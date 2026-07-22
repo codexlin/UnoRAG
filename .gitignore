@@ -7,3 +7,10 @@ dist
 .env.local
 apps/web/.next
 apps/web/node_modules
+apps/api/.venv
+apps/api/**/__pycache__/
+apps/api/.pytest_cache/
+apps/api/*.egg-info/
+.venv
+__pycache__/
+.pytest_cache/

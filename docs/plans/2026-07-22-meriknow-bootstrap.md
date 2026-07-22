@@ -55,12 +55,13 @@ meridian/   # 本地目录名；远程仓库 MeriKnow
 - [x] `/app` 工作台壳（侧栏 · 顶栏 · Northline）  
 - [x] 问答台 + 引用抽屉（mock 回合）  
 - [x] 文库列表占位；档案 / 设置占位  
-- [ ] 对接 API 健康检查与真实流式问答  
+- [x] 对接 API 健康检查与问答 stub（`/health` · `POST /v1/ask`）  
 - [ ] 上传 / 解析进度接通后端  
 
 ### Phase 2 — LangGraph 内核
 
-- [ ] `apps/api`：LangChain 模型与切分零件  
+- [x] `apps/api` 脚手架：FastAPI · CORS · settings · stub 图  
+- [ ] LangChain 模型与切分零件；真实检索（Qdrant）  
 - [ ] LangGraph：标准路径 + agentic 路径（对齐 QueryNest 行为）  
 - [ ] Session 记忆 + query 改写  
 - [ ] 弱相关 / 无命中策略（承袭 DustyKB）

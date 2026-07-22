@@ -10,6 +10,7 @@ import Link from "next/link";
 import { type FormEvent, type KeyboardEvent, useMemo, useState } from "react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
+import { askQuestion } from "@/lib/api";
 import {
 	MOCK_DEMO_TURN,
 	MOCK_LIBRARIES,
@@ -18,11 +19,12 @@ import {
 } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 
-type LocalTurn = MockTurn & { pending?: boolean };
+type LocalTurn = MockTurn & { pending?: boolean; error?: string };
 
 export function AskWorkspace() {
 	const [libraryId, setLibraryId] = useState(MOCK_LIBRARIES[0]?.id ?? "");
 	const [input, setInput] = useState("");
+	const [sessionId, setSessionId] = useState<string | undefined>();
 	const [turns, setTurns] = useState<LocalTurn[]>([]);
 	const [activeCitation, setActiveCitation] = useState<MockCitation | null>(
 		null,
@@ -36,7 +38,7 @@ export function AskWorkspace() {
 
 	const canAsk = Boolean(library && library.status === "ready");
 
-	function submitQuestion(question: string) {
+	async function submitQuestion(question: string) {
 		const trimmed = question.trim();
 		if (!trimmed || !canAsk) return;
 
@@ -54,28 +56,53 @@ export function AskWorkspace() {
 		setInput("");
 		setDrawerOpen(true);
 
-		window.setTimeout(() => {
+		try {
+			const result = await askQuestion({
+				question: trimmed,
+				libraryId,
+				sessionId,
+			});
+			setSessionId(result.session_id);
+			const next: LocalTurn = {
+				id: `turn-${Date.now()}`,
+				question: trimmed,
+				answer: result.answer,
+				citations: result.citations.map((citation) => ({
+					id: citation.id,
+					index: citation.index,
+					title: citation.title,
+					page: citation.page ?? undefined,
+					snippet: citation.snippet,
+					score: citation.score,
+				})),
+			};
+			setTurns((prev) =>
+				prev.map((turn) => (turn.id === pendingId ? next : turn)),
+			);
+			setActiveCitation(next.citations[0] ?? null);
+		} catch {
 			const demo: LocalTurn = {
 				...MOCK_DEMO_TURN,
 				id: `turn-${Date.now()}`,
 				question: trimmed,
+				answer: `${MOCK_DEMO_TURN.answer}\n\n（API 不可用，已回退本地 mock。）`,
 			};
 			setTurns((prev) =>
 				prev.map((turn) => (turn.id === pendingId ? demo : turn)),
 			);
 			setActiveCitation(demo.citations[0] ?? null);
-		}, 650);
+		}
 	}
 
 	function onSubmit(event: FormEvent) {
 		event.preventDefault();
-		submitQuestion(input);
+		void submitQuestion(input);
 	}
 
 	function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
 		if (event.key === "Enter" && !event.shiftKey) {
 			event.preventDefault();
-			submitQuestion(input);
+			void submitQuestion(input);
 		}
 	}
 
