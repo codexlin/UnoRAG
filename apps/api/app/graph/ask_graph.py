@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import logging
 import uuid
-from typing import Any, TypedDict
+from collections.abc import Callable
+from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
 
 from app.schemas import AskResponse, Citation
+from app.services.answer_copy import no_match_answer, weak_match_answer
+from app.services.llm import ChatService
+from app.services.retrieval import RetrievalService
+from app.services.runtime import RuntimeCapability, resolve_runtime
+from app.settings import Settings, get_settings
+
+logger = logging.getLogger(__name__)
+
+RetrieveFn = Callable[[str, str | None, int], list[dict[str, Any]]]
+GenerateFn = Callable[[str, list[dict[str, Any]]], str]
 
 
 class AskState(TypedDict, total=False):
@@ -15,83 +27,295 @@ class AskState(TypedDict, total=False):
 	rewritten_question: str
 	citations: list[dict[str, Any]]
 	answer: str
+	refused: bool
+	refuse_reason: str | None
+	retrieval_attempts: int
+	judgement: dict[str, Any]
 	retrieval_debug: dict[str, Any]
 
 
-def _rewrite_node(state: AskState) -> AskState:
-	question = state["question"].strip()
-	return {
-		"rewritten_question": question,
-		"retrieval_debug": {
-			**state.get("retrieval_debug", {}),
-			"rewrite": "passthrough",
-		},
-	}
+STUB_CITATIONS: list[dict[str, Any]] = [
+	{
+		"id": "c1",
+		"index": 1,
+		"title": "员工手册-休假篇.pdf",
+		"page": "p.12",
+		"snippet": "病假须于返岗后三个工作日内补交证明材料，并由直属主管确认……",
+		"score": 0.91,
+		"text": "病假须于返岗后三个工作日内补交证明材料，并由直属主管确认。",
+	},
+	{
+		"id": "c2",
+		"index": 2,
+		"title": "考勤管理细则.docx",
+		"page": "§3.2",
+		"snippet": "未能按期提交病假证明的，人力资源部有权按事假或旷工规则核算……",
+		"score": 0.78,
+		"text": "未能按期提交病假证明的，人力资源部有权按事假或旷工规则核算。",
+	},
+]
 
 
-def _retrieve_node(state: AskState) -> AskState:
-	# Stub retrieval — replace with hybrid search + rerank later.
-	citations = [
-		{
-			"id": "c1",
-			"index": 1,
-			"title": "员工手册-休假篇.pdf",
-			"page": "p.12",
-			"snippet": "病假须于返岗后三个工作日内补交证明材料，并由直属主管确认……",
-			"score": 0.91,
-		},
-		{
-			"id": "c2",
-			"index": 2,
-			"title": "考勤管理细则.docx",
-			"page": "§3.2",
-			"snippet": "未能按期提交病假证明的，人力资源部有权按事假或旷工规则核算……",
-			"score": 0.78,
-		},
-	]
-	return {
-		"citations": citations,
-		"retrieval_debug": {
-			**state.get("retrieval_debug", {}),
-			"retrieve": "stub",
-			"library_id": state.get("library_id"),
-			"hit_count": len(citations),
-		},
-	}
+def _library_label(library_id: str | None) -> str:
+	if not library_id:
+		return "当前文库"
+	return library_id
 
 
-def _generate_node(state: AskState) -> AskState:
-	answer = (
+def stub_retrieve(query: str, library_id: str | None, _top_k: int) -> list[dict[str, Any]]:
+	"""Deterministic stub hits; special queries exercise refuse paths in tests."""
+	normalized = query.strip().lower()
+	if "无命中" in query or normalized.startswith("__no_hit__"):
+		return []
+	if "弱相关" in query or normalized.startswith("__weak__"):
+		return [
+			{
+				"id": "weak-1",
+				"index": 1,
+				"title": "无关附录.pdf",
+				"page": "p.99",
+				"snippet": "本附录仅作排版示例，不含人事制度条款。",
+				"score": 0.11,
+				"text": "本附录仅作排版示例，不含人事制度条款。",
+			}
+		]
+	_ = library_id
+	return [dict(item) for item in STUB_CITATIONS]
+
+
+def stub_generate(question: str, citations: list[dict[str, Any]]) -> str:
+	_ = question, citations
+	return (
 		"根据现行人事制度，病假须于返岗后三个工作日内补交证明材料，并由直属主管确认。"
 		"逾期未补交的，可按事假或旷工规则处理（以制度原文为准）。"
-		"\n\n（当前为 LangGraph stub 路径，尚未接入真实检索与模型。）"
+		"\n\n（当前为 stub 路径：未调用真实 LLM。）"
 	)
-	return {
-		"answer": answer,
-		"retrieval_debug": {
-			**state.get("retrieval_debug", {}),
-			"generate": "stub_template",
-		},
-	}
 
 
-def build_stub_graph():
+def _format_context(citations: list[dict[str, Any]]) -> str:
+	blocks: list[str] = []
+	for item in citations:
+		idx = item.get("index", len(blocks) + 1)
+		title = item.get("title") or "资料"
+		text = item.get("text") or item.get("snippet") or ""
+		blocks.append(f"[{idx}] {title}\n{text}")
+	return "\n\n".join(blocks)
+
+
+def _merge_debug(state: AskState, **extra: Any) -> dict[str, Any]:
+	debug = dict(state.get("retrieval_debug") or {})
+	debug.update(extra)
+	return debug
+
+
+def build_ask_graph(
+	*,
+	settings: Settings,
+	retrieve_fn: RetrieveFn,
+	generate_fn: GenerateFn,
+	mode: str,
+):
+	min_score = float(settings.answer_min_score)
+	max_retries = max(0, int(settings.max_retrieve_retries))
+
+	def rewrite_node(state: AskState) -> AskState:
+		question = state["question"].strip()
+		return {
+			"rewritten_question": question,
+			"retrieval_attempts": 0,
+			"refused": False,
+			"refuse_reason": None,
+			"retrieval_debug": _merge_debug(
+				state,
+				rewrite="passthrough",
+				mode=mode,
+				answer_min_score=min_score,
+			),
+		}
+
+	def retrieve_node(state: AskState) -> AskState:
+		query = state.get("rewritten_question") or state["question"]
+		attempts = int(state.get("retrieval_attempts") or 0) + 1
+		citations = retrieve_fn(query, state.get("library_id"), settings.retrieve_top_k)
+		top_score = float(citations[0]["score"]) if citations else None
+		return {
+			"citations": citations,
+			"retrieval_attempts": attempts,
+			"retrieval_debug": _merge_debug(
+				state,
+				retrieve=mode,
+				library_id=state.get("library_id"),
+				hit_count=len(citations),
+				top_score=top_score,
+				retrieval_attempts=attempts,
+				query=query,
+			),
+		}
+
+	def judge_node(state: AskState) -> AskState:
+		citations = state.get("citations") or []
+		attempts = int(state.get("retrieval_attempts") or 0)
+		library_name = _library_label(state.get("library_id"))
+
+		if not citations:
+			can_retry = attempts <= max_retries
+			judgement = {
+				"sufficient": False,
+				"action": "retry" if can_retry else "refuse",
+				"reason": "no_hit",
+				"can_retry": can_retry,
+			}
+		else:
+			top_score = float(citations[0].get("score") or 0.0)
+			weak = min_score > 0 and top_score < min_score
+			if weak:
+				can_retry = attempts <= max_retries
+				judgement = {
+					"sufficient": False,
+					"action": "retry" if can_retry else "refuse",
+					"reason": "weak_match",
+					"top_score": top_score,
+					"min_score": min_score,
+					"can_retry": can_retry,
+				}
+			else:
+				judgement = {
+					"sufficient": True,
+					"action": "generate",
+					"reason": "ok",
+					"top_score": top_score,
+					"min_score": min_score,
+				}
+
+		# Attach human-facing refuse reason early for refuse path.
+		refuse_reason = None
+		if judgement["action"] == "refuse":
+			refuse_reason = judgement["reason"]
+
+		return {
+			"judgement": judgement,
+			"refuse_reason": refuse_reason,
+			"retrieval_debug": _merge_debug(state, judgement=judgement, library_name=library_name),
+		}
+
+	def route_after_judge(state: AskState) -> Literal["retry", "generate", "refuse"]:
+		action = (state.get("judgement") or {}).get("action") or "generate"
+		if action == "retry":
+			return "retry"
+		if action == "refuse":
+			return "refuse"
+		return "generate"
+
+	def retry_node(state: AskState) -> AskState:
+		"""Broaden query once, then re-enter retrieve."""
+		base = state.get("rewritten_question") or state["question"]
+		reason = (state.get("judgement") or {}).get("reason")
+		if reason == "weak_match":
+			broadened = f"{base} 相关制度 条款 规定"
+		else:
+			broadened = f"{base} 关键词 概要"
+		return {
+			"rewritten_question": broadened,
+			"retrieval_debug": _merge_debug(
+				state,
+				retry={"from": base, "to": broadened, "reason": reason},
+			),
+		}
+
+	def refuse_node(state: AskState) -> AskState:
+		reason = (state.get("judgement") or {}).get("reason") or state.get("refuse_reason") or "no_hit"
+		library_name = _library_label(state.get("library_id"))
+		if reason == "weak_match":
+			answer = weak_match_answer(library_name=library_name)
+			# Keep weak citations for transparency (DustyKB behavior).
+			citations = state.get("citations") or []
+		else:
+			answer = no_match_answer(library_name=library_name)
+			citations = []
+		return {
+			"answer": answer,
+			"citations": citations,
+			"refused": True,
+			"refuse_reason": reason,
+			"retrieval_debug": _merge_debug(state, generate="refuse", refuse_reason=reason),
+		}
+
+	def generate_node(state: AskState) -> AskState:
+		citations = state.get("citations") or []
+		answer = generate_fn(state["question"], citations)
+		return {
+			"answer": answer,
+			"refused": False,
+			"refuse_reason": None,
+			"retrieval_debug": _merge_debug(state, generate=mode),
+		}
+
 	graph: StateGraph[AskState] = StateGraph(AskState)
-	graph.add_node("rewrite", _rewrite_node)
-	graph.add_node("retrieve", _retrieve_node)
-	graph.add_node("generate", _generate_node)
+	graph.add_node("rewrite", rewrite_node)
+	graph.add_node("retrieve", retrieve_node)
+	graph.add_node("judge", judge_node)
+	graph.add_node("retry", retry_node)
+	graph.add_node("generate", generate_node)
+	graph.add_node("refuse", refuse_node)
 	graph.set_entry_point("rewrite")
 	graph.add_edge("rewrite", "retrieve")
-	graph.add_edge("retrieve", "generate")
+	graph.add_edge("retrieve", "judge")
+	graph.add_conditional_edges(
+		"judge",
+		route_after_judge,
+		{"retry": "retry", "generate": "generate", "refuse": "refuse"},
+	)
+	graph.add_edge("retry", "retrieve")
 	graph.add_edge("generate", END)
+	graph.add_edge("refuse", END)
 	return graph.compile()
 
 
 class AskGraphService:
-	"""Thin wrapper; later swap stub graph for full agentic path."""
+	"""rewrite → retrieve → judge → (retry) → generate | refuse."""
 
-	def __init__(self) -> None:
-		self._graph = build_stub_graph()
+	def __init__(
+		self,
+		settings: Settings | None = None,
+		*,
+		capability: RuntimeCapability | None = None,
+		retrieve_fn: RetrieveFn | None = None,
+		generate_fn: GenerateFn | None = None,
+	) -> None:
+		self.settings = settings or get_settings()
+		self.capability = capability or resolve_runtime(self.settings)
+		self.mode = self.capability.effective_mode
+
+		if retrieve_fn is not None:
+			self._retrieve = retrieve_fn
+		elif self.mode == "live":
+			retrieval = RetrievalService(self.settings)
+			self._retrieve = lambda query, library_id, top_k: retrieval.search(
+				query=query,
+				library_id=library_id,
+				top_k=top_k,
+			)
+		else:
+			self._retrieve = stub_retrieve
+
+		if generate_fn is not None:
+			self._generate = generate_fn
+		elif self.mode == "live":
+			chat = ChatService(self.settings)
+
+			def live_generate(question: str, citations: list[dict[str, Any]]) -> str:
+				return chat.answer(question=question, context=_format_context(citations))
+
+			self._generate = live_generate
+		else:
+			self._generate = stub_generate
+
+		self._graph = build_ask_graph(
+			settings=self.settings,
+			retrieve_fn=self._retrieve,
+			generate_fn=self._generate,
+			mode=self.mode,
+		)
 
 	def ask(
 		self,
@@ -99,7 +323,6 @@ class AskGraphService:
 		question: str,
 		library_id: str | None = None,
 		session_id: str | None = None,
-		mode: str = "stub",
 	) -> AskResponse:
 		resolved_session = session_id or str(uuid.uuid4())
 		state = self._graph.invoke(
@@ -107,15 +330,35 @@ class AskGraphService:
 				"session_id": resolved_session,
 				"question": question,
 				"library_id": library_id,
-				"retrieval_debug": {},
+				"retrieval_debug": {
+					"requested_mode": self.capability.requested_mode,
+					"effective_mode": self.capability.effective_mode,
+					"degraded": self.capability.degraded,
+					"reasons": list(self.capability.reasons),
+				},
 			}
 		)
-		citations = [Citation.model_validate(item) for item in state.get("citations", [])]
+		raw_citations = state.get("citations") or []
+		citations = [
+			Citation.model_validate(
+				{
+					"id": item["id"],
+					"index": item["index"],
+					"title": item["title"],
+					"page": item.get("page"),
+					"snippet": item["snippet"],
+					"score": item["score"],
+				}
+			)
+			for item in raw_citations
+		]
 		return AskResponse(
 			session_id=resolved_session,
 			question=question,
 			answer=state["answer"],
 			citations=citations,
-			mode=mode,
-			retrieval_debug=state.get("retrieval_debug", {}),
+			mode=self.mode,
+			refused=bool(state.get("refused")),
+			refuse_reason=state.get("refuse_reason"),
+			retrieval_debug=state.get("retrieval_debug") or {},
 		)

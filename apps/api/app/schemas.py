@@ -8,7 +8,12 @@ class HealthResponse(BaseModel):
 	service: str
 	env: str
 	ask_mode: str
-	graph: str = "stub"
+	effective_mode: str = "stub"
+	graph: str = "ask_v1"
+	degraded: bool = False
+	has_llm_key: bool = False
+	qdrant_ok: bool = False
+	reasons: list[str] = Field(default_factory=list)
 
 
 class Citation(BaseModel):
@@ -32,4 +37,21 @@ class AskResponse(BaseModel):
 	answer: str
 	citations: list[Citation]
 	mode: str
+	refused: bool = False
+	refuse_reason: str | None = None
 	retrieval_debug: dict[str, object] = Field(default_factory=dict)
+
+
+class IngestRequest(BaseModel):
+	library_id: str = Field(min_length=1, max_length=128)
+	title: str = Field(min_length=1, max_length=512)
+	text: str = Field(min_length=1, max_length=200_000)
+	doc_id: str | None = None
+
+
+class IngestResponse(BaseModel):
+	library_id: str
+	doc_id: str
+	title: str
+	chunk_count: int
+	mode: str = "live"

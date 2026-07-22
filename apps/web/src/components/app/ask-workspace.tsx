@@ -75,6 +75,9 @@ export function AskWorkspace() {
 					snippet: citation.snippet,
 					score: citation.score,
 				})),
+				refused: result.refused,
+				refuseReason: result.refuse_reason,
+				mode: result.mode,
 			};
 			setTurns((prev) =>
 				prev.map((turn) => (turn.id === pendingId ? next : turn)),
@@ -166,7 +169,7 @@ export function AskWorkspace() {
 							</h2>
 							<p className="text-sm leading-6 text-muted-foreground">
 								{canAsk
-									? "当前为 Phase 1 mock：发送后会返回一条示例答案与引用轨，便于确认信息架构。"
+									? "对着文库提问；无命中或相关度过低时会明确拒答，避免瞎猜。API 不可用时回退本地示例。"
 									: library?.status === "empty"
 										? "先去文库收录几份资料，问答才有据可依。"
 										: "索引完成前暂不可提问，可先到文库查看进度。"}
@@ -214,7 +217,8 @@ export function AskWorkspace() {
 									</div>
 									<div className="rounded-md border border-border/80 bg-card/90 px-4 py-4 shadow-sm">
 										<p className="font-mono text-[10px] tracking-[0.14em] text-cite uppercase">
-											Answer
+											{turn.refused ? "Refused" : "Answer"}
+											{turn.mode ? ` · ${turn.mode}` : ""}
 										</p>
 										{turn.pending ? (
 											<p className="mt-2 text-sm text-muted-foreground">
@@ -222,6 +226,13 @@ export function AskWorkspace() {
 											</p>
 										) : (
 											<>
+												{turn.refused ? (
+													<p className="mt-2 font-mono text-[11px] text-survey">
+														{turn.refuseReason === "weak_match"
+															? "弱相关 · 未调用生成"
+															: "无命中 · 未调用生成"}
+													</p>
+												) : null}
 												<p className="mt-2 text-sm leading-7 text-foreground">
 													{turn.answer}
 												</p>
@@ -246,6 +257,10 @@ export function AskWorkspace() {
 															</button>
 														))}
 													</div>
+												) : turn.refused ? (
+													<p className="mt-4 font-mono text-[11px] text-muted-foreground">
+														无可用引用
+													</p>
 												) : null}
 											</>
 										)}
@@ -321,12 +336,12 @@ export function AskWorkspace() {
 									{activeCitation.snippet}
 								</p>
 								<p className="font-mono text-[11px] text-muted-foreground">
-									score {activeCitation.score.toFixed(2)} · mock
+									score {activeCitation.score.toFixed(2)}
 								</p>
 							</article>
 						) : (
 							<p className="text-sm leading-6 text-muted-foreground">
-								发送问题后，这里会列出可核对的原文片段。点答案旁的编号可切换引用。
+								发送问题后，这里会列出可核对的原文片段。无命中拒答时保持空白。
 							</p>
 						)}
 					</div>

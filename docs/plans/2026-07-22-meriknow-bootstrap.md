@@ -61,23 +61,22 @@ meridian/   # 本地目录名；远程仓库 MeriKnow
 ### Phase 2 — LangGraph 内核
 
 - [x] `apps/api` 脚手架：FastAPI · CORS · settings · stub 图  
-- [ ] LangChain 模型与切分零件；真实检索（Qdrant）  
-- [ ] LangGraph：标准路径 + agentic 路径（对齐 QueryNest 行为）  
-- [ ] Session 记忆 + query 改写  
-- [ ] 弱相关 / 无命中策略（承袭 DustyKB）
+- [x] LangChain 兼容 chat/embeddings；切分（500/80）；Qdrant 检索；最小 ingest  
+- [x] LangGraph：rewrite → retrieve → judge → retry → generate/refuse  
+- [ ] Session 记忆 + query 改写（多轮）  
+- [x] 弱相关 / 无命中策略（承袭 DustyKB；`ANSWER_MIN_SCORE`）  
+- [ ] Rerank / 混合检索（后续）
 
 ### Phase 3 — 企业壳
 
 - [ ] SSO/RBAC、审计日志、索引队列  
 - [ ] 评测抽检、连接器 / OCR（按需）
 
-## 成功标准（Phase 0）
+## 成功标准（Phase 2 本切片）
 
-- `pnpm --filter web dev` 可启动  
-- Biome 可 check  
-- shadcn 已 init  
-- 计划文档可在仓库内查阅  
-- 已推送到 `origin/main`
+- `ASK_MODE=stub` 无密钥可问答与拒答自测  
+- `ASK_MODE=live` + 密钥 + Qdrant：ingest → ask 可跑通；失败时 health 标明降级  
+- `uv run pytest` 覆盖 stub / 拒答 / retry
 
 ## 风险
 

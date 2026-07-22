@@ -21,6 +21,9 @@ export type MockTurn = {
 	question: string;
 	answer: string;
 	citations: MockCitation[];
+	refused?: boolean;
+	refuseReason?: string | null;
+	mode?: string;
 };
 
 export const MOCK_LIBRARIES: MockLibrary[] = [

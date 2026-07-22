@@ -13,7 +13,7 @@ export function AppTopbar() {
 	const pathname = usePathname();
 	const current = getAppNavItem(pathname);
 	const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
-	const [askMode, setAskMode] = useState<string | null>(null);
+	const [modeLabel, setModeLabel] = useState<string | null>(null);
 
 	useEffect(() => {
 		const controller = new AbortController();
@@ -24,11 +24,12 @@ export function AppTopbar() {
 				const health = await fetchHealth(controller.signal);
 				if (cancelled) return;
 				setApiStatus(health.status === "ok" ? "online" : "offline");
-				setAskMode(health.ask_mode);
+				const effective = health.effective_mode || health.ask_mode;
+				setModeLabel(health.degraded ? `${effective}·降级` : effective);
 			} catch {
 				if (cancelled) return;
 				setApiStatus("offline");
-				setAskMode(null);
+				setModeLabel(null);
 			}
 		}
 
@@ -46,7 +47,7 @@ export function AppTopbar() {
 
 	const statusLabel =
 		apiStatus === "online"
-			? `API · ${askMode ?? "ok"}`
+			? `API · ${modeLabel ?? "ok"}`
 			: apiStatus === "checking"
 				? "API 探测中"
 				: "API 离线";

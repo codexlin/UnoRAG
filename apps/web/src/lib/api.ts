@@ -3,7 +3,12 @@ export type ApiHealth = {
 	service: string;
 	env: string;
 	ask_mode: string;
+	effective_mode: string;
 	graph: string;
+	degraded: boolean;
+	has_llm_key: boolean;
+	qdrant_ok: boolean;
+	reasons: string[];
 };
 
 export type ApiCitation = {
@@ -21,6 +26,8 @@ export type ApiAskResponse = {
 	answer: string;
 	citations: ApiCitation[];
 	mode: string;
+	refused: boolean;
+	refuse_reason?: string | null;
 	retrieval_debug: Record<string, unknown>;
 };
 
