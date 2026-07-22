@@ -22,12 +22,7 @@ import {
 	askQuestionStream,
 	fetchLibraries,
 } from "@/lib/api";
-import {
-	MOCK_DEMO_TURN,
-	MOCK_LIBRARIES,
-	type MockCitation,
-	type MockTurn,
-} from "@/lib/mock-data";
+import type { MockCitation, MockTurn } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 
 type LocalTurn = MockTurn & {
@@ -134,20 +129,14 @@ export function AskWorkspace() {
 				setLibraries(items);
 				setLibraryId((prev) => prev || items[0]?.id || "");
 				setLibsError(null);
-			} catch {
-				setLibraries(
-					MOCK_LIBRARIES.map((item) => ({
-						id: item.id,
-						name: item.name,
-						status: item.status,
-						doc_count: item.docCount,
-						ready_count: item.readyCount,
-						created_at: item.updatedAt,
-						updated_at: item.updatedAt,
-					})),
+			} catch (err) {
+				setLibraries([]);
+				setLibraryId("");
+				setLibsError(
+					err instanceof Error
+						? `文库加载失败：${err.message}`
+						: "文库加载失败：API 不可用",
 				);
-				setLibraryId((prev) => prev || MOCK_LIBRARIES[0]?.id || "");
-				setLibsError("文库列表来自本地示例（API 不可用）");
 			}
 		})();
 		return () => controller.abort();
@@ -268,18 +257,25 @@ export function AskWorkspace() {
 					},
 				},
 			);
-		} catch {
-			const demo: LocalTurn = {
-				...MOCK_DEMO_TURN,
-				id: `turn-${Date.now()}`,
-				question: trimmed,
-				answer: `${MOCK_DEMO_TURN.answer}\n\n（API 不可用，已回退本地 mock。）`,
-				evidenceReady: true,
-			};
+		} catch (err) {
+			const message =
+				err instanceof Error ? err.message : "请求失败，请确认 API 已启动";
 			setTurns((prev) =>
-				prev.map((turn) => (turn.id === pendingId ? demo : turn)),
+				prev.map((turn) =>
+					turn.id === pendingId
+						? {
+								id: `turn-${Date.now()}`,
+								question: trimmed,
+								answer: "",
+								citations: [],
+								pending: false,
+								error: message,
+								evidenceReady: false,
+							}
+						: turn,
+				),
 			);
-			setActiveCitation(demo.citations[0] ?? null);
+			setActiveCitation(null);
 		}
 	}
 
@@ -340,7 +336,7 @@ export function AskWorkspace() {
 					</div>
 				</div>
 				{libsError ? (
-					<p className="border-b border-border/60 bg-muted/30 px-5 py-1.5 font-mono text-[11px] text-muted-foreground">
+					<p className="border-b border-destructive/30 bg-destructive/10 px-5 py-1.5 text-sm text-destructive">
 						{libsError}
 					</p>
 				) : null}
@@ -363,7 +359,9 @@ export function AskWorkspace() {
 									? "流式回答会边生成边显示；下方证据块可点开核对原文。点答案里的 [n] 也能跳到对应片段。"
 									: library?.status === "empty"
 										? "先去文库收录几份资料，问答才有据可依。"
-										: "索引完成前暂不可提问，可先到文库查看进度。"}
+										: libsError
+											? "请先恢复 API 连接后再提问。"
+											: "索引完成前暂不可提问，可先到文库查看进度。"}
 							</p>
 							{!canAsk ? (
 								<Link
@@ -414,6 +412,10 @@ export function AskWorkspace() {
 										{turn.pending && !turn.answer && !turn.evidenceReady ? (
 											<p className="mt-2 text-sm text-muted-foreground">
 												正在检索并整理依据…
+											</p>
+										) : turn.error ? (
+											<p className="mt-2 text-sm text-destructive">
+												{turn.error}
 											</p>
 										) : (
 											<>

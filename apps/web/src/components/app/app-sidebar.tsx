@@ -80,7 +80,7 @@ export function AppSidebar() {
 					默认工作区
 				</p>
 				<p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
-					mock · Phase 1
+					MeriKnow desk
 				</p>
 			</div>
 		</aside>

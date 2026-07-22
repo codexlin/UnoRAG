@@ -20,7 +20,6 @@ import {
 	fetchLibraries,
 	uploadDocument,
 } from "@/lib/api";
-import { MOCK_LIBRARIES } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 
 const statusLabel = {
@@ -55,7 +54,6 @@ export function LibrariesPanel() {
 	const [creating, setCreating] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
-	const [usingMock, setUsingMock] = useState(false);
 	const [displayName, setDisplayName] = useState("");
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -65,23 +63,15 @@ export function LibrariesPanel() {
 		try {
 			const items = await fetchLibraries(signal);
 			setLibraries(items);
-			setUsingMock(false);
 			setSelectedId((prev) => prev || items[0]?.id || "");
-		} catch {
-			setUsingMock(true);
-			setLibraries(
-				MOCK_LIBRARIES.map((item) => ({
-					id: item.id,
-					name: item.name,
-					status: item.status,
-					doc_count: item.docCount,
-					ready_count: item.readyCount,
-					created_at: item.updatedAt,
-					updated_at: item.updatedAt,
-				})),
+		} catch (err) {
+			setLibraries([]);
+			setSelectedId("");
+			setError(
+				err instanceof Error
+					? `文库加载失败：${err.message}`
+					: "文库加载失败：API 不可用",
 			);
-			setSelectedId((prev) => prev || MOCK_LIBRARIES[0]?.id || "");
-			setError("API 不可用，暂显示本地示例文库。");
 		} finally {
 			setLoading(false);
 		}
@@ -89,18 +79,23 @@ export function LibrariesPanel() {
 
 	const loadDocuments = useCallback(
 		async (libraryId: string, signal?: AbortSignal) => {
-			if (!libraryId || usingMock) {
+			if (!libraryId) {
 				setDocuments([]);
 				return;
 			}
 			try {
 				const items = await fetchDocuments(libraryId, signal);
 				setDocuments(items);
-			} catch {
+			} catch (err) {
 				setDocuments([]);
+				setError(
+					err instanceof Error
+						? `文档列表加载失败：${err.message}`
+						: "文档列表加载失败",
+				);
 			}
 		},
-		[usingMock],
+		[],
 	);
 
 	useEffect(() => {
@@ -117,7 +112,7 @@ export function LibrariesPanel() {
 	}, [selectedId, loadDocuments]);
 
 	async function onUploadFiles(files: FileList | null) {
-		if (!files?.length || !selectedId || usingMock) return;
+		if (!files?.length || !selectedId) return;
 		setUploading(true);
 		setError(null);
 		setNotice(null);
@@ -149,7 +144,6 @@ export function LibrariesPanel() {
 	}
 
 	async function onCreateLibrary() {
-		if (usingMock) return;
 		const name = window.prompt("新文库名称");
 		if (!name?.trim()) return;
 		setCreating(true);
@@ -191,8 +185,7 @@ export function LibrariesPanel() {
 								value={displayName}
 								onChange={(event) => setDisplayName(event.target.value)}
 								placeholder="如：毕业设计说明书"
-								disabled={usingMock}
-								className="h-8 rounded-md border border-border bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/40 disabled:opacity-60"
+								className="h-8 rounded-md border border-border bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/40"
 							/>
 						</label>
 						<input
@@ -217,7 +210,7 @@ export function LibrariesPanel() {
 							type="button"
 							variant="outline"
 							className="rounded-md"
-							disabled={uploading || usingMock || !selectedId}
+							disabled={uploading || !selectedId}
 							onClick={() => fileInputRef.current?.click()}
 						>
 							<FileUp data-icon="inline-start" />
@@ -226,7 +219,7 @@ export function LibrariesPanel() {
 						<Button
 							type="button"
 							className="rounded-md"
-							disabled={creating || usingMock}
+							disabled={creating}
 							onClick={() => void onCreateLibrary()}
 						>
 							<Plus data-icon="inline-start" />
@@ -236,7 +229,7 @@ export function LibrariesPanel() {
 				</div>
 
 				{error ? (
-					<p className="rounded-md border border-border/80 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+					<p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
 						{error}
 					</p>
 				) : null}
@@ -304,7 +297,7 @@ export function LibrariesPanel() {
 					))}
 				</ul>
 
-				{selectedId && !usingMock ? (
+				{selectedId ? (
 					<section className="space-y-3 rounded-md border border-border/80 bg-card/70 p-4">
 						<div className="flex items-center justify-between gap-2">
 							<h3 className="font-heading text-base font-semibold">文档</h3>
