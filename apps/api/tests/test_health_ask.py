@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.graph.ask_graph import AskGraphService, build_ask_graph, stub_generate
 from app.main import app
-from app.settings import Settings
+from app.settings import Settings, get_settings
 
 client = TestClient(app)
 
@@ -132,7 +132,32 @@ def test_build_graph_compile() -> None:
 	assert graph is not None
 
 
-def test_ingest_unavailable_in_stub() -> None:
+def test_ingest_simulates_in_stub() -> None:
+	response = client.post(
+		"/v1/ingest",
+		json={
+			"library_id": "lib-hr",
+			"title": "sample",
+			"text": "病假须于返岗后三个工作日内补交证明材料。",
+		},
+	)
+	assert response.status_code == 200
+	payload = response.json()
+	assert payload["status"] == "ready"
+	assert payload["simulated"] is True
+	assert payload["chunk_count"] >= 1
+	assert payload["mode"] == "stub"
+
+	libs = client.get("/v1/libraries")
+	assert libs.status_code == 200
+	hr = next(item for item in libs.json() if item["id"] == "lib-hr")
+	assert hr["ready_count"] >= 1
+	assert hr["status"] == "ready"
+
+
+def test_ingest_503_when_simulate_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setenv("STUB_INGEST_SIMULATE", "false")
+	get_settings.cache_clear()
 	response = client.post(
 		"/v1/ingest",
 		json={
@@ -142,3 +167,4 @@ def test_ingest_unavailable_in_stub() -> None:
 		},
 	)
 	assert response.status_code == 503
+	get_settings.cache_clear()

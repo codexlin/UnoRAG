@@ -316,31 +316,36 @@ class AskGraphService:
 		retrieve_fn: RetrieveFn | None = None,
 		generate_fn: GenerateFn | None = None,
 		session_memory: SessionMemory | None = None,
+		retrieval_service: RetrievalService | None = None,
 	) -> None:
 		self.settings = settings or get_settings()
 		self.capability = capability or resolve_runtime(self.settings)
 		self.mode = self.capability.effective_mode
 		self.session_memory = session_memory or default_session_memory
+		self._retrieval_service = retrieval_service
+		self._chat: ChatService | None = None
 
 		if retrieve_fn is not None:
 			self._retrieve = retrieve_fn
 		elif self.mode == "live":
-			retrieval = RetrievalService(self.settings)
-			self._retrieve = lambda query, library_id, top_k: retrieval.search(
-				query=query,
-				library_id=library_id,
-				top_k=top_k,
-			)
+			retrieval = retrieval_service or RetrievalService(self.settings)
+			self._retrieval_service = retrieval
+
+			def live_retrieve(query: str, library_id: str | None, top_k: int) -> list[dict[str, Any]]:
+				return retrieval.search(query=query, library_id=library_id, top_k=top_k)
+
+			self._retrieve = live_retrieve
 		else:
 			self._retrieve = stub_retrieve
 
 		if generate_fn is not None:
 			self._generate = generate_fn
 		elif self.mode == "live":
-			chat = ChatService(self.settings)
+			self._chat = ChatService(self.settings)
 
 			def live_generate(question: str, citations: list[dict[str, Any]]) -> str:
-				return chat.answer(question=question, context=_format_context(citations))
+				assert self._chat is not None
+				return self._chat.answer(question=question, context=_format_context(citations))
 
 			self._generate = live_generate
 		else:
@@ -352,6 +357,12 @@ class AskGraphService:
 			generate_fn=self._generate,
 			mode=self.mode,
 		)
+
+	def _merge_retrieval_debug(self, debug: dict[str, Any]) -> dict[str, Any]:
+		merged = dict(debug)
+		if self._retrieval_service is not None and getattr(self._retrieval_service, "last_debug", None):
+			merged.update(self._retrieval_service.last_debug)
+		return merged
 
 	def ask(
 		self,
@@ -380,6 +391,7 @@ class AskGraphService:
 					"degraded": self.capability.degraded,
 					"reasons": list(self.capability.reasons),
 					"session_memory": self.settings.session_memory_enabled,
+					"hybrid_enabled": self.settings.hybrid_enabled,
 				},
 			}
 		)
@@ -410,5 +422,124 @@ class AskGraphService:
 			mode=self.mode,
 			refused=bool(state.get("refused")),
 			refuse_reason=state.get("refuse_reason"),
-			retrieval_debug=state.get("retrieval_debug") or {},
+			retrieval_debug=self._merge_retrieval_debug(state.get("retrieval_debug") or {}),
 		)
+
+	def iter_ask_events(
+		self,
+		*,
+		question: str,
+		library_id: str | None = None,
+		session_id: str | None = None,
+	):
+		"""Yield SSE-friendly dicts: meta → citations → token* → done | error."""
+		resolved_session = session_id or str(uuid.uuid4())
+		history: list[dict[str, str]] = []
+		if self.settings.session_memory_enabled:
+			history = self.session_memory.load(
+				resolved_session,
+				limit=self.settings.session_memory_max_turns * 2,
+			)
+
+		held: dict[str, Any] = {"citations": [], "question": question}
+
+		def capture_generate(q: str, citations: list[dict[str, Any]]) -> str:
+			held["citations"] = citations
+			held["question"] = q
+			return ""
+
+		graph = build_ask_graph(
+			settings=self.settings,
+			retrieve_fn=self._retrieve,
+			generate_fn=capture_generate,
+			mode=self.mode,
+		)
+		state = graph.invoke(
+			{
+				"session_id": resolved_session,
+				"question": question,
+				"library_id": library_id,
+				"history": history,
+				"retrieval_debug": {
+					"requested_mode": self.capability.requested_mode,
+					"effective_mode": self.capability.effective_mode,
+					"degraded": self.capability.degraded,
+					"reasons": list(self.capability.reasons),
+					"session_memory": self.settings.session_memory_enabled,
+					"hybrid_enabled": self.settings.hybrid_enabled,
+					"stream": True,
+				},
+			}
+		)
+		debug = self._merge_retrieval_debug(state.get("retrieval_debug") or {})
+		refused = bool(state.get("refused"))
+		raw_citations = state.get("citations") or held.get("citations") or []
+		citations = [
+			{
+				"id": item["id"],
+				"index": item["index"],
+				"title": item["title"],
+				"page": item.get("page"),
+				"snippet": item["snippet"],
+				"score": item["score"],
+			}
+			for item in raw_citations
+		]
+
+		yield {
+			"event": "meta",
+			"data": {
+				"session_id": resolved_session,
+				"mode": self.mode,
+				"refused": refused,
+				"refuse_reason": state.get("refuse_reason"),
+			},
+		}
+		yield {"event": "citations", "data": citations}
+
+		if refused:
+			answer = state.get("answer") or ""
+			step = 12 if len(answer) > 24 else max(1, len(answer) or 1)
+			for offset in range(0, len(answer), step):
+				yield {"event": "token", "data": answer[offset : offset + step]}
+		elif self.mode == "live" and self._chat is not None and raw_citations:
+			parts: list[str] = []
+			try:
+				for token in self._chat.stream_answer(
+					question=question,
+					context=_format_context(raw_citations),
+				):
+					parts.append(token)
+					yield {"event": "token", "data": token}
+			except Exception as exc:
+				logger.exception("ask.stream.llm_failed")
+				yield {"event": "error", "data": {"message": f"流式生成失败：{exc}"}}
+				return
+			answer = "".join(parts).strip()
+			state["answer"] = answer
+		else:
+			answer = self._generate(question, raw_citations)
+			state["answer"] = answer
+			step = 12 if len(answer) > 24 else max(1, len(answer) or 1)
+			for offset in range(0, len(answer), step):
+				yield {"event": "token", "data": answer[offset : offset + step]}
+
+		answer = state.get("answer") or ""
+		if self.settings.session_memory_enabled:
+			self.session_memory.append(resolved_session, "user", question)
+			self.session_memory.append(resolved_session, "assistant", answer)
+
+		yield {
+			"event": "done",
+			"data": {
+				"session_id": resolved_session,
+				"question": question,
+				"answer": answer,
+				"citations": citations,
+				"mode": self.mode,
+				"refused": refused,
+				"refuse_reason": state.get("refuse_reason"),
+				"retrieval_debug": debug,
+			},
+		}
+

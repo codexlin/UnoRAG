@@ -14,6 +14,9 @@ dependencies = [
   "langchain-openai>=0.2.0",
   "langgraph>=0.2.0",
   "qdrant-client>=1.12.0",
+  "pymupdf>=1.24.0",
+  "sqlalchemy>=2.0.36",
+  "psycopg[binary]>=3.2.0",
 ]
 
 [dependency-groups]

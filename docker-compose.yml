@@ -1,6 +1,7 @@
-# MeriKnow local infra — keep lean for this phase (Qdrant only).
+# MeriKnow local infra
 # Usage: docker compose up -d
-# Verify: curl -s http://localhost:6333/readyz
+# Verify Qdrant: curl -s http://localhost:6333/readyz
+# Verify Postgres (profile): docker compose --profile db up -d && pg_isready -h localhost -U meriknow
 
 services:
   qdrant:
@@ -17,23 +18,25 @@ services:
       retries: 10
       start_period: 10s
 
-  # Optional — uncomment when metadata / multi-tenant DB is needed later.
-  # postgres:
-  #   image: postgres:17-alpine
-  #   environment:
-  #     POSTGRES_DB: meriknow
-  #     POSTGRES_USER: meriknow
-  #     POSTGRES_PASSWORD: meriknow
-  #   ports:
-  #     - "5432:5432"
-  #   volumes:
-  #     - meriknow_postgres_data:/var/lib/postgresql/data
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "pg_isready -U meriknow -d meriknow"]
-  #     interval: 5s
-  #     timeout: 5s
-  #     retries: 10
+  # Optional metadata DB — enable with: docker compose --profile db up -d
+  # Then set DATABASE_URL=postgresql+psycopg://meriknow:meriknow@localhost:5432/meriknow
+  postgres:
+    profiles: ["db"]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: meriknow
+      POSTGRES_USER: meriknow
+      POSTGRES_PASSWORD: meriknow
+    ports:
+      - "5432:5432"
+    volumes:
+      - meriknow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meriknow -d meriknow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   meriknow_qdrant_data:
-  # meriknow_postgres_data:
+  meriknow_postgres_data:

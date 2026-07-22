@@ -137,6 +137,56 @@ class QdrantStore:
 			)
 		return hits
 
+	def list_chunks(
+		self,
+		*,
+		library_id: str | None = None,
+		limit: int = 10_000,
+	) -> list[dict[str, Any]]:
+		"""Scroll payload chunks for BM25 corpus building."""
+		query_filter = None
+		if library_id:
+			query_filter = qm.Filter(
+				must=[
+					qm.FieldCondition(
+						key="library_id",
+						match=qm.MatchValue(value=library_id),
+					)
+				]
+			)
+		chunks: list[dict[str, Any]] = []
+		offset = None
+		while len(chunks) < limit:
+			points, offset = self.client.scroll(
+				collection_name=self.collection,
+				scroll_filter=query_filter,
+				limit=min(256, limit - len(chunks)),
+				offset=offset,
+				with_payload=True,
+				with_vectors=False,
+			)
+			for point in points:
+				payload = dict(point.payload or {})
+				doc_id = payload.get("doc_id")
+				chunk_index = payload.get("chunk_index")
+				if doc_id is None or chunk_index is None:
+					continue
+				chunks.append(
+					{
+						"id": str(point.id),
+						"doc_id": str(doc_id),
+						"chunk_index": int(chunk_index),
+						"title": str(payload.get("title") or "未命名文档"),
+						"page": str(payload["page"]) if payload.get("page") is not None else None,
+						"text": str(payload.get("text") or ""),
+						"snippet": str(payload.get("text") or "")[:280],
+						"library_id": payload.get("library_id"),
+					}
+				)
+			if offset is None:
+				break
+		return chunks
+
 
 def probe_qdrant(settings: Settings) -> bool:
 	try:

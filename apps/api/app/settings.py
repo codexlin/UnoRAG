@@ -50,6 +50,17 @@ class Settings(BaseSettings):
 	session_memory_enabled: bool = True
 	session_memory_max_turns: int = 6
 
+	# Dense + BM25 hybrid (RRF). Failures fall back to dense-only.
+	hybrid_enabled: bool = False
+	bm25_top_k: int = 20
+	rrf_k: int = 60
+
+	# Metadata: empty DATABASE_URL → JSON file store
+	database_url: str = ""
+	metadata_path: str = "data/metadata.json"
+	# stub upload: simulate ready without Qdrant (live still embeds)
+	stub_ingest_simulate: bool = True
+
 	@property
 	def cors_origin_list(self) -> list[str]:
 		return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

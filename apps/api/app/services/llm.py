@@ -68,16 +68,25 @@ class ChatService:
 	def __init__(self, settings: Settings) -> None:
 		self.settings = settings
 		self._model = build_chat_model(settings)
+		self._client = OpenAI(
+			api_key=settings.llm_api_key,
+			base_url=settings.llm_base_url,
+		)
 
-	def answer(self, *, question: str, context: str) -> str:
+	def _messages(self, *, question: str, context: str) -> list[dict[str, str]]:
 		system = (
 			"你是 MeriKnow 文库助手：根据已收录资料回答，并便于核对原文。"
 			"只根据「资料」回答；资料没写到的内容要直说不知道或资料未覆盖，不要编造。"
 			"语气简洁友好，用中文；必要时分点。引用资料时可用 [1]、[2] 对应来源编号。"
 		)
+		return [
+			{"role": "system", "content": system},
+			{"role": "user", "content": f"资料：\n{context}\n\n问题：{question}"},
+		]
+
+	def answer(self, *, question: str, context: str) -> str:
 		messages: list[tuple[str, str]] = [
-			("system", system),
-			("user", f"资料：\n{context}\n\n问题：{question}"),
+			(item["role"], item["content"]) for item in self._messages(question=question, context=context)
 		]
 		response: Any = self._model.invoke(messages)
 		content = getattr(response, "content", "") or ""
@@ -92,3 +101,27 @@ class ChatService:
 			len(answer),
 		)
 		return answer
+
+	def stream_answer(self, *, question: str, context: str):
+		chunk_count = 0
+		response = self._client.chat.completions.create(
+			model=self.settings.chat_model,
+			messages=self._messages(question=question, context=context),
+			temperature=0.2,
+			stream=True,
+		)
+		for chunk in response:
+			if not chunk.choices:
+				continue
+			token = chunk.choices[0].delta.content or ""
+			if not token:
+				continue
+			chunk_count += 1
+			yield token
+		logger.info(
+			"llm.chat_stream model=%s question_len=%s context_len=%s chunks=%s",
+			self.settings.chat_model,
+			len(question),
+			len(context),
+			chunk_count,
+		)

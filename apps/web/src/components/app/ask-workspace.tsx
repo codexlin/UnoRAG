@@ -7,10 +7,21 @@ import {
 	Send,
 } from "lucide-react";
 import Link from "next/link";
-import { type FormEvent, type KeyboardEvent, useMemo, useState } from "react";
+import {
+	type FormEvent,
+	type KeyboardEvent,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
-import { askQuestion } from "@/lib/api";
+import {
+	type ApiCitation,
+	type ApiLibrary,
+	askQuestionStream,
+	fetchLibraries,
+} from "@/lib/api";
 import {
 	MOCK_DEMO_TURN,
 	MOCK_LIBRARIES,
@@ -21,8 +32,20 @@ import { cn } from "@/lib/utils";
 
 type LocalTurn = MockTurn & { pending?: boolean; error?: string };
 
+function toMockCitation(citation: ApiCitation): MockCitation {
+	return {
+		id: citation.id,
+		index: citation.index,
+		title: citation.title,
+		page: citation.page ?? undefined,
+		snippet: citation.snippet,
+		score: citation.score,
+	};
+}
+
 export function AskWorkspace() {
-	const [libraryId, setLibraryId] = useState(MOCK_LIBRARIES[0]?.id ?? "");
+	const [libraries, setLibraries] = useState<ApiLibrary[]>([]);
+	const [libraryId, setLibraryId] = useState("");
 	const [input, setInput] = useState("");
 	const [sessionId, setSessionId] = useState<string | undefined>();
 	const [turns, setTurns] = useState<LocalTurn[]>([]);
@@ -30,10 +53,38 @@ export function AskWorkspace() {
 		null,
 	);
 	const [drawerOpen, setDrawerOpen] = useState(true);
+	const [libsError, setLibsError] = useState<string | null>(null);
+
+	useEffect(() => {
+		const controller = new AbortController();
+		void (async () => {
+			try {
+				const items = await fetchLibraries(controller.signal);
+				setLibraries(items);
+				setLibraryId((prev) => prev || items[0]?.id || "");
+				setLibsError(null);
+			} catch {
+				setLibraries(
+					MOCK_LIBRARIES.map((item) => ({
+						id: item.id,
+						name: item.name,
+						status: item.status,
+						doc_count: item.docCount,
+						ready_count: item.readyCount,
+						created_at: item.updatedAt,
+						updated_at: item.updatedAt,
+					})),
+				);
+				setLibraryId((prev) => prev || MOCK_LIBRARIES[0]?.id || "");
+				setLibsError("文库列表来自本地示例（API 不可用）");
+			}
+		})();
+		return () => controller.abort();
+	}, []);
 
 	const library = useMemo(
-		() => MOCK_LIBRARIES.find((item) => item.id === libraryId) ?? null,
-		[libraryId],
+		() => libraries.find((item) => item.id === libraryId) ?? null,
+		[libraries, libraryId],
 	);
 
 	const canAsk = Boolean(library && library.status === "ready");
@@ -57,32 +108,76 @@ export function AskWorkspace() {
 		setDrawerOpen(true);
 
 		try {
-			const result = await askQuestion({
-				question: trimmed,
-				libraryId,
-				sessionId,
-			});
-			setSessionId(result.session_id);
-			const next: LocalTurn = {
-				id: `turn-${Date.now()}`,
-				question: trimmed,
-				answer: result.answer,
-				citations: result.citations.map((citation) => ({
-					id: citation.id,
-					index: citation.index,
-					title: citation.title,
-					page: citation.page ?? undefined,
-					snippet: citation.snippet,
-					score: citation.score,
-				})),
-				refused: result.refused,
-				refuseReason: result.refuse_reason,
-				mode: result.mode,
-			};
-			setTurns((prev) =>
-				prev.map((turn) => (turn.id === pendingId ? next : turn)),
+			await askQuestionStream(
+				{
+					question: trimmed,
+					libraryId,
+					sessionId,
+				},
+				{
+					onMeta: (meta) => {
+						setSessionId(meta.session_id);
+						setTurns((prev) =>
+							prev.map((turn) =>
+								turn.id === pendingId
+									? {
+											...turn,
+											refused: meta.refused,
+											refuseReason: meta.refuse_reason,
+											mode: meta.mode,
+										}
+									: turn,
+							),
+						);
+					},
+					onCitations: (citations) => {
+						const mapped = citations.map(toMockCitation);
+						setTurns((prev) =>
+							prev.map((turn) =>
+								turn.id === pendingId ? { ...turn, citations: mapped } : turn,
+							),
+						);
+						setActiveCitation(mapped[0] ?? null);
+					},
+					onToken: (token) => {
+						setTurns((prev) =>
+							prev.map((turn) =>
+								turn.id === pendingId
+									? {
+											...turn,
+											answer: `${turn.answer}${token}`,
+											pending: false,
+										}
+									: turn,
+							),
+						);
+					},
+					onDone: (result) => {
+						setSessionId(result.session_id);
+						const citations = result.citations.map(toMockCitation);
+						setTurns((prev) =>
+							prev.map((turn) =>
+								turn.id === pendingId
+									? {
+											id: `turn-${Date.now()}`,
+											question: trimmed,
+											answer: result.answer,
+											citations,
+											refused: result.refused,
+											refuseReason: result.refuse_reason,
+											mode: result.mode,
+											pending: false,
+										}
+									: turn,
+							),
+						);
+						setActiveCitation(citations[0] ?? null);
+					},
+					onError: (message) => {
+						throw new Error(message);
+					},
+				},
 			);
-			setActiveCitation(next.citations[0] ?? null);
 		} catch {
 			const demo: LocalTurn = {
 				...MOCK_DEMO_TURN,
@@ -122,7 +217,7 @@ export function AskWorkspace() {
 							onChange={(event) => setLibraryId(event.target.value)}
 							className="h-9 rounded-md border border-border bg-background px-2.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/40"
 						>
-							{MOCK_LIBRARIES.map((item) => (
+							{libraries.map((item) => (
 								<option key={item.id} value={item.id}>
 									{item.name}
 									{item.status === "indexing" ? " · 索引中" : ""}
@@ -134,7 +229,7 @@ export function AskWorkspace() {
 					<div className="flex items-center gap-2">
 						<span className="font-mono text-[11px] text-muted-foreground">
 							{library
-								? `${library.readyCount}/${library.docCount} 就绪`
+								? `${library.ready_count}/${library.doc_count} 就绪`
 								: "未选择"}
 						</span>
 						<Button
@@ -153,6 +248,11 @@ export function AskWorkspace() {
 						</Button>
 					</div>
 				</div>
+				{libsError ? (
+					<p className="border-b border-border/60 bg-muted/30 px-5 py-1.5 font-mono text-[11px] text-muted-foreground">
+						{libsError}
+					</p>
+				) : null}
 
 				<div className="flex-1 overflow-y-auto px-5 py-6">
 					{turns.length === 0 ? (
@@ -169,7 +269,7 @@ export function AskWorkspace() {
 							</h2>
 							<p className="text-sm leading-6 text-muted-foreground">
 								{canAsk
-									? "对着文库提问；无命中或相关度过低时会明确拒答，避免瞎猜。API 不可用时回退本地示例。"
+									? "流式回答会边生成边显示；无命中或相关度过低时会明确拒答。API 不可用时回退本地示例。"
 									: library?.status === "empty"
 										? "先去文库收录几份资料，问答才有据可依。"
 										: "索引完成前暂不可提问，可先到文库查看进度。"}
@@ -220,7 +320,7 @@ export function AskWorkspace() {
 											{turn.refused ? "Refused" : "Answer"}
 											{turn.mode ? ` · ${turn.mode}` : ""}
 										</p>
-										{turn.pending ? (
+										{turn.pending && !turn.answer ? (
 											<p className="mt-2 text-sm text-muted-foreground">
 												正在检索并整理依据…
 											</p>
@@ -233,8 +333,11 @@ export function AskWorkspace() {
 															: "无命中 · 未调用生成"}
 													</p>
 												) : null}
-												<p className="mt-2 text-sm leading-7 text-foreground">
+												<p className="mt-2 text-sm leading-7 text-foreground whitespace-pre-wrap">
 													{turn.answer}
+													{turn.pending ? (
+														<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-cite/70 align-text-bottom" />
+													) : null}
 												</p>
 												{turn.citations.length > 0 ? (
 													<div className="mt-4 flex flex-wrap gap-2">
