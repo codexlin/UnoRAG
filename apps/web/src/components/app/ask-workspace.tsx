@@ -390,18 +390,28 @@ export function AskWorkspace() {
 							<h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground">
 								{canAsk
 									? "对着文库提问，答案旁核对出处"
-									: library?.status === "empty"
-										? "这本文库还是空的"
-										: "文库还在整理中"}
+									: !apiReady
+										? "API 暂不可用"
+										: !library
+											? libraries.length === 0
+												? "还没有文库"
+												: "请选择文库"
+											: library.status === "empty"
+												? "这本文库还是空的"
+												: "文库还在整理中"}
 							</h2>
 							<p className="desk-enter desk-enter-delay-1 text-sm leading-6 text-muted-foreground">
 								{canAsk
 									? "流式回答会边生成边显示；每轮会标注时间与耗时。点答案里的 [n] 可跳到证据抽屉核对原文。"
-									: library?.status === "empty"
-										? "先去文库收录几份资料，问答才有据可依。"
-										: libsError
-											? "请先恢复 API 连接后再提问。"
-											: "索引完成前暂不可提问，可先到文库查看进度。"}
+									: !apiReady || libsError
+										? "请先恢复 API 连接后再提问。"
+										: !library
+											? libraries.length === 0
+												? "先到文库新建并上传资料。"
+												: "从上方选择一本就绪的文库。"
+											: library.status === "empty"
+												? "先去文库收录几份资料，问答才有据可依。"
+												: "索引完成前暂不可提问，可先到文库查看进度。"}
 							</p>
 							{!canAsk ? (
 								<Link
