@@ -6,22 +6,8 @@ import { useEffect, useState } from "react";
 import { MarkdownAnswer } from "@/components/app/markdown-answer";
 import { buttonVariants } from "@/components/ui/button";
 import { type ApiArchiveTurn, fetchArchive, isAbortError } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-
-function formatTime(value: string) {
-	try {
-		const date = new Date(value);
-		if (Number.isNaN(date.getTime())) return value;
-		return date.toLocaleString("zh-CN", {
-			month: "numeric",
-			day: "numeric",
-			hour: "2-digit",
-			minute: "2-digit",
-		});
-	} catch {
-		return value;
-	}
-}
 
 function preview(text: string, max = 96) {
 	const compact = text.replace(/\s+/g, " ").trim();
@@ -69,6 +55,9 @@ export function ArchivePanel() {
 						Archive
 					</p>
 					<p className="text-sm font-medium text-foreground">历史问答</p>
+					<p className="mt-1 font-mono text-[10px] text-muted-foreground">
+						共 {loading ? "…" : turns.length} 条
+					</p>
 				</div>
 				<div className="flex-1 overflow-y-auto p-2">
 					{loading ? (
@@ -97,7 +86,7 @@ export function ArchivePanel() {
 											{turn.question}
 										</p>
 										<p className="mt-1 font-mono text-[10px] text-muted-foreground">
-											{formatTime(turn.created_at)}
+											{formatDateTime(turn.created_at)}
 											{turn.refused ? " · 拒答" : ""}
 											{` · ${turn.citations.length} 证据`}
 										</p>
@@ -119,13 +108,23 @@ export function ArchivePanel() {
 							<h2 className="font-heading mt-1 text-2xl font-semibold tracking-tight">
 								{selected.question}
 							</h2>
-							<p className="mt-1 font-mono text-[11px] text-muted-foreground">
-								{formatTime(selected.created_at)}
-								{selected.library_id ? ` · ${selected.library_id}` : ""}
-								{selected.refused
-									? ` · ${selected.refuse_reason || "refused"}`
-									: ""}
-							</p>
+							<div className="mt-2 flex flex-wrap gap-1.5">
+								<span className="meta-chip">
+									{formatDateTime(selected.created_at)}
+								</span>
+								{selected.library_id ? (
+									<span className="meta-chip">{selected.library_id}</span>
+								) : null}
+								<span className="meta-chip">{selected.mode}</span>
+								<span className="meta-chip">
+									{selected.citations.length} 证据
+								</span>
+								{selected.refused ? (
+									<span className="meta-chip text-survey">
+										{selected.refuse_reason || "refused"}
+									</span>
+								) : null}
+							</div>
 						</div>
 						<article className="rounded-md border border-border/80 bg-card/90 px-4 py-4 shadow-sm">
 							<p className="font-mono text-[10px] tracking-[0.14em] text-cite uppercase">

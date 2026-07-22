@@ -29,6 +29,10 @@ type AppDataContextValue = {
 	healthError: string | null;
 	healthLoading: boolean;
 	apiReady: boolean;
+	/** Last successful/failed health probe wall time */
+	healthProbedAt: number | null;
+	/** Round-trip ms of last health probe */
+	healthProbeMs: number | null;
 	refreshHealth: (signal?: AbortSignal) => Promise<ApiHealth | null>;
 };
 
@@ -43,6 +47,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 	const [health, setHealth] = useState<ApiHealth | null>(null);
 	const [healthError, setHealthError] = useState<string | null>(null);
 	const [healthLoading, setHealthLoading] = useState(true);
+	const [healthProbedAt, setHealthProbedAt] = useState<number | null>(null);
+	const [healthProbeMs, setHealthProbeMs] = useState<number | null>(null);
 	const mountedRef = useRef(true);
 
 	const refreshLibraries = useCallback(async (signal?: AbortSignal) => {
@@ -72,11 +78,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	const refreshHealth = useCallback(async (signal?: AbortSignal) => {
+		const started = performance.now();
 		try {
 			const payload = await fetchHealth(signal);
 			if (signal?.aborted || !mountedRef.current) return payload;
 			setHealth(payload);
 			setHealthError(null);
+			setHealthProbedAt(Date.now());
+			setHealthProbeMs(Math.round(performance.now() - started));
 			return payload;
 		} catch (err) {
 			if (signal?.aborted || isAbortError(err) || !mountedRef.current) {
@@ -84,6 +93,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 			}
 			setHealth(null);
 			setHealthError(err instanceof Error ? err.message : "health unavailable");
+			setHealthProbedAt(Date.now());
+			setHealthProbeMs(Math.round(performance.now() - started));
 			return null;
 		} finally {
 			if (!signal?.aborted && mountedRef.current) {
@@ -129,6 +140,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 			healthError,
 			healthLoading,
 			apiReady: health ? isApiAvailable(health) : false,
+			healthProbedAt,
+			healthProbeMs,
 			refreshHealth,
 		}),
 		[
@@ -139,6 +152,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 			health,
 			healthError,
 			healthLoading,
+			healthProbedAt,
+			healthProbeMs,
 			refreshHealth,
 		],
 	);
@@ -172,7 +187,17 @@ export function useHealth() {
 		healthError: error,
 		healthLoading: loading,
 		apiReady,
+		healthProbedAt,
+		healthProbeMs,
 		refreshHealth: refresh,
 	} = useAppData();
-	return { health, error, loading, apiReady, refresh };
+	return {
+		health,
+		error,
+		loading,
+		apiReady,
+		healthProbedAt,
+		healthProbeMs,
+		refresh,
+	};
 }

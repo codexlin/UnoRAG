@@ -2,10 +2,11 @@
 
 import { useHealth } from "@/hooks/use-health";
 import { getApiBaseUrl } from "@/lib/api";
+import { formatDateTime, formatDurationMs } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function SettingsPage() {
-	const { health, error, loading } = useHealth();
+	const { health, error, loading, healthProbedAt, healthProbeMs } = useHealth();
 
 	return (
 		<div className="flex flex-1 items-start justify-center px-5 py-12">
@@ -79,6 +80,28 @@ export default function SettingsPage() {
 								<span className="text-muted-foreground">Qdrant</span>
 								<span className="font-mono text-xs">
 									{health.qdrant_ok ? "可达" : "不可达"}
+								</span>
+							</li>
+							<li className="flex justify-between gap-3">
+								<span className="text-muted-foreground">混合检索</span>
+								<span className="font-mono text-xs">
+									{health.hybrid_enabled ? "开启" : "关闭"}
+								</span>
+							</li>
+							<li className="flex justify-between gap-3">
+								<span className="text-muted-foreground">元数据</span>
+								<span className="font-mono text-xs">
+									{health.metadata_backend}
+									{health.metadata_ok === false ? " · 异常" : ""}
+								</span>
+							</li>
+							<li className="flex justify-between gap-3">
+								<span className="text-muted-foreground">最近探测</span>
+								<span className="text-right font-mono text-xs">
+									{formatDateTime(healthProbedAt)}
+									{healthProbeMs != null
+										? ` · ${formatDurationMs(healthProbeMs)}`
+										: ""}
 								</span>
 							</li>
 							{health.reasons.length > 0 ? (

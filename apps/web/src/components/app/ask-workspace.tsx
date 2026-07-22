@@ -20,6 +20,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { useHealth } from "@/hooks/use-health";
 import { useLibraries } from "@/hooks/use-libraries";
 import { type ApiCitation, askQuestionStream } from "@/lib/api";
+import { formatDateTime, formatDurationMs, formatScore } from "@/lib/format";
 import type { UiCitation, UiTurn } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +35,14 @@ type LocalTurn = UiTurn & {
 	retrievalMode?: string;
 	persisted?: boolean;
 	persistError?: string | null;
+	/** performance.now() mark when request started */
+	startedAtMs?: number;
+	/** wall-clock when request started */
+	startedAt?: number;
+	completedAt?: number;
+	durationMs?: number;
+	/** ms until first citations / evidence event */
+	evidenceMs?: number;
 };
 
 function toUiCitation(citation: ApiCitation): UiCitation {
@@ -147,6 +156,8 @@ export function AskWorkspace() {
 		if (!trimmed || !canAsk || !libraryId) return;
 
 		const pendingId = `pending-${Date.now()}`;
+		const startedAtMs = performance.now();
+		const startedAt = Date.now();
 		setTurns((prev) => [
 			...prev,
 			{
@@ -156,6 +167,8 @@ export function AskWorkspace() {
 				citations: [],
 				pending: true,
 				evidenceReady: false,
+				startedAtMs,
+				startedAt,
 			},
 		]);
 		setInput("");
@@ -189,6 +202,7 @@ export function AskWorkspace() {
 					},
 					onCitations: (citations) => {
 						const mapped = citations.map(toUiCitation);
+						const evidenceMs = Math.round(performance.now() - startedAtMs);
 						setTurns((prev) =>
 							prev.map((turn) =>
 								turn.id === pendingId
@@ -196,6 +210,7 @@ export function AskWorkspace() {
 											...turn,
 											citations: mapped,
 											evidenceReady: true,
+											evidenceMs: turn.evidenceMs ?? evidenceMs,
 										}
 									: turn,
 							),
@@ -219,6 +234,8 @@ export function AskWorkspace() {
 						setSessionId(result.session_id);
 						const citations = result.citations.map(toUiCitation);
 						const debug = result.retrieval_debug || {};
+						const completedAt = Date.now();
+						const durationMs = Math.round(performance.now() - startedAtMs);
 						setTurns((prev) =>
 							prev.map((turn) =>
 								turn.id === pendingId
@@ -232,6 +249,10 @@ export function AskWorkspace() {
 											mode: result.mode,
 											pending: false,
 											evidenceReady: true,
+											startedAt,
+											completedAt,
+											durationMs,
+											evidenceMs: turn.evidenceMs,
 											topScore:
 												typeof debug.top_score === "number"
 													? debug.top_score
@@ -264,6 +285,8 @@ export function AskWorkspace() {
 		} catch (err) {
 			const message =
 				err instanceof Error ? err.message : "请求失败，请确认 API 已启动";
+			const completedAt = Date.now();
+			const durationMs = Math.round(performance.now() - startedAtMs);
 			setTurns((prev) =>
 				prev.map((turn) =>
 					turn.id === pendingId
@@ -275,6 +298,9 @@ export function AskWorkspace() {
 								pending: false,
 								error: message,
 								evidenceReady: false,
+								startedAt,
+								completedAt,
+								durationMs,
 							}
 						: turn,
 				),
@@ -319,17 +345,25 @@ export function AskWorkspace() {
 							))}
 						</select>
 					</label>
-					<div className="flex items-center gap-2">
-						<span className="font-mono text-[11px] text-muted-foreground">
-							{library
-								? `${library.ready_count}/${library.doc_count} 就绪`
-								: "未选择"}
-						</span>
+					<div className="flex flex-wrap items-center gap-2">
+						{library ? (
+							<span className="meta-chip">
+								{library.ready_count}/{library.doc_count} 就绪
+							</span>
+						) : (
+							<span className="meta-chip">未选择文库</span>
+						)}
+						{sessionId ? (
+							<span className="meta-chip" title={sessionId}>
+								session {sessionId.slice(0, 8)}…
+							</span>
+						) : null}
+						<span className="meta-chip">本轮 {turns.length} 问</span>
 						<Button
 							type="button"
 							variant="outline"
 							size="sm"
-							className="rounded-md"
+							className="rounded-md transition-transform active:scale-[0.98]"
 							onClick={() => setDrawerOpen((open) => !open)}
 						>
 							{drawerOpen ? (
@@ -349,7 +383,7 @@ export function AskWorkspace() {
 
 				<div className="flex-1 overflow-y-auto px-5 py-6">
 					{turns.length === 0 ? (
-						<div className="mx-auto flex max-w-xl flex-col gap-4 py-10">
+						<div className="desk-enter mx-auto flex max-w-xl flex-col gap-4 py-10">
 							<p className="font-mono text-xs tracking-[0.2em] text-cite uppercase">
 								Ask desk
 							</p>
@@ -360,9 +394,9 @@ export function AskWorkspace() {
 										? "这本文库还是空的"
 										: "文库还在整理中"}
 							</h2>
-							<p className="text-sm leading-6 text-muted-foreground">
+							<p className="desk-enter desk-enter-delay-1 text-sm leading-6 text-muted-foreground">
 								{canAsk
-									? "流式回答会边生成边显示；下方证据块可点开核对原文。点答案里的 [n] 也能跳到对应片段。"
+									? "流式回答会边生成边显示；每轮会标注时间与耗时。点答案里的 [n] 可跳到证据抽屉核对原文。"
 									: library?.status === "empty"
 										? "先去文库收录几份资料，问答才有据可依。"
 										: libsError
@@ -374,23 +408,24 @@ export function AskWorkspace() {
 									href="/app/libraries"
 									className={cn(
 										buttonVariants({ variant: "outline" }),
-										"w-fit rounded-md",
+										"desk-enter desk-enter-delay-2 w-fit rounded-md",
 									)}
 								>
 									前往文库
 									<ChevronRight data-icon="inline-end" />
 								</Link>
 							) : (
-								<div className="flex flex-wrap gap-2">
+								<div className="desk-enter desk-enter-delay-2 flex flex-wrap gap-2">
 									{[
-										"病假需要在几天内补交证明？",
-										"试用期考核通过标准是什么？",
+										"林仁杰的教育背景是什么？",
+										"DustyKB 用了哪些技术栈？",
+										"毕业设计说明书的题目和作者是谁？",
 									].map((sample) => (
 										<button
 											key={sample}
 											type="button"
 											onClick={() => setInput(sample)}
-											className="rounded-md border border-border/80 bg-card/80 px-3 py-2 text-left text-xs leading-5 text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+											className="rounded-md border border-border/80 bg-card/80 px-3 py-2 text-left text-xs leading-5 text-muted-foreground transition-all hover:-translate-y-0.5 hover:border-cite/35 hover:text-foreground hover:shadow-sm"
 										>
 											{sample}
 										</button>
@@ -400,28 +435,79 @@ export function AskWorkspace() {
 						</div>
 					) : (
 						<ul className="mx-auto flex max-w-2xl flex-col gap-6">
-							{turns.map((turn) => (
-								<li key={turn.id} className="space-y-3">
-									<div className="rounded-md border border-border/70 bg-secondary/40 px-4 py-3">
-										<p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-											Question
-										</p>
+							{turns.map((turn, turnIndex) => (
+								<li
+									key={turn.id}
+									className="desk-enter space-y-3"
+									style={{ animationDelay: `${Math.min(turnIndex, 4) * 40}ms` }}
+								>
+									<div className="rounded-md border border-border/70 bg-secondary/45 px-4 py-3 transition-colors">
+										<div className="flex flex-wrap items-center justify-between gap-2">
+											<p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+												Question
+											</p>
+											{turn.startedAt ? (
+												<span className="meta-chip">
+													{formatDateTime(turn.startedAt)}
+												</span>
+											) : null}
+										</div>
 										<p className="mt-1 text-sm leading-6 text-foreground">
 											{turn.question}
 										</p>
 									</div>
-									<div className="rounded-md border border-border/80 bg-card/90 px-4 py-4 shadow-sm">
-										<p className="font-mono text-[10px] tracking-[0.14em] text-cite uppercase">
-											{turn.refused ? "Refused" : "Answer"}
-											{turn.mode ? ` · ${turn.mode}` : ""}
-										</p>
+									<div className="rounded-md border border-border/80 bg-card/95 px-4 py-4 shadow-sm transition-shadow hover:shadow-md">
+										<div className="flex flex-wrap items-center justify-between gap-2">
+											<p className="font-mono text-[10px] tracking-[0.14em] text-cite uppercase">
+												{turn.refused ? "Refused" : "Answer"}
+												{turn.mode ? ` · ${turn.mode}` : ""}
+											</p>
+											<div className="flex flex-wrap gap-1.5">
+												{turn.pending ? (
+													<span className="meta-chip animate-pulse text-cite">
+														处理中…
+													</span>
+												) : null}
+												{turn.durationMs != null ? (
+													<span className="meta-chip text-foreground/80">
+														总耗时 {formatDurationMs(turn.durationMs)}
+													</span>
+												) : null}
+												{turn.evidenceMs != null ? (
+													<span className="meta-chip">
+														检索 {formatDurationMs(turn.evidenceMs)}
+													</span>
+												) : null}
+												{turn.retrievalMode || turn.usedHybrid ? (
+													<span className="meta-chip">
+														{turn.usedHybrid
+															? "hybrid"
+															: turn.retrievalMode || "dense"}
+													</span>
+												) : null}
+												{typeof turn.topScore === "number" ? (
+													<span className="meta-chip">
+														top {formatScore(turn.topScore)}
+													</span>
+												) : null}
+												{turn.citations.length > 0 ? (
+													<span className="meta-chip">
+														{turn.citations.length} 证据
+													</span>
+												) : null}
+											</div>
+										</div>
 										{turn.pending && !turn.answer && !turn.evidenceReady ? (
-											<p className="mt-2 text-sm text-muted-foreground">
+											<p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+												<span className="inline-block size-1.5 animate-pulse rounded-full bg-cite" />
 												正在检索并整理依据…
 											</p>
 										) : turn.error ? (
 											<p className="mt-2 text-sm text-destructive">
 												{turn.error}
+												{turn.durationMs != null
+													? ` · ${formatDurationMs(turn.durationMs)}`
+													: ""}
 											</p>
 										) : (
 											<>
@@ -450,14 +536,9 @@ export function AskWorkspace() {
 													<div className="mt-4 space-y-2">
 														<p className="font-mono text-[11px] text-muted-foreground">
 															依据 {turn.citations.length} 条证据片段
-															{typeof turn.topScore === "number"
-																? ` · top ${turn.topScore.toFixed(2)}`
+															{turn.completedAt
+																? ` · 完成于 ${formatDateTime(turn.completedAt)}`
 																: ""}
-															{turn.usedHybrid
-																? " · hybrid"
-																: turn.retrievalMode
-																	? ` · ${turn.retrievalMode}`
-																	: ""}
 														</p>
 														<div className="flex flex-wrap gap-2">
 															{turn.citations.map((citation) => {
@@ -471,17 +552,22 @@ export function AskWorkspace() {
 																		type="button"
 																		onClick={() => openCitation(citation)}
 																		className={cn(
-																			"max-w-full rounded-md border px-2 py-1.5 text-left transition-colors",
+																			"max-w-full rounded-md border px-2 py-1.5 text-left transition-all",
 																			activeCitation?.id === citation.id
-																				? "border-cite/40 bg-cite/10 text-cite"
-																				: "border-border bg-background text-muted-foreground hover:text-foreground",
+																				? "border-cite/40 bg-cite/10 text-cite shadow-sm"
+																				: "border-border bg-background text-muted-foreground hover:-translate-y-0.5 hover:border-cite/30 hover:text-foreground",
 																		)}
 																	>
 																		<span className="font-mono text-[11px]">
 																			[{citation.index}] {citation.title}
+																			{citation.sectionPath
+																				? ` · ${citation.sectionPath}`
+																				: citation.page
+																					? ` · ${citation.page}`
+																					: ""}
 																			{sameDocCount > 1 &&
 																			citation.chunkIndex != null
-																				? ` · 第 ${citation.chunkIndex + 1} 段`
+																				? ` · #${citation.chunkIndex}`
 																				: ""}
 																		</span>
 																		<span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground/90">
@@ -564,18 +650,26 @@ export function AskWorkspace() {
 					</div>
 					<div className="flex-1 overflow-y-auto p-4">
 						{activeCitation ? (
-							<article className="cite-rail space-y-3 rounded-md bg-background/70 py-3 pr-3">
+							<article className="desk-enter cite-rail space-y-3 rounded-md bg-background/80 py-3 pr-3">
 								<p className="font-mono text-[11px] text-cite">
 									[{activeCitation.index}] · {activeCitation.title}
 									{activeCitation.page ? ` · ${activeCitation.page}` : ""}
 								</p>
-								{activeCitation.sectionPath ? (
-									<p className="font-mono text-[10px] text-muted-foreground">
-										章节 {activeCitation.sectionPath}
-									</p>
-								) : null}
+								<div className="flex flex-wrap gap-1.5">
+									<span className="meta-chip">
+										score {formatScore(activeCitation.score)}
+									</span>
+									{activeCitation.sectionPath ? (
+										<span className="meta-chip">
+											{activeCitation.sectionPath}
+										</span>
+									) : null}
+									{evidenceText ? (
+										<span className="meta-chip">{evidenceText.length} 字</span>
+									) : null}
+								</div>
 								{activeCitation.preamble ? (
-									<p className="text-[11px] leading-5 text-muted-foreground">
+									<p className="rounded-md border border-border/60 bg-card/50 px-2 py-1.5 text-[11px] leading-5 text-muted-foreground">
 										定位 {activeCitation.preamble}
 									</p>
 								) : null}
@@ -587,23 +681,22 @@ export function AskWorkspace() {
 											: ""}
 									</p>
 								) : null}
-								<div className="max-h-[50vh] overflow-y-auto rounded-md border border-border/60 bg-card/40 px-2.5 py-2">
+								<div className="max-h-[50vh] overflow-y-auto rounded-md border border-border/60 bg-card/50 px-2.5 py-2">
 									<p className="whitespace-pre-wrap text-sm leading-6 text-foreground/90">
 										{evidenceText}
 									</p>
 								</div>
-								<p className="font-mono text-[11px] text-muted-foreground">
-									score {activeCitation.score.toFixed(2)}
-									{evidenceText.length > (activeCitation.snippet?.length || 0)
-										? ` · 全文 ${evidenceText.length} 字`
-										: ""}
-								</p>
 							</article>
 						) : (
-							<p className="text-sm leading-6 text-muted-foreground">
-								这里展示本轮检索命中的原文片段（不是导航标签）。点答案里的 [n]
-								或下方证据块即可核对。
-							</p>
+							<div className="desk-enter space-y-2 text-sm leading-6 text-muted-foreground">
+								<p>
+									这里展示本轮检索命中的原文片段。点答案里的 [n]
+									或下方证据块即可核对。
+								</p>
+								<p className="font-mono text-[10px] text-muted-foreground/80">
+									提示：证据抽屉可随时用顶栏「证据」开关
+								</p>
+							</div>
 						)}
 					</div>
 				</div>

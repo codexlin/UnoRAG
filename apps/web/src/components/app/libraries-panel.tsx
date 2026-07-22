@@ -21,6 +21,7 @@ import {
 	isAbortError,
 	uploadDocument,
 } from "@/lib/api";
+import { formatDateTime, formatDurationMs } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const statusLabel = {
@@ -30,21 +31,6 @@ const statusLabel = {
 	processing: "处理中",
 	failed: "失败",
 } as const;
-
-function formatUpdatedAt(value: string) {
-	try {
-		const date = new Date(value);
-		if (Number.isNaN(date.getTime())) return value;
-		return date.toLocaleString("zh-CN", {
-			month: "numeric",
-			day: "numeric",
-			hour: "2-digit",
-			minute: "2-digit",
-		});
-	} catch {
-		return value;
-	}
-}
 
 export function LibrariesPanel() {
 	const {
@@ -61,6 +47,7 @@ export function LibrariesPanel() {
 	const [error, setError] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [displayName, setDisplayName] = useState("");
+	const [lastUploadMs, setLastUploadMs] = useState<number | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const loadDocuments = useCallback(
@@ -109,6 +96,7 @@ export function LibrariesPanel() {
 		setUploading(true);
 		setError(null);
 		setNotice(null);
+		const started = performance.now();
 		try {
 			const results = [];
 			for (const file of Array.from(files)) {
@@ -119,17 +107,24 @@ export function LibrariesPanel() {
 				});
 				results.push(result);
 			}
+			const elapsed = Math.round(performance.now() - started);
+			setLastUploadMs(elapsed);
 			const last = results[results.length - 1];
 			const partialNotice = last?.notice ? ` · ${last.notice}` : "";
+			const chunkHint =
+				typeof last?.chunk_count === "number"
+					? ` · ${last.chunk_count} chunks`
+					: "";
 			setNotice(
 				last
-					? `已上传 ${results.length} 个文件 · 显示名「${last.title}」→ ${last.status}${last.simulated ? "（stub 模拟）" : ""}${partialNotice}`
+					? `已上传 ${results.length} 个文件 · 「${last.title}」→ ${last.status}${chunkHint} · 耗时 ${formatDurationMs(elapsed)}${last.simulated ? "（stub 模拟）" : ""}${partialNotice}`
 					: null,
 			);
 			setDisplayName("");
 			await loadLibraries();
 			await loadDocuments(selectedId);
 		} catch (err) {
+			setLastUploadMs(Math.round(performance.now() - started));
 			setError(err instanceof Error ? err.message : "上传失败");
 		} finally {
 			setUploading(false);
@@ -231,17 +226,44 @@ export function LibrariesPanel() {
 					</p>
 				) : null}
 				{notice ? (
-					<p className="rounded-md border border-cite/30 bg-cite/10 px-3 py-2 text-sm text-cite">
+					<p className="desk-enter rounded-md border border-cite/30 bg-cite/10 px-3 py-2 text-sm text-cite">
 						{notice}
 					</p>
 				) : null}
 
+				<div className="flex flex-wrap gap-2">
+					<span className="meta-chip">文库 {libraries.length}</span>
+					<span className="meta-chip">
+						文档{" "}
+						{libraries.reduce((sum, item) => sum + (item.doc_count || 0), 0)}
+					</span>
+					<span className="meta-chip">
+						就绪{" "}
+						{libraries.reduce((sum, item) => sum + (item.ready_count || 0), 0)}
+					</span>
+					{documents.length > 0 ? (
+						<span className="meta-chip">
+							当前库 chunks{" "}
+							{documents.reduce((sum, doc) => sum + (doc.chunk_count || 0), 0)}
+						</span>
+					) : null}
+					{lastUploadMs != null ? (
+						<span className="meta-chip">
+							上次上传 {formatDurationMs(lastUploadMs)}
+						</span>
+					) : null}
+				</div>
+
 				<ul className="grid gap-3 sm:grid-cols-2">
-					{libraries.map((library) => (
-						<li key={library.id}>
+					{libraries.map((library, index) => (
+						<li
+							key={library.id}
+							className="desk-enter"
+							style={{ animationDelay: `${index * 40}ms` }}
+						>
 							<Card
 								className={cn(
-									"border-border/80 bg-card/90 shadow-sm transition-colors hover:border-border",
+									"border-border/80 bg-card/90 shadow-sm transition-all hover:-translate-y-0.5 hover:border-border hover:shadow-md",
 									selectedId === library.id &&
 										"border-cite/40 ring-1 ring-cite/20",
 								)}
@@ -272,9 +294,12 @@ export function LibrariesPanel() {
 												] ?? library.status}
 											</span>
 										</div>
-										<CardDescription>
-											{library.ready_count}/{library.doc_count} 文档就绪 ·
-											更新于 {formatUpdatedAt(library.updated_at)}
+										<CardDescription className="font-mono text-[11px]">
+											{library.ready_count}/{library.doc_count} 文档就绪
+											<br />
+											创建 {formatDateTime(library.created_at)}
+											<br />
+											更新 {formatDateTime(library.updated_at)}
 										</CardDescription>
 									</CardHeader>
 								</button>
@@ -316,8 +341,14 @@ export function LibrariesPanel() {
 										<div className="min-w-0">
 											<p className="font-medium text-foreground">{doc.name}</p>
 											<p className="font-mono text-[11px] text-muted-foreground">
-												原文件 {doc.filename} · chunks {doc.chunk_count} ·{" "}
-												{formatUpdatedAt(doc.updated_at)}
+												原文件 {doc.filename} · chunks {doc.chunk_count}
+											</p>
+											<p className="font-mono text-[10px] text-muted-foreground/80">
+												创建 {formatDateTime(doc.created_at)} · 更新{" "}
+												{formatDateTime(doc.updated_at)}
+												{typeof doc.parser_report?.parser === "string"
+													? ` · ${doc.parser_report.parser}`
+													: ""}
 											</p>
 											{doc.error ? (
 												<p className="mt-0.5 text-[11px] text-destructive">
