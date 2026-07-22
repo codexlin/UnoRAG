@@ -1,0 +1,11 @@
+{
+  "name": "meriknow",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "lint": "pnpm --filter web lint",
+    "format": "pnpm --filter web format"
+  },
+  "packageManager": "pnpm@9.7.1"
+}

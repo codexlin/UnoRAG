@@ -1,8 +1,8 @@
-# Meridian 实施计划
+# MeriKnow 实施计划
 
-> **产品名：** Meridian（循迹）  
+> **产品名：** MeriKnow  
 > **一句话：** 有据可依的企业知识问答——融合 DustyKB 的可上线体验与 QueryNest 的多步 Agent 编排，技术栈以 LangChain + LangGraph（Python）减少胶水代码。  
-> **仓库：** `/Users/codexlin/codexlin/meridian`
+> **仓库：** `git@github.com:codexlin/MeriKnow.git`（本地 `/Users/codexlin/codexlin/meridian`）
 
 ## 目标与非目标
 
@@ -30,9 +30,9 @@
 ## 仓库结构（目标）
 
 ```text
-meridian/
+meridian/   # 本地目录名；远程仓库 MeriKnow
   apps/
-    web/          # Next.js（本阶段先落地）
+    web/          # Next.js（本阶段已落地）
     api/          # FastAPI + LangGraph（下一阶段）
   docs/
     plans/        # 计划与决策
@@ -44,11 +44,11 @@ meridian/
 
 ### Phase 0 — 脚手架（当前）
 
-- [x] 定名 Meridian  
-- [ ] pnpm workspace + `apps/web`（Next.js App Router）  
-- [ ] Tailwind + shadcn/ui + Biome  
-- [ ] 基础 README / 首页占位  
-- [ ] Git 初始提交（若用户需要再执行）
+- [x] 定名 MeriKnow  
+- [x] pnpm workspace + `apps/web`（Next.js App Router）  
+- [x] Tailwind + shadcn/ui + Biome  
+- [x] 基础 README / 首页占位  
+- [x] GitHub remote：`codexlin/MeriKnow`  
 
 ### Phase 1 — 可演示问答壳
 
@@ -71,10 +71,11 @@ meridian/
 
 - `pnpm --filter web dev` 可启动  
 - Biome 可 check  
-- shadcn 已 init，可 `pnpm dlx shadcn@latest add button`  
+- shadcn 已 init  
 - 计划文档可在仓库内查阅  
+- 已推送到 `origin/main`
 
 ## 风险
 
 - 过早堆满 Graph 节点导致无 UI —— Phase 0–1 先壳后核  
-- 与 DustyKB 双线维护 —— DustyKB 仅作作品集，主线仅 Meridian  
+- 与 DustyKB 双线维护 —— DustyKB 仅作作品集，主线仅 MeriKnow  
