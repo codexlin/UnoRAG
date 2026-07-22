@@ -2,7 +2,7 @@
 
 > **产品名：** MeriKnow  
 > **一句话：** 有据可依的企业知识问答——融合 DustyKB 的可上线体验与 QueryNest 的多步 Agent 编排，技术栈以 LangChain + LangGraph（Python）减少胶水代码。  
-> **仓库：** `git@github.com:codexlin/MeriKnow.git`（本地 `/Users/codexlin/codexlin/meridian`）
+> **仓库：** `git@github.com:codexlin/MeriKnow.git`（本地 `/Users/codexlin/codexlin/rag-py/MeriKnow`）
 
 ## 目标与非目标
 
