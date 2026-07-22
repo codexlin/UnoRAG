@@ -3,23 +3,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
+from openai import OpenAI
 
 from app.settings import Settings
 
 logger = logging.getLogger(__name__)
-
-
-def build_embeddings(settings: Settings) -> OpenAIEmbeddings:
-	if not settings.has_llm_key:
-		raise RuntimeError("OPENAI_API_KEY / DASHSCOPE_API_KEY is required for embeddings")
-	return OpenAIEmbeddings(
-		api_key=settings.llm_api_key,
-		base_url=settings.llm_base_url,
-		model=settings.embedding_model,
-		dimensions=settings.embedding_dim,
-		chunk_size=max(1, settings.embedding_batch_size),
-	)
 
 
 def build_chat_model(settings: Settings) -> ChatOpenAI:
@@ -34,14 +23,35 @@ def build_chat_model(settings: Settings) -> ChatOpenAI:
 
 
 class EmbeddingService:
+	"""DashScope-compatible embeddings via raw OpenAI client.
+
+	LangChain OpenAIEmbeddings may tokenize inputs before send; DashScope
+	rejects that shape (`contents is neither str nor list of str`).
+	"""
+
 	def __init__(self, settings: Settings) -> None:
+		if not settings.has_llm_key:
+			raise RuntimeError("OPENAI_API_KEY / DASHSCOPE_API_KEY is required for embeddings")
 		self.settings = settings
-		self._client = build_embeddings(settings)
+		self._client = OpenAI(
+			api_key=settings.llm_api_key,
+			base_url=settings.llm_base_url,
+		)
 
 	def embed_texts(self, texts: list[str]) -> list[list[float]]:
 		if not texts:
 			return []
-		vectors = self._client.embed_documents(texts)
+		batch_size = max(1, int(self.settings.embedding_batch_size))
+		vectors: list[list[float]] = []
+		for offset in range(0, len(texts), batch_size):
+			batch = texts[offset : offset + batch_size]
+			response = self._client.embeddings.create(
+				model=self.settings.embedding_model,
+				input=batch,
+				dimensions=self.settings.embedding_dim,
+			)
+			items = sorted(response.data, key=lambda item: getattr(item, "index", 0))
+			vectors.extend(list(item.embedding) for item in items)
 		logger.info(
 			"llm.embedding model=%s inputs=%s dim=%s",
 			self.settings.embedding_model,
