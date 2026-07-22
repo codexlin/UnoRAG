@@ -48,6 +48,7 @@ class QdrantStore:
 		title: str,
 		chunks: list[dict[str, Any]],
 		vectors: list[list[float]],
+		filename: str | None = None,
 	) -> int:
 		if len(chunks) != len(vectors):
 			raise ValueError("chunks and vectors length mismatch")
@@ -63,6 +64,9 @@ class QdrantStore:
 			}
 			if chunk.get("page") is not None:
 				payload["page"] = chunk["page"]
+			resolved_filename = chunk.get("filename") or filename
+			if resolved_filename:
+				payload["filename"] = resolved_filename
 			points.append(
 				qm.PointStruct(
 					id=str(uuid4()),
@@ -132,6 +136,7 @@ class QdrantStore:
 					"library_id": payload.get("library_id"),
 					"doc_id": payload.get("doc_id"),
 					"chunk_index": payload.get("chunk_index"),
+					"filename": payload.get("filename"),
 					"text": str(payload.get("text") or ""),
 				}
 			)

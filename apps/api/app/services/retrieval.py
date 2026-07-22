@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.services.chunking import chunk_text
+from app.services.documents import infer_page_label
 from app.services.hybrid import fuse_dense_and_bm25, get_bm25_cache
 from app.services.llm import EmbeddingService
 from app.services.qdrant_store import QdrantStore
@@ -49,6 +50,7 @@ class IngestService:
 		title: str,
 		text: str,
 		doc_id: str | None = None,
+		filename: str | None = None,
 	) -> dict[str, Any]:
 		resolved_doc_id = doc_id or str(uuid4())
 		pieces = chunk_text(
@@ -59,7 +61,15 @@ class IngestService:
 		if not pieces:
 			raise ValueError("text is empty after cleaning")
 
-		chunks = [{"chunk_index": piece.index, "text": piece.text} for piece in pieces]
+		chunks = []
+		for piece in pieces:
+			chunk: dict[str, Any] = {"chunk_index": piece.index, "text": piece.text}
+			page = infer_page_label(piece.text)
+			if page:
+				chunk["page"] = page
+			if filename:
+				chunk["filename"] = filename
+			chunks.append(chunk)
 		vectors = self.embeddings.embed_texts([piece.text for piece in pieces])
 		count = self.store.upsert_chunks(
 			library_id=library_id,
@@ -67,6 +77,7 @@ class IngestService:
 			title=title,
 			chunks=chunks,
 			vectors=vectors,
+			filename=filename,
 		)
 		get_bm25_cache().invalidate(library_id)
 		logger.info(
@@ -178,6 +189,7 @@ class RetrievalService:
 					"text": hit.get("text") or hit.get("snippet") or "",
 					"doc_id": hit.get("doc_id"),
 					"chunk_index": hit.get("chunk_index"),
+					"filename": hit.get("filename"),
 				}
 			)
 		final = self._maybe_rerank(query=query, citations=citations, top_k=limit)

@@ -1,7 +1,7 @@
 # MeriKnow local infra
 # Usage: docker compose up -d
 # Verify Qdrant: curl -s http://localhost:6333/readyz
-# Verify Postgres (profile): docker compose --profile db up -d && pg_isready -h localhost -U meriknow
+# Verify Postgres: pg_isready -h localhost -U meriknow
 
 services:
   qdrant:
@@ -18,10 +18,7 @@ services:
       retries: 10
       start_period: 10s
 
-  # Optional metadata DB — enable with: docker compose --profile db up -d
-  # Then set DATABASE_URL=postgresql+psycopg://meriknow:meriknow@localhost:5432/meriknow
   postgres:
-    profiles: ["db"]
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: meriknow

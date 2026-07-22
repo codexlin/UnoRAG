@@ -30,7 +30,13 @@ import {
 } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 
-type LocalTurn = MockTurn & { pending?: boolean; error?: string };
+type LocalTurn = MockTurn & {
+	pending?: boolean;
+	error?: string;
+	topScore?: number | null;
+	usedHybrid?: boolean;
+	evidenceReady?: boolean;
+};
 
 function toMockCitation(citation: ApiCitation): MockCitation {
 	return {
@@ -40,7 +46,72 @@ function toMockCitation(citation: ApiCitation): MockCitation {
 		page: citation.page ?? undefined,
 		snippet: citation.snippet,
 		score: citation.score,
+		docId: citation.doc_id ?? undefined,
+		chunkIndex: citation.chunk_index ?? undefined,
+		filename: citation.filename ?? undefined,
 	};
+}
+
+function snippetPreview(text: string, max = 28) {
+	const compact = text.replace(/\s+/g, " ").trim();
+	if (compact.length <= max) return compact;
+	return `${compact.slice(0, max)}…`;
+}
+
+function AnswerBody({
+	answer,
+	citations,
+	pending,
+	onCite,
+}: {
+	answer: string;
+	citations: MockCitation[];
+	pending?: boolean;
+	onCite: (citation: MockCitation) => void;
+}) {
+	const byIndex = useMemo(() => {
+		const map = new Map<number, MockCitation>();
+		for (const citation of citations) {
+			map.set(citation.index, citation);
+		}
+		return map;
+	}, [citations]);
+
+	const parts = answer.split(/(\[\d+\])/g);
+
+	return (
+		<p className="mt-2 text-sm leading-7 text-foreground whitespace-pre-wrap">
+			{parts.map((part, index) => {
+				const match = part.match(/^\[(\d+)\]$/);
+				const key = `${index}:${part.slice(0, 32)}`;
+				if (!match) {
+					return <span key={key}>{part}</span>;
+				}
+				const citeIndex = Number(match[1]);
+				const citation = byIndex.get(citeIndex);
+				if (!citation) {
+					return (
+						<span key={key} className="font-mono text-muted-foreground">
+							{part}
+						</span>
+					);
+				}
+				return (
+					<button
+						key={key}
+						type="button"
+						onClick={() => onCite(citation)}
+						className="mx-0.5 inline rounded-sm bg-cite/10 px-1 font-mono text-[12px] text-cite underline-offset-2 hover:bg-cite/20 hover:underline"
+					>
+						[{citeIndex}]
+					</button>
+				);
+			})}
+			{pending ? (
+				<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-cite/70 align-text-bottom" />
+			) : null}
+		</p>
+	);
 }
 
 export function AskWorkspace() {
@@ -89,6 +160,11 @@ export function AskWorkspace() {
 
 	const canAsk = Boolean(library && library.status === "ready");
 
+	function openCitation(citation: MockCitation) {
+		setActiveCitation(citation);
+		setDrawerOpen(true);
+	}
+
 	async function submitQuestion(question: string) {
 		const trimmed = question.trim();
 		if (!trimmed || !canAsk) return;
@@ -102,6 +178,7 @@ export function AskWorkspace() {
 				answer: "",
 				citations: [],
 				pending: true,
+				evidenceReady: false,
 			},
 		]);
 		setInput("");
@@ -134,7 +211,13 @@ export function AskWorkspace() {
 						const mapped = citations.map(toMockCitation);
 						setTurns((prev) =>
 							prev.map((turn) =>
-								turn.id === pendingId ? { ...turn, citations: mapped } : turn,
+								turn.id === pendingId
+									? {
+											...turn,
+											citations: mapped,
+											evidenceReady: true,
+										}
+									: turn,
 							),
 						);
 						setActiveCitation(mapped[0] ?? null);
@@ -155,6 +238,7 @@ export function AskWorkspace() {
 					onDone: (result) => {
 						setSessionId(result.session_id);
 						const citations = result.citations.map(toMockCitation);
+						const debug = result.retrieval_debug || {};
 						setTurns((prev) =>
 							prev.map((turn) =>
 								turn.id === pendingId
@@ -167,6 +251,12 @@ export function AskWorkspace() {
 											refuseReason: result.refuse_reason,
 											mode: result.mode,
 											pending: false,
+											evidenceReady: true,
+											topScore:
+												typeof debug.top_score === "number"
+													? debug.top_score
+													: null,
+											usedHybrid: Boolean(debug.used_hybrid),
 										}
 									: turn,
 							),
@@ -184,6 +274,7 @@ export function AskWorkspace() {
 				id: `turn-${Date.now()}`,
 				question: trimmed,
 				answer: `${MOCK_DEMO_TURN.answer}\n\n（API 不可用，已回退本地 mock。）`,
+				evidenceReady: true,
 			};
 			setTurns((prev) =>
 				prev.map((turn) => (turn.id === pendingId ? demo : turn)),
@@ -244,7 +335,7 @@ export function AskWorkspace() {
 							) : (
 								<PanelRightOpen data-icon="inline-start" />
 							)}
-							引用
+							证据
 						</Button>
 					</div>
 				</div>
@@ -269,7 +360,7 @@ export function AskWorkspace() {
 							</h2>
 							<p className="text-sm leading-6 text-muted-foreground">
 								{canAsk
-									? "流式回答会边生成边显示；无命中或相关度过低时会明确拒答。API 不可用时回退本地示例。"
+									? "流式回答会边生成边显示；下方证据块可点开核对原文。点答案里的 [n] 也能跳到对应片段。"
 									: library?.status === "empty"
 										? "先去文库收录几份资料，问答才有据可依。"
 										: "索引完成前暂不可提问，可先到文库查看进度。"}
@@ -320,7 +411,7 @@ export function AskWorkspace() {
 											{turn.refused ? "Refused" : "Answer"}
 											{turn.mode ? ` · ${turn.mode}` : ""}
 										</p>
-										{turn.pending && !turn.answer ? (
+										{turn.pending && !turn.answer && !turn.evidenceReady ? (
 											<p className="mt-2 text-sm text-muted-foreground">
 												正在检索并整理依据…
 											</p>
@@ -333,36 +424,64 @@ export function AskWorkspace() {
 															: "无命中 · 未调用生成"}
 													</p>
 												) : null}
-												<p className="mt-2 text-sm leading-7 text-foreground whitespace-pre-wrap">
-													{turn.answer}
-													{turn.pending ? (
+												{turn.answer ? (
+													<AnswerBody
+														answer={turn.answer}
+														citations={turn.citations}
+														pending={turn.pending}
+														onCite={openCitation}
+													/>
+												) : turn.pending ? (
+													<p className="mt-2 text-sm text-muted-foreground">
+														依据已就绪，正在生成回答…
 														<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-cite/70 align-text-bottom" />
-													) : null}
-												</p>
+													</p>
+												) : null}
 												{turn.citations.length > 0 ? (
-													<div className="mt-4 flex flex-wrap gap-2">
-														{turn.citations.map((citation) => (
-															<button
-																key={citation.id}
-																type="button"
-																onClick={() => {
-																	setActiveCitation(citation);
-																	setDrawerOpen(true);
-																}}
-																className={cn(
-																	"rounded-md border px-2 py-1 font-mono text-[11px] transition-colors",
-																	activeCitation?.id === citation.id
-																		? "border-cite/40 bg-cite/10 text-cite"
-																		: "border-border bg-background text-muted-foreground hover:text-foreground",
-																)}
-															>
-																[{citation.index}] {citation.title}
-															</button>
-														))}
+													<div className="mt-4 space-y-2">
+														<p className="font-mono text-[11px] text-muted-foreground">
+															依据 {turn.citations.length} 条证据片段
+															{typeof turn.topScore === "number"
+																? ` · top ${turn.topScore.toFixed(2)}`
+																: ""}
+															{turn.usedHybrid ? " · hybrid" : ""}
+														</p>
+														<div className="flex flex-wrap gap-2">
+															{turn.citations.map((citation) => {
+																const sameDocCount = turn.citations.filter(
+																	(item) =>
+																		item.docId && item.docId === citation.docId,
+																).length;
+																return (
+																	<button
+																		key={citation.id}
+																		type="button"
+																		onClick={() => openCitation(citation)}
+																		className={cn(
+																			"max-w-full rounded-md border px-2 py-1.5 text-left transition-colors",
+																			activeCitation?.id === citation.id
+																				? "border-cite/40 bg-cite/10 text-cite"
+																				: "border-border bg-background text-muted-foreground hover:text-foreground",
+																		)}
+																	>
+																		<span className="font-mono text-[11px]">
+																			[{citation.index}] {citation.title}
+																			{sameDocCount > 1 &&
+																			citation.chunkIndex != null
+																				? ` · 第 ${citation.chunkIndex + 1} 段`
+																				: ""}
+																		</span>
+																		<span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground/90">
+																			{snippetPreview(citation.snippet)}
+																		</span>
+																	</button>
+																);
+															})}
+														</div>
 													</div>
 												) : turn.refused ? (
 													<p className="mt-4 font-mono text-[11px] text-muted-foreground">
-														无可用引用
+														无可用证据片段
 													</p>
 												) : null}
 											</>
@@ -415,15 +534,15 @@ export function AskWorkspace() {
 					<div className="flex h-12 items-center justify-between border-b border-border/70 px-4">
 						<div>
 							<p className="font-mono text-[10px] tracking-[0.16em] text-cite uppercase">
-								Citations
+								Evidence
 							</p>
-							<p className="text-sm font-medium text-foreground">引用抽屉</p>
+							<p className="text-sm font-medium text-foreground">证据片段</p>
 						</div>
 						<button
 							type="button"
 							onClick={() => setDrawerOpen(false)}
 							className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-							aria-label="关闭引用抽屉"
+							aria-label="关闭证据抽屉"
 						>
 							<PanelRightClose className="size-4" />
 						</button>
@@ -435,6 +554,14 @@ export function AskWorkspace() {
 									[{activeCitation.index}] · {activeCitation.title}
 									{activeCitation.page ? ` · ${activeCitation.page}` : ""}
 								</p>
+								{activeCitation.filename ? (
+									<p className="font-mono text-[10px] text-muted-foreground">
+										文件 {activeCitation.filename}
+										{activeCitation.chunkIndex != null
+											? ` · chunk ${activeCitation.chunkIndex}`
+											: ""}
+									</p>
+								) : null}
 								<p className="text-sm leading-6 text-foreground/90">
 									{activeCitation.snippet}
 								</p>
@@ -444,7 +571,8 @@ export function AskWorkspace() {
 							</article>
 						) : (
 							<p className="text-sm leading-6 text-muted-foreground">
-								发送问题后，这里会列出可核对的原文片段。无命中拒答时保持空白。
+								这里展示本轮检索命中的原文片段（不是导航标签）。点答案里的 [n]
+								或下方证据块即可核对。
 							</p>
 						)}
 					</div>

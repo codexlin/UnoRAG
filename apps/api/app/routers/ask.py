@@ -157,6 +157,7 @@ def ingest(
 async def ingest_upload(
 	library_id: str = Form(...),
 	file: UploadFile = File(...),
+	display_name: str | None = Form(default=None),
 	settings: Settings = Depends(get_settings),
 	meta: MetadataStore = Depends(get_meta),
 ) -> UploadResponse:
@@ -175,12 +176,19 @@ async def ingest_upload(
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+	from app.services.documents import clean_display_title
+
+	title = clean_display_title(
+		(display_name or "").strip() or parsed.title,
+		filename=parsed.filename,
+	)
+
 	if meta.get_library(library_id) is None:
 		raise HTTPException(status_code=404, detail=f"library not found: {library_id}")
 
 	doc = meta.create_document(
 		library_id=library_id,
-		name=parsed.title,
+		name=title,
 		filename=parsed.filename,
 		content_type=parsed.content_type,
 		status="processing",
@@ -209,16 +217,17 @@ async def ingest_upload(
 		if live:
 			result = IngestService(settings).ingest_text(
 				library_id=library_id,
-				title=parsed.title,
+				title=title,
 				text=parsed.text,
 				doc_id=doc["id"],
+				filename=parsed.filename,
 			)
 			simulated = False
 			mode = "live"
 		else:
 			result = IngestService(settings).simulate_ingest(
 				library_id=library_id,
-				title=parsed.title,
+				title=title,
 				text=parsed.text,
 				doc_id=doc["id"],
 			)
@@ -240,7 +249,7 @@ async def ingest_upload(
 	return UploadResponse(
 		library_id=library_id,
 		doc_id=doc["id"],
-		title=parsed.title,
+		title=title,
 		filename=parsed.filename,
 		chunk_count=result["chunk_count"],
 		status="ready",

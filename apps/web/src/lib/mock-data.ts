@@ -14,6 +14,9 @@ export type MockCitation = {
 	page?: string;
 	snippet: string;
 	score: number;
+	docId?: string;
+	chunkIndex?: number;
+	filename?: string;
 };
 
 export type MockTurn = {

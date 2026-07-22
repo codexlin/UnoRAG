@@ -76,6 +76,36 @@ class MetadataStore(ABC):
 	def refresh_library_counts(self, library_id: str) -> dict[str, Any] | None:
 		raise NotImplementedError
 
+	@abstractmethod
+	def create_turn(
+		self,
+		*,
+		session_id: str,
+		library_id: str | None,
+		question: str,
+		answer: str,
+		citations: list[dict[str, Any]],
+		mode: str,
+		refused: bool = False,
+		refuse_reason: str | None = None,
+		turn_id: str | None = None,
+	) -> dict[str, Any]:
+		raise NotImplementedError
+
+	@abstractmethod
+	def list_turns(
+		self,
+		*,
+		library_id: str | None = None,
+		session_id: str | None = None,
+		limit: int = 50,
+	) -> list[dict[str, Any]]:
+		raise NotImplementedError
+
+	@abstractmethod
+	def get_turn(self, turn_id: str) -> dict[str, Any] | None:
+		raise NotImplementedError
+
 
 class JsonMetadataStore(MetadataStore):
 	"""File-backed metadata for local demos without Postgres."""
@@ -85,7 +115,7 @@ class JsonMetadataStore(MetadataStore):
 		self._lock = threading.Lock()
 		self.path.parent.mkdir(parents=True, exist_ok=True)
 		if not self.path.exists():
-			self._write({"libraries": {}, "documents": {}})
+			self._write({"libraries": {}, "documents": {}, "turns": {}})
 			self._seed_defaults()
 
 	def _read(self) -> dict[str, Any]:
@@ -247,6 +277,62 @@ class JsonMetadataStore(MetadataStore):
 			self._write(data)
 			return dict(library)
 
+	def create_turn(
+		self,
+		*,
+		session_id: str,
+		library_id: str | None,
+		question: str,
+		answer: str,
+		citations: list[dict[str, Any]],
+		mode: str,
+		refused: bool = False,
+		refuse_reason: str | None = None,
+		turn_id: str | None = None,
+	) -> dict[str, Any]:
+		resolved = turn_id or str(uuid4())
+		now = _now_iso()
+		row = {
+			"id": resolved,
+			"session_id": session_id,
+			"library_id": library_id,
+			"question": question,
+			"answer": answer,
+			"citations": citations,
+			"mode": mode,
+			"refused": bool(refused),
+			"refuse_reason": refuse_reason,
+			"created_at": now,
+		}
+		with self._lock:
+			data = self._read()
+			data.setdefault("turns", {})[resolved] = row
+			self._write(data)
+		return dict(row)
+
+	def list_turns(
+		self,
+		*,
+		library_id: str | None = None,
+		session_id: str | None = None,
+		limit: int = 50,
+	) -> list[dict[str, Any]]:
+		with self._lock:
+			data = self._read()
+			items = [dict(item) for item in data.get("turns", {}).values()]
+		if library_id:
+			items = [item for item in items if item.get("library_id") == library_id]
+		if session_id:
+			items = [item for item in items if item.get("session_id") == session_id]
+		items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+		return items[: max(1, min(limit, 200))]
+
+	def get_turn(self, turn_id: str) -> dict[str, Any] | None:
+		with self._lock:
+			data = self._read()
+			item = data.get("turns", {}).get(turn_id)
+			return dict(item) if item else None
+
 
 class SqlAlchemyMetadataStore(MetadataStore):
 	"""Optional Postgres-backed metadata when DATABASE_URL is set."""
@@ -310,8 +396,27 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				nullable=False,
 			)
 
+		class TurnRow(Base):
+			__tablename__ = "turns"
+
+			id: Mapped[str] = mapped_column(String(128), primary_key=True)
+			session_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+			library_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+			question: Mapped[str] = mapped_column(Text, nullable=False)
+			answer: Mapped[str] = mapped_column(Text, nullable=False, default="")
+			citations_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+			mode: Mapped[str] = mapped_column(String(32), nullable=False, default="stub")
+			refused: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+			refuse_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+			created_at: Mapped[datetime] = mapped_column(
+				DateTime(timezone=True),
+				server_default=func.now(),
+				nullable=False,
+			)
+
 		self._LibraryRow = LibraryRow
 		self._DocumentRow = DocumentRow
+		self._TurnRow = TurnRow
 		self._select = select
 		self._engine = create_engine(database_url, pool_pre_ping=True)
 		Base.metadata.create_all(self._engine)
@@ -349,6 +454,26 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			"error": row.error,
 			"created_at": self._dt(row.created_at),
 			"updated_at": self._dt(row.updated_at),
+		}
+
+	def _turn_dict(self, row: Any) -> dict[str, Any]:
+		try:
+			citations = json.loads(row.citations_json or "[]")
+		except json.JSONDecodeError:
+			citations = []
+		if not isinstance(citations, list):
+			citations = []
+		return {
+			"id": row.id,
+			"session_id": row.session_id,
+			"library_id": row.library_id,
+			"question": row.question,
+			"answer": row.answer,
+			"citations": citations,
+			"mode": row.mode,
+			"refused": bool(row.refused),
+			"refuse_reason": row.refuse_reason,
+			"created_at": self._dt(row.created_at),
 		}
 
 	def _seed_defaults(self) -> None:
@@ -484,6 +609,60 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			session.commit()
 			session.refresh(library)
 			return self._library_dict(library)
+
+	def create_turn(
+		self,
+		*,
+		session_id: str,
+		library_id: str | None,
+		question: str,
+		answer: str,
+		citations: list[dict[str, Any]],
+		mode: str,
+		refused: bool = False,
+		refuse_reason: str | None = None,
+		turn_id: str | None = None,
+	) -> dict[str, Any]:
+		resolved = turn_id or str(uuid4())
+		with self._Session() as session:
+			row = self._TurnRow(
+				id=resolved,
+				session_id=session_id,
+				library_id=library_id,
+				question=question,
+				answer=answer,
+				citations_json=json.dumps(citations, ensure_ascii=False),
+				mode=mode,
+				refused=1 if refused else 0,
+				refuse_reason=refuse_reason,
+			)
+			session.add(row)
+			session.commit()
+			session.refresh(row)
+			return self._turn_dict(row)
+
+	def list_turns(
+		self,
+		*,
+		library_id: str | None = None,
+		session_id: str | None = None,
+		limit: int = 50,
+	) -> list[dict[str, Any]]:
+		capped = max(1, min(limit, 200))
+		with self._Session() as session:
+			stmt = self._select(self._TurnRow).order_by(self._TurnRow.created_at.desc())
+			if library_id:
+				stmt = stmt.where(self._TurnRow.library_id == library_id)
+			if session_id:
+				stmt = stmt.where(self._TurnRow.session_id == session_id)
+			stmt = stmt.limit(capped)
+			rows = session.scalars(stmt).all()
+			return [self._turn_dict(row) for row in rows]
+
+	def get_turn(self, turn_id: str) -> dict[str, Any] | None:
+		with self._Session() as session:
+			row = session.get(self._TurnRow, turn_id)
+			return self._turn_dict(row) if row else None
 
 
 _store: MetadataStore | None = None

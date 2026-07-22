@@ -56,6 +56,7 @@ export function LibrariesPanel() {
 	const [error, setError] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [usingMock, setUsingMock] = useState(false);
+	const [displayName, setDisplayName] = useState("");
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const loadLibraries = useCallback(async (signal?: AbortSignal) => {
@@ -123,15 +124,20 @@ export function LibrariesPanel() {
 		try {
 			const results = [];
 			for (const file of Array.from(files)) {
-				const result = await uploadDocument({ libraryId: selectedId, file });
+				const result = await uploadDocument({
+					libraryId: selectedId,
+					file,
+					displayName: displayName.trim() || undefined,
+				});
 				results.push(result);
 			}
 			const last = results[results.length - 1];
 			setNotice(
 				last
-					? `已上传 ${results.length} 个文件 · ${last.title} → ${last.status}${last.simulated ? "（stub 模拟）" : ""}`
+					? `已上传 ${results.length} 个文件 · 显示名「${last.title}」→ ${last.status}${last.simulated ? "（stub 模拟）" : ""}`
 					: null,
 			);
+			setDisplayName("");
 			await loadLibraries();
 			await loadDocuments(selectedId);
 		} catch (err) {
@@ -172,11 +178,23 @@ export function LibrariesPanel() {
 							文库
 						</h2>
 						<p className="max-w-lg text-sm leading-6 text-muted-foreground">
-							选择文库后上传 txt / md / pdf。live 模式会真正向量化；stub
-							可模拟就绪状态。
+							选择文库后上传 txt / md / pdf。可填写「显示名」，避免芯片上只出现
+							`学号：…` / `t` 这类文件名。live 会真正向量化；stub 可模拟就绪。
 						</p>
 					</div>
-					<div className="flex flex-wrap gap-2">
+					<div className="flex flex-wrap items-end gap-2">
+						<label className="flex min-w-[180px] flex-col gap-1">
+							<span className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+								显示名（可选）
+							</span>
+							<input
+								value={displayName}
+								onChange={(event) => setDisplayName(event.target.value)}
+								placeholder="如：毕业设计说明书"
+								disabled={usingMock}
+								className="h-8 rounded-md border border-border bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/40 disabled:opacity-60"
+							/>
+						</label>
 						<input
 							ref={fileInputRef}
 							type="file"
@@ -305,11 +323,17 @@ export function LibrariesPanel() {
 										key={doc.id}
 										className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
 									>
-										<div>
+										<div className="min-w-0">
 											<p className="font-medium text-foreground">{doc.name}</p>
 											<p className="font-mono text-[11px] text-muted-foreground">
-												{doc.filename} · chunks {doc.chunk_count}
+												原文件 {doc.filename} · chunks {doc.chunk_count} ·{" "}
+												{formatUpdatedAt(doc.updated_at)}
 											</p>
+											{doc.error ? (
+												<p className="mt-0.5 text-[11px] text-destructive">
+													{doc.error}
+												</p>
+											) : null}
 										</div>
 										<span
 											className={cn(

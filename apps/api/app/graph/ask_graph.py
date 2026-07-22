@@ -40,22 +40,79 @@ STUB_CITATIONS: list[dict[str, Any]] = [
 	{
 		"id": "c1",
 		"index": 1,
-		"title": "员工手册-休假篇.pdf",
+		"title": "员工手册-休假篇",
 		"page": "p.12",
 		"snippet": "病假须于返岗后三个工作日内补交证明材料，并由直属主管确认……",
 		"score": 0.91,
 		"text": "病假须于返岗后三个工作日内补交证明材料，并由直属主管确认。",
+		"doc_id": "doc-hr-leave",
+		"chunk_index": 0,
+		"filename": "员工手册-休假篇.pdf",
 	},
 	{
 		"id": "c2",
 		"index": 2,
-		"title": "考勤管理细则.docx",
+		"title": "考勤管理细则",
 		"page": "§3.2",
 		"snippet": "未能按期提交病假证明的，人力资源部有权按事假或旷工规则核算……",
 		"score": 0.78,
 		"text": "未能按期提交病假证明的，人力资源部有权按事假或旷工规则核算。",
+		"doc_id": "doc-hr-attendance",
+		"chunk_index": 0,
+		"filename": "考勤管理细则.docx",
 	},
 ]
+
+
+def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
+	return [
+		Citation.model_validate(
+			{
+				"id": item["id"],
+				"index": item["index"],
+				"title": item["title"],
+				"page": item.get("page"),
+				"snippet": item["snippet"],
+				"score": item["score"],
+				"doc_id": item.get("doc_id"),
+				"chunk_index": item.get("chunk_index"),
+				"filename": item.get("filename"),
+			}
+		)
+		for item in raw_citations
+	]
+
+
+def _to_citation_dicts(raw_citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+	return [item.model_dump() for item in _to_citation_models(raw_citations)]
+
+
+def _persist_turn(
+	*,
+	session_id: str,
+	library_id: str | None,
+	question: str,
+	answer: str,
+	citations: list[Citation],
+	mode: str,
+	refused: bool,
+	refuse_reason: str | None,
+) -> None:
+	try:
+		from app.services.metadata import get_metadata_store
+
+		get_metadata_store().create_turn(
+			session_id=session_id,
+			library_id=library_id,
+			question=question,
+			answer=answer,
+			citations=[item.model_dump() for item in citations],
+			mode=mode,
+			refused=refused,
+			refuse_reason=refuse_reason,
+		)
+	except Exception:
+		logger.exception("ask.persist_turn_failed session_id=%s", session_id)
 
 
 def _library_label(library_id: str | None) -> str:
@@ -401,19 +458,17 @@ class AskGraphService:
 			self.session_memory.append(resolved_session, "assistant", state.get("answer") or "")
 
 		raw_citations = state.get("citations") or []
-		citations = [
-			Citation.model_validate(
-				{
-					"id": item["id"],
-					"index": item["index"],
-					"title": item["title"],
-					"page": item.get("page"),
-					"snippet": item["snippet"],
-					"score": item["score"],
-				}
-			)
-			for item in raw_citations
-		]
+		citations = _to_citation_models(raw_citations)
+		_persist_turn(
+			session_id=resolved_session,
+			library_id=library_id,
+			question=question,
+			answer=state["answer"],
+			citations=citations,
+			mode=self.mode,
+			refused=bool(state.get("refused")),
+			refuse_reason=state.get("refuse_reason"),
+		)
 		return AskResponse(
 			session_id=resolved_session,
 			question=question,
@@ -474,17 +529,8 @@ class AskGraphService:
 		debug = self._merge_retrieval_debug(state.get("retrieval_debug") or {})
 		refused = bool(state.get("refused"))
 		raw_citations = state.get("citations") or held.get("citations") or []
-		citations = [
-			{
-				"id": item["id"],
-				"index": item["index"],
-				"title": item["title"],
-				"page": item.get("page"),
-				"snippet": item["snippet"],
-				"score": item["score"],
-			}
-			for item in raw_citations
-		]
+		citations = _to_citation_dicts(raw_citations)
+		citation_models = _to_citation_models(raw_citations)
 
 		yield {
 			"event": "meta",
@@ -528,6 +574,17 @@ class AskGraphService:
 		if self.settings.session_memory_enabled:
 			self.session_memory.append(resolved_session, "user", question)
 			self.session_memory.append(resolved_session, "assistant", answer)
+
+		_persist_turn(
+			session_id=resolved_session,
+			library_id=library_id,
+			question=question,
+			answer=answer,
+			citations=citation_models,
+			mode=self.mode,
+			refused=refused,
+			refuse_reason=state.get("refuse_reason"),
+		)
 
 		yield {
 			"event": "done",

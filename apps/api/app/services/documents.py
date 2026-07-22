@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf"}
+_PAGE_RE = re.compile(r"(?m)^## Page (\d+)\s*$")
+_NOISY_PREFIX_RE = re.compile(
+	r"^(学号|编号|姓名|班级|指导教师)[：:\s]*",
+	re.IGNORECASE,
+)
 
 
 @dataclass
@@ -18,9 +24,35 @@ class ParsedDocument:
 	parser: str
 
 
+def clean_display_title(raw: str, *, filename: str | None = None) -> str:
+	"""Normalize upload stems into readable display names."""
+	stem = (raw or "").strip()
+	if not stem and filename:
+		stem = PurePosixPath(filename).stem.strip()
+	stem = stem or "未命名文档"
+	cleaned = stem
+	# Strip repeated noisy form-field prefixes (e.g. 学号：2022…)
+	for _ in range(4):
+		nxt = _NOISY_PREFIX_RE.sub("", cleaned).strip(" -_./\\")
+		if nxt == cleaned:
+			break
+		cleaned = nxt
+	cleaned = cleaned or stem
+	# Extremely short stems stay usable but callers may warn in UI.
+	return cleaned[:512]
+
+
 def _guess_title(filename: str) -> str:
 	stem = PurePosixPath(filename).stem.strip() or "未命名文档"
-	return stem[:512]
+	return clean_display_title(stem, filename=filename)
+
+
+def infer_page_label(text: str) -> str | None:
+	"""Best-effort page from embedded `## Page N` markers."""
+	matches = list(_PAGE_RE.finditer(text or ""))
+	if not matches:
+		return None
+	return f"p.{matches[-1].group(1)}"
 
 
 def extract_text(

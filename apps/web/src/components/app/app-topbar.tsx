@@ -25,7 +25,12 @@ export function AppTopbar() {
 				if (cancelled) return;
 				setApiStatus(health.status === "ok" ? "online" : "offline");
 				const effective = health.effective_mode || health.ask_mode;
-				setModeLabel(health.degraded ? `${effective}·降级` : effective);
+				const backend = health.metadata_backend
+					? ` · ${health.metadata_backend}`
+					: "";
+				setModeLabel(
+					`${health.degraded ? `${effective}·降级` : effective}${backend}`,
+				);
 			} catch {
 				if (cancelled) return;
 				setApiStatus("offline");

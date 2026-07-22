@@ -53,30 +53,32 @@ meridian/   # 本地目录名；远程仓库 MeriKnow
 ### Phase 1 — 可演示问答壳
 
 - [x] `/app` 工作台壳（侧栏 · 顶栏 · Northline）  
-- [x] 问答台 + 引用抽屉（mock 回合）  
-- [x] 文库列表占位；档案 / 设置占位  
-- [x] 对接 API 健康检查与问答 stub（`/health` · `POST /v1/ask`）  
-- [ ] 上传 / 解析进度接通后端  
+- [x] 问答台 + 证据抽屉（流式 + `[n]` 联动）  
+- [x] 文库上传 / 显示名 / 文档列表  
+- [x] 档案回看（`/app/archive` · `GET /v1/archive`）  
+- [x] 对接 API 健康检查与问答（`/health` · `/v1/ask` · `/v1/ask/stream`）  
 
 ### Phase 2 — LangGraph 内核
 
-- [x] `apps/api` 脚手架：FastAPI · CORS · settings · stub 图  
-- [x] LangChain 兼容 chat/embeddings；切分（500/80）；Qdrant 检索；最小 ingest  
+- [x] `apps/api` 脚手架：FastAPI · CORS · settings · stub/live 图  
+- [x] LangChain 兼容 chat/embeddings；切分（500/80）；Qdrant 检索；ingest/upload  
 - [x] LangGraph：rewrite → retrieve → judge → retry → generate/refuse  
-- [ ] Session 记忆 + query 改写（多轮）  
-- [x] 弱相关 / 无命中策略（承袭 DustyKB；`ANSWER_MIN_SCORE`）  
-- [ ] Rerank / 混合检索（后续）
+- [x] Session 短记忆 + 追问 rewrite  
+- [x] 弱相关 / 无命中策略（`ANSWER_MIN_SCORE`）  
+- [x] 可选 Rerank / BM25+RRF 混合检索  
+- [x] 默认 Postgres 元数据 + turns；JSON 降级  
 
 ### Phase 3 — 企业壳
 
 - [ ] SSO/RBAC、审计日志、索引队列  
 - [ ] 评测抽检、连接器 / OCR（按需）
 
-## 成功标准（Phase 2 本切片）
+## 成功标准（当前）
 
-- `ASK_MODE=stub` 无密钥可问答与拒答自测  
-- `ASK_MODE=live` + 密钥 + Qdrant：ingest → ask 可跑通；失败时 health 标明降级  
-- `uv run pytest` 覆盖 stub / 拒答 / retry
+- stub 可问答 / 拒答；live + 密钥 + Qdrant 可上传问答  
+- 引用展示为可读显示名 + 片段预览；答案 `[n]` 可点  
+- `docker compose up -d` 起 Qdrant + Postgres；health 显示 `metadata_backend`  
+- `uv run pytest` 通过  
 
 ## 风险
 

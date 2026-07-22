@@ -25,6 +25,22 @@ class Citation(BaseModel):
 	page: str | None = None
 	snippet: str
 	score: float = Field(ge=0, le=1)
+	doc_id: str | None = None
+	chunk_index: int | None = None
+	filename: str | None = None
+
+
+class ArchiveTurnResponse(BaseModel):
+	id: str
+	session_id: str
+	library_id: str | None = None
+	question: str
+	answer: str
+	citations: list[Citation] = Field(default_factory=list)
+	mode: str
+	refused: bool = False
+	refuse_reason: str | None = None
+	created_at: str
 
 
 class AskRequest(BaseModel):

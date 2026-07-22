@@ -168,3 +168,25 @@ def test_ingest_503_when_simulate_disabled(monkeypatch: pytest.MonkeyPatch) -> N
 	)
 	assert response.status_code == 503
 	get_settings.cache_clear()
+
+
+def test_ask_persists_archive_turn() -> None:
+	response = client.post(
+		"/v1/ask",
+		json={
+			"question": "病假需要在几天内补交证明？",
+			"library_id": "lib-hr",
+			"session_id": "archive-session-1",
+		},
+	)
+	assert response.status_code == 200
+	payload = response.json()
+	assert payload["citations"][0].get("doc_id") or payload["citations"][0].get("title")
+
+	archive = client.get("/v1/archive", params={"session_id": "archive-session-1"})
+	assert archive.status_code == 200
+	rows = archive.json()
+	assert len(rows) >= 1
+	assert rows[0]["question"] == "病假需要在几天内补交证明？"
+	assert rows[0]["citations"]
+	assert "doc_id" in rows[0]["citations"][0] or rows[0]["citations"][0].get("title")

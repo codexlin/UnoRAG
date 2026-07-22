@@ -1,3 +1,3 @@
-from app.routers import ask, health
+from app.routers import archive, ask, health, libraries
 
-__all__ = ["ask", "health"]
+__all__ = ["archive", "ask", "health", "libraries"]

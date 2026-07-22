@@ -20,6 +20,22 @@ export type ApiCitation = {
 	page?: string | null;
 	snippet: string;
 	score: number;
+	doc_id?: string | null;
+	chunk_index?: number | null;
+	filename?: string | null;
+};
+
+export type ApiArchiveTurn = {
+	id: string;
+	session_id: string;
+	library_id?: string | null;
+	question: string;
+	answer: string;
+	citations: ApiCitation[];
+	mode: string;
+	refused: boolean;
+	refuse_reason?: string | null;
+	created_at: string;
 };
 
 export type ApiAskResponse = {
@@ -140,10 +156,14 @@ export async function createLibrary(input: {
 export async function uploadDocument(input: {
 	libraryId: string;
 	file: File;
+	displayName?: string;
 }): Promise<ApiUploadResponse> {
 	const form = new FormData();
 	form.append("library_id", input.libraryId);
 	form.append("file", input.file);
+	if (input.displayName?.trim()) {
+		form.append("display_name", input.displayName.trim());
+	}
 	const response = await fetch(`${getApiBaseUrl()}/v1/ingest/upload`, {
 		method: "POST",
 		body: form,
@@ -153,6 +173,31 @@ export async function uploadDocument(input: {
 		throw new Error(text || `upload ${response.status}`);
 	}
 	return (await response.json()) as ApiUploadResponse;
+}
+
+export async function fetchArchive(input?: {
+	libraryId?: string;
+	sessionId?: string;
+	limit?: number;
+	signal?: AbortSignal;
+}): Promise<ApiArchiveTurn[]> {
+	const params = new URLSearchParams();
+	if (input?.libraryId) params.set("library_id", input.libraryId);
+	if (input?.sessionId) params.set("session_id", input.sessionId);
+	if (input?.limit) params.set("limit", String(input.limit));
+	const query = params.toString();
+	const response = await fetch(
+		`${getApiBaseUrl()}/v1/archive${query ? `?${query}` : ""}`,
+		{
+			method: "GET",
+			signal: input?.signal,
+			cache: "no-store",
+		},
+	);
+	if (!response.ok) {
+		throw new Error(`archive ${response.status}`);
+	}
+	return (await response.json()) as ApiArchiveTurn[];
 }
 
 export async function askQuestion(input: {
