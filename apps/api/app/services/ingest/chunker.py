@@ -233,23 +233,18 @@ def _split_into_sections(nodes: list[Node], *, boundary_level: int) -> list[_Sec
 		force_page = False
 
 	for node in nodes:
-		if node.type == NodeType.HEADING and node.level is not None and node.level <= boundary_level:
+		# 任意级别标题都先 flush：同级 ### 若只改 path 不切段，会把上一节正文挂到下一节路径上
+		# （例：CMSTOP 正文被标成「…/璞华」）。boundary_level 仅影响「是否把标题行写入 body」。
+		if node.type == NodeType.HEADING and node.level is not None:
 			flush()
 			current_path = node.path
 			current_heading = node.text
 			node_ids.append(node.id)
 			page_start = node.page_start
 			page_end = node.page_end if node.page_end is not None else node.page_start
-			continue
-
-		if node.type == NodeType.HEADING:
-			# 更深 heading：写入正文，保留层级路径
-			current_path = node.path or current_path
-			current_heading = node.text or current_heading
-			if node.text:
+			# 深于 boundary 的标题保留在正文里，便于检索看到小节名
+			if node.level > boundary_level and node.text:
 				body_parts.append(node.text)
-			node_ids.append(node.id)
-			page_start, page_end = _extend_pages(page_start, page_end, node)
 			continue
 
 		if node.type in {NodeType.TABLE, NodeType.CODE}:

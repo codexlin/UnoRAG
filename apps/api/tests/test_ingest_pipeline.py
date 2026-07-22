@@ -42,6 +42,30 @@ def test_handbook_md_no_cross_h2_and_preamble() -> None:
 		assert chunk.section_path is None or "第3章" in (chunk.section_path or "")
 
 
+def test_sibling_h3_section_paths_do_not_cross() -> None:
+	"""同级 ### 必须各自成段，避免正文挂到下一节 path（CMSTOP → 璞华串号）。"""
+	content = """# 简历
+
+## 工作经历
+
+### CMSTOP
+Monorepo 迁移与规范。
+
+### 璞华国际
+LangChain 企业助手。
+""".encode("utf-8")
+	doc = parse_markdown(content=content, filename="resume.md", title="简历")
+	chunks = chunk_document(doc, config=ChunkerConfig(chunk_size=500, chunk_overlap=40))
+	cmstop = [c for c in chunks if "Monorepo" in c.body]
+	puhua = [c for c in chunks if "LangChain" in c.body]
+	assert cmstop
+	assert puhua
+	assert all(c.section_path and "CMSTOP" in c.section_path for c in cmstop)
+	assert all("璞华" not in (c.section_path or "") for c in cmstop)
+	assert all(c.section_path and "璞华" in c.section_path for c in puhua)
+	assert all("Monorepo" not in c.body for c in puhua)
+
+
 def test_txt_parser_paragraphs() -> None:
 	content = "第一段内容。\n\n第二段内容。".encode("utf-8")
 	doc = parse_txt(content=content, filename="a.txt", title="a")

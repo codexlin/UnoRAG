@@ -77,6 +77,11 @@ class MetadataStore(ABC):
 		raise NotImplementedError
 
 	@abstractmethod
+	def delete_document(self, doc_id: str) -> bool:
+		"""删除文档元数据行；向量需调用方先清 Qdrant。"""
+		raise NotImplementedError
+
+	@abstractmethod
 	def refresh_library_counts(self, library_id: str) -> dict[str, Any] | None:
 		raise NotImplementedError
 
@@ -262,6 +267,17 @@ class JsonMetadataStore(MetadataStore):
 			updated = dict(row)
 		self.refresh_library_counts(library_id)
 		return updated
+
+	def delete_document(self, doc_id: str) -> bool:
+		with self._lock:
+			data = self._read()
+			row = data.get("documents", {}).pop(doc_id, None)
+			if not row:
+				return False
+			library_id = str(row["library_id"])
+			self._write(data)
+		self.refresh_library_counts(library_id)
+		return True
 
 	def refresh_library_counts(self, library_id: str) -> dict[str, Any] | None:
 		with self._lock:
@@ -614,6 +630,17 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			payload = self._document_dict(row)
 		self.refresh_library_counts(library_id)
 		return payload
+
+	def delete_document(self, doc_id: str) -> bool:
+		with self._Session() as session:
+			row = session.get(self._DocumentRow, doc_id)
+			if row is None:
+				return False
+			library_id = row.library_id
+			session.delete(row)
+			session.commit()
+		self.refresh_library_counts(library_id)
+		return True
 
 	def refresh_library_counts(self, library_id: str) -> dict[str, Any] | None:
 		with self._Session() as session:

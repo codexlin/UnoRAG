@@ -198,6 +198,25 @@ async def ingest_upload(
 	if meta.get_library(library_id) is None:
 		raise HTTPException(status_code=404, detail=f"library not found: {library_id}")
 
+	# 同库同名文件覆盖：先清旧向量 + 元数据，避免脏 chunk 叠加
+	for old in meta.list_documents(library_id):
+		if str(old.get("filename") or "") != filename:
+			continue
+		old_id = str(old["id"])
+		try:
+			if capability.live_ready:
+				IngestService(settings).delete_document_chunks(
+					doc_id=old_id,
+					library_id=library_id,
+				)
+		except Exception as exc:
+			logger.warning(
+				"upload.replace_delete_vectors_failed doc_id=%s err=%s",
+				old_id,
+				exc,
+			)
+		meta.delete_document(old_id)
+
 	try:
 		prepared = prepare_ingest(
 			settings=settings,

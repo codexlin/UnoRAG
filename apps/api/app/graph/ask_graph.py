@@ -300,6 +300,7 @@ def build_ask_graph(
 			}
 		else:
 			top_score = float(citations[0].get("score") or 0.0)
+			# 低于阈值必须走正式 refuse（refused=true），禁止落到 generate 再靠模型口头「未覆盖」
 			weak = min_score > 0 and top_score < min_score
 			if weak:
 				can_retry = attempts <= max_retries

@@ -73,6 +73,8 @@ class IngestService:
 			if filename:
 				chunk["filename"] = filename
 			chunks.append(chunk)
+		# 同 doc_id 覆盖写入前先清旧点，避免重传叠向量
+		self.delete_document_chunks(doc_id=resolved_doc_id, library_id=library_id)
 		vectors = self.embeddings.embed_texts([piece.text for piece in pieces])
 		count = self.store.upsert_chunks(
 			library_id=library_id,
@@ -112,6 +114,7 @@ class IngestService:
 			raise ValueError("no chunks to ingest")
 		payloads = chunks_to_payloads(chunks, filename=filename)
 		embed_inputs = [str(item.get("embed_text") or item.get("text") or "") for item in payloads]
+		self.delete_document_chunks(doc_id=resolved_doc_id, library_id=library_id)
 		vectors = self.embeddings.embed_texts(embed_inputs)
 		count = self.store.upsert_chunks(
 			library_id=library_id,
@@ -137,6 +140,20 @@ class IngestService:
 		if parser_report is not None:
 			result["parser_report"] = parser_report
 		return result
+
+	def delete_document_chunks(self, *, doc_id: str, library_id: str | None = None) -> None:
+		"""按文档清除向量；删元数据或同名覆盖上传前调用。"""
+		try:
+			self.store.delete_by_doc_id(doc_id=doc_id, library_id=library_id)
+		except Exception:
+			logger.exception(
+				"ingest.delete_chunks_failed doc_id=%s library_id=%s",
+				doc_id,
+				library_id,
+			)
+			raise
+		if library_id:
+			get_bm25_cache().invalidate(library_id)
 
 	def simulate_ingest(
 		self,

@@ -102,6 +102,28 @@ class QdrantStore:
 		)
 		return len(points)
 
+	def delete_by_doc_id(self, *, doc_id: str, library_id: str | None = None) -> None:
+		"""删除某文档在 collection 中的全部向量点（覆盖重传 / 删文档前调用）。"""
+		must: list[qm.Condition] = [
+			qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id)),
+		]
+		if library_id:
+			must.append(
+				qm.FieldCondition(
+					key="library_id",
+					match=qm.MatchValue(value=library_id),
+				)
+			)
+		self.client.delete(
+			collection_name=self.collection,
+			points_selector=qm.FilterSelector(filter=qm.Filter(must=must)),
+		)
+		logger.info(
+			"qdrant.delete_by_doc_id library_id=%s doc_id=%s",
+			library_id,
+			doc_id,
+		)
+
 	def search(
 		self,
 		*,

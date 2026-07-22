@@ -47,7 +47,8 @@ class Settings(BaseSettings):
 	tool_ask: bool = False
 	retrieve_top_k: int = 6
 	# 最高分低于此阈值则拒答（0 = 关闭弱相关拒答）；无命中始终拒答
-	answer_min_score: float = 0.35
+	# 最高分低于此值 → 正式 refused（弱相关），避免模型口头「未覆盖」却 refused=false
+	answer_min_score: float = 0.4
 	max_retrieve_retries: int = 1
 
 	# Optional rerank after dense retrieval (DashScope-compatible /reranks)
