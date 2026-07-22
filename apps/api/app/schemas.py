@@ -27,6 +27,8 @@ class Citation(BaseModel):
 	title: str
 	page: str | None = None
 	snippet: str
+	# Full chunk text used in LLM context (drawer/archive should show this).
+	text: str = ""
 	score: float = Field(ge=0, le=1)
 	doc_id: str | None = None
 	chunk_index: int | None = None
@@ -48,7 +50,8 @@ class ArchiveTurnResponse(BaseModel):
 
 class AskRequest(BaseModel):
 	question: str = Field(min_length=1, max_length=4000)
-	library_id: str | None = None
+	# Required on HTTP ask paths; validated in router (400 if missing/blank).
+	library_id: str | None = Field(default=None, max_length=128)
 	session_id: str | None = None
 
 
@@ -61,6 +64,11 @@ class AskResponse(BaseModel):
 	refused: bool = False
 	refuse_reason: str | None = None
 	retrieval_debug: dict[str, object] = Field(default_factory=dict)
+	persisted: bool = True
+	persist_error: str | None = None
+	hybrid_failed: bool = False
+	rerank_failed: bool = False
+	retrieval_mode: str = "dense"
 
 
 class IngestRequest(BaseModel):

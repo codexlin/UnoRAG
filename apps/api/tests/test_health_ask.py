@@ -67,6 +67,24 @@ def test_live_unavailable_hard_fails_not_stub(monkeypatch: pytest.MonkeyPatch) -
 	get_settings.cache_clear()
 
 
+def test_ask_requires_library_id() -> None:
+	missing = client.post("/v1/ask", json={"question": "病假需要在几天内补交证明？"})
+	assert missing.status_code == 400
+	assert "library_id" in missing.json()["detail"]
+
+	blank = client.post(
+		"/v1/ask",
+		json={"question": "病假需要在几天内补交证明？", "library_id": "  "},
+	)
+	assert blank.status_code == 400
+
+	stream = client.post(
+		"/v1/ask/stream",
+		json={"question": "病假需要在几天内补交证明？"},
+	)
+	assert stream.status_code == 400
+
+
 def test_ask_stub() -> None:
 	response = client.post(
 		"/v1/ask",
@@ -76,8 +94,14 @@ def test_ask_stub() -> None:
 	payload = response.json()
 	assert "三个工作日" in payload["answer"]
 	assert len(payload["citations"]) >= 1
+	citation = payload["citations"][0]
+	assert citation.get("text")
+	assert "三个工作日" in citation["text"]
+	assert citation["snippet"]
 	assert payload["mode"] == "stub"
 	assert payload["refused"] is False
+	assert payload["persisted"] is True
+	assert payload["retrieval_mode"] in {"dense", "hybrid"}
 	assert payload["retrieval_debug"]["judgement"]["action"] == "generate"
 
 
@@ -228,6 +252,8 @@ def test_ask_persists_archive_turn() -> None:
 	assert response.status_code == 200
 	payload = response.json()
 	assert payload["citations"][0].get("doc_id") or payload["citations"][0].get("title")
+	assert payload["persisted"] is True
+	assert payload["citations"][0].get("text")
 
 	archive = client.get("/v1/archive", params={"session_id": "archive-session-1"})
 	assert archive.status_code == 200
@@ -236,3 +262,26 @@ def test_ask_persists_archive_turn() -> None:
 	assert rows[0]["question"] == "病假需要在几天内补交证明？"
 	assert rows[0]["citations"]
 	assert "doc_id" in rows[0]["citations"][0] or rows[0]["citations"][0].get("title")
+	assert rows[0]["citations"][0].get("text") or rows[0]["citations"][0].get("snippet")
+
+
+def test_ask_persist_failure_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+	from app.graph import ask_graph as ask_graph_mod
+
+	def boom_persist(**_kwargs):
+		return {"persisted": False, "persist_error": "disk full"}
+
+	monkeypatch.setattr(ask_graph_mod, "_persist_turn", boom_persist)
+	response = client.post(
+		"/v1/ask",
+		json={
+			"question": "病假需要在几天内补交证明？",
+			"library_id": "lib-hr",
+			"session_id": "persist-fail-session",
+		},
+	)
+	assert response.status_code == 200
+	payload = response.json()
+	assert "三个工作日" in payload["answer"]
+	assert payload["persisted"] is False
+	assert payload["persist_error"] == "disk full"

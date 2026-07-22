@@ -42,7 +42,7 @@ STUB_CITATIONS: list[dict[str, Any]] = [
 		"index": 1,
 		"title": "员工手册-休假篇",
 		"page": "p.12",
-		"snippet": "病假须于返岗后三个工作日内补交证明材料，并由直属主管确认……",
+		"snippet": "病假须于返岗后三个工作日内补交证明材料，并由直属主管确认。",
 		"score": 0.91,
 		"text": "病假须于返岗后三个工作日内补交证明材料，并由直属主管确认。",
 		"doc_id": "doc-hr-leave",
@@ -54,7 +54,7 @@ STUB_CITATIONS: list[dict[str, Any]] = [
 		"index": 2,
 		"title": "考勤管理细则",
 		"page": "§3.2",
-		"snippet": "未能按期提交病假证明的，人力资源部有权按事假或旷工规则核算……",
+		"snippet": "未能按期提交病假证明的，人力资源部有权按事假或旷工规则核算。",
 		"score": 0.78,
 		"text": "未能按期提交病假证明的，人力资源部有权按事假或旷工规则核算。",
 		"doc_id": "doc-hr-attendance",
@@ -65,22 +65,27 @@ STUB_CITATIONS: list[dict[str, Any]] = [
 
 
 def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
-	return [
-		Citation.model_validate(
-			{
-				"id": item["id"],
-				"index": item["index"],
-				"title": item["title"],
-				"page": item.get("page"),
-				"snippet": item["snippet"],
-				"score": item["score"],
-				"doc_id": item.get("doc_id"),
-				"chunk_index": item.get("chunk_index"),
-				"filename": item.get("filename"),
-			}
+	models: list[Citation] = []
+	for item in raw_citations:
+		full_text = str(item.get("text") or item.get("snippet") or "")
+		snippet = str(item.get("snippet") or full_text[:280])
+		models.append(
+			Citation.model_validate(
+				{
+					"id": item["id"],
+					"index": item["index"],
+					"title": item["title"],
+					"page": item.get("page"),
+					"snippet": snippet,
+					"text": full_text,
+					"score": item["score"],
+					"doc_id": item.get("doc_id"),
+					"chunk_index": item.get("chunk_index"),
+					"filename": item.get("filename"),
+				}
+			)
 		)
-		for item in raw_citations
-	]
+	return models
 
 
 def _to_citation_dicts(raw_citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -97,7 +102,7 @@ def _persist_turn(
 	mode: str,
 	refused: bool,
 	refuse_reason: str | None,
-) -> None:
+) -> dict[str, Any]:
 	try:
 		from app.services.metadata import get_metadata_store
 
@@ -111,8 +116,21 @@ def _persist_turn(
 			refused=refused,
 			refuse_reason=refuse_reason,
 		)
-	except Exception:
+		return {"persisted": True, "persist_error": None}
+	except Exception as exc:
 		logger.exception("ask.persist_turn_failed session_id=%s", session_id)
+		return {"persisted": False, "persist_error": str(exc)}
+
+
+def _retrieval_visibility(debug: dict[str, Any]) -> dict[str, Any]:
+	hybrid_failed = bool(debug.get("hybrid_failed") or debug.get("hybrid_error"))
+	rerank_failed = bool(debug.get("rerank_failed"))
+	retrieval_mode = str(debug.get("retrieval_mode") or ("hybrid" if debug.get("used_hybrid") else "dense"))
+	return {
+		"hybrid_failed": hybrid_failed,
+		"rerank_failed": rerank_failed,
+		"retrieval_mode": retrieval_mode,
+	}
 
 
 def _library_label(library_id: str | None) -> str:
@@ -389,6 +407,8 @@ class AskGraphService:
 			self._retrieval_service = retrieval
 
 			def live_retrieve(query: str, library_id: str | None, top_k: int) -> list[dict[str, Any]]:
+				if not library_id or not str(library_id).strip():
+					raise ValueError("library_id is required for live retrieval")
 				return retrieval.search(query=query, library_id=library_id, top_k=top_k)
 
 			self._retrieve = live_retrieve
@@ -459,7 +479,7 @@ class AskGraphService:
 
 		raw_citations = state.get("citations") or []
 		citations = _to_citation_models(raw_citations)
-		_persist_turn(
+		persist = _persist_turn(
 			session_id=resolved_session,
 			library_id=library_id,
 			question=question,
@@ -469,6 +489,8 @@ class AskGraphService:
 			refused=bool(state.get("refused")),
 			refuse_reason=state.get("refuse_reason"),
 		)
+		debug = self._merge_retrieval_debug(state.get("retrieval_debug") or {})
+		visibility = _retrieval_visibility(debug)
 		return AskResponse(
 			session_id=resolved_session,
 			question=question,
@@ -477,7 +499,12 @@ class AskGraphService:
 			mode=self.mode,
 			refused=bool(state.get("refused")),
 			refuse_reason=state.get("refuse_reason"),
-			retrieval_debug=self._merge_retrieval_debug(state.get("retrieval_debug") or {}),
+			retrieval_debug=debug,
+			persisted=bool(persist["persisted"]),
+			persist_error=persist.get("persist_error"),
+			hybrid_failed=bool(visibility["hybrid_failed"]),
+			rerank_failed=bool(visibility["rerank_failed"]),
+			retrieval_mode=str(visibility["retrieval_mode"]),
 		)
 
 	def iter_ask_events(
@@ -527,6 +554,7 @@ class AskGraphService:
 			}
 		)
 		debug = self._merge_retrieval_debug(state.get("retrieval_debug") or {})
+		visibility = _retrieval_visibility(debug)
 		refused = bool(state.get("refused"))
 		raw_citations = state.get("citations") or held.get("citations") or []
 		citations = _to_citation_dicts(raw_citations)
@@ -539,6 +567,9 @@ class AskGraphService:
 				"mode": self.mode,
 				"refused": refused,
 				"refuse_reason": state.get("refuse_reason"),
+				"hybrid_failed": visibility["hybrid_failed"],
+				"rerank_failed": visibility["rerank_failed"],
+				"retrieval_mode": visibility["retrieval_mode"],
 			},
 		}
 		yield {"event": "citations", "data": citations}
@@ -575,7 +606,7 @@ class AskGraphService:
 			self.session_memory.append(resolved_session, "user", question)
 			self.session_memory.append(resolved_session, "assistant", answer)
 
-		_persist_turn(
+		persist = _persist_turn(
 			session_id=resolved_session,
 			library_id=library_id,
 			question=question,
@@ -597,6 +628,11 @@ class AskGraphService:
 				"refused": refused,
 				"refuse_reason": state.get("refuse_reason"),
 				"retrieval_debug": debug,
+				"persisted": bool(persist["persisted"]),
+				"persist_error": persist.get("persist_error"),
+				"hybrid_failed": visibility["hybrid_failed"],
+				"rerank_failed": visibility["rerank_failed"],
+				"retrieval_mode": visibility["retrieval_mode"],
 			},
 		}
 

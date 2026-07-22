@@ -17,33 +17,34 @@ import {
 
 import { MarkdownAnswer } from "@/components/app/markdown-answer";
 import { Button, buttonVariants } from "@/components/ui/button";
-import {
-	type ApiCitation,
-	type ApiLibrary,
-	askQuestionStream,
-	fetchHealth,
-	fetchLibraries,
-	isAbortError,
-	isApiAvailable,
-} from "@/lib/api";
-import type { MockCitation, MockTurn } from "@/lib/mock-data";
+import { useHealth } from "@/hooks/use-health";
+import { useLibraries } from "@/hooks/use-libraries";
+import { type ApiCitation, askQuestionStream } from "@/lib/api";
+import type { UiCitation, UiTurn } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
-type LocalTurn = MockTurn & {
+type LocalTurn = UiTurn & {
 	pending?: boolean;
 	error?: string;
 	topScore?: number | null;
 	usedHybrid?: boolean;
 	evidenceReady?: boolean;
+	hybridFailed?: boolean;
+	rerankFailed?: boolean;
+	retrievalMode?: string;
+	persisted?: boolean;
+	persistError?: string | null;
 };
 
-function toMockCitation(citation: ApiCitation): MockCitation {
+function toUiCitation(citation: ApiCitation): UiCitation {
+	const text = citation.text || citation.snippet || "";
 	return {
 		id: citation.id,
 		index: citation.index,
 		title: citation.title,
 		page: citation.page ?? undefined,
-		snippet: citation.snippet,
+		snippet: citation.snippet || text.slice(0, 280),
+		text,
 		score: citation.score,
 		docId: citation.doc_id ?? undefined,
 		chunkIndex: citation.chunk_index ?? undefined,
@@ -64,9 +65,9 @@ function AnswerBody({
 	onCite,
 }: {
 	answer: string;
-	citations: MockCitation[];
+	citations: UiCitation[];
 	pending?: boolean;
-	onCite: (citation: MockCitation) => void;
+	onCite: (citation: UiCitation) => void;
 }) {
 	return (
 		<MarkdownAnswer
@@ -79,46 +80,53 @@ function AnswerBody({
 	);
 }
 
+function RetrievalNotice({ turn }: { turn: LocalTurn }) {
+	const notices: string[] = [];
+	if (turn.hybridFailed) {
+		notices.push(
+			turn.retrievalMode === "dense" || !turn.usedHybrid
+				? "hybrid 失败，已回退 dense"
+				: "hybrid 失败",
+		);
+	}
+	if (turn.rerankFailed) {
+		notices.push("rerank 失败，已跳过重排");
+	}
+	if (turn.persisted === false) {
+		notices.push(
+			turn.persistError ? `档案未写入：${turn.persistError}` : "档案未写入",
+		);
+	}
+	if (notices.length === 0) return null;
+	return (
+		<div className="mt-2 space-y-1">
+			{notices.map((notice) => (
+				<p
+					key={notice}
+					className="rounded-md border border-survey/35 bg-accent px-2.5 py-1.5 font-mono text-[11px] text-accent-foreground"
+				>
+					{notice}
+				</p>
+			))}
+		</div>
+	);
+}
+
 export function AskWorkspace() {
-	const [libraries, setLibraries] = useState<ApiLibrary[]>([]);
+	const { libraries, error: libsError } = useLibraries();
+	const { apiReady } = useHealth();
 	const [libraryId, setLibraryId] = useState("");
 	const [input, setInput] = useState("");
 	const [sessionId, setSessionId] = useState<string | undefined>();
 	const [turns, setTurns] = useState<LocalTurn[]>([]);
-	const [activeCitation, setActiveCitation] = useState<MockCitation | null>(
-		null,
-	);
+	const [activeCitation, setActiveCitation] = useState<UiCitation | null>(null);
 	const [drawerOpen, setDrawerOpen] = useState(true);
-	const [libsError, setLibsError] = useState<string | null>(null);
-	const [apiReady, setApiReady] = useState(true);
 
 	useEffect(() => {
-		const controller = new AbortController();
-		void (async () => {
-			try {
-				const [items, health] = await Promise.all([
-					fetchLibraries(controller.signal),
-					fetchHealth(controller.signal).catch(() => null),
-				]);
-				if (controller.signal.aborted) return;
-				setLibraries(items);
-				setLibraryId((prev) => prev || items[0]?.id || "");
-				setLibsError(null);
-				setApiReady(health ? isApiAvailable(health) : false);
-			} catch (err) {
-				if (controller.signal.aborted || isAbortError(err)) return;
-				setLibraries([]);
-				setLibraryId("");
-				setApiReady(false);
-				setLibsError(
-					err instanceof Error
-						? `文库加载失败：${err.message}`
-						: "文库加载失败：API 不可用",
-				);
-			}
-		})();
-		return () => controller.abort();
-	}, []);
+		if (!libraryId && libraries[0]?.id) {
+			setLibraryId(libraries[0].id);
+		}
+	}, [libraries, libraryId]);
 
 	const library = useMemo(
 		() => libraries.find((item) => item.id === libraryId) ?? null,
@@ -127,14 +135,14 @@ export function AskWorkspace() {
 
 	const canAsk = Boolean(library && library.status === "ready" && apiReady);
 
-	function openCitation(citation: MockCitation) {
+	function openCitation(citation: UiCitation) {
 		setActiveCitation(citation);
 		setDrawerOpen(true);
 	}
 
 	async function submitQuestion(question: string) {
 		const trimmed = question.trim();
-		if (!trimmed || !canAsk) return;
+		if (!trimmed || !canAsk || !libraryId) return;
 
 		const pendingId = `pending-${Date.now()}`;
 		setTurns((prev) => [
@@ -169,13 +177,16 @@ export function AskWorkspace() {
 											refused: meta.refused,
 											refuseReason: meta.refuse_reason,
 											mode: meta.mode,
+											hybridFailed: Boolean(meta.hybrid_failed),
+											rerankFailed: Boolean(meta.rerank_failed),
+											retrievalMode: meta.retrieval_mode,
 										}
 									: turn,
 							),
 						);
 					},
 					onCitations: (citations) => {
-						const mapped = citations.map(toMockCitation);
+						const mapped = citations.map(toUiCitation);
 						setTurns((prev) =>
 							prev.map((turn) =>
 								turn.id === pendingId
@@ -204,7 +215,7 @@ export function AskWorkspace() {
 					},
 					onDone: (result) => {
 						setSessionId(result.session_id);
-						const citations = result.citations.map(toMockCitation);
+						const citations = result.citations.map(toUiCitation);
 						const debug = result.retrieval_debug || {};
 						setTurns((prev) =>
 							prev.map((turn) =>
@@ -224,6 +235,19 @@ export function AskWorkspace() {
 													? debug.top_score
 													: null,
 											usedHybrid: Boolean(debug.used_hybrid),
+											hybridFailed: Boolean(
+												result.hybrid_failed ?? debug.hybrid_failed,
+											),
+											rerankFailed: Boolean(
+												result.rerank_failed ?? debug.rerank_failed,
+											),
+											retrievalMode:
+												result.retrieval_mode ||
+												(typeof debug.retrieval_mode === "string"
+													? debug.retrieval_mode
+													: undefined),
+											persisted: result.persisted !== false,
+											persistError: result.persist_error ?? null,
 										}
 									: turn,
 							),
@@ -268,6 +292,8 @@ export function AskWorkspace() {
 			void submitQuestion(input);
 		}
 	}
+
+	const evidenceText = activeCitation?.text || activeCitation?.snippet || "";
 
 	return (
 		<div className="flex min-h-0 flex-1">
@@ -404,6 +430,7 @@ export function AskWorkspace() {
 															: "无命中 · 未调用生成"}
 													</p>
 												) : null}
+												<RetrievalNotice turn={turn} />
 												{turn.answer ? (
 													<AnswerBody
 														answer={turn.answer}
@@ -424,7 +451,11 @@ export function AskWorkspace() {
 															{typeof turn.topScore === "number"
 																? ` · top ${turn.topScore.toFixed(2)}`
 																: ""}
-															{turn.usedHybrid ? " · hybrid" : ""}
+															{turn.usedHybrid
+																? " · hybrid"
+																: turn.retrievalMode
+																	? ` · ${turn.retrievalMode}`
+																	: ""}
 														</p>
 														<div className="flex flex-wrap gap-2">
 															{turn.citations.map((citation) => {
@@ -452,7 +483,9 @@ export function AskWorkspace() {
 																				: ""}
 																		</span>
 																		<span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground/90">
-																			{snippetPreview(citation.snippet)}
+																			{snippetPreview(
+																				citation.snippet || citation.text,
+																			)}
 																		</span>
 																	</button>
 																);
@@ -542,11 +575,16 @@ export function AskWorkspace() {
 											: ""}
 									</p>
 								) : null}
-								<p className="text-sm leading-6 text-foreground/90">
-									{activeCitation.snippet}
-								</p>
+								<div className="max-h-[50vh] overflow-y-auto rounded-md border border-border/60 bg-card/40 px-2.5 py-2">
+									<p className="whitespace-pre-wrap text-sm leading-6 text-foreground/90">
+										{evidenceText}
+									</p>
+								</div>
 								<p className="font-mono text-[11px] text-muted-foreground">
 									score {activeCitation.score.toFixed(2)}
+									{evidenceText.length > (activeCitation.snippet?.length || 0)
+										? ` · 全文 ${evidenceText.length} 字`
+										: ""}
 								</p>
 							</article>
 						) : (

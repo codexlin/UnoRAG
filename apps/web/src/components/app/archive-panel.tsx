@@ -133,17 +133,21 @@ export function ArchivePanel() {
 							</p>
 							<MarkdownAnswer
 								content={selected.answer}
-								citations={selected.citations.map((citation) => ({
-									id: citation.id,
-									index: citation.index,
-									title: citation.title,
-									page: citation.page ?? undefined,
-									snippet: citation.snippet,
-									score: citation.score,
-									docId: citation.doc_id ?? undefined,
-									chunkIndex: citation.chunk_index ?? undefined,
-									filename: citation.filename ?? undefined,
-								}))}
+								citations={selected.citations.map((citation) => {
+									const text = citation.text || citation.snippet || "";
+									return {
+										id: citation.id,
+										index: citation.index,
+										title: citation.title,
+										page: citation.page ?? undefined,
+										snippet: citation.snippet || text.slice(0, 280),
+										text,
+										score: citation.score,
+										docId: citation.doc_id ?? undefined,
+										chunkIndex: citation.chunk_index ?? undefined,
+										filename: citation.filename ?? undefined,
+									};
+								})}
 								enhanced
 							/>
 						</article>
@@ -153,20 +157,31 @@ export function ArchivePanel() {
 									当时依据 {selected.citations.length} 条证据
 								</p>
 								<ul className="space-y-2">
-									{selected.citations.map((citation) => (
-										<li
-											key={citation.id}
-											className="cite-rail rounded-md bg-background/70 py-3 pr-3"
-										>
-											<p className="font-mono text-[11px] text-cite">
-												[{citation.index}] · {citation.title}
-												{citation.page ? ` · ${citation.page}` : ""}
-											</p>
-											<p className="mt-1 text-sm leading-6 text-foreground/90">
-												{preview(citation.snippet, 180)}
-											</p>
-										</li>
-									))}
+									{selected.citations.map((citation) => {
+										const fullText = citation.text || citation.snippet || "";
+										return (
+											<li
+												key={citation.id}
+												className="cite-rail rounded-md bg-background/70 py-3 pr-3"
+											>
+												<p className="font-mono text-[11px] text-cite">
+													[{citation.index}] · {citation.title}
+													{citation.page ? ` · ${citation.page}` : ""}
+												</p>
+												<div className="mt-1 max-h-56 overflow-y-auto rounded-md border border-border/50 bg-card/30 px-2 py-1.5">
+													<p className="whitespace-pre-wrap text-sm leading-6 text-foreground/90">
+														{fullText}
+													</p>
+												</div>
+												{fullText.length > 180 ? (
+													<p className="mt-1 font-mono text-[10px] text-muted-foreground">
+														全文 {fullText.length} 字 · 预览{" "}
+														{preview(fullText, 48)}
+													</p>
+												) : null}
+											</li>
+										);
+									})}
 								</ul>
 							</section>
 						) : null}

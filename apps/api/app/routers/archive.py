@@ -17,7 +17,12 @@ def _to_turn_response(row: dict) -> ArchiveTurnResponse:
 	citations = []
 	for item in row.get("citations") or []:
 		try:
-			citations.append(Citation.model_validate(item))
+			payload = dict(item)
+			if not payload.get("text"):
+				payload["text"] = str(payload.get("snippet") or "")
+			if not payload.get("snippet") and payload.get("text"):
+				payload["snippet"] = str(payload["text"])[:280]
+			citations.append(Citation.model_validate(payload))
 		except Exception:
 			continue
 	return ArchiveTurnResponse(

@@ -22,6 +22,8 @@ export type ApiCitation = {
 	title: string;
 	page?: string | null;
 	snippet: string;
+	/** Full chunk text used in LLM context. */
+	text?: string;
 	score: number;
 	doc_id?: string | null;
 	chunk_index?: number | null;
@@ -50,6 +52,11 @@ export type ApiAskResponse = {
 	refused: boolean;
 	refuse_reason?: string | null;
 	retrieval_debug: Record<string, unknown>;
+	persisted?: boolean;
+	persist_error?: string | null;
+	hybrid_failed?: boolean;
+	rerank_failed?: boolean;
+	retrieval_mode?: string;
 };
 
 export type ApiLibrary = {
@@ -222,7 +229,7 @@ export async function fetchArchive(input?: {
 
 export async function askQuestion(input: {
 	question: string;
-	libraryId?: string;
+	libraryId: string;
 	sessionId?: string;
 }): Promise<ApiAskResponse> {
 	const response = await fetch(`${getApiBaseUrl()}/v1/ask`, {
@@ -247,6 +254,9 @@ export type AskStreamHandlers = {
 		mode: string;
 		refused: boolean;
 		refuse_reason?: string | null;
+		hybrid_failed?: boolean;
+		rerank_failed?: boolean;
+		retrieval_mode?: string;
 	}) => void;
 	onCitations?: (citations: ApiCitation[]) => void;
 	onToken?: (token: string) => void;
@@ -280,7 +290,7 @@ function parseSseChunk(buffer: string): {
 export async function askQuestionStream(
 	input: {
 		question: string;
-		libraryId?: string;
+		libraryId: string;
 		sessionId?: string;
 	},
 	handlers: AskStreamHandlers,

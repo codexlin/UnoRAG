@@ -152,7 +152,81 @@ def test_rerank_fallback_on_error() -> None:
 		store=_Store(),  # type: ignore[arg-type]
 		reranker=_BoomReranker(),  # type: ignore[arg-type]
 	)
-	hits = svc.search(query="q", library_id=None, top_k=2)
+	hits = svc.search(query="q", library_id="lib-hr", top_k=2)
 	assert hits[0]["id"] == "a"
 	assert hits[0]["used_rerank"] is False
 	assert hits[0].get("rerank_error") is True
+	assert svc.last_debug.get("rerank_failed") is True
+	assert svc.last_debug.get("retrieval_mode") == "dense"
+
+
+def test_hybrid_failure_flags_dense_fallback() -> None:
+	settings = Settings(
+		ask_mode="stub",
+		hybrid_enabled=True,
+		retrieve_top_k=1,
+		bm25_top_k=1,
+	)
+
+	class _Store:
+		def search(self, *, vector, library_id, top_k):
+			_ = vector, library_id
+			return [
+				{
+					"id": "a",
+					"title": "keep",
+					"page": None,
+					"snippet": "aaa",
+					"score": 0.8,
+					"text": "aaa",
+					"doc_id": "d1",
+					"chunk_index": 0,
+				}
+			][:top_k]
+
+		def list_chunks(self, *, library_id, limit=10_000):
+			_ = library_id, limit
+			raise RuntimeError("bm25 corpus unavailable")
+
+	class _Emb:
+		def embed_query(self, text: str):
+			_ = text
+			return [0.1]
+
+	svc = RetrievalService(
+		settings,
+		embeddings=_Emb(),  # type: ignore[arg-type]
+		store=_Store(),  # type: ignore[arg-type]
+		reranker=None,
+	)
+	hits = svc.search(query="q", library_id="lib-hr", top_k=1)
+	assert hits[0]["id"] == "a"
+	assert svc.last_debug.get("hybrid_failed") is True
+	assert svc.last_debug.get("used_hybrid") is False
+	assert svc.last_debug.get("retrieval_mode") == "dense"
+
+
+def test_retrieval_requires_library_id() -> None:
+	settings = Settings(ask_mode="stub", retrieve_top_k=1)
+
+	class _Store:
+		def search(self, *, vector, library_id, top_k):
+			_ = vector, library_id, top_k
+			raise AssertionError("search must not run without library_id")
+
+	class _Emb:
+		def embed_query(self, text: str):
+			_ = text
+			return [0.1]
+
+	svc = RetrievalService(
+		settings,
+		embeddings=_Emb(),  # type: ignore[arg-type]
+		store=_Store(),  # type: ignore[arg-type]
+		reranker=None,
+	)
+	try:
+		svc.search(query="q", library_id=None, top_k=1)
+		raise AssertionError("expected ValueError")
+	except ValueError as exc:
+		assert "library_id" in str(exc)

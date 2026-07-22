@@ -62,6 +62,9 @@ def test_ask_stream_sse() -> None:
 	assert "event: token" in body
 	assert "event: done" in body
 	assert "三个工作日" in body
+	assert '"text"' in body
+	assert '"persisted": true' in body or '"persisted":true' in body
+	assert "retrieval_mode" in body
 
 
 def test_tokenize_chinese_bigrams() -> None:

@@ -1,54 +1,22 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
-
 import { getAppNavItem } from "@/components/app/nav-items";
-import { fetchHealth, isAbortError, isApiAvailable } from "@/lib/api";
+import { useHealth } from "@/hooks/use-health";
 import { cn } from "@/lib/utils";
-
-type ApiStatus = "checking" | "online" | "offline";
 
 export function AppTopbar() {
 	const pathname = usePathname();
 	const current = getAppNavItem(pathname);
-	const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
-	const [modeLabel, setModeLabel] = useState<string | null>(null);
+	const { health, apiReady, loading } = useHealth();
 
-	useEffect(() => {
-		const controller = new AbortController();
-		let cancelled = false;
+	const apiStatus = loading ? "checking" : apiReady ? "online" : "offline";
 
-		async function probe() {
-			try {
-				const health = await fetchHealth(controller.signal);
-				if (cancelled || controller.signal.aborted) return;
-				const available = isApiAvailable(health);
-				setApiStatus(available ? "online" : "offline");
-				const effective = health.effective_mode || health.ask_mode;
-				const backend = health.metadata_backend
-					? ` · ${health.metadata_backend}`
-					: "";
-				const suffix = available ? "" : "·不可用";
-				setModeLabel(`${effective}${suffix}${backend}`);
-			} catch (err) {
-				if (cancelled || controller.signal.aborted || isAbortError(err)) return;
-				setApiStatus("offline");
-				setModeLabel(null);
-			}
-		}
-
-		void probe();
-		const timer = window.setInterval(() => {
-			void probe();
-		}, 15000);
-
-		return () => {
-			cancelled = true;
-			controller.abort();
-			window.clearInterval(timer);
-		};
-	}, []);
+	const modeLabel = health
+		? `${health.effective_mode || health.ask_mode}${apiReady ? "" : "·不可用"}${
+				health.metadata_backend ? ` · ${health.metadata_backend}` : ""
+			}`
+		: null;
 
 	const statusLabel =
 		apiStatus === "online"

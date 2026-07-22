@@ -1,34 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
-import {
-	type ApiHealth,
-	fetchHealth,
-	getApiBaseUrl,
-	isAbortError,
-} from "@/lib/api";
+import { useHealth } from "@/hooks/use-health";
+import { getApiBaseUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export default function SettingsPage() {
-	const [health, setHealth] = useState<ApiHealth | null>(null);
-	const [error, setError] = useState<string | null>(null);
-
-	useEffect(() => {
-		const controller = new AbortController();
-		void fetchHealth(controller.signal)
-			.then((payload) => {
-				if (controller.signal.aborted) return;
-				setHealth(payload);
-				setError(null);
-			})
-			.catch((err) => {
-				if (controller.signal.aborted || isAbortError(err)) return;
-				setHealth(null);
-				setError("无法连接 API");
-			});
-		return () => controller.abort();
-	}, []);
+	const { health, error, loading } = useHealth();
 
 	return (
 		<div className="flex flex-1 items-start justify-center px-5 py-12">
@@ -41,8 +18,9 @@ export default function SettingsPage() {
 						工作区设置
 					</h2>
 					<p className="text-sm leading-6 text-muted-foreground">
-						模型与检索阈值由 API 环境变量配置。此处展示当前服务健康与 live /
-						stub 状态。
+						模型与检索参数由 API 环境变量配置。生产默认走 live；若 live
+						未就绪，健康检查会标为不可用并拒绝问答，不会静默降级到 stub。stub
+						仅用于本地/测试显式配置。
 					</p>
 				</div>
 
@@ -53,8 +31,8 @@ export default function SettingsPage() {
 					<p className="mt-1 font-mono text-xs text-muted-foreground">
 						{getApiBaseUrl()}
 					</p>
-					{error ? (
-						<p className="mt-3 text-sm text-destructive">{error}</p>
+					{error && !health ? (
+						<p className="mt-3 text-sm text-destructive">无法连接 API</p>
 					) : health ? (
 						<ul className="mt-4 space-y-2 text-sm text-foreground">
 							<li className="flex justify-between gap-3">
@@ -78,6 +56,7 @@ export default function SettingsPage() {
 								<span className="text-muted-foreground">生效模式</span>
 								<span className="font-mono text-xs">
 									{health.effective_mode}
+									{health.ask_mode === "stub" ? " · 测试/本地" : ""}
 								</span>
 							</li>
 							<li className="flex justify-between gap-3">
@@ -112,7 +91,9 @@ export default function SettingsPage() {
 							) : null}
 						</ul>
 					) : (
-						<p className="mt-3 text-sm text-muted-foreground">探测中…</p>
+						<p className="mt-3 text-sm text-muted-foreground">
+							{loading ? "探测中…" : "暂无数据"}
+						</p>
 					)}
 				</div>
 			</div>

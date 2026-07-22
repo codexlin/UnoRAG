@@ -1,6 +1,6 @@
 /** Shared UI types for ask / evidence panels (not demo fixtures). */
 
-export type MockLibrary = {
+export type UiLibrary = {
 	id: string;
 	name: string;
 	docCount: number;
@@ -9,23 +9,25 @@ export type MockLibrary = {
 	status: "ready" | "indexing" | "empty";
 };
 
-export type MockCitation = {
+export type UiCitation = {
 	id: string;
 	index: number;
 	title: string;
 	page?: string;
 	snippet: string;
+	/** Full chunk text used in LLM context. */
+	text: string;
 	score: number;
 	docId?: string;
 	chunkIndex?: number;
 	filename?: string;
 };
 
-export type MockTurn = {
+export type UiTurn = {
 	id: string;
 	question: string;
 	answer: string;
-	citations: MockCitation[];
+	citations: UiCitation[];
 	refused?: boolean;
 	refuseReason?: string | null;
 	mode?: string;

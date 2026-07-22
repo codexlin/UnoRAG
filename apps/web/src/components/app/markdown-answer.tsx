@@ -13,7 +13,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { codeToHtml } from "shiki";
 
-import type { MockCitation } from "@/lib/mock-data";
+import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
 type MarkdownAnswerProps = {
@@ -21,8 +21,8 @@ type MarkdownAnswerProps = {
 	className?: string;
 	/** When true, run Shiki highlighting (prefer after stream completes). */
 	enhanced?: boolean;
-	citations?: MockCitation[];
-	onCite?: (citation: MockCitation) => void;
+	citations?: UiCitation[];
+	onCite?: (citation: UiCitation) => void;
 	pending?: boolean;
 };
 
@@ -37,7 +37,7 @@ export function MarkdownAnswer({
 	pending = false,
 }: MarkdownAnswerProps) {
 	const byIndex = useMemo(() => {
-		const map = new Map<number, MockCitation>();
+		const map = new Map<number, UiCitation>();
 		for (const citation of citations) {
 			map.set(citation.index, citation);
 		}
@@ -145,8 +145,8 @@ export function MarkdownAnswer({
 
 function injectCitations(
 	children: ReactNode,
-	byIndex: Map<number, MockCitation>,
-	onCite?: (citation: MockCitation) => void,
+	byIndex: Map<number, UiCitation>,
+	onCite?: (citation: UiCitation) => void,
 ): ReactNode {
 	return Children.map(children, (child, index) => {
 		if (typeof child === "string") {
@@ -166,8 +166,8 @@ function injectCitations(
 
 function splitCitationText(
 	text: string,
-	byIndex: Map<number, MockCitation>,
-	onCite: ((citation: MockCitation) => void) | undefined,
+	byIndex: Map<number, UiCitation>,
+	onCite: ((citation: UiCitation) => void) | undefined,
 	keyPrefix: number,
 ): ReactNode {
 	CITE_RE.lastIndex = 0;

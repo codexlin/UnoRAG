@@ -55,14 +55,22 @@ def get_meta(settings: Settings = Depends(get_settings)) -> MetadataStore:
 	return get_metadata_store(settings)
 
 
+def _require_library_id(library_id: str | None) -> str:
+	resolved = (library_id or "").strip()
+	if not resolved:
+		raise HTTPException(status_code=400, detail="library_id is required")
+	return resolved
+
+
 @router.post("/ask", response_model=AskResponse)
 def ask(
 	body: AskRequest,
 	service: AskGraphService = Depends(get_ask_service),
 ) -> AskResponse:
+	library_id = _require_library_id(body.library_id)
 	return service.ask(
 		question=body.question,
-		library_id=body.library_id,
+		library_id=library_id,
 		session_id=body.session_id,
 	)
 
@@ -72,6 +80,8 @@ def ask_stream(
 	body: AskRequest,
 	service: AskGraphService = Depends(get_ask_service),
 ) -> StreamingResponse:
+	library_id = _require_library_id(body.library_id)
+
 	def sse(event: str, data: object) -> str:
 		return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -79,7 +89,7 @@ def ask_stream(
 		try:
 			for item in service.iter_ask_events(
 				question=body.question,
-				library_id=body.library_id,
+				library_id=library_id,
 				session_id=body.session_id,
 			):
 				yield sse(str(item["event"]), item["data"])

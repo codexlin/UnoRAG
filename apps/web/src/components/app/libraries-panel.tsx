@@ -12,15 +12,13 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { useHealth } from "@/hooks/use-health";
+import { useLibraries } from "@/hooks/use-libraries";
 import {
 	type ApiDocument,
-	type ApiLibrary,
 	createLibrary,
 	fetchDocuments,
-	fetchHealth,
-	fetchLibraries,
 	isAbortError,
-	isApiAvailable,
 	uploadDocument,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -49,44 +47,21 @@ function formatUpdatedAt(value: string) {
 }
 
 export function LibrariesPanel() {
-	const [libraries, setLibraries] = useState<ApiLibrary[]>([]);
+	const {
+		libraries,
+		error: librariesError,
+		loading,
+		refresh: refreshLibraries,
+	} = useLibraries();
+	const { apiReady } = useHealth();
 	const [selectedId, setSelectedId] = useState<string>("");
 	const [documents, setDocuments] = useState<ApiDocument[]>([]);
-	const [loading, setLoading] = useState(true);
 	const [uploading, setUploading] = useState(false);
 	const [creating, setCreating] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [displayName, setDisplayName] = useState("");
-	const [apiReady, setApiReady] = useState(true);
 	const fileInputRef = useRef<HTMLInputElement>(null);
-
-	const loadLibraries = useCallback(async (signal?: AbortSignal) => {
-		setLoading(true);
-		setError(null);
-		try {
-			const [items, health] = await Promise.all([
-				fetchLibraries(signal),
-				fetchHealth(signal).catch(() => null),
-			]);
-			if (signal?.aborted) return;
-			setLibraries(items);
-			setSelectedId((prev) => prev || items[0]?.id || "");
-			setApiReady(health ? isApiAvailable(health) : false);
-		} catch (err) {
-			if (signal?.aborted || isAbortError(err)) return;
-			setLibraries([]);
-			setSelectedId("");
-			setApiReady(false);
-			setError(
-				err instanceof Error
-					? `文库加载失败：${err.message}`
-					: "文库加载失败：API 不可用",
-			);
-		} finally {
-			if (!signal?.aborted) setLoading(false);
-		}
-	}, []);
 
 	const loadDocuments = useCallback(
 		async (libraryId: string, signal?: AbortSignal) => {
@@ -112,10 +87,10 @@ export function LibrariesPanel() {
 	);
 
 	useEffect(() => {
-		const controller = new AbortController();
-		void loadLibraries(controller.signal);
-		return () => controller.abort();
-	}, [loadLibraries]);
+		if (!selectedId && libraries[0]?.id) {
+			setSelectedId(libraries[0].id);
+		}
+	}, [libraries, selectedId]);
 
 	useEffect(() => {
 		if (!selectedId) return;
@@ -123,6 +98,11 @@ export function LibrariesPanel() {
 		void loadDocuments(selectedId, controller.signal);
 		return () => controller.abort();
 	}, [selectedId, loadDocuments]);
+
+	async function loadLibraries() {
+		setError(null);
+		await refreshLibraries();
+	}
 
 	async function onUploadFiles(files: FileList | null) {
 		if (!files?.length || !selectedId) return;
@@ -242,9 +222,9 @@ export function LibrariesPanel() {
 					</div>
 				</div>
 
-				{error ? (
+				{error || librariesError ? (
 					<p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-						{error}
+						{error || librariesError}
 					</p>
 				) : null}
 				{notice ? (

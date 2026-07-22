@@ -140,31 +140,37 @@ class RetrievalService:
 		self.last_debug: dict[str, Any] = {}
 
 	def search(self, *, query: str, library_id: str | None, top_k: int | None = None) -> list[dict[str, Any]]:
+		if not library_id or not str(library_id).strip():
+			raise ValueError("library_id is required for retrieval")
+		resolved_library = str(library_id).strip()
 		limit = top_k or self.settings.retrieve_top_k
 		# Pull a slightly wider dense pool when rerank / hybrid will trim.
 		dense_k = max(limit, self.settings.rerank_top_k, self.settings.bm25_top_k)
 		vector = self.embeddings.embed_query(query)
 		dense_hits = self.store.search(
 			vector=vector,
-			library_id=library_id,
+			library_id=resolved_library,
 			top_k=dense_k,
 		)
 		hits = dense_hits
 		used_hybrid = False
 		hybrid_error: str | None = None
 
-		if self.settings.hybrid_enabled and library_id:
+		if self.settings.hybrid_enabled:
 			try:
 				hits = self._hybrid_fuse(
 					query=query,
-					library_id=library_id,
+					library_id=resolved_library,
 					dense_hits=dense_hits,
 					limit=dense_k,
 				)
 				used_hybrid = True
 			except Exception as exc:
 				hybrid_error = str(exc)
-				logger.exception("retrieval.hybrid_failed fallback=dense library_id=%s", library_id)
+				logger.exception(
+					"retrieval.hybrid_failed fallback=dense library_id=%s",
+					resolved_library,
+				)
 				hits = dense_hits
 
 		citations: list[dict[str, Any]] = []
@@ -175,28 +181,36 @@ class RetrievalService:
 				score = _clamp_score(float(hit["rrf_score"]) * 10.0)
 			else:
 				score = _clamp_score(score)
+			full_text = str(hit.get("text") or hit.get("snippet") or "")
 			citations.append(
 				{
 					"id": hit["id"],
 					"index": index,
 					"title": hit["title"],
 					"page": hit.get("page"),
-					"snippet": hit.get("snippet") or str(hit.get("text") or "")[:280],
+					"snippet": hit.get("snippet") or full_text[:280],
 					"score": score,
 					"dense_score": hit.get("dense_score", hit.get("score")),
 					"bm25_score": hit.get("bm25_score"),
 					"rrf_score": hit.get("rrf_score"),
-					"text": hit.get("text") or hit.get("snippet") or "",
+					"text": full_text,
 					"doc_id": hit.get("doc_id"),
 					"chunk_index": hit.get("chunk_index"),
 					"filename": hit.get("filename"),
 				}
 			)
 		final = self._maybe_rerank(query=query, citations=citations, top_k=limit)
+		rerank_failed = any(bool(item.get("rerank_error")) for item in final)
+		used_rerank = any(bool(item.get("used_rerank")) for item in final)
+		retrieval_mode = "hybrid" if used_hybrid else "dense"
 		self.last_debug = {
 			"used_hybrid": used_hybrid,
 			"hybrid_enabled": self.settings.hybrid_enabled,
 			"hybrid_error": hybrid_error,
+			"hybrid_failed": hybrid_error is not None,
+			"rerank_failed": rerank_failed,
+			"used_rerank": used_rerank,
+			"retrieval_mode": retrieval_mode,
 			"dense_hit_count": len(dense_hits),
 			"fusion": "rrf" if used_hybrid else "dense",
 			"rrf_k": self.settings.rrf_k if used_hybrid else None,
