@@ -71,7 +71,8 @@ meridian/   # 本地目录名；远程仓库 MeriKnow
 ### Phase 3 — 企业壳
 
 - [ ] SSO/RBAC、审计日志、索引队列  
-- [ ] 评测抽检、连接器 / OCR（按需）
+- [ ] 评测抽检、连接器 / OCR（按需）  
+- [ ] 文档解析与索引管线（IR / 语义切片 / 多格式）→ 见 [2026-07-23-document-ingest-pipeline.md](./2026-07-23-document-ingest-pipeline.md)
 
 ## 成功标准（当前）
 
