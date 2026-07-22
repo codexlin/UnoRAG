@@ -661,6 +661,7 @@ _store_lock = threading.Lock()
 
 
 def get_metadata_store(settings: Any | None = None) -> MetadataStore:
+	"""Resolve metadata store. Postgres is required unless METADATA_BACKEND=json."""
 	global _store
 	from app.settings import get_settings
 
@@ -668,18 +669,51 @@ def get_metadata_store(settings: Any | None = None) -> MetadataStore:
 	with _store_lock:
 		if _store is not None:
 			return _store
+
+		backend = (getattr(cfg, "metadata_backend", "postgres") or "postgres").strip().lower()
+		if backend == "json":
+			path = Path(getattr(cfg, "metadata_path", "data/metadata.json"))
+			_store = JsonMetadataStore(path)
+			logger.warning(
+				"metadata.backend=json path=%s (explicit escape hatch; not for production)",
+				path,
+			)
+			return _store
+
 		database_url = (getattr(cfg, "database_url", "") or "").strip()
-		if database_url:
-			try:
-				_store = SqlAlchemyMetadataStore(database_url)
-				logger.info("metadata.backend=postgres")
-				return _store
-			except Exception:
-				logger.exception("metadata.postgres_failed fallback=json")
-		path = Path(getattr(cfg, "metadata_path", "data/metadata.json"))
-		_store = JsonMetadataStore(path)
-		logger.info("metadata.backend=json path=%s", path)
+		if not database_url:
+			raise RuntimeError(
+				"DATABASE_URL is required when METADATA_BACKEND=postgres. "
+				"Start Postgres via `docker compose up -d`, or set METADATA_BACKEND=json only for local tests."
+			)
+		try:
+			_store = SqlAlchemyMetadataStore(database_url)
+		except Exception as exc:
+			logger.exception("metadata.postgres_failed")
+			raise RuntimeError(
+				f"Postgres metadata store failed to initialize ({exc}). "
+				"Fix DATABASE_URL / docker compose postgres — MeriKnow does not fall back to JSON."
+			) from exc
+		logger.info("metadata.backend=postgres")
 		return _store
+
+
+def probe_metadata_store(settings: Any | None = None) -> tuple[bool, str, str]:
+	"""Return (ok, backend, detail). Used by health / startup."""
+	from app.settings import get_settings
+
+	cfg = settings or get_settings()
+	backend = (cfg.metadata_backend or "postgres").strip().lower()
+	if backend == "json":
+		return True, "json", "explicit METADATA_BACKEND=json"
+	try:
+		store = get_metadata_store(cfg)
+		# cheap round-trip
+		store.list_libraries()
+		name = "postgres" if store.__class__.__name__.startswith("SqlAlchemy") else store.__class__.__name__
+		return True, name, "ok"
+	except Exception as exc:
+		return False, "postgres", str(exc)
 
 
 def reset_metadata_store() -> None:

@@ -15,7 +15,8 @@ class HealthResponse(BaseModel):
 	qdrant_ok: bool = False
 	reasons: list[str] = Field(default_factory=list)
 	hybrid_enabled: bool = False
-	metadata_backend: str = "json"
+	metadata_backend: str = "postgres"
+	metadata_ok: bool = True
 
 
 class Citation(BaseModel):

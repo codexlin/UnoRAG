@@ -11,6 +11,7 @@ export type ApiHealth = {
 	reasons: string[];
 	hybrid_enabled?: boolean;
 	metadata_backend?: string;
+	metadata_ok?: boolean;
 };
 
 export type ApiCitation = {

@@ -55,8 +55,10 @@ class Settings(BaseSettings):
 	bm25_top_k: int = 20
 	rrf_k: int = 60
 
-	# Metadata: empty DATABASE_URL → JSON file store
-	database_url: str = ""
+	# Metadata is Postgres-required in production/dev.
+	# METADATA_BACKEND=json is test-only escape hatch (never silent fallback).
+	metadata_backend: str = "postgres"
+	database_url: str = "postgresql+psycopg://meriknow:meriknow@localhost:5432/meriknow"
 	metadata_path: str = "data/metadata.json"
 	# stub upload: simulate ready without Qdrant (live still embeds)
 	stub_ingest_simulate: bool = True
@@ -80,6 +82,10 @@ class Settings(BaseSettings):
 	@property
 	def has_llm_key(self) -> bool:
 		return bool(self.llm_api_key)
+
+	@property
+	def uses_postgres_metadata(self) -> bool:
+		return self.metadata_backend.strip().lower() != "json"
 
 
 @lru_cache

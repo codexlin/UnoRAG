@@ -10,7 +10,7 @@
 |----|------|
 | Web | Next.js · pnpm · Tailwind · shadcn/ui · Biome |
 | API | FastAPI · LangGraph · Qdrant · OpenAI-compatible LLM |
-| 元数据 / 档案 | **默认 Postgres**（SQLAlchemy）；无 `DATABASE_URL` 时降级 JSON |
+| 元数据 / 档案 | **Postgres 必选**（SQLAlchemy）；仅测试可显式 `METADATA_BACKEND=json` |
 
 ## 仓库结构
 
@@ -31,7 +31,7 @@ docker compose up -d
 
 cd apps/api
 cp -n .env.example .env
-# .env 已含 DATABASE_URL=postgresql+psycopg://meriknow:meriknow@localhost:5432/meriknow
+# DATABASE_URL + METADATA_BACKEND=postgres 必填；连不上 Postgres 时进程直接启动失败
 uv sync
 uv run uvicorn app.main:app --reload --port 8000
 

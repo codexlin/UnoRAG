@@ -1,19 +1,42 @@
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import archive, ask, health, libraries
+from app.services.metadata import get_metadata_store, probe_metadata_store, reset_metadata_store
 from app.settings import get_settings
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_application: FastAPI):
+	settings = get_settings()
+	reset_metadata_store()
+	ok, backend, detail = probe_metadata_store(settings)
+	if not ok:
+		raise RuntimeError(
+			f"MeriKnow requires Postgres metadata (backend={backend}): {detail}. "
+			"Run `docker compose up -d` and set DATABASE_URL."
+		)
+	# Force init + seed
+	get_metadata_store(settings)
+	logger.info("startup.metadata_ok backend=%s detail=%s", backend, detail)
+	yield
 
 
 def create_app() -> FastAPI:
 	settings = get_settings()
 	application = FastAPI(
 		title=settings.app_name,
-		version="0.4.0",
+		version="0.4.1",
 		docs_url="/docs",
 		redoc_url="/redoc",
+		lifespan=lifespan,
 	)
 	application.add_middleware(
 		CORSMiddleware,
