@@ -4,9 +4,11 @@
 > **关联：** [bootstrap 总计划](./2026-07-22-meriknow-bootstrap.md) · 现状：`apps/api/app/services/documents.py`（txt/md/pdf 抽字）+ `chunking.py`（固定字数）+ hybrid/rerank ask。  
 > **日期：** 2026-07-23
 
-**Goal:** 把「任意办公文档 → 可追溯知识」做成生产级管线：类型分流解析、结构还原、语义切片、双路索引，并预留 Agent 工具化按需阅读。
+**Goal:** 把「任意办公文档 → 可追溯知识」做成生产级管线：类型分流解析、结构还原、**结构优先切片**（非全库 embedding 语义切）、双路索引，并预留 Agent 工具化按需阅读。
 
-**Architecture:** 所有格式汇入统一 Document IR；L1 按格式/页类型选解析器，L2 还原结构树，L3 语义切片并补上下文 preamble + metadata，L4（后期）将能力封装为 `search` / `read_section` / `extract_table` / `quote_source`。Ask 路径继续吃 IR 产出的 chunk，不直接啃原文件。
+**Architecture:** 所有格式汇入统一 Document IR；L1 按格式/页类型选解析器，L2 还原结构树，L3 **结构感知切片**（heading/条款/表专用规则 → 节点内 Recursive/字窗 fallback；仅长无结构文本可选 embedding 语义切）并补 preamble + metadata，L4（后期）工具化。Ask 吃 IR chunk，不直接啃原文件。
+
+**切片原则（对照 QueryNest / FCC / 课程仓）：** 不是「所有格式都语义切片」。默认 **结构优先 → 专用规则（表/代码）→ 字数窗 fallback**；FCC 的 Contextual preamble、课程仓的 Parent-Child / MarkdownHeader、QueryNest 的 heading 块 + 表切分均可借鉴；**embedding SemanticChunker 不作全库默认。**
 
 **Tech Stack（目标）:** PyMuPDF ·（可选）OCR · Markdown AST · python-docx · 现有 Qdrant dense + BM25/RRF · Postgres 元数据 · LangGraph ask（后续工具节点）
 
@@ -58,9 +60,9 @@ Upload
 └───────────────────┬─────────────────────────┘
                     ▼
 ┌─────────────────────────────────────────────┐
-│ L3 Semantic Chunk + Index                   │
-│  structure-aware split + preamble           │
-│  metadata → Qdrant payload + BM25 corpus    │
+│ L3 Structure-aware Chunk + Index            │
+│  heading/table rules → char-window fallback │
+│  preamble + metadata → dense + BM25         │
 └───────────────────┬─────────────────────────┘
                     ▼
 ┌─────────────────────────────────────────────┐
@@ -132,16 +134,28 @@ embedding 可用 `preamble + body`；抽屉引用默认展示 `body`，并单独
 
 ### 2.4 L3 — 切片与索引
 
+> **命名澄清：** 此处「结构/语义切片」指 **按文档语义结构（标题、条款、表）切**，不是 LangChain `SemanticChunker`（embedding 相似度断点）的全库默认。
+
 **禁止作为唯一策略：** 固定字符窗跨章硬切（现状）。允许作为「无结构节点」的 fallback，且必须记录 `split_strategy=char_window`。
 
-**优先策略：**
+**优先策略（与三仓对齐）：**
 
-1. 按 heading 子树 / 条款节点切；超长节点再在节点内二次切（保留同一 `section_path`）。
-2. 表格：独立 chunk（或行组 chunk）+ `table_id` + 字段文本化。
-3. 图片/图：caption +（可选）VLM 摘要进 chunk；原图引用后期再做。
-4. 每个 chunk 必带 metadata（上表）；写入 Qdrant payload；BM25 语料与 dense 同源 `body`（或 `preamble+body`，需测评二选一，默认 `preamble+body` 检索、`body` 展示）。
+1. **结构优先：** 按 heading 子树 / 条款节点切（对齐 QueryNest MD heading blocks、课程仓 `MarkdownHeaderTextSplitter`）。
+2. **节点内二次切：** 超长节点用 Recursive/字窗（separators 含 `\n\n`、中文 `。`/`；`、标题行）；保留同一 `section_path`（对齐 QueryNest `chunk_size≈900` 量级可测评后定）。
+3. **表格专用：** 独立 chunk / 行组 + `table_id`（对齐 QueryNest `split_table_markdown`）；**不对表做 embedding 语义切**。
+4. **Preamble：** 入库时补定位句（对齐 FCC Contextual Retrieval）；embedding 用 `preamble+body`，UI 展示 `body`。
+5. **可选增强（非默认）：** Parent-Child（小块检索、大块回填，课程仓 `ParentDocumentRetriever`）；embedding 语义切仅用于「长且无 heading」的单一弱结构节点，且需测评优于结构+Recursive 才开。
+6. 每个 chunk 必带 metadata；写入 Qdrant payload。
 
 **双路索引：** 保持并强化现有 hybrid（dense + BM25 + RRF）+ 可选 rerank；payload 过滤 `library_id`（已强制）+ 后续 `section_path` / `doc_id`。
+
+**参考仓库（只借鉴策略，不搬课代码当产品）：**
+
+| 仓库 | 解析 | 切片主路径 | 可借 |
+|------|------|------------|------|
+| QueryNest | MD/TXT/PDF hybrid(PyMuPDF+MinerU)/xlsx/OCR | heading 块 → Recursive；表专用 | 分流解析、表切、丰富 metadata |
+| FCC Part6 | 教学、无完整 loader | Recursive 字窗 + Contextual preamble；Late/Parent 概念 | indexing-time preamble |
+| production-course-main-code | Text/PDF/Web loader | Recursive 默认；MD Header；Parent-Child demo | MD 结构切、双粒度检索 |
 
 ### 2.5 L4 — Agent 工具（后期）
 
