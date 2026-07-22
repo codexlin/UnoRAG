@@ -279,7 +279,10 @@ class RetrievalService:
 			if original_index < 0 or original_index >= len(citations):
 				continue
 			item = dict(citations[original_index])
-			item["dense_score"] = float(item.get("dense_score", item.get("score") or 0.0))
+			raw_dense = item.get("dense_score")
+			if raw_dense is None:
+				raw_dense = item.get("score")
+			item["dense_score"] = float(raw_dense or 0.0)
 			item["score"] = _clamp_score(rerank_score)
 			item["used_rerank"] = True
 			reranked.append(item)
