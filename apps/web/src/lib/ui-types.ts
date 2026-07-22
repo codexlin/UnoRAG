@@ -14,8 +14,10 @@ export type UiCitation = {
 	index: number;
 	title: string;
 	page?: string;
+	sectionPath?: string;
+	preamble?: string;
 	snippet: string;
-	/** Full chunk text used in LLM context. */
+	/** Chunk body used in LLM context / drawer. */
 	text: string;
 	score: number;
 	docId?: string;

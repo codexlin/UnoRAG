@@ -72,6 +72,7 @@ class MetadataStore(ABC):
 		status: DocumentStatus | None = None,
 		chunk_count: int | None = None,
 		error: str | None = None,
+		parser_report: dict[str, Any] | None = None,
 	) -> dict[str, Any] | None:
 		raise NotImplementedError
 
@@ -223,6 +224,7 @@ class JsonMetadataStore(MetadataStore):
 				"status": status,
 				"chunk_count": 0,
 				"error": None,
+				"parser_report": None,
 				"created_at": now,
 				"updated_at": now,
 			}
@@ -238,6 +240,7 @@ class JsonMetadataStore(MetadataStore):
 		status: DocumentStatus | None = None,
 		chunk_count: int | None = None,
 		error: str | None = None,
+		parser_report: dict[str, Any] | None = None,
 	) -> dict[str, Any] | None:
 		with self._lock:
 			data = self._read()
@@ -250,6 +253,8 @@ class JsonMetadataStore(MetadataStore):
 				row["chunk_count"] = int(chunk_count)
 			if error is not None:
 				row["error"] = error
+			if parser_report is not None:
+				row["parser_report"] = parser_report
 			row["updated_at"] = _now_iso()
 			data["documents"][doc_id] = row
 			self._write(data)
@@ -375,6 +380,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing")
 			chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 			error: Mapped[str | None] = mapped_column(Text, nullable=True)
+			# JSON string：页级 text/ocr/vlm/failed 账本（诚实失败 / partial）
+			parser_report: Mapped[str | None] = mapped_column(Text, nullable=True)
 			created_at: Mapped[datetime] = mapped_column(
 				DateTime(timezone=True),
 				server_default=func.now(),
@@ -411,6 +418,18 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		self._select = select
 		self._engine = create_engine(database_url, pool_pre_ping=True)
 		Base.metadata.create_all(self._engine)
+		# 已有库补列（create_all 不会 ALTER）
+		try:
+			from sqlalchemy import text as sql_text
+
+			with self._engine.begin() as conn:
+				conn.execute(
+					sql_text(
+						"ALTER TABLE documents ADD COLUMN IF NOT EXISTS parser_report TEXT"
+					)
+				)
+		except Exception:
+			logger.debug("metadata.parser_report_column.skip", exc_info=True)
 		self._Session = sessionmaker(bind=self._engine, expire_on_commit=False, class_=Session)
 		self._seed_defaults()
 
@@ -434,6 +453,15 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		}
 
 	def _document_dict(self, row: Any) -> dict[str, Any]:
+		report = None
+		raw_report = getattr(row, "parser_report", None)
+		if raw_report:
+			try:
+				parsed = json.loads(raw_report)
+				if isinstance(parsed, dict):
+					report = parsed
+			except json.JSONDecodeError:
+				report = None
 		return {
 			"id": row.id,
 			"library_id": row.library_id,
@@ -443,6 +471,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			"status": row.status,
 			"chunk_count": int(row.chunk_count),
 			"error": row.error,
+			"parser_report": report,
 			"created_at": self._dt(row.created_at),
 			"updated_at": self._dt(row.updated_at),
 		}
@@ -565,6 +594,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		status: DocumentStatus | None = None,
 		chunk_count: int | None = None,
 		error: str | None = None,
+		parser_report: dict[str, Any] | None = None,
 	) -> dict[str, Any] | None:
 		with self._Session() as session:
 			row = session.get(self._DocumentRow, doc_id)
@@ -576,6 +606,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				row.chunk_count = int(chunk_count)
 			if error is not None:
 				row.error = error
+			if parser_report is not None:
+				row.parser_report = json.dumps(parser_report, ensure_ascii=False)
 			library_id = row.library_id
 			session.commit()
 			session.refresh(row)

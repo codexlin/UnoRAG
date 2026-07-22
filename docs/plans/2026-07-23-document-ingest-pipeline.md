@@ -211,14 +211,14 @@ embedding 可用 `preamble + body`；抽屉引用默认展示 `body`，并单独
 
 **产出：** MD/TXT 经 IR 切片入库；chunk 带 `section_path` + preamble；引用 UI 可显示章节。
 
-- [ ] 定义 `ir.py`（Document/Node/Chunk）与序列化
-- [ ] MD parser（heading/list/code/table）→ IR
-- [ ] TXT parser（编码 + 段落）→ IR
-- [ ] 结构感知 chunker + preamble；legacy char_window 仅作 fallback
-- [ ] `ingest` 写 Qdrant payload 新字段（向后兼容旧 payload）
-- [ ] Citation / 抽屉展示 `section_path`；无则隐藏
-- [ ] 单测：样例 `fixtures/handbook.md` 切片不跨 H2；preamble 非空
-- [ ] `INGEST_PIPELINE=v2` 对 md/txt 默认开；pdf 暂走 legacy
+- [x] 定义 `ir.py`（Document/Node/Chunk）与序列化
+- [x] MD parser（heading/list/code/table）→ IR
+- [x] TXT parser（编码 + 段落）→ IR
+- [x] 结构感知 chunker + preamble；legacy char_window 仅作 fallback
+- [x] `ingest` 写 Qdrant payload 新字段（向后兼容旧 payload）
+- [x] Citation / 抽屉展示 `section_path`；无则隐藏
+- [x] 单测：样例 `fixtures/handbook.md` 切片不跨 H2；preamble 非空
+- [x] `INGEST_PIPELINE=v2` 对 md/txt 默认开；（B 后 pdf 亦走 v2）
 
 **验收：** 上传 MD 制度文档，问答引用出现「第 x 章」类路径；固定字数跨章切显著减少。
 
@@ -226,12 +226,12 @@ embedding 可用 `preamble + body`；抽屉引用默认展示 `body`，并单独
 
 **产出：** 文本 PDF 页分类；按页（再章内）切片；页码为范围而非「最后一个 Page 标记」。
 
-- [ ] PDF 页信号：文字字符数、图片占比 → `text | suspect_scan | complex`
-- [ ] 文本页：抽取 + 去重复行/页眉页脚启发式
-- [ ] 扫描页：显式 `needs_ocr`；无 OCR 时该页失败计入 report，整本策略可配置（`fail` / `partial`）
-- [ ] chunk `page_start`/`page_end`；`infer_page_label` 改为范围或主页面
-- [ ] 复杂页占位：先抽得到的字 + `vlm_pending` 标记（VLM 放到 Phase C）
-- [ ] 回归：人事库简历/毕业设计类 PDF 封面重复字清洗；引用页码与正文一致
+- [x] PDF 页信号：文字字符数、图片占比 → `text | suspect_scan | complex`
+- [x] 文本页：抽取 + 去重复行/页眉页脚启发式
+- [x] 扫描页：显式 `needs_ocr`；无 OCR 时该页失败计入 report，整本策略可配置（`fail` / `partial`）
+- [x] chunk `page_start`/`page_end`；`infer_page_label` 改为范围或主页面
+- [x] 复杂页占位：先抽得到的字 + `vlm_pending` 标记（VLM 放到 Phase C）
+- [x] 回归：人事库简历/毕业设计类 PDF 封面重复字清洗；引用页码与正文一致（启发式去重 + 页范围标签）
 
 **验收：** 抽屉不再出现「标 p.2 但大段 ## Page 1」的系统性错误；扫描件失败原因可读。
 
@@ -239,12 +239,12 @@ embedding 可用 `preamble + body`；抽屉引用默认展示 `body`，并单独
 
 **产出：** Word 入库；表格独立 chunk；可选 OCR/VLM 接入。
 
-- [ ] DOCX parser → IR（Heading/表/图 caption）
-- [ ] 表格 → `table_json` + 文本化行；`extract` 路径预备
-- [ ] OCR 适配器接口 + 一种默认实现（选型写入 ADR 小节）
-- [ ] VLM 适配器：仅 `complex` 页/图；摘要写入 figure/table 节点
-- [ ] Web 上传 accept 扩展；文库说明文案更新
-- [ ] 测评集 v0：MD 条款定位、PDF 页命中、表字段（有表样本时）
+- [x] DOCX parser → IR（Heading/表/图 caption）
+- [x] 表格 → `table_json` + 文本化行；`extract` 路径预备
+- [x] OCR 适配器接口 + 一种默认实现（选型写入 ADR 子弹）
+- [x] VLM 适配器：仅 `complex` 页/图；摘要写入 figure/table 节点
+- [x] Web 上传 accept 扩展；文库说明文案更新
+- [x] 测评集 v0：MD 条款定位、PDF 页命中、表字段（有表样本时）— MD 基线 + 表节点入库；PDF 页命中待实库扩展
 
 **验收：** docx 制度可问条款；表类问题引用带 `table_id` 或可定位单元格说明。
 
@@ -252,11 +252,11 @@ embedding 可用 `preamble + body`；抽屉引用默认展示 `body`，并单独
 
 **产出：** LangGraph 可选工具节点；评测脚本；引用与命中指标。
 
-- [ ] 工具：`search_docs` / `read_section` / `read_page` / `extract_table` / `quote_source`
-- [ ] 路由策略：简单事实短路径；多跳/对比走工具；表/图走专用工具
-- [ ] 多维测评：检索命中、页/章准确、表解析、OCR 漏字率、图表摘要正确率（有样本才计）
-- [ ] 档案/审计保留 `parser_report` + retrieval 快照（承接已有 persist 可见性）
-- [ ] 文档：README / API README 更新管线说明；bootstrap Phase 3 OCR 条目标记衔接
+- [x] 工具：`search_docs` / `read_section` / `read_page` / `extract_table` / `quote_source`
+- [x] 路由策略：简单事实短路径；多跳/对比走工具；表/图走专用工具（`TOOL_ASK` 默认关；开启后记录 tool_trace + quote_source）
+- [x] 多维测评：检索命中、页/章准确骨架（`tests/eval` + `scripts/eval_ingest.py`）；OCR/VLM 正确率待有样本再计
+- [x] 档案/审计保留 `parser_report` + retrieval 快照（承接已有 persist 可见性）
+- [x] 文档：README / API README 更新管线说明；bootstrap Phase 3 OCR 条目标记衔接
 
 **验收：** 复杂问题可展示工具轨迹（debug）；黄金集基线可重复跑。
 

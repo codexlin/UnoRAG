@@ -7,6 +7,8 @@ from uuid import uuid4
 from app.services.chunking import chunk_text
 from app.services.documents import infer_page_label
 from app.services.hybrid import fuse_dense_and_bm25, get_bm25_cache
+from app.services.ingest.ir import Chunk as IRChunk
+from app.services.ingest.pipeline import chunks_to_payloads
 from app.services.llm import EmbeddingService
 from app.services.qdrant_store import QdrantStore
 from app.services.rerank import RerankClient
@@ -52,6 +54,7 @@ class IngestService:
 		doc_id: str | None = None,
 		filename: str | None = None,
 	) -> dict[str, Any]:
+		"""Legacy flat-text ingest（字窗）。新上传请走 ingest_prepared / prepare_ingest。"""
 		resolved_doc_id = doc_id or str(uuid4())
 		pieces = chunk_text(
 			text,
@@ -92,6 +95,48 @@ class IngestService:
 			"title": title,
 			"chunk_count": count,
 		}
+
+	def ingest_ir_chunks(
+		self,
+		*,
+		library_id: str,
+		title: str,
+		chunks: list[IRChunk],
+		doc_id: str | None = None,
+		filename: str | None = None,
+		parser_report: dict[str, Any] | None = None,
+	) -> dict[str, Any]:
+		"""IR chunks → embed(preamble+body) → Qdrant；payload 含 section/page 新字段。"""
+		resolved_doc_id = doc_id or str(uuid4())
+		if not chunks:
+			raise ValueError("no chunks to ingest")
+		payloads = chunks_to_payloads(chunks, filename=filename)
+		embed_inputs = [str(item.get("embed_text") or item.get("text") or "") for item in payloads]
+		vectors = self.embeddings.embed_texts(embed_inputs)
+		count = self.store.upsert_chunks(
+			library_id=library_id,
+			doc_id=resolved_doc_id,
+			title=title,
+			chunks=payloads,
+			vectors=vectors,
+			filename=filename,
+		)
+		get_bm25_cache().invalidate(library_id)
+		logger.info(
+			"ingest.ir.done library_id=%s doc_id=%s chunks=%s",
+			library_id,
+			resolved_doc_id,
+			count,
+		)
+		result: dict[str, Any] = {
+			"library_id": library_id,
+			"doc_id": resolved_doc_id,
+			"title": title,
+			"chunk_count": count,
+		}
+		if parser_report is not None:
+			result["parser_report"] = parser_report
+		return result
 
 	def simulate_ingest(
 		self,
@@ -181,19 +226,26 @@ class RetrievalService:
 				score = _clamp_score(float(hit["rrf_score"]) * 10.0)
 			else:
 				score = _clamp_score(score)
-			full_text = str(hit.get("text") or hit.get("snippet") or "")
+			# UI/LLM 优先 body；旧 payload 无 body 时回退 text
+			body = str(hit.get("body") or hit.get("text") or hit.get("snippet") or "")
 			citations.append(
 				{
 					"id": hit["id"],
 					"index": index,
 					"title": hit["title"],
 					"page": hit.get("page"),
-					"snippet": hit.get("snippet") or full_text[:280],
+					"page_start": hit.get("page_start"),
+					"page_end": hit.get("page_end"),
+					"section_path": hit.get("section_path"),
+					"preamble": hit.get("preamble"),
+					"table_id": hit.get("table_id"),
+					"snippet": hit.get("snippet") or body[:280],
 					"score": score,
 					"dense_score": hit.get("dense_score", hit.get("score")),
 					"bm25_score": hit.get("bm25_score"),
 					"rrf_score": hit.get("rrf_score"),
-					"text": full_text,
+					"text": body,
+					"body": body,
 					"doc_id": hit.get("doc_id"),
 					"chunk_index": hit.get("chunk_index"),
 					"filename": hit.get("filename"),

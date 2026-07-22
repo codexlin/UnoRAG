@@ -56,7 +56,11 @@ curl -s -X POST http://localhost:8000/v1/ask \
 | `OPENAI_BASE_URL` | 默认 DashScope compatible-mode |
 | `CHAT_MODEL` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` | 默认 qwen-plus / text-embedding-v3 / 1024 |
 | `QDRANT_URL` / `QDRANT_COLLECTION` | 向量库（默认 `http://localhost:6333`） |
-| `CHUNK_SIZE` / `CHUNK_OVERLAP` | 默认 500 / 80 |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | 默认 500 / 80（v2 节点内二次切 / legacy 字窗） |
+| `INGEST_PIPELINE` | `v2`（默认，IR 结构切）或 `legacy` |
+| `PDF_SCAN_STRATEGY` | `partial`（默认）\| `fail` |
+| `OCR_ENABLED` / `VLM_ENABLED` | 默认 `false`；见 `docs/adr/0001-ocr-vlm-adapters.md` |
+| `TOOL_ASK` | 默认 `false`；工具函数在 `app/services/ingest/tools.py` |
 | `ANSWER_MIN_SCORE` | 弱相关拒答阈值；`0` 关闭 |
 | `MAX_RETRIEVE_RETRIES` | judge 后最多重试次数（默认 1） |
 | `RERANK_ENABLED` | 默认 `false`；开启后 dense → `/reranks` |

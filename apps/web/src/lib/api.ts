@@ -21,9 +21,15 @@ export type ApiCitation = {
 	index: number;
 	title: string;
 	page?: string | null;
+	page_start?: number | null;
+	page_end?: number | null;
+	section_path?: string | null;
+	preamble?: string | null;
+	table_id?: string | null;
 	snippet: string;
-	/** Full chunk text used in LLM context. */
+	/** Chunk body used in LLM context / drawer (no preamble). */
 	text?: string;
+	body?: string;
 	score: number;
 	doc_id?: string | null;
 	chunk_index?: number | null;
@@ -78,6 +84,14 @@ export type ApiDocument = {
 	status: "processing" | "ready" | "failed" | string;
 	chunk_count: number;
 	error?: string | null;
+	parser_report?: {
+		partial?: boolean;
+		failed_pages?: number[];
+		needs_ocr_pages?: number[];
+		warnings?: string[];
+		notes?: string;
+		[key: string]: unknown;
+	} | null;
 	created_at: string;
 	updated_at: string;
 };
@@ -92,6 +106,9 @@ export type ApiUploadResponse = {
 	mode: string;
 	simulated: boolean;
 	error?: string | null;
+	notice?: string | null;
+	pipeline?: string | null;
+	parser_report?: Record<string, unknown> | null;
 };
 
 const DEFAULT_API_URL = "http://localhost:8000";

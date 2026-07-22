@@ -120,9 +120,10 @@ export function LibrariesPanel() {
 				results.push(result);
 			}
 			const last = results[results.length - 1];
+			const partialNotice = last?.notice ? ` · ${last.notice}` : "";
 			setNotice(
 				last
-					? `已上传 ${results.length} 个文件 · 显示名「${last.title}」→ ${last.status}${last.simulated ? "（stub 模拟）" : ""}`
+					? `已上传 ${results.length} 个文件 · 显示名「${last.title}」→ ${last.status}${last.simulated ? "（stub 模拟）" : ""}${partialNotice}`
 					: null,
 			);
 			setDisplayName("");
@@ -165,9 +166,11 @@ export function LibrariesPanel() {
 							文库
 						</h2>
 						<p className="max-w-lg text-sm leading-6 text-muted-foreground">
-							选择文库后上传 txt / md / pdf。可填写「显示名」，避免芯片上只出现
-							`学号：…` / `t` 这类文件名。live
-							会真正向量化；不可用时上传会失败而非静默模拟。
+							选择文库后上传 txt / md / docx /
+							pdf。可填写「显示名」，避免芯片上只出现 `学号：…` / `t`
+							这类文件名。live
+							会真正向量化；不可用时上传会失败而非静默模拟。扫描 PDF
+							可能提示「部分页未解析」。
 						</p>
 					</div>
 					<div className="flex flex-wrap items-end gap-2">
@@ -185,7 +188,7 @@ export function LibrariesPanel() {
 						<input
 							ref={fileInputRef}
 							type="file"
-							accept=".txt,.md,.markdown,.pdf,text/plain,text/markdown,application/pdf"
+							accept=".txt,.md,.markdown,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 							className="hidden"
 							multiple
 							onChange={(event) => void onUploadFiles(event.target.files)}
@@ -301,7 +304,7 @@ export function LibrariesPanel() {
 						</div>
 						{documents.length === 0 ? (
 							<p className="text-sm text-muted-foreground">
-								尚无文档。点击「上传」选择 txt / md / pdf。
+								尚无文档。点击「上传」选择 txt / md / docx / pdf。
 							</p>
 						) : (
 							<ul className="divide-y divide-border/70">
@@ -319,6 +322,14 @@ export function LibrariesPanel() {
 											{doc.error ? (
 												<p className="mt-0.5 text-[11px] text-destructive">
 													{doc.error}
+												</p>
+											) : null}
+											{doc.status === "ready" && doc.parser_report?.partial ? (
+												<p className="mt-0.5 text-[11px] text-survey">
+													部分页未解析
+													{doc.parser_report.failed_pages?.length
+														? `（失败页 ${doc.parser_report.failed_pages.join(", ")}）`
+														: ""}
 												</p>
 											) : null}
 										</div>

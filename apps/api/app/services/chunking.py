@@ -1,3 +1,9 @@
+"""Legacy char-window chunker.
+
+保留给 INGEST_PIPELINE=legacy 与结构切片内部 fallback（split_strategy=char_window）。
+新路径请用 app.services.ingest.chunker（结构优先）。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

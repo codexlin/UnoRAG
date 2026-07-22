@@ -54,16 +54,34 @@ class QdrantStore:
 			raise ValueError("chunks and vectors length mismatch")
 
 		points: list[qm.PointStruct] = []
+		# 可选 payload 字段：旧客户端忽略即可（向后兼容）
+		_optional_keys = (
+			"body",
+			"preamble",
+			"section_path",
+			"heading_text",
+			"page",
+			"page_start",
+			"page_end",
+			"table_id",
+			"figure_id",
+			"node_ids",
+			"split_strategy",
+			"source_format",
+			"content_hash",
+		)
 		for chunk, vector in zip(chunks, vectors, strict=True):
 			payload: dict[str, Any] = {
 				"library_id": library_id,
 				"doc_id": doc_id,
 				"title": title,
 				"chunk_index": int(chunk["chunk_index"]),
-				"text": chunk["text"],
+				# text = body（展示/BM25）；向量在 ingest 侧用 embed_text 生成
+				"text": chunk.get("body") or chunk["text"],
 			}
-			if chunk.get("page") is not None:
-				payload["page"] = chunk["page"]
+			for key in _optional_keys:
+				if chunk.get(key) is not None:
+					payload[key] = chunk[key]
 			resolved_filename = chunk.get("filename") or filename
 			if resolved_filename:
 				payload["filename"] = resolved_filename
@@ -126,18 +144,25 @@ class QdrantStore:
 			score = float(getattr(point, "score", 0.0) or 0.0)
 			# Cosine similarity may be slightly outside [0, 1]; clamp for API schema.
 			score = max(0.0, min(1.0, score))
+			body = str(payload.get("body") or payload.get("text") or "")
 			hits.append(
 				{
 					"id": str(point.id),
 					"score": score,
 					"title": str(payload.get("title") or "未命名文档"),
 					"page": str(payload["page"]) if payload.get("page") is not None else None,
-					"snippet": str(payload.get("text") or "")[:280],
+					"page_start": payload.get("page_start"),
+					"page_end": payload.get("page_end"),
+					"section_path": payload.get("section_path"),
+					"preamble": payload.get("preamble"),
+					"table_id": payload.get("table_id"),
+					"snippet": body[:280],
 					"library_id": payload.get("library_id"),
 					"doc_id": payload.get("doc_id"),
 					"chunk_index": payload.get("chunk_index"),
 					"filename": payload.get("filename"),
-					"text": str(payload.get("text") or ""),
+					"text": body,
+					"body": body,
 				}
 			)
 		return hits
@@ -176,6 +201,7 @@ class QdrantStore:
 				chunk_index = payload.get("chunk_index")
 				if doc_id is None or chunk_index is None:
 					continue
+				body = str(payload.get("body") or payload.get("text") or "")
 				chunks.append(
 					{
 						"id": str(point.id),
@@ -183,8 +209,13 @@ class QdrantStore:
 						"chunk_index": int(chunk_index),
 						"title": str(payload.get("title") or "未命名文档"),
 						"page": str(payload["page"]) if payload.get("page") is not None else None,
-						"text": str(payload.get("text") or ""),
-						"snippet": str(payload.get("text") or "")[:280],
+						"page_start": payload.get("page_start"),
+						"page_end": payload.get("page_end"),
+						"section_path": payload.get("section_path"),
+						"table_id": payload.get("table_id"),
+						"text": body,
+						"body": body,
+						"snippet": body[:280],
 						"library_id": payload.get("library_id"),
 					}
 				)

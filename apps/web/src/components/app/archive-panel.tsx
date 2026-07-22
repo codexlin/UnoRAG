@@ -134,12 +134,15 @@ export function ArchivePanel() {
 							<MarkdownAnswer
 								content={selected.answer}
 								citations={selected.citations.map((citation) => {
-									const text = citation.text || citation.snippet || "";
+									const text =
+										citation.body || citation.text || citation.snippet || "";
 									return {
 										id: citation.id,
 										index: citation.index,
 										title: citation.title,
 										page: citation.page ?? undefined,
+										sectionPath: citation.section_path ?? undefined,
+										preamble: citation.preamble ?? undefined,
 										snippet: citation.snippet || text.slice(0, 280),
 										text,
 										score: citation.score,
@@ -167,6 +170,9 @@ export function ArchivePanel() {
 												<p className="font-mono text-[11px] text-cite">
 													[{citation.index}] · {citation.title}
 													{citation.page ? ` · ${citation.page}` : ""}
+													{citation.section_path
+														? ` · ${citation.section_path}`
+														: ""}
 												</p>
 												<div className="mt-1 max-h-56 overflow-y-auto rounded-md border border-border/50 bg-card/30 px-2 py-1.5">
 													<p className="whitespace-pre-wrap text-sm leading-6 text-foreground/90">

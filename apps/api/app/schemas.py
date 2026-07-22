@@ -26,9 +26,15 @@ class Citation(BaseModel):
 	index: int
 	title: str
 	page: str | None = None
+	page_start: int | None = None
+	page_end: int | None = None
+	section_path: str | None = None
+	preamble: str | None = None
+	table_id: str | None = None
 	snippet: str
-	# Full chunk text used in LLM context (drawer/archive should show this).
+	# Full chunk body used in LLM context / drawer（不含 preamble）.
 	text: str = ""
+	body: str = ""
 	score: float = Field(ge=0, le=1)
 	doc_id: str | None = None
 	chunk_index: int | None = None
@@ -112,6 +118,7 @@ class DocumentResponse(BaseModel):
 	status: str
 	chunk_count: int
 	error: str | None = None
+	parser_report: dict[str, object] | None = None
 	created_at: str
 	updated_at: str
 
@@ -126,3 +133,6 @@ class UploadResponse(BaseModel):
 	mode: str
 	simulated: bool = False
 	error: str | None = None
+	notice: str | None = None
+	parser_report: dict[str, object] | None = None
+	pipeline: str | None = None

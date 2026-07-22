@@ -67,7 +67,7 @@ STUB_CITATIONS: list[dict[str, Any]] = [
 def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
 	models: list[Citation] = []
 	for item in raw_citations:
-		full_text = str(item.get("text") or item.get("snippet") or "")
+		full_text = str(item.get("body") or item.get("text") or item.get("snippet") or "")
 		snippet = str(item.get("snippet") or full_text[:280])
 		models.append(
 			Citation.model_validate(
@@ -76,8 +76,14 @@ def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
 					"index": item["index"],
 					"title": item["title"],
 					"page": item.get("page"),
+					"page_start": item.get("page_start"),
+					"page_end": item.get("page_end"),
+					"section_path": item.get("section_path"),
+					"preamble": item.get("preamble"),
+					"table_id": item.get("table_id"),
 					"snippet": snippet,
 					"text": full_text,
+					"body": full_text,
 					"score": item["score"],
 					"doc_id": item.get("doc_id"),
 					"chunk_index": item.get("chunk_index"),
@@ -200,8 +206,11 @@ def _format_context(citations: list[dict[str, Any]]) -> str:
 	for item in citations:
 		idx = item.get("index", len(blocks) + 1)
 		title = item.get("title") or "资料"
-		text = item.get("text") or item.get("snippet") or ""
-		blocks.append(f"[{idx}] {title}\n{text}")
+		# 模型上下文用 body（与抽屉一致）；章节路径作定位前缀
+		text = item.get("body") or item.get("text") or item.get("snippet") or ""
+		section = item.get("section_path")
+		header = f"[{idx}] {title}" + (f" · {section}" if section else "")
+		blocks.append(f"{header}\n{text}")
 	return "\n\n".join(blocks)
 
 
@@ -244,6 +253,19 @@ def build_ask_graph(
 		query = state.get("rewritten_question") or state["question"]
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
 		citations = retrieve_fn(query, state.get("library_id"), settings.retrieve_top_k)
+		tool_trace: list[dict[str, Any]] = []
+		# TOOL_ASK：默认仍短路径；仅规范化 citation + 记录 search_docs 轨迹（多跳工具后续扩展）
+		if settings.tool_ask:
+			from app.services.ingest.tools import quote_source
+
+			citations = [quote_source(item) for item in citations]
+			tool_trace.append(
+				{
+					"tool": "search_docs",
+					"query": query,
+					"hit_count": len(citations),
+				}
+			)
 		top_score = float(citations[0]["score"]) if citations else None
 		used_rerank = bool(citations and citations[0].get("used_rerank"))
 		return {
@@ -258,6 +280,8 @@ def build_ask_graph(
 				used_rerank=used_rerank,
 				retrieval_attempts=attempts,
 				query=query,
+				tool_ask=bool(settings.tool_ask),
+				tool_trace=tool_trace,
 			),
 		}
 

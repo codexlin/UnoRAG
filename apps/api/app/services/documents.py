@@ -7,6 +7,7 @@ from pathlib import PurePosixPath
 
 logger = logging.getLogger(__name__)
 
+# legacy extract_text 仍支持的集合；v2 另含 .docx（见 ingest.router）
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf"}
 _PAGE_RE = re.compile(r"(?m)^## Page (\d+)\s*$")
 _NOISY_PREFIX_RE = re.compile(
@@ -48,11 +49,21 @@ def _guess_title(filename: str) -> str:
 
 
 def infer_page_label(text: str) -> str | None:
-	"""Best-effort page from embedded `## Page N` markers."""
+	"""Best-effort page from embedded `## Page N` markers.
+
+	Legacy only：取**第一个**标记作为主页面（旧逻辑取最后一个会导致
+	「标 p.2 但正文从 Page 1 起」）。v2 PDF 应使用 chunk.page_start/end。
+	"""
 	matches = list(_PAGE_RE.finditer(text or ""))
 	if not matches:
 		return None
-	return f"p.{matches[-1].group(1)}"
+	if len(matches) == 1:
+		return f"p.{matches[0].group(1)}"
+	first = int(matches[0].group(1))
+	last = int(matches[-1].group(1))
+	if first == last:
+		return f"p.{first}"
+	return f"p.{first}-{last}"
 
 
 def extract_text(

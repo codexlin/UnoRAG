@@ -37,12 +37,14 @@ type LocalTurn = UiTurn & {
 };
 
 function toUiCitation(citation: ApiCitation): UiCitation {
-	const text = citation.text || citation.snippet || "";
+	const text = citation.body || citation.text || citation.snippet || "";
 	return {
 		id: citation.id,
 		index: citation.index,
 		title: citation.title,
 		page: citation.page ?? undefined,
+		sectionPath: citation.section_path ?? undefined,
+		preamble: citation.preamble ?? undefined,
 		snippet: citation.snippet || text.slice(0, 280),
 		text,
 		score: citation.score,
@@ -567,6 +569,16 @@ export function AskWorkspace() {
 									[{activeCitation.index}] · {activeCitation.title}
 									{activeCitation.page ? ` · ${activeCitation.page}` : ""}
 								</p>
+								{activeCitation.sectionPath ? (
+									<p className="font-mono text-[10px] text-muted-foreground">
+										章节 {activeCitation.sectionPath}
+									</p>
+								) : null}
+								{activeCitation.preamble ? (
+									<p className="text-[11px] leading-5 text-muted-foreground">
+										定位 {activeCitation.preamble}
+									</p>
+								) : null}
 								{activeCitation.filename ? (
 									<p className="font-mono text-[10px] text-muted-foreground">
 										文件 {activeCitation.filename}

@@ -45,11 +45,24 @@ pnpm install && pnpm --filter web dev
 
 ## 能力一览
 
-- **文库上传**：显示名 + txt/md/pdf → 索引状态 → 问答
-- **流式问答**：SSE；答案内 `[n]` 可点；证据 chip 带片段预览
+- **文库上传**：显示名 + txt/md/docx/pdf → 结构优先切片 → 索引状态 → 问答
+- **流式问答**：SSE；答案内 `[n]` 可点；证据 chip 带片段预览；抽屉可显示章节路径
 - **拒答**：无命中 / 弱相关
 - **Session rewrite**、可选 **rerank** / **BM25+RRF 混合检索**
 - **档案回看**：ask 完成后写入 turns（Postgres 或 JSON）
+
+## 文档入库管线（v2）
+
+默认 `INGEST_PIPELINE=v2`：格式分流 → Document IR → **结构感知切片**（非全库 SemanticChunker）→ preamble+body 向量化，UI 展示 body。
+
+| 变量 | 说明 |
+|------|------|
+| `INGEST_PIPELINE` | `v2`（默认）或 `legacy` 字窗 |
+| `PDF_SCAN_STRATEGY` | `partial`（默认）成功页入库；`fail` 更严 |
+| `OCR_ENABLED` / `VLM_ENABLED` | 默认关；扫描/复杂页按需 |
+| `TOOL_ASK` | 默认 `false`；短路径 ask，工具见 `app/services/ingest/tools.py` |
+
+计划详情：[docs/plans/2026-07-23-document-ingest-pipeline.md](./docs/plans/2026-07-23-document-ingest-pipeline.md)
 
 ## live 提示
 
@@ -67,4 +80,4 @@ cd apps/api && uv run pytest
 
 ## 计划
 
-见 [docs/plans/2026-07-22-meriknow-bootstrap.md](./docs/plans/2026-07-22-meriknow-bootstrap.md)。
+见 [docs/plans/2026-07-22-meriknow-bootstrap.md](./docs/plans/2026-07-22-meriknow-bootstrap.md) · [文档入库管线](./docs/plans/2026-07-23-document-ingest-pipeline.md)。

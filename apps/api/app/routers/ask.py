@@ -15,7 +15,7 @@ from app.schemas import (
 	IngestResponse,
 	UploadResponse,
 )
-from app.services.documents import extract_text
+from app.services.ingest.pipeline import prepare_ingest
 from app.services.metadata import MetadataStore, get_metadata_store
 from app.services.retrieval import IngestService
 from app.services.runtime import resolve_runtime
@@ -195,30 +195,27 @@ async def ingest_upload(
 		raise HTTPException(status_code=400, detail="Empty file")
 
 	filename = file.filename or "untitled.txt"
+	if meta.get_library(library_id) is None:
+		raise HTTPException(status_code=404, detail=f"library not found: {library_id}")
+
 	try:
-		parsed = extract_text(
+		prepared = prepare_ingest(
+			settings=settings,
 			filename=filename,
 			content=content,
+			library_id=library_id,
+			display_name=display_name,
 			content_type=file.content_type,
 		)
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-	from app.services.documents import clean_display_title
-
-	title = clean_display_title(
-		(display_name or "").strip() or parsed.title,
-		filename=parsed.filename,
-	)
-
-	if meta.get_library(library_id) is None:
-		raise HTTPException(status_code=404, detail=f"library not found: {library_id}")
-
 	doc = meta.create_document(
 		library_id=library_id,
-		name=title,
-		filename=parsed.filename,
-		content_type=parsed.content_type,
+		name=prepared.title,
+		filename=prepared.filename,
+		content_type=prepared.content_type,
+		doc_id=prepared.doc_id,
 		status="processing",
 	)
 
@@ -242,24 +239,28 @@ async def ingest_upload(
 			},
 		)
 
+	report = prepared.parser_report.to_public_dict()
+	notice = prepared.notice()
 	try:
 		if live:
-			result = IngestService(settings).ingest_text(
+			result = IngestService(settings).ingest_ir_chunks(
 				library_id=library_id,
-				title=title,
-				text=parsed.text,
+				title=prepared.title,
+				chunks=prepared.chunks,
 				doc_id=doc["id"],
-				filename=parsed.filename,
+				filename=prepared.filename,
+				parser_report=report,
 			)
 			simulated = False
 			mode = "live"
 		else:
-			result = IngestService(settings).simulate_ingest(
-				library_id=library_id,
-				title=title,
-				text=parsed.text,
-				doc_id=doc["id"],
-			)
+			result = {
+				"library_id": library_id,
+				"doc_id": doc["id"],
+				"title": prepared.title,
+				"chunk_count": len(prepared.chunks),
+				"simulated": True,
+			}
 			simulated = True
 			mode = "stub"
 		meta.update_document(
@@ -267,21 +268,25 @@ async def ingest_upload(
 			status="ready",
 			chunk_count=result["chunk_count"],
 			error=None,
+			parser_report=report,
 		)
 	except ValueError as exc:
-		meta.update_document(doc["id"], status="failed", error=str(exc))
+		meta.update_document(doc["id"], status="failed", error=str(exc), parser_report=report)
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	except Exception as exc:
-		meta.update_document(doc["id"], status="failed", error=str(exc))
+		meta.update_document(doc["id"], status="failed", error=str(exc), parser_report=report)
 		raise HTTPException(status_code=502, detail=f"upload ingest failed: {exc}") from exc
 
 	return UploadResponse(
 		library_id=library_id,
 		doc_id=doc["id"],
-		title=title,
-		filename=parsed.filename,
+		title=prepared.title,
+		filename=prepared.filename,
 		chunk_count=result["chunk_count"],
 		status="ready",
 		mode=mode,
 		simulated=simulated,
+		notice=notice,
+		parser_report=report,
+		pipeline=prepared.pipeline,
 	)

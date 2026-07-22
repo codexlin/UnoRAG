@@ -36,6 +36,15 @@ class Settings(BaseSettings):
 
 	chunk_size: int = 500
 	chunk_overlap: int = 80
+	# legacy | v2 — v2=IR 结构优先切片；md/txt/pdf/docx 走新管线
+	ingest_pipeline: str = "v2"
+	# PDF 扫描/失败页：partial=成功页入库+notice；fail=无成功页则整本失败
+	pdf_scan_strategy: str = "partial"
+	ocr_enabled: bool = False
+	vlm_enabled: bool = False
+	vlm_model: str = "qwen-vl-plus"
+	# 可选 LangGraph 工具化 ask；默认短路径 retrieve→generate
+	tool_ask: bool = False
 	retrieve_top_k: int = 6
 	# 最高分低于此阈值则拒答（0 = 关闭弱相关拒答）；无命中始终拒答
 	answer_min_score: float = 0.35
