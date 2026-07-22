@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { MarkdownAnswer } from "@/components/app/markdown-answer";
 import { buttonVariants } from "@/components/ui/button";
 import { type ApiArchiveTurn, fetchArchive, isAbortError } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -130,9 +131,21 @@ export function ArchivePanel() {
 							<p className="font-mono text-[10px] tracking-[0.14em] text-cite uppercase">
 								Answer
 							</p>
-							<p className="mt-2 text-sm leading-7 whitespace-pre-wrap text-foreground">
-								{selected.answer}
-							</p>
+							<MarkdownAnswer
+								content={selected.answer}
+								citations={selected.citations.map((citation) => ({
+									id: citation.id,
+									index: citation.index,
+									title: citation.title,
+									page: citation.page ?? undefined,
+									snippet: citation.snippet,
+									score: citation.score,
+									docId: citation.doc_id ?? undefined,
+									chunkIndex: citation.chunk_index ?? undefined,
+									filename: citation.filename ?? undefined,
+								}))}
+								enhanced
+							/>
 						</article>
 						{selected.citations.length > 0 ? (
 							<section className="space-y-2">

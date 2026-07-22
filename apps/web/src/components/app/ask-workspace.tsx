@@ -15,6 +15,7 @@ import {
 	useState,
 } from "react";
 
+import { MarkdownAnswer } from "@/components/app/markdown-answer";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	type ApiCitation,
@@ -67,48 +68,14 @@ function AnswerBody({
 	pending?: boolean;
 	onCite: (citation: MockCitation) => void;
 }) {
-	const byIndex = useMemo(() => {
-		const map = new Map<number, MockCitation>();
-		for (const citation of citations) {
-			map.set(citation.index, citation);
-		}
-		return map;
-	}, [citations]);
-
-	const parts = answer.split(/(\[\d+\])/g);
-
 	return (
-		<p className="mt-2 text-sm leading-7 text-foreground whitespace-pre-wrap">
-			{parts.map((part, index) => {
-				const match = part.match(/^\[(\d+)\]$/);
-				const key = `${index}:${part.slice(0, 32)}`;
-				if (!match) {
-					return <span key={key}>{part}</span>;
-				}
-				const citeIndex = Number(match[1]);
-				const citation = byIndex.get(citeIndex);
-				if (!citation) {
-					return (
-						<span key={key} className="font-mono text-muted-foreground">
-							{part}
-						</span>
-					);
-				}
-				return (
-					<button
-						key={key}
-						type="button"
-						onClick={() => onCite(citation)}
-						className="mx-0.5 inline rounded-sm bg-cite/10 px-1 font-mono text-[12px] text-cite underline-offset-2 hover:bg-cite/20 hover:underline"
-					>
-						[{citeIndex}]
-					</button>
-				);
-			})}
-			{pending ? (
-				<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-cite/70 align-text-bottom" />
-			) : null}
-		</p>
+		<MarkdownAnswer
+			content={answer}
+			citations={citations}
+			onCite={onCite}
+			pending={pending}
+			enhanced={!pending}
+		/>
 	);
 }
 
