@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import {
 	Card,
 	CardContent,
@@ -43,9 +43,12 @@ export default function Home() {
 						用冷静的海青与批注轨，区别于常见的紫渐变 AI 仪表盘。
 					</p>
 					<div className="flex flex-wrap gap-3 pt-1">
-						<Button type="button" className="rounded-md">
-							进入工作台（即将）
-						</Button>
+						<Link
+							href="/app/ask"
+							className={cn(buttonVariants(), "rounded-md")}
+						>
+							进入工作台
+						</Link>
 						<Link
 							className={cn(
 								buttonVariants({ variant: "outline" }),

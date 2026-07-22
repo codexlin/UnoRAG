@@ -27,7 +27,7 @@ pnpm install
 pnpm dev
 ```
 
-打开 [http://localhost:3000](http://localhost:3000)。
+打开 [http://localhost:3000](http://localhost:3000)。工作台：[http://localhost:3000/app](http://localhost:3000/app)。
 
 ```bash
 pnpm --filter web lint    # biome check

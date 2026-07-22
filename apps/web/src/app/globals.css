@@ -134,10 +134,26 @@
 	body {
 		@apply bg-background text-foreground;
 		background-image:
-			linear-gradient(to right, color-mix(in oklab, var(--border) 55%, transparent) 1px, transparent 1px),
-			linear-gradient(to bottom, color-mix(in oklab, var(--border) 55%, transparent) 1px, transparent 1px),
-			radial-gradient(ellipse 80% 50% at 10% -10%, color-mix(in oklab, var(--primary) 12%, transparent), transparent 55%),
-			radial-gradient(ellipse 60% 40% at 100% 0%, color-mix(in oklab, var(--cite) 10%, transparent), transparent 50%);
+			linear-gradient(
+				to right,
+				color-mix(in oklab, var(--border) 55%, transparent) 1px,
+				transparent 1px
+			),
+			linear-gradient(
+				to bottom,
+				color-mix(in oklab, var(--border) 55%, transparent) 1px,
+				transparent 1px
+			),
+			radial-gradient(
+				ellipse 80% 50% at 10% -10%,
+				color-mix(in oklab, var(--primary) 12%, transparent),
+				transparent 55%
+			),
+			radial-gradient(
+				ellipse 60% 40% at 100% 0%,
+				color-mix(in oklab, var(--cite) 10%, transparent),
+				transparent 50%
+			);
 		background-size:
 			72px 72px,
 			72px 72px,
