@@ -41,6 +41,15 @@ class Settings(BaseSettings):
 	answer_min_score: float = 0.35
 	max_retrieve_retries: int = 1
 
+	# Optional rerank after dense retrieval (DashScope-compatible /reranks)
+	rerank_enabled: bool = False
+	rerank_base_url: str = "https://dashscope.aliyuncs.com/compatible-api/v1"
+	rerank_model: str = "qwen3-rerank"
+	rerank_top_k: int = 6
+	# When True and session has prior turns, rewrite query with short history
+	session_memory_enabled: bool = True
+	session_memory_max_turns: int = 6
+
 	@property
 	def cors_origin_list(self) -> list[str]:
 		return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

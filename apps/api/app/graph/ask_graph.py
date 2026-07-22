@@ -12,6 +12,7 @@ from app.services.answer_copy import no_match_answer, weak_match_answer
 from app.services.llm import ChatService
 from app.services.retrieval import RetrievalService
 from app.services.runtime import RuntimeCapability, resolve_runtime
+from app.services.session_memory import SessionMemory, default_session_memory
 from app.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ class AskState(TypedDict, total=False):
 	session_id: str
 	question: str
 	library_id: str | None
+	history: list[dict[str, str]]
 	rewritten_question: str
 	citations: list[dict[str, Any]]
 	answer: str
@@ -62,6 +64,28 @@ def _library_label(library_id: str | None) -> str:
 	return library_id
 
 
+def rewrite_with_history(question: str, history: list[dict[str, str]] | None) -> tuple[str, str]:
+	"""Return (rewritten_query, rewrite_mode). Lightweight QueryNest-style follow-up rewrite."""
+	q = question.strip()
+	if not history:
+		return q, "passthrough"
+	previous_questions = [
+		item["content"]
+		for item in reversed(history)
+		if item.get("role") == "user" and (item.get("content") or "").strip()
+	]
+	if not previous_questions:
+		return q, "passthrough"
+	prev = previous_questions[0].strip()
+	# Pronoun / short follow-ups benefit most from prior turn context.
+	needs_context = len(q) <= 24 or any(
+		token in q for token in ("它", "这个", "那个", "上述", "刚才", "还有", "呢", "吗")
+	)
+	if not needs_context:
+		return q, "passthrough"
+	return f"上一轮用户问题：{prev}\n当前追问：{q}", "history"
+
+
 def stub_retrieve(query: str, library_id: str | None, _top_k: int) -> list[dict[str, Any]]:
 	"""Deterministic stub hits; special queries exercise refuse paths in tests."""
 	normalized = query.strip().lower()
@@ -77,10 +101,14 @@ def stub_retrieve(query: str, library_id: str | None, _top_k: int) -> list[dict[
 				"snippet": "本附录仅作排版示例，不含人事制度条款。",
 				"score": 0.11,
 				"text": "本附录仅作排版示例，不含人事制度条款。",
+				"used_rerank": False,
 			}
 		]
 	_ = library_id
-	return [dict(item) for item in STUB_CITATIONS]
+	hits = [dict(item) for item in STUB_CITATIONS]
+	for item in hits:
+		item["used_rerank"] = False
+	return hits
 
 
 def stub_generate(question: str, citations: list[dict[str, Any]]) -> str:
@@ -120,16 +148,20 @@ def build_ask_graph(
 
 	def rewrite_node(state: AskState) -> AskState:
 		question = state["question"].strip()
+		history = state.get("history") or []
+		rewritten, rewrite_mode = rewrite_with_history(question, history)
 		return {
-			"rewritten_question": question,
+			"rewritten_question": rewritten,
 			"retrieval_attempts": 0,
 			"refused": False,
 			"refuse_reason": None,
 			"retrieval_debug": _merge_debug(
 				state,
-				rewrite="passthrough",
+				rewrite=rewrite_mode,
+				history_turns=len(history),
 				mode=mode,
 				answer_min_score=min_score,
+				rerank_enabled=bool(settings.rerank_enabled),
 			),
 		}
 
@@ -138,6 +170,7 @@ def build_ask_graph(
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
 		citations = retrieve_fn(query, state.get("library_id"), settings.retrieve_top_k)
 		top_score = float(citations[0]["score"]) if citations else None
+		used_rerank = bool(citations and citations[0].get("used_rerank"))
 		return {
 			"citations": citations,
 			"retrieval_attempts": attempts,
@@ -147,6 +180,7 @@ def build_ask_graph(
 				library_id=state.get("library_id"),
 				hit_count=len(citations),
 				top_score=top_score,
+				used_rerank=used_rerank,
 				retrieval_attempts=attempts,
 				query=query,
 			),
@@ -281,10 +315,12 @@ class AskGraphService:
 		capability: RuntimeCapability | None = None,
 		retrieve_fn: RetrieveFn | None = None,
 		generate_fn: GenerateFn | None = None,
+		session_memory: SessionMemory | None = None,
 	) -> None:
 		self.settings = settings or get_settings()
 		self.capability = capability or resolve_runtime(self.settings)
 		self.mode = self.capability.effective_mode
+		self.session_memory = session_memory or default_session_memory
 
 		if retrieve_fn is not None:
 			self._retrieve = retrieve_fn
@@ -325,19 +361,33 @@ class AskGraphService:
 		session_id: str | None = None,
 	) -> AskResponse:
 		resolved_session = session_id or str(uuid.uuid4())
+		history: list[dict[str, str]] = []
+		if self.settings.session_memory_enabled:
+			history = self.session_memory.load(
+				resolved_session,
+				limit=self.settings.session_memory_max_turns * 2,
+			)
+
 		state = self._graph.invoke(
 			{
 				"session_id": resolved_session,
 				"question": question,
 				"library_id": library_id,
+				"history": history,
 				"retrieval_debug": {
 					"requested_mode": self.capability.requested_mode,
 					"effective_mode": self.capability.effective_mode,
 					"degraded": self.capability.degraded,
 					"reasons": list(self.capability.reasons),
+					"session_memory": self.settings.session_memory_enabled,
 				},
 			}
 		)
+
+		if self.settings.session_memory_enabled:
+			self.session_memory.append(resolved_session, "user", question)
+			self.session_memory.append(resolved_session, "assistant", state.get("answer") or "")
+
 		raw_citations = state.get("citations") or []
 		citations = [
 			Citation.model_validate(
