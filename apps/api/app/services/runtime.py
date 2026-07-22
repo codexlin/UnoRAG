@@ -20,6 +20,13 @@ class RuntimeCapability:
 	def live_ready(self) -> bool:
 		return self.has_llm_key and self.qdrant_ok
 
+	@property
+	def ask_ready(self) -> bool:
+		"""Explicit stub (tests) always ready; live requires key + Qdrant."""
+		if self.requested_mode == "stub":
+			return True
+		return self.live_ready
+
 
 def resolve_runtime(settings: Settings, *, qdrant_ok: bool | None = None) -> RuntimeCapability:
 	requested = "live" if settings.wants_live else "stub"
@@ -42,9 +49,10 @@ def resolve_runtime(settings: Settings, *, qdrant_ok: bool | None = None) -> Run
 				qdrant_ok=qdrant,
 				reasons=[],
 			)
+		# Hard failure — never silently degrade live → stub
 		return RuntimeCapability(
 			requested_mode=requested,
-			effective_mode="stub",
+			effective_mode="live",
 			graph="ask_v1",
 			degraded=True,
 			has_llm_key=has_key,

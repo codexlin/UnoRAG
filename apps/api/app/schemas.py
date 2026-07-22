@@ -8,11 +8,13 @@ class HealthResponse(BaseModel):
 	service: str
 	env: str
 	ask_mode: str
-	effective_mode: str = "stub"
+	effective_mode: str = "live"
 	graph: str = "ask_v1"
 	degraded: bool = False
 	has_llm_key: bool = False
 	qdrant_ok: bool = False
+	live_ready: bool = False
+	ask_ready: bool = False
 	reasons: list[str] = Field(default_factory=list)
 	hybrid_enabled: bool = False
 	metadata_backend: str = "postgres"

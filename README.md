@@ -40,7 +40,7 @@ pnpm install && pnpm --filter web dev
 ```
 
 - 工作台：<http://localhost:3000/app>
-- 健康检查：`GET /health`（看 `metadata_backend` / `effective_mode`）
+- 健康检查：`GET /health`（看 `status` / `ask_ready` / `metadata_backend`；live 未就绪时为 `unavailable`）
 - 档案：`GET /v1/archive` · 页面 `/app/archive`
 
 ## 能力一览

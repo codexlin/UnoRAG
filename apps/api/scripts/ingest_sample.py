@@ -33,12 +33,13 @@ SAMPLE = """
 def main() -> int:
 	settings = get_settings()
 	capability = resolve_runtime(settings)
-	if capability.effective_mode != "live":
+	if not capability.live_ready:
 		print(
 			"live unavailable:",
 			{
 				"requested": capability.requested_mode,
 				"effective": capability.effective_mode,
+				"degraded": capability.degraded,
 				"reasons": capability.reasons,
 			},
 		)

@@ -26,8 +26,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ask"])
 
 
+def _unavailable_detail(capability, *, message: str) -> dict:
+	return {
+		"message": message,
+		"requested_mode": capability.requested_mode,
+		"effective_mode": capability.effective_mode,
+		"degraded": capability.degraded,
+		"live_ready": capability.live_ready,
+		"ask_ready": capability.ask_ready,
+		"reasons": capability.reasons,
+	}
+
+
 def get_ask_service(settings: Settings = Depends(get_settings)) -> AskGraphService:
 	capability = resolve_runtime(settings)
+	if not capability.ask_ready:
+		raise HTTPException(
+			status_code=503,
+			detail=_unavailable_detail(
+				capability,
+				message="ask unavailable: live mode requires LLM key and reachable Qdrant",
+			),
+		)
 	return AskGraphService(settings, capability=capability)
 
 
@@ -84,46 +104,44 @@ def ingest(
 	meta: MetadataStore = Depends(get_meta),
 ) -> IngestResponse:
 	capability = resolve_runtime(settings)
-	if capability.effective_mode != "live":
-		if not settings.stub_ingest_simulate:
-			raise HTTPException(
-				status_code=503,
-				detail={
-					"message": "ingest requires live mode with LLM key and reachable Qdrant",
-					"requested_mode": capability.requested_mode,
-					"effective_mode": capability.effective_mode,
-					"reasons": capability.reasons,
-				},
-			)
-		if meta.get_library(body.library_id) is None:
-			meta.create_library(name=body.library_id, library_id=body.library_id)
-		doc = meta.create_document(
-			library_id=body.library_id,
-			name=body.title,
-			filename=f"{body.title}.txt",
-			content_type="text/plain",
-			doc_id=body.doc_id,
-			status="processing",
-		)
-		try:
-			result = IngestService(settings).simulate_ingest(
+	if not capability.live_ready:
+		if capability.requested_mode == "stub" and settings.stub_ingest_simulate:
+			if meta.get_library(body.library_id) is None:
+				meta.create_library(name=body.library_id, library_id=body.library_id)
+			doc = meta.create_document(
 				library_id=body.library_id,
-				title=body.title,
-				text=body.text,
-				doc_id=doc["id"],
+				name=body.title,
+				filename=f"{body.title}.txt",
+				content_type="text/plain",
+				doc_id=body.doc_id,
+				status="processing",
 			)
-			meta.update_document(doc["id"], status="ready", chunk_count=result["chunk_count"], error=None)
-		except Exception as exc:
-			meta.update_document(doc["id"], status="failed", error=str(exc))
-			raise HTTPException(status_code=400, detail=str(exc)) from exc
-		return IngestResponse(
-			library_id=body.library_id,
-			doc_id=doc["id"],
-			title=body.title,
-			chunk_count=result["chunk_count"],
-			mode="stub",
-			status="ready",
-			simulated=True,
+			try:
+				result = IngestService(settings).simulate_ingest(
+					library_id=body.library_id,
+					title=body.title,
+					text=body.text,
+					doc_id=doc["id"],
+				)
+				meta.update_document(doc["id"], status="ready", chunk_count=result["chunk_count"], error=None)
+			except Exception as exc:
+				meta.update_document(doc["id"], status="failed", error=str(exc))
+				raise HTTPException(status_code=400, detail=str(exc)) from exc
+			return IngestResponse(
+				library_id=body.library_id,
+				doc_id=doc["id"],
+				title=body.title,
+				chunk_count=result["chunk_count"],
+				mode="stub",
+				status="ready",
+				simulated=True,
+			)
+		raise HTTPException(
+			status_code=503,
+			detail=_unavailable_detail(
+				capability,
+				message="ingest requires live mode with LLM key and reachable Qdrant",
+			),
 		)
 
 	if meta.get_library(body.library_id) is None:
@@ -194,8 +212,9 @@ async def ingest_upload(
 		status="processing",
 	)
 
-	live = capability.effective_mode == "live"
-	if not live and not settings.stub_ingest_simulate:
+	live = capability.live_ready
+	stub_simulate = capability.requested_mode == "stub" and settings.stub_ingest_simulate
+	if not live and not stub_simulate:
 		meta.update_document(
 			doc["id"],
 			status="failed",
@@ -204,10 +223,10 @@ async def ingest_upload(
 		raise HTTPException(
 			status_code=503,
 			detail={
-				"message": "ingest requires live mode with LLM key and reachable Qdrant",
-				"requested_mode": capability.requested_mode,
-				"effective_mode": capability.effective_mode,
-				"reasons": capability.reasons,
+				**_unavailable_detail(
+					capability,
+					message="ingest requires live mode with LLM key and reachable Qdrant",
+				),
 				"doc_id": doc["id"],
 				"status": "failed",
 			},

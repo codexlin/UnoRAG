@@ -20,7 +20,10 @@ import {
 	type ApiCitation,
 	type ApiLibrary,
 	askQuestionStream,
+	fetchHealth,
 	fetchLibraries,
+	isAbortError,
+	isApiAvailable,
 } from "@/lib/api";
 import type { MockCitation, MockTurn } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
@@ -120,18 +123,26 @@ export function AskWorkspace() {
 	);
 	const [drawerOpen, setDrawerOpen] = useState(true);
 	const [libsError, setLibsError] = useState<string | null>(null);
+	const [apiReady, setApiReady] = useState(true);
 
 	useEffect(() => {
 		const controller = new AbortController();
 		void (async () => {
 			try {
-				const items = await fetchLibraries(controller.signal);
+				const [items, health] = await Promise.all([
+					fetchLibraries(controller.signal),
+					fetchHealth(controller.signal).catch(() => null),
+				]);
+				if (controller.signal.aborted) return;
 				setLibraries(items);
 				setLibraryId((prev) => prev || items[0]?.id || "");
 				setLibsError(null);
+				setApiReady(health ? isApiAvailable(health) : false);
 			} catch (err) {
+				if (controller.signal.aborted || isAbortError(err)) return;
 				setLibraries([]);
 				setLibraryId("");
+				setApiReady(false);
 				setLibsError(
 					err instanceof Error
 						? `文库加载失败：${err.message}`
@@ -147,7 +158,7 @@ export function AskWorkspace() {
 		[libraries, libraryId],
 	);
 
-	const canAsk = Boolean(library && library.status === "ready");
+	const canAsk = Boolean(library && library.status === "ready" && apiReady);
 
 	function openCitation(citation: MockCitation) {
 		setActiveCitation(citation);

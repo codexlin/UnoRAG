@@ -18,8 +18,10 @@ def health() -> HealthResponse:
 	reasons = list(capability.reasons)
 	if not meta_ok:
 		reasons.append(f"metadata_unavailable: {meta_detail}")
-	degraded = capability.degraded or not meta_ok
-	status = "ok" if meta_ok else "degraded"
+	ask_ready = capability.ask_ready
+	degraded = capability.degraded or not meta_ok or not ask_ready
+	# Never report ok when ask/live is not ready or metadata is down
+	status = "ok" if meta_ok and ask_ready and not capability.degraded else "unavailable"
 	return HealthResponse(
 		status=status,
 		service=settings.app_name,
@@ -30,6 +32,8 @@ def health() -> HealthResponse:
 		degraded=degraded,
 		has_llm_key=capability.has_llm_key,
 		qdrant_ok=capability.qdrant_ok,
+		live_ready=capability.live_ready,
+		ask_ready=ask_ready,
 		reasons=reasons,
 		hybrid_enabled=settings.hybrid_enabled,
 		metadata_backend=meta_backend,

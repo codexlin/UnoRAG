@@ -17,8 +17,8 @@ class Settings(BaseSettings):
 	api_prefix: str = "/v1"
 	cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
-	# stub | live — live 在缺密钥 / Qdrant 不可达时自动降级为 stub
-	ask_mode: str = "stub"
+	# stub | live — live 缺密钥 / Qdrant 不可达时硬失败（不降级 stub；stub 仅测试）
+	ask_mode: str = "live"
 
 	# OpenAI-compatible（DashScope 等）
 	openai_api_key: str = ""
@@ -60,8 +60,8 @@ class Settings(BaseSettings):
 	metadata_backend: str = "postgres"
 	database_url: str = "postgresql+psycopg://meriknow:meriknow@localhost:5432/meriknow"
 	metadata_path: str = "data/metadata.json"
-	# stub upload: simulate ready without Qdrant (live still embeds)
-	stub_ingest_simulate: bool = True
+	# stub upload: simulate ready without Qdrant (false=503；仅测试可 true)
+	stub_ingest_simulate: bool = False
 
 	@property
 	def cors_origin_list(self) -> list[str]:

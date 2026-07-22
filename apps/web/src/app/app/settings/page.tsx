@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from "react";
 
-import { type ApiHealth, fetchHealth, getApiBaseUrl } from "@/lib/api";
+import {
+	type ApiHealth,
+	fetchHealth,
+	getApiBaseUrl,
+	isAbortError,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export default function SettingsPage() {
@@ -13,10 +18,12 @@ export default function SettingsPage() {
 		const controller = new AbortController();
 		void fetchHealth(controller.signal)
 			.then((payload) => {
+				if (controller.signal.aborted) return;
 				setHealth(payload);
 				setError(null);
 			})
-			.catch(() => {
+			.catch((err) => {
+				if (controller.signal.aborted || isAbortError(err)) return;
 				setHealth(null);
 				setError("无法连接 API");
 			});
@@ -55,15 +62,28 @@ export default function SettingsPage() {
 								<span className="font-mono text-xs">{health.ask_mode}</span>
 							</li>
 							<li className="flex justify-between gap-3">
-								<span className="text-muted-foreground">生效模式</span>
+								<span className="text-muted-foreground">状态</span>
 								<span
 									className={cn(
 										"font-mono text-xs",
-										health.degraded && "text-survey",
+										(health.degraded || health.status !== "ok") &&
+											"text-destructive",
 									)}
 								>
+									{health.status}
+									{health.degraded ? "（不可用）" : ""}
+								</span>
+							</li>
+							<li className="flex justify-between gap-3">
+								<span className="text-muted-foreground">生效模式</span>
+								<span className="font-mono text-xs">
 									{health.effective_mode}
-									{health.degraded ? "（已降级）" : ""}
+								</span>
+							</li>
+							<li className="flex justify-between gap-3">
+								<span className="text-muted-foreground">Ask 就绪</span>
+								<span className="font-mono text-xs">
+									{health.ask_ready === false ? "否" : "是"}
 								</span>
 							</li>
 							<li className="flex justify-between gap-3">
@@ -84,7 +104,7 @@ export default function SettingsPage() {
 							</li>
 							{health.reasons.length > 0 ? (
 								<li className="flex justify-between gap-3">
-									<span className="text-muted-foreground">降级原因</span>
+									<span className="text-muted-foreground">原因</span>
 									<span className="max-w-[60%] text-right font-mono text-xs text-muted-foreground">
 										{health.reasons.join(", ")}
 									</span>

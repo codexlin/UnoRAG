@@ -17,7 +17,10 @@ import {
 	type ApiLibrary,
 	createLibrary,
 	fetchDocuments,
+	fetchHealth,
 	fetchLibraries,
+	isAbortError,
+	isApiAvailable,
 	uploadDocument,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -55,25 +58,33 @@ export function LibrariesPanel() {
 	const [error, setError] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [displayName, setDisplayName] = useState("");
+	const [apiReady, setApiReady] = useState(true);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const loadLibraries = useCallback(async (signal?: AbortSignal) => {
 		setLoading(true);
 		setError(null);
 		try {
-			const items = await fetchLibraries(signal);
+			const [items, health] = await Promise.all([
+				fetchLibraries(signal),
+				fetchHealth(signal).catch(() => null),
+			]);
+			if (signal?.aborted) return;
 			setLibraries(items);
 			setSelectedId((prev) => prev || items[0]?.id || "");
+			setApiReady(health ? isApiAvailable(health) : false);
 		} catch (err) {
+			if (signal?.aborted || isAbortError(err)) return;
 			setLibraries([]);
 			setSelectedId("");
+			setApiReady(false);
 			setError(
 				err instanceof Error
 					? `文库加载失败：${err.message}`
 					: "文库加载失败：API 不可用",
 			);
 		} finally {
-			setLoading(false);
+			if (!signal?.aborted) setLoading(false);
 		}
 	}, []);
 
@@ -85,8 +96,10 @@ export function LibrariesPanel() {
 			}
 			try {
 				const items = await fetchDocuments(libraryId, signal);
+				if (signal?.aborted) return;
 				setDocuments(items);
 			} catch (err) {
+				if (signal?.aborted || isAbortError(err)) return;
 				setDocuments([]);
 				setError(
 					err instanceof Error
@@ -173,7 +186,8 @@ export function LibrariesPanel() {
 						</h2>
 						<p className="max-w-lg text-sm leading-6 text-muted-foreground">
 							选择文库后上传 txt / md / pdf。可填写「显示名」，避免芯片上只出现
-							`学号：…` / `t` 这类文件名。live 会真正向量化；stub 可模拟就绪。
+							`学号：…` / `t` 这类文件名。live
+							会真正向量化；不可用时上传会失败而非静默模拟。
 						</p>
 					</div>
 					<div className="flex flex-wrap items-end gap-2">
@@ -210,7 +224,7 @@ export function LibrariesPanel() {
 							type="button"
 							variant="outline"
 							className="rounded-md"
-							disabled={uploading || !selectedId}
+							disabled={uploading || !selectedId || !apiReady}
 							onClick={() => fileInputRef.current?.click()}
 						>
 							<FileUp data-icon="inline-start" />

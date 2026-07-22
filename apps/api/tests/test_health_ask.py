@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.graph.ask_graph import AskGraphService, build_ask_graph, stub_generate
@@ -15,10 +16,55 @@ def test_health() -> None:
 	payload = response.json()
 	assert payload["status"] == "ok"
 	assert payload["graph"] == "ask_v1"
-	assert payload["ask_mode"] in {"stub", "live"}
-	assert payload["effective_mode"] in {"stub", "live"}
-	assert "degraded" in payload
+	assert payload["ask_mode"] == "stub"
+	assert payload["effective_mode"] == "stub"
+	assert payload["degraded"] is False
+	assert payload["ask_ready"] is True
 	assert "qdrant_ok" in payload
+	assert "live_ready" in payload
+
+
+def test_live_unavailable_hard_fails_not_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""ASK_MODE=live without keys must not silently degrade to stub ask."""
+	monkeypatch.setenv("ASK_MODE", "live")
+	monkeypatch.setenv("DASHSCOPE_API_KEY", "")
+	monkeypatch.setenv("OPENAI_API_KEY", "")
+	get_settings.cache_clear()
+
+	from app.services.runtime import resolve_runtime
+
+	capability = resolve_runtime(get_settings(), qdrant_ok=False)
+	assert capability.requested_mode == "live"
+	assert capability.effective_mode == "live"
+	assert capability.degraded is True
+	assert capability.live_ready is False
+	assert capability.ask_ready is False
+	assert "missing_llm_api_key" in capability.reasons
+
+	health = client.get("/health")
+	assert health.status_code == 200
+	body = health.json()
+	assert body["status"] == "unavailable"
+	assert body["effective_mode"] == "live"
+	assert body["degraded"] is True
+	assert body["ask_ready"] is False
+
+	ask = client.post(
+		"/v1/ask",
+		json={"question": "病假需要在几天内补交证明？", "library_id": "lib-hr"},
+	)
+	assert ask.status_code == 503
+
+	ingest = client.post(
+		"/v1/ingest",
+		json={
+			"library_id": "lib-hr",
+			"title": "sample",
+			"text": "病假须于返岗后三个工作日内补交证明材料。",
+		},
+	)
+	assert ingest.status_code == 503
+	get_settings.cache_clear()
 
 
 def test_ask_stub() -> None:

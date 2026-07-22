@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { getAppNavItem } from "@/components/app/nav-items";
-import { fetchHealth } from "@/lib/api";
+import { fetchHealth, isAbortError, isApiAvailable } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type ApiStatus = "checking" | "online" | "offline";
@@ -22,17 +22,17 @@ export function AppTopbar() {
 		async function probe() {
 			try {
 				const health = await fetchHealth(controller.signal);
-				if (cancelled) return;
-				setApiStatus(health.status === "ok" ? "online" : "offline");
+				if (cancelled || controller.signal.aborted) return;
+				const available = isApiAvailable(health);
+				setApiStatus(available ? "online" : "offline");
 				const effective = health.effective_mode || health.ask_mode;
 				const backend = health.metadata_backend
 					? ` · ${health.metadata_backend}`
 					: "";
-				setModeLabel(
-					`${health.degraded ? `${effective}·降级` : effective}${backend}`,
-				);
-			} catch {
-				if (cancelled) return;
+				const suffix = available ? "" : "·不可用";
+				setModeLabel(`${effective}${suffix}${backend}`);
+			} catch (err) {
+				if (cancelled || controller.signal.aborted || isAbortError(err)) return;
 				setApiStatus("offline");
 				setModeLabel(null);
 			}
@@ -55,7 +55,7 @@ export function AppTopbar() {
 			? `API · ${modeLabel ?? "ok"}`
 			: apiStatus === "checking"
 				? "API 探测中"
-				: "API 离线";
+				: `API 离线${modeLabel ? ` · ${modeLabel}` : ""}`;
 
 	return (
 		<header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border/80 bg-card/75 px-5 backdrop-blur-sm">

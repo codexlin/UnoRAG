@@ -8,6 +8,8 @@ export type ApiHealth = {
 	degraded: boolean;
 	has_llm_key: boolean;
 	qdrant_ok: boolean;
+	live_ready?: boolean;
+	ask_ready?: boolean;
 	reasons: string[];
 	hybrid_enabled?: boolean;
 	metadata_backend?: string;
@@ -89,6 +91,23 @@ const DEFAULT_API_URL = "http://localhost:8000";
 
 export function getApiBaseUrl() {
 	return process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || DEFAULT_API_URL;
+}
+
+/** True when fetch was cancelled via AbortController (e.g. React Strict Mode remount). */
+export function isAbortError(err: unknown): boolean {
+	if (!err || typeof err !== "object") return false;
+	const name = "name" in err ? String(err.name) : "";
+	if (name === "AbortError") return true;
+	if (err instanceof DOMException && err.code === DOMException.ABORT_ERR) {
+		return true;
+	}
+	return false;
+}
+
+export function isApiAvailable(health: ApiHealth): boolean {
+	return (
+		health.status === "ok" && !health.degraded && health.ask_ready !== false
+	);
 }
 
 export async function fetchHealth(signal?: AbortSignal): Promise<ApiHealth> {

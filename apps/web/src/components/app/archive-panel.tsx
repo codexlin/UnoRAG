@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { buttonVariants } from "@/components/ui/button";
-import { type ApiArchiveTurn, fetchArchive } from "@/lib/api";
+import { type ApiArchiveTurn, fetchArchive, isAbortError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 function formatTime(value: string) {
@@ -43,14 +43,16 @@ export function ArchivePanel() {
 					limit: 40,
 					signal: controller.signal,
 				});
+				if (controller.signal.aborted) return;
 				setTurns(items);
 				setSelectedId((prev) => prev || items[0]?.id || "");
 				setError(null);
-			} catch {
+			} catch (err) {
+				if (controller.signal.aborted || isAbortError(err)) return;
 				setTurns([]);
 				setError("无法加载档案（API 不可用或尚未写入回合）。");
 			} finally {
-				setLoading(false);
+				if (!controller.signal.aborted) setLoading(false);
 			}
 		})();
 		return () => controller.abort();

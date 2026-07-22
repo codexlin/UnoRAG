@@ -51,7 +51,7 @@ curl -s -X POST http://localhost:8000/v1/ask \
 
 | 变量 | 说明 |
 |------|------|
-| `ASK_MODE` | `stub` / `live`；live 缺密钥或 Qdrant 不可达时降级 stub |
+| `ASK_MODE` | 默认 `live`；缺密钥或 Qdrant 不可达时硬失败（503），不降级 stub。`stub` 仅测试 |
 | `OPENAI_API_KEY` / `DASHSCOPE_API_KEY` | OpenAI-compatible 密钥 |
 | `OPENAI_BASE_URL` | 默认 DashScope compatible-mode |
 | `CHAT_MODEL` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` | 默认 qwen-plus / text-embedding-v3 / 1024 |
@@ -63,6 +63,7 @@ curl -s -X POST http://localhost:8000/v1/ask \
 | `RERANK_BASE_URL` / `RERANK_MODEL` / `RERANK_TOP_K` | DashScope-compatible rerank |
 | `SESSION_MEMORY_ENABLED` | 默认 `true`；同 session 短记忆 rewrite |
 | `SESSION_MEMORY_MAX_TURNS` | 保留轮数（默认 6） |
+| `STUB_INGEST_SIMULATE` | 默认 `false`；仅 `ASK_MODE=stub` 且为 true 时模拟入库 |
 
 ## Live 样例入库
 
