@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+from sqlalchemy import DateTime, Integer, MetaData, String, Text, create_engine, func, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+
 logger = logging.getLogger(__name__)
 
 LibraryStatus = Literal["ready", "indexing", "empty"]
@@ -338,18 +341,6 @@ class SqlAlchemyMetadataStore(MetadataStore):
 	"""Optional Postgres-backed metadata when DATABASE_URL is set."""
 
 	def __init__(self, database_url: str) -> None:
-		from sqlalchemy import (
-			DateTime,
-			Integer,
-			MetaData,
-			String,
-			Text,
-			create_engine,
-			func,
-			select,
-		)
-		from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
-
 		class Base(DeclarativeBase):
 			metadata = MetaData()
 
