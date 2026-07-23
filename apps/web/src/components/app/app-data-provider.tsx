@@ -66,8 +66,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 			setLibraries([]);
 			setLibrariesError(
 				err instanceof Error
-					? `文库加载失败：${err.message}`
-					: "文库加载失败：API 不可用",
+					? `知识库加载失败：${err.message}`
+					: "知识库加载失败：API 不可用",
 			);
 			return [];
 		} finally {

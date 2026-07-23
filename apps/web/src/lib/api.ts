@@ -31,6 +31,11 @@ export type ApiCitation = {
 	text?: string;
 	body?: string;
 	score: number;
+	dense_score?: number | null;
+	bm25_score?: number | null;
+	rrf_score?: number | null;
+	used_rerank?: boolean;
+	used_hybrid?: boolean;
 	doc_id?: string | null;
 	chunk_index?: number | null;
 	filename?: string | null;
@@ -68,6 +73,7 @@ export type ApiAskResponse = {
 export type ApiLibrary = {
 	id: string;
 	name: string;
+	description?: string | null;
 	status: "ready" | "indexing" | "empty" | string;
 	doc_count: number;
 	ready_count: number;
@@ -83,13 +89,17 @@ export type ApiDocument = {
 	content_type: string;
 	status: "processing" | "ready" | "failed" | string;
 	chunk_count: number;
+	size_bytes?: number | null;
 	error?: string | null;
+	storage_key?: string | null;
+	has_file?: boolean;
 	parser_report?: {
 		partial?: boolean;
 		failed_pages?: number[];
 		needs_ocr_pages?: number[];
 		warnings?: string[];
 		notes?: string;
+		parser?: string;
 		[key: string]: unknown;
 	} | null;
 	created_at: string;
@@ -105,6 +115,8 @@ export type ApiUploadResponse = {
 	status: string;
 	mode: string;
 	simulated: boolean;
+	/** true when server accepted async ingest (HTTP 202) */
+	accepted?: boolean;
 	error?: string | null;
 	notice?: string | null;
 	pipeline?: string | null;
@@ -180,6 +192,7 @@ export async function fetchDocuments(
 
 export async function createLibrary(input: {
 	name: string;
+	description?: string;
 	libraryId?: string;
 }): Promise<ApiLibrary> {
 	const response = await fetch(`${getApiBaseUrl()}/v1/libraries`, {
@@ -187,19 +200,70 @@ export async function createLibrary(input: {
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({
 			name: input.name,
+			description: input.description?.trim() || null,
 			library_id: input.libraryId,
 		}),
 	});
 	if (!response.ok) {
 		const text = await response.text();
-		throw new Error(text || `create library ${response.status}`);
+		throw new Error(parseApiError(text) || `create library ${response.status}`);
 	}
 	return (await response.json()) as ApiLibrary;
 }
 
+export async function updateLibrary(input: {
+	libraryId: string;
+	name?: string;
+	description?: string | null;
+}): Promise<ApiLibrary> {
+	const body: { name?: string; description?: string | null } = {};
+	if (input.name !== undefined) body.name = input.name;
+	if (input.description !== undefined) {
+		body.description =
+			typeof input.description === "string"
+				? input.description.trim() || null
+				: null;
+	}
+	const response = await fetch(
+		`${getApiBaseUrl()}/v1/libraries/${encodeURIComponent(input.libraryId)}`,
+		{
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		},
+	);
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `update library ${response.status}`);
+	}
+	return (await response.json()) as ApiLibrary;
+}
+
+export async function deleteLibrary(libraryId: string): Promise<{
+	ok: boolean;
+	library_id: string;
+	deleted_documents: number;
+}> {
+	const response = await fetch(
+		`${getApiBaseUrl()}/v1/libraries/${encodeURIComponent(libraryId)}`,
+		{ method: "DELETE" },
+	);
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `delete library ${response.status}`);
+	}
+	return (await response.json()) as {
+		ok: boolean;
+		library_id: string;
+		deleted_documents: number;
+	};
+}
+
+/** 上传文档；未传 displayName 时后端以文件名作为显示名。 */
 export async function uploadDocument(input: {
 	libraryId: string;
 	file: File;
+	/** 可选；前端默认不传，兼容旧调用 */
 	displayName?: string;
 }): Promise<ApiUploadResponse> {
 	const form = new FormData();
@@ -212,11 +276,97 @@ export async function uploadDocument(input: {
 		method: "POST",
 		body: form,
 	});
-	if (!response.ok) {
+	// 200=同步完成；202=已入队异步索引
+	if (response.status !== 200 && response.status !== 202) {
 		const text = await response.text();
-		throw new Error(text || `upload ${response.status}`);
+		throw new Error(parseApiError(text) || `upload ${response.status}`);
 	}
 	return (await response.json()) as ApiUploadResponse;
+}
+
+export async function deleteDocument(docId: string): Promise<void> {
+	const response = await fetch(
+		`${getApiBaseUrl()}/v1/documents/${encodeURIComponent(docId)}`,
+		{ method: "DELETE" },
+	);
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `delete ${response.status}`);
+	}
+}
+
+export async function reindexDocument(docId: string): Promise<ApiUploadResponse> {
+	const response = await fetch(
+		`${getApiBaseUrl()}/v1/documents/${encodeURIComponent(docId)}/reindex`,
+		{ method: "POST" },
+	);
+	if (response.status !== 200 && response.status !== 202) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `reindex ${response.status}`);
+	}
+	return (await response.json()) as ApiUploadResponse;
+}
+
+/** 用新文件覆盖同一 doc_id：清旧向量与原文后重新索引 */
+export async function replaceDocument(input: {
+	docId: string;
+	file: File;
+}): Promise<ApiUploadResponse> {
+	const form = new FormData();
+	form.append("file", input.file);
+	const response = await fetch(
+		`${getApiBaseUrl()}/v1/documents/${encodeURIComponent(input.docId)}/replace`,
+		{ method: "POST", body: form },
+	);
+	if (response.status !== 200 && response.status !== 202) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `replace ${response.status}`);
+	}
+	return (await response.json()) as ApiUploadResponse;
+}
+
+export async function downloadDocument(
+	docId: string,
+	filename?: string,
+): Promise<void> {
+	const response = await fetch(
+		`${getApiBaseUrl()}/v1/documents/${encodeURIComponent(docId)}/download`,
+		{ method: "GET", cache: "no-store" },
+	);
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `download ${response.status}`);
+	}
+	const blob = await response.blob();
+	const disposition = response.headers.get("content-disposition");
+	const fromHeader = disposition?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i)?.[1];
+	const resolvedName = filename || (fromHeader ? decodeURIComponent(fromHeader) : docId);
+	const url = URL.createObjectURL(blob);
+	try {
+		const anchor = document.createElement("a");
+		anchor.href = url;
+		anchor.download = resolvedName;
+		anchor.click();
+	} finally {
+		URL.revokeObjectURL(url);
+	}
+}
+
+function parseApiError(text: string): string {
+	const trimmed = text.trim();
+	if (!trimmed) return "";
+	try {
+		const json = JSON.parse(trimmed) as { detail?: unknown };
+		if (typeof json.detail === "string") return json.detail;
+		if (json.detail && typeof json.detail === "object") {
+			const detail = json.detail as { message?: string };
+			if (typeof detail.message === "string") return detail.message;
+			return JSON.stringify(json.detail);
+		}
+	} catch {
+		/* plain text */
+	}
+	return trimmed;
 }
 
 export async function fetchArchive(input?: {

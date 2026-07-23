@@ -1,4 +1,4 @@
-/** Display helpers for desk timestamps and durations (Northline mono chips). */
+/** Display helpers for timestamps and durations (Northline mono chips). */
 
 export function formatDateTime(
 	value: string | number | Date | null | undefined,
@@ -29,4 +29,22 @@ export function formatDurationMs(ms: number | null | undefined): string {
 export function formatScore(score: number | null | undefined): string {
 	if (score == null || Number.isNaN(score)) return "—";
 	return score.toFixed(2);
+}
+
+/** Human-readable file size, e.g. 340 KB / 1.2 MB. Null/unknown → — */
+export function formatFileSize(bytes: number | null | undefined): string {
+	if (bytes == null || Number.isNaN(bytes) || bytes < 0) return "—";
+	if (bytes < 1024) return `${Math.round(bytes)} B`;
+	const units = ["KB", "MB", "GB"] as const;
+	let value = bytes / 1024;
+	let unit = 0;
+	while (value >= 1024 && unit < units.length - 1) {
+		value /= 1024;
+		unit += 1;
+	}
+	const formatted =
+		value >= 100
+			? String(Math.round(value))
+			: value.toFixed(1).replace(/\.0$/, "");
+	return `${formatted} ${units[unit]}`;
 }
