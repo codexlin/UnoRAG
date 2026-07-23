@@ -42,10 +42,21 @@ The provider contract also defines the OIDC callback boundary; an OIDC adapter
 can replace local authentication without changing the RAG context.
 
 `app.libraries` is the business source of truth and is served by native Next.js
-routes. Successful ingest responses and document list probes project RAG
-document state into `app.documents`. Existing FastAPI `public.*` metadata is a
-derived compatibility representation until the outbox and idempotent job
-protocol replace synchronous projection.
+routes. Library mutations transactionally append ordered events to
+`app.outbox_events`. Independent workers claim events with
+`FOR UPDATE SKIP LOCKED`, call idempotent FastAPI projection endpoints using a
+signed service context, retry transient failures, and retain terminal failure
+details for operators. Successful ingest responses and document list probes
+still project RAG document state into `app.documents`; document lifecycle
+callbacks will move to the same protocol when asynchronous ingest ownership is
+finalized. Existing FastAPI `public.*` metadata remains a derived compatibility
+representation.
+
+The compatibility `rag_library_id` remains globally unique while FastAPI uses
+it as the primary key. Product-facing names are not unique. Supporting the
+same external library identifier in multiple organizations requires a future
+composite-key data-plane migration; it must not be simulated with scope-only
+control-plane uniqueness.
 
 Qdrant points require tenant, workspace, and ACL payload. Dense retrieval,
 BM25 corpus scroll, table-group loading, document deletion, and session memory
@@ -84,6 +95,7 @@ customer-owned in private deployments.
 - Heavy parsing and model calls remain outside the Next.js request process.
 - Internal API versioning, idempotency, retries, and callbacks become explicit
   engineering requirements.
-- The initial migration keeps two metadata representations temporarily, but
-  only one system writes each physical table.
+- The migration keeps two metadata representations temporarily. Library
+  projection is transactionally queued and eventually consistent; each system
+  still writes only the tables it owns.
 - Existing Qdrant data needs reindexing before enabling authenticated retrieval.

@@ -6,7 +6,11 @@ import pytest
 
 from app.security.access_scope import AccessScope
 from app.services.ingest import jobs
-from app.services.metadata import JsonMetadataStore, get_metadata_store
+from app.services.metadata import (
+	JsonMetadataStore,
+	_sqlalchemy_database_url,
+	get_metadata_store,
+)
 from app.settings import Settings
 
 
@@ -16,6 +20,30 @@ def scope(workspace_id: str, *, tenant_id: str = "tenant-a") -> AccessScope:
 		workspace_id=workspace_id,
 		principal_id=f"user-{workspace_id}",
 	)
+
+
+@pytest.mark.parametrize(
+	("configured", "resolved"),
+	[
+		(
+			"postgresql://user:pass@db/meriknow",
+			"postgresql+psycopg://user:pass@db/meriknow",
+		),
+		(
+			"postgres://user:pass@db/meriknow",
+			"postgresql+psycopg://user:pass@db/meriknow",
+		),
+		(
+			"postgresql+psycopg://user:pass@db/meriknow",
+			"postgresql+psycopg://user:pass@db/meriknow",
+		),
+	],
+)
+def test_postgres_urls_use_the_declared_psycopg3_driver(
+	configured: str,
+	resolved: str,
+) -> None:
+	assert _sqlalchemy_database_url(configured) == resolved
 
 
 def test_library_and_document_metadata_are_workspace_scoped(tmp_path: Path) -> None:

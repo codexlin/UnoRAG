@@ -38,6 +38,7 @@ def _signed_headers(
 	tenant_id: str = "org-1",
 	workspace_id: str = "ws-1",
 	principal_id: str = "user-1",
+	auth_source: str = "session",
 ) -> dict[str, str]:
 	now = int(time.time())
 	request_id = jti or str(uuid4())
@@ -50,7 +51,7 @@ def _signed_headers(
 		"group_ids": ["group-1"],
 		"request_id": request_id,
 		"jti": request_id,
-		"auth_source": "session",
+		"auth_source": auth_source,
 		"method": method,
 		"target": target,
 		"body_sha256": hashlib.sha256(body).hexdigest() if body is not None else None,
@@ -258,3 +259,36 @@ def test_production_settings_fail_closed() -> None:
 			internal_auth_secret=TEST_SECRET,
 			internal_auth_replay_backend="memory",
 		)
+
+
+def test_production_accepts_signed_service_context(monkeypatch) -> None:
+	monkeypatch.setenv("APP_ENV", "production")
+	monkeypatch.setenv("INTERNAL_AUTH_ENABLED", "true")
+	monkeypatch.setenv("INTERNAL_AUTH_SECRET", TEST_SECRET)
+	monkeypatch.setenv("INTERNAL_AUTH_REPLAY_BACKEND", "redis")
+	get_settings.cache_clear()
+	settings = Settings()
+
+	async def reserve_jti(*args, **kwargs) -> bool:
+		return True
+
+	monkeypatch.setattr(
+		"app.security.internal_context._reserve_jti",
+		reserve_jti,
+	)
+	app.dependency_overrides[get_settings] = lambda: settings
+	try:
+		client = TestClient(app)
+		response = client.get(
+			"/v1/libraries",
+			headers=_signed_headers(
+				method="GET",
+				target="/v1/libraries",
+				auth_source="service",
+			),
+		)
+	finally:
+		app.dependency_overrides.pop(get_settings, None)
+		get_settings.cache_clear()
+
+	assert response.status_code == 200

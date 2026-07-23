@@ -20,6 +20,14 @@ LibraryStatus = Literal["ready", "indexing", "empty"]
 DocumentStatus = Literal["processing", "ready", "failed"]
 
 
+def _sqlalchemy_database_url(database_url: str) -> str:
+	if database_url.startswith("postgresql://"):
+		return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+	if database_url.startswith("postgres://"):
+		return database_url.replace("postgres://", "postgresql+psycopg://", 1)
+	return database_url
+
+
 def _now_iso() -> str:
 	return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -1293,7 +1301,7 @@ def get_metadata_store(settings: Any | None = None) -> MetadataStore:
 				"Start Postgres via `docker compose up -d`, or set METADATA_BACKEND=json only for local tests."
 			)
 		try:
-			_store = SqlAlchemyMetadataStore(database_url)
+			_store = SqlAlchemyMetadataStore(_sqlalchemy_database_url(database_url))
 		except Exception as exc:
 			logger.exception("metadata.postgres_failed")
 			raise RuntimeError(

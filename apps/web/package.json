@@ -13,7 +13,10 @@
 		"db:migrate": "drizzle-kit migrate",
 		"db:bootstrap": "node scripts/bootstrap-control-plane.mjs",
 		"db:check": "drizzle-kit check",
-		"db:studio": "drizzle-kit studio"
+		"db:studio": "drizzle-kit studio",
+		"outbox:once": "node scripts/process-outbox.mjs",
+		"outbox:run": "node scripts/process-outbox.mjs --watch",
+		"outbox:reconcile": "node scripts/reconcile-outbox.mjs"
 	},
 	"dependencies": {
 		"@base-ui/react": "^1.3.0",

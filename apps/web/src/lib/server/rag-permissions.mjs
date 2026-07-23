@@ -19,3 +19,7 @@ export function requiresLibraryWritePermission(method, pathSegments) {
 			(pathSegments.length === 3 && pathSegments[2] === "stream"));
 	return !isAskRequest;
 }
+
+export function isInternalRagPath(pathSegments) {
+	return pathSegments[0] === "v1" && pathSegments[1] === "internal";
+}

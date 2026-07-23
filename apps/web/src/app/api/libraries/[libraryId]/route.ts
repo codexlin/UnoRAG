@@ -1,14 +1,15 @@
+import { randomUUID } from "node:crypto";
+
 import { and, eq } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import { libraries } from "@/db/schema";
+import { libraries, outboxEvents } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
 	canManageLibraries,
 	canWriteLibraries,
 	findAuthorizedLibrary,
 } from "@/lib/server/library-access";
-import { proxyRagRequest } from "@/lib/server/rag-proxy";
 
 type RouteContext = {
 	params: Promise<{ libraryId: string }>;
@@ -59,25 +60,45 @@ export async function PATCH(request: Request, context: RouteContext) {
 		);
 	}
 	const db = getDatabase();
-	const [updated] = await db
-		.update(libraries)
-		.set({
-			...(body.name !== undefined
-				? { name: body.name.trim().slice(0, 256) }
-				: {}),
-			...(body.description !== undefined
-				? { description: body.description?.trim().slice(0, 2000) || null }
-				: {}),
-			updatedAt: new Date(),
-		})
-		.where(
-			and(
-				eq(libraries.id, current.id),
-				eq(libraries.organizationId, identity.tenantId),
-				eq(libraries.workspaceId, identity.workspaceId),
-			),
-		)
-		.returning();
+	const now = new Date();
+	const updated = await db.transaction(async (tx) => {
+		const [row] = await tx
+			.update(libraries)
+			.set({
+				...(body.name !== undefined
+					? { name: body.name.trim().slice(0, 256) }
+					: {}),
+				...(body.description !== undefined
+					? { description: body.description?.trim().slice(0, 2000) || null }
+					: {}),
+				updatedAt: now,
+			})
+			.where(
+				and(
+					eq(libraries.id, current.id),
+					eq(libraries.organizationId, identity.tenantId),
+					eq(libraries.workspaceId, identity.workspaceId),
+				),
+			)
+			.returning();
+		await tx.insert(outboxEvents).values({
+			organizationId: identity.tenantId,
+			workspaceId: identity.workspaceId,
+			aggregateType: "library",
+			aggregateId: row.ragLibraryId,
+			eventType: "library.upsert",
+			idempotencyKey: `library.upsert:${row.ragLibraryId}:${randomUUID()}`,
+			payload: {
+				library_id: row.ragLibraryId,
+				name: row.name,
+				description: row.description,
+				principal_id: identity.principalId,
+			},
+			createdAt: now,
+			updatedAt: now,
+		});
+		return row;
+	});
 	return Response.json(toApiLibrary(updated));
 }
 
@@ -100,43 +121,37 @@ export async function DELETE(request: Request, context: RouteContext) {
 	if (!current) {
 		return Response.json({ detail: "library not found" }, { status: 404 });
 	}
-	const cleanupRequest = new Request(
-		new URL(
-			`/api/rag/v1/libraries/${encodeURIComponent(libraryId)}`,
-			request.url,
-		),
-		{
-			method: "DELETE",
-			headers: { cookie: request.headers.get("cookie") ?? "" },
-		},
-	);
-	const cleanup = await proxyRagRequest(cleanupRequest, [
-		"v1",
-		"libraries",
-		libraryId,
-	]);
-	if (!cleanup.ok && cleanup.status !== 404) {
-		return Response.json(
-			{ detail: "RAG library cleanup failed" },
-			{ status: 502 },
-		);
-	}
-	const cleanupResult = cleanup.ok
-		? ((await cleanup.clone().json()) as { deleted_documents?: number })
-		: {};
 	const db = getDatabase();
-	await db
-		.delete(libraries)
-		.where(
-			and(
-				eq(libraries.id, current.id),
-				eq(libraries.organizationId, identity.tenantId),
-				eq(libraries.workspaceId, identity.workspaceId),
-			),
-		);
+	const now = new Date();
+	await db.transaction(async (tx) => {
+		await tx.insert(outboxEvents).values({
+			organizationId: identity.tenantId,
+			workspaceId: identity.workspaceId,
+			aggregateType: "library",
+			aggregateId: current.ragLibraryId,
+			eventType: "library.delete",
+			idempotencyKey: `library.delete:${current.ragLibraryId}:${randomUUID()}`,
+			payload: {
+				library_id: current.ragLibraryId,
+				principal_id: identity.principalId,
+			},
+			createdAt: now,
+			updatedAt: now,
+		});
+		await tx
+			.delete(libraries)
+			.where(
+				and(
+					eq(libraries.id, current.id),
+					eq(libraries.organizationId, identity.tenantId),
+					eq(libraries.workspaceId, identity.workspaceId),
+				),
+			);
+	});
 	return Response.json({
 		ok: true,
 		library_id: libraryId,
-		deleted_documents: cleanupResult.deleted_documents ?? 0,
+		deleted_documents: current.docCount,
+		cleanup_queued: true,
 	});
 }

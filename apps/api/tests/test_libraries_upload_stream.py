@@ -67,6 +67,24 @@ def test_update_library_name_and_description() -> None:
 	assert cleared.json()["name"] == "已改名库"
 
 
+def test_internal_library_projection_is_idempotent() -> None:
+	created = client.put(
+		"/v1/internal/projections/libraries/lib-projection-test",
+		json={"name": "Initial", "description": "v1"},
+	)
+	updated = client.put(
+		"/v1/internal/projections/libraries/lib-projection-test",
+		json={"name": "Updated", "description": None},
+	)
+
+	assert created.status_code == 200
+	assert created.json()["name"] == "Initial"
+	assert updated.status_code == 200
+	assert updated.json()["name"] == "Updated"
+	assert updated.json()["description"] is None
+	assert client.get("/v1/libraries/lib-projection-test").json()["name"] == "Updated"
+
+
 def test_delete_library_with_documents() -> None:
 	lib_id = create_library(client, name="待删除库", library_id="lib-delete-test")
 

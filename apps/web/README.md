@@ -64,4 +64,32 @@ Deployment tooling must inject the variables from a customer-owned secret store.
 `/api/libraries` route. FastAPI `public.*` library/document rows remain derived
 compatibility data during the migration.
 
+## Outbox projection
+
+Library create, update, and delete operations write `app.libraries` and an
+`app.outbox_events` record in one PostgreSQL transaction. Run at least one
+worker process in every deployment:
+
+```bash
+pnpm outbox:run
+```
+
+Workers claim aggregate heads with `FOR UPDATE SKIP LOCKED`, preserve event
+order per library, sign requests with a `service` context, retry transient
+failures with bounded exponential backoff, and move exhausted events to
+`dead`. Operations can inspect `status`, `attempts`, and `last_error` in
+`app.outbox_events`.
+
+After upgrading an installation that already has libraries, enqueue an
+idempotent projection for each current row:
+
+```bash
+pnpm outbox:reconcile
+pnpm outbox:once
+```
+
+`outbox:reconcile` also revives matching dead reconciliation events. The
+browser-facing RAG proxy denies `/v1/internal/*`; only HMAC-authenticated
+service callers can invoke projection endpoints directly.
+
 See [ADR-0004](../../docs/adr/0004-nextjs-control-plane.md).

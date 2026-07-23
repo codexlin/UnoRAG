@@ -131,6 +131,11 @@ class LibraryUpdateRequest(BaseModel):
 	description: str | None = Field(default=None, max_length=2000)
 
 
+class LibraryProjectionRequest(BaseModel):
+	name: str = Field(min_length=1, max_length=256)
+	description: str | None = Field(default=None, max_length=2000)
+
+
 class LibraryResponse(BaseModel):
 	id: str
 	name: str

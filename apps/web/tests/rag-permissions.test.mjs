@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { requiresLibraryWritePermission } from "../src/lib/server/rag-permissions.mjs";
+import {
+	isInternalRagPath,
+	requiresLibraryWritePermission,
+} from "../src/lib/server/rag-permissions.mjs";
 
 test("read and ask requests do not require library write permission", () => {
 	assert.equal(requiresLibraryWritePermission("GET", ["v1", "archive"]), false);
@@ -43,4 +46,12 @@ test("RAG mutations require library write permission", () => {
 		requiresLibraryWritePermission("POST", ["v1", "future-write-endpoint"]),
 		true,
 	);
+});
+
+test("internal projection paths are never browser-exposed", () => {
+	assert.equal(
+		isInternalRagPath(["v1", "internal", "projections", "libraries"]),
+		true,
+	);
+	assert.equal(isInternalRagPath(["v1", "libraries"]), false);
 });

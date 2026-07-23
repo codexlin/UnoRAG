@@ -1,5 +1,6 @@
 import {
 	bigint,
+	bigserial,
 	foreignKey,
 	index,
 	integer,
@@ -181,10 +182,7 @@ export const libraries = appSchema.table(
 		...timestamps,
 	},
 	(table) => [
-		uniqueIndex("libraries_org_rag_id_uq").on(
-			table.organizationId,
-			table.ragLibraryId,
-		),
+		uniqueIndex("libraries_rag_id_uq").on(table.ragLibraryId),
 		index("libraries_workspace_idx").on(table.workspaceId, table.updatedAt),
 	],
 );
@@ -344,6 +342,49 @@ export const jobs = appSchema.table(
 		),
 		index("jobs_claim_idx").on(table.status, table.createdAt),
 		index("jobs_workspace_idx").on(table.workspaceId, table.updatedAt),
+	],
+);
+
+export const outboxEvents = appSchema.table(
+	"outbox_events",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		sequence: bigserial("sequence", { mode: "number" }),
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		aggregateType: varchar("aggregate_type", { length: 64 }).notNull(),
+		aggregateId: varchar("aggregate_id", { length: 256 }).notNull(),
+		eventType: varchar("event_type", { length: 128 }).notNull(),
+		idempotencyKey: varchar("idempotency_key", { length: 512 }).notNull(),
+		payload: jsonb("payload").default({}).notNull(),
+		status: varchar("status", { length: 32 }).default("pending").notNull(),
+		attempts: integer("attempts").default(0).notNull(),
+		availableAt: timestamp("available_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		lockedBy: varchar("locked_by", { length: 256 }),
+		lockedAt: timestamp("locked_at", { withTimezone: true }),
+		lastError: text("last_error"),
+		processedAt: timestamp("processed_at", { withTimezone: true }),
+		...timestamps,
+	},
+	(table) => [
+		uniqueIndex("outbox_events_idempotency_uq").on(table.idempotencyKey),
+		index("outbox_events_claim_idx").on(
+			table.status,
+			table.availableAt,
+			table.sequence,
+		),
+		index("outbox_events_aggregate_idx").on(
+			table.aggregateType,
+			table.aggregateId,
+			table.sequence,
+		),
+		index("outbox_events_workspace_idx").on(
+			table.organizationId,
+			table.workspaceId,
+			table.createdAt,
+		),
 	],
 );
 

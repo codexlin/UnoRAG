@@ -9,7 +9,10 @@ import {
 	removeRagDocument,
 	syncRagDocument,
 } from "./library-access";
-import { requiresLibraryWritePermission } from "./rag-permissions.mjs";
+import {
+	isInternalRagPath,
+	requiresLibraryWritePermission,
+} from "./rag-permissions.mjs";
 
 const REQUEST_HEADER_DENYLIST = new Set([
 	"authorization",
@@ -117,6 +120,9 @@ export async function proxyRagRequest(
 			{ detail: "authentication required" },
 			{ status: 401 },
 		);
+	}
+	if (identity && isInternalRagPath(safeSegments)) {
+		return Response.json({ detail: "RAG path not exposed" }, { status: 404 });
 	}
 	if (
 		identity &&

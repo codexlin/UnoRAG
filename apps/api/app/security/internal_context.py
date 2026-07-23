@@ -303,10 +303,10 @@ async def require_internal_context(
 				detail="internal request body mismatch",
 			)
 	if settings.app_env.strip().lower() in {"prod", "production"}:
-		if context.auth_source != "session":
+		if context.auth_source not in {"session", "service"}:
 			raise HTTPException(
 				status_code=status.HTTP_403_FORBIDDEN,
-				detail="production requires authenticated session context",
+				detail="production requires authenticated session or service context",
 			)
 	now = int(time.time())
 	if not await _reserve_jti(context, settings=settings, now=now):

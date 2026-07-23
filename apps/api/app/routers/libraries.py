@@ -11,6 +11,7 @@ from app.security.internal_context import RequestContext, require_internal_conte
 from app.schemas import (
 	DocumentResponse,
 	LibraryCreateRequest,
+	LibraryProjectionRequest,
 	LibraryResponse,
 	LibraryUpdateRequest,
 	UploadResponse,
@@ -62,6 +63,44 @@ def _unavailable_detail(capability, *, message: str) -> dict:
 		"ask_ready": capability.ask_ready,
 		"reasons": capability.reasons,
 	}
+
+
+@router.put(
+	"/internal/projections/libraries/{library_id}",
+	response_model=LibraryResponse,
+)
+def upsert_library_projection(
+	library_id: str,
+	body: LibraryProjectionRequest,
+	meta: MetadataStore = Depends(get_meta),
+	access_scope: AccessScope = Depends(get_access_scope),
+) -> LibraryResponse:
+	"""Idempotent Control Plane -> RAG metadata projection."""
+	current = meta.get_library(library_id, scope=access_scope)
+	if current is None:
+		try:
+			row = meta.create_library(
+				name=body.name,
+				library_id=library_id,
+				description=body.description,
+				scope=access_scope,
+			)
+		except ValueError:
+			# A concurrent replay may have created the same global RAG id.
+			row = meta.get_library(library_id, scope=access_scope)
+			if row is None:
+				raise HTTPException(status_code=409, detail="library id conflict") from None
+	else:
+		row = meta.update_library(
+			library_id,
+			name=body.name,
+			description=body.description,
+			update_description=True,
+			scope=access_scope,
+		)
+	if row is None:
+		raise HTTPException(status_code=409, detail="library projection failed")
+	return LibraryResponse.model_validate(row)
 
 
 @router.get("/libraries", response_model=list[LibraryResponse])
