@@ -69,6 +69,16 @@ def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
 	for item in raw_citations:
 		full_text = str(item.get("body") or item.get("text") or item.get("snippet") or "")
 		snippet = str(item.get("snippet") or full_text[:280])
+
+		def _opt_float(key: str) -> float | None:
+			raw = item.get(key)
+			if raw is None:
+				return None
+			try:
+				return float(raw)
+			except (TypeError, ValueError):
+				return None
+
 		models.append(
 			Citation.model_validate(
 				{
@@ -85,6 +95,11 @@ def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
 					"text": full_text,
 					"body": full_text,
 					"score": item["score"],
+					"dense_score": _opt_float("dense_score"),
+					"bm25_score": _opt_float("bm25_score"),
+					"rrf_score": _opt_float("rrf_score"),
+					"used_rerank": bool(item.get("used_rerank")),
+					"used_hybrid": bool(item.get("used_hybrid")),
 					"doc_id": item.get("doc_id"),
 					"chunk_index": item.get("chunk_index"),
 					"filename": item.get("filename"),
@@ -141,7 +156,7 @@ def _retrieval_visibility(debug: dict[str, Any]) -> dict[str, Any]:
 
 def _library_label(library_id: str | None) -> str:
 	if not library_id:
-		return "当前文库"
+		return "当前知识库"
 	return library_id
 
 
