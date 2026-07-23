@@ -2,6 +2,8 @@
 
 import { usePathname } from "next/navigation";
 import { getAppNavItem } from "@/components/app/nav-items";
+import { ThemeToggle } from "@/components/app/theme-toggle";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import { useHealth } from "@/hooks/use-health";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -24,12 +26,17 @@ export function AppTopbar() {
 	}
 
 	return (
-		<header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border/80 bg-card/80 px-5 backdrop-blur-md">
-			<div className="min-w-0">
-				<p className="font-mono text-[10px] tracking-[0.18em] text-cite uppercase">
-					{current.code} · {current.label}
-				</p>
-				<p className="truncate text-sm text-muted-foreground">{current.hint}</p>
+		<header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border/80 bg-card/80 px-3 backdrop-blur-md sm:px-5">
+			<div className="flex min-w-0 items-center gap-2">
+				<SidebarTrigger className="-ml-0.5" />
+				<div className="min-w-0">
+					<p className="text-meta font-mono tracking-[0.14em] text-cite">
+						{current.label}
+					</p>
+					<p className="text-ui truncate text-muted-foreground">
+						{current.hint}
+					</p>
+				</div>
 			</div>
 			<div className="flex min-w-0 items-center gap-2 sm:gap-3">
 				<div className="hidden flex-col items-end gap-0.5 md:flex">
@@ -51,7 +58,7 @@ export function AppTopbar() {
 								: `API 离线${bits.length ? ` · ${bits.join(" · ")}` : ""}`}
 					</span>
 					{(healthProbedAt || healthProbeMs != null) && (
-						<span className="font-mono text-[10px] text-muted-foreground/80">
+						<span className="text-meta font-mono text-muted-foreground/80">
 							探测 {formatDateTime(healthProbedAt)}
 							{healthProbeMs != null
 								? ` · ${formatDurationMs(healthProbeMs)}`
@@ -59,9 +66,7 @@ export function AppTopbar() {
 						</span>
 					)}
 				</div>
-				<span className="flex size-8 items-center justify-center rounded-md border border-border bg-background font-mono text-[11px] font-medium text-primary transition-colors hover:border-primary/40">
-					MK
-				</span>
+				<ThemeToggle />
 			</div>
 		</header>
 	);

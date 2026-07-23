@@ -130,7 +130,46 @@
 @layer base {
 	* {
 		@apply border-border outline-ring/50;
+		/* Firefox — thin theme-aware bars; macOS overlay scrollbars ignore most of this */
+		scrollbar-width: thin;
+		scrollbar-color: color-mix(
+				in oklab,
+				var(--muted-foreground) 42%,
+				transparent
+			)
+			transparent;
 	}
+
+	*::-webkit-scrollbar {
+		width: 10px;
+		height: 10px;
+	}
+	*::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	*::-webkit-scrollbar-thumb {
+		background-color: color-mix(
+			in oklab,
+			var(--muted-foreground) 32%,
+			transparent
+		);
+		border-radius: 999px;
+		border: 2px solid transparent;
+		background-clip: content-box;
+	}
+	*::-webkit-scrollbar-thumb:hover {
+		background-color: color-mix(
+			in oklab,
+			var(--muted-foreground) 52%,
+			transparent
+		);
+		border: 2px solid transparent;
+		background-clip: content-box;
+	}
+	*::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+
 	body {
 		@apply bg-background text-foreground;
 		background-image:
@@ -162,6 +201,7 @@
 		background-attachment: fixed;
 	}
 	html {
+		/* Keep 16px root so Tailwind rem scale stays predictable */
 		@apply font-sans;
 	}
 	h1,
@@ -195,7 +235,25 @@
 		animation-delay: 120ms;
 	}
 	.meta-chip {
-		@apply inline-flex items-center rounded-md border border-border/70 bg-background/80 px-1.5 py-0.5 font-mono text-[10px] tracking-wide text-muted-foreground;
+		@apply inline-flex items-center rounded-md border border-border/70 bg-background/80 px-1.5 py-0.5 font-mono text-[11px] tracking-wide text-muted-foreground;
+	}
+
+	/*
+	 * Type scale — enterprise KB reading
+	 * answer 15px · ui 13px · meta 11px · micro 10px (cite badges only)
+	 */
+	.text-answer {
+		font-size: 0.9375rem;
+		line-height: 1.7;
+	}
+	.text-ui {
+		font-size: 0.8125rem;
+		line-height: 1.5;
+	}
+	.text-meta {
+		font-size: 0.6875rem;
+		line-height: 1.4;
+		letter-spacing: 0.02em;
 	}
 }
 

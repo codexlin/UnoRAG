@@ -3,86 +3,138 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { APP_NAV_ITEMS } from "@/components/app/nav-items";
+import { AppNavUser } from "@/components/app/app-nav-user";
+import { MeriKnowMark } from "@/components/app/meriknow-logo";
+import {
+	type AppNavItem,
+	getAppNavItemsByGroup,
+} from "@/components/app/nav-items";
+import {
+	Sidebar,
+	SidebarContent,
+	SidebarFooter,
+	SidebarGroup,
+	SidebarGroupContent,
+	SidebarGroupLabel,
+	SidebarHeader,
+	SidebarMenu,
+	SidebarMenuButton,
+	SidebarMenuItem,
+	SidebarRail,
+} from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 
-export function AppSidebar() {
+const PRIMARY_NAV = getAppNavItemsByGroup("nav");
+const SETTINGS_NAV = getAppNavItemsByGroup("settings");
+
+function NavLink({ item }: { item: AppNavItem }) {
 	const pathname = usePathname();
+	const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+	const Icon = item.icon;
 
 	return (
-		<aside className="flex w-[232px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar/90 backdrop-blur-sm">
-			<div className="flex h-14 items-center gap-2.5 border-b border-sidebar-border px-4">
-				<Link href="/" className="group flex min-w-0 items-baseline gap-2">
-					<span className="font-heading text-lg font-semibold tracking-tight text-primary transition-colors group-hover:text-foreground">
-						MeriKnow
-					</span>
-					<span className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
-						desk
-					</span>
-				</Link>
-			</div>
+		<SidebarMenuItem>
+			<SidebarMenuButton
+				render={<Link href={item.href} />}
+				isActive={active}
+				tooltip={item.label}
+				className={cn(
+					"relative h-11 gap-3 overflow-visible rounded-lg px-2.5 text-[0.9375rem] font-medium",
+					/* 覆盖 SidebarMenuButton 默认的 width/height 过渡，只做轻量变色 */
+					"transition-[background-color,color]! duration-150! ease-out!",
+					"hover:bg-primary/12 hover:text-foreground",
+					"group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:overflow-hidden group-data-[collapsible=icon]:p-1.5!",
+					"data-active:bg-card data-active:font-medium data-active:text-foreground",
+					"data-active:hover:bg-card",
+					active && "bg-card text-foreground ring-1 ring-border/70",
+				)}
+			>
+				<span
+					className={cn(
+						"flex size-8 shrink-0 items-center justify-center rounded-md border [&_svg]:size-4",
+						"transition-[background-color,border-color,color] duration-150 ease-out",
+						"group-data-[collapsible=icon]:size-5 group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:[&_svg]:size-4",
+						active
+							? "border-primary/30 bg-primary/15 text-primary"
+							: "border-border/70 bg-background/70 text-muted-foreground group-hover/menu-button:border-primary/40 group-hover/menu-button:bg-primary/15 group-hover/menu-button:text-primary",
+					)}
+				>
+					<Icon aria-hidden />
+				</span>
+				<span className="truncate">{item.label}</span>
+				{active ? (
+					<span
+						className="absolute top-1/2 right-0 h-6 w-0.5 -translate-y-1/2 rounded-full bg-cite group-data-[collapsible=icon]:hidden"
+						aria-hidden
+					/>
+				) : null}
+			</SidebarMenuButton>
+		</SidebarMenuItem>
+	);
+}
 
-			<nav className="flex flex-1 flex-col gap-1 p-3" aria-label="工作台导航">
-				{APP_NAV_ITEMS.map((item) => {
-					const active =
-						pathname === item.href || pathname.startsWith(`${item.href}/`);
-					const Icon = item.icon;
-					return (
-						<Link
-							key={item.href}
-							href={item.href}
+export function AppSidebar() {
+	return (
+		<Sidebar
+			collapsible="icon"
+			variant="sidebar"
+			className="border-sidebar-border bg-sidebar/90 backdrop-blur-sm"
+		>
+			<SidebarHeader className="h-14 justify-center border-b border-sidebar-border px-2">
+				<SidebarMenu>
+					<SidebarMenuItem>
+						<SidebarMenuButton
+							size="lg"
+							render={<Link href="/" />}
+							tooltip="MeriKnow"
 							className={cn(
-								"group flex items-start gap-3 rounded-md border border-transparent px-2.5 py-2.5 transition-colors",
-								active
-									? "border-border bg-card text-foreground shadow-sm"
-									: "text-muted-foreground hover:border-border/70 hover:bg-card/60 hover:text-foreground",
+								"h-10 gap-2.5 rounded-lg px-2 hover:bg-primary/10",
+								"[&_svg]:size-7!",
+								"group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-1.5! group-data-[collapsible=icon]:[&_svg]:size-6!",
 							)}
 						>
-							<span
-								className={cn(
-									"mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border",
-									active
-										? "border-primary/25 bg-primary/10 text-primary"
-										: "border-border/80 bg-background/60 text-muted-foreground group-hover:text-foreground",
-								)}
-							>
-								<Icon className="size-4" aria-hidden />
+							<MeriKnowMark className="text-primary" />
+							<span className="font-heading text-lg font-semibold tracking-tight text-primary">
+								MeriKnow
 							</span>
-							<span className="min-w-0">
-								<span className="flex items-center gap-2">
-									<span className="font-mono text-[10px] tracking-wider text-muted-foreground">
-										{item.code}
-									</span>
-									<span className="text-sm font-medium text-foreground">
-										{item.label}
-									</span>
-								</span>
-								<span className="mt-0.5 block truncate text-xs text-muted-foreground">
-									{item.hint}
-								</span>
-							</span>
-							{active ? (
-								<span
-									className="ml-auto mt-1 h-8 w-0.5 shrink-0 rounded-full bg-cite"
-									aria-hidden
-								/>
-							) : null}
-						</Link>
-					);
-				})}
-			</nav>
+						</SidebarMenuButton>
+					</SidebarMenuItem>
+				</SidebarMenu>
+			</SidebarHeader>
 
-			<div className="border-t border-sidebar-border p-3">
-				<p className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
-					Workspace
-				</p>
-				<p className="mt-1 truncate text-sm font-medium text-foreground">
-					默认工作区
-				</p>
-				<p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
-					MeriKnow desk
-				</p>
-			</div>
-		</aside>
+			<SidebarContent className="pt-1">
+				<SidebarGroup>
+					<SidebarGroupLabel className="text-meta font-mono tracking-[0.14em] text-muted-foreground uppercase">
+						导航
+					</SidebarGroupLabel>
+					<SidebarGroupContent>
+						<SidebarMenu className="gap-1.5">
+							{PRIMARY_NAV.map((item) => (
+								<NavLink key={item.href} item={item} />
+							))}
+						</SidebarMenu>
+					</SidebarGroupContent>
+				</SidebarGroup>
+
+				{/* 紧挨主导航，不沉底 */}
+				<SidebarGroup>
+					<SidebarGroupLabel className="text-meta font-mono tracking-[0.14em] text-muted-foreground uppercase">
+						系统设置
+					</SidebarGroupLabel>
+					<SidebarGroupContent>
+						<SidebarMenu className="gap-1.5">
+							{SETTINGS_NAV.map((item) => (
+								<NavLink key={item.href} item={item} />
+							))}
+						</SidebarMenu>
+					</SidebarGroupContent>
+				</SidebarGroup>
+			</SidebarContent>
+
+			<SidebarFooter className="border-t border-sidebar-border p-2">
+				<AppNavUser />
+			</SidebarFooter>
+			<SidebarRail />
+		</Sidebar>
 	);
 }

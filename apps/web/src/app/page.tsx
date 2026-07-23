@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { MeriKnowLogo } from "@/components/app/meriknow-logo";
 import { buttonVariants } from "@/components/ui/button";
 import {
 	Card,
@@ -14,11 +15,9 @@ export default function Home() {
 	return (
 		<main className="relative mx-auto flex min-h-full w-full max-w-5xl flex-col gap-12 px-6 py-16 md:py-24">
 			<header className="flex items-center justify-between gap-4">
-				<div className="flex items-baseline gap-3">
-					<span className="font-heading text-2xl font-semibold tracking-tight text-primary">
-						MeriKnow
-					</span>
-					<span className="hidden font-mono text-[11px] tracking-[0.18em] text-muted-foreground uppercase sm:inline">
+				<div className="flex items-center gap-3">
+					<MeriKnowLogo size="lg" withWordmark wordmarkClassName="text-2xl" />
+					<span className="text-meta hidden font-mono tracking-[0.18em] text-muted-foreground uppercase sm:inline">
 						Northline
 					</span>
 				</div>
