@@ -81,6 +81,7 @@ class QdrantStore:
 			"rows",
 			"row_start",
 			"row_end",
+			"table_row_count",
 		)
 		from app.services.versioning import derive_document_version_id
 
@@ -213,41 +214,95 @@ class QdrantStore:
 
 		hits: list[dict[str, Any]] = []
 		for point in points:
-			payload = dict(point.payload or {})
 			score = float(getattr(point, "score", 0.0) or 0.0)
-			# Cosine similarity may be slightly outside [0, 1]; clamp for API schema.
-			score = max(0.0, min(1.0, score))
-			body = str(payload.get("body") or payload.get("text") or "")
-			hits.append(
-				{
-					"id": str(point.id),
-					"score": score,
-					"title": str(payload.get("title") or "未命名文档"),
-					"page": str(payload["page"]) if payload.get("page") is not None else None,
-					"page_start": payload.get("page_start"),
-					"page_end": payload.get("page_end"),
-					"section_path": payload.get("section_path"),
-					"preamble": payload.get("preamble"),
-					"table_id": payload.get("table_id"),
-					"headers": payload.get("headers") or [],
-					"rows": payload.get("rows") or [],
-					"row_start": payload.get("row_start"),
-					"row_end": payload.get("row_end"),
-					"snippet": body[:280],
-					"library_id": payload.get("library_id"),
-					"doc_id": payload.get("doc_id"),
-					"chunk_index": payload.get("chunk_index"),
-					"filename": payload.get("filename"),
-					"document_version_id": payload.get("document_version_id"),
-					"tenant_id": payload.get("tenant_id"),
-					"record_type": payload.get("record_type") or "chunk",
-					"record_id": payload.get("record_id"),
-					"source_chunk_ids": payload.get("source_chunk_ids") or [],
-					"source_node_ids": payload.get("source_node_ids") or [],
-					"text": body,
-					"body": body,
-				}
+			hits.append(self._payload_to_hit(point, score=score))
+		return hits
+
+	def _payload_to_hit(self, point: Any, *, score: float = 0.0) -> dict[str, Any]:
+		payload = dict(getattr(point, "payload", None) or {})
+		body = str(payload.get("body") or payload.get("text") or "")
+		clamped = max(0.0, min(1.0, float(score)))
+		return {
+			"id": str(point.id),
+			"score": clamped,
+			"title": str(payload.get("title") or "未命名文档"),
+			"page": str(payload["page"]) if payload.get("page") is not None else None,
+			"page_start": payload.get("page_start"),
+			"page_end": payload.get("page_end"),
+			"section_path": payload.get("section_path"),
+			"preamble": payload.get("preamble"),
+			"table_id": payload.get("table_id"),
+			"headers": payload.get("headers") or [],
+			"rows": payload.get("rows") or [],
+			"row_start": payload.get("row_start"),
+			"row_end": payload.get("row_end"),
+			"table_row_count": payload.get("table_row_count"),
+			"snippet": body[:280],
+			"library_id": payload.get("library_id"),
+			"doc_id": payload.get("doc_id"),
+			"chunk_index": payload.get("chunk_index"),
+			"filename": payload.get("filename"),
+			"document_version_id": payload.get("document_version_id"),
+			"tenant_id": payload.get("tenant_id"),
+			"record_type": payload.get("record_type") or "chunk",
+			"record_id": payload.get("record_id"),
+			"source_chunk_ids": payload.get("source_chunk_ids") or [],
+			"source_node_ids": payload.get("source_node_ids") or [],
+			"text": body,
+			"body": body,
+		}
+
+	def scroll_table_groups(
+		self,
+		*,
+		doc_id: str,
+		table_id: str,
+		document_version_id: str | None = None,
+		library_id: str | None = None,
+		limit: int = 10_000,
+	) -> list[dict[str, Any]]:
+		"""按表实例键拉取全部 table 行组（非向量 top_k），供全表聚合。"""
+		must: list[qm.Condition] = [
+			qm.FieldCondition(key="record_type", match=qm.MatchValue(value="table")),
+			qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id)),
+			qm.FieldCondition(key="table_id", match=qm.MatchValue(value=table_id)),
+		]
+		if document_version_id:
+			must.append(
+				qm.FieldCondition(
+					key="document_version_id",
+					match=qm.MatchValue(value=document_version_id),
+				)
 			)
+		if library_id:
+			must.append(
+				qm.FieldCondition(
+					key="library_id",
+					match=qm.MatchValue(value=library_id),
+				)
+			)
+		query_filter = qm.Filter(must=must)
+		hits: list[dict[str, Any]] = []
+		offset = None
+		while len(hits) < limit:
+			points, offset = self.client.scroll(
+				collection_name=self.collection,
+				scroll_filter=query_filter,
+				limit=min(256, limit - len(hits)),
+				offset=offset,
+				with_payload=True,
+				with_vectors=False,
+			)
+			for point in points:
+				hits.append(self._payload_to_hit(point, score=0.0))
+			if offset is None:
+				break
+		hits.sort(
+			key=lambda h: (
+				int(h["row_start"]) if h.get("row_start") is not None else 10**9,
+				int(h["row_end"]) if h.get("row_end") is not None else 10**9,
+			)
+		)
 		return hits
 
 	def list_chunks(

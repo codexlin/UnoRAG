@@ -289,6 +289,7 @@ class RetrievalService:
 					"rows": hit.get("rows") or [],
 					"row_start": hit.get("row_start"),
 					"row_end": hit.get("row_end"),
+					"table_row_count": hit.get("table_row_count"),
 					"snippet": hit.get("snippet") or body[:280],
 					"score": score,
 					"dense_score": hit.get("dense_score", hit.get("score")),
@@ -403,3 +404,19 @@ class RetrievalService:
 			item["index"] = index
 			item.setdefault("used_rerank", bool(reranked))
 		return final
+
+	def load_table_groups(
+		self,
+		*,
+		doc_id: str,
+		table_id: str,
+		document_version_id: str | None = None,
+		library_id: str | None = None,
+	) -> list[dict[str, Any]]:
+		"""按表实例键从 Qdrant 拉取全部行组（全表聚合用，不受 retrieve top_k 限制）。"""
+		return self.store.scroll_table_groups(
+			doc_id=doc_id,
+			table_id=table_id,
+			document_version_id=document_version_id,
+			library_id=library_id,
+		)

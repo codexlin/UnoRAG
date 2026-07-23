@@ -22,9 +22,11 @@ from app.services.runtime import RuntimeCapability, resolve_runtime
 from app.services.session_memory import SessionMemory, default_session_memory
 from app.services.table_query import (
 	build_table_query_plan,
+	citations_with_matched_evidence,
 	execute_table_query,
 	looks_like_numeric_table_query,
-	merge_table_hits_for_execute,
+	prepare_table_for_execute,
+	table_instance_key,
 )
 from app.settings import Settings, get_settings
 
@@ -32,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 RetrieveFn = Callable[..., list[dict[str, Any]]]
 GenerateFn = Callable[[str, list[dict[str, Any]]], str]
+LoadTableGroupsFn = Callable[..., list[dict[str, Any]]]
 
 
 class AskState(TypedDict, total=False):
@@ -275,6 +278,7 @@ def stub_retrieve(
 			item["rows"] = [["甲公司", "120000"], ["乙公司", "80000"]]
 			item["row_start"] = 0
 			item["row_end"] = 1
+			item["table_row_count"] = 2
 			item["body"] = "供应商 | 总价\n甲公司 | 120000\n乙公司 | 80000"
 			item["text"] = item["body"]
 			item["snippet"] = item["body"][:280]
@@ -340,6 +344,8 @@ def _format_table_generate_context(
 			f"operation={execution.get('operation')} column={execution.get('column')} "
 			f"operator={execution.get('operator')} value={execution.get('value')}\n"
 			f"answer_text={execution.get('answer_text')}\n"
+			f"matched_count={execution.get('matched_count')} "
+			f"matched_rows_truncated={execution.get('matched_rows_truncated')}\n"
 			f"matched_rows={execution.get('matched_rows')}"
 		)
 	parts.append(f"用户问题：{question}")
@@ -358,6 +364,7 @@ def build_ask_graph(
 	retrieve_fn: RetrieveFn,
 	generate_fn: GenerateFn,
 	mode: str,
+	load_table_groups_fn: LoadTableGroupsFn | None = None,
 ):
 	min_score = float(settings.answer_min_score)
 	max_retries = max(0, int(settings.max_retrieve_retries))
@@ -482,69 +489,126 @@ def build_ask_graph(
 		}
 
 	def table_execute_node(state: AskState) -> AskState:
-		"""代码侧过滤/聚合；不确定数值问法 → clarify，禁止 LLM 心算。"""
+		"""定位表实例 → 全表加载 → 代码侧过滤/聚合；缺组/不确定 → clarify。"""
 		citations = list(state.get("citations") or [])
 		question = state.get("question") or ""
-		merged = merge_table_hits_for_execute(citations)
+		merged = prepare_table_for_execute(
+			citations,
+			load_table_groups=load_table_groups_fn,
+			library_id=state.get("library_id"),
+		)
 		headers = list(merged.get("headers") or [])
+		table_complete = bool(merged.get("complete"))
 		# 用真实表头 refinement plan
 		base_plan = dict(state.get("table_query_plan") or {})
 		refined = build_table_query_plan(question, headers=headers or None)
 		# 若初始已自信且 refinement 因缺 headers 仍自信，保留；否则用 refined
 		tq = refined if headers else base_plan
-		execution = (
-			execute_table_query(
+
+		if headers and table_complete:
+			execution = execute_table_query(
 				tq,
 				headers=headers,
 				rows=list(merged.get("rows") or []),
 				row_offset=int(merged.get("row_offset") or 0),
+				collect_evidence_indices=True,
 			)
-			if headers
-			else {
+		elif headers and not table_complete:
+			# fail closed：禁止在 top_k 子集上聚合后标 table_exec_ok
+			execution = {
+				"ok": False,
+				"operation": str(tq.get("operation") or "fallback"),
+				"matched_rows": [],
+				"reason": f"table_incomplete:{merged.get('reason') or 'unknown'}",
+				"group_count": merged.get("group_count"),
+				"load_source": merged.get("load_source"),
+			}
+		else:
+			execution = {
 				"ok": False,
 				"operation": "fallback",
 				"matched_rows": [],
 				"reason": "no_table_payload",
 			}
+		evidence_row_indices = list(
+			execution.pop(
+				"_evidence_row_indices",
+				execution.get("matched_row_indices") or [],
+			)
 		)
 
-		# 标注 citation 行范围 / 版本（供 UI）
+		# 标注 citation 行范围 / 版本（供 UI）；仅同实例
+		target_key = (
+			table_instance_key(merged)
+			if merged.get("table_id")
+			else None
+		)
 		enriched: list[dict[str, Any]] = []
 		for item in citations:
 			row = dict(item)
 			row["record_type"] = "table"
-			if merged.get("table_id") and row.get("table_id") == merged.get("table_id"):
+			if target_key and table_instance_key(row) == target_key:
 				row.setdefault("document_version_id", merged.get("document_version_id"))
 			enriched.append(row)
 
-		# 数值问法但无法自信执行 → clarify（不交给 LLM 算）
+		# 全表执行命中的行可能在向量 top_k 之外：用证据行组替换同实例 citation
+		if (
+			execution.get("ok")
+			and tq.get("confident")
+			and table_complete
+			and (
+				evidence_row_indices
+				or execution.get("matched_rows")
+			)
+			and merged.get("groups")
+		):
+			enriched, evidence_meta = citations_with_matched_evidence(
+				enriched,
+				groups=list(merged.get("groups") or []),
+				matched_rows=list(execution.get("matched_rows") or []),
+				matched_row_indices=evidence_row_indices,
+				target_key=target_key,
+				seed_citation=merged.get("citation") or (citations[0] if citations else None),
+			)
+			execution.update(evidence_meta)
+
+		# 数值问法但无法自信执行 / 表不完整 → clarify（不交给 LLM 算）
 		if (
 			looks_like_numeric_table_query(question)
 			and citations
-			and not (execution.get("ok") and tq.get("confident"))
+			and not (execution.get("ok") and tq.get("confident") and table_complete)
 		):
 			library_name = _library_label(state.get("library_id"))
 			judgement = {
 				"sufficient": False,
 				"action": "clarify",
-				"reason": "table_unclear",
+				"reason": "table_unclear" if table_complete else "table_incomplete",
 				"can_retry": False,
 			}
+			refuse_reason = "table_unclear" if table_complete else "table_incomplete"
 			return {
 				"table_query_plan": tq,
 				"table_execution": execution,
 				"citations": enriched,
 				"answer": table_unclear_answer(library_name=library_name),
 				"refused": True,
-				"refuse_reason": "table_unclear",
+				"refuse_reason": refuse_reason,
 				"judgement": judgement,
 				"retrieval_debug": _merge_debug(
 					state,
 					table_query_plan=tq,
 					table_execution=execution,
+					table_load={
+						"complete": table_complete,
+						"reason": merged.get("reason"),
+						"group_count": merged.get("group_count"),
+						"load_source": merged.get("load_source"),
+						"doc_id": merged.get("doc_id"),
+						"table_id": merged.get("table_id"),
+					},
 					judgement=judgement,
 					generate="table_unclear",
-					refuse_reason="table_unclear",
+					refuse_reason=refuse_reason,
 				),
 			}
 
@@ -556,13 +620,21 @@ def build_ask_graph(
 				state,
 				table_query_plan=tq,
 				table_execution=execution,
+				table_load={
+					"complete": table_complete,
+					"reason": merged.get("reason"),
+					"group_count": merged.get("group_count"),
+					"load_source": merged.get("load_source"),
+					"doc_id": merged.get("doc_id"),
+					"table_id": merged.get("table_id"),
+				},
 			),
 		}
 
 	def route_after_table_execute(
 		state: AskState,
 	) -> Literal["judge", "end"]:
-		if state.get("refuse_reason") == "table_unclear":
+		if state.get("refuse_reason") in {"table_unclear", "table_incomplete"}:
 			return "end"
 		return "judge"
 
@@ -907,11 +979,32 @@ class AskGraphService:
 		else:
 			self._generate = stub_generate
 
+		load_table_groups_fn: LoadTableGroupsFn | None = None
+		if self._retrieval_service is not None:
+			retrieval_for_table = self._retrieval_service
+
+			def _load_table_groups(
+				*,
+				doc_id: str,
+				table_id: str,
+				document_version_id: str | None = None,
+				library_id: str | None = None,
+			) -> list[dict[str, Any]]:
+				return retrieval_for_table.load_table_groups(
+					doc_id=doc_id,
+					table_id=table_id,
+					document_version_id=document_version_id,
+					library_id=library_id,
+				)
+
+			load_table_groups_fn = _load_table_groups
+
 		self._graph = build_ask_graph(
 			settings=self.settings,
 			retrieve_fn=self._retrieve,
 			generate_fn=self._generate,
 			mode=self.mode,
+			load_table_groups_fn=load_table_groups_fn,
 		)
 
 	def _merge_retrieval_debug(self, debug: dict[str, Any]) -> dict[str, Any]:

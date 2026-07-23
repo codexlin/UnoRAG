@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any, Literal
 
 TableOp = Literal["lookup", "filter", "max", "min", "count", "fallback"]
@@ -41,23 +42,35 @@ _EQ_ENTITY = re.compile(
 	r"(?P<entity>[\u4e00-\u9fffA-Za-z0-9]{1,24})(?P<col>总价|报价|单价|数量)"
 )
 
+_UNIT_SCALE = {"千": 1_000.0, "万": 10_000.0, "亿": 100_000_000.0}
+_ARABIC_NUMBER_TOKEN = r"-?[0-9][0-9,，]*(?:\.[0-9]+)?\s*[万千亿]?"
+
+# 宽过滤 / count 命中整表时，避免 matched_rows 与证据 citation 撑爆 LLM/API 上下文
+MATCHED_ROWS_PREVIEW_LIMIT = 8
+EVIDENCE_GROUPS_LIMIT = 5
+
+# (doc_id, document_version_id, table_id)
+TableInstanceKey = tuple[str, str, str]
+
+LoadTableGroupsFn = Callable[..., list[dict[str, Any]]]
+
+
+def _apply_unit(val: float, unit: str | None) -> float:
+	if not unit:
+		return val
+	return val * _UNIT_SCALE.get(unit, 1.0)
+
 
 def _parse_chinese_number(text: str) -> float | None:
 	raw = (text or "").strip().replace(",", "").replace("，", "")
 	if not raw:
 		return None
-	# 阿拉伯数字 + 可选 万/千
-	m = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)\s*(万|千)?", raw)
+	# 阿拉伯数字 + 可选 万/千/亿
+	m = re.fullmatch(r"(-?[0-9]+(?:\.[0-9]+)?)\s*(万|千|亿)?", raw)
 	if m:
-		val = float(m.group(1))
-		unit = m.group(2)
-		if unit == "万":
-			val *= 10_000
-		elif unit == "千":
-			val *= 1_000
-		return val
+		return _apply_unit(float(m.group(1)), m.group(2))
 	# 十万 / 二十万 / 十
-	m2 = re.fullmatch(r"([一二两三四五六七八九十]?十?)(万|千)?", raw)
+	m2 = re.fullmatch(r"([一二两三四五六七八九十]?十?)(万|千|亿)?", raw)
 	if m2 and m2.group(0):
 		head = m2.group(1) or ""
 		unit = m2.group(2)
@@ -69,16 +82,16 @@ def _parse_chinese_number(text: str) -> float | None:
 			val = float(_CN_NUM[head])
 		else:
 			return None
-		if unit == "万":
-			val *= 10_000
-		elif unit == "千":
-			val *= 1_000
-		return val
+		return _apply_unit(val, unit)
 	# 「超过十万」里单独的「十万」
 	if raw in {"十万", "十万块", "十万元"}:
 		return 100_000.0
 	if raw in {"一万", "万"}:
 		return 10_000.0
+	if raw in {"一千", "千"}:
+		return 1_000.0
+	if raw in {"一亿", "亿"}:
+		return 100_000_000.0
 	return None
 
 
@@ -183,7 +196,7 @@ def build_table_query_plan(
 	# filter: 超过 / 大于 / 小于 …
 	op_match = re.search(
 		r"(超过|大于等于|大于|不少于|不低于|小于等于|小于|不高于|不多于)\s*"
-		r"([0-9]+(?:\.[0-9]+)?\s*万?|[一二两三四五六七八九十]+万?|十万)",
+		rf"({_ARABIC_NUMBER_TOKEN}|[一二两三四五六七八九十]+[万千亿]?|十万)",
 		q,
 	)
 	if op_match:
@@ -222,21 +235,29 @@ def build_table_query_plan(
 			)
 			return _finalize_columns(plan, headers)
 
-	# ASCII ops
+	# ASCII ops（数值须走统一单位解析，避免「>= 10万」被当成 10；千分位交给 _cell_number）
 	ascii_op = re.search(
-		r"(总价|报价|单价|数量)\s*(>=|<=|>|<|==|=)\s*([0-9]+(?:\.[0-9]+)?)",
+		r"(总价|报价|单价|数量)\s*(>=|<=|>|<|==|=)\s*"
+		rf"({_ARABIC_NUMBER_TOKEN})",
 		q,
 	)
 	if ascii_op:
 		op_raw = ascii_op.group(2)
 		operator = "==" if op_raw == "=" else op_raw  # type: ignore[assignment]
+		value = _cell_number(ascii_op.group(3))
+		if value is None:
+			plan["reason"] = "ascii_filter_bad_value"
+			return plan
+		col = ascii_op.group(1)
+		if col == "报价":
+			col = "总价"
 		plan.update(
 			{
 				"operation": "filter",
-				"column": ascii_op.group(1),
+				"column": col,
 				"operator": operator,
-				"value": float(ascii_op.group(3)),
-				"select_columns": ["供应商", ascii_op.group(1)],
+				"value": value,
+				"select_columns": ["供应商", col],
 				"confident": True,
 				"reason": "ascii_filter",
 			}
@@ -302,14 +323,32 @@ def _finalize_columns(plan: dict[str, Any], headers: list[str] | None) -> dict[s
 
 
 def _cell_number(raw: Any) -> float | None:
-	text = str(raw or "").strip().replace(",", "").replace("，", "").replace("元", "")
+	"""解析单元格数值；正确处理 万/千/亿。含单位却无法解析时返回 None，绝不截断成错误标量。"""
+	text = str(raw or "").strip().replace(",", "").replace("，", "")
 	if not text:
 		return None
-	m = re.search(r"-?[0-9]+(?:\.[0-9]+)?", text)
-	if not m:
+	cleaned = re.sub(r"[元块圆￥¥$]", "", text).strip()
+	if not cleaned:
+		return None
+
+	parsed = _parse_chinese_number(cleaned)
+	if parsed is not None:
+		return parsed
+
+	# 「约12万」「12万元整」等：数字+单位子串
+	m_unit = re.search(r"(-?[0-9]+(?:\.[0-9]+)?)\s*(万|千|亿)", cleaned)
+	if m_unit:
+		return _apply_unit(float(m_unit.group(1)), m_unit.group(2))
+
+	# 含中文单位却未能解析 → 拒绝，避免把「12万」当成 12
+	if re.search(r"[万千亿]", cleaned):
+		return None
+
+	m_plain = re.search(r"-?[0-9]+(?:\.[0-9]+)?", cleaned)
+	if not m_plain:
 		return None
 	try:
-		return float(m.group(0))
+		return float(m_plain.group(0))
 	except ValueError:
 		return None
 
@@ -320,12 +359,48 @@ def _row_dict(headers: list[str], row: list[str], *, absolute_index: int) -> dic
 	return cells
 
 
+def _matched_row_indices(rows: list[dict[str, Any]]) -> list[int]:
+	out: list[int] = []
+	for row in rows:
+		raw = row.get("_row_index")
+		if raw is None:
+			continue
+		try:
+			out.append(int(raw))
+		except (TypeError, ValueError):
+			continue
+	return out
+
+
+def _with_matched_preview(
+	projected: list[dict[str, Any]],
+	*,
+	preview_limit: int = MATCHED_ROWS_PREVIEW_LIMIT,
+	collect_evidence_indices: bool = False,
+) -> dict[str, Any]:
+	"""返回有界公开预览；完整行号仅按需作为节点内临时证据数据。"""
+	count = len(projected)
+	indices = _matched_row_indices(projected)
+	result: dict[str, Any] = {
+		"matched_count": count,
+		"matched_rows": projected[:preview_limit],
+		"matched_rows_truncated": count > preview_limit,
+		"matched_row_indices": indices[:preview_limit],
+		"matched_row_indices_truncated": len(indices) > preview_limit,
+	}
+	if collect_evidence_indices:
+		# Ask 图选完证据组后必须 pop，禁止进入 state/archive/API。
+		result["_evidence_row_indices"] = indices
+	return result
+
+
 def execute_table_query(
 	plan: dict[str, Any],
 	*,
 	headers: list[str],
 	rows: list[list[str]],
 	row_offset: int = 0,
+	collect_evidence_indices: bool = False,
 ) -> dict[str, Any]:
 	"""在代码侧执行 TableQueryPlan；返回可归档的 execution result。"""
 	op = str(plan.get("operation") or "fallback")
@@ -336,7 +411,12 @@ def execute_table_query(
 		"operator": plan.get("operator"),
 		"value": plan.get("value"),
 		"matched_rows": [],
+		"matched_count": 0,
+		"matched_rows_truncated": False,
+		"matched_row_indices": [],
+		"matched_row_indices_truncated": False,
 		"answer_value": None,
+		"answer_value_truncated": False,
 		"answer_text": None,
 		"reason": "not_run",
 	}
@@ -370,11 +450,15 @@ def execute_table_query(
 		return out
 
 	if op == "count":
+		projected = [_project(r) for r in indexed_rows]
 		result.update(
-			{
-				"ok": True,
-				"matched_rows": [_project(r) for r in indexed_rows],
-				"answer_value": len(indexed_rows),
+				{
+					"ok": True,
+					**_with_matched_preview(
+						projected,
+						collect_evidence_indices=collect_evidence_indices,
+					),
+					"answer_value": len(indexed_rows),
 				"answer_text": f"共 {len(indexed_rows)} 行",
 				"reason": "count",
 			}
@@ -391,15 +475,28 @@ def execute_table_query(
 			if entity_val and entity_val in str(r.get(entity_col) or "")
 		]
 		if not matched:
-			result.update({"ok": True, "matched_rows": [], "answer_text": "未找到匹配行", "reason": "no_match"})
+			result.update(
+					{
+						"ok": True,
+						**_with_matched_preview(
+							[],
+							collect_evidence_indices=collect_evidence_indices,
+						),
+						"answer_text": "未找到匹配行",
+					"reason": "no_match",
+				}
+			)
 			return result
 		values = [matched[0].get(column)] if column else []
 		answer = values[0] if values else None
 		result.update(
-			{
-				"ok": True,
-				"matched_rows": [_project(r) for r in matched],
-				"answer_value": answer,
+				{
+					"ok": True,
+					**_with_matched_preview(
+						[_project(r) for r in matched],
+						collect_evidence_indices=collect_evidence_indices,
+					),
+					"answer_value": answer,
 				"answer_text": f"{entity_val} 的{column}为 {answer}" if answer is not None else None,
 				"reason": "lookup",
 			}
@@ -428,13 +525,18 @@ def execute_table_query(
 				matched.append(row)
 		labels = [
 			f"{r.get(next((c for c in (plan.get('select_columns') or []) if c != column), column))}={r.get(column)}"
-			for r in matched
+			for r in matched[:MATCHED_ROWS_PREVIEW_LIMIT]
 		]
+		answer_values = [r.get(column) for r in matched[:MATCHED_ROWS_PREVIEW_LIMIT]]
 		result.update(
 			{
 				"ok": True,
-				"matched_rows": [_project(r) for r in matched],
-				"answer_value": [r.get(column) for r in matched],
+				**_with_matched_preview(
+					[_project(r) for r in matched],
+					collect_evidence_indices=collect_evidence_indices,
+				),
+				"answer_value": answer_values,
+				"answer_value_truncated": len(matched) > len(answer_values),
 				"answer_text": (
 					f"满足 {column} {operator} {threshold} 的共 {len(matched)} 行："
 					+ ("；".join(str(x) for x in labels[:8]) if labels else "无")
@@ -451,14 +553,27 @@ def execute_table_query(
 			if num is not None:
 				scored.append((num, row))
 		if not scored:
-			result.update({"ok": True, "matched_rows": [], "answer_text": "无可用数值", "reason": "no_numeric"})
+			result.update(
+					{
+						"ok": True,
+						**_with_matched_preview(
+							[],
+							collect_evidence_indices=collect_evidence_indices,
+						),
+						"answer_text": "无可用数值",
+					"reason": "no_numeric",
+				}
+			)
 			return result
 		best_val, best_row = (max if op == "max" else min)(scored, key=lambda x: x[0])
 		result.update(
-			{
-				"ok": True,
-				"matched_rows": [_project(best_row)],
-				"answer_value": best_val,
+				{
+					"ok": True,
+					**_with_matched_preview(
+						[_project(best_row)],
+						collect_evidence_indices=collect_evidence_indices,
+					),
+					"answer_value": best_val,
 				"answer_text": f"{'最高' if op == 'max' else '最低'}{column}为 {best_val}",
 				"reason": op,
 			}
@@ -469,54 +584,426 @@ def execute_table_query(
 	return result
 
 
-def merge_table_hits_for_execute(citations: list[dict[str, Any]]) -> dict[str, Any]:
-	"""合并检索到的 table records（同 table_id 优先取分最高的一组行）。"""
+def table_instance_key(item: dict[str, Any]) -> TableInstanceKey:
+	"""表实例唯一键：跨文档的同名 table_id（如 t1）不得合并。"""
+	return (
+		str(item.get("doc_id") or ""),
+		str(item.get("document_version_id") or ""),
+		str(item.get("table_id") or ""),
+	)
+
+
+def locate_best_table_instance(citations: list[dict[str, Any]]) -> dict[str, Any] | None:
+	"""向量检索阶段：从 table hits 中选出得分最高的表实例（仅定位，不聚合）。"""
 	best: dict[str, Any] | None = None
 	for item in citations:
 		if str(item.get("record_type") or "") != "table" and not item.get("headers"):
 			continue
 		headers = [str(h) for h in (item.get("headers") or [])]
-		rows = [[str(c) for c in row] for row in (item.get("rows") or [])]
-		if not headers:
+		if not headers and not item.get("table_id"):
 			continue
-		if best is None or float(item.get("score") or 0) > float(best.get("score") or 0):
+		score = float(item.get("score") or 0)
+		if best is None or score > float(best.get("score") or 0):
+			doc_id, version_id, table_id = table_instance_key(item)
 			best = {
-				"headers": headers,
-				"rows": rows,
-				"row_offset": int(item.get("row_start") or 0),
-				"table_id": item.get("table_id"),
-				"document_version_id": item.get("document_version_id"),
-				"page": item.get("page"),
-				"page_start": item.get("page_start"),
-				"page_end": item.get("page_end"),
-				"doc_id": item.get("doc_id"),
-				"score": item.get("score"),
+				"doc_id": doc_id,
+				"document_version_id": version_id or None,
+				"table_id": table_id or None,
+				"score": score,
+				"library_id": item.get("library_id"),
 				"citation": item,
 			}
-	# 同 table 多分片：合并同一 table_id 的所有行
-	if best and best.get("table_id"):
-		tid = best["table_id"]
-		merged_rows: list[tuple[int, list[str]]] = []
-		headers = best["headers"]
-		for item in citations:
-			if item.get("table_id") != tid:
+	if best and not best.get("table_id"):
+		return None
+	return best
+
+
+def validate_table_group_coverage(groups: list[dict[str, Any]]) -> tuple[bool, str]:
+	"""校验行组从 0 连续覆盖，且与 table_row_count（若有）一致。缺组 → incomplete。"""
+	if not groups:
+		return False, "no_groups"
+	missing_range = [
+		g
+		for g in groups
+		if g.get("row_start") is None or g.get("row_end") is None
+	]
+	if missing_range:
+		return False, "missing_row_range"
+
+	ordered = sorted(groups, key=lambda g: (int(g["row_start"]), int(g["row_end"])))
+	expected = 0
+	for group in ordered:
+		start = int(group["row_start"])
+		end = int(group["row_end"])
+		rows = group.get("rows") or []
+		# 空表：仅 headers，row_end=-1
+		if end < 0 and not rows:
+			if start != 0:
+				return False, f"empty_table_bad_start:{start}"
+			declared_total = group.get("table_row_count")
+			if declared_total is not None and int(declared_total) != 0:
+				return False, f"empty_but_table_row_count:{declared_total}"
+			return True, "complete_empty"
+		if start != expected:
+			return False, f"gap_or_missing:expected_{expected}_got_{start}"
+		if end < start:
+			return False, f"bad_range:{start}-{end}"
+		# 行数应与声明区间一致
+		declared = end - start + 1
+		if len(rows) != declared:
+			return False, f"row_count_mismatch:{start}-{end}:got_{len(rows)}"
+		expected = end + 1
+
+	# 有整表行数元数据时：必须覆盖到最后一行（防止 top_k 只召回前缀仍标 complete）
+	totals = [
+		int(g["table_row_count"])
+		for g in ordered
+		if g.get("table_row_count") is not None
+	]
+	if totals:
+		table_row_count = totals[0]
+		if any(t != table_row_count for t in totals):
+			return False, "table_row_count_inconsistent"
+		if expected != table_row_count:
+			return False, f"truncated:got_{expected}_of_{table_row_count}"
+	return True, "complete"
+
+
+def assemble_table_from_groups(groups: list[dict[str, Any]]) -> dict[str, Any]:
+	"""合并同一表实例的行组；incomplete 时仍返回已拼行供调试，但 complete=False。"""
+	complete, reason = validate_table_group_coverage(groups)
+	if not groups:
+		return {
+			"headers": [],
+			"rows": [],
+			"row_offset": 0,
+			"complete": False,
+			"reason": reason,
+			"group_count": 0,
+		}
+
+	ordered = sorted(
+		groups,
+		key=lambda g: (
+			int(g.get("row_start") if g.get("row_start") is not None else 10**9),
+			int(g.get("row_end") if g.get("row_end") is not None else 10**9),
+		),
+	)
+	headers = [str(h) for h in (ordered[0].get("headers") or [])]
+	# 同实例内 headers 不一致 → 拒绝
+	for group in ordered[1:]:
+		other = [str(h) for h in (group.get("headers") or [])]
+		if other and headers and other != headers:
+			return {
+				"headers": headers,
+				"rows": [],
+				"row_offset": 0,
+				"complete": False,
+				"reason": "header_mismatch",
+				"group_count": len(groups),
+				"doc_id": ordered[0].get("doc_id"),
+				"document_version_id": ordered[0].get("document_version_id"),
+				"table_id": ordered[0].get("table_id"),
+			}
+
+	merged_rows: list[tuple[int, list[str]]] = []
+	for group in ordered:
+		offset = int(group.get("row_start") or 0)
+		for i, row in enumerate(group.get("rows") or []):
+			merged_rows.append((offset + i, [str(c) for c in row]))
+	merged_rows.sort(key=lambda x: x[0])
+	seen: set[int] = set()
+	rows_out: list[list[str]] = []
+	min_idx: int | None = None
+	for idx, row in merged_rows:
+		if idx in seen:
+			continue
+		seen.add(idx)
+		if min_idx is None:
+			min_idx = idx
+		rows_out.append(row)
+
+	seed = ordered[0]
+	return {
+		"headers": headers,
+		"rows": rows_out,
+		"row_offset": int(min_idx or 0),
+		"complete": complete,
+		"reason": reason,
+		"group_count": len(groups),
+		"table_id": seed.get("table_id"),
+		"document_version_id": seed.get("document_version_id"),
+		"doc_id": seed.get("doc_id"),
+		"page": seed.get("page"),
+		"page_start": seed.get("page_start"),
+		"page_end": seed.get("page_end"),
+		"score": seed.get("score"),
+		"library_id": seed.get("library_id"),
+	}
+
+
+def prepare_table_for_execute(
+	citations: list[dict[str, Any]],
+	*,
+	load_table_groups: LoadTableGroupsFn | None = None,
+	library_id: str | None = None,
+) -> dict[str, Any]:
+	"""两阶段：向量定位表实例 → 按键加载全表行组 → 校验完整性后供聚合。
+
+	聚合不得只在 top_k 检索子集上执行；缺组时 complete=False（fail closed）。
+	"""
+	located = locate_best_table_instance(citations)
+	if not located:
+		return {
+			"headers": [],
+			"rows": [],
+			"row_offset": 0,
+			"complete": False,
+			"reason": "no_table_hit",
+			"group_count": 0,
+		}
+
+	doc_id = str(located.get("doc_id") or "")
+	version_id = located.get("document_version_id")
+	table_id = str(located.get("table_id") or "")
+	lib = library_id or located.get("library_id")
+	instance = (doc_id, str(version_id or ""), table_id)
+
+	groups: list[dict[str, Any]]
+	load_source = "citations"
+	if load_table_groups is not None and doc_id and table_id:
+		try:
+			groups = list(
+				load_table_groups(
+					doc_id=doc_id,
+					document_version_id=str(version_id) if version_id else None,
+					table_id=table_id,
+					library_id=str(lib) if lib else None,
+				)
+			)
+			load_source = "store"
+		except Exception as exc:  # noqa: BLE001 — fail closed
+			return {
+				"headers": [],
+				"rows": [],
+				"row_offset": 0,
+				"complete": False,
+				"reason": f"load_failed:{exc}",
+				"group_count": 0,
+				"doc_id": doc_id,
+				"document_version_id": version_id,
+				"table_id": table_id,
+				"load_source": "store",
+			}
+	else:
+		groups = [
+			item
+			for item in citations
+			if table_instance_key(item) == instance
+			and (str(item.get("record_type") or "") == "table" or item.get("headers"))
+		]
+
+	assembled = assemble_table_from_groups(groups)
+	assembled["load_source"] = load_source
+	assembled["score"] = located.get("score")
+	assembled["citation"] = located.get("citation")
+	assembled["groups"] = groups
+	# 定位键写回，便于 citation 标注
+	assembled.setdefault("doc_id", doc_id)
+	assembled.setdefault("document_version_id", version_id)
+	assembled.setdefault("table_id", table_id)
+	return assembled
+
+
+def select_evidence_groups(
+	groups: list[dict[str, Any]],
+	matched_rows: list[dict[str, Any]] | None = None,
+	*,
+	matched_row_indices: list[int] | None = None,
+	limit: int = EVIDENCE_GROUPS_LIMIT,
+) -> dict[str, Any]:
+	"""按命中行号选出覆盖证据行组；返回截断后的 groups 与审计字段。"""
+	indices: set[int] = set()
+	if matched_row_indices is not None:
+		for raw in matched_row_indices:
+			try:
+				indices.add(int(raw))
+			except (TypeError, ValueError):
 				continue
-			offset = int(item.get("row_start") or 0)
-			for i, row in enumerate(item.get("rows") or []):
-				merged_rows.append((offset + i, [str(c) for c in row]))
-		merged_rows.sort(key=lambda x: x[0])
-		# 去重行号
-		seen: set[int] = set()
-		rows_out: list[list[str]] = []
-		min_idx = None
-		for idx, row in merged_rows:
-			if idx in seen:
+	else:
+		for row in matched_rows or []:
+			raw = row.get("_row_index")
+			if raw is None:
 				continue
-			seen.add(idx)
-			if min_idx is None:
-				min_idx = idx
-			rows_out.append(row)
-		best["rows"] = rows_out
-		best["row_offset"] = int(min_idx or 0)
-		best["headers"] = headers
-	return best or {}
+			try:
+				indices.add(int(raw))
+			except (TypeError, ValueError):
+				continue
+	if not indices:
+		return {
+			"groups": [],
+			"total_group_count": 0,
+			"evidence_truncated": False,
+			"evidence_group_count": 0,
+		}
+
+	out: list[dict[str, Any]] = []
+	seen: set[tuple[str, int, int]] = set()
+	for group in groups:
+		if group.get("row_start") is None or group.get("row_end") is None:
+			continue
+		start = int(group["row_start"])
+		end = int(group["row_end"])
+		if not any(start <= idx <= end for idx in indices):
+			continue
+		key = (
+			str(group.get("record_id") or group.get("id") or ""),
+			start,
+			end,
+		)
+		if key in seen:
+			continue
+		seen.add(key)
+		out.append(group)
+
+	# 按行号稳定排序，截断时优先靠前的命中组
+	out.sort(
+		key=lambda g: (
+			int(g.get("row_start") if g.get("row_start") is not None else 10**9),
+			int(g.get("row_end") if g.get("row_end") is not None else 10**9),
+		)
+	)
+	total = len(out)
+	capped = out[: max(0, int(limit))]
+	return {
+		"groups": capped,
+		"total_group_count": total,
+		"evidence_truncated": total > len(capped),
+		"evidence_group_count": len(capped),
+	}
+
+
+def citations_with_matched_evidence(
+	citations: list[dict[str, Any]],
+	*,
+	groups: list[dict[str, Any]],
+	matched_rows: list[dict[str, Any]],
+	target_key: TableInstanceKey | None,
+	seed_citation: dict[str, Any] | None = None,
+	matched_row_indices: list[int] | None = None,
+	evidence_limit: int = EVIDENCE_GROUPS_LIMIT,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+	"""用覆盖命中行的行组替换同表实例的向量 citation；附带证据截断审计字段。"""
+	empty_meta = {
+		"total_group_count": 0,
+		"evidence_truncated": False,
+		"evidence_group_count": 0,
+	}
+	if target_key is None:
+		return citations, empty_meta
+	selected = select_evidence_groups(
+		groups,
+		matched_rows,
+		matched_row_indices=matched_row_indices,
+		limit=evidence_limit,
+	)
+	evidence = selected["groups"]
+	meta = {
+		"total_group_count": selected["total_group_count"],
+		"evidence_truncated": selected["evidence_truncated"],
+		"evidence_group_count": selected["evidence_group_count"],
+	}
+	if not evidence:
+		return citations, meta
+
+	kept = [
+		item
+		for item in citations
+		if not (
+			(str(item.get("record_type") or "") == "table" or item.get("headers"))
+			and table_instance_key(item) == target_key
+		)
+	]
+	seed = seed_citation or next(
+		(c for c in citations if table_instance_key(c) == target_key),
+		{},
+	)
+
+	formatted: list[dict[str, Any]] = []
+	for i, group in enumerate(evidence):
+		body = str(group.get("body") or group.get("text") or group.get("snippet") or "")
+		if not body:
+			headers = [str(h) for h in (group.get("headers") or [])]
+			rows = group.get("rows") or []
+			lines = [" | ".join(headers)] if headers else []
+			for row in rows:
+				lines.append(" | ".join(str(c) for c in row))
+			body = "\n".join(lines)
+		score_raw = group.get("score")
+		if score_raw is None:
+			score_raw = seed.get("score")
+		try:
+			score = max(0.0, min(1.0, float(score_raw if score_raw is not None else 1.0)))
+		except (TypeError, ValueError):
+			score = 1.0
+		formatted.append(
+			{
+				"id": str(
+					group.get("id")
+					or group.get("record_id")
+					or f"table-evidence-{target_key[2]}-{group.get('row_start')}-{i}"
+				),
+				"index": i + 1,
+				"title": str(group.get("title") or seed.get("title") or "表格证据"),
+				"page": group.get("page") if group.get("page") is not None else seed.get("page"),
+				"page_start": group.get("page_start", seed.get("page_start")),
+				"page_end": group.get("page_end", seed.get("page_end")),
+				"section_path": group.get("section_path", seed.get("section_path")),
+				"preamble": group.get("preamble", seed.get("preamble")),
+				"table_id": group.get("table_id") or target_key[2],
+				"headers": group.get("headers") or seed.get("headers") or [],
+				"rows": group.get("rows") or [],
+				"row_start": group.get("row_start"),
+				"row_end": group.get("row_end"),
+				"table_row_count": group.get("table_row_count", seed.get("table_row_count")),
+				"snippet": str(group.get("snippet") or body[:280]),
+				"score": score,
+				"dense_score": group.get("dense_score", seed.get("dense_score")),
+				"bm25_score": group.get("bm25_score", seed.get("bm25_score")),
+				"rrf_score": group.get("rrf_score", seed.get("rrf_score")),
+				"text": body,
+				"body": body,
+				"doc_id": group.get("doc_id") or target_key[0] or seed.get("doc_id"),
+				"chunk_index": group.get("chunk_index", seed.get("chunk_index")),
+				"filename": group.get("filename", seed.get("filename")),
+				"document_version_id": (
+					group.get("document_version_id")
+					or (target_key[1] or None)
+					or seed.get("document_version_id")
+				),
+				"tenant_id": group.get("tenant_id", seed.get("tenant_id")),
+				"record_type": "table",
+				"record_id": group.get("record_id", seed.get("record_id")),
+				"source_chunk_ids": group.get("source_chunk_ids")
+				or seed.get("source_chunk_ids")
+				or [],
+				"source_node_ids": group.get("source_node_ids")
+				or seed.get("source_node_ids")
+				or [],
+				"library_id": group.get("library_id", seed.get("library_id")),
+			}
+		)
+
+	merged = formatted + [dict(item) for item in kept]
+	for index, item in enumerate(merged, start=1):
+		item["index"] = index
+		item["record_type"] = item.get("record_type") or "table"
+	return merged, meta
+
+
+def merge_table_hits_for_execute(citations: list[dict[str, Any]]) -> dict[str, Any]:
+	"""兼容入口：仅合并同实例 citation 行组（无 store 全表加载）。
+
+	新路径请用 prepare_table_for_execute(..., load_table_groups=...)。
+	"""
+	return prepare_table_for_execute(citations, load_table_groups=None)

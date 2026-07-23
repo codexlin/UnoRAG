@@ -46,6 +46,8 @@ class IndexRecord(BaseModel):
 	rows: list[list[str]] = Field(default_factory=list)
 	row_start: int | None = None
 	row_end: int | None = None
+	# 整表行数（每个 row group 复制），用于全表加载完整性校验
+	table_row_count: int | None = None
 	content_hash: str = ""
 	source_format: str = ""
 	filename: str | None = None
@@ -260,6 +262,7 @@ def build_table_records_from_chunks(
 			continue
 		source_chunk = chunk_record_id(doc_id, chunk.chunk_index)
 		source_nodes = list(chunk.node_ids or [])
+		table_row_count = len(rows)
 		# 空表也建一条（仅 headers），便于召回表结构
 		if not rows:
 			row_slices = [(0, -1, [])]
@@ -304,6 +307,7 @@ def build_table_records_from_chunks(
 					rows=part_rows,
 					row_start=row_start,
 					row_end=row_end,
+					table_row_count=table_row_count,
 					content_hash=hashlib.sha1(body.encode("utf-8")).hexdigest()[:16],
 					source_format=chunk.source_format,
 					filename=filename,
@@ -353,6 +357,8 @@ def index_record_to_payload(record: IndexRecord) -> dict[str, Any]:
 		payload["row_start"] = int(record.row_start)
 	if record.row_end is not None:
 		payload["row_end"] = int(record.row_end)
+	if record.table_row_count is not None:
+		payload["table_row_count"] = int(record.table_row_count)
 	if record.content_hash:
 		payload["content_hash"] = record.content_hash
 	if record.source_format:
