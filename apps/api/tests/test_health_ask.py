@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.graph.ask_graph import AskGraphService, build_ask_graph, stub_generate
 from app.main import app
 from app.settings import Settings, get_settings
+from tests.conftest import create_library
 
 client = TestClient(app)
 
@@ -51,14 +52,14 @@ def test_live_unavailable_hard_fails_not_stub(monkeypatch: pytest.MonkeyPatch) -
 
 	ask = client.post(
 		"/v1/ask",
-		json={"question": "病假需要在几天内补交证明？", "library_id": "lib-hr"},
+		json={"question": "病假需要在几天内补交证明？", "library_id": "lib-any"},
 	)
 	assert ask.status_code == 503
 
 	ingest = client.post(
 		"/v1/ingest",
 		json={
-			"library_id": "lib-hr",
+			"library_id": "lib-any",
 			"title": "sample",
 			"text": "病假须于返岗后三个工作日内补交证明材料。",
 		},
@@ -86,9 +87,10 @@ def test_ask_requires_library_id() -> None:
 
 
 def test_ask_stub() -> None:
+	lib_id = create_library(client, library_id="lib-ask-stub")
 	response = client.post(
 		"/v1/ask",
-		json={"question": "病假需要在几天内补交证明？", "library_id": "lib-hr"},
+		json={"question": "病假需要在几天内补交证明？", "library_id": lib_id},
 	)
 	assert response.status_code == 200
 	payload = response.json()
@@ -106,9 +108,10 @@ def test_ask_stub() -> None:
 
 
 def test_ask_refuse_no_hit() -> None:
+	lib_id = create_library(client, library_id="lib-ask-nohit")
 	response = client.post(
 		"/v1/ask",
-		json={"question": "无命中：火星上的年假怎么算？", "library_id": "lib-hr"},
+		json={"question": "无命中：火星上的年假怎么算？", "library_id": lib_id},
 	)
 	assert response.status_code == 200
 	payload = response.json()
@@ -120,16 +123,16 @@ def test_ask_refuse_no_hit() -> None:
 
 
 def test_ask_refuse_weak_match() -> None:
+	lib_id = create_library(client, library_id="lib-ask-weak")
 	response = client.post(
 		"/v1/ask",
-		json={"question": "弱相关：随便问问无关内容", "library_id": "lib-hr"},
+		json={"question": "弱相关：随便问问无关内容", "library_id": lib_id},
 	)
 	assert response.status_code == 200
 	payload = response.json()
 	assert payload["refused"] is True
 	assert payload["refuse_reason"] == "weak_match"
 	assert "相关度不够高" in payload["answer"]
-	# Weak hits kept for transparency after final refuse.
 	assert len(payload["citations"]) >= 1
 	assert payload["citations"][0]["score"] < 0.35
 
@@ -155,7 +158,7 @@ def test_judge_with_injected_weak_retrieve() -> None:
 		retrieve_fn=fake_retrieve,
 		generate_fn=stub_generate,
 	)
-	result = service.ask(question="anything", library_id="lib-hr")
+	result = service.ask(question="anything", library_id="lib-unit")
 	assert result.refused is True
 	assert result.refuse_reason == "weak_match"
 
@@ -203,10 +206,11 @@ def test_build_graph_compile() -> None:
 
 
 def test_ingest_simulates_in_stub() -> None:
+	lib_id = create_library(client, library_id="lib-ingest-sim")
 	response = client.post(
 		"/v1/ingest",
 		json={
-			"library_id": "lib-hr",
+			"library_id": lib_id,
 			"title": "sample",
 			"text": "病假须于返岗后三个工作日内补交证明材料。",
 		},
@@ -220,18 +224,19 @@ def test_ingest_simulates_in_stub() -> None:
 
 	libs = client.get("/v1/libraries")
 	assert libs.status_code == 200
-	hr = next(item for item in libs.json() if item["id"] == "lib-hr")
-	assert hr["ready_count"] >= 1
-	assert hr["status"] == "ready"
+	row = next(item for item in libs.json() if item["id"] == lib_id)
+	assert row["ready_count"] >= 1
+	assert row["status"] == "ready"
 
 
 def test_ingest_503_when_simulate_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+	lib_id = create_library(client, library_id="lib-ingest-nosim")
 	monkeypatch.setenv("STUB_INGEST_SIMULATE", "false")
 	get_settings.cache_clear()
 	response = client.post(
 		"/v1/ingest",
 		json={
-			"library_id": "lib-hr",
+			"library_id": lib_id,
 			"title": "sample",
 			"text": "病假须于返岗后三个工作日内补交证明材料。",
 		},
@@ -241,11 +246,12 @@ def test_ingest_503_when_simulate_disabled(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_ask_persists_archive_turn() -> None:
+	lib_id = create_library(client, library_id="lib-ask-archive")
 	response = client.post(
 		"/v1/ask",
 		json={
 			"question": "病假需要在几天内补交证明？",
-			"library_id": "lib-hr",
+			"library_id": lib_id,
 			"session_id": "archive-session-1",
 		},
 	)
@@ -268,6 +274,8 @@ def test_ask_persists_archive_turn() -> None:
 def test_ask_persist_failure_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
 	from app.graph import ask_graph as ask_graph_mod
 
+	lib_id = create_library(client, library_id="lib-ask-persist-fail")
+
 	def boom_persist(**_kwargs):
 		return {"persisted": False, "persist_error": "disk full"}
 
@@ -276,7 +284,7 @@ def test_ask_persist_failure_is_visible(monkeypatch: pytest.MonkeyPatch) -> None
 		"/v1/ask",
 		json={
 			"question": "病假需要在几天内补交证明？",
-			"library_id": "lib-hr",
+			"library_id": lib_id,
 			"session_id": "persist-fail-session",
 		},
 	)
