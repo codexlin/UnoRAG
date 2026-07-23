@@ -16,6 +16,7 @@ from pathlib import Path
 # Allow `uv run python scripts/ingest_sample.py` from apps/api
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.security.access_scope import AccessScope
 from app.services.metadata import get_metadata_store
 from app.services.retrieval import IngestService
 from app.services.runtime import resolve_runtime
@@ -47,9 +48,10 @@ def main() -> int:
 		return 1
 
 	meta = get_metadata_store(settings)
+	scope = AccessScope.development(settings)
 	library_id = "lib-sample"
-	if meta.get_library(library_id) is None:
-		meta.create_library(name="样例知识库", library_id=library_id)
+	if meta.get_library(library_id, scope=scope) is None:
+		meta.create_library(name="样例知识库", library_id=library_id, scope=scope)
 		print("created library:", library_id)
 
 	result = IngestService(settings).ingest_text(

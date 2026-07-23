@@ -133,8 +133,12 @@ def ingest(
 	capability = resolve_runtime(settings)
 	if not capability.live_ready:
 		if capability.requested_mode == "stub" and settings.stub_ingest_simulate:
-			if meta.get_library(body.library_id) is None:
-				meta.create_library(name=body.library_id, library_id=body.library_id)
+			if meta.get_library(body.library_id, scope=access_scope) is None:
+				meta.create_library(
+					name=body.library_id,
+					library_id=body.library_id,
+					scope=access_scope,
+				)
 			doc = meta.create_document(
 				library_id=body.library_id,
 				name=body.title,
@@ -142,6 +146,7 @@ def ingest(
 				content_type="text/plain",
 				doc_id=body.doc_id,
 				status="processing",
+				scope=access_scope,
 			)
 			try:
 				result = IngestService(settings, access_scope=access_scope).simulate_ingest(
@@ -150,9 +155,20 @@ def ingest(
 					text=body.text,
 					doc_id=doc["id"],
 				)
-				meta.update_document(doc["id"], status="ready", chunk_count=result["chunk_count"], error=None)
+				meta.update_document(
+					doc["id"],
+					status="ready",
+					chunk_count=result["chunk_count"],
+					error=None,
+					scope=access_scope,
+				)
 			except Exception as exc:
-				meta.update_document(doc["id"], status="failed", error=str(exc))
+				meta.update_document(
+					doc["id"],
+					status="failed",
+					error=str(exc),
+					scope=access_scope,
+				)
 				raise HTTPException(status_code=400, detail=str(exc)) from exc
 			return IngestResponse(
 				library_id=body.library_id,
@@ -171,8 +187,12 @@ def ingest(
 			),
 		)
 
-	if meta.get_library(body.library_id) is None:
-		meta.create_library(name=body.library_id, library_id=body.library_id)
+	if meta.get_library(body.library_id, scope=access_scope) is None:
+		meta.create_library(
+			name=body.library_id,
+			library_id=body.library_id,
+			scope=access_scope,
+		)
 	doc = meta.create_document(
 		library_id=body.library_id,
 		name=body.title,
@@ -180,6 +200,7 @@ def ingest(
 		content_type="text/plain",
 		doc_id=body.doc_id,
 		status="processing",
+		scope=access_scope,
 	)
 	try:
 		result = IngestService(settings, access_scope=access_scope).ingest_text(
@@ -188,12 +209,28 @@ def ingest(
 			text=body.text,
 			doc_id=doc["id"],
 		)
-		meta.update_document(doc["id"], status="ready", chunk_count=result["chunk_count"], error=None)
+		meta.update_document(
+			doc["id"],
+			status="ready",
+			chunk_count=result["chunk_count"],
+			error=None,
+			scope=access_scope,
+		)
 	except ValueError as exc:
-		meta.update_document(doc["id"], status="failed", error=str(exc))
+		meta.update_document(
+			doc["id"],
+			status="failed",
+			error=str(exc),
+			scope=access_scope,
+		)
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	except Exception as exc:
-		meta.update_document(doc["id"], status="failed", error=str(exc))
+		meta.update_document(
+			doc["id"],
+			status="failed",
+			error=str(exc),
+			scope=access_scope,
+		)
 		raise HTTPException(status_code=502, detail=f"ingest failed: {exc}") from exc
 	return IngestResponse(**result, mode="live", status="ready", simulated=False)
 
@@ -229,12 +266,16 @@ async def ingest_upload(
 			status_code=400,
 			detail=f"unsupported file type: {suffix or '(none)'}; use txt/md/pdf/docx/csv/xlsx",
 		)
-	if meta.get_library(library_id) is None:
-		meta.create_library(name=library_id, library_id=library_id)
+	if meta.get_library(library_id, scope=access_scope) is None:
+		meta.create_library(
+			name=library_id,
+			library_id=library_id,
+			scope=access_scope,
+		)
 
 	# 同库同名文件覆盖：先清旧向量 + 元数据，避免脏 chunk 叠加
 	doc_storage = DocumentStorage(settings)
-	for old in meta.list_documents(library_id):
+	for old in meta.list_documents(library_id, scope=access_scope):
 		if str(old.get("filename") or "") != filename:
 			continue
 		old_id = str(old["id"])
@@ -260,7 +301,7 @@ async def ingest_upload(
 					old_id,
 					exc,
 				)
-		meta.delete_document(old_id)
+		meta.delete_document(old_id, scope=access_scope)
 
 	title = clean_display_title(
 		(display_name or "").strip() or PurePosixPath(filename).stem,
@@ -284,9 +325,14 @@ async def ingest_upload(
 		doc_id=doc_id,
 		status="processing",
 		size_bytes=len(content),
+		scope=access_scope,
 	)
 	storage_key = doc_storage.save(library_id, doc["id"], filename, content)
-	meta.update_document(doc["id"], storage_key=storage_key)
+	meta.update_document(
+		doc["id"],
+		storage_key=storage_key,
+		scope=access_scope,
+	)
 
 	live = capability.live_ready
 	stub_simulate = capability.requested_mode == "stub" and settings.stub_ingest_simulate
@@ -295,6 +341,7 @@ async def ingest_upload(
 			doc["id"],
 			status="failed",
 			error="ingest requires live mode",
+			scope=access_scope,
 		)
 		raise HTTPException(
 			status_code=503,
@@ -318,7 +365,12 @@ async def ingest_upload(
 				settings=settings,
 			)
 		except RuntimeError as exc:
-			meta.update_document(doc["id"], status="failed", error=str(exc))
+			meta.update_document(
+				doc["id"],
+				status="failed",
+				error=str(exc),
+				scope=access_scope,
+			)
 			raise HTTPException(status_code=429, detail=str(exc)) from exc
 		except Exception as exc:
 			logger.exception("upload.enqueue_failed doc_id=%s", doc["id"])
@@ -326,6 +378,7 @@ async def ingest_upload(
 				doc["id"],
 				status="failed",
 				error=f"入队失败: {exc}",
+				scope=access_scope,
 			)
 			raise HTTPException(
 				status_code=503,

@@ -35,15 +35,18 @@ def _signed_headers(
 	target: str,
 	jti: str | None = None,
 	body: bytes | None = None,
+	tenant_id: str = "org-1",
+	workspace_id: str = "ws-1",
+	principal_id: str = "user-1",
 ) -> dict[str, str]:
 	now = int(time.time())
 	request_id = jti or str(uuid4())
 	payload = {
 		"v": 1,
 		"iss": "meriknow-control-plane",
-		"tenant_id": "org-1",
-		"workspace_id": "ws-1",
-		"principal_id": "user-1",
+		"tenant_id": tenant_id,
+		"workspace_id": workspace_id,
+		"principal_id": principal_id,
 		"group_ids": ["group-1"],
 		"request_id": request_id,
 		"jti": request_id,
@@ -182,6 +185,59 @@ def test_internal_context_body_digest_is_enforced(monkeypatch) -> None:
 
 	assert response.status_code == 401
 	assert response.json()["detail"] == "internal request body mismatch"
+
+
+def test_metadata_routes_do_not_leak_across_workspaces(monkeypatch) -> None:
+	monkeypatch.setenv("INTERNAL_AUTH_ENABLED", "true")
+	monkeypatch.setenv("INTERNAL_AUTH_SECRET", TEST_SECRET)
+	monkeypatch.setenv("INTERNAL_AUTH_REPLAY_BACKEND", "memory")
+	get_settings.cache_clear()
+	client = TestClient(app)
+	body = b'{"name":"Workspace A","library_id":"scoped-library"}'
+
+	created = client.post(
+		"/v1/libraries",
+		content=body,
+		headers={
+			**_signed_headers(
+				method="POST",
+				target="/v1/libraries",
+				body=body,
+				workspace_id="workspace-a",
+			),
+			"content-type": "application/json",
+		},
+	)
+	visible = client.get(
+		"/v1/libraries/scoped-library",
+		headers=_signed_headers(
+			method="GET",
+			target="/v1/libraries/scoped-library",
+			workspace_id="workspace-a",
+		),
+	)
+	foreign_list = client.get(
+		"/v1/libraries",
+		headers=_signed_headers(
+			method="GET",
+			target="/v1/libraries",
+			workspace_id="workspace-b",
+		),
+	)
+	foreign_detail = client.get(
+		"/v1/libraries/scoped-library",
+		headers=_signed_headers(
+			method="GET",
+			target="/v1/libraries/scoped-library",
+			workspace_id="workspace-b",
+		),
+	)
+
+	assert created.status_code == 200
+	assert visible.status_code == 200
+	assert foreign_list.status_code == 200
+	assert foreign_list.json() == []
+	assert foreign_detail.status_code == 404
 
 
 def test_production_settings_fail_closed() -> None:

@@ -12,6 +12,8 @@ from uuid import uuid4
 from sqlalchemy import DateTime, Integer, MetaData, String, Text, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
+from app.security.access_scope import AccessScope
+
 logger = logging.getLogger(__name__)
 
 LibraryStatus = Literal["ready", "indexing", "empty"]
@@ -32,11 +34,16 @@ def _library_status(doc_count: int, ready_count: int, has_processing: bool) -> L
 
 class MetadataStore(ABC):
 	@abstractmethod
-	def list_libraries(self) -> list[dict[str, Any]]:
+	def list_libraries(self, *, scope: AccessScope) -> list[dict[str, Any]]:
 		raise NotImplementedError
 
 	@abstractmethod
-	def get_library(self, library_id: str) -> dict[str, Any] | None:
+	def get_library(
+		self,
+		library_id: str,
+		*,
+		scope: AccessScope,
+	) -> dict[str, Any] | None:
 		raise NotImplementedError
 
 	@abstractmethod
@@ -46,6 +53,7 @@ class MetadataStore(ABC):
 		name: str,
 		library_id: str | None = None,
 		description: str | None = None,
+		scope: AccessScope,
 	) -> dict[str, Any]:
 		raise NotImplementedError
 
@@ -57,20 +65,31 @@ class MetadataStore(ABC):
 		name: str | None = None,
 		description: str | None = None,
 		update_description: bool = False,
+		scope: AccessScope,
 	) -> dict[str, Any] | None:
 		raise NotImplementedError
 
 	@abstractmethod
-	def delete_library(self, library_id: str) -> bool:
+	def delete_library(self, library_id: str, *, scope: AccessScope) -> bool:
 		"""删除知识库及其下全部文档元数据；向量与落盘原文由调用方先清。"""
 		raise NotImplementedError
 
 	@abstractmethod
-	def list_documents(self, library_id: str) -> list[dict[str, Any]]:
+	def list_documents(
+		self,
+		library_id: str,
+		*,
+		scope: AccessScope,
+	) -> list[dict[str, Any]]:
 		raise NotImplementedError
 
 	@abstractmethod
-	def get_document(self, doc_id: str) -> dict[str, Any] | None:
+	def get_document(
+		self,
+		doc_id: str,
+		*,
+		scope: AccessScope,
+	) -> dict[str, Any] | None:
 		raise NotImplementedError
 
 	@abstractmethod
@@ -85,6 +104,7 @@ class MetadataStore(ABC):
 		status: DocumentStatus = "processing",
 		storage_key: str | None = None,
 		size_bytes: int | None = None,
+		scope: AccessScope,
 	) -> dict[str, Any]:
 		raise NotImplementedError
 
@@ -103,16 +123,22 @@ class MetadataStore(ABC):
 		filename: str | None = None,
 		content_type: str | None = None,
 		clear_error: bool = False,
+		scope: AccessScope,
 	) -> dict[str, Any] | None:
 		raise NotImplementedError
 
 	@abstractmethod
-	def delete_document(self, doc_id: str) -> bool:
+	def delete_document(self, doc_id: str, *, scope: AccessScope) -> bool:
 		"""删除文档元数据行；向量需调用方先清 Qdrant。"""
 		raise NotImplementedError
 
 	@abstractmethod
-	def refresh_library_counts(self, library_id: str) -> dict[str, Any] | None:
+	def refresh_library_counts(
+		self,
+		library_id: str,
+		*,
+		scope: AccessScope,
+	) -> dict[str, Any] | None:
 		raise NotImplementedError
 
 	@abstractmethod
@@ -154,7 +180,14 @@ class MetadataStore(ABC):
 		raise NotImplementedError
 
 	@abstractmethod
-	def get_turn(self, turn_id: str) -> dict[str, Any] | None:
+	def get_turn(
+		self,
+		turn_id: str,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+	) -> dict[str, Any] | None:
 		raise NotImplementedError
 
 
@@ -184,17 +217,33 @@ class JsonMetadataStore(MetadataStore):
 		row.setdefault("description", None)
 		return row
 
-	def list_libraries(self) -> list[dict[str, Any]]:
+	@staticmethod
+	def _in_scope(item: dict[str, Any], scope: AccessScope) -> bool:
+		return (
+			item.get("tenant_id") == scope.tenant_id
+			and item.get("workspace_id") == scope.workspace_id
+		)
+
+	def list_libraries(self, *, scope: AccessScope) -> list[dict[str, Any]]:
 		with self._lock:
 			data = self._read()
-			items = [self._library_dict(item) for item in data.get("libraries", {}).values()]
+			items = [
+				self._library_dict(item)
+				for item in data.get("libraries", {}).values()
+				if self._in_scope(item, scope)
+			]
 		return sorted(items, key=lambda item: item.get("updated_at") or "", reverse=True)
 
-	def get_library(self, library_id: str) -> dict[str, Any] | None:
+	def get_library(
+		self,
+		library_id: str,
+		*,
+		scope: AccessScope,
+	) -> dict[str, Any] | None:
 		with self._lock:
 			data = self._read()
 			item = data.get("libraries", {}).get(library_id)
-			return self._library_dict(item) if item else None
+			return self._library_dict(item) if item and self._in_scope(item, scope) else None
 
 	def create_library(
 		self,
@@ -202,6 +251,7 @@ class JsonMetadataStore(MetadataStore):
 		name: str,
 		library_id: str | None = None,
 		description: str | None = None,
+		scope: AccessScope,
 	) -> dict[str, Any]:
 		resolved = library_id or str(uuid4())
 		now = _now_iso()
@@ -213,6 +263,8 @@ class JsonMetadataStore(MetadataStore):
 			"status": "empty",
 			"doc_count": 0,
 			"ready_count": 0,
+			"tenant_id": scope.tenant_id,
+			"workspace_id": scope.workspace_id,
 			"created_at": now,
 			"updated_at": now,
 		}
@@ -231,11 +283,12 @@ class JsonMetadataStore(MetadataStore):
 		name: str | None = None,
 		description: str | None = None,
 		update_description: bool = False,
+		scope: AccessScope,
 	) -> dict[str, Any] | None:
 		with self._lock:
 			data = self._read()
 			row = data.get("libraries", {}).get(library_id)
-			if row is None:
+			if row is None or not self._in_scope(row, scope):
 				return None
 			if name is not None:
 				row["name"] = name.strip()[:256] or "未命名知识库"
@@ -249,38 +302,52 @@ class JsonMetadataStore(MetadataStore):
 			self._write(data)
 			return self._library_dict(row)
 
-	def delete_library(self, library_id: str) -> bool:
+	def delete_library(self, library_id: str, *, scope: AccessScope) -> bool:
 		with self._lock:
 			data = self._read()
 			libraries = data.get("libraries", {})
-			if library_id not in libraries:
+			library = libraries.get(library_id)
+			if library is None or not self._in_scope(library, scope):
 				return False
 			documents = data.setdefault("documents", {})
 			for doc_id in [
 				key
 				for key, item in list(documents.items())
-				if item.get("library_id") == library_id
+				if item.get("library_id") == library_id and self._in_scope(item, scope)
 			]:
 				documents.pop(doc_id, None)
 			libraries.pop(library_id, None)
 			self._write(data)
 			return True
 
-	def list_documents(self, library_id: str) -> list[dict[str, Any]]:
+	def list_documents(
+		self,
+		library_id: str,
+		*,
+		scope: AccessScope,
+	) -> list[dict[str, Any]]:
 		with self._lock:
 			data = self._read()
+			library = data.get("libraries", {}).get(library_id)
+			if library is None or not self._in_scope(library, scope):
+				return []
 			items = [
 				dict(item)
 				for item in data.get("documents", {}).values()
-				if item.get("library_id") == library_id
+				if item.get("library_id") == library_id and self._in_scope(item, scope)
 			]
 		return sorted(items, key=lambda item: item.get("updated_at") or "", reverse=True)
 
-	def get_document(self, doc_id: str) -> dict[str, Any] | None:
+	def get_document(
+		self,
+		doc_id: str,
+		*,
+		scope: AccessScope,
+	) -> dict[str, Any] | None:
 		with self._lock:
 			data = self._read()
 			item = data.get("documents", {}).get(doc_id)
-			return dict(item) if item else None
+			return dict(item) if item and self._in_scope(item, scope) else None
 
 	def create_document(
 		self,
@@ -293,12 +360,16 @@ class JsonMetadataStore(MetadataStore):
 		status: DocumentStatus = "processing",
 		storage_key: str | None = None,
 		size_bytes: int | None = None,
+		scope: AccessScope,
 	) -> dict[str, Any]:
 		with self._lock:
 			data = self._read()
-			if library_id not in data.get("libraries", {}):
+			library = data.get("libraries", {}).get(library_id)
+			if library is None or not self._in_scope(library, scope):
 				raise ValueError(f"library not found: {library_id}")
 			resolved = doc_id or str(uuid4())
+			if resolved in data.get("documents", {}):
+				raise ValueError(f"document already exists: {resolved}")
 			now = _now_iso()
 			row = {
 				"id": resolved,
@@ -312,12 +383,14 @@ class JsonMetadataStore(MetadataStore):
 				"error": None,
 				"parser_report": None,
 				"storage_key": storage_key,
+				"tenant_id": scope.tenant_id,
+				"workspace_id": scope.workspace_id,
 				"created_at": now,
 				"updated_at": now,
 			}
 			data.setdefault("documents", {})[resolved] = row
 			self._write(data)
-		self.refresh_library_counts(library_id)
+		self.refresh_library_counts(library_id, scope=scope)
 		return dict(row)
 
 	def update_document(
@@ -334,11 +407,12 @@ class JsonMetadataStore(MetadataStore):
 		filename: str | None = None,
 		content_type: str | None = None,
 		clear_error: bool = False,
+		scope: AccessScope,
 	) -> dict[str, Any] | None:
 		with self._lock:
 			data = self._read()
 			row = data.get("documents", {}).get(doc_id)
-			if not row:
+			if not row or not self._in_scope(row, scope):
 				return None
 			if status is not None:
 				row["status"] = status
@@ -365,30 +439,36 @@ class JsonMetadataStore(MetadataStore):
 			self._write(data)
 			library_id = str(row["library_id"])
 			updated = dict(row)
-		self.refresh_library_counts(library_id)
+		self.refresh_library_counts(library_id, scope=scope)
 		return updated
 
-	def delete_document(self, doc_id: str) -> bool:
+	def delete_document(self, doc_id: str, *, scope: AccessScope) -> bool:
 		with self._lock:
 			data = self._read()
-			row = data.get("documents", {}).pop(doc_id, None)
-			if not row:
+			row = data.get("documents", {}).get(doc_id)
+			if not row or not self._in_scope(row, scope):
 				return False
+			data["documents"].pop(doc_id, None)
 			library_id = str(row["library_id"])
 			self._write(data)
-		self.refresh_library_counts(library_id)
+		self.refresh_library_counts(library_id, scope=scope)
 		return True
 
-	def refresh_library_counts(self, library_id: str) -> dict[str, Any] | None:
+	def refresh_library_counts(
+		self,
+		library_id: str,
+		*,
+		scope: AccessScope,
+	) -> dict[str, Any] | None:
 		with self._lock:
 			data = self._read()
 			library = data.get("libraries", {}).get(library_id)
-			if not library:
+			if not library or not self._in_scope(library, scope):
 				return None
 			docs = [
 				item
 				for item in data.get("documents", {}).values()
-				if item.get("library_id") == library_id
+				if item.get("library_id") == library_id and self._in_scope(item, scope)
 			]
 			doc_count = len(docs)
 			ready_count = sum(1 for item in docs if item.get("status") == "ready")
@@ -462,6 +542,8 @@ class JsonMetadataStore(MetadataStore):
 		principal_id: str | None = None,
 		limit: int = 50,
 	) -> list[dict[str, Any]]:
+		if not tenant_id or not workspace_id or not principal_id:
+			raise ValueError("tenant_id, workspace_id and principal_id are required")
 		with self._lock:
 			data = self._read()
 			items = [dict(item) for item in data.get("turns", {}).values()]
@@ -478,11 +560,25 @@ class JsonMetadataStore(MetadataStore):
 		items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
 		return items[: max(1, min(limit, 200))]
 
-	def get_turn(self, turn_id: str) -> dict[str, Any] | None:
+	def get_turn(
+		self,
+		turn_id: str,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+	) -> dict[str, Any] | None:
 		with self._lock:
 			data = self._read()
 			item = data.get("turns", {}).get(turn_id)
-			return dict(item) if item else None
+			if (
+				item
+				and item.get("tenant_id") == tenant_id
+				and item.get("workspace_id") == workspace_id
+				and item.get("principal_id") == principal_id
+			):
+				return dict(item)
+			return None
 
 
 class SqlAlchemyMetadataStore(MetadataStore):
@@ -496,6 +592,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			__tablename__ = "libraries"
 
 			id: Mapped[str] = mapped_column(String(128), primary_key=True)
+			tenant_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+			workspace_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
 			name: Mapped[str] = mapped_column(String(256), nullable=False)
 			description: Mapped[str | None] = mapped_column(Text, nullable=True)
 			status: Mapped[str] = mapped_column(String(32), nullable=False, default="empty")
@@ -518,6 +616,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 
 			id: Mapped[str] = mapped_column(String(128), primary_key=True)
 			library_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+			tenant_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+			workspace_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
 			name: Mapped[str] = mapped_column(String(512), nullable=False)
 			filename: Mapped[str] = mapped_column(String(512), nullable=False)
 			content_type: Mapped[str] = mapped_column(String(128), nullable=False, default="")
@@ -600,6 +700,54 @@ class SqlAlchemyMetadataStore(MetadataStore):
 					)
 				)
 				for stmt in (
+					"ALTER TABLE libraries ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128)",
+					"ALTER TABLE libraries ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(128)",
+					"ALTER TABLE documents ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128)",
+					"ALTER TABLE documents ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(128)",
+					"""
+					DO $$
+					BEGIN
+						IF to_regclass('app.libraries') IS NOT NULL THEN
+							EXECUTE '
+								UPDATE public.libraries AS public_library
+								SET tenant_id = control_library.organization_id::text,
+									workspace_id = control_library.workspace_id::text
+								FROM app.libraries AS control_library
+								WHERE control_library.rag_library_id = public_library.id
+									AND (
+										public_library.tenant_id IS NULL
+										OR public_library.workspace_id IS NULL
+									)
+							';
+						END IF;
+					END $$;
+					""",
+					"""
+					DO $$
+					BEGIN
+						IF (
+							to_regclass('app.documents') IS NOT NULL
+							AND to_regclass('app.libraries') IS NOT NULL
+						) THEN
+							EXECUTE '
+								UPDATE public.documents AS public_document
+								SET tenant_id = control_document.organization_id::text,
+									workspace_id = control_document.workspace_id::text
+								FROM app.documents AS control_document
+								JOIN app.libraries AS control_library
+									ON control_library.id = control_document.library_id
+								WHERE control_document.rag_document_id = public_document.id
+									AND control_library.rag_library_id = public_document.library_id
+									AND (
+										public_document.tenant_id IS NULL
+										OR public_document.workspace_id IS NULL
+									)
+							';
+						END IF;
+					END $$;
+					""",
+					"CREATE INDEX IF NOT EXISTS ix_libraries_scope ON libraries (tenant_id, workspace_id)",
+					"CREATE INDEX IF NOT EXISTS ix_documents_scope ON documents (tenant_id, workspace_id)",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS query_type VARCHAR(64)",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS rewrite VARCHAR(64)",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS rewritten_query TEXT",
@@ -630,6 +778,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 	def _library_dict(self, row: Any) -> dict[str, Any]:
 		return {
 			"id": row.id,
+			"tenant_id": row.tenant_id,
+			"workspace_id": row.workspace_id,
 			"name": row.name,
 			"description": getattr(row, "description", None),
 			"status": row.status,
@@ -653,6 +803,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		return {
 			"id": row.id,
 			"library_id": row.library_id,
+			"tenant_id": row.tenant_id,
+			"workspace_id": row.workspace_id,
 			"name": row.name,
 			"filename": row.filename,
 			"content_type": row.content_type,
@@ -705,16 +857,32 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			"created_at": self._dt(row.created_at),
 		}
 
-	def list_libraries(self) -> list[dict[str, Any]]:
+	def list_libraries(self, *, scope: AccessScope) -> list[dict[str, Any]]:
 		with self._Session() as session:
 			rows = session.scalars(
-				self._select(self._LibraryRow).order_by(self._LibraryRow.updated_at.desc())
+				self._select(self._LibraryRow)
+				.where(
+					self._LibraryRow.tenant_id == scope.tenant_id,
+					self._LibraryRow.workspace_id == scope.workspace_id,
+				)
+				.order_by(self._LibraryRow.updated_at.desc())
 			).all()
 			return [self._library_dict(row) for row in rows]
 
-	def get_library(self, library_id: str) -> dict[str, Any] | None:
+	def get_library(
+		self,
+		library_id: str,
+		*,
+		scope: AccessScope,
+	) -> dict[str, Any] | None:
 		with self._Session() as session:
-			row = session.get(self._LibraryRow, library_id)
+			row = session.scalar(
+				self._select(self._LibraryRow).where(
+					self._LibraryRow.id == library_id,
+					self._LibraryRow.tenant_id == scope.tenant_id,
+					self._LibraryRow.workspace_id == scope.workspace_id,
+				)
+			)
 			return self._library_dict(row) if row else None
 
 	def create_library(
@@ -723,6 +891,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		name: str,
 		library_id: str | None = None,
 		description: str | None = None,
+		scope: AccessScope,
 	) -> dict[str, Any]:
 		resolved = library_id or str(uuid4())
 		desc = description.strip()[:2000] if isinstance(description, str) and description.strip() else None
@@ -731,6 +900,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				raise ValueError(f"library already exists: {resolved}")
 			row = self._LibraryRow(
 				id=resolved,
+				tenant_id=scope.tenant_id,
+				workspace_id=scope.workspace_id,
 				name=name.strip()[:256] or "未命名知识库",
 				description=desc,
 				status="empty",
@@ -749,9 +920,16 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		name: str | None = None,
 		description: str | None = None,
 		update_description: bool = False,
+		scope: AccessScope,
 	) -> dict[str, Any] | None:
 		with self._Session() as session:
-			row = session.get(self._LibraryRow, library_id)
+			row = session.scalar(
+				self._select(self._LibraryRow).where(
+					self._LibraryRow.id == library_id,
+					self._LibraryRow.tenant_id == scope.tenant_id,
+					self._LibraryRow.workspace_id == scope.workspace_id,
+				)
+			)
 			if row is None:
 				return None
 			if name is not None:
@@ -765,13 +943,23 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			session.refresh(row)
 			return self._library_dict(row)
 
-	def delete_library(self, library_id: str) -> bool:
+	def delete_library(self, library_id: str, *, scope: AccessScope) -> bool:
 		with self._Session() as session:
-			library = session.get(self._LibraryRow, library_id)
+			library = session.scalar(
+				self._select(self._LibraryRow).where(
+					self._LibraryRow.id == library_id,
+					self._LibraryRow.tenant_id == scope.tenant_id,
+					self._LibraryRow.workspace_id == scope.workspace_id,
+				)
+			)
 			if library is None:
 				return False
 			docs = session.scalars(
-				self._select(self._DocumentRow).where(self._DocumentRow.library_id == library_id)
+				self._select(self._DocumentRow).where(
+					self._DocumentRow.library_id == library_id,
+					self._DocumentRow.tenant_id == scope.tenant_id,
+					self._DocumentRow.workspace_id == scope.workspace_id,
+				)
 			).all()
 			for doc in docs:
 				session.delete(doc)
@@ -779,18 +967,47 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			session.commit()
 			return True
 
-	def list_documents(self, library_id: str) -> list[dict[str, Any]]:
+	def list_documents(
+		self,
+		library_id: str,
+		*,
+		scope: AccessScope,
+	) -> list[dict[str, Any]]:
 		with self._Session() as session:
+			library = session.scalar(
+				self._select(self._LibraryRow.id).where(
+					self._LibraryRow.id == library_id,
+					self._LibraryRow.tenant_id == scope.tenant_id,
+					self._LibraryRow.workspace_id == scope.workspace_id,
+				)
+			)
+			if library is None:
+				return []
 			rows = session.scalars(
 				self._select(self._DocumentRow)
-				.where(self._DocumentRow.library_id == library_id)
+				.where(
+					self._DocumentRow.library_id == library_id,
+					self._DocumentRow.tenant_id == scope.tenant_id,
+					self._DocumentRow.workspace_id == scope.workspace_id,
+				)
 				.order_by(self._DocumentRow.updated_at.desc())
 			).all()
 			return [self._document_dict(row) for row in rows]
 
-	def get_document(self, doc_id: str) -> dict[str, Any] | None:
+	def get_document(
+		self,
+		doc_id: str,
+		*,
+		scope: AccessScope,
+	) -> dict[str, Any] | None:
 		with self._Session() as session:
-			row = session.get(self._DocumentRow, doc_id)
+			row = session.scalar(
+				self._select(self._DocumentRow).where(
+					self._DocumentRow.id == doc_id,
+					self._DocumentRow.tenant_id == scope.tenant_id,
+					self._DocumentRow.workspace_id == scope.workspace_id,
+				)
+			)
 			return self._document_dict(row) if row else None
 
 	def create_document(
@@ -804,14 +1021,26 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		status: DocumentStatus = "processing",
 		storage_key: str | None = None,
 		size_bytes: int | None = None,
+		scope: AccessScope,
 	) -> dict[str, Any]:
 		resolved = doc_id or str(uuid4())
 		with self._Session() as session:
-			if session.get(self._LibraryRow, library_id) is None:
+			library = session.scalar(
+				self._select(self._LibraryRow.id).where(
+					self._LibraryRow.id == library_id,
+					self._LibraryRow.tenant_id == scope.tenant_id,
+					self._LibraryRow.workspace_id == scope.workspace_id,
+				)
+			)
+			if library is None:
 				raise ValueError(f"library not found: {library_id}")
+			if session.get(self._DocumentRow, resolved) is not None:
+				raise ValueError(f"document already exists: {resolved}")
 			row = self._DocumentRow(
 				id=resolved,
 				library_id=library_id,
+				tenant_id=scope.tenant_id,
+				workspace_id=scope.workspace_id,
 				name=name.strip()[:512] or filename,
 				filename=filename,
 				content_type=content_type,
@@ -825,7 +1054,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			session.commit()
 			session.refresh(row)
 			payload = self._document_dict(row)
-		self.refresh_library_counts(library_id)
+		self.refresh_library_counts(library_id, scope=scope)
 		return payload
 
 	def update_document(
@@ -842,9 +1071,16 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		filename: str | None = None,
 		content_type: str | None = None,
 		clear_error: bool = False,
+		scope: AccessScope,
 	) -> dict[str, Any] | None:
 		with self._Session() as session:
-			row = session.get(self._DocumentRow, doc_id)
+			row = session.scalar(
+				self._select(self._DocumentRow).where(
+					self._DocumentRow.id == doc_id,
+					self._DocumentRow.tenant_id == scope.tenant_id,
+					self._DocumentRow.workspace_id == scope.workspace_id,
+				)
+			)
 			if row is None:
 				return None
 			if status is not None:
@@ -871,27 +1107,48 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			session.commit()
 			session.refresh(row)
 			payload = self._document_dict(row)
-		self.refresh_library_counts(library_id)
+		self.refresh_library_counts(library_id, scope=scope)
 		return payload
 
-	def delete_document(self, doc_id: str) -> bool:
+	def delete_document(self, doc_id: str, *, scope: AccessScope) -> bool:
 		with self._Session() as session:
-			row = session.get(self._DocumentRow, doc_id)
+			row = session.scalar(
+				self._select(self._DocumentRow).where(
+					self._DocumentRow.id == doc_id,
+					self._DocumentRow.tenant_id == scope.tenant_id,
+					self._DocumentRow.workspace_id == scope.workspace_id,
+				)
+			)
 			if row is None:
 				return False
 			library_id = row.library_id
 			session.delete(row)
 			session.commit()
-		self.refresh_library_counts(library_id)
+		self.refresh_library_counts(library_id, scope=scope)
 		return True
 
-	def refresh_library_counts(self, library_id: str) -> dict[str, Any] | None:
+	def refresh_library_counts(
+		self,
+		library_id: str,
+		*,
+		scope: AccessScope,
+	) -> dict[str, Any] | None:
 		with self._Session() as session:
-			library = session.get(self._LibraryRow, library_id)
+			library = session.scalar(
+				self._select(self._LibraryRow).where(
+					self._LibraryRow.id == library_id,
+					self._LibraryRow.tenant_id == scope.tenant_id,
+					self._LibraryRow.workspace_id == scope.workspace_id,
+				)
+			)
 			if library is None:
 				return None
 			docs = session.scalars(
-				self._select(self._DocumentRow).where(self._DocumentRow.library_id == library_id)
+				self._select(self._DocumentRow).where(
+					self._DocumentRow.library_id == library_id,
+					self._DocumentRow.tenant_id == scope.tenant_id,
+					self._DocumentRow.workspace_id == scope.workspace_id,
+				)
 			).all()
 			doc_count = len(docs)
 			ready_count = sum(1 for item in docs if item.status == "ready")
@@ -966,6 +1223,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		principal_id: str | None = None,
 		limit: int = 50,
 	) -> list[dict[str, Any]]:
+		if not tenant_id or not workspace_id or not principal_id:
+			raise ValueError("tenant_id, workspace_id and principal_id are required")
 		capped = max(1, min(limit, 200))
 		with self._Session() as session:
 			stmt = self._select(self._TurnRow).order_by(self._TurnRow.created_at.desc())
@@ -983,9 +1242,23 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			rows = session.scalars(stmt).all()
 			return [self._turn_dict(row) for row in rows]
 
-	def get_turn(self, turn_id: str) -> dict[str, Any] | None:
+	def get_turn(
+		self,
+		turn_id: str,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+	) -> dict[str, Any] | None:
 		with self._Session() as session:
-			row = session.get(self._TurnRow, turn_id)
+			row = session.scalar(
+				self._select(self._TurnRow).where(
+					self._TurnRow.id == turn_id,
+					self._TurnRow.tenant_id == tenant_id,
+					self._TurnRow.workspace_id == workspace_id,
+					self._TurnRow.principal_id == principal_id,
+				)
+			)
 			return self._turn_dict(row) if row else None
 
 
@@ -1042,7 +1315,7 @@ def probe_metadata_store(settings: Any | None = None) -> tuple[bool, str, str]:
 	try:
 		store = get_metadata_store(cfg)
 		# cheap round-trip
-		store.list_libraries()
+		store.list_libraries(scope=AccessScope.development(cfg))
 		name = "postgres" if store.__class__.__name__.startswith("SqlAlchemy") else store.__class__.__name__
 		return True, name, "ok"
 	except Exception as exc:

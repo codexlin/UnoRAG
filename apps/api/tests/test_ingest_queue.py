@@ -13,8 +13,14 @@ class FakeMetadataStore:
 	def __init__(self, documents: list[dict[str, Any]] | None = None) -> None:
 		self.documents = documents or []
 
-	def list_documents(self, library_id: str) -> list[dict[str, Any]]:
+	def list_documents(
+		self,
+		library_id: str,
+		*,
+		scope: AccessScope,
+	) -> list[dict[str, Any]]:
 		assert library_id == "lib-test"
+		assert scope == access_scope()
 		return self.documents
 
 

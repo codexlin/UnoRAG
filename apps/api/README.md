@@ -48,8 +48,11 @@ RequestContext；签名绑定 method、canonical path/query 与精确 body
 > 放在内部网络，只允许 Next.js 与 worker 访问；不要公开映射 `:8000`。
 
 RequestContext 会生成统一 `AccessScope`。Dense、BM25、表格全量加载、
-删除和异步 ingest 都强制携带 tenant/workspace/ACL 过滤；旧的无 scope
-Qdrant 点不会被召回，需要重新索引。
+删除、`public.libraries/documents` 元数据和异步 ingest 都强制携带
+tenant/workspace/ACL 过滤。启动升级只会根据 `app.libraries/documents`
+的明确 ID 映射回填旧元数据；无法映射的 legacy 行保持不可见，需要通过
+Control Plane 重新投影或重新入库。旧的无 scope Qdrant 点同样不会被召回，
+需要重新索引。
 
 ```bash
 curl -s http://localhost:8000/health

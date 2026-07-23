@@ -74,11 +74,12 @@ def get_archive_turn(
 	meta: MetadataStore = Depends(get_meta),
 	context: RequestContext = Depends(require_internal_context),
 ) -> ArchiveTurnResponse:
-	row = meta.get_turn(turn_id)
-	if row is None or (
-		row.get("tenant_id") != context.tenant_id
-		or row.get("workspace_id") != context.workspace_id
-		or row.get("principal_id") != context.principal_id
-	):
+	row = meta.get_turn(
+		turn_id,
+		tenant_id=context.tenant_id,
+		workspace_id=context.workspace_id,
+		principal_id=context.principal_id,
+	)
+	if row is None:
 		raise HTTPException(status_code=404, detail="turn not found")
 	return _to_turn_response(row)

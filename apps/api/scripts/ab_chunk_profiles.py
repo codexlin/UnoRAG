@@ -56,6 +56,7 @@ TESTDATA = REPO_ROOT / "testdata"
 REPORT_DIR = ROOT / ".eval_reports"
 
 from app.graph.ask_graph import AskGraphService
+from app.security.access_scope import AccessScope
 from app.services.document_storage import DocumentStorage
 from app.services.ingest.chunker import ChunkerConfig, chunk_document
 from app.services.ingest.ir import DocumentIR
@@ -254,11 +255,12 @@ def _mime_for(path: Path) -> str:
 
 
 def _ensure_clean_library(meta, settings: Settings, library_id: str, name: str) -> None:
+	scope = AccessScope.development(settings)
 	ingest = IngestService(settings)
 	storage = DocumentStorage(settings)
-	existing = meta.get_library(library_id)
+	existing = meta.get_library(library_id, scope=scope)
 	if existing is not None:
-		for doc in list(meta.list_documents(library_id)):
+		for doc in list(meta.list_documents(library_id, scope=scope)):
 			doc_id = str(doc["id"])
 			try:
 				ingest.delete_document_chunks(doc_id=doc_id, library_id=library_id)
@@ -270,9 +272,14 @@ def _ensure_clean_library(meta, settings: Settings, library_id: str, name: str) 
 					storage.delete(str(key))
 				except Exception:
 					pass
-			meta.delete_document(doc_id)
-		meta.delete_library(library_id)
-	meta.create_library(name=name, library_id=library_id, description="chunk-profile A/B")
+			meta.delete_document(doc_id, scope=scope)
+		meta.delete_library(library_id, scope=scope)
+	meta.create_library(
+		name=name,
+		library_id=library_id,
+		description="chunk-profile A/B",
+		scope=scope,
+	)
 
 
 def _parse_ir_cached(
@@ -340,6 +347,7 @@ def _ingest_ir(
 			break
 
 	storage = DocumentStorage(settings)
+	scope = AccessScope.development(settings)
 	doc_id = ir.id
 	try:
 		chunks = chunk_document(
@@ -371,9 +379,10 @@ def _ingest_ir(
 			doc_id=doc_id,
 			status="processing",
 			size_bytes=path.stat().st_size,
+			scope=scope,
 		)
 		storage_key = storage.save(library_id, doc["id"], path.name, path.read_bytes())
-		meta.update_document(doc["id"], storage_key=storage_key)
+		meta.update_document(doc["id"], storage_key=storage_key, scope=scope)
 
 		result = IngestService(settings).ingest_ir_chunks(
 			library_id=library_id,
@@ -389,6 +398,7 @@ def _ingest_ir(
 			chunk_count=result["chunk_count"],
 			error=None,
 			parser_report=report,
+			scope=scope,
 		)
 		index_wall = round(time.perf_counter() - started, 3)
 		row.status = "ready"
@@ -414,7 +424,12 @@ def _ingest_ir(
 		row.error = str(exc)
 		row.doc_id = doc_id
 		try:
-			meta.update_document(doc_id, status="failed", error=str(exc))
+			meta.update_document(
+				doc_id,
+				status="failed",
+				error=str(exc),
+				scope=scope,
+			)
 		except Exception:
 			pass
 		# Attach parser backend if parse succeeded before chunk/ingest failed

@@ -9,7 +9,7 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 from arq.jobs import Job
 
-from app.security.access_scope import AccessScope
+from app.security.access_scope import AccessScope, resolve_access_scope
 from app.services.document_storage import DocumentStorage
 from app.services.ingest.pipeline import prepare_ingest
 from app.services.metadata import MetadataStore, get_metadata_store
@@ -30,10 +30,11 @@ def process_document_ingest(
 ) -> dict[str, Any]:
 	"""Parse + embed a stored document. Idempotent if not in processing."""
 	settings = settings or get_settings()
+	scope = resolve_access_scope(settings, access_scope)
 	meta = get_metadata_store(settings)
 	storage = DocumentStorage(settings)
 
-	doc = meta.get_document(doc_id)
+	doc = meta.get_document(doc_id, scope=scope)
 	if doc is None:
 		logger.warning("ingest.job.missing doc_id=%s", doc_id)
 		return {"ok": False, "doc_id": doc_id, "error": "document not found"}
@@ -63,13 +64,23 @@ def process_document_ingest(
 
 	storage_key = doc.get("storage_key")
 	if not storage_key:
-		meta.update_document(doc_id, status="failed", error="原文未保留，请重新上传")
+		meta.update_document(
+			doc_id,
+			status="failed",
+			error="原文未保留，请重新上传",
+			scope=scope,
+		)
 		return {"ok": False, "doc_id": doc_id, "error": "原文未保留，请重新上传"}
 
 	try:
 		content = storage.read(str(storage_key))
 	except FileNotFoundError:
-		meta.update_document(doc_id, status="failed", error="原文未保留，请重新上传")
+		meta.update_document(
+			doc_id,
+			status="failed",
+			error="原文未保留，请重新上传",
+			scope=scope,
+		)
 		return {"ok": False, "doc_id": doc_id, "error": "原文未保留，请重新上传"}
 
 	library_id = str(doc["library_id"])
@@ -88,13 +99,18 @@ def process_document_ingest(
 			doc_id=doc_id,
 		)
 	except ValueError as exc:
-		meta.update_document(doc_id, status="failed", error=str(exc))
+		meta.update_document(doc_id, status="failed", error=str(exc), scope=scope)
 		return {"ok": False, "doc_id": doc_id, "error": str(exc)}
 
 	live = capability.live_ready
 	stub_simulate = capability.requested_mode == "stub" and settings.stub_ingest_simulate
 	if not live and not stub_simulate:
-		meta.update_document(doc_id, status="failed", error="ingest requires live mode")
+		meta.update_document(
+			doc_id,
+			status="failed",
+			error="ingest requires live mode",
+			scope=scope,
+		)
 		return {"ok": False, "doc_id": doc_id, "error": "ingest requires live mode"}
 
 	report = prepared.parser_report.to_public_dict()
@@ -103,7 +119,7 @@ def process_document_ingest(
 		if live:
 			result = IngestService(
 				settings,
-				access_scope=access_scope,
+				access_scope=scope,
 			).ingest_ir_chunks(
 				library_id=library_id,
 				title=prepared.title,
@@ -130,13 +146,26 @@ def process_document_ingest(
 			chunk_count=result["chunk_count"],
 			error=None,
 			parser_report=report,
+			scope=scope,
 		)
 	except ValueError as exc:
-		meta.update_document(doc_id, status="failed", error=str(exc), parser_report=report)
+		meta.update_document(
+			doc_id,
+			status="failed",
+			error=str(exc),
+			parser_report=report,
+			scope=scope,
+		)
 		return {"ok": False, "doc_id": doc_id, "error": str(exc)}
 	except Exception as exc:
 		logger.exception("ingest.job.failed doc_id=%s", doc_id)
-		meta.update_document(doc_id, status="failed", error=str(exc), parser_report=report)
+		meta.update_document(
+			doc_id,
+			status="failed",
+			error=str(exc),
+			parser_report=report,
+			scope=scope,
+		)
 		return {"ok": False, "doc_id": doc_id, "error": str(exc)}
 
 	logger.info(
@@ -188,7 +217,7 @@ async def enqueue_ingest_job(
 	meta = get_metadata_store(settings)
 	inflight = sum(
 		1
-		for row in meta.list_documents(library_id)
+		for row in meta.list_documents(library_id, scope=access_scope)
 		if str(row.get("status") or "") == "processing"
 	)
 	# 当前文档已计入 processing；超限时拒绝（允许等于上限）
