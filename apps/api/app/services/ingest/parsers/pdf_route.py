@@ -1,0 +1,291 @@
+"""PDF 解析路由：数字 PDF → PyMuPDF；扫描/复杂 → MinerU。
+
+不替换现有 PyMuPDF 解析器；MinerU 为补充路径。不可用时显式 degrade / fail，禁止静默空文档。
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any, Literal
+
+from app.services.ingest.backends.base import ParseRequest
+from app.services.ingest.backends.mineru import MinerUClientError, get_mineru_backend
+from app.services.ingest.backends.pymupdf import PyMuPDFBackend
+from app.services.ingest.ir import DocumentIR
+from app.services.ingest.parsers.pdf import PdfParseOptions, classify_page
+from app.settings import Settings
+
+logger = logging.getLogger(__name__)
+
+PdfRouteMode = Literal["auto", "pymupdf", "mineru"]
+
+
+def should_upgrade_to_mineru(ir: DocumentIR) -> bool:
+	"""PyMuPDF 结果含扫描/失败/VLM 待处理页，或完全无节点时，应尝试 MinerU。"""
+	report = ir.parser_report
+	if not ir.nodes:
+		return True
+	if report.needs_ocr_pages or report.failed_pages:
+		return True
+	if report.vlm_pending_pages and not report.vlm_pages:
+		return True
+	# 启发式：复杂页占比高（仅 complex meta）
+	complex_pages = [
+		n
+		for n in ir.nodes
+		if (n.meta or {}).get("page_kind") == "complex"
+	]
+	if complex_pages and len(complex_pages) >= max(1, len(ir.nodes) // 2):
+		return True
+	return False
+
+
+def probe_needs_mineru(content: bytes) -> bool:
+	"""轻量页信号：扫描 / 复杂 / 疑似双栏 → 建议 MinerU。"""
+	try:
+		import fitz
+	except ImportError:
+		return False
+	document = fitz.open(stream=content, filetype="pdf")
+	try:
+		for page in document:
+			raw = (page.get_text("text") or "").strip()
+			import re
+
+			char_count = len(re.sub(r"\s+", "", raw))
+			images = page.get_images(full=True) or []
+			image_count = len(images)
+			page_rect = page.rect
+			page_area = max(float(page_rect.width * page_rect.height), 1.0)
+			image_area = 0.0
+			blocks = []
+			try:
+				blocks = page.get_text("dict").get("blocks", [])
+				for block in blocks:
+					if block.get("type") == 1:
+						bbox = block.get("bbox") or [0, 0, 0, 0]
+						image_area += abs((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]))
+			except Exception:
+				image_area = page_area * min(0.9, 0.2 * image_count)
+			if image_area <= 0 and image_count:
+				image_area = page_area * min(0.9, 0.2 * image_count)
+			ratio = min(1.0, image_area / page_area)
+			kind = classify_page(
+				char_count=char_count,
+				image_area_ratio=ratio,
+				image_count=image_count,
+			)
+			if kind in {"suspect_scan", "complex"}:
+				return True
+			if _looks_multi_column(blocks, page_width=float(page_rect.width)):
+				return True
+	finally:
+		document.close()
+	return False
+
+
+def _looks_multi_column(blocks: list[dict[str, Any]], *, page_width: float) -> bool:
+	"""粗检双栏：左右各有文本块且中间有明显空隙。"""
+	text_blocks = [b for b in blocks if b.get("type") == 0 and b.get("bbox")]
+	if len(text_blocks) < 4 or page_width <= 0:
+		return False
+	mid = page_width / 2
+	left = 0
+	right = 0
+	for block in text_blocks:
+		bbox = block.get("bbox") or [0, 0, 0, 0]
+		x0, x1 = float(bbox[0]), float(bbox[2])
+		cx = (x0 + x1) / 2
+		if x1 < mid - page_width * 0.05:
+			left += 1
+		elif x0 > mid + page_width * 0.05:
+			right += 1
+	return left >= 2 and right >= 2
+
+
+def parse_pdf_routed(
+	*,
+	content: bytes,
+	filename: str,
+	title: str,
+	settings: Settings,
+	doc_id: str | None = None,
+	library_id: str = "",
+	options: PdfParseOptions | None = None,
+	mineru_backend: Any | None = None,
+) -> DocumentIR:
+	"""路由入口：保持 PyMuPDF 默认；按需升级 MinerU。"""
+	t0 = time.perf_counter()
+	opts = options or PdfParseOptions()
+	route_mode: PdfRouteMode = (settings.mineru_mode or "auto").strip().lower()  # type: ignore[assignment]
+	if route_mode not in {"auto", "pymupdf", "mineru"}:
+		route_mode = "auto"
+
+	backend = mineru_backend
+	if backend is None:
+		backend = get_mineru_backend(
+			enabled=settings.mineru_enabled,
+			base_url=settings.mineru_url,
+			timeout_s=settings.mineru_timeout_s,
+			max_retries=settings.mineru_max_retries,
+			parse_path=settings.mineru_parse_path,
+			use_fake=settings.mineru_use_fake,
+		)
+
+	# 强制 MinerU
+	if route_mode == "mineru":
+		return _parse_mineru_or_fail(
+			content=content,
+			filename=filename,
+			title=title,
+			doc_id=doc_id,
+			library_id=library_id,
+			backend=backend,
+			started=t0,
+			pymupdf_ir=None,
+		)
+
+	# PyMuPDF 先跑（allow_empty 以便 MinerU 救援）
+	pymupdf_opts = PdfParseOptions(
+		scan_strategy=opts.scan_strategy,
+		ocr_enabled=opts.ocr_enabled,
+		vlm_enabled=opts.vlm_enabled,
+		ocr_adapter=opts.ocr_adapter,
+		vlm_adapter=opts.vlm_adapter,
+		allow_empty=True,
+	)
+	pymupdf_ir = PyMuPDFBackend().parse(
+		ParseRequest(
+			content=content,
+			filename=filename,
+			title=title,
+			doc_id=doc_id,
+			library_id=library_id,
+			options=pymupdf_opts,
+		)
+	)
+	_stamp_latency(pymupdf_ir, t0)
+
+	if route_mode == "pymupdf":
+		return _finalize_pymupdf(pymupdf_ir, settings=settings)
+
+	# auto：正常数字 PDF 不升级
+	upgrade = should_upgrade_to_mineru(pymupdf_ir) or probe_needs_mineru(content)
+	if not upgrade:
+		pymupdf_ir.parser_report.mode = "text"
+		pymupdf_ir.parser_report.metrics["route"] = "pymupdf"
+		return pymupdf_ir
+
+	if backend is None:
+		return _degrade_without_mineru(pymupdf_ir, settings=settings)
+
+	try:
+		mineru_ir = backend.parse(
+			ParseRequest(
+				content=content,
+				filename=filename,
+				title=title,
+				doc_id=doc_id or pymupdf_ir.id,
+				library_id=library_id,
+			)
+		)
+		_stamp_latency(mineru_ir, t0)
+		mineru_ir.parser_report.metrics["route"] = "mineru"
+		mineru_ir.parser_report.metrics["pymupdf_partial"] = bool(
+			pymupdf_ir.parser_report.partial
+		)
+		# 归档解析器版本到 meta
+		mineru_ir.meta["parser_backend"] = mineru_ir.parser_report.backend or "mineru"
+		mineru_ir.meta["parser_version"] = mineru_ir.parser_report.parser_version
+		return mineru_ir
+	except (MinerUClientError, ValueError) as exc:
+		logger.warning("mineru.degrade filename=%s err=%s", filename, exc)
+		if pymupdf_ir.nodes:
+			report = pymupdf_ir.parser_report
+			report.partial = True
+			report.warnings.append(f"MinerU unavailable, degraded to PyMuPDF: {exc}")
+			report.notes = (report.notes or "") + f"; mineru_degrade={exc}"
+			report.metrics["route"] = "pymupdf_degrade"
+			report.metrics["mineru_error"] = str(exc)
+			_stamp_latency(pymupdf_ir, t0)
+			return pymupdf_ir
+		raise ValueError(
+			f"MinerU unavailable and PDF has no extractable text: {exc}. "
+			"Set MINERU_URL to a running MinerU service, or enable OCR."
+		) from exc
+
+
+def _parse_mineru_or_fail(
+	*,
+	content: bytes,
+	filename: str,
+	title: str,
+	doc_id: str | None,
+	library_id: str,
+	backend: Any | None,
+	started: float,
+	pymupdf_ir: DocumentIR | None,
+) -> DocumentIR:
+	if backend is None:
+		raise ValueError(
+			"MINERU_MODE=mineru but MinerU is not configured "
+			"(set MINERU_ENABLED=true and MINERU_URL, or MINERU_USE_FAKE=true for tests)"
+		)
+	try:
+		ir = backend.parse(
+			ParseRequest(
+				content=content,
+				filename=filename,
+				title=title,
+				doc_id=doc_id,
+				library_id=library_id,
+			)
+		)
+	except (MinerUClientError, ValueError) as exc:
+		if pymupdf_ir and pymupdf_ir.nodes:
+			pymupdf_ir.parser_report.warnings.append(f"MinerU forced mode failed: {exc}")
+			return _finalize_pymupdf(pymupdf_ir, settings=None)
+		raise ValueError(f"MinerU parse failed: {exc}") from exc
+	_stamp_latency(ir, started)
+	ir.parser_report.metrics["route"] = "mineru_forced"
+	return ir
+
+
+def _finalize_pymupdf(ir: DocumentIR, *, settings: Settings | None) -> DocumentIR:
+	if not ir.nodes:
+		raise ValueError(
+			"PDF has no extractable text (possibly scanned); "
+			"enable MinerU (MINERU_ENABLED + MINERU_URL) or OCR"
+		)
+	ir.parser_report.metrics["route"] = "pymupdf"
+	if settings is not None and (
+		ir.parser_report.needs_ocr_pages or ir.parser_report.failed_pages
+	):
+		ir.parser_report.warnings.append(
+			"complex/scan pages present; MinerU disabled — partial PyMuPDF result"
+		)
+	return ir
+
+
+def _degrade_without_mineru(ir: DocumentIR, *, settings: Settings) -> DocumentIR:
+	if ir.nodes:
+		ir.parser_report.partial = True
+		ir.parser_report.warnings.append(
+			"MinerU not configured; keeping PyMuPDF partial "
+			"(set MINERU_ENABLED=true and MINERU_URL)"
+		)
+		ir.parser_report.metrics["route"] = "pymupdf_no_mineru"
+		return ir
+	strategy = (settings.pdf_scan_strategy or "partial").strip().lower()
+	msg = (
+		"PDF has no extractable text (possibly scanned); "
+		"enable MinerU (MINERU_ENABLED + MINERU_URL) or OCR"
+	)
+	if strategy == "fail" or not ir.nodes:
+		raise ValueError(msg)
+	raise ValueError(msg)
+
+
+def _stamp_latency(ir: DocumentIR, started: float) -> None:
+	ir.parser_report.latency_ms = round((time.perf_counter() - started) * 1000.0, 2)

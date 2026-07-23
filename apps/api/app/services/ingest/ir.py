@@ -42,6 +42,11 @@ class ParserReport(BaseModel):
 
 	source_format: str = ""
 	parser: str = ""
+	# Phase 2C：后端 / 版本 / 模式 / 延迟（UI 与 eval 可观测）
+	backend: str = ""
+	parser_version: str = ""
+	mode: str = ""  # text | mineru | hybrid | legacy
+	latency_ms: float | None = None
 	text_pages: list[int] = Field(default_factory=list)
 	ocr_pages: list[int] = Field(default_factory=list)
 	vlm_pages: list[int] = Field(default_factory=list)
@@ -51,6 +56,8 @@ class ParserReport(BaseModel):
 	warnings: list[str] = Field(default_factory=list)
 	partial: bool = False
 	notes: str = ""
+	# 轻量 A/B：node/table 计数、是否走 MinerU 等（不做仪表盘）
+	metrics: dict[str, Any] = Field(default_factory=dict)
 
 	def to_public_dict(self) -> dict[str, Any]:
 		return self.model_dump()

@@ -69,7 +69,7 @@ testdata/
 ### `pdf/leave-scanned.pdf`
 | 问法 | 期望 |
 |------|------|
-| 能否直接抽字？ | 失败可见：`needs_ocr` / `partial` / 空文本，而非假装 ready 可答 |
+| 能否直接抽字？ | 无 MinerU/OCR：显式 fail（错误含 extractable/MinerU）；启用 `MINERU_ENABLED`+服务或 `MINERU_USE_FAKE` → `ready`/`partial`，`parser_report.backend=mineru` |
 
 ### `pdf/manual-with-figure.pdf`
 | 问法 | 期望片段 |

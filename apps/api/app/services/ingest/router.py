@@ -10,7 +10,8 @@ from app.services.ingest.adapters.vlm import get_vlm_adapter
 from app.services.ingest.ir import DocumentIR
 from app.services.ingest.parsers.docx import parse_docx
 from app.services.ingest.parsers.md import parse_markdown
-from app.services.ingest.parsers.pdf import PdfParseOptions, parse_pdf
+from app.services.ingest.parsers.pdf import PdfParseOptions
+from app.services.ingest.parsers.pdf_route import parse_pdf_routed
 from app.services.ingest.parsers.txt import parse_txt
 from app.settings import Settings
 
@@ -97,10 +98,12 @@ def parse_to_ir(
 			ocr_adapter=ocr_adapter,
 			vlm_adapter=vlm_adapter,
 		)
-		return parse_pdf(
+		# Phase 2C：数字 PDF→PyMuPDF；扫描/复杂→MinerU（独立服务）
+		return parse_pdf_routed(
 			content=content,
 			filename=filename,
 			title=title,
+			settings=settings,
 			doc_id=doc_id,
 			library_id=library_id,
 			options=options,

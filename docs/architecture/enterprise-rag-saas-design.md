@@ -1228,6 +1228,14 @@ Phase 1 hardening：另含少量 `ingest_http` 用例，覆盖正例 upload→re
 - [x] Ask 图 table 分支：`build_table_plan → table_retrieve → table_execute → judge → generate`。
 - [x] Citation / archive 暴露 table_id、row range、TableQueryPlan + execution。
 
+#### Phase 2C：MinerU 复杂文档解析（进行中）
+
+- [x] `DocumentParserBackend`；PyMuPDF 默认，MinerU 补充扫描/复杂 PDF。
+- [x] MinerU `content_list` → DocumentIR（page/heading/table/figure/bbox/reading_order）。
+- [x] 独立服务客户端：timeout / retry / degrade；`parser_report` 含 backend/version/mode/latency。
+- [x] FakeMinerU + 单测；真实服务经 `MINERU_URL`。
+- [ ] 更丰富的双栏/跨页表真实 PDF 金标（当前以 JSON fixture + leave-scanned Fake 路径为主）。
+
 #### Phase 2C+（后续）
 
 - 增加 document summary index。

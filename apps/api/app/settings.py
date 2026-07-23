@@ -43,6 +43,16 @@ class Settings(BaseSettings):
 	ocr_enabled: bool = False
 	vlm_enabled: bool = False
 	vlm_model: str = "qwen-vl-plus"
+	# Phase 2C MinerU：独立服务补充扫描/复杂 PDF（默认关闭，不替换 PyMuPDF）
+	mineru_enabled: bool = False
+	mineru_url: str = ""
+	mineru_timeout_s: float = 120.0
+	mineru_max_retries: int = 2
+	mineru_parse_path: str = "/parse"
+	# auto | pymupdf | mineru
+	mineru_mode: str = "auto"
+	# 单测 / 本地无服务：true 时用 FakeMinerUBackend（勿用于生产）
+	mineru_use_fake: bool = False
 	# 可选 LangGraph 工具化 ask；默认短路径 retrieve→generate
 	tool_ask: bool = False
 	retrieve_top_k: int = 6

@@ -60,6 +60,10 @@ curl -s -X POST http://localhost:8000/v1/ask \
 | `INGEST_PIPELINE` | `v2`（默认，IR 结构切）或 `legacy` |
 | `PDF_SCAN_STRATEGY` | `partial`（默认）\| `fail` |
 | `OCR_ENABLED` / `VLM_ENABLED` | 默认 `false`；见 `docs/adr/0001-ocr-vlm-adapters.md` |
+| `MINERU_ENABLED` / `MINERU_URL` | 默认关；扫描/复杂 PDF 走独立 MinerU 服务（见 `docs/adr/0002-mineru-complex-pdf.md`） |
+| `MINERU_MODE` | `auto`（默认）\| `pymupdf` \| `mineru` |
+| `MINERU_TIMEOUT_S` / `MINERU_MAX_RETRIES` / `MINERU_PARSE_PATH` | 默认 `120` / `2` / `/parse` |
+| `MINERU_USE_FAKE` | 仅测试；`true` 时用 FakeMinerUBackend |
 | `TOOL_ASK` | 默认 `false`；工具函数在 `app/services/ingest/tools.py` |
 | `ANSWER_MIN_SCORE` | 弱相关拒答阈值；`0` 关闭 |
 | `MAX_RETRIEVE_RETRIES` | judge 后最多重试次数（默认 1） |

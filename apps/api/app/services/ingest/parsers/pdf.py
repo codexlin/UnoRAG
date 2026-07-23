@@ -37,6 +37,8 @@ class PdfParseOptions:
 	vlm_enabled: bool = False
 	ocr_adapter: Any | None = None
 	vlm_adapter: Any | None = None
+	# Phase 2C：允许空 nodes 返回，供上层 MinerU 救援（禁止静默 ready）
+	allow_empty: bool = False
 
 
 def classify_page(*, char_count: int, image_area_ratio: float, image_count: int) -> PageKind:
@@ -222,23 +224,44 @@ def parse_pdf(
 
 	# 整本策略
 	if not nodes:
+		report.backend = report.backend or "pymupdf"
+		report.parser_version = report.parser_version or "1.0"
+		report.mode = "text"
+		report.partial = True
+		report.notes = (
+			"no extractable text via PyMuPDF (possibly scanned); "
+			+ "; ".join(report.warnings[:3])
+		)
+		if opts.allow_empty:
+			return DocumentIR(
+				id=doc_id or str(uuid4()),
+				library_id=library_id,
+				source=filename,
+				source_format="pdf",
+				title=title,
+				filename=filename,
+				content_hash=content_hash_bytes(content),
+				nodes=[],
+				parser_report=report,
+			)
 		raise ValueError(
 			"PDF has no extractable text (possibly scanned); "
+			"enable MinerU (MINERU_ENABLED + MINERU_URL) or OCR; "
 			+ "; ".join(report.warnings[:3])
 		)
 
 	if report.failed_pages or report.needs_ocr_pages:
 		if opts.scan_strategy == "fail" and not report.text_pages and not report.ocr_pages:
 			raise ValueError(
-				"PDF scan/complex pages require OCR/VLM; set PDF_SCAN_STRATEGY=partial "
+				"PDF scan/complex pages require OCR/VLM/MinerU; set PDF_SCAN_STRATEGY=partial "
 				"to ingest successful pages only"
 			)
 		if opts.scan_strategy == "fail" and report.failed_pages and not (
 			report.text_pages or report.ocr_pages or report.vlm_pages
 		):
 			raise ValueError(
-				f"PDF pages failed without OCR: {report.failed_pages}; "
-				"enable OCR or use PDF_SCAN_STRATEGY=partial"
+				f"PDF pages failed without OCR/MinerU: {report.failed_pages}; "
+				"enable MinerU/OCR or use PDF_SCAN_STRATEGY=partial"
 			)
 		# partial：有成功页则入库，UI 需提示
 		if report.failed_pages or report.needs_ocr_pages or report.vlm_pending_pages:
@@ -248,6 +271,16 @@ def parse_pdf(
 				f"failed={len(report.failed_pages)} needs_ocr={len(report.needs_ocr_pages)} "
 				f"vlm_pending={len(report.vlm_pending_pages)}"
 			)
+
+	report.backend = report.backend or "pymupdf"
+	report.parser_version = report.parser_version or "1.0"
+	report.mode = report.mode or "text"
+	report.metrics = {
+		**report.metrics,
+		"node_count": len(nodes),
+		"text_page_count": len(report.text_pages),
+		"needs_ocr_count": len(report.needs_ocr_pages),
+	}
 
 	return DocumentIR(
 		id=doc_id or str(uuid4()),
