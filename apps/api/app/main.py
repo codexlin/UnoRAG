@@ -23,7 +23,7 @@ async def lifespan(_application: FastAPI):
 			f"MeriKnow requires Postgres metadata (backend={backend}): {detail}. "
 			"Run `docker compose up -d` and set DATABASE_URL."
 		)
-	# Force init + seed
+	# Force metadata store init (no demo library seed)
 	get_metadata_store(settings)
 	logger.info("startup.metadata_ok backend=%s detail=%s", backend, detail)
 	yield

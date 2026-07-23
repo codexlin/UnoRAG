@@ -40,7 +40,29 @@ class MetadataStore(ABC):
 		raise NotImplementedError
 
 	@abstractmethod
-	def create_library(self, *, name: str, library_id: str | None = None) -> dict[str, Any]:
+	def create_library(
+		self,
+		*,
+		name: str,
+		library_id: str | None = None,
+		description: str | None = None,
+	) -> dict[str, Any]:
+		raise NotImplementedError
+
+	@abstractmethod
+	def update_library(
+		self,
+		library_id: str,
+		*,
+		name: str | None = None,
+		description: str | None = None,
+		update_description: bool = False,
+	) -> dict[str, Any] | None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def delete_library(self, library_id: str) -> bool:
+		"""删除知识库及其下全部文档元数据；向量与落盘原文由调用方先清。"""
 		raise NotImplementedError
 
 	@abstractmethod
@@ -61,6 +83,8 @@ class MetadataStore(ABC):
 		content_type: str,
 		doc_id: str | None = None,
 		status: DocumentStatus = "processing",
+		storage_key: str | None = None,
+		size_bytes: int | None = None,
 	) -> dict[str, Any]:
 		raise NotImplementedError
 
@@ -73,6 +97,12 @@ class MetadataStore(ABC):
 		chunk_count: int | None = None,
 		error: str | None = None,
 		parser_report: dict[str, Any] | None = None,
+		storage_key: str | None = None,
+		size_bytes: int | None = None,
+		name: str | None = None,
+		filename: str | None = None,
+		content_type: str | None = None,
+		clear_error: bool = False,
 	) -> dict[str, Any] | None:
 		raise NotImplementedError
 
@@ -125,7 +155,6 @@ class JsonMetadataStore(MetadataStore):
 		self.path.parent.mkdir(parents=True, exist_ok=True)
 		if not self.path.exists():
 			self._write({"libraries": {}, "documents": {}, "turns": {}})
-			self._seed_defaults()
 
 	def _read(self) -> dict[str, Any]:
 		with self.path.open("r", encoding="utf-8") as handle:
@@ -137,43 +166,38 @@ class JsonMetadataStore(MetadataStore):
 			json.dump(data, handle, ensure_ascii=False, indent=2)
 		tmp.replace(self.path)
 
-	def _seed_defaults(self) -> None:
-		with self._lock:
-			data = self._read()
-			if data.get("libraries"):
-				return
-			now = _now_iso()
-			library_id = "lib-hr"
-			data["libraries"][library_id] = {
-				"id": library_id,
-				"name": "人事制度库",
-				"status": "empty",
-				"doc_count": 0,
-				"ready_count": 0,
-				"created_at": now,
-				"updated_at": now,
-			}
-			self._write(data)
-			logger.info("metadata.seed library_id=%s", library_id)
+	@staticmethod
+	def _library_dict(item: dict[str, Any]) -> dict[str, Any]:
+		row = dict(item)
+		row.setdefault("description", None)
+		return row
 
 	def list_libraries(self) -> list[dict[str, Any]]:
 		with self._lock:
 			data = self._read()
-			items = list(data.get("libraries", {}).values())
+			items = [self._library_dict(item) for item in data.get("libraries", {}).values()]
 		return sorted(items, key=lambda item: item.get("updated_at") or "", reverse=True)
 
 	def get_library(self, library_id: str) -> dict[str, Any] | None:
 		with self._lock:
 			data = self._read()
 			item = data.get("libraries", {}).get(library_id)
-			return dict(item) if item else None
+			return self._library_dict(item) if item else None
 
-	def create_library(self, *, name: str, library_id: str | None = None) -> dict[str, Any]:
+	def create_library(
+		self,
+		*,
+		name: str,
+		library_id: str | None = None,
+		description: str | None = None,
+	) -> dict[str, Any]:
 		resolved = library_id or str(uuid4())
 		now = _now_iso()
+		desc = description.strip()[:2000] if isinstance(description, str) and description.strip() else None
 		row = {
 			"id": resolved,
-			"name": name.strip()[:256] or "未命名文库",
+			"name": name.strip()[:256] or "未命名知识库",
+			"description": desc,
 			"status": "empty",
 			"doc_count": 0,
 			"ready_count": 0,
@@ -187,6 +211,48 @@ class JsonMetadataStore(MetadataStore):
 			data.setdefault("libraries", {})[resolved] = row
 			self._write(data)
 		return dict(row)
+
+	def update_library(
+		self,
+		library_id: str,
+		*,
+		name: str | None = None,
+		description: str | None = None,
+		update_description: bool = False,
+	) -> dict[str, Any] | None:
+		with self._lock:
+			data = self._read()
+			row = data.get("libraries", {}).get(library_id)
+			if row is None:
+				return None
+			if name is not None:
+				row["name"] = name.strip()[:256] or "未命名知识库"
+			if update_description:
+				if isinstance(description, str) and description.strip():
+					row["description"] = description.strip()[:2000]
+				else:
+					row["description"] = None
+			row["updated_at"] = _now_iso()
+			data["libraries"][library_id] = row
+			self._write(data)
+			return self._library_dict(row)
+
+	def delete_library(self, library_id: str) -> bool:
+		with self._lock:
+			data = self._read()
+			libraries = data.get("libraries", {})
+			if library_id not in libraries:
+				return False
+			documents = data.setdefault("documents", {})
+			for doc_id in [
+				key
+				for key, item in list(documents.items())
+				if item.get("library_id") == library_id
+			]:
+				documents.pop(doc_id, None)
+			libraries.pop(library_id, None)
+			self._write(data)
+			return True
 
 	def list_documents(self, library_id: str) -> list[dict[str, Any]]:
 		with self._lock:
@@ -213,6 +279,8 @@ class JsonMetadataStore(MetadataStore):
 		content_type: str,
 		doc_id: str | None = None,
 		status: DocumentStatus = "processing",
+		storage_key: str | None = None,
+		size_bytes: int | None = None,
 	) -> dict[str, Any]:
 		with self._lock:
 			data = self._read()
@@ -228,8 +296,10 @@ class JsonMetadataStore(MetadataStore):
 				"content_type": content_type,
 				"status": status,
 				"chunk_count": 0,
+				"size_bytes": int(size_bytes) if size_bytes is not None else None,
 				"error": None,
 				"parser_report": None,
+				"storage_key": storage_key,
 				"created_at": now,
 				"updated_at": now,
 			}
@@ -246,6 +316,12 @@ class JsonMetadataStore(MetadataStore):
 		chunk_count: int | None = None,
 		error: str | None = None,
 		parser_report: dict[str, Any] | None = None,
+		storage_key: str | None = None,
+		size_bytes: int | None = None,
+		name: str | None = None,
+		filename: str | None = None,
+		content_type: str | None = None,
+		clear_error: bool = False,
 	) -> dict[str, Any] | None:
 		with self._lock:
 			data = self._read()
@@ -256,10 +332,22 @@ class JsonMetadataStore(MetadataStore):
 				row["status"] = status
 			if chunk_count is not None:
 				row["chunk_count"] = int(chunk_count)
-			if error is not None:
+			if clear_error:
+				row["error"] = None
+			elif error is not None:
 				row["error"] = error
 			if parser_report is not None:
 				row["parser_report"] = parser_report
+			if storage_key is not None:
+				row["storage_key"] = storage_key
+			if size_bytes is not None:
+				row["size_bytes"] = int(size_bytes)
+			if name is not None:
+				row["name"] = name
+			if filename is not None:
+				row["filename"] = filename
+			if content_type is not None:
+				row["content_type"] = content_type
 			row["updated_at"] = _now_iso()
 			data["documents"][doc_id] = row
 			self._write(data)
@@ -370,6 +458,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 
 			id: Mapped[str] = mapped_column(String(128), primary_key=True)
 			name: Mapped[str] = mapped_column(String(256), nullable=False)
+			description: Mapped[str | None] = mapped_column(Text, nullable=True)
 			status: Mapped[str] = mapped_column(String(32), nullable=False, default="empty")
 			doc_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 			ready_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -395,9 +484,11 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			content_type: Mapped[str] = mapped_column(String(128), nullable=False, default="")
 			status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing")
 			chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+			size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 			error: Mapped[str | None] = mapped_column(Text, nullable=True)
 			# JSON string：页级 text/ocr/vlm/failed 账本（诚实失败 / partial）
 			parser_report: Mapped[str | None] = mapped_column(Text, nullable=True)
+			storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
 			created_at: Mapped[datetime] = mapped_column(
 				DateTime(timezone=True),
 				server_default=func.now(),
@@ -444,10 +535,24 @@ class SqlAlchemyMetadataStore(MetadataStore):
 						"ALTER TABLE documents ADD COLUMN IF NOT EXISTS parser_report TEXT"
 					)
 				)
+				conn.execute(
+					sql_text(
+						"ALTER TABLE documents ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"
+					)
+				)
+				conn.execute(
+					sql_text(
+						"ALTER TABLE documents ADD COLUMN IF NOT EXISTS size_bytes INTEGER"
+					)
+				)
+				conn.execute(
+					sql_text(
+						"ALTER TABLE libraries ADD COLUMN IF NOT EXISTS description TEXT"
+					)
+				)
 		except Exception:
 			logger.debug("metadata.parser_report_column.skip", exc_info=True)
 		self._Session = sessionmaker(bind=self._engine, expire_on_commit=False, class_=Session)
-		self._seed_defaults()
 
 	@staticmethod
 	def _dt(value: datetime | None) -> str:
@@ -461,6 +566,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		return {
 			"id": row.id,
 			"name": row.name,
+			"description": getattr(row, "description", None),
 			"status": row.status,
 			"doc_count": int(row.doc_count),
 			"ready_count": int(row.ready_count),
@@ -478,6 +584,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 					report = parsed
 			except json.JSONDecodeError:
 				report = None
+		raw_size = getattr(row, "size_bytes", None)
 		return {
 			"id": row.id,
 			"library_id": row.library_id,
@@ -486,8 +593,10 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			"content_type": row.content_type,
 			"status": row.status,
 			"chunk_count": int(row.chunk_count),
+			"size_bytes": int(raw_size) if raw_size is not None else None,
 			"error": row.error,
 			"parser_report": report,
+			"storage_key": getattr(row, "storage_key", None),
 			"created_at": self._dt(row.created_at),
 			"updated_at": self._dt(row.updated_at),
 		}
@@ -512,23 +621,6 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			"created_at": self._dt(row.created_at),
 		}
 
-	def _seed_defaults(self) -> None:
-		with self._Session() as session:
-			existing = session.get(self._LibraryRow, "lib-hr")
-			if existing is not None:
-				return
-			session.add(
-				self._LibraryRow(
-					id="lib-hr",
-					name="人事制度库",
-					status="empty",
-					doc_count=0,
-					ready_count=0,
-				)
-			)
-			session.commit()
-			logger.info("metadata.seed.sql library_id=lib-hr")
-
 	def list_libraries(self) -> list[dict[str, Any]]:
 		with self._Session() as session:
 			rows = session.scalars(
@@ -541,14 +633,22 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			row = session.get(self._LibraryRow, library_id)
 			return self._library_dict(row) if row else None
 
-	def create_library(self, *, name: str, library_id: str | None = None) -> dict[str, Any]:
+	def create_library(
+		self,
+		*,
+		name: str,
+		library_id: str | None = None,
+		description: str | None = None,
+	) -> dict[str, Any]:
 		resolved = library_id or str(uuid4())
+		desc = description.strip()[:2000] if isinstance(description, str) and description.strip() else None
 		with self._Session() as session:
 			if session.get(self._LibraryRow, resolved) is not None:
 				raise ValueError(f"library already exists: {resolved}")
 			row = self._LibraryRow(
 				id=resolved,
-				name=name.strip()[:256] or "未命名文库",
+				name=name.strip()[:256] or "未命名知识库",
+				description=desc,
 				status="empty",
 				doc_count=0,
 				ready_count=0,
@@ -557,6 +657,43 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			session.commit()
 			session.refresh(row)
 			return self._library_dict(row)
+
+	def update_library(
+		self,
+		library_id: str,
+		*,
+		name: str | None = None,
+		description: str | None = None,
+		update_description: bool = False,
+	) -> dict[str, Any] | None:
+		with self._Session() as session:
+			row = session.get(self._LibraryRow, library_id)
+			if row is None:
+				return None
+			if name is not None:
+				row.name = name.strip()[:256] or "未命名知识库"
+			if update_description:
+				if isinstance(description, str) and description.strip():
+					row.description = description.strip()[:2000]
+				else:
+					row.description = None
+			session.commit()
+			session.refresh(row)
+			return self._library_dict(row)
+
+	def delete_library(self, library_id: str) -> bool:
+		with self._Session() as session:
+			library = session.get(self._LibraryRow, library_id)
+			if library is None:
+				return False
+			docs = session.scalars(
+				self._select(self._DocumentRow).where(self._DocumentRow.library_id == library_id)
+			).all()
+			for doc in docs:
+				session.delete(doc)
+			session.delete(library)
+			session.commit()
+			return True
 
 	def list_documents(self, library_id: str) -> list[dict[str, Any]]:
 		with self._Session() as session:
@@ -581,6 +718,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		content_type: str,
 		doc_id: str | None = None,
 		status: DocumentStatus = "processing",
+		storage_key: str | None = None,
+		size_bytes: int | None = None,
 	) -> dict[str, Any]:
 		resolved = doc_id or str(uuid4())
 		with self._Session() as session:
@@ -594,7 +733,9 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				content_type=content_type,
 				status=status,
 				chunk_count=0,
+				size_bytes=int(size_bytes) if size_bytes is not None else None,
 				error=None,
+				storage_key=storage_key,
 			)
 			session.add(row)
 			session.commit()
@@ -611,6 +752,12 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		chunk_count: int | None = None,
 		error: str | None = None,
 		parser_report: dict[str, Any] | None = None,
+		storage_key: str | None = None,
+		size_bytes: int | None = None,
+		name: str | None = None,
+		filename: str | None = None,
+		content_type: str | None = None,
+		clear_error: bool = False,
 	) -> dict[str, Any] | None:
 		with self._Session() as session:
 			row = session.get(self._DocumentRow, doc_id)
@@ -620,10 +767,22 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				row.status = status
 			if chunk_count is not None:
 				row.chunk_count = int(chunk_count)
-			if error is not None:
+			if clear_error:
+				row.error = None
+			elif error is not None:
 				row.error = error
 			if parser_report is not None:
 				row.parser_report = json.dumps(parser_report, ensure_ascii=False)
+			if storage_key is not None:
+				row.storage_key = storage_key
+			if size_bytes is not None:
+				row.size_bytes = int(size_bytes)
+			if name is not None:
+				row.name = name
+			if filename is not None:
+				row.filename = filename
+			if content_type is not None:
+				row.content_type = content_type
 			library_id = row.library_id
 			session.commit()
 			session.refresh(row)

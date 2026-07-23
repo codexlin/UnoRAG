@@ -70,8 +70,18 @@ class Settings(BaseSettings):
 	metadata_backend: str = "postgres"
 	database_url: str = "postgresql+psycopg://meriknow:meriknow@localhost:5432/meriknow"
 	metadata_path: str = "data/metadata.json"
+	document_storage_dir: str = "data/documents"
 	# stub upload: simulate ready without Qdrant (false=503；仅测试可 true)
 	stub_ingest_simulate: bool = False
+
+	# 异步索引：true=落盘后入队返回 202；false=同请求内同步 ingest（本地/测试）
+	ingest_async: bool = True
+	redis_url: str = "redis://localhost:6379"
+	max_upload_bytes: int = 52_428_800  # 50 MiB
+	ingest_queue_max_depth: int = 100
+	ingest_max_inflight_per_library: int = 8
+	ingest_worker_max_jobs: int = 2
+	ingest_job_timeout_s: int = 600
 
 	@property
 	def cors_origin_list(self) -> list[str]:

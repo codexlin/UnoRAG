@@ -18,6 +18,8 @@ dependencies = [
   "python-docx>=1.1.0",
   "sqlalchemy>=2.0.36",
   "psycopg[binary]>=3.2.0",
+  "arq>=0.28.0",
+  "redis>=5.3.1",
 ]
 
 [dependency-groups]

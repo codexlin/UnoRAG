@@ -16,6 +16,7 @@ from pathlib import Path
 # Allow `uv run python scripts/ingest_sample.py` from apps/api
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.services.metadata import get_metadata_store
 from app.services.retrieval import IngestService
 from app.services.runtime import resolve_runtime
 from app.settings import get_settings
@@ -45,14 +46,23 @@ def main() -> int:
 		)
 		return 1
 
+	meta = get_metadata_store(settings)
+	library_id = "lib-sample"
+	if meta.get_library(library_id) is None:
+		meta.create_library(name="样例知识库", library_id=library_id)
+		print("created library:", library_id)
+
 	result = IngestService(settings).ingest_text(
-		library_id="lib-hr",
+		library_id=library_id,
 		title="员工手册-休假篇.pdf",
 		text=SAMPLE,
 		doc_id="sample-hr-leave",
 	)
 	print("ingested:", result)
-	print("try: POST /v1/ask {\"question\":\"病假需要在几天内补交证明？\",\"library_id\":\"lib-hr\"}")
+	print(
+		'try: POST /v1/ask '
+		f'{{"question":"病假需要在几天内补交证明？","library_id":"{library_id}"}}'
+	)
 	return 0
 
 
