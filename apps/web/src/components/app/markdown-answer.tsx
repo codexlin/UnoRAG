@@ -50,7 +50,7 @@ export function MarkdownAnswer({
 	return (
 		<div
 			className={cn(
-				"mt-2 space-y-3 text-sm leading-7 text-foreground",
+				"text-answer mt-2 space-y-3.5 text-foreground",
 				className,
 			)}
 		>
@@ -58,20 +58,33 @@ export function MarkdownAnswer({
 				remarkPlugins={[remarkGfm]}
 				components={{
 					p: ({ children }) => (
-						<p className="leading-7 whitespace-pre-wrap">
+						<p className="whitespace-pre-wrap">{wrapText(children)}</p>
+					),
+					h1: ({ children }) => (
+						<h3 className="font-heading mt-4 mb-1 text-lg font-semibold tracking-tight first:mt-0">
 							{wrapText(children)}
-						</p>
+						</h3>
+					),
+					h2: ({ children }) => (
+						<h3 className="font-heading mt-4 mb-1 text-base font-semibold tracking-tight first:mt-0">
+							{wrapText(children)}
+						</h3>
+					),
+					h3: ({ children }) => (
+						<h4 className="mt-3 mb-1 text-[0.95em] font-semibold text-foreground first:mt-0">
+							{wrapText(children)}
+						</h4>
 					),
 					ul: ({ children }) => (
-						<ul className="ml-5 list-disc space-y-1">{wrapText(children)}</ul>
+						<ul className="ml-5 list-disc space-y-1.5">{wrapText(children)}</ul>
 					),
 					ol: ({ children }) => (
-						<ol className="ml-5 list-decimal space-y-1">
+						<ol className="ml-5 list-decimal space-y-1.5">
 							{wrapText(children)}
 						</ol>
 					),
 					li: ({ children }) => (
-						<li className="pl-1 leading-7">{wrapText(children)}</li>
+						<li className="pl-1">{wrapText(children)}</li>
 					),
 					strong: ({ children }) => (
 						<strong className="font-semibold text-foreground">
@@ -192,24 +205,28 @@ function splitCitationText(
 					key={key}
 					type="button"
 					onClick={() => onCite(citation)}
-					className="mx-0.5 inline rounded-sm bg-cite/10 px-1 font-mono text-[12px] text-cite underline-offset-2 hover:bg-cite/20 hover:underline"
+					title={`${citation.title}${citation.sectionPath ? ` · ${citation.sectionPath}` : ""} · ${citation.score.toFixed(2)}`}
+					className="mx-0.5 inline-flex size-4 translate-y-[-1px] items-center justify-center rounded-sm border border-cite/35 bg-cite/12 align-middle font-mono text-[10px] font-semibold leading-none text-cite shadow-[0_0_0_1px_rgba(0,0,0,0.02)] transition-colors hover:border-cite/55 hover:bg-cite/22"
 				>
-					[{citeIndex}]
+					{citeIndex}
 				</button>,
 			);
 		} else if (citation) {
 			nodes.push(
 				<span
 					key={key}
-					className="mx-0.5 inline rounded-sm bg-cite/10 px-1 font-mono text-[12px] text-cite"
+					className="mx-0.5 inline-flex size-4 translate-y-[-1px] items-center justify-center rounded-sm border border-cite/25 bg-cite/10 align-middle font-mono text-[10px] font-medium leading-none text-cite"
 				>
-					[{citeIndex}]
+					{citeIndex}
 				</span>,
 			);
 		} else {
 			nodes.push(
-				<span key={key} className="font-mono text-muted-foreground">
-					[{citeIndex}]
+				<span
+					key={key}
+					className="mx-0.5 inline-flex size-4 translate-y-[-1px] items-center justify-center rounded-sm border border-border align-middle font-mono text-[10px] leading-none text-muted-foreground"
+				>
+					{citeIndex}
 				</span>,
 			);
 		}

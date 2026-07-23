@@ -1,10 +1,14 @@
 "use client";
 
 import {
+	Bot,
 	ChevronRight,
 	PanelRightClose,
 	PanelRightOpen,
+	RefreshCw,
 	Send,
+	Square,
+	UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -12,21 +16,72 @@ import {
 	type KeyboardEvent,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 
+import { CitationSourceCard } from "@/components/app/citation-source-card";
+import { LibraryCombobox } from "@/components/app/library-combobox";
 import { MarkdownAnswer } from "@/components/app/markdown-answer";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import { useHealth } from "@/hooks/use-health";
 import { useLibraries } from "@/hooks/use-libraries";
-import { type ApiCitation, askQuestionStream } from "@/lib/api";
+import {
+	type ApiCitation,
+	type ApiDocument,
+	askQuestionStream,
+	fetchDocuments,
+	isAbortError,
+} from "@/lib/api";
 import { formatDateTime, formatDurationMs, formatScore } from "@/lib/format";
 import type { UiCitation, UiTurn } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
+/** 中性示例：不暗示内置语料，仅在无可用文档标题时使用 */
+const NEUTRAL_SAMPLE_QUESTIONS = [
+	"这份资料的主要内容是什么？",
+	"有哪些关键要点值得注意？",
+] as const;
+
+const DOC_QUESTION_TEMPLATES = [
+	(title: string) => `《${title}》里说了什么？`,
+	(title: string) => `关于「${title}」的要点是什么？`,
+	(title: string) => `总结一下《${title}》的核心内容`,
+] as const;
+
+function documentDisplayTitle(doc: ApiDocument): string {
+	const raw = (doc.name || doc.filename || "").trim();
+	if (!raw) return "";
+	return raw.replace(/\.[A-Za-z0-9]{1,8}$/, "").trim() || raw;
+}
+
+/** 根据就绪文档标题生成 2～3 条可点提问；无标题时退回中性文案 */
+function buildSampleQuestions(docs: ApiDocument[]): string[] {
+	const titles = docs
+		.filter((doc) => doc.status === "ready")
+		.map(documentDisplayTitle)
+		.filter(Boolean);
+	const unique: string[] = [];
+	for (const title of titles) {
+		if (!unique.includes(title)) unique.push(title);
+		if (unique.length >= 3) break;
+	}
+	if (unique.length === 0) {
+		return [...NEUTRAL_SAMPLE_QUESTIONS];
+	}
+	return unique.map(
+		(title, index) =>
+			DOC_QUESTION_TEMPLATES[index % DOC_QUESTION_TEMPLATES.length](title),
+	);
+}
+
 type LocalTurn = UiTurn & {
 	pending?: boolean;
 	error?: string;
+	cancelled?: boolean;
 	topScore?: number | null;
 	usedHybrid?: boolean;
 	evidenceReady?: boolean;
@@ -57,16 +112,15 @@ function toUiCitation(citation: ApiCitation): UiCitation {
 		snippet: citation.snippet || text.slice(0, 280),
 		text,
 		score: citation.score,
+		denseScore: citation.dense_score,
+		bm25Score: citation.bm25_score,
+		rrfScore: citation.rrf_score,
+		usedRerank: Boolean(citation.used_rerank),
+		usedHybrid: Boolean(citation.used_hybrid),
 		docId: citation.doc_id ?? undefined,
 		chunkIndex: citation.chunk_index ?? undefined,
 		filename: citation.filename ?? undefined,
 	};
-}
-
-function snippetPreview(text: string, max = 28) {
-	const compact = text.replace(/\s+/g, " ").trim();
-	if (compact.length <= max) return compact;
-	return `${compact.slice(0, max)}…`;
 }
 
 function AnswerBody({
@@ -105,7 +159,7 @@ function RetrievalNotice({ turn }: { turn: LocalTurn }) {
 	}
 	if (turn.persisted === false) {
 		notices.push(
-			turn.persistError ? `档案未写入：${turn.persistError}` : "档案未写入",
+			turn.persistError ? `会话未持久化：${turn.persistError}` : "会话未持久化",
 		);
 	}
 	if (notices.length === 0) return null;
@@ -123,6 +177,11 @@ function RetrievalNotice({ turn }: { turn: LocalTurn }) {
 	);
 }
 
+function canRetryTurn(turn: LocalTurn): boolean {
+	if (turn.pending) return false;
+	return Boolean(turn.error || turn.cancelled || turn.refused);
+}
+
 export function AskWorkspace() {
 	const { libraries, error: libsError } = useLibraries();
 	const { apiReady } = useHealth();
@@ -132,12 +191,57 @@ export function AskWorkspace() {
 	const [turns, setTurns] = useState<LocalTurn[]>([]);
 	const [activeCitation, setActiveCitation] = useState<UiCitation | null>(null);
 	const [drawerOpen, setDrawerOpen] = useState(true);
+	const [readyDocuments, setReadyDocuments] = useState<ApiDocument[]>([]);
+	const [docsLoaded, setDocsLoaded] = useState(false);
+	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const abortRef = useRef<AbortController | null>(null);
+	const activeTurnIdRef = useRef<string | null>(null);
+
+	const isStreaming = turns.some((turn) => turn.pending);
 
 	useEffect(() => {
 		if (!libraryId && libraries[0]?.id) {
 			setLibraryId(libraries[0].id);
 		}
 	}, [libraries, libraryId]);
+
+	useEffect(() => {
+		return () => {
+			abortRef.current?.abort();
+		};
+	}, []);
+
+	useEffect(() => {
+		if (!libraryId || !apiReady) {
+			setReadyDocuments([]);
+			setDocsLoaded(false);
+			return;
+		}
+		const controller = new AbortController();
+		setDocsLoaded(false);
+		setReadyDocuments([]);
+		void (async () => {
+			try {
+				const items = await fetchDocuments(libraryId, controller.signal);
+				if (controller.signal.aborted) return;
+				setReadyDocuments(items.filter((doc) => doc.status === "ready"));
+				setDocsLoaded(true);
+			} catch (err) {
+				if (controller.signal.aborted || isAbortError(err)) return;
+				setReadyDocuments([]);
+				setDocsLoaded(true);
+			}
+		})();
+		return () => controller.abort();
+	}, [libraryId, apiReady]);
+
+	function resizeComposer(
+		el: HTMLTextAreaElement | null = textareaRef.current,
+	) {
+		if (!el) return;
+		el.style.height = "0px";
+		el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+	}
 
 	const library = useMemo(
 		() => libraries.find((item) => item.id === libraryId) ?? null,
@@ -146,32 +250,97 @@ export function AskWorkspace() {
 
 	const canAsk = Boolean(library && library.status === "ready" && apiReady);
 
+	const sampleQuestions = useMemo(() => {
+		if (!canAsk || !docsLoaded) return [];
+		return buildSampleQuestions(readyDocuments);
+	}, [canAsk, docsLoaded, readyDocuments]);
+
+	const hasReadyDocTitles = useMemo(
+		() =>
+			readyDocuments.some((doc) => Boolean(documentDisplayTitle(doc))),
+		[readyDocuments],
+	);
+
 	function openCitation(citation: UiCitation) {
 		setActiveCitation(citation);
 		setDrawerOpen(true);
 	}
 
-	async function submitQuestion(question: string) {
+	function cancelAsk() {
+		abortRef.current?.abort();
+	}
+
+	async function submitQuestion(
+		question: string,
+		options?: { replaceTurnId?: string },
+	) {
 		const trimmed = question.trim();
 		if (!trimmed || !canAsk || !libraryId) return;
+		if (isStreaming && !options?.replaceTurnId) return;
 
-		const pendingId = `pending-${Date.now()}`;
+		const replaceTurnId = options?.replaceTurnId;
+		if (replaceTurnId && isStreaming) {
+			cancelAsk();
+		}
+
+		const pendingId = replaceTurnId ?? `pending-${Date.now()}`;
 		const startedAtMs = performance.now();
 		const startedAt = Date.now();
-		setTurns((prev) => [
-			...prev,
-			{
-				id: pendingId,
-				question: trimmed,
-				answer: "",
-				citations: [],
-				pending: true,
-				evidenceReady: false,
-				startedAtMs,
-				startedAt,
-			},
-		]);
-		setInput("");
+
+		const controller = new AbortController();
+		abortRef.current?.abort();
+		abortRef.current = controller;
+		activeTurnIdRef.current = pendingId;
+
+		if (replaceTurnId) {
+			setTurns((prev) =>
+				prev.map((turn) =>
+					turn.id === replaceTurnId
+						? {
+								id: pendingId,
+								question: trimmed,
+								answer: "",
+								citations: [],
+								pending: true,
+								error: undefined,
+								cancelled: undefined,
+								refused: undefined,
+								refuseReason: undefined,
+								mode: undefined,
+								evidenceReady: false,
+								hybridFailed: undefined,
+								rerankFailed: undefined,
+								retrievalMode: undefined,
+								persisted: undefined,
+								persistError: undefined,
+								topScore: undefined,
+								usedHybrid: undefined,
+								startedAtMs,
+								startedAt,
+								completedAt: undefined,
+								durationMs: undefined,
+								evidenceMs: undefined,
+							}
+						: turn,
+				),
+			);
+		} else {
+			setTurns((prev) => [
+				...prev,
+				{
+					id: pendingId,
+					question: trimmed,
+					answer: "",
+					citations: [],
+					pending: true,
+					evidenceReady: false,
+					startedAtMs,
+					startedAt,
+				},
+			]);
+			setInput("");
+			requestAnimationFrame(() => resizeComposer());
+		}
 		setDrawerOpen(true);
 
 		try {
@@ -183,6 +352,7 @@ export function AskWorkspace() {
 				},
 				{
 					onMeta: (meta) => {
+						if (activeTurnIdRef.current !== pendingId) return;
 						setSessionId(meta.session_id);
 						setTurns((prev) =>
 							prev.map((turn) =>
@@ -201,6 +371,7 @@ export function AskWorkspace() {
 						);
 					},
 					onCitations: (citations) => {
+						if (activeTurnIdRef.current !== pendingId) return;
 						const mapped = citations.map(toUiCitation);
 						const evidenceMs = Math.round(performance.now() - startedAtMs);
 						setTurns((prev) =>
@@ -218,19 +389,21 @@ export function AskWorkspace() {
 						setActiveCitation(mapped[0] ?? null);
 					},
 					onToken: (token) => {
+						if (activeTurnIdRef.current !== pendingId) return;
 						setTurns((prev) =>
 							prev.map((turn) =>
 								turn.id === pendingId
 									? {
 											...turn,
 											answer: `${turn.answer}${token}`,
-											pending: false,
+											pending: true,
 										}
 									: turn,
 							),
 						);
 					},
 					onDone: (result) => {
+						if (activeTurnIdRef.current !== pendingId) return;
 						setSessionId(result.session_id);
 						const citations = result.citations.map(toUiCitation);
 						const debug = result.retrieval_debug || {};
@@ -248,6 +421,8 @@ export function AskWorkspace() {
 											refuseReason: result.refuse_reason,
 											mode: result.mode,
 											pending: false,
+											cancelled: false,
+											error: undefined,
 											evidenceReady: true,
 											startedAt,
 											completedAt,
@@ -281,99 +456,163 @@ export function AskWorkspace() {
 						throw new Error(message);
 					},
 				},
+				controller.signal,
 			);
 		} catch (err) {
-			const message =
-				err instanceof Error ? err.message : "请求失败，请确认 API 已启动";
 			const completedAt = Date.now();
 			const durationMs = Math.round(performance.now() - startedAtMs);
+			const aborted = controller.signal.aborted || isAbortError(err);
+
+			if (aborted) {
+				setTurns((prev) =>
+					prev.map((turn) =>
+						turn.id === pendingId
+							? {
+									...turn,
+									id: `turn-${Date.now()}`,
+									pending: false,
+									cancelled: true,
+									error: undefined,
+									completedAt,
+									durationMs,
+								}
+							: turn,
+					),
+				);
+				return;
+			}
+
+			const message =
+				err instanceof Error ? err.message : "请求失败，请确认 API 已启动";
 			setTurns((prev) =>
 				prev.map((turn) =>
 					turn.id === pendingId
 						? {
+								...turn,
 								id: `turn-${Date.now()}`,
-								question: trimmed,
-								answer: "",
-								citations: [],
 								pending: false,
+								cancelled: false,
 								error: message,
-								evidenceReady: false,
-								startedAt,
 								completedAt,
 								durationMs,
 							}
 						: turn,
 				),
 			);
-			setActiveCitation(null);
+		} finally {
+			if (abortRef.current === controller) {
+				abortRef.current = null;
+			}
+			if (activeTurnIdRef.current === pendingId) {
+				activeTurnIdRef.current = null;
+			}
 		}
+	}
+
+	function retryTurn(turn: LocalTurn) {
+		if (!canRetryTurn(turn) || !canAsk) return;
+		void submitQuestion(turn.question, { replaceTurnId: turn.id });
 	}
 
 	function onSubmit(event: FormEvent) {
 		event.preventDefault();
+		if (isStreaming) {
+			cancelAsk();
+			return;
+		}
 		void submitQuestion(input);
 	}
 
 	function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
 		if (event.key === "Enter" && !event.shiftKey) {
 			event.preventDefault();
+			if (isStreaming) return;
 			void submitQuestion(input);
 		}
 	}
 
-	const evidenceText = activeCitation?.text || activeCitation?.snippet || "";
-
 	return (
 		<div className="flex min-h-0 flex-1">
 			<section className="flex min-w-0 flex-1 flex-col">
-				<div className="flex flex-wrap items-center gap-3 border-b border-border/70 bg-card/40 px-5 py-3">
-					<label className="flex min-w-0 flex-1 flex-col gap-1 sm:max-w-xs">
-						<span className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
-							当前文库
-						</span>
-						<select
+				<div className="flex h-12 shrink-0 items-center gap-3 border-b border-border/70 bg-card/50 px-4 sm:px-5">
+					<div className="min-w-0 flex-1 sm:max-w-xs">
+						<LibraryCombobox
+							libraries={libraries}
 							value={libraryId}
-							onChange={(event) => setLibraryId(event.target.value)}
-							className="h-9 rounded-md border border-border bg-background px-2.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/40"
-						>
-							{libraries.map((item) => (
-								<option key={item.id} value={item.id}>
-									{item.name}
-									{item.status === "indexing" ? " · 索引中" : ""}
-									{item.status === "empty" ? " · 空" : ""}
-								</option>
-							))}
-						</select>
-					</label>
-					<div className="flex flex-wrap items-center gap-2">
-						{library ? (
-							<span className="meta-chip">
-								{library.ready_count}/{library.doc_count} 就绪
-							</span>
-						) : (
-							<span className="meta-chip">未选择文库</span>
-						)}
-						{sessionId ? (
-							<span className="meta-chip" title={sessionId}>
-								session {sessionId.slice(0, 8)}…
-							</span>
-						) : null}
-						<span className="meta-chip">本轮 {turns.length} 问</span>
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							className="rounded-md transition-transform active:scale-[0.98]"
-							onClick={() => setDrawerOpen((open) => !open)}
-						>
-							{drawerOpen ? (
-								<PanelRightClose data-icon="inline-start" />
-							) : (
-								<PanelRightOpen data-icon="inline-start" />
-							)}
-							证据
-						</Button>
+							onValueChange={setLibraryId}
+							showLabel={false}
+							className="w-full"
+						/>
 					</div>
+
+					<Separator orientation="vertical" className="hidden h-6 sm:block" />
+
+					<div className="hidden min-w-0 items-center gap-2.5 text-ui text-muted-foreground md:flex">
+						{libraries.length === 0 ? (
+							<Link
+								href="/app/libraries"
+								className="inline-flex items-center gap-1 font-medium text-cite underline-offset-4 hover:underline"
+							>
+								去创建知识库
+								<ChevronRight className="size-3.5" />
+							</Link>
+						) : !library ? (
+							<span>请选择知识库</span>
+						) : library.doc_count === 0 || library.status === "empty" ? (
+							<Link
+								href="/app/libraries"
+								className="inline-flex items-center gap-1 font-medium text-cite underline-offset-4 hover:underline"
+							>
+								知识库为空，去上传文档
+								<ChevronRight className="size-3.5" />
+							</Link>
+						) : (
+							<span
+								className="inline-flex items-center gap-1.5"
+								title="已完成索引、可检索的文档数 / 知识库内文档总数"
+							>
+								<span
+									className={cn(
+										"size-1.5 rounded-full",
+										library.status === "ready"
+											? "bg-cite"
+											: library.status === "indexing"
+												? "animate-pulse bg-survey"
+												: "bg-muted-foreground/50",
+									)}
+									aria-hidden
+								/>
+								<span className="tabular-nums text-foreground/80">
+									{library.ready_count}/{library.doc_count}
+								</span>
+								<span>文档已索引</span>
+							</span>
+						)}
+						<span className="text-border" aria-hidden>
+							|
+						</span>
+						<span className="inline-flex items-center gap-1 tabular-nums">
+							<span className="text-foreground/80">{turns.length}</span>
+							<span>问</span>
+						</span>
+					</div>
+
+					<Button
+						type="button"
+						variant={drawerOpen ? "secondary" : "outline"}
+						size="sm"
+						className="ml-auto shrink-0 rounded-lg"
+						onClick={() => setDrawerOpen((open) => !open)}
+						aria-pressed={drawerOpen}
+					>
+						{drawerOpen ? (
+							<PanelRightClose data-icon="inline-start" />
+						) : (
+							<PanelRightOpen data-icon="inline-start" />
+						)}
+						<span className="hidden sm:inline">引用来源</span>
+						<span className="sm:hidden">引用</span>
+					</Button>
 				</div>
 				{libsError ? (
 					<p className="border-b border-destructive/30 bg-destructive/10 px-5 py-1.5 text-sm text-destructive">
@@ -381,255 +620,349 @@ export function AskWorkspace() {
 					</p>
 				) : null}
 
-				<div className="flex-1 overflow-y-auto px-5 py-6">
-					{turns.length === 0 ? (
-						<div className="desk-enter mx-auto flex max-w-xl flex-col gap-4 py-10">
-							<p className="font-mono text-xs tracking-[0.2em] text-cite uppercase">
-								Ask desk
-							</p>
-							<h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground">
-								{canAsk
-									? "对着文库提问，答案旁核对出处"
-									: !apiReady
-										? "API 暂不可用"
-										: !library
-											? libraries.length === 0
-												? "还没有文库"
-												: "请选择文库"
-											: library.status === "empty"
-												? "这本文库还是空的"
-												: "文库还在整理中"}
-							</h2>
-							<p className="desk-enter desk-enter-delay-1 text-sm leading-6 text-muted-foreground">
-								{canAsk
-									? "流式回答会边生成边显示；每轮会标注时间与耗时。点答案里的 [n] 可跳到证据抽屉核对原文。"
-									: !apiReady || libsError
-										? "请先恢复 API 连接后再提问。"
-										: !library
-											? libraries.length === 0
-												? "先到文库新建并上传资料。"
-												: "从上方选择一本就绪的文库。"
-											: library.status === "empty"
-												? "先去文库收录几份资料，问答才有据可依。"
-												: "索引完成前暂不可提问，可先到文库查看进度。"}
-							</p>
-							{!canAsk ? (
-								<Link
-									href="/app/libraries"
-									className={cn(
-										buttonVariants({ variant: "outline" }),
-										"desk-enter desk-enter-delay-2 w-fit rounded-md",
-									)}
-								>
-									前往文库
-									<ChevronRight data-icon="inline-end" />
-								</Link>
-							) : (
-								<div className="desk-enter desk-enter-delay-2 flex flex-wrap gap-2">
-									{[
-										"林仁杰的教育背景是什么？",
-										"DustyKB 用了哪些技术栈？",
-										"毕业设计说明书的题目和作者是谁？",
-									].map((sample) => (
-										<button
-											key={sample}
-											type="button"
-											onClick={() => setInput(sample)}
-											className="rounded-md border border-border/80 bg-card/80 px-3 py-2 text-left text-xs leading-5 text-muted-foreground transition-all hover:-translate-y-0.5 hover:border-cite/35 hover:text-foreground hover:shadow-sm"
-										>
-											{sample}
-										</button>
-									))}
-								</div>
-							)}
-						</div>
-					) : (
-						<ul className="mx-auto flex max-w-2xl flex-col gap-6">
-							{turns.map((turn, turnIndex) => (
-								<li
-									key={turn.id}
-									className="desk-enter space-y-3"
-									style={{ animationDelay: `${Math.min(turnIndex, 4) * 40}ms` }}
-								>
-									<div className="rounded-md border border-border/70 bg-secondary/45 px-4 py-3 transition-colors">
-										<div className="flex flex-wrap items-center justify-between gap-2">
-											<p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-												Question
+				<ScrollArea className="min-h-0 flex-1">
+					<div className="px-5 py-6">
+						{turns.length === 0 ? (
+							<div className="desk-enter mx-auto flex max-w-xl flex-col gap-5 py-10">
+								<p className="text-meta font-mono tracking-[0.14em] text-cite">
+									{!apiReady
+										? "服务状态 · 暂不可用"
+										: library
+											? `知识库 · ${library.name}${
+													library.status === "empty"
+														? " · 空"
+														: library.status === "indexing"
+															? " · 索引中"
+															: ""
+												}`
+											: libraries.length === 0
+												? "知识库 · 尚未创建"
+												: "知识库 · 请选择"}
+								</p>
+								<h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground">
+									{canAsk
+										? "向知识库提问，答案可追溯到原文"
+										: !apiReady
+											? "服务暂不可用"
+											: !library
+												? libraries.length === 0
+													? "还没有知识库"
+													: "请选择知识库"
+												: library.status === "empty"
+													? "知识库还是空的"
+													: "文档仍在索引中"}
+								</h2>
+								<p className="text-answer desk-enter desk-enter-delay-1 text-muted-foreground">
+									{canAsk
+										? "支持流式回答与来源核对。每条回复会显示耗时、检索模式与引用分数；点击答案中的编号可打开引用来源。"
+										: !apiReady || libsError
+											? "请先恢复 API 连接后再提问。"
+											: !library
+												? libraries.length === 0
+													? "先到「知识库」创建空间并上传文档。"
+													: "从上方选择一个已就绪的知识库。"
+												: library.status === "empty"
+													? "先上传文档完成索引，再回来提问。"
+													: "索引完成后即可提问，可先到知识库查看进度。"}
+								</p>
+								{!canAsk ? (
+									<Link
+										href="/app/libraries"
+										className={cn(
+											buttonVariants({ variant: "outline" }),
+											"desk-enter desk-enter-delay-2 w-fit rounded-lg",
+										)}
+									>
+										{libraries.length === 0
+											? "去创建知识库"
+											: library?.status === "empty" || library?.doc_count === 0
+												? "去上传文档"
+												: "前往知识库"}
+										<ChevronRight data-icon="inline-end" />
+									</Link>
+								) : docsLoaded ? (
+									<div className="desk-enter desk-enter-delay-2 space-y-2">
+										{!hasReadyDocTitles ? (
+											<p className="text-xs text-muted-foreground">
+												先上传文档后再提问，或试试下面的通用问法。
 											</p>
-											{turn.startedAt ? (
-												<span className="meta-chip">
-													{formatDateTime(turn.startedAt)}
-												</span>
-											) : null}
+										) : null}
+										<div className="flex flex-wrap gap-2">
+											{sampleQuestions.map((sample) => (
+												<button
+													key={sample}
+													type="button"
+													onClick={() => setInput(sample)}
+													className="rounded-full border border-border/80 bg-card/90 px-3.5 py-2 text-left text-xs leading-5 text-muted-foreground transition-all hover:border-cite/40 hover:bg-cite/5 hover:text-foreground"
+												>
+													{sample}
+												</button>
+											))}
 										</div>
-										<p className="mt-1 text-sm leading-6 text-foreground">
-											{turn.question}
-										</p>
 									</div>
-									<div className="rounded-md border border-border/80 bg-card/95 px-4 py-4 shadow-sm transition-shadow hover:shadow-md">
-										<div className="flex flex-wrap items-center justify-between gap-2">
-											<p className="font-mono text-[10px] tracking-[0.14em] text-cite uppercase">
-												{turn.refused ? "Refused" : "Answer"}
-												{turn.mode ? ` · ${turn.mode}` : ""}
-											</p>
-											<div className="flex flex-wrap gap-1.5">
-												{turn.pending ? (
-													<span className="meta-chip animate-pulse text-cite">
-														处理中…
-													</span>
+								) : null}
+							</div>
+						) : (
+							<ul className="mx-auto flex max-w-3xl flex-col gap-8">
+								{turns.map((turn, turnIndex) => (
+									<li
+										key={turn.id}
+										className="desk-enter space-y-5"
+										style={{
+											animationDelay: `${Math.min(turnIndex, 4) * 40}ms`,
+										}}
+									>
+										<div className="flex justify-end gap-3">
+											<div className="max-w-[min(85%,36rem)] space-y-1.5">
+												{turn.startedAt ? (
+													<p className="text-meta text-right font-mono text-muted-foreground">
+														{formatDateTime(turn.startedAt)}
+													</p>
 												) : null}
-												{turn.durationMs != null ? (
-													<span className="meta-chip text-foreground/80">
-														总耗时 {formatDurationMs(turn.durationMs)}
-													</span>
-												) : null}
-												{turn.evidenceMs != null ? (
-													<span className="meta-chip">
-														检索 {formatDurationMs(turn.evidenceMs)}
-													</span>
-												) : null}
-												{turn.retrievalMode || turn.usedHybrid ? (
-													<span className="meta-chip">
-														{turn.usedHybrid
-															? "hybrid"
-															: turn.retrievalMode || "dense"}
-													</span>
-												) : null}
-												{typeof turn.topScore === "number" ? (
-													<span className="meta-chip">
-														top {formatScore(turn.topScore)}
-													</span>
-												) : null}
-												{turn.citations.length > 0 ? (
-													<span className="meta-chip">
-														{turn.citations.length} 证据
-													</span>
-												) : null}
+												<div className="text-answer rounded-2xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground shadow-sm">
+													{turn.question}
+												</div>
+											</div>
+											<div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary ring-1 ring-primary/20">
+												<UserRound className="size-4" aria-hidden />
 											</div>
 										</div>
-										{turn.pending && !turn.answer && !turn.evidenceReady ? (
-											<p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
-												<span className="inline-block size-1.5 animate-pulse rounded-full bg-cite" />
-												正在检索并整理依据…
-											</p>
-										) : turn.error ? (
-											<p className="mt-2 text-sm text-destructive">
-												{turn.error}
-												{turn.durationMs != null
-													? ` · ${formatDurationMs(turn.durationMs)}`
-													: ""}
-											</p>
-										) : (
-											<>
-												{turn.refused ? (
-													<p className="mt-2 font-mono text-[11px] text-survey">
-														{turn.refuseReason === "weak_match"
-															? "弱相关 · 未调用生成"
-															: "无命中 · 未调用生成"}
-													</p>
+
+										<div className="flex gap-3">
+											<div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full border border-cite/30 bg-cite/10 text-cite">
+												<Bot className="size-4" aria-hidden />
+											</div>
+											<div className="min-w-0 max-w-[min(92%,42rem)] flex-1 space-y-3">
+												<div className="rounded-2xl rounded-bl-md border border-border/70 bg-card/95 px-4 py-4 shadow-sm">
+													<div className="flex flex-wrap items-center justify-between gap-2">
+														<p className="text-meta font-mono tracking-[0.14em] text-cite uppercase">
+															{turn.refused
+																? "Refused"
+																: turn.cancelled
+																	? "Cancelled"
+																	: "Answer"}
+															{turn.mode ? ` · ${turn.mode}` : ""}
+														</p>
+														<div className="flex flex-wrap gap-1.5">
+															{turn.pending ? (
+																<span className="meta-chip animate-pulse text-cite">
+																	处理中…
+																</span>
+															) : null}
+															{turn.cancelled ? (
+																<span className="meta-chip text-survey">
+																	已取消
+																</span>
+															) : null}
+															{turn.durationMs != null ? (
+																<span className="meta-chip text-foreground/80">
+																	总耗时 {formatDurationMs(turn.durationMs)}
+																</span>
+															) : null}
+															{turn.evidenceMs != null ? (
+																<span className="meta-chip">
+																	检索 {formatDurationMs(turn.evidenceMs)}
+																</span>
+															) : null}
+															{turn.retrievalMode || turn.usedHybrid ? (
+																<span className="meta-chip">
+																	{turn.usedHybrid
+																		? "hybrid"
+																		: turn.retrievalMode || "dense"}
+																</span>
+															) : null}
+															{typeof turn.topScore === "number" ? (
+																<span className="meta-chip">
+																	top {formatScore(turn.topScore)}
+																</span>
+															) : null}
+															{turn.citations.length > 0 ? (
+																<span className="meta-chip">
+																	{turn.citations.length} 引用
+																</span>
+															) : null}
+														</div>
+													</div>
+													{turn.pending &&
+													!turn.answer &&
+													!turn.evidenceReady ? (
+														<p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+															<span className="inline-block size-1.5 animate-pulse rounded-full bg-cite" />
+															正在检索并整理引用来源…
+														</p>
+													) : turn.error ? (
+														<p className="mt-2 text-sm text-destructive">
+															{turn.error}
+															{turn.durationMs != null
+																? ` · ${formatDurationMs(turn.durationMs)}`
+																: ""}
+														</p>
+													) : (
+														<>
+															{turn.cancelled && !turn.answer ? (
+																<p className="mt-2 text-sm text-muted-foreground">
+																	已停止生成。可重试本问题，或继续提问。
+																</p>
+															) : null}
+															{turn.refused ? (
+																<p className="mt-2 font-mono text-[11px] text-survey">
+																	{turn.refuseReason === "weak_match"
+																		? "弱相关 · 未调用生成"
+																		: "无命中 · 未调用生成"}
+																</p>
+															) : null}
+															<RetrievalNotice turn={turn} />
+															{turn.answer ? (
+																<>
+																	<AnswerBody
+																		answer={turn.answer}
+																		citations={turn.citations}
+																		pending={turn.pending}
+																		onCite={openCitation}
+																	/>
+																	{turn.cancelled ? (
+																		<p className="mt-2 font-mono text-[11px] text-muted-foreground">
+																			生成已中止 · 保留已输出内容
+																		</p>
+																	) : null}
+																</>
+															) : turn.pending ? (
+																<p className="mt-2 text-sm text-muted-foreground">
+																	引用来源已就绪，正在生成回答…
+																	<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-cite/70 align-text-bottom" />
+																</p>
+															) : null}
+														</>
+													)}
+													{turn.pending ? (
+														<div className="mt-3">
+															<Button
+																type="button"
+																variant="outline"
+																size="sm"
+																onClick={cancelAsk}
+																className="rounded-md"
+															>
+																<Square
+																	data-icon="inline-start"
+																	className="size-3 fill-current"
+																/>
+																停止生成
+															</Button>
+														</div>
+													) : null}
+												</div>
+
+												{canRetryTurn(turn) ? (
+													<div>
+														<Button
+															type="button"
+															variant="outline"
+															size="sm"
+															disabled={!canAsk || isStreaming}
+															onClick={() => retryTurn(turn)}
+															className="rounded-md"
+														>
+															<RefreshCw data-icon="inline-start" />
+															重试
+														</Button>
+													</div>
 												) : null}
-												<RetrievalNotice turn={turn} />
-												{turn.answer ? (
-													<AnswerBody
-														answer={turn.answer}
-														citations={turn.citations}
-														pending={turn.pending}
-														onCite={openCitation}
-													/>
-												) : turn.pending ? (
-													<p className="mt-2 text-sm text-muted-foreground">
-														依据已就绪，正在生成回答…
-														<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-cite/70 align-text-bottom" />
-													</p>
-												) : null}
+
 												{turn.citations.length > 0 ? (
-													<div className="mt-4 space-y-2">
+													<div className="space-y-2">
 														<p className="font-mono text-[11px] text-muted-foreground">
-															依据 {turn.citations.length} 条证据片段
+															引用来源 · {turn.citations.length} 条
 															{turn.completedAt
 																? ` · 完成于 ${formatDateTime(turn.completedAt)}`
 																: ""}
 														</p>
-														<div className="flex flex-wrap gap-2">
-															{turn.citations.map((citation) => {
-																const sameDocCount = turn.citations.filter(
-																	(item) =>
-																		item.docId && item.docId === citation.docId,
-																).length;
-																return (
-																	<button
-																		key={citation.id}
-																		type="button"
-																		onClick={() => openCitation(citation)}
-																		className={cn(
-																			"max-w-full rounded-md border px-2 py-1.5 text-left transition-all",
-																			activeCitation?.id === citation.id
-																				? "border-cite/40 bg-cite/10 text-cite shadow-sm"
-																				: "border-border bg-background text-muted-foreground hover:-translate-y-0.5 hover:border-cite/30 hover:text-foreground",
-																		)}
-																	>
-																		<span className="font-mono text-[11px]">
-																			[{citation.index}] {citation.title}
-																			{citation.sectionPath
-																				? ` · ${citation.sectionPath}`
-																				: citation.page
-																					? ` · ${citation.page}`
-																					: ""}
-																			{sameDocCount > 1 &&
-																			citation.chunkIndex != null
-																				? ` · #${citation.chunkIndex}`
-																				: ""}
-																		</span>
-																		<span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground/90">
-																			{snippetPreview(
-																				citation.snippet || citation.text,
-																			)}
-																		</span>
-																	</button>
-																);
-															})}
-														</div>
+														<ul className="space-y-2">
+															{turn.citations.map((citation) => (
+																<li key={citation.id}>
+																	<CitationSourceCard
+																		citation={citation}
+																		active={activeCitation?.id === citation.id}
+																		onSelect={openCitation}
+																	/>
+																</li>
+															))}
+														</ul>
 													</div>
-												) : turn.refused ? (
-													<p className="mt-4 font-mono text-[11px] text-muted-foreground">
-														无可用证据片段
+												) : turn.refused && !turn.pending && !turn.error ? (
+													<p className="font-mono text-[11px] text-muted-foreground">
+														无可用引用来源
 													</p>
 												) : null}
-											</>
-										)}
-									</div>
-								</li>
-							))}
-						</ul>
-					)}
-				</div>
+											</div>
+										</div>
+									</li>
+								))}
+							</ul>
+						)}
+					</div>
+				</ScrollArea>
 
 				<form
 					onSubmit={onSubmit}
-					className="border-t border-border/80 bg-card/70 px-5 py-4 backdrop-blur-sm"
+					className="bg-linear-to-t from-background via-background/90 to-transparent px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5"
 				>
-					<div className="mx-auto flex max-w-2xl gap-3">
-						<textarea
-							value={input}
-							onChange={(event) => setInput(event.target.value)}
-							onKeyDown={onKeyDown}
-							disabled={!canAsk}
-							rows={2}
-							placeholder={
-								canAsk
-									? "输入问题，Enter 发送 · Shift+Enter 换行"
-									: "文库就绪后再提问…"
-							}
-							className="min-h-[72px] flex-1 resize-none rounded-md border border-border bg-background px-3 py-2.5 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/80 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-60"
-						/>
-						<Button
-							type="submit"
-							disabled={!canAsk || !input.trim()}
-							className="h-auto self-end rounded-md px-3"
+					<div className="mx-auto max-w-3xl">
+						<div
+							className={cn(
+								"flex items-end gap-2 rounded-3xl border border-border/60 bg-card/95 px-3.5 py-2 shadow-[0_8px_30px_-12px_rgba(15,23,42,0.18)] ring-1 ring-black/4 backdrop-blur-md transition-[border-color,box-shadow] dark:ring-white/6",
+								"focus-within:border-cite/35 focus-within:shadow-[0_10px_36px_-14px_rgba(26,122,109,0.28)] focus-within:ring-cite/15",
+								!canAsk && "opacity-80",
+							)}
 						>
-							<Send data-icon="inline-start" />
-							发送
-						</Button>
+							<Textarea
+								ref={textareaRef}
+								value={input}
+								onChange={(event) => {
+									setInput(event.target.value);
+									resizeComposer(event.target);
+								}}
+								onKeyDown={onKeyDown}
+								disabled={!canAsk || isStreaming}
+								rows={1}
+								placeholder={
+									isStreaming
+										? "生成中… 可点击停止"
+										: canAsk
+											? "向知识库提问…"
+											: "知识库就绪后再提问…"
+								}
+								className="text-answer max-h-50 min-h-11 flex-1 resize-none border-0 bg-transparent px-0 py-2.5 shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+							/>
+							{isStreaming ? (
+								<Button
+									type="button"
+									size="icon"
+									variant="outline"
+									aria-label="停止生成"
+									title="停止生成"
+									onClick={cancelAsk}
+									className="mb-0.5 size-9 shrink-0 rounded-full border-survey/40 text-survey shadow-sm transition-transform hover:bg-survey/10 active:scale-[0.96]"
+								>
+									<Square className="size-3.5 fill-current" />
+								</Button>
+							) : (
+								<Button
+									type="submit"
+									size="icon"
+									disabled={!canAsk || !input.trim()}
+									aria-label="发送"
+									className="mb-0.5 size-9 shrink-0 rounded-full bg-primary text-primary-foreground shadow-sm transition-transform hover:bg-primary/90 active:scale-[0.96] disabled:shadow-none"
+								>
+									<Send className="size-4" />
+								</Button>
+							)}
+						</div>
+						<p className="text-meta mt-2 text-center font-mono tracking-wide text-muted-foreground/60">
+							{isStreaming
+								? "点击停止按钮取消当前回答"
+								: "Enter 发送 · Shift+Enter 换行"}
+						</p>
 					</div>
 				</form>
 			</section>
@@ -637,78 +970,52 @@ export function AskWorkspace() {
 			<aside
 				className={cn(
 					"shrink-0 overflow-hidden border-l border-border/80 bg-card/85 backdrop-blur-sm transition-[width,opacity] duration-200",
-					drawerOpen ? "w-[320px] opacity-100" : "w-0 opacity-0 border-l-0",
+					drawerOpen ? "w-[360px] opacity-100" : "w-0 opacity-0 border-l-0",
 				)}
 				aria-hidden={!drawerOpen}
 			>
-				<div className="flex h-full w-[320px] flex-col">
+				<div className="flex h-full w-[360px] flex-col">
 					<div className="flex h-12 items-center justify-between border-b border-border/70 px-4">
 						<div>
-							<p className="font-mono text-[10px] tracking-[0.16em] text-cite uppercase">
-								Evidence
+							<p className="text-meta font-mono tracking-[0.16em] text-cite uppercase">
+								Sources
 							</p>
-							<p className="text-sm font-medium text-foreground">证据片段</p>
+							<p className="text-[0.9375rem] font-medium leading-snug text-foreground">
+								引用来源
+							</p>
 						</div>
 						<button
 							type="button"
 							onClick={() => setDrawerOpen(false)}
 							className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-							aria-label="关闭证据抽屉"
+							aria-label="关闭引用来源"
 						>
 							<PanelRightClose className="size-4" />
 						</button>
 					</div>
-					<div className="flex-1 overflow-y-auto p-4">
-						{activeCitation ? (
-							<article className="desk-enter cite-rail space-y-3 rounded-md bg-background/80 py-3 pr-3">
-								<p className="font-mono text-[11px] text-cite">
-									[{activeCitation.index}] · {activeCitation.title}
-									{activeCitation.page ? ` · ${activeCitation.page}` : ""}
-								</p>
-								<div className="flex flex-wrap gap-1.5">
-									<span className="meta-chip">
-										score {formatScore(activeCitation.score)}
-									</span>
-									{activeCitation.sectionPath ? (
-										<span className="meta-chip">
-											{activeCitation.sectionPath}
-										</span>
-									) : null}
-									{evidenceText ? (
-										<span className="meta-chip">{evidenceText.length} 字</span>
-									) : null}
+					<ScrollArea className="min-h-0 flex-1">
+						<div className="p-4">
+							{activeCitation ? (
+								<div className="desk-enter">
+									<CitationSourceCard
+										citation={activeCitation}
+										active
+										expanded
+									/>
 								</div>
-								{activeCitation.preamble ? (
-									<p className="rounded-md border border-border/60 bg-card/50 px-2 py-1.5 text-[11px] leading-5 text-muted-foreground">
-										定位 {activeCitation.preamble}
+							) : (
+								<div className="text-ui desk-enter space-y-2 text-muted-foreground">
+									<p>
+										这里展示本轮检索命中的原文片段。点击答案中的引用编号或下方来源卡片即可核对
+										dense / bm25 / rrf 等分数。
 									</p>
-								) : null}
-								{activeCitation.filename ? (
-									<p className="font-mono text-[10px] text-muted-foreground">
-										文件 {activeCitation.filename}
-										{activeCitation.chunkIndex != null
-											? ` · chunk ${activeCitation.chunkIndex}`
-											: ""}
-									</p>
-								) : null}
-								<div className="max-h-[50vh] overflow-y-auto rounded-md border border-border/60 bg-card/50 px-2.5 py-2">
-									<p className="whitespace-pre-wrap text-sm leading-6 text-foreground/90">
-										{evidenceText}
+									<p className="text-meta font-mono text-muted-foreground/80">
+										提示：可用顶栏「引用来源」开关此面板
 									</p>
 								</div>
-							</article>
-						) : (
-							<div className="desk-enter space-y-2 text-sm leading-6 text-muted-foreground">
-								<p>
-									这里展示本轮检索命中的原文片段。点答案里的 [n]
-									或下方证据块即可核对。
-								</p>
-								<p className="font-mono text-[10px] text-muted-foreground/80">
-									提示：证据抽屉可随时用顶栏「证据」开关
-								</p>
-							</div>
-						)}
-					</div>
+							)}
+						</div>
+					</ScrollArea>
 				</div>
 			</aside>
 		</div>

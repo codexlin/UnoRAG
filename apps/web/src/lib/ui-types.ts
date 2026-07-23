@@ -1,4 +1,4 @@
-/** Shared UI types for ask / evidence panels (not demo fixtures). */
+/** Shared UI types for ask / evidence panels. */
 
 export type UiLibrary = {
 	id: string;
@@ -19,7 +19,13 @@ export type UiCitation = {
 	snippet: string;
 	/** Chunk body used in LLM context / drawer. */
 	text: string;
+	/** Final rank score (0–1). */
 	score: number;
+	denseScore?: number | null;
+	bm25Score?: number | null;
+	rrfScore?: number | null;
+	usedRerank?: boolean;
+	usedHybrid?: boolean;
 	docId?: string;
 	chunkIndex?: number;
 	filename?: string;
