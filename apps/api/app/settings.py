@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -85,6 +86,11 @@ class Settings(BaseSettings):
 	# SaaS 预埋（Phase 1：默认租户/工作区 stub，完整多租户后置）
 	default_tenant_id: str = "default"
 	default_workspace_id: str = "default"
+	# Next.js control plane -> FastAPI data plane HMAC boundary.
+	internal_auth_enabled: bool = False
+	internal_auth_secret: str = ""
+	# memory 仅单进程开发；production 强制 redis。
+	internal_auth_replay_backend: str = "memory"
 
 	# Metadata is Postgres-required in production/dev.
 	# METADATA_BACKEND=json is test-only escape hatch (never silent fallback).
@@ -103,6 +109,18 @@ class Settings(BaseSettings):
 	ingest_max_inflight_per_library: int = 8
 	ingest_worker_max_jobs: int = 2
 	ingest_job_timeout_s: int = 600
+
+	@model_validator(mode="after")
+	def validate_production_security(self) -> "Settings":
+		if self.app_env.strip().lower() not in {"prod", "production"}:
+			return self
+		if not self.internal_auth_enabled:
+			raise ValueError("production requires INTERNAL_AUTH_ENABLED=true")
+		if len(self.internal_auth_secret.strip()) < 32:
+			raise ValueError("production requires INTERNAL_AUTH_SECRET with 32+ characters")
+		if self.internal_auth_replay_backend.strip().lower() != "redis":
+			raise ValueError("production requires INTERNAL_AUTH_REPLAY_BACKEND=redis")
+		return self
 
 	@property
 	def cors_origin_list(self) -> list[str]:

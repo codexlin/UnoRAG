@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import archive, ask, health, libraries
+from app.security.internal_context import InternalBodyDigestMiddleware, require_internal_context
 from app.services.metadata import get_metadata_store, probe_metadata_store, reset_metadata_store
 from app.settings import get_settings
 
@@ -45,10 +46,24 @@ def create_app() -> FastAPI:
 		allow_methods=["*"],
 		allow_headers=["*"],
 	)
+	application.add_middleware(InternalBodyDigestMiddleware)
 	application.include_router(health.router)
-	application.include_router(ask.router, prefix=settings.api_prefix)
-	application.include_router(libraries.router, prefix=settings.api_prefix)
-	application.include_router(archive.router, prefix=settings.api_prefix)
+	internal_dependencies = [Depends(require_internal_context)]
+	application.include_router(
+		ask.router,
+		prefix=settings.api_prefix,
+		dependencies=internal_dependencies,
+	)
+	application.include_router(
+		libraries.router,
+		prefix=settings.api_prefix,
+		dependencies=internal_dependencies,
+	)
+	application.include_router(
+		archive.router,
+		prefix=settings.api_prefix,
+		dependencies=internal_dependencies,
+	)
 	return application
 
 

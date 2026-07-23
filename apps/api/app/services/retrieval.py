@@ -7,6 +7,7 @@ from uuid import uuid4
 from app.services.chunking import chunk_text
 from app.services.documents import infer_page_label
 from app.services.hybrid import fuse_dense_and_bm25, get_bm25_cache
+from app.security.access_scope import AccessScope, resolve_access_scope
 from app.services.ingest.ir import Chunk as IRChunk
 from app.services.ingest.pipeline import chunks_to_payloads
 from app.services.llm import EmbeddingService
@@ -28,10 +29,12 @@ class IngestService:
 		*,
 		embeddings: EmbeddingService | None = None,
 		store: QdrantStore | None = None,
+		access_scope: AccessScope | None = None,
 	) -> None:
 		self.settings = settings
 		self._embeddings = embeddings
 		self._store = store
+		self.access_scope = resolve_access_scope(settings, access_scope)
 
 	@property
 	def embeddings(self) -> EmbeddingService:
@@ -83,6 +86,7 @@ class IngestService:
 			chunks=chunks,
 			vectors=vectors,
 			filename=filename,
+			access_scope=self.access_scope,
 		)
 		get_bm25_cache().invalidate(library_id)
 		logger.info(
@@ -128,6 +132,7 @@ class IngestService:
 			chunks=payloads,
 			vectors=vectors,
 			filename=filename,
+			access_scope=self.access_scope,
 		)
 		chunk_only = sum(1 for item in payloads if item.get("record_type", "chunk") == "chunk")
 		section_only = sum(1 for item in payloads if item.get("record_type") == "section")
@@ -158,7 +163,11 @@ class IngestService:
 	def delete_document_chunks(self, *, doc_id: str, library_id: str | None = None) -> None:
 		"""按文档清除向量；删元数据或同名覆盖上传前调用。"""
 		try:
-			self.store.delete_by_doc_id(doc_id=doc_id, library_id=library_id)
+			self.store.delete_by_doc_id(
+				doc_id=doc_id,
+				library_id=library_id,
+				access_scope=self.access_scope,
+			)
 		except Exception:
 			logger.exception(
 				"ingest.delete_chunks_failed doc_id=%s library_id=%s",
@@ -203,10 +212,12 @@ class RetrievalService:
 		embeddings: EmbeddingService | None = None,
 		store: QdrantStore | None = None,
 		reranker: RerankClient | None = None,
+		access_scope: AccessScope | None = None,
 	) -> None:
 		self.settings = settings
 		self.embeddings = embeddings or EmbeddingService(settings)
 		self.store = store or QdrantStore(settings)
+		self.access_scope = resolve_access_scope(settings, access_scope)
 		if reranker is not None:
 			self.reranker = reranker
 		elif settings.rerank_enabled and settings.has_llm_key:
@@ -241,6 +252,7 @@ class RetrievalService:
 			library_id=resolved_library,
 			top_k=dense_k,
 			record_type=resolved_type,
+			access_scope=self.access_scope,
 		)
 		hits = dense_hits
 		used_hybrid = False
@@ -341,8 +353,12 @@ class RetrievalService:
 	) -> list[dict[str, Any]]:
 		cache = get_bm25_cache()
 		index = cache.get_or_build(
-			f"{library_id}:{record_type}",
-			lambda: self.store.list_chunks(library_id=library_id, record_type=record_type),
+				f"{self.access_scope.cache_key()}:{library_id}:{record_type}",
+				lambda: self.store.list_chunks(
+					library_id=library_id,
+					record_type=record_type,
+					access_scope=self.access_scope,
+				),
 		)
 		bm25_hits = index.search(query, top_k=self.settings.bm25_top_k)
 		if not bm25_hits:
@@ -419,4 +435,5 @@ class RetrievalService:
 			table_id=table_id,
 			document_version_id=document_version_id,
 			library_id=library_id,
+			access_scope=self.access_scope,
 		)

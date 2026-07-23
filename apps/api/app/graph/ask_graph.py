@@ -7,6 +7,7 @@ from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from app.security.access_scope import AccessScope, resolve_access_scope
 from app.schemas import AskResponse, Citation
 from app.services.answer_copy import (
 	clarify_answer,
@@ -161,6 +162,8 @@ def _persist_turn(
 	judge: dict[str, Any] | None = None,
 	document_version_id: str | None = None,
 	tenant_id: str | None = None,
+	workspace_id: str | None = None,
+	principal_id: str | None = None,
 ) -> dict[str, Any]:
 	try:
 		from app.services.metadata import get_metadata_store
@@ -181,6 +184,8 @@ def _persist_turn(
 			judge=judge,
 			document_version_id=document_version_id,
 			tenant_id=tenant_id,
+			workspace_id=workspace_id,
+			principal_id=principal_id,
 		)
 		return {"persisted": True, "persist_error": None}
 	except Exception as exc:
@@ -365,11 +370,13 @@ def build_ask_graph(
 	generate_fn: GenerateFn,
 	mode: str,
 	load_table_groups_fn: LoadTableGroupsFn | None = None,
+	access_scope: AccessScope | None = None,
 ):
 	min_score = float(settings.answer_min_score)
 	max_retries = max(0, int(settings.max_retrieve_retries))
-	tenant_id = str(getattr(settings, "default_tenant_id", None) or "default")
-	workspace_id = str(getattr(settings, "default_workspace_id", None) or "default")
+	scope = resolve_access_scope(settings, access_scope)
+	tenant_id = scope.tenant_id
+	workspace_id = scope.workspace_id
 
 	def query_router_node(state: AskState) -> AskState:
 		"""规则分类；summary/table/ambiguous 等仅落盘，不建子图。"""
@@ -973,18 +980,23 @@ class AskGraphService:
 		generate_fn: GenerateFn | None = None,
 		session_memory: SessionMemory | None = None,
 		retrieval_service: RetrievalService | None = None,
+		access_scope: AccessScope | None = None,
 	) -> None:
 		self.settings = settings or get_settings()
 		self.capability = capability or resolve_runtime(self.settings)
 		self.mode = self.capability.effective_mode
 		self.session_memory = session_memory or default_session_memory
+		self.access_scope = resolve_access_scope(self.settings, access_scope)
 		self._retrieval_service = retrieval_service
 		self._chat: ChatService | None = None
 
 		if retrieve_fn is not None:
 			self._retrieve = retrieve_fn
 		elif self.mode == "live":
-			retrieval = retrieval_service or RetrievalService(self.settings)
+			retrieval = retrieval_service or RetrievalService(
+				self.settings,
+				access_scope=self.access_scope,
+			)
 			self._retrieval_service = retrieval
 
 			def live_retrieve(
@@ -1046,6 +1058,7 @@ class AskGraphService:
 			generate_fn=self._generate,
 			mode=self.mode,
 			load_table_groups_fn=load_table_groups_fn,
+			access_scope=self.access_scope,
 		)
 
 	def _merge_retrieval_debug(self, debug: dict[str, Any]) -> dict[str, Any]:
@@ -1053,6 +1066,9 @@ class AskGraphService:
 		if self._retrieval_service is not None and getattr(self._retrieval_service, "last_debug", None):
 			merged.update(self._retrieval_service.last_debug)
 		return merged
+
+	def _memory_session_id(self, session_id: str) -> str:
+		return f"{self.access_scope.cache_key()}:{session_id}"
 
 	def ask(
 		self,
@@ -1062,10 +1078,11 @@ class AskGraphService:
 		session_id: str | None = None,
 	) -> AskResponse:
 		resolved_session = session_id or str(uuid.uuid4())
+		memory_session = self._memory_session_id(resolved_session)
 		history: list[dict[str, str]] = []
 		if self.settings.session_memory_enabled:
 			history = self.session_memory.load(
-				resolved_session,
+				memory_session,
 				limit=self.settings.session_memory_max_turns * 2,
 			)
 
@@ -1087,8 +1104,8 @@ class AskGraphService:
 		)
 
 		if self.settings.session_memory_enabled:
-			self.session_memory.append(resolved_session, "user", question)
-			self.session_memory.append(resolved_session, "assistant", state.get("answer") or "")
+			self.session_memory.append(memory_session, "user", question)
+			self.session_memory.append(memory_session, "assistant", state.get("answer") or "")
 
 		raw_citations = state.get("citations") or []
 		citations = _to_citation_models(raw_citations)
@@ -1122,7 +1139,9 @@ class AskGraphService:
 			rewritten_query=state.get("rewritten_question"),
 			judge=judge if isinstance(judge, dict) else None,
 			document_version_id=_single_document_version_id(citations),
-			tenant_id=str(getattr(self.settings, "default_tenant_id", None) or "default"),
+			tenant_id=self.access_scope.tenant_id,
+			workspace_id=self.access_scope.workspace_id,
+			principal_id=self.access_scope.principal_id,
 		)
 		visibility = _retrieval_visibility(debug)
 		return AskResponse(
@@ -1131,6 +1150,7 @@ class AskGraphService:
 			answer=state["answer"],
 			citations=citations,
 			mode=self.mode,
+			access_scope=self.access_scope,
 			refused=bool(state.get("refused")),
 			refuse_reason=state.get("refuse_reason"),
 			retrieval_debug=debug,
@@ -1150,10 +1170,11 @@ class AskGraphService:
 	):
 		"""Yield SSE-friendly dicts: meta → citations → token* → done | error."""
 		resolved_session = session_id or str(uuid.uuid4())
+		memory_session = self._memory_session_id(resolved_session)
 		history: list[dict[str, str]] = []
 		if self.settings.session_memory_enabled:
 			history = self.session_memory.load(
-				resolved_session,
+				memory_session,
 				limit=self.settings.session_memory_max_turns * 2,
 			)
 
@@ -1169,6 +1190,7 @@ class AskGraphService:
 			retrieve_fn=self._retrieve,
 			generate_fn=capture_generate,
 			mode=self.mode,
+			access_scope=self.access_scope,
 		)
 		state = graph.invoke(
 			{
@@ -1237,8 +1259,8 @@ class AskGraphService:
 
 		answer = state.get("answer") or ""
 		if self.settings.session_memory_enabled:
-			self.session_memory.append(resolved_session, "user", question)
-			self.session_memory.append(resolved_session, "assistant", answer)
+			self.session_memory.append(memory_session, "user", question)
+			self.session_memory.append(memory_session, "assistant", answer)
 
 		judge = state.get("judgement") or debug.get("judgement")
 		plan = state.get("retrieval_plan") or debug.get("retrieval_plan")
@@ -1269,7 +1291,9 @@ class AskGraphService:
 			rewritten_query=state.get("rewritten_question"),
 			judge=judge if isinstance(judge, dict) else None,
 			document_version_id=_single_document_version_id(citation_models),
-			tenant_id=str(getattr(self.settings, "default_tenant_id", None) or "default"),
+			tenant_id=self.access_scope.tenant_id,
+			workspace_id=self.access_scope.workspace_id,
+			principal_id=self.access_scope.principal_id,
 		)
 
 		yield {

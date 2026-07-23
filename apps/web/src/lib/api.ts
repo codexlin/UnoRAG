@@ -123,10 +123,8 @@ export type ApiUploadResponse = {
 	parser_report?: Record<string, unknown> | null;
 };
 
-const DEFAULT_API_URL = "http://localhost:8000";
-
 export function getApiBaseUrl() {
-	return process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || DEFAULT_API_URL;
+	return "/api/rag";
 }
 
 /** True when fetch was cancelled via AbortController (e.g. React Strict Mode remount). */
@@ -161,7 +159,7 @@ export async function fetchHealth(signal?: AbortSignal): Promise<ApiHealth> {
 export async function fetchLibraries(
 	signal?: AbortSignal,
 ): Promise<ApiLibrary[]> {
-	const response = await fetch(`${getApiBaseUrl()}/v1/libraries`, {
+	const response = await fetch("/api/libraries", {
 		method: "GET",
 		signal,
 		cache: "no-store",
@@ -195,7 +193,7 @@ export async function createLibrary(input: {
 	description?: string;
 	libraryId?: string;
 }): Promise<ApiLibrary> {
-	const response = await fetch(`${getApiBaseUrl()}/v1/libraries`, {
+	const response = await fetch("/api/libraries", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({
@@ -225,7 +223,7 @@ export async function updateLibrary(input: {
 				: null;
 	}
 	const response = await fetch(
-		`${getApiBaseUrl()}/v1/libraries/${encodeURIComponent(input.libraryId)}`,
+		`/api/libraries/${encodeURIComponent(input.libraryId)}`,
 		{
 			method: "PATCH",
 			headers: { "content-type": "application/json" },
@@ -245,7 +243,7 @@ export async function deleteLibrary(libraryId: string): Promise<{
 	deleted_documents: number;
 }> {
 	const response = await fetch(
-		`${getApiBaseUrl()}/v1/libraries/${encodeURIComponent(libraryId)}`,
+		`/api/libraries/${encodeURIComponent(libraryId)}`,
 		{ method: "DELETE" },
 	);
 	if (!response.ok) {
@@ -295,7 +293,9 @@ export async function deleteDocument(docId: string): Promise<void> {
 	}
 }
 
-export async function reindexDocument(docId: string): Promise<ApiUploadResponse> {
+export async function reindexDocument(
+	docId: string,
+): Promise<ApiUploadResponse> {
 	const response = await fetch(
 		`${getApiBaseUrl()}/v1/documents/${encodeURIComponent(docId)}/reindex`,
 		{ method: "POST" },
@@ -339,8 +339,11 @@ export async function downloadDocument(
 	}
 	const blob = await response.blob();
 	const disposition = response.headers.get("content-disposition");
-	const fromHeader = disposition?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i)?.[1];
-	const resolvedName = filename || (fromHeader ? decodeURIComponent(fromHeader) : docId);
+	const fromHeader = disposition?.match(
+		/filename\*?=(?:UTF-8''|")?([^";]+)/i,
+	)?.[1];
+	const resolvedName =
+		filename || (fromHeader ? decodeURIComponent(fromHeader) : docId);
 	const url = URL.createObjectURL(blob);
 	try {
 		const anchor = document.createElement("a");

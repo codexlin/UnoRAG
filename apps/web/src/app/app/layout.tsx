@@ -4,12 +4,17 @@ import { AppTopbar } from "@/components/app/app-topbar";
 import { IngestJobsProvider } from "@/components/app/ingest-jobs-provider";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { resolveSessionCookieHeader } from "@/lib/server/auth/session";
 
-export default function AppLayout({
+export default async function AppLayout({
 	children,
 }: Readonly<{
 	children: React.ReactNode;
 }>) {
+	const cookieStore = await cookies();
+	const identity = await resolveSessionCookieHeader(cookieStore.toString());
+	if (!identity) redirect("/login");
+
 	return (
 		<AppDataProvider>
 			<IngestJobsProvider>
@@ -34,3 +39,6 @@ export default function AppLayout({
 		</AppDataProvider>
 	);
 }
+
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";

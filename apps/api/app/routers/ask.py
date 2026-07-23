@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.graph import AskGraphService
+from app.security.access_scope import AccessScope
+from app.security.internal_context import RequestContext, require_internal_context
 from app.schemas import (
 	AskRequest,
 	AskResponse,
@@ -44,7 +46,10 @@ def _unavailable_detail(capability, *, message: str) -> dict:
 	}
 
 
-def get_ask_service(settings: Settings = Depends(get_settings)) -> AskGraphService:
+def get_ask_service(
+	settings: Settings = Depends(get_settings),
+	context: RequestContext = Depends(require_internal_context),
+) -> AskGraphService:
 	capability = resolve_runtime(settings)
 	if not capability.ask_ready:
 		raise HTTPException(
@@ -54,7 +59,11 @@ def get_ask_service(settings: Settings = Depends(get_settings)) -> AskGraphServi
 				message="ask unavailable: live mode requires LLM key and reachable Qdrant",
 			),
 		)
-	return AskGraphService(settings, capability=capability)
+	return AskGraphService(
+		settings,
+		capability=capability,
+		access_scope=AccessScope.from_request_context(context),
+	)
 
 
 def get_meta(settings: Settings = Depends(get_settings)) -> MetadataStore:
@@ -118,7 +127,9 @@ def ingest(
 	body: IngestRequest,
 	settings: Settings = Depends(get_settings),
 	meta: MetadataStore = Depends(get_meta),
+	context: RequestContext = Depends(require_internal_context),
 ) -> IngestResponse:
+	access_scope = AccessScope.from_request_context(context)
 	capability = resolve_runtime(settings)
 	if not capability.live_ready:
 		if capability.requested_mode == "stub" and settings.stub_ingest_simulate:
@@ -133,7 +144,7 @@ def ingest(
 				status="processing",
 			)
 			try:
-				result = IngestService(settings).simulate_ingest(
+				result = IngestService(settings, access_scope=access_scope).simulate_ingest(
 					library_id=body.library_id,
 					title=body.title,
 					text=body.text,
@@ -171,7 +182,7 @@ def ingest(
 		status="processing",
 	)
 	try:
-		result = IngestService(settings).ingest_text(
+		result = IngestService(settings, access_scope=access_scope).ingest_text(
 			library_id=body.library_id,
 			title=body.title,
 			text=body.text,
@@ -198,7 +209,9 @@ async def ingest_upload(
 	display_name: str | None = Form(default=None),
 	settings: Settings = Depends(get_settings),
 	meta: MetadataStore = Depends(get_meta),
+	context: RequestContext = Depends(require_internal_context),
 ) -> UploadResponse | JSONResponse:
+	access_scope = AccessScope.from_request_context(context)
 	capability = resolve_runtime(settings)
 	content = await file.read()
 	if not content:
@@ -217,7 +230,7 @@ async def ingest_upload(
 			detail=f"unsupported file type: {suffix or '(none)'}; use txt/md/pdf/docx/csv/xlsx",
 		)
 	if meta.get_library(library_id) is None:
-		raise HTTPException(status_code=404, detail=f"library not found: {library_id}")
+		meta.create_library(name=library_id, library_id=library_id)
 
 	# 同库同名文件覆盖：先清旧向量 + 元数据，避免脏 chunk 叠加
 	doc_storage = DocumentStorage(settings)
@@ -228,7 +241,7 @@ async def ingest_upload(
 		old_storage_key = old.get("storage_key")
 		try:
 			if capability.live_ready:
-				IngestService(settings).delete_document_chunks(
+				IngestService(settings, access_scope=access_scope).delete_document_chunks(
 					doc_id=old_id,
 					library_id=library_id,
 				)
@@ -301,6 +314,7 @@ async def ingest_upload(
 			await enqueue_ingest_job(
 				doc_id=doc["id"],
 				library_id=library_id,
+				access_scope=access_scope,
 				settings=settings,
 			)
 		except RuntimeError as exc:
@@ -331,7 +345,11 @@ async def ingest_upload(
 		return JSONResponse(status_code=202, content=payload.model_dump())
 
 	# 同步回退（INGEST_ASYNC=false）：同请求内跑完 ingest
-	result = process_document_ingest(doc["id"], settings=settings)
+	result = process_document_ingest(
+		doc["id"],
+		settings=settings,
+		access_scope=access_scope,
+	)
 	if not result.get("ok"):
 		raise HTTPException(
 			status_code=400 if "empty" in str(result.get("error") or "").lower() else 502,

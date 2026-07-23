@@ -9,6 +9,7 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 from arq.jobs import Job
 
+from app.security.access_scope import AccessScope
 from app.services.document_storage import DocumentStorage
 from app.services.ingest.pipeline import prepare_ingest
 from app.services.metadata import MetadataStore, get_metadata_store
@@ -25,6 +26,7 @@ def process_document_ingest(
 	doc_id: str,
 	*,
 	settings: Settings | None = None,
+	access_scope: AccessScope | None = None,
 ) -> dict[str, Any]:
 	"""Parse + embed a stored document. Idempotent if not in processing."""
 	settings = settings or get_settings()
@@ -99,7 +101,10 @@ def process_document_ingest(
 	notice = prepared.notice()
 	try:
 		if live:
-			result = IngestService(settings).ingest_ir_chunks(
+			result = IngestService(
+				settings,
+				access_scope=access_scope,
+			).ingest_ir_chunks(
 				library_id=library_id,
 				title=prepared.title,
 				chunks=prepared.chunks,
@@ -173,6 +178,7 @@ async def enqueue_ingest_job(
 	*,
 	doc_id: str,
 	library_id: str,
+	access_scope: AccessScope,
 	settings: Settings | None = None,
 ) -> Job | None:
 	"""Enqueue ARQ job. Raises RuntimeError on Redis/backpressure failures."""
@@ -202,6 +208,12 @@ async def enqueue_ingest_job(
 		job = await redis.enqueue_job(
 			INGEST_JOB_NAME,
 			doc_id,
+			{
+				"tenant_id": access_scope.tenant_id,
+				"workspace_id": access_scope.workspace_id,
+				"principal_id": access_scope.principal_id,
+				"group_ids": list(access_scope.group_ids),
+			},
 			_job_id=f"ingest:{doc_id}:{uuid4().hex}",
 		)
 		if job is None:
@@ -218,7 +230,19 @@ async def enqueue_ingest_job(
 		await redis.aclose(close_connection_pool=True)
 
 
-async def ingest_document(ctx: dict[str, Any], doc_id: str) -> dict[str, Any]:
+async def ingest_document(
+	ctx: dict[str, Any],
+	doc_id: str,
+	access_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
 	"""ARQ worker entrypoint."""
 	_ = ctx
-	return process_document_ingest(doc_id)
+	access_scope = None
+	if access_payload:
+		access_scope = AccessScope(
+			tenant_id=str(access_payload["tenant_id"]),
+			workspace_id=str(access_payload["workspace_id"]),
+			principal_id=str(access_payload["principal_id"]),
+			group_ids=tuple(str(item) for item in access_payload.get("group_ids") or []),
+		)
+	return process_document_ingest(doc_id, access_scope=access_scope)

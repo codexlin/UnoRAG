@@ -6,6 +6,8 @@ from pathlib import PurePosixPath
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
+from app.security.access_scope import AccessScope
+from app.security.internal_context import RequestContext, require_internal_context
 from app.schemas import (
 	DocumentResponse,
 	LibraryCreateRequest,
@@ -33,6 +35,12 @@ def get_meta(settings: Settings = Depends(get_settings)) -> MetadataStore:
 
 def get_document_storage(settings: Settings = Depends(get_settings)) -> DocumentStorage:
 	return DocumentStorage(settings)
+
+
+def get_access_scope(
+	context: RequestContext = Depends(require_internal_context),
+) -> AccessScope:
+	return AccessScope.from_request_context(context)
 
 
 def _document_response(row: dict) -> DocumentResponse:
@@ -110,6 +118,7 @@ def delete_library(
 	settings: Settings = Depends(get_settings),
 	meta: MetadataStore = Depends(get_meta),
 	storage: DocumentStorage = Depends(get_document_storage),
+	access_scope: AccessScope = Depends(get_access_scope),
 ) -> dict[str, object]:
 	library = meta.get_library(library_id)
 	if library is None:
@@ -124,7 +133,7 @@ def delete_library(
 		doc_id = str(doc["id"])
 		if capability.live_ready:
 			try:
-				IngestService(settings).delete_document_chunks(
+				IngestService(settings, access_scope=access_scope).delete_document_chunks(
 					doc_id=doc_id,
 					library_id=library_id,
 				)
@@ -205,6 +214,7 @@ def delete_document(
 	settings: Settings = Depends(get_settings),
 	meta: MetadataStore = Depends(get_meta),
 	storage: DocumentStorage = Depends(get_document_storage),
+	access_scope: AccessScope = Depends(get_access_scope),
 ) -> dict[str, object]:
 	doc = meta.get_document(doc_id)
 	if doc is None:
@@ -213,7 +223,7 @@ def delete_document(
 	capability = resolve_runtime(settings)
 	if capability.live_ready:
 		try:
-			IngestService(settings).delete_document_chunks(
+			IngestService(settings, access_scope=access_scope).delete_document_chunks(
 				doc_id=doc_id,
 				library_id=str(doc["library_id"]),
 			)
@@ -242,6 +252,7 @@ async def replace_document(
 	settings: Settings = Depends(get_settings),
 	meta: MetadataStore = Depends(get_meta),
 	storage: DocumentStorage = Depends(get_document_storage),
+	access_scope: AccessScope = Depends(get_access_scope),
 ) -> UploadResponse | JSONResponse:
 	"""用新文件覆盖同一文档：清旧向量与原文，保留 doc_id，再入队索引。"""
 	doc = meta.get_document(doc_id)
@@ -290,7 +301,7 @@ async def replace_document(
 		other_id = str(other["id"])
 		try:
 			if live:
-				IngestService(settings).delete_document_chunks(
+				IngestService(settings, access_scope=access_scope).delete_document_chunks(
 					doc_id=other_id,
 					library_id=library_id,
 				)
@@ -307,7 +318,7 @@ async def replace_document(
 	# 清当前文档向量（live 失败则中止，避免孤儿点）
 	if live:
 		try:
-			IngestService(settings).delete_document_chunks(
+			IngestService(settings, access_scope=access_scope).delete_document_chunks(
 				doc_id=doc_id,
 				library_id=library_id,
 			)
@@ -356,6 +367,7 @@ async def replace_document(
 			await enqueue_ingest_job(
 				doc_id=doc_id,
 				library_id=library_id,
+				access_scope=access_scope,
 				settings=settings,
 			)
 		except RuntimeError as exc:
@@ -378,7 +390,11 @@ async def replace_document(
 		)
 		return JSONResponse(status_code=202, content=payload.model_dump())
 
-	result = process_document_ingest(doc_id, settings=settings)
+	result = process_document_ingest(
+		doc_id,
+		settings=settings,
+		access_scope=access_scope,
+	)
 	if not result.get("ok"):
 		raise HTTPException(
 			status_code=400,
@@ -410,6 +426,7 @@ async def reindex_document(
 	settings: Settings = Depends(get_settings),
 	meta: MetadataStore = Depends(get_meta),
 	storage: DocumentStorage = Depends(get_document_storage),
+	access_scope: AccessScope = Depends(get_access_scope),
 ) -> UploadResponse | JSONResponse:
 	doc = meta.get_document(doc_id)
 	if doc is None:
@@ -451,6 +468,7 @@ async def reindex_document(
 			await enqueue_ingest_job(
 				doc_id=doc_id,
 				library_id=library_id,
+				access_scope=access_scope,
 				settings=settings,
 			)
 		except RuntimeError as exc:
@@ -476,7 +494,11 @@ async def reindex_document(
 		)
 		return JSONResponse(status_code=202, content=payload.model_dump())
 
-	result = process_document_ingest(doc_id, settings=settings)
+	result = process_document_ingest(
+		doc_id,
+		settings=settings,
+		access_scope=access_scope,
+	)
 	if not result.get("ok"):
 		raise HTTPException(
 			status_code=400,

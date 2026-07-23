@@ -2,6 +2,9 @@
 
 FastAPI + LangChain + LangGraph。图路径：`rewrite → retrieve → judge → (retry) → generate | refuse`。
 
+FastAPI 是内部 RAG Data Plane。浏览器应访问 Next.js
+`/api/rag/*`，不直接访问本服务的 `/v1`。
+
 ## 前置：Qdrant
 
 仓库根目录：
@@ -25,6 +28,28 @@ uv run uvicorn app.main:app --reload --port 8000
 - 健康检查：<http://localhost:8000/health>
 - 问答：`POST http://localhost:8000/v1/ask`
 - 入库（live）：`POST http://localhost:8000/v1/ingest`
+
+私有化生产需设置：
+
+```bash
+APP_ENV=production
+INTERNAL_AUTH_ENABLED=true
+INTERNAL_AUTH_SECRET=<与 Next.js MERIKNOW_INTERNAL_SECRET 相同>
+INTERNAL_AUTH_REPLAY_BACKEND=redis
+```
+
+开启后，所有 `/v1` 请求必须携带 Next.js 签发的短期 HMAC
+RequestContext；签名绑定 method、canonical path/query 与精确 body
+摘要，并通过一次性 `jti` 防重放。JSON 与 multipart 都在路由解析前
+验证精确 body 摘要。`/health` 保持可用于容器探针。
+
+> **禁止将开发默认值用于部署：** development 模式允许直接调用 `/v1`，
+> 仅用于本机开发。生产必须设置 `APP_ENV=production`，并将 FastAPI
+> 放在内部网络，只允许 Next.js 与 worker 访问；不要公开映射 `:8000`。
+
+RequestContext 会生成统一 `AccessScope`。Dense、BM25、表格全量加载、
+删除和异步 ingest 都强制携带 tenant/workspace/ACL 过滤；旧的无 scope
+Qdrant 点不会被召回，需要重新索引。
 
 ```bash
 curl -s http://localhost:8000/health
@@ -75,6 +100,9 @@ curl -s -X POST http://localhost:8000/v1/ask \
 | `SESSION_MEMORY_ENABLED` | 默认 `true`；同 session 短记忆 rewrite |
 | `SESSION_MEMORY_MAX_TURNS` | 保留轮数（默认 6） |
 | `STUB_INGEST_SIMULATE` | 默认 `false`；仅 `ASK_MODE=stub` 且为 true 时模拟入库 |
+| `INTERNAL_AUTH_ENABLED` | 私有化生产设为 `true`，阻止绕过 Next.js 直连 `/v1` |
+| `INTERNAL_AUTH_SECRET` | 与 Next.js 共享的 32+ 字节随机密钥，不写入镜像或 Git |
+| `INTERNAL_AUTH_REPLAY_BACKEND` | 开发可用 `memory`；production 强制 `redis`，跨 worker 防重放 |
 
 ## Live 样例入库
 

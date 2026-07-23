@@ -135,6 +135,8 @@ class MetadataStore(ABC):
 		judge: dict[str, Any] | None = None,
 		document_version_id: str | None = None,
 		tenant_id: str | None = None,
+		workspace_id: str | None = None,
+		principal_id: str | None = None,
 	) -> dict[str, Any]:
 		raise NotImplementedError
 
@@ -144,6 +146,9 @@ class MetadataStore(ABC):
 		*,
 		library_id: str | None = None,
 		session_id: str | None = None,
+		tenant_id: str | None = None,
+		workspace_id: str | None = None,
+		principal_id: str | None = None,
 		limit: int = 50,
 	) -> list[dict[str, Any]]:
 		raise NotImplementedError
@@ -415,6 +420,8 @@ class JsonMetadataStore(MetadataStore):
 		judge: dict[str, Any] | None = None,
 		document_version_id: str | None = None,
 		tenant_id: str | None = None,
+		workspace_id: str | None = None,
+		principal_id: str | None = None,
 	) -> dict[str, Any]:
 		resolved = turn_id or str(uuid4())
 		now = _now_iso()
@@ -435,6 +442,8 @@ class JsonMetadataStore(MetadataStore):
 			"judge": judge,
 			"document_version_id": document_version_id,
 			"tenant_id": tenant_id or "default",
+			"workspace_id": workspace_id or "default",
+			"principal_id": principal_id or "development",
 			"created_at": now,
 		}
 		with self._lock:
@@ -448,6 +457,9 @@ class JsonMetadataStore(MetadataStore):
 		*,
 		library_id: str | None = None,
 		session_id: str | None = None,
+		tenant_id: str | None = None,
+		workspace_id: str | None = None,
+		principal_id: str | None = None,
 		limit: int = 50,
 	) -> list[dict[str, Any]]:
 		with self._lock:
@@ -457,6 +469,12 @@ class JsonMetadataStore(MetadataStore):
 			items = [item for item in items if item.get("library_id") == library_id]
 		if session_id:
 			items = [item for item in items if item.get("session_id") == session_id]
+		if tenant_id:
+			items = [item for item in items if item.get("tenant_id") == tenant_id]
+		if workspace_id:
+			items = [item for item in items if item.get("workspace_id") == workspace_id]
+		if principal_id:
+			items = [item for item in items if item.get("principal_id") == principal_id]
 		items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
 		return items[: max(1, min(limit, 200))]
 
@@ -542,6 +560,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			retrieval_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 			document_version_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
 			tenant_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+			workspace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+			principal_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 			created_at: Mapped[datetime] = mapped_column(
 				DateTime(timezone=True),
 				server_default=func.now(),
@@ -587,6 +607,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS retrieval_plan_json TEXT",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS document_version_id VARCHAR(256)",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128)",
+					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(128)",
+					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS principal_id VARCHAR(128)",
 				):
 					conn.execute(sql_text(stmt))
 		except Exception as exc:
@@ -678,6 +700,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			"retrieval_plan": _load_obj(getattr(row, "retrieval_plan_json", None)),
 			"document_version_id": getattr(row, "document_version_id", None),
 			"tenant_id": getattr(row, "tenant_id", None),
+			"workspace_id": getattr(row, "workspace_id", None),
+			"principal_id": getattr(row, "principal_id", None),
 			"created_at": self._dt(row.created_at),
 		}
 
@@ -898,6 +922,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		judge: dict[str, Any] | None = None,
 		document_version_id: str | None = None,
 		tenant_id: str | None = None,
+		workspace_id: str | None = None,
+		principal_id: str | None = None,
 	) -> dict[str, Any]:
 		resolved = turn_id or str(uuid4())
 		with self._Session() as session:
@@ -922,6 +948,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				),
 				document_version_id=document_version_id,
 				tenant_id=tenant_id or "default",
+				workspace_id=workspace_id or "default",
+				principal_id=principal_id or "development",
 			)
 			session.add(row)
 			session.commit()
@@ -933,6 +961,9 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		*,
 		library_id: str | None = None,
 		session_id: str | None = None,
+		tenant_id: str | None = None,
+		workspace_id: str | None = None,
+		principal_id: str | None = None,
 		limit: int = 50,
 	) -> list[dict[str, Any]]:
 		capped = max(1, min(limit, 200))
@@ -942,6 +973,12 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				stmt = stmt.where(self._TurnRow.library_id == library_id)
 			if session_id:
 				stmt = stmt.where(self._TurnRow.session_id == session_id)
+			if tenant_id:
+				stmt = stmt.where(self._TurnRow.tenant_id == tenant_id)
+			if workspace_id:
+				stmt = stmt.where(self._TurnRow.workspace_id == workspace_id)
+			if principal_id:
+				stmt = stmt.where(self._TurnRow.principal_id == principal_id)
 			stmt = stmt.limit(capped)
 			rows = session.scalars(stmt).all()
 			return [self._turn_dict(row) for row in rows]

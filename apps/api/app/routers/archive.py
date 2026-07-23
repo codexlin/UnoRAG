@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.security.internal_context import RequestContext, require_internal_context
 from app.schemas import ArchiveTurnResponse, Citation
 from app.services.metadata import MetadataStore, get_metadata_store
 from app.settings import Settings, get_settings
@@ -54,8 +55,16 @@ def list_archive(
 	session_id: str | None = Query(default=None),
 	limit: int = Query(default=50, ge=1, le=200),
 	meta: MetadataStore = Depends(get_meta),
+	context: RequestContext = Depends(require_internal_context),
 ) -> list[ArchiveTurnResponse]:
-	rows = meta.list_turns(library_id=library_id, session_id=session_id, limit=limit)
+	rows = meta.list_turns(
+		library_id=library_id,
+		session_id=session_id,
+		tenant_id=context.tenant_id,
+		workspace_id=context.workspace_id,
+		principal_id=context.principal_id,
+		limit=limit,
+	)
 	return [_to_turn_response(row) for row in rows]
 
 
@@ -63,8 +72,13 @@ def list_archive(
 def get_archive_turn(
 	turn_id: str,
 	meta: MetadataStore = Depends(get_meta),
+	context: RequestContext = Depends(require_internal_context),
 ) -> ArchiveTurnResponse:
 	row = meta.get_turn(turn_id)
-	if row is None:
+	if row is None or (
+		row.get("tenant_id") != context.tenant_id
+		or row.get("workspace_id") != context.workspace_id
+		or row.get("principal_id") != context.principal_id
+	):
 		raise HTTPException(status_code=404, detail="turn not found")
 	return _to_turn_response(row)

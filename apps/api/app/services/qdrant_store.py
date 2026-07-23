@@ -7,6 +7,7 @@ from uuid import uuid4
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 
+from app.security.access_scope import AclScope, AccessScope, resolve_access_scope
 from app.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,10 @@ class QdrantStore:
 		chunks: list[dict[str, Any]],
 		vectors: list[list[float]],
 		filename: str | None = None,
+		access_scope: AccessScope | None = None,
+		acl_scope: AclScope = "workspace",
+		allowed_principal_ids: tuple[str, ...] = (),
+		allowed_group_ids: tuple[str, ...] = (),
 	) -> int:
 		if len(chunks) != len(vectors):
 			raise ValueError("chunks and vectors length mismatch")
@@ -80,8 +85,11 @@ class QdrantStore:
 			"source_format",
 			"content_hash",
 			"document_version_id",
-			"tenant_id",
-			"workspace_id",
+				"tenant_id",
+				"workspace_id",
+				"acl_scope",
+				"acl_principal_ids",
+				"acl_group_ids",
 			"record_type",
 			"record_id",
 			"parent_record_id",
@@ -102,6 +110,7 @@ class QdrantStore:
 		)
 		from app.services.versioning import derive_document_version_id
 
+		scope = resolve_access_scope(self.settings, access_scope)
 		for chunk, vector in zip(chunks, vectors, strict=True):
 			payload: dict[str, Any] = {
 				"library_id": library_id,
@@ -110,20 +119,29 @@ class QdrantStore:
 				"chunk_index": int(chunk["chunk_index"]),
 				# text = body（展示/BM25）；向量在 ingest 侧用 embed_text 生成
 				"text": chunk.get("body") or chunk["text"],
+				**scope.payload(
+					acl_scope=acl_scope,
+					allowed_principal_ids=allowed_principal_ids,
+					allowed_group_ids=allowed_group_ids,
+				),
 			}
 			for key in _optional_keys:
 				if chunk.get(key) is not None:
 					payload[key] = chunk[key]
-			# Phase 1：预埋版本 / 租户（无完整 version 表时用派生 stub）
+			# Request scope is authoritative; parser/chunk payload may not override it.
+			payload.update(
+				scope.payload(
+					acl_scope=acl_scope,
+					allowed_principal_ids=allowed_principal_ids,
+					allowed_group_ids=allowed_group_ids,
+				)
+			)
+			# 无完整 version 表时保留派生版本 stub。
 			if not payload.get("document_version_id"):
 				payload["document_version_id"] = derive_document_version_id(
 					doc_id,
 					content_hash=str(chunk.get("content_hash") or "") or None,
 				)
-			if not payload.get("tenant_id"):
-				payload["tenant_id"] = "default"
-			if not payload.get("workspace_id"):
-				payload["workspace_id"] = "default"
 			# 缺省视为 chunk，兼容旧点
 			if not payload.get("record_type"):
 				payload["record_type"] = "chunk"
@@ -148,9 +166,17 @@ class QdrantStore:
 		)
 		return len(points)
 
-	def delete_by_doc_id(self, *, doc_id: str, library_id: str | None = None) -> None:
+	def delete_by_doc_id(
+		self,
+		*,
+		doc_id: str,
+		library_id: str | None = None,
+		access_scope: AccessScope | None = None,
+	) -> None:
 		"""删除某文档在 collection 中的全部向量点（覆盖重传 / 删文档前调用）。"""
+		scope = resolve_access_scope(self.settings, access_scope)
 		must: list[qm.Condition] = [
+			*scope.qdrant_conditions()[:2],
 			qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id)),
 		]
 		if library_id:
@@ -178,8 +204,10 @@ class QdrantStore:
 		top_k: int,
 		record_type: str | None = None,
 		extra_must: list[qm.Condition] | None = None,
+		access_scope: AccessScope | None = None,
 	) -> list[dict[str, Any]]:
-		must: list[qm.Condition] = []
+		scope = resolve_access_scope(self.settings, access_scope)
+		must: list[qm.Condition] = list(scope.qdrant_conditions())
 		if library_id:
 			must.append(
 				qm.FieldCondition(
@@ -267,7 +295,9 @@ class QdrantStore:
 			"chunk_index": payload.get("chunk_index"),
 			"filename": payload.get("filename"),
 			"document_version_id": payload.get("document_version_id"),
-			"tenant_id": payload.get("tenant_id"),
+				"tenant_id": payload.get("tenant_id"),
+				"workspace_id": payload.get("workspace_id"),
+				"acl_scope": payload.get("acl_scope"),
 			"record_type": payload.get("record_type") or "chunk",
 			"record_id": payload.get("record_id"),
 			"source_chunk_ids": payload.get("source_chunk_ids") or [],
@@ -283,10 +313,13 @@ class QdrantStore:
 		table_id: str,
 		document_version_id: str | None = None,
 		library_id: str | None = None,
+		access_scope: AccessScope | None = None,
 		limit: int = 10_000,
 	) -> list[dict[str, Any]]:
 		"""按表实例键拉取全部 table 行组（非向量 top_k），供全表聚合。"""
+		scope = resolve_access_scope(self.settings, access_scope)
 		must: list[qm.Condition] = [
+			*scope.qdrant_conditions(),
 			qm.FieldCondition(key="record_type", match=qm.MatchValue(value="table")),
 			qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id)),
 			qm.FieldCondition(key="table_id", match=qm.MatchValue(value=table_id)),
@@ -335,9 +368,11 @@ class QdrantStore:
 		library_id: str | None = None,
 		limit: int = 10_000,
 		record_type: str | None = "chunk",
+		access_scope: AccessScope | None = None,
 	) -> list[dict[str, Any]]:
 		"""Scroll payload chunks for BM25 corpus building（默认仅 chunk 粒度）。"""
-		must: list[qm.Condition] = []
+		scope = resolve_access_scope(self.settings, access_scope)
+		must: list[qm.Condition] = list(scope.qdrant_conditions())
 		if library_id:
 			must.append(
 				qm.FieldCondition(
@@ -399,7 +434,9 @@ class QdrantStore:
 						"snippet": body[:280],
 						"library_id": payload.get("library_id"),
 						"document_version_id": payload.get("document_version_id"),
-						"tenant_id": payload.get("tenant_id"),
+							"tenant_id": payload.get("tenant_id"),
+							"workspace_id": payload.get("workspace_id"),
+							"acl_scope": payload.get("acl_scope"),
 						"record_type": payload.get("record_type") or "chunk",
 						"record_id": payload.get("record_id"),
 						"source_chunk_ids": payload.get("source_chunk_ids") or [],

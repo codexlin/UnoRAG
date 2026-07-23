@@ -31,7 +31,10 @@ def read_section(
 	limit: int = 20,
 ) -> list[dict[str, Any]]:
 	"""按 section_path 拉回该节相关 chunk（payload 过滤 best-effort）。"""
-	chunks = retrieval.store.list_chunks(library_id=library_id)
+	chunks = retrieval.store.list_chunks(
+		library_id=library_id,
+		access_scope=retrieval.access_scope,
+	)
 	needle = section_path.strip()
 	matched: list[dict[str, Any]] = []
 	for chunk in chunks:
@@ -56,7 +59,10 @@ def read_page(
 	limit: int = 20,
 ) -> list[dict[str, Any]]:
 	"""PDF/PPT 按页读取：匹配 page_start/end 或 page 标签。"""
-	chunks = retrieval.store.list_chunks(library_id=library_id)
+	chunks = retrieval.store.list_chunks(
+		library_id=library_id,
+		access_scope=retrieval.access_scope,
+	)
 	matched: list[dict[str, Any]] = []
 	label = f"p.{page}"
 	for chunk in chunks:
@@ -87,7 +93,10 @@ def extract_table(
 	limit: int = 10,
 ) -> list[dict[str, Any]]:
 	"""返回带 table_id 的 chunk（结构化表优先走此工具）。"""
-	chunks = retrieval.store.list_chunks(library_id=library_id)
+	chunks = retrieval.store.list_chunks(
+		library_id=library_id,
+		access_scope=retrieval.access_scope,
+	)
 	matched: list[dict[str, Any]] = []
 	for chunk in chunks:
 		if doc_id and str(chunk.get("doc_id") or "") != doc_id:
