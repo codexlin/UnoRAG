@@ -1,4 +1,4 @@
-"""RetrievalPlan — Phase 2A：plan.filters.record_type 真正驱动检索粒度。"""
+"""RetrievalPlan — Phase 2A/2B：plan.filters.record_type 真正驱动检索粒度。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from app.services.query_router import QueryType
 
-ExecutePath = Literal["short", "clarify", "section_short"]
+ExecutePath = Literal["short", "clarify", "section_short", "table"]
 
 
 def build_retrieval_plan(
@@ -21,12 +21,12 @@ def build_retrieval_plan(
 	workspace_id: str = "default",
 	question: str | None = None,
 ) -> dict[str, Any]:
-	"""按 query_type 生成 plan；fact 查 chunk，summary/section_lookup 查 section。"""
+	"""按 query_type 生成 plan；强制 filters.record_type。"""
 	qt = str(query_type or "fact")
 	mode = "hybrid" if hybrid_enabled else "dense"
 
-	# Phase 2A：fact/follow_up → chunk；summary/section_lookup → section；
-	# table/compare 仍走 chunk 短路径（不做 table agent）；ambiguous → clarify
+	# fact/follow_up → chunk；summary/section_lookup → section；
+	# table → table；compare 暂仍 chunk；ambiguous → clarify
 	if qt == "ambiguous":
 		execute_path: ExecutePath = "clarify"
 		record_type = "chunk"
@@ -35,10 +35,14 @@ def build_retrieval_plan(
 		execute_path = "section_short"
 		record_type = "section"
 		reason = f"{qt}:{route_reason};section_retrieval"
-	elif qt in {"table", "compare"}:
+	elif qt == "table":
+		execute_path = "table"
+		record_type = "table"
+		reason = f"table:{route_reason};table_retrieval"
+	elif qt == "compare":
 		execute_path = "short"
 		record_type = "chunk"
-		reason = f"{qt}:{route_reason};phase1_record_only_chunk_path"
+		reason = f"compare:{route_reason};phase2b_compare_still_chunk"
 	elif qt == "follow_up":
 		execute_path = "short"
 		record_type = "chunk"
@@ -49,8 +53,11 @@ def build_retrieval_plan(
 		reason = f"fact:{route_reason};short_path"
 
 	plan_top_k = int(top_k)
-	# section 总结略抬 top_k，仍由 plan 控制（与 Phase1「非 fact 不抬」不同：此处真正改执行）
+	# section 总结略抬 top_k
 	if qt in {"summary", "section_lookup"} and plan_top_k < 8:
+		plan_top_k = 8
+	# table 略抬以便合并多分片 row group
+	if qt == "table" and plan_top_k < 8:
 		plan_top_k = 8
 
 	filters: dict[str, Any] = {
@@ -72,6 +79,10 @@ def build_retrieval_plan(
 		"reason": reason,
 		"execute_path": execute_path,
 		"rewritten_queries": [question.strip()] if question and question.strip() else [],
-		"evidence_policy": "multi_source" if qt in {"summary", "compare", "section_lookup"} else "top_chunk",
+		"evidence_policy": (
+			"multi_source"
+			if qt in {"summary", "compare", "section_lookup", "table"}
+			else "top_chunk"
+		),
 	}
 	return plan

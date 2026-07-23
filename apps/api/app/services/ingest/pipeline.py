@@ -165,11 +165,13 @@ def chunks_to_payloads(
 	tenant_id: str = "default",
 	workspace_id: str = "default",
 	include_sections: bool = True,
+	include_tables: bool = True,
 ) -> list[dict[str, Any]]:
-	"""IR Chunk → Qdrant/ingest dict；可选附带 section 粒度 records。"""
+	"""IR Chunk → Qdrant/ingest dict；可选附带 section / table 粒度 records。"""
 	from app.services.ingest.index_record import (
 		IndexRecord,
 		build_section_records_from_chunks,
+		build_table_records_from_chunks,
 		chunk_record_id,
 		index_record_to_payload,
 	)
@@ -248,6 +250,18 @@ def chunks_to_payloads(
 			filename=filename,
 		)
 		for record in sections:
+			payloads.append(index_record_to_payload(record))
+	if include_tables and chunks:
+		tables = build_table_records_from_chunks(
+			chunks,
+			doc_id=resolved_doc,
+			library_id=library_id or "",
+			document_version_id=version_id,
+			tenant_id=tenant_id,
+			workspace_id=workspace_id,
+			filename=filename,
+		)
+		for record in tables:
 			payloads.append(index_record_to_payload(record))
 	return payloads
 

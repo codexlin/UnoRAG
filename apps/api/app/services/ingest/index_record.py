@@ -1,4 +1,4 @@
-"""多粒度 IndexRecord — Phase 2A：chunk / section（同 collection，靠 record_type 过滤）。"""
+"""多粒度 IndexRecord — Phase 2A/2B：chunk / section / table（同 collection，靠 record_type 过滤）。"""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ _POINT_NS = UUID("a6c3e8f0-2b1d-4e9a-9c7f-1d2e3f4a5b6c")
 
 # section 正文过长时按字符软切（不引入 LLM summary）
 DEFAULT_SECTION_MAX_CHARS = 2400
+# 大表按连续行组拆分；每组复制 headers
+DEFAULT_TABLE_MAX_ROWS = 40
 
 
 class IndexRecord(BaseModel):
@@ -34,11 +36,16 @@ class IndexRecord(BaseModel):
 	body: str = ""
 	embed_text: str = ""
 	source_chunk_ids: list[str] = Field(default_factory=list)
+	source_node_ids: list[str] = Field(default_factory=list)
 	chunk_index: int | None = None  # chunk 粒度沿用；section 可用 part 序号
 	page_start: int | None = None
 	page_end: int | None = None
 	page_label: str | None = None
 	table_id: str | None = None
+	headers: list[str] = Field(default_factory=list)
+	rows: list[list[str]] = Field(default_factory=list)
+	row_start: int | None = None
+	row_end: int | None = None
 	content_hash: str = ""
 	source_format: str = ""
 	filename: str | None = None
@@ -64,6 +71,25 @@ def section_record_id(
 	).hexdigest()[:16]
 	return f"sec:{digest}"
 
+
+def table_record_id(
+	doc_id: str,
+	table_id: str,
+	row_start: int,
+	row_end: int,
+) -> str:
+	"""确定性 table point id：doc_id + table_id + row_range。"""
+	digest = hashlib.sha1(
+		f"{doc_id}|{table_id}|{int(row_start)}|{int(row_end)}".encode("utf-8")
+	).hexdigest()[:16]
+	return f"tbl:{digest}"
+
+
+def _table_group_to_text(headers: list[str], rows: list[list[str]]) -> str:
+	lines = [" | ".join(str(h) for h in headers)] if headers else []
+	for row in rows:
+		lines.append(" | ".join(str(c) for c in row))
+	return "\n".join(lines).strip()
 
 def _split_long_text(text: str, max_chars: int) -> list[str]:
 	raw = (text or "").strip()
@@ -204,6 +230,88 @@ def build_section_records_from_chunks(
 	return records
 
 
+def build_table_records_from_chunks(
+	chunks: list[Chunk],
+	*,
+	doc_id: str,
+	library_id: str = "",
+	document_version_id: str | None = None,
+	tenant_id: str = "default",
+	workspace_id: str = "default",
+	filename: str | None = None,
+	max_rows: int = DEFAULT_TABLE_MAX_ROWS,
+) -> list[IndexRecord]:
+	"""从带 table_id + meta.headers/rows 的 chunk 生成 table IndexRecord。
+
+	大表按连续行组分片，**headers 复制到每个 record**；确定性 ID 保证 reindex 幂等。
+	"""
+	records: list[IndexRecord] = []
+	group_cap = max(1, int(max_rows))
+	for chunk in chunks:
+		table_id = (chunk.table_id or "").strip()
+		if not table_id:
+			continue
+		meta = chunk.meta or {}
+		headers = [str(h) for h in (meta.get("headers") or [])]
+		raw_rows = meta.get("rows") or []
+		rows = [[str(c) for c in row] for row in raw_rows]
+		if not headers and not rows:
+			# 兼容：无结构化 meta 时跳过（仍保留 chunk 粒度）
+			continue
+		source_chunk = chunk_record_id(doc_id, chunk.chunk_index)
+		source_nodes = list(chunk.node_ids or [])
+		# 空表也建一条（仅 headers），便于召回表结构
+		if not rows:
+			row_slices = [(0, -1, [])]
+		else:
+			row_slices = []
+			for start in range(0, len(rows), group_cap):
+				end = min(len(rows), start + group_cap) - 1
+				row_slices.append((start, end, rows[start : end + 1]))
+
+		for part_idx, (row_start, row_end, part_rows) in enumerate(row_slices):
+			body = _table_group_to_text(headers, part_rows)
+			if not body:
+				continue
+			prefix_bits = [b for b in [chunk.section_path, chunk.heading_text, f"表格 {table_id}"] if b]
+			prefix = " / ".join(dict.fromkeys(prefix_bits))
+			embed = f"{prefix}\n\n{body}" if prefix else body
+			rid = table_record_id(doc_id, table_id, row_start, row_end)
+			records.append(
+				IndexRecord(
+					record_type="table",
+					record_id=rid,
+					parent_record_id=source_chunk,
+					document_version_id=document_version_id,
+					library_id=library_id,
+					doc_id=doc_id,
+					tenant_id=tenant_id,
+					workspace_id=workspace_id,
+					section_path=chunk.section_path,
+					heading_text=chunk.heading_text,
+					body=body,
+					embed_text=embed,
+					source_chunk_ids=[source_chunk],
+					source_node_ids=source_nodes,
+					chunk_index=part_idx,
+					page_start=chunk.page_start,
+					page_end=chunk.page_end,
+					page_label=chunk.page_label or (
+						str(chunk.page_start) if chunk.page_start is not None else None
+					),
+					table_id=table_id,
+					headers=headers,
+					rows=part_rows,
+					row_start=row_start,
+					row_end=row_end,
+					content_hash=hashlib.sha1(body.encode("utf-8")).hexdigest()[:16],
+					source_format=chunk.source_format,
+					filename=filename,
+				)
+			)
+	return records
+
+
 def index_record_to_payload(record: IndexRecord) -> dict[str, Any]:
 	"""转为 Qdrant upsert 用的 chunk-shaped dict。"""
 	payload: dict[str, Any] = {
@@ -215,6 +323,8 @@ def index_record_to_payload(record: IndexRecord) -> dict[str, Any]:
 		"record_id": record.record_id,
 		"source_chunk_ids": list(record.source_chunk_ids),
 	}
+	if record.source_node_ids:
+		payload["source_node_ids"] = list(record.source_node_ids)
 	if record.parent_record_id:
 		payload["parent_record_id"] = record.parent_record_id
 	if record.document_version_id:
@@ -235,6 +345,14 @@ def index_record_to_payload(record: IndexRecord) -> dict[str, Any]:
 		payload["page_end"] = record.page_end
 	if record.table_id:
 		payload["table_id"] = record.table_id
+	if record.headers:
+		payload["headers"] = list(record.headers)
+	if record.rows:
+		payload["rows"] = [list(r) for r in record.rows]
+	if record.row_start is not None:
+		payload["row_start"] = int(record.row_start)
+	if record.row_end is not None:
+		payload["row_end"] = int(record.row_end)
 	if record.content_hash:
 		payload["content_hash"] = record.content_hash
 	if record.source_format:

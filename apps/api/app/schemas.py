@@ -31,6 +31,10 @@ class Citation(BaseModel):
 	section_path: str | None = None
 	preamble: str | None = None
 	table_id: str | None = None
+	row_start: int | None = None
+	row_end: int | None = None
+	headers: list[str] = Field(default_factory=list)
+	rows: list[list[str]] = Field(default_factory=list)
 	snippet: str
 	# Full chunk body used in LLM context / drawer（不含 preamble）.
 	text: str = ""
@@ -48,10 +52,11 @@ class Citation(BaseModel):
 	# Phase 1 预埋：无完整 version 表时为派生 stub
 	document_version_id: str | None = None
 	tenant_id: str | None = None
-	# Phase 2A：多粒度
+	# Phase 2A/2B：多粒度
 	record_type: str | None = None
 	record_id: str | None = None
 	source_chunk_ids: list[str] = Field(default_factory=list)
+	source_node_ids: list[str] = Field(default_factory=list)
 
 
 class ArchiveTurnResponse(BaseModel):

@@ -66,6 +66,12 @@ def chunk_document(doc: DocumentIR, *, config: ChunkerConfig | None = None) -> l
 			strategy = SplitStrategy.TABLE if node.type == NodeType.TABLE else SplitStrategy.CODE
 			ps = node.page_start if node.page_start is not None else page_start
 			pe = node.page_end if node.page_end is not None else page_end
+			meta: dict = {}
+			if node.type == NodeType.TABLE and isinstance(node.table_json, dict):
+				meta["headers"] = [str(h) for h in (node.table_json.get("headers") or [])]
+				meta["rows"] = [
+					[str(c) for c in row] for row in (node.table_json.get("rows") or [])
+				]
 			chunks.append(
 				Chunk(
 					chunk_index=index,
@@ -83,6 +89,7 @@ def chunk_document(doc: DocumentIR, *, config: ChunkerConfig | None = None) -> l
 					split_strategy=strategy,
 					source_format=doc.source_format,
 					content_hash=doc.content_hash or doc.content_fingerprint(),
+					meta=meta,
 				)
 			)
 			chunks[-1].text = chunks[-1].embed_text()

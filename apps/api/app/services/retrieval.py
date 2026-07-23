@@ -131,14 +131,16 @@ class IngestService:
 		)
 		chunk_only = sum(1 for item in payloads if item.get("record_type", "chunk") == "chunk")
 		section_only = sum(1 for item in payloads if item.get("record_type") == "section")
+		table_only = sum(1 for item in payloads if item.get("record_type") == "table")
 		get_bm25_cache().invalidate(library_id)
 		logger.info(
-			"ingest.ir.done library_id=%s doc_id=%s points=%s chunks=%s sections=%s",
+			"ingest.ir.done library_id=%s doc_id=%s points=%s chunks=%s sections=%s tables=%s",
 			library_id,
 			resolved_doc_id,
 			count,
 			chunk_only,
 			section_only,
+			table_only,
 		)
 		result: dict[str, Any] = {
 			"library_id": library_id,
@@ -146,6 +148,7 @@ class IngestService:
 			"title": title,
 			"chunk_count": chunk_only,
 			"section_count": section_only,
+			"table_count": table_only,
 			"point_count": count,
 		}
 		if parser_report is not None:
@@ -282,6 +285,10 @@ class RetrievalService:
 					"section_path": hit.get("section_path"),
 					"preamble": hit.get("preamble"),
 					"table_id": hit.get("table_id"),
+					"headers": hit.get("headers") or [],
+					"rows": hit.get("rows") or [],
+					"row_start": hit.get("row_start"),
+					"row_end": hit.get("row_end"),
 					"snippet": hit.get("snippet") or body[:280],
 					"score": score,
 					"dense_score": hit.get("dense_score", hit.get("score")),
@@ -297,6 +304,7 @@ class RetrievalService:
 					"record_type": hit.get("record_type") or resolved_type or "chunk",
 					"record_id": hit.get("record_id"),
 					"source_chunk_ids": hit.get("source_chunk_ids") or [],
+					"source_node_ids": hit.get("source_node_ids") or [],
 				}
 			)
 		final = self._maybe_rerank(query=query, citations=citations, top_k=limit)

@@ -1,6 +1,6 @@
 # MeriKnow 企业级 RAG SaaS 架构设计
 
-> 状态：Draft（Phase 1 已收口；Phase 2A section 多粒度已落地；eval 基线约 34 条）
+> 状态：Draft（Phase 1 已收口；Phase 2A section + Phase 2B table 多粒度已落地；eval 基线约 38 条）
 > 日期：2026-07-23  
 > 目标：把 MeriKnow 从「可演示的企业知识问答 MVP」推进为「可治理、可评测、可扩展、可隔离」的企业级 RAG SaaS 知识库平台。
 
@@ -1185,7 +1185,7 @@ Phase 1 子步骤：
 2. [x] `RetrievalPlan`：描述 mode、top_k、hybrid、rerank、filters、reason。
 3. [x] Ask graph：写入 `query_type`、`retrieval_plan`、`judge`；fact / follow_up 走现有短路径，其余类型仅分类落盘，执行不拆子图。
 4. [x] Archive：保存 `query_type`、`retrieval_plan`、`rewrite`、`rewritten_query`、`judge`；citation 保留逐证据 `document_version_id`。
-5. [x] Eval：建立可回归黄金集（当前约 34 条），覆盖 no_hit、weak_match、MD/PDF/DOCX、section 隔离与 ingest_http；含内存 Qdrant 检索回归。
+5. [x] Eval：建立可回归黄金集（当前约 38 条），覆盖 no_hit、weak_match、MD/PDF/DOCX、section/table 隔离与 ingest_http；含内存 Qdrant 检索回归。
 6. [x] Payload：预埋 `document_version_id`（无完整 version 表时可用派生 stub），可选预埋默认 `tenant_id` / `workspace_id`。
 
 非阻塞可选（Phase 1 之后，不计入 Phase 1 Done）：
@@ -1195,7 +1195,7 @@ Phase 1 子步骤：
 **Phase 1 Done 标准**：
 
 - [x] HTTP schema 兼容：`/v1/ask` 等对外响应不破。
-- [x] 黄金集本地可跑：`eval_cases.jsonl` + runner 可在本机执行；当前约 **34** 条，含确定性 embedding + 内存 Qdrant、section/chunk 隔离、ingest_http 负例。
+- [x] 黄金集本地可跑：`eval_cases.jsonl` + runner 可在本机执行；当前约 **38** 条，含确定性 embedding + 内存 Qdrant、section/chunk/table 隔离、ingest_http 负例。
 - [x] archive 能读出 `query_type` / `judge`（及已写入的 plan 相关 debug）。
 - [x] `document_version_id` 无完整 version 表时，可用派生 stub 预埋，不强制先建完整版本模型。
 
@@ -1220,10 +1220,17 @@ Phase 1 hardening：另含少量 `ingest_http` 用例，覆盖正例 upload→re
 - [x] Ask 图：section 路径复用短链路 + 薄 `citation_check`（`source_chunk_ids`）；archive/debug 可见 `record_type`。
 - [x] 黄金集：章节 Recall、fact 不泄漏 section、HTTP 兼容。
 
-#### Phase 2B+（后续）
+#### Phase 2B（进行中）：Table-aware Retrieval
+
+- [x] `record_type: table` IndexRecord（headers/rows/row_range；大表分行组且复制表头；确定性 ID）。
+- [x] `RetrievalPlan`：`table → record_type=table`；`compare` 暂仍 chunk；Qdrant 强制过滤。
+- [x] 轻量 `TableQueryPlan`（filter / min/max / lookup / count）；不确定则澄清，禁止 LLM 心算。
+- [x] Ask 图 table 分支：`build_table_plan → table_retrieve → table_execute → judge → generate`。
+- [x] Citation / archive 暴露 table_id、row range、TableQueryPlan + execution。
+
+#### Phase 2C+（后续）
 
 - 增加 document summary index。
-- 增加 table chunk / row group index。
 - UI citation 支持版本、章节、表格定位。
 - 在业务接口稳定后，引入 LangChain Retriever / Tool 适配层，复用已验证的 `RetrievalPlan`。
 

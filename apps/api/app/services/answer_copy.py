@@ -26,3 +26,12 @@ def clarify_answer(*, library_name: str = "当前知识库") -> str:
 		f"问题表述不够具体，暂时无法在「{name}」中准确检索。"
 		"请补充主题、制度名称或想了解的条款，例如「病假证明几天内补交」。"
 	)
+
+
+def table_unclear_answer(*, library_name: str = "当前知识库") -> str:
+	"""表格数值问法无法安全解析列/运算符时：澄清，禁止 LLM 自由心算。"""
+	name = (library_name or "当前知识库").strip() or "当前知识库"
+	return (
+		f"已在「{name}」检索到相关表格，但无法确定要计算的列或条件，暂不进行数值推算。"
+		"请写明列名与条件，例如「总价超过100000的供应商」或「甲公司的总价」。"
+	)

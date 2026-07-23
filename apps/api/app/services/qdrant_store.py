@@ -76,6 +76,11 @@ class QdrantStore:
 			"record_id",
 			"parent_record_id",
 			"source_chunk_ids",
+			"source_node_ids",
+			"headers",
+			"rows",
+			"row_start",
+			"row_end",
 		)
 		from app.services.versioning import derive_document_version_id
 
@@ -224,6 +229,10 @@ class QdrantStore:
 					"section_path": payload.get("section_path"),
 					"preamble": payload.get("preamble"),
 					"table_id": payload.get("table_id"),
+					"headers": payload.get("headers") or [],
+					"rows": payload.get("rows") or [],
+					"row_start": payload.get("row_start"),
+					"row_end": payload.get("row_end"),
 					"snippet": body[:280],
 					"library_id": payload.get("library_id"),
 					"doc_id": payload.get("doc_id"),
@@ -234,6 +243,7 @@ class QdrantStore:
 					"record_type": payload.get("record_type") or "chunk",
 					"record_id": payload.get("record_id"),
 					"source_chunk_ids": payload.get("source_chunk_ids") or [],
+					"source_node_ids": payload.get("source_node_ids") or [],
 					"text": body,
 					"body": body,
 				}

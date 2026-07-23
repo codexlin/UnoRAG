@@ -8,13 +8,24 @@ from typing import Any, Literal, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app.schemas import AskResponse, Citation
-from app.services.answer_copy import clarify_answer, no_match_answer, weak_match_answer
+from app.services.answer_copy import (
+	clarify_answer,
+	no_match_answer,
+	table_unclear_answer,
+	weak_match_answer,
+)
 from app.services.llm import ChatService
 from app.services.query_router import route_query
 from app.services.retrieval import RetrievalService
 from app.services.retrieval_plan import build_retrieval_plan
 from app.services.runtime import RuntimeCapability, resolve_runtime
 from app.services.session_memory import SessionMemory, default_session_memory
+from app.services.table_query import (
+	build_table_query_plan,
+	execute_table_query,
+	looks_like_numeric_table_query,
+	merge_table_hits_for_execute,
+)
 from app.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -39,6 +50,8 @@ class AskState(TypedDict, total=False):
 	query_type: str
 	route_reason: str
 	retrieval_plan: dict[str, Any]
+	table_query_plan: dict[str, Any]
+	table_execution: dict[str, Any]
 
 
 STUB_CITATIONS: list[dict[str, Any]] = [
@@ -96,6 +109,10 @@ def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
 					"section_path": item.get("section_path"),
 					"preamble": item.get("preamble"),
 					"table_id": item.get("table_id"),
+					"row_start": item.get("row_start"),
+					"row_end": item.get("row_end"),
+					"headers": item.get("headers") or [],
+					"rows": item.get("rows") or [],
 					"snippet": snippet,
 					"text": full_text,
 					"body": full_text,
@@ -113,6 +130,7 @@ def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
 					"record_type": item.get("record_type"),
 					"record_id": item.get("record_id"),
 					"source_chunk_ids": item.get("source_chunk_ids") or [],
+					"source_node_ids": item.get("source_node_ids") or [],
 				}
 			)
 		)
@@ -250,6 +268,18 @@ def stub_retrieve(
 			item["section_path"] = item.get("section_path") or "第3章 请假制度"
 			item["source_chunk_ids"] = ["chk:stub-doc:0"]
 			item["record_id"] = "sec:stub-leave"
+		if record_type == "table":
+			item["table_id"] = "t1"
+			item["record_id"] = "tbl:stub-quote"
+			item["headers"] = ["供应商", "总价"]
+			item["rows"] = [["甲公司", "120000"], ["乙公司", "80000"]]
+			item["row_start"] = 0
+			item["row_end"] = 1
+			item["body"] = "供应商 | 总价\n甲公司 | 120000\n乙公司 | 80000"
+			item["text"] = item["body"]
+			item["snippet"] = item["body"][:280]
+			item["source_chunk_ids"] = ["chk:stub-doc:0"]
+			item["document_version_id"] = "stub-version"
 	return hits
 
 
@@ -260,7 +290,13 @@ def stub_generate(question: str, citations: list[dict[str, Any]]) -> str:
 		str(item.get("record_type") or "") == "section" or item.get("section_path")
 		for item in citations
 	)
-	prefix = "（章节摘要）" if sectionish else ""
+	tableish = any(str(item.get("record_type") or "") == "table" for item in citations)
+	if tableish:
+		prefix = "（表格）"
+	elif sectionish:
+		prefix = "（章节摘要）"
+	else:
+		prefix = ""
 	return (
 		f"{prefix}根据现行人事制度，病假须于返岗后三个工作日内补交证明材料，并由直属主管确认。"
 		"逾期未补交的，可按事假或旷工规则处理（以制度原文为准）。"
@@ -276,9 +312,38 @@ def _format_context(citations: list[dict[str, Any]]) -> str:
 		# 模型上下文用 body（与抽屉一致）；章节路径作定位前缀
 		text = item.get("body") or item.get("text") or item.get("snippet") or ""
 		section = item.get("section_path")
-		header = f"[{idx}] {title}" + (f" · {section}" if section else "")
+		table_id = item.get("table_id")
+		row_start = item.get("row_start")
+		row_end = item.get("row_end")
+		loc_bits = []
+		if section:
+			loc_bits.append(str(section))
+		if table_id:
+			loc_bits.append(f"table={table_id}")
+		if row_start is not None and row_end is not None:
+			loc_bits.append(f"rows={row_start}-{row_end}")
+		header = f"[{idx}] {title}" + (f" · {' · '.join(loc_bits)}" if loc_bits else "")
 		blocks.append(f"{header}\n{text}")
 	return "\n\n".join(blocks)
+
+
+def _format_table_generate_context(
+	question: str,
+	citations: list[dict[str, Any]],
+	execution: dict[str, Any] | None,
+) -> str:
+	"""表格路径：把代码侧计算结果与行证据交给 LLM 解释（禁止心算）。"""
+	parts = [_format_context(citations)]
+	if execution and execution.get("ok"):
+		parts.append(
+			"【已由程序计算，请据此解释，勿自行改算】\n"
+			f"operation={execution.get('operation')} column={execution.get('column')} "
+			f"operator={execution.get('operator')} value={execution.get('value')}\n"
+			f"answer_text={execution.get('answer_text')}\n"
+			f"matched_rows={execution.get('matched_rows')}"
+		)
+	parts.append(f"用户问题：{question}")
+	return "\n\n".join(parts)
 
 
 def _merge_debug(state: AskState, **extra: Any) -> dict[str, Any]:
@@ -345,10 +410,13 @@ def build_ask_graph(
 			"retrieval_debug": _merge_debug(state, retrieval_plan=plan),
 		}
 
-	def route_after_plan(state: AskState) -> Literal["clarify", "rewrite"]:
+	def route_after_plan(state: AskState) -> Literal["clarify", "rewrite", "table"]:
 		plan = state.get("retrieval_plan") or {}
-		if str(plan.get("execute_path") or "short") == "clarify":
+		path = str(plan.get("execute_path") or "short")
+		if path == "clarify":
 			return "clarify"
+		if path == "table":
+			return "table"
 		return "rewrite"
 
 	def clarify_node(state: AskState) -> AskState:
@@ -372,6 +440,131 @@ def build_ask_graph(
 				refuse_reason="ambiguous",
 			),
 		}
+
+	def build_table_plan_node(state: AskState) -> AskState:
+		"""轻量 TableQueryPlan；不确定则 fallback（retrieve 后仍可能 clarify）。"""
+		question = state.get("question") or ""
+		tq = build_table_query_plan(question)
+		return {
+			"table_query_plan": tq,
+			"retrieval_debug": _merge_debug(state, table_query_plan=tq),
+		}
+
+	def table_retrieve_node(state: AskState) -> AskState:
+		"""强制 record_type=table 的检索。"""
+		query = state.get("rewritten_question") or state["question"]
+		attempts = int(state.get("retrieval_attempts") or 0) + 1
+		plan = state.get("retrieval_plan") or {}
+		top_k = int(plan.get("top_k") or settings.retrieve_top_k)
+		filters = dict(plan.get("filters") or {})
+		filters["record_type"] = "table"
+		citations = retrieve_fn(query, state.get("library_id"), top_k, filters)
+		citation_check = {
+			"ok": all(item.get("table_id") for item in citations) if citations else True,
+			"missing_table_id": sum(1 for item in citations if not item.get("table_id")),
+		}
+		top_score = float(citations[0]["score"]) if citations else None
+		return {
+			"citations": citations,
+			"retrieval_attempts": attempts,
+			"retrieval_debug": _merge_debug(
+				state,
+				retrieve=mode,
+				library_id=state.get("library_id"),
+				hit_count=len(citations),
+				top_score=top_score,
+				retrieval_attempts=attempts,
+				query=query,
+				record_type="table",
+				filters=filters,
+				citation_check=citation_check,
+			),
+		}
+
+	def table_execute_node(state: AskState) -> AskState:
+		"""代码侧过滤/聚合；不确定数值问法 → clarify，禁止 LLM 心算。"""
+		citations = list(state.get("citations") or [])
+		question = state.get("question") or ""
+		merged = merge_table_hits_for_execute(citations)
+		headers = list(merged.get("headers") or [])
+		# 用真实表头 refinement plan
+		base_plan = dict(state.get("table_query_plan") or {})
+		refined = build_table_query_plan(question, headers=headers or None)
+		# 若初始已自信且 refinement 因缺 headers 仍自信，保留；否则用 refined
+		tq = refined if headers else base_plan
+		execution = (
+			execute_table_query(
+				tq,
+				headers=headers,
+				rows=list(merged.get("rows") or []),
+				row_offset=int(merged.get("row_offset") or 0),
+			)
+			if headers
+			else {
+				"ok": False,
+				"operation": "fallback",
+				"matched_rows": [],
+				"reason": "no_table_payload",
+			}
+		)
+
+		# 标注 citation 行范围 / 版本（供 UI）
+		enriched: list[dict[str, Any]] = []
+		for item in citations:
+			row = dict(item)
+			row["record_type"] = "table"
+			if merged.get("table_id") and row.get("table_id") == merged.get("table_id"):
+				row.setdefault("document_version_id", merged.get("document_version_id"))
+			enriched.append(row)
+
+		# 数值问法但无法自信执行 → clarify（不交给 LLM 算）
+		if (
+			looks_like_numeric_table_query(question)
+			and citations
+			and not (execution.get("ok") and tq.get("confident"))
+		):
+			library_name = _library_label(state.get("library_id"))
+			judgement = {
+				"sufficient": False,
+				"action": "clarify",
+				"reason": "table_unclear",
+				"can_retry": False,
+			}
+			return {
+				"table_query_plan": tq,
+				"table_execution": execution,
+				"citations": enriched,
+				"answer": table_unclear_answer(library_name=library_name),
+				"refused": True,
+				"refuse_reason": "table_unclear",
+				"judgement": judgement,
+				"retrieval_debug": _merge_debug(
+					state,
+					table_query_plan=tq,
+					table_execution=execution,
+					judgement=judgement,
+					generate="table_unclear",
+					refuse_reason="table_unclear",
+				),
+			}
+
+		return {
+			"table_query_plan": tq,
+			"table_execution": execution,
+			"citations": enriched,
+			"retrieval_debug": _merge_debug(
+				state,
+				table_query_plan=tq,
+				table_execution=execution,
+			),
+		}
+
+	def route_after_table_execute(
+		state: AskState,
+	) -> Literal["judge", "end"]:
+		if state.get("refuse_reason") == "table_unclear":
+			return "end"
+		return "judge"
 
 	def rewrite_node(state: AskState) -> AskState:
 		question = state["question"].strip()
@@ -455,6 +648,29 @@ def build_ask_graph(
 		citations = state.get("citations") or []
 		attempts = int(state.get("retrieval_attempts") or 0)
 		library_name = _library_label(state.get("library_id"))
+		table_execution = state.get("table_execution") or {}
+		query_type = str(state.get("query_type") or "")
+
+		# 表格结构化执行成功：证据充分，跳过 dense score 阈值
+		if (
+			query_type == "table"
+			and table_execution.get("ok")
+			and (state.get("table_query_plan") or {}).get("confident")
+		):
+			judgement = {
+				"sufficient": True,
+				"action": "generate",
+				"reason": "table_exec_ok",
+				"top_score": float(citations[0].get("score") or 1.0) if citations else 1.0,
+				"min_score": min_score,
+			}
+			return {
+				"judgement": judgement,
+				"refuse_reason": None,
+				"retrieval_debug": _merge_debug(
+					state, judgement=judgement, library_name=library_name
+				),
+			}
 
 		if not citations:
 			can_retry = attempts <= max_retries
@@ -468,7 +684,16 @@ def build_ask_graph(
 			top_score = float(citations[0].get("score") or 0.0)
 			# 低于阈值必须走正式 refuse（refused=true），禁止落到 generate 再靠模型口头「未覆盖」
 			weak = min_score > 0 and top_score < min_score
-			if weak:
+			# table fallback（软问法）：有命中即生成，不因分数卡死 stub/结构化表
+			if query_type == "table" and not weak:
+				judgement = {
+					"sufficient": True,
+					"action": "generate",
+					"reason": "table_fallback_llm",
+					"top_score": top_score,
+					"min_score": min_score,
+				}
+			elif weak:
 				can_retry = attempts <= max_retries
 				judgement = {
 					"sufficient": False,
@@ -506,6 +731,11 @@ def build_ask_graph(
 			return "refuse"
 		return "generate"
 
+	def route_after_retry(state: AskState) -> Literal["retrieve", "table_retrieve"]:
+		if str(state.get("query_type") or "") == "table":
+			return "table_retrieve"
+		return "retrieve"
+
 	def retry_node(state: AskState) -> AskState:
 		"""Broaden query once, then re-enter retrieve."""
 		base = state.get("rewritten_question") or state["question"]
@@ -542,18 +772,44 @@ def build_ask_graph(
 
 	def generate_node(state: AskState) -> AskState:
 		citations = state.get("citations") or []
-		answer = generate_fn(state["question"], citations)
+		execution = state.get("table_execution") or {}
+		tq = state.get("table_query_plan") or {}
+		# 结构化表格结果：优先用程序答案（LLM 仅在 live 路径解释）；stub 直接给 answer_text
+		if (
+			str(state.get("query_type") or "") == "table"
+			and execution.get("ok")
+			and tq.get("confident")
+			and execution.get("answer_text")
+		):
+			if mode == "stub":
+				answer = str(execution["answer_text"])
+			else:
+				# live：把计算结果注入 generate_fn 上下文
+				ctx_question = _format_table_generate_context(
+					state["question"], citations, execution
+				)
+				answer = generate_fn(ctx_question, citations)
+		else:
+			answer = generate_fn(state["question"], citations)
 		return {
 			"answer": answer,
 			"refused": False,
 			"refuse_reason": None,
-			"retrieval_debug": _merge_debug(state, generate=mode),
+			"retrieval_debug": _merge_debug(
+				state,
+				generate=mode,
+				table_query_plan=tq or None,
+				table_execution=execution or None,
+			),
 		}
 
 	graph: StateGraph[AskState] = StateGraph(AskState)
 	graph.add_node("query_router", query_router_node)
 	graph.add_node("build_retrieval_plan", build_plan_node)
 	graph.add_node("clarify", clarify_node)
+	graph.add_node("build_table_plan", build_table_plan_node)
+	graph.add_node("table_retrieve", table_retrieve_node)
+	graph.add_node("table_execute", table_execute_node)
 	graph.add_node("rewrite", rewrite_node)
 	graph.add_node("retrieve", retrieve_node)
 	graph.add_node("judge", judge_node)
@@ -565,9 +821,16 @@ def build_ask_graph(
 	graph.add_conditional_edges(
 		"build_retrieval_plan",
 		route_after_plan,
-		{"clarify": "clarify", "rewrite": "rewrite"},
+		{"clarify": "clarify", "rewrite": "rewrite", "table": "build_table_plan"},
 	)
 	graph.add_edge("clarify", END)
+	graph.add_edge("build_table_plan", "table_retrieve")
+	graph.add_edge("table_retrieve", "table_execute")
+	graph.add_conditional_edges(
+		"table_execute",
+		route_after_table_execute,
+		{"judge": "judge", "end": END},
+	)
 	graph.add_edge("rewrite", "retrieve")
 	graph.add_edge("retrieve", "judge")
 	graph.add_conditional_edges(
@@ -575,7 +838,11 @@ def build_ask_graph(
 		route_after_judge,
 		{"retry": "retry", "generate": "generate", "refuse": "refuse"},
 	)
-	graph.add_edge("retry", "retrieve")
+	graph.add_conditional_edges(
+		"retry",
+		route_after_retry,
+		{"retrieve": "retrieve", "table_retrieve": "table_retrieve"},
+	)
 	graph.add_edge("generate", END)
 	graph.add_edge("refuse", END)
 	return graph.compile()
@@ -694,6 +961,16 @@ class AskGraphService:
 		debug = self._merge_retrieval_debug(state.get("retrieval_debug") or {})
 		judge = state.get("judgement") or debug.get("judgement")
 		plan = state.get("retrieval_plan") or debug.get("retrieval_plan")
+		if isinstance(plan, dict):
+			plan = dict(plan)
+			if state.get("table_query_plan"):
+				plan["table_query_plan"] = state["table_query_plan"]
+			elif debug.get("table_query_plan"):
+				plan["table_query_plan"] = debug["table_query_plan"]
+			if state.get("table_execution"):
+				plan["table_execution"] = state["table_execution"]
+			elif debug.get("table_execution"):
+				plan["table_execution"] = debug["table_execution"]
 		query_type = state.get("query_type") or debug.get("query_type")
 		rewrite_mode = debug.get("rewrite")
 		persist = _persist_turn(
@@ -831,6 +1108,16 @@ class AskGraphService:
 
 		judge = state.get("judgement") or debug.get("judgement")
 		plan = state.get("retrieval_plan") or debug.get("retrieval_plan")
+		if isinstance(plan, dict):
+			plan = dict(plan)
+			if state.get("table_query_plan"):
+				plan["table_query_plan"] = state["table_query_plan"]
+			elif debug.get("table_query_plan"):
+				plan["table_query_plan"] = debug["table_query_plan"]
+			if state.get("table_execution"):
+				plan["table_execution"] = state["table_execution"]
+			elif debug.get("table_execution"):
+				plan["table_execution"] = debug["table_execution"]
 		query_type = state.get("query_type") or debug.get("query_type")
 		rewrite_mode = debug.get("rewrite")
 		persist = _persist_turn(

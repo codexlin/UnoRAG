@@ -77,6 +77,18 @@ def test_retrieval_plan_phase2a_record_types() -> None:
 	assert section["execute_path"] == "section_short"
 	assert section["record_type"] == "section"
 
+	table = build_retrieval_plan(
+		query_type="table",
+		route_reason="table_keyword",
+		library_id="lib-1",
+		top_k=6,
+		hybrid_enabled=False,
+		rerank_enabled=False,
+	)
+	assert table["execute_path"] == "table"
+	assert table["record_type"] == "table"
+	assert table["filters"]["record_type"] == "table"
+
 	amb = build_retrieval_plan(
 		query_type="ambiguous",
 		route_reason="too_short",
