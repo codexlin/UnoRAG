@@ -166,8 +166,8 @@ def build_table_query_plan(
 		return _finalize_columns(plan, headers)
 
 	# max / min
-	if re.search(r"(最低|最小|最少).{0,6}(价|报价|总价|单价)", q) or re.search(
-		r"(价|报价|总价|单价).{0,4}(最低|最小)", q
+	if re.search(r"(最低|最小|最少).{0,6}(价|报价|总价|单价|金额)", q) or re.search(
+		r"(价|报价|总价|单价|金额).{0,4}(最低|最小)", q
 	):
 		plan.update(
 			{
@@ -175,12 +175,12 @@ def build_table_query_plan(
 				"column": "总价",
 				"confident": True,
 				"reason": "min_pattern",
-				"select_columns": ["供应商", "总价"],
+				"select_columns": ["产品", "供应商", "总价"],
 			}
 		)
 		return _finalize_columns(plan, headers)
-	if re.search(r"(最高|最大|最多).{0,6}(价|报价|总价|单价)", q) or re.search(
-		r"(价|报价|总价|单价).{0,4}(最高|最大)", q
+	if re.search(r"(最高|最大|最多).{0,6}(价|报价|总价|单价|金额)", q) or re.search(
+		r"(价|报价|总价|单价|金额).{0,4}(最高|最大)", q
 	):
 		plan.update(
 			{
@@ -188,7 +188,7 @@ def build_table_query_plan(
 				"column": "总价",
 				"confident": True,
 				"reason": "max_pattern",
-				"select_columns": ["供应商", "总价"],
+				"select_columns": ["产品", "供应商", "总价"],
 			}
 		)
 		return _finalize_columns(plan, headers)
@@ -214,7 +214,11 @@ def build_table_query_plan(
 			"不多于": "<=",
 		}.get(op_word)
 		if value is not None and operator:
-			col = "总价" if ("价" in q or "报价" in q or "总价" in q) else None
+			col = (
+				"总价"
+				if ("价" in q or "报价" in q or "总价" in q or "金额" in q)
+				else None
+			)
 			# 「超过十万的供应商」无显式「价」时，默认按总价/报价列过滤
 			if col is None and ("供应商" in q or "哪" in q):
 				col = "总价"
@@ -237,7 +241,7 @@ def build_table_query_plan(
 
 	# ASCII ops（数值须走统一单位解析，避免「>= 10万」被当成 10；千分位交给 _cell_number）
 	ascii_op = re.search(
-		r"(总价|报价|单价|数量)\s*(>=|<=|>|<|==|=)\s*"
+		r"(中标金额|金额|总价|报价|单价|数量)\s*(>=|<=|>|<|==|=)\s*"
 		rf"({_ARABIC_NUMBER_TOKEN})",
 		q,
 	)
@@ -249,7 +253,7 @@ def build_table_query_plan(
 			plan["reason"] = "ascii_filter_bad_value"
 			return plan
 		col = ascii_op.group(1)
-		if col == "报价":
+		if col in {"报价", "金额", "中标金额"}:
 			col = "总价"
 		plan.update(
 			{
@@ -594,18 +598,21 @@ def table_instance_key(item: dict[str, Any]) -> TableInstanceKey:
 
 
 def locate_best_table_instance(citations: list[dict[str, Any]]) -> dict[str, Any] | None:
-	"""向量检索阶段：从 table hits 中选出得分最高的表实例（仅定位，不聚合）。"""
-	best: dict[str, Any] | None = None
+	"""Locate a table; row evidence wins, table_summary is discovery fallback."""
+	best_row: dict[str, Any] | None = None
+	best_summary: dict[str, Any] | None = None
 	for item in citations:
-		if str(item.get("record_type") or "") != "table" and not item.get("headers"):
+		record_type = str(item.get("record_type") or "")
+		if record_type not in {"table", "table_summary"} and not item.get("headers"):
 			continue
 		headers = [str(h) for h in (item.get("headers") or [])]
 		if not headers and not item.get("table_id"):
 			continue
 		score = float(item.get("score") or 0)
-		if best is None or score > float(best.get("score") or 0):
+		target = best_summary if record_type == "table_summary" else best_row
+		if target is None or score > float(target.get("score") or 0):
 			doc_id, version_id, table_id = table_instance_key(item)
-			best = {
+			candidate = {
 				"doc_id": doc_id,
 				"document_version_id": version_id or None,
 				"table_id": table_id or None,
@@ -613,6 +620,11 @@ def locate_best_table_instance(citations: list[dict[str, Any]]) -> dict[str, Any
 				"library_id": item.get("library_id"),
 				"citation": item,
 			}
+			if record_type == "table_summary":
+				best_summary = candidate
+			else:
+				best_row = candidate
+	best = best_row or best_summary
 	if best and not best.get("table_id"):
 		return None
 	return best
@@ -739,6 +751,10 @@ def assemble_table_from_groups(groups: list[dict[str, Any]]) -> dict[str, Any]:
 		"page_end": seed.get("page_end"),
 		"score": seed.get("score"),
 		"library_id": seed.get("library_id"),
+		"table_caption": seed.get("table_caption"),
+		"table_quality": seed.get("table_quality") or {},
+		"summary_rows": seed.get("summary_rows") or [],
+		"footnotes": seed.get("footnotes") or [],
 	}
 
 
@@ -807,6 +823,10 @@ def prepare_table_for_execute(
 	assembled["load_source"] = load_source
 	assembled["score"] = located.get("score")
 	assembled["citation"] = located.get("citation")
+	if not assembled.get("table_quality"):
+		assembled["table_quality"] = (
+			(located.get("citation") or {}).get("table_quality") or {}
+		)
 	assembled["groups"] = groups
 	# 定位键写回，便于 citation 标注
 	assembled.setdefault("doc_id", doc_id)

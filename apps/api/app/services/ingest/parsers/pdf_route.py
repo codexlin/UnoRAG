@@ -80,9 +80,39 @@ def probe_needs_mineru(content: bytes) -> bool:
 				return True
 			if _looks_multi_column(blocks, page_width=float(page_rect.width)):
 				return True
+			if _looks_like_ruled_table(page, word_count=len(page.get_text("words") or [])):
+				return True
 	finally:
 		document.close()
 	return False
+
+
+def _looks_like_ruled_table(page: Any, *, word_count: int) -> bool:
+	"""Detect a substantial ruled table without upgrading decorative PDFs."""
+	if word_count < 12:
+		return False
+	try:
+		drawings = page.get_drawings() or []
+	except Exception:
+		return False
+	horizontal = 0
+	vertical = 0
+	for drawing in drawings:
+		for item in drawing.get("items") or []:
+			kind = item[0] if item else None
+			if kind == "l" and len(item) >= 3:
+				start, end = item[1], item[2]
+				dx = abs(float(end.x) - float(start.x))
+				dy = abs(float(end.y) - float(start.y))
+				if dx >= dy * 4 and dx >= 20:
+					horizontal += 1
+				elif dy >= dx * 4 and dy >= 20:
+					vertical += 1
+			elif kind == "re":
+				# One rectangle contributes two horizontal and two vertical edges.
+				horizontal += 2
+				vertical += 2
+	return horizontal >= 8 and vertical >= 6
 
 
 def _looks_multi_column(blocks: list[dict[str, Any]], *, page_width: float) -> bool:

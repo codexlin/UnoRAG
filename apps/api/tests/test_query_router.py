@@ -19,6 +19,7 @@ def test_classify_query_rules() -> None:
 	assert classify_query("病假几天内补交？")[0] == "fact"
 	assert classify_query("总结本库的报销规则")[0] == "summary"
 	assert classify_query("表格里供应商报价")[0] == "table"
+	assert classify_query("中标金额最高的项目是什么，金额是多少？")[0] == "table"
 	assert classify_query("A 和 B 区别？")[0] == "compare"
 	assert classify_query("？")[0] == "ambiguous"
 	assert classify_query("第3章讲什么？")[0] == "section_lookup"

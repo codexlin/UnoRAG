@@ -16,6 +16,11 @@ from app.services.ingest.ir import (
 	content_hash_bytes,
 )
 from app.services.ingest.parsers.txt import decode_text_bytes
+from app.services.ingest.table_ir import (
+	normalize_table,
+	table_ir_from_legacy,
+	table_ir_to_legacy,
+)
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _FENCE_RE = re.compile(r"^```")
@@ -23,7 +28,7 @@ _TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
 _LIST_RE = re.compile(r"^(\s*)([-*+]|\d+[.)])\s+")
 
 
-def _parse_table_block(lines: list[str]) -> tuple[dict, str]:
+def _parse_table_block(lines: list[str], *, table_id: str) -> tuple[dict, str]:
 	rows: list[list[str]] = []
 	for line in lines:
 		if _TABLE_SEP_RE.match(line):
@@ -33,7 +38,13 @@ def _parse_table_block(lines: list[str]) -> tuple[dict, str]:
 			rows.append(cells)
 	headers = rows[0] if rows else []
 	body = rows[1:] if len(rows) > 1 else []
-	table_json = {"headers": headers, "rows": body}
+	table_ir = normalize_table(
+		table_id=table_id,
+		headers=headers,
+		rows=body,
+		confidence=0.95,
+	)
+	table_json = table_ir_to_legacy(table_ir)
 	# 文本化行：供 embedding / 无表工具时的可读回退
 	textual_parts = [" | ".join(headers)] if headers else []
 	for row in body:
@@ -134,7 +145,7 @@ def parse_markdown(
 				i += 1
 			table_id_seq += 1
 			table_id = f"t{table_id_seq}"
-			table_json, textual = _parse_table_block(table_lines)
+			table_json, textual = _parse_table_block(table_lines, table_id=table_id)
 			nodes.append(
 				Node(
 					id=str(uuid4()),
@@ -142,6 +153,11 @@ def parse_markdown(
 					path=_section_path(heading_stack),
 					text=textual,
 					table_json=table_json,
+					table_ir=table_ir_from_legacy(
+						table_json,
+						table_id=table_id,
+						confidence=0.95,
+					),
 					table_id=table_id,
 					confidence=0.9,
 				)

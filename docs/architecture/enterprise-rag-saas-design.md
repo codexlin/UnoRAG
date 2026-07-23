@@ -1,6 +1,6 @@
 # MeriKnow 企业级 RAG SaaS 架构设计
 
-> 状态：Draft（Phase 1 已收口；Phase 2A section + Phase 2B table 多粒度已落地；eval 基线约 38 条）
+> 状态：Draft（Phase 1 已收口；Phase 2A section + Phase 2B table 多粒度与 TableIR v2 已落地；eval 基线约 39 条）
 > 日期：2026-07-23  
 > 目标：把 MeriKnow 从「可演示的企业知识问答 MVP」推进为「可治理、可评测、可扩展、可隔离」的企业级 RAG SaaS 知识库平台。
 
@@ -709,6 +709,43 @@ DocumentIR 是所有格式进入系统后的统一中间表示。它的价值是
 | CSV / XLSX | sheet / table parser | row groups / sheet summary | structured + dense summary |
 | PPTX | slide parser | slide-level chunks | dense + slide metadata |
 
+### 5.3.1 TableIR v2 与表格存储边界
+
+表格遵守“逻辑整表不拆、检索记录按需分组”的原则。MD、DOCX、CSV、XLSX
+和 MinerU 表格输出统一归一化为 `TableIR v2`：
+
+```text
+TableIR
+├── table_id / caption / page_start / page_end
+├── header_rows
+├── columns(name / normalized_name / data_type / unit)
+├── rows.cells(raw_text / normalized_value / page / bbox / confidence)
+├── summary_rows / footnotes
+└── quality_report
+```
+
+兼容边界：
+
+- `Node.table_json.headers/rows` 继续保留，现有 chunk、TableQueryPlan 和 HTTP 不做破坏式迁移。
+- `Node.table_ir` 保存完整 v2 模型；table row records 同步保存其行范围内的 cell metadata。
+- `table_summary` 每张逻辑表一条，用 caption、字段、单位、行数和备注定位表实例。
+- `table` records 按连续行组索引，每组复制 headers，并携带 `row_start/row_end`。
+- 行组同时受最大行数和估算 token 预算约束，宽表会自动减少每组行数。
+- 查询先用 summary/row group 定位表实例，再按 `doc_id + document_version_id + table_id`
+  加载全部行组；完整性校验通过后才允许确定性聚合。
+- `quality_report.executable=false` 时禁止代码侧聚合，回退引用/澄清，不能静默计算。
+
+当前不引入 DuckDB：完整逻辑表由同版本全部 table row records 可逆重建。万行级分析表
+不作为本阶段知识库入库目标；此类需求优先连接业务数据库，由受控查询工具执行。
+
+PDF 路由补充：
+
+- 扫描、复杂、多栏 PDF 继续升级 MinerU。
+- 有文字层但存在明显网格表结构的数字 PDF 也升级 MinerU。
+- MinerU `<td>` 首行仅在强证据下推断为表头，并写入
+  `quality_report.header_inferred/header_confidence`。
+- 跨页空 table placeholder 用于恢复 `page_end`，汇总/合并行移出普通数据行。
+
 ### 5.4 parser_report 设计
 
 每次入库必须写 parser_report：
@@ -1185,7 +1222,7 @@ Phase 1 子步骤：
 2. [x] `RetrievalPlan`：描述 mode、top_k、hybrid、rerank、filters、reason。
 3. [x] Ask graph：写入 `query_type`、`retrieval_plan`、`judge`；fact / follow_up 走现有短路径，其余类型仅分类落盘，执行不拆子图。
 4. [x] Archive：保存 `query_type`、`retrieval_plan`、`rewrite`、`rewritten_query`、`judge`；citation 保留逐证据 `document_version_id`。
-5. [x] Eval：建立可回归黄金集（当前约 38 条），覆盖 no_hit、weak_match、MD/PDF/DOCX、section/table 隔离与 ingest_http；含内存 Qdrant 检索回归。
+5. [x] Eval：建立可回归黄金集（当前约 39 条），覆盖 no_hit、weak_match、MD/PDF/DOCX、section/table 隔离与 ingest_http；含内存 Qdrant 检索回归。
 6. [x] Payload：预埋 `document_version_id`（无完整 version 表时可用派生 stub），可选预埋默认 `tenant_id` / `workspace_id`。
 
 非阻塞可选（Phase 1 之后，不计入 Phase 1 Done）：
@@ -1220,13 +1257,19 @@ Phase 1 hardening：另含少量 `ingest_http` 用例，覆盖正例 upload→re
 - [x] Ask 图：section 路径复用短链路 + 薄 `citation_check`（`source_chunk_ids`）；archive/debug 可见 `record_type`。
 - [x] 黄金集：章节 Recall、fact 不泄漏 section、HTTP 兼容。
 
-#### Phase 2B（进行中）：Table-aware Retrieval
+#### Phase 2B（已落地）：Table-aware Retrieval
 
 - [x] `record_type: table` IndexRecord（headers/rows/row_range；大表分行组且复制表头；确定性 ID）。
+- [x] `TableIR v2`：列类型/单位、原始值/标准值、跨页范围、汇总行、脚注和质量报告。
+- [x] `record_type: table_summary`：每表一条 schema/summary 向量；table Ask 双路定位。
+- [x] 行组受 `max_rows + token budget` 双门限约束；宽表不再固定塞满 20/40 行。
 - [x] `RetrievalPlan`：`table → record_type=table`；`compare` 暂仍 chunk；Qdrant 强制过滤。
 - [x] 轻量 `TableQueryPlan`（filter / min/max / lookup / count）；不确定则澄清，禁止 LLM 心算。
 - [x] Ask 图 table 分支：`build_table_plan → table_retrieve → table_execute → judge → generate`。
 - [x] Citation / archive 暴露 table_id、row range、TableQueryPlan + execution。
+- [x] 原生 CSV/XLSX 解析进入 TableIR；XLSX 每个非空 worksheet 为一张逻辑表。
+- [x] 表格质量 fail-closed：表头缺失、结构质量不足时禁止确定性执行。
+- [ ] 万行级表/数据仓库查询不在本阶段实现；企业场景优先接业务数据库查询工具。
 
 #### Phase 2C：MinerU 复杂文档解析（进行中）
 
@@ -1234,7 +1277,8 @@ Phase 1 hardening：另含少量 `ingest_http` 用例，覆盖正例 upload→re
 - [x] MinerU `content_list` → DocumentIR（page/heading/table/figure/bbox/reading_order）。
 - [x] 独立服务客户端：timeout / retry / degrade；`parser_report` 含 backend/version/mode/latency。
 - [x] FakeMinerU + 单测；真实服务经 `MINERU_URL`。
-- [ ] 更丰富的双栏/跨页表真实 PDF 金标（当前以 JSON fixture + leave-scanned Fake 路径为主）。
+- [x] 真实跨页长表验证：75 行数据、1 条汇总、`p.1-3`、表头推断与行组索引。
+- [ ] 继续增加无边框、旋转、多级表头和低质量 OCR 表格金标。
 
 #### Phase 2C+（后续）
 

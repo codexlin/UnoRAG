@@ -20,6 +20,10 @@ from app.services.ingest.ir import (
 	ParserReport,
 	content_hash_bytes,
 )
+from app.services.ingest.table_ir import (
+	normalize_table,
+	table_ir_to_legacy,
+)
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _STRONG_CONTINUATION_RE = re.compile(
@@ -290,6 +294,7 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 			if not isinstance(table_json, dict):
 				table_json = parse_table_html(html) if html else {"headers": [], "rows": []}
 			caption = _join_caption(item.get("table_caption") or item.get("caption"))
+			footnote = _join_caption(item.get("table_footnote") or item.get("footnote"))
 			headers = table_json.get("headers") or []
 			rows = table_json.get("rows") or []
 			source_table_id = str(item.get("table_id") or item.get("id") or "").strip()
@@ -311,8 +316,35 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 				)
 				continue
 
+			# MinerU may emit a body only on the first page plus empty table
+			# placeholders on continuation pages. They still carry provenance.
+			if not html and not headers and not rows and last_table is not None:
+				if last_table.page_end is not None and page == last_table.page_end + 1:
+					last_table.page_end = page
+					last_table.meta.setdefault("continuation_pages", []).append(page)
+					if bbox is not None:
+						last_table.meta.setdefault("page_bboxes", []).append(
+							{"page": page, "bbox": bbox}
+						)
+					_refresh_node_table_ir(last_table, cross_page_merged=True)
+					continue
+
 			table_seq += 1
 			table_id = source_table_id or f"mineru-t{table_seq}"
+			table_ir = normalize_table(
+				table_id=table_id,
+				headers=list(headers),
+				rows=list(rows),
+				page_start=page,
+				page_end=page,
+				caption=caption,
+				footnotes=[footnote] if footnote else [],
+				confidence=0.72,
+				allow_header_inference=True,
+			)
+			table_json = table_ir_to_legacy(table_ir)
+			headers = table_ir.headers()
+			rows = table_ir.legacy_rows()
 			textual = []
 			if caption:
 				textual.append(caption)
@@ -333,6 +365,7 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 				page_end=page,
 				text=body,
 				table_json=table_json,
+				table_ir=table_ir,
 				table_id=table_id,
 				confidence=0.72,
 				meta=meta,
@@ -523,6 +556,8 @@ def _merge_table_continuation(
 	if caption:
 		meta.setdefault("continuation_captions", []).append(caption)
 	previous.meta = meta
+	_refresh_node_table_ir(previous, cross_page_merged=True)
+	table_json = previous.table_json if isinstance(previous.table_json, dict) else {}
 	textual = []
 	base_caption = str(meta.get("caption") or "")
 	if base_caption:
@@ -533,6 +568,59 @@ def _merge_table_continuation(
 	for row in table_json.get("rows") or []:
 		textual.append(" | ".join(str(value) for value in row))
 	previous.text = "\n".join(textual).strip()
+
+
+def _refresh_node_table_ir(previous: Node, *, cross_page_merged: bool) -> None:
+	table_json = previous.table_json if isinstance(previous.table_json, dict) else {}
+	meta = previous.meta or {}
+	existing_ir = previous.table_ir
+	table_ir = normalize_table(
+		table_id=previous.table_id or "table",
+		headers=list(table_json.get("headers") or []),
+		rows=list(table_json.get("rows") or []),
+		page_start=previous.page_start,
+		page_end=previous.page_end,
+		caption=str(meta.get("caption") or ""),
+		footnotes=(
+			list(existing_ir.footnotes)
+			if existing_ir is not None
+			else list(table_json.get("footnotes") or [])
+		),
+		confidence=previous.confidence,
+		cross_page_merged=cross_page_merged,
+	)
+	if existing_ir is not None and existing_ir.summary_rows:
+		seen = {row.raw_text for row in table_ir.summary_rows}
+		table_ir.summary_rows.extend(
+			row for row in existing_ir.summary_rows if row.raw_text not in seen
+		)
+		table_ir.quality_report.warnings = list(
+			dict.fromkeys(
+				[
+					*table_ir.quality_report.warnings,
+					f"{len(table_ir.summary_rows)} summary rows separated from data",
+				]
+			)
+		)
+	if existing_ir is not None and existing_ir.quality_report.header_inferred:
+		table_ir.quality_report.header_inferred = True
+		table_ir.quality_report.header_confidence = (
+			existing_ir.quality_report.header_confidence
+		)
+		table_ir.quality_report.score = min(
+			table_ir.quality_report.score,
+			existing_ir.quality_report.score,
+		)
+		table_ir.quality_report.warnings = list(
+			dict.fromkeys(
+				[
+					"table header inferred from first data row",
+					*table_ir.quality_report.warnings,
+				]
+			)
+		)
+	previous.table_ir = table_ir
+	previous.table_json = table_ir_to_legacy(table_ir)
 
 
 def _decode_content_list(value: Any) -> list[Any] | None:

@@ -458,7 +458,7 @@ def build_ask_graph(
 		}
 
 	def table_retrieve_node(state: AskState) -> AskState:
-		"""强制 record_type=table 的检索。"""
+		"""Retrieve table summaries for discovery plus row groups for evidence."""
 		query = state.get("rewritten_question") or state["question"]
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
 		plan = state.get("retrieval_plan") or {}
@@ -466,6 +466,37 @@ def build_ask_graph(
 		filters = dict(plan.get("filters") or {})
 		filters["record_type"] = "table"
 		citations = retrieve_fn(query, state.get("library_id"), top_k, filters)
+		summary_filters = dict(filters)
+		summary_filters["record_type"] = "table_summary"
+		summaries = retrieve_fn(
+			query,
+			state.get("library_id"),
+			min(4, top_k),
+			summary_filters,
+		)
+		combined = [*summaries, *citations]
+		deduped: list[dict[str, Any]] = []
+		seen: set[str] = set()
+		for item in sorted(
+			combined,
+			key=lambda value: float(value.get("score") or 0),
+			reverse=True,
+		):
+			key = str(
+				item.get("record_id")
+				or item.get("id")
+				or (
+					item.get("doc_id"),
+					item.get("table_id"),
+					item.get("record_type"),
+					item.get("row_start"),
+				)
+			)
+			if key in seen:
+				continue
+			seen.add(key)
+			deduped.append(item)
+		citations = deduped[: top_k + min(4, top_k)]
 		citation_check = {
 			"ok": all(item.get("table_id") for item in citations) if citations else True,
 			"missing_table_id": sum(1 for item in citations if not item.get("table_id")),
@@ -482,7 +513,7 @@ def build_ask_graph(
 				top_score=top_score,
 				retrieval_attempts=attempts,
 				query=query,
-				record_type="table",
+				record_type="table+table_summary",
 				filters=filters,
 				citation_check=citation_check,
 			),
@@ -499,13 +530,15 @@ def build_ask_graph(
 		)
 		headers = list(merged.get("headers") or [])
 		table_complete = bool(merged.get("complete"))
+		table_quality = dict(merged.get("table_quality") or {})
+		quality_executable = table_quality.get("executable", True) is not False
 		# 用真实表头 refinement plan
 		base_plan = dict(state.get("table_query_plan") or {})
 		refined = build_table_query_plan(question, headers=headers or None)
 		# 若初始已自信且 refinement 因缺 headers 仍自信，保留；否则用 refined
 		tq = refined if headers else base_plan
 
-		if headers and table_complete:
+		if headers and table_complete and quality_executable:
 			execution = execute_table_query(
 				tq,
 				headers=headers,
@@ -513,6 +546,14 @@ def build_ask_graph(
 				row_offset=int(merged.get("row_offset") or 0),
 				collect_evidence_indices=True,
 			)
+		elif headers and table_complete and not quality_executable:
+			execution = {
+				"ok": False,
+				"operation": str(tq.get("operation") or "fallback"),
+				"matched_rows": [],
+				"reason": "table_quality_not_executable",
+				"quality_report": table_quality,
+			}
 		elif headers and not table_complete:
 			# fail closed：禁止在 top_k 子集上聚合后标 table_exec_ok
 			execution = {

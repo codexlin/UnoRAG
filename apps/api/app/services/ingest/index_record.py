@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.services.ingest.ir import Chunk
 
-RecordType = Literal["chunk", "section", "document", "table"]
+RecordType = Literal["chunk", "section", "document", "table", "table_summary"]
 
 # 稳定命名空间，用于 Qdrant point id
 _POINT_NS = UUID("a6c3e8f0-2b1d-4e9a-9c7f-1d2e3f4a5b6c")
@@ -20,6 +20,7 @@ _POINT_NS = UUID("a6c3e8f0-2b1d-4e9a-9c7f-1d2e3f4a5b6c")
 DEFAULT_SECTION_MAX_CHARS = 2400
 # 大表按连续行组拆分；每组复制 headers
 DEFAULT_TABLE_MAX_ROWS = 40
+DEFAULT_TABLE_MAX_TOKENS = 1400
 
 
 class IndexRecord(BaseModel):
@@ -48,6 +49,13 @@ class IndexRecord(BaseModel):
 	row_end: int | None = None
 	# 整表行数（每个 row group 复制），用于全表加载完整性校验
 	table_row_count: int | None = None
+	table_caption: str | None = None
+	table_quality: dict[str, Any] = Field(default_factory=dict)
+	summary_rows: list[dict[str, Any]] = Field(default_factory=list)
+	footnotes: list[str] = Field(default_factory=list)
+	header_rows: list[list[str]] = Field(default_factory=list)
+	table_columns: list[dict[str, Any]] = Field(default_factory=list)
+	cell_rows: list[dict[str, Any]] = Field(default_factory=list)
 	content_hash: str = ""
 	source_format: str = ""
 	filename: str | None = None
@@ -87,11 +95,131 @@ def table_record_id(
 	return f"tbl:{digest}"
 
 
+def table_summary_record_id(doc_id: str, table_id: str) -> str:
+	digest = hashlib.sha1(f"{doc_id}|{table_id}|summary".encode("utf-8")).hexdigest()[:16]
+	return f"tblsum:{digest}"
+
+
 def _table_group_to_text(headers: list[str], rows: list[list[str]]) -> str:
 	lines = [" | ".join(str(h) for h in headers)] if headers else []
 	for row in rows:
 		lines.append(" | ".join(str(c) for c in row))
 	return "\n".join(lines).strip()
+
+
+def _estimate_tokens(text: str) -> int:
+	"""Dependency-free conservative token estimate for mixed Chinese/Latin text."""
+	cjk = sum(
+		1
+		for char in text
+		if "\u3400" <= char <= "\u9fff"
+		or "\u3040" <= char <= "\u30ff"
+		or "\uac00" <= char <= "\ud7af"
+	)
+	return cjk + max(1, (len(text) - cjk + 3) // 4)
+
+
+def _slice_table_rows(
+	headers: list[str],
+	rows: list[list[str]],
+	*,
+	max_rows: int,
+	max_tokens: int,
+) -> list[tuple[int, int, list[list[str]]]]:
+	if not rows:
+		return [(0, -1, [])]
+	header_tokens = _estimate_tokens(" | ".join(headers))
+	result: list[tuple[int, int, list[list[str]]]] = []
+	start = 0
+	current: list[list[str]] = []
+	current_tokens = header_tokens
+	for index, row in enumerate(rows):
+		row_tokens = _estimate_tokens(" | ".join(row))
+		over_budget = current and (
+			len(current) >= max_rows or current_tokens + row_tokens > max_tokens
+		)
+		if over_budget:
+			result.append((start, index - 1, current))
+			start = index
+			current = []
+			current_tokens = header_tokens
+		current.append(row)
+		current_tokens += row_tokens
+	if current:
+		result.append((start, start + len(current) - 1, current))
+	return result
+
+
+def build_table_summary_records_from_chunks(
+	chunks: list[Chunk],
+	*,
+	doc_id: str,
+	library_id: str = "",
+	document_version_id: str | None = None,
+	tenant_id: str = "default",
+	workspace_id: str = "default",
+	filename: str | None = None,
+) -> list[IndexRecord]:
+	"""One schema/summary vector per logical table for table discovery."""
+	records: list[IndexRecord] = []
+	for chunk in chunks:
+		table_id = (chunk.table_id or "").strip()
+		if not table_id:
+			continue
+		meta = chunk.meta or {}
+		headers = [str(value) for value in (meta.get("headers") or [])]
+		rows = list(meta.get("rows") or [])
+		caption = str(meta.get("table_caption") or chunk.heading_text or "").strip()
+		parts = [caption] if caption else [f"表格 {table_id}"]
+		if headers:
+			parts.append("字段：" + "、".join(headers))
+		parts.append(f"共{len(rows)}条数据")
+		footnotes = [str(value) for value in (meta.get("footnotes") or []) if str(value)]
+		table_ir = meta.get("table_ir") if isinstance(meta.get("table_ir"), dict) else {}
+		if footnotes:
+			parts.append("备注：" + "；".join(footnotes[:3]))
+		body = "；".join(parts)
+		rid = table_summary_record_id(doc_id, table_id)
+		records.append(
+			IndexRecord(
+				record_type="table_summary",
+				record_id=rid,
+				parent_record_id=chunk_record_id(doc_id, chunk.chunk_index),
+				document_version_id=document_version_id,
+				library_id=library_id,
+				doc_id=doc_id,
+				tenant_id=tenant_id,
+				workspace_id=workspace_id,
+				section_path=chunk.section_path,
+				heading_text=chunk.heading_text,
+				body=body,
+				embed_text=body,
+				source_chunk_ids=[chunk_record_id(doc_id, chunk.chunk_index)],
+				source_node_ids=list(chunk.node_ids or []),
+				page_start=chunk.page_start,
+				page_end=chunk.page_end,
+				page_label=chunk.page_label,
+				table_id=table_id,
+				headers=headers,
+				table_row_count=len(rows),
+				table_caption=caption or None,
+				table_quality=dict(meta.get("table_quality") or {}),
+				summary_rows=list(meta.get("summary_rows") or []),
+				footnotes=footnotes,
+				header_rows=[
+					[str(cell) for cell in row]
+					for row in (table_ir.get("header_rows") or [])
+				],
+				table_columns=[
+					dict(column) for column in (table_ir.get("columns") or [])
+					if isinstance(column, dict)
+				],
+				content_hash=hashlib.sha1(body.encode("utf-8")).hexdigest()[:16],
+				source_format=chunk.source_format,
+				filename=filename,
+			)
+		)
+	return records
 
 def _split_long_text(text: str, max_chars: int) -> list[str]:
 	raw = (text or "").strip()
@@ -242,6 +370,7 @@ def build_table_records_from_chunks(
 	workspace_id: str = "default",
 	filename: str | None = None,
 	max_rows: int = DEFAULT_TABLE_MAX_ROWS,
+	max_tokens: int = DEFAULT_TABLE_MAX_TOKENS,
 ) -> list[IndexRecord]:
 	"""从带 table_id + meta.headers/rows 的 chunk 生成 table IndexRecord。
 
@@ -249,6 +378,7 @@ def build_table_records_from_chunks(
 	"""
 	records: list[IndexRecord] = []
 	group_cap = max(1, int(max_rows))
+	token_cap = max(128, int(max_tokens))
 	for chunk in chunks:
 		table_id = (chunk.table_id or "").strip()
 		if not table_id:
@@ -263,14 +393,17 @@ def build_table_records_from_chunks(
 		source_chunk = chunk_record_id(doc_id, chunk.chunk_index)
 		source_nodes = list(chunk.node_ids or [])
 		table_row_count = len(rows)
+		table_ir = meta.get("table_ir") if isinstance(meta.get("table_ir"), dict) else {}
+		all_cell_rows = [
+			dict(row) for row in (table_ir.get("rows") or []) if isinstance(row, dict)
+		]
 		# 空表也建一条（仅 headers），便于召回表结构
-		if not rows:
-			row_slices = [(0, -1, [])]
-		else:
-			row_slices = []
-			for start in range(0, len(rows), group_cap):
-				end = min(len(rows), start + group_cap) - 1
-				row_slices.append((start, end, rows[start : end + 1]))
+		row_slices = _slice_table_rows(
+			headers,
+			rows,
+			max_rows=group_cap,
+			max_tokens=token_cap,
+		)
 
 		for part_idx, (row_start, row_end, part_rows) in enumerate(row_slices):
 			body = _table_group_to_text(headers, part_rows)
@@ -308,6 +441,19 @@ def build_table_records_from_chunks(
 					row_start=row_start,
 					row_end=row_end,
 					table_row_count=table_row_count,
+					table_caption=str(meta.get("table_caption") or "") or None,
+					table_quality=dict(meta.get("table_quality") or {}),
+					header_rows=[
+						[str(cell) for cell in row]
+						for row in (table_ir.get("header_rows") or [])
+					],
+					table_columns=[
+						dict(column) for column in (table_ir.get("columns") or [])
+						if isinstance(column, dict)
+					],
+					cell_rows=all_cell_rows[row_start : row_end + 1]
+					if row_end >= row_start
+					else [],
 					content_hash=hashlib.sha1(body.encode("utf-8")).hexdigest()[:16],
 					source_format=chunk.source_format,
 					filename=filename,
@@ -359,6 +505,20 @@ def index_record_to_payload(record: IndexRecord) -> dict[str, Any]:
 		payload["row_end"] = int(record.row_end)
 	if record.table_row_count is not None:
 		payload["table_row_count"] = int(record.table_row_count)
+	if record.table_caption:
+		payload["table_caption"] = record.table_caption
+	if record.table_quality:
+		payload["table_quality"] = dict(record.table_quality)
+	if record.summary_rows:
+		payload["summary_rows"] = list(record.summary_rows)
+	if record.footnotes:
+		payload["footnotes"] = list(record.footnotes)
+	if record.header_rows:
+		payload["header_rows"] = [list(row) for row in record.header_rows]
+	if record.table_columns:
+		payload["table_columns"] = list(record.table_columns)
+	if record.cell_rows:
+		payload["cell_rows"] = list(record.cell_rows)
 	if record.content_hash:
 		payload["content_hash"] = record.content_hash
 	if record.source_format:

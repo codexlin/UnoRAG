@@ -12,6 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.services.ingest.table_ir import TableIR
+
 
 class NodeType(StrEnum):
 	HEADING = "heading"
@@ -73,6 +75,8 @@ class Node(BaseModel):
 	page_end: int | None = None
 	text: str = ""
 	table_json: dict[str, Any] | list[Any] | None = None
+	# Canonical v2 model; table_json remains as the backward-compatible surface.
+	table_ir: TableIR | None = None
 	figure_desc: str | None = None
 	confidence: float | None = None
 	# 关联：表格/图片 id，供 extract_table / quote 使用

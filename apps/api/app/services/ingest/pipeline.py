@@ -190,6 +190,7 @@ def chunks_to_payloads(
 		IndexRecord,
 		build_section_records_from_chunks,
 		build_table_records_from_chunks,
+		build_table_summary_records_from_chunks,
 		chunk_record_id,
 		index_record_to_payload,
 	)
@@ -260,6 +261,7 @@ def chunks_to_payloads(
 			"target_chars",
 			"max_chars",
 			"table_rows_per_record",
+			"table_tokens_per_record",
 			"semantic_distance_threshold",
 			"semantic_unit_count",
 			"semantic_fallback",
@@ -291,6 +293,14 @@ def chunks_to_payloads(
 			),
 			40,
 		)
+		table_tokens_per_record = next(
+			(
+				int(chunk.meta["table_tokens_per_record"])
+				for chunk in chunks
+				if chunk.meta.get("table_tokens_per_record") is not None
+			),
+			1400,
+		)
 		tables = build_table_records_from_chunks(
 			chunks,
 			doc_id=resolved_doc,
@@ -300,8 +310,20 @@ def chunks_to_payloads(
 			workspace_id=workspace_id,
 			filename=filename,
 			max_rows=table_rows_per_record,
+			max_tokens=table_tokens_per_record,
 		)
 		for record in tables:
+			payloads.append(index_record_to_payload(record))
+		table_summaries = build_table_summary_records_from_chunks(
+			chunks,
+			doc_id=resolved_doc,
+			library_id=library_id or "",
+			document_version_id=version_id,
+			tenant_id=tenant_id,
+			workspace_id=workspace_id,
+			filename=filename,
+		)
+		for record in table_summaries:
 			payloads.append(index_record_to_payload(record))
 	return payloads
 
@@ -312,4 +334,6 @@ def _guess_content_type(suffix: str) -> str:
 		".markdown": "text/markdown",
 		".pdf": "application/pdf",
 		".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		".csv": "text/csv",
+		".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 	}.get(suffix, "application/octet-stream")

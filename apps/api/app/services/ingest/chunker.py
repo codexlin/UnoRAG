@@ -80,12 +80,33 @@ def chunk_document(
 			ps = node.page_start if node.page_start is not None else section.page_start
 			pe = node.page_end if node.page_end is not None else section.page_end
 			meta = decision_metadata(decision, profile)
-			if node.type == NodeType.TABLE and isinstance(node.table_json, dict):
-				meta["headers"] = [str(h) for h in (node.table_json.get("headers") or [])]
-				meta["rows"] = [
-					[str(c) for c in row] for row in (node.table_json.get("rows") or [])
-				]
+			if node.type == NodeType.TABLE and (
+				node.table_ir is not None or isinstance(node.table_json, dict)
+			):
+				table_json = node.table_json if isinstance(node.table_json, dict) else {}
+				meta["headers"] = (
+					node.table_ir.headers()
+					if node.table_ir is not None
+					else [str(h) for h in (table_json.get("headers") or [])]
+				)
+				meta["rows"] = (
+					node.table_ir.legacy_rows()
+					if node.table_ir is not None
+					else [
+						[str(c) for c in row]
+						for row in (table_json.get("rows") or [])
+					]
+				)
+				if node.table_ir is not None:
+					meta["table_ir"] = node.table_ir.model_dump()
+					meta["table_quality"] = node.table_ir.quality_report.model_dump()
+					meta["table_caption"] = node.table_ir.caption
+					meta["summary_rows"] = [
+						row.model_dump() for row in node.table_ir.summary_rows
+					]
+					meta["footnotes"] = list(node.table_ir.footnotes)
 				meta["table_rows_per_record"] = profile.table_rows_per_record
+				meta["table_tokens_per_record"] = profile.table_tokens_per_record
 			chunk = Chunk(
 				chunk_index=len(chunks),
 				text="",

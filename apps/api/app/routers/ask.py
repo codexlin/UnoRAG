@@ -214,7 +214,7 @@ async def ingest_upload(
 	if suffix not in V2_EXTENSIONS:
 		raise HTTPException(
 			status_code=400,
-			detail=f"unsupported file type: {suffix or '(none)'}; use txt/md/pdf/docx",
+			detail=f"unsupported file type: {suffix or '(none)'}; use txt/md/pdf/docx/csv/xlsx",
 		)
 	if meta.get_library(library_id) is None:
 		raise HTTPException(status_code=404, detail=f"library not found: {library_id}")
@@ -259,6 +259,8 @@ async def ingest_upload(
 		".markdown": "text/markdown",
 		".pdf": "application/pdf",
 		".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		".csv": "text/csv",
+		".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 	}.get(suffix, "application/octet-stream")
 	doc_id = str(uuid4())
 	doc = meta.create_document(

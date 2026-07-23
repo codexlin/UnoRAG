@@ -31,6 +31,7 @@ class ChunkingProfile:
 	semantic_break_percentile: int
 	semantic_min_chunk_chars: int
 	table_rows_per_record: int
+	table_tokens_per_record: int
 	policy_version: str = POLICY_VERSION
 
 
@@ -72,6 +73,7 @@ def build_chunking_profile(
 		semantic_break_percentile=max(1, min(99, int(semantic_break_percentile))),
 		semantic_min_chunk_chars=min_chunk,
 		table_rows_per_record=20 if resolved_name == "table_heavy" else 40,
+		table_tokens_per_record=1000 if resolved_name == "table_heavy" else 1400,
 		policy_version=(policy_version or POLICY_VERSION).strip() or POLICY_VERSION,
 	)
 
@@ -132,6 +134,7 @@ def decision_metadata(
 		"target_chars": profile.target_chars,
 		"max_chars": profile.max_chars,
 		"table_rows_per_record": profile.table_rows_per_record,
+		"table_tokens_per_record": profile.table_tokens_per_record,
 	}
 	for key, value in extra.items():
 		if value is not None:
