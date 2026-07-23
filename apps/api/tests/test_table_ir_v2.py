@@ -170,8 +170,7 @@ def test_csv_and_xlsx_use_native_table_ir() -> None:
 
 def test_ruled_digital_pdf_routes_to_mineru_probe() -> None:
 	fixture = TESTDATA / "ab" / "crosstable-large.pdf"
-	if fixture.exists():
-		assert probe_needs_mineru(fixture.read_bytes()) is True
+	assert probe_needs_mineru(fixture.read_bytes()) is True
 
 
 def test_table_row_hit_has_priority_and_summary_is_fallback() -> None:

@@ -1232,7 +1232,7 @@ Phase 1 子步骤：
 **Phase 1 Done 标准**：
 
 - [x] HTTP schema 兼容：`/v1/ask` 等对外响应不破。
-- [x] 黄金集本地可跑：`eval_cases.jsonl` + runner 可在本机执行；当前约 **38** 条，含确定性 embedding + 内存 Qdrant、section/chunk/table 隔离、ingest_http 负例。
+- [x] 黄金集本地可跑：`eval_cases.jsonl` + runner 可在本机执行；当前 **39** 条，含确定性 embedding + 内存 Qdrant、section/chunk/table 隔离、ingest_http 负例。
 - [x] archive 能读出 `query_type` / `judge`（及已写入的 plan 相关 debug）。
 - [x] `document_version_id` 无完整 version 表时，可用派生 stub 预埋，不强制先建完整版本模型。
 
