@@ -64,6 +64,10 @@ pnpm install && pnpm --filter web dev
 
 计划详情：[docs/plans/2026-07-23-document-ingest-pipeline.md](./docs/plans/2026-07-23-document-ingest-pipeline.md)
 
+## 架构设计
+
+- 企业级 RAG SaaS 目标架构：[docs/architecture/enterprise-rag-saas-design.md](./docs/architecture/enterprise-rag-saas-design.md)
+
 ## live 提示
 
 ```bash
@@ -75,7 +79,10 @@ DASHSCOPE_API_KEY=...   # 或 OPENAI_API_KEY
 ```
 
 ```bash
-cd apps/api && uv run pytest
+cd apps/api
+uv run pytest
+# Phase 1 黄金集（20 条，含内存 Qdrant 检索回归）
+uv run python scripts/run_eval_cases.py
 ```
 
 ## 计划

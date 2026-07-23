@@ -45,6 +45,9 @@ class Citation(BaseModel):
 	doc_id: str | None = None
 	chunk_index: int | None = None
 	filename: str | None = None
+	# Phase 1 预埋：无完整 version 表时为派生 stub
+	document_version_id: str | None = None
+	tenant_id: str | None = None
 
 
 class ArchiveTurnResponse(BaseModel):
@@ -57,6 +60,14 @@ class ArchiveTurnResponse(BaseModel):
 	mode: str
 	refused: bool = False
 	refuse_reason: str | None = None
+	# Phase 1：可审计字段（可选，旧客户端忽略）
+	query_type: str | None = None
+	rewrite: str | None = None
+	rewritten_query: str | None = None
+	judge: dict[str, object] | None = None
+	retrieval_plan: dict[str, object] | None = None
+	document_version_id: str | None = None
+	tenant_id: str | None = None
 	created_at: str
 
 

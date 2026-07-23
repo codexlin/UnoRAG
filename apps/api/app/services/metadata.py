@@ -128,6 +128,13 @@ class MetadataStore(ABC):
 		refused: bool = False,
 		refuse_reason: str | None = None,
 		turn_id: str | None = None,
+		query_type: str | None = None,
+		retrieval_plan: dict[str, Any] | None = None,
+		rewrite: str | None = None,
+		rewritten_query: str | None = None,
+		judge: dict[str, Any] | None = None,
+		document_version_id: str | None = None,
+		tenant_id: str | None = None,
 	) -> dict[str, Any]:
 		raise NotImplementedError
 
@@ -401,6 +408,13 @@ class JsonMetadataStore(MetadataStore):
 		refused: bool = False,
 		refuse_reason: str | None = None,
 		turn_id: str | None = None,
+		query_type: str | None = None,
+		retrieval_plan: dict[str, Any] | None = None,
+		rewrite: str | None = None,
+		rewritten_query: str | None = None,
+		judge: dict[str, Any] | None = None,
+		document_version_id: str | None = None,
+		tenant_id: str | None = None,
 	) -> dict[str, Any]:
 		resolved = turn_id or str(uuid4())
 		now = _now_iso()
@@ -414,6 +428,13 @@ class JsonMetadataStore(MetadataStore):
 			"mode": mode,
 			"refused": bool(refused),
 			"refuse_reason": refuse_reason,
+			"query_type": query_type,
+			"retrieval_plan": retrieval_plan,
+			"rewrite": rewrite,
+			"rewritten_query": rewritten_query,
+			"judge": judge,
+			"document_version_id": document_version_id,
+			"tenant_id": tenant_id or "default",
 			"created_at": now,
 		}
 		with self._lock:
@@ -513,6 +534,14 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			mode: Mapped[str] = mapped_column(String(32), nullable=False, default="stub")
 			refused: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 			refuse_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+			# Phase 1：query / plan / judge 可审计字段（旧库 ALTER 补列）
+			query_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+			rewrite: Mapped[str | None] = mapped_column(String(64), nullable=True)
+			rewritten_query: Mapped[str | None] = mapped_column(Text, nullable=True)
+			judge_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+			retrieval_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+			document_version_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+			tenant_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 			created_at: Mapped[datetime] = mapped_column(
 				DateTime(timezone=True),
 				server_default=func.now(),
@@ -550,8 +579,22 @@ class SqlAlchemyMetadataStore(MetadataStore):
 						"ALTER TABLE libraries ADD COLUMN IF NOT EXISTS description TEXT"
 					)
 				)
-		except Exception:
-			logger.debug("metadata.parser_report_column.skip", exc_info=True)
+				for stmt in (
+					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS query_type VARCHAR(64)",
+					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS rewrite VARCHAR(64)",
+					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS rewritten_query TEXT",
+					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS judge_json TEXT",
+					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS retrieval_plan_json TEXT",
+					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS document_version_id VARCHAR(256)",
+					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128)",
+				):
+					conn.execute(sql_text(stmt))
+		except Exception as exc:
+			logger.exception("metadata.schema_upgrade_failed")
+			raise RuntimeError(
+				"Postgres metadata schema upgrade failed; "
+				"verify ALTER permission and apply the required columns before startup"
+			) from exc
 		self._Session = sessionmaker(bind=self._engine, expire_on_commit=False, class_=Session)
 
 	@staticmethod
@@ -608,6 +651,16 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			citations = []
 		if not isinstance(citations, list):
 			citations = []
+
+		def _load_obj(raw: str | None) -> dict[str, Any] | None:
+			if not raw:
+				return None
+			try:
+				value = json.loads(raw)
+			except json.JSONDecodeError:
+				return None
+			return value if isinstance(value, dict) else None
+
 		return {
 			"id": row.id,
 			"session_id": row.session_id,
@@ -618,6 +671,13 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			"mode": row.mode,
 			"refused": bool(row.refused),
 			"refuse_reason": row.refuse_reason,
+			"query_type": getattr(row, "query_type", None),
+			"rewrite": getattr(row, "rewrite", None),
+			"rewritten_query": getattr(row, "rewritten_query", None),
+			"judge": _load_obj(getattr(row, "judge_json", None)),
+			"retrieval_plan": _load_obj(getattr(row, "retrieval_plan_json", None)),
+			"document_version_id": getattr(row, "document_version_id", None),
+			"tenant_id": getattr(row, "tenant_id", None),
 			"created_at": self._dt(row.created_at),
 		}
 
@@ -831,6 +891,13 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		refused: bool = False,
 		refuse_reason: str | None = None,
 		turn_id: str | None = None,
+		query_type: str | None = None,
+		retrieval_plan: dict[str, Any] | None = None,
+		rewrite: str | None = None,
+		rewritten_query: str | None = None,
+		judge: dict[str, Any] | None = None,
+		document_version_id: str | None = None,
+		tenant_id: str | None = None,
 	) -> dict[str, Any]:
 		resolved = turn_id or str(uuid4())
 		with self._Session() as session:
@@ -844,6 +911,17 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				mode=mode,
 				refused=1 if refused else 0,
 				refuse_reason=refuse_reason,
+				query_type=query_type,
+				rewrite=rewrite,
+				rewritten_query=rewritten_query,
+				judge_json=json.dumps(judge, ensure_ascii=False) if judge is not None else None,
+				retrieval_plan_json=(
+					json.dumps(retrieval_plan, ensure_ascii=False)
+					if retrieval_plan is not None
+					else None
+				),
+				document_version_id=document_version_id,
+				tenant_id=tenant_id or "default",
 			)
 			session.add(row)
 			session.commit()

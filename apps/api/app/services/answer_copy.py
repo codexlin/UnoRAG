@@ -17,3 +17,12 @@ def weak_match_answer(*, library_name: str = "当前知识库") -> str:
 		f"检索过「{name}」中的资料，但相关度不够高，暂不生成猜测性回答。"
 		"你可以问得更具体一点，或补充相关文档后再试。"
 	)
+
+
+def clarify_answer(*, library_name: str = "当前知识库") -> str:
+	"""ambiguous 问题：Phase 1 澄清，不进入检索生成。"""
+	name = (library_name or "当前知识库").strip() or "当前知识库"
+	return (
+		f"问题表述不够具体，暂时无法在「{name}」中准确检索。"
+		"请补充主题、制度名称或想了解的条款，例如「病假证明几天内补交」。"
+	)

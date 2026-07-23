@@ -65,6 +65,10 @@ class Settings(BaseSettings):
 	bm25_top_k: int = 20
 	rrf_k: int = 60
 
+	# SaaS 预埋（Phase 1：默认租户/工作区 stub，完整多租户后置）
+	default_tenant_id: str = "default"
+	default_workspace_id: str = "default"
+
 	# Metadata is Postgres-required in production/dev.
 	# METADATA_BACKEND=json is test-only escape hatch (never silent fallback).
 	metadata_backend: str = "postgres"

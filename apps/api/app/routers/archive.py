@@ -35,6 +35,15 @@ def _to_turn_response(row: dict) -> ArchiveTurnResponse:
 		mode=row.get("mode") or "stub",
 		refused=bool(row.get("refused")),
 		refuse_reason=row.get("refuse_reason"),
+		query_type=row.get("query_type"),
+		rewrite=row.get("rewrite"),
+		rewritten_query=row.get("rewritten_query"),
+		judge=row.get("judge") if isinstance(row.get("judge"), dict) else None,
+		retrieval_plan=(
+			row.get("retrieval_plan") if isinstance(row.get("retrieval_plan"), dict) else None
+		),
+		document_version_id=row.get("document_version_id"),
+		tenant_id=row.get("tenant_id"),
 		created_at=row.get("created_at") or "",
 	)
 

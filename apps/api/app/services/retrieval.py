@@ -266,6 +266,8 @@ class RetrievalService:
 					"doc_id": hit.get("doc_id"),
 					"chunk_index": hit.get("chunk_index"),
 					"filename": hit.get("filename"),
+					"document_version_id": hit.get("document_version_id"),
+					"tenant_id": hit.get("tenant_id"),
 				}
 			)
 		final = self._maybe_rerank(query=query, citations=citations, top_k=limit)

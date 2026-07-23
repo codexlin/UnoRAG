@@ -8,9 +8,11 @@ from typing import Any, Literal, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app.schemas import AskResponse, Citation
-from app.services.answer_copy import no_match_answer, weak_match_answer
+from app.services.answer_copy import clarify_answer, no_match_answer, weak_match_answer
 from app.services.llm import ChatService
+from app.services.query_router import route_query
 from app.services.retrieval import RetrievalService
+from app.services.retrieval_plan import build_retrieval_plan
 from app.services.runtime import RuntimeCapability, resolve_runtime
 from app.services.session_memory import SessionMemory, default_session_memory
 from app.settings import Settings, get_settings
@@ -34,6 +36,9 @@ class AskState(TypedDict, total=False):
 	retrieval_attempts: int
 	judgement: dict[str, Any]
 	retrieval_debug: dict[str, Any]
+	query_type: str
+	route_reason: str
+	retrieval_plan: dict[str, Any]
 
 
 STUB_CITATIONS: list[dict[str, Any]] = [
@@ -103,6 +108,8 @@ def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
 					"doc_id": item.get("doc_id"),
 					"chunk_index": item.get("chunk_index"),
 					"filename": item.get("filename"),
+					"document_version_id": item.get("document_version_id"),
+					"tenant_id": item.get("tenant_id"),
 				}
 			)
 		)
@@ -123,6 +130,13 @@ def _persist_turn(
 	mode: str,
 	refused: bool,
 	refuse_reason: str | None,
+	query_type: str | None = None,
+	retrieval_plan: dict[str, Any] | None = None,
+	rewrite: str | None = None,
+	rewritten_query: str | None = None,
+	judge: dict[str, Any] | None = None,
+	document_version_id: str | None = None,
+	tenant_id: str | None = None,
 ) -> dict[str, Any]:
 	try:
 		from app.services.metadata import get_metadata_store
@@ -136,11 +150,28 @@ def _persist_turn(
 			mode=mode,
 			refused=refused,
 			refuse_reason=refuse_reason,
+			query_type=query_type,
+			retrieval_plan=retrieval_plan,
+			rewrite=rewrite,
+			rewritten_query=rewritten_query,
+			judge=judge,
+			document_version_id=document_version_id,
+			tenant_id=tenant_id,
 		)
 		return {"persisted": True, "persist_error": None}
 	except Exception as exc:
 		logger.exception("ask.persist_turn_failed session_id=%s", session_id)
 		return {"persisted": False, "persist_error": str(exc)}
+
+
+def _single_document_version_id(citations: list[Citation]) -> str | None:
+	"""Turn 只有一个文档版本时提供便捷字段；完整快照仍以 citations 为准。"""
+	version_ids = {
+		item.document_version_id
+		for item in citations
+		if item.document_version_id
+	}
+	return next(iter(version_ids)) if len(version_ids) == 1 else None
 
 
 def _retrieval_visibility(debug: dict[str, Any]) -> dict[str, Any]:
@@ -244,6 +275,82 @@ def build_ask_graph(
 ):
 	min_score = float(settings.answer_min_score)
 	max_retries = max(0, int(settings.max_retrieve_retries))
+	tenant_id = str(getattr(settings, "default_tenant_id", None) or "default")
+	workspace_id = str(getattr(settings, "default_workspace_id", None) or "default")
+
+	def query_router_node(state: AskState) -> AskState:
+		"""规则分类；summary/table/ambiguous 等仅落盘，不建子图。"""
+		routed = route_query(
+			state["question"],
+			history=state.get("history") or [],
+			library_id=state.get("library_id"),
+		)
+		query_type = str(routed["query_type"])
+		route_reason = str(routed["reason"])
+		return {
+			"query_type": query_type,
+			"route_reason": route_reason,
+			"retrieval_attempts": 0,
+			"refused": False,
+			"refuse_reason": None,
+			"retrieval_debug": _merge_debug(
+				state,
+				query_type=query_type,
+				route_reason=route_reason,
+				mode=mode,
+				answer_min_score=min_score,
+				rerank_enabled=bool(settings.rerank_enabled),
+				tenant_id=tenant_id,
+				workspace_id=workspace_id,
+			),
+		}
+
+	def build_plan_node(state: AskState) -> AskState:
+		query_type = str(state.get("query_type") or "fact")
+		route_reason = str(state.get("route_reason") or "default_fact")
+		plan = build_retrieval_plan(
+			query_type=query_type,
+			route_reason=route_reason,
+			library_id=state.get("library_id"),
+			top_k=settings.retrieve_top_k,
+			hybrid_enabled=bool(settings.hybrid_enabled),
+			rerank_enabled=bool(settings.rerank_enabled),
+			tenant_id=tenant_id,
+			workspace_id=workspace_id,
+			question=state.get("question"),
+		)
+		return {
+			"retrieval_plan": plan,
+			"retrieval_debug": _merge_debug(state, retrieval_plan=plan),
+		}
+
+	def route_after_plan(state: AskState) -> Literal["clarify", "rewrite"]:
+		plan = state.get("retrieval_plan") or {}
+		if str(plan.get("execute_path") or "short") == "clarify":
+			return "clarify"
+		return "rewrite"
+
+	def clarify_node(state: AskState) -> AskState:
+		library_name = _library_label(state.get("library_id"))
+		judgement = {
+			"sufficient": False,
+			"action": "clarify",
+			"reason": "ambiguous",
+			"can_retry": False,
+		}
+		return {
+			"answer": clarify_answer(library_name=library_name),
+			"citations": [],
+			"refused": True,
+			"refuse_reason": "ambiguous",
+			"judgement": judgement,
+			"retrieval_debug": _merge_debug(
+				state,
+				judgement=judgement,
+				generate="clarify",
+				refuse_reason="ambiguous",
+			),
+		}
 
 	def rewrite_node(state: AskState) -> AskState:
 		question = state["question"].strip()
@@ -267,7 +374,9 @@ def build_ask_graph(
 	def retrieve_node(state: AskState) -> AskState:
 		query = state.get("rewritten_question") or state["question"]
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
-		citations = retrieve_fn(query, state.get("library_id"), settings.retrieve_top_k)
+		plan = state.get("retrieval_plan") or {}
+		top_k = int(plan.get("top_k") or settings.retrieve_top_k)
+		citations = retrieve_fn(query, state.get("library_id"), top_k)
 		tool_trace: list[dict[str, Any]] = []
 		# TOOL_ASK：默认仍短路径；仅规范化 citation + 记录 search_docs 轨迹（多跳工具后续扩展）
 		if settings.tool_ask:
@@ -400,13 +509,23 @@ def build_ask_graph(
 		}
 
 	graph: StateGraph[AskState] = StateGraph(AskState)
+	graph.add_node("query_router", query_router_node)
+	graph.add_node("build_retrieval_plan", build_plan_node)
+	graph.add_node("clarify", clarify_node)
 	graph.add_node("rewrite", rewrite_node)
 	graph.add_node("retrieve", retrieve_node)
 	graph.add_node("judge", judge_node)
 	graph.add_node("retry", retry_node)
 	graph.add_node("generate", generate_node)
 	graph.add_node("refuse", refuse_node)
-	graph.set_entry_point("rewrite")
+	graph.set_entry_point("query_router")
+	graph.add_edge("query_router", "build_retrieval_plan")
+	graph.add_conditional_edges(
+		"build_retrieval_plan",
+		route_after_plan,
+		{"clarify": "clarify", "rewrite": "rewrite"},
+	)
+	graph.add_edge("clarify", END)
 	graph.add_edge("rewrite", "retrieve")
 	graph.add_edge("retrieve", "judge")
 	graph.add_conditional_edges(
@@ -421,7 +540,7 @@ def build_ask_graph(
 
 
 class AskGraphService:
-	"""rewrite → retrieve → judge → (retry) → generate | refuse."""
+	"""query_router → plan → rewrite → retrieve → judge → (retry) → generate | refuse | clarify."""
 
 	def __init__(
 		self,
@@ -519,6 +638,11 @@ class AskGraphService:
 
 		raw_citations = state.get("citations") or []
 		citations = _to_citation_models(raw_citations)
+		debug = self._merge_retrieval_debug(state.get("retrieval_debug") or {})
+		judge = state.get("judgement") or debug.get("judgement")
+		plan = state.get("retrieval_plan") or debug.get("retrieval_plan")
+		query_type = state.get("query_type") or debug.get("query_type")
+		rewrite_mode = debug.get("rewrite")
 		persist = _persist_turn(
 			session_id=resolved_session,
 			library_id=library_id,
@@ -528,8 +652,14 @@ class AskGraphService:
 			mode=self.mode,
 			refused=bool(state.get("refused")),
 			refuse_reason=state.get("refuse_reason"),
+			query_type=str(query_type) if query_type else None,
+			retrieval_plan=plan if isinstance(plan, dict) else None,
+			rewrite=str(rewrite_mode) if rewrite_mode else None,
+			rewritten_query=state.get("rewritten_question"),
+			judge=judge if isinstance(judge, dict) else None,
+			document_version_id=_single_document_version_id(citations),
+			tenant_id=str(getattr(self.settings, "default_tenant_id", None) or "default"),
 		)
-		debug = self._merge_retrieval_debug(state.get("retrieval_debug") or {})
 		visibility = _retrieval_visibility(debug)
 		return AskResponse(
 			session_id=resolved_session,
@@ -646,6 +776,10 @@ class AskGraphService:
 			self.session_memory.append(resolved_session, "user", question)
 			self.session_memory.append(resolved_session, "assistant", answer)
 
+		judge = state.get("judgement") or debug.get("judgement")
+		plan = state.get("retrieval_plan") or debug.get("retrieval_plan")
+		query_type = state.get("query_type") or debug.get("query_type")
+		rewrite_mode = debug.get("rewrite")
 		persist = _persist_turn(
 			session_id=resolved_session,
 			library_id=library_id,
@@ -655,6 +789,13 @@ class AskGraphService:
 			mode=self.mode,
 			refused=refused,
 			refuse_reason=state.get("refuse_reason"),
+			query_type=str(query_type) if query_type else None,
+			retrieval_plan=plan if isinstance(plan, dict) else None,
+			rewrite=str(rewrite_mode) if rewrite_mode else None,
+			rewritten_query=state.get("rewritten_question"),
+			judge=judge if isinstance(judge, dict) else None,
+			document_version_id=_single_document_version_id(citation_models),
+			tenant_id=str(getattr(self.settings, "default_tenant_id", None) or "default"),
 		)
 
 		yield {
@@ -675,4 +816,3 @@ class AskGraphService:
 				"retrieval_mode": visibility["retrieval_mode"],
 			},
 		}
-

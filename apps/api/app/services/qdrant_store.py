@@ -69,7 +69,12 @@ class QdrantStore:
 			"split_strategy",
 			"source_format",
 			"content_hash",
+			"document_version_id",
+			"tenant_id",
+			"workspace_id",
 		)
+		from app.services.versioning import derive_document_version_id
+
 		for chunk, vector in zip(chunks, vectors, strict=True):
 			payload: dict[str, Any] = {
 				"library_id": library_id,
@@ -82,6 +87,16 @@ class QdrantStore:
 			for key in _optional_keys:
 				if chunk.get(key) is not None:
 					payload[key] = chunk[key]
+			# Phase 1：预埋版本 / 租户（无完整 version 表时用派生 stub）
+			if not payload.get("document_version_id"):
+				payload["document_version_id"] = derive_document_version_id(
+					doc_id,
+					content_hash=str(chunk.get("content_hash") or "") or None,
+				)
+			if not payload.get("tenant_id"):
+				payload["tenant_id"] = "default"
+			if not payload.get("workspace_id"):
+				payload["workspace_id"] = "default"
 			resolved_filename = chunk.get("filename") or filename
 			if resolved_filename:
 				payload["filename"] = resolved_filename
@@ -183,6 +198,8 @@ class QdrantStore:
 					"doc_id": payload.get("doc_id"),
 					"chunk_index": payload.get("chunk_index"),
 					"filename": payload.get("filename"),
+					"document_version_id": payload.get("document_version_id"),
+					"tenant_id": payload.get("tenant_id"),
 					"text": body,
 					"body": body,
 				}
@@ -239,6 +256,8 @@ class QdrantStore:
 						"body": body,
 						"snippet": body[:280],
 						"library_id": payload.get("library_id"),
+						"document_version_id": payload.get("document_version_id"),
+						"tenant_id": payload.get("tenant_id"),
 					}
 				)
 			if offset is None:
