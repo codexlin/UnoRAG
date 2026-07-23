@@ -154,11 +154,32 @@ def prepare_ingest(
 	)
 
 
-def chunks_to_payloads(chunks: list[Chunk], *, filename: str | None = None) -> list[dict[str, Any]]:
-	"""IR Chunk → Qdrant/ingest dict（向后兼容旧 payload 字段）。"""
+def chunks_to_payloads(
+	chunks: list[Chunk],
+	*,
+	filename: str | None = None,
+	doc_id: str | None = None,
+	library_id: str | None = None,
+	document_version_id: str | None = None,
+	tenant_id: str = "default",
+	workspace_id: str = "default",
+	include_sections: bool = True,
+) -> list[dict[str, Any]]:
+	"""IR Chunk → Qdrant/ingest dict；可选附带 section 粒度 records。"""
+	from app.services.ingest.index_record import (
+		IndexRecord,
+		build_section_records_from_chunks,
+		chunk_record_id,
+		index_record_to_payload,
+	)
+	from app.services.versioning import derive_document_version_id
+
+	resolved_doc = (doc_id or "").strip() or "unknown"
+	version_id = document_version_id or derive_document_version_id(resolved_doc)
 	payloads: list[dict[str, Any]] = []
 	for chunk in chunks:
 		body = chunk.display_text()
+		rid = chunk_record_id(resolved_doc, chunk.chunk_index)
 		item: dict[str, Any] = {
 			"chunk_index": chunk.chunk_index,
 			# text：LLM/抽屉主展示 = body（看见的≈模型用的）
@@ -167,6 +188,16 @@ def chunks_to_payloads(chunks: list[Chunk], *, filename: str | None = None) -> l
 			"embed_text": chunk.embed_text(),
 			"split_strategy": str(chunk.split_strategy),
 			"source_format": chunk.source_format,
+			"record_type": "chunk",
+			"record_id": rid,
+			"document_version_id": version_id,
+			"tenant_id": tenant_id,
+			"workspace_id": workspace_id,
+			"_point_id": IndexRecord(
+				record_type="chunk",
+				record_id=rid,
+				doc_id=resolved_doc,
+			).point_uuid(),
 		}
 		if chunk.preamble:
 			item["preamble"] = chunk.preamble
@@ -191,8 +222,20 @@ def chunks_to_payloads(chunks: list[Chunk], *, filename: str | None = None) -> l
 		if filename:
 			item["filename"] = filename
 		payloads.append(item)
-	return payloads
 
+	if include_sections and chunks:
+		sections = build_section_records_from_chunks(
+			chunks,
+			doc_id=resolved_doc,
+			library_id=library_id or "",
+			document_version_id=version_id,
+			tenant_id=tenant_id,
+			workspace_id=workspace_id,
+			filename=filename,
+		)
+		for record in sections:
+			payloads.append(index_record_to_payload(record))
+	return payloads
 
 def _guess_content_type(suffix: str) -> str:
 	return {

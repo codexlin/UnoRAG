@@ -19,7 +19,7 @@ from app.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
-RetrieveFn = Callable[[str, str | None, int], list[dict[str, Any]]]
+RetrieveFn = Callable[..., list[dict[str, Any]]]
 GenerateFn = Callable[[str, list[dict[str, Any]]], str]
 
 
@@ -110,6 +110,9 @@ def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
 					"filename": item.get("filename"),
 					"document_version_id": item.get("document_version_id"),
 					"tenant_id": item.get("tenant_id"),
+					"record_type": item.get("record_type"),
+					"record_id": item.get("record_id"),
+					"source_chunk_ids": item.get("source_chunk_ids") or [],
 				}
 			)
 		)
@@ -213,7 +216,12 @@ def rewrite_with_history(question: str, history: list[dict[str, str]] | None) ->
 	return f"上一轮用户问题：{prev}\n当前追问：{q}", "history"
 
 
-def stub_retrieve(query: str, library_id: str | None, _top_k: int) -> list[dict[str, Any]]:
+def stub_retrieve(
+	query: str,
+	library_id: str | None,
+	_top_k: int,
+	filters: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
 	"""Deterministic stub hits; special queries exercise refuse paths in tests."""
 	normalized = query.strip().lower()
 	if "无命中" in query or normalized.startswith("__no_hit__"):
@@ -229,19 +237,32 @@ def stub_retrieve(query: str, library_id: str | None, _top_k: int) -> list[dict[
 				"score": 0.11,
 				"text": "本附录仅作排版示例，不含人事制度条款。",
 				"used_rerank": False,
+				"record_type": "chunk",
 			}
 		]
 	_ = library_id
+	record_type = str((filters or {}).get("record_type") or "chunk")
 	hits = [dict(item) for item in STUB_CITATIONS]
 	for item in hits:
 		item["used_rerank"] = False
+		item["record_type"] = record_type
+		if record_type == "section":
+			item["section_path"] = item.get("section_path") or "第3章 请假制度"
+			item["source_chunk_ids"] = ["chk:stub-doc:0"]
+			item["record_id"] = "sec:stub-leave"
 	return hits
 
 
 def stub_generate(question: str, citations: list[dict[str, Any]]) -> str:
-	_ = question, citations
+	_ = question
+	# section 总结：若有章节路径，稍作提示（仍为 stub 固定答）
+	sectionish = any(
+		str(item.get("record_type") or "") == "section" or item.get("section_path")
+		for item in citations
+	)
+	prefix = "（章节摘要）" if sectionish else ""
 	return (
-		"根据现行人事制度，病假须于返岗后三个工作日内补交证明材料，并由直属主管确认。"
+		f"{prefix}根据现行人事制度，病假须于返岗后三个工作日内补交证明材料，并由直属主管确认。"
 		"逾期未补交的，可按事假或旷工规则处理（以制度原文为准）。"
 		"\n\n（当前为 stub 路径：未调用真实 LLM。）"
 	)
@@ -376,7 +397,30 @@ def build_ask_graph(
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
 		plan = state.get("retrieval_plan") or {}
 		top_k = int(plan.get("top_k") or settings.retrieve_top_k)
-		citations = retrieve_fn(query, state.get("library_id"), top_k)
+		filters = dict(plan.get("filters") or {})
+		if plan.get("record_type") and "record_type" not in filters:
+			filters["record_type"] = plan["record_type"]
+		try:
+			citations = retrieve_fn(query, state.get("library_id"), top_k, filters)
+		except TypeError:
+			citations = retrieve_fn(query, state.get("library_id"), top_k)
+		# 薄 citation_check：section 命中应能回溯 source_chunk_ids
+		citation_check = {"ok": True, "missing_source_chunk_ids": 0}
+		if str(filters.get("record_type") or "") == "section":
+			missing = sum(
+				1
+				for item in citations
+				if not (item.get("source_chunk_ids") or [])
+			)
+			citation_check = {
+				"ok": missing == 0,
+				"missing_source_chunk_ids": missing,
+			}
+		debug_extra: dict[str, Any] = {
+			"record_type": filters.get("record_type"),
+			"filters": filters,
+			"citation_check": citation_check,
+		}
 		tool_trace: list[dict[str, Any]] = []
 		# TOOL_ASK：默认仍短路径；仅规范化 citation + 记录 search_docs 轨迹（多跳工具后续扩展）
 		if settings.tool_ask:
@@ -406,6 +450,7 @@ def build_ask_graph(
 				query=query,
 				tool_ask=bool(settings.tool_ask),
 				tool_trace=tool_trace,
+				**debug_extra,
 			),
 		}
 
@@ -565,10 +610,21 @@ class AskGraphService:
 			retrieval = retrieval_service or RetrievalService(self.settings)
 			self._retrieval_service = retrieval
 
-			def live_retrieve(query: str, library_id: str | None, top_k: int) -> list[dict[str, Any]]:
+			def live_retrieve(
+				query: str,
+				library_id: str | None,
+				top_k: int,
+				filters: dict[str, Any] | None = None,
+			) -> list[dict[str, Any]]:
 				if not library_id or not str(library_id).strip():
 					raise ValueError("library_id is required for live retrieval")
-				return retrieval.search(query=query, library_id=library_id, top_k=top_k)
+				return retrieval.search(
+					query=query,
+					library_id=library_id,
+					top_k=top_k,
+					filters=filters,
+					record_type=str((filters or {}).get("record_type") or "chunk"),
+				)
 
 			self._retrieve = live_retrieve
 		else:

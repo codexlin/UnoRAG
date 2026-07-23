@@ -1,10 +1,20 @@
-"""规则版 QueryRouter — Phase 1：分类 intent，不引入 LLM classifier。"""
+"""规则版 QueryRouter — Phase 1+2A：分类 intent，不引入 LLM classifier。"""
 
 from __future__ import annotations
 
 from typing import Any, Literal
 
-QueryType = Literal["fact", "follow_up", "summary", "compare", "table", "ambiguous"]
+from app.services.ingest.index_record import looks_like_section_lookup
+
+QueryType = Literal[
+	"fact",
+	"follow_up",
+	"summary",
+	"compare",
+	"table",
+	"section_lookup",
+	"ambiguous",
+]
 
 SUMMARY_KEYWORDS = (
 	"总结",
@@ -61,10 +71,16 @@ def classify_query(
 	*,
 	history: list[dict[str, str]] | None = None,
 ) -> tuple[QueryType, str]:
-	"""按规则返回 (query_type, reason)。优先级：ambiguous → summary → table → compare → follow_up → fact。"""
+	"""按规则返回 (query_type, reason)。
+
+	优先级：ambiguous → section_lookup → summary → table → compare → follow_up → fact。
+	"""
 	q = (question or "").strip()
 	if not q or q in AMBIGUOUS_EXACT or len(q) <= 1:
 		return "ambiguous", "too_short_or_vague"
+
+	if looks_like_section_lookup(q):
+		return "section_lookup", "section_lookup_pattern"
 
 	if any(token in q for token in SUMMARY_KEYWORDS):
 		return "summary", "summary_keyword"

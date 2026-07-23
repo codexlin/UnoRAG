@@ -78,7 +78,7 @@ def test_rerank_reorders_hits() -> None:
 	settings = Settings(ask_mode="stub", rerank_enabled=True, rerank_top_k=2, retrieve_top_k=2)
 
 	class _Store:
-		def search(self, *, vector, library_id, top_k):
+		def search(self, *, vector, library_id, top_k, **_kwargs):
 			_ = vector, library_id
 			return [
 				{
@@ -120,7 +120,7 @@ def test_rerank_fallback_on_error() -> None:
 	settings = Settings(ask_mode="stub", rerank_enabled=True, retrieve_top_k=2)
 
 	class _Store:
-		def search(self, *, vector, library_id, top_k):
+		def search(self, *, vector, library_id, top_k, **_kwargs):
 			_ = vector, library_id
 			return [
 				{
@@ -169,7 +169,7 @@ def test_hybrid_failure_flags_dense_fallback() -> None:
 	)
 
 	class _Store:
-		def search(self, *, vector, library_id, top_k):
+		def search(self, *, vector, library_id, top_k, **_kwargs):
 			_ = vector, library_id
 			return [
 				{
@@ -184,7 +184,7 @@ def test_hybrid_failure_flags_dense_fallback() -> None:
 				}
 			][:top_k]
 
-		def list_chunks(self, *, library_id, limit=10_000):
+		def list_chunks(self, *, library_id, limit=10_000, **_kwargs):
 			_ = library_id, limit
 			raise RuntimeError("bm25 corpus unavailable")
 
@@ -210,7 +210,7 @@ def test_retrieval_requires_library_id() -> None:
 	settings = Settings(ask_mode="stub", retrieve_top_k=1)
 
 	class _Store:
-		def search(self, *, vector, library_id, top_k):
+		def search(self, *, vector, library_id, top_k, **_kwargs):
 			_ = vector, library_id, top_k
 			raise AssertionError("search must not run without library_id")
 

@@ -48,6 +48,10 @@ class Citation(BaseModel):
 	# Phase 1 预埋：无完整 version 表时为派生 stub
 	document_version_id: str | None = None
 	tenant_id: str | None = None
+	# Phase 2A：多粒度
+	record_type: str | None = None
+	record_id: str | None = None
+	source_chunk_ids: list[str] = Field(default_factory=list)
 
 
 class ArchiveTurnResponse(BaseModel):

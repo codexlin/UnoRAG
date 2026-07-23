@@ -107,6 +107,10 @@ def _check_expect(expect: EvalExpect, observed: dict[str, Any]) -> list[str]:
 		blob = str(observed.get("detail") or "")
 		if expect.detail_substr not in blob:
 			errors.append(f"detail missing {expect.detail_substr!r} got={blob!r}")
+	if expect.record_type is not None and observed.get("record_type") != expect.record_type:
+		errors.append(
+			f"record_type want={expect.record_type} got={observed.get('record_type')}"
+		)
 	return errors
 
 
@@ -412,7 +416,15 @@ def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 	fixture_name = case.fixture or "handbook.md"
 	doc = _load_ir_for_fixture(fixture_name)
 	chunks = chunk_document(doc)
-	payloads = chunks_to_payloads(chunks, filename=doc.filename or fixture_name)
+	record_type = str(case.expect.record_type or "chunk")
+	payloads = chunks_to_payloads(
+		chunks,
+		filename=doc.filename or fixture_name,
+		doc_id=doc.id,
+		library_id=case.library_id or "lib-eval",
+		include_sections=True,
+	)
+	# fact 隔离：只 upsert 所需粒度时仍写入全部，靠 search filter 验证 section 不进 fact
 	dimensions = 128
 	recall_at_k = int(case.expect.recall_at_k or 3)
 	settings = Settings(
@@ -429,6 +441,9 @@ def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 	class _EvalEmbeddings:
 		def embed_query(self, text: str) -> list[float]:
 			return _deterministic_vector(text, dimensions=dimensions)
+
+		def embed_texts(self, texts: list[str]) -> list[list[float]]:
+			return [_deterministic_vector(text, dimensions=dimensions) for text in texts]
 
 	client = QdrantClient(location=":memory:")
 	try:
@@ -454,6 +469,8 @@ def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 			query=case.question,
 			library_id=case.library_id or "lib-eval",
 			top_k=recall_at_k,
+			record_type=record_type,
+			filters={"record_type": record_type},
 		)
 	finally:
 		client.close()
@@ -479,16 +496,23 @@ def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 
 	chosen = matched or top
 	mrr = (1.0 / observed_rank) if observed_rank else 0.0
+	# fact 隔离：chunk 检索结果中不得出现 section 记录
+	polluted = [
+		item for item in hits if str(item.get("record_type") or "") == "section"
+	] if record_type == "chunk" else []
 	observed = {
 		"body": chosen.get("body") if chosen else None,
 		"section_path": chosen.get("section_path") if chosen else None,
 		"document_version_id": chosen.get("document_version_id") if chosen else None,
+		"record_type": (chosen.get("record_type") if chosen else None) or record_type,
+		"source_chunk_ids": chosen.get("source_chunk_ids") if chosen else None,
 		"hit_count": len(hits),
 		"recall_at_k": recall_at_k,
 		"recall_hit": observed_rank is not None,
 		"observed_rank": observed_rank,
 		"mrr": mrr,
 		"metric": f"Recall@{recall_at_k}",
+		"section_pollution_count": len(polluted),
 	}
 	errors = _check_expect(case.expect, observed)
 	if top is None:
@@ -500,6 +524,10 @@ def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 		)
 	elif chosen and not observed["document_version_id"]:
 		errors.append("retrieval hit missing document_version_id")
+	if record_type == "chunk" and polluted:
+		errors.append("section records leaked into chunk retrieval")
+	if record_type == "section" and chosen and not (chosen.get("source_chunk_ids") or []):
+		errors.append("section hit missing source_chunk_ids")
 	return EvalCaseResult(
 		id=case.id,
 		ok=not errors,

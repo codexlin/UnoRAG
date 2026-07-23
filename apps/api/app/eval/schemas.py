@@ -19,6 +19,7 @@ class EvalExpect(BaseModel):
 	# retrieval：默认按 Recall@K 判命中；max_rank 收紧名次（1-based）
 	max_rank: int | None = None
 	recall_at_k: int | None = None
+	record_type: str | None = None
 	# ingest_http
 	http_status: int | None = None
 	http_status_any: list[int] = Field(default_factory=list)

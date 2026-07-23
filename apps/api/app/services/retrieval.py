@@ -112,7 +112,12 @@ class IngestService:
 		resolved_doc_id = doc_id or str(uuid4())
 		if not chunks:
 			raise ValueError("no chunks to ingest")
-		payloads = chunks_to_payloads(chunks, filename=filename)
+		payloads = chunks_to_payloads(
+			chunks,
+			filename=filename,
+			doc_id=resolved_doc_id,
+			library_id=library_id,
+		)
 		embed_inputs = [str(item.get("embed_text") or item.get("text") or "") for item in payloads]
 		self.delete_document_chunks(doc_id=resolved_doc_id, library_id=library_id)
 		vectors = self.embeddings.embed_texts(embed_inputs)
@@ -124,18 +129,24 @@ class IngestService:
 			vectors=vectors,
 			filename=filename,
 		)
+		chunk_only = sum(1 for item in payloads if item.get("record_type", "chunk") == "chunk")
+		section_only = sum(1 for item in payloads if item.get("record_type") == "section")
 		get_bm25_cache().invalidate(library_id)
 		logger.info(
-			"ingest.ir.done library_id=%s doc_id=%s chunks=%s",
+			"ingest.ir.done library_id=%s doc_id=%s points=%s chunks=%s sections=%s",
 			library_id,
 			resolved_doc_id,
 			count,
+			chunk_only,
+			section_only,
 		)
 		result: dict[str, Any] = {
 			"library_id": library_id,
 			"doc_id": resolved_doc_id,
 			"title": title,
-			"chunk_count": count,
+			"chunk_count": chunk_only,
+			"section_count": section_only,
+			"point_count": count,
 		}
 		if parser_report is not None:
 			result["parser_report"] = parser_report
@@ -201,18 +212,32 @@ class RetrievalService:
 			self.reranker = None
 		self.last_debug: dict[str, Any] = {}
 
-	def search(self, *, query: str, library_id: str | None, top_k: int | None = None) -> list[dict[str, Any]]:
+	def search(
+		self,
+		*,
+		query: str,
+		library_id: str | None,
+		top_k: int | None = None,
+		record_type: str | None = "chunk",
+		filters: dict[str, Any] | None = None,
+	) -> list[dict[str, Any]]:
 		if not library_id or not str(library_id).strip():
 			raise ValueError("library_id is required for retrieval")
 		resolved_library = str(library_id).strip()
 		limit = top_k or self.settings.retrieve_top_k
 		# Pull a slightly wider dense pool when rerank / hybrid will trim.
 		dense_k = max(limit, self.settings.rerank_top_k, self.settings.bm25_top_k)
+		resolved_type = None
+		if filters and filters.get("record_type"):
+			resolved_type = str(filters["record_type"])
+		elif record_type:
+			resolved_type = str(record_type)
 		vector = self.embeddings.embed_query(query)
 		dense_hits = self.store.search(
 			vector=vector,
 			library_id=resolved_library,
 			top_k=dense_k,
+			record_type=resolved_type,
 		)
 		hits = dense_hits
 		used_hybrid = False
@@ -225,6 +250,7 @@ class RetrievalService:
 					library_id=resolved_library,
 					dense_hits=dense_hits,
 					limit=dense_k,
+					record_type=resolved_type or "chunk",
 				)
 				used_hybrid = True
 			except Exception as exc:
@@ -268,6 +294,9 @@ class RetrievalService:
 					"filename": hit.get("filename"),
 					"document_version_id": hit.get("document_version_id"),
 					"tenant_id": hit.get("tenant_id"),
+					"record_type": hit.get("record_type") or resolved_type or "chunk",
+					"record_id": hit.get("record_id"),
+					"source_chunk_ids": hit.get("source_chunk_ids") or [],
 				}
 			)
 		final = self._maybe_rerank(query=query, citations=citations, top_k=limit)
@@ -285,6 +314,8 @@ class RetrievalService:
 			"dense_hit_count": len(dense_hits),
 			"fusion": "rrf" if used_hybrid else "dense",
 			"rrf_k": self.settings.rrf_k if used_hybrid else None,
+			"record_type": resolved_type,
+			"filters": dict(filters or {}),
 		}
 		for item in final:
 			item["used_hybrid"] = used_hybrid
@@ -297,11 +328,12 @@ class RetrievalService:
 		library_id: str,
 		dense_hits: list[dict[str, Any]],
 		limit: int,
+		record_type: str = "chunk",
 	) -> list[dict[str, Any]]:
 		cache = get_bm25_cache()
 		index = cache.get_or_build(
-			library_id,
-			lambda: self.store.list_chunks(library_id=library_id),
+			f"{library_id}:{record_type}",
+			lambda: self.store.list_chunks(library_id=library_id, record_type=record_type),
 		)
 		bm25_hits = index.search(query, top_k=self.settings.bm25_top_k)
 		if not bm25_hits:

@@ -72,6 +72,10 @@ class QdrantStore:
 			"document_version_id",
 			"tenant_id",
 			"workspace_id",
+			"record_type",
+			"record_id",
+			"parent_record_id",
+			"source_chunk_ids",
 		)
 		from app.services.versioning import derive_document_version_id
 
@@ -97,12 +101,16 @@ class QdrantStore:
 				payload["tenant_id"] = "default"
 			if not payload.get("workspace_id"):
 				payload["workspace_id"] = "default"
+			# 缺省视为 chunk，兼容旧点
+			if not payload.get("record_type"):
+				payload["record_type"] = "chunk"
 			resolved_filename = chunk.get("filename") or filename
 			if resolved_filename:
 				payload["filename"] = resolved_filename
+			point_id = chunk.get("_point_id") or str(uuid4())
 			points.append(
 				qm.PointStruct(
-					id=str(uuid4()),
+					id=point_id,
 					vector=vector,
 					payload=payload,
 				)
@@ -145,17 +153,40 @@ class QdrantStore:
 		vector: list[float],
 		library_id: str | None,
 		top_k: int,
+		record_type: str | None = None,
+		extra_must: list[qm.Condition] | None = None,
 	) -> list[dict[str, Any]]:
-		query_filter = None
+		must: list[qm.Condition] = []
 		if library_id:
-			query_filter = qm.Filter(
-				must=[
-					qm.FieldCondition(
-						key="library_id",
-						match=qm.MatchValue(value=library_id),
-					)
-				]
+			must.append(
+				qm.FieldCondition(
+					key="library_id",
+					match=qm.MatchValue(value=library_id),
+				)
 			)
+		# fact：只要 chunk；兼容旧点（无 record_type）
+		if record_type == "chunk":
+			must.append(
+				qm.Filter(
+					should=[
+						qm.FieldCondition(
+							key="record_type",
+							match=qm.MatchValue(value="chunk"),
+						),
+						qm.IsNullCondition(is_null=qm.PayloadField(key="record_type")),
+					]
+				)
+			)
+		elif record_type:
+			must.append(
+				qm.FieldCondition(
+					key="record_type",
+					match=qm.MatchValue(value=record_type),
+				)
+			)
+		if extra_must:
+			must.extend(extra_must)
+		query_filter = qm.Filter(must=must) if must else None
 		# Prefer query_points (newer client); fall back to search.
 		try:
 			response = self.client.query_points(
@@ -200,6 +231,9 @@ class QdrantStore:
 					"filename": payload.get("filename"),
 					"document_version_id": payload.get("document_version_id"),
 					"tenant_id": payload.get("tenant_id"),
+					"record_type": payload.get("record_type") or "chunk",
+					"record_id": payload.get("record_id"),
+					"source_chunk_ids": payload.get("source_chunk_ids") or [],
 					"text": body,
 					"body": body,
 				}
@@ -211,18 +245,37 @@ class QdrantStore:
 		*,
 		library_id: str | None = None,
 		limit: int = 10_000,
+		record_type: str | None = "chunk",
 	) -> list[dict[str, Any]]:
-		"""Scroll payload chunks for BM25 corpus building."""
-		query_filter = None
+		"""Scroll payload chunks for BM25 corpus building（默认仅 chunk 粒度）。"""
+		must: list[qm.Condition] = []
 		if library_id:
-			query_filter = qm.Filter(
-				must=[
-					qm.FieldCondition(
-						key="library_id",
-						match=qm.MatchValue(value=library_id),
-					)
-				]
+			must.append(
+				qm.FieldCondition(
+					key="library_id",
+					match=qm.MatchValue(value=library_id),
+				)
 			)
+		if record_type == "chunk":
+			must.append(
+				qm.Filter(
+					should=[
+						qm.FieldCondition(
+							key="record_type",
+							match=qm.MatchValue(value="chunk"),
+						),
+						qm.IsNullCondition(is_null=qm.PayloadField(key="record_type")),
+					]
+				)
+			)
+		elif record_type:
+			must.append(
+				qm.FieldCondition(
+					key="record_type",
+					match=qm.MatchValue(value=record_type),
+				)
+			)
+		query_filter = qm.Filter(must=must) if must else None
 		chunks: list[dict[str, Any]] = []
 		offset = None
 		while len(chunks) < limit:
@@ -258,6 +311,9 @@ class QdrantStore:
 						"library_id": payload.get("library_id"),
 						"document_version_id": payload.get("document_version_id"),
 						"tenant_id": payload.get("tenant_id"),
+						"record_type": payload.get("record_type") or "chunk",
+						"record_id": payload.get("record_id"),
+						"source_chunk_ids": payload.get("source_chunk_ids") or [],
 					}
 				)
 			if offset is None:

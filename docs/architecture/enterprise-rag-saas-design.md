@@ -1211,10 +1211,19 @@ Phase 1 hardening：另含少量 `ingest_http` 用例，覆盖正例 upload→re
 
 目标：提升复杂问题能力。
 
-- 增加 section-level records。
+#### Phase 2A（进行中 / 已落地核心）：Section-level
+
+- [x] 统一 `IndexRecord`（`chunk | section | …`），同 collection + `record_type` 过滤。
+- [x] 入库按 `section_path` 聚合生成 section records（确定性 ID；过长分段；无 LLM summary）。
+- [x] `RetrievalPlan.filters.record_type` 真正驱动检索：`fact/follow_up→chunk`，`summary/section_lookup→section`。
+- [x] QueryRouter 增加规则版 `section_lookup`。
+- [x] Ask 图：section 路径复用短链路 + 薄 `citation_check`（`source_chunk_ids`）；archive/debug 可见 `record_type`。
+- [x] 黄金集：章节 Recall、fact 不泄漏 section、HTTP 兼容。
+
+#### Phase 2B+（后续）
+
 - 增加 document summary index。
 - 增加 table chunk / row group index。
-- RetrievalService 支持按 query_type 选择 chunk / section / document summary。
 - UI citation 支持版本、章节、表格定位。
 - 在业务接口稳定后，引入 LangChain Retriever / Tool 适配层，复用已验证的 `RetrievalPlan`。
 

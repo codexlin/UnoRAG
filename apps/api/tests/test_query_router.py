@@ -1,10 +1,12 @@
-"""QueryRouter / RetrievalPlan / archive 字段 Phase 1 单测。"""
+"""QueryRouter / RetrievalPlan / archive 字段 Phase 1+2A 单测。"""
 
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.ingest.index_record import build_section_records_from_chunks, chunk_record_id
+from app.services.ingest.ir import Chunk, SplitStrategy
 from app.services.query_router import classify_query
 from app.services.retrieval_plan import build_retrieval_plan
 from app.services.versioning import derive_document_version_id
@@ -19,6 +21,8 @@ def test_classify_query_rules() -> None:
 	assert classify_query("表格里供应商报价")[0] == "table"
 	assert classify_query("A 和 B 区别？")[0] == "compare"
 	assert classify_query("？")[0] == "ambiguous"
+	assert classify_query("第3章讲什么？")[0] == "section_lookup"
+	assert classify_query("请假制度这一节有哪些规定？")[0] == "section_lookup"
 	assert (
 		classify_query(
 			"那逾期呢？",
@@ -35,7 +39,7 @@ def test_classify_query_rules() -> None:
 	)
 
 
-def test_retrieval_plan_phase1_paths() -> None:
+def test_retrieval_plan_phase2a_record_types() -> None:
 	fact = build_retrieval_plan(
 		query_type="fact",
 		route_reason="default_fact",
@@ -45,6 +49,9 @@ def test_retrieval_plan_phase1_paths() -> None:
 		rerank_enabled=False,
 	)
 	assert fact["execute_path"] == "short"
+	assert fact["record_type"] == "chunk"
+	assert fact["filters"]["record_type"] == "chunk"
+
 	summary = build_retrieval_plan(
 		query_type="summary",
 		route_reason="summary_keyword",
@@ -53,10 +60,23 @@ def test_retrieval_plan_phase1_paths() -> None:
 		hybrid_enabled=True,
 		rerank_enabled=True,
 	)
-	assert summary["execute_path"] == "short"
-	assert summary["query_type"] == "summary"
-	assert summary["top_k"] == 6
-	assert "phase1_record_only" in summary["reason"]
+	assert summary["execute_path"] == "section_short"
+	assert summary["record_type"] == "section"
+	assert summary["filters"]["record_type"] == "section"
+	assert summary["top_k"] >= 8
+	assert "section_retrieval" in summary["reason"]
+
+	section = build_retrieval_plan(
+		query_type="section_lookup",
+		route_reason="section_lookup_pattern",
+		library_id="lib-1",
+		top_k=6,
+		hybrid_enabled=False,
+		rerank_enabled=False,
+	)
+	assert section["execute_path"] == "section_short"
+	assert section["record_type"] == "section"
+
 	amb = build_retrieval_plan(
 		query_type="ambiguous",
 		route_reason="too_short",
@@ -66,6 +86,47 @@ def test_retrieval_plan_phase1_paths() -> None:
 		rerank_enabled=False,
 	)
 	assert amb["execute_path"] == "clarify"
+
+
+def test_section_records_aggregate_and_deterministic_ids() -> None:
+	chunks = [
+		Chunk(
+			chunk_index=0,
+			text="a",
+			body="病假须于返岗后三个工作日内补交。",
+			section_path="第3章 请假制度",
+			heading_text="请假制度",
+			split_strategy=SplitStrategy.HEADING,
+		),
+		Chunk(
+			chunk_index=1,
+			text="b",
+			body="年假不扣薪。",
+			section_path="第3章 请假制度",
+			heading_text="请假制度",
+			split_strategy=SplitStrategy.HEADING,
+		),
+		Chunk(
+			chunk_index=2,
+			text="c",
+			body="薪酬按月发放。",
+			section_path="第4章 薪酬福利",
+			heading_text="薪酬福利",
+			split_strategy=SplitStrategy.HEADING,
+		),
+	]
+	first = build_section_records_from_chunks(chunks, doc_id="doc-a")
+	second = build_section_records_from_chunks(chunks, doc_id="doc-a")
+	assert len(first) == 2
+	assert {item.section_path for item in first} == {"第3章 请假制度", "第4章 薪酬福利"}
+	leave = next(item for item in first if item.section_path and "第3章" in item.section_path)
+	assert "三个工作日" in leave.body and "年假" in leave.body
+	assert leave.source_chunk_ids == [
+		chunk_record_id("doc-a", 0),
+		chunk_record_id("doc-a", 1),
+	]
+	assert [item.record_id for item in first] == [item.record_id for item in second]
+	assert [item.point_uuid() for item in first] == [item.point_uuid() for item in second]
 
 
 def test_document_version_stub() -> None:
@@ -87,6 +148,7 @@ def test_ask_writes_query_type_and_judge_to_archive() -> None:
 	assert body["retrieval_debug"]["query_type"] == "fact"
 	assert body["retrieval_debug"]["judgement"]["reason"] == "ok"
 	assert body["retrieval_debug"]["retrieval_plan"]["execute_path"] == "short"
+	assert body["retrieval_debug"]["retrieval_plan"]["record_type"] == "chunk"
 
 	archive = client.get("/v1/archive", params={"library_id": lib_id, "limit": 5})
 	assert archive.status_code == 200
@@ -99,6 +161,24 @@ def test_ask_writes_query_type_and_judge_to_archive() -> None:
 	assert isinstance(row["retrieval_plan"], dict)
 	assert row["rewrite"] == "passthrough"
 	assert row["rewritten_query"] == question
+
+
+def test_ask_section_lookup_uses_section_plan() -> None:
+	lib_id = create_library(client, library_id="lib-router-section")
+	ask = client.post(
+		"/v1/ask",
+		json={"question": "第3章讲什么？", "library_id": lib_id},
+	)
+	assert ask.status_code == 200
+	body = ask.json()
+	plan = body["retrieval_debug"]["retrieval_plan"]
+	assert body["retrieval_debug"]["query_type"] == "section_lookup"
+	assert plan["record_type"] == "section"
+	assert plan["execute_path"] == "section_short"
+	assert body["retrieval_debug"].get("record_type") == "section"
+	assert body["citations"]
+	assert body["citations"][0].get("record_type") == "section"
+	assert body["citations"][0].get("source_chunk_ids")
 
 
 def test_ask_ambiguous_clarifies_without_breaking_schema() -> None:
