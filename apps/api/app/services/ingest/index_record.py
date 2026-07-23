@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections import OrderedDict
 from typing import Any, Literal
 from uuid import uuid5, UUID
 
@@ -53,9 +52,15 @@ def chunk_record_id(doc_id: str, chunk_index: int) -> str:
 	return f"chk:{doc_id}:{int(chunk_index)}"
 
 
-def section_record_id(doc_id: str, section_path: str, *, part: int = 0) -> str:
+def section_record_id(
+	doc_id: str,
+	section_path: str,
+	*,
+	occurrence: int = 0,
+	part: int = 0,
+) -> str:
 	digest = hashlib.sha1(
-		f"{doc_id}|{section_path}|{part}".encode("utf-8")
+		f"{doc_id}|{section_path}|{occurrence}|{part}".encode("utf-8")
 	).hexdigest()[:16]
 	return f"sec:{digest}"
 
@@ -92,14 +97,25 @@ def build_section_records_from_chunks(
 	filename: str | None = None,
 	max_chars: int = DEFAULT_SECTION_MAX_CHARS,
 ) -> list[IndexRecord]:
-	"""按 section_path 聚合相邻 chunks → section IndexRecord（按 chunk 组装 part）。"""
-	groups: OrderedDict[str, list[Chunk]] = OrderedDict()
+	"""按连续同 section_path 的 chunk 跑聚合 → section IndexRecord（按 chunk 组装 part）。
+
+	仅合并相邻同 path 的 chunks；同名但非相邻（如 A→B→A）生成独立 section，
+	并用 occurrence 区分确定性 ID。无 path / ``__root__`` 同样按连续跑拆分。
+	"""
+	# 连续跑分组（相邻同 path 才合并）
+	runs: list[tuple[str, list[Chunk]]] = []
 	for chunk in chunks:
 		key = (chunk.section_path or "").strip() or "__root__"
-		groups.setdefault(key, []).append(chunk)
+		if runs and runs[-1][0] == key:
+			runs[-1][1].append(chunk)
+		else:
+			runs.append((key, [chunk]))
 
+	occurrence_counts: dict[str, int] = {}
 	records: list[IndexRecord] = []
-	for path, group in groups.items():
+	for path, group in runs:
+		occurrence = occurrence_counts.get(path, 0)
+		occurrence_counts[path] = occurrence + 1
 		display_path = None if path == "__root__" else path
 		heading = next((c.heading_text for c in group if c.heading_text), None)
 		if not heading and display_path:
@@ -158,7 +174,9 @@ def build_section_records_from_chunks(
 			page_starts = [int(m.page_start) for m in members if m.page_start is not None]
 			page_ends = [int(m.page_end) for m in members if m.page_end is not None]
 			embed = f"{prefix}\n\n{part_body}" if prefix else part_body
-			rid = section_record_id(doc_id, path, part=part_idx)
+			rid = section_record_id(
+				doc_id, path, occurrence=occurrence, part=part_idx
+			)
 			records.append(
 				IndexRecord(
 					record_type="section",

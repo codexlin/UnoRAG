@@ -206,13 +206,36 @@ def test_retry_then_generate() -> None:
 
 def test_build_graph_compile() -> None:
 	settings = Settings(ask_mode="stub")
+	calls: dict[str, object] = {"n": 0}
+
+	def retrieve_fn(
+		_query: str,
+		_library_id: str | None,
+		_top_k: int,
+		_filters: dict | None = None,
+	):
+		calls["n"] = int(calls["n"]) + 1
+		return []
+
 	graph = build_ask_graph(
 		settings=settings,
-		retrieve_fn=lambda q, lib, k: [],
+		retrieve_fn=retrieve_fn,
 		generate_fn=stub_generate,
 		mode="stub",
 	)
 	assert graph is not None
+	# 实际 invoke 一次，强制校验 RetrieveFn 为 4 参签名
+	state = graph.invoke(
+		{
+			"session_id": "s-compile",
+			"question": "病假几天？",
+			"library_id": "lib-compile",
+			"history": [],
+			"retrieval_debug": {},
+		}
+	)
+	assert state is not None
+	assert int(calls["n"]) >= 1
 
 
 def test_ingest_simulates_in_stub() -> None:

@@ -129,6 +129,75 @@ def test_section_records_aggregate_and_deterministic_ids() -> None:
 	assert [item.point_uuid() for item in first] == [item.point_uuid() for item in second]
 
 
+def test_section_records_do_not_merge_non_adjacent_same_path() -> None:
+	"""A → B → A 不得合并成一个 A；无 path 的 head/tail 也不得跨中间节合并。"""
+	chunks = [
+		Chunk(
+			chunk_index=0,
+			text="a1",
+			body="第一章开头。",
+			section_path="第1章",
+			heading_text="第1章",
+			split_strategy=SplitStrategy.HEADING,
+		),
+		Chunk(
+			chunk_index=1,
+			text="b",
+			body="第二章内容。",
+			section_path="第2章",
+			heading_text="第2章",
+			split_strategy=SplitStrategy.HEADING,
+		),
+		Chunk(
+			chunk_index=2,
+			text="a2",
+			body="第一章再出现。",
+			section_path="第1章",
+			heading_text="第1章",
+			split_strategy=SplitStrategy.HEADING,
+		),
+		Chunk(
+			chunk_index=3,
+			text="root-head",
+			body="文档前言。",
+			section_path=None,
+			split_strategy=SplitStrategy.HEADING,
+		),
+		Chunk(
+			chunk_index=4,
+			text="mid",
+			body="有标题节。",
+			section_path="附录",
+			heading_text="附录",
+			split_strategy=SplitStrategy.HEADING,
+		),
+		Chunk(
+			chunk_index=5,
+			text="root-tail",
+			body="文档结尾。",
+			section_path=None,
+			split_strategy=SplitStrategy.HEADING,
+		),
+	]
+	records = build_section_records_from_chunks(chunks, doc_id="doc-aba")
+	# A, B, A, __root__, 附录, __root__
+	assert len(records) == 6
+
+	chapter1 = [r for r in records if r.section_path == "第1章"]
+	assert len(chapter1) == 2
+	assert chapter1[0].record_id != chapter1[1].record_id
+	assert "开头" in chapter1[0].body and "再出现" not in chapter1[0].body
+	assert "再出现" in chapter1[1].body and "开头" not in chapter1[1].body
+	assert chapter1[0].source_chunk_ids == [chunk_record_id("doc-aba", 0)]
+	assert chapter1[1].source_chunk_ids == [chunk_record_id("doc-aba", 2)]
+
+	roots = [r for r in records if r.section_path is None]
+	assert len(roots) == 2
+	assert roots[0].record_id != roots[1].record_id
+	assert "前言" in roots[0].body and "结尾" not in roots[0].body
+	assert "结尾" in roots[1].body and "前言" not in roots[1].body
+
+
 def test_section_parts_keep_local_source_chunk_ids() -> None:
 	chunks = [
 		Chunk(
