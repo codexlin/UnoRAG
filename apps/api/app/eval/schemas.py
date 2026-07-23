@@ -1,4 +1,4 @@
-"""Eval case / result schemas（Phase 1 smoke）。"""
+"""Eval case / result schemas（Phase 1 smoke + hardening）。"""
 
 from __future__ import annotations
 
@@ -16,11 +16,20 @@ class EvalExpect(BaseModel):
 	execute_path: str | None = None
 	section_substr: str | None = None
 	body_substr: str | None = None
+	# retrieval：默认按 Recall@K 判命中；max_rank 收紧名次（1-based）
+	max_rank: int | None = None
+	recall_at_k: int | None = None
+	# ingest_http
+	http_status: int | None = None
+	http_status_any: list[int] = Field(default_factory=list)
+	doc_status: str | None = None
+	error_substr: str | None = None
+	detail_substr: str | None = None
 
 
 class EvalCase(BaseModel):
 	id: str
-	kind: Literal["ask", "classify", "ingest_chunk", "retrieval"] = "ask"
+	kind: Literal["ask", "classify", "ingest_chunk", "retrieval", "ingest_http"] = "ask"
 	question: str = ""
 	library_id: str | None = "lib-eval"
 	session_id: str | None = None

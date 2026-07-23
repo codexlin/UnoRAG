@@ -108,4 +108,6 @@ curl -X POST localhost:8000/v1/ingest/upload \
   -F file=@testdata/md/handbook.md
 ```
 
+黄金集已覆盖部分本目录文件：`ingest_chunk` / `retrieval`（**Recall@3**）以及 `ingest_http`（plain→ready、leave-scanned→failed、sample.html→400）。
+
 体积参考：本集 PDF/DOCX 均约数 KB～数十 KB，远低于 50MB 上限。

@@ -1201,6 +1201,10 @@ Phase 1 子步骤：
 
 评测边界：当前基线已经能拦截 parser、chunker、Qdrant payload、`RetrievalService`、judge 和路由的基础回归，但不代表线上模型效果验收。外部 embedding、hybrid、rerank、答案忠实度和真实企业语料评测仍属于 Phase 5。
 
+检索指标说明：黄金集里的 retrieval 用例默认按 **Recall@3** 判定（目标片段出现在前 3 条即算命中），并记录 `observed_rank` / MRR；关键 fact/table 样例另设 `max_rank<=2` 收紧名次。不要把 Recall@3 误读成「必须第 1 名」。
+
+Phase 1 hardening：另含少量 `ingest_http` 用例，覆盖正例 upload→ready、扫描件失败可见、unsupported 格式 HTTP 400。
+
 数据库边界：Phase 1 保留启动期自动补列，但补列失败必须让 metadata 初始化失败，禁止静默降级成 `persisted=false`。正式环境仍应在 Phase 3 前引入版本化 migration，并把运行账号的 DDL 权限与应用读写权限分离。
 
 ### Phase 2：多粒度索引

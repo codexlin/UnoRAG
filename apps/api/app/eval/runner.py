@@ -79,6 +79,34 @@ def _check_expect(expect: EvalExpect, observed: dict[str, Any]) -> list[str]:
 		body = str(observed.get("body") or "")
 		if expect.body_substr not in body:
 			errors.append(f"body missing {expect.body_substr!r}")
+	if expect.max_rank is not None:
+		rank = observed.get("observed_rank")
+		if rank is None:
+			errors.append(f"max_rank={expect.max_rank} but observed_rank is missing (no hit in Recall@K)")
+		elif int(rank) > int(expect.max_rank):
+			errors.append(f"observed_rank={rank} exceeds max_rank={expect.max_rank}")
+	if expect.http_status is not None and observed.get("http_status") != expect.http_status:
+		errors.append(
+			f"http_status want={expect.http_status} got={observed.get('http_status')}"
+		)
+	if expect.http_status_any:
+		got_status = observed.get("http_status")
+		if got_status not in expect.http_status_any:
+			errors.append(
+				f"http_status want one of {expect.http_status_any} got={got_status}"
+			)
+	if expect.doc_status is not None and observed.get("doc_status") != expect.doc_status:
+		errors.append(
+			f"doc_status want={expect.doc_status} got={observed.get('doc_status')}"
+		)
+	if expect.error_substr is not None:
+		blob = str(observed.get("error") or "")
+		if expect.error_substr not in blob:
+			errors.append(f"error missing {expect.error_substr!r} got={blob!r}")
+	if expect.detail_substr is not None:
+		blob = str(observed.get("detail") or "")
+		if expect.detail_substr not in blob:
+			errors.append(f"detail missing {expect.detail_substr!r} got={blob!r}")
 	return errors
 
 
@@ -211,6 +239,7 @@ def _resolve_fixture_path(fixture_name: str) -> Path:
 				TESTDATA / "txt" / name,
 				TESTDATA / "pdf" / name,
 				TESTDATA / "docx" / name,
+				TESTDATA / "unsupported" / name,
 			]
 		)
 	for path in candidates:
@@ -367,7 +396,11 @@ def _deterministic_vector(text: str, *, dimensions: int = 128) -> list[float]:
 
 
 def _run_retrieval(case: EvalCase) -> EvalCaseResult:
-	"""真实经过 QdrantStore + RetrievalService 的本地可重复检索回归。"""
+	"""真实经过 QdrantStore + RetrievalService 的本地可重复检索回归。
+
+	默认指标是 Recall@K（K=retrieve_top_k，当前为 3）：目标片段出现在前 K 条即算命中。
+	可用 expect.max_rank 收紧名次（1-based）。
+	"""
 	from qdrant_client import QdrantClient
 
 	from app.services.ingest.chunker import chunk_document
@@ -381,15 +414,16 @@ def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 	chunks = chunk_document(doc)
 	payloads = chunks_to_payloads(chunks, filename=doc.filename or fixture_name)
 	dimensions = 128
+	recall_at_k = int(case.expect.recall_at_k or 3)
 	settings = Settings(
 		ask_mode="stub",
 		embedding_dim=dimensions,
 		qdrant_collection=f"eval_{case.id.replace('-', '_')}",
 		hybrid_enabled=False,
 		rerank_enabled=False,
-		retrieve_top_k=3,
-		rerank_top_k=3,
-		bm25_top_k=3,
+		retrieve_top_k=recall_at_k,
+		rerank_top_k=recall_at_k,
+		bm25_top_k=recall_at_k,
 	)
 
 	class _EvalEmbeddings:
@@ -419,32 +453,52 @@ def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 		hits = service.search(
 			query=case.question,
 			library_id=case.library_id or "lib-eval",
-			top_k=3,
+			top_k=recall_at_k,
 		)
 	finally:
 		client.close()
 
 	top = hits[0] if hits else None
 	body_substr = (case.expect.body_substr or "").strip()
+	section_substr = (case.expect.section_substr or "").strip()
+	observed_rank: int | None = None
 	matched = None
-	if body_substr:
-		matched = next(
-			(item for item in hits if body_substr in str(item.get("body") or "")),
-			None,
-		)
+	for index, item in enumerate(hits, start=1):
+		body = str(item.get("body") or "")
+		section = str(item.get("section_path") or "")
+		body_ok = (not body_substr) or (body_substr in body)
+		section_ok = (not section_substr) or (section_substr in section)
+		if body_ok and section_ok and (body_substr or section_substr):
+			observed_rank = index
+			matched = item
+			break
+		if not body_substr and not section_substr and index == 1:
+			observed_rank = 1
+			matched = item
+			break
+
 	chosen = matched or top
+	mrr = (1.0 / observed_rank) if observed_rank else 0.0
 	observed = {
 		"body": chosen.get("body") if chosen else None,
 		"section_path": chosen.get("section_path") if chosen else None,
 		"document_version_id": chosen.get("document_version_id") if chosen else None,
 		"hit_count": len(hits),
+		"recall_at_k": recall_at_k,
+		"recall_hit": observed_rank is not None,
+		"observed_rank": observed_rank,
+		"mrr": mrr,
+		"metric": f"Recall@{recall_at_k}",
 	}
 	errors = _check_expect(case.expect, observed)
 	if top is None:
 		errors.append("retrieval returned no hits")
-	elif body_substr and matched is None:
-		errors.append(f"no retrieval hit contains body_substr={body_substr!r}")
-	elif not observed["document_version_id"]:
+	elif (body_substr or section_substr) and matched is None:
+		errors.append(
+			f"Recall@{recall_at_k} miss: no hit contains "
+			f"body={body_substr!r} section={section_substr!r}"
+		)
+	elif chosen and not observed["document_version_id"]:
 		errors.append("retrieval hit missing document_version_id")
 	return EvalCaseResult(
 		id=case.id,
@@ -453,6 +507,136 @@ def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 		errors=errors,
 		observed=observed,
 	)
+
+
+def _run_ingest_http(case: EvalCase) -> EvalCaseResult:
+	"""经正式 /v1/libraries + /v1/ingest/upload 的 HTTP 集成用例（同步 ingest）。"""
+	from fastapi.testclient import TestClient
+
+	from app.main import app
+	from app.services.metadata import reset_metadata_store
+	from app.settings import get_settings
+
+	fixture_name = case.fixture or ""
+	keys = (
+		"ASK_MODE",
+		"DASHSCOPE_API_KEY",
+		"OPENAI_API_KEY",
+		"METADATA_BACKEND",
+		"METADATA_PATH",
+		"DOCUMENT_STORAGE_DIR",
+		"STUB_INGEST_SIMULATE",
+		"INGEST_ASYNC",
+		"HYBRID_ENABLED",
+		"SESSION_MEMORY_ENABLED",
+	)
+	previous = {key: os.environ.get(key) for key in keys}
+	with TemporaryDirectory(prefix="meriknow-eval-http-") as tmp_dir:
+		os.environ.update(
+			{
+				"ASK_MODE": "stub",
+				"DASHSCOPE_API_KEY": "",
+				"OPENAI_API_KEY": "",
+				"METADATA_BACKEND": "json",
+				"METADATA_PATH": str(Path(tmp_dir) / "metadata.json"),
+				"DOCUMENT_STORAGE_DIR": str(Path(tmp_dir) / "documents"),
+				"STUB_INGEST_SIMULATE": "true",
+				"INGEST_ASYNC": "false",
+				"HYBRID_ENABLED": "false",
+				"SESSION_MEMORY_ENABLED": "false",
+			}
+		)
+		get_settings.cache_clear()
+		reset_metadata_store()
+		try:
+			client = TestClient(app)
+			lib_id = case.library_id or f"lib-eval-{case.id}"
+			created = client.post(
+				"/v1/libraries",
+				json={"name": f"eval-{case.id}", "library_id": lib_id},
+			)
+			if created.status_code != 200:
+				return EvalCaseResult(
+					id=case.id,
+					ok=False,
+					kind=case.kind,
+					errors=[f"create library failed: {created.status_code} {created.text}"],
+					observed={"http_status": created.status_code, "detail": created.text},
+				)
+
+			path = _resolve_fixture_path(fixture_name)
+			content = path.read_bytes()
+			filename = path.name
+			mime = {
+				".md": "text/markdown",
+				".txt": "text/plain",
+				".pdf": "application/pdf",
+				".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+				".html": "text/html",
+				".htm": "text/html",
+				".csv": "text/csv",
+			}.get(path.suffix.lower(), "application/octet-stream")
+
+			response = client.post(
+				"/v1/ingest/upload",
+				data={"library_id": lib_id},
+				files={"file": (filename, content, mime)},
+			)
+			detail = response.text
+			try:
+				payload = response.json()
+			except Exception:
+				payload = {}
+			if isinstance(payload, dict) and "detail" in payload:
+				detail = str(payload.get("detail"))
+
+			doc_status = None
+			error = None
+			doc_id = None
+			if isinstance(payload, dict):
+				doc_id = payload.get("doc_id")
+				doc_status = payload.get("status")
+			if not doc_id and isinstance(payload, dict) and isinstance(payload.get("detail"), dict):
+				doc_id = payload["detail"].get("doc_id")
+				doc_status = payload["detail"].get("status")
+
+			# 同步失败时仍可能已建 doc；再查库确认状态
+			docs = client.get(f"/v1/libraries/{lib_id}/documents")
+			doc_row = None
+			if docs.status_code == 200:
+				rows = docs.json()
+				if doc_id:
+					doc_row = next((row for row in rows if row.get("id") == doc_id), None)
+				elif rows:
+					doc_row = rows[0]
+			if doc_row:
+				doc_status = doc_row.get("status") or doc_status
+				error = doc_row.get("error")
+
+			observed = {
+				"http_status": response.status_code,
+				"detail": detail,
+				"doc_status": doc_status,
+				"error": error or detail,
+				"doc_id": doc_id or (doc_row or {}).get("id"),
+				"payload_status": payload.get("status") if isinstance(payload, dict) else None,
+			}
+			errors = _check_expect(case.expect, observed)
+			return EvalCaseResult(
+				id=case.id,
+				ok=not errors,
+				kind=case.kind,
+				errors=errors,
+				observed=observed,
+			)
+		finally:
+			reset_metadata_store()
+			for key, value in previous.items():
+				if value is None:
+					os.environ.pop(key, None)
+				else:
+					os.environ[key] = value
+			get_settings.cache_clear()
 
 
 def run_eval_cases(path: Path | None = None) -> list[EvalCaseResult]:
@@ -465,6 +649,8 @@ def run_eval_cases(path: Path | None = None) -> list[EvalCaseResult]:
 			results.append(_run_ingest_chunk(case))
 		elif case.kind == "retrieval":
 			results.append(_run_retrieval(case))
+		elif case.kind == "ingest_http":
+			results.append(_run_ingest_http(case))
 		else:
 			results.append(_run_ask(case))
 	return results
@@ -477,9 +663,15 @@ def main(argv: list[str] | None = None) -> int:
 	passed = sum(1 for item in results if item.ok)
 	failed = [item for item in results if not item.ok]
 	print(f"[eval] cases={len(results)} passed={passed} failed={len(failed)} file={path}")
+	print("[eval] retrieval metric default = Recall@K (K=3 unless expect.recall_at_k overrides)")
 	for item in results:
 		mark = "PASS" if item.ok else "FAIL"
-		print(f"  {mark} {item.id} ({item.kind})")
+		extra = ""
+		if item.kind == "retrieval":
+			rank = (item.observed or {}).get("observed_rank")
+			metric = (item.observed or {}).get("metric") or "Recall@3"
+			extra = f" {metric} rank={rank}"
+		print(f"  {mark} {item.id} ({item.kind}){extra}")
 		for err in item.errors:
 			print(f"       - {err}")
 	return 1 if failed else 0

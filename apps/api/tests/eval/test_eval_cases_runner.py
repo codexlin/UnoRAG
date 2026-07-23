@@ -18,12 +18,18 @@ def test_eval_cases_file_has_smoke_size() -> None:
 	assert "classify" in kinds
 	assert "ingest_chunk" in kinds
 	assert "retrieval" in kinds
+	assert "ingest_http" in kinds
 	tags = {tag for c in cases for tag in c.tags}
 	assert "no_hit" in tags
 	assert "weak_match" in tags
 	assert any(
 		(c.fixture or "").startswith("testdata/") for c in cases
 	), "expected real testdata fixtures wired into golden set"
+	assert any(
+		c.kind == "retrieval" and (c.expect.max_rank is not None) for c in cases
+	), "expected some retrieval cases to assert max_rank"
+	assert any(c.kind == "ingest_http" and "negative" in c.tags for c in cases)
+
 
 
 def test_eval_cases_runner_passes(monkeypatch) -> None:
