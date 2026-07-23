@@ -10,8 +10,8 @@ import json
 import logging
 import time
 from typing import Any, Callable
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+
+import httpx
 
 from app.services.ingest.adapters.mineru_ir import mineru_json_to_ir
 from app.services.ingest.backends.base import ParseRequest
@@ -39,44 +39,29 @@ def _post_multipart(
 	timeout_s: float,
 	extra_fields: dict[str, str] | None = None,
 ) -> bytes:
-	"""最小 multipart 上传，避免强制依赖 httpx（urllib 足够）。"""
-	boundary = f"----MeriKnowMinerU{int(time.time() * 1000)}"
-	body = bytearray()
-	fields = {"return_content_list": "true", **(extra_fields or {})}
-	for key, value in fields.items():
-		body.extend(f"--{boundary}\r\n".encode())
-		body.extend(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode())
-		body.extend(f"{value}\r\n".encode())
-	body.extend(f"--{boundary}\r\n".encode())
-	body.extend(
-		(
-			f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-			"Content-Type: application/pdf\r\n\r\n"
-		).encode()
-	)
-	body.extend(content)
-	body.extend(b"\r\n")
-	body.extend(f"--{boundary}--\r\n".encode())
-
-	req = Request(
-		url,
-		data=bytes(body),
-		method="POST",
-		headers={
-			"Content-Type": f"multipart/form-data; boundary={boundary}",
-			"Accept": "application/json",
-		},
-	)
+	"""按官方 mineru-api 契约上传单个文件并要求 JSON content_list。"""
+	fields = {
+		"return_content_list": "true",
+		"response_format_zip": "false",
+		**(extra_fields or {}),
+	}
 	try:
-		with urlopen(req, timeout=timeout_s) as resp:
-			return resp.read()
-	except HTTPError as exc:
-		detail = exc.read().decode("utf-8", errors="replace")[:500]
-		raise MinerUClientError(f"MinerU HTTP {exc.code}: {detail}") from exc
-	except URLError as exc:
-		raise MinerUClientError(f"MinerU unreachable: {exc.reason}") from exc
-	except TimeoutError as exc:
+		response = httpx.post(
+			url,
+			data=fields,
+			files={"files": (filename, content, "application/pdf")},
+			headers={"Accept": "application/json"},
+			timeout=timeout_s,
+		)
+		response.raise_for_status()
+		return response.content
+	except httpx.TimeoutException as exc:
 		raise MinerUClientError(f"MinerU timeout after {timeout_s}s") from exc
+	except httpx.HTTPStatusError as exc:
+		detail = exc.response.text[:500]
+		raise MinerUClientError(f"MinerU HTTP {exc.response.status_code}: {detail}") from exc
+	except httpx.RequestError as exc:
+		raise MinerUClientError(f"MinerU unreachable: {exc}") from exc
 
 
 class MinerUBackend:
@@ -88,7 +73,7 @@ class MinerUBackend:
 		base_url: str,
 		timeout_s: float = 120.0,
 		max_retries: int = 2,
-		parse_path: str = "/parse",
+		parse_path: str = "/file_parse",
 		version: str = DEFAULT_MINERU_VERSION,
 		post_fn: Callable[..., bytes] | None = None,
 	) -> None:
@@ -273,10 +258,11 @@ class FakeMinerUBackend:
 					"page_idx": 0,
 					"bbox": [80, 140, 920, 420],
 				},
-				{
-					"type": "table",
-					"table_caption": ["跨页供应商报价表（第2页）"],
-					"table_body": (
+					{
+						"type": "table",
+						"table_caption": ["跨页供应商报价表（第2页）"],
+						"is_table_continuation": True,
+						"table_body": (
 						"<table><tr><th>供应商</th><th>报价</th></tr>"
 						"<tr><td>丙公司</td><td>95000</td></tr></table>"
 					),
@@ -306,7 +292,7 @@ def get_mineru_backend(
 	base_url: str,
 	timeout_s: float = 120.0,
 	max_retries: int = 2,
-	parse_path: str = "/parse",
+	parse_path: str = "/file_parse",
 	use_fake: bool = False,
 	fake_backend: FakeMinerUBackend | None = None,
 ) -> MinerUBackend | FakeMinerUBackend | None:

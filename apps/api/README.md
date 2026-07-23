@@ -57,6 +57,9 @@ curl -s -X POST http://localhost:8000/v1/ask \
 | `CHAT_MODEL` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` | 默认 qwen-plus / text-embedding-v3 / 1024 |
 | `QDRANT_URL` / `QDRANT_COLLECTION` | 向量库（默认 `http://localhost:6333`） |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | 默认 500 / 80（v2 节点内二次切 / legacy 字窗） |
+| `CHUNKING_PROFILE` / `CHUNK_POLICY_VERSION` | 默认 `balanced` / `v1`；profile 见 ADR 0003 |
+| `SEMANTIC_CHUNKING_ENABLED` | 默认 `false`；仅增强长、无结构叙事文本，失败显式降级 |
+| `SEMANTIC_CHUNK_MIN_CHARS` / `SEMANTIC_CHUNK_BREAK_PERCENTILE` | 默认 1200 / 85 |
 | `INGEST_PIPELINE` | `v2`（默认，IR 结构切）或 `legacy` |
 | `PDF_SCAN_STRATEGY` | `partial`（默认）\| `fail` |
 | `OCR_ENABLED` / `VLM_ENABLED` | 默认 `false`；见 `docs/adr/0001-ocr-vlm-adapters.md` |

@@ -1,16 +1,21 @@
-"""L3 structure-aware chunker.
-
-策略优先级（非 SemanticChunker）：
-1. heading 子树切（不跨同级/更高级标题）
-2. table / code 独立块
-3. 节点内 recursive / 字窗 fallback（记 split_strategy）
-"""
+"""L3 policy-driven, structure-aware chunker."""
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 from app.services.chunking import chunk_text
+from app.services.ingest.chunk_policy import (
+	POLICY_VERSION,
+	ChunkDecision,
+	ChunkingProfile,
+	SemanticEmbedder,
+	build_chunking_profile,
+	decide_special_node,
+	decide_text_strategy,
+	decision_metadata,
+)
 from app.services.ingest.ir import (
 	Chunk,
 	DocumentIR,
@@ -20,6 +25,7 @@ from app.services.ingest.ir import (
 	build_preamble,
 	format_page_label,
 )
+from app.services.ingest.semantic_chunker import SemanticChunkError, semantic_split
 
 # 句级/段级分隔：中文制度文档常见边界
 _RECURSIVE_SEPARATORS = ("\n\n", "\n", "。", "；", "！", "？", ". ", "; ", " ")
@@ -31,165 +37,174 @@ class ChunkerConfig:
 	chunk_overlap: int = 80
 	# heading 切片：以不超过该 level 的 heading 作为块边界（默认 H2）
 	heading_boundary_level: int = 2
+	profile_name: str = "balanced"
+	policy_version: str = POLICY_VERSION
+	semantic_enabled: bool = False
+	semantic_min_chars: int = 1200
+	semantic_break_percentile: int = 85
+
+	def resolved_profile(self) -> ChunkingProfile:
+		return build_chunking_profile(
+			name=self.profile_name,
+			chunk_size=self.chunk_size,
+			chunk_overlap=self.chunk_overlap,
+			heading_boundary_level=self.heading_boundary_level,
+			semantic_enabled=self.semantic_enabled,
+			semantic_min_chars=self.semantic_min_chars,
+			semantic_break_percentile=self.semantic_break_percentile,
+			policy_version=self.policy_version,
+		)
 
 
-def chunk_document(doc: DocumentIR, *, config: ChunkerConfig | None = None) -> list[Chunk]:
-	cfg = config or ChunkerConfig()
+def chunk_document(
+	doc: DocumentIR,
+	*,
+	config: ChunkerConfig | None = None,
+	semantic_embedder: SemanticEmbedder | None = None,
+) -> list[Chunk]:
+	profile = (config or ChunkerConfig()).resolved_profile()
 	if not doc.nodes:
 		return []
 
-	# 按 heading 边界分组：同组共享 section_path
-	sections = _split_into_sections(doc.nodes, boundary_level=cfg.heading_boundary_level)
+	sections = _split_into_sections(doc.nodes, boundary_level=profile.heading_boundary_level)
 	chunks: list[Chunk] = []
-	index = 0
 
 	for section in sections:
-		section_path = section.section_path
-		heading_text = section.heading_text
-		page_start = section.page_start
-		page_end = section.page_end
-
-		# 表 / 代码：专用策略，独立 chunk，不做 embedding 语义切
 		for node in section.special_nodes:
 			body = (node.text or "").strip()
-			if not body and not node.table_json:
-				continue
-			if node.type == NodeType.TABLE and node.table_json and not body:
+			if not body and node.table_json:
 				body = _table_json_to_text(node.table_json)
-			preamble = build_preamble(
-				title=doc.title,
-				section_path=section_path,
-				heading_text=heading_text,
-				page_start=node.page_start or page_start,
-				page_end=node.page_end or page_end,
-			)
-			strategy = SplitStrategy.TABLE if node.type == NodeType.TABLE else SplitStrategy.CODE
-			ps = node.page_start if node.page_start is not None else page_start
-			pe = node.page_end if node.page_end is not None else page_end
-			meta: dict = {}
+			if not body:
+				continue
+			decision = decide_special_node(node.type)
+			ps = node.page_start if node.page_start is not None else section.page_start
+			pe = node.page_end if node.page_end is not None else section.page_end
+			meta = decision_metadata(decision, profile)
 			if node.type == NodeType.TABLE and isinstance(node.table_json, dict):
 				meta["headers"] = [str(h) for h in (node.table_json.get("headers") or [])]
 				meta["rows"] = [
 					[str(c) for c in row] for row in (node.table_json.get("rows") or [])
 				]
-			chunks.append(
-				Chunk(
-					chunk_index=index,
-					text="",  # filled below
-					body=body,
-					preamble=preamble,
-					section_path=section_path,
-					heading_text=heading_text,
+				meta["table_rows_per_record"] = profile.table_rows_per_record
+			chunk = Chunk(
+				chunk_index=len(chunks),
+				text="",
+				body=body,
+				preamble=build_preamble(
+					title=doc.title,
+					section_path=section.section_path,
+					heading_text=section.heading_text,
 					page_start=ps,
 					page_end=pe,
-					page_label=format_page_label(ps, pe),
-					node_ids=[node.id],
-					table_id=node.table_id,
-					figure_id=node.figure_id,
-					split_strategy=strategy,
-					source_format=doc.source_format,
-					content_hash=doc.content_hash or doc.content_fingerprint(),
-					meta=meta,
-				)
+				),
+				section_path=section.section_path,
+				heading_text=section.heading_text,
+				page_start=ps,
+				page_end=pe,
+				page_label=format_page_label(ps, pe),
+				node_ids=[node.id],
+				table_id=node.table_id,
+				figure_id=node.figure_id,
+				split_strategy=decision.strategy,
+				source_format=doc.source_format,
+				content_hash=doc.content_hash or doc.content_fingerprint(),
+				meta=meta,
 			)
-			chunks[-1].text = chunks[-1].embed_text()
-			index += 1
+			chunk.text = chunk.embed_text()
+			chunks.append(chunk)
 
 		body = section.body_text.strip()
 		if not body:
 			continue
-
-		# 页级 PDF：优先保留页边界（page strategy）
-		if section.force_page_strategy and len(body) <= cfg.chunk_size:
-			preamble = build_preamble(
-				title=doc.title,
-				section_path=section_path,
-				heading_text=heading_text,
-				page_start=page_start,
-				page_end=page_end,
-			)
-			chunks.append(
-				_make_chunk(
-					index=index,
-					body=body,
-					preamble=preamble,
-					doc=doc,
-					section_path=section_path,
-					heading_text=heading_text,
-					page_start=page_start,
-					page_end=page_end,
-					node_ids=section.node_ids,
-					strategy=SplitStrategy.PAGE,
+		decision = decide_text_strategy(
+			text=body,
+			source_format=doc.source_format,
+			section_path=section.section_path,
+			force_page_strategy=section.force_page_strategy,
+			profile=profile,
+			semantic_available=semantic_embedder is not None,
+		)
+		extra_meta: dict = {}
+		if decision.strategy == SplitStrategy.SEMANTIC:
+			try:
+				result = semantic_split(body, embedder=semantic_embedder, profile=profile)
+				pieces = result.pieces
+				extra_meta.update(
+					{
+						"semantic_distance_threshold": result.distance_threshold,
+						"semantic_unit_count": result.unit_count,
+					}
 				)
-			)
-			index += 1
-			continue
-
-		if len(body) <= cfg.chunk_size:
-			preamble = build_preamble(
-				title=doc.title,
-				section_path=section_path,
-				heading_text=heading_text,
-				page_start=page_start,
-				page_end=page_end,
-			)
-			strategy = (
-				SplitStrategy.HEADING
-				if section_path
-				else (SplitStrategy.PAGE if page_start is not None else SplitStrategy.RECURSIVE)
-			)
-			chunks.append(
-				_make_chunk(
-					index=index,
-					body=body,
-					preamble=preamble,
-					doc=doc,
-					section_path=section_path,
-					heading_text=heading_text,
-					page_start=page_start,
-					page_end=page_end,
-					node_ids=section.node_ids,
-					strategy=strategy,
+			except SemanticChunkError as exc:
+				decision = ChunkDecision(SplitStrategy.RECURSIVE, "semantic_error_fallback")
+				extra_meta["semantic_fallback"] = type(exc.__cause__ or exc).__name__
+				pieces = _recursive_split(
+					body,
+					chunk_size=profile.target_chars,
+					overlap=profile.overlap_chars,
 				)
+		elif decision.strategy == SplitStrategy.PAGE:
+			# force_page + len<=max_chars → keep whole page (even if over target).
+			# Policy labels PAGE for page-boundary semantics; do not recursive-split
+			# while still tagging as PAGE (precise target < max made that mismatch).
+			pieces = [body]
+		elif len(body) <= profile.target_chars:
+			pieces = [body]
+		else:
+			pieces = _recursive_split(
+				body,
+				chunk_size=profile.target_chars,
+				overlap=profile.overlap_chars,
 			)
-			index += 1
-			continue
 
-		# 超长：节点内 recursive → char_window fallback
-		pieces = _recursive_split(body, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap)
-		strategy = SplitStrategy.RECURSIVE
 		if not pieces:
-			legacy = chunk_text(body, chunk_size=cfg.chunk_size, chunk_overlap=cfg.chunk_overlap)
-			pieces = [p.text for p in legacy]
-			strategy = SplitStrategy.CHAR_WINDOW
+			pieces = [
+				part.text
+				for part in chunk_text(
+					body,
+					chunk_size=profile.target_chars,
+					chunk_overlap=profile.overlap_chars,
+				)
+			]
+			decision = ChunkDecision(SplitStrategy.CHAR_WINDOW, "recursive_empty_fallback")
 
+		preamble = build_preamble(
+			title=doc.title,
+			section_path=section.section_path,
+			heading_text=section.heading_text,
+			page_start=section.page_start,
+			page_end=section.page_end,
+		)
 		for piece in pieces:
-			preamble = build_preamble(
-				title=doc.title,
-				section_path=section_path,
-				heading_text=heading_text,
-				page_start=page_start,
-				page_end=page_end,
-			)
 			chunks.append(
 				_make_chunk(
-					index=index,
+					index=len(chunks),
 					body=piece,
 					preamble=preamble,
 					doc=doc,
-					section_path=section_path,
-					heading_text=heading_text,
-					page_start=page_start,
-					page_end=page_end,
+					section_path=section.section_path,
+					heading_text=section.heading_text,
+					page_start=section.page_start,
+					page_end=section.page_end,
 					node_ids=section.node_ids,
-					strategy=strategy,
+					decision=decision,
+					profile=profile,
+					meta=extra_meta,
 				)
 			)
-			index += 1
 
-	# 重新编号，保证连续
-	for i, chunk in enumerate(chunks):
-		chunk.chunk_index = i
+	for index, chunk in enumerate(chunks):
+		chunk.chunk_index = index
+	strategy_counts = Counter(str(chunk.split_strategy) for chunk in chunks)
+	doc.parser_report.metrics["chunking"] = {
+		"policy_version": profile.policy_version,
+		"profile": profile.name,
+		"chunk_count": len(chunks),
+		"strategies": dict(strategy_counts),
+		"fallback_count": sum(
+			1 for chunk in chunks if "fallback" in str(chunk.meta.get("split_reason") or "")
+		),
+	}
 	return chunks
 
 
@@ -308,8 +323,12 @@ def _make_chunk(
 	page_start: int | None,
 	page_end: int | None,
 	node_ids: list[str],
-	strategy: SplitStrategy,
+	decision: ChunkDecision,
+	profile: ChunkingProfile,
+	meta: dict | None = None,
 ) -> Chunk:
+	chunk_meta = decision_metadata(decision, profile)
+	chunk_meta.update(meta or {})
 	chunk = Chunk(
 		chunk_index=index,
 		text="",
@@ -321,9 +340,10 @@ def _make_chunk(
 		page_end=page_end,
 		page_label=format_page_label(page_start, page_end),
 		node_ids=list(node_ids),
-		split_strategy=strategy,
+		split_strategy=decision.strategy,
 		source_format=doc.source_format,
 		content_hash=doc.content_hash or doc.content_fingerprint(),
+		meta=chunk_meta,
 	)
 	chunk.text = chunk.embed_text()
 	return chunk

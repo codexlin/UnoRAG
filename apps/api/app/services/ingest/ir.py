@@ -34,6 +34,7 @@ class SplitStrategy(StrEnum):
 	CODE = "code"
 	PAGE = "page"
 	RECURSIVE = "recursive"
+	SEMANTIC = "semantic"
 	CHAR_WINDOW = "char_window"
 
 

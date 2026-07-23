@@ -1,15 +1,17 @@
 # ADR 0002 — MinerU 补充复杂 / 扫描 PDF
 
-**状态：** Accepted（2026-07-23）  
+**状态：** Accepted（2026-07-23）
 **上下文：** Phase 2C 需处理扫描件、双栏、复杂表、公式页；不得替换已验证的 PyMuPDF 数字 PDF 路径。
 
 ## 决策
 
 1. **契约：** `DocumentParserBackend`；PyMuPDF 与 MinerU 均输出 `DocumentIR`。
 2. **路由（`mineru_mode=auto`）：** 先 PyMuPDF；仅当扫描/失败/复杂页信号触发时升级整本 MinerU。正常数字 PDF 不调用 MinerU。
-3. **MinerU 为独立 HTTP 服务：** `MINERU_URL` + timeout/retry；失败显式 degrade（有 PyMuPDF 节点则 partial）或 fail（无节点），禁止静默空文档。
-4. **适配器：** `content_list` JSON → nodes（heading/table/figure/equation + page/bbox/reading_order），表格进入既有 table IndexRecord 链。
-5. **默认关闭：** `MINERU_ENABLED=false`；测试可用 `MINERU_USE_FAKE=true`。
+3. **MinerU 为独立 HTTP 服务：** 默认遵循官方 `POST /file_parse` + multipart `files` 契约；`MINERU_URL` + timeout/retry，失败显式 degrade（有 PyMuPDF 节点则 partial）或 fail（无节点），禁止静默空文档。
+4. **适配器：** 支持直接 `content_list` 及 `results[filename].content_list` 包装；`content_list` 可为数组或 JSON 字符串，非法字符串显式失败。输出 heading/table/figure/equation + page/bbox/reading_order，表格进入既有 table IndexRecord 链。
+5. **表格边界：** 展开 `rowspan` / `colspan`，无 `<th>` 时不臆造表头；页眉、页脚、页码等辅助块不进入正文且不打断续表。仅对相邻页、列结构兼容且有明确 continuation 信号（或相同上游 table id）的表做跨页合并；`第 N 页` 只参与 caption 归一化，不能单独触发合并。
+6. **标题路径：** 按 `text_level` 维护 heading stack，向 chunker 提供完整 section path。
+7. **默认关闭：** `MINERU_ENABLED=false`；测试可用 `MINERU_USE_FAKE=true`。
 
 ## 后果
 

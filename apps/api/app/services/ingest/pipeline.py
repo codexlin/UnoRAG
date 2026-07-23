@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.services.documents import clean_display_title
+from app.services.ingest.chunk_policy import SemanticEmbedder
 from app.services.ingest.chunker import ChunkerConfig, chunk_document
 from app.services.ingest.ir import Chunk, DocumentIR, ParserReport
 from app.services.ingest.router import parse_to_ir, use_v2_pipeline
@@ -59,6 +60,7 @@ def prepare_ingest(
 	display_name: str | None = None,
 	doc_id: str | None = None,
 	content_type: str | None = None,
+	semantic_embedder: SemanticEmbedder | None = None,
 ) -> PreparedIngest:
 	name = (filename or "untitled.txt").strip() or "untitled.txt"
 	suffix = PurePosixPath(name).suffix.lower()
@@ -131,12 +133,28 @@ def prepare_ingest(
 	if display_name and display_name.strip():
 		ir.title = clean_display_title(display_name, filename=name)
 
+	resolved_semantic_embedder = semantic_embedder
+	if (
+		settings.semantic_chunking_enabled
+		and resolved_semantic_embedder is None
+		and settings.has_llm_key
+	):
+		from app.services.llm import EmbeddingService
+
+		resolved_semantic_embedder = EmbeddingService(settings).embed_texts
+
 	chunks = chunk_document(
 		ir,
 		config=ChunkerConfig(
 			chunk_size=settings.chunk_size,
 			chunk_overlap=settings.chunk_overlap,
+			profile_name=settings.chunking_profile,
+			policy_version=settings.chunk_policy_version,
+			semantic_enabled=settings.semantic_chunking_enabled,
+			semantic_min_chars=settings.semantic_chunk_min_chars,
+			semantic_break_percentile=settings.semantic_chunk_break_percentile,
 		),
+		semantic_embedder=resolved_semantic_embedder,
 	)
 	if not chunks:
 		raise ValueError("document produced no chunks after structure-aware split")
@@ -235,6 +253,19 @@ def chunks_to_payloads(
 			item["node_ids"] = list(chunk.node_ids)
 		if chunk.content_hash:
 			item["content_hash"] = chunk.content_hash
+		for key in (
+			"chunk_policy_version",
+			"chunk_profile",
+			"split_reason",
+			"target_chars",
+			"max_chars",
+			"table_rows_per_record",
+			"semantic_distance_threshold",
+			"semantic_unit_count",
+			"semantic_fallback",
+		):
+			if chunk.meta.get(key) is not None:
+				item[key] = chunk.meta[key]
 		if filename:
 			item["filename"] = filename
 		payloads.append(item)
@@ -252,6 +283,14 @@ def chunks_to_payloads(
 		for record in sections:
 			payloads.append(index_record_to_payload(record))
 	if include_tables and chunks:
+		table_rows_per_record = next(
+			(
+				int(chunk.meta["table_rows_per_record"])
+				for chunk in chunks
+				if chunk.meta.get("table_rows_per_record") is not None
+			),
+			40,
+		)
 		tables = build_table_records_from_chunks(
 			chunks,
 			doc_id=resolved_doc,
@@ -260,6 +299,7 @@ def chunks_to_payloads(
 			tenant_id=tenant_id,
 			workspace_id=workspace_id,
 			filename=filename,
+			max_rows=table_rows_per_record,
 		)
 		for record in tables:
 			payloads.append(index_record_to_payload(record))

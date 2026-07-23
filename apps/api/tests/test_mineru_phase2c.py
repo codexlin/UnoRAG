@@ -9,7 +9,12 @@ import pytest
 
 from app.services.ingest.adapters.mineru_ir import mineru_json_to_ir, parse_table_html
 from app.services.ingest.backends.base import ParseRequest
-from app.services.ingest.backends.mineru import FakeMinerUBackend, MinerUClientError
+from app.services.ingest.backends.mineru import (
+	FakeMinerUBackend,
+	MinerUBackend,
+	MinerUClientError,
+	_post_multipart,
+)
 from app.services.ingest.chunker import chunk_document
 from app.services.ingest.ir import NodeType
 from app.services.ingest.parsers.pdf_route import (
@@ -33,6 +38,97 @@ def test_parse_table_html_headers_rows() -> None:
 	assert parsed["rows"] == [["甲公司", "120000"]]
 
 
+def test_parse_table_html_keeps_headerless_first_row() -> None:
+	html = (
+		"<table><tr><td>甲公司</td><td>120000</td></tr>"
+		"<tr><td>乙公司</td><td>80000</td></tr></table>"
+	)
+	parsed = parse_table_html(html)
+	assert parsed["headers"] == []
+	assert parsed["rows"] == [["甲公司", "120000"], ["乙公司", "80000"]]
+
+
+def test_parse_table_html_expands_rowspan_and_colspan() -> None:
+	html = (
+		'<table><tr><th rowspan="2">供应商</th><th colspan="2">报价</th></tr>'
+		"<tr><th>未税</th><th>含税</th></tr>"
+		"<tr><td>甲公司</td><td>100000</td><td>106000</td></tr></table>"
+	)
+	parsed = parse_table_html(html)
+	assert parsed["headers"] == ["供应商", "报价 / 未税", "报价 / 含税"]
+	assert parsed["rows"] == [["甲公司", "100000", "106000"]]
+
+
+def test_official_mineru_http_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+	captured: dict = {}
+
+	class Response:
+		content = b'{"content_list": [{"type": "text", "text": "ok", "page_idx": 0}]}'
+
+		def raise_for_status(self) -> None:
+			return None
+
+	def fake_post(url: str, **kwargs):
+		captured["url"] = url
+		captured.update(kwargs)
+		return Response()
+
+	monkeypatch.setattr("app.services.ingest.backends.mineru.httpx.post", fake_post)
+	raw = _post_multipart(
+		"http://mineru:8000/file_parse",
+		filename="sample.pdf",
+		content=b"%PDF",
+		timeout_s=30,
+	)
+	assert raw.startswith(b"{")
+	assert captured["url"].endswith("/file_parse")
+	assert set(captured["files"]) == {"files"}
+	assert captured["data"]["return_content_list"] == "true"
+	assert captured["data"]["response_format_zip"] == "false"
+
+
+def test_backend_unwraps_official_results_by_filename() -> None:
+	def post_fn(*_args, **_kwargs) -> bytes:
+		content_list = json.dumps(
+			[{"type": "text", "text": "真实响应", "page_idx": 0}],
+			ensure_ascii=False,
+		)
+		return json.dumps(
+			{
+				"results": {
+					"sample.pdf": {
+						"content_list": content_list,
+					}
+				}
+			},
+			ensure_ascii=False,
+		).encode()
+
+	backend = MinerUBackend(base_url="http://mineru:8000", post_fn=post_fn)
+	ir = backend.parse(ParseRequest(content=b"%PDF", filename="sample.pdf", title="sample"))
+	assert ir.nodes[0].text == "真实响应"
+
+
+@pytest.mark.parametrize(
+	("content_list", "message"),
+	[
+		("{not-json", "invalid JSON"),
+		('{"type": "text"}', "decode to a list"),
+		(123, "list or JSON string"),
+	],
+)
+def test_mineru_rejects_invalid_content_list_contract(
+	content_list,
+	message: str,
+) -> None:
+	with pytest.raises(ValueError, match=message):
+		mineru_json_to_ir(
+			payload={"results": {"sample": {"content_list": content_list}}},
+			filename="sample.pdf",
+			title="sample",
+		)
+
+
 def test_mineru_json_to_ir_preserves_structure() -> None:
 	payload = json.loads((FIXTURES / "mineru_content_list_complex.json").read_text())
 	ir = mineru_json_to_ir(
@@ -47,12 +143,23 @@ def test_mineru_json_to_ir_preserves_structure() -> None:
 	assert ir.parser_report.parser_version == "fake-complex-1.0"
 	assert ir.parser_report.mode == "mineru"
 	assert ir.parser_report.latency_ms == 12.5
-	assert any(n.type == NodeType.HEADING for n in ir.nodes)
+	headings = [n for n in ir.nodes if n.type == NodeType.HEADING]
+	assert [n.path for n in headings] == [
+		"复杂文档样例",
+		"复杂文档样例 / 双栏左：考勤须知",
+		"复杂文档样例 / 双栏右：出差报销",
+	]
 	tables = [n for n in ir.nodes if n.type == NodeType.TABLE]
-	assert len(tables) >= 2
+	assert len(tables) == 1
 	assert all(n.table_id and n.table_json for n in tables)
-	assert any(n.page_start == 1 and n.page_end == 1 for n in tables)
-	assert any(n.page_start == 2 for n in tables)
+	assert tables[0].page_start == 1
+	assert tables[0].page_end == 2
+	assert tables[0].table_json["rows"] == [
+		["甲公司", "120000"],
+		["乙公司", "80000"],
+		["丙公司", "95000"],
+	]
+	assert tables[0].meta["continuation_pages"] == [2]
 	assert any(n.type == NodeType.FIGURE and "断电" in (n.text or "") for n in ir.nodes)
 	assert any("E = mc^2" in (n.text or "") for n in ir.nodes)
 	assert all("reading_order" in n.meta for n in ir.nodes)
@@ -64,6 +171,126 @@ def test_mineru_json_to_ir_preserves_structure() -> None:
 	table_records = [p for p in payloads if p.get("record_type") == "table"]
 	assert table_records
 	assert any("120000" in (p.get("text") or "") for p in table_records)
+	assert {p.get("table_id") for p in table_records} == {tables[0].table_id}
+	assert all(p.get("page_start") == 1 and p.get("page_end") == 2 for p in table_records)
+
+
+def test_adjacent_tables_without_continuation_stay_separate() -> None:
+	payload = {
+		"content_list": [
+			{
+				"type": "table",
+				"table_caption": ["一季度报价"],
+				"table_body": (
+					"<table><tr><th>供应商</th><th>报价</th></tr>"
+					"<tr><td>甲</td><td>1</td></tr></table>"
+				),
+				"page_idx": 0,
+			},
+			{
+				"type": "table",
+				"table_caption": ["二季度报价"],
+				"table_body": (
+					"<table><tr><th>供应商</th><th>报价</th></tr>"
+					"<tr><td>乙</td><td>2</td></tr></table>"
+				),
+				"page_idx": 1,
+			},
+		]
+	}
+	ir = mineru_json_to_ir(payload=payload, filename="tables.pdf", title="tables")
+	tables = [node for node in ir.nodes if node.type == NodeType.TABLE]
+	assert len(tables) == 2
+	assert tables[0].table_id != tables[1].table_id
+
+
+def test_continuation_skips_page_noise_and_accepts_missing_headers() -> None:
+	payload = {
+		"content_list": [
+			{
+				"type": "table",
+				"table_caption": ["供应商报价表"],
+				"table_body": (
+					"<table><tr><th>供应商</th><th>报价</th></tr>"
+					"<tr><td>甲</td><td>1</td></tr></table>"
+				),
+				"page_idx": 0,
+			},
+			{"type": "footer", "text": "内部资料", "page_idx": 0},
+			{"type": "page_number", "text": "1", "page_idx": 0},
+			{"type": "discarded", "text": "重复页眉", "page_idx": 1},
+			{"type": "page_header", "text": "报价清单", "page_idx": 1},
+			{
+				"type": "table",
+				"table_caption": ["供应商报价表（续）"],
+				"table_body": (
+					"<table><tr><td>乙</td><td>2</td></tr>"
+					"<tr><td>丙</td><td>3</td></tr></table>"
+				),
+				"page_idx": 1,
+			},
+		]
+	}
+	ir = mineru_json_to_ir(payload=payload, filename="continued.pdf", title="continued")
+	tables = [node for node in ir.nodes if node.type == NodeType.TABLE]
+	assert len(tables) == 1
+	assert tables[0].page_end == 2
+	assert tables[0].table_json["headers"] == ["供应商", "报价"]
+	assert tables[0].table_json["rows"] == [["甲", "1"], ["乙", "2"], ["丙", "3"]]
+	assert all("内部资料" not in node.text for node in ir.nodes)
+
+
+def test_headerless_tables_merge_only_with_strong_continuation() -> None:
+	payload = {
+		"content_list": [
+			{
+				"type": "table",
+				"table_caption": ["无表头明细"],
+				"table_body": "<table><tr><td>甲</td><td>1</td></tr></table>",
+				"page_idx": 0,
+			},
+			{
+				"type": "table",
+				"table_caption": ["无表头明细（续）"],
+				"table_body": "<table><tr><td>乙</td><td>2</td></tr></table>",
+				"page_idx": 1,
+			},
+		]
+	}
+	ir = mineru_json_to_ir(payload=payload, filename="headerless.pdf", title="headerless")
+	tables = [node for node in ir.nodes if node.type == NodeType.TABLE]
+	assert len(tables) == 1
+	assert tables[0].table_json["headers"] == []
+	assert tables[0].table_json["rows"] == [["甲", "1"], ["乙", "2"]]
+
+
+def test_page_number_caption_alone_does_not_merge_tables() -> None:
+	payload = {
+		"content_list": [
+			{
+				"type": "table",
+				"table_caption": ["供应商报价表"],
+				"table_body": (
+					"<table><tr><th>供应商</th><th>报价</th></tr>"
+					"<tr><td>甲</td><td>1</td></tr></table>"
+				),
+				"page_idx": 0,
+			},
+			{
+				"type": "table",
+				"table_caption": ["供应商报价表（第2页）"],
+				"continued": "false",
+				"table_body": (
+					"<table><tr><th>供应商</th><th>报价</th></tr>"
+					"<tr><td>乙</td><td>2</td></tr></table>"
+				),
+				"page_idx": 1,
+			},
+		]
+	}
+	ir = mineru_json_to_ir(payload=payload, filename="pages.pdf", title="pages")
+	tables = [node for node in ir.nodes if node.type == NodeType.TABLE]
+	assert len(tables) == 2
 
 
 def test_mineru_empty_content_list_refuses_silent() -> None:
@@ -91,6 +318,17 @@ def test_fake_mineru_scanned_ready() -> None:
 	assert ir.parser_report.backend == "mineru"
 	assert any("三个工作日" in (n.text or "") for n in ir.nodes)
 	assert ir.parser_report.latency_ms is not None
+
+
+def test_fake_mineru_default_merges_explicit_continuation() -> None:
+	ir = FakeMinerUBackend().parse(
+		ParseRequest(content=b"%PDF", filename="complex.pdf", title="complex")
+	)
+	tables = [node for node in ir.nodes if node.type == NodeType.TABLE]
+	assert len(tables) == 1
+	assert tables[0].page_start == 1
+	assert tables[0].page_end == 2
+	assert len(tables[0].table_json["rows"]) == 3
 
 
 def test_route_digital_pdf_stays_pymupdf() -> None:

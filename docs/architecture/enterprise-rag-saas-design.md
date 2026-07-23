@@ -1242,6 +1242,17 @@ Phase 1 hardening：另含少量 `ingest_http` 用例，覆盖正例 upload→re
 - UI citation 支持版本、章节、表格定位。
 - 在业务接口稳定后，引入 LangChain Retriever / Tool 适配层，复用已验证的 `RetrievalPlan`。
 
+#### Phase 2D：分块策略路由（已落地骨架）
+
+- [x] `ChunkingProfile` + versioned policy；支持 `precise / balanced / narrative / table_heavy`。
+- [x] 结构优先决策：heading/page/table/code → recursive → char window fallback。
+- [x] 可选 semantic：仅处理长、无结构叙事文本；默认关闭，embedding 异常显式降级。
+- [x] chunk、Qdrant payload 和 `parser_report.metrics.chunking` 暴露 profile、strategy、reason、fallback。
+- [x] `table_heavy` 驱动 table IndexRecord 行组大小，不停留在分类标签。
+- [ ] 用真实合同、长报告和表格集做 profile A/B，证明收益后再考虑默认开启 semantic。
+
+详细决策见 `docs/adr/0003-policy-driven-chunking.md`。
+
 ### Phase 3：企业权限与租户
 
 目标：从单工作区产品变为 SaaS 架构。

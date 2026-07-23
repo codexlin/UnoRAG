@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import json
 import re
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
 from uuid import uuid4
@@ -20,26 +22,64 @@ from app.services.ingest.ir import (
 )
 
 _TAG_RE = re.compile(r"<[^>]+>")
+_STRONG_CONTINUATION_RE = re.compile(
+	r"(?:[（(]\s*(?:续|continued)\s*[）)]|(?:续表|续上表)|continued)",
+	re.IGNORECASE,
+)
+_PAGE_MARKER_RE = re.compile(r"第\s*\d+\s*页", re.IGNORECASE)
+_IGNORABLE_PAGE_KINDS = {
+	"discarded",
+	"header",
+	"footer",
+	"page_header",
+	"page_footer",
+	"page_number",
+	"aside_text",
+	"page_aside_text",
+	"page_footnote",
+}
+
+
+@dataclass
+class _TableCell:
+	text: str
+	is_header: bool
+	rowspan: int = 1
+	colspan: int = 1
 
 
 class _TableHTMLParser(HTMLParser):
 	def __init__(self) -> None:
 		super().__init__()
-		self.rows: list[list[str]] = []
-		self._row: list[str] = []
+		self.rows: list[list[_TableCell]] = []
+		self._row: list[_TableCell] = []
 		self._cell: list[str] = []
 		self._in_cell = False
+		self._cell_is_header = False
+		self._rowspan = 1
+		self._colspan = 1
 
 	def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
 		if tag == "tr":
 			self._row = []
 		elif tag in {"td", "th"}:
+			attr_map = {key.lower(): value for key, value in attrs}
 			self._cell = []
 			self._in_cell = True
+			self._cell_is_header = tag == "th"
+			self._rowspan = _positive_span(attr_map.get("rowspan"))
+			self._colspan = _positive_span(attr_map.get("colspan"))
 
 	def handle_endtag(self, tag: str) -> None:
 		if tag in {"td", "th"} and self._in_cell:
-			self._row.append("".join(self._cell).strip())
+			self._row.append(
+				_TableCell(
+					text="".join(self._cell).strip(),
+					is_header=self._cell_is_header,
+					rowspan=self._rowspan,
+					colspan=self._colspan,
+				)
+			)
 			self._cell = []
 			self._in_cell = False
 		elif tag == "tr" and self._row:
@@ -51,20 +91,81 @@ class _TableHTMLParser(HTMLParser):
 			self._cell.append(data)
 
 
+def _positive_span(value: str | None) -> int:
+	try:
+		return min(100, max(1, int(value or 1)))
+	except (TypeError, ValueError):
+		return 1
+
+
+def _expand_table_rows(
+	raw_rows: list[list[_TableCell]],
+) -> tuple[list[list[str]], list[list[bool]]]:
+	grid: dict[tuple[int, int], tuple[str, bool]] = {}
+	max_col = 0
+	for row_idx, raw_row in enumerate(raw_rows):
+		col_idx = 0
+		for cell in raw_row:
+			while (row_idx, col_idx) in grid:
+				col_idx += 1
+			for row_offset in range(cell.rowspan):
+				for col_offset in range(cell.colspan):
+					grid[(row_idx + row_offset, col_idx + col_offset)] = (
+						cell.text,
+						cell.is_header,
+					)
+			col_idx += cell.colspan
+			max_col = max(max_col, col_idx)
+
+	if not grid:
+		return [], []
+	row_count = max(row for row, _ in grid) + 1
+	max_col = max(max_col, max(col for _, col in grid) + 1)
+	rows: list[list[str]] = []
+	header_flags: list[list[bool]] = []
+	for row_idx in range(row_count):
+		rows.append([grid.get((row_idx, col), ("", False))[0] for col in range(max_col)])
+		header_flags.append(
+			[grid.get((row_idx, col), ("", False))[1] for col in range(max_col)]
+		)
+	return rows, header_flags
+
+
+def _header_row_count(rows: list[list[str]], flags: list[list[bool]]) -> int:
+	count = 0
+	for row, row_flags in zip(rows, flags, strict=True):
+		nonempty = [idx for idx, value in enumerate(row) if value.strip()]
+		if not nonempty or not all(row_flags[idx] for idx in nonempty):
+			break
+		count += 1
+	return count
+
+
+def _flatten_headers(rows: list[list[str]]) -> list[str]:
+	if not rows:
+		return []
+	headers: list[str] = []
+	for column in zip(*rows, strict=True):
+		parts = list(dict.fromkeys(value.strip() for value in column if value.strip()))
+		headers.append(" / ".join(parts))
+	return headers
+
+
 def parse_table_html(html: str) -> dict[str, Any]:
-	"""简单 HTML table → {headers, rows}；无表结构时退回单行文本。"""
+	"""HTML table → {headers, rows}，展开 rowspan/colspan 且不臆造表头。"""
 	parser = _TableHTMLParser()
 	try:
 		parser.feed(html or "")
 	except Exception:
 		text = _TAG_RE.sub(" ", html or "").strip()
 		return {"headers": [], "rows": [[text]] if text else []}
-	rows = parser.rows
+	rows, header_flags = _expand_table_rows(parser.rows)
 	if not rows:
 		text = _TAG_RE.sub(" ", html or "").strip()
 		return {"headers": [], "rows": [[text]] if text else []}
-	headers = rows[0]
-	body = rows[1:] if len(rows) > 1 else []
+	header_count = _header_row_count(rows, header_flags)
+	headers = _flatten_headers(rows[:header_count])
+	body = rows[header_count:]
 	return {"headers": headers, "rows": body}
 
 
@@ -102,6 +203,8 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 	nodes: list[Node] = []
 	table_seq = 0
 	figure_seq = 0
+	heading_stack: list[str] = []
+	last_table: Node | None = None
 
 	for order, item in enumerate(content_list):
 		if not isinstance(item, dict):
@@ -116,9 +219,14 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 		if bbox is not None:
 			meta["bbox"] = bbox
 
-		if kind in {"text", "discarded"}:
+		# 页眉/页脚等辅助块不进入正文，也不打断紧邻跨页表的续接判断。
+		if kind in _IGNORABLE_PAGE_KINDS:
+			continue
+
+		if kind == "text":
+			last_table = None
 			text = str(item.get("text") or item.get("content") or "").strip()
-			if not text or kind == "discarded":
+			if not text:
 				continue
 			level = item.get("text_level")
 			if level is not None:
@@ -127,12 +235,14 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 				except (TypeError, ValueError):
 					lvl = 0
 				if lvl >= 1:
+					heading_stack = heading_stack[: max(0, lvl - 1)]
+					heading_stack.append(text)
 					nodes.append(
 						Node(
 							id=str(uuid4()),
 							type=NodeType.HEADING,
 							level=lvl,
-							path=text,
+							path=" / ".join(heading_stack),
 							page_start=page,
 							page_end=page,
 							text=text,
@@ -155,6 +265,7 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 			continue
 
 		if kind == "list":
+			last_table = None
 			text = str(item.get("text") or item.get("content") or "").strip()
 			if not text and isinstance(item.get("list_items"), list):
 				text = "\n".join(str(x).strip() for x in item["list_items"] if str(x).strip())
@@ -174,8 +285,6 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 			continue
 
 		if kind == "table":
-			table_seq += 1
-			table_id = f"mineru-t{table_seq}"
 			html = str(item.get("table_body") or item.get("html") or "")
 			table_json = item.get("table_json")
 			if not isinstance(table_json, dict):
@@ -183,6 +292,27 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 			caption = _join_caption(item.get("table_caption") or item.get("caption"))
 			headers = table_json.get("headers") or []
 			rows = table_json.get("rows") or []
+			source_table_id = str(item.get("table_id") or item.get("id") or "").strip()
+			if _is_table_continuation(
+				previous=last_table,
+				page=page,
+				caption=caption,
+				headers=headers,
+				rows=rows,
+				source_table_id=source_table_id,
+				item=item,
+			):
+				_merge_table_continuation(
+					last_table,
+					page=page,
+					caption=caption,
+					rows=rows,
+					bbox=bbox,
+				)
+				continue
+
+			table_seq += 1
+			table_id = source_table_id or f"mineru-t{table_seq}"
 			textual = []
 			if caption:
 				textual.append(caption)
@@ -192,24 +322,27 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 				textual.append(" | ".join(str(c) for c in row))
 			body = "\n".join(textual).strip() or html.strip()
 			if not body and not headers and not rows:
+				last_table = None
 				continue
 			meta["caption"] = caption
-			nodes.append(
-				Node(
-					id=str(uuid4()),
-					type=NodeType.TABLE,
-					page_start=page,
-					page_end=page,
-					text=body,
-					table_json=table_json,
-					table_id=table_id,
-					confidence=0.72,
-					meta=meta,
-				)
+			meta["source_table_id"] = source_table_id
+			table_node = Node(
+				id=str(uuid4()),
+				type=NodeType.TABLE,
+				page_start=page,
+				page_end=page,
+				text=body,
+				table_json=table_json,
+				table_id=table_id,
+				confidence=0.72,
+				meta=meta,
 			)
+			nodes.append(table_node)
+			last_table = table_node
 			continue
 
 		if kind in {"image", "figure", "chart"}:
+			last_table = None
 			figure_seq += 1
 			figure_id = f"mineru-f{figure_seq}"
 			caption = _join_caption(
@@ -240,6 +373,7 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 			continue
 
 		if kind in {"equation", "formula"}:
+			last_table = None
 			latex = str(
 				item.get("text") or item.get("latex") or item.get("content") or ""
 			).strip()
@@ -260,6 +394,7 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 			continue
 
 		if kind == "code":
+			last_table = None
 			code = str(
 				item.get("code_body") or item.get("text") or item.get("content") or ""
 			).strip()
@@ -279,6 +414,7 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 			continue
 
 		# 未知类型：尽量保留文本
+		last_table = None
 		fallback = str(item.get("text") or item.get("content") or "").strip()
 		if fallback:
 			nodes.append(
@@ -296,6 +432,160 @@ def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
 	return nodes
 
 
+def _normalized_caption(caption: str) -> str:
+	without_marker = _STRONG_CONTINUATION_RE.sub("", caption or "")
+	without_marker = _PAGE_MARKER_RE.sub("", without_marker)
+	without_empty_parens = re.sub(r"[（(]\s*[）)]", "", without_marker)
+	return re.sub(r"\s+", "", without_empty_parens).strip("：:.-_")
+
+
+def _table_width(headers: list[Any], rows: list[Any]) -> int:
+	width = len(headers)
+	for row in rows:
+		if isinstance(row, (list, tuple)):
+			width = max(width, len(row))
+	return width
+
+
+def _is_true(value: Any) -> bool:
+	if value is True or value == 1:
+		return True
+	if isinstance(value, str):
+		return value.strip().lower() in {"true", "1", "yes"}
+	return False
+
+
+def _is_table_continuation(
+	*,
+	previous: Node | None,
+	page: int,
+	caption: str,
+	headers: list[Any],
+	rows: list[Any],
+	source_table_id: str,
+	item: dict[str, Any],
+) -> bool:
+	if previous is None or previous.page_end is None or page != previous.page_end + 1:
+		return False
+	previous_json = previous.table_json if isinstance(previous.table_json, dict) else {}
+	previous_headers = [str(value).strip() for value in previous_json.get("headers") or []]
+	current_headers = [str(value).strip() for value in headers]
+	previous_rows = list(previous_json.get("rows") or [])
+	previous_width = _table_width(previous_headers, previous_rows)
+	current_width = _table_width(current_headers, rows)
+	if current_width <= 0:
+		return False
+	if previous_width and current_width and previous_width != current_width:
+		return False
+	if previous_headers and current_headers and current_headers != previous_headers:
+		return False
+
+	previous_source_id = str((previous.meta or {}).get("source_table_id") or "")
+	if source_table_id and previous_source_id and source_table_id == previous_source_id:
+		return True
+	has_explicit_flag = any(
+		_is_true(item.get(key))
+		for key in ("is_continued", "continued", "is_table_continuation")
+	)
+	has_caption_marker = bool(_STRONG_CONTINUATION_RE.search(caption or ""))
+	if not has_explicit_flag and not has_caption_marker:
+		return False
+
+	previous_caption = str((previous.meta or {}).get("caption") or "")
+	if has_explicit_flag:
+		return True
+	normalized_current = _normalized_caption(caption)
+	normalized_previous = _normalized_caption(previous_caption)
+	return bool(
+		normalized_current
+		and normalized_previous
+		and normalized_current == normalized_previous
+	)
+
+
+def _merge_table_continuation(
+	previous: Node,
+	*,
+	page: int,
+	caption: str,
+	rows: list[Any],
+	bbox: list[float] | None,
+) -> None:
+	table_json = previous.table_json if isinstance(previous.table_json, dict) else {}
+	existing_rows = list(table_json.get("rows") or [])
+	table_json["rows"] = [*existing_rows, *rows]
+	previous.table_json = table_json
+	previous.page_end = page
+	meta = previous.meta or {}
+	meta.setdefault("continuation_pages", []).append(page)
+	if bbox is not None:
+		meta.setdefault("page_bboxes", []).append({"page": page, "bbox": bbox})
+	if caption:
+		meta.setdefault("continuation_captions", []).append(caption)
+	previous.meta = meta
+	textual = []
+	base_caption = str(meta.get("caption") or "")
+	if base_caption:
+		textual.append(base_caption)
+	headers = table_json.get("headers") or []
+	if headers:
+		textual.append(" | ".join(str(value) for value in headers))
+	for row in table_json.get("rows") or []:
+		textual.append(" | ".join(str(value) for value in row))
+	previous.text = "\n".join(textual).strip()
+
+
+def _decode_content_list(value: Any) -> list[Any] | None:
+	if value is None:
+		return None
+	if isinstance(value, list):
+		return value
+	if isinstance(value, str):
+		try:
+			decoded = json.loads(value)
+		except json.JSONDecodeError as exc:
+			raise ValueError("MinerU content_list is invalid JSON") from exc
+		if isinstance(decoded, list):
+			return decoded
+		raise ValueError("MinerU content_list JSON must decode to a list")
+	raise ValueError("MinerU content_list must be a list or JSON string")
+
+
+def _extract_content_list(payload: dict[str, Any], *, filename: str) -> list[Any] | None:
+	if "content_list" in payload:
+		return _decode_content_list(payload.get("content_list"))
+	for wrapper in ("result", "data"):
+		nested = payload.get(wrapper)
+		if isinstance(nested, dict):
+			found = _extract_content_list(nested, filename=filename)
+			if found is not None:
+				return found
+
+	results = payload.get("results")
+	if isinstance(results, dict):
+		basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+		stem = basename.rsplit(".", 1)[0]
+		candidates = [
+			results.get(filename),
+			results.get(basename),
+			results.get(stem),
+		]
+		if len(results) == 1:
+			candidates.append(next(iter(results.values())))
+		for candidate in candidates:
+			if isinstance(candidate, dict):
+				found = _extract_content_list(candidate, filename=filename)
+				if found is not None:
+					return found
+	elif isinstance(results, list):
+		for candidate in results:
+			if isinstance(candidate, dict):
+				found = _extract_content_list(candidate, filename=filename)
+				if found is not None:
+					return found
+	return None
+
+
 def mineru_json_to_ir(
 	*,
 	payload: dict[str, Any],
@@ -309,11 +599,7 @@ def mineru_json_to_ir(
 	failed_pages: list[int] | None = None,
 ) -> DocumentIR:
 	"""将 MinerU 服务响应（或 content_list 包装）转为 DocumentIR。"""
-	content_list = payload.get("content_list")
-	if content_list is None and isinstance(payload.get("result"), dict):
-		content_list = payload["result"].get("content_list")
-	if content_list is None and isinstance(payload.get("data"), dict):
-		content_list = payload["data"].get("content_list")
+	content_list = _extract_content_list(payload, filename=filename)
 	if not isinstance(content_list, list):
 		raise ValueError("MinerU response missing content_list")
 

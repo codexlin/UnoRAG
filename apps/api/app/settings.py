@@ -36,6 +36,13 @@ class Settings(BaseSettings):
 
 	chunk_size: int = 500
 	chunk_overlap: int = 80
+	# precise | balanced | narrative | table_heavy
+	chunking_profile: str = "balanced"
+	chunk_policy_version: str = "v1"
+	# 仅对长、无结构、叙事型文本生效；失败时明确降级 recursive
+	semantic_chunking_enabled: bool = False
+	semantic_chunk_min_chars: int = 1200
+	semantic_chunk_break_percentile: int = 85
 	# legacy | v2 — v2=IR 结构优先切片；md/txt/pdf/docx 走新管线
 	ingest_pipeline: str = "v2"
 	# PDF 扫描/失败页：partial=成功页入库+notice；fail=无成功页则整本失败
@@ -48,7 +55,7 @@ class Settings(BaseSettings):
 	mineru_url: str = ""
 	mineru_timeout_s: float = 120.0
 	mineru_max_retries: int = 2
-	mineru_parse_path: str = "/parse"
+	mineru_parse_path: str = "/file_parse"
 	# auto | pymupdf | mineru
 	mineru_mode: str = "auto"
 	# 单测 / 本地无服务：true 时用 FakeMinerUBackend（勿用于生产）
