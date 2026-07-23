@@ -129,6 +129,66 @@ def test_section_records_aggregate_and_deterministic_ids() -> None:
 	assert [item.point_uuid() for item in first] == [item.point_uuid() for item in second]
 
 
+def test_section_parts_keep_local_source_chunk_ids() -> None:
+	chunks = [
+		Chunk(
+			chunk_index=0,
+			text="甲",
+			body="甲" * 20,
+			section_path="长节",
+			page_start=1,
+			page_end=1,
+			split_strategy=SplitStrategy.HEADING,
+		),
+		Chunk(
+			chunk_index=1,
+			text="乙",
+			body="乙" * 20,
+			section_path="长节",
+			page_start=2,
+			page_end=2,
+			split_strategy=SplitStrategy.HEADING,
+		),
+	]
+	parts = build_section_records_from_chunks(chunks, doc_id="doc-long", max_chars=25)
+	assert len(parts) >= 2
+	assert parts[0].source_chunk_ids == [chunk_record_id("doc-long", 0)]
+	assert "甲" in parts[0].body and "乙" not in parts[0].body
+	assert parts[0].page_start == 1 and parts[0].page_end == 1
+	assert parts[1].source_chunk_ids == [chunk_record_id("doc-long", 1)]
+	assert "乙" in parts[1].body and "甲" not in parts[1].body
+
+
+def test_document_version_changes_with_content() -> None:
+	from app.services.ingest.pipeline import chunks_to_payloads
+
+	a = [
+		Chunk(
+			chunk_index=0,
+			text="a",
+			body="版本甲内容",
+			section_path="第1章",
+			split_strategy=SplitStrategy.HEADING,
+			content_hash="hash_aaa_111111",
+		),
+	]
+	b = [
+		Chunk(
+			chunk_index=0,
+			text="b",
+			body="版本乙内容",
+			section_path="第1章",
+			split_strategy=SplitStrategy.HEADING,
+			content_hash="hash_bbb_222222",
+		),
+	]
+	pa = chunks_to_payloads(a, doc_id="doc-a", include_sections=False)
+	pb = chunks_to_payloads(b, doc_id="doc-a", include_sections=False)
+	assert pa[0]["document_version_id"] != pb[0]["document_version_id"]
+	assert pa[0]["document_version_id"].startswith("doc-a:")
+	assert pb[0]["document_version_id"].startswith("doc-a:")
+
+
 def test_document_version_stub() -> None:
 	assert derive_document_version_id("doc-1") == "doc-1:v1"
 	assert derive_document_version_id("doc-1", content_hash="abcdef1234567890").endswith(

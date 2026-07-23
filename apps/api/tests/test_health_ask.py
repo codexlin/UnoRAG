@@ -140,7 +140,12 @@ def test_ask_refuse_weak_match() -> None:
 def test_judge_with_injected_weak_retrieve() -> None:
 	settings = Settings(ask_mode="stub", answer_min_score=0.5, max_retrieve_retries=0)
 
-	def fake_retrieve(_query: str, _library_id: str | None, _top_k: int):
+	def fake_retrieve(
+		_query: str,
+		_library_id: str | None,
+		_top_k: int,
+		_filters: dict | None = None,
+	):
 		return [
 			{
 				"id": "x",
@@ -167,7 +172,12 @@ def test_retry_then_generate() -> None:
 	settings = Settings(ask_mode="stub", answer_min_score=0.5, max_retrieve_retries=1)
 	calls = {"n": 0}
 
-	def flaky_retrieve(_query: str, _library_id: str | None, _top_k: int):
+	def flaky_retrieve(
+		_query: str,
+		_library_id: str | None,
+		_top_k: int,
+		_filters: dict | None = None,
+	):
 		calls["n"] += 1
 		if calls["n"] == 1:
 			return []

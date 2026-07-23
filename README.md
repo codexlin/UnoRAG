@@ -81,7 +81,7 @@ DASHSCOPE_API_KEY=...   # 或 OPENAI_API_KEY
 ```bash
 cd apps/api
 uv run pytest
-# Phase 1 黄金集（20 条，含内存 Qdrant 检索回归）
+# 黄金集（约 34 条：含内存 Qdrant、section 隔离、ingest_http）
 uv run python scripts/run_eval_cases.py
 ```
 

@@ -92,7 +92,7 @@ def build_section_records_from_chunks(
 	filename: str | None = None,
 	max_chars: int = DEFAULT_SECTION_MAX_CHARS,
 ) -> list[IndexRecord]:
-	"""按 section_path 聚合相邻 chunks → section IndexRecord（可分段）。"""
+	"""按 section_path 聚合相邻 chunks → section IndexRecord（按 chunk 组装 part）。"""
 	groups: OrderedDict[str, list[Chunk]] = OrderedDict()
 	for chunk in chunks:
 		key = (chunk.section_path or "").strip() or "__root__"
@@ -100,37 +100,63 @@ def build_section_records_from_chunks(
 
 	records: list[IndexRecord] = []
 	for path, group in groups.items():
-		bodies: list[str] = []
-		source_ids: list[str] = []
-		page_starts: list[int] = []
-		page_ends: list[int] = []
-		heading = None
-		source_format = ""
-		for chunk in group:
-			body = chunk.display_text()
-			if body:
-				bodies.append(body)
-			source_ids.append(chunk_record_id(doc_id, chunk.chunk_index))
-			if chunk.page_start is not None:
-				page_starts.append(int(chunk.page_start))
-			if chunk.page_end is not None:
-				page_ends.append(int(chunk.page_end))
-			if not heading and chunk.heading_text:
-				heading = chunk.heading_text
-			if not source_format and chunk.source_format:
-				source_format = chunk.source_format
-
-		joined = "\n\n".join(bodies).strip()
-		if not joined:
-			continue
 		display_path = None if path == "__root__" else path
+		heading = next((c.heading_text for c in group if c.heading_text), None)
 		if not heading and display_path:
 			heading = display_path.split("/")[-1]
-		parts = _split_long_text(joined, max_chars)
-		for part_idx, part_body in enumerate(parts):
-			# embed_text：标题/路径 + 正文聚合（无 LLM summary）
-			prefix_bits = [b for b in [display_path, heading] if b]
-			prefix = " / ".join(dict.fromkeys(prefix_bits))  # 去重保序
+		source_format = next((c.source_format for c in group if c.source_format), "")
+
+		# 以 chunk 为单位装入 part，避免字符切分后 source_chunk_ids 错绑
+		part_chunks: list[list[Chunk]] = []
+		current: list[Chunk] = []
+		current_len = 0
+
+		def _flush() -> None:
+			nonlocal current, current_len
+			if current:
+				part_chunks.append(current)
+			current = []
+			current_len = 0
+
+		for chunk in group:
+			body = chunk.display_text()
+			if not body:
+				continue
+			# 单 chunk 超长：单独切字，来源仍只指向该 chunk
+			if len(body) > max_chars:
+				_flush()
+				for piece in _split_long_text(body, max_chars):
+					# 用临时 chunk 副本承载切段正文
+					part_chunks.append(
+						[
+							chunk.model_copy(
+								update={
+									"body": piece,
+									"text": piece,
+								}
+							)
+						]
+					)
+				continue
+			sep = 2 if current else 0  # "\n\n"
+			if current and current_len + sep + len(body) > max_chars:
+				_flush()
+			current.append(chunk)
+			current_len += sep + len(body)
+		_flush()
+
+		prefix_bits = [b for b in [display_path, heading] if b]
+		prefix = " / ".join(dict.fromkeys(prefix_bits))
+		for part_idx, members in enumerate(part_chunks):
+			bodies = [m.display_text() for m in members if m.display_text()]
+			part_body = "\n\n".join(bodies).strip()
+			if not part_body:
+				continue
+			source_ids = [chunk_record_id(doc_id, m.chunk_index) for m in members]
+			# 去重保序（同一 chunk 被切多段时仍指向同一 id）
+			source_ids = list(dict.fromkeys(source_ids))
+			page_starts = [int(m.page_start) for m in members if m.page_start is not None]
+			page_ends = [int(m.page_end) for m in members if m.page_end is not None]
 			embed = f"{prefix}\n\n{part_body}" if prefix else part_body
 			rid = section_record_id(doc_id, path, part=part_idx)
 			records.append(
@@ -147,7 +173,7 @@ def build_section_records_from_chunks(
 					heading_text=heading,
 					body=part_body,
 					embed_text=embed,
-					source_chunk_ids=list(source_ids),
+					source_chunk_ids=source_ids,
 					chunk_index=part_idx,
 					page_start=min(page_starts) if page_starts else None,
 					page_end=max(page_ends) if page_ends else None,

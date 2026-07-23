@@ -43,7 +43,12 @@ def test_session_memory_rewrite_on_followup() -> None:
 	settings = Settings(ask_mode="stub", session_memory_enabled=True, max_retrieve_retries=0)
 	seen: dict[str, str] = {}
 
-	def capture_retrieve(query: str, _library_id: str | None, _top_k: int):
+	def capture_retrieve(
+		query: str,
+		_library_id: str | None,
+		_top_k: int,
+		_filters: dict | None = None,
+	):
 		seen["query"] = query
 		return [
 			{

@@ -1,6 +1,6 @@
 # MeriKnow 企业级 RAG SaaS 架构设计
 
-> 状态：Draft（Phase 1 核心项已落地：QueryRouter / RetrievalPlan / archive 字段 / 20 条 eval 基线）
+> 状态：Draft（Phase 1 已收口；Phase 2A section 多粒度已落地；eval 基线约 34 条）
 > 日期：2026-07-23  
 > 目标：把 MeriKnow 从「可演示的企业知识问答 MVP」推进为「可治理、可评测、可扩展、可隔离」的企业级 RAG SaaS 知识库平台。
 
@@ -1185,7 +1185,7 @@ Phase 1 子步骤：
 2. [x] `RetrievalPlan`：描述 mode、top_k、hybrid、rerank、filters、reason。
 3. [x] Ask graph：写入 `query_type`、`retrieval_plan`、`judge`；fact / follow_up 走现有短路径，其余类型仅分类落盘，执行不拆子图。
 4. [x] Archive：保存 `query_type`、`retrieval_plan`、`rewrite`、`rewritten_query`、`judge`；citation 保留逐证据 `document_version_id`。
-5. [x] Eval：建立 20 条小黄金集，覆盖 no_hit、weak_match、MD heading、PDF page、DOCX table；其中 3 条通过内存 Qdrant 真实执行 `QdrantStore + RetrievalService`，本地可跑 `eval_cases.jsonl` + runner。
+5. [x] Eval：建立可回归黄金集（当前约 34 条），覆盖 no_hit、weak_match、MD/PDF/DOCX、section 隔离与 ingest_http；含内存 Qdrant 检索回归。
 6. [x] Payload：预埋 `document_version_id`（无完整 version 表时可用派生 stub），可选预埋默认 `tenant_id` / `workspace_id`。
 
 非阻塞可选（Phase 1 之后，不计入 Phase 1 Done）：
@@ -1195,7 +1195,7 @@ Phase 1 子步骤：
 **Phase 1 Done 标准**：
 
 - [x] HTTP schema 兼容：`/v1/ask` 等对外响应不破。
-- [x] 黄金集本地可跑：`eval_cases.jsonl` + runner 可在本机执行；当前 20 条，包含 3 条确定性 embedding + 内存 Qdrant 检索回归。
+- [x] 黄金集本地可跑：`eval_cases.jsonl` + runner 可在本机执行；当前约 **34** 条，含确定性 embedding + 内存 Qdrant、section/chunk 隔离、ingest_http 负例。
 - [x] archive 能读出 `query_type` / `judge`（及已写入的 plan 相关 debug）。
 - [x] `document_version_id` 无完整 version 表时，可用派生 stub 预埋，不强制先建完整版本模型。
 

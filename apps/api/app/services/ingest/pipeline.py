@@ -5,6 +5,7 @@ documents.py / ask router 保持薄封装；业务策略集中在此。
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
@@ -175,7 +176,20 @@ def chunks_to_payloads(
 	from app.services.versioning import derive_document_version_id
 
 	resolved_doc = (doc_id or "").strip() or "unknown"
-	version_id = document_version_id or derive_document_version_id(resolved_doc)
+	content_hash = next(
+		(str(chunk.content_hash).strip() for chunk in chunks if (chunk.content_hash or "").strip()),
+		"",
+	)
+	if not content_hash:
+		digest = hashlib.sha256()
+		for chunk in chunks:
+			digest.update(chunk.display_text().encode("utf-8"))
+			digest.update(b"\n")
+		content_hash = digest.hexdigest()[:32]
+	version_id = document_version_id or derive_document_version_id(
+		resolved_doc,
+		content_hash=content_hash,
+	)
 	payloads: list[dict[str, Any]] = []
 	for chunk in chunks:
 		body = chunk.display_text()

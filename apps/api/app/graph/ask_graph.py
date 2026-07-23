@@ -400,10 +400,7 @@ def build_ask_graph(
 		filters = dict(plan.get("filters") or {})
 		if plan.get("record_type") and "record_type" not in filters:
 			filters["record_type"] = plan["record_type"]
-		try:
-			citations = retrieve_fn(query, state.get("library_id"), top_k, filters)
-		except TypeError:
-			citations = retrieve_fn(query, state.get("library_id"), top_k)
+		citations = retrieve_fn(query, state.get("library_id"), top_k, filters)
 		# 薄 citation_check：section 命中应能回溯 source_chunk_ids
 		citation_check = {"ok": True, "missing_source_chunk_ids": 0}
 		if str(filters.get("record_type") or "") == "section":
