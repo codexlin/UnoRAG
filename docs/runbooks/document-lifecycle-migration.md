@@ -222,3 +222,46 @@ DATABASE_URL=postgresql://... pnpm lifecycle:inspect
 
 报告字段：`dead_jobs`、`stuck_jobs`（lease 过期或心跳超时）、
 `deleting_documents`、`cleanup_errors`、`libraries`（deleting/deleted）。
+
+## L6 legacy ingest exit
+
+生产路径只有控制面 + lifecycle worker：
+
+```text
+Browser
+  -> Next.js /api/libraries/.../documents (upload/replace/reindex/delete)
+  -> app.jobs
+  -> Python lifecycle worker (PostgreSQL claim)
+```
+
+FastAPI 浏览器写路径默认关闭：
+
+```bash
+# 默认即关闭；生产启动若显式开启会 fail-closed
+# LEGACY_INGEST_WRITES_ENABLED=true   # 仅迁移/单测临时兼容
+```
+
+关闭时以下接口返回 `410 legacy_ingest_writes_disabled`：
+
+- `POST /v1/ingest`
+- `POST /v1/ingest/upload`
+- `POST /v1/documents/{id}/replace`
+- `POST /v1/documents/{id}/reindex`
+- `DELETE /v1/documents/{id}`
+
+Next BFF `/api/rag/...` 对同样写路径直接 `410`，不再 dual-write
+`app.documents`，也不再对 document list 做 RAG probe 同步。Ask / Ask stream /
+archive / download 仍走 HMAC 代理。
+
+控制面重索引：
+
+```bash
+POST /api/libraries/{libraryId}/documents/{docId}/reindex
+```
+
+复用现有 version 的 `storage_key`/`content_hash`，创建新 version +
+`document.ingest` job，不经 ARQ。
+
+激活 CAS：document 处于 `deleting`/`deleted` 时 `prepare_activation` /
+`activate_generation` 失败；library 状态刷新不会把 `deleting` 清成
+`ready`/`indexing`。

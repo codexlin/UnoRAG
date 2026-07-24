@@ -6,10 +6,9 @@ import {
 	canWriteLibraries,
 	findAuthorizedDocument,
 	findAuthorizedLibrary,
-	removeRagDocument,
-	syncRagDocument,
 } from "./library-access";
 import {
+	isDeprecatedBrowserRagWritePath,
 	isInternalRagPath,
 	requiresLibraryWritePermission,
 } from "./rag-permissions.mjs";
@@ -124,6 +123,16 @@ export async function proxyRagRequest(
 	if (identity && isInternalRagPath(safeSegments)) {
 		return Response.json({ detail: "RAG path not exposed" }, { status: 404 });
 	}
+	if (isDeprecatedBrowserRagWritePath(request.method, safeSegments)) {
+		return Response.json(
+			{
+				detail:
+					"legacy RAG write path retired; use the control plane document API",
+				code: "legacy_ingest_writes_disabled",
+			},
+			{ status: 410 },
+		);
+	}
 	if (
 		identity &&
 		safeSegments[0] === "v1" &&
@@ -210,59 +219,8 @@ export async function proxyRagRequest(
 			init.body = signedBody;
 		}
 		const upstream = await fetch(upstreamUrl, init);
-		if (
-			identity &&
-			safeSegments[0] === "v1" &&
-			safeSegments[1] === "ingest" &&
-			safeSegments[2] === "upload" &&
-			(upstream.status === 200 || upstream.status === 202)
-		) {
-			const payload = (await upstream.clone().json()) as {
-				library_id: string;
-				doc_id: string;
-				title: string;
-				filename: string;
-				status: string;
-			};
-			await syncRagDocument(identity, payload);
-		}
-		if (
-			identity &&
-			safeSegments[0] === "v1" &&
-			safeSegments[1] === "libraries" &&
-			safeSegments[2] &&
-			safeSegments[3] === "documents" &&
-			upstream.status === 200
-		) {
-			const payloads = (await upstream.clone().json()) as Array<{
-				library_id: string;
-				id: string;
-				name: string;
-				filename: string;
-				status: string;
-				content_type?: string;
-			}>;
-			for (const payload of payloads) {
-				await syncRagDocument(identity, {
-					library_id: payload.library_id,
-					doc_id: payload.id,
-					title: payload.name,
-					filename: payload.filename,
-					status: payload.status,
-					content_type: payload.content_type,
-				});
-			}
-		}
-		if (
-			identity &&
-			safeSegments[0] === "v1" &&
-			safeSegments[1] === "documents" &&
-			safeSegments[2] &&
-			request.method === "DELETE" &&
-			upstream.ok
-		) {
-			await removeRagDocument(identity, safeSegments[2]);
-		}
+		// L6: no dual-write / document-list probe sync into app.documents.
+		// Control-plane routes own product metadata; Ask/retrieval stay HMAC-proxied.
 		return new Response(upstream.body, {
 			status: upstream.status,
 			statusText: upstream.statusText,

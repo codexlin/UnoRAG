@@ -213,7 +213,10 @@ async def enqueue_ingest_job(
 	"""Enqueue ARQ job. Raises RuntimeError on Redis/backpressure failures."""
 	from uuid import uuid4
 
+	from app.services.ingest.legacy_writes import ensure_legacy_arq_enqueue_allowed
+
 	settings = settings or get_settings()
+	ensure_legacy_arq_enqueue_allowed(settings)
 	meta = get_metadata_store(settings)
 	inflight = sum(
 		1

@@ -1,6 +1,13 @@
-"""文档版本 stub — 无完整 version 表时派生 document_version_id。"""
+"""Deprecated stub for pre-lifecycle document_version_id derivation.
+
+L6 product ingest must pass real Control Plane UUIDs. This helper remains only
+for legacy unit fixtures and migration-era code paths that still opt into
+LEGACY_INGEST_WRITES_ENABLED. New call sites must not use it.
+"""
 
 from __future__ import annotations
+
+import warnings
 
 
 def derive_document_version_id(
@@ -9,7 +16,12 @@ def derive_document_version_id(
 	content_hash: str | None = None,
 	version: int = 1,
 ) -> str:
-	"""派生版本 id：优先 content_hash 前缀，否则 `{doc_id}:v{n}`。"""
+	"""Deprecated: prefer real app.document_versions.id UUIDs."""
+	warnings.warn(
+		"derive_document_version_id is deprecated; pass real document_version_id",
+		DeprecationWarning,
+		stacklevel=2,
+	)
 	resolved = (doc_id or "").strip() or "unknown"
 	if content_hash and str(content_hash).strip():
 		return f"{resolved}:{str(content_hash).strip()[:12]}"

@@ -111,8 +111,11 @@ class Settings(BaseSettings):
 	ingest_max_inflight_per_library: int = 8
 	ingest_worker_max_jobs: int = 2
 	ingest_job_timeout_s: int = 600
+	# L6: FastAPI upload/replace/reindex + ARQ enqueue are migration-only.
+	# Default off; production forbids enabling. Tests may set true explicitly.
+	legacy_ingest_writes_enabled: bool = False
 
-	# PostgreSQL lifecycle worker (L2). This coexists with legacy ARQ until L7.
+	# PostgreSQL lifecycle worker (L2+). Ingest jobs claim app.jobs directly.
 	worker_database_url: str = ""
 	lifecycle_worker_poll_seconds: float = 1.0
 	lifecycle_worker_lease_seconds: int = 120
@@ -151,11 +154,21 @@ class Settings(BaseSettings):
 			raise ValueError("production MINERU_ENABLED=true requires MINERU_URL")
 		if self.mineru_mode.strip().lower() == "mineru" and not self.mineru_enabled:
 			raise ValueError("production MINERU_MODE=mineru requires MINERU_ENABLED=true")
+		if self.legacy_ingest_writes_enabled:
+			raise ValueError(
+				"production forbids LEGACY_INGEST_WRITES_ENABLED=true; "
+				"use the Next.js document lifecycle control plane"
+			)
 		return self
 
 	@property
 	def cors_origin_list(self) -> list[str]:
 		return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+	@property
+	def allows_legacy_ingest_writes(self) -> bool:
+		"""Browser/product ingest writes must use app.jobs lifecycle, not ARQ."""
+		return bool(self.legacy_ingest_writes_enabled)
 
 	@property
 	def llm_api_key(self) -> str:

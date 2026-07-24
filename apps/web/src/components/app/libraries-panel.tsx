@@ -482,7 +482,13 @@ export function LibrariesPanel() {
 		setBusyDocId(doc.id);
 		setError(null);
 		try {
-			const result = await reindexDocument(doc.id);
+			if (!selectedId) {
+				throw new Error("请先选择知识库");
+			}
+			const result = await reindexDocument({
+				libraryId: selectedId,
+				docId: doc.id,
+			});
 			if (result.accepted || result.status === "processing") {
 				trackProcessing([{ id: result.doc_id, name: result.title }]);
 				toast.success(`已提交重索引「${result.title}」`);

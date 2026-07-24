@@ -22,6 +22,7 @@ from app.schemas import (
 from app.services.document_storage import DocumentStorage
 from app.services.documents import clean_display_title
 from app.services.ingest.jobs import enqueue_ingest_job, process_document_ingest
+from app.services.ingest.legacy_writes import reject_legacy_ingest_writes
 from app.services.ingest.pipeline import prepare_ingest
 from app.services.ingest.router import V2_EXTENSIONS
 from app.services.metadata import MetadataStore, get_metadata_store
@@ -129,6 +130,8 @@ def ingest(
 	meta: MetadataStore = Depends(get_meta),
 	context: RequestContext = Depends(require_internal_context),
 ) -> IngestResponse:
+	"""Deprecated: product ingest uses the lifecycle control plane + app.jobs."""
+	reject_legacy_ingest_writes(settings)
 	access_scope = AccessScope.from_request_context(context)
 	capability = resolve_runtime(settings)
 	if not capability.live_ready:
@@ -248,6 +251,8 @@ async def ingest_upload(
 	meta: MetadataStore = Depends(get_meta),
 	context: RequestContext = Depends(require_internal_context),
 ) -> UploadResponse | JSONResponse:
+	"""Deprecated: browser uploads must use the Next.js control plane."""
+	reject_legacy_ingest_writes(settings)
 	access_scope = AccessScope.from_request_context(context)
 	capability = resolve_runtime(settings)
 	content = await file.read()

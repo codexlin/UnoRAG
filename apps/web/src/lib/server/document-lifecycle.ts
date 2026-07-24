@@ -2,13 +2,8 @@ import "server-only";
 
 import type { AuthIdentity } from "./auth/provider";
 export { validateDocumentUpload } from "./document-upload-core.mjs";
+export { documentLifecycleV2Enabled } from "./document-lifecycle-flag.mjs";
 import { safeStorageFilename } from "./object-storage/local";
-
-export function documentLifecycleV2Enabled(): boolean {
-	const configured = process.env.DOCUMENT_LIFECYCLE_V2?.trim().toLowerCase();
-	if (configured) return configured === "true" || configured === "1";
-	return process.env.NODE_ENV !== "production";
-}
 
 export function documentStorageKey(input: {
 	identity: AuthIdentity;

@@ -61,6 +61,7 @@ export async function findAuthorizedDocument(
 	return document ?? null;
 }
 
+/** @deprecated L6: browser dual-write removed; keep for optional backfill scripts. */
 export async function syncRagDocument(
 	identity: AuthIdentity,
 	payload: {

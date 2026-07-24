@@ -130,10 +130,12 @@ Pod 横向扩展。`FOR UPDATE SKIP LOCKED` 防止重复 claim，后台 heartbea
 `dead`。L2 产出的 Qdrant 点均为 `staging`，在 L3 原子激活前不会进入
 Dense、BM25 或表格检索。
 
-旧 ARQ worker 在 L7 迁移完成前仍用于 legacy ingest：
+L6 起产品 ingest 默认不再入队 ARQ。`LEGACY_INGEST_WRITES_ENABLED=true` 仅供
+迁移/单测临时打开 FastAPI upload/replace/reindex；生产环境禁止开启。若仍需
+调试旧 worker：
 
 ```bash
-uv run arq app.worker.WorkerSettings
+LEGACY_INGEST_WRITES_ENABLED=true uv run arq app.worker.WorkerSettings
 ```
 
 首次启用 L3 前，使用 migrator 凭据应用 Python 管理的 `rag` schema：

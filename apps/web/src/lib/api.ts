@@ -209,34 +209,19 @@ export async function fetchDocuments(
 	signal?: AbortSignal,
 ): Promise<ApiDocument[]> {
 	const encodedLibraryId = encodeURIComponent(libraryId);
-	const [controlResponse, legacyResponse] = await Promise.all([
-		fetch(`/api/libraries/${encodedLibraryId}/documents`, {
+	const controlResponse = await fetch(
+		`/api/libraries/${encodedLibraryId}/documents`,
+		{
 			method: "GET",
 			signal,
 			cache: "no-store",
-		}),
-		fetch(`${getApiBaseUrl()}/v1/libraries/${encodedLibraryId}/documents`, {
-			method: "GET",
-			signal,
-			cache: "no-store",
-		}).catch(() => null),
-	]);
+		},
+	);
 	if (!controlResponse.ok) {
 		throw new Error(`documents ${controlResponse.status}`);
 	}
 	const controlDocuments = (await controlResponse.json()) as ApiDocument[];
-	const legacyDocuments =
-		legacyResponse?.ok === true
-			? ((await legacyResponse.json()) as ApiDocument[])
-			: [];
-	const merged = new Map(controlDocuments.map((item) => [item.id, item]));
-	for (const legacy of legacyDocuments) {
-		const control = merged.get(legacy.id);
-		if (!control?.document_version_id) {
-			merged.set(legacy.id, { ...control, ...legacy });
-		}
-	}
-	return Array.from(merged.values()).sort((left, right) =>
+	return controlDocuments.sort((left, right) =>
 		right.updated_at.localeCompare(left.updated_at),
 	);
 }
@@ -321,37 +306,15 @@ export async function uploadDocument(input: {
 	/** 可选；前端默认不传，兼容旧调用 */
 	displayName?: string;
 }): Promise<ApiUploadResponse> {
-	const extension = input.file.name.split(".").pop()?.toLowerCase();
-	if (extension === "md" || extension === "markdown") {
-		const nativeForm = new FormData();
-		nativeForm.append("file", input.file);
-		if (input.displayName?.trim()) {
-			nativeForm.append("display_name", input.displayName.trim());
-		}
-		const nativeResponse = await fetch(
-			`/api/libraries/${encodeURIComponent(input.libraryId)}/documents`,
-			{ method: "POST", body: nativeForm },
-		);
-		if (nativeResponse.status === 200 || nativeResponse.status === 202) {
-			return (await nativeResponse.json()) as ApiUploadResponse;
-		}
-		if (nativeResponse.status !== 404) {
-			const text = await nativeResponse.text();
-			throw new Error(parseApiError(text) || `upload ${nativeResponse.status}`);
-		}
-	}
-
 	const form = new FormData();
-	form.append("library_id", input.libraryId);
 	form.append("file", input.file);
 	if (input.displayName?.trim()) {
 		form.append("display_name", input.displayName.trim());
 	}
-	const response = await fetch(`${getApiBaseUrl()}/v1/ingest/upload`, {
-		method: "POST",
-		body: form,
-	});
-	// 200=同步完成；202=已入队异步索引
+	const response = await fetch(
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents`,
+		{ method: "POST", body: form },
+	);
 	if (response.status !== 200 && response.status !== 202) {
 		const text = await response.text();
 		throw new Error(parseApiError(text) || `upload ${response.status}`);
@@ -464,11 +427,12 @@ export async function fetchDocumentVersions(input: {
 	};
 }
 
-export async function reindexDocument(
-	docId: string,
-): Promise<ApiUploadResponse> {
+export async function reindexDocument(input: {
+	libraryId: string;
+	docId: string;
+}): Promise<ApiUploadResponse> {
 	const response = await fetch(
-		`${getApiBaseUrl()}/v1/documents/${encodeURIComponent(docId)}/reindex`,
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents/${encodeURIComponent(input.docId)}/reindex`,
 		{ method: "POST" },
 	);
 	if (response.status !== 200 && response.status !== 202) {

@@ -19,6 +19,7 @@ from app.schemas import (
 from app.services.document_storage import DocumentStorage
 from app.services.documents import clean_display_title
 from app.services.ingest.jobs import enqueue_ingest_job, process_document_ingest
+from app.services.ingest.legacy_writes import reject_legacy_ingest_writes
 from app.services.ingest.router import V2_EXTENSIONS
 from app.services.metadata import MetadataStore, get_metadata_store
 from app.services.retrieval import IngestService
@@ -351,6 +352,8 @@ def delete_document(
 	storage: DocumentStorage = Depends(get_document_storage),
 	access_scope: AccessScope = Depends(get_access_scope),
 ) -> dict[str, object]:
+	"""Deprecated: use Next.js DELETE .../documents/{id} (document.delete job)."""
+	reject_legacy_ingest_writes(settings)
 	doc = meta.get_document(doc_id, scope=access_scope)
 	if doc is None:
 		raise HTTPException(status_code=404, detail="document not found")
@@ -389,7 +392,8 @@ async def replace_document(
 	storage: DocumentStorage = Depends(get_document_storage),
 	access_scope: AccessScope = Depends(get_access_scope),
 ) -> UploadResponse | JSONResponse:
-	"""用新文件覆盖同一文档：清旧向量与原文，保留 doc_id，再入队索引。"""
+	"""Deprecated: use Next.js POST .../documents/{id}/versions."""
+	reject_legacy_ingest_writes(settings)
 	doc = meta.get_document(doc_id, scope=access_scope)
 	if doc is None:
 		raise HTTPException(status_code=404, detail="document not found")
@@ -574,6 +578,8 @@ async def reindex_document(
 	storage: DocumentStorage = Depends(get_document_storage),
 	access_scope: AccessScope = Depends(get_access_scope),
 ) -> UploadResponse | JSONResponse:
+	"""Deprecated: use Next.js POST .../documents/{id}/reindex."""
+	reject_legacy_ingest_writes(settings)
 	doc = meta.get_document(doc_id, scope=access_scope)
 	if doc is None:
 		raise HTTPException(status_code=404, detail="document not found")

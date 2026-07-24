@@ -297,6 +297,7 @@ def test_production_accepts_signed_service_context(monkeypatch) -> None:
 	monkeypatch.setenv("INTERNAL_AUTH_SECRET", TEST_SECRET)
 	monkeypatch.setenv("INTERNAL_AUTH_REPLAY_BACKEND", "redis")
 	monkeypatch.setenv("ACTIVE_GENERATION_GATE_ENABLED", "true")
+	monkeypatch.setenv("LEGACY_INGEST_WRITES_ENABLED", "false")
 	get_settings.cache_clear()
 	settings = Settings()
 

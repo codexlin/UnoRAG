@@ -60,11 +60,12 @@ signed service context, retry transient failures, and retain terminal failure
 details for operators. Workers heartbeat long-running leases and abort work
 after losing ownership. Library deletion uses a service-only, idempotent
 projection endpoint and fails closed when vector or object cleanup is
-unavailable. During migration, successful legacy ingest responses and document
-list probes still project RAG document state into `app.documents`; the native
-document lifecycle removes those probes in favor of direct PostgreSQL Job and
-version transitions. Existing FastAPI `public.*` metadata remains a derived
-compatibility representation until the legacy path exits.
+unavailable. As of L6, browser ingest no longer dual-writes via RAG upload or
+document list probes; the native document lifecycle owns `app.documents` through
+PostgreSQL Job and version transitions. FastAPI write routes remain only behind
+an explicit `LEGACY_INGEST_WRITES_ENABLED` escape hatch (forbidden in
+production). Existing FastAPI `public.*` metadata remains a derived
+compatibility representation until backfill and projection cleanup finish.
 
 Document ingestion does not add a second set of Next.js claim, heartbeat,
 progress, and completion endpoints. Next.js streams the source to
