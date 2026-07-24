@@ -1,0 +1,211 @@
+# MeriKnow Helm starter values (L8 deferred slice).
+# External Postgres / Qdrant / Redis / object storage are customer-managed by default.
+# Do not commit real secrets — use --set-file / ExternalSecret / sealed-secrets.
+
+fullnameOverride: ""
+nameOverride: ""
+
+imagePullSecrets: []
+
+# Pin tags before customer handoff. Digest locking / SBOM scanning are follow-ups.
+images:
+  web:
+    repository: meriknow-web
+    tag: local
+    pullPolicy: IfNotPresent
+  api:
+    repository: meriknow-api
+    tag: local
+    pullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# Workloads
+# ---------------------------------------------------------------------------
+web:
+  enabled: true
+  replicaCount: 1
+  port: 3000
+  resources: {}
+  # HTTP readiness via control-plane health (proxies RAG readiness).
+  readinessProbe:
+    httpGet:
+      path: /api/rag/health
+      port: http
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+  livenessProbe:
+    httpGet:
+      path: /api/rag/health
+      port: http
+    initialDelaySeconds: 40
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+api:
+  enabled: true
+  replicaCount: 1
+  port: 8000
+  resources: {}
+  # ClusterIP only — do not expose via Ingress (fail-closed edge).
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+worker:
+  enabled: true
+  replicaCount: 1
+  resources: {}
+  # Ready file written by lifecycle worker after first successful poll loop.
+  readinessProbe:
+    exec:
+      command: ["test", "-f", "/tmp/meriknow-lifecycle-ready"]
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 6
+  livenessProbe:
+    exec:
+      command: ["test", "-f", "/tmp/meriknow-lifecycle-ready"]
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 3
+    failureThreshold: 3
+  terminationGracePeriodSeconds: 120
+
+# ---------------------------------------------------------------------------
+# Networking
+# ---------------------------------------------------------------------------
+service:
+  web:
+    type: ClusterIP
+    port: 3000
+  api:
+    type: ClusterIP
+    port: 8000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: meriknow.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # tls:
+  #   - secretName: meriknow-tls
+  #     hosts: [meriknow.example.com]
+
+# ---------------------------------------------------------------------------
+# Document object storage
+# ---------------------------------------------------------------------------
+# Default: shared PVC mounted by web + worker (+ api if needed for local files).
+# For customer MinIO/S3: leave persistence disabled and point app config at S3
+# once the object backend lands (currently Compose uses DOCUMENT_STORAGE_ROOT).
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes:
+    - ReadWriteMany
+  size: 50Gi
+  # existingClaim: meriknow-documents
+
+documentStorageRoot: /var/lib/meriknow/documents
+
+# ---------------------------------------------------------------------------
+# External dependencies (customer-managed; not chart-installed)
+# ---------------------------------------------------------------------------
+# Provide connection strings via secret (recommended) or plain env below.
+# Chart does NOT deploy Postgres / Qdrant / Redis / MinIO.
+external:
+  # postgresql://…  (control-plane / drizzle)
+  # postgresql+psycopg://… for FastAPI DATABASE_URL if required by Settings
+  postgres:
+    # Set secret keys: DATABASE_URL, WORKER_DATABASE_URL, RAG_READ_DATABASE_URL, API_DATABASE_URL
+    existingSecret: ""
+  qdrant:
+    url: http://qdrant.external:6333
+    collection: meriknow_chunks
+  redis:
+    url: redis://redis.external:6379
+  # Object notes: prefer customer S3/MinIO later; PVC is the starter path.
+  objectStorage: pvc # pvc | s3 (s3 adapter deferred)
+
+# ---------------------------------------------------------------------------
+# Application config (non-secret)
+# ---------------------------------------------------------------------------
+config:
+  appEnv: production
+  askMode: live
+  metadataBackend: postgres
+  documentLifecycleV2: "true"
+  internalAuthEnabled: "true"
+  internalAuthReplayBackend: redis
+  activeGenerationGateEnabled: "true"
+  activeGenerationCacheTtlSeconds: "0"
+  legacyIngestWritesEnabled: "false"
+  corsOrigins: https://meriknow.example.com
+  chatModel: qwen-plus
+  embeddingModel: text-embedding-v3
+  embeddingDim: "1024"
+  rerankEnabled: "true"
+  rerankModel: qwen3-rerank
+  mineruEnabled: "false"
+  openaiBaseUrl: ""
+  rerankBaseUrl: ""
+  mineruUrl: ""
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+# Prefer existingSecret with keys listed in templates/NOTES.txt.
+# For bootstrap only, chart can create a Secret from values.secret (not for prod).
+secret:
+  create: false
+  existingSecret: meriknow-runtime
+  # When create=true, fill placeholders locally via --set / values overlay (never commit):
+  # data:
+  #   MERIKNOW_INTERNAL_SECRET: ""
+  #   MERIKNOW_SESSION_SECRET: ""
+  #   INTERNAL_AUTH_SECRET: ""
+  #   MERIKNOW_ADMIN_PASSWORD: ""
+  #   DATABASE_URL: ""
+  #   API_DATABASE_URL: ""
+  #   WORKER_DATABASE_URL: ""
+  #   RAG_READ_DATABASE_URL: ""
+  #   OPENAI_API_KEY: ""
+  #   DASHSCOPE_API_KEY: ""
+
+# ---------------------------------------------------------------------------
+# Migration Jobs (opt-in; run as separate release step)
+# ---------------------------------------------------------------------------
+migrate:
+  web:
+    enabled: false
+    image:
+      repository: meriknow-web-migrator
+      tag: local
+      pullPolicy: IfNotPresent
+  rag:
+    enabled: false
+    # Uses api image + scripts/apply_rag_migrations.py
+    # Requires MIGRATOR_DATABASE_URL in secret.
+
+# SBOM / image digest scanning: not automated in this chart; see deploy/README.md.

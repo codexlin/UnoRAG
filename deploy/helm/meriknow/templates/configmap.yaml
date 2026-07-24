@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "meriknow.fullname" . }}-config
+  labels:
+    {{- include "meriknow.labels" . | nindent 4 }}
+data:
+  APP_ENV: {{ .Values.config.appEnv | quote }}
+  ASK_MODE: {{ .Values.config.askMode | quote }}
+  METADATA_BACKEND: {{ .Values.config.metadataBackend | quote }}
+  DOCUMENT_LIFECYCLE_V2: {{ .Values.config.documentLifecycleV2 | quote }}
+  INTERNAL_AUTH_ENABLED: {{ .Values.config.internalAuthEnabled | quote }}
+  INTERNAL_AUTH_REPLAY_BACKEND: {{ .Values.config.internalAuthReplayBackend | quote }}
+  ACTIVE_GENERATION_GATE_ENABLED: {{ .Values.config.activeGenerationGateEnabled | quote }}
+  ACTIVE_GENERATION_CACHE_TTL_SECONDS: {{ .Values.config.activeGenerationCacheTtlSeconds | quote }}
+  LEGACY_INGEST_WRITES_ENABLED: {{ .Values.config.legacyIngestWritesEnabled | quote }}
+  CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  CHAT_MODEL: {{ .Values.config.chatModel | quote }}
+  EMBEDDING_MODEL: {{ .Values.config.embeddingModel | quote }}
+  EMBEDDING_DIM: {{ .Values.config.embeddingDim | quote }}
+  RERANK_ENABLED: {{ .Values.config.rerankEnabled | quote }}
+  RERANK_MODEL: {{ .Values.config.rerankModel | quote }}
+  MINERU_ENABLED: {{ .Values.config.mineruEnabled | quote }}
+  OPENAI_BASE_URL: {{ .Values.config.openaiBaseUrl | quote }}
+  RERANK_BASE_URL: {{ .Values.config.rerankBaseUrl | quote }}
+  MINERU_URL: {{ .Values.config.mineruUrl | quote }}
+  QDRANT_URL: {{ .Values.external.qdrant.url | quote }}
+  QDRANT_COLLECTION: {{ .Values.external.qdrant.collection | quote }}
+  REDIS_URL: {{ .Values.external.redis.url | quote }}
+  DOCUMENT_STORAGE_ROOT: {{ .Values.documentStorageRoot | quote }}
+  RAG_API_URL: {{ printf "http://%s-api:%v" (include "meriknow.fullname" .) .Values.service.api.port | quote }}
+  API_PREFIX: /v1
+  LIFECYCLE_WORKER_READY_FILE: /tmp/meriknow-lifecycle-ready

@@ -1,0 +1,19 @@
+{{- if .Values.web.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "meriknow.fullname" . }}-web
+  labels:
+    {{- include "meriknow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: {{ .Values.service.web.type }}
+  ports:
+    - port: {{ .Values.service.web.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "meriknow.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+{{- end }}

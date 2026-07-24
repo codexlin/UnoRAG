@@ -1,0 +1,5 @@
+# Patterns to ignore when packaging charts.
+.git
+.gitignore
+*.md
+.DS_Store

@@ -189,13 +189,35 @@ override 文件中加 `mem_limit` / `cpus`，并外接日志栈。
 - 运行登录应授予 `meriknow_web` / `meriknow_worker` / `meriknow_rag_read`  
   （见 `ops/postgres/configure-runtime-roles.sql`），不要用 migrator 跑业务。  
 
-## 9. 本片后置
+## 9. Helm / Kubernetes（起步骨架）
 
-- Kubernetes / Helm 生产拓扑与容量参数  
+Compose 适合单机；多副本生产使用 [`deploy/helm/meriknow`](../../deploy/helm/meriknow)。
+
+要点：
+
+- 部署 **web / api / lifecycle-worker**；**不**内置 Postgres、Qdrant、Redis、MinIO。  
+- `values.external.*` 填客户托管连接；密钥走 `secret.existingSecret`（勿提交明文）。  
+- Ingress（可选）只暴露 **web**；api 保持 ClusterIP（fail-closed）。  
+- readiness：web `GET /api/rag/health`、api `GET /health`、worker 就绪文件。  
+- 文档对象：默认 `ReadWriteMany` PVC；S3/MinIO 适配仍后置。  
+- 迁移：`migrate.web` / `migrate.rag` 为可选 Helm hook Job。
+
+```bash
+helm upgrade --install meriknow ./deploy/helm/meriknow -n meriknow \
+  --set secret.existingSecret=meriknow-runtime \
+  --set external.qdrant.url=http://qdrant.infra:6333 \
+  --set external.redis.url=redis://redis.infra:6379
+```
+
+细节与密钥键名见 [`deploy/helm/README.md`](../../deploy/helm/README.md)。
+
+## 10. 本片后置
+
+- Helm 容量参数、HPA、PDB、NetworkPolicy 硬化  
 - SBOM、镜像 digest 锁定、依赖/镜像 CVE 扫描流水线  
-- MinIO/S3 作为一等对象后端（当前默认共享卷）  
+- MinIO/S3 作为一等对象后端（当前默认共享卷 / PVC）  
 
-## 10. 本地验证清单
+## 11. 本地验证清单
 
 ```bash
 cd deploy/compose

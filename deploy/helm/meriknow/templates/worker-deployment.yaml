@@ -1,0 +1,55 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "meriknow.fullname" . }}-worker
+  labels:
+    {{- include "meriknow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: lifecycle-worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "meriknow.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: lifecycle-worker
+  template:
+    metadata:
+      labels:
+        {{- include "meriknow.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: lifecycle-worker
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: lifecycle-worker
+          image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"
+          imagePullPolicy: {{ .Values.images.api.pullPolicy }}
+          command: ["python", "-m", "app.lifecycle_worker"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "meriknow.fullname" . }}-config
+            - secretRef:
+                name: {{ include "meriknow.secretName" . }}
+          volumeMounts:
+            {{- if .Values.persistence.enabled }}
+            - name: documents
+              mountPath: {{ .Values.documentStorageRoot }}
+            {{- end }}
+          readinessProbe:
+            {{- toYaml .Values.worker.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.worker.livenessProbe | nindent 12 }}
+          {{- with .Values.worker.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        {{- if .Values.persistence.enabled }}
+        - name: documents
+          persistentVolumeClaim:
+            claimName: {{ include "meriknow.documentsPvcName" . }}
+        {{- end }}
+{{- end }}

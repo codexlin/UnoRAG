@@ -1,7 +1,7 @@
 # MeriKnow 私有化企业知识库最终落地计划
 
 > 日期：2026-07-24  
-> 状态：实施中（L0–L7 主路径完成；L8 私有化部署包首片已落地，Helm/SBOM 后置）  
+> 状态：实施中（L0–L7 主路径完成；L8 Compose + Helm 起步骨架已落地，SBOM/硬化后置）  
 > 关联文档：
 > [企业 RAG 主蓝图](../architecture/enterprise-rag-saas-design.md) ·
 > [Next.js 控制面 ADR](../adr/0004-nextjs-control-plane.md)
@@ -1239,7 +1239,8 @@ Done：
 
 - [x] 提供 Docker Compose 单机参考拓扑；
   （`deploy/compose/docker-compose.yml` + `deploy/docker/*`）
-- [ ] 提供 Kubernetes/Helm 生产拓扑和容量参数；**(后置)**
+- [x] 提供 Kubernetes/Helm 生产拓扑和容量参数；
+  （`deploy/helm/meriknow` 起步骨架：web/api/worker + external deps；HPA/容量硬化后置）
 - [x] PostgreSQL、Qdrant、Redis、对象存储均支持客户托管连接；
   （`.env` 连接串；默认 Compose 卷，可改为外部托管）
 - [x] LLM/embedding/rerank/MinerU 使用客户 endpoint/key；

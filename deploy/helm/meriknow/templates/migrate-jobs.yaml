@@ -1,0 +1,64 @@
+{{- if .Values.migrate.web.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "meriknow.fullname" . }}-migrate-web
+  labels:
+    {{- include "meriknow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate-web
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "meriknow.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate-web
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate-web
+          image: "{{ .Values.migrate.web.image.repository }}:{{ .Values.migrate.web.image.tag }}"
+          imagePullPolicy: {{ .Values.migrate.web.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "meriknow.secretName" . }}
+{{- end }}
+---
+{{- if .Values.migrate.rag.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "meriknow.fullname" . }}-migrate-rag
+  labels:
+    {{- include "meriknow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate-rag
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-4"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "meriknow.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate-rag
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate-rag
+          image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"
+          imagePullPolicy: {{ .Values.images.api.pullPolicy }}
+          command: ["python", "scripts/apply_rag_migrations.py"]
+          envFrom:
+            - secretRef:
+                name: {{ include "meriknow.secretName" . }}
+          env:
+            - name: MIGRATOR_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "meriknow.secretName" . }}
+                  key: MIGRATOR_DATABASE_URL
+{{- end }}
