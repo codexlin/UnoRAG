@@ -14,9 +14,11 @@ from uuid import uuid4
 
 from app.services.ingest.ir import (
 	DocumentIR,
+	CancelCheck,
 	Node,
 	NodeType,
 	ParserReport,
+	ParseProgressCallback,
 	content_hash_bytes,
 )
 
@@ -39,6 +41,8 @@ class PdfParseOptions:
 	vlm_adapter: Any | None = None
 	# Phase 2C：允许空 nodes 返回，供上层 MinerU 救援（禁止静默 ready）
 	allow_empty: bool = False
+	progress_callback: ParseProgressCallback | None = None
+	cancel_check: CancelCheck | None = None
 
 
 def classify_page(*, char_count: int, image_area_ratio: float, image_count: int) -> PageKind:
@@ -74,6 +78,8 @@ def parse_pdf(
 	try:
 		page_infos: list[dict[str, Any]] = []
 		for index, page in enumerate(document, start=1):
+			if opts.cancel_check is not None:
+				opts.cancel_check()
 			raw = (page.get_text("text") or "").strip()
 			char_count = len(re.sub(r"\s+", "", raw))
 			images = page.get_images(full=True) or []
@@ -113,7 +119,11 @@ def parse_pdf(
 		header_footer = _detect_repeated_lines(page_line_bags)
 
 		for info in page_infos:
+			if opts.cancel_check is not None:
+				opts.cancel_check()
 			index = int(info["index"])
+			if opts.progress_callback is not None:
+				opts.progress_callback("pymupdf_page", index, len(page_infos))
 			kind = info["kind"]
 			raw = str(info["raw"])
 

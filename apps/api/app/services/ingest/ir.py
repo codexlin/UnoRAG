@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import hashlib
 from enum import StrEnum
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
 from app.services.ingest.table_ir import TableIR
+
+ParseProgressCallback = Callable[[str, int | None, int | None], None]
+CancelCheck = Callable[[], None]
 
 
 class NodeType(StrEnum):

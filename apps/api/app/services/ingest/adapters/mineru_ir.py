@@ -10,7 +10,7 @@ import json
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from app.services.ingest.ir import (
@@ -202,19 +202,38 @@ def _join_caption(value: Any) -> str:
 	return str(value).strip()
 
 
-def content_list_to_nodes(content_list: list[dict[str, Any]]) -> list[Node]:
+def content_list_to_nodes(
+	content_list: list[dict[str, Any]],
+	*,
+	progress_callback: Callable[[str, int | None, int | None], None] | None = None,
+	cancel_check: Callable[[], None] | None = None,
+) -> list[Node]:
 	"""按 reading order 将 MinerU content_list 转为 IR nodes。"""
 	nodes: list[Node] = []
 	table_seq = 0
 	figure_seq = 0
 	heading_stack: list[str] = []
 	last_table: Node | None = None
+	pages = sorted(
+		{
+			_page_number(item)
+			for item in content_list
+			if isinstance(item, dict)
+		}
+	)
+	seen_pages: set[int] = set()
 
 	for order, item in enumerate(content_list):
+		if cancel_check is not None:
+			cancel_check()
 		if not isinstance(item, dict):
 			continue
 		kind = str(item.get("type") or "text").lower()
 		page = _page_number(item)
+		if page not in seen_pages:
+			seen_pages.add(page)
+			if progress_callback is not None:
+				progress_callback("mineru_page", len(seen_pages), len(pages))
 		bbox = _bbox(item)
 		meta: dict[str, Any] = {
 			"reading_order": order,
@@ -685,13 +704,19 @@ def mineru_json_to_ir(
 	parser_version: str = "unknown",
 	latency_ms: float | None = None,
 	failed_pages: list[int] | None = None,
+	progress_callback: Callable[[str, int | None, int | None], None] | None = None,
+	cancel_check: Callable[[], None] | None = None,
 ) -> DocumentIR:
 	"""将 MinerU 服务响应（或 content_list 包装）转为 DocumentIR。"""
 	content_list = _extract_content_list(payload, filename=filename)
 	if not isinstance(content_list, list):
 		raise ValueError("MinerU response missing content_list")
 
-	nodes = content_list_to_nodes(content_list)
+	nodes = content_list_to_nodes(
+		content_list,
+		progress_callback=progress_callback,
+		cancel_check=cancel_check,
+	)
 	pages = sorted({n.page_start for n in nodes if n.page_start is not None})
 	failed = list(failed_pages or payload.get("failed_pages") or [])
 	version = str(

@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from app.services.ingest.ir import DocumentIR
+from app.services.ingest.ir import CancelCheck, DocumentIR, ParseProgressCallback
 
 
 @dataclass
@@ -19,6 +19,8 @@ class ParseRequest:
 	doc_id: str | None = None
 	library_id: str = ""
 	options: Any | None = None
+	progress_callback: ParseProgressCallback | None = None
+	cancel_check: CancelCheck | None = None
 
 
 @runtime_checkable

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import threading
 import time
 from typing import Any, Callable
 
@@ -27,8 +29,23 @@ _FAKE_SCANNED_TEXT = (
 )
 
 
-class MinerUClientError(RuntimeError):
+class MinerUClientError(RuntimeError, ValueError):
 	"""MinerU 服务调用失败（超时 / HTTP / 空结果）。"""
+
+	def __init__(
+		self,
+		message: str,
+		*,
+		code: str = "mineru_unavailable",
+		retryable: bool = True,
+		status_code: int | None = None,
+		parser_report: dict[str, Any] | None = None,
+	) -> None:
+		super().__init__(message)
+		self.code = code
+		self.retryable = retryable
+		self.status_code = status_code
+		self.parser_report = parser_report
 
 
 def _post_multipart(
@@ -56,12 +73,36 @@ def _post_multipart(
 		response.raise_for_status()
 		return response.content
 	except httpx.TimeoutException as exc:
-		raise MinerUClientError(f"MinerU timeout after {timeout_s}s") from exc
+		raise MinerUClientError(
+			f"MinerU timeout after {timeout_s}s",
+			code="mineru_timeout",
+		) from exc
 	except httpx.HTTPStatusError as exc:
+		status = exc.response.status_code
 		detail = exc.response.text[:500]
-		raise MinerUClientError(f"MinerU HTTP {exc.response.status_code}: {detail}") from exc
+		if status == 429:
+			code = "mineru_rate_limited"
+			retryable = True
+		elif status == 408:
+			code = "mineru_timeout"
+			retryable = True
+		elif status >= 500:
+			code = "mineru_service_error"
+			retryable = True
+		else:
+			code = "mineru_request_rejected"
+			retryable = False
+		raise MinerUClientError(
+			f"MinerU HTTP {status}: {detail}",
+			code=code,
+			retryable=retryable,
+			status_code=status,
+		) from exc
 	except httpx.RequestError as exc:
-		raise MinerUClientError(f"MinerU unreachable: {exc}") from exc
+		raise MinerUClientError(
+			f"MinerU unreachable: {exc}",
+			code="mineru_unreachable",
+		) from exc
 
 
 class MinerUBackend:
@@ -99,9 +140,15 @@ class MinerUBackend:
 		t0 = time.perf_counter()
 		raw: bytes | None = None
 		for attempt in range(1, attempts + 1):
+			if request.cancel_check is not None:
+				request.cancel_check()
 			try:
-				raw = self._post_fn(
-					url,
+				if request.progress_callback is not None:
+					request.progress_callback("mineru_request", None, None)
+				raw = _post_with_cancel(
+					self._post_fn,
+					cancel_check=request.cancel_check,
+					url=url,
 					filename=request.filename,
 					content=request.content,
 					timeout_s=self.timeout_s,
@@ -115,30 +162,49 @@ class MinerUBackend:
 					attempts,
 					exc,
 				)
-				if attempt >= attempts:
+				if not exc.retryable or attempt >= attempts:
 					raise
-				time.sleep(min(0.5 * attempt, 2.0))
+				_sleep_with_cancel(
+					min(0.5 * attempt, 2.0),
+					request.cancel_check,
+				)
 		if raw is None:
 			raise MinerUClientError(str(last_exc or "MinerU request failed"))
+		if request.cancel_check is not None:
+			request.cancel_check()
 
 		try:
 			payload = json.loads(raw.decode("utf-8"))
 		except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-			raise MinerUClientError("MinerU response is not valid JSON") from exc
+			raise MinerUClientError(
+				"MinerU response is not valid JSON",
+				code="mineru_invalid_response",
+			) from exc
 		if not isinstance(payload, dict):
-			raise MinerUClientError("MinerU response JSON must be an object")
+			raise MinerUClientError(
+				"MinerU response JSON must be an object",
+				code="mineru_invalid_response",
+			)
 
 		latency_ms = (time.perf_counter() - t0) * 1000.0
-		return mineru_json_to_ir(
-			payload=payload,
-			filename=request.filename,
-			title=request.title,
-			content=request.content,
-			doc_id=request.doc_id,
-			library_id=request.library_id,
-			parser_version=str(payload.get("version") or self.version),
-			latency_ms=latency_ms,
-		)
+		try:
+			return mineru_json_to_ir(
+				payload=payload,
+				filename=request.filename,
+				title=request.title,
+				content=request.content,
+				doc_id=request.doc_id,
+				library_id=request.library_id,
+				parser_version=str(payload.get("version") or self.version),
+				latency_ms=latency_ms,
+				progress_callback=request.progress_callback,
+				cancel_check=request.cancel_check,
+			)
+		except ValueError as exc:
+			raise MinerUClientError(
+				str(exc),
+				code="mineru_invalid_response",
+			) from exc
 
 
 class FakeMinerUBackend:
@@ -181,6 +247,8 @@ class FakeMinerUBackend:
 			library_id=request.library_id,
 			parser_version=self.version,
 			latency_ms=latency_ms,
+			progress_callback=request.progress_callback,
+			cancel_check=request.cancel_check,
 		)
 
 	def _default_payload(self, filename: str) -> dict[str, Any]:
@@ -309,3 +377,49 @@ def get_mineru_backend(
 		max_retries=max_retries,
 		parse_path=parse_path,
 	)
+
+
+def _sleep_with_cancel(
+	seconds: float,
+	cancel_check: Callable[[], None] | None,
+) -> None:
+	deadline = time.monotonic() + max(0.0, seconds)
+	while True:
+		if cancel_check is not None:
+			cancel_check()
+		remaining = deadline - time.monotonic()
+		if remaining <= 0:
+			return
+		time.sleep(min(0.1, remaining))
+
+
+def _post_with_cancel(
+	post_fn: Callable[..., bytes],
+	*,
+	cancel_check: Callable[[], None] | None,
+	**kwargs: Any,
+) -> bytes:
+	if cancel_check is None:
+		return post_fn(**kwargs)
+
+	result: queue.Queue[tuple[bool, bytes | BaseException]] = queue.Queue(maxsize=1)
+
+	def invoke() -> None:
+		try:
+			result.put((True, post_fn(**kwargs)))
+		except BaseException as exc:
+			result.put((False, exc))
+
+	thread = threading.Thread(
+		target=invoke,
+		name="mineru-http",
+		daemon=True,
+	)
+	thread.start()
+	while thread.is_alive():
+		thread.join(timeout=0.25)
+		cancel_check()
+	ok, value = result.get()
+	if ok:
+		return value  # type: ignore[return-value]
+	raise value  # type: ignore[misc]
