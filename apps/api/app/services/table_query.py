@@ -11,14 +11,59 @@ TableOperator = Literal[">", ">=", "<", "<=", "=="]
 
 # 列名别名：问法 → 可能命中的表头片段（匹配时仍需与真实 headers 对齐）
 _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-	"总价": ("总价", "报价", "金额", "price", "amount"),
+	"总价": ("总价", "报价", "金额", "合计", "中标金额", "price", "amount"),
 	"单价": ("单价", "unit"),
-	"供应商": ("供应商", "厂商", "公司", "vendor", "supplier"),
+	"合计": ("合计", "总价", "金额"),
+	"中标金额": ("中标金额", "金额", "总价"),
+	"序号": ("序号", "编号", "No", "#"),
+	"供应商": ("供应商", "中标供应商", "厂商", "公司", "vendor", "supplier"),
+	"中标供应商": ("中标供应商", "供应商", "厂商"),
 	"数量": ("数量", "qty", "quantity"),
-	"产品": ("产品", "品名", "名称", "product"),
+	"产品": ("产品", "品名", "设备名称", "项目名称", "名称", "product"),
+	"设备名称": ("设备名称", "设备", "产品", "品名", "名称"),
+	"项目名称": ("项目名称", "项目", "名称"),
+	"采购单位": ("采购单位", "采购人", "单位"),
+	"规格参数": ("规格参数", "规格", "参数"),
 	"交付": ("交付", "交期", "周期"),
 	"质保": ("质保", "保修"),
 }
+
+# 实体列候选：lookup 时按问法/表头优先级解析，不只绑「供应商」
+_ENTITY_COLUMN_CANDIDATES: tuple[str, ...] = (
+	"设备名称",
+	"产品",
+	"品名",
+	"项目名称",
+	"名称",
+	"供应商",
+	"中标供应商",
+	"厂商",
+	"公司",
+)
+
+_ENTITY_STOPWORDS = frozenset(
+	{
+		"最低",
+		"最高",
+		"最大",
+		"最小",
+		"多少",
+		"哪些",
+		"哪个",
+		"什么",
+		"的",
+		"了",
+		"和",
+		"与",
+		"其",
+		"该",
+		"本",
+		"哪",
+		"请",
+		"列出",
+		"大约",
+	}
+)
 
 _CN_NUM = {
 	"零": 0,
@@ -36,11 +81,19 @@ _CN_NUM = {
 }
 
 _NUMERIC_INTENT = re.compile(
-	r"(超过|大于|小于|不低于|不高于|至少|最多|最低|最高|最大|最小|多少行|几行|统计|平均值|>|>=|<|<=)"
+	r"(超过|大于|小于|不低于|不高于|至少|最多|最低|最高|最大|最小|多少行|几行|统计|平均值|序号|>|>=|<|<=)"
 )
+# 甲公司总价 / 服务器主机（型号）的单价
 _EQ_ENTITY = re.compile(
-	r"(?P<entity>[\u4e00-\u9fffA-Za-z0-9]{1,24})(?P<col>总价|报价|单价|数量)"
+	r"(?P<entity>[\u4e00-\u9fff]{2,24}|[A-Za-z][A-Za-z0-9\-_.]{1,30})"
+	r"(?:（[^）]{0,48}）|\([^)]{0,48}\))?"
+	r"的?"
+	r"(?P<col>总价|报价|单价|数量|合计|中标金额|规格参数|规格)"
 )
+_SEQ_LOOKUP = re.compile(
+	r"(?:序号\s*(?:为|是|:|：)?\s*(?P<seq>\d+)|第\s*(?P<row>\d+)\s*行)"
+)
+_SUMMARY_ROW_RE = re.compile(r"^(合计|总计|小计|汇总|汇总说明|备注|注[:：])")
 
 _UNIT_SCALE = {"千": 1_000.0, "万": 10_000.0, "亿": 100_000_000.0}
 _ARABIC_NUMBER_TOKEN = r"-?[0-9][0-9,，]*(?:\.[0-9]+)?\s*[万千亿]?"
@@ -116,15 +169,108 @@ def _match_header(column_hint: str | None, headers: list[str]) -> str | None:
 	return None
 
 
+def _infer_numeric_column(question: str) -> str | None:
+	"""从问法推断数值列；单价优先于笼统的「价」。"""
+	q = question or ""
+	if "单价" in q:
+		return "单价"
+	if "中标金额" in q:
+		return "中标金额"
+	if "合计" in q and "总价" not in q and "报价" not in q:
+		return "合计"
+	if any(token in q for token in ("总价", "报价", "金额")):
+		return "总价"
+	if "价" in q:
+		return "总价"
+	return None
+
+
+def _pick_entity_column_hint(question: str, headers: list[str] | None) -> str:
+	"""按问法与表头选实体列 hint（仍需 _finalize_columns 对齐真实表头）。"""
+	q = question or ""
+	preferred: list[str] = []
+	if "设备" in q:
+		preferred.append("设备名称")
+	if "项目" in q:
+		preferred.append("项目名称")
+	if "产品" in q or "品名" in q:
+		preferred.append("产品")
+	if "供应商" in q or "厂商" in q:
+		preferred.append("供应商")
+	preferred.extend(_ENTITY_COLUMN_CANDIDATES)
+	if headers:
+		for hint in preferred:
+			if _match_header(hint, headers):
+				return hint
+	return preferred[0] if preferred else "供应商"
+
+
+def _lookup_select_columns(question: str, *, value_column: str | None = None) -> list[str]:
+	"""lookup/filter 的 select：问到的名称/金额列 + value_column。"""
+	q = question or ""
+	select: list[str] = []
+
+	def _add(hint: str) -> None:
+		if hint and hint not in select:
+			select.append(hint)
+
+	if any(t in q for t in ("设备", "产品", "品名")):
+		_add("设备名称")
+		_add("产品")
+	if "项目" in q:
+		_add("项目名称")
+	if any(t in q for t in ("供应商", "厂商")):
+		_add("供应商")
+		_add("中标供应商")
+	if "采购" in q or "单位" in q:
+		_add("采购单位")
+	if "规格" in q:
+		_add("规格参数")
+	if "品牌" in q or "型号" in q:
+		_add("品牌/型号")
+	if "序号" in q:
+		_add("序号")
+	if "哪些" in q or "哪" in q:
+		_add("设备名称")
+		_add("项目名称")
+		_add("产品")
+		_add("供应商")
+	if "单价" in q:
+		_add("单价")
+	if "合计" in q:
+		_add("合计")
+	if "总价" in q or "报价" in q:
+		_add("总价")
+	if "中标金额" in q or ("金额" in q and "单价" not in q):
+		_add("中标金额")
+		_add("总价")
+	if value_column:
+		_add(value_column)
+	# filter/lookup 至少保留一类名称列，便于 answer_text / 证据展示
+	if not any(c in select for c in ("供应商", "中标供应商", "设备名称", "项目名称", "产品")):
+		_add("供应商")
+		_add("产品")
+		_add("设备名称")
+		_add("项目名称")
+	if not select:
+		select = ["产品", "供应商", value_column or "总价"]
+	return select
+
+
 def looks_like_numeric_table_query(question: str) -> bool:
 	q = (question or "").strip()
 	if not q:
 		return False
 	if _NUMERIC_INTENT.search(q):
 		return True
+	if _SEQ_LOOKUP.search(q):
+		return True
 	if _EQ_ENTITY.search(q):
 		return True
-	return bool(re.search(r"[0-9]+万?", q) and ("价" in q or "报价" in q or "供应商" in q))
+	return bool(
+		re.search(r"[0-9]+万?", q)
+		and ("价" in q or "报价" in q or "供应商" in q or "金额" in q)
+	)
 
 
 def build_table_query_plan(
@@ -148,6 +294,7 @@ def build_table_query_plan(
 		"select_columns": [],
 		"confident": False,
 		"reason": "unparsed",
+		"exclude_summary_rows": True,
 	}
 	if not q:
 		plan["reason"] = "empty"
@@ -165,30 +312,71 @@ def build_table_query_plan(
 		)
 		return _finalize_columns(plan, headers)
 
-	# max / min
-	if re.search(r"(最低|最小|最少).{0,6}(价|报价|总价|单价|金额)", q) or re.search(
-		r"(价|报价|总价|单价|金额).{0,4}(最低|最小)", q
-	):
-		plan.update(
-			{
-				"operation": "min",
-				"column": "总价",
-				"confident": True,
-				"reason": "min_pattern",
-				"select_columns": ["产品", "供应商", "总价"],
-			}
-		)
-		return _finalize_columns(plan, headers)
-	if re.search(r"(最高|最大|最多).{0,6}(价|报价|总价|单价|金额)", q) or re.search(
-		r"(价|报价|总价|单价|金额).{0,4}(最高|最大)", q
-	):
+	# 序号 / 第 N 行 lookup（先于 max/min，避免被数值意图抢走）
+	seq_m = _SEQ_LOOKUP.search(q)
+	if seq_m:
+		seq_val = seq_m.group("seq") or seq_m.group("row")
+		if seq_val:
+			select = _lookup_select_columns(q)
+			# 序号行通常要带回整行关键列
+			for hint in ("设备名称", "项目名称", "产品", "采购单位", "供应商", "中标供应商", "单价", "合计", "总价", "中标金额", "规格参数"):
+				if hint not in select:
+					select.append(hint)
+			plan.update(
+				{
+					"operation": "lookup",
+					"column": _infer_numeric_column(q) or "产品",
+					"entity_column": "序号",
+					"entity_value": str(int(seq_val)) if seq_val.isdigit() else seq_val,
+					"select_columns": select,
+					"confident": True,
+					"reason": "seq_lookup",
+				}
+			)
+			return _finalize_columns(plan, headers)
+
+	# max / min（可同时问最大和最小 → 主操作为 max，附带 also_min）
+	min_pat = bool(
+		re.search(r"(最低|最小|最少).{0,6}(价|报价|总价|单价|金额)", q)
+		or re.search(r"(价|报价|总价|单价|金额).{0,4}(最低|最小)", q)
+	)
+	max_pat = bool(
+		re.search(r"(最高|最大|最多).{0,6}(价|报价|总价|单价|金额)", q)
+		or re.search(r"(价|报价|总价|单价|金额).{0,4}(最高|最大)", q)
+	)
+	amount_col = _infer_numeric_column(q) or "总价"
+	agg_select = ["产品", "项目名称", "设备名称", "供应商", "中标供应商", amount_col]
+	if max_pat and min_pat:
 		plan.update(
 			{
 				"operation": "max",
-				"column": "总价",
+				"column": amount_col,
+				"also_min": True,
+				"confident": True,
+				"reason": "maxmin_pattern",
+				"select_columns": agg_select,
+			}
+		)
+		return _finalize_columns(plan, headers)
+	if min_pat:
+		plan.update(
+			{
+				"operation": "min",
+				"column": amount_col,
+				"confident": True,
+				"reason": "min_pattern",
+				"select_columns": agg_select,
+			}
+		)
+		return _finalize_columns(plan, headers)
+	if max_pat:
+		plan.update(
+			{
+				"operation": "max",
+				"column": amount_col,
 				"confident": True,
 				"reason": "max_pattern",
-				"select_columns": ["产品", "供应商", "总价"],
+				"select_columns": agg_select,
 			}
 		)
 		return _finalize_columns(plan, headers)
@@ -214,18 +402,14 @@ def build_table_query_plan(
 			"不多于": "<=",
 		}.get(op_word)
 		if value is not None and operator:
-			col = (
-				"总价"
-				if ("价" in q or "报价" in q or "总价" in q or "金额" in q)
-				else None
-			)
+			col = _infer_numeric_column(q)
 			# 「超过十万的供应商」无显式「价」时，默认按总价/报价列过滤
-			if col is None and ("供应商" in q or "哪" in q):
+			if col is None and ("供应商" in q or "哪" in q or "设备" in q):
 				col = "总价"
 			if col is None:
 				plan["reason"] = "filter_missing_column"
 				return plan
-			select = ["供应商", "总价"] if "供应商" in q or "哪" in q else ["总价"]
+			select = _lookup_select_columns(q, value_column=col)
 			plan.update(
 				{
 					"operation": "filter",
@@ -241,7 +425,7 @@ def build_table_query_plan(
 
 	# ASCII ops（数值须走统一单位解析，避免「>= 10万」被当成 10；千分位交给 _cell_number）
 	ascii_op = re.search(
-		r"(中标金额|金额|总价|报价|单价|数量)\s*(>=|<=|>|<|==|=)\s*"
+		r"(中标金额|金额|总价|报价|单价|合计|数量)\s*(>=|<=|>|<|==|=)\s*"
 		rf"({_ARABIC_NUMBER_TOKEN})",
 		q,
 	)
@@ -253,37 +437,47 @@ def build_table_query_plan(
 			plan["reason"] = "ascii_filter_bad_value"
 			return plan
 		col = ascii_op.group(1)
-		if col in {"报价", "金额", "中标金额"}:
+		if col in {"报价", "金额"}:
 			col = "总价"
+		# 中标金额 / 单价 / 合计 保留自身 hint，由 _match_header 对齐
+		select = _lookup_select_columns(q, value_column=col)
 		plan.update(
 			{
 				"operation": "filter",
 				"column": col,
 				"operator": operator,
 				"value": value,
-				"select_columns": ["供应商", col],
+				"select_columns": select,
 				"confident": True,
 				"reason": "ascii_filter",
 			}
 		)
 		return _finalize_columns(plan, headers)
 
-	# lookup: 甲公司总价 / 乙科技的报价
+	# lookup: 甲公司总价 / 服务器主机（型号）的单价
 	entity_m = _EQ_ENTITY.search(q)
 	if entity_m:
 		entity = entity_m.group("entity")
-		col = entity_m.group("col")
-		# 过滤掉「最低总价」之类已被上面覆盖的
-		if entity in {"最低", "最高", "最大", "最小", "多少"}:
+		col_raw = entity_m.group("col")
+		if entity in _ENTITY_STOPWORDS or len(entity) < 2:
 			plan["reason"] = "entity_ambiguous"
 			return plan
+		col = {
+			"报价": "总价",
+			"规格": "规格参数",
+			"规格参数": "规格参数",
+		}.get(col_raw, col_raw)
+		entity_col = _pick_entity_column_hint(q, headers)
+		select = _lookup_select_columns(q, value_column=col)
+		if entity_col not in select:
+			select = [entity_col, *select]
 		plan.update(
 			{
 				"operation": "lookup",
-				"column": col if col != "报价" else "总价",
-				"entity_column": "供应商",
+				"column": col,
+				"entity_column": entity_col,
 				"entity_value": entity,
-				"select_columns": ["供应商", col if col != "报价" else "总价"],
+				"select_columns": select,
 				"confident": True,
 				"reason": "entity_lookup",
 			}
@@ -311,10 +505,22 @@ def _finalize_columns(plan: dict[str, Any], headers: list[str] | None) -> dict[s
 		plan["column"] = col
 	entity_col = _match_header(plan.get("entity_column"), headers)
 	if plan.get("entity_column") and entity_col is None:
-		plan["confident"] = False
-		plan["reason"] = f"entity_column_unresolved:{plan.get('entity_column')}"
-		plan["operation"] = "fallback"
-		return plan
+		# 实体列可在名称类候选间回退（不猜测数值列）
+		for cand in _ENTITY_COLUMN_CANDIDATES:
+			alt = _match_header(cand, headers)
+			if alt:
+				entity_col = alt
+				break
+		if entity_col is None and plan.get("entity_column") != "序号":
+			plan["confident"] = False
+			plan["reason"] = f"entity_column_unresolved:{plan.get('entity_column')}"
+			plan["operation"] = "fallback"
+			return plan
+		if entity_col is None:
+			plan["confident"] = False
+			plan["reason"] = f"entity_column_unresolved:{plan.get('entity_column')}"
+			plan["operation"] = "fallback"
+			return plan
 	if entity_col:
 		plan["entity_column"] = entity_col
 	resolved_select: list[str] = []
@@ -398,6 +604,41 @@ def _with_matched_preview(
 	return result
 
 
+def _summary_row_texts(summary_rows: list[Any] | None) -> set[str]:
+	texts: set[str] = set()
+	for item in summary_rows or []:
+		if isinstance(item, dict):
+			raw = str(item.get("raw_text") or "").strip()
+		else:
+			raw = str(item or "").strip()
+		if raw:
+			texts.add(raw)
+	return texts
+
+
+def _is_summary_like_row(
+	row: dict[str, Any],
+	headers: list[str],
+	*,
+	summary_texts: set[str],
+) -> bool:
+	"""合计/小计行：已分离的 summary_rows 文本，或首格命中汇总模式。"""
+	cells = [str(row.get(h) or "").strip() for h in headers]
+	joined = " | ".join(c for c in cells if c)
+	if joined and joined in summary_texts:
+		return True
+	for cell in cells:
+		if cell and cell in summary_texts:
+			return True
+	first = next((c for c in cells if c), "")
+	if first and _SUMMARY_ROW_RE.match(first):
+		return True
+	# 单格跨列汇总说明
+	if len([c for c in cells if c]) == 1 and first.startswith(("汇总", "合计", "总计")):
+		return True
+	return False
+
+
 def execute_table_query(
 	plan: dict[str, Any],
 	*,
@@ -405,6 +646,7 @@ def execute_table_query(
 	rows: list[list[str]],
 	row_offset: int = 0,
 	collect_evidence_indices: bool = False,
+	summary_rows: list[Any] | None = None,
 ) -> dict[str, Any]:
 	"""在代码侧执行 TableQueryPlan；返回可归档的 execution result。"""
 	op = str(plan.get("operation") or "fallback")
@@ -446,6 +688,16 @@ def execute_table_query(
 	indexed_rows = [
 		_row_dict(headers, row, absolute_index=row_offset + i) for i, row in enumerate(rows)
 	]
+	summary_texts = _summary_row_texts(summary_rows)
+	exclude_summary = plan.get("exclude_summary_rows", True) is not False
+	if exclude_summary and (summary_texts or op in {"max", "min", "count", "filter", "lookup"}):
+		data_rows = [
+			r
+			for r in indexed_rows
+			if not _is_summary_like_row(r, headers, summary_texts=summary_texts)
+		]
+	else:
+		data_rows = indexed_rows
 
 	def _project(row: dict[str, Any]) -> dict[str, Any]:
 		cols = plan.get("select_columns") or headers
@@ -454,16 +706,16 @@ def execute_table_query(
 		return out
 
 	if op == "count":
-		projected = [_project(r) for r in indexed_rows]
+		projected = [_project(r) for r in data_rows]
 		result.update(
-				{
-					"ok": True,
-					**_with_matched_preview(
-						projected,
-						collect_evidence_indices=collect_evidence_indices,
-					),
-					"answer_value": len(indexed_rows),
-				"answer_text": f"共 {len(indexed_rows)} 行",
+			{
+				"ok": True,
+				**_with_matched_preview(
+					projected,
+					collect_evidence_indices=collect_evidence_indices,
+				),
+				"answer_value": len(data_rows),
+				"answer_text": f"共 {len(data_rows)} 行",
 				"reason": "count",
 			}
 		)
@@ -473,35 +725,60 @@ def execute_table_query(
 	if op == "lookup":
 		entity_col = str(plan.get("entity_column") or "")
 		entity_val = str(plan.get("entity_value") or "").strip()
-		matched = [
-			r
-			for r in indexed_rows
-			if entity_val and entity_val in str(r.get(entity_col) or "")
-		]
+		matched: list[dict[str, Any]] = []
+		if entity_val:
+			for r in data_rows:
+				cell = str(r.get(entity_col) or "").strip()
+				if not cell:
+					continue
+				if entity_col and ("序号" in entity_col or entity_col in {"编号", "No", "#"}):
+					cell_num = _cell_number(cell)
+					ent_num = _cell_number(entity_val)
+					if cell_num is not None and ent_num is not None and cell_num == ent_num:
+						matched.append(r)
+						continue
+					if cell == entity_val:
+						matched.append(r)
+					continue
+				if entity_val in cell:
+					matched.append(r)
 		if not matched:
 			result.update(
-					{
-						"ok": True,
-						**_with_matched_preview(
-							[],
-							collect_evidence_indices=collect_evidence_indices,
-						),
-						"answer_text": "未找到匹配行",
+				{
+					"ok": True,
+					**_with_matched_preview(
+						[],
+						collect_evidence_indices=collect_evidence_indices,
+					),
+					"answer_text": "未找到匹配行",
 					"reason": "no_match",
 				}
 			)
 			return result
-		values = [matched[0].get(column)] if column else []
-		answer = values[0] if values else None
+		proj = [_project(r) for r in matched]
+		answer: Any = matched[0].get(column) if column else None
+		if plan.get("reason") == "seq_lookup" or answer in (None, ""):
+			parts = [
+				f"{k}={v}"
+				for k, v in proj[0].items()
+				if k != "_row_index" and v not in (None, "")
+			]
+			answer_text = (
+				f"{entity_col}={entity_val} → " + ("；".join(parts[:8]) if parts else "命中")
+			)
+			if answer in (None, "") and parts:
+				answer = {k: v for k, v in proj[0].items() if k != "_row_index"}
+		else:
+			answer_text = f"{entity_val} 的{column}为 {answer}"
 		result.update(
-				{
-					"ok": True,
-					**_with_matched_preview(
-						[_project(r) for r in matched],
-						collect_evidence_indices=collect_evidence_indices,
-					),
-					"answer_value": answer,
-				"answer_text": f"{entity_val} 的{column}为 {answer}" if answer is not None else None,
+			{
+				"ok": True,
+				**_with_matched_preview(
+					proj,
+					collect_evidence_indices=collect_evidence_indices,
+				),
+				"answer_value": answer,
+				"answer_text": answer_text,
 				"reason": "lookup",
 			}
 		)
@@ -514,7 +791,7 @@ def execute_table_query(
 			result["reason"] = "bad_filter"
 			return result
 		matched = []
-		for row in indexed_rows:
+		for row in data_rows:
 			num = _cell_number(row.get(column))
 			if num is None:
 				continue
@@ -552,40 +829,57 @@ def execute_table_query(
 
 	if op in {"max", "min"}:
 		scored: list[tuple[float, dict[str, Any]]] = []
-		for row in indexed_rows:
+		for row in data_rows:
 			num = _cell_number(row.get(column))
 			if num is not None:
 				scored.append((num, row))
 		if not scored:
 			result.update(
-					{
-						"ok": True,
-						**_with_matched_preview(
-							[],
-							collect_evidence_indices=collect_evidence_indices,
-						),
-						"answer_text": "无可用数值",
+				{
+					"ok": True,
+					**_with_matched_preview(
+						[],
+						collect_evidence_indices=collect_evidence_indices,
+					),
+					"answer_text": "无可用数值",
 					"reason": "no_numeric",
 				}
 			)
 			return result
-		best_val, best_row = (max if op == "max" else min)(scored, key=lambda x: x[0])
+
+		def _best(op_name: str) -> tuple[float, dict[str, Any]]:
+			return (max if op_name == "max" else min)(scored, key=lambda x: x[0])
+
+		best_val, best_row = _best(op)
+		matched_for_preview = [_project(best_row)]
+		answer_value: Any = best_val
+		answer_text = f"{'最高' if op == 'max' else '最低'}{column}为 {best_val}"
+		reason = str(plan.get("reason") or op)
+
+		if plan.get("also_min") and op == "max":
+			min_val, min_row = _best("min")
+			matched_for_preview = [_project(best_row), _project(min_row)]
+			answer_value = {"max": best_val, "min": min_val}
+			answer_text = f"最高{column}为 {best_val}；最低{column}为 {min_val}"
+			reason = "maxmin"
+
 		result.update(
-				{
-					"ok": True,
-					**_with_matched_preview(
-						[_project(best_row)],
-						collect_evidence_indices=collect_evidence_indices,
-					),
-					"answer_value": best_val,
-				"answer_text": f"{'最高' if op == 'max' else '最低'}{column}为 {best_val}",
-				"reason": op,
+			{
+				"ok": True,
+				**_with_matched_preview(
+					matched_for_preview,
+					collect_evidence_indices=collect_evidence_indices,
+				),
+				"answer_value": answer_value,
+				"answer_text": answer_text,
+				"reason": reason,
 			}
 		)
 		return result
 
 	result["reason"] = f"unsupported:{op}"
 	return result
+
 
 
 def table_instance_key(item: dict[str, Any]) -> TableInstanceKey:
@@ -597,10 +891,60 @@ def table_instance_key(item: dict[str, Any]) -> TableInstanceKey:
 	)
 
 
-def locate_best_table_instance(citations: list[dict[str, Any]]) -> dict[str, Any] | None:
-	"""Locate a table; row evidence wins, table_summary is discovery fallback."""
-	best_row: dict[str, Any] | None = None
-	best_summary: dict[str, Any] | None = None
+def question_schema_hints(question: str) -> list[tuple[str, int]]:
+	"""从问法提取应优先命中的列 hint 与权重（多表消歧用，不放宽执行门槛）。"""
+	q = question or ""
+	hints: list[tuple[str, int]] = []
+	if _SEQ_LOOKUP.search(q):
+		hints.append(("序号", 2))
+	if "设备" in q:
+		hints.append(("设备名称", 3))
+	elif "项目" in q:
+		hints.append(("项目名称", 3))
+	if "产品" in q or "品名" in q:
+		hints.append(("产品", 2))
+	if "单价" in q:
+		hints.append(("单价", 4))
+	if "合计" in q:
+		hints.append(("合计", 3))
+	if "中标金额" in q:
+		hints.append(("中标金额", 4))
+	elif "总价" in q or "报价" in q:
+		hints.append(("总价", 3))
+	if "供应商" in q or "厂商" in q:
+		hints.append(("供应商", 2))
+	if "采购单位" in q or ("采购" in q and "单位" in q):
+		hints.append(("采购单位", 2))
+	if "规格" in q:
+		hints.append(("规格参数", 2))
+	return hints
+
+
+def headers_schema_fit(headers: list[str], question: str) -> int:
+	"""表头与问法所需列的契合分；字面/强包含命中权重大于宽泛别名。"""
+	if not headers or not question:
+		return 0
+	total = 0
+	for hint, weight in question_schema_hints(question):
+		matched = _match_header(hint, headers)
+		if not matched:
+			continue
+		# 字面或核心词命中：设备≠项目名称、单价≠中标金额
+		core = hint[:2] if len(hint) >= 2 else hint
+		if hint in matched or core in matched:
+			total += weight
+		else:
+			total += max(1, weight // 2)
+	return total
+
+
+def rank_table_instances(
+	citations: list[dict[str, Any]],
+	*,
+	question: str | None = None,
+) -> list[dict[str, Any]]:
+	"""按「行证据优先 → schema fit → 检索分」排序去重后的表实例候选。"""
+	by_key: dict[TableInstanceKey, dict[str, Any]] = {}
 	for item in citations:
 		record_type = str(item.get("record_type") or "")
 		if record_type not in {"table", "table_summary"} and not item.get("headers"):
@@ -608,26 +952,75 @@ def locate_best_table_instance(citations: list[dict[str, Any]]) -> dict[str, Any
 		headers = [str(h) for h in (item.get("headers") or [])]
 		if not headers and not item.get("table_id"):
 			continue
+		key = table_instance_key(item)
+		if not key[2]:
+			continue
 		score = float(item.get("score") or 0)
-		target = best_summary if record_type == "table_summary" else best_row
-		if target is None or score > float(target.get("score") or 0):
-			doc_id, version_id, table_id = table_instance_key(item)
-			candidate = {
-				"doc_id": doc_id,
-				"document_version_id": version_id or None,
-				"table_id": table_id or None,
+		is_summary = record_type == "table_summary"
+		fit = headers_schema_fit(headers, question or "")
+		prev = by_key.get(key)
+		if prev is None:
+			by_key[key] = {
+				"doc_id": key[0],
+				"document_version_id": key[1] or None,
+				"table_id": key[2],
 				"score": score,
+				"schema_fit": fit,
+				"is_summary": is_summary,
 				"library_id": item.get("library_id"),
 				"citation": item,
+				"headers": headers,
 			}
-			if record_type == "table_summary":
-				best_summary = candidate
-			else:
-				best_row = candidate
-	best = best_row or best_summary
-	if best and not best.get("table_id"):
-		return None
-	return best
+			continue
+		# 同行组证据优先于 summary；同层级取更高 fit/score，并保留更好 headers
+		prev_summary = bool(prev.get("is_summary"))
+		better = False
+		if prev_summary and not is_summary:
+			better = True
+		elif prev_summary == is_summary:
+			if fit > int(prev.get("schema_fit") or 0):
+				better = True
+			elif fit == int(prev.get("schema_fit") or 0) and score > float(
+				prev.get("score") or 0
+			):
+				better = True
+		if better:
+			prev.update(
+				{
+					"score": max(float(prev.get("score") or 0), score),
+					"schema_fit": max(int(prev.get("schema_fit") or 0), fit),
+					"is_summary": is_summary,
+					"library_id": item.get("library_id") or prev.get("library_id"),
+					"citation": item,
+					"headers": headers or prev.get("headers") or [],
+				}
+			)
+		else:
+			prev["score"] = max(float(prev.get("score") or 0), score)
+			prev["schema_fit"] = max(int(prev.get("schema_fit") or 0), fit)
+
+	ranked = list(by_key.values())
+	ranked.sort(
+		key=lambda c: (
+			0 if not c.get("is_summary") else 1,
+			-int(c.get("schema_fit") or 0),
+			-float(c.get("score") or 0),
+		)
+	)
+	return ranked
+
+
+def locate_best_table_instance(
+	citations: list[dict[str, Any]],
+	*,
+	question: str | None = None,
+) -> dict[str, Any] | None:
+	"""Locate a table; row evidence wins, table_summary is discovery fallback.
+
+	同库多表时优先选表头契合问法的实例（避免报价题落到中标明细表后 column_unresolved）。
+	"""
+	ranked = rank_table_instances(citations, question=question)
+	return ranked[0] if ranked else None
 
 
 def validate_table_group_coverage(groups: list[dict[str, Any]]) -> tuple[bool, str]:
@@ -758,27 +1151,14 @@ def assemble_table_from_groups(groups: list[dict[str, Any]]) -> dict[str, Any]:
 	}
 
 
-def prepare_table_for_execute(
+def _assemble_located_table(
+	located: dict[str, Any],
 	citations: list[dict[str, Any]],
 	*,
-	load_table_groups: LoadTableGroupsFn | None = None,
-	library_id: str | None = None,
+	load_table_groups: LoadTableGroupsFn | None,
+	library_id: str | None,
 ) -> dict[str, Any]:
-	"""两阶段：向量定位表实例 → 按键加载全表行组 → 校验完整性后供聚合。
-
-	聚合不得只在 top_k 检索子集上执行；缺组时 complete=False（fail closed）。
-	"""
-	located = locate_best_table_instance(citations)
-	if not located:
-		return {
-			"headers": [],
-			"rows": [],
-			"row_offset": 0,
-			"complete": False,
-			"reason": "no_table_hit",
-			"group_count": 0,
-		}
-
+	"""加载并拼装单个表实例；失败时返回 incomplete 结构。"""
 	doc_id = str(located.get("doc_id") or "")
 	version_id = located.get("document_version_id")
 	table_id = str(located.get("table_id") or "")
@@ -810,29 +1190,93 @@ def prepare_table_for_execute(
 				"document_version_id": version_id,
 				"table_id": table_id,
 				"load_source": "store",
+				"score": located.get("score"),
+				"citation": located.get("citation"),
+				"schema_fit": located.get("schema_fit"),
+				"groups": [],
 			}
 	else:
+		# 仅用行组拼表：排除 table_summary（常有 headers 但无 row_start/end），
+		# 否则 validate 会因 missing_row_range 把本可拼全的表标 incomplete。
 		groups = [
 			item
 			for item in citations
 			if table_instance_key(item) == instance
-			and (str(item.get("record_type") or "") == "table" or item.get("headers"))
+			and str(item.get("record_type") or "") == "table"
+			and item.get("row_start") is not None
+			and item.get("row_end") is not None
 		]
 
 	assembled = assemble_table_from_groups(groups)
 	assembled["load_source"] = load_source
 	assembled["score"] = located.get("score")
 	assembled["citation"] = located.get("citation")
+	assembled["schema_fit"] = located.get("schema_fit")
 	if not assembled.get("table_quality"):
 		assembled["table_quality"] = (
 			(located.get("citation") or {}).get("table_quality") or {}
 		)
 	assembled["groups"] = groups
-	# 定位键写回，便于 citation 标注
 	assembled.setdefault("doc_id", doc_id)
 	assembled.setdefault("document_version_id", version_id)
 	assembled.setdefault("table_id", table_id)
 	return assembled
+
+
+def prepare_table_for_execute(
+	citations: list[dict[str, Any]],
+	*,
+	load_table_groups: LoadTableGroupsFn | None = None,
+	library_id: str | None = None,
+	question: str | None = None,
+) -> dict[str, Any]:
+	"""两阶段：向量定位表实例 → 按键加载全表行组 → 校验完整性后供聚合。
+
+	聚合不得只在 top_k 检索子集上执行；缺组时 complete=False（fail closed）。
+	同库多表时：按问法 schema fit 排序，并优先选用能自信 refine TableQueryPlan 的实例。
+	"""
+	candidates = rank_table_instances(citations, question=question)
+	if not candidates:
+		return {
+			"headers": [],
+			"rows": [],
+			"row_offset": 0,
+			"complete": False,
+			"reason": "no_table_hit",
+			"group_count": 0,
+		}
+
+	fallback: dict[str, Any] | None = None
+	for located in candidates:
+		assembled = _assemble_located_table(
+			located,
+			citations,
+			load_table_groups=load_table_groups,
+			library_id=library_id,
+		)
+		headers = list(assembled.get("headers") or [])
+		if not headers:
+			if fallback is None:
+				fallback = assembled
+			continue
+		if question:
+			refined = build_table_query_plan(question, headers=headers)
+			if refined.get("confident"):
+				assembled["selected_reason"] = "schema_plan_fit"
+				return assembled
+			if fallback is None:
+				fallback = assembled
+			continue
+		return assembled
+
+	chosen = fallback or _assemble_located_table(
+		candidates[0],
+		citations,
+		load_table_groups=load_table_groups,
+		library_id=library_id,
+	)
+	chosen.setdefault("selected_reason", "best_effort")
+	return chosen
 
 
 def select_evidence_groups(

@@ -534,6 +534,7 @@ def build_ask_graph(
 			citations,
 			load_table_groups=load_table_groups_fn,
 			library_id=state.get("library_id"),
+			question=question,
 		)
 		headers = list(merged.get("headers") or [])
 		table_complete = bool(merged.get("complete"))
@@ -552,6 +553,7 @@ def build_ask_graph(
 				rows=list(merged.get("rows") or []),
 				row_offset=int(merged.get("row_offset") or 0),
 				collect_evidence_indices=True,
+				summary_rows=list(merged.get("summary_rows") or []),
 			)
 		elif headers and table_complete and not quality_executable:
 			execution = {
@@ -586,6 +588,7 @@ def build_ask_graph(
 		)
 
 		# 标注 citation 行范围 / 版本（供 UI）；仅同实例
+		# 保留 table_summary 的 record_type，避免后续 citations 回退拼表时被当成行组。
 		target_key = (
 			table_instance_key(merged)
 			if merged.get("table_id")
@@ -594,7 +597,9 @@ def build_ask_graph(
 		enriched: list[dict[str, Any]] = []
 		for item in citations:
 			row = dict(item)
-			row["record_type"] = "table"
+			rt = str(row.get("record_type") or "")
+			if rt not in {"table", "table_summary"}:
+				row["record_type"] = "table"
 			if target_key and table_instance_key(row) == target_key:
 				row.setdefault("document_version_id", merged.get("document_version_id"))
 			enriched.append(row)
@@ -1052,6 +1057,9 @@ class AskGraphService:
 
 			load_table_groups_fn = _load_table_groups
 
+		# Keep for iter_ask_events — it rebuilds the graph with a capture generate_fn.
+		self._load_table_groups_fn = load_table_groups_fn
+
 		self._graph = build_ask_graph(
 			settings=self.settings,
 			retrieve_fn=self._retrieve,
@@ -1190,6 +1198,7 @@ class AskGraphService:
 			retrieve_fn=self._retrieve,
 			generate_fn=capture_generate,
 			mode=self.mode,
+			load_table_groups_fn=self._load_table_groups_fn,
 			access_scope=self.access_scope,
 		)
 		state = graph.invoke(

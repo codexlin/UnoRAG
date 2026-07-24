@@ -196,6 +196,27 @@ def test_table_row_hit_has_priority_and_summary_is_fallback() -> None:
 	assert locate_best_table_instance([summary])["table_id"] == "t-summary"
 
 
+def test_locate_prefers_schema_fit_over_higher_retrieval_score() -> None:
+	quote = {
+		"record_type": "table",
+		"doc_id": "doc-quote",
+		"document_version_id": "v1",
+		"table_id": "t-quote",
+		"headers": ["序号", "设备名称", "单价（元）", "合计（元）"],
+		"score": 0.4,
+	}
+	cross = {
+		"record_type": "table",
+		"doc_id": "doc-cross",
+		"document_version_id": "v1",
+		"table_id": "t-cross",
+		"headers": ["序号", "项目名称", "中标金额(元)"],
+		"score": 0.99,
+	}
+	q = "序号为1的设备是什么？单价和合计金额是多少？"
+	assert locate_best_table_instance([cross, quote], question=q)["table_id"] == "t-quote"
+
+
 def test_max_amount_query_executes_against_full_table_schema() -> None:
 	headers = ["序号", "项目名称", "中标供应商", "中标金额(元)"]
 	rows = [
