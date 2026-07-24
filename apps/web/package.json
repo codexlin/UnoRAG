@@ -20,7 +20,9 @@
 		"outbox:reconcile": "node scripts/reconcile-outbox.mjs",
 		"outbox:inspect": "node scripts/inspect-outbox.mjs",
 		"outbox:check": "node scripts/inspect-outbox.mjs --fail-on-dead",
-		"outbox:retry-dead": "node scripts/retry-dead-outbox.mjs"
+		"outbox:retry-dead": "node scripts/retry-dead-outbox.mjs",
+		"lifecycle:inspect": "node scripts/inspect-lifecycle.mjs",
+		"lifecycle:check": "node scripts/inspect-lifecycle.mjs --fail-on-dead --fail-on-stuck"
 	},
 	"dependencies": {
 		"@base-ui/react": "^1.3.0",

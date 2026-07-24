@@ -1116,20 +1116,30 @@ Done：
 
 目标：补齐企业运维闭环。
 
-- [ ] document delete job/tombstone；
-- [ ] library delete fan-out；
-- [ ] job retry/cancel UI；
-- [ ] version history 和 active 标识；
-- [ ] dead/stuck/orphan dashboards 或 CLI；
-- [ ] object/generation sweepers；
+- [x] document delete job/tombstone；
+- [x] library delete fan-out；
+- [x] job retry/cancel UI；
+- [x] version history 和 active 标识；
+- [x] dead/stuck/orphan dashboards 或 CLI；
+- [x] object/generation sweepers；
 - [ ] audit 页面或导出；
-- [ ] worker drain/health/readiness。
+- [x] worker drain/health/readiness。
 
 Done：
 
 - 删除可恢复、可审计；
 - dead 与 orphan 可发现、可补偿；
 - 管理员无需查数据库即可处理常见失败。
+
+### L5 落地说明（2026-07-24）
+
+- `DELETE /api/libraries/{id}/documents/{docId}` → document tombstone + `document.delete` job；
+- library 删除 fan-out 为 per-document delete jobs，空库仍立即 outbox `library.delete`；
+- lifecycle worker 认领 `document.delete` / `document.ingest`，并支持 `LIFECYCLE_WORKER_READY_FILE`；
+- generation cleanup sweeper（L4/L5）继续清理到期 Qdrant 点；
+- `pnpm lifecycle:inspect` 巡检 dead/stuck/deleting/orphan cleanup；
+- 文档详情展示版本历史与 active 标识；job retry/cancel UI 沿用 L3/L4；
+- 未做：完整 audit 页面/CSV 导出（审计行已写入 `app.audit_logs`）。
 
 ## Phase L6：迁移与旧链路退出
 

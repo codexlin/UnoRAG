@@ -191,3 +191,34 @@ uv run python -m app.generation_cleanup_sweeper
 停止时发送 `SIGTERM`。worker 会停止 claim 新 Job，当前同步步骤结束后退出。
 若容器被强杀，lease 过期后会自动恢复；同 generation 的确定性 point ID
 保证重放不会产生重复点。
+
+可选 readiness 文件（编排探针）：
+
+```bash
+export LIFECYCLE_WORKER_READY_FILE=/tmp/meriknow-lifecycle-ready
+uv run python -m app.lifecycle_worker
+# 进程进入主循环后写入该文件；SIGTERM 退出时删除
+```
+
+## Document / library delete (L5)
+
+浏览器删除走 Next 控制面，不再同步调用 FastAPI `DELETE /v1/documents/{id}`：
+
+1. `DELETE /api/libraries/{libraryId}/documents/{documentId}` 将 document
+   标为 `deleting`，取消未完成 ingest，并入队 `document.delete` job；
+2. lifecycle worker 清理 Qdrant（generation + doc_id）、对象存储与 RAG
+   metadata，再把 document/version 标为 `deleted`；
+3. library 删除 fan-out 为多个 `document.delete`（`library_delete=true`）。
+   最后一个文档清理完成后，worker 写入 `library.delete` outbox，并标记
+   library `deleted`。空库仍立即硬删 + outbox。
+
+运维巡检：
+
+```bash
+cd apps/web
+DATABASE_URL=postgresql://... pnpm lifecycle:inspect
+# CI / 告警：pnpm lifecycle:check
+```
+
+报告字段：`dead_jobs`、`stuck_jobs`（lease 过期或心跳超时）、
+`deleting_documents`、`cleanup_errors`、`libraries`（deleting/deleted）。
