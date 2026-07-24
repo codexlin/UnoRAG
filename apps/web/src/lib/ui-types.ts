@@ -1,5 +1,7 @@
 /** Shared UI types for ask / evidence panels. */
 
+import type { ApiRetrievalDebug } from "@/lib/api";
+
 export type UiLibrary = {
 	id: string;
 	name: string;
@@ -39,4 +41,6 @@ export type UiTurn = {
 	refused?: boolean;
 	refuseReason?: string | null;
 	mode?: string;
+	/** Full ask retrieval_debug from onDone (session-local). */
+	retrievalDebug?: ApiRetrievalDebug | null;
 };

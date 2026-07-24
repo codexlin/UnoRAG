@@ -41,6 +41,37 @@ export type ApiCitation = {
 	filename?: string | null;
 };
 
+/** Timed stage entry inside retrieval_debug.stages */
+export type ApiAskStage = {
+	stage: string;
+	duration_ms: number;
+	ok: boolean;
+	detail?: Record<string, unknown>;
+};
+
+/** Ask observability payload (P0 stages + summary fields). */
+export type ApiRetrievalDebug = {
+	trace_id?: string;
+	question_hash?: string;
+	library_id?: string | null;
+	path?: string;
+	route?: string;
+	upgrade?: unknown;
+	upgrade_reason?: string | null;
+	downgrade_reason?: string | null;
+	precise_gate?: string | null;
+	refuse_reason?: string | null;
+	total_duration_ms?: number;
+	truncated?: boolean;
+	stages?: ApiAskStage[];
+	top_score?: number | null;
+	used_hybrid?: boolean;
+	hybrid_failed?: boolean;
+	rerank_failed?: boolean;
+	retrieval_mode?: string;
+	[key: string]: unknown;
+};
+
 export type ApiArchiveTurn = {
 	id: string;
 	session_id: string;
@@ -52,6 +83,7 @@ export type ApiArchiveTurn = {
 	refused: boolean;
 	refuse_reason?: string | null;
 	created_at: string;
+	retrieval_debug?: ApiRetrievalDebug | null;
 };
 
 export type ApiAskResponse = {
@@ -62,7 +94,7 @@ export type ApiAskResponse = {
 	mode: string;
 	refused: boolean;
 	refuse_reason?: string | null;
-	retrieval_debug: Record<string, unknown>;
+	retrieval_debug: ApiRetrievalDebug;
 	persisted?: boolean;
 	persist_error?: string | null;
 	hybrid_failed?: boolean;

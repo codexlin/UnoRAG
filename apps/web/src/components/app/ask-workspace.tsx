@@ -20,6 +20,7 @@ import {
 	useState,
 } from "react";
 
+import { AskTraceDrawer, hasAskTrace } from "@/components/app/ask-trace-drawer";
 import { CitationSourceCard } from "@/components/app/citation-source-card";
 import { LibraryCombobox } from "@/components/app/library-combobox";
 import { MarkdownAnswer } from "@/components/app/markdown-answer";
@@ -32,6 +33,7 @@ import { useLibraries } from "@/hooks/use-libraries";
 import {
 	type ApiCitation,
 	type ApiDocument,
+	type ApiRetrievalDebug,
 	askQuestionStream,
 	fetchDocuments,
 	isAbortError,
@@ -191,6 +193,8 @@ export function AskWorkspace() {
 	const [turns, setTurns] = useState<LocalTurn[]>([]);
 	const [activeCitation, setActiveCitation] = useState<UiCitation | null>(null);
 	const [drawerOpen, setDrawerOpen] = useState(true);
+	const [traceDebug, setTraceDebug] = useState<ApiRetrievalDebug | null>(null);
+	const [traceOpen, setTraceOpen] = useState(false);
 	const [readyDocuments, setReadyDocuments] = useState<ApiDocument[]>([]);
 	const [docsLoaded, setDocsLoaded] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -262,8 +266,15 @@ export function AskWorkspace() {
 	);
 
 	function openCitation(citation: UiCitation) {
+		setTraceOpen(false);
 		setActiveCitation(citation);
 		setDrawerOpen(true);
+	}
+
+	function openTrace(debug: ApiRetrievalDebug) {
+		setDrawerOpen(false);
+		setTraceDebug(debug);
+		setTraceOpen(true);
 	}
 
 	function cancelAsk() {
@@ -320,6 +331,7 @@ export function AskWorkspace() {
 								completedAt: undefined,
 								durationMs: undefined,
 								evidenceMs: undefined,
+								retrievalDebug: undefined,
 							}
 						: turn,
 				),
@@ -341,6 +353,7 @@ export function AskWorkspace() {
 			setInput("");
 			requestAnimationFrame(() => resizeComposer());
 		}
+		setTraceOpen(false);
 		setDrawerOpen(true);
 
 		try {
@@ -406,7 +419,7 @@ export function AskWorkspace() {
 						if (activeTurnIdRef.current !== pendingId) return;
 						setSessionId(result.session_id);
 						const citations = result.citations.map(toUiCitation);
-						const debug = result.retrieval_debug || {};
+						const debug: ApiRetrievalDebug = result.retrieval_debug || {};
 						const completedAt = Date.now();
 						const durationMs = Math.round(performance.now() - startedAtMs);
 						setTurns((prev) =>
@@ -428,6 +441,7 @@ export function AskWorkspace() {
 											completedAt,
 											durationMs,
 											evidenceMs: turn.evidenceMs,
+											retrievalDebug: debug,
 											topScore:
 												typeof debug.top_score === "number"
 													? debug.top_score
@@ -602,7 +616,13 @@ export function AskWorkspace() {
 						variant={drawerOpen ? "secondary" : "outline"}
 						size="sm"
 						className="ml-auto shrink-0 rounded-lg"
-						onClick={() => setDrawerOpen((open) => !open)}
+						onClick={() => {
+							setDrawerOpen((open) => {
+								const next = !open;
+								if (next) setTraceOpen(false);
+								return next;
+							});
+						}}
 						aria-pressed={drawerOpen}
 					>
 						{drawerOpen ? (
@@ -780,6 +800,19 @@ export function AskWorkspace() {
 																<span className="meta-chip">
 																	{turn.citations.length} 引用
 																</span>
+															) : null}
+															{hasAskTrace(turn.retrievalDebug) ? (
+																<button
+																	type="button"
+																	className="meta-chip cursor-pointer transition-colors hover:border-cite/40 hover:bg-cite/5 hover:text-cite"
+																	onClick={() => {
+																		if (turn.retrievalDebug) {
+																			openTrace(turn.retrievalDebug);
+																		}
+																	}}
+																>
+																	链路
+																</button>
 															) : null}
 														</div>
 													</div>
@@ -1018,6 +1051,12 @@ export function AskWorkspace() {
 					</ScrollArea>
 				</div>
 			</aside>
+
+			<AskTraceDrawer
+				open={traceOpen}
+				onOpenChange={setTraceOpen}
+				debug={traceDebug}
+			/>
 		</div>
 	);
 }
