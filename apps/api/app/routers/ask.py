@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from pathlib import PurePosixPath
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.graph import AskGraphService
@@ -19,6 +19,7 @@ from app.schemas import (
 	IngestResponse,
 	UploadResponse,
 )
+from app.services.ask_trace import resolve_trace_id
 from app.services.document_storage import DocumentStorage
 from app.services.documents import clean_display_title
 from app.services.ingest.jobs import enqueue_ingest_job, process_document_ingest
@@ -78,25 +79,38 @@ def _require_library_id(library_id: str | None) -> str:
 	return resolved
 
 
+def _trace_id_for_request(request: Request, context: RequestContext) -> str:
+	return resolve_trace_id(
+		x_request_id=request.headers.get("x-request-id"),
+		request_id=context.request_id,
+	)
+
+
 @router.post("/ask", response_model=AskResponse)
 def ask(
 	body: AskRequest,
+	request: Request,
 	service: AskGraphService = Depends(get_ask_service),
+	context: RequestContext = Depends(require_internal_context),
 ) -> AskResponse:
 	library_id = _require_library_id(body.library_id)
 	return service.ask(
 		question=body.question,
 		library_id=library_id,
 		session_id=body.session_id,
+		trace_id=_trace_id_for_request(request, context),
 	)
 
 
 @router.post("/ask/stream")
 def ask_stream(
 	body: AskRequest,
+	request: Request,
 	service: AskGraphService = Depends(get_ask_service),
+	context: RequestContext = Depends(require_internal_context),
 ) -> StreamingResponse:
 	library_id = _require_library_id(body.library_id)
+	trace_id = _trace_id_for_request(request, context)
 
 	def sse(event: str, data: object) -> str:
 		return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -107,6 +121,7 @@ def ask_stream(
 				question=body.question,
 				library_id=library_id,
 				session_id=body.session_id,
+				trace_id=trace_id,
 			):
 				yield sse(str(item["event"]), item["data"])
 		except Exception as exc:
@@ -119,6 +134,7 @@ def ask_stream(
 		headers={
 			"Cache-Control": "no-cache",
 			"X-Accel-Buffering": "no",
+			"X-Request-Id": trace_id,
 		},
 	)
 

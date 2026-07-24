@@ -43,6 +43,9 @@ def _to_turn_response(row: dict) -> ArchiveTurnResponse:
 		retrieval_plan=(
 			row.get("retrieval_plan") if isinstance(row.get("retrieval_plan"), dict) else None
 		),
+		retrieval_debug=(
+			row.get("retrieval_debug") if isinstance(row.get("retrieval_debug"), dict) else None
+		),
 		document_version_id=row.get("document_version_id"),
 		tenant_id=row.get("tenant_id"),
 		created_at=row.get("created_at") or "",

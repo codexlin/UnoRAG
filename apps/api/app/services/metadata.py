@@ -172,6 +172,7 @@ class MetadataStore(ABC):
 		turn_id: str | None = None,
 		query_type: str | None = None,
 		retrieval_plan: dict[str, Any] | None = None,
+		retrieval_debug: dict[str, Any] | None = None,
 		rewrite: str | None = None,
 		rewritten_query: str | None = None,
 		judge: dict[str, Any] | None = None,
@@ -511,6 +512,7 @@ class JsonMetadataStore(MetadataStore):
 		turn_id: str | None = None,
 		query_type: str | None = None,
 		retrieval_plan: dict[str, Any] | None = None,
+		retrieval_debug: dict[str, Any] | None = None,
 		rewrite: str | None = None,
 		rewritten_query: str | None = None,
 		judge: dict[str, Any] | None = None,
@@ -533,6 +535,7 @@ class JsonMetadataStore(MetadataStore):
 			"refuse_reason": refuse_reason,
 			"query_type": query_type,
 			"retrieval_plan": retrieval_plan,
+			"retrieval_debug": retrieval_debug,
 			"rewrite": rewrite,
 			"rewritten_query": rewritten_query,
 			"judge": judge,
@@ -674,6 +677,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			rewritten_query: Mapped[str | None] = mapped_column(Text, nullable=True)
 			judge_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 			retrieval_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+			retrieval_debug_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 			document_version_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
 			tenant_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 			workspace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -769,6 +773,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS rewritten_query TEXT",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS judge_json TEXT",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS retrieval_plan_json TEXT",
+					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS retrieval_debug_json TEXT",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS document_version_id VARCHAR(256)",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128)",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(128)",
@@ -866,6 +871,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			"rewritten_query": getattr(row, "rewritten_query", None),
 			"judge": _load_obj(getattr(row, "judge_json", None)),
 			"retrieval_plan": _load_obj(getattr(row, "retrieval_plan_json", None)),
+			"retrieval_debug": _load_obj(getattr(row, "retrieval_debug_json", None)),
 			"document_version_id": getattr(row, "document_version_id", None),
 			"tenant_id": getattr(row, "tenant_id", None),
 			"workspace_id": getattr(row, "workspace_id", None),
@@ -1190,6 +1196,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		turn_id: str | None = None,
 		query_type: str | None = None,
 		retrieval_plan: dict[str, Any] | None = None,
+		retrieval_debug: dict[str, Any] | None = None,
 		rewrite: str | None = None,
 		rewritten_query: str | None = None,
 		judge: dict[str, Any] | None = None,
@@ -1217,6 +1224,11 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				retrieval_plan_json=(
 					json.dumps(retrieval_plan, ensure_ascii=False)
 					if retrieval_plan is not None
+					else None
+				),
+				retrieval_debug_json=(
+					json.dumps(retrieval_debug, ensure_ascii=False)
+					if retrieval_debug is not None
 					else None
 				),
 				document_version_id=document_version_id,

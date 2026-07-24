@@ -79,6 +79,7 @@ class ArchiveTurnResponse(BaseModel):
 	rewritten_query: str | None = None
 	judge: dict[str, object] | None = None
 	retrieval_plan: dict[str, object] | None = None
+	retrieval_debug: dict[str, object] | None = None
 	document_version_id: str | None = None
 	tenant_id: str | None = None
 	created_at: str

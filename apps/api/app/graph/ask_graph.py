@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from typing import Any, Literal, TypedDict
@@ -14,6 +15,15 @@ from app.services.answer_copy import (
 	no_match_answer,
 	table_unclear_answer,
 	weak_match_answer,
+)
+from app.services.ask_trace import (
+	append_stage,
+	citation_retrieve_detail,
+	emit_ask_trace,
+	finalize_ask_debug,
+	initial_ask_debug,
+	question_hash,
+	resolve_trace_id,
 )
 from app.services.llm import ChatService
 from app.services.ask_route import (
@@ -56,6 +66,7 @@ class AskState(TypedDict, total=False):
 	retrieval_attempts: int
 	judgement: dict[str, Any]
 	retrieval_debug: dict[str, Any]
+	trace_id: str
 	query_type: str
 	route_reason: str
 	retrieval_plan: dict[str, Any]
@@ -165,6 +176,7 @@ def _persist_turn(
 	refuse_reason: str | None,
 	query_type: str | None = None,
 	retrieval_plan: dict[str, Any] | None = None,
+	retrieval_debug: dict[str, Any] | None = None,
 	rewrite: str | None = None,
 	rewritten_query: str | None = None,
 	judge: dict[str, Any] | None = None,
@@ -187,6 +199,7 @@ def _persist_turn(
 			refuse_reason=refuse_reason,
 			query_type=query_type,
 			retrieval_plan=retrieval_plan,
+			retrieval_debug=retrieval_debug,
 			rewrite=rewrite,
 			rewritten_query=rewritten_query,
 			judge=judge,
@@ -429,6 +442,7 @@ def build_ask_graph(
 		}
 
 	def build_plan_node(state: AskState) -> AskState:
+		t0 = time.perf_counter()
 		query_type = str(state.get("query_type") or "fact")
 		route_reason = str(state.get("route_reason") or "default_fact")
 		plan = build_retrieval_plan(
@@ -442,21 +456,32 @@ def build_ask_graph(
 			workspace_id=workspace_id,
 			question=state.get("question"),
 		)
+		debug = _merge_debug(
+			state,
+			retrieval_plan=plan,
+			route=plan.get("route"),
+			path=plan.get("path"),
+			precise_kind=plan.get("precise_kind"),
+			upgrade=None,
+			upgrade_reason=None,
+			downgrade_reason=None,
+		)
+		append_stage(
+			debug,
+			name="route",
+			duration_ms=(time.perf_counter() - t0) * 1000,
+			detail={
+				"path": plan.get("path"),
+				"route": plan.get("route"),
+				"decision_reason": plan.get("reason") or route_reason,
+			},
+		)
 		return {
 			"retrieval_plan": plan,
 			"upgrade": None,
 			"upgrade_reason": None,
 			"downgrade_reason": None,
-			"retrieval_debug": _merge_debug(
-				state,
-				retrieval_plan=plan,
-				route=plan.get("route"),
-				path=plan.get("path"),
-				precise_kind=plan.get("precise_kind"),
-				upgrade=None,
-				upgrade_reason=None,
-				downgrade_reason=None,
-			),
+			"retrieval_debug": debug,
 		}
 
 	def route_after_plan(state: AskState) -> Literal["clarify", "rewrite", "table"]:
@@ -504,6 +529,7 @@ def build_ask_graph(
 
 	def table_retrieve_node(state: AskState) -> AskState:
 		"""Retrieve table summaries for discovery plus row groups for evidence."""
+		t0 = time.perf_counter()
 		query = state.get("rewritten_question") or state["question"]
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
 		plan = state.get("retrieval_plan") or {}
@@ -547,25 +573,34 @@ def build_ask_graph(
 			"missing_table_id": sum(1 for item in citations if not item.get("table_id")),
 		}
 		top_score = float(citations[0]["score"]) if citations else None
+		retrieve_detail = citation_retrieve_detail(citations)
+		debug = _merge_debug(
+			state,
+			retrieve=mode,
+			library_id=state.get("library_id"),
+			hit_count=len(citations),
+			top_score=top_score,
+			retrieval_attempts=attempts,
+			query=query,
+			record_type="table+table_summary",
+			filters=filters,
+			citation_check=citation_check,
+		)
+		append_stage(
+			debug,
+			name="retrieve",
+			duration_ms=(time.perf_counter() - t0) * 1000,
+			detail=retrieve_detail,
+		)
 		return {
 			"citations": citations,
 			"retrieval_attempts": attempts,
-			"retrieval_debug": _merge_debug(
-				state,
-				retrieve=mode,
-				library_id=state.get("library_id"),
-				hit_count=len(citations),
-				top_score=top_score,
-				retrieval_attempts=attempts,
-				query=query,
-				record_type="table+table_summary",
-				filters=filters,
-				citation_check=citation_check,
-			),
+			"retrieval_debug": debug,
 		}
 
 	def table_execute_node(state: AskState) -> AskState:
 		"""定位表实例 → 全表加载 → 代码侧过滤/聚合；缺组/不确定 → clarify。"""
+		t_load0 = time.perf_counter()
 		citations = list(state.get("citations") or [])
 		question = state.get("question") or ""
 		merged = prepare_table_for_execute(
@@ -574,6 +609,7 @@ def build_ask_graph(
 			library_id=state.get("library_id"),
 			question=question,
 		)
+		load_ms = (time.perf_counter() - t_load0) * 1000
 		headers = list(merged.get("headers") or [])
 		table_complete = bool(merged.get("complete"))
 		table_quality = dict(merged.get("table_quality") or {})
@@ -584,6 +620,7 @@ def build_ask_graph(
 		# 若初始已自信且 refinement 因缺 headers 仍自信，保留；否则用 refined
 		tq = refined if headers else base_plan
 
+		t_exec0 = time.perf_counter()
 		if headers and table_complete and quality_executable:
 			execution = execute_table_query(
 				tq,
@@ -618,12 +655,41 @@ def build_ask_graph(
 				"matched_rows": [],
 				"reason": "no_table_payload",
 			}
+		exec_ms = (time.perf_counter() - t_exec0) * 1000
 		evidence_row_indices = list(
 			execution.pop(
 				"_evidence_row_indices",
 				execution.get("matched_row_indices") or [],
 			)
 		)
+
+		def _with_table_stages(debug: dict[str, Any]) -> dict[str, Any]:
+			append_stage(
+				debug,
+				name="table_load",
+				duration_ms=load_ms,
+				ok=bool(merged.get("complete")),
+				detail={
+					"load_source": merged.get("load_source"),
+					"complete": bool(merged.get("complete")),
+					"table_id": merged.get("table_id"),
+				},
+			)
+			matched_count = execution.get("matched_count")
+			if matched_count is None and isinstance(execution.get("matched_rows"), list):
+				matched_count = len(execution["matched_rows"])
+			append_stage(
+				debug,
+				name="table_execute",
+				duration_ms=exec_ms,
+				ok=bool(execution.get("ok")),
+				detail={
+					"operation": execution.get("operation"),
+					"ok": bool(execution.get("ok")),
+					"matched_count": matched_count,
+				},
+			)
+			return debug
 
 		# 标注 citation 行范围 / 版本（供 UI）；仅同实例
 		# 保留 table_summary 的 record_type，避免与行组混淆（store 才是可执行路径）。
@@ -686,13 +752,15 @@ def build_ask_graph(
 				"table_execution": execution,
 				"citations": enriched,
 				"downgrade_reason": None,
-				"retrieval_debug": _merge_debug(
-					state,
-					table_query_plan=tq,
-					table_execution=execution,
-					table_load=table_load,
-					downgrade_reason=None,
-					precise_gate="execute",
+				"retrieval_debug": _with_table_stages(
+					_merge_debug(
+						state,
+						table_query_plan=tq,
+						table_execution=execution,
+						table_load=table_load,
+						downgrade_reason=None,
+						precise_gate="execute",
+					)
 				),
 			}
 
@@ -715,16 +783,18 @@ def build_ask_graph(
 				"refuse_reason": refuse_reason,
 				"judgement": judgement,
 				"downgrade_reason": None,
-				"retrieval_debug": _merge_debug(
-					state,
-					table_query_plan=tq,
-					table_execution=execution,
-					table_load=table_load,
-					judgement=judgement,
-					generate="table_unclear",
-					refuse_reason=refuse_reason,
-					precise_gate="refuse",
-					downgrade_reason=None,
+				"retrieval_debug": _with_table_stages(
+					_merge_debug(
+						state,
+						table_query_plan=tq,
+						table_execution=execution,
+						table_load=table_load,
+						judgement=judgement,
+						generate="table_unclear",
+						refuse_reason=refuse_reason,
+						precise_gate="refuse",
+						downgrade_reason=None,
+					)
 				),
 			}
 
@@ -750,13 +820,15 @@ def build_ask_graph(
 				"table_execution": execution,
 				"citations": overview_citations,
 				"downgrade_reason": downgrade,
-				"retrieval_debug": _merge_debug(
-					state,
-					table_query_plan=tq,
-					table_execution=execution,
-					table_load=table_load,
-					downgrade_reason=downgrade,
-					precise_gate="overview",
+				"retrieval_debug": _with_table_stages(
+					_merge_debug(
+						state,
+						table_query_plan=tq,
+						table_execution=execution,
+						table_load=table_load,
+						downgrade_reason=downgrade,
+						precise_gate="overview",
+					)
 				),
 			}
 
@@ -765,12 +837,14 @@ def build_ask_graph(
 			"table_execution": execution,
 			"citations": enriched,
 			"downgrade_reason": None,
-			"retrieval_debug": _merge_debug(
-				state,
-				table_query_plan=tq,
-				table_execution=execution,
-				table_load=table_load,
-				precise_gate="fallback_llm",
+			"retrieval_debug": _with_table_stages(
+				_merge_debug(
+					state,
+					table_query_plan=tq,
+					table_execution=execution,
+					table_load=table_load,
+					precise_gate="fallback_llm",
+				)
 			),
 		}
 
@@ -801,6 +875,7 @@ def build_ask_graph(
 		}
 
 	def retrieve_node(state: AskState) -> AskState:
+		t0 = time.perf_counter()
 		query = state.get("rewritten_question") or state["question"]
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
 		plan = dict(state.get("retrieval_plan") or {})
@@ -889,8 +964,11 @@ def build_ask_graph(
 			)
 		top_score = float(citations[0]["score"]) if citations else None
 		used_rerank = bool(citations and citations[0].get("used_rerank"))
+		retrieve_ms = (time.perf_counter() - t0) * 1000
+		retrieve_detail = citation_retrieve_detail(citations)
 
 		# 阶段2：fast → precise 升级（写死条件 + upgrade_reason）
+		t_gate0 = time.perf_counter()
 		upgrade: str | None = None
 		upgrade_reason: str | None = None
 		out_plan = plan
@@ -917,7 +995,43 @@ def build_ask_graph(
 				filters_up = dict(out_plan.get("filters") or {})
 				filters_up["record_type"] = "table"
 				out_plan["filters"] = filters_up
+		gate_ms = (time.perf_counter() - t_gate0) * 1000
 
+		debug = _merge_debug(
+			state,
+			retrieve=mode,
+			library_id=state.get("library_id"),
+			hit_count=len(citations),
+			top_score=top_score,
+			used_rerank=used_rerank,
+			retrieval_attempts=attempts,
+			query=query,
+			tool_ask=bool(settings.tool_ask),
+			tool_trace=tool_trace,
+			retrieval_plan=out_plan,
+			route=out_plan.get("route") or plan.get("route"),
+			path=out_plan.get("path"),
+			precise_kind=out_plan.get("precise_kind"),
+			upgrade=upgrade,
+			upgrade_reason=upgrade_reason,
+			**debug_extra,
+		)
+		append_stage(
+			debug,
+			name="retrieve",
+			duration_ms=retrieve_ms,
+			detail=retrieve_detail,
+		)
+		append_stage(
+			debug,
+			name="gate",
+			duration_ms=gate_ms,
+			detail={
+				"decision": "upgrade" if upgrade else "keep",
+				"decision_reason": upgrade_reason,
+				"upgrade_to": upgrade,
+			},
+		)
 		return {
 			"citations": citations,
 			"retrieval_attempts": attempts,
@@ -925,25 +1039,7 @@ def build_ask_graph(
 			"query_type": out_query_type,
 			"upgrade": upgrade,
 			"upgrade_reason": upgrade_reason,
-			"retrieval_debug": _merge_debug(
-				state,
-				retrieve=mode,
-				library_id=state.get("library_id"),
-				hit_count=len(citations),
-				top_score=top_score,
-				used_rerank=used_rerank,
-				retrieval_attempts=attempts,
-				query=query,
-				tool_ask=bool(settings.tool_ask),
-				tool_trace=tool_trace,
-				retrieval_plan=out_plan,
-				route=out_plan.get("route") or plan.get("route"),
-				path=out_plan.get("path"),
-				precise_kind=out_plan.get("precise_kind"),
-				upgrade=upgrade,
-				upgrade_reason=upgrade_reason,
-				**debug_extra,
-			),
+			"retrieval_debug": debug,
 		}
 
 	def route_after_retrieve(
@@ -1085,9 +1181,11 @@ def build_ask_graph(
 		}
 
 	def generate_node(state: AskState) -> AskState:
+		t0 = time.perf_counter()
 		citations = state.get("citations") or []
 		execution = state.get("table_execution") or {}
 		tq = state.get("table_query_plan") or {}
+		stream_mode = bool((state.get("retrieval_debug") or {}).get("stream"))
 		# 结构化表格结果：优先用程序答案（LLM 仅在 live 路径解释）；stub 直接给 answer_text
 		if (
 			str(state.get("query_type") or "") == "table"
@@ -1105,16 +1203,30 @@ def build_ask_graph(
 				answer = generate_fn(ctx_question, citations)
 		else:
 			answer = generate_fn(state["question"], citations)
+		debug = _merge_debug(
+			state,
+			generate=mode,
+			table_query_plan=tq or None,
+			table_execution=execution or None,
+		)
+		# stream：真实生成在 iter_ask_events 结束时计时；此处跳过以免 TTFB 污染
+		if not stream_mode:
+			append_stage(
+				debug,
+				name="generate",
+				duration_ms=(time.perf_counter() - t0) * 1000,
+				detail={
+					"mode": mode,
+					"model": settings.chat_model if mode == "live" else None,
+					"input_tokens": None,
+					"output_tokens": None,
+				},
+			)
 		return {
 			"answer": answer,
 			"refused": False,
 			"refuse_reason": None,
-			"retrieval_debug": _merge_debug(
-				state,
-				generate=mode,
-				table_query_plan=tq or None,
-				table_execution=execution or None,
-			),
+			"retrieval_debug": debug,
 		}
 
 	graph: StateGraph[AskState] = StateGraph(AskState)
@@ -1277,7 +1389,10 @@ class AskGraphService:
 		question: str,
 		library_id: str | None = None,
 		session_id: str | None = None,
+		trace_id: str | None = None,
 	) -> AskResponse:
+		started_at = time.perf_counter()
+		resolved_trace = resolve_trace_id(request_id=trace_id)
 		resolved_session = session_id or str(uuid.uuid4())
 		memory_session = self._memory_session_id(resolved_session)
 		history: list[dict[str, str]] = []
@@ -1293,14 +1408,19 @@ class AskGraphService:
 				"question": question,
 				"library_id": library_id,
 				"history": history,
-				"retrieval_debug": {
-					"requested_mode": self.capability.requested_mode,
-					"effective_mode": self.capability.effective_mode,
-					"degraded": self.capability.degraded,
-					"reasons": list(self.capability.reasons),
-					"session_memory": self.settings.session_memory_enabled,
-					"hybrid_enabled": self.settings.hybrid_enabled,
-				},
+				"trace_id": resolved_trace,
+				"retrieval_debug": initial_ask_debug(
+					trace_id=resolved_trace,
+					question=question,
+					library_id=library_id,
+					requested_mode=self.capability.requested_mode,
+					effective_mode=self.capability.effective_mode,
+					degraded=self.capability.degraded,
+					reasons=list(self.capability.reasons),
+					session_memory=self.settings.session_memory_enabled,
+					hybrid_enabled=self.settings.hybrid_enabled,
+					stream=False,
+				),
 			}
 		)
 
@@ -1311,6 +1431,9 @@ class AskGraphService:
 		raw_citations = state.get("citations") or []
 		citations = _to_citation_models(raw_citations)
 		debug = self._merge_retrieval_debug(state.get("retrieval_debug") or {})
+		debug.setdefault("trace_id", resolved_trace)
+		debug.setdefault("question_hash", question_hash(question))
+		debug.setdefault("library_id", library_id)
 		judge = state.get("judgement") or debug.get("judgement")
 		plan = state.get("retrieval_plan") or debug.get("retrieval_plan")
 		if isinstance(plan, dict):
@@ -1325,6 +1448,7 @@ class AskGraphService:
 				plan["table_execution"] = debug["table_execution"]
 		query_type = state.get("query_type") or debug.get("query_type")
 		rewrite_mode = debug.get("rewrite")
+		finalize_ask_debug(debug, started_at=started_at, truncated=False)
 		persist = _persist_turn(
 			session_id=resolved_session,
 			library_id=library_id,
@@ -1336,6 +1460,7 @@ class AskGraphService:
 			refuse_reason=state.get("refuse_reason"),
 			query_type=str(query_type) if query_type else None,
 			retrieval_plan=plan if isinstance(plan, dict) else None,
+			retrieval_debug=debug,
 			rewrite=str(rewrite_mode) if rewrite_mode else None,
 			rewritten_query=state.get("rewritten_question"),
 			judge=judge if isinstance(judge, dict) else None,
@@ -1344,6 +1469,7 @@ class AskGraphService:
 			workspace_id=self.access_scope.workspace_id,
 			principal_id=self.access_scope.principal_id,
 		)
+		emit_ask_trace(debug)
 		visibility = _retrieval_visibility(debug)
 		return AskResponse(
 			session_id=resolved_session,
@@ -1368,8 +1494,11 @@ class AskGraphService:
 		question: str,
 		library_id: str | None = None,
 		session_id: str | None = None,
+		trace_id: str | None = None,
 	):
 		"""Yield SSE-friendly dicts: meta → citations → token* → done | error."""
+		started_at = time.perf_counter()
+		resolved_trace = resolve_trace_id(request_id=trace_id)
 		resolved_session = session_id or str(uuid.uuid4())
 		memory_session = self._memory_session_id(resolved_session)
 		history: list[dict[str, str]] = []
@@ -1400,136 +1529,197 @@ class AskGraphService:
 				"question": question,
 				"library_id": library_id,
 				"history": history,
-				"retrieval_debug": {
-					"requested_mode": self.capability.requested_mode,
-					"effective_mode": self.capability.effective_mode,
-					"degraded": self.capability.degraded,
-					"reasons": list(self.capability.reasons),
-					"session_memory": self.settings.session_memory_enabled,
-					"hybrid_enabled": self.settings.hybrid_enabled,
-					"stream": True,
-				},
+				"trace_id": resolved_trace,
+				"retrieval_debug": initial_ask_debug(
+					trace_id=resolved_trace,
+					question=question,
+					library_id=library_id,
+					requested_mode=self.capability.requested_mode,
+					effective_mode=self.capability.effective_mode,
+					degraded=self.capability.degraded,
+					reasons=list(self.capability.reasons),
+					session_memory=self.settings.session_memory_enabled,
+					hybrid_enabled=self.settings.hybrid_enabled,
+					stream=True,
+				),
 			}
 		)
 		debug = self._merge_retrieval_debug(state.get("retrieval_debug") or {})
+		debug.setdefault("trace_id", resolved_trace)
+		debug.setdefault("question_hash", question_hash(question))
+		debug.setdefault("library_id", library_id)
 		visibility = _retrieval_visibility(debug)
 		refused = bool(state.get("refused"))
 		raw_citations = state.get("citations") or held.get("citations") or []
 		citations = _to_citation_dicts(raw_citations)
 		citation_models = _to_citation_models(raw_citations)
+		truncated = False
+		finished = False
+		persist: dict[str, Any] = {"persisted": False, "persist_error": None}
+		answer = state.get("answer") or ""
 
-		yield {
-			"event": "meta",
-			"data": {
-				"session_id": resolved_session,
-				"mode": self.mode,
-				"refused": refused,
-				"refuse_reason": state.get("refuse_reason"),
-				"hybrid_failed": visibility["hybrid_failed"],
-				"rerank_failed": visibility["rerank_failed"],
-				"retrieval_mode": visibility["retrieval_mode"],
-			},
-		}
-		yield {"event": "citations", "data": citations}
+		def _finish(*, mark_truncated: bool) -> None:
+			nonlocal finished, debug, persist, answer
+			if finished:
+				return
+			finished = True
+			finalize_ask_debug(debug, started_at=started_at, truncated=mark_truncated)
+			judge = state.get("judgement") or debug.get("judgement")
+			plan = state.get("retrieval_plan") or debug.get("retrieval_plan")
+			if isinstance(plan, dict):
+				plan = dict(plan)
+				if state.get("table_query_plan"):
+					plan["table_query_plan"] = state["table_query_plan"]
+				elif debug.get("table_query_plan"):
+					plan["table_query_plan"] = debug["table_query_plan"]
+				if state.get("table_execution"):
+					plan["table_execution"] = state["table_execution"]
+				elif debug.get("table_execution"):
+					plan["table_execution"] = debug["table_execution"]
+			query_type_final = state.get("query_type") or debug.get("query_type")
+			rewrite_mode = debug.get("rewrite")
+			persist = _persist_turn(
+				session_id=resolved_session,
+				library_id=library_id,
+				question=question,
+				answer=answer,
+				citations=citation_models,
+				mode=self.mode,
+				refused=refused,
+				refuse_reason=state.get("refuse_reason"),
+				query_type=str(query_type_final) if query_type_final else None,
+				retrieval_plan=plan if isinstance(plan, dict) else None,
+				retrieval_debug=debug,
+				rewrite=str(rewrite_mode) if rewrite_mode else None,
+				rewritten_query=state.get("rewritten_question"),
+				judge=judge if isinstance(judge, dict) else None,
+				document_version_id=_single_document_version_id(citation_models),
+				tenant_id=self.access_scope.tenant_id,
+				workspace_id=self.access_scope.workspace_id,
+				principal_id=self.access_scope.principal_id,
+			)
+			emit_ask_trace(debug)
 
-		execution = state.get("table_execution") or debug.get("table_execution") or {}
-		tq = state.get("table_query_plan") or debug.get("table_query_plan") or {}
-		query_type = str(state.get("query_type") or debug.get("query_type") or "")
-		# 与 generate_node 对齐：结构化 table 结果须注入 stream 上下文，避免 LLM 自行改算
-		stream_question = question
-		if (
-			query_type == "table"
-			and isinstance(execution, dict)
-			and execution.get("ok")
-			and isinstance(tq, dict)
-			and tq.get("confident")
-			and execution.get("answer_text")
-		):
-			stream_question = _format_table_generate_context(
-				question, raw_citations, execution
+		try:
+			yield {
+				"event": "meta",
+				"data": {
+					"session_id": resolved_session,
+					"mode": self.mode,
+					"refused": refused,
+					"refuse_reason": state.get("refuse_reason"),
+					"trace_id": resolved_trace,
+					"hybrid_failed": visibility["hybrid_failed"],
+					"rerank_failed": visibility["rerank_failed"],
+					"retrieval_mode": visibility["retrieval_mode"],
+				},
+			}
+			yield {"event": "citations", "data": citations}
+
+			execution = state.get("table_execution") or debug.get("table_execution") or {}
+			tq = state.get("table_query_plan") or debug.get("table_query_plan") or {}
+			query_type = str(state.get("query_type") or debug.get("query_type") or "")
+			# 与 generate_node 对齐：结构化 table 结果须注入 stream 上下文，避免 LLM 自行改算
+			stream_question = question
+			if (
+				query_type == "table"
+				and isinstance(execution, dict)
+				and execution.get("ok")
+				and isinstance(tq, dict)
+				and tq.get("confident")
+				and execution.get("answer_text")
+			):
+				stream_question = _format_table_generate_context(
+					question, raw_citations, execution
+				)
+
+			t_gen = time.perf_counter()
+			if refused:
+				answer = state.get("answer") or ""
+				step = 12 if len(answer) > 24 else max(1, len(answer) or 1)
+				for offset in range(0, len(answer), step):
+					yield {"event": "token", "data": answer[offset : offset + step]}
+			elif self.mode == "live" and self._chat is not None and raw_citations:
+				parts: list[str] = []
+				try:
+					for token in self._chat.stream_answer(
+						question=stream_question,
+						context=_format_context(raw_citations),
+					):
+						parts.append(token)
+						yield {"event": "token", "data": token}
+				except Exception as exc:
+					logger.exception("ask.stream.llm_failed")
+					append_stage(
+						debug,
+						name="generate",
+						duration_ms=(time.perf_counter() - t_gen) * 1000,
+						ok=False,
+						detail={
+							"mode": self.mode,
+							"model": self.settings.chat_model,
+							"input_tokens": None,
+							"output_tokens": None,
+						},
+					)
+					truncated = True
+					_finish(mark_truncated=True)
+					yield {"event": "error", "data": {"message": f"流式生成失败：{exc}"}}
+					return
+				answer = "".join(parts).strip()
+				state["answer"] = answer
+			else:
+				answer = self._generate(stream_question, raw_citations)
+				state["answer"] = answer
+				step = 12 if len(answer) > 24 else max(1, len(answer) or 1)
+				for offset in range(0, len(answer), step):
+					yield {"event": "token", "data": answer[offset : offset + step]}
+
+			append_stage(
+				debug,
+				name="generate",
+				duration_ms=(time.perf_counter() - t_gen) * 1000,
+				detail={
+					"mode": self.mode,
+					"model": self.settings.chat_model if self.mode == "live" else None,
+					"input_tokens": None,
+					"output_tokens": None,
+				},
 			)
 
-		if refused:
 			answer = state.get("answer") or ""
-			step = 12 if len(answer) > 24 else max(1, len(answer) or 1)
-			for offset in range(0, len(answer), step):
-				yield {"event": "token", "data": answer[offset : offset + step]}
-		elif self.mode == "live" and self._chat is not None and raw_citations:
-			parts: list[str] = []
-			try:
-				for token in self._chat.stream_answer(
-					question=stream_question,
-					context=_format_context(raw_citations),
-				):
-					parts.append(token)
-					yield {"event": "token", "data": token}
-			except Exception as exc:
-				logger.exception("ask.stream.llm_failed")
-				yield {"event": "error", "data": {"message": f"流式生成失败：{exc}"}}
-				return
-			answer = "".join(parts).strip()
-			state["answer"] = answer
-		else:
-			answer = self._generate(stream_question, raw_citations)
-			state["answer"] = answer
-			step = 12 if len(answer) > 24 else max(1, len(answer) or 1)
-			for offset in range(0, len(answer), step):
-				yield {"event": "token", "data": answer[offset : offset + step]}
+			if self.settings.session_memory_enabled:
+				self.session_memory.append(memory_session, "user", question)
+				self.session_memory.append(memory_session, "assistant", answer)
 
-		answer = state.get("answer") or ""
-		if self.settings.session_memory_enabled:
-			self.session_memory.append(memory_session, "user", question)
-			self.session_memory.append(memory_session, "assistant", answer)
-
-		judge = state.get("judgement") or debug.get("judgement")
-		plan = state.get("retrieval_plan") or debug.get("retrieval_plan")
-		if isinstance(plan, dict):
-			plan = dict(plan)
-			if state.get("table_query_plan"):
-				plan["table_query_plan"] = state["table_query_plan"]
-			elif debug.get("table_query_plan"):
-				plan["table_query_plan"] = debug["table_query_plan"]
-			if state.get("table_execution"):
-				plan["table_execution"] = state["table_execution"]
-			elif debug.get("table_execution"):
-				plan["table_execution"] = debug["table_execution"]
-		query_type = state.get("query_type") or debug.get("query_type")
-		rewrite_mode = debug.get("rewrite")
-		persist = _persist_turn(
-			session_id=resolved_session,
-			library_id=library_id,
-			question=question,
-			answer=answer,
-			citations=citation_models,
-			mode=self.mode,
-			refused=refused,
-			refuse_reason=state.get("refuse_reason"),
-			query_type=str(query_type) if query_type else None,
-			retrieval_plan=plan if isinstance(plan, dict) else None,
-			rewrite=str(rewrite_mode) if rewrite_mode else None,
-			rewritten_query=state.get("rewritten_question"),
-			judge=judge if isinstance(judge, dict) else None,
-			document_version_id=_single_document_version_id(citation_models),
-			tenant_id=self.access_scope.tenant_id,
-			workspace_id=self.access_scope.workspace_id,
-			principal_id=self.access_scope.principal_id,
-		)
-
-		yield {
-			"event": "done",
-			"data": {
-				"session_id": resolved_session,
-				"question": question,
-				"answer": answer,
-				"citations": citations,
-				"mode": self.mode,
-				"refused": refused,
-				"refuse_reason": state.get("refuse_reason"),
-				"retrieval_debug": debug,
-				"persisted": bool(persist["persisted"]),
-				"persist_error": persist.get("persist_error"),
-				"hybrid_failed": visibility["hybrid_failed"],
-				"rerank_failed": visibility["rerank_failed"],
-				"retrieval_mode": visibility["retrieval_mode"],
-			},
-		}
+			_finish(mark_truncated=False)
+			yield {
+				"event": "done",
+				"data": {
+					"session_id": resolved_session,
+					"question": question,
+					"answer": answer,
+					"citations": citations,
+					"mode": self.mode,
+					"refused": refused,
+					"refuse_reason": state.get("refuse_reason"),
+					"trace_id": resolved_trace,
+					"retrieval_debug": debug,
+					"persisted": bool(persist["persisted"]),
+					"persist_error": persist.get("persist_error"),
+					"hybrid_failed": visibility["hybrid_failed"],
+					"rerank_failed": visibility["rerank_failed"],
+					"retrieval_mode": visibility["retrieval_mode"],
+				},
+			}
+		except GeneratorExit:
+			truncated = True
+			_finish(mark_truncated=True)
+			raise
+		except Exception:
+			truncated = True
+			_finish(mark_truncated=True)
+			raise
+		finally:
+			if not finished:
+				_finish(mark_truncated=truncated)
