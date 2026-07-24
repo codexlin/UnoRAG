@@ -31,6 +31,11 @@ from app.services.ask_route import (
 	table_overview_downgrade_reason,
 )
 from app.services.query_router import looks_like_table_summary_lookup, route_query
+from app.services.citation_gate import (
+	apply_citation_gate,
+	gate_debug_fields,
+	wide_recall_limit,
+)
 from app.services.retrieval import RetrievalService
 from app.services.retrieval_plan import build_retrieval_plan
 from app.services.runtime import RuntimeCapability, resolve_runtime
@@ -889,6 +894,8 @@ def build_ask_graph(
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
 		plan = dict(state.get("retrieval_plan") or {})
 		top_k = int(plan.get("top_k") or settings.retrieve_top_k)
+		# 宽召回：门控前多取候选；display/context 再截到 top_k
+		candidate_k = wide_recall_limit(top_k, settings)
 		filters = dict(plan.get("filters") or {})
 		plan_rt = str(plan.get("record_type") or filters.get("record_type") or "chunk")
 		unified_fast = plan_rt == "chunk+table_summary" or (
@@ -900,14 +907,14 @@ def build_ask_graph(
 			chunk_filters = dict(filters)
 			chunk_filters["record_type"] = "chunk"
 			citations = retrieve_fn(
-				query, state.get("library_id"), top_k, chunk_filters
+				query, state.get("library_id"), candidate_k, chunk_filters
 			)
 			summary_filters = dict(filters)
 			summary_filters["record_type"] = "table_summary"
 			summaries = retrieve_fn(
 				query,
 				state.get("library_id"),
-				min(4, top_k),
+				min(4, candidate_k),
 				summary_filters,
 			)
 			combined = [*summaries, *citations]
@@ -932,14 +939,26 @@ def build_ask_graph(
 					continue
 				seen.add(key)
 				deduped.append(item)
-			citations = _renumber_citation_indexes(deduped[: top_k + min(4, top_k)])
+			# 门控前暂不硬截 top_k；保留宽池供 citation_gate
+			citations = deduped[: max(candidate_k, top_k + min(4, top_k))]
 			filters = {**filters, "record_type": "chunk+table_summary"}
 			resolved_rt = "chunk+table_summary"
 		else:
 			if plan.get("record_type") and "record_type" not in filters:
 				filters["record_type"] = plan["record_type"]
-			citations = retrieve_fn(query, state.get("library_id"), top_k, filters)
+			citations = retrieve_fn(
+				query, state.get("library_id"), candidate_k, filters
+			)
 			resolved_rt = str(filters.get("record_type") or plan_rt)
+
+		# 文本引用门控（table precise 路径不走本节点）
+		gate_result = apply_citation_gate(
+			query,
+			citations,
+			top_k=top_k,
+			settings=settings,
+		)
+		citations = gate_result.citations
 
 		# 薄 citation_check：section 命中应能回溯 source_chunk_ids
 		citation_check = {"ok": True, "missing_source_chunk_ids": 0}
@@ -957,6 +976,7 @@ def build_ask_graph(
 			"record_type": resolved_rt,
 			"filters": filters,
 			"citation_check": citation_check,
+			**gate_debug_fields(gate_result),
 		}
 		tool_trace: list[dict[str, Any]] = []
 		# TOOL_ASK：默认仍短路径；仅规范化 citation + 记录 search_docs 轨迹（多跳工具后续扩展）
@@ -971,7 +991,7 @@ def build_ask_graph(
 					"hit_count": len(citations),
 				}
 			)
-		# 防御保障：多路合并 / quote_source 后 index 仍为唯一连续 1..N
+		# 最终保障：多路合并 / quote_source / 门控后 index 仍为唯一连续 1..N
 		citations = _renumber_citation_indexes(citations)
 		top_score = float(citations[0]["score"]) if citations else None
 		used_rerank = bool(citations and citations[0].get("used_rerank"))

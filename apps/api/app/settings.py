@@ -69,6 +69,13 @@ class Settings(BaseSettings):
 	answer_min_score: float = 0.4
 	max_retrieve_retries: int = 1
 
+	# SAG-style citation gate: wide recall → relevance filter → context/citations 同源
+	# absolute_floor<=0 时回退对齐 answer_min_score
+	citation_gate_enabled: bool = True
+	citation_gate_absolute_floor: float = 0.35
+	citation_gate_ratio: float = 0.68
+	citation_gate_lexical_threshold: float = 0.2
+
 	# Optional rerank after dense retrieval (DashScope-compatible /reranks)
 	rerank_enabled: bool = False
 	rerank_base_url: str = "https://dashscope.aliyuncs.com/compatible-api/v1"

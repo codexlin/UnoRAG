@@ -425,7 +425,8 @@ def test_unified_fast_merge_renumbers_citation_indexes_unique() -> None:
 					"record_id": "sum-1",
 					"table_id": "t-a",
 					"title": "表摘要A",
-					"score": 0.55,
+					# 分数需过 citation_gate semantic_floor，否则双路合并测不到 table_summary
+					"score": 0.82,
 					"body": "报价有效期说明摘要",
 					"text": "报价有效期说明摘要",
 					"snippet": "报价有效期说明摘要",
@@ -437,7 +438,7 @@ def test_unified_fast_merge_renumbers_citation_indexes_unique() -> None:
 					"record_id": "sum-2",
 					"table_id": "t-b",
 					"title": "表摘要B",
-					"score": 0.42,
+					"score": 0.76,
 					"body": "其它表摘要",
 					"text": "其它表摘要",
 					"snippet": "其它表摘要",
