@@ -390,6 +390,17 @@ class QdrantStore:
 	def _payload_to_hit(self, point: Any, *, score: float = 0.0) -> dict[str, Any]:
 		payload = dict(getattr(point, "payload", None) or {})
 		body = str(payload.get("body") or payload.get("text") or "")
+		# 旧索引可能仅在 summary_rows 存文末汇总，未写入 embed body；检索展示时补齐。
+		summary_bits: list[str] = []
+		for item in payload.get("summary_rows") or []:
+			if isinstance(item, dict):
+				raw = str(item.get("raw_text") or "").strip()
+			else:
+				raw = str(item or "").strip()
+			if raw and raw not in body and raw not in summary_bits:
+				summary_bits.append(raw)
+		if summary_bits:
+			body = f"{body}\n汇总：{'；'.join(summary_bits)}".strip()
 		clamped = max(0.0, min(1.0, float(score)))
 		return {
 			"id": str(point.id),

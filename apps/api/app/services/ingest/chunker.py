@@ -105,6 +105,16 @@ def chunk_document(
 						row.model_dump() for row in node.table_ir.summary_rows
 					]
 					meta["footnotes"] = list(node.table_ir.footnotes)
+					# 文末汇总说明并入 chunk body，使 section/chunk 路径也能召回
+					summary_bits = [
+						str(row.raw_text).strip()
+						for row in node.table_ir.summary_rows
+						if str(row.raw_text or "").strip()
+					]
+					if summary_bits:
+						suffix = "\n\n汇总说明：" + "；".join(summary_bits[:5])
+						if suffix.strip() not in body:
+							body = f"{body.rstrip()}{suffix}"
 				meta["table_rows_per_record"] = profile.table_rows_per_record
 				meta["table_tokens_per_record"] = profile.table_tokens_per_record
 			chunk = Chunk(

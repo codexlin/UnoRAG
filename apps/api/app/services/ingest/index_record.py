@@ -158,6 +158,26 @@ def _slice_table_rows(
 	return result
 
 
+def _extract_summary_row_texts(meta: dict[str, Any]) -> list[str]:
+	"""Collect summary/footnote texts from chunk meta (flat or nested table_ir)."""
+	texts: list[str] = []
+
+	def _push(item: Any) -> None:
+		if isinstance(item, dict):
+			raw = str(item.get("raw_text") or "").strip()
+		else:
+			raw = str(item or "").strip()
+		if raw and raw not in texts:
+			texts.append(raw)
+
+	for item in meta.get("summary_rows") or []:
+		_push(item)
+	table_ir = meta.get("table_ir") if isinstance(meta.get("table_ir"), dict) else {}
+	for item in table_ir.get("summary_rows") or []:
+		_push(item)
+	return texts
+
+
 def build_table_summary_records_from_chunks(
 	chunks: list[Chunk],
 	*,
@@ -168,8 +188,11 @@ def build_table_summary_records_from_chunks(
 	workspace_id: str = "default",
 	filename: str | None = None,
 ) -> list[IndexRecord]:
-	"""One schema/summary vector per logical table for table discovery."""
-	records: list[IndexRecord] = []
+	"""One schema/summary vector per logical table for table discovery.
+
+	同一 table_id 多 chunk 时合并 summary_rows，保证文末汇总说明写入可检索 body。
+	"""
+	by_table: dict[str, IndexRecord] = {}
 	for chunk in chunks:
 		table_id = (chunk.table_id or "").strip()
 		if not table_id:
@@ -178,67 +201,98 @@ def build_table_summary_records_from_chunks(
 		headers = [str(value) for value in (meta.get("headers") or [])]
 		rows = list(meta.get("rows") or [])
 		caption = str(meta.get("table_caption") or chunk.heading_text or "").strip()
+		footnotes = [str(value) for value in (meta.get("footnotes") or []) if str(value)]
+		table_ir = meta.get("table_ir") if isinstance(meta.get("table_ir"), dict) else {}
+		summary_items = list(meta.get("summary_rows") or [])
+		if not summary_items and table_ir.get("summary_rows"):
+			summary_items = list(table_ir.get("summary_rows") or [])
+		summary_texts = _extract_summary_row_texts(meta)
+
+		existing = by_table.get(table_id)
+		if existing is not None:
+			# 合并后续 chunk 的汇总行（跨页表尾常落在最后一片）
+			merged_summaries = list(existing.summary_rows)
+			for item in summary_items:
+				if item not in merged_summaries:
+					merged_summaries.append(item)
+			merged_texts = _extract_summary_row_texts({"summary_rows": merged_summaries})
+			base_parts = [
+				caption or existing.table_caption or f"表格 {table_id}",
+			]
+			use_headers = headers or list(existing.headers)
+			if use_headers:
+				base_parts.append("字段：" + "、".join(use_headers))
+			row_count = max(len(rows), int(existing.table_row_count or 0))
+			base_parts.append(f"共{row_count}条数据")
+			if merged_texts:
+				base_parts.append("汇总：" + "；".join(merged_texts[:5]))
+			use_footnotes = footnotes or list(existing.footnotes)
+			if use_footnotes:
+				base_parts.append("备注：" + "；".join(use_footnotes[:3]))
+			body = "；".join(base_parts)
+			by_table[table_id] = existing.model_copy(
+				update={
+					"body": body,
+					"embed_text": body,
+					"summary_rows": merged_summaries,
+					"footnotes": use_footnotes,
+					"headers": use_headers,
+					"table_row_count": row_count,
+					"content_hash": hashlib.sha1(body.encode("utf-8")).hexdigest()[:16],
+					"page_end": chunk.page_end or existing.page_end,
+				}
+			)
+			continue
+
 		parts = [caption] if caption else [f"表格 {table_id}"]
 		if headers:
 			parts.append("字段：" + "、".join(headers))
 		parts.append(f"共{len(rows)}条数据")
-		footnotes = [str(value) for value in (meta.get("footnotes") or []) if str(value)]
-		table_ir = meta.get("table_ir") if isinstance(meta.get("table_ir"), dict) else {}
 		# 合计/汇总说明写入可检索文本，使「占比/总额」类问法能命中 table_summary
-		summary_texts: list[str] = []
-		for item in meta.get("summary_rows") or []:
-			if isinstance(item, dict):
-				raw = str(item.get("raw_text") or "").strip()
-			else:
-				raw = str(item or "").strip()
-			if raw and raw not in summary_texts:
-				summary_texts.append(raw)
 		if summary_texts:
 			parts.append("汇总：" + "；".join(summary_texts[:5]))
 		if footnotes:
 			parts.append("备注：" + "；".join(footnotes[:3]))
 		body = "；".join(parts)
 		rid = table_summary_record_id(doc_id, table_id)
-		records.append(
-			IndexRecord(
-				record_type="table_summary",
-				record_id=rid,
-				parent_record_id=chunk_record_id(doc_id, chunk.chunk_index),
-				document_version_id=document_version_id,
-				library_id=library_id,
-				doc_id=doc_id,
-				tenant_id=tenant_id,
-				workspace_id=workspace_id,
-				section_path=chunk.section_path,
-				heading_text=chunk.heading_text,
-				body=body,
-				embed_text=body,
-				source_chunk_ids=[chunk_record_id(doc_id, chunk.chunk_index)],
-				source_node_ids=list(chunk.node_ids or []),
-				page_start=chunk.page_start,
-				page_end=chunk.page_end,
-				page_label=chunk.page_label,
-				table_id=table_id,
-				headers=headers,
-				table_row_count=len(rows),
-				table_caption=caption or None,
-				table_quality=dict(meta.get("table_quality") or {}),
-				summary_rows=list(meta.get("summary_rows") or []),
-				footnotes=footnotes,
-				header_rows=[
-					[str(cell) for cell in row]
-					for row in (table_ir.get("header_rows") or [])
-				],
-				table_columns=[
-					dict(column) for column in (table_ir.get("columns") or [])
-					if isinstance(column, dict)
-				],
-				content_hash=hashlib.sha1(body.encode("utf-8")).hexdigest()[:16],
-				source_format=chunk.source_format,
-				filename=filename,
-			)
+		by_table[table_id] = IndexRecord(
+			record_type="table_summary",
+			record_id=rid,
+			parent_record_id=chunk_record_id(doc_id, chunk.chunk_index),
+			document_version_id=document_version_id,
+			library_id=library_id,
+			doc_id=doc_id,
+			tenant_id=tenant_id,
+			workspace_id=workspace_id,
+			section_path=chunk.section_path,
+			heading_text=chunk.heading_text,
+			body=body,
+			embed_text=body,
+			source_chunk_ids=[chunk_record_id(doc_id, chunk.chunk_index)],
+			source_node_ids=list(chunk.node_ids or []),
+			page_start=chunk.page_start,
+			page_end=chunk.page_end,
+			page_label=chunk.page_label,
+			table_id=table_id,
+			headers=headers,
+			table_row_count=len(rows),
+			table_caption=caption or None,
+			table_quality=dict(meta.get("table_quality") or {}),
+			summary_rows=summary_items,
+			footnotes=footnotes,
+			header_rows=[
+				[str(cell) for cell in row]
+				for row in (table_ir.get("header_rows") or [])
+			],
+			table_columns=[
+				dict(column) for column in (table_ir.get("columns") or [])
+				if isinstance(column, dict)
+			],
+			content_hash=hashlib.sha1(body.encode("utf-8")).hexdigest()[:16],
+			source_format=chunk.source_format,
+			filename=filename,
 		)
-	return records
+	return list(by_table.values())
 
 def _split_long_text(text: str, max_chars: int) -> list[str]:
 	raw = (text or "").strip()
