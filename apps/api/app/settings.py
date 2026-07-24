@@ -118,6 +118,9 @@ class Settings(BaseSettings):
 	lifecycle_worker_lease_seconds: int = 120
 	lifecycle_worker_heartbeat_seconds: int = 30
 	lifecycle_worker_version: str = "lifecycle-worker-v1"
+	# Delayed Qdrant point deletion for superseded generations.
+	lifecycle_cleanup_enabled: bool = True
+	lifecycle_cleanup_batch_size: int = 20
 	active_generation_gate_enabled: bool = False
 	active_generation_cache_ttl_seconds: float = 0.0
 	rag_read_database_url: str = ""

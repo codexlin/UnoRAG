@@ -114,6 +114,19 @@ class ActivationResult:
     previous_generation_id: UUID | None = None
 
 
+@dataclass(frozen=True)
+class GenerationCleanupClaim:
+    generation_id: UUID
+    organization_id: UUID
+    workspace_id: UUID
+    library_id: UUID
+    document_id: UUID
+    document_version_id: UUID
+    delete_after: datetime
+    hint_status: str
+    sweep_attempts: int
+
+
 class JobRepository:
     """The only Python write boundary for app.jobs scheduling fields."""
 
@@ -921,6 +934,124 @@ class JobRepository:
                         "generation_id": generation_id,
                         "status": "applied" if applied else "error",
                         "error": (error or "")[:8000] or None,
+                    },
+                )
+
+    def claim_cleanup_due(
+        self,
+        *,
+        capacity: int = 20,
+        sweeping_stale_seconds: int = 300,
+    ) -> list[GenerationCleanupClaim]:
+        if capacity < 1:
+            raise ValueError("capacity must be positive")
+        if sweeping_stale_seconds < 1:
+            raise ValueError("sweeping_stale_seconds must be positive")
+        with self._connection.transaction():
+            with self._connection.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    WITH candidates AS (
+                        SELECT queue.generation_id
+                        FROM rag.generation_cleanup_queue AS queue
+                        WHERE queue.delete_after <= now()
+                          AND (
+                              queue.sweep_status IN ('pending', 'error')
+                              OR (
+                                  queue.sweep_status = 'sweeping'
+                                  AND queue.updated_at
+                                      <= now()
+                                          - make_interval(
+                                              secs => %(sweeping_stale_seconds)s
+                                          )
+                              )
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM rag.active_document_generations AS active
+                              WHERE active.generation_id = queue.generation_id
+                          )
+                        ORDER BY queue.delete_after, queue.generation_id
+                        FOR UPDATE OF queue SKIP LOCKED
+                        LIMIT %(capacity)s
+                    )
+                    UPDATE rag.generation_cleanup_queue AS queue
+                    SET sweep_status = 'sweeping',
+                        sweep_attempts = queue.sweep_attempts + 1,
+                        last_error = NULL,
+                        updated_at = now()
+                    FROM candidates
+                    WHERE queue.generation_id = candidates.generation_id
+                    RETURNING
+                        queue.generation_id,
+                        queue.organization_id,
+                        queue.workspace_id,
+                        queue.library_id,
+                        queue.document_id,
+                        queue.document_version_id,
+                        queue.delete_after,
+                        queue.hint_status,
+                        queue.sweep_attempts
+                    """,
+                    {
+                        "capacity": capacity,
+                        "sweeping_stale_seconds": sweeping_stale_seconds,
+                    },
+                )
+                return [
+                    GenerationCleanupClaim(
+                        generation_id=row["generation_id"],
+                        organization_id=row["organization_id"],
+                        workspace_id=row["workspace_id"],
+                        library_id=row["library_id"],
+                        document_id=row["document_id"],
+                        document_version_id=row["document_version_id"],
+                        delete_after=row["delete_after"],
+                        hint_status=str(row["hint_status"]),
+                        sweep_attempts=int(row["sweep_attempts"]),
+                    )
+                    for row in cursor.fetchall()
+                ]
+
+    def mark_cleanup_swept(
+        self,
+        *,
+        generation_id: UUID,
+    ) -> None:
+        with self._connection.transaction():
+            with self._connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE rag.generation_cleanup_queue
+                    SET sweep_status = 'deleted',
+                        last_error = NULL,
+                        updated_at = now()
+                    WHERE generation_id = %(generation_id)s
+                      AND sweep_status = 'sweeping'
+                    """,
+                    {"generation_id": generation_id},
+                )
+
+    def mark_cleanup_sweep_error(
+        self,
+        *,
+        generation_id: UUID,
+        error: str,
+    ) -> None:
+        with self._connection.transaction():
+            with self._connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE rag.generation_cleanup_queue
+                    SET sweep_status = 'error',
+                        last_error = %(error)s,
+                        updated_at = now()
+                    WHERE generation_id = %(generation_id)s
+                      AND sweep_status = 'sweeping'
+                    """,
+                    {
+                        "generation_id": generation_id,
+                        "error": (error or "")[:8000] or "cleanup sweep failed",
                     },
                 )
 

@@ -171,6 +171,23 @@ uv run python -m app.lifecycle_worker
 - `lease_expires_at` 过期的 Job 会由任意健康 worker reaper 回收；
 - `dead` 必须告警并由管理员检查 source、模型和 Qdrant 后手动 retry。
 
+## Generation cleanup sweeper
+
+激活成功后，旧 generation 会进入 `rag.generation_cleanup_queue`，并在
+`delete_after`（默认 7 天）之后才删除 Qdrant 点。lifecycle worker 循环内会
+顺带消费到期行；也可单独跑：
+
+```bash
+cd apps/api
+export WORKER_DATABASE_URL=postgresql://meriknow_worker_login:secret@postgres:5432/meriknow
+uv run python -m app.generation_cleanup_sweeper
+# 持续循环：LIFECYCLE_CLEANUP_LOOP=1 uv run python -m app.generation_cleanup_sweeper
+```
+
+应用 RAG migration `0002_generation_cleanup_sweep.sql` 后，队列行带有
+`sweep_status`（`pending` → `sweeping` → `deleted` / `error`）。仍处于
+`rag.active_document_generations` 的 generation 不会被删除。
+
 停止时发送 `SIGTERM`。worker 会停止 claim 新 Job，当前同步步骤结束后退出。
 若容器被强杀，lease 过期后会自动恢复；同 generation 的确定性 point ID
 保证重放不会产生重复点。

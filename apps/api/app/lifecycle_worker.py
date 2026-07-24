@@ -24,6 +24,7 @@ from app.repositories.job_repository import (
 )
 from app.settings import Settings, get_settings
 from app.workers.document_ingest import DocumentIngestProcessor
+from app.workers.generation_cleanup import GenerationCleanupSweeper
 
 logger = logging.getLogger(__name__)
 
@@ -164,10 +165,28 @@ class LifecycleWorker:
 		) as connection:
 			repository = JobRepository(connection)
 			processor = DocumentIngestProcessor(self.settings, repository)
+			sweeper = (
+				GenerationCleanupSweeper(self.settings, repository)
+				if self.settings.lifecycle_cleanup_enabled
+				else None
+			)
 			while not self.stop_event.is_set():
 				reaped = repository.reap_expired()
 				if reaped:
 					logger.warning("lifecycle_worker.reaped count=%s", reaped)
+				if sweeper is not None:
+					try:
+						sweep = sweeper.run_once()
+						if sweep.claimed:
+							logger.info(
+								"lifecycle_worker.cleanup claimed=%s deleted=%s "
+								"errors=%s",
+								sweep.claimed,
+								sweep.deleted,
+								sweep.errors,
+							)
+					except Exception:
+						logger.exception("lifecycle_worker.cleanup_failed")
 				leases = repository.claim(
 					worker_id=self.worker_id,
 					job_types=["document.ingest"],

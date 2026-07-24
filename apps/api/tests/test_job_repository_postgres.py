@@ -543,3 +543,114 @@ def test_late_job_is_superseded_before_activation(ingest_job_scope):
     assert old_job == ("completed", "done", "superseded")
     assert old_version_status == "superseded"
     assert active_count == 0
+
+
+def test_claim_cleanup_due_skips_active_and_marks_sweep(ingest_job_scope):
+    ids = ingest_job_scope
+    with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
+        has_sweep = connection.execute(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'rag'
+              AND table_name = 'generation_cleanup_queue'
+              AND column_name = 'sweep_status'
+            """
+        ).fetchone()
+        if has_sweep is None:
+            pytest.skip("rag.generation_cleanup_queue.sweep_status not migrated")
+
+        inactive_generation_id = uuid4()
+        active_generation_id = ids["generation_id"]
+        connection.execute(
+            """
+            INSERT INTO rag.generation_cleanup_queue (
+                generation_id,
+                organization_id,
+                workspace_id,
+                library_id,
+                document_id,
+                document_version_id,
+                delete_after
+            )
+            SELECT
+                %s,
+                document.organization_id,
+                document.workspace_id,
+                document.library_id,
+                document.id,
+                %s,
+                now() - interval '1 minute'
+            FROM app.documents AS document
+            WHERE document.id = %s
+            """,
+            (inactive_generation_id, ids["version_id"], ids["document_id"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO rag.active_document_generations (
+                organization_id,
+                workspace_id,
+                library_id,
+                rag_library_id,
+                document_id,
+                document_version_id,
+                generation_id
+            )
+            SELECT
+                document.organization_id,
+                document.workspace_id,
+                document.library_id,
+                library.rag_library_id,
+                document.id,
+                %s,
+                %s
+            FROM app.documents AS document
+            JOIN app.libraries AS library ON library.id = document.library_id
+            WHERE document.id = %s
+            """,
+            (ids["version_id"], active_generation_id, ids["document_id"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO rag.generation_cleanup_queue (
+                generation_id,
+                organization_id,
+                workspace_id,
+                library_id,
+                document_id,
+                document_version_id,
+                delete_after
+            )
+            SELECT
+                %s,
+                document.organization_id,
+                document.workspace_id,
+                document.library_id,
+                document.id,
+                %s,
+                now() - interval '1 minute'
+            FROM app.documents AS document
+            WHERE document.id = %s
+            ON CONFLICT (generation_id) DO NOTHING
+            """,
+            (active_generation_id, ids["version_id"], ids["document_id"]),
+        )
+
+        connection.execute("SET ROLE meriknow_worker")
+        repository = JobRepository(connection)
+        claims = repository.claim_cleanup_due(capacity=10)
+        claimed_ids = {claim.generation_id for claim in claims}
+        assert inactive_generation_id in claimed_ids
+        assert active_generation_id not in claimed_ids
+
+        repository.mark_cleanup_swept(generation_id=inactive_generation_id)
+        status = connection.execute(
+            """
+            SELECT sweep_status
+            FROM rag.generation_cleanup_queue
+            WHERE generation_id = %s
+            """,
+            (inactive_generation_id,),
+        ).fetchone()[0]
+        assert status == "deleted"
