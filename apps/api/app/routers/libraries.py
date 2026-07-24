@@ -44,6 +44,17 @@ def get_access_scope(
 	return AccessScope.from_request_context(context)
 
 
+def get_service_access_scope(
+	context: RequestContext = Depends(require_internal_context),
+) -> AccessScope:
+	if context.auth_source not in {"service", "development"}:
+		raise HTTPException(
+			status_code=403,
+			detail="service request context required",
+		)
+	return AccessScope.from_request_context(context)
+
+
 def _document_response(row: dict) -> DocumentResponse:
 	return DocumentResponse.model_validate(
 		{
@@ -73,7 +84,7 @@ def upsert_library_projection(
 	library_id: str,
 	body: LibraryProjectionRequest,
 	meta: MetadataStore = Depends(get_meta),
-	access_scope: AccessScope = Depends(get_access_scope),
+	access_scope: AccessScope = Depends(get_service_access_scope),
 ) -> LibraryResponse:
 	"""Idempotent Control Plane -> RAG metadata projection."""
 	current = meta.get_library(library_id, scope=access_scope)
@@ -101,6 +112,129 @@ def upsert_library_projection(
 	if row is None:
 		raise HTTPException(status_code=409, detail="library projection failed")
 	return LibraryResponse.model_validate(row)
+
+
+def _delete_library_resources(
+	library_id: str,
+	*,
+	settings: Settings,
+	meta: MetadataStore,
+	storage: DocumentStorage,
+	access_scope: AccessScope,
+	missing_ok: bool,
+) -> dict[str, object]:
+	library = meta.get_library(library_id, scope=access_scope)
+	if library is None:
+		if missing_ok:
+			return {
+				"ok": True,
+				"library_id": library_id,
+				"deleted_documents": 0,
+				"already_absent": True,
+			}
+		raise HTTPException(status_code=404, detail="library not found")
+
+	documents = meta.list_documents(library_id, scope=access_scope)
+	capability = resolve_runtime(settings)
+	if capability.requested_mode == "live" and not capability.live_ready:
+		raise HTTPException(
+			status_code=503,
+			detail="RAG runtime unavailable; library cleanup will be retried",
+		)
+
+	chunk_failures: list[str] = []
+	storage_failures: list[str] = []
+	ingest = (
+		IngestService(settings, access_scope=access_scope)
+		if capability.live_ready
+		else None
+	)
+	for doc in documents:
+		doc_id = str(doc["id"])
+		if ingest is not None:
+			try:
+				ingest.delete_document_chunks(
+					doc_id=doc_id,
+					library_id=library_id,
+				)
+			except Exception as exc:
+				logger.warning(
+					"delete_library_chunks_failed library_id=%s doc_id=%s err=%s",
+					library_id,
+					doc_id,
+					exc,
+				)
+				chunk_failures.append(doc_id)
+
+		storage_key = doc.get("storage_key")
+		if storage_key:
+			try:
+				storage.delete(str(storage_key))
+			except Exception as exc:
+				logger.warning(
+					"delete_library_storage_failed library_id=%s doc_id=%s err=%s",
+					library_id,
+					doc_id,
+					exc,
+				)
+				storage_failures.append(doc_id)
+
+	if chunk_failures or storage_failures:
+		failures = sorted(set([*chunk_failures, *storage_failures]))
+		raise HTTPException(
+			status_code=502,
+			detail=(
+				"library resource cleanup failed; metadata retained for retry: "
+				f"{', '.join(failures[:5])}"
+				+ ("..." if len(failures) > 5 else "")
+			),
+		)
+
+	try:
+		ok = meta.delete_library(library_id, scope=access_scope)
+	except Exception as exc:
+		logger.exception("delete_library_metadata_failed library_id=%s", library_id)
+		raise HTTPException(
+			status_code=500,
+			detail=f"library metadata cleanup failed: {exc}",
+		) from exc
+	if not ok:
+		if missing_ok and meta.get_library(library_id, scope=access_scope) is None:
+			return {
+				"ok": True,
+				"library_id": library_id,
+				"deleted_documents": len(documents),
+				"already_absent": True,
+			}
+		raise HTTPException(
+			status_code=500,
+			detail="library metadata cleanup lost a concurrent update",
+		)
+	return {
+		"ok": True,
+		"library_id": library_id,
+		"deleted_documents": len(documents),
+		"already_absent": False,
+	}
+
+
+@router.delete("/internal/projections/libraries/{library_id}")
+def delete_library_projection(
+	library_id: str,
+	settings: Settings = Depends(get_settings),
+	meta: MetadataStore = Depends(get_meta),
+	storage: DocumentStorage = Depends(get_document_storage),
+	access_scope: AccessScope = Depends(get_service_access_scope),
+) -> dict[str, object]:
+	"""Idempotently remove a derived RAG library projection."""
+	return _delete_library_resources(
+		library_id,
+		settings=settings,
+		meta=meta,
+		storage=storage,
+		access_scope=access_scope,
+		missing_ok=True,
+	)
 
 
 @router.get("/libraries", response_model=list[LibraryResponse])
@@ -173,74 +307,14 @@ def delete_library(
 	storage: DocumentStorage = Depends(get_document_storage),
 	access_scope: AccessScope = Depends(get_access_scope),
 ) -> dict[str, object]:
-	library = meta.get_library(library_id, scope=access_scope)
-	if library is None:
-		raise HTTPException(status_code=404, detail="library not found")
-
-	documents = meta.list_documents(library_id, scope=access_scope)
-	capability = resolve_runtime(settings)
-	chunk_failures: list[str] = []
-	storage_failures: list[str] = []
-
-	for doc in documents:
-		doc_id = str(doc["id"])
-		if capability.live_ready:
-			try:
-				IngestService(settings, access_scope=access_scope).delete_document_chunks(
-					doc_id=doc_id,
-					library_id=library_id,
-				)
-			except Exception as exc:
-				logger.warning(
-					"delete_library_chunks_failed library_id=%s doc_id=%s err=%s",
-					library_id,
-					doc_id,
-					exc,
-				)
-				chunk_failures.append(doc_id)
-
-		storage_key = doc.get("storage_key")
-		if storage_key:
-			try:
-				storage.delete(str(storage_key))
-			except Exception as exc:
-				logger.warning(
-					"delete_library_storage_failed library_id=%s doc_id=%s err=%s",
-					library_id,
-					doc_id,
-					exc,
-				)
-				storage_failures.append(doc_id)
-
-	# live 模式下向量清除硬失败：不继续删元数据，避免「库没了但向量还在」
-	if capability.live_ready and chunk_failures:
-		raise HTTPException(
-			status_code=502,
-			detail=(
-				"删除知识库向量失败，已中止元数据删除："
-				f"{', '.join(chunk_failures[:5])}"
-				+ ("…" if len(chunk_failures) > 5 else "")
-			),
-		)
-
-	try:
-		ok = meta.delete_library(library_id, scope=access_scope)
-	except Exception as exc:
-		logger.exception("delete_library_metadata_failed library_id=%s", library_id)
-		raise HTTPException(
-			status_code=500,
-			detail=f"删除知识库元数据失败: {exc}",
-		) from exc
-
-	if not ok:
-		raise HTTPException(status_code=500, detail="删除知识库失败：库已不存在或写入失败")
-
-	return {
-		"ok": True,
-		"library_id": library_id,
-		"deleted_documents": len(documents),
-		"storage_warnings": storage_failures,
-	}
+	return _delete_library_resources(
+		library_id,
+		settings=settings,
+		meta=meta,
+		storage=storage,
+		access_scope=access_scope,
+		missing_ok=False,
+	)
 
 
 @router.get("/libraries/{library_id}/documents", response_model=list[DocumentResponse])

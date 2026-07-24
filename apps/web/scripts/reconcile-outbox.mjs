@@ -6,12 +6,23 @@ if (existsSync(".env.local")) process.loadEnvFile(".env.local");
 
 const { Client } = pg;
 const databaseUrl = process.env.DATABASE_URL?.trim();
+const libraryId = process.argv
+	.find((argument) => argument.startsWith("--library-id="))
+	?.slice("--library-id=".length)
+	.trim();
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
 
 const client = new Client({ connectionString: databaseUrl });
 await client.connect();
 try {
-	const result = await client.query(`
+	const result = await client.query(
+		`
+		WITH library_snapshot AS MATERIALIZED (
+			SELECT library.*
+			FROM app.libraries AS library
+			WHERE ($1::varchar IS NULL OR library.rag_library_id = $1)
+			FOR UPDATE
+		)
 		INSERT INTO app.outbox_events (
 			organization_id,
 			workspace_id,
@@ -35,7 +46,7 @@ try {
 				'description', library.description,
 				'principal_id', COALESCE(library.created_by::text, 'outbox-reconcile')
 			)
-		FROM app.libraries AS library
+		FROM library_snapshot AS library
 		ON CONFLICT (idempotency_key) DO UPDATE
 		SET status = 'pending',
 			attempts = 0,
@@ -48,7 +59,9 @@ try {
 			updated_at = now()
 		WHERE app.outbox_events.status = 'dead'
 		RETURNING id
-	`);
+	`,
+		[libraryId || null],
+	);
 	console.log(`enqueued ${result.rowCount} reconciliation event(s)`);
 } finally {
 	await client.end();

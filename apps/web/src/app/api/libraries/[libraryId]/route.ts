@@ -10,6 +10,7 @@ import {
 	canWriteLibraries,
 	findAuthorizedLibrary,
 } from "@/lib/server/library-access";
+import { runOutboxMutation } from "@/lib/server/outbox-transaction.mjs";
 
 type RouteContext = {
 	params: Promise<{ libraryId: string }>;
@@ -61,44 +62,48 @@ export async function PATCH(request: Request, context: RouteContext) {
 	}
 	const db = getDatabase();
 	const now = new Date();
-	const updated = await db.transaction(async (tx) => {
-		const [row] = await tx
-			.update(libraries)
-			.set({
-				...(body.name !== undefined
-					? { name: body.name.trim().slice(0, 256) }
-					: {}),
-				...(body.description !== undefined
-					? { description: body.description?.trim().slice(0, 2000) || null }
-					: {}),
+	const updated = await runOutboxMutation(
+		db,
+		async (tx) => {
+			const [row] = await tx
+				.update(libraries)
+				.set({
+					...(body.name !== undefined
+						? { name: body.name.trim().slice(0, 256) }
+						: {}),
+					...(body.description !== undefined
+						? { description: body.description?.trim().slice(0, 2000) || null }
+						: {}),
+					updatedAt: now,
+				})
+				.where(
+					and(
+						eq(libraries.id, current.id),
+						eq(libraries.organizationId, identity.tenantId),
+						eq(libraries.workspaceId, identity.workspaceId),
+					),
+				)
+				.returning();
+			return row;
+		},
+		(tx, row) =>
+			tx.insert(outboxEvents).values({
+				organizationId: identity.tenantId,
+				workspaceId: identity.workspaceId,
+				aggregateType: "library",
+				aggregateId: row.ragLibraryId,
+				eventType: "library.upsert",
+				idempotencyKey: `library.upsert:${row.ragLibraryId}:${randomUUID()}`,
+				payload: {
+					library_id: row.ragLibraryId,
+					name: row.name,
+					description: row.description,
+					principal_id: identity.principalId,
+				},
+				createdAt: now,
 				updatedAt: now,
-			})
-			.where(
-				and(
-					eq(libraries.id, current.id),
-					eq(libraries.organizationId, identity.tenantId),
-					eq(libraries.workspaceId, identity.workspaceId),
-				),
-			)
-			.returning();
-		await tx.insert(outboxEvents).values({
-			organizationId: identity.tenantId,
-			workspaceId: identity.workspaceId,
-			aggregateType: "library",
-			aggregateId: row.ragLibraryId,
-			eventType: "library.upsert",
-			idempotencyKey: `library.upsert:${row.ragLibraryId}:${randomUUID()}`,
-			payload: {
-				library_id: row.ragLibraryId,
-				name: row.name,
-				description: row.description,
-				principal_id: identity.principalId,
-			},
-			createdAt: now,
-			updatedAt: now,
-		});
-		return row;
-	});
+			}),
+	);
 	return Response.json(toApiLibrary(updated));
 }
 
@@ -123,31 +128,34 @@ export async function DELETE(request: Request, context: RouteContext) {
 	}
 	const db = getDatabase();
 	const now = new Date();
-	await db.transaction(async (tx) => {
-		await tx.insert(outboxEvents).values({
-			organizationId: identity.tenantId,
-			workspaceId: identity.workspaceId,
-			aggregateType: "library",
-			aggregateId: current.ragLibraryId,
-			eventType: "library.delete",
-			idempotencyKey: `library.delete:${current.ragLibraryId}:${randomUUID()}`,
-			payload: {
-				library_id: current.ragLibraryId,
-				principal_id: identity.principalId,
-			},
-			createdAt: now,
-			updatedAt: now,
-		});
-		await tx
-			.delete(libraries)
-			.where(
-				and(
-					eq(libraries.id, current.id),
-					eq(libraries.organizationId, identity.tenantId),
-					eq(libraries.workspaceId, identity.workspaceId),
+	await runOutboxMutation(
+		db,
+		(tx) =>
+			tx
+				.delete(libraries)
+				.where(
+					and(
+						eq(libraries.id, current.id),
+						eq(libraries.organizationId, identity.tenantId),
+						eq(libraries.workspaceId, identity.workspaceId),
+					),
 				),
-			);
-	});
+		(tx) =>
+			tx.insert(outboxEvents).values({
+				organizationId: identity.tenantId,
+				workspaceId: identity.workspaceId,
+				aggregateType: "library",
+				aggregateId: current.ragLibraryId,
+				eventType: "library.delete",
+				idempotencyKey: `library.delete:${current.ragLibraryId}:${randomUUID()}`,
+				payload: {
+					library_id: current.ragLibraryId,
+					principal_id: identity.principalId,
+				},
+				createdAt: now,
+				updatedAt: now,
+			}),
+	);
 	return Response.json({
 		ok: true,
 		library_id: libraryId,

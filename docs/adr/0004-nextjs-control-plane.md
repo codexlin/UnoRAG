@@ -46,7 +46,10 @@ routes. Library mutations transactionally append ordered events to
 `app.outbox_events`. Independent workers claim events with
 `FOR UPDATE SKIP LOCKED`, call idempotent FastAPI projection endpoints using a
 signed service context, retry transient failures, and retain terminal failure
-details for operators. Successful ingest responses and document list probes
+details for operators. Workers heartbeat long-running leases and abort work
+after losing ownership. Library deletion uses a service-only, idempotent
+projection endpoint and fails closed when vector or object cleanup is
+unavailable. Successful ingest responses and document list probes
 still project RAG document state into `app.documents`; document lifecycle
 callbacks will move to the same protocol when asynchronous ingest ownership is
 finalized. Existing FastAPI `public.*` metadata remains a derived compatibility

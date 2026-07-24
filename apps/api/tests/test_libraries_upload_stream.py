@@ -1,14 +1,45 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.routers.libraries import (
+	_delete_library_resources,
+	get_document_storage,
+	get_service_access_scope,
+)
+from app.security.access_scope import AccessScope
+from app.security.internal_context import RequestContext
 from app.services.hybrid import fuse_dense_and_bm25, tokenize
 from app.services.documents import extract_text
+from app.settings import get_settings
 from tests.conftest import create_library
 
 client = TestClient(app)
+
+
+def test_internal_projection_rejects_session_context() -> None:
+	context = RequestContext(
+		tenant_id="tenant-1",
+		workspace_id="workspace-1",
+		principal_id="user-1",
+		group_ids=(),
+		request_id="request-1",
+		jti="jti-1",
+		auth_source="session",
+		method="DELETE",
+		target="/v1/internal/projections/libraries/library-1",
+		body_sha256=None,
+		issued_at=0,
+		expires_at=0,
+	)
+
+	with pytest.raises(HTTPException, match="service request context required") as exc:
+		get_service_access_scope(context)
+
+	assert exc.value.status_code == 403
 
 
 def test_list_libraries_starts_empty() -> None:
@@ -83,6 +114,93 @@ def test_internal_library_projection_is_idempotent() -> None:
 	assert updated.json()["name"] == "Updated"
 	assert updated.json()["description"] is None
 	assert client.get("/v1/libraries/lib-projection-test").json()["name"] == "Updated"
+
+
+def test_internal_library_projection_delete_is_idempotent() -> None:
+	created = client.put(
+		"/v1/internal/projections/libraries/lib-projection-delete-test",
+		json={"name": "Delete me"},
+	)
+	first = client.delete(
+		"/v1/internal/projections/libraries/lib-projection-delete-test",
+	)
+	replayed = client.delete(
+		"/v1/internal/projections/libraries/lib-projection-delete-test",
+	)
+
+	assert created.status_code == 200
+	assert first.status_code == 200
+	assert first.json()["already_absent"] is False
+	assert replayed.status_code == 200
+	assert replayed.json()["already_absent"] is True
+
+
+def test_internal_library_projection_accepts_concurrent_delete_completion() -> None:
+	class ConcurrentDeleteMeta:
+		def __init__(self) -> None:
+			self.reads = 0
+
+		def get_library(self, _library_id, *, scope):
+			self.reads += 1
+			return {"id": "library-1"} if self.reads == 1 else None
+
+		def list_documents(self, _library_id, *, scope):
+			return []
+
+		def delete_library(self, _library_id, *, scope):
+			return False
+
+	class Storage:
+		pass
+
+	settings = get_settings()
+	result = _delete_library_resources(
+		"library-1",
+		settings=settings,
+		meta=ConcurrentDeleteMeta(),
+		storage=Storage(),
+		access_scope=AccessScope.development(settings),
+		missing_ok=True,
+	)
+
+	assert result["ok"] is True
+	assert result["already_absent"] is True
+
+
+def test_internal_library_delete_retains_metadata_when_storage_cleanup_fails() -> None:
+	lib_id = create_library(
+		client,
+		name="Cleanup retry",
+		library_id="lib-projection-delete-retry",
+	)
+	uploaded = client.post(
+		"/v1/ingest/upload",
+		data={"library_id": lib_id},
+		files={
+			"file": (
+				"retry.md",
+				b"# Retry\n\nRetain metadata until storage cleanup succeeds.",
+				"text/markdown",
+			)
+		},
+	)
+	assert uploaded.status_code == 200
+
+	class FailingStorage:
+		def delete(self, _storage_key: str) -> None:
+			raise OSError("storage unavailable")
+
+	app.dependency_overrides[get_document_storage] = FailingStorage
+	try:
+		deleted = client.delete(
+			f"/v1/internal/projections/libraries/{lib_id}",
+		)
+	finally:
+		app.dependency_overrides.pop(get_document_storage, None)
+
+	assert deleted.status_code == 502
+	assert "metadata retained for retry" in deleted.json()["detail"]
+	assert client.get(f"/v1/libraries/{lib_id}").status_code == 200
 
 
 def test_delete_library_with_documents() -> None:

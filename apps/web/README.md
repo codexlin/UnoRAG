@@ -30,6 +30,18 @@ pnpm db:studio
 Drizzle exclusively manages schema `app`. Do not point Drizzle migrations at
 the Python-owned compatibility tables in `public`.
 
+Migration `0003` makes `rag_library_id` globally unique to match the current
+FastAPI primary-key contract. It aborts with an actionable error if an older
+installation contains duplicates. Operators can inspect conflicts before the
+upgrade with:
+
+```sql
+SELECT rag_library_id, count(*)
+FROM app.libraries
+GROUP BY rag_library_id
+HAVING count(*) > 1;
+```
+
 ## Internal RAG authentication
 
 Set `MERIKNOW_INTERNAL_SECRET` to the same random 32+ character value as
@@ -77,8 +89,9 @@ pnpm outbox:run
 Workers claim aggregate heads with `FOR UPDATE SKIP LOCKED`, preserve event
 order per library, sign requests with a `service` context, retry transient
 failures with bounded exponential backoff, and move exhausted events to
-`dead`. Operations can inspect `status`, `attempts`, and `last_error` in
-`app.outbox_events`.
+`dead`. Long requests renew their lease; loss of ownership aborts the upstream
+request and prevents a stale worker from marking another worker's event
+complete.
 
 After upgrading an installation that already has libraries, enqueue an
 idempotent projection for each current row:
@@ -91,5 +104,27 @@ pnpm outbox:once
 `outbox:reconcile` also revives matching dead reconciliation events. The
 browser-facing RAG proxy denies `/v1/internal/*`; only HMAC-authenticated
 service callers can invoke projection endpoints directly.
+
+Dead events are retained until an operator resolves the dependency or
+configuration failure. Monitor them with:
+
+```bash
+pnpm outbox:check
+pnpm outbox:inspect
+pnpm outbox:retry-dead -- --event-type=library.delete --limit=100
+pnpm outbox:once
+```
+
+`outbox:check` exits nonzero while any dead event exists and is suitable for a
+scheduled deployment probe. Review `last_error` before replaying. Prefer
+`--event-id=<uuid>` when only one event should be retried; never bulk replay
+unknown event types merely to clear the alert.
+
+PostgreSQL concurrency regressions are opt-in so the default unit suite remains
+self-contained:
+
+```bash
+OUTBOX_TEST_DATABASE_URL="$DATABASE_URL" pnpm test:postgres
+```
 
 See [ADR-0004](../../docs/adr/0004-nextjs-control-plane.md).

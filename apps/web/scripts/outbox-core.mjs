@@ -37,9 +37,9 @@ export function eventRequest(event) {
 	if (event.event_type === "library.delete") {
 		return {
 			method: "DELETE",
-			target: `/v1/libraries/${encodeURIComponent(libraryId)}`,
+			target: `/v1/internal/projections/libraries/${encodeURIComponent(libraryId)}`,
 			body: undefined,
-			successStatuses: new Set([200, 404]),
+			successStatuses: new Set([200]),
 		};
 	}
 	throw new Error(`unsupported outbox event type: ${event.event_type}`);
@@ -94,7 +94,7 @@ export function createInternalHeaders({
 
 export async function deliverOutboxEvent(
 	event,
-	{ baseUrl, secret, fetchImpl = fetch, now } = {},
+	{ baseUrl, secret, fetchImpl = fetch, now, signal } = {},
 ) {
 	const request = eventRequest(event);
 	const headers = createInternalHeaders({ event, request, secret, now });
@@ -106,6 +106,7 @@ export async function deliverOutboxEvent(
 				Object.entries(headers).filter(([, value]) => value !== undefined),
 			),
 			body: request.body,
+			signal,
 		},
 	);
 	if (!request.successStatuses.has(response.status)) {

@@ -60,19 +60,22 @@ test("library upsert request is canonical and body-bound", () => {
 	assert.equal(headers["x-meriknow-signature"], expectedSignature);
 });
 
-test("library delete treats missing projection as idempotent success", async () => {
+test("library delete uses the service-only idempotent projection path", async () => {
 	const calls = [];
 	const result = await deliverOutboxEvent(event("library.delete"), {
 		baseUrl: "http://rag.internal/",
 		secret: SECRET,
 		fetchImpl: async (url, init) => {
 			calls.push({ url, init });
-			return new Response('{"detail":"library not found"}', { status: 404 });
+			return new Response('{"ok":true,"already_absent":true}', { status: 200 });
 		},
 	});
 
-	assert.equal(result.status, 404);
-	assert.equal(calls[0].url, "http://rag.internal/v1/libraries/library-1");
+	assert.equal(result.status, 200);
+	assert.equal(
+		calls[0].url,
+		"http://rag.internal/v1/internal/projections/libraries/library-1",
+	);
 	assert.equal(calls[0].init.method, "DELETE");
 	assert.equal(calls[0].init.body, undefined);
 });

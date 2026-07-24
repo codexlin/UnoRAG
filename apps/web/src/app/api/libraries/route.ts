@@ -6,6 +6,7 @@ import { getDatabase } from "@/db";
 import { libraries, outboxEvents } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import { canWriteLibraries } from "@/lib/server/library-access";
+import { runOutboxMutation } from "@/lib/server/outbox-transaction.mjs";
 
 const RAG_LIBRARY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -81,38 +82,42 @@ export async function POST(request: Request) {
 		);
 	}
 	const db = getDatabase();
-	const created = await db.transaction(async (tx) => {
-		const [row] = await tx
-			.insert(libraries)
-			.values({
-				id,
+	const created = await runOutboxMutation(
+		db,
+		async (tx) => {
+			const [row] = await tx
+				.insert(libraries)
+				.values({
+					id,
+					organizationId: identity.tenantId,
+					workspaceId: identity.workspaceId,
+					ragLibraryId,
+					name: name.slice(0, 256),
+					description: body.description?.trim().slice(0, 2000) || null,
+					createdBy: identity.principalId,
+					createdAt: now,
+					updatedAt: now,
+				})
+				.returning();
+			return row;
+		},
+		(tx, row) =>
+			tx.insert(outboxEvents).values({
 				organizationId: identity.tenantId,
 				workspaceId: identity.workspaceId,
-				ragLibraryId,
-				name: name.slice(0, 256),
-				description: body.description?.trim().slice(0, 2000) || null,
-				createdBy: identity.principalId,
+				aggregateType: "library",
+				aggregateId: row.ragLibraryId,
+				eventType: "library.upsert",
+				idempotencyKey: `library.upsert:${row.ragLibraryId}:${randomUUID()}`,
+				payload: {
+					library_id: row.ragLibraryId,
+					name: row.name,
+					description: row.description,
+					principal_id: identity.principalId,
+				},
 				createdAt: now,
 				updatedAt: now,
-			})
-			.returning();
-		await tx.insert(outboxEvents).values({
-			organizationId: identity.tenantId,
-			workspaceId: identity.workspaceId,
-			aggregateType: "library",
-			aggregateId: row.ragLibraryId,
-			eventType: "library.upsert",
-			idempotencyKey: `library.upsert:${row.ragLibraryId}:${randomUUID()}`,
-			payload: {
-				library_id: row.ragLibraryId,
-				name: row.name,
-				description: row.description,
-				principal_id: identity.principalId,
-			},
-			createdAt: now,
-			updatedAt: now,
-		});
-		return row;
-	});
+			}),
+	);
 	return Response.json(toApiLibrary(created), { status: 201 });
 }

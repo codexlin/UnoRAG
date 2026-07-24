@@ -19,6 +19,19 @@ CREATE TABLE "app"."outbox_events" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+DO $$
+BEGIN
+	IF EXISTS (
+		SELECT 1
+		FROM "app"."libraries"
+		GROUP BY "rag_library_id"
+		HAVING count(*) > 1
+	) THEN
+		RAISE EXCEPTION 'cannot make app.libraries.rag_library_id globally unique'
+			USING HINT = 'Resolve duplicate rag_library_id values across organizations before rerunning this migration.';
+	END IF;
+END $$;
+--> statement-breakpoint
 DROP INDEX "app"."libraries_org_rag_id_uq";--> statement-breakpoint
 CREATE UNIQUE INDEX "outbox_events_idempotency_uq" ON "app"."outbox_events" USING btree ("idempotency_key");--> statement-breakpoint
 CREATE INDEX "outbox_events_claim_idx" ON "app"."outbox_events" USING btree ("status","available_at","sequence");--> statement-breakpoint
