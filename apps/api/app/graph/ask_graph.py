@@ -588,7 +588,7 @@ def build_ask_graph(
 		)
 
 		# 标注 citation 行范围 / 版本（供 UI）；仅同实例
-		# 保留 table_summary 的 record_type，避免后续 citations 回退拼表时被当成行组。
+		# 保留 table_summary 的 record_type，避免与行组混淆（store 才是可执行路径）。
 		target_key = (
 			table_instance_key(merged)
 			if merged.get("table_id")

@@ -190,7 +190,7 @@ def test_chunker_attaches_table_meta_for_quote_ir() -> None:
 
 
 def test_same_table_id_across_docs_do_not_mix() -> None:
-	"""两文档均有 t1：合并/定位不得混行、混表头。"""
+	"""两文档均有 t1：合并/定位不得混行、混表头；无 loader 不得 complete。"""
 	citations = [
 		{
 			"record_type": "table",
@@ -230,11 +230,38 @@ def test_same_table_id_across_docs_do_not_mix() -> None:
 		},
 	]
 	assert table_instance_key(citations[0]) != table_instance_key(citations[1])
-	merged = merge_table_hits_for_execute(citations)
+
+	# 废止路径：无 store loader → incomplete
+	no_loader = merge_table_hits_for_execute(citations)
+	assert no_loader["complete"] is False
+	assert no_loader["reason"] == "no_store_loader"
+	assert no_loader.get("load_source") == "citations"
+
+	def _load(
+		*,
+		doc_id: str,
+		table_id: str,
+		document_version_id: str | None = None,
+		library_id: str | None = None,
+	):
+		return [
+			item
+			for item in citations
+			if item["doc_id"] == doc_id
+			and item["table_id"] == table_id
+			and (
+				document_version_id is None
+				or item.get("document_version_id") == document_version_id
+			)
+			and item.get("row_start") is not None
+		]
+
+	merged = prepare_table_for_execute(citations, load_table_groups=_load)
 	assert merged["doc_id"] == "doc-a"
 	assert merged["table_id"] == "t1"
 	assert merged["headers"] == ["供应商", "总价"]
 	assert merged["complete"] is True
+	assert merged.get("load_source") == "store"
 	assert len(merged["rows"]) == 2
 	assert merged["rows"][0][0] == "甲公司"
 	assert all(row[0] != "芯片" for row in merged["rows"])
@@ -272,13 +299,15 @@ def test_large_table_full_load_aggregate_not_top_k_subset() -> None:
 	citations = [{**g, "score": 0.9 - i * 0.01} for i, g in enumerate(full_groups[:top_k])]
 	partial = prepare_table_for_execute(citations, load_table_groups=None)
 	assert partial["complete"] is False
-	assert "truncated" in str(partial.get("reason"))
+	assert partial.get("reason") == "no_store_loader"
+	assert partial.get("load_source") == "citations"
 
 	def _load(**_kwargs):
 		return full_groups
 
 	full = prepare_table_for_execute(citations, load_table_groups=_load)
 	assert full["complete"] is True
+	assert full.get("load_source") == "store"
 	assert len(full["rows"]) == total_rows
 	plan = build_table_query_plan("最低报价是多少？", headers=headers)
 	ex = execute_table_query(plan, headers=headers, rows=full["rows"])
@@ -645,7 +674,10 @@ def test_seq_lookup_and_device_name_entity() -> None:
 
 
 def test_citation_fallback_ignores_table_summary_without_row_range() -> None:
-	"""citations 回退拼表时不得把 table_summary（无 row_start/end）算进组。"""
+	"""无 loader 时 citations 仅诊断且永不 complete；store loader 才可执行。
+
+	诊断拼表仍须排除 table_summary（无 row_start/end）。
+	"""
 	headers = ["序号", "设备名称", "单价（元）", "合计（元）"]
 	question = "序号为1的设备是什么？单价和合计金额是多少？"
 	citations = [
@@ -674,13 +706,25 @@ def test_citation_fallback_ignores_table_summary_without_row_range() -> None:
 			"body": "表格 t1；字段：序号、设备名称、单价（元）、合计（元）；共1条数据",
 		},
 	]
-	merged = prepare_table_for_execute(
+	diag = prepare_table_for_execute(
 		citations, load_table_groups=None, question=question
+	)
+	assert diag.get("complete") is False
+	assert diag.get("reason") == "no_store_loader"
+	assert diag.get("group_count") == 1  # 不含 table_summary
+	assert diag.get("load_source") == "citations"
+	assert diag.get("headers") == headers
+
+	def _load(**_kwargs):
+		return [citations[0]]
+
+	merged = prepare_table_for_execute(
+		citations, load_table_groups=_load, question=question
 	)
 	assert merged.get("complete") is True
 	assert merged.get("reason") == "complete"
 	assert merged.get("group_count") == 1
-	assert merged.get("load_source") == "citations"
+	assert merged.get("load_source") == "store"
 	plan = build_table_query_plan(question, headers=list(merged["headers"]))
 	ex = execute_table_query(
 		plan, headers=list(merged["headers"]), rows=list(merged["rows"])
@@ -733,9 +777,33 @@ def test_multi_table_prefers_quote_schema_for_device_unit_price() -> None:
 	assert bad["confident"] is False
 	assert "column_unresolved" in str(bad.get("reason") or "")
 
-	merged = prepare_table_for_execute(citations, load_table_groups=None, question=question)
+	def _load(
+		*,
+		doc_id: str,
+		table_id: str,
+		document_version_id: str | None = None,
+		library_id: str | None = None,
+	):
+		return [
+			item
+			for item in citations
+			if item["doc_id"] == doc_id and item["table_id"] == table_id
+		]
+
+	# 无 loader：仍可按 schema 选中报价表，但不得 complete / 执行
+	no_loader = prepare_table_for_execute(
+		citations, load_table_groups=None, question=question
+	)
+	assert no_loader["doc_id"] == "doc-quote"
+	assert no_loader.get("complete") is False
+	assert no_loader.get("reason") == "no_store_loader"
+
+	merged = prepare_table_for_execute(
+		citations, load_table_groups=_load, question=question
+	)
 	assert merged["doc_id"] == "doc-quote"
 	assert merged.get("complete") is True
+	assert merged.get("load_source") == "store"
 	plan = build_table_query_plan(question, headers=list(merged["headers"]))
 	assert plan["confident"] is True
 	ex = execute_table_query(plan, headers=list(merged["headers"]), rows=list(merged["rows"]))
