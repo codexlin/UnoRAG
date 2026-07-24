@@ -16,6 +16,10 @@ from app.services.answer_copy import (
 	weak_match_answer,
 )
 from app.services.llm import ChatService
+from app.services.ask_route import (
+	should_upgrade_fast_to_precise_table,
+	table_overview_downgrade_reason,
+)
 from app.services.query_router import looks_like_table_summary_lookup, route_query
 from app.services.retrieval import RetrievalService
 from app.services.retrieval_plan import build_retrieval_plan
@@ -23,6 +27,7 @@ from app.services.runtime import RuntimeCapability, resolve_runtime
 from app.services.session_memory import SessionMemory, default_session_memory
 from app.services.table_query import (
 	build_table_query_plan,
+	citations_for_table_overview,
 	citations_with_matched_evidence,
 	execute_table_query,
 	looks_like_numeric_table_query,
@@ -56,6 +61,9 @@ class AskState(TypedDict, total=False):
 	retrieval_plan: dict[str, Any]
 	table_query_plan: dict[str, Any]
 	table_execution: dict[str, Any]
+	upgrade: str | None
+	upgrade_reason: str | None
+	downgrade_reason: str | None
 
 
 STUB_CITATIONS: list[dict[str, Any]] = [
@@ -268,23 +276,38 @@ def stub_retrieve(
 		]
 	_ = library_id
 	record_type = str((filters or {}).get("record_type") or "chunk")
+	# fast 双路会查 table_summary：无表信号时返回空，避免 stub 同分抢占文本 citation
+	if record_type == "table_summary":
+		tableish = any(
+			token in query
+			for token in ("表", "报价", "总价", "供应商", "金额", "明细", "单价")
+		)
+		if not tableish:
+			return []
 	hits = [dict(item) for item in STUB_CITATIONS]
 	for item in hits:
 		item["used_rerank"] = False
-		item["record_type"] = record_type
+		item["record_type"] = "chunk" if record_type == "chunk+table_summary" else record_type
 		if record_type == "section":
 			item["section_path"] = item.get("section_path") or "第3章 请假制度"
 			item["source_chunk_ids"] = ["chk:stub-doc:0"]
 			item["record_id"] = "sec:stub-leave"
-		if record_type == "table":
+		if record_type in {"table", "table_summary"}:
 			item["table_id"] = "t1"
-			item["record_id"] = "tbl:stub-quote"
+			item["record_id"] = (
+				"tblsum:stub-quote" if record_type == "table_summary" else "tbl:stub-quote"
+			)
+			item["record_type"] = record_type
 			item["headers"] = ["供应商", "总价"]
 			item["rows"] = [["甲公司", "120000"], ["乙公司", "80000"]]
 			item["row_start"] = 0
 			item["row_end"] = 1
 			item["table_row_count"] = 2
-			item["body"] = "供应商 | 总价\n甲公司 | 120000\n乙公司 | 80000"
+			item["body"] = (
+				"报价表摘要：供应商/总价；共2行；含甲公司120000、乙公司80000"
+				if record_type == "table_summary"
+				else "供应商 | 总价\n甲公司 | 120000\n乙公司 | 80000"
+			)
 			item["text"] = item["body"]
 			item["snippet"] = item["body"][:280]
 			item["source_chunk_ids"] = ["chk:stub-doc:0"]
@@ -421,15 +444,30 @@ def build_ask_graph(
 		)
 		return {
 			"retrieval_plan": plan,
-			"retrieval_debug": _merge_debug(state, retrieval_plan=plan),
+			"upgrade": None,
+			"upgrade_reason": None,
+			"downgrade_reason": None,
+			"retrieval_debug": _merge_debug(
+				state,
+				retrieval_plan=plan,
+				route=plan.get("route"),
+				path=plan.get("path"),
+				precise_kind=plan.get("precise_kind"),
+				upgrade=None,
+				upgrade_reason=None,
+				downgrade_reason=None,
+			),
 		}
 
 	def route_after_plan(state: AskState) -> Literal["clarify", "rewrite", "table"]:
 		plan = state.get("retrieval_plan") or {}
-		path = str(plan.get("execute_path") or "short")
-		if path == "clarify":
+		path = str(plan.get("path") or "")
+		execute_path = str(plan.get("execute_path") or "short")
+		if path == "clarify" or execute_path == "clarify":
 			return "clarify"
-		if path == "table":
+		if path == "precise" and plan.get("precise_kind") == "table":
+			return "table"
+		if execute_path == "table":
 			return "table"
 		return "rewrite"
 
@@ -625,14 +663,41 @@ def build_ask_graph(
 			)
 			execution.update(evidence_meta)
 
-		# 数值问法但无法自信执行 / 表不完整 → clarify（不交给 LLM 算）
-		# 文末汇总说明类问法依赖 table_summary 原文，允许 LLM 基于 citation 作答。
-		if (
+		# 精路径三岔门：能算则算 / 只能述则述 / 该拒则拒
+		can_execute = bool(
+			execution.get("ok") and tq.get("confident") and table_complete
+		)
+		must_compute = bool(
 			looks_like_numeric_table_query(question)
 			and not looks_like_table_summary_lookup(question)
-			and citations
-			and not (execution.get("ok") and tq.get("confident") and table_complete)
-		):
+		)
+		table_load = {
+			"complete": table_complete,
+			"reason": merged.get("reason"),
+			"group_count": merged.get("group_count"),
+			"load_source": merged.get("load_source"),
+			"doc_id": merged.get("doc_id"),
+			"table_id": merged.get("table_id"),
+		}
+
+		if can_execute:
+			return {
+				"table_query_plan": tq,
+				"table_execution": execution,
+				"citations": enriched,
+				"downgrade_reason": None,
+				"retrieval_debug": _merge_debug(
+					state,
+					table_query_plan=tq,
+					table_execution=execution,
+					table_load=table_load,
+					downgrade_reason=None,
+					precise_gate="execute",
+				),
+			}
+
+		# 必须算数但 store/plan 不行 → 拒答（禁止 LLM 估数）
+		if must_compute and citations:
 			library_name = _library_label(state.get("library_id"))
 			judgement = {
 				"sufficient": False,
@@ -649,21 +714,49 @@ def build_ask_graph(
 				"refused": True,
 				"refuse_reason": refuse_reason,
 				"judgement": judgement,
+				"downgrade_reason": None,
 				"retrieval_debug": _merge_debug(
 					state,
 					table_query_plan=tq,
 					table_execution=execution,
-					table_load={
-						"complete": table_complete,
-						"reason": merged.get("reason"),
-						"group_count": merged.get("group_count"),
-						"load_source": merged.get("load_source"),
-						"doc_id": merged.get("doc_id"),
-						"table_id": merged.get("table_id"),
-					},
+					table_load=table_load,
 					judgement=judgement,
 					generate="table_unclear",
 					refuse_reason=refuse_reason,
+					precise_gate="refuse",
+					downgrade_reason=None,
+				),
+			}
+
+		# 不需精确算 / plan 不自信但表证据够 → LLM 概述（summary + 有界行预览）
+		has_overview_evidence = bool(
+			(headers and (table_complete or any(
+				str(c.get("record_type") or "") == "table_summary" for c in enriched
+			)))
+			or any(str(c.get("record_type") or "") == "table_summary" for c in enriched)
+		)
+		downgrade = table_overview_downgrade_reason(
+			plan_confident=bool(tq.get("confident")),
+			must_compute=must_compute,
+			table_complete=table_complete,
+		)
+		if has_overview_evidence and downgrade:
+			overview_citations = citations_for_table_overview(
+				enriched,
+				merged=merged,
+			)
+			return {
+				"table_query_plan": tq,
+				"table_execution": execution,
+				"citations": overview_citations,
+				"downgrade_reason": downgrade,
+				"retrieval_debug": _merge_debug(
+					state,
+					table_query_plan=tq,
+					table_execution=execution,
+					table_load=table_load,
+					downgrade_reason=downgrade,
+					precise_gate="overview",
 				),
 			}
 
@@ -671,18 +764,13 @@ def build_ask_graph(
 			"table_query_plan": tq,
 			"table_execution": execution,
 			"citations": enriched,
+			"downgrade_reason": None,
 			"retrieval_debug": _merge_debug(
 				state,
 				table_query_plan=tq,
 				table_execution=execution,
-				table_load={
-					"complete": table_complete,
-					"reason": merged.get("reason"),
-					"group_count": merged.get("group_count"),
-					"load_source": merged.get("load_source"),
-					"doc_id": merged.get("doc_id"),
-					"table_id": merged.get("table_id"),
-				},
+				table_load=table_load,
+				precise_gate="fallback_llm",
 			),
 		}
 
@@ -715,15 +803,63 @@ def build_ask_graph(
 	def retrieve_node(state: AskState) -> AskState:
 		query = state.get("rewritten_question") or state["question"]
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
-		plan = state.get("retrieval_plan") or {}
+		plan = dict(state.get("retrieval_plan") or {})
 		top_k = int(plan.get("top_k") or settings.retrieve_top_k)
 		filters = dict(plan.get("filters") or {})
-		if plan.get("record_type") and "record_type" not in filters:
-			filters["record_type"] = plan["record_type"]
-		citations = retrieve_fn(query, state.get("library_id"), top_k, filters)
+		plan_rt = str(plan.get("record_type") or filters.get("record_type") or "chunk")
+		unified_fast = plan_rt == "chunk+table_summary" or (
+			str(plan.get("path") or "") == "fast"
+			and plan_rt not in {"section", "table", "table_summary"}
+		)
+
+		if unified_fast:
+			chunk_filters = dict(filters)
+			chunk_filters["record_type"] = "chunk"
+			citations = retrieve_fn(
+				query, state.get("library_id"), top_k, chunk_filters
+			)
+			summary_filters = dict(filters)
+			summary_filters["record_type"] = "table_summary"
+			summaries = retrieve_fn(
+				query,
+				state.get("library_id"),
+				min(4, top_k),
+				summary_filters,
+			)
+			combined = [*summaries, *citations]
+			deduped: list[dict[str, Any]] = []
+			seen: set[str] = set()
+			for item in sorted(
+				combined,
+				key=lambda value: float(value.get("score") or 0),
+				reverse=True,
+			):
+				key = str(
+					item.get("record_id")
+					or item.get("id")
+					or (
+						item.get("doc_id"),
+						item.get("table_id"),
+						item.get("record_type"),
+						item.get("chunk_index"),
+					)
+				)
+				if key in seen:
+					continue
+				seen.add(key)
+				deduped.append(item)
+			citations = deduped[: top_k + min(4, top_k)]
+			filters = {**filters, "record_type": "chunk+table_summary"}
+			resolved_rt = "chunk+table_summary"
+		else:
+			if plan.get("record_type") and "record_type" not in filters:
+				filters["record_type"] = plan["record_type"]
+			citations = retrieve_fn(query, state.get("library_id"), top_k, filters)
+			resolved_rt = str(filters.get("record_type") or plan_rt)
+
 		# 薄 citation_check：section 命中应能回溯 source_chunk_ids
 		citation_check = {"ok": True, "missing_source_chunk_ids": 0}
-		if str(filters.get("record_type") or "") == "section":
+		if resolved_rt == "section":
 			missing = sum(
 				1
 				for item in citations
@@ -734,7 +870,7 @@ def build_ask_graph(
 				"missing_source_chunk_ids": missing,
 			}
 		debug_extra: dict[str, Any] = {
-			"record_type": filters.get("record_type"),
+			"record_type": resolved_rt,
 			"filters": filters,
 			"citation_check": citation_check,
 		}
@@ -753,9 +889,42 @@ def build_ask_graph(
 			)
 		top_score = float(citations[0]["score"]) if citations else None
 		used_rerank = bool(citations and citations[0].get("used_rerank"))
+
+		# 阶段2：fast → precise 升级（写死条件 + upgrade_reason）
+		upgrade: str | None = None
+		upgrade_reason: str | None = None
+		out_plan = plan
+		out_query_type = str(state.get("query_type") or plan.get("query_type") or "fact")
+		if str(plan.get("path") or "fast") == "fast" and resolved_rt != "section":
+			do_upgrade, reason = should_upgrade_fast_to_precise_table(
+				state.get("question") or query,
+				citations,
+			)
+			if do_upgrade:
+				upgrade = "precise"
+				upgrade_reason = reason
+				out_query_type = "table"
+				out_plan = {
+					**plan,
+					"path": "precise",
+					"precise_kind": "table",
+					"execute_path": "table",
+					"record_type": "table",
+					"query_type": "table",
+					"route": plan.get("route") or "fast",
+					"reason": f"upgrade:{reason}",
+				}
+				filters_up = dict(out_plan.get("filters") or {})
+				filters_up["record_type"] = "table"
+				out_plan["filters"] = filters_up
+
 		return {
 			"citations": citations,
 			"retrieval_attempts": attempts,
+			"retrieval_plan": out_plan,
+			"query_type": out_query_type,
+			"upgrade": upgrade,
+			"upgrade_reason": upgrade_reason,
 			"retrieval_debug": _merge_debug(
 				state,
 				retrieve=mode,
@@ -767,9 +936,22 @@ def build_ask_graph(
 				query=query,
 				tool_ask=bool(settings.tool_ask),
 				tool_trace=tool_trace,
+				retrieval_plan=out_plan,
+				route=out_plan.get("route") or plan.get("route"),
+				path=out_plan.get("path"),
+				precise_kind=out_plan.get("precise_kind"),
+				upgrade=upgrade,
+				upgrade_reason=upgrade_reason,
 				**debug_extra,
 			),
 		}
+
+	def route_after_retrieve(
+		state: AskState,
+	) -> Literal["upgrade_precise", "judge"]:
+		if state.get("upgrade") == "precise":
+			return "upgrade_precise"
+		return "judge"
 
 	def judge_node(state: AskState) -> AskState:
 		citations = state.get("citations") or []
@@ -859,7 +1041,12 @@ def build_ask_graph(
 		return "generate"
 
 	def route_after_retry(state: AskState) -> Literal["retrieve", "table_retrieve"]:
-		if str(state.get("query_type") or "") == "table":
+		plan = state.get("retrieval_plan") or {}
+		if (
+			str(state.get("query_type") or "") == "table"
+			or plan.get("path") == "precise"
+			or state.get("upgrade") == "precise"
+		):
 			return "table_retrieve"
 		return "retrieve"
 
@@ -959,7 +1146,11 @@ def build_ask_graph(
 		{"judge": "judge", "end": END},
 	)
 	graph.add_edge("rewrite", "retrieve")
-	graph.add_edge("retrieve", "judge")
+	graph.add_conditional_edges(
+		"retrieve",
+		route_after_retrieve,
+		{"upgrade_precise": "build_table_plan", "judge": "judge"},
+	)
 	graph.add_conditional_edges(
 		"judge",
 		route_after_judge,

@@ -147,9 +147,18 @@ def classify_query(
 ) -> tuple[QueryType, str]:
 	"""按规则返回 (query_type, reason)。
 
-	优先级：ambiguous → section_lookup → table_detail_override →
-	table_summary_lookup → summary → table → compare → follow_up → fact。
+	阶段1表格短路写松：仅高置信表格信号 → query_type=table；
+	弱「表/供应商」类词不再硬判 table（交给 path=fast + 阶段2升级）。
+
+	优先级：ambiguous → section_lookup → high-confidence table shortcircuit →
+	summary → compare → follow_up → fact。
 	"""
+	# 延迟导入：避免 ask_route ↔ query_router 循环
+	from app.services.ask_route import (
+		looks_like_high_confidence_table_shortcircuit,
+		stage1_table_route_reason,
+	)
+
 	q = (question or "").strip()
 	if not q or q in AMBIGUOUS_EXACT or len(q) <= 1:
 		return "ambiguous", "too_short_or_vague"
@@ -157,17 +166,13 @@ def classify_query(
 	if looks_like_section_lookup(q):
 		return "section_lookup", "section_lookup_pattern"
 
-	# 明细聚合优先于「汇总」关键字，避免 summary 劫持 table 路径
-	if looks_like_table_detail_query(q):
-		return "table", "table_detail_override"
-	# 文末汇总说明事实 → table（table_summary 双路），而非 section 库级总结
-	if looks_like_table_summary_lookup(q):
-		return "table", "table_summary_lookup"
+	# 阶段1：高置信表格短路（含 table_detail_override / table_summary_lookup）
+	if looks_like_high_confidence_table_shortcircuit(q):
+		return "table", stage1_table_route_reason(q)
 
 	if any(token in q for token in SUMMARY_KEYWORDS):
 		return "summary", "summary_keyword"
-	if any(token in q for token in TABLE_KEYWORDS):
-		return "table", "table_keyword"
+	# 弱表格词不再短路；阶段2 用命中证据 upgrade
 	if any(token in q for token in COMPARE_KEYWORDS):
 		return "compare", "compare_keyword"
 

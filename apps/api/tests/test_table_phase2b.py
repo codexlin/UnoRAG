@@ -90,13 +90,15 @@ def test_chunks_to_payloads_include_tables_idempotent_point_ids() -> None:
 def test_retrieval_plan_table_forces_record_type() -> None:
 	plan = build_retrieval_plan(
 		query_type="table",
-		route_reason="table_keyword",
+		route_reason="table_shortcircuit",
 		library_id="lib-1",
 		top_k=6,
 		hybrid_enabled=False,
 		rerank_enabled=False,
 	)
 	assert plan["execute_path"] == "table"
+	assert plan["path"] == "precise"
+	assert plan["precise_kind"] == "table"
 	assert plan["record_type"] == "table"
 	assert plan["filters"]["record_type"] == "table"
 
@@ -108,7 +110,8 @@ def test_retrieval_plan_table_forces_record_type() -> None:
 		hybrid_enabled=False,
 		rerank_enabled=False,
 	)
-	assert compare["record_type"] == "chunk"
+	assert compare["record_type"] == "chunk+table_summary"
+	assert compare["path"] == "fast"
 	assert compare["execute_path"] == "short"
 
 

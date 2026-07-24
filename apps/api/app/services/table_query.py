@@ -1506,3 +1506,69 @@ def citations_with_matched_evidence(
 		item["index"] = index
 		item["record_type"] = item.get("record_type") or "table"
 	return merged, meta
+
+
+def citations_for_table_overview(
+	citations: list[dict[str, Any]],
+	*,
+	merged: dict[str, Any] | None = None,
+	preview_rows: int = MATCHED_ROWS_PREVIEW_LIMIT,
+) -> list[dict[str, Any]]:
+	"""概述降级上下文：保留 table_summary + 有界行预览，勿塞整表。"""
+	limit = max(1, int(preview_rows))
+	out: list[dict[str, Any]] = []
+	seen: set[str] = set()
+	for item in citations:
+		rt = str(item.get("record_type") or "")
+		if rt != "table_summary":
+			continue
+		key = str(item.get("record_id") or item.get("id") or id(item))
+		if key in seen:
+			continue
+		seen.add(key)
+		out.append(dict(item))
+
+	payload = merged or {}
+	headers = list(payload.get("headers") or [])
+	rows = list(payload.get("rows") or [])
+	if headers and rows:
+		preview = rows[:limit]
+		lines = [" | ".join(str(h) for h in headers)]
+		for row in preview:
+			cells = list(row) if isinstance(row, (list, tuple)) else [row]
+			lines.append(" | ".join(str(c) for c in cells))
+		if len(rows) > limit:
+			lines.append(f"…（仅预览前 {limit} 行，共 {len(rows)} 行）")
+		body = "\n".join(lines)
+		seed = payload.get("citation") or (citations[0] if citations else {}) or {}
+		out.append(
+			{
+				"id": str(seed.get("id") or "table-overview-preview"),
+				"index": len(out) + 1,
+				"title": seed.get("title") or "表格预览",
+				"page": seed.get("page"),
+				"snippet": body[:280],
+				"score": float(seed.get("score") or 0.85),
+				"text": body,
+				"body": body,
+				"doc_id": payload.get("doc_id") or seed.get("doc_id"),
+				"table_id": payload.get("table_id") or seed.get("table_id"),
+				"headers": headers,
+				"rows": preview,
+				"row_start": int(payload.get("row_offset") or 0),
+				"row_end": int(payload.get("row_offset") or 0) + max(0, len(preview) - 1),
+				"table_row_count": payload.get("table_row_count") or len(rows),
+				"document_version_id": payload.get("document_version_id")
+				or seed.get("document_version_id"),
+				"record_type": "table",
+				"record_id": seed.get("record_id"),
+				"filename": seed.get("filename"),
+			}
+		)
+	elif not out:
+		# 无 summary 也无行时，退回原 citations（仍可能只有弱证据）
+		return [dict(item) for item in citations]
+
+	for index, item in enumerate(out, start=1):
+		item["index"] = index
+	return out

@@ -58,6 +58,8 @@ def test_classify_table_detail_not_hijacked_by_summary_keyword() -> None:
 		question=q,
 	)
 	assert plan["execute_path"] == "table"
+	assert plan["path"] == "precise"
+	assert plan["precise_kind"] == "table"
 	assert plan["record_type"] == "table"
 
 
@@ -79,6 +81,8 @@ def test_classify_table_summary_lookup_routes_to_table() -> None:
 			question=q,
 		)
 		assert plan["execute_path"] == "table"
+		assert plan["path"] == "precise"
+		assert plan["precise_kind"] == "table"
 
 
 def test_retrieval_plan_phase2a_record_types() -> None:
@@ -91,8 +95,10 @@ def test_retrieval_plan_phase2a_record_types() -> None:
 		rerank_enabled=False,
 	)
 	assert fact["execute_path"] == "short"
-	assert fact["record_type"] == "chunk"
-	assert fact["filters"]["record_type"] == "chunk"
+	assert fact["path"] == "fast"
+	assert fact["precise_kind"] is None
+	assert fact["record_type"] == "chunk+table_summary"
+	assert "record_type" not in fact["filters"]
 
 	summary = build_retrieval_plan(
 		query_type="summary",
@@ -103,6 +109,7 @@ def test_retrieval_plan_phase2a_record_types() -> None:
 		rerank_enabled=True,
 	)
 	assert summary["execute_path"] == "section_short"
+	assert summary["path"] == "fast"
 	assert summary["record_type"] == "section"
 	assert summary["filters"]["record_type"] == "section"
 	assert summary["top_k"] >= 8
@@ -117,17 +124,21 @@ def test_retrieval_plan_phase2a_record_types() -> None:
 		rerank_enabled=False,
 	)
 	assert section["execute_path"] == "section_short"
+	assert section["path"] == "fast"
 	assert section["record_type"] == "section"
 
 	table = build_retrieval_plan(
 		query_type="table",
-		route_reason="table_keyword",
+		route_reason="table_shortcircuit",
 		library_id="lib-1",
 		top_k=6,
 		hybrid_enabled=False,
 		rerank_enabled=False,
 	)
 	assert table["execute_path"] == "table"
+	assert table["path"] == "precise"
+	assert table["precise_kind"] == "table"
+	assert table["route"] == "precise_table"
 	assert table["record_type"] == "table"
 	assert table["filters"]["record_type"] == "table"
 
@@ -140,6 +151,7 @@ def test_retrieval_plan_phase2a_record_types() -> None:
 		rerank_enabled=False,
 	)
 	assert amb["execute_path"] == "clarify"
+	assert amb["path"] == "clarify"
 
 
 def test_section_records_aggregate_and_deterministic_ids() -> None:
@@ -352,7 +364,8 @@ def test_ask_writes_query_type_and_judge_to_archive() -> None:
 	assert body["retrieval_debug"]["query_type"] == "fact"
 	assert body["retrieval_debug"]["judgement"]["reason"] == "ok"
 	assert body["retrieval_debug"]["retrieval_plan"]["execute_path"] == "short"
-	assert body["retrieval_debug"]["retrieval_plan"]["record_type"] == "chunk"
+	assert body["retrieval_debug"]["retrieval_plan"]["path"] == "fast"
+	assert body["retrieval_debug"]["retrieval_plan"]["record_type"] == "chunk+table_summary"
 
 	archive = client.get("/v1/archive", params={"library_id": lib_id, "limit": 5})
 	assert archive.status_code == 200
