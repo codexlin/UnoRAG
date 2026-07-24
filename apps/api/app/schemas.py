@@ -19,6 +19,8 @@ class HealthResponse(BaseModel):
 	hybrid_enabled: bool = False
 	metadata_backend: str = "postgres"
 	metadata_ok: bool = True
+	active_generation_gate_enabled: bool = False
+	active_generation_gate_ok: bool = True
 
 
 class Citation(BaseModel):
@@ -49,8 +51,10 @@ class Citation(BaseModel):
 	doc_id: str | None = None
 	chunk_index: int | None = None
 	filename: str | None = None
-	# Phase 1 预埋：无完整 version 表时为派生 stub
+	# Lifecycle V2 uses the real version/generation IDs; legacy points retain
+	# the deterministic version stub during migration.
 	document_version_id: str | None = None
+	generation_id: str | None = None
 	tenant_id: str | None = None
 	# Phase 2A/2B：多粒度
 	record_type: str | None = None

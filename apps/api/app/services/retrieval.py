@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
@@ -8,6 +9,11 @@ from app.services.chunking import chunk_text
 from app.services.documents import infer_page_label
 from app.services.hybrid import fuse_dense_and_bm25, get_bm25_cache
 from app.security.access_scope import AccessScope, resolve_access_scope
+from app.services.active_generations import (
+	ActiveGenerationResolver,
+	ActiveGenerationResolverProtocol,
+	ActiveGenerationSnapshot,
+)
 from app.services.ingest.ir import Chunk as IRChunk
 from app.services.ingest.pipeline import chunks_to_payloads
 from app.services.llm import EmbeddingService
@@ -111,6 +117,13 @@ class IngestService:
 		doc_id: str | None = None,
 		filename: str | None = None,
 		parser_report: dict[str, Any] | None = None,
+		document_version_id: str | None = None,
+		generation_id: str | None = None,
+		lifecycle_visibility: str | None = None,
+		acl_scope: str = "workspace",
+		allowed_principal_ids: tuple[str, ...] = (),
+		allowed_group_ids: tuple[str, ...] = (),
+		progress_callback: Callable[[str, int, int], None] | None = None,
 	) -> dict[str, Any]:
 		"""IR chunks → embed(preamble+body) → Qdrant；payload 含 section/page 新字段。"""
 		resolved_doc_id = doc_id or str(uuid4())
@@ -121,10 +134,25 @@ class IngestService:
 			filename=filename,
 			doc_id=resolved_doc_id,
 			library_id=library_id,
+			document_version_id=document_version_id,
+			generation_id=generation_id,
+			lifecycle_visibility=lifecycle_visibility,
+			tenant_id=self.access_scope.tenant_id,
+			workspace_id=self.access_scope.workspace_id,
 		)
 		embed_inputs = [str(item.get("embed_text") or item.get("text") or "") for item in payloads]
-		self.delete_document_chunks(doc_id=resolved_doc_id, library_id=library_id)
+		if progress_callback is not None:
+			progress_callback("embedding", 0, len(embed_inputs))
 		vectors = self.embeddings.embed_texts(embed_inputs)
+		if progress_callback is not None:
+			progress_callback("indexing", len(vectors), len(embed_inputs))
+		if generation_id:
+			self.store.delete_by_generation(
+				generation_id=generation_id,
+				access_scope=self.access_scope,
+			)
+		else:
+			self.delete_document_chunks(doc_id=resolved_doc_id, library_id=library_id)
 		count = self.store.upsert_chunks(
 			library_id=library_id,
 			doc_id=resolved_doc_id,
@@ -133,6 +161,9 @@ class IngestService:
 			vectors=vectors,
 			filename=filename,
 			access_scope=self.access_scope,
+			acl_scope=acl_scope,  # type: ignore[arg-type]
+			allowed_principal_ids=allowed_principal_ids,
+			allowed_group_ids=allowed_group_ids,
 		)
 		chunk_only = sum(1 for item in payloads if item.get("record_type", "chunk") == "chunk")
 		section_only = sum(1 for item in payloads if item.get("record_type") == "section")
@@ -156,6 +187,11 @@ class IngestService:
 			"table_count": table_only,
 			"point_count": count,
 		}
+		if document_version_id:
+			result["document_version_id"] = document_version_id
+		if generation_id:
+			result["generation_id"] = generation_id
+			result["visibility"] = lifecycle_visibility or "staging"
 		if parser_report is not None:
 			result["parser_report"] = parser_report
 		return result
@@ -213,11 +249,18 @@ class RetrievalService:
 		store: QdrantStore | None = None,
 		reranker: RerankClient | None = None,
 		access_scope: AccessScope | None = None,
+		active_generation_resolver: ActiveGenerationResolverProtocol | None = None,
 	) -> None:
 		self.settings = settings
 		self.embeddings = embeddings or EmbeddingService(settings)
 		self.store = store or QdrantStore(settings)
 		self.access_scope = resolve_access_scope(settings, access_scope)
+		self.active_generation_resolver = active_generation_resolver
+		if (
+			self.active_generation_resolver is None
+			and settings.active_generation_gate_enabled
+		):
+			self.active_generation_resolver = ActiveGenerationResolver(settings)
 		if reranker is not None:
 			self.reranker = reranker
 		elif settings.rerank_enabled and settings.has_llm_key:
@@ -238,6 +281,7 @@ class RetrievalService:
 		if not library_id or not str(library_id).strip():
 			raise ValueError("library_id is required for retrieval")
 		resolved_library = str(library_id).strip()
+		active_snapshot = self._resolve_active_generations(resolved_library)
 		limit = top_k or self.settings.retrieve_top_k
 		# Pull a slightly wider dense pool when rerank / hybrid will trim.
 		dense_k = max(limit, self.settings.rerank_top_k, self.settings.bm25_top_k)
@@ -253,6 +297,9 @@ class RetrievalService:
 			top_k=dense_k,
 			record_type=resolved_type,
 			access_scope=self.access_scope,
+			active_generation_ids=(
+				active_snapshot.generation_ids if active_snapshot is not None else None
+			),
 		)
 		hits = dense_hits
 		used_hybrid = False
@@ -266,6 +313,7 @@ class RetrievalService:
 					dense_hits=dense_hits,
 					limit=dense_k,
 					record_type=resolved_type or "chunk",
+					active_snapshot=active_snapshot,
 				)
 				used_hybrid = True
 			except Exception as exc:
@@ -313,6 +361,7 @@ class RetrievalService:
 					"chunk_index": hit.get("chunk_index"),
 					"filename": hit.get("filename"),
 					"document_version_id": hit.get("document_version_id"),
+					"generation_id": hit.get("generation_id"),
 					"tenant_id": hit.get("tenant_id"),
 					"record_type": hit.get("record_type") or resolved_type or "chunk",
 					"record_id": hit.get("record_id"),
@@ -337,6 +386,12 @@ class RetrievalService:
 			"rrf_k": self.settings.rrf_k if used_hybrid else None,
 			"record_type": resolved_type,
 			"filters": dict(filters or {}),
+			"active_generation_gate": active_snapshot is not None,
+			"active_generation_count": (
+				len(active_snapshot.generation_ids)
+				if active_snapshot is not None
+				else None
+			),
 		}
 		for item in final:
 			item["used_hybrid"] = used_hybrid
@@ -350,14 +405,23 @@ class RetrievalService:
 		dense_hits: list[dict[str, Any]],
 		limit: int,
 		record_type: str = "chunk",
+		active_snapshot: ActiveGenerationSnapshot | None = None,
 	) -> list[dict[str, Any]]:
 		cache = get_bm25_cache()
 		index = cache.get_or_build(
-				f"{self.access_scope.cache_key()}:{library_id}:{record_type}",
+				(
+					f"{self.access_scope.cache_key()}:{library_id}:{record_type}:"
+					f"{active_snapshot.cache_key if active_snapshot else 'ungated'}"
+				),
 				lambda: self.store.list_chunks(
 					library_id=library_id,
 					record_type=record_type,
 					access_scope=self.access_scope,
+					active_generation_ids=(
+						active_snapshot.generation_ids
+						if active_snapshot is not None
+						else None
+					),
 				),
 		)
 		bm25_hits = index.search(query, top_k=self.settings.bm25_top_k)
@@ -430,10 +494,49 @@ class RetrievalService:
 		library_id: str | None = None,
 	) -> list[dict[str, Any]]:
 		"""按表实例键从 Qdrant 拉取全部行组（全表聚合用，不受 retrieve top_k 限制）。"""
+		if self.active_generation_resolver is not None and not library_id:
+			raise ValueError("library_id is required by active generation gate")
+		active_snapshot = (
+			self._resolve_active_generations(library_id)
+			if library_id
+			else None
+		)
 		return self.store.scroll_table_groups(
 			doc_id=doc_id,
 			table_id=table_id,
 			document_version_id=document_version_id,
 			library_id=library_id,
 			access_scope=self.access_scope,
+			active_generation_ids=(
+				active_snapshot.generation_ids if active_snapshot is not None else None
+			),
+		)
+
+	def list_chunks(
+		self,
+		*,
+		library_id: str,
+		record_type: str | None = "chunk",
+		limit: int = 10_000,
+	) -> list[dict[str, Any]]:
+		active_snapshot = self._resolve_active_generations(library_id)
+		return self.store.list_chunks(
+			library_id=library_id,
+			limit=limit,
+			record_type=record_type,
+			access_scope=self.access_scope,
+			active_generation_ids=(
+				active_snapshot.generation_ids if active_snapshot is not None else None
+			),
+		)
+
+	def _resolve_active_generations(
+		self,
+		library_id: str,
+	) -> ActiveGenerationSnapshot | None:
+		if self.active_generation_resolver is None:
+			return None
+		return self.active_generation_resolver.resolve(
+			scope=self.access_scope,
+			library_id=library_id,
 		)

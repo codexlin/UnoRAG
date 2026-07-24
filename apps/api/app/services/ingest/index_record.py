@@ -65,6 +65,14 @@ class IndexRecord(BaseModel):
 		return str(uuid5(_POINT_NS, self.record_id))
 
 
+def generation_point_uuid(generation_id: str, record_id: str) -> str:
+	"""A generation owns a stable, disjoint Qdrant point namespace."""
+	resolved_generation = (generation_id or "").strip()
+	if not resolved_generation:
+		raise ValueError("generation_id is required")
+	return str(uuid5(_POINT_NS, f"{resolved_generation}:{record_id}"))
+
+
 def chunk_record_id(doc_id: str, chunk_index: int) -> str:
 	return f"chk:{doc_id}:{int(chunk_index)}"
 

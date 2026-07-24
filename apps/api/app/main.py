@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import archive, ask, health, libraries
 from app.security.internal_context import InternalBodyDigestMiddleware, require_internal_context
+from app.services.active_generations import probe_active_generation_store
 from app.services.metadata import get_metadata_store, probe_metadata_store, reset_metadata_store
 from app.settings import get_settings
 
@@ -27,6 +28,17 @@ async def lifespan(_application: FastAPI):
 	# Force metadata store init (no demo library seed)
 	get_metadata_store(settings)
 	logger.info("startup.metadata_ok backend=%s detail=%s", backend, detail)
+	active_gate_ok, active_gate_detail = probe_active_generation_store(settings)
+	if not active_gate_ok:
+		raise RuntimeError(
+			f"active generation gate is unavailable: {active_gate_detail}. "
+			"Run `uv run python scripts/apply_rag_migrations.py`."
+		)
+	logger.info(
+		"startup.active_generation_gate enabled=%s detail=%s",
+		settings.active_generation_gate_enabled,
+		active_gate_detail,
+	)
 	yield
 
 

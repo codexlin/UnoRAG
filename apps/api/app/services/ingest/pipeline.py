@@ -14,7 +14,13 @@ from uuid import uuid4
 from app.services.documents import clean_display_title
 from app.services.ingest.chunk_policy import SemanticEmbedder
 from app.services.ingest.chunker import ChunkerConfig, chunk_document
-from app.services.ingest.ir import Chunk, DocumentIR, ParserReport
+from app.services.ingest.ir import (
+	CancelCheck,
+	Chunk,
+	DocumentIR,
+	ParserReport,
+	ParseProgressCallback,
+)
 from app.services.ingest.router import parse_to_ir, use_v2_pipeline
 from app.settings import Settings
 
@@ -61,6 +67,8 @@ def prepare_ingest(
 	doc_id: str | None = None,
 	content_type: str | None = None,
 	semantic_embedder: SemanticEmbedder | None = None,
+	parser_progress_callback: ParseProgressCallback | None = None,
+	cancel_check: CancelCheck | None = None,
 ) -> PreparedIngest:
 	name = (filename or "untitled.txt").strip() or "untitled.txt"
 	suffix = PurePosixPath(name).suffix.lower()
@@ -129,6 +137,8 @@ def prepare_ingest(
 		doc_id=resolved_doc_id,
 		library_id=library_id,
 		content_type=content_type,
+		progress_callback=parser_progress_callback,
+		cancel_check=cancel_check,
 	)
 	if display_name and display_name.strip():
 		ir.title = clean_display_title(display_name, filename=name)
@@ -180,6 +190,8 @@ def chunks_to_payloads(
 	doc_id: str | None = None,
 	library_id: str | None = None,
 	document_version_id: str | None = None,
+	generation_id: str | None = None,
+	lifecycle_visibility: str | None = None,
 	tenant_id: str = "default",
 	workspace_id: str = "default",
 	include_sections: bool = True,
@@ -192,6 +204,7 @@ def chunks_to_payloads(
 		build_table_records_from_chunks,
 		build_table_summary_records_from_chunks,
 		chunk_record_id,
+		generation_point_uuid,
 		index_record_to_payload,
 	)
 	from app.services.versioning import derive_document_version_id
@@ -325,6 +338,14 @@ def chunks_to_payloads(
 		)
 		for record in table_summaries:
 			payloads.append(index_record_to_payload(record))
+	if generation_id:
+		for payload in payloads:
+			record_id = str(payload.get("record_id") or "").strip()
+			if not record_id:
+				raise ValueError("generation payload requires record_id")
+			payload["generation_id"] = generation_id
+			payload["lifecycle_visibility"] = lifecycle_visibility or "staging"
+			payload["_point_id"] = generation_point_uuid(generation_id, record_id)
 	return payloads
 
 def _guess_content_type(suffix: str) -> str:

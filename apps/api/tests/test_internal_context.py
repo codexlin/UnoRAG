@@ -260,12 +260,43 @@ def test_production_settings_fail_closed() -> None:
 			internal_auth_replay_backend="memory",
 		)
 
+	with pytest.raises(ValidationError, match="ACTIVE_GENERATION_GATE_ENABLED"):
+		Settings(
+			app_env="production",
+			internal_auth_enabled=True,
+			internal_auth_secret=TEST_SECRET,
+			internal_auth_replay_backend="redis",
+			active_generation_gate_enabled=False,
+		)
+
+	with pytest.raises(ValidationError, match="ACTIVE_GENERATION_CACHE_TTL_SECONDS"):
+		Settings(
+			app_env="production",
+			internal_auth_enabled=True,
+			internal_auth_secret=TEST_SECRET,
+			internal_auth_replay_backend="redis",
+			active_generation_gate_enabled=True,
+			active_generation_cache_ttl_seconds=1,
+		)
+
+	with pytest.raises(ValidationError, match="MINERU_URL"):
+		Settings(
+			app_env="production",
+			internal_auth_enabled=True,
+			internal_auth_secret=TEST_SECRET,
+			internal_auth_replay_backend="redis",
+			active_generation_gate_enabled=True,
+			mineru_enabled=True,
+			mineru_url="",
+		)
+
 
 def test_production_accepts_signed_service_context(monkeypatch) -> None:
 	monkeypatch.setenv("APP_ENV", "production")
 	monkeypatch.setenv("INTERNAL_AUTH_ENABLED", "true")
 	monkeypatch.setenv("INTERNAL_AUTH_SECRET", TEST_SECRET)
 	monkeypatch.setenv("INTERNAL_AUTH_REPLAY_BACKEND", "redis")
+	monkeypatch.setenv("ACTIVE_GENERATION_GATE_ENABLED", "true")
 	get_settings.cache_clear()
 	settings = Settings()
 
