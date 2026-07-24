@@ -1,6 +1,7 @@
 "use client";
 
 import {
+	Activity,
 	Bot,
 	ChevronRight,
 	PanelRightClose,
@@ -20,7 +21,11 @@ import {
 	useState,
 } from "react";
 
-import { AskTraceDrawer, hasAskTrace } from "@/components/app/ask-trace-drawer";
+import {
+	AskTraceDrawer,
+	hasAskTrace,
+	stageDurationMs,
+} from "@/components/app/ask-trace-drawer";
 import { CitationSourceCard } from "@/components/app/citation-source-card";
 import { LibraryCombobox } from "@/components/app/library-combobox";
 import { MarkdownAnswer } from "@/components/app/markdown-answer";
@@ -28,6 +33,11 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useHealth } from "@/hooks/use-health";
 import { useLibraries } from "@/hooks/use-libraries";
 import {
@@ -98,8 +108,10 @@ type LocalTurn = UiTurn & {
 	startedAt?: number;
 	completedAt?: number;
 	durationMs?: number;
-	/** ms until first citations / evidence event */
+	/** ms until first citations / evidence event (client wall-clock; not shown as 检索) */
 	evidenceMs?: number;
+	/** server retrieve stage duration_ms from retrieval_debug.stages */
+	retrieveMs?: number;
 };
 
 function toUiCitation(citation: ApiCitation): UiCitation {
@@ -194,6 +206,7 @@ export function AskWorkspace() {
 	const [activeCitation, setActiveCitation] = useState<UiCitation | null>(null);
 	const [drawerOpen, setDrawerOpen] = useState(true);
 	const [traceDebug, setTraceDebug] = useState<ApiRetrievalDebug | null>(null);
+	const [traceClientMs, setTraceClientMs] = useState<number | null>(null);
 	const [traceOpen, setTraceOpen] = useState(false);
 	const [readyDocuments, setReadyDocuments] = useState<ApiDocument[]>([]);
 	const [docsLoaded, setDocsLoaded] = useState(false);
@@ -271,9 +284,14 @@ export function AskWorkspace() {
 		setDrawerOpen(true);
 	}
 
-	function openTrace(debug: ApiRetrievalDebug) {
+	function openTrace(debug: ApiRetrievalDebug, clientDurationMs?: number | null) {
 		setDrawerOpen(false);
 		setTraceDebug(debug);
+		setTraceClientMs(
+			clientDurationMs != null && !Number.isNaN(clientDurationMs)
+				? clientDurationMs
+				: null,
+		);
 		setTraceOpen(true);
 	}
 
@@ -422,6 +440,7 @@ export function AskWorkspace() {
 						const debug: ApiRetrievalDebug = result.retrieval_debug || {};
 						const completedAt = Date.now();
 						const durationMs = Math.round(performance.now() - startedAtMs);
+						const retrieveMs = stageDurationMs(debug, "retrieve");
 						setTurns((prev) =>
 							prev.map((turn) =>
 								turn.id === pendingId
@@ -441,6 +460,7 @@ export function AskWorkspace() {
 											completedAt,
 											durationMs,
 											evidenceMs: turn.evidenceMs,
+											retrieveMs: retrieveMs ?? undefined,
 											retrievalDebug: debug,
 											topScore:
 												typeof debug.top_score === "number"
@@ -611,28 +631,51 @@ export function AskWorkspace() {
 						</span>
 					</div>
 
-					<Button
-						type="button"
-						variant={drawerOpen ? "secondary" : "outline"}
-						size="sm"
-						className="ml-auto shrink-0 rounded-lg"
-						onClick={() => {
-							setDrawerOpen((open) => {
-								const next = !open;
-								if (next) setTraceOpen(false);
-								return next;
-							});
-						}}
-						aria-pressed={drawerOpen}
-					>
-						{drawerOpen ? (
-							<PanelRightClose data-icon="inline-start" />
-						) : (
-							<PanelRightOpen data-icon="inline-start" />
-						)}
-						<span className="hidden sm:inline">引用来源</span>
-						<span className="sm:hidden">引用</span>
-					</Button>
+					<Tooltip>
+						<TooltipTrigger
+							render={
+								<Button
+									type="button"
+									variant={drawerOpen ? "secondary" : "outline"}
+									size="sm"
+									className={cn(
+										"ml-auto shrink-0 rounded-lg",
+										drawerOpen
+											? "border-cite/40 bg-cite/10 text-cite hover:bg-cite/15"
+											: "border-cite/35 text-cite hover:border-cite/55 hover:bg-cite/8",
+									)}
+									onClick={() => {
+										setDrawerOpen((open) => {
+											const next = !open;
+											if (next) setTraceOpen(false);
+											return next;
+										});
+									}}
+									aria-pressed={drawerOpen}
+									aria-label={
+										drawerOpen ? "收起引用来源面板" : "展开引用来源面板"
+									}
+								>
+									{drawerOpen ? (
+										<PanelRightClose data-icon="inline-start" />
+									) : (
+										<PanelRightOpen data-icon="inline-start" />
+									)}
+									<span className="hidden sm:inline">
+										{drawerOpen ? "收起引用" : "引用来源"}
+									</span>
+									<span className="sm:hidden">
+										{drawerOpen ? "收起" : "引用"}
+									</span>
+								</Button>
+							}
+						/>
+						<TooltipContent side="bottom">
+							{drawerOpen
+								? "收起右侧引用来源面板"
+								: "展开右侧引用来源，查看原文与 rank / dense 分数"}
+						</TooltipContent>
+					</Tooltip>
 				</div>
 				{libsError ? (
 					<p className="border-b border-destructive/30 bg-destructive/10 px-5 py-1.5 text-sm text-destructive">
@@ -775,13 +818,27 @@ export function AskWorkspace() {
 																</span>
 															) : null}
 															{turn.durationMs != null ? (
-																<span className="meta-chip text-foreground/80">
-																	总耗时 {formatDurationMs(turn.durationMs)}
+																<span
+																	className="meta-chip text-foreground/80"
+																	title="浏览器端到端：点发送到回答完成（含网络）"
+																>
+																	端到端 {formatDurationMs(turn.durationMs)}
 																</span>
 															) : null}
-															{turn.evidenceMs != null ? (
-																<span className="meta-chip">
-																	检索 {formatDurationMs(turn.evidenceMs)}
+															{turn.retrieveMs != null ? (
+																<span
+																	className="meta-chip"
+																	title="服务端 retrieve 阶段耗时（与链路抽屉一致）"
+																>
+																	检索 {formatDurationMs(turn.retrieveMs)}
+																</span>
+															) : turn.pending &&
+																turn.evidenceMs != null ? (
+																<span
+																	className="meta-chip text-muted-foreground"
+																	title="首包引用到达时间（客户端，生成完成后会换成服务端检索）"
+																>
+																	首包 {formatDurationMs(turn.evidenceMs)}
 																</span>
 															) : null}
 															{turn.retrievalMode || turn.usedHybrid ? (
@@ -802,17 +859,38 @@ export function AskWorkspace() {
 																</span>
 															) : null}
 															{hasAskTrace(turn.retrievalDebug) ? (
-																<button
-																	type="button"
-																	className="meta-chip cursor-pointer transition-colors hover:border-cite/40 hover:bg-cite/5 hover:text-cite"
-																	onClick={() => {
-																		if (turn.retrievalDebug) {
-																			openTrace(turn.retrievalDebug);
+																<Tooltip>
+																	<TooltipTrigger
+																		render={
+																			<button
+																				type="button"
+																				className={cn(
+																					"meta-chip inline-flex cursor-pointer items-center gap-1 border-cite/45 bg-cite/12 font-medium text-cite shadow-[0_0_0_1px_color-mix(in_oklab,var(--cite)_18%,transparent)]",
+																					"transition-colors hover:border-cite/70 hover:bg-cite/20 hover:text-cite",
+																				)}
+																				aria-label="查看请求链路：路由、检索、裁决与生成各阶段耗时"
+																				onClick={() => {
+																					if (turn.retrievalDebug) {
+																						openTrace(
+																							turn.retrievalDebug,
+																							turn.durationMs,
+																						);
+																					}
+																				}}
+																			>
+																				<Activity
+																					className="size-3 shrink-0"
+																					aria-hidden
+																				/>
+																				链路
+																			</button>
 																		}
-																	}}
-																>
-																	链路
-																</button>
+																	/>
+																	<TooltipContent side="top" className="max-w-[16rem]">
+																		查看请求链路：路由 / 检索 / 裁决 / 生成各阶段耗时与
+																		trace_id
+																	</TooltipContent>
+																</Tooltip>
 															) : null}
 														</div>
 													</div>
@@ -1000,6 +1078,27 @@ export function AskWorkspace() {
 				</form>
 			</section>
 
+			{!drawerOpen ? (
+				<button
+					type="button"
+					onClick={() => {
+						setTraceOpen(false);
+						setDrawerOpen(true);
+					}}
+					className="group flex w-7 shrink-0 flex-col items-center justify-center gap-2 border-l border-cite/25 bg-cite/[0.06] text-cite transition-colors hover:bg-cite/12"
+					aria-label="展开引用来源面板"
+					title="展开引用来源"
+				>
+					<PanelRightOpen className="size-4 shrink-0" aria-hidden />
+					<span
+						className="text-meta font-mono tracking-[0.18em] uppercase [writing-mode:vertical-rl]"
+						aria-hidden
+					>
+						Sources
+					</span>
+				</button>
+			) : null}
+
 			<aside
 				className={cn(
 					"shrink-0 overflow-hidden border-l border-border/80 bg-card/85 backdrop-blur-sm transition-[width,opacity] duration-200",
@@ -1017,14 +1116,22 @@ export function AskWorkspace() {
 								引用来源
 							</p>
 						</div>
-						<button
-							type="button"
-							onClick={() => setDrawerOpen(false)}
-							className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-							aria-label="关闭引用来源"
-						>
-							<PanelRightClose className="size-4" />
-						</button>
+						<Tooltip>
+							<TooltipTrigger
+								render={
+									<button
+										type="button"
+										onClick={() => setDrawerOpen(false)}
+										className="inline-flex items-center gap-1 rounded-md border border-border/70 px-2 py-1 text-meta text-muted-foreground transition-colors hover:border-cite/40 hover:bg-cite/8 hover:text-cite"
+										aria-label="收起引用来源面板"
+									>
+										<PanelRightClose className="size-3.5" aria-hidden />
+										收起
+									</button>
+								}
+							/>
+							<TooltipContent side="left">收起右侧面板，需要时再展开</TooltipContent>
+						</Tooltip>
 					</div>
 					<ScrollArea className="min-h-0 flex-1">
 						<div className="p-4">
@@ -1043,7 +1150,8 @@ export function AskWorkspace() {
 										dense / bm25 / rrf 等分数。
 									</p>
 									<p className="text-meta font-mono text-muted-foreground/80">
-										提示：可用顶栏「引用来源」开关此面板
+										提示：点顶栏「收起引用」或面板「收起」可折叠；收起后右侧留有
+										Sources 细条可再展开
 									</p>
 								</div>
 							)}
@@ -1054,8 +1162,12 @@ export function AskWorkspace() {
 
 			<AskTraceDrawer
 				open={traceOpen}
-				onOpenChange={setTraceOpen}
+				onOpenChange={(open) => {
+					setTraceOpen(open);
+					if (!open) setTraceClientMs(null);
+				}}
 				debug={traceDebug}
+				clientDurationMs={traceClientMs}
 			/>
 		</div>
 	);
