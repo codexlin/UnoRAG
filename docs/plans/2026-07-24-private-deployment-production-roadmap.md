@@ -1,7 +1,7 @@
 # MeriKnow 私有化企业知识库最终落地计划
 
 > 日期：2026-07-24  
-> 状态：实施中（L0–L6 主路径完成；下一步 L7 质量门禁）  
+> 状态：实施中（L0–L6 主路径完成；L7 质量门禁落地中）  
 > 关联文档：
 > [企业 RAG 主蓝图](../architecture/enterprise-rag-saas-design.md) ·
 > [Next.js 控制面 ADR](../adr/0004-nextjs-control-plane.md)
@@ -1192,13 +1192,13 @@ Done（代码侧）：
 
 目标：把当前黄金集提升为每次发布都必须通过的产品合同。
 
-- [ ] 固定离线数据集版本、pipeline version 和报告 schema；
-- [ ] 将 ingestion、retrieval、answer 三层指标分开；
-- [ ] 保留确定性 CI 小集，增加真实 embedding/MinerU 受控集成集；
-- [ ] 覆盖 fact、summary、table、ambiguous、拒答和 ACL 用例；
+- [x] 固定离线数据集版本、pipeline version 和报告 schema；
+- [x] 将 ingestion、retrieval、answer 三层指标分开；
+- [x] 保留确定性 CI 小集，增加真实 embedding/MinerU 受控集成集；
+- [x] 覆盖 fact、summary、table、ambiguous、拒答和 ACL 用例；
 - [ ] archive 固化 query type、plan、judge、citations 和版本信息；
-- [ ] 建立失败样本回流流程，线上反馈必须先进入 eval case；
-- [ ] 输出基线与候选版本对比报告，禁止只看总通过数。
+- [x] 建立失败样本回流流程，线上反馈必须先进入 eval case；
+- [x] 输出基线与候选版本对比报告，禁止只看总通过数。
 
 首批硬指标：
 
@@ -1217,6 +1217,21 @@ Done：
 - PR 跑确定性小集，release candidate 跑真实服务集；
 - 报告记录代码 commit、模型、配置、数据集和依赖版本；
 - 任一硬指标退化必须显式审批，不能用总分上涨掩盖。
+
+### L7 落地说明（2026-07-24）
+
+- `scripts/run_release_gates.py --mode ci|release` + baselines + report schema
+  `meriknow.release_gate.v1`；
+- `.github/workflows/eval-gates.yml` 跑 CI 确定性门禁；
+- fuse tag（`fuse`/`isolation`/拒答期望）失败即熔断；层 pass_rate 低于 baseline
+  需 `--allow-regression` 显式审批（不能解除 fuse）；
+- runbook：`docs/runbooks/quality-release-gates.md`。
+
+仍后置：
+
+- archive 字段与线上延迟/成功率预算的环境基线固化；
+- live MinerU/embedding 受控集成集接入 release 流水线（当前 release 模式仍可
+  本地 stub 全量黄金集）。
 
 ## Phase L8：私有化部署、升级与灾备
 

@@ -296,3 +296,7 @@ and backfill joins. Product status, desired version, and jobs live only in
 `derive_document_version_id` was removed in L6; lifecycle ingest always passes
 real `app.document_versions.id` UUIDs. Legacy ARQ (only when
 `LEGACY_INGEST_WRITES_ENABLED=true`) mints a fresh UUID per job.
+
+## L7 quality release gates
+
+See [quality-release-gates.md](./quality-release-gates.md).

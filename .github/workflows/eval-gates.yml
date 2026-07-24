@@ -1,0 +1,32 @@
+name: eval-gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci-deterministic:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install API deps
+        run: uv sync --group dev
+      - name: L7 CI release gates
+        run: |
+          uv run python scripts/run_release_gates.py \
+            --mode ci \
+            --baseline tests/eval/baselines/ci-deterministic.json \
+            --report-out /tmp/meriknow-ci-gate.json
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meriknow-ci-gate-report
+          path: /tmp/meriknow-ci-gate.json

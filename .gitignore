@@ -13,6 +13,7 @@ apps/api/.pytest_cache/
 apps/api/*.egg-info/
 apps/api/data/
 apps/api/.eval_reports/
+apps/api/tests/eval/.gate_*_cases.jsonl
 testdata/ab/_e2e_out/
 .venv
 __pycache__/
