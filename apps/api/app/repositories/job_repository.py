@@ -127,6 +127,27 @@ class GenerationCleanupClaim:
     sweep_attempts: int
 
 
+@dataclass(frozen=True)
+class DocumentDeleteContext:
+    job_id: UUID
+    organization_id: UUID
+    workspace_id: UUID
+    library_id: UUID
+    document_id: UUID
+    rag_document_id: str
+    rag_library_id: str
+    library_status: str
+    library_delete: bool
+    storage_keys: tuple[str, ...]
+    generation_ids: tuple[UUID, ...]
+    principal_id: UUID | None
+
+
+@dataclass(frozen=True)
+class DocumentDeleteCompletion:
+    library_finalized: bool
+
+
 class JobRepository:
     """The only Python write boundary for app.jobs scheduling fields."""
 
@@ -1054,6 +1075,399 @@ class JobRepository:
                         "error": (error or "")[:8000] or "cleanup sweep failed",
                     },
                 )
+
+    def load_document_delete_context(self, lease: JobLease) -> DocumentDeleteContext:
+        if lease.type != "document.delete":
+            raise ValueError("document.delete job required")
+        payload = lease.payload if isinstance(lease.payload, dict) else {}
+        document_id_raw = payload.get("document_id")
+        if not document_id_raw:
+            raise ValueError("document.delete job missing document_id")
+        with self._connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    job.id AS job_id,
+                    job.organization_id,
+                    job.workspace_id,
+                    document.id AS document_id,
+                    document.rag_document_id,
+                    document.created_by AS principal_id,
+                    library.id AS library_id,
+                    library.rag_library_id,
+                    library.status AS library_status,
+                    coalesce(
+                        (
+                            SELECT array_agg(version.storage_key)
+                            FROM app.document_versions AS version
+                            WHERE version.document_id = document.id
+                              AND version.storage_key IS NOT NULL
+                              AND version.storage_key <> ''
+                        ),
+                        ARRAY[]::text[]
+                    ) AS storage_keys,
+                    coalesce(
+                        (
+                            SELECT array_agg(version.generation_id)
+                            FROM app.document_versions AS version
+                            WHERE version.document_id = document.id
+                        ),
+                        ARRAY[]::uuid[]
+                    ) AS generation_ids
+                FROM app.jobs AS job
+                JOIN app.documents AS document
+                  ON document.id = %(document_id)s
+                 AND document.organization_id = job.organization_id
+                 AND document.workspace_id = job.workspace_id
+                JOIN app.libraries AS library
+                  ON library.id = document.library_id
+                WHERE job.id = %(job_id)s
+                  AND job.lease_token = %(lease_token)s
+                  AND job.status IN ('running', 'cancelling')
+                  AND job.lease_expires_at > now()
+                """,
+                {
+                    "job_id": lease.id,
+                    "lease_token": lease.lease_token,
+                    "document_id": str(document_id_raw),
+                },
+            )
+            row = cursor.fetchone()
+        if row is None:
+            raise LostJobLeaseError(f"job lease is no longer valid: {lease.id}")
+        payload_keys = payload.get("storage_keys") or []
+        payload_gens = payload.get("generation_ids") or []
+        storage_keys = tuple(
+            dict.fromkeys(
+                [
+                    *(str(key) for key in payload_keys if key),
+                    *(str(key) for key in (row["storage_keys"] or []) if key),
+                ]
+            )
+        )
+        generation_ids = tuple(
+            dict.fromkeys(
+                [
+                    *(UUID(str(item)) for item in payload_gens if item),
+                    *(UUID(str(item)) for item in (row["generation_ids"] or []) if item),
+                ]
+            )
+        )
+        return DocumentDeleteContext(
+            job_id=row["job_id"],
+            organization_id=row["organization_id"],
+            workspace_id=row["workspace_id"],
+            library_id=row["library_id"],
+            document_id=row["document_id"],
+            rag_document_id=row["rag_document_id"],
+            rag_library_id=row["rag_library_id"],
+            library_status=row["library_status"],
+            library_delete=bool(payload.get("library_delete")),
+            storage_keys=storage_keys,
+            generation_ids=generation_ids,
+            principal_id=row["principal_id"],
+        )
+
+    def complete_document_delete(
+        self,
+        lease: JobLease,
+        context: DocumentDeleteContext,
+        *,
+        result: dict[str, Any] | None = None,
+    ) -> DocumentDeleteCompletion:
+        with self._connection.transaction():
+            with self._connection.cursor() as cursor:
+                self._assert_live_lease(cursor, lease)
+                cursor.execute(
+                    """
+                    UPDATE app.document_versions
+                    SET status = 'deleted',
+                        updated_at = now()
+                    WHERE document_id = %(document_id)s
+                      AND status <> 'deleted'
+                    """,
+                    {"document_id": context.document_id},
+                )
+                cursor.execute(
+                    """
+                    DELETE FROM app.document_active_versions
+                    WHERE document_id = %(document_id)s
+                    """,
+                    {"document_id": context.document_id},
+                )
+                cursor.execute(
+                    """
+                    DELETE FROM rag.active_document_generations
+                    WHERE organization_id = %(organization_id)s
+                      AND workspace_id = %(workspace_id)s
+                      AND document_id = %(document_id)s
+                    """,
+                    {
+                        "organization_id": context.organization_id,
+                        "workspace_id": context.workspace_id,
+                        "document_id": context.document_id,
+                    },
+                )
+                cursor.execute(
+                    """
+                    DELETE FROM rag.generation_cleanup_queue
+                    WHERE document_id = %(document_id)s
+                    """,
+                    {"document_id": context.document_id},
+                )
+                cursor.execute(
+                    """
+                    UPDATE app.documents
+                    SET status = 'deleted',
+                        deleted_at = coalesce(deleted_at, now()),
+                        updated_at = now()
+                    WHERE id = %(document_id)s
+                    """,
+                    {"document_id": context.document_id},
+                )
+                cursor.execute(
+                    """
+                    UPDATE app.libraries AS library
+                    SET ready_count = counts.ready_count,
+                        status = CASE
+                            WHEN library.status = 'deleting' THEN 'deleting'
+                            WHEN counts.document_count = 0 THEN 'empty'
+                            WHEN counts.processing_count > 0 THEN 'indexing'
+                            WHEN counts.problem_count > 0 THEN 'degraded'
+                            ELSE 'ready'
+                        END,
+                        updated_at = now()
+                    FROM (
+                        SELECT
+                            count(*) FILTER (
+                                WHERE status NOT IN ('deleting', 'deleted')
+                            )::integer AS document_count,
+                            count(*) FILTER (
+                                WHERE status IN ('ready', 'degraded')
+                            )::integer AS ready_count,
+                            count(*) FILTER (
+                                WHERE status IN ('processing', 'deleting')
+                            )::integer AS processing_count,
+                            count(*) FILTER (
+                                WHERE status IN ('degraded', 'failed')
+                            )::integer AS problem_count
+                        FROM app.documents
+                        WHERE library_id = %(library_id)s
+                    ) AS counts
+                    WHERE library.id = %(library_id)s
+                    """,
+                    {"library_id": context.library_id},
+                )
+                library_finalized = False
+                if context.library_status == "deleting" or context.library_delete:
+                    cursor.execute(
+                        """
+                        SELECT count(*)::integer
+                        FROM app.documents
+                        WHERE library_id = %(library_id)s
+                          AND status NOT IN ('deleted')
+                        """,
+                        {"library_id": context.library_id},
+                    )
+                    remaining = int(cursor.fetchone()[0])
+                    if remaining == 0:
+                        cursor.execute(
+                            """
+                            UPDATE app.libraries
+                            SET status = 'deleted',
+                                ready_count = 0,
+                                updated_at = now()
+                            WHERE id = %(library_id)s
+                              AND status = 'deleting'
+                            """,
+                            {"library_id": context.library_id},
+                        )
+                        if cursor.rowcount == 1:
+                            cursor.execute(
+                                """
+                                INSERT INTO app.outbox_events (
+                                    organization_id,
+                                    workspace_id,
+                                    aggregate_type,
+                                    aggregate_id,
+                                    event_type,
+                                    idempotency_key,
+                                    payload,
+                                    status,
+                                    created_at,
+                                    updated_at
+                                )
+                                VALUES (
+                                    %(organization_id)s,
+                                    %(workspace_id)s,
+                                    'library',
+                                    %(rag_library_id)s,
+                                    'library.delete',
+                                    %(idempotency_key)s,
+                                    %(payload)s,
+                                    'pending',
+                                    now(),
+                                    now()
+                                )
+                                ON CONFLICT (idempotency_key) DO NOTHING
+                                """,
+                                {
+                                    "organization_id": context.organization_id,
+                                    "workspace_id": context.workspace_id,
+                                    "rag_library_id": context.rag_library_id,
+                                    "idempotency_key": (
+                                        f"library.delete:{context.rag_library_id}:"
+                                        f"{context.document_id}"
+                                    ),
+                                    "payload": Jsonb(
+                                        {
+                                            "library_id": context.rag_library_id,
+                                            "principal_id": str(
+                                                context.principal_id
+                                                or context.organization_id
+                                            ),
+                                        }
+                                    ),
+                                },
+                            )
+                            library_finalized = True
+                completion = {
+                    "deleted": True,
+                    "document_id": str(context.document_id),
+                    "rag_document_id": context.rag_document_id,
+                    "library_finalized": library_finalized,
+                    **(result or {}),
+                }
+                cursor.execute(
+                    """
+                    UPDATE app.jobs
+                    SET status = 'completed',
+                        stage = 'done',
+                        progress = 100,
+                        result = coalesce(result, '{}'::jsonb) || %(result)s,
+                        error_code = NULL,
+                        error = NULL,
+                        lease_token = NULL,
+                        lease_expires_at = NULL,
+                        heartbeat_at = now(),
+                        finished_at = now(),
+                        updated_at = now()
+                    WHERE id = %(job_id)s
+                      AND lease_token = %(lease_token)s
+                      AND status IN ('running', 'cancelling')
+                      AND lease_expires_at > now()
+                    """,
+                    {
+                        "job_id": lease.id,
+                        "lease_token": lease.lease_token,
+                        "result": Jsonb(completion),
+                    },
+                )
+                if cursor.rowcount != 1:
+                    raise LostJobLeaseError(f"job lease is no longer valid: {lease.id}")
+                cursor.execute(
+                    """
+                    INSERT INTO app.audit_logs (
+                        organization_id,
+                        workspace_id,
+                        action,
+                        resource_type,
+                        resource_id,
+                        details
+                    )
+                    VALUES (
+                        %(organization_id)s,
+                        %(workspace_id)s,
+                        'document.deleted',
+                        'document',
+                        %(resource_id)s,
+                        %(details)s
+                    )
+                    """,
+                    {
+                        "organization_id": context.organization_id,
+                        "workspace_id": context.workspace_id,
+                        "resource_id": str(context.document_id),
+                        "details": Jsonb(completion),
+                    },
+                )
+                return DocumentDeleteCompletion(library_finalized=library_finalized)
+
+    def fail_leased_job(
+        self,
+        lease: JobLease,
+        *,
+        error_code: str,
+        error: str,
+        retryable: bool,
+        retry_delay_seconds: int | None = None,
+    ) -> JobFailureResult:
+        safe_error = error[:8000]
+        with self._connection.transaction():
+            with self._connection.cursor() as cursor:
+                self._assert_live_lease(cursor, lease)
+                cursor.execute(
+                    """
+                    SELECT
+                        status,
+                        cancel_requested_at IS NOT NULL,
+                        attempt,
+                        max_attempts
+                    FROM app.jobs
+                    WHERE id = %(job_id)s
+                      AND lease_token = %(lease_token)s
+                    FOR UPDATE
+                    """,
+                    {"job_id": lease.id, "lease_token": lease.lease_token},
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise LostJobLeaseError(f"job lease is no longer valid: {lease.id}")
+                status, cancel_requested, attempt, max_attempts = row
+                if status == "cancelling" or cancel_requested:
+                    target = JobStatus.CANCELLED
+                elif retryable and attempt < max_attempts:
+                    target = JobStatus.RETRY
+                elif retryable:
+                    target = JobStatus.DEAD
+                else:
+                    target = JobStatus.FAILED
+                delay = retry_delay_seconds
+                if target == JobStatus.RETRY and delay is None:
+                    delay = min(300, 5 * (2 ** max(0, int(attempt) - 1)))
+                cursor.execute(
+                    """
+                    UPDATE app.jobs
+                    SET status = %(status)s,
+                        next_attempt_at = CASE
+                            WHEN %(status)s = 'retry'
+                            THEN now() + make_interval(secs => %(delay)s)
+                            ELSE NULL
+                        END,
+                        error_code = %(error_code)s,
+                        error = %(error)s,
+                        lease_token = NULL,
+                        lease_expires_at = NULL,
+                        finished_at = CASE
+                            WHEN %(status)s IN ('cancelled', 'failed', 'dead') THEN now()
+                            ELSE NULL
+                        END,
+                        updated_at = now()
+                    WHERE id = %(job_id)s
+                      AND lease_token = %(lease_token)s
+                    RETURNING next_attempt_at
+                    """,
+                    {
+                        "job_id": lease.id,
+                        "lease_token": lease.lease_token,
+                        "status": target.value,
+                        "delay": delay or 0,
+                        "error_code": error_code[:128],
+                        "error": safe_error,
+                    },
+                )
+                next_attempt_at = cursor.fetchone()[0]
+                return JobFailureResult(status=target, next_attempt_at=next_attempt_at)
 
     @staticmethod
     def _complete_superseded(

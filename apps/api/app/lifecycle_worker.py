@@ -11,6 +11,7 @@ import signal
 import socket
 import threading
 import time
+from pathlib import Path
 from types import FrameType
 
 import psycopg
@@ -23,6 +24,7 @@ from app.repositories.job_repository import (
 	LostJobLeaseError,
 )
 from app.settings import Settings, get_settings
+from app.workers.document_delete import DocumentDeleteProcessor
 from app.workers.document_ingest import DocumentIngestProcessor
 from app.workers.generation_cleanup import GenerationCleanupSweeper
 
@@ -159,12 +161,16 @@ class LifecycleWorker:
 			self.worker_id,
 			self.settings.lifecycle_worker_version,
 		)
+		ready_path = os.getenv("LIFECYCLE_WORKER_READY_FILE", "").strip()
+		if ready_path:
+			Path(ready_path).write_text(f"{self.worker_id}\n", encoding="utf-8")
 		with psycopg.connect(
 			self.settings.worker_database_dsn,
 			autocommit=True,
 		) as connection:
 			repository = JobRepository(connection)
-			processor = DocumentIngestProcessor(self.settings, repository)
+			ingest_processor = DocumentIngestProcessor(self.settings, repository)
+			delete_processor = DocumentDeleteProcessor(self.settings, repository)
 			sweeper = (
 				GenerationCleanupSweeper(self.settings, repository)
 				if self.settings.lifecycle_cleanup_enabled
@@ -187,9 +193,10 @@ class LifecycleWorker:
 							)
 					except Exception:
 						logger.exception("lifecycle_worker.cleanup_failed")
+				# Prefer delete jobs so library fan-out does not starve behind ingest.
 				leases = repository.claim(
 					worker_id=self.worker_id,
-					job_types=["document.ingest"],
+					job_types=["document.delete", "document.ingest"],
 					capacity=1,
 					lease_seconds=self.settings.lifecycle_worker_lease_seconds,
 					worker_version=self.settings.lifecycle_worker_version,
@@ -206,16 +213,26 @@ class LifecycleWorker:
 						lease_seconds=self.settings.lifecycle_worker_lease_seconds,
 						heartbeat_seconds=self.settings.lifecycle_worker_heartbeat_seconds,
 					) as progress:
-						result = processor.process(lease, progress)
-					logger.info(
-						"lifecycle_worker.completed job_id=%s generation_id=%s "
-						"points=%s activated=%s superseded=%s",
-						result.job_id,
-						result.generation_id,
-						result.point_count,
-						result.activated,
-						result.superseded,
-					)
+						if lease.type == "document.delete":
+							result = delete_processor.process(lease, progress)
+							logger.info(
+								"lifecycle_worker.delete_completed job_id=%s "
+								"document_id=%s library_finalized=%s",
+								result.job_id,
+								result.document_id,
+								result.library_finalized,
+							)
+						else:
+							result = ingest_processor.process(lease, progress)
+							logger.info(
+								"lifecycle_worker.completed job_id=%s generation_id=%s "
+								"points=%s activated=%s superseded=%s",
+								result.job_id,
+								result.generation_id,
+								result.point_count,
+								result.activated,
+								result.superseded,
+							)
 				except CancelRequestedError:
 					logger.info("lifecycle_worker.cancelled job_id=%s", lease.id)
 				except LostJobLeaseError:
@@ -228,6 +245,15 @@ class LifecycleWorker:
 					# The processor has already transitioned the leased job to
 					# retry/failed/dead with a bounded error payload.
 					logger.exception("lifecycle_worker.job_failed job_id=%s", lease.id)
+		if ready_path:
+			try:
+				Path(ready_path).unlink(missing_ok=True)
+			except Exception:
+				logger.warning(
+					"lifecycle_worker.ready_file_cleanup_failed path=%s",
+					ready_path,
+					exc_info=True,
+				)
 		logger.info("lifecycle_worker.stop worker_id=%s", self.worker_id)
 
 

@@ -65,3 +65,10 @@ class LocalSourceObjectStorage:
 				f"source object hash mismatch: expected {expected_hash}, got {actual_hash}"
 			)
 		return b"".join(parts)
+
+	def delete(self, key: str) -> None:
+		path = self.resolve(key)
+		try:
+			path.unlink()
+		except FileNotFoundError:
+			return
