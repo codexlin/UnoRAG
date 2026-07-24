@@ -93,7 +93,9 @@ curl -s -X POST http://localhost:8000/v1/ask \
 | `OCR_ENABLED` / `VLM_ENABLED` | 默认 `false`；见 `docs/adr/0001-ocr-vlm-adapters.md` |
 | `MINERU_ENABLED` / `MINERU_URL` | 默认关；扫描/复杂 PDF 走独立 MinerU 服务（见 `docs/adr/0002-mineru-complex-pdf.md`） |
 | `MINERU_MODE` | `auto`（默认）\| `pymupdf` \| `mineru` |
-| `MINERU_TIMEOUT_S` / `MINERU_MAX_RETRIES` / `MINERU_PARSE_PATH` | 默认 `120` / `2` / `/file_parse` |
+| `MINERU_TIMEOUT_S` / `MINERU_SOFT_TIMEOUT_S` / `MINERU_MAX_RETRIES` / `MINERU_PARSE_PATH` | 默认 `120` / `60` / `2` / `/file_parse`；软超时 ≤ 硬超时，`<=0` 关闭软超时 |
+| `MINERU_RETRY_BASE_S` / `MINERU_RETRY_MAX_S` | 默认 `30` / `300`；`mineru_rate_limited` / `mineru_soft_timeout` 的 job 退避 |
+| `LLM_MAX_INFLIGHT` | 默认 `4`；Ask/ingest LLM 进程内并发，`<=0` 关闭 |
 | `MINERU_USE_FAKE` | 仅测试；production 明确禁止 |
 | `TOOL_ASK` | 默认 `false`；工具函数在 `app/services/ingest/tools.py` |
 | `ANSWER_MIN_SCORE` | 弱相关拒答阈值；`0` 关闭 |
@@ -160,8 +162,9 @@ MinerU。PyMuPDF/MinerU 转换按页回写 Job progress，独立 heartbeat 在�
 
 | error_code | Job 行为 |
 |---|---|
+| `mineru_soft_timeout` | 立刻还槽 + retry（较长退避），耗尽后 dead |
 | `mineru_timeout` | retry，耗尽后 dead |
-| `mineru_rate_limited` | retry，耗尽后 dead |
+| `mineru_rate_limited` | 立刻还槽 + retry（较长退避），耗尽后 dead |
 | `mineru_service_error` / `mineru_unreachable` | retry，耗尽后 dead |
 | `mineru_invalid_response` | retry，耗尽后 dead |
 | `mineru_request_rejected` / `mineru_not_configured` | failed，不重试 |

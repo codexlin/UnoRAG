@@ -160,6 +160,7 @@ def parse_pdf_routed(
 			enabled=settings.mineru_enabled,
 			base_url=settings.mineru_url,
 			timeout_s=settings.mineru_timeout_s,
+			soft_timeout_s=settings.mineru_soft_timeout_s,
 			max_retries=settings.mineru_max_retries,
 			parse_path=settings.mineru_parse_path,
 			use_fake=settings.mineru_use_fake,

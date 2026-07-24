@@ -223,7 +223,8 @@ class LifecycleWorker:
 		if ready_path:
 			Path(ready_path).write_text(f"{self.worker_id}\n", encoding="utf-8")
 		max_workers = self._local_capacity + self._mineru_capacity
-		futures: dict[Future[None], str] = {}
+		# future → (slot kind, started monotonic)
+		futures: dict[Future[None], tuple[str, float]] = {}
 		with (
 			psycopg.connect(
 				self.settings.worker_database_dsn,
@@ -239,9 +240,17 @@ class LifecycleWorker:
 				# Reap finished futures
 				done = [fut for fut in list(futures) if fut.done()]
 				for fut in done:
-					kind = futures.pop(fut)
+					kind, started = futures.pop(fut)
+					slot_held_ms = (time.monotonic() - started) * 1000.0
 					self._release_slot(kind)
 					exc = fut.exception()
+					logger.info(
+						"lifecycle_worker.slot_released kind=%s slot_held_ms=%.1f "
+						"ok=%s",
+						kind,
+						slot_held_ms,
+						exc is None,
+					)
 					if exc is not None and not isinstance(
 						exc, (CancelRequestedError, LostJobLeaseError)
 					):
@@ -290,7 +299,7 @@ class LifecycleWorker:
 							)
 							continue
 						fut = pool.submit(self._process_lease, lease)
-						futures[fut] = kind
+						futures[fut] = (kind, time.monotonic())
 
 				if free_mineru > 0:
 					mineru_leases = repository.claim(
@@ -309,7 +318,7 @@ class LifecycleWorker:
 							)
 							continue
 						fut = pool.submit(self._process_lease, lease)
-						futures[fut] = "mineru"
+						futures[fut] = ("mineru", time.monotonic())
 
 				if not futures:
 					self.stop_event.wait(self.settings.lifecycle_worker_poll_seconds)

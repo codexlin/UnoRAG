@@ -287,12 +287,29 @@ class DocumentIngestProcessor:
 			if not indexed:
 				self._delete_staging_generation(context)
 			retryable, error_code = classify_ingest_error(exc)
+			retry_delay = mineru_job_retry_delay_seconds(
+				self.settings,
+				error_code=error_code,
+				attempt=lease.attempt,
+			)
+			timeout_kind = getattr(exc, "timeout_kind", None)
+			logger.warning(
+				"lifecycle_worker.ingest_failed job_id=%s error_code=%s "
+				"retryable=%s timeout_kind=%s attempt=%s retry_delay_s=%s",
+				lease.id,
+				error_code,
+				retryable,
+				timeout_kind,
+				lease.attempt,
+				retry_delay,
+			)
 			self.repository.fail(
 				lease,
 				context,
 				error_code=error_code,
 				error=str(exc) or exc.__class__.__name__,
 				retryable=retryable,
+				retry_delay_seconds=retry_delay,
 				parser_report=getattr(exc, "parser_report", None),
 			)
 			raise
@@ -446,3 +463,21 @@ def classify_ingest_error(error: Exception) -> tuple[bool, str]:
 	if isinstance(error, RuntimeError) and "validation mismatch" in str(error):
 		return True, "generation_validation_failed"
 	return True, "ingest_transient"
+
+
+_MINERU_LONG_BACKOFF_CODES = frozenset({"mineru_rate_limited", "mineru_soft_timeout"})
+
+
+def mineru_job_retry_delay_seconds(
+	settings: Settings,
+	*,
+	error_code: str,
+	attempt: int,
+) -> int | None:
+	"""Longer backoff for soft-timeout / 429; None keeps default job delay."""
+	if error_code not in _MINERU_LONG_BACKOFF_CODES:
+		return None
+	base = max(1.0, float(settings.mineru_retry_base_s))
+	cap = max(base, float(settings.mineru_retry_max_s))
+	delay = base * (2 ** max(0, int(attempt) - 1))
+	return int(min(cap, delay))

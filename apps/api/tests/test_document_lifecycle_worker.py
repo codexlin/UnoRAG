@@ -45,6 +45,8 @@ class FakeRepository:
 		self.activated = False
 		self.cleanup_hints: list[tuple[object, bool]] = []
 		self.failure: dict[str, object] | None = None
+		self.requeued_class: str | None = None
+		self.payload_patch: dict[str, object] | None = None
 
 	def load_document_ingest_context(self, _lease: JobLease) -> DocumentIngestContext:
 		return self.context
@@ -119,6 +121,28 @@ class FakeRepository:
 		**values: object,
 	) -> None:
 		self.failure = values
+
+	def requeue_for_queue_class(
+		self,
+		*,
+		job_id: object,
+		lease_token: object,
+		queue_class: str,
+	) -> None:
+		self.requeued_class = queue_class
+		assert job_id is not None
+		assert lease_token is not None
+
+	def patch_job_payload(
+		self,
+		*,
+		job_id: object,
+		lease_token: object,
+		patch: dict[str, object],
+	) -> None:
+		self.payload_patch = patch
+		assert job_id is not None
+		assert lease_token is not None
 
 
 class FakeStorage:
@@ -468,6 +492,15 @@ def test_source_integrity_errors_are_permanent() -> None:
 		),
 		(
 			MinerUClientError(
+				"soft timeout",
+				code="mineru_soft_timeout",
+				timeout_kind="soft",
+			),
+			True,
+			"mineru_soft_timeout",
+		),
+		(
+			MinerUClientError(
 				"bad request",
 				code="mineru_request_rejected",
 				retryable=False,
@@ -538,6 +571,8 @@ def test_real_files_run_through_lifecycle_v2(
 		allowed_principal_ids=(),
 		allowed_group_ids=(),
 	)
+	# Scanned PDFs probe to mineru; start on that slot so process completes.
+	queue_class = "mineru" if settings.mineru_enabled else "local"
 	lease = JobLease(
 		id=job_id,
 		organization_id=organization_id,
@@ -550,7 +585,7 @@ def test_real_files_run_through_lifecycle_v2(
 		max_attempts=5,
 		lease_token=uuid4(),
 		lease_expires_at=datetime.now(timezone.utc),
-		payload={},
+		payload={"queue_class": queue_class},
 	)
 	repository = FakeRepository(context)
 	service = FakeIngestService()
@@ -564,6 +599,7 @@ def test_real_files_run_through_lifecycle_v2(
 
 	result = processor.process(lease, progress)
 
+	assert result is not None
 	assert result.activated is True
 	assert repository.completed is not None
 	report = repository.completed["parser_report"]

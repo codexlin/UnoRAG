@@ -114,13 +114,21 @@ class Settings(BaseSettings):
 	# Phase 2C MinerU：独立服务补充扫描/复杂 PDF（默认关闭，不替换 PyMuPDF）
 	mineru_enabled: bool = False
 	mineru_url: str = ""
+	# 硬超时（httpx）；软超时见 mineru_soft_timeout_s
 	mineru_timeout_s: float = 120.0
+	# 软超时：放弃本地等待并还槽（<=0 关闭，仅硬超时）；须 ≤ mineru_timeout_s
+	mineru_soft_timeout_s: float = 60.0
 	mineru_max_retries: int = 2
+	# job 层对 mineru_rate_limited / mineru_soft_timeout 的指数退避
+	mineru_retry_base_s: float = 30.0
+	mineru_retry_max_s: float = 300.0
 	mineru_parse_path: str = "/file_parse"
 	# auto | pymupdf | mineru
 	mineru_mode: str = "auto"
 	# 单测 / 本地无服务：true 时用 FakeMinerUBackend（勿用于生产）
 	mineru_use_fake: bool = False
+	# Ask generate + ingest embedding/chat 进程内并发闸门（<=0 关闭）
+	llm_max_inflight: int = 4
 	# 可选 LangGraph 工具化 ask；默认短路径 retrieve→generate
 	tool_ask: bool = False
 	retrieve_top_k: int = 6
@@ -228,8 +236,14 @@ class Settings(BaseSettings):
 	def validate_production_security(self) -> "Settings":
 		if self.mineru_timeout_s <= 0:
 			raise ValueError("MINERU_TIMEOUT_S must be positive")
+		if self.mineru_soft_timeout_s > 0 and self.mineru_soft_timeout_s > self.mineru_timeout_s:
+			raise ValueError("MINERU_SOFT_TIMEOUT_S must be <= MINERU_TIMEOUT_S")
 		if self.mineru_max_retries < 0:
 			raise ValueError("MINERU_MAX_RETRIES cannot be negative")
+		if self.mineru_retry_base_s <= 0:
+			raise ValueError("MINERU_RETRY_BASE_S must be positive")
+		if self.mineru_retry_max_s < self.mineru_retry_base_s:
+			raise ValueError("MINERU_RETRY_MAX_S must be >= MINERU_RETRY_BASE_S")
 		if self.app_env.strip().lower() not in {"prod", "production"}:
 			return self
 		if not self.internal_auth_enabled:

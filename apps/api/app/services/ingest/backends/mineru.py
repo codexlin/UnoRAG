@@ -1,6 +1,7 @@
 """MinerU 独立服务客户端：timeout / retry / 显式失败；禁止静默空文档。
 
-环境变量见 Settings：MINERU_ENABLED / MINERU_URL / MINERU_TIMEOUT_S / MINERU_MAX_RETRIES。
+环境变量见 Settings：MINERU_ENABLED / MINERU_URL / MINERU_TIMEOUT_S /
+MINERU_SOFT_TIMEOUT_S / MINERU_MAX_RETRIES。
 本地无服务时用 FakeMinerUBackend 跑单测；指向真实服务时设 MINERU_URL。
 """
 
@@ -22,6 +23,8 @@ from app.services.ingest.ir import DocumentIR
 logger = logging.getLogger(__name__)
 
 DEFAULT_MINERU_VERSION = "2.x"
+# Soft timeout / 429：不在客户端内重试，立刻上抛以便 job 还槽 + 退避。
+_NO_INLINE_RETRY_CODES = frozenset({"mineru_soft_timeout", "mineru_rate_limited"})
 # Fake 默认 OCR 文案：与 leave-scanned 语义对齐（扫描请假制度）
 _FAKE_SCANNED_TEXT = (
 	"病假须于返岗后三个工作日内补交证明材料。"
@@ -40,12 +43,14 @@ class MinerUClientError(RuntimeError, ValueError):
 		retryable: bool = True,
 		status_code: int | None = None,
 		parser_report: dict[str, Any] | None = None,
+		timeout_kind: str | None = None,
 	) -> None:
 		super().__init__(message)
 		self.code = code
 		self.retryable = retryable
 		self.status_code = status_code
 		self.parser_report = parser_report
+		self.timeout_kind = timeout_kind
 
 
 def _post_multipart(
@@ -74,8 +79,9 @@ def _post_multipart(
 		return response.content
 	except httpx.TimeoutException as exc:
 		raise MinerUClientError(
-			f"MinerU timeout after {timeout_s}s",
+			f"MinerU hard timeout after {timeout_s}s",
 			code="mineru_timeout",
+			timeout_kind="hard",
 		) from exc
 	except httpx.HTTPStatusError as exc:
 		status = exc.response.status_code
@@ -97,6 +103,7 @@ def _post_multipart(
 			code=code,
 			retryable=retryable,
 			status_code=status,
+			timeout_kind="hard" if code == "mineru_timeout" else None,
 		) from exc
 	except httpx.RequestError as exc:
 		raise MinerUClientError(
@@ -113,6 +120,7 @@ class MinerUBackend:
 		*,
 		base_url: str,
 		timeout_s: float = 120.0,
+		soft_timeout_s: float = 0.0,
 		max_retries: int = 2,
 		parse_path: str = "/file_parse",
 		version: str = DEFAULT_MINERU_VERSION,
@@ -120,6 +128,7 @@ class MinerUBackend:
 	) -> None:
 		self.base_url = base_url.rstrip("/")
 		self.timeout_s = timeout_s
+		self.soft_timeout_s = float(soft_timeout_s)
 		self.max_retries = max(0, int(max_retries))
 		self.parse_path = parse_path if parse_path.startswith("/") else f"/{parse_path}"
 		self._version = version
@@ -148,6 +157,7 @@ class MinerUBackend:
 				raw = _post_with_cancel(
 					self._post_fn,
 					cancel_check=request.cancel_check,
+					soft_timeout_s=self.soft_timeout_s,
 					url=url,
 					filename=request.filename,
 					content=request.content,
@@ -157,12 +167,19 @@ class MinerUBackend:
 			except MinerUClientError as exc:
 				last_exc = exc
 				logger.warning(
-					"mineru.parse.retry attempt=%s/%s err=%s",
+					"mineru.parse.retry attempt=%s/%s err=%s code=%s "
+					"timeout_kind=%s",
 					attempt,
 					attempts,
 					exc,
+					exc.code,
+					exc.timeout_kind,
 				)
-				if not exc.retryable or attempt >= attempts:
+				if (
+					not exc.retryable
+					or attempt >= attempts
+					or exc.code in _NO_INLINE_RETRY_CODES
+				):
 					raise
 				_sleep_with_cancel(
 					min(0.5 * attempt, 2.0),
@@ -359,6 +376,7 @@ def get_mineru_backend(
 	enabled: bool,
 	base_url: str,
 	timeout_s: float = 120.0,
+	soft_timeout_s: float = 0.0,
 	max_retries: int = 2,
 	parse_path: str = "/file_parse",
 	use_fake: bool = False,
@@ -374,6 +392,7 @@ def get_mineru_backend(
 	return MinerUBackend(
 		base_url=url,
 		timeout_s=timeout_s,
+		soft_timeout_s=soft_timeout_s,
 		max_retries=max_retries,
 		parse_path=parse_path,
 	)
@@ -397,12 +416,17 @@ def _post_with_cancel(
 	post_fn: Callable[..., bytes],
 	*,
 	cancel_check: Callable[[], None] | None,
+	soft_timeout_s: float = 0.0,
 	**kwargs: Any,
 ) -> bytes:
-	if cancel_check is None:
+	"""Run HTTP post; optionally abandon on cancel or soft timeout to free slots."""
+	soft = float(soft_timeout_s or 0.0)
+	use_watcher = cancel_check is not None or soft > 0
+	if not use_watcher:
 		return post_fn(**kwargs)
 
 	result: queue.Queue[tuple[bool, bytes | BaseException]] = queue.Queue(maxsize=1)
+	started = time.monotonic()
 
 	def invoke() -> None:
 		try:
@@ -418,7 +442,22 @@ def _post_with_cancel(
 	thread.start()
 	while thread.is_alive():
 		thread.join(timeout=0.25)
-		cancel_check()
+		if cancel_check is not None:
+			cancel_check()
+		if soft > 0 and (time.monotonic() - started) >= soft:
+			held_ms = (time.monotonic() - started) * 1000.0
+			logger.warning(
+				"mineru.soft_timeout timeout_kind=soft soft_timeout_s=%s "
+				"slot_held_ms=%.1f",
+				soft,
+				held_ms,
+			)
+			raise MinerUClientError(
+				f"MinerU soft timeout after {soft}s (abandoned local wait)",
+				code="mineru_soft_timeout",
+				retryable=True,
+				timeout_kind="soft",
+			)
 	ok, value = result.get()
 	if ok:
 		return value  # type: ignore[return-value]
