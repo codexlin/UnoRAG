@@ -13,9 +13,11 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 
 
 def main() -> None:
-	settings = get_settings()
+	# Prefer explicit migrator DSN so deploy/migrate containers do not need
+	# full production Settings (secrets, redis replay, active-generation gate).
 	dsn = os.getenv("MIGRATOR_DATABASE_URL", "").strip()
 	if not dsn:
+		settings = get_settings()
 		dsn = settings.worker_database_dsn
 	dsn = dsn.replace("postgresql+psycopg://", "postgresql://", 1)
 	if not dsn:
