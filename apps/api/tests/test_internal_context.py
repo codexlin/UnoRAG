@@ -141,6 +141,57 @@ def test_v1_requires_context_when_internal_auth_enabled(monkeypatch) -> None:
 	assert response.json()["detail"] == "internal request context required"
 
 
+@pytest.mark.asyncio
+async def test_signed_context_tenant_workspace_override_defaults() -> None:
+	"""Authenticated path must use session org/workspace, not Settings defaults."""
+	from starlette.requests import Request
+
+	session_tenant = "11111111-1111-4111-8111-111111111111"
+	session_workspace = "22222222-2222-4222-8222-222222222222"
+	settings = Settings(
+		_env_file=None,
+		internal_auth_enabled=True,
+		internal_auth_secret=TEST_SECRET,
+		internal_auth_replay_backend="memory",
+		default_tenant_id="00000000-0000-4000-8000-000000000001",
+		default_workspace_id="00000000-0000-4000-8000-000000000002",
+	)
+	headers = _signed_headers(
+		method="GET",
+		target="/v1/libraries",
+		tenant_id=session_tenant,
+		workspace_id=session_workspace,
+	)
+	scope = {
+		"type": "http",
+		"asgi": {"version": "3.0"},
+		"http_version": "1.1",
+		"method": "GET",
+		"scheme": "http",
+		"path": "/v1/libraries",
+		"raw_path": b"/v1/libraries",
+		"query_string": b"",
+		"headers": [
+			(key.lower().encode(), value.encode())
+			for key, value in headers.items()
+		],
+		"client": ("127.0.0.1", 123),
+		"server": ("test", 80),
+	}
+
+	async def receive() -> dict:
+		return {"type": "http.request", "body": b"", "more_body": False}
+
+	request = Request(scope, receive)
+	from app.security.internal_context import require_internal_context
+
+	context = await require_internal_context(request, settings=settings)
+	assert context.tenant_id == session_tenant
+	assert context.workspace_id == session_workspace
+	assert context.tenant_id != settings.default_tenant_id
+	assert context.workspace_id != settings.default_workspace_id
+
+
 def test_internal_context_is_bound_to_target_and_one_time_use(monkeypatch) -> None:
 	monkeypatch.setenv("INTERNAL_AUTH_ENABLED", "true")
 	monkeypatch.setenv("INTERNAL_AUTH_SECRET", TEST_SECRET)

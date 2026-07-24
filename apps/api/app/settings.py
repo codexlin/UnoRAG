@@ -83,9 +83,11 @@ class Settings(BaseSettings):
 	bm25_top_k: int = 20
 	rrf_k: int = 60
 
-	# SaaS 预埋（Phase 1：默认租户/工作区 stub，完整多租户后置）
-	default_tenant_id: str = "default"
-	default_workspace_id: str = "default"
+	# Local / auth-disabled fallback must match control-plane bootstrap IDs
+	# (apps/web MERIKNOW_ORGANIZATION_ID / MERIKNOW_WORKSPACE_ID). Using the
+	# literal "default" silently mismatches Qdrant points written by outbox ingest.
+	default_tenant_id: str = "00000000-0000-4000-8000-000000000001"
+	default_workspace_id: str = "00000000-0000-4000-8000-000000000002"
 	# Next.js control plane -> FastAPI data plane HMAC boundary.
 	internal_auth_enabled: bool = False
 	internal_auth_secret: str = ""

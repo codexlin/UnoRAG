@@ -70,8 +70,14 @@ export class LocalObjectStorage {
 				await handle.write(value);
 			}
 			if (sizeBytes === 0) throw new Error("empty files are not supported");
-			if (prefix.includes(0)) {
-				throw new Error("markdown file contains binary NUL bytes");
+			// Text uploads only: ZIP-based binaries (docx/pdf) legitimately contain NUL bytes.
+			const basename = path.basename(key).toLowerCase();
+			const textUpload =
+				basename.endsWith(".txt") ||
+				basename.endsWith(".md") ||
+				basename.endsWith(".markdown");
+			if (textUpload && prefix.includes(0)) {
+				throw new Error("text file contains binary NUL bytes");
 			}
 			await handle.sync();
 			await handle.close();

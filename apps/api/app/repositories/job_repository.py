@@ -1456,9 +1456,9 @@ class JobRepository:
                 cursor.execute(
                     """
                     UPDATE app.jobs
-                    SET status = %(status)s,
+                    SET status = %(status)s::varchar(32),
                         next_attempt_at = CASE
-                            WHEN %(status)s = 'retry'
+                            WHEN %(status)s::varchar(32) = 'retry'
                             THEN now() + make_interval(secs => %(delay)s)
                             ELSE NULL
                         END,
@@ -1467,7 +1467,7 @@ class JobRepository:
                         lease_token = NULL,
                         lease_expires_at = NULL,
                         finished_at = CASE
-                            WHEN %(status)s IN ('cancelled', 'failed', 'dead') THEN now()
+                            WHEN %(status)s::varchar(32) IN ('cancelled', 'failed', 'dead') THEN now()
                             ELSE NULL
                         END,
                         updated_at = now()
@@ -1635,9 +1635,9 @@ class JobRepository:
                 cursor.execute(
                     """
                     UPDATE app.jobs
-                    SET status = %(status)s,
+                    SET status = %(status)s::varchar(32),
                         next_attempt_at = CASE
-                            WHEN %(status)s = 'retry'
+                            WHEN %(status)s::varchar(32) = 'retry'
                             THEN now() + make_interval(secs => %(delay)s)
                             ELSE NULL
                         END,
@@ -1646,7 +1646,7 @@ class JobRepository:
                         lease_token = NULL,
                         lease_expires_at = NULL,
                         finished_at = CASE
-                            WHEN %(status)s IN ('cancelled', 'failed', 'dead') THEN now()
+                            WHEN %(status)s::varchar(32) IN ('cancelled', 'failed', 'dead') THEN now()
                             ELSE NULL
                         END,
                         updated_at = now()
@@ -1735,9 +1735,9 @@ class JobRepository:
                     cursor.execute(
                         """
                         UPDATE app.jobs
-                        SET status = %(status)s,
+                        SET status = %(status)s::varchar(32),
                             next_attempt_at = CASE
-                                WHEN %(status)s = 'retry' THEN now()
+                                WHEN %(status)s::varchar(32) = 'retry' THEN now()
                                 ELSE NULL
                             END,
                             error_code = %(error_code)s,
@@ -1745,7 +1745,7 @@ class JobRepository:
                             lease_token = NULL,
                             lease_expires_at = NULL,
                             finished_at = CASE
-                                WHEN %(status)s IN ('cancelled', 'dead') THEN now()
+                                WHEN %(status)s::varchar(32) IN ('cancelled', 'dead') THEN now()
                                 ELSE NULL
                             END,
                             updated_at = now()

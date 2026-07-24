@@ -85,14 +85,14 @@ export async function markFailed(
 	const result = await pool.query(
 		`
 			UPDATE app.outbox_events
-			SET status = $3,
+			SET status = $3::text,
 				available_at = CASE
-					WHEN $3 = 'dead' THEN available_at
-					ELSE now() + ($4 * interval '1 second')
+					WHEN $3::text = 'dead' THEN available_at
+					ELSE now() + ($4::double precision * interval '1 second')
 				END,
 				locked_by = NULL,
 				locked_at = NULL,
-				last_error = $5,
+				last_error = $5::text,
 				updated_at = now()
 			WHERE id = $1 AND status = 'processing' AND locked_by = $2
 		`,
