@@ -111,6 +111,14 @@ class TableIR(BaseModel):
 		]
 		if units:
 			parts.append("单位：" + "，".join(units))
+		if self.summary_rows:
+			summary_bits = [
+				row.raw_text.strip()
+				for row in self.summary_rows
+				if (row.raw_text or "").strip()
+			]
+			if summary_bits:
+				parts.append("汇总：" + "；".join(summary_bits[:5]))
 		if self.footnotes:
 			parts.append("备注：" + "；".join(self.footnotes[:3]))
 		return "；".join(parts)

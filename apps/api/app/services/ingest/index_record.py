@@ -184,6 +184,17 @@ def build_table_summary_records_from_chunks(
 		parts.append(f"共{len(rows)}条数据")
 		footnotes = [str(value) for value in (meta.get("footnotes") or []) if str(value)]
 		table_ir = meta.get("table_ir") if isinstance(meta.get("table_ir"), dict) else {}
+		# 合计/汇总说明写入可检索文本，使「占比/总额」类问法能命中 table_summary
+		summary_texts: list[str] = []
+		for item in meta.get("summary_rows") or []:
+			if isinstance(item, dict):
+				raw = str(item.get("raw_text") or "").strip()
+			else:
+				raw = str(item or "").strip()
+			if raw and raw not in summary_texts:
+				summary_texts.append(raw)
+		if summary_texts:
+			parts.append("汇总：" + "；".join(summary_texts[:5]))
 		if footnotes:
 			parts.append("备注：" + "；".join(footnotes[:3]))
 		body = "；".join(parts)
