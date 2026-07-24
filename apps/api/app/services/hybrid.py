@@ -117,12 +117,17 @@ class Bm25IndexCache:
 
 	def invalidate(self, library_id: str) -> None:
 		with self._lock:
-			removed = self._indexes.pop(library_id, None)
-		if removed is not None:
+			keys = [
+				key
+				for key in self._indexes
+				if key == library_id or f":{library_id}:" in key
+			]
+			removed = [self._indexes.pop(key) for key in keys]
+		if removed:
 			logger.info(
 				"bm25.cache.invalidate library_id=%s chunks=%s",
 				library_id,
-				len(removed.chunks),
+				sum(len(index.chunks) for index in removed),
 			)
 
 	def get_or_build(

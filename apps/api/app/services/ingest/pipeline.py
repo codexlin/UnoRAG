@@ -5,7 +5,6 @@ documents.py / ask router 保持薄封装；业务策略集中在此。
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
@@ -14,7 +13,13 @@ from uuid import uuid4
 from app.services.documents import clean_display_title
 from app.services.ingest.chunk_policy import SemanticEmbedder
 from app.services.ingest.chunker import ChunkerConfig, chunk_document
-from app.services.ingest.ir import Chunk, DocumentIR, ParserReport
+from app.services.ingest.ir import (
+	CancelCheck,
+	Chunk,
+	DocumentIR,
+	ParserReport,
+	ParseProgressCallback,
+)
 from app.services.ingest.router import parse_to_ir, use_v2_pipeline
 from app.settings import Settings
 
@@ -61,6 +66,8 @@ def prepare_ingest(
 	doc_id: str | None = None,
 	content_type: str | None = None,
 	semantic_embedder: SemanticEmbedder | None = None,
+	parser_progress_callback: ParseProgressCallback | None = None,
+	cancel_check: CancelCheck | None = None,
 ) -> PreparedIngest:
 	name = (filename or "untitled.txt").strip() or "untitled.txt"
 	suffix = PurePosixPath(name).suffix.lower()
@@ -129,6 +136,8 @@ def prepare_ingest(
 		doc_id=resolved_doc_id,
 		library_id=library_id,
 		content_type=content_type,
+		progress_callback=parser_progress_callback,
+		cancel_check=cancel_check,
 	)
 	if display_name and display_name.strip():
 		ir.title = clean_display_title(display_name, filename=name)
@@ -180,6 +189,8 @@ def chunks_to_payloads(
 	doc_id: str | None = None,
 	library_id: str | None = None,
 	document_version_id: str | None = None,
+	generation_id: str | None = None,
+	lifecycle_visibility: str | None = None,
 	tenant_id: str = "default",
 	workspace_id: str = "default",
 	include_sections: bool = True,
@@ -190,26 +201,19 @@ def chunks_to_payloads(
 		IndexRecord,
 		build_section_records_from_chunks,
 		build_table_records_from_chunks,
+		build_table_summary_records_from_chunks,
 		chunk_record_id,
+		generation_point_uuid,
 		index_record_to_payload,
 	)
-	from app.services.versioning import derive_document_version_id
 
 	resolved_doc = (doc_id or "").strip() or "unknown"
-	content_hash = next(
-		(str(chunk.content_hash).strip() for chunk in chunks if (chunk.content_hash or "").strip()),
-		"",
-	)
-	if not content_hash:
-		digest = hashlib.sha256()
-		for chunk in chunks:
-			digest.update(chunk.display_text().encode("utf-8"))
-			digest.update(b"\n")
-		content_hash = digest.hexdigest()[:32]
-	version_id = document_version_id or derive_document_version_id(
-		resolved_doc,
-		content_hash=content_hash,
-	)
+	version_id = (document_version_id or "").strip()
+	if not version_id:
+		raise ValueError(
+			"document_version_id is required; pass app.document_versions.id "
+			"from the control plane (derive_document_version_id was removed in L6)"
+		)
 	payloads: list[dict[str, Any]] = []
 	for chunk in chunks:
 		body = chunk.display_text()
@@ -260,6 +264,7 @@ def chunks_to_payloads(
 			"target_chars",
 			"max_chars",
 			"table_rows_per_record",
+			"table_tokens_per_record",
 			"semantic_distance_threshold",
 			"semantic_unit_count",
 			"semantic_fallback",
@@ -291,6 +296,14 @@ def chunks_to_payloads(
 			),
 			40,
 		)
+		table_tokens_per_record = next(
+			(
+				int(chunk.meta["table_tokens_per_record"])
+				for chunk in chunks
+				if chunk.meta.get("table_tokens_per_record") is not None
+			),
+			1400,
+		)
 		tables = build_table_records_from_chunks(
 			chunks,
 			doc_id=resolved_doc,
@@ -300,9 +313,29 @@ def chunks_to_payloads(
 			workspace_id=workspace_id,
 			filename=filename,
 			max_rows=table_rows_per_record,
+			max_tokens=table_tokens_per_record,
 		)
 		for record in tables:
 			payloads.append(index_record_to_payload(record))
+		table_summaries = build_table_summary_records_from_chunks(
+			chunks,
+			doc_id=resolved_doc,
+			library_id=library_id or "",
+			document_version_id=version_id,
+			tenant_id=tenant_id,
+			workspace_id=workspace_id,
+			filename=filename,
+		)
+		for record in table_summaries:
+			payloads.append(index_record_to_payload(record))
+	if generation_id:
+		for payload in payloads:
+			record_id = str(payload.get("record_id") or "").strip()
+			if not record_id:
+				raise ValueError("generation payload requires record_id")
+			payload["generation_id"] = generation_id
+			payload["lifecycle_visibility"] = lifecycle_visibility or "staging"
+			payload["_point_id"] = generation_point_uuid(generation_id, record_id)
 	return payloads
 
 def _guess_content_type(suffix: str) -> str:
@@ -312,4 +345,6 @@ def _guess_content_type(suffix: str) -> str:
 		".markdown": "text/markdown",
 		".pdf": "application/pdf",
 		".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		".csv": "text/csv",
+		".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 	}.get(suffix, "application/octet-stream")

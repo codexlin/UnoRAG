@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""全量 reindex：对所有库文档调用 POST /v1/documents/{id}/reindex。
+"""DEPRECATED (L6): FastAPI /v1/documents/{id}/reindex returns 410 by default.
 
-用法（API 已启动）：
+Prefer:
+  1) apps/web scripts/backfill-lifecycle-versions.mjs --apply
+  2) apps/api scripts/backfill_qdrant_lifecycle_payload.py --apply
+  3) Control-plane POST /api/libraries/{libraryId}/documents/{docId}/reindex
+     (or a future enqueue-all helper)
 
-  python scripts/reindex_all.py
+This script only works when LEGACY_INGEST_WRITES_ENABLED=true.
+
+用法（API 已启动且 legacy writes 开启）：
+
+  LEGACY_INGEST_WRITES_ENABLED=true python scripts/reindex_all.py
   python scripts/reindex_all.py --base-url http://127.0.0.1:8000
 
 默认 INGEST_ASYNC=true 时接口返回 202/processing；本脚本会轮询

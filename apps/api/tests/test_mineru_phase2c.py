@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 
+import httpx
 import pytest
 
 from app.services.ingest.adapters.mineru_ir import mineru_json_to_ir, parse_table_html
@@ -87,6 +90,41 @@ def test_official_mineru_http_contract(monkeypatch: pytest.MonkeyPatch) -> None:
 	assert captured["data"]["response_format_zip"] == "false"
 
 
+@pytest.mark.parametrize(
+	("status", "code", "retryable"),
+	[
+		(400, "mineru_request_rejected", False),
+		(429, "mineru_rate_limited", True),
+		(503, "mineru_service_error", True),
+	],
+)
+def test_mineru_http_error_taxonomy(
+	monkeypatch: pytest.MonkeyPatch,
+	status: int,
+	code: str,
+	retryable: bool,
+) -> None:
+	def fake_post(url: str, **_kwargs) -> httpx.Response:
+		return httpx.Response(
+			status,
+			text="upstream error",
+			request=httpx.Request("POST", url),
+		)
+
+	monkeypatch.setattr("app.services.ingest.backends.mineru.httpx.post", fake_post)
+	with pytest.raises(MinerUClientError) as exc_info:
+		_post_multipart(
+			"http://mineru:8000/file_parse",
+			filename="sample.pdf",
+			content=b"%PDF",
+			timeout_s=30,
+		)
+
+	assert exc_info.value.code == code
+	assert exc_info.value.retryable is retryable
+	assert exc_info.value.status_code == status
+
+
 def test_backend_unwraps_official_results_by_filename() -> None:
 	def post_fn(*_args, **_kwargs) -> bytes:
 		content_list = json.dumps(
@@ -167,7 +205,12 @@ def test_mineru_json_to_ir_preserves_structure() -> None:
 
 	chunks = chunk_document(ir)
 	assert chunks
-	payloads = chunks_to_payloads(chunks, doc_id=ir.id, filename=ir.filename)
+	payloads = chunks_to_payloads(
+		chunks,
+		doc_id=ir.id,
+		filename=ir.filename,
+		document_version_id="66666666-6666-6666-6666-666666666666",
+	)
 	table_records = [p for p in payloads if p.get("record_type") == "table"]
 	assert table_records
 	assert any("120000" in (p.get("text") or "") for p in table_records)
@@ -331,6 +374,73 @@ def test_fake_mineru_default_merges_explicit_continuation() -> None:
 	assert len(tables[0].table_json["rows"]) == 3
 
 
+def test_mineru_reports_page_progress_and_checks_cancellation() -> None:
+	progress: list[tuple[str, int | None, int | None]] = []
+	cancel_checks = 0
+
+	def check_cancel() -> None:
+		nonlocal cancel_checks
+		cancel_checks += 1
+
+	ir = FakeMinerUBackend().parse(
+		ParseRequest(
+			content=b"%PDF",
+			filename="complex.pdf",
+			title="complex",
+			progress_callback=lambda phase, current, total: progress.append(
+				(phase, current, total)
+			),
+			cancel_check=check_cancel,
+		)
+	)
+
+	assert ir.nodes
+	assert ("mineru_page", 1, 2) in progress
+	assert ("mineru_page", 2, 2) in progress
+	assert cancel_checks >= len(ir.nodes)
+
+
+def test_mineru_blocking_request_is_cooperatively_cancelled() -> None:
+	started = threading.Event()
+	release = threading.Event()
+	checks = 0
+
+	class Cancelled(RuntimeError):
+		pass
+
+	def blocking_post(**_kwargs) -> bytes:
+		started.set()
+		release.wait(timeout=5)
+		return b'{"content_list":[{"type":"text","text":"late","page_idx":0}]}'
+
+	def check_cancel() -> None:
+		nonlocal checks
+		checks += 1
+		if started.is_set() and checks >= 2:
+			raise Cancelled("cancel requested")
+
+	backend = MinerUBackend(
+		base_url="http://mineru:8000",
+		max_retries=0,
+		post_fn=blocking_post,
+	)
+	t0 = time.monotonic()
+	try:
+		with pytest.raises(Cancelled):
+			backend.parse(
+				ParseRequest(
+					content=b"%PDF",
+					filename="large.pdf",
+					title="large",
+					cancel_check=check_cancel,
+				)
+			)
+	finally:
+		release.set()
+
+	assert time.monotonic() - t0 < 1.5
+
+
 def test_route_digital_pdf_stays_pymupdf() -> None:
 	digital = TESTDATA / "pdf" / "leave-digital.pdf"
 	if not digital.is_file():
@@ -342,18 +452,24 @@ def test_route_digital_pdf_stays_pymupdf() -> None:
 		ask_mode="stub",
 		metadata_backend="json",
 	)
+	progress: list[tuple[str, int | None, int | None]] = []
 	ir = parse_pdf_routed(
 		content=digital.read_bytes(),
 		filename="leave-digital.pdf",
 		title="数字请假",
 		settings=settings,
 		mineru_backend=FakeMinerUBackend(),
+		progress_callback=lambda phase, current, total: progress.append(
+			(phase, current, total)
+		),
 	)
 	assert ir.nodes
 	assert ir.parser_report.backend == "pymupdf"
 	assert ir.parser_report.mode == "text"
 	assert ir.parser_report.metrics.get("route") == "pymupdf"
 	assert any("人力资源前台" in (n.text or "") for n in ir.nodes)
+	assert progress
+	assert all(item[0] == "pymupdf_page" for item in progress)
 
 
 def test_route_scanned_uses_mineru_fake() -> None:
@@ -470,7 +586,7 @@ def test_mineru_degrade_keeps_pymupdf_partial() -> None:
 	# auto + 扫描件 + fail → 显式失败（无 pymupdf 节点）
 	scanned = TESTDATA / "pdf" / "leave-scanned.pdf"
 	if scanned.is_file():
-		with pytest.raises(ValueError, match="MinerU unavailable|FakeMinerU"):
+		with pytest.raises(MinerUClientError) as exc_info:
 			parse_pdf_routed(
 				content=scanned.read_bytes(),
 				filename="leave-scanned.pdf",
@@ -478,6 +594,9 @@ def test_mineru_degrade_keeps_pymupdf_partial() -> None:
 				settings=settings,
 				mineru_backend=failing,
 			)
+		assert exc_info.value.retryable is True
+		assert exc_info.value.parser_report is not None
+		assert exc_info.value.parser_report["metrics"]["route"] == "mineru_failed"
 
 	assert ir_text.nodes  # 数字页路径不回归
 

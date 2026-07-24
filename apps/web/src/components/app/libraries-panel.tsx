@@ -1,6 +1,7 @@
 "use client";
 
 import {
+	CircleStop,
 	Download,
 	Eye,
 	FileUp,
@@ -16,6 +17,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { useIngestJobs } from "@/components/app/ingest-jobs-provider";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -62,20 +64,22 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { useHealth } from "@/hooks/use-health";
 import { useLibraries } from "@/hooks/use-libraries";
-import { useIngestJobs } from "@/components/app/ingest-jobs-provider";
 import {
 	type ApiDocument,
+	type ApiDocumentVersion,
 	type ApiLibrary,
+	cancelJob,
 	createLibrary,
 	deleteDocument,
 	deleteLibrary,
 	downloadDocument,
 	fetchDocuments,
+	fetchDocumentVersions,
 	isAbortError,
 	reindexDocument,
 	replaceDocument,
+	retryJob,
 	updateLibrary,
 	uploadDocument,
 } from "@/lib/api";
@@ -87,7 +91,14 @@ const statusLabel = {
 	indexing: "索引中",
 	empty: "空库",
 	processing: "处理中",
+	degraded: "降级可用",
+	cancelled: "已取消",
 	failed: "失败",
+	deleting: "删除中",
+	deleted: "已删除",
+	active: "活跃",
+	superseded: "已替代",
+	pending: "待处理",
 } as const;
 
 function DocStatusBadge({ status }: { status: string }) {
@@ -100,9 +111,15 @@ function DocStatusBadge({ status }: { status: string }) {
 					"border-survey/35 bg-accent text-accent-foreground",
 				status === "failed" &&
 					"border-destructive/30 bg-destructive/10 text-destructive",
+				status === "degraded" &&
+					"border-survey/35 bg-accent text-accent-foreground",
+				status === "cancelled" &&
+					"border-border bg-muted text-muted-foreground",
 				status === "indexing" &&
 					"border-survey/35 bg-accent text-accent-foreground",
 				status === "empty" && "border-border bg-muted text-muted-foreground",
+				status === "deleting" &&
+					"border-destructive/30 bg-destructive/10 text-destructive",
 			)}
 		>
 			{statusLabel[status as keyof typeof statusLabel] ?? status}
@@ -117,8 +134,12 @@ function LibStatusDot({ status }: { status: string }) {
 				"size-2 shrink-0 rounded-full",
 				status === "ready" && "bg-cite",
 				status === "indexing" && "bg-survey",
+				status === "degraded" && "bg-survey",
+				status === "failed" && "bg-destructive",
 				status === "empty" && "bg-muted-foreground/40",
-				!["ready", "indexing", "empty"].includes(status) &&
+				!["ready", "indexing", "degraded", "failed", "empty"].includes(
+					status,
+				) &&
 					"bg-muted-foreground/40",
 			)}
 			aria-hidden
@@ -133,7 +154,6 @@ export function LibrariesPanel() {
 		loading,
 		refresh: refreshLibraries,
 	} = useLibraries();
-	const { apiReady } = useHealth();
 	const { tick: ingestTick, trackProcessing } = useIngestJobs();
 	const [selectedId, setSelectedId] = useState<string>("");
 	const [documents, setDocuments] = useState<ApiDocument[]>([]);
@@ -159,6 +179,8 @@ export function LibrariesPanel() {
 	const [deleteLibraryTarget, setDeleteLibraryTarget] =
 		useState<ApiLibrary | null>(null);
 	const [deletingLibrary, setDeletingLibrary] = useState(false);
+	const [versionRows, setVersionRows] = useState<ApiDocumentVersion[]>([]);
+	const [versionsLoading, setVersionsLoading] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const replaceInputRef = useRef<HTMLInputElement>(null);
 
@@ -234,9 +256,37 @@ export function LibrariesPanel() {
 	useEffect(() => {
 		if (!selectedId || ingestTick === 0) return;
 		const selected = libraries.find((item) => item.id === selectedId);
-		if (!selected || selected.status !== "indexing") return;
+		if (selected?.status !== "indexing") return;
 		void loadDocuments(selectedId);
 	}, [ingestTick, selectedId, libraries, loadDocuments]);
+
+	useEffect(() => {
+		if (!detailDocId || !selectedId) {
+			setVersionRows([]);
+			return;
+		}
+		const controller = new AbortController();
+		setVersionsLoading(true);
+		void fetchDocumentVersions({
+			libraryId: selectedId,
+			docId: detailDocId,
+			signal: controller.signal,
+		})
+			.then((payload) => {
+				if (!controller.signal.aborted) {
+					setVersionRows(payload.versions);
+				}
+			})
+			.catch((err) => {
+				if (!isAbortError(err) && !controller.signal.aborted) {
+					setVersionRows([]);
+				}
+			})
+			.finally(() => {
+				if (!controller.signal.aborted) setVersionsLoading(false);
+			});
+		return () => controller.abort();
+	}, [detailDocId, selectedId, ingestTick]);
 
 	async function loadLibraries() {
 		setError(null);
@@ -395,8 +445,12 @@ export function LibrariesPanel() {
 							return libraries[idx + 1]?.id ?? libraries[idx - 1]?.id ?? "";
 						})()
 					: selectedId;
-			await deleteLibrary(target.id);
-			toast.success(`已删除知识库「${target.name}」`);
+			const result = await deleteLibrary(target.id);
+			toast.success(
+				result.accepted
+					? `已排队删除知识库「${target.name}」（${result.deleted_documents} 篇文档）`
+					: `已删除知识库「${target.name}」`,
+			);
 			setDeleteLibraryTarget(null);
 			setLibraryDialogOpen(false);
 			setDetailDocId(null);
@@ -428,7 +482,13 @@ export function LibrariesPanel() {
 		setBusyDocId(doc.id);
 		setError(null);
 		try {
-			const result = await reindexDocument(doc.id);
+			if (!selectedId) {
+				throw new Error("请先选择知识库");
+			}
+			const result = await reindexDocument({
+				libraryId: selectedId,
+				docId: doc.id,
+			});
 			if (result.accepted || result.status === "processing") {
 				trackProcessing([{ id: result.doc_id, name: result.title }]);
 				toast.success(`已提交重索引「${result.title}」`);
@@ -444,6 +504,45 @@ export function LibrariesPanel() {
 			setError(message);
 			toast.error(message);
 			if (selectedId) await loadDocuments(selectedId);
+		} finally {
+			setBusyDocId(null);
+		}
+	}
+
+	async function onCancelJob(doc: ApiDocument) {
+		if (!doc.job_id) return;
+		setBusyDocId(doc.id);
+		setError(null);
+		try {
+			const result = await cancelJob(doc.job_id);
+			toast.success(
+				result.status === "cancelling" ? "已请求取消任务" : "任务已取消",
+			);
+			await loadLibraries();
+			if (selectedId) await loadDocuments(selectedId);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "取消任务失败";
+			setError(message);
+			toast.error(message);
+		} finally {
+			setBusyDocId(null);
+		}
+	}
+
+	async function onRetryJob(doc: ApiDocument) {
+		if (!doc.job_id) return;
+		setBusyDocId(doc.id);
+		setError(null);
+		try {
+			const result = await retryJob(doc.job_id);
+			trackProcessing([{ id: result.document_id, name: doc.name }]);
+			toast.success(`已重新提交「${doc.name}」`);
+			await loadLibraries();
+			if (selectedId) await loadDocuments(selectedId);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "重试任务失败";
+			setError(message);
+			toast.error(message);
 		} finally {
 			setBusyDocId(null);
 		}
@@ -471,13 +570,13 @@ export function LibrariesPanel() {
 	}
 
 	async function onConfirmDelete() {
-		if (!deleteDocId) return;
+		if (!deleteDocId || !selectedId) return;
 		const id = deleteDocId;
 		setBusyDocId(id);
 		setError(null);
 		try {
-			await deleteDocument(id);
-			toast.success("文档已删除（向量与元数据已清除）");
+			await deleteDocument({ libraryId: selectedId, docId: id });
+			toast.success("已排队删除文档（后台清理向量、对象与元数据）");
 			if (detailDocId === id) setDetailDocId(null);
 			setDeleteDocId(null);
 			await loadLibraries();
@@ -515,14 +614,18 @@ export function LibrariesPanel() {
 	}
 
 	async function onConfirmReplace() {
-		if (!replaceDoc || !replaceFile) return;
+		if (!replaceDoc || !replaceFile || !selectedId) return;
 		const doc = replaceDoc;
 		const file = replaceFile;
 		setReplacing(true);
 		setBusyDocId(doc.id);
 		setError(null);
 		try {
-			const result = await replaceDocument({ docId: doc.id, file });
+			const result = await replaceDocument({
+				libraryId: selectedId,
+				docId: doc.id,
+				file,
+			});
 			if (result.accepted || result.status === "processing") {
 				trackProcessing([{ id: result.doc_id, name: result.title }]);
 				toast.success(`已提交替换「${result.title}」，正在重新索引`);
@@ -545,7 +648,7 @@ export function LibrariesPanel() {
 		}
 	}
 
-	const uploadDisabled = uploading || !selectedId || !apiReady;
+	const uploadDisabled = uploading || !selectedId;
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -797,6 +900,14 @@ export function LibrariesPanel() {
 													</TableCell>
 													<TableCell>
 														<DocStatusBadge status={doc.status} />
+														{doc.job_stage ? (
+															<span className="text-meta mt-1 block font-mono text-muted-foreground">
+																{doc.job_stage}
+																{doc.job_progress != null
+																	? ` · ${doc.job_progress}%`
+																	: ""}
+															</span>
+														) : null}
 													</TableCell>
 													<TableCell className="text-right font-mono text-meta text-muted-foreground">
 														{formatFileSize(doc.size_bytes)}
@@ -848,6 +959,32 @@ export function LibrariesPanel() {
 																	<RotateCcw />
 																	重索引
 																</DropdownMenuItem>
+																{doc.job_id &&
+																["queued", "running", "retry", "cancelling"].includes(
+																	doc.job_status ?? "",
+																) ? (
+																	<DropdownMenuItem
+																		disabled={
+																			doc.job_status === "cancelling" || busy
+																		}
+																		onClick={() => void onCancelJob(doc)}
+																	>
+																		<CircleStop />
+																		取消任务
+																	</DropdownMenuItem>
+																) : null}
+																{doc.job_id &&
+																["cancelled", "failed", "dead"].includes(
+																	doc.job_status ?? "",
+																) ? (
+																	<DropdownMenuItem
+																		disabled={!doc.has_file || busy}
+																		onClick={() => void onRetryJob(doc)}
+																	>
+																		<RotateCcw />
+																		重试任务
+																	</DropdownMenuItem>
+																) : null}
 																<DropdownMenuItem
 																	disabled={!doc.has_file || busy}
 																	onClick={() => void onDownload(doc)}
@@ -965,6 +1102,43 @@ export function LibrariesPanel() {
 										</p>
 									</div>
 								) : null}
+
+								<div className="rounded-md border border-border/80 bg-muted/20 px-3 py-2">
+									<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
+										版本历史
+									</p>
+									{versionsLoading ? (
+										<p className="text-ui mt-2 text-muted-foreground">加载中…</p>
+									) : versionRows.length === 0 ? (
+										<p className="text-ui mt-2 text-muted-foreground">暂无版本</p>
+									) : (
+										<ul className="mt-2 space-y-2">
+											{versionRows.map((version) => (
+												<li
+													key={version.id}
+													className="flex items-start justify-between gap-2 border-t border-border/50 pt-2 first:border-t-0 first:pt-0"
+												>
+													<div className="min-w-0">
+														<p className="font-mono text-meta">
+															v{version.version}
+															{version.is_active ? " · active" : ""}
+															{version.is_desired && !version.is_active
+																? " · desired"
+																: ""}
+														</p>
+														<p className="truncate text-meta text-muted-foreground">
+															{version.generation_id.slice(0, 8)}…
+															{version.chunk_count != null
+																? ` · ${version.chunk_count} chunks`
+																: ""}
+														</p>
+													</div>
+													<DocStatusBadge status={version.status} />
+												</li>
+											))}
+										</ul>
+									)}
+								</div>
 
 								{detailDoc.parser_report ? (
 									<div className="rounded-md border border-border/80 bg-muted/30 px-3 py-2">

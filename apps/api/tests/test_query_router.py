@@ -9,7 +9,6 @@ from app.services.ingest.index_record import build_section_records_from_chunks, 
 from app.services.ingest.ir import Chunk, SplitStrategy
 from app.services.query_router import classify_query
 from app.services.retrieval_plan import build_retrieval_plan
-from app.services.versioning import derive_document_version_id
 from tests.conftest import create_library
 
 client = TestClient(app)
@@ -19,6 +18,7 @@ def test_classify_query_rules() -> None:
 	assert classify_query("病假几天内补交？")[0] == "fact"
 	assert classify_query("总结本库的报销规则")[0] == "summary"
 	assert classify_query("表格里供应商报价")[0] == "table"
+	assert classify_query("中标金额最高的项目是什么，金额是多少？")[0] == "table"
 	assert classify_query("A 和 B 区别？")[0] == "compare"
 	assert classify_query("？")[0] == "ambiguous"
 	assert classify_query("第3章讲什么？")[0] == "section_lookup"
@@ -39,6 +39,52 @@ def test_classify_query_rules() -> None:
 	)
 
 
+def test_classify_table_detail_not_hijacked_by_summary_keyword() -> None:
+	"""含「汇总说明」的明细聚合必须走 table，不能 summary_keyword。"""
+	q = (
+		"忽略文末汇总说明，按表格75条明细逐行比较，"
+		"中标金额最大和最小的项目分别是什么？金额各是多少？"
+	)
+	qt, reason = classify_query(q)
+	assert qt == "table"
+	assert reason == "table_detail_override"
+	plan = build_retrieval_plan(
+		query_type=qt,
+		route_reason=reason,
+		library_id="lib-1",
+		top_k=6,
+		hybrid_enabled=False,
+		rerank_enabled=False,
+		question=q,
+	)
+	assert plan["execute_path"] == "table"
+	assert plan["path"] == "precise"
+	assert plan["precise_kind"] == "table"
+	assert plan["record_type"] == "table"
+
+
+def test_classify_table_summary_lookup_routes_to_table() -> None:
+	"""文末汇总说明事实问法走 table（召回 table_summary），非 section 总结。"""
+	q1 = "文末汇总说明声称共收录多少个采购项目？中标总额合计是多少？"
+	q2 = "文末汇总说明中，公开招标方式的项目占比是多少？排名第二的采购方式是什么？"
+	for q in (q1, q2):
+		qt, reason = classify_query(q)
+		assert qt == "table", q
+		assert reason == "table_summary_lookup", q
+		plan = build_retrieval_plan(
+			query_type=qt,
+			route_reason=reason,
+			library_id="lib-1",
+			top_k=6,
+			hybrid_enabled=False,
+			rerank_enabled=False,
+			question=q,
+		)
+		assert plan["execute_path"] == "table"
+		assert plan["path"] == "precise"
+		assert plan["precise_kind"] == "table"
+
+
 def test_retrieval_plan_phase2a_record_types() -> None:
 	fact = build_retrieval_plan(
 		query_type="fact",
@@ -49,8 +95,10 @@ def test_retrieval_plan_phase2a_record_types() -> None:
 		rerank_enabled=False,
 	)
 	assert fact["execute_path"] == "short"
-	assert fact["record_type"] == "chunk"
-	assert fact["filters"]["record_type"] == "chunk"
+	assert fact["path"] == "fast"
+	assert fact["precise_kind"] is None
+	assert fact["record_type"] == "chunk+table_summary"
+	assert "record_type" not in fact["filters"]
 
 	summary = build_retrieval_plan(
 		query_type="summary",
@@ -61,6 +109,7 @@ def test_retrieval_plan_phase2a_record_types() -> None:
 		rerank_enabled=True,
 	)
 	assert summary["execute_path"] == "section_short"
+	assert summary["path"] == "fast"
 	assert summary["record_type"] == "section"
 	assert summary["filters"]["record_type"] == "section"
 	assert summary["top_k"] >= 8
@@ -75,17 +124,21 @@ def test_retrieval_plan_phase2a_record_types() -> None:
 		rerank_enabled=False,
 	)
 	assert section["execute_path"] == "section_short"
+	assert section["path"] == "fast"
 	assert section["record_type"] == "section"
 
 	table = build_retrieval_plan(
 		query_type="table",
-		route_reason="table_keyword",
+		route_reason="table_shortcircuit",
 		library_id="lib-1",
 		top_k=6,
 		hybrid_enabled=False,
 		rerank_enabled=False,
 	)
 	assert table["execute_path"] == "table"
+	assert table["path"] == "precise"
+	assert table["precise_kind"] == "table"
+	assert table["route"] == "precise_table"
 	assert table["record_type"] == "table"
 	assert table["filters"]["record_type"] == "table"
 
@@ -98,6 +151,7 @@ def test_retrieval_plan_phase2a_record_types() -> None:
 		rerank_enabled=False,
 	)
 	assert amb["execute_path"] == "clarify"
+	assert amb["path"] == "clarify"
 
 
 def test_section_records_aggregate_and_deterministic_ids() -> None:
@@ -263,18 +317,39 @@ def test_document_version_changes_with_content() -> None:
 			content_hash="hash_bbb_222222",
 		),
 	]
-	pa = chunks_to_payloads(a, doc_id="doc-a", include_sections=False)
-	pb = chunks_to_payloads(b, doc_id="doc-a", include_sections=False)
-	assert pa[0]["document_version_id"] != pb[0]["document_version_id"]
-	assert pa[0]["document_version_id"].startswith("doc-a:")
-	assert pb[0]["document_version_id"].startswith("doc-a:")
-
-
-def test_document_version_stub() -> None:
-	assert derive_document_version_id("doc-1") == "doc-1:v1"
-	assert derive_document_version_id("doc-1", content_hash="abcdef1234567890").endswith(
-		"abcdef123456"
+	pa = chunks_to_payloads(
+		a,
+		doc_id="doc-a",
+		document_version_id="11111111-1111-1111-1111-111111111111",
+		include_sections=False,
 	)
+	pb = chunks_to_payloads(
+		b,
+		doc_id="doc-a",
+		document_version_id="22222222-2222-2222-2222-222222222222",
+		include_sections=False,
+	)
+	assert pa[0]["document_version_id"] != pb[0]["document_version_id"]
+	assert pa[0]["document_version_id"] == "11111111-1111-1111-1111-111111111111"
+
+
+def test_chunks_to_payloads_requires_document_version_id() -> None:
+	import pytest
+
+	from app.services.ingest.ir import Chunk, SplitStrategy
+	from app.services.ingest.pipeline import chunks_to_payloads
+
+	chunks = [
+		Chunk(
+			chunk_index=0,
+			text="a",
+			body="body",
+			section_path="第1章",
+			split_strategy=SplitStrategy.HEADING,
+		)
+	]
+	with pytest.raises(ValueError, match="document_version_id is required"):
+		chunks_to_payloads(chunks, doc_id="doc-1", include_sections=False)
 
 
 def test_ask_writes_query_type_and_judge_to_archive() -> None:
@@ -289,7 +364,8 @@ def test_ask_writes_query_type_and_judge_to_archive() -> None:
 	assert body["retrieval_debug"]["query_type"] == "fact"
 	assert body["retrieval_debug"]["judgement"]["reason"] == "ok"
 	assert body["retrieval_debug"]["retrieval_plan"]["execute_path"] == "short"
-	assert body["retrieval_debug"]["retrieval_plan"]["record_type"] == "chunk"
+	assert body["retrieval_debug"]["retrieval_plan"]["path"] == "fast"
+	assert body["retrieval_debug"]["retrieval_plan"]["record_type"] == "chunk+table_summary"
 
 	archive = client.get("/v1/archive", params={"library_id": lib_id, "limit": 5})
 	assert archive.status_code == 200

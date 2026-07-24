@@ -326,3 +326,41 @@ def test_ask_persist_failure_is_visible(monkeypatch: pytest.MonkeyPatch) -> None
 	assert "三个工作日" in payload["answer"]
 	assert payload["persisted"] is False
 	assert payload["persist_error"] == "disk full"
+
+
+def test_iter_ask_events_passes_load_table_groups_fn(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""Stream path rebuilds the graph; must keep the same table-group loader as ask()."""
+	from app.graph import ask_graph as ask_graph_mod
+
+	settings = Settings(ask_mode="stub", session_memory_enabled=False)
+
+	class FakeRetrieval:
+		last_debug: dict = {}
+
+		def load_table_groups(self, **_kwargs):
+			return []
+
+	captured: dict[str, object] = {}
+	real_build = ask_graph_mod.build_ask_graph
+
+	def capture_build(**kwargs):
+		captured["load_table_groups_fn"] = kwargs.get("load_table_groups_fn")
+		return real_build(**kwargs)
+
+	monkeypatch.setattr(ask_graph_mod, "build_ask_graph", capture_build)
+
+	service = AskGraphService(
+		settings,
+		retrieve_fn=lambda *_a, **_k: [],
+		generate_fn=stub_generate,
+		retrieval_service=FakeRetrieval(),
+	)
+	assert service._load_table_groups_fn is not None
+
+	captured.clear()
+	events = list(service.iter_ask_events(question="表格题？", library_id="lib-stream-loader"))
+	assert events
+	assert captured.get("load_table_groups_fn") is not None
+	assert captured["load_table_groups_fn"] is service._load_table_groups_fn

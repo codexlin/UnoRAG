@@ -30,9 +30,12 @@ function ScoreBar({
 		<div className="min-w-0 flex-1 space-y-1">
 			<div className="text-meta flex items-center justify-between gap-2 font-mono text-muted-foreground">
 				<span>{label}</span>
-				<span className="text-foreground/80">{formatScore(value)}</span>
+				<span className="tabular-nums text-foreground/85">
+					{formatScore(value)}
+				</span>
 			</div>
-			<div className="h-1.5 overflow-hidden rounded-full bg-muted">
+			{/* Track needs stronger contrast than bg-muted on light surfaces */}
+			<div className="h-2 overflow-hidden rounded-full border border-border/80 bg-foreground/[0.08] dark:border-border/50 dark:bg-foreground/15">
 				<div
 					className={cn(
 						"h-full rounded-full transition-[width] duration-300",

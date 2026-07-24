@@ -7,16 +7,17 @@ from typing import Any
 
 from app.services.ingest.adapters.ocr import get_ocr_adapter
 from app.services.ingest.adapters.vlm import get_vlm_adapter
-from app.services.ingest.ir import DocumentIR
+from app.services.ingest.ir import CancelCheck, DocumentIR, ParseProgressCallback
 from app.services.ingest.parsers.docx import parse_docx
 from app.services.ingest.parsers.md import parse_markdown
 from app.services.ingest.parsers.pdf import PdfParseOptions
 from app.services.ingest.parsers.pdf_route import parse_pdf_routed
 from app.services.ingest.parsers.txt import parse_txt
+from app.services.ingest.parsers.tabular import parse_csv, parse_xlsx
 from app.settings import Settings
 
 # v2 管线已接通的格式（随阶段扩展）
-V2_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf", ".docx"}
+V2_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf", ".docx", ".csv", ".xlsx"}
 SUPPORTED_EXTENSIONS = V2_EXTENSIONS | {".txt", ".md", ".markdown", ".pdf"}
 
 
@@ -30,15 +31,22 @@ def detect_format(filename: str) -> str:
 		return "pdf"
 	if suffix == ".docx":
 		return "docx"
+	if suffix == ".csv":
+		return "csv"
+	if suffix == ".xlsx":
+		return "xlsx"
 	return suffix.lstrip(".") or "unknown"
 
 
 def use_v2_pipeline(settings: Settings, filename: str) -> bool:
 	"""INGEST_PIPELINE=v2 时启用 IR 路径；legacy 强制旧抽字+字窗。"""
+	suffix = PurePosixPath(filename or "").suffix.lower()
+	# Structured tabular formats have no lossy legacy parser.
+	if suffix in {".csv", ".xlsx"}:
+		return True
 	mode = (settings.ingest_pipeline or "v2").strip().lower()
 	if mode != "v2":
 		return False
-	suffix = PurePosixPath(filename or "").suffix.lower()
 	return suffix in V2_EXTENSIONS
 
 
@@ -51,12 +59,23 @@ def parse_to_ir(
 	doc_id: str | None = None,
 	library_id: str = "",
 	content_type: str | None = None,
+	progress_callback: ParseProgressCallback | None = None,
+	cancel_check: CancelCheck | None = None,
 ) -> DocumentIR:
+	if cancel_check is not None:
+		cancel_check()
 	fmt = detect_format(filename)
 	suffix = PurePosixPath(filename or "").suffix.lower()
-	if suffix not in SUPPORTED_EXTENSIONS and fmt not in {"txt", "md", "pdf", "docx"}:
+	if suffix not in SUPPORTED_EXTENSIONS and fmt not in {
+		"txt",
+		"md",
+		"pdf",
+		"docx",
+		"csv",
+		"xlsx",
+	}:
 		raise ValueError(
-			f"unsupported file type: {suffix or '(none)'}; use txt/md/pdf/docx"
+			f"unsupported file type: {suffix or '(none)'}; use txt/md/pdf/docx/csv/xlsx"
 		)
 
 	if fmt == "txt":
@@ -77,6 +96,22 @@ def parse_to_ir(
 		)
 	if fmt == "docx":
 		return parse_docx(
+			content=content,
+			filename=filename,
+			title=title,
+			doc_id=doc_id,
+			library_id=library_id,
+		)
+	if fmt == "csv":
+		return parse_csv(
+			content=content,
+			filename=filename,
+			title=title,
+			doc_id=doc_id,
+			library_id=library_id,
+		)
+	if fmt == "xlsx":
+		return parse_xlsx(
 			content=content,
 			filename=filename,
 			title=title,
@@ -107,6 +142,8 @@ def parse_to_ir(
 			doc_id=doc_id,
 			library_id=library_id,
 			options=options,
+			progress_callback=progress_callback,
+			cancel_check=cancel_check,
 		)
 
 	raise ValueError(f"unsupported format for v2 ingest: {fmt}")

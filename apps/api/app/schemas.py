@@ -19,6 +19,8 @@ class HealthResponse(BaseModel):
 	hybrid_enabled: bool = False
 	metadata_backend: str = "postgres"
 	metadata_ok: bool = True
+	active_generation_gate_enabled: bool = False
+	active_generation_gate_ok: bool = True
 
 
 class Citation(BaseModel):
@@ -49,8 +51,10 @@ class Citation(BaseModel):
 	doc_id: str | None = None
 	chunk_index: int | None = None
 	filename: str | None = None
-	# Phase 1 预埋：无完整 version 表时为派生 stub
+	# Lifecycle V2 uses the real version/generation IDs; legacy points retain
+	# the deterministic version stub during migration.
 	document_version_id: str | None = None
+	generation_id: str | None = None
 	tenant_id: str | None = None
 	# Phase 2A/2B：多粒度
 	record_type: str | None = None
@@ -75,9 +79,26 @@ class ArchiveTurnResponse(BaseModel):
 	rewritten_query: str | None = None
 	judge: dict[str, object] | None = None
 	retrieval_plan: dict[str, object] | None = None
+	# Same-origin as Ask UI /stream done.retrieval_debug (sanitized for archive).
+	retrieval_debug: dict[str, object] | None = None
 	document_version_id: str | None = None
 	tenant_id: str | None = None
 	created_at: str
+
+
+class ArchiveDebugResponse(BaseModel):
+	"""Internal debug projection for replaying Ask adjudicate / retrieve without UI."""
+
+	turn_id: str
+	session_id: str
+	library_id: str | None = None
+	created_at: str
+	refused: bool = False
+	refuse_reason: str | None = None
+	trace_id: str | None = None
+	question_hash: str | None = None
+	# Sanitized; includes stages (adjudicate), citation_adjudication, path/route.
+	retrieval_debug: dict[str, object] = Field(default_factory=dict)
 
 
 class AskRequest(BaseModel):
@@ -128,6 +149,11 @@ class LibraryCreateRequest(BaseModel):
 
 class LibraryUpdateRequest(BaseModel):
 	name: str | None = Field(default=None, min_length=1, max_length=256)
+	description: str | None = Field(default=None, max_length=2000)
+
+
+class LibraryProjectionRequest(BaseModel):
+	name: str = Field(min_length=1, max_length=256)
 	description: str | None = Field(default=None, max_length=2000)
 
 

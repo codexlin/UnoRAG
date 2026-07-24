@@ -6,9 +6,12 @@ from pathlib import PurePosixPath
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
+from app.security.access_scope import AccessScope
+from app.security.internal_context import RequestContext, require_internal_context
 from app.schemas import (
 	DocumentResponse,
 	LibraryCreateRequest,
+	LibraryProjectionRequest,
 	LibraryResponse,
 	LibraryUpdateRequest,
 	UploadResponse,
@@ -16,6 +19,7 @@ from app.schemas import (
 from app.services.document_storage import DocumentStorage
 from app.services.documents import clean_display_title
 from app.services.ingest.jobs import enqueue_ingest_job, process_document_ingest
+from app.services.ingest.legacy_writes import reject_legacy_ingest_writes
 from app.services.ingest.router import V2_EXTENSIONS
 from app.services.metadata import MetadataStore, get_metadata_store
 from app.services.retrieval import IngestService
@@ -33,6 +37,23 @@ def get_meta(settings: Settings = Depends(get_settings)) -> MetadataStore:
 
 def get_document_storage(settings: Settings = Depends(get_settings)) -> DocumentStorage:
 	return DocumentStorage(settings)
+
+
+def get_access_scope(
+	context: RequestContext = Depends(require_internal_context),
+) -> AccessScope:
+	return AccessScope.from_request_context(context)
+
+
+def get_service_access_scope(
+	context: RequestContext = Depends(require_internal_context),
+) -> AccessScope:
+	if context.auth_source not in {"service", "development"}:
+		raise HTTPException(
+			status_code=403,
+			detail="service request context required",
+		)
+	return AccessScope.from_request_context(context)
 
 
 def _document_response(row: dict) -> DocumentResponse:
@@ -56,75 +77,84 @@ def _unavailable_detail(capability, *, message: str) -> dict:
 	}
 
 
-@router.get("/libraries", response_model=list[LibraryResponse])
-def list_libraries(meta: MetadataStore = Depends(get_meta)) -> list[LibraryResponse]:
-	return [LibraryResponse.model_validate(item) for item in meta.list_libraries()]
-
-
-@router.post("/libraries", response_model=LibraryResponse)
-def create_library(
-	body: LibraryCreateRequest,
+@router.put(
+	"/internal/projections/libraries/{library_id}",
+	response_model=LibraryResponse,
+)
+def upsert_library_projection(
+	library_id: str,
+	body: LibraryProjectionRequest,
 	meta: MetadataStore = Depends(get_meta),
+	access_scope: AccessScope = Depends(get_service_access_scope),
 ) -> LibraryResponse:
-	try:
-		row = meta.create_library(
+	"""Idempotent Control Plane -> RAG metadata projection."""
+	current = meta.get_library(library_id, scope=access_scope)
+	if current is None:
+		try:
+			row = meta.create_library(
+				name=body.name,
+				library_id=library_id,
+				description=body.description,
+				scope=access_scope,
+			)
+		except ValueError:
+			# A concurrent replay may have created the same global RAG id.
+			row = meta.get_library(library_id, scope=access_scope)
+			if row is None:
+				raise HTTPException(status_code=409, detail="library id conflict") from None
+	else:
+		row = meta.update_library(
+			library_id,
 			name=body.name,
-			library_id=body.library_id,
 			description=body.description,
+			update_description=True,
+			scope=access_scope,
 		)
-	except ValueError as exc:
-		raise HTTPException(status_code=400, detail=str(exc)) from exc
-	return LibraryResponse.model_validate(row)
-
-
-@router.patch("/libraries/{library_id}", response_model=LibraryResponse)
-def update_library(
-	library_id: str,
-	body: LibraryUpdateRequest,
-	meta: MetadataStore = Depends(get_meta),
-) -> LibraryResponse:
-	if "name" not in body.model_fields_set and "description" not in body.model_fields_set:
-		raise HTTPException(status_code=400, detail="至少提供 name 或 description")
-	row = meta.update_library(
-		library_id,
-		name=body.name if "name" in body.model_fields_set else None,
-		description=body.description if "description" in body.model_fields_set else None,
-		update_description="description" in body.model_fields_set,
-	)
 	if row is None:
-		raise HTTPException(status_code=404, detail="library not found")
+		raise HTTPException(status_code=409, detail="library projection failed")
 	return LibraryResponse.model_validate(row)
 
 
-@router.get("/libraries/{library_id}", response_model=LibraryResponse)
-def get_library(library_id: str, meta: MetadataStore = Depends(get_meta)) -> LibraryResponse:
-	row = meta.get_library(library_id)
-	if row is None:
-		raise HTTPException(status_code=404, detail="library not found")
-	return LibraryResponse.model_validate(row)
-
-
-@router.delete("/libraries/{library_id}")
-def delete_library(
+def _delete_library_resources(
 	library_id: str,
-	settings: Settings = Depends(get_settings),
-	meta: MetadataStore = Depends(get_meta),
-	storage: DocumentStorage = Depends(get_document_storage),
+	*,
+	settings: Settings,
+	meta: MetadataStore,
+	storage: DocumentStorage,
+	access_scope: AccessScope,
+	missing_ok: bool,
 ) -> dict[str, object]:
-	library = meta.get_library(library_id)
+	library = meta.get_library(library_id, scope=access_scope)
 	if library is None:
+		if missing_ok:
+			return {
+				"ok": True,
+				"library_id": library_id,
+				"deleted_documents": 0,
+				"already_absent": True,
+			}
 		raise HTTPException(status_code=404, detail="library not found")
 
-	documents = meta.list_documents(library_id)
+	documents = meta.list_documents(library_id, scope=access_scope)
 	capability = resolve_runtime(settings)
+	if capability.requested_mode == "live" and not capability.live_ready:
+		raise HTTPException(
+			status_code=503,
+			detail="RAG runtime unavailable; library cleanup will be retried",
+		)
+
 	chunk_failures: list[str] = []
 	storage_failures: list[str] = []
-
+	ingest = (
+		IngestService(settings, access_scope=access_scope)
+		if capability.live_ready
+		else None
+	)
 	for doc in documents:
 		doc_id = str(doc["id"])
-		if capability.live_ready:
+		if ingest is not None:
 			try:
-				IngestService(settings).delete_document_chunks(
+				ingest.delete_document_chunks(
 					doc_id=doc_id,
 					library_id=library_id,
 				)
@@ -150,50 +180,165 @@ def delete_library(
 				)
 				storage_failures.append(doc_id)
 
-	# live 模式下向量清除硬失败：不继续删元数据，避免「库没了但向量还在」
-	if capability.live_ready and chunk_failures:
+	if chunk_failures or storage_failures:
+		failures = sorted(set([*chunk_failures, *storage_failures]))
 		raise HTTPException(
 			status_code=502,
 			detail=(
-				"删除知识库向量失败，已中止元数据删除："
-				f"{', '.join(chunk_failures[:5])}"
-				+ ("…" if len(chunk_failures) > 5 else "")
+				"library resource cleanup failed; metadata retained for retry: "
+				f"{', '.join(failures[:5])}"
+				+ ("..." if len(failures) > 5 else "")
 			),
 		)
 
 	try:
-		ok = meta.delete_library(library_id)
+		ok = meta.delete_library(library_id, scope=access_scope)
 	except Exception as exc:
 		logger.exception("delete_library_metadata_failed library_id=%s", library_id)
 		raise HTTPException(
 			status_code=500,
-			detail=f"删除知识库元数据失败: {exc}",
+			detail=f"library metadata cleanup failed: {exc}",
 		) from exc
-
 	if not ok:
-		raise HTTPException(status_code=500, detail="删除知识库失败：库已不存在或写入失败")
-
+		if missing_ok and meta.get_library(library_id, scope=access_scope) is None:
+			return {
+				"ok": True,
+				"library_id": library_id,
+				"deleted_documents": len(documents),
+				"already_absent": True,
+			}
+		raise HTTPException(
+			status_code=500,
+			detail="library metadata cleanup lost a concurrent update",
+		)
 	return {
 		"ok": True,
 		"library_id": library_id,
 		"deleted_documents": len(documents),
-		"storage_warnings": storage_failures,
+		"already_absent": False,
 	}
+
+
+@router.delete("/internal/projections/libraries/{library_id}")
+def delete_library_projection(
+	library_id: str,
+	settings: Settings = Depends(get_settings),
+	meta: MetadataStore = Depends(get_meta),
+	storage: DocumentStorage = Depends(get_document_storage),
+	access_scope: AccessScope = Depends(get_service_access_scope),
+) -> dict[str, object]:
+	"""Idempotently remove a derived RAG library projection."""
+	return _delete_library_resources(
+		library_id,
+		settings=settings,
+		meta=meta,
+		storage=storage,
+		access_scope=access_scope,
+		missing_ok=True,
+	)
+
+
+@router.get("/libraries", response_model=list[LibraryResponse])
+def list_libraries(
+	meta: MetadataStore = Depends(get_meta),
+	access_scope: AccessScope = Depends(get_access_scope),
+) -> list[LibraryResponse]:
+	return [
+		LibraryResponse.model_validate(item)
+		for item in meta.list_libraries(scope=access_scope)
+	]
+
+
+@router.post("/libraries", response_model=LibraryResponse)
+def create_library(
+	body: LibraryCreateRequest,
+	meta: MetadataStore = Depends(get_meta),
+	access_scope: AccessScope = Depends(get_access_scope),
+) -> LibraryResponse:
+	try:
+		row = meta.create_library(
+			name=body.name,
+			library_id=body.library_id,
+			description=body.description,
+			scope=access_scope,
+		)
+	except ValueError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
+	return LibraryResponse.model_validate(row)
+
+
+@router.patch("/libraries/{library_id}", response_model=LibraryResponse)
+def update_library(
+	library_id: str,
+	body: LibraryUpdateRequest,
+	meta: MetadataStore = Depends(get_meta),
+	access_scope: AccessScope = Depends(get_access_scope),
+) -> LibraryResponse:
+	if "name" not in body.model_fields_set and "description" not in body.model_fields_set:
+		raise HTTPException(status_code=400, detail="至少提供 name 或 description")
+	row = meta.update_library(
+		library_id,
+		name=body.name if "name" in body.model_fields_set else None,
+		description=body.description if "description" in body.model_fields_set else None,
+		update_description="description" in body.model_fields_set,
+		scope=access_scope,
+	)
+	if row is None:
+		raise HTTPException(status_code=404, detail="library not found")
+	return LibraryResponse.model_validate(row)
+
+
+@router.get("/libraries/{library_id}", response_model=LibraryResponse)
+def get_library(
+	library_id: str,
+	meta: MetadataStore = Depends(get_meta),
+	access_scope: AccessScope = Depends(get_access_scope),
+) -> LibraryResponse:
+	row = meta.get_library(library_id, scope=access_scope)
+	if row is None:
+		raise HTTPException(status_code=404, detail="library not found")
+	return LibraryResponse.model_validate(row)
+
+
+@router.delete("/libraries/{library_id}")
+def delete_library(
+	library_id: str,
+	settings: Settings = Depends(get_settings),
+	meta: MetadataStore = Depends(get_meta),
+	storage: DocumentStorage = Depends(get_document_storage),
+	access_scope: AccessScope = Depends(get_access_scope),
+) -> dict[str, object]:
+	return _delete_library_resources(
+		library_id,
+		settings=settings,
+		meta=meta,
+		storage=storage,
+		access_scope=access_scope,
+		missing_ok=False,
+	)
 
 
 @router.get("/libraries/{library_id}/documents", response_model=list[DocumentResponse])
 def list_documents(
 	library_id: str,
 	meta: MetadataStore = Depends(get_meta),
+	access_scope: AccessScope = Depends(get_access_scope),
 ) -> list[DocumentResponse]:
-	if meta.get_library(library_id) is None:
+	if meta.get_library(library_id, scope=access_scope) is None:
 		raise HTTPException(status_code=404, detail="library not found")
-	return [_document_response(item) for item in meta.list_documents(library_id)]
+	return [
+		_document_response(item)
+		for item in meta.list_documents(library_id, scope=access_scope)
+	]
 
 
 @router.get("/documents/{doc_id}", response_model=DocumentResponse)
-def get_document(doc_id: str, meta: MetadataStore = Depends(get_meta)) -> DocumentResponse:
-	row = meta.get_document(doc_id)
+def get_document(
+	doc_id: str,
+	meta: MetadataStore = Depends(get_meta),
+	access_scope: AccessScope = Depends(get_access_scope),
+) -> DocumentResponse:
+	row = meta.get_document(doc_id, scope=access_scope)
 	if row is None:
 		raise HTTPException(status_code=404, detail="document not found")
 	return _document_response(row)
@@ -205,15 +350,18 @@ def delete_document(
 	settings: Settings = Depends(get_settings),
 	meta: MetadataStore = Depends(get_meta),
 	storage: DocumentStorage = Depends(get_document_storage),
+	access_scope: AccessScope = Depends(get_access_scope),
 ) -> dict[str, object]:
-	doc = meta.get_document(doc_id)
+	"""Deprecated: use Next.js DELETE .../documents/{id} (document.delete job)."""
+	reject_legacy_ingest_writes(settings)
+	doc = meta.get_document(doc_id, scope=access_scope)
 	if doc is None:
 		raise HTTPException(status_code=404, detail="document not found")
 
 	capability = resolve_runtime(settings)
 	if capability.live_ready:
 		try:
-			IngestService(settings).delete_document_chunks(
+			IngestService(settings, access_scope=access_scope).delete_document_chunks(
 				doc_id=doc_id,
 				library_id=str(doc["library_id"]),
 			)
@@ -227,7 +375,7 @@ def delete_document(
 		except Exception as exc:
 			logger.warning("delete_document_storage_failed doc_id=%s err=%s", doc_id, exc)
 
-	meta.delete_document(doc_id)
+	meta.delete_document(doc_id, scope=access_scope)
 	return {"ok": True, "doc_id": doc_id}
 
 
@@ -242,9 +390,11 @@ async def replace_document(
 	settings: Settings = Depends(get_settings),
 	meta: MetadataStore = Depends(get_meta),
 	storage: DocumentStorage = Depends(get_document_storage),
+	access_scope: AccessScope = Depends(get_access_scope),
 ) -> UploadResponse | JSONResponse:
-	"""用新文件覆盖同一文档：清旧向量与原文，保留 doc_id，再入队索引。"""
-	doc = meta.get_document(doc_id)
+	"""Deprecated: use Next.js POST .../documents/{id}/versions."""
+	reject_legacy_ingest_writes(settings)
+	doc = meta.get_document(doc_id, scope=access_scope)
 	if doc is None:
 		raise HTTPException(status_code=404, detail="document not found")
 
@@ -265,7 +415,7 @@ async def replace_document(
 	if suffix not in V2_EXTENSIONS:
 		raise HTTPException(
 			status_code=400,
-			detail=f"unsupported file type: {suffix or '(none)'}; use txt/md/pdf/docx",
+			detail=f"unsupported file type: {suffix or '(none)'}; use txt/md/pdf/docx/csv/xlsx",
 		)
 
 	library_id = str(doc["library_id"])
@@ -282,7 +432,7 @@ async def replace_document(
 		)
 
 	# 库内其它同名文档一并清掉，保持「同库同名唯一」
-	for other in meta.list_documents(library_id):
+	for other in meta.list_documents(library_id, scope=access_scope):
 		if str(other["id"]) == doc_id:
 			continue
 		if str(other.get("filename") or "") != filename:
@@ -290,7 +440,7 @@ async def replace_document(
 		other_id = str(other["id"])
 		try:
 			if live:
-				IngestService(settings).delete_document_chunks(
+				IngestService(settings, access_scope=access_scope).delete_document_chunks(
 					doc_id=other_id,
 					library_id=library_id,
 				)
@@ -302,12 +452,12 @@ async def replace_document(
 				storage.delete(str(peer_key))
 			except Exception as exc:
 				logger.warning("replace.peer_delete_storage_failed doc_id=%s err=%s", other_id, exc)
-		meta.delete_document(other_id)
+		meta.delete_document(other_id, scope=access_scope)
 
 	# 清当前文档向量（live 失败则中止，避免孤儿点）
 	if live:
 		try:
-			IngestService(settings).delete_document_chunks(
+			IngestService(settings, access_scope=access_scope).delete_document_chunks(
 				doc_id=doc_id,
 				library_id=library_id,
 			)
@@ -332,6 +482,8 @@ async def replace_document(
 		".markdown": "text/markdown",
 		".pdf": "application/pdf",
 		".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		".csv": "text/csv",
+		".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 	}.get(suffix, "application/octet-stream")
 
 	storage_key = storage.save(library_id, doc_id, filename, content)
@@ -346,6 +498,7 @@ async def replace_document(
 		chunk_count=0,
 		parser_report={},
 		clear_error=True,
+		scope=access_scope,
 	)
 
 	mode = "live" if live else "stub"
@@ -354,14 +507,25 @@ async def replace_document(
 			await enqueue_ingest_job(
 				doc_id=doc_id,
 				library_id=library_id,
+				access_scope=access_scope,
 				settings=settings,
 			)
 		except RuntimeError as exc:
-			meta.update_document(doc_id, status="failed", error=str(exc))
+			meta.update_document(
+				doc_id,
+				status="failed",
+				error=str(exc),
+				scope=access_scope,
+			)
 			raise HTTPException(status_code=429, detail=str(exc)) from exc
 		except Exception as exc:
 			logger.exception("replace.enqueue_failed doc_id=%s", doc_id)
-			meta.update_document(doc_id, status="failed", error=f"入队失败: {exc}")
+			meta.update_document(
+				doc_id,
+				status="failed",
+				error=f"入队失败: {exc}",
+				scope=access_scope,
+			)
 			raise HTTPException(status_code=503, detail=f"索引队列不可用: {exc}") from exc
 		payload = UploadResponse(
 			library_id=library_id,
@@ -376,7 +540,11 @@ async def replace_document(
 		)
 		return JSONResponse(status_code=202, content=payload.model_dump())
 
-	result = process_document_ingest(doc_id, settings=settings)
+	result = process_document_ingest(
+		doc_id,
+		settings=settings,
+		access_scope=access_scope,
+	)
 	if not result.get("ok"):
 		raise HTTPException(
 			status_code=400,
@@ -408,8 +576,11 @@ async def reindex_document(
 	settings: Settings = Depends(get_settings),
 	meta: MetadataStore = Depends(get_meta),
 	storage: DocumentStorage = Depends(get_document_storage),
+	access_scope: AccessScope = Depends(get_access_scope),
 ) -> UploadResponse | JSONResponse:
-	doc = meta.get_document(doc_id)
+	"""Deprecated: use Next.js POST .../documents/{id}/reindex."""
+	reject_legacy_ingest_writes(settings)
+	doc = meta.get_document(doc_id, scope=access_scope)
 	if doc is None:
 		raise HTTPException(status_code=404, detail="document not found")
 
@@ -441,7 +612,12 @@ async def reindex_document(
 	if str(doc.get("status") or "") == "processing":
 		raise HTTPException(status_code=409, detail="文档正在索引中")
 
-	meta.update_document(doc_id, status="processing", error=None)
+	meta.update_document(
+		doc_id,
+		status="processing",
+		error=None,
+		scope=access_scope,
+	)
 	mode = "live" if live else "stub"
 
 	if settings.ingest_async:
@@ -449,14 +625,25 @@ async def reindex_document(
 			await enqueue_ingest_job(
 				doc_id=doc_id,
 				library_id=library_id,
+				access_scope=access_scope,
 				settings=settings,
 			)
 		except RuntimeError as exc:
-			meta.update_document(doc_id, status="failed", error=str(exc))
+			meta.update_document(
+				doc_id,
+				status="failed",
+				error=str(exc),
+				scope=access_scope,
+			)
 			raise HTTPException(status_code=429, detail=str(exc)) from exc
 		except Exception as exc:
 			logger.exception("reindex.enqueue_failed doc_id=%s", doc_id)
-			meta.update_document(doc_id, status="failed", error=f"入队失败: {exc}")
+			meta.update_document(
+				doc_id,
+				status="failed",
+				error=f"入队失败: {exc}",
+				scope=access_scope,
+			)
 			raise HTTPException(
 				status_code=503,
 				detail=f"索引队列不可用: {exc}",
@@ -474,7 +661,11 @@ async def reindex_document(
 		)
 		return JSONResponse(status_code=202, content=payload.model_dump())
 
-	result = process_document_ingest(doc_id, settings=settings)
+	result = process_document_ingest(
+		doc_id,
+		settings=settings,
+		access_scope=access_scope,
+	)
 	if not result.get("ok"):
 		raise HTTPException(
 			status_code=400,
@@ -501,8 +692,9 @@ def download_document(
 	doc_id: str,
 	meta: MetadataStore = Depends(get_meta),
 	storage: DocumentStorage = Depends(get_document_storage),
+	access_scope: AccessScope = Depends(get_access_scope),
 ) -> FileResponse:
-	doc = meta.get_document(doc_id)
+	doc = meta.get_document(doc_id, scope=access_scope)
 	if doc is None:
 		raise HTTPException(status_code=404, detail="document not found")
 

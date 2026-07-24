@@ -12,6 +12,7 @@ from app.services.ingest.ir import (
 	ParserReport,
 	content_hash_bytes,
 )
+from app.services.ingest.table_ir import normalize_table, table_ir_to_legacy
 
 _HEADING_STYLE = re.compile(r"heading\s*(\d+)", re.IGNORECASE)
 
@@ -95,7 +96,14 @@ def parse_docx(
 				rows_data.append([(cell.text or "").strip() for cell in row.cells])
 			headers = rows_data[0] if rows_data else []
 			body_rows = rows_data[1:] if len(rows_data) > 1 else []
-			table_json = {"headers": headers, "rows": body_rows}
+			table_ir = normalize_table(
+				table_id=table_id,
+				headers=headers,
+				rows=body_rows,
+				caption=section_path() or "",
+				confidence=0.9,
+			)
+			table_json = table_ir_to_legacy(table_ir)
 			textual_parts = [" | ".join(headers)] if headers else []
 			for row in body_rows:
 				textual_parts.append(" | ".join(row))
@@ -109,6 +117,7 @@ def parse_docx(
 					path=section_path(),
 					text=textual,
 					table_json=table_json,
+					table_ir=table_ir,
 					table_id=table_id,
 					confidence=0.9,
 				)

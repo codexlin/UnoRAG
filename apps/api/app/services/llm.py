@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+import threading
+import time
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 from langchain_openai import ChatOpenAI
 from openai import OpenAI
@@ -9,6 +12,60 @@ from openai import OpenAI
 from app.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+# Process-local LLM inflight gate (Ask generate + ingest embeddings/chat).
+_gate_lock = threading.Lock()
+_gate: threading.Semaphore | None = None
+_gate_limit: int | None = None
+
+
+def reset_llm_inflight_gate_for_tests() -> None:
+	"""Clear process gate so tests can reconfigure LLM_MAX_INFLIGHT."""
+	global _gate, _gate_limit
+	with _gate_lock:
+		_gate = None
+		_gate_limit = None
+
+
+def _resolve_gate(limit: int) -> threading.Semaphore | None:
+	"""Return a semaphore for positive limits; None disables the gate."""
+	global _gate, _gate_limit
+	if limit <= 0:
+		return None
+	with _gate_lock:
+		if _gate is None or _gate_limit != limit:
+			_gate = threading.Semaphore(limit)
+			_gate_limit = limit
+		return _gate
+
+
+@contextmanager
+def llm_inflight_slot(settings: Settings) -> Iterator[None]:
+	"""Acquire a process-local LLM slot (no-op when LLM_MAX_INFLIGHT <= 0)."""
+	gate = _resolve_gate(int(settings.llm_max_inflight))
+	if gate is None:
+		yield
+		return
+	wait_t0 = time.perf_counter()
+	gate.acquire()
+	wait_ms = (time.perf_counter() - wait_t0) * 1000.0
+	held_t0 = time.perf_counter()
+	try:
+		if wait_ms >= 1.0:
+			logger.info(
+				"llm.inflight_acquired wait_ms=%.1f limit=%s",
+				wait_ms,
+				settings.llm_max_inflight,
+			)
+		yield
+	finally:
+		held_ms = (time.perf_counter() - held_t0) * 1000.0
+		gate.release()
+		logger.debug(
+			"llm.inflight_released held_ms=%.1f limit=%s",
+			held_ms,
+			settings.llm_max_inflight,
+		)
 
 
 def build_chat_model(settings: Settings) -> ChatOpenAI:
@@ -43,15 +100,16 @@ class EmbeddingService:
 			return []
 		batch_size = max(1, int(self.settings.embedding_batch_size))
 		vectors: list[list[float]] = []
-		for offset in range(0, len(texts), batch_size):
-			batch = texts[offset : offset + batch_size]
-			response = self._client.embeddings.create(
-				model=self.settings.embedding_model,
-				input=batch,
-				dimensions=self.settings.embedding_dim,
-			)
-			items = sorted(response.data, key=lambda item: getattr(item, "index", 0))
-			vectors.extend(list(item.embedding) for item in items)
+		with llm_inflight_slot(self.settings):
+			for offset in range(0, len(texts), batch_size):
+				batch = texts[offset : offset + batch_size]
+				response = self._client.embeddings.create(
+					model=self.settings.embedding_model,
+					input=batch,
+					dimensions=self.settings.embedding_dim,
+				)
+				items = sorted(response.data, key=lambda item: getattr(item, "index", 0))
+				vectors.extend(list(item.embedding) for item in items)
 		logger.info(
 			"llm.embedding model=%s inputs=%s dim=%s",
 			self.settings.embedding_model,
@@ -90,7 +148,8 @@ class ChatService:
 		messages: list[tuple[str, str]] = [
 			(item["role"], item["content"]) for item in self._messages(question=question, context=context)
 		]
-		response: Any = self._model.invoke(messages)
+		with llm_inflight_slot(self.settings):
+			response: Any = self._model.invoke(messages)
 		content = getattr(response, "content", "") or ""
 		if isinstance(content, list):
 			content = "".join(str(part) for part in content)
@@ -106,20 +165,21 @@ class ChatService:
 
 	def stream_answer(self, *, question: str, context: str):
 		chunk_count = 0
-		response = self._client.chat.completions.create(
-			model=self.settings.chat_model,
-			messages=self._messages(question=question, context=context),
-			temperature=0.2,
-			stream=True,
-		)
-		for chunk in response:
-			if not chunk.choices:
-				continue
-			token = chunk.choices[0].delta.content or ""
-			if not token:
-				continue
-			chunk_count += 1
-			yield token
+		with llm_inflight_slot(self.settings):
+			response = self._client.chat.completions.create(
+				model=self.settings.chat_model,
+				messages=self._messages(question=question, context=context),
+				temperature=0.2,
+				stream=True,
+			)
+			for chunk in response:
+				if not chunk.choices:
+					continue
+				token = chunk.choices[0].delta.content or ""
+				if not token:
+					continue
+				chunk_count += 1
+				yield token
 		logger.info(
 			"llm.chat_stream model=%s question_len=%s context_len=%s chunks=%s",
 			self.settings.chat_model,

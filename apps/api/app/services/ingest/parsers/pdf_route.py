@@ -12,7 +12,7 @@ from typing import Any, Literal
 from app.services.ingest.backends.base import ParseRequest
 from app.services.ingest.backends.mineru import MinerUClientError, get_mineru_backend
 from app.services.ingest.backends.pymupdf import PyMuPDFBackend
-from app.services.ingest.ir import DocumentIR
+from app.services.ingest.ir import CancelCheck, DocumentIR, ParseProgressCallback
 from app.services.ingest.parsers.pdf import PdfParseOptions, classify_page
 from app.settings import Settings
 
@@ -80,9 +80,39 @@ def probe_needs_mineru(content: bytes) -> bool:
 				return True
 			if _looks_multi_column(blocks, page_width=float(page_rect.width)):
 				return True
+			if _looks_like_ruled_table(page, word_count=len(page.get_text("words") or [])):
+				return True
 	finally:
 		document.close()
 	return False
+
+
+def _looks_like_ruled_table(page: Any, *, word_count: int) -> bool:
+	"""Detect a substantial ruled table without upgrading decorative PDFs."""
+	if word_count < 12:
+		return False
+	try:
+		drawings = page.get_drawings() or []
+	except Exception:
+		return False
+	horizontal = 0
+	vertical = 0
+	for drawing in drawings:
+		for item in drawing.get("items") or []:
+			kind = item[0] if item else None
+			if kind == "l" and len(item) >= 3:
+				start, end = item[1], item[2]
+				dx = abs(float(end.x) - float(start.x))
+				dy = abs(float(end.y) - float(start.y))
+				if dx >= dy * 4 and dx >= 20:
+					horizontal += 1
+				elif dy >= dx * 4 and dy >= 20:
+					vertical += 1
+			elif kind == "re":
+				# One rectangle contributes two horizontal and two vertical edges.
+				horizontal += 2
+				vertical += 2
+	return horizontal >= 8 and vertical >= 6
 
 
 def _looks_multi_column(blocks: list[dict[str, Any]], *, page_width: float) -> bool:
@@ -114,6 +144,8 @@ def parse_pdf_routed(
 	library_id: str = "",
 	options: PdfParseOptions | None = None,
 	mineru_backend: Any | None = None,
+	progress_callback: ParseProgressCallback | None = None,
+	cancel_check: CancelCheck | None = None,
 ) -> DocumentIR:
 	"""路由入口：保持 PyMuPDF 默认；按需升级 MinerU。"""
 	t0 = time.perf_counter()
@@ -128,6 +160,7 @@ def parse_pdf_routed(
 			enabled=settings.mineru_enabled,
 			base_url=settings.mineru_url,
 			timeout_s=settings.mineru_timeout_s,
+			soft_timeout_s=settings.mineru_soft_timeout_s,
 			max_retries=settings.mineru_max_retries,
 			parse_path=settings.mineru_parse_path,
 			use_fake=settings.mineru_use_fake,
@@ -144,6 +177,8 @@ def parse_pdf_routed(
 			backend=backend,
 			started=t0,
 			pymupdf_ir=None,
+			progress_callback=progress_callback,
+			cancel_check=cancel_check,
 		)
 
 	# PyMuPDF 先跑（allow_empty 以便 MinerU 救援）
@@ -154,6 +189,8 @@ def parse_pdf_routed(
 		ocr_adapter=opts.ocr_adapter,
 		vlm_adapter=opts.vlm_adapter,
 		allow_empty=True,
+		progress_callback=progress_callback,
+		cancel_check=cancel_check,
 	)
 	pymupdf_ir = PyMuPDFBackend().parse(
 		ParseRequest(
@@ -188,6 +225,8 @@ def parse_pdf_routed(
 				title=title,
 				doc_id=doc_id or pymupdf_ir.id,
 				library_id=library_id,
+				progress_callback=progress_callback,
+				cancel_check=cancel_check,
 			)
 		)
 		_stamp_latency(mineru_ir, t0)
@@ -199,8 +238,11 @@ def parse_pdf_routed(
 		mineru_ir.meta["parser_backend"] = mineru_ir.parser_report.backend or "mineru"
 		mineru_ir.meta["parser_version"] = mineru_ir.parser_report.parser_version
 		return mineru_ir
-	except (MinerUClientError, ValueError) as exc:
+	except MinerUClientError as exc:
 		logger.warning("mineru.degrade filename=%s err=%s", filename, exc)
+		_attach_parser_report(exc, pymupdf_ir)
+		if exc.retryable:
+			raise
 		if pymupdf_ir.nodes:
 			report = pymupdf_ir.parser_report
 			report.partial = True
@@ -210,10 +252,14 @@ def parse_pdf_routed(
 			report.metrics["mineru_error"] = str(exc)
 			_stamp_latency(pymupdf_ir, t0)
 			return pymupdf_ir
-		raise ValueError(
-			f"MinerU unavailable and PDF has no extractable text: {exc}. "
-			"Set MINERU_URL to a running MinerU service, or enable OCR."
-		) from exc
+		raise
+	except ValueError as exc:
+		wrapped = MinerUClientError(
+			f"MinerU response could not be converted: {exc}",
+			code="mineru_invalid_response",
+		)
+		_attach_parser_report(wrapped, pymupdf_ir)
+		raise wrapped from exc
 
 
 def _parse_mineru_or_fail(
@@ -226,11 +272,15 @@ def _parse_mineru_or_fail(
 	backend: Any | None,
 	started: float,
 	pymupdf_ir: DocumentIR | None,
+	progress_callback: ParseProgressCallback | None,
+	cancel_check: CancelCheck | None,
 ) -> DocumentIR:
 	if backend is None:
-		raise ValueError(
+		raise MinerUClientError(
 			"MINERU_MODE=mineru but MinerU is not configured "
-			"(set MINERU_ENABLED=true and MINERU_URL, or MINERU_USE_FAKE=true for tests)"
+			"(set MINERU_ENABLED=true and MINERU_URL, or MINERU_USE_FAKE=true for tests)",
+			code="mineru_not_configured",
+			retryable=False,
 		)
 	try:
 		ir = backend.parse(
@@ -240,13 +290,20 @@ def _parse_mineru_or_fail(
 				title=title,
 				doc_id=doc_id,
 				library_id=library_id,
+				progress_callback=progress_callback,
+				cancel_check=cancel_check,
 			)
 		)
-	except (MinerUClientError, ValueError) as exc:
+	except MinerUClientError:
+		raise
+	except ValueError as exc:
 		if pymupdf_ir and pymupdf_ir.nodes:
 			pymupdf_ir.parser_report.warnings.append(f"MinerU forced mode failed: {exc}")
 			return _finalize_pymupdf(pymupdf_ir, settings=None)
-		raise ValueError(f"MinerU parse failed: {exc}") from exc
+		raise MinerUClientError(
+			f"MinerU parse failed: {exc}",
+			code="mineru_invalid_response",
+		) from exc
 	_stamp_latency(ir, started)
 	ir.parser_report.metrics["route"] = "mineru_forced"
 	return ir
@@ -289,3 +346,13 @@ def _degrade_without_mineru(ir: DocumentIR, *, settings: Settings) -> DocumentIR
 
 def _stamp_latency(ir: DocumentIR, started: float) -> None:
 	ir.parser_report.latency_ms = round((time.perf_counter() - started) * 1000.0, 2)
+
+
+def _attach_parser_report(error: MinerUClientError, ir: DocumentIR) -> None:
+	report = ir.parser_report
+	report.partial = True
+	report.metrics["route"] = "mineru_failed"
+	report.metrics["mineru_error_code"] = error.code
+	report.metrics["mineru_status_code"] = error.status_code
+	report.warnings.append(str(error))
+	error.parser_report = report.to_public_dict()

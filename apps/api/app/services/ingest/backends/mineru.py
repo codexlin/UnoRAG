@@ -1,6 +1,7 @@
 """MinerU 独立服务客户端：timeout / retry / 显式失败；禁止静默空文档。
 
-环境变量见 Settings：MINERU_ENABLED / MINERU_URL / MINERU_TIMEOUT_S / MINERU_MAX_RETRIES。
+环境变量见 Settings：MINERU_ENABLED / MINERU_URL / MINERU_TIMEOUT_S /
+MINERU_SOFT_TIMEOUT_S / MINERU_MAX_RETRIES。
 本地无服务时用 FakeMinerUBackend 跑单测；指向真实服务时设 MINERU_URL。
 """
 
@@ -8,6 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import threading
 import time
 from typing import Any, Callable
 
@@ -20,6 +23,8 @@ from app.services.ingest.ir import DocumentIR
 logger = logging.getLogger(__name__)
 
 DEFAULT_MINERU_VERSION = "2.x"
+# Soft timeout / 429：不在客户端内重试，立刻上抛以便 job 还槽 + 退避。
+_NO_INLINE_RETRY_CODES = frozenset({"mineru_soft_timeout", "mineru_rate_limited"})
 # Fake 默认 OCR 文案：与 leave-scanned 语义对齐（扫描请假制度）
 _FAKE_SCANNED_TEXT = (
 	"病假须于返岗后三个工作日内补交证明材料。"
@@ -27,8 +32,25 @@ _FAKE_SCANNED_TEXT = (
 )
 
 
-class MinerUClientError(RuntimeError):
+class MinerUClientError(RuntimeError, ValueError):
 	"""MinerU 服务调用失败（超时 / HTTP / 空结果）。"""
+
+	def __init__(
+		self,
+		message: str,
+		*,
+		code: str = "mineru_unavailable",
+		retryable: bool = True,
+		status_code: int | None = None,
+		parser_report: dict[str, Any] | None = None,
+		timeout_kind: str | None = None,
+	) -> None:
+		super().__init__(message)
+		self.code = code
+		self.retryable = retryable
+		self.status_code = status_code
+		self.parser_report = parser_report
+		self.timeout_kind = timeout_kind
 
 
 def _post_multipart(
@@ -56,12 +78,38 @@ def _post_multipart(
 		response.raise_for_status()
 		return response.content
 	except httpx.TimeoutException as exc:
-		raise MinerUClientError(f"MinerU timeout after {timeout_s}s") from exc
+		raise MinerUClientError(
+			f"MinerU hard timeout after {timeout_s}s",
+			code="mineru_timeout",
+			timeout_kind="hard",
+		) from exc
 	except httpx.HTTPStatusError as exc:
+		status = exc.response.status_code
 		detail = exc.response.text[:500]
-		raise MinerUClientError(f"MinerU HTTP {exc.response.status_code}: {detail}") from exc
+		if status == 429:
+			code = "mineru_rate_limited"
+			retryable = True
+		elif status == 408:
+			code = "mineru_timeout"
+			retryable = True
+		elif status >= 500:
+			code = "mineru_service_error"
+			retryable = True
+		else:
+			code = "mineru_request_rejected"
+			retryable = False
+		raise MinerUClientError(
+			f"MinerU HTTP {status}: {detail}",
+			code=code,
+			retryable=retryable,
+			status_code=status,
+			timeout_kind="hard" if code == "mineru_timeout" else None,
+		) from exc
 	except httpx.RequestError as exc:
-		raise MinerUClientError(f"MinerU unreachable: {exc}") from exc
+		raise MinerUClientError(
+			f"MinerU unreachable: {exc}",
+			code="mineru_unreachable",
+		) from exc
 
 
 class MinerUBackend:
@@ -72,6 +120,7 @@ class MinerUBackend:
 		*,
 		base_url: str,
 		timeout_s: float = 120.0,
+		soft_timeout_s: float = 0.0,
 		max_retries: int = 2,
 		parse_path: str = "/file_parse",
 		version: str = DEFAULT_MINERU_VERSION,
@@ -79,6 +128,7 @@ class MinerUBackend:
 	) -> None:
 		self.base_url = base_url.rstrip("/")
 		self.timeout_s = timeout_s
+		self.soft_timeout_s = float(soft_timeout_s)
 		self.max_retries = max(0, int(max_retries))
 		self.parse_path = parse_path if parse_path.startswith("/") else f"/{parse_path}"
 		self._version = version
@@ -99,9 +149,16 @@ class MinerUBackend:
 		t0 = time.perf_counter()
 		raw: bytes | None = None
 		for attempt in range(1, attempts + 1):
+			if request.cancel_check is not None:
+				request.cancel_check()
 			try:
-				raw = self._post_fn(
-					url,
+				if request.progress_callback is not None:
+					request.progress_callback("mineru_request", None, None)
+				raw = _post_with_cancel(
+					self._post_fn,
+					cancel_check=request.cancel_check,
+					soft_timeout_s=self.soft_timeout_s,
+					url=url,
 					filename=request.filename,
 					content=request.content,
 					timeout_s=self.timeout_s,
@@ -110,35 +167,61 @@ class MinerUBackend:
 			except MinerUClientError as exc:
 				last_exc = exc
 				logger.warning(
-					"mineru.parse.retry attempt=%s/%s err=%s",
+					"mineru.parse.retry attempt=%s/%s err=%s code=%s "
+					"timeout_kind=%s",
 					attempt,
 					attempts,
 					exc,
+					exc.code,
+					exc.timeout_kind,
 				)
-				if attempt >= attempts:
+				if (
+					not exc.retryable
+					or attempt >= attempts
+					or exc.code in _NO_INLINE_RETRY_CODES
+				):
 					raise
-				time.sleep(min(0.5 * attempt, 2.0))
+				_sleep_with_cancel(
+					min(0.5 * attempt, 2.0),
+					request.cancel_check,
+				)
 		if raw is None:
 			raise MinerUClientError(str(last_exc or "MinerU request failed"))
+		if request.cancel_check is not None:
+			request.cancel_check()
 
 		try:
 			payload = json.loads(raw.decode("utf-8"))
 		except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-			raise MinerUClientError("MinerU response is not valid JSON") from exc
+			raise MinerUClientError(
+				"MinerU response is not valid JSON",
+				code="mineru_invalid_response",
+			) from exc
 		if not isinstance(payload, dict):
-			raise MinerUClientError("MinerU response JSON must be an object")
+			raise MinerUClientError(
+				"MinerU response JSON must be an object",
+				code="mineru_invalid_response",
+			)
 
 		latency_ms = (time.perf_counter() - t0) * 1000.0
-		return mineru_json_to_ir(
-			payload=payload,
-			filename=request.filename,
-			title=request.title,
-			content=request.content,
-			doc_id=request.doc_id,
-			library_id=request.library_id,
-			parser_version=str(payload.get("version") or self.version),
-			latency_ms=latency_ms,
-		)
+		try:
+			return mineru_json_to_ir(
+				payload=payload,
+				filename=request.filename,
+				title=request.title,
+				content=request.content,
+				doc_id=request.doc_id,
+				library_id=request.library_id,
+				parser_version=str(payload.get("version") or self.version),
+				latency_ms=latency_ms,
+				progress_callback=request.progress_callback,
+				cancel_check=request.cancel_check,
+			)
+		except ValueError as exc:
+			raise MinerUClientError(
+				str(exc),
+				code="mineru_invalid_response",
+			) from exc
 
 
 class FakeMinerUBackend:
@@ -181,6 +264,8 @@ class FakeMinerUBackend:
 			library_id=request.library_id,
 			parser_version=self.version,
 			latency_ms=latency_ms,
+			progress_callback=request.progress_callback,
+			cancel_check=request.cancel_check,
 		)
 
 	def _default_payload(self, filename: str) -> dict[str, Any]:
@@ -291,6 +376,7 @@ def get_mineru_backend(
 	enabled: bool,
 	base_url: str,
 	timeout_s: float = 120.0,
+	soft_timeout_s: float = 0.0,
 	max_retries: int = 2,
 	parse_path: str = "/file_parse",
 	use_fake: bool = False,
@@ -306,6 +392,73 @@ def get_mineru_backend(
 	return MinerUBackend(
 		base_url=url,
 		timeout_s=timeout_s,
+		soft_timeout_s=soft_timeout_s,
 		max_retries=max_retries,
 		parse_path=parse_path,
 	)
+
+
+def _sleep_with_cancel(
+	seconds: float,
+	cancel_check: Callable[[], None] | None,
+) -> None:
+	deadline = time.monotonic() + max(0.0, seconds)
+	while True:
+		if cancel_check is not None:
+			cancel_check()
+		remaining = deadline - time.monotonic()
+		if remaining <= 0:
+			return
+		time.sleep(min(0.1, remaining))
+
+
+def _post_with_cancel(
+	post_fn: Callable[..., bytes],
+	*,
+	cancel_check: Callable[[], None] | None,
+	soft_timeout_s: float = 0.0,
+	**kwargs: Any,
+) -> bytes:
+	"""Run HTTP post; optionally abandon on cancel or soft timeout to free slots."""
+	soft = float(soft_timeout_s or 0.0)
+	use_watcher = cancel_check is not None or soft > 0
+	if not use_watcher:
+		return post_fn(**kwargs)
+
+	result: queue.Queue[tuple[bool, bytes | BaseException]] = queue.Queue(maxsize=1)
+	started = time.monotonic()
+
+	def invoke() -> None:
+		try:
+			result.put((True, post_fn(**kwargs)))
+		except BaseException as exc:
+			result.put((False, exc))
+
+	thread = threading.Thread(
+		target=invoke,
+		name="mineru-http",
+		daemon=True,
+	)
+	thread.start()
+	while thread.is_alive():
+		thread.join(timeout=0.25)
+		if cancel_check is not None:
+			cancel_check()
+		if soft > 0 and (time.monotonic() - started) >= soft:
+			held_ms = (time.monotonic() - started) * 1000.0
+			logger.warning(
+				"mineru.soft_timeout timeout_kind=soft soft_timeout_s=%s "
+				"slot_held_ms=%.1f",
+				soft,
+				held_ms,
+			)
+			raise MinerUClientError(
+				f"MinerU soft timeout after {soft}s (abandoned local wait)",
+				code="mineru_soft_timeout",
+				retryable=True,
+				timeout_kind="soft",
+			)
+	ok, value = result.get()
+	if ok:
+		return value  # type: ignore[return-value]
+	raise value  # type: ignore[misc]

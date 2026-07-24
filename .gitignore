@@ -5,6 +5,8 @@ dist
 *.log
 .env
 .env.local
+deploy/compose/.env
+deploy/compose/backups/
 apps/web/.next
 apps/web/node_modules
 apps/api/.venv
@@ -12,6 +14,9 @@ apps/api/**/__pycache__/
 apps/api/.pytest_cache/
 apps/api/*.egg-info/
 apps/api/data/
+apps/api/.eval_reports/
+apps/api/tests/eval/.gate_*_cases.jsonl
+testdata/ab/_e2e_out/
 .venv
 __pycache__/
 .pytest_cache/

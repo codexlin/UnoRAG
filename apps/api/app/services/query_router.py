@@ -43,6 +43,47 @@ TABLE_KEYWORDS = (
 	"表里",
 	"最低报价",
 	"最高报价",
+	"中标金额",
+	"金额最高",
+	"金额最低",
+	"最高金额",
+	"最低金额",
+	"最大金额",
+	"最小金额",
+)
+# 明确「忽略汇总 / 按明细聚合」时优先 table，避免被「汇总」打成 summary。
+TABLE_DETAIL_OVERRIDE_HINTS = (
+	"忽略文末汇总",
+	"忽略汇总说明",
+	"忽略汇总",
+	"按表格",
+	"按表中",
+	"逐行比较",
+	"逐行",
+	"条明细",
+	"明细逐行",
+	"明细里",
+	"明细中",
+)
+TABLE_AGG_HINTS = (
+	"最大和最小",
+	"最大最小",
+	"最大与最小",
+	"最高和最低",
+	"最高最低",
+	"金额最大",
+	"金额最小",
+	"最大的",
+	"最小的",
+)
+# 问文末/表尾「汇总说明」本身的事实 → 走 table（召回 table_summary），而非 section 总结。
+TABLE_SUMMARY_LOOKUP_HINTS = (
+	"文末汇总说明",
+	"文末汇总",
+	"汇总说明声称",
+	"汇总说明中",
+	"汇总说明里",
+	"汇总说明称",
 )
 COMPARE_KEYWORDS = (
 	"对比",
@@ -70,6 +111,35 @@ FOLLOW_UP_PRONOUNS = ("它", "这个", "那个", "上述", "刚才")
 AMBIGUOUS_EXACT = {"?", "？", "嗯", "啊", "哦", "那个", "这个", "怎么样", "如何", "什么"}
 
 
+def looks_like_table_detail_query(question: str) -> bool:
+	"""表格明细聚合/比较：即使含「汇总」也应走 table，不被 summary 劫持。"""
+	q = (question or "").strip()
+	if not q:
+		return False
+	if any(hint in q for hint in TABLE_DETAIL_OVERRIDE_HINTS):
+		# 「忽略汇总…按表格…最大最小」或「明细里最大最小」
+		if any(hint in q for hint in TABLE_AGG_HINTS) or any(
+			token in q for token in TABLE_KEYWORDS
+		):
+			return True
+		if "明细" in q or "表格" in q or "表中" in q or "逐行" in q:
+			return True
+	if ("明细" in q or "表格" in q) and any(hint in q for hint in TABLE_AGG_HINTS):
+		return True
+	return False
+
+
+def looks_like_table_summary_lookup(question: str) -> bool:
+	"""问表尾/文末汇总说明段落本身（共收录、占比等），需召回 table_summary。"""
+	q = (question or "").strip()
+	if not q:
+		return False
+	# 与明细覆盖互斥：明确忽略汇总时不算 summary-lookup
+	if looks_like_table_detail_query(q):
+		return False
+	return any(hint in q for hint in TABLE_SUMMARY_LOOKUP_HINTS)
+
+
 def classify_query(
 	question: str,
 	*,
@@ -77,8 +147,18 @@ def classify_query(
 ) -> tuple[QueryType, str]:
 	"""按规则返回 (query_type, reason)。
 
-	优先级：ambiguous → section_lookup → summary → table → compare → follow_up → fact。
+	阶段1表格短路写松：仅高置信表格信号 → query_type=table；
+	弱「表/供应商」类词不再硬判 table（交给 path=fast + 阶段2升级）。
+
+	优先级：ambiguous → section_lookup → high-confidence table shortcircuit →
+	summary → compare → follow_up → fact。
 	"""
+	# 延迟导入：避免 ask_route ↔ query_router 循环
+	from app.services.ask_route import (
+		looks_like_high_confidence_table_shortcircuit,
+		stage1_table_route_reason,
+	)
+
 	q = (question or "").strip()
 	if not q or q in AMBIGUOUS_EXACT or len(q) <= 1:
 		return "ambiguous", "too_short_or_vague"
@@ -86,10 +166,13 @@ def classify_query(
 	if looks_like_section_lookup(q):
 		return "section_lookup", "section_lookup_pattern"
 
+	# 阶段1：高置信表格短路（含 table_detail_override / table_summary_lookup）
+	if looks_like_high_confidence_table_shortcircuit(q):
+		return "table", stage1_table_route_reason(q)
+
 	if any(token in q for token in SUMMARY_KEYWORDS):
 		return "summary", "summary_keyword"
-	if any(token in q for token in TABLE_KEYWORDS):
-		return "table", "table_keyword"
+	# 弱表格词不再短路；阶段2 用命中证据 upgrade
 	if any(token in q for token in COMPARE_KEYWORDS):
 		return "compare", "compare_keyword"
 

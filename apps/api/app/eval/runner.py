@@ -422,6 +422,9 @@ def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 		filename=doc.filename or fixture_name,
 		doc_id=doc.id,
 		library_id=case.library_id or "lib-eval",
+		document_version_id=f"eval-{case.id}-version",
+		generation_id=f"eval-{case.id}-generation",
+		lifecycle_visibility="active",
 		include_sections=True,
 	)
 	# fact 隔离：只 upsert 所需粒度时仍写入全部，靠 search filter 验证 section 不进 fact

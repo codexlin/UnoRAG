@@ -41,6 +41,37 @@ export type ApiCitation = {
 	filename?: string | null;
 };
 
+/** Timed stage entry inside retrieval_debug.stages */
+export type ApiAskStage = {
+	stage: string;
+	duration_ms: number;
+	ok: boolean;
+	detail?: Record<string, unknown>;
+};
+
+/** Ask observability payload (P0 stages + summary fields). */
+export type ApiRetrievalDebug = {
+	trace_id?: string;
+	question_hash?: string;
+	library_id?: string | null;
+	path?: string;
+	route?: string;
+	upgrade?: unknown;
+	upgrade_reason?: string | null;
+	downgrade_reason?: string | null;
+	precise_gate?: string | null;
+	refuse_reason?: string | null;
+	total_duration_ms?: number;
+	truncated?: boolean;
+	stages?: ApiAskStage[];
+	top_score?: number | null;
+	used_hybrid?: boolean;
+	hybrid_failed?: boolean;
+	rerank_failed?: boolean;
+	retrieval_mode?: string;
+	[key: string]: unknown;
+};
+
 export type ApiArchiveTurn = {
 	id: string;
 	session_id: string;
@@ -52,6 +83,7 @@ export type ApiArchiveTurn = {
 	refused: boolean;
 	refuse_reason?: string | null;
 	created_at: string;
+	retrieval_debug?: ApiRetrievalDebug | null;
 };
 
 export type ApiAskResponse = {
@@ -62,7 +94,7 @@ export type ApiAskResponse = {
 	mode: string;
 	refused: boolean;
 	refuse_reason?: string | null;
-	retrieval_debug: Record<string, unknown>;
+	retrieval_debug: ApiRetrievalDebug;
 	persisted?: boolean;
 	persist_error?: string | null;
 	hybrid_failed?: boolean;
@@ -102,6 +134,13 @@ export type ApiDocument = {
 		parser?: string;
 		[key: string]: unknown;
 	} | null;
+	document_id?: string | null;
+	document_version_id?: string | null;
+	generation_id?: string | null;
+	job_id?: string | null;
+	job_status?: string | null;
+	job_stage?: string | null;
+	job_progress?: number | null;
 	created_at: string;
 	updated_at: string;
 };
@@ -117,16 +156,41 @@ export type ApiUploadResponse = {
 	simulated: boolean;
 	/** true when server accepted async ingest (HTTP 202) */
 	accepted?: boolean;
+	document_id?: string;
+	document_version_id?: string;
+	generation_id?: string;
+	job_id?: string;
 	error?: string | null;
 	notice?: string | null;
 	pipeline?: string | null;
 	parser_report?: Record<string, unknown> | null;
 };
 
-const DEFAULT_API_URL = "http://localhost:8000";
+export type ApiJob = {
+	id: string;
+	type: string;
+	status: string;
+	stage: string;
+	progress: number;
+	progress_current?: number | null;
+	progress_total?: number | null;
+	attempt: number;
+	max_attempts: number;
+	error_code?: string | null;
+	error?: string | null;
+	parser_report?: Record<string, unknown> | null;
+	document_id: string;
+	document_version_id: string;
+	generation_id: string;
+	library_id: string;
+	created_at: string;
+	started_at?: string | null;
+	finished_at?: string | null;
+	updated_at: string;
+};
 
 export function getApiBaseUrl() {
-	return process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || DEFAULT_API_URL;
+	return "/api/rag";
 }
 
 /** True when fetch was cancelled via AbortController (e.g. React Strict Mode remount). */
@@ -161,7 +225,7 @@ export async function fetchHealth(signal?: AbortSignal): Promise<ApiHealth> {
 export async function fetchLibraries(
 	signal?: AbortSignal,
 ): Promise<ApiLibrary[]> {
-	const response = await fetch(`${getApiBaseUrl()}/v1/libraries`, {
+	const response = await fetch("/api/libraries", {
 		method: "GET",
 		signal,
 		cache: "no-store",
@@ -176,18 +240,22 @@ export async function fetchDocuments(
 	libraryId: string,
 	signal?: AbortSignal,
 ): Promise<ApiDocument[]> {
-	const response = await fetch(
-		`${getApiBaseUrl()}/v1/libraries/${encodeURIComponent(libraryId)}/documents`,
+	const encodedLibraryId = encodeURIComponent(libraryId);
+	const controlResponse = await fetch(
+		`/api/libraries/${encodedLibraryId}/documents`,
 		{
 			method: "GET",
 			signal,
 			cache: "no-store",
 		},
 	);
-	if (!response.ok) {
-		throw new Error(`documents ${response.status}`);
+	if (!controlResponse.ok) {
+		throw new Error(`documents ${controlResponse.status}`);
 	}
-	return (await response.json()) as ApiDocument[];
+	const controlDocuments = (await controlResponse.json()) as ApiDocument[];
+	return controlDocuments.sort((left, right) =>
+		right.updated_at.localeCompare(left.updated_at),
+	);
 }
 
 export async function createLibrary(input: {
@@ -195,7 +263,7 @@ export async function createLibrary(input: {
 	description?: string;
 	libraryId?: string;
 }): Promise<ApiLibrary> {
-	const response = await fetch(`${getApiBaseUrl()}/v1/libraries`, {
+	const response = await fetch("/api/libraries", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({
@@ -225,7 +293,7 @@ export async function updateLibrary(input: {
 				: null;
 	}
 	const response = await fetch(
-		`${getApiBaseUrl()}/v1/libraries/${encodeURIComponent(input.libraryId)}`,
+		`/api/libraries/${encodeURIComponent(input.libraryId)}`,
 		{
 			method: "PATCH",
 			headers: { "content-type": "application/json" },
@@ -243,9 +311,13 @@ export async function deleteLibrary(libraryId: string): Promise<{
 	ok: boolean;
 	library_id: string;
 	deleted_documents: number;
+	delete_jobs_queued?: number;
+	status?: string;
+	accepted?: boolean;
+	cleanup_queued?: boolean;
 }> {
 	const response = await fetch(
-		`${getApiBaseUrl()}/v1/libraries/${encodeURIComponent(libraryId)}`,
+		`/api/libraries/${encodeURIComponent(libraryId)}`,
 		{ method: "DELETE" },
 	);
 	if (!response.ok) {
@@ -267,16 +339,14 @@ export async function uploadDocument(input: {
 	displayName?: string;
 }): Promise<ApiUploadResponse> {
 	const form = new FormData();
-	form.append("library_id", input.libraryId);
 	form.append("file", input.file);
 	if (input.displayName?.trim()) {
 		form.append("display_name", input.displayName.trim());
 	}
-	const response = await fetch(`${getApiBaseUrl()}/v1/ingest/upload`, {
-		method: "POST",
-		body: form,
-	});
-	// 200=同步完成；202=已入队异步索引
+	const response = await fetch(
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents`,
+		{ method: "POST", body: form },
+	);
 	if (response.status !== 200 && response.status !== 202) {
 		const text = await response.text();
 		throw new Error(parseApiError(text) || `upload ${response.status}`);
@@ -284,20 +354,117 @@ export async function uploadDocument(input: {
 	return (await response.json()) as ApiUploadResponse;
 }
 
-export async function deleteDocument(docId: string): Promise<void> {
+export async function fetchJob(jobId: string): Promise<ApiJob> {
+	const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+		cache: "no-store",
+	});
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `job ${response.status}`);
+	}
+	return (await response.json()) as ApiJob;
+}
+
+export async function retryJob(jobId: string): Promise<ApiJob> {
+	const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/retry`, {
+		method: "POST",
+	});
+	if (response.status !== 200 && response.status !== 202) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `retry job ${response.status}`);
+	}
+	return (await response.json()) as ApiJob;
+}
+
+export async function cancelJob(jobId: string): Promise<ApiJob> {
 	const response = await fetch(
-		`${getApiBaseUrl()}/v1/documents/${encodeURIComponent(docId)}`,
+		`/api/jobs/${encodeURIComponent(jobId)}/cancel`,
+		{ method: "POST" },
+	);
+	if (response.status !== 200 && response.status !== 202) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `cancel job ${response.status}`);
+	}
+	return (await response.json()) as ApiJob;
+}
+
+export async function deleteDocument(input: {
+	libraryId: string;
+	docId: string;
+}): Promise<{
+	ok: boolean;
+	job_id: string;
+	status: string;
+	accepted?: boolean;
+}> {
+	const response = await fetch(
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents/${encodeURIComponent(input.docId)}`,
 		{ method: "DELETE" },
 	);
-	if (!response.ok) {
+	if (response.status !== 200 && response.status !== 202) {
 		const text = await response.text();
 		throw new Error(parseApiError(text) || `delete ${response.status}`);
 	}
+	return (await response.json()) as {
+		ok: boolean;
+		job_id: string;
+		status: string;
+		accepted?: boolean;
+	};
 }
 
-export async function reindexDocument(docId: string): Promise<ApiUploadResponse> {
+export type ApiDocumentVersion = {
+	id: string;
+	version: number;
+	generation_id: string;
+	status: string;
+	is_active: boolean;
+	is_desired: boolean;
+	content_hash: string;
+	size_bytes?: number | null;
+	point_count?: number | null;
+	chunk_count?: number | null;
+	pipeline_version?: string | null;
+	parser_backend?: string | null;
+	failure_code?: string | null;
+	error?: string | null;
+	indexed_at?: string | null;
+	activated_at?: string | null;
+	superseded_at?: string | null;
+	created_at: string;
+	updated_at: string;
+};
+
+export async function fetchDocumentVersions(input: {
+	libraryId: string;
+	docId: string;
+	signal?: AbortSignal;
+}): Promise<{
+	active_version_id: string | null;
+	desired_version_id: string | null;
+	versions: ApiDocumentVersion[];
+}> {
 	const response = await fetch(
-		`${getApiBaseUrl()}/v1/documents/${encodeURIComponent(docId)}/reindex`,
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents/${encodeURIComponent(input.docId)}/versions`,
+		{ method: "GET", cache: "no-store", signal: input.signal },
+	);
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `versions ${response.status}`);
+	}
+	return (await response.json()) as {
+		active_version_id: string | null;
+		desired_version_id: string | null;
+		versions: ApiDocumentVersion[];
+	};
+}
+
+export async function reindexDocument(input: {
+	libraryId: string;
+	docId: string;
+}): Promise<ApiUploadResponse> {
+	const response = await fetch(
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents/${encodeURIComponent(input.docId)}/reindex`,
 		{ method: "POST" },
 	);
 	if (response.status !== 200 && response.status !== 202) {
@@ -307,15 +474,20 @@ export async function reindexDocument(docId: string): Promise<ApiUploadResponse>
 	return (await response.json()) as ApiUploadResponse;
 }
 
-/** 用新文件覆盖同一 doc_id：清旧向量与原文后重新索引 */
+/** 用新文件创建文档新版本：保留旧 active generation，直到新 job 激活。 */
 export async function replaceDocument(input: {
+	libraryId: string;
 	docId: string;
 	file: File;
+	displayName?: string;
 }): Promise<ApiUploadResponse> {
 	const form = new FormData();
 	form.append("file", input.file);
+	if (input.displayName?.trim()) {
+		form.append("display_name", input.displayName.trim());
+	}
 	const response = await fetch(
-		`${getApiBaseUrl()}/v1/documents/${encodeURIComponent(input.docId)}/replace`,
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents/${encodeURIComponent(input.docId)}/versions`,
 		{ method: "POST", body: form },
 	);
 	if (response.status !== 200 && response.status !== 202) {
@@ -339,8 +511,11 @@ export async function downloadDocument(
 	}
 	const blob = await response.blob();
 	const disposition = response.headers.get("content-disposition");
-	const fromHeader = disposition?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i)?.[1];
-	const resolvedName = filename || (fromHeader ? decodeURIComponent(fromHeader) : docId);
+	const fromHeader = disposition?.match(
+		/filename\*?=(?:UTF-8''|")?([^";]+)/i,
+	)?.[1];
+	const resolvedName =
+		filename || (fromHeader ? decodeURIComponent(fromHeader) : docId);
 	const url = URL.createObjectURL(blob);
 	try {
 		const anchor = document.createElement("a");

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 
+from app.security.access_scope import AclScope, AccessScope, resolve_access_scope
 from app.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,10 @@ class QdrantStore:
 		chunks: list[dict[str, Any]],
 		vectors: list[list[float]],
 		filename: str | None = None,
+		access_scope: AccessScope | None = None,
+		acl_scope: AclScope = "workspace",
+		allowed_principal_ids: tuple[str, ...] = (),
+		allowed_group_ids: tuple[str, ...] = (),
 	) -> int:
 		if len(chunks) != len(vectors):
 			raise ValueError("chunks and vectors length mismatch")
@@ -73,14 +79,20 @@ class QdrantStore:
 			"target_chars",
 			"max_chars",
 			"table_rows_per_record",
+			"table_tokens_per_record",
 			"semantic_distance_threshold",
 			"semantic_unit_count",
 			"semantic_fallback",
 			"source_format",
 			"content_hash",
 			"document_version_id",
+			"generation_id",
+			"lifecycle_visibility",
 			"tenant_id",
 			"workspace_id",
+			"acl_scope",
+			"acl_principal_ids",
+			"acl_group_ids",
 			"record_type",
 			"record_id",
 			"parent_record_id",
@@ -91,9 +103,15 @@ class QdrantStore:
 			"row_start",
 			"row_end",
 			"table_row_count",
+			"table_caption",
+			"table_quality",
+			"summary_rows",
+			"footnotes",
+			"header_rows",
+			"table_columns",
+			"cell_rows",
 		)
-		from app.services.versioning import derive_document_version_id
-
+		scope = resolve_access_scope(self.settings, access_scope)
 		for chunk, vector in zip(chunks, vectors, strict=True):
 			payload: dict[str, Any] = {
 				"library_id": library_id,
@@ -102,20 +120,28 @@ class QdrantStore:
 				"chunk_index": int(chunk["chunk_index"]),
 				# text = body（展示/BM25）；向量在 ingest 侧用 embed_text 生成
 				"text": chunk.get("body") or chunk["text"],
+				**scope.payload(
+					acl_scope=acl_scope,
+					allowed_principal_ids=allowed_principal_ids,
+					allowed_group_ids=allowed_group_ids,
+				),
 			}
 			for key in _optional_keys:
 				if chunk.get(key) is not None:
 					payload[key] = chunk[key]
-			# Phase 1：预埋版本 / 租户（无完整 version 表时用派生 stub）
-			if not payload.get("document_version_id"):
-				payload["document_version_id"] = derive_document_version_id(
-					doc_id,
-					content_hash=str(chunk.get("content_hash") or "") or None,
+			# Request scope is authoritative; parser/chunk payload may not override it.
+			payload.update(
+				scope.payload(
+					acl_scope=acl_scope,
+					allowed_principal_ids=allowed_principal_ids,
+					allowed_group_ids=allowed_group_ids,
 				)
-			if not payload.get("tenant_id"):
-				payload["tenant_id"] = "default"
-			if not payload.get("workspace_id"):
-				payload["workspace_id"] = "default"
+			)
+			if not payload.get("document_version_id"):
+				raise ValueError(
+					"document_version_id is required on Qdrant payloads; "
+					"lifecycle ingest must supply app.document_versions.id"
+				)
 			# 缺省视为 chunk，兼容旧点
 			if not payload.get("record_type"):
 				payload["record_type"] = "chunk"
@@ -140,9 +166,17 @@ class QdrantStore:
 		)
 		return len(points)
 
-	def delete_by_doc_id(self, *, doc_id: str, library_id: str | None = None) -> None:
+	def delete_by_doc_id(
+		self,
+		*,
+		doc_id: str,
+		library_id: str | None = None,
+		access_scope: AccessScope | None = None,
+	) -> None:
 		"""删除某文档在 collection 中的全部向量点（覆盖重传 / 删文档前调用）。"""
+		scope = resolve_access_scope(self.settings, access_scope)
 		must: list[qm.Condition] = [
+			*scope.qdrant_conditions()[:2],
 			qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id)),
 		]
 		if library_id:
@@ -162,6 +196,122 @@ class QdrantStore:
 			doc_id,
 		)
 
+	def delete_by_generation(
+		self,
+		*,
+		generation_id: str,
+		access_scope: AccessScope | None = None,
+	) -> None:
+		scope = resolve_access_scope(self.settings, access_scope)
+		must: list[qm.Condition] = [
+			*scope.qdrant_conditions()[:2],
+			qm.FieldCondition(
+				key="generation_id",
+				match=qm.MatchValue(value=generation_id),
+			),
+		]
+		self.client.delete(
+			collection_name=self.collection,
+			points_selector=qm.FilterSelector(filter=qm.Filter(must=must)),
+		)
+
+	def count_generation(
+		self,
+		*,
+		generation_id: str,
+		access_scope: AccessScope | None = None,
+	) -> int:
+		scope = resolve_access_scope(self.settings, access_scope)
+		result = self.client.count(
+			collection_name=self.collection,
+			count_filter=qm.Filter(
+				must=[
+					*scope.qdrant_conditions()[:2],
+					qm.FieldCondition(
+						key="generation_id",
+						match=qm.MatchValue(value=generation_id),
+					),
+				]
+			),
+			exact=True,
+		)
+		return int(result.count)
+
+	def set_generation_visibility(
+		self,
+		*,
+		generation_id: str,
+		visibility: str,
+		access_scope: AccessScope | None = None,
+	) -> None:
+		if visibility not in {"staging", "active", "inactive"}:
+			raise ValueError(f"unsupported generation visibility: {visibility}")
+		scope = resolve_access_scope(self.settings, access_scope)
+		payload: dict[str, Any] = {"lifecycle_visibility": visibility}
+		if visibility == "inactive":
+			payload["deactivated_at"] = datetime.now(timezone.utc).isoformat()
+		self.client.set_payload(
+			collection_name=self.collection,
+			payload=payload,
+			points=qm.FilterSelector(
+				filter=qm.Filter(
+					must=[
+						*scope.qdrant_conditions()[:2],
+						qm.FieldCondition(
+							key="generation_id",
+							match=qm.MatchValue(value=generation_id),
+						),
+					]
+				)
+			),
+		)
+
+	@staticmethod
+	def _active_generation_condition() -> qm.Filter:
+		# Untagged legacy points remain readable until operators run
+		# backfill_qdrant_lifecycle_payload / control-plane reindex.
+		return qm.Filter(
+			should=[
+				qm.FieldCondition(
+					key="lifecycle_visibility",
+					match=qm.MatchValue(value="active"),
+				),
+				qm.IsEmptyCondition(
+					is_empty=qm.PayloadField(key="lifecycle_visibility")
+				),
+			]
+		)
+
+	@staticmethod
+	def _authoritative_generation_condition(
+		active_generation_ids: tuple[str, ...],
+	) -> qm.Filter:
+		# Once the authoritative gate is enabled, legacy points cannot bypass it.
+		# They remain readable only on the ungated migration path.
+		if active_generation_ids:
+			return qm.Filter(
+				must=[
+					qm.FieldCondition(
+						key="generation_id",
+						match=qm.MatchAny(any=list(active_generation_ids)),
+					)
+				]
+			)
+		# Two distinct exact matches on one field form a portable match-none
+		# filter without relying on empty MatchAny behavior across Qdrant versions.
+		return qm.Filter(
+			must=[
+				qm.FieldCondition(
+					key="generation_id",
+					match=qm.MatchValue(value="__meriknow_no_active_generation_a__"),
+				),
+				qm.FieldCondition(
+					key="generation_id",
+					match=qm.MatchValue(value="__meriknow_no_active_generation_b__"),
+				),
+			]
+		)
+
 	def search(
 		self,
 		*,
@@ -170,8 +320,18 @@ class QdrantStore:
 		top_k: int,
 		record_type: str | None = None,
 		extra_must: list[qm.Condition] | None = None,
+		access_scope: AccessScope | None = None,
+		active_generation_ids: tuple[str, ...] | None = None,
 	) -> list[dict[str, Any]]:
-		must: list[qm.Condition] = []
+		scope = resolve_access_scope(self.settings, access_scope)
+		must: list[qm.Condition] = [
+			*scope.qdrant_conditions(),
+			self._active_generation_condition(),
+		]
+		if active_generation_ids is not None:
+			must.append(
+				self._authoritative_generation_condition(active_generation_ids)
+			)
 		if library_id:
 			must.append(
 				qm.FieldCondition(
@@ -230,6 +390,17 @@ class QdrantStore:
 	def _payload_to_hit(self, point: Any, *, score: float = 0.0) -> dict[str, Any]:
 		payload = dict(getattr(point, "payload", None) or {})
 		body = str(payload.get("body") or payload.get("text") or "")
+		# 旧索引可能仅在 summary_rows 存文末汇总，未写入 embed body；检索展示时补齐。
+		summary_bits: list[str] = []
+		for item in payload.get("summary_rows") or []:
+			if isinstance(item, dict):
+				raw = str(item.get("raw_text") or "").strip()
+			else:
+				raw = str(item or "").strip()
+			if raw and raw not in body and raw not in summary_bits:
+				summary_bits.append(raw)
+		if summary_bits:
+			body = f"{body}\n汇总：{'；'.join(summary_bits)}".strip()
 		clamped = max(0.0, min(1.0, float(score)))
 		return {
 			"id": str(point.id),
@@ -246,13 +417,24 @@ class QdrantStore:
 			"row_start": payload.get("row_start"),
 			"row_end": payload.get("row_end"),
 			"table_row_count": payload.get("table_row_count"),
+			"table_caption": payload.get("table_caption"),
+			"table_quality": payload.get("table_quality") or {},
+			"summary_rows": payload.get("summary_rows") or [],
+			"footnotes": payload.get("footnotes") or [],
+			"header_rows": payload.get("header_rows") or [],
+			"table_columns": payload.get("table_columns") or [],
+			"cell_rows": payload.get("cell_rows") or [],
 			"snippet": body[:280],
 			"library_id": payload.get("library_id"),
 			"doc_id": payload.get("doc_id"),
 			"chunk_index": payload.get("chunk_index"),
 			"filename": payload.get("filename"),
 			"document_version_id": payload.get("document_version_id"),
+			"generation_id": payload.get("generation_id"),
+			"lifecycle_visibility": payload.get("lifecycle_visibility"),
 			"tenant_id": payload.get("tenant_id"),
+			"workspace_id": payload.get("workspace_id"),
+			"acl_scope": payload.get("acl_scope"),
 			"record_type": payload.get("record_type") or "chunk",
 			"record_id": payload.get("record_id"),
 			"source_chunk_ids": payload.get("source_chunk_ids") or [],
@@ -268,14 +450,23 @@ class QdrantStore:
 		table_id: str,
 		document_version_id: str | None = None,
 		library_id: str | None = None,
+		access_scope: AccessScope | None = None,
+		active_generation_ids: tuple[str, ...] | None = None,
 		limit: int = 10_000,
 	) -> list[dict[str, Any]]:
 		"""按表实例键拉取全部 table 行组（非向量 top_k），供全表聚合。"""
+		scope = resolve_access_scope(self.settings, access_scope)
 		must: list[qm.Condition] = [
+			*scope.qdrant_conditions(),
+			self._active_generation_condition(),
 			qm.FieldCondition(key="record_type", match=qm.MatchValue(value="table")),
 			qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id)),
 			qm.FieldCondition(key="table_id", match=qm.MatchValue(value=table_id)),
 		]
+		if active_generation_ids is not None:
+			must.append(
+				self._authoritative_generation_condition(active_generation_ids)
+			)
 		if document_version_id:
 			must.append(
 				qm.FieldCondition(
@@ -320,9 +511,19 @@ class QdrantStore:
 		library_id: str | None = None,
 		limit: int = 10_000,
 		record_type: str | None = "chunk",
+		access_scope: AccessScope | None = None,
+		active_generation_ids: tuple[str, ...] | None = None,
 	) -> list[dict[str, Any]]:
 		"""Scroll payload chunks for BM25 corpus building（默认仅 chunk 粒度）。"""
-		must: list[qm.Condition] = []
+		scope = resolve_access_scope(self.settings, access_scope)
+		must: list[qm.Condition] = [
+			*scope.qdrant_conditions(),
+			self._active_generation_condition(),
+		]
+		if active_generation_ids is not None:
+			must.append(
+				self._authoritative_generation_condition(active_generation_ids)
+			)
 		if library_id:
 			must.append(
 				qm.FieldCondition(
@@ -383,8 +584,12 @@ class QdrantStore:
 						"body": body,
 						"snippet": body[:280],
 						"library_id": payload.get("library_id"),
-						"document_version_id": payload.get("document_version_id"),
-						"tenant_id": payload.get("tenant_id"),
+							"document_version_id": payload.get("document_version_id"),
+							"generation_id": payload.get("generation_id"),
+							"lifecycle_visibility": payload.get("lifecycle_visibility"),
+							"tenant_id": payload.get("tenant_id"),
+							"workspace_id": payload.get("workspace_id"),
+							"acl_scope": payload.get("acl_scope"),
 						"record_type": payload.get("record_type") or "chunk",
 						"record_id": payload.get("record_id"),
 						"source_chunk_ids": payload.get("source_chunk_ids") or [],

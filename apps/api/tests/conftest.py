@@ -24,6 +24,9 @@ def force_stub_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 	monkeypatch.setenv("HYBRID_ENABLED", "false")
 	# 测试默认同步 ingest，避免依赖 Redis/worker
 	monkeypatch.setenv("INGEST_ASYNC", "false")
+	# Explicit legacy unit-test escape hatch only. Product/default is off;
+	# V2 control-plane paths and L7 CI gates do not rely on this flag.
+	monkeypatch.setenv("LEGACY_INGEST_WRITES_ENABLED", "true")
 	get_settings.cache_clear()
 	reset_metadata_store()
 	yield

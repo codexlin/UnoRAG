@@ -6,19 +6,82 @@ import re
 from collections.abc import Callable
 from typing import Any, Literal
 
-TableOp = Literal["lookup", "filter", "max", "min", "count", "fallback"]
+TableOp = Literal["lookup", "filter", "max", "min", "count", "join_lookup", "fallback"]
 TableOperator = Literal[">", ">=", "<", "<=", "=="]
+
+# 等值 join 候选（MVP：同库两表、一列 equi-join）
+_JOIN_KEY_CANDIDATES: tuple[str, ...] = (
+	"设备号",
+	"序列号",
+	"设备序列号",
+	"资产编号",
+	"SN",
+	"设备名称",
+	"产品",
+	"品名",
+	"项目名称",
+	"序号",
+)
+
+_DUAL_QUERY_HINT = re.compile(
+	r"(设备号|序列号|设备序列号|资产编号|\bSN\b|跨表|两张表|两个表|关联|对应|对照)"
+)
 
 # 列名别名：问法 → 可能命中的表头片段（匹配时仍需与真实 headers 对齐）
 _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-	"总价": ("总价", "报价", "金额", "price", "amount"),
+	"总价": ("总价", "报价", "金额", "合计", "中标金额", "price", "amount"),
 	"单价": ("单价", "unit"),
-	"供应商": ("供应商", "厂商", "公司", "vendor", "supplier"),
+	"合计": ("合计", "总价", "金额"),
+	"中标金额": ("中标金额", "金额", "总价"),
+	"序号": ("序号", "编号", "No", "#"),
+	"供应商": ("供应商", "中标供应商", "厂商", "公司", "vendor", "supplier"),
+	"中标供应商": ("中标供应商", "供应商", "厂商"),
 	"数量": ("数量", "qty", "quantity"),
-	"产品": ("产品", "品名", "名称", "product"),
+	"产品": ("产品", "品名", "设备名称", "项目名称", "名称", "product"),
+	"设备名称": ("设备名称", "设备", "产品", "品名", "名称"),
+	"项目名称": ("项目名称", "项目", "名称"),
+	"采购单位": ("采购单位", "采购人", "单位"),
+	"规格参数": ("规格参数", "规格", "参数"),
 	"交付": ("交付", "交期", "周期"),
 	"质保": ("质保", "保修"),
 }
+
+# 实体列候选：lookup 时按问法/表头优先级解析，不只绑「供应商」
+_ENTITY_COLUMN_CANDIDATES: tuple[str, ...] = (
+	"设备名称",
+	"产品",
+	"品名",
+	"项目名称",
+	"名称",
+	"供应商",
+	"中标供应商",
+	"厂商",
+	"公司",
+)
+
+_ENTITY_STOPWORDS = frozenset(
+	{
+		"最低",
+		"最高",
+		"最大",
+		"最小",
+		"多少",
+		"哪些",
+		"哪个",
+		"什么",
+		"的",
+		"了",
+		"和",
+		"与",
+		"其",
+		"该",
+		"本",
+		"哪",
+		"请",
+		"列出",
+		"大约",
+	}
+)
 
 _CN_NUM = {
 	"零": 0,
@@ -36,11 +99,19 @@ _CN_NUM = {
 }
 
 _NUMERIC_INTENT = re.compile(
-	r"(超过|大于|小于|不低于|不高于|至少|最多|最低|最高|最大|最小|多少行|几行|统计|平均值|>|>=|<|<=)"
+	r"(超过|大于|小于|不低于|不高于|至少|最多|最低|最高|最大|最小|多少行|几行|统计|平均值|序号|>|>=|<|<=)"
 )
+# 甲公司总价 / 服务器主机（型号）的单价
 _EQ_ENTITY = re.compile(
-	r"(?P<entity>[\u4e00-\u9fffA-Za-z0-9]{1,24})(?P<col>总价|报价|单价|数量)"
+	r"(?P<entity>[\u4e00-\u9fff]{2,24}|[A-Za-z][A-Za-z0-9\-_.]{1,30})"
+	r"(?:（[^）]{0,48}）|\([^)]{0,48}\))?"
+	r"的?"
+	r"(?P<col>总价|报价|单价|数量|合计|中标金额|规格参数|规格)"
 )
+_SEQ_LOOKUP = re.compile(
+	r"(?:序号\s*(?:为|是|:|：)?\s*(?P<seq>\d+)|第\s*(?P<row>\d+)\s*行)"
+)
+_SUMMARY_ROW_RE = re.compile(r"^(合计|总计|小计|汇总|汇总说明|备注|注[:：])")
 
 _UNIT_SCALE = {"千": 1_000.0, "万": 10_000.0, "亿": 100_000_000.0}
 _ARABIC_NUMBER_TOKEN = r"-?[0-9][0-9,，]*(?:\.[0-9]+)?\s*[万千亿]?"
@@ -116,15 +187,108 @@ def _match_header(column_hint: str | None, headers: list[str]) -> str | None:
 	return None
 
 
+def _infer_numeric_column(question: str) -> str | None:
+	"""从问法推断数值列；单价优先于笼统的「价」。"""
+	q = question or ""
+	if "单价" in q:
+		return "单价"
+	if "中标金额" in q:
+		return "中标金额"
+	if "合计" in q and "总价" not in q and "报价" not in q:
+		return "合计"
+	if any(token in q for token in ("总价", "报价", "金额")):
+		return "总价"
+	if "价" in q:
+		return "总价"
+	return None
+
+
+def _pick_entity_column_hint(question: str, headers: list[str] | None) -> str:
+	"""按问法与表头选实体列 hint（仍需 _finalize_columns 对齐真实表头）。"""
+	q = question or ""
+	preferred: list[str] = []
+	if "设备" in q:
+		preferred.append("设备名称")
+	if "项目" in q:
+		preferred.append("项目名称")
+	if "产品" in q or "品名" in q:
+		preferred.append("产品")
+	if "供应商" in q or "厂商" in q:
+		preferred.append("供应商")
+	preferred.extend(_ENTITY_COLUMN_CANDIDATES)
+	if headers:
+		for hint in preferred:
+			if _match_header(hint, headers):
+				return hint
+	return preferred[0] if preferred else "供应商"
+
+
+def _lookup_select_columns(question: str, *, value_column: str | None = None) -> list[str]:
+	"""lookup/filter 的 select：问到的名称/金额列 + value_column。"""
+	q = question or ""
+	select: list[str] = []
+
+	def _add(hint: str) -> None:
+		if hint and hint not in select:
+			select.append(hint)
+
+	if any(t in q for t in ("设备", "产品", "品名")):
+		_add("设备名称")
+		_add("产品")
+	if "项目" in q:
+		_add("项目名称")
+	if any(t in q for t in ("供应商", "厂商")):
+		_add("供应商")
+		_add("中标供应商")
+	if "采购" in q or "单位" in q:
+		_add("采购单位")
+	if "规格" in q:
+		_add("规格参数")
+	if "品牌" in q or "型号" in q:
+		_add("品牌/型号")
+	if "序号" in q:
+		_add("序号")
+	if "哪些" in q or "哪" in q:
+		_add("设备名称")
+		_add("项目名称")
+		_add("产品")
+		_add("供应商")
+	if "单价" in q:
+		_add("单价")
+	if "合计" in q:
+		_add("合计")
+	if "总价" in q or "报价" in q:
+		_add("总价")
+	if "中标金额" in q or ("金额" in q and "单价" not in q):
+		_add("中标金额")
+		_add("总价")
+	if value_column:
+		_add(value_column)
+	# filter/lookup 至少保留一类名称列，便于 answer_text / 证据展示
+	if not any(c in select for c in ("供应商", "中标供应商", "设备名称", "项目名称", "产品")):
+		_add("供应商")
+		_add("产品")
+		_add("设备名称")
+		_add("项目名称")
+	if not select:
+		select = ["产品", "供应商", value_column or "总价"]
+	return select
+
+
 def looks_like_numeric_table_query(question: str) -> bool:
 	q = (question or "").strip()
 	if not q:
 		return False
 	if _NUMERIC_INTENT.search(q):
 		return True
+	if _SEQ_LOOKUP.search(q):
+		return True
 	if _EQ_ENTITY.search(q):
 		return True
-	return bool(re.search(r"[0-9]+万?", q) and ("价" in q or "报价" in q or "供应商" in q))
+	return bool(
+		re.search(r"[0-9]+万?", q)
+		and ("价" in q or "报价" in q or "供应商" in q or "金额" in q)
+	)
 
 
 def build_table_query_plan(
@@ -148,6 +312,7 @@ def build_table_query_plan(
 		"select_columns": [],
 		"confident": False,
 		"reason": "unparsed",
+		"exclude_summary_rows": True,
 	}
 	if not q:
 		plan["reason"] = "empty"
@@ -165,30 +330,71 @@ def build_table_query_plan(
 		)
 		return _finalize_columns(plan, headers)
 
-	# max / min
-	if re.search(r"(最低|最小|最少).{0,6}(价|报价|总价|单价)", q) or re.search(
-		r"(价|报价|总价|单价).{0,4}(最低|最小)", q
-	):
-		plan.update(
-			{
-				"operation": "min",
-				"column": "总价",
-				"confident": True,
-				"reason": "min_pattern",
-				"select_columns": ["供应商", "总价"],
-			}
-		)
-		return _finalize_columns(plan, headers)
-	if re.search(r"(最高|最大|最多).{0,6}(价|报价|总价|单价)", q) or re.search(
-		r"(价|报价|总价|单价).{0,4}(最高|最大)", q
-	):
+	# 序号 / 第 N 行 lookup（先于 max/min，避免被数值意图抢走）
+	seq_m = _SEQ_LOOKUP.search(q)
+	if seq_m:
+		seq_val = seq_m.group("seq") or seq_m.group("row")
+		if seq_val:
+			select = _lookup_select_columns(q)
+			# 序号行通常要带回整行关键列
+			for hint in ("设备名称", "项目名称", "产品", "采购单位", "供应商", "中标供应商", "单价", "合计", "总价", "中标金额", "规格参数"):
+				if hint not in select:
+					select.append(hint)
+			plan.update(
+				{
+					"operation": "lookup",
+					"column": _infer_numeric_column(q) or "产品",
+					"entity_column": "序号",
+					"entity_value": str(int(seq_val)) if seq_val.isdigit() else seq_val,
+					"select_columns": select,
+					"confident": True,
+					"reason": "seq_lookup",
+				}
+			)
+			return _finalize_columns(plan, headers)
+
+	# max / min（可同时问最大和最小 → 主操作为 max，附带 also_min）
+	min_pat = bool(
+		re.search(r"(最低|最小|最少).{0,6}(价|报价|总价|单价|金额)", q)
+		or re.search(r"(价|报价|总价|单价|金额).{0,4}(最低|最小)", q)
+	)
+	max_pat = bool(
+		re.search(r"(最高|最大|最多).{0,6}(价|报价|总价|单价|金额)", q)
+		or re.search(r"(价|报价|总价|单价|金额).{0,4}(最高|最大)", q)
+	)
+	amount_col = _infer_numeric_column(q) or "总价"
+	agg_select = ["产品", "项目名称", "设备名称", "供应商", "中标供应商", amount_col]
+	if max_pat and min_pat:
 		plan.update(
 			{
 				"operation": "max",
-				"column": "总价",
+				"column": amount_col,
+				"also_min": True,
+				"confident": True,
+				"reason": "maxmin_pattern",
+				"select_columns": agg_select,
+			}
+		)
+		return _finalize_columns(plan, headers)
+	if min_pat:
+		plan.update(
+			{
+				"operation": "min",
+				"column": amount_col,
+				"confident": True,
+				"reason": "min_pattern",
+				"select_columns": agg_select,
+			}
+		)
+		return _finalize_columns(plan, headers)
+	if max_pat:
+		plan.update(
+			{
+				"operation": "max",
+				"column": amount_col,
 				"confident": True,
 				"reason": "max_pattern",
-				"select_columns": ["供应商", "总价"],
+				"select_columns": agg_select,
 			}
 		)
 		return _finalize_columns(plan, headers)
@@ -214,14 +420,14 @@ def build_table_query_plan(
 			"不多于": "<=",
 		}.get(op_word)
 		if value is not None and operator:
-			col = "总价" if ("价" in q or "报价" in q or "总价" in q) else None
+			col = _infer_numeric_column(q)
 			# 「超过十万的供应商」无显式「价」时，默认按总价/报价列过滤
-			if col is None and ("供应商" in q or "哪" in q):
+			if col is None and ("供应商" in q or "哪" in q or "设备" in q):
 				col = "总价"
 			if col is None:
 				plan["reason"] = "filter_missing_column"
 				return plan
-			select = ["供应商", "总价"] if "供应商" in q or "哪" in q else ["总价"]
+			select = _lookup_select_columns(q, value_column=col)
 			plan.update(
 				{
 					"operation": "filter",
@@ -237,7 +443,7 @@ def build_table_query_plan(
 
 	# ASCII ops（数值须走统一单位解析，避免「>= 10万」被当成 10；千分位交给 _cell_number）
 	ascii_op = re.search(
-		r"(总价|报价|单价|数量)\s*(>=|<=|>|<|==|=)\s*"
+		r"(中标金额|金额|总价|报价|单价|合计|数量)\s*(>=|<=|>|<|==|=)\s*"
 		rf"({_ARABIC_NUMBER_TOKEN})",
 		q,
 	)
@@ -249,37 +455,47 @@ def build_table_query_plan(
 			plan["reason"] = "ascii_filter_bad_value"
 			return plan
 		col = ascii_op.group(1)
-		if col == "报价":
+		if col in {"报价", "金额"}:
 			col = "总价"
+		# 中标金额 / 单价 / 合计 保留自身 hint，由 _match_header 对齐
+		select = _lookup_select_columns(q, value_column=col)
 		plan.update(
 			{
 				"operation": "filter",
 				"column": col,
 				"operator": operator,
 				"value": value,
-				"select_columns": ["供应商", col],
+				"select_columns": select,
 				"confident": True,
 				"reason": "ascii_filter",
 			}
 		)
 		return _finalize_columns(plan, headers)
 
-	# lookup: 甲公司总价 / 乙科技的报价
+	# lookup: 甲公司总价 / 服务器主机（型号）的单价
 	entity_m = _EQ_ENTITY.search(q)
 	if entity_m:
 		entity = entity_m.group("entity")
-		col = entity_m.group("col")
-		# 过滤掉「最低总价」之类已被上面覆盖的
-		if entity in {"最低", "最高", "最大", "最小", "多少"}:
+		col_raw = entity_m.group("col")
+		if entity in _ENTITY_STOPWORDS or len(entity) < 2:
 			plan["reason"] = "entity_ambiguous"
 			return plan
+		col = {
+			"报价": "总价",
+			"规格": "规格参数",
+			"规格参数": "规格参数",
+		}.get(col_raw, col_raw)
+		entity_col = _pick_entity_column_hint(q, headers)
+		select = _lookup_select_columns(q, value_column=col)
+		if entity_col not in select:
+			select = [entity_col, *select]
 		plan.update(
 			{
 				"operation": "lookup",
-				"column": col if col != "报价" else "总价",
-				"entity_column": "供应商",
+				"column": col,
+				"entity_column": entity_col,
 				"entity_value": entity,
-				"select_columns": ["供应商", col if col != "报价" else "总价"],
+				"select_columns": select,
 				"confident": True,
 				"reason": "entity_lookup",
 			}
@@ -307,10 +523,22 @@ def _finalize_columns(plan: dict[str, Any], headers: list[str] | None) -> dict[s
 		plan["column"] = col
 	entity_col = _match_header(plan.get("entity_column"), headers)
 	if plan.get("entity_column") and entity_col is None:
-		plan["confident"] = False
-		plan["reason"] = f"entity_column_unresolved:{plan.get('entity_column')}"
-		plan["operation"] = "fallback"
-		return plan
+		# 实体列可在名称类候选间回退（不猜测数值列）
+		for cand in _ENTITY_COLUMN_CANDIDATES:
+			alt = _match_header(cand, headers)
+			if alt:
+				entity_col = alt
+				break
+		if entity_col is None and plan.get("entity_column") != "序号":
+			plan["confident"] = False
+			plan["reason"] = f"entity_column_unresolved:{plan.get('entity_column')}"
+			plan["operation"] = "fallback"
+			return plan
+		if entity_col is None:
+			plan["confident"] = False
+			plan["reason"] = f"entity_column_unresolved:{plan.get('entity_column')}"
+			plan["operation"] = "fallback"
+			return plan
 	if entity_col:
 		plan["entity_column"] = entity_col
 	resolved_select: list[str] = []
@@ -394,6 +622,41 @@ def _with_matched_preview(
 	return result
 
 
+def _summary_row_texts(summary_rows: list[Any] | None) -> set[str]:
+	texts: set[str] = set()
+	for item in summary_rows or []:
+		if isinstance(item, dict):
+			raw = str(item.get("raw_text") or "").strip()
+		else:
+			raw = str(item or "").strip()
+		if raw:
+			texts.add(raw)
+	return texts
+
+
+def _is_summary_like_row(
+	row: dict[str, Any],
+	headers: list[str],
+	*,
+	summary_texts: set[str],
+) -> bool:
+	"""合计/小计行：已分离的 summary_rows 文本，或首格命中汇总模式。"""
+	cells = [str(row.get(h) or "").strip() for h in headers]
+	joined = " | ".join(c for c in cells if c)
+	if joined and joined in summary_texts:
+		return True
+	for cell in cells:
+		if cell and cell in summary_texts:
+			return True
+	first = next((c for c in cells if c), "")
+	if first and _SUMMARY_ROW_RE.match(first):
+		return True
+	# 单格跨列汇总说明
+	if len([c for c in cells if c]) == 1 and first.startswith(("汇总", "合计", "总计")):
+		return True
+	return False
+
+
 def execute_table_query(
 	plan: dict[str, Any],
 	*,
@@ -401,6 +664,7 @@ def execute_table_query(
 	rows: list[list[str]],
 	row_offset: int = 0,
 	collect_evidence_indices: bool = False,
+	summary_rows: list[Any] | None = None,
 ) -> dict[str, Any]:
 	"""在代码侧执行 TableQueryPlan；返回可归档的 execution result。"""
 	op = str(plan.get("operation") or "fallback")
@@ -442,6 +706,16 @@ def execute_table_query(
 	indexed_rows = [
 		_row_dict(headers, row, absolute_index=row_offset + i) for i, row in enumerate(rows)
 	]
+	summary_texts = _summary_row_texts(summary_rows)
+	exclude_summary = plan.get("exclude_summary_rows", True) is not False
+	if exclude_summary and (summary_texts or op in {"max", "min", "count", "filter", "lookup"}):
+		data_rows = [
+			r
+			for r in indexed_rows
+			if not _is_summary_like_row(r, headers, summary_texts=summary_texts)
+		]
+	else:
+		data_rows = indexed_rows
 
 	def _project(row: dict[str, Any]) -> dict[str, Any]:
 		cols = plan.get("select_columns") or headers
@@ -450,16 +724,16 @@ def execute_table_query(
 		return out
 
 	if op == "count":
-		projected = [_project(r) for r in indexed_rows]
+		projected = [_project(r) for r in data_rows]
 		result.update(
-				{
-					"ok": True,
-					**_with_matched_preview(
-						projected,
-						collect_evidence_indices=collect_evidence_indices,
-					),
-					"answer_value": len(indexed_rows),
-				"answer_text": f"共 {len(indexed_rows)} 行",
+			{
+				"ok": True,
+				**_with_matched_preview(
+					projected,
+					collect_evidence_indices=collect_evidence_indices,
+				),
+				"answer_value": len(data_rows),
+				"answer_text": f"共 {len(data_rows)} 行",
 				"reason": "count",
 			}
 		)
@@ -469,35 +743,60 @@ def execute_table_query(
 	if op == "lookup":
 		entity_col = str(plan.get("entity_column") or "")
 		entity_val = str(plan.get("entity_value") or "").strip()
-		matched = [
-			r
-			for r in indexed_rows
-			if entity_val and entity_val in str(r.get(entity_col) or "")
-		]
+		matched: list[dict[str, Any]] = []
+		if entity_val:
+			for r in data_rows:
+				cell = str(r.get(entity_col) or "").strip()
+				if not cell:
+					continue
+				if entity_col and ("序号" in entity_col or entity_col in {"编号", "No", "#"}):
+					cell_num = _cell_number(cell)
+					ent_num = _cell_number(entity_val)
+					if cell_num is not None and ent_num is not None and cell_num == ent_num:
+						matched.append(r)
+						continue
+					if cell == entity_val:
+						matched.append(r)
+					continue
+				if entity_val in cell:
+					matched.append(r)
 		if not matched:
 			result.update(
-					{
-						"ok": True,
-						**_with_matched_preview(
-							[],
-							collect_evidence_indices=collect_evidence_indices,
-						),
-						"answer_text": "未找到匹配行",
+				{
+					"ok": True,
+					**_with_matched_preview(
+						[],
+						collect_evidence_indices=collect_evidence_indices,
+					),
+					"answer_text": "未找到匹配行",
 					"reason": "no_match",
 				}
 			)
 			return result
-		values = [matched[0].get(column)] if column else []
-		answer = values[0] if values else None
+		proj = [_project(r) for r in matched]
+		answer: Any = matched[0].get(column) if column else None
+		if plan.get("reason") == "seq_lookup" or answer in (None, ""):
+			parts = [
+				f"{k}={v}"
+				for k, v in proj[0].items()
+				if k != "_row_index" and v not in (None, "")
+			]
+			answer_text = (
+				f"{entity_col}={entity_val} → " + ("；".join(parts[:8]) if parts else "命中")
+			)
+			if answer in (None, "") and parts:
+				answer = {k: v for k, v in proj[0].items() if k != "_row_index"}
+		else:
+			answer_text = f"{entity_val} 的{column}为 {answer}"
 		result.update(
-				{
-					"ok": True,
-					**_with_matched_preview(
-						[_project(r) for r in matched],
-						collect_evidence_indices=collect_evidence_indices,
-					),
-					"answer_value": answer,
-				"answer_text": f"{entity_val} 的{column}为 {answer}" if answer is not None else None,
+			{
+				"ok": True,
+				**_with_matched_preview(
+					proj,
+					collect_evidence_indices=collect_evidence_indices,
+				),
+				"answer_value": answer,
+				"answer_text": answer_text,
 				"reason": "lookup",
 			}
 		)
@@ -510,7 +809,7 @@ def execute_table_query(
 			result["reason"] = "bad_filter"
 			return result
 		matched = []
-		for row in indexed_rows:
+		for row in data_rows:
 			num = _cell_number(row.get(column))
 			if num is None:
 				continue
@@ -548,40 +847,57 @@ def execute_table_query(
 
 	if op in {"max", "min"}:
 		scored: list[tuple[float, dict[str, Any]]] = []
-		for row in indexed_rows:
+		for row in data_rows:
 			num = _cell_number(row.get(column))
 			if num is not None:
 				scored.append((num, row))
 		if not scored:
 			result.update(
-					{
-						"ok": True,
-						**_with_matched_preview(
-							[],
-							collect_evidence_indices=collect_evidence_indices,
-						),
-						"answer_text": "无可用数值",
+				{
+					"ok": True,
+					**_with_matched_preview(
+						[],
+						collect_evidence_indices=collect_evidence_indices,
+					),
+					"answer_text": "无可用数值",
 					"reason": "no_numeric",
 				}
 			)
 			return result
-		best_val, best_row = (max if op == "max" else min)(scored, key=lambda x: x[0])
+
+		def _best(op_name: str) -> tuple[float, dict[str, Any]]:
+			return (max if op_name == "max" else min)(scored, key=lambda x: x[0])
+
+		best_val, best_row = _best(op)
+		matched_for_preview = [_project(best_row)]
+		answer_value: Any = best_val
+		answer_text = f"{'最高' if op == 'max' else '最低'}{column}为 {best_val}"
+		reason = str(plan.get("reason") or op)
+
+		if plan.get("also_min") and op == "max":
+			min_val, min_row = _best("min")
+			matched_for_preview = [_project(best_row), _project(min_row)]
+			answer_value = {"max": best_val, "min": min_val}
+			answer_text = f"最高{column}为 {best_val}；最低{column}为 {min_val}"
+			reason = "maxmin"
+
 		result.update(
-				{
-					"ok": True,
-					**_with_matched_preview(
-						[_project(best_row)],
-						collect_evidence_indices=collect_evidence_indices,
-					),
-					"answer_value": best_val,
-				"answer_text": f"{'最高' if op == 'max' else '最低'}{column}为 {best_val}",
-				"reason": op,
+			{
+				"ok": True,
+				**_with_matched_preview(
+					matched_for_preview,
+					collect_evidence_indices=collect_evidence_indices,
+				),
+				"answer_value": answer_value,
+				"answer_text": answer_text,
+				"reason": reason,
 			}
 		)
 		return result
 
 	result["reason"] = f"unsupported:{op}"
 	return result
+
 
 
 def table_instance_key(item: dict[str, Any]) -> TableInstanceKey:
@@ -593,29 +909,136 @@ def table_instance_key(item: dict[str, Any]) -> TableInstanceKey:
 	)
 
 
-def locate_best_table_instance(citations: list[dict[str, Any]]) -> dict[str, Any] | None:
-	"""向量检索阶段：从 table hits 中选出得分最高的表实例（仅定位，不聚合）。"""
-	best: dict[str, Any] | None = None
+def question_schema_hints(question: str) -> list[tuple[str, int]]:
+	"""从问法提取应优先命中的列 hint 与权重（多表消歧用，不放宽执行门槛）。"""
+	q = question or ""
+	hints: list[tuple[str, int]] = []
+	if _SEQ_LOOKUP.search(q):
+		hints.append(("序号", 2))
+	if "设备" in q:
+		hints.append(("设备名称", 3))
+	elif "项目" in q:
+		hints.append(("项目名称", 3))
+	if "产品" in q or "品名" in q:
+		hints.append(("产品", 2))
+	if "单价" in q:
+		hints.append(("单价", 4))
+	if "合计" in q:
+		hints.append(("合计", 3))
+	if "中标金额" in q:
+		hints.append(("中标金额", 4))
+	elif "总价" in q or "报价" in q:
+		hints.append(("总价", 3))
+	if "供应商" in q or "厂商" in q:
+		hints.append(("供应商", 2))
+	if "采购单位" in q or ("采购" in q and "单位" in q):
+		hints.append(("采购单位", 2))
+	if "规格" in q:
+		hints.append(("规格参数", 2))
+	return hints
+
+
+def headers_schema_fit(headers: list[str], question: str) -> int:
+	"""表头与问法所需列的契合分；字面/强包含命中权重大于宽泛别名。"""
+	if not headers or not question:
+		return 0
+	total = 0
+	for hint, weight in question_schema_hints(question):
+		matched = _match_header(hint, headers)
+		if not matched:
+			continue
+		# 字面或核心词命中：设备≠项目名称、单价≠中标金额
+		core = hint[:2] if len(hint) >= 2 else hint
+		if hint in matched or core in matched:
+			total += weight
+		else:
+			total += max(1, weight // 2)
+	return total
+
+
+def rank_table_instances(
+	citations: list[dict[str, Any]],
+	*,
+	question: str | None = None,
+) -> list[dict[str, Any]]:
+	"""按「行证据优先 → schema fit → 检索分」排序去重后的表实例候选。"""
+	by_key: dict[TableInstanceKey, dict[str, Any]] = {}
 	for item in citations:
-		if str(item.get("record_type") or "") != "table" and not item.get("headers"):
+		record_type = str(item.get("record_type") or "")
+		if record_type not in {"table", "table_summary"} and not item.get("headers"):
 			continue
 		headers = [str(h) for h in (item.get("headers") or [])]
 		if not headers and not item.get("table_id"):
 			continue
+		key = table_instance_key(item)
+		if not key[2]:
+			continue
 		score = float(item.get("score") or 0)
-		if best is None or score > float(best.get("score") or 0):
-			doc_id, version_id, table_id = table_instance_key(item)
-			best = {
-				"doc_id": doc_id,
-				"document_version_id": version_id or None,
-				"table_id": table_id or None,
+		is_summary = record_type == "table_summary"
+		fit = headers_schema_fit(headers, question or "")
+		prev = by_key.get(key)
+		if prev is None:
+			by_key[key] = {
+				"doc_id": key[0],
+				"document_version_id": key[1] or None,
+				"table_id": key[2],
 				"score": score,
+				"schema_fit": fit,
+				"is_summary": is_summary,
 				"library_id": item.get("library_id"),
 				"citation": item,
+				"headers": headers,
 			}
-	if best and not best.get("table_id"):
-		return None
-	return best
+			continue
+		# 同行组证据优先于 summary；同层级取更高 fit/score，并保留更好 headers
+		prev_summary = bool(prev.get("is_summary"))
+		better = False
+		if prev_summary and not is_summary:
+			better = True
+		elif prev_summary == is_summary:
+			if fit > int(prev.get("schema_fit") or 0):
+				better = True
+			elif fit == int(prev.get("schema_fit") or 0) and score > float(
+				prev.get("score") or 0
+			):
+				better = True
+		if better:
+			prev.update(
+				{
+					"score": max(float(prev.get("score") or 0), score),
+					"schema_fit": max(int(prev.get("schema_fit") or 0), fit),
+					"is_summary": is_summary,
+					"library_id": item.get("library_id") or prev.get("library_id"),
+					"citation": item,
+					"headers": headers or prev.get("headers") or [],
+				}
+			)
+		else:
+			prev["score"] = max(float(prev.get("score") or 0), score)
+			prev["schema_fit"] = max(int(prev.get("schema_fit") or 0), fit)
+
+	ranked = list(by_key.values())
+	ranked.sort(
+		key=lambda c: (
+			0 if not c.get("is_summary") else 1,
+			-int(c.get("schema_fit") or 0),
+			-float(c.get("score") or 0),
+		)
+	)
+	return ranked
+
+
+def locate_best_table_instance(
+	citations: list[dict[str, Any]],
+	*,
+	question: str | None = None,
+) -> dict[str, Any] | None:
+	"""Locate a table; row evidence wins, table_summary is discovery fallback.
+
+	同库多表时优先选表头契合问法的实例（避免报价题落到中标明细表后 column_unresolved）。
+	"""
+	ranked = rank_table_instances(citations, question=question)
+	return ranked[0] if ranked else None
 
 
 def validate_table_group_coverage(groups: list[dict[str, Any]]) -> tuple[bool, str]:
@@ -739,7 +1162,127 @@ def assemble_table_from_groups(groups: list[dict[str, Any]]) -> dict[str, Any]:
 		"page_end": seed.get("page_end"),
 		"score": seed.get("score"),
 		"library_id": seed.get("library_id"),
+		"table_caption": seed.get("table_caption"),
+		"table_quality": seed.get("table_quality") or {},
+		"summary_rows": seed.get("summary_rows") or [],
+		"footnotes": seed.get("footnotes") or [],
 	}
+
+
+def _decorate_assembled_table(
+	assembled: dict[str, Any],
+	located: dict[str, Any],
+	*,
+	groups: list[dict[str, Any]],
+	doc_id: str,
+	version_id: Any,
+	table_id: str,
+	load_source: Literal["store", "load_failed"],
+) -> dict[str, Any]:
+	assembled["load_source"] = load_source
+	assembled["score"] = located.get("score")
+	assembled["citation"] = located.get("citation")
+	assembled["schema_fit"] = located.get("schema_fit")
+	if not assembled.get("table_quality"):
+		assembled["table_quality"] = (
+			(located.get("citation") or {}).get("table_quality") or {}
+		)
+	assembled["groups"] = groups
+	assembled.setdefault("doc_id", doc_id)
+	assembled.setdefault("document_version_id", version_id)
+	assembled.setdefault("table_id", table_id)
+	return assembled
+
+
+def _fail_located_table(
+	located: dict[str, Any],
+	*,
+	doc_id: str,
+	version_id: Any,
+	table_id: str,
+	reason: str,
+) -> dict[str, Any]:
+	"""Store 不可用时 fail closed：无 headers/rows，禁止 citations 拼表。"""
+	return {
+		"headers": [],
+		"rows": [],
+		"row_offset": 0,
+		"complete": False,
+		"reason": reason,
+		"group_count": 0,
+		"doc_id": doc_id,
+		"document_version_id": version_id,
+		"table_id": table_id,
+		"load_source": "load_failed",
+		"score": located.get("score"),
+		"citation": located.get("citation"),
+		"schema_fit": located.get("schema_fit"),
+		"groups": [],
+	}
+
+
+def _assemble_located_table(
+	located: dict[str, Any],
+	*,
+	load_table_groups: LoadTableGroupsFn | None,
+	library_id: str | None,
+) -> dict[str, Any]:
+	"""从 store 加载并拼装单个表实例；唯一可执行路径。
+
+	无 loader → no_store_loader；缺 doc_id/table_id → missing_table_key；
+	加载异常 → load_failed:*。任何失败均不返回可拼出的 rows。
+	"""
+	doc_id = str(located.get("doc_id") or "")
+	version_id = located.get("document_version_id")
+	table_id = str(located.get("table_id") or "")
+	lib = library_id or located.get("library_id")
+
+	if load_table_groups is None:
+		return _fail_located_table(
+			located,
+			doc_id=doc_id,
+			version_id=version_id,
+			table_id=table_id,
+			reason="no_store_loader",
+		)
+
+	if not doc_id or not table_id:
+		return _fail_located_table(
+			located,
+			doc_id=doc_id,
+			version_id=version_id,
+			table_id=table_id,
+			reason="missing_table_key",
+		)
+
+	try:
+		groups = list(
+			load_table_groups(
+				doc_id=doc_id,
+				document_version_id=str(version_id) if version_id else None,
+				table_id=table_id,
+				library_id=str(lib) if lib else None,
+			)
+		)
+	except Exception as exc:  # noqa: BLE001 — fail closed
+		return _fail_located_table(
+			located,
+			doc_id=doc_id,
+			version_id=version_id,
+			table_id=table_id,
+			reason=f"load_failed:{exc}",
+		)
+
+	assembled = assemble_table_from_groups(groups)
+	return _decorate_assembled_table(
+		assembled,
+		located,
+		groups=groups,
+		doc_id=doc_id,
+		version_id=version_id,
+		table_id=table_id,
+		load_source="store",
+	)
 
 
 def prepare_table_for_execute(
@@ -747,13 +1290,16 @@ def prepare_table_for_execute(
 	*,
 	load_table_groups: LoadTableGroupsFn | None = None,
 	library_id: str | None = None,
+	question: str | None = None,
 ) -> dict[str, Any]:
-	"""两阶段：向量定位表实例 → 按键加载全表行组 → 校验完整性后供聚合。
+	"""两阶段：向量定位表实例 → store 按键加载全表行组 → 校验完整性后供聚合。
 
-	聚合不得只在 top_k 检索子集上执行；缺组时 complete=False（fail closed）。
+	唯一可执行路径是 store loader；无 loader / 缺 key / 缺组时 complete=False，
+	且不返回 citations 拼出的 headers/rows。
+	同库多表时：按问法 schema fit 排序，并优先选用能自信 refine TableQueryPlan 的实例。
 	"""
-	located = locate_best_table_instance(citations)
-	if not located:
+	candidates = rank_table_instances(citations, question=question)
+	if not candidates:
 		return {
 			"headers": [],
 			"rows": [],
@@ -763,56 +1309,35 @@ def prepare_table_for_execute(
 			"group_count": 0,
 		}
 
-	doc_id = str(located.get("doc_id") or "")
-	version_id = located.get("document_version_id")
-	table_id = str(located.get("table_id") or "")
-	lib = library_id or located.get("library_id")
-	instance = (doc_id, str(version_id or ""), table_id)
+	fallback: dict[str, Any] | None = None
+	for located in candidates:
+		assembled = _assemble_located_table(
+			located,
+			load_table_groups=load_table_groups,
+			library_id=library_id,
+		)
+		headers = list(assembled.get("headers") or [])
+		if not headers:
+			if fallback is None:
+				fallback = assembled
+			continue
+		if question:
+			refined = build_table_query_plan(question, headers=headers)
+			if refined.get("confident"):
+				assembled["selected_reason"] = "schema_plan_fit"
+				return assembled
+			if fallback is None:
+				fallback = assembled
+			continue
+		return assembled
 
-	groups: list[dict[str, Any]]
-	load_source = "citations"
-	if load_table_groups is not None and doc_id and table_id:
-		try:
-			groups = list(
-				load_table_groups(
-					doc_id=doc_id,
-					document_version_id=str(version_id) if version_id else None,
-					table_id=table_id,
-					library_id=str(lib) if lib else None,
-				)
-			)
-			load_source = "store"
-		except Exception as exc:  # noqa: BLE001 — fail closed
-			return {
-				"headers": [],
-				"rows": [],
-				"row_offset": 0,
-				"complete": False,
-				"reason": f"load_failed:{exc}",
-				"group_count": 0,
-				"doc_id": doc_id,
-				"document_version_id": version_id,
-				"table_id": table_id,
-				"load_source": "store",
-			}
-	else:
-		groups = [
-			item
-			for item in citations
-			if table_instance_key(item) == instance
-			and (str(item.get("record_type") or "") == "table" or item.get("headers"))
-		]
-
-	assembled = assemble_table_from_groups(groups)
-	assembled["load_source"] = load_source
-	assembled["score"] = located.get("score")
-	assembled["citation"] = located.get("citation")
-	assembled["groups"] = groups
-	# 定位键写回，便于 citation 标注
-	assembled.setdefault("doc_id", doc_id)
-	assembled.setdefault("document_version_id", version_id)
-	assembled.setdefault("table_id", table_id)
-	return assembled
+	chosen = fallback or _assemble_located_table(
+		candidates[0],
+		load_table_groups=load_table_groups,
+		library_id=library_id,
+	)
+	chosen.setdefault("selected_reason", "best_effort")
+	return chosen
 
 
 def select_evidence_groups(
@@ -1001,9 +1526,648 @@ def citations_with_matched_evidence(
 	return merged, meta
 
 
-def merge_table_hits_for_execute(citations: list[dict[str, Any]]) -> dict[str, Any]:
-	"""兼容入口：仅合并同实例 citation 行组（无 store 全表加载）。
+def citations_for_table_overview(
+	citations: list[dict[str, Any]],
+	*,
+	merged: dict[str, Any] | None = None,
+	preview_rows: int = MATCHED_ROWS_PREVIEW_LIMIT,
+) -> list[dict[str, Any]]:
+	"""概述降级上下文：保留 table_summary + 有界行预览，勿塞整表。"""
+	limit = max(1, int(preview_rows))
+	out: list[dict[str, Any]] = []
+	seen: set[str] = set()
+	for item in citations:
+		rt = str(item.get("record_type") or "")
+		if rt != "table_summary":
+			continue
+		key = str(item.get("record_id") or item.get("id") or id(item))
+		if key in seen:
+			continue
+		seen.add(key)
+		out.append(dict(item))
 
-	新路径请用 prepare_table_for_execute(..., load_table_groups=...)。
+	payload = merged or {}
+	headers = list(payload.get("headers") or [])
+	rows = list(payload.get("rows") or [])
+	if headers and rows:
+		preview = rows[:limit]
+		lines = [" | ".join(str(h) for h in headers)]
+		for row in preview:
+			cells = list(row) if isinstance(row, (list, tuple)) else [row]
+			lines.append(" | ".join(str(c) for c in cells))
+		if len(rows) > limit:
+			lines.append(f"…（仅预览前 {limit} 行，共 {len(rows)} 行）")
+		body = "\n".join(lines)
+		seed = payload.get("citation") or (citations[0] if citations else {}) or {}
+		out.append(
+			{
+				"id": str(seed.get("id") or "table-overview-preview"),
+				"index": len(out) + 1,
+				"title": seed.get("title") or "表格预览",
+				"page": seed.get("page"),
+				"snippet": body[:280],
+				"score": float(seed.get("score") or 0.85),
+				"text": body,
+				"body": body,
+				"doc_id": payload.get("doc_id") or seed.get("doc_id"),
+				"table_id": payload.get("table_id") or seed.get("table_id"),
+				"headers": headers,
+				"rows": preview,
+				"row_start": int(payload.get("row_offset") or 0),
+				"row_end": int(payload.get("row_offset") or 0) + max(0, len(preview) - 1),
+				"table_row_count": payload.get("table_row_count") or len(rows),
+				"document_version_id": payload.get("document_version_id")
+				or seed.get("document_version_id"),
+				"record_type": "table",
+				"record_id": seed.get("record_id"),
+				"filename": seed.get("filename"),
+			}
+		)
+	elif not out:
+		# 无 summary 也无行时，退回原 citations（仍可能只有弱证据）
+		return [dict(item) for item in citations]
+
+	for index, item in enumerate(out, start=1):
+		item["index"] = index
+	return out
+
+
+def looks_like_dual_table_query(question: str) -> bool:
+	"""跨表/设备号关联等问法；不含则仍可能因 schema 互补走双表。"""
+	q = (question or "").strip()
+	if not q:
+		return False
+	if _DUAL_QUERY_HINT.search(q):
+		return True
+	# 「A 和 B 分别是什么」且两侧像不同字段族
+	if "分别" in q and ("和" in q or "与" in q):
+		return True
+	return False
+
+
+def _normalize_join_cell(raw: Any) -> str:
+	text = str(raw or "").strip()
+	if not text:
+		return ""
+	# 序号类：统一成去前导零的数字串，便于 01 == 1
+	num = _cell_number(text)
+	if num is not None and re.fullmatch(r"-?[0-9]+(?:\.[0-9]+)?", text.replace(",", "")):
+		if float(num).is_integer():
+			return str(int(num))
+		return str(num)
+	return text.casefold()
+
+
+def infer_equi_join_key(
+	left_headers: list[str],
+	right_headers: list[str],
+	*,
+	question: str | None = None,
+) -> dict[str, str] | None:
+	"""在两侧表头中解析等值 join 列；优先问法点名的键，再按候选顺序。"""
+	if not left_headers or not right_headers:
+		return None
+	q = question or ""
+	ordered: list[str] = []
+	for hint in _JOIN_KEY_CANDIDATES:
+		if hint in q or hint.casefold() in q.casefold():
+			ordered.append(hint)
+	for hint in _JOIN_KEY_CANDIDATES:
+		if hint not in ordered:
+			ordered.append(hint)
+
+	for hint in ordered:
+		left_col = _match_header(hint, left_headers)
+		right_col = _match_header(hint, right_headers)
+		if left_col and right_col:
+			return {
+				"hint": hint,
+				"left_column": left_col,
+				"right_column": right_col,
+			}
+	return None
+
+
+def _question_column_hints(question: str) -> list[str]:
+	"""问法里需要的列 hint（用于判断单表是否覆盖不全）。"""
+	hints: list[str] = []
+	for hint, _weight in question_schema_hints(question):
+		if hint not in hints:
+			hints.append(hint)
+	q = question or ""
+	for extra in ("安装位置", "位置", "最近检修", "检修", "故障次数"):
+		if extra in q and extra not in hints:
+			hints.append(extra)
+	return hints
+
+
+def _headers_cover_hint(headers: list[str], hint: str) -> bool:
+	if hint in {"位置", "安装位置"}:
+		return bool(
+			_match_header("安装位置", headers)
+			or _match_header("位置", headers)
+		)
+	if hint in {"检修", "最近检修"}:
+		return bool(
+			_match_header("最近检修", headers)
+			or _match_header("检修", headers)
+		)
+	return _match_header(hint, headers) is not None
+
+
+def complementary_dual_schema_score(
+	question: str,
+	left_headers: list[str],
+	right_headers: list[str],
+) -> int:
+	""">0 表示问法所需列分散在两表，单表覆盖不全。"""
+	hints = _question_column_hints(question)
+	if not hints:
+		return 0
+	left_only = 0
+	right_only = 0
+	both = 0
+	for hint in hints:
+		l_ok = _headers_cover_hint(left_headers, hint)
+		r_ok = _headers_cover_hint(right_headers, hint)
+		if l_ok and r_ok:
+			both += 1
+		elif l_ok:
+			left_only += 1
+		elif r_ok:
+			right_only += 1
+	if left_only > 0 and right_only > 0:
+		return left_only + right_only + both
+	return 0
+
+
+def prepare_dual_tables_for_execute(
+	citations: list[dict[str, Any]],
+	*,
+	load_table_groups: LoadTableGroupsFn | None = None,
+	library_id: str | None = None,
+	question: str | None = None,
+	max_candidates: int = 4,
+) -> dict[str, Any] | None:
+	"""定位两张可 join 的 store 表；不满足则返回 None（调用方回退单表）。
+
+	MVP 边界：同库候选、等值 join 一列、两侧都必须 store complete。
 	"""
-	return prepare_table_for_execute(citations, load_table_groups=None)
+	q = question or ""
+	candidates = rank_table_instances(citations, question=question)
+	if len(candidates) < 2:
+		return None
+
+	loaded: list[dict[str, Any]] = []
+	for located in candidates[: max(2, int(max_candidates))]:
+		assembled = _assemble_located_table(
+			located,
+			load_table_groups=load_table_groups,
+			library_id=library_id,
+		)
+		if not assembled.get("complete"):
+			continue
+		if not assembled.get("headers"):
+			continue
+		if str(assembled.get("load_source") or "") != "store":
+			continue
+		loaded.append(assembled)
+
+	if len(loaded) < 2:
+		return None
+
+	best: dict[str, Any] | None = None
+	best_score = -1
+	for i in range(len(loaded)):
+		for j in range(i + 1, len(loaded)):
+			left = loaded[i]
+			right = loaded[j]
+			if (
+				str(left.get("doc_id") or ""),
+				str(left.get("table_id") or ""),
+			) == (
+				str(right.get("doc_id") or ""),
+				str(right.get("table_id") or ""),
+			):
+				continue
+			join = infer_equi_join_key(
+				list(left.get("headers") or []),
+				list(right.get("headers") or []),
+				question=q,
+			)
+			if not join:
+				continue
+			comp = complementary_dual_schema_score(
+				q,
+				list(left.get("headers") or []),
+				list(right.get("headers") or []),
+			)
+			explicit = looks_like_dual_table_query(q)
+			if not explicit and comp <= 0:
+				continue
+			score = (
+				(10 if explicit else 0)
+				+ comp * 3
+				+ int(left.get("schema_fit") or 0)
+				+ int(right.get("schema_fit") or 0)
+			)
+			# 设备号/序列号优于弱键「序号」
+			hint = join.get("hint") or ""
+			if hint in {"设备号", "序列号", "设备序列号", "资产编号", "SN"}:
+				score += 5
+			elif hint == "序号":
+				score -= 2
+			if score > best_score:
+				best_score = score
+				best = {
+					"mode": "dual",
+					"complete": True,
+					"reason": "dual_equi_join",
+					"left": left,
+					"right": right,
+					"join_hint": join["hint"],
+					"join_left_column": join["left_column"],
+					"join_right_column": join["right_column"],
+					"complementary_score": comp,
+					"load_source": "store",
+				}
+
+	return best
+
+
+def build_dual_table_query_plan(
+	question: str,
+	*,
+	left_headers: list[str],
+	right_headers: list[str],
+	join_left_column: str,
+	join_right_column: str,
+) -> dict[str, Any]:
+	"""生成 join_lookup 计划；不确定则 confident=False。"""
+	combined_headers: list[str] = []
+	for h in [*left_headers, *right_headers]:
+		if h not in combined_headers:
+			combined_headers.append(h)
+
+	inner = build_table_query_plan(question, headers=combined_headers)
+	plan: dict[str, Any] = {
+		"operation": "fallback",
+		"table_count": 2,
+		"join_left_column": join_left_column,
+		"join_right_column": join_right_column,
+		"inner_operation": inner.get("operation") or "fallback",
+		"column": inner.get("column"),
+		"operator": inner.get("operator"),
+		"value": inner.get("value"),
+		"entity_column": inner.get("entity_column"),
+		"entity_value": inner.get("entity_value"),
+		"select_columns": list(inner.get("select_columns") or []),
+		"also_min": inner.get("also_min"),
+		"exclude_summary_rows": True,
+		"confident": False,
+		"reason": "dual_unparsed",
+	}
+
+	# 确保 select 覆盖问法两侧关键列
+	for hint in _question_column_hints(question):
+		matched = _match_header(hint, combined_headers)
+		if matched and matched not in plan["select_columns"]:
+			plan["select_columns"].append(matched)
+	for col in (join_left_column, join_right_column):
+		if col and col not in plan["select_columns"]:
+			plan["select_columns"].insert(0, col)
+
+	inner_op = str(inner.get("operation") or "fallback")
+	if inner.get("confident") and inner_op in {"lookup", "filter", "max", "min", "count"}:
+		plan.update(
+			{
+				"operation": "join_lookup",
+				"confident": True,
+				"reason": f"dual_join_{inner.get('reason') or inner_op}",
+				"inner_operation": inner_op,
+			}
+		)
+		return plan
+
+	# 问法点名设备号/序列号但 inner 未自信：仍可做 join + 实体 lookup
+	sn_m = re.search(
+		r"(?:设备号|序列号|设备序列号|资产编号|SN)\s*[为是:：]?\s*"
+		r"([A-Za-z0-9][A-Za-z0-9\-_.]{1,40})",
+		question or "",
+		flags=re.IGNORECASE,
+	)
+	if sn_m and join_left_column:
+		entity = sn_m.group(1)
+		plan.update(
+			{
+				"operation": "join_lookup",
+				"inner_operation": "lookup",
+				"entity_column": join_left_column,
+				"entity_value": entity,
+				"column": plan["select_columns"][1]
+				if len(plan["select_columns"]) > 1
+				else join_left_column,
+				"confident": True,
+				"reason": "dual_join_sn_lookup",
+			}
+		)
+		return plan
+
+	plan["reason"] = f"dual_inner_unresolved:{inner.get('reason') or inner_op}"
+	return plan
+
+
+def _join_table_rows(
+	left: dict[str, Any],
+	right: dict[str, Any],
+	*,
+	join_left_column: str,
+	join_right_column: str,
+) -> list[dict[str, Any]]:
+	left_headers = [str(h) for h in (left.get("headers") or [])]
+	right_headers = [str(h) for h in (right.get("headers") or [])]
+	left_offset = int(left.get("row_offset") or 0)
+	right_offset = int(right.get("row_offset") or 0)
+
+	right_index: dict[str, list[dict[str, Any]]] = {}
+	for i, row in enumerate(right.get("rows") or []):
+		rd = _row_dict(right_headers, [str(c) for c in row], absolute_index=right_offset + i)
+		key = _normalize_join_cell(rd.get(join_right_column))
+		if not key:
+			continue
+		right_index.setdefault(key, []).append(rd)
+
+	joined: list[dict[str, Any]] = []
+	for i, row in enumerate(left.get("rows") or []):
+		ld = _row_dict(left_headers, [str(c) for c in row], absolute_index=left_offset + i)
+		key = _normalize_join_cell(ld.get(join_left_column))
+		if not key:
+			continue
+		for rd in right_index.get(key) or []:
+			merged: dict[str, Any] = {}
+			for h in left_headers:
+				merged[h] = ld.get(h)
+			for h in right_headers:
+				if h == join_right_column and h in merged:
+					continue
+				# 右表同名列：仅在左表空时覆盖，避免悄悄丢左值
+				if h in merged and merged.get(h) not in (None, ""):
+					continue
+				merged[h] = rd.get(h)
+			merged["_row_index"] = ld.get("_row_index")
+			merged["_left_row_index"] = ld.get("_row_index")
+			merged["_right_row_index"] = rd.get("_row_index")
+			merged["_left_table_id"] = left.get("table_id")
+			merged["_right_table_id"] = right.get("table_id")
+			joined.append(merged)
+	return joined
+
+
+def execute_dual_table_query(
+	plan: dict[str, Any],
+	*,
+	left: dict[str, Any],
+	right: dict[str, Any],
+	collect_evidence_indices: bool = False,
+) -> dict[str, Any]:
+	"""对两份 store 表做等值 join 后再执行内层 lookup/聚合。"""
+	result: dict[str, Any] = {
+		"ok": False,
+		"operation": str(plan.get("operation") or "fallback"),
+		"table_count": 2,
+		"matched_rows": [],
+		"matched_count": 0,
+		"matched_rows_truncated": False,
+		"matched_row_indices": [],
+		"matched_row_indices_truncated": False,
+		"answer_value": None,
+		"answer_text": None,
+		"reason": "not_run",
+		"left_table_id": left.get("table_id"),
+		"right_table_id": right.get("table_id"),
+	}
+	if not plan.get("confident") or plan.get("operation") != "join_lookup":
+		result["reason"] = "fallback"
+		return result
+
+	join_l = str(plan.get("join_left_column") or "")
+	join_r = str(plan.get("join_right_column") or "")
+	if not join_l or not join_r:
+		result["reason"] = "missing_join_key"
+		return result
+	if not left.get("complete") or not right.get("complete"):
+		result["reason"] = "dual_incomplete"
+		return result
+
+	joined_rows = _join_table_rows(
+		left,
+		right,
+		join_left_column=join_l,
+		join_right_column=join_r,
+	)
+	if not joined_rows:
+		result.update(
+			{
+				"ok": True,
+				"answer_text": "两表关联后无匹配行",
+				"reason": "no_join_match",
+				**_with_matched_preview(
+					[],
+					collect_evidence_indices=collect_evidence_indices,
+				),
+			}
+		)
+		return result
+
+	# 虚拟宽表 headers + rows，复用单表 execute
+	virtual_headers: list[str] = []
+	for h in [*(left.get("headers") or []), *(right.get("headers") or [])]:
+		hs = str(h)
+		if hs not in virtual_headers:
+			virtual_headers.append(hs)
+
+	inner_plan = {
+		**plan,
+		"operation": plan.get("inner_operation") or "lookup",
+		"confident": True,
+		"reason": plan.get("reason") or "dual_inner",
+	}
+	# join_lookup 外壳 → 内层真实 op
+	if inner_plan["operation"] == "join_lookup":
+		inner_plan["operation"] = "lookup"
+
+	virtual_rows = [
+		[str(row.get(h) or "") for h in virtual_headers] for row in joined_rows
+	]
+	# 保留 join 行号映射：execute 用 0..n-1，再映射回两侧
+	inner = execute_table_query(
+		inner_plan,
+		headers=virtual_headers,
+		rows=virtual_rows,
+		row_offset=0,
+		collect_evidence_indices=True,
+		summary_rows=list(left.get("summary_rows") or [])
+		+ list(right.get("summary_rows") or []),
+	)
+	if not inner.get("ok"):
+		result["reason"] = f"dual_inner_failed:{inner.get('reason')}"
+		return result
+
+	# 把 matched 行换回带两侧索引的 join 行
+	matched_idx = list(inner.get("_evidence_row_indices") or inner.get("matched_row_indices") or [])
+	matched_joined: list[dict[str, Any]] = []
+	for idx in matched_idx:
+		try:
+			i = int(idx)
+		except (TypeError, ValueError):
+			continue
+		if 0 <= i < len(joined_rows):
+			matched_joined.append(joined_rows[i])
+	if not matched_joined and inner.get("matched_rows"):
+		# preview 行可能已投影；按虚拟索引回填
+		for row in inner.get("matched_rows") or []:
+			raw = row.get("_row_index")
+			try:
+				i = int(raw)
+			except (TypeError, ValueError):
+				continue
+			if 0 <= i < len(joined_rows):
+				matched_joined.append(joined_rows[i])
+
+	select_cols = [
+		c
+		for c in (plan.get("select_columns") or virtual_headers)
+		if c in virtual_headers
+	]
+	projected = []
+	for row in matched_joined:
+		out = {c: row.get(c) for c in select_cols}
+		out["_row_index"] = row.get("_row_index")
+		out["_left_row_index"] = row.get("_left_row_index")
+		out["_right_row_index"] = row.get("_right_row_index")
+		out["_left_table_id"] = row.get("_left_table_id")
+		out["_right_table_id"] = row.get("_right_table_id")
+		projected.append(out)
+
+	preview = _with_matched_preview(
+		projected,
+		collect_evidence_indices=collect_evidence_indices,
+	)
+	# 证据需要两侧行号
+	if collect_evidence_indices:
+		preview["_evidence_left_row_indices"] = [
+			int(r["_left_row_index"])
+			for r in matched_joined
+			if r.get("_left_row_index") is not None
+		]
+		preview["_evidence_right_row_indices"] = [
+			int(r["_right_row_index"])
+			for r in matched_joined
+			if r.get("_right_row_index") is not None
+		]
+
+	answer_text = inner.get("answer_text")
+	# 增强：把两侧关键列拼进答案，避免只回单列
+	if projected and (
+		plan.get("reason") == "dual_join_sn_lookup"
+		or str(plan.get("inner_operation") or "") == "lookup"
+	):
+		parts = [
+			f"{k}={v}"
+			for k, v in projected[0].items()
+			if not str(k).startswith("_") and v not in (None, "")
+		]
+		if parts:
+			entity = plan.get("entity_value") or ""
+			prefix = f"{plan.get('entity_column') or join_l}={entity} → " if entity else ""
+			answer_text = prefix + "；".join(parts[:10])
+
+	result.update(
+		{
+			"ok": True,
+			**preview,
+			"answer_value": inner.get("answer_value"),
+			"answer_value_truncated": inner.get("answer_value_truncated", False),
+			"answer_text": answer_text,
+			"reason": plan.get("reason") or "dual_join",
+			"join_left_column": join_l,
+			"join_right_column": join_r,
+			"inner_operation": plan.get("inner_operation"),
+		}
+	)
+	# 清理内层临时字段，避免泄漏
+	result.pop("_evidence_row_indices", None)
+	if collect_evidence_indices:
+		result["_evidence_row_indices"] = preview.get("_evidence_row_indices") or []
+	return result
+
+
+def citations_with_dual_matched_evidence(
+	citations: list[dict[str, Any]],
+	*,
+	left: dict[str, Any],
+	right: dict[str, Any],
+	execution: dict[str, Any],
+	evidence_limit: int = EVIDENCE_GROUPS_LIMIT,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+	"""合并两侧命中行组证据；失败时保留原 citations。"""
+	left_key = table_instance_key(left) if left.get("table_id") else None
+	right_key = table_instance_key(right) if right.get("table_id") else None
+	left_indices = list(execution.get("_evidence_left_row_indices") or [])
+	right_indices = list(execution.get("_evidence_right_row_indices") or [])
+	if not left_indices or not right_indices:
+		for row in execution.get("matched_rows") or []:
+			if row.get("_left_row_index") is not None:
+				try:
+					left_indices.append(int(row["_left_row_index"]))
+				except (TypeError, ValueError):
+					pass
+			if row.get("_right_row_index") is not None:
+				try:
+					right_indices.append(int(row["_right_row_index"]))
+				except (TypeError, ValueError):
+					pass
+	# 节点返回前可 pop 临时证据字段；此处只读，不强制 pop
+
+	per_side = max(1, int(evidence_limit) // 2)
+	enriched = list(citations)
+	meta = {
+		"total_group_count": 0,
+		"evidence_truncated": False,
+		"evidence_group_count": 0,
+		"dual": True,
+	}
+
+	if left_key and left.get("groups") is not None:
+		enriched, left_meta = citations_with_matched_evidence(
+			enriched,
+			groups=list(left.get("groups") or []),
+			matched_rows=[],
+			matched_row_indices=left_indices,
+			target_key=left_key,
+			seed_citation=left.get("citation"),
+			evidence_limit=per_side,
+		)
+		meta["total_group_count"] += int(left_meta.get("total_group_count") or 0)
+		meta["evidence_group_count"] += int(left_meta.get("evidence_group_count") or 0)
+		meta["evidence_truncated"] = meta["evidence_truncated"] or bool(
+			left_meta.get("evidence_truncated")
+		)
+
+	if right_key and right.get("groups") is not None:
+		enriched, right_meta = citations_with_matched_evidence(
+			enriched,
+			groups=list(right.get("groups") or []),
+			matched_rows=[],
+			matched_row_indices=right_indices,
+			target_key=right_key,
+			seed_citation=right.get("citation"),
+			evidence_limit=per_side,
+		)
+		meta["total_group_count"] += int(right_meta.get("total_group_count") or 0)
+		meta["evidence_group_count"] += int(right_meta.get("evidence_group_count") or 0)
+		meta["evidence_truncated"] = meta["evidence_truncated"] or bool(
+			right_meta.get("evidence_truncated")
+		)
+
+	return enriched, meta
