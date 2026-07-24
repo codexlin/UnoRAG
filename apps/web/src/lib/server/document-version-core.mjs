@@ -26,6 +26,20 @@ export function nextDocumentVersionNumber(currentMax) {
 	return Math.floor(max) + 1;
 }
 
+/** Enqueue-time ingest slot: pdf→auto (probe later), else local. */
+export function inferIngestQueueClass(filename, contentType) {
+	const name = String(filename || "")
+		.trim()
+		.toLowerCase();
+	const ctype = String(contentType || "")
+		.trim()
+		.toLowerCase();
+	if (name.endsWith(".pdf") || ctype.includes("pdf")) {
+		return "auto";
+	}
+	return "local";
+}
+
 /** Build the document.ingest job payload shared by upload and replace. */
 export function buildDocumentIngestPayload(input) {
 	return {
@@ -37,6 +51,8 @@ export function buildDocumentIngestPayload(input) {
 		content_hash: input.contentHash,
 		filename: input.filename,
 		content_type: input.contentType,
+		// local | auto | mineru — worker claims by class so MinerU cannot starve docx
+		queue_class: inferIngestQueueClass(input.filename, input.contentType),
 	};
 }
 

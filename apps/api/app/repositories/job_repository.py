@@ -162,7 +162,13 @@ class JobRepository:
         capacity: int,
         lease_seconds: int = 120,
         worker_version: str | None = None,
+        queue_classes: Sequence[str] | None = None,
     ) -> list[JobLease]:
+        """Claim queued jobs with SKIP LOCKED.
+
+        ``queue_classes`` filters ``payload.queue_class`` (default ``local`` when
+        missing). Pass ``None`` to claim any class (legacy single-queue behaviour).
+        """
         if not worker_id.strip():
             raise ValueError("worker_id is required")
         if not job_types:
@@ -171,6 +177,7 @@ class JobRepository:
             raise ValueError("capacity must be positive")
         if lease_seconds < 30:
             raise ValueError("lease_seconds must be at least 30")
+        classes = [str(item).strip() for item in (queue_classes or []) if str(item).strip()]
 
         with self._connection.transaction():
             with self._connection.cursor(row_factory=dict_row) as cursor:
@@ -184,6 +191,13 @@ class JobRepository:
                           AND (next_attempt_at IS NULL OR next_attempt_at <= now())
                           AND cancel_requested_at IS NULL
                           AND type = ANY(%(job_types)s)
+                          AND (
+                            %(queue_classes)s::text[] IS NULL
+                            OR COALESCE(
+                                NULLIF(payload->>'queue_class', ''),
+                                'local'
+                            ) = ANY(%(queue_classes)s)
+                          )
                         ORDER BY created_at, id
                         FOR UPDATE SKIP LOCKED
                         LIMIT %(capacity)s
@@ -210,9 +224,84 @@ class JobRepository:
                         "job_types": list(job_types),
                         "capacity": capacity,
                         "lease_seconds": lease_seconds,
+                        "queue_classes": classes or None,
                     },
                 )
                 return [self._to_lease(row) for row in cursor.fetchall()]
+
+    def patch_job_payload(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        patch: dict[str, Any],
+    ) -> None:
+        """Merge keys into job.payload while lease is held."""
+        if not patch:
+            return
+        with self._connection.transaction():
+            with self._connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE app.jobs
+                    SET payload = COALESCE(payload, '{}'::jsonb) || %(patch)s::jsonb,
+                        updated_at = now()
+                    WHERE id = %(job_id)s
+                      AND lease_token = %(lease_token)s
+                      AND status = 'running'
+                    """,
+                    {
+                        "job_id": job_id,
+                        "lease_token": lease_token,
+                        "patch": Jsonb(patch),
+                    },
+                )
+                if cursor.rowcount != 1:
+                    raise LostJobLeaseError(
+                        f"failed to patch payload for job {job_id}"
+                    )
+
+    def requeue_for_queue_class(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        queue_class: str,
+    ) -> None:
+        """Release lease and re-queue with a new queue_class (does not burn attempt)."""
+        resolved = (queue_class or "").strip() or "local"
+        with self._connection.transaction():
+            with self._connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE app.jobs
+                    SET status = 'queued',
+                        stage = 'accepted',
+                        progress = 0,
+                        claimed_by = NULL,
+                        claimed_at = NULL,
+                        started_at = NULL,
+                        lease_token = NULL,
+                        lease_expires_at = NULL,
+                        heartbeat_at = NULL,
+                        worker_version = NULL,
+                        attempt = GREATEST(0, attempt - 1),
+                        payload = COALESCE(payload, '{}'::jsonb) || %(patch)s,
+                        updated_at = now()
+                    WHERE id = %(job_id)s
+                      AND lease_token = %(lease_token)s
+                      AND status = 'running'
+                    """,
+                    {
+                        "job_id": job_id,
+                        "lease_token": lease_token,
+                        "patch": Jsonb({"queue_class": resolved}),
+                    },
+                )
+                if cursor.rowcount != 1:
+                    raise LostJobLeaseError(
+                        f"failed to requeue job {job_id} for class {resolved}"
+                    )
 
     def heartbeat(
         self,

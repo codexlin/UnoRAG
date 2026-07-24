@@ -18,6 +18,7 @@ from app.security.access_scope import AccessScope
 from app.services.hybrid import get_bm25_cache
 from app.services.ingest.backends.mineru import MinerUClientError
 from app.services.ingest.pipeline import prepare_ingest
+from app.services.ingest.queue_class import resolve_queue_class_after_probe
 from app.services.qdrant_store import QdrantStore
 from app.services.retrieval import IngestService
 from app.services.source_object_storage import (
@@ -73,7 +74,10 @@ class DocumentIngestProcessor:
 			lambda: QdrantStore(settings)
 		)
 
-	def process(self, lease: JobLease, progress: ProgressReporter) -> ProcessResult:
+	def process(
+		self, lease: JobLease, progress: ProgressReporter
+	) -> ProcessResult | None:
+		"""Process ingest. Returns ``None`` when re-queued for a different slot class."""
 		context = self.repository.load_document_ingest_context(lease)
 		scope = self._access_scope(context)
 		indexed = context.version_status in {"indexed", "activating"}
@@ -89,13 +93,43 @@ class DocumentIngestProcessor:
 				if point_count <= 0 or actual_count != point_count:
 					indexed = False
 			if not indexed:
-				self.repository.begin_document_ingest(lease, context)
 				progress.checkpoint(JobStage.DOWNLOADING, 5)
 				content = self.storage.read_bytes(
 					context.storage_key,
 					expected_hash=context.content_hash,
 				)
 
+				# Probe → mark queue_class; mineru jobs requeue onto mineru slot
+				# so a running MinerU parse does not block local/docx claims.
+				resolved_class = resolve_queue_class_after_probe(
+					filename=context.filename,
+					content_type=context.content_type,
+					content=content,
+					mineru_enabled=bool(self.settings.mineru_enabled),
+				)
+				current_class = str(
+					(lease.payload or {}).get("queue_class") or "local"
+				).strip().lower()
+				if resolved_class == "mineru" and current_class != "mineru":
+					logger.info(
+						"document_ingest.requeue_mineru job_id=%s filename=%s",
+						lease.id,
+						context.filename,
+					)
+					self.repository.requeue_for_queue_class(
+						job_id=lease.id,
+						lease_token=lease.lease_token,
+						queue_class="mineru",
+					)
+					return None
+				if resolved_class != current_class:
+					self.repository.patch_job_payload(
+						job_id=lease.id,
+						lease_token=lease.lease_token,
+						patch={"queue_class": resolved_class},
+					)
+
+				self.repository.begin_document_ingest(lease, context)
 				progress.checkpoint(JobStage.PARSING, 15)
 
 				def check_parse_cancelled() -> None:

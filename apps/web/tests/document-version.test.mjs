@@ -5,6 +5,7 @@ import {
 	buildDocumentIngestPayload,
 	contentTypeForUpload,
 	documentIngestIdempotencyKey,
+	inferIngestQueueClass,
 	nextDocumentVersionNumber,
 } from "../src/lib/server/document-version-core.mjs";
 
@@ -31,6 +32,13 @@ test("contentTypeForUpload prefers real MIME then extension", () => {
 	);
 });
 
+test("inferIngestQueueClass slots pdf vs local", () => {
+	assert.equal(inferIngestQueueClass("a.docx", "application/vnd..."), "local");
+	assert.equal(inferIngestQueueClass("a.md", "text/markdown"), "local");
+	assert.equal(inferIngestQueueClass("a.pdf", "application/pdf"), "auto");
+	assert.equal(inferIngestQueueClass("x.bin", "application/pdf"), "auto");
+});
+
 test("buildDocumentIngestPayload matches upload/replace contract", () => {
 	const payload = buildDocumentIngestPayload({
 		documentId: "doc-1",
@@ -51,7 +59,19 @@ test("buildDocumentIngestPayload matches upload/replace contract", () => {
 		content_hash: "abc",
 		filename: "source.md",
 		content_type: "text/markdown",
+		queue_class: "local",
 	});
+	const pdfPayload = buildDocumentIngestPayload({
+		documentId: "doc-2",
+		versionId: "ver-2",
+		generationId: "gen-2",
+		ragLibraryId: "lib-1",
+		storageKey: "org/x/a.pdf",
+		contentHash: "def",
+		filename: "a.pdf",
+		contentType: "application/pdf",
+	});
+	assert.equal(pdfPayload.queue_class, "auto");
 	assert.equal(
 		documentIngestIdempotencyKey("ver-1", "gen-1"),
 		"document.ingest:ver-1:gen-1:document-lifecycle-v2",

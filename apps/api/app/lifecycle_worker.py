@@ -1,6 +1,13 @@
 """PostgreSQL lifecycle worker.
 
 Run with: ``uv run python -m app.lifecycle_worker``.
+
+Ingest slotting (payload.queue_class):
+- ``LIFECYCLE_LOCAL_CAPACITY`` (default 2): concurrent local/auto jobs
+- ``LIFECYCLE_MINERU_CAPACITY`` (default 1): concurrent mineru jobs
+
+When mineru slots are full, claim only ``local`` so docx continues while a
+MinerU PDF holds its slot. See ``app.services.ingest.queue_class``.
 """
 
 from __future__ import annotations
@@ -11,6 +18,7 @@ import signal
 import socket
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import FrameType
 
@@ -130,6 +138,16 @@ class LeaseController:
 			) from self._failure
 
 
+def _lease_queue_class(lease: JobLease) -> str:
+	payload = lease.payload if isinstance(lease.payload, dict) else {}
+	raw = str(payload.get("queue_class") or "").strip().lower()
+	if raw in {"local", "auto", "mineru"}:
+		return raw
+	if lease.type == "document.delete":
+		return "local"
+	return "local"
+
+
 class LifecycleWorker:
 	def __init__(self, settings: Settings) -> None:
 		if not settings.worker_database_dsn:
@@ -145,43 +163,99 @@ class LifecycleWorker:
 			raise ValueError(
 				"LIFECYCLE_WORKER_LEASE_SECONDS must be at least twice heartbeat seconds"
 			)
+		if settings.lifecycle_local_capacity < 1:
+			raise ValueError("LIFECYCLE_LOCAL_CAPACITY must be positive")
+		if settings.lifecycle_mineru_capacity < 1:
+			raise ValueError("LIFECYCLE_MINERU_CAPACITY must be positive")
 		self.settings = settings
 		self.worker_id = (
 			os.getenv("LIFECYCLE_WORKER_ID", "").strip()
 			or f"{socket.gethostname()}:{os.getpid()}"
 		)
 		self.stop_event = threading.Event()
+		self._local_capacity = int(settings.lifecycle_local_capacity)
+		self._mineru_capacity = int(settings.lifecycle_mineru_capacity)
+		self._inflight_lock = threading.Lock()
+		self._inflight_local = 0
+		self._inflight_mineru = 0
 
 	def request_stop(self) -> None:
 		self.stop_event.set()
 
+	def _slot_kind(self, lease: JobLease) -> str:
+		return "mineru" if _lease_queue_class(lease) == "mineru" else "local"
+
+	def _reserve_slot(self, kind: str) -> bool:
+		with self._inflight_lock:
+			if kind == "mineru":
+				if self._inflight_mineru >= self._mineru_capacity:
+					return False
+				self._inflight_mineru += 1
+				return True
+			if self._inflight_local >= self._local_capacity:
+				return False
+			self._inflight_local += 1
+			return True
+
+	def _release_slot(self, kind: str) -> None:
+		with self._inflight_lock:
+			if kind == "mineru":
+				self._inflight_mineru = max(0, self._inflight_mineru - 1)
+			else:
+				self._inflight_local = max(0, self._inflight_local - 1)
+
+	def _free_slots(self) -> tuple[int, int]:
+		with self._inflight_lock:
+			return (
+				self._local_capacity - self._inflight_local,
+				self._mineru_capacity - self._inflight_mineru,
+			)
+
 	def run(self) -> None:
 		logger.info(
-			"lifecycle_worker.start worker_id=%s version=%s",
+			"lifecycle_worker.start worker_id=%s version=%s local_cap=%s mineru_cap=%s",
 			self.worker_id,
 			self.settings.lifecycle_worker_version,
+			self._local_capacity,
+			self._mineru_capacity,
 		)
 		ready_path = os.getenv("LIFECYCLE_WORKER_READY_FILE", "").strip()
 		if ready_path:
 			Path(ready_path).write_text(f"{self.worker_id}\n", encoding="utf-8")
-		with psycopg.connect(
-			self.settings.worker_database_dsn,
-			autocommit=True,
-		) as connection:
+		max_workers = self._local_capacity + self._mineru_capacity
+		futures: dict[Future[None], str] = {}
+		with (
+			psycopg.connect(
+				self.settings.worker_database_dsn,
+				autocommit=True,
+			) as connection,
+			ThreadPoolExecutor(
+				max_workers=max_workers,
+				thread_name_prefix="lifecycle",
+			) as pool,
+		):
 			repository = JobRepository(connection)
-			ingest_processor = DocumentIngestProcessor(self.settings, repository)
-			delete_processor = DocumentDeleteProcessor(self.settings, repository)
-			sweeper = (
-				GenerationCleanupSweeper(self.settings, repository)
-				if self.settings.lifecycle_cleanup_enabled
-				else None
-			)
 			while not self.stop_event.is_set():
+				# Reap finished futures
+				done = [fut for fut in list(futures) if fut.done()]
+				for fut in done:
+					kind = futures.pop(fut)
+					self._release_slot(kind)
+					exc = fut.exception()
+					if exc is not None and not isinstance(
+						exc, (CancelRequestedError, LostJobLeaseError)
+					):
+						logger.exception(
+							"lifecycle_worker.job_failed",
+							exc_info=exc,
+						)
+
 				reaped = repository.reap_expired()
 				if reaped:
 					logger.warning("lifecycle_worker.reaped count=%s", reaped)
-				if sweeper is not None:
+				if self.settings.lifecycle_cleanup_enabled:
 					try:
+						sweeper = GenerationCleanupSweeper(self.settings, repository)
 						sweep = sweeper.run_once()
 						if sweep.claimed:
 							logger.info(
@@ -193,58 +267,56 @@ class LifecycleWorker:
 							)
 					except Exception:
 						logger.exception("lifecycle_worker.cleanup_failed")
-				# Prefer delete jobs so library fan-out does not starve behind ingest.
-				leases = repository.claim(
-					worker_id=self.worker_id,
-					job_types=["document.delete", "document.ingest"],
-					capacity=1,
-					lease_seconds=self.settings.lifecycle_worker_lease_seconds,
-					worker_version=self.settings.lifecycle_worker_version,
-				)
-				if not leases:
+
+				free_local, free_mineru = self._free_slots()
+				# Prefer delete + local ingest when mineru slots are saturated.
+				if free_local > 0:
+					local_leases = repository.claim(
+						worker_id=self.worker_id,
+						job_types=["document.delete", "document.ingest"],
+						capacity=free_local,
+						lease_seconds=self.settings.lifecycle_worker_lease_seconds,
+						worker_version=self.settings.lifecycle_worker_version,
+						queue_classes=["local", "auto"],
+					)
+					for lease in local_leases:
+						kind = self._slot_kind(lease)
+						if not self._reserve_slot(kind):
+							# Should be rare (race); requeue-equivalent: let lease expire
+							logger.warning(
+								"lifecycle_worker.slot_exhausted job_id=%s kind=%s",
+								lease.id,
+								kind,
+							)
+							continue
+						fut = pool.submit(self._process_lease, lease)
+						futures[fut] = kind
+
+				if free_mineru > 0:
+					mineru_leases = repository.claim(
+						worker_id=self.worker_id,
+						job_types=["document.ingest"],
+						capacity=free_mineru,
+						lease_seconds=self.settings.lifecycle_worker_lease_seconds,
+						worker_version=self.settings.lifecycle_worker_version,
+						queue_classes=["mineru"],
+					)
+					for lease in mineru_leases:
+						if not self._reserve_slot("mineru"):
+							logger.warning(
+								"lifecycle_worker.mineru_slot_exhausted job_id=%s",
+								lease.id,
+							)
+							continue
+						fut = pool.submit(self._process_lease, lease)
+						futures[fut] = "mineru"
+
+				if not futures:
 					self.stop_event.wait(self.settings.lifecycle_worker_poll_seconds)
 					continue
-				lease = leases[0]
-				try:
-					with LeaseController(
-						database_dsn=self.settings.worker_database_dsn,
-						repository=repository,
-						lease=lease,
-						lease_seconds=self.settings.lifecycle_worker_lease_seconds,
-						heartbeat_seconds=self.settings.lifecycle_worker_heartbeat_seconds,
-					) as progress:
-						if lease.type == "document.delete":
-							result = delete_processor.process(lease, progress)
-							logger.info(
-								"lifecycle_worker.delete_completed job_id=%s "
-								"document_id=%s library_finalized=%s",
-								result.job_id,
-								result.document_id,
-								result.library_finalized,
-							)
-						else:
-							result = ingest_processor.process(lease, progress)
-							logger.info(
-								"lifecycle_worker.completed job_id=%s generation_id=%s "
-								"points=%s activated=%s superseded=%s",
-								result.job_id,
-								result.generation_id,
-								result.point_count,
-								result.activated,
-								result.superseded,
-							)
-				except CancelRequestedError:
-					logger.info("lifecycle_worker.cancelled job_id=%s", lease.id)
-				except LostJobLeaseError:
-					logger.warning(
-						"lifecycle_worker.lease_lost job_id=%s",
-						lease.id,
-						exc_info=True,
-					)
-				except Exception:
-					# The processor has already transitioned the leased job to
-					# retry/failed/dead with a bounded error payload.
-					logger.exception("lifecycle_worker.job_failed job_id=%s", lease.id)
+				# Brief wait so heartbeats/progress can run without busy-spin
+				time.sleep(min(0.25, self.settings.lifecycle_worker_poll_seconds))
+
 		if ready_path:
 			try:
 				Path(ready_path).unlink(missing_ok=True)
@@ -255,6 +327,62 @@ class LifecycleWorker:
 					exc_info=True,
 				)
 		logger.info("lifecycle_worker.stop worker_id=%s", self.worker_id)
+
+	def _process_lease(self, lease: JobLease) -> None:
+		"""Process one lease on a worker thread with its own DB connection."""
+		with psycopg.connect(
+			self.settings.worker_database_dsn,
+			autocommit=True,
+		) as connection:
+			repository = JobRepository(connection)
+			ingest_processor = DocumentIngestProcessor(self.settings, repository)
+			delete_processor = DocumentDeleteProcessor(self.settings, repository)
+			try:
+				with LeaseController(
+					database_dsn=self.settings.worker_database_dsn,
+					repository=repository,
+					lease=lease,
+					lease_seconds=self.settings.lifecycle_worker_lease_seconds,
+					heartbeat_seconds=self.settings.lifecycle_worker_heartbeat_seconds,
+				) as progress:
+					if lease.type == "document.delete":
+						result = delete_processor.process(lease, progress)
+						logger.info(
+							"lifecycle_worker.delete_completed job_id=%s "
+							"document_id=%s library_finalized=%s",
+							result.job_id,
+							result.document_id,
+							result.library_finalized,
+						)
+					else:
+						result = ingest_processor.process(lease, progress)
+						if result is None:
+							logger.info(
+								"lifecycle_worker.requeued job_id=%s",
+								lease.id,
+							)
+							return
+						logger.info(
+							"lifecycle_worker.completed job_id=%s generation_id=%s "
+							"points=%s activated=%s superseded=%s",
+							result.job_id,
+							result.generation_id,
+							result.point_count,
+							result.activated,
+							result.superseded,
+						)
+			except CancelRequestedError:
+				logger.info("lifecycle_worker.cancelled job_id=%s", lease.id)
+			except LostJobLeaseError:
+				logger.warning(
+					"lifecycle_worker.lease_lost job_id=%s",
+					lease.id,
+					exc_info=True,
+				)
+			except Exception:
+				# The processor has already transitioned the leased job to
+				# retry/failed/dead with a bounded error payload.
+				logger.exception("lifecycle_worker.job_failed job_id=%s", lease.id)
 
 
 def main() -> None:

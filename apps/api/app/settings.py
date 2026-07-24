@@ -123,6 +123,10 @@ class Settings(BaseSettings):
 	lifecycle_worker_lease_seconds: int = 120
 	lifecycle_worker_heartbeat_seconds: int = 30
 	lifecycle_worker_version: str = "lifecycle-worker-v1"
+	# Ingest slotting: local/docx vs MinerU (SKIP LOCKED + payload.queue_class).
+	# MinerU=1 keeps heavy OCR from starving local parsers when local>=2.
+	lifecycle_local_capacity: int = 2
+	lifecycle_mineru_capacity: int = 1
 	# Delayed Qdrant point deletion for superseded generations.
 	lifecycle_cleanup_enabled: bool = True
 	lifecycle_cleanup_batch_size: int = 20
