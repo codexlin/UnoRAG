@@ -24,10 +24,12 @@ MeriKnow/
 
 ## 一键启动
 
+本机开发（仅基础设施）：
+
 ```bash
 cd MeriKnow
 docker compose up -d
-# Qdrant :6333 · Postgres :5432
+# Qdrant :6333 · Postgres :5432 · Redis :6379
 
 # Control Plane schema（只创建 PostgreSQL app schema）
 cd apps/web
@@ -46,6 +48,10 @@ uv run uvicorn app.main:app --reload --port 8000
 cd apps/web
 pnpm dev
 ```
+
+私有化客户式安装（Compose 全栈参考拓扑、迁移、备份恢复）：见
+[`deploy/README.md`](./deploy/README.md) 与
+[`docs/runbooks/private-deployment.md`](./docs/runbooks/private-deployment.md)。
 
 - 工作台：<http://localhost:3000/app>
 - 同源健康检查：`GET http://localhost:3000/api/rag/health`

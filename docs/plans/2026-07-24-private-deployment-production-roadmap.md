@@ -1,7 +1,7 @@
 # MeriKnow 私有化企业知识库最终落地计划
 
 > 日期：2026-07-24  
-> 状态：实施中（L0–L6 主路径完成；L7 质量门禁落地中）  
+> 状态：实施中（L0–L7 主路径完成；L8 私有化部署包首片已落地，Helm/SBOM 后置）  
 > 关联文档：
 > [企业 RAG 主蓝图](../architecture/enterprise-rag-saas-design.md) ·
 > [Next.js 控制面 ADR](../adr/0004-nextjs-control-plane.md)
@@ -1237,18 +1237,29 @@ Done：
 
 目标：交付客户可以掌控数据、密钥和基础设施的安装包。
 
-- [ ] 提供 Docker Compose 单机参考拓扑；
-- [ ] 提供 Kubernetes/Helm 生产拓扑和容量参数；
-- [ ] PostgreSQL、Qdrant、Redis、对象存储均支持客户托管连接；
-- [ ] LLM/embedding/rerank/MinerU 使用客户 endpoint/key；
-- [ ] secret 只从环境或 secret manager 注入，不进入镜像和日志；
-- [ ] production 配置 fail-closed，禁用浏览器直连 FastAPI 写接口；
-- [ ] migration 作为独立部署步骤，运行账号不持有 DDL 权限；
-- [ ] readiness 覆盖 DB/Qdrant/storage/control-plane compatibility；
-- [ ] 支持 worker drain、滚动升级和 pipeline version 并存；
-- [ ] 制定 PostgreSQL、对象、Qdrant 的备份与恢复顺序；
-- [ ] 提供安装、升级、回滚、扩容、故障恢复 runbook；
-- [ ] 生成 SBOM、锁定镜像版本并完成依赖/镜像安全扫描。
+- [x] 提供 Docker Compose 单机参考拓扑；
+  （`deploy/compose/docker-compose.yml` + `deploy/docker/*`）
+- [ ] 提供 Kubernetes/Helm 生产拓扑和容量参数；**(后置)**
+- [x] PostgreSQL、Qdrant、Redis、对象存储均支持客户托管连接；
+  （`.env` 连接串；默认 Compose 卷，可改为外部托管）
+- [x] LLM/embedding/rerank/MinerU 使用客户 endpoint/key；
+- [x] secret 只从环境或 secret manager 注入，不进入镜像和日志；
+- [x] production 配置 fail-closed，禁用浏览器直连 FastAPI 写接口；
+  （Caddy 仅反代 web；api 不发布端口；见 runbook）
+- [x] migration 作为独立部署步骤，运行账号不持有 DDL 权限；
+  （`migrate` profile + `configure-runtime-roles.sql`）
+- [x] readiness 覆盖 DB/Qdrant/storage/control-plane compatibility；
+  （Compose healthcheck + `docs/runbooks/private-deployment.md` §3）
+- [x] 支持 worker drain、滚动升级和 pipeline version 并存；
+  （`upgrade.sh` SIGTERM drain；`stop_grace_period`）
+- [x] 制定 PostgreSQL、对象、Qdrant 的备份与恢复顺序；
+  （`backup.sh` / `restore.sh`）
+- [x] 提供安装、升级、回滚、扩容、故障恢复 runbook；
+  （`docs/runbooks/private-deployment.md`）
+- [ ] 生成 SBOM、锁定镜像版本并完成依赖/镜像安全扫描。**(后置；Compose 已 pin 镜像 tag)**
+
+交付入口：[`deploy/README.md`](../../deploy/README.md) ·
+[`docs/runbooks/private-deployment.md`](../runbooks/private-deployment.md)。
 
 推荐拓扑：
 

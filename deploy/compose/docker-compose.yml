@@ -1,0 +1,309 @@
+# MeriKnow private-deployment reference topology (L8).
+# Usage (from this directory, after copying env.example → .env):
+#   ./scripts/install.sh
+# Or manually:
+#   docker compose up -d postgres qdrant redis
+#   docker compose --profile migrate run --rm migrate-web
+#   docker compose --profile migrate run --rm migrate-rag
+#   docker compose up -d
+#
+# Browser → Caddy :80 → web :3000
+# FastAPI / lifecycle-worker are NOT published.
+
+name: ${COMPOSE_PROJECT_NAME:-meriknow}
+
+x-api-env: &api-env
+  APP_NAME: MeriKnow API
+  APP_ENV: ${APP_ENV:-production}
+  API_PREFIX: /v1
+  CORS_ORIGINS: http://localhost,http://127.0.0.1
+  INTERNAL_AUTH_ENABLED: ${INTERNAL_AUTH_ENABLED:-true}
+  INTERNAL_AUTH_SECRET: ${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET required}
+  INTERNAL_AUTH_REPLAY_BACKEND: ${INTERNAL_AUTH_REPLAY_BACKEND:-redis}
+  ASK_MODE: ${ASK_MODE:-live}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+  CHAT_MODEL: ${CHAT_MODEL:-qwen-plus}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v3}
+  EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
+  QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+  QDRANT_COLLECTION: ${QDRANT_COLLECTION:-meriknow_chunks}
+  METADATA_BACKEND: ${METADATA_BACKEND:-postgres}
+  DATABASE_URL: ${API_DATABASE_URL:?API_DATABASE_URL required}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+  WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL required}
+  RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:?RAG_READ_DATABASE_URL required}
+  DOCUMENT_STORAGE_ROOT: ${DOCUMENT_STORAGE_ROOT:-/var/lib/meriknow/documents}
+  ACTIVE_GENERATION_GATE_ENABLED: ${ACTIVE_GENERATION_GATE_ENABLED:-true}
+  ACTIVE_GENERATION_CACHE_TTL_SECONDS: ${ACTIVE_GENERATION_CACHE_TTL_SECONDS:-0}
+  LEGACY_INGEST_WRITES_ENABLED: ${LEGACY_INGEST_WRITES_ENABLED:-false}
+  RERANK_ENABLED: ${RERANK_ENABLED:-true}
+  RERANK_BASE_URL: ${RERANK_BASE_URL:-}
+  RERANK_MODEL: ${RERANK_MODEL:-qwen3-rerank}
+  MINERU_ENABLED: ${MINERU_ENABLED:-false}
+  MINERU_URL: ${MINERU_URL:-}
+  MINERU_USE_FAKE: ${MINERU_USE_FAKE:-false}
+  LIFECYCLE_WORKER_READY_FILE: /tmp/meriknow-lifecycle-ready
+  LIFECYCLE_WORKER_POLL_SECONDS: ${LIFECYCLE_WORKER_POLL_SECONDS:-1}
+  LIFECYCLE_WORKER_LEASE_SECONDS: ${LIFECYCLE_WORKER_LEASE_SECONDS:-120}
+  LIFECYCLE_WORKER_HEARTBEAT_SECONDS: ${LIFECYCLE_WORKER_HEARTBEAT_SECONDS:-30}
+
+services:
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2.9.1-alpine}
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - edge
+      - internal
+
+  web:
+    image: ${MERIKNOW_WEB_IMAGE:-meriknow-web:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/web.Dockerfile
+      target: runner
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      RAG_API_URL: http://api:8000
+      MERIKNOW_INTERNAL_SECRET: ${MERIKNOW_INTERNAL_SECRET:?MERIKNOW_INTERNAL_SECRET required}
+      MERIKNOW_SESSION_SECRET: ${MERIKNOW_SESSION_SECRET:?MERIKNOW_SESSION_SECRET required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+      DOCUMENT_LIFECYCLE_V2: ${DOCUMENT_LIFECYCLE_V2:-true}
+      DOCUMENT_STORAGE_ROOT: ${DOCUMENT_STORAGE_ROOT:-/var/lib/meriknow/documents}
+      MERIKNOW_ORGANIZATION_ID: ${MERIKNOW_ORGANIZATION_ID:-00000000-0000-4000-8000-000000000001}
+      MERIKNOW_WORKSPACE_ID: ${MERIKNOW_WORKSPACE_ID:-00000000-0000-4000-8000-000000000002}
+      MERIKNOW_PRINCIPAL_ID: ${MERIKNOW_PRINCIPAL_ID:-00000000-0000-4000-8000-000000000003}
+      MERIKNOW_ORGANIZATION_SLUG: ${MERIKNOW_ORGANIZATION_SLUG:-default}
+      MERIKNOW_ORGANIZATION_NAME: ${MERIKNOW_ORGANIZATION_NAME:-MeriKnow Private Deployment}
+      MERIKNOW_WORKSPACE_SLUG: ${MERIKNOW_WORKSPACE_SLUG:-default}
+      MERIKNOW_WORKSPACE_NAME: ${MERIKNOW_WORKSPACE_NAME:-Default Workspace}
+      MERIKNOW_ADMIN_SUBJECT: ${MERIKNOW_ADMIN_SUBJECT:-local-admin}
+      MERIKNOW_ADMIN_EMAIL: ${MERIKNOW_ADMIN_EMAIL:-admin@example.com}
+      MERIKNOW_ADMIN_NAME: ${MERIKNOW_ADMIN_NAME:-Local Administrator}
+      MERIKNOW_ADMIN_PASSWORD: ${MERIKNOW_ADMIN_PASSWORD:?MERIKNOW_ADMIN_PASSWORD required}
+    volumes:
+      - document_storage:${DOCUMENT_STORAGE_ROOT:-/var/lib/meriknow/documents}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:3000/api/rag/health >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - internal
+      - edge
+
+  api:
+    image: ${MERIKNOW_API_IMAGE:-meriknow-api:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/api.Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+    volumes:
+      - document_storage:${DOCUMENT_STORAGE_ROOT:-/var/lib/meriknow/documents}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:8000/health | grep -q '\"status\"' || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # Intentionally no ports: — FastAPI is internal-only (fail-closed edge).
+    networks:
+      - internal
+
+  lifecycle-worker:
+    image: ${MERIKNOW_API_IMAGE:-meriknow-api:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/api.Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "app.lifecycle_worker"]
+    environment:
+      <<: *api-env
+    volumes:
+      - document_storage:${DOCUMENT_STORAGE_ROOT:-/var/lib/meriknow/documents}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "test -f /tmp/meriknow-lifecycle-ready || exit 1",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    stop_grace_period: 2m
+    networks:
+      - internal
+
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-meriknow}
+      POSTGRES_USER: ${POSTGRES_USER:-meriknow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-meriknow} -d ${POSTGRES_DB:-meriknow}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - internal
+
+  qdrant:
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.13.2}
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - internal
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - internal
+
+  migrate-web:
+    profiles: ["migrate"]
+    # Distinct tag so migrator layers are not overwritten by the runtime web image.
+    image: ${MERIKNOW_WEB_MIGRATOR_IMAGE:-meriknow-web-migrator:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/web.Dockerfile
+      target: migrator
+    environment:
+      DATABASE_URL: ${MIGRATOR_DATABASE_URL:?MIGRATOR_DATABASE_URL required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: "no"
+
+  migrate-rag:
+    profiles: ["migrate"]
+    image: ${MERIKNOW_API_IMAGE:-meriknow-api:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/api.Dockerfile
+    environment:
+      MIGRATOR_DATABASE_URL: ${MIGRATOR_DATABASE_URL:?MIGRATOR_DATABASE_URL required}
+    command: ["python", "scripts/apply_rag_migrations.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate-web:
+        condition: service_completed_successfully
+    networks:
+      - internal
+    restart: "no"
+
+  bootstrap:
+    profiles: ["migrate"]
+    image: ${MERIKNOW_WEB_MIGRATOR_IMAGE:-meriknow-web-migrator:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/web.Dockerfile
+      target: migrator
+    working_dir: /repo/apps/web
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      MERIKNOW_ORGANIZATION_ID: ${MERIKNOW_ORGANIZATION_ID:-00000000-0000-4000-8000-000000000001}
+      MERIKNOW_WORKSPACE_ID: ${MERIKNOW_WORKSPACE_ID:-00000000-0000-4000-8000-000000000002}
+      MERIKNOW_PRINCIPAL_ID: ${MERIKNOW_PRINCIPAL_ID:-00000000-0000-4000-8000-000000000003}
+      MERIKNOW_ORGANIZATION_SLUG: ${MERIKNOW_ORGANIZATION_SLUG:-default}
+      MERIKNOW_ORGANIZATION_NAME: ${MERIKNOW_ORGANIZATION_NAME:-MeriKnow Private Deployment}
+      MERIKNOW_WORKSPACE_SLUG: ${MERIKNOW_WORKSPACE_SLUG:-default}
+      MERIKNOW_WORKSPACE_NAME: ${MERIKNOW_WORKSPACE_NAME:-Default Workspace}
+      MERIKNOW_ADMIN_SUBJECT: ${MERIKNOW_ADMIN_SUBJECT:-local-admin}
+      MERIKNOW_ADMIN_EMAIL: ${MERIKNOW_ADMIN_EMAIL:-admin@example.com}
+      MERIKNOW_ADMIN_NAME: ${MERIKNOW_ADMIN_NAME:-Local Administrator}
+      MERIKNOW_ADMIN_PASSWORD: ${MERIKNOW_ADMIN_PASSWORD:?MERIKNOW_ADMIN_PASSWORD required}
+    command: ["node", "scripts/bootstrap-control-plane.mjs"]
+    depends_on:
+      migrate-rag:
+        condition: service_completed_successfully
+    networks:
+      - internal
+    restart: "no"
+
+networks:
+  # Edge: reverse proxy only. Do not attach FastAPI here.
+  edge:
+    driver: bridge
+  # App backend. Ports for api/worker are unpublished (network isolation via
+  # non-publish, not Docker "internal: true") so the data plane can still reach
+  # customer LLM / embedding / MinerU endpoints.
+  internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:
+  document_storage:

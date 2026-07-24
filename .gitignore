@@ -5,6 +5,8 @@ dist
 *.log
 .env
 .env.local
+deploy/compose/.env
+deploy/compose/backups/
 apps/web/.next
 apps/web/node_modules
 apps/api/.venv

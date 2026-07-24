@@ -1,0 +1,18 @@
+# MeriKnow private-deployment edge proxy.
+# Only the Next.js control plane is exposed. FastAPI stays on the internal network.
+
+{
+	admin off
+}
+
+:80 {
+	encode gzip
+
+	# Control plane (browser + BFF /api/*).
+	reverse_proxy web:3000
+
+	log {
+		output stdout
+		format console
+	}
+}
