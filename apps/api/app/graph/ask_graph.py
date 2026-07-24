@@ -164,6 +164,15 @@ def _to_citation_dicts(raw_citations: list[dict[str, Any]]) -> list[dict[str, An
 	return [item.model_dump() for item in _to_citation_models(raw_citations)]
 
 
+def _renumber_citation_indexes(
+	citations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+	"""合并多路命中后重新编号为稳定唯一的 1..N（各路 retrieve 各自从 1 起编）。"""
+	for index, item in enumerate(citations, start=1):
+		item["index"] = index
+	return citations
+
+
 def _persist_turn(
 	*,
 	session_id: str,
@@ -567,7 +576,7 @@ def build_ask_graph(
 				continue
 			seen.add(key)
 			deduped.append(item)
-		citations = deduped[: top_k + min(4, top_k)]
+		citations = _renumber_citation_indexes(deduped[: top_k + min(4, top_k)])
 		citation_check = {
 			"ok": all(item.get("table_id") for item in citations) if citations else True,
 			"missing_table_id": sum(1 for item in citations if not item.get("table_id")),
@@ -923,7 +932,7 @@ def build_ask_graph(
 					continue
 				seen.add(key)
 				deduped.append(item)
-			citations = deduped[: top_k + min(4, top_k)]
+			citations = _renumber_citation_indexes(deduped[: top_k + min(4, top_k)])
 			filters = {**filters, "record_type": "chunk+table_summary"}
 			resolved_rt = "chunk+table_summary"
 		else:
@@ -962,6 +971,8 @@ def build_ask_graph(
 					"hit_count": len(citations),
 				}
 			)
+		# 防御保障：多路合并 / quote_source 后 index 仍为唯一连续 1..N
+		citations = _renumber_citation_indexes(citations)
 		top_score = float(citations[0]["score"]) if citations else None
 		used_rerank = bool(citations and citations[0].get("used_rerank"))
 		retrieve_ms = (time.perf_counter() - t0) * 1000

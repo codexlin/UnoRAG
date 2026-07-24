@@ -407,3 +407,79 @@ def test_citations_for_table_overview_bounds_rows() -> None:
 	preview = next(c for c in cites if c.get("record_type") == "table")
 	assert len(preview["rows"]) == 5
 	assert "仅预览前 5 行" in preview["body"]
+
+
+def test_unified_fast_merge_renumbers_citation_indexes_unique() -> None:
+	"""chunk + table_summary 双路各自从 1 编号时，合并后须稳定唯一 1..N。"""
+
+	def _retrieve(query, library_id, top_k, filters=None):
+		_ = query, library_id, top_k
+		rt = str((filters or {}).get("record_type") or "chunk")
+		if rt == "table_summary":
+			# 故意复用与 chunk 路重叠的 index，复现合并未重编号缺陷
+			return [
+				{
+					"id": "sum-1",
+					"index": 1,
+					"record_type": "table_summary",
+					"record_id": "sum-1",
+					"table_id": "t-a",
+					"title": "表摘要A",
+					"score": 0.55,
+					"body": "报价有效期说明摘要",
+					"text": "报价有效期说明摘要",
+					"snippet": "报价有效期说明摘要",
+				},
+				{
+					"id": "sum-2",
+					"index": 2,
+					"record_type": "table_summary",
+					"record_id": "sum-2",
+					"table_id": "t-b",
+					"title": "表摘要B",
+					"score": 0.42,
+					"body": "其它表摘要",
+					"text": "其它表摘要",
+					"snippet": "其它表摘要",
+				},
+			]
+		return [
+			{
+				"id": f"chunk-{i}",
+				"index": i,
+				"record_type": "chunk",
+				"record_id": f"chunk-{i}",
+				"title": f"正文{i}",
+				"score": 0.9 - i * 0.05,
+				"body": f"报价有效期正文片段{i}",
+				"text": f"报价有效期正文片段{i}",
+				"snippet": f"报价有效期正文片段{i}",
+			}
+			for i in range(1, 7)
+		]
+
+	graph = build_ask_graph(
+		settings=Settings(ask_mode="stub"),
+		retrieve_fn=_retrieve,
+		generate_fn=stub_generate,
+		mode="stub",
+	)
+	state = graph.invoke(
+		{
+			"session_id": "s-cite-index",
+			"question": "公司的差旅报销额度是多少？",
+			"library_id": "lib-cite-index",
+			"history": [],
+			"retrieval_debug": {},
+		}
+	)
+	citations = list(state.get("citations") or [])
+	assert len(citations) >= 4
+	indexes = [int(c["index"]) for c in citations]
+	assert indexes == list(range(1, len(citations) + 1)), indexes
+	assert len(set(indexes)) == len(indexes)
+	# 双路都应进入合并结果（未升级 precise 时）
+	rts = {str(c.get("record_type") or "") for c in citations}
+	assert "chunk" in rts
+	assert "table_summary" in rts
+	assert str((state.get("retrieval_plan") or {}).get("path") or "") == "fast"
