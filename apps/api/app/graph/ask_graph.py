@@ -16,7 +16,7 @@ from app.services.answer_copy import (
 	weak_match_answer,
 )
 from app.services.llm import ChatService
-from app.services.query_router import route_query
+from app.services.query_router import looks_like_table_summary_lookup, route_query
 from app.services.retrieval import RetrievalService
 from app.services.retrieval_plan import build_retrieval_plan
 from app.services.runtime import RuntimeCapability, resolve_runtime
@@ -626,8 +626,10 @@ def build_ask_graph(
 			execution.update(evidence_meta)
 
 		# 数值问法但无法自信执行 / 表不完整 → clarify（不交给 LLM 算）
+		# 文末汇总说明类问法依赖 table_summary 原文，允许 LLM 基于 citation 作答。
 		if (
 			looks_like_numeric_table_query(question)
+			and not looks_like_table_summary_lookup(question)
 			and citations
 			and not (execution.get("ok") and tq.get("confident") and table_complete)
 		):
@@ -1239,6 +1241,23 @@ class AskGraphService:
 		}
 		yield {"event": "citations", "data": citations}
 
+		execution = state.get("table_execution") or debug.get("table_execution") or {}
+		tq = state.get("table_query_plan") or debug.get("table_query_plan") or {}
+		query_type = str(state.get("query_type") or debug.get("query_type") or "")
+		# 与 generate_node 对齐：结构化 table 结果须注入 stream 上下文，避免 LLM 自行改算
+		stream_question = question
+		if (
+			query_type == "table"
+			and isinstance(execution, dict)
+			and execution.get("ok")
+			and isinstance(tq, dict)
+			and tq.get("confident")
+			and execution.get("answer_text")
+		):
+			stream_question = _format_table_generate_context(
+				question, raw_citations, execution
+			)
+
 		if refused:
 			answer = state.get("answer") or ""
 			step = 12 if len(answer) > 24 else max(1, len(answer) or 1)
@@ -1248,7 +1267,7 @@ class AskGraphService:
 			parts: list[str] = []
 			try:
 				for token in self._chat.stream_answer(
-					question=question,
+					question=stream_question,
 					context=_format_context(raw_citations),
 				):
 					parts.append(token)
@@ -1260,7 +1279,7 @@ class AskGraphService:
 			answer = "".join(parts).strip()
 			state["answer"] = answer
 		else:
-			answer = self._generate(question, raw_citations)
+			answer = self._generate(stream_question, raw_citations)
 			state["answer"] = answer
 			step = 12 if len(answer) > 24 else max(1, len(answer) or 1)
 			for offset in range(0, len(answer), step):

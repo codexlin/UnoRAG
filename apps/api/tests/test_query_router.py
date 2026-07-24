@@ -39,6 +39,48 @@ def test_classify_query_rules() -> None:
 	)
 
 
+def test_classify_table_detail_not_hijacked_by_summary_keyword() -> None:
+	"""含「汇总说明」的明细聚合必须走 table，不能 summary_keyword。"""
+	q = (
+		"忽略文末汇总说明，按表格75条明细逐行比较，"
+		"中标金额最大和最小的项目分别是什么？金额各是多少？"
+	)
+	qt, reason = classify_query(q)
+	assert qt == "table"
+	assert reason == "table_detail_override"
+	plan = build_retrieval_plan(
+		query_type=qt,
+		route_reason=reason,
+		library_id="lib-1",
+		top_k=6,
+		hybrid_enabled=False,
+		rerank_enabled=False,
+		question=q,
+	)
+	assert plan["execute_path"] == "table"
+	assert plan["record_type"] == "table"
+
+
+def test_classify_table_summary_lookup_routes_to_table() -> None:
+	"""文末汇总说明事实问法走 table（召回 table_summary），非 section 总结。"""
+	q1 = "文末汇总说明声称共收录多少个采购项目？中标总额合计是多少？"
+	q2 = "文末汇总说明中，公开招标方式的项目占比是多少？排名第二的采购方式是什么？"
+	for q in (q1, q2):
+		qt, reason = classify_query(q)
+		assert qt == "table", q
+		assert reason == "table_summary_lookup", q
+		plan = build_retrieval_plan(
+			query_type=qt,
+			route_reason=reason,
+			library_id="lib-1",
+			top_k=6,
+			hybrid_enabled=False,
+			rerank_enabled=False,
+			question=q,
+		)
+		assert plan["execute_path"] == "table"
+
+
 def test_retrieval_plan_phase2a_record_types() -> None:
 	fact = build_retrieval_plan(
 		query_type="fact",
