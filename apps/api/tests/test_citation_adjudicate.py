@@ -1,10 +1,10 @@
-"""Citation gate: wide recall → relevance filter → context/citations 同源."""
+"""Citation adjudication（裁决）: wide recall → relevance filter → context/citations 同源."""
 
 from __future__ import annotations
 
 from app.graph.ask_graph import AskGraphService, _format_context, stub_generate
-from app.services.citation_gate import (
-	apply_citation_gate,
+from app.services.citation_adjudicate import (
+	apply_citation_adjudicate,
 	wide_recall_limit,
 )
 from app.settings import Settings
@@ -38,9 +38,9 @@ def test_wide_recall_limit_formula() -> None:
 def test_semantic_floor_filters_low_tail() -> None:
 	settings = Settings(
 		_env_file=None,
-		citation_gate_enabled=True,
-		citation_gate_absolute_floor=0.35,
-		citation_gate_ratio=0.68,
+		citation_adjudicate_enabled=True,
+		citation_adjudicate_absolute_floor=0.35,
+		citation_adjudicate_ratio=0.68,
 		answer_min_score=0.4,
 	)
 	# Pure semantic: no lexical overlap with query
@@ -52,7 +52,7 @@ def test_semantic_floor_filters_low_tail() -> None:
 		_hit(5, 0.38, text="完全无关的附录排版说明。"),
 	]
 	# Pure-English query → no CJK lexical signal; rely on semantic_floor
-	result = apply_citation_gate(
+	result = apply_citation_adjudicate(
 		"zzpolicy duration alphaunique",
 		candidates,
 		top_k=8,
@@ -63,12 +63,12 @@ def test_semantic_floor_filters_low_tail() -> None:
 	assert result.filtered_irrelevant >= 2
 	assert all(float(c["score"]) >= 0.612 for c in result.citations)
 	assert {c["id"] for c in result.citations} == {"c1", "c2"}
-	assert result.citation_gate["mode"] == "semantic_floor"
+	assert result.citation_adjudication["mode"] == "semantic_floor"
 
 
 def test_context_and_citations_same_source() -> None:
 	def fake_retrieve(_q, _lib, top_k, _filters=None):
-		# Return a wide pool; gate should trim
+		# Return a wide pool; adjudicate should trim
 		pool = [
 			_hit(1, 0.88, text="病假须于返岗后三个工作日内补交证明材料。"),
 			_hit(2, 0.80, text="病假证明由直属主管确认后交人力资源部。"),
@@ -91,7 +91,7 @@ def test_context_and_citations_same_source() -> None:
 	service = AskGraphService(
 		Settings(
 			_env_file=None,
-			citation_gate_enabled=True,
+			citation_adjudicate_enabled=True,
 			ask_mode="stub",
 			answer_min_score=0.4,
 			max_retrieve_retries=0,
@@ -100,7 +100,7 @@ def test_context_and_citations_same_source() -> None:
 		retrieve_fn=fake_retrieve,
 		generate_fn=capture_generate,
 	)
-	result = service.ask(question="病假证明怎么交？", library_id="lib-gate")
+	result = service.ask(question="病假证明怎么交？", library_id="lib-adjudicate")
 	assert result.refused is False
 	assert len(result.citations) >= 1
 	assert len(result.citations) < 8
@@ -112,7 +112,7 @@ def test_context_and_citations_same_source() -> None:
 	assert "candidates_count" in debug
 	assert "filtered_irrelevant" in debug
 	assert "relevant_count" in debug
-	assert "citation_gate" in debug
+	assert "citation_adjudication" in debug
 
 
 def test_weak_match_still_refuses() -> None:
@@ -121,8 +121,8 @@ def test_weak_match_still_refuses() -> None:
 		ask_mode="stub",
 		answer_min_score=0.5,
 		max_retrieve_retries=0,
-		citation_gate_enabled=True,
-		citation_gate_absolute_floor=0.35,
+		citation_adjudicate_enabled=True,
+		citation_adjudicate_absolute_floor=0.35,
 	)
 
 	def fake_retrieve(_q, _lib, _top_k, _filters=None):
@@ -133,7 +133,7 @@ def test_weak_match_still_refuses() -> None:
 		retrieve_fn=fake_retrieve,
 		generate_fn=stub_generate,
 	)
-	result = service.ask(question="anything", library_id="lib-weak-gate")
+	result = service.ask(question="anything", library_id="lib-weak-adjudicate")
 	assert result.refused is True
 	assert result.refuse_reason == "weak_match"
 	assert len(result.citations) >= 1
@@ -142,16 +142,16 @@ def test_weak_match_still_refuses() -> None:
 def test_renumber_indexes_unique_1_to_n() -> None:
 	settings = Settings(
 		_env_file=None,
-		citation_gate_enabled=True,
-		citation_gate_absolute_floor=0.35,
-		citation_gate_ratio=0.68,
+		citation_adjudicate_enabled=True,
+		citation_adjudicate_absolute_floor=0.35,
+		citation_adjudicate_ratio=0.68,
 	)
 	candidates = [
 		_hit(10, 0.91, text="报价有效期三十天。"),
 		_hit(20, 0.85, text="报价有效期自发出日起算。"),
 		_hit(30, 0.40, text="无关页脚。"),
 	]
-	result = apply_citation_gate(
+	result = apply_citation_adjudicate(
 		"zzquote validity alphaunique",
 		candidates,
 		top_k=6,
@@ -166,9 +166,24 @@ def test_renumber_indexes_unique_1_to_n() -> None:
 	assert len(set(indexes)) == len(indexes)
 
 
-def test_gate_disabled_passthrough() -> None:
-	settings = Settings(_env_file=None, citation_gate_enabled=False)
+def test_adjudicate_disabled_passthrough() -> None:
+	settings = Settings(_env_file=None, citation_adjudicate_enabled=False)
 	candidates = [_hit(i, 0.9 - i * 0.05) for i in range(1, 9)]
-	result = apply_citation_gate("q", candidates, top_k=6, settings=settings)
-	assert result.citation_gate["mode"] == "passthrough"
+	result = apply_citation_adjudicate("q", candidates, top_k=6, settings=settings)
+	assert result.citation_adjudication["mode"] == "passthrough"
 	assert len(result.citations) == 6
+
+
+def test_legacy_citation_gate_settings_soft_migrate() -> None:
+	"""Old citation_gate_* kwargs still populate citation_adjudicate_* fields."""
+	settings = Settings(
+		_env_file=None,
+		citation_gate_enabled=False,
+		citation_gate_absolute_floor=0.41,
+		citation_gate_ratio=0.55,
+		citation_gate_lexical_threshold=0.33,
+	)
+	assert settings.citation_adjudicate_enabled is False
+	assert settings.citation_adjudicate_absolute_floor == 0.41
+	assert settings.citation_adjudicate_ratio == 0.55
+	assert settings.citation_adjudicate_lexical_threshold == 0.33

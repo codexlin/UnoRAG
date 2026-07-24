@@ -22,6 +22,9 @@ STAGE_DETAIL_KEYS: dict[str, tuple[str, ...]] = {
 		"table_summary_hits",
 		"top_table_summary_score",
 	),
+	# Product term: 裁决 / adjudicate (keep/upgrade/refuse). New emits use adjudicate only.
+	"adjudicate": ("decision", "decision_reason", "upgrade_to"),
+	# Legacy stage name: keep for reading historical traces only.
 	"gate": ("decision", "decision_reason", "upgrade_to"),
 	"table_load": ("load_source", "complete", "table_id"),
 	"table_execute": ("operation", "ok", "matched_count"),
@@ -82,7 +85,7 @@ def append_stage(
 
 
 def citation_retrieve_detail(citations: list[dict[str, Any]] | None) -> dict[str, Any]:
-	"""Build retrieve-stage detail from hit list (source type breakdown for gate debugging)."""
+	"""Build retrieve-stage detail from hit list (source types for adjudication)."""
 	items = list(citations or [])
 	source_types: list[str] = []
 	seen: set[str] = set()

@@ -1,4 +1,9 @@
-"""SAG-style relevance gate: wide recall → filter low hits → display/context 同源 top_k."""
+"""Citation adjudication（裁决）: wide recall → weigh hits → display/context 同源 top_k.
+
+Decisions align with ask routing language: keep / upgrade / refuse at the Ask
+layer; this module filters retrieval hits so generation context and returned
+citations are the same set.
+"""
 
 from __future__ import annotations
 
@@ -48,7 +53,7 @@ def query_terms(query: str) -> list[str]:
 
 
 def wide_recall_limit(top_k: int, settings: Settings | None = None) -> int:
-	"""Candidate pool size before relevance gate.
+	"""Candidate pool size before citation adjudication.
 
 	Formula: min(50, max(top_k*3, top_k+8)); if rerank is on, also honor rerank_top_k.
 	"""
@@ -125,37 +130,40 @@ def _bm25_signal(hit: dict[str, Any]) -> float | None:
 
 
 @dataclass(frozen=True, slots=True)
-class CitationGateResult:
+class CitationAdjudicateResult:
 	citations: list[dict[str, Any]]
 	candidates_count: int
 	relevant_count: int
 	filtered_irrelevant: int
-	citation_gate: dict[str, Any]
+	citation_adjudication: dict[str, Any]
 
 
-def apply_citation_gate(
+def apply_citation_adjudicate(
 	query: str,
 	candidates: list[dict[str, Any]],
 	*,
 	top_k: int,
 	settings: Settings,
 	enabled: bool | None = None,
-) -> CitationGateResult:
-	"""Filter low-relevance hits, then truncate to top_k (context ≡ citations)."""
+) -> CitationAdjudicateResult:
+	"""Weigh hits, drop low-relevance tails, truncate to top_k (context ≡ citations)."""
 	limit = max(1, int(top_k))
-	gate_on = (
-		bool(settings.citation_gate_enabled) if enabled is None else bool(enabled)
+	adjudicate_on = (
+		bool(settings.citation_adjudicate_enabled)
+		if enabled is None
+		else bool(enabled)
 	)
-	absolute = float(settings.citation_gate_absolute_floor)
+	absolute = float(settings.citation_adjudicate_absolute_floor)
 	if absolute <= 0:
-		# 0 / negative → align with hard refuse floor when configured
-		absolute = float(settings.answer_min_score) if settings.answer_min_score > 0 else 0.35
-	ratio = float(settings.citation_gate_ratio)
-	lexical_threshold = float(settings.citation_gate_lexical_threshold)
+		absolute = (
+			float(settings.answer_min_score) if settings.answer_min_score > 0 else 0.35
+		)
+	ratio = float(settings.citation_adjudicate_ratio)
+	lexical_threshold = float(settings.citation_adjudicate_lexical_threshold)
 
 	if not candidates:
 		summary = {
-			"enabled": gate_on,
+			"enabled": adjudicate_on,
 			"mode": "empty",
 			"absolute_floor": absolute,
 			"ratio": ratio,
@@ -163,9 +171,8 @@ def apply_citation_gate(
 			"has_lexical_signal": False,
 			"kept_fallback_top": False,
 		}
-		return CitationGateResult([], 0, 0, 0, summary)
+		return CitationAdjudicateResult([], 0, 0, 0, summary)
 
-	# Stable dedupe preserving best score
 	merged: dict[str, dict[str, Any]] = {}
 	for item in candidates:
 		key = _hit_key(item)
@@ -177,7 +184,7 @@ def apply_citation_gate(
 	top_raw = _raw_score(pool[0])
 	semantic_floor = max(absolute, top_raw * ratio)
 
-	if not gate_on:
+	if not adjudicate_on:
 		selected = pool[:limit]
 		summary = {
 			"enabled": False,
@@ -190,7 +197,7 @@ def apply_citation_gate(
 			"wide_limit": candidate_count,
 			"final_top_k": limit,
 		}
-		return CitationGateResult(
+		return CitationAdjudicateResult(
 			selected,
 			candidate_count,
 			len(selected),
@@ -198,10 +205,9 @@ def apply_citation_gate(
 			summary,
 		)
 
-	lexical_scores = { _hit_key(hit): lexical_relevance(query, hit) for hit in pool }
+	lexical_scores = {_hit_key(hit): lexical_relevance(query, hit) for hit in pool}
 	bm25_values = [_bm25_signal(hit) for hit in pool]
 	has_bm25 = any(v is not None and v > 0 for v in bm25_values)
-	# Normalize BM25 for thresholding when present (relative to max in pool)
 	max_bm25 = max((v for v in bm25_values if v is not None), default=0.0) or 0.0
 	has_lexical_signal = has_bm25 or any(
 		score >= lexical_threshold for score in lexical_scores.values()
@@ -229,7 +235,6 @@ def apply_citation_gate(
 
 	kept_fallback = False
 	if not relevant:
-		# Preserve top hit so answer_min_score hard refuse stays weak_match ≠ no_hit
 		relevant = [pool[0]]
 		kept_fallback = True
 
@@ -249,20 +254,20 @@ def apply_citation_gate(
 		"final_top_k": limit,
 		"top_score": round(top_raw, 6),
 	}
-	return CitationGateResult(
+	return CitationAdjudicateResult(
 		citations=selected,
 		candidates_count=candidate_count,
 		relevant_count=len(relevant),
 		filtered_irrelevant=max(0, candidate_count - len(relevant)),
-		citation_gate=summary,
+		citation_adjudication=summary,
 	)
 
 
-def gate_debug_fields(result: CitationGateResult) -> dict[str, Any]:
+def adjudicate_debug_fields(result: CitationAdjudicateResult) -> dict[str, Any]:
 	"""Fields to merge into retrieval_debug."""
 	return {
 		"candidates_count": result.candidates_count,
 		"filtered_irrelevant": result.filtered_irrelevant,
 		"relevant_count": result.relevant_count,
-		"citation_gate": result.citation_gate,
+		"citation_adjudication": result.citation_adjudication,
 	}

@@ -17,7 +17,10 @@ import { cn } from "@/lib/utils";
 const STAGE_LABELS: Record<string, string> = {
 	route: "路由",
 	retrieve: "检索",
-	gate: "门控",
+	/** Product term: 裁决（adjudicate）. */
+	adjudicate: "裁决",
+	/** Legacy stage key `gate` — historical traces only. */
+	gate: "裁决（历史）",
 	table_load: "表加载",
 	table_execute: "表执行",
 	generate: "生成",
@@ -47,12 +50,38 @@ function formatDebugValue(value: unknown): string {
 	}
 }
 
-function summaryRows(debug: ApiRetrievalDebug): { label: string; value: string }[] {
-	const total =
-		typeof debug.total_duration_ms === "number"
-			? formatDurationMs(debug.total_duration_ms)
-			: "—";
-	return [
+/** Server-side stage duration from retrieval_debug.stages */
+export function stageDurationMs(
+	debug: ApiRetrievalDebug | null | undefined,
+	stageName: string,
+): number | null {
+	const stages = Array.isArray(debug?.stages) ? debug.stages : [];
+	const hit = stages.find((s) => s.stage === stageName);
+	if (!hit || typeof hit.duration_ms !== "number" || Number.isNaN(hit.duration_ms)) {
+		return null;
+	}
+	return hit.duration_ms;
+}
+
+export function serverTotalDurationMs(
+	debug: ApiRetrievalDebug | null | undefined,
+): number | null {
+	if (
+		typeof debug?.total_duration_ms === "number" &&
+		!Number.isNaN(debug.total_duration_ms)
+	) {
+		return debug.total_duration_ms;
+	}
+	return null;
+}
+
+function summaryRows(
+	debug: ApiRetrievalDebug,
+	clientDurationMs?: number | null,
+): { label: string; value: string }[] {
+	const serverTotal = serverTotalDurationMs(debug);
+	const retrieveMs = stageDurationMs(debug, "retrieve");
+	const rows: { label: string; value: string }[] = [
 		{ label: "path", value: formatDebugValue(debug.path) },
 		{ label: "route", value: formatDebugValue(debug.route) },
 		{ label: "precise_gate", value: formatDebugValue(debug.precise_gate) },
@@ -63,8 +92,22 @@ function summaryRows(debug: ApiRetrievalDebug): { label: string; value: string }
 					? "—"
 					: formatDebugValue(debug.upgrade),
 		},
-		{ label: "总耗时", value: total },
+		{
+			label: "服务端合计",
+			value: serverTotal != null ? formatDurationMs(serverTotal) : "—",
+		},
+		{
+			label: "检索(服务端)",
+			value: retrieveMs != null ? formatDurationMs(retrieveMs) : "—",
+		},
 	];
+	if (clientDurationMs != null && !Number.isNaN(clientDurationMs)) {
+		rows.push({
+			label: "端到端",
+			value: formatDurationMs(clientDurationMs),
+		});
+	}
+	return rows;
 }
 
 function StageRow({ stage }: { stage: ApiAskStage }) {
@@ -183,18 +226,22 @@ export function AskTraceDrawer({
 	open,
 	onOpenChange,
 	debug,
+	clientDurationMs = null,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	debug: ApiRetrievalDebug | null;
+	/** Browser wall-clock until done (端到端), for reconciling with server total */
+	clientDurationMs?: number | null;
 }) {
 	const stages = Array.isArray(debug?.stages) ? debug.stages : [];
-	const rows = debug ? summaryRows(debug) : [];
+	const rows = debug ? summaryRows(debug, clientDurationMs) : [];
 	const traceId =
 		typeof debug?.trace_id === "string" && debug.trace_id ? debug.trace_id : null;
 	const rawJson = debug
 		? JSON.stringify(debug, null, 2)
 		: "";
+	const serverTotal = serverTotalDurationMs(debug);
 
 	return (
 		<Sheet open={open && debug != null} onOpenChange={onOpenChange}>
@@ -208,7 +255,9 @@ export function AskTraceDrawer({
 						<SheetHeader className="border-b border-border/70">
 							<SheetTitle className="pr-8">请求链路</SheetTitle>
 							<SheetDescription>
-								本轮 Ask 的 stages 与检索调试信息
+								{serverTotal != null && clientDurationMs != null
+									? `服务端合计 ${formatDurationMs(serverTotal)} · 端到端 ${formatDurationMs(clientDurationMs)}`
+									: "本轮 Ask 的 stages 与检索调试信息（服务端阶段耗时）"}
 							</SheetDescription>
 						</SheetHeader>
 

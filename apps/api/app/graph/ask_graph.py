@@ -31,9 +31,9 @@ from app.services.ask_route import (
 	table_overview_downgrade_reason,
 )
 from app.services.query_router import looks_like_table_summary_lookup, route_query
-from app.services.citation_gate import (
-	apply_citation_gate,
-	gate_debug_fields,
+from app.services.citation_adjudicate import (
+	adjudicate_debug_fields,
+	apply_citation_adjudicate,
 	wide_recall_limit,
 )
 from app.services.retrieval import RetrievalService
@@ -894,7 +894,7 @@ def build_ask_graph(
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
 		plan = dict(state.get("retrieval_plan") or {})
 		top_k = int(plan.get("top_k") or settings.retrieve_top_k)
-		# 宽召回：门控前多取候选；display/context 再截到 top_k
+		# 宽召回：裁决前多取候选；display/context 再截到 top_k
 		candidate_k = wide_recall_limit(top_k, settings)
 		filters = dict(plan.get("filters") or {})
 		plan_rt = str(plan.get("record_type") or filters.get("record_type") or "chunk")
@@ -939,7 +939,7 @@ def build_ask_graph(
 					continue
 				seen.add(key)
 				deduped.append(item)
-			# 门控前暂不硬截 top_k；保留宽池供 citation_gate
+			# 裁决前暂不硬截 top_k；保留宽池供 citation_adjudicate
 			citations = deduped[: max(candidate_k, top_k + min(4, top_k))]
 			filters = {**filters, "record_type": "chunk+table_summary"}
 			resolved_rt = "chunk+table_summary"
@@ -951,14 +951,14 @@ def build_ask_graph(
 			)
 			resolved_rt = str(filters.get("record_type") or plan_rt)
 
-		# 文本引用门控（table precise 路径不走本节点）
-		gate_result = apply_citation_gate(
+		# 文本引用裁决（table precise 路径不走本节点）
+		adjudicate_result = apply_citation_adjudicate(
 			query,
 			citations,
 			top_k=top_k,
 			settings=settings,
 		)
-		citations = gate_result.citations
+		citations = adjudicate_result.citations
 
 		# 薄 citation_check：section 命中应能回溯 source_chunk_ids
 		citation_check = {"ok": True, "missing_source_chunk_ids": 0}
@@ -976,7 +976,7 @@ def build_ask_graph(
 			"record_type": resolved_rt,
 			"filters": filters,
 			"citation_check": citation_check,
-			**gate_debug_fields(gate_result),
+			**adjudicate_debug_fields(adjudicate_result),
 		}
 		tool_trace: list[dict[str, Any]] = []
 		# TOOL_ASK：默认仍短路径；仅规范化 citation + 记录 search_docs 轨迹（多跳工具后续扩展）
@@ -991,7 +991,7 @@ def build_ask_graph(
 					"hit_count": len(citations),
 				}
 			)
-		# 最终保障：多路合并 / quote_source / 门控后 index 仍为唯一连续 1..N
+		# 最终保障：多路合并 / quote_source / 裁决后 index 仍为唯一连续 1..N
 		citations = _renumber_citation_indexes(citations)
 		top_score = float(citations[0]["score"]) if citations else None
 		used_rerank = bool(citations and citations[0].get("used_rerank"))
@@ -999,7 +999,7 @@ def build_ask_graph(
 		retrieve_detail = citation_retrieve_detail(citations)
 
 		# 阶段2：fast → precise 升级（写死条件 + upgrade_reason）
-		t_gate0 = time.perf_counter()
+		t_adjudicate0 = time.perf_counter()
 		upgrade: str | None = None
 		upgrade_reason: str | None = None
 		out_plan = plan
@@ -1026,7 +1026,7 @@ def build_ask_graph(
 				filters_up = dict(out_plan.get("filters") or {})
 				filters_up["record_type"] = "table"
 				out_plan["filters"] = filters_up
-		gate_ms = (time.perf_counter() - t_gate0) * 1000
+		adjudicate_ms = (time.perf_counter() - t_adjudicate0) * 1000
 
 		debug = _merge_debug(
 			state,
@@ -1055,8 +1055,8 @@ def build_ask_graph(
 		)
 		append_stage(
 			debug,
-			name="gate",
-			duration_ms=gate_ms,
+			name="adjudicate",
+			duration_ms=adjudicate_ms,
 			detail={
 				"decision": "upgrade" if upgrade else "keep",
 				"decision_reason": upgrade_reason,

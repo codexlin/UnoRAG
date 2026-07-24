@@ -21,7 +21,7 @@ client = TestClient(app)
 
 RETRIEVE_KEYS = STAGE_DETAIL_KEYS["retrieve"]
 ROUTE_KEYS = STAGE_DETAIL_KEYS["route"]
-GATE_KEYS = STAGE_DETAIL_KEYS["gate"]
+ADJUDICATE_KEYS = STAGE_DETAIL_KEYS["adjudicate"]
 GENERATE_KEYS = STAGE_DETAIL_KEYS["generate"]
 
 
@@ -50,11 +50,13 @@ def test_stage_detail_schema_keys_always_present() -> None:
 	assert detail["top_score"] is None
 
 	debug: dict = {"stages": []}
-	append_stage(debug, name="gate", duration_ms=1.2, detail={"decision": "keep"})
+	append_stage(
+		debug, name="adjudicate", duration_ms=1.2, detail={"decision": "keep"}
+	)
 	stage = debug["stages"][0]
-	assert stage["stage"] == "gate"
+	assert stage["stage"] == "adjudicate"
 	assert stage["duration_ms"] == 1
-	for key in GATE_KEYS:
+	for key in ADJUDICATE_KEYS:
 		assert key in stage["detail"]
 
 
@@ -79,7 +81,8 @@ def test_ask_stub_has_trace_id_question_hash_and_stages() -> None:
 	names = [item["stage"] for item in stages]
 	assert "route" in names
 	assert "retrieve" in names
-	assert "gate" in names
+	# New emits use adjudicate; legacy stage name `gate` remains readable in STAGE_DETAIL_KEYS.
+	assert "adjudicate" in names
 	assert "generate" in names
 
 	route = next(item for item in stages if item["stage"] == "route")

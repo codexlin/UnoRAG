@@ -1,9 +1,69 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
+from typing import Any
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Legacy citation gate → adjudicate field / env soft-migration pairs.
+_CITATION_ADJUDICATE_LEGACY: tuple[tuple[str, str, str, str], ...] = (
+	(
+		"citation_adjudicate_enabled",
+		"citation_gate_enabled",
+		"CITATION_ADJUDICATE_ENABLED",
+		"CITATION_GATE_ENABLED",
+	),
+	(
+		"citation_adjudicate_absolute_floor",
+		"citation_gate_absolute_floor",
+		"CITATION_ADJUDICATE_ABSOLUTE_FLOOR",
+		"CITATION_GATE_ABSOLUTE_FLOOR",
+	),
+	(
+		"citation_adjudicate_ratio",
+		"citation_gate_ratio",
+		"CITATION_ADJUDICATE_RATIO",
+		"CITATION_GATE_RATIO",
+	),
+	(
+		"citation_adjudicate_lexical_threshold",
+		"citation_gate_lexical_threshold",
+		"CITATION_ADJUDICATE_LEXICAL_THRESHOLD",
+		"CITATION_GATE_LEXICAL_THRESHOLD",
+	),
+)
+
+
+def _dotenv_lookup(key: str) -> str | None:
+	"""Read a key from local .env without mutating os.environ."""
+	env_path = Path(".env")
+	if not env_path.is_file():
+		return None
+	try:
+		text = env_path.read_text(encoding="utf-8")
+	except OSError:
+		return None
+	for raw in text.splitlines():
+		line = raw.strip()
+		if not line or line.startswith("#") or "=" not in line:
+			continue
+		name, _, value = line.partition("=")
+		if name.strip() != key:
+			continue
+		value = value.strip()
+		if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+			value = value[1:-1]
+		return value
+	return None
+
+
+def _env_or_dotenv(key: str) -> str | None:
+	if key in os.environ:
+		return os.environ.get(key)
+	return _dotenv_lookup(key)
 
 
 class Settings(BaseSettings):
@@ -69,12 +129,13 @@ class Settings(BaseSettings):
 	answer_min_score: float = 0.4
 	max_retrieve_retries: int = 1
 
-	# SAG-style citation gate: wide recall → relevance filter → context/citations 同源
-	# absolute_floor<=0 时回退对齐 answer_min_score
-	citation_gate_enabled: bool = True
-	citation_gate_absolute_floor: float = 0.35
-	citation_gate_ratio: float = 0.68
-	citation_gate_lexical_threshold: float = 0.2
+	# Citation adjudication（裁决）: wide recall → weigh hits → context/citations 同源
+	# Env: CITATION_ADJUDICATE_*. absolute_floor<=0 → answer_min_score
+	# Legacy CITATION_GATE_* / citation_gate_* soft-migrated via model_validator below.
+	citation_adjudicate_enabled: bool = True
+	citation_adjudicate_absolute_floor: float = 0.35
+	citation_adjudicate_ratio: float = 0.68
+	citation_adjudicate_lexical_threshold: float = 0.2
 
 	# Optional rerank after dense retrieval (DashScope-compatible /reranks)
 	rerank_enabled: bool = False
@@ -140,6 +201,28 @@ class Settings(BaseSettings):
 	active_generation_gate_enabled: bool = False
 	active_generation_cache_ttl_seconds: float = 0.0
 	rag_read_database_url: str = ""
+
+	@model_validator(mode="before")
+	@classmethod
+	def migrate_legacy_citation_gate(cls, data: Any) -> Any:
+		"""Map legacy citation_gate_* / CITATION_GATE_* → citation_adjudicate_*."""
+		values: dict[str, Any] = dict(data) if isinstance(data, dict) else {}
+		for new_key, old_key, new_env, old_env in _CITATION_ADJUDICATE_LEGACY:
+			if new_key in values and values[new_key] is not None:
+				values.pop(old_key, None)
+				continue
+			if old_key in values and values[old_key] is not None:
+				values[new_key] = values[old_key]
+				values.pop(old_key, None)
+				continue
+			if _env_or_dotenv(new_env) is not None:
+				values.pop(old_key, None)
+				continue
+			legacy = _env_or_dotenv(old_env)
+			if legacy is not None:
+				values[new_key] = legacy
+			values.pop(old_key, None)
+		return values
 
 	@model_validator(mode="after")
 	def validate_production_security(self) -> "Settings":
