@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, count, eq, ne, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import { documents, libraries } from "@/db/schema";
@@ -116,32 +116,43 @@ export async function syncRagDocument(
 export async function refreshLibraryCounts(libraryId: string) {
 	const db = getDatabase();
 	const now = new Date();
+	const [library] = await db
+		.select({ status: libraries.status })
+		.from(libraries)
+		.where(eq(libraries.id, libraryId))
+		.limit(1);
+	if (!library || library.status === "deleted") return;
 	const [counts] = await db
 		.select({
-			total: count(),
+			total: sql<number>`count(*) filter (where ${documents.status} not in ('deleted'))`,
+			live: sql<number>`count(*) filter (where ${documents.status} not in ('deleting', 'deleted'))`,
 			ready: sql<number>`count(*) filter (where ${documents.status} in ('ready', 'degraded'))`,
-			processing: sql<number>`count(*) filter (where ${documents.status} = 'processing')`,
+			processing: sql<number>`count(*) filter (where ${documents.status} in ('processing', 'deleting'))`,
 			failed: sql<number>`count(*) filter (where ${documents.status} = 'failed')`,
 		})
 		.from(documents)
 		.where(eq(documents.libraryId, libraryId));
+	const live = Number(counts.live);
+	const total = Number(counts.total);
 	await db
 		.update(libraries)
 		.set({
-			docCount: Number(counts.total),
+			docCount: total,
 			readyCount: Number(counts.ready),
 			status:
-				Number(counts.total) === 0
-					? "empty"
-					: Number(counts.processing) > 0
-						? "indexing"
-						: Number(counts.ready) === Number(counts.total)
-							? "ready"
-							: Number(counts.ready) > 0
-								? "degraded"
-								: Number(counts.failed) > 0
-									? "failed"
-									: "empty",
+				library.status === "deleting"
+					? "deleting"
+					: live === 0
+						? "empty"
+						: Number(counts.processing) > 0
+							? "indexing"
+							: Number(counts.ready) === live
+								? "ready"
+								: Number(counts.ready) > 0
+									? "degraded"
+									: Number(counts.failed) > 0
+										? "failed"
+										: "empty",
 			updatedAt: now,
 		})
 		.where(eq(libraries.id, libraryId));

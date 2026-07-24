@@ -294,6 +294,10 @@ export async function deleteLibrary(libraryId: string): Promise<{
 	ok: boolean;
 	library_id: string;
 	deleted_documents: number;
+	delete_jobs_queued?: number;
+	status?: string;
+	accepted?: boolean;
+	cleanup_queued?: boolean;
 }> {
 	const response = await fetch(
 		`/api/libraries/${encodeURIComponent(libraryId)}`,
@@ -389,15 +393,75 @@ export async function cancelJob(jobId: string): Promise<ApiJob> {
 	return (await response.json()) as ApiJob;
 }
 
-export async function deleteDocument(docId: string): Promise<void> {
+export async function deleteDocument(input: {
+	libraryId: string;
+	docId: string;
+}): Promise<{
+	ok: boolean;
+	job_id: string;
+	status: string;
+	accepted?: boolean;
+}> {
 	const response = await fetch(
-		`${getApiBaseUrl()}/v1/documents/${encodeURIComponent(docId)}`,
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents/${encodeURIComponent(input.docId)}`,
 		{ method: "DELETE" },
 	);
-	if (!response.ok) {
+	if (response.status !== 200 && response.status !== 202) {
 		const text = await response.text();
 		throw new Error(parseApiError(text) || `delete ${response.status}`);
 	}
+	return (await response.json()) as {
+		ok: boolean;
+		job_id: string;
+		status: string;
+		accepted?: boolean;
+	};
+}
+
+export type ApiDocumentVersion = {
+	id: string;
+	version: number;
+	generation_id: string;
+	status: string;
+	is_active: boolean;
+	is_desired: boolean;
+	content_hash: string;
+	size_bytes?: number | null;
+	point_count?: number | null;
+	chunk_count?: number | null;
+	pipeline_version?: string | null;
+	parser_backend?: string | null;
+	failure_code?: string | null;
+	error?: string | null;
+	indexed_at?: string | null;
+	activated_at?: string | null;
+	superseded_at?: string | null;
+	created_at: string;
+	updated_at: string;
+};
+
+export async function fetchDocumentVersions(input: {
+	libraryId: string;
+	docId: string;
+	signal?: AbortSignal;
+}): Promise<{
+	active_version_id: string | null;
+	desired_version_id: string | null;
+	versions: ApiDocumentVersion[];
+}> {
+	const response = await fetch(
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents/${encodeURIComponent(input.docId)}/versions`,
+		{ method: "GET", cache: "no-store", signal: input.signal },
+	);
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `versions ${response.status}`);
+	}
+	return (await response.json()) as {
+		active_version_id: string | null;
+		desired_version_id: string | null;
+		versions: ApiDocumentVersion[];
+	};
 }
 
 export async function reindexDocument(

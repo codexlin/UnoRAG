@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import {
 	auditLogs,
+	documentActiveVersions,
 	documents,
 	documentVersions,
 	jobs,
@@ -38,6 +39,77 @@ export const runtime = "nodejs";
 type RouteContext = {
 	params: Promise<{ libraryId: string; documentId: string }>;
 };
+
+/** List document versions with active pointer for history UI. */
+export async function GET(request: Request, context: RouteContext) {
+	const identity = await resolveRequestSession(request);
+	if (!identity) {
+		return Response.json(
+			{ detail: "authentication required" },
+			{ status: 401 },
+		);
+	}
+	const { libraryId, documentId } = await context.params;
+	const library = await findAuthorizedLibrary(identity, libraryId);
+	if (!library) {
+		return Response.json({ detail: "library not found" }, { status: 404 });
+	}
+	const db = getDatabase();
+	const [document] = await db
+		.select()
+		.from(documents)
+		.where(
+			and(
+				eq(documents.organizationId, identity.tenantId),
+				eq(documents.workspaceId, identity.workspaceId),
+				eq(documents.libraryId, library.id),
+				eq(documents.ragDocumentId, documentId),
+				ne(documents.status, "deleted"),
+			),
+		)
+		.limit(1);
+	if (!document) {
+		return Response.json({ detail: "document not found" }, { status: 404 });
+	}
+	const [active] = await db
+		.select()
+		.from(documentActiveVersions)
+		.where(eq(documentActiveVersions.documentId, document.id))
+		.limit(1);
+	const rows = await db
+		.select()
+		.from(documentVersions)
+		.where(eq(documentVersions.documentId, document.id))
+		.orderBy(desc(documentVersions.version));
+	return Response.json({
+		library_id: library.ragLibraryId,
+		doc_id: document.ragDocumentId,
+		document_id: document.id,
+		active_version_id: active?.versionId ?? null,
+		desired_version_id: document.desiredVersionId,
+		versions: rows.map((version) => ({
+			id: version.id,
+			version: version.version,
+			generation_id: version.generationId,
+			status: version.status,
+			is_active: active?.versionId === version.id,
+			is_desired: document.desiredVersionId === version.id,
+			content_hash: version.contentHash,
+			size_bytes: version.sizeBytes,
+			point_count: version.pointCount,
+			chunk_count: version.chunkCount,
+			pipeline_version: version.pipelineVersion,
+			parser_backend: version.parserBackend,
+			failure_code: version.failureCode,
+			error: version.error,
+			indexed_at: version.indexedAt?.toISOString() ?? null,
+			activated_at: version.activatedAt?.toISOString() ?? null,
+			superseded_at: version.supersededAt?.toISOString() ?? null,
+			created_at: version.createdAt.toISOString(),
+			updated_at: version.updatedAt.toISOString(),
+		})),
+	});
+}
 
 /**
  * Create a new document version (replace). Keeps the old active generation

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, notInArray } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import { libraries, outboxEvents } from "@/db/schema";
@@ -39,6 +39,7 @@ export async function GET(request: Request) {
 			and(
 				eq(libraries.organizationId, identity.tenantId),
 				eq(libraries.workspaceId, identity.workspaceId),
+				notInArray(libraries.status, ["deleted"]),
 			),
 		)
 		.orderBy(desc(libraries.updatedAt));
