@@ -132,6 +132,7 @@ def test_token_budget_splits_wide_rows_and_adds_table_summary_record() -> None:
 	payloads = chunks_to_payloads(
 		chunks,
 		doc_id="doc-1",
+		document_version_id="55555555-5555-5555-5555-555555555555",
 		include_sections=False,
 	)
 	summaries = [item for item in payloads if item["record_type"] == "table_summary"]

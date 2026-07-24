@@ -111,8 +111,6 @@ class QdrantStore:
 			"table_columns",
 			"cell_rows",
 		)
-		from app.services.versioning import derive_document_version_id
-
 		scope = resolve_access_scope(self.settings, access_scope)
 		for chunk, vector in zip(chunks, vectors, strict=True):
 			payload: dict[str, Any] = {
@@ -139,11 +137,10 @@ class QdrantStore:
 					allowed_group_ids=allowed_group_ids,
 				)
 			)
-			# 无完整 version 表时保留派生版本 stub。
 			if not payload.get("document_version_id"):
-				payload["document_version_id"] = derive_document_version_id(
-					doc_id,
-					content_hash=str(chunk.get("content_hash") or "") or None,
+				raise ValueError(
+					"document_version_id is required on Qdrant payloads; "
+					"lifecycle ingest must supply app.document_versions.id"
 				)
 			# 缺省视为 chunk，兼容旧点
 			if not payload.get("record_type"):
@@ -271,7 +268,8 @@ class QdrantStore:
 
 	@staticmethod
 	def _active_generation_condition() -> qm.Filter:
-		# Legacy points have no lifecycle_visibility and remain readable until L7.
+		# Untagged legacy points remain readable until operators run
+		# backfill_qdrant_lifecycle_payload / control-plane reindex.
 		return qm.Filter(
 			should=[
 				qm.FieldCondition(

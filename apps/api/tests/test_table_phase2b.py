@@ -68,8 +68,18 @@ def test_table_records_split_copy_headers_and_deterministic_ids() -> None:
 
 def test_chunks_to_payloads_include_tables_idempotent_point_ids() -> None:
 	chunks = _quote_chunks()
-	a = chunks_to_payloads(chunks, doc_id="doc-q", library_id="lib-1")
-	b = chunks_to_payloads(chunks, doc_id="doc-q", library_id="lib-1")
+	a = chunks_to_payloads(
+		chunks,
+		doc_id="doc-q",
+		library_id="lib-1",
+		document_version_id="44444444-4444-4444-4444-444444444444",
+	)
+	b = chunks_to_payloads(
+		chunks,
+		doc_id="doc-q",
+		library_id="lib-1",
+		document_version_id="44444444-4444-4444-4444-444444444444",
+	)
 	table_a = [p for p in a if p.get("record_type") == "table"]
 	table_b = [p for p in b if p.get("record_type") == "table"]
 	assert table_a

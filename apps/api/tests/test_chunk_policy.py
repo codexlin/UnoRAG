@@ -140,6 +140,7 @@ def test_table_heavy_profile_controls_table_record_row_groups() -> None:
 	payloads = chunks_to_payloads(
 		chunks,
 		doc_id=doc.id,
+		document_version_id="33333333-3333-3333-3333-333333333333",
 		include_sections=False,
 	)
 	table_records = [item for item in payloads if item["record_type"] == "table"]

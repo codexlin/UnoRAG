@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from uuid import uuid4
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
@@ -117,6 +118,8 @@ def process_document_ingest(
 	notice = prepared.notice()
 	try:
 		if live:
+			# Legacy ARQ path only: mint a UUID so payloads stay schema-valid.
+			# Product ingest must pass app.document_versions.id from the worker.
 			result = IngestService(
 				settings,
 				access_scope=scope,
@@ -127,6 +130,7 @@ def process_document_ingest(
 				doc_id=doc_id,
 				filename=prepared.filename,
 				parser_report=report,
+				document_version_id=str(uuid4()),
 			)
 			simulated = False
 			mode = "live"

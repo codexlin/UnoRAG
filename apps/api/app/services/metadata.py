@@ -41,6 +41,14 @@ def _library_status(doc_count: int, ready_count: int, has_processing: bool) -> L
 
 
 class MetadataStore(ABC):
+	"""Data-plane metadata projection.
+
+	L6+: `app.*` is the product source of truth. `public.documents` /
+	`public.libraries` (Postgres backend) are compatibility projections for
+	legacy FastAPI reads and migration backfill joins. Do not treat public.*
+	status as authoritative for product lifecycle.
+	"""
+
 	@abstractmethod
 	def list_libraries(self, *, scope: AccessScope) -> list[dict[str, Any]]:
 		raise NotImplementedError

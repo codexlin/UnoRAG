@@ -22,7 +22,9 @@
 		"outbox:check": "node scripts/inspect-outbox.mjs --fail-on-dead",
 		"outbox:retry-dead": "node scripts/retry-dead-outbox.mjs",
 		"lifecycle:inspect": "node scripts/inspect-lifecycle.mjs",
-		"lifecycle:check": "node scripts/inspect-lifecycle.mjs --fail-on-dead --fail-on-stuck"
+		"lifecycle:check": "node scripts/inspect-lifecycle.mjs --fail-on-dead --fail-on-stuck",
+		"lifecycle:backfill-versions": "node scripts/backfill-lifecycle-versions.mjs",
+		"lifecycle:backfill-versions:apply": "node scripts/backfill-lifecycle-versions.mjs --apply"
 	},
 	"dependencies": {
 		"@base-ui/react": "^1.3.0",

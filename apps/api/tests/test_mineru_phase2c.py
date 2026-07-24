@@ -205,7 +205,12 @@ def test_mineru_json_to_ir_preserves_structure() -> None:
 
 	chunks = chunk_document(ir)
 	assert chunks
-	payloads = chunks_to_payloads(chunks, doc_id=ir.id, filename=ir.filename)
+	payloads = chunks_to_payloads(
+		chunks,
+		doc_id=ir.id,
+		filename=ir.filename,
+		document_version_id="66666666-6666-6666-6666-666666666666",
+	)
 	table_records = [p for p in payloads if p.get("record_type") == "table"]
 	assert table_records
 	assert any("120000" in (p.get("text") or "") for p in table_records)

@@ -9,7 +9,6 @@ from app.services.ingest.index_record import build_section_records_from_chunks, 
 from app.services.ingest.ir import Chunk, SplitStrategy
 from app.services.query_router import classify_query
 from app.services.retrieval_plan import build_retrieval_plan
-from app.services.versioning import derive_document_version_id
 from tests.conftest import create_library
 
 client = TestClient(app)
@@ -264,18 +263,39 @@ def test_document_version_changes_with_content() -> None:
 			content_hash="hash_bbb_222222",
 		),
 	]
-	pa = chunks_to_payloads(a, doc_id="doc-a", include_sections=False)
-	pb = chunks_to_payloads(b, doc_id="doc-a", include_sections=False)
-	assert pa[0]["document_version_id"] != pb[0]["document_version_id"]
-	assert pa[0]["document_version_id"].startswith("doc-a:")
-	assert pb[0]["document_version_id"].startswith("doc-a:")
-
-
-def test_document_version_stub() -> None:
-	assert derive_document_version_id("doc-1") == "doc-1:v1"
-	assert derive_document_version_id("doc-1", content_hash="abcdef1234567890").endswith(
-		"abcdef123456"
+	pa = chunks_to_payloads(
+		a,
+		doc_id="doc-a",
+		document_version_id="11111111-1111-1111-1111-111111111111",
+		include_sections=False,
 	)
+	pb = chunks_to_payloads(
+		b,
+		doc_id="doc-a",
+		document_version_id="22222222-2222-2222-2222-222222222222",
+		include_sections=False,
+	)
+	assert pa[0]["document_version_id"] != pb[0]["document_version_id"]
+	assert pa[0]["document_version_id"] == "11111111-1111-1111-1111-111111111111"
+
+
+def test_chunks_to_payloads_requires_document_version_id() -> None:
+	import pytest
+
+	from app.services.ingest.ir import Chunk, SplitStrategy
+	from app.services.ingest.pipeline import chunks_to_payloads
+
+	chunks = [
+		Chunk(
+			chunk_index=0,
+			text="a",
+			body="body",
+			section_path="第1章",
+			split_strategy=SplitStrategy.HEADING,
+		)
+	]
+	with pytest.raises(ValueError, match="document_version_id is required"):
+		chunks_to_payloads(chunks, doc_id="doc-1", include_sections=False)
 
 
 def test_ask_writes_query_type_and_judge_to_archive() -> None:

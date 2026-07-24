@@ -391,6 +391,7 @@ def _ingest_ir(
 			doc_id=doc_id,
 			filename=path.name,
 			parser_report=report,
+			document_version_id=str(uuid4()),
 		)
 		meta.update_document(
 			doc_id,

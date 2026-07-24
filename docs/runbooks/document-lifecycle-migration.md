@@ -265,3 +265,34 @@ POST /api/libraries/{libraryId}/documents/{docId}/reindex
 激活 CAS：document 处于 `deleting`/`deleted` 时 `prepare_activation` /
 `activate_generation` 失败；library 状态刷新不会把 `deleting` 清成
 `ready`/`indexing`。
+
+## L6 stock backfill (versions / Qdrant)
+
+Existing `app.documents` created by the retired dual-write path may lack
+`document_versions`, `desired_version_id`, and active pointers.
+
+```bash
+# 1) Dry-run then apply version/active backfill (reads public.documents when present)
+cd apps/web
+DATABASE_URL=postgresql://... pnpm lifecycle:backfill-versions
+DATABASE_URL=postgresql://... pnpm lifecycle:backfill-versions:apply
+
+# 2) Tag old Qdrant points with generation_id + ACL from active versions
+cd ../api
+DATABASE_URL=postgresql://... QDRANT_URL=http://127.0.0.1:6333 \
+  uv run python scripts/backfill_qdrant_lifecycle_payload.py
+DATABASE_URL=postgresql://... QDRANT_URL=http://127.0.0.1:6333 \
+  uv run python scripts/backfill_qdrant_lifecycle_payload.py --apply
+
+# 3) Preferred full repair for missing/placeholder storage_key:
+#    POST /api/libraries/{libraryId}/documents/{docId}/reindex
+#    (creates a new generation via app.jobs; do not use deprecated reindex_all.py)
+```
+
+`public.documents` remains a **compatibility projection** for data-plane reads
+and backfill joins. Product status, desired version, and jobs live only in
+`app.*`. Operators must not treat `public.documents.status` as authoritative.
+
+`derive_document_version_id` was removed in L6; lifecycle ingest always passes
+real `app.document_versions.id` UUIDs. Legacy ARQ (only when
+`LEGACY_INGEST_WRITES_ENABLED=true`) mints a fresh UUID per job.

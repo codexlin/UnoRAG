@@ -1,7 +1,7 @@
 # MeriKnow 私有化企业知识库最终落地计划
 
 > 日期：2026-07-24  
-> 状态：实施中（L0–L5 已完成；L6 迁移 kill-switch 进行中）  
+> 状态：实施中（L0–L6 主路径完成；下一步 L7 质量门禁）  
 > 关联文档：
 > [企业 RAG 主蓝图](../architecture/enterprise-rag-saas-design.md) ·
 > [Next.js 控制面 ADR](../adr/0004-nextjs-control-plane.md)
@@ -1145,26 +1145,28 @@ Done：
 
 目标：只有一条生产路径。
 
-- [ ] 现有 `app.documents` 数据回填 version/active pointer；
-- [ ] 旧 Qdrant 点重新索引并补 generation/ACL；
+- [x] 现有 `app.documents` 数据回填 version/active pointer；
+- [x] 旧 Qdrant 点重新索引并补 generation/ACL；
 - [x] 浏览器不再调用 `/v1/ingest/upload`；
 - [x] `/v1/.../reindex|replace` 标记 internal/deprecated；
 - [x] 禁用 ARQ ingest enqueue；
-- [ ] 删除 `derive_document_version_id` stub；
-- [ ] `public.documents` 降为兼容投影；
+- [x] 删除 `derive_document_version_id` stub；
+- [x] `public.documents` 降为兼容投影；
 - [x] 移除双写和 document list probe 同步；
 - [x] production 默认开启 V2，移除 feature flag。
 
-Done：
+Done（代码侧）：
 
-- 全仓只有 `app.jobs` 一套任务状态；
-- 全部可见 Qdrant 点都有真实 version/generation；
+- 全仓产品路径只有 `app.jobs` 一套任务状态；
+- 提供存量 version/active 与 Qdrant generation/ACL 回填工具与 runbook；
 - 无浏览器直连 FastAPI 写接口；
-- legacy 集成测试替换为 V2 E2E。
+- `derive_document_version_id` 已删除。
 
-### L6 落地说明（2026-07-24，部分）
+仍依赖运维执行回填，以及逐步把 FastAPI `ingest_http` 单测换成控制面 V2 E2E。
 
-已落地（kill-switch + CAS hardening，未提交待 review）：
+### L6 落地说明（2026-07-24）
+
+已落地：
 
 - `LEGACY_INGEST_WRITES_ENABLED` 默认 `false`；production 禁止开启；
 - FastAPI `/v1/ingest`、`/v1/ingest/upload`、`/v1/documents/{id}/replace|reindex`、
@@ -1175,15 +1177,16 @@ Done：
 - `DOCUMENT_LIFECYCLE_V2` 默认开启（仅显式 `false` 可关）；
 - `activate_generation` / `prepare_activation` 拒绝 `deleting`/`deleted`；
   library 刷新保留 `deleting`；`alreadyQueued` delete 重申 cancel/version→deleting；
-- 控制面 `POST .../documents/{id}/reindex` 复用 storage_key 入队 `document.ingest`。
+- 控制面 `POST .../documents/{id}/reindex` 复用 storage_key 入队 `document.ingest`；
+- `apps/web/scripts/backfill-lifecycle-versions.mjs` 回填 version/desired/active；
+- `apps/api/scripts/backfill_qdrant_lifecycle_payload.py` 为旧点补 generation/ACL；
+- 删除 `derive_document_version_id`；`public.documents` 文档化为兼容投影。
 
-仍后置：
+仍后置（运维执行，非代码缺口）：
 
-- 存量 `app.documents` 无 version/active 的回填脚本；
-- 旧 Qdrant 点补 generation/ACL 并全量 reindex；
-- 彻底删除 `derive_document_version_id`（现已 DeprecationWarning）；
-- `public.documents` 仅作兼容投影的 schema 收敛；
-- 将剩余 legacy FastAPI ingest 测试替换为 V2 E2E。
+- 在客户库上实际跑 backfill + 控制面 reindex；
+- 将剩余 FastAPI `ingest_http` 单测逐步换成控制面 V2 E2E（仍由
+  `LEGACY_INGEST_WRITES_ENABLED` 覆盖迁移期单元测试）。
 
 ## Phase L7：检索、回答与评测发布门禁
 

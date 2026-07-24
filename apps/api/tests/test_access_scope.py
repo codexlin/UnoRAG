@@ -36,7 +36,14 @@ def _upsert(
 		library_id="shared-library-id",
 		doc_id=f"doc-{point_id}",
 		title=title,
-		chunks=[{"_point_id": point_id, "chunk_index": 0, "text": title}],
+		chunks=[
+			{
+				"_point_id": point_id,
+				"chunk_index": 0,
+				"text": title,
+				"document_version_id": f"version-{point_id}",
+			}
+		],
 		vectors=[[1.0, 0.0, 0.0]],
 		access_scope=scope,
 		acl_scope=acl_scope,
@@ -120,6 +127,7 @@ def test_ir_ingest_writes_the_authenticated_access_scope() -> None:
 		library_id="library-a",
 		title="Scoped document",
 		doc_id="doc-a",
+		document_version_id="77777777-7777-7777-7777-777777777777",
 		chunks=[Chunk(chunk_index=0, text="scoped body", body="scoped body")],
 	)
 	hits = store.search(
