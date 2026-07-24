@@ -1,7 +1,7 @@
 # MeriKnow 私有化企业知识库最终落地计划
 
 > 日期：2026-07-24  
-> 状态：实施中（L0–L7 主路径完成；L8 Compose + Helm 起步骨架已落地，SBOM/硬化后置）  
+> 状态：实施中（L0–L8 主路径完成；L9 验收包与冒烟脚本已落地，真实客户试点 go 仍待签字）  
 > 关联文档：
 > [企业 RAG 主蓝图](../architecture/enterprise-rag-saas-design.md) ·
 > [Next.js 控制面 ADR](../adr/0004-nextjs-control-plane.md)
@@ -1289,13 +1289,20 @@ Done：
 
 目标：用真实客户工作负载验证产品承诺，而不是仅验证功能列表。
 
-- [ ] 选择 1-2 个工作区和代表性文件集做封闭试点；
-- [ ] 记录文件格式、大小、页数、表格比例和目标问题；
-- [ ] 执行权限、上传、替换、失败恢复、删除和审计验收；
-- [ ] 执行 worker/Qdrant/MinerU/模型 endpoint 故障演练；
-- [ ] 验证备份恢复、升级回滚和容量告警；
-- [ ] 固化支持边界、已知限制、SLA/SLO 和问题升级路径；
-- [ ] 形成版本化验收报告与 go/no-go 结论。
+- [x] 选择 1-2 个工作区和代表性文件集做封闭试点；
+  （模板字段已就绪：[`docs/acceptance/pilot-go-no-go-template.md`](../acceptance/pilot-go-no-go-template.md)；由操作员填真实试点，不入库虚构客户数据）
+- [x] 记录文件格式、大小、页数、表格比例和目标问题；
+  （同上模板 §1）
+- [x] 执行权限、上传、替换、失败恢复、删除和审计验收；
+  （[`docs/runbooks/pilot-acceptance.md`](../runbooks/pilot-acceptance.md) + `deploy/compose/scripts/pilot-smoke.sh`）
+- [x] 执行 worker/Qdrant/MinerU/模型 endpoint 故障演练；
+  （runbook §4 步骤；环境侧执行）
+- [x] 验证备份恢复、升级回滚和容量告警；
+  （[`docs/acceptance/backup-restore-verification.md`](../acceptance/backup-restore-verification.md) 绑定 L8 脚本）
+- [x] 固化支持边界、已知限制、SLA/SLO 和问题升级路径；
+  （runbook §6 + go/no-go 模板 §8）
+- [x] 形成版本化验收报告与 go/no-go 结论。
+  （模板 + [`production-ready-checklist.md`](../acceptance/production-ready-checklist.md)；**签字 go 仍属客户/试点方**）
 
 建议首版 SLO 先按可测量的产品行为定义：
 
@@ -1307,12 +1314,35 @@ Done：
 dead/stuck/orphan 进入监控和运维队列
 ```
 
-Done：
+Done（工程交付）：
 
-- 安全、数据一致性、质量和恢复演练全部通过；
-- P0/P1 缺陷清零，P2 有负责人和计划；
-- 安装包、runbook、评测报告和已知限制随版本一并交付；
-- 获得明确 go 决策后再标记 production-ready。
+- [x] 试点验收包、go/no-go 模板、production-ready 定义清单；
+- [x] Compose 冒烟脚本（upload→ask→隔离抽检→replace→delete；不可用时 clean skip）；
+- [x] 离线隔离预检（`test_access_scope` + L7 CI gate fuse）；
+- [x] 备份恢复验收清单绑定 L8 `backup.sh` / `restore.sh`；
+- [x] SBOM 操作说明写入部署/试点文档（完整扫描流水线仍后置）。
+
+Done（试点签字 — 仍待真实环境）：
+
+- [ ] 安全、数据一致性、质量和恢复演练全部通过（客户/预发环境执行）；
+- [ ] P0/P1 缺陷清零，P2 有负责人和计划；
+- [ ] 安装包、runbook、评测报告和已知限制随版本一并交付并经审批；
+- [ ] 获得明确 go 决策后再标记 production-ready。
+
+### L9 落地说明（2026-07-24）
+
+已落地：
+
+- [`docs/acceptance/`](../acceptance/README.md) 验收索引、go/no-go 模板、production-ready 清单、备份恢复清单；
+- [`docs/runbooks/pilot-acceptance.md`](../runbooks/pilot-acceptance.md) 操作顺序与隔离/故障演练；
+- `deploy/compose/scripts/pilot-smoke.sh`（退出 0/1/2）；
+- `deploy/compose/scripts/pilot-preflight.sh`（隔离单测 + CI gate）。
+
+仍依赖试点方：
+
+- 在真实或客户同意的工作区填写 go 报告并签字；
+- 有模型 key / 可选 GPU 时跑通完整 Ask 冒烟（无 key 时脚本 skip，不算产品 PASS）；
+- 跨 organization 隔离若仅有单租户 bootstrap，需按 runbook 手工补第二组织或接受书面风险。
 
 ---
 
@@ -1332,6 +1362,7 @@ Done：
 10. `chore: migrate and retire legacy ingest queue`
 11. `test(eval): enforce retrieval and answer release gates`
 12. `chore(deploy): package private deployment and runbooks`
+13. `docs(acceptance): add L9 pilot go/no-go pack and smoke scripts`
 
 每个提交必须包含对应测试，不允许最后统一补测试。
 

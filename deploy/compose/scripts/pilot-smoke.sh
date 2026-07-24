@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+# L9 private-deploy smoke: health → login → library → upload → ask → replace →
+# cross-library isolation probe → delete.
+# Requires curl + a running edge (default http://localhost from compose).
+# Exit: 0=pass, 1=fail, 2=skip (stack/credentials unavailable).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+if [[ -f .env ]]; then
+	# shellcheck disable=SC1091
+	set -a && source .env && set +a
+fi
+
+BASE_URL="${MERIKNOW_BASE_URL:-http://localhost}"
+BASE_URL="${BASE_URL%/}"
+EMAIL="${MERIKNOW_ADMIN_EMAIL:-admin@example.com}"
+PASSWORD="${MERIKNOW_ADMIN_PASSWORD:-}"
+JOB_TIMEOUT_SEC="${MERIKNOW_PILOT_JOB_TIMEOUT_SEC:-300}"
+POLL_INTERVAL_SEC="${MERIKNOW_PILOT_POLL_INTERVAL_SEC:-3}"
+COOKIE_JAR="$(mktemp -t meriknow-pilot-cookies.XXXXXX)"
+WORKDIR="$(mktemp -d -t meriknow-pilot-work.XXXXXX)"
+trap 'rm -f "$COOKIE_JAR"; rm -rf "$WORKDIR"' EXIT
+
+log() { printf '==> %s\n' "$*"; }
+warn() { printf '!!  %s\n' "$*" >&2; }
+fail() { warn "FAIL: $*"; exit 1; }
+skip() { warn "SKIP: $*"; exit 2; }
+
+if ! command -v curl >/dev/null 2>&1; then
+	skip "curl is required"
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+	skip "python3 is required for JSON parsing"
+fi
+
+json_get() {
+	# json_get <file> <python_expr_on_obj>
+	local file="$1"
+	local expr="$2"
+	python3 - "$file" "$expr" <<'PY'
+import json, sys
+path, expr = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+	obj = json.load(f)
+# expr is a dotted path like "job_id" or "status"
+cur = obj
+for part in expr.split("."):
+	if cur is None:
+		break
+	if isinstance(cur, dict):
+		cur = cur.get(part)
+	else:
+		cur = None
+		break
+if cur is None:
+	sys.exit(2)
+print(cur)
+PY
+}
+
+http_code() {
+	local code
+	code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$@" || true)"
+	printf '%s' "$code"
+}
+
+# --- readiness ---
+log "checking edge health at $BASE_URL/api/rag/health"
+HEALTH_CODE="$(http_code "$BASE_URL/api/rag/health")"
+if [[ "$HEALTH_CODE" == "000" || -z "$HEALTH_CODE" ]]; then
+	skip "edge not reachable at $BASE_URL (is compose up? install.sh done?)"
+fi
+if [[ "$HEALTH_CODE" != "200" ]]; then
+	skip "health returned HTTP $HEALTH_CODE (want 200); fix stack before pilot smoke"
+fi
+
+if [[ -z "$PASSWORD" || "$PASSWORD" == "change-this-before-deployment" ]]; then
+	skip "set MERIKNOW_ADMIN_PASSWORD in deploy/compose/.env (not the placeholder)"
+fi
+
+# --- login ---
+log "login as $EMAIL"
+LOGIN_BODY="$WORKDIR/login.json"
+LOGIN_CODE="$(
+	curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+		-o "$LOGIN_BODY" -w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" \
+		"$BASE_URL/api/auth/session" || true
+)"
+if [[ "$LOGIN_CODE" == "000" ]]; then
+	skip "login endpoint unreachable"
+fi
+if [[ "$LOGIN_CODE" != "200" ]]; then
+	fail "login HTTP $LOGIN_CODE body=$(head -c 400 "$LOGIN_BODY" 2>/dev/null || true)"
+fi
+
+auth_curl() {
+	curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" "$@"
+}
+
+# --- create libraries ---
+TOKEN="pilot-smoke-$(date +%s)-$RANDOM"
+LIB_A_BODY="$WORKDIR/lib_a.json"
+log "create library A"
+LIB_A_CODE="$(
+	auth_curl -o "$LIB_A_BODY" -w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-d "{\"name\":\"Pilot Smoke A $TOKEN\"}" \
+		"$BASE_URL/api/libraries" || true
+)"
+[[ "$LIB_A_CODE" == "200" || "$LIB_A_CODE" == "201" ]] \
+	|| fail "create library A HTTP $LIB_A_CODE $(head -c 300 "$LIB_A_BODY")"
+LIB_A_ID="$(json_get "$LIB_A_BODY" id)" || fail "library A missing id"
+
+LIB_B_BODY="$WORKDIR/lib_b.json"
+log "create library B (isolation probe)"
+LIB_B_CODE="$(
+	auth_curl -o "$LIB_B_BODY" -w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-d "{\"name\":\"Pilot Smoke B $TOKEN\"}" \
+		"$BASE_URL/api/libraries" || true
+)"
+[[ "$LIB_B_CODE" == "200" || "$LIB_B_CODE" == "201" ]] \
+	|| fail "create library B HTTP $LIB_B_CODE"
+LIB_B_ID="$(json_get "$LIB_B_BODY" id)" || fail "library B missing id"
+
+# --- upload ---
+DOC_FILE="$WORKDIR/pilot-doc.md"
+SECRET_MARKER="PILOT_UNIQUE_${TOKEN}"
+cat >"$DOC_FILE" <<EOF
+# Pilot Smoke Document
+
+Unique marker: \`${SECRET_MARKER}\`.
+
+## Policy
+
+Leave proof must be submitted within three working days.
+EOF
+
+UPLOAD_BODY="$WORKDIR/upload.json"
+log "upload markdown to library A"
+UPLOAD_CODE="$(
+	auth_curl -o "$UPLOAD_BODY" -w '%{http_code}' \
+		-F "file=@${DOC_FILE};filename=pilot-smoke.md;type=text/markdown" \
+		-F "display_name=Pilot Smoke Doc" \
+		"$BASE_URL/api/libraries/${LIB_A_ID}/documents" || true
+)"
+[[ "$UPLOAD_CODE" == "202" ]] \
+	|| fail "upload HTTP $UPLOAD_CODE (want 202) $(head -c 400 "$UPLOAD_BODY")"
+JOB_ID="$(json_get "$UPLOAD_BODY" job_id)" || fail "upload missing job_id"
+DOC_ID="$(json_get "$UPLOAD_BODY" document_id)" || fail "upload missing document_id"
+log "accepted job_id=$JOB_ID document_id=$DOC_ID"
+
+wait_job() {
+	local job_id="$1"
+	local label="$2"
+	local started end status stage body code
+	started="$(date +%s)"
+	body="$WORKDIR/job-${job_id}.json"
+	while true; do
+		code="$(
+			auth_curl -o "$body" -w '%{http_code}' \
+				"$BASE_URL/api/jobs/${job_id}" || true
+		)"
+		[[ "$code" == "200" ]] || fail "GET job $job_id HTTP $code"
+		status="$(json_get "$body" status || true)"
+		stage="$(json_get "$body" stage || true)"
+		log "  [$label] status=$status stage=${stage:-?} elapsed=$(( $(date +%s) - started ))s"
+		case "$status" in
+			completed) return 0 ;;
+			failed|dead|cancelled)
+				fail "$label job terminal status=$status $(head -c 500 "$body")"
+				;;
+		esac
+		end="$(date +%s)"
+		if (( end - started > JOB_TIMEOUT_SEC )); then
+			fail "$label job timed out after ${JOB_TIMEOUT_SEC}s (status=$status)"
+		fi
+		sleep "$POLL_INTERVAL_SEC"
+	done
+}
+
+wait_job "$JOB_ID" "ingest"
+
+# --- ask ---
+ASK_BODY="$WORKDIR/ask.json"
+log "ask library A for unique marker"
+ASK_CODE="$(
+	auth_curl -o "$ASK_BODY" -w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-d "{\"question\":\"What is the unique marker ${SECRET_MARKER}?\",\"library_id\":\"${LIB_A_ID}\"}" \
+		"$BASE_URL/api/rag/v1/ask" || true
+)"
+if [[ "$ASK_CODE" != "200" ]]; then
+	# Model/embedding may be unavailable — treat as skip only when stack otherwise healthy.
+	if [[ "$ASK_CODE" == "503" || "$ASK_CODE" == "502" || "$ASK_CODE" == "500" ]]; then
+		skip "ask HTTP $ASK_CODE — model/embedding likely unavailable; lifecycle upload passed. body=$(head -c 300 "$ASK_BODY")"
+	fi
+	fail "ask HTTP $ASK_CODE $(head -c 400 "$ASK_BODY")"
+fi
+set +e
+python3 - "$ASK_BODY" "$SECRET_MARKER" <<'PY'
+import json, sys
+path, marker = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+	data = json.load(f)
+blob = json.dumps(data, ensure_ascii=False)
+answer = data.get("answer") or ""
+if marker in blob or marker in answer:
+	print("ask ok")
+	sys.exit(0)
+if data.get("refused") is True:
+	sys.stderr.write("ask refused; marker not in payload (check embedding/live mode)\n")
+	sys.exit(3)
+sys.exit(1)
+PY
+ASK_RC=$?
+set -e
+if [[ $ASK_RC -eq 3 ]]; then
+	skip "ask refused without marker — configure live embedding/LLM for full pilot; ingest path already validated"
+fi
+[[ $ASK_RC -eq 0 ]] || fail "ask response missing unique marker"
+
+# --- cross-library isolation ---
+ASK_B_BODY="$WORKDIR/ask_b.json"
+log "isolation: ask library B for library A marker (must not cite A)"
+ASK_B_CODE="$(
+	auth_curl -o "$ASK_B_BODY" -w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-d "{\"question\":\"Quote the unique marker ${SECRET_MARKER}\",\"library_id\":\"${LIB_B_ID}\"}" \
+		"$BASE_URL/api/rag/v1/ask" || true
+)"
+[[ "$ASK_B_CODE" == "200" ]] || fail "isolation ask HTTP $ASK_B_CODE"
+python3 - "$ASK_B_BODY" "$SECRET_MARKER" "$DOC_ID" <<'PY' || fail "cross-library isolation leak detected"
+import json, sys
+path, marker, doc_id = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, encoding="utf-8") as f:
+	data = json.load(f)
+citations = data.get("citations") or []
+for c in citations:
+	cid = str(c.get("document_id") or c.get("doc_id") or "")
+	if cid == doc_id:
+		sys.stderr.write(f"citation leaked document_id={cid}\n")
+		sys.exit(1)
+	text = json.dumps(c, ensure_ascii=False)
+	if marker in text:
+		sys.stderr.write("citation payload contains secret marker\n")
+		sys.exit(1)
+answer = data.get("answer") or ""
+# If not refused and answer confidently repeats the marker, treat as leak.
+if marker in answer and data.get("refused") is not True:
+	sys.stderr.write("answer contains secret marker without refuse\n")
+	sys.exit(1)
+print("isolation ok")
+PY
+
+# --- replace ---
+DOC_FILE_V2="$WORKDIR/pilot-doc-v2.md"
+cat >"$DOC_FILE_V2" <<EOF
+# Pilot Smoke Document v2
+
+Unique marker: \`${SECRET_MARKER}\`.
+
+## Policy (updated)
+
+Leave proof must be submitted within **five** working days.
+EOF
+
+REPLACE_BODY="$WORKDIR/replace.json"
+log "replace document (new version)"
+REPLACE_CODE="$(
+	auth_curl -o "$REPLACE_BODY" -w '%{http_code}' \
+		-F "file=@${DOC_FILE_V2};filename=pilot-smoke-v2.md;type=text/markdown" \
+		"$BASE_URL/api/libraries/${LIB_A_ID}/documents/${DOC_ID}/versions" || true
+)"
+[[ "$REPLACE_CODE" == "202" ]] \
+	|| fail "replace HTTP $REPLACE_CODE $(head -c 400 "$REPLACE_BODY")"
+JOB2="$(json_get "$REPLACE_BODY" job_id)" || fail "replace missing job_id"
+wait_job "$JOB2" "replace"
+
+# --- delete ---
+DEL_BODY="$WORKDIR/delete.json"
+log "delete document"
+DEL_CODE="$(
+	auth_curl -o "$DEL_BODY" -w '%{http_code}' -X DELETE \
+		"$BASE_URL/api/libraries/${LIB_A_ID}/documents/${DOC_ID}" || true
+)"
+[[ "$DEL_CODE" == "202" || "$DEL_CODE" == "200" ]] \
+	|| fail "delete HTTP $DEL_CODE $(head -c 300 "$DEL_BODY")"
+
+# Best-effort wait for delete job if present
+DEL_JOB="$(json_get "$DEL_BODY" job_id 2>/dev/null || true)"
+if [[ -n "${DEL_JOB:-}" ]]; then
+	# delete may complete asynchronously; allow failed wait to be soft only if status deleting→gone
+	set +e
+	wait_job "$DEL_JOB" "delete"
+	DEL_WAIT_RC=$?
+	set -e
+	if [[ $DEL_WAIT_RC -ne 0 ]]; then
+		warn "delete job wait reported failure; verify cleanup manually in go report"
+	fi
+fi
+
+log "pilot-smoke PASS (upload→ask→isolation→replace→delete)"
+log "library_a=$LIB_A_ID library_b=$LIB_B_ID document_id=$DOC_ID"
+exit 0

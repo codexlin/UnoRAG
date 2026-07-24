@@ -217,6 +217,9 @@ helm upgrade --install meriknow ./deploy/helm/meriknow -n meriknow \
 - SBOM、镜像 digest 锁定、依赖/镜像 CVE 扫描流水线  
 - MinIO/S3 作为一等对象后端（当前默认共享卷 / PVC）  
 
+**SBOM 薄说明：** Compose/Helm 已 pin 镜像 tag。完整 SBOM/CVE CI 后置；
+客户交付前可对构建镜像自行跑 `syft`/`trivy` 并归档。未扫描须写入已知限制。
+
 ## 11. 本地验证清单
 
 ```bash
@@ -227,4 +230,10 @@ curl -sf http://localhost/api/rag/health
 # 浏览器打开 http://localhost/ 登录 admin
 # 上传一个 md，等待 ready，Ask 一次
 DATABASE_URL=postgresql://... pnpm --dir ../../apps/web lifecycle:inspect
+
+# L9 冒烟（可选；栈/密钥不可用时 exit 2 干净跳过）
+./scripts/pilot-smoke.sh
 ```
+
+试点 go/no-go：[`pilot-acceptance.md`](./pilot-acceptance.md) ·
+[`docs/acceptance/`](../acceptance/README.md)。
