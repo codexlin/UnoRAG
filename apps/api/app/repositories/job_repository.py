@@ -551,6 +551,7 @@ class JobRepository:
                     """
                     SELECT
                         document.desired_version_id,
+                        document.status,
                         version.status,
                         version.generation_id
                     FROM app.documents AS document
@@ -568,7 +569,16 @@ class JobRepository:
                 row = cursor.fetchone()
                 if row is None:
                     raise StaleDocumentVersionError("document version no longer exists")
-                desired_version_id, version_status, generation_id = row
+                (
+                    desired_version_id,
+                    document_status,
+                    version_status,
+                    generation_id,
+                ) = row
+                if document_status in {"deleting", "deleted"}:
+                    raise StaleDocumentVersionError(
+                        f"document cannot activate while status is {document_status}"
+                    )
                 if (
                     desired_version_id != context.document_version_id
                     or generation_id != context.generation_id
@@ -630,6 +640,7 @@ class JobRepository:
                     """
                     SELECT
                         document.desired_version_id,
+                        document.status,
                         version.status,
                         version.generation_id,
                         active.version_id,
@@ -655,11 +666,16 @@ class JobRepository:
                     raise StaleDocumentVersionError("document version no longer exists")
                 (
                     desired_version_id,
+                    document_status,
                     version_status,
                     generation_id,
                     previous_version_id,
                     previous_generation_id,
                 ) = row
+                if document_status in {"deleting", "deleted"}:
+                    raise StaleDocumentVersionError(
+                        f"document cannot activate while status is {document_status}"
+                    )
                 if (
                     desired_version_id != context.document_version_id
                     or generation_id != context.generation_id
@@ -799,6 +815,7 @@ class JobRepository:
                         updated_at = now()
                     WHERE id = %(document_id)s
                       AND desired_version_id = %(version_id)s
+                      AND status NOT IN ('deleting', 'deleted')
                     """,
                     {
                         "document_id": context.document_id,
@@ -812,6 +829,7 @@ class JobRepository:
                     UPDATE app.libraries AS library
                     SET ready_count = counts.ready_count,
                         status = CASE
+                            WHEN library.status = 'deleting' THEN 'deleting'
                             WHEN counts.document_count = 0 THEN 'empty'
                             WHEN counts.processing_count > 0 THEN 'indexing'
                             WHEN counts.problem_count > 0 THEN 'degraded'

@@ -11,6 +11,7 @@ from app.repositories.job_repository import (
     JobStage,
     JobStatus,
     LostJobLeaseError,
+    StaleDocumentVersionError,
 )
 
 
@@ -384,6 +385,86 @@ def test_document_ingest_repository_completes_staging_generation(
     assert version == ("active", 3, 1, 1, 1)
     assert document == ("ready",)
     assert active == (ids["version_id"], ids["generation_id"])
+
+
+def test_activate_generation_refuses_deleting_document(ingest_job_scope):
+    ids = ingest_job_scope
+    with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
+        connection.execute("SET ROLE meriknow_worker")
+        repository = JobRepository(connection)
+        [lease] = repository.claim(
+            worker_id="lifecycle-worker-1",
+            job_types=["test.document.ingest"],
+            capacity=1,
+        )
+        context = repository.load_document_ingest_context(lease)
+        repository.begin_document_ingest(lease, context)
+        repository.complete_indexing(
+            lease,
+            context,
+            parser_backend="markdown",
+            chunk_profile="balanced",
+            parser_report={"parser": "markdown"},
+            point_count=1,
+            chunk_count=1,
+            section_count=0,
+            table_count=0,
+        )
+        connection.execute(
+            """
+            UPDATE app.documents
+            SET status = 'deleting'
+            WHERE id = %s
+            """,
+            (ids["document_id"],),
+        )
+        with pytest.raises(StaleDocumentVersionError, match="deleting"):
+            repository.prepare_activation(lease, context)
+        with pytest.raises(StaleDocumentVersionError, match="deleting"):
+            repository.activate_generation(lease, context)
+
+
+def test_activate_generation_preserves_library_deleting_status(ingest_job_scope):
+    ids = ingest_job_scope
+    with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
+        library_id = connection.execute(
+            "SELECT library_id FROM app.documents WHERE id = %s",
+            (ids["document_id"],),
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE app.libraries SET status = 'deleting' WHERE id = %s",
+            (library_id,),
+        )
+        connection.execute("SET ROLE meriknow_worker")
+        repository = JobRepository(connection)
+        [lease] = repository.claim(
+            worker_id="lifecycle-worker-1",
+            job_types=["test.document.ingest"],
+            capacity=1,
+        )
+        context = repository.load_document_ingest_context(lease)
+        repository.begin_document_ingest(lease, context)
+        repository.complete_indexing(
+            lease,
+            context,
+            parser_backend="markdown",
+            chunk_profile="balanced",
+            parser_report={"parser": "markdown"},
+            point_count=1,
+            chunk_count=1,
+            section_count=0,
+            table_count=0,
+        )
+        preparation = repository.prepare_activation(lease, context)
+        activation = repository.activate_generation(lease, context)
+        library_status = connection.execute(
+            "SELECT status FROM app.libraries WHERE id = %s",
+            (library_id,),
+        ).fetchone()[0]
+
+    assert preparation.should_activate is True
+    assert activation.activated is True
+    assert library_status == "deleting"
 
 
 def test_expired_leases_retry_then_dead(ingest_job_scope):
