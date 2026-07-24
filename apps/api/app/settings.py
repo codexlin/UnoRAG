@@ -98,6 +98,8 @@ class Settings(BaseSettings):
 	database_url: str = "postgresql+psycopg://meriknow:meriknow@localhost:5432/meriknow"
 	metadata_path: str = "data/metadata.json"
 	document_storage_dir: str = "data/documents"
+	# Next.js Document Lifecycle V2 shared source-object volume.
+	document_storage_root: str = ""
 	# stub upload: simulate ready without Qdrant (false=503；仅测试可 true)
 	stub_ingest_simulate: bool = False
 
@@ -110,8 +112,22 @@ class Settings(BaseSettings):
 	ingest_worker_max_jobs: int = 2
 	ingest_job_timeout_s: int = 600
 
+	# PostgreSQL lifecycle worker (L2). This coexists with legacy ARQ until L7.
+	worker_database_url: str = ""
+	lifecycle_worker_poll_seconds: float = 1.0
+	lifecycle_worker_lease_seconds: int = 120
+	lifecycle_worker_heartbeat_seconds: int = 30
+	lifecycle_worker_version: str = "lifecycle-worker-v1"
+	active_generation_gate_enabled: bool = False
+	active_generation_cache_ttl_seconds: float = 0.0
+	rag_read_database_url: str = ""
+
 	@model_validator(mode="after")
 	def validate_production_security(self) -> "Settings":
+		if self.mineru_timeout_s <= 0:
+			raise ValueError("MINERU_TIMEOUT_S must be positive")
+		if self.mineru_max_retries < 0:
+			raise ValueError("MINERU_MAX_RETRIES cannot be negative")
 		if self.app_env.strip().lower() not in {"prod", "production"}:
 			return self
 		if not self.internal_auth_enabled:
@@ -120,6 +136,18 @@ class Settings(BaseSettings):
 			raise ValueError("production requires INTERNAL_AUTH_SECRET with 32+ characters")
 		if self.internal_auth_replay_backend.strip().lower() != "redis":
 			raise ValueError("production requires INTERNAL_AUTH_REPLAY_BACKEND=redis")
+		if not self.active_generation_gate_enabled:
+			raise ValueError("production requires ACTIVE_GENERATION_GATE_ENABLED=true")
+		if self.active_generation_cache_ttl_seconds != 0:
+			raise ValueError(
+				"production requires ACTIVE_GENERATION_CACHE_TTL_SECONDS=0"
+			)
+		if self.mineru_use_fake:
+			raise ValueError("production forbids MINERU_USE_FAKE=true")
+		if self.mineru_enabled and not self.mineru_url.strip():
+			raise ValueError("production MINERU_ENABLED=true requires MINERU_URL")
+		if self.mineru_mode.strip().lower() == "mineru" and not self.mineru_enabled:
+			raise ValueError("production MINERU_MODE=mineru requires MINERU_ENABLED=true")
 		return self
 
 	@property
@@ -145,6 +173,16 @@ class Settings(BaseSettings):
 	@property
 	def uses_postgres_metadata(self) -> bool:
 		return self.metadata_backend.strip().lower() != "json"
+
+	@property
+	def worker_database_dsn(self) -> str:
+		dsn = (self.worker_database_url or self.database_url).strip()
+		return dsn.replace("postgresql+psycopg://", "postgresql://", 1)
+
+	@property
+	def rag_read_database_dsn(self) -> str:
+		dsn = (self.rag_read_database_url or self.database_url).strip()
+		return dsn.replace("postgresql+psycopg://", "postgresql://", 1)
 
 
 @lru_cache
