@@ -1151,21 +1151,6 @@ def assemble_table_from_groups(groups: list[dict[str, Any]]) -> dict[str, Any]:
 	}
 
 
-def _citation_row_groups_for_instance(
-	citations: list[dict[str, Any]],
-	instance: TableInstanceKey,
-) -> list[dict[str, Any]]:
-	"""从 citations 筛同行组（仅诊断）；排除 table_summary（无 row_start/end）。"""
-	return [
-		item
-		for item in citations
-		if table_instance_key(item) == instance
-		and str(item.get("record_type") or "") == "table"
-		and item.get("row_start") is not None
-		and item.get("row_end") is not None
-	]
-
-
 def _decorate_assembled_table(
 	assembled: dict[str, Any],
 	located: dict[str, Any],
@@ -1174,7 +1159,7 @@ def _decorate_assembled_table(
 	doc_id: str,
 	version_id: Any,
 	table_id: str,
-	load_source: str,
+	load_source: Literal["store", "load_failed"],
 ) -> dict[str, Any]:
 	assembled["load_source"] = load_source
 	assembled["score"] = located.get("score")
@@ -1191,52 +1176,65 @@ def _decorate_assembled_table(
 	return assembled
 
 
+def _fail_located_table(
+	located: dict[str, Any],
+	*,
+	doc_id: str,
+	version_id: Any,
+	table_id: str,
+	reason: str,
+) -> dict[str, Any]:
+	"""Store 不可用时 fail closed：无 headers/rows，禁止 citations 拼表。"""
+	return {
+		"headers": [],
+		"rows": [],
+		"row_offset": 0,
+		"complete": False,
+		"reason": reason,
+		"group_count": 0,
+		"doc_id": doc_id,
+		"document_version_id": version_id,
+		"table_id": table_id,
+		"load_source": "load_failed",
+		"score": located.get("score"),
+		"citation": located.get("citation"),
+		"schema_fit": located.get("schema_fit"),
+		"groups": [],
+	}
+
+
 def _assemble_located_table(
 	located: dict[str, Any],
-	citations: list[dict[str, Any]],
 	*,
 	load_table_groups: LoadTableGroupsFn | None,
 	library_id: str | None,
 ) -> dict[str, Any]:
-	"""加载并拼装单个表实例；失败时返回 incomplete 结构。
+	"""从 store 加载并拼装单个表实例；唯一可执行路径。
 
-	Store loader 是唯一可执行路径：无 loader 或缺 doc_id/table_id 时
-	complete=False。可保留 citations 拼行供诊断（load_source=citations），
-	但永不标 complete。
+	无 loader → no_store_loader；缺 doc_id/table_id → missing_table_key；
+	加载异常 → load_failed:*。任何失败均不返回可拼出的 rows。
 	"""
 	doc_id = str(located.get("doc_id") or "")
 	version_id = located.get("document_version_id")
 	table_id = str(located.get("table_id") or "")
 	lib = library_id or located.get("library_id")
-	instance = (doc_id, str(version_id or ""), table_id)
-	citation_groups = _citation_row_groups_for_instance(citations, instance)
 
 	if load_table_groups is None:
-		assembled = assemble_table_from_groups(citation_groups)
-		assembled["complete"] = False
-		assembled["reason"] = "no_store_loader"
-		return _decorate_assembled_table(
-			assembled,
+		return _fail_located_table(
 			located,
-			groups=citation_groups,
 			doc_id=doc_id,
 			version_id=version_id,
 			table_id=table_id,
-			load_source="citations",
+			reason="no_store_loader",
 		)
 
 	if not doc_id or not table_id:
-		assembled = assemble_table_from_groups(citation_groups)
-		assembled["complete"] = False
-		assembled["reason"] = "missing_table_key"
-		return _decorate_assembled_table(
-			assembled,
+		return _fail_located_table(
 			located,
-			groups=citation_groups,
 			doc_id=doc_id,
 			version_id=version_id,
 			table_id=table_id,
-			load_source="citations",
+			reason="missing_table_key",
 		)
 
 	try:
@@ -1249,22 +1247,13 @@ def _assemble_located_table(
 			)
 		)
 	except Exception as exc:  # noqa: BLE001 — fail closed
-		return {
-			"headers": [],
-			"rows": [],
-			"row_offset": 0,
-			"complete": False,
-			"reason": f"load_failed:{exc}",
-			"group_count": 0,
-			"doc_id": doc_id,
-			"document_version_id": version_id,
-			"table_id": table_id,
-			"load_source": "store",
-			"score": located.get("score"),
-			"citation": located.get("citation"),
-			"schema_fit": located.get("schema_fit"),
-			"groups": [],
-		}
+		return _fail_located_table(
+			located,
+			doc_id=doc_id,
+			version_id=version_id,
+			table_id=table_id,
+			reason=f"load_failed:{exc}",
+		)
 
 	assembled = assemble_table_from_groups(groups)
 	return _decorate_assembled_table(
@@ -1287,7 +1276,8 @@ def prepare_table_for_execute(
 ) -> dict[str, Any]:
 	"""两阶段：向量定位表实例 → store 按键加载全表行组 → 校验完整性后供聚合。
 
-	唯一可执行路径是 store loader；无 loader / 缺 key / 缺组时 complete=False。
+	唯一可执行路径是 store loader；无 loader / 缺 key / 缺组时 complete=False，
+	且不返回 citations 拼出的 headers/rows。
 	同库多表时：按问法 schema fit 排序，并优先选用能自信 refine TableQueryPlan 的实例。
 	"""
 	candidates = rank_table_instances(citations, question=question)
@@ -1305,7 +1295,6 @@ def prepare_table_for_execute(
 	for located in candidates:
 		assembled = _assemble_located_table(
 			located,
-			citations,
 			load_table_groups=load_table_groups,
 			library_id=library_id,
 		)
@@ -1326,7 +1315,6 @@ def prepare_table_for_execute(
 
 	chosen = fallback or _assemble_located_table(
 		candidates[0],
-		citations,
 		load_table_groups=load_table_groups,
 		library_id=library_id,
 	)
@@ -1518,11 +1506,3 @@ def citations_with_matched_evidence(
 		item["index"] = index
 		item["record_type"] = item.get("record_type") or "table"
 	return merged, meta
-
-
-def merge_table_hits_for_execute(citations: list[dict[str, Any]]) -> dict[str, Any]:
-	"""已废止：无 store loader，始终 fail closed（complete=False, reason=no_store_loader）。
-
-	生产路径请用 prepare_table_for_execute(..., load_table_groups=...)。
-	"""
-	return prepare_table_for_execute(citations, load_table_groups=None)

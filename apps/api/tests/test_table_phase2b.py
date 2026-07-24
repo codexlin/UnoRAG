@@ -19,7 +19,6 @@ from app.services.table_query import (
 	build_table_query_plan,
 	citations_with_matched_evidence,
 	execute_table_query,
-	merge_table_hits_for_execute,
 	prepare_table_for_execute,
 	select_evidence_groups,
 	table_instance_key,
@@ -231,11 +230,13 @@ def test_same_table_id_across_docs_do_not_mix() -> None:
 	]
 	assert table_instance_key(citations[0]) != table_instance_key(citations[1])
 
-	# 废止路径：无 store loader → incomplete
-	no_loader = merge_table_hits_for_execute(citations)
+	# 无 store loader → incomplete，且不得拼出可执行 rows
+	no_loader = prepare_table_for_execute(citations, load_table_groups=None)
 	assert no_loader["complete"] is False
 	assert no_loader["reason"] == "no_store_loader"
-	assert no_loader.get("load_source") == "citations"
+	assert no_loader.get("load_source") == "load_failed"
+	assert no_loader.get("headers") == []
+	assert no_loader.get("rows") == []
 
 	def _load(
 		*,
@@ -300,7 +301,9 @@ def test_large_table_full_load_aggregate_not_top_k_subset() -> None:
 	partial = prepare_table_for_execute(citations, load_table_groups=None)
 	assert partial["complete"] is False
 	assert partial.get("reason") == "no_store_loader"
-	assert partial.get("load_source") == "citations"
+	assert partial.get("load_source") == "load_failed"
+	assert partial.get("headers") == []
+	assert partial.get("rows") == []
 
 	def _load(**_kwargs):
 		return full_groups
@@ -673,11 +676,8 @@ def test_seq_lookup_and_device_name_entity() -> None:
 	assert float(_cell_number(ex_dev["answer_value"]) or 0) == 185_000.0
 
 
-def test_citation_fallback_ignores_table_summary_without_row_range() -> None:
-	"""无 loader 时 citations 仅诊断且永不 complete；store loader 才可执行。
-
-	诊断拼表仍须排除 table_summary（无 row_start/end）。
-	"""
+def test_no_store_loader_fails_without_assembled_rows() -> None:
+	"""无 loader 必失败：complete=False、无拼出的 headers/rows；store loader 才可执行。"""
 	headers = ["序号", "设备名称", "单价（元）", "合计（元）"]
 	question = "序号为1的设备是什么？单价和合计金额是多少？"
 	citations = [
@@ -706,14 +706,17 @@ def test_citation_fallback_ignores_table_summary_without_row_range() -> None:
 			"body": "表格 t1；字段：序号、设备名称、单价（元）、合计（元）；共1条数据",
 		},
 	]
-	diag = prepare_table_for_execute(
+	failed = prepare_table_for_execute(
 		citations, load_table_groups=None, question=question
 	)
-	assert diag.get("complete") is False
-	assert diag.get("reason") == "no_store_loader"
-	assert diag.get("group_count") == 1  # 不含 table_summary
-	assert diag.get("load_source") == "citations"
-	assert diag.get("headers") == headers
+	assert failed.get("complete") is False
+	assert failed.get("reason") == "no_store_loader"
+	assert failed.get("load_source") == "load_failed"
+	assert failed.get("headers") == []
+	assert failed.get("rows") == []
+	assert failed.get("group_count") == 0
+	assert failed.get("doc_id") == "doc-quote"
+	assert failed.get("table_id") == "t1"
 
 	def _load(**_kwargs):
 		return [citations[0]]
@@ -790,13 +793,16 @@ def test_multi_table_prefers_quote_schema_for_device_unit_price() -> None:
 			if item["doc_id"] == doc_id and item["table_id"] == table_id
 		]
 
-	# 无 loader：仍可按 schema 选中报价表，但不得 complete / 执行
+	# 无 loader：rank 仍可选中报价表实例，但不得拼表 / complete
 	no_loader = prepare_table_for_execute(
 		citations, load_table_groups=None, question=question
 	)
 	assert no_loader["doc_id"] == "doc-quote"
 	assert no_loader.get("complete") is False
 	assert no_loader.get("reason") == "no_store_loader"
+	assert no_loader.get("load_source") == "load_failed"
+	assert no_loader.get("headers") == []
+	assert no_loader.get("rows") == []
 
 	merged = prepare_table_for_execute(
 		citations, load_table_groups=_load, question=question
