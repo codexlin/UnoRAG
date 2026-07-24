@@ -18,6 +18,11 @@ import {
 	validateDocumentUpload,
 } from "@/lib/server/document-lifecycle";
 import {
+	buildDocumentIngestPayload,
+	contentTypeForUpload,
+	documentIngestIdempotencyKey,
+} from "@/lib/server/document-version-core.mjs";
+import {
 	canWriteLibraries,
 	findAuthorizedLibrary,
 } from "@/lib/server/library-access";
@@ -157,6 +162,7 @@ export async function POST(request: Request, context: RouteContext) {
 	const displayName =
 		(typeof displayNameValue === "string" && displayNameValue.trim()) ||
 		originalFilename;
+	const contentType = contentTypeForUpload(upload);
 	const storageKey = documentStorageKey({
 		identity,
 		libraryId: library.id,
@@ -192,7 +198,7 @@ export async function POST(request: Request, context: RouteContext) {
 				ragDocumentId: documentId,
 				name: displayName.slice(0, 512),
 				filename: originalFilename,
-				contentType: upload.type || "text/markdown",
+				contentType,
 				status: "processing",
 				createdBy: identity.principalId,
 				createdAt: now,
@@ -219,17 +225,17 @@ export async function POST(request: Request, context: RouteContext) {
 				type: "document.ingest",
 				status: "queued",
 				stage: "accepted",
-				idempotencyKey: `document.ingest:${versionId}:${generationId}:document-lifecycle-v2`,
-				payload: {
-					document_id: documentId,
-					document_version_id: versionId,
-					generation_id: generationId,
-					library_id: library.ragLibraryId,
-					storage_key: stored.key,
-					content_hash: stored.contentHash,
+				idempotencyKey: documentIngestIdempotencyKey(versionId, generationId),
+				payload: buildDocumentIngestPayload({
+					documentId,
+					versionId,
+					generationId,
+					ragLibraryId: library.ragLibraryId,
+					storageKey: stored.key,
+					contentHash: stored.contentHash,
 					filename: originalFilename,
-					content_type: upload.type || "text/markdown",
-				},
+					contentType,
+				}),
 				createdAt: now,
 				updatedAt: now,
 			});

@@ -565,14 +565,18 @@ export function LibrariesPanel() {
 	}
 
 	async function onConfirmReplace() {
-		if (!replaceDoc || !replaceFile) return;
+		if (!replaceDoc || !replaceFile || !selectedId) return;
 		const doc = replaceDoc;
 		const file = replaceFile;
 		setReplacing(true);
 		setBusyDocId(doc.id);
 		setError(null);
 		try {
-			const result = await replaceDocument({ docId: doc.id, file });
+			const result = await replaceDocument({
+				libraryId: selectedId,
+				docId: doc.id,
+				file,
+			});
 			if (result.accepted || result.status === "processing") {
 				trackProcessing([{ id: result.doc_id, name: result.title }]);
 				toast.success(`已提交替换「${result.title}」，正在重新索引`);

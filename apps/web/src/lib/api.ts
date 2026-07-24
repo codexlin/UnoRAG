@@ -414,15 +414,20 @@ export async function reindexDocument(
 	return (await response.json()) as ApiUploadResponse;
 }
 
-/** 用新文件覆盖同一 doc_id：清旧向量与原文后重新索引 */
+/** 用新文件创建文档新版本：保留旧 active generation，直到新 job 激活。 */
 export async function replaceDocument(input: {
+	libraryId: string;
 	docId: string;
 	file: File;
+	displayName?: string;
 }): Promise<ApiUploadResponse> {
 	const form = new FormData();
 	form.append("file", input.file);
+	if (input.displayName?.trim()) {
+		form.append("display_name", input.displayName.trim());
+	}
 	const response = await fetch(
-		`${getApiBaseUrl()}/v1/documents/${encodeURIComponent(input.docId)}/replace`,
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents/${encodeURIComponent(input.docId)}/versions`,
 		{ method: "POST", body: form },
 	);
 	if (response.status !== 200 && response.status !== 202) {
