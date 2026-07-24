@@ -79,10 +79,26 @@ class ArchiveTurnResponse(BaseModel):
 	rewritten_query: str | None = None
 	judge: dict[str, object] | None = None
 	retrieval_plan: dict[str, object] | None = None
+	# Same-origin as Ask UI /stream done.retrieval_debug (sanitized for archive).
 	retrieval_debug: dict[str, object] | None = None
 	document_version_id: str | None = None
 	tenant_id: str | None = None
 	created_at: str
+
+
+class ArchiveDebugResponse(BaseModel):
+	"""Internal debug projection for replaying Ask adjudicate / retrieve without UI."""
+
+	turn_id: str
+	session_id: str
+	library_id: str | None = None
+	created_at: str
+	refused: bool = False
+	refuse_reason: str | None = None
+	trace_id: str | None = None
+	question_hash: str | None = None
+	# Sanitized; includes stages (adjudicate), citation_adjudication, path/route.
+	retrieval_debug: dict[str, object] = Field(default_factory=dict)
 
 
 class AskRequest(BaseModel):

@@ -190,3 +190,52 @@ def emit_ask_trace(debug: dict[str, Any]) -> None:
 	line = json.dumps(payload, ensure_ascii=False, default=str)
 	print(line, flush=True)
 	logger.info("%s", line)
+
+
+# Keys that must never leave the control plane via archive/debug APIs.
+_SECRET_KEY_FRAGMENTS = (
+	"api_key",
+	"apikey",
+	"authorization",
+	"password",
+	"secret",
+	"access_token",
+	"refresh_token",
+	"private_key",
+	"bearer",
+)
+
+
+def _is_secret_key(key: str) -> bool:
+	"""True for underscore-private or credential-shaped keys."""
+	if key.startswith("_"):
+		return True
+	lower = key.lower().replace("-", "_")
+	if lower in _SECRET_KEY_FRAGMENTS:
+		return True
+	return any(fragment in lower for fragment in _SECRET_KEY_FRAGMENTS)
+
+
+def sanitize_retrieval_debug(debug: dict[str, Any] | None) -> dict[str, Any] | None:
+	"""Return archive/debug-safe retrieval_debug (UI-homologous, no secrets).
+
+	Keeps adjudicate stages, citation_adjudication, path/route/upgrade, etc.
+	Drops private `_…` keys (e.g. full evidence row indices) and credential fields.
+	"""
+	if not isinstance(debug, dict):
+		return None
+
+	def _clean(value: Any) -> Any:
+		if isinstance(value, dict):
+			out: dict[str, Any] = {}
+			for key, item in value.items():
+				if not isinstance(key, str) or _is_secret_key(key):
+					continue
+				out[key] = _clean(item)
+			return out
+		if isinstance(value, list):
+			return [_clean(item) for item in value]
+		return value
+
+	cleaned = _clean(debug)
+	return cleaned if isinstance(cleaned, dict) else None
