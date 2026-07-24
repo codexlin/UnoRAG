@@ -93,13 +93,21 @@ Workspace membership 与用户组，再向 FastAPI 签发一次性内部上下�
 | `PDF_SCAN_STRATEGY` | `partial`（默认）成功页入库；`fail` 更严 |
 | `OCR_ENABLED` / `VLM_ENABLED` | 默认关；扫描/复杂页按需 |
 | `TOOL_ASK` | 默认 `false`；短路径 ask，工具见 `app/services/ingest/tools.py` |
-
-计划详情：[docs/plans/2026-07-23-document-ingest-pipeline.md](./docs/plans/2026-07-23-document-ingest-pipeline.md)
+| `DOCUMENT_LIFECYCLE_V2` | Next 原生 Markdown 上传与 PostgreSQL Job；production 需显式设为 `true` |
+| `DOCUMENT_STORAGE_ROOT` | 私有部署共享原文目录；production 必填，`web` 与 lifecycle worker 共同挂载 |
+| `DOCUMENT_MAX_UPLOAD_BYTES` | 单文件上限，默认 50 MiB |
+| `WORKER_DATABASE_URL` | Python lifecycle worker 专用 PostgreSQL 登录，授予 `meriknow_worker` |
+| `LIFECYCLE_WORKER_LEASE_SECONDS` / `LIFECYCLE_WORKER_HEARTBEAT_SECONDS` | 默认 120 / 30 秒 |
+| `ACTIVE_GENERATION_GATE_ENABLED` | production 必须开启，检索以 PostgreSQL active generation 为准 |
+| `ACTIVE_GENERATION_CACHE_TTL_SECONDS` | production 必须为 `0`，避免激活切换读取旧快照 |
+| `RAG_READ_DATABASE_URL` | FastAPI 检索门禁专用只读 PostgreSQL 登录 |
+| `MINERU_ENABLED` / `MINERU_URL` | 扫描、双栏和复杂表 PDF 解析；production 开启时 URL 必填 |
 
 ## 架构设计
 
 - 企业级 RAG SaaS 目标架构：[docs/architecture/enterprise-rag-saas-design.md](./docs/architecture/enterprise-rag-saas-design.md)
 - Control Plane 决策：[docs/adr/0004-nextjs-control-plane.md](./docs/adr/0004-nextjs-control-plane.md)
+- 私有化生产落地计划：[docs/plans/2026-07-24-private-deployment-production-roadmap.md](./docs/plans/2026-07-24-private-deployment-production-roadmap.md)
 
 ## live 提示
 
@@ -118,6 +126,7 @@ uv run pytest
 uv run python scripts/run_eval_cases.py
 ```
 
-## 计划
+## 当前实施路线
 
-见 [docs/plans/2026-07-22-meriknow-bootstrap.md](./docs/plans/2026-07-22-meriknow-bootstrap.md) · [文档入库管线](./docs/plans/2026-07-23-document-ingest-pipeline.md)。
+以 [私有化生产落地计划](./docs/plans/2026-07-24-private-deployment-production-roadmap.md)
+为唯一执行入口；解析、分块和检索的长期设计保留在企业 RAG 主蓝图与 ADR 中。

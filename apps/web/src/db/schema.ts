@@ -1,6 +1,8 @@
+import { sql } from "drizzle-orm";
 import {
 	bigint,
 	bigserial,
+	check,
 	foreignKey,
 	index,
 	integer,
@@ -205,6 +207,10 @@ export const documents = appSchema.table(
 		filename: varchar("filename", { length: 512 }).notNull(),
 		contentType: varchar("content_type", { length: 128 }).notNull(),
 		status: varchar("status", { length: 32 }).default("processing").notNull(),
+		// Composite pointer FKs live in migration 0004 to avoid an ORM type cycle.
+		desiredVersionId: uuid("desired_version_id"),
+		latestJobId: uuid("latest_job_id"),
+		deletedAt: timestamp("deleted_at", { withTimezone: true }),
 		createdBy: uuid("created_by").references(() => users.id, {
 			onDelete: "set null",
 		}),
@@ -216,6 +222,10 @@ export const documents = appSchema.table(
 			table.ragDocumentId,
 		),
 		index("documents_library_status_idx").on(table.libraryId, table.status),
+		check(
+			"documents_status_check",
+			sql`${table.status} in ('empty', 'processing', 'ready', 'degraded', 'failed', 'deleting', 'deleted')`,
+		),
 	],
 );
 
@@ -232,10 +242,21 @@ export const documentVersions = appSchema.table(
 		storageKey: varchar("storage_key", { length: 1024 }).notNull(),
 		sizeBytes: bigint("size_bytes", { mode: "number" }),
 		status: varchar("status", { length: 32 }).default("pending").notNull(),
+		pipelineVersion: varchar("pipeline_version", { length: 128 })
+			.default("legacy")
+			.notNull(),
+		parserBackend: varchar("parser_backend", { length: 64 }),
+		chunkProfile: varchar("chunk_profile", { length: 64 }),
 		parserReport: jsonb("parser_report"),
+		pointCount: integer("point_count"),
+		chunkCount: integer("chunk_count"),
+		sectionCount: integer("section_count"),
+		tableCount: integer("table_count"),
+		failureCode: varchar("failure_code", { length: 128 }),
 		error: text("error"),
 		indexedAt: timestamp("indexed_at", { withTimezone: true }),
 		activatedAt: timestamp("activated_at", { withTimezone: true }),
+		supersededAt: timestamp("superseded_at", { withTimezone: true }),
 		...timestamps,
 	},
 	(table) => [
@@ -249,6 +270,17 @@ export const documentVersions = appSchema.table(
 			table.id,
 		),
 		index("document_versions_status_idx").on(table.status, table.updatedAt),
+		check(
+			"document_versions_status_check",
+			sql`${table.status} in ('pending', 'processing', 'indexed', 'activating', 'active', 'failed', 'superseded', 'cancelled', 'deleting', 'deleted')`,
+		),
+		check(
+			"document_versions_counts_check",
+			sql`coalesce(${table.pointCount}, 0) >= 0
+				and coalesce(${table.chunkCount}, 0) >= 0
+				and coalesce(${table.sectionCount}, 0) >= 0
+				and coalesce(${table.tableCount}, 0) >= 0`,
+		),
 	],
 );
 
@@ -323,14 +355,25 @@ export const jobs = appSchema.table(
 		),
 		type: varchar("type", { length: 64 }).notNull(),
 		status: varchar("status", { length: 32 }).default("queued").notNull(),
+		stage: varchar("stage", { length: 64 }).default("accepted").notNull(),
 		progress: integer("progress").default(0).notNull(),
+		progressCurrent: integer("progress_current"),
+		progressTotal: integer("progress_total"),
 		attempt: integer("attempt").default(0).notNull(),
+		maxAttempts: integer("max_attempts").default(5).notNull(),
+		nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
 		idempotencyKey: varchar("idempotency_key", { length: 256 }).notNull(),
 		payload: jsonb("payload").default({}).notNull(),
 		result: jsonb("result"),
+		errorCode: varchar("error_code", { length: 128 }),
 		error: text("error"),
 		claimedBy: varchar("claimed_by", { length: 256 }),
 		claimedAt: timestamp("claimed_at", { withTimezone: true }),
+		leaseToken: uuid("lease_token"),
+		leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+		heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+		cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+		workerVersion: varchar("worker_version", { length: 128 }),
 		startedAt: timestamp("started_at", { withTimezone: true }),
 		finishedAt: timestamp("finished_at", { withTimezone: true }),
 		...timestamps,
@@ -340,8 +383,40 @@ export const jobs = appSchema.table(
 			table.organizationId,
 			table.idempotencyKey,
 		),
-		index("jobs_claim_idx").on(table.status, table.createdAt),
+		uniqueIndex("jobs_document_version_id_id_uq").on(
+			table.documentVersionId,
+			table.id,
+		),
+		index("jobs_claim_idx").on(
+			table.status,
+			table.nextAttemptAt,
+			table.createdAt,
+		),
+		index("jobs_lease_expiry_idx")
+			.on(table.leaseExpiresAt)
+			.where(sql`${table.status} in ('running', 'cancelling')`),
 		index("jobs_workspace_idx").on(table.workspaceId, table.updatedAt),
+		index("jobs_document_version_type_idx").on(
+			table.documentVersionId,
+			table.type,
+		),
+		check(
+			"jobs_status_check",
+			sql`${table.status} in ('queued', 'running', 'retry', 'cancelling', 'cancelled', 'completed', 'failed', 'dead')`,
+		),
+		check(
+			"jobs_stage_check",
+			sql`${table.stage} in ('accepted', 'downloading', 'parsing', 'chunking', 'embedding', 'indexing', 'validating', 'awaiting_activation', 'activating', 'cleanup', 'done')`,
+		),
+		check(
+			"jobs_progress_check",
+			sql`${table.progress} between 0 and 100
+				and ${table.attempt} >= 0
+				and ${table.maxAttempts} > 0
+				and (${table.progressCurrent} is null or ${table.progressCurrent} >= 0)
+				and (${table.progressTotal} is null or ${table.progressTotal} >= 0)
+				and (${table.progressCurrent} is null or ${table.progressTotal} is null or ${table.progressCurrent} <= ${table.progressTotal})`,
+		),
 	],
 );
 

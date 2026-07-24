@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "document_statuses": [
+    "empty",
+    "processing",
+    "ready",
+    "degraded",
+    "failed",
+    "deleting",
+    "deleted"
+  ],
+  "version_statuses": [
+    "pending",
+    "processing",
+    "indexed",
+    "activating",
+    "active",
+    "failed",
+    "superseded",
+    "cancelled",
+    "deleting",
+    "deleted"
+  ],
+  "job_statuses": [
+    "queued",
+    "running",
+    "retry",
+    "cancelling",
+    "cancelled",
+    "completed",
+    "failed",
+    "dead"
+  ],
+  "job_stages": [
+    "accepted",
+    "downloading",
+    "parsing",
+    "chunking",
+    "embedding",
+    "indexing",
+    "validating",
+    "awaiting_activation",
+    "activating",
+    "cleanup",
+    "done"
+  ],
+  "terminal_job_statuses": [
+    "cancelled",
+    "completed",
+    "failed",
+    "dead"
+  ],
+  "retryable_job_statuses": [
+    "cancelled",
+    "failed",
+    "dead"
+  ],
+  "defaults": {
+    "job_status": "queued",
+    "job_stage": "accepted",
+    "job_max_attempts": 5,
+    "lease_seconds": 120,
+    "heartbeat_seconds": 30
+  }
+}

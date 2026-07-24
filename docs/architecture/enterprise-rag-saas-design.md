@@ -1318,6 +1318,13 @@ Phase 1 hardening：另含少量 `ingest_http` 用例，覆盖正例 upload→re
 - 失败重试和 dead letter。
 - UI 展示 parser_report 和 job progress。
 
+Phase 4 及后续私有化交付的唯一执行计划见
+[`2026-07-24-private-deployment-production-roadmap.md`](../plans/2026-07-24-private-deployment-production-roadmap.md)。
+该计划以 Document Lifecycle 为纵向主干，明确 `app.jobs` 单一事实源、版本
+generation 激活、受限 PostgreSQL Worker 协议、旧链路退出、质量门禁、
+部署灾备与试点验收；首版不增加 Control Plane Job internal API，实施优先级
+以该计划的 L0-L9 为准。
+
 ### Phase 5：完整评测平台
 
 目标：让优化可量化。

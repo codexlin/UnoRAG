@@ -2,6 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-07-24
+- Revision: 2026-07-24, clarified the modular deployment and direct
+  PostgreSQL document-worker protocol
 
 ## Context
 
@@ -17,7 +19,7 @@ workers and expose the data plane directly to browsers.
 
 ## Decision
 
-Use two explicit ownership boundaries:
+Use two explicit ownership boundaries inside one modular product:
 
 1. Next.js is the product control plane and browser-facing BFF.
 2. FastAPI and Python workers are the internal RAG data plane.
@@ -26,6 +28,15 @@ Drizzle exclusively manages the PostgreSQL `app` schema. Python continues to
 manage its existing tables during migration and may later own a separate
 `rag` schema for graph checkpoints and processing internals. Drizzle and
 SQLAlchemy/Alembic must never migrate the same table.
+
+Schema ownership is not the same as requiring an HTTP hop for every runtime
+write. In the first production topology, Python document workers claim and
+update `app.jobs` directly through a least-privilege PostgreSQL role. They may
+update only leased job execution fields, associated version processing fields,
+the guarded active-version transaction, processing audit, and cleanup outbox.
+They cannot migrate `app.*` or modify organizations, users, memberships,
+groups, or document ACL. `FOR UPDATE SKIP LOCKED`, lease tokens, and
+compare-and-set updates form the document worker protocol.
 
 Browser calls use same-origin `/api/rag/*`. Next.js proxies one streaming
 request to FastAPI and attaches a short-lived HMAC request context containing
@@ -49,11 +60,20 @@ signed service context, retry transient failures, and retain terminal failure
 details for operators. Workers heartbeat long-running leases and abort work
 after losing ownership. Library deletion uses a service-only, idempotent
 projection endpoint and fails closed when vector or object cleanup is
-unavailable. Successful ingest responses and document list probes
-still project RAG document state into `app.documents`; document lifecycle
-callbacks will move to the same protocol when asynchronous ingest ownership is
-finalized. Existing FastAPI `public.*` metadata remains a derived compatibility
-representation.
+unavailable. During migration, successful legacy ingest responses and document
+list probes still project RAG document state into `app.documents`; the native
+document lifecycle removes those probes in favor of direct PostgreSQL Job and
+version transitions. Existing FastAPI `public.*` metadata remains a derived
+compatibility representation until the legacy path exits.
+
+Document ingestion does not add a second set of Next.js claim, heartbeat,
+progress, and completion endpoints. Next.js streams the source to
+customer-owned object storage and transactionally creates document, version,
+job, and audit rows. A Python worker claims the PostgreSQL job directly,
+indexes an isolated generation, and uses a guarded PostgreSQL transaction to
+switch the product active pointer and the RAG active-generation read model.
+Qdrant active hints and old-generation cleanup are recoverable side effects;
+the PostgreSQL active generation remains the strong retrieval gate.
 
 The compatibility `rag_library_id` remains globally unique while FastAPI uses
 it as the primary key. Product-facing names are not unique. Supporting the
@@ -85,7 +105,9 @@ The Python data plane owns:
 - DocumentIR, TableIR, and parser reports during processing;
 - chunking, embedding, Qdrant records, and retrieval;
 - LangGraph execution and RAG evaluation;
-- worker-local processing state and future graph checkpoints.
+- the document worker implementation and future graph checkpoints;
+- DML through the restricted document job/version protocol, but not the
+  `app.*` schema or product identity/ACL semantics.
 
 Object storage, PostgreSQL, Qdrant, model credentials, and encryption keys are
 customer-owned in private deployments.
@@ -93,12 +115,19 @@ customer-owned in private deployments.
 ## Consequences
 
 - The browser no longer needs the FastAPI network address.
-- SSE and downloads stream through the BFF. Upload request bodies are buffered
-  within the configured 50 MiB limit so their exact digest can be signed.
+- SSE and downloads stream through the BFF. Legacy proxied uploads retain the
+  configured 50 MiB limit during migration; native document uploads stream
+  from Next.js to object storage and create a PostgreSQL job.
 - Heavy parsing and model calls remain outside the Next.js request process.
-- Internal API versioning, idempotency, retries, and callbacks become explicit
-  engineering requirements.
+- Browser-to-RAG HTTP still requires request binding, idempotency, and replay
+  protection, while document worker coordination uses PostgreSQL instead of
+  another internal HTTP service.
 - The migration keeps two metadata representations temporarily. Library
-  projection is transactionally queued and eventually consistent; each system
-  still writes only the tables it owns.
+  projection is transactionally queued and eventually consistent. The
+  document worker has a narrow, audited DML exception on `app.jobs` and
+  associated lifecycle rows; migration ownership remains exclusive.
 - Existing Qdrant data needs reindexing before enabling authenticated retrieval.
+- The first production deployment has three application processes:
+  `web`, `rag-api`, and `rag-worker`. `rag-api` and `rag-worker` share one
+  Python image with different commands. A message bus or remote worker API is
+  deferred until multi-cluster or remote-worker requirements justify it.
