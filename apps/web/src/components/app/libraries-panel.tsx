@@ -1,6 +1,7 @@
 "use client";
 
 import {
+	CircleStop,
 	Download,
 	Eye,
 	FileUp,
@@ -16,6 +17,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { useIngestJobs } from "@/components/app/ingest-jobs-provider";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -62,12 +64,11 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { useHealth } from "@/hooks/use-health";
 import { useLibraries } from "@/hooks/use-libraries";
-import { useIngestJobs } from "@/components/app/ingest-jobs-provider";
 import {
 	type ApiDocument,
 	type ApiLibrary,
+	cancelJob,
 	createLibrary,
 	deleteDocument,
 	deleteLibrary,
@@ -76,6 +77,7 @@ import {
 	isAbortError,
 	reindexDocument,
 	replaceDocument,
+	retryJob,
 	updateLibrary,
 	uploadDocument,
 } from "@/lib/api";
@@ -87,6 +89,8 @@ const statusLabel = {
 	indexing: "索引中",
 	empty: "空库",
 	processing: "处理中",
+	degraded: "降级可用",
+	cancelled: "已取消",
 	failed: "失败",
 } as const;
 
@@ -100,6 +104,10 @@ function DocStatusBadge({ status }: { status: string }) {
 					"border-survey/35 bg-accent text-accent-foreground",
 				status === "failed" &&
 					"border-destructive/30 bg-destructive/10 text-destructive",
+				status === "degraded" &&
+					"border-survey/35 bg-accent text-accent-foreground",
+				status === "cancelled" &&
+					"border-border bg-muted text-muted-foreground",
 				status === "indexing" &&
 					"border-survey/35 bg-accent text-accent-foreground",
 				status === "empty" && "border-border bg-muted text-muted-foreground",
@@ -117,8 +125,12 @@ function LibStatusDot({ status }: { status: string }) {
 				"size-2 shrink-0 rounded-full",
 				status === "ready" && "bg-cite",
 				status === "indexing" && "bg-survey",
+				status === "degraded" && "bg-survey",
+				status === "failed" && "bg-destructive",
 				status === "empty" && "bg-muted-foreground/40",
-				!["ready", "indexing", "empty"].includes(status) &&
+				!["ready", "indexing", "degraded", "failed", "empty"].includes(
+					status,
+				) &&
 					"bg-muted-foreground/40",
 			)}
 			aria-hidden
@@ -133,7 +145,6 @@ export function LibrariesPanel() {
 		loading,
 		refresh: refreshLibraries,
 	} = useLibraries();
-	const { apiReady } = useHealth();
 	const { tick: ingestTick, trackProcessing } = useIngestJobs();
 	const [selectedId, setSelectedId] = useState<string>("");
 	const [documents, setDocuments] = useState<ApiDocument[]>([]);
@@ -234,7 +245,7 @@ export function LibrariesPanel() {
 	useEffect(() => {
 		if (!selectedId || ingestTick === 0) return;
 		const selected = libraries.find((item) => item.id === selectedId);
-		if (!selected || selected.status !== "indexing") return;
+		if (selected?.status !== "indexing") return;
 		void loadDocuments(selectedId);
 	}, [ingestTick, selectedId, libraries, loadDocuments]);
 
@@ -449,6 +460,45 @@ export function LibrariesPanel() {
 		}
 	}
 
+	async function onCancelJob(doc: ApiDocument) {
+		if (!doc.job_id) return;
+		setBusyDocId(doc.id);
+		setError(null);
+		try {
+			const result = await cancelJob(doc.job_id);
+			toast.success(
+				result.status === "cancelling" ? "已请求取消任务" : "任务已取消",
+			);
+			await loadLibraries();
+			if (selectedId) await loadDocuments(selectedId);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "取消任务失败";
+			setError(message);
+			toast.error(message);
+		} finally {
+			setBusyDocId(null);
+		}
+	}
+
+	async function onRetryJob(doc: ApiDocument) {
+		if (!doc.job_id) return;
+		setBusyDocId(doc.id);
+		setError(null);
+		try {
+			const result = await retryJob(doc.job_id);
+			trackProcessing([{ id: result.document_id, name: doc.name }]);
+			toast.success(`已重新提交「${doc.name}」`);
+			await loadLibraries();
+			if (selectedId) await loadDocuments(selectedId);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "重试任务失败";
+			setError(message);
+			toast.error(message);
+		} finally {
+			setBusyDocId(null);
+		}
+	}
+
 	async function onDownload(doc: ApiDocument) {
 		if (!doc.has_file) {
 			const message = "原文未保留，请重新上传后再下载";
@@ -545,7 +595,7 @@ export function LibrariesPanel() {
 		}
 	}
 
-	const uploadDisabled = uploading || !selectedId || !apiReady;
+	const uploadDisabled = uploading || !selectedId;
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -797,6 +847,14 @@ export function LibrariesPanel() {
 													</TableCell>
 													<TableCell>
 														<DocStatusBadge status={doc.status} />
+														{doc.job_stage ? (
+															<span className="text-meta mt-1 block font-mono text-muted-foreground">
+																{doc.job_stage}
+																{doc.job_progress != null
+																	? ` · ${doc.job_progress}%`
+																	: ""}
+															</span>
+														) : null}
 													</TableCell>
 													<TableCell className="text-right font-mono text-meta text-muted-foreground">
 														{formatFileSize(doc.size_bytes)}
@@ -848,6 +906,32 @@ export function LibrariesPanel() {
 																	<RotateCcw />
 																	重索引
 																</DropdownMenuItem>
+																{doc.job_id &&
+																["queued", "running", "retry", "cancelling"].includes(
+																	doc.job_status ?? "",
+																) ? (
+																	<DropdownMenuItem
+																		disabled={
+																			doc.job_status === "cancelling" || busy
+																		}
+																		onClick={() => void onCancelJob(doc)}
+																	>
+																		<CircleStop />
+																		取消任务
+																	</DropdownMenuItem>
+																) : null}
+																{doc.job_id &&
+																["cancelled", "failed", "dead"].includes(
+																	doc.job_status ?? "",
+																) ? (
+																	<DropdownMenuItem
+																		disabled={!doc.has_file || busy}
+																		onClick={() => void onRetryJob(doc)}
+																	>
+																		<RotateCcw />
+																		重试任务
+																	</DropdownMenuItem>
+																) : null}
 																<DropdownMenuItem
 																	disabled={!doc.has_file || busy}
 																	onClick={() => void onDownload(doc)}

@@ -6,6 +6,11 @@ import { getDatabase } from "@/db";
 import { documents, libraries } from "@/db/schema";
 import type { AuthIdentity } from "./auth/provider";
 
+export {
+	canManageLibraries,
+	canWriteLibraries,
+} from "./library-permissions.mjs";
+
 export async function findAuthorizedLibrary(
 	identity: AuthIdentity,
 	ragLibraryId: string,
@@ -108,14 +113,15 @@ export async function syncRagDocument(
 	await refreshLibraryCounts(library.id);
 }
 
-async function refreshLibraryCounts(libraryId: string) {
+export async function refreshLibraryCounts(libraryId: string) {
 	const db = getDatabase();
 	const now = new Date();
 	const [counts] = await db
 		.select({
 			total: count(),
-			ready: sql<number>`count(*) filter (where ${documents.status} = 'ready')`,
+			ready: sql<number>`count(*) filter (where ${documents.status} in ('ready', 'degraded'))`,
 			processing: sql<number>`count(*) filter (where ${documents.status} = 'processing')`,
+			failed: sql<number>`count(*) filter (where ${documents.status} = 'failed')`,
 		})
 		.from(documents)
 		.where(eq(documents.libraryId, libraryId));
@@ -127,10 +133,15 @@ async function refreshLibraryCounts(libraryId: string) {
 			status:
 				Number(counts.total) === 0
 					? "empty"
-					: Number(counts.processing) > 0 ||
-							Number(counts.ready) < Number(counts.total)
+					: Number(counts.processing) > 0
 						? "indexing"
-						: "ready",
+						: Number(counts.ready) === Number(counts.total)
+							? "ready"
+							: Number(counts.ready) > 0
+								? "degraded"
+								: Number(counts.failed) > 0
+									? "failed"
+									: "empty",
 			updatedAt: now,
 		})
 		.where(eq(libraries.id, libraryId));
@@ -147,12 +158,4 @@ export async function removeRagDocument(
 	const library = await findAuthorizedLibrary(identity, document.ragLibraryId);
 	if (library) await refreshLibraryCounts(library.id);
 	return true;
-}
-
-export function canManageLibraries(identity: AuthIdentity): boolean {
-	return identity.role === "owner" || identity.role === "admin";
-}
-
-export function canWriteLibraries(identity: AuthIdentity): boolean {
-	return canManageLibraries(identity) || identity.role === "editor";
 }
