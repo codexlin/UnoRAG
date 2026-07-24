@@ -6,8 +6,26 @@ import re
 from collections.abc import Callable
 from typing import Any, Literal
 
-TableOp = Literal["lookup", "filter", "max", "min", "count", "fallback"]
+TableOp = Literal["lookup", "filter", "max", "min", "count", "join_lookup", "fallback"]
 TableOperator = Literal[">", ">=", "<", "<=", "=="]
+
+# 等值 join 候选（MVP：同库两表、一列 equi-join）
+_JOIN_KEY_CANDIDATES: tuple[str, ...] = (
+	"设备号",
+	"序列号",
+	"设备序列号",
+	"资产编号",
+	"SN",
+	"设备名称",
+	"产品",
+	"品名",
+	"项目名称",
+	"序号",
+)
+
+_DUAL_QUERY_HINT = re.compile(
+	r"(设备号|序列号|设备序列号|资产编号|\bSN\b|跨表|两张表|两个表|关联|对应|对照)"
+)
 
 # 列名别名：问法 → 可能命中的表头片段（匹配时仍需与真实 headers 对齐）
 _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
@@ -1572,3 +1590,584 @@ def citations_for_table_overview(
 	for index, item in enumerate(out, start=1):
 		item["index"] = index
 	return out
+
+
+def looks_like_dual_table_query(question: str) -> bool:
+	"""跨表/设备号关联等问法；不含则仍可能因 schema 互补走双表。"""
+	q = (question or "").strip()
+	if not q:
+		return False
+	if _DUAL_QUERY_HINT.search(q):
+		return True
+	# 「A 和 B 分别是什么」且两侧像不同字段族
+	if "分别" in q and ("和" in q or "与" in q):
+		return True
+	return False
+
+
+def _normalize_join_cell(raw: Any) -> str:
+	text = str(raw or "").strip()
+	if not text:
+		return ""
+	# 序号类：统一成去前导零的数字串，便于 01 == 1
+	num = _cell_number(text)
+	if num is not None and re.fullmatch(r"-?[0-9]+(?:\.[0-9]+)?", text.replace(",", "")):
+		if float(num).is_integer():
+			return str(int(num))
+		return str(num)
+	return text.casefold()
+
+
+def infer_equi_join_key(
+	left_headers: list[str],
+	right_headers: list[str],
+	*,
+	question: str | None = None,
+) -> dict[str, str] | None:
+	"""在两侧表头中解析等值 join 列；优先问法点名的键，再按候选顺序。"""
+	if not left_headers or not right_headers:
+		return None
+	q = question or ""
+	ordered: list[str] = []
+	for hint in _JOIN_KEY_CANDIDATES:
+		if hint in q or hint.casefold() in q.casefold():
+			ordered.append(hint)
+	for hint in _JOIN_KEY_CANDIDATES:
+		if hint not in ordered:
+			ordered.append(hint)
+
+	for hint in ordered:
+		left_col = _match_header(hint, left_headers)
+		right_col = _match_header(hint, right_headers)
+		if left_col and right_col:
+			return {
+				"hint": hint,
+				"left_column": left_col,
+				"right_column": right_col,
+			}
+	return None
+
+
+def _question_column_hints(question: str) -> list[str]:
+	"""问法里需要的列 hint（用于判断单表是否覆盖不全）。"""
+	hints: list[str] = []
+	for hint, _weight in question_schema_hints(question):
+		if hint not in hints:
+			hints.append(hint)
+	q = question or ""
+	for extra in ("安装位置", "位置", "最近检修", "检修", "故障次数"):
+		if extra in q and extra not in hints:
+			hints.append(extra)
+	return hints
+
+
+def _headers_cover_hint(headers: list[str], hint: str) -> bool:
+	if hint in {"位置", "安装位置"}:
+		return bool(
+			_match_header("安装位置", headers)
+			or _match_header("位置", headers)
+		)
+	if hint in {"检修", "最近检修"}:
+		return bool(
+			_match_header("最近检修", headers)
+			or _match_header("检修", headers)
+		)
+	return _match_header(hint, headers) is not None
+
+
+def complementary_dual_schema_score(
+	question: str,
+	left_headers: list[str],
+	right_headers: list[str],
+) -> int:
+	""">0 表示问法所需列分散在两表，单表覆盖不全。"""
+	hints = _question_column_hints(question)
+	if not hints:
+		return 0
+	left_only = 0
+	right_only = 0
+	both = 0
+	for hint in hints:
+		l_ok = _headers_cover_hint(left_headers, hint)
+		r_ok = _headers_cover_hint(right_headers, hint)
+		if l_ok and r_ok:
+			both += 1
+		elif l_ok:
+			left_only += 1
+		elif r_ok:
+			right_only += 1
+	if left_only > 0 and right_only > 0:
+		return left_only + right_only + both
+	return 0
+
+
+def prepare_dual_tables_for_execute(
+	citations: list[dict[str, Any]],
+	*,
+	load_table_groups: LoadTableGroupsFn | None = None,
+	library_id: str | None = None,
+	question: str | None = None,
+	max_candidates: int = 4,
+) -> dict[str, Any] | None:
+	"""定位两张可 join 的 store 表；不满足则返回 None（调用方回退单表）。
+
+	MVP 边界：同库候选、等值 join 一列、两侧都必须 store complete。
+	"""
+	q = question or ""
+	candidates = rank_table_instances(citations, question=question)
+	if len(candidates) < 2:
+		return None
+
+	loaded: list[dict[str, Any]] = []
+	for located in candidates[: max(2, int(max_candidates))]:
+		assembled = _assemble_located_table(
+			located,
+			load_table_groups=load_table_groups,
+			library_id=library_id,
+		)
+		if not assembled.get("complete"):
+			continue
+		if not assembled.get("headers"):
+			continue
+		if str(assembled.get("load_source") or "") != "store":
+			continue
+		loaded.append(assembled)
+
+	if len(loaded) < 2:
+		return None
+
+	best: dict[str, Any] | None = None
+	best_score = -1
+	for i in range(len(loaded)):
+		for j in range(i + 1, len(loaded)):
+			left = loaded[i]
+			right = loaded[j]
+			if (
+				str(left.get("doc_id") or ""),
+				str(left.get("table_id") or ""),
+			) == (
+				str(right.get("doc_id") or ""),
+				str(right.get("table_id") or ""),
+			):
+				continue
+			join = infer_equi_join_key(
+				list(left.get("headers") or []),
+				list(right.get("headers") or []),
+				question=q,
+			)
+			if not join:
+				continue
+			comp = complementary_dual_schema_score(
+				q,
+				list(left.get("headers") or []),
+				list(right.get("headers") or []),
+			)
+			explicit = looks_like_dual_table_query(q)
+			if not explicit and comp <= 0:
+				continue
+			score = (
+				(10 if explicit else 0)
+				+ comp * 3
+				+ int(left.get("schema_fit") or 0)
+				+ int(right.get("schema_fit") or 0)
+			)
+			# 设备号/序列号优于弱键「序号」
+			hint = join.get("hint") or ""
+			if hint in {"设备号", "序列号", "设备序列号", "资产编号", "SN"}:
+				score += 5
+			elif hint == "序号":
+				score -= 2
+			if score > best_score:
+				best_score = score
+				best = {
+					"mode": "dual",
+					"complete": True,
+					"reason": "dual_equi_join",
+					"left": left,
+					"right": right,
+					"join_hint": join["hint"],
+					"join_left_column": join["left_column"],
+					"join_right_column": join["right_column"],
+					"complementary_score": comp,
+					"load_source": "store",
+				}
+
+	return best
+
+
+def build_dual_table_query_plan(
+	question: str,
+	*,
+	left_headers: list[str],
+	right_headers: list[str],
+	join_left_column: str,
+	join_right_column: str,
+) -> dict[str, Any]:
+	"""生成 join_lookup 计划；不确定则 confident=False。"""
+	combined_headers: list[str] = []
+	for h in [*left_headers, *right_headers]:
+		if h not in combined_headers:
+			combined_headers.append(h)
+
+	inner = build_table_query_plan(question, headers=combined_headers)
+	plan: dict[str, Any] = {
+		"operation": "fallback",
+		"table_count": 2,
+		"join_left_column": join_left_column,
+		"join_right_column": join_right_column,
+		"inner_operation": inner.get("operation") or "fallback",
+		"column": inner.get("column"),
+		"operator": inner.get("operator"),
+		"value": inner.get("value"),
+		"entity_column": inner.get("entity_column"),
+		"entity_value": inner.get("entity_value"),
+		"select_columns": list(inner.get("select_columns") or []),
+		"also_min": inner.get("also_min"),
+		"exclude_summary_rows": True,
+		"confident": False,
+		"reason": "dual_unparsed",
+	}
+
+	# 确保 select 覆盖问法两侧关键列
+	for hint in _question_column_hints(question):
+		matched = _match_header(hint, combined_headers)
+		if matched and matched not in plan["select_columns"]:
+			plan["select_columns"].append(matched)
+	for col in (join_left_column, join_right_column):
+		if col and col not in plan["select_columns"]:
+			plan["select_columns"].insert(0, col)
+
+	inner_op = str(inner.get("operation") or "fallback")
+	if inner.get("confident") and inner_op in {"lookup", "filter", "max", "min", "count"}:
+		plan.update(
+			{
+				"operation": "join_lookup",
+				"confident": True,
+				"reason": f"dual_join_{inner.get('reason') or inner_op}",
+				"inner_operation": inner_op,
+			}
+		)
+		return plan
+
+	# 问法点名设备号/序列号但 inner 未自信：仍可做 join + 实体 lookup
+	sn_m = re.search(
+		r"(?:设备号|序列号|设备序列号|资产编号|SN)\s*[为是:：]?\s*"
+		r"([A-Za-z0-9][A-Za-z0-9\-_.]{1,40})",
+		question or "",
+		flags=re.IGNORECASE,
+	)
+	if sn_m and join_left_column:
+		entity = sn_m.group(1)
+		plan.update(
+			{
+				"operation": "join_lookup",
+				"inner_operation": "lookup",
+				"entity_column": join_left_column,
+				"entity_value": entity,
+				"column": plan["select_columns"][1]
+				if len(plan["select_columns"]) > 1
+				else join_left_column,
+				"confident": True,
+				"reason": "dual_join_sn_lookup",
+			}
+		)
+		return plan
+
+	plan["reason"] = f"dual_inner_unresolved:{inner.get('reason') or inner_op}"
+	return plan
+
+
+def _join_table_rows(
+	left: dict[str, Any],
+	right: dict[str, Any],
+	*,
+	join_left_column: str,
+	join_right_column: str,
+) -> list[dict[str, Any]]:
+	left_headers = [str(h) for h in (left.get("headers") or [])]
+	right_headers = [str(h) for h in (right.get("headers") or [])]
+	left_offset = int(left.get("row_offset") or 0)
+	right_offset = int(right.get("row_offset") or 0)
+
+	right_index: dict[str, list[dict[str, Any]]] = {}
+	for i, row in enumerate(right.get("rows") or []):
+		rd = _row_dict(right_headers, [str(c) for c in row], absolute_index=right_offset + i)
+		key = _normalize_join_cell(rd.get(join_right_column))
+		if not key:
+			continue
+		right_index.setdefault(key, []).append(rd)
+
+	joined: list[dict[str, Any]] = []
+	for i, row in enumerate(left.get("rows") or []):
+		ld = _row_dict(left_headers, [str(c) for c in row], absolute_index=left_offset + i)
+		key = _normalize_join_cell(ld.get(join_left_column))
+		if not key:
+			continue
+		for rd in right_index.get(key) or []:
+			merged: dict[str, Any] = {}
+			for h in left_headers:
+				merged[h] = ld.get(h)
+			for h in right_headers:
+				if h == join_right_column and h in merged:
+					continue
+				# 右表同名列：仅在左表空时覆盖，避免悄悄丢左值
+				if h in merged and merged.get(h) not in (None, ""):
+					continue
+				merged[h] = rd.get(h)
+			merged["_row_index"] = ld.get("_row_index")
+			merged["_left_row_index"] = ld.get("_row_index")
+			merged["_right_row_index"] = rd.get("_row_index")
+			merged["_left_table_id"] = left.get("table_id")
+			merged["_right_table_id"] = right.get("table_id")
+			joined.append(merged)
+	return joined
+
+
+def execute_dual_table_query(
+	plan: dict[str, Any],
+	*,
+	left: dict[str, Any],
+	right: dict[str, Any],
+	collect_evidence_indices: bool = False,
+) -> dict[str, Any]:
+	"""对两份 store 表做等值 join 后再执行内层 lookup/聚合。"""
+	result: dict[str, Any] = {
+		"ok": False,
+		"operation": str(plan.get("operation") or "fallback"),
+		"table_count": 2,
+		"matched_rows": [],
+		"matched_count": 0,
+		"matched_rows_truncated": False,
+		"matched_row_indices": [],
+		"matched_row_indices_truncated": False,
+		"answer_value": None,
+		"answer_text": None,
+		"reason": "not_run",
+		"left_table_id": left.get("table_id"),
+		"right_table_id": right.get("table_id"),
+	}
+	if not plan.get("confident") or plan.get("operation") != "join_lookup":
+		result["reason"] = "fallback"
+		return result
+
+	join_l = str(plan.get("join_left_column") or "")
+	join_r = str(plan.get("join_right_column") or "")
+	if not join_l or not join_r:
+		result["reason"] = "missing_join_key"
+		return result
+	if not left.get("complete") or not right.get("complete"):
+		result["reason"] = "dual_incomplete"
+		return result
+
+	joined_rows = _join_table_rows(
+		left,
+		right,
+		join_left_column=join_l,
+		join_right_column=join_r,
+	)
+	if not joined_rows:
+		result.update(
+			{
+				"ok": True,
+				"answer_text": "两表关联后无匹配行",
+				"reason": "no_join_match",
+				**_with_matched_preview(
+					[],
+					collect_evidence_indices=collect_evidence_indices,
+				),
+			}
+		)
+		return result
+
+	# 虚拟宽表 headers + rows，复用单表 execute
+	virtual_headers: list[str] = []
+	for h in [*(left.get("headers") or []), *(right.get("headers") or [])]:
+		hs = str(h)
+		if hs not in virtual_headers:
+			virtual_headers.append(hs)
+
+	inner_plan = {
+		**plan,
+		"operation": plan.get("inner_operation") or "lookup",
+		"confident": True,
+		"reason": plan.get("reason") or "dual_inner",
+	}
+	# join_lookup 外壳 → 内层真实 op
+	if inner_plan["operation"] == "join_lookup":
+		inner_plan["operation"] = "lookup"
+
+	virtual_rows = [
+		[str(row.get(h) or "") for h in virtual_headers] for row in joined_rows
+	]
+	# 保留 join 行号映射：execute 用 0..n-1，再映射回两侧
+	inner = execute_table_query(
+		inner_plan,
+		headers=virtual_headers,
+		rows=virtual_rows,
+		row_offset=0,
+		collect_evidence_indices=True,
+		summary_rows=list(left.get("summary_rows") or [])
+		+ list(right.get("summary_rows") or []),
+	)
+	if not inner.get("ok"):
+		result["reason"] = f"dual_inner_failed:{inner.get('reason')}"
+		return result
+
+	# 把 matched 行换回带两侧索引的 join 行
+	matched_idx = list(inner.get("_evidence_row_indices") or inner.get("matched_row_indices") or [])
+	matched_joined: list[dict[str, Any]] = []
+	for idx in matched_idx:
+		try:
+			i = int(idx)
+		except (TypeError, ValueError):
+			continue
+		if 0 <= i < len(joined_rows):
+			matched_joined.append(joined_rows[i])
+	if not matched_joined and inner.get("matched_rows"):
+		# preview 行可能已投影；按虚拟索引回填
+		for row in inner.get("matched_rows") or []:
+			raw = row.get("_row_index")
+			try:
+				i = int(raw)
+			except (TypeError, ValueError):
+				continue
+			if 0 <= i < len(joined_rows):
+				matched_joined.append(joined_rows[i])
+
+	select_cols = [
+		c
+		for c in (plan.get("select_columns") or virtual_headers)
+		if c in virtual_headers
+	]
+	projected = []
+	for row in matched_joined:
+		out = {c: row.get(c) for c in select_cols}
+		out["_row_index"] = row.get("_row_index")
+		out["_left_row_index"] = row.get("_left_row_index")
+		out["_right_row_index"] = row.get("_right_row_index")
+		out["_left_table_id"] = row.get("_left_table_id")
+		out["_right_table_id"] = row.get("_right_table_id")
+		projected.append(out)
+
+	preview = _with_matched_preview(
+		projected,
+		collect_evidence_indices=collect_evidence_indices,
+	)
+	# 证据需要两侧行号
+	if collect_evidence_indices:
+		preview["_evidence_left_row_indices"] = [
+			int(r["_left_row_index"])
+			for r in matched_joined
+			if r.get("_left_row_index") is not None
+		]
+		preview["_evidence_right_row_indices"] = [
+			int(r["_right_row_index"])
+			for r in matched_joined
+			if r.get("_right_row_index") is not None
+		]
+
+	answer_text = inner.get("answer_text")
+	# 增强：把两侧关键列拼进答案，避免只回单列
+	if projected and (
+		plan.get("reason") == "dual_join_sn_lookup"
+		or str(plan.get("inner_operation") or "") == "lookup"
+	):
+		parts = [
+			f"{k}={v}"
+			for k, v in projected[0].items()
+			if not str(k).startswith("_") and v not in (None, "")
+		]
+		if parts:
+			entity = plan.get("entity_value") or ""
+			prefix = f"{plan.get('entity_column') or join_l}={entity} → " if entity else ""
+			answer_text = prefix + "；".join(parts[:10])
+
+	result.update(
+		{
+			"ok": True,
+			**preview,
+			"answer_value": inner.get("answer_value"),
+			"answer_value_truncated": inner.get("answer_value_truncated", False),
+			"answer_text": answer_text,
+			"reason": plan.get("reason") or "dual_join",
+			"join_left_column": join_l,
+			"join_right_column": join_r,
+			"inner_operation": plan.get("inner_operation"),
+		}
+	)
+	# 清理内层临时字段，避免泄漏
+	result.pop("_evidence_row_indices", None)
+	if collect_evidence_indices:
+		result["_evidence_row_indices"] = preview.get("_evidence_row_indices") or []
+	return result
+
+
+def citations_with_dual_matched_evidence(
+	citations: list[dict[str, Any]],
+	*,
+	left: dict[str, Any],
+	right: dict[str, Any],
+	execution: dict[str, Any],
+	evidence_limit: int = EVIDENCE_GROUPS_LIMIT,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+	"""合并两侧命中行组证据；失败时保留原 citations。"""
+	left_key = table_instance_key(left) if left.get("table_id") else None
+	right_key = table_instance_key(right) if right.get("table_id") else None
+	left_indices = list(execution.get("_evidence_left_row_indices") or [])
+	right_indices = list(execution.get("_evidence_right_row_indices") or [])
+	if not left_indices or not right_indices:
+		for row in execution.get("matched_rows") or []:
+			if row.get("_left_row_index") is not None:
+				try:
+					left_indices.append(int(row["_left_row_index"]))
+				except (TypeError, ValueError):
+					pass
+			if row.get("_right_row_index") is not None:
+				try:
+					right_indices.append(int(row["_right_row_index"]))
+				except (TypeError, ValueError):
+					pass
+	# 节点返回前可 pop 临时证据字段；此处只读，不强制 pop
+
+	per_side = max(1, int(evidence_limit) // 2)
+	enriched = list(citations)
+	meta = {
+		"total_group_count": 0,
+		"evidence_truncated": False,
+		"evidence_group_count": 0,
+		"dual": True,
+	}
+
+	if left_key and left.get("groups") is not None:
+		enriched, left_meta = citations_with_matched_evidence(
+			enriched,
+			groups=list(left.get("groups") or []),
+			matched_rows=[],
+			matched_row_indices=left_indices,
+			target_key=left_key,
+			seed_citation=left.get("citation"),
+			evidence_limit=per_side,
+		)
+		meta["total_group_count"] += int(left_meta.get("total_group_count") or 0)
+		meta["evidence_group_count"] += int(left_meta.get("evidence_group_count") or 0)
+		meta["evidence_truncated"] = meta["evidence_truncated"] or bool(
+			left_meta.get("evidence_truncated")
+		)
+
+	if right_key and right.get("groups") is not None:
+		enriched, right_meta = citations_with_matched_evidence(
+			enriched,
+			groups=list(right.get("groups") or []),
+			matched_rows=[],
+			matched_row_indices=right_indices,
+			target_key=right_key,
+			seed_citation=right.get("citation"),
+			evidence_limit=per_side,
+		)
+		meta["total_group_count"] += int(right_meta.get("total_group_count") or 0)
+		meta["evidence_group_count"] += int(right_meta.get("evidence_group_count") or 0)
+		meta["evidence_truncated"] = meta["evidence_truncated"] or bool(
+			right_meta.get("evidence_truncated")
+		)
+
+	return enriched, meta

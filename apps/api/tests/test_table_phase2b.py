@@ -16,9 +16,14 @@ from app.services.table_query import (
 	EVIDENCE_GROUPS_LIMIT,
 	MATCHED_ROWS_PREVIEW_LIMIT,
 	_cell_number,
+	build_dual_table_query_plan,
 	build_table_query_plan,
+	citations_with_dual_matched_evidence,
 	citations_with_matched_evidence,
+	execute_dual_table_query,
 	execute_table_query,
+	looks_like_dual_table_query,
+	prepare_dual_tables_for_execute,
 	prepare_table_for_execute,
 	select_evidence_groups,
 	table_instance_key,
@@ -926,4 +931,194 @@ def test_table_summary_body_includes_summary_rows() -> None:
 	assert "123,456,780" in body or "123456780" in body.replace(",", "")
 	assert "58.7%" in body
 	assert "汇总：" in body
+
+
+def _dual_inventory_maintenance_citations() -> list[dict]:
+	"""同库两表：台账(位置) + 检修(日期)，可按设备号等值 join。"""
+	return [
+		{
+			"record_type": "table",
+			"doc_id": "doc-inv",
+			"document_version_id": "v1",
+			"table_id": "inv-t1",
+			"headers": ["设备号", "设备名称", "安装位置"],
+			"rows": [
+				["GW-01", "边缘计算网关", "机房A-01"],
+				["SV-02", "服务器主机", "机房B-12"],
+			],
+			"row_start": 0,
+			"row_end": 1,
+			"table_row_count": 2,
+			"score": 0.81,
+			"library_id": "lib-dual",
+			"title": "设备台账",
+		},
+		{
+			"record_type": "table",
+			"doc_id": "doc-mnt",
+			"document_version_id": "v1",
+			"table_id": "mnt-t1",
+			"headers": ["设备号", "故障次数", "最近检修"],
+			"rows": [
+				["GW-01", "2", "2026-03-01"],
+				["SV-02", "0", "2026-01-15"],
+			],
+			"row_start": 0,
+			"row_end": 1,
+			"table_row_count": 2,
+			"score": 0.79,
+			"library_id": "lib-dual",
+			"title": "检修记录",
+		},
+	]
+
+
+def test_looks_like_dual_table_query_for_device_sn_join() -> None:
+	assert looks_like_dual_table_query(
+		"设备号 GW-01 的安装位置和最近检修日期分别是什么？"
+	)
+	assert looks_like_dual_table_query("按序列号关联两张表，查 SN-9 的供应商")
+	assert not looks_like_dual_table_query("甲公司的总价是多少？")
+
+
+def test_dual_table_equi_join_lookup_reads_both_stores() -> None:
+	"""真双表 MVP：等值 join 一列后 lookup，execute 读两份 store，citations 覆盖两表。"""
+	question = "设备号 GW-01 的安装位置和最近检修日期分别是什么？"
+	citations = _dual_inventory_maintenance_citations()
+
+	def _load(
+		*,
+		doc_id: str,
+		table_id: str,
+		document_version_id: str | None = None,
+		library_id: str | None = None,
+	):
+		return [
+			item
+			for item in citations
+			if item["doc_id"] == doc_id and item["table_id"] == table_id
+		]
+
+	# 单表路径只能覆盖一侧字段 → 不自信或答不全
+	single = prepare_table_for_execute(
+		citations, load_table_groups=_load, question=question
+	)
+	single_plan = build_table_query_plan(question, headers=list(single.get("headers") or []))
+	assert single.get("complete") is True
+
+	dual = prepare_dual_tables_for_execute(
+		citations,
+		load_table_groups=_load,
+		library_id="lib-dual",
+		question=question,
+	)
+	assert dual is not None
+	assert dual.get("complete") is True
+	assert dual.get("mode") == "dual"
+	assert dual["left"]["table_id"] != dual["right"]["table_id"]
+	assert dual.get("join_left_column")
+	assert dual.get("join_right_column")
+
+	plan = build_dual_table_query_plan(
+		question,
+		left_headers=list(dual["left"]["headers"]),
+		right_headers=list(dual["right"]["headers"]),
+		join_left_column=str(dual["join_left_column"]),
+		join_right_column=str(dual["join_right_column"]),
+	)
+	assert plan["confident"] is True
+	assert plan["operation"] == "join_lookup"
+	assert plan.get("table_count") == 2
+
+	ex = execute_dual_table_query(
+		plan,
+		left=dual["left"],
+		right=dual["right"],
+		collect_evidence_indices=True,
+	)
+	assert ex["ok"] is True
+	assert ex["operation"] == "join_lookup"
+	assert "机房A-01" in str(ex.get("answer_text") or "")
+	assert "2026-03-01" in str(ex.get("answer_text") or "")
+	joined = ex["matched_rows"][0]
+	assert joined.get("安装位置") == "机房A-01" or "机房A-01" in str(joined)
+	assert "2026-03-01" in str(joined)
+
+	enriched, meta = citations_with_dual_matched_evidence(
+		citations,
+		left=dual["left"],
+		right=dual["right"],
+		execution=ex,
+	)
+	table_ids = {str(c.get("table_id")) for c in enriched if c.get("table_id")}
+	assert "inv-t1" in table_ids
+	assert "mnt-t1" in table_ids
+	assert meta.get("evidence_group_count", 0) >= 2
+	# 单表 plan 即使自信也不应挡住双表验收：双表必须真正用上两侧 store
+	assert single_plan.get("operation") in {"lookup", "fallback", "join_lookup"}
+
+
+def test_dual_table_without_join_key_declines() -> None:
+	"""无共享关联列时拒绝双表，不得硬拼。"""
+	citations = [
+		{
+			"record_type": "table",
+			"doc_id": "doc-a",
+			"document_version_id": "v1",
+			"table_id": "t-a",
+			"headers": ["品名", "颜色"],
+			"rows": [["苹果", "红"]],
+			"row_start": 0,
+			"row_end": 0,
+			"table_row_count": 1,
+			"score": 0.9,
+		},
+		{
+			"record_type": "table",
+			"doc_id": "doc-b",
+			"document_version_id": "v1",
+			"table_id": "t-b",
+			"headers": ["城市", "气温"],
+			"rows": [["上海", "30"]],
+			"row_start": 0,
+			"row_end": 0,
+			"table_row_count": 1,
+			"score": 0.88,
+		},
+	]
+
+	def _load(*, doc_id: str, table_id: str, **_kwargs):
+		return [
+			item
+			for item in citations
+			if item["doc_id"] == doc_id and item["table_id"] == table_id
+		]
+
+	dual = prepare_dual_tables_for_execute(
+		citations,
+		load_table_groups=_load,
+		question="按设备号关联两张表查品名和气温",
+	)
+	assert dual is None
+
+
+def test_dual_table_store_incomplete_fails_closed() -> None:
+	"""一侧 store 缺组 → 双表 complete=False，不得半边拼答案。"""
+	citations = _dual_inventory_maintenance_citations()
+
+	def _load(*, doc_id: str, table_id: str, **_kwargs):
+		if table_id == "mnt-t1":
+			return []  # incomplete
+		return [
+			item
+			for item in citations
+			if item["doc_id"] == doc_id and item["table_id"] == table_id
+		]
+
+	dual = prepare_dual_tables_for_execute(
+		citations,
+		load_table_groups=_load,
+		question="设备号 GW-01 的安装位置和最近检修日期分别是什么？",
+	)
+	assert dual is None or dual.get("complete") is False
 

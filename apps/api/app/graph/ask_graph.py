@@ -41,11 +41,15 @@ from app.services.retrieval_plan import build_retrieval_plan
 from app.services.runtime import RuntimeCapability, resolve_runtime
 from app.services.session_memory import SessionMemory, default_session_memory
 from app.services.table_query import (
+	build_dual_table_query_plan,
 	build_table_query_plan,
 	citations_for_table_overview,
+	citations_with_dual_matched_evidence,
 	citations_with_matched_evidence,
+	execute_dual_table_query,
 	execute_table_query,
 	looks_like_numeric_table_query,
+	prepare_dual_tables_for_execute,
 	prepare_table_for_execute,
 	table_instance_key,
 )
@@ -613,10 +617,168 @@ def build_ask_graph(
 		}
 
 	def table_execute_node(state: AskState) -> AskState:
-		"""定位表实例 → 全表加载 → 代码侧过滤/聚合；缺组/不确定 → clarify。"""
+		"""定位表实例 → 全表加载 → 代码侧过滤/聚合；缺组/不确定 → clarify。
+
+		MVP 双表：若同库两表可等值 join 且计划自信，则读两份 store 再算；
+		否则回退既有单表路径。
+		"""
 		t_load0 = time.perf_counter()
 		citations = list(state.get("citations") or [])
 		question = state.get("question") or ""
+
+		dual_payload = prepare_dual_tables_for_execute(
+			citations,
+			load_table_groups=load_table_groups_fn,
+			library_id=state.get("library_id"),
+			question=question,
+		)
+		dual_plan: dict[str, Any] | None = None
+		if dual_payload and dual_payload.get("complete"):
+			dual_plan = build_dual_table_query_plan(
+				question,
+				left_headers=list(dual_payload["left"].get("headers") or []),
+				right_headers=list(dual_payload["right"].get("headers") or []),
+				join_left_column=str(dual_payload.get("join_left_column") or ""),
+				join_right_column=str(dual_payload.get("join_right_column") or ""),
+			)
+
+		use_dual = bool(
+			dual_payload
+			and dual_payload.get("complete")
+			and dual_plan
+			and dual_plan.get("confident")
+			and dual_plan.get("operation") == "join_lookup"
+		)
+
+		if use_dual and dual_payload is not None and dual_plan is not None:
+			load_ms = (time.perf_counter() - t_load0) * 1000
+			tq = dual_plan
+			merged = {
+				"complete": True,
+				"reason": dual_payload.get("reason") or "dual_equi_join",
+				"group_count": int(dual_payload["left"].get("group_count") or 0)
+				+ int(dual_payload["right"].get("group_count") or 0),
+				"load_source": "store",
+				"doc_id": dual_payload["left"].get("doc_id"),
+				"table_id": dual_payload["left"].get("table_id"),
+				"document_version_id": dual_payload["left"].get("document_version_id"),
+				"headers": list(dual_payload["left"].get("headers") or []),
+				"rows": [],
+				"table_quality": {},
+				"mode": "dual",
+				"left_table_id": dual_payload["left"].get("table_id"),
+				"right_table_id": dual_payload["right"].get("table_id"),
+			}
+			table_complete = True
+			t_exec0 = time.perf_counter()
+			execution = execute_dual_table_query(
+				tq,
+				left=dual_payload["left"],
+				right=dual_payload["right"],
+				collect_evidence_indices=True,
+			)
+			exec_ms = (time.perf_counter() - t_exec0) * 1000
+			# 双表临时证据字段：选完 citation 后再丢弃
+			_ = execution.pop("_evidence_row_indices", None)
+			left_evidence = list(execution.pop("_evidence_left_row_indices", []) or [])
+			right_evidence = list(execution.pop("_evidence_right_row_indices", []) or [])
+			# 供 citations helper 从 matched_rows 恢复两侧行号
+			execution["_evidence_left_row_indices"] = left_evidence
+			execution["_evidence_right_row_indices"] = right_evidence
+
+			def _with_table_stages(debug: dict[str, Any]) -> dict[str, Any]:
+				append_stage(
+					debug,
+					name="table_load",
+					duration_ms=load_ms,
+					ok=True,
+					detail={
+						"load_source": "store",
+						"complete": True,
+						"mode": "dual",
+						"left_table_id": dual_payload["left"].get("table_id"),
+						"right_table_id": dual_payload["right"].get("table_id"),
+						"join_left_column": dual_payload.get("join_left_column"),
+						"join_right_column": dual_payload.get("join_right_column"),
+					},
+				)
+				matched_count = execution.get("matched_count")
+				if matched_count is None and isinstance(
+					execution.get("matched_rows"), list
+				):
+					matched_count = len(execution["matched_rows"])
+				append_stage(
+					debug,
+					name="table_execute",
+					duration_ms=exec_ms,
+					ok=bool(execution.get("ok")),
+					detail={
+						"operation": execution.get("operation"),
+						"ok": bool(execution.get("ok")),
+						"matched_count": matched_count,
+						"mode": "dual",
+						"table_count": 2,
+					},
+				)
+				return debug
+
+			enriched = [dict(item) for item in citations]
+			for row in enriched:
+				rt = str(row.get("record_type") or "")
+				if rt not in {"table", "table_summary"}:
+					row["record_type"] = "table"
+
+			if execution.get("ok") and tq.get("confident"):
+				enriched, evidence_meta = citations_with_dual_matched_evidence(
+					enriched,
+					left=dual_payload["left"],
+					right=dual_payload["right"],
+					execution=execution,
+				)
+				execution.update(evidence_meta)
+			execution.pop("_evidence_left_row_indices", None)
+			execution.pop("_evidence_right_row_indices", None)
+
+			can_execute = bool(
+				execution.get("ok") and tq.get("confident") and table_complete
+			)
+			must_compute = bool(
+				looks_like_numeric_table_query(question)
+				and not looks_like_table_summary_lookup(question)
+			)
+			table_load = {
+				"complete": table_complete,
+				"reason": merged.get("reason"),
+				"group_count": merged.get("group_count"),
+				"load_source": "store",
+				"mode": "dual",
+				"doc_id": merged.get("doc_id"),
+				"table_id": merged.get("table_id"),
+				"left_table_id": dual_payload["left"].get("table_id"),
+				"right_table_id": dual_payload["right"].get("table_id"),
+			}
+
+			if can_execute:
+				return {
+					"table_query_plan": tq,
+					"table_execution": execution,
+					"citations": enriched,
+					"downgrade_reason": None,
+					"retrieval_debug": _with_table_stages(
+						_merge_debug(
+							state,
+							table_query_plan=tq,
+							table_execution=execution,
+							table_load=table_load,
+							downgrade_reason=None,
+							precise_gate="execute",
+						)
+					),
+				}
+
+			# 双表尝试失败：不在此硬拒，落入下方单表路径再判定
+			# （避免互补误判时误杀单表可答问题）
+
 		merged = prepare_table_for_execute(
 			citations,
 			load_table_groups=load_table_groups_fn,
