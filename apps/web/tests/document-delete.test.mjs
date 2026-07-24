@@ -42,3 +42,9 @@ test("buildDocumentDeletePayload defaults empty arrays", () => {
 	assert.deepEqual(payload.generation_ids, []);
 	assert.equal(payload.library_delete, false);
 });
+
+test("delete idempotency key is stable for alreadyQueued reassert", () => {
+	const key = documentDeleteIdempotencyKey("same-doc");
+	assert.equal(key, documentDeleteIdempotencyKey("same-doc"));
+	assert.match(key, /^document\.delete:same-doc:/);
+});

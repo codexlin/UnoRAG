@@ -33,6 +33,64 @@ type Tx = {
 	delete: (...args: any[]) => any;
 };
 
+/** Cancel open ingest jobs and mark versions deleting (idempotent re-assert). */
+async function reassertDocumentDeletingSideEffects(
+	tx: Tx,
+	documentId: string,
+	now: Date,
+): Promise<void> {
+	const versions = await tx
+		.select({
+			id: documentVersions.id,
+		})
+		.from(documentVersions)
+		.where(eq(documentVersions.documentId, documentId));
+	const versionIds = versions.map((version: { id: string }) => version.id);
+	if (versionIds.length === 0) return;
+
+	await tx
+		.update(jobs)
+		.set({
+			status: "cancelled",
+			stage: "done",
+			finishedAt: now,
+			cancelRequestedAt: now,
+			updatedAt: now,
+			errorCode: "document_deleting",
+			error: "cancelled because document is being deleted",
+		})
+		.where(
+			and(
+				inArray(jobs.documentVersionId, versionIds),
+				inArray(jobs.status, ["queued", "retry"]),
+				eq(jobs.type, "document.ingest"),
+			),
+		);
+	await tx
+		.update(jobs)
+		.set({
+			status: "cancelling",
+			cancelRequestedAt: now,
+			updatedAt: now,
+		})
+		.where(
+			and(
+				inArray(jobs.documentVersionId, versionIds),
+				inArray(jobs.status, ["running", "cancelling"]),
+				eq(jobs.type, "document.ingest"),
+			),
+		);
+	await tx
+		.update(documentVersions)
+		.set({ status: "deleting", updatedAt: now })
+		.where(
+			and(
+				eq(documentVersions.documentId, documentId),
+				ne(documentVersions.status, "deleted"),
+			),
+		);
+}
+
 /** Mark document deleting and enqueue a document.delete job (idempotent). */
 export async function enqueueDocumentDelete(input: {
 	tx: Tx;
@@ -71,12 +129,23 @@ export async function enqueueDocumentDelete(input: {
 		)
 		.limit(1);
 	if (existingJob) {
+		// Re-assert tombstone side effects: a prior enqueue may have raced with
+		// a late ingest claim, or document status may have been cleared.
+		await reassertDocumentDeletingSideEffects(tx, document.id, now);
 		if (document.status !== "deleting") {
 			await tx
 				.update(documents)
 				.set({
 					status: "deleting",
 					deletedAt: document.deletedAt ?? now,
+					latestJobId: existingJob.id,
+					updatedAt: now,
+				})
+				.where(eq(documents.id, document.id));
+		} else if (document.latestJobId !== existingJob.id) {
+			await tx
+				.update(documents)
+				.set({
 					latestJobId: existingJob.id,
 					updatedAt: now,
 				})
@@ -98,51 +167,8 @@ export async function enqueueDocumentDelete(input: {
 		})
 		.from(documentVersions)
 		.where(eq(documentVersions.documentId, document.id));
-	const versionIds = versions.map((version: { id: string }) => version.id);
 
-	if (versionIds.length > 0) {
-		await tx
-			.update(jobs)
-			.set({
-				status: "cancelled",
-				stage: "done",
-				finishedAt: now,
-				cancelRequestedAt: now,
-				updatedAt: now,
-				errorCode: "document_deleting",
-				error: "cancelled because document is being deleted",
-			})
-			.where(
-				and(
-					inArray(jobs.documentVersionId, versionIds),
-					inArray(jobs.status, ["queued", "retry"]),
-					eq(jobs.type, "document.ingest"),
-				),
-			);
-		await tx
-			.update(jobs)
-			.set({
-				status: "cancelling",
-				cancelRequestedAt: now,
-				updatedAt: now,
-			})
-			.where(
-				and(
-					inArray(jobs.documentVersionId, versionIds),
-					inArray(jobs.status, ["running", "cancelling"]),
-					eq(jobs.type, "document.ingest"),
-				),
-			);
-		await tx
-			.update(documentVersions)
-			.set({ status: "deleting", updatedAt: now })
-			.where(
-				and(
-					eq(documentVersions.documentId, document.id),
-					ne(documentVersions.status, "deleted"),
-				),
-			);
-	}
+	await reassertDocumentDeletingSideEffects(tx, document.id, now);
 
 	const jobId = randomUUID();
 	const storageKeys: string[] = [
