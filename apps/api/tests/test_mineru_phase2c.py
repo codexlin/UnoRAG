@@ -90,6 +90,75 @@ def test_official_mineru_http_contract(monkeypatch: pytest.MonkeyPatch) -> None:
 	assert captured["data"]["response_format_zip"] == "false"
 
 
+def test_mineru_unreachable_is_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+	def fake_post(url: str, **_kwargs) -> httpx.Response:
+		raise httpx.ConnectError(
+			"[Errno 61] Connection refused",
+			request=httpx.Request("POST", url),
+		)
+
+	monkeypatch.setattr("app.services.ingest.backends.mineru.httpx.post", fake_post)
+	with pytest.raises(MinerUClientError) as exc_info:
+		_post_multipart(
+			"http://127.0.0.1:6006/file_parse",
+			filename="sample.pdf",
+			content=b"%PDF",
+			timeout_s=5,
+		)
+	assert exc_info.value.code == "mineru_unreachable"
+	assert exc_info.value.retryable is False
+
+
+def test_auto_degrades_to_pymupdf_when_mineru_unreachable(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""Upgrade path + unreachable MinerU must degrade to PyMuPDF, not retry-loop."""
+	import fitz
+
+	doc = fitz.open()
+	page = doc.new_page()
+	page.insert_text((72, 72), "Supplier quote table page with extractable text.", fontsize=12)
+	content = doc.tobytes()
+	doc.close()
+
+	class UnreachableMinerU:
+		name = "mineru"
+		version = "test"
+
+		def parse(self, request: ParseRequest):
+			raise MinerUClientError(
+				"MinerU unreachable: [Errno 61] Connection refused",
+				code="mineru_unreachable",
+				retryable=False,
+			)
+
+	monkeypatch.setattr(
+		"app.services.ingest.parsers.pdf_route.should_upgrade_to_mineru",
+		lambda _ir: True,
+	)
+	monkeypatch.setattr(
+		"app.services.ingest.parsers.pdf_route.probe_needs_mineru",
+		lambda _content: True,
+	)
+
+	ir = parse_pdf_routed(
+		content=content,
+		filename="crosstable-like.pdf",
+		title="table",
+		settings=Settings(
+			mineru_enabled=True,
+			mineru_mode="auto",
+			ask_mode="stub",
+			metadata_backend="json",
+		),
+		mineru_backend=UnreachableMinerU(),
+	)
+	assert ir.nodes
+	assert ir.parser_report.partial is True
+	assert ir.parser_report.metrics.get("route") == "pymupdf_degrade"
+	assert any("degraded to PyMuPDF" in w for w in ir.parser_report.warnings)
+
+
 @pytest.mark.parametrize(
 	("status", "code", "retryable"),
 	[

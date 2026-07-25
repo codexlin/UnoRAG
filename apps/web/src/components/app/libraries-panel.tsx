@@ -16,6 +16,7 @@ import {
 } from "@/components/app/library-doc-actions";
 import { useSession } from "@/components/app/session-provider";
 import { filterByCap } from "@/lib/client-permissions";
+import { TERMINAL_JOB_STATUSES } from "@/lib/document-lifecycle-contract";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -954,7 +955,9 @@ export function LibrariesPanel() {
 													</TableCell>
 													<TableCell>
 														<DocStatusBadge status={doc.status} />
-														{doc.job_stage ? (
+														{doc.job_stage &&
+														doc.job_status &&
+														!TERMINAL_JOB_STATUSES.has(doc.job_status) ? (
 															<span className="text-meta mt-1 block font-mono text-muted-foreground">
 																{doc.job_stage}
 																{doc.job_progress != null

@@ -96,7 +96,8 @@ MIGRATOR_DATABASE_URL=postgresql://... \
 | error_code | Job 行为 |
 |---|---|
 | `mineru_soft_timeout` / `mineru_rate_limited` | 立刻还槽 + retry（较长退避） |
-| `mineru_timeout` / `mineru_service_error` / `mineru_unreachable` / `mineru_invalid_response` | retry → dead |
+| `mineru_timeout` / `mineru_service_error` / `mineru_invalid_response` | auto 且已有 PyMuPDF 节点 → degrade 继续 ingest；否则 retry → dead |
+| `mineru_unreachable` | auto 且已有 PyMuPDF 节点 → degrade；否则 **failed（不重试）** |
 | `mineru_request_rejected` / `mineru_not_configured` | failed，不重试 |
 
 ## 测试与样例

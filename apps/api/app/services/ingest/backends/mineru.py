@@ -106,9 +106,12 @@ def _post_multipart(
 			timeout_kind="hard" if code == "mineru_timeout" else None,
 		) from exc
 	except httpx.RequestError as exc:
+		# Connection refused / DNS / reset：服务未开或不可达，fail-closed 不重试。
+		# auto 路由在已有 PyMuPDF 节点时会 degrade；无节点则 job 直接 failed。
 		raise MinerUClientError(
 			f"MinerU unreachable: {exc}",
 			code="mineru_unreachable",
+			retryable=False,
 		) from exc
 
 

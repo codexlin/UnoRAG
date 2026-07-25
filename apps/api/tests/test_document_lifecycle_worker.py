@@ -508,6 +508,15 @@ def test_source_integrity_errors_are_permanent() -> None:
 			False,
 			"mineru_request_rejected",
 		),
+		(
+			MinerUClientError(
+				"MinerU unreachable: [Errno 61] Connection refused",
+				code="mineru_unreachable",
+				retryable=False,
+			),
+			False,
+			"mineru_unreachable",
+		),
 	],
 )
 def test_mineru_error_classification(

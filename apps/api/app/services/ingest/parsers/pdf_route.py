@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 PdfRouteMode = Literal["auto", "pymupdf", "mineru"]
 
+# Soft-timeout / 429：必须上抛以便 worker 还 MinerU 槽并做长退避。
+# 其余 MinerU 错误在 auto 模式且已有 PyMuPDF 节点时按 ADR degrade，禁止重试死循环。
+_MINERU_SLOT_RETRY_CODES = frozenset({"mineru_soft_timeout", "mineru_rate_limited"})
+
 
 def should_upgrade_to_mineru(ir: DocumentIR) -> bool:
 	"""PyMuPDF 结果含扫描/失败/VLM 待处理页，或完全无节点时，应尝试 MinerU。"""
@@ -239,10 +243,19 @@ def parse_pdf_routed(
 		mineru_ir.meta["parser_version"] = mineru_ir.parser_report.parser_version
 		return mineru_ir
 	except MinerUClientError as exc:
-		logger.warning("mineru.degrade filename=%s err=%s", filename, exc)
+		logger.warning(
+			"mineru.degrade filename=%s err=%s code=%s retryable=%s nodes=%s",
+			filename,
+			exc,
+			exc.code,
+			exc.retryable,
+			len(pymupdf_ir.nodes),
+		)
 		_attach_parser_report(exc, pymupdf_ir)
-		if exc.retryable:
+		# 临时容量压力：还槽 + job 级重试（即使已有 PyMuPDF 节点）。
+		if exc.code in _MINERU_SLOT_RETRY_CODES:
 			raise
+		# ADR 0002：有 PyMuPDF 节点 → partial degrade；无节点 → 上抛（由 job 收尾）。
 		if pymupdf_ir.nodes:
 			report = pymupdf_ir.parser_report
 			report.partial = True
@@ -250,6 +263,7 @@ def parse_pdf_routed(
 			report.notes = (report.notes or "") + f"; mineru_degrade={exc}"
 			report.metrics["route"] = "pymupdf_degrade"
 			report.metrics["mineru_error"] = str(exc)
+			report.metrics["mineru_error_code"] = exc.code
 			_stamp_latency(pymupdf_ir, t0)
 			return pymupdf_ir
 		raise
