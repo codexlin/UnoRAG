@@ -11,6 +11,7 @@
 |---|---|
 | [`../runbooks/pilot-acceptance.md`](../runbooks/pilot-acceptance.md) | 试点执行 runbook（顺序、SLO、故障演练、结论） |
 | [`pilot-go-no-go-template.md`](./pilot-go-no-go-template.md) | 版本化验收报告 + go/no-go 填空模板 |
+| [`reports/2026-07-25-local-hybrid-pilot.md`](./reports/2026-07-25-local-hybrid-pilot.md) | 本机混合拓扑试点记录（**条件 GO**，非 production-ready） |
 | [`production-ready-checklist.md`](./production-ready-checklist.md) | 宣称 production-ready 前的定义清单 |
 | [`backup-restore-verification.md`](./backup-restore-verification.md) | 绑定 L8 `backup.sh` / `restore.sh` 的恢复验收 |
 | [`../runbooks/quality-release-gates.md`](../runbooks/quality-release-gates.md) | L7 质量门禁（隔离 fuse 必过） |
