@@ -45,8 +45,9 @@
 
 | 现状 | 说明 |
 |------|------|
-| 已实现 | 内部 Data Plane：`POST /v1/ask`、`/v1/ask/stream`；浏览器经 Next BFF；HMAC 内部鉴权 |
-| 规划中 | 面向外部助手的 service key、稳定 retrieve 契约、MCP；见 [INTEGRATION.md](./INTEGRATION.md) |
+| 已实现 | 内部 Data Plane：`POST /v1/ask`、`/v1/ask/stream`、`POST /v1/retrieve`；浏览器经 Next BFF；HMAC 内部鉴权 |
+| 已实现（MVP） | 对外模式 B：工作区 service key + `POST /api/v1/retrieve` · `/api/v1/ask`（Bearer `mk_svc_…`）；见 [INTEGRATION.md](./INTEGRATION.md) |
+| 规划中 | OpenAPI/错误码版本化、MCP、OAuth-for-apps |
 
 模式 B 的产品承诺是「有据检索与问答能力可被调用」，不是「再做一个通用 Agent 框架」。
 

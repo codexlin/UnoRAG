@@ -19,6 +19,8 @@ test("BFF RAG HMAC context uses session tenant/workspace UUIDs", () => {
 	assert.match(contextSrc, /tenant_id:\s*identity\.tenantId/);
 	assert.match(contextSrc, /workspace_id:\s*identity\.workspaceId/);
 	assert.match(contextSrc, /principal_id:\s*identity\.principalId/);
+	assert.match(contextSrc, /auth_source:\s*authSource/);
+	assert.match(contextSrc, /"session"\s*\|\s*"service"/);
 	assert.doesNotMatch(contextSrc, /tenant_id:\s*["']default["']/);
 	assert.doesNotMatch(contextSrc, /workspace_id:\s*["']default["']/);
 

@@ -212,6 +212,47 @@ export const workspaceSettings = appSchema.table("workspace_settings", {
 	...timestamps,
 });
 
+/**
+ * Workspace-scoped service API keys for Mode B (external retrieve/ask).
+ * Raw key is returned once at create; only sha256 hash is stored.
+ */
+export const workspaceServiceKeys = appSchema.table(
+	"workspace_service_keys",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		workspaceId: uuid("workspace_id")
+			.notNull()
+			.references(() => workspaces.id, { onDelete: "cascade" }),
+		name: varchar("name", { length: 128 }).notNull(),
+		/** First characters of raw key for UI display (e.g. mk_svc_ab12…). */
+		prefix: varchar("prefix", { length: 24 }).notNull(),
+		/** sha256 hex of the raw key. */
+		keyHash: varchar("key_hash", { length: 64 }).notNull(),
+		/** Allowed scopes, e.g. ["ask","retrieve"]. */
+		scopes: jsonb("scopes").$type<string[]>().notNull(),
+		/**
+		 * Optional allow-list of rag library ids. Empty/null = all libraries in workspace.
+		 */
+		libraryIds: jsonb("library_ids").$type<string[] | null>(),
+		createdBy: uuid("created_by").references(() => users.id, {
+			onDelete: "set null",
+		}),
+		revokedAt: timestamp("revoked_at", { withTimezone: true }),
+		lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+		...timestamps,
+	},
+	(table) => [
+		uniqueIndex("workspace_service_keys_key_hash_uq").on(table.keyHash),
+		index("workspace_service_keys_workspace_idx").on(
+			table.workspaceId,
+			table.createdAt,
+		),
+	],
+);
+
 export const libraries = appSchema.table(
 	"libraries",
 	{

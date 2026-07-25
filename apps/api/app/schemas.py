@@ -160,6 +160,27 @@ class AskRequest(BaseModel):
 	ask_overrides: dict[str, object] | None = None
 
 
+class RetrieveRequest(BaseModel):
+	"""Evidence-only retrieval for Mode B (no answer generation)."""
+
+	query: str = Field(min_length=1, max_length=4000)
+	library_id: str = Field(min_length=1, max_length=128)
+	top_k: int | None = Field(default=None, ge=1, le=50)
+	filters: dict[str, object] | None = None
+	# Workspace product knobs for this request only (unset keys → code ASK_DEFAULTS).
+	ask_overrides: dict[str, object] | None = None
+
+
+class RetrieveResponse(BaseModel):
+	query: str
+	library_id: str
+	citations: list[Citation]
+	refused: bool = False
+	refuse_reason: str | None = None
+	retrieval_mode: str = "dense"
+	retrieval_debug: dict[str, object] = Field(default_factory=dict)
+
+
 class AskResponse(BaseModel):
 	session_id: str
 	thread_id: str | None = None

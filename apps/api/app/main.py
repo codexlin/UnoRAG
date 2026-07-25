@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import archive, ask, health, libraries
+from app.routers import archive, ask, health, libraries, retrieve
 from app.security.internal_context import InternalBodyDigestMiddleware, require_internal_context
 from app.services.active_generations import probe_active_generation_store
 from app.services.metadata import get_metadata_store, probe_metadata_store, reset_metadata_store
@@ -63,6 +63,11 @@ def create_app() -> FastAPI:
 	internal_dependencies = [Depends(require_internal_context)]
 	application.include_router(
 		ask.router,
+		prefix=settings.api_prefix,
+		dependencies=internal_dependencies,
+	)
+	application.include_router(
+		retrieve.router,
 		prefix=settings.api_prefix,
 		dependencies=internal_dependencies,
 	)

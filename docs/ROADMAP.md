@@ -76,7 +76,7 @@
 
 | 项 | 模式 | 说明 |
 |----|------|------|
-| Service key + 外部 retrieve/ask 契约 | B | 见 [INTEGRATION.md](./INTEGRATION.md)；与内部 HMAC 分离 |
+| Service key + 外部 retrieve/ask 契约 | B | **MVP 已落地（方案 A）**：`mk_svc_` + `/api/v1/retrieve|ask`；见 [INTEGRATION.md](./INTEGRATION.md)。后续：OpenAPI/错误码硬化、流式对外、MCP |
 | 稳定 OpenAPI / 错误码 / 引用 schema 版本化 | B | 客户集成合同 |
 | MCP 适配（后置） | B | 在 HTTP 契约稳定后薄封装，不先做工具市场 |
 | 表格 / 受限多步加强 | A+B | 在现有 table path 上加深，不做开放工具生态 |
@@ -100,11 +100,11 @@
 | 维度 | 模式 A（完整助手） | 模式 B（RAG 嵌入） |
 |------|-------------------|-------------------|
 | UI | MeriKnow Northline 工作台 | 客户自有 Chat/Agent UI |
-| 身份 | Session + 工作区成员 | Service key / 未来 OAuth-for-apps（规划） |
-| 入库 | 控制面文库 UI + lifecycle | 可复用同一入库，或客户只读已有库（规划） |
-| 问答 | `/app/ask` → BFF → `/v1/ask` | 直连（内网）或网关后的 retrieve/ask |
+| 身份 | Session + 工作区成员 | Service key（`mk_svc_`）；OAuth-for-apps 仍规划 |
+| 入库 | 控制面文库 UI + lifecycle | 可复用同一入库，或客户只读已有库 |
+| 问答 | `/app/ask` → BFF → `/v1/ask` | `/api/v1/retrieve` · `/api/v1/ask`（Bearer）→ 内网 FastAPI |
 | Agent 运行时 | 我们的 Ask 图即可 | **不要求**使用我们的 Agent/工具生态 |
-| 当前可用性 | **主路径可用** | **内部能力可用，对外契约规划中** |
+| 当前可用性 | **主路径可用** | **对外 HTTP MVP 可用**；MCP / OpenAPI 版本化仍规划 |
 
 ## 明确不做（路线图纪律）
 
