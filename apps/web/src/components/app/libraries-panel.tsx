@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { AuthButton } from "@/components/app/auth-button";
 import { Can, useCan } from "@/components/app/can";
+import { DocumentAclDialog } from "@/components/app/document-acl-dialog";
 import { useIngestJobs } from "@/components/app/ingest-jobs-provider";
 import {
 	buildDetailActions,
@@ -164,6 +165,7 @@ export function LibrariesPanel() {
 	const [lastUploadMs, setLastUploadMs] = useState<number | null>(null);
 	const [detailDocId, setDetailDocId] = useState<string | null>(null);
 	const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
+	const [aclDoc, setAclDoc] = useState<ApiDocument | null>(null);
 	const [replaceDoc, setReplaceDoc] = useState<ApiDocument | null>(null);
 	const [replaceFile, setReplaceFile] = useState<File | null>(null);
 	const [replacing, setReplacing] = useState(false);
@@ -652,6 +654,7 @@ export function LibrariesPanel() {
 	const detailActions = filterByCap(
 		caps,
 		buildDetailActions({
+			onAcl: (doc) => setAclDoc(doc),
 			onReplace: startReplace,
 			onReindex: (doc) => {
 				void onReindex(doc);
@@ -916,6 +919,7 @@ export function LibrariesPanel() {
 												busy,
 												processing,
 												onView: (item) => setDetailDocId(item.id),
+												onAcl: (item) => setAclDoc(item),
 												onReplace: startReplace,
 												onReindex: (item) => {
 													void onReindex(item);
@@ -1234,6 +1238,20 @@ export function LibrariesPanel() {
 					) : null}
 				</SheetContent>
 			</Sheet>
+
+			<DocumentAclDialog
+				open={aclDoc != null}
+				libraryId={selectedId || null}
+				doc={aclDoc}
+				onOpenChange={(next) => {
+					if (!next) setAclDoc(null);
+				}}
+				onProjected={(item) => {
+					trackProcessing([{ id: item.id, name: item.name }]);
+					void loadLibraries();
+					if (selectedId) void loadDocuments(selectedId);
+				}}
+			/>
 
 			{/* 删除确认 */}
 			<AlertDialog

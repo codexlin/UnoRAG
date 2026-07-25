@@ -7,6 +7,7 @@ import {
 	Eye,
 	Replace,
 	RotateCcw,
+	Shield,
 	Trash2,
 } from "lucide-react";
 
@@ -18,6 +19,7 @@ export type DocActionContext = {
 	busy: boolean;
 	processing: boolean;
 	onView: (doc: ApiDocument) => void;
+	onAcl: (doc: ApiDocument) => void;
 	onReplace: (doc: ApiDocument) => void;
 	onReindex: (doc: ApiDocument) => void;
 	onCancelJob: (doc: ApiDocument) => void;
@@ -45,6 +47,14 @@ const DOC_ACTIONS: DocAction[] = [
 		label: "查看",
 		icon: Eye,
 		run: (doc, ctx) => ctx.onView(doc),
+	},
+	{
+		id: "acl",
+		cap: "writeLibraries",
+		label: "谁可见",
+		icon: Shield,
+		disabled: (_doc, ctx) => ctx.busy,
+		run: (doc, ctx) => ctx.onAcl(doc),
 	},
 	{
 		id: "replace",
@@ -130,12 +140,22 @@ export type DetailAction = {
 };
 
 export function buildDetailActions(input: {
+	onAcl: (doc: ApiDocument) => void;
 	onReplace: (doc: ApiDocument) => void;
 	onReindex: (doc: ApiDocument) => void;
 	onDownload: (doc: ApiDocument) => void;
 	onDelete: (doc: ApiDocument) => void;
 }): DetailAction[] {
 	return [
+		{
+			id: "acl",
+			cap: "writeLibraries",
+			label: "谁可见",
+			icon: Shield,
+			variant: "outline",
+			disabled: (_doc, busy) => busy,
+			run: input.onAcl,
+		},
 		{
 			id: "replace",
 			cap: "writeLibraries",

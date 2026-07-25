@@ -65,7 +65,7 @@
 | 试点 go/no-go 签字 | A | 验收包已就绪；缺真实环境演练与书面 GO（见 `docs/acceptance/`） |
 | Audit 页面或导出 | A | 设置页审计列表 + CSV 已落地（owner/admin）；后续硬化：actor/IP/UA 更完整、动作 i18n、异步大批量导出 |
 | Archive 字段硬化 | A | query type / plan / judge / 版本信息在档案侧更完整可观测 |
-| 文档 ACL 产品编辑 | A | 数据面过滤已有；控制面细粒度编辑 UI 仍弱 |
+| 文档 ACL 产品编辑 | A | 已落地：文库文档「谁可见」（workspace / 指定成员）；`app.document_acl` + 就绪文档保存后重索引投影；Ask 仍走 active generation + ACL。后续：轻量 set_payload 投影、group UI |
 | OIDC SSO | A | 本地密码 + 邀请已可用；企业 IdP 后置但需求强 |
 | SBOM / 镜像扫描流水线 | 运维 | Compose 已 pin tag；完整扫描后置 |
 | 控制面 E2E 补齐 | 工程 | 逐步替换遗留 FastAPI ingest 形状的测试依赖 |

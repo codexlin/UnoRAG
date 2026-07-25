@@ -491,6 +491,100 @@ export async function reindexDocument(input: {
 	return (await response.json()) as ApiUploadResponse;
 }
 
+export type ApiDocumentAclPrincipal = {
+	id: string;
+	label: string;
+	email?: string | null;
+	role?: string | null;
+};
+
+export type ApiDocumentAcl = {
+	library_id: string;
+	doc_id: string;
+	document_id: string;
+	scope: "workspace" | "restricted";
+	principals: ApiDocumentAclPrincipal[];
+	groups: ApiDocumentAclPrincipal[];
+	principal_ids: string[];
+	group_ids: string[];
+	projection:
+		| "none"
+		| "deferred_to_ingest"
+		| "reindex_required"
+		| "control_plane_only";
+	can_edit: boolean;
+	ok?: boolean;
+};
+
+export async function fetchDocumentAcl(input: {
+	libraryId: string;
+	docId: string;
+	signal?: AbortSignal;
+}): Promise<ApiDocumentAcl> {
+	const response = await fetch(
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents/${encodeURIComponent(input.docId)}/acl`,
+		{ method: "GET", cache: "no-store", signal: input.signal },
+	);
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `acl ${response.status}`);
+	}
+	return (await response.json()) as ApiDocumentAcl;
+}
+
+export async function updateDocumentAcl(input: {
+	libraryId: string;
+	docId: string;
+	scope: "workspace" | "restricted";
+	principalIds: string[];
+	groupIds?: string[];
+}): Promise<ApiDocumentAcl> {
+	const response = await fetch(
+		`/api/libraries/${encodeURIComponent(input.libraryId)}/documents/${encodeURIComponent(input.docId)}/acl`,
+		{
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				scope: input.scope,
+				principal_ids: input.principalIds,
+				group_ids: input.groupIds ?? [],
+			}),
+		},
+	);
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `acl update ${response.status}`);
+	}
+	return (await response.json()) as ApiDocumentAcl;
+}
+
+export type ApiWorkspaceMember = {
+	userId: string;
+	email: string | null;
+	displayName: string;
+	status: string;
+	role: string;
+};
+
+export async function fetchWorkspaceMembers(signal?: AbortSignal): Promise<{
+	members: ApiWorkspaceMember[];
+	can_manage: boolean;
+}> {
+	const response = await fetch("/api/workspace/members", {
+		method: "GET",
+		cache: "no-store",
+		signal,
+	});
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `members ${response.status}`);
+	}
+	return (await response.json()) as {
+		members: ApiWorkspaceMember[];
+		can_manage: boolean;
+	};
+}
+
 /** 用新文件创建文档新版本：保留旧 active generation，直到新 job 激活。 */
 export async function replaceDocument(input: {
 	libraryId: string;
