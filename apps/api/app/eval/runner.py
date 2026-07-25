@@ -151,7 +151,8 @@ _EVAL_ASK_OVERRIDES = {
 @contextmanager
 def _isolated_ask_settings():
 	"""隔离 eval 对环境、settings cache 和 metadata singleton 的修改。"""
-	from app.graph.ask_graph import AskGraphService
+	from app.graph.ask_graph import AskGraphService, stub_load_table_groups
+	from app.security.access_scope import AccessScope
 	from app.services.metadata import reset_metadata_store
 	from app.settings import get_settings
 
@@ -160,6 +161,7 @@ def _isolated_ask_settings():
 		"METADATA_BACKEND",
 		"METADATA_PATH",
 		"MAX_RETRIEVE_RETRIES",
+		"INTERNAL_AUTH_ENABLED",
 	)
 	previous = {key: os.environ.get(key) for key in keys}
 	with TemporaryDirectory(prefix="meriknow-eval-") as tmp_dir:
@@ -169,12 +171,20 @@ def _isolated_ask_settings():
 				"METADATA_BACKEND": "json",
 				"METADATA_PATH": str(Path(tmp_dir) / "metadata.json"),
 				"MAX_RETRIEVE_RETRIES": "0",
+				# Avoid host .env INTERNAL_AUTH_ENABLED=true requiring request scope.
+				"INTERNAL_AUTH_ENABLED": "false",
 			}
 		)
 		get_settings.cache_clear()
 		reset_metadata_store()
 		try:
-			yield AskGraphService(settings=get_settings())
+			settings = get_settings()
+			yield AskGraphService(
+				settings=settings,
+				access_scope=AccessScope.development(settings),
+				# Align with stub_retrieve / test_ask_route table shape.
+				load_table_groups_fn=stub_load_table_groups,
+			)
 		finally:
 			reset_metadata_store()
 			for key, value in previous.items():
@@ -670,20 +680,33 @@ def _run_ingest_http(case: EvalCase) -> EvalCaseResult:
 
 
 def run_eval_cases(path: Path | None = None) -> list[EvalCaseResult]:
-	cases = load_eval_cases(path)
-	results: list[EvalCaseResult] = []
-	for case in cases:
-		if case.kind == "classify":
-			results.append(_run_classify(case))
-		elif case.kind == "ingest_chunk":
-			results.append(_run_ingest_chunk(case))
-		elif case.kind == "retrieval":
-			results.append(_run_retrieval(case))
-		elif case.kind == "ingest_http":
-			results.append(_run_ingest_http(case))
+	"""跑黄金集；整段强制 INTERNAL_AUTH_ENABLED=false，避免宿主 .env 绊倒 gate。"""
+	from app.settings import get_settings
+
+	prev_auth = os.environ.get("INTERNAL_AUTH_ENABLED")
+	os.environ["INTERNAL_AUTH_ENABLED"] = "false"
+	get_settings.cache_clear()
+	try:
+		cases = load_eval_cases(path)
+		results: list[EvalCaseResult] = []
+		for case in cases:
+			if case.kind == "classify":
+				results.append(_run_classify(case))
+			elif case.kind == "ingest_chunk":
+				results.append(_run_ingest_chunk(case))
+			elif case.kind == "retrieval":
+				results.append(_run_retrieval(case))
+			elif case.kind == "ingest_http":
+				results.append(_run_ingest_http(case))
+			else:
+				results.append(_run_ask(case))
+		return results
+	finally:
+		if prev_auth is None:
+			os.environ.pop("INTERNAL_AUTH_ENABLED", None)
 		else:
-			results.append(_run_ask(case))
-	return results
+			os.environ["INTERNAL_AUTH_ENABLED"] = prev_auth
+		get_settings.cache_clear()
 
 
 def main(argv: list[str] | None = None) -> int:

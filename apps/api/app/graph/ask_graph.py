@@ -495,6 +495,41 @@ def stub_retrieve(
 	return hits
 
 
+def stub_load_table_groups(
+	*,
+	doc_id: str,
+	table_id: str,
+	document_version_id: str | None = None,
+	library_id: str | None = None,
+) -> list[dict[str, Any]]:
+	"""In-memory store aligned with stub_retrieve table hits (eval / ASK_MODE=stub).
+
+	Does not relax production fail-closed paths: live mode still requires a real store loader.
+	"""
+	if str(table_id) != "t1":
+		return []
+	headers = ["供应商", "总价"]
+	rows = [["甲公司", "120000"], ["乙公司", "80000"]]
+	return [
+		{
+			"id": "stub-g0",
+			"record_type": "table",
+			"doc_id": doc_id,
+			"document_version_id": document_version_id or "stub-version",
+			"library_id": library_id,
+			"table_id": table_id,
+			"title": "报价表",
+			"headers": headers,
+			"rows": rows,
+			"row_start": 0,
+			"row_end": 1,
+			"table_row_count": 2,
+			"score": 0.9,
+			"body": "供应商 | 总价\n甲公司 | 120000\n乙公司 | 80000",
+		}
+	]
+
+
 def stub_generate(
 	messages: list[dict[str, str]],
 	citations: list[dict[str, Any]],
@@ -1679,6 +1714,7 @@ class AskGraphService:
 		session_memory: SessionMemory | None = None,
 		retrieval_service: RetrievalService | None = None,
 		access_scope: AccessScope | None = None,
+		load_table_groups_fn: LoadTableGroupsFn | None = None,
 	) -> None:
 		self.settings = settings or get_settings()
 		self.capability = capability or resolve_runtime(self.settings)
@@ -1734,8 +1770,8 @@ class AskGraphService:
 		else:
 			self._generate = stub_generate
 
-		load_table_groups_fn: LoadTableGroupsFn | None = None
-		if self._retrieval_service is not None:
+		resolved_load_table_groups = load_table_groups_fn
+		if resolved_load_table_groups is None and self._retrieval_service is not None:
 			retrieval_for_table = self._retrieval_service
 
 			def _load_table_groups(
@@ -1752,10 +1788,14 @@ class AskGraphService:
 					library_id=library_id,
 				)
 
-			load_table_groups_fn = _load_table_groups
+			resolved_load_table_groups = _load_table_groups
+		elif resolved_load_table_groups is None and self.mode != "live":
+			# Stub retrieve returns table hits but has no Qdrant store; inject
+			# in-memory groups so prepare_table_for_execute is not no_store_loader.
+			resolved_load_table_groups = stub_load_table_groups
 
 		# Keep for iter_ask_events — it rebuilds the graph with a capture generate_fn.
-		self._load_table_groups_fn = load_table_groups_fn
+		self._load_table_groups_fn = resolved_load_table_groups
 
 		self._default_ask_settings = effective_ask_settings(self.settings)
 		self._graph = build_ask_graph(
@@ -1763,7 +1803,7 @@ class AskGraphService:
 			retrieve_fn=self._retrieve,
 			generate_fn=self._generate,
 			mode=self.mode,
-			load_table_groups_fn=load_table_groups_fn,
+			load_table_groups_fn=resolved_load_table_groups,
 			access_scope=self.access_scope,
 		)
 
