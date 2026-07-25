@@ -58,7 +58,18 @@ def test_sanitize_retrieval_debug_none() -> None:
 
 
 def test_archive_debug_endpoint_exposes_adjudicate_fields() -> None:
+	from app.settings import get_settings
+
 	lib_id = create_library(client, library_id="lib-archive-debug")
+	settings = get_settings()
+	thread = get_metadata_store().create_thread(
+		title="archive-debug",
+		session_id="archive-debug-sess",
+		library_id=lib_id,
+		tenant_id=settings.default_tenant_id,
+		workspace_id=settings.default_workspace_id,
+		principal_id="development",
+	)
 	question = "病假需要在几天内补交证明？"
 	ask = client.post(
 		"/v1/ask",
@@ -67,13 +78,17 @@ def test_archive_debug_endpoint_exposes_adjudicate_fields() -> None:
 			"question": question,
 			"library_id": lib_id,
 			"session_id": "archive-debug-sess",
+			"thread_id": thread["id"],
 		},
 	)
 	assert ask.status_code == 200
 	ask_debug = ask.json()["retrieval_debug"]
 	assert ask_debug["trace_id"] == "archive-debug-trace-1"
 
-	listed = client.get("/v1/archive", params={"session_id": "archive-debug-sess"})
+	listed = client.get(
+		"/v1/archive",
+		params={"session_id": "archive-debug-sess", "thread_id": thread["id"]},
+	)
 	assert listed.status_code == 200
 	rows = listed.json()
 	assert rows

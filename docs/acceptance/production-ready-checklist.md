@@ -3,7 +3,7 @@
 仅当下列各项均为 **是**，才可在对外材料中宣称 MeriKnow 某版本
 **production-ready**（私有化企业知识库）。
 
-本清单对齐路线图 §18「最终 Done 标准」与 L9 Done。勾选前须有证据
+本清单对齐 [`docs/ROADMAP.md`](../ROADMAP.md) 成功标准与 L9 Done。勾选前须有证据
 （报告、gate JSON、演练记录），而不是「代码看起来齐了」。
 
 ## A. 正确性
@@ -36,7 +36,7 @@
 - [ ] API / Web / PostgreSQL / Qdrant / 真实文件相关测试在发布流水线绿
 - [ ] production build 通过
 - [ ] migration 与 rollback/runbook 完整
-- [ ] 旧 ARQ ingest 与浏览器 FastAPI 写路径已退出生产默认路径
+- [ ] FastAPI ingest 写路径永久 410；生产仅 lifecycle_worker 入库（无 ARQ）
 - [ ] L7 CI gate 通过；release gate 按发布流程执行或书面豁免
 
 ## E. 交付（L8 + L9）

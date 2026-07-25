@@ -35,7 +35,8 @@ fi
 log "CI release gate (fuse / isolation hard stops)"
 REPORT="${MERIKNOW_GATE_REPORT:-/tmp/meriknow-pilot-preflight-gate.json}"
 set +e
-uv run python scripts/run_release_gates.py --mode ci \
+# Defensive: host .env may set INTERNAL_AUTH_ENABLED=true; eval isolates anyway.
+INTERNAL_AUTH_ENABLED=false uv run python scripts/run_release_gates.py --mode ci \
 	--baseline tests/eval/baselines/ci-deterministic.json \
 	--report-out "$REPORT"
 GATE_RC=$?

@@ -101,10 +101,10 @@ function parseSessionToken(token: string): SessionClaims | null {
 	}
 }
 
-async function hydrateIdentity(
+export async function hydrateIdentity(
 	principalId: string,
 	workspaceId: string,
-	provider: "local" | "oidc",
+	provider: "local" | "oidc" = "local",
 ): Promise<AuthIdentity | null> {
 	const db = getDatabase();
 	const [membership] = await db

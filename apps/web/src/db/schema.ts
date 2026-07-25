@@ -162,6 +162,97 @@ export const workspaceMembers = appSchema.table(
 	],
 );
 
+/** Magic-link invites: copy URL always; email send is optional (Resend/SMTP). */
+export const workspaceInvites = appSchema.table(
+	"workspace_invites",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		workspaceId: uuid("workspace_id")
+			.notNull()
+			.references(() => workspaces.id, { onDelete: "cascade" }),
+		email: varchar("email", { length: 320 }).notNull(),
+		role: varchar("role", { length: 32 }).default("viewer").notNull(),
+		/** sha256 hex of the raw magic token (raw token returned once at create). */
+		tokenHash: varchar("token_hash", { length: 64 }).notNull(),
+		status: varchar("status", { length: 32 }).default("pending").notNull(),
+		invitedBy: uuid("invited_by").references(() => users.id, {
+			onDelete: "set null",
+		}),
+		expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+		acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+		acceptedUserId: uuid("accepted_user_id").references(() => users.id, {
+			onDelete: "set null",
+		}),
+		lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+		...timestamps,
+	},
+	(table) => [
+		uniqueIndex("workspace_invites_token_hash_uq").on(table.tokenHash),
+		index("workspace_invites_workspace_email_idx").on(
+			table.workspaceId,
+			table.email,
+			table.status,
+		),
+		index("workspace_invites_workspace_created_idx").on(
+			table.workspaceId,
+			table.createdAt,
+		),
+	],
+);
+
+/** Per-workspace product knobs; unset keys fall back to code ASK_DEFAULTS. */
+export const workspaceSettings = appSchema.table("workspace_settings", {
+	workspaceId: uuid("workspace_id")
+		.primaryKey()
+		.references(() => workspaces.id, { onDelete: "cascade" }),
+	ask: jsonb("ask").$type<Record<string, unknown>>().default({}).notNull(),
+	...timestamps,
+});
+
+/**
+ * Workspace-scoped service API keys for Mode B (external retrieve/ask).
+ * Raw key is returned once at create; only sha256 hash is stored.
+ */
+export const workspaceServiceKeys = appSchema.table(
+	"workspace_service_keys",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		workspaceId: uuid("workspace_id")
+			.notNull()
+			.references(() => workspaces.id, { onDelete: "cascade" }),
+		name: varchar("name", { length: 128 }).notNull(),
+		/** First characters of raw key for UI display (e.g. mk_svc_ab12…). */
+		prefix: varchar("prefix", { length: 24 }).notNull(),
+		/** sha256 hex of the raw key. */
+		keyHash: varchar("key_hash", { length: 64 }).notNull(),
+		/** Allowed scopes, e.g. ["ask","retrieve"]. */
+		scopes: jsonb("scopes").$type<string[]>().notNull(),
+		/**
+		 * Optional allow-list of rag library ids. Empty/null = all libraries in workspace.
+		 */
+		libraryIds: jsonb("library_ids").$type<string[] | null>(),
+		createdBy: uuid("created_by").references(() => users.id, {
+			onDelete: "set null",
+		}),
+		revokedAt: timestamp("revoked_at", { withTimezone: true }),
+		lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+		...timestamps,
+	},
+	(table) => [
+		uniqueIndex("workspace_service_keys_key_hash_uq").on(table.keyHash),
+		index("workspace_service_keys_workspace_idx").on(
+			table.workspaceId,
+			table.createdAt,
+		),
+	],
+);
+
 export const libraries = appSchema.table(
 	"libraries",
 	{

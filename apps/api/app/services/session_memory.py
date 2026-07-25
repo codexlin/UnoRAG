@@ -3,11 +3,20 @@ from __future__ import annotations
 import threading
 from collections import defaultdict, deque
 
+# Working-memory window (complete Q/A turns). Code constant — not a workspace UI knob.
+WORKING_MEMORY_MAX_TURNS = 10
+# Soft char budget for generate history; drop oldest turns if exceeded (effect > token thrift).
+GENERATE_HISTORY_MAX_CHARS = 24_000
+
 
 class SessionMemory:
-	"""In-process short chat memory keyed by session_id (no Redis yet)."""
+	"""In-process short chat memory for temporary (non-archived) sessions.
 
-	def __init__(self, *, max_turns: int = 6) -> None:
+	Keyed by caller-provided session key (typically principal+workspace+session_id).
+	No Redis; process-local / lost on restart — intentional for default-temp chats.
+	"""
+
+	def __init__(self, *, max_turns: int = WORKING_MEMORY_MAX_TURNS) -> None:
 		self.max_turns = max(1, max_turns)
 		self._lock = threading.Lock()
 		self._messages: dict[str, deque[dict[str, str]]] = defaultdict(

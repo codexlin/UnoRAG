@@ -140,10 +140,19 @@ def _run_classify(case: EvalCase) -> EvalCaseResult:
 	)
 
 
+# Eval ask knobs: code defaults ⊕ these fixed overrides (never env).
+_EVAL_ASK_OVERRIDES = {
+	"session_memory_enabled": False,
+	"hybrid_enabled": False,
+	"rerank_enabled": False,
+}
+
+
 @contextmanager
 def _isolated_ask_settings():
 	"""隔离 eval 对环境、settings cache 和 metadata singleton 的修改。"""
-	from app.graph.ask_graph import AskGraphService
+	from app.graph.ask_graph import AskGraphService, stub_load_table_groups
+	from app.security.access_scope import AccessScope
 	from app.services.metadata import reset_metadata_store
 	from app.settings import get_settings
 
@@ -151,10 +160,8 @@ def _isolated_ask_settings():
 		"ASK_MODE",
 		"METADATA_BACKEND",
 		"METADATA_PATH",
-		"SESSION_MEMORY_ENABLED",
-		"HYBRID_ENABLED",
-		"RERANK_ENABLED",
 		"MAX_RETRIEVE_RETRIES",
+		"INTERNAL_AUTH_ENABLED",
 	)
 	previous = {key: os.environ.get(key) for key in keys}
 	with TemporaryDirectory(prefix="meriknow-eval-") as tmp_dir:
@@ -163,16 +170,21 @@ def _isolated_ask_settings():
 				"ASK_MODE": "stub",
 				"METADATA_BACKEND": "json",
 				"METADATA_PATH": str(Path(tmp_dir) / "metadata.json"),
-				"SESSION_MEMORY_ENABLED": "false",
-				"HYBRID_ENABLED": "false",
-				"RERANK_ENABLED": "false",
 				"MAX_RETRIEVE_RETRIES": "0",
+				# Avoid host .env INTERNAL_AUTH_ENABLED=true requiring request scope.
+				"INTERNAL_AUTH_ENABLED": "false",
 			}
 		)
 		get_settings.cache_clear()
 		reset_metadata_store()
 		try:
-			yield AskGraphService(settings=get_settings())
+			settings = get_settings()
+			yield AskGraphService(
+				settings=settings,
+				access_scope=AccessScope.development(settings),
+				# Align with stub_retrieve / test_ask_route table shape.
+				load_table_groups_fn=stub_load_table_groups,
+			)
 		finally:
 			reset_metadata_store()
 			for key, value in previous.items():
@@ -187,7 +199,9 @@ def _run_ask(case: EvalCase) -> EvalCaseResult:
 	with _isolated_ask_settings() as service:
 		# history 样例直接调用图，避免依赖持久化 session memory。
 		if case.history:
-			state = service._graph.invoke(
+			ask_settings = service._ask_settings_for_request(_EVAL_ASK_OVERRIDES)
+			graph = service._graph_for_settings(ask_settings)
+			state = graph.invoke(
 				{
 					"session_id": case.session_id or f"eval-{case.id}",
 					"question": case.question,
@@ -206,7 +220,11 @@ def _run_ask(case: EvalCase) -> EvalCaseResult:
 				"retrieval_plan": state.get("retrieval_plan") or debug.get("retrieval_plan"),
 			}
 		else:
-			resp = service.ask(question=case.question, library_id=case.library_id)
+			resp = service.ask(
+				question=case.question,
+				library_id=case.library_id,
+				ask_overrides=_EVAL_ASK_OVERRIDES,
+			)
 			debug = resp.retrieval_debug or {}
 			observed = {
 				"query_type": debug.get("query_type"),
@@ -402,7 +420,7 @@ def _deterministic_vector(text: str, *, dimensions: int = 128) -> list[float]:
 def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 	"""真实经过 QdrantStore + RetrievalService 的本地可重复检索回归。
 
-	默认指标是 Recall@K（K=retrieve_top_k，当前为 3）：目标片段出现在前 K 条即算命中。
+	默认指标是 Recall@K（K=expect.recall_at_k 或 3）：目标片段出现在前 K 条即算命中。
 	可用 expect.max_rank 收紧名次（1-based）。
 	"""
 	from qdrant_client import QdrantClient
@@ -434,9 +452,6 @@ def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 		ask_mode="stub",
 		embedding_dim=dimensions,
 		qdrant_collection=f"eval_{case.id.replace('-', '_')}",
-		hybrid_enabled=False,
-		rerank_enabled=False,
-		retrieve_top_k=recall_at_k,
 		rerank_top_k=recall_at_k,
 		bm25_top_k=recall_at_k,
 	)
@@ -541,12 +556,13 @@ def _run_retrieval(case: EvalCase) -> EvalCaseResult:
 
 
 def _run_ingest_http(case: EvalCase) -> EvalCaseResult:
-	"""经正式 /v1/libraries + /v1/ingest/upload 的 HTTP 集成用例（同步 ingest）。"""
+	"""Seed sync ingest (FastAPI upload is 410); keeps ingest_http expect shape."""
 	from fastapi.testclient import TestClient
 
 	from app.main import app
 	from app.services.metadata import reset_metadata_store
 	from app.settings import get_settings
+	from tests.support.seed import SeedIngestError, seed_upload_document
 
 	fixture_name = case.fixture or ""
 	keys = (
@@ -557,9 +573,6 @@ def _run_ingest_http(case: EvalCase) -> EvalCaseResult:
 		"METADATA_PATH",
 		"DOCUMENT_STORAGE_DIR",
 		"STUB_INGEST_SIMULATE",
-		"INGEST_ASYNC",
-		"HYBRID_ENABLED",
-		"SESSION_MEMORY_ENABLED",
 	)
 	previous = {key: os.environ.get(key) for key in keys}
 	with TemporaryDirectory(prefix="meriknow-eval-http-") as tmp_dir:
@@ -572,9 +585,6 @@ def _run_ingest_http(case: EvalCase) -> EvalCaseResult:
 				"METADATA_PATH": str(Path(tmp_dir) / "metadata.json"),
 				"DOCUMENT_STORAGE_DIR": str(Path(tmp_dir) / "documents"),
 				"STUB_INGEST_SIMULATE": "true",
-				"INGEST_ASYNC": "false",
-				"HYBRID_ENABLED": "false",
-				"SESSION_MEMORY_ENABLED": "false",
 			}
 		)
 		get_settings.cache_clear()
@@ -608,30 +618,29 @@ def _run_ingest_http(case: EvalCase) -> EvalCaseResult:
 				".csv": "text/csv",
 			}.get(path.suffix.lower(), "application/octet-stream")
 
-			response = client.post(
-				"/v1/ingest/upload",
-				data={"library_id": lib_id},
-				files={"file": (filename, content, mime)},
-			)
-			detail = response.text
-			try:
-				payload = response.json()
-			except Exception:
-				payload = {}
-			if isinstance(payload, dict) and "detail" in payload:
-				detail = str(payload.get("detail"))
-
+			http_status = 200
+			detail = ""
 			doc_status = None
 			error = None
 			doc_id = None
-			if isinstance(payload, dict):
+			payload_status = None
+			try:
+				payload = seed_upload_document(
+					library_id=lib_id,
+					filename=filename,
+					content=content,
+					content_type=mime,
+				)
 				doc_id = payload.get("doc_id")
 				doc_status = payload.get("status")
-			if not doc_id and isinstance(payload, dict) and isinstance(payload.get("detail"), dict):
-				doc_id = payload["detail"].get("doc_id")
-				doc_status = payload["detail"].get("status")
+				payload_status = payload.get("status")
+			except SeedIngestError as exc:
+				http_status = exc.http_status
+				detail = exc.message
+				doc_id = exc.doc_id
+				doc_status = exc.doc_status
+				error = exc.message
 
-			# 同步失败时仍可能已建 doc；再查库确认状态
 			docs = client.get(f"/v1/libraries/{lib_id}/documents")
 			doc_row = None
 			if docs.status_code == 200:
@@ -642,15 +651,15 @@ def _run_ingest_http(case: EvalCase) -> EvalCaseResult:
 					doc_row = rows[0]
 			if doc_row:
 				doc_status = doc_row.get("status") or doc_status
-				error = doc_row.get("error")
+				error = doc_row.get("error") or error
 
 			observed = {
-				"http_status": response.status_code,
-				"detail": detail,
+				"http_status": http_status,
+				"detail": detail or error or "",
 				"doc_status": doc_status,
 				"error": error or detail,
 				"doc_id": doc_id or (doc_row or {}).get("id"),
-				"payload_status": payload.get("status") if isinstance(payload, dict) else None,
+				"payload_status": payload_status,
 			}
 			errors = _check_expect(case.expect, observed)
 			return EvalCaseResult(
@@ -671,20 +680,33 @@ def _run_ingest_http(case: EvalCase) -> EvalCaseResult:
 
 
 def run_eval_cases(path: Path | None = None) -> list[EvalCaseResult]:
-	cases = load_eval_cases(path)
-	results: list[EvalCaseResult] = []
-	for case in cases:
-		if case.kind == "classify":
-			results.append(_run_classify(case))
-		elif case.kind == "ingest_chunk":
-			results.append(_run_ingest_chunk(case))
-		elif case.kind == "retrieval":
-			results.append(_run_retrieval(case))
-		elif case.kind == "ingest_http":
-			results.append(_run_ingest_http(case))
+	"""跑黄金集；整段强制 INTERNAL_AUTH_ENABLED=false，避免宿主 .env 绊倒 gate。"""
+	from app.settings import get_settings
+
+	prev_auth = os.environ.get("INTERNAL_AUTH_ENABLED")
+	os.environ["INTERNAL_AUTH_ENABLED"] = "false"
+	get_settings.cache_clear()
+	try:
+		cases = load_eval_cases(path)
+		results: list[EvalCaseResult] = []
+		for case in cases:
+			if case.kind == "classify":
+				results.append(_run_classify(case))
+			elif case.kind == "ingest_chunk":
+				results.append(_run_ingest_chunk(case))
+			elif case.kind == "retrieval":
+				results.append(_run_retrieval(case))
+			elif case.kind == "ingest_http":
+				results.append(_run_ingest_http(case))
+			else:
+				results.append(_run_ask(case))
+		return results
+	finally:
+		if prev_auth is None:
+			os.environ.pop("INTERNAL_AUTH_ENABLED", None)
 		else:
-			results.append(_run_ask(case))
-	return results
+			os.environ["INTERNAL_AUTH_ENABLED"] = prev_auth
+		get_settings.cache_clear()
 
 
 def main(argv: list[str] | None = None) -> int:

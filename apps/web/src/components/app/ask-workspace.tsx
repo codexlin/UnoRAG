@@ -2,6 +2,7 @@
 
 import {
 	Activity,
+	Archive,
 	Bot,
 	ChevronRight,
 	PanelRightClose,
@@ -12,6 +13,7 @@ import {
 	UserRound,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
 	type FormEvent,
 	type KeyboardEvent,
@@ -44,7 +46,9 @@ import {
 	type ApiCitation,
 	type ApiDocument,
 	type ApiRetrievalDebug,
+	archiveThread,
 	askQuestionStream,
+	continueThread,
 	fetchDocuments,
 	isAbortError,
 } from "@/lib/api";
@@ -171,10 +175,8 @@ function RetrievalNotice({ turn }: { turn: LocalTurn }) {
 	if (turn.rerankFailed) {
 		notices.push("rerank 失败，已跳过重排");
 	}
-	if (turn.persisted === false) {
-		notices.push(
-			turn.persistError ? `会话未持久化：${turn.persistError}` : "会话未持久化",
-		);
+	if (turn.persistError) {
+		notices.push(`归档写入失败：${turn.persistError}`);
 	}
 	if (notices.length === 0) return null;
 	return (
@@ -197,11 +199,17 @@ function canRetryTurn(turn: LocalTurn): boolean {
 }
 
 export function AskWorkspace() {
+	const router = useRouter();
+	const searchParams = useSearchParams();
 	const { libraries, error: libsError } = useLibraries();
 	const { apiReady } = useHealth();
 	const [libraryId, setLibraryId] = useState("");
 	const [input, setInput] = useState("");
 	const [sessionId, setSessionId] = useState<string | undefined>();
+	const [threadId, setThreadId] = useState<string | undefined>();
+	const [threadTitle, setThreadTitle] = useState<string | null>(null);
+	const [archiving, setArchiving] = useState(false);
+	const [archiveError, setArchiveError] = useState<string | null>(null);
 	const [turns, setTurns] = useState<LocalTurn[]>([]);
 	const [activeCitation, setActiveCitation] = useState<UiCitation | null>(null);
 	const [drawerOpen, setDrawerOpen] = useState(true);
@@ -213,8 +221,15 @@ export function AskWorkspace() {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const abortRef = useRef<AbortController | null>(null);
 	const activeTurnIdRef = useRef<string | null>(null);
+	const resumeThreadRef = useRef<string | null>(null);
 
 	const isStreaming = turns.some((turn) => turn.pending);
+	const isArchived = Boolean(threadId);
+	const canArchive =
+		!isArchived &&
+		!isStreaming &&
+		!archiving &&
+		turns.some((turn) => !turn.pending && turn.question.trim());
 
 	useEffect(() => {
 		if (!libraryId && libraries[0]?.id) {
@@ -227,6 +242,43 @@ export function AskWorkspace() {
 			abortRef.current?.abort();
 		};
 	}, []);
+
+	useEffect(() => {
+		const resumeId = (searchParams.get("thread") || "").trim();
+		if (!resumeId || resumeThreadRef.current === resumeId) return;
+		if (!apiReady) return;
+		resumeThreadRef.current = resumeId;
+		const controller = new AbortController();
+		void (async () => {
+			try {
+				const detail = await continueThread(resumeId, controller.signal);
+				if (controller.signal.aborted) return;
+				setThreadId(detail.id);
+				setThreadTitle(detail.title);
+				setSessionId(detail.session_id || detail.id);
+				if (detail.library_id) setLibraryId(detail.library_id);
+				setTurns(
+					detail.turns.map((turn, index) => ({
+						id: turn.id || `resume-${index}`,
+						question: turn.question,
+						answer: turn.answer,
+						citations: turn.citations.map(toUiCitation),
+						refused: turn.refused,
+						refuseReason: turn.refuse_reason,
+						mode: turn.mode,
+						pending: false,
+						persisted: true,
+						retrievalDebug: turn.retrieval_debug || undefined,
+					})),
+				);
+				setArchiveError(null);
+			} catch (err) {
+				if (controller.signal.aborted || isAbortError(err)) return;
+				setArchiveError("无法打开归档会话，请从会话历史重试。");
+			}
+		})();
+		return () => controller.abort();
+	}, [apiReady, searchParams]);
 
 	useEffect(() => {
 		if (!libraryId || !apiReady) {
@@ -297,6 +349,60 @@ export function AskWorkspace() {
 
 	function cancelAsk() {
 		abortRef.current?.abort();
+	}
+
+	async function handleArchive() {
+		if (!canArchive) return;
+		const readyTurns = turns.filter(
+			(turn) => !turn.pending && turn.question.trim() && !turn.error,
+		);
+		if (readyTurns.length === 0) return;
+		setArchiving(true);
+		setArchiveError(null);
+		try {
+			const detail = await archiveThread({
+				sessionId,
+				libraryId: libraryId || undefined,
+				title: readyTurns[0]?.question?.slice(0, 80),
+				turns: readyTurns.map((turn) => ({
+					question: turn.question,
+					answer: turn.answer,
+					citations: turn.citations.map((citation) => ({
+						id: citation.id,
+						index: citation.index,
+						title: citation.title,
+						page: citation.page ?? null,
+						section_path: citation.sectionPath ?? null,
+						preamble: citation.preamble ?? null,
+						snippet: citation.snippet || citation.text.slice(0, 280),
+						text: citation.text,
+						score: citation.score ?? 0,
+						dense_score: citation.denseScore ?? null,
+						bm25_score: citation.bm25Score ?? null,
+						rrf_score: citation.rrfScore ?? null,
+						used_rerank: Boolean(citation.usedRerank),
+						used_hybrid: Boolean(citation.usedHybrid),
+						doc_id: citation.docId ?? null,
+						chunk_index: citation.chunkIndex ?? null,
+						filename: citation.filename ?? null,
+					})),
+					mode: turn.mode || "stub",
+					refused: Boolean(turn.refused),
+					refuse_reason: turn.refuseReason,
+					library_id: libraryId || undefined,
+				})),
+			});
+			setThreadId(detail.id);
+			setThreadTitle(detail.title);
+			setSessionId(detail.session_id || detail.id);
+			router.replace(`/app/ask?thread=${encodeURIComponent(detail.id)}`);
+		} catch (err) {
+			setArchiveError(
+				err instanceof Error ? err.message : "归档失败，请稍后重试",
+			);
+		} finally {
+			setArchiving(false);
+		}
 	}
 
 	async function submitQuestion(
@@ -380,11 +486,13 @@ export function AskWorkspace() {
 					question: trimmed,
 					libraryId,
 					sessionId,
+					threadId,
 				},
 				{
 					onMeta: (meta) => {
 						if (activeTurnIdRef.current !== pendingId) return;
 						setSessionId(meta.session_id);
+						if (meta.thread_id) setThreadId(meta.thread_id);
 						setTurns((prev) =>
 							prev.map((turn) =>
 								turn.id === pendingId
@@ -436,6 +544,7 @@ export function AskWorkspace() {
 					onDone: (result) => {
 						if (activeTurnIdRef.current !== pendingId) return;
 						setSessionId(result.session_id);
+						if (result.thread_id) setThreadId(result.thread_id);
 						const citations = result.citations.map(toUiCitation);
 						const debug: ApiRetrievalDebug = result.retrieval_debug || {};
 						const completedAt = Date.now();
@@ -478,7 +587,7 @@ export function AskWorkspace() {
 												(typeof debug.retrieval_mode === "string"
 													? debug.retrieval_mode
 													: undefined),
-											persisted: result.persisted !== false,
+											persisted: result.persisted === true,
 											persistError: result.persist_error ?? null,
 										}
 									: turn,
@@ -629,57 +738,107 @@ export function AskWorkspace() {
 							<span className="text-foreground/80">{turns.length}</span>
 							<span>问</span>
 						</span>
+						{isArchived ? (
+							<>
+								<span className="text-border" aria-hidden>
+									|
+								</span>
+								<span className="truncate text-cite" title={threadTitle || ""}>
+									已归档
+									{threadTitle ? ` · ${threadTitle}` : ""}
+								</span>
+							</>
+						) : turns.length > 0 ? (
+							<>
+								<span className="text-border" aria-hidden>
+									|
+								</span>
+								<span title="关闭或刷新后可能丢失">未归档</span>
+							</>
+						) : null}
 					</div>
 
-					<Tooltip>
-						<TooltipTrigger
-							render={
-								<Button
-									type="button"
-									variant={drawerOpen ? "secondary" : "outline"}
-									size="sm"
-									className={cn(
-										"ml-auto shrink-0 rounded-lg",
-										drawerOpen
-											? "border-cite/40 bg-cite/10 text-cite hover:bg-cite/15"
-											: "border-cite/35 text-cite hover:border-cite/55 hover:bg-cite/8",
-									)}
-									onClick={() => {
-										setDrawerOpen((open) => {
-											const next = !open;
-											if (next) setTraceOpen(false);
-											return next;
-										});
-									}}
-									aria-pressed={drawerOpen}
-									aria-label={
-										drawerOpen ? "收起引用来源面板" : "展开引用来源面板"
-									}
-								>
-									{drawerOpen ? (
-										<PanelRightClose data-icon="inline-start" />
-									) : (
-										<PanelRightOpen data-icon="inline-start" />
-									)}
-									<span className="hidden sm:inline">
-										{drawerOpen ? "收起引用" : "引用来源"}
-									</span>
-									<span className="sm:hidden">
-										{drawerOpen ? "收起" : "引用"}
-									</span>
-								</Button>
-							}
-						/>
-						<TooltipContent side="bottom">
-							{drawerOpen
-								? "收起右侧引用来源面板"
-								: "展开右侧引用来源，查看原文与 rank / dense 分数"}
-						</TooltipContent>
-					</Tooltip>
+					<div className="ml-auto flex shrink-0 items-center gap-2">
+						<Tooltip>
+							<TooltipTrigger
+								render={
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										className="rounded-lg"
+										disabled={!canArchive}
+										onClick={() => void handleArchive()}
+										aria-label="归档当前会话"
+									>
+										<Archive data-icon="inline-start" />
+										<span className="hidden sm:inline">
+											{archiving ? "归档中…" : isArchived ? "已归档" : "归档"}
+										</span>
+									</Button>
+								}
+							/>
+							<TooltipContent side="bottom">
+								{isArchived
+									? "当前为归档会话，续聊会自动保存"
+									: "把当前临时会话写入档案，之后可继续对话"}
+							</TooltipContent>
+						</Tooltip>
+						<Tooltip>
+							<TooltipTrigger
+								render={
+									<Button
+										type="button"
+										variant={drawerOpen ? "secondary" : "outline"}
+										size="sm"
+										className={cn(
+											"rounded-lg",
+											drawerOpen
+												? "border-cite/40 bg-cite/10 text-cite hover:bg-cite/15"
+												: "border-cite/35 text-cite hover:border-cite/55 hover:bg-cite/8",
+										)}
+										onClick={() => {
+											setDrawerOpen((open) => {
+												const next = !open;
+												if (next) setTraceOpen(false);
+												return next;
+											});
+										}}
+										aria-pressed={drawerOpen}
+										aria-label={
+											drawerOpen ? "收起引用来源面板" : "展开引用来源面板"
+										}
+									>
+										{drawerOpen ? (
+											<PanelRightClose data-icon="inline-start" />
+										) : (
+											<PanelRightOpen data-icon="inline-start" />
+										)}
+										<span className="hidden sm:inline">
+											{drawerOpen ? "收起引用" : "引用来源"}
+										</span>
+										<span className="sm:hidden">
+											{drawerOpen ? "收起" : "引用"}
+										</span>
+									</Button>
+								}
+							/>
+							<TooltipContent side="bottom">
+								{drawerOpen
+									? "收起右侧引用来源面板"
+									: "展开右侧引用来源，查看原文与 rank / dense 分数"}
+							</TooltipContent>
+						</Tooltip>
+					</div>
 				</div>
 				{libsError ? (
 					<p className="border-b border-destructive/30 bg-destructive/10 px-5 py-1.5 text-sm text-destructive">
 						{libsError}
+					</p>
+				) : null}
+				{archiveError ? (
+					<p className="border-b border-destructive/30 bg-destructive/10 px-5 py-1.5 text-sm text-destructive">
+						{archiveError}
 					</p>
 				) : null}
 

@@ -3,11 +3,9 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterator
-from pathlib import PurePosixPath
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from app.graph import AskGraphService
 from app.security.access_scope import AccessScope
@@ -20,14 +18,8 @@ from app.schemas import (
 	UploadResponse,
 )
 from app.services.ask_trace import resolve_trace_id
-from app.services.document_storage import DocumentStorage
-from app.services.documents import clean_display_title
-from app.services.ingest.jobs import enqueue_ingest_job, process_document_ingest
-from app.services.ingest.legacy_writes import reject_legacy_ingest_writes
-from app.services.ingest.pipeline import prepare_ingest
-from app.services.ingest.router import V2_EXTENSIONS
+from app.services.ingest.fastapi_ingest_writes import reject_fastapi_ingest_writes
 from app.services.metadata import MetadataStore, get_metadata_store
-from app.services.retrieval import IngestService
 from app.services.runtime import resolve_runtime
 from app.settings import Settings, get_settings
 
@@ -68,10 +60,6 @@ def get_ask_service(
 	)
 
 
-def get_meta(settings: Settings = Depends(get_settings)) -> MetadataStore:
-	return get_metadata_store(settings)
-
-
 def _require_library_id(library_id: str | None) -> str:
 	resolved = (library_id or "").strip()
 	if not resolved:
@@ -86,19 +74,47 @@ def _trace_id_for_request(request: Request, context: RequestContext) -> str:
 	)
 
 
+def get_meta(settings: Settings = Depends(get_settings)) -> MetadataStore:
+	return get_metadata_store(settings)
+
+
+def _resolve_thread_id(
+	thread_id: str | None,
+	*,
+	meta: MetadataStore,
+	context: RequestContext,
+) -> str | None:
+	resolved = (thread_id or "").strip() or None
+	if not resolved:
+		return None
+	row = meta.get_thread(
+		resolved,
+		tenant_id=context.tenant_id,
+		workspace_id=context.workspace_id,
+		principal_id=context.principal_id,
+	)
+	if row is None or row.get("status") == "hidden":
+		raise HTTPException(status_code=404, detail="thread not found")
+	return resolved
+
+
 @router.post("/ask", response_model=AskResponse)
 def ask(
 	body: AskRequest,
 	request: Request,
 	service: AskGraphService = Depends(get_ask_service),
+	meta: MetadataStore = Depends(get_meta),
 	context: RequestContext = Depends(require_internal_context),
 ) -> AskResponse:
 	library_id = _require_library_id(body.library_id)
+	thread_id = _resolve_thread_id(body.thread_id, meta=meta, context=context)
 	return service.ask(
 		question=body.question,
 		library_id=library_id,
 		session_id=body.session_id,
+		thread_id=thread_id,
 		trace_id=_trace_id_for_request(request, context),
+		ask_overrides=body.ask_overrides,
 	)
 
 
@@ -107,9 +123,11 @@ def ask_stream(
 	body: AskRequest,
 	request: Request,
 	service: AskGraphService = Depends(get_ask_service),
+	meta: MetadataStore = Depends(get_meta),
 	context: RequestContext = Depends(require_internal_context),
 ) -> StreamingResponse:
 	library_id = _require_library_id(body.library_id)
+	thread_id = _resolve_thread_id(body.thread_id, meta=meta, context=context)
 	trace_id = _trace_id_for_request(request, context)
 
 	def sse(event: str, data: object) -> str:
@@ -121,7 +139,9 @@ def ask_stream(
 				question=body.question,
 				library_id=library_id,
 				session_id=body.session_id,
+				thread_id=thread_id,
 				trace_id=trace_id,
+				ask_overrides=body.ask_overrides,
 			):
 				yield sse(str(item["event"]), item["data"])
 		except Exception as exc:
@@ -142,304 +162,22 @@ def ask_stream(
 @router.post("/ingest", response_model=IngestResponse)
 def ingest(
 	body: IngestRequest,
-	settings: Settings = Depends(get_settings),
-	meta: MetadataStore = Depends(get_meta),
-	context: RequestContext = Depends(require_internal_context),
 ) -> IngestResponse:
 	"""Deprecated: product ingest uses the lifecycle control plane + app.jobs."""
-	reject_legacy_ingest_writes(settings)
-	access_scope = AccessScope.from_request_context(context)
-	capability = resolve_runtime(settings)
-	if not capability.live_ready:
-		if capability.requested_mode == "stub" and settings.stub_ingest_simulate:
-			if meta.get_library(body.library_id, scope=access_scope) is None:
-				meta.create_library(
-					name=body.library_id,
-					library_id=body.library_id,
-					scope=access_scope,
-				)
-			doc = meta.create_document(
-				library_id=body.library_id,
-				name=body.title,
-				filename=f"{body.title}.txt",
-				content_type="text/plain",
-				doc_id=body.doc_id,
-				status="processing",
-				scope=access_scope,
-			)
-			try:
-				result = IngestService(settings, access_scope=access_scope).simulate_ingest(
-					library_id=body.library_id,
-					title=body.title,
-					text=body.text,
-					doc_id=doc["id"],
-				)
-				meta.update_document(
-					doc["id"],
-					status="ready",
-					chunk_count=result["chunk_count"],
-					error=None,
-					scope=access_scope,
-				)
-			except Exception as exc:
-				meta.update_document(
-					doc["id"],
-					status="failed",
-					error=str(exc),
-					scope=access_scope,
-				)
-				raise HTTPException(status_code=400, detail=str(exc)) from exc
-			return IngestResponse(
-				library_id=body.library_id,
-				doc_id=doc["id"],
-				title=body.title,
-				chunk_count=result["chunk_count"],
-				mode="stub",
-				status="ready",
-				simulated=True,
-			)
-		raise HTTPException(
-			status_code=503,
-			detail=_unavailable_detail(
-				capability,
-				message="ingest requires live mode with LLM key and reachable Qdrant",
-			),
-		)
-
-	if meta.get_library(body.library_id, scope=access_scope) is None:
-		meta.create_library(
-			name=body.library_id,
-			library_id=body.library_id,
-			scope=access_scope,
-		)
-	doc = meta.create_document(
-		library_id=body.library_id,
-		name=body.title,
-		filename=f"{body.title}.txt",
-		content_type="text/plain",
-		doc_id=body.doc_id,
-		status="processing",
-		scope=access_scope,
-	)
-	try:
-		result = IngestService(settings, access_scope=access_scope).ingest_text(
-			library_id=body.library_id,
-			title=body.title,
-			text=body.text,
-			doc_id=doc["id"],
-		)
-		meta.update_document(
-			doc["id"],
-			status="ready",
-			chunk_count=result["chunk_count"],
-			error=None,
-			scope=access_scope,
-		)
-	except ValueError as exc:
-		meta.update_document(
-			doc["id"],
-			status="failed",
-			error=str(exc),
-			scope=access_scope,
-		)
-		raise HTTPException(status_code=400, detail=str(exc)) from exc
-	except Exception as exc:
-		meta.update_document(
-			doc["id"],
-			status="failed",
-			error=str(exc),
-			scope=access_scope,
-		)
-		raise HTTPException(status_code=502, detail=f"ingest failed: {exc}") from exc
-	return IngestResponse(**result, mode="live", status="ready", simulated=False)
+	_ = body
+	reject_fastapi_ingest_writes()
 
 
 @router.post(
 	"/ingest/upload",
 	response_model=UploadResponse,
-	responses={202: {"model": UploadResponse}},
+	responses={410: {"description": "FastAPI ingest writes permanently disabled"}},
 )
 async def ingest_upload(
 	library_id: str = Form(...),
 	file: UploadFile = File(...),
 	display_name: str | None = Form(default=None),
-	settings: Settings = Depends(get_settings),
-	meta: MetadataStore = Depends(get_meta),
-	context: RequestContext = Depends(require_internal_context),
-) -> UploadResponse | JSONResponse:
+) -> UploadResponse:
 	"""Deprecated: browser uploads must use the Next.js control plane."""
-	reject_legacy_ingest_writes(settings)
-	access_scope = AccessScope.from_request_context(context)
-	capability = resolve_runtime(settings)
-	content = await file.read()
-	if not content:
-		raise HTTPException(status_code=400, detail="Empty file")
-	if len(content) > settings.max_upload_bytes:
-		raise HTTPException(
-			status_code=413,
-			detail=f"文件过大，上限 {settings.max_upload_bytes} 字节",
-		)
-
-	filename = (file.filename or "untitled.txt").strip() or "untitled.txt"
-	suffix = PurePosixPath(filename).suffix.lower()
-	if suffix not in V2_EXTENSIONS:
-		raise HTTPException(
-			status_code=400,
-			detail=f"unsupported file type: {suffix or '(none)'}; use txt/md/pdf/docx/csv/xlsx",
-		)
-	if meta.get_library(library_id, scope=access_scope) is None:
-		meta.create_library(
-			name=library_id,
-			library_id=library_id,
-			scope=access_scope,
-		)
-
-	# 同库同名文件覆盖：先清旧向量 + 元数据，避免脏 chunk 叠加
-	doc_storage = DocumentStorage(settings)
-	for old in meta.list_documents(library_id, scope=access_scope):
-		if str(old.get("filename") or "") != filename:
-			continue
-		old_id = str(old["id"])
-		old_storage_key = old.get("storage_key")
-		try:
-			if capability.live_ready:
-				IngestService(settings, access_scope=access_scope).delete_document_chunks(
-					doc_id=old_id,
-					library_id=library_id,
-				)
-		except Exception as exc:
-			logger.warning(
-				"upload.replace_delete_vectors_failed doc_id=%s err=%s",
-				old_id,
-				exc,
-			)
-		if old_storage_key:
-			try:
-				doc_storage.delete(str(old_storage_key))
-			except Exception as exc:
-				logger.warning(
-					"upload.replace_delete_storage_failed doc_id=%s err=%s",
-					old_id,
-					exc,
-				)
-		meta.delete_document(old_id, scope=access_scope)
-
-	title = clean_display_title(
-		(display_name or "").strip() or PurePosixPath(filename).stem,
-		filename=filename,
-	)
-	content_type = file.content_type or {
-		".txt": "text/plain",
-		".md": "text/markdown",
-		".markdown": "text/markdown",
-		".pdf": "application/pdf",
-		".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		".csv": "text/csv",
-		".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-	}.get(suffix, "application/octet-stream")
-	doc_id = str(uuid4())
-	doc = meta.create_document(
-		library_id=library_id,
-		name=title,
-		filename=filename,
-		content_type=content_type,
-		doc_id=doc_id,
-		status="processing",
-		size_bytes=len(content),
-		scope=access_scope,
-	)
-	storage_key = doc_storage.save(library_id, doc["id"], filename, content)
-	meta.update_document(
-		doc["id"],
-		storage_key=storage_key,
-		scope=access_scope,
-	)
-
-	live = capability.live_ready
-	stub_simulate = capability.requested_mode == "stub" and settings.stub_ingest_simulate
-	if not live and not stub_simulate:
-		meta.update_document(
-			doc["id"],
-			status="failed",
-			error="ingest requires live mode",
-			scope=access_scope,
-		)
-		raise HTTPException(
-			status_code=503,
-			detail={
-				**_unavailable_detail(
-					capability,
-					message="ingest requires live mode with LLM key and reachable Qdrant",
-				),
-				"doc_id": doc["id"],
-				"status": "failed",
-			},
-		)
-
-	mode = "live" if live else "stub"
-	if settings.ingest_async:
-		try:
-			await enqueue_ingest_job(
-				doc_id=doc["id"],
-				library_id=library_id,
-				access_scope=access_scope,
-				settings=settings,
-			)
-		except RuntimeError as exc:
-			meta.update_document(
-				doc["id"],
-				status="failed",
-				error=str(exc),
-				scope=access_scope,
-			)
-			raise HTTPException(status_code=429, detail=str(exc)) from exc
-		except Exception as exc:
-			logger.exception("upload.enqueue_failed doc_id=%s", doc["id"])
-			meta.update_document(
-				doc["id"],
-				status="failed",
-				error=f"入队失败: {exc}",
-				scope=access_scope,
-			)
-			raise HTTPException(
-				status_code=503,
-				detail=f"索引队列不可用: {exc}",
-			) from exc
-		payload = UploadResponse(
-			library_id=library_id,
-			doc_id=doc["id"],
-			title=title,
-			filename=filename,
-			chunk_count=0,
-			status="processing",
-			mode=mode,
-			simulated=False,
-			accepted=True,
-		)
-		return JSONResponse(status_code=202, content=payload.model_dump())
-
-	# 同步回退（INGEST_ASYNC=false）：同请求内跑完 ingest
-	result = process_document_ingest(
-		doc["id"],
-		settings=settings,
-		access_scope=access_scope,
-	)
-	if not result.get("ok"):
-		raise HTTPException(
-			status_code=400 if "empty" in str(result.get("error") or "").lower() else 502,
-			detail=str(result.get("error") or "upload ingest failed"),
-		)
-	return UploadResponse(
-		library_id=library_id,
-		doc_id=doc["id"],
-		title=str(result.get("title") or title),
-		filename=str(result.get("filename") or filename),
-		chunk_count=int(result.get("chunk_count") or 0),
-		status="ready",
-		mode=str(result.get("mode") or mode),
-		simulated=bool(result.get("simulated")),
-		accepted=False,
-		notice=result.get("notice"),
-		parser_report=result.get("parser_report"),
-		pipeline=result.get("pipeline"),
-	)
+	_ = (library_id, file, display_name)
+	reject_fastapi_ingest_writes()

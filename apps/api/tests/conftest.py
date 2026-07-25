@@ -15,18 +15,14 @@ def force_stub_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 	monkeypatch.setenv("ASK_MODE", "stub")
 	monkeypatch.setenv("DASHSCOPE_API_KEY", "")
 	monkeypatch.setenv("OPENAI_API_KEY", "")
+	# Unit tests hit FastAPI without BFF HMAC headers.
+	monkeypatch.setenv("INTERNAL_AUTH_ENABLED", "false")
 	# Explicit escape hatch — production/dev must use Postgres.
 	monkeypatch.setenv("METADATA_BACKEND", "json")
 	monkeypatch.setenv("DATABASE_URL", "")
 	monkeypatch.setenv("METADATA_PATH", str(tmp_path / "metadata.json"))
 	monkeypatch.setenv("DOCUMENT_STORAGE_DIR", str(tmp_path / "documents"))
 	monkeypatch.setenv("STUB_INGEST_SIMULATE", "true")
-	monkeypatch.setenv("HYBRID_ENABLED", "false")
-	# 测试默认同步 ingest，避免依赖 Redis/worker
-	monkeypatch.setenv("INGEST_ASYNC", "false")
-	# Explicit legacy unit-test escape hatch only. Product/default is off;
-	# V2 control-plane paths and L7 CI gates do not rely on this flag.
-	monkeypatch.setenv("LEGACY_INGEST_WRITES_ENABLED", "true")
 	get_settings.cache_clear()
 	reset_metadata_store()
 	yield

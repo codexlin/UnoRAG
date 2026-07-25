@@ -7,7 +7,8 @@ from app.settings import Settings
 
 class DocumentStorage:
 	def __init__(self, settings: Settings) -> None:
-		self.root = Path(settings.document_storage_dir)
+		# Prefer DOCUMENT_STORAGE_ROOT; legacy DOCUMENT_STORAGE_DIR as fallback.
+		self.root = Path(settings.resolved_document_storage)
 		self.root.mkdir(parents=True, exist_ok=True)
 
 	@staticmethod

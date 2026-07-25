@@ -1,69 +1,12 @@
 from __future__ import annotations
 
-import os
+import logging
 from functools import lru_cache
-from pathlib import Path
-from typing import Any
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Legacy citation gate → adjudicate field / env soft-migration pairs.
-_CITATION_ADJUDICATE_LEGACY: tuple[tuple[str, str, str, str], ...] = (
-	(
-		"citation_adjudicate_enabled",
-		"citation_gate_enabled",
-		"CITATION_ADJUDICATE_ENABLED",
-		"CITATION_GATE_ENABLED",
-	),
-	(
-		"citation_adjudicate_absolute_floor",
-		"citation_gate_absolute_floor",
-		"CITATION_ADJUDICATE_ABSOLUTE_FLOOR",
-		"CITATION_GATE_ABSOLUTE_FLOOR",
-	),
-	(
-		"citation_adjudicate_ratio",
-		"citation_gate_ratio",
-		"CITATION_ADJUDICATE_RATIO",
-		"CITATION_GATE_RATIO",
-	),
-	(
-		"citation_adjudicate_lexical_threshold",
-		"citation_gate_lexical_threshold",
-		"CITATION_ADJUDICATE_LEXICAL_THRESHOLD",
-		"CITATION_GATE_LEXICAL_THRESHOLD",
-	),
-)
-
-
-def _dotenv_lookup(key: str) -> str | None:
-	"""Read a key from local .env without mutating os.environ."""
-	env_path = Path(".env")
-	if not env_path.is_file():
-		return None
-	try:
-		text = env_path.read_text(encoding="utf-8")
-	except OSError:
-		return None
-	for raw in text.splitlines():
-		line = raw.strip()
-		if not line or line.startswith("#") or "=" not in line:
-			continue
-		name, _, value = line.partition("=")
-		if name.strip() != key:
-			continue
-		value = value.strip()
-		if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-			value = value[1:-1]
-		return value
-	return None
-
-
-def _env_or_dotenv(key: str) -> str | None:
-	if key in os.environ:
-		return os.environ.get(key)
-	return _dotenv_lookup(key)
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -81,7 +24,7 @@ class Settings(BaseSettings):
 	# stub | live — live 缺密钥 / Qdrant 不可达时硬失败（不降级 stub；stub 仅测试）
 	ask_mode: str = "live"
 
-	# OpenAI-compatible（DashScope 等）
+	# OpenAI-compatible（DashScope 等）。openai_* 与 dashscope_* 为同一客户端别名。
 	openai_api_key: str = ""
 	openai_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 	dashscope_api_key: str = ""
@@ -100,140 +43,79 @@ class Settings(BaseSettings):
 	# precise | balanced | narrative | table_heavy
 	chunking_profile: str = "balanced"
 	chunk_policy_version: str = "v1"
-	# 仅对长、无结构、叙事型文本生效；失败时明确降级 recursive
 	semantic_chunking_enabled: bool = False
 	semantic_chunk_min_chars: int = 1200
 	semantic_chunk_break_percentile: int = 85
-	# legacy | v2 — v2=IR 结构优先切片；md/txt/pdf/docx 走新管线
+	# legacy | v2 — v2=IR 结构优先切片
 	ingest_pipeline: str = "v2"
-	# PDF 扫描/失败页：partial=成功页入库+notice；fail=无成功页则整本失败
 	pdf_scan_strategy: str = "partial"
 	ocr_enabled: bool = False
 	vlm_enabled: bool = False
 	vlm_model: str = "qwen-vl-plus"
-	# Phase 2C MinerU：独立服务补充扫描/复杂 PDF（默认关闭，不替换 PyMuPDF）
+
 	mineru_enabled: bool = False
 	mineru_url: str = ""
-	# 硬超时（httpx）；软超时见 mineru_soft_timeout_s
 	mineru_timeout_s: float = 120.0
-	# 软超时：放弃本地等待并还槽（<=0 关闭，仅硬超时）；须 ≤ mineru_timeout_s
+	# <=0 关闭软超时；须 ≤ mineru_timeout_s
 	mineru_soft_timeout_s: float = 60.0
 	mineru_max_retries: int = 2
-	# job 层对 mineru_rate_limited / mineru_soft_timeout 的指数退避
 	mineru_retry_base_s: float = 30.0
 	mineru_retry_max_s: float = 300.0
 	mineru_parse_path: str = "/file_parse"
-	# auto | pymupdf | mineru
 	mineru_mode: str = "auto"
-	# 单测 / 本地无服务：true 时用 FakeMinerUBackend（勿用于生产）
 	mineru_use_fake: bool = False
-	# Ask generate + ingest embedding/chat 进程内并发闸门（<=0 关闭）
+
 	llm_max_inflight: int = 4
-	# 可选 LangGraph 工具化 ask；默认短路径 retrieve→generate
 	tool_ask: bool = False
-	retrieve_top_k: int = 6
-	# 最高分低于此阈值则拒答（0 = 关闭弱相关拒答）；无命中始终拒答
-	# 最高分低于此值 → 正式 refused（弱相关），避免模型口头「未覆盖」却 refused=false
-	answer_min_score: float = 0.4
 	max_retrieve_retries: int = 1
 
-	# Citation adjudication（裁决）: wide recall → weigh hits → context/citations 同源
-	# Env: CITATION_ADJUDICATE_*. absolute_floor<=0 → answer_min_score
-	# Legacy CITATION_GATE_* / citation_gate_* soft-migrated via model_validator below.
-	citation_adjudicate_enabled: bool = True
-	citation_adjudicate_absolute_floor: float = 0.35
-	citation_adjudicate_ratio: float = 0.68
-	citation_adjudicate_lexical_threshold: float = 0.2
+	# Ask/retrieval product knobs (retrieve_top_k, hybrid, rerank, adjudicate,
+	# session_memory, …) live in app.services.ask_defaults — not env/Settings.
+	# Resolution: workspace ask_overrides > ASK_DEFAULTS.
 
-	# Optional rerank after dense retrieval (DashScope-compatible /reranks)
-	rerank_enabled: bool = False
 	rerank_base_url: str = "https://dashscope.aliyuncs.com/compatible-api/v1"
 	rerank_model: str = "qwen3-rerank"
 	rerank_top_k: int = 6
-	# When True and session has prior turns, rewrite query with short history
-	session_memory_enabled: bool = True
-	session_memory_max_turns: int = 6
-
-	# Dense + BM25 hybrid (RRF). Failures fall back to dense-only.
-	hybrid_enabled: bool = False
 	bm25_top_k: int = 20
 	rrf_k: int = 60
 
-	# Local / auth-disabled fallback must match control-plane bootstrap IDs
-	# (apps/web MERIKNOW_ORGANIZATION_ID / MERIKNOW_WORKSPACE_ID). Using the
-	# literal "default" silently mismatches Qdrant points written by outbox ingest.
+	# Only used when INTERNAL_AUTH_ENABLED=false (discouraged).
 	default_tenant_id: str = "00000000-0000-4000-8000-000000000001"
 	default_workspace_id: str = "00000000-0000-4000-8000-000000000002"
-	# Next.js control plane -> FastAPI data plane HMAC boundary.
+	# Prefer true whenever the Next.js BFF is in front of real users.
 	internal_auth_enabled: bool = False
 	internal_auth_secret: str = ""
-	# memory 仅单进程开发；production 强制 redis。
 	internal_auth_replay_backend: str = "memory"
 
-	# Metadata is Postgres-required in production/dev.
-	# METADATA_BACKEND=json is test-only escape hatch (never silent fallback).
+	# postgres required in product; json is test-only escape hatch.
 	metadata_backend: str = "postgres"
 	database_url: str = "postgresql+psycopg://meriknow:meriknow@localhost:5432/meriknow"
 	metadata_path: str = "data/metadata.json"
-	document_storage_dir: str = "data/documents"
-	# Next.js Document Lifecycle V2 shared source-object volume.
+	# Preferred shared volume with Next.js. Falls back to document_storage_dir.
 	document_storage_root: str = ""
-	# stub upload: simulate ready without Qdrant (false=503；仅测试可 true)
+	# Legacy local dir (tests / old FastAPI DocumentStorage helper).
+	document_storage_dir: str = "data/documents"
 	stub_ingest_simulate: bool = False
 
-	# 异步索引：true=落盘后入队返回 202；false=同请求内同步 ingest（本地/测试）
-	ingest_async: bool = True
+	# Redis: HMAC replay store (INTERNAL_AUTH_REPLAY_BACKEND=redis). Not an ingest queue.
 	redis_url: str = "redis://localhost:6379"
-	max_upload_bytes: int = 52_428_800  # 50 MiB
-	ingest_queue_max_depth: int = 100
-	ingest_max_inflight_per_library: int = 8
-	ingest_worker_max_jobs: int = 2
-	ingest_job_timeout_s: int = 600
-	# L6: FastAPI upload/replace/reindex + ARQ enqueue are migration-only.
-	# Default off; production forbids enabling. Tests may set true explicitly.
-	legacy_ingest_writes_enabled: bool = False
+	max_upload_bytes: int = 52_428_800
 
-	# PostgreSQL lifecycle worker (L2+). Ingest jobs claim app.jobs directly.
 	worker_database_url: str = ""
 	lifecycle_worker_poll_seconds: float = 1.0
 	lifecycle_worker_lease_seconds: int = 120
 	lifecycle_worker_heartbeat_seconds: int = 30
 	lifecycle_worker_version: str = "lifecycle-worker-v1"
-	# Ingest slotting: local/docx vs MinerU (SKIP LOCKED + payload.queue_class).
-	# MinerU=1 keeps heavy OCR from starving local parsers when local>=2.
 	lifecycle_local_capacity: int = 2
 	lifecycle_mineru_capacity: int = 1
-	# Delayed Qdrant point deletion for superseded generations.
 	lifecycle_cleanup_enabled: bool = True
 	lifecycle_cleanup_batch_size: int = 20
 	active_generation_gate_enabled: bool = False
 	active_generation_cache_ttl_seconds: float = 0.0
 	rag_read_database_url: str = ""
 
-	@model_validator(mode="before")
-	@classmethod
-	def migrate_legacy_citation_gate(cls, data: Any) -> Any:
-		"""Map legacy citation_gate_* / CITATION_GATE_* → citation_adjudicate_*."""
-		values: dict[str, Any] = dict(data) if isinstance(data, dict) else {}
-		for new_key, old_key, new_env, old_env in _CITATION_ADJUDICATE_LEGACY:
-			if new_key in values and values[new_key] is not None:
-				values.pop(old_key, None)
-				continue
-			if old_key in values and values[old_key] is not None:
-				values[new_key] = values[old_key]
-				values.pop(old_key, None)
-				continue
-			if _env_or_dotenv(new_env) is not None:
-				values.pop(old_key, None)
-				continue
-			legacy = _env_or_dotenv(old_env)
-			if legacy is not None:
-				values[new_key] = legacy
-			values.pop(old_key, None)
-		return values
-
 	@model_validator(mode="after")
-	def validate_production_security(self) -> "Settings":
+	def validate_settings(self) -> "Settings":
 		if self.mineru_timeout_s <= 0:
 			raise ValueError("MINERU_TIMEOUT_S must be positive")
 		if self.mineru_soft_timeout_s > 0 and self.mineru_soft_timeout_s > self.mineru_timeout_s:
@@ -244,6 +126,14 @@ class Settings(BaseSettings):
 			raise ValueError("MINERU_RETRY_BASE_S must be positive")
 		if self.mineru_retry_max_s < self.mineru_retry_base_s:
 			raise ValueError("MINERU_RETRY_MAX_S must be >= MINERU_RETRY_BASE_S")
+
+		if not self.internal_auth_enabled:
+			logger.warning(
+				"INTERNAL_AUTH_ENABLED=false: all requests share principal_id=development "
+				"(ask archive and access scope are not per-user). "
+				"Enable internal auth for multi-user private deploys."
+			)
+
 		if self.app_env.strip().lower() not in {"prod", "production"}:
 			return self
 		if not self.internal_auth_enabled:
@@ -264,11 +154,6 @@ class Settings(BaseSettings):
 			raise ValueError("production MINERU_ENABLED=true requires MINERU_URL")
 		if self.mineru_mode.strip().lower() == "mineru" and not self.mineru_enabled:
 			raise ValueError("production MINERU_MODE=mineru requires MINERU_ENABLED=true")
-		if self.legacy_ingest_writes_enabled:
-			raise ValueError(
-				"production forbids LEGACY_INGEST_WRITES_ENABLED=true; "
-				"use the Next.js document lifecycle control plane"
-			)
 		return self
 
 	@property
@@ -276,9 +161,12 @@ class Settings(BaseSettings):
 		return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 	@property
-	def allows_legacy_ingest_writes(self) -> bool:
-		"""Browser/product ingest writes must use app.jobs lifecycle, not ARQ."""
-		return bool(self.legacy_ingest_writes_enabled)
+	def resolved_document_storage(self) -> str:
+		"""Prefer DOCUMENT_STORAGE_ROOT; fall back to legacy DOCUMENT_STORAGE_DIR."""
+		root = self.document_storage_root.strip()
+		if root:
+			return root
+		return self.document_storage_dir.strip() or "data/documents"
 
 	@property
 	def llm_api_key(self) -> str:

@@ -122,6 +122,16 @@ class EmbeddingService:
 		return self.embed_texts([text])[0]
 
 
+CHAT_SYSTEM_PROMPT = (
+	"你是 MeriKnow 企业知识库助手：根据已收录资料回答，并便于核对原文。"
+	"只根据「资料」回答；资料没写到的内容直接说「资料未覆盖」，不要编造。"
+	"只回答用户所问，不要主动列举「未使用的技术 / 未提及的框架」等对比注脚；"
+	"除非用户明确问技术对比或用了哪些框架。"
+	"语气简洁专业，用中文；必要时分点。引用资料时可用 [1]、[2] 对应来源编号。"
+	"若有多轮对话历史，结合上文理解指代与追问，但仍以当前资料为准。"
+)
+
+
 class ChatService:
 	def __init__(self, settings: Settings) -> None:
 		self.settings = settings
@@ -131,44 +141,76 @@ class ChatService:
 			base_url=settings.llm_base_url,
 		)
 
-	def _messages(self, *, question: str, context: str) -> list[dict[str, str]]:
-		system = (
-			"你是 MeriKnow 企业知识库助手：根据已收录资料回答，并便于核对原文。"
-			"只根据「资料」回答；资料没写到的内容直接说「资料未覆盖」，不要编造。"
-			"只回答用户所问，不要主动列举「未使用的技术 / 未提及的框架」等对比注脚；"
-			"除非用户明确问技术对比或用了哪些框架。"
-			"语气简洁专业，用中文；必要时分点。引用资料时可用 [1]、[2] 对应来源编号。"
+	def _messages(
+		self,
+		*,
+		question: str,
+		context: str,
+		history: list[dict[str, str]] | None = None,
+	) -> list[dict[str, str]]:
+		"""Build chat messages: system + prior user/assistant turns + current user (资料+问题)."""
+		msgs: list[dict[str, str]] = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+		for item in history or []:
+			role = item.get("role")
+			content = (item.get("content") or "").strip()
+			if role in {"user", "assistant"} and content:
+				msgs.append({"role": role, "content": content})
+		msgs.append(
+			{
+				"role": "user",
+				"content": f"资料：\n{context}\n\n问题：{question}",
+			}
 		)
-		return [
-			{"role": "system", "content": system},
-			{"role": "user", "content": f"资料：\n{context}\n\n问题：{question}"},
-		]
+		return msgs
 
-	def answer(self, *, question: str, context: str) -> str:
-		messages: list[tuple[str, str]] = [
-			(item["role"], item["content"]) for item in self._messages(question=question, context=context)
+	def answer(
+		self,
+		*,
+		question: str,
+		context: str,
+		history: list[dict[str, str]] | None = None,
+	) -> str:
+		return self.answer_messages(
+			self._messages(question=question, context=context, history=history)
+		)
+
+	def answer_messages(self, messages: list[dict[str, str]]) -> str:
+		lc_messages: list[tuple[str, str]] = [
+			(item["role"], item["content"]) for item in messages
 		]
 		with llm_inflight_slot(self.settings):
-			response: Any = self._model.invoke(messages)
+			response: Any = self._model.invoke(lc_messages)
 		content = getattr(response, "content", "") or ""
 		if isinstance(content, list):
 			content = "".join(str(part) for part in content)
 		answer = str(content).strip()
+		user_len = sum(len(m["content"]) for m in messages if m.get("role") == "user")
 		logger.info(
-			"llm.chat model=%s question_len=%s context_len=%s answer_len=%s",
+			"llm.chat model=%s messages=%s user_chars=%s answer_len=%s",
 			self.settings.chat_model,
-			len(question),
-			len(context),
+			len(messages),
+			user_len,
 			len(answer),
 		)
 		return answer
 
-	def stream_answer(self, *, question: str, context: str):
+	def stream_answer(
+		self,
+		*,
+		question: str,
+		context: str,
+		history: list[dict[str, str]] | None = None,
+	):
+		yield from self.stream_messages(
+			self._messages(question=question, context=context, history=history)
+		)
+
+	def stream_messages(self, messages: list[dict[str, str]]):
 		chunk_count = 0
 		with llm_inflight_slot(self.settings):
 			response = self._client.chat.completions.create(
 				model=self.settings.chat_model,
-				messages=self._messages(question=question, context=context),
+				messages=messages,
 				temperature=0.2,
 				stream=True,
 			)
@@ -181,9 +223,8 @@ class ChatService:
 				chunk_count += 1
 				yield token
 		logger.info(
-			"llm.chat_stream model=%s question_len=%s context_len=%s chunks=%s",
+			"llm.chat_stream model=%s messages=%s chunks=%s",
 			self.settings.chat_model,
-			len(question),
-			len(context),
+			len(messages),
 			chunk_count,
 		)

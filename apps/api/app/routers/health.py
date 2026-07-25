@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.schemas import HealthResponse
 from app.services.active_generations import probe_active_generation_store
+from app.services.ask_defaults import ASK_DEFAULTS
 from app.services.metadata import probe_metadata_store
 from app.services.runtime import resolve_runtime
 from app.settings import get_settings
@@ -48,7 +49,7 @@ def health() -> HealthResponse:
 		live_ready=capability.live_ready,
 		ask_ready=ask_ready,
 		reasons=reasons,
-		hybrid_enabled=settings.hybrid_enabled,
+		hybrid_enabled=ASK_DEFAULTS.hybrid_enabled,
 		metadata_backend=meta_backend,
 		metadata_ok=meta_ok,
 		active_generation_gate_enabled=settings.active_generation_gate_enabled,

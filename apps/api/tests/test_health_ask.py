@@ -64,7 +64,7 @@ def test_live_unavailable_hard_fails_not_stub(monkeypatch: pytest.MonkeyPatch) -
 			"text": "病假须于返岗后三个工作日内补交证明材料。",
 		},
 	)
-	assert ingest.status_code == 503
+	assert ingest.status_code == 410
 	get_settings.cache_clear()
 
 
@@ -102,7 +102,8 @@ def test_ask_stub() -> None:
 	assert citation["snippet"]
 	assert payload["mode"] == "stub"
 	assert payload["refused"] is False
-	assert payload["persisted"] is True
+	# Default-temp: no thread_id → not durable; SessionMemory still holds short turns.
+	assert payload["persisted"] is False
 	assert payload["retrieval_mode"] in {"dense", "hybrid"}
 	assert payload["retrieval_debug"]["judgement"]["action"] == "generate"
 
@@ -138,7 +139,7 @@ def test_ask_refuse_weak_match() -> None:
 
 
 def test_judge_with_injected_weak_retrieve() -> None:
-	settings = Settings(ask_mode="stub", answer_min_score=0.5, max_retrieve_retries=0)
+	settings = Settings(ask_mode="stub", max_retrieve_retries=0)
 
 	def fake_retrieve(
 		_query: str,
@@ -163,13 +164,17 @@ def test_judge_with_injected_weak_retrieve() -> None:
 		retrieve_fn=fake_retrieve,
 		generate_fn=stub_generate,
 	)
-	result = service.ask(question="anything", library_id="lib-unit")
+	result = service.ask(
+		question="anything",
+		library_id="lib-unit",
+		ask_overrides={"answer_min_score": 0.5},
+	)
 	assert result.refused is True
 	assert result.refuse_reason == "weak_match"
 
 
 def test_retry_then_generate() -> None:
-	settings = Settings(ask_mode="stub", answer_min_score=0.5, max_retrieve_retries=1)
+	settings = Settings(ask_mode="stub", max_retrieve_retries=1)
 	calls = {"n": 0}
 
 	def flaky_retrieve(
@@ -239,17 +244,14 @@ def test_build_graph_compile() -> None:
 
 
 def test_ingest_simulates_in_stub() -> None:
+	from tests.support.seed import seed_ingest_text
+
 	lib_id = create_library(client, library_id="lib-ingest-sim")
-	response = client.post(
-		"/v1/ingest",
-		json={
-			"library_id": lib_id,
-			"title": "sample",
-			"text": "病假须于返岗后三个工作日内补交证明材料。",
-		},
+	payload = seed_ingest_text(
+		library_id=lib_id,
+		title="sample",
+		text="病假须于返岗后三个工作日内补交证明材料。",
 	)
-	assert response.status_code == 200
-	payload = response.json()
 	assert payload["status"] == "ready"
 	assert payload["simulated"] is True
 	assert payload["chunk_count"] >= 1
@@ -262,23 +264,23 @@ def test_ingest_simulates_in_stub() -> None:
 	assert row["status"] == "ready"
 
 
-def test_ingest_503_when_simulate_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_seed_ingest_503_when_simulate_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+	from tests.support.seed import SeedIngestError, seed_ingest_text
+
 	lib_id = create_library(client, library_id="lib-ingest-nosim")
 	monkeypatch.setenv("STUB_INGEST_SIMULATE", "false")
 	get_settings.cache_clear()
-	response = client.post(
-		"/v1/ingest",
-		json={
-			"library_id": lib_id,
-			"title": "sample",
-			"text": "病假须于返岗后三个工作日内补交证明材料。",
-		},
-	)
-	assert response.status_code == 503
+	with pytest.raises(SeedIngestError) as exc:
+		seed_ingest_text(
+			library_id=lib_id,
+			title="sample",
+			text="病假须于返岗后三个工作日内补交证明材料。",
+		)
+	assert exc.value.http_status == 503
 	get_settings.cache_clear()
 
 
-def test_ask_persists_archive_turn() -> None:
+def test_ask_temp_session_does_not_auto_archive() -> None:
 	lib_id = create_library(client, library_id="lib-ask-archive")
 	response = client.post(
 		"/v1/ask",
@@ -291,23 +293,29 @@ def test_ask_persists_archive_turn() -> None:
 	assert response.status_code == 200
 	payload = response.json()
 	assert payload["citations"][0].get("doc_id") or payload["citations"][0].get("title")
-	assert payload["persisted"] is True
+	assert payload["persisted"] is False
 	assert payload["citations"][0].get("text")
 
 	archive = client.get("/v1/archive", params={"session_id": "archive-session-1"})
 	assert archive.status_code == 200
-	rows = archive.json()
-	assert len(rows) >= 1
-	assert rows[0]["question"] == "病假需要在几天内补交证明？"
-	assert rows[0]["citations"]
-	assert "doc_id" in rows[0]["citations"][0] or rows[0]["citations"][0].get("title")
-	assert rows[0]["citations"][0].get("text") or rows[0]["citations"][0].get("snippet")
+	assert archive.json() == []
 
 
 def test_ask_persist_failure_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
 	from app.graph import ask_graph as ask_graph_mod
+	from app.services.metadata import get_metadata_store
+	from app.settings import get_settings
 
 	lib_id = create_library(client, library_id="lib-ask-persist-fail")
+	settings = get_settings()
+	thread = get_metadata_store().create_thread(
+		title="persist-fail",
+		session_id="persist-fail-session",
+		library_id=lib_id,
+		tenant_id=settings.default_tenant_id,
+		workspace_id=settings.default_workspace_id,
+		principal_id="development",
+	)
 
 	def boom_persist(**_kwargs):
 		return {"persisted": False, "persist_error": "disk full"}
@@ -319,6 +327,7 @@ def test_ask_persist_failure_is_visible(monkeypatch: pytest.MonkeyPatch) -> None
 			"question": "病假需要在几天内补交证明？",
 			"library_id": lib_id,
 			"session_id": "persist-fail-session",
+			"thread_id": thread["id"],
 		},
 	)
 	assert response.status_code == 200
@@ -334,7 +343,7 @@ def test_iter_ask_events_passes_load_table_groups_fn(
 	"""Stream path rebuilds the graph; must keep the same table-group loader as ask()."""
 	from app.graph import ask_graph as ask_graph_mod
 
-	settings = Settings(ask_mode="stub", session_memory_enabled=False)
+	settings = Settings(ask_mode="stub")
 
 	class FakeRetrieval:
 		last_debug: dict = {}
@@ -360,7 +369,13 @@ def test_iter_ask_events_passes_load_table_groups_fn(
 	assert service._load_table_groups_fn is not None
 
 	captured.clear()
-	events = list(service.iter_ask_events(question="表格题？", library_id="lib-stream-loader"))
+	events = list(
+		service.iter_ask_events(
+			question="表格题？",
+			library_id="lib-stream-loader",
+			ask_overrides={"session_memory_enabled": False},
+		)
+	)
 	assert events
 	assert captured.get("load_table_groups_fn") is not None
 	assert captured["load_table_groups_fn"] is service._load_table_groups_fn

@@ -61,12 +61,29 @@ def test_stage_detail_schema_keys_always_present() -> None:
 
 
 def test_ask_stub_has_trace_id_question_hash_and_stages() -> None:
+	from app.services.metadata import get_metadata_store
+	from app.settings import get_settings
+
 	lib_id = create_library(client, library_id="lib-ask-trace")
+	settings = get_settings()
+	thread = get_metadata_store().create_thread(
+		title="trace",
+		session_id="trace-sess-1",
+		library_id=lib_id,
+		tenant_id=settings.default_tenant_id,
+		workspace_id=settings.default_workspace_id,
+		principal_id="development",
+	)
 	question = "病假需要在几天内补交证明？"
 	response = client.post(
 		"/v1/ask",
 		headers={"x-request-id": "trace-stub-001"},
-		json={"question": question, "library_id": lib_id, "session_id": "trace-sess-1"},
+		json={
+			"question": question,
+			"library_id": lib_id,
+			"session_id": "trace-sess-1",
+			"thread_id": thread["id"],
+		},
 	)
 	assert response.status_code == 200
 	payload = response.json()
@@ -101,8 +118,11 @@ def test_ask_stub_has_trace_id_question_hash_and_stages() -> None:
 	assert generate["detail"]["input_tokens"] is None
 	assert generate["detail"]["output_tokens"] is None
 
-	# turn 落盘带完整 debug
-	archive = client.get("/v1/archive", params={"session_id": "trace-sess-1"})
+	# archived turn 落盘带完整 debug
+	archive = client.get(
+		"/v1/archive",
+		params={"session_id": "trace-sess-1", "thread_id": thread["id"]},
+	)
 	assert archive.status_code == 200
 	rows = archive.json()
 	assert rows
@@ -171,25 +191,36 @@ def test_stream_total_duration_only_on_done() -> None:
 
 
 def test_stream_disconnect_marks_truncated() -> None:
-	settings = Settings(ask_mode="stub", session_memory_enabled=False)
+	from app.services.metadata import get_metadata_store
+
+	settings = Settings(ask_mode="stub")
 	service = AskGraphService(
 		settings,
 		generate_fn=stub_generate,
 	)
+	thread = get_metadata_store().create_thread(
+		title="disconnect",
+		session_id="disconnect-sess",
+		library_id="lib-disconnect",
+		tenant_id=service.access_scope.tenant_id,
+		workspace_id=service.access_scope.workspace_id,
+		principal_id=service.access_scope.principal_id,
+	)
 	gen = service.iter_ask_events(
 		question="病假需要在几天内补交证明？",
 		library_id="lib-disconnect",
+		thread_id=thread["id"],
 		trace_id="trace-disconnect-1",
+		ask_overrides={"session_memory_enabled": False},
 	)
 	first = next(gen)
 	assert first["event"] == "meta"
 	# 模拟客户端断连：关闭生成器触发 GeneratorExit → truncated 落盘
 	gen.close()
 
-	from app.services.metadata import get_metadata_store
-
 	rows = get_metadata_store().list_turns(
 		library_id="lib-disconnect",
+		thread_id=thread["id"],
 		tenant_id=service.access_scope.tenant_id,
 		workspace_id=service.access_scope.workspace_id,
 		principal_id=service.access_scope.principal_id,

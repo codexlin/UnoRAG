@@ -4,6 +4,8 @@ import { createHash, createHmac, randomUUID } from "node:crypto";
 
 import type { AuthIdentity } from "./auth/provider";
 
+export type InternalAuthSource = "session" | "service";
+
 export type InternalRagContext = {
 	v: 1;
 	iss: "meriknow-control-plane";
@@ -13,7 +15,7 @@ export type InternalRagContext = {
 	group_ids: string[];
 	request_id: string;
 	jti: string;
-	auth_source: "session";
+	auth_source: InternalAuthSource;
 	method: string;
 	target: string;
 	body_sha256: string | null;
@@ -35,6 +37,7 @@ export function createInternalRagHeaders(
 	binding: InternalRequestBinding,
 	identity: AuthIdentity,
 	now = Math.floor(Date.now() / 1000),
+	options?: { authSource?: InternalAuthSource },
 ): Headers {
 	const secret = process.env.MERIKNOW_INTERNAL_SECRET?.trim();
 	if (!secret || secret.length < 32) {
@@ -44,6 +47,7 @@ export function createInternalRagHeaders(
 	}
 
 	const requestId = randomUUID();
+	const authSource = options?.authSource ?? "session";
 	const context: InternalRagContext = {
 		v: 1,
 		iss: "meriknow-control-plane",
@@ -53,7 +57,7 @@ export function createInternalRagHeaders(
 		group_ids: identity.groupIds,
 		request_id: requestId,
 		jti: requestId,
-		auth_source: "session",
+		auth_source: authSource,
 		method: binding.method.toUpperCase(),
 		target: binding.target,
 		body_sha256: binding.body

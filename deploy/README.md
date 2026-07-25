@@ -2,6 +2,9 @@
 
 本目录是客户可安装的私有部署参考包。首片以 **Docker Compose 单机拓扑** 为主；
 **Helm/K8s 起步骨架** 已提供；SBOM/镜像安全扫描仍后置。
+
+产品定位与开工 checklist：[`docs/PRODUCT.md`](../docs/PRODUCT.md) ·
+[`docs/ROADMAP.md`](../docs/ROADMAP.md)。  
 试点 go/no-go 见 [`docs/acceptance/`](../docs/acceptance/README.md)。
 
 ## 目录

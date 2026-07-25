@@ -160,12 +160,10 @@ config:
   internalAuthReplayBackend: redis
   activeGenerationGateEnabled: "true"
   activeGenerationCacheTtlSeconds: "0"
-  legacyIngestWritesEnabled: "false"
   corsOrigins: https://meriknow.example.com
   chatModel: qwen-plus
   embeddingModel: text-embedding-v3
   embeddingDim: "1024"
-  rerankEnabled: "true"
   rerankModel: qwen3-rerank
   mineruEnabled: "false"
   openaiBaseUrl: ""

@@ -1,4 +1,7 @@
-"""Document ingest jobs — shared by sync upload fallback and ARQ worker."""
+"""Shared sync document ingest for tests / scripts (not the product path).
+
+Product ingest: Next.js → app.jobs → lifecycle_worker.
+"""
 
 from __future__ import annotations
 
@@ -6,21 +9,15 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from arq import create_pool
-from arq.connections import ArqRedis, RedisSettings
-from arq.jobs import Job
-
 from app.security.access_scope import AccessScope, resolve_access_scope
 from app.services.document_storage import DocumentStorage
 from app.services.ingest.pipeline import prepare_ingest
-from app.services.metadata import MetadataStore, get_metadata_store
+from app.services.metadata import get_metadata_store
 from app.services.retrieval import IngestService
 from app.services.runtime import resolve_runtime
 from app.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
-
-INGEST_JOB_NAME = "ingest_document"
 
 
 def process_document_ingest(
@@ -118,7 +115,7 @@ def process_document_ingest(
 	notice = prepared.notice()
 	try:
 		if live:
-			# Legacy ARQ path only: mint a UUID so payloads stay schema-valid.
+			# Test/script helper path: mint a UUID so payloads stay schema-valid.
 			# Product ingest must pass app.document_versions.id from the worker.
 			result = IngestService(
 				settings,
@@ -193,92 +190,3 @@ def process_document_ingest(
 		"parser_report": report,
 		"pipeline": prepared.pipeline,
 	}
-
-
-async def _redis_pool(settings: Settings) -> ArqRedis:
-	return await create_pool(RedisSettings.from_dsn(settings.redis_url))
-
-
-async def queue_depth(redis: ArqRedis) -> int:
-	try:
-		return int(await redis.zcard(redis.default_queue_name))
-	except Exception:
-		logger.exception("ingest.queue_depth_failed")
-		return 0
-
-
-async def enqueue_ingest_job(
-	*,
-	doc_id: str,
-	library_id: str,
-	access_scope: AccessScope,
-	settings: Settings | None = None,
-) -> Job | None:
-	"""Enqueue ARQ job. Raises RuntimeError on Redis/backpressure failures."""
-	from uuid import uuid4
-
-	from app.services.ingest.legacy_writes import ensure_legacy_arq_enqueue_allowed
-
-	settings = settings or get_settings()
-	ensure_legacy_arq_enqueue_allowed(settings)
-	meta = get_metadata_store(settings)
-	inflight = sum(
-		1
-		for row in meta.list_documents(library_id, scope=access_scope)
-		if str(row.get("status") or "") == "processing"
-	)
-	# 当前文档已计入 processing；超限时拒绝（允许等于上限）
-	if inflight > settings.ingest_max_inflight_per_library:
-		raise RuntimeError(
-			f"知识库进行中的索引任务过多（{inflight}），请稍后重试"
-		)
-
-	redis = await _redis_pool(settings)
-	try:
-		depth = await queue_depth(redis)
-		if depth >= settings.ingest_queue_max_depth:
-			raise RuntimeError(
-				f"索引队列已满（{depth}），请稍后重试"
-			)
-		# 每次入队使用唯一 job_id，避免重索引被旧 result 去重吞掉
-		job = await redis.enqueue_job(
-			INGEST_JOB_NAME,
-			doc_id,
-			{
-				"tenant_id": access_scope.tenant_id,
-				"workspace_id": access_scope.workspace_id,
-				"principal_id": access_scope.principal_id,
-				"group_ids": list(access_scope.group_ids),
-			},
-			_job_id=f"ingest:{doc_id}:{uuid4().hex}",
-		)
-		if job is None:
-			raise RuntimeError("入队失败：任务未创建")
-		logger.info(
-			"ingest.enqueued doc_id=%s library_id=%s job=%s depth=%s",
-			doc_id,
-			library_id,
-			getattr(job, "job_id", None),
-			depth,
-		)
-		return job
-	finally:
-		await redis.aclose(close_connection_pool=True)
-
-
-async def ingest_document(
-	ctx: dict[str, Any],
-	doc_id: str,
-	access_payload: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-	"""ARQ worker entrypoint."""
-	_ = ctx
-	access_scope = None
-	if access_payload:
-		access_scope = AccessScope(
-			tenant_id=str(access_payload["tenant_id"]),
-			workspace_id=str(access_payload["workspace_id"]),
-			principal_id=str(access_payload["principal_id"]),
-			group_ids=tuple(str(item) for item in access_payload.get("group_ids") or []),
-		)
-	return process_document_ingest(doc_id, access_scope=access_scope)

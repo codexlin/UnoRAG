@@ -25,21 +25,27 @@ from app.services.ask_trace import (
 	question_hash,
 	resolve_trace_id,
 )
-from app.services.llm import ChatService
 from app.services.ask_route import (
 	should_upgrade_fast_to_precise_table,
 	table_overview_downgrade_reason,
 )
 from app.services.query_router import looks_like_table_summary_lookup, route_query
+from app.services.ask_overrides import effective_ask_settings, has_ask_overrides
 from app.services.citation_adjudicate import (
 	adjudicate_debug_fields,
 	apply_citation_adjudicate,
 	wide_recall_limit,
 )
+from app.services.llm import CHAT_SYSTEM_PROMPT, ChatService
 from app.services.retrieval import RetrievalService
 from app.services.retrieval_plan import build_retrieval_plan
 from app.services.runtime import RuntimeCapability, resolve_runtime
-from app.services.session_memory import SessionMemory, default_session_memory
+from app.services.session_memory import (
+	GENERATE_HISTORY_MAX_CHARS,
+	WORKING_MEMORY_MAX_TURNS,
+	SessionMemory,
+	default_session_memory,
+)
 from app.services.table_query import (
 	build_dual_table_query_plan,
 	build_table_query_plan,
@@ -58,7 +64,8 @@ from app.settings import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 RetrieveFn = Callable[..., list[dict[str, Any]]]
-GenerateFn = Callable[[str, list[dict[str, Any]]], str]
+# messages (system + history + current user) , citations
+GenerateFn = Callable[[list[dict[str, str]], list[dict[str, Any]]], str]
 LoadTableGroupsFn = Callable[..., list[dict[str, Any]]]
 
 
@@ -192,6 +199,7 @@ def _persist_turn(
 	mode: str,
 	refused: bool,
 	refuse_reason: str | None,
+	thread_id: str | None = None,
 	query_type: str | None = None,
 	retrieval_plan: dict[str, Any] | None = None,
 	retrieval_debug: dict[str, Any] | None = None,
@@ -203,11 +211,15 @@ def _persist_turn(
 	workspace_id: str | None = None,
 	principal_id: str | None = None,
 ) -> dict[str, Any]:
+	# Default-temp: only archived (thread-bound) turns are written to durable storage.
+	if not thread_id:
+		return {"persisted": False, "persist_error": None}
 	try:
 		from app.services.metadata import get_metadata_store
 
 		get_metadata_store().create_turn(
 			session_id=session_id,
+			thread_id=thread_id,
 			library_id=library_id,
 			question=question,
 			answer=answer,
@@ -228,8 +240,43 @@ def _persist_turn(
 		)
 		return {"persisted": True, "persist_error": None}
 	except Exception as exc:
-		logger.exception("ask.persist_turn_failed session_id=%s", session_id)
+		logger.exception(
+			"ask.persist_turn_failed session_id=%s thread_id=%s",
+			session_id,
+			thread_id,
+		)
 		return {"persisted": False, "persist_error": str(exc)}
+
+
+def _history_from_thread(
+	thread_id: str,
+	*,
+	tenant_id: str,
+	workspace_id: str,
+	principal_id: str,
+	max_turns: int = WORKING_MEMORY_MAX_TURNS,
+) -> list[dict[str, str]]:
+	"""Load last N Q/A turns from an archived thread (chronological for rewrite)."""
+	from app.services.metadata import get_metadata_store
+
+	cap = max(1, int(max_turns))
+	rows = get_metadata_store().list_turns(
+		thread_id=thread_id,
+		tenant_id=tenant_id,
+		workspace_id=workspace_id,
+		principal_id=principal_id,
+		limit=cap,
+	)
+	# list_turns is newest-first; reverse for chat history order.
+	history: list[dict[str, str]] = []
+	for row in reversed(rows):
+		question = (row.get("question") or "").strip()
+		answer = (row.get("answer") or "").strip()
+		if question:
+			history.append({"role": "user", "content": question})
+		if answer:
+			history.append({"role": "assistant", "content": answer})
+	return history
 
 
 def _single_document_version_id(citations: list[Citation]) -> str | None:
@@ -259,26 +306,128 @@ def _library_label(library_id: str | None) -> str:
 	return library_id
 
 
+def _last_turn_qa(
+	history: list[dict[str, str]] | None,
+) -> tuple[str | None, str | None]:
+	"""Return (last_user_question, its assistant answer) from chronological history."""
+	if not history:
+		return None, None
+	prev_q: str | None = None
+	prev_a: str | None = None
+	for item in reversed(history):
+		role = item.get("role")
+		content = (item.get("content") or "").strip()
+		if not content:
+			continue
+		if role == "assistant" and prev_a is None:
+			prev_a = content
+			continue
+		if role == "user":
+			prev_q = content
+			break
+	return prev_q, prev_a
+
+
+def _compact_answer_hint(answer: str | None, *, max_len: int = 80) -> str:
+	"""First-line snippet of prior answer for retrieval / generate coreference."""
+	if not answer:
+		return ""
+	text = answer.strip().split("\n")[0].strip()
+	if len(text) > max_len:
+		text = text[:max_len].rstrip()
+	return text
+
+
 def rewrite_with_history(question: str, history: list[dict[str, str]] | None) -> tuple[str, str]:
-	"""Return (rewritten_query, rewrite_mode). Lightweight QueryNest-style follow-up rewrite."""
+	"""Return (rewritten_query, rewrite_mode). Lightweight follow-up rewrite with coref.
+
+	Must include the prior *answer* (not only the prior question) so pronouns like
+	「它」resolve to entities such as「边缘计算网关」for retrieval.
+	Rewrite serves retrieval only — it does not replace generate history messages.
+	"""
 	q = question.strip()
 	if not history:
 		return q, "passthrough"
-	previous_questions = [
-		item["content"]
-		for item in reversed(history)
-		if item.get("role") == "user" and (item.get("content") or "").strip()
-	]
-	if not previous_questions:
+	prev, prev_answer = _last_turn_qa(history)
+	if not prev:
 		return q, "passthrough"
-	prev = previous_questions[0].strip()
 	# Pronoun / short follow-ups benefit most from prior turn context.
 	needs_context = len(q) <= 24 or any(
-		token in q for token in ("它", "这个", "那个", "上述", "刚才", "还有", "呢", "吗")
+		token in q
+		for token in ("它", "这个", "那个", "上述", "刚才", "还有", "呢", "吗", "那")
 	)
 	if not needs_context:
 		return q, "passthrough"
+	answer_hint = _compact_answer_hint(prev_answer)
+	if answer_hint:
+		# Lead with the referent so dense/BM25 latch onto the entity, not just the prior ask.
+		return f"{answer_hint}：{q}\n（上一轮问：{prev}）", "history"
 	return f"上一轮用户问题：{prev}\n当前追问：{q}", "history"
+
+
+def history_for_generate(
+	history: list[dict[str, str]] | None,
+	*,
+	max_turns: int = WORKING_MEMORY_MAX_TURNS,
+	max_chars: int = GENERATE_HISTORY_MAX_CHARS,
+) -> list[dict[str, str]]:
+	"""Last N complete Q/A turns for LLM messages; drop oldest if over char budget."""
+	if not history:
+		return []
+	normalized: list[dict[str, str]] = []
+	for item in history:
+		role = item.get("role")
+		content = (item.get("content") or "").strip()
+		if role in {"user", "assistant"} and content:
+			normalized.append({"role": role, "content": content})
+	# Keep at most max_turns pairs (2 messages each), from the end.
+	cap = max(1, int(max_turns)) * 2
+	trimmed = normalized[-cap:] if cap > 0 else normalized
+	budget = max(0, int(max_chars))
+	if budget <= 0 or not trimmed:
+		return trimmed
+	# Drop oldest messages until under budget (prefer keeping recent full turns).
+	while trimmed and sum(len(m["content"]) for m in trimmed) > budget:
+		trimmed = trimmed[2:] if len(trimmed) >= 2 else trimmed[1:]
+	return trimmed
+
+
+def build_generate_messages(
+	*,
+	question: str,
+	context: str,
+	history: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+	"""Assemble generate messages: system + history(user/assistant) + current user."""
+	msgs: list[dict[str, str]] = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+	for item in history_for_generate(history):
+		msgs.append({"role": item["role"], "content": item["content"]})
+	q = (question or "").strip()
+	msgs.append(
+		{
+			"role": "user",
+			"content": f"资料：\n{context}\n\n问题：{q}",
+		}
+	)
+	return msgs
+
+
+def question_with_working_memory(
+	question: str,
+	history: list[dict[str, str]] | None,
+) -> str:
+	"""Deprecated compatibility helper — prefer build_generate_messages for generate.
+
+	Kept for older tests; returns a short prior-turn hint line (not used by ask path).
+	"""
+	q = (question or "").strip()
+	prev_q, prev_a = _last_turn_qa(history)
+	if not prev_q:
+		return q
+	answer_hint = _compact_answer_hint(prev_a)
+	if answer_hint:
+		return f"上一轮：问「{prev_q}」答「{answer_hint}」。\n当前问题：{q}"
+	return f"上一轮问题：{prev_q}\n当前问题：{q}"
 
 
 def stub_retrieve(
@@ -346,8 +495,46 @@ def stub_retrieve(
 	return hits
 
 
-def stub_generate(question: str, citations: list[dict[str, Any]]) -> str:
-	_ = question
+def stub_load_table_groups(
+	*,
+	doc_id: str,
+	table_id: str,
+	document_version_id: str | None = None,
+	library_id: str | None = None,
+) -> list[dict[str, Any]]:
+	"""In-memory store aligned with stub_retrieve table hits (eval / ASK_MODE=stub).
+
+	Does not relax production fail-closed paths: live mode still requires a real store loader.
+	"""
+	if str(table_id) != "t1":
+		return []
+	headers = ["供应商", "总价"]
+	rows = [["甲公司", "120000"], ["乙公司", "80000"]]
+	return [
+		{
+			"id": "stub-g0",
+			"record_type": "table",
+			"doc_id": doc_id,
+			"document_version_id": document_version_id or "stub-version",
+			"library_id": library_id,
+			"table_id": table_id,
+			"title": "报价表",
+			"headers": headers,
+			"rows": rows,
+			"row_start": 0,
+			"row_end": 1,
+			"table_row_count": 2,
+			"score": 0.9,
+			"body": "供应商 | 总价\n甲公司 | 120000\n乙公司 | 80000",
+		}
+	]
+
+
+def stub_generate(
+	messages: list[dict[str, str]],
+	citations: list[dict[str, Any]],
+) -> str:
+	_ = messages
 	# section 总结：若有章节路径，稍作提示（仍为 stub 固定答）
 	sectionish = any(
 		str(item.get("record_type") or "") == "section" or item.get("section_path")
@@ -390,23 +577,39 @@ def _format_context(citations: list[dict[str, Any]]) -> str:
 	return "\n\n".join(blocks)
 
 
+def _table_execution_context_block(execution: dict[str, Any] | None) -> str:
+	"""表格路径：把代码侧计算结果交给 LLM 解释（禁止心算）。"""
+	if not execution or not execution.get("ok"):
+		return ""
+	return (
+		"【已由程序计算，请据此解释，勿自行改算】\n"
+		f"operation={execution.get('operation')} column={execution.get('column')} "
+		f"operator={execution.get('operator')} value={execution.get('value')}\n"
+		f"answer_text={execution.get('answer_text')}\n"
+		f"matched_count={execution.get('matched_count')} "
+		f"matched_rows_truncated={execution.get('matched_rows_truncated')}\n"
+		f"matched_rows={execution.get('matched_rows')}"
+	)
+
+
+def _format_generate_context(
+	citations: list[dict[str, Any]],
+	execution: dict[str, Any] | None = None,
+) -> str:
+	parts = [_format_context(citations)]
+	table_block = _table_execution_context_block(execution)
+	if table_block:
+		parts.append(table_block)
+	return "\n\n".join(parts)
+
+
 def _format_table_generate_context(
 	question: str,
 	citations: list[dict[str, Any]],
 	execution: dict[str, Any] | None,
 ) -> str:
-	"""表格路径：把代码侧计算结果与行证据交给 LLM 解释（禁止心算）。"""
-	parts = [_format_context(citations)]
-	if execution and execution.get("ok"):
-		parts.append(
-			"【已由程序计算，请据此解释，勿自行改算】\n"
-			f"operation={execution.get('operation')} column={execution.get('column')} "
-			f"operator={execution.get('operator')} value={execution.get('value')}\n"
-			f"answer_text={execution.get('answer_text')}\n"
-			f"matched_count={execution.get('matched_count')} "
-			f"matched_rows_truncated={execution.get('matched_rows_truncated')}\n"
-			f"matched_rows={execution.get('matched_rows')}"
-		)
+	"""Deprecated blob helper — prefer build_generate_messages + _format_generate_context."""
+	parts = [_format_generate_context(citations, execution)]
 	parts.append(f"用户问题：{question}")
 	return "\n\n".join(parts)
 
@@ -426,6 +629,9 @@ def build_ask_graph(
 	load_table_groups_fn: LoadTableGroupsFn | None = None,
 	access_scope: AccessScope | None = None,
 ):
+	# Product knobs live on ASK_DEFAULTS ⊕ overrides — never plain Settings/env.
+	if not hasattr(settings, "answer_min_score"):
+		settings = effective_ask_settings(settings)
 	min_score = float(settings.answer_min_score)
 	max_retries = max(0, int(settings.max_retrieve_retries))
 	scope = resolve_access_scope(settings, access_scope)
@@ -502,17 +708,22 @@ def build_ask_graph(
 			"retrieval_debug": debug,
 		}
 
-	def route_after_plan(state: AskState) -> Literal["clarify", "rewrite", "table"]:
+	def route_after_plan(state: AskState) -> Literal["clarify", "rewrite"]:
+		"""Clarify short-circuits; all retrieval paths rewrite first (incl. table)."""
 		plan = state.get("retrieval_plan") or {}
 		path = str(plan.get("path") or "")
 		execute_path = str(plan.get("execute_path") or "short")
 		if path == "clarify" or execute_path == "clarify":
 			return "clarify"
-		if path == "precise" and plan.get("precise_kind") == "table":
-			return "table"
-		if execute_path == "table":
-			return "table"
 		return "rewrite"
+
+	def route_after_rewrite(state: AskState) -> Literal["retrieve", "table"]:
+		plan = state.get("retrieval_plan") or {}
+		if str(plan.get("path") or "") == "precise" and plan.get("precise_kind") == "table":
+			return "table"
+		if str(plan.get("execute_path") or "") == "table":
+			return "table"
+		return "retrieve"
 
 	def clarify_node(state: AskState) -> AskState:
 		library_name = _library_label(state.get("library_id"))
@@ -1035,6 +1246,7 @@ def build_ask_graph(
 		question = state["question"].strip()
 		history = state.get("history") or []
 		rewritten, rewrite_mode = rewrite_with_history(question, history)
+		gen_history = history_for_generate(history)
 		return {
 			"rewritten_question": rewritten,
 			"retrieval_attempts": 0,
@@ -1043,7 +1255,10 @@ def build_ask_graph(
 			"retrieval_debug": _merge_debug(
 				state,
 				rewrite=rewrite_mode,
+				# Loaded history messages (user+assistant); rewrite uses last turn only.
 				history_turns=len(history),
+				# Messages injected into generate (after turn/char trim).
+				generate_history_turns=len(gen_history),
 				mode=mode,
 				answer_min_score=min_score,
 				rerank_enabled=bool(settings.rerank_enabled),
@@ -1379,6 +1594,9 @@ def build_ask_graph(
 		execution = state.get("table_execution") or {}
 		tq = state.get("table_query_plan") or {}
 		stream_mode = bool((state.get("retrieval_debug") or {}).get("stream"))
+		history = state.get("history") or []
+		gen_history = history_for_generate(history)
+		question = (state.get("question") or "").strip()
 		# 结构化表格结果：优先用程序答案（LLM 仅在 live 路径解释）；stub 直接给 answer_text
 		if (
 			str(state.get("query_type") or "") == "table"
@@ -1389,16 +1607,24 @@ def build_ask_graph(
 			if mode == "stub":
 				answer = str(execution["answer_text"])
 			else:
-				# live：把计算结果注入 generate_fn 上下文
-				ctx_question = _format_table_generate_context(
-					state["question"], citations, execution
+				# live：把计算结果注入资料上下文；history 仍为完整多轮 messages
+				messages = build_generate_messages(
+					question=question,
+					context=_format_generate_context(citations, execution),
+					history=gen_history,
 				)
-				answer = generate_fn(ctx_question, citations)
+				answer = generate_fn(messages, citations)
 		else:
-			answer = generate_fn(state["question"], citations)
+			messages = build_generate_messages(
+				question=question,
+				context=_format_generate_context(citations),
+				history=gen_history,
+			)
+			answer = generate_fn(messages, citations)
 		debug = _merge_debug(
 			state,
 			generate=mode,
+			generate_history_turns=len(gen_history),
 			table_query_plan=tq or None,
 			table_execution=execution or None,
 		)
@@ -1440,7 +1666,7 @@ def build_ask_graph(
 	graph.add_conditional_edges(
 		"build_retrieval_plan",
 		route_after_plan,
-		{"clarify": "clarify", "rewrite": "rewrite", "table": "build_table_plan"},
+		{"clarify": "clarify", "rewrite": "rewrite"},
 	)
 	graph.add_edge("clarify", END)
 	graph.add_edge("build_table_plan", "table_retrieve")
@@ -1450,7 +1676,11 @@ def build_ask_graph(
 		route_after_table_execute,
 		{"judge": "judge", "end": END},
 	)
-	graph.add_edge("rewrite", "retrieve")
+	graph.add_conditional_edges(
+		"rewrite",
+		route_after_rewrite,
+		{"retrieve": "retrieve", "table": "build_table_plan"},
+	)
 	graph.add_conditional_edges(
 		"retrieve",
 		route_after_retrieve,
@@ -1484,6 +1714,7 @@ class AskGraphService:
 		session_memory: SessionMemory | None = None,
 		retrieval_service: RetrievalService | None = None,
 		access_scope: AccessScope | None = None,
+		load_table_groups_fn: LoadTableGroupsFn | None = None,
 	) -> None:
 		self.settings = settings or get_settings()
 		self.capability = capability or resolve_runtime(self.settings)
@@ -1527,16 +1758,20 @@ class AskGraphService:
 		elif self.mode == "live":
 			self._chat = ChatService(self.settings)
 
-			def live_generate(question: str, citations: list[dict[str, Any]]) -> str:
+			def live_generate(
+				messages: list[dict[str, str]],
+				citations: list[dict[str, Any]],
+			) -> str:
+				_ = citations
 				assert self._chat is not None
-				return self._chat.answer(question=question, context=_format_context(citations))
+				return self._chat.answer_messages(messages)
 
 			self._generate = live_generate
 		else:
 			self._generate = stub_generate
 
-		load_table_groups_fn: LoadTableGroupsFn | None = None
-		if self._retrieval_service is not None:
+		resolved_load_table_groups = load_table_groups_fn
+		if resolved_load_table_groups is None and self._retrieval_service is not None:
 			retrieval_for_table = self._retrieval_service
 
 			def _load_table_groups(
@@ -1553,17 +1788,22 @@ class AskGraphService:
 					library_id=library_id,
 				)
 
-			load_table_groups_fn = _load_table_groups
+			resolved_load_table_groups = _load_table_groups
+		elif resolved_load_table_groups is None and self.mode != "live":
+			# Stub retrieve returns table hits but has no Qdrant store; inject
+			# in-memory groups so prepare_table_for_execute is not no_store_loader.
+			resolved_load_table_groups = stub_load_table_groups
 
 		# Keep for iter_ask_events — it rebuilds the graph with a capture generate_fn.
-		self._load_table_groups_fn = load_table_groups_fn
+		self._load_table_groups_fn = resolved_load_table_groups
 
+		self._default_ask_settings = effective_ask_settings(self.settings)
 		self._graph = build_ask_graph(
-			settings=self.settings,
+			settings=self._default_ask_settings,
 			retrieve_fn=self._retrieve,
 			generate_fn=self._generate,
 			mode=self.mode,
-			load_table_groups_fn=load_table_groups_fn,
+			load_table_groups_fn=resolved_load_table_groups,
 			access_scope=self.access_scope,
 		)
 
@@ -1576,48 +1816,105 @@ class AskGraphService:
 	def _memory_session_id(self, session_id: str) -> str:
 		return f"{self.access_scope.cache_key()}:{session_id}"
 
+	def _ask_settings_for_request(self, ask_overrides: dict[str, Any] | None):
+		if not has_ask_overrides(ask_overrides):
+			return self._default_ask_settings
+		return effective_ask_settings(self.settings, ask_overrides)
+
+	def _graph_for_settings(self, settings: Any, *, generate_fn: GenerateFn | None = None):
+		return build_ask_graph(
+			settings=settings,
+			retrieve_fn=self._retrieve,
+			generate_fn=generate_fn or self._generate,
+			mode=self.mode,
+			load_table_groups_fn=self._load_table_groups_fn,
+			access_scope=self.access_scope,
+		)
+
+	def _apply_retrieval_settings(self, settings: Any):
+		"""Temporarily point RetrievalService at effective ask settings for this request."""
+		retrieval = self._retrieval_service
+		if retrieval is None or not hasattr(retrieval, "settings"):
+			return None
+		previous = retrieval.settings
+		retrieval.settings = settings
+		# Lazily enable rerank client when override turns rerank on.
+		if (
+			bool(getattr(settings, "rerank_enabled", False))
+			and retrieval.reranker is None
+			and bool(getattr(settings, "has_llm_key", False))
+		):
+			from app.services.rerank import RerankClient
+
+			retrieval.reranker = RerankClient(settings)
+		return previous
+
 	def ask(
 		self,
 		*,
 		question: str,
 		library_id: str | None = None,
 		session_id: str | None = None,
+		thread_id: str | None = None,
 		trace_id: str | None = None,
+		ask_overrides: dict[str, Any] | None = None,
 	) -> AskResponse:
 		started_at = time.perf_counter()
 		resolved_trace = resolve_trace_id(request_id=trace_id)
 		resolved_session = session_id or str(uuid.uuid4())
+		resolved_thread = (thread_id or "").strip() or None
 		memory_session = self._memory_session_id(resolved_session)
+		ask_settings = self._ask_settings_for_request(ask_overrides)
+		previous_retrieval_settings = self._apply_retrieval_settings(ask_settings)
 		history: list[dict[str, str]] = []
-		if self.settings.session_memory_enabled:
+		if resolved_thread:
+			history = _history_from_thread(
+				resolved_thread,
+				tenant_id=self.access_scope.tenant_id,
+				workspace_id=self.access_scope.workspace_id,
+				principal_id=self.access_scope.principal_id,
+				max_turns=WORKING_MEMORY_MAX_TURNS,
+			)
+		elif ask_settings.session_memory_enabled:
+			# Same shape/window as archived threads (code constant, not UI knob).
 			history = self.session_memory.load(
 				memory_session,
-				limit=self.settings.session_memory_max_turns * 2,
+				limit=WORKING_MEMORY_MAX_TURNS * 2,
 			)
 
-		state = self._graph.invoke(
-			{
-				"session_id": resolved_session,
-				"question": question,
-				"library_id": library_id,
-				"history": history,
-				"trace_id": resolved_trace,
-				"retrieval_debug": initial_ask_debug(
-					trace_id=resolved_trace,
-					question=question,
-					library_id=library_id,
-					requested_mode=self.capability.requested_mode,
-					effective_mode=self.capability.effective_mode,
-					degraded=self.capability.degraded,
-					reasons=list(self.capability.reasons),
-					session_memory=self.settings.session_memory_enabled,
-					hybrid_enabled=self.settings.hybrid_enabled,
-					stream=False,
-				),
-			}
-		)
+		try:
+			graph = (
+				self._graph
+				if ask_settings is self._default_ask_settings
+				else self._graph_for_settings(ask_settings)
+			)
+			state = graph.invoke(
+				{
+					"session_id": resolved_session,
+					"question": question,
+					"library_id": library_id,
+					"history": history,
+					"trace_id": resolved_trace,
+					"retrieval_debug": initial_ask_debug(
+						trace_id=resolved_trace,
+						question=question,
+						library_id=library_id,
+						requested_mode=self.capability.requested_mode,
+						effective_mode=self.capability.effective_mode,
+						degraded=self.capability.degraded,
+						reasons=list(self.capability.reasons),
+						session_memory=bool(resolved_thread) or ask_settings.session_memory_enabled,
+						hybrid_enabled=ask_settings.hybrid_enabled,
+						stream=False,
+					),
+				}
+			)
+		finally:
+			if previous_retrieval_settings is not None and self._retrieval_service is not None:
+				self._retrieval_service.settings = previous_retrieval_settings
 
-		if self.settings.session_memory_enabled:
+		# Temp sessions keep short in-process memory; archived threads rely on DB.
+		if not resolved_thread and ask_settings.session_memory_enabled:
 			self.session_memory.append(memory_session, "user", question)
 			self.session_memory.append(memory_session, "assistant", state.get("answer") or "")
 
@@ -1644,6 +1941,7 @@ class AskGraphService:
 		finalize_ask_debug(debug, started_at=started_at, truncated=False)
 		persist = _persist_turn(
 			session_id=resolved_session,
+			thread_id=resolved_thread,
 			library_id=library_id,
 			question=question,
 			answer=state["answer"],
@@ -1666,11 +1964,11 @@ class AskGraphService:
 		visibility = _retrieval_visibility(debug)
 		return AskResponse(
 			session_id=resolved_session,
+			thread_id=resolved_thread,
 			question=question,
 			answer=state["answer"],
 			citations=citations,
 			mode=self.mode,
-			access_scope=self.access_scope,
 			refused=bool(state.get("refused")),
 			refuse_reason=state.get("refuse_reason"),
 			retrieval_debug=debug,
@@ -1687,56 +1985,74 @@ class AskGraphService:
 		question: str,
 		library_id: str | None = None,
 		session_id: str | None = None,
+		thread_id: str | None = None,
 		trace_id: str | None = None,
+		ask_overrides: dict[str, Any] | None = None,
 	):
 		"""Yield SSE-friendly dicts: meta → citations → token* → done | error."""
 		started_at = time.perf_counter()
 		resolved_trace = resolve_trace_id(request_id=trace_id)
 		resolved_session = session_id or str(uuid.uuid4())
+		resolved_thread = (thread_id or "").strip() or None
 		memory_session = self._memory_session_id(resolved_session)
+		ask_settings = self._ask_settings_for_request(ask_overrides)
+		previous_retrieval_settings = self._apply_retrieval_settings(ask_settings)
 		history: list[dict[str, str]] = []
-		if self.settings.session_memory_enabled:
+		if resolved_thread:
+			history = _history_from_thread(
+				resolved_thread,
+				tenant_id=self.access_scope.tenant_id,
+				workspace_id=self.access_scope.workspace_id,
+				principal_id=self.access_scope.principal_id,
+				max_turns=WORKING_MEMORY_MAX_TURNS,
+			)
+		elif ask_settings.session_memory_enabled:
 			history = self.session_memory.load(
 				memory_session,
-				limit=self.settings.session_memory_max_turns * 2,
+				limit=WORKING_MEMORY_MAX_TURNS * 2,
 			)
 
-		held: dict[str, Any] = {"citations": [], "question": question}
+		held: dict[str, Any] = {"citations": [], "messages": [], "question": question}
 
-		def capture_generate(q: str, citations: list[dict[str, Any]]) -> str:
+		def capture_generate(
+			messages: list[dict[str, str]],
+			citations: list[dict[str, Any]],
+		) -> str:
 			held["citations"] = citations
-			held["question"] = q
+			held["messages"] = messages
+			# Last user content for table/stream alignment fallbacks.
+			for item in reversed(messages):
+				if item.get("role") == "user":
+					held["question"] = item.get("content") or question
+					break
 			return ""
 
-		graph = build_ask_graph(
-			settings=self.settings,
-			retrieve_fn=self._retrieve,
-			generate_fn=capture_generate,
-			mode=self.mode,
-			load_table_groups_fn=self._load_table_groups_fn,
-			access_scope=self.access_scope,
-		)
-		state = graph.invoke(
-			{
-				"session_id": resolved_session,
-				"question": question,
-				"library_id": library_id,
-				"history": history,
-				"trace_id": resolved_trace,
-				"retrieval_debug": initial_ask_debug(
-					trace_id=resolved_trace,
-					question=question,
-					library_id=library_id,
-					requested_mode=self.capability.requested_mode,
-					effective_mode=self.capability.effective_mode,
-					degraded=self.capability.degraded,
-					reasons=list(self.capability.reasons),
-					session_memory=self.settings.session_memory_enabled,
-					hybrid_enabled=self.settings.hybrid_enabled,
-					stream=True,
-				),
-			}
-		)
+		try:
+			graph = self._graph_for_settings(ask_settings, generate_fn=capture_generate)
+			state = graph.invoke(
+				{
+					"session_id": resolved_session,
+					"question": question,
+					"library_id": library_id,
+					"history": history,
+					"trace_id": resolved_trace,
+					"retrieval_debug": initial_ask_debug(
+						trace_id=resolved_trace,
+						question=question,
+						library_id=library_id,
+						requested_mode=self.capability.requested_mode,
+						effective_mode=self.capability.effective_mode,
+						degraded=self.capability.degraded,
+						reasons=list(self.capability.reasons),
+						session_memory=bool(resolved_thread) or ask_settings.session_memory_enabled,
+						hybrid_enabled=ask_settings.hybrid_enabled,
+						stream=True,
+					),
+				}
+			)
+		finally:
+			if previous_retrieval_settings is not None and self._retrieval_service is not None:
+				self._retrieval_service.settings = previous_retrieval_settings
 		debug = self._merge_retrieval_debug(state.get("retrieval_debug") or {})
 		debug.setdefault("trace_id", resolved_trace)
 		debug.setdefault("question_hash", question_hash(question))
@@ -1773,6 +2089,7 @@ class AskGraphService:
 			rewrite_mode = debug.get("rewrite")
 			persist = _persist_turn(
 				session_id=resolved_session,
+				thread_id=resolved_thread,
 				library_id=library_id,
 				question=question,
 				answer=answer,
@@ -1798,6 +2115,7 @@ class AskGraphService:
 				"event": "meta",
 				"data": {
 					"session_id": resolved_session,
+					"thread_id": resolved_thread,
 					"mode": self.mode,
 					"refused": refused,
 					"refuse_reason": state.get("refuse_reason"),
@@ -1812,19 +2130,25 @@ class AskGraphService:
 			execution = state.get("table_execution") or debug.get("table_execution") or {}
 			tq = state.get("table_query_plan") or debug.get("table_query_plan") or {}
 			query_type = str(state.get("query_type") or debug.get("query_type") or "")
-			# 与 generate_node 对齐：结构化 table 结果须注入 stream 上下文，避免 LLM 自行改算
-			stream_question = question
-			if (
+			gen_history = history_for_generate(history)
+			# 与 generate_node 对齐：多轮 history messages + 结构化 table 结果注入资料
+			use_table_ctx = (
 				query_type == "table"
 				and isinstance(execution, dict)
 				and execution.get("ok")
 				and isinstance(tq, dict)
 				and tq.get("confident")
 				and execution.get("answer_text")
-			):
-				stream_question = _format_table_generate_context(
-					question, raw_citations, execution
-				)
+			)
+			stream_messages = held.get("messages") or build_generate_messages(
+				question=question,
+				context=_format_generate_context(
+					raw_citations,
+					execution if use_table_ctx else None,
+				),
+				history=gen_history,
+			)
+			debug["generate_history_turns"] = len(gen_history)
 
 			t_gen = time.perf_counter()
 			if refused:
@@ -1832,13 +2156,16 @@ class AskGraphService:
 				step = 12 if len(answer) > 24 else max(1, len(answer) or 1)
 				for offset in range(0, len(answer), step):
 					yield {"event": "token", "data": answer[offset : offset + step]}
+			elif use_table_ctx and self.mode == "stub" and state.get("answer"):
+				# Program answer already set in generate_node; don't re-run stub generate.
+				answer = state.get("answer") or ""
+				step = 12 if len(answer) > 24 else max(1, len(answer) or 1)
+				for offset in range(0, len(answer), step):
+					yield {"event": "token", "data": answer[offset : offset + step]}
 			elif self.mode == "live" and self._chat is not None and raw_citations:
 				parts: list[str] = []
 				try:
-					for token in self._chat.stream_answer(
-						question=stream_question,
-						context=_format_context(raw_citations),
-					):
+					for token in self._chat.stream_messages(stream_messages):
 						parts.append(token)
 						yield {"event": "token", "data": token}
 				except Exception as exc:
@@ -1862,7 +2189,7 @@ class AskGraphService:
 				answer = "".join(parts).strip()
 				state["answer"] = answer
 			else:
-				answer = self._generate(stream_question, raw_citations)
+				answer = self._generate(stream_messages, raw_citations)
 				state["answer"] = answer
 				step = 12 if len(answer) > 24 else max(1, len(answer) or 1)
 				for offset in range(0, len(answer), step):
@@ -1877,11 +2204,12 @@ class AskGraphService:
 					"model": self.settings.chat_model if self.mode == "live" else None,
 					"input_tokens": None,
 					"output_tokens": None,
+					"generate_history_turns": len(gen_history),
 				},
 			)
 
 			answer = state.get("answer") or ""
-			if self.settings.session_memory_enabled:
+			if not resolved_thread and ask_settings.session_memory_enabled:
 				self.session_memory.append(memory_session, "user", question)
 				self.session_memory.append(memory_session, "assistant", answer)
 
@@ -1890,6 +2218,7 @@ class AskGraphService:
 				"event": "done",
 				"data": {
 					"session_id": resolved_session,
+					"thread_id": resolved_thread,
 					"question": question,
 					"answer": answer,
 					"citations": citations,

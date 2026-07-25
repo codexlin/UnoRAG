@@ -20,9 +20,9 @@ Browser
 | 规则 | 要求 |
 |---|---|
 | 边缘只暴露控制面 | 不要发布 `api:8000`；浏览器只打 Caddy→web |
-| 生产鉴权 | `APP_ENV=production`、`INTERNAL_AUTH_ENABLED=true`、`INTERNAL_AUTH_SECRET`≥32、`INTERNAL_AUTH_REPLAY_BACKEND=redis` |
+| 生产鉴权 | `APP_ENV=production`、`INTERNAL_AUTH_ENABLED=true`、`INTERNAL_AUTH_SECRET`≥32 且与 web `MERIKNOW_INTERNAL_SECRET` 相同、`INTERNAL_AUTH_REPLAY_BACKEND=redis`；`MERIKNOW_SESSION_SECRET` 必须是另一把密钥 |
 | Active generation | `ACTIVE_GENERATION_GATE_ENABLED=true`、`ACTIVE_GENERATION_CACHE_TTL_SECONDS=0` |
-| 旧写路径 | `LEGACY_INGEST_WRITES_ENABLED=false`（生产禁止开启） |
+| 产品上传 | 仅 Next.js → `app.jobs` → lifecycle_worker；FastAPI ingest 写路径永久 410 |
 | Secret | 仅环境 / secret manager；禁止写入镜像或日志 |
 | DDL | 仅 migrator 凭据执行迁移；运行账号无 DDL |
 
@@ -102,8 +102,8 @@ DATABASE_URL=... pnpm lifecycle:inspect
 若缺表，先跑 `migrate-rag`，不要对生产执行 destructive backfill apply。
 
 控制面兼容性：web 与 api 必须共享同一 `MERIKNOW_INTERNAL_SECRET` /
-`INTERNAL_AUTH_SECRET`；生产 web 开启 `DOCUMENT_LIFECYCLE_V2=true` 且双方挂载同一
-`DOCUMENT_STORAGE_ROOT`。
+`INTERNAL_AUTH_SECRET`；Lifecycle V2 默认为产品上传路径（勿设
+`DOCUMENT_LIFECYCLE_V2=false`），且双方挂载同一 `DOCUMENT_STORAGE_ROOT`。
 
 ## 4. 升级
 

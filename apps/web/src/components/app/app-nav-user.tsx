@@ -1,8 +1,9 @@
 "use client";
 
-import { BadgeCheck, ChevronsUpDown, LogOut, Settings2 } from "lucide-react";
+import { ChevronsUpDown, LogOut, Settings2 } from "lucide-react";
 import Link from "next/link";
 
+import { useSession } from "@/components/app/session-provider";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
 	DropdownMenu,
@@ -19,19 +20,25 @@ import {
 	SidebarMenuItem,
 	useSidebar,
 } from "@/components/ui/sidebar";
+import { roleLabel } from "@/lib/session-types";
 import { cn } from "@/lib/utils";
 
-/** Placeholder until auth is wired. Swap with session user. */
-const PLACEHOLDER_USER = {
-	name: "演示用户",
-	email: "you@company.com",
-	role: "工作区管理员",
-	initials: "演",
-};
+function initialsFor(name: string, email: string | null): string {
+	const base = name.trim() || email?.trim() || "?";
+	const parts = base.split(/\s+/).filter(Boolean);
+	if (parts.length >= 2) {
+		return `${parts[0]![0] ?? ""}${parts[1]![0] ?? ""}`.toUpperCase();
+	}
+	return base.slice(0, 2).toUpperCase();
+}
 
 export function AppNavUser() {
 	const { isMobile } = useSidebar();
-	const user = PLACEHOLDER_USER;
+	const { identity, signOut } = useSession();
+	const name = identity.displayName;
+	const email = identity.email ?? "";
+	const role = roleLabel(identity.role);
+	const initials = initialsFor(name, identity.email);
 
 	return (
 		<SidebarMenu>
@@ -41,7 +48,7 @@ export function AppNavUser() {
 						render={
 							<SidebarMenuButton
 								size="lg"
-								tooltip={user.name}
+								tooltip={name}
 								className={cn(
 									"h-12 gap-2.5 rounded-lg px-2.5 data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground",
 									"group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2!",
@@ -51,15 +58,15 @@ export function AppNavUser() {
 					>
 						<Avatar className="size-8 rounded-lg">
 							<AvatarFallback className="rounded-lg bg-primary/15 text-sm text-primary">
-								{user.initials}
+								{initials}
 							</AvatarFallback>
 						</Avatar>
 						<div className="grid flex-1 text-left text-sm leading-tight">
 							<span className="truncate text-[0.9375rem] font-medium">
-								{user.name}
+								{name}
 							</span>
 							<span className="truncate text-xs text-muted-foreground">
-								{user.email}
+								{email}
 							</span>
 						</div>
 						<ChevronsUpDown className="ml-auto size-4 text-muted-foreground" />
@@ -75,16 +82,16 @@ export function AppNavUser() {
 								<div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
 									<Avatar size="sm" className="rounded-lg">
 										<AvatarFallback className="rounded-lg bg-primary/15 text-primary">
-											{user.initials}
+											{initials}
 										</AvatarFallback>
 									</Avatar>
 									<div className="grid flex-1 text-left text-sm leading-tight">
-										<span className="truncate font-medium">{user.name}</span>
+										<span className="truncate font-medium">{name}</span>
 										<span className="truncate text-xs text-muted-foreground">
-											{user.email}
+											{email}
 										</span>
 										<span className="text-meta mt-0.5 truncate text-muted-foreground">
-											{user.role}
+											{role}
 										</span>
 									</div>
 								</div>
@@ -92,17 +99,17 @@ export function AppNavUser() {
 						</DropdownMenuGroup>
 						<DropdownMenuSeparator />
 						<DropdownMenuGroup>
-							<DropdownMenuItem disabled>
-								<BadgeCheck />
-								账户（即将接入）
-							</DropdownMenuItem>
 							<DropdownMenuItem render={<Link href="/app/settings" />}>
 								<Settings2 />
 								工作区设置
 							</DropdownMenuItem>
 						</DropdownMenuGroup>
 						<DropdownMenuSeparator />
-						<DropdownMenuItem disabled>
+						<DropdownMenuItem
+							onClick={() => {
+								void signOut();
+							}}
+						>
 							<LogOut />
 							退出登录
 						</DropdownMenuItem>

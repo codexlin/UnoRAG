@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.settings import Settings
+from app.services.ask_defaults import ASK_DEFAULTS
 
 _QUERY_NOISE = (
 	"是多少",
@@ -52,14 +52,19 @@ def query_terms(query: str) -> list[str]:
 	return terms[:4]
 
 
-def wide_recall_limit(top_k: int, settings: Settings | None = None) -> int:
+def wide_recall_limit(top_k: int, settings: Any | None = None) -> int:
 	"""Candidate pool size before citation adjudication.
 
 	Formula: min(50, max(top_k*3, top_k+8)); if rerank is on, also honor rerank_top_k.
 	"""
 	k = max(1, int(top_k))
 	formula = min(50, max(k * 3, k + 8))
-	if settings is not None and settings.rerank_enabled:
+	rerank_on = bool(
+		getattr(settings, "rerank_enabled", ASK_DEFAULTS.rerank_enabled)
+		if settings is not None
+		else ASK_DEFAULTS.rerank_enabled
+	)
+	if settings is not None and rerank_on:
 		formula = max(formula, int(settings.rerank_top_k))
 	return max(k, min(50, formula))
 
@@ -143,23 +148,48 @@ def apply_citation_adjudicate(
 	candidates: list[dict[str, Any]],
 	*,
 	top_k: int,
-	settings: Settings,
+	settings: Any,
 	enabled: bool | None = None,
 ) -> CitationAdjudicateResult:
 	"""Weigh hits, drop low-relevance tails, truncate to top_k (context ≡ citations)."""
 	limit = max(1, int(top_k))
 	adjudicate_on = (
-		bool(settings.citation_adjudicate_enabled)
+		bool(
+			getattr(
+				settings,
+				"citation_adjudicate_enabled",
+				ASK_DEFAULTS.citation_adjudicate_enabled,
+			)
+		)
 		if enabled is None
 		else bool(enabled)
 	)
-	absolute = float(settings.citation_adjudicate_absolute_floor)
-	if absolute <= 0:
-		absolute = (
-			float(settings.answer_min_score) if settings.answer_min_score > 0 else 0.35
+	absolute = float(
+		getattr(
+			settings,
+			"citation_adjudicate_absolute_floor",
+			ASK_DEFAULTS.citation_adjudicate_absolute_floor,
 		)
-	ratio = float(settings.citation_adjudicate_ratio)
-	lexical_threshold = float(settings.citation_adjudicate_lexical_threshold)
+	)
+	answer_min = float(
+		getattr(settings, "answer_min_score", ASK_DEFAULTS.answer_min_score)
+	)
+	if absolute <= 0:
+		absolute = answer_min if answer_min > 0 else 0.35
+	ratio = float(
+		getattr(
+			settings,
+			"citation_adjudicate_ratio",
+			ASK_DEFAULTS.citation_adjudicate_ratio,
+		)
+	)
+	lexical_threshold = float(
+		getattr(
+			settings,
+			"citation_adjudicate_lexical_threshold",
+			ASK_DEFAULTS.citation_adjudicate_lexical_threshold,
+		)
+	)
 
 	if not candidates:
 		summary = {

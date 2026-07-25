@@ -1,8 +1,16 @@
 from __future__ import annotations
 
-from app.graph.ask_graph import AskGraphService, rewrite_with_history, stub_generate
+from app.graph.ask_graph import (
+	AskGraphService,
+	build_generate_messages,
+	history_for_generate,
+	question_with_working_memory,
+	rewrite_with_history,
+	stub_generate,
+)
+from app.services.ask_overrides import effective_ask_settings
 from app.services.retrieval import RetrievalService
-from app.services.session_memory import SessionMemory
+from app.services.session_memory import WORKING_MEMORY_MAX_TURNS, SessionMemory
 from app.settings import Settings
 
 
@@ -28,8 +36,83 @@ def test_rewrite_with_history_followup() -> None:
 		[{"role": "user", "content": "病假证明几天内补交？"}, {"role": "assistant", "content": "三个工作日"}],
 	)
 	assert mode == "history"
+	# Coref must use prior *answer*, not only prior question.
+	assert "三个工作日" in rewritten
 	assert "病假证明几天内补交" in rewritten
 	assert "那逾期呢" in rewritten
+
+
+def test_rewrite_resolves_pronoun_with_prior_answer() -> None:
+	"""「那它的价格是多少」+ 上轮答「边缘计算网关」→ rewrite 含实体名。"""
+	history = [
+		{"role": "user", "content": "序号为1的设备名是什么"},
+		{"role": "assistant", "content": "边缘计算网关"},
+	]
+	rewritten, mode = rewrite_with_history("那它的价格是多少", history)
+	assert mode == "history"
+	assert "边缘计算网关" in rewritten
+	assert "价格" in rewritten
+
+	# 无历史时保持含糊，不得臆造实体。
+	bare, bare_mode = rewrite_with_history("那它的价格是多少", [])
+	assert bare_mode == "passthrough"
+	assert bare == "那它的价格是多少"
+	assert "边缘计算网关" not in bare
+
+
+def test_build_generate_messages_includes_multi_turn_history() -> None:
+	history = [
+		{"role": "user", "content": "序号为1的设备名是什么"},
+		{"role": "assistant", "content": "边缘计算网关"},
+		{"role": "user", "content": "功率呢"},
+		{"role": "assistant", "content": "约 45W"},
+	]
+	messages = build_generate_messages(
+		question="那它的价格是多少",
+		context="[1] 报价表\n边缘计算网关 单价 12800",
+		history=history,
+	)
+	assert messages[0]["role"] == "system"
+	# Full prior turns as user/assistant, not a one-line「上一轮」hint.
+	roles = [m["role"] for m in messages[1:-1]]
+	assert roles == ["user", "assistant", "user", "assistant"]
+	assert messages[1]["content"] == "序号为1的设备名是什么"
+	assert messages[2]["content"] == "边缘计算网关"
+	assert "约 45W" in messages[4]["content"]
+	assert messages[-1]["role"] == "user"
+	assert "那它的价格是多少" in messages[-1]["content"]
+	assert "资料：" in messages[-1]["content"]
+	assert "12800" in messages[-1]["content"]
+	# Current question must not be baked into history as a short working-memory line.
+	joined_history = "\n".join(m["content"] for m in messages[1:-1])
+	assert "上一轮" not in joined_history
+
+
+def test_history_for_generate_drops_oldest_when_over_budget() -> None:
+	history = [
+		{"role": "user", "content": "q1-" + ("a" * 100)},
+		{"role": "assistant", "content": "a1-" + ("b" * 100)},
+		{"role": "user", "content": "q2-" + ("c" * 100)},
+		{"role": "assistant", "content": "a2-" + ("d" * 100)},
+	]
+	trimmed = history_for_generate(history, max_turns=10, max_chars=250)
+	assert len(trimmed) == 2
+	assert trimmed[0]["content"].startswith("q2-")
+	assert trimmed[1]["content"].startswith("a2-")
+
+
+def test_question_with_working_memory_includes_prior_answer() -> None:
+	"""Compat helper still works; ask path uses build_generate_messages instead."""
+	prompt = question_with_working_memory(
+		"那它的价格是多少",
+		[
+			{"role": "user", "content": "序号为1的设备名是什么"},
+			{"role": "assistant", "content": "边缘计算网关"},
+		],
+	)
+	assert "边缘计算网关" in prompt
+	assert "那它的价格是多少" in prompt
+	assert question_with_working_memory("那它的价格是多少", []) == "那它的价格是多少"
 
 
 def test_rewrite_passthrough_without_history() -> None:
@@ -38,10 +121,16 @@ def test_rewrite_passthrough_without_history() -> None:
 	assert rewritten == "病假证明几天内补交？"
 
 
+def test_working_memory_constant_is_effect_first_window() -> None:
+	assert WORKING_MEMORY_MAX_TURNS >= 8
+	assert WORKING_MEMORY_MAX_TURNS <= 12
+
+
 def test_session_memory_rewrite_on_followup() -> None:
 	memory = SessionMemory(max_turns=4)
-	settings = Settings(ask_mode="stub", session_memory_enabled=True, max_retrieve_retries=0)
+	settings = Settings(ask_mode="stub", max_retrieve_retries=0)
 	seen: dict[str, str] = {}
+	gen_seen: dict[str, object] = {}
 
 	def capture_retrieve(
 		query: str,
@@ -63,10 +152,14 @@ def test_session_memory_rewrite_on_followup() -> None:
 			}
 		]
 
+	def capture_generate(messages: list[dict[str, str]], citations: list) -> str:
+		gen_seen["messages"] = messages
+		return stub_generate(messages, citations)
+
 	service = AskGraphService(
 		settings,
 		retrieve_fn=capture_retrieve,
-		generate_fn=stub_generate,
+		generate_fn=capture_generate,
 		session_memory=memory,
 	)
 	first = service.ask(question="病假证明几天内补交？", session_id="s-mem-1")
@@ -76,11 +169,92 @@ def test_session_memory_rewrite_on_followup() -> None:
 	assert second.retrieval_debug.get("rewrite") == "history"
 	assert "病假证明几天内补交" in seen["query"]
 	assert "那逾期呢" in seen["query"]
+	# Prior stub answer first-line snippet must appear in retrieval rewrite.
+	assert "三个工作日" in seen["query"] or "病假" in seen["query"]
+	messages = gen_seen["messages"]
+	assert isinstance(messages, list)
+	assert any(m.get("role") == "user" and "病假证明几天内补交" in m.get("content", "") for m in messages)
+	assert any(m.get("role") == "assistant" for m in messages)
+	assert any(
+		m.get("role") == "user" and "那逾期呢" in m.get("content", "") for m in messages
+	)
+	assert second.retrieval_debug.get("generate_history_turns", 0) >= 2
 	assert second.session_id == "s-mem-1"
 
 
+def test_session_memory_device_price_coref() -> None:
+	"""Temp session: Q2「那它的价格」rewrite 含实体；generate messages 含完整上轮 Q+A。"""
+	memory = SessionMemory(max_turns=4)
+	settings = Settings(ask_mode="stub", max_retrieve_retries=0)
+	seen: dict[str, str] = {}
+	gen_seen: dict[str, object] = {}
+
+	def capture_retrieve(
+		query: str,
+		_library_id: str | None,
+		_top_k: int,
+		_filters: dict | None = None,
+	):
+		seen["query"] = query
+		return [
+			{
+				"id": "quote-big",
+				"index": 1,
+				"title": "报价表.pdf",
+				"page": "1",
+				"snippet": "边缘计算网关 单价 12800",
+				"score": 0.92,
+				"text": "序号1 边缘计算网关 单价 12800",
+				"used_rerank": False,
+			}
+		]
+
+	def capture_generate(messages: list[dict[str, str]], citations: list) -> str:
+		gen_seen["messages"] = messages
+		blob = "\n".join(m.get("content", "") for m in messages)
+		if "边缘计算网关" in blob and "价格" in blob:
+			return "边缘计算网关的价格是 12800。"
+		return stub_generate(messages, citations)
+
+	service = AskGraphService(
+		settings,
+		retrieve_fn=capture_retrieve,
+		generate_fn=capture_generate,
+		session_memory=memory,
+	)
+	# Seed memory as if Q1 already answered (bypass stub answer text).
+	memory.append(
+		service._memory_session_id("s-device-1"),
+		"user",
+		"序号为1的设备名是什么",
+	)
+	memory.append(
+		service._memory_session_id("s-device-1"),
+		"assistant",
+		"边缘计算网关",
+	)
+
+	follow = service.ask(question="那它的价格是多少", session_id="s-device-1")
+	assert follow.retrieval_debug.get("rewrite") == "history"
+	assert "边缘计算网关" in seen["query"]
+	assert "价格" in seen["query"]
+	messages = gen_seen["messages"]
+	assert isinstance(messages, list)
+	# Rewrite query ≠ generate history: history keeps full prior answer text.
+	assert any(
+		m.get("role") == "assistant" and m.get("content") == "边缘计算网关" for m in messages
+	)
+	assert any(
+		m.get("role") == "user" and "那它的价格是多少" in m.get("content", "") for m in messages
+	)
+	assert "12800" in follow.answer
+
+
 def test_rerank_reorders_hits() -> None:
-	settings = Settings(ask_mode="stub", rerank_enabled=True, rerank_top_k=2, retrieve_top_k=2)
+	settings = effective_ask_settings(
+		Settings(ask_mode="stub", rerank_top_k=2),
+		{"rerank_enabled": True, "retrieve_top_k": 2},
+	)
 
 	class _Store:
 		def search(self, *, vector, library_id, top_k, **_kwargs):
@@ -122,7 +296,10 @@ def test_rerank_reorders_hits() -> None:
 
 
 def test_rerank_fallback_on_error() -> None:
-	settings = Settings(ask_mode="stub", rerank_enabled=True, retrieve_top_k=2)
+	settings = effective_ask_settings(
+		Settings(ask_mode="stub"),
+		{"rerank_enabled": True, "retrieve_top_k": 2},
+	)
 
 	class _Store:
 		def search(self, *, vector, library_id, top_k, **_kwargs):
@@ -166,11 +343,9 @@ def test_rerank_fallback_on_error() -> None:
 
 
 def test_hybrid_failure_flags_dense_fallback() -> None:
-	settings = Settings(
-		ask_mode="stub",
-		hybrid_enabled=True,
-		retrieve_top_k=1,
-		bm25_top_k=1,
+	settings = effective_ask_settings(
+		Settings(ask_mode="stub", bm25_top_k=1),
+		{"hybrid_enabled": True, "retrieve_top_k": 1},
 	)
 
 	class _Store:
@@ -212,7 +387,7 @@ def test_hybrid_failure_flags_dense_fallback() -> None:
 
 
 def test_retrieval_requires_library_id() -> None:
-	settings = Settings(ask_mode="stub", retrieve_top_k=1)
+	settings = Settings(ask_mode="stub")
 
 	class _Store:
 		def search(self, *, vector, library_id, top_k, **_kwargs):

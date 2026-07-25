@@ -2,8 +2,11 @@
 
 - Status: Accepted
 - Date: 2026-07-24
-- Revision: 2026-07-24, clarified the modular deployment and direct
-  PostgreSQL document-worker protocol
+- Revision: 2026-07-25 — FastAPI browser ingest writes are **permanently**
+  HTTP 410 (no env re-enable); Document Lifecycle V2 is the default upload
+  path; product ask knobs live in workspace settings + code defaults, not
+  env flags like `HYBRID_ENABLED`. Product dual-mode context:
+  [`docs/PRODUCT.md`](../PRODUCT.md).
 
 ## Context
 
@@ -63,8 +66,7 @@ projection endpoint and fails closed when vector or object cleanup is
 unavailable. As of L6, browser ingest no longer dual-writes via RAG upload or
 document list probes; the native document lifecycle owns `app.documents` through
 PostgreSQL Job and version transitions. FastAPI write routes remain only behind
-an explicit `LEGACY_INGEST_WRITES_ENABLED` escape hatch (forbidden in
-production). Existing FastAPI `public.*` metadata remains a derived
+gone (permanent HTTP 410). Existing FastAPI `public.*` metadata remains a derived
 compatibility representation until backfill and projection cleanup finish.
 
 Document ingestion does not add a second set of Next.js claim, heartbeat,
@@ -116,9 +118,10 @@ customer-owned in private deployments.
 ## Consequences
 
 - The browser no longer needs the FastAPI network address.
-- SSE and downloads stream through the BFF. Legacy proxied uploads retain the
-  configured 50 MiB limit during migration; native document uploads stream
-  from Next.js to object storage and create a PostgreSQL job.
+- SSE and downloads stream through the BFF. Product uploads stream from
+  Next.js to object storage and create a PostgreSQL job (size limit via
+  `DOCUMENT_MAX_UPLOAD_BYTES`, default 50 MiB). FastAPI `/v1/ingest*` write
+  routes remain permanently gone (410).
 - Heavy parsing and model calls remain outside the Next.js request process.
 - Browser-to-RAG HTTP still requires request binding, idempotency, and replay
   protection, while document worker coordination uses PostgreSQL instead of

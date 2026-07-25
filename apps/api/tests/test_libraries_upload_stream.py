@@ -16,6 +16,11 @@ from app.services.hybrid import fuse_dense_and_bm25, tokenize
 from app.services.documents import extract_text
 from app.settings import get_settings
 from tests.conftest import create_library
+from tests.support.seed import (
+	seed_reindex_document,
+	seed_replace_document,
+	seed_upload_document,
+)
 
 client = TestClient(app)
 
@@ -173,18 +178,12 @@ def test_internal_library_delete_retains_metadata_when_storage_cleanup_fails() -
 		name="Cleanup retry",
 		library_id="lib-projection-delete-retry",
 	)
-	uploaded = client.post(
-		"/v1/ingest/upload",
-		data={"library_id": lib_id},
-		files={
-			"file": (
-				"retry.md",
-				b"# Retry\n\nRetain metadata until storage cleanup succeeds.",
-				"text/markdown",
-			)
-		},
+	seed_upload_document(
+		library_id=lib_id,
+		filename="retry.md",
+		content=b"# Retry\n\nRetain metadata until storage cleanup succeeds.",
+		content_type="text/markdown",
 	)
-	assert uploaded.status_code == 200
 
 	class FailingStorage:
 		def delete(self, _storage_key: str) -> None:
@@ -206,19 +205,13 @@ def test_internal_library_delete_retains_metadata_when_storage_cleanup_fails() -
 def test_delete_library_with_documents() -> None:
 	lib_id = create_library(client, name="待删除库", library_id="lib-delete-test")
 
-	uploaded = client.post(
-		"/v1/ingest/upload",
-		data={"library_id": lib_id},
-		files={
-			"file": (
-				"note.md",
-				"# 删除测试\n\n这条文档应随库一并清除。".encode("utf-8"),
-				"text/markdown",
-			)
-		},
+	uploaded = seed_upload_document(
+		library_id=lib_id,
+		filename="note.md",
+		content="# 删除测试\n\n这条文档应随库一并清除。".encode("utf-8"),
+		content_type="text/markdown",
 	)
-	assert uploaded.status_code == 200
-	doc_id = uploaded.json()["doc_id"]
+	doc_id = uploaded["doc_id"]
 
 	docs_before = client.get(f"/v1/libraries/{lib_id}/documents")
 	assert docs_before.status_code == 200
@@ -243,19 +236,12 @@ def test_delete_library_with_documents() -> None:
 
 def test_upload_txt_stub_simulate() -> None:
 	lib_id = create_library(client, library_id="lib-upload-sim")
-	response = client.post(
-		"/v1/ingest/upload",
-		data={"library_id": lib_id},
-		files={
-			"file": (
-				"leave.md",
-				"# 病假\n\n须于返岗后三个工作日内补交证明。".encode("utf-8"),
-				"text/markdown",
-			)
-		},
+	payload = seed_upload_document(
+		library_id=lib_id,
+		filename="leave.md",
+		content="# 病假\n\n须于返岗后三个工作日内补交证明。".encode("utf-8"),
+		content_type="text/markdown",
 	)
-	assert response.status_code == 200
-	payload = response.json()
 	assert payload["status"] == "ready"
 	assert payload["simulated"] is True
 	assert payload["chunk_count"] >= 1
@@ -265,63 +251,33 @@ def test_upload_txt_stub_simulate() -> None:
 	assert any(item["id"] == payload["doc_id"] for item in docs.json())
 
 
-def test_upload_async_returns_202(monkeypatch: pytest.MonkeyPatch) -> None:
-	from app.settings import get_settings
-
-	lib_id = create_library(client, library_id="lib-upload-async")
-	monkeypatch.setenv("INGEST_ASYNC", "true")
-	get_settings.cache_clear()
-
-	async def fake_enqueue(**_kwargs):
-		return None
-
-	monkeypatch.setattr(
-		"app.routers.ask.enqueue_ingest_job",
-		fake_enqueue,
-	)
+def test_fastapi_upload_permanently_gone() -> None:
+	lib_id = create_library(client, library_id="lib-upload-gone")
 	response = client.post(
 		"/v1/ingest/upload",
 		data={"library_id": lib_id},
 		files={
 			"file": (
-				"async-note.md",
-				"# 异步\n\n应返回 processing。".encode("utf-8"),
+				"gone.md",
+				"# gone\n".encode("utf-8"),
 				"text/markdown",
 			)
 		},
 	)
-	assert response.status_code == 202
-	payload = response.json()
-	assert payload["status"] == "processing"
-	assert payload["accepted"] is True
-	assert payload["doc_id"]
-
-	detail = client.get(f"/v1/documents/{payload['doc_id']}")
-	assert detail.status_code == 200
-	assert detail.json()["status"] == "processing"
-
-	get_settings.cache_clear()
-	monkeypatch.setenv("INGEST_ASYNC", "false")
-	get_settings.cache_clear()
+	assert response.status_code == 410
 
 
 def test_process_document_ingest_sync_job() -> None:
 	from app.services.ingest.jobs import process_document_ingest
 
 	lib_id = create_library(client, library_id="lib-job-sync")
-	uploaded = client.post(
-		"/v1/ingest/upload",
-		data={"library_id": lib_id},
-		files={
-			"file": (
-				"job-note.md",
-				"# job\n\n后台任务可跑通。".encode("utf-8"),
-				"text/markdown",
-			)
-		},
+	uploaded = seed_upload_document(
+		library_id=lib_id,
+		filename="job-note.md",
+		content="# job\n\n后台任务可跑通。".encode("utf-8"),
+		content_type="text/markdown",
 	)
-	assert uploaded.status_code == 200
-	doc_id = uploaded.json()["doc_id"]
+	doc_id = uploaded["doc_id"]
 	result = process_document_ingest(doc_id)
 	assert result["ok"] is True
 	assert result.get("skipped") is True
@@ -330,32 +286,20 @@ def test_process_document_ingest_sync_job() -> None:
 def test_replace_document_keeps_doc_id() -> None:
 	lib_id = create_library(client, name="替换测试库", library_id="lib-replace-test")
 
-	uploaded = client.post(
-		"/v1/ingest/upload",
-		data={"library_id": lib_id},
-		files={
-			"file": (
-				"v1.md",
-				"# v1\n\n旧版内容。".encode("utf-8"),
-				"text/markdown",
-			)
-		},
+	uploaded = seed_upload_document(
+		library_id=lib_id,
+		filename="v1.md",
+		content="# v1\n\n旧版内容。".encode("utf-8"),
+		content_type="text/markdown",
 	)
-	assert uploaded.status_code == 200
-	doc_id = uploaded.json()["doc_id"]
+	doc_id = uploaded["doc_id"]
 
-	replaced = client.post(
-		f"/v1/documents/{doc_id}/replace",
-		files={
-			"file": (
-				"v2.md",
-				"# v2\n\n新版内容应覆盖旧版。".encode("utf-8"),
-				"text/markdown",
-			)
-		},
+	body = seed_replace_document(
+		doc_id,
+		filename="v2.md",
+		content="# v2\n\n新版内容应覆盖旧版。".encode("utf-8"),
+		content_type="text/markdown",
 	)
-	assert replaced.status_code == 200
-	body = replaced.json()
 	assert body["doc_id"] == doc_id
 	assert body["filename"] == "v2.md"
 	assert body["status"] == "ready"
@@ -372,19 +316,13 @@ def test_replace_document_keeps_doc_id() -> None:
 def test_upload_writes_size_bytes() -> None:
 	lib_id = create_library(client, library_id="lib-size-check")
 	content = "# size check\n\n文件大小应写入元数据。".encode("utf-8")
-	response = client.post(
-		"/v1/ingest/upload",
-		data={"library_id": lib_id},
-		files={
-			"file": (
-				"size-check.md",
-				content,
-				"text/markdown",
-			)
-		},
+	uploaded = seed_upload_document(
+		library_id=lib_id,
+		filename="size-check.md",
+		content=content,
+		content_type="text/markdown",
 	)
-	assert response.status_code == 200
-	doc_id = response.json()["doc_id"]
+	doc_id = uploaded["doc_id"]
 
 	detail = client.get(f"/v1/documents/{doc_id}")
 	assert detail.status_code == 200
@@ -397,8 +335,7 @@ def test_upload_writes_size_bytes() -> None:
 	row = next(item for item in listed.json() if item["id"] == doc_id)
 	assert row["size_bytes"] == len(content)
 
-	reindexed = client.post(f"/v1/documents/{doc_id}/reindex")
-	assert reindexed.status_code == 200
+	seed_reindex_document(doc_id)
 	after = client.get(f"/v1/documents/{doc_id}")
 	assert after.status_code == 200
 	assert after.json()["size_bytes"] == len(content)

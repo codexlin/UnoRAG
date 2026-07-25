@@ -1,23 +1,21 @@
 "use client";
 
-import {
-	CircleStop,
-	Download,
-	Eye,
-	FileUp,
-	MoreHorizontal,
-	Pencil,
-	Plus,
-	RefreshCw,
-	Replace,
-	RotateCcw,
-	Trash2,
-} from "lucide-react";
+import { FileUp, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { AuthButton } from "@/components/app/auth-button";
+import { Can, useCan } from "@/components/app/can";
+import { DocumentAclDialog } from "@/components/app/document-acl-dialog";
 import { useIngestJobs } from "@/components/app/ingest-jobs-provider";
+import {
+	buildDetailActions,
+	type DocActionContext,
+	resolveDocActions,
+} from "@/components/app/library-doc-actions";
+import { useSession } from "@/components/app/session-provider";
+import { filterByCap } from "@/lib/client-permissions";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -148,6 +146,9 @@ function LibStatusDot({ status }: { status: string }) {
 }
 
 export function LibrariesPanel() {
+	const { caps } = useSession();
+	const canWriteLibraries = useCan("writeLibraries");
+	const canManageLibraries = useCan("manageLibraries");
 	const {
 		libraries,
 		error: librariesError,
@@ -164,6 +165,7 @@ export function LibrariesPanel() {
 	const [lastUploadMs, setLastUploadMs] = useState<number | null>(null);
 	const [detailDocId, setDetailDocId] = useState<string | null>(null);
 	const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
+	const [aclDoc, setAclDoc] = useState<ApiDocument | null>(null);
 	const [replaceDoc, setReplaceDoc] = useState<ApiDocument | null>(null);
 	const [replaceFile, setReplaceFile] = useState<File | null>(null);
 	const [replacing, setReplacing] = useState(false);
@@ -649,6 +651,20 @@ export function LibrariesPanel() {
 	}
 
 	const uploadDisabled = uploading || !selectedId;
+	const detailActions = filterByCap(
+		caps,
+		buildDetailActions({
+			onAcl: (doc) => setAclDoc(doc),
+			onReplace: startReplace,
+			onReindex: (doc) => {
+				void onReindex(doc);
+			},
+			onDownload: (doc) => {
+				void onDownload(doc);
+			},
+			onDelete: (doc) => setDeleteDocId(doc.id),
+		}),
+	);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -713,18 +729,20 @@ export function LibrariesPanel() {
 							))}
 						</ul>
 					</ScrollArea>
-					<div className="border-t border-border/70 p-3">
-						<Button
-							type="button"
-							variant="outline"
-							className="w-full rounded-md"
-							disabled={savingLibrary}
-							onClick={openCreateLibraryDialog}
-						>
-							<Plus data-icon="inline-start" />
-							新建知识库
-						</Button>
-					</div>
+					<Can cap="manageLibraries">
+						<div className="border-t border-border/70 p-3">
+							<Button
+								type="button"
+								variant="outline"
+								className="w-full rounded-md"
+								disabled={savingLibrary}
+								onClick={openCreateLibraryDialog}
+							>
+								<Plus data-icon="inline-start" />
+								新建知识库
+							</Button>
+						</div>
+					</Can>
 				</aside>
 
 				{/* 右栏：文档表 */}
@@ -741,26 +759,32 @@ export function LibrariesPanel() {
 							) : null}
 							<p className="text-ui text-muted-foreground">
 								{selectedLibrary
-									? "上传 txt / md / docx / pdf。点行查看详情；支持重索引、下载与删除。"
-									: "从左侧选择或新建知识库。"}
+									? canWriteLibraries
+										? "上传 txt / md / docx / pdf。点行查看详情；支持重索引、下载与删除。"
+										: "点行查看详情与下载。当前角色为只读，无法上传或删除。"
+									: canManageLibraries
+										? "从左侧选择或新建知识库。"
+										: "从左侧选择知识库。"}
 							</p>
 						</div>
 						<div className="flex flex-wrap items-end gap-2">
-							<input
-								ref={fileInputRef}
-								type="file"
-								accept=".txt,.md,.markdown,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-								className="hidden"
-								multiple
-								onChange={(event) => void onUploadFiles(event.target.files)}
-							/>
-							<input
-								ref={replaceInputRef}
-								type="file"
-								accept=".txt,.md,.markdown,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-								className="hidden"
-								onChange={(event) => onReplaceFilePicked(event.target.files)}
-							/>
+							<Can cap="writeLibraries">
+								<input
+									ref={fileInputRef}
+									type="file"
+									accept=".txt,.md,.markdown,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+									className="hidden"
+									multiple
+									onChange={(event) => void onUploadFiles(event.target.files)}
+								/>
+								<input
+									ref={replaceInputRef}
+									type="file"
+									accept=".txt,.md,.markdown,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+									className="hidden"
+									onChange={(event) => onReplaceFilePicked(event.target.files)}
+								/>
+							</Can>
 							<Button
 								type="button"
 								variant="outline"
@@ -774,7 +798,8 @@ export function LibrariesPanel() {
 								<RefreshCw data-icon="inline-start" />
 								刷新
 							</Button>
-							<Button
+							<AuthButton
+								cap="writeLibraries"
 								type="button"
 								className="rounded-md"
 								disabled={uploadDisabled}
@@ -782,8 +807,9 @@ export function LibrariesPanel() {
 							>
 								<FileUp data-icon="inline-start" />
 								{uploading ? "上传中…" : "上传"}
-							</Button>
-							<Button
+							</AuthButton>
+							<AuthButton
+								cap="manageLibraries"
 								type="button"
 								variant="outline"
 								className="rounded-md"
@@ -794,8 +820,9 @@ export function LibrariesPanel() {
 							>
 								<Pencil data-icon="inline-start" />
 								编辑
-							</Button>
-							<Button
+							</AuthButton>
+							<AuthButton
+								cap="manageLibraries"
 								type="button"
 								variant="outline"
 								className="rounded-md"
@@ -806,7 +833,7 @@ export function LibrariesPanel() {
 							>
 								<Trash2 data-icon="inline-start" />
 								删除
-							</Button>
+							</AuthButton>
 							{selectedLibrary ? (
 								<Link
 									href="/app/ask"
@@ -837,9 +864,12 @@ export function LibrariesPanel() {
 						{!selectedId ? (
 							<div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-border/80 bg-muted/20 px-6 text-center">
 								<p className="text-ui text-muted-foreground">
-									请先创建或选择一个知识库
+									{canManageLibraries
+										? "请先创建或选择一个知识库"
+										: "请从左侧选择一个知识库"}
 								</p>
-								<Button
+								<AuthButton
+									cap="manageLibraries"
 									type="button"
 									className="rounded-md"
 									disabled={savingLibrary}
@@ -847,14 +877,17 @@ export function LibrariesPanel() {
 								>
 									<Plus data-icon="inline-start" />
 									新建知识库
-								</Button>
+								</AuthButton>
 							</div>
 						) : documents.length === 0 ? (
 							<div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-border/80 bg-muted/20 px-6 text-center">
 								<p className="text-ui text-muted-foreground">
-									尚无文档。上传后即可在问答中引用。
+									{canWriteLibraries
+										? "尚无文档。上传后即可在问答中引用。"
+										: "尚无文档。当前角色为只读，请联系编辑者或管理员上传。"}
 								</p>
-								<Button
+								<AuthButton
+									cap="writeLibraries"
 									type="button"
 									className="rounded-md"
 									disabled={uploadDisabled}
@@ -862,7 +895,7 @@ export function LibrariesPanel() {
 								>
 									<FileUp data-icon="inline-start" />
 									上传文档
-								</Button>
+								</AuthButton>
 							</div>
 						) : (
 							<div className="overflow-hidden rounded-md border border-border/80">
@@ -882,6 +915,27 @@ export function LibrariesPanel() {
 										{documents.map((doc) => {
 											const busy = busyDocId === doc.id;
 											const processing = doc.status === "processing";
+											const actionCtx: DocActionContext = {
+												busy,
+												processing,
+												onView: (item) => setDetailDocId(item.id),
+												onAcl: (item) => setAclDoc(item),
+												onReplace: startReplace,
+												onReindex: (item) => {
+													void onReindex(item);
+												},
+												onCancelJob: (item) => {
+													void onCancelJob(item);
+												},
+												onRetryJob: (item) => {
+													void onRetryJob(item);
+												},
+												onDownload: (item) => {
+													void onDownload(item);
+												},
+												onDelete: (item) => setDeleteDocId(item.id),
+											};
+											const actions = resolveDocActions(caps, doc);
 											return (
 												<TableRow
 													key={doc.id}
@@ -936,71 +990,37 @@ export function LibrariesPanel() {
 																<MoreHorizontal />
 																<span className="sr-only">操作</span>
 															</DropdownMenuTrigger>
-															<DropdownMenuContent align="end" className="min-w-40">
-																<DropdownMenuItem
-																	onClick={() => setDetailDocId(doc.id)}
-																>
-																	<Eye />
-																	查看
-																</DropdownMenuItem>
-																<DropdownMenuItem
-																	disabled={processing || busy}
-																	onClick={() => startReplace(doc)}
-																>
-																	<Replace />
-																	替换文件
-																</DropdownMenuItem>
-																<DropdownMenuItem
-																	disabled={
-																		!doc.has_file || processing || busy
-																	}
-																	onClick={() => void onReindex(doc)}
-																>
-																	<RotateCcw />
-																	重索引
-																</DropdownMenuItem>
-																{doc.job_id &&
-																["queued", "running", "retry", "cancelling"].includes(
-																	doc.job_status ?? "",
-																) ? (
-																	<DropdownMenuItem
-																		disabled={
-																			doc.job_status === "cancelling" || busy
-																		}
-																		onClick={() => void onCancelJob(doc)}
-																	>
-																		<CircleStop />
-																		取消任务
-																	</DropdownMenuItem>
-																) : null}
-																{doc.job_id &&
-																["cancelled", "failed", "dead"].includes(
-																	doc.job_status ?? "",
-																) ? (
-																	<DropdownMenuItem
-																		disabled={!doc.has_file || busy}
-																		onClick={() => void onRetryJob(doc)}
-																	>
-																		<RotateCcw />
-																		重试任务
-																	</DropdownMenuItem>
-																) : null}
-																<DropdownMenuItem
-																	disabled={!doc.has_file || busy}
-																	onClick={() => void onDownload(doc)}
-																>
-																	<Download />
-																	下载
-																</DropdownMenuItem>
-																<DropdownMenuSeparator />
-																<DropdownMenuItem
-																	variant="destructive"
-																	disabled={busy}
-																	onClick={() => setDeleteDocId(doc.id)}
-																>
-																	<Trash2 />
-																	删除
-																</DropdownMenuItem>
+															<DropdownMenuContent
+																align="end"
+																className="min-w-40"
+															>
+																{actions.map((action) => {
+																	const Icon = action.icon;
+																	return (
+																		<div key={action.id}>
+																			{action.separatorBefore ? (
+																				<DropdownMenuSeparator />
+																			) : null}
+																			<DropdownMenuItem
+																				variant={
+																					action.destructive
+																						? "destructive"
+																						: undefined
+																				}
+																				disabled={
+																					action.disabled?.(doc, actionCtx) ??
+																					false
+																				}
+																				onClick={() =>
+																					action.run(doc, actionCtx)
+																				}
+																			>
+																				<Icon />
+																				{action.label}
+																			</DropdownMenuItem>
+																		</div>
+																	);
+																})}
 															</DropdownMenuContent>
 														</DropdownMenu>
 													</TableCell>
@@ -1185,67 +1205,53 @@ export function LibrariesPanel() {
 
 								{!detailDoc.has_file ? (
 									<p className="text-ui text-muted-foreground">
-										此文档上传时未落盘原文，无法下载或重索引。可用「替换文件」重新上传。
+										此文档上传时未落盘原文，无法下载或重索引。
+										{canWriteLibraries
+											? "可用「替换文件」重新上传。"
+											: ""}
 									</p>
 								) : null}
 							</div>
 							<SheetFooter className="border-t border-border/70">
 								<div className="flex flex-wrap gap-2">
-									<Button
-										type="button"
-										variant="outline"
-										className="rounded-md"
-										disabled={
-											detailDoc.status === "processing" ||
-											busyDocId === detailDoc.id
-										}
-										onClick={() => startReplace(detailDoc)}
-									>
-										<Replace data-icon="inline-start" />
-										替换文件
-									</Button>
-									<Button
-										type="button"
-										variant="outline"
-										className="rounded-md"
-										disabled={
-											!detailDoc.has_file ||
-											detailDoc.status === "processing" ||
-											busyDocId === detailDoc.id
-										}
-										onClick={() => void onReindex(detailDoc)}
-									>
-										<RotateCcw data-icon="inline-start" />
-										重索引
-									</Button>
-									<Button
-										type="button"
-										variant="outline"
-										className="rounded-md"
-										disabled={
-											!detailDoc.has_file || busyDocId === detailDoc.id
-										}
-										onClick={() => void onDownload(detailDoc)}
-									>
-										<Download data-icon="inline-start" />
-										下载
-									</Button>
-									<Button
-										type="button"
-										variant="destructive"
-										className="rounded-md"
-										disabled={busyDocId === detailDoc.id}
-										onClick={() => setDeleteDocId(detailDoc.id)}
-									>
-										<Trash2 data-icon="inline-start" />
-										删除
-									</Button>
+									{detailActions.map((action) => {
+										const Icon = action.icon;
+										const busy = busyDocId === detailDoc.id;
+										return (
+											<AuthButton
+												key={action.id}
+												cap={action.cap}
+												type="button"
+												variant={action.variant ?? "outline"}
+												className="rounded-md"
+												disabled={action.disabled?.(detailDoc, busy) ?? false}
+												onClick={() => action.run(detailDoc)}
+											>
+												<Icon data-icon="inline-start" />
+												{action.label}
+											</AuthButton>
+										);
+									})}
 								</div>
 							</SheetFooter>
 						</>
 					) : null}
 				</SheetContent>
 			</Sheet>
+
+			<DocumentAclDialog
+				open={aclDoc != null}
+				libraryId={selectedId || null}
+				doc={aclDoc}
+				onOpenChange={(next) => {
+					if (!next) setAclDoc(null);
+				}}
+				onProjected={(item) => {
+					trackProcessing([{ id: item.id, name: item.name }]);
+					void loadLibraries();
+					if (selectedId) void loadDocuments(selectedId);
+				}}
+			/>
 
 			{/* 删除确认 */}
 			<AlertDialog

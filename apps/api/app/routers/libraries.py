@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import logging
-from pathlib import PurePosixPath
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 
 from app.security.access_scope import AccessScope
 from app.security.internal_context import RequestContext, require_internal_context
@@ -17,10 +16,7 @@ from app.schemas import (
 	UploadResponse,
 )
 from app.services.document_storage import DocumentStorage
-from app.services.documents import clean_display_title
-from app.services.ingest.jobs import enqueue_ingest_job, process_document_ingest
-from app.services.ingest.legacy_writes import reject_legacy_ingest_writes
-from app.services.ingest.router import V2_EXTENSIONS
+from app.services.ingest.fastapi_ingest_writes import reject_fastapi_ingest_writes
 from app.services.metadata import MetadataStore, get_metadata_store
 from app.services.retrieval import IngestService
 from app.services.runtime import resolve_runtime
@@ -63,18 +59,6 @@ def _document_response(row: dict) -> DocumentResponse:
 			"has_file": bool(row.get("storage_key")),
 		}
 	)
-
-
-def _unavailable_detail(capability, *, message: str) -> dict:
-	return {
-		"message": message,
-		"requested_mode": capability.requested_mode,
-		"effective_mode": capability.effective_mode,
-		"degraded": capability.degraded,
-		"live_ready": capability.live_ready,
-		"ask_ready": capability.ask_ready,
-		"reasons": capability.reasons,
-	}
 
 
 @router.put(
@@ -345,346 +329,35 @@ def get_document(
 
 
 @router.delete("/documents/{doc_id}")
-def delete_document(
-	doc_id: str,
-	settings: Settings = Depends(get_settings),
-	meta: MetadataStore = Depends(get_meta),
-	storage: DocumentStorage = Depends(get_document_storage),
-	access_scope: AccessScope = Depends(get_access_scope),
-) -> dict[str, object]:
+def delete_document(doc_id: str) -> dict[str, object]:
 	"""Deprecated: use Next.js DELETE .../documents/{id} (document.delete job)."""
-	reject_legacy_ingest_writes(settings)
-	doc = meta.get_document(doc_id, scope=access_scope)
-	if doc is None:
-		raise HTTPException(status_code=404, detail="document not found")
-
-	capability = resolve_runtime(settings)
-	if capability.live_ready:
-		try:
-			IngestService(settings, access_scope=access_scope).delete_document_chunks(
-				doc_id=doc_id,
-				library_id=str(doc["library_id"]),
-			)
-		except Exception as exc:
-			logger.warning("delete_document_chunks_failed doc_id=%s err=%s", doc_id, exc)
-
-	storage_key = doc.get("storage_key")
-	if storage_key:
-		try:
-			storage.delete(str(storage_key))
-		except Exception as exc:
-			logger.warning("delete_document_storage_failed doc_id=%s err=%s", doc_id, exc)
-
-	meta.delete_document(doc_id, scope=access_scope)
-	return {"ok": True, "doc_id": doc_id}
+	_ = doc_id
+	reject_fastapi_ingest_writes()
 
 
 @router.post(
 	"/documents/{doc_id}/replace",
 	response_model=UploadResponse,
-	responses={202: {"model": UploadResponse}},
+	responses={410: {"description": "FastAPI ingest writes permanently disabled"}},
 )
 async def replace_document(
 	doc_id: str,
 	file: UploadFile = File(...),
-	settings: Settings = Depends(get_settings),
-	meta: MetadataStore = Depends(get_meta),
-	storage: DocumentStorage = Depends(get_document_storage),
-	access_scope: AccessScope = Depends(get_access_scope),
-) -> UploadResponse | JSONResponse:
+) -> UploadResponse:
 	"""Deprecated: use Next.js POST .../documents/{id}/versions."""
-	reject_legacy_ingest_writes(settings)
-	doc = meta.get_document(doc_id, scope=access_scope)
-	if doc is None:
-		raise HTTPException(status_code=404, detail="document not found")
-
-	if str(doc.get("status") or "") == "processing":
-		raise HTTPException(status_code=409, detail="文档正在索引中，请稍后再替换")
-
-	content = await file.read()
-	if not content:
-		raise HTTPException(status_code=400, detail="Empty file")
-	if len(content) > settings.max_upload_bytes:
-		raise HTTPException(
-			status_code=413,
-			detail=f"文件过大，上限 {settings.max_upload_bytes} 字节",
-		)
-
-	filename = (file.filename or "untitled.txt").strip() or "untitled.txt"
-	suffix = PurePosixPath(filename).suffix.lower()
-	if suffix not in V2_EXTENSIONS:
-		raise HTTPException(
-			status_code=400,
-			detail=f"unsupported file type: {suffix or '(none)'}; use txt/md/pdf/docx/csv/xlsx",
-		)
-
-	library_id = str(doc["library_id"])
-	capability = resolve_runtime(settings)
-	live = capability.live_ready
-	stub_simulate = capability.requested_mode == "stub" and settings.stub_ingest_simulate
-	if not live and not stub_simulate:
-		raise HTTPException(
-			status_code=503,
-			detail=_unavailable_detail(
-				capability,
-				message="ingest requires live mode with LLM key and reachable Qdrant",
-			),
-		)
-
-	# 库内其它同名文档一并清掉，保持「同库同名唯一」
-	for other in meta.list_documents(library_id, scope=access_scope):
-		if str(other["id"]) == doc_id:
-			continue
-		if str(other.get("filename") or "") != filename:
-			continue
-		other_id = str(other["id"])
-		try:
-			if live:
-				IngestService(settings, access_scope=access_scope).delete_document_chunks(
-					doc_id=other_id,
-					library_id=library_id,
-				)
-		except Exception as exc:
-			logger.warning("replace.peer_delete_vectors_failed doc_id=%s err=%s", other_id, exc)
-		peer_key = other.get("storage_key")
-		if peer_key:
-			try:
-				storage.delete(str(peer_key))
-			except Exception as exc:
-				logger.warning("replace.peer_delete_storage_failed doc_id=%s err=%s", other_id, exc)
-		meta.delete_document(other_id, scope=access_scope)
-
-	# 清当前文档向量（live 失败则中止，避免孤儿点）
-	if live:
-		try:
-			IngestService(settings, access_scope=access_scope).delete_document_chunks(
-				doc_id=doc_id,
-				library_id=library_id,
-			)
-		except Exception as exc:
-			logger.exception("replace.delete_vectors_failed doc_id=%s", doc_id)
-			raise HTTPException(
-				status_code=502,
-				detail=f"清除旧向量失败，已中止替换: {exc}",
-			) from exc
-
-	old_key = doc.get("storage_key")
-	if old_key:
-		try:
-			storage.delete(str(old_key))
-		except Exception as exc:
-			logger.warning("replace.delete_storage_failed doc_id=%s err=%s", doc_id, exc)
-
-	title = clean_display_title(PurePosixPath(filename).stem, filename=filename)
-	content_type = file.content_type or {
-		".txt": "text/plain",
-		".md": "text/markdown",
-		".markdown": "text/markdown",
-		".pdf": "application/pdf",
-		".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		".csv": "text/csv",
-		".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-	}.get(suffix, "application/octet-stream")
-
-	storage_key = storage.save(library_id, doc_id, filename, content)
-	meta.update_document(
-		doc_id,
-		name=title,
-		filename=filename,
-		content_type=content_type,
-		storage_key=storage_key,
-		size_bytes=len(content),
-		status="processing",
-		chunk_count=0,
-		parser_report={},
-		clear_error=True,
-		scope=access_scope,
-	)
-
-	mode = "live" if live else "stub"
-	if settings.ingest_async:
-		try:
-			await enqueue_ingest_job(
-				doc_id=doc_id,
-				library_id=library_id,
-				access_scope=access_scope,
-				settings=settings,
-			)
-		except RuntimeError as exc:
-			meta.update_document(
-				doc_id,
-				status="failed",
-				error=str(exc),
-				scope=access_scope,
-			)
-			raise HTTPException(status_code=429, detail=str(exc)) from exc
-		except Exception as exc:
-			logger.exception("replace.enqueue_failed doc_id=%s", doc_id)
-			meta.update_document(
-				doc_id,
-				status="failed",
-				error=f"入队失败: {exc}",
-				scope=access_scope,
-			)
-			raise HTTPException(status_code=503, detail=f"索引队列不可用: {exc}") from exc
-		payload = UploadResponse(
-			library_id=library_id,
-			doc_id=doc_id,
-			title=title,
-			filename=filename,
-			chunk_count=0,
-			status="processing",
-			mode=mode,
-			simulated=False,
-			accepted=True,
-		)
-		return JSONResponse(status_code=202, content=payload.model_dump())
-
-	result = process_document_ingest(
-		doc_id,
-		settings=settings,
-		access_scope=access_scope,
-	)
-	if not result.get("ok"):
-		raise HTTPException(
-			status_code=400,
-			detail=str(result.get("error") or "replace ingest failed"),
-		)
-	return UploadResponse(
-		library_id=library_id,
-		doc_id=doc_id,
-		title=str(result.get("title") or title),
-		filename=str(result.get("filename") or filename),
-		chunk_count=int(result.get("chunk_count") or 0),
-		status="ready",
-		mode=str(result.get("mode") or mode),
-		simulated=bool(result.get("simulated")),
-		accepted=False,
-		notice=result.get("notice"),
-		parser_report=result.get("parser_report"),
-		pipeline=result.get("pipeline"),
-	)
+	_ = (doc_id, file)
+	reject_fastapi_ingest_writes()
 
 
 @router.post(
 	"/documents/{doc_id}/reindex",
 	response_model=UploadResponse,
-	responses={202: {"model": UploadResponse}},
+	responses={410: {"description": "FastAPI ingest writes permanently disabled"}},
 )
-async def reindex_document(
-	doc_id: str,
-	settings: Settings = Depends(get_settings),
-	meta: MetadataStore = Depends(get_meta),
-	storage: DocumentStorage = Depends(get_document_storage),
-	access_scope: AccessScope = Depends(get_access_scope),
-) -> UploadResponse | JSONResponse:
+async def reindex_document(doc_id: str) -> UploadResponse:
 	"""Deprecated: use Next.js POST .../documents/{id}/reindex."""
-	reject_legacy_ingest_writes(settings)
-	doc = meta.get_document(doc_id, scope=access_scope)
-	if doc is None:
-		raise HTTPException(status_code=404, detail="document not found")
-
-	storage_key = doc.get("storage_key")
-	if not storage_key:
-		raise HTTPException(status_code=409, detail="原文未保留，请重新上传")
-
-	try:
-		storage.read(str(storage_key))
-	except FileNotFoundError:
-		raise HTTPException(status_code=409, detail="原文未保留，请重新上传") from None
-
-	library_id = str(doc["library_id"])
-	filename = str(doc["filename"])
-	title = str(doc["name"])
-	capability = resolve_runtime(settings)
-
-	live = capability.live_ready
-	stub_simulate = capability.requested_mode == "stub" and settings.stub_ingest_simulate
-	if not live and not stub_simulate:
-		raise HTTPException(
-			status_code=503,
-			detail=_unavailable_detail(
-				capability,
-				message="ingest requires live mode with LLM key and reachable Qdrant",
-			),
-		)
-
-	if str(doc.get("status") or "") == "processing":
-		raise HTTPException(status_code=409, detail="文档正在索引中")
-
-	meta.update_document(
-		doc_id,
-		status="processing",
-		error=None,
-		scope=access_scope,
-	)
-	mode = "live" if live else "stub"
-
-	if settings.ingest_async:
-		try:
-			await enqueue_ingest_job(
-				doc_id=doc_id,
-				library_id=library_id,
-				access_scope=access_scope,
-				settings=settings,
-			)
-		except RuntimeError as exc:
-			meta.update_document(
-				doc_id,
-				status="failed",
-				error=str(exc),
-				scope=access_scope,
-			)
-			raise HTTPException(status_code=429, detail=str(exc)) from exc
-		except Exception as exc:
-			logger.exception("reindex.enqueue_failed doc_id=%s", doc_id)
-			meta.update_document(
-				doc_id,
-				status="failed",
-				error=f"入队失败: {exc}",
-				scope=access_scope,
-			)
-			raise HTTPException(
-				status_code=503,
-				detail=f"索引队列不可用: {exc}",
-			) from exc
-		payload = UploadResponse(
-			library_id=library_id,
-			doc_id=doc_id,
-			title=title,
-			filename=filename,
-			chunk_count=int(doc.get("chunk_count") or 0),
-			status="processing",
-			mode=mode,
-			simulated=False,
-			accepted=True,
-		)
-		return JSONResponse(status_code=202, content=payload.model_dump())
-
-	result = process_document_ingest(
-		doc_id,
-		settings=settings,
-		access_scope=access_scope,
-	)
-	if not result.get("ok"):
-		raise HTTPException(
-			status_code=400,
-			detail=str(result.get("error") or "reindex failed"),
-		)
-	return UploadResponse(
-		library_id=library_id,
-		doc_id=doc_id,
-		title=str(result.get("title") or title),
-		filename=str(result.get("filename") or filename),
-		chunk_count=int(result.get("chunk_count") or 0),
-		status="ready",
-		mode=str(result.get("mode") or mode),
-		simulated=bool(result.get("simulated")),
-		accepted=False,
-		notice=result.get("notice"),
-		parser_report=result.get("parser_report"),
-		pipeline=result.get("pipeline"),
-	)
+	_ = doc_id
+	reject_fastapi_ingest_writes()
 
 
 @router.get("/documents/{doc_id}/download")
