@@ -7,11 +7,26 @@ import {
 	requiresLibraryWritePermission,
 } from "../src/lib/server/rag-permissions.mjs";
 
-test("read and ask requests do not require library write permission", () => {
+test("read, ask, and session archive do not require library write permission", () => {
 	assert.equal(requiresLibraryWritePermission("GET", ["v1", "archive"]), false);
+	assert.equal(requiresLibraryWritePermission("GET", ["v1", "threads"]), false);
 	assert.equal(requiresLibraryWritePermission("POST", ["v1", "ask"]), false);
 	assert.equal(
 		requiresLibraryWritePermission("POST", ["v1", "ask", "stream"]),
+		false,
+	);
+	assert.equal(requiresLibraryWritePermission("POST", ["v1", "threads"]), false);
+	assert.equal(
+		requiresLibraryWritePermission("POST", ["v1", "threads", "thr-1"]),
+		false,
+	);
+	assert.equal(
+		requiresLibraryWritePermission("POST", [
+			"v1",
+			"threads",
+			"thr-1",
+			"continue",
+		]),
 		false,
 	);
 });

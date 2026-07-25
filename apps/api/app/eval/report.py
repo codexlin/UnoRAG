@@ -47,16 +47,17 @@ def dependency_versions() -> dict[str, str]:
 
 
 def settings_snapshot(settings: Settings | None = None) -> dict[str, Any]:
+	from app.services.ask_defaults import ASK_DEFAULTS
+
 	resolved = settings or Settings()
 	return {
 		"ask_mode": resolved.ask_mode,
 		"chat_model": resolved.chat_model,
 		"embedding_model": resolved.embedding_model,
 		"embedding_dim": resolved.embedding_dim,
-		"hybrid_enabled": resolved.hybrid_enabled,
-		"rerank_enabled": resolved.rerank_enabled,
+		"hybrid_enabled": ASK_DEFAULTS.hybrid_enabled,
+		"rerank_enabled": ASK_DEFAULTS.rerank_enabled,
 		"active_generation_gate_enabled": resolved.active_generation_gate_enabled,
-		"legacy_ingest_writes_enabled": resolved.legacy_ingest_writes_enabled,
 		"mineru_enabled": resolved.mineru_enabled,
 		"pipeline_note": "lifecycle-v2",
 	}

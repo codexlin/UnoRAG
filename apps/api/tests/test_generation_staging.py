@@ -260,6 +260,8 @@ def test_empty_active_snapshot_rejects_legacy_points() -> None:
 				"_point_id": "00000000-0000-4000-8000-000000000099",
 				"chunk_index": 0,
 				"text": "legacy body",
+				# Required on payload; still "legacy" for gate (no generation_id).
+				"document_version_id": "legacy-version",
 			}
 		],
 		vectors=[[1.0, 0.0, 0.0]],

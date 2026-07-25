@@ -75,6 +75,7 @@ export type ApiRetrievalDebug = {
 export type ApiArchiveTurn = {
 	id: string;
 	session_id: string;
+	thread_id?: string | null;
 	library_id?: string | null;
 	question: string;
 	answer: string;
@@ -86,8 +87,24 @@ export type ApiArchiveTurn = {
 	retrieval_debug?: ApiRetrievalDebug | null;
 };
 
+export type ApiThread = {
+	id: string;
+	session_id?: string | null;
+	library_id?: string | null;
+	title: string;
+	status: string;
+	turn_count: number;
+	created_at: string;
+	updated_at: string;
+};
+
+export type ApiThreadDetail = ApiThread & {
+	turns: ApiArchiveTurn[];
+};
+
 export type ApiAskResponse = {
 	session_id: string;
+	thread_id?: string | null;
 	question: string;
 	answer: string;
 	citations: ApiCitation[];
@@ -547,12 +564,14 @@ function parseApiError(text: string): string {
 export async function fetchArchive(input?: {
 	libraryId?: string;
 	sessionId?: string;
+	threadId?: string;
 	limit?: number;
 	signal?: AbortSignal;
 }): Promise<ApiArchiveTurn[]> {
 	const params = new URLSearchParams();
 	if (input?.libraryId) params.set("library_id", input.libraryId);
 	if (input?.sessionId) params.set("session_id", input.sessionId);
+	if (input?.threadId) params.set("thread_id", input.threadId);
 	if (input?.limit) params.set("limit", String(input.limit));
 	const query = params.toString();
 	const response = await fetch(
@@ -569,10 +588,97 @@ export async function fetchArchive(input?: {
 	return (await response.json()) as ApiArchiveTurn[];
 }
 
+export async function fetchThreads(input?: {
+	limit?: number;
+	signal?: AbortSignal;
+}): Promise<ApiThread[]> {
+	const params = new URLSearchParams();
+	if (input?.limit) params.set("limit", String(input.limit));
+	const query = params.toString();
+	const response = await fetch(
+		`${getApiBaseUrl()}/v1/threads${query ? `?${query}` : ""}`,
+		{
+			method: "GET",
+			signal: input?.signal,
+			cache: "no-store",
+		},
+	);
+	if (!response.ok) {
+		throw new Error(`threads ${response.status}`);
+	}
+	return (await response.json()) as ApiThread[];
+}
+
+export async function fetchThread(
+	threadId: string,
+	signal?: AbortSignal,
+): Promise<ApiThreadDetail> {
+	const response = await fetch(`${getApiBaseUrl()}/v1/threads/${threadId}`, {
+		method: "GET",
+		signal,
+		cache: "no-store",
+	});
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(text || `thread ${response.status}`);
+	}
+	return (await response.json()) as ApiThreadDetail;
+}
+
+export async function archiveThread(input: {
+	sessionId?: string;
+	title?: string;
+	libraryId?: string;
+	turns: Array<{
+		question: string;
+		answer?: string;
+		citations?: ApiCitation[];
+		mode?: string;
+		refused?: boolean;
+		refuse_reason?: string | null;
+		library_id?: string;
+	}>;
+}): Promise<ApiThreadDetail> {
+	const response = await fetch(`${getApiBaseUrl()}/v1/threads`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			session_id: input.sessionId,
+			title: input.title,
+			library_id: input.libraryId,
+			turns: input.turns,
+		}),
+	});
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(text || `archive thread ${response.status}`);
+	}
+	return (await response.json()) as ApiThreadDetail;
+}
+
+export async function continueThread(
+	threadId: string,
+	signal?: AbortSignal,
+): Promise<ApiThreadDetail> {
+	const response = await fetch(
+		`${getApiBaseUrl()}/v1/threads/${threadId}/continue`,
+		{
+			method: "POST",
+			signal,
+		},
+	);
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(text || `continue thread ${response.status}`);
+	}
+	return (await response.json()) as ApiThreadDetail;
+}
+
 export async function askQuestion(input: {
 	question: string;
 	libraryId: string;
 	sessionId?: string;
+	threadId?: string;
 }): Promise<ApiAskResponse> {
 	const response = await fetch(`${getApiBaseUrl()}/v1/ask`, {
 		method: "POST",
@@ -581,6 +687,7 @@ export async function askQuestion(input: {
 			question: input.question,
 			library_id: input.libraryId,
 			session_id: input.sessionId,
+			thread_id: input.threadId,
 		}),
 	});
 	if (!response.ok) {
@@ -593,6 +700,7 @@ export async function askQuestion(input: {
 export type AskStreamHandlers = {
 	onMeta?: (data: {
 		session_id: string;
+		thread_id?: string | null;
 		mode: string;
 		refused: boolean;
 		refuse_reason?: string | null;
@@ -634,6 +742,7 @@ export async function askQuestionStream(
 		question: string;
 		libraryId: string;
 		sessionId?: string;
+		threadId?: string;
 	},
 	handlers: AskStreamHandlers,
 	signal?: AbortSignal,
@@ -648,6 +757,7 @@ export async function askQuestionStream(
 			question: input.question,
 			library_id: input.libraryId,
 			session_id: input.sessionId,
+			thread_id: input.threadId,
 		}),
 		signal,
 	});

@@ -45,7 +45,7 @@ export default function LoginPage() {
 				</div>
 				<form className="space-y-5" onSubmit={submit}>
 					<div className="space-y-2">
-						<Label htmlFor="email">管理员邮箱</Label>
+						<Label htmlFor="email">邮箱</Label>
 						<Input
 							id="email"
 							name="email"

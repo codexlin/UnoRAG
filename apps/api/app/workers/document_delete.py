@@ -58,7 +58,7 @@ class DocumentDeleteProcessor:
 	) -> None:
 		self.settings = settings
 		self.repository = repository
-		root = settings.document_storage_root or settings.document_storage_dir
+		root = settings.resolved_document_storage
 		self.storage = storage or LocalSourceObjectStorage(
 			root,
 			max_bytes=settings.max_upload_bytes,

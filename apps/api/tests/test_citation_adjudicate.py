@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from app.graph.ask_graph import AskGraphService, _format_context, stub_generate
+from app.services.ask_defaults import ASK_DEFAULTS
+from app.services.ask_overrides import effective_ask_settings
 from app.services.citation_adjudicate import (
 	apply_citation_adjudicate,
 	wide_recall_limit,
@@ -28,21 +30,21 @@ def _hit(i: int, score: float, *, text: str | None = None, bm25: float | None = 
 
 
 def test_wide_recall_limit_formula() -> None:
-	settings = Settings(_env_file=None, rerank_enabled=False)
+	settings = effective_ask_settings(
+		Settings(_env_file=None),
+		{"rerank_enabled": False},
+	)
 	assert wide_recall_limit(6, settings) == min(50, max(18, 14))  # 18
 	assert wide_recall_limit(2, settings) == 10  # max(6, 10)=10 → min 50
-	settings_rr = Settings(_env_file=None, rerank_enabled=True, rerank_top_k=24)
+	settings_rr = effective_ask_settings(
+		Settings(_env_file=None, rerank_top_k=24),
+		{"rerank_enabled": True},
+	)
 	assert wide_recall_limit(6, settings_rr) == 24
 
 
 def test_semantic_floor_filters_low_tail() -> None:
-	settings = Settings(
-		_env_file=None,
-		citation_adjudicate_enabled=True,
-		citation_adjudicate_absolute_floor=0.35,
-		citation_adjudicate_ratio=0.68,
-		answer_min_score=0.4,
-	)
+	settings = effective_ask_settings(Settings(_env_file=None))
 	# Pure semantic: no lexical overlap with query
 	candidates = [
 		_hit(1, 0.90, text="报价有效期为三十个自然日，自发出之日起计算。"),
@@ -83,20 +85,14 @@ def test_context_and_citations_same_source() -> None:
 
 	captured: dict = {}
 
-	def capture_generate(question: str, citations: list[dict]) -> str:
+	def capture_generate(messages: list[dict[str, str]], citations: list[dict]) -> str:
 		captured["citations"] = list(citations)
+		captured["messages"] = messages
 		captured["context"] = _format_context(citations)
-		return stub_generate(question, citations)
+		return stub_generate(messages, citations)
 
 	service = AskGraphService(
-		Settings(
-			_env_file=None,
-			citation_adjudicate_enabled=True,
-			ask_mode="stub",
-			answer_min_score=0.4,
-			max_retrieve_retries=0,
-			retrieve_top_k=6,
-		),
+		Settings(_env_file=None, ask_mode="stub", max_retrieve_retries=0),
 		retrieve_fn=fake_retrieve,
 		generate_fn=capture_generate,
 	)
@@ -116,14 +112,7 @@ def test_context_and_citations_same_source() -> None:
 
 
 def test_weak_match_still_refuses() -> None:
-	settings = Settings(
-		_env_file=None,
-		ask_mode="stub",
-		answer_min_score=0.5,
-		max_retrieve_retries=0,
-		citation_adjudicate_enabled=True,
-		citation_adjudicate_absolute_floor=0.35,
-	)
+	settings = Settings(_env_file=None, ask_mode="stub", max_retrieve_retries=0)
 
 	def fake_retrieve(_q, _lib, _top_k, _filters=None):
 		return [_hit(1, 0.22, text="无关附录排版示例。")]
@@ -133,19 +122,18 @@ def test_weak_match_still_refuses() -> None:
 		retrieve_fn=fake_retrieve,
 		generate_fn=stub_generate,
 	)
-	result = service.ask(question="anything", library_id="lib-weak-adjudicate")
+	result = service.ask(
+		question="anything",
+		library_id="lib-weak-adjudicate",
+		ask_overrides={"answer_min_score": 0.5},
+	)
 	assert result.refused is True
 	assert result.refuse_reason == "weak_match"
 	assert len(result.citations) >= 1
 
 
 def test_renumber_indexes_unique_1_to_n() -> None:
-	settings = Settings(
-		_env_file=None,
-		citation_adjudicate_enabled=True,
-		citation_adjudicate_absolute_floor=0.35,
-		citation_adjudicate_ratio=0.68,
-	)
+	settings = effective_ask_settings(Settings(_env_file=None))
 	candidates = [
 		_hit(10, 0.91, text="报价有效期三十天。"),
 		_hit(20, 0.85, text="报价有效期自发出日起算。"),
@@ -167,23 +155,18 @@ def test_renumber_indexes_unique_1_to_n() -> None:
 
 
 def test_adjudicate_disabled_passthrough() -> None:
-	settings = Settings(_env_file=None, citation_adjudicate_enabled=False)
+	settings = effective_ask_settings(
+		Settings(_env_file=None),
+		{"citation_adjudicate_enabled": False},
+	)
 	candidates = [_hit(i, 0.9 - i * 0.05) for i in range(1, 9)]
 	result = apply_citation_adjudicate("q", candidates, top_k=6, settings=settings)
 	assert result.citation_adjudication["mode"] == "passthrough"
 	assert len(result.citations) == 6
 
 
-def test_legacy_citation_gate_settings_soft_migrate() -> None:
-	"""Old citation_gate_* kwargs still populate citation_adjudicate_* fields."""
-	settings = Settings(
-		_env_file=None,
-		citation_gate_enabled=False,
-		citation_gate_absolute_floor=0.41,
-		citation_gate_ratio=0.55,
-		citation_gate_lexical_threshold=0.33,
-	)
-	assert settings.citation_adjudicate_enabled is False
-	assert settings.citation_adjudicate_absolute_floor == 0.41
-	assert settings.citation_adjudicate_ratio == 0.55
-	assert settings.citation_adjudicate_lexical_threshold == 0.33
+def test_ask_defaults_include_adjudicate_code_only_knobs() -> None:
+	assert ASK_DEFAULTS.citation_adjudicate_enabled is True
+	assert ASK_DEFAULTS.citation_adjudicate_absolute_floor == 0.35
+	assert ASK_DEFAULTS.citation_adjudicate_ratio == 0.68
+	assert ASK_DEFAULTS.citation_adjudicate_lexical_threshold == 0.2

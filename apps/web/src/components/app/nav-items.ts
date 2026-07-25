@@ -38,7 +38,7 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
 		href: "/app/archive",
 		code: "03",
 		label: "会话历史",
-		hint: "回看问答记录与引用来源",
+		hint: "归档会话回放与继续对话",
 		icon: Clock3,
 		group: "nav",
 	},

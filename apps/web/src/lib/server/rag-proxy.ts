@@ -12,6 +12,7 @@ import {
 	isInternalRagPath,
 	requiresLibraryWritePermission,
 } from "./rag-permissions.mjs";
+import { getWorkspaceAskSettings } from "./workspace-settings";
 
 const REQUEST_HEADER_DENYLIST = new Set([
 	"authorization",
@@ -96,6 +97,48 @@ async function bodyLibraryId(
 	return null;
 }
 
+function isAskPath(safeSegments: string[]): boolean {
+	return (
+		safeSegments[0] === "v1" &&
+		safeSegments[1] === "ask" &&
+		(safeSegments.length === 2 ||
+			(safeSegments.length === 3 && safeSegments[2] === "stream"))
+	);
+}
+
+function encodeJsonBody(payload: Record<string, unknown>): Uint8Array {
+	return new TextEncoder().encode(JSON.stringify(payload));
+}
+
+/** Inject workspace ask overrides into ask/stream JSON body (server-authoritative). */
+async function withAskOverrides(
+	request: Request,
+	body: Uint8Array | undefined,
+	workspaceId: string,
+): Promise<Uint8Array | undefined> {
+	if (!body?.length) return body;
+	const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
+	if (!contentType.startsWith("application/json")) return body;
+	try {
+		const payload = JSON.parse(new TextDecoder().decode(body)) as Record<
+			string,
+			unknown
+		>;
+		const { ask } = await getWorkspaceAskSettings(workspaceId);
+		if (Object.keys(ask).length === 0) {
+			if ("ask_overrides" in payload) {
+				delete payload.ask_overrides;
+				return encodeJsonBody(payload);
+			}
+			return body;
+		}
+		payload.ask_overrides = ask;
+		return encodeJsonBody(payload);
+	} catch {
+		return body;
+	}
+}
+
 export async function proxyRagRequest(
 	request: Request,
 	pathSegments: string[],
@@ -152,7 +195,7 @@ export async function proxyRagRequest(
 	const hasBody = request.method !== "GET" && request.method !== "HEAD";
 
 	try {
-		const signedBody =
+		let signedBody: Uint8Array | undefined =
 			hasBody && request.body
 				? new Uint8Array(await request.arrayBuffer())
 				: undefined;
@@ -190,6 +233,13 @@ export async function proxyRagRequest(
 					);
 				}
 			}
+			if (isAskPath(safeSegments)) {
+				signedBody = await withAskOverrides(
+					request,
+					signedBody,
+					identity.workspaceId,
+				);
+			}
 		}
 		let signedHeaders = new Headers();
 		if (safeSegments[0] === "v1") {
@@ -216,7 +266,7 @@ export async function proxyRagRequest(
 			signal: request.signal,
 		};
 		if (signedBody) {
-			init.body = signedBody;
+			init.body = Buffer.from(signedBody);
 		}
 		const upstream = await fetch(upstreamUrl, init);
 		// L6: no dual-write / document-list probe sync into app.documents.

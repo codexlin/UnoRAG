@@ -18,6 +18,7 @@ from app.services.ingest.ir import Chunk as IRChunk
 from app.services.ingest.pipeline import chunks_to_payloads
 from app.services.llm import EmbeddingService
 from app.services.qdrant_store import QdrantStore
+from app.services.ask_defaults import ASK_DEFAULTS
 from app.services.rerank import RerankClient
 from app.settings import Settings
 
@@ -263,7 +264,10 @@ class RetrievalService:
 			self.active_generation_resolver = ActiveGenerationResolver(settings)
 		if reranker is not None:
 			self.reranker = reranker
-		elif settings.rerank_enabled and settings.has_llm_key:
+		elif (
+			bool(getattr(settings, "rerank_enabled", ASK_DEFAULTS.rerank_enabled))
+			and settings.has_llm_key
+		):
 			self.reranker = RerankClient(settings)
 		else:
 			self.reranker = None
@@ -282,7 +286,9 @@ class RetrievalService:
 			raise ValueError("library_id is required for retrieval")
 		resolved_library = str(library_id).strip()
 		active_snapshot = self._resolve_active_generations(resolved_library)
-		limit = top_k or self.settings.retrieve_top_k
+		limit = top_k or int(
+			getattr(self.settings, "retrieve_top_k", ASK_DEFAULTS.retrieve_top_k)
+		)
 		# Pull a slightly wider dense pool when rerank / hybrid will trim.
 		dense_k = max(limit, self.settings.rerank_top_k, self.settings.bm25_top_k)
 		resolved_type = None
@@ -304,8 +310,11 @@ class RetrievalService:
 		hits = dense_hits
 		used_hybrid = False
 		hybrid_error: str | None = None
+		hybrid_on = bool(
+			getattr(self.settings, "hybrid_enabled", ASK_DEFAULTS.hybrid_enabled)
+		)
 
-		if self.settings.hybrid_enabled:
+		if hybrid_on:
 			try:
 				hits = self._hybrid_fuse(
 					query=query,
@@ -375,7 +384,7 @@ class RetrievalService:
 		retrieval_mode = "hybrid" if used_hybrid else "dense"
 		self.last_debug = {
 			"used_hybrid": used_hybrid,
-			"hybrid_enabled": self.settings.hybrid_enabled,
+			"hybrid_enabled": hybrid_on,
 			"hybrid_error": hybrid_error,
 			"hybrid_failed": hybrid_error is not None,
 			"rerank_failed": rerank_failed,

@@ -29,7 +29,8 @@ def _sqlalchemy_database_url(database_url: str) -> str:
 
 
 def _now_iso() -> str:
-	return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+	# Keep microseconds so bulk-archived turns in the same second stay ordered.
+	return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _library_status(doc_count: int, ready_count: int, has_processing: bool) -> LibraryStatus:
@@ -158,6 +159,58 @@ class MetadataStore(ABC):
 		raise NotImplementedError
 
 	@abstractmethod
+	def create_thread(
+		self,
+		*,
+		title: str,
+		session_id: str | None = None,
+		library_id: str | None = None,
+		thread_id: str | None = None,
+		# status=active: persisted (archived) conversation that can continue.
+		# Temporary chats have no Thread row. status=hidden soft-hides from lists.
+		status: str = "active",
+		tenant_id: str | None = None,
+		workspace_id: str | None = None,
+		principal_id: str | None = None,
+	) -> dict[str, Any]:
+		raise NotImplementedError
+
+	@abstractmethod
+	def list_threads(
+		self,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+		status: str | None = "active",
+		limit: int = 50,
+	) -> list[dict[str, Any]]:
+		raise NotImplementedError
+
+	@abstractmethod
+	def get_thread(
+		self,
+		thread_id: str,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+	) -> dict[str, Any] | None:
+		raise NotImplementedError
+
+	@abstractmethod
+	def touch_thread(
+		self,
+		thread_id: str,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+		title: str | None = None,
+	) -> dict[str, Any] | None:
+		raise NotImplementedError
+
+	@abstractmethod
 	def create_turn(
 		self,
 		*,
@@ -170,6 +223,7 @@ class MetadataStore(ABC):
 		refused: bool = False,
 		refuse_reason: str | None = None,
 		turn_id: str | None = None,
+		thread_id: str | None = None,
 		query_type: str | None = None,
 		retrieval_plan: dict[str, Any] | None = None,
 		retrieval_debug: dict[str, Any] | None = None,
@@ -189,6 +243,7 @@ class MetadataStore(ABC):
 		*,
 		library_id: str | None = None,
 		session_id: str | None = None,
+		thread_id: str | None = None,
 		tenant_id: str | None = None,
 		workspace_id: str | None = None,
 		principal_id: str | None = None,
@@ -216,11 +271,18 @@ class JsonMetadataStore(MetadataStore):
 		self._lock = threading.Lock()
 		self.path.parent.mkdir(parents=True, exist_ok=True)
 		if not self.path.exists():
-			self._write({"libraries": {}, "documents": {}, "turns": {}})
+			self._write({"libraries": {}, "documents": {}, "turns": {}, "threads": {}})
 
 	def _read(self) -> dict[str, Any]:
 		with self.path.open("r", encoding="utf-8") as handle:
-			return json.load(handle)
+			data = json.load(handle)
+		if not isinstance(data, dict):
+			return {"libraries": {}, "documents": {}, "turns": {}, "threads": {}}
+		data.setdefault("libraries", {})
+		data.setdefault("documents", {})
+		data.setdefault("turns", {})
+		data.setdefault("threads", {})
+		return data
 
 	def _write(self, data: dict[str, Any]) -> None:
 		tmp = self.path.with_suffix(".tmp")
@@ -498,6 +560,131 @@ class JsonMetadataStore(MetadataStore):
 			self._write(data)
 			return dict(library)
 
+	def create_thread(
+		self,
+		*,
+		title: str,
+		session_id: str | None = None,
+		library_id: str | None = None,
+		thread_id: str | None = None,
+		status: str = "active",
+		tenant_id: str | None = None,
+		workspace_id: str | None = None,
+		principal_id: str | None = None,
+	) -> dict[str, Any]:
+		resolved = thread_id or str(uuid4())
+		now = _now_iso()
+		row = {
+			"id": resolved,
+			"session_id": session_id,
+			"library_id": library_id,
+			"title": (title or "").strip()[:256] or "未命名会话",
+			# active = archived & continuable; hidden = soft-hidden from lists
+			"status": status if status in {"active", "hidden"} else "active",
+			"tenant_id": tenant_id or "default",
+			"workspace_id": workspace_id or "default",
+			"principal_id": principal_id or "development",
+			"created_at": now,
+			"updated_at": now,
+		}
+		with self._lock:
+			data = self._read()
+			data.setdefault("threads", {})[resolved] = row
+			self._write(data)
+		return dict(row)
+
+	def list_threads(
+		self,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+		status: str | None = "active",
+		limit: int = 50,
+	) -> list[dict[str, Any]]:
+		with self._lock:
+			data = self._read()
+			items = [dict(item) for item in data.get("threads", {}).values()]
+			turns = [dict(item) for item in data.get("turns", {}).values()]
+		items = [
+			item
+			for item in items
+			if item.get("tenant_id") == tenant_id
+			and item.get("workspace_id") == workspace_id
+			and item.get("principal_id") == principal_id
+		]
+		if status:
+			items = [item for item in items if item.get("status") == status]
+		items.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+		capped = max(1, min(limit, 200))
+		out: list[dict[str, Any]] = []
+		for item in items[:capped]:
+			turn_count = sum(
+				1
+				for turn in turns
+				if turn.get("thread_id") == item["id"]
+				and turn.get("tenant_id") == tenant_id
+				and turn.get("workspace_id") == workspace_id
+				and turn.get("principal_id") == principal_id
+			)
+			row = dict(item)
+			row["turn_count"] = turn_count
+			out.append(row)
+		return out
+
+	def get_thread(
+		self,
+		thread_id: str,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+	) -> dict[str, Any] | None:
+		with self._lock:
+			data = self._read()
+			item = data.get("threads", {}).get(thread_id)
+			if (
+				item
+				and item.get("tenant_id") == tenant_id
+				and item.get("workspace_id") == workspace_id
+				and item.get("principal_id") == principal_id
+			):
+				row = dict(item)
+				row["turn_count"] = sum(
+					1
+					for turn in data.get("turns", {}).values()
+					if turn.get("thread_id") == thread_id
+				)
+				return row
+			return None
+
+	def touch_thread(
+		self,
+		thread_id: str,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+		title: str | None = None,
+	) -> dict[str, Any] | None:
+		with self._lock:
+			data = self._read()
+			item = data.get("threads", {}).get(thread_id)
+			if (
+				not item
+				or item.get("tenant_id") != tenant_id
+				or item.get("workspace_id") != workspace_id
+				or item.get("principal_id") != principal_id
+			):
+				return None
+			item = dict(item)
+			if title is not None and title.strip():
+				item["title"] = title.strip()[:256]
+			item["updated_at"] = _now_iso()
+			data.setdefault("threads", {})[thread_id] = item
+			self._write(data)
+			return dict(item)
+
 	def create_turn(
 		self,
 		*,
@@ -510,6 +697,7 @@ class JsonMetadataStore(MetadataStore):
 		refused: bool = False,
 		refuse_reason: str | None = None,
 		turn_id: str | None = None,
+		thread_id: str | None = None,
 		query_type: str | None = None,
 		retrieval_plan: dict[str, Any] | None = None,
 		retrieval_debug: dict[str, Any] | None = None,
@@ -526,6 +714,7 @@ class JsonMetadataStore(MetadataStore):
 		row = {
 			"id": resolved,
 			"session_id": session_id,
+			"thread_id": thread_id,
 			"library_id": library_id,
 			"question": question,
 			"answer": answer,
@@ -548,6 +737,10 @@ class JsonMetadataStore(MetadataStore):
 		with self._lock:
 			data = self._read()
 			data.setdefault("turns", {})[resolved] = row
+			if thread_id and thread_id in data.get("threads", {}):
+				thread = dict(data["threads"][thread_id])
+				thread["updated_at"] = now
+				data["threads"][thread_id] = thread
 			self._write(data)
 		return dict(row)
 
@@ -556,6 +749,7 @@ class JsonMetadataStore(MetadataStore):
 		*,
 		library_id: str | None = None,
 		session_id: str | None = None,
+		thread_id: str | None = None,
 		tenant_id: str | None = None,
 		workspace_id: str | None = None,
 		principal_id: str | None = None,
@@ -570,6 +764,8 @@ class JsonMetadataStore(MetadataStore):
 			items = [item for item in items if item.get("library_id") == library_id]
 		if session_id:
 			items = [item for item in items if item.get("session_id") == session_id]
+		if thread_id:
+			items = [item for item in items if item.get("thread_id") == thread_id]
 		if tenant_id:
 			items = [item for item in items if item.get("tenant_id") == tenant_id]
 		if workspace_id:
@@ -659,11 +855,36 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				nullable=False,
 			)
 
+		class ThreadRow(Base):
+			__tablename__ = "threads"
+
+			id: Mapped[str] = mapped_column(String(128), primary_key=True)
+			session_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+			library_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+			title: Mapped[str] = mapped_column(String(256), nullable=False, default="未命名会话")
+			# active = archived & continuable; hidden = soft-hidden from lists
+			status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+			tenant_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+			workspace_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+			principal_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+			created_at: Mapped[datetime] = mapped_column(
+				DateTime(timezone=True),
+				server_default=func.now(),
+				nullable=False,
+			)
+			updated_at: Mapped[datetime] = mapped_column(
+				DateTime(timezone=True),
+				server_default=func.now(),
+				onupdate=func.now(),
+				nullable=False,
+			)
+
 		class TurnRow(Base):
 			__tablename__ = "turns"
 
 			id: Mapped[str] = mapped_column(String(128), primary_key=True)
 			session_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+			thread_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
 			library_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
 			question: Mapped[str] = mapped_column(Text, nullable=False)
 			answer: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -690,6 +911,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 
 		self._LibraryRow = LibraryRow
 		self._DocumentRow = DocumentRow
+		self._ThreadRow = ThreadRow
 		self._TurnRow = TurnRow
 		self._select = select
 		self._engine = create_engine(database_url, pool_pre_ping=True)
@@ -778,6 +1000,9 @@ class SqlAlchemyMetadataStore(MetadataStore):
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128)",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(128)",
 					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS principal_id VARCHAR(128)",
+					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS thread_id VARCHAR(128)",
+					"CREATE INDEX IF NOT EXISTS ix_turns_thread_id ON turns (thread_id)",
+					"CREATE INDEX IF NOT EXISTS ix_threads_scope ON threads (tenant_id, workspace_id, principal_id)",
 				):
 					conn.execute(sql_text(stmt))
 		except Exception as exc:
@@ -794,7 +1019,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			return _now_iso()
 		if value.tzinfo is None:
 			value = value.replace(tzinfo=UTC)
-		return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+		# Keep microseconds so same-second turns stay chronologically sortable.
+		return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 	def _library_dict(self, row: Any) -> dict[str, Any]:
 		return {
@@ -859,6 +1085,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		return {
 			"id": row.id,
 			"session_id": row.session_id,
+			"thread_id": getattr(row, "thread_id", None),
 			"library_id": row.library_id,
 			"question": row.question,
 			"answer": row.answer,
@@ -878,6 +1105,23 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			"principal_id": getattr(row, "principal_id", None),
 			"created_at": self._dt(row.created_at),
 		}
+
+	def _thread_dict(self, row: Any, *, turn_count: int | None = None) -> dict[str, Any]:
+		payload = {
+			"id": row.id,
+			"session_id": getattr(row, "session_id", None),
+			"library_id": getattr(row, "library_id", None),
+			"title": row.title,
+			"status": row.status,
+			"tenant_id": row.tenant_id,
+			"workspace_id": row.workspace_id,
+			"principal_id": row.principal_id,
+			"created_at": self._dt(row.created_at),
+			"updated_at": self._dt(row.updated_at),
+		}
+		if turn_count is not None:
+			payload["turn_count"] = turn_count
+		return payload
 
 	def list_libraries(self, *, scope: AccessScope) -> list[dict[str, Any]]:
 		with self._Session() as session:
@@ -1182,6 +1426,128 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			session.refresh(library)
 			return self._library_dict(library)
 
+	def create_thread(
+		self,
+		*,
+		title: str,
+		session_id: str | None = None,
+		library_id: str | None = None,
+		thread_id: str | None = None,
+		status: str = "active",
+		tenant_id: str | None = None,
+		workspace_id: str | None = None,
+		principal_id: str | None = None,
+	) -> dict[str, Any]:
+		resolved = thread_id or str(uuid4())
+		resolved_status = status if status in {"active", "hidden"} else "active"
+		with self._Session() as session:
+			row = self._ThreadRow(
+				id=resolved,
+				session_id=session_id,
+				library_id=library_id,
+				title=(title or "").strip()[:256] or "未命名会话",
+				status=resolved_status,
+				tenant_id=tenant_id or "default",
+				workspace_id=workspace_id or "default",
+				principal_id=principal_id or "development",
+			)
+			session.add(row)
+			session.commit()
+			session.refresh(row)
+			return self._thread_dict(row, turn_count=0)
+
+	def list_threads(
+		self,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+		status: str | None = "active",
+		limit: int = 50,
+	) -> list[dict[str, Any]]:
+		capped = max(1, min(limit, 200))
+		with self._Session() as session:
+			stmt = (
+				self._select(self._ThreadRow)
+				.where(
+					self._ThreadRow.tenant_id == tenant_id,
+					self._ThreadRow.workspace_id == workspace_id,
+					self._ThreadRow.principal_id == principal_id,
+				)
+				.order_by(self._ThreadRow.updated_at.desc())
+			)
+			if status:
+				stmt = stmt.where(self._ThreadRow.status == status)
+			stmt = stmt.limit(capped)
+			rows = session.scalars(stmt).all()
+			out: list[dict[str, Any]] = []
+			for row in rows:
+				count = len(
+					session.scalars(
+						self._select(self._TurnRow.id).where(
+							self._TurnRow.thread_id == row.id,
+							self._TurnRow.tenant_id == tenant_id,
+							self._TurnRow.workspace_id == workspace_id,
+							self._TurnRow.principal_id == principal_id,
+						)
+					).all()
+				)
+				out.append(self._thread_dict(row, turn_count=count))
+			return out
+
+	def get_thread(
+		self,
+		thread_id: str,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+	) -> dict[str, Any] | None:
+		with self._Session() as session:
+			row = session.scalar(
+				self._select(self._ThreadRow).where(
+					self._ThreadRow.id == thread_id,
+					self._ThreadRow.tenant_id == tenant_id,
+					self._ThreadRow.workspace_id == workspace_id,
+					self._ThreadRow.principal_id == principal_id,
+				)
+			)
+			if row is None:
+				return None
+			count = len(
+				session.scalars(
+					self._select(self._TurnRow.id).where(self._TurnRow.thread_id == thread_id)
+				).all()
+			)
+			return self._thread_dict(row, turn_count=count)
+
+	def touch_thread(
+		self,
+		thread_id: str,
+		*,
+		tenant_id: str,
+		workspace_id: str,
+		principal_id: str,
+		title: str | None = None,
+	) -> dict[str, Any] | None:
+		with self._Session() as session:
+			row = session.scalar(
+				self._select(self._ThreadRow).where(
+					self._ThreadRow.id == thread_id,
+					self._ThreadRow.tenant_id == tenant_id,
+					self._ThreadRow.workspace_id == workspace_id,
+					self._ThreadRow.principal_id == principal_id,
+				)
+			)
+			if row is None:
+				return None
+			if title is not None and title.strip():
+				row.title = title.strip()[:256]
+			row.updated_at = datetime.now(UTC)
+			session.commit()
+			session.refresh(row)
+			return self._thread_dict(row)
+
 	def create_turn(
 		self,
 		*,
@@ -1194,6 +1560,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		refused: bool = False,
 		refuse_reason: str | None = None,
 		turn_id: str | None = None,
+		thread_id: str | None = None,
 		query_type: str | None = None,
 		retrieval_plan: dict[str, Any] | None = None,
 		retrieval_debug: dict[str, Any] | None = None,
@@ -1210,6 +1577,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 			row = self._TurnRow(
 				id=resolved,
 				session_id=session_id,
+				thread_id=thread_id,
 				library_id=library_id,
 				question=question,
 				answer=answer,
@@ -1237,6 +1605,12 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				principal_id=principal_id or "development",
 			)
 			session.add(row)
+			if thread_id:
+				thread = session.scalar(
+					self._select(self._ThreadRow).where(self._ThreadRow.id == thread_id)
+				)
+				if thread is not None:
+					thread.updated_at = datetime.now(UTC)
 			session.commit()
 			session.refresh(row)
 			return self._turn_dict(row)
@@ -1246,6 +1620,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		*,
 		library_id: str | None = None,
 		session_id: str | None = None,
+		thread_id: str | None = None,
 		tenant_id: str | None = None,
 		workspace_id: str | None = None,
 		principal_id: str | None = None,
@@ -1260,6 +1635,8 @@ class SqlAlchemyMetadataStore(MetadataStore):
 				stmt = stmt.where(self._TurnRow.library_id == library_id)
 			if session_id:
 				stmt = stmt.where(self._TurnRow.session_id == session_id)
+			if thread_id:
+				stmt = stmt.where(self._TurnRow.thread_id == thread_id)
 			if tenant_id:
 				stmt = stmt.where(self._TurnRow.tenant_id == tenant_id)
 			if workspace_id:

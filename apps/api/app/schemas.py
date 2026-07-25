@@ -66,6 +66,7 @@ class Citation(BaseModel):
 class ArchiveTurnResponse(BaseModel):
 	id: str
 	session_id: str
+	thread_id: str | None = None
 	library_id: str | None = None
 	question: str
 	answer: str
@@ -91,6 +92,7 @@ class ArchiveDebugResponse(BaseModel):
 
 	turn_id: str
 	session_id: str
+	thread_id: str | None = None
 	library_id: str | None = None
 	created_at: str
 	refused: bool = False
@@ -101,15 +103,66 @@ class ArchiveDebugResponse(BaseModel):
 	retrieval_debug: dict[str, object] = Field(default_factory=dict)
 
 
+class ArchiveTurnInput(BaseModel):
+	"""Client-side temp turn payload used when explicitly archiving a session."""
+
+	question: str = Field(min_length=1, max_length=4000)
+	answer: str = ""
+	citations: list[Citation] = Field(default_factory=list)
+	mode: str = "stub"
+	refused: bool = False
+	refuse_reason: str | None = None
+	library_id: str | None = None
+
+
+class ArchiveThreadRequest(BaseModel):
+	"""Persist a temporary conversation into a Thread + Turns (explicit archive)."""
+
+	session_id: str | None = None
+	title: str | None = Field(default=None, max_length=256)
+	library_id: str | None = Field(default=None, max_length=128)
+	turns: list[ArchiveTurnInput] = Field(min_length=1)
+
+
+class ThreadResponse(BaseModel):
+	"""Archived conversation.
+
+	status=active means persisted and open for continue-chat.
+	Temporary chats have no Thread row and do not appear in lists.
+	status=hidden soft-hides from the archive list (reserved).
+	"""
+
+	id: str
+	session_id: str | None = None
+	library_id: str | None = None
+	title: str
+	status: str
+	tenant_id: str | None = None
+	workspace_id: str | None = None
+	principal_id: str | None = None
+	turn_count: int = 0
+	created_at: str
+	updated_at: str
+
+
+class ThreadDetailResponse(ThreadResponse):
+	turns: list[ArchiveTurnResponse] = Field(default_factory=list)
+
+
 class AskRequest(BaseModel):
 	question: str = Field(min_length=1, max_length=4000)
 	# Required on HTTP ask paths; validated in router (400 if missing/blank).
 	library_id: str | None = Field(default=None, max_length=128)
 	session_id: str | None = None
+	# Bound archived thread: load DB history + persist new turns. Omit = temporary.
+	thread_id: str | None = None
+	# Workspace product knobs for this request only (unset keys → code ASK_DEFAULTS).
+	ask_overrides: dict[str, object] | None = None
 
 
 class AskResponse(BaseModel):
 	session_id: str
+	thread_id: str | None = None
 	question: str
 	answer: str
 	citations: list[Citation]
@@ -117,7 +170,8 @@ class AskResponse(BaseModel):
 	refused: bool = False
 	refuse_reason: str | None = None
 	retrieval_debug: dict[str, object] = Field(default_factory=dict)
-	persisted: bool = True
+	# True only when written to an archived thread; temp asks stay False.
+	persisted: bool = False
 	persist_error: str | None = None
 	hybrid_failed: bool = False
 	rerank_failed: bool = False

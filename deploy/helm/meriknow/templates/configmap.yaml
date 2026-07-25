@@ -13,12 +13,10 @@ data:
   INTERNAL_AUTH_REPLAY_BACKEND: {{ .Values.config.internalAuthReplayBackend | quote }}
   ACTIVE_GENERATION_GATE_ENABLED: {{ .Values.config.activeGenerationGateEnabled | quote }}
   ACTIVE_GENERATION_CACHE_TTL_SECONDS: {{ .Values.config.activeGenerationCacheTtlSeconds | quote }}
-  LEGACY_INGEST_WRITES_ENABLED: {{ .Values.config.legacyIngestWritesEnabled | quote }}
   CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
   CHAT_MODEL: {{ .Values.config.chatModel | quote }}
   EMBEDDING_MODEL: {{ .Values.config.embeddingModel | quote }}
   EMBEDDING_DIM: {{ .Values.config.embeddingDim | quote }}
-  RERANK_ENABLED: {{ .Values.config.rerankEnabled | quote }}
   RERANK_MODEL: {{ .Values.config.rerankModel | quote }}
   MINERU_ENABLED: {{ .Values.config.mineruEnabled | quote }}
   OPENAI_BASE_URL: {{ .Values.config.openaiBaseUrl | quote }}

@@ -207,14 +207,9 @@ def _utc_stamp() -> str:
 def _base_settings() -> Settings:
 	get_settings.cache_clear()
 	reset_metadata_store()
-	base = Settings()
-	# Ensure deterministic sync path + real MinerU tunnel defaults from .env
-	return base.model_copy(
-		update={
-			"ingest_async": False,
-			"session_memory_enabled": False,
-		}
-	)
+	# Deterministic sync path + real MinerU tunnel defaults from .env.
+	# session_memory is a code/ask knob (not Settings); disable via ask_overrides.
+	return Settings()
 
 
 def _settings_for(
@@ -226,8 +221,6 @@ def _settings_for(
 ) -> Settings:
 	updates: dict[str, Any] = {
 		"chunking_profile": profile,
-		"ingest_async": False,
-		"session_memory_enabled": False,
 	}
 	if mineru_enabled is not None:
 		updates["mineru_enabled"] = mineru_enabled
@@ -588,7 +581,11 @@ def _run_ask_suite(
 			ok=False,
 		)
 		try:
-			resp = ask.ask(question=question, library_id=library_id)
+			resp = ask.ask(
+				question=question,
+				library_id=library_id,
+				ask_overrides={"session_memory_enabled": False},
+			)
 			answer = resp.answer or ""
 			row.answer = answer
 			row.refused = bool(resp.refused)

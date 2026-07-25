@@ -36,6 +36,20 @@
       "when": 1784885770581,
       "tag": "0004_cloudy_madripoor",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784935090492,
+      "tag": "0005_magical_mad_thinker",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784938643569,
+      "tag": "0006_fast_omega_flight",
+      "breakpoints": true
     }
   ]
 }

@@ -234,14 +234,8 @@ Browser
   -> Python lifecycle worker (PostgreSQL claim)
 ```
 
-FastAPI 浏览器写路径默认关闭：
-
-```bash
-# 默认即关闭；生产启动若显式开启会 fail-closed
-# LEGACY_INGEST_WRITES_ENABLED=true   # 仅迁移/单测临时兼容
-```
-
-关闭时以下接口返回 `410 legacy_ingest_writes_disabled`：
+FastAPI 浏览器写路径已永久关闭（无开关可打开），始终返回
+`410 legacy_ingest_writes_disabled`：
 
 - `POST /v1/ingest`
 - `POST /v1/ingest/upload`
@@ -294,8 +288,8 @@ and backfill joins. Product status, desired version, and jobs live only in
 `app.*`. Operators must not treat `public.documents.status` as authoritative.
 
 `derive_document_version_id` was removed in L6; lifecycle ingest always passes
-real `app.document_versions.id` UUIDs. Legacy ARQ (only when
-`LEGACY_INGEST_WRITES_ENABLED=true`) mints a fresh UUID per job.
+real `app.document_versions.id` UUIDs. ARQ / FastAPI ingest write paths are
+gone; test harnesses may mint a UUID when calling sync `process_document_ingest`.
 
 ## L7 quality release gates
 
