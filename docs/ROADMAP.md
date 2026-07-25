@@ -63,7 +63,7 @@
 | 项 | 模式 | 说明 |
 |----|------|------|
 | 试点 go/no-go 签字 | A | 验收包已就绪；缺真实环境演练与书面 GO（见 `docs/acceptance/`） |
-| Audit 页面或导出 | A | `app.audit_logs` 已有写入；缺产品可读 UI/CSV |
+| Audit 页面或导出 | A | 设置页审计列表 + CSV 已落地（owner/admin）；后续硬化：actor/IP/UA 更完整、动作 i18n、异步大批量导出 |
 | Archive 字段硬化 | A | query type / plan / judge / 版本信息在档案侧更完整可观测 |
 | 文档 ACL 产品编辑 | A | 数据面过滤已有；控制面细粒度编辑 UI 仍弱 |
 | OIDC SSO | A | 本地密码 + 邀请已可用；企业 IdP 后置但需求强 |

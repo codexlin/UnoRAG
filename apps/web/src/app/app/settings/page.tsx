@@ -1,6 +1,7 @@
 "use client";
 
 import { WorkspaceAskSettingsPanel } from "@/components/app/workspace-ask-settings-panel";
+import { WorkspaceAuditPanel } from "@/components/app/workspace-audit-panel";
 import { WorkspaceMembersPanel } from "@/components/app/workspace-members-panel";
 import { useHealth } from "@/hooks/use-health";
 import { getApiBaseUrl } from "@/lib/api";
@@ -33,6 +34,7 @@ export default function SettingsPage() {
 
 					<div className="space-y-6">
 						<WorkspaceMembersPanel />
+						<WorkspaceAuditPanel />
 
 						<div className="rounded-2xl border border-border/80 bg-card/80 px-4 py-4">
 							<p className="text-meta font-mono tracking-[0.16em] text-muted-foreground uppercase">
