@@ -94,7 +94,7 @@ uv run python -m app.lifecycle_worker
 | `DOCUMENT_STORAGE_ROOT` | 优先于遗留 `DOCUMENT_STORAGE_DIR` |
 | `WORKER_DATABASE_URL` | worker 最小权限登录（生产） |
 | `ACTIVE_GENERATION_GATE_ENABLED` | 生产必须开；`CACHE_TTL=0` |
-| `MINERU_*` / `OCR_*` / `INGEST_PIPELINE` | 解析与切分基建 |
+| `MINERU_*` / `OCR_*` / `INGEST_PIPELINE` | 解析与切分基建；短窗熔断见 `MINERU_CIRCUIT_FAILURE_THRESHOLD` / `MINERU_CIRCUIT_OPEN_SECONDS`（默认 3 / 90s，不必关 `MINERU_ENABLED`） |
 
 产品上传：**永不**通过 FastAPI `/v1/ingest*`（永久 410）。
 

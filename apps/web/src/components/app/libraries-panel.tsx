@@ -1168,6 +1168,18 @@ export function LibrariesPanel() {
 										<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
 											解析报告
 										</p>
+										{(
+											detailDoc.parser_report as {
+												metrics?: { route?: string };
+											}
+										).metrics?.route === "pymupdf_degrade" ||
+										detailDoc.parser_report.warnings?.some((w) =>
+											w.includes("已用基础解析"),
+										) ? (
+											<p className="text-ui mt-1 text-survey">
+												MinerU 不可用，已用基础解析
+											</p>
+										) : null}
 										{detailDoc.parser_report.partial ? (
 											<p className="text-ui mt-1 text-survey">
 												部分页未解析

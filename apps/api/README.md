@@ -93,11 +93,14 @@ MIGRATOR_DATABASE_URL=postgresql://... \
 
 支持 `.txt` / `.md` / `.markdown` / `.docx` / `.pdf`。文本 PDF→PyMuPDF；扫描/双栏/复杂表可由 `MINERU_MODE=auto` 升级 MinerU。
 
+`MINERU_ENABLED=true` 时仍可自动降级，**不必手改 env**。连续 `mineru_unreachable`（连接拒绝等）达到阈值后进入**短窗熔断**：一段时间内跳过 HTTP，直接 PyMuPDF degrade（有字）/ failed（无字）；到期半开探活 1 次，成功则恢复升级 MinerU。不重跑已入库文档。可选：`MINERU_CIRCUIT_FAILURE_THRESHOLD`（默认 3）、`MINERU_CIRCUIT_OPEN_SECONDS`（默认 90）。`soft_timeout` / `429` 不计入熔断。
+
 | error_code | Job 行为 |
 |---|---|
-| `mineru_soft_timeout` / `mineru_rate_limited` | 立刻还槽 + retry（较长退避） |
+| `mineru_soft_timeout` / `mineru_rate_limited` | 立刻还槽 + retry（较长退避）；**不**计入短窗熔断 |
 | `mineru_timeout` / `mineru_service_error` / `mineru_invalid_response` | auto 且已有 PyMuPDF 节点 → degrade 继续 ingest；否则 retry → dead |
-| `mineru_unreachable` | auto 且已有 PyMuPDF 节点 → degrade；否则 **failed（不重试）** |
+| `mineru_unreachable` | auto 且已有 PyMuPDF 节点 → degrade；否则 **failed（不重试）**；计入短窗熔断 |
+| `mineru_circuit_open` | 熔断开路跳过 HTTP；有节点 → degrade；无节点 → failed（不重试） |
 | `mineru_request_rejected` / `mineru_not_configured` | failed，不重试 |
 
 ## 测试与样例

@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from app.services.ingest.backends.base import ParseRequest
 from app.services.ingest.backends.mineru import MinerUClientError, get_mineru_backend
+from app.services.ingest.backends.mineru_circuit import get_mineru_circuit
 from app.services.ingest.backends.pymupdf import PyMuPDFBackend
 from app.services.ingest.ir import CancelCheck, DocumentIR, ParseProgressCallback
 from app.services.ingest.parsers.pdf import PdfParseOptions, classify_page
@@ -23,6 +24,7 @@ PdfRouteMode = Literal["auto", "pymupdf", "mineru"]
 # Soft-timeout / 429：必须上抛以便 worker 还 MinerU 槽并做长退避。
 # 其余 MinerU 错误在 auto 模式且已有 PyMuPDF 节点时按 ADR degrade，禁止重试死循环。
 _MINERU_SLOT_RETRY_CODES = frozenset({"mineru_soft_timeout", "mineru_rate_limited"})
+_DEGRADE_WARNING = "MinerU 不可用，已用基础解析（PyMuPDF）"
 
 
 def should_upgrade_to_mineru(ir: DocumentIR) -> bool:
@@ -181,6 +183,7 @@ def parse_pdf_routed(
 			backend=backend,
 			started=t0,
 			pymupdf_ir=None,
+			settings=settings,
 			progress_callback=progress_callback,
 			cancel_check=cancel_check,
 		)
@@ -222,16 +225,16 @@ def parse_pdf_routed(
 		return _degrade_without_mineru(pymupdf_ir, settings=settings)
 
 	try:
-		mineru_ir = backend.parse(
-			ParseRequest(
-				content=content,
-				filename=filename,
-				title=title,
-				doc_id=doc_id or pymupdf_ir.id,
-				library_id=library_id,
-				progress_callback=progress_callback,
-				cancel_check=cancel_check,
-			)
+		mineru_ir = _call_mineru_with_circuit(
+			backend=backend,
+			content=content,
+			filename=filename,
+			title=title,
+			doc_id=doc_id or pymupdf_ir.id,
+			library_id=library_id,
+			settings=settings,
+			progress_callback=progress_callback,
+			cancel_check=cancel_check,
 		)
 		_stamp_latency(mineru_ir, t0)
 		mineru_ir.parser_report.metrics["route"] = "mineru"
@@ -257,15 +260,7 @@ def parse_pdf_routed(
 			raise
 		# ADR 0002：有 PyMuPDF 节点 → partial degrade；无节点 → 上抛（由 job 收尾）。
 		if pymupdf_ir.nodes:
-			report = pymupdf_ir.parser_report
-			report.partial = True
-			report.warnings.append(f"MinerU unavailable, degraded to PyMuPDF: {exc}")
-			report.notes = (report.notes or "") + f"; mineru_degrade={exc}"
-			report.metrics["route"] = "pymupdf_degrade"
-			report.metrics["mineru_error"] = str(exc)
-			report.metrics["mineru_error_code"] = exc.code
-			_stamp_latency(pymupdf_ir, t0)
-			return pymupdf_ir
+			return _apply_pymupdf_degrade(pymupdf_ir, exc=exc, started=t0)
 		raise
 	except ValueError as exc:
 		wrapped = MinerUClientError(
@@ -288,6 +283,7 @@ def _parse_mineru_or_fail(
 	pymupdf_ir: DocumentIR | None,
 	progress_callback: ParseProgressCallback | None,
 	cancel_check: CancelCheck | None,
+	settings: Settings | None = None,
 ) -> DocumentIR:
 	if backend is None:
 		raise MinerUClientError(
@@ -297,16 +293,16 @@ def _parse_mineru_or_fail(
 			retryable=False,
 		)
 	try:
-		ir = backend.parse(
-			ParseRequest(
-				content=content,
-				filename=filename,
-				title=title,
-				doc_id=doc_id,
-				library_id=library_id,
-				progress_callback=progress_callback,
-				cancel_check=cancel_check,
-			)
+		ir = _call_mineru_with_circuit(
+			backend=backend,
+			content=content,
+			filename=filename,
+			title=title,
+			doc_id=doc_id,
+			library_id=library_id,
+			settings=settings,
+			progress_callback=progress_callback,
+			cancel_check=cancel_check,
 		)
 	except MinerUClientError:
 		raise
@@ -321,6 +317,81 @@ def _parse_mineru_or_fail(
 	_stamp_latency(ir, started)
 	ir.parser_report.metrics["route"] = "mineru_forced"
 	return ir
+
+
+def _call_mineru_with_circuit(
+	*,
+	backend: Any,
+	content: bytes,
+	filename: str,
+	title: str,
+	doc_id: str | None,
+	library_id: str,
+	settings: Settings | None,
+	progress_callback: ParseProgressCallback | None,
+	cancel_check: CancelCheck | None,
+) -> DocumentIR:
+	"""熔断检查 → 真实 HTTP/Fake；成功重置；unreachable 计入短窗。"""
+	circuit = get_mineru_circuit()
+	if settings is not None:
+		circuit.configure(
+			failure_threshold=settings.mineru_circuit_failure_threshold,
+			open_seconds=settings.mineru_circuit_open_seconds,
+		)
+	if not circuit.allow_request():
+		logger.info(
+			"mineru.circuit_skip filename=%s state=%s",
+			filename,
+			circuit.state,
+		)
+		raise MinerUClientError(
+			"MinerU circuit open: skipping HTTP after consecutive connection failures",
+			code="mineru_circuit_open",
+			retryable=False,
+		)
+	try:
+		ir = backend.parse(
+			ParseRequest(
+				content=content,
+				filename=filename,
+				title=title,
+				doc_id=doc_id,
+				library_id=library_id,
+				progress_callback=progress_callback,
+				cancel_check=cancel_check,
+			)
+		)
+	except MinerUClientError as exc:
+		circuit.record_failure(exc.code)
+		raise
+	except BaseException:
+		circuit.release_probe()
+		raise
+	circuit.record_success()
+	return ir
+
+
+def _apply_pymupdf_degrade(
+	pymupdf_ir: DocumentIR,
+	*,
+	exc: MinerUClientError,
+	started: float,
+) -> DocumentIR:
+	report = pymupdf_ir.parser_report
+	report.partial = True
+	if exc.code == "mineru_circuit_open":
+		warning = f"{_DEGRADE_WARNING}（短窗熔断）"
+	else:
+		warning = f"{_DEGRADE_WARNING}: {exc}"
+	report.warnings.append(warning)
+	report.notes = (report.notes or "") + f"; mineru_degrade={exc}"
+	report.metrics["route"] = "pymupdf_degrade"
+	report.metrics["mineru_error"] = str(exc)
+	report.metrics["mineru_error_code"] = exc.code
+	if exc.code == "mineru_circuit_open":
+		report.metrics["mineru_circuit"] = "open"
+	_stamp_latency(pymupdf_ir, started)
+	return pymupdf_ir
 
 
 def _finalize_pymupdf(ir: DocumentIR, *, settings: Settings | None) -> DocumentIR:

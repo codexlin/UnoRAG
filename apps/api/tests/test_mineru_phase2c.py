@@ -156,7 +156,7 @@ def test_auto_degrades_to_pymupdf_when_mineru_unreachable(
 	assert ir.nodes
 	assert ir.parser_report.partial is True
 	assert ir.parser_report.metrics.get("route") == "pymupdf_degrade"
-	assert any("degraded to PyMuPDF" in w for w in ir.parser_report.warnings)
+	assert any("已用基础解析" in w for w in ir.parser_report.warnings)
 
 
 @pytest.mark.parametrize(

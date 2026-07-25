@@ -64,6 +64,9 @@ class Settings(BaseSettings):
 	mineru_parse_path: str = "/file_parse"
 	mineru_mode: str = "auto"
 	mineru_use_fake: bool = False
+	# 短窗熔断：连续 unreachable 后跳过 HTTP；不进设置页旋钮。
+	mineru_circuit_failure_threshold: int = 3
+	mineru_circuit_open_seconds: float = 90.0
 
 	llm_max_inflight: int = 4
 	tool_ask: bool = False
@@ -126,6 +129,10 @@ class Settings(BaseSettings):
 			raise ValueError("MINERU_RETRY_BASE_S must be positive")
 		if self.mineru_retry_max_s < self.mineru_retry_base_s:
 			raise ValueError("MINERU_RETRY_MAX_S must be >= MINERU_RETRY_BASE_S")
+		if self.mineru_circuit_failure_threshold < 1:
+			raise ValueError("MINERU_CIRCUIT_FAILURE_THRESHOLD must be >= 1")
+		if self.mineru_circuit_open_seconds < 1:
+			raise ValueError("MINERU_CIRCUIT_OPEN_SECONDS must be >= 1")
 
 		if not self.internal_auth_enabled:
 			logger.warning(
