@@ -6,7 +6,12 @@ dist
 .env
 .env.local
 deploy/compose/.env
+deploy/compose/.smoke-admin-password
 deploy/compose/backups/
+deploy/config/runtime.env
+deploy/config/runtime.secret
+deploy/config/bootstrap.env
+ops/min_alerts/.env
 apps/web/.next
 apps/web/node_modules
 apps/api/.venv
@@ -39,3 +44,4 @@ scripts/acceptance/.b5-work/
 # Broader acceptance artifact ignores
 *_last_run.json
 *_last_run.json.sha256
+.b2-work/
