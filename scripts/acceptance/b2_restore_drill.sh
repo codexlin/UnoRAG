@@ -20,7 +20,7 @@ source "$ACC_DIR/lib/common.sh"
 cd "$ROOT"
 
 MODE="${MERIKNOW_B2_MODE:-hybrid}"
-RC_SHA="${MERIKNOW_RC_SHA:-b98f01438045c92804204449d3172ceb201490e6}"
+RC_SHA="${MERIKNOW_RC_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
 SCRIPT_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 KEEP="${MERIKNOW_B2_KEEP:-0}"
 JOB_TIMEOUT_SEC="${MERIKNOW_PILOT_JOB_TIMEOUT_SEC:-300}"

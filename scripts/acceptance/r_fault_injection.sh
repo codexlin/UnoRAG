@@ -16,7 +16,7 @@ ROOT="$(cd "$ACC_DIR/../.." && pwd)"
 source "$ACC_DIR/lib/common.sh"
 cd "$ROOT"
 
-RC_SHA="${MERIKNOW_RC_SHA:-b98f01438045c92804204449d3172ceb201490e6}"
+RC_SHA="${MERIKNOW_RC_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
 SCRIPT_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 BASE_URL="${MERIKNOW_BASE_URL:-http://localhost:3000}"
 BASE_URL="${BASE_URL%/}"
