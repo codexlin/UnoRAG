@@ -12,7 +12,7 @@
 | 中间产品 harden 提交 | `26e70906cbc17c7955d4b5f71e409ccfb95a6355`（含 `ask.py` / `rag-proxy.ts`） |
 | **RC2-X（实际验收运行提交）** | `a79d2a53c5ecb32423dae179bdb05784af187a46` |
 | 说明 | 本轮在 **干净工作树**（`git status --porcelain` 为空）上以 `MERIKNOW_RC_SHA=a79d2a5…` 复跑 B2/R3；结果 JSON 满足 `rc_sha == git_head == script_sha == RC2-X` 且 `git_status_porcelain == ""`。 |
-| 报告提交 | （本文件提交后的 HEAD；仅文档，不改变 RC2-X 运行时绑定） |
+| 报告提交 | `b8223aa9388c5a24f8079602d57da24340f9360c`（仅文档；运行时仍绑 RC2-X `a79d2a5…`） |
 | `.b2_last_run.json` sha256 | `58e8635d7a3a27e2e6f9b735e3873533af95a39311da87f8cdff6f6dd6b43f3a` |
 | `.r_fault_last_run.json` sha256 | `690fa741e0f3f2f40c5978026bc70d972fb25dc48fb27bfb59024eb8c833cd92` |
 | 运行时对齐 | B2/R3：`rc_sha == git_head == script_sha == a79d2a5…`；`git_status_porcelain=""` |
