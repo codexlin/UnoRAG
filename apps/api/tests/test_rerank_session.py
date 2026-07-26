@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from app.graph.ask_graph import (
 	AskGraphService,
 	build_generate_messages,
@@ -10,6 +12,7 @@ from app.graph.ask_graph import (
 )
 from app.services.ask_overrides import effective_ask_settings
 from app.services.retrieval import RetrievalService
+from app.services.runtime import RuntimeCapability
 from app.services.session_memory import WORKING_MEMORY_MAX_TURNS, SessionMemory
 from app.settings import Settings
 
@@ -250,6 +253,101 @@ def test_session_memory_device_price_coref() -> None:
 	assert "12800" in follow.answer
 
 
+def test_live_structured_plan_keeps_history_rewrite_query(monkeypatch) -> None:
+	"""Live plan 成功时：filters 用 plan；检索 query 仍为 history rewrite，不丢上下文。"""
+	memory = SessionMemory(max_turns=4)
+	settings = Settings(
+		ask_mode="live",
+		openai_api_key="test-key",
+		max_retrieve_retries=0,
+	)
+	capability = RuntimeCapability(
+		requested_mode="live",
+		effective_mode="live",
+		graph="ask_v1",
+		degraded=False,
+		has_llm_key=True,
+		qdrant_ok=True,
+	)
+	seen: dict[str, object] = {}
+
+	def capture_retrieve(
+		query: str,
+		_library_id: str | None,
+		_top_k: int,
+		_filters: dict | None = None,
+	):
+		seen["query"] = query
+		seen["filters"] = dict(_filters or {})
+		return [
+			{
+				"id": "ok",
+				"index": 1,
+				"title": "报价表.pdf",
+				"page": "1",
+				"snippet": "边缘计算网关 单价 12800",
+				"score": 0.9,
+				"text": "边缘计算网关 单价 12800",
+				"record_type": "chunk",
+				"used_rerank": False,
+			}
+		]
+
+	def fake_plan_json(settings_obj, *, question: str, fallback_semantic_query: str) -> str:
+		_ = settings_obj, question, fallback_semantic_query
+		# 故意返回短 semantic_query（丢实体），验证不得覆盖 history rewrite
+		return json.dumps(
+			{
+				"semantic_query": "那它的价格是多少",
+				"filters": {"record_type": "chunk", "doc_id": "doc-quote"},
+			},
+			ensure_ascii=False,
+		)
+
+	monkeypatch.setattr(
+		"app.graph.ask_graph._request_structured_retrieval_plan_json",
+		fake_plan_json,
+	)
+
+	service = AskGraphService(
+		settings,
+		capability=capability,
+		retrieve_fn=capture_retrieve,
+		generate_fn=stub_generate,
+		session_memory=memory,
+	)
+	memory.append(
+		service._memory_session_id("s-live-plan-1"),
+		"user",
+		"序号为1的设备名是什么",
+	)
+	memory.append(
+		service._memory_session_id("s-live-plan-1"),
+		"assistant",
+		"边缘计算网关",
+	)
+
+	result = service.ask(
+		question="那它的价格是多少",
+		session_id="s-live-plan-1",
+		library_id="lib-live-plan",
+	)
+	assert result.retrieval_debug.get("rewrite") == "history"
+	assert result.retrieval_debug.get("retrieval_query_source") == "history_rewrite"
+	query = str(seen["query"])
+	assert "边缘计算网关" in query
+	assert "价格" in query
+	# plan 短句不得成为检索 query
+	assert query != "那它的价格是多少"
+	assert result.retrieval_debug.get("plan_semantic_query") == "那它的价格是多少"
+	srp = result.retrieval_debug.get("structured_retrieval_plan") or {}
+	assert srp.get("degraded") is False
+	assert srp.get("filters", {}).get("doc_id") == "doc-quote"
+	# ask fast 双路仍可能拆 filters；至少 plan 合并后应保留 doc_id
+	plan_filters = (result.retrieval_debug.get("retrieval_plan") or {}).get("filters") or {}
+	assert plan_filters.get("doc_id") == "doc-quote"
+
+
 def test_rerank_reorders_hits() -> None:
 	settings = effective_ask_settings(
 		Settings(ask_mode="stub", rerank_top_k=2),
@@ -410,3 +508,110 @@ def test_retrieval_requires_library_id() -> None:
 		raise AssertionError("expected ValueError")
 	except ValueError as exc:
 		assert "library_id" in str(exc)
+
+
+def test_chunk_plus_table_summary_filters_record_types() -> None:
+	"""chunk+table_summary：dense/hybrid 不得混入 section/table/document。"""
+	settings = effective_ask_settings(
+		Settings(ask_mode="stub", bm25_top_k=4),
+		{"hybrid_enabled": True, "retrieve_top_k": 4, "rerank_enabled": False},
+	)
+	seen_rt: dict[str, str | None] = {}
+
+	class _Store:
+		def search(self, *, vector, library_id, top_k, record_type=None, **_kwargs):
+			_ = vector, library_id
+			seen_rt["dense"] = record_type
+			return [
+				{
+					"id": "c1",
+					"title": "chunk",
+					"page": "1",
+					"snippet": "chunk body",
+					"score": 0.9,
+					"text": "chunk body",
+					"doc_id": "d1",
+					"chunk_index": 0,
+					"record_type": "chunk",
+				},
+				{
+					"id": "s1",
+					"title": "summary",
+					"page": "1",
+					"snippet": "table summary",
+					"score": 0.85,
+					"text": "table summary",
+					"doc_id": "d1",
+					"chunk_index": 0,
+					"record_type": "table_summary",
+				},
+				# 若 store 未过滤，section 会混入；后置 filter 应剔除
+				{
+					"id": "sec1",
+					"title": "section",
+					"page": "1",
+					"snippet": "section body",
+					"score": 0.95,
+					"text": "section body",
+					"doc_id": "d1",
+					"chunk_index": 1,
+					"record_type": "section",
+				},
+			][:top_k]
+
+		def list_chunks(self, *, library_id, record_type="chunk", limit=10_000, **_kwargs):
+			_ = library_id, limit
+			seen_rt["bm25"] = record_type
+			return [
+				{
+					"id": "c1",
+					"doc_id": "d1",
+					"chunk_index": 0,
+					"title": "chunk",
+					"text": "chunk body keyword",
+					"body": "chunk body keyword",
+					"record_type": "chunk",
+				},
+				{
+					"id": "s1",
+					"doc_id": "d1",
+					"chunk_index": 0,
+					"title": "summary",
+					"text": "table summary keyword",
+					"body": "table summary keyword",
+					"record_type": "table_summary",
+				},
+				{
+					"id": "sec1",
+					"doc_id": "d1",
+					"chunk_index": 1,
+					"title": "section",
+					"text": "section body keyword",
+					"body": "section body keyword",
+					"record_type": "section",
+				},
+			]
+
+	class _Emb:
+		def embed_query(self, text: str):
+			_ = text
+			return [0.1]
+
+	svc = RetrievalService(
+		settings,
+		embeddings=_Emb(),  # type: ignore[arg-type]
+		store=_Store(),  # type: ignore[arg-type]
+		reranker=None,
+	)
+	hits = svc.search(
+		query="keyword",
+		library_id="lib-cts",
+		top_k=4,
+		filters={"record_type": "chunk+table_summary"},
+	)
+	assert seen_rt["dense"] == "chunk+table_summary"
+	assert seen_rt["bm25"] == "chunk+table_summary"
+	types = {str(h.get("record_type")) for h in hits}
+	assert types <= {"chunk", "table_summary"}
+	assert "section" not in types
+	assert svc.last_debug.get("allowed_record_types") == ["chunk", "table_summary"]

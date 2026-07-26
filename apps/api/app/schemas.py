@@ -54,6 +54,7 @@ class Citation(BaseModel):
 	# Lifecycle V2 uses the real version/generation IDs; legacy points retain
 	# the deterministic version stub during migration.
 	document_version_id: str | None = None
+	# 与 Phase 1 Qdrant payload / 检索 hit 对齐，便于端到端对账
 	generation_id: str | None = None
 	tenant_id: str | None = None
 	# Phase 2A/2B：多粒度

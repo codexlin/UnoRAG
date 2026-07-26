@@ -5,6 +5,8 @@ from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
+from qdrant_client.http import models as qm
+
 from app.services.chunking import chunk_text
 from app.services.documents import infer_page_label
 from app.services.hybrid import fuse_dense_and_bm25, get_bm25_cache
@@ -20,14 +22,79 @@ from app.services.llm import EmbeddingService
 from app.services.qdrant_store import QdrantStore
 from app.services.ask_defaults import ASK_DEFAULTS
 from app.services.rerank import RerankClient
+from app.services.retrieval_plan_contract import EXECUTABLE_PLAN_FILTER_KEYS
 from app.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+# 除 record_type 外、由 filters dict 组装进 Qdrant must 的字段
+_METADATA_FILTER_KEYS: tuple[str, ...] = ("doc_id", "table_id", "document_version_id")
+
+# ask 双路伪类型：dense/hybrid 允许的真实 record_type 集合（缺省点视为 chunk）
+_PSEUDO_RECORD_TYPE_ALLOWLIST: dict[str, frozenset[str]] = {
+	"chunk+table_summary": frozenset({"chunk", "table_summary"}),
+}
 
 
 def _clamp_score(score: float) -> float:
 	return max(0.0, min(1.0, float(score)))
 
+
+def allowed_record_types_for_filter(record_type: str | None) -> frozenset[str] | None:
+	"""计划 record_type → 命中允许集合；伪类型展开为多值。"""
+	if record_type is None:
+		return None
+	text = str(record_type).strip()
+	if not text:
+		return None
+	if text in _PSEUDO_RECORD_TYPE_ALLOWLIST:
+		return _PSEUDO_RECORD_TYPE_ALLOWLIST[text]
+	return frozenset({text})
+
+
+def filters_to_extra_must(filters: dict[str, Any] | None) -> list[qm.Condition]:
+	"""将结构化 RetrievalPlan 的可执行 metadata filter 转为 Qdrant must 条件。
+
+	``record_type`` / ``library_id`` 仍由 ``QdrantStore.search`` 专用参数处理。
+	"""
+	if not filters:
+		return []
+	must: list[qm.Condition] = []
+	for key in _METADATA_FILTER_KEYS:
+		if key not in EXECUTABLE_PLAN_FILTER_KEYS:
+			continue
+		raw = filters.get(key)
+		if raw is None:
+			continue
+		value = str(raw).strip()
+		if not value:
+			continue
+		must.append(
+			qm.FieldCondition(key=key, match=qm.MatchValue(value=value))
+		)
+	return must
+
+
+def hit_matches_plan_filters(
+	hit: dict[str, Any],
+	filters: dict[str, Any] | None,
+) -> bool:
+	"""Hybrid/BM25 后置过滤：与 dense extra_must + record_type 语义对齐。"""
+	if not filters:
+		return True
+	for key in _METADATA_FILTER_KEYS:
+		want = filters.get(key)
+		if want is None or not str(want).strip():
+			continue
+		if str(hit.get(key) or "").strip() != str(want).strip():
+			return False
+	want_rt = filters.get("record_type")
+	if want_rt is not None and str(want_rt).strip():
+		allowed = allowed_record_types_for_filter(str(want_rt).strip())
+		hit_rt = str(hit.get("record_type") or "chunk").strip() or "chunk"
+		if allowed is not None and hit_rt not in allowed:
+			return False
+	return True
 
 class IngestService:
 	def __init__(
@@ -296,12 +363,17 @@ class RetrievalService:
 			resolved_type = str(filters["record_type"])
 		elif record_type:
 			resolved_type = str(record_type)
+		# chunk+table_summary：store 侧 MatchAny(chunk|table_summary)；勿降成无过滤
+		store_record_type = resolved_type
+		allowed_types = allowed_record_types_for_filter(resolved_type)
+		extra_must = filters_to_extra_must(filters)
 		vector = self.embeddings.embed_query(query)
 		dense_hits = self.store.search(
 			vector=vector,
 			library_id=resolved_library,
 			top_k=dense_k,
-			record_type=resolved_type,
+			record_type=store_record_type,
+			extra_must=extra_must or None,
 			access_scope=self.access_scope,
 			active_generation_ids=(
 				active_snapshot.generation_ids if active_snapshot is not None else None
@@ -321,7 +393,7 @@ class RetrievalService:
 					library_id=resolved_library,
 					dense_hits=dense_hits,
 					limit=dense_k,
-					record_type=resolved_type or "chunk",
+					record_type=store_record_type or "chunk",
 					active_snapshot=active_snapshot,
 				)
 				used_hybrid = True
@@ -333,6 +405,10 @@ class RetrievalService:
 				)
 				hits = dense_hits
 
+		# BM25 语料可能未带全量 filter；融合后按计划 metadata + record_type 收紧
+		if filters:
+			hits = [hit for hit in hits if hit_matches_plan_filters(hit, filters)]
+
 		citations: list[dict[str, Any]] = []
 		for index, hit in enumerate(hits, start=1):
 			score = float(hit.get("score") or 0.0)
@@ -343,6 +419,14 @@ class RetrievalService:
 				score = _clamp_score(score)
 			# UI/LLM 优先 body；旧 payload 无 body 时回退 text
 			body = str(hit.get("body") or hit.get("text") or hit.get("snippet") or "")
+			hit_record_type = hit.get("record_type")
+			if not hit_record_type:
+				# 伪类型缺省视为 chunk，避免把 citation 标成 chunk+table_summary
+				hit_record_type = (
+					"chunk"
+					if resolved_type == "chunk+table_summary"
+					else (resolved_type or "chunk")
+				)
 			citations.append(
 				{
 					"id": hit["id"],
@@ -372,7 +456,7 @@ class RetrievalService:
 					"document_version_id": hit.get("document_version_id"),
 					"generation_id": hit.get("generation_id"),
 					"tenant_id": hit.get("tenant_id"),
-					"record_type": hit.get("record_type") or resolved_type or "chunk",
+					"record_type": hit_record_type,
 					"record_id": hit.get("record_id"),
 					"source_chunk_ids": hit.get("source_chunk_ids") or [],
 					"source_node_ids": hit.get("source_node_ids") or [],
@@ -394,7 +478,15 @@ class RetrievalService:
 			"fusion": "rrf" if used_hybrid else "dense",
 			"rrf_k": self.settings.rrf_k if used_hybrid else None,
 			"record_type": resolved_type,
+			"allowed_record_types": (
+				sorted(allowed_types) if allowed_types is not None else None
+			),
 			"filters": dict(filters or {}),
+			"extra_must_keys": [
+				key
+				for key in _METADATA_FILTER_KEYS
+				if filters and filters.get(key)
+			],
 			"active_generation_gate": active_snapshot is not None,
 			"active_generation_count": (
 				len(active_snapshot.generation_ids)

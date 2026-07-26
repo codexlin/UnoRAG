@@ -20,3 +20,5 @@ testdata/ab/_e2e_out/
 .venv
 __pycache__/
 .pytest_cache/
+# Local document store / process pids / ad-hoc eval outputs (never commit)
+.meriknow/

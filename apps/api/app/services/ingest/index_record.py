@@ -1,4 +1,7 @@
-"""多粒度 IndexRecord — Phase 2A/2B：chunk / section / table（同 collection，靠 record_type 过滤）。"""
+"""多粒度 IndexRecord — Phase 2A/2B：chunk / section / table（同 collection，靠 record_type 过滤）。
+
+Qdrant 落库字段契约见 ``qdrant_payload``：写入前 ``model_validate``，过滤以 payload 为准。
+"""
 
 from __future__ import annotations
 
@@ -7,7 +10,7 @@ import re
 from typing import Any, Literal
 from uuid import uuid5, UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.ingest.ir import Chunk
 
@@ -24,6 +27,10 @@ DEFAULT_TABLE_MAX_TOKENS = 1400
 
 
 class IndexRecord(BaseModel):
+	"""多粒度索引记录（内存侧）。落库字段见 ``index_record_to_payload`` → QdrantIndexPayload。"""
+
+	model_config = ConfigDict(extra="forbid")
+
 	record_type: RecordType
 	record_id: str
 	parent_record_id: str | None = None
@@ -536,7 +543,14 @@ def build_table_records_from_chunks(
 
 
 def index_record_to_payload(record: IndexRecord) -> dict[str, Any]:
-	"""转为 Qdrant upsert 用的 chunk-shaped dict。"""
+	"""转为 Qdrant upsert 用的 chunk-shaped dict，并做写入前强类型校验。"""
+	from app.services.ingest.qdrant_payload import validate_index_write_payload
+
+	if not (record.document_version_id or "").strip():
+		raise ValueError(
+			"document_version_id is required on IndexRecord payloads; "
+			"lifecycle ingest must supply app.document_versions.id"
+		)
 	payload: dict[str, Any] = {
 		"chunk_index": int(record.chunk_index or 0),
 		"text": record.body,
@@ -544,14 +558,13 @@ def index_record_to_payload(record: IndexRecord) -> dict[str, Any]:
 		"embed_text": record.embed_text or record.body,
 		"record_type": record.record_type,
 		"record_id": record.record_id,
+		"document_version_id": str(record.document_version_id).strip(),
 		"source_chunk_ids": list(record.source_chunk_ids),
 	}
 	if record.source_node_ids:
 		payload["source_node_ids"] = list(record.source_node_ids)
 	if record.parent_record_id:
 		payload["parent_record_id"] = record.parent_record_id
-	if record.document_version_id:
-		payload["document_version_id"] = record.document_version_id
 	if record.tenant_id:
 		payload["tenant_id"] = record.tenant_id
 	if record.workspace_id:
@@ -599,7 +612,7 @@ def index_record_to_payload(record: IndexRecord) -> dict[str, Any]:
 	if record.filename:
 		payload["filename"] = record.filename
 	payload["_point_id"] = record.point_uuid()
-	return payload
+	return validate_index_write_payload(payload)
 
 
 _SECTION_CHAPTER = re.compile(

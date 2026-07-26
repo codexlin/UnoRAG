@@ -353,11 +353,28 @@ def test_chunks_to_payloads_requires_document_version_id() -> None:
 
 
 def test_ask_writes_query_type_and_judge_to_archive() -> None:
+	from app.services.metadata import get_metadata_store
+	from app.settings import get_settings
+
 	lib_id = create_library(client, library_id="lib-router-archive")
+	settings = get_settings()
+	thread = get_metadata_store().create_thread(
+		title="router-archive",
+		session_id="router-archive-sess",
+		library_id=lib_id,
+		tenant_id=settings.default_tenant_id,
+		workspace_id=settings.default_workspace_id,
+		principal_id="development",
+	)
 	question = "病假需要在几天内补交证明？"
 	ask = client.post(
 		"/v1/ask",
-		json={"question": question, "library_id": lib_id},
+		json={
+			"question": question,
+			"library_id": lib_id,
+			"session_id": "router-archive-sess",
+			"thread_id": thread["id"],
+		},
 	)
 	assert ask.status_code == 200
 	body = ask.json()
@@ -366,8 +383,20 @@ def test_ask_writes_query_type_and_judge_to_archive() -> None:
 	assert body["retrieval_debug"]["retrieval_plan"]["execute_path"] == "short"
 	assert body["retrieval_debug"]["retrieval_plan"]["path"] == "fast"
 	assert body["retrieval_debug"]["retrieval_plan"]["record_type"] == "chunk+table_summary"
+	# stub 无 LLM：结构化 plan 降级纯语义，不挡问答
+	srp = body["retrieval_debug"]["structured_retrieval_plan"]
+	assert srp["degraded"] is True
+	assert srp["degrade_reason"] == "llm_unavailable"
 
-	archive = client.get("/v1/archive", params={"library_id": lib_id, "limit": 5})
+	archive = client.get(
+		"/v1/archive",
+		params={
+			"library_id": lib_id,
+			"session_id": "router-archive-sess",
+			"thread_id": thread["id"],
+			"limit": 5,
+		},
+	)
 	assert archive.status_code == 200
 	rows = archive.json()
 	assert rows
@@ -378,7 +407,6 @@ def test_ask_writes_query_type_and_judge_to_archive() -> None:
 	assert isinstance(row["retrieval_plan"], dict)
 	assert row["rewrite"] == "passthrough"
 	assert row["rewritten_query"] == question
-
 
 def test_ask_section_lookup_uses_section_plan() -> None:
 	lib_id = create_library(client, library_id="lib-router-section")

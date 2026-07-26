@@ -36,9 +36,18 @@ from app.services.citation_adjudicate import (
 	apply_citation_adjudicate,
 	wide_recall_limit,
 )
-from app.services.llm import CHAT_SYSTEM_PROMPT, ChatService
+from app.services.generation_contract import (
+	citation_from_hit,
+	reconcile_generation_output,
+)
+from app.services.llm import CHAT_SYSTEM_PROMPT, ChatService, llm_inflight_slot
 from app.services.retrieval import RetrievalService
 from app.services.retrieval_plan import build_retrieval_plan
+from app.services.retrieval_plan_contract import (
+	build_retrieval_plan_messages,
+	merge_plan_filters,
+	resolve_structured_retrieval_plan,
+)
 from app.services.runtime import RuntimeCapability, resolve_runtime
 from app.services.session_memory import (
 	GENERATE_HISTORY_MAX_CHARS,
@@ -122,62 +131,26 @@ STUB_CITATIONS: list[dict[str, Any]] = [
 
 
 def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
-	models: list[Citation] = []
-	for item in raw_citations:
-		full_text = str(item.get("body") or item.get("text") or item.get("snippet") or "")
-		snippet = str(item.get("snippet") or full_text[:280])
-
-		def _opt_float(key: str) -> float | None:
-			raw = item.get(key)
-			if raw is None:
-				return None
-			try:
-				return float(raw)
-			except (TypeError, ValueError):
-				return None
-
-		models.append(
-			Citation.model_validate(
-				{
-					"id": item["id"],
-					"index": item["index"],
-					"title": item["title"],
-					"page": item.get("page"),
-					"page_start": item.get("page_start"),
-					"page_end": item.get("page_end"),
-					"section_path": item.get("section_path"),
-					"preamble": item.get("preamble"),
-					"table_id": item.get("table_id"),
-					"row_start": item.get("row_start"),
-					"row_end": item.get("row_end"),
-					"headers": item.get("headers") or [],
-					"rows": item.get("rows") or [],
-					"snippet": snippet,
-					"text": full_text,
-					"body": full_text,
-					"score": item["score"],
-					"dense_score": _opt_float("dense_score"),
-					"bm25_score": _opt_float("bm25_score"),
-					"rrf_score": _opt_float("rrf_score"),
-					"used_rerank": bool(item.get("used_rerank")),
-					"used_hybrid": bool(item.get("used_hybrid")),
-					"doc_id": item.get("doc_id"),
-					"chunk_index": item.get("chunk_index"),
-					"filename": item.get("filename"),
-					"document_version_id": item.get("document_version_id"),
-					"tenant_id": item.get("tenant_id"),
-					"record_type": item.get("record_type"),
-					"record_id": item.get("record_id"),
-					"source_chunk_ids": item.get("source_chunk_ids") or [],
-					"source_node_ids": item.get("source_node_ids") or [],
-				}
-			)
-		)
-	return models
+	return [citation_from_hit(item) for item in raw_citations]
 
 
-def _to_citation_dicts(raw_citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-	return [item.model_dump() for item in _to_citation_models(raw_citations)]
+def _finalize_generation_output(
+	*,
+	answer: str,
+	raw_citations: list[dict[str, Any]],
+	allowed_hits: list[dict[str, Any]] | None = None,
+	debug: dict[str, Any] | None = None,
+) -> tuple[str, list[Citation]]:
+	"""generation 共享出口：结构化校验 + 命中集对账（非法引用剔除，不 500）。"""
+	hits = allowed_hits if allowed_hits is not None else raw_citations
+	result = reconcile_generation_output(
+		answer=answer,
+		citations=raw_citations,
+		allowed_hits=hits,
+	)
+	if debug is not None:
+		debug["citation_reconcile"] = result.debug_fields()
+	return result.answer, result.citations
 
 
 def _renumber_citation_indexes(
@@ -364,6 +337,34 @@ def rewrite_with_history(question: str, history: list[dict[str, str]] | None) ->
 		return f"{answer_hint}：{q}\n（上一轮问：{prev}）", "history"
 	return f"上一轮用户问题：{prev}\n当前追问：{q}", "history"
 
+
+def _request_structured_retrieval_plan_json(
+	settings: Settings,
+	*,
+	question: str,
+	fallback_semantic_query: str,
+) -> str:
+	"""Live 路径：轻量 LLM JSON 计划；失败由调用方降级。"""
+	from openai import OpenAI
+
+	messages = build_retrieval_plan_messages(
+		question=question,
+		fallback_semantic_query=fallback_semantic_query,
+	)
+	client = OpenAI(
+		api_key=settings.llm_api_key,
+		base_url=settings.llm_base_url,
+	)
+	with llm_inflight_slot(settings):
+		response = client.chat.completions.create(
+			model=settings.chat_model,
+			messages=messages,
+			temperature=0.0,
+		)
+	content = ""
+	if response.choices:
+		content = response.choices[0].message.content or ""
+	return str(content).strip()
 
 def history_for_generate(
 	history: list[dict[str, str]] | None,
@@ -1247,8 +1248,51 @@ def build_ask_graph(
 		history = state.get("history") or []
 		rewritten, rewrite_mode = rewrite_with_history(question, history)
 		gen_history = history_for_generate(history)
+
+		# Phase 3：结构化 RetrievalPlan（LLM JSON → Pydantic）；失败降级纯语义
+		raw_plan: str | dict[str, Any] | None = None
+		from_llm = False
+		llm_error: str | None = None
+		if mode == "live" and bool(getattr(settings, "has_llm_key", False)):
+			from_llm = True
+			try:
+				raw_plan = _request_structured_retrieval_plan_json(
+					settings,
+					question=question,
+					fallback_semantic_query=rewritten,
+				)
+			except Exception as exc:
+				llm_error = str(exc)[:240]
+				logger.warning(
+					"retrieval_plan.llm_failed error=%s",
+					llm_error,
+				)
+				raw_plan = None
+		structured = resolve_structured_retrieval_plan(
+			raw=raw_plan,
+			fallback_semantic_query=rewritten,
+			from_llm=from_llm,
+			llm_error=llm_error,
+		)
+		route_plan = dict(state.get("retrieval_plan") or {})
+		merged_filters = merge_plan_filters(
+			route_plan.get("filters") if isinstance(route_plan.get("filters"), dict) else {},
+			structured,
+		)
+		route_plan["filters"] = merged_filters
+		# Strategy A：检索 query 保留 history rewrite；plan 只贡献 filters（及 debug 中的 semantic_query）
+		retrieval_query = rewritten
+		route_plan["rewritten_queries"] = [retrieval_query]
+		if (
+			not structured.degraded
+			and structured.applied_filters.get("record_type")
+			and not route_plan.get("record_type")
+		):
+			route_plan["record_type"] = structured.applied_filters["record_type"]
+
 		return {
-			"rewritten_question": rewritten,
+			"rewritten_question": retrieval_query,
+			"retrieval_plan": route_plan,
 			"retrieval_attempts": 0,
 			"refused": False,
 			"refuse_reason": None,
@@ -1262,6 +1306,11 @@ def build_ask_graph(
 				mode=mode,
 				answer_min_score=min_score,
 				rerank_enabled=bool(settings.rerank_enabled),
+				structured_retrieval_plan=structured.debug_fields(),
+				retrieval_plan=route_plan,
+				retrieval_query=retrieval_query,
+				retrieval_query_source="history_rewrite",
+				plan_semantic_query=structured.plan.semantic_query,
 			),
 		}
 
@@ -1913,17 +1962,21 @@ class AskGraphService:
 			if previous_retrieval_settings is not None and self._retrieval_service is not None:
 				self._retrieval_service.settings = previous_retrieval_settings
 
-		# Temp sessions keep short in-process memory; archived threads rely on DB.
-		if not resolved_thread and ask_settings.session_memory_enabled:
-			self.session_memory.append(memory_session, "user", question)
-			self.session_memory.append(memory_session, "assistant", state.get("answer") or "")
-
 		raw_citations = state.get("citations") or []
-		citations = _to_citation_models(raw_citations)
 		debug = self._merge_retrieval_debug(state.get("retrieval_debug") or {})
 		debug.setdefault("trace_id", resolved_trace)
 		debug.setdefault("question_hash", question_hash(question))
 		debug.setdefault("library_id", library_id)
+		answer, citations = _finalize_generation_output(
+			answer=state.get("answer") or "",
+			raw_citations=raw_citations,
+			allowed_hits=raw_citations,
+			debug=debug,
+		)
+		# Temp sessions keep short in-process memory; archived threads rely on DB.
+		if not resolved_thread and ask_settings.session_memory_enabled:
+			self.session_memory.append(memory_session, "user", question)
+			self.session_memory.append(memory_session, "assistant", answer)
 		judge = state.get("judgement") or debug.get("judgement")
 		plan = state.get("retrieval_plan") or debug.get("retrieval_plan")
 		if isinstance(plan, dict):
@@ -1944,7 +1997,7 @@ class AskGraphService:
 			thread_id=resolved_thread,
 			library_id=library_id,
 			question=question,
-			answer=state["answer"],
+			answer=answer,
 			citations=citations,
 			mode=self.mode,
 			refused=bool(state.get("refused")),
@@ -1966,7 +2019,7 @@ class AskGraphService:
 			session_id=resolved_session,
 			thread_id=resolved_thread,
 			question=question,
-			answer=state["answer"],
+			answer=answer,
 			citations=citations,
 			mode=self.mode,
 			refused=bool(state.get("refused")),
@@ -2060,18 +2113,31 @@ class AskGraphService:
 		visibility = _retrieval_visibility(debug)
 		refused = bool(state.get("refused"))
 		raw_citations = state.get("citations") or held.get("citations") or []
-		citations = _to_citation_dicts(raw_citations)
-		citation_models = _to_citation_models(raw_citations)
+		# 流式路径 citations 先于 token 发出；对账在出口做一次，供 SSE + persist 同源
+		answer, citation_models = _finalize_generation_output(
+			answer=state.get("answer") or "",
+			raw_citations=raw_citations,
+			allowed_hits=raw_citations,
+			debug=debug,
+		)
+		citations = [item.model_dump() for item in citation_models]
 		truncated = False
 		finished = False
 		persist: dict[str, Any] = {"persisted": False, "persist_error": None}
-		answer = state.get("answer") or ""
 
 		def _finish(*, mark_truncated: bool) -> None:
-			nonlocal finished, debug, persist, answer
+			nonlocal finished, debug, persist, answer, citation_models, citations
 			if finished:
 				return
 			finished = True
+			# 流式生成可能改写 answer；若日后结构化 JSON，出口再对账一次
+			answer, citation_models = _finalize_generation_output(
+				answer=answer,
+				raw_citations=raw_citations,
+				allowed_hits=raw_citations,
+				debug=debug,
+			)
+			citations = [item.model_dump() for item in citation_models]
 			finalize_ask_debug(debug, started_at=started_at, truncated=mark_truncated)
 			judge = state.get("judgement") or debug.get("judgement")
 			plan = state.get("retrieval_plan") or debug.get("retrieval_plan")
@@ -2209,11 +2275,11 @@ class AskGraphService:
 			)
 
 			answer = state.get("answer") or ""
+			_finish(mark_truncated=False)
 			if not resolved_thread and ask_settings.session_memory_enabled:
 				self.session_memory.append(memory_session, "user", question)
 				self.session_memory.append(memory_session, "assistant", answer)
 
-			_finish(mark_truncated=False)
 			yield {
 				"event": "done",
 				"data": {

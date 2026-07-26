@@ -206,6 +206,7 @@ def chunks_to_payloads(
 		generation_point_uuid,
 		index_record_to_payload,
 	)
+	from app.services.ingest.qdrant_payload import validate_index_write_payload
 
 	resolved_doc = (doc_id or "").strip() or "unknown"
 	version_id = (document_version_id or "").strip()
@@ -273,7 +274,7 @@ def chunks_to_payloads(
 				item[key] = chunk.meta[key]
 		if filename:
 			item["filename"] = filename
-		payloads.append(item)
+		payloads.append(validate_index_write_payload(item))
 
 	if include_sections and chunks:
 		sections = build_section_records_from_chunks(
@@ -329,13 +330,15 @@ def chunks_to_payloads(
 		for record in table_summaries:
 			payloads.append(index_record_to_payload(record))
 	if generation_id:
-		for payload in payloads:
+		for index, payload in enumerate(payloads):
 			record_id = str(payload.get("record_id") or "").strip()
 			if not record_id:
 				raise ValueError("generation payload requires record_id")
-			payload["generation_id"] = generation_id
-			payload["lifecycle_visibility"] = lifecycle_visibility or "staging"
-			payload["_point_id"] = generation_point_uuid(generation_id, record_id)
+			enriched = dict(payload)
+			enriched["generation_id"] = generation_id
+			enriched["lifecycle_visibility"] = lifecycle_visibility or "staging"
+			enriched["_point_id"] = generation_point_uuid(generation_id, record_id)
+			payloads[index] = validate_index_write_payload(enriched)
 	return payloads
 
 def _guess_content_type(suffix: str) -> str:

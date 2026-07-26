@@ -9,6 +9,11 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 
 from app.security.access_scope import AclScope, AccessScope, resolve_access_scope
+from app.services.ingest.qdrant_payload import (
+	QDRANT_OPTIONAL_PAYLOAD_KEYS,
+	parse_stored_payload,
+	validate_payload_for_upsert,
+)
 from app.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -60,57 +65,6 @@ class QdrantStore:
 			raise ValueError("chunks and vectors length mismatch")
 
 		points: list[qm.PointStruct] = []
-		# 可选 payload 字段：旧客户端忽略即可（向后兼容）
-		_optional_keys = (
-			"body",
-			"preamble",
-			"section_path",
-			"heading_text",
-			"page",
-			"page_start",
-			"page_end",
-			"table_id",
-			"figure_id",
-			"node_ids",
-			"split_strategy",
-			"chunk_policy_version",
-			"chunk_profile",
-			"split_reason",
-			"target_chars",
-			"max_chars",
-			"table_rows_per_record",
-			"table_tokens_per_record",
-			"semantic_distance_threshold",
-			"semantic_unit_count",
-			"semantic_fallback",
-			"source_format",
-			"content_hash",
-			"document_version_id",
-			"generation_id",
-			"lifecycle_visibility",
-			"tenant_id",
-			"workspace_id",
-			"acl_scope",
-			"acl_principal_ids",
-			"acl_group_ids",
-			"record_type",
-			"record_id",
-			"parent_record_id",
-			"source_chunk_ids",
-			"source_node_ids",
-			"headers",
-			"rows",
-			"row_start",
-			"row_end",
-			"table_row_count",
-			"table_caption",
-			"table_quality",
-			"summary_rows",
-			"footnotes",
-			"header_rows",
-			"table_columns",
-			"cell_rows",
-		)
 		scope = resolve_access_scope(self.settings, access_scope)
 		for chunk, vector in zip(chunks, vectors, strict=True):
 			payload: dict[str, Any] = {
@@ -126,7 +80,7 @@ class QdrantStore:
 					allowed_group_ids=allowed_group_ids,
 				),
 			}
-			for key in _optional_keys:
+			for key in QDRANT_OPTIONAL_PAYLOAD_KEYS:
 				if chunk.get(key) is not None:
 					payload[key] = chunk[key]
 			# Request scope is authoritative; parser/chunk payload may not override it.
@@ -148,6 +102,8 @@ class QdrantStore:
 			resolved_filename = chunk.get("filename") or filename
 			if resolved_filename:
 				payload["filename"] = resolved_filename
+			# 写入前强类型校验：未知键 / 脏 filter 字段 fail-closed
+			payload = validate_payload_for_upsert(payload)
 			point_id = chunk.get("_point_id") or str(uuid4())
 			points.append(
 				qm.PointStruct(
@@ -312,6 +268,41 @@ class QdrantStore:
 			]
 		)
 
+	@staticmethod
+	def _record_type_condition(record_type: str | None) -> qm.Condition | None:
+		"""Build record_type filter；伪类型 chunk+table_summary → chunk|table_summary。"""
+		if not record_type:
+			return None
+		if record_type == "chunk":
+			# fact：只要 chunk；兼容旧点（无 record_type）
+			return qm.Filter(
+				should=[
+					qm.FieldCondition(
+						key="record_type",
+						match=qm.MatchValue(value="chunk"),
+					),
+					qm.IsNullCondition(is_null=qm.PayloadField(key="record_type")),
+				]
+			)
+		if record_type == "chunk+table_summary":
+			return qm.Filter(
+				should=[
+					qm.FieldCondition(
+						key="record_type",
+						match=qm.MatchValue(value="chunk"),
+					),
+					qm.FieldCondition(
+						key="record_type",
+						match=qm.MatchValue(value="table_summary"),
+					),
+					qm.IsNullCondition(is_null=qm.PayloadField(key="record_type")),
+				]
+			)
+		return qm.FieldCondition(
+			key="record_type",
+			match=qm.MatchValue(value=record_type),
+		)
+
 	def search(
 		self,
 		*,
@@ -339,26 +330,9 @@ class QdrantStore:
 					match=qm.MatchValue(value=library_id),
 				)
 			)
-		# fact：只要 chunk；兼容旧点（无 record_type）
-		if record_type == "chunk":
-			must.append(
-				qm.Filter(
-					should=[
-						qm.FieldCondition(
-							key="record_type",
-							match=qm.MatchValue(value="chunk"),
-						),
-						qm.IsNullCondition(is_null=qm.PayloadField(key="record_type")),
-					]
-				)
-			)
-		elif record_type:
-			must.append(
-				qm.FieldCondition(
-					key="record_type",
-					match=qm.MatchValue(value=record_type),
-				)
-			)
+		rt_cond = self._record_type_condition(record_type)
+		if rt_cond is not None:
+			must.append(rt_cond)
 		if extra_must:
 			must.extend(extra_must)
 		query_filter = qm.Filter(must=must) if must else None
@@ -388,7 +362,14 @@ class QdrantStore:
 		return hits
 
 	def _payload_to_hit(self, point: Any, *, score: float = 0.0) -> dict[str, Any]:
-		payload = dict(getattr(point, "payload", None) or {})
+		raw_payload = dict(getattr(point, "payload", None) or {})
+		# 读路径用同一契约解析；失败则回退原始 dict（兼容历史脏点，不阻断检索）
+		parsed = parse_stored_payload(raw_payload)
+		payload = (
+			{**raw_payload, **parsed.model_dump(exclude_none=True)}
+			if parsed is not None
+			else raw_payload
+		)
 		body = str(payload.get("body") or payload.get("text") or "")
 		# 旧索引可能仅在 summary_rows 存文末汇总，未写入 embed body；检索展示时补齐。
 		summary_bits: list[str] = []
@@ -531,25 +512,9 @@ class QdrantStore:
 					match=qm.MatchValue(value=library_id),
 				)
 			)
-		if record_type == "chunk":
-			must.append(
-				qm.Filter(
-					should=[
-						qm.FieldCondition(
-							key="record_type",
-							match=qm.MatchValue(value="chunk"),
-						),
-						qm.IsNullCondition(is_null=qm.PayloadField(key="record_type")),
-					]
-				)
-			)
-		elif record_type:
-			must.append(
-				qm.FieldCondition(
-					key="record_type",
-					match=qm.MatchValue(value=record_type),
-				)
-			)
+		rt_cond = self._record_type_condition(record_type)
+		if rt_cond is not None:
+			must.append(rt_cond)
 		query_filter = qm.Filter(must=must) if must else None
 		chunks: list[dict[str, Any]] = []
 		offset = None
