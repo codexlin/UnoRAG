@@ -2,10 +2,12 @@ import "server-only";
 
 import { createHash, randomBytes } from "node:crypto";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import {
+	documentAcl,
+	documents,
 	localCredentials,
 	users,
 	workspaceInvites,
@@ -16,7 +18,10 @@ import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { hashPassword } from "@/lib/server/auth/passwords.mjs";
 import { hydrateIdentity } from "@/lib/server/auth/session";
 import { sendInviteEmail } from "@/lib/server/email";
-import { isAssignableInviteRole } from "@/lib/server/workspace-permissions.mjs";
+import {
+	authorizeRemoveMember,
+	isAssignableInviteRole,
+} from "@/lib/server/workspace-permissions.mjs";
 
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -475,5 +480,98 @@ export async function updateMemberRole(input: {
 				eq(workspaceMembers.userId, input.userId),
 			),
 		);
+	return { ok: true };
+}
+
+/**
+ * Revoke workspace access for a member.
+ * Does NOT cascade-delete documents, chunks, audit, or threads.
+ */
+export async function removeWorkspaceMember(input: {
+	identity: AuthIdentity;
+	userId: string;
+}): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
+	const userId = input.userId.trim();
+	if (!userId) {
+		return { ok: false, status: 400, detail: "user_id is required" };
+	}
+	if (userId === input.identity.principalId) {
+		return { ok: false, status: 400, detail: "cannot remove yourself" };
+	}
+
+	const db = getDatabase();
+	const workspaceId = input.identity.workspaceId;
+	const [target] = await db
+		.select({
+			userId: workspaceMembers.userId,
+			role: workspaceMembers.role,
+			email: users.email,
+		})
+		.from(workspaceMembers)
+		.innerJoin(users, eq(users.id, workspaceMembers.userId))
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				eq(workspaceMembers.userId, userId),
+			),
+		)
+		.limit(1);
+	if (!target) {
+		return { ok: false, status: 404, detail: "member not found" };
+	}
+
+	const gate = authorizeRemoveMember({
+		actorPrincipalId: input.identity.principalId,
+		targetUserId: target.userId,
+		targetRole: target.role,
+	});
+	if (!gate.ok) {
+		return {
+			ok: false,
+			status: gate.status ?? 403,
+			detail: gate.detail ?? "forbidden",
+		};
+	}
+
+	const now = new Date();
+	await db.transaction(async (tx) => {
+		await tx
+			.delete(workspaceMembers)
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspaceId),
+					eq(workspaceMembers.userId, userId),
+				),
+			);
+
+		const workspaceDocIds = tx
+			.select({ id: documents.id })
+			.from(documents)
+			.where(eq(documents.workspaceId, workspaceId));
+
+		await tx
+			.delete(documentAcl)
+			.where(
+				and(
+					eq(documentAcl.subjectId, userId),
+					inArray(documentAcl.subjectType, ["principal", "user"]),
+					inArray(documentAcl.documentId, workspaceDocIds),
+				),
+			);
+
+		if (target.email) {
+			await tx
+				.update(workspaceInvites)
+				.set({ status: "revoked", updatedAt: now })
+				.where(
+					and(
+						eq(workspaceInvites.workspaceId, workspaceId),
+						eq(workspaceInvites.email, normalizeEmail(target.email)),
+						eq(workspaceInvites.status, "pending"),
+					),
+				);
+		}
+	});
+
 	return { ok: true };
 }

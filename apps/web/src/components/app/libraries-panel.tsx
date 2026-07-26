@@ -65,6 +65,12 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useLibraries } from "@/hooks/use-libraries";
 import {
+	PARSE_DEGRADED_REINDEX_HINT,
+	formatParserReportView,
+	isParserReportDegraded,
+	resolveDocumentStatusDisplay,
+} from "@/lib/parser-report-view.mjs";
+import {
 	type ApiDocument,
 	type ApiDocumentVersion,
 	type ApiLibrary,
@@ -85,43 +91,46 @@ import {
 import { formatDateTime, formatDurationMs, formatFileSize } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-const statusLabel = {
-	ready: "就绪",
-	indexing: "索引中",
-	empty: "空库",
-	processing: "处理中",
-	degraded: "降级可用",
-	cancelled: "已取消",
-	failed: "失败",
-	deleting: "删除中",
-	deleted: "已删除",
-	active: "活跃",
-	superseded: "已替代",
-	pending: "待处理",
-} as const;
-
-function DocStatusBadge({ status }: { status: string }) {
+function DocStatusBadge({
+	status,
+	parserReport,
+}: {
+	status: string;
+	parserReport?: ApiDocument["parser_report"];
+}) {
+	const display = resolveDocumentStatusDisplay(status, parserReport);
+	const tone = display.tone;
 	return (
 		<span
 			className={cn(
 				"text-meta rounded-md border px-2 py-0.5 font-mono uppercase",
-				status === "ready" && "border-cite/30 bg-cite/10 text-cite",
-				status === "processing" &&
+				tone === "ready" && "border-cite/30 bg-cite/10 text-cite",
+				tone === "processing" &&
 					"border-survey/35 bg-accent text-accent-foreground",
-				status === "failed" &&
+				tone === "failed" &&
 					"border-destructive/30 bg-destructive/10 text-destructive",
-				status === "degraded" &&
+				tone === "degraded" &&
 					"border-survey/35 bg-accent text-accent-foreground",
-				status === "cancelled" &&
+				tone === "cancelled" &&
 					"border-border bg-muted text-muted-foreground",
-				status === "indexing" &&
+				tone === "indexing" &&
 					"border-survey/35 bg-accent text-accent-foreground",
-				status === "empty" && "border-border bg-muted text-muted-foreground",
-				status === "deleting" &&
+				tone === "empty" && "border-border bg-muted text-muted-foreground",
+				tone === "deleting" &&
 					"border-destructive/30 bg-destructive/10 text-destructive",
+				![
+					"ready",
+					"processing",
+					"failed",
+					"degraded",
+					"cancelled",
+					"indexing",
+					"empty",
+					"deleting",
+				].includes(tone) && "border-border bg-muted text-muted-foreground",
 			)}
 		>
-			{statusLabel[status as keyof typeof statusLabel] ?? status}
+			{display.label}
 		</span>
 	);
 }
@@ -143,6 +152,75 @@ function LibStatusDot({ status }: { status: string }) {
 			)}
 			aria-hidden
 		/>
+	);
+}
+
+function ParserReportCard({
+	report,
+}: {
+	report: NonNullable<ApiDocument["parser_report"]>;
+}) {
+	const reportView = formatParserReportView(report);
+	return (
+		<div
+			className={cn(
+				"rounded-md border px-3 py-2",
+				reportView.degraded
+					? "border-survey/40 bg-accent/40"
+					: "border-border/80 bg-muted/30",
+			)}
+		>
+			<div className="flex flex-wrap items-center gap-2">
+				<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
+					{reportView.title}
+				</p>
+				{reportView.degraded ? (
+					<span className="text-meta rounded-md border border-survey/35 bg-accent px-1.5 py-0.5 font-mono text-accent-foreground">
+						降级处理
+					</span>
+				) : null}
+			</div>
+			{reportView.summaries.map((line) => (
+				<p
+					key={line}
+					className={cn(
+						"text-ui mt-1",
+						line.startsWith("建议 OCR")
+							? "text-muted-foreground"
+							: "text-survey",
+					)}
+				>
+					{line}
+				</p>
+			))}
+			{reportView.degraded ? (
+				<p className="text-ui mt-1.5 text-muted-foreground">
+					{PARSE_DEGRADED_REINDEX_HINT}
+				</p>
+			) : null}
+			{reportView.techDetails.length > 0 ? (
+				<details className="group mt-2 rounded-md border border-border/60 bg-background/40">
+					<summary className="cursor-pointer list-none px-2 py-1.5 font-mono text-meta text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground [&::-webkit-details-marker]:hidden">
+						技术详情
+					</summary>
+					<ul className="text-ui space-y-1 border-t border-border/50 px-2 py-1.5 text-muted-foreground">
+						{reportView.techDetails.map((detail) => (
+							<li
+								key={detail}
+								className="break-all font-mono text-[11px] leading-relaxed"
+							>
+								{detail}
+							</li>
+						))}
+					</ul>
+				</details>
+			) : null}
+			{reportView.empty ? (
+				<p className="text-ui mt-1 text-muted-foreground">
+					解析完成，无额外提示
+				</p>
+			) : null}
+		</div>
 	);
 }
 
@@ -954,7 +1032,10 @@ export function LibrariesPanel() {
 														</span>
 													</TableCell>
 													<TableCell>
-														<DocStatusBadge status={doc.status} />
+														<DocStatusBadge
+															status={doc.status}
+															parserReport={doc.parser_report}
+														/>
 														{doc.job_stage &&
 														doc.job_status &&
 														!TERMINAL_JOB_STATUSES.has(doc.job_status) ? (
@@ -1060,7 +1141,10 @@ export function LibrariesPanel() {
 							</SheetHeader>
 							<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-2">
 								<div className="flex flex-wrap items-center gap-2">
-									<DocStatusBadge status={detailDoc.status} />
+									<DocStatusBadge
+										status={detailDoc.status}
+										parserReport={detailDoc.parser_report}
+									/>
 									<span className="text-meta font-mono text-muted-foreground">
 										{detailDoc.chunk_count} chunks
 									</span>
@@ -1164,58 +1248,7 @@ export function LibrariesPanel() {
 								</div>
 
 								{detailDoc.parser_report ? (
-									<div className="rounded-md border border-border/80 bg-muted/30 px-3 py-2">
-										<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
-											解析报告
-										</p>
-										{(
-											detailDoc.parser_report as {
-												metrics?: { route?: string };
-											}
-										).metrics?.route === "pymupdf_degrade" ||
-										detailDoc.parser_report.warnings?.some((w) =>
-											w.includes("已用基础解析"),
-										) ? (
-											<p className="text-ui mt-1 text-survey">
-												MinerU 不可用，已用基础解析
-											</p>
-										) : null}
-										{detailDoc.parser_report.partial ? (
-											<p className="text-ui mt-1 text-survey">
-												部分页未解析
-												{detailDoc.parser_report.failed_pages?.length
-													? `（失败页 ${detailDoc.parser_report.failed_pages.join(", ")}）`
-													: ""}
-											</p>
-										) : null}
-										{detailDoc.parser_report.needs_ocr_pages?.length ? (
-											<p className="text-ui mt-1 text-muted-foreground">
-												建议 OCR 页：
-												{detailDoc.parser_report.needs_ocr_pages.join(", ")}
-											</p>
-										) : null}
-										{detailDoc.parser_report.warnings?.length ? (
-											<ul className="text-ui mt-1 list-inside list-disc text-muted-foreground">
-												{detailDoc.parser_report.warnings.map((warning) => (
-													<li key={warning}>{warning}</li>
-												))}
-											</ul>
-										) : null}
-										{typeof detailDoc.parser_report.notes === "string" &&
-										detailDoc.parser_report.notes ? (
-											<p className="text-ui mt-1 text-muted-foreground">
-												{detailDoc.parser_report.notes}
-											</p>
-										) : null}
-										{!detailDoc.parser_report.partial &&
-										!detailDoc.parser_report.needs_ocr_pages?.length &&
-										!detailDoc.parser_report.warnings?.length &&
-										!detailDoc.parser_report.notes ? (
-											<p className="text-ui mt-1 text-muted-foreground">
-												解析完成，无额外提示
-											</p>
-										) : null}
-									</div>
+									<ParserReportCard report={detailDoc.parser_report} />
 								) : null}
 
 								{!detailDoc.has_file ? (
@@ -1232,12 +1265,20 @@ export function LibrariesPanel() {
 									{detailActions.map((action) => {
 										const Icon = action.icon;
 										const busy = busyDocId === detailDoc.id;
+										const highlightReindex =
+											action.id === "reindex" &&
+											isParserReportDegraded(detailDoc.parser_report) &&
+											Boolean(detailDoc.has_file);
 										return (
 											<AuthButton
 												key={action.id}
 												cap={action.cap}
 												type="button"
-												variant={action.variant ?? "outline"}
+												variant={
+													highlightReindex
+														? "default"
+														: (action.variant ?? "outline")
+												}
 												className="rounded-md"
 												disabled={action.disabled?.(detailDoc, busy) ?? false}
 												onClick={() => action.run(detailDoc)}

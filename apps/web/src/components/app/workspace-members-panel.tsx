@@ -1,9 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 
 import { Can } from "@/components/app/can";
 import { useSession } from "@/components/app/session-provider";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,7 +43,7 @@ const ROLE_OPTIONS = [
 ] as const;
 
 export function WorkspaceMembersPanel() {
-	const { can } = useSession();
+	const { can, identity } = useSession();
 	const canManage = can("manageMembers");
 	const [members, setMembers] = useState<Member[]>([]);
 	const [invites, setInvites] = useState<Invite[]>([]);
@@ -43,6 +54,8 @@ export function WorkspaceMembersPanel() {
 	const [emailNote, setEmailNote] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [copied, setCopied] = useState(false);
+	const [removeTarget, setRemoveTarget] = useState<Member | null>(null);
+	const [removing, setRemoving] = useState(false);
 
 	const refresh = useCallback(async () => {
 		const membersRes = await fetch("/api/workspace/members");
@@ -128,6 +141,29 @@ export function WorkspaceMembersPanel() {
 		await refresh();
 	}
 
+	async function confirmRemove() {
+		if (!removeTarget) return;
+		setRemoving(true);
+		setError(null);
+		const response = await fetch("/api/workspace/members", {
+			method: "DELETE",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ user_id: removeTarget.userId }),
+		});
+		setRemoving(false);
+		if (!response.ok) {
+			const detail = await response.json().catch(() => null);
+			const message =
+				typeof detail?.detail === "string" ? detail.detail : "移除成员失败";
+			setError(message);
+			toast.error(message);
+			return;
+		}
+		toast.success(`已移除「${removeTarget.displayName}」的访问权限`);
+		setRemoveTarget(null);
+		await refresh();
+	}
+
 	return (
 		<div className="space-y-5 rounded-2xl border border-border/80 bg-card/80 px-4 py-4">
 			<div>
@@ -153,29 +189,48 @@ export function WorkspaceMembersPanel() {
 								{member.email}
 							</p>
 						</div>
-						<Can
-							cap="manageMembers"
-							when={member.role !== "owner"}
-							fallback={
-								<span className="font-mono text-xs text-muted-foreground">
-									{member.role}
-								</span>
-							}
-						>
-							<select
-								className="rounded-md border border-border bg-background px-2 py-1 text-xs"
-								value={member.role}
-								onChange={(event) =>
-									void changeRole(member.userId, event.target.value)
+						<div className="flex items-center gap-2">
+							<Can
+								cap="manageMembers"
+								when={member.role !== "owner"}
+								fallback={
+									<span className="font-mono text-xs text-muted-foreground">
+										{member.role}
+									</span>
 								}
 							>
-								{ROLE_OPTIONS.map((option) => (
-									<option key={option.value} value={option.value}>
-										{option.label}
-									</option>
-								))}
-							</select>
-						</Can>
+								<select
+									className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+									value={member.role}
+									onChange={(event) =>
+										void changeRole(member.userId, event.target.value)
+									}
+								>
+									{ROLE_OPTIONS.map((option) => (
+										<option key={option.value} value={option.value}>
+											{option.label}
+										</option>
+									))}
+								</select>
+							</Can>
+							<Can
+								cap="manageMembers"
+								when={
+									member.role !== "owner" &&
+									member.userId !== identity.principalId
+								}
+							>
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									className="text-destructive hover:text-destructive"
+									onClick={() => setRemoveTarget(member)}
+								>
+									移除
+								</Button>
+							</Can>
+						</div>
 					</li>
 				))}
 			</ul>
@@ -184,7 +239,7 @@ export function WorkspaceMembersPanel() {
 				cap="manageMembers"
 				fallback={
 					<p className="text-xs text-muted-foreground">
-						仅 owner / admin 可邀请成员与改角色。
+						仅 owner / admin 可邀请成员、改角色与移除成员。
 					</p>
 				}
 			>
@@ -270,6 +325,36 @@ export function WorkspaceMembersPanel() {
 					) : null}
 				</div>
 			</Can>
+
+			<AlertDialog
+				open={removeTarget != null}
+				onOpenChange={(open) => {
+					if (!open && !removing) setRemoveTarget(null);
+				}}
+			>
+				<AlertDialogContent size="default">
+					<AlertDialogHeader>
+						<AlertDialogTitle>移除成员？</AlertDialogTitle>
+						<AlertDialogDescription>
+							将移除「{removeTarget?.displayName ?? "该成员"}
+							」对本工作区的访问权限；其上传的文档仍保留在工作区。不会删除文档、问答记录或审计历史。
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={removing}>取消</AlertDialogCancel>
+						<AlertDialogAction
+							variant="destructive"
+							disabled={removing}
+							onClick={(event) => {
+								event.preventDefault();
+								void confirmRemove();
+							}}
+						>
+							{removing ? "移除中…" : "确认移除"}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	);
 }
