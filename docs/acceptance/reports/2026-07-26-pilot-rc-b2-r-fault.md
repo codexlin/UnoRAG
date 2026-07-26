@@ -9,10 +9,10 @@
 | 字段 | 值 |
 |---|---|
 | Pilot RC（代码基线） | `b98f01438045c92804204449d3172ceb201490e6` |
-| HEAD（harden 后） | `a60df51d98ebad0ea2d5706c11fe5ac9ddd6296c`（已 push `origin/main`） |
-| B2 script sha | _（B2 复跑后填 `script_sha`）_ |
+| HEAD（报告收尾） | `1e0cc963b30f2acf15a83b52cac1f3b5cc0eb025`（推送后以最新 commit 为准） |
+| B2 script sha | `1e0cc963b30f2acf15a83b52cac1f3b5cc0eb025` |
 | R-fault script sha | `a60df51d98ebad0ea2d5706c11fe5ac9ddd6296c` |
-| `.b2_last_run.json` sha256 | _（B2 复跑后填）_ |
+| `.b2_last_run.json` sha256 | `e84db15bd7d46a9c42696233ea2304c2d991ee17451f173c2898c9c2f5f05210` |
 | `.r_fault_last_run.json` sha256 | `6bedb3c0da288284658567db8fa254a6b724697be00aad0d9f3516c4e8268e3f` |
 | 拓扑 | **B2**：一次性 Compose 独立项目 + bind 文档目录（**不**触碰主开发 `.meriknow` / `meriknow_*` 主卷）；**R\***：本机混合栈 `:3000`/`:8000` + Docker Postgres/Qdrant/Redis |
 | 日期 | 2026-07-26 |
@@ -21,14 +21,15 @@
 
 | 字段 | 值 |
 |---|---|
-| 结果 | **PASS**（上一轮证据；harden 后待复跑确认真 Qdrant↔PG） |
+| 结果 | **PASS**（harden 后复跑；真 Qdrant↔PG） |
 | 脚本 | [`../../../scripts/acceptance/b2_restore_drill.sh`](../../../scripts/acceptance/b2_restore_drill.sh) |
 | 基础设施 | [`../../../scripts/acceptance/compose.b2-infra.yml`](../../../scripts/acceptance/compose.b2-infra.yml) |
 | 模式 | `hybrid`：`meriknow-b2-src` → backup → destroy → `meriknow-b2-dst` restore |
-| 备份完成延迟（write→backup complete） | **5 s**（本机实测；**不是** RPO） |
+| 备份完成延迟（write→backup complete） | **6 s**（本机实测；**不是** RPO） |
 | 本轮数据丢失 | **0**（备份后无写入） |
 | 目标 RPO | **未定义**（取决于备份周期/调度；本轮未承诺） |
-| RTO（disaster→apps ready） | **48 s**（有证据：`timing.rto`） |
+| RTO（disaster→apps ready） | **22 s**（本轮证据 `timing.rto`；此前一轮曾观测 48 s） |
+| Qdrant↔PG | **exact match**（`qdrant_count=2` / `pg_point_count=2`；org/ws/doc/version/generation/status=active） |
 
 ### 流程摘要
 
@@ -36,7 +37,7 @@
 2. migrate + bootstrap → 上传 → replace 新版本 → restricted ACL + reindex → service key → Ask → archive thread  
 3. backup：`postgres.sql` + `documents.tgz` + `qdrant.tgz` + `MANIFEST.txt`  
 4. 销毁源 project volumes → 目标 project restore（顺序：PG → documents → Qdrant）→ 再拉起应用  
-5. 校验：health、对象文件数、active version/generation、ACL 未扩大、members、service key 仍在、session Ask/Retrieve 含 marker+citation、Mode B 密钥可认证、**Qdrant↔PG 精确比对**（非仅 collection count>0）  
+5. 校验：health、对象文件数、active version/generation、ACL 未扩大、members、service key 仍在、session Ask/Retrieve 含 marker+citation、Mode B 密钥可认证、**Qdrant↔PG 精确比对**  
 
 本地 JSON（勿提交；`0600`）：`scripts/acceptance/.b2_last_run.json`（仅 `service_key_id` / `service_key_last4`，无完整 key）。
 
@@ -44,7 +45,7 @@
 
 - `.b2-work/**/*.json` 与 last_run：已脱敏（无完整 `service_key`）。  
 - `.gitignore` 已忽略 `.b2-work/`、`*_last_run.json` 及其 sha256。  
-- 吊销：主库 `app.workspace_service_keys` 查无 B2 key id `0a2fd7c9-…`（last4 `Pzau`）——B2 一次性 Postgres 已销毁；主库现有 2 把 key 均已 `revoked`；无完整 key 可调 API。  
+- 吊销：B2 一次性 Postgres 跑完即销毁；主库查无 B2 key（例 `5fa4f6ff-…` / 旧 `0a2fd7c9-…`）；主库现有 key 均已 `revoked`；无完整 key 可调 API。  
 
 复跑：
 
@@ -93,8 +94,8 @@ MERIKNOW_RC_SHA=b98f01438045c92804204449d3172ceb201490e6 \
 | 项 | 状态 |
 |---|---|
 | S1/S2 隔离 | PASS（另文） |
-| B2 独立恢复 | PASS（指标：备份完成延迟 / 丢失 0 / RTO；目标 RPO 未定义）；harden 后 Qdrant↔PG 待复跑确认 |
-| R1 / R2 / R4 | PASS（本文；**禁止**无必要重跑 R2） |
+| B2 独立恢复 | **PASS**（备份完成延迟 6s / 丢失 0 / RTO 22s；目标 RPO 未定义；真 Qdrant↔PG exact match） |
+| R1 / R2 / R4 | PASS（本文；**未**重跑 R2） |
 | R3（收紧后） | **PASS**（复跑证据见上；sha256 已绑） |
 | B3/B4 升级/回滚演练 | 仍缺 |
 | B5 容量/告警接通 | 仍缺（仅有观测草稿） |
