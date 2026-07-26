@@ -9,7 +9,7 @@
 | 字段 | 值 |
 |---|---|
 | Pilot RC（代码基线） | `b98f01438045c92804204449d3172ceb201490e6` |
-| HEAD（报告收尾） | `1e0cc963b30f2acf15a83b52cac1f3b5cc0eb025`（推送后以最新 commit 为准） |
+| 证据绑定 commit | `84b59b4fc687f8137f133edf82254a7b5ed33fb2`（B2/R3 sha256 写入本报告） |
 | B2 script sha | `1e0cc963b30f2acf15a83b52cac1f3b5cc0eb025` |
 | R-fault script sha | `a60df51d98ebad0ea2d5706c11fe5ac9ddd6296c` |
 | `.b2_last_run.json` sha256 | `e84db15bd7d46a9c42696233ea2304c2d991ee17451f173c2898c9c2f5f05210` |
