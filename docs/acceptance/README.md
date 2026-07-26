@@ -32,6 +32,7 @@
 
 ## 宣称 production-ready 的条件
 
-仅当 [`production-ready-checklist.md`](./production-ready-checklist.md) 全部勾选，
-且 [`pilot-go-no-go-template.md`](./pilot-go-no-go-template.md) 记录明确 **GO** 时，
-才可在发布说明中写 production-ready。代码与验收包到位 **不等于** 已获 go。
+仅当 [`production-ready-checklist.md`](./production-ready-checklist.md) A–E 必选项全部勾选、
+F 类非阻断项已写入已知限制，且 [`pilot-go-no-go-template.md`](./pilot-go-no-go-template.md)
+记录明确 **GO** 时，才可针对该版本与部署环境写 production-ready。代码与验收包到位
+**不等于** 已获 go。

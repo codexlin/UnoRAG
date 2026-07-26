@@ -1,15 +1,18 @@
-# 模式 B：RAG 嵌入集成
+# MeriKnow Knowledge API 与嵌入集成
 
-> 状态：MVP 已落地（方案 A：Next 网关 + service key）（2026-07-25）  
-> 产品语境见 [PRODUCT.md](./PRODUCT.md)
+> 状态：Retrieve/Ask MVP 已落地（Next 网关 + service key）（2026-07-26）
+>
+> 产品语境见 [PRODUCT.md](./PRODUCT.md)，产品层级见 [STRATEGY.md](./STRATEGY.md)
 
 ## 目标
 
-让客户**已有助手**接入 MeriKnow 的有据检索与问答，而不必：
+让客户已有客服、售后、门户、Chat 或 Agent 接入 MeriKnow 的企业知识能力，而不必：
 
 - 使用 MeriKnow UI
 - 采用我们的通用 Agent / 工具运行时
 - 把 FastAPI 裸暴露到公网
+
+Knowledge API 是核心产品契约；Workspace、Python SDK、MCP 和 OpenAI-compatible endpoint 都是它的客户端或薄适配层。
 
 ## 已实现 vs 仍规划
 
@@ -19,14 +22,18 @@
 | `POST /v1/ask/stream` | **已实现** | SSE：meta / citations / token / done |
 | `POST /v1/retrieve`（内部 HMAC） | **已实现** | 只返回证据包；经集成网关对外 |
 | 检索执行（Ask 图内） | **已实现** | dense；可选 hybrid / rerank；表格路径 |
-| Active generation + ACL 过滤 | **已实现** | 与模式 A 同一数据面 |
-| 浏览器经 Next BFF 调用 | **已实现** | 模式 A 主路径（session） |
+| Active generation + ACL 过滤 | **已实现** | 与 Workspace 共享同一数据面 |
+| 浏览器经 Next BFF 调用 | **已实现** | Workspace 主路径（session） |
 | **Service key** | **已实现（MVP）** | 工作区级；hash 存储；scopes=`ask`/`retrieve`；可选 `library_ids` |
 | **对外 HTTP**：`POST /api/v1/retrieve`、`POST /api/v1/ask` | **已实现（方案 A）** | `Authorization: Bearer mk_svc_…` → Next 校验 → HMAC 转发 FastAPI |
 | 控制面密钥管理 API / UI | **已实现** | owner/admin；明文只创建时返回一次 |
-| 稳定 OpenAPI / 错误码版本化 | **规划中** | 客户集成合同硬化 |
-| MCP server（retrieve/ask tools） | **规划中（后置）** | HTTP 契约稳定后的薄适配 |
-| OAuth-for-apps | **非目标（远期）** | 本 MVP 不做 |
+| 对外术语 `answer` + `ask` 兼容期 | **规划中** | 原生产品契约使用 Answer；已有 `/ask` 在明确版本周期内兼容 |
+| 稳定 OpenAPI / 错误码 / citation 版本化 | **规划中（优先）** | 客户集成合同硬化 |
+| 外部 Documents / Versions / Jobs API | **规划中（优先）** | 让业务系统完成知识生命周期接入，不绕过 Control Plane |
+| Python SDK | **规划中（HTTP 契约后）** | API client，不是嵌入式第二引擎 |
+| MCP server | **规划中（SDK 同期或后置）** | HTTP 契约稳定后的只读知识工具适配 |
+| OpenAI-compatible endpoint | **规划中（后置）** | 降低迁移成本；MeriKnow 原生 citation/refusal/trace 契约仍权威 |
+| OAuth-for-apps | **当前产品非目标** | 服务间集成使用可审计、可限制 scope 的 Service Key；只有明确建设公网多租户开发者平台时才重新评估 |
 | 公网多租户 SaaS 网关 | **非目标（远期可选）** | 首版私有化内网集成 |
 
 ## 架构（方案 A）
@@ -43,6 +50,8 @@ Customer Backend
 与内部 HMAC、`MERIKNOW_SESSION_SECRET`、用户 cookie **分离**。生产仍禁止公网裸暴露 `:8000`。
 
 ## 对外契约（已实现 MVP）
+
+当前 MVP 资源面只有 Retrieve/Ask 和 Service Key 管理。下文必须按「已实现」理解，不代表规划中的完整 Knowledge API 已冻结。
 
 ### 鉴权头
 
@@ -71,7 +80,7 @@ Authorization: Bearer mk_svc_…
 
 响应要素：`citations[]`、`refused` / `refuse_reason`、`retrieval_mode`、`retrieval_debug`（勿原样暴露给终端用户）。
 
-### Ask（有据问答）
+### Ask（有据问答；未来原生术语为 Answer）
 
 ```http
 POST /api/v1/ask
@@ -86,6 +95,12 @@ Authorization: Bearer mk_svc_…
 ```
 
 响应字段与现网 ask 对齐：`answer`、`citations[]`、`refused`、`refuse_reason` 等。流式 ask 本 MVP 未对外暴露（仍可用内部 `/api/rag/v1/ask/stream` + session）。
+
+迁移原则：
+
+- 新版外部契约计划提供 `/api/v1/answer` 与 `/api/v1/answer/stream`。
+- `/api/v1/ask` 不会无提示移除；兼容周期和废弃响应头须写入版本化契约。
+- 内部 LangGraph、代码类名和历史字段可继续使用 Ask，不要求一次性重命名实现细节。
 
 ### 控制面：密钥管理（owner/admin）
 
@@ -134,11 +149,109 @@ curl -sS -X POST "$APP/api/v1/ask" \
 
 ## MVP 限制
 
-1. 无 OAuth-for-apps、无 MCP、无对外流式 ask。
+1. 无外部文档生命周期 API、Python SDK、MCP、OpenAI-compatible endpoint、OAuth-for-apps、对外流式 ask。
 2. Service principal 为 `service:<key_id>`：可见 `acl_scope=workspace` 的文档；**不会**自动获得仅绑定某用户的 restricted ACL。
 3. 密钥绑定**当前工作区**；不跨工作区。
 4. 限流 / 审计明细 / OpenAPI 冻结仍后置。
 5. 客户应用应只在**服务端**持有 key，不要放进浏览器。
+
+## 目标 Knowledge API 资源面（规划）
+
+以下是产品方向，不是当前已实现接口：
+
+```text
+POST   /api/v1/knowledge-bases
+GET    /api/v1/knowledge-bases/{id}
+
+POST   /api/v1/documents
+GET    /api/v1/documents/{id}
+GET    /api/v1/documents/{id}/versions
+DELETE /api/v1/documents/{id}
+
+GET    /api/v1/jobs/{id}
+
+POST   /api/v1/retrieve
+POST   /api/v1/answer
+POST   /api/v1/answer/stream
+
+POST   /api/v1/feedback
+GET    /api/v1/traces/{trace_id}
+```
+
+约束：
+
+1. Documents/Versions/Jobs 必须复用 Next Control Plane、对象存储和 `app.jobs`，不得复活 FastAPI ingest。
+2. 所有写接口提供 idempotency key、明确的异步 Job 和版本化错误码。
+3. Retrieve/Answer 共享 active generation、ACL、citation、refusal 和 trace。
+4. Trace Debug 默认不返回原文、密钥或内部高敏字段。
+5. Service Key scopes 按资源扩展，例如 `documents:write`、`documents:read`、`retrieve`、`answer`，不得用单个全能 scope。
+
+## Python SDK 方向（规划）
+
+SDK 保持薄、可替换、可生成：
+
+```python
+from meriknow import MeriKnow
+
+client = MeriKnow(
+    base_url="https://knowledge.example.internal",
+    api_key="mk_svc_...",
+)
+
+evidence = client.retrieve(
+    knowledge_base="product-support",
+    query="设备出现 E37 应如何处理？",
+)
+
+answer = client.answer(
+    knowledge_base="product-support",
+    question="设备出现 E37 应如何处理？",
+)
+```
+
+SDK 职责：
+
+- 鉴权、超时、重试和幂等键
+- Pydantic 类型
+- 同步/异步 client
+- SSE 消费
+- 标准错误映射
+
+SDK 不负责：
+
+- 启动本地 Qdrant/PostgreSQL
+- 复制完整解析与检索引擎
+- 绕过 Control Plane 写入向量
+
+## MCP 方向（规划）
+
+首版只读工具：
+
+```text
+search_knowledge
+answer_with_sources
+get_source
+```
+
+MCP Server 使用独立 Service Key 调用 Knowledge API。删除文档、修改 ACL、成员管理等高影响动作不进入首版 MCP。
+
+## OpenAI-compatible 方向（规划）
+
+兼容层用于让现有 OpenAI client 快速试用，例如将 `model` 映射到指定 knowledge base。标准响应无法完整表达 MeriKnow 的 citation、refusal 和 trace，因此兼容响应需使用扩展字段，同时保留原生 API：
+
+```json
+{
+  "choices": [],
+  "meriknow": {
+    "citations": [],
+    "refused": false,
+    "refuse_reason": null,
+    "trace_id": "..."
+  }
+}
+```
+
+OpenAI-compatible endpoint 不成为新的业务事实源，也不允许绕过 Service Key、ACL 或 active generation。
 
 ## 集成方 checklist
 
@@ -156,10 +269,12 @@ curl -sS -X POST "$APP/api/v1/ask" \
 | 浏览器直连 FastAPI | 经 `/api/v1/*` 或客户自有 BFF |
 | 用 internal HMAC secret 当客户 key | 独立 `mk_svc_` service key |
 | 调用 `/v1/ingest` 上传 | 控制面文档 API |
-| 期望 MeriKnow 托管客户 Agent 工具链 | 模式 B 只补强 RAG |
+| 期望 MeriKnow 托管客户 Agent 工具链 | Knowledge API 只提供可治理的知识能力 |
+| 在 Python SDK 内复制完整引擎 | SDK 只调用统一 Knowledge API |
+| MCP 自己访问 Qdrant | MCP 通过 Service Key 调用 Knowledge API |
 | 每轮强制写 MeriKnow archive | 客户可自管消息 |
 
-## 与模式 A 的共享内核
+## 与 Workspace 共享的内核
 
 ```text
 同一 Qdrant + active generation + ACL

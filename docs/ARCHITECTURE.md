@@ -1,7 +1,33 @@
 # MeriKnow 架构（与代码一致）
 
-> 状态：现行（2026-07-25）  
+> 状态：现行（2026-07-26）
+>
 > 决策记录：[ADR-0004](./adr/0004-nextjs-control-plane.md) · 解析/切分：[ADR-0001](./adr/0001-ocr-vlm-adapters.md)–[0003](./adr/0003-policy-driven-chunking.md)
+
+## 产品与技术分层
+
+MeriKnow 在部署上是独立知识服务，在使用上可嵌入客户业务：
+
+```text
+Official Workspace     Customer Apps / Agents
+        │                 │       │       │
+        │              Python SDK MCP  OpenAI adapter
+        │                 └───────┼───────┘
+        └─────────────────────────▼
+                    Knowledge API
+          Documents / Jobs / Retrieve / Answer
+                              │
+                              ▼
+                Enterprise Knowledge Kernel
+        ACL / Version / Parse / Index / Citation / Eval
+```
+
+架构约束：
+
+1. Workspace 是官方客户端和管理控制台，不是唯一消费方。
+2. HTTP Knowledge API 是权威运行时契约。
+3. SDK、MCP、OpenAI-compatible endpoint 只做协议适配，不拥有第二套检索实现。
+4. 所有入口共享 tenant/workspace/ACL、active generation、citation、refusal 与 trace 语义。
 
 ## 总览
 
@@ -151,10 +177,19 @@ Browser cookie (MERIKNOW_SESSION_SECRET)
 
 Service 上下文：Outbox worker 调 `/v1/internal/*`；浏览器 BFF **拒绝**代理这些路径。
 
-## 模式 B 在架构中的位置
+## 外部集成在架构中的位置
 
-当前 Ask/Retrieve 能力住在 Data Plane。模式 B 的目标是在**不暴露浏览器会话模型**的前提下，增加「服务身份」调用同一能力（见 [INTEGRATION.md](./INTEGRATION.md)）。  
-控制面 UI 与 Agent 运行时保持可选，而不是强制依赖。
+当前 Ask/Retrieve 能力住在 Data Plane，对外由 Next Knowledge API 网关验证工作区 Service Key，再签发内部 HMAC。目标是在**不暴露浏览器 Session 和 FastAPI 网络边界**的前提下，让客户业务系统调用同一知识内核（见 [INTEGRATION.md](./INTEGRATION.md)）。
+
+外部 Documents/Versions/Jobs API 仍由 Control Plane 承载，因为文档产品事实和 Job 所有权属于 `app` schema；Retrieve/Answer 转发到 Data Plane。Python SDK、MCP 和 OpenAI-compatible endpoint 均建立在这些 HTTP 契约之上。
+
+```text
+Customer Backend
+  → Service Key
+  → Next Knowledge API
+       ├─ Documents / Versions / Jobs → app schema + object storage
+       └─ Retrieve / Answer → HMAC → FastAPI Data Plane
+```
 
 ## 关键进程与依赖
 
@@ -172,9 +207,10 @@ Service 上下文：Outbox worker 调 `/v1/internal/*`；浏览器 BFF **拒绝*
 
 | 文档 | 内容 |
 |------|------|
-| [PRODUCT.md](./PRODUCT.md) | 为什么做、双模式边界 |
+| [PRODUCT.md](./PRODUCT.md) | 为什么做、核心产品与使用方式 |
+| [STRATEGY.md](./STRATEGY.md) | 产品层级、目标客户与交付策略 |
 | [ROADMAP.md](./ROADMAP.md) | 下一步与先决条件 |
 | [DEV.md](./DEV.md) | 如何本地跑 |
-| [INTEGRATION.md](./INTEGRATION.md) | 模式 B 契约 |
+| [INTEGRATION.md](./INTEGRATION.md) | Knowledge API 与适配层契约 |
 | `docs/runbooks/*` | 部署、迁移、门禁、试点操作 |
 | `docs/adr/*` | 已接受技术决策 |

@@ -1,9 +1,9 @@
 # Production-ready 定义清单
 
-仅当下列各项均为 **是**，才可在对外材料中宣称 MeriKnow 某版本
-**production-ready**（私有化企业知识库）。
+仅当 A–E 必选项均为 **是**、F 类非阻断项已写入已知限制，才可针对经过验收的
+MeriKnow 版本与部署环境宣称 **production-ready**（私有化企业知识服务）。
 
-本清单对齐 [`docs/ROADMAP.md`](../ROADMAP.md) 成功标准与 L9 Done。勾选前须有证据
+本清单对齐 [`PRODUCT.md`](../PRODUCT.md) 的发布口径与 [`ROADMAP.md`](../ROADMAP.md) P0。勾选前须有证据
 （报告、gate JSON、演练记录），而不是「代码看起来齐了」。
 
 ## A. 正确性
@@ -45,7 +45,7 @@
 - [ ] 全新安装、升级、回滚、备份恢复均按 runbook 演练通过
 - [ ] 质量报告、已知限制、SLA/SLO、问题升级路径随版本交付
 - [ ] [`pilot-go-no-go-template.md`](./pilot-go-no-go-template.md) 已填写且结论为 **GO**
-- [ ] P0/P1 清零；P2 有负责人和计划
+- [ ] 目标部署的阻断项清零；非阻断项已写入已知限制并有负责人或处置结论
 
 ## F. 明确仍可后置（不阻塞宣称，但须写入已知限制）
 
@@ -54,10 +54,14 @@
 
 - [ ] （可选）完整 audit 页面 / CSV 导出
 - [ ] （可选）SBOM 生成与依赖/镜像 CVE 扫描流水线
+- [ ] （可选）OIDC / SSO 与组织同步
+- [ ] （可选）Workspace 成本分析面板（token/model usage 原始采集仍应保留）
 - [ ] （可选）Helm HPA / PDB / NetworkPolicy 硬化
 - [ ] （可选）镜像 digest 锁定与私有 registry
 - [ ] （可选）MinIO/S3 一等对象后端
 - [ ] （可选）archive 全字段固化与线上延迟环境基线
+
+若客户合同、采购安全基线或部署环境明确要求上述某项，该项自动成为该次交付的门禁；这不把它提升为所有受控试点的通用 P0。
 
 ## 结论栏
 

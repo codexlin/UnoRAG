@@ -1,7 +1,8 @@
 # MeriKnow 路线图
 
-> 状态：现行（2026-07-25）  
-> 产品定位见 [PRODUCT.md](./PRODUCT.md)。  
+> 状态：现行（2026-07-26）
+>
+> 产品定位见 [PRODUCT.md](./PRODUCT.md)，产品层级与商业方向见 [STRATEGY.md](./STRATEGY.md)。
 > 已完成的 Document Lifecycle L0–L8 工程细节以代码与 runbook 为准；旧「私有化落地计划」长文已退役，剩余缺口收敛到本文。
 
 ## 当前基线（已落地）
@@ -43,7 +44,7 @@
 - [ ] 浏览器只打 Next：`/api/*` 与 `/api/rag/*`
 - [ ] 产品入库只走控制面文档 API；不要复活 FastAPI ingest
 - [ ] 产品旋钮改工作区 / `ask_defaults.py`，不要加回已废弃 env 开关
-- [ ] 模式 B 对外契约未稳定前，不要向客户承诺「独立 PyPI / 公网 MCP」
+- [ ] Knowledge API 未稳定前，不要让 SDK/MCP/OpenAI adapter 各自形成第二套契约
 
 ### 质量与交付
 
@@ -52,59 +53,98 @@
 
 ---
 
+## 执行原则
+
+路线图服务于一个核心产品：**MeriKnow Knowledge Service**。优先级顺序是：
+
+```text
+生产可信度
+  → 稳定 Knowledge API
+  → Python SDK
+  → MCP / OpenAI-compatible 薄适配
+  → Connector 与能力加深
+```
+
+Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功能挤占隔离、一致性、API 契约、可观测和交付工作。所有 SDK/协议适配必须调用同一 HTTP API，不产生第二套权限、版本、索引或检索真相。
+
 ## 近 / 中 / 远期
 
-时间盒按「私有化可试点 → 模式 B 可嵌入 → 能力加深」排列，不按虚构日期硬锁。
+时间盒按「受控私有化试点 Conditional GO → Knowledge API 可稳定嵌入 → 协议与场景扩展」排列，不按虚构日期硬锁。
 
-### 近期（北极星巩固）
+### P0 / 近期：受控生产试点与 Conditional GO
 
-目标：模式 A 体验与工程合同一致；试点可签字。
+目标：在明确客户、部署边界和运维责任的前提下，让核心路径全绿、真实试点可签字。Conditional GO 只代表受控私有化试点可进入生产使用，不等同于通用生产 GA。
 
-| 项 | 模式 | 说明 |
+| 项 | 面向 | 说明 |
 |----|------|------|
-| 试点 go/no-go 签字 | A | 验收包已就绪；缺真实环境演练与书面 GO（见 `docs/acceptance/`） |
-| Audit 页面或导出 | A | 设置页审计列表 + CSV 已落地（owner/admin）；后续硬化：actor/IP/UA 更完整、动作 i18n、异步大批量导出 |
-| Archive 字段硬化 | A | query type / plan / judge / 版本信息在档案侧更完整可观测 |
-| 文档 ACL 产品编辑 | A | 已落地：文库文档「谁可见」（workspace / 指定成员）；`app.document_acl` + 就绪文档保存后重索引投影；Ask 仍走 active generation + ACL。后续：轻量 set_payload 投影、group UI |
-| OIDC SSO | A | 本地密码 + 邀请已可用；企业 IdP 后置但需求强 |
-| SBOM / 镜像扫描流水线 | 运维 | Compose 已 pin tag；完整扫描后置 |
-| 控制面 E2E 补齐 | 工程 | 逐步替换遗留 FastAPI ingest 形状的测试依赖 |
+| 全量 CI 基线 | 工程 | API pytest、Web test、TypeScript、production build、lint 与 deterministic eval gate 全部进入流水线；修复默认临时会话后的过时持久化测试 |
+| 可执行 lint 基线 | 工程 | 排除生成型 Drizzle snapshots 等不应格式化内容，清理真实 a11y/import 诊断 |
+| 隔离与版本门禁 | 内核 | 跨 organization/workspace/ACL 零泄漏；未激活 generation 不可召回；替换失败旧版继续服务 |
+| 备份与恢复演练 | 运维 | 对目标部署执行独立 backup/restore，记录 RPO/RTO、负责人和失败处理路径 |
+| 安全边界 | 运维 | 生产密钥、内部 HMAC、Redis replay、公网入口与最小权限配置通过检查 |
+| 最低可运维观测 | 运行 | 关联 ID、结构化日志、健康指标和核心告警可用；保留业务 Trace Drawer。完整 OTel 覆盖和集中平台不阻塞 P0 |
+| Usage 原始采集 | 运行 | 采集 Chat/Embedding token 与模型维度到 trace/usage ledger；成本核算和 Workspace 面板后置 |
+| 控制面 E2E | 工程 | 覆盖上传→ready→ask→替换→ACL→删除 |
+| 试点 go/no-go 签字 | 交付 | 根据目标环境完成隔离、故障注入、恢复与运维责任验收，形成书面 Conditional GO |
 
-### 中期（模式 B + 受限加强）
+### P1 / 中期：稳定 Knowledge API
 
-目标：已有助手可「只接 RAG」；表格等多步路径更稳。
+目标：客户业务系统能管理知识生命周期并稳定调用 Retrieve/Answer，不依赖 Workspace UI。
 
-| 项 | 模式 | 说明 |
+| 项 | 面向 | 说明 |
 |----|------|------|
-| Service key + 外部 retrieve/ask 契约 | B | **MVP 已落地（方案 A）**：`mk_svc_` + `/api/v1/retrieve|ask`；见 [INTEGRATION.md](./INTEGRATION.md)。后续：OpenAPI/错误码硬化、流式对外、MCP |
-| 稳定 OpenAPI / 错误码 / 引用 schema 版本化 | B | 客户集成合同 |
-| MCP 适配（后置） | B | 在 HTTP 契约稳定后薄封装，不先做工具市场 |
-| 表格 / 受限多步加强 | A+B | 在现有 table path 上加深，不做开放工具生态 |
-| 多粒度索引（section/doc summary） | A+B | 评测证明收益后再开 |
-| 线上反馈 → eval case 闭环产品化 | A | L7 流程已有骨架 |
+| Service Key + Retrieve/Ask MVP | API | **已落地**：`mk_svc_` + `/api/v1/retrieve|ask` |
+| Answer 契约与 Ask 兼容期 | API | 新产品术语采用 Answer；定义 `/answer`、`/answer/stream` 与 `/ask` 废弃周期 |
+| 稳定 OpenAPI | API | 冻结请求、citation、refusal、pagination、错误码和版本策略 |
+| Documents / Versions / Jobs | API | 外部上传、替换、删除、状态查询复用 Control Plane 与 `app.jobs`；支持 idempotency key |
+| Service Key scopes v2 | 安全 | `documents:read/write`、`retrieve`、`answer` 等最小权限 scope；限流与完整审计 |
+| Feedback / Trace API | 质量 | 集成方可回传反馈并按 trace_id 获取脱敏调试信息 |
+| 对外流式 Answer | API | 稳定 SSE 事件、断线与错误语义 |
+| 表格 / 受限多步加强 | 内核 | 在现有 table path 上加深，不做开放工具生态 |
+| 线上反馈 → eval case | 质量 | 形成反馈审核、回归用例与发布门禁闭环 |
 
-### 远期（可选加深，不挡首版）
+### P2 / 中后期：开发者接入面
+
+目标：在稳定 HTTP 契约上降低集成成本。
 
 | 项 | 说明 |
 |----|------|
-| 独立引擎包（PyPI） | 仅当模式 B 契约被多客户验证后 |
+| Python SDK | 同步/异步 client、Pydantic 类型、SSE、重试、幂等与标准错误；SDK 不嵌完整引擎 |
+| MCP Server | 首版只读 `search_knowledge`、`answer_with_sources`、`get_source` |
+| OpenAI-compatible adapter | 兼容现有 client；citation/refusal/trace 放扩展字段，原生 API 仍权威 |
+| TypeScript SDK | 在 Python SDK 和 OpenAPI 经真实集成验证后生成或实现 |
+| Reference integrations | 客服/售后、企业 Agent、内部门户示例，而不只提供 curl |
+
+### P3 / 远期：企业增强与场景能力加深
+
+| 项 | 说明 |
+|----|------|
+| OIDC / SSO 与组织同步 | 企业增强；本地密码 + 邀请不阻塞受控试点 |
+| SBOM / 镜像扫描 | 采购与供应链安全增强；按客户合规要求进入具体交付，不绑定通用 P0 |
+| Audit / Archive 深化 | actor/IP/UA、异步导出、更多 query/plan/judge/版本字段 |
+| 成本分析面板 | 基于已采集 usage ledger 提供工作区、模型和时间维度分析 |
+| Group ACL 管理 | 在现有 workspace / 指定成员 ACL 上补 group UI 和组织映射 |
+| 独立引擎包（PyPI） | 默认不做；只有多客户明确需要嵌入式运行且能保持治理不变量时再评估 |
 | Connector 增量同步 | 企业网盘/wiki；非上传替代而是补充 |
 | DuckDB / 超大表执行 | 表格路径上限抬高 |
+| 多粒度索引 | section/doc summary 等必须由评测证明收益 |
 | 云 SaaS 计费与多 region | 私有化优先后再谈 |
 | LlamaIndex 等检索实现 A/B | 必须服从 active generation + ACL，不得拥有 Job/权限事实 |
 
 ---
 
-## 模式 A / B 对照
+## 使用方式对照
 
-| 维度 | 模式 A（完整助手） | 模式 B（RAG 嵌入） |
+| 维度 | 官方 Workspace | 客户系统嵌入 |
 |------|-------------------|-------------------|
-| UI | MeriKnow Northline 工作台 | 客户自有 Chat/Agent UI |
-| 身份 | Session + 工作区成员 | Service key（`mk_svc_`）；OAuth-for-apps 仍规划 |
-| 入库 | 控制面文库 UI + lifecycle | 可复用同一入库，或客户只读已有库 |
+| UI | MeriKnow Northline 工作台 | 客户自有业务系统 / Chat / Agent |
+| 身份 | Session + 工作区成员 | Service key（`mk_svc_`）；OAuth-for-apps 当前非目标 |
+| 入库 | 控制面文库 UI + lifecycle | 目标为 Knowledge API Documents/Jobs；当前可复用 Workspace 入库 |
 | 问答 | `/app/ask` → BFF → `/v1/ask` | `/api/v1/retrieve` · `/api/v1/ask`（Bearer）→ 内网 FastAPI |
-| Agent 运行时 | 我们的 Ask 图即可 | **不要求**使用我们的 Agent/工具生态 |
-| 当前可用性 | **主路径可用** | **对外 HTTP MVP 可用**；MCP / OpenAPI 版本化仍规划 |
+| Agent 运行时 | 官方 Ask 图 | **不要求**使用我们的 Agent/工具生态 |
+| 当前可用性 | **主路径可用** | **Retrieve/Ask MVP 可用**；完整 Knowledge API / SDK / MCP 仍规划 |
+
+两种方式共享一个 Knowledge Service，不是两套产品、两套索引或两套权限系统。
 
 ## 明确不做（路线图纪律）
 
@@ -114,6 +154,7 @@
 - 公网裸 FastAPI
 - 每轮强制归档 / 用户画像长期记忆
 - 为「看起来像 SaaS 平台」而堆计费与多 region
+- OAuth-for-apps；只有明确建设公网多租户开发者平台时才重新评估
 
 ## 已退役文档
 

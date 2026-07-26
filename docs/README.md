@@ -4,10 +4,11 @@
 
 | 文档 | 内容 |
 |------|------|
-| [PRODUCT.md](./PRODUCT.md) | 一句话定位、双模式、边界、成功标准 |
-| [ROADMAP.md](./ROADMAP.md) | 近中远期、开始前 checklist、模式 A/B 对照 |
+| [PRODUCT.md](./PRODUCT.md) | 一句话定位、使用方式、边界、成功标准 |
+| [STRATEGY.md](./STRATEGY.md) | 产品层级、目标客户、首发场景、商业化与面试叙事 |
+| [ROADMAP.md](./ROADMAP.md) | 近中远期、开始前 checklist、交付优先级 |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 控制面 / 数据面、入库、会话、Ask 流水线 |
-| [INTEGRATION.md](./INTEGRATION.md) | 模式 B：已实现 vs 规划中契约 |
+| [INTEGRATION.md](./INTEGRATION.md) | Knowledge API：已实现 vs 规划中契约 |
 | [DEV.md](./DEV.md) | 本地启动与 env 分层 |
 
 仓库根 [README.md](../README.md) 是入口摘要。

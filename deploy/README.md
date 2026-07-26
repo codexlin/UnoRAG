@@ -78,7 +78,7 @@ cd deploy/compose
 
 ## 供应链 / SBOM（薄说明）
 
-完整 SBOM + CVE 扫描流水线仍后置，不阻塞 L8/L9 工程交付。交付前建议：
+完整 SBOM + CVE 扫描流水线仍后置，不阻塞通用受控试点 P0。交付前建议：
 
 1. 确认 `env.example` / values 中基础镜像 tag 已 pin；  
 2. 对构建出的 `meriknow-web` / `meriknow-api` 镜像自行运行 `syft` / `trivy`（或客户等价工具）并归档；  
@@ -93,4 +93,4 @@ cd deploy/compose
 | 镜像 digest 锁定与私有 registry 推送 | 客户环境按 registry 策略固化 |
 | MinIO/S3 一等公民对象后端 | 默认共享卷 / PVC；S3 适配另开 |
 
-生产验收以路线图 L9 go/no-go 签字为准；仅有部署包不能宣称 production-ready。
+生产验收以 `docs/acceptance/` 的部署级 go/no-go 签字为准；仅有部署包不能宣称 production-ready。

@@ -121,11 +121,11 @@ dead/stuck/orphan 进入监控和运维队列
 2. 勾选 [`production-ready-checklist.md`](../acceptance/production-ready-checklist.md)。  
 3. 仅当结论为 **GO** 且清单允许时，才可宣称 production-ready。  
 
-**仓库内 L9 文档与脚本就绪 ≠ 已获得客户/试点 GO。**
+**仓库内验收文档与脚本就绪 ≠ 已获得客户/试点 GO。**
 
 ## 8. 供应链（SBOM）说明
 
-L8/L9 不阻塞完整 SBOM 流水线。操作建议：
+受控试点 P0 不阻塞完整 SBOM 流水线。操作建议：
 
 - Compose / Helm 已 pin 基础镜像 tag（见 `deploy/compose/env.example`）。  
 - 客户交付前可自行对构建产物运行 `syft` / `trivy` 等并归档。  
