@@ -11,7 +11,7 @@
 | 原始 structured-retrieval 基线（RC1） | `b98f01438045c92804204449d3172ceb201490e6` |
 | **RC2（实际验收运行提交）** | `26e70906cbc17c7955d4b5f71e409ccfb95a6355` |
 | 说明 | `b98f014..26e7090` 含产品改动：`apps/api/app/routers/ask.py`、`apps/web/src/lib/server/rag-proxy.ts`（harden：错误关联 / request id）。最新 PASS 证明的是 **RC2**，不是 RC1。 |
-| 证据收口 commit | （本报告提交后的 HEAD；见 git log） |
+| 证据收口 commit | `21c61682e122714a44d70d39889663020adf4819`（本报告 + 脚本默认 rc_sha=HEAD） |
 | B2/R 脚本默认 `rc_sha` | 默认 `git rev-parse HEAD`；本轮显式 `MERIKNOW_RC_SHA=26e7090…` |
 | `.b2_last_run.json` sha256 | `ec8fb1d4c11d2daf5f424ac17ce6d08828c03d4caf4d6ee61b71b0bbf2194805` |
 | `.r_fault_last_run.json` sha256 | `dc8d53b1d46730132f8917a9db701d5e750b1acddc3888735a95b11504a61287` |
