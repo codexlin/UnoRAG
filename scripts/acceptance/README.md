@@ -95,4 +95,5 @@ MERIKNOW_BASE_URL=http://localhost:3000 \
 
 - [`../../docs/acceptance/reports/2026-07-26-pilot-rc-s1-s2.md`](../../docs/acceptance/reports/2026-07-26-pilot-rc-s1-s2.md)  
 - [`../../docs/acceptance/reports/2026-07-26-pilot-rc-b2-r-fault.md`](../../docs/acceptance/reports/2026-07-26-pilot-rc-b2-r-fault.md)  
+- [`../../docs/acceptance/reports/2026-07-27-pilot-rc-b3-b4.md`](../../docs/acceptance/reports/2026-07-27-pilot-rc-b3-b4.md)  
 - 观测草稿：[`../../docs/acceptance/observability-min-runbook.md`](../../docs/acceptance/observability-min-runbook.md)  

@@ -103,7 +103,7 @@ MERIKNOW_RC_SHA=a79d2a53c5ecb32423dae179bdb05784af187a46 \
 | B2 独立恢复 | **PASS**（RC2-X：备份完成延迟 5s / 丢失 0 / RTO 22s；目标 RPO 未定义；真 Qdrant↔PG exact match；porcelain 空） |
 | R1 / R2 / R4 | PASS（本文；**未**重跑 R2） |
 | R3（收紧后） | **PASS**（RC2-X 干净树复跑；sha256 已绑） |
-| B3/B4 升级/回滚演练 | 仍缺 |
+| B3/B4 升级/回滚演练 | **PASS**（见 [`2026-07-27-pilot-rc-b3-b4.md`](./2026-07-27-pilot-rc-b3-b4.md)；绑 `88b72d9`） |
 | B5 容量/告警接通 | 仍缺（仅有观测草稿） |
 | 完整 Grafana/告警 | 非本轮；仅最低 runbook |
 | OIDC / SDK / MCP / 成本面板 | 明确不做 |
@@ -112,5 +112,5 @@ MERIKNOW_RC_SHA=a79d2a53c5ecb32423dae179bdb05784af187a46 \
 ## 建议下一步
 
 1. 把本文 + S1/S2 报告勾进 `pilot-go-no-go-template` 副本，请审批人 **Conditional GO**（勿勾正式 GO）。  
-2. 补 B3 升级冒烟与 B4 回滚（`scripts/acceptance/b3_b4_upgrade_rollback.sh`）。  
+2. ~~补 B3/B4~~ → 已闭合，见 [`2026-07-27-pilot-rc-b3-b4.md`](./2026-07-27-pilot-rc-b3-b4.md)。  
 3. 接通 B5 最低告警（webhook）：Qdrant/Ask health、worker heartbeat、dead/stuck jobs、Ask 5xx、磁盘 85%。  

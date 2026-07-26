@@ -29,7 +29,8 @@
 | [`../../scripts/acceptance/r_fault_injection.sh`](../../scripts/acceptance/r_fault_injection.sh) | **R1–R4** Worker / Qdrant / 模型 / MinerU 故障注入 |
 | [`observability-min-runbook.md`](./observability-min-runbook.md) | 最低观测/告警草稿（`trace_id` → 网关/模型/检索/DB/Worker） |
 | [`../../scripts/acceptance/README.md`](../../scripts/acceptance/README.md) | 验收脚本如何跑、依赖、退出码 |
-| [`reports/2026-07-26-pilot-rc-b2-r-fault.md`](./reports/2026-07-26-pilot-rc-b2-r-fault.md) | B2 + R1–R4 实测片段（绑 RC `b98f014`） |
+| [`reports/2026-07-26-pilot-rc-b2-r-fault.md`](./reports/2026-07-26-pilot-rc-b2-r-fault.md) | B2 + R1–R4 实测片段（RC2-X `a79d2a5`） |
+| [`reports/2026-07-27-pilot-rc-b3-b4.md`](./reports/2026-07-27-pilot-rc-b3-b4.md) | B3/B4 升级 + 回滚实测（绑 `88b72d9`） |
 
 退出码约定（上述脚本一致）：
 
