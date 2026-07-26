@@ -23,12 +23,14 @@
 |---|---|
 | [`../../deploy/compose/scripts/pilot-smoke.sh`](../../deploy/compose/scripts/pilot-smoke.sh) | Compose 栈上的控制面冒烟：login → upload → ask → replace → delete |
 | [`../../deploy/compose/scripts/pilot-preflight.sh`](../../deploy/compose/scripts/pilot-preflight.sh) | 离线隔离单测 + CI 质量门禁（无 Compose 也可跑） |
+| [`../../scripts/acceptance/s1_s2_isolation.sh`](../../scripts/acceptance/s1_s2_isolation.sh) | **S1/S2** 多组织/多工作区可重复隔离验收（Retrieve+Ask+IDOR+restricted ACL） |
+| [`../../scripts/acceptance/README.md`](../../scripts/acceptance/README.md) | S1/S2 如何跑、依赖、退出码 |
 
-退出码约定（两脚本一致）：
+退出码约定（上述脚本一致）：
 
 - `0` — 通过  
 - `1` — 失败（阻断 go）  
-- `2` — 跳过（服务/密钥/依赖不可用；不算通过，也不算产品缺陷）
+- `2` — 跳过 / BLOCKED（服务/密钥/依赖不可用；不算通过，也不算产品缺陷）
 
 ## 宣称 production-ready 的条件
 

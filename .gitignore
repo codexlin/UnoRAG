@@ -22,3 +22,6 @@ __pycache__/
 .pytest_cache/
 # Local document store / process pids / ad-hoc eval outputs (never commit)
 .meriknow/
+# Acceptance local run artifacts (passwords / keys / last JSON reports)
+scripts/acceptance/.isolation-topology.json
+scripts/acceptance/.s1_s2_last_run.json
