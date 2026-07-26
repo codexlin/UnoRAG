@@ -26,5 +26,7 @@ __pycache__/
 scripts/acceptance/.isolation-topology.json
 scripts/acceptance/.s1_s2_last_run.json
 scripts/acceptance/.b2_last_run.json
+scripts/acceptance/.b2_last_run.json.sha256
 scripts/acceptance/.r_fault_last_run.json
+scripts/acceptance/.r_fault_last_run.json.sha256
 scripts/acceptance/.b2-work/

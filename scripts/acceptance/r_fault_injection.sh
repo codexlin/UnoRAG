@@ -58,9 +58,13 @@ PY
 }
 
 write_report() {
-	python3 - "$REPORT_JSON" "$1" "$2" "$RC_SHA" "$SCRIPT_SHA" "$BASE_URL" "$CHECKS_FILE" <<'PY' || true
-import json, sys, pathlib, time
-out, status, detail, rc, script, base, checks_path = sys.argv[1:8]
+	local git_head git_porcelain
+	git_head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+	git_porcelain="$(git -C "$ROOT" status --porcelain 2>/dev/null | tr '\n' '|' | head -c 2000 || true)"
+	python3 - "$REPORT_JSON" "$1" "$2" "$RC_SHA" "$SCRIPT_SHA" "$BASE_URL" "$CHECKS_FILE" \
+		"$git_head" "$git_porcelain" <<'PY' || true
+import json, sys, pathlib, time, hashlib, os
+out, status, detail, rc, script, base, checks_path, git_head, git_porcelain = sys.argv[1:10]
 checks=[]
 for line in pathlib.Path(checks_path).read_text(encoding="utf-8").splitlines():
 	if line.strip():
@@ -82,13 +86,28 @@ payload={
 	"detail": detail,
 	"rc_sha": rc,
 	"script_sha": script,
+	"git_head": git_head,
+	"git_status_porcelain": git_porcelain or "",
+	"runtime": {
+		"web": "local-process",
+		"api": "local-process",
+		"base_url": base,
+	},
 	"base_url": base,
 	"cases": cases,
 	"checks": checks,
 	"finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
 }
-pathlib.Path(out).write_text(json.dumps(payload, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
+text = json.dumps(payload, ensure_ascii=False, indent=2)+"\n"
+path = pathlib.Path(out)
+path.write_text(text, encoding="utf-8")
+os.chmod(path, 0o600)
+digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+meta = path.with_suffix(path.suffix + ".sha256")
+meta.write_text(digest + "  " + path.name + "\n", encoding="utf-8")
+os.chmod(meta, 0o600)
 print(f"report → {out}")
+print(f"sha256 → {digest}")
 PY
 }
 
@@ -215,6 +234,22 @@ ensure_lifecycle_worker() {
 	sleep 2
 	pid="$(find_lifecycle_pid)"
 	[[ -n "$pid" ]]
+}
+
+# uvicorn --reload does not watch .env; touch a watched module so Settings re-reads env_file.
+bounce_api_for_env() {
+	local reason="${1:-env change}" i code
+	log "  bounce API for $reason (touch settings.py → uvicorn --reload)"
+	touch "$ROOT/apps/api/app/settings.py"
+	sleep 2
+	for i in $(seq 1 40); do
+		code="$(http_code "$BASE_URL/api/rag/health")"
+		if [[ "$code" == "200" ]]; then
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
 }
 
 # ---------- R1 ----------
@@ -466,53 +501,133 @@ EOF
 	auth_curl -o "$doc_before" "$BASE_URL/api/libraries/${lib_id}/documents/${doc_id}/versions" >/dev/null
 
 	log "  inject: $inject"
+	# Break both aliases — llm_base_url prefers openai_base_url then dashscope_base_url.
 	env_set_key "$API_ENV" OPENAI_BASE_URL "http://127.0.0.1:1"
-	# touch to encourage reload
+	env_set_key "$API_ENV" DASHSCOPE_BASE_URL "http://127.0.0.1:1"
 	touch "$API_ENV"
-	sleep 5
-	pass_case "R3.inject" "$inject"
+	if ! bounce_api_for_env "OPENAI/DASHSCOPE_BASE_URL=dead"; then
+		fail_case "R3.inject" "API did not become healthy after env bounce"
+		restore_api_env
+		bounce_api_for_env "restore" || true
+		return
+	fi
+	pass_case "R3.inject" "$inject (+ API reload)"
 
 	ask_req="$WORKDIR/r3-ask-req.json"
 	ask_body="$WORKDIR/r3-ask.json"
+	ask_hdrs="$WORKDIR/r3-ask.hdrs"
 	python3 - "$ask_req" "$lib_id" <<'PY'
 import json, sys
 json.dump({"library_id": sys.argv[2], "question": "Summarize the R3_MODEL marker document."}, open(sys.argv[1],"w"))
 PY
+	# Capture response headers for X-Request-Id correlation.
 	code="$(
-		auth_curl -o "$ask_body" -w '%{http_code}' \
+		auth_curl -D "$ask_hdrs" -o "$ask_body" -w '%{http_code}' \
 			-H 'content-type: application/json' \
 			-d @"$ask_req" \
 			"$BASE_URL/api/rag/v1/ask" || true
 	)"
-	python3 - "$ask_body" "$code" <<'PY'
-import json, sys
-path, code = sys.argv[1], int(sys.argv[2])
-raw=open(path, encoding="utf-8").read()
+	# Hardened PASS (either):
+	#   A) HTTP 4xx/5xx + standard error body + request/trace id
+	#   B) HTTP 200 + refused=true + refuse_reason/error_code + trace_id or X-Request-Id
+	# Explicitly reject: HTTP 200 + empty/soft answer without refused.
+	local r3_eval="$WORKDIR/r3-ask-eval.json"
+	if python3 - "$ask_body" "$ask_hdrs" "$code" "$r3_eval" <<'PY'
+import json, sys, re
+path, hdr_path, code_s, out_path = sys.argv[1:5]
+code = int(code_s)
+raw = open(path, encoding="utf-8").read()
 try:
-	data=json.loads(raw)
+	data = json.loads(raw)
 except Exception:
-	data={"_raw": raw[:500]}
-trace = data.get("trace_id") or (data.get("debug") or {}).get("trace_id") or data.get("request_id")
+	data = {"_raw": raw[:500]}
+hdrs = open(hdr_path, encoding="utf-8", errors="ignore").read()
+m = re.search(r"(?im)^x-request-id:\s*(\S+)", hdrs)
+x_request_id = m.group(1).strip() if m else ""
+debug = data.get("retrieval_debug") or data.get("debug") or {}
+if not isinstance(debug, dict):
+	debug = {}
+trace = (
+	data.get("trace_id")
+	or debug.get("trace_id")
+	or data.get("request_id")
+	or x_request_id
+	or ""
+)
 refused = data.get("refused") is True
-err = str(data.get("detail") or data.get("error") or data.get("error_code") or "")
+refuse_reason = data.get("refuse_reason")
+error_code = data.get("error_code") or data.get("code")
+detail = data.get("detail")
+err = ""
+if isinstance(detail, dict):
+	err = str(detail.get("message") or detail.get("error") or detail.get("code") or detail)
+elif detail is not None:
+	err = str(detail)
+if not err:
+	err = str(data.get("error") or error_code or "")
 answer = data.get("answer") or ""
-http_fail = code >= 400
-# Must be an explicit failure/refuse — not a normal fluent answer pretending success
-ok = http_fail or refused or bool(err) or (code == 200 and (not answer or any(x in (answer+err+raw).lower() for x in ("error", "fail", "unavailable", "超时", "失败", "无法", "拒"))))
-print(json.dumps({"http": code, "trace_id": trace, "refused": refused, "ok": ok, "err": err[:160]}, ensure_ascii=False))
+has_corr = bool(str(trace).strip() or str(x_request_id).strip())
+# Standard error for 4xx/5xx: structured JSON detail/error OR non-empty error body
+# (FastAPI/Next may surface plain "Internal Server Error").
+if not err.strip() and code >= 400 and raw.strip():
+	err = raw.strip()[:160]
+has_standard_error = bool(err.strip())
+path_a = code >= 400 and has_standard_error and has_corr
+path_b = (
+	code == 200
+	and refused
+	and bool(str(refuse_reason or error_code or "").strip())
+	and has_corr
+)
+ok = path_a or path_b
+soft_empty = code == 200 and not refused and (not answer or not str(answer).strip())
+if soft_empty:
+	ok = False
+summary = {
+	"http": code,
+	"refused": refused,
+	"refuse_reason": refuse_reason,
+	"error_code": error_code,
+	"err": (err or "")[:160],
+	"trace_id": trace or None,
+	"x_request_id": x_request_id or None,
+	"path": "A" if path_a else ("B" if path_b else "none"),
+	"ok": ok,
+}
+open(out_path, "w", encoding="utf-8").write(json.dumps(summary, ensure_ascii=False) + "\n")
+print(json.dumps(summary, ensure_ascii=False))
 raise SystemExit(0 if ok else 1)
 PY
-	if [[ $? -ne 0 ]]; then
-		fail_case "R3.ask" "Ask did not clearly fail HTTP=$code body=$(head -c 240 "$ask_body")"
+	then
+		local r3_summary
+		r3_summary="$(python3 -c "import json;d=json.load(open('$r3_eval'));print(f\"HTTP={d['http']} refused={d['refused']} refuse_reason={d.get('refuse_reason') or d.get('error_code') or d.get('err') or '-'} trace/request_id={d.get('trace_id') or d.get('x_request_id') or 'n/a'} path={d.get('path')}\")" 2>/dev/null || true)"
+		pass_case "R3.ask" "hardened explicit error/refuse ${r3_summary:-HTTP=$code}"
 	else
-		local trace
-		trace="$(python3 -c "import json;d=json.load(open('$ask_body'));print(d.get('trace_id') or (d.get('debug') or {}).get('trace_id') or '')" 2>/dev/null || true)"
-		pass_case "R3.ask" "explicit error/refuse HTTP=$code trace_id=${trace:-n/a}"
+		fail_case "R3.ask" "hardened criteria not met HTTP=$code body=$(head -c 240 "$ask_body") hdrs=$(head -c 160 "$ask_hdrs")"
+		# Still verify index was not corrupted, then restore env and stop (no false R3 PASS).
+		doc_after="$WORKDIR/r3-doc-after.json"
+		auth_curl -o "$doc_after" "$BASE_URL/api/libraries/${lib_id}/documents/${doc_id}/versions" >/dev/null || true
+		if python3 - "$doc_before" "$doc_after" <<'PY'
+import json, sys
+a=json.load(open(sys.argv[1], encoding="utf-8"))
+b=json.load(open(sys.argv[2], encoding="utf-8"))
+assert a.get("active_version_id") == b.get("active_version_id")
+PY
+		then
+			pass_case "R3.index" "active document metadata unchanged doc_id=$doc_id"
+		else
+			fail_case "R3.index" "document metadata changed after model outage"
+		fi
+		restore_api_env
+		API_ENV_BACKUP=""
+		bounce_api_for_env "restore OPENAI/DASHSCOPE_BASE_URL" || true
+		pass_case "R3.recover" "OPENAI_BASE_URL/DASHSCOPE_BASE_URL restored"
+		return
 	fi
 
 	doc_after="$WORKDIR/r3-doc-after.json"
 	auth_curl -o "$doc_after" "$BASE_URL/api/libraries/${lib_id}/documents/${doc_id}/versions" >/dev/null
-	python3 - "$doc_before" "$doc_after" <<'PY' || { fail_case "R3.index" "document metadata changed after model outage"; restore_api_env; return; }
+	if ! python3 - "$doc_before" "$doc_after" <<'PY'
 import json, sys
 a=json.load(open(sys.argv[1], encoding="utf-8"))
 b=json.load(open(sys.argv[2], encoding="utf-8"))
@@ -526,12 +641,19 @@ def gen(d):
 assert gen(a)==gen(b), (gen(a), gen(b))
 print("index intact")
 PY
+	then
+		fail_case "R3.index" "document metadata changed after model outage"
+		restore_api_env
+		API_ENV_BACKUP=""
+		bounce_api_for_env "restore OPENAI/DASHSCOPE_BASE_URL" || true
+		return
+	fi
 	pass_case "R3.index" "active document metadata unchanged doc_id=$doc_id"
 
 	restore_api_env
 	API_ENV_BACKUP=""
-	sleep 4
-	pass_case "R3.recover" "OPENAI_BASE_URL restored"
+	bounce_api_for_env "restore OPENAI/DASHSCOPE_BASE_URL" || true
+	pass_case "R3.recover" "OPENAI_BASE_URL/DASHSCOPE_BASE_URL restored"
 	pass_case "R3" "PASS inject=[$inject] expect=[$expect] doc_id=$doc_id"
 }
 

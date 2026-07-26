@@ -271,10 +271,17 @@ export async function proxyRagRequest(
 		const upstream = await fetch(upstreamUrl, init);
 		// L6: no dual-write / document-list probe sync into app.documents.
 		// Control-plane routes own product metadata; Ask/retrieval stay HMAC-proxied.
+		const headers = downstreamHeaders(upstream);
+		// Echo the internal request id on every proxied response (incl. upstream 5xx)
+		// so fault drills / operators can correlate without relying on body shape.
+		const requestId = signedHeaders.get("x-request-id");
+		if (requestId && !headers.get("x-request-id")) {
+			headers.set("x-request-id", requestId);
+		}
 		return new Response(upstream.body, {
 			status: upstream.status,
 			statusText: upstream.statusText,
-			headers: downstreamHeaders(upstream),
+			headers,
 		});
 	} catch (error) {
 		const message =

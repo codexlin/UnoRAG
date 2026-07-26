@@ -108,14 +108,30 @@ def ask(
 ) -> AskResponse:
 	library_id = _require_library_id(body.library_id)
 	thread_id = _resolve_thread_id(body.thread_id, meta=meta, context=context)
-	return service.ask(
-		question=body.question,
-		library_id=library_id,
-		session_id=body.session_id,
-		thread_id=thread_id,
-		trace_id=_trace_id_for_request(request, context),
-		ask_overrides=body.ask_overrides,
-	)
+	trace_id = _trace_id_for_request(request, context)
+	try:
+		return service.ask(
+			question=body.question,
+			library_id=library_id,
+			session_id=body.session_id,
+			thread_id=thread_id,
+			trace_id=trace_id,
+			ask_overrides=body.ask_overrides,
+		)
+	except HTTPException:
+		raise
+	except Exception as exc:
+		# Fault drills / operators need a structured 5xx (not a bare 500 text body)
+		# with correlatable request/trace id when the model/embedding upstream dies.
+		logger.exception("ask.upstream_failed trace_id=%s", trace_id)
+		raise HTTPException(
+			status_code=503,
+			detail={
+				"message": "ask unavailable: upstream model or embedding failed",
+				"error_code": "llm_upstream_unavailable",
+				"trace_id": trace_id,
+			},
+		) from exc
 
 
 @router.post("/ask/stream")

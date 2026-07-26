@@ -44,27 +44,74 @@ PIDS=()
 PHASE="init"
 STATUS="BLOCKED"
 DETAIL=""
-RPO_SEC=""
+BACKUP_COMPLETE_DELAY_SEC=""
 RTO_SEC=""
 BACKUP_DIR=""
 BASELINE_JSON=""
 T_DISASTER=""
 T_RESTORE_DONE=""
 CHECKS_FILE=""
+# In-memory only — never persisted to baseline/report JSON.
+RUNTIME_SVC_KEY=""
+DATA_LOSS_COUNT=""
+QDRANT_PG_NOTE=""
 
 log() { printf '==> %s\n' "$*"; }
 warn() { printf '!!  %s\n' "$*" >&2; }
 
+secure_chmod() {
+	local f="$1"
+	[[ -f "$f" ]] || return 0
+	chmod 0600 "$f" 2>/dev/null || true
+}
+
+sanitize_service_key_file() {
+	# Rewrite a JSON file that may contain a one-time plaintext service key.
+	local f="$1"
+	[[ -f "$f" ]] || return 0
+	python3 - "$f" <<'PY'
+import json, sys, pathlib
+path = pathlib.Path(sys.argv[1])
+try:
+	data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+	raise SystemExit(0)
+changed = False
+if isinstance(data, dict):
+	if isinstance(data.get("key"), str) and data["key"]:
+		data["key_last4"] = data["key"][-4:]
+		data.pop("key", None)
+		changed = True
+	if isinstance(data.get("service_key"), str) and data["service_key"]:
+		data["service_key_last4"] = data["service_key"][-4:]
+		data.pop("service_key", None)
+		changed = True
+	if isinstance(data.get("prefix"), str) and data.get("prefix", "").startswith("mk_svc"):
+		# keep short prefix as returned by API; do not expand
+		pass
+if changed:
+	path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+	secure_chmod "$f"
+}
+
 write_report() {
 	STATUS="$1"
 	DETAIL="$2"
+	local git_head git_porcelain web_ver api_ver evidence_sha
+	git_head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+	git_porcelain="$(git -C "$ROOT" status --porcelain 2>/dev/null | tr '\n' '|' | head -c 2000 || true)"
+	web_ver="local-process"
+	api_ver="local-process"
 	python3 - "$REPORT_JSON" "$STATUS" "$DETAIL" "$RC_SHA" "$SCRIPT_SHA" "$MODE" \
-		"$RPO_SEC" "$RTO_SEC" "$BACKUP_DIR" "$CHECKS_FILE" "$BASELINE_JSON" <<'PY' || true
-import json, sys, pathlib, time
+		"$BACKUP_COMPLETE_DELAY_SEC" "$RTO_SEC" "$BACKUP_DIR" "$CHECKS_FILE" "$BASELINE_JSON" \
+		"$git_head" "$git_porcelain" "$web_ver" "$api_ver" "${DATA_LOSS_COUNT:-}" "${QDRANT_PG_NOTE:-}" <<'PY' || true
+import json, sys, pathlib, time, hashlib, os
 (
 	out, status, detail, rc, script, mode,
-	rpo, rto, backup, checks_path, baseline_path,
-) = sys.argv[1:12]
+	backup_delay, rto, backup, checks_path, baseline_path,
+	git_head, git_porcelain, web_ver, api_ver, data_loss, qdrant_pg_note,
+) = sys.argv[1:18]
 checks = []
 p = pathlib.Path(checks_path) if checks_path else None
 if p and p.exists():
@@ -75,22 +122,47 @@ baseline = None
 bp = pathlib.Path(baseline_path) if baseline_path else None
 if bp and bp.exists():
 	baseline = json.loads(bp.read_text(encoding="utf-8"))
+# Never persist full service key material.
+if isinstance(baseline, dict):
+	sk = baseline.pop("service_key", None)
+	if isinstance(sk, str) and sk:
+		baseline["service_key_last4"] = sk[-4:]
+	baseline.pop("key", None)
 payload = {
 	"suite": "B2 independent restore",
 	"status": status,
 	"detail": detail,
 	"rc_sha": rc,
 	"script_sha": script,
+	"git_head": git_head,
+	"git_status_porcelain": git_porcelain or "",
 	"mode": mode,
-	"rpo_seconds": int(rpo) if rpo.isdigit() else None,
-	"rto_seconds": int(rto) if rto.isdigit() else None,
+	"runtime": {
+		"web": web_ver,
+		"api": api_ver,
+		"topology": "hybrid-local-process + compose infra volumes",
+	},
+	# Metrics: do NOT call write→backup-complete an RPO.
+	"backup_complete_delay_seconds": int(backup_delay) if str(backup_delay).isdigit() else None,
+	"data_loss_count": int(data_loss) if str(data_loss).isdigit() else None,
+	"rpo_target": "undefined (depends on backup schedule)",
+	"rto_seconds": int(rto) if str(rto).isdigit() else None,
 	"backup_dir": backup or None,
+	"qdrant_pg_consistency": qdrant_pg_note or None,
 	"baseline": baseline,
 	"checks": checks,
 	"finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
 }
-pathlib.Path(out).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+path = pathlib.Path(out)
+path.write_text(text, encoding="utf-8")
+os.chmod(path, 0o600)
+digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+meta = path.with_suffix(path.suffix + ".sha256")
+meta.write_text(digest + "  " + path.name + "\n", encoding="utf-8")
+os.chmod(meta, 0o600)
 print(f"report → {out}")
+print(f"sha256 → {digest}")
 PY
 }
 
@@ -553,6 +625,8 @@ EOF
 	local svc_key key_id
 	svc_key="$(json_get "$key_body" key)"
 	key_id="$(json_get "$key_body" id)"
+	RUNTIME_SVC_KEY="$svc_key"
+	sanitize_service_key_file "$key_body"
 
 	# Members list
 	local mem_body="$WORKDIR/members.json"
@@ -666,13 +740,14 @@ PY
 		"$lib_id" "$doc_id" "$marker" "$token" "$version_id" "$generation_id" \
 		"$citation_version" "$svc_key" "$key_id" "$member_count" \
 		"${thread_id:-}" "$obj_count" <<'PY'
-import json, sys
+import json, sys, os
 (
 	out, lib_id, doc_id, marker, token, version_id, generation_id,
 	citation_version, svc_key, key_id, member_count,
 	thread_id, obj_count,
 ) = sys.argv[1:]
-json.dump({
+# Never write the full service key — only id + last4.
+payload = {
 	"library_id": lib_id,
 	"document_id": doc_id,
 	"marker": marker,
@@ -681,11 +756,15 @@ json.dump({
 	"active_generation_id": generation_id or None,
 	"citation_version_id": citation_version or None,
 	"service_key_id": key_id,
-	"service_key": svc_key,
+	"service_key_last4": (svc_key[-4:] if svc_key else None),
 	"member_count": int(member_count),
 	"thread_id": thread_id or None,
 	"object_file_count": int(obj_count),
-}, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+}
+with open(out, "w", encoding="utf-8") as f:
+	json.dump(payload, f, ensure_ascii=False, indent=2)
+	f.write("\n")
+os.chmod(out, 0o600)
 print(f"baseline → {out}")
 PY
 	record "seed.baseline" pass "doc=$doc_id marker present objects=$obj_count"
@@ -710,11 +789,13 @@ verify_restored() {
 	marker="$(json_get "$BASELINE_JSON" marker)"
 	version_id="$(json_get "$BASELINE_JSON" active_version_id 2>/dev/null || true)"
 	generation_id="$(json_get "$BASELINE_JSON" active_generation_id 2>/dev/null || true)"
-	svc_key="$(json_get "$BASELINE_JSON" service_key)"
+	# Full key lives only in RUNTIME_SVC_KEY (never re-read from disk).
+	svc_key="${RUNTIME_SVC_KEY:-}"
 	key_id="$(json_get "$BASELINE_JSON" service_key_id)"
 	member_count="$(json_get "$BASELINE_JSON" member_count)"
 	citation_version="$(json_get "$BASELINE_JSON" citation_version_id 2>/dev/null || true)"
 	obj_before="$(json_get "$BASELINE_JSON" object_file_count)"
+	[[ -n "$svc_key" ]] || fail "RUNTIME_SVC_KEY missing — cannot verify Mode B without in-memory key"
 
 	local health="$WORKDIR/health.json"
 	code="$(curl -sS -o "$health" -w '%{http_code}' "$BASE_URL/api/rag/health" || true)"
@@ -867,27 +948,162 @@ PY
 		|| fail "Mode B ask unexpected HTTP $code $(head -c 200 "$mb")"
 	record "verify.mode_b_key" pass "service key accepted HTTP $code (restricted ACL may omit marker)"
 
-	# Qdrant ↔ PG: point count for collection > 0 and generation filter if available
-	python3 - "$DSN_PG" "http://127.0.0.1:${B2_QDRANT_PORT}" "${QDRANT_COLLECTION:-meriknow_chunks}" "$doc_id" <<'PY' || fail "Qdrant↔PG consistency check failed"
-import json, sys, urllib.request
-import subprocess
-dsn, qurl, coll, doc_id = sys.argv[1:5]
-# PG active generations
-sql = """
-SELECT count(*) FROM rag.document_versions WHERE document_id = %s AND is_active = true
+	# Qdrant ↔ PG: filter by org/workspace/doc/version/generation and compare counts.
+	local qpg_note
+	qpg_note="$(
+		python3 - "$DSN_PG" "http://127.0.0.1:${B2_QDRANT_PORT}" \
+			"${QDRANT_COLLECTION:-meriknow_chunks}" "$doc_id" \
+			"$ORG_ID" "$WS_ID" "$version_id" "$generation_id" \
+			"${B2_POSTGRES_PORT}" "$PG_PASSWORD" <<'PY'
+import json, sys, urllib.request, subprocess, re
+
+(
+	dsn, qurl, coll, doc_id, org_id, ws_id, want_version, want_gen,
+	pg_port, pg_password,
+) = sys.argv[1:11]
+
+sql = f"""
+SELECT
+  d.id::text,
+  d.rag_document_id,
+  d.organization_id::text,
+  d.workspace_id::text,
+  av.version_id::text,
+  v.generation_id::text,
+  coalesce(v.point_count::text, ''),
+  coalesce(v.chunk_count::text, ''),
+  v.status
+FROM app.documents d
+JOIN app.document_active_versions av ON av.document_id = d.id
+JOIN app.document_versions v ON v.id = av.version_id
+WHERE d.id = '{doc_id}'::uuid
 """
-# use dockerized psql via python? Prefer urllib only for qdrant; pg via subprocess psql if available
-# Fall back: qdrant collection points > 0
-req = urllib.request.Request(f"{qurl}/collections/{coll}", method="GET")
-with urllib.request.urlopen(req, timeout=10) as resp:
-	info = json.load(resp)
-pts = (((info.get("result") or {}).get("points_count"))
-	or ((info.get("result") or {}).get("indexed_vectors_count"))
-	or 0)
-assert int(pts) > 0, info
-print(f"qdrant points_count={pts}")
+
+def run_psql() -> str:
+	# Prefer host psql when available.
+	try:
+		return subprocess.check_output(
+			["psql", dsn, "-v", "ON_ERROR_STOP=1", "-At", "-F", "\t", "-c", sql],
+			text=True,
+			stderr=subprocess.STDOUT,
+		).strip()
+	except FileNotFoundError:
+		pass
+	except subprocess.CalledProcessError as exc:
+		raise SystemExit(f"host psql failed: {exc.output}") from exc
+	# Fallback: docker exec into the B2 postgres container publishing pg_port.
+	names = subprocess.check_output(
+		["docker", "ps", "--format", "{{.Names}}\t{{.Ports}}"], text=True
+	)
+	cname = None
+	for line in names.splitlines():
+		if f":{pg_port}->" in line or f"0.0.0.0:{pg_port}" in line or f"[::]:{pg_port}" in line:
+			cname = line.split("\t", 1)[0]
+			break
+	if not cname:
+		# compose naming fallback
+		for line in names.splitlines():
+			name = line.split("\t", 1)[0]
+			if "b2" in name and "postgres" in name:
+				cname = name
+				break
+	if not cname:
+		raise SystemExit(f"no B2 postgres container for port {pg_port}")
+	m = re.match(r"postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)", dsn)
+	if not m:
+		raise SystemExit(f"cannot parse DSN: {dsn}")
+	user, _pw, _host, _port, db = m.groups()
+	return subprocess.check_output(
+		[
+			"docker", "exec",
+			"-e", f"PGPASSWORD={pg_password}",
+			cname,
+			"psql", "-U", user, "-d", db,
+			"-v", "ON_ERROR_STOP=1", "-At", "-F", "\t", "-c", sql,
+		],
+		text=True,
+		stderr=subprocess.STDOUT,
+	).strip()
+
+out = run_psql()
+if not out:
+	raise SystemExit(f"no active generation row for document_id={doc_id}")
+cols = out.split("\t")
+(
+	_document_id, rag_doc_id, pg_org, pg_ws, pg_version, pg_gen,
+	point_count, chunk_count, status,
+) = (cols + [""] * 9)[:9]
+assert pg_org == org_id, (pg_org, org_id)
+assert pg_ws == ws_id, (pg_ws, ws_id)
+if want_version and want_version not in ("None", ""):
+	assert pg_version == want_version, (pg_version, want_version)
+if want_gen and want_gen not in ("None", ""):
+	assert pg_gen == want_gen, (pg_gen, want_gen)
+
+must = [
+	{"key": "tenant_id", "match": {"value": pg_org}},
+	{"key": "workspace_id", "match": {"value": pg_ws}},
+	{"key": "doc_id", "match": {"value": rag_doc_id}},
+	{"key": "document_version_id", "match": {"value": pg_version}},
+	{"key": "generation_id", "match": {"value": pg_gen}},
+]
+body = json.dumps({"exact": True, "filter": {"must": must}}).encode("utf-8")
+req = urllib.request.Request(
+	f"{qurl}/collections/{coll}/points/count",
+	data=body,
+	headers={"content-type": "application/json"},
+	method="POST",
+)
+with urllib.request.urlopen(req, timeout=20) as resp:
+	count_payload = json.load(resp)
+q_count = int((count_payload.get("result") or {}).get("count") or 0)
+assert q_count > 0, {"qdrant_count": q_count, "filter": must, "pg": cols}
+
+pg_points = int(point_count) if point_count not in ("", None) else None
+if pg_points is not None:
+	assert q_count == pg_points, {
+		"qdrant_count": q_count,
+		"pg_point_count": pg_points,
+		"rag_document_id": rag_doc_id,
+		"generation_id": pg_gen,
+	}
+
+scroll_body = json.dumps({
+	"limit": 1,
+	"with_payload": True,
+	"with_vector": False,
+	"filter": {"must": must},
+}).encode("utf-8")
+sreq = urllib.request.Request(
+	f"{qurl}/collections/{coll}/points/scroll",
+	data=scroll_body,
+	headers={"content-type": "application/json"},
+	method="POST",
+)
+with urllib.request.urlopen(sreq, timeout=20) as resp:
+	scroll = json.load(resp)
+points = (scroll.get("result") or {}).get("points") or []
+assert points, "scroll returned no points for active generation filter"
+payload = points[0].get("payload") or {}
+for key, expect in (
+	("tenant_id", pg_org),
+	("workspace_id", pg_ws),
+	("doc_id", rag_doc_id),
+	("document_version_id", pg_version),
+	("generation_id", pg_gen),
+):
+	assert str(payload.get(key)) == str(expect), (key, payload.get(key), expect)
+
+note = (
+	f"exact match qdrant_count={q_count} pg_point_count={pg_points} "
+	f"org={pg_org} ws={pg_ws} doc={rag_doc_id} version={pg_version} "
+	f"generation={pg_gen} status={status}"
+)
+print(note)
 PY
-	record "verify.qdrant_pg" pass "qdrant collection non-empty; doc still active in API"
+	)" || fail "Qdrant↔PG consistency check failed"
+	QDRANT_PG_NOTE="$qpg_note"
+	record "verify.qdrant_pg" pass "$qpg_note"
 
 	log "all post-restore checks passed"
 }
@@ -916,9 +1132,13 @@ BACKUP_DIR="$WORK_ROOT/backups/b2-$(date +%Y%m%dT%H%M%S)"
 T_BACKUP_START="$(now_epoch)"
 backup_hybrid "$PROJECT_SRC" "$BACKUP_DIR"
 T_BACKUP_END="$(now_epoch)"
-RPO_SEC=$((T_BACKUP_END - local_write_end))
-[[ "$RPO_SEC" -lt 0 ]] && RPO_SEC=0
-record "timing.rpo" pass "RPO=${RPO_SEC}s (write→backup complete)"
+BACKUP_COMPLETE_DELAY_SEC=$((T_BACKUP_END - local_write_end))
+[[ "$BACKUP_COMPLETE_DELAY_SEC" -lt 0 ]] && BACKUP_COMPLETE_DELAY_SEC=0
+# No writes after backup → observed data loss is 0. Target RPO is undefined (schedule-dependent).
+DATA_LOSS_COUNT=0
+record "timing.backup_complete_delay" pass "backup_complete_delay=${BACKUP_COMPLETE_DELAY_SEC}s (write→backup complete; not RPO)"
+record "timing.data_loss" pass "data_loss_count=0 (no post-backup writes)"
+record "timing.rpo_target" pass "rpo_target=undefined (depends on backup schedule)"
 
 PHASE="disaster"
 log "simulate disaster: stop apps + destroy source volumes"
@@ -936,9 +1156,9 @@ restore_hybrid "$PROJECT_DST" "$BACKUP_DIR"
 start_apps
 T_RESTORE_DONE="$(now_epoch)"
 RTO_SEC=$((T_RESTORE_DONE - T_DISASTER))
-record "timing.rto" pass "RTO=${RTO_SEC}s (disaster→apps ready)"
+record "timing.rto" pass "RTO=${RTO_SEC}s (disaster→apps ready; from this run)"
 
 PHASE="verify"
 verify_restored
 
-pass_exit "B2 PASS RPO=${RPO_SEC}s RTO=${RTO_SEC}s backup=$BACKUP_DIR"
+pass_exit "B2 PASS backup_complete_delay=${BACKUP_COMPLETE_DELAY_SEC}s data_loss=0 RTO=${RTO_SEC}s backup=$BACKUP_DIR"

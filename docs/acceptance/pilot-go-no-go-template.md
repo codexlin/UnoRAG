@@ -1,8 +1,9 @@
-# MeriKnow 试点验收报告（go / no-go）
+# MeriKnow 试点验收报告（go / conditional go / no-go）
 
 > 复制本模板为版本化文件，例如  
 > `docs/acceptance/reports/YYYY-MM-DD-<customer-or-env>-pilot.md`  
-> **禁止**在仓库中提交真实客户敏感内容；客户侧报告可外置保管。
+> **禁止**在仓库中提交真实客户敏感内容；客户侧报告可外置保管。  
+> **禁止**提交完整 Service Key / `.env` / 未脱敏 JSON。
 
 ## 元数据
 
@@ -67,7 +68,7 @@
 |---|---|---|---|---|
 | R1 | lifecycle-worker SIGTERM drain 后可恢复 claim | | | |
 | R2 | 短暂停止 Qdrant：health degraded；恢复后 Ask/ingest 正常 | | | |
-| R3 | 模型 endpoint 不可用：Ask 失败可定位，不破坏 active version | | | |
+| R3 | 模型 endpoint 不可用：Ask **明确**失败/拒答（禁止「HTTP 200 + 空 answer」算 PASS）；须有 `refused`+reason/error_code 或 4xx/5xx+标准错误，并带 trace/request id；active version 不被破坏 | | | |
 | R4 | MinerU/解析超时或 429：job retry/dead 可定位 | | | 无 MinerU 可 SKIP |
 | R5 | `pnpm lifecycle:inspect` 无不可解释的 dead/stuck/orphan 堆积 | | | |
 
@@ -76,10 +77,10 @@
 | ID | 检查项 | 结果 | 证据 | 备注 |
 |---|---|---|---|---|
 | B1 | `backup.sh` 产出完整 MANIFEST | | | 见 backup-restore-verification |
-| B2 | `restore.sh` 后 active / ACL / citation / 对象一致 | | | |
-| B3 | 升级演练（`upgrade.sh` 或镜像滚动）后冒烟通过 | | | |
-| B4 | 回滚演练（或书面回滚计划已确认） | | | |
-| B5 | 容量/磁盘/队列告警已接通或书面接受风险 | | | |
+| B2 | 独立环境 restore 后 active / ACL / citation / 对象一致；Qdrant↔PG 按 org/workspace/doc/version/generation **精确比对**（非仅 collection count>0） | | | 指标：备份完成延迟、本轮数据丢失、RTO；**勿**把 write→backup 叫作 RPO；目标 RPO 取决于备份周期（未定义则写明） |
+| B3 | 升级演练（`upgrade.sh` 或镜像滚动）后冒烟通过 | | | **本轮未做** |
+| B4 | 回滚演练（或书面回滚计划已确认） | | | **本轮未做** |
+| B5 | 容量/磁盘/队列告警已接通或书面接受风险 | | | **仅有观测草稿**，未接通告警 |
 
 ## 6. SLO（首版可测量行为）
 
@@ -116,15 +117,28 @@
 | CI gate 报告 | | |
 | Release gate 报告（若跑） | | |
 | `pilot-smoke.sh` 日志 | | |
+| B2 / R* 脱敏 JSON + SHA-256 | | 勿提交完整 key |
 
 ## 10. 结论
 
-- [ ] **GO** — 可标记该版本为试点通过，进入正式发布流程  
+勾选**恰好一项**：
+
+- [ ] **GO** — 可标记该版本为试点通过，进入正式发布流程（须 B3/B4 完成且 B5 告警接通或书面接受）  
+- [ ] **Conditional GO** — 受控试点可继续，但**不是**正式 GO；须列出未决项（例如 B3/B4 未做、B5 仅草稿、R3 硬化证据缺口等）  
 - [ ] **NO-GO** — 不可宣称 production-ready；列出阻断项  
 
 **决策人签字 / 日期：**
 
 **一句话理由：**
+
+**Conditional GO 未决项（若勾选）：**
+
+| # | 未决项 | 负责人 | 计划关闭条件 |
+|---|---|---|---|
+| 1 | B3 升级演练 | | |
+| 2 | B4 回滚演练 / 书面回滚 | | |
+| 3 | B5 容量/告警接通（当前仅观测草稿） | | |
+| 4 | | | |
 
 ---
 
@@ -133,5 +147,6 @@
 1. 任一安全硬熔断（§3）失败 → NO-GO  
 2. 任一 P0/P1 未清零 → NO-GO  
 3. 备份恢复或关键一致性演练失败 → NO-GO  
-4. 仅有 SKIP（无密钥/无 GPU/无第二租户）且书面接受风险 → 可条件 GO，但不得隐瞒  
-5. 代码仓 L9 验收包齐全 **不能** 代替本报告的 GO 勾选  
+4. 仅有 SKIP（无密钥/无 GPU/无第二租户）且书面接受风险 → 可 **Conditional GO**，但不得隐瞒  
+5. 仓库内验收脚本/清单齐全 **不能** 代替本报告的 GO / Conditional GO / NO-GO 勾选  
+6. **Conditional GO ≠ 正式 GO**；在 B3/B4/B5 与审批人签字完成前，不得对外宣称 production-ready  
