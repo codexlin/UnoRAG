@@ -253,7 +253,7 @@ def evaluate(cfg: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]
 		{
 			"name": SIGNAL_HEALTH,
 			"firing": bool(health_firing),
-			"labels": {"signal": SIGNAL_HEALTH, "severity": cfg["severity"]},
+			"labels": {"signal": SIGNAL_HEALTH, "namespace": cfg["namespace"]},
 			"annotations": {
 				"summary": "Qdrant/Ask health unavailable"
 				if health_firing
@@ -276,7 +276,7 @@ def evaluate(cfg: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]
 	max_age = float(cfg["heartbeat_max_age_sec"])
 	worker_firing = False
 	age = None
-	worker_id = ""
+	worker_id = str(state.get("last_worker_id") or "")
 	if ready is None:
 		# Not configured → treat as skipped (not firing); acceptance always sets it.
 		worker_detail = "LIFECYCLE_WORKER_READY_FILE unset (skip)"
@@ -286,9 +286,11 @@ def evaluate(cfg: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]
 	else:
 		age = max(0.0, time.time() - ready.stat().st_mtime)
 		try:
-			worker_id = ready.read_text(encoding="utf-8").splitlines()[0].strip()
+			worker_id = ready.read_text(encoding="utf-8").splitlines()[0].strip() or worker_id
 		except Exception:
-			worker_id = ""
+			pass
+		if worker_id:
+			state["last_worker_id"] = worker_id
 		if age > max_age:
 			worker_firing = True
 			worker_detail = f"heartbeat stale age_sec={age:.1f} > {max_age}"
@@ -298,7 +300,7 @@ def evaluate(cfg: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]
 		{
 			"name": SIGNAL_WORKER,
 			"firing": worker_firing,
-			"labels": {"signal": SIGNAL_WORKER, "severity": cfg["severity"]},
+			"labels": {"signal": SIGNAL_WORKER, "namespace": cfg["namespace"]},
 			"annotations": {
 				"summary": "lifecycle worker heartbeat lost"
 				if worker_firing
@@ -354,7 +356,7 @@ def evaluate(cfg: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]
 		{
 			"name": SIGNAL_JOBS,
 			"firing": bool(jobs_firing) and not jobs_error,
-			"labels": {"signal": SIGNAL_JOBS, "severity": cfg["severity"]},
+			"labels": {"signal": SIGNAL_JOBS, "namespace": cfg["namespace"]},
 			"annotations": {
 				"summary": "dead/stuck jobs grew" if jobs_firing else "dead/stuck jobs stable",
 				"detail": jobs_summary,
@@ -417,7 +419,7 @@ def evaluate(cfg: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]
 		{
 			"name": SIGNAL_ASK,
 			"firing": bool(ask_firing),
-			"labels": {"signal": SIGNAL_ASK, "severity": cfg["severity"]},
+			"labels": {"signal": SIGNAL_ASK, "namespace": cfg["namespace"]},
 			"annotations": {
 				"summary": "Ask 5xx/503 anomaly" if ask_firing else "Ask probe OK/skipped",
 				"detail": ask_detail,
@@ -450,7 +452,7 @@ def evaluate(cfg: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]
 		{
 			"name": SIGNAL_DISK,
 			"firing": disk_firing,
-			"labels": {"signal": SIGNAL_DISK, "severity": cfg["severity"]},
+			"labels": {"signal": SIGNAL_DISK, "namespace": cfg["namespace"]},
 			"annotations": {
 				"summary": f"disk usage over {threshold:.0f}%"
 				if disk_firing
@@ -476,12 +478,13 @@ def build_payload(
 ) -> dict[str, Any]:
 	ann = dict(signal.get("annotations") or {})
 	labels = dict(signal.get("labels") or {})
+	ns = str(labels.get("namespace") or "meriknow")
 	return {
 		"version": "meriknow.min_alerts/1",
 		"status": status,
 		"alert_name": signal["name"],
-		"severity": labels.get("severity") or "meriknow",
-		"severity": f"{signal['name']}:{labels.get('severity') or 'meriknow'}",
+		"namespace": ns,
+		"fingerprint": f"{signal['name']}:{ns}",
 		"severity": severity,
 		"starts_at": starts_at,
 		"ends_at": ends_at,
@@ -617,7 +620,7 @@ def build_config(args: argparse.Namespace) -> dict[str, Any]:
 		"state_file": args.state_file
 		or env("MERIKNOW_ALERT_STATE_FILE", "/tmp/meriknow-min-alerts-state.json"),
 		"severity": args.severity or env("MERIKNOW_ALERT_SEVERITY", "warning"),
-		"severity": args.severity or env("MERIKNOW_ALERT_NAMESPACE", "meriknow"),
+		"namespace": args.namespace or env("MERIKNOW_ALERT_NAMESPACE", "meriknow"),
 		"default_workspace_id": args.workspace_id
 		or env("DEFAULT_WORKSPACE_ID")
 		or env("MERIKNOW_WORKSPACE_ID"),
