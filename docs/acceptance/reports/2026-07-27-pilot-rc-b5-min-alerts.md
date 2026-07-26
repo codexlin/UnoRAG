@@ -1,13 +1,13 @@
 # 试点 · B5 最低告警接通
 
-> 绑定脚本/实现提交 **`4a249d2`**（含后续 payload 字段修正的同波次提交，见下方证据 SHA）。  
+> 绑定证据提交 **`9b80fe3`**（实现 `4a249d2` + payload 修正 + 本报告）。  
 > 结论：本项 **PASS**（五项 firing→webhook→resolved 均可复现）；整体仍为 **Conditional GO**（正式签字另议）。
 
 ## 元数据 / 审计绑定
 
 | 字段 | 值 |
 |---|---|
-| **证据提交（实现 + 验收脚本）** | `4a249d258ee9ab8576bb22f2755444bd14d7fad6`（初版）+ 本报告同批修正 commit（`namespace`/`fingerprint` + `last_worker_id`） |
+| **证据提交（实现 + 报告/修正）** | `9b80fe388ddc4f83863c5beaa4395577dea43158` |
 | RC2-X（产品验收运行时基线） | `a79d2a53c5ecb32423dae179bdb05784af187a46` |
 | `.b5_last_run.json` sha256 | `7adb4d70e85629376acfe6ee7054d3a92890f1b6c2b3b77b442dab84490e7009` |
 | 拓扑 | 本机混合栈：Next `:3000` + FastAPI `:8000` + Docker `meriknow-{postgres,qdrant,redis}-1` |
