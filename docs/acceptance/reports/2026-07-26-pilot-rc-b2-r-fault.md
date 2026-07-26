@@ -8,7 +8,7 @@
 | 字段 | 值 |
 |---|---|
 | Pilot RC（代码基线） | `b98f01438045c92804204449d3172ceb201490e6` |
-| 脚本/证据 commit | 引入本报告与 `b2_restore_drill.sh` / `r_fault_injection.sh` 的 main 提交（本地 JSON 的 `script_sha` 为跑测时 HEAD） |
+| 脚本/证据 commit | `1cfa06359179e519097c63b26c9d6caa227d0d8e`（已 push；本地 JSON `script_sha` 为跑测时 HEAD，可能略早） |
 | 拓扑 | **B2**：一次性 Compose 独立项目 + bind 文档目录（**不**触碰主开发 `.meriknow` / `meriknow_*` 主卷）；**R\***：本机混合栈 `:3000`/`:8000` + Docker Postgres/Qdrant/Redis |
 | 日期 | 2026-07-26 |
 
