@@ -25,6 +25,7 @@
 | [`../../deploy/compose/scripts/pilot-preflight.sh`](../../deploy/compose/scripts/pilot-preflight.sh) | 离线隔离单测 + CI 质量门禁（无 Compose 也可跑） |
 | [`../../scripts/acceptance/s1_s2_isolation.sh`](../../scripts/acceptance/s1_s2_isolation.sh) | **S1/S2** 多组织/多工作区可重复隔离验收（Retrieve+Ask+IDOR+restricted ACL） |
 | [`../../scripts/acceptance/b2_restore_drill.sh`](../../scripts/acceptance/b2_restore_drill.sh) | **B2** 独立 Compose volumes backup→restore（不碰主开发数据） |
+| [`../../scripts/acceptance/b3_b4_upgrade_rollback.sh`](../../scripts/acceptance/b3_b4_upgrade_rollback.sh) | **B3/B4** 独立环境升级冒烟 + 应用回滚 / 数据恢复回滚 |
 | [`../../scripts/acceptance/r_fault_injection.sh`](../../scripts/acceptance/r_fault_injection.sh) | **R1–R4** Worker / Qdrant / 模型 / MinerU 故障注入 |
 | [`observability-min-runbook.md`](./observability-min-runbook.md) | 最低观测/告警草稿（`trace_id` → 网关/模型/检索/DB/Worker） |
 | [`../../scripts/acceptance/README.md`](../../scripts/acceptance/README.md) | 验收脚本如何跑、依赖、退出码 |

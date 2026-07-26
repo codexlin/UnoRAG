@@ -78,8 +78,8 @@
 |---|---|---|---|---|
 | B1 | `backup.sh` 产出完整 MANIFEST | | | 见 backup-restore-verification |
 | B2 | 独立环境 restore 后 active / ACL / citation / 对象一致；Qdrant↔PG 按 org/workspace/doc/version/generation **精确比对**（非仅 collection count>0） | | | 指标：备份完成延迟、本轮数据丢失、RTO；**勿**把 write→backup 叫作 RPO；目标 RPO 取决于备份周期（未定义则写明） |
-| B3 | 升级演练（`upgrade.sh` 或镜像滚动）后冒烟通过 | | | **本轮未做** |
-| B4 | 回滚演练（或书面回滚计划已确认） | | | **本轮未做** |
+| B3 | 升级演练（独立环境：旧版 seed → 备份 → migrate → 新版冒烟） | | | 脚本 `scripts/acceptance/b3_b4_upgrade_rollback.sh`；无正式旧镜像时用 `MERIKNOW_B3_OLD_SHA` worktree |
+| B4 | 回滚演练：B4A 仅应用回滚 + B4B 升级前备份恢复（B2 语义） | | | 同上脚本；schema 不兼容时 B4A 可 FAIL、以 B4B 为准 |
 | B5 | 容量/磁盘/队列告警已接通或书面接受风险 | | | **仅有观测草稿**，未接通告警 |
 
 ## 6. SLO（首版可测量行为）
