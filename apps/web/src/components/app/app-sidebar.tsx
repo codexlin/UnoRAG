@@ -89,11 +89,11 @@ export function AppSidebar() {
 							tooltip="MeriKnow"
 							className={cn(
 								"h-10 gap-2.5 rounded-lg px-2 hover:bg-primary/10",
-								"[&_svg]:size-7!",
-								"group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-1.5! group-data-[collapsible=icon]:[&_svg]:size-6!",
+								"[&_img]:size-7!",
+								"group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-1.5! group-data-[collapsible=icon]:[&_img]:size-6!",
 							)}
 						>
-							<MeriKnowMark className="text-primary" />
+							<MeriKnowMark decorative />
 							<span className="font-heading text-lg font-semibold tracking-tight text-primary">
 								MeriKnow
 							</span>

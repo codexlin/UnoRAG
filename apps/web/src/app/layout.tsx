@@ -8,7 +8,26 @@ export const metadata: Metadata = {
 	title: "MeriKnow",
 	description: "有据可依的企业知识问答",
 	icons: {
-		icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+		icon: [
+			{ url: "/favicon.ico", sizes: "any" },
+			{
+				url: "/favicon-32x32.png",
+				sizes: "32x32",
+				type: "image/png",
+			},
+			{
+				url: "/brand/meriknow-mark.png",
+				sizes: "150x150",
+				type: "image/png",
+			},
+		],
+		apple: [
+			{
+				url: "/apple-touch-icon.png",
+				sizes: "180x180",
+				type: "image/png",
+			},
+		],
 	},
 };
 
