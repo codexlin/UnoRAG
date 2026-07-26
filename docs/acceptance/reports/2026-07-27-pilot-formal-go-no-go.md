@@ -7,12 +7,14 @@
 
 | 字段 | 值 |
 |---|---|
-| 证据基线标签 | **RC2-X** |
-| 产品验收运行时基线 | `a79d2a53c5ecb32423dae179bdb05784af187a46` |
-| 文档汇总时 HEAD（写稿参考） | `c4c0f6ce4a2386eb8e4f5cc2b683233337480f7a`（B5 证据戳记） |
+| **批准发布候选 SHA（唯一审批对象）** | `b72a585d1d6a1e0406c9420ae3d1f5edbce67fbe` |
+| 证据基线标签 | **RC2-X**（分项运行时）+ 发布候选 **`b72a585`**（含 B5 实现与签字稿） |
+| 产品验收运行时基线（B2/R3） | `a79d2a53c5ecb32423dae179bdb05784af187a46` |
 | 拓扑 | 本机混合栈 + B2/B3 独立 Compose 演练环境 |
 | 日期 | 2026-07-27 |
 | 模板 | [`../pilot-go-no-go-template.md`](../pilot-go-no-go-template.md) |
+
+> 审批签字时请写明：**批准发布版本 = `b72a585`**（或在其上打的 tag）。分项证据 SHA 仅作附件溯源，不替代唯一发布对象。
 
 ## Commit 绑定（以 `git log` 核实）
 
@@ -24,8 +26,20 @@
 | B3/B4 脚本 + 演练 | `88b72d9` | `88b72d9daf7910c4eed9d51963d9e4e9ac7feb8c` | 升级/回滚脚本与实测 |
 | B3/B4 报告 | `2e27c1c` | `2e27c1c782b22ebc3693dd77d557887e2017a7f1` | 记录 B3/B4 PASS |
 | B5 实现接线 | `4a249d2` | `4a249d258ee9ab8576bb22f2755444bd14d7fad6` | min-alerts webhook |
-| B5 PASS 证据 | `9b80fe3` | `9b80fe388ddc4f83863c5beaa4395577dea43158` | 报告 + payload 修正 |
+| B5 PASS 证据（初跑） | `9b80fe3` | `9b80fe388ddc4f83863c5beaa4395577dea43158` | 报告 + payload 修正（初跑 porcelain 非空） |
 | B5 证据戳记 | `c4c0f6c` | `c4c0f6ce4a2386eb8e4f5cc2b683233337480f7a` | 报告内 SHA 戳记 |
+| 签字稿初版 | `b72a585` | `b72a585d1d6a1e0406c9420ae3d1f5edbce67fbe` | **发布候选**；其干净树上复跑 B5 |
+
+### 在发布候选 `b72a585` 上的最终总门禁（非破坏性）
+
+| 门禁 | 结果 | 备注 |
+|---|---|---|
+| 工作树 | **干净** | `git status --porcelain` 为空 |
+| B5 干净复跑 | **PASS** | `rc_sha=git_head=script_sha=b72a585…`；`porcelain=""`；sha256 `e8b3c7eddebe17a2c9601199c2da89f0f6a82d9efcb5b6ecaf0723e19b5163c0` |
+| `pilot-preflight.sh` | **PASS** | isolation + CI gate 36/36 |
+| API 契约/健康相关 pytest | **PASS** | 52 passed |
+| `apps/web` `pnpm build` | **PASS** | production build |
+| `pilot-smoke.sh` | **SKIP** | 本地 `MERIKNOW_ADMIN_PASSWORD` 仍为 placeholder，脚本按设计 exit 2；**不**计为 FAIL |
 
 ---
 
@@ -96,13 +110,18 @@ RC2-X / 当前证据基线
 | S1 health.qdrant_ask / S2 worker.heartbeat / S3 jobs.dead_stuck / S4 ask.http_5xx / S5 disk.usage | **PASS**（firing→webhook→resolved） |
 
 报告：[`2026-07-27-pilot-rc-b5-min-alerts.md`](./2026-07-27-pilot-rc-b5-min-alerts.md)。  
-绑定：证据 `9b80fe3`；戳记 `c4c0f6c`；实现接线 `4a249d2`。
 
-**S5 已知限制（签字前须确认）：**
+| 绑定 | 值 |
+|---|---|
+| 实现接线 | `4a249d2`（含 `lifecycle_worker.py` ready-file 心跳） |
+| 初跑证据 | `9b80fe3`（当时 `porcelain= M ops/min_alerts/check.py`，**非**干净树） |
+| **干净复跑（发布候选）** | **`b72a585`**：五项 PASS；sha256 `e8b3c7ed…`；`porcelain=""` |
+
+**S5 / 运维已知限制（签字前须确认）：**
 
 1. 本机未对 documents/PG/Qdrant 卷做 **真实灌盘** 至 >85%（避免 destructive）。  
-2. 验收同时覆盖：**真实 df 测量**（本轮约 57.86%，未误报）+ `MERIKNOW_ALERT_DISK_FORCE_PERCENT` **force 注入** webhook 路径。  
-3. Webhook 为通用 JSON 接收端；生产落点（Slack / 邮件 / Alertmanager 等）须审批人书面确认。
+2. 验收同时覆盖：**真实 df 测量**（干净复跑约 57.87%，未误报）+ `MERIKNOW_ALERT_DISK_FORCE_PERCENT` **force 注入** webhook 路径。  
+3. Webhook 为通用 JSON 接收端（`check.py once|watch` + mock）；**无** Compose/systemd/Kubernetes 常驻部署清单——须配置真实常驻方式与接收端，或审批人书面接受该运维风险。
 
 ---
 
@@ -111,11 +130,12 @@ RC2-X / 当前证据基线
 | # | 限制 | 影响 |
 |---|---|---|
 | 1 | B5 S5 为真实 df + force 注入，**非**真实灌盘 | 磁盘告警路径已通；极端写满场景未 destructive 验证 |
-| 2 | Webhook 落点未绑定具体生产通道 | 须运维确认接收端与 on-call |
+| 2 | Webhook 落点未绑定具体生产通道；无常驻部署清单 | 须运维确认 `watch`/cron/systemd + 接收端与 on-call，或书面接受风险 |
 | 3 | R2 未在 RC2-X 干净树重跑（历史 PASS） | 可接受为已知；若审批人要求可复跑 |
-| 4 | 完整 Grafana / OIDC / SDK / MCP / 成本面板 | 非本轮范围（既有产品边界） |
-| 5 | 目标 RPO 未定义 | B2 仅测单次备份窗口，不承诺周期 RPO |
-| 6 | Web 无正式旧镜像标签（B3 用 `meriknow-web:local`） | 已在 B3/B4 报告写明 |
+| 4 | `pilot-smoke.sh` 因本地 admin 密码仍为 placeholder 而 SKIP | 总门禁不记 FAIL；部署前须换成真实密码并重跑 smoke |
+| 5 | 完整 Grafana / OIDC / SDK / MCP / 成本面板 | 非本轮范围（既有产品边界） |
+| 6 | 目标 RPO 未定义 | B2 仅测单次备份窗口，不承诺周期 RPO |
+| 7 | Web 无正式旧镜像标签（B3 用 `meriknow-web:local`） | 已在 B3/B4 报告写明 |
 
 ---
 
@@ -141,6 +161,7 @@ RC2-X / 当前证据基线
 
 | 字段 | 填写 |
 |---|---|
+| **批准发布 SHA** | `b72a585d1d6a1e0406c9420ae3d1f5edbce67fbe`（或等价 tag：________） |
 | 结论（勾选恰好一项） | [ ] GO [ ] Conditional GO [ ] NO-GO |
 | 审批人姓名 | ________________ |
 | 日期 | ________________ |
@@ -151,9 +172,10 @@ RC2-X / 当前证据基线
 
 | # | 未决项 | 关闭条件 |
 |---|---|---|
-| 1 | B5 webhook 生产落点 | 书面确认接收通道与值班响应 |
+| 1 | B5 webhook 生产落点 + 常驻运行方式 | 书面确认接收通道、值班响应，以及 `watch`/cron/systemd/K8s 之一 |
 | 2 | S5 磁盘证明方式 | 书面接受「force 注入」或另开真实灌盘窗口 |
-| 3 | （可选）R2 在当前 HEAD 复跑 | 审批人要求时再跑 |
+| 3 | （可选）`pilot-smoke` 在真实 admin 密码下重跑 | 部署环境凭据就绪后执行 |
+| 4 | （可选）R2 在发布 SHA 复跑 | 审批人要求时再跑 |
 
 ---
 
