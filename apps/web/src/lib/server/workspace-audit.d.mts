@@ -41,7 +41,9 @@ export function parseAuditListParams(
 
 export function encodeAuditCursor(cursor: AuditCursor): string;
 
-export function decodeAuditCursor(cursor: string | null | undefined): AuditCursor | null;
+export function decodeAuditCursor(
+	cursor: string | null | undefined,
+): AuditCursor | null;
 
 export function summarizeAuditDetails(
 	details: unknown,

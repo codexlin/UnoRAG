@@ -49,7 +49,10 @@ test("parse workspace scope clears principals", () => {
 });
 
 test("parse restricted requires at least one subject", () => {
-	const empty = parseDocumentAclBody({ scope: "restricted", principal_ids: [] });
+	const empty = parseDocumentAclBody({
+		scope: "restricted",
+		principal_ids: [],
+	});
 	assert.equal(empty.ok, false);
 	assert.equal(empty.status, 400);
 
@@ -62,9 +65,7 @@ test("parse restricted requires at least one subject", () => {
 	});
 	assert.equal(ok.ok, true);
 	assert.equal(ok.scope, "restricted");
-	assert.deepEqual(ok.principalIds, [
-		"11111111-1111-4111-8111-111111111111",
-	]);
+	assert.deepEqual(ok.principalIds, ["11111111-1111-4111-8111-111111111111"]);
 });
 
 test("parse rejects invalid uuids and scope", () => {

@@ -45,10 +45,7 @@ async function resolveDocumentContext(
 			: authorizeDocumentAclRead(identity);
 	if (!auth.ok || !identity) {
 		return {
-			error: Response.json(
-				{ detail: auth.detail },
-				{ status: auth.status },
-			),
+			error: Response.json({ detail: auth.detail }, { status: auth.status }),
 		};
 	}
 	const { libraryId, documentId } = await context.params;

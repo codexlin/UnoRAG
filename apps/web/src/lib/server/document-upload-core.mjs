@@ -3,10 +3,7 @@ import path from "node:path";
 const COMMON_BINARY_TYPES = new Set(["", "application/octet-stream"]);
 const CONTENT_TYPES_BY_EXTENSION = new Map([
 	[".txt", new Set([...COMMON_BINARY_TYPES, "text/plain"])],
-	[
-		".md",
-		new Set([...COMMON_BINARY_TYPES, "text/markdown", "text/plain"]),
-	],
+	[".md", new Set([...COMMON_BINARY_TYPES, "text/markdown", "text/plain"])],
 	[
 		".markdown",
 		new Set([...COMMON_BINARY_TYPES, "text/markdown", "text/plain"]),

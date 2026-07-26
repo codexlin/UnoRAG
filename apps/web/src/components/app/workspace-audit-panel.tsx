@@ -45,44 +45,41 @@ export function WorkspaceAuditPanel() {
 	const [loadingMore, setLoadingMore] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	const load = useCallback(
-		async (cursor: string | null, append: boolean) => {
-			if (append) setLoadingMore(true);
-			else setLoading(true);
-			setError(null);
-			const params = new URLSearchParams({ limit: "30" });
-			if (cursor) params.set("cursor", cursor);
-			const response = await fetch(`/api/workspace/audit?${params}`);
-			if (!response.ok) {
-				if (response.status === 403) {
-					setError("无权限查看审计日志（需要 owner 或 admin）");
-				} else if (response.status === 401) {
-					setError("请先登录");
-				} else {
-					const detail = await response.json().catch(() => null);
-					setError(
-						typeof detail?.detail === "string"
-							? detail.detail
-							: "加载审计日志失败",
-					);
-				}
-				if (!append) setItems([]);
-				setNextCursor(null);
-				setLoading(false);
-				setLoadingMore(false);
-				return;
+	const load = useCallback(async (cursor: string | null, append: boolean) => {
+		if (append) setLoadingMore(true);
+		else setLoading(true);
+		setError(null);
+		const params = new URLSearchParams({ limit: "30" });
+		if (cursor) params.set("cursor", cursor);
+		const response = await fetch(`/api/workspace/audit?${params}`);
+		if (!response.ok) {
+			if (response.status === 403) {
+				setError("无权限查看审计日志（需要 owner 或 admin）");
+			} else if (response.status === 401) {
+				setError("请先登录");
+			} else {
+				const detail = await response.json().catch(() => null);
+				setError(
+					typeof detail?.detail === "string"
+						? detail.detail
+						: "加载审计日志失败",
+				);
 			}
-			const data = (await response.json()) as {
-				items: AuditItem[];
-				next_cursor: string | null;
-			};
-			setItems((prev) => (append ? [...prev, ...data.items] : data.items));
-			setNextCursor(data.next_cursor);
+			if (!append) setItems([]);
+			setNextCursor(null);
 			setLoading(false);
 			setLoadingMore(false);
-		},
-		[],
-	);
+			return;
+		}
+		const data = (await response.json()) as {
+			items: AuditItem[];
+			next_cursor: string | null;
+		};
+		setItems((prev) => (append ? [...prev, ...data.items] : data.items));
+		setNextCursor(data.next_cursor);
+		setLoading(false);
+		setLoadingMore(false);
+	}, []);
 
 	useEffect(() => {
 		if (!canManage) return;

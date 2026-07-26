@@ -6,19 +6,19 @@ import { getDatabase } from "@/db";
 import { workspaceServiceKeys } from "@/db/schema";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import {
-	KEY_PREFIX,
-	SERVICE_KEY_SCOPES,
+	serviceKeyAllowsLibrary as allowsLibrary,
 	extractBearerServiceKey as extractBearerFromHeaders,
 	generateServiceKeyRaw,
 	hashServiceKey,
+	serviceKeyHasScope as hasScope,
+	KEY_PREFIX,
 	normalizeLibraryIds,
 	normalizeScopes,
 	principalForServiceKey,
-	serviceKeyAllowsLibrary as allowsLibrary,
-	serviceKeyHasScope as hasScope,
+	SERVICE_KEY_SCOPES,
 } from "@/lib/server/service-keys-core.mjs";
 
-export { SERVICE_KEY_SCOPES, hashServiceKey, generateServiceKeyRaw };
+export { generateServiceKeyRaw, hashServiceKey, SERVICE_KEY_SCOPES };
 export type ServiceKeyScope = (typeof SERVICE_KEY_SCOPES)[number];
 
 export type ServiceKeyRecord = {
@@ -80,10 +80,9 @@ export async function createWorkspaceServiceKey(input: {
 	if (!name) {
 		return { ok: false, status: 400, detail: "name is required" };
 	}
-	const scopes = (normalizeScopes(input.scopes) as ServiceKeyScope[] | null) ?? [
-		"ask",
-		"retrieve",
-	];
+	const scopes = (normalizeScopes(input.scopes) as
+		| ServiceKeyScope[]
+		| null) ?? ["ask", "retrieve"];
 	const libraryIds = normalizeLibraryIds(input.libraryIds) as string[] | null;
 	const { rawKey, prefix } = generateServiceKeyRaw();
 	const keyHash = hashServiceKey(rawKey);

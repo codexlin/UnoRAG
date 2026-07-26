@@ -85,7 +85,9 @@ export function isParserReportDegraded(report) {
 	const route = typeof metrics.route === "string" ? metrics.route : "";
 	if (isDegradeRoute(route)) return true;
 	const warnings = Array.isArray(report.warnings) ? report.warnings : [];
-	if (warnings.some((w) => typeof w === "string" && looksLikeDegradeWarning(w))) {
+	if (
+		warnings.some((w) => typeof w === "string" && looksLikeDegradeWarning(w))
+	) {
 		return true;
 	}
 	const notes = typeof report.notes === "string" ? report.notes : "";
@@ -119,7 +121,8 @@ export function resolveDocumentStatusDisplay(status, parserReport) {
 	}
 
 	return {
-		label: STATUS_LABELS[/** @type {keyof typeof STATUS_LABELS} */ (key)] ?? key,
+		label:
+			STATUS_LABELS[/** @type {keyof typeof STATUS_LABELS} */ (key)] ?? key,
 		tone: key || "unknown",
 		parseDegraded,
 	};
@@ -264,10 +267,7 @@ export function formatParserReportView(report) {
 		summaries.push(`建议 OCR 页：${report.needs_ocr_pages.join(", ")}`);
 	}
 
-	if (
-		typeof metrics.mineru_error === "string" &&
-		metrics.mineru_error.trim()
-	) {
+	if (typeof metrics.mineru_error === "string" && metrics.mineru_error.trim()) {
 		techRaw.push(metrics.mineru_error.trim());
 	}
 

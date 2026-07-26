@@ -20,7 +20,10 @@ export async function DELETE(request: Request, context: RouteContext) {
 	const { id } = await context.params;
 	const result = await revokeWorkspaceServiceKey({ identity, keyId: id });
 	if (!result.ok) {
-		return NextResponse.json({ detail: result.detail }, { status: result.status });
+		return NextResponse.json(
+			{ detail: result.detail },
+			{ status: result.status },
+		);
 	}
 	return NextResponse.json({ ok: true, revoked: true });
 }

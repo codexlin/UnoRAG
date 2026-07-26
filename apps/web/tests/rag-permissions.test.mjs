@@ -15,7 +15,10 @@ test("read, ask, and session archive do not require library write permission", (
 		requiresLibraryWritePermission("POST", ["v1", "ask", "stream"]),
 		false,
 	);
-	assert.equal(requiresLibraryWritePermission("POST", ["v1", "threads"]), false);
+	assert.equal(
+		requiresLibraryWritePermission("POST", ["v1", "threads"]),
+		false,
+	);
 	assert.equal(
 		requiresLibraryWritePermission("POST", ["v1", "threads", "thr-1"]),
 		false,

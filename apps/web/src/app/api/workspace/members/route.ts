@@ -46,7 +46,10 @@ export async function PATCH(request: Request) {
 		role: body.role ?? "",
 	});
 	if (!result.ok) {
-		return NextResponse.json({ detail: result.detail }, { status: result.status });
+		return NextResponse.json(
+			{ detail: result.detail },
+			{ status: result.status },
+		);
 	}
 	return NextResponse.json({ ok: true });
 }
@@ -73,7 +76,10 @@ export async function DELETE(request: Request) {
 		userId: body.user_id ?? "",
 	});
 	if (!result.ok) {
-		return NextResponse.json({ detail: result.detail }, { status: result.status });
+		return NextResponse.json(
+			{ detail: result.detail },
+			{ status: result.status },
+		);
 	}
 	return NextResponse.json({ ok: true });
 }

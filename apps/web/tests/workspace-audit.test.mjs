@@ -126,10 +126,7 @@ test("parseAuditListParams clamps limit and reads format", () => {
 	assert.equal(params.limit, 200);
 	assert.equal(params.format, "csv");
 	assert.equal(params.cursor, "abc");
-	assert.equal(
-		parseAuditListParams(new URLSearchParams("limit=0")).limit,
-		50,
-	);
+	assert.equal(parseAuditListParams(new URLSearchParams("limit=0")).limit, 50);
 });
 
 test("summarizeAuditDetails falls back to JSON for unknown shape", () => {

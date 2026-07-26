@@ -90,9 +90,7 @@ export function WorkspaceIntegrationKeysPanel() {
 		setBusy(false);
 		if (!response.ok) {
 			const detail = await response.json().catch(() => null);
-			setError(
-				typeof detail?.detail === "string" ? detail.detail : "吊销失败",
-			);
+			setError(typeof detail?.detail === "string" ? detail.detail : "吊销失败");
 			return;
 		}
 		await refresh();
@@ -197,9 +195,7 @@ export function WorkspaceIntegrationKeysPanel() {
 						</div>
 					) : null}
 
-					{error ? (
-						<p className="text-xs text-destructive">{error}</p>
-					) : null}
+					{error ? <p className="text-xs text-destructive">{error}</p> : null}
 				</div>
 			</Can>
 		</div>

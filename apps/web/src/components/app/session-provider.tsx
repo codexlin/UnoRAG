@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
 	createContext,
 	type ReactNode,
@@ -7,7 +8,6 @@ import {
 	useContext,
 	useMemo,
 } from "react";
-import { useRouter } from "next/navigation";
 
 import {
 	allowsCap,

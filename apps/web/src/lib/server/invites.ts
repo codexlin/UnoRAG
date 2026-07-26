@@ -14,8 +14,8 @@ import {
 	workspaceMembers,
 	workspaces,
 } from "@/db/schema";
-import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { hashPassword } from "@/lib/server/auth/passwords.mjs";
+import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { hydrateIdentity } from "@/lib/server/auth/session";
 import { sendInviteEmail } from "@/lib/server/email";
 import {

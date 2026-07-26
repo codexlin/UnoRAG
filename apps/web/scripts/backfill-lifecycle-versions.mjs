@@ -53,7 +53,9 @@ try {
 	const ragActivePresent = Boolean(hasRagActive.rows[0]?.present);
 
 	const limitSql =
-		limit && Number.isFinite(limit) ? `LIMIT ${Math.max(1, Math.floor(limit))}` : "";
+		limit && Number.isFinite(limit)
+			? `LIMIT ${Math.max(1, Math.floor(limit))}`
+			: "";
 
 	const rows = await client.query(
 		`
@@ -130,7 +132,8 @@ try {
 			let storageKey =
 				(row.public_storage_key && String(row.public_storage_key).trim()) || "";
 			let contentHash =
-				(row.public_content_hash && String(row.public_content_hash).trim()) || "";
+				(row.public_content_hash && String(row.public_content_hash).trim()) ||
+				"";
 			let sizeBytes = row.public_size_bytes;
 
 			if (!needsVersion) {
@@ -146,7 +149,9 @@ try {
 				);
 				const version = existing.rows[0];
 				if (!version) {
-					throw new Error(`document ${row.id} reported versions but none found`);
+					throw new Error(
+						`document ${row.id} reported versions but none found`,
+					);
 				}
 				resolvedVersionId = version.id;
 				resolvedGenerationId = version.generation_id;

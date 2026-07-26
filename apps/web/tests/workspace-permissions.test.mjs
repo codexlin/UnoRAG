@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-
+import {
+	hashPassword,
+	verifyPasswordSync,
+} from "../src/lib/server/auth/passwords.mjs";
 import {
 	authorizeRemoveMember,
 	canManageMembers,
 	isAssignableInviteRole,
 } from "../src/lib/server/workspace-permissions.mjs";
-import { hashPassword, verifyPasswordSync } from "../src/lib/server/auth/passwords.mjs";
 
 test("only owner and admin can manage members", () => {
 	assert.equal(canManageMembers({ role: "viewer" }), false);

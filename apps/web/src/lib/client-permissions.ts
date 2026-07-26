@@ -28,7 +28,9 @@ export type CapExpr =
 	| ((caps: PermissionCaps) => boolean);
 
 /** Mirrors server library/workspace permission helpers for UI gating. */
-export function permissionsFor(identity: SessionIdentity | null): PermissionCaps {
+export function permissionsFor(
+	identity: SessionIdentity | null,
+): PermissionCaps {
 	const role = identity?.role;
 	const canManageLibraries = role === "owner" || role === "admin";
 	const canWriteLibraries = canManageLibraries || role === "editor";

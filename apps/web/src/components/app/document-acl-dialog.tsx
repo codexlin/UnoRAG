@@ -126,8 +126,7 @@ export function DocumentAclDialog({
 			}
 			onOpenChange(false);
 		} catch (err) {
-			const message =
-				err instanceof Error ? err.message : "保存可见性失败";
+			const message = err instanceof Error ? err.message : "保存可见性失败";
 			setError(message);
 			toast.error(message);
 		} finally {
@@ -195,9 +194,7 @@ export function DocumentAclDialog({
 							<div className="space-y-2">
 								<Label>可见成员</Label>
 								{members.length === 0 ? (
-									<p className="text-ui text-muted-foreground">
-										暂无可用成员
-									</p>
+									<p className="text-ui text-muted-foreground">暂无可用成员</p>
 								) : (
 									<ScrollArea className="h-48 rounded-md border border-border/80">
 										<ul className="divide-y divide-border/60 p-1">
@@ -215,9 +212,7 @@ export function DocumentAclDialog({
 																type="checkbox"
 																checked={checked}
 																disabled={!canEdit || saving}
-																onChange={() =>
-																	toggleMember(member.userId)
-																}
+																onChange={() => toggleMember(member.userId)}
 															/>
 															<span className="min-w-0 flex-1">
 																<span className="text-ui block truncate">
@@ -237,9 +232,7 @@ export function DocumentAclDialog({
 							</div>
 						) : null}
 
-						{error ? (
-							<p className="text-ui text-destructive">{error}</p>
-						) : null}
+						{error ? <p className="text-ui text-destructive">{error}</p> : null}
 						{!canEdit ? (
 							<p className="text-meta text-muted-foreground">
 								需要 editor 及以上权限才能修改

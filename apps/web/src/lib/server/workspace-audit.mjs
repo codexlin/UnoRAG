@@ -32,10 +32,9 @@ export function parseAuditListParams(searchParams) {
 }
 
 export function encodeAuditCursor({ createdAt, id }) {
-	return Buffer.from(
-		JSON.stringify({ createdAt, id }),
-		"utf8",
-	).toString("base64url");
+	return Buffer.from(JSON.stringify({ createdAt, id }), "utf8").toString(
+		"base64url",
+	);
 }
 
 export function decodeAuditCursor(cursor) {

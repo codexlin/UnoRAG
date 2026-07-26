@@ -257,7 +257,9 @@ export function ArchivePanel() {
 									) : null}
 								</>
 							) : (
-								<p className="text-ui text-muted-foreground">该会话还没有消息。</p>
+								<p className="text-ui text-muted-foreground">
+									该会话还没有消息。
+								</p>
 							)}
 						</div>
 					) : (

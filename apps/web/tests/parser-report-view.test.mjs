@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-	PARSE_DEGRADED_REINDEX_HINT,
-	PARSE_DEGRADED_STATUS_LABEL,
-	PARSER_REPORT_TITLE,
 	dedupeTechDetails,
 	formatParserReportView,
 	isParserReportDegraded,
+	PARSE_DEGRADED_REINDEX_HINT,
+	PARSE_DEGRADED_STATUS_LABEL,
+	PARSER_REPORT_TITLE,
 	resolveDocumentStatusDisplay,
 } from "../src/lib/parser-report-view.mjs";
 
@@ -42,7 +42,9 @@ test("layers degrade + partial and dedupes tech details", () => {
 	assert.equal(view.empty, false);
 	assert.equal(view.degraded, true);
 	assert.ok(
-		!view.summaries.some((line) => /Errno|Connection refused|mineru_degrade=/i.test(line)),
+		!view.summaries.some((line) =>
+			/Errno|Connection refused|mineru_degrade=/i.test(line),
+		),
 	);
 });
 

@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 
-import {
-	createSessionToken,
-	SESSION_COOKIE,
-} from "@/lib/server/auth/session";
+import { createSessionToken, SESSION_COOKIE } from "@/lib/server/auth/session";
 import { acceptInvite, previewInvite } from "@/lib/server/invites";
 
 const COOKIE_OPTIONS = {
@@ -39,7 +36,10 @@ export async function POST(request: Request) {
 		displayName: body.display_name,
 	});
 	if (!result.ok) {
-		return NextResponse.json({ detail: result.detail }, { status: result.status });
+		return NextResponse.json(
+			{ detail: result.detail },
+			{ status: result.status },
+		);
 	}
 	const response = NextResponse.json(result.identity);
 	response.cookies.set(

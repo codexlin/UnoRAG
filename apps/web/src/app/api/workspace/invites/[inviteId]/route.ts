@@ -20,7 +20,10 @@ export async function DELETE(request: Request, { params }: Params) {
 	const { inviteId } = await params;
 	const result = await revokeWorkspaceInvite({ identity, inviteId });
 	if (!result.ok) {
-		return NextResponse.json({ detail: result.detail }, { status: result.status });
+		return NextResponse.json(
+			{ detail: result.detail },
+			{ status: result.status },
+		);
 	}
 	return NextResponse.json({ ok: true });
 }

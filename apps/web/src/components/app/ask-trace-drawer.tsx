@@ -57,7 +57,11 @@ export function stageDurationMs(
 ): number | null {
 	const stages = Array.isArray(debug?.stages) ? debug.stages : [];
 	const hit = stages.find((s) => s.stage === stageName);
-	if (!hit || typeof hit.duration_ms !== "number" || Number.isNaN(hit.duration_ms)) {
+	if (
+		!hit ||
+		typeof hit.duration_ms !== "number" ||
+		Number.isNaN(hit.duration_ms)
+	) {
 		return null;
 	}
 	return hit.duration_ms;
@@ -208,7 +212,10 @@ function CopyTraceId({ traceId }: { traceId: string }) {
 			{copied ? (
 				<Check className="size-3.5 shrink-0 text-cite" aria-hidden />
 			) : (
-				<Copy className="size-3.5 shrink-0 text-muted-foreground group-hover:text-foreground" aria-hidden />
+				<Copy
+					className="size-3.5 shrink-0 text-muted-foreground group-hover:text-foreground"
+					aria-hidden
+				/>
 			)}
 			<span className="sr-only">{copied ? "已复制" : "复制 trace_id"}</span>
 		</button>
@@ -237,10 +244,10 @@ export function AskTraceDrawer({
 	const stages = Array.isArray(debug?.stages) ? debug.stages : [];
 	const rows = debug ? summaryRows(debug, clientDurationMs) : [];
 	const traceId =
-		typeof debug?.trace_id === "string" && debug.trace_id ? debug.trace_id : null;
-	const rawJson = debug
-		? JSON.stringify(debug, null, 2)
-		: "";
+		typeof debug?.trace_id === "string" && debug.trace_id
+			? debug.trace_id
+			: null;
+	const rawJson = debug ? JSON.stringify(debug, null, 2) : "";
 	const serverTotal = serverTotalDurationMs(debug);
 
 	return (
@@ -315,14 +322,13 @@ export function AskTraceDrawer({
 									</span>
 								</div>
 								{stages.length === 0 ? (
-									<p className="text-ui text-muted-foreground">暂无 stage 记录</p>
+									<p className="text-ui text-muted-foreground">
+										暂无 stage 记录
+									</p>
 								) : (
 									<ul className="divide-y-0">
 										{stages.map((stage, index) => (
-											<StageRow
-												key={`${stage.stage}-${index}`}
-												stage={stage}
-											/>
+											<StageRow key={`${stage.stage}-${index}`} stage={stage} />
 										))}
 									</ul>
 								)}

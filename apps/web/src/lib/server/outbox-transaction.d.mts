@@ -5,8 +5,5 @@ export function runOutboxMutation<TTransaction, TResult>(
 		): Promise<T>;
 	},
 	mutate: (transaction: TTransaction) => Promise<TResult>,
-	enqueue: (
-		transaction: TTransaction,
-		result: TResult,
-	) => Promise<unknown>,
+	enqueue: (transaction: TTransaction, result: TResult) => Promise<unknown>,
 ): Promise<TResult>;

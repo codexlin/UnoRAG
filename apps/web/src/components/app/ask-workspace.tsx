@@ -88,9 +88,8 @@ function buildSampleQuestions(docs: ApiDocument[]): string[] {
 	if (unique.length === 0) {
 		return [...NEUTRAL_SAMPLE_QUESTIONS];
 	}
-	return unique.map(
-		(title, index) =>
-			DOC_QUESTION_TEMPLATES[index % DOC_QUESTION_TEMPLATES.length](title),
+	return unique.map((title, index) =>
+		DOC_QUESTION_TEMPLATES[index % DOC_QUESTION_TEMPLATES.length](title),
 	);
 }
 
@@ -325,8 +324,7 @@ export function AskWorkspace() {
 	}, [canAsk, docsLoaded, readyDocuments]);
 
 	const hasReadyDocTitles = useMemo(
-		() =>
-			readyDocuments.some((doc) => Boolean(documentDisplayTitle(doc))),
+		() => readyDocuments.some((doc) => Boolean(documentDisplayTitle(doc))),
 		[readyDocuments],
 	);
 
@@ -336,7 +334,10 @@ export function AskWorkspace() {
 		setDrawerOpen(true);
 	}
 
-	function openTrace(debug: ApiRetrievalDebug, clientDurationMs?: number | null) {
+	function openTrace(
+		debug: ApiRetrievalDebug,
+		clientDurationMs?: number | null,
+	) {
 		setDrawerOpen(false);
 		setTraceDebug(debug);
 		setTraceClientMs(
@@ -991,8 +992,7 @@ export function AskWorkspace() {
 																>
 																	检索 {formatDurationMs(turn.retrieveMs)}
 																</span>
-															) : turn.pending &&
-																turn.evidenceMs != null ? (
+															) : turn.pending && turn.evidenceMs != null ? (
 																<span
 																	className="meta-chip text-muted-foreground"
 																	title="首包引用到达时间（客户端，生成完成后会换成服务端检索）"
@@ -1045,9 +1045,12 @@ export function AskWorkspace() {
 																			</button>
 																		}
 																	/>
-																	<TooltipContent side="top" className="max-w-[16rem]">
-																		查看请求链路：路由 / 检索 / 裁决 / 生成各阶段耗时与
-																		trace_id
+																	<TooltipContent
+																		side="top"
+																		className="max-w-[16rem]"
+																	>
+																		查看请求链路：路由 / 检索 / 裁决 /
+																		生成各阶段耗时与 trace_id
 																	</TooltipContent>
 																</Tooltip>
 															) : null}
@@ -1289,7 +1292,9 @@ export function AskWorkspace() {
 									</button>
 								}
 							/>
-							<TooltipContent side="left">收起右侧面板，需要时再展开</TooltipContent>
+							<TooltipContent side="left">
+								收起右侧面板，需要时再展开
+							</TooltipContent>
 						</Tooltip>
 					</div>
 					<ScrollArea className="min-h-0 flex-1">

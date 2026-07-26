@@ -48,7 +48,10 @@ export async function POST(request: Request) {
 		sendEmail: body.send_email !== false,
 	});
 	if (!result.ok) {
-		return NextResponse.json({ detail: result.detail }, { status: result.status });
+		return NextResponse.json(
+			{ detail: result.detail },
+			{ status: result.status },
+		);
 	}
 	return NextResponse.json(result.invite, { status: 201 });
 }

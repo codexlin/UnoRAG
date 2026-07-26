@@ -13,7 +13,10 @@ test("lifecycle v2 can be explicitly disabled", () => {
 		documentLifecycleV2Enabled({ DOCUMENT_LIFECYCLE_V2: "false" }),
 		false,
 	);
-	assert.equal(documentLifecycleV2Enabled({ DOCUMENT_LIFECYCLE_V2: "0" }), false);
+	assert.equal(
+		documentLifecycleV2Enabled({ DOCUMENT_LIFECYCLE_V2: "0" }),
+		false,
+	);
 });
 
 test("lifecycle v2 accepts explicit enable", () => {

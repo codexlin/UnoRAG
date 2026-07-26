@@ -49,7 +49,10 @@ test("editor can write but not manage", () => {
 	const caps = permissionsFor({ role: "editor" });
 	assert.equal(allowsCap(caps, "writeLibraries"), true);
 	assert.equal(allowsCap(caps, "manageLibraries"), false);
-	assert.equal(allowsCap(caps, { anyOf: ["writeLibraries", "manageMembers"] }), true);
+	assert.equal(
+		allowsCap(caps, { anyOf: ["writeLibraries", "manageMembers"] }),
+		true,
+	);
 	assert.equal(allowsCap(caps, ["writeLibraries", "manageLibraries"]), false);
 });
 
@@ -72,5 +75,8 @@ test("admin predicate and allOf", () => {
 		allowsCap(caps, (c) => c.canManageLibraries && c.canWriteLibraries),
 		true,
 	);
-	assert.equal(allowsCap(caps, { allOf: ["writeLibraries", "manageMembers"] }), true);
+	assert.equal(
+		allowsCap(caps, { allOf: ["writeLibraries", "manageMembers"] }),
+		true,
+	);
 });

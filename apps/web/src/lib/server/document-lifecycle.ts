@@ -1,8 +1,10 @@
 import "server-only";
 
 import type { AuthIdentity } from "./auth/provider";
-export { validateDocumentUpload } from "./document-upload-core.mjs";
+
 export { documentLifecycleV2Enabled } from "./document-lifecycle-flag.mjs";
+export { validateDocumentUpload } from "./document-upload-core.mjs";
+
 import { safeStorageFilename } from "./object-storage/local";
 
 export function documentStorageKey(input: {

@@ -50,7 +50,10 @@ export async function POST(request: Request) {
 		libraryIds: body.library_ids,
 	});
 	if (!result.ok) {
-		return NextResponse.json({ detail: result.detail }, { status: result.status });
+		return NextResponse.json(
+			{ detail: result.detail },
+			{ status: result.status },
+		);
 	}
 	return NextResponse.json(result.key, { status: 201 });
 }

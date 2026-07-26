@@ -4,12 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { and, eq, inArray, ne } from "drizzle-orm";
 
-import {
-	auditLogs,
-	documents,
-	documentVersions,
-	jobs,
-} from "@/db/schema";
+import { auditLogs, documents, documentVersions, jobs } from "@/db/schema";
 import {
 	buildDocumentDeletePayload,
 	documentDeleteIdempotencyKey,
@@ -173,9 +168,7 @@ export async function enqueueDocumentDelete(input: {
 	const jobId = randomUUID();
 	const storageKeys: string[] = [
 		...new Set(
-			(
-				versions as Array<{ storageKey: string | null; generationId: string }>
-			)
+			(versions as Array<{ storageKey: string | null; generationId: string }>)
 				.map((version) => version.storageKey)
 				.filter((key): key is string => Boolean(key)),
 		),

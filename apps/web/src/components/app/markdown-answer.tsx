@@ -49,10 +49,7 @@ export function MarkdownAnswer({
 
 	return (
 		<div
-			className={cn(
-				"text-answer mt-2 space-y-3.5 text-foreground",
-				className,
-			)}
+			className={cn("text-answer mt-2 space-y-3.5 text-foreground", className)}
 		>
 			<ReactMarkdown
 				remarkPlugins={[remarkGfm]}
@@ -83,9 +80,7 @@ export function MarkdownAnswer({
 							{wrapText(children)}
 						</ol>
 					),
-					li: ({ children }) => (
-						<li className="pl-1">{wrapText(children)}</li>
-					),
+					li: ({ children }) => <li className="pl-1">{wrapText(children)}</li>,
 					strong: ({ children }) => (
 						<strong className="font-semibold text-foreground">
 							{wrapText(children)}

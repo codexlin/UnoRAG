@@ -13,11 +13,7 @@ import {
 import { toast } from "sonner";
 
 import { useLibraries } from "@/hooks/use-libraries";
-import {
-	type ApiDocument,
-	fetchDocuments,
-	isAbortError,
-} from "@/lib/api";
+import { type ApiDocument, fetchDocuments, isAbortError } from "@/lib/api";
 
 const POLL_MS = 2_000;
 
@@ -104,9 +100,7 @@ export function IngestJobsProvider({ children }: { children: ReactNode }) {
 							`「${doc.name}」索引完成 · ${doc.chunk_count} chunks`,
 						);
 					} else if (prev === "processing" && doc.status === "failed") {
-						toast.error(
-							`「${doc.name}」索引失败：${doc.error || "未知错误"}`,
-						);
+						toast.error(`「${doc.name}」索引失败：${doc.error || "未知错误"}`);
 					}
 					statusRef.current[doc.id] = doc.status;
 					if (doc.status === "processing") processing += 1;
