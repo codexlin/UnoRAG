@@ -166,6 +166,12 @@ def finalize_ask_debug(
 
 def build_ask_trace_event(debug: dict[str, Any]) -> dict[str, Any]:
 	"""Project retrieval_debug into a greppable ask.trace JSON line payload."""
+	ask_policy = debug.get("ask_policy")
+	resolved = (
+		ask_policy.get("resolved")
+		if isinstance(ask_policy, dict) and isinstance(ask_policy.get("resolved"), dict)
+		else {}
+	)
 	return {
 		"event": "ask.trace",
 		"trace_id": debug.get("trace_id"),
@@ -181,6 +187,10 @@ def build_ask_trace_event(debug: dict[str, Any]) -> dict[str, Any]:
 		"total_duration_ms": debug.get("total_duration_ms"),
 		"truncated": bool(debug.get("truncated")),
 		"stages": list(debug.get("stages") or []),
+		# Resolved product knobs used for this ask (hybrid/rerank must be concrete).
+		"ask_policy": ask_policy if isinstance(ask_policy, dict) else None,
+		"hybrid_enabled": debug.get("hybrid_enabled", resolved.get("hybrid_enabled")),
+		"rerank_enabled": debug.get("rerank_enabled", resolved.get("rerank_enabled")),
 	}
 
 

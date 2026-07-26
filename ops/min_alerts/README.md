@@ -12,17 +12,15 @@
 
 ## 快速用
 
+配置模板：`ops/min_alerts/env.example`（复制为 `.env`，勿放进 `apps/api`）。
+
 ```bash
 # 本地 mock receiver（写入 JSONL）
 python3 ops/min_alerts/check.py mock-receiver --port 18999 --out /tmp/mk-alerts.jsonl
 
 # 评估一次（需 ALERT_WEBHOOK_URL）
-export ALERT_WEBHOOK_URL=http://127.0.0.1:18999/alert
-export MERIKNOW_HEALTH_URL=http://127.0.0.1:3000/api/rag/health
-export LIFECYCLE_WORKER_READY_FILE=/tmp/meriknow-lifecycle-ready
-export DOCUMENT_STORAGE_ROOT=$PWD/.meriknow/documents
-export DATABASE_URL=postgresql://...
-python3 ops/min_alerts/check.py once --state-file /tmp/mk-alert-state.json
+set -a && source ops/min_alerts/.env && set +a
+python3 ops/min_alerts/check.py once --state-file "${MERIKNOW_ALERT_STATE_FILE:-/tmp/mk-alert-state.json}"
 ```
 
 Webhook payload 字段：`status`（firing/resolved）、`alert_name`、`workspace_id`、`trace_id`、`job_id`、`worker_id` 等。

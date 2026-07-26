@@ -7,10 +7,24 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/compose-env.sh"
 
-if [[ -f .env ]]; then
-	# shellcheck disable=SC1091
-	set -a && source .env && set +a
+# Prefer split config (bootstrap.env) over a local smoke helper file.
+# .smoke-admin-password is only a fallback so rotation of bootstrap.env is not shadowed.
+_SMOKE_PW_FILE="${ROOT}/.smoke-admin-password"
+if [[ -z "${MERIKNOW_ADMIN_PASSWORD:-}" ]]; then
+	MERIKNOW_ADMIN_PASSWORD="$(mk_config_get MERIKNOW_ADMIN_PASSWORD 2>/dev/null || true)"
+fi
+if [[ -z "${MERIKNOW_ADMIN_PASSWORD:-}" && -f "$_SMOKE_PW_FILE" ]]; then
+	MERIKNOW_ADMIN_PASSWORD="$(tr -d '\n' < "$_SMOKE_PW_FILE")"
+fi
+if [[ -z "${MERIKNOW_ADMIN_EMAIL:-}" ]]; then
+	MERIKNOW_ADMIN_EMAIL="$(mk_config_get MERIKNOW_ADMIN_EMAIL 2>/dev/null || true)"
+fi
+if [[ -z "${MERIKNOW_BASE_URL:-}" ]]; then
+	_HTTP_PORT="$(mk_config_get HTTP_PORT 2>/dev/null || echo 80)"
+	MERIKNOW_BASE_URL="http://localhost:${_HTTP_PORT}"
 fi
 
 BASE_URL="${MERIKNOW_BASE_URL:-http://localhost}"
@@ -77,7 +91,7 @@ if [[ "$HEALTH_CODE" != "200" ]]; then
 fi
 
 if [[ -z "$PASSWORD" || "$PASSWORD" == "change-this-before-deployment" ]]; then
-	skip "set MERIKNOW_ADMIN_PASSWORD in deploy/compose/.env (not the placeholder)"
+	skip "set MERIKNOW_ADMIN_PASSWORD in deploy/config/bootstrap.env (or .smoke-admin-password)"
 fi
 
 # --- login ---

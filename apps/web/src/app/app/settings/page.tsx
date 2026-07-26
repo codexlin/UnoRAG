@@ -23,10 +23,9 @@ export default function SettingsPage() {
 						工作区设置
 					</h2>
 					<p className="text-answer text-muted-foreground">
-						问答与检索可在下方按工作区覆盖；未覆盖 = 代码默认。生产默认走
-						live；若 live
-						未就绪，健康检查会标为不可用并拒绝问答，不会静默降级到 stub。stub
-						仅用于本地/测试显式配置。
+						问答策略按业务意图配置（回答模式、检索增强、对话记忆、证据要求），算法参数由服务端映射。生产默认走
+						live；若 live 未就绪，健康检查会标为不可用并拒绝问答，不会静默降级到
+						stub。stub 仅用于本地/测试显式配置。
 					</p>
 				</div>
 

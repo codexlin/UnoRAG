@@ -1,53 +1,40 @@
 # MeriKnow private-deployment reference topology (L8).
-# Usage (from this directory, after copying env.example → .env):
-#   ./scripts/install.sh
-# Or manually:
-#   docker compose up -d postgres qdrant redis
-#   docker compose --profile migrate run --rm migrate-web
-#   docker compose --profile migrate run --rm migrate-rag
-#   docker compose up -d
 #
-# Browser → Caddy :80 → web :3000
+# Config model (split by lifecycle / sensitivity):
+#   ../config/runtime.env      — non-secret (ConfigMap)
+#   ../config/runtime.secret   — secrets (Secret)
+#   ../config/bootstrap.env    — one-time bootstrap Job only
+#
+# Init once:
+#   ./scripts/init-config.sh
+#
+# Always use the helpers. They load --env-file without sourcing secrets and
+# remove managed host variables that would otherwise override those files:
+#   source scripts/compose-env.sh
+#   mk_compose up -d
+# Bootstrap/migrate profile:
+#   mk_compose_bootstrap --profile migrate run --rm bootstrap
+# mk_compose does NOT require bootstrap.env; mk_compose_bootstrap does.
+#
+# Browser → Caddy :${HTTP_PORT} → web :3000
 # FastAPI / lifecycle-worker are NOT published.
 
 name: ${COMPOSE_PROJECT_NAME:-meriknow}
 
-x-api-env: &api-env
-  APP_NAME: MeriKnow API
-  APP_ENV: ${APP_ENV:-production}
-  API_PREFIX: /v1
-  CORS_ORIGINS: http://localhost,http://127.0.0.1
-  INTERNAL_AUTH_ENABLED: ${INTERNAL_AUTH_ENABLED:-true}
-  INTERNAL_AUTH_SECRET: ${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET required}
-  INTERNAL_AUTH_REPLAY_BACKEND: ${INTERNAL_AUTH_REPLAY_BACKEND:-redis}
-  ASK_MODE: ${ASK_MODE:-live}
-  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-  DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
-  CHAT_MODEL: ${CHAT_MODEL:-qwen-plus}
-  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v3}
-  EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
-  QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
-  QDRANT_COLLECTION: ${QDRANT_COLLECTION:-meriknow_chunks}
-  METADATA_BACKEND: ${METADATA_BACKEND:-postgres}
-  DATABASE_URL: ${API_DATABASE_URL:?API_DATABASE_URL required}
-  REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-  WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL required}
-  RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:?RAG_READ_DATABASE_URL required}
-  DOCUMENT_STORAGE_ROOT: ${DOCUMENT_STORAGE_ROOT:-/var/lib/meriknow/documents}
-  ACTIVE_GENERATION_GATE_ENABLED: ${ACTIVE_GENERATION_GATE_ENABLED:-true}
-  ACTIVE_GENERATION_CACHE_TTL_SECONDS: ${ACTIVE_GENERATION_CACHE_TTL_SECONDS:-0}
-  RERANK_BASE_URL: ${RERANK_BASE_URL:-}
-  RERANK_MODEL: ${RERANK_MODEL:-qwen3-rerank}
-  MINERU_ENABLED: ${MINERU_ENABLED:-false}
-  MINERU_URL: ${MINERU_URL:-}
-  MINERU_USE_FAKE: ${MINERU_USE_FAKE:-false}
-  LIFECYCLE_WORKER_READY_FILE: /tmp/meriknow-lifecycle-ready
-  LIFECYCLE_WORKER_POLL_SECONDS: ${LIFECYCLE_WORKER_POLL_SECONDS:-1}
-  LIFECYCLE_WORKER_LEASE_SECONDS: ${LIFECYCLE_WORKER_LEASE_SECONDS:-120}
-  LIFECYCLE_WORKER_HEARTBEAT_SECONDS: ${LIFECYCLE_WORKER_HEARTBEAT_SECONDS:-30}
-
 services:
+  # Named volumes default to root:root; web runs as uid 10001 (meriknow).
+  document-storage-init:
+    image: ${MERIKNOW_WEB_IMAGE:-meriknow-web:local}
+    user: "0:0"
+    volumes:
+      - document_storage:/var/lib/meriknow/documents
+    entrypoint: ["sh", "-c"]
+    command:
+      - "chown -R meriknow:meriknow /var/lib/meriknow/documents && chmod 775 /var/lib/meriknow/documents"
+    restart: "no"
+    networks:
+      - internal
+
   caddy:
     image: ${CADDY_IMAGE:-caddy:2.9.1-alpine}
     restart: unless-stopped
@@ -72,26 +59,18 @@ services:
     environment:
       NODE_ENV: production
       RAG_API_URL: http://api:8000
-      MERIKNOW_INTERNAL_SECRET: ${MERIKNOW_INTERNAL_SECRET:?MERIKNOW_INTERNAL_SECRET required}
-      MERIKNOW_SESSION_SECRET: ${MERIKNOW_SESSION_SECRET:?MERIKNOW_SESSION_SECRET required}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
-      DOCUMENT_LIFECYCLE_V2: ${DOCUMENT_LIFECYCLE_V2:-true}
-      DOCUMENT_STORAGE_ROOT: ${DOCUMENT_STORAGE_ROOT:-/var/lib/meriknow/documents}
-      MERIKNOW_ORGANIZATION_ID: ${MERIKNOW_ORGANIZATION_ID:-00000000-0000-4000-8000-000000000001}
-      MERIKNOW_WORKSPACE_ID: ${MERIKNOW_WORKSPACE_ID:-00000000-0000-4000-8000-000000000002}
-      MERIKNOW_PRINCIPAL_ID: ${MERIKNOW_PRINCIPAL_ID:-00000000-0000-4000-8000-000000000003}
-      MERIKNOW_ORGANIZATION_SLUG: ${MERIKNOW_ORGANIZATION_SLUG:-default}
-      MERIKNOW_ORGANIZATION_NAME: ${MERIKNOW_ORGANIZATION_NAME:-MeriKnow Private Deployment}
-      MERIKNOW_WORKSPACE_SLUG: ${MERIKNOW_WORKSPACE_SLUG:-default}
-      MERIKNOW_WORKSPACE_NAME: ${MERIKNOW_WORKSPACE_NAME:-Default Workspace}
-      MERIKNOW_ADMIN_SUBJECT: ${MERIKNOW_ADMIN_SUBJECT:-local-admin}
-      MERIKNOW_ADMIN_EMAIL: ${MERIKNOW_ADMIN_EMAIL:-admin@example.com}
-      MERIKNOW_ADMIN_NAME: ${MERIKNOW_ADMIN_NAME:-Local Administrator}
-      MERIKNOW_ADMIN_PASSWORD: ${MERIKNOW_ADMIN_PASSWORD:?MERIKNOW_ADMIN_PASSWORD required}
+      MERIKNOW_INTERNAL_SECRET: ${MERIKNOW_INTERNAL_SECRET:?MERIKNOW_INTERNAL_SECRET required}
+      MERIKNOW_SESSION_SECRET: ${MERIKNOW_SESSION_SECRET:?MERIKNOW_SESSION_SECRET required}
+      # Container-internal path only (named volume). Do not pass host absolute paths.
+      DOCUMENT_STORAGE_ROOT: /var/lib/meriknow/documents
+      DOCUMENT_MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-52428800}
     volumes:
-      - document_storage:${DOCUMENT_STORAGE_ROOT:-/var/lib/meriknow/documents}
+      - document_storage:/var/lib/meriknow/documents
     depends_on:
+      document-storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       api:
@@ -117,10 +96,47 @@ services:
       dockerfile: deploy/docker/api.Dockerfile
     restart: unless-stopped
     environment:
-      <<: *api-env
+      APP_ENV: ${APP_ENV:-production}
+      APP_NAME: MeriKnow API
+      API_PREFIX: /v1
+      CORS_ORIGINS: http://localhost,http://127.0.0.1
+      # Product invariants (not customer-tunable env knobs)
+      ASK_MODE: live
+      METADATA_BACKEND: postgres
+      INTERNAL_AUTH_ENABLED: "true"
+      INTERNAL_AUTH_SECRET: ${MERIKNOW_INTERNAL_SECRET:?MERIKNOW_INTERNAL_SECRET required}
+      INTERNAL_AUTH_REPLAY_BACKEND: redis
+      ACTIVE_GENERATION_GATE_ENABLED: "true"
+      ACTIVE_GENERATION_CACHE_TTL_SECONDS: "0"
+      MINERU_USE_FAKE: "false"
+      DATABASE_URL: ${API_DATABASE_URL:?API_DATABASE_URL required}
+      RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:?RAG_READ_DATABASE_URL required}
+      QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-meriknow_chunks}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL required}
+      DOCUMENT_STORAGE_ROOT: /var/lib/meriknow/documents
+      MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-52428800}
+      # Transitional mapping: deploy name LLM_* → app OPENAI_*
+      OPENAI_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}
+      OPENAI_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL required}
+      CHAT_MODEL: ${CHAT_MODEL:?CHAT_MODEL required}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:?EMBEDDING_MODEL required}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:?EMBEDDING_DIM required}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-10}
+      LLM_MAX_INFLIGHT: ${LLM_MAX_INFLIGHT:-4}
+      RERANK_BASE_URL: ${RERANK_BASE_URL:-}
+      RERANK_MODEL: ${RERANK_MODEL:-qwen3-rerank}
+      MINERU_ENABLED: ${MINERU_ENABLED:-false}
+      MINERU_URL: ${MINERU_URL:-}
+      LIFECYCLE_WORKER_READY_FILE: /tmp/meriknow-lifecycle-ready
+      LIFECYCLE_WORKER_POLL_SECONDS: ${LIFECYCLE_WORKER_POLL_SECONDS:-1}
+      LIFECYCLE_WORKER_LEASE_SECONDS: ${LIFECYCLE_WORKER_LEASE_SECONDS:-120}
+      LIFECYCLE_WORKER_HEARTBEAT_SECONDS: ${LIFECYCLE_WORKER_HEARTBEAT_SECONDS:-30}
     volumes:
-      - document_storage:${DOCUMENT_STORAGE_ROOT:-/var/lib/meriknow/documents}
+      - document_storage:/var/lib/meriknow/documents
     depends_on:
+      document-storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       qdrant:
@@ -149,10 +165,45 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "app.lifecycle_worker"]
     environment:
-      <<: *api-env
+      APP_ENV: ${APP_ENV:-production}
+      # Invariants required by Settings production validator
+      ASK_MODE: live
+      METADATA_BACKEND: postgres
+      INTERNAL_AUTH_ENABLED: "true"
+      INTERNAL_AUTH_SECRET: ${MERIKNOW_INTERNAL_SECRET:?MERIKNOW_INTERNAL_SECRET required}
+      INTERNAL_AUTH_REPLAY_BACKEND: redis
+      ACTIVE_GENERATION_GATE_ENABLED: "true"
+      ACTIVE_GENERATION_CACHE_TTL_SECONDS: "0"
+      MINERU_USE_FAKE: "false"
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL required}
+      RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:?RAG_READ_DATABASE_URL required}
+      # Settings.database_url fallback; worker DSN is authoritative via WORKER_*
+      DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL required}
+      QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-meriknow_chunks}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL required}
+      DOCUMENT_STORAGE_ROOT: /var/lib/meriknow/documents
+      MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-52428800}
+      OPENAI_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}
+      OPENAI_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL required}
+      CHAT_MODEL: ${CHAT_MODEL:?CHAT_MODEL required}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:?EMBEDDING_MODEL required}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:?EMBEDDING_DIM required}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-10}
+      LLM_MAX_INFLIGHT: ${LLM_MAX_INFLIGHT:-4}
+      MINERU_ENABLED: ${MINERU_ENABLED:-false}
+      MINERU_URL: ${MINERU_URL:-}
+      LIFECYCLE_WORKER_READY_FILE: /tmp/meriknow-lifecycle-ready
+      LIFECYCLE_WORKER_POLL_SECONDS: ${LIFECYCLE_WORKER_POLL_SECONDS:-1}
+      LIFECYCLE_WORKER_LEASE_SECONDS: ${LIFECYCLE_WORKER_LEASE_SECONDS:-120}
+      LIFECYCLE_WORKER_HEARTBEAT_SECONDS: ${LIFECYCLE_WORKER_HEARTBEAT_SECONDS:-30}
+      LIFECYCLE_LOCAL_CAPACITY: ${LIFECYCLE_LOCAL_CAPACITY:-2}
+      LIFECYCLE_MINERU_CAPACITY: ${LIFECYCLE_MINERU_CAPACITY:-1}
     volumes:
-      - document_storage:${DOCUMENT_STORAGE_ROOT:-/var/lib/meriknow/documents}
+      - document_storage:/var/lib/meriknow/documents
     depends_on:
+      document-storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       qdrant:
@@ -249,8 +300,10 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/api.Dockerfile
+    working_dir: /app
     environment:
       MIGRATOR_DATABASE_URL: ${MIGRATOR_DATABASE_URL:?MIGRATOR_DATABASE_URL required}
+      PYTHONPATH: /app
     command: ["python", "scripts/apply_rag_migrations.py"]
     depends_on:
       postgres:
@@ -270,6 +323,8 @@ services:
       target: migrator
     working_dir: /repo/apps/web
     environment:
+      # Bootstrap-only vars: use defaults so `compose config` works without
+      # bootstrap.env. The bootstrap script still requires a real password at run.
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       MERIKNOW_ORGANIZATION_ID: ${MERIKNOW_ORGANIZATION_ID:-00000000-0000-4000-8000-000000000001}
       MERIKNOW_WORKSPACE_ID: ${MERIKNOW_WORKSPACE_ID:-00000000-0000-4000-8000-000000000002}
@@ -281,7 +336,8 @@ services:
       MERIKNOW_ADMIN_SUBJECT: ${MERIKNOW_ADMIN_SUBJECT:-local-admin}
       MERIKNOW_ADMIN_EMAIL: ${MERIKNOW_ADMIN_EMAIL:-admin@example.com}
       MERIKNOW_ADMIN_NAME: ${MERIKNOW_ADMIN_NAME:-Local Administrator}
-      MERIKNOW_ADMIN_PASSWORD: ${MERIKNOW_ADMIN_PASSWORD:?MERIKNOW_ADMIN_PASSWORD required}
+      MERIKNOW_ADMIN_PASSWORD: ${MERIKNOW_ADMIN_PASSWORD:-}
+      MERIKNOW_ADMIN_PASSWORD_UPSERT: ${MERIKNOW_ADMIN_PASSWORD_UPSERT:-}
     command: ["node", "scripts/bootstrap-control-plane.mjs"]
     depends_on:
       migrate-rag:

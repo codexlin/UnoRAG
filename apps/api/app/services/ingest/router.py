@@ -61,6 +61,8 @@ def parse_to_ir(
 	content_type: str | None = None,
 	progress_callback: ParseProgressCallback | None = None,
 	cancel_check: CancelCheck | None = None,
+	ocr_enabled: bool | None = None,
+	enhanced_parser_allowed: bool = True,
 ) -> DocumentIR:
 	if cancel_check is not None:
 		cancel_check()
@@ -119,17 +121,22 @@ def parse_to_ir(
 			library_id=library_id,
 		)
 	if fmt == "pdf":
-		ocr_adapter = get_ocr_adapter(enabled=settings.ocr_enabled)
+		# Library scan_handling override (force_ocr/disabled); None → deploy default.
+		resolved_ocr = (
+			settings.ocr_enabled if ocr_enabled is None else bool(ocr_enabled)
+		)
+		resolved_vlm = bool(settings.vlm_enabled and enhanced_parser_allowed)
+		ocr_adapter = get_ocr_adapter(enabled=resolved_ocr)
 		vlm_adapter = get_vlm_adapter(
-			enabled=settings.vlm_enabled,
+			enabled=resolved_vlm,
 			api_key=settings.llm_api_key,
 			base_url=settings.llm_base_url,
 			model=settings.vlm_model,
 		)
 		options = PdfParseOptions(
 			scan_strategy=settings.pdf_scan_strategy,  # type: ignore[arg-type]
-			ocr_enabled=settings.ocr_enabled,
-			vlm_enabled=settings.vlm_enabled,
+			ocr_enabled=resolved_ocr,
+			vlm_enabled=resolved_vlm,
 			ocr_adapter=ocr_adapter,
 			vlm_adapter=vlm_adapter,
 		)
@@ -144,6 +151,7 @@ def parse_to_ir(
 			options=options,
 			progress_callback=progress_callback,
 			cancel_check=cancel_check,
+			enhanced_parser_allowed=enhanced_parser_allowed,
 		)
 
 	raise ValueError(f"unsupported format for v2 ingest: {fmt}")

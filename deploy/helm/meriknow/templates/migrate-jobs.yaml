@@ -22,9 +22,12 @@ spec:
         - name: migrate-web
           image: "{{ .Values.migrate.web.image.repository }}:{{ .Values.migrate.web.image.tag }}"
           imagePullPolicy: {{ .Values.migrate.web.image.pullPolicy }}
-          envFrom:
-            - secretRef:
-                name: {{ include "meriknow.secretName" . }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "meriknow.secretName" . }}
+                  key: MIGRATOR_DATABASE_URL
 {{- end }}
 ---
 {{- if .Values.migrate.rag.enabled }}
@@ -52,9 +55,6 @@ spec:
           image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"
           imagePullPolicy: {{ .Values.images.api.pullPolicy }}
           command: ["python", "scripts/apply_rag_migrations.py"]
-          envFrom:
-            - secretRef:
-                name: {{ include "meriknow.secretName" . }}
           env:
             - name: MIGRATOR_DATABASE_URL
               valueFrom:

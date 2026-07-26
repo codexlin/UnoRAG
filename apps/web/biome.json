@@ -6,7 +6,11 @@
     "useIgnoreFile": true
   },
   "files": {
-    "ignoreUnknown": false
+    "ignoreUnknown": false,
+    "includes": [
+      "**",
+      "!!drizzle/meta"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -15,8 +19,10 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended",
-      "complexity": { "noUselessTypeConstraint": "error" }
+      "recommended": true,
+      "complexity": {
+        "noUselessTypeConstraint": "error"
+      }
     }
   },
   "javascript": {

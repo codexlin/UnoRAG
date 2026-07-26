@@ -113,10 +113,7 @@ export async function POST(request: Request, context: RouteContext) {
 		)
 		.limit(1);
 	if (!sourceVersion?.storageKey || !sourceVersion.contentHash) {
-		return Response.json(
-			{ detail: "原文未保留，请重新上传" },
-			{ status: 409 },
-		);
+		return Response.json({ detail: "原文未保留，请重新上传" }, { status: 409 });
 	}
 
 	const versionId = randomUUID();
@@ -236,6 +233,9 @@ export async function POST(request: Request, context: RouteContext) {
 				sizeBytes: sourceVersion.sizeBytes,
 				status: "pending",
 				pipelineVersion: "document-lifecycle-v2",
+				documentProfile: library.documentProfile ?? "auto",
+				scanHandling: library.scanHandling ?? "auto",
+				ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
 				createdAt: now,
 				updatedAt: now,
 			});
@@ -257,6 +257,9 @@ export async function POST(request: Request, context: RouteContext) {
 					contentHash: sourceVersion.contentHash,
 					filename: document.filename,
 					contentType: document.contentType,
+					documentProfile: library.documentProfile ?? "auto",
+					scanHandling: library.scanHandling ?? "auto",
+					ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
 				}),
 				createdAt: now,
 				updatedAt: now,

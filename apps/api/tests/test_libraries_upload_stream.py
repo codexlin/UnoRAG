@@ -356,7 +356,8 @@ def test_ask_stream_sse() -> None:
 	assert "event: done" in body
 	assert "三个工作日" in body
 	assert '"text"' in body
-	assert '"persisted": true' in body or '"persisted":true' in body
+	# Default-temp ask (no thread_id): SessionMemory only — not durable archive.
+	assert '"persisted": false' in body or '"persisted":false' in body
 	assert "retrieval_mode" in body
 
 

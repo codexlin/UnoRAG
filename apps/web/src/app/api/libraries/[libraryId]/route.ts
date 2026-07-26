@@ -8,28 +8,21 @@ import { resolveRequestSession } from "@/lib/server/auth/session";
 import { enqueueDocumentDelete } from "@/lib/server/document-delete-enqueue";
 import { documentLifecycleV2Enabled } from "@/lib/server/document-lifecycle";
 import {
+	validateDocumentProfile,
+	validateScanHandling,
+} from "@/lib/server/document-policy.mjs";
+import {
 	canManageLibraries,
 	canWriteLibraries,
 	findAuthorizedLibrary,
 } from "@/lib/server/library-access";
+import { toApiLibrary } from "@/lib/server/library-api.mjs";
+import { staleActiveVersionsSql } from "@/lib/server/library-reindex-sql";
 import { runOutboxMutation } from "@/lib/server/outbox-transaction.mjs";
 
 type RouteContext = {
 	params: Promise<{ libraryId: string }>;
 };
-
-function toApiLibrary(row: typeof libraries.$inferSelect) {
-	return {
-		id: row.ragLibraryId,
-		name: row.name,
-		description: row.description,
-		status: row.status,
-		doc_count: row.docCount,
-		ready_count: row.readyCount,
-		created_at: row.createdAt.toISOString(),
-		updated_at: row.updatedAt.toISOString(),
-	};
-}
 
 export async function PATCH(request: Request, context: RouteContext) {
 	const identity = await resolveRequestSession(request);
@@ -56,18 +49,55 @@ export async function PATCH(request: Request, context: RouteContext) {
 			{ status: 409 },
 		);
 	}
-	let body: { name?: string; description?: string | null };
+	let body: {
+		name?: string;
+		description?: string | null;
+		document_profile?: string;
+		scan_handling?: string;
+	};
 	try {
 		body = (await request.json()) as typeof body;
 	} catch {
 		return Response.json({ detail: "invalid JSON body" }, { status: 400 });
 	}
-	if (body.name === undefined && body.description === undefined) {
+	if (
+		body.name === undefined &&
+		body.description === undefined &&
+		body.document_profile === undefined &&
+		body.scan_handling === undefined
+	) {
 		return Response.json(
-			{ detail: "name or description is required" },
+			{
+				detail:
+					"name, description, document_profile, or scan_handling is required",
+			},
 			{ status: 400 },
 		);
 	}
+
+	let nextProfile: string | undefined;
+	if (body.document_profile !== undefined) {
+		const profileResult = validateDocumentProfile(body.document_profile);
+		if (!profileResult.ok) {
+			return Response.json({ detail: profileResult.detail }, { status: 400 });
+		}
+		nextProfile = profileResult.value;
+	}
+	let nextScan: string | undefined;
+	if (body.scan_handling !== undefined) {
+		const scanResult = validateScanHandling(body.scan_handling);
+		if (!scanResult.ok) {
+			return Response.json({ detail: scanResult.detail }, { status: 400 });
+		}
+		nextScan = scanResult.value;
+	}
+
+	const profileChanged =
+		nextProfile !== undefined && nextProfile !== current.documentProfile;
+	const scanChanged =
+		nextScan !== undefined && nextScan !== current.scanHandling;
+	const policyChanged = profileChanged || scanChanged;
+
 	const db = getDatabase();
 	const now = new Date();
 	const updated = await runOutboxMutation(
@@ -81,6 +111,15 @@ export async function PATCH(request: Request, context: RouteContext) {
 						: {}),
 					...(body.description !== undefined
 						? { description: body.description?.trim().slice(0, 2000) || null }
+						: {}),
+					...(nextProfile !== undefined
+						? { documentProfile: nextProfile }
+						: {}),
+					...(nextScan !== undefined ? { scanHandling: nextScan } : {}),
+					...(policyChanged
+						? {
+								ingestPolicyVersion: (current.ingestPolicyVersion ?? 1) + 1,
+							}
 						: {}),
 					updatedAt: now,
 				})
@@ -106,13 +145,34 @@ export async function PATCH(request: Request, context: RouteContext) {
 					library_id: row.ragLibraryId,
 					name: row.name,
 					description: row.description,
+					document_profile: row.documentProfile,
+					scan_handling: row.scanHandling,
 					principal_id: identity.principalId,
 				},
 				createdAt: now,
 				updatedAt: now,
 			}),
 	);
-	return Response.json(toApiLibrary(updated));
+	const [withStale] = await db
+		.select({
+			ragLibraryId: libraries.ragLibraryId,
+			name: libraries.name,
+			description: libraries.description,
+			status: libraries.status,
+			docCount: libraries.docCount,
+			readyCount: libraries.readyCount,
+			documentProfile: libraries.documentProfile,
+			appliedDocumentProfile: libraries.appliedDocumentProfile,
+			scanHandling: libraries.scanHandling,
+			ingestPolicyVersion: libraries.ingestPolicyVersion,
+			staleActiveVersions: staleActiveVersionsSql(),
+			createdAt: libraries.createdAt,
+			updatedAt: libraries.updatedAt,
+		})
+		.from(libraries)
+		.where(eq(libraries.id, updated.id))
+		.limit(1);
+	return Response.json(toApiLibrary(withStale ?? updated));
 }
 
 /**

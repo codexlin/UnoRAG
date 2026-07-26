@@ -59,6 +59,9 @@ test("buildDocumentIngestPayload matches upload/replace contract", () => {
 		content_hash: "abc",
 		filename: "source.md",
 		content_type: "text/markdown",
+		document_profile: "auto",
+		scan_handling: "auto",
+		ingest_policy_version: 1,
 		queue_class: "local",
 	});
 	const pdfPayload = buildDocumentIngestPayload({

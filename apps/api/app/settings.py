@@ -2,11 +2,45 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+from urllib.parse import urlparse
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+_PLACEHOLDER_SECRET_MARKERS = (
+	"replace-with-random",
+	"change-me",
+	"change-this",
+	"changeme",
+	"your-secret",
+	"todo",
+)
+
+
+def _looks_like_placeholder(value: str) -> bool:
+	normalized = value.strip().lower()
+	if not normalized:
+		return True
+	return any(marker in normalized for marker in _PLACEHOLDER_SECRET_MARKERS)
+
+
+def _redacted_url_host(url: str) -> str:
+	"""Hostname[:port] only — never userinfo (user:pass@host)."""
+	raw = (url or "").strip()
+	if not raw:
+		return ""
+	parsed = urlparse(raw)
+	host = parsed.hostname
+	if not host:
+		# Non-URL / opaque value: return as-is only if it cannot contain userinfo.
+		if "@" in raw:
+			return "[redacted-host]"
+		return raw
+	if parsed.port is not None:
+		return f"{host}:{parsed.port}"
+	return host
 
 
 class Settings(BaseSettings):
@@ -133,6 +167,12 @@ class Settings(BaseSettings):
 			raise ValueError("MINERU_CIRCUIT_FAILURE_THRESHOLD must be >= 1")
 		if self.mineru_circuit_open_seconds < 1:
 			raise ValueError("MINERU_CIRCUIT_OPEN_SECONDS must be >= 1")
+		if self.embedding_dim <= 0:
+			raise ValueError("EMBEDDING_DIM must be > 0")
+		if self.lifecycle_worker_heartbeat_seconds * 2 >= self.lifecycle_worker_lease_seconds:
+			raise ValueError(
+				"LIFECYCLE_WORKER_HEARTBEAT_SECONDS must be < LIFECYCLE_WORKER_LEASE_SECONDS / 2"
+			)
 
 		if not self.internal_auth_enabled:
 			logger.warning(
@@ -145,10 +185,33 @@ class Settings(BaseSettings):
 			return self
 		if not self.internal_auth_enabled:
 			raise ValueError("production requires INTERNAL_AUTH_ENABLED=true")
-		if len(self.internal_auth_secret.strip()) < 32:
+		secret = self.internal_auth_secret.strip()
+		if len(secret) < 32:
 			raise ValueError("production requires INTERNAL_AUTH_SECRET with 32+ characters")
+		if _looks_like_placeholder(secret):
+			raise ValueError("production forbids placeholder INTERNAL_AUTH_SECRET")
 		if self.internal_auth_replay_backend.strip().lower() != "redis":
 			raise ValueError("production requires INTERNAL_AUTH_REPLAY_BACKEND=redis")
+		if not self.redis_url.strip():
+			raise ValueError("production requires REDIS_URL")
+		if not self.qdrant_url.strip():
+			raise ValueError("production requires QDRANT_URL")
+		if not self.document_storage_root.strip():
+			raise ValueError(
+				"production requires DOCUMENT_STORAGE_ROOT "
+				"(do not rely on DOCUMENT_STORAGE_DIR / data/documents fallback)"
+			)
+		if not self.database_url.strip():
+			raise ValueError("production requires DATABASE_URL / API_DATABASE_URL")
+		db_scheme = urlparse(self.database_url).scheme.lower()
+		if db_scheme not in {"postgresql", "postgresql+psycopg", "postgres"}:
+			raise ValueError(
+				"production DATABASE_URL must use postgresql:// or postgresql+psycopg://"
+			)
+		if not self.has_llm_key or _looks_like_placeholder(self.llm_api_key):
+			raise ValueError("production requires a real LLM/OpenAI API key")
+		if not self.llm_base_url.strip():
+			raise ValueError("production requires OPENAI_BASE_URL / LLM_BASE_URL")
 		if not self.active_generation_gate_enabled:
 			raise ValueError("production requires ACTIVE_GENERATION_GATE_ENABLED=true")
 		if self.active_generation_cache_ttl_seconds != 0:
@@ -162,6 +225,25 @@ class Settings(BaseSettings):
 		if self.mineru_mode.strip().lower() == "mineru" and not self.mineru_enabled:
 			raise ValueError("production MINERU_MODE=mineru requires MINERU_ENABLED=true")
 		return self
+
+	def redacted_effective_config(self) -> dict[str, object]:
+		"""Safe-to-log deployment summary (no secret values)."""
+		return {
+			"app_env": self.app_env,
+			"database": "configured" if self.database_url.strip() else "missing",
+			"rag_read_database": "configured" if self.rag_read_database_url.strip() else "default",
+			"worker_database": "configured" if self.worker_database_url.strip() else "default",
+			"qdrant_host": _redacted_url_host(self.qdrant_url),
+			"redis": "configured" if self.redis_url.strip() else "missing",
+			"document_storage": self.resolved_document_storage or "missing",
+			"llm_provider_host": _redacted_url_host(self.llm_base_url),
+			"chat_model": self.chat_model,
+			"embedding_model": self.embedding_model,
+			"embedding_dim": self.embedding_dim,
+			"internal_auth": "enabled" if self.internal_auth_enabled else "disabled",
+			"mineru_enabled": self.mineru_enabled,
+			"secret_values": "[REDACTED]",
+		}
 
 	@property
 	def cors_origin_list(self) -> list[str]:

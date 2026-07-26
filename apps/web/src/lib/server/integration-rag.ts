@@ -1,16 +1,17 @@
 import "server-only";
 
+import { injectAskOverrides } from "./ask-overrides-inject.mjs";
 import { createInternalRagHeaders } from "./internal-rag-context";
-import { getWorkspaceAskSettings } from "./workspace-settings";
 import {
 	type AuthenticatedServiceKey,
-	type ServiceKeyScope,
 	authenticateServiceKey,
 	extractBearerServiceKey,
+	type ServiceKeyScope,
 	serviceKeyAllowsLibrary,
 	serviceKeyHasScope,
 	serviceKeyToIdentity,
 } from "./service-keys";
+import { getWorkspaceAskSettings } from "./workspace-settings";
 
 function ragBaseUrl(): string {
 	return (process.env.RAG_API_URL?.trim() || "http://localhost:8000").replace(
@@ -56,25 +57,13 @@ function encodeJsonBody(payload: Record<string, unknown>): Uint8Array {
 async function withAskOverrides(
 	body: Uint8Array,
 	workspaceId: string,
-): Promise<Uint8Array> {
-	try {
-		const payload = JSON.parse(new TextDecoder().decode(body)) as Record<
-			string,
-			unknown
-		>;
-		const { ask } = await getWorkspaceAskSettings(workspaceId);
-		if (Object.keys(ask).length === 0) {
-			if ("ask_overrides" in payload) {
-				delete payload.ask_overrides;
-				return encodeJsonBody(payload);
-			}
-			return body;
-		}
-		payload.ask_overrides = ask;
-		return encodeJsonBody(payload);
-	} catch {
-		return body;
-	}
+): Promise<
+	| { ok: true; body: Uint8Array }
+	| { ok: false; status: 400 | 503; detail: string }
+> {
+	return injectAskOverrides(body, workspaceId, getWorkspaceAskSettings, {
+		questionKeys: ["question", "query"],
+	});
 }
 
 /**
@@ -145,7 +134,14 @@ export async function forwardIntegrationRag(input: {
 	}
 
 	if (input.injectAskOverrides) {
-		bodyBytes = await withAskOverrides(bodyBytes, input.key.workspaceId);
+		const injected = await withAskOverrides(bodyBytes, input.key.workspaceId);
+		if (!injected.ok) {
+			return Response.json(
+				{ detail: injected.detail },
+				{ status: injected.status },
+			);
+		}
+		bodyBytes = injected.body;
 	}
 
 	const identity = serviceKeyToIdentity(input.key);
@@ -192,8 +188,7 @@ export async function forwardIntegrationRag(input: {
 	}
 
 	const responseHeaders = new Headers({
-		"content-type":
-			upstream.headers.get("content-type") ?? "application/json",
+		"content-type": upstream.headers.get("content-type") ?? "application/json",
 		"cache-control": "no-store",
 	});
 	const requestId = signedHeaders.get("x-request-id");

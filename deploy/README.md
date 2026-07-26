@@ -4,7 +4,7 @@
 **Helm/K8s 起步骨架** 已提供；SBOM/镜像安全扫描仍后置。
 
 产品定位与开工 checklist：[`docs/PRODUCT.md`](../docs/PRODUCT.md) ·
-[`docs/ROADMAP.md`](../docs/ROADMAP.md)。  
+[`docs/ROADMAP.md`](../docs/ROADMAP.md)。
 试点 go/no-go 见 [`docs/acceptance/`](../docs/acceptance/README.md)。
 
 ## 目录
@@ -12,11 +12,17 @@
 ```text
 deploy/
   README.md                 # 本文件
+  config/
+    runtime.env.example     # 非敏感运行期配置 → runtime.env
+    runtime.secret.example  # Secret 名称模板 → runtime.secret
+    bootstrap.env.example   # 一次性 bootstrap → bootstrap.env
   compose/
-    docker-compose.yml      # 单机参考拓扑
-    env.example             # 环境变量模板（复制为 .env）
+    docker-compose.yml      # 单机参考拓扑（按服务最小权限注入）
+    env.example             # 指向 deploy/config 的简短说明（勿再填大而全 .env）
     Caddyfile               # 反向代理：仅暴露控制面
     scripts/
+      init-config.sh        # 复制 example → 真实文件（不覆盖）
+      compose-env.sh        # mk_compose / --env-file 助手
       install.sh            # 安装：infra → migrate → app
       upgrade.sh            # 滚动升级（含 worker drain）
       backup.sh             # PostgreSQL / 对象 / Qdrant
@@ -37,8 +43,8 @@ deploy/
 
 ```bash
 cd deploy/compose
-cp env.example .env
-# 编辑 .env：密钥、模型 endpoint、数据库口令
+./scripts/init-config.sh
+# 编辑 ../config/runtime.env、runtime.secret、bootstrap.env
 
 ./scripts/install.sh
 # 浏览器：http://localhost/
@@ -68,7 +74,7 @@ cp env.example .env
 # 离线（不需要 Compose）：隔离单测 + CI 质量门禁
 ./deploy/compose/scripts/pilot-preflight.sh
 
-# Compose 已 up 且 .env 含真实 admin 密码：
+# Compose 已 up 且 bootstrap.env（或 .smoke-admin-password）含真实 admin 密码：
 cd deploy/compose
 ./scripts/pilot-smoke.sh
 # 退出 0=PASS；1=FAIL；2=SKIP（栈未起 / 无模型 key 等）
@@ -80,8 +86,8 @@ cd deploy/compose
 
 完整 SBOM + CVE 扫描流水线仍后置，不阻塞通用受控试点 P0。交付前建议：
 
-1. 确认 `env.example` / values 中基础镜像 tag 已 pin；  
-2. 对构建出的 `meriknow-web` / `meriknow-api` 镜像自行运行 `syft` / `trivy`（或客户等价工具）并归档；  
+1. 确认 `deploy/config/runtime.env.example` / Helm values 中基础镜像 tag 已 pin；
+2. 对构建出的 `meriknow-web` / `meriknow-api` 镜像自行运行 `syft` / `trivy`（或客户等价工具）并归档；
 3. 未扫描时写入发布「已知限制」，勿暗示已完成镜像安全认证。
 
 ## 明确后置

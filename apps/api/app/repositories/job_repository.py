@@ -84,6 +84,10 @@ class DocumentIngestContext:
     version_status: str
     parser_backend: str | None
     chunk_profile: str | None
+    # Ingest policy snapshot from enqueue (document_version / job.payload).
+    document_profile: str | None
+    scan_handling: str | None
+    ingest_policy_version: int | None
     parser_report: dict[str, Any] | None
     point_count: int | None
     chunk_count: int | None
@@ -371,6 +375,7 @@ class JobRepository:
                     job.id AS job_id,
                     job.organization_id,
                     job.workspace_id,
+                    job.payload AS job_payload,
                     version.id AS document_version_id,
                     version.generation_id,
                     version.content_hash,
@@ -384,6 +389,9 @@ class JobRepository:
                     version.chunk_count,
                     version.section_count,
                     version.table_count,
+                    version.document_profile AS version_document_profile,
+                    version.scan_handling AS version_scan_handling,
+                    version.ingest_policy_version AS version_ingest_policy_version,
                     document.id AS document_id,
                     document.rag_document_id,
                     document.name AS title,
@@ -429,6 +437,25 @@ class JobRepository:
             row = cursor.fetchone()
         if row is None:
             raise LostJobLeaseError(f"job lease is no longer valid: {lease.id}")
+        payload = row.get("job_payload") if isinstance(row.get("job_payload"), dict) else {}
+        # Prefer version snapshot, then job payload. Never re-read live library policy.
+        document_profile = (
+            row.get("version_document_profile")
+            or payload.get("document_profile")
+            or "auto"
+        )
+        scan_handling = (
+            row.get("version_scan_handling")
+            or payload.get("scan_handling")
+            or "auto"
+        )
+        ingest_policy_version = row.get("version_ingest_policy_version")
+        if ingest_policy_version is None:
+            raw_version = payload.get("ingest_policy_version")
+            try:
+                ingest_policy_version = int(raw_version) if raw_version is not None else 1
+            except (TypeError, ValueError):
+                ingest_policy_version = 1
         return DocumentIngestContext(
             job_id=row["job_id"],
             organization_id=row["organization_id"],
@@ -448,6 +475,9 @@ class JobRepository:
             version_status=row["version_status"],
             parser_backend=row["parser_backend"],
             chunk_profile=row["chunk_profile"],
+            document_profile=str(document_profile),
+            scan_handling=str(scan_handling),
+            ingest_policy_version=int(ingest_policy_version),
             parser_report=row["parser_report"],
             point_count=row["point_count"],
             chunk_count=row["chunk_count"],
@@ -511,6 +541,28 @@ class JobRepository:
             raise LostJobLeaseError(f"job lease is no longer valid: {lease.id}")
         return bool(row[0])
 
+    def mark_library_document_profile_applied(
+        self,
+        *,
+        library_id: UUID,
+        document_profile: str,
+    ) -> None:
+        """Deprecated aggregate hint only — requires_reindex uses per-version snapshots.
+
+        Kept for backwards-compatible observability; never treat as sole signal.
+        """
+        profile = (document_profile or "auto").strip()[:64] or "auto"
+        with self._connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE app.libraries
+                SET applied_document_profile = %(profile)s,
+                    updated_at = now()
+                WHERE id = %(library_id)s
+                """,
+                {"library_id": library_id, "profile": profile},
+            )
+
     def complete_indexing(
         self,
         lease: JobLease,
@@ -544,6 +596,15 @@ class JobRepository:
                         parser_backend = %(parser_backend)s,
                         chunk_profile = %(chunk_profile)s,
                         parser_report = %(parser_report)s,
+                        document_profile = coalesce(
+                            document_profile, %(document_profile)s
+                        ),
+                        scan_handling = coalesce(
+                            scan_handling, %(scan_handling)s
+                        ),
+                        ingest_policy_version = coalesce(
+                            ingest_policy_version, %(ingest_policy_version)s
+                        ),
                         point_count = %(point_count)s,
                         chunk_count = %(chunk_count)s,
                         section_count = %(section_count)s,
@@ -564,6 +625,11 @@ class JobRepository:
                         "parser_backend": parser_backend[:64],
                         "chunk_profile": chunk_profile[:64],
                         "parser_report": Jsonb(parser_report),
+                        "document_profile": (context.document_profile or "auto")[:64],
+                        "scan_handling": (context.scan_handling or "auto")[:32],
+                        "ingest_policy_version": int(
+                            context.ingest_policy_version or 1
+                        ),
                         "point_count": point_count,
                         "chunk_count": chunk_count,
                         "section_count": section_count,

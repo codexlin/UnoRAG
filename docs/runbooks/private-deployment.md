@@ -34,17 +34,23 @@ Browser
 
 ```bash
 cd deploy/compose
-cp env.example .env
-# 生成密钥（示例）
-# openssl rand -base64 48
+./scripts/init-config.sh
+# 编辑 ../config/runtime.env / runtime.secret / bootstrap.env
+# 生成密钥（示例）：openssl rand -base64 48
 ```
 
-至少替换：`POSTGRES_PASSWORD`、`MERIKNOW_INTERNAL_SECRET`、
-`MERIKNOW_SESSION_SECRET`、`INTERNAL_AUTH_SECRET`（与前者相同）、
-`MERIKNOW_ADMIN_PASSWORD`，以及客户 `OPENAI_*` / `DASHSCOPE_API_KEY`。
+至少填写：`POSTGRES_PASSWORD`、`MERIKNOW_INTERNAL_SECRET`、
+`MERIKNOW_SESSION_SECRET`（必须与 INTERNAL 不同）、`LLM_API_KEY`、
+各 `*_DATABASE_URL`，以及 `bootstrap.env` 中的 `MERIKNOW_ADMIN_PASSWORD`。
+Compose 会把 `MERIKNOW_INTERNAL_SECRET` 映射为 API 的 `INTERNAL_AUTH_SECRET`，
+无需再填第二份。
 
-外部托管 Postgres/Qdrant/Redis/S3 时，把 `.env` 中的 URL 改成客户连接串即可；
+外部托管 Postgres/Qdrant/Redis/S3 时，改 `runtime.env` / `runtime.secret` 中的 URL 即可；
 可去掉对应 Compose 服务（需自行保证网络可达）。
+勿 `source` secret 文件污染宿主机 shell，也不要直接执行
+`docker compose --env-file ...`（宿主机同名变量优先级更高）。统一使用
+`source scripts/compose-env.sh && mk_compose ...`；需要 bootstrap 配置时使用
+`mk_compose_bootstrap ...`。helper 会清除受管宿主变量，再加载拆分配置。
 
 ### 2.2 一键安装
 
@@ -65,15 +71,16 @@ chmod +x scripts/*.sh
 ### 2.3 手工等价步骤
 
 ```bash
-docker compose build web api migrate-web
-docker compose up -d --wait postgres qdrant redis
-docker compose --profile migrate run --rm migrate-web
-docker compose --profile migrate run --rm migrate-rag
-docker compose exec -T postgres \
-  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+source scripts/compose-env.sh
+mk_compose build web api migrate-web
+mk_compose up -d --wait postgres qdrant redis
+mk_compose --profile migrate run --rm migrate-web
+mk_compose --profile migrate run --rm migrate-rag
+mk_compose exec -T postgres \
+  psql -U meriknow -d meriknow \
   < ../../ops/postgres/configure-runtime-roles.sql
-docker compose --profile migrate run --rm bootstrap
-docker compose up -d caddy web api lifecycle-worker
+mk_compose_bootstrap --profile migrate run --rm bootstrap
+mk_compose up -d caddy web api lifecycle-worker
 ```
 
 生命周期迁移细节另见
@@ -115,7 +122,7 @@ DATABASE_URL=... pnpm lifecycle:inspect
 升级要点：
 
 1. **先迁移、再切流量**（additive schema）。  
-2. **worker drain**：`docker compose stop lifecycle-worker` 发送 SIGTERM；  
+2. **worker drain**：`source scripts/compose-env.sh && mk_compose stop lifecycle-worker` 发送 SIGTERM；  
    worker 停止 claim，当前同步步骤结束后退出（`stop_grace_period: 2m`）。  
 3. 滚动 `api` → `web` → 拉起新 `lifecycle-worker` → `caddy`。  
 4. 多 pipeline version 可短暂并存；检索以 PostgreSQL active generation 为准。  
@@ -126,7 +133,7 @@ DATABASE_URL=... pnpm lifecycle:inspect
 
 1. 停止写入（或 drain worker）。  
 2. 将 `MERIKNOW_WEB_IMAGE` / `MERIKNOW_API_IMAGE` 指回上一版本 tag，  
-   `docker compose up -d api web lifecycle-worker caddy`。  
+   `source scripts/compose-env.sh && mk_compose up -d api web lifecycle-worker caddy`。  
 3. **不要**盲目 down-migrate Schema。Additive 列可保留；若版本要求恢复数据，  
    使用备份按第 6 节 restore。  
 4. 若仅应用回归：回滚镜像即可；若出现数据损坏或不兼容迁移，走 backup restore。  
@@ -144,7 +151,7 @@ DATABASE_URL=... pnpm lifecycle:inspect
 产物：
 
 - `postgres.sql` — `app` / `rag` / 相关 schema  
-- `documents.tgz` — `DOCUMENT_STORAGE_ROOT`  
+- `documents.tgz` — container path `/var/lib/meriknow/documents` (Compose invariant)
 - `qdrant.tgz` — 向量存储  
 - `MANIFEST.txt`  
 
@@ -224,7 +231,7 @@ helm upgrade --install meriknow ./deploy/helm/meriknow -n meriknow \
 
 ```bash
 cd deploy/compose
-cp env.example .env   # 填真实密钥与模型 key
+./scripts/init-config.sh   # 填 deploy/config 下真实密钥与模型 key
 ./scripts/install.sh
 curl -sf http://localhost/api/rag/health
 # 浏览器打开 http://localhost/ 登录 admin

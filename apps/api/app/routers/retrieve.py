@@ -74,7 +74,11 @@ def retrieve(
 			),
 		)
 
-	effective = effective_ask_settings(settings, body.ask_overrides)
+	effective = effective_ask_settings(
+		settings,
+		body.ask_overrides,
+		question=query,
+	)
 	service = RetrievalService(
 		effective,
 		access_scope=AccessScope.from_request_context(context),

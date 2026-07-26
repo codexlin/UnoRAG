@@ -1,6 +1,13 @@
 "use client";
 
-import { FileUp, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import {
+	FileUp,
+	MoreHorizontal,
+	Pencil,
+	Plus,
+	RefreshCw,
+	Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -15,8 +22,6 @@ import {
 	resolveDocActions,
 } from "@/components/app/library-doc-actions";
 import { useSession } from "@/components/app/session-provider";
-import { filterByCap } from "@/lib/client-permissions";
-import { TERMINAL_JOB_STATUSES } from "@/lib/document-lifecycle-contract";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -65,12 +70,6 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useLibraries } from "@/hooks/use-libraries";
 import {
-	PARSE_DEGRADED_REINDEX_HINT,
-	formatParserReportView,
-	isParserReportDegraded,
-	resolveDocumentStatusDisplay,
-} from "@/lib/parser-report-view.mjs";
-import {
 	type ApiDocument,
 	type ApiDocumentVersion,
 	type ApiLibrary,
@@ -88,7 +87,15 @@ import {
 	updateLibrary,
 	uploadDocument,
 } from "@/lib/api";
+import { filterByCap } from "@/lib/client-permissions";
+import { TERMINAL_JOB_STATUSES } from "@/lib/document-lifecycle-contract";
 import { formatDateTime, formatDurationMs, formatFileSize } from "@/lib/format";
+import {
+	formatParserReportView,
+	isParserReportDegraded,
+	PARSE_DEGRADED_REINDEX_HINT,
+	resolveDocumentStatusDisplay,
+} from "@/lib/parser-report-view.mjs";
 import { cn } from "@/lib/utils";
 
 function DocStatusBadge({
@@ -111,8 +118,7 @@ function DocStatusBadge({
 					"border-destructive/30 bg-destructive/10 text-destructive",
 				tone === "degraded" &&
 					"border-survey/35 bg-accent text-accent-foreground",
-				tone === "cancelled" &&
-					"border-border bg-muted text-muted-foreground",
+				tone === "cancelled" && "border-border bg-muted text-muted-foreground",
 				tone === "indexing" &&
 					"border-survey/35 bg-accent text-accent-foreground",
 				tone === "empty" && "border-border bg-muted text-muted-foreground",
@@ -147,8 +153,7 @@ function LibStatusDot({ status }: { status: string }) {
 				status === "empty" && "bg-muted-foreground/40",
 				!["ready", "indexing", "degraded", "failed", "empty"].includes(
 					status,
-				) &&
-					"bg-muted-foreground/40",
+				) && "bg-muted-foreground/40",
 			)}
 			aria-hidden
 		/>
@@ -256,6 +261,9 @@ export function LibrariesPanel() {
 	const [editingLibrary, setEditingLibrary] = useState<ApiLibrary | null>(null);
 	const [libraryName, setLibraryName] = useState("");
 	const [libraryDescription, setLibraryDescription] = useState("");
+	const [libraryDocumentProfile, setLibraryDocumentProfile] = useState("auto");
+	const [libraryScanHandling, setLibraryScanHandling] = useState("auto");
+	const [libraryAdvancedOpen, setLibraryAdvancedOpen] = useState(false);
 	const [libraryFormError, setLibraryFormError] = useState<string | null>(null);
 	const [deleteLibraryTarget, setDeleteLibraryTarget] =
 		useState<ApiLibrary | null>(null);
@@ -294,8 +302,7 @@ export function LibrariesPanel() {
 			} catch (err) {
 				if (signal?.aborted || isAbortError(err)) return;
 				setDocuments([]);
-				const message =
-					err instanceof Error ? err.message : "文档列表加载失败";
+				const message = err instanceof Error ? err.message : "文档列表加载失败";
 				// 库已不存在 / 无库：不当成页面错误，静默清空
 				if (/404|not found/i.test(message)) {
 					setError(null);
@@ -342,6 +349,8 @@ export function LibrariesPanel() {
 	}, [ingestTick, selectedId, libraries, loadDocuments]);
 
 	useEffect(() => {
+		// ingestTick intentionally refreshes versions while ingest progresses.
+		void ingestTick;
 		if (!detailDocId || !selectedId) {
 			setVersionRows([]);
 			return;
@@ -392,14 +401,16 @@ export function LibrariesPanel() {
 			const elapsed = Math.round(performance.now() - started);
 			setLastUploadMs(elapsed);
 			const ok = settled.filter(
-				(item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof uploadDocument>>> =>
-					item.status === "fulfilled",
+				(
+					item,
+				): item is PromiseFulfilledResult<
+					Awaited<ReturnType<typeof uploadDocument>>
+				> => item.status === "fulfilled",
 			);
 			const failed = settled.filter((item) => item.status === "rejected");
 			const acceptedDocs = ok
 				.filter(
-					(item) =>
-						item.value.accepted || item.value.status === "processing",
+					(item) => item.value.accepted || item.value.status === "processing",
 				)
 				.map((item) => ({
 					id: item.value.doc_id,
@@ -409,9 +420,7 @@ export function LibrariesPanel() {
 				trackProcessing(acceptedDocs);
 			}
 			const accepted = acceptedDocs.length;
-			const ready = ok.filter(
-				(item) => item.value.status === "ready",
-			).length;
+			const ready = ok.filter((item) => item.value.status === "ready").length;
 			if (ok.length > 0) {
 				if (accepted > 0) {
 					toast.success(
@@ -449,6 +458,9 @@ export function LibrariesPanel() {
 		setEditingLibrary(null);
 		setLibraryName("");
 		setLibraryDescription("");
+		setLibraryDocumentProfile("auto");
+		setLibraryScanHandling("auto");
+		setLibraryAdvancedOpen(false);
 		setLibraryFormError(null);
 		setLibraryDialogMode("create");
 		setLibraryDialogOpen(true);
@@ -458,6 +470,9 @@ export function LibrariesPanel() {
 		setEditingLibrary(library);
 		setLibraryName(library.name);
 		setLibraryDescription(library.description?.trim() ?? "");
+		setLibraryDocumentProfile(library.document_profile ?? "auto");
+		setLibraryScanHandling(library.scan_handling ?? "auto");
+		setLibraryAdvancedOpen((library.scan_handling ?? "auto") !== "auto");
 		setLibraryFormError(null);
 		setLibraryDialogMode("edit");
 		setLibraryDialogOpen(true);
@@ -482,7 +497,12 @@ export function LibrariesPanel() {
 		try {
 			const description = libraryDescription.trim() || undefined;
 			if (libraryDialogMode === "create") {
-				const created = await createLibrary({ name, description });
+				const created = await createLibrary({
+					name,
+					description,
+					documentProfile: libraryDocumentProfile,
+					scanHandling: libraryScanHandling,
+				});
 				toast.success(`已创建知识库「${created.name}」`);
 				setLibraryDialogOpen(false);
 				await loadLibraries();
@@ -492,8 +512,16 @@ export function LibrariesPanel() {
 					libraryId: editingLibrary.id,
 					name,
 					description: description ?? null,
+					documentProfile: libraryDocumentProfile,
+					scanHandling: libraryScanHandling,
 				});
-				toast.success(`已更新知识库「${updated.name}」`);
+				if (updated.requires_reindex) {
+					toast.success(
+						`已更新「${updated.name}」。文档处理预设已变更，需重新索引后才会全部生效。`,
+					);
+				} else {
+					toast.success(`已更新知识库「${updated.name}」`);
+				}
 				setLibraryDialogOpen(false);
 				await loadLibraries();
 			}
@@ -542,8 +570,7 @@ export function LibrariesPanel() {
 			}
 			await loadLibraries();
 		} catch (err) {
-			const message =
-				err instanceof Error ? err.message : "删除知识库失败";
+			const message = err instanceof Error ? err.message : "删除知识库失败";
 			setError(message);
 			toast.error(message);
 			setDeleteLibraryTarget(null);
@@ -1215,9 +1242,13 @@ export function LibrariesPanel() {
 										版本历史
 									</p>
 									{versionsLoading ? (
-										<p className="text-ui mt-2 text-muted-foreground">加载中…</p>
+										<p className="text-ui mt-2 text-muted-foreground">
+											加载中…
+										</p>
 									) : versionRows.length === 0 ? (
-										<p className="text-ui mt-2 text-muted-foreground">暂无版本</p>
+										<p className="text-ui mt-2 text-muted-foreground">
+											暂无版本
+										</p>
 									) : (
 										<ul className="mt-2 space-y-2">
 											{versionRows.map((version) => (
@@ -1254,9 +1285,7 @@ export function LibrariesPanel() {
 								{!detailDoc.has_file ? (
 									<p className="text-ui text-muted-foreground">
 										此文档上传时未落盘原文，无法下载或重索引。
-										{canWriteLibraries
-											? "可用「替换文件」重新上传。"
-											: ""}
+										{canWriteLibraries ? "可用「替换文件」重新上传。" : ""}
 									</p>
 								) : null}
 							</div>
@@ -1393,8 +1422,8 @@ export function LibrariesPanel() {
 						</DialogTitle>
 						<DialogDescription>
 							{libraryDialogMode === "edit"
-								? "修改名称与描述后保存；也可删除整个知识库。"
-								: "填写名称即可创建；描述可选。"}
+								? "修改名称、描述与文档处理预设；更改预设不会自动全量重建。"
+								: "填写名称即可创建；可选择文档处理预设。"}
 						</DialogDescription>
 					</DialogHeader>
 					<div className="grid gap-3">
@@ -1426,6 +1455,71 @@ export function LibrariesPanel() {
 								className="min-h-20"
 							/>
 						</div>
+						<div className="grid gap-1.5">
+							<Label htmlFor="library-document-profile">文档处理预设</Label>
+							<select
+								id="library-document-profile"
+								className="rounded-md border border-border bg-background px-2 py-2 text-sm"
+								value={libraryDocumentProfile}
+								disabled={savingLibrary || deletingLibrary}
+								onChange={(event) =>
+									setLibraryDocumentProfile(event.target.value)
+								}
+							>
+								<option value="auto">自动</option>
+								<option value="general">通用</option>
+								<option value="narrative">叙述/长文</option>
+								<option value="table_heavy">表格密集</option>
+								<option value="regulatory">制度/规章</option>
+								<option value="precise_paragraph">精确段落</option>
+							</select>
+							{libraryDialogMode === "edit" &&
+							editingLibrary?.requires_reindex ? (
+								<p className="text-xs text-muted-foreground">
+									当前库已有文档，且预设与已索引内容不一致；保存后不会自动全量重建，请按需对文档重新索引。
+								</p>
+							) : libraryDialogMode === "edit" &&
+								editingLibrary &&
+								libraryDocumentProfile !==
+									(editingLibrary.document_profile ?? "auto") &&
+								(editingLibrary.doc_count ?? 0) > 0 ? (
+								<p className="text-xs text-amber-700 dark:text-amber-400">
+									更改预设不会自动重新索引已有文档；新上传/手动重索引将使用新预设。
+								</p>
+							) : null}
+						</div>
+						<div className="grid gap-1.5">
+							<button
+								type="button"
+								className="text-left text-xs text-muted-foreground underline-offset-2 hover:underline"
+								onClick={() => setLibraryAdvancedOpen((open) => !open)}
+							>
+								{libraryAdvancedOpen ? "收起高级选项" : "高级选项（OCR）"}
+							</button>
+							{libraryAdvancedOpen ? (
+								<div className="grid gap-1.5 rounded-md border border-border/70 px-3 py-2">
+									<Label htmlFor="library-scan-handling">扫描件处理</Label>
+									<select
+										id="library-scan-handling"
+										className="rounded-md border border-border bg-background px-2 py-2 text-sm"
+										value={libraryScanHandling}
+										disabled={savingLibrary || deletingLibrary}
+										onChange={(event) =>
+											setLibraryScanHandling(event.target.value)
+										}
+									>
+										<option value="auto">自动</option>
+										<option value="disabled">仅文本解析（禁用扫描识别）</option>
+										<option value="force_ocr">强制 OCR</option>
+									</select>
+									<p className="text-xs text-muted-foreground">
+										对新上传/重索引生效：自动沿用部署默认；仅文本解析不会调用
+										OCR 或 MinerU，纯扫描文件会明确失败；强制 OCR
+										会覆盖部署默认，但不强制数字 PDF 全文 OCR。更改后需重索引。
+									</p>
+								</div>
+							) : null}
+						</div>
 						{libraryFormError ? (
 							<p className="text-ui rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive">
 								{libraryFormError}
@@ -1434,9 +1528,7 @@ export function LibrariesPanel() {
 					</div>
 					<DialogFooter
 						className={
-							libraryDialogMode === "edit"
-								? "sm:justify-between"
-								: undefined
+							libraryDialogMode === "edit" ? "sm:justify-between" : undefined
 						}
 					>
 						{libraryDialogMode === "edit" && editingLibrary ? (
@@ -1489,11 +1581,14 @@ export function LibrariesPanel() {
 					<AlertDialogHeader>
 						<AlertDialogTitle>删除知识库？</AlertDialogTitle>
 						<AlertDialogDescription>
-							将清除「{deleteLibraryTarget?.name ?? "该知识库"}」下所有文档的向量、元数据与原文，此操作不可恢复。
+							将清除「{deleteLibraryTarget?.name ?? "该知识库"}
+							」下所有文档的向量、元数据与原文，此操作不可恢复。
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel disabled={deletingLibrary}>取消</AlertDialogCancel>
+						<AlertDialogCancel disabled={deletingLibrary}>
+							取消
+						</AlertDialogCancel>
 						<AlertDialogAction
 							variant="destructive"
 							disabled={deletingLibrary}

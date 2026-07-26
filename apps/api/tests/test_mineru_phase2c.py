@@ -569,6 +569,31 @@ def test_route_scanned_uses_mineru_fake() -> None:
 	assert chunks
 
 
+def test_text_only_scanned_pdf_never_calls_mineru() -> None:
+	scanned = TESTDATA / "pdf" / "leave-scanned.pdf"
+	if not scanned.is_file():
+		pytest.skip("leave-scanned.pdf missing")
+
+	class ForbiddenMinerU:
+		def parse(self, _request: ParseRequest):
+			raise AssertionError("text-only policy must never call MinerU")
+
+	with pytest.raises(ValueError, match="scan recognition is disabled"):
+		parse_pdf_routed(
+			content=scanned.read_bytes(),
+			filename="leave-scanned.pdf",
+			title="扫描请假",
+			settings=Settings(
+				mineru_enabled=True,
+				mineru_mode="mineru",
+				ask_mode="stub",
+				metadata_backend="json",
+			),
+			mineru_backend=ForbiddenMinerU(),
+			enhanced_parser_allowed=False,
+		)
+
+
 def test_route_scanned_without_mineru_explicit_fail() -> None:
 	scanned = TESTDATA / "pdf" / "leave-scanned.pdf"
 	if not scanned.is_file():

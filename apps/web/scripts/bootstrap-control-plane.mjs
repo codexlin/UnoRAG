@@ -30,6 +30,14 @@ function hashPassword(password) {
 	return `scrypt$${salt.toString("hex")}$${hash.toString("hex")}`;
 }
 
+const upsertPassword =
+	String(process.env.MERIKNOW_ADMIN_PASSWORD_UPSERT || "")
+		.trim()
+		.toLowerCase() === "1" ||
+	String(process.env.MERIKNOW_ADMIN_PASSWORD_UPSERT || "")
+		.trim()
+		.toLowerCase() === "true";
+
 const config = {
 	databaseUrl: required("DATABASE_URL"),
 	organizationId: requiredUuid("MERIKNOW_ORGANIZATION_ID"),
@@ -101,23 +109,40 @@ try {
 		`,
 		[config.workspaceId, config.adminId],
 	);
-	const credential = await client.query(
-		"SELECT 1 FROM app.local_credentials WHERE user_id = $1",
-		[config.adminId],
-	);
-	if (credential.rowCount === 0) {
+	// Create-only by default so re-install / re-bootstrap does not reset passwords.
+	// Opt-in rotation: MERIKNOW_ADMIN_PASSWORD_UPSERT=1
+	if (upsertPassword) {
 		await client.query(
 			`
 				INSERT INTO app.local_credentials (user_id, password_hash)
 				VALUES ($1, $2)
+				ON CONFLICT (user_id) DO UPDATE
+				SET password_hash = EXCLUDED.password_hash,
+					failed_attempts = 0,
+					locked_until = NULL,
+					updated_at = now()
 			`,
 			[config.adminId, hashPassword(config.adminPassword)],
 		);
+		console.log(
+			`Bootstrapped (password upsert) organization=${config.organizationId} workspace=${config.workspaceId} admin=${config.adminId}`,
+		);
+	} else {
+		const inserted = await client.query(
+			`
+				INSERT INTO app.local_credentials (user_id, password_hash)
+				VALUES ($1, $2)
+				ON CONFLICT (user_id) DO NOTHING
+				RETURNING user_id
+			`,
+			[config.adminId, hashPassword(config.adminPassword)],
+		);
+		const created = (inserted.rowCount ?? 0) > 0;
+		console.log(
+			`Bootstrapped organization=${config.organizationId} workspace=${config.workspaceId} admin=${config.adminId} password=${created ? "created" : "kept"}`,
+		);
 	}
 	await client.query("COMMIT");
-	console.log(
-		`Bootstrapped organization=${config.organizationId} workspace=${config.workspaceId} admin=${config.adminId}`,
-	);
 } catch (error) {
 	await client.query("ROLLBACK");
 	throw error;

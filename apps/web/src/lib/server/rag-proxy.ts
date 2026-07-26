@@ -1,5 +1,6 @@
 import "server-only";
 
+import { injectAskOverrides } from "./ask-overrides-inject.mjs";
 import { resolveRequestSession } from "./auth/session";
 import { createInternalRagHeaders } from "./internal-rag-context";
 import {
@@ -106,37 +107,21 @@ function isAskPath(safeSegments: string[]): boolean {
 	);
 }
 
-function encodeJsonBody(payload: Record<string, unknown>): Uint8Array {
-	return new TextEncoder().encode(JSON.stringify(payload));
-}
-
-/** Inject workspace ask overrides into ask/stream JSON body (server-authoritative). */
+/** Inject resolved ask knobs + public policy meta (server-authoritative, fail-closed). */
 async function withAskOverrides(
 	request: Request,
 	body: Uint8Array | undefined,
 	workspaceId: string,
-): Promise<Uint8Array | undefined> {
-	if (!body?.length) return body;
+): Promise<
+	| { ok: true; body: Uint8Array | undefined }
+	| { ok: false; status: 400 | 503; detail: string }
+> {
+	if (!body?.length) return { ok: true, body };
 	const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
-	if (!contentType.startsWith("application/json")) return body;
-	try {
-		const payload = JSON.parse(new TextDecoder().decode(body)) as Record<
-			string,
-			unknown
-		>;
-		const { ask } = await getWorkspaceAskSettings(workspaceId);
-		if (Object.keys(ask).length === 0) {
-			if ("ask_overrides" in payload) {
-				delete payload.ask_overrides;
-				return encodeJsonBody(payload);
-			}
-			return body;
-		}
-		payload.ask_overrides = ask;
-		return encodeJsonBody(payload);
-	} catch {
-		return body;
-	}
+	if (!contentType.startsWith("application/json")) return { ok: true, body };
+	return injectAskOverrides(body, workspaceId, getWorkspaceAskSettings, {
+		questionKeys: ["question"],
+	});
 }
 
 export async function proxyRagRequest(
@@ -234,11 +219,18 @@ export async function proxyRagRequest(
 				}
 			}
 			if (isAskPath(safeSegments)) {
-				signedBody = await withAskOverrides(
+				const injected = await withAskOverrides(
 					request,
 					signedBody,
 					identity.workspaceId,
 				);
+				if (!injected.ok) {
+					return Response.json(
+						{ detail: injected.detail },
+						{ status: injected.status },
+					);
+				}
+				signedBody = injected.body;
 			}
 		}
 		let signedHeaders = new Headers();

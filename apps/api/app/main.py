@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_application: FastAPI):
 	settings = get_settings()
+	logger.info("startup.config %s", settings.redacted_effective_config())
 	reset_metadata_store()
 	ok, backend, detail = probe_metadata_store(settings)
 	if not ok:

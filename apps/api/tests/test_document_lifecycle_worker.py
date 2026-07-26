@@ -69,6 +69,14 @@ class FakeRepository:
 	) -> None:
 		self.completed = values
 
+	def mark_library_document_profile_applied(
+		self,
+		*,
+		library_id: object,
+		document_profile: str,
+	) -> None:
+		self.applied_document_profile = (library_id, document_profile)
+
 	def prepare_activation(
 		self,
 		_lease: JobLease,
@@ -273,6 +281,9 @@ def test_document_lifecycle_worker_indexes_real_version_as_staging() -> None:
 		version_status="pending",
 		parser_backend=None,
 		chunk_profile=None,
+		document_profile="auto",
+		scan_handling="auto",
+		ingest_policy_version=1,
 		parser_report=None,
 		point_count=None,
 		chunk_count=None,
@@ -358,6 +369,9 @@ def test_document_lifecycle_worker_cleans_staging_when_cancelled() -> None:
 		version_status="pending",
 		parser_backend=None,
 		chunk_profile=None,
+		document_profile="auto",
+		scan_handling="auto",
+		ingest_policy_version=1,
 		parser_report=None,
 		point_count=None,
 		chunk_count=None,
@@ -425,6 +439,9 @@ def test_indexed_job_resumes_at_activation_and_deactivates_previous_hint() -> No
 		version_status="indexed",
 		parser_backend="markdown",
 		chunk_profile="balanced",
+		document_profile="auto",
+		scan_handling="auto",
+		ingest_policy_version=1,
 		parser_report={"parser": "markdown"},
 		point_count=2,
 		chunk_count=1,
@@ -571,6 +588,9 @@ def test_real_files_run_through_lifecycle_v2(
 		version_status="pending",
 		parser_backend=None,
 		chunk_profile=None,
+		document_profile="auto",
+		scan_handling="auto",
+		ingest_policy_version=1,
 		parser_report=None,
 		point_count=None,
 		chunk_count=None,

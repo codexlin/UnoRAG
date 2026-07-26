@@ -5,6 +5,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/compose-env.sh"
 
 BACKUP_DIR="${1:-}"
 if [[ -z "$BACKUP_DIR" || ! -d "$BACKUP_DIR" ]]; then
@@ -16,25 +18,24 @@ if [[ "${CONFIRM:-}" != "YES" ]]; then
 	exit 1
 fi
 
-# shellcheck disable=SC1091
-[[ -f .env ]] && set -a && source .env && set +a
-
-PROJECT="${COMPOSE_PROJECT_NAME:-meriknow}"
+PROJECT="$(mk_config_get COMPOSE_PROJECT_NAME || echo meriknow)"
+POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo meriknow)"
+POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo meriknow)"
 
 echo "==> stopping app services (keeping volumes)"
-docker compose stop caddy web api lifecycle-worker || true
+mk_compose stop caddy web api lifecycle-worker || true
 
 echo "==> ensuring infra is up"
-docker compose up -d postgres qdrant redis
-docker compose up -d --wait postgres qdrant redis
+mk_compose up -d postgres qdrant redis
+mk_compose up -d --wait postgres qdrant redis
 
 echo "==> restore postgres"
-docker compose exec -T postgres \
-	psql -U "${POSTGRES_USER:-meriknow}" -d "${POSTGRES_DB:-meriknow}" \
+mk_compose exec -T postgres \
+	psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
 	-v ON_ERROR_STOP=1 \
 	-c "DROP SCHEMA IF EXISTS app CASCADE; DROP SCHEMA IF EXISTS rag CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
-docker compose exec -T postgres \
-	psql -U "${POSTGRES_USER:-meriknow}" -d "${POSTGRES_DB:-meriknow}" \
+mk_compose exec -T postgres \
+	psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
 	-v ON_ERROR_STOP=1 \
 	< "$BACKUP_DIR/postgres.sql"
 
@@ -45,15 +46,15 @@ docker run --rm \
 	alpine:3.21 sh -c 'rm -rf /data/* /data/.[!.]* 2>/dev/null; tar -C /data -xzf /backup/documents.tgz'
 
 echo "==> restore qdrant (stop first)"
-docker compose stop qdrant
+mk_compose stop qdrant
 docker run --rm \
 	-v "${PROJECT}_qdrant_data:/data" \
 	-v "$BACKUP_DIR:/backup:ro" \
 	alpine:3.21 sh -c 'rm -rf /data/* /data/.[!.]* 2>/dev/null; tar -C /data -xzf /backup/qdrant.tgz'
-docker compose up -d --wait qdrant
+mk_compose up -d --wait qdrant
 
 echo "==> starting application stack"
-docker compose up -d caddy web api lifecycle-worker
+mk_compose up -d caddy web api lifecycle-worker
 
 echo "restore complete — verify /api/rag/health, citations, and active versions"
 echo "see docs/runbooks/private-deployment.md"

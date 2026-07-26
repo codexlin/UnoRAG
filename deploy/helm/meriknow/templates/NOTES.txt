@@ -9,17 +9,18 @@ External deps (not installed by this chart)
   Postgres / Qdrant / Redis must be reachable via secret + values.external.*
   Object storage: PVC (default) or customer S3/MinIO later.
 
-Create runtime secret before install (example keys):
-  MERIKNOW_INTERNAL_SECRET
-  MERIKNOW_SESSION_SECRET
-  INTERNAL_AUTH_SECRET
-  MERIKNOW_ADMIN_PASSWORD
-  DATABASE_URL
-  API_DATABASE_URL
-  WORKER_DATABASE_URL
-  RAG_READ_DATABASE_URL
-  MIGRATOR_DATABASE_URL   (only if migrate.*.enabled)
-  OPENAI_API_KEY / DASHSCOPE_API_KEY (optional)
+Runtime Secret keys (least-privilege injection — pods do not envFrom the whole Secret):
+  MERIKNOW_INTERNAL_SECRET   → web + mapped to INTERNAL_AUTH_SECRET for api/worker
+  MERIKNOW_SESSION_SECRET    → web only
+  DATABASE_URL               → web only
+  API_DATABASE_URL           → api DATABASE_URL
+  WORKER_DATABASE_URL        → worker DATABASE_URL / WORKER_DATABASE_URL
+  RAG_READ_DATABASE_URL      → api + worker
+  LLM_API_KEY                → api/worker OPENAI_API_KEY
+  MIGRATOR_DATABASE_URL      → migrate jobs only
+
+Do NOT put MERIKNOW_ADMIN_PASSWORD in the long-running runtime Secret.
+Admin bootstrap is a one-shot Job / Compose profile (create-only password by default).
 
 helm upgrade --install {{ .Release.Name }} deploy/helm/meriknow \
   -n {{ .Release.Namespace }} \

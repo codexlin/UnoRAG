@@ -45,3 +45,7 @@ scripts/acceptance/.b5-work/
 *_last_run.json
 *_last_run.json.sha256
 .b2-work/
+
+# Local rotation / one-time migration markers
+deploy/config/.credential-rotation.receipt
+deploy/config/.legacy-env-migrated

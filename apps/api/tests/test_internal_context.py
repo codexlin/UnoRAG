@@ -292,64 +292,85 @@ def test_metadata_routes_do_not_leak_across_workspaces(monkeypatch) -> None:
 	assert foreign_detail.status_code == 404
 
 
+def _production_kwargs(**overrides):
+	base = dict(
+		app_env="production",
+		internal_auth_enabled=True,
+		internal_auth_secret=TEST_SECRET,
+		internal_auth_replay_backend="redis",
+		active_generation_gate_enabled=True,
+		active_generation_cache_ttl_seconds=0,
+		openai_api_key="test-llm-key-not-a-placeholder-value",
+		openai_base_url="https://example.com/v1",
+		redis_url="redis://localhost:6379",
+		qdrant_url="http://localhost:6333",
+		document_storage_root="/var/lib/meriknow/documents",
+		database_url="postgresql+psycopg://meriknow:meriknow@localhost:5432/meriknow",
+		_env_file=None,
+	)
+	base.update(overrides)
+	return base
+
+
 def test_production_settings_fail_closed() -> None:
 	with pytest.raises(ValidationError, match="INTERNAL_AUTH_ENABLED"):
-		Settings(app_env="production", internal_auth_enabled=False)
+		Settings(**_production_kwargs(internal_auth_enabled=False))
 
 	with pytest.raises(ValidationError, match="32"):
-		Settings(
-			app_env="production",
-			internal_auth_enabled=True,
-			internal_auth_secret="short",
-		)
+		Settings(**_production_kwargs(internal_auth_secret="short"))
+
+	with pytest.raises(ValidationError, match="placeholder"):
+		Settings(**_production_kwargs(internal_auth_secret="replace-with-random-internal-secret-xx"))
 
 	with pytest.raises(ValidationError, match="REPLAY_BACKEND"):
-		Settings(
-			app_env="production",
-			internal_auth_enabled=True,
-			internal_auth_secret=TEST_SECRET,
-			internal_auth_replay_backend="memory",
-		)
+		Settings(**_production_kwargs(internal_auth_replay_backend="memory"))
+
+	with pytest.raises(ValidationError, match="API key"):
+		Settings(**_production_kwargs(openai_api_key=""))
 
 	with pytest.raises(ValidationError, match="ACTIVE_GENERATION_GATE_ENABLED"):
-		Settings(
-			app_env="production",
-			internal_auth_enabled=True,
-			internal_auth_secret=TEST_SECRET,
-			internal_auth_replay_backend="redis",
-			active_generation_gate_enabled=False,
-		)
+		Settings(**_production_kwargs(active_generation_gate_enabled=False))
 
 	with pytest.raises(ValidationError, match="ACTIVE_GENERATION_CACHE_TTL_SECONDS"):
-		Settings(
-			app_env="production",
-			internal_auth_enabled=True,
-			internal_auth_secret=TEST_SECRET,
-			internal_auth_replay_backend="redis",
-			active_generation_gate_enabled=True,
-			active_generation_cache_ttl_seconds=1,
-		)
+		Settings(**_production_kwargs(active_generation_cache_ttl_seconds=1))
 
 	with pytest.raises(ValidationError, match="MINERU_URL"):
+		Settings(**_production_kwargs(mineru_enabled=True, mineru_url=""))
+
+	with pytest.raises(ValidationError, match="HEARTBEAT"):
 		Settings(
-			app_env="production",
-			internal_auth_enabled=True,
-			internal_auth_secret=TEST_SECRET,
-			internal_auth_replay_backend="redis",
-			active_generation_gate_enabled=True,
-			mineru_enabled=True,
-			mineru_url="",
+			**_production_kwargs(
+				lifecycle_worker_heartbeat_seconds=90,
+				lifecycle_worker_lease_seconds=120,
+			)
 		)
+
+	ok = Settings(**_production_kwargs())
+	assert ok.redacted_effective_config()["secret_values"] == "[REDACTED]"
+	assert "example.com" in str(ok.redacted_effective_config()["llm_provider_host"])
+
+
+def test_redacted_effective_config_strips_url_userinfo() -> None:
+	"""netloc user:pass must never appear in startup-safe config logs."""
+	password = "s3cret-pass-never-log"
+	settings = Settings(
+		**_production_kwargs(
+			qdrant_url=f"http://qdrant_user:{password}@qdrant.internal:6333",
+			openai_base_url=f"https://llm_user:{password}@llm.example.com:8443/v1",
+		)
+	)
+	redacted = settings.redacted_effective_config()
+	blob = str(redacted)
+	assert password not in blob
+	assert "qdrant_user" not in blob
+	assert "llm_user" not in blob
+	assert redacted["qdrant_host"] == "qdrant.internal:6333"
+	assert redacted["llm_provider_host"] == "llm.example.com:8443"
 
 
 def test_production_accepts_signed_service_context(monkeypatch) -> None:
-	monkeypatch.setenv("APP_ENV", "production")
-	monkeypatch.setenv("INTERNAL_AUTH_ENABLED", "true")
-	monkeypatch.setenv("INTERNAL_AUTH_SECRET", TEST_SECRET)
-	monkeypatch.setenv("INTERNAL_AUTH_REPLAY_BACKEND", "redis")
-	monkeypatch.setenv("ACTIVE_GENERATION_GATE_ENABLED", "true")
 	get_settings.cache_clear()
-	settings = Settings()
+	settings = Settings(**_production_kwargs())
 
 	async def reserve_jti(*args, **kwargs) -> bool:
 		return True

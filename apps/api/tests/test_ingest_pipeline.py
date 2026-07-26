@@ -108,6 +108,91 @@ def test_pdf_page_classify() -> None:
 	assert classify_page(char_count=80, image_area_ratio=0.5, image_count=2) == "complex"
 
 
+def test_prepare_ingest_applies_ocr_override(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""scan_handling force_ocr/disabled must reach PDF parse options."""
+	from app.services.ingest import router as ingest_router
+	from app.services.ingest.ir import DocumentIR, ParserReport, Node, NodeType
+
+	seen: dict[str, object] = {}
+
+	def fake_get_ocr_adapter(*, enabled: bool):
+		seen["adapter_enabled"] = enabled
+		return None
+
+	def fake_get_vlm_adapter(*, enabled: bool, **_kwargs):
+		seen["vlm_adapter_enabled"] = enabled
+		return None
+
+	def fake_parse_pdf_routed(**kwargs):
+		opts = kwargs["options"]
+		seen["options_ocr"] = opts.ocr_enabled
+		seen["options_vlm"] = opts.vlm_enabled
+		seen["enhanced_parser_allowed"] = kwargs["enhanced_parser_allowed"]
+		return DocumentIR(
+			id="doc-ocr",
+			title="scan",
+			filename="scan.pdf",
+			source_format="pdf",
+			nodes=[
+				Node(
+					id="n1",
+					type=NodeType.PAGE,
+					path="第1页",
+					page_start=1,
+					page_end=1,
+					text="hello",
+				)
+			],
+			parser_report=ParserReport(source_format="pdf", parser="test"),
+		)
+
+	monkeypatch.setattr(ingest_router, "get_ocr_adapter", fake_get_ocr_adapter)
+	monkeypatch.setattr(ingest_router, "get_vlm_adapter", fake_get_vlm_adapter)
+	monkeypatch.setattr(ingest_router, "parse_pdf_routed", fake_parse_pdf_routed)
+
+	settings = Settings(
+		ingest_pipeline="v2",
+		ask_mode="stub",
+		metadata_backend="json",
+		ocr_enabled=False,
+		vlm_enabled=True,
+	)
+	prepared = prepare_ingest(
+		settings=settings,
+		filename="scan.pdf",
+		content=b"%PDF-1.4 fake",
+		library_id="lib-ocr",
+		ocr_enabled=True,
+		enhanced_parser_allowed=True,
+	)
+	assert prepared.pipeline == "v2"
+	assert seen["adapter_enabled"] is True
+	assert seen["options_ocr"] is True
+	assert seen["options_vlm"] is True
+	assert seen["enhanced_parser_allowed"] is True
+
+	seen.clear()
+	prepare_ingest(
+		settings=Settings(
+			ingest_pipeline="v2",
+			ask_mode="stub",
+			metadata_backend="json",
+			ocr_enabled=True,
+			vlm_enabled=True,
+		),
+		filename="scan.pdf",
+		content=b"%PDF-1.4 fake",
+		library_id="lib-ocr",
+		ocr_enabled=False,
+		enhanced_parser_allowed=False,
+	)
+	assert seen["adapter_enabled"] is False
+	assert seen["vlm_adapter_enabled"] is False
+	assert seen["options_ocr"] is False
+	assert seen["options_vlm"] is False
+	assert seen["enhanced_parser_allowed"] is False
+
+
 def test_format_page_label_range() -> None:
 	assert format_page_label(1) == "p.1"
 	assert format_page_label(2, 4) == "p.2-4"

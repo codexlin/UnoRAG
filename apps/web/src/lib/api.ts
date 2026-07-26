@@ -126,6 +126,11 @@ export type ApiLibrary = {
 	status: "ready" | "indexing" | "empty" | string;
 	doc_count: number;
 	ready_count: number;
+	document_profile?: string;
+	applied_document_profile?: string | null;
+	scan_handling?: string;
+	ingest_policy_version?: number;
+	requires_reindex?: boolean;
 	created_at: string;
 	updated_at: string;
 };
@@ -279,6 +284,8 @@ export async function createLibrary(input: {
 	name: string;
 	description?: string;
 	libraryId?: string;
+	documentProfile?: string;
+	scanHandling?: string;
 }): Promise<ApiLibrary> {
 	const response = await fetch("/api/libraries", {
 		method: "POST",
@@ -287,6 +294,8 @@ export async function createLibrary(input: {
 			name: input.name,
 			description: input.description?.trim() || null,
 			library_id: input.libraryId,
+			document_profile: input.documentProfile,
+			scan_handling: input.scanHandling,
 		}),
 	});
 	if (!response.ok) {
@@ -300,14 +309,27 @@ export async function updateLibrary(input: {
 	libraryId: string;
 	name?: string;
 	description?: string | null;
+	documentProfile?: string;
+	scanHandling?: string;
 }): Promise<ApiLibrary> {
-	const body: { name?: string; description?: string | null } = {};
+	const body: {
+		name?: string;
+		description?: string | null;
+		document_profile?: string;
+		scan_handling?: string;
+	} = {};
 	if (input.name !== undefined) body.name = input.name;
 	if (input.description !== undefined) {
 		body.description =
 			typeof input.description === "string"
 				? input.description.trim() || null
 				: null;
+	}
+	if (input.documentProfile !== undefined) {
+		body.document_profile = input.documentProfile;
+	}
+	if (input.scanHandling !== undefined) {
+		body.scan_handling = input.scanHandling;
 	}
 	const response = await fetch(
 		`/api/libraries/${encodeURIComponent(input.libraryId)}`,

@@ -30,7 +30,12 @@ from app.services.ask_route import (
 	table_overview_downgrade_reason,
 )
 from app.services.query_router import looks_like_table_summary_lookup, route_query
-from app.services.ask_overrides import effective_ask_settings, has_ask_overrides
+from app.services.ask_overrides import (
+	effective_ask_settings,
+	extract_ask_policy_snapshot,
+	has_ask_overrides,
+)
+from app.services.policy_profiles import resolve_ask_policy
 from app.services.citation_adjudicate import (
 	adjudicate_debug_fields,
 	apply_citation_adjudicate,
@@ -1865,10 +1870,47 @@ class AskGraphService:
 	def _memory_session_id(self, session_id: str) -> str:
 		return f"{self.access_scope.cache_key()}:{session_id}"
 
-	def _ask_settings_for_request(self, ask_overrides: dict[str, Any] | None):
+	def _ask_settings_for_request(
+		self,
+		ask_overrides: dict[str, Any] | None,
+		*,
+		question: str | None = None,
+	):
 		if not has_ask_overrides(ask_overrides):
 			return self._default_ask_settings
-		return effective_ask_settings(self.settings, ask_overrides)
+		return effective_ask_settings(
+			self.settings,
+			ask_overrides,
+			question=question,
+		)
+
+	def _ask_policy_snapshot_for_request(
+		self,
+		ask_overrides: dict[str, Any] | None,
+		*,
+		question: str | None = None,
+		ask_settings: Any,
+	) -> dict[str, Any]:
+		"""Public + resolved knobs for retrieval_debug / ask.trace."""
+		injected = extract_ask_policy_snapshot(ask_overrides)
+		if injected:
+			# Refresh resolved hybrid/rerank from effective settings (auto heuristic).
+			resolved = dict(injected.get("resolved") or {})
+			resolved["hybrid_enabled"] = bool(ask_settings.hybrid_enabled)
+			resolved["rerank_enabled"] = bool(ask_settings.rerank_enabled)
+			return {
+				**injected,
+				"resolved": resolved,
+				"retrieval_enhancement": (
+					injected.get("retrieval_enhancement")
+					or (injected.get("public") or {}).get("retrieval_enhancement")
+				),
+			}
+		policy = resolve_ask_policy(
+			ask_overrides if isinstance(ask_overrides, dict) else None,
+			question=question,
+		)
+		return policy.snapshot()
 
 	def _graph_for_settings(self, settings: Any, *, generate_fn: GenerateFn | None = None):
 		return build_ask_graph(
@@ -1913,7 +1955,15 @@ class AskGraphService:
 		resolved_session = session_id or str(uuid.uuid4())
 		resolved_thread = (thread_id or "").strip() or None
 		memory_session = self._memory_session_id(resolved_session)
-		ask_settings = self._ask_settings_for_request(ask_overrides)
+		ask_settings = self._ask_settings_for_request(
+			ask_overrides,
+			question=question,
+		)
+		policy_snapshot = self._ask_policy_snapshot_for_request(
+			ask_overrides,
+			question=question,
+			ask_settings=ask_settings,
+		)
 		previous_retrieval_settings = self._apply_retrieval_settings(ask_settings)
 		history: list[dict[str, str]] = []
 		if resolved_thread:
@@ -1937,6 +1987,20 @@ class AskGraphService:
 				if ask_settings is self._default_ask_settings
 				else self._graph_for_settings(ask_settings)
 			)
+			debug_seed = initial_ask_debug(
+				trace_id=resolved_trace,
+				question=question,
+				library_id=library_id,
+				requested_mode=self.capability.requested_mode,
+				effective_mode=self.capability.effective_mode,
+				degraded=self.capability.degraded,
+				reasons=list(self.capability.reasons),
+				session_memory=bool(resolved_thread) or ask_settings.session_memory_enabled,
+				hybrid_enabled=ask_settings.hybrid_enabled,
+				stream=False,
+			)
+			debug_seed["rerank_enabled"] = bool(ask_settings.rerank_enabled)
+			debug_seed["ask_policy"] = policy_snapshot
 			state = graph.invoke(
 				{
 					"session_id": resolved_session,
@@ -1944,18 +2008,7 @@ class AskGraphService:
 					"library_id": library_id,
 					"history": history,
 					"trace_id": resolved_trace,
-					"retrieval_debug": initial_ask_debug(
-						trace_id=resolved_trace,
-						question=question,
-						library_id=library_id,
-						requested_mode=self.capability.requested_mode,
-						effective_mode=self.capability.effective_mode,
-						degraded=self.capability.degraded,
-						reasons=list(self.capability.reasons),
-						session_memory=bool(resolved_thread) or ask_settings.session_memory_enabled,
-						hybrid_enabled=ask_settings.hybrid_enabled,
-						stream=False,
-					),
+					"retrieval_debug": debug_seed,
 				}
 			)
 		finally:
@@ -1967,6 +2020,9 @@ class AskGraphService:
 		debug.setdefault("trace_id", resolved_trace)
 		debug.setdefault("question_hash", question_hash(question))
 		debug.setdefault("library_id", library_id)
+		debug.setdefault("ask_policy", policy_snapshot)
+		debug["hybrid_enabled"] = bool(ask_settings.hybrid_enabled)
+		debug["rerank_enabled"] = bool(ask_settings.rerank_enabled)
 		answer, citations = _finalize_generation_output(
 			answer=state.get("answer") or "",
 			raw_citations=raw_citations,
@@ -2048,7 +2104,15 @@ class AskGraphService:
 		resolved_session = session_id or str(uuid.uuid4())
 		resolved_thread = (thread_id or "").strip() or None
 		memory_session = self._memory_session_id(resolved_session)
-		ask_settings = self._ask_settings_for_request(ask_overrides)
+		ask_settings = self._ask_settings_for_request(
+			ask_overrides,
+			question=question,
+		)
+		policy_snapshot = self._ask_policy_snapshot_for_request(
+			ask_overrides,
+			question=question,
+			ask_settings=ask_settings,
+		)
 		previous_retrieval_settings = self._apply_retrieval_settings(ask_settings)
 		history: list[dict[str, str]] = []
 		if resolved_thread:
@@ -2082,6 +2146,20 @@ class AskGraphService:
 
 		try:
 			graph = self._graph_for_settings(ask_settings, generate_fn=capture_generate)
+			debug_seed = initial_ask_debug(
+				trace_id=resolved_trace,
+				question=question,
+				library_id=library_id,
+				requested_mode=self.capability.requested_mode,
+				effective_mode=self.capability.effective_mode,
+				degraded=self.capability.degraded,
+				reasons=list(self.capability.reasons),
+				session_memory=bool(resolved_thread) or ask_settings.session_memory_enabled,
+				hybrid_enabled=ask_settings.hybrid_enabled,
+				stream=True,
+			)
+			debug_seed["rerank_enabled"] = bool(ask_settings.rerank_enabled)
+			debug_seed["ask_policy"] = policy_snapshot
 			state = graph.invoke(
 				{
 					"session_id": resolved_session,
@@ -2089,18 +2167,7 @@ class AskGraphService:
 					"library_id": library_id,
 					"history": history,
 					"trace_id": resolved_trace,
-					"retrieval_debug": initial_ask_debug(
-						trace_id=resolved_trace,
-						question=question,
-						library_id=library_id,
-						requested_mode=self.capability.requested_mode,
-						effective_mode=self.capability.effective_mode,
-						degraded=self.capability.degraded,
-						reasons=list(self.capability.reasons),
-						session_memory=bool(resolved_thread) or ask_settings.session_memory_enabled,
-						hybrid_enabled=ask_settings.hybrid_enabled,
-						stream=True,
-					),
+					"retrieval_debug": debug_seed,
 				}
 			)
 		finally:
@@ -2110,6 +2177,9 @@ class AskGraphService:
 		debug.setdefault("trace_id", resolved_trace)
 		debug.setdefault("question_hash", question_hash(question))
 		debug.setdefault("library_id", library_id)
+		debug.setdefault("ask_policy", policy_snapshot)
+		debug["hybrid_enabled"] = bool(ask_settings.hybrid_enabled)
+		debug["rerank_enabled"] = bool(ask_settings.rerank_enabled)
 		visibility = _retrieval_visibility(debug)
 		refused = bool(state.get("refused"))
 		raw_citations = state.get("citations") or held.get("citations") or []

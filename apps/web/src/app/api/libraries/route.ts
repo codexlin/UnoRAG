@@ -5,23 +5,18 @@ import { and, desc, eq, notInArray } from "drizzle-orm";
 import { getDatabase } from "@/db";
 import { libraries, outboxEvents } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
+import {
+	DOCUMENT_PROFILE_DEFAULT,
+	SCAN_HANDLING_DEFAULT,
+	validateDocumentProfile,
+	validateScanHandling,
+} from "@/lib/server/document-policy.mjs";
 import { canWriteLibraries } from "@/lib/server/library-access";
+import { toApiLibrary } from "@/lib/server/library-api.mjs";
+import { staleActiveVersionsSql } from "@/lib/server/library-reindex-sql";
 import { runOutboxMutation } from "@/lib/server/outbox-transaction.mjs";
 
 const RAG_LIBRARY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-
-function toApiLibrary(row: typeof libraries.$inferSelect) {
-	return {
-		id: row.ragLibraryId,
-		name: row.name,
-		description: row.description,
-		status: row.status,
-		doc_count: row.docCount,
-		ready_count: row.readyCount,
-		created_at: row.createdAt.toISOString(),
-		updated_at: row.updatedAt.toISOString(),
-	};
-}
 
 export async function GET(request: Request) {
 	const identity = await resolveRequestSession(request);
@@ -33,7 +28,21 @@ export async function GET(request: Request) {
 	}
 	const db = getDatabase();
 	const rows = await db
-		.select()
+		.select({
+			ragLibraryId: libraries.ragLibraryId,
+			name: libraries.name,
+			description: libraries.description,
+			status: libraries.status,
+			docCount: libraries.docCount,
+			readyCount: libraries.readyCount,
+			documentProfile: libraries.documentProfile,
+			appliedDocumentProfile: libraries.appliedDocumentProfile,
+			scanHandling: libraries.scanHandling,
+			ingestPolicyVersion: libraries.ingestPolicyVersion,
+			staleActiveVersions: staleActiveVersionsSql(),
+			createdAt: libraries.createdAt,
+			updatedAt: libraries.updatedAt,
+		})
 		.from(libraries)
 		.where(
 			and(
@@ -60,7 +69,13 @@ export async function POST(request: Request) {
 			{ status: 403 },
 		);
 	}
-	let body: { name?: string; description?: string | null; library_id?: string };
+	let body: {
+		name?: string;
+		description?: string | null;
+		library_id?: string;
+		document_profile?: string;
+		scan_handling?: string;
+	};
 	try {
 		body = (await request.json()) as typeof body;
 	} catch {
@@ -69,6 +84,18 @@ export async function POST(request: Request) {
 	const name = body.name?.trim();
 	if (!name) {
 		return Response.json({ detail: "name is required" }, { status: 400 });
+	}
+	const profileResult = validateDocumentProfile(
+		body.document_profile ?? DOCUMENT_PROFILE_DEFAULT,
+	);
+	if (!profileResult.ok) {
+		return Response.json({ detail: profileResult.detail }, { status: 400 });
+	}
+	const scanResult = validateScanHandling(
+		body.scan_handling ?? SCAN_HANDLING_DEFAULT,
+	);
+	if (!scanResult.ok) {
+		return Response.json({ detail: scanResult.detail }, { status: 400 });
 	}
 	const now = new Date();
 	const id = randomUUID();
@@ -95,6 +122,9 @@ export async function POST(request: Request) {
 					ragLibraryId,
 					name: name.slice(0, 256),
 					description: body.description?.trim().slice(0, 2000) || null,
+					documentProfile: profileResult.value,
+					scanHandling: scanResult.value,
+					ingestPolicyVersion: 1,
 					createdBy: identity.principalId,
 					createdAt: now,
 					updatedAt: now,
@@ -114,6 +144,8 @@ export async function POST(request: Request) {
 					library_id: row.ragLibraryId,
 					name: row.name,
 					description: row.description,
+					document_profile: row.documentProfile,
+					scan_handling: row.scanHandling,
 					principal_id: identity.principalId,
 				},
 				createdAt: now,

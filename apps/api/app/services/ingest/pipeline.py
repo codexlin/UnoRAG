@@ -68,6 +68,10 @@ def prepare_ingest(
 	semantic_embedder: SemanticEmbedder | None = None,
 	parser_progress_callback: ParseProgressCallback | None = None,
 	cancel_check: CancelCheck | None = None,
+	chunking_profile: str | None = None,
+	semantic_enabled: bool | None = None,
+	ocr_enabled: bool | None = None,
+	enhanced_parser_allowed: bool = True,
 ) -> PreparedIngest:
 	name = (filename or "untitled.txt").strip() or "untitled.txt"
 	suffix = PurePosixPath(name).suffix.lower()
@@ -138,13 +142,21 @@ def prepare_ingest(
 		content_type=content_type,
 		progress_callback=parser_progress_callback,
 		cancel_check=cancel_check,
+		ocr_enabled=ocr_enabled,
+		enhanced_parser_allowed=enhanced_parser_allowed,
 	)
 	if display_name and display_name.strip():
 		ir.title = clean_display_title(display_name, filename=name)
 
+	profile_name = (chunking_profile or settings.chunking_profile or "balanced").strip()
+	use_semantic = (
+		settings.semantic_chunking_enabled
+		if semantic_enabled is None
+		else bool(semantic_enabled)
+	)
 	resolved_semantic_embedder = semantic_embedder
 	if (
-		settings.semantic_chunking_enabled
+		use_semantic
 		and resolved_semantic_embedder is None
 		and settings.has_llm_key
 	):
@@ -157,9 +169,9 @@ def prepare_ingest(
 		config=ChunkerConfig(
 			chunk_size=settings.chunk_size,
 			chunk_overlap=settings.chunk_overlap,
-			profile_name=settings.chunking_profile,
+			profile_name=profile_name,
 			policy_version=settings.chunk_policy_version,
-			semantic_enabled=settings.semantic_chunking_enabled,
+			semantic_enabled=use_semantic,
 			semantic_min_chars=settings.semantic_chunk_min_chars,
 			semantic_break_percentile=settings.semantic_chunk_break_percentile,
 		),

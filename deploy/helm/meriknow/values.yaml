@@ -164,17 +164,31 @@ config:
   chatModel: qwen-plus
   embeddingModel: text-embedding-v3
   embeddingDim: "1024"
+  embeddingBatchSize: "10"
+  llmMaxInflight: "4"
   rerankModel: qwen3-rerank
   mineruEnabled: "false"
+  # Transitional: chart maps LLM_BASE_URL / openaiBaseUrl → OPENAI_BASE_URL for api/worker
   openaiBaseUrl: ""
+  llmBaseUrl: ""
   rerankBaseUrl: ""
   mineruUrl: ""
+  databasePoolMax: "10"
+  documentMaxUploadBytes: "52428800"
+  lifecycleWorkerPollSeconds: "1"
+  lifecycleWorkerLeaseSeconds: "120"
+  lifecycleWorkerHeartbeatSeconds: "30"
 
 # ---------------------------------------------------------------------------
 # Secrets
 # ---------------------------------------------------------------------------
-# Prefer existingSecret with keys listed in templates/NOTES.txt.
-# For bootstrap only, chart can create a Secret from values.secret (not for prod).
+# Prefer existingSecret. Pods inject least-privilege keys (not full Secret via envFrom).
+# Required keys (align with deploy/config/runtime.secret):
+#   MERIKNOW_INTERNAL_SECRET, MERIKNOW_SESSION_SECRET
+#   DATABASE_URL, API_DATABASE_URL, WORKER_DATABASE_URL, RAG_READ_DATABASE_URL
+#   MIGRATOR_DATABASE_URL (migrate jobs only)
+#   LLM_API_KEY  (mapped to OPENAI_API_KEY for api/worker)
+# Bootstrap admin password must NOT live in the long-running runtime Secret.
 secret:
   create: false
   existingSecret: meriknow-runtime
@@ -182,14 +196,12 @@ secret:
   # data:
   #   MERIKNOW_INTERNAL_SECRET: ""
   #   MERIKNOW_SESSION_SECRET: ""
-  #   INTERNAL_AUTH_SECRET: ""
-  #   MERIKNOW_ADMIN_PASSWORD: ""
   #   DATABASE_URL: ""
   #   API_DATABASE_URL: ""
   #   WORKER_DATABASE_URL: ""
   #   RAG_READ_DATABASE_URL: ""
-  #   OPENAI_API_KEY: ""
-  #   DASHSCOPE_API_KEY: ""
+  #   MIGRATOR_DATABASE_URL: ""
+  #   LLM_API_KEY: ""
 
 # ---------------------------------------------------------------------------
 # Migration Jobs (opt-in; run as separate release step)

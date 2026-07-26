@@ -235,7 +235,11 @@ export async function POST(request: Request, context: RouteContext) {
 				.from(documents)
 				.where(eq(documents.id, document.id))
 				.for("update");
-			if (!locked || locked.status === "deleted" || locked.status === "deleting") {
+			if (
+				!locked ||
+				locked.status === "deleted" ||
+				locked.status === "deleting"
+			) {
 				throw new Error("document unavailable");
 			}
 
@@ -332,6 +336,9 @@ export async function POST(request: Request, context: RouteContext) {
 				sizeBytes: stored.sizeBytes,
 				status: "pending",
 				pipelineVersion: "document-lifecycle-v2",
+				documentProfile: library.documentProfile ?? "auto",
+				scanHandling: library.scanHandling ?? "auto",
+				ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
 				createdAt: now,
 				updatedAt: now,
 			});
@@ -353,6 +360,9 @@ export async function POST(request: Request, context: RouteContext) {
 					contentHash: stored.contentHash,
 					filename: originalFilename,
 					contentType,
+					documentProfile: library.documentProfile ?? "auto",
+					scanHandling: library.scanHandling ?? "auto",
+					ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
 				}),
 				createdAt: now,
 				updatedAt: now,

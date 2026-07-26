@@ -5,103 +5,85 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useSession } from "@/components/app/session-provider";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
 	Tooltip,
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-type AskDefaults = {
-	retrieve_top_k: number;
-	answer_min_score: number;
-	hybrid_enabled: boolean;
-	rerank_enabled: boolean;
-	citation_adjudicate_enabled: boolean;
-	citation_adjudicate_absolute_floor: number;
+type AskSettings = {
+	answer_profile: "precise" | "balanced" | "exploratory";
+	retrieval_enhancement: "auto" | "off" | "on";
 	session_memory_enabled: boolean;
-	session_memory_max_turns: number;
+	evidence_requirement: "strict" | "standard" | "relaxed";
 };
 
-type AskSettings = Partial<AskDefaults>;
-
-type FieldKey = keyof AskDefaults;
+type FieldKey = keyof AskSettings;
 
 const FIELDS: {
 	key: FieldKey;
 	label: string;
-	kind: "int" | "float" | "bool";
-	hint?: string;
-	/** Hover tip：产品说明，与 ASK_SETTING_DEFAULTS 默认值对齐 */
 	tip: string;
+	kind: "enum" | "bool";
+	options?: { value: string; label: string }[];
 }[] = [
 	{
-		key: "retrieve_top_k",
-		label: "引用条数上限",
-		kind: "int",
-		hint: "1–20",
-		tip: "引用条数上限。偏大=更全但更吵/更贵；常见 4–8，默认 6。",
+		key: "answer_profile",
+		label: "回答模式",
+		kind: "enum",
+		tip: "精确=证据不足时更易拒答；均衡=默认；探索=更宽召回、更敢关联线索。",
+		options: [
+			{ value: "precise", label: "精确" },
+			{ value: "balanced", label: "均衡" },
+			{ value: "exploratory", label: "探索" },
+		],
 	},
 	{
-		key: "answer_min_score",
-		label: "弱相关拒答阈值",
-		kind: "float",
-		hint: "0–1",
-		tip: "弱相关拒答阈值。偏高=更严（少瞎答），偏低=更敢答。默认 0.4。",
-	},
-	{
-		key: "hybrid_enabled",
-		label: "混合检索",
-		kind: "bool",
-		tip: "混合检索（向量+关键词）。专名/编号/精确字段多时建议开；一般叙述问答可关。默认关。",
-	},
-	{
-		key: "rerank_enabled",
-		label: "重排",
-		kind: "bool",
-		tip: "重排。需已配置重排/LLM；要更准排序时开，会增加延迟与费用。默认关。",
-	},
-	{
-		key: "citation_adjudicate_enabled",
-		label: "引用裁决",
-		kind: "bool",
-		tip: "引用裁决，滤掉弱引用。生产建议开。默认开。",
-	},
-	{
-		key: "citation_adjudicate_absolute_floor",
-		label: "裁决绝对分下限",
-		kind: "float",
-		hint: "0–1",
-		tip: "裁决绝对分下限。越高越严。默认 0.35。",
+		key: "retrieval_enhancement",
+		label: "检索增强",
+		kind: "enum",
+		tip: "关闭=仅向量；开启=混合检索+重排（若可用）；自动=按问法启发式或产品默认，并在问答轨迹中记录实际取值。",
+		options: [
+			{ value: "auto", label: "自动" },
+			{ value: "off", label: "关闭" },
+			{ value: "on", label: "开启" },
+		],
 	},
 	{
 		key: "session_memory_enabled",
-		label: "多轮短记忆",
+		label: "对话记忆",
 		kind: "bool",
-		tip: "多轮短记忆。跟进追问建议开。默认开。",
+		tip: "多轮追问时保留短上下文。默认开。",
 	},
 	{
-		key: "session_memory_max_turns",
-		label: "记忆轮数",
-		kind: "int",
-		hint: "0–20",
-		tip: "兼容字段；实际工作记忆窗口由服务端代码常量决定（当前约 10 轮）。",
+		key: "evidence_requirement",
+		label: "证据要求",
+		kind: "enum",
+		tip: "严格/标准/宽松，调节拒答与引用裁决；与回答模式冲突时取更严一侧。",
+		options: [
+			{ value: "strict", label: "严格" },
+			{ value: "standard", label: "标准" },
+			{ value: "relaxed", label: "宽松" },
+		],
 	},
 ];
 
-function formatDefault(value: number | boolean | undefined): string {
+function formatDefault(key: FieldKey, defaults: AskSettings | null): string {
+	if (!defaults) return "—";
+	const value = defaults[key];
 	if (typeof value === "boolean") return value ? "开" : "关";
-	if (typeof value === "number") return String(value);
-	return "—";
+	const field = FIELDS.find((item) => item.key === key);
+	const option = field?.options?.find((item) => item.value === value);
+	return option?.label ?? String(value);
 }
 
 export function WorkspaceAskSettingsPanel() {
 	const { can } = useSession();
 	const canManage = can("manageMembers");
-	const [ask, setAsk] = useState<AskSettings>({});
-	const [defaults, setDefaults] = useState<AskDefaults | null>(null);
-	const [draft, setDraft] = useState<AskSettings>({});
+	const [ask, setAsk] = useState<AskSettings | null>(null);
+	const [defaults, setDefaults] = useState<AskSettings | null>(null);
+	const [draft, setDraft] = useState<AskSettings | null>(null);
+	const [policyVersion, setPolicyVersion] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [saved, setSaved] = useState(false);
 	const [busy, setBusy] = useState(false);
@@ -118,52 +100,37 @@ export function WorkspaceAskSettingsPanel() {
 		}
 		const data = (await response.json()) as {
 			ask: AskSettings;
-			defaults: AskDefaults;
+			defaults: AskSettings;
+			policy_version?: number;
 		};
 		setAsk(data.ask);
 		setDraft(data.ask);
 		setDefaults(data.defaults);
+		setPolicyVersion(
+			typeof data.policy_version === "number" ? data.policy_version : null,
+		);
 	}, []);
 
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
 
-	function setField(key: FieldKey, value: unknown) {
+	function setField<K extends FieldKey>(key: K, value: AskSettings[K]) {
 		setSaved(false);
-		setDraft((prev) => {
-			const next = { ...prev };
-			if (value === undefined) {
-				delete next[key];
-			} else {
-				(next as Record<string, unknown>)[key] = value;
-			}
-			return next;
-		});
-	}
-
-	function clearField(key: FieldKey) {
-		setField(key, undefined);
+		setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
 	}
 
 	async function save() {
-		if (!canManage) return;
+		if (!canManage || !ask || !draft) return;
 		setBusy(true);
 		setError(null);
 		setSaved(false);
 
-		const patch: Record<string, unknown> = {};
+		const patch: Partial<AskSettings> = {};
 		for (const field of FIELDS) {
 			const key = field.key;
-			const had = Object.hasOwn(ask, key);
-			const has = Object.hasOwn(draft, key);
-			if (!had && !has) continue;
-			if (had && !has) {
-				patch[key] = null;
-				continue;
-			}
-			if (has && draft[key] !== ask[key]) {
-				patch[key] = draft[key];
+			if (draft[key] !== ask[key]) {
+				(patch as Record<string, unknown>)[key] = draft[key];
 			}
 		}
 
@@ -181,18 +148,20 @@ export function WorkspaceAskSettingsPanel() {
 		setBusy(false);
 		if (!response.ok) {
 			const detail = await response.json().catch(() => null);
-			setError(
-				typeof detail?.detail === "string" ? detail.detail : "保存失败",
-			);
+			setError(typeof detail?.detail === "string" ? detail.detail : "保存失败");
 			return;
 		}
 		const data = (await response.json()) as {
 			ask: AskSettings;
-			defaults: AskDefaults;
+			defaults: AskSettings;
+			policy_version?: number;
 		};
 		setAsk(data.ask);
 		setDraft(data.ask);
 		setDefaults(data.defaults);
+		setPolicyVersion(
+			typeof data.policy_version === "number" ? data.policy_version : null,
+		);
 		setSaved(true);
 	}
 
@@ -214,15 +183,15 @@ export function WorkspaceAskSettingsPanel() {
 					Ask
 				</p>
 				<p className="text-ui mt-1 text-muted-foreground">
-					问答与检索。未覆盖的项使用代码默认。
+					问答策略（业务意图）。算法细节由服务端映射，不在此暴露。
 					{!canManage ? " 查看者/编辑者只读。" : ""}
+					{policyVersion != null ? ` · 策略版本 ${policyVersion}` : ""}
 				</p>
 			</div>
 
 			<ul className="space-y-3">
 				{FIELDS.map((field) => {
-					const overridden = Object.hasOwn(draft, field.key);
-					const defaultValue = defaults?.[field.key];
+					const value = draft?.[field.key];
 					return (
 						<li
 							key={field.key}
@@ -253,78 +222,44 @@ export function WorkspaceAskSettingsPanel() {
 									</Tooltip>
 								</div>
 								<p className="font-mono text-xs text-muted-foreground">
-									{overridden
-										? "已覆盖"
-										: `未覆盖 · 默认 ${formatDefault(defaultValue)}`}
-									{field.hint ? ` · ${field.hint}` : ""}
+									默认 {formatDefault(field.key, defaults)}
 								</p>
 							</div>
 							<div className="flex items-center gap-2">
 								{field.kind === "bool" ? (
 									<select
 										className="rounded-md border border-border bg-background px-2 py-1 text-xs"
-										disabled={!canManage}
-										value={
-											overridden
-												? draft[field.key]
-													? "true"
-													: "false"
-												: ""
-										}
+										disabled={!canManage || value == null}
+										value={value ? "true" : "false"}
 										onChange={(event) => {
-											const v = event.target.value;
-											if (v === "") clearField(field.key);
-											else setField(field.key, v === "true");
+											setField(
+												"session_memory_enabled",
+												event.target.value === "true",
+											);
 										}}
 									>
-										<option value="">默认</option>
 										<option value="true">开</option>
 										<option value="false">关</option>
 									</select>
 								) : (
-									<>
-										<Label htmlFor={`ask-${field.key}`} className="sr-only">
-											{field.label}
-										</Label>
-										<Input
-											id={`ask-${field.key}`}
-											type="number"
-											step={field.kind === "float" ? "0.01" : "1"}
-											className="h-8 w-24 font-mono text-xs"
-											disabled={!canManage}
-											placeholder={
-												defaultValue != null ? String(defaultValue) : ""
-											}
-											value={
-												overridden && draft[field.key] != null
-													? String(draft[field.key])
-													: ""
-											}
-											onChange={(event) => {
-												const raw = event.target.value.trim();
-												if (raw === "") {
-													clearField(field.key);
-													return;
-												}
-												const num = Number(raw);
-												if (!Number.isFinite(num)) return;
-												setField(
-													field.key,
-													field.kind === "int" ? Math.trunc(num) : num,
-												);
-											}}
-										/>
-									</>
-								)}
-								{canManage && overridden ? (
-									<button
-										type="button"
-										className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-										onClick={() => clearField(field.key)}
+									<select
+										className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+										disabled={!canManage || value == null}
+										value={String(value ?? "")}
+										onChange={(event) => {
+											setField(
+												field.key,
+												event.target.value as AskSettings[typeof field.key],
+											);
+										}}
 									>
-										清除
-									</button>
-								) : null}
+										{(field.options ?? []).map((option) => (
+											<option key={option.value} value={option.value}>
+												{option.label}
+											</option>
+										))}
+									</select>
+								)}
 							</div>
 						</li>
 					);
@@ -332,9 +267,7 @@ export function WorkspaceAskSettingsPanel() {
 			</ul>
 
 			{error ? <p className="text-ui text-destructive">{error}</p> : null}
-			{saved ? (
-				<p className="text-ui text-muted-foreground">已保存</p>
-			) : null}
+			{saved ? <p className="text-ui text-muted-foreground">已保存</p> : null}
 
 			{canManage ? (
 				<div className="pt-1">

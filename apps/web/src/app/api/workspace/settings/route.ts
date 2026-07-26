@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { resolveRequestSession } from "@/lib/server/auth/session";
+import { canManageMembers } from "@/lib/server/workspace-permissions.mjs";
 import {
 	getWorkspaceAskSettings,
 	patchWorkspaceAskSettings,
 } from "@/lib/server/workspace-settings";
-import { canManageMembers } from "@/lib/server/workspace-permissions.mjs";
 
 export async function GET(request: Request) {
 	const identity = await resolveRequestSession(request);
@@ -19,6 +19,9 @@ export async function GET(request: Request) {
 	return NextResponse.json({
 		ask: payload.ask,
 		defaults: payload.defaults,
+		policy_version: payload.policy_version,
+		updated_at: payload.updated_at,
+		updated_by: payload.updated_by,
 		can_manage: canManageMembers(identity),
 	});
 }
@@ -43,6 +46,7 @@ export async function PATCH(request: Request) {
 	const result = await patchWorkspaceAskSettings(
 		identity.workspaceId,
 		body.ask,
+		identity.principalId,
 	);
 	if (!result.ok) {
 		return NextResponse.json(
@@ -53,6 +57,9 @@ export async function PATCH(request: Request) {
 	return NextResponse.json({
 		ask: result.ask,
 		defaults: result.defaults,
+		policy_version: result.policy_version,
+		updated_at: result.updated_at,
+		updated_by: result.updated_by,
 		can_manage: true,
 	});
 }

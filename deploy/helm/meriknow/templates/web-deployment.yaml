@@ -29,16 +29,34 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.web.port }}
-          envFrom:
-            - configMapRef:
-                name: {{ include "meriknow.fullname" . }}-config
-            - secretRef:
-                name: {{ include "meriknow.secretName" . }}
           env:
             - name: NODE_ENV
               value: production
             - name: PORT
               value: {{ .Values.web.port | quote }}
+            - name: RAG_API_URL
+              value: {{ printf "http://%s-api:%v" (include "meriknow.fullname" .) .Values.service.api.port | quote }}
+            - name: DATABASE_POOL_MAX
+              value: {{ .Values.config.databasePoolMax | default "10" | quote }}
+            - name: DOCUMENT_STORAGE_ROOT
+              value: {{ .Values.documentStorageRoot | quote }}
+            - name: DOCUMENT_MAX_UPLOAD_BYTES
+              value: {{ .Values.config.documentMaxUploadBytes | default "52428800" | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "meriknow.secretName" . }}
+                  key: DATABASE_URL
+            - name: MERIKNOW_INTERNAL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "meriknow.secretName" . }}
+                  key: MERIKNOW_INTERNAL_SECRET
+            - name: MERIKNOW_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "meriknow.secretName" . }}
+                  key: MERIKNOW_SESSION_SECRET
           volumeMounts:
             {{- if .Values.persistence.enabled }}
             - name: documents

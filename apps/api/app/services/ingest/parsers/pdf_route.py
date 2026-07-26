@@ -152,16 +152,17 @@ def parse_pdf_routed(
 	mineru_backend: Any | None = None,
 	progress_callback: ParseProgressCallback | None = None,
 	cancel_check: CancelCheck | None = None,
+	enhanced_parser_allowed: bool = True,
 ) -> DocumentIR:
-	"""路由入口：保持 PyMuPDF 默认；按需升级 MinerU。"""
+	"""路由入口：保持 PyMuPDF 默认；策略允许时按需升级 MinerU。"""
 	t0 = time.perf_counter()
 	opts = options or PdfParseOptions()
 	route_mode: PdfRouteMode = (settings.mineru_mode or "auto").strip().lower()  # type: ignore[assignment]
 	if route_mode not in {"auto", "pymupdf", "mineru"}:
 		route_mode = "auto"
 
-	backend = mineru_backend
-	if backend is None:
+	backend = mineru_backend if enhanced_parser_allowed else None
+	if backend is None and enhanced_parser_allowed:
 		backend = get_mineru_backend(
 			enabled=settings.mineru_enabled,
 			base_url=settings.mineru_url,
@@ -172,8 +173,8 @@ def parse_pdf_routed(
 			use_fake=settings.mineru_use_fake,
 		)
 
-	# 强制 MinerU
-	if route_mode == "mineru":
+	# 全局强制 MinerU 不能覆盖知识库 text-only 策略。
+	if route_mode == "mineru" and enhanced_parser_allowed:
 		return _parse_mineru_or_fail(
 			content=content,
 			filename=filename,
@@ -210,6 +211,9 @@ def parse_pdf_routed(
 		)
 	)
 	_stamp_latency(pymupdf_ir, t0)
+
+	if not enhanced_parser_allowed:
+		return _finalize_text_only(pymupdf_ir)
 
 	if route_mode == "pymupdf":
 		return _finalize_pymupdf(pymupdf_ir, settings=settings)
@@ -406,6 +410,25 @@ def _finalize_pymupdf(ir: DocumentIR, *, settings: Settings | None) -> DocumentI
 	):
 		ir.parser_report.warnings.append(
 			"complex/scan pages present; MinerU disabled — partial PyMuPDF result"
+		)
+	return ir
+
+
+def _finalize_text_only(ir: DocumentIR) -> DocumentIR:
+	"""Strict scan_handling=disabled result: never call OCR or MinerU."""
+	report = ir.parser_report
+	report.metrics["route"] = "pymupdf_text_only"
+	report.metrics["scan_handling"] = "disabled"
+	if not ir.nodes:
+		raise ValueError(
+			"PDF has no extractable text (possibly scanned); "
+			"scan recognition is disabled by library policy"
+		)
+	if report.needs_ocr_pages or report.failed_pages:
+		report.partial = True
+		report.warnings.append(
+			"scan/complex pages skipped because scan recognition is disabled "
+			"by library policy"
 		)
 	return ir
 

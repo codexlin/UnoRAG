@@ -5,6 +5,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/compose-env.sh"
 
 OUT="${1:-}"
 if [[ -z "$OUT" ]]; then
@@ -13,20 +15,20 @@ fi
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 
-# shellcheck disable=SC1091
-[[ -f .env ]] && set -a && source .env && set +a
-
-PROJECT="${COMPOSE_PROJECT_NAME:-meriknow}"
-STORAGE_ROOT="${DOCUMENT_STORAGE_ROOT:-/var/lib/meriknow/documents}"
+PROJECT="$(mk_config_get COMPOSE_PROJECT_NAME || echo meriknow)"
+# Compose invariant — must match docker-compose named-volume mount (not runtime.env).
+STORAGE_ROOT="/var/lib/meriknow/documents"
+POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo meriknow)"
+POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo meriknow)"
 
 echo "==> postgres dump → $OUT/postgres.sql"
-docker compose exec -T postgres \
-	pg_dump -U "${POSTGRES_USER:-meriknow}" -d "${POSTGRES_DB:-meriknow}" \
+mk_compose exec -T postgres \
+	pg_dump -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
 	--format=plain --no-owner --no-acl \
 	> "$OUT/postgres.sql"
 
 echo "==> document storage → $OUT/documents.tgz"
-docker compose run --rm --no-deps --user root --entrypoint "" web \
+mk_compose run --rm --no-deps --user root --entrypoint "" web \
 	tar -C "$STORAGE_ROOT" -czf - . > "$OUT/documents.tgz"
 
 echo "==> qdrant storage → $OUT/qdrant.tgz"
@@ -40,7 +42,7 @@ created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 postgres=postgres.sql
 documents=documents.tgz
 qdrant=qdrant.tgz
-restore_order=postgres -> documents -> qdrant -> start apps
+project=${PROJECT}
 EOF
 
-echo "backup written to $OUT"
+echo "backup complete → $OUT"

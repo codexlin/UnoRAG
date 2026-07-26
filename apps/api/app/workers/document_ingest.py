@@ -19,6 +19,7 @@ from app.services.hybrid import get_bm25_cache
 from app.services.ingest.backends.mineru import MinerUClientError
 from app.services.ingest.pipeline import prepare_ingest
 from app.services.ingest.queue_class import resolve_queue_class_after_probe
+from app.services.policy_profiles import resolve_document_policy
 from app.services.qdrant_store import QdrantStore
 from app.services.retrieval import IngestService
 from app.services.source_object_storage import (
@@ -98,14 +99,24 @@ class DocumentIngestProcessor:
 					context.storage_key,
 					expected_hash=context.content_hash,
 				)
+				# Resolve the enqueue-time policy before queue routing. A strict
+				# text-only document must not consume a MinerU slot.
+				doc_policy = resolve_document_policy(
+					document_profile=context.document_profile,
+					scan_handling=context.scan_handling,
+				)
 
 				# Probe → mark queue_class; mineru jobs requeue onto mineru slot
 				# so a running MinerU parse does not block local/docx claims.
-				resolved_class = resolve_queue_class_after_probe(
-					filename=context.filename,
-					content_type=context.content_type,
-					content=content,
-					mineru_enabled=bool(self.settings.mineru_enabled),
+				resolved_class = (
+					resolve_queue_class_after_probe(
+						filename=context.filename,
+						content_type=context.content_type,
+						content=content,
+						mineru_enabled=bool(self.settings.mineru_enabled),
+					)
+					if doc_policy.enhanced_parser_allowed
+					else "local"
 				)
 				current_class = str(
 					(lease.payload or {}).get("queue_class") or "local"
@@ -166,6 +177,10 @@ class DocumentIngestProcessor:
 					content_type=context.content_type,
 					parser_progress_callback=report_parse_progress,
 					cancel_check=check_parse_cancelled,
+					chunking_profile=doc_policy.chunk_profile,
+					semantic_enabled=doc_policy.semantic_enabled,
+					ocr_enabled=doc_policy.ocr_enabled,
+					enhanced_parser_allowed=doc_policy.enhanced_parser_allowed,
 				)
 				progress.checkpoint(
 					JobStage.CHUNKING,
@@ -199,6 +214,14 @@ class DocumentIngestProcessor:
 						)
 
 				report = prepared.parser_report.to_public_dict()
+				report["ingest_policy"] = {
+					"ingest_policy_version": int(
+						context.ingest_policy_version or 1
+					),
+					"document_profile": doc_policy.document_profile,
+					"scan_handling": doc_policy.scan_handling,
+					"chunk_profile": doc_policy.chunk_profile,
+				}
 				result = service.ingest_ir_chunks(
 					library_id=context.rag_library_id,
 					title=prepared.title,
@@ -247,12 +270,18 @@ class DocumentIngestProcessor:
 					lease,
 					context,
 					parser_backend=parser_backend,
-					chunk_profile=self.settings.chunking_profile,
+					chunk_profile=doc_policy.chunk_profile,
 					parser_report=report,
 					point_count=actual_count,
 					chunk_count=int(result["chunk_count"]),
 					section_count=int(result["section_count"]),
 					table_count=int(result["table_count"]),
+				)
+				# Deprecated library-level hint only; requires_reindex uses
+				# per-version snapshots (do not treat this as "whole library applied").
+				self.repository.mark_library_document_profile_applied(
+					library_id=context.library_id,
+					document_profile=doc_policy.document_profile,
 				)
 				indexed = True
 

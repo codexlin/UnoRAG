@@ -150,14 +150,23 @@ query_router
 ### Ask 设置解析顺序
 
 ```text
-workspace ask_overrides  >  ASK_DEFAULTS（代码）
+workspace 业务意图策略（profiles）
+  → policy_profiles / ask-policy 映射为内部 knobs
+  → ASK_DEFAULTS（代码）填补未覆盖项
 ```
 
-**不读**产品 env：`HYBRID_ENABLED`、`RERANK_ENABLED`、`SESSION_MEMORY_*` 等已退出产品配置面。  
-UI：`/app/settings` → 工作区问答设置。  
-代码：`apps/api/app/services/ask_defaults.py`。
+**产品面只暴露业务意图**：`answer_profile`、`retrieval_enhancement`、`session_memory_enabled`、`evidence_requirement`。
+**不读**产品 env：`HYBRID_ENABLED`、`RERANK_ENABLED`、`SESSION_MEMORY_*` 等已退出产品配置面。
+**不在 UI/正常 API 暴露**：`RRF_K`、`BM25_TOP_K`、原始 `CHUNK_SIZE`、语义 percentile 等算法旋钮。
 
-可覆盖键（摘要）：`retrieve_top_k`、`answer_min_score`、`hybrid_enabled`、`rerank_enabled`、`citation_adjudicate_*`、`session_memory_enabled` 等。
+UI：`/app/settings` → 工作区问答策略。
+映射：`apps/api/app/services/policy_profiles.py` 与 `apps/web/src/lib/server/ask-policy.mjs`（需保持同步）。
+冲突规则：拒答/引用严格度取 `answer_profile` 与 `evidence_requirement` 的更严一侧。
+Ask 轨迹：`retrieval_debug.ask_policy` 记录 public + resolved（含具体 hybrid/rerank）。
+
+知识库 `document_profile`（+ 高级 `scan_handling`）决定切片与扫描解析预设；
+`scan_handling=disabled` 是严格 text-only（不调用 OCR/MinerU）。策略变更后
+`requires_reindex=true`，V1 不静默全量重建。
 
 ## 鉴权与请求上下文
 

@@ -51,6 +51,10 @@ export function buildDocumentIngestPayload(input) {
 		content_hash: input.contentHash,
 		filename: input.filename,
 		content_type: input.contentType,
+		// Policy snapshot at enqueue time — worker must not re-read live library.
+		document_profile: input.documentProfile ?? "auto",
+		scan_handling: input.scanHandling ?? "auto",
+		ingest_policy_version: Number(input.ingestPolicyVersion) || 1,
 		// local | auto | mineru — worker claims by class so MinerU cannot starve docx
 		queue_class: inferIngestQueueClass(input.filename, input.contentType),
 	};

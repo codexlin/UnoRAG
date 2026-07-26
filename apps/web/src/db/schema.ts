@@ -203,12 +203,21 @@ export const workspaceInvites = appSchema.table(
 	],
 );
 
-/** Per-workspace product knobs; unset keys fall back to code ASK_DEFAULTS. */
+/**
+ * Per-workspace ask policy (business-intent public contract in `ask`).
+ * Resolved internals live only at read/ask time via ask-policy mapping.
+ */
 export const workspaceSettings = appSchema.table("workspace_settings", {
 	workspaceId: uuid("workspace_id")
 		.primaryKey()
 		.references(() => workspaces.id, { onDelete: "cascade" }),
 	ask: jsonb("ask").$type<Record<string, unknown>>().default({}).notNull(),
+	/** Previous public ask JSON after a change (minimal rollback aid). */
+	askPrevious: jsonb("ask_previous").$type<Record<string, unknown> | null>(),
+	policyVersion: integer("policy_version").default(1).notNull(),
+	updatedBy: uuid("updated_by").references(() => users.id, {
+		onDelete: "set null",
+	}),
 	...timestamps,
 });
 
@@ -269,6 +278,29 @@ export const libraries = appSchema.table(
 		status: varchar("status", { length: 32 }).default("empty").notNull(),
 		docCount: integer("doc_count").default(0).notNull(),
 		readyCount: integer("ready_count").default(0).notNull(),
+		/**
+		 * Pending ingest policy (business-intent). Changing this does not
+		 * silently reindex; requires_reindex is derived from active document
+		 * version policy snapshots vs these pending fields.
+		 */
+		documentProfile: varchar("document_profile", { length: 64 })
+			.default("auto")
+			.notNull(),
+		/**
+		 * Deprecated aggregate hint only — do not trust for requires_reindex.
+		 * Prefer per-version snapshots on document_versions.
+		 */
+		appliedDocumentProfile: varchar("applied_document_profile", {
+			length: 64,
+		}),
+		/**
+		 * OCR advanced (collapsed UI). auto|disabled|force_ocr.
+		 * Snapshotted per version and applied via prepare_ingest ocr_enabled.
+		 */
+		scanHandling: varchar("scan_handling", { length: 32 })
+			.default("auto")
+			.notNull(),
+		ingestPolicyVersion: integer("ingest_policy_version").default(1).notNull(),
 		createdBy: uuid("created_by").references(() => users.id, {
 			onDelete: "set null",
 		}),
@@ -339,6 +371,13 @@ export const documentVersions = appSchema.table(
 		parserBackend: varchar("parser_backend", { length: 64 }),
 		chunkProfile: varchar("chunk_profile", { length: 64 }),
 		parserReport: jsonb("parser_report"),
+		/**
+		 * Ingest policy snapshot at job enqueue/create time (not live library).
+		 * Worker must use these fields; requires_reindex compares them to library.
+		 */
+		ingestPolicyVersion: integer("ingest_policy_version"),
+		documentProfile: varchar("document_profile", { length: 64 }),
+		scanHandling: varchar("scan_handling", { length: 32 }),
 		pointCount: integer("point_count"),
 		chunkCount: integer("chunk_count"),
 		sectionCount: integer("section_count"),
