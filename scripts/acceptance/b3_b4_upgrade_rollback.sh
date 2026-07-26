@@ -12,10 +12,10 @@
 #   → B4a app-only rollback (old API on same DB) → verify
 #   → B4b data-restore rollback (B2-style restore of pre-upgrade backup) → verify
 #
-# Version strategy (no formal old image tags):
-#   - OLD: git worktree at MERIKNOW_B3_OLD_SHA (default RC1 b98f014)
-#   - NEW: MERIKNOW_B3_NEW_SHA / HEAD (API from repo root)
-#   - Web: meriknow-web:local (shared unless MERIKNOW_B3_WEB_*_TAG set)
+# Version strategy (no formal release image tags required):
+#   - OLD/NEW: detached git worktrees at the requested immutable SHAs.
+#   - API/migrations run from their matching worktrees.
+#   - Web images are SHA-scoped and built on demand unless already present.
 #
 # Exit: 0=PASS 1=FAIL 2=BLOCKED/SKIP
 set -euo pipefail
@@ -48,12 +48,15 @@ B3_API_PORT="${B3_API_PORT:-18001}"
 PROJECT="${MERIKNOW_B3_PROJECT:-meriknow-b3}"
 PROJECT_RESTORE="${MERIKNOW_B3_PROJECT_RESTORE:-meriknow-b3-restore}"
 
-WEB_TAG_NEW="${MERIKNOW_B3_WEB_NEW_TAG:-meriknow-web:local}"
-WEB_TAG_OLD="${MERIKNOW_B3_WEB_OLD_TAG:-meriknow-web:local}"
+WEB_TAG_NEW="${MERIKNOW_B3_WEB_NEW_TAG:-meriknow-web:b3-new-${NEW_SHA:0:12}}"
+WEB_TAG_OLD="${MERIKNOW_B3_WEB_OLD_TAG:-meriknow-web:b3-old-${OLD_SHA:0:12}}"
+BUILD_WEB_IMAGES="${MERIKNOW_B3_BUILD_WEB_IMAGES:-auto}"
 
 COOKIE_JAR=""
 WORKDIR=""
 OLD_WT=""
+NEW_WT=""
+NEW_ROOT=""
 PIDS=()
 STATUS="BLOCKED"
 DETAIL=""
@@ -153,7 +156,7 @@ payload = {
 		"new_sha": new_sha,
 		"web_tag_old": web_old,
 		"web_tag_new": web_new,
-		"note": "No formal old image tag; API process rooted at git worktree/SHA. Web defaults to meriknow-web:local.",
+		"note": "API/migrations run from detached SHA worktrees. Web images are SHA-scoped and built on demand unless overridden.",
 	},
 	"phases": {
 		"B3": b3,
@@ -330,11 +333,6 @@ ensure_old_worktree() {
 		git -C "$ROOT" worktree remove --force "$OLD_WT" >/dev/null 2>&1 || rm -rf "$OLD_WT"
 	fi
 	git -C "$ROOT" worktree add --detach "$OLD_WT" "$OLD_SHA"
-	# Reuse host toolchains (do not reinstall).
-	if [[ -d "$ROOT/apps/api/.venv" ]]; then
-		rm -rf "$OLD_WT/apps/api/.venv"
-		ln -sfn "$ROOT/apps/api/.venv" "$OLD_WT/apps/api/.venv"
-	fi
 	local mig_delta
 	mig_delta="$(git -C "$ROOT" diff --stat "$OLD_SHA" "$NEW_SHA" -- apps/web/drizzle apps/api/migrations 2>/dev/null || true)"
 	if [[ -z "${mig_delta//[[:space:]]/}" ]]; then
@@ -343,6 +341,63 @@ ensure_old_worktree() {
 		SCHEMA_COMPAT="review needed — migration diff present:\n${mig_delta}"
 	fi
 	record "versions.prepare" pass "old=$OLD_SHA new=$NEW_SHA schema=$SCHEMA_COMPAT"
+}
+
+ensure_new_worktree() {
+	NEW_WT="$WORK_ROOT/new-src-${NEW_SHA:0:12}"
+	log "prepare new worktree NEW_SHA=$NEW_SHA at $NEW_WT"
+	if [[ -e "$NEW_WT" ]]; then
+		git -C "$ROOT" worktree remove --force "$NEW_WT" >/dev/null 2>&1 || rm -rf "$NEW_WT"
+	fi
+	git -C "$ROOT" worktree add --detach "$NEW_WT" "$NEW_SHA"
+	NEW_ROOT="$NEW_WT"
+}
+
+link_host_toolchains() {
+	# link_host_toolchains <worktree>
+	# Reuse installed host dependencies after image builds; never reinstall in a
+	# detached acceptance worktree.
+	local code_root="$1"
+	if [[ -d "$ROOT/node_modules" ]]; then
+		rm -rf "$code_root/node_modules"
+		ln -sfn "$ROOT/node_modules" "$code_root/node_modules"
+	fi
+	if [[ -d "$ROOT/apps/web/node_modules" ]]; then
+		rm -rf "$code_root/apps/web/node_modules"
+		ln -sfn "$ROOT/apps/web/node_modules" "$code_root/apps/web/node_modules"
+	fi
+	if [[ -d "$ROOT/apps/api/.venv" ]]; then
+		rm -rf "$code_root/apps/api/.venv"
+		ln -sfn "$ROOT/apps/api/.venv" "$code_root/apps/api/.venv"
+	fi
+}
+
+ensure_web_image() {
+	# ensure_web_image <worktree> <tag> <label>
+	local code_root="$1"
+	local tag="$2"
+	local label="$3"
+	case "$BUILD_WEB_IMAGES" in
+		auto)
+			if docker image inspect "$tag" >/dev/null 2>&1; then
+				log "reuse $label web image $tag"
+				return 0
+			fi
+			;;
+		always) ;;
+		never)
+			docker image inspect "$tag" >/dev/null 2>&1 \
+				|| blocked "$label web image missing: $tag (BUILD_WEB_IMAGES=never)"
+			log "reuse $label web image $tag"
+			return 0
+			;;
+		*)
+			blocked "MERIKNOW_B3_BUILD_WEB_IMAGES must be auto, always, or never"
+			;;
+	esac
+	log "build $label web image $tag from $code_root"
+	docker build -f "$code_root/deploy/docker/web.Dockerfile" -t "$tag" "$code_root" \
+		|| blocked "failed to build $label web image $tag"
 }
 
 start_infra() {
@@ -364,7 +419,7 @@ stop_infra() {
 
 migrate_and_bootstrap() {
 	local code_root="${1:-$ROOT}"
-	log "migrate control-plane + rag schemas (tools from $code_root)"
+	log "initialize source schemas + bootstrap (tools from $code_root)"
 	(
 		cd "$code_root/apps/web"
 		DATABASE_URL="$DSN_PG" pnpm db:migrate
@@ -373,6 +428,7 @@ migrate_and_bootstrap() {
 		cd "$code_root/apps/api"
 		MIGRATOR_DATABASE_URL="$DSN_PG" PYTHONPATH=. uv run python scripts/apply_rag_migrations.py
 	)
+	assert_control_migration_count "$code_root" "B3.source_schema"
 	log "bootstrap admin/workspace"
 	(
 		cd "$code_root/apps/web"
@@ -403,7 +459,39 @@ migrate_only() {
 		cd "$code_root/apps/api"
 		MIGRATOR_DATABASE_URL="$DSN_PG" PYTHONPATH=. uv run python scripts/apply_rag_migrations.py
 	)
-	record "B3.migration" pass "db:migrate + apply_rag_migrations ok"
+	assert_control_migration_count "$code_root" "B3.target_schema"
+	record "B3.migration" pass "db:migrate + apply_rag_migrations ok root=$code_root"
+}
+
+journal_migration_count() {
+	# journal_migration_count <worktree>
+	python3 - "$1/apps/web/drizzle/meta/_journal.json" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+print(len(payload.get("entries") or []))
+PY
+}
+
+database_migration_count() {
+	COMPOSE_PROJECT_NAME="$PROJECT" docker compose -f "$COMPOSE_FILE" \
+		exec -T postgres \
+		psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
+		"SELECT count(*) FROM drizzle.__drizzle_migrations"
+}
+
+assert_control_migration_count() {
+	# assert_control_migration_count <worktree> <check_id>
+	local code_root="$1"
+	local check_id="$2"
+	local expected actual
+	expected="$(journal_migration_count "$code_root")" \
+		|| fail "$check_id cannot read Drizzle journal from $code_root"
+	actual="$(database_migration_count)" \
+		|| fail "$check_id cannot read Drizzle migration table"
+	[[ "$actual" == "$expected" ]] \
+		|| fail "$check_id migration count mismatch actual=$actual expected=$expected root=$code_root"
+	record "$check_id" pass "drizzle_migrations=$actual root=$code_root"
 }
 
 WEB_CONTAINER=""
@@ -1168,11 +1256,16 @@ ACTIVE_PROJECT="$PROJECT"
 
 log "B3/B4 drill rc=$RC_SHA old=$OLD_SHA new=$NEW_SHA cases='$CASES' work=$WORKDIR"
 ensure_old_worktree
+ensure_new_worktree
+ensure_web_image "$OLD_WT" "$WEB_TAG_OLD" "old"
+ensure_web_image "$NEW_ROOT" "$WEB_TAG_NEW" "new"
+link_host_toolchains "$OLD_WT"
+link_host_toolchains "$NEW_ROOT"
 
-# Prefer NEW tree for initial migrate tools if OLD lacks drizzle CLI layout; both should work.
 start_infra "$PROJECT"
-# Bootstrap with NEW migrate tools (schema identical OLD→NEW) then run OLD API for seed.
-migrate_and_bootstrap "$ROOT"
+# Source DB must be initialized by OLD migrations. Otherwise a B3 run with a
+# schema delta only proves app compatibility against an already-upgraded DB.
+migrate_and_bootstrap "$OLD_WT"
 start_apps "$OLD_WT" "$WEB_TAG_OLD" "old"
 
 seed_and_baseline
@@ -1184,19 +1277,7 @@ backup_hybrid "$PROJECT" "$BACKUP_DIR"
 if case_enabled B3; then
 	log "B3: stop old apps → migrate → start new apps"
 	stop_apps
-	migrate_only "$ROOT"
-	# Ensure NEW_SHA tip is what ROOT is; if NEW_SHA != HEAD, use a new worktree.
-	NEW_ROOT="$ROOT"
-	if [[ "$(git -C "$ROOT" rev-parse HEAD)" != "$(git -C "$ROOT" rev-parse "$NEW_SHA")" ]]; then
-		NEW_WT="$WORK_ROOT/new-src-${NEW_SHA:0:12}"
-		if [[ -e "$NEW_WT" ]]; then
-			git -C "$ROOT" worktree remove --force "$NEW_WT" >/dev/null 2>&1 || rm -rf "$NEW_WT"
-		fi
-		git -C "$ROOT" worktree add --detach "$NEW_WT" "$NEW_SHA"
-		rm -rf "$NEW_WT/apps/api/.venv"
-		ln -sfn "$ROOT/apps/api/.venv" "$NEW_WT/apps/api/.venv"
-		NEW_ROOT="$NEW_WT"
-	fi
+	migrate_only "$NEW_ROOT"
 	start_apps "$NEW_ROOT" "$WEB_TAG_NEW" "new"
 	verify_suite "B3"
 	B3_STATUS="PASS"

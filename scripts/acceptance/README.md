@@ -10,6 +10,7 @@
 | [`b2_restore_drill.sh`](./b2_restore_drill.sh) | B2 | 独立 Compose volumes 上 backup→destroy→restore |
 | [`b3_b4_upgrade_rollback.sh`](./b3_b4_upgrade_rollback.sh) | B3/B4 | 独立环境升级冒烟 + 应用回滚 / 数据恢复回滚 |
 | [`r_fault_injection.sh`](./r_fault_injection.sh) | R1–R4 | Worker / Qdrant / 模型 / MinerU |
+| [`ocr_policy_smoke.sh`](./ocr_policy_smoke.sh) | OCR policy | 严格 text-only + MinerU 连接失败降级/失败语义 |
 | [`b5_min_alerts.sh`](./b5_min_alerts.sh) | B5 | 五信号 → 通用 webhook（本地 mock receiver） |
 | [`compose.b2-infra.yml`](./compose.b2-infra.yml) | B2/B3 基建 | 仅 Postgres/Qdrant/Redis；**禁止**指向主开发卷 |
 | [`hooks/README.md`](./hooks/README.md) | 索引 | 钩子入口 |
@@ -48,7 +49,9 @@ MERIKNOW_RC_SHA=b98f01438045c92804204449d3172ceb201490e6 \
 
 - **不会**触碰主开发 `.meriknow` 或根 `docker-compose.yml` 卷。  
 - 独立 project（默认 `meriknow-b3` / `meriknow-b3-restore`）+ 端口 `15532/16433/16479/13001/18001`。  
-- **版本策略**：无正式旧镜像时，`MERIKNOW_B3_OLD_SHA`（默认 RC1 `b98f014`）git worktree 跑旧 API；`MERIKNOW_B3_NEW_SHA`/HEAD 为新 API；Web 默认 `meriknow-web:local`。  
+- **版本策略**：`MERIKNOW_B3_OLD_SHA`（默认 RC1 `b98f014`）与 `MERIKNOW_B3_NEW_SHA`/HEAD 分别创建 detached worktree；migration、API、Web 均从对应 SHA 运行。
+- **Schema 证据**：源数据库只应用旧 SHA migration；升级阶段才应用新 SHA migration。脚本核对 Drizzle journal 与数据库 migration 数，避免在已升级 schema 上误报 B3 PASS。
+- **Web 镜像**：默认使用 `meriknow-web:b3-old-<sha>` / `meriknow-web:b3-new-<sha>`；本地不存在时按需构建，可用环境变量覆盖。
 - **B3**：旧版 seed → 升级前备份 → migrate → 新版 → smoke（active generation / ACL / Ask / Retrieve / citation / Service Key / lifecycle / Qdrant↔PG）。  
 - **B4A**：仅应用回滚（旧 API 接升级后 DB；schema 不兼容则记 FAIL 并继续 B4B）。  
 - **B4B**：数据恢复回滚（复用 B2 restore：PG → documents → Qdrant）。  
@@ -71,9 +74,23 @@ MERIKNOW_B3_CASES='B3 B4B' ./scripts/acceptance/b3_b4_upgrade_rollback.sh
 | `MERIKNOW_B3_CASES` | `B3 B4A B4B` | 要跑的阶段 |
 | `MERIKNOW_B3_KEEP` | `0` | `1` 保留 workdir/stacks |
 | `B3_*_PORT` | 见上 | 端口覆盖 |
-| `MERIKNOW_B3_WEB_OLD_TAG` / `_NEW_TAG` | `meriknow-web:local` | Web 镜像标签 |
+| `MERIKNOW_B3_WEB_OLD_TAG` / `_NEW_TAG` | SHA-scoped 本地标签 | Web 镜像标签 |
+| `MERIKNOW_B3_BUILD_WEB_IMAGES` | `auto` | `auto` 缺失才构建；也可设 `always` / `never` |
 
 退出码同表：`0` PASS · `1` FAIL · `2` BLOCKED。
+
+## OCR policy / MinerU unavailable
+
+- 不读取部署中的 `MINERU_URL`，不会调用真实 MinerU。
+- 自动选择并释放一个本机临时端口，制造真实 `Connection refused`。
+- 覆盖 `auto` 混合 PDF 降级、`auto` 纯扫描失败、`disabled`
+  严格 text-only、`force_ocr` 无可用识别后端时 fail-closed。
+- 结果写入 `.ocr_policy_last_run.json` 与 SHA-256 文件（gitignore，`0600`）。
+
+```bash
+MERIKNOW_RC_SHA="$(git rev-parse HEAD)" \
+  ./scripts/acceptance/ocr_policy_smoke.sh
+```
 
 ## R1–R4（故障注入）
 
@@ -103,6 +120,7 @@ MERIKNOW_BASE_URL=http://localhost:3000 \
 - `.s1_s2_last_run.json` / `.isolation-topology.json`  
 - `.b2_last_run.json` / `.b2-work/`  
 - `.b3_b4_last_run.json` / `.b3-work/`  
+- `.ocr_policy_last_run.json`
 - `.b5_last_run.json`  
 - `.r_fault_last_run.json`  
 
