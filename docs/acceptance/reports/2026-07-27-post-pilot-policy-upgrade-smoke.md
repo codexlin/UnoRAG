@@ -2,8 +2,10 @@
 
 - Date: 2026-07-27 (Asia/Shanghai)
 - Candidate SHA: `3ccd58590d82ef45cf9daa8142c3dddb89b19115`
+- Acceptance tooling SHA: `0436d91847360b13543724a4324e0855a164d8de`
 - Scope: control-plane schema upgrade, document policy routing, MinerU unavailable behavior
 - Result: **PASS**
+- Evidence worktree: **clean** (`git_status_porcelain=""`)
 
 ## Baseline gates
 
@@ -98,13 +100,14 @@ passed the post-upgrade application/data/Qdrant verification suite.
 - Corrected B3 upgrade report:
   `scripts/acceptance/.b3_b4_last_run.json`
 - B3 report SHA-256:
-  `ac1ecd00bb1eec441e561d6f5c85e15c050cb6ef7a1d358e300140862d7a5285`
+  `cd9b7e2611c834907e8dbde827ce21130810dadaa56ec51620f4d1644f1cefce`
 - OCR policy report:
   `scripts/acceptance/.ocr_policy_last_run.json`
 - OCR policy report SHA-256:
-  `d8f34f25ea4244ae414a3c0b79bacf569bde400cf495479dc8b7bced6019e888`
+  `d12a23c38ffd2c884eb825772d5b55a165274f2bc396db1f5b2982586a7bc01a`
 - SHA-scoped Web images:
   `meriknow-web:b3-old-b98f01438045`,
   `meriknow-web:b3-new-3ccd58590d82`
 
-The acceptance report is intentionally not committed or pushed by this run.
+The generated JSON evidence remains local and gitignored; this Markdown report
+contains only sanitized bindings and outcomes.
