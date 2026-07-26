@@ -33,6 +33,9 @@ scripts/acceptance/.b2-work/
 scripts/acceptance/.b3-work/
 scripts/acceptance/.b3_b4_last_run.json
 scripts/acceptance/.b3_b4_last_run.json.sha256
+scripts/acceptance/.b5_last_run.json
+scripts/acceptance/.b5_last_run.json.sha256
+scripts/acceptance/.b5-work/
 # Broader acceptance artifact ignores
 *_last_run.json
 *_last_run.json.sha256

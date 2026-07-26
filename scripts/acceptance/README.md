@@ -10,6 +10,7 @@
 | [`b2_restore_drill.sh`](./b2_restore_drill.sh) | B2 | 独立 Compose volumes 上 backup→destroy→restore |
 | [`b3_b4_upgrade_rollback.sh`](./b3_b4_upgrade_rollback.sh) | B3/B4 | 独立环境升级冒烟 + 应用回滚 / 数据恢复回滚 |
 | [`r_fault_injection.sh`](./r_fault_injection.sh) | R1–R4 | Worker / Qdrant / 模型 / MinerU |
+| [`b5_min_alerts.sh`](./b5_min_alerts.sh) | B5 | 五信号 → 通用 webhook（本地 mock receiver） |
 | [`compose.b2-infra.yml`](./compose.b2-infra.yml) | B2/B3 基建 | 仅 Postgres/Qdrant/Redis；**禁止**指向主开发卷 |
 | [`hooks/README.md`](./hooks/README.md) | 索引 | 钩子入口 |
 
@@ -84,11 +85,25 @@ MERIKNOW_BASE_URL=http://localhost:3000 \
   ./scripts/acceptance/r_fault_injection.sh
 ```
 
+## B5（最低告警）
+
+- 依赖本机混合栈（web/api + `meriknow-qdrant-1`）与 `DATABASE_URL`。  
+- 启动 mock webhook → 对五信号制造故障 → 断言 firing 送达（含定位字段）→ 恢复 → resolved。  
+- **不**清空主开发卷；仅短暂 stop/start Qdrant；插入一条标记 stuck job 并在 EXIT 删除。  
+- 磁盘：真实 `df` 测量 + `MERIKNOW_ALERT_DISK_FORCE_PERCENT` 注入 webhook 路径（本机不填满磁盘）。  
+- 实现：[`../../ops/min_alerts/`](../../ops/min_alerts/)。
+
+```bash
+./scripts/acceptance/b5_min_alerts.sh
+# 可选：MERIKNOW_B5_CASES='S1 S2' MERIKNOW_B5_KEEP=1
+```
+
 ## 本地结果文件（勿提交）
 
 - `.s1_s2_last_run.json` / `.isolation-topology.json`  
 - `.b2_last_run.json` / `.b2-work/`  
 - `.b3_b4_last_run.json` / `.b3-work/`  
+- `.b5_last_run.json`  
 - `.r_fault_last_run.json`  
 
 ## 报告
@@ -96,4 +111,5 @@ MERIKNOW_BASE_URL=http://localhost:3000 \
 - [`../../docs/acceptance/reports/2026-07-26-pilot-rc-s1-s2.md`](../../docs/acceptance/reports/2026-07-26-pilot-rc-s1-s2.md)  
 - [`../../docs/acceptance/reports/2026-07-26-pilot-rc-b2-r-fault.md`](../../docs/acceptance/reports/2026-07-26-pilot-rc-b2-r-fault.md)  
 - [`../../docs/acceptance/reports/2026-07-27-pilot-rc-b3-b4.md`](../../docs/acceptance/reports/2026-07-27-pilot-rc-b3-b4.md)  
-- 观测草稿：[`../../docs/acceptance/observability-min-runbook.md`](../../docs/acceptance/observability-min-runbook.md)  
+- [`../../docs/acceptance/reports/2026-07-27-pilot-rc-b5-min-alerts.md`](../../docs/acceptance/reports/2026-07-27-pilot-rc-b5-min-alerts.md)  
+- 观测：[`../../docs/acceptance/observability-min-runbook.md`](../../docs/acceptance/observability-min-runbook.md)  

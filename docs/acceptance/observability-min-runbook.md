@@ -1,6 +1,7 @@
-# 最低观测 / 告警 Runbook（草稿）
+# 最低观测 / 告警 Runbook
 
-> 受控试点轻量版：不要求完整 Grafana。目标是 **一条 `trace_id` / `job_id` 能在 15 分钟内定位**到网关、模型、检索、DB 或 Worker。
+> 受控试点轻量版：不要求完整 Grafana。目标是 **一条 `trace_id` / `job_id` 能在 15 分钟内定位**到网关、模型、检索、DB 或 Worker。  
+> **B5**：通用 webhook 最低告警已接通（`ops/min_alerts/check.py` + `scripts/acceptance/b5_min_alerts.sh`）。
 
 ## 1. 关联键
 
@@ -40,21 +41,30 @@ curl -sf http://127.0.0.1:6333/readyz && curl -s http://127.0.0.1:6333/collectio
 
 Compose 私有部署则经边缘 `http://localhost/api/rag/health`；FastAPI **不**对浏览器暴露。
 
-## 3. 建议最低告警（可后接）
+## 3. 最低告警（B5 · 通用 webhook）
 
-| 信号 | 条件（建议） | 动作 |
+实现：[`../../ops/min_alerts/README.md`](../../ops/min_alerts/README.md)。配置 `ALERT_WEBHOOK_URL` 后周期性跑 `python ops/min_alerts/check.py once|watch`；payload 含 `status=firing|resolved` 与 `workspace_id` / `trace_id` / `job_id` / `worker_id`。
+
+| 信号名 | 条件（建议） | 动作 |
 |---|---|---|
-| API health | `qdrant_ok=false` 或 `ask_ready=false` ≥ 2m | 查 Qdrant/模型密钥；对照 R2/R3 |
-| Worker heartbeat | `LIFECYCLE_WORKER_READY_FILE` 缺失或 inspect 无活跃 worker ≥ 2m | 重启 worker；对照 R1 |
-| Dead jobs | `dead` 新增或 `mineru_unreachable` 突发 | 查 MinerU/解析；对照 R4 |
-| Ask 5xx/503 | 边缘 5xx 率突增 | 用 `trace_id` 分网关 vs 模型 vs Qdrant |
-| 磁盘 | document volume / PG / Qdrant > 85% | 扩容或清理；B5 |
+| `health.qdrant_ask` | `qdrant_ok=false` 或 `ask_ready=false` | 查 Qdrant/模型密钥；对照 R2/R3 |
+| `worker.heartbeat` | `LIFECYCLE_WORKER_READY_FILE` 缺失或 mtime 过期（worker 循环 touch） | 重启 worker；对照 R1 |
+| `jobs.dead_stuck` | dead/stuck 相对 baseline 增长 | 查 MinerU/解析/lease；`lifecycle:inspect`；对照 R4 |
+| `ask.http_5xx` | Ask 探针 5xx/503 | 用 `trace_id` 分网关 vs 模型 vs Qdrant |
+| `disk.usage` | documents / postgres / qdrant 路径 > 85% | 扩容或清理 |
+
+本地验收（mock receiver 写 JSONL）：
+
+```bash
+./scripts/acceptance/b5_min_alerts.sh
+```
 
 ## 4. 与验收脚本的关系
 
 | 演练 | 脚本 | 观测点 |
 |---|---|---|
 | B2 restore | `scripts/acceptance/b2_restore_drill.sh` | restore 后 health + citation version |
+| B5 告警 | `scripts/acceptance/b5_min_alerts.sh` | 五信号 firing→webhook→resolved |
 | R1 worker | `r_fault_injection.sh` | job 不丢、恢复后 completed |
 | R2 Qdrant | 同上 | health degraded；Ask 503；无假答案 |
 | R3 模型 | 同上 | 明确失败；active 不变 |

@@ -220,8 +220,24 @@ class LifecycleWorker:
 			self._mineru_capacity,
 		)
 		ready_path = os.getenv("LIFECYCLE_WORKER_READY_FILE", "").strip()
-		if ready_path:
-			Path(ready_path).write_text(f"{self.worker_id}\n", encoding="utf-8")
+
+		def _touch_ready_file() -> None:
+			if not ready_path:
+				return
+			try:
+				Path(ready_path).parent.mkdir(parents=True, exist_ok=True)
+				Path(ready_path).write_text(
+					f"{self.worker_id}\n{time.time():.3f}\n",
+					encoding="utf-8",
+				)
+			except Exception:
+				logger.warning(
+					"lifecycle_worker.ready_file_touch_failed path=%s",
+					ready_path,
+					exc_info=True,
+				)
+
+		_touch_ready_file()
 		max_workers = self._local_capacity + self._mineru_capacity
 		# future → (slot kind, started monotonic)
 		futures: dict[Future[None], tuple[str, float]] = {}
@@ -237,6 +253,7 @@ class LifecycleWorker:
 		):
 			repository = JobRepository(connection)
 			while not self.stop_event.is_set():
+				_touch_ready_file()
 				# Reap finished futures
 				done = [fut for fut in list(futures) if fut.done()]
 				for fut in done:
