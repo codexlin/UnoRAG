@@ -80,7 +80,7 @@
 | B2 | 独立环境 restore 后 active / ACL / citation / 对象一致；Qdrant↔PG 按 org/workspace/doc/version/generation **精确比对**（非仅 collection count>0） | | | 指标：备份完成延迟、本轮数据丢失、RTO；**勿**把 write→backup 叫作 RPO；目标 RPO 取决于备份周期（未定义则写明） |
 | B3 | 升级演练（独立环境：旧版 seed → 备份 → migrate → 新版冒烟） | | | 脚本 `scripts/acceptance/b3_b4_upgrade_rollback.sh`；无正式旧镜像时用 `MERIKNOW_B3_OLD_SHA` worktree |
 | B4 | 回滚演练：B4A 仅应用回滚 + B4B 升级前备份恢复（B2 语义） | | | 同上脚本；schema 不兼容时 B4A 可 FAIL、以 B4B 为准 |
-| B5 | 容量/磁盘/队列告警已接通或书面接受风险 | | | 见 `reports/2026-07-27-pilot-rc-b5-min-alerts.md`（webhook 五信号 PASS；磁盘为真实 df + force 注入） |
+| B5 | 容量/磁盘/队列告警已接通或书面接受风险 | | | 见 [`reports/2026-07-27-pilot-rc-b5-min-alerts.md`](./reports/2026-07-27-pilot-rc-b5-min-alerts.md)（webhook 五信号 PASS；磁盘为真实 df + force 注入）；正式签字汇总见 [`reports/2026-07-27-pilot-formal-go-no-go.md`](./reports/2026-07-27-pilot-formal-go-no-go.md) |
 
 ## 6. SLO（首版可测量行为）
 
@@ -135,10 +135,10 @@
 
 | # | 未决项 | 负责人 | 计划关闭条件 |
 |---|---|---|---|
-| 1 | B3 升级演练 | | 脚本已具备；填实测见 `reports/2026-07-27-pilot-rc-b3-b4.md` |
-| 2 | B4 回滚演练 / 书面回滚 | | 同上（B4A 应用回滚 + B4B 数据恢复） |
-| 3 | B5 容量/告警接通（当前仅观测草稿） | | |
-| 4 | | | |
+| 1 | B3 升级演练 | | **PASS** — 见 [`reports/2026-07-27-pilot-rc-b3-b4.md`](./reports/2026-07-27-pilot-rc-b3-b4.md) |
+| 2 | B4 回滚演练 / 书面回滚 | | **PASS** — 同上（B4A + B4B） |
+| 3 | B5 容量/告警接通 | | **PASS**（技术）— 见 [`reports/2026-07-27-pilot-rc-b5-min-alerts.md`](./reports/2026-07-27-pilot-rc-b5-min-alerts.md)；签字前确认 webhook 落点与 S5 force vs 真实灌盘 |
+| 4 | 正式签字 | | 汇总稿 [`reports/2026-07-27-pilot-formal-go-no-go.md`](./reports/2026-07-27-pilot-formal-go-no-go.md)（**待审批人签字**） |
 
 ---
 

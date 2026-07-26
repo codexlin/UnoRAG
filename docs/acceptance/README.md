@@ -31,6 +31,8 @@
 | [`../../scripts/acceptance/README.md`](../../scripts/acceptance/README.md) | 验收脚本如何跑、依赖、退出码 |
 | [`reports/2026-07-26-pilot-rc-b2-r-fault.md`](./reports/2026-07-26-pilot-rc-b2-r-fault.md) | B2 + R1–R4 实测片段（RC2-X `a79d2a5`） |
 | [`reports/2026-07-27-pilot-rc-b3-b4.md`](./reports/2026-07-27-pilot-rc-b3-b4.md) | B3/B4 升级 + 回滚实测（绑 `88b72d9`） |
+| [`reports/2026-07-27-pilot-rc-b5-min-alerts.md`](./reports/2026-07-27-pilot-rc-b5-min-alerts.md) | B5 最低告警 webhook 实测（绑 `9b80fe3` / `c4c0f6c`） |
+| [`reports/2026-07-27-pilot-formal-go-no-go.md`](./reports/2026-07-27-pilot-formal-go-no-go.md) | **正式签字结论稿**（技术可进入签字；**待审批人签字**） |
 
 退出码约定（上述脚本一致）：
 

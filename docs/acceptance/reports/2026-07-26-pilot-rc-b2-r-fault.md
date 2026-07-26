@@ -104,7 +104,7 @@ MERIKNOW_RC_SHA=a79d2a53c5ecb32423dae179bdb05784af187a46 \
 | R1 / R2 / R4 | PASS（本文；**未**重跑 R2） |
 | R3（收紧后） | **PASS**（RC2-X 干净树复跑；sha256 已绑） |
 | B3/B4 升级/回滚演练 | **PASS**（见 [`2026-07-27-pilot-rc-b3-b4.md`](./2026-07-27-pilot-rc-b3-b4.md)；绑 `88b72d9`） |
-| B5 容量/告警接通 | 仍缺（仅有观测草稿） |
+| B5 容量/告警接通 | **PASS**（见 [`2026-07-27-pilot-rc-b5-min-alerts.md`](./2026-07-27-pilot-rc-b5-min-alerts.md)；正式签字见 [`2026-07-27-pilot-formal-go-no-go.md`](./2026-07-27-pilot-formal-go-no-go.md)） |
 | 完整 Grafana/告警 | 非本轮；仅最低 runbook |
 | OIDC / SDK / MCP / 成本面板 | 明确不做 |
 | 正式 go/no-go 签字 | 仍待审批人 |
@@ -113,4 +113,4 @@ MERIKNOW_RC_SHA=a79d2a53c5ecb32423dae179bdb05784af187a46 \
 
 1. 把本文 + S1/S2 报告勾进 `pilot-go-no-go-template` 副本，请审批人 **Conditional GO**（勿勾正式 GO）。  
 2. ~~补 B3/B4~~ → 已闭合，见 [`2026-07-27-pilot-rc-b3-b4.md`](./2026-07-27-pilot-rc-b3-b4.md)。  
-3. 接通 B5 最低告警（webhook）：Qdrant/Ask health、worker heartbeat、dead/stuck jobs、Ask 5xx、磁盘 85%。  
+3. ~~接通 B5 最低告警~~ → 已闭合，见 [`2026-07-27-pilot-rc-b5-min-alerts.md`](./2026-07-27-pilot-rc-b5-min-alerts.md)。正式签字汇总：[`2026-07-27-pilot-formal-go-no-go.md`](./2026-07-27-pilot-formal-go-no-go.md)（**待审批人签字**）。  
