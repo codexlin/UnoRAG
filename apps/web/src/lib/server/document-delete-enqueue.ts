@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { and, eq, inArray, ne } from "drizzle-orm";
 
+import type { getDatabase } from "@/db";
 import { auditLogs, documents, documentVersions, jobs } from "@/db/schema";
 import {
 	buildDocumentDeletePayload,
@@ -17,16 +18,8 @@ export type DeleteEnqueueResult = {
 	jobId: string;
 };
 
-type Tx = {
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	select: (...args: any[]) => any;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	insert: (...args: any[]) => any;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	update: (...args: any[]) => any;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	delete: (...args: any[]) => any;
-};
+type Database = ReturnType<typeof getDatabase>;
+type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 /** Cancel open ingest jobs and mark versions deleting (idempotent re-assert). */
 async function reassertDocumentDeletingSideEffects(
@@ -168,17 +161,13 @@ export async function enqueueDocumentDelete(input: {
 	const jobId = randomUUID();
 	const storageKeys: string[] = [
 		...new Set(
-			(versions as Array<{ storageKey: string | null; generationId: string }>)
+			versions
 				.map((version) => version.storageKey)
 				.filter((key): key is string => Boolean(key)),
 		),
 	];
 	const generationIds: string[] = [
-		...new Set(
-			(versions as Array<{ generationId: string }>).map(
-				(version) => version.generationId,
-			),
-		),
+		...new Set(versions.map((version) => version.generationId)),
 	];
 
 	await tx.insert(jobs).values({

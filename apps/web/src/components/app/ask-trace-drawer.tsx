@@ -327,8 +327,11 @@ export function AskTraceDrawer({
 									</p>
 								) : (
 									<ul className="divide-y-0">
-										{stages.map((stage, index) => (
-											<StageRow key={`${stage.stage}-${index}`} stage={stage} />
+										{stages.map((stage) => (
+											<StageRow
+												key={`${stage.stage}:${stage.ok ? "ok" : "fail"}:${stage.duration_ms}`}
+												stage={stage}
+											/>
 										))}
 									</ul>
 								)}

@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <title>MeriKnow</title>
   <rect width="32" height="32" rx="8" fill="#0f4c5c"/>
   <path d="M16 4.2 27.8 26.2H4.2L16 4.2Z" stroke="#e8f6f3" stroke-width="1.65" stroke-linejoin="round"/>
   <path d="M16 7.8 24.8 24.2H7.2L16 7.8Z" stroke="#e8f6f3" stroke-width="1" stroke-linejoin="round" opacity="0.45"/>

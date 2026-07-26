@@ -26,8 +26,10 @@ import { cn } from "@/lib/utils";
 function initialsFor(name: string, email: string | null): string {
 	const base = name.trim() || email?.trim() || "?";
 	const parts = base.split(/\s+/).filter(Boolean);
-	if (parts.length >= 2) {
-		return `${parts[0]![0] ?? ""}${parts[1]![0] ?? ""}`.toUpperCase();
+	const first = parts[0];
+	const second = parts[1];
+	if (first && second) {
+		return `${first[0] ?? ""}${second[0] ?? ""}`.toUpperCase();
 	}
 	return base.slice(0, 2).toUpperCase();
 }

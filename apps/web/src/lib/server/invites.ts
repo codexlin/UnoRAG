@@ -108,7 +108,7 @@ export async function createWorkspaceInvite(input: {
 > {
 	const email = normalizeEmail(input.email);
 	const role = input.role.trim();
-	if (!email || !email.includes("@")) {
+	if (!email?.includes("@")) {
 		return { ok: false, status: 400, detail: "valid email is required" };
 	}
 	if (!isAssignableInviteRole(role)) {

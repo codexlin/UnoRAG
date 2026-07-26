@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 
 function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
 	return (
+		// biome-ignore lint/a11y/useSemanticElements: shadcn input group shell; fieldset would break flex addon layout
 		<div
 			data-slot="input-group"
 			role="group"
@@ -42,24 +43,39 @@ const inputGroupAddonVariants = cva(
 	},
 );
 
+function focusInputGroupControl(
+	currentTarget: HTMLElement,
+	eventTarget: EventTarget | null,
+) {
+	if ((eventTarget as HTMLElement | null)?.closest?.("button")) {
+		return;
+	}
+	currentTarget.parentElement?.querySelector("input")?.focus();
+}
+
 function InputGroupAddon({
 	className,
 	align = "inline-start",
 	...props
 }: React.ComponentProps<"div"> & VariantProps<typeof inputGroupAddonVariants>) {
 	return (
+		// biome-ignore lint/a11y/useSemanticElements: addon is a focus-delegation container, not a fieldset
 		<div
 			role="group"
 			data-slot="input-group-addon"
 			data-align={align}
 			className={cn(inputGroupAddonVariants({ align }), className)}
+			{...props}
 			onClick={(e) => {
-				if ((e.target as HTMLElement).closest("button")) {
+				focusInputGroupControl(e.currentTarget, e.target);
+			}}
+			onKeyDown={(e) => {
+				if (e.key !== "Enter" && e.key !== " ") {
 					return;
 				}
-				e.currentTarget.parentElement?.querySelector("input")?.focus();
+				e.preventDefault();
+				focusInputGroupControl(e.currentTarget, e.target);
 			}}
-			{...props}
 		/>
 	);
 }
