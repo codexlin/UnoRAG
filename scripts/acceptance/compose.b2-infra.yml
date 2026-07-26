@@ -1,0 +1,62 @@
+# Isolated infra for B2 backup/restore drill.
+# NEVER point this at the main hybrid volumes (root docker-compose.yml / .meriknow).
+# Usage (via b2_restore_drill.sh):
+#   COMPOSE_PROJECT_NAME=meriknow-b2-src docker compose -f compose.b2-infra.yml up -d
+name: ${COMPOSE_PROJECT_NAME:-meriknow-b2}
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-meriknow}
+      POSTGRES_USER: ${POSTGRES_USER:-meriknow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    ports:
+      - "${B2_POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-meriknow} -d ${POSTGRES_DB:-meriknow}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  qdrant:
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.13.2}
+    ports:
+      - "${B2_QDRANT_PORT:-16333}:6333"
+      - "${B2_QDRANT_GRPC_PORT:-16334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${B2_REDIS_PORT:-16379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:

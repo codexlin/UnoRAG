@@ -1,70 +1,65 @@
-# 验收自动化脚本（S1/S2）
+# 验收自动化脚本
 
-可重复的多组织 / 多工作区隔离验收。绑定试点 RC commit 后执行。
+可重复的试点验收：隔离（S1/S2）、独立恢复（B2）、故障注入（R1–R4）。
 
-## 拓扑
+## 脚本一览
 
-脚本会创建（并可清理）专用验收拓扑：
+| 脚本 | 覆盖 | 说明 |
+|---|---|---|
+| [`s1_s2_isolation.sh`](./s1_s2_isolation.sh) | S1/S2 | 多组织/多工作区隔离 |
+| [`b2_restore_drill.sh`](./b2_restore_drill.sh) | B2 | 独立 Compose volumes 上 backup→destroy→restore |
+| [`r_fault_injection.sh`](./r_fault_injection.sh) | R1–R4 | Worker / Qdrant / 模型 / MinerU |
+| [`compose.b2-infra.yml`](./compose.b2-infra.yml) | B2 基建 | 仅 Postgres/Qdrant/Redis；**禁止**指向主开发卷 |
+| [`hooks/README.md`](./hooks/README.md) | 索引 | 钩子入口 |
 
-```
-Organization A
-├── Workspace A1  — owner + viewer（restricted ACL 对照）
-└── Workspace A2  — owner
-Organization B
-└── Workspace B1  — owner
-```
-
-各工作区上传带唯一 marker 的文档，并创建 Mode B service key。
-
-## 依赖服务
-
-- Next.js 控制面（默认 `http://localhost:3000`，可用 `MERIKNOW_BASE_URL`）
-- FastAPI data plane（经 BFF `/api/rag/*` 与 Mode B `/api/v1/*`）
-- Postgres（`DATABASE_URL`，通常来自 `apps/web/.env.local`）
-- Qdrant + lifecycle worker（文档 ingest 完成）
-- 可检索所需的 embedding / Ask 配置（如 `ASK_MODE`、`EMBEDDING_MODEL`、对应 API key）
-
-离线单测不等价于本脚本：`deploy/compose/scripts/pilot-preflight.sh` 只覆盖 Qdrant access-scope 单测 + CI gate。
-
-## 如何运行
-
-```bash
-# 仓库根目录
-chmod +x scripts/acceptance/s1_s2_isolation.sh
-
-# 可选：固定密码 / 基址 / 保留拓扑
-export MERIKNOW_BASE_URL=http://localhost:3000
-export MERIKNOW_ISOLATION_PASSWORD='IsolationPilot!2026'
-# export MERIKNOW_ISOLATION_KEEP=1   # 跑完不删 Org A/B
-# export MERIKNOW_RC_SHA=$(git rev-parse HEAD)
-
-./scripts/acceptance/s1_s2_isolation.sh
-```
-
-仅建/清拓扑：
-
-```bash
-node scripts/acceptance/bootstrap_isolation_topology.mjs
-node scripts/acceptance/bootstrap_isolation_topology.mjs --cleanup
-```
+共享辅助：[`lib/common.sh`](./lib/common.sh)。
 
 ## 退出码
 
 | 码 | 含义 |
 |---|---|
-| `0` | **PASS** — S1/S2 自动化探针全过 |
-| `1` | **FAIL** — 发现泄漏或产品错误 |
-| `2` | **BLOCKED/SKIP** — 服务/DB/embedding 不可用；不算产品 PASS |
+| `0` | **PASS** |
+| `1` | **FAIL**（阻断 go） |
+| `2` | **BLOCKED/SKIP**（依赖不可用；不算产品 PASS） |
 
-最近一次结果写在 `scripts/acceptance/.s1_s2_last_run.json`（已 gitignore 建议本地保留）。
+## S1/S2
 
-## 覆盖项
+见历史说明：拓扑 OrgA{A1,A2}+OrgB{B1}；依赖本机混合栈 + embedding/Ask。
 
-- S2：A1 用户/Key 无法召回 A2 / B1 marker（session Ask + Mode B ask/retrieve；含外键 `library_id`）
-- S1：B1 无法召回 A1；文档 / Library / archive / archive debug IDOR
-- Restricted ACL：仅指定 principal 可见；viewer 不可见
-- Replace / Delete API（A2 文档）及删除后不可召回
+```bash
+./scripts/acceptance/s1_s2_isolation.sh
+```
 
-## 下一步钩子（本目录不实现完整演练）
+## B2（独立恢复）
 
-见 [`hooks/README.md`](./hooks/README.md)：B2 restore、R1–R4 故障注入、观测。
+- **不会**对主开发 `.meriknow` 或根 `docker-compose.yml` 卷做 destructive restore。  
+- 默认 `hybrid`：独立 project `meriknow-b2-src` / `meriknow-b2-dst` + 临时 API/Worker + Docker `meriknow-web:local`。  
+- 需要镜像：`docker build -f deploy/docker/web.Dockerfile -t meriknow-web:local .`  
+- 复用 backup/restore 语义（PG → documents → Qdrant）；产物在 `scripts/acceptance/.b2-work/`（gitignore）。
+
+```bash
+MERIKNOW_RC_SHA=b98f01438045c92804204449d3172ceb201490e6 \
+  ./scripts/acceptance/b2_restore_drill.sh
+```
+
+## R1–R4（故障注入）
+
+在**正在运行的混合栈**上注入；R2 会短暂 stop 共享 Qdrant 容器并自动 start；R3/R4 临时改 `apps/api/.env` 并在 EXIT 还原。
+
+```bash
+MERIKNOW_BASE_URL=http://localhost:3000 \
+  MERIKNOW_RC_SHA=b98f01438045c92804204449d3172ceb201490e6 \
+  ./scripts/acceptance/r_fault_injection.sh
+```
+
+## 本地结果文件（勿提交）
+
+- `.s1_s2_last_run.json` / `.isolation-topology.json`  
+- `.b2_last_run.json` / `.b2-work/`  
+- `.r_fault_last_run.json`  
+
+## 报告
+
+- [`../../docs/acceptance/reports/2026-07-26-pilot-rc-s1-s2.md`](../../docs/acceptance/reports/2026-07-26-pilot-rc-s1-s2.md)  
+- [`../../docs/acceptance/reports/2026-07-26-pilot-rc-b2-r-fault.md`](../../docs/acceptance/reports/2026-07-26-pilot-rc-b2-r-fault.md)  
+- 观测草稿：[`../../docs/acceptance/observability-min-runbook.md`](../../docs/acceptance/observability-min-runbook.md)  

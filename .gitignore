@@ -25,3 +25,6 @@ __pycache__/
 # Acceptance local run artifacts (passwords / keys / last JSON reports)
 scripts/acceptance/.isolation-topology.json
 scripts/acceptance/.s1_s2_last_run.json
+scripts/acceptance/.b2_last_run.json
+scripts/acceptance/.r_fault_last_run.json
+scripts/acceptance/.b2-work/
