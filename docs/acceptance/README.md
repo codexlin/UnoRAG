@@ -33,6 +33,8 @@
 | [`reports/2026-07-27-pilot-rc-b3-b4.md`](./reports/2026-07-27-pilot-rc-b3-b4.md) | B3/B4 升级 + 回滚实测（绑 `88b72d9`） |
 | [`reports/2026-07-27-pilot-rc-b5-min-alerts.md`](./reports/2026-07-27-pilot-rc-b5-min-alerts.md) | B5 最低告警 webhook 实测（绑 `9b80fe3` / `c4c0f6c`） |
 | [`reports/2026-07-27-pilot-formal-go-no-go.md`](./reports/2026-07-27-pilot-formal-go-no-go.md) | **正式签字结论稿**（技术可进入签字；**待审批人签字**） |
+| [`reports/2026-07-27-private-v1-rc3-browser.md`](./reports/2026-07-27-private-v1-rc3-browser.md) | Private Deployment v1.0 RC3 真实浏览器与质量门禁验收 |
+| [`reports/2026-07-27-private-v1-rc3-formal-go-no-go.md`](./reports/2026-07-27-private-v1-rc3-formal-go-no-go.md) | **RC3 专属签字稿**（唯一产品审批对象 `a255752`；建议 Conditional GO） |
 
 退出码约定（上述脚本一致）：
 

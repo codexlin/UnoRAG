@@ -99,3 +99,5 @@ timer tick；该用例单独复跑及 Web 全套串行复跑均通过，不构�
 `a255752` 已通过本地完整私有化栈的真实浏览器主路径、移动端关键页面、
 生产构建与发布前质量门禁。它可以作为 Private Deployment v1.0 的
 RC3 产品代码候选；正式对外发布仍沿用既有审批与签字流程。
+RC3 专属签字材料见
+[`2026-07-27-private-v1-rc3-formal-go-no-go.md`](./2026-07-27-private-v1-rc3-formal-go-no-go.md)。
