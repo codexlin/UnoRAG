@@ -1,8 +1,8 @@
-# MeriKnow 收敛计划（Step 3：兼容负担清理 — 部分落地）
+# MeriKnow 收敛计划（Step 3：兼容负担清理 — 硬删冻结；转向 CI/CD P0）
 
-> 状态：**Step 1 已完成**（2026-07-27）；**Step 2 已完成**（Eval + AskGraph 主线，2026-07-28）；**Step 3 已启动**（2026-07-28）— 正式 GO **未**达成，硬删项按 §4 前置 **defer**；本轮仅落地零风险别名/文档收紧。
+> 状态：**Step 1 已完成**（2026-07-27）；**Step 2 已完成**（Eval + AskGraph 主线，2026-07-28）；**Step 3 零风险项已落地**；**硬删全面冻结**（2026-07-28）— 正式 GO **未**达成前不再推进 410 / legacy / facade / codegen 删除。
 > 前提：私有栈黑盒 [Conditional PASS @ `0170ba8`](../acceptance/reports/2026-07-27-private-0170ba8-blackbox.md)；试点 **Conditional GO @ webch**（≠ 正式 GO）。
-> **当前**：Step 3 前置审计完成；`ASK_SETTING_*` 别名已删；`DOCUMENT_STORAGE_DIR` 生产文档已收紧；410 / legacy knobs / ask_graph facade / schema codegen **defer**。
+> **当前主线**：**CI/CD P0 闭环**（见 [`docs/ops/cicd-p0.md`](../ops/cicd-p0.md)）— 停止结构清理 → CI 构建/门禁/镜像构建验证 →（后续）推 Registry → 人工批准 CD → 真实告警与恢复演练 → **正式 GO** → **下一 major 再硬删**。
 > 约束：无行为变化于 Ask 算法；不扩 eval/OpenAI/新 Ask 分支；高风险项不硬删。
 
 ---
@@ -22,9 +22,11 @@
 | 四边界模块头（ask_graph / eval runner / lifecycle / process-outbox） | — |
 | Eval + AskGraph Step 2 主线 | — |
 | 试点 Conditional GO @ webch | 正式 GO / 升配 / Resend 上机 |
+| — | **CI/CD P0 前半**（`ci.yml` + `upgrade.sh` pull 路径）见 [`cicd-p0.md`](../ops/cicd-p0.md) |
 
 > **P0（Step 1）= 架构认知 / 文档口径 / 冻结边界 / 最小防漂移门禁已闭环。**
-> 剩余 P1（policy/outbox-core 等模块头）非本轮必做；**勿批量加模块头**。
+> **P0（CI/CD）= 构建一次 → 测试扫描 →（后续）推 Registry → digest → 人工批准 → SSH；本轮仅代码/工作流前半。**
+> 剩余 P1（policy/outbox-core 等模块头）非本轮必做；**勿批量加模块头**；**勿在正式 GO 前硬删**。
 
 ---
 
@@ -377,11 +379,13 @@ apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
 
 1. ~~事实源、废弃标记、文档漂移、最小 parity、边界模块头、功能冻结~~ — **Step 1 已完成**
 2. ~~Eval 拆分 + AskGraph 提交 1–7~~ — **Step 2 已完成**（facade 删除后置）
-3. **进行中**：删兼容负担 — 本轮仅零风险项；硬删等正式 GO 后下一 major（§7.4）
+3. **硬删冻结**：零风险项已落地；硬删等正式 GO 后下一 major（§7.4）。当前主线转 **CI/CD P0**（§7.5 · `docs/ops/cicd-p0.md`）
 
-### 7.4 Step 3 执行清单（2026-07-28）
+### 7.4 Step 3 执行清单（2026-07-28）— **硬删冻结**
 
-> 总门禁：§4「**最早删除版本：正式 GO 后的下一 major**」。当前仅 **Conditional GO @ webch** → 硬删默认 **defer**；可做项须前置审计通过且无生产调用风险。
+> 总门禁：§4「**最早删除版本：正式 GO 后的下一 major**」。当前仅 **Conditional GO @ webch** → 硬删默认 **defer**。
+>
+> **工程优先级变更（已确认）**：停止把带宽花在 Step 3 结构硬删上；先完成 **CI/CD P0**（[`docs/ops/cicd-p0.md`](../ops/cicd-p0.md)）与正式 GO 证据，再在下一 major 硬删。
 
 #### 前置审计（本轮）
 
@@ -404,7 +408,19 @@ apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
 - [ ] 删除 `ask_graph.py` facade — **defer**（正式 GO 后下一 major；先迁 import）
 - [ ] Py/TS schema codegen / 共享 schema 包 — **defer**（非本轮；parity 维持）
 
-**本轮不做**：飞书告警、升配机器、改 Ask 业务算法、扩 eval/OpenAI。
+**本轮不做**：飞书告警、升配机器、改 Ask 业务算法、扩 eval/OpenAI、Step 3 硬删。
+
+### 7.5 正式 GO 门禁（含发布闭环）
+
+正式 GO ≠ Conditional GO @ webch。除黑盒 / 备份恢复 / 告警演练外，须满足：
+
+| 门禁 | 说明 |
+|------|------|
+| CI 绿 | `.github/workflows/ci.yml`（含 L7 release gate + policy parity + pytest + web + Docker 构建验证） |
+| 镜像分发 | digest 推 Registry（`release-images.yml` 真推；P0 骨架尚未） |
+| 人工批准 CD | Environment 批准后部署；`upgrade.sh --manifest` **pull** 路径 |
+| 告警 + 恢复 | Resend（或约定通道）上机；故障/备份恢复演练有证据 |
+| Step 3 硬删 | **仍禁止**；仅正式 GO **之后**的下一 major |
 
 ## 8. 成功标准
 
@@ -447,3 +463,4 @@ apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
 | Helm api Service | `deploy/helm/meriknow/templates/api-service.yaml`（workers 无对应 Service） |
 | v1 合同 | `docs/contracts/retrieve-ask-v1.md` |
 | 私有黑盒 | `docs/acceptance/reports/2026-07-27-private-0170ba8-blackbox.md` |
+| CI/CD P0 | `docs/ops/cicd-p0.md` · `.github/workflows/ci.yml` · `deploy/compose/scripts/upgrade.sh` |

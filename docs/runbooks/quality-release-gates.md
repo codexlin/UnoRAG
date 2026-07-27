@@ -23,7 +23,9 @@ uv run python scripts/run_release_gates.py --mode release \
   --report-out /tmp/meriknow-release-gate.json
 ```
 
-CI workflow: `.github/workflows/eval-gates.yml`.
+CI：`.github/workflows/ci.yml`（PR + `main` 入口）调用可复用工作流
+`.github/workflows/eval-gates.yml`（L7 deterministic + policy parity）。
+全量 API pytest / web / Docker 构建验证也在 `ci.yml`。见 [`docs/ops/cicd-p0.md`](../ops/cicd-p0.md)。
 
 ## Layers
 

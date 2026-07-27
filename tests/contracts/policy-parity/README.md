@@ -30,7 +30,7 @@ uv run --directory apps/api pytest tests/test_policy_profiles.py tests/test_poli
 pnpm --dir apps/web test -- tests/policy-parity.test.mjs
 ```
 
-CI：`.github/workflows/eval-gates.yml` 的 `policy-parity` job。
+CI：`.github/workflows/ci.yml` → `eval-gates.yml` 的 `policy-parity` job。
 
 ## 改映射时
 
