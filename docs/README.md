@@ -28,6 +28,7 @@
 |------|------|
 | [runbooks/](./runbooks/) | 私有化部署、lifecycle 迁移、质量门禁、试点操作 |
 | [acceptance/](./acceptance/) | L9 试点 go/no-go 与 production-ready 清单 |
+| [case-studies/](./case-studies/) | 真实问题复盘、根因分析、修复设计与面试叙事 |
 | [design/northline-theme.md](./design/northline-theme.md) | UI 主题 Northline |
 
 ## 已删除的过时文档

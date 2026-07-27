@@ -160,3 +160,5 @@ OCR 后端必须成为部署必选依赖。
 5. 改造 gold scorer：显式关键事实、同义词/数值归一化、人工复核状态。
 6. 启动 MinerU 后单独重跑扫描件 4 条，不与无 OCR 基线混为一谈。
 
+跨文档表格错检索的完整问题复盘与修复设计见：
+[`工程案例：表格问答为什么会选错文档`](../../case-studies/cross-document-table-retrieval.md)。
