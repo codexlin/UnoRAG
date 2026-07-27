@@ -438,6 +438,184 @@ def test_async_mineru_pending_persists_state_and_releases_lease(
 	assert repository.failure is None
 
 
+def test_async_mineru_rate_limited_releases_lease_with_long_backoff(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	content = b"# placeholder"
+	organization_id = uuid4()
+	workspace_id = uuid4()
+	version_id = uuid4()
+	job_id = uuid4()
+	context = DocumentIngestContext(
+		job_id=job_id,
+		organization_id=organization_id,
+		workspace_id=workspace_id,
+		library_id=uuid4(),
+		document_id=uuid4(),
+		document_version_id=version_id,
+		generation_id=uuid4(),
+		rag_document_id="document-429",
+		rag_library_id="library-async",
+		title="Rate limited",
+		filename="async.md",
+		content_type="text/markdown",
+		content_hash=f"sha256:{hashlib.sha256(content).hexdigest()}",
+		storage_key="async.md",
+		pipeline_version="document-lifecycle-v2",
+		version_status="pending",
+		parser_backend=None,
+		chunk_profile=None,
+		document_profile="auto",
+		scan_handling="auto",
+		ingest_policy_version=1,
+		parser_report=None,
+		point_count=None,
+		chunk_count=None,
+		section_count=None,
+		table_count=None,
+		principal_id=uuid4(),
+		allowed_principal_ids=(),
+		allowed_group_ids=(),
+	)
+	lease = JobLease(
+		id=job_id,
+		organization_id=organization_id,
+		workspace_id=workspace_id,
+		document_version_id=version_id,
+		type="document.ingest",
+		status=JobStatus.RUNNING,
+		stage=JobStage.ACCEPTED,
+		attempt=1,
+		max_attempts=5,
+		lease_token=uuid4(),
+		lease_expires_at=datetime.now(timezone.utc),
+		payload={
+			"queue_class": "local",
+			"mineru_provider_state": {
+				"provider": "302ai",
+				"task_id": "task-rate",
+				"state": "RUNNING",
+			},
+		},
+	)
+	repository = FakeRepository(context)
+
+	def rate_limited_prepare(**_kwargs: object) -> None:
+		raise MinerUClientError(
+			"302 MinerU HTTP 429: too many",
+			code="mineru_rate_limited",
+			retryable=True,
+			status_code=429,
+		)
+
+	monkeypatch.setattr(document_ingest_worker, "prepare_ingest", rate_limited_prepare)
+	settings = Settings(mineru_retry_base_s=30, mineru_retry_max_s=300)
+	processor = DocumentIngestProcessor(
+		settings,
+		repository,  # type: ignore[arg-type]
+		storage=FakeStorage(content),  # type: ignore[arg-type]
+	)
+
+	with pytest.raises(MinerUClientError) as exc_info:
+		processor.process(lease, RecordingProgress())
+
+	assert exc_info.value.code == "mineru_rate_limited"
+	assert repository.deferred_seconds is None
+	assert repository.failure is not None
+	assert repository.failure["error_code"] == "mineru_rate_limited"
+	assert repository.failure["retryable"] is True
+	assert repository.failure["retry_delay_seconds"] == 30
+
+
+def test_async_mineru_hard_timeout_releases_lease_without_silent_success(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	content = b"# placeholder"
+	organization_id = uuid4()
+	workspace_id = uuid4()
+	version_id = uuid4()
+	job_id = uuid4()
+	context = DocumentIngestContext(
+		job_id=job_id,
+		organization_id=organization_id,
+		workspace_id=workspace_id,
+		library_id=uuid4(),
+		document_id=uuid4(),
+		document_version_id=version_id,
+		generation_id=uuid4(),
+		rag_document_id="document-timeout",
+		rag_library_id="library-async",
+		title="Hard timeout",
+		filename="async.md",
+		content_type="text/markdown",
+		content_hash=f"sha256:{hashlib.sha256(content).hexdigest()}",
+		storage_key="async.md",
+		pipeline_version="document-lifecycle-v2",
+		version_status="pending",
+		parser_backend=None,
+		chunk_profile=None,
+		document_profile="auto",
+		scan_handling="auto",
+		ingest_policy_version=1,
+		parser_report=None,
+		point_count=None,
+		chunk_count=None,
+		section_count=None,
+		table_count=None,
+		principal_id=uuid4(),
+		allowed_principal_ids=(),
+		allowed_group_ids=(),
+	)
+	lease = JobLease(
+		id=job_id,
+		organization_id=organization_id,
+		workspace_id=workspace_id,
+		document_version_id=version_id,
+		type="document.ingest",
+		status=JobStatus.RUNNING,
+		stage=JobStage.ACCEPTED,
+		attempt=3,
+		max_attempts=5,
+		lease_token=uuid4(),
+		lease_expires_at=datetime.now(timezone.utc),
+		payload={
+			"queue_class": "local",
+			"mineru_provider_state": {
+				"provider": "302ai",
+				"task_id": "task-stuck",
+				"state": "STARTED",
+				"poll_count": 180,
+			},
+		},
+	)
+	repository = FakeRepository(context)
+
+	def timeout_prepare(**_kwargs: object) -> None:
+		raise MinerUClientError(
+			"302 MinerU task task-stuck exceeded maximum wait",
+			code="mineru_timeout",
+			retryable=False,
+			timeout_kind="hard",
+		)
+
+	monkeypatch.setattr(document_ingest_worker, "prepare_ingest", timeout_prepare)
+	processor = DocumentIngestProcessor(
+		Settings(),
+		repository,  # type: ignore[arg-type]
+		storage=FakeStorage(content),  # type: ignore[arg-type]
+	)
+
+	with pytest.raises(MinerUClientError) as exc_info:
+		processor.process(lease, RecordingProgress())
+
+	assert exc_info.value.code == "mineru_timeout"
+	assert repository.deferred_seconds is None
+	assert repository.failure is not None
+	assert repository.failure["error_code"] == "mineru_timeout"
+	assert repository.failure["retryable"] is False
+	assert repository.completed is None
+
+
 def test_document_lifecycle_worker_cleans_staging_when_cancelled() -> None:
 	content = b"# Policy\n\nCancel this generation.\n"
 	organization_id = uuid4()
