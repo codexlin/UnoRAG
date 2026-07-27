@@ -826,6 +826,136 @@ def test_multi_table_prefers_quote_schema_for_device_unit_price() -> None:
 	assert str(ex["matched_rows"][0]["单价（元）"]) == "115"
 
 
+def test_explicit_requested_columns_are_execution_gate() -> None:
+	"""序号相同不足以执行：候选表必须覆盖用户明确要求的业务字段。"""
+	question = "序号25的项目名称、采购单位和中标供应商分别是什么？"
+	quote_headers = ["序号", "设备名称", "品牌/型号", "数量", "单价（元）", "合计（元）"]
+	cross_headers = [
+		"序号",
+		"项目名称",
+		"采购单位",
+		"中标供应商",
+		"中标金额(元)",
+		"采购方式",
+	]
+
+	wrong = build_table_query_plan(question, headers=quote_headers)
+	assert wrong["confident"] is False
+	assert wrong["operation"] == "fallback"
+	assert wrong["reason"] == "required_columns_unresolved:项目名称,采购单位,中标供应商"
+	assert wrong["required_columns"] == ["项目名称", "采购单位", "中标供应商"]
+
+	correct = build_table_query_plan(question, headers=cross_headers)
+	assert correct["confident"] is True
+	assert correct["operation"] == "lookup"
+	assert correct["resolved_required_columns"] == {
+		"项目名称": "项目名称",
+		"采购单位": "采购单位",
+		"中标供应商": "中标供应商",
+	}
+
+
+def test_lower_score_table_with_complete_required_schema_wins() -> None:
+	"""错误报价表即使检索分更高，也不得压过字段完整的中标表。"""
+	question = "序号25的项目名称、采购单位和中标供应商分别是什么？"
+	citations = [
+		{
+			"record_type": "table",
+			"doc_id": "doc-quote",
+			"document_version_id": "v1",
+			"table_id": "t1",
+			"headers": ["序号", "设备名称", "数量", "单价（元）", "合计（元）"],
+			"rows": [["25", "错误设备", "1", "100", "100"]],
+			"row_start": 0,
+			"row_end": 0,
+			"table_row_count": 1,
+			"score": 0.99,
+		},
+		{
+			"record_type": "table",
+			"doc_id": "doc-cross",
+			"document_version_id": "v1",
+			"table_id": "mineru-t1",
+			"headers": ["序号", "项目名称", "采购单位", "中标供应商", "中标金额(元)"],
+			"rows": [["25", "智慧校园", "市教育局", "星河科技", "113501"]],
+			"row_start": 0,
+			"row_end": 0,
+			"table_row_count": 1,
+			"score": 0.40,
+		},
+	]
+
+	def _load(*, doc_id: str, table_id: str, **_kwargs):
+		return [
+			item
+			for item in citations
+			if item["doc_id"] == doc_id and item["table_id"] == table_id
+		]
+
+	merged = prepare_table_for_execute(
+		citations,
+		load_table_groups=_load,
+		question=question,
+	)
+	assert merged["doc_id"] == "doc-cross"
+	assert merged["table_id"] == "mineru-t1"
+	assert merged["selected_reason"] == "schema_plan_fit"
+
+
+def test_wrong_only_cross_document_table_candidate_fails_closed() -> None:
+	"""目标扫描件无结构化候选时，不得拿另一文档的同序号报价行作答。"""
+	question = "序号25的项目名称、采购单位和中标供应商分别是什么？"
+	wrong_group = {
+		"id": "quote-row-25",
+		"index": 1,
+		"record_type": "table",
+		"doc_id": "doc-quote",
+		"document_version_id": "v1",
+		"library_id": "lib-cross",
+		"table_id": "t1",
+		"title": "设备报价表",
+		"headers": ["序号", "设备名称", "数量", "单价（元）", "合计（元）"],
+		"rows": [["25", "错误设备", "1", "100", "100"]],
+		"row_start": 0,
+		"row_end": 0,
+		"table_row_count": 1,
+		"score": 0.99,
+		"body": "序号25 错误设备",
+		"text": "序号25 错误设备",
+		"snippet": "序号25 错误设备",
+	}
+
+	def _retrieve(query, library_id, top_k, filters=None):
+		_ = query, library_id, top_k
+		if str((filters or {}).get("record_type") or "") in {"table", "table_summary"}:
+			return [dict(wrong_group)]
+		return []
+
+	graph = build_ask_graph(
+		settings=Settings(ask_mode="stub"),
+		retrieve_fn=_retrieve,
+		generate_fn=stub_generate,
+		mode="stub",
+		load_table_groups_fn=lambda **_kwargs: [dict(wrong_group)],
+	)
+	state = graph.invoke(
+		{
+			"session_id": "s-cross-doc-field-gate",
+			"question": question,
+			"library_id": "lib-cross",
+			"history": [],
+			"retrieval_debug": {},
+		}
+	)
+	assert state.get("refused") is True
+	assert state.get("refuse_reason") == "table_unclear"
+	assert state["table_query_plan"]["reason"] == (
+		"required_columns_unresolved:项目名称,采购单位,中标供应商"
+	)
+	assert state["retrieval_debug"].get("precise_gate") == "refuse"
+	assert "错误设备" not in str(state.get("answer") or "")
+
+
 def test_unit_price_filter_prefers_unit_column() -> None:
 	"""「单价超过」应对齐单价列，不得误绑总价/合计后 column_unresolved。"""
 	headers = ["序号", "设备名称", "单价（元）", "合计（元）"]
@@ -1121,4 +1251,3 @@ def test_dual_table_store_incomplete_fails_closed() -> None:
 		question="设备号 GW-01 的安装位置和最近检修日期分别是什么？",
 	)
 	assert dual is None or dual.get("complete") is False
-

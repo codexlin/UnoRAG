@@ -46,6 +46,25 @@ _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 	"质保": ("质保", "保修"),
 }
 
+# 用户明确点名的返回字段必须由候选表真实提供。这里刻意不用「名称」「单位」
+# 等宽泛别名，避免把「项目名称」误配成「设备名称」、把「采购单位」误配成计量单位。
+_REQUIRED_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+	"设备名称": ("设备名称", "产品名称", "品名"),
+	"项目名称": ("项目名称", "采购项目名称"),
+	"采购单位": ("采购单位", "采购人名称", "采购人"),
+	"中标供应商": ("中标供应商", "成交供应商", "中标人", "成交人"),
+	"供应商": ("供应商名称", "供应商", "厂商"),
+	"采购方式": ("采购方式", "招标方式"),
+	"单价": ("单价",),
+	"合计": ("合计", "总计"),
+	"总价": ("总价", "报价总额"),
+	# 数值度量保持现有兼容契约：在非中标清单中「中标金额」可由总价列承载；
+	# 业务维度字段（项目/采购人/中标供应商）仍使用严格语义匹配。
+	"中标金额": ("中标金额", "成交金额", "总价"),
+	"品牌/型号": ("品牌/型号", "品牌型号", "品牌", "型号"),
+	"规格参数": ("规格参数", "技术参数", "规格"),
+}
+
 # 实体列候选：lookup 时按问法/表头优先级解析，不只绑「供应商」
 _ENTITY_COLUMN_CANDIDATES: tuple[str, ...] = (
 	"设备名称",
@@ -187,6 +206,54 @@ def _match_header(column_hint: str | None, headers: list[str]) -> str | None:
 	return None
 
 
+def _explicit_required_columns(question: str) -> list[str]:
+	"""提取用户明确要求返回/计算的字段；不把泛化展示列升级为硬约束。"""
+	q = question or ""
+	required: list[str] = []
+
+	def _add(name: str) -> None:
+		if name not in required:
+			required.append(name)
+
+	if "设备名称" in q or "产品名称" in q or "品名" in q:
+		_add("设备名称")
+	elif re.search(r"设备(?:是|为|有哪些|是什么|分别是什么)", q):
+		_add("设备名称")
+	if "项目名称" in q or "采购项目名称" in q:
+		_add("项目名称")
+	if "采购单位" in q or "采购人" in q:
+		_add("采购单位")
+	if "中标供应商" in q or "成交供应商" in q or "中标人" in q:
+		_add("中标供应商")
+	elif "供应商" in q or "厂商" in q:
+		_add("供应商")
+	if "采购方式" in q or "招标方式" in q:
+		_add("采购方式")
+	if "单价" in q:
+		_add("单价")
+	if "中标金额" in q or "成交金额" in q:
+		_add("中标金额")
+	elif "合计" in q or "总计" in q:
+		_add("合计")
+	elif "总价" in q or ("报价" in q and "单价" not in q):
+		_add("总价")
+	if "品牌" in q or "型号" in q:
+		_add("品牌/型号")
+	if "规格" in q or "技术参数" in q:
+		_add("规格参数")
+	return required
+
+
+def _match_required_header(column_hint: str, headers: list[str]) -> str | None:
+	"""严格匹配显式字段，禁止复用通用列解析中的宽泛跨语义别名。"""
+	aliases = _REQUIRED_COLUMN_ALIASES.get(column_hint, (column_hint,))
+	for alias in aliases:
+		for header in headers:
+			if alias == header or alias in header:
+				return header
+	return None
+
+
 def _infer_numeric_column(question: str) -> str | None:
 	"""从问法推断数值列；单价优先于笼统的「价」。"""
 	q = question or ""
@@ -310,6 +377,7 @@ def build_table_query_plan(
 		"entity_column": None,
 		"entity_value": None,
 		"select_columns": [],
+		"required_columns": _explicit_required_columns(q),
 		"confident": False,
 		"reason": "unparsed",
 		"exclude_summary_rows": True,
@@ -547,6 +615,19 @@ def _finalize_columns(plan: dict[str, Any], headers: list[str] | None) -> dict[s
 		if matched and matched not in resolved_select:
 			resolved_select.append(matched)
 	plan["select_columns"] = resolved_select
+	resolved_required: dict[str, str] = {}
+	missing_required: list[str] = []
+	for name in plan.get("required_columns") or []:
+		matched = _match_required_header(str(name), headers)
+		if matched:
+			resolved_required[str(name)] = matched
+		else:
+			missing_required.append(str(name))
+	plan["resolved_required_columns"] = resolved_required
+	if missing_required:
+		plan["confident"] = False
+		plan["reason"] = f"required_columns_unresolved:{','.join(missing_required)}"
+		plan["operation"] = "fallback"
 	return plan
 
 
