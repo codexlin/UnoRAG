@@ -10,17 +10,24 @@ from __future__ import annotations
 
 import logging
 import time
-import uuid
 from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
 
+from app.graph.lifecycle import (
+	append_temp_session_memory,
+	history_from_thread,
+	load_request_history,
+	memory_session_id,
+	resolve_request_ids,
+)
 from app.graph.messages import (
 	build_generate_messages,
 	history_for_generate,
 	question_with_working_memory,
 	rewrite_with_history,
 )
+from app.graph.persistence import persist_turn, single_document_version_id
 from app.graph.state import AskState, GenerateFn, LoadTableGroupsFn, RetrieveFn
 from app.graph.stubs import (
 	STUB_CITATIONS,
@@ -97,6 +104,11 @@ from app.settings import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 # Re-export extracted symbols so existing `from app.graph.ask_graph import …` keeps working.
+# Underscore aliases keep monkeypatches on ask_graph._persist_turn / _history_from_thread working.
+_persist_turn = persist_turn
+_history_from_thread = history_from_thread
+_single_document_version_id = single_document_version_id
+
 __all__ = [
 	"AskGraphService",
 	"AskState",
@@ -104,11 +116,18 @@ __all__ = [
 	"LoadTableGroupsFn",
 	"RetrieveFn",
 	"STUB_CITATIONS",
+	"append_temp_session_memory",
 	"build_ask_graph",
 	"build_generate_messages",
 	"history_for_generate",
+	"history_from_thread",
+	"load_request_history",
+	"memory_session_id",
+	"persist_turn",
 	"question_with_working_memory",
+	"resolve_request_ids",
 	"rewrite_with_history",
+	"single_document_version_id",
 	"stub_generate",
 	"stub_load_table_groups",
 	"stub_retrieve",
@@ -145,106 +164,6 @@ def _renumber_citation_indexes(
 	for index, item in enumerate(citations, start=1):
 		item["index"] = index
 	return citations
-
-
-def _persist_turn(
-	*,
-	session_id: str,
-	library_id: str | None,
-	question: str,
-	answer: str,
-	citations: list[Citation],
-	mode: str,
-	refused: bool,
-	refuse_reason: str | None,
-	thread_id: str | None = None,
-	query_type: str | None = None,
-	retrieval_plan: dict[str, Any] | None = None,
-	retrieval_debug: dict[str, Any] | None = None,
-	rewrite: str | None = None,
-	rewritten_query: str | None = None,
-	judge: dict[str, Any] | None = None,
-	document_version_id: str | None = None,
-	tenant_id: str | None = None,
-	workspace_id: str | None = None,
-	principal_id: str | None = None,
-) -> dict[str, Any]:
-	# Default-temp: only archived (thread-bound) turns are written to durable storage.
-	if not thread_id:
-		return {"persisted": False, "persist_error": None}
-	try:
-		from app.services.metadata import get_metadata_store
-
-		get_metadata_store().create_turn(
-			session_id=session_id,
-			thread_id=thread_id,
-			library_id=library_id,
-			question=question,
-			answer=answer,
-			citations=[item.model_dump() for item in citations],
-			mode=mode,
-			refused=refused,
-			refuse_reason=refuse_reason,
-			query_type=query_type,
-			retrieval_plan=retrieval_plan,
-			retrieval_debug=retrieval_debug,
-			rewrite=rewrite,
-			rewritten_query=rewritten_query,
-			judge=judge,
-			document_version_id=document_version_id,
-			tenant_id=tenant_id,
-			workspace_id=workspace_id,
-			principal_id=principal_id,
-		)
-		return {"persisted": True, "persist_error": None}
-	except Exception as exc:
-		logger.exception(
-			"ask.persist_turn_failed session_id=%s thread_id=%s",
-			session_id,
-			thread_id,
-		)
-		return {"persisted": False, "persist_error": str(exc)}
-
-
-def _history_from_thread(
-	thread_id: str,
-	*,
-	tenant_id: str,
-	workspace_id: str,
-	principal_id: str,
-	max_turns: int = WORKING_MEMORY_MAX_TURNS,
-) -> list[dict[str, str]]:
-	"""Load last N Q/A turns from an archived thread (chronological for rewrite)."""
-	from app.services.metadata import get_metadata_store
-
-	cap = max(1, int(max_turns))
-	rows = get_metadata_store().list_turns(
-		thread_id=thread_id,
-		tenant_id=tenant_id,
-		workspace_id=workspace_id,
-		principal_id=principal_id,
-		limit=cap,
-	)
-	# list_turns is newest-first; reverse for chat history order.
-	history: list[dict[str, str]] = []
-	for row in reversed(rows):
-		question = (row.get("question") or "").strip()
-		answer = (row.get("answer") or "").strip()
-		if question:
-			history.append({"role": "user", "content": question})
-		if answer:
-			history.append({"role": "assistant", "content": answer})
-	return history
-
-
-def _single_document_version_id(citations: list[Citation]) -> str | None:
-	"""Turn 只有一个文档版本时提供便捷字段；完整快照仍以 citations 为准。"""
-	version_ids = {
-		item.document_version_id
-		for item in citations
-		if item.document_version_id
-	}
-	return next(iter(version_ids)) if len(version_ids) == 1 else None
 
 
 def _retrieval_visibility(debug: dict[str, Any]) -> dict[str, Any]:
@@ -1601,7 +1520,7 @@ class AskGraphService:
 		return merged
 
 	def _memory_session_id(self, session_id: str) -> str:
-		return f"{self.access_scope.cache_key()}:{session_id}"
+		return memory_session_id(self.access_scope.cache_key(), session_id)
 
 	def _ask_settings_for_request(
 		self,
@@ -1685,8 +1604,7 @@ class AskGraphService:
 	) -> AskResponse:
 		started_at = time.perf_counter()
 		resolved_trace = resolve_trace_id(request_id=trace_id)
-		resolved_session = session_id or str(uuid.uuid4())
-		resolved_thread = (thread_id or "").strip() or None
+		resolved_session, resolved_thread = resolve_request_ids(session_id, thread_id)
 		memory_session = self._memory_session_id(resolved_session)
 		ask_settings = self._ask_settings_for_request(
 			ask_overrides,
@@ -1698,21 +1616,16 @@ class AskGraphService:
 			ask_settings=ask_settings,
 		)
 		previous_retrieval_settings = self._apply_retrieval_settings(ask_settings)
-		history: list[dict[str, str]] = []
-		if resolved_thread:
-			history = _history_from_thread(
-				resolved_thread,
-				tenant_id=self.access_scope.tenant_id,
-				workspace_id=self.access_scope.workspace_id,
-				principal_id=self.access_scope.principal_id,
-				max_turns=WORKING_MEMORY_MAX_TURNS,
-			)
-		elif ask_settings.session_memory_enabled:
-			# Same shape/window as archived threads (code constant, not UI knob).
-			history = self.session_memory.load(
-				memory_session,
-				limit=WORKING_MEMORY_MAX_TURNS * 2,
-			)
+		history = load_request_history(
+			thread_id=resolved_thread,
+			tenant_id=self.access_scope.tenant_id,
+			workspace_id=self.access_scope.workspace_id,
+			principal_id=self.access_scope.principal_id,
+			session_memory=self.session_memory,
+			memory_session=memory_session,
+			session_memory_enabled=ask_settings.session_memory_enabled,
+			max_turns=WORKING_MEMORY_MAX_TURNS,
+		)
 
 		try:
 			graph = (
@@ -1762,10 +1675,14 @@ class AskGraphService:
 			allowed_hits=raw_citations,
 			debug=debug,
 		)
-		# Temp sessions keep short in-process memory; archived threads rely on DB.
-		if not resolved_thread and ask_settings.session_memory_enabled:
-			self.session_memory.append(memory_session, "user", question)
-			self.session_memory.append(memory_session, "assistant", answer)
+		append_temp_session_memory(
+			thread_id=resolved_thread,
+			session_memory_enabled=ask_settings.session_memory_enabled,
+			session_memory=self.session_memory,
+			memory_session=memory_session,
+			question=question,
+			answer=answer,
+		)
 		judge = state.get("judgement") or debug.get("judgement")
 		plan = state.get("retrieval_plan") or debug.get("retrieval_plan")
 		if isinstance(plan, dict):
@@ -1834,8 +1751,7 @@ class AskGraphService:
 		"""Yield SSE-friendly dicts: meta → citations → token* → done | error."""
 		started_at = time.perf_counter()
 		resolved_trace = resolve_trace_id(request_id=trace_id)
-		resolved_session = session_id or str(uuid.uuid4())
-		resolved_thread = (thread_id or "").strip() or None
+		resolved_session, resolved_thread = resolve_request_ids(session_id, thread_id)
 		memory_session = self._memory_session_id(resolved_session)
 		ask_settings = self._ask_settings_for_request(
 			ask_overrides,
@@ -1847,20 +1763,16 @@ class AskGraphService:
 			ask_settings=ask_settings,
 		)
 		previous_retrieval_settings = self._apply_retrieval_settings(ask_settings)
-		history: list[dict[str, str]] = []
-		if resolved_thread:
-			history = _history_from_thread(
-				resolved_thread,
-				tenant_id=self.access_scope.tenant_id,
-				workspace_id=self.access_scope.workspace_id,
-				principal_id=self.access_scope.principal_id,
-				max_turns=WORKING_MEMORY_MAX_TURNS,
-			)
-		elif ask_settings.session_memory_enabled:
-			history = self.session_memory.load(
-				memory_session,
-				limit=WORKING_MEMORY_MAX_TURNS * 2,
-			)
+		history = load_request_history(
+			thread_id=resolved_thread,
+			tenant_id=self.access_scope.tenant_id,
+			workspace_id=self.access_scope.workspace_id,
+			principal_id=self.access_scope.principal_id,
+			session_memory=self.session_memory,
+			memory_session=memory_session,
+			session_memory_enabled=ask_settings.session_memory_enabled,
+			max_turns=WORKING_MEMORY_MAX_TURNS,
+		)
 
 		held: dict[str, Any] = {"citations": [], "messages": [], "question": question}
 
@@ -2079,9 +1991,14 @@ class AskGraphService:
 
 			answer = state.get("answer") or ""
 			_finish(mark_truncated=False)
-			if not resolved_thread and ask_settings.session_memory_enabled:
-				self.session_memory.append(memory_session, "user", question)
-				self.session_memory.append(memory_session, "assistant", answer)
+			append_temp_session_memory(
+				thread_id=resolved_thread,
+				session_memory_enabled=ask_settings.session_memory_enabled,
+				session_memory=self.session_memory,
+				memory_session=memory_session,
+				question=question,
+				answer=answer,
+			)
 
 			yield {
 				"event": "done",
