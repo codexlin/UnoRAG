@@ -621,3 +621,32 @@ def test_302_crash_after_submit_resumes_same_task_without_second_post() -> None:
 		)
 		== 1
 	)
+
+
+def test_rewrite_302_result_url_for_china_base() -> None:
+	from app.services.ingest.backends.mineru import (
+		_rewrite_302_result_url_for_region,
+		_validate_302_result_url,
+	)
+
+	overseas = "https://file.302.ai/gpt/imgs/x.zip"
+	assert (
+		_rewrite_302_result_url_for_region(
+			overseas, base_url="https://api.302ai.cn"
+		)
+		== "https://file.302ai.cn/gpt/imgs/x.zip"
+	)
+	assert (
+		_rewrite_302_result_url_for_region(
+			overseas, base_url="https://api.302ai.com"
+		)
+		== "https://file.302ai.com/gpt/imgs/x.zip"
+	)
+	# Overseas API base keeps overseas file host.
+	assert (
+		_rewrite_302_result_url_for_region(overseas, base_url="https://api.302.ai")
+		== overseas
+	)
+	_validate_302_result_url(
+		"https://file.302ai.cn/gpt/imgs/x.zip", base_url="https://api.302ai.cn"
+	)

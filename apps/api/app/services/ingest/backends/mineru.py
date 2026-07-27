@@ -517,6 +517,11 @@ class Ai302MinerUBackend:
 				)
 				self._observe_error(exc, phase="complete", request=request, task_id=task_id)
 				raise exc
+			# Domestic API (api.302ai.cn) still returns overseas file.302.ai CDN URLs;
+			# rewrite to the China file host so mainland egress can download.
+			result_url = _rewrite_302_result_url_for_region(
+				result_url, base_url=self.base_url
+			)
 			_validate_302_result_url(result_url, base_url=self.base_url)
 			try:
 				raw_zip = self._request_bytes("GET", result_url, include_auth=False)
@@ -978,6 +983,38 @@ def _normalized_path(value: str) -> str:
 	return path if path.startswith("/") else f"/{path}"
 
 
+def _302_region_suffix(base_url: str) -> str | None:
+	"""Return domestic file-host suffix when API base is a China endpoint."""
+	host = (urlparse(base_url).hostname or "").lower()
+	if host == "api.302ai.cn" or host.endswith(".302ai.cn"):
+		return "302ai.cn"
+	if host == "api.302ai.com" or host.endswith(".302ai.com"):
+		return "302ai.com"
+	return None
+
+
+def _rewrite_302_result_url_for_region(url: str, *, base_url: str) -> str:
+	"""Map overseas result CDN hosts to the matching domestic file host.
+
+	302 docs list:
+	  - https://api.302.ai     overseas
+	  - https://api.302ai.cn   China 1
+	  - https://api.302ai.com  China 2
+	Task success payloads often still use https://file.302.ai/... even when the
+	task was created on api.302ai.cn; mainland hosts can download the same object
+	from https://file.302ai.cn/... .
+	"""
+	suffix = _302_region_suffix(base_url)
+	if not suffix:
+		return url
+	parsed = urlparse(url)
+	host = (parsed.hostname or "").lower()
+	# Only rewrite the known overseas file CDN host; leave other URLs untouched.
+	if host == "file.302.ai":
+		return parsed._replace(netloc=f"file.{suffix}").geturl()
+	return url
+
+
 def _validate_302_result_url(url: str, *, base_url: str) -> None:
 	parsed = urlparse(url)
 	base = urlparse(base_url)
@@ -989,7 +1026,13 @@ def _validate_302_result_url(url: str, *, base_url: str) -> None:
 			code="mineru_invalid_response",
 			retryable=False,
 		)
-	if host != base_host and not host.endswith(".302.ai"):
+	trusted = (
+		host == base_host
+		or host.endswith(".302.ai")
+		or host.endswith(".302ai.cn")
+		or host.endswith(".302ai.com")
+	)
+	if not trusted:
 		raise MinerUClientError(
 			"302 MinerU result_url host is not trusted",
 			code="mineru_invalid_response",

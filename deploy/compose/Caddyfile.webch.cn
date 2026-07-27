@@ -1,0 +1,18 @@
+# MeriKnow edge for webch.cn (Aliyun pilot — simulated real user).
+# HTTP-01 ACME on :80; HTTPS on :443. FastAPI stays unpublished.
+
+{
+	email admin@webch.cn
+	admin off
+}
+
+webch.cn, www.webch.cn {
+	encode gzip
+
+	reverse_proxy web:3000
+
+	log {
+		output stdout
+		format console
+	}
+}
