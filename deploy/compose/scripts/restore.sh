@@ -23,7 +23,7 @@ POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo meriknow)"
 POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo meriknow)"
 
 echo "==> stopping app services (keeping volumes)"
-mk_compose stop caddy web api lifecycle-worker || true
+mk_compose stop caddy web api lifecycle-worker outbox-worker || true
 
 echo "==> ensuring infra is up"
 mk_compose up -d postgres qdrant redis
@@ -33,7 +33,7 @@ echo "==> restore postgres"
 mk_compose exec -T postgres \
 	psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
 	-v ON_ERROR_STOP=1 \
-	-c "DROP SCHEMA IF EXISTS app CASCADE; DROP SCHEMA IF EXISTS rag CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
+	-c "DROP SCHEMA IF EXISTS app CASCADE; DROP SCHEMA IF EXISTS rag CASCADE; DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
 mk_compose exec -T postgres \
 	psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
 	-v ON_ERROR_STOP=1 \
@@ -53,8 +53,8 @@ docker run --rm \
 	alpine:3.21 sh -c 'rm -rf /data/* /data/.[!.]* 2>/dev/null; tar -C /data -xzf /backup/qdrant.tgz'
 mk_compose up -d --wait qdrant
 
-echo "==> starting application stack"
-mk_compose up -d caddy web api lifecycle-worker
+echo "==> starting application stack (incl. outbox-worker)"
+mk_compose up -d caddy web api lifecycle-worker outbox-worker
 
 echo "restore complete — verify /api/rag/health, citations, and active versions"
 echo "see docs/runbooks/private-deployment.md"
