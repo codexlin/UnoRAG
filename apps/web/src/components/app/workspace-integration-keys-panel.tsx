@@ -93,6 +93,8 @@ export function WorkspaceIntegrationKeysPanel() {
 			setError(typeof detail?.detail === "string" ? detail.detail : "吊销失败");
 			return;
 		}
+		setCreatedKey(null);
+		setCopied(false);
 		await refresh();
 	}
 
@@ -103,7 +105,7 @@ export function WorkspaceIntegrationKeysPanel() {
 					Integration
 				</p>
 				<p className="text-ui mt-1 text-muted-foreground">
-					模式 B 服务密钥：供已有助手调用{" "}
+					Service Key：供外部系统安全调用 Public API v1.0 的{" "}
 					<span className="font-mono text-xs">/api/v1/retrieve</span> 与{" "}
 					<span className="font-mono text-xs">/api/v1/ask</span>
 					。明文仅创建时显示一次。
@@ -184,14 +186,27 @@ export function WorkspaceIntegrationKeysPanel() {
 								请立即复制并妥善保存，关闭后无法再次查看明文。
 							</p>
 							<p className="break-all font-mono text-xs">{createdKey}</p>
-							<Button
-								type="button"
-								variant="secondary"
-								size="sm"
-								onClick={() => void copyKey()}
-							>
-								{copied ? "已复制" : "复制密钥"}
-							</Button>
+							<div className="flex flex-wrap gap-2">
+								<Button
+									type="button"
+									variant="secondary"
+									size="sm"
+									onClick={() => void copyKey()}
+								>
+									{copied ? "已复制" : "复制密钥"}
+								</Button>
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={() => {
+										setCreatedKey(null);
+										setCopied(false);
+									}}
+								>
+									清除明文
+								</Button>
+							</div>
 						</div>
 					) : null}
 

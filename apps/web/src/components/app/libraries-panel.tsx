@@ -774,9 +774,9 @@ export function LibrariesPanel() {
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
-			<div className="flex min-h-0 flex-1">
+			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
 				{/* 左栏：知识库列表 */}
-				<aside className="flex w-65 shrink-0 flex-col border-r border-border/80 bg-card/40">
+				<aside className="flex h-[min(42vh,22rem)] w-full shrink-0 flex-col border-b border-border/80 bg-card/40 md:h-auto md:w-65 md:border-r md:border-b-0">
 					<div className="space-y-1 border-b border-border/70 px-4 py-4">
 						<p className="text-meta font-mono tracking-[0.2em] text-cite uppercase">
 							Libraries
@@ -1004,7 +1004,7 @@ export function LibrariesPanel() {
 								</AuthButton>
 							</div>
 						) : (
-							<div className="overflow-hidden rounded-md border border-border/80">
+							<div className="overflow-x-auto rounded-md border border-border/80">
 								<Table>
 									<TableHeader>
 										<TableRow className="hover:bg-transparent">

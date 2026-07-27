@@ -100,7 +100,7 @@ export function WorkspaceAuditPanel() {
 	}
 
 	return (
-		<div className="space-y-4 rounded-2xl border border-border/80 bg-card/80 px-4 py-4">
+		<div className="min-w-0 space-y-4 rounded-2xl border border-border/80 bg-card/80 px-4 py-4">
 			<div className="flex flex-wrap items-start justify-between gap-3">
 				<div>
 					<p className="text-meta font-mono tracking-[0.16em] text-muted-foreground uppercase">
@@ -127,7 +127,7 @@ export function WorkspaceAuditPanel() {
 			) : items.length === 0 ? (
 				<p className="text-ui text-muted-foreground">暂无审计记录</p>
 			) : (
-				<div className="overflow-x-auto">
+				<div className="max-w-full overflow-x-auto">
 					<table className="w-full min-w-xl border-collapse text-left text-sm">
 						<thead>
 							<tr className="border-b border-border/60 text-xs text-muted-foreground">

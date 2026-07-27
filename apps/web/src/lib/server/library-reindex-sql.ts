@@ -2,8 +2,6 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 
-import { libraries } from "@/db/schema";
-
 /**
  * Correlated subquery counting active versions whose policy snapshot
  * differs from the current library row.
@@ -16,15 +14,15 @@ export function staleActiveVersionsSql() {
 			ON dav.document_id = d.id
 		INNER JOIN app.document_versions AS dv
 			ON dv.id = dav.version_id
-		WHERE d.library_id = ${libraries.id}
+		WHERE d.library_id = "app"."libraries"."id"
 			AND d.deleted_at IS NULL
 			AND (
 				coalesce(dv.document_profile, 'auto')
-					IS DISTINCT FROM ${libraries.documentProfile}
+					IS DISTINCT FROM "app"."libraries"."document_profile"
 				OR coalesce(dv.scan_handling, 'auto')
-					IS DISTINCT FROM ${libraries.scanHandling}
+					IS DISTINCT FROM "app"."libraries"."scan_handling"
 				OR coalesce(dv.ingest_policy_version, 0)
-					IS DISTINCT FROM ${libraries.ingestPolicyVersion}
+					IS DISTINCT FROM "app"."libraries"."ingest_policy_version"
 			)
 	)`.mapWith(Number);
 }

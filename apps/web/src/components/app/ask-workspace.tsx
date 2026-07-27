@@ -34,6 +34,13 @@ import { MarkdownAnswer } from "@/components/app/markdown-answer";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import {
+	Sheet,
+	SheetContent,
+	SheetDescription,
+	SheetHeader,
+	SheetTitle,
+} from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import {
 	Tooltip,
@@ -42,6 +49,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useHealth } from "@/hooks/use-health";
 import { useLibraries } from "@/hooks/use-libraries";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
 	type ApiCitation,
 	type ApiDocument,
@@ -192,6 +200,64 @@ function RetrievalNotice({ turn }: { turn: LocalTurn }) {
 	);
 }
 
+function SourcesPanelContent({
+	activeCitation,
+	onClose,
+}: {
+	activeCitation: UiCitation | null;
+	onClose: () => void;
+}) {
+	return (
+		<div className="flex h-full min-h-0 w-full flex-col">
+			<div className="flex h-12 shrink-0 items-center justify-between border-b border-border/70 px-4">
+				<div>
+					<p className="text-meta font-mono tracking-[0.16em] text-cite uppercase">
+						Sources
+					</p>
+					<p className="text-[0.9375rem] font-medium leading-snug text-foreground">
+						引用来源
+					</p>
+				</div>
+				<Tooltip>
+					<TooltipTrigger
+						render={
+							<button
+								type="button"
+								onClick={onClose}
+								className="inline-flex items-center gap-1 rounded-md border border-border/70 px-2 py-1 text-meta text-muted-foreground transition-colors hover:border-cite/40 hover:bg-cite/8 hover:text-cite"
+								aria-label="收起引用来源面板"
+							>
+								<PanelRightClose className="size-3.5" aria-hidden />
+								收起
+							</button>
+						}
+					/>
+					<TooltipContent side="left">关闭引用来源面板</TooltipContent>
+				</Tooltip>
+			</div>
+			<ScrollArea className="min-h-0 flex-1">
+				<div className="p-4">
+					{activeCitation ? (
+						<div className="desk-enter">
+							<CitationSourceCard citation={activeCitation} active expanded />
+						</div>
+					) : (
+						<div className="text-ui desk-enter space-y-2 text-muted-foreground">
+							<p>
+								这里展示本轮检索命中的原文片段。点击答案中的引用编号或下方来源卡片即可核对
+								dense / bm25 / rrf 等分数。
+							</p>
+							<p className="text-meta font-mono text-muted-foreground/80">
+								需要时可通过顶栏的「引用来源」再次打开。
+							</p>
+						</div>
+					)}
+				</div>
+			</ScrollArea>
+		</div>
+	);
+}
+
 function canRetryTurn(turn: LocalTurn): boolean {
 	if (turn.pending) return false;
 	return Boolean(turn.error || turn.cancelled || turn.refused);
@@ -200,6 +266,7 @@ function canRetryTurn(turn: LocalTurn): boolean {
 export function AskWorkspace() {
 	const router = useRouter();
 	const searchParams = useSearchParams();
+	const isMobile = useIsMobile();
 	const { libraries, error: libsError } = useLibraries();
 	const { apiReady } = useHealth();
 	const [libraryId, setLibraryId] = useState("");
@@ -211,7 +278,7 @@ export function AskWorkspace() {
 	const [archiveError, setArchiveError] = useState<string | null>(null);
 	const [turns, setTurns] = useState<LocalTurn[]>([]);
 	const [activeCitation, setActiveCitation] = useState<UiCitation | null>(null);
-	const [drawerOpen, setDrawerOpen] = useState(true);
+	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [traceDebug, setTraceDebug] = useState<ApiRetrievalDebug | null>(null);
 	const [traceClientMs, setTraceClientMs] = useState<number | null>(null);
 	const [traceOpen, setTraceOpen] = useState(false);
@@ -1240,14 +1307,14 @@ export function AskWorkspace() {
 				</form>
 			</section>
 
-			{!drawerOpen ? (
+			{!isMobile && !drawerOpen ? (
 				<button
 					type="button"
 					onClick={() => {
 						setTraceOpen(false);
 						setDrawerOpen(true);
 					}}
-					className="group flex w-7 shrink-0 flex-col items-center justify-center gap-2 border-l border-cite/25 bg-cite/[0.06] text-cite transition-colors hover:bg-cite/12"
+					className="group hidden w-7 shrink-0 flex-col items-center justify-center gap-2 border-l border-cite/25 bg-cite/[0.06] text-cite transition-colors hover:bg-cite/12 md:flex"
 					aria-label="展开引用来源面板"
 					title="展开引用来源"
 				>
@@ -1261,68 +1328,41 @@ export function AskWorkspace() {
 				</button>
 			) : null}
 
-			<aside
-				className={cn(
-					"shrink-0 overflow-hidden border-l border-border/80 bg-card/85 backdrop-blur-sm transition-[width,opacity] duration-200",
-					drawerOpen ? "w-[360px] opacity-100" : "w-0 opacity-0 border-l-0",
-				)}
-				aria-hidden={!drawerOpen}
-			>
-				<div className="flex h-full w-[360px] flex-col">
-					<div className="flex h-12 items-center justify-between border-b border-border/70 px-4">
-						<div>
-							<p className="text-meta font-mono tracking-[0.16em] text-cite uppercase">
-								Sources
-							</p>
-							<p className="text-[0.9375rem] font-medium leading-snug text-foreground">
-								引用来源
-							</p>
-						</div>
-						<Tooltip>
-							<TooltipTrigger
-								render={
-									<button
-										type="button"
-										onClick={() => setDrawerOpen(false)}
-										className="inline-flex items-center gap-1 rounded-md border border-border/70 px-2 py-1 text-meta text-muted-foreground transition-colors hover:border-cite/40 hover:bg-cite/8 hover:text-cite"
-										aria-label="收起引用来源面板"
-									>
-										<PanelRightClose className="size-3.5" aria-hidden />
-										收起
-									</button>
-								}
-							/>
-							<TooltipContent side="left">
-								收起右侧面板，需要时再展开
-							</TooltipContent>
-						</Tooltip>
+			{isMobile ? (
+				<Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+					<SheetContent
+						side="right"
+						showCloseButton={false}
+						className="w-[min(92vw,360px)] p-0"
+					>
+						<SheetHeader className="sr-only">
+							<SheetTitle>引用来源</SheetTitle>
+							<SheetDescription>
+								查看回答所依据的原文片段与检索分数
+							</SheetDescription>
+						</SheetHeader>
+						<SourcesPanelContent
+							activeCitation={activeCitation}
+							onClose={() => setDrawerOpen(false)}
+						/>
+					</SheetContent>
+				</Sheet>
+			) : (
+				<aside
+					className={cn(
+						"hidden shrink-0 overflow-hidden border-l border-border/80 bg-card/85 backdrop-blur-sm transition-[width,opacity] duration-200 md:block",
+						drawerOpen ? "w-[360px] opacity-100" : "w-0 border-l-0 opacity-0",
+					)}
+					aria-hidden={!drawerOpen}
+				>
+					<div className="h-full w-[360px]">
+						<SourcesPanelContent
+							activeCitation={activeCitation}
+							onClose={() => setDrawerOpen(false)}
+						/>
 					</div>
-					<ScrollArea className="min-h-0 flex-1">
-						<div className="p-4">
-							{activeCitation ? (
-								<div className="desk-enter">
-									<CitationSourceCard
-										citation={activeCitation}
-										active
-										expanded
-									/>
-								</div>
-							) : (
-								<div className="text-ui desk-enter space-y-2 text-muted-foreground">
-									<p>
-										这里展示本轮检索命中的原文片段。点击答案中的引用编号或下方来源卡片即可核对
-										dense / bm25 / rrf 等分数。
-									</p>
-									<p className="text-meta font-mono text-muted-foreground/80">
-										提示：点顶栏「收起引用」或面板「收起」可折叠；收起后右侧留有
-										Sources 细条可再展开
-									</p>
-								</div>
-							)}
-						</div>
-					</ScrollArea>
-				</div>
-			</aside>
+				</aside>
+			)}
 
 			<AskTraceDrawer
 				open={traceOpen}

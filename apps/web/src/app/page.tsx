@@ -22,7 +22,7 @@ export default function Home() {
 					</span>
 				</div>
 				<span className="font-mono text-[11px] tracking-wide text-muted-foreground">
-					v0 · scaffold
+					Private Deployment · v1.0
 				</span>
 			</header>
 
@@ -37,9 +37,9 @@ export default function Home() {
 						像测绘一样对准出处。
 					</h1>
 					<p className="max-w-lg text-base leading-7 text-muted-foreground">
-						MeriKnow 面向团队知识库：检索有据、引用可循、编排可演进。主题
-						<strong className="font-medium text-foreground"> Northline </strong>
-						用冷静的海青与批注轨，区别于常见的紫渐变 AI 仪表盘。
+						MeriKnow 是可私有化部署的 Knowledge Service：统一管理文档生命周期、
+						权限、检索与有据回答。团队可直接使用 Workspace，也可通过 Public API
+						v1.0 接入现有业务系统。
 					</p>
 					<div className="flex flex-wrap gap-3 pt-1">
 						<Link
@@ -95,12 +95,12 @@ export default function Home() {
 						body: "答案旁挂引用轨，先核对出处再采信结论。",
 					},
 					{
-						title: "日间友好",
-						body: "冷雾底色 + 深海青主色，适合长时间办公阅读。",
+						title: "生产可信",
+						body: "权限隔离、生命周期任务与关联 ID 贯穿关键业务链路。",
 					},
 					{
-						title: "可演进编排",
-						body: "UI 克制；多步 Agent 能力留给 LangGraph 后端。",
+						title: "服务优先",
+						body: "Workspace 用于管理与验收，Retrieve / Ask API 用于业务集成。",
 					},
 				].map((item) => (
 					<div

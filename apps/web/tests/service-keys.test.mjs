@@ -164,4 +164,7 @@ test("settings page mounts integration keys panel", () => {
 	assert.match(panel, /manageMembers/);
 	assert.match(panel, /\/api\/workspace\/keys/);
 	assert.match(panel, /明文仅创建时显示一次/);
+	assert.match(panel, /setCreatedKey\(null\)/);
+	assert.match(panel, /清除明文/);
+	assert.doesNotMatch(panel, /模式 B 服务密钥/);
 });

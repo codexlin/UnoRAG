@@ -71,6 +71,13 @@
       "when": 1785094000000,
       "tag": "0009_document_version_policy_snapshot",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785145698295,
+      "tag": "0010_reconcile_library_counts",
+      "breakpoints": true
     }
   ]
 }

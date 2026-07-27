@@ -29,10 +29,10 @@ export default function SettingsPage() {
 					</p>
 				</div>
 
-				<div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-8">
+				<div className="grid items-start gap-6 [&>*]:min-w-0 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-8">
 					<WorkspaceAskSettingsPanel />
 
-					<div className="space-y-6">
+					<div className="min-w-0 space-y-6">
 						<WorkspaceMembersPanel />
 						<WorkspaceIntegrationKeysPanel />
 						<WorkspaceAuditPanel />

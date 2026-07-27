@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
 	buildDocumentDeletePayload,
 	documentDeleteIdempotencyKey,
 } from "../src/lib/server/document-delete-core.mjs";
+
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("buildDocumentDeletePayload snapshots cleanup targets", () => {
 	const payload = buildDocumentDeletePayload({
@@ -47,4 +52,17 @@ test("delete idempotency key is stable for alreadyQueued reassert", () => {
 	const key = documentDeleteIdempotencyKey("same-doc");
 	assert.equal(key, documentDeleteIdempotencyKey("same-doc"));
 	assert.match(key, /^document\.delete:same-doc:/);
+});
+
+test("upgrade migration reconciles historical library counters", () => {
+	const migration = readFileSync(
+		path.join(root, "drizzle/0010_reconcile_library_counts.sql"),
+		"utf8",
+	);
+
+	assert.match(migration, /count\(document\.id\) FILTER/);
+	assert.match(migration, /doc_count = desired\.document_count/);
+	assert.match(migration, /ready_count = desired\.ready_count/);
+	assert.match(migration, /document_count = 0 THEN 'empty'/);
+	assert.match(migration, /IS DISTINCT FROM/);
 });

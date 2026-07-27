@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
 	libraryRequiresReindex,
 	toApiLibrary,
 } from "../src/lib/server/library-api.mjs";
 import { computeRequiresReindex } from "../src/lib/server/library-reindex.mjs";
+
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("requires_reindex false when all active versions match library policy", () => {
 	assert.equal(
@@ -116,4 +121,19 @@ test("one newly indexed doc must not clear whole-library reindex", () => {
 		}),
 		false,
 	);
+});
+
+test("stale-version correlated SQL qualifies outer library columns", () => {
+	const source = readFileSync(
+		path.join(root, "src/lib/server/library-reindex-sql.ts"),
+		"utf8",
+	);
+	for (const column of [
+		"id",
+		"document_profile",
+		"scan_handling",
+		"ingest_policy_version",
+	]) {
+		assert.match(source, new RegExp(`"app"\\."libraries"\\."${column}"`));
+	}
 });

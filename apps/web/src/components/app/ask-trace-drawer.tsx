@@ -119,6 +119,8 @@ function StageRow({ stage }: { stage: ApiAskStage }) {
 	const detail = stage.detail ?? {};
 	const detailEntries = Object.entries(detail);
 	const hasDetail = detailEntries.length > 0;
+	const label = stageLabel(stage.stage);
+	const duration = formatDurationMs(stage.duration_ms);
 
 	return (
 		<li className="border-b border-border/50 last:border-b-0">
@@ -126,6 +128,7 @@ function StageRow({ stage }: { stage: ApiAskStage }) {
 				type="button"
 				disabled={!hasDetail}
 				onClick={() => hasDetail && setOpen((v) => !v)}
+				aria-label={`${label}（${stage.stage}）${duration}`}
 				className={cn(
 					"flex w-full items-center gap-2 px-0 py-2.5 text-left",
 					hasDetail
@@ -141,15 +144,13 @@ function StageRow({ stage }: { stage: ApiAskStage }) {
 					aria-hidden
 				/>
 				<span className="min-w-0 flex-1">
-					<span className="text-ui font-medium text-foreground">
-						{stageLabel(stage.stage)}
-					</span>
+					<span className="text-ui font-medium text-foreground">{label}</span>
 					<span className="ml-2 font-mono text-[11px] text-muted-foreground">
 						{stage.stage}
 					</span>
 				</span>
 				<span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
-					{formatDurationMs(stage.duration_ms)}
+					{duration}
 				</span>
 				{!stage.ok ? (
 					<span className="shrink-0 font-mono text-[10px] text-destructive">
