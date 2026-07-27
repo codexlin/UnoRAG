@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Literal
+from typing import Any
 
 from langgraph.graph import END, StateGraph
 
@@ -29,6 +29,30 @@ from app.graph.messages import (
 )
 from app.graph.persistence import persist_turn, single_document_version_id
 from app.graph.context import AskGraphContext, build_ask_graph_context
+from app.graph.nodes import (
+	build_decision_nodes,
+	build_generation_nodes,
+	build_retrieval_nodes,
+	build_rewrite_nodes,
+	build_routing_nodes,
+	build_table_nodes,
+)
+from app.graph.nodes.common import (  # noqa: F401 — re-export for tests / monkeypatch
+	_library_label,
+	_merge_debug,
+	_renumber_citation_indexes,
+)
+from app.graph.nodes.generation import (  # noqa: F401 — re-export helpers used by tests/service
+	_finalize_generation_output,
+	_format_context,
+	_format_generate_context,
+	_format_table_generate_context,
+	_table_execution_context_block,
+	_to_citation_models,
+)
+from app.graph.nodes.rewrite import (  # noqa: F401 — monkeypatch target for live plan tests
+	_request_structured_retrieval_plan_json,
+)
 from app.graph.state import AskState, GenerateFn, LoadTableGroupsFn, RetrieveFn
 from app.graph.stubs import (
 	STUB_CITATIONS,
@@ -38,67 +62,27 @@ from app.graph.stubs import (
 )
 from app.security.access_scope import AccessScope, resolve_access_scope
 from app.schemas import AskResponse, Citation
-from app.services.answer_copy import (
-	clarify_answer,
-	no_match_answer,
-	table_unclear_answer,
-	weak_match_answer,
-)
 from app.services.ask_trace import (
 	append_stage,
-	citation_retrieve_detail,
 	emit_ask_trace,
 	finalize_ask_debug,
 	initial_ask_debug,
 	question_hash,
 	resolve_trace_id,
 )
-from app.services.ask_route import (
-	should_upgrade_fast_to_precise_table,
-	table_overview_downgrade_reason,
-)
-from app.services.query_router import looks_like_table_summary_lookup, route_query
 from app.services.ask_overrides import (
 	effective_ask_settings,
 	extract_ask_policy_snapshot,
 	has_ask_overrides,
 )
 from app.services.policy_profiles import resolve_ask_policy
-from app.services.citation_adjudicate import (
-	adjudicate_debug_fields,
-	apply_citation_adjudicate,
-	wide_recall_limit,
-)
-from app.services.generation_contract import (
-	citation_from_hit,
-	reconcile_generation_output,
-)
-from app.services.llm import ChatService, llm_inflight_slot
+from app.services.llm import ChatService
 from app.services.retrieval import RetrievalService
-from app.services.retrieval_plan import build_retrieval_plan
-from app.services.retrieval_plan_contract import (
-	build_retrieval_plan_messages,
-	merge_plan_filters,
-	resolve_structured_retrieval_plan,
-)
 from app.services.runtime import RuntimeCapability, resolve_runtime
 from app.services.session_memory import (
 	WORKING_MEMORY_MAX_TURNS,
 	SessionMemory,
 	default_session_memory,
-)
-from app.services.table_query import (
-	build_dual_table_query_plan,
-	build_table_query_plan,
-	citations_for_table_overview,
-	citations_with_dual_matched_evidence,
-	citations_with_matched_evidence,
-	execute_dual_table_query,
-	execute_table_query,
-	looks_like_numeric_table_query,
-	prepare_dual_tables_for_execute,
-	prepare_table_for_execute,
-	table_instance_key,
 )
 from app.settings import Settings, get_settings
 
@@ -137,38 +121,6 @@ __all__ = [
 ]
 
 
-def _to_citation_models(raw_citations: list[dict[str, Any]]) -> list[Citation]:
-	return [citation_from_hit(item) for item in raw_citations]
-
-
-def _finalize_generation_output(
-	*,
-	answer: str,
-	raw_citations: list[dict[str, Any]],
-	allowed_hits: list[dict[str, Any]] | None = None,
-	debug: dict[str, Any] | None = None,
-) -> tuple[str, list[Citation]]:
-	"""generation 共享出口：结构化校验 + 命中集对账（非法引用剔除，不 500）。"""
-	hits = allowed_hits if allowed_hits is not None else raw_citations
-	result = reconcile_generation_output(
-		answer=answer,
-		citations=raw_citations,
-		allowed_hits=hits,
-	)
-	if debug is not None:
-		debug["citation_reconcile"] = result.debug_fields()
-	return result.answer, result.citations
-
-
-def _renumber_citation_indexes(
-	citations: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-	"""合并多路命中后重新编号为稳定唯一的 1..N（各路 retrieve 各自从 1 起编）。"""
-	for index, item in enumerate(citations, start=1):
-		item["index"] = index
-	return citations
-
-
 def _retrieval_visibility(debug: dict[str, Any]) -> dict[str, Any]:
 	hybrid_failed = bool(debug.get("hybrid_failed") or debug.get("hybrid_error"))
 	rerank_failed = bool(debug.get("rerank_failed"))
@@ -178,107 +130,6 @@ def _retrieval_visibility(debug: dict[str, Any]) -> dict[str, Any]:
 		"rerank_failed": rerank_failed,
 		"retrieval_mode": retrieval_mode,
 	}
-
-
-def _library_label(library_id: str | None) -> str:
-	if not library_id:
-		return "当前知识库"
-	return library_id
-
-
-def _request_structured_retrieval_plan_json(
-	settings: Settings,
-	*,
-	question: str,
-	fallback_semantic_query: str,
-) -> str:
-	"""Live 路径：轻量 LLM JSON 计划；失败由调用方降级。"""
-	from openai import OpenAI
-
-	messages = build_retrieval_plan_messages(
-		question=question,
-		fallback_semantic_query=fallback_semantic_query,
-	)
-	client = OpenAI(
-		api_key=settings.llm_api_key,
-		base_url=settings.llm_base_url,
-	)
-	with llm_inflight_slot(settings):
-		response = client.chat.completions.create(
-			model=settings.chat_model,
-			messages=messages,
-			temperature=0.0,
-		)
-	content = ""
-	if response.choices:
-		content = response.choices[0].message.content or ""
-	return str(content).strip()
-
-
-def _format_context(citations: list[dict[str, Any]]) -> str:
-	blocks: list[str] = []
-	for item in citations:
-		idx = item.get("index", len(blocks) + 1)
-		title = item.get("title") or "资料"
-		# 模型上下文用 body（与抽屉一致）；章节路径作定位前缀
-		text = item.get("body") or item.get("text") or item.get("snippet") or ""
-		section = item.get("section_path")
-		table_id = item.get("table_id")
-		row_start = item.get("row_start")
-		row_end = item.get("row_end")
-		loc_bits = []
-		if section:
-			loc_bits.append(str(section))
-		if table_id:
-			loc_bits.append(f"table={table_id}")
-		if row_start is not None and row_end is not None:
-			loc_bits.append(f"rows={row_start}-{row_end}")
-		header = f"[{idx}] {title}" + (f" · {' · '.join(loc_bits)}" if loc_bits else "")
-		blocks.append(f"{header}\n{text}")
-	return "\n\n".join(blocks)
-
-
-def _table_execution_context_block(execution: dict[str, Any] | None) -> str:
-	"""表格路径：把代码侧计算结果交给 LLM 解释（禁止心算）。"""
-	if not execution or not execution.get("ok"):
-		return ""
-	return (
-		"【已由程序计算，请据此解释，勿自行改算】\n"
-		f"operation={execution.get('operation')} column={execution.get('column')} "
-		f"operator={execution.get('operator')} value={execution.get('value')}\n"
-		f"answer_text={execution.get('answer_text')}\n"
-		f"matched_count={execution.get('matched_count')} "
-		f"matched_rows_truncated={execution.get('matched_rows_truncated')}\n"
-		f"matched_rows={execution.get('matched_rows')}"
-	)
-
-
-def _format_generate_context(
-	citations: list[dict[str, Any]],
-	execution: dict[str, Any] | None = None,
-) -> str:
-	parts = [_format_context(citations)]
-	table_block = _table_execution_context_block(execution)
-	if table_block:
-		parts.append(table_block)
-	return "\n\n".join(parts)
-
-
-def _format_table_generate_context(
-	question: str,
-	citations: list[dict[str, Any]],
-	execution: dict[str, Any] | None,
-) -> str:
-	"""Deprecated blob helper — prefer build_generate_messages + _format_generate_context."""
-	parts = [_format_generate_context(citations, execution)]
-	parts.append(f"用户问题：{question}")
-	return "\n\n".join(parts)
-
-
-def _merge_debug(state: AskState, **extra: Any) -> dict[str, Any]:
-	debug = dict(state.get("retrieval_debug") or {})
-	debug.update(extra)
-	return debug
 
 
 def build_ask_graph(
@@ -303,1082 +154,31 @@ def build_ask_graph(
 	min_score = float(ctx.settings.answer_min_score)
 	max_retries = max(0, int(ctx.settings.max_retrieve_retries))
 
-	def query_router_node(state: AskState) -> AskState:
-		"""规则分类；summary/table/ambiguous 等仅落盘，不建子图。"""
-		routed = route_query(
-			state["question"],
-			history=state.get("history") or [],
-			library_id=state.get("library_id"),
-		)
-		query_type = str(routed["query_type"])
-		route_reason = str(routed["reason"])
-		return {
-			"query_type": query_type,
-			"route_reason": route_reason,
-			"retrieval_attempts": 0,
-			"refused": False,
-			"refuse_reason": None,
-			"retrieval_debug": _merge_debug(
-				state,
-				query_type=query_type,
-				route_reason=route_reason,
-				mode=ctx.mode,
-				answer_min_score=min_score,
-				rerank_enabled=bool(ctx.settings.rerank_enabled),
-				tenant_id=ctx.scope.tenant_id,
-				workspace_id=ctx.scope.workspace_id,
-			),
-		}
-
-	def build_plan_node(state: AskState) -> AskState:
-		t0 = time.perf_counter()
-		query_type = str(state.get("query_type") or "fact")
-		route_reason = str(state.get("route_reason") or "default_fact")
-		plan = build_retrieval_plan(
-			query_type=query_type,
-			route_reason=route_reason,
-			library_id=state.get("library_id"),
-			top_k=ctx.settings.retrieve_top_k,
-			hybrid_enabled=bool(ctx.settings.hybrid_enabled),
-			rerank_enabled=bool(ctx.settings.rerank_enabled),
-			tenant_id=ctx.scope.tenant_id,
-			workspace_id=ctx.scope.workspace_id,
-			question=state.get("question"),
-		)
-		debug = _merge_debug(
-			state,
-			retrieval_plan=plan,
-			route=plan.get("route"),
-			path=plan.get("path"),
-			precise_kind=plan.get("precise_kind"),
-			upgrade=None,
-			upgrade_reason=None,
-			downgrade_reason=None,
-		)
-		append_stage(
-			debug,
-			name="route",
-			duration_ms=(time.perf_counter() - t0) * 1000,
-			detail={
-				"path": plan.get("path"),
-				"route": plan.get("route"),
-				"decision_reason": plan.get("reason") or route_reason,
-			},
-		)
-		return {
-			"retrieval_plan": plan,
-			"upgrade": None,
-			"upgrade_reason": None,
-			"downgrade_reason": None,
-			"retrieval_debug": debug,
-		}
-
-	def route_after_plan(state: AskState) -> Literal["clarify", "rewrite"]:
-		"""Clarify short-circuits; all retrieval paths rewrite first (incl. table)."""
-		plan = state.get("retrieval_plan") or {}
-		path = str(plan.get("path") or "")
-		execute_path = str(plan.get("execute_path") or "short")
-		if path == "clarify" or execute_path == "clarify":
-			return "clarify"
-		return "rewrite"
-
-	def route_after_rewrite(state: AskState) -> Literal["retrieve", "table"]:
-		plan = state.get("retrieval_plan") or {}
-		if str(plan.get("path") or "") == "precise" and plan.get("precise_kind") == "table":
-			return "table"
-		if str(plan.get("execute_path") or "") == "table":
-			return "table"
-		return "retrieve"
-
-	def clarify_node(state: AskState) -> AskState:
-		library_name = _library_label(state.get("library_id"))
-		judgement = {
-			"sufficient": False,
-			"action": "clarify",
-			"reason": "ambiguous",
-			"can_retry": False,
-		}
-		return {
-			"answer": clarify_answer(library_name=library_name),
-			"citations": [],
-			"refused": True,
-			"refuse_reason": "ambiguous",
-			"judgement": judgement,
-			"retrieval_debug": _merge_debug(
-				state,
-				judgement=judgement,
-				generate="clarify",
-				refuse_reason="ambiguous",
-			),
-		}
-
-	def build_table_plan_node(state: AskState) -> AskState:
-		"""轻量 TableQueryPlan；不确定则 fallback（retrieve 后仍可能 clarify）。"""
-		question = state.get("question") or ""
-		tq = build_table_query_plan(question)
-		return {
-			"table_query_plan": tq,
-			"retrieval_debug": _merge_debug(state, table_query_plan=tq),
-		}
-
-	def table_retrieve_node(state: AskState) -> AskState:
-		"""Retrieve table summaries for discovery plus row groups for evidence."""
-		t0 = time.perf_counter()
-		query = state.get("rewritten_question") or state["question"]
-		attempts = int(state.get("retrieval_attempts") or 0) + 1
-		plan = state.get("retrieval_plan") or {}
-		top_k = int(plan.get("top_k") or ctx.settings.retrieve_top_k)
-		filters = dict(plan.get("filters") or {})
-		filters["record_type"] = "table"
-		citations = ctx.retrieve(query, state.get("library_id"), top_k, filters)
-		summary_filters = dict(filters)
-		summary_filters["record_type"] = "table_summary"
-		summaries = ctx.retrieve(
-			query,
-			state.get("library_id"),
-			min(4, top_k),
-			summary_filters,
-		)
-		combined = [*summaries, *citations]
-		deduped: list[dict[str, Any]] = []
-		seen: set[str] = set()
-		for item in sorted(
-			combined,
-			key=lambda value: float(value.get("score") or 0),
-			reverse=True,
-		):
-			key = str(
-				item.get("record_id")
-				or item.get("id")
-				or (
-					item.get("doc_id"),
-					item.get("table_id"),
-					item.get("record_type"),
-					item.get("row_start"),
-				)
-			)
-			if key in seen:
-				continue
-			seen.add(key)
-			deduped.append(item)
-		citations = _renumber_citation_indexes(deduped[: top_k + min(4, top_k)])
-		citation_check = {
-			"ok": all(item.get("table_id") for item in citations) if citations else True,
-			"missing_table_id": sum(1 for item in citations if not item.get("table_id")),
-		}
-		top_score = float(citations[0]["score"]) if citations else None
-		retrieve_detail = citation_retrieve_detail(citations)
-		debug = _merge_debug(
-			state,
-			retrieve=ctx.mode,
-			library_id=state.get("library_id"),
-			hit_count=len(citations),
-			top_score=top_score,
-			retrieval_attempts=attempts,
-			query=query,
-			record_type="table+table_summary",
-			filters=filters,
-			citation_check=citation_check,
-		)
-		append_stage(
-			debug,
-			name="retrieve",
-			duration_ms=(time.perf_counter() - t0) * 1000,
-			detail=retrieve_detail,
-		)
-		return {
-			"citations": citations,
-			"retrieval_attempts": attempts,
-			"retrieval_debug": debug,
-		}
-
-	def table_execute_node(state: AskState) -> AskState:
-		"""定位表实例 → 全表加载 → 代码侧过滤/聚合；缺组/不确定 → clarify。
-
-		MVP 双表：若同库两表可等值 join 且计划自信，则读两份 store 再算；
-		否则回退既有单表路径。
-		"""
-		t_load0 = time.perf_counter()
-		citations = list(state.get("citations") or [])
-		question = state.get("question") or ""
-
-		dual_payload = prepare_dual_tables_for_execute(
-			citations,
-			load_table_groups=ctx.load_table_groups,
-			library_id=state.get("library_id"),
-			question=question,
-		)
-		dual_plan: dict[str, Any] | None = None
-		if dual_payload and dual_payload.get("complete"):
-			dual_plan = build_dual_table_query_plan(
-				question,
-				left_headers=list(dual_payload["left"].get("headers") or []),
-				right_headers=list(dual_payload["right"].get("headers") or []),
-				join_left_column=str(dual_payload.get("join_left_column") or ""),
-				join_right_column=str(dual_payload.get("join_right_column") or ""),
-			)
-
-		use_dual = bool(
-			dual_payload
-			and dual_payload.get("complete")
-			and dual_plan
-			and dual_plan.get("confident")
-			and dual_plan.get("operation") == "join_lookup"
-		)
-
-		if use_dual and dual_payload is not None and dual_plan is not None:
-			load_ms = (time.perf_counter() - t_load0) * 1000
-			tq = dual_plan
-			merged = {
-				"complete": True,
-				"reason": dual_payload.get("reason") or "dual_equi_join",
-				"group_count": int(dual_payload["left"].get("group_count") or 0)
-				+ int(dual_payload["right"].get("group_count") or 0),
-				"load_source": "store",
-				"doc_id": dual_payload["left"].get("doc_id"),
-				"table_id": dual_payload["left"].get("table_id"),
-				"document_version_id": dual_payload["left"].get("document_version_id"),
-				"headers": list(dual_payload["left"].get("headers") or []),
-				"rows": [],
-				"table_quality": {},
-				"mode": "dual",
-				"left_table_id": dual_payload["left"].get("table_id"),
-				"right_table_id": dual_payload["right"].get("table_id"),
-			}
-			table_complete = True
-			t_exec0 = time.perf_counter()
-			execution = execute_dual_table_query(
-				tq,
-				left=dual_payload["left"],
-				right=dual_payload["right"],
-				collect_evidence_indices=True,
-			)
-			exec_ms = (time.perf_counter() - t_exec0) * 1000
-			# 双表临时证据字段：选完 citation 后再丢弃
-			_ = execution.pop("_evidence_row_indices", None)
-			left_evidence = list(execution.pop("_evidence_left_row_indices", []) or [])
-			right_evidence = list(execution.pop("_evidence_right_row_indices", []) or [])
-			# 供 citations helper 从 matched_rows 恢复两侧行号
-			execution["_evidence_left_row_indices"] = left_evidence
-			execution["_evidence_right_row_indices"] = right_evidence
-
-			def _with_table_stages(debug: dict[str, Any]) -> dict[str, Any]:
-				append_stage(
-					debug,
-					name="table_load",
-					duration_ms=load_ms,
-					ok=True,
-					detail={
-						"load_source": "store",
-						"complete": True,
-						"mode": "dual",
-						"left_table_id": dual_payload["left"].get("table_id"),
-						"right_table_id": dual_payload["right"].get("table_id"),
-						"join_left_column": dual_payload.get("join_left_column"),
-						"join_right_column": dual_payload.get("join_right_column"),
-					},
-				)
-				matched_count = execution.get("matched_count")
-				if matched_count is None and isinstance(
-					execution.get("matched_rows"), list
-				):
-					matched_count = len(execution["matched_rows"])
-				append_stage(
-					debug,
-					name="table_execute",
-					duration_ms=exec_ms,
-					ok=bool(execution.get("ok")),
-					detail={
-						"operation": execution.get("operation"),
-						"ok": bool(execution.get("ok")),
-						"matched_count": matched_count,
-						"mode": "dual",
-						"table_count": 2,
-					},
-				)
-				return debug
-
-			enriched = [dict(item) for item in citations]
-			for row in enriched:
-				rt = str(row.get("record_type") or "")
-				if rt not in {"table", "table_summary"}:
-					row["record_type"] = "table"
-
-			if execution.get("ok") and tq.get("confident"):
-				enriched, evidence_meta = citations_with_dual_matched_evidence(
-					enriched,
-					left=dual_payload["left"],
-					right=dual_payload["right"],
-					execution=execution,
-				)
-				execution.update(evidence_meta)
-			execution.pop("_evidence_left_row_indices", None)
-			execution.pop("_evidence_right_row_indices", None)
-
-			can_execute = bool(
-				execution.get("ok") and tq.get("confident") and table_complete
-			)
-			must_compute = bool(
-				looks_like_numeric_table_query(question)
-				and not looks_like_table_summary_lookup(question)
-			)
-			table_load = {
-				"complete": table_complete,
-				"reason": merged.get("reason"),
-				"group_count": merged.get("group_count"),
-				"load_source": "store",
-				"mode": "dual",
-				"doc_id": merged.get("doc_id"),
-				"table_id": merged.get("table_id"),
-				"left_table_id": dual_payload["left"].get("table_id"),
-				"right_table_id": dual_payload["right"].get("table_id"),
-			}
-
-			if can_execute:
-				return {
-					"table_query_plan": tq,
-					"table_execution": execution,
-					"citations": enriched,
-					"downgrade_reason": None,
-					"retrieval_debug": _with_table_stages(
-						_merge_debug(
-							state,
-							table_query_plan=tq,
-							table_execution=execution,
-							table_load=table_load,
-							downgrade_reason=None,
-							precise_gate="execute",
-						)
-					),
-				}
-
-			# 双表尝试失败：不在此硬拒，落入下方单表路径再判定
-			# （避免互补误判时误杀单表可答问题）
-
-		merged = prepare_table_for_execute(
-			citations,
-			load_table_groups=ctx.load_table_groups,
-			library_id=state.get("library_id"),
-			question=question,
-		)
-		load_ms = (time.perf_counter() - t_load0) * 1000
-		headers = list(merged.get("headers") or [])
-		table_complete = bool(merged.get("complete"))
-		table_quality = dict(merged.get("table_quality") or {})
-		quality_executable = table_quality.get("executable", True) is not False
-		# 用真实表头 refinement plan
-		base_plan = dict(state.get("table_query_plan") or {})
-		refined = build_table_query_plan(question, headers=headers or None)
-		# 若初始已自信且 refinement 因缺 headers 仍自信，保留；否则用 refined
-		tq = refined if headers else base_plan
-
-		t_exec0 = time.perf_counter()
-		if headers and table_complete and quality_executable:
-			execution = execute_table_query(
-				tq,
-				headers=headers,
-				rows=list(merged.get("rows") or []),
-				row_offset=int(merged.get("row_offset") or 0),
-				collect_evidence_indices=True,
-				summary_rows=list(merged.get("summary_rows") or []),
-			)
-		elif headers and table_complete and not quality_executable:
-			execution = {
-				"ok": False,
-				"operation": str(tq.get("operation") or "fallback"),
-				"matched_rows": [],
-				"reason": "table_quality_not_executable",
-				"quality_report": table_quality,
-			}
-		elif headers and not table_complete:
-			# fail closed：禁止在 top_k 子集上聚合后标 table_exec_ok
-			execution = {
-				"ok": False,
-				"operation": str(tq.get("operation") or "fallback"),
-				"matched_rows": [],
-				"reason": f"table_incomplete:{merged.get('reason') or 'unknown'}",
-				"group_count": merged.get("group_count"),
-				"load_source": merged.get("load_source"),
-			}
-		else:
-			execution = {
-				"ok": False,
-				"operation": "fallback",
-				"matched_rows": [],
-				"reason": "no_table_payload",
-			}
-		exec_ms = (time.perf_counter() - t_exec0) * 1000
-		evidence_row_indices = list(
-			execution.pop(
-				"_evidence_row_indices",
-				execution.get("matched_row_indices") or [],
-			)
-		)
-
-		def _with_table_stages(debug: dict[str, Any]) -> dict[str, Any]:
-			append_stage(
-				debug,
-				name="table_load",
-				duration_ms=load_ms,
-				ok=bool(merged.get("complete")),
-				detail={
-					"load_source": merged.get("load_source"),
-					"complete": bool(merged.get("complete")),
-					"table_id": merged.get("table_id"),
-				},
-			)
-			matched_count = execution.get("matched_count")
-			if matched_count is None and isinstance(execution.get("matched_rows"), list):
-				matched_count = len(execution["matched_rows"])
-			append_stage(
-				debug,
-				name="table_execute",
-				duration_ms=exec_ms,
-				ok=bool(execution.get("ok")),
-				detail={
-					"operation": execution.get("operation"),
-					"ok": bool(execution.get("ok")),
-					"matched_count": matched_count,
-				},
-			)
-			return debug
-
-		# 标注 citation 行范围 / 版本（供 UI）；仅同实例
-		# 保留 table_summary 的 record_type，避免与行组混淆（store 才是可执行路径）。
-		target_key = (
-			table_instance_key(merged)
-			if merged.get("table_id")
-			else None
-		)
-		enriched: list[dict[str, Any]] = []
-		for item in citations:
-			row = dict(item)
-			rt = str(row.get("record_type") or "")
-			if rt not in {"table", "table_summary"}:
-				row["record_type"] = "table"
-			if target_key and table_instance_key(row) == target_key:
-				row.setdefault("document_version_id", merged.get("document_version_id"))
-			enriched.append(row)
-
-		# 全表执行命中的行可能在向量 top_k 之外：用证据行组替换同实例 citation
-		if (
-			execution.get("ok")
-			and tq.get("confident")
-			and table_complete
-			and (
-				evidence_row_indices
-				or execution.get("matched_rows")
-			)
-			and merged.get("groups")
-		):
-			enriched, evidence_meta = citations_with_matched_evidence(
-				enriched,
-				groups=list(merged.get("groups") or []),
-				matched_rows=list(execution.get("matched_rows") or []),
-				matched_row_indices=evidence_row_indices,
-				target_key=target_key,
-				seed_citation=merged.get("citation") or (citations[0] if citations else None),
-			)
-			execution.update(evidence_meta)
-
-		# 精路径三岔门：能算则算 / 只能述则述 / 该拒则拒
-		can_execute = bool(
-			execution.get("ok") and tq.get("confident") and table_complete
-		)
-		must_compute = bool(
-			looks_like_numeric_table_query(question)
-			and not looks_like_table_summary_lookup(question)
-		)
-		table_load = {
-			"complete": table_complete,
-			"reason": merged.get("reason"),
-			"group_count": merged.get("group_count"),
-			"load_source": merged.get("load_source"),
-			"doc_id": merged.get("doc_id"),
-			"table_id": merged.get("table_id"),
-		}
-
-		if can_execute:
-			return {
-				"table_query_plan": tq,
-				"table_execution": execution,
-				"citations": enriched,
-				"downgrade_reason": None,
-				"retrieval_debug": _with_table_stages(
-					_merge_debug(
-						state,
-						table_query_plan=tq,
-						table_execution=execution,
-						table_load=table_load,
-						downgrade_reason=None,
-						precise_gate="execute",
-					)
-				),
-			}
-
-		# 必须算数但 store/plan 不行 → 拒答（禁止 LLM 估数）
-		if must_compute and citations:
-			library_name = _library_label(state.get("library_id"))
-			judgement = {
-				"sufficient": False,
-				"action": "clarify",
-				"reason": "table_unclear" if table_complete else "table_incomplete",
-				"can_retry": False,
-			}
-			refuse_reason = "table_unclear" if table_complete else "table_incomplete"
-			return {
-				"table_query_plan": tq,
-				"table_execution": execution,
-				"citations": enriched,
-				"answer": table_unclear_answer(library_name=library_name),
-				"refused": True,
-				"refuse_reason": refuse_reason,
-				"judgement": judgement,
-				"downgrade_reason": None,
-				"retrieval_debug": _with_table_stages(
-					_merge_debug(
-						state,
-						table_query_plan=tq,
-						table_execution=execution,
-						table_load=table_load,
-						judgement=judgement,
-						generate="table_unclear",
-						refuse_reason=refuse_reason,
-						precise_gate="refuse",
-						downgrade_reason=None,
-					)
-				),
-			}
-
-		# 不需精确算 / plan 不自信但表证据够 → LLM 概述（summary + 有界行预览）
-		has_overview_evidence = bool(
-			(headers and (table_complete or any(
-				str(c.get("record_type") or "") == "table_summary" for c in enriched
-			)))
-			or any(str(c.get("record_type") or "") == "table_summary" for c in enriched)
-		)
-		downgrade = table_overview_downgrade_reason(
-			plan_confident=bool(tq.get("confident")),
-			must_compute=must_compute,
-			table_complete=table_complete,
-		)
-		if has_overview_evidence and downgrade:
-			overview_citations = citations_for_table_overview(
-				enriched,
-				merged=merged,
-			)
-			return {
-				"table_query_plan": tq,
-				"table_execution": execution,
-				"citations": overview_citations,
-				"downgrade_reason": downgrade,
-				"retrieval_debug": _with_table_stages(
-					_merge_debug(
-						state,
-						table_query_plan=tq,
-						table_execution=execution,
-						table_load=table_load,
-						downgrade_reason=downgrade,
-						precise_gate="overview",
-					)
-				),
-			}
-
-		return {
-			"table_query_plan": tq,
-			"table_execution": execution,
-			"citations": enriched,
-			"downgrade_reason": None,
-			"retrieval_debug": _with_table_stages(
-				_merge_debug(
-					state,
-					table_query_plan=tq,
-					table_execution=execution,
-					table_load=table_load,
-					precise_gate="fallback_llm",
-				)
-			),
-		}
-
-	def route_after_table_execute(
-		state: AskState,
-	) -> Literal["judge", "end"]:
-		if state.get("refuse_reason") in {"table_unclear", "table_incomplete"}:
-			return "end"
-		return "judge"
-
-	def rewrite_node(state: AskState) -> AskState:
-		question = state["question"].strip()
-		history = state.get("history") or []
-		rewritten, rewrite_mode = rewrite_with_history(question, history)
-		gen_history = history_for_generate(history)
-
-		# Phase 3：结构化 RetrievalPlan（LLM JSON → Pydantic）；失败降级纯语义
-		raw_plan: str | dict[str, Any] | None = None
-		from_llm = False
-		llm_error: str | None = None
-		if ctx.mode == "live" and bool(getattr(ctx.settings, "has_llm_key", False)):
-			from_llm = True
-			try:
-				raw_plan = _request_structured_retrieval_plan_json(
-					ctx.settings,
-					question=question,
-					fallback_semantic_query=rewritten,
-				)
-			except Exception as exc:
-				llm_error = str(exc)[:240]
-				logger.warning(
-					"retrieval_plan.llm_failed error=%s",
-					llm_error,
-				)
-				raw_plan = None
-		structured = resolve_structured_retrieval_plan(
-			raw=raw_plan,
-			fallback_semantic_query=rewritten,
-			from_llm=from_llm,
-			llm_error=llm_error,
-		)
-		route_plan = dict(state.get("retrieval_plan") or {})
-		merged_filters = merge_plan_filters(
-			route_plan.get("filters") if isinstance(route_plan.get("filters"), dict) else {},
-			structured,
-		)
-		route_plan["filters"] = merged_filters
-		# Strategy A：检索 query 保留 history rewrite；plan 只贡献 filters（及 debug 中的 semantic_query）
-		retrieval_query = rewritten
-		route_plan["rewritten_queries"] = [retrieval_query]
-		if (
-			not structured.degraded
-			and structured.applied_filters.get("record_type")
-			and not route_plan.get("record_type")
-		):
-			route_plan["record_type"] = structured.applied_filters["record_type"]
-
-		return {
-			"rewritten_question": retrieval_query,
-			"retrieval_plan": route_plan,
-			"retrieval_attempts": 0,
-			"refused": False,
-			"refuse_reason": None,
-			"retrieval_debug": _merge_debug(
-				state,
-				rewrite=rewrite_mode,
-				# Loaded history messages (user+assistant); rewrite uses last turn only.
-				history_turns=len(history),
-				# Messages injected into generate (after turn/char trim).
-				generate_history_turns=len(gen_history),
-				mode=ctx.mode,
-				answer_min_score=min_score,
-				rerank_enabled=bool(ctx.settings.rerank_enabled),
-				structured_retrieval_plan=structured.debug_fields(),
-				retrieval_plan=route_plan,
-				retrieval_query=retrieval_query,
-				retrieval_query_source="history_rewrite",
-				plan_semantic_query=structured.plan.semantic_query,
-			),
-		}
-
-	def retrieve_node(state: AskState) -> AskState:
-		t0 = time.perf_counter()
-		query = state.get("rewritten_question") or state["question"]
-		attempts = int(state.get("retrieval_attempts") or 0) + 1
-		plan = dict(state.get("retrieval_plan") or {})
-		top_k = int(plan.get("top_k") or ctx.settings.retrieve_top_k)
-		# 宽召回：裁决前多取候选；display/context 再截到 top_k
-		candidate_k = wide_recall_limit(top_k, ctx.settings)
-		filters = dict(plan.get("filters") or {})
-		plan_rt = str(plan.get("record_type") or filters.get("record_type") or "chunk")
-		unified_fast = plan_rt == "chunk+table_summary" or (
-			str(plan.get("path") or "") == "fast"
-			and plan_rt not in {"section", "table", "table_summary"}
-		)
-
-		if unified_fast:
-			chunk_filters = dict(filters)
-			chunk_filters["record_type"] = "chunk"
-			citations = ctx.retrieve(
-				query, state.get("library_id"), candidate_k, chunk_filters
-			)
-			summary_filters = dict(filters)
-			summary_filters["record_type"] = "table_summary"
-			summaries = ctx.retrieve(
-				query,
-				state.get("library_id"),
-				min(4, candidate_k),
-				summary_filters,
-			)
-			combined = [*summaries, *citations]
-			deduped: list[dict[str, Any]] = []
-			seen: set[str] = set()
-			for item in sorted(
-				combined,
-				key=lambda value: float(value.get("score") or 0),
-				reverse=True,
-			):
-				key = str(
-					item.get("record_id")
-					or item.get("id")
-					or (
-						item.get("doc_id"),
-						item.get("table_id"),
-						item.get("record_type"),
-						item.get("chunk_index"),
-					)
-				)
-				if key in seen:
-					continue
-				seen.add(key)
-				deduped.append(item)
-			# 裁决前暂不硬截 top_k；保留宽池供 citation_adjudicate
-			citations = deduped[: max(candidate_k, top_k + min(4, top_k))]
-			filters = {**filters, "record_type": "chunk+table_summary"}
-			resolved_rt = "chunk+table_summary"
-		else:
-			if plan.get("record_type") and "record_type" not in filters:
-				filters["record_type"] = plan["record_type"]
-			citations = ctx.retrieve(
-				query, state.get("library_id"), candidate_k, filters
-			)
-			resolved_rt = str(filters.get("record_type") or plan_rt)
-
-		# 文本引用裁决（table precise 路径不走本节点）
-		adjudicate_result = apply_citation_adjudicate(
-			query,
-			citations,
-			top_k=top_k,
-			settings=ctx.settings,
-		)
-		citations = adjudicate_result.citations
-
-		# 薄 citation_check：section 命中应能回溯 source_chunk_ids
-		citation_check = {"ok": True, "missing_source_chunk_ids": 0}
-		if resolved_rt == "section":
-			missing = sum(
-				1
-				for item in citations
-				if not (item.get("source_chunk_ids") or [])
-			)
-			citation_check = {
-				"ok": missing == 0,
-				"missing_source_chunk_ids": missing,
-			}
-		debug_extra: dict[str, Any] = {
-			"record_type": resolved_rt,
-			"filters": filters,
-			"citation_check": citation_check,
-			**adjudicate_debug_fields(adjudicate_result),
-		}
-		tool_trace: list[dict[str, Any]] = []
-		# TOOL_ASK：默认仍短路径；仅规范化 citation + 记录 search_docs 轨迹（多跳工具后续扩展）
-		if ctx.settings.tool_ask:
-			from app.services.ingest.tools import quote_source
-
-			citations = [quote_source(item) for item in citations]
-			tool_trace.append(
-				{
-					"tool": "search_docs",
-					"query": query,
-					"hit_count": len(citations),
-				}
-			)
-		# 最终保障：多路合并 / quote_source / 裁决后 index 仍为唯一连续 1..N
-		citations = _renumber_citation_indexes(citations)
-		top_score = float(citations[0]["score"]) if citations else None
-		used_rerank = bool(citations and citations[0].get("used_rerank"))
-		retrieve_ms = (time.perf_counter() - t0) * 1000
-		retrieve_detail = citation_retrieve_detail(citations)
-
-		# 阶段2：fast → precise 升级（写死条件 + upgrade_reason）
-		t_adjudicate0 = time.perf_counter()
-		upgrade: str | None = None
-		upgrade_reason: str | None = None
-		out_plan = plan
-		out_query_type = str(state.get("query_type") or plan.get("query_type") or "fact")
-		if str(plan.get("path") or "fast") == "fast" and resolved_rt != "section":
-			do_upgrade, reason = should_upgrade_fast_to_precise_table(
-				state.get("question") or query,
-				citations,
-			)
-			if do_upgrade:
-				upgrade = "precise"
-				upgrade_reason = reason
-				out_query_type = "table"
-				out_plan = {
-					**plan,
-					"path": "precise",
-					"precise_kind": "table",
-					"execute_path": "table",
-					"record_type": "table",
-					"query_type": "table",
-					"route": plan.get("route") or "fast",
-					"reason": f"upgrade:{reason}",
-				}
-				filters_up = dict(out_plan.get("filters") or {})
-				filters_up["record_type"] = "table"
-				out_plan["filters"] = filters_up
-		adjudicate_ms = (time.perf_counter() - t_adjudicate0) * 1000
-
-		debug = _merge_debug(
-			state,
-			retrieve=ctx.mode,
-			library_id=state.get("library_id"),
-			hit_count=len(citations),
-			top_score=top_score,
-			used_rerank=used_rerank,
-			retrieval_attempts=attempts,
-			query=query,
-			tool_ask=bool(ctx.settings.tool_ask),
-			tool_trace=tool_trace,
-			retrieval_plan=out_plan,
-			route=out_plan.get("route") or plan.get("route"),
-			path=out_plan.get("path"),
-			precise_kind=out_plan.get("precise_kind"),
-			upgrade=upgrade,
-			upgrade_reason=upgrade_reason,
-			**debug_extra,
-		)
-		append_stage(
-			debug,
-			name="retrieve",
-			duration_ms=retrieve_ms,
-			detail=retrieve_detail,
-		)
-		append_stage(
-			debug,
-			name="adjudicate",
-			duration_ms=adjudicate_ms,
-			detail={
-				"decision": "upgrade" if upgrade else "keep",
-				"decision_reason": upgrade_reason,
-				"upgrade_to": upgrade,
-			},
-		)
-		return {
-			"citations": citations,
-			"retrieval_attempts": attempts,
-			"retrieval_plan": out_plan,
-			"query_type": out_query_type,
-			"upgrade": upgrade,
-			"upgrade_reason": upgrade_reason,
-			"retrieval_debug": debug,
-		}
-
-	def route_after_retrieve(
-		state: AskState,
-	) -> Literal["upgrade_precise", "judge"]:
-		if state.get("upgrade") == "precise":
-			return "upgrade_precise"
-		return "judge"
-
-	def judge_node(state: AskState) -> AskState:
-		citations = state.get("citations") or []
-		attempts = int(state.get("retrieval_attempts") or 0)
-		library_name = _library_label(state.get("library_id"))
-		table_execution = state.get("table_execution") or {}
-		query_type = str(state.get("query_type") or "")
-
-		# 表格结构化执行成功：证据充分，跳过 dense score 阈值
-		if (
-			query_type == "table"
-			and table_execution.get("ok")
-			and (state.get("table_query_plan") or {}).get("confident")
-		):
-			judgement = {
-				"sufficient": True,
-				"action": "generate",
-				"reason": "table_exec_ok",
-				"top_score": float(citations[0].get("score") or 1.0) if citations else 1.0,
-				"min_score": min_score,
-			}
-			return {
-				"judgement": judgement,
-				"refuse_reason": None,
-				"retrieval_debug": _merge_debug(
-					state, judgement=judgement, library_name=library_name
-				),
-			}
-
-		if not citations:
-			can_retry = attempts <= max_retries
-			judgement = {
-				"sufficient": False,
-				"action": "retry" if can_retry else "refuse",
-				"reason": "no_hit",
-				"can_retry": can_retry,
-			}
-		else:
-			top_score = float(citations[0].get("score") or 0.0)
-			# 低于阈值必须走正式 refuse（refused=true），禁止落到 generate 再靠模型口头「未覆盖」
-			weak = min_score > 0 and top_score < min_score
-			# table fallback（软问法）：有命中即生成，不因分数卡死 stub/结构化表
-			if query_type == "table" and not weak:
-				judgement = {
-					"sufficient": True,
-					"action": "generate",
-					"reason": "table_fallback_llm",
-					"top_score": top_score,
-					"min_score": min_score,
-				}
-			elif weak:
-				can_retry = attempts <= max_retries
-				judgement = {
-					"sufficient": False,
-					"action": "retry" if can_retry else "refuse",
-					"reason": "weak_match",
-					"top_score": top_score,
-					"min_score": min_score,
-					"can_retry": can_retry,
-				}
-			else:
-				judgement = {
-					"sufficient": True,
-					"action": "generate",
-					"reason": "ok",
-					"top_score": top_score,
-					"min_score": min_score,
-				}
-
-		# Attach human-facing refuse reason early for refuse path.
-		refuse_reason = None
-		if judgement["action"] == "refuse":
-			refuse_reason = judgement["reason"]
-
-		return {
-			"judgement": judgement,
-			"refuse_reason": refuse_reason,
-			"retrieval_debug": _merge_debug(state, judgement=judgement, library_name=library_name),
-		}
-
-	def route_after_judge(state: AskState) -> Literal["retry", "generate", "refuse"]:
-		action = (state.get("judgement") or {}).get("action") or "generate"
-		if action == "retry":
-			return "retry"
-		if action == "refuse":
-			return "refuse"
-		return "generate"
-
-	def route_after_retry(state: AskState) -> Literal["retrieve", "table_retrieve"]:
-		plan = state.get("retrieval_plan") or {}
-		if (
-			str(state.get("query_type") or "") == "table"
-			or plan.get("path") == "precise"
-			or state.get("upgrade") == "precise"
-		):
-			return "table_retrieve"
-		return "retrieve"
-
-	def retry_node(state: AskState) -> AskState:
-		"""Broaden query once, then re-enter retrieve."""
-		base = state.get("rewritten_question") or state["question"]
-		reason = (state.get("judgement") or {}).get("reason")
-		if reason == "weak_match":
-			broadened = f"{base} 相关制度 条款 规定"
-		else:
-			broadened = f"{base} 关键词 概要"
-		return {
-			"rewritten_question": broadened,
-			"retrieval_debug": _merge_debug(
-				state,
-				retry={"from": base, "to": broadened, "reason": reason},
-			),
-		}
-
-	def refuse_node(state: AskState) -> AskState:
-		reason = (state.get("judgement") or {}).get("reason") or state.get("refuse_reason") or "no_hit"
-		library_name = _library_label(state.get("library_id"))
-		if reason == "weak_match":
-			answer = weak_match_answer(library_name=library_name)
-			# Keep weak citations for transparency (DustyKB behavior).
-			citations = state.get("citations") or []
-		else:
-			answer = no_match_answer(library_name=library_name)
-			citations = []
-		return {
-			"answer": answer,
-			"citations": citations,
-			"refused": True,
-			"refuse_reason": reason,
-			"retrieval_debug": _merge_debug(state, generate="refuse", refuse_reason=reason),
-		}
-
-	def generate_node(state: AskState) -> AskState:
-		t0 = time.perf_counter()
-		citations = state.get("citations") or []
-		execution = state.get("table_execution") or {}
-		tq = state.get("table_query_plan") or {}
-		stream_mode = bool((state.get("retrieval_debug") or {}).get("stream"))
-		history = state.get("history") or []
-		gen_history = history_for_generate(history)
-		question = (state.get("question") or "").strip()
-		# 结构化表格结果：优先用程序答案（LLM 仅在 live 路径解释）；stub 直接给 answer_text
-		if (
-			str(state.get("query_type") or "") == "table"
-			and execution.get("ok")
-			and tq.get("confident")
-			and execution.get("answer_text")
-		):
-			if ctx.mode == "stub":
-				answer = str(execution["answer_text"])
-			else:
-				# live：把计算结果注入资料上下文；history 仍为完整多轮 messages
-				messages = build_generate_messages(
-					question=question,
-					context=_format_generate_context(citations, execution),
-					history=gen_history,
-				)
-				answer = ctx.generate(messages, citations)
-		else:
-			messages = build_generate_messages(
-				question=question,
-				context=_format_generate_context(citations),
-				history=gen_history,
-			)
-			answer = ctx.generate(messages, citations)
-		debug = _merge_debug(
-			state,
-			generate=ctx.mode,
-			generate_history_turns=len(gen_history),
-			table_query_plan=tq or None,
-			table_execution=execution or None,
-		)
-		# stream：真实生成在 iter_ask_events 结束时计时；此处跳过以免 TTFB 污染
-		if not stream_mode:
-			append_stage(
-				debug,
-				name="generate",
-				duration_ms=(time.perf_counter() - t0) * 1000,
-				detail={
-					"mode": ctx.mode,
-					"model": ctx.settings.chat_model if ctx.mode == "live" else None,
-					"input_tokens": None,
-					"output_tokens": None,
-				},
-			)
-		return {
-			"answer": answer,
-			"refused": False,
-			"refuse_reason": None,
-			"retrieval_debug": debug,
-		}
+	routing = build_routing_nodes(ctx, min_score=min_score)
+	rewrite = build_rewrite_nodes(ctx, min_score=min_score)
+	retrieval = build_retrieval_nodes(ctx)
+	table = build_table_nodes(ctx)
+	decision = build_decision_nodes(ctx, min_score=min_score, max_retries=max_retries)
+	generation = build_generation_nodes(ctx)
 
 	graph: StateGraph[AskState] = StateGraph(AskState)
-	graph.add_node("query_router", query_router_node)
-	graph.add_node("build_retrieval_plan", build_plan_node)
-	graph.add_node("clarify", clarify_node)
-	graph.add_node("build_table_plan", build_table_plan_node)
-	graph.add_node("table_retrieve", table_retrieve_node)
-	graph.add_node("table_execute", table_execute_node)
-	graph.add_node("rewrite", rewrite_node)
-	graph.add_node("retrieve", retrieve_node)
-	graph.add_node("judge", judge_node)
-	graph.add_node("retry", retry_node)
-	graph.add_node("generate", generate_node)
-	graph.add_node("refuse", refuse_node)
+	graph.add_node("query_router", routing.query_router)
+	graph.add_node("build_retrieval_plan", routing.build_plan)
+	graph.add_node("clarify", routing.clarify)
+	graph.add_node("build_table_plan", table.build_table_plan)
+	graph.add_node("table_retrieve", table.table_retrieve)
+	graph.add_node("table_execute", table.table_execute)
+	graph.add_node("rewrite", rewrite.rewrite)
+	graph.add_node("retrieve", retrieval.retrieve)
+	graph.add_node("judge", decision.judge)
+	graph.add_node("retry", decision.retry)
+	graph.add_node("generate", generation.generate)
+	graph.add_node("refuse", decision.refuse)
 	graph.set_entry_point("query_router")
 	graph.add_edge("query_router", "build_retrieval_plan")
 	graph.add_conditional_edges(
 		"build_retrieval_plan",
-		route_after_plan,
+		routing.route_after_plan,
 		{"clarify": "clarify", "rewrite": "rewrite"},
 	)
 	graph.add_edge("clarify", END)
@@ -1386,27 +186,27 @@ def build_ask_graph(
 	graph.add_edge("table_retrieve", "table_execute")
 	graph.add_conditional_edges(
 		"table_execute",
-		route_after_table_execute,
+		table.route_after_table_execute,
 		{"judge": "judge", "end": END},
 	)
 	graph.add_conditional_edges(
 		"rewrite",
-		route_after_rewrite,
+		routing.route_after_rewrite,
 		{"retrieve": "retrieve", "table": "build_table_plan"},
 	)
 	graph.add_conditional_edges(
 		"retrieve",
-		route_after_retrieve,
+		retrieval.route_after_retrieve,
 		{"upgrade_precise": "build_table_plan", "judge": "judge"},
 	)
 	graph.add_conditional_edges(
 		"judge",
-		route_after_judge,
+		decision.route_after_judge,
 		{"retry": "retry", "generate": "generate", "refuse": "refuse"},
 	)
 	graph.add_conditional_edges(
 		"retry",
-		route_after_retry,
+		decision.route_after_retry,
 		{"retrieve": "retrieve", "table_retrieve": "table_retrieve"},
 	)
 	graph.add_edge("generate", END)
