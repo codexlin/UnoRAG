@@ -24,7 +24,7 @@ deploy/
       init-config.sh        # 复制 example → 真实文件（不覆盖）
       compose-env.sh        # mk_compose / --env-file 助手
       install.sh            # 安装：infra → migrate → app
-      upgrade.sh            # 滚动升级（含 worker drain）
+      upgrade.sh            # 滚动升级：compose pull + drain + outbox；见 docs/ops/cicd-p0.md
       backup.sh             # PostgreSQL / 对象 / Qdrant
       restore.sh            # 恢复（需显式确认）
       pilot-preflight.sh    # L9：隔离单测 + CI gate（可无 Compose）

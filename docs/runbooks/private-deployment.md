@@ -116,29 +116,33 @@ DATABASE_URL=... pnpm lifecycle:inspect
 
 ## 4. 升级
 
+默认路径是 **Registry pull**（不是本机 `compose build`）。须提供 pin 过的 release（拒绝 `latest` / 空 tag）。详见 [`docs/ops/cicd-p0.md`](../ops/cicd-p0.md)。
+
 ```bash
 ./scripts/backup.sh ./backups/pre-upgrade
-./scripts/upgrade.sh
+./scripts/upgrade.sh --manifest /path/to/release.env
+# 或：./scripts/upgrade.sh --web IMG --api IMG --migrator IMG
+# 或：./scripts/upgrade.sh --from-runtime   # 使用 runtime.env 已有 pin
 ```
 
 升级要点：
 
-1. **先迁移、再切流量**（additive schema）。  
-2. **worker drain**：`source scripts/compose-env.sh && mk_compose stop lifecycle-worker` 发送 SIGTERM；  
-   worker 停止 claim，当前同步步骤结束后退出（`stop_grace_period: 2m`）。  
-3. 滚动 `api` → `web` → 拉起新 `lifecycle-worker` / `outbox-worker` → `caddy`。  
-4. 多 pipeline version 可短暂并存；检索以 PostgreSQL active generation 为准。  
+1. **先迁移、再切流量**（**additive** schema；迁移失败 **不**自动回滚数据库）。
+2. **worker drain**：SIGTERM `lifecycle-worker`（`stop_grace_period: 2m`）。
+3. 滚动 `api` → `web` → `lifecycle-worker` → **`outbox-worker`** → `caddy`。
+4. Health 后自动跑 `pilot-smoke.sh`（若可执行；SKIP=exit 2 不触发回滚）。
+5. 应用失败时脚本可按 `.upgrade-state/previous-images.env` **回切旧镜像**（应用回滚 ≠ DB 回滚）。
 
 升级后验收：health、上传/替换一文档、Ask 引用、`lifecycle:inspect` 无异常堆积。
 
 ## 5. 回滚
 
-1. 停止写入（或 drain worker）。  
-2. 将 `MERIKNOW_WEB_IMAGE` / `MERIKNOW_API_IMAGE` 指回上一版本 tag，  
-   `source scripts/compose-env.sh && mk_compose up -d api web lifecycle-worker outbox-worker caddy`。  
-3. **不要**盲目 down-migrate Schema。Additive 列可保留；若版本要求恢复数据，  
-   使用备份按第 6 节 restore。  
-4. 若仅应用回归：回滚镜像即可；若出现数据损坏或不兼容迁移，走 backup restore。  
+1. 停止写入（或 drain worker）。
+2. 将 `MERIKNOW_WEB_IMAGE` / `MERIKNOW_WEB_MIGRATOR_IMAGE` / `MERIKNOW_API_IMAGE` 指回上一版本（或重跑升级脚本的自动应用回滚），
+   `source scripts/compose-env.sh && mk_compose up -d api web lifecycle-worker outbox-worker caddy`。
+3. **不要**盲目 down-migrate Schema。Additive 列可保留；若版本要求恢复数据，
+   使用备份按第 6 节 restore。
+4. 若仅应用回归：回滚镜像即可；若出现数据损坏或不兼容迁移，走 backup restore。
 
 应用回滚后再次执行 readiness 与一次 Ask/上传冒烟。
 

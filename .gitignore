@@ -55,3 +55,4 @@ scripts/acceptance/.b5-work/
 # Local rotation / one-time migration markers
 deploy/config/.credential-rotation.receipt
 deploy/config/.legacy-env-migrated
+deploy/compose/.upgrade-state/
