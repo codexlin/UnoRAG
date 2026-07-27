@@ -28,6 +28,7 @@ from app.graph.messages import (
 	rewrite_with_history,
 )
 from app.graph.persistence import persist_turn, single_document_version_id
+from app.graph.context import AskGraphContext, build_ask_graph_context
 from app.graph.state import AskState, GenerateFn, LoadTableGroupsFn, RetrieveFn
 from app.graph.stubs import (
 	STUB_CITATIONS,
@@ -110,12 +111,14 @@ _history_from_thread = history_from_thread
 _single_document_version_id = single_document_version_id
 
 __all__ = [
+	"AskGraphContext",
 	"AskGraphService",
 	"AskState",
 	"GenerateFn",
 	"LoadTableGroupsFn",
 	"RetrieveFn",
 	"STUB_CITATIONS",
+	"build_ask_graph_context",
 	"append_temp_session_memory",
 	"build_ask_graph",
 	"build_generate_messages",
@@ -287,14 +290,18 @@ def build_ask_graph(
 	load_table_groups_fn: LoadTableGroupsFn | None = None,
 	access_scope: AccessScope | None = None,
 ):
-	# Product knobs live on ASK_DEFAULTS ⊕ overrides — never plain Settings/env.
-	if not hasattr(settings, "answer_min_score"):
-		settings = effective_ask_settings(settings)
-	min_score = float(settings.answer_min_score)
-	max_retries = max(0, int(settings.max_retrieve_retries))
-	scope = resolve_access_scope(settings, access_scope)
-	tenant_id = scope.tenant_id
-	workspace_id = scope.workspace_id
+	"""Compile Ask topology; nodes close over a single AskGraphContext (not loose deps)."""
+	ctx = build_ask_graph_context(
+		settings=settings,
+		retrieve=retrieve_fn,
+		generate=generate_fn,
+		mode=mode,
+		load_table_groups=load_table_groups_fn,
+		access_scope=access_scope,
+	)
+	# Derived once from already-resolved ctx.settings (nodes never re-resolve policy).
+	min_score = float(ctx.settings.answer_min_score)
+	max_retries = max(0, int(ctx.settings.max_retrieve_retries))
 
 	def query_router_node(state: AskState) -> AskState:
 		"""规则分类；summary/table/ambiguous 等仅落盘，不建子图。"""
@@ -315,11 +322,11 @@ def build_ask_graph(
 				state,
 				query_type=query_type,
 				route_reason=route_reason,
-				mode=mode,
+				mode=ctx.mode,
 				answer_min_score=min_score,
-				rerank_enabled=bool(settings.rerank_enabled),
-				tenant_id=tenant_id,
-				workspace_id=workspace_id,
+				rerank_enabled=bool(ctx.settings.rerank_enabled),
+				tenant_id=ctx.scope.tenant_id,
+				workspace_id=ctx.scope.workspace_id,
 			),
 		}
 
@@ -331,11 +338,11 @@ def build_ask_graph(
 			query_type=query_type,
 			route_reason=route_reason,
 			library_id=state.get("library_id"),
-			top_k=settings.retrieve_top_k,
-			hybrid_enabled=bool(settings.hybrid_enabled),
-			rerank_enabled=bool(settings.rerank_enabled),
-			tenant_id=tenant_id,
-			workspace_id=workspace_id,
+			top_k=ctx.settings.retrieve_top_k,
+			hybrid_enabled=bool(ctx.settings.hybrid_enabled),
+			rerank_enabled=bool(ctx.settings.rerank_enabled),
+			tenant_id=ctx.scope.tenant_id,
+			workspace_id=ctx.scope.workspace_id,
 			question=state.get("question"),
 		)
 		debug = _merge_debug(
@@ -420,13 +427,13 @@ def build_ask_graph(
 		query = state.get("rewritten_question") or state["question"]
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
 		plan = state.get("retrieval_plan") or {}
-		top_k = int(plan.get("top_k") or settings.retrieve_top_k)
+		top_k = int(plan.get("top_k") or ctx.settings.retrieve_top_k)
 		filters = dict(plan.get("filters") or {})
 		filters["record_type"] = "table"
-		citations = retrieve_fn(query, state.get("library_id"), top_k, filters)
+		citations = ctx.retrieve(query, state.get("library_id"), top_k, filters)
 		summary_filters = dict(filters)
 		summary_filters["record_type"] = "table_summary"
-		summaries = retrieve_fn(
+		summaries = ctx.retrieve(
 			query,
 			state.get("library_id"),
 			min(4, top_k),
@@ -463,7 +470,7 @@ def build_ask_graph(
 		retrieve_detail = citation_retrieve_detail(citations)
 		debug = _merge_debug(
 			state,
-			retrieve=mode,
+			retrieve=ctx.mode,
 			library_id=state.get("library_id"),
 			hit_count=len(citations),
 			top_score=top_score,
@@ -497,7 +504,7 @@ def build_ask_graph(
 
 		dual_payload = prepare_dual_tables_for_execute(
 			citations,
-			load_table_groups=load_table_groups_fn,
+			load_table_groups=ctx.load_table_groups,
 			library_id=state.get("library_id"),
 			question=question,
 		)
@@ -650,7 +657,7 @@ def build_ask_graph(
 
 		merged = prepare_table_for_execute(
 			citations,
-			load_table_groups=load_table_groups_fn,
+			load_table_groups=ctx.load_table_groups,
 			library_id=state.get("library_id"),
 			question=question,
 		)
@@ -910,11 +917,11 @@ def build_ask_graph(
 		raw_plan: str | dict[str, Any] | None = None
 		from_llm = False
 		llm_error: str | None = None
-		if mode == "live" and bool(getattr(settings, "has_llm_key", False)):
+		if ctx.mode == "live" and bool(getattr(ctx.settings, "has_llm_key", False)):
 			from_llm = True
 			try:
 				raw_plan = _request_structured_retrieval_plan_json(
-					settings,
+					ctx.settings,
 					question=question,
 					fallback_semantic_query=rewritten,
 				)
@@ -960,9 +967,9 @@ def build_ask_graph(
 				history_turns=len(history),
 				# Messages injected into generate (after turn/char trim).
 				generate_history_turns=len(gen_history),
-				mode=mode,
+				mode=ctx.mode,
 				answer_min_score=min_score,
-				rerank_enabled=bool(settings.rerank_enabled),
+				rerank_enabled=bool(ctx.settings.rerank_enabled),
 				structured_retrieval_plan=structured.debug_fields(),
 				retrieval_plan=route_plan,
 				retrieval_query=retrieval_query,
@@ -976,9 +983,9 @@ def build_ask_graph(
 		query = state.get("rewritten_question") or state["question"]
 		attempts = int(state.get("retrieval_attempts") or 0) + 1
 		plan = dict(state.get("retrieval_plan") or {})
-		top_k = int(plan.get("top_k") or settings.retrieve_top_k)
+		top_k = int(plan.get("top_k") or ctx.settings.retrieve_top_k)
 		# 宽召回：裁决前多取候选；display/context 再截到 top_k
-		candidate_k = wide_recall_limit(top_k, settings)
+		candidate_k = wide_recall_limit(top_k, ctx.settings)
 		filters = dict(plan.get("filters") or {})
 		plan_rt = str(plan.get("record_type") or filters.get("record_type") or "chunk")
 		unified_fast = plan_rt == "chunk+table_summary" or (
@@ -989,12 +996,12 @@ def build_ask_graph(
 		if unified_fast:
 			chunk_filters = dict(filters)
 			chunk_filters["record_type"] = "chunk"
-			citations = retrieve_fn(
+			citations = ctx.retrieve(
 				query, state.get("library_id"), candidate_k, chunk_filters
 			)
 			summary_filters = dict(filters)
 			summary_filters["record_type"] = "table_summary"
-			summaries = retrieve_fn(
+			summaries = ctx.retrieve(
 				query,
 				state.get("library_id"),
 				min(4, candidate_k),
@@ -1029,7 +1036,7 @@ def build_ask_graph(
 		else:
 			if plan.get("record_type") and "record_type" not in filters:
 				filters["record_type"] = plan["record_type"]
-			citations = retrieve_fn(
+			citations = ctx.retrieve(
 				query, state.get("library_id"), candidate_k, filters
 			)
 			resolved_rt = str(filters.get("record_type") or plan_rt)
@@ -1039,7 +1046,7 @@ def build_ask_graph(
 			query,
 			citations,
 			top_k=top_k,
-			settings=settings,
+			settings=ctx.settings,
 		)
 		citations = adjudicate_result.citations
 
@@ -1063,7 +1070,7 @@ def build_ask_graph(
 		}
 		tool_trace: list[dict[str, Any]] = []
 		# TOOL_ASK：默认仍短路径；仅规范化 citation + 记录 search_docs 轨迹（多跳工具后续扩展）
-		if settings.tool_ask:
+		if ctx.settings.tool_ask:
 			from app.services.ingest.tools import quote_source
 
 			citations = [quote_source(item) for item in citations]
@@ -1113,14 +1120,14 @@ def build_ask_graph(
 
 		debug = _merge_debug(
 			state,
-			retrieve=mode,
+			retrieve=ctx.mode,
 			library_id=state.get("library_id"),
 			hit_count=len(citations),
 			top_score=top_score,
 			used_rerank=used_rerank,
 			retrieval_attempts=attempts,
 			query=query,
-			tool_ask=bool(settings.tool_ask),
+			tool_ask=bool(ctx.settings.tool_ask),
 			tool_trace=tool_trace,
 			retrieval_plan=out_plan,
 			route=out_plan.get("route") or plan.get("route"),
@@ -1310,7 +1317,7 @@ def build_ask_graph(
 			and tq.get("confident")
 			and execution.get("answer_text")
 		):
-			if mode == "stub":
+			if ctx.mode == "stub":
 				answer = str(execution["answer_text"])
 			else:
 				# live：把计算结果注入资料上下文；history 仍为完整多轮 messages
@@ -1319,17 +1326,17 @@ def build_ask_graph(
 					context=_format_generate_context(citations, execution),
 					history=gen_history,
 				)
-				answer = generate_fn(messages, citations)
+				answer = ctx.generate(messages, citations)
 		else:
 			messages = build_generate_messages(
 				question=question,
 				context=_format_generate_context(citations),
 				history=gen_history,
 			)
-			answer = generate_fn(messages, citations)
+			answer = ctx.generate(messages, citations)
 		debug = _merge_debug(
 			state,
-			generate=mode,
+			generate=ctx.mode,
 			generate_history_turns=len(gen_history),
 			table_query_plan=tq or None,
 			table_execution=execution or None,
@@ -1341,8 +1348,8 @@ def build_ask_graph(
 				name="generate",
 				duration_ms=(time.perf_counter() - t0) * 1000,
 				detail={
-					"mode": mode,
-					"model": settings.chat_model if mode == "live" else None,
+					"mode": ctx.mode,
+					"model": ctx.settings.chat_model if ctx.mode == "live" else None,
 					"input_tokens": None,
 					"output_tokens": None,
 				},
