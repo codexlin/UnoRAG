@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "description": "Shared Py↔JS policy parity fixtures. Both sides must emit identical sorted JSON for each case.",
+  "cases": [
+    {
+      "id": "ask-public-balanced-default",
+      "kind": "ask_resolve",
+      "input": {
+        "raw": {
+          "answer_profile": "balanced",
+          "retrieval_enhancement": "auto",
+          "session_memory_enabled": true,
+          "evidence_requirement": "standard"
+        },
+        "question": null,
+        "policy_version": 1
+      }
+    },
+    {
+      "id": "ask-public-precise-strict",
+      "kind": "ask_resolve",
+      "input": {
+        "raw": {
+          "answer_profile": "precise",
+          "retrieval_enhancement": "on",
+          "session_memory_enabled": false,
+          "evidence_requirement": "strict"
+        },
+        "question": null,
+        "policy_version": null
+      }
+    },
+    {
+      "id": "ask-public-exploratory-relaxed",
+      "kind": "ask_resolve",
+      "input": {
+        "raw": {
+          "answer_profile": "exploratory",
+          "retrieval_enhancement": "off",
+          "session_memory_enabled": true,
+          "evidence_requirement": "relaxed"
+        },
+        "question": null,
+        "policy_version": 2
+      }
+    },
+    {
+      "id": "ask-public-auto-precise-lookup",
+      "kind": "ask_resolve",
+      "input": {
+        "raw": {
+          "answer_profile": "balanced",
+          "retrieval_enhancement": "auto",
+          "session_memory_enabled": true,
+          "evidence_requirement": "standard"
+        },
+        "question": "合同编号 HT-2024-001",
+        "policy_version": null
+      }
+    },
+    {
+      "id": "ask-public-invalid-enums-fallback",
+      "kind": "ask_resolve",
+      "input": {
+        "raw": {
+          "answer_profile": "turbo",
+          "retrieval_enhancement": "maybe",
+          "session_memory_enabled": "yes",
+          "evidence_requirement": "loud"
+        },
+        "question": null,
+        "policy_version": null
+      }
+    },
+    {
+      "id": "ask-legacy-pass-through",
+      "kind": "ask_resolve",
+      "input": {
+        "raw": {
+          "retrieve_top_k": 3,
+          "answer_min_score": 0.6,
+          "hybrid_enabled": true,
+          "rerank_enabled": false,
+          "citation_adjudicate_enabled": true,
+          "citation_adjudicate_absolute_floor": 0.5,
+          "session_memory_enabled": false,
+          "session_memory_max_turns": 5
+        },
+        "question": null,
+        "policy_version": null
+      }
+    },
+    {
+      "id": "ask-migrate-precise-on-strict",
+      "kind": "ask_migrate",
+      "input": {
+        "raw": {
+          "retrieve_top_k": 4,
+          "answer_min_score": 0.55,
+          "hybrid_enabled": true,
+          "rerank_enabled": true,
+          "citation_adjudicate_absolute_floor": 0.45
+        }
+      }
+    },
+    {
+      "id": "ask-migrate-exploratory-off-relaxed",
+      "kind": "ask_migrate",
+      "input": {
+        "raw": {
+          "retrieve_top_k": 10,
+          "answer_min_score": 0.25,
+          "hybrid_enabled": false,
+          "rerank_enabled": false,
+          "citation_adjudicate_enabled": false,
+          "citation_adjudicate_absolute_floor": 0.2
+        }
+      }
+    },
+    {
+      "id": "ask-migrate-empty",
+      "kind": "ask_migrate",
+      "input": {
+        "raw": null
+      }
+    },
+    {
+      "id": "doc-auto-defaults",
+      "kind": "document_resolve",
+      "input": {
+        "document_profile": null,
+        "scan_handling": null,
+        "parse_preference": null
+      }
+    },
+    {
+      "id": "doc-table-heavy-force-ocr-quality",
+      "kind": "document_resolve",
+      "input": {
+        "document_profile": "table_heavy",
+        "scan_handling": "force_ocr",
+        "parse_preference": "quality"
+      }
+    },
+    {
+      "id": "doc-regulatory-disabled-local",
+      "kind": "document_resolve",
+      "input": {
+        "document_profile": "regulatory",
+        "scan_handling": "disabled",
+        "parse_preference": "local_only"
+      }
+    },
+    {
+      "id": "doc-narrative-auto",
+      "kind": "document_resolve",
+      "input": {
+        "document_profile": "narrative",
+        "scan_handling": "auto",
+        "parse_preference": "auto"
+      }
+    },
+    {
+      "id": "doc-precise-paragraph-invalid-scan",
+      "kind": "document_resolve",
+      "input": {
+        "document_profile": "precise_paragraph",
+        "scan_handling": "weird",
+        "parse_preference": "quality"
+      }
+    },
+    {
+      "id": "override-keys-list",
+      "kind": "override_keys",
+      "input": {}
+    }
+  ]
+}

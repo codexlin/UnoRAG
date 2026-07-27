@@ -1,5 +1,10 @@
 """黄金集 runner — 本地可跑，默认 stub AskGraph。
 
+输入：eval JSONL cases（默认 tests/eval/eval_cases.jsonl）+ 可选真实/stub AskGraph
+输出：逐案 EvalCaseResult / 汇总报告
+不变量：本模块是质量工具，不是 CI release gate；消融见 ablation.py（亦非门禁）
+所有者：Data Plane / Eval
+
 用法：
   uv run python -m app.eval.runner
   uv run python scripts/run_eval_cases.py

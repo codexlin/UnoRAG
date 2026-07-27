@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ask"])
 
+# DEPRECATION (ingest 写路径): 永久废弃对外入口；禁止新调用方。
+# 最早删除版本：正式 GO 后的下一 major；删除前置：确认无调用日志、契约测试仍覆盖 410、发布迁移说明。
+# 实现见 fastapi_ingest_writes.reject_fastapi_ingest_writes。
+
 
 def _unavailable_detail(capability, *, message: str) -> dict:
 	return {
@@ -179,7 +183,11 @@ def ask_stream(
 def ingest(
 	body: IngestRequest,
 ) -> IngestResponse:
-	"""Deprecated: product ingest uses the lifecycle control plane + app.jobs."""
+	"""DEPRECATION: 永久废弃对外入口；禁止新调用方。
+	最早删除版本：正式 GO 后的下一 major；删除前置：确认无调用日志、契约测试仍覆盖 410、发布迁移说明。
+
+	Product ingest uses the lifecycle control plane + app.jobs.
+	"""
 	_ = body
 	reject_fastapi_ingest_writes()
 
@@ -194,6 +202,10 @@ async def ingest_upload(
 	file: UploadFile = File(...),
 	display_name: str | None = Form(default=None),
 ) -> UploadResponse:
-	"""Deprecated: browser uploads must use the Next.js control plane."""
+	"""DEPRECATION: 永久废弃对外入口；禁止新调用方。
+	最早删除版本：正式 GO 后的下一 major；删除前置：确认无调用日志、契约测试仍覆盖 410、发布迁移说明。
+
+	Browser uploads must use the Next.js control plane.
+	"""
 	_ = (library_id, file, display_name)
 	reject_fastapi_ingest_writes()

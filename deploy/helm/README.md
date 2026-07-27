@@ -14,7 +14,8 @@ deploy/helm/meriknow/
   templates/
     web-deployment.yaml / web-service.yaml
     api-deployment.yaml / api-service.yaml   # ClusterIP only
-    worker-deployment.yaml
+    worker-deployment.yaml                   # lifecycle-worker
+    outbox-worker-deployment.yaml            # outbox-worker（必需）
     configmap.yaml / secret.yaml / pvc.yaml
     ingress.yaml
     migrate-jobs.yaml                        # opt-in Helm hooks
@@ -63,7 +64,7 @@ helm upgrade --install meriknow ./deploy/helm/meriknow \
 ## Fail-closed edge
 
 - Ingress (when enabled) only fronts **web**.
-- **api** and **lifecycle-worker** stay ClusterIP / unpublished.
+- **api** 仅通过 ClusterIP 在集群内暴露；**lifecycle-worker** 与 **outbox-worker** 不创建 Service，三者均不对外暴露（均为私有部署必需进程）。
 - Production flags default to gate-on / legacy-writes-off (see `values.yaml` `config`).
 
 ## Explicitly deferred

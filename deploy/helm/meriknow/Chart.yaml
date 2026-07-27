@@ -1,6 +1,6 @@
 apiVersion: v2
 name: meriknow
-description: MeriKnow private-deployment Helm starter (web / api / lifecycle-worker)
+description: MeriKnow private-deployment Helm starter (web / api / lifecycle-worker / outbox-worker)
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

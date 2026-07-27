@@ -1,5 +1,9 @@
 """Business-intent policy profiles → internal ask/ingest knobs.
 
+权威映射需 Py↔JS 手工同步；改一侧必须改另一侧：
+  - Ask：本文件 ↔ apps/web/src/lib/server/ask-policy.mjs
+  - Document：本文件 resolve_document_policy ↔ apps/web/src/lib/server/document-policy.mjs
+
 Public contract (stable): answer_profile, retrieval_enhancement,
 session_memory_enabled, evidence_requirement, document_profile,
 scan_handling, parse_preference.

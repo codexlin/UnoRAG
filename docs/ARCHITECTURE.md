@@ -52,7 +52,7 @@ Outbox worker (web)  ──service HMAC──►  FastAPI /v1/internal/projectio
 | **Control Plane** | 身份、工作区、ACL 语义、文库/文档产品元数据、Job 可见性、审计写入、浏览器 BFF | 重解析、embedding、向量检索执行 |
 | **Data Plane** | DocumentIR、切分、索引、Ask 图、检索门禁、turns/threads 存储、投影消费 | 浏览器会话、成员邀请、产品路由 UI |
 
-生产拓扑：**web + rag-api + lifecycle-worker**（api 与 worker 可同镜像异命令）。FastAPI **仅内网**；浏览器只访问控制面。
+生产拓扑：**web + rag-api + lifecycle-worker + outbox-worker**（api 与 lifecycle-worker 可同镜像异命令；outbox 用 web 镜像跑 `process-outbox.mjs`）。FastAPI **仅内网**；浏览器只访问控制面。
 
 ## Schema 所有权
 

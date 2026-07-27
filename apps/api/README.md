@@ -33,7 +33,7 @@ uv run python -m app.lifecycle_worker
 | `GET /health` | 探针（可无内部鉴权） |
 | `POST /v1/ask` · `/v1/ask/stream` | 有据问答 |
 | `POST /v1/threads` 等 | 主动归档 / 续聊 |
-| `/v1/ingest*` 等写路径 | **永久 410** |
+| `/v1/ingest*` 等写路径 | **永久 410**（DEPRECATION：永久废弃对外入口；禁止新调用方。最早删除版本：正式 GO 后的下一 major；删除前置：确认无调用日志、契约测试仍覆盖 410、发布迁移说明） |
 
 私有化生产：
 

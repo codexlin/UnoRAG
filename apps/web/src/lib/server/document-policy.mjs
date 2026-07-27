@@ -1,6 +1,8 @@
 /**
  * Library document_profile / scan_handling / parse_preference → internal knobs.
- * Keep in sync with apps/api/app/services/policy_profiles.py
+ *
+ * 权威映射需 Py↔JS 手工同步；改一侧必须改另一侧：
+ *   apps/api/app/services/policy_profiles.py (resolve_document_policy) ↔ 本文件
  *
  * OCR (scan_handling): auto = deploy default; disabled = strict text-only
  * (no local OCR or MinerU); force_ocr = OCR required, engine remains internal.

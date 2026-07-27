@@ -1,3 +1,11 @@
+/**
+ * Outbox worker 入口（Control Plane → Data Plane 投影）。
+ *
+ * 输入：`app.outbox_events`（claim batch）
+ * 输出：HMAC 投递 `/v1/internal/projections/libraries/*`；标记 completed/failed
+ * 不变量：不解析 PDF / 不写 Qdrant generation；与 lifecycle-worker 职责正交
+ * 所有者：Control Plane / Outbox
+ */
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import pg from "pg";

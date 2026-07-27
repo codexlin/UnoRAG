@@ -1,4 +1,9 @@
-"""PostgreSQL lifecycle worker.
+"""PostgreSQL lifecycle worker（Data Plane ingest / delete）。
+
+输入：`app.jobs` 中 document.ingest / delete（lease claim）
+输出：parse→chunk→embed→staging→激活→延迟清理；更新 job 状态
+不变量：不处理 outbox / 文库投影；不改 Control Plane 身份与 ACL
+所有者：Data Plane / Lifecycle
 
 Run with: ``uv run python -m app.lifecycle_worker``.
 

@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["libraries"])
 
+# DEPRECATION (delete/replace/reindex 写路径): 永久废弃对外入口；禁止新调用方。
+# 最早删除版本：正式 GO 后的下一 major；删除前置：确认无调用日志、契约测试仍覆盖 410、发布迁移说明。
+# 实现见 fastapi_ingest_writes.reject_fastapi_ingest_writes。
+
 
 def get_meta(settings: Settings = Depends(get_settings)) -> MetadataStore:
 	return get_metadata_store(settings)
@@ -330,7 +334,11 @@ def get_document(
 
 @router.delete("/documents/{doc_id}")
 def delete_document(doc_id: str) -> dict[str, object]:
-	"""Deprecated: use Next.js DELETE .../documents/{id} (document.delete job)."""
+	"""DEPRECATION: 永久废弃对外入口；禁止新调用方。
+	最早删除版本：正式 GO 后的下一 major；删除前置：确认无调用日志、契约测试仍覆盖 410、发布迁移说明。
+
+	Use Next.js DELETE .../documents/{id} (document.delete job).
+	"""
 	_ = doc_id
 	reject_fastapi_ingest_writes()
 
@@ -344,7 +352,11 @@ async def replace_document(
 	doc_id: str,
 	file: UploadFile = File(...),
 ) -> UploadResponse:
-	"""Deprecated: use Next.js POST .../documents/{id}/versions."""
+	"""DEPRECATION: 永久废弃对外入口；禁止新调用方。
+	最早删除版本：正式 GO 后的下一 major；删除前置：确认无调用日志、契约测试仍覆盖 410、发布迁移说明。
+
+	Use Next.js POST .../documents/{id}/versions.
+	"""
 	_ = (doc_id, file)
 	reject_fastapi_ingest_writes()
 
@@ -355,7 +367,11 @@ async def replace_document(
 	responses={410: {"description": "FastAPI ingest writes permanently disabled"}},
 )
 async def reindex_document(doc_id: str) -> UploadResponse:
-	"""Deprecated: use Next.js POST .../documents/{id}/reindex."""
+	"""DEPRECATION: 永久废弃对外入口；禁止新调用方。
+	最早删除版本：正式 GO 后的下一 major；删除前置：确认无调用日志、契约测试仍覆盖 410、发布迁移说明。
+
+	Use Next.js POST .../documents/{id}/reindex.
+	"""
 	_ = doc_id
 	reject_fastapi_ingest_writes()
 

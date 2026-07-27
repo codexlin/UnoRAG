@@ -30,3 +30,26 @@ jobs:
         with:
           name: meriknow-ci-gate-report
           path: /tmp/meriknow-ci-gate.json
+
+  policy-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install API deps
+        working-directory: apps/api
+        run: uv sync --group dev
+      - name: Python policy unit + fixture contract
+        working-directory: apps/api
+        run: |
+          uv run pytest tests/test_policy_profiles.py tests/test_policy_parity_contract.py -q
+      - name: JS policy fixture contract
+        working-directory: apps/web
+        run: node --test tests/policy-parity.test.mjs
+      - name: Py↔JS policy parity compare
+        run: python3 scripts/compare_policy_parity.py

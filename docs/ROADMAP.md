@@ -168,7 +168,17 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 
 ## 明确不做（路线图纪律）
 
-与 [PRODUCT.md](./PRODUCT.md) 一致，下列项不得挤占近期容量：
+与 [PRODUCT.md](./PRODUCT.md) 及 [architecture/convergence-plan.md](./architecture/convergence-plan.md) §7 一致，下列项不得挤占近期容量：
+
+### 冻结（私有化上线 / 试点正式 GO 前）
+
+私有化上线前**只做稳定性与 Step 1 收敛**；明确冻结：
+
+- **不扩张**消融评测平台（`ask-ablation-eval` 保持实验，**不进** release gate）
+- **不实现** OpenAI-compatible 层加深
+- **不新增** Ask 图分支 / 平行 policy 引擎 / 新 Ask 产品能力面
+
+### 长期不做 / 纪律
 
 - 开放式通用 Agent 工具市场
 - 公网裸 FastAPI

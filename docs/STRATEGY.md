@@ -136,7 +136,7 @@ OpenAI API ──┘
 
 目标交付包括可重复运行的 Compose、Workspace、Retrieve/Ask 对外 API v1.0、示例数据、质量门禁、基础运维文档和可复现演示。
 
-Python SDK、MCP 和 OpenAI-compatible adapter 不属于本阶段必交付；它们应在 Knowledge API 经真实集成验证稳定后，作为降低接入成本的薄适配层提供。具体顺序以 [ROADMAP.md](./ROADMAP.md) 为准。
+Python SDK 与 MCP 薄适配（Retrieve/Ask v1）**已交付 0.1.0**：[`sdk/python/`](../sdk/python/) · [`sdk/mcp/`](../sdk/mcp/)；契约见 [`contracts/retrieve-ask-v1.md`](./contracts/retrieve-ask-v1.md)。OpenAI-compatible adapter 仍后置，待 Knowledge API 经真实集成验证稳定后再加深。具体顺序以 [ROADMAP.md](./ROADMAP.md) 为准。
 
 目标不是堆 star，而是证明：
 

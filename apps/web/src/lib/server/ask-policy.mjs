@@ -1,6 +1,8 @@
 /**
  * Business-intent ask policy → internal knobs.
- * Keep in sync with apps/api/app/services/policy_profiles.py
+ *
+ * 权威映射需 Py↔JS 手工同步；改一侧必须改另一侧：
+ *   apps/api/app/services/policy_profiles.py ↔ 本文件
  *
  * Conflict rule (refusal/citation): take the stricter of answer_profile and
  * evidence_requirement (higher min_score/floor; adjudicate=true preferred).

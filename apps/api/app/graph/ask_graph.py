@@ -1,3 +1,11 @@
+"""Ask 编排图（Data Plane）。
+
+输入：有效 Ask 请求 + effective settings（含 ask_overrides / policy snapshot）
+输出：AskResponse（答案、引用、trace/debug）
+不变量：产品 knobs 不读 HYBRID_ENABLED 等 env；门禁与检索计划走既有合同
+所有者：Data Plane / Ask
+"""
+
 from __future__ import annotations
 
 import logging

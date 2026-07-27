@@ -8,6 +8,7 @@
 | [STRATEGY.md](./STRATEGY.md) | 产品层级、目标客户、首发场景、商业化与面试叙事 |
 | [ROADMAP.md](./ROADMAP.md) | 近中远期、开始前 checklist、交付优先级 |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 控制面 / 数据面、入库、会话、Ask 流水线 |
+| [architecture/convergence-plan.md](./architecture/convergence-plan.md) | 事实源收敛、兼容路径、Step 1 backlog（临近私有化） |
 | [INTEGRATION.md](./INTEGRATION.md) | Knowledge API：已实现 vs 规划中契约 |
 | [contracts/retrieve-ask-v1.md](./contracts/retrieve-ask-v1.md) | Retrieve/Ask 公共 API v1 冻结契约 |
 | [DEV.md](./DEV.md) | 本地启动与 env 分层 |
