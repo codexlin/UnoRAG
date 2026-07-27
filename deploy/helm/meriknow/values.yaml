@@ -179,6 +179,11 @@ config:
   mineru302TaskPath: /302/v2/mineru/task
   mineru302PollIntervalSeconds: "5"
   mineru302MaxWaitSeconds: "900"
+  # Placeholder cost rate; set from 302 billing. Budget 0 = gate off.
+  mineru302CostPerPage: "0.02"
+  mineru302DailyBudget: "0"
+  mineru302BudgetWarnRatio: "0.8"
+  mineru302LongPendingSeconds: "300"
   # Transitional: chart maps LLM_BASE_URL / openaiBaseUrl → OPENAI_BASE_URL for api/worker
   openaiBaseUrl: ""
   llmBaseUrl: ""

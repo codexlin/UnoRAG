@@ -17,6 +17,7 @@ from app.repositories.job_repository import (
 from app.security.access_scope import AccessScope
 from app.services.hybrid import get_bm25_cache
 from app.services.ingest.backends.mineru import MinerUClientError, MinerUPendingError
+from app.services.ingest.backends.mineru_observability import redact_provider_task_id
 from app.services.ingest.pipeline import prepare_ingest
 from app.services.ingest.queue_class import resolve_queue_class_after_probe
 from app.services.policy_profiles import resolve_document_policy
@@ -83,6 +84,9 @@ class DocumentIngestProcessor:
 		scope = self._access_scope(context)
 		indexed = context.version_status in {"indexed", "activating"}
 		point_count = int(context.point_count or 0)
+		provider_state_local: dict[str, object] = dict(
+			(lease.payload or {}).get("mineru_provider_state") or {}
+		)
 		try:
 			store = None
 			if indexed:
@@ -168,12 +172,18 @@ class DocumentIngestProcessor:
 					)
 
 				def persist_provider_state(state: dict[str, object]) -> None:
+					provider_state_local.clear()
+					provider_state_local.update(state)
 					self.repository.patch_job_payload(
 						job_id=lease.id,
 						lease_token=lease.lease_token,
 						patch={"mineru_provider_state": state},
 					)
 
+				provider_state_local.clear()
+				provider_state_local.update(
+					dict((lease.payload or {}).get("mineru_provider_state") or {})
+				)
 				prepared = prepare_ingest(
 					settings=self.settings,
 					filename=context.filename,
@@ -188,10 +198,15 @@ class DocumentIngestProcessor:
 					semantic_enabled=doc_policy.semantic_enabled,
 					ocr_enabled=doc_policy.ocr_enabled,
 					enhanced_parser_allowed=doc_policy.enhanced_parser_allowed,
-					provider_state=dict(
-						(lease.payload or {}).get("mineru_provider_state") or {}
-					),
+					provider_state=dict(provider_state_local),
 					provider_state_callback=persist_provider_state,
+					job_id=str(lease.id),
+					trace_id=str(
+						(lease.payload or {}).get("trace_id")
+						or (lease.payload or {}).get("request_id")
+						or ""
+					)
+					or None,
 				)
 				progress.checkpoint(
 					JobStage.CHUNKING,
@@ -320,8 +335,13 @@ class DocumentIngestProcessor:
 				delay_seconds=exc.retry_after_s,
 			)
 			logger.info(
-				"document_ingest.mineru_pending job_id=%s retry_after_s=%s",
+				"document_ingest.mineru_pending job_id=%s document_id=%s "
+				"provider_task_id=%s poll_count=%s wait_s=%s retry_after_s=%s",
 				lease.id,
+				context.rag_document_id,
+				redact_provider_task_id(str(provider_state_local.get("task_id") or "")),
+				provider_state_local.get("poll_count"),
+				provider_state_local.get("wait_s"),
 				exc.retry_after_s,
 			)
 			return None

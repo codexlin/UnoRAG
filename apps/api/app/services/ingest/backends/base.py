@@ -25,6 +25,9 @@ class ParseRequest:
 	# Secrets must never be stored here.
 	provider_state: dict[str, Any] | None = None
 	provider_state_callback: Callable[[dict[str, Any]], None] | None = None
+	# Optional ingest correlation (job / ask-adjacent trace). Not secrets.
+	job_id: str | None = None
+	trace_id: str | None = None
 
 
 @runtime_checkable

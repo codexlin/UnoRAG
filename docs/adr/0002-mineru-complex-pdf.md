@@ -28,3 +28,34 @@
 - `parser_report` 暴露 `backend` / `parser_version` / `mode` / `failed_pages` / `latency_ms` / 轻量 `metrics`。
 - 无 MinerU 时扫描件仍诚实失败（错误信息提示启用 MinerU/OCR）。
 - 可在自建与 302 MinerU 间切换而不改 chunker / retrieval。
+
+## Ops：302 可观测性与成本（P1）
+
+**关联字段：** `trace_id`（可选，job payload）→ `job_id` → `document_id` →
+`provider_task_id`（外部仅脱敏：`first8…last4`）。完整 task id 只留在 job
+payload `mineru_provider_state.task_id`，不进 `parser_report` / UI。
+
+**日志事件（JSON 行，`event=`）：**
+
+| event | 何时 | 看什么 |
+|---|---|---|
+| `mineru.302.upload` / `create` | 上传 / 创建任务 | `latency_ms`、`page_count`、`estimated_cost` |
+| `mineru.302.pending` | poll 未完成 | `wait_s`、`poll_count`、`provider_latency_ms` |
+| `mineru.302.long_pending` | wait ≥ `MINERU_302_LONG_PENDING_S` | 为何慢 |
+| `mineru.302.complete` | 成功 | 总成本估计、等待时长 |
+| `mineru.302.fail` | 超时 / 429 / 5xx / invalid | `error_code`、`metric`、`phase` |
+| `mineru.302.budget_exceeded` / `budget_near_limit` | 日预算门禁 | `spent` / `budget` |
+| `mineru.302.duplicate_submit` | 无 task_id 却带非失败 prior state | 重复计费风险 |
+
+Worker 另有：`document_ingest.mineru_pending … provider_task_id=… wait_s=…`。
+
+**环境变量（非密钥，worker 生效）：**
+
+- `MINERU_302_COST_PER_PAGE`（默认 `0.02`，占位单价）
+- `MINERU_302_DAILY_BUDGET`（默认 `0`=关闭；超出则 fail-closed 拒绝新 submit）
+- `MINERU_302_BUDGET_WARN_RATIO`（默认 `0.8`）
+- `MINERU_302_LONG_PENDING_S`（默认 `300`）
+
+进程内计数器键：`mineru_302_upload|create|complete|fail|429|5xx|timeout|invalid_result|pending|budget_exceeded`。
+无 Prometheus 时靠结构化日志；workspace 日/月汇总 UI 为后续项。
+`ops/min_alerts` 可后续对 `mineru.302.fail` / `long_pending` / `budget_*` 加规则。

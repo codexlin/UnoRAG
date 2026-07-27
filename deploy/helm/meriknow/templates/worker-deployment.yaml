@@ -91,6 +91,14 @@ spec:
               value: {{ .Values.config.mineru302PollIntervalSeconds | quote }}
             - name: MINERU_302_MAX_WAIT_S
               value: {{ .Values.config.mineru302MaxWaitSeconds | quote }}
+            - name: MINERU_302_COST_PER_PAGE
+              value: {{ .Values.config.mineru302CostPerPage | quote }}
+            - name: MINERU_302_DAILY_BUDGET
+              value: {{ .Values.config.mineru302DailyBudget | quote }}
+            - name: MINERU_302_BUDGET_WARN_RATIO
+              value: {{ .Values.config.mineru302BudgetWarnRatio | quote }}
+            - name: MINERU_302_LONG_PENDING_S
+              value: {{ .Values.config.mineru302LongPendingSeconds | quote }}
             - name: MINERU_302_API_KEY
               valueFrom:
                 secretKeyRef:

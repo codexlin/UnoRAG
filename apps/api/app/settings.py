@@ -108,6 +108,13 @@ class Settings(BaseSettings):
 	mineru_302_task_path: str = "/302/v2/mineru/task"
 	mineru_302_poll_interval_s: float = 5.0
 	mineru_302_max_wait_s: float = 900.0
+	# Cost control (non-secret). 0 daily budget = gate disabled.
+	# DEFAULT_COST_PER_PAGE placeholder — set real rate from 302 billing.
+	mineru_302_cost_per_page: float = 0.02
+	mineru_302_daily_budget: float = 0.0
+	mineru_302_budget_warn_ratio: float = 0.8
+	# Warn when async wait exceeds this many seconds (structured log).
+	mineru_302_long_pending_s: float = 300.0
 	external_parser_allowed: bool = False
 	mineru_use_fake: bool = False
 	# 短窗熔断：连续 unreachable 后跳过 HTTP；不进设置页旋钮。
@@ -188,6 +195,14 @@ class Settings(BaseSettings):
 			raise ValueError(
 				"MINERU_302_MAX_WAIT_S must be >= MINERU_302_POLL_INTERVAL_S"
 			)
+		if self.mineru_302_cost_per_page < 0:
+			raise ValueError("MINERU_302_COST_PER_PAGE cannot be negative")
+		if self.mineru_302_daily_budget < 0:
+			raise ValueError("MINERU_302_DAILY_BUDGET cannot be negative")
+		if not 0.0 <= self.mineru_302_budget_warn_ratio <= 1.0:
+			raise ValueError("MINERU_302_BUDGET_WARN_RATIO must be in [0, 1]")
+		if self.mineru_302_long_pending_s < 0:
+			raise ValueError("MINERU_302_LONG_PENDING_S cannot be negative")
 		if self.embedding_dim <= 0:
 			raise ValueError("EMBEDDING_DIM must be > 0")
 		if self.lifecycle_worker_heartbeat_seconds * 2 >= self.lifecycle_worker_lease_seconds:
@@ -279,6 +294,8 @@ class Settings(BaseSettings):
 			"external_parser": (
 				"allowed" if self.external_parser_allowed else "forbidden"
 			),
+			"mineru_302_cost_per_page": self.mineru_302_cost_per_page,
+			"mineru_302_daily_budget": self.mineru_302_daily_budget,
 			"secret_values": "[REDACTED]",
 		}
 

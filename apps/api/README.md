@@ -116,6 +116,12 @@ index / citation 无需感知供应商。
 | `mineru_unreachable` | auto 且已有 PyMuPDF 节点 → degrade；否则 **failed（不重试）**；计入短窗熔断 |
 | `mineru_circuit_open` | 熔断开路跳过 HTTP；有节点 → degrade；无节点 → failed（不重试） |
 | `mineru_request_rejected` / `mineru_not_configured` | failed，不重试 |
+| `mineru_budget_exceeded` | 日预算门禁；failed，不重试（未发起 billable submit） |
+
+302 可观测性（P1）：结构化 JSON 事件 `mineru.302.*`（upload/create/pending/complete/fail/
+budget_*）；`parser_report.metrics` 含页数与估计成本，`mineru_task_id` 仅脱敏。
+环境变量见 `MINERU_302_COST_PER_PAGE` / `MINERU_302_DAILY_BUDGET` /
+`MINERU_302_LONG_PENDING_S`（`runtime.env.example`）。详情：ADR 0002。
 
 ## 测试与样例
 

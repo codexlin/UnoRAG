@@ -167,12 +167,11 @@ def test_302_submit_persists_task_and_defers() -> None:
 			)
 		)
 	assert exc_info.value.retry_after_s == 7
-	assert states[-1] == {
-		"provider": "302ai",
-		"task_id": "task-1",
-		"state": "RUNNING",
-		"poll_count": 1,
-	}
+	assert states[-1]["provider"] == "302ai"
+	assert states[-1]["task_id"] == "task-1"
+	assert states[-1]["state"] == "RUNNING"
+	assert states[-1]["poll_count"] == 1
+	assert states[-1]["wait_s"] == 7.0
 	assert [method for method, _url in calls] == ["POST", "POST", "GET"]
 
 

@@ -65,6 +65,8 @@ def parse_to_ir(
 	enhanced_parser_allowed: bool = True,
 	provider_state: dict[str, Any] | None = None,
 	provider_state_callback: Callable[[dict[str, Any]], None] | None = None,
+	job_id: str | None = None,
+	trace_id: str | None = None,
 ) -> DocumentIR:
 	if cancel_check is not None:
 		cancel_check()
@@ -156,6 +158,8 @@ def parse_to_ir(
 			enhanced_parser_allowed=enhanced_parser_allowed,
 			provider_state=provider_state,
 			provider_state_callback=provider_state_callback,
+			job_id=job_id,
+			trace_id=trace_id,
 		)
 
 	raise ValueError(f"unsupported format for v2 ingest: {fmt}")

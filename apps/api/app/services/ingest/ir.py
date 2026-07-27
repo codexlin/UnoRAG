@@ -66,7 +66,15 @@ class ParserReport(BaseModel):
 	metrics: dict[str, Any] = Field(default_factory=dict)
 
 	def to_public_dict(self) -> dict[str, Any]:
-		return self.model_dump()
+		payload = self.model_dump()
+		metrics = payload.get("metrics")
+		if isinstance(metrics, dict):
+			from app.services.ingest.backends.mineru_observability import (
+				redact_metrics_task_ids,
+			)
+
+			payload["metrics"] = redact_metrics_task_ids(metrics)
+		return payload
 
 
 class Node(BaseModel):

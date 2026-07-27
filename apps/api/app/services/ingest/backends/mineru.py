@@ -21,6 +21,20 @@ import httpx
 
 from app.services.ingest.adapters.mineru_ir import mineru_json_to_ir
 from app.services.ingest.backends.base import ParseRequest
+from app.services.ingest.backends.mineru_observability import (
+	BudgetExceededError,
+	build_cost_metrics,
+	classify_error_metric,
+	correlation_fields,
+	emit_mineru_event,
+	estimate_parse_cost,
+	estimate_pdf_page_count,
+	get_budget_ledger,
+	incr,
+	note_failure_for_spike,
+	page_count_from_content_list,
+	redact_provider_task_id,
+)
 from app.services.ingest.ir import DocumentIR
 
 logger = logging.getLogger(__name__)
@@ -285,6 +299,10 @@ class Ai302MinerUBackend:
 		max_wait_s: float = 900.0,
 		parse_method: str = "auto",
 		version: str = "2.5",
+		cost_per_page: float = 0.02,
+		daily_budget: float = 0.0,
+		budget_warn_ratio: float = 0.8,
+		long_pending_s: float = 300.0,
 		request_fn: Callable[..., httpx.Response] | None = None,
 	) -> None:
 		self.base_url = base_url.rstrip("/")
@@ -296,7 +314,13 @@ class Ai302MinerUBackend:
 		self.max_wait_s = max(self.poll_interval_s, float(max_wait_s))
 		self.parse_method = parse_method.strip() or "auto"
 		self._version = version.strip() or "2.5"
+		self.cost_per_page = max(0.0, float(cost_per_page))
+		self.long_pending_s = max(0.0, float(long_pending_s))
 		self._request_fn = request_fn or httpx.request
+		get_budget_ledger().configure(
+			daily_budget=daily_budget,
+			warn_ratio=budget_warn_ratio,
+		)
 
 	@property
 	def name(self) -> str:
@@ -314,109 +338,344 @@ class Ai302MinerUBackend:
 				retryable=False,
 			)
 		t0 = time.perf_counter()
+		corr = self._correlation(request)
 		state = dict(request.provider_state or {})
 		task_id = str(state.get("task_id") or "").strip()
-		if not task_id:
-			if request.progress_callback is not None:
-				request.progress_callback("mineru_upload", None, None)
-			pdf_url = self._upload(request)
-			task_id = self._submit(pdf_url)
-			state = {
-				"provider": "302ai",
-				"task_id": task_id,
-				"state": "SUBMITTED",
-				"poll_count": 0,
-			}
-			_publish_provider_state(request, state)
-
-		if request.cancel_check is not None:
-			request.cancel_check()
-		if request.progress_callback is not None:
-			request.progress_callback("mineru_poll", None, None)
-		payload = self._request_json(
-			"GET",
-			self.task_path,
-			params={"task_id": task_id},
+		page_count = estimate_pdf_page_count(request.content)
+		estimated_cost = estimate_parse_cost(
+			page_count, cost_per_page=self.cost_per_page
 		)
-		provider_status = str(
-			payload.get("state") or payload.get("status") or ""
-		).strip().upper()
-		kind = classify_302_task_state(provider_status)
-		if kind == "pending":
-			poll_count = int(state.get("poll_count") or 0) + 1
-			state.update(
-				{"state": provider_status or "PENDING", "poll_count": poll_count}
-			)
-			_publish_provider_state(request, state)
-			if poll_count * self.poll_interval_s >= self.max_wait_s:
-				raise MinerUClientError(
-					f"302 MinerU task {task_id} exceeded maximum wait",
-					code="mineru_timeout",
-					retryable=False,
-					timeout_kind="hard",
-				)
-			raise MinerUPendingError(
-				f"302 MinerU task {task_id} is {provider_status or 'PENDING'}",
-				retry_after_s=self.poll_interval_s,
-			)
-		if kind != "success":
-			message = str(
-				payload.get("message") or payload.get("error") or provider_status
-			)
-			raise MinerUClientError(
-				f"302 MinerU task failed: {message[:500]}",
-				code="mineru_service_error",
-				retryable=False,
-			)
-		result_url = str(
-			payload.get("result_url") or payload.get("full_zip_url") or ""
-		).strip()
-		if not result_url:
-			raise MinerUClientError(
-				"302 MinerU success response is missing result_url",
-				code="mineru_invalid_response",
-			)
-		_validate_302_result_url(result_url, base_url=self.base_url)
-		raw_zip = self._request_bytes("GET", result_url, include_auth=False)
-		if len(raw_zip) > 128 * 1024 * 1024:
-			raise MinerUClientError(
-				"302 MinerU result ZIP exceeds 128 MiB safety limit",
-				code="mineru_invalid_response",
-				retryable=False,
-			)
-		content_list = _content_list_from_zip(raw_zip)
-		latency_ms = (time.perf_counter() - t0) * 1000.0
 		try:
-			ir = mineru_json_to_ir(
-				payload={"version": self.version, "content_list": content_list},
-				filename=request.filename,
-				title=request.title,
-				content=request.content,
-				doc_id=request.doc_id,
-				library_id=request.library_id,
-				parser_version=self.version,
-				latency_ms=latency_ms,
-				progress_callback=request.progress_callback,
-				cancel_check=request.cancel_check,
+			if not task_id:
+				prior = str(state.get("state") or "").strip().upper()
+				if prior and prior not in {"", "FAILED", "ERROR", "CANCELLED"}:
+					incr("mineru_302_duplicate_submit")
+					emit_mineru_event(
+						"mineru.302.duplicate_submit",
+						level="warning",
+						phase="submit",
+						prior_state=prior,
+						**corr,
+					)
+				# Fail-closed before any billable create.
+				try:
+					get_budget_ledger().check_can_submit(estimated_cost)
+				except BudgetExceededError as exc:
+					emit_mineru_event(
+						"mineru.302.budget_exceeded",
+						level="warning",
+						phase="submit",
+						spent=exc.spent,
+						budget=exc.budget,
+						estimated_cost=exc.estimated,
+						page_count=page_count,
+						**corr,
+					)
+					raise MinerUClientError(
+						str(exc),
+						code="mineru_budget_exceeded",
+						retryable=False,
+					) from exc
+				if request.progress_callback is not None:
+					request.progress_callback("mineru_upload", None, None)
+				upload_t0 = time.perf_counter()
+				try:
+					pdf_url = self._upload(request)
+				except MinerUClientError as exc:
+					self._observe_error(exc, phase="upload", request=request, task_id=None)
+					raise
+				incr("mineru_302_upload")
+				emit_mineru_event(
+					"mineru.302.upload",
+					phase="upload",
+					latency_ms=round((time.perf_counter() - upload_t0) * 1000.0, 1),
+					page_count=page_count,
+					estimated_cost=estimated_cost,
+					**corr,
+				)
+				submit_t0 = time.perf_counter()
+				try:
+					task_id = self._submit(pdf_url)
+				except MinerUClientError as exc:
+					self._observe_error(exc, phase="create", request=request, task_id=None)
+					raise
+				incr("mineru_302_create")
+				get_budget_ledger().record_spend(estimated_cost)
+				corr = self._correlation(request, task_id=task_id)
+				emit_mineru_event(
+					"mineru.302.create",
+					phase="create",
+					latency_ms=round((time.perf_counter() - submit_t0) * 1000.0, 1),
+					page_count=page_count,
+					estimated_cost=estimated_cost,
+					**corr,
+				)
+				state = {
+					"provider": "302ai",
+					"task_id": task_id,
+					"state": "SUBMITTED",
+					"poll_count": 0,
+					"page_count": page_count,
+					"estimated_cost": estimated_cost,
+					"submitted_at": time.time(),
+				}
+				_publish_provider_state(request, state)
+
+			corr = self._correlation(request, task_id=task_id)
+			if request.cancel_check is not None:
+				request.cancel_check()
+			if request.progress_callback is not None:
+				request.progress_callback("mineru_poll", None, None)
+			poll_t0 = time.perf_counter()
+			try:
+				payload = self._request_json(
+					"GET",
+					self.task_path,
+					params={"task_id": task_id},
+				)
+			except MinerUClientError as exc:
+				self._observe_error(exc, phase="poll", request=request, task_id=task_id)
+				raise
+			provider_latency_ms = (time.perf_counter() - poll_t0) * 1000.0
+			provider_status = str(
+				payload.get("state") or payload.get("status") or ""
+			).strip().upper()
+			kind = classify_302_task_state(provider_status)
+			if kind == "pending":
+				poll_count = int(state.get("poll_count") or 0) + 1
+				wait_s = poll_count * self.poll_interval_s
+				state.update(
+					{
+						"state": provider_status or "PENDING",
+						"poll_count": poll_count,
+						"wait_s": wait_s,
+					}
+				)
+				_publish_provider_state(request, state)
+				incr("mineru_302_pending")
+				emit_mineru_event(
+					"mineru.302.pending",
+					phase="poll",
+					provider_status=provider_status or "PENDING",
+					poll_count=poll_count,
+					wait_s=wait_s,
+					provider_latency_ms=round(provider_latency_ms, 1),
+					max_wait_s=self.max_wait_s,
+					**corr,
+				)
+				if (
+					self.long_pending_s > 0
+					and wait_s >= self.long_pending_s
+					and not state.get("long_pending_warned")
+				):
+					state["long_pending_warned"] = True
+					_publish_provider_state(request, state)
+					emit_mineru_event(
+						"mineru.302.long_pending",
+						level="warning",
+						phase="poll",
+						wait_s=wait_s,
+						long_pending_s=self.long_pending_s,
+						poll_count=poll_count,
+						**corr,
+					)
+				if wait_s >= self.max_wait_s:
+					exc = MinerUClientError(
+						f"302 MinerU task {redact_provider_task_id(task_id)} "
+						"exceeded maximum wait",
+						code="mineru_timeout",
+						retryable=False,
+						timeout_kind="hard",
+					)
+					self._observe_error(
+						exc, phase="poll", request=request, task_id=task_id
+					)
+					raise exc
+				raise MinerUPendingError(
+					f"302 MinerU task {redact_provider_task_id(task_id)} is "
+					f"{provider_status or 'PENDING'}",
+					retry_after_s=self.poll_interval_s,
+				)
+			if kind != "success":
+				message = str(
+					payload.get("message") or payload.get("error") or provider_status
+				)
+				exc = MinerUClientError(
+					f"302 MinerU task failed: {message[:500]}",
+					code="mineru_service_error",
+					retryable=False,
+				)
+				self._observe_error(exc, phase="poll", request=request, task_id=task_id)
+				raise exc
+			result_url = str(
+				payload.get("result_url") or payload.get("full_zip_url") or ""
+			).strip()
+			if not result_url:
+				exc = MinerUClientError(
+					"302 MinerU success response is missing result_url",
+					code="mineru_invalid_response",
+				)
+				self._observe_error(exc, phase="complete", request=request, task_id=task_id)
+				raise exc
+			_validate_302_result_url(result_url, base_url=self.base_url)
+			try:
+				raw_zip = self._request_bytes("GET", result_url, include_auth=False)
+			except MinerUClientError as exc:
+				self._observe_error(
+					exc, phase="download", request=request, task_id=task_id
+				)
+				raise
+			if len(raw_zip) > 128 * 1024 * 1024:
+				exc = MinerUClientError(
+					"302 MinerU result ZIP exceeds 128 MiB safety limit",
+					code="mineru_invalid_response",
+					retryable=False,
+				)
+				self._observe_error(exc, phase="download", request=request, task_id=task_id)
+				raise exc
+			try:
+				content_list = _content_list_from_zip(raw_zip)
+			except MinerUClientError as exc:
+				self._observe_error(
+					exc, phase="complete", request=request, task_id=task_id
+				)
+				raise
+			result_pages = page_count_from_content_list(content_list)
+			if result_pages is not None:
+				page_count = result_pages
+				estimated_cost = estimate_parse_cost(
+					page_count, cost_per_page=self.cost_per_page
+				)
+			elif state.get("page_count") is not None:
+				try:
+					page_count = int(state["page_count"])
+				except (TypeError, ValueError):
+					pass
+				if state.get("estimated_cost") is not None:
+					try:
+						estimated_cost = float(state["estimated_cost"])
+					except (TypeError, ValueError):
+						estimated_cost = estimate_parse_cost(
+							page_count, cost_per_page=self.cost_per_page
+						)
+			latency_ms = (time.perf_counter() - t0) * 1000.0
+			wait_s = float(state.get("wait_s") or 0.0)
+			try:
+				ir = mineru_json_to_ir(
+					payload={"version": self.version, "content_list": content_list},
+					filename=request.filename,
+					title=request.title,
+					content=request.content,
+					doc_id=request.doc_id,
+					library_id=request.library_id,
+					parser_version=self.version,
+					latency_ms=latency_ms,
+					progress_callback=request.progress_callback,
+					cancel_check=request.cancel_check,
+				)
+			except ValueError as exc:
+				err = MinerUClientError(
+					str(exc),
+					code="mineru_invalid_response",
+				)
+				self._observe_error(
+					err, phase="complete", request=request, task_id=task_id
+				)
+				raise err from exc
+			cost_metrics = build_cost_metrics(
+				page_count=page_count,
+				cost_per_page=self.cost_per_page,
+				estimated_cost=estimated_cost,
 			)
-		except ValueError as exc:
-			raise MinerUClientError(
-				str(exc),
-				code="mineru_invalid_response",
-			) from exc
-		ir.parser_report.metrics.update(
-			{
-				"mineru_provider": "302ai",
-				"mineru_external": True,
-				"mineru_task_id": task_id,
-				"mineru_parse_method": self.parse_method,
-			}
+			ir.parser_report.metrics.update(
+				{
+					"mineru_provider": "302ai",
+					"mineru_external": True,
+					# External / UI: redacted only. Full id stays in job payload.
+					"mineru_task_id": redact_provider_task_id(task_id),
+					"mineru_parse_method": self.parse_method,
+					"mineru_wait_s": wait_s,
+					"mineru_poll_count": int(state.get("poll_count") or 0),
+					"mineru_provider_latency_ms": round(provider_latency_ms, 1),
+					**cost_metrics,
+				}
+			)
+			incr("mineru_302_complete")
+			emit_mineru_event(
+				"mineru.302.complete",
+				phase="complete",
+				latency_ms=round(latency_ms, 1),
+				provider_latency_ms=round(provider_latency_ms, 1),
+				wait_s=wait_s,
+				poll_count=int(state.get("poll_count") or 0),
+				page_count=page_count,
+				estimated_cost=estimated_cost,
+				**corr,
+			)
+			_publish_provider_state(
+				request,
+				{
+					"provider": "302ai",
+					"task_id": task_id,
+					"state": "SUCCESS",
+					"page_count": page_count,
+					"estimated_cost": estimated_cost,
+				},
+			)
+			return ir
+		except MinerUPendingError:
+			raise
+		except MinerUClientError:
+			raise
+		except Exception:
+			incr("mineru_302_fail")
+			raise
+
+	def _correlation(
+		self,
+		request: ParseRequest,
+		*,
+		task_id: str | None = None,
+	) -> dict[str, Any]:
+		return correlation_fields(
+			job_id=request.job_id,
+			document_id=request.doc_id,
+			library_id=request.library_id,
+			trace_id=request.trace_id,
+			task_id=task_id,
 		)
-		_publish_provider_state(
-			request,
-			{"provider": "302ai", "task_id": task_id, "state": "SUCCESS"},
+
+	def _observe_error(
+		self,
+		exc: MinerUClientError,
+		*,
+		phase: str,
+		request: ParseRequest,
+		task_id: str | None,
+	) -> None:
+		metric = classify_error_metric(exc.code, exc.status_code)
+		incr(f"mineru_302_{metric}")
+		incr("mineru_302_fail")
+		corr = self._correlation(request, task_id=task_id)
+		emit_mineru_event(
+			"mineru.302.fail",
+			level="warning",
+			phase=phase,
+			error_code=exc.code,
+			status_code=exc.status_code,
+			retryable=exc.retryable,
+			timeout_kind=exc.timeout_kind,
+			metric=metric,
+			**corr,
 		)
-		return ir
+		if note_failure_for_spike():
+			emit_mineru_event(
+				"mineru.302.failure_spike",
+				level="warning",
+				phase=phase,
+				error_code=exc.code,
+				**corr,
+			)
 
 	def _upload(self, request: ParseRequest) -> str:
 		response = self._request(
@@ -670,6 +929,10 @@ def get_mineru_backend(
 	task_path_302: str = "/302/v2/mineru/task",
 	poll_interval_s_302: float = 5.0,
 	max_wait_s_302: float = 900.0,
+	cost_per_page_302: float = 0.02,
+	daily_budget_302: float = 0.0,
+	budget_warn_ratio_302: float = 0.8,
+	long_pending_s_302: float = 300.0,
 	parse_method: str = "auto",
 	version: str = "2.5",
 	use_fake: bool = False,
@@ -691,6 +954,10 @@ def get_mineru_backend(
 			task_path=task_path_302,
 			poll_interval_s=poll_interval_s_302,
 			max_wait_s=max_wait_s_302,
+			cost_per_page=cost_per_page_302,
+			daily_budget=daily_budget_302,
+			budget_warn_ratio=budget_warn_ratio_302,
+			long_pending_s=long_pending_s_302,
 			parse_method=parse_method,
 			version=version,
 		)

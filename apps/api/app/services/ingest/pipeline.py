@@ -74,6 +74,8 @@ def prepare_ingest(
 	enhanced_parser_allowed: bool = True,
 	provider_state: dict[str, Any] | None = None,
 	provider_state_callback: Callable[[dict[str, Any]], None] | None = None,
+	job_id: str | None = None,
+	trace_id: str | None = None,
 ) -> PreparedIngest:
 	name = (filename or "untitled.txt").strip() or "untitled.txt"
 	suffix = PurePosixPath(name).suffix.lower()
@@ -148,6 +150,8 @@ def prepare_ingest(
 		enhanced_parser_allowed=enhanced_parser_allowed,
 		provider_state=provider_state,
 		provider_state_callback=provider_state_callback,
+		job_id=job_id,
+		trace_id=trace_id,
 	)
 	if display_name and display_name.strip():
 		ir.title = clean_display_title(display_name, filename=name)

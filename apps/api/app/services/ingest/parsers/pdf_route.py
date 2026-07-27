@@ -157,6 +157,8 @@ def parse_pdf_routed(
 	enhanced_parser_allowed: bool = True,
 	provider_state: dict[str, Any] | None = None,
 	provider_state_callback: Callable[[dict[str, Any]], None] | None = None,
+	job_id: str | None = None,
+	trace_id: str | None = None,
 ) -> DocumentIR:
 	"""路由入口：保持 PyMuPDF 默认；策略允许时按需升级 MinerU。"""
 	t0 = time.perf_counter()
@@ -182,6 +184,10 @@ def parse_pdf_routed(
 			task_path_302=settings.mineru_302_task_path,
 			poll_interval_s_302=settings.mineru_302_poll_interval_s,
 			max_wait_s_302=settings.mineru_302_max_wait_s,
+			cost_per_page_302=settings.mineru_302_cost_per_page,
+			daily_budget_302=settings.mineru_302_daily_budget,
+			budget_warn_ratio_302=settings.mineru_302_budget_warn_ratio,
+			long_pending_s_302=settings.mineru_302_long_pending_s,
 			parse_method=settings.mineru_parse_method,
 			version=settings.mineru_version,
 			use_fake=settings.mineru_use_fake,
@@ -203,6 +209,8 @@ def parse_pdf_routed(
 			cancel_check=cancel_check,
 			provider_state=provider_state,
 			provider_state_callback=provider_state_callback,
+			job_id=job_id,
+			trace_id=trace_id,
 		)
 
 	# PyMuPDF 先跑（allow_empty 以便 MinerU 救援）
@@ -257,6 +265,8 @@ def parse_pdf_routed(
 			cancel_check=cancel_check,
 			provider_state=provider_state,
 			provider_state_callback=provider_state_callback,
+			job_id=job_id,
+			trace_id=trace_id,
 		)
 		_stamp_latency(mineru_ir, t0)
 		mineru_ir.parser_report.metrics["route"] = "mineru"
@@ -308,6 +318,8 @@ def _parse_mineru_or_fail(
 	settings: Settings | None = None,
 	provider_state: dict[str, Any] | None = None,
 	provider_state_callback: Callable[[dict[str, Any]], None] | None = None,
+	job_id: str | None = None,
+	trace_id: str | None = None,
 ) -> DocumentIR:
 	if backend is None:
 		raise MinerUClientError(
@@ -329,6 +341,8 @@ def _parse_mineru_or_fail(
 			cancel_check=cancel_check,
 			provider_state=provider_state,
 			provider_state_callback=provider_state_callback,
+			job_id=job_id,
+			trace_id=trace_id,
 		)
 	except MinerUClientError:
 		raise
@@ -358,6 +372,8 @@ def _call_mineru_with_circuit(
 	cancel_check: CancelCheck | None,
 	provider_state: dict[str, Any] | None = None,
 	provider_state_callback: Callable[[dict[str, Any]], None] | None = None,
+	job_id: str | None = None,
+	trace_id: str | None = None,
 ) -> DocumentIR:
 	"""熔断检查 → 真实 HTTP/Fake；成功重置；unreachable 计入短窗。"""
 	circuit = get_mineru_circuit()
@@ -389,6 +405,8 @@ def _call_mineru_with_circuit(
 				cancel_check=cancel_check,
 				provider_state=provider_state,
 				provider_state_callback=provider_state_callback,
+				job_id=job_id,
+				trace_id=trace_id,
 			)
 		)
 	except MinerUClientError as exc:
