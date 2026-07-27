@@ -23,8 +23,14 @@ EXECUTORS: dict[str, ExecutorFn] = {
 
 
 def run_case(case: EvalCase) -> EvalCaseResult:
-	"""Dispatch by case.kind; unknown kinds fall back to ask (legacy default)."""
-	executor = EXECUTORS.get(case.kind) or EXECUTORS["ask"]
+	"""Dispatch by case.kind; unknown kinds raise (fail-closed)."""
+	try:
+		executor = EXECUTORS[case.kind]
+	except KeyError as exc:
+		known = ", ".join(sorted(EXECUTORS))
+		raise ValueError(
+			f"unknown eval executor kind {case.kind!r}; known: {known}"
+		) from exc
 	return executor(case)
 
 

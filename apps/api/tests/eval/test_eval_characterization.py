@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.eval.executors import EXECUTORS, run_case
 from app.eval.runner import (
 	_check_expect,
@@ -20,6 +22,21 @@ def test_executors_registry_covers_all_kinds() -> None:
 		"retrieval",
 		"ingest_http",
 	}
+
+
+def test_run_case_unknown_kind_fail_closed() -> None:
+	"""Unknown / illegal kinds must not silently fall back to ask."""
+	case = EvalCase.model_construct(
+		id="char-unknown-kind",
+		kind="not_a_registered_executor",
+		question="q",
+	)
+	with pytest.raises(ValueError, match="unknown eval executor kind") as exc_info:
+		run_case(case)
+	msg = str(exc_info.value)
+	assert "not_a_registered_executor" in msg
+	assert "ask" in msg
+	assert "classify" in msg
 
 
 def test_runner_reexports_private_helpers() -> None:
