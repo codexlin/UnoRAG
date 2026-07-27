@@ -60,6 +60,10 @@ import {
 	fetchDocuments,
 	isAbortError,
 } from "@/lib/api";
+import {
+	ASK_LIBRARY_STORAGE_KEY,
+	chooseAskLibraryId,
+} from "@/lib/ask-library-selection.mjs";
 import { formatDateTime, formatDurationMs, formatScore } from "@/lib/format";
 import type { UiCitation, UiTurn } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
@@ -267,7 +271,11 @@ export function AskWorkspace() {
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const isMobile = useIsMobile();
-	const { libraries, error: libsError } = useLibraries();
+	const {
+		libraries,
+		error: libsError,
+		loading: librariesLoading,
+	} = useLibraries();
 	const { apiReady } = useHealth();
 	const [libraryId, setLibraryId] = useState("");
 	const [input, setInput] = useState("");
@@ -298,10 +306,37 @@ export function AskWorkspace() {
 		turns.some((turn) => !turn.pending && turn.question.trim());
 
 	useEffect(() => {
-		if (!libraryId && libraries[0]?.id) {
-			setLibraryId(libraries[0].id);
+		if (librariesLoading) return;
+		if (libraries.length === 0) {
+			setLibraryId("");
+			try {
+				window.localStorage.removeItem(ASK_LIBRARY_STORAGE_KEY);
+			} catch {
+				// Storage may be unavailable in hardened/private browser contexts.
+			}
+			return;
 		}
-	}, [libraries, libraryId]);
+
+		let storedId = "";
+		try {
+			storedId =
+				window.localStorage.getItem(ASK_LIBRARY_STORAGE_KEY)?.trim() ?? "";
+		} catch {
+			// Continue with the deterministic ready-library fallback.
+		}
+		const nextId = chooseAskLibraryId(libraries, libraryId || storedId);
+		if (nextId !== libraryId) {
+			setLibraryId(nextId);
+			return;
+		}
+		if (nextId) {
+			try {
+				window.localStorage.setItem(ASK_LIBRARY_STORAGE_KEY, nextId);
+			} catch {
+				// Selection still works when persistence is unavailable.
+			}
+		}
+	}, [libraries, librariesLoading, libraryId]);
 
 	useEffect(() => {
 		return () => {

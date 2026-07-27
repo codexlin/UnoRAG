@@ -37,14 +37,22 @@ COOKIE_JAR="$(mktemp -t meriknow-pilot-cookies.XXXXXX)"
 WORKDIR="$(mktemp -d -t meriknow-pilot-work.XXXXXX)"
 SERVICE_KEY_ID=""
 RETRIEVE_KEY_ID=""
+LIB_A_ID=""
+LIB_B_ID=""
 
 cleanup() {
-	local key_id
+	local key_id library_id
 	for key_id in "$SERVICE_KEY_ID" "$RETRIEVE_KEY_ID"; do
 		[[ -n "$key_id" ]] || continue
 		curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" -X DELETE \
 			-o /dev/null --max-time 5 \
 			"$BASE_URL/api/workspace/keys/$key_id" 2>/dev/null || true
+	done
+	for library_id in "$LIB_A_ID" "$LIB_B_ID"; do
+		[[ -n "$library_id" ]] || continue
+		curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" -X DELETE \
+			-o /dev/null --max-time 10 \
+			"$BASE_URL/api/libraries/$library_id" 2>/dev/null || true
 	done
 	rm -f "$COOKIE_JAR"
 	rm -rf "$WORKDIR"
