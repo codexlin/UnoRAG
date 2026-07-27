@@ -162,10 +162,13 @@ function LibStatusDot({ status }: { status: string }) {
 
 function ParserReportCard({
 	report,
+	parseStatus,
 }: {
 	report: NonNullable<ApiDocument["parser_report"]>;
+	parseStatus?: ApiDocument["parse_status"];
 }) {
 	const reportView = formatParserReportView(report);
+	const status = parseStatus ?? null;
 	return (
 		<div
 			className={cn(
@@ -185,6 +188,36 @@ function ParserReportCard({
 					</span>
 				) : null}
 			</div>
+			{status?.parser_label ? (
+				<p className="text-ui mt-1">
+					实际解析器：{status.parser_label}
+					{status.external_processing === true
+						? " · 已出域处理"
+						: status.external_processing === false
+							? " · 未出域"
+							: ""}
+				</p>
+			) : null}
+			{status?.task_status ? (
+				<p className="text-ui mt-1 text-muted-foreground">
+					任务状态：{status.task_status}
+				</p>
+			) : null}
+			{status?.parse_quality_hint ? (
+				<p className="text-ui mt-1 text-muted-foreground">
+					{status.parse_quality_hint}
+				</p>
+			) : null}
+			{status?.degrade_reason ? (
+				<p className="text-ui mt-1 text-survey">
+					降级原因：{status.degrade_reason}
+				</p>
+			) : null}
+			{status?.provider_task_id ? (
+				<p className="text-meta mt-1 font-mono text-muted-foreground">
+					任务 ID：{status.provider_task_id}
+				</p>
+			) : null}
 			{reportView.summaries.map((line) => (
 				<p
 					key={line}
@@ -220,7 +253,7 @@ function ParserReportCard({
 					</ul>
 				</details>
 			) : null}
-			{reportView.empty ? (
+			{reportView.empty && !status?.parser_label ? (
 				<p className="text-ui mt-1 text-muted-foreground">
 					解析完成，无额外提示
 				</p>
@@ -263,6 +296,7 @@ export function LibrariesPanel() {
 	const [libraryDescription, setLibraryDescription] = useState("");
 	const [libraryDocumentProfile, setLibraryDocumentProfile] = useState("auto");
 	const [libraryScanHandling, setLibraryScanHandling] = useState("auto");
+	const [libraryParsePreference, setLibraryParsePreference] = useState("auto");
 	const [libraryAdvancedOpen, setLibraryAdvancedOpen] = useState(false);
 	const [libraryFormError, setLibraryFormError] = useState<string | null>(null);
 	const [deleteLibraryTarget, setDeleteLibraryTarget] =
@@ -460,6 +494,7 @@ export function LibrariesPanel() {
 		setLibraryDescription("");
 		setLibraryDocumentProfile("auto");
 		setLibraryScanHandling("auto");
+		setLibraryParsePreference("auto");
 		setLibraryAdvancedOpen(false);
 		setLibraryFormError(null);
 		setLibraryDialogMode("create");
@@ -472,7 +507,11 @@ export function LibrariesPanel() {
 		setLibraryDescription(library.description?.trim() ?? "");
 		setLibraryDocumentProfile(library.document_profile ?? "auto");
 		setLibraryScanHandling(library.scan_handling ?? "auto");
-		setLibraryAdvancedOpen((library.scan_handling ?? "auto") !== "auto");
+		setLibraryParsePreference(library.parse_preference ?? "auto");
+		setLibraryAdvancedOpen(
+			(library.scan_handling ?? "auto") !== "auto" ||
+				(library.parse_preference ?? "auto") !== "auto",
+		);
 		setLibraryFormError(null);
 		setLibraryDialogMode("edit");
 		setLibraryDialogOpen(true);
@@ -502,6 +541,7 @@ export function LibrariesPanel() {
 					description,
 					documentProfile: libraryDocumentProfile,
 					scanHandling: libraryScanHandling,
+					parsePreference: libraryParsePreference,
 				});
 				toast.success(`已创建知识库「${created.name}」`);
 				setLibraryDialogOpen(false);
@@ -514,6 +554,7 @@ export function LibrariesPanel() {
 					description: description ?? null,
 					documentProfile: libraryDocumentProfile,
 					scanHandling: libraryScanHandling,
+					parsePreference: libraryParsePreference,
 				});
 				if (updated.requires_reindex) {
 					toast.success(
@@ -1214,13 +1255,28 @@ export function LibrariesPanel() {
 											{formatDateTime(detailDoc.updated_at)}
 										</dd>
 									</div>
-									{typeof detailDoc.parser_report?.parser === "string" ? (
+									{typeof detailDoc.parser_report?.parser === "string" ||
+									detailDoc.parse_status?.parser_label ? (
 										<div>
 											<dt className="text-meta font-mono text-muted-foreground uppercase tracking-wide">
 												解析器
 											</dt>
 											<dd className="mt-0.5 font-mono text-meta">
-												{detailDoc.parser_report.parser}
+												{detailDoc.parse_status?.parser_label ||
+													detailDoc.parser_report?.parser}
+											</dd>
+										</div>
+									) : null}
+									{detailDoc.parse_status?.task_status ? (
+										<div>
+											<dt className="text-meta font-mono text-muted-foreground uppercase tracking-wide">
+												入库状态
+											</dt>
+											<dd className="mt-0.5 font-mono text-meta">
+												{detailDoc.parse_status.task_status}
+												{detailDoc.job_progress != null
+													? ` · ${detailDoc.job_progress}%`
+													: ""}
 											</dd>
 										</div>
 									) : null}
@@ -1279,7 +1335,19 @@ export function LibrariesPanel() {
 								</div>
 
 								{detailDoc.parser_report ? (
-									<ParserReportCard report={detailDoc.parser_report} />
+									<ParserReportCard
+										report={detailDoc.parser_report}
+										parseStatus={detailDoc.parse_status}
+									/>
+								) : detailDoc.parse_status?.task_status ? (
+									<div className="rounded-md border border-border/80 bg-muted/30 px-3 py-2">
+										<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
+											入库进度
+										</p>
+										<p className="text-ui mt-1">
+											{detailDoc.parse_status.task_status}
+										</p>
+									</div>
 								) : null}
 
 								{!detailDoc.has_file ? (
@@ -1494,29 +1562,57 @@ export function LibrariesPanel() {
 								className="text-left text-xs text-muted-foreground underline-offset-2 hover:underline"
 								onClick={() => setLibraryAdvancedOpen((open) => !open)}
 							>
-								{libraryAdvancedOpen ? "收起高级选项" : "高级选项（OCR）"}
+								{libraryAdvancedOpen
+									? "收起解析策略"
+									: "解析策略（质量 / 扫描件）"}
 							</button>
 							{libraryAdvancedOpen ? (
-								<div className="grid gap-1.5 rounded-md border border-border/70 px-3 py-2">
-									<Label htmlFor="library-scan-handling">扫描件处理</Label>
-									<select
-										id="library-scan-handling"
-										className="rounded-md border border-border bg-background px-2 py-2 text-sm"
-										value={libraryScanHandling}
-										disabled={savingLibrary || deletingLibrary}
-										onChange={(event) =>
-											setLibraryScanHandling(event.target.value)
-										}
-									>
-										<option value="auto">自动</option>
-										<option value="disabled">仅文本解析（禁用扫描识别）</option>
-										<option value="force_ocr">强制 OCR</option>
-									</select>
-									<p className="text-xs text-muted-foreground">
-										对新上传/重索引生效：自动沿用部署默认；仅文本解析不会调用
-										OCR 或 MinerU，纯扫描文件会明确失败；强制 OCR
-										会覆盖部署默认，但不强制数字 PDF 全文 OCR。更改后需重索引。
-									</p>
+								<div className="grid gap-3 rounded-md border border-border/70 px-3 py-2">
+									<div className="grid gap-1.5">
+										<Label htmlFor="library-parse-preference">
+											解析质量偏好
+										</Label>
+										<select
+											id="library-parse-preference"
+											className="rounded-md border border-border bg-background px-2 py-2 text-sm"
+											value={libraryParsePreference}
+											disabled={savingLibrary || deletingLibrary}
+											onChange={(event) =>
+												setLibraryParsePreference(event.target.value)
+											}
+										>
+											<option value="auto">自动识别</option>
+											<option value="quality">强制高质量解析</option>
+											<option value="local_only">严格不出域（仅本地）</option>
+										</select>
+										<p className="text-xs text-muted-foreground">
+											只表达业务意图：不会选择自建或 302，也不会配置 API Key /
+											URL。高质量在部署允许时优先增强解析；严格不出域对本库禁用增强/外部解析。若部署禁止出域而选择高质量，将回退本地并展示降级原因。
+										</p>
+									</div>
+									<div className="grid gap-1.5">
+										<Label htmlFor="library-scan-handling">扫描件处理</Label>
+										<select
+											id="library-scan-handling"
+											className="rounded-md border border-border bg-background px-2 py-2 text-sm"
+											value={libraryScanHandling}
+											disabled={savingLibrary || deletingLibrary}
+											onChange={(event) =>
+												setLibraryScanHandling(event.target.value)
+											}
+										>
+											<option value="auto">允许扫描件（自动）</option>
+											<option value="force_ocr">强制 OCR</option>
+											<option value="disabled">
+												仅文本解析（禁用扫描识别）
+											</option>
+										</select>
+										<p className="text-xs text-muted-foreground">
+											对新上传/重索引生效：自动沿用部署默认；仅文本解析不会调用
+											OCR 或 MinerU，纯扫描文件会明确失败；强制 OCR
+											会覆盖部署默认。更改后需重索引。
+										</p>
+									</div>
 								</div>
 							) : null}
 						</div>

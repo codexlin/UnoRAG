@@ -100,6 +100,11 @@ MIGRATOR_DATABASE_URL=postgresql://... \
 确认 PDF 会离开当前部署边界；Key 不进入 ConfigMap、job payload 或解析报告。
 Compose/Helm 仅把该 Key 注入 lifecycle worker，不注入 API/Web。
 
+**产品配置边界：** 上述 Provider / Key / 出域许可 / URL / 成本 / 超时 / 容量均为
+**deploy-only**。知识库用户只设 `parse_preference`（`auto`|`quality`|`local_only`）
+与 `scan_handling`（`auto`|`force_ocr`|`disabled`）；不得通过 API 选择供应商。
+见 ADR 0002。
+
 302 是异步任务：首次执行上传并保存非敏感 `task_id`，随后释放 worker lease；
 按 `MINERU_302_POLL_INTERVAL_S` 延迟续跑，不占用 MinerU slot，也不消耗 job
 attempt。`MINERU_302_MAX_WAIT_S`（默认 900）防止异常任务无限轮询。成功 ZIP

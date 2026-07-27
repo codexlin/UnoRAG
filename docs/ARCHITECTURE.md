@@ -164,7 +164,8 @@ UI：`/app/settings` → 工作区问答策略。
 冲突规则：拒答/引用严格度取 `answer_profile` 与 `evidence_requirement` 的更严一侧。
 Ask 轨迹：`retrieval_debug.ask_policy` 记录 public + resolved（含具体 hybrid/rerank）。
 
-知识库 `document_profile`（+ 高级 `scan_handling`）决定切片与扫描解析预设；
+知识库 `document_profile` + `parse_preference` + `scan_handling` 决定切片与解析意图；
+`parse_preference` 只表达自动 / 高质量 / 严格不出域，**不**选择 Provider；
 `scan_handling=disabled` 是严格 text-only（不调用 OCR/MinerU）。策略变更后
 `requires_reindex=true`，V1 不静默全量重建。
 

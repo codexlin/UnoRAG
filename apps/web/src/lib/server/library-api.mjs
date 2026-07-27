@@ -1,11 +1,13 @@
 /**
- * Library API shape helpers (document_profile / scan_handling).
+ * Library API shape helpers (document_profile / scan_handling / parse_preference).
  */
 
 import {
 	DOCUMENT_PROFILE_DEFAULT,
 	normalizeDocumentProfile,
+	normalizeParsePreference,
 	normalizeScanHandling,
+	PARSE_PREFERENCE_DEFAULT,
 	SCAN_HANDLING_DEFAULT,
 } from "./document-policy.mjs";
 
@@ -16,6 +18,7 @@ import {
  * @param {{
  *   documentProfile?: string | null,
  *   scanHandling?: string | null,
+ *   parsePreference?: string | null,
  *   ingestPolicyVersion?: number | null,
  *   staleActiveVersions?: number | null,
  *   requiresReindex?: boolean | null,
@@ -45,6 +48,7 @@ export function libraryRequiresReindex(row) {
  *   documentProfile?: string | null,
  *   appliedDocumentProfile?: string | null,
  *   scanHandling?: string | null,
+ *   parsePreference?: string | null,
  *   ingestPolicyVersion?: number | null,
  *   staleActiveVersions?: number | null,
  *   requiresReindex?: boolean | null,
@@ -62,6 +66,9 @@ export function toApiLibrary(row) {
 	const scan_handling = normalizeScanHandling(
 		row.scanHandling ?? SCAN_HANDLING_DEFAULT,
 	);
+	const parse_preference = normalizeParsePreference(
+		row.parsePreference ?? PARSE_PREFERENCE_DEFAULT,
+	);
 	const doc_count = Number(row.docCount) || 0;
 	const requires_reindex = libraryRequiresReindex(row);
 
@@ -75,6 +82,7 @@ export function toApiLibrary(row) {
 		document_profile,
 		applied_document_profile: applied,
 		scan_handling,
+		parse_preference,
 		ingest_policy_version: Number(row.ingestPolicyVersion) || 1,
 		requires_reindex,
 		created_at: row.createdAt.toISOString(),

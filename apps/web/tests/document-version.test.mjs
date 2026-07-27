@@ -61,6 +61,7 @@ test("buildDocumentIngestPayload matches upload/replace contract", () => {
 		content_type: "text/markdown",
 		document_profile: "auto",
 		scan_handling: "auto",
+		parse_preference: "auto",
 		ingest_policy_version: 1,
 		queue_class: "local",
 	});

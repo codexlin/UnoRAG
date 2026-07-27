@@ -155,6 +155,7 @@ def parse_pdf_routed(
 	progress_callback: ParseProgressCallback | None = None,
 	cancel_check: CancelCheck | None = None,
 	enhanced_parser_allowed: bool = True,
+	prefer_enhanced: bool = False,
 	provider_state: dict[str, Any] | None = None,
 	provider_state_callback: Callable[[dict[str, Any]], None] | None = None,
 	job_id: str | None = None,
@@ -166,6 +167,9 @@ def parse_pdf_routed(
 	route_mode: PdfRouteMode = (settings.mineru_mode or "auto").strip().lower()  # type: ignore[assignment]
 	if route_mode not in {"auto", "pymupdf", "mineru"}:
 		route_mode = "auto"
+	# Library quality intent: prefer MinerU when deploy allows (not provider pick).
+	if prefer_enhanced and enhanced_parser_allowed and route_mode == "auto":
+		route_mode = "mineru"
 
 	backend = mineru_backend if enhanced_parser_allowed else None
 	if backend is None and enhanced_parser_allowed:

@@ -21,6 +21,8 @@ export function staleActiveVersionsSql() {
 					IS DISTINCT FROM "app"."libraries"."document_profile"
 				OR coalesce(dv.scan_handling, 'auto')
 					IS DISTINCT FROM "app"."libraries"."scan_handling"
+				OR coalesce(dv.parse_preference, 'auto')
+					IS DISTINCT FROM "app"."libraries"."parse_preference"
 				OR coalesce(dv.ingest_policy_version, 0)
 					IS DISTINCT FROM "app"."libraries"."ingest_policy_version"
 			)

@@ -129,6 +129,7 @@ export type ApiLibrary = {
 	document_profile?: string;
 	applied_document_profile?: string | null;
 	scan_handling?: string;
+	parse_preference?: string;
 	ingest_policy_version?: number;
 	requires_reindex?: boolean;
 	created_at: string;
@@ -154,8 +155,18 @@ export type ApiDocument = {
 		warnings?: string[];
 		notes?: string;
 		parser?: string;
+		backend?: string;
 		[key: string]: unknown;
 	} | null;
+	parse_status?: {
+		parser_label?: string | null;
+		external_processing?: boolean | null;
+		task_status?: string | null;
+		degrade_reason?: string | null;
+		parse_quality_hint?: string | null;
+		provider_task_id?: string | null;
+	} | null;
+	parse_preference?: string | null;
 	document_id?: string | null;
 	document_version_id?: string | null;
 	generation_id?: string | null;
@@ -201,6 +212,14 @@ export type ApiJob = {
 	error_code?: string | null;
 	error?: string | null;
 	parser_report?: Record<string, unknown> | null;
+	parse_status?: {
+		parser_label?: string | null;
+		external_processing?: boolean | null;
+		task_status?: string | null;
+		degrade_reason?: string | null;
+		parse_quality_hint?: string | null;
+		provider_task_id?: string | null;
+	} | null;
 	document_id: string;
 	document_version_id: string;
 	generation_id: string;
@@ -286,6 +305,7 @@ export async function createLibrary(input: {
 	libraryId?: string;
 	documentProfile?: string;
 	scanHandling?: string;
+	parsePreference?: string;
 }): Promise<ApiLibrary> {
 	const response = await fetch("/api/libraries", {
 		method: "POST",
@@ -296,6 +316,7 @@ export async function createLibrary(input: {
 			library_id: input.libraryId,
 			document_profile: input.documentProfile,
 			scan_handling: input.scanHandling,
+			parse_preference: input.parsePreference,
 		}),
 	});
 	if (!response.ok) {
@@ -311,12 +332,14 @@ export async function updateLibrary(input: {
 	description?: string | null;
 	documentProfile?: string;
 	scanHandling?: string;
+	parsePreference?: string;
 }): Promise<ApiLibrary> {
 	const body: {
 		name?: string;
 		description?: string | null;
 		document_profile?: string;
 		scan_handling?: string;
+		parse_preference?: string;
 	} = {};
 	if (input.name !== undefined) body.name = input.name;
 	if (input.description !== undefined) {
@@ -330,6 +353,9 @@ export async function updateLibrary(input: {
 	}
 	if (input.scanHandling !== undefined) {
 		body.scan_handling = input.scanHandling;
+	}
+	if (input.parsePreference !== undefined) {
+		body.parse_preference = input.parsePreference;
 	}
 	const response = await fetch(
 		`/api/libraries/${encodeURIComponent(input.libraryId)}`,

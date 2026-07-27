@@ -20,7 +20,7 @@ from app.services.ingest.backends.mineru import MinerUClientError, MinerUPending
 from app.services.ingest.backends.mineru_observability import redact_provider_task_id
 from app.services.ingest.pipeline import prepare_ingest
 from app.services.ingest.queue_class import resolve_queue_class_after_probe
-from app.services.policy_profiles import resolve_document_policy
+from app.services.policy_profiles import resolve_document_policy, resolve_parse_plan
 from app.services.qdrant_store import QdrantStore
 from app.services.retrieval import IngestService
 from app.services.source_object_storage import (
@@ -104,10 +104,21 @@ class DocumentIngestProcessor:
 					expected_hash=context.content_hash,
 				)
 				# Resolve the enqueue-time policy before queue routing. A strict
-				# text-only document must not consume a MinerU slot.
+				# text-only / local_only document must not consume a MinerU slot.
 				doc_policy = resolve_document_policy(
 					document_profile=context.document_profile,
 					scan_handling=context.scan_handling,
+					parse_preference=context.parse_preference,
+				)
+				parse_plan = resolve_parse_plan(
+					document_profile=context.document_profile,
+					scan_handling=context.scan_handling,
+					parse_preference=context.parse_preference,
+					mineru_enabled=bool(self.settings.mineru_enabled),
+					mineru_provider=self.settings.resolved_mineru_provider,
+					external_parser_allowed=bool(
+						self.settings.external_parser_allowed
+					),
 				)
 
 				# Probe → mark queue_class; mineru jobs requeue onto mineru slot
@@ -119,7 +130,7 @@ class DocumentIngestProcessor:
 						content=content,
 						mineru_enabled=bool(self.settings.mineru_enabled),
 					)
-					if doc_policy.enhanced_parser_allowed
+					if parse_plan.enhanced_parser_allowed
 					else "local"
 				)
 				current_class = str(
@@ -196,8 +207,9 @@ class DocumentIngestProcessor:
 					cancel_check=check_parse_cancelled,
 					chunking_profile=doc_policy.chunk_profile,
 					semantic_enabled=doc_policy.semantic_enabled,
-					ocr_enabled=doc_policy.ocr_enabled,
-					enhanced_parser_allowed=doc_policy.enhanced_parser_allowed,
+					ocr_enabled=parse_plan.ocr_enabled,
+					enhanced_parser_allowed=parse_plan.enhanced_parser_allowed,
+					prefer_enhanced=parse_plan.prefer_enhanced,
 					provider_state=dict(provider_state_local),
 					provider_state_callback=persist_provider_state,
 					job_id=str(lease.id),
@@ -246,8 +258,34 @@ class DocumentIngestProcessor:
 					),
 					"document_profile": doc_policy.document_profile,
 					"scan_handling": doc_policy.scan_handling,
+					"parse_preference": doc_policy.parse_preference,
 					"chunk_profile": doc_policy.chunk_profile,
 				}
+				metrics = report.setdefault("metrics", {})
+				if isinstance(metrics, dict):
+					if parse_plan.degrade_reason:
+						metrics.setdefault("degrade_reason", parse_plan.degrade_reason)
+					if parse_plan.degrade_message:
+						metrics.setdefault(
+							"degrade_message", parse_plan.degrade_message
+						)
+						warnings = report.setdefault("warnings", [])
+						if (
+							isinstance(warnings, list)
+							and parse_plan.degrade_message not in warnings
+						):
+							warnings.insert(0, parse_plan.degrade_message)
+					hint = {
+						"auto": "偏好：自动识别",
+						"quality": "偏好：强制高质量解析",
+						"local_only": "偏好：严格不出域（仅本地）",
+					}.get(doc_policy.parse_preference)
+					if hint:
+						metrics.setdefault("parse_quality_hint", hint)
+					metrics.setdefault(
+						"external_processing_allowed",
+						parse_plan.external_processing_allowed,
+					)
 				result = service.ingest_ir_chunks(
 					library_id=context.rag_library_id,
 					title=prepared.title,

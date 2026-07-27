@@ -13,6 +13,7 @@ from app.services.policy_profiles import (
 	migrate_legacy_ask_to_public,
 	resolve_ask_policy,
 	resolve_document_policy,
+	resolve_parse_plan,
 )
 from app.settings import Settings
 
@@ -118,6 +119,84 @@ def test_document_profile_mapping() -> None:
 		is True
 	)
 	assert resolve_document_policy(scan_handling="auto").ocr_enabled is None
+	assert (
+		resolve_document_policy(parse_preference="local_only").enhanced_parser_allowed
+		is False
+	)
+	assert (
+		resolve_document_policy(parse_preference="quality").prefer_enhanced is True
+	)
+
+
+def test_parse_plan_intents_vs_deploy_flags() -> None:
+	"""User intents × deploy flags → fail-closed plan (no provider selection)."""
+	auto = resolve_parse_plan(
+		parse_preference="auto",
+		scan_handling="auto",
+		mineru_enabled=True,
+		mineru_provider="self_hosted",
+		external_parser_allowed=False,
+	)
+	assert auto.enhanced_parser_allowed is True
+	assert auto.prefer_enhanced is False
+	assert auto.external_processing_allowed is False
+	assert auto.degrade_reason is None
+
+	quality_ok = resolve_parse_plan(
+		parse_preference="quality",
+		mineru_enabled=True,
+		mineru_provider="self_hosted",
+		external_parser_allowed=False,
+	)
+	assert quality_ok.enhanced_parser_allowed is True
+	assert quality_ok.prefer_enhanced is True
+	assert quality_ok.degrade_reason is None
+
+	# quality + 302 but deploy forbids external → local path + reason
+	quality_blocked = resolve_parse_plan(
+		parse_preference="quality",
+		mineru_enabled=True,
+		mineru_provider="302ai",
+		external_parser_allowed=False,
+	)
+	assert quality_blocked.enhanced_parser_allowed is False
+	assert quality_blocked.prefer_enhanced is False
+	assert quality_blocked.degrade_reason == "external_parser_forbidden"
+	assert quality_blocked.external_processing_allowed is False
+
+	quality_disabled_deploy = resolve_parse_plan(
+		parse_preference="quality",
+		mineru_enabled=False,
+		mineru_provider="self_hosted",
+	)
+	assert quality_disabled_deploy.degrade_reason == "deploy_mineru_disabled"
+	assert quality_disabled_deploy.enhanced_parser_allowed is False
+
+	local_only = resolve_parse_plan(
+		parse_preference="local_only",
+		mineru_enabled=True,
+		mineru_provider="302ai",
+		external_parser_allowed=True,
+	)
+	assert local_only.enhanced_parser_allowed is False
+	assert local_only.external_processing_allowed is False
+
+	scan_disabled = resolve_parse_plan(
+		parse_preference="quality",
+		scan_handling="disabled",
+		mineru_enabled=True,
+		mineru_provider="self_hosted",
+	)
+	assert scan_disabled.degrade_reason == "scan_handling_disabled"
+	assert scan_disabled.enhanced_parser_allowed is False
+
+	external_ok = resolve_parse_plan(
+		parse_preference="auto",
+		mineru_enabled=True,
+		mineru_provider="302ai",
+		external_parser_allowed=True,
+	)
+	assert external_ok.external_processing_allowed is True
 
 
 def test_ask_policy_snapshot_shape() -> None:

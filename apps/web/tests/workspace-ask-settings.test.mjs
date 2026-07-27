@@ -180,4 +180,9 @@ test("document_profile maps to internal chunk profiles", () => {
 			.enhanced_parser_allowed,
 		true,
 	);
+	assert.equal(
+		resolveDocumentPolicy({ parsePreference: "local_only" })
+			.enhanced_parser_allowed,
+		false,
+	);
 });

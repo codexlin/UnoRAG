@@ -123,6 +123,28 @@ test("one newly indexed doc must not clear whole-library reindex", () => {
 	);
 });
 
+test("requires_reindex true when parse_preference diverges", () => {
+	assert.equal(
+		computeRequiresReindex({
+			library: {
+				documentProfile: "auto",
+				scanHandling: "auto",
+				parsePreference: "quality",
+				ingestPolicyVersion: 1,
+			},
+			activeVersions: [
+				{
+					documentProfile: "auto",
+					scanHandling: "auto",
+					parsePreference: "auto",
+					ingestPolicyVersion: 1,
+				},
+			],
+		}),
+		true,
+	);
+});
+
 test("stale-version correlated SQL qualifies outer library columns", () => {
 	const source = readFileSync(
 		path.join(root, "src/lib/server/library-reindex-sql.ts"),
@@ -132,6 +154,7 @@ test("stale-version correlated SQL qualifies outer library columns", () => {
 		"id",
 		"document_profile",
 		"scan_handling",
+		"parse_preference",
 		"ingest_policy_version",
 	]) {
 		assert.match(source, new RegExp(`"app"\\."libraries"\\."${column}"`));

@@ -196,6 +196,16 @@ override 文件中加 `mem_limit` / `cpus`，并外接日志栈。
 - 运行登录应授予 `meriknow_web` / `meriknow_worker` / `meriknow_rag_read`  
   （见 `ops/postgres/configure-runtime-roles.sql`），不要用 migrator 跑业务。  
 
+### 8.1 解析配置边界（deploy vs 产品）
+
+| Deploy-only（`runtime.env` / Secret / Helm） | Workspace / 知识库意图（UI） |
+|---|---|
+| `MINERU_PROVIDER`、`MINERU_*_URL`、`MINERU_302_API_KEY`（仅 worker） | `parse_preference`：`auto` / `quality` / `local_only` |
+| `EXTERNAL_PARSER_ALLOWED`、成本单价/日预算 | `scan_handling`：`auto` / `force_ocr` / `disabled`（仅文本） |
+| 超时、槽位容量、`MINERU_MODE` | 文档详情展示实际解析器 / 是否出域 / 降级原因 |
+
+库 PATCH/POST 若携带 Provider、API Key、成本费率等字段会 **400 拒绝**。详见 [ADR 0002](../adr/0002-mineru-complex-pdf.md)。
+
 ## 9. Helm / Kubernetes（起步骨架）
 
 Compose 适合单机；多副本生产使用 [`deploy/helm/meriknow`](../../deploy/helm/meriknow)。

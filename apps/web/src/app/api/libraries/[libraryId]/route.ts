@@ -8,7 +8,9 @@ import { resolveRequestSession } from "@/lib/server/auth/session";
 import { enqueueDocumentDelete } from "@/lib/server/document-delete-enqueue";
 import { documentLifecycleV2Enabled } from "@/lib/server/document-lifecycle";
 import {
+	rejectDeployOnlyParseFields,
 	validateDocumentProfile,
+	validateParsePreference,
 	validateScanHandling,
 } from "@/lib/server/document-policy.mjs";
 import {
@@ -54,22 +56,30 @@ export async function PATCH(request: Request, context: RouteContext) {
 		description?: string | null;
 		document_profile?: string;
 		scan_handling?: string;
+		parse_preference?: string;
 	};
 	try {
 		body = (await request.json()) as typeof body;
 	} catch {
 		return Response.json({ detail: "invalid JSON body" }, { status: 400 });
 	}
+	const deployOnly = rejectDeployOnlyParseFields(
+		body as Record<string, unknown>,
+	);
+	if (!deployOnly.ok) {
+		return Response.json({ detail: deployOnly.detail }, { status: 400 });
+	}
 	if (
 		body.name === undefined &&
 		body.description === undefined &&
 		body.document_profile === undefined &&
-		body.scan_handling === undefined
+		body.scan_handling === undefined &&
+		body.parse_preference === undefined
 	) {
 		return Response.json(
 			{
 				detail:
-					"name, description, document_profile, or scan_handling is required",
+					"name, description, document_profile, scan_handling, or parse_preference is required",
 			},
 			{ status: 400 },
 		);
@@ -91,12 +101,26 @@ export async function PATCH(request: Request, context: RouteContext) {
 		}
 		nextScan = scanResult.value;
 	}
+	let nextPreference: string | undefined;
+	if (body.parse_preference !== undefined) {
+		const preferenceResult = validateParsePreference(body.parse_preference);
+		if (!preferenceResult.ok) {
+			return Response.json(
+				{ detail: preferenceResult.detail },
+				{ status: 400 },
+			);
+		}
+		nextPreference = preferenceResult.value;
+	}
 
 	const profileChanged =
 		nextProfile !== undefined && nextProfile !== current.documentProfile;
 	const scanChanged =
 		nextScan !== undefined && nextScan !== current.scanHandling;
-	const policyChanged = profileChanged || scanChanged;
+	const preferenceChanged =
+		nextPreference !== undefined &&
+		nextPreference !== (current.parsePreference ?? "auto");
+	const policyChanged = profileChanged || scanChanged || preferenceChanged;
 
 	const db = getDatabase();
 	const now = new Date();
@@ -116,6 +140,9 @@ export async function PATCH(request: Request, context: RouteContext) {
 						? { documentProfile: nextProfile }
 						: {}),
 					...(nextScan !== undefined ? { scanHandling: nextScan } : {}),
+					...(nextPreference !== undefined
+						? { parsePreference: nextPreference }
+						: {}),
 					...(policyChanged
 						? {
 								ingestPolicyVersion: (current.ingestPolicyVersion ?? 1) + 1,
@@ -147,6 +174,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 					description: row.description,
 					document_profile: row.documentProfile,
 					scan_handling: row.scanHandling,
+					parse_preference: row.parsePreference,
 					principal_id: identity.principalId,
 				},
 				createdAt: now,
@@ -164,6 +192,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 			documentProfile: libraries.documentProfile,
 			appliedDocumentProfile: libraries.appliedDocumentProfile,
 			scanHandling: libraries.scanHandling,
+			parsePreference: libraries.parsePreference,
 			ingestPolicyVersion: libraries.ingestPolicyVersion,
 			staleActiveVersions: staleActiveVersionsSql(),
 			createdAt: libraries.createdAt,

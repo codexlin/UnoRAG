@@ -1,12 +1,12 @@
 # ADR 0002 — MinerU 补充复杂 / 扫描 PDF
 
-**状态：** Accepted（2026-07-23）
+**状态：** Accepted（2026-07-23）；产品配置边界补充（2026-07-27）
 **上下文：** Phase 2C 需处理扫描件、双栏、复杂表、公式页；不得替换已验证的 PyMuPDF 数字 PDF 路径。
 
 ## 决策
 
 1. **契约：** `DocumentParserBackend`；PyMuPDF 与 MinerU 均输出 `DocumentIR`。
-2. **路由（`mineru_mode=auto`）：** 先 PyMuPDF；仅当扫描/失败/复杂页信号触发时升级整本 MinerU。正常数字 PDF 不调用 MinerU。
+2. **路由（`mineru_mode=auto`）：** 先 PyMuPDF；仅当扫描/失败/复杂页信号触发时升级整本 MinerU。正常数字 PDF 不调用 MinerU。知识库 `parse_preference=quality` 可将路由提升为偏好增强解析（仍不选择 Provider）。
 3. **统一语义、分离传输：** `self_hosted` 遵循同步 `POST /file_parse` +
    multipart `files` 契约；`302ai` 使用 upload → create task → poll → ZIP。
    两者只在 provider adapter 内不同，统一输出 `DocumentIR`，失败显式
@@ -23,11 +23,32 @@
 8. **标题路径：** 按 `text_level` 维护 heading stack，向 chunker 提供完整 section path。
 9. **默认关闭：** `MINERU_ENABLED=false`；测试可用 `MINERU_USE_FAKE=true`。
 
+## 产品配置边界（P1）
+
+**原则：** 部署管理员管基础设施；Workspace/知识库用户只调业务意图。
+
+| 层 | 可配置项 | 禁止暴露给终端用户 |
+|---|---|---|
+| **Deploy-only**（`runtime.env` / Secret / Helm） | `MINERU_PROVIDER`、`MINERU_302_API_KEY`（worker-only）、`EXTERNAL_PARSER_ALLOWED`、Base URL、成本单价/日预算、超时、容量 | Provider URL、API Key、超时、容量、成本费率 |
+| **Library intent**（`parse_preference` + `scan_handling`） | `auto` 自动识别；`quality` 强制高质量解析；`local_only` 严格不出域；`scan_handling` 控制是否允许扫描件 / 仅文本 | 不得选择 `self_hosted` vs `302ai` |
+
+**映射（fail-closed）：**
+
+```text
+parse_preference=quality + deploy 允许增强 → prefer MinerU（不挑供应商）
+parse_preference=quality + EXTERNAL_PARSER_ALLOWED=false 且 Provider=302ai
+  → 回退本地，parser_report.metrics.degrade_reason=external_parser_forbidden
+parse_preference=local_only 或 scan_handling=disabled
+  → enhanced_parser_allowed=false（本库不出域 / 仅文本）
+```
+
+UI / API 展示（来自 `parser_report` + job）：实际解析器（PyMuPDF / 自建 MinerU / 302）、是否出域、任务状态（含等待 302）、降级原因、解析质量提示；`provider_task_id` 仅脱敏 `first8…last4`。
+
 ## 后果
 
 - `parser_report` 暴露 `backend` / `parser_version` / `mode` / `failed_pages` / `latency_ms` / 轻量 `metrics`。
 - 无 MinerU 时扫描件仍诚实失败（错误信息提示启用 MinerU/OCR）。
-- 可在自建与 302 MinerU 间切换而不改 chunker / retrieval。
+- 可在自建与 302 MinerU 间切换而不改 chunker / retrieval；切换权仅在部署层。
 
 ## Ops：302 可观测性与成本（P1）
 
@@ -49,7 +70,7 @@ payload `mineru_provider_state.task_id`，不进 `parser_report` / UI。
 
 Worker 另有：`document_ingest.mineru_pending … provider_task_id=… wait_s=…`。
 
-**环境变量（非密钥，worker 生效）：**
+**环境变量（非密钥，worker 生效；均为 deploy-only）：**
 
 - `MINERU_302_COST_PER_PAGE`（默认 `0.02`，占位单价）
 - `MINERU_302_DAILY_BUDGET`（默认 `0`=关闭；超出则 fail-closed 拒绝新 submit）

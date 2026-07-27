@@ -7,8 +7,11 @@ import { libraries, outboxEvents } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
 	DOCUMENT_PROFILE_DEFAULT,
+	PARSE_PREFERENCE_DEFAULT,
+	rejectDeployOnlyParseFields,
 	SCAN_HANDLING_DEFAULT,
 	validateDocumentProfile,
+	validateParsePreference,
 	validateScanHandling,
 } from "@/lib/server/document-policy.mjs";
 import { canWriteLibraries } from "@/lib/server/library-access";
@@ -38,6 +41,7 @@ export async function GET(request: Request) {
 			documentProfile: libraries.documentProfile,
 			appliedDocumentProfile: libraries.appliedDocumentProfile,
 			scanHandling: libraries.scanHandling,
+			parsePreference: libraries.parsePreference,
 			ingestPolicyVersion: libraries.ingestPolicyVersion,
 			staleActiveVersions: staleActiveVersionsSql(),
 			createdAt: libraries.createdAt,
@@ -75,11 +79,18 @@ export async function POST(request: Request) {
 		library_id?: string;
 		document_profile?: string;
 		scan_handling?: string;
+		parse_preference?: string;
 	};
 	try {
 		body = (await request.json()) as typeof body;
 	} catch {
 		return Response.json({ detail: "invalid JSON body" }, { status: 400 });
+	}
+	const deployOnly = rejectDeployOnlyParseFields(
+		body as Record<string, unknown>,
+	);
+	if (!deployOnly.ok) {
+		return Response.json({ detail: deployOnly.detail }, { status: 400 });
 	}
 	const name = body.name?.trim();
 	if (!name) {
@@ -96,6 +107,12 @@ export async function POST(request: Request) {
 	);
 	if (!scanResult.ok) {
 		return Response.json({ detail: scanResult.detail }, { status: 400 });
+	}
+	const preferenceResult = validateParsePreference(
+		body.parse_preference ?? PARSE_PREFERENCE_DEFAULT,
+	);
+	if (!preferenceResult.ok) {
+		return Response.json({ detail: preferenceResult.detail }, { status: 400 });
 	}
 	const now = new Date();
 	const id = randomUUID();
@@ -124,6 +141,7 @@ export async function POST(request: Request) {
 					description: body.description?.trim().slice(0, 2000) || null,
 					documentProfile: profileResult.value,
 					scanHandling: scanResult.value,
+					parsePreference: preferenceResult.value,
 					ingestPolicyVersion: 1,
 					createdBy: identity.principalId,
 					createdAt: now,
@@ -146,6 +164,7 @@ export async function POST(request: Request) {
 					description: row.description,
 					document_profile: row.documentProfile,
 					scan_handling: row.scanHandling,
+					parse_preference: row.parsePreference,
 					principal_id: identity.principalId,
 				},
 				createdAt: now,

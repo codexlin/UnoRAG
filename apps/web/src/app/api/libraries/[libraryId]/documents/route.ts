@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { and, desc, eq, ne, sql } from "drizzle-orm";
-
 import { getDatabase } from "@/db";
 import {
 	auditLogs,
@@ -11,6 +10,7 @@ import {
 	jobs,
 	libraries,
 } from "@/db/schema";
+import { formatParseStatusView } from "@/lib/parse-status-view.mjs";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
 	documentLifecycleV2Enabled,
@@ -74,28 +74,41 @@ export async function GET(request: Request, context: RouteContext) {
 		.orderBy(desc(documents.updatedAt));
 
 	return Response.json(
-		rows.map(({ document, version, job }) => ({
-			id: document.ragDocumentId,
-			document_id: document.id,
-			library_id: library.ragLibraryId,
-			name: document.name,
-			filename: document.filename,
-			content_type: document.contentType,
-			status: document.status,
-			chunk_count: version?.chunkCount ?? 0,
-			size_bytes: version?.sizeBytes ?? null,
-			error: version?.error ?? job?.error ?? null,
-			has_file: Boolean(version?.storageKey),
-			parser_report: version?.parserReport ?? null,
-			document_version_id: version?.id ?? null,
-			generation_id: version?.generationId ?? null,
-			job_id: job?.id ?? null,
-			job_status: job?.status ?? null,
-			job_stage: job?.stage ?? null,
-			job_progress: job?.progress ?? null,
-			created_at: document.createdAt.toISOString(),
-			updated_at: document.updatedAt.toISOString(),
-		})),
+		rows.map(({ document, version, job }) => {
+			const parser_report = version?.parserReport ?? null;
+			const parse_status = formatParseStatusView({
+				parserReport: parser_report as Record<string, unknown> | null,
+				jobStatus: job?.status ?? null,
+				jobStage: job?.stage ?? null,
+				jobPayload: (job?.payload as Record<string, unknown> | null) ?? null,
+				documentStatus: document.status,
+				parsePreference: version?.parsePreference ?? null,
+			});
+			return {
+				id: document.ragDocumentId,
+				document_id: document.id,
+				library_id: library.ragLibraryId,
+				name: document.name,
+				filename: document.filename,
+				content_type: document.contentType,
+				status: document.status,
+				chunk_count: version?.chunkCount ?? 0,
+				size_bytes: version?.sizeBytes ?? null,
+				error: version?.error ?? job?.error ?? null,
+				has_file: Boolean(version?.storageKey),
+				parser_report,
+				parse_status,
+				parse_preference: version?.parsePreference ?? null,
+				document_version_id: version?.id ?? null,
+				generation_id: version?.generationId ?? null,
+				job_id: job?.id ?? null,
+				job_status: job?.status ?? null,
+				job_stage: job?.stage ?? null,
+				job_progress: job?.progress ?? null,
+				created_at: document.createdAt.toISOString(),
+				updated_at: document.updatedAt.toISOString(),
+			};
+		}),
 	);
 }
 
@@ -216,6 +229,7 @@ export async function POST(request: Request, context: RouteContext) {
 				pipelineVersion: "document-lifecycle-v2",
 				documentProfile: library.documentProfile ?? "auto",
 				scanHandling: library.scanHandling ?? "auto",
+				parsePreference: library.parsePreference ?? "auto",
 				ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
 				createdAt: now,
 				updatedAt: now,
@@ -240,6 +254,7 @@ export async function POST(request: Request, context: RouteContext) {
 					contentType,
 					documentProfile: library.documentProfile ?? "auto",
 					scanHandling: library.scanHandling ?? "auto",
+					parsePreference: library.parsePreference ?? "auto",
 					ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
 				}),
 				createdAt: now,

@@ -300,6 +300,13 @@ export const libraries = appSchema.table(
 		scanHandling: varchar("scan_handling", { length: 32 })
 			.default("auto")
 			.notNull(),
+		/**
+		 * Parse quality intent (UI). auto|quality|local_only.
+		 * Never stores Provider URL / API key / EXTERNAL_PARSER_ALLOWED.
+		 */
+		parsePreference: varchar("parse_preference", { length: 32 })
+			.default("auto")
+			.notNull(),
 		ingestPolicyVersion: integer("ingest_policy_version").default(1).notNull(),
 		createdBy: uuid("created_by").references(() => users.id, {
 			onDelete: "set null",
@@ -378,6 +385,7 @@ export const documentVersions = appSchema.table(
 		ingestPolicyVersion: integer("ingest_policy_version"),
 		documentProfile: varchar("document_profile", { length: 64 }),
 		scanHandling: varchar("scan_handling", { length: 32 }),
+		parsePreference: varchar("parse_preference", { length: 32 }),
 		pointCount: integer("point_count"),
 		chunkCount: integer("chunk_count"),
 		sectionCount: integer("section_count"),

@@ -1,10 +1,12 @@
 """Business-intent policy profiles → internal ask/ingest knobs.
 
 Public contract (stable): answer_profile, retrieval_enhancement,
-session_memory_enabled, evidence_requirement, document_profile, scan_handling.
+session_memory_enabled, evidence_requirement, document_profile,
+scan_handling, parse_preference.
 
-Internal knobs (retrieve_top_k, RRF_K, chunk sizes, …) are resolved here only —
-never exposed as free-form product settings.
+Internal knobs (retrieve_top_k, RRF_K, chunk sizes, Provider URL/Key, …)
+are resolved here / at deploy time only — never exposed as free-form
+product settings.
 
 Conflict rule (refusal/citation):
   Take the *stricter* of answer_profile and evidence_requirement.
@@ -30,6 +32,8 @@ DOCUMENT_PROFILES = (
 	"precise_paragraph",
 )
 SCAN_HANDLINGS = ("auto", "disabled", "force_ocr")
+# Library/user parse intent — never selects self_hosted vs 302ai.
+PARSE_PREFERENCES = ("auto", "quality", "local_only")
 
 # Public keys stored in workspace_settings.ask
 ASK_PUBLIC_KEYS = (
@@ -157,12 +161,33 @@ class ResolvedAskPolicy:
 class ResolvedDocumentPolicy:
 	document_profile: str
 	scan_handling: str
+	parse_preference: str
 	chunk_profile: str
 	semantic_enabled: bool | None
 	# OCR: auto → leave deploy defaults; disabled/force_ocr override parse path.
 	ocr_enabled: bool | None
-	# disabled is strict text-only: no MinerU/external enhanced parser.
+	# local_only / scan disabled → no MinerU/external enhanced parser.
 	enhanced_parser_allowed: bool
+	# quality → prefer enhanced path when deploy allows (not provider selection).
+	prefer_enhanced: bool
+
+	def as_dict(self) -> dict[str, Any]:
+		return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedParsePlan:
+	"""User parse intents × deploy flags → effective knobs + fail-closed reason."""
+
+	parse_preference: str
+	scan_handling: str
+	enhanced_parser_allowed: bool
+	prefer_enhanced: bool
+	ocr_enabled: bool | None
+	# True only when this library may actually send bytes off-box (302).
+	external_processing_allowed: bool
+	degrade_reason: str | None
+	degrade_message: str | None
 
 	def as_dict(self) -> dict[str, Any]:
 		return asdict(self)
@@ -396,6 +421,7 @@ def resolve_document_policy(
 	*,
 	document_profile: str | None = None,
 	scan_handling: str | None = None,
+	parse_preference: str | None = None,
 ) -> ResolvedDocumentPolicy:
 	profile = (document_profile or "auto").strip().lower()
 	if profile not in DOCUMENT_PROFILES:
@@ -403,6 +429,9 @@ def resolve_document_policy(
 	scan = (scan_handling or "auto").strip().lower()
 	if scan not in SCAN_HANDLINGS:
 		scan = "auto"
+	preference = (parse_preference or "auto").strip().lower()
+	if preference not in PARSE_PREFERENCES:
+		preference = "auto"
 	mapped = _DOCUMENT_PROFILE_MAP[profile]
 	ocr: bool | None
 	if scan == "disabled":
@@ -411,11 +440,90 @@ def resolve_document_policy(
 		ocr = True
 	else:
 		ocr = None  # deploy default / auto
+	# Intent: local_only or scan disabled → never call MinerU / external.
+	enhanced = scan != "disabled" and preference != "local_only"
 	return ResolvedDocumentPolicy(
 		document_profile=profile,
 		scan_handling=scan,
+		parse_preference=preference,
 		chunk_profile=str(mapped["chunk_profile"]),
 		semantic_enabled=mapped["semantic_enabled"],
 		ocr_enabled=ocr,
-		enhanced_parser_allowed=scan != "disabled",
+		enhanced_parser_allowed=enhanced,
+		prefer_enhanced=preference == "quality" and enhanced,
+	)
+
+
+def resolve_parse_plan(
+	*,
+	parse_preference: str | None = None,
+	scan_handling: str | None = None,
+	document_profile: str | None = None,
+	mineru_enabled: bool = False,
+	mineru_provider: str = "self_hosted",
+	external_parser_allowed: bool = False,
+) -> ResolvedParsePlan:
+	"""Map library intents + deploy flags to an effective parse plan.
+
+	Deploy-only (never from UI): MINERU_PROVIDER, API keys, EXTERNAL_PARSER_ALLOWED,
+	base URLs, cost rates/budgets, timeouts, capacity.
+	"""
+	policy = resolve_document_policy(
+		document_profile=document_profile,
+		scan_handling=scan_handling,
+		parse_preference=parse_preference,
+	)
+	provider = (mineru_provider or "self_hosted").strip().lower()
+	if provider not in {"self_hosted", "302ai"}:
+		provider = "self_hosted"
+
+	enhanced = policy.enhanced_parser_allowed
+	prefer = policy.prefer_enhanced
+	degrade_reason: str | None = None
+	degrade_message: str | None = None
+
+	if policy.parse_preference == "quality":
+		if policy.scan_handling == "disabled":
+			# quality + disabled scan: intent conflict → local text-only wins.
+			enhanced = False
+			prefer = False
+			degrade_reason = "scan_handling_disabled"
+			degrade_message = "已禁用扫描件识别（仅文本），无法使用高质量解析"
+		elif not mineru_enabled:
+			enhanced = False
+			prefer = False
+			degrade_reason = "deploy_mineru_disabled"
+			degrade_message = "部署未启用增强解析，已回退基础解析（PyMuPDF）"
+		elif provider == "302ai" and not external_parser_allowed:
+			# Fail-closed: quality wanted but deploy forbids out-of-domain.
+			enhanced = False
+			prefer = False
+			degrade_reason = "external_parser_forbidden"
+			degrade_message = "部署禁止文档出域，已回退本地解析"
+	elif policy.parse_preference == "local_only":
+		enhanced = False
+		prefer = False
+	elif not enhanced:
+		# scan_handling=disabled without quality preference
+		pass
+
+	# Auto path still respects deploy MinerU availability at runtime; do not
+	# pre-disable enhanced here so probe/queue_class stays consistent.
+
+	external_ok = bool(
+		enhanced
+		and mineru_enabled
+		and provider == "302ai"
+		and external_parser_allowed
+	)
+
+	return ResolvedParsePlan(
+		parse_preference=policy.parse_preference,
+		scan_handling=policy.scan_handling,
+		enhanced_parser_allowed=enhanced,
+		prefer_enhanced=prefer,
+		ocr_enabled=policy.ocr_enabled,
+		external_processing_allowed=external_ok,
+		degrade_reason=degrade_reason,
+		degrade_message=degrade_message,
 	)

@@ -87,6 +87,7 @@ class DocumentIngestContext:
     # Ingest policy snapshot from enqueue (document_version / job.payload).
     document_profile: str | None
     scan_handling: str | None
+    parse_preference: str | None
     ingest_policy_version: int | None
     parser_report: dict[str, Any] | None
     point_count: int | None
@@ -431,6 +432,7 @@ class JobRepository:
                     version.table_count,
                     version.document_profile AS version_document_profile,
                     version.scan_handling AS version_scan_handling,
+                    version.parse_preference AS version_parse_preference,
                     version.ingest_policy_version AS version_ingest_policy_version,
                     document.id AS document_id,
                     document.rag_document_id,
@@ -489,6 +491,11 @@ class JobRepository:
             or payload.get("scan_handling")
             or "auto"
         )
+        parse_preference = (
+            row.get("version_parse_preference")
+            or payload.get("parse_preference")
+            or "auto"
+        )
         ingest_policy_version = row.get("version_ingest_policy_version")
         if ingest_policy_version is None:
             raw_version = payload.get("ingest_policy_version")
@@ -517,6 +524,7 @@ class JobRepository:
             chunk_profile=row["chunk_profile"],
             document_profile=str(document_profile),
             scan_handling=str(scan_handling),
+            parse_preference=str(parse_preference),
             ingest_policy_version=int(ingest_policy_version),
             parser_report=row["parser_report"],
             point_count=row["point_count"],
@@ -642,6 +650,9 @@ class JobRepository:
                         scan_handling = coalesce(
                             scan_handling, %(scan_handling)s
                         ),
+                        parse_preference = coalesce(
+                            parse_preference, %(parse_preference)s
+                        ),
                         ingest_policy_version = coalesce(
                             ingest_policy_version, %(ingest_policy_version)s
                         ),
@@ -667,6 +678,7 @@ class JobRepository:
                         "parser_report": Jsonb(parser_report),
                         "document_profile": (context.document_profile or "auto")[:64],
                         "scan_handling": (context.scan_handling or "auto")[:32],
+                        "parse_preference": (context.parse_preference or "auto")[:32],
                         "ingest_policy_version": int(
                             context.ingest_policy_version or 1
                         ),
