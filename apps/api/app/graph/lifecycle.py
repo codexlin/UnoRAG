@@ -1,7 +1,8 @@
-"""AskGraph request lifecycle: id resolve, history load, temp session memory.
+"""AskGraph request lifecycle helpers: id resolve, history load, temp session memory.
 
 Metadata/session I/O for prepare + finalize lives here so graph nodes stay free
-of store singletons. Full prepare→execute→finalize service lands in a later commit.
+of store singletons. Orchestration is in service.AskGraphService
+(prepare_request → execute_graph/stream_graph → finalize_result).
 """
 
 from __future__ import annotations
