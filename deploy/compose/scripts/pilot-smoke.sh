@@ -35,7 +35,21 @@ JOB_TIMEOUT_SEC="${MERIKNOW_PILOT_JOB_TIMEOUT_SEC:-300}"
 POLL_INTERVAL_SEC="${MERIKNOW_PILOT_POLL_INTERVAL_SEC:-3}"
 COOKIE_JAR="$(mktemp -t meriknow-pilot-cookies.XXXXXX)"
 WORKDIR="$(mktemp -d -t meriknow-pilot-work.XXXXXX)"
-trap 'rm -f "$COOKIE_JAR"; rm -rf "$WORKDIR"' EXIT
+SERVICE_KEY_ID=""
+RETRIEVE_KEY_ID=""
+
+cleanup() {
+	local key_id
+	for key_id in "$SERVICE_KEY_ID" "$RETRIEVE_KEY_ID"; do
+		[[ -n "$key_id" ]] || continue
+		curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" -X DELETE \
+			-o /dev/null --max-time 5 \
+			"$BASE_URL/api/workspace/keys/$key_id" 2>/dev/null || true
+	done
+	rm -f "$COOKIE_JAR"
+	rm -rf "$WORKDIR"
+}
+trap cleanup EXIT
 
 log() { printf '==> %s\n' "$*"; }
 warn() { printf '!!  %s\n' "$*" >&2; }
@@ -237,6 +251,175 @@ if [[ $ASK_RC -eq 3 ]]; then
 	skip "ask refused without marker — configure live embedding/LLM for full pilot; ingest path already validated"
 fi
 [[ $ASK_RC -eq 0 ]] || fail "ask response missing unique marker"
+
+# --- Public API v1: real service keys + stable external contract ---
+SERVICE_KEY_BODY="$WORKDIR/service-key.json"
+log "create library-scoped service key for Public API v1"
+SERVICE_KEY_CODE="$(
+	auth_curl -o "$SERVICE_KEY_BODY" -w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-d "{\"name\":\"Pilot API v1 $TOKEN\",\"scopes\":[\"ask\",\"retrieve\"],\"library_ids\":[\"${LIB_A_ID}\"]}" \
+		"$BASE_URL/api/workspace/keys" || true
+)"
+[[ "$SERVICE_KEY_CODE" == "201" ]] \
+	|| fail "create service key HTTP $SERVICE_KEY_CODE $(head -c 300 "$SERVICE_KEY_BODY")"
+SERVICE_KEY_ID="$(json_get "$SERVICE_KEY_BODY" id)" || fail "service key missing id"
+SERVICE_KEY_RAW="$(json_get "$SERVICE_KEY_BODY" key)" || fail "service key missing one-time key"
+
+validate_public_v1() {
+	local kind="$1" body="$2" headers="$3" marker="$4" library_id="$5"
+	python3 - "$kind" "$body" "$headers" "$marker" "$library_id" <<'PY'
+import json, sys, uuid
+
+kind, body_path, headers_path, marker, library_id = sys.argv[1:6]
+with open(body_path, encoding="utf-8") as f:
+	data = json.load(f)
+with open(headers_path, encoding="utf-8", errors="replace") as f:
+	header_lines = f.read().splitlines()
+headers = {}
+for line in header_lines:
+	if ":" in line:
+		key, value = line.split(":", 1)
+		headers[key.strip().lower()] = value.strip()
+
+request_id = headers.get("x-request-id", "")
+uuid.UUID(request_id)
+assert headers.get("x-meriknow-api-version") == "1", headers
+assert data.get("trace_id") == request_id, (data.get("trace_id"), request_id)
+assert data.get("library_id", library_id) == library_id
+
+common = {
+	"trace_id", "citations", "refused", "refuse_reason", "retrieval_mode",
+}
+expected = (
+	common | {"query", "library_id"}
+	if kind == "retrieve"
+	else common | {"session_id", "question", "answer"}
+)
+assert set(data) == expected, sorted(set(data) ^ expected)
+
+citations = data.get("citations")
+assert isinstance(citations, list) and citations, "expected at least one citation"
+required_citation = {
+	"id", "index", "title", "snippet", "score", "document_id", "filename",
+	"page", "page_start", "page_end", "section_path", "table_id",
+	"row_start", "row_end", "record_type",
+}
+for citation in citations:
+	assert set(citation) == required_citation, sorted(set(citation) ^ required_citation)
+	for forbidden in (
+		"text", "body", "tenant_id", "generation_id", "document_version_id",
+		"dense_score", "bm25_score", "rrf_score", "retrieval_debug", "doc_id",
+	):
+		assert forbidden not in citation
+assert "retrieval_debug" not in data
+blob = json.dumps(citations, ensure_ascii=False)
+assert marker in blob, "marker missing from public citations"
+print(f"public {kind} contract ok trace_id={request_id} citations={len(citations)}")
+PY
+}
+
+PUBLIC_RETRIEVE_BODY="$WORKDIR/public-retrieve.json"
+PUBLIC_RETRIEVE_HEADERS="$WORKDIR/public-retrieve.headers"
+log "Public API v1 retrieve with real service key"
+PUBLIC_RETRIEVE_CODE="$(
+	curl -sS -D "$PUBLIC_RETRIEVE_HEADERS" -o "$PUBLIC_RETRIEVE_BODY" \
+		-w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-H "authorization: Bearer ${SERVICE_KEY_RAW}" \
+		-d "{\"query\":\"${SECRET_MARKER}\",\"library_id\":\"${LIB_A_ID}\",\"top_k\":6}" \
+		"$BASE_URL/api/v1/retrieve" || true
+)"
+[[ "$PUBLIC_RETRIEVE_CODE" == "200" ]] \
+	|| fail "public retrieve HTTP $PUBLIC_RETRIEVE_CODE $(head -c 400 "$PUBLIC_RETRIEVE_BODY")"
+validate_public_v1 retrieve "$PUBLIC_RETRIEVE_BODY" "$PUBLIC_RETRIEVE_HEADERS" \
+	"$SECRET_MARKER" "$LIB_A_ID" || fail "public retrieve v1 contract mismatch"
+
+PUBLIC_ASK_BODY="$WORKDIR/public-ask.json"
+PUBLIC_ASK_HEADERS="$WORKDIR/public-ask.headers"
+log "Public API v1 ask with real service key"
+PUBLIC_ASK_CODE="$(
+	curl -sS -D "$PUBLIC_ASK_HEADERS" -o "$PUBLIC_ASK_BODY" \
+		-w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-H "authorization: Bearer ${SERVICE_KEY_RAW}" \
+		-d "{\"question\":\"What is the unique marker ${SECRET_MARKER}?\",\"library_id\":\"${LIB_A_ID}\",\"session_id\":\"pilot-${TOKEN}\"}" \
+		"$BASE_URL/api/v1/ask" || true
+)"
+[[ "$PUBLIC_ASK_CODE" == "200" ]] \
+	|| fail "public ask HTTP $PUBLIC_ASK_CODE $(head -c 400 "$PUBLIC_ASK_BODY")"
+validate_public_v1 ask "$PUBLIC_ASK_BODY" "$PUBLIC_ASK_HEADERS" \
+	"$SECRET_MARKER" "$LIB_A_ID" || fail "public ask v1 contract mismatch"
+
+INVALID_BODY="$WORKDIR/public-invalid.json"
+log "Public API v1 rejects client algorithm overrides"
+INVALID_CODE="$(
+	curl -sS -o "$INVALID_BODY" -w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-H "authorization: Bearer ${SERVICE_KEY_RAW}" \
+		-d "{\"question\":\"test\",\"library_id\":\"${LIB_A_ID}\",\"ask_overrides\":{}}" \
+		"$BASE_URL/api/v1/ask" || true
+)"
+[[ "$INVALID_CODE" == "400" ]] || fail "ask_overrides expected 400, got $INVALID_CODE"
+[[ "$(json_get "$INVALID_BODY" error.code || true)" == "invalid_request" ]] \
+	|| fail "ask_overrides error code mismatch"
+
+DENIED_BODY="$WORKDIR/public-library-denied.json"
+log "Public API v1 enforces service-key library allow-list"
+DENIED_CODE="$(
+	curl -sS -o "$DENIED_BODY" -w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-H "authorization: Bearer ${SERVICE_KEY_RAW}" \
+		-d "{\"query\":\"test\",\"library_id\":\"${LIB_B_ID}\"}" \
+		"$BASE_URL/api/v1/retrieve" || true
+)"
+[[ "$DENIED_CODE" == "403" ]] || fail "library allow-list expected 403, got $DENIED_CODE"
+[[ "$(json_get "$DENIED_BODY" error.code || true)" == "library_access_denied" ]] \
+	|| fail "library allow-list error code mismatch"
+
+RETRIEVE_KEY_BODY="$WORKDIR/retrieve-only-key.json"
+log "create retrieve-only key and enforce scope"
+RETRIEVE_KEY_CODE="$(
+	auth_curl -o "$RETRIEVE_KEY_BODY" -w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-d "{\"name\":\"Pilot Retrieve Only $TOKEN\",\"scopes\":[\"retrieve\"],\"library_ids\":[\"${LIB_A_ID}\"]}" \
+		"$BASE_URL/api/workspace/keys" || true
+)"
+[[ "$RETRIEVE_KEY_CODE" == "201" ]] || fail "create retrieve-only key HTTP $RETRIEVE_KEY_CODE"
+RETRIEVE_KEY_ID="$(json_get "$RETRIEVE_KEY_BODY" id)" || fail "retrieve-only key missing id"
+RETRIEVE_KEY_RAW="$(json_get "$RETRIEVE_KEY_BODY" key)" || fail "retrieve-only key missing key"
+
+SCOPE_BODY="$WORKDIR/public-scope-denied.json"
+SCOPE_CODE="$(
+	curl -sS -o "$SCOPE_BODY" -w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-H "authorization: Bearer ${RETRIEVE_KEY_RAW}" \
+		-d "{\"question\":\"test\",\"library_id\":\"${LIB_A_ID}\"}" \
+		"$BASE_URL/api/v1/ask" || true
+)"
+[[ "$SCOPE_CODE" == "403" ]] || fail "scope check expected 403, got $SCOPE_CODE"
+[[ "$(json_get "$SCOPE_BODY" error.code || true)" == "insufficient_scope" ]] \
+	|| fail "scope error code mismatch"
+
+log "revoke service keys and verify revoked key rejection"
+auth_curl -X DELETE -o /dev/null \
+	"$BASE_URL/api/workspace/keys/$SERVICE_KEY_ID" || fail "revoke service key failed"
+REVOKED_BODY="$WORKDIR/public-revoked.json"
+REVOKED_CODE="$(
+	curl -sS -o "$REVOKED_BODY" -w '%{http_code}' \
+		-H 'content-type: application/json' \
+		-H "authorization: Bearer ${SERVICE_KEY_RAW}" \
+		-d "{\"query\":\"test\",\"library_id\":\"${LIB_A_ID}\"}" \
+		"$BASE_URL/api/v1/retrieve" || true
+)"
+[[ "$REVOKED_CODE" == "401" ]] || fail "revoked key expected 401, got $REVOKED_CODE"
+[[ "$(json_get "$REVOKED_BODY" error.code || true)" == "authentication_failed" ]] \
+	|| fail "revoked key error code mismatch"
+SERVICE_KEY_ID=""
+
+auth_curl -X DELETE -o /dev/null \
+	"$BASE_URL/api/workspace/keys/$RETRIEVE_KEY_ID" || fail "revoke retrieve-only key failed"
+RETRIEVE_KEY_ID=""
 
 # --- cross-library isolation ---
 ASK_B_BODY="$WORKDIR/ask_b.json"
