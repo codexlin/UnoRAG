@@ -55,17 +55,37 @@
 
 ## 执行原则
 
-路线图服务于一个核心产品：**MeriKnow Knowledge Service**。优先级顺序是：
+路线图服务于一个核心产品：**MeriKnow Knowledge Service**。
+
+**当前阶段（私有化稳固）明确优先级：**
+
+```text
+私有化部署做稳、做熟
+  → Ask/Retrieve 质量可证明（消融 + 领域断言 + release gate）
+  → 再谈协议扩展（SDK/MCP/OpenAI 已有薄适配，暂缓加深）
+```
+
+在私有化版本未达到「稳定可交付」前，不主动开新的产品面扩展。已落地的 SDK/MCP 维持维护模式。
+
+通用优先级仍是：
 
 ```text
 生产可信度
   → 稳定 Knowledge API
-  → Python SDK
-  → MCP / OpenAI-compatible 薄适配
+  → 薄适配层维护
   → Connector 与能力加深
 ```
 
 Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功能挤占隔离、一致性、API 契约、可观测和交付工作。所有 SDK/协议适配必须调用同一 HTTP API，不产生第二套权限、版本、索引或检索真相。
+
+### 私有化稳固工作包（进行中）
+
+| 项 | 说明 |
+|----|------|
+| Ask 消融最小骨架 | `docs/runbooks/ask-ablation-eval.md`（实验，**不进** release gate） |
+| 稳定性电池 | `deploy/compose/scripts/private-stability.sh`（发布 go/no-go） |
+| Outbox | Compose/Helm `outbox-worker` 投影文库变更 |
+| 安全 fuse | ACL / tenant / active generation / 拒答契约（release gate） |
 
 ## 近 / 中 / 远期
 

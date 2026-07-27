@@ -88,6 +88,17 @@ worker:
     failureThreshold: 3
   terminationGracePeriodSeconds: 120
 
+outboxWorker:
+  enabled: true
+  replicaCount: 1
+  resources: {}
+  batchSize: "20"
+  pollMs: "2000"
+  lockTimeoutSeconds: "300"
+  requestTimeoutSeconds: "1800"
+  maxAttempts: "8"
+  terminationGracePeriodSeconds: 60
+
 # ---------------------------------------------------------------------------
 # Networking
 # ---------------------------------------------------------------------------

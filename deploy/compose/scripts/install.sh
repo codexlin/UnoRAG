@@ -68,8 +68,8 @@ echo "==> bootstrapping control-plane admin/workspace (create-only password)"
 mk_compose_bootstrap --profile migrate run --rm bootstrap
 
 echo "==> starting application stack"
-mk_compose up -d caddy web api lifecycle-worker
-mk_compose up -d --wait caddy web api lifecycle-worker || true
+mk_compose up -d caddy web api lifecycle-worker outbox-worker
+mk_compose up -d --wait caddy web api lifecycle-worker outbox-worker || true
 
 echo
 echo "install complete"
@@ -77,5 +77,6 @@ echo "  UI:     http://localhost:${HTTP_PORT}/"
 echo "  health: curl -sf http://localhost:${HTTP_PORT}/api/rag/health"
 echo "  note:   FastAPI is not published; only Caddy→web is on the edge"
 echo "  note:   admin password is only in bootstrap.env (not in web runtime)"
+echo "  note:   outbox-worker projects library mutations to the RAG API"
 echo
 echo "next: review docs/runbooks/private-deployment.md (readiness + backup)"

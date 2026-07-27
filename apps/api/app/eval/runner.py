@@ -69,6 +69,46 @@ def _check_expect(expect: EvalExpect, observed: dict[str, Any]) -> list[str]:
 	for needle in expect.answer_contains:
 		if needle not in answer:
 			errors.append(f"answer missing: {needle!r}")
+	for point in expect.expected_answer_points:
+		if point not in answer:
+			errors.append(f"expected_answer_point missing: {point!r}")
+	# Domain gold: require observed evidence ids when gold is annotated.
+	# Missing observed ids is a failure (do not silently pass).
+	if expect.gold_chunk_ids:
+		observed_chunks = _collect_ids(observed, keys=("chunk_id", "chunk_ids"))
+		if not observed_chunks:
+			errors.append(
+				f"gold_chunk_ids required {expect.gold_chunk_ids} but no chunk_id in observed"
+			)
+		elif not (set(expect.gold_chunk_ids) & observed_chunks):
+			errors.append(
+				f"gold_chunk_ids miss: want any of {expect.gold_chunk_ids} got={sorted(observed_chunks)}"
+			)
+	if expect.gold_document_version_ids:
+		observed_versions = _collect_ids(
+			observed,
+			keys=("document_version_id", "doc_version_id", "version_id"),
+		)
+		if not observed_versions:
+			errors.append(
+				"gold_document_version_ids required "
+				f"{expect.gold_document_version_ids} but none observed"
+			)
+		elif not (set(expect.gold_document_version_ids) & observed_versions):
+			errors.append(
+				"gold_document_version_ids miss: "
+				f"want any of {expect.gold_document_version_ids} got={sorted(observed_versions)}"
+			)
+	if expect.gold_table_ids:
+		observed_tables = _collect_ids(observed, keys=("table_id", "table_ids"))
+		if not observed_tables:
+			errors.append(
+				f"gold_table_ids required {expect.gold_table_ids} but none observed"
+			)
+		elif not (set(expect.gold_table_ids) & observed_tables):
+			errors.append(
+				f"gold_table_ids miss: want any of {expect.gold_table_ids} got={sorted(observed_tables)}"
+			)
 	if expect.section_substr is not None:
 		section = str(observed.get("section_path") or "")
 		if expect.section_substr not in section:
@@ -114,6 +154,29 @@ def _check_expect(expect: EvalExpect, observed: dict[str, Any]) -> list[str]:
 	return errors
 
 
+def _collect_ids(observed: dict[str, Any], *, keys: tuple[str, ...]) -> set[str]:
+	"""Harvest id-like fields from observed answer / citations / hits."""
+	found: set[str] = set()
+
+	def walk(node: Any) -> None:
+		if isinstance(node, dict):
+			for key, value in node.items():
+				if key in keys:
+					if isinstance(value, str) and value:
+						found.add(value)
+					elif isinstance(value, list):
+						for item in value:
+							if isinstance(item, str) and item:
+								found.add(item)
+				walk(value)
+		elif isinstance(node, list):
+			for item in node:
+				walk(item)
+
+	walk(observed)
+	return found
+
+
 def _run_classify(case: EvalCase) -> EvalCaseResult:
 	query_type, reason = classify_query(case.question, history=case.history or None)
 	plan = build_retrieval_plan(
@@ -148,8 +211,35 @@ _EVAL_ASK_OVERRIDES = {
 }
 
 
+def _resolve_ablation(case: "EvalCase") -> tuple[dict[str, Any], dict[str, str], str | None]:
+	"""Return (ask_overrides, env, skip_reason) for a case's policy_variant."""
+	from app.eval.ablation import variant_by_id
+
+	if not case.policy_variant:
+		return dict(_EVAL_ASK_OVERRIDES), {"MAX_RETRIEVE_RETRIES": "0"}, None
+	try:
+		variant = variant_by_id(case.policy_variant)
+	except KeyError:
+		return dict(_EVAL_ASK_OVERRIDES), {"MAX_RETRIEVE_RETRIES": "0"}, (
+			f"unknown policy_variant={case.policy_variant}"
+		)
+	if variant.not_evaluable:
+		return (
+			dict(variant.ask_overrides),
+			dict(variant.env),
+			variant.note or f"{variant.id} not evaluable yet",
+		)
+	if variant.requires_graph_hook:
+		return (
+			dict(variant.ask_overrides),
+			dict(variant.env),
+			variant.note or f"{variant.id} requires graph hook",
+		)
+	return dict(variant.ask_overrides), dict(variant.env), None
+
+
 @contextmanager
-def _isolated_ask_settings():
+def _isolated_ask_settings(env_overrides: dict[str, str] | None = None):
 	"""隔离 eval 对环境、settings cache 和 metadata singleton 的修改。"""
 	from app.graph.ask_graph import AskGraphService, stub_load_table_groups
 	from app.security.access_scope import AccessScope
@@ -164,17 +254,21 @@ def _isolated_ask_settings():
 		"INTERNAL_AUTH_ENABLED",
 	)
 	previous = {key: os.environ.get(key) for key in keys}
+	extra_env = dict(env_overrides or {})
 	with TemporaryDirectory(prefix="meriknow-eval-") as tmp_dir:
 		os.environ.update(
 			{
 				"ASK_MODE": "stub",
 				"METADATA_BACKEND": "json",
 				"METADATA_PATH": str(Path(tmp_dir) / "metadata.json"),
-				"MAX_RETRIEVE_RETRIES": "0",
+				"MAX_RETRIEVE_RETRIES": extra_env.get("MAX_RETRIEVE_RETRIES", "0"),
 				# Avoid host .env INTERNAL_AUTH_ENABLED=true requiring request scope.
 				"INTERNAL_AUTH_ENABLED": "false",
 			}
 		)
+		for key, value in extra_env.items():
+			if key not in {"MAX_RETRIEVE_RETRIES"}:
+				os.environ[key] = value
 		get_settings.cache_clear()
 		reset_metadata_store()
 		try:
@@ -196,10 +290,34 @@ def _isolated_ask_settings():
 
 
 def _run_ask(case: EvalCase) -> EvalCaseResult:
-	with _isolated_ask_settings() as service:
+	import time
+
+	ask_overrides, env_overrides, skip_reason = _resolve_ablation(case)
+	if skip_reason and case.policy_variant:
+		from app.eval.ablation import variant_by_id
+
+		try:
+			variant = variant_by_id(case.policy_variant)
+		except KeyError:
+			variant = None
+		if variant and (variant.requires_graph_hook or variant.not_evaluable):
+			return EvalCaseResult(
+				id=case.id,
+				ok=True,
+				kind=case.kind,
+				errors=[],
+				observed={"skipped": True},
+				policy_variant=case.policy_variant,
+				category=case.category,
+				skipped=True,
+				skip_reason=skip_reason,
+			)
+
+	t0 = time.perf_counter()
+	with _isolated_ask_settings(env_overrides) as service:
 		# history 样例直接调用图，避免依赖持久化 session memory。
 		if case.history:
-			ask_settings = service._ask_settings_for_request(_EVAL_ASK_OVERRIDES)
+			ask_settings = service._ask_settings_for_request(ask_overrides)
 			graph = service._graph_for_settings(ask_settings)
 			state = graph.invoke(
 				{
@@ -218,12 +336,14 @@ def _run_ask(case: EvalCase) -> EvalCaseResult:
 				"answer": state.get("answer") or "",
 				"judge": state.get("judgement") or debug.get("judgement"),
 				"retrieval_plan": state.get("retrieval_plan") or debug.get("retrieval_plan"),
+				"citations": state.get("citations") or debug.get("citations") or [],
+				"ask_overrides": ask_overrides,
 			}
 		else:
 			resp = service.ask(
 				question=case.question,
 				library_id=case.library_id,
-				ask_overrides=_EVAL_ASK_OVERRIDES,
+				ask_overrides=ask_overrides,
 			)
 			debug = resp.retrieval_debug or {}
 			observed = {
@@ -233,7 +353,10 @@ def _run_ask(case: EvalCase) -> EvalCaseResult:
 				"answer": resp.answer,
 				"judge": debug.get("judgement"),
 				"retrieval_plan": debug.get("retrieval_plan"),
+				"citations": getattr(resp, "citations", None) or debug.get("citations") or [],
+				"ask_overrides": ask_overrides,
 			}
+	duration_ms = (time.perf_counter() - t0) * 1000.0
 	errors = _check_expect(case.expect, observed)
 	return EvalCaseResult(
 		id=case.id,
@@ -241,6 +364,9 @@ def _run_ask(case: EvalCase) -> EvalCaseResult:
 		kind=case.kind,
 		errors=errors,
 		observed=observed,
+		policy_variant=case.policy_variant,
+		category=case.category,
+		duration_ms=duration_ms,
 	)
 
 

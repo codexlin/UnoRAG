@@ -17,7 +17,7 @@
 # mk_compose does NOT require bootstrap.env; mk_compose_bootstrap does.
 #
 # Browser → Caddy :${HTTP_PORT} → web :3000
-# FastAPI / lifecycle-worker are NOT published.
+# FastAPI / lifecycle-worker / outbox-worker are NOT published.
 
 name: ${COMPOSE_PROJECT_NAME:-meriknow}
 
@@ -252,6 +252,34 @@ services:
       retries: 12
       start_period: 20s
     stop_grace_period: 2m
+    networks:
+      - internal
+
+  # Library mutation projection: app.outbox_events → FastAPI internal projectors.
+  # Required for create/update/delete library to reach the RAG read model.
+  outbox-worker:
+    image: ${MERIKNOW_WEB_MIGRATOR_IMAGE:-meriknow-web-migrator:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/web.Dockerfile
+      target: migrator
+    working_dir: /repo/apps/web
+    restart: unless-stopped
+    command: ["node", "scripts/process-outbox.mjs", "--watch"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      RAG_API_URL: http://api:8000
+      MERIKNOW_INTERNAL_SECRET: ${MERIKNOW_INTERNAL_SECRET:?MERIKNOW_INTERNAL_SECRET required}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-20}
+      OUTBOX_POLL_MS: ${OUTBOX_POLL_MS:-2000}
+      OUTBOX_LOCK_TIMEOUT_SECONDS: ${OUTBOX_LOCK_TIMEOUT_SECONDS:-300}
+      OUTBOX_REQUEST_TIMEOUT_SECONDS: ${OUTBOX_REQUEST_TIMEOUT_SECONDS:-1800}
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-8}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
     networks:
       - internal
 

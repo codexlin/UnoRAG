@@ -11,6 +11,7 @@ Browser
            -> FastAPI RAG Data Plane (api, unpublished)
            -> PostgreSQL / Qdrant / Redis
       -> Python lifecycle-worker (unpublished; claims app.jobs)
+      -> Node outbox-worker (unpublished; projects app.outbox_events → RAG)
   -> DOCUMENT_STORAGE_ROOT shared volume (web + worker)
   -> Customer LLM / embedding / rerank / MinerU endpoints
 ```
@@ -66,7 +67,7 @@ chmod +x scripts/*.sh
 3. `migrate-web`（Drizzle `app.*`）→ `migrate-rag`（`rag.*`）  
 4. 应用 `ops/postgres/configure-runtime-roles.sql`  
 5. `bootstrap` 控制面组织/工作区/管理员  
-6. 启动 Caddy / web / api / lifecycle-worker  
+6. 启动 Caddy / web / api / lifecycle-worker / outbox-worker   
 
 ### 2.3 手工等价步骤
 
@@ -80,7 +81,7 @@ mk_compose exec -T postgres \
   psql -U meriknow -d meriknow \
   < ../../ops/postgres/configure-runtime-roles.sql
 mk_compose_bootstrap --profile migrate run --rm bootstrap
-mk_compose up -d caddy web api lifecycle-worker
+mk_compose up -d caddy web api lifecycle-worker outbox-worker
 ```
 
 生命周期迁移细节另见
@@ -93,6 +94,7 @@ mk_compose up -d caddy web api lifecycle-worker
 | Edge / 控制面 | `GET /api/rag/health`（经 Caddy） | HTTP 200；代理到 FastAPI `/health` |
 | FastAPI | 容器内 `GET /health` | `status=ok` 时需 metadata + active-generation gate + ask_ready；否则 `unavailable`/`degraded` |
 | lifecycle-worker | 文件 `/tmp/meriknow-lifecycle-ready` | 进入主循环后创建；SIGTERM 删除 |
+| outbox-worker | 进程常驻 `process-outbox.mjs --watch` | 投影文库变更；无单独 ready 文件 |
 | Postgres | `pg_isready` | healthy |
 | Qdrant | TCP `:6333` / `readyz` | healthy |
 | Redis | `redis-cli ping` | `PONG` |
@@ -124,7 +126,7 @@ DATABASE_URL=... pnpm lifecycle:inspect
 1. **先迁移、再切流量**（additive schema）。  
 2. **worker drain**：`source scripts/compose-env.sh && mk_compose stop lifecycle-worker` 发送 SIGTERM；  
    worker 停止 claim，当前同步步骤结束后退出（`stop_grace_period: 2m`）。  
-3. 滚动 `api` → `web` → 拉起新 `lifecycle-worker` → `caddy`。  
+3. 滚动 `api` → `web` → 拉起新 `lifecycle-worker` / `outbox-worker` → `caddy`。  
 4. 多 pipeline version 可短暂并存；检索以 PostgreSQL active generation 为准。  
 
 升级后验收：health、上传/替换一文档、Ask 引用、`lifecycle:inspect` 无异常堆积。
@@ -133,7 +135,7 @@ DATABASE_URL=... pnpm lifecycle:inspect
 
 1. 停止写入（或 drain worker）。  
 2. 将 `MERIKNOW_WEB_IMAGE` / `MERIKNOW_API_IMAGE` 指回上一版本 tag，  
-   `source scripts/compose-env.sh && mk_compose up -d api web lifecycle-worker caddy`。  
+   `source scripts/compose-env.sh && mk_compose up -d api web lifecycle-worker outbox-worker caddy`。  
 3. **不要**盲目 down-migrate Schema。Additive 列可保留；若版本要求恢复数据，  
    使用备份按第 6 节 restore。  
 4. 若仅应用回归：回滚镜像即可；若出现数据损坏或不兼容迁移，走 backup restore。  
@@ -212,7 +214,7 @@ Compose 适合单机；多副本生产使用 [`deploy/helm/meriknow`](../../depl
 
 要点：
 
-- 部署 **web / api / lifecycle-worker**；**不**内置 Postgres、Qdrant、Redis、MinIO。  
+- 部署 **web / api / lifecycle-worker / outbox-worker**；**不**内置 Postgres、Qdrant、Redis、MinIO。  
 - `values.external.*` 填客户托管连接；密钥走 `secret.existingSecret`（勿提交明文）。  
 - Ingress（可选）只暴露 **web**；api 保持 ClusterIP（fail-closed）。  
 - readiness：web `GET /api/rag/health`、api `GET /health`、worker 就绪文件。  
