@@ -1,9 +1,9 @@
-# MeriKnow 收敛计划（Step 1：事实源与无行为变化清理）
+# MeriKnow 收敛计划（Step 2：Eval → AskGraph 无行为变化拆分）
 
-> 状态：**Step 1 基本完成**（2026-07-27）；文档/废弃口径 + 最小 Py↔JS policy parity 已落地。  
-> 前提：私有栈黑盒切片 [Conditional PASS @ `0170ba8`](../acceptance/reports/2026-07-27-private-0170ba8-blackbox.md)  
-> **下一步**：私有试点稳定性（非本文件 Step 2）；**Step 2 拆文件待试点 GO 后**（现在不拆 `ask_graph.py` / `eval/runner.py`）。  
-> 约束：**不做大范围搬代码**；优先消灭「同一业务概念多定义 / 多映射 / 多入口」；行为变更放到 Step 2/3。
+> 状态：**Step 1 已完成**（2026-07-27）；**Step 2 已启动**（2026-07-28）— **先 Eval，后 AskGraph**（两模块不同 PR）。  
+> 前提：私有栈黑盒 [Conditional PASS @ `0170ba8`](../acceptance/reports/2026-07-27-private-0170ba8-blackbox.md)；试点 **Conditional GO @ webch**。  
+> **当前**：Eval 无行为变化拆分进行中；AskGraph 本阶段只定结构与提交顺序，**不拆代码**直至 Eval PR 合入。  
+> 约束：无行为变化；旧 import 过渡期仍可用；每提交 release gate 绿；不删 410 内部实现、不做 codegen、不扩消融/OpenAI。
 
 ---
 
@@ -13,16 +13,17 @@
 
 ### P0 完成度口径
 
-| 已基本收敛 | 后置 / 非本轮 |
-|------------|---------------|
-| 架构认知（平面 / 双 worker / 事实源表） | 大文件拆分（Step 2，试点 GO 后） |
+| 已基本收敛（Step 1） | 本轮 / 后置 |
+|----------------------|-------------|
+| 架构认知（平面 / 双 worker / 事实源表） | **Step 2**：先 Eval 拆分，后 AskGraph（不同 PR） |
 | 文档口径（Compose/Helm/outbox、SDK 0.1.0） | 其余模块头批量注释（非必做） |
 | 冻结边界声明（§7 + ROADMAP） | 410 实现删除 / codegen（Step 3+） |
-| **最小 Py↔JS policy parity**（fixtures + CI） | — |
+| **最小 Py↔JS policy parity**（fixtures + CI） | 消融平台扩张 / OpenAI 层（仍冻结） |
 | 四边界模块头（ask_graph / eval runner / lifecycle / process-outbox） | — |
+| 试点 Conditional GO @ webch | — |
 
-> **P0 = 架构认知 / 文档口径 / 冻结边界 / 最小防漂移门禁已闭环。**  
-> 剩余 P1（ablation 一行已标；policy/outbox-core 等）非本轮必做；**勿批量加模块头**。
+> **P0（Step 1）= 架构认知 / 文档口径 / 冻结边界 / 最小防漂移门禁已闭环。**  
+> 剩余 P1（policy/outbox-core 等模块头）非本轮必做；**勿批量加模块头**。
 
 ---
 
@@ -203,13 +204,13 @@ Step 1 仍要求：改映射必须双边改；parity 证明**同一输入等值*
 
 ## 6. Step 1 执行 backlog（无行为变化）
 
-### 下一步顺序（Step 1 收尾后）
+### 下一步顺序（Step 1 收尾后 → Step 2）
 
 1. ~~修 Helm / 删除时限措辞~~ — **已完成**  
 2. ~~最小 Py↔JS parity~~ — **已完成**（`tests/contracts/policy-parity/` + CI）  
 3. ~~四边界模块头~~ — **已完成**（**不要**再批量加头）  
-4. **当前**：私有试点稳定性（观测、冒烟、故障恢复）；**非**本文件 Step 2  
-5. **试点正式 GO 后**：再拆 `ask_graph.py` / `eval/runner.py`（Step 2）
+4. ~~私有试点稳定性~~ — **Conditional GO @ webch**  
+5. **当前（Step 2）**：先拆 `eval/`（本文件 §7.1），再拆 AskGraph（§7.2）；**两模块不同 PR**
 
 ### P0 — 文档/废弃标记/冻结声明 / 防漂移起点
 
@@ -252,33 +253,122 @@ Step 1 仍要求：改映射必须双边改；parity 证明**同一输入等值*
 
 ---
 
-## 7. Step 2 / 3 冻结边界（现在不做）
+## 7. Step 2 打法（已启动）与冻结边界
 
-> **冻结声明（现行）**：私有化上线 / 试点正式 GO 前，**只做稳定性与 Step 1 收敛**。  
-> 明确冻结：消融评测平台扩张、OpenAI 兼容层加深、新 Ask 分支/能力。PR 审查可据此拒绝越界改动。  
-> 同步写入 [`docs/ROADMAP.md`](../ROADMAP.md)「明确不做」。
+> **Step 2 已启动**（试点 Conditional GO @ webch）。顺序：**先 Eval，后 AskGraph**；**两个模块不同 PR**。  
+> 第一刀**不是按行数搬家**，而是抽依赖边界（Eval：cases/assertions/fixtures/environment/executors；AskGraph：闭包 → `AskGraphContext`）。  
+> 同步写入 [`docs/ROADMAP.md`](../ROADMAP.md)「明确不做」的仍适用项见 §7.3。
+
+### 7.1 Eval 目标结构与提交顺序
+
+复用现有 `schemas.py` / `gates.py` / `report.py` / `ablation.py`——**不新建**重复 scorers / reports。
+
+```text
+apps/api/app/eval/
+  schemas.py          # 保留
+  gates.py            # 保留
+  report.py           # 保留
+  ablation.py         # 保留（实验，非 release gate）
+  cases.py            # load_eval_cases / DEFAULT_CASES
+  assertions.py       # check_expect / collect_ids
+  fixtures.py         # fixture 路径解析 / IR 加载
+  environment.py      # isolated settings / ablation resolve
+  executors/          # 按 kind 一文件；EXECUTORS 注册表替代大分支
+    __init__.py       # EXECUTORS = {kind: fn}
+    ask.py · classify.py · ingest_chunk.py · retrieval.py · ingest_http.py
+  runner.py           # ~100 行：调度 + 过渡期 re-export；旧 import 仍可用
+  cli.py              # main / argparse（可后置从 runner 抽出）
+```
+
+| 提交 | 内容 |
+|------|------|
+| E1 | characterization tests（runner 调度、主要 executor、断言路径）绿 |
+| E2 | `cases` / `assertions` / `fixtures` / `environment` 抽出；runner re-export |
+| E3 | `executors/` + `EXECUTORS` 注册表；迁出 ask/classify/ingest/retrieval |
+| E4 | runner 收薄至 ~100 行；可选 `cli.py`；每提交 release gate 相关子集绿 |
+
+**完成标准（Eval）**
+
+- `run_eval_cases` 经 `EXECUTORS` 调度，无大 `if/elif` 分支  
+- 断言语义、消融行为、gate 条件**不变**  
+- 不新建与 `report.py` / `gates.py` 重复的 scorers/reports  
+- 旧 `from app.eval.runner import …` 过渡期可用  
+- 每提交 eval 相关 pytest + release gate 子集绿  
+
+### 7.2 AskGraph 目标结构与提交顺序
+
+> **本阶段只写文档，不拆 `ask_graph.py` 实现**（等 Eval PR 合入后再开 AskGraph PR）。
+
+**第一刀不是按行数搬家**：把节点依赖从闭包取出 → **`AskGraphContext`**（已解析的 `EffectiveAskSettings`、注入的 store/LLM/retriever 等）。节点只收 `State + Context`；**禁止**节点再 `resolve` policy / 读 env / 碰 DB singleton。
+
+```text
+apps/api/app/graph/ask/
+  state.py            # AskState / 相关 TypedDict
+  context.py          # AskGraphContext（含已解析 EffectiveAskSettings）
+  topology.py         # 纯图连线；无算法
+  service.py          # prepare_request → execute/stream → finalize
+  lifecycle.py        # 图/服务构造与生命周期
+  persistence.py      # turns / session 等持久化
+  messages.py         # 提示词与消息拼装
+  stubs.py            # stub retrieve / table 等
+  nodes/
+    routing/          # classify / route
+    rewrite/
+    retrieval/
+    table/
+    decision/         # refuse / adjudicate / judge
+    generation/       # answer
+  ask_graph.py        # 仅 facade（过渡期 re-export）；正式 GO 后下一 major 可删
+```
+
+| 提交 | 内容 |
+|------|------|
+| 1 | characterization tests（同步 ask / 流式 / refuse / stub 路径） |
+| 2 | `state` / `messages` / `stubs` 抽出 |
+| 3 | `persistence` / `lifecycle` |
+| 4 | **Context 替换闭包**（节点签名改为 State+Context；policy 只在入口解析一次） |
+| 5 | 按 routing/rewrite/retrieval/table/decision/generation **分组搬节点** |
+| 6 | `topology`（无算法） |
+| 7 | `service`：`prepare_request` → `execute`/`stream` → `finalize`；同步与流式共享收尾 |
+
+**Service 边界**：入口一次解析 policy → 写入 Context；节点不读 env/DB/singleton；同步与流式共享 `finalize`。
+
+**完成标准（AskGraph）**
+
+- topology **无算法**  
+- node **不读** env / DB / singleton；**不**再 resolve policy  
+- Context 携带**已解析** `EffectiveAskSettings`  
+- policy **只在入口解析一次**  
+- 同步 / 流式共享收尾  
+- 旧 `ask_graph` import 过渡期可用；每提交 release gate 绿  
+- facade 删除时机 = **正式 GO 后的下一 major**（与 §4 一致）  
+
+**AskGraph 下一步第一提交建议**：characterization tests（覆盖 stub ask、refuse、history 直调图、stream finalize 等价），再开提交 2（state/messages/stubs）。
+
+### 7.3 现在不做（Step 2 期间仍冻结）
 
 | 不做 | 说明 |
 |------|------|
-| **不拆** `ask_graph.py` | Step 2 试点稳定后再拆 |
-| **不拆** `eval/runner.py` | 同上 |
 | **不删** 410 后内部实现 / 路由桩 | Step 3（正式 GO 后的下一 major；见 §4 删除前置） |
-| **不统一** Py/TS schema codegen | 可列后续；Step 1 用最小 parity fixtures，不做共享包 |
+| **不统一** Py/TS schema codegen / 共享 schema 包 | Step 1 最小 parity 已够；不做共享包 |
 | **不合并** lifecycle 与 outbox 进程 | 职责已分清 |
 | **不扩张** 消融为平台产品 / 把 ablation 纳入 CI release gate | **冻结** |
-| **不实现** OpenAI-compatible 层加深 | **冻结**至试点 GO + API 稳定 |
+| **不实现** OpenAI-compatible 层加深 | **冻结** |
 | **不新增** Ask 图分支 / 平行 policy 引擎 | **冻结** |
-| **不大范围移动** 包路径或「按文件大小重构」 | 明确禁止 |
+| **不按行数** 无边界搬家 | 先 Context / EXECUTORS，再分组搬 |
+| **本任务不拆** `ask_graph.py` 实现 | 仅 Eval 开刀；AskGraph 等独立 PR |
 
 三步顺序回顾：
 
-1. **本文件执行面**：事实源、废弃标记、文档漂移、**最小 parity**、（可选）边界模块头、功能冻结  
-2. 拆 `ask_graph.py` 与 `eval/runner.py`（试点稳定后）  
-3. 删兼容负担（410 内部残骸、legacy knobs、过时别名等）— 正式 GO 后的下一 major
+1. ~~事实源、废弃标记、文档漂移、最小 parity、边界模块头、功能冻结~~ — **Step 1 已完成**  
+2. **进行中**：先 Eval 拆分，后 AskGraph（Context 优先；不同 PR）  
+3. 删兼容负担（410 内部残骸、legacy knobs、过时别名、facade）— 正式 GO 后的下一 major  
 
 ---
 
-## 8. 成功标准（Step 1 验收）
+## 8. 成功标准
+
+### 8.1 Step 1 验收（已满足，2026-07-27）
 
 1. **单一入口**：新人从 `docs/README.md` → 本文即可找到各概念权威源与禁止项。  
 2. **部署一致**：`ARCHITECTURE` / `private-deployment` / Compose / Helm 文案均列出 **outbox-worker**；Helm 正确区分 api Service vs workers 无 Service；无「Compose 缺 outbox」旧断言。  
@@ -286,10 +376,16 @@ Step 1 仍要求：改映射必须双边改；parity 证明**同一输入等值*
 4. **废弃有时限**：§4 每条有状态 + 删除时机；代码/README 统一为：**最早删除版本：正式 GO 后的下一 major**；删除前置：确认无调用日志、契约测试仍覆盖 410、发布迁移说明。  
 5. **消融非门禁**：文档与 CI 不把 ablation 当作 release gate。  
 6. **无行为变化**：不改 Python/TS 业务逻辑（parity 仅测既有映射）；既有 pytest / web 单测 / CI gate 仍绿。  
-7. **冻结可执行**：§7 清单被 ROADMAP 或本文引用，PR 审查可拒绝越界改动。  
+7. **冻结可执行**：§7.3 清单被 ROADMAP 或本文引用，PR 审查可拒绝越界改动。  
 8. **防漂移起步**：`python3 scripts/compare_policy_parity.py`（或 CI `policy-parity`）对共享 fixtures **Py↔JS 等值**通过。
 
-**验收判定（2026-07-27）**：上列 1–8 已满足 → **Step 1 可标基本完成**。后续产能优先私有试点稳定性；**不开** Step 2 拆文件，直至试点 GO。
+**验收判定（2026-07-27）**：上列 1–8 已满足 → **Step 1 完成**。试点 Conditional GO @ webch 后进入 Step 2。
+
+### 8.2 Step 2 验收（进行中）
+
+1. Eval：目标结构落地；`EXECUTORS` 调度；断言/消融/gate 语义不变；旧 import 可用。  
+2. AskGraph：Context 替换闭包；topology 无算法；节点只收 State+Context；policy 入口一次解析；同步/流式共享 finalize。  
+3. 两模块分 PR；每提交相关 release gate 绿；无行为变化。
 
 ---
 
@@ -297,8 +393,8 @@ Step 1 仍要求：改映射必须双边改；parity 证明**同一输入等值*
 
 | 主题 | 路径 |
 |------|------|
-| Ask 图 | `apps/api/app/graph/ask_graph.py` |
-| Eval runner / ablation | `apps/api/app/eval/runner.py` · `ablation.py` |
+| Ask 图 | `apps/api/app/graph/ask_graph.py`（Step 2 后见 §7.2 目标树） |
+| Eval | `apps/api/app/eval/`（`runner` facade · `executors/` · `cases`/`assertions`/`fixtures`/`environment` · `ablation`） |
 | Policy | `apps/api/app/services/policy_profiles.py` · `ask_defaults.py` · `ask-policy.mjs` |
 | Policy parity | `tests/contracts/policy-parity/` · `scripts/compare_policy_parity.py` |
 | Compose outbox | `deploy/compose/docker-compose.yml` → service `outbox-worker` |
