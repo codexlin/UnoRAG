@@ -233,3 +233,103 @@ def test_ask_sync_and_stream_finalize_consistent() -> None:
 	assert _citation_fingerprint(sync_r.citations) == _citation_fingerprint(
 		done_r["citations"]
 	)
+
+
+def test_live_stream_llm_midstream_failure_marks_truncated() -> None:
+	"""Live stream_messages mid-stream exception → error event + truncated persist."""
+	from app.services.metadata import get_metadata_store
+	from app.services.runtime import RuntimeCapability
+
+	settings = Settings(
+		ask_mode="live",
+		openai_api_key="test-key",
+		internal_auth_enabled=False,
+		max_retrieve_retries=0,
+	)
+	capability = RuntimeCapability(
+		requested_mode="live",
+		effective_mode="live",
+		graph="ask_v1",
+		degraded=False,
+		has_llm_key=True,
+		qdrant_ok=True,
+	)
+
+	def hit_retrieve(
+		_query: str,
+		_library_id: str | None,
+		_top_k: int,
+		_filters: dict | None = None,
+	):
+		return [
+			{
+				"id": "ok",
+				"index": 1,
+				"title": "制度.pdf",
+				"page": "1",
+				"snippet": "三个工作日",
+				"score": 0.9,
+				"text": "病假三个工作日内补交证明",
+			}
+		]
+
+	class BoomChat:
+		def stream_messages(self, _messages):
+			yield "部分回答"
+			raise RuntimeError("simulated llm stream failure")
+
+	service = AskGraphService(
+		settings,
+		capability=capability,
+		retrieve_fn=hit_retrieve,
+		generate_fn=stub_generate,
+	)
+	service._chat = BoomChat()
+
+	thread = get_metadata_store().create_thread(
+		title="stream-llm-fail",
+		session_id="stream-llm-fail-sess",
+		library_id="lib-stream-llm-fail",
+		tenant_id=service.access_scope.tenant_id,
+		workspace_id=service.access_scope.workspace_id,
+		principal_id=service.access_scope.principal_id,
+	)
+
+	events = list(
+		service.iter_ask_events(
+			question="病假需要在几天内补交证明？",
+			library_id="lib-stream-llm-fail",
+			thread_id=thread["id"],
+			session_id="stream-llm-fail-sess",
+			trace_id="trace-stream-llm-fail",
+			ask_overrides={"session_memory_enabled": False},
+		)
+	)
+	names = [e["event"] for e in events]
+	assert names[:2] == ["meta", "citations"]
+	assert "token" in names
+	assert "error" in names
+	assert "done" not in names
+
+	err = next(e for e in events if e["event"] == "error")
+	assert "流式生成失败" in err["data"]["message"]
+	assert "simulated llm stream failure" in err["data"]["message"]
+
+	rows = get_metadata_store().list_turns(
+		library_id="lib-stream-llm-fail",
+		thread_id=thread["id"],
+		tenant_id=service.access_scope.tenant_id,
+		workspace_id=service.access_scope.workspace_id,
+		principal_id=service.access_scope.principal_id,
+		limit=5,
+	)
+	assert rows
+	debug = rows[0].get("retrieval_debug") or {}
+	assert debug.get("truncated") is True
+	assert debug.get("trace_id") == "trace-stream-llm-fail"
+	assert isinstance(debug.get("total_duration_ms"), int)
+	gen_stages = [
+		s for s in (debug.get("stages") or []) if s.get("stage") == "generate"
+	]
+	assert gen_stages
+	assert gen_stages[-1].get("ok") is False

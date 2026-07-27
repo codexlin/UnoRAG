@@ -302,7 +302,6 @@ def test_ask_temp_session_does_not_auto_archive() -> None:
 
 
 def test_ask_persist_failure_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
-	from app.graph import ask_graph as ask_graph_mod
 	from app.services.metadata import get_metadata_store
 	from app.settings import get_settings
 
@@ -320,7 +319,7 @@ def test_ask_persist_failure_is_visible(monkeypatch: pytest.MonkeyPatch) -> None
 	def boom_persist(**_kwargs):
 		return {"persisted": False, "persist_error": "disk full"}
 
-	monkeypatch.setattr(ask_graph_mod, "_persist_turn", boom_persist)
+	monkeypatch.setattr("app.graph.service.persist_turn", boom_persist)
 	response = client.post(
 		"/v1/ask",
 		json={
@@ -341,7 +340,7 @@ def test_iter_ask_events_passes_load_table_groups_fn(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
 	"""Stream path rebuilds the graph; must keep the same table-group loader as ask()."""
-	from app.graph import ask_graph as ask_graph_mod
+	from app.graph.builder import build_ask_graph as real_build
 
 	settings = Settings(ask_mode="stub")
 
@@ -352,13 +351,12 @@ def test_iter_ask_events_passes_load_table_groups_fn(
 			return []
 
 	captured: dict[str, object] = {}
-	real_build = ask_graph_mod.build_ask_graph
 
 	def capture_build(**kwargs):
 		captured["load_table_groups_fn"] = kwargs.get("load_table_groups_fn")
 		return real_build(**kwargs)
 
-	monkeypatch.setattr(ask_graph_mod, "build_ask_graph", capture_build)
+	monkeypatch.setattr("app.graph.service.build_ask_graph", capture_build)
 
 	service = AskGraphService(
 		settings,

@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
+from app.graph.builder import build_ask_graph
 from app.graph.lifecycle import (
 	append_temp_session_memory,
 	load_request_history,
@@ -22,6 +23,7 @@ from app.graph.nodes.generation import (
 	_finalize_generation_output,
 	_format_generate_context,
 )
+from app.graph.persistence import persist_turn, single_document_version_id
 from app.graph.state import GenerateFn, LoadTableGroupsFn, RetrieveFn
 from app.graph.stubs import stub_generate, stub_load_table_groups, stub_retrieve
 from app.security.access_scope import AccessScope, resolve_access_scope
@@ -195,10 +197,6 @@ class AskGraphService:
 		self._load_table_groups_fn = resolved_load_table_groups
 
 		self._default_ask_settings = effective_ask_settings(self.settings)
-		# Late-bind build_ask_graph via ask_graph so tests can monkeypatch
-		# app.graph.ask_graph.build_ask_graph without circular import at import time.
-		from app.graph.ask_graph import build_ask_graph
-
 		self._graph = build_ask_graph(
 			settings=self._default_ask_settings,
 			retrieve_fn=self._retrieve,
@@ -260,8 +258,6 @@ class AskGraphService:
 		return policy.snapshot()
 
 	def _graph_for_settings(self, settings: Any, *, generate_fn: GenerateFn | None = None):
-		from app.graph.ask_graph import build_ask_graph
-
 		return build_ask_graph(
 			settings=settings,
 			retrieve_fn=self._retrieve,
@@ -438,15 +434,11 @@ class AskGraphService:
 		debug: dict[str, Any],
 		refused: bool,
 	) -> dict[str, Any]:
-		# Late-bind via ask_graph aliases so monkeypatches on
-		# app.graph.ask_graph._persist_turn / _single_document_version_id still work.
-		from app.graph import ask_graph as ask_graph_mod
-
 		judge = state.get("judgement") or debug.get("judgement")
 		plan = self._plan_for_persist(state, debug)
 		query_type = state.get("query_type") or debug.get("query_type")
 		rewrite_mode = debug.get("rewrite")
-		persist = ask_graph_mod._persist_turn(
+		persist = persist_turn(
 			session_id=prepared.resolved_session,
 			thread_id=prepared.resolved_thread,
 			library_id=prepared.library_id,
@@ -462,7 +454,7 @@ class AskGraphService:
 			rewrite=str(rewrite_mode) if rewrite_mode else None,
 			rewritten_query=state.get("rewritten_question"),
 			judge=judge if isinstance(judge, dict) else None,
-			document_version_id=ask_graph_mod._single_document_version_id(citations),
+			document_version_id=single_document_version_id(citations),
 			tenant_id=self.access_scope.tenant_id,
 			workspace_id=self.access_scope.workspace_id,
 			principal_id=self.access_scope.principal_id,
