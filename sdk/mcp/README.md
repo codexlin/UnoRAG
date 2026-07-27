@@ -18,15 +18,20 @@ Contract authority:
 
 ## Install
 
-From this monorepo:
+**Monorepo-only path dependency.** `pyproject.toml` pins
+`meriknow @ file:../python`, so this package is not a stand-alone PyPI install
+from this directory alone. Install the Python SDK first (or use editable
+install from the monorepo checkout):
 
 ```bash
-cd sdk/mcp
-pip install -e ".[dev]"
-# or: uv pip install -e ".[dev]"
+# From MeriKnow repo root — install SDK, then MCP adapter
+cd sdk/python && pip install -e ".[dev]"
+cd ../mcp && pip install -e ".[dev]"
+# or: uv pip install -e ".[dev]" in each directory
 ```
 
-This pulls in the local `meriknow` SDK (`sdk/python`) via a path dependency.
+Editable installs from `sdk/mcp` resolve `file:../python` relative to this
+package; cloning only `sdk/mcp` without `sdk/python` will fail.
 
 ## Environment
 
@@ -39,6 +44,9 @@ export MERIKNOW_SERVICE_KEY="mk_svc_…"             # scopes: retrieve, ask
 
 Every request sends `Authorization: Bearer mk_svc_…`, `X-MeriKnow-Api-Version: 1`,
 and `Content-Type: application/json`.
+
+Missing `MERIKNOW_BASE_URL` / `MERIKNOW_SERVICE_KEY` (or an invalid key prefix)
+surfaces as a tool error with MCP-local code `client_error` (see Errors).
 
 ## Run (stdio)
 
@@ -97,7 +105,7 @@ Claude Desktop uses the same shape under `mcpServers` in its config file.
 | `query` | yes | 1–4000 chars |
 | `library_id` | yes | 1–128 chars |
 | `top_k` | no | 1–50 |
-| `filters` | no | only `record_type`, `doc_id`, `table_id`, `document_version_id` |
+| `filters` | no | only `record_type`, `doc_id`, `table_id`, `document_version_id`; unknown keys → `invalid_request` |
 
 Success body matches public v1 (`api_version`, `trace_id`, `citations`, `refused`, …).
 `refused=true` with empty citations is a **normal** outcome (not a tool error).
@@ -112,8 +120,8 @@ Success body matches public v1 (`api_version`, `trace_id`, `citations`, `refused
 
 ## Errors
 
-API / transport failures become MCP tool errors (`isError`) whose text is a JSON
-envelope with a stable `error.code` when available, e.g.:
+API / transport / client failures become MCP tool errors (`isError`) whose text
+is a JSON envelope:
 
 ```json
 {
@@ -126,6 +134,25 @@ envelope with a stable `error.code` when available, e.g.:
   }
 }
 ```
+
+### HTTP v1 codes (pass-through)
+
+When the SDK raises `MeriKnowAPIError`, `error.code` is the public v1 code from
+the closed HTTP table (`invalid_request`, `authentication_required`,
+`rate_limit_exceeded`, …). See
+[`docs/contracts/retrieve-ask-v1.md`](../../docs/contracts/retrieve-ask-v1.md).
+
+### MCP-local extension codes
+
+These codes are **MCP adapter extensions** — they are **not** part of the closed
+HTTP v1 `error.code` table:
+
+| Code | When |
+|------|------|
+| `transport_error` | Network / transport failure before a MeriKnow error envelope (`MeriKnowTransportError`) |
+| `unexpected_api_version` | Response advertised an unexpected API major version (`MeriKnowVersionError`) |
+| `client_error` | Local SDK / config errors (e.g. missing `MERIKNOW_BASE_URL` / `MERIKNOW_SERVICE_KEY`) |
+| `internal_error` | Non-`MeriKnowError` unexpected exceptions |
 
 ## Tests
 

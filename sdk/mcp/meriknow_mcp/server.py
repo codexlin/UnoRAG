@@ -51,23 +51,25 @@ def create_server(
             library_id: Target library id (1–128 chars).
             top_k: Optional result count (1–50).
             filters: Optional object with only ``record_type``, ``doc_id``,
-                ``table_id``, ``document_version_id``.
+                ``table_id``, ``document_version_id``. Unknown keys →
+                ``invalid_request``.
         """
-        client = factory()
         try:
-            result = client.retrieve(
-                query=query,
-                library_id=library_id,
-                top_k=top_k,
-                filters=filters_mapping(filters),
-            )
-            return response_to_dict(result)
+            client = factory()
+            try:
+                result = client.retrieve(
+                    query=query,
+                    library_id=library_id,
+                    top_k=top_k,
+                    filters=filters_mapping(filters),
+                )
+                return response_to_dict(result)
+            finally:
+                close = getattr(client, "close", None)
+                if callable(close):
+                    close()
         except MeriKnowError as exc:
             raise RuntimeError(error_text(exc)) from exc
-        finally:
-            close = getattr(client, "close", None)
-            if callable(close):
-                close()
 
     @mcp.tool()
     def ask(
@@ -86,20 +88,21 @@ def create_server(
             session_id: Optional customer-opaque id (≤256); does not create a
                 Workspace archive thread.
         """
-        client = factory()
         try:
-            result = client.ask(
-                question=question,
-                library_id=library_id,
-                session_id=session_id,
-            )
-            return response_to_dict(result)
+            client = factory()
+            try:
+                result = client.ask(
+                    question=question,
+                    library_id=library_id,
+                    session_id=session_id,
+                )
+                return response_to_dict(result)
+            finally:
+                close = getattr(client, "close", None)
+                if callable(close):
+                    close()
         except MeriKnowError as exc:
             raise RuntimeError(error_text(exc)) from exc
-        finally:
-            close = getattr(client, "close", None)
-            if callable(close):
-                close()
 
     return mcp
 

@@ -16,6 +16,10 @@ from meriknow import (
     RetrieveResponse,
 )
 
+ALLOWED_FILTER_KEYS = frozenset(
+    {"record_type", "doc_id", "table_id", "document_version_id"}
+)
+
 
 def response_to_dict(response: RetrieveResponse | AskResponse) -> dict[str, Any]:
     """Convert frozen dataclass responses to JSON-serializable dicts."""
@@ -87,9 +91,21 @@ def error_text(exc: BaseException) -> str:
 
 
 def filters_mapping(filters: Mapping[str, Any] | None) -> dict[str, str] | None:
-    """Normalize optional filters for ``MeriKnow.retrieve``."""
+    """Normalize optional filters for ``MeriKnow.retrieve``.
+
+    Unknown keys are rejected with ``invalid_request`` (aligned with HTTP v1),
+    not silently dropped.
+    """
     if filters is None:
         return None
+    unknown = sorted(key for key in filters if key not in ALLOWED_FILTER_KEYS)
+    if unknown:
+        raise MeriKnowAPIError(
+            code=ErrorCode.INVALID_REQUEST,
+            message="request contains unsupported fields",
+            retryable=False,
+            details={"fields": unknown},
+        )
     out: dict[str, str] = {}
     for key in ("record_type", "doc_id", "table_id", "document_version_id"):
         value = filters.get(key)

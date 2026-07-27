@@ -12,10 +12,12 @@ from meriknow import (
     Citation,
     ErrorCode,
     MeriKnowAPIError,
+    MeriKnowError,
     MeriKnowTransportError,
+    MeriKnowVersionError,
     RetrieveResponse,
 )
-from meriknow_mcp.formatting import error_payload, response_to_dict
+from meriknow_mcp.formatting import error_payload, filters_mapping, response_to_dict
 from meriknow_mcp.server import create_server
 
 
@@ -137,6 +139,100 @@ async def test_ask_maps_to_sdk():
         library_id="lib_1",
         session_id="demo-1",
     )
+
+
+@pytest.mark.asyncio
+async def test_retrieve_refused_true_is_success_not_tool_error():
+    refused = RetrieveResponse(
+        api_version="v1",
+        trace_id=TRACE,
+        query="无关问题",
+        library_id="lib_1",
+        citations=(),
+        refused=True,
+        refuse_reason="no_relevant_evidence",
+        retrieval_mode="dense",
+    )
+    client = _mock_client(retrieve=refused)
+    mcp = create_server(client_factory=lambda: client)
+
+    result = await _call_tool(
+        mcp, "retrieve", {"query": "无关问题", "library_id": "lib_1"}
+    )
+
+    payload = _tool_payload(result)
+    assert payload["refused"] is True
+    assert payload["citations"] == []
+    assert payload["refuse_reason"] == "no_relevant_evidence"
+    client.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_unknown_filter_keys_are_invalid_request():
+    client = _mock_client(retrieve=MagicMock())
+    mcp = create_server(client_factory=lambda: client)
+
+    with pytest.raises(Exception) as caught:
+        await _call_tool(
+            mcp,
+            "retrieve",
+            {
+                "query": "q",
+                "library_id": "lib_1",
+                "filters": {"record_type": "chunk", "ask_overrides": "x"},
+            },
+        )
+
+    envelope = json.loads(_exception_text(caught.value))
+    assert envelope["error"]["code"] == "invalid_request"
+    assert envelope["error"]["details"]["fields"] == ["ask_overrides"]
+    client.retrieve.assert_not_called()
+
+
+def test_filters_mapping_rejects_unknown_keys():
+    with pytest.raises(MeriKnowAPIError) as caught:
+        filters_mapping({"doc_id": "d1", "extra": "nope", "foo": "bar"})
+    assert caught.value.code == ErrorCode.INVALID_REQUEST
+    assert caught.value.details["fields"] == ["extra", "foo"]
+
+
+@pytest.mark.asyncio
+async def test_version_error_is_unexpected_api_version_tool_error():
+    def boom(**_: Any) -> None:
+        raise MeriKnowVersionError(
+            "unexpected API version",
+            expected="1",
+            actual="2",
+        )
+
+    client = _mock_client(ask=boom)
+    mcp = create_server(client_factory=lambda: client)
+
+    with pytest.raises(Exception) as caught:
+        await _call_tool(mcp, "ask", {"question": "q", "library_id": "lib_1"})
+
+    envelope = json.loads(_exception_text(caught.value))
+    assert envelope["error"]["code"] == "unexpected_api_version"
+    assert envelope["error"]["retryable"] is False
+    assert envelope["error"]["details"] == {"expected": "1", "actual": "2"}
+
+
+@pytest.mark.asyncio
+async def test_factory_config_error_surfaces_client_error_envelope():
+    def missing_env() -> MagicMock:
+        raise MeriKnowError("base_url is required (or set MERIKNOW_BASE_URL)")
+
+    mcp = create_server(client_factory=missing_env)
+
+    with pytest.raises(Exception) as caught:
+        await _call_tool(
+            mcp, "retrieve", {"query": "q", "library_id": "lib_1"}
+        )
+
+    envelope = json.loads(_exception_text(caught.value))
+    assert envelope["error"]["code"] == "client_error"
+    assert "MERIKNOW_BASE_URL" in envelope["error"]["message"]
+    assert envelope["error"]["retryable"] is False
 
 
 @pytest.mark.asyncio
