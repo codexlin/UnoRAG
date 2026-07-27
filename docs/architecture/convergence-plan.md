@@ -318,8 +318,9 @@ apps/api/app/graph/          # 提交 2–7 平铺 + nodes/ + service；后续�
     decision.py              # judge / retry / refuse
     generation.py            # 生成与引用对账
   topology.py                # 提交 6：纯图连线；无算法（`compile_ask_topology`）
+  builder.py                 # `build_ask_graph` 组装（真实实现；facade re-export）
   service.py                 # 提交 7：prepare_request → execute/stream → finalize
-  ask_graph.py               # facade（re-export）+ build_ask_graph 组装
+  ask_graph.py               # facade（re-export）+ 兼容入口
 apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
   context.py                 # 可自 graph/context 迁入
   topology.py                # 可自 graph/topology 迁入
@@ -351,7 +352,10 @@ apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
 
 **AskGraph 当前进度**：提交 1–7 **已完成** → **AskGraph Step 2 主线完成**。可选后续：`graph/ask/` 包迁入、facade 删除、同步/流式更深去重（非必做）。
 
-**收尾（可选）**：`nodes.rewrite` → `ask_graph` 的反向依赖（为兼容 monkeypatch 的 late-bind）**已消除**；`_request_structured_retrieval_plan_json` 在 `nodes/rewrite.py` 本地调用，`ask_graph` 仅 facade re-export。
+**收尾（可选）**：`nodes.rewrite` → `ask_graph` 的反向依赖（为兼容 monkeypatch 的 late-bind）**已消除**；`_request_structured_retrieval_plan_json` 在 `nodes/rewrite.py` 本地调用，`ask_graph` 仅 facade re-export。  
+`service.py` → `ask_graph` facade 的 reverse late-import **已消除**（2026-07-28）：`build_ask_graph` 在 `builder.py`；`persist_turn` / `single_document_version_id` 直调 `persistence`；测试 patch 指向真实模块 / `service` 绑定；`ask_graph` 仍 re-export。另补 live `stream_messages` 中途异常 characterization。
+
+**告警（私有）**：webch 告警通道先接 **Resend 邮件**（`ops/min_alerts`，非飞书）；飞书 webhook 可后置。**Step 3（B：删 410 / legacy knobs / schema codegen）尚未开始**。
 
 ### 7.3 现在不做（Step 2 期间仍冻结）
 
@@ -401,7 +405,7 @@ apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
 
 | 主题 | 路径 |
 |------|------|
-| Ask 图 | `apps/api/app/graph/ask_graph.py` facade · `service.py` · `topology.py` · `nodes/`（见 §7.2） |
+| Ask 图 | `apps/api/app/graph/ask_graph.py` facade · `builder.py` · `service.py` · `topology.py` · `nodes/`（见 §7.2） |
 | Eval | `apps/api/app/eval/`（`runner` facade · `executors/` · `cases`/`assertions`/`fixtures`/`environment` · `ablation`） |
 | Policy | `apps/api/app/services/policy_profiles.py` · `ask_defaults.py` · `ask-policy.mjs` |
 | Policy parity | `tests/contracts/policy-parity/` · `scripts/compare_policy_parity.py` |

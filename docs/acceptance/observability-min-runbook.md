@@ -1,7 +1,7 @@
 # 最低观测 / 告警 Runbook
 
 > 受控试点轻量版：不要求完整 Grafana。目标是 **一条 `trace_id` / `job_id` 能在 15 分钟内定位**到网关、模型、检索、DB 或 Worker。  
-> **B5**：通用 webhook 最低告警已接通（`ops/min_alerts/check.py` + `scripts/acceptance/b5_min_alerts.sh`）。
+> **B5**：最低告警已接通（`ops/min_alerts/check.py` + `scripts/acceptance/b5_min_alerts.sh`）。私有栈可走 **Resend 邮件**；通用 webhook（飞书等）可选并存。
 
 ## 1. 关联键
 
@@ -41,9 +41,16 @@ curl -sf http://127.0.0.1:6333/readyz && curl -s http://127.0.0.1:6333/collectio
 
 Compose 私有部署则经边缘 `http://localhost/api/rag/health`；FastAPI **不**对浏览器暴露。
 
-## 3. 最低告警（B5 · 通用 webhook）
+## 3. 最低告警（B5 · webhook 和/或 Resend）
 
-实现：[`../../ops/min_alerts/README.md`](../../ops/min_alerts/README.md)。配置 `ALERT_WEBHOOK_URL` 后周期性跑 `python ops/min_alerts/check.py once|watch`；payload 含 `status=firing|resolved` 与 `workspace_id` / `trace_id` / `job_id` / `worker_id`。
+实现：[`../../ops/min_alerts/README.md`](../../ops/min_alerts/README.md)。配置 **至少一种** 通知通道后周期性跑 `python ops/min_alerts/check.py once|watch`：
+
+| 通道 | 环境变量 |
+|------|----------|
+| Resend 邮件（私有 webch 推荐） | `RESEND_API_KEY` · `ALERT_EMAIL_FROM` · `ALERT_EMAIL_TO` |
+| 通用 webhook（飞书等，可选） | `ALERT_WEBHOOK_URL` |
+
+Payload 含 `status=firing|resolved` 与 `workspace_id` / `trace_id` / `job_id` / `worker_id`。投递 fail-soft（通道失败不崩 checker）。`ALERT_WEBHOOK_URL` 与 Resend 可并存；任一成功即视为送达。
 
 | 信号名 | 条件（建议） | 动作 |
 |---|---|---|
@@ -64,7 +71,7 @@ Compose 私有部署则经边缘 `http://localhost/api/rag/health`；FastAPI **�
 | 演练 | 脚本 | 观测点 |
 |---|---|---|
 | B2 restore | `scripts/acceptance/b2_restore_drill.sh` | restore 后 health + citation version |
-| B5 告警 | `scripts/acceptance/b5_min_alerts.sh` | 五信号 firing→webhook→resolved |
+| B5 告警 | `scripts/acceptance/b5_min_alerts.sh` | 五信号 firing→notify→resolved（webhook mock；Resend 见 ops 单测） |
 | R1 worker | `r_fault_injection.sh` | job 不丢、恢复后 completed |
 | R2 Qdrant | 同上 | health degraded；Ask 503；无假答案 |
 | R3 模型 | 同上 | 明确失败；active 不变 |

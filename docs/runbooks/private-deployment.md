@@ -208,6 +208,16 @@ override 文件中加 `mem_limit` / `cpus`，并外接日志栈。
 
 库 PATCH/POST 若携带 Provider、API Key、成本费率等字段会 **400 拒绝**。详见 [ADR 0002](../adr/0002-mineru-complex-pdf.md)。
 
+### 8.2 最低告警（Resend 邮件）
+
+私有试点优先用 Resend 邮件接 `ops/min_alerts`（飞书 webhook 可选后置）。复制 `ops/min_alerts/env.example` → `ops/min_alerts/.env`，至少配置：
+
+- `RESEND_API_KEY` · `ALERT_EMAIL_FROM` · `ALERT_EMAIL_TO`
+- `MERIKNOW_HEALTH_URL`（经边缘，如 `https://webch.cn/api/rag/health`）
+- 可选：`DATABASE_URL`、`LIFECYCLE_WORKER_READY_FILE`、`DOCUMENT_STORAGE_ROOT`
+
+周期执行：`python3 ops/min_alerts/check.py once`（详见 [`ops/min_alerts/README.md`](../../ops/min_alerts/README.md)）。密钥勿入库。
+
 ## 9. Helm / Kubernetes（起步骨架）
 
 Compose 适合单机；多副本生产使用 [`deploy/helm/meriknow`](../../deploy/helm/meriknow)。

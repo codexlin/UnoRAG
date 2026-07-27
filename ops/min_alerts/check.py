@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MeriKnow minimum alerts: evaluate five signals and POST to a webhook.
+"""MeriKnow minimum alerts: evaluate five signals and notify via webhook and/or Resend email.
 
 Signals:
   1. health.qdrant_ask   — /health qdrant_ok=false or ask_ready=false
@@ -9,7 +9,11 @@ Signals:
   5. disk.usage          — documents / postgres / qdrant path > threshold
 
 Env (also CLI flags):
-  ALERT_WEBHOOK_URL              required for notify (unless --dry-run)
+  ALERT_WEBHOOK_URL              optional generic webhook
+  RESEND_API_KEY                Resend API key (private deploy email channel)
+  ALERT_EMAIL_FROM              Resend verified from (or EMAIL_FROM)
+  ALERT_EMAIL_TO                comma-separated recipients
+  ALERT_RESEND_API_URL          override Resend endpoint (tests / dry local mock)
   MERIKNOW_HEALTH_URL            default http://127.0.0.1:3000/api/rag/health
   MERIKNOW_ALERT_ASK_PROBE_URL   optional Ask probe URL
   MERIKNOW_ALERT_ASK_PROBE_BODY  JSON body for Ask probe
@@ -23,6 +27,10 @@ Env (also CLI flags):
   MERIKNOW_ALERT_DISK_THRESHOLD  default 85
   MERIKNOW_ALERT_HEARTBEAT_MAX_AGE_SEC  default 120
   MERIKNOW_ALERT_SEVERITY        default warning
+
+Notify: configure webhook and/or Resend. Delivery is fail-soft per channel
+(exceptions become delivery notes; checker does not crash). Need at least one
+channel unless --dry-run.
 
 Usage:
   python ops/min_alerts/check.py once
@@ -150,6 +158,149 @@ def post_webhook(url: str, payload: dict[str, Any], timeout: float = 8.0) -> tup
 	)
 	note = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)[:300]
 	return code, note
+
+
+def format_alert_email(payload: dict[str, Any]) -> tuple[str, str]:
+	"""Build subject + plain-text body for Resend (or any SMTP-like) delivery."""
+	status = str(payload.get("status") or "")
+	name = str(payload.get("alert_name") or "alert")
+	severity = str(payload.get("severity") or "")
+	ns = str(payload.get("namespace") or "meriknow")
+	subject = f"[MeriKnow {status}] {name} ({severity or 'n/a'})"
+	lines = [
+		f"status: {status}",
+		f"alert_name: {name}",
+		f"severity: {severity}",
+		f"namespace: {ns}",
+		f"fingerprint: {payload.get('fingerprint') or ''}",
+		f"starts_at: {payload.get('starts_at') or ''}",
+		f"ends_at: {payload.get('ends_at') or ''}",
+		"",
+		"locators:",
+		f"  workspace_id: {payload.get('workspace_id') or ''}",
+		f"  organization_id: {payload.get('organization_id') or ''}",
+		f"  trace_id: {payload.get('trace_id') or ''}",
+		f"  job_id: {payload.get('job_id') or ''}",
+		f"  worker_id: {payload.get('worker_id') or ''}",
+		f"  request_id: {payload.get('request_id') or ''}",
+		"",
+		"annotations:",
+		json.dumps(payload.get("annotations") or {}, ensure_ascii=False, indent=2),
+		"",
+		"labels:",
+		json.dumps(payload.get("labels") or {}, ensure_ascii=False, indent=2),
+	]
+	return subject, "\n".join(lines)
+
+
+def post_resend_email(
+	*,
+	api_key: str,
+	from_addr: str,
+	to_addrs: list[str],
+	payload: dict[str, Any],
+	api_url: str = "https://api.resend.com/emails",
+	timeout: float = 8.0,
+) -> dict[str, Any]:
+	"""POST alert email via Resend API. Fail-soft: never raises."""
+	if not api_key or not from_addr or not to_addrs:
+		return {
+			"ok": False,
+			"channel": "resend",
+			"error": "RESEND_API_KEY / ALERT_EMAIL_FROM / ALERT_EMAIL_TO incomplete",
+		}
+	subject, text = format_alert_email(payload)
+	body = json.dumps(
+		{
+			"from": from_addr,
+			"to": to_addrs,
+			"subject": subject,
+			"text": text,
+		},
+		ensure_ascii=False,
+	).encode("utf-8")
+	try:
+		code, _hdrs, resp = http_json(
+			api_url,
+			method="POST",
+			body=body,
+			headers={
+				"Authorization": f"Bearer {api_key}",
+				"Content-Type": "application/json",
+			},
+			timeout=timeout,
+		)
+	except Exception as exc:  # pragma: no cover — http_json already soft-fails; belt+suspenders
+		return {"ok": False, "channel": "resend", "error": str(exc)}
+	note = resp if isinstance(resp, str) else json.dumps(resp, ensure_ascii=False)[:300]
+	ok = 200 <= code < 300
+	out: dict[str, Any] = {
+		"ok": ok,
+		"channel": "resend",
+		"http_status": code,
+		"note": note,
+	}
+	if isinstance(resp, dict) and resp.get("id"):
+		out["resend_id"] = resp.get("id")
+	return out
+
+
+def parse_email_to(raw: str | None) -> list[str]:
+	if not raw:
+		return []
+	parts = [p.strip() for p in raw.replace(";", ",").split(",")]
+	return [p for p in parts if p and "@" in p]
+
+
+def deliver_notification(
+	payload: dict[str, Any],
+	*,
+	webhook_url: str,
+	resend: dict[str, Any] | None,
+	dry_run: bool,
+) -> dict[str, Any]:
+	"""Deliver via webhook and/or Resend. Fail-soft per channel; ok if any channel succeeds."""
+	if dry_run:
+		return {"skipped": True, "reason": "dry_run"}
+
+	channels: list[dict[str, Any]] = []
+	has_webhook = bool(webhook_url)
+	has_resend = bool(
+		resend
+		and resend.get("api_key")
+		and resend.get("from_addr")
+		and resend.get("to_addrs")
+	)
+
+	if not has_webhook and not has_resend:
+		return {
+			"ok": False,
+			"error": "no notify channel: set ALERT_WEBHOOK_URL and/or Resend (RESEND_API_KEY + ALERT_EMAIL_FROM + ALERT_EMAIL_TO)",
+			"channels": [],
+		}
+
+	if has_webhook:
+		try:
+			code, note = post_webhook(webhook_url, payload)
+			channels.append(
+				{"channel": "webhook", "ok": 200 <= code < 300, "http_status": code, "note": note}
+			)
+		except Exception as exc:
+			channels.append({"channel": "webhook", "ok": False, "error": str(exc)})
+
+	if has_resend and resend is not None:
+		channels.append(
+			post_resend_email(
+				api_key=str(resend["api_key"]),
+				from_addr=str(resend["from_addr"]),
+				to_addrs=list(resend["to_addrs"]),
+				payload=payload,
+				api_url=str(resend.get("api_url") or "https://api.resend.com/emails"),
+			)
+		)
+
+	ok = any(bool(c.get("ok")) for c in channels)
+	return {"ok": ok, "channels": channels}
 
 
 def disk_usage_percent(path: str) -> float | None:
@@ -505,6 +656,7 @@ def apply_transitions(
 	state: dict[str, Any],
 	*,
 	webhook_url: str,
+	resend: dict[str, Any] | None,
 	severity: str,
 	dry_run: bool,
 ) -> list[dict[str, Any]]:
@@ -525,13 +677,12 @@ def apply_transitions(
 					starts_at=starts or now,
 					ends_at=None,
 				)
-				delivery = {"skipped": True, "reason": "dry_run"} if dry_run else None
-				if not dry_run:
-					if not webhook_url:
-						delivery = {"ok": False, "error": "ALERT_WEBHOOK_URL empty"}
-					else:
-						code, note = post_webhook(webhook_url, payload)
-						delivery = {"ok": 200 <= code < 300, "http_status": code, "note": note}
+				delivery = deliver_notification(
+					payload,
+					webhook_url=webhook_url,
+					resend=resend,
+					dry_run=dry_run,
+				)
 				events.append({"transition": "firing", "payload": payload, "delivery": delivery})
 				alerts_state[name] = {
 					"status": "firing",
@@ -553,13 +704,12 @@ def apply_transitions(
 					starts_at=str(prev.get("starts_at") or now),
 					ends_at=now,
 				)
-				delivery = {"skipped": True, "reason": "dry_run"} if dry_run else None
-				if not dry_run:
-					if not webhook_url:
-						delivery = {"ok": False, "error": "ALERT_WEBHOOK_URL empty"}
-					else:
-						code, note = post_webhook(webhook_url, payload)
-						delivery = {"ok": 200 <= code < 300, "http_status": code, "note": note}
+				delivery = deliver_notification(
+					payload,
+					webhook_url=webhook_url,
+					resend=resend,
+					dry_run=dry_run,
+				)
 				events.append({"transition": "resolved", "payload": payload, "delivery": delivery})
 			alerts_state[name] = {
 				"status": "resolved",
@@ -593,6 +743,12 @@ def build_config(args: argparse.Namespace) -> dict[str, Any]:
 		force = float(env("MERIKNOW_ALERT_DISK_FORCE_PERCENT"))
 	return {
 		"webhook_url": args.webhook_url or env("ALERT_WEBHOOK_URL"),
+		"resend": {
+			"api_key": env("RESEND_API_KEY", ""),
+			"from_addr": env("ALERT_EMAIL_FROM") or env("EMAIL_FROM", ""),
+			"to_addrs": parse_email_to(env("ALERT_EMAIL_TO")),
+			"api_url": env("ALERT_RESEND_API_URL", "https://api.resend.com/emails"),
+		},
 		"health_url": args.health_url
 		or env("MERIKNOW_HEALTH_URL", "http://127.0.0.1:3000/api/rag/health"),
 		"ask_probe_url": args.ask_probe_url or env("MERIKNOW_ALERT_ASK_PROBE_URL"),
@@ -637,6 +793,7 @@ def cmd_once(args: argparse.Namespace) -> int:
 		evals,
 		state,
 		webhook_url=cfg["webhook_url"],
+		resend=cfg.get("resend"),
 		severity=cfg["severity"],
 		dry_run=cfg["dry_run"],
 	)
