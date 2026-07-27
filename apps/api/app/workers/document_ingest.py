@@ -16,7 +16,7 @@ from app.repositories.job_repository import (
 )
 from app.security.access_scope import AccessScope
 from app.services.hybrid import get_bm25_cache
-from app.services.ingest.backends.mineru import MinerUClientError
+from app.services.ingest.backends.mineru import MinerUClientError, MinerUPendingError
 from app.services.ingest.pipeline import prepare_ingest
 from app.services.ingest.queue_class import resolve_queue_class_after_probe
 from app.services.policy_profiles import resolve_document_policy
@@ -167,6 +167,13 @@ class DocumentIngestProcessor:
 						total=total,
 					)
 
+				def persist_provider_state(state: dict[str, object]) -> None:
+					self.repository.patch_job_payload(
+						job_id=lease.id,
+						lease_token=lease.lease_token,
+						patch={"mineru_provider_state": state},
+					)
+
 				prepared = prepare_ingest(
 					settings=self.settings,
 					filename=context.filename,
@@ -181,6 +188,10 @@ class DocumentIngestProcessor:
 					semantic_enabled=doc_policy.semantic_enabled,
 					ocr_enabled=doc_policy.ocr_enabled,
 					enhanced_parser_allowed=doc_policy.enhanced_parser_allowed,
+					provider_state=dict(
+						(lease.payload or {}).get("mineru_provider_state") or {}
+					),
+					provider_state_callback=persist_provider_state,
 				)
 				progress.checkpoint(
 					JobStage.CHUNKING,
@@ -302,6 +313,18 @@ class DocumentIngestProcessor:
 				activated=activation.activated,
 				superseded=activation.superseded,
 			)
+		except MinerUPendingError as exc:
+			self.repository.defer_leased_job(
+				job_id=lease.id,
+				lease_token=lease.lease_token,
+				delay_seconds=exc.retry_after_s,
+			)
+			logger.info(
+				"document_ingest.mineru_pending job_id=%s retry_after_s=%s",
+				lease.id,
+				exc.retry_after_s,
+			)
+			return None
 		except CancelRequestedError:
 			self._delete_staging_generation(context)
 			self.repository.acknowledge_cancel(

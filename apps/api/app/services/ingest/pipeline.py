@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from app.services.documents import clean_display_title
@@ -72,6 +72,8 @@ def prepare_ingest(
 	semantic_enabled: bool | None = None,
 	ocr_enabled: bool | None = None,
 	enhanced_parser_allowed: bool = True,
+	provider_state: dict[str, Any] | None = None,
+	provider_state_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> PreparedIngest:
 	name = (filename or "untitled.txt").strip() or "untitled.txt"
 	suffix = PurePosixPath(name).suffix.lower()
@@ -144,6 +146,8 @@ def prepare_ingest(
 		cancel_check=cancel_check,
 		ocr_enabled=ocr_enabled,
 		enhanced_parser_allowed=enhanced_parser_allowed,
+		provider_state=provider_state,
+		provider_state_callback=provider_state_callback,
 	)
 	if display_name and display_name.strip():
 		ir.title = clean_display_title(display_name, filename=name)

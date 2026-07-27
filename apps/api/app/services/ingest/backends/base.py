@@ -6,7 +6,7 @@ WHY: PyMuPDF 与 MinerU 输出必须同为 DocumentIR，才能共用 chunker / t
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from app.services.ingest.ir import CancelCheck, DocumentIR, ParseProgressCallback
 
@@ -21,6 +21,10 @@ class ParseRequest:
 	options: Any | None = None
 	progress_callback: ParseProgressCallback | None = None
 	cancel_check: CancelCheck | None = None
+	# Provider-owned resumable state (for example an external async task id).
+	# Secrets must never be stored here.
+	provider_state: dict[str, Any] | None = None
+	provider_state_callback: Callable[[dict[str, Any]], None] | None = None
 
 
 @runtime_checkable

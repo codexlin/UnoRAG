@@ -168,6 +168,17 @@ config:
   llmMaxInflight: "4"
   rerankModel: qwen3-rerank
   mineruEnabled: "false"
+  mineruProvider: self_hosted
+  mineruSelfHostedUrl: ""
+  mineruMode: auto
+  mineruVersion: "2.5"
+  mineruParseMethod: auto
+  externalParserAllowed: "false"
+  mineru302BaseUrl: https://api.302.ai
+  mineru302UploadPath: /302/upload-file
+  mineru302TaskPath: /302/v2/mineru/task
+  mineru302PollIntervalSeconds: "5"
+  mineru302MaxWaitSeconds: "900"
   # Transitional: chart maps LLM_BASE_URL / openaiBaseUrl → OPENAI_BASE_URL for api/worker
   openaiBaseUrl: ""
   llmBaseUrl: ""
@@ -188,6 +199,7 @@ config:
 #   DATABASE_URL, API_DATABASE_URL, WORKER_DATABASE_URL, RAG_READ_DATABASE_URL
 #   MIGRATOR_DATABASE_URL (migrate jobs only)
 #   LLM_API_KEY  (mapped to OPENAI_API_KEY for api/worker)
+#   MINERU_302_API_KEY (required only for config.mineruProvider=302ai)
 # Bootstrap admin password must NOT live in the long-running runtime Secret.
 secret:
   create: false
@@ -202,6 +214,7 @@ secret:
   #   RAG_READ_DATABASE_URL: ""
   #   MIGRATOR_DATABASE_URL: ""
   #   LLM_API_KEY: ""
+  #   MINERU_302_API_KEY: ""
 
 # ---------------------------------------------------------------------------
 # Migration Jobs (opt-in; run as separate release step)

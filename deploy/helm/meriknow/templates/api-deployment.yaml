@@ -78,8 +78,30 @@ spec:
               value: {{ .Values.config.rerankBaseUrl | quote }}
             - name: MINERU_ENABLED
               value: {{ .Values.config.mineruEnabled | quote }}
+            - name: MINERU_PROVIDER
+              value: {{ .Values.config.mineruProvider | quote }}
+            - name: MINERU_SELF_HOSTED_URL
+              value: {{ .Values.config.mineruSelfHostedUrl | quote }}
             - name: MINERU_URL
               value: {{ .Values.config.mineruUrl | quote }}
+            - name: MINERU_MODE
+              value: {{ .Values.config.mineruMode | quote }}
+            - name: MINERU_VERSION
+              value: {{ .Values.config.mineruVersion | quote }}
+            - name: MINERU_PARSE_METHOD
+              value: {{ .Values.config.mineruParseMethod | quote }}
+            - name: EXTERNAL_PARSER_ALLOWED
+              value: {{ .Values.config.externalParserAllowed | quote }}
+            - name: MINERU_302_BASE_URL
+              value: {{ .Values.config.mineru302BaseUrl | quote }}
+            - name: MINERU_302_UPLOAD_PATH
+              value: {{ .Values.config.mineru302UploadPath | quote }}
+            - name: MINERU_302_TASK_PATH
+              value: {{ .Values.config.mineru302TaskPath | quote }}
+            - name: MINERU_302_POLL_INTERVAL_S
+              value: {{ .Values.config.mineru302PollIntervalSeconds | quote }}
+            - name: MINERU_302_MAX_WAIT_S
+              value: {{ .Values.config.mineru302MaxWaitSeconds | quote }}
             - name: LIFECYCLE_WORKER_READY_FILE
               value: /tmp/meriknow-lifecycle-ready
             - name: DATABASE_URL

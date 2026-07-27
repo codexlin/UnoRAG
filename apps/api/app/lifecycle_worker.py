@@ -167,6 +167,14 @@ class LifecycleWorker:
 			raise ValueError("LIFECYCLE_LOCAL_CAPACITY must be positive")
 		if settings.lifecycle_mineru_capacity < 1:
 			raise ValueError("LIFECYCLE_MINERU_CAPACITY must be positive")
+		if (
+			settings.mineru_enabled
+			and settings.resolved_mineru_provider == "302ai"
+			and not settings.mineru_302_api_key.strip()
+		):
+			raise ValueError(
+				"302 MinerU lifecycle worker requires MINERU_302_API_KEY"
+			)
 		self.settings = settings
 		self.worker_id = (
 			os.getenv("LIFECYCLE_WORKER_ID", "").strip()

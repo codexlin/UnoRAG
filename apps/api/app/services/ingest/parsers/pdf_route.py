@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from app.services.ingest.backends.base import ParseRequest
 from app.services.ingest.backends.mineru import MinerUClientError, get_mineru_backend
@@ -23,7 +23,9 @@ PdfRouteMode = Literal["auto", "pymupdf", "mineru"]
 
 # Soft-timeout / 429：必须上抛以便 worker 还 MinerU 槽并做长退避。
 # 其余 MinerU 错误在 auto 模式且已有 PyMuPDF 节点时按 ADR degrade，禁止重试死循环。
-_MINERU_SLOT_RETRY_CODES = frozenset({"mineru_soft_timeout", "mineru_rate_limited"})
+_MINERU_SLOT_RETRY_CODES = frozenset(
+	{"mineru_pending", "mineru_soft_timeout", "mineru_rate_limited"}
+)
 _DEGRADE_WARNING = "MinerU 不可用，已用基础解析（PyMuPDF）"
 
 
@@ -153,6 +155,8 @@ def parse_pdf_routed(
 	progress_callback: ParseProgressCallback | None = None,
 	cancel_check: CancelCheck | None = None,
 	enhanced_parser_allowed: bool = True,
+	provider_state: dict[str, Any] | None = None,
+	provider_state_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DocumentIR:
 	"""路由入口：保持 PyMuPDF 默认；策略允许时按需升级 MinerU。"""
 	t0 = time.perf_counter()
@@ -165,11 +169,21 @@ def parse_pdf_routed(
 	if backend is None and enhanced_parser_allowed:
 		backend = get_mineru_backend(
 			enabled=settings.mineru_enabled,
-			base_url=settings.mineru_url,
+			base_url=settings.resolved_mineru_self_hosted_url,
+			provider=settings.resolved_mineru_provider,
 			timeout_s=settings.mineru_timeout_s,
 			soft_timeout_s=settings.mineru_soft_timeout_s,
 			max_retries=settings.mineru_max_retries,
 			parse_path=settings.mineru_parse_path,
+			api_key_302=settings.mineru_302_api_key,
+			external_parser_allowed=settings.external_parser_allowed,
+			base_url_302=settings.mineru_302_base_url,
+			upload_path_302=settings.mineru_302_upload_path,
+			task_path_302=settings.mineru_302_task_path,
+			poll_interval_s_302=settings.mineru_302_poll_interval_s,
+			max_wait_s_302=settings.mineru_302_max_wait_s,
+			parse_method=settings.mineru_parse_method,
+			version=settings.mineru_version,
 			use_fake=settings.mineru_use_fake,
 		)
 
@@ -187,6 +201,8 @@ def parse_pdf_routed(
 			settings=settings,
 			progress_callback=progress_callback,
 			cancel_check=cancel_check,
+			provider_state=provider_state,
+			provider_state_callback=provider_state_callback,
 		)
 
 	# PyMuPDF 先跑（allow_empty 以便 MinerU 救援）
@@ -239,6 +255,8 @@ def parse_pdf_routed(
 			settings=settings,
 			progress_callback=progress_callback,
 			cancel_check=cancel_check,
+			provider_state=provider_state,
+			provider_state_callback=provider_state_callback,
 		)
 		_stamp_latency(mineru_ir, t0)
 		mineru_ir.parser_report.metrics["route"] = "mineru"
@@ -288,6 +306,8 @@ def _parse_mineru_or_fail(
 	progress_callback: ParseProgressCallback | None,
 	cancel_check: CancelCheck | None,
 	settings: Settings | None = None,
+	provider_state: dict[str, Any] | None = None,
+	provider_state_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DocumentIR:
 	if backend is None:
 		raise MinerUClientError(
@@ -307,6 +327,8 @@ def _parse_mineru_or_fail(
 			settings=settings,
 			progress_callback=progress_callback,
 			cancel_check=cancel_check,
+			provider_state=provider_state,
+			provider_state_callback=provider_state_callback,
 		)
 	except MinerUClientError:
 		raise
@@ -334,6 +356,8 @@ def _call_mineru_with_circuit(
 	settings: Settings | None,
 	progress_callback: ParseProgressCallback | None,
 	cancel_check: CancelCheck | None,
+	provider_state: dict[str, Any] | None = None,
+	provider_state_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DocumentIR:
 	"""熔断检查 → 真实 HTTP/Fake；成功重置；unreachable 计入短窗。"""
 	circuit = get_mineru_circuit()
@@ -363,6 +387,8 @@ def _call_mineru_with_circuit(
 				library_id=library_id,
 				progress_callback=progress_callback,
 				cancel_check=cancel_check,
+				provider_state=provider_state,
+				provider_state_callback=provider_state_callback,
 			)
 		)
 	except MinerUClientError as exc:

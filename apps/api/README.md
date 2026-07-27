@@ -93,10 +93,24 @@ MIGRATOR_DATABASE_URL=postgresql://... \
 
 支持 `.txt` / `.md` / `.markdown` / `.docx` / `.pdf`。文本 PDF→PyMuPDF；扫描/双栏/复杂表可由 `MINERU_MODE=auto` 升级 MinerU。
 
-`MINERU_ENABLED=true` 时仍可自动降级，**不必手改 env**。连续 `mineru_unreachable`（连接拒绝等）达到阈值后进入**短窗熔断**：一段时间内跳过 HTTP，直接 PyMuPDF degrade（有字）/ failed（无字）；到期半开探活 1 次，成功则恢复升级 MinerU。不重跑已入库文档。可选：`MINERU_CIRCUIT_FAILURE_THRESHOLD`（默认 3）、`MINERU_CIRCUIT_OPEN_SECONDS`（默认 90）。`soft_timeout` / `429` 不计入熔断。
+`MINERU_PROVIDER=self_hosted`（默认）使用同步 `/file_parse`，并兼容旧
+`MINERU_URL`；推荐新部署使用 `MINERU_SELF_HOSTED_URL`。云解析使用
+`MINERU_PROVIDER=302ai`，还必须同时配置
+`EXTERNAL_PARSER_ALLOWED=true` 和 Secret `MINERU_302_API_KEY`。该显式门禁用于
+确认 PDF 会离开当前部署边界；Key 不进入 ConfigMap、job payload 或解析报告。
+Compose/Helm 仅把该 Key 注入 lifecycle worker，不注入 API/Web。
+
+302 是异步任务：首次执行上传并保存非敏感 `task_id`，随后释放 worker lease；
+按 `MINERU_302_POLL_INTERVAL_S` 延迟续跑，不占用 MinerU slot，也不消耗 job
+attempt。`MINERU_302_MAX_WAIT_S`（默认 900）防止异常任务无限轮询。成功 ZIP
+中的 `*_content_list.json` 与自建响应统一转换为 `DocumentIR`，后续 chunk /
+index / citation 无需感知供应商。
+
+`MINERU_ENABLED=true` 时仍可自动降级。连续 `mineru_unreachable`（连接拒绝等）达到阈值后进入**短窗熔断**：一段时间内跳过 HTTP，直接 PyMuPDF degrade（有字）/ failed（无字）；到期半开探活 1 次，成功则恢复升级 MinerU。不重跑已入库文档。可选：`MINERU_CIRCUIT_FAILURE_THRESHOLD`（默认 3）、`MINERU_CIRCUIT_OPEN_SECONDS`（默认 90）。`soft_timeout` / `429` 不计入熔断。
 
 | error_code | Job 行为 |
 |---|---|
+| `mineru_pending` | 保存 task id，立刻释放 lease，延迟轮询；不消耗 attempt |
 | `mineru_soft_timeout` / `mineru_rate_limited` | 立刻还槽 + retry（较长退避）；**不**计入短窗熔断 |
 | `mineru_timeout` / `mineru_service_error` / `mineru_invalid_response` | auto 且已有 PyMuPDF 节点 → degrade 继续 ingest；否则 retry → dead |
 | `mineru_unreachable` | auto 且已有 PyMuPDF 节点 → degrade；否则 **failed（不重试）**；计入短窗熔断 |

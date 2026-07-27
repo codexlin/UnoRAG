@@ -88,7 +88,10 @@ class Settings(BaseSettings):
 	vlm_model: str = "qwen-vl-plus"
 
 	mineru_enabled: bool = False
+	# self_hosted | 302ai. Legacy MINERU_URL remains the self-hosted URL.
+	mineru_provider: str = "self_hosted"
 	mineru_url: str = ""
+	mineru_self_hosted_url: str = ""
 	mineru_timeout_s: float = 120.0
 	# <=0 关闭软超时；须 ≤ mineru_timeout_s
 	mineru_soft_timeout_s: float = 60.0
@@ -97,6 +100,15 @@ class Settings(BaseSettings):
 	mineru_retry_max_s: float = 300.0
 	mineru_parse_path: str = "/file_parse"
 	mineru_mode: str = "auto"
+	mineru_version: str = "2.5"
+	mineru_parse_method: str = "auto"
+	mineru_302_api_key: str = ""
+	mineru_302_base_url: str = "https://api.302.ai"
+	mineru_302_upload_path: str = "/302/upload-file"
+	mineru_302_task_path: str = "/302/v2/mineru/task"
+	mineru_302_poll_interval_s: float = 5.0
+	mineru_302_max_wait_s: float = 900.0
+	external_parser_allowed: bool = False
 	mineru_use_fake: bool = False
 	# 短窗熔断：连续 unreachable 后跳过 HTTP；不进设置页旋钮。
 	mineru_circuit_failure_threshold: int = 3
@@ -167,6 +179,15 @@ class Settings(BaseSettings):
 			raise ValueError("MINERU_CIRCUIT_FAILURE_THRESHOLD must be >= 1")
 		if self.mineru_circuit_open_seconds < 1:
 			raise ValueError("MINERU_CIRCUIT_OPEN_SECONDS must be >= 1")
+		provider = self.resolved_mineru_provider
+		if provider not in {"self_hosted", "302ai"}:
+			raise ValueError("MINERU_PROVIDER must be self_hosted or 302ai")
+		if self.mineru_302_poll_interval_s < 1:
+			raise ValueError("MINERU_302_POLL_INTERVAL_S must be >= 1")
+		if self.mineru_302_max_wait_s < self.mineru_302_poll_interval_s:
+			raise ValueError(
+				"MINERU_302_MAX_WAIT_S must be >= MINERU_302_POLL_INTERVAL_S"
+			)
 		if self.embedding_dim <= 0:
 			raise ValueError("EMBEDDING_DIM must be > 0")
 		if self.lifecycle_worker_heartbeat_seconds * 2 >= self.lifecycle_worker_lease_seconds:
@@ -220,8 +241,20 @@ class Settings(BaseSettings):
 			)
 		if self.mineru_use_fake:
 			raise ValueError("production forbids MINERU_USE_FAKE=true")
-		if self.mineru_enabled and not self.mineru_url.strip():
-			raise ValueError("production MINERU_ENABLED=true requires MINERU_URL")
+		if (
+			self.mineru_enabled
+			and provider == "self_hosted"
+			and not self.resolved_mineru_self_hosted_url
+		):
+			raise ValueError(
+				"production self-hosted MinerU requires "
+				"MINERU_SELF_HOSTED_URL or legacy MINERU_URL"
+			)
+		if self.mineru_enabled and provider == "302ai":
+			if not self.external_parser_allowed:
+				raise ValueError(
+					"production 302 MinerU requires EXTERNAL_PARSER_ALLOWED=true"
+				)
 		if self.mineru_mode.strip().lower() == "mineru" and not self.mineru_enabled:
 			raise ValueError("production MINERU_MODE=mineru requires MINERU_ENABLED=true")
 		return self
@@ -242,6 +275,10 @@ class Settings(BaseSettings):
 			"embedding_dim": self.embedding_dim,
 			"internal_auth": "enabled" if self.internal_auth_enabled else "disabled",
 			"mineru_enabled": self.mineru_enabled,
+			"mineru_provider": self.resolved_mineru_provider,
+			"external_parser": (
+				"allowed" if self.external_parser_allowed else "forbidden"
+			),
 			"secret_values": "[REDACTED]",
 		}
 
@@ -260,6 +297,15 @@ class Settings(BaseSettings):
 	@property
 	def llm_api_key(self) -> str:
 		return (self.openai_api_key or self.dashscope_api_key).strip()
+
+	@property
+	def resolved_mineru_provider(self) -> str:
+		value = (self.mineru_provider or "self_hosted").strip().lower()
+		return "302ai" if value in {"302", "302_ai", "302ai"} else value.replace("-", "_")
+
+	@property
+	def resolved_mineru_self_hosted_url(self) -> str:
+		return (self.mineru_self_hosted_url or self.mineru_url).strip()
 
 	@property
 	def llm_base_url(self) -> str:

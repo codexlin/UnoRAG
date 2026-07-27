@@ -307,6 +307,46 @@ class JobRepository:
                         f"failed to requeue job {job_id} for class {resolved}"
                     )
 
+    def defer_leased_job(
+        self,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+        delay_seconds: float,
+    ) -> None:
+        """Release an async-provider poll without consuming a job attempt."""
+        delay = max(1.0, float(delay_seconds))
+        with self._connection.transaction():
+            with self._connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE app.jobs
+                    SET status = 'retry',
+                        lease_token = NULL,
+                        lease_expires_at = NULL,
+                        claimed_by = NULL,
+                        claimed_at = NULL,
+                        heartbeat_at = NULL,
+                        worker_version = NULL,
+                        attempt = GREATEST(0, attempt - 1),
+                        next_attempt_at =
+                            now() + make_interval(secs => %(delay_seconds)s),
+                        updated_at = now()
+                    WHERE id = %(job_id)s
+                      AND lease_token = %(lease_token)s
+                      AND status = 'running'
+                    """,
+                    {
+                        "job_id": job_id,
+                        "lease_token": lease_token,
+                        "delay_seconds": delay,
+                    },
+                )
+                if cursor.rowcount != 1:
+                    raise LostJobLeaseError(
+                        f"failed to defer async provider poll for job {job_id}"
+                    )
+
     def heartbeat(
         self,
         *,

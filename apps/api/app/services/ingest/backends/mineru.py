@@ -7,12 +7,15 @@ MINERU_SOFT_TIMEOUT_S / MINERU_MAX_RETRIES。
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import queue
 import threading
 import time
+import zipfile
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 import httpx
 
@@ -51,6 +54,18 @@ class MinerUClientError(RuntimeError, ValueError):
 		self.status_code = status_code
 		self.parser_report = parser_report
 		self.timeout_kind = timeout_kind
+
+
+class MinerUPendingError(MinerUClientError):
+	"""External MinerU task is still running; release the worker lease and poll later."""
+
+	def __init__(self, message: str, *, retry_after_s: float) -> None:
+		super().__init__(
+			message,
+			code="mineru_pending",
+			retryable=True,
+		)
+		self.retry_after_s = max(1.0, float(retry_after_s))
 
 
 def _post_multipart(
@@ -227,6 +242,249 @@ class MinerUBackend:
 			) from exc
 
 
+class Ai302MinerUBackend:
+	"""302.AI async MinerU transport, normalized to the shared DocumentIR contract."""
+
+	def __init__(
+		self,
+		*,
+		base_url: str,
+		api_key: str,
+		timeout_s: float = 120.0,
+		upload_path: str = "/302/upload-file",
+		task_path: str = "/302/v2/mineru/task",
+		poll_interval_s: float = 5.0,
+		max_wait_s: float = 900.0,
+		parse_method: str = "auto",
+		version: str = "2.5",
+		request_fn: Callable[..., httpx.Response] | None = None,
+	) -> None:
+		self.base_url = base_url.rstrip("/")
+		self.api_key = api_key.strip()
+		self.timeout_s = float(timeout_s)
+		self.upload_path = _normalized_path(upload_path)
+		self.task_path = _normalized_path(task_path)
+		self.poll_interval_s = max(1.0, float(poll_interval_s))
+		self.max_wait_s = max(self.poll_interval_s, float(max_wait_s))
+		self.parse_method = parse_method.strip() or "auto"
+		self._version = version.strip() or "2.5"
+		self._request_fn = request_fn or httpx.request
+
+	@property
+	def name(self) -> str:
+		return "mineru"
+
+	@property
+	def version(self) -> str:
+		return self._version
+
+	def parse(self, request: ParseRequest) -> DocumentIR:
+		if not self.api_key:
+			raise MinerUClientError(
+				"302 MinerU API key is not configured",
+				code="mineru_not_configured",
+				retryable=False,
+			)
+		t0 = time.perf_counter()
+		state = dict(request.provider_state or {})
+		task_id = str(state.get("task_id") or "").strip()
+		if not task_id:
+			if request.progress_callback is not None:
+				request.progress_callback("mineru_upload", None, None)
+			pdf_url = self._upload(request)
+			task_id = self._submit(pdf_url)
+			state = {
+				"provider": "302ai",
+				"task_id": task_id,
+				"state": "SUBMITTED",
+				"poll_count": 0,
+			}
+			_publish_provider_state(request, state)
+
+		if request.cancel_check is not None:
+			request.cancel_check()
+		if request.progress_callback is not None:
+			request.progress_callback("mineru_poll", None, None)
+		payload = self._request_json(
+			"GET",
+			self.task_path,
+			params={"task_id": task_id},
+		)
+		provider_status = str(
+			payload.get("state") or payload.get("status") or ""
+		).strip().upper()
+		if provider_status in {
+			"",
+			"PENDING",
+			"QUEUED",
+			"SUBMITTED",
+			"RUNNING",
+			"PROCESSING",
+		}:
+			poll_count = int(state.get("poll_count") or 0) + 1
+			state.update(
+				{"state": provider_status or "PENDING", "poll_count": poll_count}
+			)
+			_publish_provider_state(request, state)
+			if poll_count * self.poll_interval_s >= self.max_wait_s:
+				raise MinerUClientError(
+					f"302 MinerU task {task_id} exceeded maximum wait",
+					code="mineru_timeout",
+					retryable=False,
+					timeout_kind="hard",
+				)
+			raise MinerUPendingError(
+				f"302 MinerU task {task_id} is {provider_status or 'PENDING'}",
+				retry_after_s=self.poll_interval_s,
+			)
+		if provider_status not in {"SUCCESS", "SUCCEEDED", "COMPLETED", "DONE"}:
+			message = str(
+				payload.get("message") or payload.get("error") or provider_status
+			)
+			raise MinerUClientError(
+				f"302 MinerU task failed: {message[:500]}",
+				code="mineru_service_error",
+				retryable=False,
+			)
+		result_url = str(
+			payload.get("result_url") or payload.get("full_zip_url") or ""
+		).strip()
+		if not result_url:
+			raise MinerUClientError(
+				"302 MinerU success response is missing result_url",
+				code="mineru_invalid_response",
+			)
+		_validate_302_result_url(result_url, base_url=self.base_url)
+		raw_zip = self._request_bytes("GET", result_url, include_auth=False)
+		if len(raw_zip) > 128 * 1024 * 1024:
+			raise MinerUClientError(
+				"302 MinerU result ZIP exceeds 128 MiB safety limit",
+				code="mineru_invalid_response",
+				retryable=False,
+			)
+		content_list = _content_list_from_zip(raw_zip)
+		latency_ms = (time.perf_counter() - t0) * 1000.0
+		try:
+			ir = mineru_json_to_ir(
+				payload={"version": self.version, "content_list": content_list},
+				filename=request.filename,
+				title=request.title,
+				content=request.content,
+				doc_id=request.doc_id,
+				library_id=request.library_id,
+				parser_version=self.version,
+				latency_ms=latency_ms,
+				progress_callback=request.progress_callback,
+				cancel_check=request.cancel_check,
+			)
+		except ValueError as exc:
+			raise MinerUClientError(
+				str(exc),
+				code="mineru_invalid_response",
+			) from exc
+		ir.parser_report.metrics.update(
+			{
+				"mineru_provider": "302ai",
+				"mineru_external": True,
+				"mineru_task_id": task_id,
+				"mineru_parse_method": self.parse_method,
+			}
+		)
+		_publish_provider_state(
+			request,
+			{"provider": "302ai", "task_id": task_id, "state": "SUCCESS"},
+		)
+		return ir
+
+	def _upload(self, request: ParseRequest) -> str:
+		response = self._request(
+			"POST",
+			self.upload_path,
+			files={"file": (request.filename, request.content, "application/pdf")},
+		)
+		payload = _response_json(response)
+		value = payload.get("data")
+		url = value if isinstance(value, str) else ""
+		if not url:
+			raise MinerUClientError(
+				"302 upload response is missing data URL",
+				code="mineru_invalid_response",
+			)
+		return url
+
+	def _submit(self, pdf_url: str) -> str:
+		payload = self._request_json(
+			"POST",
+			self.task_path,
+			json={
+				"pdf_url": pdf_url,
+				"parse_method": self.parse_method,
+				"version": self.version,
+			},
+		)
+		task_id = str(payload.get("task_id") or "").strip()
+		if not task_id:
+			raise MinerUClientError(
+				"302 task response is missing task_id",
+				code="mineru_invalid_response",
+			)
+		return task_id
+
+	def _request_json(self, method: str, path_or_url: str, **kwargs: Any) -> dict[str, Any]:
+		return _response_json(self._request(method, path_or_url, **kwargs))
+
+	def _request_bytes(self, method: str, path_or_url: str, **kwargs: Any) -> bytes:
+		return self._request(method, path_or_url, **kwargs).content
+
+	def _request(self, method: str, path_or_url: str, **kwargs: Any) -> httpx.Response:
+		include_auth = bool(kwargs.pop("include_auth", True))
+		url = (
+			path_or_url
+			if path_or_url.startswith(("http://", "https://"))
+			else f"{self.base_url}{_normalized_path(path_or_url)}"
+		)
+		try:
+			headers = {"Accept": "application/json"}
+			if include_auth:
+				headers["Authorization"] = f"Bearer {self.api_key}"
+			response = self._request_fn(
+				method,
+				url,
+				headers=headers,
+				timeout=self.timeout_s,
+				**kwargs,
+			)
+			response.raise_for_status()
+			return response
+		except httpx.TimeoutException as exc:
+			raise MinerUClientError(
+				f"302 MinerU timeout after {self.timeout_s}s",
+				code="mineru_timeout",
+				timeout_kind="hard",
+			) from exc
+		except httpx.HTTPStatusError as exc:
+			status = exc.response.status_code
+			code = (
+				"mineru_rate_limited"
+				if status == 429
+				else "mineru_service_error"
+				if status >= 500
+				else "mineru_request_rejected"
+			)
+			raise MinerUClientError(
+				f"302 MinerU HTTP {status}: {exc.response.text[:500]}",
+				code=code,
+				retryable=status == 429 or status >= 500,
+				status_code=status,
+			) from exc
+		except httpx.RequestError as exc:
+			raise MinerUClientError(
+				f"302 MinerU unreachable: {exc}",
+				code="mineru_unreachable",
+				retryable=False,
+			) from exc
+
+
 class FakeMinerUBackend:
 	"""单测 / 本地无服务：按文件名返回可控 content_list，不走网络。"""
 
@@ -378,17 +636,42 @@ def get_mineru_backend(
 	*,
 	enabled: bool,
 	base_url: str,
+	provider: str = "self_hosted",
 	timeout_s: float = 120.0,
 	soft_timeout_s: float = 0.0,
 	max_retries: int = 2,
 	parse_path: str = "/file_parse",
+	api_key_302: str = "",
+	external_parser_allowed: bool = False,
+	base_url_302: str = "https://api.302.ai",
+	upload_path_302: str = "/302/upload-file",
+	task_path_302: str = "/302/v2/mineru/task",
+	poll_interval_s_302: float = 5.0,
+	max_wait_s_302: float = 900.0,
+	parse_method: str = "auto",
+	version: str = "2.5",
 	use_fake: bool = False,
 	fake_backend: FakeMinerUBackend | None = None,
-) -> MinerUBackend | FakeMinerUBackend | None:
+) -> MinerUBackend | Ai302MinerUBackend | FakeMinerUBackend | None:
 	if not enabled:
 		return None
 	if use_fake or fake_backend is not None:
 		return fake_backend or FakeMinerUBackend()
+	resolved_provider = (provider or "self_hosted").strip().lower().replace("-", "_")
+	if resolved_provider in {"302", "302ai"}:
+		if not external_parser_allowed or not api_key_302.strip():
+			return None
+		return Ai302MinerUBackend(
+			base_url=base_url_302,
+			api_key=api_key_302,
+			timeout_s=timeout_s,
+			upload_path=upload_path_302,
+			task_path=task_path_302,
+			poll_interval_s=poll_interval_s_302,
+			max_wait_s=max_wait_s_302,
+			parse_method=parse_method,
+			version=version,
+		)
 	url = (base_url or "").strip()
 	if not url:
 		return None
@@ -399,6 +682,90 @@ def get_mineru_backend(
 		max_retries=max_retries,
 		parse_path=parse_path,
 	)
+
+
+def _normalized_path(value: str) -> str:
+	path = (value or "").strip()
+	return path if path.startswith("/") else f"/{path}"
+
+
+def _validate_302_result_url(url: str, *, base_url: str) -> None:
+	parsed = urlparse(url)
+	base = urlparse(base_url)
+	host = (parsed.hostname or "").lower()
+	base_host = (base.hostname or "").lower()
+	if parsed.scheme != "https" or not host:
+		raise MinerUClientError(
+			"302 MinerU result_url must use HTTPS",
+			code="mineru_invalid_response",
+			retryable=False,
+		)
+	if host != base_host and not host.endswith(".302.ai"):
+		raise MinerUClientError(
+			"302 MinerU result_url host is not trusted",
+			code="mineru_invalid_response",
+			retryable=False,
+		)
+
+
+def _publish_provider_state(request: ParseRequest, state: dict[str, Any]) -> None:
+	if request.provider_state_callback is not None:
+		request.provider_state_callback(dict(state))
+
+
+def _response_json(response: httpx.Response) -> dict[str, Any]:
+	try:
+		payload = response.json()
+	except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+		raise MinerUClientError(
+			"302 MinerU response is not valid JSON",
+			code="mineru_invalid_response",
+		) from exc
+	if not isinstance(payload, dict):
+		raise MinerUClientError(
+			"302 MinerU response JSON must be an object",
+			code="mineru_invalid_response",
+		)
+	return payload
+
+
+def _content_list_from_zip(raw: bytes) -> list[dict[str, Any]]:
+	try:
+		with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+			candidates = sorted(
+				name
+				for name in archive.namelist()
+				if name.endswith("_content_list.json") or name == "content_list.json"
+			)
+			if not candidates:
+				raise MinerUClientError(
+					"302 MinerU result ZIP has no content_list JSON",
+					code="mineru_invalid_response",
+				)
+			info = archive.getinfo(candidates[0])
+			if info.file_size > 64 * 1024 * 1024:
+				raise MinerUClientError(
+					"302 MinerU content_list exceeds 64 MiB safety limit",
+					code="mineru_invalid_response",
+					retryable=False,
+				)
+			payload = json.loads(archive.read(info).decode("utf-8"))
+	except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+		raise MinerUClientError(
+			"302 MinerU result ZIP is invalid",
+			code="mineru_invalid_response",
+		) from exc
+	content_list = (
+		payload.get("content_list")
+		if isinstance(payload, dict)
+		else payload
+	)
+	if not isinstance(content_list, list):
+		raise MinerUClientError(
+			"302 MinerU content_list must be an array",
+			code="mineru_invalid_response",
+		)
+	return [item for item in content_list if isinstance(item, dict)]
 
 
 def _sleep_with_cancel(

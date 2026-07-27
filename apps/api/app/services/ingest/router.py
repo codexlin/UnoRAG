@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 from app.services.ingest.adapters.ocr import get_ocr_adapter
 from app.services.ingest.adapters.vlm import get_vlm_adapter
@@ -63,6 +63,8 @@ def parse_to_ir(
 	cancel_check: CancelCheck | None = None,
 	ocr_enabled: bool | None = None,
 	enhanced_parser_allowed: bool = True,
+	provider_state: dict[str, Any] | None = None,
+	provider_state_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DocumentIR:
 	if cancel_check is not None:
 		cancel_check()
@@ -152,6 +154,8 @@ def parse_to_ir(
 			progress_callback=progress_callback,
 			cancel_check=cancel_check,
 			enhanced_parser_allowed=enhanced_parser_allowed,
+			provider_state=provider_state,
+			provider_state_callback=provider_state_callback,
 		)
 
 	raise ValueError(f"unsupported format for v2 ingest: {fmt}")

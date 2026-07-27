@@ -21,8 +21,9 @@ from app.workers.document_ingest import (
 	DocumentIngestProcessor,
 	classify_ingest_error,
 )
-from app.services.ingest.backends.mineru import MinerUClientError
+from app.services.ingest.backends.mineru import MinerUClientError, MinerUPendingError
 from app.services.source_object_storage import SourceObjectIntegrityError
+from app.workers import document_ingest as document_ingest_worker
 
 TESTDATA = Path(__file__).resolve().parents[3] / "testdata"
 
@@ -47,6 +48,7 @@ class FakeRepository:
 		self.failure: dict[str, object] | None = None
 		self.requeued_class: str | None = None
 		self.payload_patch: dict[str, object] | None = None
+		self.deferred_seconds: float | None = None
 
 	def load_document_ingest_context(self, _lease: JobLease) -> DocumentIngestContext:
 		return self.context
@@ -151,6 +153,17 @@ class FakeRepository:
 		self.payload_patch = patch
 		assert job_id is not None
 		assert lease_token is not None
+
+	def defer_leased_job(
+		self,
+		*,
+		job_id: object,
+		lease_token: object,
+		delay_seconds: float,
+	) -> None:
+		assert job_id is not None
+		assert lease_token is not None
+		self.deferred_seconds = delay_seconds
 
 
 class FakeStorage:
@@ -341,6 +354,88 @@ def test_document_lifecycle_worker_indexes_real_version_as_staging() -> None:
 	assert result.activated is True
 	assert result.superseded is False
 	assert service.store.visibility == [(str(generation_id), "active")]
+
+
+def test_async_mineru_pending_persists_state_and_releases_lease(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	content = b"# placeholder"
+	organization_id = uuid4()
+	workspace_id = uuid4()
+	version_id = uuid4()
+	job_id = uuid4()
+	context = DocumentIngestContext(
+		job_id=job_id,
+		organization_id=organization_id,
+		workspace_id=workspace_id,
+		library_id=uuid4(),
+		document_id=uuid4(),
+		document_version_id=version_id,
+		generation_id=uuid4(),
+		rag_document_id="document-async",
+		rag_library_id="library-async",
+		title="Async parse",
+		filename="async.md",
+		content_type="text/markdown",
+		content_hash=f"sha256:{hashlib.sha256(content).hexdigest()}",
+		storage_key="async.md",
+		pipeline_version="document-lifecycle-v2",
+		version_status="pending",
+		parser_backend=None,
+		chunk_profile=None,
+		document_profile="auto",
+		scan_handling="auto",
+		ingest_policy_version=1,
+		parser_report=None,
+		point_count=None,
+		chunk_count=None,
+		section_count=None,
+		table_count=None,
+		principal_id=uuid4(),
+		allowed_principal_ids=(),
+		allowed_group_ids=(),
+	)
+	lease = JobLease(
+		id=job_id,
+		organization_id=organization_id,
+		workspace_id=workspace_id,
+		document_version_id=version_id,
+		type="document.ingest",
+		status=JobStatus.RUNNING,
+		stage=JobStage.ACCEPTED,
+		attempt=2,
+		max_attempts=5,
+		lease_token=uuid4(),
+		lease_expires_at=datetime.now(timezone.utc),
+		payload={"queue_class": "local"},
+	)
+	repository = FakeRepository(context)
+
+	def pending_prepare(**kwargs: object) -> None:
+		callback = kwargs["provider_state_callback"]
+		assert callable(callback)
+		callback({"provider": "302ai", "task_id": "task-1", "state": "RUNNING"})
+		raise MinerUPendingError("still running", retry_after_s=7)
+
+	monkeypatch.setattr(document_ingest_worker, "prepare_ingest", pending_prepare)
+	processor = DocumentIngestProcessor(
+		Settings(),
+		repository,  # type: ignore[arg-type]
+		storage=FakeStorage(content),  # type: ignore[arg-type]
+	)
+
+	result = processor.process(lease, RecordingProgress())
+
+	assert result is None
+	assert repository.payload_patch == {
+		"mineru_provider_state": {
+			"provider": "302ai",
+			"task_id": "task-1",
+			"state": "RUNNING",
+		}
+	}
+	assert repository.deferred_seconds == 7
+	assert repository.failure is None
 
 
 def test_document_lifecycle_worker_cleans_staging_when_cancelled() -> None:
