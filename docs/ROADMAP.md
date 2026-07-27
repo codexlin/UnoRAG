@@ -105,13 +105,13 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 
 ### P2 / 中后期：开发者接入面
 
-目标：在稳定 HTTP 契约上降低集成成本。**下一项：MCP Server（薄适配本契约）。**
+目标：在稳定 HTTP 契约上降低集成成本。**下一项：OpenAI-compatible API（薄适配本契约）。**
 
 | 项 | 说明 |
 |----|------|
 | Python SDK | **已交付 0.1.0**（[`sdk/python/`](../sdk/python/)）：同步 `retrieve`/`ask`、类型模型、稳定错误码；后续可加 async/SSE/重试 |
-| MCP Server | 首版只读 `search_knowledge`、`answer_with_sources`、`get_source` |
-| OpenAI-compatible adapter | 兼容现有 client；citation/refusal/trace 放扩展字段，原生 API 仍权威 |
+| MCP Server | **已交付 0.1.0**（[`sdk/mcp/`](../sdk/mcp/)）：stdio 工具 `retrieve`/`ask`（1:1 HTTP）；经 Python SDK，不嵌入引擎 |
+| OpenAI-compatible adapter | **下一项**：兼容现有 client；citation/refusal/trace 放扩展字段，原生 API 仍权威 |
 | TypeScript SDK | 在 Python SDK 和 OpenAPI 经真实集成验证后生成或实现 |
 | Reference integrations | 客服/售后、企业 Agent、内部门户示例，而不只提供 curl |
 
@@ -142,7 +142,7 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 | 入库 | 控制面文库 UI + lifecycle | 目标为 Knowledge API Documents/Jobs；当前可复用 Workspace 入库 |
 | 问答 | `/app/ask` → BFF → `/v1/ask` | `/api/v1/retrieve` · `/api/v1/ask`（Bearer）→ 内网 FastAPI |
 | Agent 运行时 | 官方 Ask 图 | **不要求**使用我们的 Agent/工具生态 |
-| 当前可用性 | **主路径可用** | **Retrieve/Ask v1.0 已冻结** + **Python SDK 0.1.0**；MCP / OpenAI-compatible 仍规划 |
+| 当前可用性 | **主路径可用** | **Retrieve/Ask v1.0 已冻结** + **Python SDK / MCP 0.1.0**；OpenAI-compatible 仍规划 |
 
 两种方式共享一个 Knowledge Service，不是两套产品、两套索引或两套权限系统。
 

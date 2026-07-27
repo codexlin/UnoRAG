@@ -80,7 +80,8 @@ except MeriKnowAPIError as exc:
 | `RetrieveResponse` / `AskResponse` / `Citation` | Frozen success fields |
 | `ErrorCode` / `MeriKnowAPIError` | Stable error codes |
 
-Out of scope for 0.1.0: async client, SSE streaming, MCP, OpenAI-compatible layer.
+Out of scope for 0.1.0: async client, SSE streaming, OpenAI-compatible layer.
+MCP (stdio tools over this SDK): [`../mcp/`](../mcp/).
 
 ## Tests
 

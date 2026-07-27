@@ -12,7 +12,7 @@ MeriKnow 独立部署和治理知识，但不要求客户采用我们的最终�
 |------|--------|----------|
 | **官方 Workspace** | 公司需要开箱即用的知识助手与管理台 | 工作区、文库、有据问答、追问、主动归档、调试 |
 | **嵌入现有系统** | 已有客服、售后、门户、Chat 或 Agent | 通过稳定 API 接入 retrieve/answer，不更换现有 UI/Agent |
-| **协议适配** | 希望用现有开发工具快速集成 | [Python SDK](./sdk/python/) 已可用；MCP、OpenAI-compatible adapter 按路线图提供 |
+| **协议适配** | 希望用现有开发工具快速集成 | [Python SDK](./sdk/python/) · [MCP](./sdk/mcp/) 已可用；OpenAI-compatible adapter 按路线图提供 |
 
 > 边界与成功标准见 [`docs/PRODUCT.md`](./docs/PRODUCT.md)。  
 > 后面做什么、开始前先做好什么见 [`docs/ROADMAP.md`](./docs/ROADMAP.md)。
@@ -98,7 +98,7 @@ INTERNAL_AUTH_REPLAY_BACKEND=redis
 - **工作区旋钮**：hybrid / rerank / 裁决等在设置页（**不是** `HYBRID_ENABLED` env）
 - **入库**：仅控制面 → lifecycle_worker；FastAPI ingest **永久 410**
 - **对外 API（v1.0 已冻结）**：工作区 Service Key → `POST /api/v1/retrieve`、`POST /api/v1/ask`；严格输入、稳定错误与 citation 契约、OpenAPI
-- **仍在规划**：外部 Documents/Versions/Jobs、Answer 契约、Python SDK、MCP 与 OpenAI-compatible adapter
+- **协议适配**：[Python SDK](./sdk/python/) · [MCP Server](./sdk/mcp/)（0.1.0）；**仍在规划**：外部 Documents/Versions/Jobs、Answer 契约、OpenAI-compatible adapter
 
 ## 测试
 

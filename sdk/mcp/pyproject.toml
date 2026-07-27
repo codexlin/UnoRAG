@@ -1,0 +1,52 @@
+[project]
+name = "meriknow-mcp"
+version = "0.1.0"
+description = "Thin MCP server adapter for MeriKnow Knowledge API v1 (retrieve / ask)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "MeriKnow" }]
+keywords = ["meriknow", "mcp", "rag", "knowledge", "retrieve", "ask"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
+]
+dependencies = [
+  "mcp>=1.9.0,<2",
+  "meriknow @ file:../python",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.24.0",
+]
+
+[project.scripts]
+meriknow-mcp = "meriknow_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/codexlin/MeriKnow"
+Documentation = "https://github.com/codexlin/MeriKnow/blob/main/sdk/mcp/README.md"
+Contract = "https://github.com/codexlin/MeriKnow/blob/main/docs/contracts/retrieve-ask-v1.md"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["meriknow_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

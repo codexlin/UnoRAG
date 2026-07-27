@@ -33,8 +33,8 @@ Knowledge API 是核心产品契约；Workspace、Python SDK、MCP 和 OpenAI-co
 | 稳定 OpenAPI / 错误码 / citation 版本化 | **已实现（v1.0）** | `GET /api/v1/openapi.json`；仓库源文件 `contracts/public-api-v1.openapi.json` |
 | 外部 Documents / Versions / Jobs API | **规划中（优先）** | 让业务系统完成知识生命周期接入，不绕过 Control Plane |
 | Python SDK | **可用（0.1.0）** — [`sdk/python/`](../sdk/python/) | 薄 HTTP client（`retrieve` / `ask`），不是嵌入式第二引擎 |
-| MCP server | **规划中（下一项）** | HTTP 契约稳定后的只读知识工具适配 |
-| OpenAI-compatible endpoint | **规划中（后置）** | 降低迁移成本；MeriKnow 原生 citation/refusal/trace 契约仍权威 |
+| MCP server | **已交付 0.1.0**（[`sdk/mcp/`](../sdk/mcp/)） | stdio 工具 `retrieve` / `ask`，经 Python SDK 调同一 HTTP 契约 |
+| OpenAI-compatible endpoint | **规划中（下一项）** | 降低迁移成本；MeriKnow 原生 citation/refusal/trace 契约仍权威 |
 | OAuth-for-apps | **当前产品非目标** | 服务间集成使用可审计、可限制 scope 的 Service Key；只有明确建设公网多租户开发者平台时才重新评估 |
 | 公网多租户 SaaS 网关 | **非目标（远期可选）** | 首版私有化内网集成 |
 
@@ -269,7 +269,7 @@ curl -sS -X POST "$APP/api/v1/ask" \
 
 ## v1.0 边界
 
-1. 无外部文档生命周期 API、MCP、OpenAI-compatible endpoint、OAuth-for-apps、对外流式 ask（Python SDK 0.1.0 已提供 retrieve/ask 薄客户端）。
+1. 无外部文档生命周期 API、OpenAI-compatible endpoint、OAuth-for-apps、对外流式 ask（Python SDK + MCP 0.1.0 已提供 retrieve/ask 薄客户端）。
 2. Service principal 为 `service:<key_id>`：可见 `acl_scope=workspace` 的文档；**不会**自动获得仅绑定某用户的 restricted ACL。
 3. 密钥绑定**当前工作区**；不跨工作区。
 4. `429` 契约已冻结；单节点可设 `MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE`；多副本仍建议 Redis/Ingress。
@@ -346,19 +346,22 @@ SDK 不负责：
 - 复制完整解析与检索引擎
 - 绕过 Control Plane 写入向量
 
-## MCP 方向（规划）
+## MCP Server（v0.1.0）
 
-首版只读工具：
+包路径：[`sdk/mcp/`](../sdk/mcp/)。安装：`cd sdk/mcp && pip install -e .`；运行：`meriknow-mcp`（stdio）。
 
-```text
-search_knowledge
-answer_with_sources
-get_source
-```
+工具与 HTTP 1:1（经 Python SDK，不嵌入引擎）：
 
-MCP Server 使用独立 Service Key 调用 Knowledge API。删除文档、修改 ACL、成员管理等高影响动作不进入首版 MCP。
+| MCP tool | HTTP |
+|----------|------|
+| `retrieve` | `POST /api/v1/retrieve` |
+| `ask` | `POST /api/v1/ask` |
 
-## OpenAI-compatible 方向（规划）
+鉴权与 SDK 相同：`MERIKNOW_BASE_URL` + `MERIKNOW_SERVICE_KEY`（`mk_svc_…`），请求带 `X-MeriKnow-Api-Version: 1`。Cursor / Claude 配置见 [`sdk/mcp/README.md`](../sdk/mcp/README.md)。
+
+删除文档、修改 ACL、成员管理等高影响动作不进入首版 MCP。
+
+## OpenAI-compatible 方向（规划 · 下一项）
 
 兼容层用于让现有 OpenAI client 快速试用，例如将 `model` 映射到指定 knowledge base。标准响应无法完整表达 MeriKnow 的 citation、refusal 和 trace，因此兼容响应需使用扩展字段，同时保留原生 API：
 
