@@ -87,3 +87,12 @@ indexed-via-302 and table Ask quality **failed** due to `STARTED` handling.
 - MinerU restored to disabled / self-hosted defaults.
 - **Rotate the exposed temporary 302 API key** (it appeared in chat/ops context
   for this run).
+
+## Appendix — root-cause fix (pending E2E re-run)
+
+Code fix landed in `apps/api/app/services/ingest/backends/mineru.py`:
+`classify_302_task_state` treats `STARTED` (plus `WAITING` / `IN_PROGRESS`) as
+in-progress → `MinerUPendingError`, not `mineru_service_error`. Unit coverage in
+`apps/api/tests/test_mineru_302_provider.py` asserts `STARTED` never maps to
+service_error. **This report’s overall FAIL still stands until the lifecycle
+E2E is re-run** with temporary 302 credentials on the worker.

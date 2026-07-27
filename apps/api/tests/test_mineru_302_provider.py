@@ -13,7 +13,9 @@ from app.services.ingest.backends.base import ParseRequest
 from app.services.ingest.backends.mineru import (
 	Ai302MinerUBackend,
 	MinerUBackend,
+	MinerUClientError,
 	MinerUPendingError,
+	classify_302_task_state,
 	get_mineru_backend,
 )
 from app.lifecycle_worker import LifecycleWorker
@@ -36,6 +38,86 @@ def _result_zip() -> bytes:
 			),
 		)
 	return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+	("status", "expected"),
+	[
+		("", "pending"),
+		("PENDING", "pending"),
+		("QUEUED", "pending"),
+		("SUBMITTED", "pending"),
+		("STARTED", "pending"),
+		("started", "pending"),
+		("RUNNING", "pending"),
+		("PROCESSING", "pending"),
+		("WAITING", "pending"),
+		("IN_PROGRESS", "pending"),
+		("SUCCESS", "success"),
+		("SUCCEEDED", "success"),
+		("COMPLETED", "success"),
+		("DONE", "success"),
+		("FAILED", "failed"),
+		("ERROR", "failed"),
+		("CANCELLED", "failed"),
+	],
+)
+def test_classify_302_task_state(status: str, expected: str) -> None:
+	assert classify_302_task_state(status) == expected
+
+
+def test_302_started_poll_is_pending_not_service_error() -> None:
+	"""Regression: live 302 returns STARTED; must not map to mineru_service_error."""
+	states: list[dict[str, Any]] = []
+
+	def request_fn(method: str, url: str, **_kwargs: Any) -> httpx.Response:
+		del method, url
+		return _response({"state": "STARTED"})
+
+	backend = Ai302MinerUBackend(
+		base_url="https://api.302.ai",
+		api_key="test-key",
+		request_fn=request_fn,
+		poll_interval_s=5,
+	)
+	with pytest.raises(MinerUPendingError) as exc_info:
+		backend.parse(
+			ParseRequest(
+				content=b"%PDF",
+				filename="sample.pdf",
+				title="sample",
+				provider_state={"provider": "302ai", "task_id": "task-started"},
+				provider_state_callback=states.append,
+			)
+		)
+	assert "STARTED" in str(exc_info.value)
+	assert exc_info.value.code == "mineru_pending"
+	assert exc_info.value.code != "mineru_service_error"
+	assert states[-1]["state"] == "STARTED"
+	assert states[-1]["task_id"] == "task-started"
+
+
+def test_302_failed_poll_is_service_error() -> None:
+	def request_fn(method: str, url: str, **_kwargs: Any) -> httpx.Response:
+		del method, url
+		return _response({"state": "FAILED", "message": "upstream boom"})
+
+	backend = Ai302MinerUBackend(
+		base_url="https://api.302.ai",
+		api_key="test-key",
+		request_fn=request_fn,
+	)
+	with pytest.raises(MinerUClientError) as exc_info:
+		backend.parse(
+			ParseRequest(
+				content=b"%PDF",
+				filename="sample.pdf",
+				title="sample",
+				provider_state={"provider": "302ai", "task_id": "task-fail"},
+			)
+		)
+	assert exc_info.value.code == "mineru_service_error"
+	assert "upstream boom" in str(exc_info.value)
 
 
 def test_302_submit_persists_task_and_defers() -> None:

@@ -28,11 +28,39 @@ logger = logging.getLogger(__name__)
 DEFAULT_MINERU_VERSION = "2.x"
 # Soft timeout / 429：不在客户端内重试，立刻上抛以便 job 还槽 + 退避。
 _NO_INLINE_RETRY_CODES = frozenset({"mineru_soft_timeout", "mineru_rate_limited"})
+# 302.AI async poll: only true terminal failure falls through to service_error.
+# Live 302 returns STARTED while work is in flight (see lifecycle E2E 2026-07-27).
+_AI302_IN_PROGRESS_STATES = frozenset(
+	{
+		"",
+		"PENDING",
+		"QUEUED",
+		"SUBMITTED",
+		"STARTED",
+		"RUNNING",
+		"PROCESSING",
+		"WAITING",
+		"IN_PROGRESS",
+	}
+)
+_AI302_SUCCESS_STATES = frozenset(
+	{"SUCCESS", "SUCCEEDED", "COMPLETED", "DONE"}
+)
 # Fake 默认 OCR 文案：与 leave-scanned 语义对齐（扫描请假制度）
 _FAKE_SCANNED_TEXT = (
 	"病假须于返岗后三个工作日内补交证明材料。"
 	"逾期未交按事假处理。"
 )
+
+
+def classify_302_task_state(status: str) -> str:
+	"""Map a 302 poll `state`/`status` to pending | success | failed."""
+	normalized = str(status or "").strip().upper()
+	if normalized in _AI302_IN_PROGRESS_STATES:
+		return "pending"
+	if normalized in _AI302_SUCCESS_STATES:
+		return "success"
+	return "failed"
 
 
 class MinerUClientError(RuntimeError, ValueError):
@@ -313,14 +341,8 @@ class Ai302MinerUBackend:
 		provider_status = str(
 			payload.get("state") or payload.get("status") or ""
 		).strip().upper()
-		if provider_status in {
-			"",
-			"PENDING",
-			"QUEUED",
-			"SUBMITTED",
-			"RUNNING",
-			"PROCESSING",
-		}:
+		kind = classify_302_task_state(provider_status)
+		if kind == "pending":
 			poll_count = int(state.get("poll_count") or 0) + 1
 			state.update(
 				{"state": provider_status or "PENDING", "poll_count": poll_count}
@@ -337,7 +359,7 @@ class Ai302MinerUBackend:
 				f"302 MinerU task {task_id} is {provider_status or 'PENDING'}",
 				retry_after_s=self.poll_interval_s,
 			)
-		if provider_status not in {"SUCCESS", "SUCCEEDED", "COMPLETED", "DONE"}:
+		if kind != "success":
 			message = str(
 				payload.get("message") or payload.get("error") or provider_status
 			)
