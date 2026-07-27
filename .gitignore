@@ -18,6 +18,11 @@ apps/api/.venv
 apps/api/**/__pycache__/
 apps/api/.pytest_cache/
 apps/api/*.egg-info/
+sdk/python/.venv
+sdk/python/**/__pycache__/
+sdk/python/.pytest_cache/
+sdk/python/*.egg-info/
+sdk/python/meriknow.egg-info/
 apps/api/data/
 apps/api/.eval_reports/
 apps/api/tests/eval/.gate_*_cases.jsonl

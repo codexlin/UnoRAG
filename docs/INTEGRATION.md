@@ -32,8 +32,8 @@ Knowledge API 是核心产品契约；Workspace、Python SDK、MCP 和 OpenAI-co
 | 对外术语 `answer` + `ask` 兼容期 | **规划中** | 原生产品契约使用 Answer；已有 `/ask` 在明确版本周期内兼容 |
 | 稳定 OpenAPI / 错误码 / citation 版本化 | **已实现（v1.0）** | `GET /api/v1/openapi.json`；仓库源文件 `contracts/public-api-v1.openapi.json` |
 | 外部 Documents / Versions / Jobs API | **规划中（优先）** | 让业务系统完成知识生命周期接入，不绕过 Control Plane |
-| Python SDK | **规划中（HTTP 契约后）** | API client，不是嵌入式第二引擎 |
-| MCP server | **规划中（SDK 同期或后置）** | HTTP 契约稳定后的只读知识工具适配 |
+| Python SDK | **可用（0.1.0）** — [`sdk/python/`](../sdk/python/) | 薄 HTTP client（`retrieve` / `ask`），不是嵌入式第二引擎 |
+| MCP server | **规划中（下一项）** | HTTP 契约稳定后的只读知识工具适配 |
 | OpenAI-compatible endpoint | **规划中（后置）** | 降低迁移成本；MeriKnow 原生 citation/refusal/trace 契约仍权威 |
 | OAuth-for-apps | **当前产品非目标** | 服务间集成使用可审计、可限制 scope 的 Service Key；只有明确建设公网多租户开发者平台时才重新评估 |
 | 公网多租户 SaaS 网关 | **非目标（远期可选）** | 首版私有化内网集成 |
@@ -269,7 +269,7 @@ curl -sS -X POST "$APP/api/v1/ask" \
 
 ## v1.0 边界
 
-1. 无外部文档生命周期 API、Python SDK、MCP、OpenAI-compatible endpoint、OAuth-for-apps、对外流式 ask。
+1. 无外部文档生命周期 API、MCP、OpenAI-compatible endpoint、OAuth-for-apps、对外流式 ask（Python SDK 0.1.0 已提供 retrieve/ask 薄客户端）。
 2. Service principal 为 `service:<key_id>`：可见 `acl_scope=workspace` 的文档；**不会**自动获得仅绑定某用户的 restricted ACL。
 3. 密钥绑定**当前工作区**；不跨工作区。
 4. `429` 契约已冻结；单节点可设 `MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE`；多副本仍建议 Redis/Ingress。
@@ -307,36 +307,38 @@ GET    /api/v1/traces/{trace_id}
 4. Trace Debug 默认不返回原文、密钥或内部高敏字段。
 5. Service Key scopes 按资源扩展，例如 `documents:write`、`documents:read`、`retrieve`、`answer`，不得用单个全能 scope。
 
-## Python SDK 方向（规划）
+## Python SDK（v0.1.0）
 
-SDK 保持薄、可替换、可生成：
+包路径：[`sdk/python/`](../sdk/python/)。安装：`cd sdk/python && pip install -e .`
+
+SDK 保持薄、可替换；字段对齐冻结契约（`library_id`，非规划稿里的 `knowledge_base`）：
 
 ```python
 from meriknow import MeriKnow
 
 client = MeriKnow(
     base_url="https://knowledge.example.internal",
-    api_key="mk_svc_...",
+    service_key="mk_svc_...",
 )
 
 evidence = client.retrieve(
-    knowledge_base="product-support",
+    library_id="product-support",
     query="设备出现 E37 应如何处理？",
 )
 
-answer = client.answer(
-    knowledge_base="product-support",
+answer = client.ask(
+    library_id="product-support",
     question="设备出现 E37 应如何处理？",
 )
 ```
 
-SDK 职责：
+0.1.0 已具备：
 
-- 鉴权、超时、重试和幂等键
-- Pydantic 类型
-- 同步/异步 client
-- SSE 消费
-- 标准错误映射
+- Service Key 鉴权 + `X-MeriKnow-Api-Version: 1`
+- 同步 `retrieve` / `ask`
+- dataclass 响应模型 + 稳定错误码映射
+
+后续可选：异步 client、SSE、重试策略（仍不得嵌入引擎）。
 
 SDK 不负责：
 

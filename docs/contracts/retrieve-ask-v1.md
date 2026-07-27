@@ -3,7 +3,8 @@
 > Status: **frozen** (2026-07-27)  
 > Machine-readable source: [`contracts/public-api-v1.openapi.json`](../../contracts/public-api-v1.openapi.json)  
 > Served at: `GET /api/v1/openapi.json`  
-> Integration guide: [`../INTEGRATION.md`](../INTEGRATION.md)
+> Integration guide: [`../INTEGRATION.md`](../INTEGRATION.md)  
+> Python SDK (thin adapter): [`../../sdk/python/`](../../sdk/python/)
 
 This document is the **canonical human contract** for Knowledge Service Retrieve/Ask v1.
 OpenAPI is the machine source of truth for request/response schemas and error codes.
@@ -205,9 +206,14 @@ When public stream ships (planned `/api/v1/answer/stream`), it must reuse these 
 | Pagination | **Not supported**. Retrieve uses `top_k` only (1–50). No cursor/`page_token`. |
 | Answer alias paths | `/api/v1/answer` · `/answer/stream` are **planned**, not in this freeze. `/api/v1/ask` remains stable through an explicit deprecation window when Answer lands. |
 
+## Adapters on this kernel
+
+- **Python SDK (0.1.0):** [`../../sdk/python/`](../../sdk/python/) — sync `retrieve` / `ask` only; no embedded engine
+- **Next:** MCP Server, then OpenAI-compatible API (still thin over this HTTP surface)
+
 ## Non-goals (explicitly out of v1)
 
-- Python SDK, MCP, OpenAI-compatible adapters (next roadmap items; thin on this kernel)
+- MCP / OpenAI-compatible adapters (next roadmap items; thin on this kernel)
 - External Documents / Versions / Jobs HTTP API
 - Public streaming Ask/Answer path
 - Client-supplied algorithm knobs (`ask_overrides`, hybrid/rerank/top_k policy internals)

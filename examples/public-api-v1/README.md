@@ -102,4 +102,5 @@ curl -sS -X POST "$APP/api/v1/ask" \
 ```
 
 Canonical contract: [`docs/contracts/retrieve-ask-v1.md`](../../docs/contracts/retrieve-ask-v1.md)  
-OpenAPI: `GET $APP/api/v1/openapi.json`
+OpenAPI: `GET $APP/api/v1/openapi.json`  
+Python SDK (same calls, typed): [`sdk/python/`](../../sdk/python/)
