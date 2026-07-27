@@ -35,6 +35,7 @@
 | [`reports/2026-07-27-pilot-formal-go-no-go.md`](./reports/2026-07-27-pilot-formal-go-no-go.md) | **正式签字结论稿**（技术可进入签字；**待审批人签字**） |
 | [`reports/2026-07-27-private-v1-rc3-browser.md`](./reports/2026-07-27-private-v1-rc3-browser.md) | Private Deployment v1.0 RC3 真实浏览器与质量门禁验收 |
 | [`reports/2026-07-27-private-v1-rc3-formal-go-no-go.md`](./reports/2026-07-27-private-v1-rc3-formal-go-no-go.md) | **RC3 专属签字稿**（唯一产品审批对象 `a255752`；建议 Conditional GO） |
+| [`reports/2026-07-27-live-retrieval-quality-baseline.md`](./reports/2026-07-27-live-retrieval-quality-baseline.md) | 真实入库 / Qdrant / live 模型质量基线（Recall、MRR、引用噪声、拒答与延迟） |
 
 退出码约定（上述脚本一致）：
 

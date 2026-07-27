@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import re
+import statistics
 import sys
 import time
 import urllib.error
@@ -21,6 +23,19 @@ OUT_DIR = AB / "_e2e_out"
 BASE = os.environ.get("MERIKNOW_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
 JOB_TIMEOUT_S = int(os.environ.get("MERIKNOW_AB_JOB_TIMEOUT_SEC", "900"))
 ASK_TIMEOUT_S = int(os.environ.get("MERIKNOW_AB_ASK_TIMEOUT_SEC", "120"))
+KEEP_LIBRARY = os.environ.get("MERIKNOW_AB_KEEP_LIBRARY", "").strip().lower() in {
+	"1",
+	"true",
+	"yes",
+}
+
+NEGATIVE_CASES = [
+	"资料中规定的员工宠物医疗保险年度报销上限是多少？",
+	"资料中火星分公司的办公地址和邮政编码是什么？",
+	"资料中量子芯片 QZ-900 的保修年限是多少？",
+	"资料中南极数据中心的柴油储备可以维持多少天？",
+	"资料中 2029 年春节团建预算是多少？",
+]
 
 
 def load_dotenv(path: Path) -> dict[str, str]:
@@ -56,6 +71,19 @@ def key_facts_from(case: dict) -> list[str]:
 	return uniq[:8] if uniq else ([answer[:40]] if answer else [])
 
 
+def citation_file(citation: dict) -> str:
+	value = citation.get("filename") or citation.get("file") or ""
+	return Path(str(value)).name
+
+
+def percentile(values: list[float], ratio: float) -> float | None:
+	if not values:
+		return None
+	ordered = sorted(values)
+	index = min(len(ordered) - 1, max(0, int(len(ordered) * ratio + 0.999999) - 1))
+	return round(ordered[index], 1)
+
+
 class Client:
 	def __init__(self, base: str) -> None:
 		self.base = base
@@ -71,11 +99,21 @@ class Client:
 		headers: dict[str, str] | None = None,
 		timeout: float = 60,
 	) -> tuple[int, bytes]:
+		resolved_headers = dict(headers or {})
+		if self.base.startswith(("http://127.0.0.1", "http://localhost")):
+			# Production cookies are Secure. Browsers treat localhost as a secure
+			# context, while urllib correctly refuses to attach them to plain HTTP.
+			# Mirror browser localhost behavior without weakening remote HTTP.
+			local_cookies = "; ".join(
+				f"{cookie.name}={cookie.value}" for cookie in self.jar
+			)
+			if local_cookies:
+				resolved_headers.setdefault("cookie", local_cookies)
 		req = urllib.request.Request(
 			self.base + path,
 			data=data,
 			method=method,
-			headers=headers or {},
+			headers=resolved_headers,
 		)
 		try:
 			with self.opener.open(req, timeout=timeout) as resp:
@@ -135,8 +173,16 @@ def main() -> int:
 	env = {}
 	env.update(load_dotenv(ROOT / "apps" / "web" / ".env.local"))
 	env.update(load_dotenv(ROOT / "apps" / "web" / ".env"))
+	credentials_file = os.environ.get("MERIKNOW_AB_CREDENTIALS_FILE", "").strip()
+	if credentials_file:
+		env.update(load_dotenv(Path(credentials_file).expanduser()))
 	email = os.environ.get("MERIKNOW_ADMIN_EMAIL") or env.get("MERIKNOW_ADMIN_EMAIL")
 	password = os.environ.get("MERIKNOW_ADMIN_PASSWORD") or env.get("MERIKNOW_ADMIN_PASSWORD")
+	password_file = os.environ.get("MERIKNOW_AB_PASSWORD_FILE", "").strip()
+	if password_file:
+		path = Path(password_file).expanduser()
+		if path.is_file():
+			password = path.read_text(encoding="utf-8").strip()
 	if not email or not password:
 		print("FAIL: missing MERIKNOW_ADMIN_EMAIL/PASSWORD", file=sys.stderr)
 		return 2
@@ -181,6 +227,22 @@ def main() -> int:
 		return 1
 	library_id = lib["id"]
 	print("library_id", library_id)
+
+	def cleanup_library() -> None:
+		if KEEP_LIBRARY:
+			print("== keep evaluation library", library_id)
+			return
+		try:
+			cleanup_code, _ = client.json(
+				"DELETE",
+				f"/api/libraries/{library_id}",
+				timeout=30,
+			)
+			print("== cleanup library", library_id, "http", cleanup_code)
+		except Exception as exc:
+			print(f"!! cleanup library failed: {exc}", file=sys.stderr)
+
+	atexit.register(cleanup_library)
 
 	uploads: dict[str, dict] = {}
 	print("== upload", len(files), "files")
@@ -264,6 +326,11 @@ def main() -> int:
 	ask_rows = []
 	passed = 0
 	failed = 0
+	reciprocal_ranks: list[float] = []
+	document_hits = 0
+	total_citations = 0
+	cross_document_citations = 0
+	latencies_ms: list[float] = []
 	for i, case in enumerate(cases, 1):
 		fname = case["file"]
 		job = job_results.get(fname) or {}
@@ -284,21 +351,44 @@ def main() -> int:
 			print(f"  [{i}/{len(cases)}] SKIP ingest={job.get('status')} {fname}")
 			continue
 
+		started = time.perf_counter()
 		code, resp = client.json(
 			"POST",
 			"/api/rag/v1/ask",
 			{"question": case["question"], "library_id": library_id},
 			timeout=ASK_TIMEOUT_S,
 		)
+		latency_ms = round((time.perf_counter() - started) * 1000, 1)
+		latencies_ms.append(latency_ms)
 		answer = ""
 		refused = None
 		reason = None
 		citations = []
+		citation_files: list[str] = []
 		if isinstance(resp, dict):
 			answer = str(resp.get("answer") or "")
 			refused = resp.get("refused")
 			reason = resp.get("refuse_reason")
 			citations = resp.get("citations") or []
+		citation_files = [
+			citation_file(citation)
+			for citation in citations
+			if isinstance(citation, dict)
+		]
+		target_file = Path(fname).name
+		relevant_ranks = [
+			rank
+			for rank, citation_name in enumerate(citation_files, 1)
+			if citation_name == target_file
+		]
+		reciprocal_rank = 1 / relevant_ranks[0] if relevant_ranks else 0.0
+		reciprocal_ranks.append(reciprocal_rank)
+		if relevant_ranks:
+			document_hits += 1
+		total_citations += len(citation_files)
+		cross_document_citations += sum(
+			1 for citation_name in citation_files if citation_name != target_file
+		)
 		missing = [f for f in facts if f and f not in answer]
 		ok = code == 200 and not refused and not missing
 		if ok:
@@ -313,6 +403,15 @@ def main() -> int:
 				"refuse_reason": reason,
 				"answer": answer[:500],
 				"citations": len(citations),
+				"citation_files": citation_files,
+				"target_document_rank": relevant_ranks[0] if relevant_ranks else None,
+				"reciprocal_rank": round(reciprocal_rank, 4),
+				"latency_ms": latency_ms,
+				"trace_id": (
+					(resp.get("retrieval_debug") or {}).get("trace_id")
+					if isinstance(resp, dict)
+					else None
+				),
 				"missing_facts": missing,
 			}
 		)
@@ -320,6 +419,60 @@ def main() -> int:
 		flag = "PASS" if ok else "FAIL"
 		print(f"  [{i}/{len(cases)}] {flag} missing={missing[:3]} file={fname}")
 
+	print("== ask negative cases", len(NEGATIVE_CASES))
+	negative_rows = []
+	negative_passed = 0
+	for i, question in enumerate(NEGATIVE_CASES, 1):
+		started = time.perf_counter()
+		code, resp = client.json(
+			"POST",
+			"/api/rag/v1/ask",
+			{"question": question, "library_id": library_id},
+			timeout=ASK_TIMEOUT_S,
+		)
+		latency_ms = round((time.perf_counter() - started) * 1000, 1)
+		latencies_ms.append(latency_ms)
+		refused = isinstance(resp, dict) and resp.get("refused") is True
+		ok = code == 200 and refused
+		if ok:
+			negative_passed += 1
+		else:
+			failed += 1
+		negative_rows.append(
+			{
+				"i": i,
+				"question": question,
+				"ok": ok,
+				"http": code,
+				"refused": resp.get("refused") if isinstance(resp, dict) else None,
+				"refuse_reason": (
+					resp.get("refuse_reason") if isinstance(resp, dict) else None
+				),
+				"answer": (
+					str(resp.get("answer") or "")[:500]
+					if isinstance(resp, dict)
+					else str(resp)[:500]
+				),
+				"citations": (
+					len(resp.get("citations") or []) if isinstance(resp, dict) else 0
+				),
+				"latency_ms": latency_ms,
+				"trace_id": (
+					(resp.get("retrieval_debug") or {}).get("trace_id")
+					if isinstance(resp, dict)
+					else None
+				),
+			}
+		)
+		flag = "PASS" if ok else "FAIL"
+		reason = resp.get("refuse_reason") if isinstance(resp, dict) else None
+		print(f"  [N{i}/{len(NEGATIVE_CASES)}] {flag} reason={reason}")
+
+	document_recall = document_hits / len(reciprocal_ranks) if reciprocal_ranks else 0
+	document_mrr = statistics.fmean(reciprocal_ranks) if reciprocal_ranks else 0
+	cross_document_rate = (
+		cross_document_citations / total_citations if total_citations else 0
+	)
 	report = {
 		"stamp": stamp,
 		"base_url": BASE,
@@ -340,10 +493,29 @@ def main() -> int:
 			"passed": passed,
 			"failed": failed,
 			"pass_rate": round(passed / len(cases), 4) if cases else 0,
+			"evaluated_cases": len(reciprocal_ranks),
+			"strict_evaluated_pass_rate": round(
+				passed / len(reciprocal_ranks), 4
+			)
+			if reciprocal_ranks
+			else 0,
+			"ingest_blocked_cases": len(cases) - len(reciprocal_ranks),
 			"ingest_completed": sum(1 for j in job_results.values() if j.get("status") == "completed"),
 			"ingest_total": len(files),
+			"document_recall_at_k": round(document_recall, 4),
+			"document_mrr": round(document_mrr, 4),
+			"cross_document_citation_rate": round(cross_document_rate, 4),
+			"negative_cases": len(NEGATIVE_CASES),
+			"negative_passed": negative_passed,
+			"refusal_accuracy": round(
+				negative_passed / len(NEGATIVE_CASES), 4
+			),
+			"latency_p50_ms": percentile(latencies_ms, 0.50),
+			"latency_p95_ms": percentile(latencies_ms, 0.95),
+			"latency_max_ms": round(max(latencies_ms), 1) if latencies_ms else None,
 		},
 		"cases": ask_rows,
+		"negative_cases": negative_rows,
 	}
 	json_path = OUT_DIR / f"ab_live_{stamp}.json"
 	md_path = OUT_DIR / f"ab_live_{stamp}.md"
@@ -358,6 +530,13 @@ def main() -> int:
 		f"- library_id: `{library_id}`",
 		f"- ingest: {report['summary']['ingest_completed']}/{report['summary']['ingest_total']} completed",
 		f"- ask: **{passed}/{len(cases)}** passed ({report['summary']['pass_rate']:.1%})",
+		f"- strict evaluated ask: **{passed}/{len(reciprocal_ranks)}** passed "
+		f"({report['summary']['strict_evaluated_pass_rate']:.1%})",
+		f"- document Recall@K: **{document_recall:.1%}**",
+		f"- document MRR: **{document_mrr:.3f}**",
+		f"- cross-document citation rate: **{cross_document_rate:.1%}**",
+		f"- refusal accuracy: **{negative_passed}/{len(NEGATIVE_CASES)}**",
+		f"- latency p50 / p95: **{percentile(latencies_ms, 0.50)} / {percentile(latencies_ms, 0.95)} ms**",
 		"",
 		"## Ingest",
 		"",
@@ -384,6 +563,17 @@ def main() -> int:
 				lines.append(f"- missing: {r.get('missing_facts')}")
 				lines.append(f"- answer: {(r.get('answer') or '')[:240]}")
 			lines.append("")
+	lines.extend(["", "## Refusal failures", ""])
+	negative_fails = [row for row in negative_rows if not row.get("ok")]
+	if not negative_fails:
+		lines.append("_none_")
+	else:
+		for row in negative_fails:
+			lines.append(f"- Q: {row['question']}")
+			lines.append(
+				f"  - refused={row.get('refused')} reason={row.get('refuse_reason')}"
+			)
+			lines.append(f"  - answer: {(row.get('answer') or '')[:240]}")
 	md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 	latest_md.write_text(md_path.read_text(encoding="utf-8"), encoding="utf-8")
 
