@@ -1,6 +1,48 @@
 export const PUBLIC_API_V1 = "1";
+/** Body marker for success responses; header uses PUBLIC_API_V1 ("1"). */
+export const PUBLIC_API_VERSION_BODY = "v1";
 export const PUBLIC_API_MAX_BODY_BYTES = 64 * 1024;
 export const PUBLIC_API_UPSTREAM_TIMEOUT_MS = 60_000;
+
+/** Stable success top-level keys (excluding dynamic values). */
+export const PUBLIC_RETRIEVE_SUCCESS_KEYS = Object.freeze([
+	"api_version",
+	"trace_id",
+	"query",
+	"library_id",
+	"citations",
+	"refused",
+	"refuse_reason",
+	"retrieval_mode",
+]);
+export const PUBLIC_ASK_SUCCESS_KEYS = Object.freeze([
+	"api_version",
+	"trace_id",
+	"session_id",
+	"question",
+	"answer",
+	"citations",
+	"refused",
+	"refuse_reason",
+	"retrieval_mode",
+]);
+export const PUBLIC_CITATION_KEYS = Object.freeze([
+	"id",
+	"index",
+	"title",
+	"snippet",
+	"score",
+	"document_id",
+	"filename",
+	"page",
+	"page_start",
+	"page_end",
+	"section_path",
+	"table_id",
+	"row_start",
+	"row_end",
+	"record_type",
+]);
 
 const ASK_FIELDS = new Set(["question", "library_id", "session_id"]);
 const RETRIEVE_FIELDS = new Set([
@@ -308,6 +350,7 @@ export function projectPublicApiSuccess(target, value, requestId) {
 	const citations = publicCitations(value.citations);
 	if (citations === null) return null;
 	const base = {
+		api_version: PUBLIC_API_VERSION_BODY,
 		trace_id: requestId,
 		citations,
 		refused: value.refused === true,
@@ -319,18 +362,32 @@ export function projectPublicApiSuccess(target, value, requestId) {
 		const libraryId = optionalString(value.library_id);
 		if (!query || !libraryId) return null;
 		return {
+			api_version: base.api_version,
+			trace_id: base.trace_id,
 			query,
 			library_id: libraryId,
-			...base,
+			citations: base.citations,
+			refused: base.refused,
+			refuse_reason: base.refuse_reason,
+			retrieval_mode: base.retrieval_mode,
 		};
 	}
 	const sessionId = optionalString(value.session_id);
 	const question = optionalString(value.question);
 	if (!sessionId || !question || typeof value.answer !== "string") return null;
 	return {
+		api_version: base.api_version,
+		trace_id: base.trace_id,
 		session_id: sessionId,
 		question,
 		answer: value.answer,
-		...base,
+		citations: base.citations,
+		refused: base.refused,
+		refuse_reason: base.refuse_reason,
+		retrieval_mode: base.retrieval_mode,
 	};
+}
+
+export function publicSuccessKeySet(target) {
+	return target === "ask" ? PUBLIC_ASK_SUCCESS_KEYS : PUBLIC_RETRIEVE_SUCCESS_KEYS;
 }

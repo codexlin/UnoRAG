@@ -2,6 +2,9 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
+import { getDatabase } from "@/db";
+import { auditLogs } from "@/db/schema";
+
 import { injectAskOverrides } from "./ask-overrides-inject.mjs";
 import { createInternalRagHeaders } from "./internal-rag-context";
 import {
@@ -10,11 +13,13 @@ import {
 	PUBLIC_API_MAX_BODY_BYTES,
 	PUBLIC_API_UPSTREAM_TIMEOUT_MS,
 	PUBLIC_API_V1,
+	PUBLIC_API_VERSION_BODY,
 	type PublicApiFailure,
 	type PublicApiTarget,
 	projectPublicApiSuccess,
 	publicApiErrorPayload,
 } from "./public-api-v1-core.mjs";
+import { checkPublicApiRateLimit } from "./public-api-v1-rate-limit.mjs";
 import {
 	type AuthenticatedServiceKey,
 	authenticateServiceKey,
@@ -129,6 +134,62 @@ function publicErrorResponse(input: {
 	);
 }
 
+function emitPublicApiUsage(payload: Record<string, unknown>): void {
+	try {
+		console.info(
+			JSON.stringify({
+				event: "knowledge.api.usage",
+				api_version: PUBLIC_API_VERSION_BODY,
+				...payload,
+			}),
+		);
+	} catch {
+		/* never fail the request on observability */
+	}
+}
+
+async function recordPublicApiAudit(input: {
+	key: AuthenticatedServiceKey;
+	action: "knowledge.retrieve" | "knowledge.ask";
+	requestId: string;
+	libraryId: string;
+	status: number;
+	code?: string | null;
+	refused?: boolean | null;
+	citationCount?: number | null;
+	durationMs: number;
+	request: Request;
+}): Promise<void> {
+	try {
+		const db = getDatabase();
+		await db.insert(auditLogs).values({
+			organizationId: input.key.organizationId,
+			workspaceId: input.key.workspaceId,
+			actorId: null,
+			action: input.action,
+			resourceType: "library",
+			resourceId: input.libraryId,
+			requestId: input.requestId,
+			ipAddress:
+				input.request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+				null,
+			userAgent: input.request.headers.get("user-agent"),
+			details: {
+				service_key_id: input.key.id,
+				service_key_prefix: input.key.prefix,
+				scopes: input.key.scopes,
+				status: input.status,
+				error_code: input.code ?? null,
+				refused: input.refused ?? null,
+				citation_count: input.citationCount ?? null,
+				duration_ms: input.durationMs,
+			},
+		});
+	} catch {
+		/* audit must not break the Knowledge API path */
+	}
+}
+
 async function readBodyWithLimit(
 	request: Request,
 ): Promise<{ ok: true; body: Uint8Array } | PublicApiFailure> {
@@ -216,6 +277,20 @@ export async function handlePublicApiV1(input: {
 			retryable: false,
 		});
 	}
+
+	const rate = checkPublicApiRateLimit(auth.key.id);
+	if (!rate.ok) {
+		return publicErrorResponse({
+			status: 429,
+			code: "rate_limit_exceeded",
+			message: "Knowledge API rate limit exceeded",
+			requestId,
+			retryable: true,
+			retryAfter: String(rate.retryAfterSeconds),
+			details: { retry_after_seconds: rate.retryAfterSeconds },
+		});
+	}
+
 	return forwardIntegrationRag({
 		...input,
 		key: auth.key,
@@ -234,63 +309,131 @@ export async function forwardIntegrationRag(input: {
 	injectAskOverrides?: boolean;
 	requestId: string;
 }): Promise<Response> {
+	const started = Date.now();
+	const publicTarget: PublicApiTarget =
+		input.target === "/v1/ask" ? "ask" : "retrieve";
+	const auditAction =
+		publicTarget === "ask" ? "knowledge.ask" : "knowledge.retrieve";
+
+	const finishObservability = (opts: {
+		status: number;
+		libraryId?: string;
+		code?: string | null;
+		refused?: boolean | null;
+		citationCount?: number | null;
+	}) => {
+		const durationMs = Date.now() - started;
+		const libraryId = opts.libraryId ?? "";
+		emitPublicApiUsage({
+			request_id: input.requestId,
+			service_key_id: input.key.id,
+			workspace_id: input.key.workspaceId,
+			organization_id: input.key.organizationId,
+			target: publicTarget,
+			library_id: libraryId || null,
+			status: opts.status,
+			error_code: opts.code ?? null,
+			refused: opts.refused ?? null,
+			citation_count: opts.citationCount ?? null,
+			duration_ms: durationMs,
+		});
+		if (libraryId) {
+			void recordPublicApiAudit({
+				key: input.key,
+				action: auditAction,
+				requestId: input.requestId,
+				libraryId,
+				status: opts.status,
+				code: opts.code,
+				refused: opts.refused,
+				citationCount: opts.citationCount,
+				durationMs,
+				request: input.request,
+			});
+		}
+	};
+
 	const contentType = input.request.headers.get("content-type") ?? "";
 	if (!contentType.toLowerCase().startsWith("application/json")) {
-		return publicErrorResponse({
+		const response = publicErrorResponse({
 			status: 415,
 			code: "unsupported_media_type",
 			message: "content-type must be application/json",
 			requestId: input.requestId,
 		});
+		finishObservability({ status: 415, code: "unsupported_media_type" });
+		return response;
 	}
 
 	let rawBody: Uint8Array;
 	try {
 		const read = await readBodyWithLimit(input.request);
 		if (!read.ok) {
-			return publicErrorResponse({ ...read, requestId: input.requestId });
+			const response = publicErrorResponse({
+				...read,
+				requestId: input.requestId,
+			});
+			finishObservability({ status: read.status, code: read.code });
+			return response;
 		}
 		rawBody = read.body;
 	} catch {
-		return publicErrorResponse({
+		const response = publicErrorResponse({
 			status: 400,
 			code: "invalid_request",
 			message: "invalid request body",
 			requestId: input.requestId,
 		});
+		finishObservability({ status: 400, code: "invalid_request" });
+		return response;
 	}
 
 	let decoded: unknown;
 	try {
 		decoded = JSON.parse(new TextDecoder().decode(rawBody));
 	} catch {
-		return publicErrorResponse({
+		const response = publicErrorResponse({
 			status: 400,
 			code: "invalid_request",
 			message: "invalid JSON body",
 			requestId: input.requestId,
 		});
+		finishObservability({ status: 400, code: "invalid_request" });
+		return response;
 	}
 
-	const publicTarget: PublicApiTarget =
-		input.target === "/v1/ask" ? "ask" : "retrieve";
 	const normalized = normalizePublicApiRequest(publicTarget, decoded);
 	if (!normalized.ok) {
-		return publicErrorResponse({
+		const response = publicErrorResponse({
 			...normalized,
 			requestId: input.requestId,
 		});
+		finishObservability({
+			status: normalized.status,
+			code: normalized.code,
+			libraryId:
+				typeof (decoded as { library_id?: unknown })?.library_id === "string"
+					? String((decoded as { library_id: string }).library_id)
+					: undefined,
+		});
+		return response;
 	}
 	const payload = normalized.payload;
 	const libraryId = String(payload.library_id);
 	if (!serviceKeyAllowsLibrary(input.key, libraryId)) {
-		return publicErrorResponse({
+		const response = publicErrorResponse({
 			status: 403,
 			code: "library_access_denied",
 			message: "library_id not allowed for this service key",
 			requestId: input.requestId,
 			details: { library_id: libraryId },
 		});
+		finishObservability({
+			status: 403,
+			code: "library_access_denied",
+			libraryId,
+		});
+		return response;
 	}
 
 	let bodyBytes = encodeJsonBody(payload);
@@ -298,14 +441,17 @@ export async function forwardIntegrationRag(input: {
 	if (input.injectAskOverrides) {
 		const injected = await withAskOverrides(bodyBytes, input.key.workspaceId);
 		if (!injected.ok) {
-			return publicErrorResponse({
+			const code =
+				injected.status === 503 ? "policy_unavailable" : "invalid_request";
+			const response = publicErrorResponse({
 				status: injected.status,
-				code:
-					injected.status === 503 ? "policy_unavailable" : "invalid_request",
+				code,
 				message: injected.detail,
 				requestId: input.requestId,
 				retryable: injected.status === 503,
 			});
+			finishObservability({ status: injected.status, code, libraryId });
+			return response;
 		}
 		bodyBytes = injected.body;
 	}
@@ -324,13 +470,19 @@ export async function forwardIntegrationRag(input: {
 			{ authSource: "service", requestId: input.requestId },
 		);
 	} catch {
-		return publicErrorResponse({
+		const response = publicErrorResponse({
 			status: 503,
 			code: "gateway_misconfigured",
 			message: "Knowledge API gateway is unavailable",
 			requestId: input.requestId,
 			retryable: true,
 		});
+		finishObservability({
+			status: 503,
+			code: "gateway_misconfigured",
+			libraryId,
+		});
+		return response;
 	}
 
 	const headers = new Headers({
@@ -354,39 +506,58 @@ export async function forwardIntegrationRag(input: {
 		});
 	} catch {
 		const timedOut = timeoutSignal.aborted;
-		return publicErrorResponse({
+		const code = timedOut ? "upstream_timeout" : "upstream_unavailable";
+		const response = publicErrorResponse({
 			status: timedOut ? 504 : 502,
-			code: timedOut ? "upstream_timeout" : "upstream_unavailable",
+			code,
 			message: timedOut
 				? "Knowledge API request timed out"
 				: "RAG data plane unavailable",
 			requestId: input.requestId,
 			retryable: true,
 		});
+		finishObservability({
+			status: timedOut ? 504 : 502,
+			code,
+			libraryId,
+		});
+		return response;
 	}
 
 	let upstreamPayload: unknown;
 	try {
 		upstreamPayload = await upstream.json();
 	} catch {
-		return publicErrorResponse({
+		const response = publicErrorResponse({
 			status: 502,
 			code: "invalid_upstream_response",
 			message: "RAG data plane returned an invalid response",
 			requestId: input.requestId,
 			retryable: true,
 		});
+		finishObservability({
+			status: 502,
+			code: "invalid_upstream_response",
+			libraryId,
+		});
+		return response;
 	}
 	if (!upstream.ok) {
 		const normalizedError = normalizeUpstreamError(
 			upstream.status,
 			upstreamPayload,
 		);
-		return publicErrorResponse({
+		const response = publicErrorResponse({
 			...normalizedError,
 			requestId: input.requestId,
 			retryAfter: upstream.headers.get("retry-after"),
 		});
+		finishObservability({
+			status: normalizedError.status,
+			code: normalizedError.code,
+			libraryId,
+		});
+		return response;
 	}
 	const projected = projectPublicApiSuccess(
 		publicTarget,
@@ -394,14 +565,28 @@ export async function forwardIntegrationRag(input: {
 		input.requestId,
 	);
 	if (!projected) {
-		return publicErrorResponse({
+		const response = publicErrorResponse({
 			status: 502,
 			code: "invalid_upstream_response",
 			message: "RAG data plane response does not match the v1 contract",
 			requestId: input.requestId,
 			retryable: true,
 		});
+		finishObservability({
+			status: 502,
+			code: "invalid_upstream_response",
+			libraryId,
+		});
+		return response;
 	}
+	finishObservability({
+		status: upstream.status,
+		libraryId,
+		refused: projected.refused === true,
+		citationCount: Array.isArray(projected.citations)
+			? projected.citations.length
+			: 0,
+	});
 	return Response.json(projected, {
 		status: upstream.status,
 		headers: publicHeaders(input.requestId),

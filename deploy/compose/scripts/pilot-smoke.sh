@@ -297,7 +297,7 @@ assert data.get("trace_id") == request_id, (data.get("trace_id"), request_id)
 assert data.get("library_id", library_id) == library_id
 
 common = {
-	"trace_id", "citations", "refused", "refuse_reason", "retrieval_mode",
+	"api_version", "trace_id", "citations", "refused", "refuse_reason", "retrieval_mode",
 }
 expected = (
 	common | {"query", "library_id"}
@@ -305,6 +305,7 @@ expected = (
 	else common | {"session_id", "question", "answer"}
 )
 assert set(data) == expected, sorted(set(data) ^ expected)
+assert data.get("api_version") == "v1", data.get("api_version")
 
 citations = data.get("citations")
 assert isinstance(citations, list) and citations, "expected at least one citation"

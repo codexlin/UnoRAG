@@ -93,19 +93,19 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 
 | 项 | 面向 | 说明 |
 |----|------|------|
-| Service Key + Retrieve/Ask v1.0 | API | **已冻结**：`mk_svc_` + `/api/v1/retrieve|ask`；严格输入、稳定错误/citation、请求关联 ID |
+| Service Key + Retrieve/Ask v1.0 | API | **已冻结（含契约 hardening）**：`mk_svc_` + `/api/v1/retrieve|ask`；`docs/contracts/retrieve-ask-v1.md`；`api_version`；审计/usage/可选限流；OpenAPI + 契约测试 |
 | Answer 契约与 Ask 兼容期 | API | 新产品术语采用 Answer；定义 `/answer`、`/answer/stream` 与 `/ask` 废弃周期 |
 | 稳定 OpenAPI | API | **Retrieve/Ask v1.0 已落地**；后续资源逐项补入，不从路线图隐式承诺契约 |
 | Documents / Versions / Jobs | API | 外部上传、替换、删除、状态查询复用 Control Plane 与 `app.jobs`；支持 idempotency key |
-| Service Key scopes v2 | 安全 | `documents:read/write`、`retrieve`、`answer` 等最小权限 scope；限流与完整审计 |
+| Service Key scopes v2 | 安全 | `documents:read/write`、`retrieve`、`answer` 等最小权限 scope；集群级限流与更深审计 |
 | Feedback / Trace API | 质量 | 集成方可回传反馈并按 trace_id 获取脱敏调试信息 |
-| 对外流式 Answer | API | 稳定 SSE 事件、断线与错误语义 |
+| 对外流式 Answer | API | 事件名已在 v1 契约冻结；公开路径待 Answer 资源落地 |
 | 表格 / 受限多步加强 | 内核 | 在现有 table path 上加深，不做开放工具生态 |
 | 线上反馈 → eval case | 质量 | 形成反馈审核、回归用例与发布门禁闭环 |
 
 ### P2 / 中后期：开发者接入面
 
-目标：在稳定 HTTP 契约上降低集成成本。
+目标：在稳定 HTTP 契约上降低集成成本。**下一项：Python SDK（薄适配本契约）。**
 
 | 项 | 说明 |
 |----|------|

@@ -2,6 +2,8 @@
 
 > 状态：Public API v1.0 已冻结（Retrieve/Ask + Service Key）（2026-07-27）
 >
+> **权威契约**：[`contracts/retrieve-ask-v1.md`](./contracts/retrieve-ask-v1.md) · OpenAPI [`../contracts/public-api-v1.openapi.json`](../contracts/public-api-v1.openapi.json) · 示例 [`../examples/public-api-v1/`](../examples/public-api-v1/)
+>
 > 产品语境见 [PRODUCT.md](./PRODUCT.md)，产品层级见 [STRATEGY.md](./STRATEGY.md)
 
 ## 目标
@@ -74,11 +76,13 @@ GET /api/v1/openapi.json
 | Citation | 只返回稳定展示字段；不暴露完整 chunk body、tenant、generation |
 | Debug | `retrieval_debug` 不属于外部契约 |
 | 关联 ID | 每次请求由网关生成；响应头 `X-Request-Id`；成功体 `trace_id`；错误体 `error.request_id` |
+| 版本标记 | 响应头 `X-MeriKnow-Api-Version: 1`；成功体 `api_version: "v1"` |
 | 错误 | 统一 `error.code/message/request_id/retryable/details?` |
 | 边界 | JSON body 最大 65,536 bytes；问句最大 4,000 字符；`top_k` 1–50 |
 | 超时 | 网关等待数据面最多 60 秒；超时返回 `504 upstream_timeout` |
-| 流式 | 不属于外部 v1.0；内部 Workspace SSE 不等于公开契约 |
-| 限流 | `429 rate_limit_exceeded` 形状已冻结；执行器由 Redis/Ingress 接入，当前未内置 |
+| 流式 | 不属于外部 v1.0 路径；事件名已在契约文档冻结供未来 `/answer/stream`；内部 Workspace SSE ≠ 公开路径 |
+| 限流 | `429 rate_limit_exceeded` 已冻结；可选进程内限流 `MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE`；集群级用 Redis/Ingress |
+| 审计 / usage | `audit_logs`：`knowledge.retrieve` / `knowledge.ask`；stdout `knowledge.api.usage`；token ledger 后置 |
 
 ### 鉴权头
 
@@ -115,6 +119,7 @@ Authorization: Bearer mk_svc_…
 
 ```json
 {
+  "api_version": "v1",
   "trace_id": "f43f...",
   "query": "病假证明几天内补交？",
   "library_id": "lib_xxx",
@@ -143,6 +148,7 @@ Authorization: Bearer mk_svc_…
 
 ```json
 {
+  "api_version": "v1",
   "trace_id": "f43f...",
   "session_id": "customer-opaque-id",
   "question": "病假证明几天内补交？",
@@ -266,8 +272,9 @@ curl -sS -X POST "$APP/api/v1/ask" \
 1. 无外部文档生命周期 API、Python SDK、MCP、OpenAI-compatible endpoint、OAuth-for-apps、对外流式 ask。
 2. Service principal 为 `service:<key_id>`：可见 `acl_scope=workspace` 的文档；**不会**自动获得仅绑定某用户的 restricted ACL。
 3. 密钥绑定**当前工作区**；不跨工作区。
-4. `429` 契约已冻结，但 Redis/Ingress 限流执行器尚未接入。
+4. `429` 契约已冻结；单节点可设 `MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE`；多副本仍建议 Redis/Ingress。
 5. 客户应用应只在**服务端**持有 key，不要放进浏览器。
+6. curl 示例见 [`../examples/public-api-v1/`](../examples/public-api-v1/)。
 
 ## 目标 Knowledge API 资源面（规划）
 

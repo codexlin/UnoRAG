@@ -1,6 +1,10 @@
 export const PUBLIC_API_V1: "1";
+export const PUBLIC_API_VERSION_BODY: "v1";
 export const PUBLIC_API_MAX_BODY_BYTES: number;
 export const PUBLIC_API_UPSTREAM_TIMEOUT_MS: number;
+export const PUBLIC_RETRIEVE_SUCCESS_KEYS: readonly string[];
+export const PUBLIC_ASK_SUCCESS_KEYS: readonly string[];
+export const PUBLIC_CITATION_KEYS: readonly string[];
 
 export type PublicApiTarget = "ask" | "retrieve";
 export type PublicApiFailure = {
@@ -51,3 +55,4 @@ export function projectPublicApiSuccess(
 	value: unknown,
 	requestId: string,
 ): Record<string, unknown> | null;
+export function publicSuccessKeySet(target: PublicApiTarget): readonly string[];

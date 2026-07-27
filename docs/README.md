@@ -9,6 +9,7 @@
 | [ROADMAP.md](./ROADMAP.md) | 近中远期、开始前 checklist、交付优先级 |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 控制面 / 数据面、入库、会话、Ask 流水线 |
 | [INTEGRATION.md](./INTEGRATION.md) | Knowledge API：已实现 vs 规划中契约 |
+| [contracts/retrieve-ask-v1.md](./contracts/retrieve-ask-v1.md) | Retrieve/Ask 公共 API v1 冻结契约 |
 | [DEV.md](./DEV.md) | 本地启动与 env 分层 |
 
 仓库根 [README.md](../README.md) 是入口摘要。

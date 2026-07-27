@@ -9,10 +9,19 @@ import {
 	normalizeUpstreamError,
 	PUBLIC_API_MAX_BODY_BYTES,
 	PUBLIC_API_UPSTREAM_TIMEOUT_MS,
+	PUBLIC_API_VERSION_BODY,
+	PUBLIC_ASK_SUCCESS_KEYS,
+	PUBLIC_CITATION_KEYS,
+	PUBLIC_RETRIEVE_SUCCESS_KEYS,
 	projectPublicApiSuccess,
 	publicApiErrorPayload,
+	publicSuccessKeySet,
 	upstreamErrorMessage,
 } from "../src/lib/server/public-api-v1-core.mjs";
+import {
+	checkPublicApiRateLimit,
+	resetPublicApiRateLimitBuckets,
+} from "../src/lib/server/public-api-v1-rate-limit.mjs";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contract = JSON.parse(
@@ -199,13 +208,39 @@ test("success projection exposes stable citations and strips internal debug", ()
 		},
 		"11111111-1111-4111-8111-111111111111",
 	);
+	assert.equal(projected.api_version, PUBLIC_API_VERSION_BODY);
 	assert.equal(projected.trace_id, "11111111-1111-4111-8111-111111111111");
 	assert.equal(projected.citations[0].document_id, "doc-1");
+	assert.deepEqual(Object.keys(projected).sort(), [...PUBLIC_ASK_SUCCESS_KEYS].sort());
+	assert.deepEqual(
+		Object.keys(projected.citations[0]).sort(),
+		[...PUBLIC_CITATION_KEYS].sort(),
+	);
 	assert.equal("retrieval_debug" in projected, false);
 	assert.equal("text" in projected.citations[0], false);
 	assert.equal("body" in projected.citations[0], false);
 	assert.equal("tenant_id" in projected.citations[0], false);
 	assert.equal("generation_id" in projected.citations[0], false);
+
+	const retrieveProjected = projectPublicApiSuccess(
+		"retrieve",
+		{
+			query: "q",
+			library_id: "lib-1",
+			refused: true,
+			refuse_reason: "no_matching_evidence",
+			retrieval_mode: "dense",
+			citations: [],
+		},
+		"22222222-2222-4222-8222-222222222222",
+	);
+	assert.equal(retrieveProjected.api_version, "v1");
+	assert.deepEqual(
+		Object.keys(retrieveProjected).sort(),
+		[...PUBLIC_RETRIEVE_SUCCESS_KEYS].sort(),
+	);
+	assert.equal(publicSuccessKeySet("retrieve"), PUBLIC_RETRIEVE_SUCCESS_KEYS);
+	assert.equal(publicSuccessKeySet("ask"), PUBLIC_ASK_SUCCESS_KEYS);
 });
 
 test("OpenAPI artifact matches the enforced v1 surface", () => {
@@ -222,6 +257,13 @@ test("OpenAPI artifact matches the enforced v1 surface", () => {
 		false,
 	);
 	assert.ok(contract.components.schemas.RetrieveRequest.oneOf);
+	assert.equal(
+		contract.components.schemas.ResponseBase.properties.api_version.const,
+		"v1",
+	);
+	assert.ok(
+		contract.components.schemas.ResponseBase.required.includes("api_version"),
+	);
 	assert.deepEqual(contract.components.schemas.ErrorCode.enum, [
 		"invalid_request",
 		"authentication_required",
@@ -250,7 +292,28 @@ test("OpenAPI artifact matches the enforced v1 surface", () => {
 	assert.equal(JSON.stringify(contract).includes("ask_overrides"), false);
 });
 
-test("gateway enforces request IDs, limits, timeout, and response projection", () => {
+test("optional process-local rate limit returns frozen 429 shape inputs", () => {
+	resetPublicApiRateLimitBuckets();
+	const previous = process.env.MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
+	process.env.MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE = "2";
+	try {
+		assert.equal(checkPublicApiRateLimit("key-a").ok, true);
+		assert.equal(checkPublicApiRateLimit("key-a").ok, true);
+		const limited = checkPublicApiRateLimit("key-a");
+		assert.equal(limited.ok, false);
+		assert.ok(limited.retryAfterSeconds >= 1);
+		assert.equal(checkPublicApiRateLimit("key-b").ok, true);
+	} finally {
+		if (previous === undefined) {
+			delete process.env.MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
+		} else {
+			process.env.MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE = previous;
+		}
+		resetPublicApiRateLimitBuckets();
+	}
+});
+
+test("gateway enforces request IDs, limits, timeout, audit, and response projection", () => {
 	const integration = readFileSync(
 		path.join(root, "src/lib/server/integration-rag.ts"),
 		"utf8",
@@ -264,5 +327,9 @@ test("gateway enforces request IDs, limits, timeout, and response projection", (
 	assert.match(integration, /PUBLIC_API_UPSTREAM_TIMEOUT_MS/);
 	assert.match(integration, /projectPublicApiSuccess/);
 	assert.match(integration, /requestId:\s*input\.requestId/);
+	assert.match(integration, /checkPublicApiRateLimit/);
+	assert.match(integration, /knowledge\.api\.usage/);
+	assert.match(integration, /knowledge\.retrieve/);
+	assert.match(integration, /knowledge\.ask/);
 	assert.match(context, /options\?\.requestId\s*\?\?\s*randomUUID\(\)/);
 });

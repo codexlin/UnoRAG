@@ -54,7 +54,7 @@
 | 现状 | 说明 |
 |------|------|
 | 已实现 | 内部 Data Plane：`POST /v1/ask`、`/v1/ask/stream`、`POST /v1/retrieve`；浏览器经 Next BFF；HMAC 内部鉴权 |
-| 已冻结（v1.0） | 工作区 service key + `POST /api/v1/retrieve` · `/api/v1/ask`（Bearer `mk_svc_…`）；严格输入、稳定错误与 citation schema、OpenAPI；见 [INTEGRATION.md](./INTEGRATION.md) |
+| 已冻结（v1.0） | 工作区 service key + `POST /api/v1/retrieve` · `/api/v1/ask`；契约见 [contracts/retrieve-ask-v1.md](./contracts/retrieve-ask-v1.md) 与 [INTEGRATION.md](./INTEGRATION.md) |
 | 近期扩展 | 对外统一产品术语 `answer`；保持 `ask` 兼容期，补齐 Documents/Versions/Jobs 等知识生命周期接口 |
 | 规划中 | 外部 Documents/Versions/Jobs API、Python SDK、MCP、OpenAI-compatible adapter |
 
