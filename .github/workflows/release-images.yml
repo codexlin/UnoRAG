@@ -1,0 +1,147 @@
+name: release-images
+
+# P0 skeleton — build once and (eventually) push digest-pinned images to ACR.
+#
+# Status: NOT production-ready. Push steps fail closed until GitHub Secrets for
+# the container registry are configured. A green dry-run does NOT mean ACR push works.
+#
+# Intended closed loop (later):
+#   CI green → build three targets → push by digest → release manifest →
+#   human-approved deploy.yml → upgrade.sh --manifest (compose pull)
+#
+# Required secrets (configure in GitHub; never commit):
+#   ACR_REGISTRY / ACR_USERNAME / ACR_PASSWORD / ACR_NAMESPACE
+#
+# See docs/ops/cicd-p0.md
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build only; skip registry login/push (keep true until secrets exist)"
+        type: boolean
+        default: true
+      image_tag:
+        description: "Version tag alongside digest (never 'latest'; empty → sha-XXXXXXXXXXXX)"
+        type: string
+        required: false
+        default: ""
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-maybe-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag and dry_run
+        id: meta
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-}"
+          if [[ -z "$TAG" && "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          if [[ -z "$TAG" ]]; then
+            TAG="sha-${GITHUB_SHA::12}"
+          fi
+          if [[ "$TAG" == "latest" ]]; then
+            echo "refusing tag=latest" >&2
+            exit 1
+          fi
+          # Fail closed: only workflow_dispatch with dry_run=false attempts push path.
+          DRY_RUN=true
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$INPUT_DRY_RUN" == "false" ]]; then
+            DRY_RUN=false
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=$TAG dry_run=$DRY_RUN"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Registry login (placeholder — not wired)
+        if: steps.meta.outputs.dry_run != 'true'
+        env:
+          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ACR_REGISTRY:-}" || -z "${ACR_USERNAME:-}" || -z "${ACR_PASSWORD:-}" ]]; then
+            echo "ACR_* secrets missing. Keep dry_run=true until secrets are configured." >&2
+            exit 1
+          fi
+          echo "ACR secrets present, but docker/login-action + push are not enabled in this P0 skeleton." >&2
+          echo "Wire login-action + digest push in a follow-up; do not pretend push works." >&2
+          exit 1
+
+      - name: Build web runner
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/web.Dockerfile
+          target: runner
+          push: false
+          load: true
+          tags: meriknow-web:${{ steps.meta.outputs.tag }}
+
+      - name: Build web migrator
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/web.Dockerfile
+          target: migrator
+          push: false
+          load: true
+          tags: meriknow-web-migrator:${{ steps.meta.outputs.tag }}
+
+      - name: Build api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/api.Dockerfile
+          push: false
+          load: true
+          tags: meriknow-api:${{ steps.meta.outputs.tag }}
+
+      - name: Emit release manifest skeleton
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          mkdir -p /tmp/meriknow-release
+          cat > /tmp/meriknow-release/release.env <<EOF
+          # MeriKnow release manifest (skeleton — replace with registry/digest after real ACR push)
+          # Feed to: deploy/compose/scripts/upgrade.sh --manifest release.env
+          MERIKNOW_WEB_IMAGE=meriknow-web:${TAG}
+          MERIKNOW_WEB_MIGRATOR_IMAGE=meriknow-web-migrator:${TAG}
+          MERIKNOW_API_IMAGE=meriknow-api:${TAG}
+          EOF
+          # Heredoc above is indented with tabs/spaces in some editors; normalize:
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("/tmp/meriknow-release/release.env")
+          lines = [ln.lstrip() for ln in p.read_text().splitlines()]
+          p.write_text("\n".join(lines) + "\n")
+          print(p.read_text())
+          PY
+
+      - name: Push placeholder
+        if: steps.meta.outputs.dry_run != 'true'
+        run: |
+          echo "Push to ACR not implemented in P0 skeleton" >&2
+          exit 1

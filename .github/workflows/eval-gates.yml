@@ -1,9 +1,15 @@
 name: eval-gates
 
+# L7 deterministic release gates + Py↔JS policy parity.
+# Called from ci.yml (single PR/main entrypoint). Also callable manually.
+# Ablation eval is intentionally NOT a release gate.
+
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   ci-deterministic:
@@ -24,12 +30,12 @@ jobs:
             --mode ci \
             --baseline tests/eval/baselines/ci-deterministic.json \
             --report-out /tmp/meriknow-ci-gate.json
-      - name: Upload gate report
+      - name: Show gate report summary
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: meriknow-ci-gate-report
-          path: /tmp/meriknow-ci-gate.json
+        run: |
+          if [[ -f /tmp/meriknow-ci-gate.json ]]; then
+            python3 -c "import json; d=json.load(open('/tmp/meriknow-ci-gate.json')); print(json.dumps({k:d.get(k) for k in ('ok','mode','failed','fuse_failures') if k in d or True}, indent=2, default=str)[:2000])"
+          fi
 
   policy-parity:
     runs-on: ubuntu-latest

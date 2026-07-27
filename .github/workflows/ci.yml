@@ -1,0 +1,106 @@
+name: ci
+
+# P0 CI closed loop (build / test / scan-in-repo / image build verify).
+# Does NOT push to registry, read production secrets, or SSH deploy.
+# Release image push: see release-images.yml (skeleton; needs ACR secrets).
+# Deploy with approval: deploy.yml (deferred).
+#
+# Specialized L7 gates also live in eval-gates.yml (reusable); this workflow
+# is the single PR/main entrypoint and calls that workflow.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reject conflict markers / whitespace errors
+        run: git diff --check origin/main...HEAD || git diff --check HEAD~1...HEAD || git diff --check
+
+  eval-gates:
+    uses: ./.github/workflows/eval-gates.yml
+
+  api-pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install API deps
+        run: uv sync --group dev
+      - name: Full pytest
+        run: uv run pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.7.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Test
+        run: pnpm --filter web test
+      - name: Lint
+        run: pnpm --filter web lint
+      - name: Production build
+        run: pnpm --filter web build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      # No type=gha cache: would need actions: write; P0 keeps contents: read only.
+      - name: Build web runner (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/web.Dockerfile
+          target: runner
+          push: false
+          load: true
+          tags: meriknow-web:ci
+      - name: Build web migrator (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/web.Dockerfile
+          target: migrator
+          push: false
+          load: true
+          tags: meriknow-web-migrator:ci
+      - name: Build api (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/api.Dockerfile
+          push: false
+          load: true
+          tags: meriknow-api:ci
