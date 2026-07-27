@@ -28,12 +28,6 @@ export {
 	resolvedAskAsOverrideKnobs,
 } from "./ask-policy.mjs";
 
-/** @deprecated Use PUBLIC_ASK_DEFAULTS; kept for older imports. */
-export const ASK_SETTING_DEFAULTS = PUBLIC_ASK_DEFAULTS;
-
-/** @deprecated Use ASK_PUBLIC_KEYS. */
-export const ASK_SETTING_KEYS = ASK_PUBLIC_KEYS;
-
 /**
  * Normalize stored ask JSON to public contract (migrates legacy knobs).
  * @param {unknown} raw

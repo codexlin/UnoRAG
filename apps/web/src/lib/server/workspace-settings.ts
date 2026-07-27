@@ -16,8 +16,6 @@ import {
 export {
 	ASK_INTERNAL_DEFAULTS,
 	ASK_PUBLIC_KEYS,
-	ASK_SETTING_DEFAULTS,
-	ASK_SETTING_KEYS,
 	mergeAskPatch,
 	PUBLIC_ASK_DEFAULTS,
 	publicAskDefaults,

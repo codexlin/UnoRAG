@@ -99,13 +99,9 @@ testdata/
 ## 建议用法
 
 ```bash
-# 起 API 后建库上传（示例）
-curl -X POST localhost:8000/v1/libraries -H 'Content-Type: application/json' \
-  -d '{"name":"testdata","library_id":"lib-testdata"}'
-
-curl -X POST localhost:8000/v1/ingest/upload \
-  -F library_id=lib-testdata \
-  -F file=@testdata/md/handbook.md
+# 产品上传走控制面（FastAPI /v1/ingest* 永久 410）
+# 例：登录 Web UI 后 POST /api/libraries/{id}/documents
+# 或使用已有 seed / lifecycle 路径；勿再 curl FastAPI ingest。
 ```
 
 黄金集已覆盖部分本目录文件：`ingest_chunk` / `retrieval`（**Recall@3**）以及 `ingest_http`（plain→ready、leave-scanned→failed、sample.html→400）。

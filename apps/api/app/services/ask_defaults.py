@@ -46,6 +46,6 @@ def ask_defaults_dict() -> dict[str, Any]:
 
 
 def ui_ask_defaults_dict() -> dict[str, Any]:
-	"""Defaults for the 8 UI-overridable knobs (keep in sync with web ASK_SETTING_DEFAULTS)."""
+	"""Defaults for the 8 UI-overridable knobs (keep in sync with web PUBLIC_ASK_DEFAULTS knobs)."""
 	full = ask_defaults_dict()
 	return {key: full[key] for key in ASK_OVERRIDE_KEYS}

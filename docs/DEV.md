@@ -91,7 +91,7 @@ uv run python -m app.lifecycle_worker
 | `DATABASE_URL` + `METADATA_BACKEND=postgres` | 元数据 / turns |
 | `QDRANT_*` | 向量 |
 | `OPENAI_API_KEY` **或** `DASHSCOPE_API_KEY` | 二选一 |
-| `DOCUMENT_STORAGE_ROOT` | 优先于遗留 `DOCUMENT_STORAGE_DIR` |
+| `DOCUMENT_STORAGE_ROOT` | **生产唯一权威**；勿再把 `DOCUMENT_STORAGE_DIR` 写进 runbook（仅测试/本机 fallback） |
 | `WORKER_DATABASE_URL` | worker 最小权限登录（生产） |
 | `ACTIVE_GENERATION_GATE_ENABLED` | 生产必须开；`CACHE_TTL=0` |
 | `MINERU_*` / `OCR_*` / `INGEST_PIPELINE` | 解析与切分基建；短窗熔断见 `MINERU_CIRCUIT_FAILURE_THRESHOLD` / `MINERU_CIRCUIT_OPEN_SECONDS`（默认 3 / 90s，不必关 `MINERU_ENABLED`） |

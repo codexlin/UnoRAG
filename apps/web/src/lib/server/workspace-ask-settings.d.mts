@@ -1,12 +1,5 @@
 export const ASK_INTERNAL_DEFAULTS: Record<string, unknown>;
 export const ASK_PUBLIC_KEYS: string[];
-export const ASK_SETTING_DEFAULTS: {
-	answer_profile: string;
-	retrieval_enhancement: string;
-	session_memory_enabled: boolean;
-	evidence_requirement: string;
-};
-export const ASK_SETTING_KEYS: string[];
 export const PUBLIC_ASK_DEFAULTS: {
 	answer_profile: string;
 	retrieval_enhancement: string;

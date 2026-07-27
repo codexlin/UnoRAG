@@ -1,9 +1,9 @@
-# MeriKnow 收敛计划（Step 2：Eval → AskGraph 无行为变化拆分）
+# MeriKnow 收敛计划（Step 3：兼容负担清理 — 部分落地）
 
-> 状态：**Step 1 已完成**（2026-07-27）；**Step 2 进行中**（2026-07-28）— **先 Eval，后 AskGraph**（两模块不同 PR）。
-> 前提：私有栈黑盒 [Conditional PASS @ `0170ba8`](../acceptance/reports/2026-07-27-private-0170ba8-blackbox.md)；试点 **Conditional GO @ webch**。
-> **当前**：Eval 无行为变化拆分 **已完成**；AskGraph 提交 1–7（含 `AskGraphService`：prepare→execute→finalize）**已完成** → **AskGraph Step 2 主线完成**。
-> 约束：无行为变化；旧 import 过渡期仍可用；每提交 release gate 绿；不删 410 内部实现、不做 codegen、不扩消融/OpenAI。
+> 状态：**Step 1 已完成**（2026-07-27）；**Step 2 已完成**（Eval + AskGraph 主线，2026-07-28）；**Step 3 已启动**（2026-07-28）— 正式 GO **未**达成，硬删项按 §4 前置 **defer**；本轮仅落地零风险别名/文档收紧。
+> 前提：私有栈黑盒 [Conditional PASS @ `0170ba8`](../acceptance/reports/2026-07-27-private-0170ba8-blackbox.md)；试点 **Conditional GO @ webch**（≠ 正式 GO）。
+> **当前**：Step 3 前置审计完成；`ASK_SETTING_*` 别名已删；`DOCUMENT_STORAGE_DIR` 生产文档已收紧；410 / legacy knobs / ask_graph facade / schema codegen **defer**。
+> 约束：无行为变化于 Ask 算法；不扩 eval/OpenAI/新 Ask 分支；高风险项不硬删。
 
 ---
 
@@ -13,14 +13,15 @@
 
 ### P0 完成度口径
 
-| 已基本收敛（Step 1） | 本轮 / 后置 |
+| 已基本收敛（Step 1–2） | 本轮 / 后置 |
 |----------------------|-------------|
-| 架构认知（平面 / 双 worker / 事实源表） | **Step 2**：Eval + AskGraph 主线 **已完成** |
-| 文档口径（Compose/Helm/outbox、SDK 0.1.0） | 其余模块头批量注释（非必做） |
-| 冻结边界声明（§7 + ROADMAP） | 410 实现删除 / codegen（Step 3+） |
+| 架构认知（平面 / 双 worker / 事实源表） | **Step 3**：零风险别名/文档 **已做**；410/legacy/facade/codegen **defer**（正式 GO 后） |
+| 文档口径（Compose/Helm/outbox、SDK 0.1.0） | — |
+| 冻结边界声明（§7 + ROADMAP） | — |
 | **最小 Py↔JS policy parity**（fixtures + CI） | 消融平台扩张 / OpenAI 层（仍冻结） |
 | 四边界模块头（ask_graph / eval runner / lifecycle / process-outbox） | — |
-| 试点 Conditional GO @ webch | — |
+| Eval + AskGraph Step 2 主线 | — |
+| 试点 Conditional GO @ webch | 正式 GO / 升配 / Resend 上机 |
 
 > **P0（Step 1）= 架构认知 / 文档口径 / 冻结边界 / 最小防漂移门禁已闭环。**
 > 剩余 P1（policy/outbox-core 等模块头）非本轮必做；**勿批量加模块头**。
@@ -161,15 +162,16 @@ Step 1 仍要求：改映射必须双边改；parity 证明**同一输入等值*
 
 | 路径 | 状态 | 保留原因 | 建议删除时机 | 禁止 |
 |------|------|----------|--------------|------|
-| FastAPI ingest 写路径（`/v1/ingest*`、replace/reindex 等）→ **永久 410** | **永久废弃（对外）**；实现仍在仓库以 fail-closed | 防止旧客户端误写；契约明确 | **最早删除版本：正式 GO 后的下一 major**；删除前置：确认无调用日志、契约测试仍覆盖 410、发布迁移说明 | 新调用方；用 env 重新打开 |
+| FastAPI ingest 写路径（`/v1/ingest*`、replace/reindex 等）→ **永久 410** | **永久废弃（对外）**；实现已是 fail-closed stub | 防止旧客户端误写；契约明确 | **最早删除版本：正式 GO 后的下一 major**；删除前置：确认无调用日志、契约测试仍覆盖 410、发布迁移说明 | 新调用方；用 env 重新打开 |
 | 实现入口 | `apps/api/app/services/ingest/fastapi_ingest_writes.py` · `reject_fastapi_ingest_writes` | — | 同上（路由桩随 major 清理） | 新路由挂旧写逻辑 |
-| legacy Ask knobs（数值 top_k/min_score 等经 `ask_overrides` / 旧 settings JSON） | **过渡** | 存量工作区迁移；eval/ablation 仍可能注入 legacy | **最早删除版本：正式 GO 后的下一 major**；删除前置：无 legacy 写入、迁移路径已跑完、parity/契约仍绿 | 新 UI/API 字段；新测试默认用 legacy |
-| `ASK_SETTING_DEFAULTS` 别名（web） | **过渡** | 旧 import | **最早删除版本：正式 GO 后的下一 major** | 新代码 import 别名 |
+| legacy Ask knobs（数值 top_k/min_score 等经 `ask_overrides` / 旧 settings JSON） | **过渡** | 存量工作区迁移；eval/ablation 仍注入 legacy | **最早删除版本：正式 GO 后的下一 major**；删除前置：无 legacy 写入、迁移路径已跑完、parity/契约仍绿 | 新 UI/API 字段；新测试默认用 legacy |
+| `ASK_SETTING_DEFAULTS` / `ASK_SETTING_KEYS` 别名（web） | **已删除**（2026-07-28 Step 3） | 仓库内零引用；改用 `PUBLIC_ASK_DEFAULTS` / `ASK_PUBLIC_KEYS` | — | 新代码勿再引入别名 |
 | `public` schema 投影（libraries/documents/turns 等） | **过渡（长期兼容）** | Data Plane 检索/会话仍读投影；outbox 写入 | 完整切到仅 `app`+`rag` 后再删；非本季度 | 新产品事实只落 `public` |
 | outbox → `/v1/internal/projections/*` | **现行必需** | 文库变更投影 | 永久保留直至投影模型替换 | 浏览器 BFF 代理 internal 路径 |
 | lifecycle-worker vs outbox-worker | **现行双进程** | 职责正交（见 §2.5） | 不合并 | 让一个进程兼做另一职责而不改合同 |
-| `DOCUMENT_STORAGE_DIR` / json metadata backend | **过渡 / 测试** | 单测与旧本地路径 | 试点 GO 后收紧文档：生产只提 ROOT | 生产 runbook 主推 DIR |
+| `DOCUMENT_STORAGE_DIR` / json metadata backend | **过渡 / 测试** | 单测与旧本地路径 | **文档已收紧**（试点 Conditional GO 后）：生产只提 `DOCUMENT_STORAGE_ROOT`；DIR 仅测试 fallback | 生产 runbook 主推 DIR |
 | 废弃产品 env：`HYBRID_ENABLED` 等 | **永久废弃** | 文档/测试证明「env 不生效」 | 已退出产品面（无删代码压力） | 新功能绑回这些 env |
+| `ask_graph.py` facade | **过渡** | 旧 import / monkeypatch | **最早删除版本：正式 GO 后的下一 major**（与 §7.2）；删除前置：调用方迁至 `builder`/`service`/`stubs` 等 | 新代码经 facade 再加算法 |
 
 ---
 
@@ -210,7 +212,8 @@ Step 1 仍要求：改映射必须双边改；parity 证明**同一输入等值*
 2. ~~最小 Py↔JS parity~~ — **已完成**（`tests/contracts/policy-parity/` + CI）
 3. ~~四边界模块头~~ — **已完成**（**不要**再批量加头）
 4. ~~私有试点稳定性~~ — **Conditional GO @ webch**
-5. **当前（Step 2）**：~~先拆 `eval/`（§7.1）~~ **Eval 已完成**；~~AskGraph（§7.2）~~ **AskGraph 主线已完成**；**两模块不同 PR**
+5. ~~**Step 2**：先拆 `eval/`（§7.1）；AskGraph（§7.2）~~ — **已完成**
+6. **当前（Step 3）**：§7.4 — 别名/文档已落地；硬删 defer 至正式 GO
 
 ### P0 — 文档/废弃标记/冻结声明 / 防漂移起点
 
@@ -355,14 +358,14 @@ apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
 **收尾（可选）**：`nodes.rewrite` → `ask_graph` 的反向依赖（为兼容 monkeypatch 的 late-bind）**已消除**；`_request_structured_retrieval_plan_json` 在 `nodes/rewrite.py` 本地调用，`ask_graph` 仅 facade re-export。  
 `service.py` → `ask_graph` facade 的 reverse late-import **已消除**（2026-07-28）：`build_ask_graph` 在 `builder.py`；`persist_turn` / `single_document_version_id` 直调 `persistence`；测试 patch 指向真实模块 / `service` 绑定；`ask_graph` 仍 re-export。另补 live `stream_messages` 中途异常 characterization。
 
-**告警（私有）**：webch 告警通道先接 **Resend 邮件**（`ops/min_alerts`，非飞书）；飞书 webhook 可后置。**Step 3（B：删 410 / legacy knobs / schema codegen）尚未开始**。
+**告警（私有）**：webch 告警通道先接 **Resend 邮件**（`ops/min_alerts`，非飞书）；飞书 webhook 可后置。**Step 3 已启动**（见 §7.4）：别名/文档收紧已落地；410 / legacy knobs / facade / codegen **defer** 至正式 GO 后下一 major。
 
-### 7.3 现在不做（Step 2 期间仍冻结）
+### 7.3 现在不做（Step 2 期间仍冻结；Step 3 硬删仍受正式 GO 门禁）
 
 | 不做 | 说明 |
 |------|------|
-| **不删** 410 后内部实现 / 路由桩 | Step 3（正式 GO 后的下一 major；见 §4 删除前置） |
-| **不统一** Py/TS schema codegen / 共享 schema 包 | Step 1 最小 parity 已够；不做共享包 |
+| **不删** 410 后内部实现 / 路由桩 | Step 3 硬删需正式 GO + §4 前置（本轮 **defer**；stub 保留 fail-closed） |
+| **不统一** Py/TS schema codegen / 共享 schema 包 | 最小 parity 已够；codegen **defer**（非本轮） |
 | **不合并** lifecycle 与 outbox 进程 | 职责已分清 |
 | **不扩张** 消融为平台产品 / 把 ablation 纳入 CI release gate | **冻结** |
 | **不实现** OpenAI-compatible 层加深 | **冻结** |
@@ -373,10 +376,35 @@ apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
 三步顺序回顾：
 
 1. ~~事实源、废弃标记、文档漂移、最小 parity、边界模块头、功能冻结~~ — **Step 1 已完成**
-2. **进行中**：~~Eval 拆分~~ **已完成**；~~AskGraph 提交 1–7~~ **主线已完成**（可选包迁入 / facade 删除后置）
-3. 删兼容负担（410 内部残骸、legacy knobs、过时别名、facade）— 正式 GO 后的下一 major
+2. ~~Eval 拆分 + AskGraph 提交 1–7~~ — **Step 2 已完成**（facade 删除后置）
+3. **进行中**：删兼容负担 — 本轮仅零风险项；硬删等正式 GO 后下一 major（§7.4）
 
----
+### 7.4 Step 3 执行清单（2026-07-28）
+
+> 总门禁：§4「**最早删除版本：正式 GO 后的下一 major**」。当前仅 **Conditional GO @ webch** → 硬删默认 **defer**；可做项须前置审计通过且无生产调用风险。
+
+#### 前置审计（本轮）
+
+| 项 | 引用 / 依赖 | 兼容窗口 | 结论 |
+|----|-------------|----------|------|
+| 410 路由桩 + `reject_fastapi_ingest_writes` | `ask.py` / `libraries.py` 路由；`test_legacy_ingest_writes` / `test_health_ask` / BFF 同 code；契约依赖 **仍返回 410** | 正式 GO 未达成；**无**生产调用日志证据 | **defer** — 删掉会破坏 fail-closed 合同；实现已是 stub，无更深「写路径残骸」 |
+| legacy Ask knobs / `migrate_legacy_*` | `policy_profiles` · `ask-policy.mjs` · workspace sanitize；eval/ablation 注入 legacy；parity fixtures | 迁移路径仍在用；不能证明存量 JSON 已清 | **defer** |
+| `ASK_SETTING_DEFAULTS` / `ASK_SETTING_KEYS` | 仅自定义 + `workspace-settings` re-export；**零外部引用** | 过渡别名 | **已删** |
+| `ask_graph.py` facade | ≥10 测试/脚本/eval 经 facade import；`graph/__init__` | 正式 GO 后下一 major（§7.2） | **defer** — 按 plan 标注，不硬删 |
+| Py/TS schema codegen | §7.3 冻结；最小 parity 已够 | 非删除项 / 非本轮扩张 | **defer** |
+| `DOCUMENT_STORAGE_DIR` 文档 | 生产已强制 ROOT（settings validate）；DIR 仅测试 | 试点 Conditional GO 后可收紧文档 | **已收紧** |
+
+#### 勾选
+
+- [x] 前置审计表（上）写入本文
+- [x] 删除 web `ASK_SETTING_DEFAULTS` / `ASK_SETTING_KEYS` 别名与 d.ts；注释改指 `PUBLIC_ASK_DEFAULTS`
+- [x] 收紧生产文档 / `.env.example`：只主推 `DOCUMENT_STORAGE_ROOT`；修正 `testdata/README` 过时 `/v1/ingest/upload` 示例
+- [ ] 删除 410 路由桩 / `fastapi_ingest_writes` — **defer**（正式 GO + 无调用日志 + 迁移说明）
+- [ ] 删除 legacy Ask knobs 与迁移路径 — **defer**（eval/ablation + 存量 sanitize 仍依赖）
+- [ ] 删除 `ask_graph.py` facade — **defer**（正式 GO 后下一 major；先迁 import）
+- [ ] Py/TS schema codegen / 共享 schema 包 — **defer**（非本轮；parity 维持）
+
+**本轮不做**：飞书告警、升配机器、改 Ask 业务算法、扩 eval/OpenAI。
 
 ## 8. 成功标准
 
@@ -393,13 +421,18 @@ apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
 
 **验收判定（2026-07-27）**：上列 1–8 已满足 → **Step 1 完成**。试点 Conditional GO @ webch 后进入 Step 2。
 
-### 8.2 Step 2 验收（进行中）
+### 8.2 Step 2 验收（已满足）
 
 1. ~~Eval：目标结构落地；`EXECUTORS` 调度；断言/消融/gate 语义不变；旧 import 可用。~~ **已完成**（含未知 kind fail-closed）。
 2. ~~AskGraph：Context 替换闭包；topology 无算法；节点只收 State+Context；policy 入口一次解析；同步/流式共享 finalize。~~ **已完成**（提交 1–7；characterization 为提交 1）
 3. 两模块分 PR；每提交相关 release gate 绿；无行为变化。
 
----
+### 8.3 Step 3 验收（部分）
+
+1. ~~过时 `ASK_SETTING_*` 别名删除；零外部引用。~~ **已完成**
+2. ~~生产文档只主推 `DOCUMENT_STORAGE_ROOT`。~~ **已完成**
+3. 410 / legacy knobs / facade / codegen — **未删**（正式 GO 前置未满足；见 §7.4）
+4. 相关单测 / policy-parity 仍绿；Ask 算法无改动。
 
 ## 附录：关键路径速查
 
