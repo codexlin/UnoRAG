@@ -2,7 +2,7 @@
 
 > 状态：**Step 1 已完成**（2026-07-27）；**Step 2 进行中**（2026-07-28）— **先 Eval，后 AskGraph**（两模块不同 PR）。
 > 前提：私有栈黑盒 [Conditional PASS @ `0170ba8`](../acceptance/reports/2026-07-27-private-0170ba8-blackbox.md)；试点 **Conditional GO @ webch**。
-> **当前**：Eval 无行为变化拆分 **已完成**；AskGraph 提交 1–5（characterization → state/messages/stubs → persistence/lifecycle → AskGraphContext → 分组搬 `nodes/`）**已完成**；下一步提交 6（`topology.py`）。
+> **当前**：Eval 无行为变化拆分 **已完成**；AskGraph 提交 1–6（characterization → state/messages/stubs → persistence/lifecycle → AskGraphContext → 分组搬 `nodes/` → `topology.py`）**已完成**；下一步提交 7（`AskGraphService`：prepare→execute→finalize）。
 > 约束：无行为变化；旧 import 过渡期仍可用；每提交 release gate 绿；不删 410 内部实现、不做 codegen、不扩消融/OpenAI。
 
 ---
@@ -298,7 +298,7 @@ apps/api/app/eval/
 
 ### 7.2 AskGraph 目标结构与提交顺序 — **可开始**
 
-> Eval 拆分已合入；AskGraph 仍为**独立 PR**。提交 1–5 已完成；下一步 **提交 6：`topology.py`**。
+> Eval 拆分已合入；AskGraph 仍为**独立 PR**。提交 1–6 已完成；下一步 **提交 7：`AskGraphService`（prepare→execute→finalize）**。
 
 **第一刀不是按行数搬家**：把节点依赖从闭包取出 → **`AskGraphContext`**（已解析的 `EffectiveAskSettings`、注入的 store/LLM/retriever 等）。节点只收 `State + Context`；**禁止**节点再 `resolve` policy / 读 env / 碰 DB singleton。
 
@@ -317,10 +317,11 @@ apps/api/app/graph/          # 提交 2–5 平铺 + nodes/；后续可迁入 as
     table.py                 # 表格检索与执行
     decision.py              # judge / retry / refuse
     generation.py            # 生成与引用对账
-  ask_graph.py               # facade（re-export）+ topology 组装 + service（待拆）
-apps/api/app/graph/ask/      # 目标结构（提交 6+ 可迁入）
+  topology.py                # 提交 6：纯图连线；无算法（`compile_ask_topology`）
+  ask_graph.py               # facade（re-export）+ build_ask_graph + service（待拆）
+apps/api/app/graph/ask/      # 目标结构（提交 7+ 可迁入）
   context.py                 # 可自 graph/context 迁入
-  topology.py                # 纯图连线；无算法
+  topology.py                # 可自 graph/topology 迁入
   service.py                 # prepare_request → execute/stream → finalize
   nodes/                     # 可自 graph/nodes 迁入
 ```
@@ -332,7 +333,7 @@ apps/api/app/graph/ask/      # 目标结构（提交 6+ 可迁入）
 | 3 | `persistence` / `lifecycle` | ✅ |
 | 4 | **Context 替换闭包**（节点经 `AskGraphContext`；policy 只在入口解析一次） | ✅ |
 | 5 | 按 routing/rewrite/retrieval/table/decision/generation **分组搬节点** | ✅ |
-| 6 | `topology`（无算法） | 待做 |
+| 6 | `topology`（无算法） | ✅ |
 | 7 | `service`：`prepare_request` → `execute`/`stream` → `finalize`；同步与流式共享收尾 | 待做 |
 
 **Service 边界**：入口一次解析 policy → 写入 Context；节点不读 env/DB/singleton；同步与流式共享 `finalize`。
@@ -347,7 +348,7 @@ apps/api/app/graph/ask/      # 目标结构（提交 6+ 可迁入）
 - 旧 `ask_graph` import 过渡期可用；每提交 release gate 绿
 - facade 删除时机 = **正式 GO 后的下一 major**（与 §4 一致）
 
-**AskGraph 当前进度**：提交 1–5 已完成 → **下一刀：提交 6（`topology.py`）**。
+**AskGraph 当前进度**：提交 1–6 已完成 → **下一刀：提交 7（`AskGraphService`：prepare→execute→finalize）**。
 
 ### 7.3 现在不做（Step 2 期间仍冻结）
 
@@ -365,7 +366,7 @@ apps/api/app/graph/ask/      # 目标结构（提交 6+ 可迁入）
 三步顺序回顾：
 
 1. ~~事实源、废弃标记、文档漂移、最小 parity、边界模块头、功能冻结~~ — **Step 1 已完成**
-2. **进行中**：~~Eval 拆分~~ **已完成**；AskGraph（~~提交 1–5~~；下一步 **提交 6 topology**）
+2. **进行中**：~~Eval 拆分~~ **已完成**；AskGraph（~~提交 1–6~~；下一步 **提交 7 AskGraphService**）
 3. 删兼容负担（410 内部残骸、legacy knobs、过时别名、facade）— 正式 GO 后的下一 major
 
 ---

@@ -12,8 +12,6 @@ import logging
 import time
 from typing import Any
 
-from langgraph.graph import END, StateGraph
-
 from app.graph.lifecycle import (
 	append_temp_session_memory,
 	history_from_thread,
@@ -60,6 +58,7 @@ from app.graph.stubs import (
 	stub_load_table_groups,
 	stub_retrieve,
 )
+from app.graph.topology import compile_ask_topology
 from app.security.access_scope import AccessScope, resolve_access_scope
 from app.schemas import AskResponse, Citation
 from app.services.ask_trace import (
@@ -161,57 +160,14 @@ def build_ask_graph(
 	decision = build_decision_nodes(ctx, min_score=min_score, max_retries=max_retries)
 	generation = build_generation_nodes(ctx)
 
-	graph: StateGraph[AskState] = StateGraph(AskState)
-	graph.add_node("query_router", routing.query_router)
-	graph.add_node("build_retrieval_plan", routing.build_plan)
-	graph.add_node("clarify", routing.clarify)
-	graph.add_node("build_table_plan", table.build_table_plan)
-	graph.add_node("table_retrieve", table.table_retrieve)
-	graph.add_node("table_execute", table.table_execute)
-	graph.add_node("rewrite", rewrite.rewrite)
-	graph.add_node("retrieve", retrieval.retrieve)
-	graph.add_node("judge", decision.judge)
-	graph.add_node("retry", decision.retry)
-	graph.add_node("generate", generation.generate)
-	graph.add_node("refuse", decision.refuse)
-	graph.set_entry_point("query_router")
-	graph.add_edge("query_router", "build_retrieval_plan")
-	graph.add_conditional_edges(
-		"build_retrieval_plan",
-		routing.route_after_plan,
-		{"clarify": "clarify", "rewrite": "rewrite"},
+	return compile_ask_topology(
+		routing=routing,
+		rewrite=rewrite,
+		retrieval=retrieval,
+		table=table,
+		decision=decision,
+		generation=generation,
 	)
-	graph.add_edge("clarify", END)
-	graph.add_edge("build_table_plan", "table_retrieve")
-	graph.add_edge("table_retrieve", "table_execute")
-	graph.add_conditional_edges(
-		"table_execute",
-		table.route_after_table_execute,
-		{"judge": "judge", "end": END},
-	)
-	graph.add_conditional_edges(
-		"rewrite",
-		routing.route_after_rewrite,
-		{"retrieve": "retrieve", "table": "build_table_plan"},
-	)
-	graph.add_conditional_edges(
-		"retrieve",
-		retrieval.route_after_retrieve,
-		{"upgrade_precise": "build_table_plan", "judge": "judge"},
-	)
-	graph.add_conditional_edges(
-		"judge",
-		decision.route_after_judge,
-		{"retry": "retry", "generate": "generate", "refuse": "refuse"},
-	)
-	graph.add_conditional_edges(
-		"retry",
-		decision.route_after_retry,
-		{"retrieve": "retrieve", "table_retrieve": "table_retrieve"},
-	)
-	graph.add_edge("generate", END)
-	graph.add_edge("refuse", END)
-	return graph.compile()
 
 
 class AskGraphService:
