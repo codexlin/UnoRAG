@@ -47,7 +47,7 @@ from app.graph.nodes.generation import (  # noqa: F401 — re-export helpers use
 	_table_execution_context_block,
 	_to_citation_models,
 )
-from app.graph.nodes.rewrite import (  # noqa: F401 — monkeypatch target for live plan tests
+from app.graph.nodes.rewrite import (  # noqa: F401 — facade re-export; impl lives in nodes.rewrite
 	_request_structured_retrieval_plan_json,
 )
 from app.graph.state import AskState, GenerateFn, LoadTableGroupsFn, RetrieveFn

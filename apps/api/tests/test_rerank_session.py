@@ -305,7 +305,7 @@ def test_live_structured_plan_keeps_history_rewrite_query(monkeypatch) -> None:
 		)
 
 	monkeypatch.setattr(
-		"app.graph.ask_graph._request_structured_retrieval_plan_json",
+		"app.graph.nodes.rewrite._request_structured_retrieval_plan_json",
 		fake_plan_json,
 	)
 

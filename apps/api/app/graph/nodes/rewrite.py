@@ -64,11 +64,7 @@ def build_rewrite_nodes(ctx: AskGraphContext, *, min_score: float) -> SimpleName
 		if ctx.mode == "live" and bool(getattr(ctx.settings, "has_llm_key", False)):
 			from_llm = True
 			try:
-				# Late-bind via ask_graph so tests can monkeypatch
-				# app.graph.ask_graph._request_structured_retrieval_plan_json.
-				from app.graph import ask_graph as _ask_graph_mod
-
-				raw_plan = _ask_graph_mod._request_structured_retrieval_plan_json(
+				raw_plan = _request_structured_retrieval_plan_json(
 					ctx.settings,
 					question=question,
 					fallback_semantic_query=rewritten,

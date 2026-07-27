@@ -351,6 +351,8 @@ apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
 
 **AskGraph 当前进度**：提交 1–7 **已完成** → **AskGraph Step 2 主线完成**。可选后续：`graph/ask/` 包迁入、facade 删除、同步/流式更深去重（非必做）。
 
+**收尾（可选）**：`nodes.rewrite` → `ask_graph` 的反向依赖（为兼容 monkeypatch 的 late-bind）**已消除**；`_request_structured_retrieval_plan_json` 在 `nodes/rewrite.py` 本地调用，`ask_graph` 仅 facade re-export。
+
 ### 7.3 现在不做（Step 2 期间仍冻结）
 
 | 不做 | 说明 |
