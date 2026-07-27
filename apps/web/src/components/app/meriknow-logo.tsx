@@ -52,10 +52,7 @@ export function MeriKnowLogo({
 }: MeriKnowLogoProps) {
 	return (
 		<span className={cn("inline-flex min-w-0 items-center gap-2.5", className)}>
-			<MeriKnowMark
-				className={cn(sizeClass[size])}
-				decorative={withWordmark}
-			/>
+			<MeriKnowMark className={cn(sizeClass[size])} decorative={withWordmark} />
 			{withWordmark ? (
 				<span
 					className={cn(

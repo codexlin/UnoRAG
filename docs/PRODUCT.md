@@ -54,8 +54,8 @@
 | 现状 | 说明 |
 |------|------|
 | 已实现 | 内部 Data Plane：`POST /v1/ask`、`/v1/ask/stream`、`POST /v1/retrieve`；浏览器经 Next BFF；HMAC 内部鉴权 |
-| 已实现（MVP） | 工作区 service key + `POST /api/v1/retrieve` · `/api/v1/ask`（Bearer `mk_svc_…`）；见 [INTEGRATION.md](./INTEGRATION.md) |
-| 近期契约硬化 | 对外统一产品术语 `answer`；保持 `ask` 兼容期，冻结 OpenAPI、错误码和 citation schema |
+| 已冻结（v1.0） | 工作区 service key + `POST /api/v1/retrieve` · `/api/v1/ask`（Bearer `mk_svc_…`）；严格输入、稳定错误与 citation schema、OpenAPI；见 [INTEGRATION.md](./INTEGRATION.md) |
+| 近期扩展 | 对外统一产品术语 `answer`；保持 `ask` 兼容期，补齐 Documents/Versions/Jobs 等知识生命周期接口 |
 | 规划中 | 外部 Documents/Versions/Jobs API、Python SDK、MCP、OpenAI-compatible adapter |
 
 产品承诺是「企业知识能力可被治理和调用」，不是「再做一个通用 Agent 框架」。
@@ -145,7 +145,7 @@ Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客
 | 版本 | 未激活 generation 不可召回；替换失败旧版仍可用 | 核心能力已实现；纳入回归 |
 | 会话 | 临时不强制落库；归档可续聊且 rewrite 可用 | Workspace 主路径可用 |
 | Workspace | 新用户能完成：上传 → 问答 → 归档 → 续聊 | 主路径可用 |
-| Knowledge API | 外部系统无需嵌 UI 即可管理知识生命周期并 retrieve/answer | 当前仅 Service Key + Retrieve/Ask MVP；完整生命周期 API 规划中 |
+| Knowledge API | 外部系统无需嵌 UI 即可管理知识生命周期并 retrieve/answer | Service Key + Retrieve/Ask v1.0 契约已冻结；完整生命周期 API 规划中 |
 | 接入 | SDK/MCP/OpenAI adapter 不产生第二套权限、版本和检索真相 | 架构约束已定义；适配器规划中 |
 | 交付 | 私有化可安装、升级、备份和恢复 | 按具体部署完成验收后才可 Conditional GO |
 

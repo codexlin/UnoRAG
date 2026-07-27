@@ -140,11 +140,10 @@ test("Mode B integration routes use Bearer service key and HMAC service auth_sou
 		"utf8",
 	);
 
-	assert.match(ask, /requireIntegrationServiceKey\(request,\s*"ask"\)/);
-	assert.match(
-		retrieve,
-		/requireIntegrationServiceKey\(request,\s*"retrieve"\)/,
-	);
+	assert.match(ask, /handlePublicApiV1/);
+	assert.match(ask, /scope:\s*"ask"/);
+	assert.match(retrieve, /handlePublicApiV1/);
+	assert.match(retrieve, /scope:\s*"retrieve"/);
 	assert.match(integration, /authSource:\s*"service"/);
 	assert.match(integration, /\/v1\/ask/);
 	assert.match(integration, /\/v1\/retrieve/);

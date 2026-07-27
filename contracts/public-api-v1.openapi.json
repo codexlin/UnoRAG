@@ -1,0 +1,654 @@
+{
+	"openapi": "3.1.0",
+	"info": {
+		"title": "MeriKnow Knowledge API",
+		"version": "1.0.0",
+		"description": "Stable service-to-service Retrieve and Ask contract. FastAPI data-plane endpoints are internal and are not part of this public contract."
+	},
+	"servers": [
+		{
+			"url": "/",
+			"description": "Current MeriKnow deployment"
+		}
+	],
+	"tags": [
+		{
+			"name": "Knowledge"
+		}
+	],
+	"paths": {
+		"/api/v1/retrieve": {
+			"post": {
+				"operationId": "retrieveKnowledge",
+				"tags": ["Knowledge"],
+				"summary": "Retrieve evidence without generating an answer",
+				"security": [
+					{
+						"ServiceKey": []
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/RetrieveRequest"
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Evidence result",
+						"headers": {
+							"X-Request-Id": {
+								"$ref": "#/components/headers/RequestId"
+							},
+							"X-MeriKnow-Api-Version": {
+								"$ref": "#/components/headers/ApiVersion"
+							}
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RetrieveResponse"
+								}
+							}
+						}
+					},
+					"400": {
+						"$ref": "#/components/responses/InvalidRequest"
+					},
+					"401": {
+						"$ref": "#/components/responses/AuthenticationError"
+					},
+					"403": {
+						"$ref": "#/components/responses/AccessDenied"
+					},
+					"413": {
+						"$ref": "#/components/responses/PayloadTooLarge"
+					},
+					"415": {
+						"$ref": "#/components/responses/UnsupportedMediaType"
+					},
+					"429": {
+						"$ref": "#/components/responses/RateLimited"
+					},
+					"502": {
+						"$ref": "#/components/responses/BadGateway"
+					},
+					"503": {
+						"$ref": "#/components/responses/Unavailable"
+					},
+					"504": {
+						"$ref": "#/components/responses/Timeout"
+					}
+				}
+			}
+		},
+		"/api/v1/ask": {
+			"post": {
+				"operationId": "askKnowledge",
+				"tags": ["Knowledge"],
+				"summary": "Generate an evidence-grounded answer",
+				"security": [
+					{
+						"ServiceKey": []
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/AskRequest"
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Grounded answer result",
+						"headers": {
+							"X-Request-Id": {
+								"$ref": "#/components/headers/RequestId"
+							},
+							"X-MeriKnow-Api-Version": {
+								"$ref": "#/components/headers/ApiVersion"
+							}
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/AskResponse"
+								}
+							}
+						}
+					},
+					"400": {
+						"$ref": "#/components/responses/InvalidRequest"
+					},
+					"401": {
+						"$ref": "#/components/responses/AuthenticationError"
+					},
+					"403": {
+						"$ref": "#/components/responses/AccessDenied"
+					},
+					"413": {
+						"$ref": "#/components/responses/PayloadTooLarge"
+					},
+					"415": {
+						"$ref": "#/components/responses/UnsupportedMediaType"
+					},
+					"429": {
+						"$ref": "#/components/responses/RateLimited"
+					},
+					"502": {
+						"$ref": "#/components/responses/BadGateway"
+					},
+					"503": {
+						"$ref": "#/components/responses/Unavailable"
+					},
+					"504": {
+						"$ref": "#/components/responses/Timeout"
+					}
+				}
+			}
+		}
+	},
+	"components": {
+		"securitySchemes": {
+			"ServiceKey": {
+				"type": "http",
+				"scheme": "bearer",
+				"bearerFormat": "mk_svc_..."
+			}
+		},
+		"headers": {
+			"RequestId": {
+				"description": "Server-generated correlation ID. It is also returned as trace_id in successful responses and error.request_id in errors.",
+				"schema": {
+					"type": "string",
+					"format": "uuid"
+				}
+			},
+			"ApiVersion": {
+				"description": "Resolved public API major version.",
+				"schema": {
+					"type": "string",
+					"const": "1"
+				}
+			}
+		},
+		"schemas": {
+			"RetrieveRequest": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["library_id"],
+				"oneOf": [
+					{
+						"required": ["query"],
+						"not": {
+							"required": ["question"]
+						}
+					},
+					{
+						"required": ["question"],
+						"not": {
+							"required": ["query"]
+						}
+					}
+				],
+				"properties": {
+					"query": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4000
+					},
+					"question": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4000,
+						"deprecated": true,
+						"description": "Compatibility alias for query."
+					},
+					"library_id": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 128
+					},
+					"top_k": {
+						"type": "integer",
+						"minimum": 1,
+						"maximum": 50
+					},
+					"filters": {
+						"$ref": "#/components/schemas/RetrieveFilters"
+					}
+				}
+			},
+			"RetrieveFilters": {
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {
+					"record_type": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 128
+					},
+					"doc_id": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 128
+					},
+					"table_id": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 128
+					},
+					"document_version_id": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 128
+					}
+				}
+			},
+			"AskRequest": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["question", "library_id"],
+				"properties": {
+					"question": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4000
+					},
+					"library_id": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 128
+					},
+					"session_id": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 256,
+						"description": "Customer-controlled opaque conversation ID. It does not create an archived Workspace thread."
+					}
+				}
+			},
+			"Citation": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"id",
+					"index",
+					"title",
+					"snippet",
+					"score",
+					"document_id",
+					"filename",
+					"page",
+					"page_start",
+					"page_end",
+					"section_path",
+					"table_id",
+					"row_start",
+					"row_end",
+					"record_type"
+				],
+				"properties": {
+					"id": {
+						"type": "string"
+					},
+					"index": {
+						"type": "integer"
+					},
+					"title": {
+						"type": "string"
+					},
+					"snippet": {
+						"type": "string"
+					},
+					"score": {
+						"type": "number",
+						"minimum": 0,
+						"maximum": 1
+					},
+					"document_id": {
+						"type": ["string", "null"]
+					},
+					"filename": {
+						"type": ["string", "null"]
+					},
+					"page": {
+						"type": ["string", "null"]
+					},
+					"page_start": {
+						"type": ["integer", "null"]
+					},
+					"page_end": {
+						"type": ["integer", "null"]
+					},
+					"section_path": {
+						"type": ["string", "null"]
+					},
+					"table_id": {
+						"type": ["string", "null"]
+					},
+					"row_start": {
+						"type": ["integer", "null"]
+					},
+					"row_end": {
+						"type": ["integer", "null"]
+					},
+					"record_type": {
+						"type": ["string", "null"]
+					}
+				}
+			},
+			"ResponseBase": {
+				"type": "object",
+				"required": [
+					"trace_id",
+					"citations",
+					"refused",
+					"refuse_reason",
+					"retrieval_mode"
+				],
+				"properties": {
+					"trace_id": {
+						"type": "string",
+						"format": "uuid"
+					},
+					"citations": {
+						"type": "array",
+						"items": {
+							"$ref": "#/components/schemas/Citation"
+						}
+					},
+					"refused": {
+						"type": "boolean"
+					},
+					"refuse_reason": {
+						"type": ["string", "null"]
+					},
+					"retrieval_mode": {
+						"type": "string"
+					}
+				}
+			},
+			"RetrieveResponse": {
+				"unevaluatedProperties": false,
+				"allOf": [
+					{
+						"$ref": "#/components/schemas/ResponseBase"
+					},
+					{
+						"type": "object",
+						"required": ["query", "library_id"],
+						"properties": {
+							"query": {
+								"type": "string"
+							},
+							"library_id": {
+								"type": "string"
+							}
+						}
+					}
+				]
+			},
+			"AskResponse": {
+				"unevaluatedProperties": false,
+				"allOf": [
+					{
+						"$ref": "#/components/schemas/ResponseBase"
+					},
+					{
+						"type": "object",
+						"required": ["session_id", "question", "answer"],
+						"properties": {
+							"session_id": {
+								"type": "string"
+							},
+							"question": {
+								"type": "string"
+							},
+							"answer": {
+								"type": "string"
+							}
+						}
+					}
+				]
+			},
+			"Error": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["code", "message", "request_id", "retryable"],
+				"properties": {
+					"code": {
+						"$ref": "#/components/schemas/ErrorCode"
+					},
+					"message": {
+						"type": "string"
+					},
+					"request_id": {
+						"type": "string",
+						"format": "uuid"
+					},
+					"retryable": {
+						"type": "boolean"
+					},
+					"details": {
+						"type": "object",
+						"additionalProperties": true
+					}
+				}
+			},
+			"ErrorCode": {
+				"type": "string",
+				"enum": [
+					"invalid_request",
+					"authentication_required",
+					"authentication_failed",
+					"insufficient_scope",
+					"library_access_denied",
+					"payload_too_large",
+					"unsupported_media_type",
+					"rate_limit_exceeded",
+					"upstream_unavailable",
+					"invalid_upstream_response",
+					"service_unavailable",
+					"policy_unavailable",
+					"authentication_backend_unavailable",
+					"gateway_misconfigured",
+					"upstream_timeout"
+				]
+			},
+			"ErrorResponse": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["error"],
+				"properties": {
+					"error": {
+						"$ref": "#/components/schemas/Error"
+					}
+				}
+			}
+		},
+		"responses": {
+			"InvalidRequest": {
+				"description": "Invalid or unsupported request",
+				"headers": {
+					"X-Request-Id": {
+						"$ref": "#/components/headers/RequestId"
+					},
+					"X-MeriKnow-Api-Version": {
+						"$ref": "#/components/headers/ApiVersion"
+					}
+				},
+				"content": {
+					"application/json": {
+						"schema": {
+							"$ref": "#/components/schemas/ErrorResponse"
+						}
+					}
+				}
+			},
+			"AuthenticationError": {
+				"description": "Missing, invalid, or revoked service key",
+				"headers": {
+					"X-Request-Id": {
+						"$ref": "#/components/headers/RequestId"
+					},
+					"X-MeriKnow-Api-Version": {
+						"$ref": "#/components/headers/ApiVersion"
+					},
+					"WWW-Authenticate": {
+						"schema": {
+							"type": "string",
+							"const": "Bearer"
+						}
+					}
+				},
+				"content": {
+					"application/json": {
+						"schema": {
+							"$ref": "#/components/schemas/ErrorResponse"
+						}
+					}
+				}
+			},
+			"AccessDenied": {
+				"description": "Missing scope or library access",
+				"headers": {
+					"X-Request-Id": {
+						"$ref": "#/components/headers/RequestId"
+					},
+					"X-MeriKnow-Api-Version": {
+						"$ref": "#/components/headers/ApiVersion"
+					}
+				},
+				"content": {
+					"application/json": {
+						"schema": {
+							"$ref": "#/components/schemas/ErrorResponse"
+						}
+					}
+				}
+			},
+			"PayloadTooLarge": {
+				"description": "Request body exceeds 65536 bytes",
+				"headers": {
+					"X-Request-Id": {
+						"$ref": "#/components/headers/RequestId"
+					},
+					"X-MeriKnow-Api-Version": {
+						"$ref": "#/components/headers/ApiVersion"
+					}
+				},
+				"content": {
+					"application/json": {
+						"schema": {
+							"$ref": "#/components/schemas/ErrorResponse"
+						}
+					}
+				}
+			},
+			"UnsupportedMediaType": {
+				"description": "Content-Type is not application/json",
+				"headers": {
+					"X-Request-Id": {
+						"$ref": "#/components/headers/RequestId"
+					},
+					"X-MeriKnow-Api-Version": {
+						"$ref": "#/components/headers/ApiVersion"
+					}
+				},
+				"content": {
+					"application/json": {
+						"schema": {
+							"$ref": "#/components/schemas/ErrorResponse"
+						}
+					}
+				}
+			},
+			"RateLimited": {
+				"description": "Deployment rate limit exceeded",
+				"headers": {
+					"X-Request-Id": {
+						"$ref": "#/components/headers/RequestId"
+					},
+					"X-MeriKnow-Api-Version": {
+						"$ref": "#/components/headers/ApiVersion"
+					},
+					"Retry-After": {
+						"schema": {
+							"type": "string"
+						}
+					}
+				},
+				"content": {
+					"application/json": {
+						"schema": {
+							"$ref": "#/components/schemas/ErrorResponse"
+						}
+					}
+				}
+			},
+			"BadGateway": {
+				"description": "Data plane unavailable or returned an invalid response",
+				"headers": {
+					"X-Request-Id": {
+						"$ref": "#/components/headers/RequestId"
+					},
+					"X-MeriKnow-Api-Version": {
+						"$ref": "#/components/headers/ApiVersion"
+					}
+				},
+				"content": {
+					"application/json": {
+						"schema": {
+							"$ref": "#/components/schemas/ErrorResponse"
+						}
+					}
+				}
+			},
+			"Unavailable": {
+				"description": "Knowledge service or policy configuration unavailable",
+				"headers": {
+					"X-Request-Id": {
+						"$ref": "#/components/headers/RequestId"
+					},
+					"X-MeriKnow-Api-Version": {
+						"$ref": "#/components/headers/ApiVersion"
+					}
+				},
+				"content": {
+					"application/json": {
+						"schema": {
+							"$ref": "#/components/schemas/ErrorResponse"
+						}
+					}
+				}
+			},
+			"Timeout": {
+				"description": "Data-plane request exceeded 60 seconds",
+				"headers": {
+					"X-Request-Id": {
+						"$ref": "#/components/headers/RequestId"
+					},
+					"X-MeriKnow-Api-Version": {
+						"$ref": "#/components/headers/ApiVersion"
+					}
+				},
+				"content": {
+					"application/json": {
+						"schema": {
+							"$ref": "#/components/schemas/ErrorResponse"
+						}
+					}
+				}
+			}
+		}
+	}
+}

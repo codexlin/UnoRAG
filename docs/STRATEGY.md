@@ -134,7 +134,7 @@ OpenAI API ──┘
 
 ### 阶段 1：可信开源产品
 
-目标交付包括可重复运行的 Compose、Workspace、Retrieve/Ask 对外 API MVP、示例数据、质量门禁、基础运维文档和可复现演示。
+目标交付包括可重复运行的 Compose、Workspace、Retrieve/Ask 对外 API v1.0、示例数据、质量门禁、基础运维文档和可复现演示。
 
 Python SDK、MCP 和 OpenAI-compatible adapter 不属于本阶段必交付；它们应在 Knowledge API 经真实集成验证稳定后，作为降低接入成本的薄适配层提供。具体顺序以 [ROADMAP.md](./ROADMAP.md) 为准。
 
@@ -190,7 +190,7 @@ Python SDK、MCP 和 OpenAI-compatible adapter 不属于本阶段必交付；它
 → 上传新版 → 处理中旧版继续服务
 → 新版激活 → 答案切换
 → restricted ACL → viewer 无法召回
-→ Service Key 调用 Retrieve/Ask MVP
+→ Service Key 调用 Retrieve/Ask v1.0
 → Trace Drawer 解释一次拒答
 ```
 

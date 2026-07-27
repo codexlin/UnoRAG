@@ -93,9 +93,9 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 
 | 项 | 面向 | 说明 |
 |----|------|------|
-| Service Key + Retrieve/Ask MVP | API | **已落地**：`mk_svc_` + `/api/v1/retrieve|ask` |
+| Service Key + Retrieve/Ask v1.0 | API | **已冻结**：`mk_svc_` + `/api/v1/retrieve|ask`；严格输入、稳定错误/citation、请求关联 ID |
 | Answer 契约与 Ask 兼容期 | API | 新产品术语采用 Answer；定义 `/answer`、`/answer/stream` 与 `/ask` 废弃周期 |
-| 稳定 OpenAPI | API | 冻结请求、citation、refusal、pagination、错误码和版本策略 |
+| 稳定 OpenAPI | API | **Retrieve/Ask v1.0 已落地**；后续资源逐项补入，不从路线图隐式承诺契约 |
 | Documents / Versions / Jobs | API | 外部上传、替换、删除、状态查询复用 Control Plane 与 `app.jobs`；支持 idempotency key |
 | Service Key scopes v2 | 安全 | `documents:read/write`、`retrieve`、`answer` 等最小权限 scope；限流与完整审计 |
 | Feedback / Trace API | 质量 | 集成方可回传反馈并按 trace_id 获取脱敏调试信息 |
@@ -142,7 +142,7 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 | 入库 | 控制面文库 UI + lifecycle | 目标为 Knowledge API Documents/Jobs；当前可复用 Workspace 入库 |
 | 问答 | `/app/ask` → BFF → `/v1/ask` | `/api/v1/retrieve` · `/api/v1/ask`（Bearer）→ 内网 FastAPI |
 | Agent 运行时 | 官方 Ask 图 | **不要求**使用我们的 Agent/工具生态 |
-| 当前可用性 | **主路径可用** | **Retrieve/Ask MVP 可用**；完整 Knowledge API / SDK / MCP 仍规划 |
+| 当前可用性 | **主路径可用** | **Retrieve/Ask v1.0 契约已冻结**；完整 Knowledge API / SDK / MCP 仍规划 |
 
 两种方式共享一个 Knowledge Service，不是两套产品、两套索引或两套权限系统。
 

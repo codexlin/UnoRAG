@@ -37,7 +37,7 @@ export function createInternalRagHeaders(
 	binding: InternalRequestBinding,
 	identity: AuthIdentity,
 	now = Math.floor(Date.now() / 1000),
-	options?: { authSource?: InternalAuthSource },
+	options?: { authSource?: InternalAuthSource; requestId?: string },
 ): Headers {
 	const secret = process.env.MERIKNOW_INTERNAL_SECRET?.trim();
 	if (!secret || secret.length < 32) {
@@ -46,7 +46,7 @@ export function createInternalRagHeaders(
 		);
 	}
 
-	const requestId = randomUUID();
+	const requestId = options?.requestId ?? randomUUID();
 	const authSource = options?.authSource ?? "session";
 	const context: InternalRagContext = {
 		v: 1,

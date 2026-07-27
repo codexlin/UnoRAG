@@ -1,6 +1,6 @@
 # MeriKnow Knowledge API 与嵌入集成
 
-> 状态：Retrieve/Ask MVP 已落地（Next 网关 + service key）（2026-07-26）
+> 状态：Public API v1.0 已冻结（Retrieve/Ask + Service Key）（2026-07-27）
 >
 > 产品语境见 [PRODUCT.md](./PRODUCT.md)，产品层级见 [STRATEGY.md](./STRATEGY.md)
 
@@ -24,11 +24,11 @@ Knowledge API 是核心产品契约；Workspace、Python SDK、MCP 和 OpenAI-co
 | 检索执行（Ask 图内） | **已实现** | dense；可选 hybrid / rerank；表格路径 |
 | Active generation + ACL 过滤 | **已实现** | 与 Workspace 共享同一数据面 |
 | 浏览器经 Next BFF 调用 | **已实现** | Workspace 主路径（session） |
-| **Service key** | **已实现（MVP）** | 工作区级；hash 存储；scopes=`ask`/`retrieve`；可选 `library_ids` |
-| **对外 HTTP**：`POST /api/v1/retrieve`、`POST /api/v1/ask` | **已实现（方案 A）** | `Authorization: Bearer mk_svc_…` → Next 校验 → HMAC 转发 FastAPI |
+| **Service key** | **已实现（v1.0）** | 工作区级；hash 存储；scopes=`ask`/`retrieve`；可选 `library_ids` |
+| **对外 HTTP**：`POST /api/v1/retrieve`、`POST /api/v1/ask` | **已冻结（v1.0）** | `Authorization: Bearer mk_svc_…` → Next 校验 → HMAC 转发 FastAPI |
 | 控制面密钥管理 API / UI | **已实现** | owner/admin；明文只创建时返回一次 |
 | 对外术语 `answer` + `ask` 兼容期 | **规划中** | 原生产品契约使用 Answer；已有 `/ask` 在明确版本周期内兼容 |
-| 稳定 OpenAPI / 错误码 / citation 版本化 | **规划中（优先）** | 客户集成合同硬化 |
+| 稳定 OpenAPI / 错误码 / citation 版本化 | **已实现（v1.0）** | `GET /api/v1/openapi.json`；仓库源文件 `contracts/public-api-v1.openapi.json` |
 | 外部 Documents / Versions / Jobs API | **规划中（优先）** | 让业务系统完成知识生命周期接入，不绕过 Control Plane |
 | Python SDK | **规划中（HTTP 契约后）** | API client，不是嵌入式第二引擎 |
 | MCP server | **规划中（SDK 同期或后置）** | HTTP 契约稳定后的只读知识工具适配 |
@@ -49,9 +49,36 @@ Customer Backend
 
 与内部 HMAC、`MERIKNOW_SESSION_SECRET`、用户 cookie **分离**。生产仍禁止公网裸暴露 `:8000`。
 
-## 对外契约（已实现 MVP）
+## Public API v1.0 契约
 
-当前 MVP 资源面只有 Retrieve/Ask 和 Service Key 管理。下文必须按「已实现」理解，不代表规划中的完整 Knowledge API 已冻结。
+当前冻结资源面只有 Retrieve/Ask。Documents/Jobs 等规划接口不属于
+v1.0，不能从路线图推断其请求或响应结构。
+
+OpenAPI：
+
+```http
+GET /api/v1/openapi.json
+```
+
+仓库中的权威源文件：
+[`../contracts/public-api-v1.openapi.json`](../contracts/public-api-v1.openapi.json)。
+
+### 契约矩阵
+
+| 维度 | v1.0 决策 |
+|------|-----------|
+| 鉴权 | Service Key；`ask` / `retrieve` scope；可选 Library allow-list |
+| 输入 | JSON object；字段白名单；未知字段返回 `400 invalid_request` |
+| 内部策略 | 客户不能传 `ask_overrides` 或算法旋钮；网关注入 Workspace 策略 |
+| Retrieve alias | `question` 暂作 `query` 的 deprecated 兼容别名；二者不能同时出现 |
+| Citation | 只返回稳定展示字段；不暴露完整 chunk body、tenant、generation |
+| Debug | `retrieval_debug` 不属于外部契约 |
+| 关联 ID | 每次请求由网关生成；响应头 `X-Request-Id`；成功体 `trace_id`；错误体 `error.request_id` |
+| 错误 | 统一 `error.code/message/request_id/retryable/details?` |
+| 边界 | JSON body 最大 65,536 bytes；问句最大 4,000 字符；`top_k` 1–50 |
+| 超时 | 网关等待数据面最多 60 秒；超时返回 `504 upstream_timeout` |
+| 流式 | 不属于外部 v1.0；内部 Workspace SSE 不等于公开契约 |
+| 限流 | `429 rate_limit_exceeded` 形状已冻结；执行器由 Redis/Ingress 接入，当前未内置 |
 
 ### 鉴权头
 
@@ -59,7 +86,8 @@ Customer Backend
 Authorization: Bearer mk_svc_<secret>
 ```
 
-也接受：`X-MeriKnow-Service-Key: mk_svc_<secret>`。
+也接受：`X-MeriKnow-Service-Key: mk_svc_<secret>`。新集成应使用标准
+`Authorization` 头。
 
 ### Retrieve（只检索）
 
@@ -72,13 +100,30 @@ Authorization: Bearer mk_svc_…
   "query": "病假证明几天内补交？",
   "library_id": "<rag_library_id>",
   "top_k": 6,
-  "filters": { "document_ids": [] }
+  "filters": {
+    "record_type": "chunk",
+    "doc_id": "<optional-document-id>",
+    "table_id": "<optional-table-id>",
+    "document_version_id": "<optional-version-id>"
+  }
 }
 ```
 
 也可传 `question`（网关会规范为 `query`）。
 
-响应要素：`citations[]`、`refused` / `refuse_reason`、`retrieval_mode`、`retrieval_debug`（勿原样暴露给终端用户）。
+稳定响应：
+
+```json
+{
+  "trace_id": "f43f...",
+  "query": "病假证明几天内补交？",
+  "library_id": "lib_xxx",
+  "citations": [],
+  "refused": true,
+  "refuse_reason": "no_matching_evidence",
+  "retrieval_mode": "hybrid"
+}
+```
 
 ### Ask（有据问答；未来原生术语为 Answer）
 
@@ -94,13 +139,82 @@ Authorization: Bearer mk_svc_…
 }
 ```
 
-响应字段与现网 ask 对齐：`answer`、`citations[]`、`refused`、`refuse_reason` 等。流式 ask 本 MVP 未对外暴露（仍可用内部 `/api/rag/v1/ask/stream` + session）。
+稳定响应：
+
+```json
+{
+  "trace_id": "f43f...",
+  "session_id": "customer-opaque-id",
+  "question": "病假证明几天内补交？",
+  "answer": "……",
+  "citations": [],
+  "refused": false,
+  "refuse_reason": null,
+  "retrieval_mode": "hybrid"
+}
+```
+
+流式 Ask 不属于外部 v1.0。内部 `/api/rag/v1/ask/stream` 使用用户
+Session，不能当作 Service Key 集成接口。
+
+Citation v1.0 只包含：
+
+```text
+id · index · title · snippet · score
+document_id · filename
+page · page_start · page_end · section_path
+table_id · row_start · row_end · record_type
+```
+
+可能不存在的定位字段固定返回 `null`。
 
 迁移原则：
 
 - 新版外部契约计划提供 `/api/v1/answer` 与 `/api/v1/answer/stream`。
 - `/api/v1/ask` 不会无提示移除；兼容周期和废弃响应头须写入版本化契约。
 - 内部 LangGraph、代码类名和历史字段可继续使用 Ask，不要求一次性重命名实现细节。
+
+### 错误契约
+
+所有网关错误使用同一结构：
+
+```json
+{
+  "error": {
+    "code": "invalid_request",
+    "message": "query is required",
+    "request_id": "f43f...",
+    "retryable": false,
+    "details": {
+      "field": "query"
+    }
+  }
+}
+```
+
+稳定错误类别：
+
+| HTTP | 常见 code | 是否通常可重试 |
+|------|-----------|----------------|
+| 400 | `invalid_request` | 否 |
+| 401 | `authentication_required` / `authentication_failed` | 否 |
+| 403 | `insufficient_scope` / `library_access_denied` | 否 |
+| 413 | `payload_too_large` | 否 |
+| 415 | `unsupported_media_type` | 否 |
+| 429 | `rate_limit_exceeded` | 是，遵循 `Retry-After` |
+| 502 | `upstream_unavailable` / `invalid_upstream_response` | 是 |
+| 503 | `service_unavailable` / `policy_unavailable` / `authentication_backend_unavailable` / `gateway_misconfigured` | 是 |
+| 504 | `upstream_timeout` | 是 |
+
+上游内部错误名不会透传为公共 `error.code`；网关只返回 OpenAPI
+`ErrorCode` 中冻结的枚举，避免数据面实现细节意外成为兼容承诺。
+
+所有成功和错误响应都包含：
+
+```http
+X-Request-Id: <uuid>
+X-MeriKnow-Api-Version: 1
+```
 
 ### 控制面：密钥管理（owner/admin）
 
@@ -147,12 +261,12 @@ curl -sS -X POST "$APP/api/v1/ask" \
 # 4. 吊销后应 401
 ```
 
-## MVP 限制
+## v1.0 边界
 
 1. 无外部文档生命周期 API、Python SDK、MCP、OpenAI-compatible endpoint、OAuth-for-apps、对外流式 ask。
 2. Service principal 为 `service:<key_id>`：可见 `acl_scope=workspace` 的文档；**不会**自动获得仅绑定某用户的 restricted ACL。
 3. 密钥绑定**当前工作区**；不跨工作区。
-4. 限流 / 审计明细 / OpenAPI 冻结仍后置。
+4. `429` 契约已冻结，但 Redis/Ingress 限流执行器尚未接入。
 5. 客户应用应只在**服务端**持有 key，不要放进浏览器。
 
 ## 目标 Knowledge API 资源面（规划）
@@ -260,7 +374,7 @@ OpenAI-compatible endpoint 不成为新的业务事实源，也不允许绕过 S
 - [ ] 处理 `refused` 与空 citations（UI 提示「资料未覆盖」）
 - [ ] 引用展示至少：文档名 + 片段
 - [ ] 超时与限流按私有化容量设置
-- [ ] 不把 `retrieval_debug` 原样暴露给终端用户
+- [x] v1 网关不返回 `retrieval_debug`、完整 chunk body 或租户内部字段
 
 ## 反模式
 

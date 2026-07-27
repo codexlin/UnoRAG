@@ -97,7 +97,7 @@ INTERNAL_AUTH_REPLAY_BACKEND=redis
 - **会话**：默认临时；主动归档；可续聊；query rewrite
 - **工作区旋钮**：hybrid / rerank / 裁决等在设置页（**不是** `HYBRID_ENABLED` env）
 - **入库**：仅控制面 → lifecycle_worker；FastAPI ingest **永久 410**
-- **对外 API（当前 MVP）**：工作区 Service Key → `POST /api/v1/retrieve`、`POST /api/v1/ask`
+- **对外 API（v1.0 已冻结）**：工作区 Service Key → `POST /api/v1/retrieve`、`POST /api/v1/ask`；严格输入、稳定错误与 citation 契约、OpenAPI
 - **仍在规划**：外部 Documents/Versions/Jobs、Answer 契约、Python SDK、MCP 与 OpenAI-compatible adapter
 
 ## 测试
