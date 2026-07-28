@@ -3,15 +3,16 @@
 #
 # Install: brew install just
 # List:    just --list
+#
+# Examples:
+#   just images v0.0.1-local
+#   JUST_SKIP_CHECK=1 just release v0.0.1 registry.cn-hangzhou.aliyuncs.com/my-ns
+#   just upgrade dist/release/release-registry.env
 
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
-# Override: just release tag=v0.1.0 registry=registry.cn-hangzhou.aliyuncs.com/my-ns
-tag := ""
-registry := ""
 out := "dist/release"
-platform := "linux/amd64"
-manifest := "dist/release/release-registry.env"
+default_platform := "linux/amd64"
 
 default:
 	@just --list
@@ -46,23 +47,30 @@ check: brand
 # --- images ---
 
 # Build three images locally (no push). Writes dist/release/release-local.env
-images tag=tag platform=platform:
+# Usage: just images v0.0.1 [linux/amd64|local]
+images tag platform=default_platform:
 	#!/usr/bin/env bash
-	[[ -n "{{tag}}" ]] || { echo "error: pass tag=... (never latest)" >&2; exit 1; }
+	[[ -n "{{tag}}" ]] || { echo "error: pass tag (never latest), e.g. just images v0.0.1" >&2; exit 1; }
 	./scripts/release/local-images.sh build --tag "{{tag}}" --platform "{{platform}}" --out "{{out}}"
 
 # Build + push to REGISTRY/unorag:{web,api,migrator}-TAG + digest manifest
-push tag=tag registry=registry platform=platform out=out:
+# Usage: just push v0.0.1 registry.example.com/ns [linux/amd64]
+push tag registry platform=default_platform:
 	#!/usr/bin/env bash
-	[[ -n "{{tag}}" ]] || { echo "error: pass tag=..." >&2; exit 1; }
-	[[ -n "{{registry}}" ]] || { echo "error: pass registry=HOST/NAMESPACE" >&2; exit 1; }
+	[[ -n "{{tag}}" && -n "{{registry}}" ]] || {
+		echo "error: just push TAG REGISTRY" >&2
+		exit 1
+	}
 	./scripts/release/local-images.sh push --tag "{{tag}}" --registry "{{registry}}" --platform "{{platform}}" --out "{{out}}"
 
 # check (unless JUST_SKIP_CHECK=1) → push → print upgrade hint
-release tag=tag registry=registry platform=platform out=out:
+# Usage: JUST_SKIP_CHECK=1 just release v0.0.1 registry.example.com/ns
+release tag registry platform=default_platform:
 	#!/usr/bin/env bash
-	[[ -n "{{tag}}" ]] || { echo "error: pass tag=..." >&2; exit 1; }
-	[[ -n "{{registry}}" ]] || { echo "error: pass registry=HOST/NAMESPACE" >&2; exit 1; }
+	[[ -n "{{tag}}" && -n "{{registry}}" ]] || {
+		echo "error: just release TAG REGISTRY" >&2
+		exit 1
+	}
 	if [[ "${JUST_SKIP_CHECK:-}" != "1" ]]; then
 		just check
 	else
@@ -75,5 +83,5 @@ release tag=tag registry=registry platform=platform out=out:
 	echo "  ./deploy/compose/scripts/upgrade.sh --manifest {{out}}/release-registry.env"
 
 # Run upgrade.sh against a manifest (must be executed where compose stack lives)
-upgrade manifest=manifest:
+upgrade manifest:
 	./deploy/compose/scripts/upgrade.sh --manifest "{{manifest}}"

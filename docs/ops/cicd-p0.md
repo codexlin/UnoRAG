@@ -98,10 +98,10 @@ cd deploy/compose
 just --list
 
 # 只构建（默认 linux/amd64，适合从 Apple Silicon 打服务器镜像）
-just images tag=v0.0.1
+just images v0.0.1
 
 # 门禁（可跳过）+ 构建 + 推送 + 写 digest manifest
-JUST_SKIP_CHECK=1 just release tag=v0.0.1 registry=registry.cn-hangzhou.aliyuncs.com/你的命名空间
+JUST_SKIP_CHECK=1 just release v0.0.1 registry.cn-hangzhou.aliyuncs.com/你的命名空间
 
 # 部署机
 ./deploy/compose/scripts/backup.sh ./backups/pre-upgrade
