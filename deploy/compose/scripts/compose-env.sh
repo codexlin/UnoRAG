@@ -90,8 +90,14 @@ _mk_run_compose() {
 		_mk_env_unset+=(-u "$_mk_key")
 	done < <(_mk_managed_env_keys "${_mk_files[@]}")
 
+	# Include webch overlay automatically when present (TLS / public ports).
+	local -a _mk_file_args=(-f "${_MK_COMPOSE_DIR}/docker-compose.yml")
+	if [[ -f "${_MK_COMPOSE_DIR}/docker-compose.webch.yml" ]]; then
+		_mk_file_args+=(-f "${_MK_COMPOSE_DIR}/docker-compose.webch.yml")
+	fi
+
 	env "${_mk_env_unset[@]}" docker compose \
-		-f "${_MK_COMPOSE_DIR}/docker-compose.yml" \
+		"${_mk_file_args[@]}" \
 		"${_mk_compose_args[@]}"
 }
 

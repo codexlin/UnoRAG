@@ -294,7 +294,14 @@ if [[ "$ALLOW_BUILD" -eq 1 ]]; then
 	mk_compose build web api migrate-web
 else
 	log "pulling release images (no local build)"
-	mk_compose pull web api lifecycle-worker outbox-worker migrate-web
+	# Prefer explicit service pulls; local-only tags (e.g. legacy migrator) must not
+	# fail the upgrade when Docker Hub is unreachable.
+	if ! mk_compose pull web api lifecycle-worker; then
+		die "failed to pull web/api images from registry"
+	fi
+	if ! mk_compose pull outbox-worker migrate-web; then
+		warn "outbox/migrator pull failed (ok if pins are local-only tags); continuing"
+	fi
 fi
 
 log "migrations (additive; run before switching traffic)"
