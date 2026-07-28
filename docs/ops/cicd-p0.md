@@ -2,6 +2,8 @@
 
 > 状态：**进行中**（2026-07-28）。CI、ACR + GHCR 双 Registry 发布 workflow、digest manifest、pull 升级脚本和真实告警已落地；仍待 ACR Secret、首次真推和人工批准 SSH CD。
 >
+> **GitHub Actions 账单锁定时：** 用本机 **Just** 发布（见 §5），不依赖托管 runner。账单恢复后 Actions 与 Just 共用同一套镜像命名与 `upgrade.sh --manifest`。
+>
 > 路线（已确认）：**停止结构清理 → CI 构建/扫描/推镜像 → 人工批准 CD → 真实告警与恢复演练 → 正式 GO → 下一 major 再硬删。**
 
 ---
@@ -37,8 +39,9 @@
 
 ### 2.2 下一轮（真发布路径）
 
+- [x] 本机发布旁路：根目录 `justfile` + `scripts/release/local-images.sh`（账单锁定时可用）
 - [ ] 配置 ACR GitHub Secrets（`ACR_REGISTRY` / `ACR_USERNAME` / `ACR_PASSWORD` / `ACR_NAMESPACE`）
-- [ ] 手动运行 `release-images`（`dry_run=false`），验证双 Registry digest 与 artifact
+- [ ] 手动运行 `release-images`（`dry_run=false`），验证双 Registry digest 与 artifact（或用 `just release` 等价真推）
 - [ ] `deploy.yml` + GitHub Environment 人工批准 + SSH（仍不把密钥写入仓库）
 - [x] webch：Resend firing / resolved 演练通过
 - [ ] 正式 GO 签字（见收敛计划 § 正式 GO 门禁）
@@ -84,3 +87,31 @@ cd deploy/compose
 - **正式 GO 门禁**除试点黑盒 / 告警 / 恢复外，须含 **发布闭环**：CI 绿 →（后续）digest 推送 → 人工批准 → `upgrade.sh` pull 部署可重复。
 
 密钥与凭据只存在于部署机 / GitHub Secrets / 客户 Secret 存储，**永不**提交进 git。
+
+---
+
+## 5. 本机 Just 发布（Actions 不可用时）
+
+前置：`brew install just`、本机 Docker、已 `docker login` 目标 Registry。
+
+```bash
+just --list
+
+# 只构建（默认 linux/amd64，适合从 Apple Silicon 打服务器镜像）
+just images tag=v0.0.1
+
+# 门禁（可跳过）+ 构建 + 推送 + 写 digest manifest
+JUST_SKIP_CHECK=1 just release tag=v0.0.1 registry=registry.cn-hangzhou.aliyuncs.com/你的命名空间
+
+# 部署机
+./deploy/compose/scripts/backup.sh ./backups/pre-upgrade
+./deploy/compose/scripts/upgrade.sh --manifest dist/release/release-registry.env
+```
+
+| 产物 | 说明 |
+|------|------|
+| `dist/release/release-local.env` | 仅本地 `name:tag`（不上服务器） |
+| `dist/release/release-registry.env` | `REGISTRY/unorag@sha256:…` 三键，喂给 `upgrade.sh` |
+| `dist/release/release-manifest.json` | tag / git sha / digest 记录 |
+
+镜像命名与 `release-images.yml` 对齐：`{registry}/unorag:web|api|migrator-{tag}`。拒绝 `latest`。`dist/` 已在 `.gitignore`。
