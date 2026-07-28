@@ -196,7 +196,7 @@ EOF
 	if [[ "$mode" == "registry" ]]; then
 		log "deploy with: ./deploy/compose/scripts/upgrade.sh --manifest ${env_file}"
 	else
-		log "local env only — push with: just push tag=${TAG} registry=HOST/NS"
+		log "local env only — push with: just push ${TAG} HOST/NAMESPACE"
 	fi
 	cat "$env_file"
 }
