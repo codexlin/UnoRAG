@@ -84,19 +84,21 @@ cd deploy/compose
 
 ## 供应链 / SBOM（薄说明）
 
-完整 SBOM + CVE 扫描流水线仍后置，不阻塞通用受控试点 P0。交付前建议：
+`release-images.yml` 已对 web / api / migrator 三张发布镜像执行 Trivy
+`HIGH/CRITICAL` CVE 门禁；扫描未通过时不产出 release manifest。完整 SBOM、签名和
+证明材料仍后置。交付前：
 
 1. 确认 `deploy/config/runtime.env.example` / Helm values 中基础镜像 tag 已 pin；
-2. 对构建出的 `unorag-web` / `unorag-api` 镜像自行运行 `syft` / `trivy`（或客户等价工具）并归档；
-3. 未扫描时写入发布「已知限制」，勿暗示已完成镜像安全认证。
+2. 使用 workflow 产出的 digest manifest 部署，并归档对应 Trivy 日志；
+3. 客户要求 SBOM / 签名时另行运行 `syft` / `cosign`（或客户等价工具）。
 
 ## 明确后置
 
 | 项 | 说明 |
 |---|---|
 | Helm 容量 / HPA / PDB / NetworkPolicy | starter 未纳入；按客户集群硬化 |
-| SBOM 生成与依赖/镜像扫描 | 需接入 CI；Compose/Helm 已 pin 镜像 tag |
-| 镜像 digest 锁定与私有 registry 推送 | 客户环境按 registry 策略固化 |
+| SBOM 生成与镜像签名 | CVE 镜像扫描已接入发布 CI；SBOM / Cosign 后置 |
+| 客户自有 registry promotion | ACR + GHCR 已双推并产出 digest；TCR/Harbor 按客户策略后置 |
 | MinIO/S3 一等公民对象后端 | 默认共享卷 / PVC；S3 适配另开 |
 
 生产验收以 `docs/acceptance/` 的部署级 go/no-go 签字为准；仅有部署包不能宣称 production-ready。

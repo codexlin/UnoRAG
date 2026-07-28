@@ -32,4 +32,4 @@ Readiness
   api  GET /health
   worker file /tmp/unorag-lifecycle-ready
 
-SBOM / digest scanning: not automated yet — pin image tags and scan in CI.
+CVE scanning and digest manifests are provided by release CI; SBOM/signing remain deferred.

@@ -16,7 +16,7 @@
 |----------|---------|
 | `.github/workflows/ci.yml` | **已做** — PR + `main`；pytest / web / release gate / parity / Docker 构建验证（不推） |
 | `.github/workflows/eval-gates.yml` | **保留** — 改为 `workflow_call`（+ 手动），由 `ci.yml` 调用 |
-| `.github/workflows/release-images.yml` | **已做** — 三 target 各构建一次，同时推 ACR + GHCR；产出区域 digest manifest |
+| `.github/workflows/release-images.yml` | **已做** — 三 target 各构建一次，同时推 ACR + GHCR；Trivy `HIGH/CRITICAL` 门禁通过后产出区域 digest manifest |
 | `promote-images.yml` | **未建** — 后置 |
 | `deploy.yml` | **未建** — 改完 `upgrade.sh` 且有 Environment 批准后再做 |
 
@@ -31,7 +31,7 @@
 - [x] `deploy/compose/scripts/upgrade.sh`：默认 `compose pull`；更新 **outbox-worker**；拒绝 `latest`/空 tag；保留旧 pin 可应用回切；迁移失败不自动回滚 DB；health 后跑 `pilot-smoke.sh`（若存在）
 - [x] `.github/workflows/ci.yml` 入口
 - [x] `eval-gates.yml` 可复用、不丢 L7 / policy parity
-- [x] `release-images.yml`：单次构建双推 ACR + GHCR，输出 `release-acr.env` / `release-ghcr.env`
+- [x] `release-images.yml`：单次构建双推 ACR + GHCR，Trivy 扫描三张镜像，通过后输出 `release-acr.env` / `release-ghcr.env`
 - [x] 品牌残留门禁：受版本控制的内容和路径不得重新出现旧品牌
 - [x] 文档：冻结 Step 3 硬删；正式 GO 含发布闭环；本文
 

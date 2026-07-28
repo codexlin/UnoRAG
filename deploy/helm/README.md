@@ -71,8 +71,8 @@ helm upgrade --install unorag ./deploy/helm/unorag \
 
 | Item | Notes |
 |---|---|
-| SBOM / CVE image scan | Document-only; pin tags and wire CI later |
-| Image digest locking | Prefer digest after registry promotion |
+| SBOM / image signing | Release workflow already gates CVEs; SBOM / Cosign remain deferred |
+| Customer-registry promotion | ACR/GHCR manifests are digest-locked; TCR/Harbor promotion remains deferred |
 | Bundled Postgres/Qdrant/Redis | Customer-managed; no Bitnami subcharts in this starter |
 | MinIO/S3 first-class PVC alternative | `external.objectStorage: s3` stub; adapter WIP |
 | Capacity / HPA / PDB / NetworkPolicy | Add in hardening pass |

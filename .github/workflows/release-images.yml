@@ -81,10 +81,16 @@ jobs:
             echo "migrator_tags=${acr_repo}:migrator-${tag},${ghcr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
             echo "acr_repo=${acr_repo}" >> "${GITHUB_OUTPUT}"
             echo "ghcr_repo=${ghcr_repo}" >> "${GITHUB_OUTPUT}"
+            echo "web_scan_ref=${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "api_scan_ref=${ghcr_repo}:api-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "migrator_scan_ref=${ghcr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
           else
             echo "web_tags=unorag-web:${tag}" >> "${GITHUB_OUTPUT}"
             echo "api_tags=unorag-api:${tag}" >> "${GITHUB_OUTPUT}"
             echo "migrator_tags=unorag-web-migrator:${tag}" >> "${GITHUB_OUTPUT}"
+            echo "web_scan_ref=unorag-web:${tag}" >> "${GITHUB_OUTPUT}"
+            echo "api_scan_ref=unorag-api:${tag}" >> "${GITHUB_OUTPUT}"
+            echo "migrator_scan_ref=unorag-web-migrator:${tag}" >> "${GITHUB_OUTPUT}"
           fi
 
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
@@ -151,6 +157,33 @@ jobs:
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.api_tags }}
+
+      - name: Scan web image
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ steps.meta.outputs.web_scan_ref }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      - name: Scan web migrator image
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ steps.meta.outputs.migrator_scan_ref }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      - name: Scan API image
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ steps.meta.outputs.api_scan_ref }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
 
       - name: Emit release manifests
         env:

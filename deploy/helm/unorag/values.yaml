@@ -247,4 +247,4 @@ migrate:
     # Uses api image + scripts/apply_rag_migrations.py
     # Requires MIGRATOR_DATABASE_URL in secret.
 
-# SBOM / image digest scanning: not automated in this chart; see deploy/README.md.
+# Release CI gates CVEs and emits digest manifests; SBOM/signing are deferred.
