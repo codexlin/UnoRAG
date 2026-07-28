@@ -20,7 +20,7 @@
 
 ```bash
 cd deploy/compose
-# 可选：export MERIKNOW_BASE_URL=http://localhost
+# 可选：export UNORAG_BASE_URL=http://localhost
 ./scripts/pilot-smoke.sh
 ```
 

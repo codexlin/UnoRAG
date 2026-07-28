@@ -4,7 +4,7 @@
 |----|----|
 | 日期 | 2026-07-27 |
 | 发布候选 SHA | `0170ba86dc7f83eba4789ebaef80b5ebbf0da24a` |
-| 拓扑 | Compose `meriknow-private` · `HTTP_PORT=8088` · 含 **outbox-worker** |
+| 拓扑 | Compose `unorag-private` · `HTTP_PORT=8088` · 含 **outbox-worker** |
 | 结论（本切片） | **Conditional PASS** — 真实上传黑盒与离线门禁绿；长 soak / 故障全矩阵 / TLS·告警签字仍待 |
 
 ## 1. 发布候选
@@ -41,7 +41,7 @@
 | delete | PASS |
 | **总体** | **`pilot-smoke PASS`** |
 
-证据（本机）：`/tmp/meriknow-private-stability-0170ba8/pilot-smoke.log`
+证据（本机）：`/tmp/unorag-private-stability-0170ba8/pilot-smoke.log`
 
 ## 4. 稳定性抽检（本轮已做）
 
@@ -61,5 +61,5 @@
 
 ## 6. 操作提示
 
-全新或落后迁移的卷：安装后务必 `mk_compose --profile migrate run --rm migrate-web`（及 rag migrate）。  
+全新或落后迁移的卷：安装后务必 `mk_compose --profile migrate run --rm migrate-web`（及 rag migrate）。
 日常启动：`mk_compose up -d caddy web api lifecycle-worker outbox-worker`。

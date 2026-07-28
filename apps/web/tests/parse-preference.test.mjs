@@ -1,17 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import {
+	formatParseStatusView,
+	redactProviderTaskId,
+	resolveParserLabel,
+} from "../src/lib/parse-status-view.mjs";
 import {
 	rejectDeployOnlyParseFields,
 	resolveDocumentPolicy,
 	resolveParsePlan,
 	validateParsePreference,
 } from "../src/lib/server/document-policy.mjs";
-import {
-	formatParseStatusView,
-	redactProviderTaskId,
-	resolveParserLabel,
-} from "../src/lib/parse-status-view.mjs";
 
 test("parse_preference maps to internal enhanced / prefer flags", () => {
 	assert.equal(validateParsePreference("quality").ok, true);

@@ -1,8 +1,8 @@
 # Public API v1.0 真实 Service Key E2E
 
-> 日期：2026-07-27（Asia/Shanghai）  
-> 结果：**PASS**  
-> 产品提交：`eec8a4dcec199b50837ced13b5f7f669a1c8eec7`  
+> 日期：2026-07-27（Asia/Shanghai）
+> 结果：**PASS**
+> 产品提交：`eec8a4dcec199b50837ced13b5f7f669a1c8eec7`
 > 拓扑：本地 `deploy/compose` 私有化完整栈，edge=`http://localhost:8088`
 
 ## 目标
@@ -56,7 +56,7 @@ sha256:fe9587c75abc6eb7483a0ab71d3fc0fca8361ea6f8d7e5ff61399d69efe5e7a4
 | Public Retrieve | **PASS** | HTTP 200；2 citations；trace `7f3a5687-5cdc-4dc2-ad80-a990682816f8` |
 | Public Ask | **PASS** | HTTP 200；1 citation；trace `1315fbeb-b855-44d7-b345-1129baded341` |
 | 关联 ID | **PASS** | 两条成功链路均满足 body `trace_id == X-Request-Id` |
-| API 版本头 | **PASS** | `X-MeriKnow-Api-Version: 1` |
+| API 版本头 | **PASS** | `X-UnoRAG-Api-Version: 1` |
 | 稳定顶层 schema | **PASS** | Ask/Retrieve 响应字段与 v1.0 白名单精确相等 |
 | Citation schema | **PASS** | citation 字段与 v1.0 白名单精确相等 |
 | 内部字段隔离 | **PASS** | 无 `retrieval_debug`、`text/body`、tenant、generation、内部 score、`doc_id` |

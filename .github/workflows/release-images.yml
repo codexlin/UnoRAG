@@ -1,28 +1,21 @@
 name: release-images
 
-# P0 skeleton — build once and (eventually) push digest-pinned images to ACR.
+# Build each target once, then publish the same result to:
+# - ACR for mainland China deployments
+# - GHCR for overseas deployments
 #
-# Status: NOT production-ready. Push steps fail closed until GitHub Secrets for
-# the container registry are configured. A green dry-run does NOT mean ACR push works.
-#
-# Intended closed loop (later):
-#   CI green → build three targets → push by digest → release manifest →
-#   human-approved deploy.yml → upgrade.sh --manifest (compose pull)
-#
-# Required secrets (configure in GitHub; never commit):
+# Required repository secrets:
 #   ACR_REGISTRY / ACR_USERNAME / ACR_PASSWORD / ACR_NAMESPACE
-#
-# See docs/ops/cicd-p0.md
 
 on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Build only; skip registry login/push (keep true until secrets exist)"
+        description: "Build only; skip registry login and push"
         type: boolean
         default: true
       image_tag:
-        description: "Version tag alongside digest (never 'latest'; empty → sha-XXXXXXXXXXXX)"
+        description: "Version tag (never 'latest'; empty -> sha-XXXXXXXXXXXX)"
         type: string
         required: false
         default: ""
@@ -32,6 +25,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: release-images-${{ github.ref }}
@@ -43,105 +37,163 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve tag and dry_run
+      - name: Reject legacy brand names
+        run: ./scripts/check_brand_residue.sh
+
+      - name: Resolve release metadata
         id: meta
         env:
           INPUT_TAG: ${{ inputs.image_tag }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           EVENT_NAME: ${{ github.event_name }}
+          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
         run: |
           set -euo pipefail
-          TAG="${INPUT_TAG:-}"
-          if [[ -z "$TAG" && "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            TAG="${GITHUB_REF_NAME}"
+
+          tag="${INPUT_TAG:-}"
+          if [[ -z "${tag}" && "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
           fi
-          if [[ -z "$TAG" ]]; then
-            TAG="sha-${GITHUB_SHA::12}"
+          if [[ -z "${tag}" ]]; then
+            tag="sha-${GITHUB_SHA::12}"
           fi
-          if [[ "$TAG" == "latest" ]]; then
-            echo "refusing tag=latest" >&2
+          if [[ "${tag}" == "latest" || ! "${tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "invalid or floating image tag: ${tag}" >&2
             exit 1
           fi
-          # Fail closed: only workflow_dispatch with dry_run=false attempts push path.
-          DRY_RUN=true
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$INPUT_DRY_RUN" == "false" ]]; then
-            DRY_RUN=false
+
+          dry_run=true
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${INPUT_DRY_RUN}" == "false" ]]; then
+            dry_run=false
           fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
-          echo "Resolved tag=$TAG dry_run=$DRY_RUN"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          if [[ "${dry_run}" == "false" ]]; then
+            if [[ -z "${ACR_REGISTRY:-}" || -z "${ACR_NAMESPACE:-}" ]]; then
+              echo "ACR_REGISTRY and ACR_NAMESPACE secrets are required" >&2
+              exit 1
+            fi
+            acr_repo="${ACR_REGISTRY}/${ACR_NAMESPACE}/unorag"
+            ghcr_repo="ghcr.io/${owner}/unorag"
+            echo "web_tags=${acr_repo}:web-${tag},${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "api_tags=${acr_repo}:api-${tag},${ghcr_repo}:api-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "migrator_tags=${acr_repo}:migrator-${tag},${ghcr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "acr_repo=${acr_repo}" >> "${GITHUB_OUTPUT}"
+            echo "ghcr_repo=${ghcr_repo}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "web_tags=unorag-web:${tag}" >> "${GITHUB_OUTPUT}"
+            echo "api_tags=unorag-api:${tag}" >> "${GITHUB_OUTPUT}"
+            echo "migrator_tags=unorag-web-migrator:${tag}" >> "${GITHUB_OUTPUT}"
+          fi
 
-      - name: Registry login (placeholder — not wired)
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "dry_run=${dry_run}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved tag=${tag} dry_run=${dry_run}"
+
+      - name: Validate ACR credentials
         if: steps.meta.outputs.dry_run != 'true'
         env:
-          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
           ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
         run: |
           set -euo pipefail
-          if [[ -z "${ACR_REGISTRY:-}" || -z "${ACR_USERNAME:-}" || -z "${ACR_PASSWORD:-}" ]]; then
-            echo "ACR_* secrets missing. Keep dry_run=true until secrets are configured." >&2
-            exit 1
-          fi
-          echo "ACR secrets present, but docker/login-action + push are not enabled in this P0 skeleton." >&2
-          echo "Wire login-action + digest push in a follow-up; do not pretend push works." >&2
-          exit 1
+          [[ -n "${ACR_USERNAME:-}" ]] || { echo "ACR_USERNAME secret is required" >&2; exit 1; }
+          [[ -n "${ACR_PASSWORD:-}" ]] || { echo "ACR_PASSWORD secret is required" >&2; exit 1; }
 
-      - name: Build web runner
+      - name: Log in to ACR
+        if: steps.meta.outputs.dry_run != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Log in to GHCR
+        if: steps.meta.outputs.dry_run != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and publish web runner
+        id: web
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/docker/web.Dockerfile
           target: runner
-          push: false
-          load: true
-          tags: meriknow-web:${{ steps.meta.outputs.tag }}
+          push: ${{ steps.meta.outputs.dry_run != 'true' }}
+          load: ${{ steps.meta.outputs.dry_run == 'true' }}
+          tags: ${{ steps.meta.outputs.web_tags }}
 
-      - name: Build web migrator
+      - name: Build and publish web migrator
+        id: migrator
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/docker/web.Dockerfile
           target: migrator
-          push: false
-          load: true
-          tags: meriknow-web-migrator:${{ steps.meta.outputs.tag }}
+          push: ${{ steps.meta.outputs.dry_run != 'true' }}
+          load: ${{ steps.meta.outputs.dry_run == 'true' }}
+          tags: ${{ steps.meta.outputs.migrator_tags }}
 
-      - name: Build api
+      - name: Build and publish API
+        id: api
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/docker/api.Dockerfile
-          push: false
-          load: true
-          tags: meriknow-api:${{ steps.meta.outputs.tag }}
+          push: ${{ steps.meta.outputs.dry_run != 'true' }}
+          load: ${{ steps.meta.outputs.dry_run == 'true' }}
+          tags: ${{ steps.meta.outputs.api_tags }}
 
-      - name: Emit release manifest skeleton
+      - name: Emit release manifests
+        env:
+          DRY_RUN: ${{ steps.meta.outputs.dry_run }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          ACR_REPO: ${{ steps.meta.outputs.acr_repo }}
+          GHCR_REPO: ${{ steps.meta.outputs.ghcr_repo }}
+          WEB_DIGEST: ${{ steps.web.outputs.digest }}
+          API_DIGEST: ${{ steps.api.outputs.digest }}
+          MIGRATOR_DIGEST: ${{ steps.migrator.outputs.digest }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.meta.outputs.tag }}"
-          mkdir -p /tmp/meriknow-release
-          cat > /tmp/meriknow-release/release.env <<EOF
-          # MeriKnow release manifest (skeleton — replace with registry/digest after real ACR push)
-          # Feed to: deploy/compose/scripts/upgrade.sh --manifest release.env
-          MERIKNOW_WEB_IMAGE=meriknow-web:${TAG}
-          MERIKNOW_WEB_MIGRATOR_IMAGE=meriknow-web-migrator:${TAG}
-          MERIKNOW_API_IMAGE=meriknow-api:${TAG}
-          EOF
-          # Heredoc above is indented with tabs/spaces in some editors; normalize:
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("/tmp/meriknow-release/release.env")
-          lines = [ln.lstrip() for ln in p.read_text().splitlines()]
-          p.write_text("\n".join(lines) + "\n")
-          print(p.read_text())
-          PY
+          mkdir -p /tmp/unorag-release
 
-      - name: Push placeholder
-        if: steps.meta.outputs.dry_run != 'true'
-        run: |
-          echo "Push to ACR not implemented in P0 skeleton" >&2
-          exit 1
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            cat > /tmp/unorag-release/release-local.env <<EOF
+          UNORAG_WEB_IMAGE=unorag-web:${TAG}
+          UNORAG_WEB_MIGRATOR_IMAGE=unorag-web-migrator:${TAG}
+          UNORAG_API_IMAGE=unorag-api:${TAG}
+          EOF
+          else
+            for digest in "${WEB_DIGEST}" "${API_DIGEST}" "${MIGRATOR_DIGEST}"; do
+              [[ "${digest}" == sha256:* ]] || { echo "missing image digest" >&2; exit 1; }
+            done
+            cat > /tmp/unorag-release/release-acr.env <<EOF
+          UNORAG_WEB_IMAGE=${ACR_REPO}@${WEB_DIGEST}
+          UNORAG_WEB_MIGRATOR_IMAGE=${ACR_REPO}@${MIGRATOR_DIGEST}
+          UNORAG_API_IMAGE=${ACR_REPO}@${API_DIGEST}
+          EOF
+            cat > /tmp/unorag-release/release-ghcr.env <<EOF
+          UNORAG_WEB_IMAGE=${GHCR_REPO}@${WEB_DIGEST}
+          UNORAG_WEB_MIGRATOR_IMAGE=${GHCR_REPO}@${MIGRATOR_DIGEST}
+          UNORAG_API_IMAGE=${GHCR_REPO}@${API_DIGEST}
+          EOF
+          fi
+
+          sed -i 's/^[[:space:]]*//' /tmp/unorag-release/*.env
+          grep -R '^UNORAG_.*_IMAGE=' /tmp/unorag-release
+
+      - name: Upload release manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: unorag-release-${{ steps.meta.outputs.tag }}
+          path: /tmp/unorag-release/*.env
+          if-no-files-found: error
+          retention-days: 30

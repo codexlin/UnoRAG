@@ -2,7 +2,7 @@ import { defineConfig } from "drizzle-kit";
 
 const databaseUrl =
 	process.env.DATABASE_URL ??
-	"postgresql://meriknow:meriknow@localhost:5432/meriknow";
+	"postgresql://unorag:unorag@localhost:5432/unorag";
 
 export default defineConfig({
 	dialect: "postgresql",

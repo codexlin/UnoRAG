@@ -1,4 +1,4 @@
-"""MeriKnow Python SDK (v0.1.0)
+"""UnoRAG Python SDK (v0.1.0)
 
 Thin HTTP adapter for the frozen Knowledge Retrieve/Ask **public API v1**.
 This package does **not** embed RAG, embeddings, MinerU, or Qdrant — it only
@@ -26,8 +26,8 @@ pip install -e ".[dev]"
 ## Environment
 
 ```bash
-export MERIKNOW_BASE_URL="http://localhost:3000"   # edge / Next.js origin
-export MERIKNOW_SERVICE_KEY="mk_svc_…"             # server-side only; never commit
+export UNORAG_BASE_URL="http://localhost:3000"   # edge / Next.js origin
+export UNORAG_SERVICE_KEY="mk_svc_…"             # server-side only; never commit
 ```
 
 You may also pass `base_url=` / `service_key=` to the constructor.
@@ -35,9 +35,9 @@ You may also pass `base_url=` / `service_key=` to the constructor.
 ## Quick start (matches curl examples)
 
 ```python
-from meriknow import MeriKnow, MeriKnowAPIError
+from unorag import UnoRAG, UnoRAGAPIError
 
-with MeriKnow() as client:
+with UnoRAG() as client:
     evidence = client.retrieve(
         query="病假证明几天内补交？",
         library_id="lib_xxx",
@@ -56,17 +56,17 @@ with MeriKnow() as client:
 Every request sends:
 
 - `Authorization: Bearer mk_svc_…`
-- `X-MeriKnow-Api-Version: 1`
+- `X-UnoRAG-Api-Version: 1`
 - `Content-Type: application/json`
 
 `refused=True` with empty citations is a **normal business outcome**, not a
-transport error. Stable API errors raise `MeriKnowAPIError` with
+transport error. Stable API errors raise `UnoRAGAPIError` with
 `code` / `request_id` / `retryable` / `details`.
 
 ```python
 try:
     client.ask(question="…", library_id="…")
-except MeriKnowAPIError as exc:
+except UnoRAGAPIError as exc:
     print(exc.code, exc.retryable, exc.request_id)
 ```
 
@@ -74,11 +74,11 @@ except MeriKnowAPIError as exc:
 
 | Symbol | Role |
 |--------|------|
-| `MeriKnow` / `MeriKnowClient` | Sync client |
+| `UnoRAG` / `UnoRAGClient` | Sync client |
 | `retrieve(...)` | Evidence only |
 | `ask(...)` | Grounded answer |
 | `RetrieveResponse` / `AskResponse` / `Citation` | Frozen success fields |
-| `ErrorCode` / `MeriKnowAPIError` | Stable error codes |
+| `ErrorCode` / `UnoRAGAPIError` | Stable error codes |
 
 Out of scope for 0.1.0: async client, SSE streaming, OpenAI-compatible layer.
 MCP (stdio tools over this SDK): [`../mcp/`](../mcp/).

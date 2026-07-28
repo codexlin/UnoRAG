@@ -30,7 +30,7 @@ def main() -> None:
 	with psycopg.connect(dsn) as connection:
 		with connection.transaction():
 			connection.execute(
-				"SELECT pg_advisory_xact_lock(hashtext('meriknow:rag:migrations'))"
+				"SELECT pg_advisory_xact_lock(hashtext('unorag:rag:migrations'))"
 			)
 			connection.execute("CREATE SCHEMA IF NOT EXISTS rag")
 			connection.execute(

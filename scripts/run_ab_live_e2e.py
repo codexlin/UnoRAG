@@ -20,10 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 AB = ROOT / "testdata" / "ab"
 GOLDS = AB / "golds.jsonl"
 OUT_DIR = AB / "_e2e_out"
-BASE = os.environ.get("MERIKNOW_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
-JOB_TIMEOUT_S = int(os.environ.get("MERIKNOW_AB_JOB_TIMEOUT_SEC", "900"))
-ASK_TIMEOUT_S = int(os.environ.get("MERIKNOW_AB_ASK_TIMEOUT_SEC", "120"))
-KEEP_LIBRARY = os.environ.get("MERIKNOW_AB_KEEP_LIBRARY", "").strip().lower() in {
+BASE = os.environ.get("UNORAG_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
+JOB_TIMEOUT_S = int(os.environ.get("UNORAG_AB_JOB_TIMEOUT_SEC", "900"))
+ASK_TIMEOUT_S = int(os.environ.get("UNORAG_AB_ASK_TIMEOUT_SEC", "120"))
+KEEP_LIBRARY = os.environ.get("UNORAG_AB_KEEP_LIBRARY", "").strip().lower() in {
 	"1",
 	"true",
 	"yes",
@@ -142,7 +142,7 @@ class Client:
 			return code, raw.decode("utf-8", errors="replace")
 
 	def upload(self, library_id: str, file_path: Path) -> tuple[int, dict]:
-		boundary = f"----meriknow{int(time.time()*1000)}"
+		boundary = f"----unorag{int(time.time()*1000)}"
 		filename = file_path.name
 		content = file_path.read_bytes()
 		# naive multipart
@@ -173,18 +173,18 @@ def main() -> int:
 	env = {}
 	env.update(load_dotenv(ROOT / "apps" / "web" / ".env.local"))
 	env.update(load_dotenv(ROOT / "apps" / "web" / ".env"))
-	credentials_file = os.environ.get("MERIKNOW_AB_CREDENTIALS_FILE", "").strip()
+	credentials_file = os.environ.get("UNORAG_AB_CREDENTIALS_FILE", "").strip()
 	if credentials_file:
 		env.update(load_dotenv(Path(credentials_file).expanduser()))
-	email = os.environ.get("MERIKNOW_ADMIN_EMAIL") or env.get("MERIKNOW_ADMIN_EMAIL")
-	password = os.environ.get("MERIKNOW_ADMIN_PASSWORD") or env.get("MERIKNOW_ADMIN_PASSWORD")
-	password_file = os.environ.get("MERIKNOW_AB_PASSWORD_FILE", "").strip()
+	email = os.environ.get("UNORAG_ADMIN_EMAIL") or env.get("UNORAG_ADMIN_EMAIL")
+	password = os.environ.get("UNORAG_ADMIN_PASSWORD") or env.get("UNORAG_ADMIN_PASSWORD")
+	password_file = os.environ.get("UNORAG_AB_PASSWORD_FILE", "").strip()
 	if password_file:
 		path = Path(password_file).expanduser()
 		if path.is_file():
 			password = path.read_text(encoding="utf-8").strip()
 	if not email or not password:
-		print("FAIL: missing MERIKNOW_ADMIN_EMAIL/PASSWORD", file=sys.stderr)
+		print("FAIL: missing UNORAG_ADMIN_EMAIL/PASSWORD", file=sys.stderr)
 		return 2
 
 	cases = []

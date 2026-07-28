@@ -33,7 +33,7 @@ export async function sendInviteEmail(input: {
 		};
 	}
 
-	const subject = `邀请加入 ${input.workspaceName} · MeriKnow`;
+	const subject = `邀请加入 ${input.workspaceName} · UnoRAG`;
 	const text = [
 		`你被邀请以「${input.role}」加入工作区「${input.workspaceName}」。`,
 		"",

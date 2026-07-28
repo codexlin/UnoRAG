@@ -1,6 +1,6 @@
 # 试点正式验收 / 签字结论稿（RC2-X 证据基线）
 
-> **状态：待审批人签字** — 技术侧证据已齐，**可进入签字流程**；本文**未**宣称已正式 GO。  
+> **状态：待审批人签字** — 技术侧证据已齐，**可进入签字流程**；本文**未**宣称已正式 GO。
 > 勾选与签字栏须由审批人确认后生效；仓库提交本文件不等于完成签字。
 
 ## 元数据
@@ -39,7 +39,7 @@
 | `pilot-preflight.sh` | **PASS** | isolation + CI gate 36/36 |
 | API 契约/健康相关 pytest | **PASS** | 52 passed |
 | `apps/web` `pnpm build` | **PASS** | production build |
-| `pilot-smoke.sh` | **SKIP** | 本地 `MERIKNOW_ADMIN_PASSWORD` 仍为 placeholder，脚本按设计 exit 2；**不**计为 FAIL |
+| `pilot-smoke.sh` | **SKIP** | 本地 `UNORAG_ADMIN_PASSWORD` 仍为 placeholder，脚本按设计 exit 2；**不**计为 FAIL |
 
 ---
 
@@ -83,7 +83,7 @@ RC2-X / 当前证据基线
 | R3 | **PASS** | 模型不可用 → HTTP 503 + 明确错误 + trace；索引未破坏 |
 | R4 | **PASS** | MinerU unreachable → job failed 可定位 |
 
-报告：[`2026-07-26-pilot-rc-b2-r-fault.md`](./2026-07-26-pilot-rc-b2-r-fault.md)。  
+报告：[`2026-07-26-pilot-rc-b2-r-fault.md`](./2026-07-26-pilot-rc-b2-r-fault.md)。
 绑定：R3 干净树复跑 = RC2-X `a79d2a5`。
 
 ### B3 — PASS
@@ -109,7 +109,7 @@ RC2-X / 当前证据基线
 |---|---|
 | S1 health.qdrant_ask / S2 worker.heartbeat / S3 jobs.dead_stuck / S4 ask.http_5xx / S5 disk.usage | **PASS**（firing→webhook→resolved） |
 
-报告：[`2026-07-27-pilot-rc-b5-min-alerts.md`](./2026-07-27-pilot-rc-b5-min-alerts.md)。  
+报告：[`2026-07-27-pilot-rc-b5-min-alerts.md`](./2026-07-27-pilot-rc-b5-min-alerts.md)。
 
 | 绑定 | 值 |
 |---|---|
@@ -119,8 +119,8 @@ RC2-X / 当前证据基线
 
 **S5 / 运维已知限制（签字前须确认）：**
 
-1. 本机未对 documents/PG/Qdrant 卷做 **真实灌盘** 至 >85%（避免 destructive）。  
-2. 验收同时覆盖：**真实 df 测量**（干净复跑约 57.87%，未误报）+ `MERIKNOW_ALERT_DISK_FORCE_PERCENT` **force 注入** webhook 路径。  
+1. 本机未对 documents/PG/Qdrant 卷做 **真实灌盘** 至 >85%（避免 destructive）。
+2. 验收同时覆盖：**真实 df 测量**（干净复跑约 57.87%，未误报）+ `UNORAG_ALERT_DISK_FORCE_PERCENT` **force 注入** webhook 路径。
 3. Webhook 为通用 JSON 接收端（`check.py once|watch` + mock）；**无** Compose/systemd/Kubernetes 常驻部署清单——须配置真实常驻方式与接收端，或审批人书面接受该运维风险。
 
 ---
@@ -135,7 +135,7 @@ RC2-X / 当前证据基线
 | 4 | `pilot-smoke.sh` 因本地 admin 密码仍为 placeholder 而 SKIP | 总门禁不记 FAIL；部署前须换成真实密码并重跑 smoke |
 | 5 | 完整 Grafana / OIDC / SDK / MCP / 成本面板 | 非本轮范围（既有产品边界） |
 | 6 | 目标 RPO 未定义 | B2 仅测单次备份窗口，不承诺周期 RPO |
-| 7 | Web 无正式旧镜像标签（B3 用 `meriknow-web:local`） | 已在 B3/B4 报告写明 |
+| 7 | Web 无正式旧镜像标签（B3 用 `unorag-web:local`） | 已在 B3/B4 报告写明 |
 
 ---
 
@@ -149,8 +149,8 @@ RC2-X / 当前证据基线
 
 **建议勾选（默认，供审批人参考）：**
 
-- [x] **Conditional GO** — 技术证据齐全，待审批人确认正式 GO；签字前须确认 B5 webhook 落点与 S5 磁盘证明方式（force 注入 vs 真实灌盘）。  
-- [ ] **GO** — 仅当审批人书面接受上述限制并完成签字后勾选（**当前勿由技术侧代勾**）。  
+- [x] **Conditional GO** — 技术证据齐全，待审批人确认正式 GO；签字前须确认 B5 webhook 落点与 S5 磁盘证明方式（force 注入 vs 真实灌盘）。
+- [ ] **GO** — 仅当审批人书面接受上述限制并完成签字后勾选（**当前勿由技术侧代勾**）。
 - [ ] **NO-GO**
 
 > 若审批人五项验收齐且书面接受 B5 限制：可考虑将勾选改为 **正式 GO**；在此之前保持 **Conditional GO / 待签字**。

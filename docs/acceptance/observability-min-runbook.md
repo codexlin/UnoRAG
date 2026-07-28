@@ -1,6 +1,6 @@
 # 最低观测 / 告警 Runbook
 
-> 受控试点轻量版：不要求完整 Grafana。目标是 **一条 `trace_id` / `job_id` 能在 15 分钟内定位**到网关、模型、检索、DB 或 Worker。  
+> 受控试点轻量版：不要求完整 Grafana。目标是 **一条 `trace_id` / `job_id` 能在 15 分钟内定位**到网关、模型、检索、DB 或 Worker。
 > **B5**：最低告警已接通（`ops/min_alerts/check.py` + `scripts/acceptance/b5_min_alerts.sh`）。私有栈可走 **Resend 邮件**；通用 webhook（飞书等）可选并存。
 
 ## 1. 关联键
@@ -27,10 +27,10 @@
 
 ```bash
 # 数据面 readiness
-curl -sS "$MERIKNOW_BASE_URL/api/rag/health" | jq .
+curl -sS "$UNORAG_BASE_URL/api/rag/health" | jq .
 
 # 任务
-curl -sS -b cookies.jar "$MERIKNOW_BASE_URL/api/jobs/<job_id>" | jq .
+curl -sS -b cookies.jar "$UNORAG_BASE_URL/api/jobs/<job_id>" | jq .
 
 # Worker / dead / stuck
 pnpm --dir apps/web lifecycle:inspect
@@ -79,6 +79,6 @@ Payload 含 `status=firing|resolved` 与 `workspace_id` / `trace_id` / `job_id` 
 
 ## 5. 非目标（本草稿不覆盖）
 
-- 完整 Grafana/Tempo/Loki 大盘  
-- 成本面板、OIDC、MCP  
+- 完整 Grafana/Tempo/Loki 大盘
+- 成本面板、OIDC、MCP
 - 客户侧 PagerDuty 集成细则（由部署方按上表映射）

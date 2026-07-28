@@ -1,7 +1,7 @@
 # Production-ready 定义清单
 
 仅当 A–E 必选项均为 **是**、F 类非阻断项已写入已知限制，才可针对经过验收的
-MeriKnow 版本与部署环境宣称 **production-ready**（私有化企业知识服务）。
+UnoRAG 版本与部署环境宣称 **production-ready**（私有化企业知识服务）。
 
 本清单对齐 [`PRODUCT.md`](../PRODUCT.md) 的发布口径与 [`ROADMAP.md`](../ROADMAP.md) P0。勾选前须有证据
 （报告、gate JSON、演练记录），而不是「代码看起来齐了」。

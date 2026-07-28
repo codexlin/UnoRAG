@@ -1,11 +1,11 @@
-# MeriKnow
+# UnoRAG
 
 **可私有化部署、权限感知、版本安全、结果可追溯的企业知识服务。**
 
-MeriKnow 独立部署和治理知识，但不要求客户采用我们的最终业务 UI：
+UnoRAG 独立部署和治理知识，但不要求客户采用我们的最终业务 UI：
 
-- 核心产品是 **MeriKnow Knowledge Service**：文档生命周期、ACL、检索、有据回答、评测与可观测性。
-- **MeriKnow Workspace** 是官方管理控制台和参考客户端，也可直接作为企业知识助手使用。
+- 核心产品是 **UnoRAG Knowledge Service**：文档生命周期、ACL、检索、有据回答、评测与可观测性。
+- **UnoRAG Workspace** 是官方管理控制台和参考客户端，也可直接作为企业知识助手使用。
 - 客户已有业务系统或 Agent 时，通过 HTTP API 接入；Python SDK、MCP 与 OpenAI-compatible adapter 是同一 API 的薄适配层。
 
 | 使用方式 | 何时用 | 得到什么 |
@@ -14,7 +14,7 @@ MeriKnow 独立部署和治理知识，但不要求客户采用我们的最终�
 | **嵌入现有系统** | 已有客服、售后、门户、Chat 或 Agent | 通过稳定 API 接入 retrieve/answer，不更换现有 UI/Agent |
 | **协议适配** | 希望用现有开发工具快速集成 | [Python SDK](./sdk/python/) · [MCP](./sdk/mcp/) 已可用；OpenAI-compatible adapter 按路线图提供 |
 
-> 边界与成功标准见 [`docs/PRODUCT.md`](./docs/PRODUCT.md)。  
+> 边界与成功标准见 [`docs/PRODUCT.md`](./docs/PRODUCT.md)。
 > 后面做什么、开始前先做好什么见 [`docs/ROADMAP.md`](./docs/ROADMAP.md)。
 
 ## 快速链接
@@ -42,7 +42,7 @@ MeriKnow 独立部署和治理知识，但不要求客户采用我们的最终�
 ## 仓库结构
 
 ```text
-MeriKnow/
+UnoRAG/
   docker-compose.yml   # 本机 Postgres + Qdrant + Redis
   apps/web/            # Northline 工作台（控制面）
   apps/api/            # FastAPI + LangGraph + lifecycle_worker
@@ -55,7 +55,7 @@ MeriKnow/
 完整说明与 env 分层见 [`docs/DEV.md`](./docs/DEV.md)。摘要：
 
 ```bash
-cd MeriKnow
+cd UnoRAG
 docker compose up -d
 
 cd apps/web
@@ -79,9 +79,9 @@ uv run uvicorn app.main:app --reload --port 8000
 
 ```bash
 # apps/web/.env.local
-MERIKNOW_INTERNAL_SECRET=...   # = api INTERNAL_AUTH_SECRET
-MERIKNOW_SESSION_SECRET=...    # 独立；≠ internal
-MERIKNOW_ADMIN_PASSWORD=...
+UNORAG_INTERNAL_SECRET=...   # = api INTERNAL_AUTH_SECRET
+UNORAG_SESSION_SECRET=...    # 独立；≠ internal
+UNORAG_ADMIN_PASSWORD=...
 
 # apps/api/.env
 APP_ENV=production
@@ -110,4 +110,4 @@ uv run python scripts/run_eval_cases.py
 
 ## 与 SAG / RAG-Anything
 
-借鉴解析与编排能力，**不照搬**「通用 Agent / 万能框架」定位。MeriKnow 坚持企业知识服务内核 + 多种客户端/接入面。
+借鉴解析与编排能力，**不照搬**「通用 Agent / 万能框架」定位。UnoRAG 坚持企业知识服务内核 + 多种客户端/接入面。

@@ -1,4 +1,4 @@
-# MeriKnow Knowledge API 与嵌入集成
+# UnoRAG Knowledge API 与嵌入集成
 
 > 状态：Public API v1.0 已冻结（Retrieve/Ask + Service Key）（2026-07-27）
 >
@@ -8,9 +8,9 @@
 
 ## 目标
 
-让客户已有客服、售后、门户、Chat 或 Agent 接入 MeriKnow 的企业知识能力，而不必：
+让客户已有客服、售后、门户、Chat 或 Agent 接入 UnoRAG 的企业知识能力，而不必：
 
-- 使用 MeriKnow UI
+- 使用 UnoRAG UI
 - 采用我们的通用 Agent / 工具运行时
 - 把 FastAPI 裸暴露到公网
 
@@ -34,7 +34,7 @@ Knowledge API 是核心产品契约；Workspace、Python SDK、MCP 和 OpenAI-co
 | 外部 Documents / Versions / Jobs API | **规划中（优先）** | 让业务系统完成知识生命周期接入，不绕过 Control Plane |
 | Python SDK | **可用（0.1.0）** — [`sdk/python/`](../sdk/python/) | 薄 HTTP client（`retrieve` / `ask`），不是嵌入式第二引擎 |
 | MCP server | **已交付 0.1.0**（[`sdk/mcp/`](../sdk/mcp/)） | stdio 工具 `retrieve` / `ask`，经 Python SDK 调同一 HTTP 契约 |
-| OpenAI-compatible endpoint | **规划中（下一项）** | 降低迁移成本；MeriKnow 原生 citation/refusal/trace 契约仍权威 |
+| OpenAI-compatible endpoint | **规划中（下一项）** | 降低迁移成本；UnoRAG 原生 citation/refusal/trace 契约仍权威 |
 | OAuth-for-apps | **当前产品非目标** | 服务间集成使用可审计、可限制 scope 的 Service Key；只有明确建设公网多租户开发者平台时才重新评估 |
 | 公网多租户 SaaS 网关 | **非目标（远期可选）** | 首版私有化内网集成 |
 
@@ -49,7 +49,7 @@ Customer Backend
   → FastAPI  /v1/retrieve | /v1/ask   （仅内网）
 ```
 
-与内部 HMAC、`MERIKNOW_SESSION_SECRET`、用户 cookie **分离**。生产仍禁止公网裸暴露 `:8000`。
+与内部 HMAC、`UNORAG_SESSION_SECRET`、用户 cookie **分离**。生产仍禁止公网裸暴露 `:8000`。
 
 ## Public API v1.0 契约
 
@@ -76,12 +76,12 @@ GET /api/v1/openapi.json
 | Citation | 只返回稳定展示字段；不暴露完整 chunk body、tenant、generation |
 | Debug | `retrieval_debug` 不属于外部契约 |
 | 关联 ID | 每次请求由网关生成；响应头 `X-Request-Id`；成功体 `trace_id`；错误体 `error.request_id` |
-| 版本标记 | 响应头 `X-MeriKnow-Api-Version: 1`；成功体 `api_version: "v1"` |
+| 版本标记 | 响应头 `X-UnoRAG-Api-Version: 1`；成功体 `api_version: "v1"` |
 | 错误 | 统一 `error.code/message/request_id/retryable/details?` |
 | 边界 | JSON body 最大 65,536 bytes；问句最大 4,000 字符；`top_k` 1–50 |
 | 超时 | 网关等待数据面最多 60 秒；超时返回 `504 upstream_timeout` |
 | 流式 | 不属于外部 v1.0 路径；事件名已在契约文档冻结供未来 `/answer/stream`；内部 Workspace SSE ≠ 公开路径 |
-| 限流 | `429 rate_limit_exceeded` 已冻结；可选进程内限流 `MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE`；集群级用 Redis/Ingress |
+| 限流 | `429 rate_limit_exceeded` 已冻结；可选进程内限流 `UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE`；集群级用 Redis/Ingress |
 | 审计 / usage | `audit_logs`：`knowledge.retrieve` / `knowledge.ask`；stdout `knowledge.api.usage`；token ledger 后置 |
 
 ### 鉴权头
@@ -90,7 +90,7 @@ GET /api/v1/openapi.json
 Authorization: Bearer mk_svc_<secret>
 ```
 
-也接受：`X-MeriKnow-Service-Key: mk_svc_<secret>`。新集成应使用标准
+也接受：`X-UnoRAG-Service-Key: mk_svc_<secret>`。新集成应使用标准
 `Authorization` 头。
 
 ### Retrieve（只检索）
@@ -219,7 +219,7 @@ table_id · row_start · row_end · record_type
 
 ```http
 X-Request-Id: <uuid>
-X-MeriKnow-Api-Version: 1
+X-UnoRAG-Api-Version: 1
 ```
 
 ### 控制面：密钥管理（owner/admin）
@@ -272,7 +272,7 @@ curl -sS -X POST "$APP/api/v1/ask" \
 1. 无外部文档生命周期 API、OpenAI-compatible endpoint、OAuth-for-apps、对外流式 ask（Python SDK + MCP 0.1.0 已提供 retrieve/ask 薄客户端）。
 2. Service principal 为 `service:<key_id>`：可见 `acl_scope=workspace` 的文档；**不会**自动获得仅绑定某用户的 restricted ACL。
 3. 密钥绑定**当前工作区**；不跨工作区。
-4. `429` 契约已冻结；单节点可设 `MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE`；多副本仍建议 Redis/Ingress。
+4. `429` 契约已冻结；单节点可设 `UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE`；多副本仍建议 Redis/Ingress。
 5. 客户应用应只在**服务端**持有 key，不要放进浏览器。
 6. curl 示例见 [`../examples/public-api-v1/`](../examples/public-api-v1/)。
 
@@ -314,9 +314,9 @@ GET    /api/v1/traces/{trace_id}
 SDK 保持薄、可替换；字段对齐冻结契约（`library_id`，非规划稿里的 `knowledge_base`）：
 
 ```python
-from meriknow import MeriKnow
+from unorag import UnoRAG
 
-client = MeriKnow(
+client = UnoRAG(
     base_url="https://knowledge.example.internal",
     service_key="mk_svc_...",
 )
@@ -334,7 +334,7 @@ answer = client.ask(
 
 0.1.0 已具备：
 
-- Service Key 鉴权 + `X-MeriKnow-Api-Version: 1`
+- Service Key 鉴权 + `X-UnoRAG-Api-Version: 1`
 - 同步 `retrieve` / `ask`
 - dataclass 响应模型 + 稳定错误码映射
 
@@ -348,7 +348,7 @@ SDK 不负责：
 
 ## MCP Server（v0.1.0）
 
-包路径：[`sdk/mcp/`](../sdk/mcp/)。安装：`cd sdk/mcp && pip install -e .`；运行：`meriknow-mcp`（stdio）。
+包路径：[`sdk/mcp/`](../sdk/mcp/)。安装：`cd sdk/mcp && pip install -e .`；运行：`unorag-mcp`（stdio）。
 
 工具与 HTTP 1:1（经 Python SDK，不嵌入引擎）：
 
@@ -357,18 +357,18 @@ SDK 不负责：
 | `retrieve` | `POST /api/v1/retrieve` |
 | `ask` | `POST /api/v1/ask` |
 
-鉴权与 SDK 相同：`MERIKNOW_BASE_URL` + `MERIKNOW_SERVICE_KEY`（`mk_svc_…`），请求带 `X-MeriKnow-Api-Version: 1`。Cursor / Claude 配置见 [`sdk/mcp/README.md`](../sdk/mcp/README.md)。
+鉴权与 SDK 相同：`UNORAG_BASE_URL` + `UNORAG_SERVICE_KEY`（`mk_svc_…`），请求带 `X-UnoRAG-Api-Version: 1`。Cursor / Claude 配置见 [`sdk/mcp/README.md`](../sdk/mcp/README.md)。
 
 删除文档、修改 ACL、成员管理等高影响动作不进入首版 MCP。
 
 ## OpenAI-compatible 方向（规划 · 下一项）
 
-兼容层用于让现有 OpenAI client 快速试用，例如将 `model` 映射到指定 knowledge base。标准响应无法完整表达 MeriKnow 的 citation、refusal 和 trace，因此兼容响应需使用扩展字段，同时保留原生 API：
+兼容层用于让现有 OpenAI client 快速试用，例如将 `model` 映射到指定 knowledge base。标准响应无法完整表达 UnoRAG 的 citation、refusal 和 trace，因此兼容响应需使用扩展字段，同时保留原生 API：
 
 ```json
 {
   "choices": [],
-  "meriknow": {
+  "unorag": {
     "citations": [],
     "refused": false,
     "refuse_reason": null,
@@ -395,10 +395,10 @@ OpenAI-compatible endpoint 不成为新的业务事实源，也不允许绕过 S
 | 浏览器直连 FastAPI | 经 `/api/v1/*` 或客户自有 BFF |
 | 用 internal HMAC secret 当客户 key | 独立 `mk_svc_` service key |
 | 调用 `/v1/ingest` 上传 | 控制面文档 API |
-| 期望 MeriKnow 托管客户 Agent 工具链 | Knowledge API 只提供可治理的知识能力 |
+| 期望 UnoRAG 托管客户 Agent 工具链 | Knowledge API 只提供可治理的知识能力 |
 | 在 Python SDK 内复制完整引擎 | SDK 只调用统一 Knowledge API |
 | MCP 自己访问 Qdrant | MCP 通过 Service Key 调用 Knowledge API |
-| 每轮强制写 MeriKnow archive | 客户可自管消息 |
+| 每轮强制写 UnoRAG archive | 客户可自管消息 |
 
 ## 与 Workspace 共享的内核
 

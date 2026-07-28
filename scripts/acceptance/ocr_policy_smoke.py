@@ -284,7 +284,7 @@ def main() -> int:
 		"suite": "OCR policy + MinerU unavailable smoke",
 		"status": status,
 		"detail": detail,
-		"rc_sha": os.getenv("MERIKNOW_RC_SHA") or _git("rev-parse", "HEAD"),
+		"rc_sha": os.getenv("UNORAG_RC_SHA") or _git("rev-parse", "HEAD"),
 		"git_head": _git("rev-parse", "HEAD"),
 		"git_status_porcelain": _git("status", "--porcelain"),
 		"script_sha256": hashlib.sha256(script_bytes).hexdigest(),

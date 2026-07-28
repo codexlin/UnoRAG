@@ -1,4 +1,4 @@
-# MeriKnow Control Plane（控制面）
+# UnoRAG Control Plane（控制面）
 
 Next.js 是浏览器侧产品服务：身份、工作区、ACL、文档版本、Job、审计（PostgreSQL schema `app`）。FastAPI 仍是内部 RAG 数据面。
 
@@ -15,8 +15,8 @@ pnpm outbox:run &   # 文库投影到 RAG API
 pnpm dev
 ```
 
-打开 <http://localhost:3000/app>。浏览器走同源 `/api/rag/*` → `RAG_API_URL`。  
-登录：`MERIKNOW_ADMIN_EMAIL` / `MERIKNOW_ADMIN_PASSWORD`。
+打开 <http://localhost:3000/app>。浏览器走同源 `/api/rag/*` → `RAG_API_URL`。
+登录：`UNORAG_ADMIN_EMAIL` / `UNORAG_ADMIN_PASSWORD`。
 
 产品上传走原生文档 API（默认 Lifecycle V2），**不**再代理 FastAPI ingest。需同时运行 api 的 `lifecycle_worker`，并与本进程共享 `DOCUMENT_STORAGE_ROOT`。
 
@@ -28,7 +28,7 @@ Owner/admin 在 **设置** 中邀请。主路径为可复制 magic link（`/invi
 EMAIL_PROVIDER=none          # 默认：仅复制链接
 # EMAIL_PROVIDER=resend
 # RESEND_API_KEY=re_...
-# EMAIL_FROM=MeriKnow <onboarding@your-domain.com>
+# EMAIL_FROM=UnoRAG <onboarding@your-domain.com>
 # APP_BASE_URL=http://localhost:3000
 ```
 
@@ -51,14 +51,14 @@ Drizzle **只**管理 schema `app`。不要指向 Python 的 `public` 兼容表�
 
 | 要点 | 说明 |
 |------|------|
-| `MERIKNOW_INTERNAL_SECRET` | = FastAPI `INTERNAL_AUTH_SECRET` |
-| `MERIKNOW_SESSION_SECRET` | 独立；≥32；≠ internal |
+| `UNORAG_INTERNAL_SECRET` | = FastAPI `INTERNAL_AUTH_SECRET` |
+| `UNORAG_SESSION_SECRET` | 独立；≥32；≠ internal |
 | `DOCUMENT_LIFECYCLE_V2` | 默认开；仅显式 `false`/`0` 关闭 |
 | Ask 产品旋钮 | `/app/settings` 工作区覆盖，不在 web env |
 
 `INTERNAL_AUTH_ENABLED=true`（api）时多用户才不会档案串台。生产勿暴露 FastAPI。
 
-Bootstrap UUID（`MERIKNOW_ORGANIZATION_ID` 等）为私有化种子，直至 OIDC 替换。`pnpm db:bootstrap` 幂等；已有密码凭证不会被静默重置。
+Bootstrap UUID（`UNORAG_ORGANIZATION_ID` 等）为私有化种子，直至 OIDC 替换。`pnpm db:bootstrap` 幂等；已有密码凭证不会被静默重置。
 
 ## Outbox 投影
 

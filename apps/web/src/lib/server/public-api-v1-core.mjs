@@ -389,5 +389,7 @@ export function projectPublicApiSuccess(target, value, requestId) {
 }
 
 export function publicSuccessKeySet(target) {
-	return target === "ask" ? PUBLIC_ASK_SUCCESS_KEYS : PUBLIC_RETRIEVE_SUCCESS_KEYS;
+	return target === "ask"
+		? PUBLIC_ASK_SUCCESS_KEYS
+		: PUBLIC_RETRIEVE_SUCCESS_KEYS;
 }

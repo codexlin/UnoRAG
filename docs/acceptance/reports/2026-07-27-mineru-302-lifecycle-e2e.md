@@ -2,7 +2,7 @@
 
 ## Scope
 
-Black-box lifecycle acceptance against private Compose (`meriknow-private`,
+Black-box lifecycle acceptance against private Compose (`unorag-private`,
 `http://localhost:8088`) with temporary `MINERU_PROVIDER=302ai` on
 **lifecycle-worker only**. Credential was injected for this run only and removed
 afterward. Full API key never appears below (last4 only if needed: `…tgNH`).
@@ -11,12 +11,12 @@ afterward. Full API key never appears below (last4 only if needed: `…tgNH`).
 
 | Item | Value |
 |---|---|
-| Compose project | `meriknow-private` |
+| Compose project | `unorag-private` |
 | HTTP | `:8088` |
 | Fixture | `testdata/ab/crosstable-large.pdf` (64,840 bytes) |
 | Worker flags (temporary) | `MINERU_ENABLED=true`, `MINERU_PROVIDER=302ai`, `EXTERNAL_PARSER_ALLOWED=true`, `MINERU_302_API_KEY` set |
 | API / Web | Recreated **worker only**; API kept prior defaults and **no** 302 key |
-| Code under test | `4deed36` (`STARTED` → in-progress / `MinerUPendingError`); image rebuilt `meriknow-api:local` |
+| Code under test | `4deed36` (`STARTED` → in-progress / `MinerUPendingError`); image rebuilt `unorag-api:local` |
 | Admin login | `admin@example.com` via `deploy/config/bootstrap.env` |
 
 ## Browser access

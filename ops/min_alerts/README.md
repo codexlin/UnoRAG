@@ -1,4 +1,4 @@
-# MeriKnow 最低告警（B5）
+# UnoRAG 最低告警（B5）
 
 通用 webhook **或** Resend 邮件（私有部署优先邮件；飞书 webhook 可后接）。五个信号：
 
@@ -20,10 +20,10 @@ python3 ops/min_alerts/check.py mock-receiver --port 18999 --out /tmp/mk-alerts.
 
 # 评估一次（webhook 和/或 Resend；可用 --dry-run）
 set -a && source ops/min_alerts/.env && set +a
-python3 ops/min_alerts/check.py once --state-file "${MERIKNOW_ALERT_STATE_FILE:-/tmp/mk-alert-state.json}"
+python3 ops/min_alerts/check.py once --state-file "${UNORAG_ALERT_STATE_FILE:-/tmp/mk-alert-state.json}"
 ```
 
-Payload 字段：`status`（firing/resolved）、`alert_name`、`workspace_id`、`trace_id`、`job_id`、`worker_id` 等。  
+Payload 字段：`status`（firing/resolved）、`alert_name`、`workspace_id`、`trace_id`、`job_id`、`worker_id` 等。
 投递 fail-soft：单通道失败只记在 `delivery`，不抛崩 checker。
 
 ## Resend 邮件（私有 webch 推荐）
@@ -39,10 +39,14 @@ Webhook 仍用 `ALERT_WEBHOOK_URL`（可与邮件并存；任一成功即 `deliv
 
 ### 阿里云 webch 启用
 
-在主机 `/opt/meriknow`（或 compose 工作目录）准备 `ops/min_alerts/.env`，填入上表三键 + 既有 `MERIKNOW_HEALTH_URL` / `DATABASE_URL` / heartbeat / disk 路径。cron 示例：
+在主机 `/opt/unorag`（或 compose 工作目录）准备 `ops/min_alerts/.env`，填入上表三键 + 既有 `UNORAG_HEALTH_URL` / `DATABASE_URL` / heartbeat / disk 路径。
+
+生产 Compose 主机优先通过 `run-docker.sh` 复用当前 API 镜像的 Python 运行时。脚本会从正在运行的 API 容器读取镜像引用，升级后无需同步修改 cron。默认容器、网络和 documents volume 可分别用 `UNORAG_ALERT_API_CONTAINER`、`UNORAG_ALERT_DOCKER_NETWORK`、`UNORAG_ALERT_DOCUMENTS_VOLUME` 覆盖。
+
+cron 示例（`flock` 防止上一次检查未结束时重叠执行）：
 
 ```cron
-*/5 * * * * cd /opt/meriknow && set -a && . ops/min_alerts/.env && set +a && /usr/bin/python3 ops/min_alerts/check.py once >> /var/log/meriknow-alerts.log 2>&1
+*/5 * * * * /usr/bin/flock -n /run/lock/unorag-alerts.lock /opt/unorag/ops/min_alerts/run-docker.sh once >> /var/log/unorag-alerts.log 2>&1
 ```
 
 首次建议 `--dry-run` 看 signals，再去掉 dry-run 发真实邮件。飞书 webhook 可后续加 `ALERT_WEBHOOK_URL`，无需改代码。

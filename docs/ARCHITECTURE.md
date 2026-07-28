@@ -1,4 +1,4 @@
-# MeriKnow 架构（与代码一致）
+# UnoRAG 架构（与代码一致）
 
 > 状态：现行（2026-07-26）
 >
@@ -6,7 +6,7 @@
 
 ## 产品与技术分层
 
-MeriKnow 在部署上是独立知识服务，在使用上可嵌入客户业务：
+UnoRAG 在部署上是独立知识服务，在使用上可嵌入客户业务：
 
 ```text
 Official Workspace     Customer Apps / Agents
@@ -172,7 +172,7 @@ Ask 轨迹：`retrieval_debug.ask_policy` 记录 public + resolved（含具体 h
 ## 鉴权与请求上下文
 
 ```text
-Browser cookie (MERIKNOW_SESSION_SECRET)
+Browser cookie (UNORAG_SESSION_SECRET)
   → Next 每次重载 user / membership / groups
   → 签发短时 HMAC RequestContext
        (tenant, workspace, principal, groups, method, path, body digest, jti)

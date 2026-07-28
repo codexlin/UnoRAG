@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 API="$ROOT/apps/api"
-REPORT_DIR="${MERIKNOW_STABILITY_REPORT_DIR:-/tmp/meriknow-private-stability}"
+REPORT_DIR="${UNORAG_STABILITY_REPORT_DIR:-/tmp/unorag-private-stability}"
 mkdir -p "$REPORT_DIR"
 
 log() { printf '==> %s\n' "$*"; }

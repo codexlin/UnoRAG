@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
-# apps/api/app/eval/fixtures.py → MeriKnow/
+# apps/api/app/eval/fixtures.py → UnoRAG/
 REPO_ROOT = Path(__file__).resolve().parents[4]
 TESTDATA = REPO_ROOT / "testdata"
 

@@ -12,25 +12,25 @@ if [[ ! -f ../config/runtime.env || ! -f ../config/runtime.secret || ! -f ../con
 	exit 1
 fi
 
-INTERNAL="$(mk_config_get MERIKNOW_INTERNAL_SECRET || true)"
-SESSION="$(mk_config_get MERIKNOW_SESSION_SECRET || true)"
-ADMIN_PW="$(mk_config_get MERIKNOW_ADMIN_PASSWORD || true)"
+INTERNAL="$(mk_config_get UNORAG_INTERNAL_SECRET || true)"
+SESSION="$(mk_config_get UNORAG_SESSION_SECRET || true)"
+ADMIN_PW="$(mk_config_get UNORAG_ADMIN_PASSWORD || true)"
 LLM_KEY="$(mk_config_get LLM_API_KEY || true)"
 
 if [[ -z "$INTERNAL" || "$INTERNAL" == *"replace-with-random"* || "${#INTERNAL}" -lt 32 ]]; then
-	echo "refusing to install: MERIKNOW_INTERNAL_SECRET missing/placeholder/<32 chars" >&2
+	echo "refusing to install: UNORAG_INTERNAL_SECRET missing/placeholder/<32 chars" >&2
 	exit 1
 fi
 if [[ -z "$SESSION" || "$SESSION" == *"replace-with-random"* || "${#SESSION}" -lt 32 ]]; then
-	echo "refusing to install: MERIKNOW_SESSION_SECRET missing/placeholder/<32 chars" >&2
+	echo "refusing to install: UNORAG_SESSION_SECRET missing/placeholder/<32 chars" >&2
 	exit 1
 fi
 if [[ "$INTERNAL" == "$SESSION" ]]; then
-	echo "refusing to install: MERIKNOW_INTERNAL_SECRET must differ from MERIKNOW_SESSION_SECRET" >&2
+	echo "refusing to install: UNORAG_INTERNAL_SECRET must differ from UNORAG_SESSION_SECRET" >&2
 	exit 1
 fi
 if [[ -z "$ADMIN_PW" || "$ADMIN_PW" == "change-this-before-deployment" ]]; then
-	echo "refusing to install: set MERIKNOW_ADMIN_PASSWORD in ../config/bootstrap.env" >&2
+	echo "refusing to install: set UNORAG_ADMIN_PASSWORD in ../config/bootstrap.env" >&2
 	exit 1
 fi
 if [[ -z "$LLM_KEY" ]]; then
@@ -52,8 +52,8 @@ mk_compose --profile migrate run --rm migrate-web
 mk_compose --profile migrate run --rm migrate-rag
 
 echo "==> configuring least-privilege roles (idempotent)"
-POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo meriknow)"
-POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo meriknow)"
+POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo unorag)"
+POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo unorag)"
 if [[ -f ../../ops/postgres/configure-runtime-roles.sql ]]; then
 	mk_compose exec -T postgres \
 		psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \

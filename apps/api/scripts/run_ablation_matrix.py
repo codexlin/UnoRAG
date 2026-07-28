@@ -10,7 +10,7 @@ Examples:
   cd apps/api
   uv run python scripts/run_ablation_matrix.py \\
     --cases tests/eval/ablation_cases.jsonl \\
-    --report-out /tmp/meriknow-ablation.json
+    --report-out /tmp/unorag-ablation.json
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ def _summarize(results: list, cases: list[EvalCase]) -> dict:
 			}
 		)
 	return {
-		"schema_version": "meriknow.ablation.v1",
+		"schema_version": "unorag.ablation.v1",
 		"purpose": "experimental — not a release gate",
 		"baseline_variant": "A0_full",
 		"variants": rows,
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
 	with tempfile.NamedTemporaryFile(
 		mode="w",
 		suffix=".jsonl",
-		prefix="meriknow-ablation-",
+		prefix="unorag-ablation-",
 		delete=False,
 		encoding="utf-8",
 	) as handle:

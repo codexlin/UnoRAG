@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Chunk-profile + MinerU A/B evaluation for MeriKnow.
+"""Chunk-profile + MinerU A/B evaluation for UnoRAG.
 
 Runs in-process (Settings overrides) so CHUNKING_PROFILE / MINERU_* can vary
 without restarting uvicorn. Ingest uses live embeddings + Qdrant; Ask uses
@@ -706,7 +706,7 @@ def _markdown_report(
 	profiles: list[str],
 ) -> str:
 	lines: list[str] = []
-	lines.append("# MeriKnow Chunk Profile + MinerU A/B Report")
+	lines.append("# UnoRAG Chunk Profile + MinerU A/B Report")
 	lines.append("")
 	lines.append(f"- Generated: `{_utc_stamp()}`")
 	lines.append(f"- Profiles: {', '.join(profiles)}")

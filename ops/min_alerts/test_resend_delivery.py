@@ -15,15 +15,15 @@ import check as min_alerts  # noqa: E402
 
 
 SAMPLE_PAYLOAD = {
-	"version": "meriknow.min_alerts/1",
+	"version": "unorag.min_alerts/1",
 	"status": "firing",
 	"alert_name": "health.qdrant_ask",
-	"namespace": "meriknow",
-	"fingerprint": "health.qdrant_ask:meriknow",
+	"namespace": "unorag",
+	"fingerprint": "health.qdrant_ask:unorag",
 	"severity": "warning",
 	"starts_at": "2026-07-28T00:00:00Z",
 	"ends_at": None,
-	"labels": {"namespace": "meriknow"},
+	"labels": {"namespace": "unorag"},
 	"annotations": {"reasons": ["qdrant_ok=false"]},
 	"workspace_id": "ws-1",
 	"organization_id": "",
@@ -149,7 +149,7 @@ def test_apply_transitions_resend_fail_soft(monkeypatch: pytest.MonkeyPatch) -> 
 			"name": "health.qdrant_ask",
 			"firing": True,
 			"annotations": {"reasons": ["ask_ready=false"]},
-			"labels": {"namespace": "meriknow"},
+			"labels": {"namespace": "unorag"},
 		}
 	]
 	events = min_alerts.apply_transitions(

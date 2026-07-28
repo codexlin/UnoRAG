@@ -6,7 +6,7 @@ export function GET() {
 	return Response.json(contract, {
 		headers: {
 			"cache-control": "public, max-age=300",
-			"x-meriknow-api-version": "1",
+			"x-unorag-api-version": "1",
 		},
 	});
 }

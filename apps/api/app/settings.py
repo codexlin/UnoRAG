@@ -50,7 +50,7 @@ class Settings(BaseSettings):
 		extra="ignore",
 	)
 
-	app_name: str = "MeriKnow API"
+	app_name: str = "UnoRAG API"
 	app_env: str = "development"
 	api_prefix: str = "/v1"
 	cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
 	embedding_batch_size: int = 10
 
 	qdrant_url: str = "http://localhost:6333"
-	qdrant_collection: str = "meriknow_chunks"
+	qdrant_collection: str = "unorag_chunks"
 	qdrant_timeout_s: float = 2.0
 
 	chunk_size: int = 500
@@ -145,7 +145,7 @@ class Settings(BaseSettings):
 
 	# postgres required in product; json is test-only escape hatch.
 	metadata_backend: str = "postgres"
-	database_url: str = "postgresql+psycopg://meriknow:meriknow@localhost:5432/meriknow"
+	database_url: str = "postgresql+psycopg://unorag:unorag@localhost:5432/unorag"
 	metadata_path: str = "data/metadata.json"
 	# Preferred shared volume with Next.js. Falls back to document_storage_dir.
 	document_storage_root: str = ""

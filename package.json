@@ -1,5 +1,5 @@
 {
-  "name": "meriknow",
+  "name": "unorag",
   "private": true,
   "scripts": {
     "dev": "pnpm --filter web dev",

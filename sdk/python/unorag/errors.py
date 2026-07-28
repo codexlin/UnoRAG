@@ -1,4 +1,4 @@
-"""Stable error mapping for MeriKnow Knowledge API v1."""
+"""Stable error mapping for UnoRAG Knowledge API v1."""
 
 from __future__ import annotations
 
@@ -33,19 +33,19 @@ class ErrorCode(str, Enum):
             return value
 
 
-class MeriKnowError(Exception):
-    """Base error for the MeriKnow SDK."""
+class UnoRAGError(Exception):
+    """Base error for the UnoRAG SDK."""
 
 
-class MeriKnowTransportError(MeriKnowError):
-    """Network / transport failure before a MeriKnow error envelope is available."""
+class UnoRAGTransportError(UnoRAGError):
+    """Network / transport failure before a UnoRAG error envelope is available."""
 
     def __init__(self, message: str, *, cause: Optional[BaseException] = None) -> None:
         super().__init__(message)
         self.cause = cause
 
 
-class MeriKnowVersionError(MeriKnowError):
+class UnoRAGVersionError(UnoRAGError):
     """Response advertised an unexpected API major version."""
 
     def __init__(
@@ -60,7 +60,7 @@ class MeriKnowVersionError(MeriKnowError):
         self.actual = actual
 
 
-class MeriKnowAPIError(MeriKnowError):
+class UnoRAGAPIError(UnoRAGError):
     """Structured API error matching the frozen error envelope."""
 
     def __init__(
@@ -92,7 +92,7 @@ class MeriKnowAPIError(MeriKnowError):
         status_code: int,
         body: Mapping[str, Any],
         headers: Mapping[str, str],
-    ) -> MeriKnowAPIError:
+    ) -> UnoRAGAPIError:
         error = body.get("error") if isinstance(body.get("error"), Mapping) else {}
         if not isinstance(error, Mapping):
             error = {}
@@ -113,7 +113,7 @@ class MeriKnowAPIError(MeriKnowError):
             details=details if isinstance(details, Mapping) else {},
             status_code=status_code,
             retry_after=headers.get("retry-after"),
-            api_version=headers.get("x-meriknow-api-version"),
+            api_version=headers.get("x-unorag-api-version"),
         )
 
 

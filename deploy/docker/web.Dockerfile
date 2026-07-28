@@ -1,6 +1,6 @@
-# MeriKnow Next.js Control Plane image.
+# UnoRAG Next.js Control Plane image.
 # Build from repository root:
-#   docker build -f deploy/docker/web.Dockerfile -t meriknow-web:local .
+#   docker build -f deploy/docker/web.Dockerfile -t unorag-web:local .
 
 FROM node:22-bookworm-slim AS deps
 WORKDIR /repo
@@ -38,20 +38,20 @@ ENV NODE_ENV=production \
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends curl \
 	&& rm -rf /var/lib/apt/lists/* \
-	&& useradd --system --uid 10001 --create-home meriknow
+	&& useradd --system --uid 10001 --create-home unorag
 
 # Next standalone output (see apps/web/next.config.ts).
-COPY --from=builder --chown=meriknow:meriknow /repo/apps/web/.next/standalone ./
-COPY --from=builder --chown=meriknow:meriknow /repo/apps/web/.next/static ./apps/web/.next/static
-COPY --from=builder --chown=meriknow:meriknow /repo/apps/web/public ./apps/web/public
+COPY --from=builder --chown=unorag:unorag /repo/apps/web/.next/standalone ./
+COPY --from=builder --chown=unorag:unorag /repo/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder --chown=unorag:unorag /repo/apps/web/public ./apps/web/public
 # Migrator / ops scripts (drizzle SQL + node tools).
-COPY --from=builder --chown=meriknow:meriknow /repo/apps/web/drizzle ./apps/web/drizzle
-COPY --from=builder --chown=meriknow:meriknow /repo/apps/web/drizzle.config.ts ./apps/web/drizzle.config.ts
-COPY --from=builder --chown=meriknow:meriknow /repo/apps/web/scripts ./apps/web/scripts
-COPY --from=builder --chown=meriknow:meriknow /repo/apps/web/package.json ./apps/web/package.json
-COPY --from=builder --chown=meriknow:meriknow /repo/contracts ./contracts
+COPY --from=builder --chown=unorag:unorag /repo/apps/web/drizzle ./apps/web/drizzle
+COPY --from=builder --chown=unorag:unorag /repo/apps/web/drizzle.config.ts ./apps/web/drizzle.config.ts
+COPY --from=builder --chown=unorag:unorag /repo/apps/web/scripts ./apps/web/scripts
+COPY --from=builder --chown=unorag:unorag /repo/apps/web/package.json ./apps/web/package.json
+COPY --from=builder --chown=unorag:unorag /repo/contracts ./contracts
 
-USER meriknow
+USER unorag
 EXPOSE 3000
 WORKDIR /app/apps/web
 CMD ["node", "server.js"]

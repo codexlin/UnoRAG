@@ -21,6 +21,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  brand-residue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject legacy brand names
+        run: ./scripts/check_brand_residue.sh
+
   lint-diff:
     runs-on: ubuntu-latest
     steps:
@@ -86,7 +93,7 @@ jobs:
           target: runner
           push: false
           load: true
-          tags: meriknow-web:ci
+          tags: unorag-web:ci
       - name: Build web migrator (no push)
         uses: docker/build-push-action@v6
         with:
@@ -95,7 +102,7 @@ jobs:
           target: migrator
           push: false
           load: true
-          tags: meriknow-web-migrator:ci
+          tags: unorag-web-migrator:ci
       - name: Build api (no push)
         uses: docker/build-push-action@v6
         with:
@@ -103,4 +110,4 @@ jobs:
           file: deploy/docker/api.Dockerfile
           push: false
           load: true
-          tags: meriknow-api:ci
+          tags: unorag-api:ci

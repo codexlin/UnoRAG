@@ -1,4 +1,4 @@
-"""Tests for MeriKnow MCP tools (mock MeriKnow client — no live server)."""
+"""Tests for UnoRAG MCP tools (mock UnoRAG client — no live server)."""
 
 from __future__ import annotations
 
@@ -7,18 +7,18 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from meriknow import (
+from unorag import (
     AskResponse,
     Citation,
     ErrorCode,
-    MeriKnowAPIError,
-    MeriKnowError,
-    MeriKnowTransportError,
-    MeriKnowVersionError,
+    UnoRAGAPIError,
+    UnoRAGError,
+    UnoRAGTransportError,
+    UnoRAGVersionError,
     RetrieveResponse,
 )
-from meriknow_mcp.formatting import error_payload, filters_mapping, response_to_dict
-from meriknow_mcp.server import create_server
+from unorag_mcp.formatting import error_payload, filters_mapping, response_to_dict
+from unorag_mcp.server import create_server
 
 
 TRACE = "11111111-1111-4111-8111-111111111111"
@@ -190,7 +190,7 @@ async def test_unknown_filter_keys_are_invalid_request():
 
 
 def test_filters_mapping_rejects_unknown_keys():
-    with pytest.raises(MeriKnowAPIError) as caught:
+    with pytest.raises(UnoRAGAPIError) as caught:
         filters_mapping({"doc_id": "d1", "extra": "nope", "foo": "bar"})
     assert caught.value.code == ErrorCode.INVALID_REQUEST
     assert caught.value.details["fields"] == ["extra", "foo"]
@@ -199,7 +199,7 @@ def test_filters_mapping_rejects_unknown_keys():
 @pytest.mark.asyncio
 async def test_version_error_is_unexpected_api_version_tool_error():
     def boom(**_: Any) -> None:
-        raise MeriKnowVersionError(
+        raise UnoRAGVersionError(
             "unexpected API version",
             expected="1",
             actual="2",
@@ -220,7 +220,7 @@ async def test_version_error_is_unexpected_api_version_tool_error():
 @pytest.mark.asyncio
 async def test_factory_config_error_surfaces_client_error_envelope():
     def missing_env() -> MagicMock:
-        raise MeriKnowError("base_url is required (or set MERIKNOW_BASE_URL)")
+        raise UnoRAGError("base_url is required (or set UNORAG_BASE_URL)")
 
     mcp = create_server(client_factory=missing_env)
 
@@ -231,14 +231,14 @@ async def test_factory_config_error_surfaces_client_error_envelope():
 
     envelope = json.loads(_exception_text(caught.value))
     assert envelope["error"]["code"] == "client_error"
-    assert "MERIKNOW_BASE_URL" in envelope["error"]["message"]
+    assert "UNORAG_BASE_URL" in envelope["error"]["message"]
     assert envelope["error"]["retryable"] is False
 
 
 @pytest.mark.asyncio
 async def test_api_error_surfaces_stable_code_as_tool_error():
     def boom(**_: Any) -> None:
-        raise MeriKnowAPIError(
+        raise UnoRAGAPIError(
             code=ErrorCode.INVALID_REQUEST,
             message="request contains unsupported fields",
             request_id=TRACE,
@@ -265,7 +265,7 @@ async def test_api_error_surfaces_stable_code_as_tool_error():
 @pytest.mark.asyncio
 async def test_transport_error_is_retryable_tool_error():
     def boom(**_: Any) -> None:
-        raise MeriKnowTransportError("request timed out")
+        raise UnoRAGTransportError("request timed out")
 
     client = _mock_client(retrieve=boom)
     mcp = create_server(client_factory=lambda: client)
@@ -306,7 +306,7 @@ def test_response_to_dict_roundtrip():
 
 
 def test_error_payload_maps_rate_limit():
-    err = MeriKnowAPIError(
+    err = UnoRAGAPIError(
         code=ErrorCode.RATE_LIMIT_EXCEEDED,
         message="slow down",
         request_id=TRACE,

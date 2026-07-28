@@ -31,26 +31,26 @@ function hashPassword(password) {
 }
 
 const upsertPassword =
-	String(process.env.MERIKNOW_ADMIN_PASSWORD_UPSERT || "")
+	String(process.env.UNORAG_ADMIN_PASSWORD_UPSERT || "")
 		.trim()
 		.toLowerCase() === "1" ||
-	String(process.env.MERIKNOW_ADMIN_PASSWORD_UPSERT || "")
+	String(process.env.UNORAG_ADMIN_PASSWORD_UPSERT || "")
 		.trim()
 		.toLowerCase() === "true";
 
 const config = {
 	databaseUrl: required("DATABASE_URL"),
-	organizationId: requiredUuid("MERIKNOW_ORGANIZATION_ID"),
-	organizationSlug: required("MERIKNOW_ORGANIZATION_SLUG"),
-	organizationName: required("MERIKNOW_ORGANIZATION_NAME"),
-	workspaceId: requiredUuid("MERIKNOW_WORKSPACE_ID"),
-	workspaceSlug: required("MERIKNOW_WORKSPACE_SLUG"),
-	workspaceName: required("MERIKNOW_WORKSPACE_NAME"),
-	adminId: requiredUuid("MERIKNOW_PRINCIPAL_ID"),
-	adminSubject: required("MERIKNOW_ADMIN_SUBJECT"),
-	adminEmail: required("MERIKNOW_ADMIN_EMAIL"),
-	adminName: required("MERIKNOW_ADMIN_NAME"),
-	adminPassword: required("MERIKNOW_ADMIN_PASSWORD"),
+	organizationId: requiredUuid("UNORAG_ORGANIZATION_ID"),
+	organizationSlug: required("UNORAG_ORGANIZATION_SLUG"),
+	organizationName: required("UNORAG_ORGANIZATION_NAME"),
+	workspaceId: requiredUuid("UNORAG_WORKSPACE_ID"),
+	workspaceSlug: required("UNORAG_WORKSPACE_SLUG"),
+	workspaceName: required("UNORAG_WORKSPACE_NAME"),
+	adminId: requiredUuid("UNORAG_PRINCIPAL_ID"),
+	adminSubject: required("UNORAG_ADMIN_SUBJECT"),
+	adminEmail: required("UNORAG_ADMIN_EMAIL"),
+	adminName: required("UNORAG_ADMIN_NAME"),
+	adminPassword: required("UNORAG_ADMIN_PASSWORD"),
 };
 
 const client = new Client({ connectionString: config.databaseUrl });
@@ -110,7 +110,7 @@ try {
 		[config.workspaceId, config.adminId],
 	);
 	// Create-only by default so re-install / re-bootstrap does not reset passwords.
-	// Opt-in rotation: MERIKNOW_ADMIN_PASSWORD_UPSERT=1
+	// Opt-in rotation: UNORAG_ADMIN_PASSWORD_UPSERT=1
 	if (upsertPassword) {
 		await client.query(
 			`

@@ -22,7 +22,7 @@ sdk/python/.venv
 sdk/python/**/__pycache__/
 sdk/python/.pytest_cache/
 sdk/python/*.egg-info/
-sdk/python/meriknow.egg-info/
+sdk/python/unorag.egg-info/
 apps/api/data/
 apps/api/.eval_reports/
 apps/api/tests/eval/.gate_*_cases.jsonl
@@ -32,7 +32,7 @@ testdata/ab/_e2e_out/
 __pycache__/
 .pytest_cache/
 # Local document store / process pids / ad-hoc eval outputs (never commit)
-.meriknow/
+.unorag/
 # Acceptance local run artifacts (passwords / keys / last JSON reports)
 scripts/acceptance/.isolation-topology.json
 scripts/acceptance/.s1_s2_last_run.json

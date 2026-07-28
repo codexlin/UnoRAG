@@ -1,14 +1,14 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "meriknow.name" -}}
+{{- define "unorag.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "meriknow.fullname" -}}
+{{- define "unorag.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -21,34 +21,34 @@ Create a default fully qualified app name.
 {{- end }}
 {{- end }}
 
-{{- define "meriknow.chart" -}}
+{{- define "unorag.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{- define "meriknow.labels" -}}
-helm.sh/chart: {{ include "meriknow.chart" . }}
-{{ include "meriknow.selectorLabels" . }}
+{{- define "unorag.labels" -}}
+helm.sh/chart: {{ include "unorag.chart" . }}
+{{ include "unorag.selectorLabels" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
-{{- define "meriknow.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "meriknow.name" . }}
+{{- define "unorag.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "unorag.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{- define "meriknow.secretName" -}}
+{{- define "unorag.secretName" -}}
 {{- if .Values.secret.existingSecret }}
 {{- .Values.secret.existingSecret }}
 {{- else }}
-{{- printf "%s-runtime" (include "meriknow.fullname" .) }}
+{{- printf "%s-runtime" (include "unorag.fullname" .) }}
 {{- end }}
 {{- end }}
 
-{{- define "meriknow.documentsPvcName" -}}
+{{- define "unorag.documentsPvcName" -}}
 {{- if .Values.persistence.existingClaim }}
 {{- .Values.persistence.existingClaim }}
 {{- else }}
-{{- printf "%s-documents" (include "meriknow.fullname" .) }}
+{{- printf "%s-documents" (include "unorag.fullname" .) }}
 {{- end }}
 {{- end }}

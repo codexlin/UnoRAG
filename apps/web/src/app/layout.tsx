@@ -5,20 +5,18 @@ import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 export const metadata: Metadata = {
-	title: "MeriKnow",
+	title: "UnoRAG",
 	description: "有据可依的企业知识问答",
 	icons: {
 		icon: [
-			{ url: "/favicon.ico", sizes: "any" },
 			{
 				url: "/favicon-32x32.png",
 				sizes: "32x32",
 				type: "image/png",
 			},
 			{
-				url: "/brand/meriknow-mark.png",
-				sizes: "150x150",
-				type: "image/png",
+				url: "/brand/unorag-mark.svg",
+				type: "image/svg+xml",
 			},
 		],
 		apple: [
@@ -44,7 +42,7 @@ export default function RootLayout({
 					defaultTheme="system"
 					enableSystem
 					disableTransitionOnChange
-					storageKey="meriknow-theme"
+					storageKey="unorag-theme"
 				>
 					{children}
 					<Toaster position="top-right" richColors closeButton />

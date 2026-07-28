@@ -106,8 +106,8 @@ passed the post-upgrade application/data/Qdrant verification suite.
 - OCR policy report SHA-256:
   `d12a23c38ffd2c884eb825772d5b55a165274f2bc396db1f5b2982586a7bc01a`
 - SHA-scoped Web images:
-  `meriknow-web:b3-old-b98f01438045`,
-  `meriknow-web:b3-new-3ccd58590d82`
+  `unorag-web:b3-old-b98f01438045`,
+  `unorag-web:b3-new-3ccd58590d82`
 
 The generated JSON evidence remains local and gitignored; this Markdown report
 contains only sanitized bindings and outcomes.

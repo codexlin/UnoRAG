@@ -1,4 +1,4 @@
-# MeriKnow Helm chart (L8 starter)
+# UnoRAG Helm chart (L8 starter)
 
 Kubernetes starter for customer private deployments. Complements
 [`deploy/compose/`](../compose/) — Compose remains the single-node reference;
@@ -8,7 +8,7 @@ Redis / object storage.
 ## Layout
 
 ```text
-deploy/helm/meriknow/
+deploy/helm/unorag/
   Chart.yaml
   values.yaml
   templates/
@@ -24,7 +24,7 @@ deploy/helm/meriknow/
 ## Prerequisites
 
 1. Customer-managed PostgreSQL, Qdrant, Redis (chart does not install them).
-2. Runtime Secret `meriknow-runtime` (or override `secret.existingSecret`) with
+2. Runtime Secret `unorag-runtime` (or override `secret.existingSecret`) with
    DSNs and auth secrets — see `helm status` NOTES / values comments.
 3. Built images pushed to a registry the cluster can pull (`images.*.repository`).
 4. StorageClass that supports `ReadWriteMany` if using the shared documents PVC
@@ -34,12 +34,12 @@ deploy/helm/meriknow/
 
 ```bash
 # Create namespace + secret first (do not commit secret YAML with real values)
-kubectl create namespace meriknow
-kubectl -n meriknow create secret generic meriknow-runtime \
-  --from-literal=MERIKNOW_INTERNAL_SECRET=... \
-  --from-literal=MERIKNOW_SESSION_SECRET=... \
+kubectl create namespace unorag
+kubectl -n unorag create secret generic unorag-runtime \
+  --from-literal=UNORAG_INTERNAL_SECRET=... \
+  --from-literal=UNORAG_SESSION_SECRET=... \
   --from-literal=INTERNAL_AUTH_SECRET=... \
-  --from-literal=MERIKNOW_ADMIN_PASSWORD=... \
+  --from-literal=UNORAG_ADMIN_PASSWORD=... \
   --from-literal=DATABASE_URL=postgresql://... \
   --from-literal=API_DATABASE_URL=postgresql+psycopg://... \
   --from-literal=WORKER_DATABASE_URL=postgresql://... \
@@ -47,18 +47,18 @@ kubectl -n meriknow create secret generic meriknow-runtime \
   --from-literal=MIGRATOR_DATABASE_URL=postgresql://...
 
 # Optional: enable migration Jobs for this install
-helm upgrade --install meriknow ./deploy/helm/meriknow \
-  -n meriknow \
-  --set images.web.repository=registry.example/meriknow-web \
+helm upgrade --install unorag ./deploy/helm/unorag \
+  -n unorag \
+  --set images.web.repository=registry.example/unorag-web \
   --set images.web.tag=1.0.0 \
-  --set images.api.repository=registry.example/meriknow-api \
+  --set images.api.repository=registry.example/unorag-api \
   --set images.api.tag=1.0.0 \
   --set external.qdrant.url=http://qdrant.infra:6333 \
   --set external.redis.url=redis://redis.infra:6379 \
   --set migrate.web.enabled=true \
   --set migrate.rag.enabled=true \
   --set ingress.enabled=true \
-  --set ingress.hosts[0].host=meriknow.example.com
+  --set ingress.hosts[0].host=unorag.example.com
 ```
 
 ## Fail-closed edge

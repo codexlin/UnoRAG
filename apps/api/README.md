@@ -1,4 +1,4 @@
-# MeriKnow API（RAG Data Plane）
+# UnoRAG API（RAG Data Plane）
 
 FastAPI + LangChain + LangGraph。Ask 图见 [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md)。
 
@@ -40,7 +40,7 @@ uv run python -m app.lifecycle_worker
 ```bash
 APP_ENV=production
 INTERNAL_AUTH_ENABLED=true
-INTERNAL_AUTH_SECRET=<与 Next.js MERIKNOW_INTERNAL_SECRET 相同>
+INTERNAL_AUTH_SECRET=<与 Next.js UNORAG_INTERNAL_SECRET 相同>
 INTERNAL_AUTH_REPLAY_BACKEND=redis
 ```
 
@@ -63,7 +63,7 @@ curl -s -X POST http://localhost:8000/v1/ask \
 | 变量 | 说明 |
 |------|------|
 | `INTERNAL_AUTH_ENABLED` | 多用户必须 `true`，否则 `principal=development` 串台 |
-| `INTERNAL_AUTH_SECRET` | = web `MERIKNOW_INTERNAL_SECRET` |
+| `INTERNAL_AUTH_SECRET` | = web `UNORAG_INTERNAL_SECRET` |
 | `OPENAI_API_KEY` **或** `DASHSCOPE_API_KEY` | 只配一个 |
 | `DOCUMENT_STORAGE_ROOT` | 与 web 共享原文卷 |
 | 问答/检索产品旋钮 | 代码默认 ⊕ 工作区覆盖，**不**读 env（`ask_defaults.py`） |
@@ -72,8 +72,8 @@ curl -s -X POST http://localhost:8000/v1/ask \
 ## Document Lifecycle Worker
 
 ```bash
-export WORKER_DATABASE_URL=postgresql://worker_login:secret@localhost:5432/meriknow
-export DOCUMENT_STORAGE_ROOT=/var/lib/meriknow/documents
+export WORKER_DATABASE_URL=postgresql://worker_login:secret@localhost:5432/unorag
+export DOCUMENT_STORAGE_ROOT=/var/lib/unorag/documents
 uv run python -m app.lifecycle_worker
 ```
 

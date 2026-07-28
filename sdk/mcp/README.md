@@ -1,7 +1,7 @@
-# MeriKnow MCP Server (v0.1.0)
+# UnoRAG MCP Server (v0.1.0)
 
 Thin **stdio MCP** adapter for the frozen Knowledge Retrieve/Ask **public API v1**.
-Tools map 1:1 onto the HTTP surface (via the [`meriknow`](../python/) Python SDK):
+Tools map 1:1 onto the HTTP surface (via the [`unorag`](../python/) Python SDK):
 
 | MCP tool | HTTP |
 |----------|------|
@@ -19,12 +19,12 @@ Contract authority:
 ## Install
 
 **Monorepo-only path dependency.** `pyproject.toml` pins
-`meriknow @ file:../python`, so this package is not a stand-alone PyPI install
+`unorag @ file:../python`, so this package is not a stand-alone PyPI install
 from this directory alone. Install the Python SDK first (or use editable
 install from the monorepo checkout):
 
 ```bash
-# From MeriKnow repo root — install SDK, then MCP adapter
+# From UnoRAG repo root — install SDK, then MCP adapter
 cd sdk/python && pip install -e ".[dev]"
 cd ../mcp && pip install -e ".[dev]"
 # or: uv pip install -e ".[dev]" in each directory
@@ -38,22 +38,22 @@ package; cloning only `sdk/mcp` without `sdk/python` will fail.
 Same as the Python SDK (server-side only — never commit keys):
 
 ```bash
-export MERIKNOW_BASE_URL="http://localhost:3000"   # edge / Next.js origin
-export MERIKNOW_SERVICE_KEY="mk_svc_…"             # scopes: retrieve, ask
+export UNORAG_BASE_URL="http://localhost:3000"   # edge / Next.js origin
+export UNORAG_SERVICE_KEY="mk_svc_…"             # scopes: retrieve, ask
 ```
 
-Every request sends `Authorization: Bearer mk_svc_…`, `X-MeriKnow-Api-Version: 1`,
+Every request sends `Authorization: Bearer mk_svc_…`, `X-UnoRAG-Api-Version: 1`,
 and `Content-Type: application/json`.
 
-Missing `MERIKNOW_BASE_URL` / `MERIKNOW_SERVICE_KEY` (or an invalid key prefix)
+Missing `UNORAG_BASE_URL` / `UNORAG_SERVICE_KEY` (or an invalid key prefix)
 surfaces as a tool error with MCP-local code `client_error` (see Errors).
 
 ## Run (stdio)
 
 ```bash
 cd sdk/mcp
-meriknow-mcp
-# or: python -m meriknow_mcp
+unorag-mcp
+# or: python -m unorag_mcp
 ```
 
 Host applications (Cursor / Claude Desktop) spawn this process and speak MCP over stdin/stdout.
@@ -65,11 +65,11 @@ Project or user MCP config:
 ```json
 {
   "mcpServers": {
-    "meriknow": {
-      "command": "meriknow-mcp",
+    "unorag": {
+      "command": "unorag-mcp",
       "env": {
-        "MERIKNOW_BASE_URL": "http://localhost:3000",
-        "MERIKNOW_SERVICE_KEY": "mk_svc_…"
+        "UNORAG_BASE_URL": "http://localhost:3000",
+        "UNORAG_SERVICE_KEY": "mk_svc_…"
       }
     }
   }
@@ -81,13 +81,13 @@ If the script is not on `PATH`, use an absolute interpreter + module:
 ```json
 {
   "mcpServers": {
-    "meriknow": {
+    "unorag": {
       "command": "/path/to/venv/bin/python",
-      "args": ["-m", "meriknow_mcp"],
-      "cwd": "/path/to/MeriKnow/sdk/mcp",
+      "args": ["-m", "unorag_mcp"],
+      "cwd": "/path/to/UnoRAG/sdk/mcp",
       "env": {
-        "MERIKNOW_BASE_URL": "http://localhost:3000",
-        "MERIKNOW_SERVICE_KEY": "mk_svc_…"
+        "UNORAG_BASE_URL": "http://localhost:3000",
+        "UNORAG_SERVICE_KEY": "mk_svc_…"
       }
     }
   }
@@ -137,7 +137,7 @@ is a JSON envelope:
 
 ### HTTP v1 codes (pass-through)
 
-When the SDK raises `MeriKnowAPIError`, `error.code` is the public v1 code from
+When the SDK raises `UnoRAGAPIError`, `error.code` is the public v1 code from
 the closed HTTP table (`invalid_request`, `authentication_required`,
 `rate_limit_exceeded`, …). See
 [`docs/contracts/retrieve-ask-v1.md`](../../docs/contracts/retrieve-ask-v1.md).
@@ -149,10 +149,10 @@ HTTP v1 `error.code` table:
 
 | Code | When |
 |------|------|
-| `transport_error` | Network / transport failure before a MeriKnow error envelope (`MeriKnowTransportError`) |
-| `unexpected_api_version` | Response advertised an unexpected API major version (`MeriKnowVersionError`) |
-| `client_error` | Local SDK / config errors (e.g. missing `MERIKNOW_BASE_URL` / `MERIKNOW_SERVICE_KEY`) |
-| `internal_error` | Non-`MeriKnowError` unexpected exceptions |
+| `transport_error` | Network / transport failure before a UnoRAG error envelope (`UnoRAGTransportError`) |
+| `unexpected_api_version` | Response advertised an unexpected API major version (`UnoRAGVersionError`) |
+| `client_error` | Local SDK / config errors (e.g. missing `UNORAG_BASE_URL` / `UNORAG_SERVICE_KEY`) |
+| `internal_error` | Non-`UnoRAGError` unexpected exceptions |
 
 ## Tests
 
@@ -161,7 +161,7 @@ cd sdk/mcp
 pytest
 ```
 
-Tests mock the `meriknow` client — no live MeriKnow server required.
+Tests mock the `unorag` client — no live UnoRAG server required.
 
 ## Out of scope (0.1.0)
 

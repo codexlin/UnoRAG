@@ -3,7 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, Suspense, useEffect, useState } from "react";
 
-import { MeriKnowLogo } from "@/components/app/meriknow-logo";
+import { UnoRAGLogo } from "@/components/app/unorag-logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -91,7 +91,7 @@ function InviteForm() {
 		<main className="grid min-h-dvh place-items-center bg-background px-6">
 			<div className="w-full max-w-sm">
 				<div className="mb-8 flex items-center gap-3">
-					<MeriKnowLogo size="md" withWordmark />
+					<UnoRAGLogo size="md" withWordmark />
 				</div>
 				{loadError ? (
 					<p className="text-sm text-destructive" role="alert">

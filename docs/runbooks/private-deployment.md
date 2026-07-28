@@ -21,7 +21,7 @@ Browser
 | 规则 | 要求 |
 |---|---|
 | 边缘只暴露控制面 | 不要发布 `api:8000`；浏览器只打 Caddy→web |
-| 生产鉴权 | `APP_ENV=production`、`INTERNAL_AUTH_ENABLED=true`、`INTERNAL_AUTH_SECRET`≥32 且与 web `MERIKNOW_INTERNAL_SECRET` 相同、`INTERNAL_AUTH_REPLAY_BACKEND=redis`；`MERIKNOW_SESSION_SECRET` 必须是另一把密钥 |
+| 生产鉴权 | `APP_ENV=production`、`INTERNAL_AUTH_ENABLED=true`、`INTERNAL_AUTH_SECRET`≥32 且与 web `UNORAG_INTERNAL_SECRET` 相同、`INTERNAL_AUTH_REPLAY_BACKEND=redis`；`UNORAG_SESSION_SECRET` 必须是另一把密钥 |
 | Active generation | `ACTIVE_GENERATION_GATE_ENABLED=true`、`ACTIVE_GENERATION_CACHE_TTL_SECONDS=0` |
 | 产品上传 | 仅 Next.js → `app.jobs` → lifecycle_worker；FastAPI ingest 写路径永久 410 |
 | Secret | 仅环境 / secret manager；禁止写入镜像或日志 |
@@ -40,10 +40,10 @@ cd deploy/compose
 # 生成密钥（示例）：openssl rand -base64 48
 ```
 
-至少填写：`POSTGRES_PASSWORD`、`MERIKNOW_INTERNAL_SECRET`、
-`MERIKNOW_SESSION_SECRET`（必须与 INTERNAL 不同）、`LLM_API_KEY`、
-各 `*_DATABASE_URL`，以及 `bootstrap.env` 中的 `MERIKNOW_ADMIN_PASSWORD`。
-Compose 会把 `MERIKNOW_INTERNAL_SECRET` 映射为 API 的 `INTERNAL_AUTH_SECRET`，
+至少填写：`POSTGRES_PASSWORD`、`UNORAG_INTERNAL_SECRET`、
+`UNORAG_SESSION_SECRET`（必须与 INTERNAL 不同）、`LLM_API_KEY`、
+各 `*_DATABASE_URL`，以及 `bootstrap.env` 中的 `UNORAG_ADMIN_PASSWORD`。
+Compose 会把 `UNORAG_INTERNAL_SECRET` 映射为 API 的 `INTERNAL_AUTH_SECRET`，
 无需再填第二份。
 
 外部托管 Postgres/Qdrant/Redis/S3 时，改 `runtime.env` / `runtime.secret` 中的 URL 即可；
@@ -62,12 +62,12 @@ chmod +x scripts/*.sh
 
 脚本顺序：
 
-1. 构建 `web` / `api` / `web-migrator` 镜像  
-2. 启动 Postgres / Qdrant / Redis  
-3. `migrate-web`（Drizzle `app.*`）→ `migrate-rag`（`rag.*`）  
-4. 应用 `ops/postgres/configure-runtime-roles.sql`  
-5. `bootstrap` 控制面组织/工作区/管理员  
-6. 启动 Caddy / web / api / lifecycle-worker / outbox-worker   
+1. 构建 `web` / `api` / `web-migrator` 镜像
+2. 启动 Postgres / Qdrant / Redis
+3. `migrate-web`（Drizzle `app.*`）→ `migrate-rag`（`rag.*`）
+4. 应用 `ops/postgres/configure-runtime-roles.sql`
+5. `bootstrap` 控制面组织/工作区/管理员
+6. 启动 Caddy / web / api / lifecycle-worker / outbox-worker
 
 ### 2.3 手工等价步骤
 
@@ -78,7 +78,7 @@ mk_compose up -d --wait postgres qdrant redis
 mk_compose --profile migrate run --rm migrate-web
 mk_compose --profile migrate run --rm migrate-rag
 mk_compose exec -T postgres \
-  psql -U meriknow -d meriknow \
+  psql -U unorag -d unorag \
   < ../../ops/postgres/configure-runtime-roles.sql
 mk_compose_bootstrap --profile migrate run --rm bootstrap
 mk_compose up -d caddy web api lifecycle-worker outbox-worker
@@ -93,7 +93,7 @@ mk_compose up -d caddy web api lifecycle-worker outbox-worker
 |---|---|---|
 | Edge / 控制面 | `GET /api/rag/health`（经 Caddy） | HTTP 200；代理到 FastAPI `/health` |
 | FastAPI | 容器内 `GET /health` | `status=ok` 时需 metadata + active-generation gate + ask_ready；否则 `unavailable`/`degraded` |
-| lifecycle-worker | 文件 `/tmp/meriknow-lifecycle-ready` | 进入主循环后创建；SIGTERM 删除 |
+| lifecycle-worker | 文件 `/tmp/unorag-lifecycle-ready` | 进入主循环后创建；SIGTERM 删除 |
 | outbox-worker | 进程常驻 `process-outbox.mjs --watch` | 投影文库变更；无单独 ready 文件 |
 | Postgres | `pg_isready` | healthy |
 | Qdrant | TCP `:6333` / `readyz` | healthy |
@@ -110,7 +110,7 @@ DATABASE_URL=... pnpm lifecycle:inspect
 `lifecycle:inspect` 需要已应用 `rag` 迁移（含 `rag.generation_cleanup_queue`）。
 若缺表，先跑 `migrate-rag`，不要对生产执行 destructive backfill apply。
 
-控制面兼容性：web 与 api 必须共享同一 `MERIKNOW_INTERNAL_SECRET` /
+控制面兼容性：web 与 api 必须共享同一 `UNORAG_INTERNAL_SECRET` /
 `INTERNAL_AUTH_SECRET`；Lifecycle V2 默认为产品上传路径（勿设
 `DOCUMENT_LIFECYCLE_V2=false`），且双方挂载同一 `DOCUMENT_STORAGE_ROOT`。
 
@@ -138,7 +138,7 @@ DATABASE_URL=... pnpm lifecycle:inspect
 ## 5. 回滚
 
 1. 停止写入（或 drain worker）。
-2. 将 `MERIKNOW_WEB_IMAGE` / `MERIKNOW_WEB_MIGRATOR_IMAGE` / `MERIKNOW_API_IMAGE` 指回上一版本（或重跑升级脚本的自动应用回滚），
+2. 将 `UNORAG_WEB_IMAGE` / `UNORAG_WEB_MIGRATOR_IMAGE` / `UNORAG_API_IMAGE` 指回上一版本（或重跑升级脚本的自动应用回滚），
    `source scripts/compose-env.sh && mk_compose up -d api web lifecycle-worker outbox-worker caddy`。
 3. **不要**盲目 down-migrate Schema。Additive 列可保留；若版本要求恢复数据，
    使用备份按第 6 节 restore。
@@ -151,15 +151,15 @@ DATABASE_URL=... pnpm lifecycle:inspect
 ### 6.1 备份顺序（脚本已封装）
 
 ```bash
-./scripts/backup.sh ./backups/meriknow-$(date +%Y%m%d)
+./scripts/backup.sh ./backups/unorag-$(date +%Y%m%d)
 ```
 
 产物：
 
-- `postgres.sql` — `app` / `rag` / 相关 schema  
-- `documents.tgz` — container path `/var/lib/meriknow/documents` (Compose invariant)
-- `qdrant.tgz` — 向量存储  
-- `MANIFEST.txt`  
+- `postgres.sql` — `app` / `rag` / 相关 schema
+- `documents.tgz` — container path `/var/lib/unorag/documents` (Compose invariant)
+- `qdrant.tgz` — 向量存储
+- `MANIFEST.txt`
 
 一致性建议：短暂暂停上传或在低峰备份；严格一致性需要短停写窗口。
 
@@ -174,10 +174,10 @@ DATABASE_URL=... pnpm lifecycle:inspect
 ```
 
 ```bash
-CONFIRM=YES ./scripts/restore.sh ./backups/meriknow-YYYYMMDD
+CONFIRM=YES ./scripts/restore.sh ./backups/unorag-YYYYMMDD
 ```
 
-**错误顺序会破坏 citation / active generation 一致性。**  
+**错误顺序会破坏 citation / active generation 一致性。**
 Redis 可重建（仅 replay/cache）；不必从备份恢复。
 
 ## 7. 扩容与故障
@@ -196,11 +196,11 @@ override 文件中加 `mem_limit` / `cpus`，并外接日志栈。
 
 ## 8. 安全与密钥
 
-- `.env` 权限 `600`；不进 Git。  
-- 轮换 `MERIKNOW_INTERNAL_SECRET` 时 web 与 api **同时**更新并滚动重启。  
-- 生产禁用：`MINERU_USE_FAKE`、浏览器直连 FastAPI、legacy ingest writes。  
-- 运行登录应授予 `meriknow_web` / `meriknow_worker` / `meriknow_rag_read`  
-  （见 `ops/postgres/configure-runtime-roles.sql`），不要用 migrator 跑业务。  
+- `.env` 权限 `600`；不进 Git。
+- 轮换 `UNORAG_INTERNAL_SECRET` 时 web 与 api **同时**更新并滚动重启。
+- 生产禁用：`MINERU_USE_FAKE`、浏览器直连 FastAPI、legacy ingest writes。
+- 运行登录应授予 `unorag_web` / `unorag_worker` / `unorag_rag_read`
+  （见 `ops/postgres/configure-runtime-roles.sql`），不要用 migrator 跑业务。
 
 ### 8.1 解析配置边界（deploy vs 产品）
 
@@ -217,27 +217,27 @@ override 文件中加 `mem_limit` / `cpus`，并外接日志栈。
 私有试点优先用 Resend 邮件接 `ops/min_alerts`（飞书 webhook 可选后置）。复制 `ops/min_alerts/env.example` → `ops/min_alerts/.env`，至少配置：
 
 - `RESEND_API_KEY` · `ALERT_EMAIL_FROM` · `ALERT_EMAIL_TO`
-- `MERIKNOW_HEALTH_URL`（经边缘，如 `https://webch.cn/api/rag/health`）
+- `UNORAG_HEALTH_URL`（经边缘，如 `https://webch.cn/api/rag/health`）
 - 可选：`DATABASE_URL`、`LIFECYCLE_WORKER_READY_FILE`、`DOCUMENT_STORAGE_ROOT`
 
 周期执行：`python3 ops/min_alerts/check.py once`（详见 [`ops/min_alerts/README.md`](../../ops/min_alerts/README.md)）。密钥勿入库。
 
 ## 9. Helm / Kubernetes（起步骨架）
 
-Compose 适合单机；多副本生产使用 [`deploy/helm/meriknow`](../../deploy/helm/meriknow)。
+Compose 适合单机；多副本生产使用 [`deploy/helm/unorag`](../../deploy/helm/unorag)。
 
 要点：
 
-- 部署 **web / api / lifecycle-worker / outbox-worker**；**不**内置 Postgres、Qdrant、Redis、MinIO。  
-- `values.external.*` 填客户托管连接；密钥走 `secret.existingSecret`（勿提交明文）。  
-- Ingress（可选）只暴露 **web**；api 保持 ClusterIP（fail-closed）。  
-- readiness：web `GET /api/rag/health`、api `GET /health`、worker 就绪文件。  
-- 文档对象：默认 `ReadWriteMany` PVC；S3/MinIO 适配仍后置。  
+- 部署 **web / api / lifecycle-worker / outbox-worker**；**不**内置 Postgres、Qdrant、Redis、MinIO。
+- `values.external.*` 填客户托管连接；密钥走 `secret.existingSecret`（勿提交明文）。
+- Ingress（可选）只暴露 **web**；api 保持 ClusterIP（fail-closed）。
+- readiness：web `GET /api/rag/health`、api `GET /health`、worker 就绪文件。
+- 文档对象：默认 `ReadWriteMany` PVC；S3/MinIO 适配仍后置。
 - 迁移：`migrate.web` / `migrate.rag` 为可选 Helm hook Job。
 
 ```bash
-helm upgrade --install meriknow ./deploy/helm/meriknow -n meriknow \
-  --set secret.existingSecret=meriknow-runtime \
+helm upgrade --install unorag ./deploy/helm/unorag -n unorag \
+  --set secret.existingSecret=unorag-runtime \
   --set external.qdrant.url=http://qdrant.infra:6333 \
   --set external.redis.url=redis://redis.infra:6379
 ```
@@ -246,9 +246,9 @@ helm upgrade --install meriknow ./deploy/helm/meriknow -n meriknow \
 
 ## 10. 本片后置
 
-- Helm 容量参数、HPA、PDB、NetworkPolicy 硬化  
-- SBOM、镜像 digest 锁定、依赖/镜像 CVE 扫描流水线  
-- MinIO/S3 作为一等对象后端（当前默认共享卷 / PVC）  
+- Helm 容量参数、HPA、PDB、NetworkPolicy 硬化
+- SBOM、镜像 digest 锁定、依赖/镜像 CVE 扫描流水线
+- MinIO/S3 作为一等对象后端（当前默认共享卷 / PVC）
 
 **SBOM 薄说明：** Compose/Helm 已 pin 镜像 tag。完整 SBOM/CVE CI 后置；
 客户交付前可对构建镜像自行跑 `syft`/`trivy` 并归档。未扫描须写入已知限制。

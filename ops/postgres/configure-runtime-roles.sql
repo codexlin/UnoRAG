@@ -2,27 +2,27 @@
 
 DO $$
 BEGIN
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meriknow_migrator') THEN
-		CREATE ROLE meriknow_migrator NOLOGIN;
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'unorag_migrator') THEN
+		CREATE ROLE unorag_migrator NOLOGIN;
 	END IF;
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meriknow_web') THEN
-		CREATE ROLE meriknow_web NOLOGIN;
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'unorag_web') THEN
+		CREATE ROLE unorag_web NOLOGIN;
 	END IF;
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meriknow_worker') THEN
-		CREATE ROLE meriknow_worker NOLOGIN;
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'unorag_worker') THEN
+		CREATE ROLE unorag_worker NOLOGIN;
 	END IF;
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meriknow_rag_read') THEN
-		CREATE ROLE meriknow_rag_read NOLOGIN;
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'unorag_rag_read') THEN
+		CREATE ROLE unorag_rag_read NOLOGIN;
 	END IF;
 END $$;
 
-GRANT USAGE ON SCHEMA app TO meriknow_web, meriknow_worker, meriknow_rag_read;
-GRANT USAGE ON SCHEMA rag TO meriknow_worker, meriknow_rag_read;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA app TO meriknow_migrator;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA app TO meriknow_migrator;
+GRANT USAGE ON SCHEMA app TO unorag_web, unorag_worker, unorag_rag_read;
+GRANT USAGE ON SCHEMA rag TO unorag_worker, unorag_rag_read;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA app TO unorag_migrator;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA app TO unorag_migrator;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO meriknow_web;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app TO meriknow_web;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO unorag_web;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app TO unorag_web;
 
 GRANT SELECT ON
 	app.jobs,
@@ -31,7 +31,7 @@ GRANT SELECT ON
 	app.document_active_versions,
 	app.document_acl,
 	app.libraries
-TO meriknow_worker;
+TO unorag_worker;
 
 GRANT UPDATE (
 	status,
@@ -54,7 +54,7 @@ GRANT UPDATE (
 	started_at,
 	finished_at,
 	updated_at
-) ON app.jobs TO meriknow_worker;
+) ON app.jobs TO unorag_worker;
 
 GRANT UPDATE (
 	status,
@@ -71,7 +71,7 @@ GRANT UPDATE (
 	activated_at,
 	superseded_at,
 	updated_at
-) ON app.document_versions TO meriknow_worker;
+) ON app.document_versions TO unorag_worker;
 
 GRANT UPDATE (
 	status,
@@ -79,22 +79,22 @@ GRANT UPDATE (
 	latest_job_id,
 	deleted_at,
 	updated_at
-) ON app.documents TO meriknow_worker;
+) ON app.documents TO unorag_worker;
 
 GRANT UPDATE (
 	status,
 	ready_count,
 	updated_at
-) ON app.libraries TO meriknow_worker;
+) ON app.libraries TO unorag_worker;
 
-GRANT INSERT, UPDATE, DELETE ON app.document_active_versions TO meriknow_worker;
-GRANT INSERT ON app.audit_logs, app.outbox_events TO meriknow_worker;
+GRANT INSERT, UPDATE, DELETE ON app.document_active_versions TO unorag_worker;
+GRANT INSERT ON app.audit_logs, app.outbox_events TO unorag_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
 	rag.active_document_generations,
 	rag.generation_cleanup_queue
-TO meriknow_worker;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app TO meriknow_worker;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA rag TO meriknow_worker;
+TO unorag_worker;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app TO unorag_worker;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA rag TO unorag_worker;
 
 GRANT SELECT ON
 	app.documents,
@@ -102,12 +102,12 @@ GRANT SELECT ON
 	app.document_active_versions,
 	app.document_acl,
 	app.libraries
-TO meriknow_rag_read;
+TO unorag_rag_read;
 
-GRANT SELECT ON rag.active_document_generations TO meriknow_rag_read;
+GRANT SELECT ON rag.active_document_generations TO unorag_rag_read;
 
 -- Login roles are deployment-specific. Operators create them with customer
 -- secret policy, then grant exactly one runtime role:
---   GRANT meriknow_web TO <web_login>;
---   GRANT meriknow_worker TO <worker_login>;
---   GRANT meriknow_rag_read TO <rag_api_login>;
+--   GRANT unorag_web TO <web_login>;
+--   GRANT unorag_worker TO <worker_login>;
+--   GRANT unorag_rag_read TO <rag_api_login>;

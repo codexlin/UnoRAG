@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "meriknow.fullname" . }}-config
+  name: {{ include "unorag.fullname" . }}-config
   labels:
-    {{- include "meriknow.labels" . | nindent 4 }}
+    {{- include "unorag.labels" . | nindent 4 }}
 data:
   APP_ENV: {{ .Values.config.appEnv | quote }}
   ASK_MODE: {{ .Values.config.askMode | quote }}
@@ -41,6 +41,6 @@ data:
   QDRANT_COLLECTION: {{ .Values.external.qdrant.collection | quote }}
   REDIS_URL: {{ .Values.external.redis.url | quote }}
   DOCUMENT_STORAGE_ROOT: {{ .Values.documentStorageRoot | quote }}
-  RAG_API_URL: {{ printf "http://%s-api:%v" (include "meriknow.fullname" .) .Values.service.api.port | quote }}
+  RAG_API_URL: {{ printf "http://%s-api:%v" (include "unorag.fullname" .) .Values.service.api.port | quote }}
   API_PREFIX: /v1
-  LIFECYCLE_WORKER_READY_FILE: /tmp/meriknow-lifecycle-ready
+  LIFECYCLE_WORKER_READY_FILE: /tmp/unorag-lifecycle-ready

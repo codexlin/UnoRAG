@@ -18,9 +18,9 @@ if [[ "${CONFIRM:-}" != "YES" ]]; then
 	exit 1
 fi
 
-PROJECT="$(mk_config_get COMPOSE_PROJECT_NAME || echo meriknow)"
-POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo meriknow)"
-POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo meriknow)"
+PROJECT="$(mk_config_get COMPOSE_PROJECT_NAME || echo unorag)"
+POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo unorag)"
+POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo unorag)"
 
 echo "==> stopping app services (keeping volumes)"
 mk_compose stop caddy web api lifecycle-worker outbox-worker || true

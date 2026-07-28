@@ -1,6 +1,6 @@
 # Public API v1 — curl examples
 
-Prerequisites: running MeriKnow web + API, a workspace Service Key with scopes
+Prerequisites: running UnoRAG web + API, a workspace Service Key with scopes
 `retrieve` and `ask`, and a `library_id` that the key may access.
 
 ```bash
@@ -53,7 +53,7 @@ Expected success shape (fields may vary; keys are stable):
 ```
 
 Headers always include `X-Request-Id` (equals `trace_id`) and
-`X-MeriKnow-Api-Version: 1`.
+`X-UnoRAG-Api-Version: 1`.
 
 ## Ask
 
@@ -101,7 +101,7 @@ curl -sS -X POST "$APP/api/v1/ask" \
 }
 ```
 
-Canonical contract: [`docs/contracts/retrieve-ask-v1.md`](../../docs/contracts/retrieve-ask-v1.md)  
-OpenAPI: `GET $APP/api/v1/openapi.json`  
-Python SDK (same calls, typed): [`sdk/python/`](../../sdk/python/)  
+Canonical contract: [`docs/contracts/retrieve-ask-v1.md`](../../docs/contracts/retrieve-ask-v1.md)
+OpenAPI: `GET $APP/api/v1/openapi.json`
+Python SDK (same calls, typed): [`sdk/python/`](../../sdk/python/)
 MCP Server (stdio tools `retrieve` / `ask`): [`sdk/mcp/`](../../sdk/mcp/)

@@ -1,6 +1,6 @@
-# MeriKnow RAG Data Plane + lifecycle worker image.
+# UnoRAG RAG Data Plane + lifecycle worker image.
 # Build from repository root:
-#   docker build -f deploy/docker/api.Dockerfile -t meriknow-api:local .
+#   docker build -f deploy/docker/api.Dockerfile -t unorag-api:local .
 
 FROM python:3.12-slim-bookworm AS base
 

@@ -2,10 +2,10 @@ import Image from "next/image";
 
 import { cn } from "@/lib/utils";
 
-/** Primary brand mark asset (black-square MK monogram). */
-export const MERIKNOW_MARK_SRC = "/brand/meriknow-mark.png";
+/** Primary UnoRAG brand mark asset. */
+export const UNORAG_MARK_SRC = "/brand/unorag-mark.svg";
 
-type MeriKnowLogoProps = {
+type UnoRAGLogoProps = {
 	className?: string;
 	/** Icon-only mark size. */
 	size?: "sm" | "md" | "lg";
@@ -20,10 +20,8 @@ const sizeClass = {
 	lg: "size-11",
 } as const;
 
-/**
- * MeriKnow mark — stylized MK monogram on black (brand PNG).
- */
-export function MeriKnowMark({
+/** UnoRAG U-shaped knowledge graph mark. */
+export function UnoRAGMark({
 	className,
 	decorative = true,
 }: {
@@ -32,11 +30,11 @@ export function MeriKnowMark({
 }) {
 	return (
 		<Image
-			src={MERIKNOW_MARK_SRC}
-			alt={decorative ? "" : "MeriKnow"}
-			title={decorative ? undefined : "MeriKnow"}
-			width={150}
-			height={150}
+			src={UNORAG_MARK_SRC}
+			alt={decorative ? "" : "UnoRAG"}
+			title={decorative ? undefined : "UnoRAG"}
+			width={128}
+			height={128}
 			draggable={false}
 			className={cn("shrink-0 rounded-md object-cover", className)}
 			aria-hidden={decorative ? true : undefined}
@@ -44,15 +42,15 @@ export function MeriKnowMark({
 	);
 }
 
-export function MeriKnowLogo({
+export function UnoRAGLogo({
 	className,
 	size = "md",
 	withWordmark = false,
 	wordmarkClassName,
-}: MeriKnowLogoProps) {
+}: UnoRAGLogoProps) {
 	return (
 		<span className={cn("inline-flex min-w-0 items-center gap-2.5", className)}>
-			<MeriKnowMark className={cn(sizeClass[size])} decorative={withWordmark} />
+			<UnoRAGMark className={cn(sizeClass[size])} decorative={withWordmark} />
 			{withWordmark ? (
 				<span
 					className={cn(
@@ -60,7 +58,7 @@ export function MeriKnowLogo({
 						wordmarkClassName,
 					)}
 				>
-					MeriKnow
+					UnoRAG
 				</span>
 			) : null}
 		</span>

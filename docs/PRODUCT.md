@@ -1,4 +1,4 @@
-# MeriKnow 产品说明
+# UnoRAG 产品说明
 
 > 状态：现行北极星（2026-07-26）
 >
@@ -6,7 +6,7 @@
 
 ## 一句话
 
-**MeriKnow 是一个可私有化部署、权限感知、版本安全、结果可追溯的企业知识服务，为现有业务系统、Agent 和员工知识助手提供 Retrieve 与 Answer 能力。**
+**UnoRAG 是一个可私有化部署、权限感知、版本安全、结果可追溯的企业知识服务，为现有业务系统、Agent 和员工知识助手提供 Retrieve 与 Answer 能力。**
 
 产品结构遵循：
 
@@ -31,11 +31,11 @@
 
 ## 一个核心产品，多种使用方式
 
-核心产品是 **MeriKnow Knowledge Service**。它拥有唯一的文档、版本、权限、检索、引用和评测真相。
+核心产品是 **UnoRAG Knowledge Service**。它拥有唯一的文档、版本、权限、检索、引用和评测真相。
 
 ### 官方 Workspace
 
-公司没有现成知识助手时，可直接使用 MeriKnow Workspace；管理员也通过它管理和验收 Knowledge Service：
+公司没有现成知识助手时，可直接使用 UnoRAG Workspace；管理员也通过它管理和验收 Knowledge Service：
 
 | 能力 | 说明 |
 |------|------|
@@ -49,7 +49,7 @@
 
 ### 嵌入现有系统
 
-公司已有客服、售后、门户、Chat 或 Agent 时：通过稳定 API 接入 **retrieve / answer**，不强迫使用 MeriKnow UI 或 Agent 运行时。
+公司已有客服、售后、门户、Chat 或 Agent 时：通过稳定 API 接入 **retrieve / answer**，不强迫使用 UnoRAG UI 或 Agent 运行时。
 
 | 现状 | 说明 |
 |------|------|
@@ -71,13 +71,13 @@ MCP Server ──┼──► Knowledge API ──► 同一 ACL / active genera
 OpenAI API ──┘
 ```
 
-Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客户业务进程。MCP 首版以只读知识工具为主，OpenAI compatibility 用于降低迁移成本，MeriKnow 原生契约仍是权威。
+Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客户业务进程。MCP 首版以只读知识工具为主，OpenAI compatibility 用于降低迁移成本，UnoRAG 原生契约仍是权威。
 
 ## 术语
 
 | 术语 | 含义 |
 |------|------|
-| Knowledge Service | MeriKnow 核心产品整体 |
+| Knowledge Service | UnoRAG 核心产品整体 |
 | Workspace | 官方管理控制台和参考客户端 |
 | Library | 当前产品 UI / 内部数据模型中的文库 |
 | Knowledge Base | 规划中的对外 API 资源名称；迁移时映射现有 Library，不复制数据 |
@@ -137,7 +137,7 @@ Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客
 
 ## 成功标准（产品层）
 
-**当前发布口径：受控私有化试点的 Conditional GO。** 这不表示 MeriKnow 已达到适用于任意客户和环境的通用生产 GA。每个试点仍须结合目标部署完成隔离、安全、容量、恢复和运维责任验收，结论记录在 `docs/acceptance/`。
+**当前发布口径：受控私有化试点的 Conditional GO。** 这不表示 UnoRAG 已达到适用于任意客户和环境的通用生产 GA。每个试点仍须结合目标部署完成隔离、安全、容量、恢复和运维责任验收，结论记录在 `docs/acceptance/`。
 
 | 维度 | 产品标准 | 当前判定 |
 |------|----------|----------|
@@ -152,6 +152,6 @@ Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客
 
 ## 非目标表述（避免误解）
 
-- MeriKnow **不是**「再做一个 ChatGPT」。
-- MeriKnow **不是**「开放 Agent 平台」。
-- MeriKnow **首先是**企业知识服务；Workspace 是官方客户端，API/SDK/MCP/OpenAI adapter 是接入面。
+- UnoRAG **不是**「再做一个 ChatGPT」。
+- UnoRAG **不是**「开放 Agent 平台」。
+- UnoRAG **首先是**企业知识服务；Workspace 是官方客户端，API/SDK/MCP/OpenAI adapter 是接入面。

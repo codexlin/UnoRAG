@@ -26,8 +26,8 @@ import type {
 } from "./provider";
 import { resolveSessionSecret } from "./secrets.mjs";
 
-export const SESSION_COOKIE = "meriknow_session";
-const SESSION_ISSUER = "meriknow-control-plane";
+export const SESSION_COOKIE = "unorag_session";
+const SESSION_ISSUER = "unorag-control-plane";
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
 const scrypt = promisify(scryptCallback);
 

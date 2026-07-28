@@ -1,8 +1,8 @@
 # Private Deployment v1.0 RC3 真实浏览器验收
 
-> 日期：2026-07-27  
-> 代码基线：`a255752`  
-> 环境：本地 Docker Compose 完整栈，入口 `http://localhost:8088`  
+> 日期：2026-07-27
+> 代码基线：`a255752`
+> 环境：本地 Docker Compose 完整栈，入口 `http://localhost:8088`
 > 结论：**PASS（产品主路径）**
 
 ## 范围
@@ -20,7 +20,7 @@
 |---|---|---|
 | 登录与工作区会话 | PASS | 本地管理员真实登录 |
 | 创建知识库 | PASS | `RC3 浏览器验收知识库` |
-| Markdown 上传与索引 | PASS | `meriknow-rc3-browser-e2e.md`，3 chunks，状态就绪 |
+| Markdown 上传与索引 | PASS | `unorag-rc3-browser-e2e.md`，3 chunks，状态就绪 |
 | live Ask | PASS | “员工返岗后需要在几天内补交病假证明？”→“三个工作日” |
 | 引用正确性 | PASS | 首条引用命中验收文档“请假制度”，top score `0.85` |
 | 关联 ID / Trace | PASS | `ecdd5510-e6dc-49d2-ac75-63a09cb4596b` |

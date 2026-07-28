@@ -80,7 +80,7 @@ Verify that:
 
 - two workers claim disjoint jobs;
 - an invalid lease cannot heartbeat;
-- `meriknow_worker` cannot update `app.organizations`;
+- `unorag_worker` cannot update `app.organizations`;
 - invalid statuses and cross-document desired-version pointers are rejected.
 - activation updates `app.document_active_versions` and
   `rag.active_document_generations` in one transaction;
@@ -101,7 +101,7 @@ FastAPI production configuration:
 
 ```bash
 export ACTIVE_GENERATION_GATE_ENABLED=true
-export RAG_READ_DATABASE_URL=postgresql://rag_read_login:secret@postgres:5432/meriknow
+export RAG_READ_DATABASE_URL=postgresql://rag_read_login:secret@postgres:5432/unorag
 export ACTIVE_GENERATION_CACHE_TTL_SECONDS=0
 ```
 
@@ -148,16 +148,16 @@ remains authoritative. Parser page diagnostics are retained in
 ## L2 lifecycle worker
 
 Next.js 与 worker 必须挂载同一个 `DOCUMENT_STORAGE_ROOT`。生产环境使用独立
-PostgreSQL 登录并只授予 `meriknow_worker`：
+PostgreSQL 登录并只授予 `unorag_worker`：
 
 ```sql
-GRANT meriknow_worker TO meriknow_worker_login;
+GRANT unorag_worker TO unorag_worker_login;
 ```
 
 ```bash
 cd apps/api
-export WORKER_DATABASE_URL=postgresql://meriknow_worker_login:secret@postgres:5432/meriknow
-export DOCUMENT_STORAGE_ROOT=/var/lib/meriknow/documents
+export WORKER_DATABASE_URL=postgresql://unorag_worker_login:secret@postgres:5432/unorag
+export DOCUMENT_STORAGE_ROOT=/var/lib/unorag/documents
 uv run python -m app.lifecycle_worker
 ```
 
@@ -179,7 +179,7 @@ uv run python -m app.lifecycle_worker
 
 ```bash
 cd apps/api
-export WORKER_DATABASE_URL=postgresql://meriknow_worker_login:secret@postgres:5432/meriknow
+export WORKER_DATABASE_URL=postgresql://unorag_worker_login:secret@postgres:5432/unorag
 uv run python -m app.generation_cleanup_sweeper
 # 持续循环：LIFECYCLE_CLEANUP_LOOP=1 uv run python -m app.generation_cleanup_sweeper
 ```
@@ -195,7 +195,7 @@ uv run python -m app.generation_cleanup_sweeper
 可选 readiness 文件（编排探针）：
 
 ```bash
-export LIFECYCLE_WORKER_READY_FILE=/tmp/meriknow-lifecycle-ready
+export LIFECYCLE_WORKER_READY_FILE=/tmp/unorag-lifecycle-ready
 uv run python -m app.lifecycle_worker
 # 进程进入主循环后写入该文件；SIGTERM 退出时删除
 ```

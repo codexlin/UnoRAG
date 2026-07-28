@@ -4,11 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { AppNavUser } from "@/components/app/app-nav-user";
-import { MeriKnowMark } from "@/components/app/meriknow-logo";
 import {
 	type AppNavItem,
 	getAppNavItemsByGroup,
 } from "@/components/app/nav-items";
+import { UnoRAGMark } from "@/components/app/unorag-logo";
 import {
 	Sidebar,
 	SidebarContent,
@@ -86,16 +86,16 @@ export function AppSidebar() {
 						<SidebarMenuButton
 							size="lg"
 							render={<Link href="/" />}
-							tooltip="MeriKnow"
+							tooltip="UnoRAG"
 							className={cn(
 								"h-10 gap-2.5 rounded-lg px-2 hover:bg-primary/10",
 								"[&_img]:size-7!",
 								"group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-1.5! group-data-[collapsible=icon]:[&_img]:size-6!",
 							)}
 						>
-							<MeriKnowMark decorative />
+							<UnoRAGMark decorative />
 							<span className="font-heading text-lg font-semibold tracking-tight text-primary">
-								MeriKnow
+								UnoRAG
 							</span>
 						</SidebarMenuButton>
 					</SidebarMenuItem>

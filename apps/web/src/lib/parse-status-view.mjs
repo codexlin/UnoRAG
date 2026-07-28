@@ -240,9 +240,7 @@ export function resolveParseQualityHint(report, opts = {}) {
 export function formatParseStatusView(input = {}) {
 	const report = input.parserReport ?? null;
 	const metrics =
-		report?.metrics && typeof report.metrics === "object"
-			? report.metrics
-			: {};
+		report?.metrics && typeof report.metrics === "object" ? report.metrics : {};
 	const payload =
 		input.jobPayload && typeof input.jobPayload === "object"
 			? input.jobPayload

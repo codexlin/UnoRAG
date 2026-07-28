@@ -20,7 +20,7 @@ load_env_keys() {
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		[[ "$line" =~ ^[[:space:]]*# ]] && continue
 		[[ "$line" =~ ^[[:space:]]*$ ]] && continue
-		if [[ "$line" =~ ^(MERIKNOW_BASE_URL|MERIKNOW_ISOLATION_PASSWORD|MERIKNOW_PILOT_JOB_TIMEOUT_SEC|MERIKNOW_PILOT_POLL_INTERVAL_SEC|MERIKNOW_ISOLATION_KEEP)= ]]; then
+		if [[ "$line" =~ ^(UNORAG_BASE_URL|UNORAG_ISOLATION_PASSWORD|UNORAG_PILOT_JOB_TIMEOUT_SEC|UNORAG_PILOT_POLL_INTERVAL_SEC|UNORAG_ISOLATION_KEEP)= ]]; then
 			local key="${line%%=*}"
 			local val="${line#*=}"
 			val="${val%\"}"
@@ -35,18 +35,18 @@ for envfile in "$ROOT/apps/web/.env.local" "$ROOT/deploy/compose/.env" "$ROOT/.e
 	load_env_keys "$envfile"
 done
 
-BASE_URL="${MERIKNOW_BASE_URL:-http://localhost:3000}"
+BASE_URL="${UNORAG_BASE_URL:-http://localhost:3000}"
 BASE_URL="${BASE_URL%/}"
-PASSWORD="${MERIKNOW_ISOLATION_PASSWORD:-IsolationPilot!2026}"
-JOB_TIMEOUT_SEC="${MERIKNOW_PILOT_JOB_TIMEOUT_SEC:-300}"
-POLL_INTERVAL_SEC="${MERIKNOW_PILOT_POLL_INTERVAL_SEC:-3}"
-KEEP_TOPOLOGY="${MERIKNOW_ISOLATION_KEEP:-0}"
-RC_SHA="${MERIKNOW_RC_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
-REPORT_JSON="${MERIKNOW_ISOLATION_REPORT:-$ACC_DIR/.s1_s2_last_run.json}"
-TOPOLOGY_JSON="${MERIKNOW_ISOLATION_TOPOLOGY:-$ACC_DIR/.isolation-topology.json}"
+PASSWORD="${UNORAG_ISOLATION_PASSWORD:-IsolationPilot!2026}"
+JOB_TIMEOUT_SEC="${UNORAG_PILOT_JOB_TIMEOUT_SEC:-300}"
+POLL_INTERVAL_SEC="${UNORAG_PILOT_POLL_INTERVAL_SEC:-3}"
+KEEP_TOPOLOGY="${UNORAG_ISOLATION_KEEP:-0}"
+RC_SHA="${UNORAG_RC_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
+REPORT_JSON="${UNORAG_ISOLATION_REPORT:-$ACC_DIR/.s1_s2_last_run.json}"
+TOPOLOGY_JSON="${UNORAG_ISOLATION_TOPOLOGY:-$ACC_DIR/.isolation-topology.json}"
 
-COOKIE_DIR="$(mktemp -d -t meriknow-iso-cookies.XXXXXX)"
-WORKDIR="$(mktemp -d -t meriknow-iso-work.XXXXXX)"
+COOKIE_DIR="$(mktemp -d -t unorag-iso-cookies.XXXXXX)"
+WORKDIR="$(mktemp -d -t unorag-iso-work.XXXXXX)"
 RESULT_FILE="$WORKDIR/results.jsonl"
 trap 'rm -rf "$COOKIE_DIR" "$WORKDIR"' EXIT
 
@@ -387,10 +387,10 @@ MARKER_B1="ISO_MARKER_B1_${TOKEN}"
 MARKER_REST="ISO_MARKER_RESTRICTED_${TOKEN}"
 
 log "login principals"
-login A1 "iso-a1-owner@meriknow.isolation.test" "$WS_A1"
-login A1V "iso-a1-viewer@meriknow.isolation.test" "$WS_A1"
-login A2 "iso-a2-owner@meriknow.isolation.test" "$WS_A2"
-login B1 "iso-b1-owner@meriknow.isolation.test" "$WS_B1"
+login A1 "iso-a1-owner@unorag.isolation.test" "$WS_A1"
+login A1V "iso-a1-viewer@unorag.isolation.test" "$WS_A1"
+login A2 "iso-a2-owner@unorag.isolation.test" "$WS_A2"
+login B1 "iso-b1-owner@unorag.isolation.test" "$WS_B1"
 
 # --- provision libraries + docs + keys ---
 LIB_A1_BODY="$WORKDIR/lib_a1.json"
@@ -621,7 +621,7 @@ fi
 assert_no_leak "S2.post_delete_no_A2_marker" session_ask A2 "$LIB_A2" "$MARKER_A2" "$WORKDIR/s2_post_del.json"
 
 if [[ "$KEEP_TOPOLOGY" != "1" ]]; then
-	log "cleanup topology (set MERIKNOW_ISOLATION_KEEP=1 to retain)"
+	log "cleanup topology (set UNORAG_ISOLATION_KEEP=1 to retain)"
 	set +e
 	node "$ACC_DIR/bootstrap_isolation_topology.mjs" --cleanup --out "$TOPOLOGY_JSON"
 	set -e

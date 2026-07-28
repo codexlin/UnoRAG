@@ -1,4 +1,4 @@
-# MeriKnow 产品策略
+# UnoRAG 产品策略
 
 > 状态：现行方向（2026-07-26）
 >
@@ -6,17 +6,17 @@
 
 ## 核心判断
 
-企业 RAG 既可能以完整知识助手出现，也可能只是客服、售后、门户或 Agent 中的一项能力。MeriKnow 不在二者之间二选一，而采用统一结构：
+企业 RAG 既可能以完整知识助手出现，也可能只是客服、售后、门户或 Agent 中的一项能力。UnoRAG 不在二者之间二选一，而采用统一结构：
 
 > **部署形态独立，使用形态嵌入；运行时 API-first，管理上有控制台。**
 
-MeriKnow 独立负责知识的接入、版本、权限、检索、回答、证据、评测和运维；最终用户可以使用官方 Workspace，也可以继续使用客户已有业务系统。
+UnoRAG 独立负责知识的接入、版本、权限、检索、回答、证据、评测和运维；最终用户可以使用官方 Workspace，也可以继续使用客户已有业务系统。
 
 ## 产品定位
 
 ### 一句话
 
-**MeriKnow 是一个可私有化部署、权限感知、版本安全、结果可追溯的企业知识服务，为现有业务系统、Agent 和员工知识助手提供 Retrieve 与 Answer 能力。**
+**UnoRAG 是一个可私有化部署、权限感知、版本安全、结果可追溯的企业知识服务，为现有业务系统、Agent 和员工知识助手提供 Retrieve 与 Answer 能力。**
 
 英文表述：
 
@@ -24,10 +24,10 @@ MeriKnow 独立负责知识的接入、版本、权限、检索、回答、证�
 
 ### 不用什么表述
 
-- 不把 MeriKnow 定位成「通用 Agent 平台」。
-- 不把 MeriKnow 定位成「另一个 ChatGPT」。
-- 不把 MeriKnow 定位成「带 UI 的向量数据库」。
-- 不把 MeriKnow 定位成需要嵌入业务进程的 Python RAG 框架。
+- 不把 UnoRAG 定位成「通用 Agent 平台」。
+- 不把 UnoRAG 定位成「另一个 ChatGPT」。
+- 不把 UnoRAG 定位成「带 UI 的向量数据库」。
+- 不把 UnoRAG 定位成需要嵌入业务进程的 Python RAG 框架。
 - 不以模型、LangGraph 或 Qdrant 作为客户价值主张。
 
 客户购买的不是 RAG 技术名词，而是可核对的回答、权限隔离、文档更新安全、失败可追踪和可交付的私有化能力。
@@ -97,13 +97,13 @@ Workspace 很重要，但不得反向绑死 Knowledge API，也不得让路线�
 
 ```text
 Python SDK ──┐
-MCP Server ──┼──► MeriKnow Knowledge API
+MCP Server ──┼──► UnoRAG Knowledge API
 OpenAI API ──┘
 ```
 
 - Python SDK 是 API client，不把 PostgreSQL、Qdrant 和完整引擎嵌入客户 Python 进程。
 - MCP 首版只提供只读知识工具，例如 `search_knowledge`、`answer_with_sources`、`get_source`。
-- OpenAI-compatible endpoint 用于降低迁移成本；MeriKnow 原生 citation、refusal、trace schema 仍是权威契约。
+- OpenAI-compatible endpoint 用于降低迁移成本；UnoRAG 原生 citation、refusal、trace schema 仍是权威契约。
 
 ## 目标客户与首发场景
 

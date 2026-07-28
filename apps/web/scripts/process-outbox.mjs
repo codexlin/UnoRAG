@@ -37,13 +37,11 @@ const maxAttempts = Math.max(1, Number(process.env.OUTBOX_MAX_ATTEMPTS ?? 8));
 const workerId = `${process.env.HOSTNAME ?? "local"}:${process.pid}:${randomUUID()}`;
 const databaseUrl = process.env.DATABASE_URL?.trim();
 const ragApiUrl = process.env.RAG_API_URL?.trim() || "http://localhost:8000";
-const secret = process.env.MERIKNOW_INTERNAL_SECRET?.trim();
+const secret = process.env.UNORAG_INTERNAL_SECRET?.trim();
 
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
 if (!secret || secret.length < 32) {
-	throw new Error(
-		"MERIKNOW_INTERNAL_SECRET must contain at least 32 characters",
-	);
+	throw new Error("UNORAG_INTERNAL_SECRET must contain at least 32 characters");
 }
 
 const pool = new Pool({ connectionString: databaseUrl, max: 2 });

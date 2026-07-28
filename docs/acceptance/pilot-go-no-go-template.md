@@ -1,8 +1,8 @@
-# MeriKnow 试点验收报告（go / conditional go / no-go）
+# UnoRAG 试点验收报告（go / conditional go / no-go）
 
-> 复制本模板为版本化文件，例如  
-> `docs/acceptance/reports/YYYY-MM-DD-<customer-or-env>-pilot.md`  
-> **禁止**在仓库中提交真实客户敏感内容；客户侧报告可外置保管。  
+> 复制本模板为版本化文件，例如
+> `docs/acceptance/reports/YYYY-MM-DD-<customer-or-env>-pilot.md`
+> **禁止**在仓库中提交真实客户敏感内容；客户侧报告可外置保管。
 > **禁止**提交完整 Service Key / `.env` / 未脱敏 JSON。
 
 ## 元数据
@@ -78,7 +78,7 @@
 |---|---|---|---|---|
 | B1 | `backup.sh` 产出完整 MANIFEST | | | 见 backup-restore-verification |
 | B2 | 独立环境 restore 后 active / ACL / citation / 对象一致；Qdrant↔PG 按 org/workspace/doc/version/generation **精确比对**（非仅 collection count>0） | | | 指标：备份完成延迟、本轮数据丢失、RTO；**勿**把 write→backup 叫作 RPO；目标 RPO 取决于备份周期（未定义则写明） |
-| B3 | 升级演练（独立环境：旧版 seed → 备份 → migrate → 新版冒烟） | | | 脚本 `scripts/acceptance/b3_b4_upgrade_rollback.sh`；无正式旧镜像时用 `MERIKNOW_B3_OLD_SHA` worktree |
+| B3 | 升级演练（独立环境：旧版 seed → 备份 → migrate → 新版冒烟） | | | 脚本 `scripts/acceptance/b3_b4_upgrade_rollback.sh`；无正式旧镜像时用 `UNORAG_B3_OLD_SHA` worktree |
 | B4 | 回滚演练：B4A 仅应用回滚 + B4B 升级前备份恢复（B2 语义） | | | 同上脚本；schema 不兼容时 B4A 可 FAIL、以 B4B 为准 |
 | B5 | 容量/磁盘/队列告警已接通或书面接受风险 | | | 见 [`reports/2026-07-27-pilot-rc-b5-min-alerts.md`](./reports/2026-07-27-pilot-rc-b5-min-alerts.md)（webhook 五信号 PASS；磁盘为真实 df + force 注入）；正式签字汇总见 [`reports/2026-07-27-pilot-formal-go-no-go.md`](./reports/2026-07-27-pilot-formal-go-no-go.md) |
 
@@ -104,11 +104,11 @@
 
 填写或粘贴发布说明中的边界，至少覆盖：
 
-- 支持的文件格式与大小/页数上限  
-- 模型 / embedding / MinerU 客户自备 endpoint  
-- 审计 UI/CSV 导出是否仍后置  
-- SBOM / 镜像 CVE 扫描是否仍后置  
-- Helm HPA / NetworkPolicy 硬化是否仍后置  
+- 支持的文件格式与大小/页数上限
+- 模型 / embedding / MinerU 客户自备 endpoint
+- 审计 UI/CSV 导出是否仍后置
+- SBOM / 镜像 CVE 扫描是否仍后置
+- Helm HPA / NetworkPolicy 硬化是否仍后置
 
 ## 9. 质量门禁附件
 
@@ -123,9 +123,9 @@
 
 勾选**恰好一项**：
 
-- [ ] **GO** — 可标记该版本为试点通过，进入正式发布流程（须 B3/B4 完成且 B5 告警接通或书面接受）  
-- [ ] **Conditional GO** — 受控试点可继续，但**不是**正式 GO；须列出未决项（例如 B3/B4 未做、B5 仅草稿、R3 硬化证据缺口等）  
-- [ ] **NO-GO** — 不可宣称 production-ready；列出阻断项  
+- [ ] **GO** — 可标记该版本为试点通过，进入正式发布流程（须 B3/B4 完成且 B5 告警接通或书面接受）
+- [ ] **Conditional GO** — 受控试点可继续，但**不是**正式 GO；须列出未决项（例如 B3/B4 未做、B5 仅草稿、R3 硬化证据缺口等）
+- [ ] **NO-GO** — 不可宣称 production-ready；列出阻断项
 
 **决策人签字 / 日期：**
 
@@ -144,9 +144,9 @@
 
 ### 快速判定规则
 
-1. 任一安全硬熔断（§3）失败 → NO-GO  
-2. 任一 P0/P1 未清零 → NO-GO  
-3. 备份恢复或关键一致性演练失败 → NO-GO  
-4. 仅有 SKIP（无密钥/无 GPU/无第二租户）且书面接受风险 → 可 **Conditional GO**，但不得隐瞒  
-5. 仓库内验收脚本/清单齐全 **不能** 代替本报告的 GO / Conditional GO / NO-GO 勾选  
-6. **Conditional GO ≠ 正式 GO**；在 B3/B4/B5 与审批人签字完成前，不得对外宣称 production-ready  
+1. 任一安全硬熔断（§3）失败 → NO-GO
+2. 任一 P0/P1 未清零 → NO-GO
+3. 备份恢复或关键一致性演练失败 → NO-GO
+4. 仅有 SKIP（无密钥/无 GPU/无第二租户）且书面接受风险 → 可 **Conditional GO**，但不得隐瞒
+5. 仓库内验收脚本/清单齐全 **不能** 代替本报告的 GO / Conditional GO / NO-GO 勾选
+6. **Conditional GO ≠ 正式 GO**；在 B3/B4/B5 与审批人签字完成前，不得对外宣称 production-ready

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Emit standardized policy-parity JSON from Python policy_profiles.
 
-Usage (from MeriKnow repo root):
+Usage (from UnoRAG repo root):
   uv run --directory apps/api python ../../scripts/policy_parity_py.py
   uv run --directory apps/api python ../../scripts/policy_parity_py.py --out /tmp/py.json
 """

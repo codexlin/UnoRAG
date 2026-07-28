@@ -1,9 +1,9 @@
 # Retrieve / Ask Public API v1 — Frozen Contract
 
-> Status: **frozen** (2026-07-27)  
-> Machine-readable source: [`contracts/public-api-v1.openapi.json`](../../contracts/public-api-v1.openapi.json)  
-> Served at: `GET /api/v1/openapi.json`  
-> Integration guide: [`../INTEGRATION.md`](../INTEGRATION.md)  
+> Status: **frozen** (2026-07-27)
+> Machine-readable source: [`contracts/public-api-v1.openapi.json`](../../contracts/public-api-v1.openapi.json)
+> Served at: `GET /api/v1/openapi.json`
+> Integration guide: [`../INTEGRATION.md`](../INTEGRATION.md)
 > Python SDK (thin adapter): [`../../sdk/python/`](../../sdk/python/)
 
 This document is the **canonical human contract** for Knowledge Service Retrieve/Ask v1.
@@ -15,7 +15,7 @@ Python SDK / MCP / OpenAI-compatible adapters must be **thin clients** of this H
 | Marker | Value | Where |
 |--------|-------|-------|
 | Path prefix | `/api/v1/...` | Public gateway (Next.js) |
-| Response header | `X-MeriKnow-Api-Version: 1` | Every success and error |
+| Response header | `X-UnoRAG-Api-Version: 1` | Every success and error |
 | Response body | `api_version: "v1"` | Every **success** body |
 | OpenAPI `info.version` | `1.0.0` | Contract artifact |
 
@@ -25,7 +25,7 @@ Breaking changes require a new major (`/api/v2` + new OpenAPI). Additive optiona
 
 | Mode | Entry | Identity | Scopes |
 |------|-------|----------|--------|
-| **Service Key (public v1)** | `POST /api/v1/retrieve` · `POST /api/v1/ask` | `Authorization: Bearer mk_svc_…` (alt: `X-MeriKnow-Service-Key`) | `retrieve`, `ask` |
+| **Service Key (public v1)** | `POST /api/v1/retrieve` · `POST /api/v1/ask` | `Authorization: Bearer mk_svc_…` (alt: `X-UnoRAG-Service-Key`) | `retrieve`, `ask` |
 | **Session (Workspace)** | `/api/rag/v1/*` via browser BFF | Cookie session + workspace membership | Not part of public v1 |
 | **Internal HMAC** | FastAPI `/v1/*` (private network only) | Signed internal headers | Not customer-facing |
 
@@ -155,7 +155,7 @@ table_id · row_start · row_end · record_type
 }
 ```
 
-Headers: `X-Request-Id`, `X-MeriKnow-Api-Version: 1`; `401` also sets `WWW-Authenticate: Bearer`; `429` may set `Retry-After`.
+Headers: `X-Request-Id`, `X-UnoRAG-Api-Version: 1`; `401` also sets `WWW-Authenticate: Bearer`; `429` may set `Retry-After`.
 
 ### Stable error codes
 
@@ -177,7 +177,7 @@ Upstream internal names (e.g. `llm_upstream_unavailable`) are **never** passed t
 
 | Concern | v1 behavior |
 |---------|-------------|
-| Rate limit | Error shape frozen (`429` + `rate_limit_exceeded` + optional `Retry-After`). Optional process-local limiter via `MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE` (per service key). Multi-instance / cluster limits: Redis or Ingress — out of band. |
+| Rate limit | Error shape frozen (`429` + `rate_limit_exceeded` + optional `Retry-After`). Optional process-local limiter via `UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE` (per service key). Multi-instance / cluster limits: Redis or Ingress — out of band. |
 | Audit | Each public retrieve/ask attempt writes `audit_logs` action `knowledge.retrieve` / `knowledge.ask` (service key id in `details`; `actor_id` null). Key create/revoke remain control-plane audits. |
 | Usage | Structured stdout JSON line `event=knowledge.api.usage` with key_id, target, library_id, status, refused, citation_count, duration_ms, request_id. Token ledger / cost panels are **deferred**. |
 | `last_used_at` | Updated on successful key authentication. |
@@ -226,6 +226,6 @@ When public stream ships (planned `/api/v1/answer/stream`), it must reuse these 
 
 1. Call only `/api/v1/retrieve` and `/api/v1/ask` with Service Key.
 2. Treat success key sets and `ErrorCode` enum as closed for the major.
-3. Read `api_version` / `X-MeriKnow-Api-Version`; reject unexpected majors.
+3. Read `api_version` / `X-UnoRAG-Api-Version`; reject unexpected majors.
 4. Handle `refused` + empty `citations` as a normal business outcome, not a transport error.
 5. Do not depend on undocumented FastAPI fields.

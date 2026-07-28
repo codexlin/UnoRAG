@@ -6,13 +6,13 @@ import json
 from dataclasses import asdict
 from typing import Any, Mapping
 
-from meriknow import (
+from unorag import (
     AskResponse,
     ErrorCode,
-    MeriKnowAPIError,
-    MeriKnowError,
-    MeriKnowTransportError,
-    MeriKnowVersionError,
+    UnoRAGAPIError,
+    UnoRAGError,
+    UnoRAGTransportError,
+    UnoRAGVersionError,
     RetrieveResponse,
 )
 
@@ -28,7 +28,7 @@ def response_to_dict(response: RetrieveResponse | AskResponse) -> dict[str, Any]
 
 def error_payload(exc: BaseException) -> dict[str, Any]:
     """Map SDK exceptions to a stable error envelope (aligned with public v1)."""
-    if isinstance(exc, MeriKnowAPIError):
+    if isinstance(exc, UnoRAGAPIError):
         code = exc.code.value if isinstance(exc.code, ErrorCode) else str(exc.code)
         error: dict[str, Any] = {
             "code": code,
@@ -45,7 +45,7 @@ def error_payload(exc: BaseException) -> dict[str, Any]:
             error["retry_after"] = exc.retry_after
         return {"error": error}
 
-    if isinstance(exc, MeriKnowVersionError):
+    if isinstance(exc, UnoRAGVersionError):
         return {
             "error": {
                 "code": "unexpected_api_version",
@@ -58,7 +58,7 @@ def error_payload(exc: BaseException) -> dict[str, Any]:
             }
         }
 
-    if isinstance(exc, MeriKnowTransportError):
+    if isinstance(exc, UnoRAGTransportError):
         return {
             "error": {
                 "code": "transport_error",
@@ -67,7 +67,7 @@ def error_payload(exc: BaseException) -> dict[str, Any]:
             }
         }
 
-    if isinstance(exc, MeriKnowError):
+    if isinstance(exc, UnoRAGError):
         return {
             "error": {
                 "code": "client_error",
@@ -91,7 +91,7 @@ def error_text(exc: BaseException) -> str:
 
 
 def filters_mapping(filters: Mapping[str, Any] | None) -> dict[str, str] | None:
-    """Normalize optional filters for ``MeriKnow.retrieve``.
+    """Normalize optional filters for ``UnoRAG.retrieve``.
 
     Unknown keys are rejected with ``invalid_request`` (aligned with HTTP v1),
     not silently dropped.
@@ -100,7 +100,7 @@ def filters_mapping(filters: Mapping[str, Any] | None) -> dict[str, str] | None:
         return None
     unknown = sorted(key for key in filters if key not in ALLOWED_FILTER_KEYS)
     if unknown:
-        raise MeriKnowAPIError(
+        raise UnoRAGAPIError(
             code=ErrorCode.INVALID_REQUEST,
             message="request contains unsupported fields",
             retryable=False,

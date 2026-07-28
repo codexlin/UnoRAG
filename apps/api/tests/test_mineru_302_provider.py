@@ -235,7 +235,7 @@ def test_production_302_requires_explicit_egress_and_secret() -> None:
 		"internal_auth_secret": "a" * 40,
 		"internal_auth_replay_backend": "redis",
 		"document_storage_root": "/data",
-		"database_url": "postgresql://app:pass@db/meriknow",
+		"database_url": "postgresql://app:pass@db/unorag",
 		"qdrant_url": "http://qdrant:6333",
 		"redis_url": "redis://redis:6379",
 		"openai_api_key": "real-enough-test-key",
@@ -248,7 +248,7 @@ def test_production_302_requires_explicit_egress_and_secret() -> None:
 	worker_settings = Settings(
 		**base,
 		external_parser_allowed=True,
-		worker_database_url="postgresql://worker:pass@db/meriknow",
+		worker_database_url="postgresql://worker:pass@db/unorag",
 	)
 	with pytest.raises(ValueError, match="MINERU_302_API_KEY"):
 		LifecycleWorker(worker_settings)

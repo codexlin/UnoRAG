@@ -1,7 +1,7 @@
-# MeriKnow local infra
+# UnoRAG local infra
 # Usage: docker compose up -d
 # Verify Qdrant: curl -s http://localhost:6333/readyz
-# Verify Postgres: pg_isready -h localhost -U meriknow
+# Verify Postgres: pg_isready -h localhost -U unorag
 
 services:
   qdrant:
@@ -10,7 +10,7 @@ services:
       - "6333:6333"
       - "6334:6334"
     volumes:
-      - meriknow_qdrant_data:/qdrant/storage
+      - unorag_qdrant_data:/qdrant/storage
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'"]
       interval: 5s
@@ -21,15 +21,15 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: meriknow
-      POSTGRES_USER: meriknow
-      POSTGRES_PASSWORD: meriknow
+      POSTGRES_DB: unorag
+      POSTGRES_USER: unorag
+      POSTGRES_PASSWORD: unorag
     ports:
       - "5432:5432"
     volumes:
-      - meriknow_postgres_data:/var/lib/postgresql/data
+      - unorag_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U meriknow -d meriknow"]
+      test: ["CMD-SHELL", "pg_isready -U unorag -d unorag"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -45,5 +45,5 @@ services:
       retries: 10
 
 volumes:
-  meriknow_qdrant_data:
-  meriknow_postgres_data:
+  unorag_qdrant_data:
+  unorag_postgres_data:

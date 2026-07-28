@@ -13,28 +13,28 @@ source "${ROOT}/scripts/compose-env.sh"
 # Prefer split config (bootstrap.env) over a local smoke helper file.
 # .smoke-admin-password is only a fallback so rotation of bootstrap.env is not shadowed.
 _SMOKE_PW_FILE="${ROOT}/.smoke-admin-password"
-if [[ -z "${MERIKNOW_ADMIN_PASSWORD:-}" ]]; then
-	MERIKNOW_ADMIN_PASSWORD="$(mk_config_get MERIKNOW_ADMIN_PASSWORD 2>/dev/null || true)"
+if [[ -z "${UNORAG_ADMIN_PASSWORD:-}" ]]; then
+	UNORAG_ADMIN_PASSWORD="$(mk_config_get UNORAG_ADMIN_PASSWORD 2>/dev/null || true)"
 fi
-if [[ -z "${MERIKNOW_ADMIN_PASSWORD:-}" && -f "$_SMOKE_PW_FILE" ]]; then
-	MERIKNOW_ADMIN_PASSWORD="$(tr -d '\n' < "$_SMOKE_PW_FILE")"
+if [[ -z "${UNORAG_ADMIN_PASSWORD:-}" && -f "$_SMOKE_PW_FILE" ]]; then
+	UNORAG_ADMIN_PASSWORD="$(tr -d '\n' < "$_SMOKE_PW_FILE")"
 fi
-if [[ -z "${MERIKNOW_ADMIN_EMAIL:-}" ]]; then
-	MERIKNOW_ADMIN_EMAIL="$(mk_config_get MERIKNOW_ADMIN_EMAIL 2>/dev/null || true)"
+if [[ -z "${UNORAG_ADMIN_EMAIL:-}" ]]; then
+	UNORAG_ADMIN_EMAIL="$(mk_config_get UNORAG_ADMIN_EMAIL 2>/dev/null || true)"
 fi
-if [[ -z "${MERIKNOW_BASE_URL:-}" ]]; then
+if [[ -z "${UNORAG_BASE_URL:-}" ]]; then
 	_HTTP_PORT="$(mk_config_get HTTP_PORT 2>/dev/null || echo 80)"
-	MERIKNOW_BASE_URL="http://localhost:${_HTTP_PORT}"
+	UNORAG_BASE_URL="http://localhost:${_HTTP_PORT}"
 fi
 
-BASE_URL="${MERIKNOW_BASE_URL:-http://localhost}"
+BASE_URL="${UNORAG_BASE_URL:-http://localhost}"
 BASE_URL="${BASE_URL%/}"
-EMAIL="${MERIKNOW_ADMIN_EMAIL:-admin@example.com}"
-PASSWORD="${MERIKNOW_ADMIN_PASSWORD:-}"
-JOB_TIMEOUT_SEC="${MERIKNOW_PILOT_JOB_TIMEOUT_SEC:-300}"
-POLL_INTERVAL_SEC="${MERIKNOW_PILOT_POLL_INTERVAL_SEC:-3}"
-COOKIE_JAR="$(mktemp -t meriknow-pilot-cookies.XXXXXX)"
-WORKDIR="$(mktemp -d -t meriknow-pilot-work.XXXXXX)"
+EMAIL="${UNORAG_ADMIN_EMAIL:-admin@example.com}"
+PASSWORD="${UNORAG_ADMIN_PASSWORD:-}"
+JOB_TIMEOUT_SEC="${UNORAG_PILOT_JOB_TIMEOUT_SEC:-300}"
+POLL_INTERVAL_SEC="${UNORAG_PILOT_POLL_INTERVAL_SEC:-3}"
+COOKIE_JAR="$(mktemp -t unorag-pilot-cookies.XXXXXX)"
+WORKDIR="$(mktemp -d -t unorag-pilot-work.XXXXXX)"
 SERVICE_KEY_ID=""
 RETRIEVE_KEY_ID=""
 LIB_A_ID=""
@@ -113,7 +113,7 @@ if [[ "$HEALTH_CODE" != "200" ]]; then
 fi
 
 if [[ -z "$PASSWORD" || "$PASSWORD" == "change-this-before-deployment" ]]; then
-	skip "set MERIKNOW_ADMIN_PASSWORD in deploy/config/bootstrap.env (or .smoke-admin-password)"
+	skip "set UNORAG_ADMIN_PASSWORD in deploy/config/bootstrap.env (or .smoke-admin-password)"
 fi
 
 # --- login ---
@@ -292,7 +292,7 @@ for line in header_lines:
 
 request_id = headers.get("x-request-id", "")
 uuid.UUID(request_id)
-assert headers.get("x-meriknow-api-version") == "1", headers
+assert headers.get("x-unorag-api-version") == "1", headers
 assert data.get("trace_id") == request_id, (data.get("trace_id"), request_id)
 assert data.get("library_id", library_id) == library_id
 

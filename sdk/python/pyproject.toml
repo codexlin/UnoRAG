@@ -1,12 +1,12 @@
 [project]
-name = "meriknow"
+name = "unorag"
 version = "0.1.0"
-description = "Thin Python client for MeriKnow Knowledge API v1 (retrieve / ask)"
+description = "Thin Python client for UnoRAG Knowledge API v1 (retrieve / ask)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Proprietary" }
-authors = [{ name = "MeriKnow" }]
-keywords = ["meriknow", "rag", "knowledge", "retrieve", "ask"]
+authors = [{ name = "UnoRAG" }]
+keywords = ["unorag", "rag", "knowledge", "retrieve", "ask"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -26,16 +26,16 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/codexlin/MeriKnow"
-Documentation = "https://github.com/codexlin/MeriKnow/blob/main/sdk/python/README.md"
-Contract = "https://github.com/codexlin/MeriKnow/blob/main/docs/contracts/retrieve-ask-v1.md"
+Homepage = "https://github.com/codexlin/UnoRAG"
+Documentation = "https://github.com/codexlin/UnoRAG/blob/main/sdk/python/README.md"
+Contract = "https://github.com/codexlin/UnoRAG/blob/main/docs/contracts/retrieve-ask-v1.md"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["meriknow"]
+packages = ["unorag"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

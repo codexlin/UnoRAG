@@ -3,12 +3,12 @@
 #
 # Safety:
 #   - Uses a one-shot Compose project + dedicated volumes (never main hybrid volumes).
-#   - Document root is under the workdir (never .meriknow/).
+#   - Document root is under the workdir (never .unorag/).
 #   - Destructive restore only targets the B2 project.
 #
 # Modes:
 #   hybrid (default) — infra compose on alternate ports + ephemeral Next/API/worker/outbox
-#   compose          — full deploy/compose stack (needs meriknow-web:local + meriknow-api:local)
+#   compose          — full deploy/compose stack (needs unorag-web:local + unorag-api:local)
 #
 # Exit: 0=PASS 1=FAIL 2=BLOCKED/SKIP
 set -euo pipefail
@@ -19,14 +19,14 @@ ROOT="$(cd "$ACC_DIR/../.." && pwd)"
 source "$ACC_DIR/lib/common.sh"
 cd "$ROOT"
 
-MODE="${MERIKNOW_B2_MODE:-hybrid}"
-RC_SHA="${MERIKNOW_RC_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
+MODE="${UNORAG_B2_MODE:-hybrid}"
+RC_SHA="${UNORAG_RC_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
 SCRIPT_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
-KEEP="${MERIKNOW_B2_KEEP:-0}"
-JOB_TIMEOUT_SEC="${MERIKNOW_PILOT_JOB_TIMEOUT_SEC:-300}"
-POLL_INTERVAL_SEC="${MERIKNOW_PILOT_POLL_INTERVAL_SEC:-3}"
-WORK_ROOT="${MERIKNOW_B2_WORKDIR:-$ACC_DIR/.b2-work}"
-REPORT_JSON="${MERIKNOW_B2_REPORT:-$ACC_DIR/.b2_last_run.json}"
+KEEP="${UNORAG_B2_KEEP:-0}"
+JOB_TIMEOUT_SEC="${UNORAG_PILOT_JOB_TIMEOUT_SEC:-300}"
+POLL_INTERVAL_SEC="${UNORAG_PILOT_POLL_INTERVAL_SEC:-3}"
+WORK_ROOT="${UNORAG_B2_WORKDIR:-$ACC_DIR/.b2-work}"
+REPORT_JSON="${UNORAG_B2_REPORT:-$ACC_DIR/.b2_last_run.json}"
 COMPOSE_FILE="$ACC_DIR/compose.b2-infra.yml"
 
 B2_POSTGRES_PORT="${B2_POSTGRES_PORT:-15432}"
@@ -35,8 +35,8 @@ B2_QDRANT_GRPC_PORT="${B2_QDRANT_GRPC_PORT:-16334}"
 B2_REDIS_PORT="${B2_REDIS_PORT:-16379}"
 B2_WEB_PORT="${B2_WEB_PORT:-13000}"
 B2_API_PORT="${B2_API_PORT:-18000}"
-PROJECT_SRC="${MERIKNOW_B2_PROJECT_SRC:-meriknow-b2-src}"
-PROJECT_DST="${MERIKNOW_B2_PROJECT_DST:-meriknow-b2-dst}"
+PROJECT_SRC="${UNORAG_B2_PROJECT_SRC:-unorag-b2-src}"
+PROJECT_DST="${UNORAG_B2_PROJECT_DST:-unorag-b2-dst}"
 
 COOKIE_JAR=""
 WORKDIR=""
@@ -198,7 +198,7 @@ cleanup_soft() {
 		while read -r n; do
 			[[ -n "$n" ]] || continue
 			docker rm -f "$n" >/dev/null 2>&1
-		done < <(docker ps -a --format '{{.Names}}' | grep -E '^meriknow-b2-web-' || true)
+		done < <(docker ps -a --format '{{.Names}}' | grep -E '^unorag-b2-web-' || true)
 		COMPOSE_PROJECT_NAME="$PROJECT_SRC" docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1
 		COMPOSE_PROJECT_NAME="$PROJECT_DST" docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1
 	else
@@ -248,24 +248,24 @@ docker info >/dev/null 2>&1 || blocked "Docker daemon not available"
 # Secrets / model keys from local hybrid env (never printed).
 load_env_file_keys "$ROOT/apps/api/.env"
 load_env_file_keys "$ROOT/apps/web/.env.local" \
-	MERIKNOW_INTERNAL_SECRET MERIKNOW_SESSION_SECRET MERIKNOW_ADMIN_PASSWORD \
-	MERIKNOW_ADMIN_EMAIL MERIKNOW_ADMIN_NAME MERIKNOW_ADMIN_SUBJECT \
+	UNORAG_INTERNAL_SECRET UNORAG_SESSION_SECRET UNORAG_ADMIN_PASSWORD \
+	UNORAG_ADMIN_EMAIL UNORAG_ADMIN_NAME UNORAG_ADMIN_SUBJECT \
 	DATABASE_URL RAG_API_URL DOCUMENT_STORAGE_ROOT
 
 [[ -n "${DASHSCOPE_API_KEY:-}${OPENAI_API_KEY:-}" ]] \
 	|| blocked "no DASHSCOPE_API_KEY/OPENAI_API_KEY in apps/api/.env — Ask/Retrieve cannot be verified"
-[[ -n "${MERIKNOW_INTERNAL_SECRET:-}" && -n "${MERIKNOW_SESSION_SECRET:-}" ]] \
-	|| blocked "MERIKNOW_INTERNAL_SECRET / MERIKNOW_SESSION_SECRET missing"
+[[ -n "${UNORAG_INTERNAL_SECRET:-}" && -n "${UNORAG_SESSION_SECRET:-}" ]] \
+	|| blocked "UNORAG_INTERNAL_SECRET / UNORAG_SESSION_SECRET missing"
 
-ADMIN_EMAIL="${MERIKNOW_ADMIN_EMAIL:-admin@example.com}"
-ADMIN_PASSWORD="${MERIKNOW_ADMIN_PASSWORD:-B2PilotRestore!2026}"
-ADMIN_NAME="${MERIKNOW_ADMIN_NAME:-B2 Administrator}"
-ORG_ID="${MERIKNOW_ORGANIZATION_ID:-11111111-1111-4111-8111-111111111111}"
-WS_ID="${MERIKNOW_WORKSPACE_ID:-22222222-2222-4222-8222-222222222222}"
-PRINCIPAL_ID="${MERIKNOW_PRINCIPAL_ID:-33333333-3333-4333-8333-333333333333}"
-INTERNAL_SECRET="${MERIKNOW_INTERNAL_SECRET}"
-SESSION_SECRET="${MERIKNOW_SESSION_SECRET}"
-PG_PASSWORD="${MERIKNOW_B2_PG_PASSWORD:-b2-restore-pg-$(openssl rand -hex 6)}"
+ADMIN_EMAIL="${UNORAG_ADMIN_EMAIL:-admin@example.com}"
+ADMIN_PASSWORD="${UNORAG_ADMIN_PASSWORD:-B2PilotRestore!2026}"
+ADMIN_NAME="${UNORAG_ADMIN_NAME:-B2 Administrator}"
+ORG_ID="${UNORAG_ORGANIZATION_ID:-11111111-1111-4111-8111-111111111111}"
+WS_ID="${UNORAG_WORKSPACE_ID:-22222222-2222-4222-8222-222222222222}"
+PRINCIPAL_ID="${UNORAG_PRINCIPAL_ID:-33333333-3333-4333-8333-333333333333}"
+INTERNAL_SECRET="${UNORAG_INTERNAL_SECRET}"
+SESSION_SECRET="${UNORAG_SESSION_SECRET}"
+PG_PASSWORD="${UNORAG_B2_PG_PASSWORD:-b2-restore-pg-$(openssl rand -hex 6)}"
 
 mkdir -p "$WORK_ROOT"
 WORKDIR="$(mktemp -d "$WORK_ROOT/run.XXXXXX")"
@@ -285,17 +285,17 @@ for p in "$B2_POSTGRES_PORT" "$B2_QDRANT_PORT" "$B2_REDIS_PORT" "$B2_WEB_PORT" "
 done
 
 # Ensure we never accidentally use main document root.
-MAIN_DOC_ROOT="$(cd "$ROOT/.meriknow/documents" 2>/dev/null && pwd || true)"
+MAIN_DOC_ROOT="$(cd "$ROOT/.unorag/documents" 2>/dev/null && pwd || true)"
 [[ -n "$MAIN_DOC_ROOT" && "$DOC_ROOT" == "$MAIN_DOC_ROOT" ]] \
-	&& blocked "refusing to use main .meriknow documents root"
+	&& blocked "refusing to use main .unorag documents root"
 
 export POSTGRES_PASSWORD="$PG_PASSWORD"
-export POSTGRES_USER=meriknow
-export POSTGRES_DB=meriknow
+export POSTGRES_USER=unorag
+export POSTGRES_DB=unorag
 export B2_POSTGRES_PORT B2_QDRANT_PORT B2_QDRANT_GRPC_PORT B2_REDIS_PORT
 
-DSN_PG="postgresql://meriknow:${PG_PASSWORD}@127.0.0.1:${B2_POSTGRES_PORT}/meriknow"
-DSN_API="postgresql+psycopg://meriknow:${PG_PASSWORD}@127.0.0.1:${B2_POSTGRES_PORT}/meriknow"
+DSN_PG="postgresql://unorag:${PG_PASSWORD}@127.0.0.1:${B2_POSTGRES_PORT}/unorag"
+DSN_API="postgresql+psycopg://unorag:${PG_PASSWORD}@127.0.0.1:${B2_POSTGRES_PORT}/unorag"
 BASE_URL="http://127.0.0.1:${B2_WEB_PORT}"
 
 start_infra() {
@@ -330,17 +330,17 @@ migrate_and_bootstrap() {
 	(
 		cd "$ROOT/apps/web"
 		DATABASE_URL="$DSN_PG" \
-			MERIKNOW_ORGANIZATION_ID="$ORG_ID" \
-			MERIKNOW_WORKSPACE_ID="$WS_ID" \
-			MERIKNOW_PRINCIPAL_ID="$PRINCIPAL_ID" \
-			MERIKNOW_ORGANIZATION_SLUG=b2-org \
-			MERIKNOW_ORGANIZATION_NAME="B2 Restore Org" \
-			MERIKNOW_WORKSPACE_SLUG=b2-ws \
-			MERIKNOW_WORKSPACE_NAME="B2 Restore Workspace" \
-			MERIKNOW_ADMIN_SUBJECT=b2-admin \
-			MERIKNOW_ADMIN_EMAIL="$ADMIN_EMAIL" \
-			MERIKNOW_ADMIN_NAME="$ADMIN_NAME" \
-			MERIKNOW_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+			UNORAG_ORGANIZATION_ID="$ORG_ID" \
+			UNORAG_WORKSPACE_ID="$WS_ID" \
+			UNORAG_PRINCIPAL_ID="$PRINCIPAL_ID" \
+			UNORAG_ORGANIZATION_SLUG=b2-org \
+			UNORAG_ORGANIZATION_NAME="B2 Restore Org" \
+			UNORAG_WORKSPACE_SLUG=b2-ws \
+			UNORAG_WORKSPACE_NAME="B2 Restore Workspace" \
+			UNORAG_ADMIN_SUBJECT=b2-admin \
+			UNORAG_ADMIN_EMAIL="$ADMIN_EMAIL" \
+			UNORAG_ADMIN_NAME="$ADMIN_NAME" \
+			UNORAG_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
 			pnpm db:bootstrap
 	)
 }
@@ -363,7 +363,7 @@ start_apps() {
 			RAG_READ_DATABASE_URL="$DSN_PG" \
 			METADATA_BACKEND=postgres \
 			QDRANT_URL="http://127.0.0.1:${B2_QDRANT_PORT}" \
-			QDRANT_COLLECTION="${QDRANT_COLLECTION:-meriknow_chunks}" \
+			QDRANT_COLLECTION="${QDRANT_COLLECTION:-unorag_chunks}" \
 			REDIS_URL="redis://127.0.0.1:${B2_REDIS_PORT}" \
 			DOCUMENT_STORAGE_ROOT="$DOC_ROOT" \
 			ACTIVE_GENERATION_GATE_ENABLED=true \
@@ -390,7 +390,7 @@ start_apps() {
 			RAG_READ_DATABASE_URL="$DSN_PG" \
 			METADATA_BACKEND=postgres \
 			QDRANT_URL="http://127.0.0.1:${B2_QDRANT_PORT}" \
-			QDRANT_COLLECTION="${QDRANT_COLLECTION:-meriknow_chunks}" \
+			QDRANT_COLLECTION="${QDRANT_COLLECTION:-unorag_chunks}" \
 			REDIS_URL="redis://127.0.0.1:${B2_REDIS_PORT}" \
 			DOCUMENT_STORAGE_ROOT="$DOC_ROOT" \
 			ACTIVE_GENERATION_GATE_ENABLED=true \
@@ -407,35 +407,35 @@ start_apps() {
 	PIDS+=($!)
 
 	# Web: prefer Docker image to avoid fighting host next.dev .next lock.
-	if ! docker image inspect meriknow-web:local >/dev/null 2>&1; then
-		blocked "meriknow-web:local image missing — build with: docker build -f deploy/docker/web.Dockerfile -t meriknow-web:local ."
+	if ! docker image inspect unorag-web:local >/dev/null 2>&1; then
+		blocked "unorag-web:local image missing — build with: docker build -f deploy/docker/web.Dockerfile -t unorag-web:local ."
 	fi
-	WEB_CONTAINER="meriknow-b2-web-$$"
+	WEB_CONTAINER="unorag-b2-web-$$"
 	docker rm -f "$WEB_CONTAINER" >/dev/null 2>&1 || true
 	# From inside the container, Postgres is on the host — not 127.0.0.1.
-	local dsn_web="postgresql://meriknow:${PG_PASSWORD}@host.docker.internal:${B2_POSTGRES_PORT}/meriknow"
+	local dsn_web="postgresql://unorag:${PG_PASSWORD}@host.docker.internal:${B2_POSTGRES_PORT}/unorag"
 	docker run -d --name "$WEB_CONTAINER" \
 		-p "${B2_WEB_PORT}:3000" \
 		-e NODE_ENV=production \
 		-e RAG_API_URL="http://host.docker.internal:${B2_API_PORT}" \
-		-e MERIKNOW_INTERNAL_SECRET="$INTERNAL_SECRET" \
-		-e MERIKNOW_SESSION_SECRET="$SESSION_SECRET" \
+		-e UNORAG_INTERNAL_SECRET="$INTERNAL_SECRET" \
+		-e UNORAG_SESSION_SECRET="$SESSION_SECRET" \
 		-e DATABASE_URL="$dsn_web" \
-		-e DOCUMENT_STORAGE_ROOT=/var/lib/meriknow/documents \
+		-e DOCUMENT_STORAGE_ROOT=/var/lib/unorag/documents \
 		-e DOCUMENT_LIFECYCLE_V2=true \
-		-e MERIKNOW_ORGANIZATION_ID="$ORG_ID" \
-		-e MERIKNOW_WORKSPACE_ID="$WS_ID" \
-		-e MERIKNOW_PRINCIPAL_ID="$PRINCIPAL_ID" \
-		-v "${DOC_ROOT}:/var/lib/meriknow/documents" \
+		-e UNORAG_ORGANIZATION_ID="$ORG_ID" \
+		-e UNORAG_WORKSPACE_ID="$WS_ID" \
+		-e UNORAG_PRINCIPAL_ID="$PRINCIPAL_ID" \
+		-v "${DOC_ROOT}:/var/lib/unorag/documents" \
 		--add-host=host.docker.internal:host-gateway \
-		meriknow-web:local >/dev/null
+		unorag-web:local >/dev/null
 
 	(
 		cd "$ROOT/apps/web"
 		env \
 			DATABASE_URL="$DSN_PG" \
 			RAG_API_URL="http://127.0.0.1:${B2_API_PORT}" \
-			MERIKNOW_INTERNAL_SECRET="$INTERNAL_SECRET" \
+			UNORAG_INTERNAL_SECRET="$INTERNAL_SECRET" \
 			pnpm outbox:run \
 			>"$outbox_log" 2>&1
 	) &
@@ -472,7 +472,7 @@ backup_hybrid() {
 	mkdir -p "$out"
 	log "backup postgres → $out/postgres.sql"
 	COMPOSE_PROJECT_NAME="$project" docker compose -f "$COMPOSE_FILE" exec -T postgres \
-		pg_dump -U meriknow -d meriknow --format=plain --no-owner --no-acl \
+		pg_dump -U unorag -d unorag --format=plain --no-owner --no-acl \
 		> "$out/postgres.sql"
 	log "backup documents → $out/documents.tgz"
 	tar -C "$DOC_ROOT" -czf "$out/documents.tgz" .
@@ -503,10 +503,10 @@ restore_hybrid() {
 	COMPOSE_PROJECT_NAME="$project" docker compose -f "$COMPOSE_FILE" up -d --wait postgres qdrant redis
 	# Postgres restore: drop schemas then apply dump
 	COMPOSE_PROJECT_NAME="$project" docker compose -f "$COMPOSE_FILE" exec -T postgres \
-		psql -U meriknow -d meriknow -v ON_ERROR_STOP=1 \
+		psql -U unorag -d unorag -v ON_ERROR_STOP=1 \
 		-c "DROP SCHEMA IF EXISTS app CASCADE; DROP SCHEMA IF EXISTS rag CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
 	COMPOSE_PROJECT_NAME="$project" docker compose -f "$COMPOSE_FILE" exec -T postgres \
-		psql -U meriknow -d meriknow -v ON_ERROR_STOP=1 \
+		psql -U unorag -d unorag -v ON_ERROR_STOP=1 \
 		< "$backup/postgres.sql"
 	rm -rf "${DOC_ROOT:?}/"* "${DOC_ROOT}"/.[!.]* 2>/dev/null || true
 	tar -C "$DOC_ROOT" -xzf "$backup/documents.tgz"
@@ -952,7 +952,7 @@ PY
 	local qpg_note
 	qpg_note="$(
 		python3 - "$DSN_PG" "http://127.0.0.1:${B2_QDRANT_PORT}" \
-			"${QDRANT_COLLECTION:-meriknow_chunks}" "$doc_id" \
+			"${QDRANT_COLLECTION:-unorag_chunks}" "$doc_id" \
 			"$ORG_ID" "$WS_ID" "$version_id" "$generation_id" \
 			"${B2_POSTGRES_PORT}" "$PG_PASSWORD" <<'PY'
 import json, sys, urllib.request, subprocess, re
@@ -1110,11 +1110,11 @@ PY
 
 # --------------- main (hybrid) ---------------
 if [[ "$MODE" != "hybrid" && "$MODE" != "compose" ]]; then
-	blocked "unknown MERIKNOW_B2_MODE=$MODE (use hybrid|compose)"
+	blocked "unknown UNORAG_B2_MODE=$MODE (use hybrid|compose)"
 fi
 
 if [[ "$MODE" == "compose" ]]; then
-	blocked "compose mode requires meriknow-web:local build + deploy/compose/.env; use hybrid (default) on this host or set up images first"
+	blocked "compose mode requires unorag-web:local build + deploy/compose/.env; use hybrid (default) on this host or set up images first"
 fi
 
 log "B2 hybrid drill rc=$RC_SHA script=$SCRIPT_SHA work=$WORKDIR"

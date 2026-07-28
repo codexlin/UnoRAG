@@ -49,7 +49,7 @@ const USERS = [
 	{
 		id: IDS.userA1,
 		org: IDS.orgA,
-		email: "iso-a1-owner@meriknow.isolation.test",
+		email: "iso-a1-owner@unorag.isolation.test",
 		name: "ISO A1 Owner",
 		subject: "iso-a1-owner",
 		workspace: IDS.wsA1,
@@ -58,7 +58,7 @@ const USERS = [
 	{
 		id: IDS.userA1Viewer,
 		org: IDS.orgA,
-		email: "iso-a1-viewer@meriknow.isolation.test",
+		email: "iso-a1-viewer@unorag.isolation.test",
 		name: "ISO A1 Viewer",
 		subject: "iso-a1-viewer",
 		workspace: IDS.wsA1,
@@ -67,7 +67,7 @@ const USERS = [
 	{
 		id: IDS.userA2,
 		org: IDS.orgA,
-		email: "iso-a2-owner@meriknow.isolation.test",
+		email: "iso-a2-owner@unorag.isolation.test",
 		name: "ISO A2 Owner",
 		subject: "iso-a2-owner",
 		workspace: IDS.wsA2,
@@ -76,7 +76,7 @@ const USERS = [
 	{
 		id: IDS.userB1,
 		org: IDS.orgB,
-		email: "iso-b1-owner@meriknow.isolation.test",
+		email: "iso-b1-owner@unorag.isolation.test",
 		name: "ISO B1 Owner",
 		subject: "iso-b1-owner",
 		workspace: IDS.wsB1,
@@ -95,7 +95,7 @@ function usage() {
 
 Env:
   DATABASE_URL                 required (apps/web/.env.local or compose .env)
-  MERIKNOW_ISOLATION_PASSWORD  default IsolationPilot!2026
+  UNORAG_ISOLATION_PASSWORD  default IsolationPilot!2026
 `);
 }
 
@@ -207,7 +207,7 @@ async function main() {
 		process.exit(2);
 	}
 	const password =
-		process.env.MERIKNOW_ISOLATION_PASSWORD?.trim() || "IsolationPilot!2026";
+		process.env.UNORAG_ISOLATION_PASSWORD?.trim() || "IsolationPilot!2026";
 
 	const client = new Client({ connectionString: databaseUrl });
 	try {
@@ -227,8 +227,8 @@ async function main() {
 		}
 		await bootstrap(client, password);
 		const manifest = {
-			password_env: "MERIKNOW_ISOLATION_PASSWORD",
-			password_default_used: !process.env.MERIKNOW_ISOLATION_PASSWORD?.trim(),
+			password_env: "UNORAG_ISOLATION_PASSWORD",
+			password_default_used: !process.env.UNORAG_ISOLATION_PASSWORD?.trim(),
 			organizations: {
 				A: { id: IDS.orgA, slug: "iso-org-a" },
 				B: { id: IDS.orgB, slug: "iso-org-b" },

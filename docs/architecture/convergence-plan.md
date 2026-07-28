@@ -1,4 +1,4 @@
-# MeriKnow 收敛计划（Step 3：兼容负担清理 — 硬删冻结；转向 CI/CD P0）
+# UnoRAG 收敛计划（Step 3：兼容负担清理 — 硬删冻结；转向 CI/CD P0）
 
 > 状态：**Step 1 已完成**（2026-07-27）；**Step 2 已完成**（Eval + AskGraph 主线，2026-07-28）；**Step 3 零风险项已落地**；**硬删全面冻结**（2026-07-28）— 正式 GO **未**达成前不再推进 410 / legacy / facade / codegen 删除。
 > 前提：私有栈黑盒 [Conditional PASS @ `0170ba8`](../acceptance/reports/2026-07-27-private-0170ba8-blackbox.md)；试点 **Conditional GO @ webch**（≠ 正式 GO）。
@@ -188,7 +188,7 @@ Step 1 仍要求：改映射必须双边改；parity 证明**同一输入等值*
 | [x] | `docs/PRODUCT.md` 成功标准表（约 L149） | 「适配器规划中」 | **已改**：SDK/MCP 已交付；OpenAI 仍规划 |
 | [x] | `docs/STRATEGY.md`（约 L139） | 「SDK/MCP…不属于本阶段必交付」 | **已改**：Retrieve/Ask 适配 **0.1.0 已交付**（`sdk/python/` · `sdk/mcp/`）；OpenAI 层仍后置 |
 | [x] | `deploy/README.md`（约 L37、L69） | chart 描述 / Helm 句只写 web/api/lifecycle-worker | **已改**：补 **outbox-worker** |
-| [x] | `deploy/helm/meriknow/Chart.yaml` | `description: … lifecycle-worker` | **已改**：加上 outbox-worker |
+| [x] | `deploy/helm/unorag/Chart.yaml` | `description: … lifecycle-worker` | **已改**：加上 outbox-worker |
 | [x] | `deploy/helm/README.md` | 曾误写 workers「均为 ClusterIP」 | **已改**：api 仅 ClusterIP；lifecycle/outbox **不创建 Service**；三者均不对外 |
 | [x] | `docs/acceptance/backup-restore-verification.md`（约 L42） | 停止 app 列表缺 outbox-worker | **已改**：含 **outbox-worker** |
 | [x] | `docs/README.md` | 无收敛计划入口 | **已链**到本文 |
@@ -252,7 +252,7 @@ Step 1 仍要求：改映射必须双边改；parity 证明**同一输入等值*
 | `apps/api/scripts/ab_chunk_profiles.py` · `run_ablation_matrix.py` · `ingest_sample.py` 等 | 开发/实验工具；`apps/api/README.md` 已标明样例非产品 HTTP ingest；消融见 runbook | **保留，不删** |
 | `apps/api/scripts/NOTES.txt` | **仓库中已不存在**（未跟踪/未提交）；无需再删。勿与 Helm `templates/NOTES.txt` 混淆 | **无操作** |
 | `data/` 本地元数据/文档（若存在） | 勿提交；非仓库事实源 | 不进 git |
-| 测试临时目录 / `/tmp/meriknow-*` | 本机产物 | 不入库 |
+| 测试临时目录 / `/tmp/unorag-*` | 本机产物 | 不入库 |
 
 > P2 结论：不批量删脚本；NOTES.txt 已缺席故无归档动作；生成物继续靠 gitignore。
 
@@ -357,7 +357,7 @@ apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
 
 **AskGraph 当前进度**：提交 1–7 **已完成** → **AskGraph Step 2 主线完成**。可选后续：`graph/ask/` 包迁入、facade 删除、同步/流式更深去重（非必做）。
 
-**收尾（可选）**：`nodes.rewrite` → `ask_graph` 的反向依赖（为兼容 monkeypatch 的 late-bind）**已消除**；`_request_structured_retrieval_plan_json` 在 `nodes/rewrite.py` 本地调用，`ask_graph` 仅 facade re-export。  
+**收尾（可选）**：`nodes.rewrite` → `ask_graph` 的反向依赖（为兼容 monkeypatch 的 late-bind）**已消除**；`_request_structured_retrieval_plan_json` 在 `nodes/rewrite.py` 本地调用，`ask_graph` 仅 facade re-export。
 `service.py` → `ask_graph` facade 的 reverse late-import **已消除**（2026-07-28）：`build_ask_graph` 在 `builder.py`；`persist_turn` / `single_document_version_id` 直调 `persistence`；测试 patch 指向真实模块 / `service` 绑定；`ask_graph` 仍 re-export。另补 live `stream_messages` 中途异常 characterization。
 
 **告警（私有）**：webch 告警通道先接 **Resend 邮件**（`ops/min_alerts`，非飞书）；飞书 webhook 可后置。**Step 3 已启动**（见 §7.4）：别名/文档收紧已落地；410 / legacy knobs / facade / codegen **defer** 至正式 GO 后下一 major。
@@ -459,8 +459,8 @@ apps/api/app/graph/ask/      # 可选迁入（正式 GO 前非必做）
 | Policy | `apps/api/app/services/policy_profiles.py` · `ask_defaults.py` · `ask-policy.mjs` |
 | Policy parity | `tests/contracts/policy-parity/` · `scripts/compare_policy_parity.py` |
 | Compose outbox | `deploy/compose/docker-compose.yml` → service `outbox-worker` |
-| Helm outbox | `deploy/helm/meriknow/templates/outbox-worker-deployment.yaml` |
-| Helm api Service | `deploy/helm/meriknow/templates/api-service.yaml`（workers 无对应 Service） |
+| Helm outbox | `deploy/helm/unorag/templates/outbox-worker-deployment.yaml` |
+| Helm api Service | `deploy/helm/unorag/templates/api-service.yaml`（workers 无对应 Service） |
 | v1 合同 | `docs/contracts/retrieve-ask-v1.md` |
 | 私有黑盒 | `docs/acceptance/reports/2026-07-27-private-0170ba8-blackbox.md` |
 | CI/CD P0 | `docs/ops/cicd-p0.md` · `.github/workflows/ci.yml` · `deploy/compose/scripts/upgrade.sh` |

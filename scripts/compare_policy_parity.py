@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run Python + JS policy runners and assert result equality.
 
-Usage (from MeriKnow repo root):
+Usage (from UnoRAG repo root):
   python3 scripts/compare_policy_parity.py
 
 Exit 0 on match; non-zero on mismatch or runner failure.
@@ -107,7 +107,7 @@ def main() -> int:
 	)
 	args = parser.parse_args()
 
-	with tempfile.TemporaryDirectory(prefix="meriknow-policy-parity-") as tmp:
+	with tempfile.TemporaryDirectory(prefix="unorag-policy-parity-") as tmp:
 		tmp_path = Path(tmp)
 		py_out = tmp_path / "py.json"
 		js_out = tmp_path / "js.json"

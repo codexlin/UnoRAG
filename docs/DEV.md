@@ -5,7 +5,7 @@
 ## 仓库布局
 
 ```text
-MeriKnow/
+UnoRAG/
   docker-compose.yml     # 本机 infra：Postgres / Qdrant / Redis
   apps/web/              # Next.js 控制面
   apps/api/              # FastAPI 数据面 + lifecycle_worker
@@ -17,7 +17,7 @@ MeriKnow/
 ## 本机一键联调
 
 ```bash
-cd MeriKnow
+cd UnoRAG
 docker compose up -d
 # Qdrant :6333 · Postgres :5432 · Redis :6379
 
@@ -39,7 +39,7 @@ uv run uvicorn app.main:app --reload --port 8000
 
 # —— Lifecycle worker（产品上传必需）——
 # 与 web 共用 DOCUMENT_STORAGE_ROOT（本地可先建目录）
-export DOCUMENT_STORAGE_ROOT="${DOCUMENT_STORAGE_ROOT:-$PWD/../../.meriknow/documents}"
+export DOCUMENT_STORAGE_ROOT="${DOCUMENT_STORAGE_ROOT:-$PWD/../../.unorag/documents}"
 mkdir -p "$DOCUMENT_STORAGE_ROOT"
 uv run python -m app.lifecycle_worker
 ```
@@ -49,7 +49,7 @@ uv run python -m app.lifecycle_worker
 | 工作台 | http://localhost:3000/app |
 | 同源健康 | `GET http://localhost:3000/api/rag/health` |
 | API 健康 | `GET http://localhost:8000/health` |
-| 登录 | `.env.local` 中 `MERIKNOW_ADMIN_EMAIL` / `MERIKNOW_ADMIN_PASSWORD` |
+| 登录 | `.env.local` 中 `UNORAG_ADMIN_EMAIL` / `UNORAG_ADMIN_PASSWORD` |
 
 私有化客户式安装见 [`deploy/README.md`](../deploy/README.md) 与 [`runbooks/private-deployment.md`](./runbooks/private-deployment.md)。
 
@@ -72,12 +72,12 @@ uv run python -m app.lifecycle_worker
 | 变量 | 说明 |
 |------|------|
 | `RAG_API_URL` | FastAPI 基址（仅服务端） |
-| `MERIKNOW_INTERNAL_SECRET` | 与 api `INTERNAL_AUTH_SECRET` **完全相同** |
-| `MERIKNOW_SESSION_SECRET` | Cookie 签名；≥32；**≠** internal |
+| `UNORAG_INTERNAL_SECRET` | 与 api `INTERNAL_AUTH_SECRET` **完全相同** |
+| `UNORAG_SESSION_SECRET` | Cookie 签名；≥32；**≠** internal |
 | `DATABASE_URL` | Drizzle 只管 `app` schema |
 | `DOCUMENT_STORAGE_ROOT` | 与 worker 共享原文；生产必填 |
 | `DOCUMENT_LIFECYCLE_V2` | 默认开；仅 `false`/`0` 关闭 |
-| `MERIKNOW_ADMIN_*` / org·workspace UUID | `pnpm db:bootstrap` |
+| `UNORAG_ADMIN_*` / org·workspace UUID | `pnpm db:bootstrap` |
 
 ### API（数据面）要点
 

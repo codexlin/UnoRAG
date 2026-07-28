@@ -44,7 +44,7 @@ def test_active_generation_resolver_scopes_and_caches_snapshot(monkeypatch) -> N
 	)
 	resolver = ActiveGenerationResolver(
 		Settings(
-			database_url="postgresql+psycopg://db/meriknow",
+			database_url="postgresql+psycopg://db/unorag",
 			active_generation_cache_ttl_seconds=60,
 		)
 	)
@@ -56,7 +56,7 @@ def test_active_generation_resolver_scopes_and_caches_snapshot(monkeypatch) -> N
 	assert first is second
 	assert first.generation_ids == ("generation-b", "generation-a")
 	assert first.cache_key == "generation-b,generation-a"
-	assert connect_calls == ["postgresql://db/meriknow"]
+	assert connect_calls == ["postgresql://db/unorag"]
 	assert connection.calls[0][1] == ("tenant-a", "workspace-a", "library-a")
 
 	resolver.invalidate(

@@ -8,7 +8,7 @@ import {
 } from "../src/lib/server/object-storage/path-core.mjs";
 
 test("storage paths remain inside the configured root", () => {
-	const root = path.resolve("/tmp/meriknow-storage-test");
+	const root = path.resolve("/tmp/unorag-storage-test");
 	const resolved = resolveStoragePath(
 		root,
 		"org/o/workspace/w/document/d/version/v/source/policy.md",

@@ -259,11 +259,11 @@ class QdrantStore:
 			must=[
 				qm.FieldCondition(
 					key="generation_id",
-					match=qm.MatchValue(value="__meriknow_no_active_generation_a__"),
+					match=qm.MatchValue(value="__unorag_no_active_generation_a__"),
 				),
 				qm.FieldCondition(
 					key="generation_id",
-					match=qm.MatchValue(value="__meriknow_no_active_generation_b__"),
+					match=qm.MatchValue(value="__unorag_no_active_generation_b__"),
 				),
 			]
 		)

@@ -105,6 +105,6 @@ export async function exportWorkspaceAuditCsv(opts: {
 	const stamp = new Date().toISOString().slice(0, 10);
 	return {
 		body: formatAuditCsv(result.items),
-		filename: `meriknow-audit-${stamp}.csv`,
+		filename: `unorag-audit-${stamp}.csv`,
 	};
 }

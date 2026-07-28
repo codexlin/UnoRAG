@@ -60,7 +60,7 @@ def isolated_ask_settings(env_overrides: dict[str, str] | None = None):
 	)
 	previous = {key: os.environ.get(key) for key in keys}
 	extra_env = dict(env_overrides or {})
-	with TemporaryDirectory(prefix="meriknow-eval-") as tmp_dir:
+	with TemporaryDirectory(prefix="unorag-eval-") as tmp_dir:
 		os.environ.update(
 			{
 				"ASK_MODE": "stub",

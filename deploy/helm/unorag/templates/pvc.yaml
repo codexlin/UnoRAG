@@ -2,9 +2,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "meriknow.documentsPvcName" . }}
+  name: {{ include "unorag.documentsPvcName" . }}
   labels:
-    {{- include "meriknow.labels" . | nindent 4 }}
+    {{- include "unorag.labels" . | nindent 4 }}
 spec:
   accessModes:
     {{- toYaml .Values.persistence.accessModes | nindent 4 }}

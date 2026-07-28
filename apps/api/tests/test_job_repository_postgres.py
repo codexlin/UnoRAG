@@ -76,8 +76,8 @@ def test_workers_claim_disjoint_jobs_and_enforce_lease(job_scope):
         psycopg.connect(DATABASE_URL, autocommit=True) as first_connection,
         psycopg.connect(DATABASE_URL, autocommit=True) as second_connection,
     ):
-        first_connection.execute("SET ROLE meriknow_worker")
-        second_connection.execute("SET ROLE meriknow_worker")
+        first_connection.execute("SET ROLE unorag_worker")
+        second_connection.execute("SET ROLE unorag_worker")
         first_repository = JobRepository(first_connection)
         second_repository = JobRepository(second_connection)
 
@@ -327,7 +327,7 @@ def test_document_ingest_repository_completes_staging_generation(
 ):
     ids = ingest_job_scope
     with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
-        connection.execute("SET ROLE meriknow_worker")
+        connection.execute("SET ROLE unorag_worker")
         repository = JobRepository(connection)
         [lease] = repository.claim(
             worker_id="lifecycle-worker-1",
@@ -390,7 +390,7 @@ def test_document_ingest_repository_completes_staging_generation(
 def test_activate_generation_refuses_deleting_document(ingest_job_scope):
     ids = ingest_job_scope
     with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
-        connection.execute("SET ROLE meriknow_worker")
+        connection.execute("SET ROLE unorag_worker")
         repository = JobRepository(connection)
         [lease] = repository.claim(
             worker_id="lifecycle-worker-1",
@@ -435,7 +435,7 @@ def test_activate_generation_preserves_library_deleting_status(ingest_job_scope)
             "UPDATE app.libraries SET status = 'deleting' WHERE id = %s",
             (library_id,),
         )
-        connection.execute("SET ROLE meriknow_worker")
+        connection.execute("SET ROLE unorag_worker")
         repository = JobRepository(connection)
         [lease] = repository.claim(
             worker_id="lifecycle-worker-1",
@@ -470,7 +470,7 @@ def test_activate_generation_preserves_library_deleting_status(ingest_job_scope)
 def test_expired_leases_retry_then_dead(ingest_job_scope):
     ids = ingest_job_scope
     with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
-        connection.execute("SET ROLE meriknow_worker")
+        connection.execute("SET ROLE unorag_worker")
         repository = JobRepository(connection)
 
         [first] = repository.claim(
@@ -523,7 +523,7 @@ def test_expired_leases_retry_then_dead(ingest_job_scope):
 def test_late_job_is_superseded_before_activation(ingest_job_scope):
     ids = ingest_job_scope
     with psycopg.connect(DATABASE_URL, autocommit=True) as worker_connection:
-        worker_connection.execute("SET ROLE meriknow_worker")
+        worker_connection.execute("SET ROLE unorag_worker")
         repository = JobRepository(worker_connection)
         [lease] = repository.claim(
             worker_id="lifecycle-worker-late",
@@ -718,7 +718,7 @@ def test_claim_cleanup_due_skips_active_and_marks_sweep(ingest_job_scope):
             (active_generation_id, ids["version_id"], ids["document_id"]),
         )
 
-        connection.execute("SET ROLE meriknow_worker")
+        connection.execute("SET ROLE unorag_worker")
         repository = JobRepository(connection)
         claims = repository.claim_cleanup_due(capacity=10)
         claimed_ids = {claim.generation_id for claim in claims}

@@ -2,9 +2,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "meriknow.fullname" . }}-api
+  name: {{ include "unorag.fullname" . }}-api
   labels:
-    {{- include "meriknow.labels" . | nindent 4 }}
+    {{- include "unorag.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
 spec:
   # Fail-closed: ClusterIP only. Browser traffic must go through web Ingress.
@@ -15,6 +15,6 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "meriknow.selectorLabels" . | nindent 4 }}
+    {{- include "unorag.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: api
 {{- end }}

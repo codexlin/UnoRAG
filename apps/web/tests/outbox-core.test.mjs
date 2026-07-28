@@ -38,10 +38,10 @@ test("library upsert request is canonical and body-bound", () => {
 		now: 1_700_000_000,
 	});
 	const context = JSON.parse(
-		Buffer.from(headers["x-meriknow-context"], "base64url").toString("utf8"),
+		Buffer.from(headers["x-unorag-context"], "base64url").toString("utf8"),
 	);
 	const expectedSignature = createHmac("sha256", SECRET)
-		.update(headers["x-meriknow-context"], "utf8")
+		.update(headers["x-unorag-context"], "utf8")
 		.digest("base64url");
 
 	assert.equal(request.method, "PUT");
@@ -57,7 +57,7 @@ test("library upsert request is canonical and body-bound", () => {
 	assert.equal(context.method, "PUT");
 	assert.equal(context.target, request.target);
 	assert.match(context.body_sha256, /^[0-9a-f]{64}$/);
-	assert.equal(headers["x-meriknow-signature"], expectedSignature);
+	assert.equal(headers["x-unorag-signature"], expectedSignature);
 });
 
 test("library delete uses the service-only idempotent projection path", async () => {

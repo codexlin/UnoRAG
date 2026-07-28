@@ -1,4 +1,4 @@
-# MeriKnow 路线图
+# UnoRAG 路线图
 
 > 状态：现行（2026-07-26）
 >
@@ -34,8 +34,8 @@
 
 ### 鉴权边界（多用户必做）
 
-- [ ] `MERIKNOW_INTERNAL_SECRET` === `INTERNAL_AUTH_SECRET`（≥32 字符）
-- [ ] `MERIKNOW_SESSION_SECRET` 独立且 ≠ internal secret
+- [ ] `UNORAG_INTERNAL_SECRET` === `INTERNAL_AUTH_SECRET`（≥32 字符）
+- [ ] `UNORAG_SESSION_SECRET` 独立且 ≠ internal secret
 - [ ] `INTERNAL_AUTH_ENABLED=true`（否则全员 `principal=development`，档案串台）
 - [ ] 生产：`APP_ENV=production` + Redis replay；**禁止**公网暴露 `:8000`
 
@@ -55,7 +55,7 @@
 
 ## 执行原则
 
-路线图服务于一个核心产品：**MeriKnow Knowledge Service**。
+路线图服务于一个核心产品：**UnoRAG Knowledge Service**。
 
 **当前阶段（私有化稳固）明确优先级：**
 
@@ -157,7 +157,7 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 
 | 维度 | 官方 Workspace | 客户系统嵌入 |
 |------|-------------------|-------------------|
-| UI | MeriKnow Northline 工作台 | 客户自有业务系统 / Chat / Agent |
+| UI | UnoRAG Northline 工作台 | 客户自有业务系统 / Chat / Agent |
 | 身份 | Session + 工作区成员 | Service key（`mk_svc_`）；OAuth-for-apps 当前非目标 |
 | 入库 | 控制面文库 UI + lifecycle | 目标为 Knowledge API Documents/Jobs；当前可复用 Workspace 入库 |
 | 问答 | `/app/ask` → BFF → `/v1/ask` | `/api/v1/retrieve` · `/api/v1/ask`（Bearer）→ 内网 FastAPI |

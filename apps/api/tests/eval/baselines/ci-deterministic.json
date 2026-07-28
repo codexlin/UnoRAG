@@ -1,5 +1,5 @@
 {
-  "schema_version": "meriknow.release_baseline.v1",
+  "schema_version": "unorag.release_baseline.v1",
   "name": "ci-deterministic",
   "description": "PR gate floors for stub Ask + deterministic retrieval/ingest contracts",
   "layer_pass_rate_floors": {

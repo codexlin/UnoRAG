@@ -10,7 +10,7 @@
 
 ## Context
 
-MeriKnow began as a vertical Python slice: FastAPI owns product metadata and
+UnoRAG began as a vertical Python slice: FastAPI owns product metadata and
 also runs parsing, retrieval, LangGraph Ask, and archive persistence. The web
 client calls FastAPI directly. This was useful while DocumentIR, MinerU,
 chunking, TableIR, and retrieval contracts were still changing.

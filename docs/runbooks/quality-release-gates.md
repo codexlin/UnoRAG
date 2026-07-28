@@ -15,12 +15,12 @@ cd apps/api
 # PR / local fast gate
 uv run python scripts/run_release_gates.py --mode ci \
   --baseline tests/eval/baselines/ci-deterministic.json \
-  --report-out /tmp/meriknow-ci-gate.json
+  --report-out /tmp/unorag-ci-gate.json
 
 # Release candidate
 uv run python scripts/run_release_gates.py --mode release \
   --baseline tests/eval/baselines/release.json \
-  --report-out /tmp/meriknow-release-gate.json
+  --report-out /tmp/unorag-release-gate.json
 ```
 
 CI：`.github/workflows/ci.yml`（PR + `main` 入口）调用可复用工作流
@@ -52,7 +52,7 @@ Cases tagged `fuse` / `isolation` / `acl` / `tenant_leak` /
 
 ## Report contract
 
-Reports use schema `meriknow.release_gate.v1` and record:
+Reports use schema `unorag.release_gate.v1` and record:
 
 - git commit
 - dataset path + sha256

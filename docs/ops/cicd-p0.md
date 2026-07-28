@@ -1,6 +1,6 @@
-# CI/CD P0 闭环（前半：代码 / 工作流）
+# CI/CD P0 闭环
 
-> 状态：**进行中**（2026-07-28）。本轮只落地「构建 / 门禁 / pull 升级脚本 / 文档冻结」；**不含**真实 SSH 上云、生产 Secret、ACR 真推、TCR/Harbor promote、Cosign/OIDC、Dokploy、Step 3 硬删。
+> 状态：**进行中**（2026-07-28）。CI、ACR + GHCR 双 Registry 发布 workflow、digest manifest、pull 升级脚本和真实告警已落地；仍待 ACR Secret、首次真推和人工批准 SSH CD。
 >
 > 路线（已确认）：**停止结构清理 → CI 构建/扫描/推镜像 → 人工批准 CD → 真实告警与恢复演练 → 正式 GO → 下一 major 再硬删。**
 
@@ -16,11 +16,11 @@
 |----------|---------|
 | `.github/workflows/ci.yml` | **已做** — PR + `main`；pytest / web / release gate / parity / Docker 构建验证（不推） |
 | `.github/workflows/eval-gates.yml` | **保留** — 改为 `workflow_call`（+ 手动），由 `ci.yml` 调用 |
-| `.github/workflows/release-images.yml` | **骨架** — manual/tag 构建三镜像；ACR 推送需 Secret，默认 dry-run / fail-closed |
+| `.github/workflows/release-images.yml` | **已做** — 三 target 各构建一次，同时推 ACR + GHCR；产出区域 digest manifest |
 | `promote-images.yml` | **未建** — 后置 |
 | `deploy.yml` | **未建** — 改完 `upgrade.sh` 且有 Environment 批准后再做 |
 
-权限约定（CI）：仅 `permissions: contents: read`。不用 `pull_request_target`；不读 Registry / SSH / 生产 Secret。
+权限约定：`ci.yml` 仅 `contents: read`；`release-images.yml` 额外使用 `packages: write` 推 GHCR。均不用 `pull_request_target`，不读取 SSH 或生产应用 Secret。
 
 ---
 
@@ -31,21 +31,22 @@
 - [x] `deploy/compose/scripts/upgrade.sh`：默认 `compose pull`；更新 **outbox-worker**；拒绝 `latest`/空 tag；保留旧 pin 可应用回切；迁移失败不自动回滚 DB；health 后跑 `pilot-smoke.sh`（若存在）
 - [x] `.github/workflows/ci.yml` 入口
 - [x] `eval-gates.yml` 可复用、不丢 L7 / policy parity
-- [x] `release-images.yml` 骨架（不假装已能推 ACR）
+- [x] `release-images.yml`：单次构建双推 ACR + GHCR，输出 `release-acr.env` / `release-ghcr.env`
+- [x] 品牌残留门禁：受版本控制的内容和路径不得重新出现旧品牌
 - [x] 文档：冻结 Step 3 硬删；正式 GO 含发布闭环；本文
 
 ### 2.2 下一轮（真发布路径）
 
 - [ ] 配置 ACR GitHub Secrets（`ACR_REGISTRY` / `ACR_USERNAME` / `ACR_PASSWORD` / `ACR_NAMESPACE`）
-- [ ] `release-images.yml` 真推 digest + 写出可喂给 `upgrade.sh --manifest` 的 `release.env`
+- [ ] 手动运行 `release-images`（`dry_run=false`），验证双 Registry digest 与 artifact
 - [ ] `deploy.yml` + GitHub Environment 人工批准 + SSH（仍不把密钥写入仓库）
-- [ ] webch：Resend 告警上机 + 恢复演练证据
+- [x] webch：Resend firing / resolved 演练通过
 - [ ] 正式 GO 签字（见收敛计划 § 正式 GO 门禁）
 
 ### 2.3 明确不做（本阶段）
 
 - Step 3 硬删（410 / legacy knobs / `ask_graph` facade / schema codegen）
-- TCR/Harbor promote、Cosign/OIDC、Dokploy
+- TCR/Harbor、Cosign/OIDC、Dokploy
 - 在仓库中存放生产 Secret / SSH 私钥
 
 ---

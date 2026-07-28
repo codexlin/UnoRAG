@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { MeriKnowLogo } from "@/components/app/meriknow-logo";
+import { UnoRAGLogo } from "@/components/app/unorag-logo";
 import { buttonVariants } from "@/components/ui/button";
 import {
 	Card,
@@ -16,7 +16,7 @@ export default function Home() {
 		<main className="relative mx-auto flex min-h-full w-full max-w-5xl flex-col gap-12 px-6 py-16 md:py-24">
 			<header className="flex items-center justify-between gap-4">
 				<div className="flex items-center gap-3">
-					<MeriKnowLogo size="lg" withWordmark wordmarkClassName="text-2xl" />
+					<UnoRAGLogo size="lg" withWordmark wordmarkClassName="text-2xl" />
 					<span className="text-meta hidden font-mono tracking-[0.18em] text-muted-foreground uppercase sm:inline">
 						Northline
 					</span>
@@ -37,7 +37,7 @@ export default function Home() {
 						像测绘一样对准出处。
 					</h1>
 					<p className="max-w-lg text-base leading-7 text-muted-foreground">
-						MeriKnow 是可私有化部署的 Knowledge Service：统一管理文档生命周期、
+						UnoRAG 是可私有化部署的 Knowledge Service：统一管理文档生命周期、
 						权限、检索与有据回答。团队可直接使用 Workspace，也可通过 Public API
 						v1.0 接入现有业务系统。
 					</p>
@@ -53,7 +53,7 @@ export default function Home() {
 								buttonVariants({ variant: "outline" }),
 								"rounded-md",
 							)}
-							href="https://github.com/codexlin/MeriKnow"
+							href="https://github.com/codexlin/UnoRAG"
 							target="_blank"
 							rel="noreferrer"
 						>

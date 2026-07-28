@@ -1,12 +1,12 @@
 [project]
-name = "meriknow-mcp"
+name = "unorag-mcp"
 version = "0.1.0"
-description = "Thin MCP server adapter for MeriKnow Knowledge API v1 (retrieve / ask)"
+description = "Thin MCP server adapter for UnoRAG Knowledge API v1 (retrieve / ask)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Proprietary" }
-authors = [{ name = "MeriKnow" }]
-keywords = ["meriknow", "mcp", "rag", "knowledge", "retrieve", "ask"]
+authors = [{ name = "UnoRAG" }]
+keywords = ["unorag", "mcp", "rag", "knowledge", "retrieve", "ask"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -18,7 +18,7 @@ classifiers = [
 ]
 dependencies = [
   "mcp>=1.9.0,<2",
-  "meriknow @ file:../python",
+  "unorag @ file:../python",
 ]
 
 [project.optional-dependencies]
@@ -28,12 +28,12 @@ dev = [
 ]
 
 [project.scripts]
-meriknow-mcp = "meriknow_mcp.server:main"
+unorag-mcp = "unorag_mcp.server:main"
 
 [project.urls]
-Homepage = "https://github.com/codexlin/MeriKnow"
-Documentation = "https://github.com/codexlin/MeriKnow/blob/main/sdk/mcp/README.md"
-Contract = "https://github.com/codexlin/MeriKnow/blob/main/docs/contracts/retrieve-ask-v1.md"
+Homepage = "https://github.com/codexlin/UnoRAG"
+Documentation = "https://github.com/codexlin/UnoRAG/blob/main/sdk/mcp/README.md"
+Contract = "https://github.com/codexlin/UnoRAG/blob/main/docs/contracts/retrieve-ask-v1.md"
 
 [build-system]
 requires = ["hatchling"]
@@ -43,7 +43,7 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["meriknow_mcp"]
+packages = ["unorag_mcp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

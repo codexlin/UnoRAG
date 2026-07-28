@@ -2,7 +2,7 @@
 
 ## Scope
 
-Validate the real 302.AI MinerU 2.5 protocol and the MeriKnow provider adapter
+Validate the real 302.AI MinerU 2.5 protocol and the UnoRAG provider adapter
 without persisting the temporary credential.
 
 ## Fixture

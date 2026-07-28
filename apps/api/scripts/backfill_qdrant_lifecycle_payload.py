@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
 	parser.add_argument("--limit", type=int, default=0, help="max points to scan (0=all)")
 	parser.add_argument(
 		"--collection",
-		default=os.environ.get("QDRANT_COLLECTION", "meriknow"),
+		default=os.environ.get("QDRANT_COLLECTION", "unorag"),
 	)
 	parser.add_argument(
 		"--qdrant-url",

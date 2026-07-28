@@ -12,7 +12,7 @@ from app.services.policy_profiles import (
 	resolve_document_policy,
 )
 
-# apps/api/tests → MeriKnow/
+# apps/api/tests → UnoRAG/
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = REPO_ROOT / "tests" / "contracts" / "policy-parity" / "fixtures.json"
 

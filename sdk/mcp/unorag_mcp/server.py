@@ -1,6 +1,6 @@
 """stdio MCP server exposing Knowledge API v1 ``retrieve`` / ``ask`` tools.
 
-Thin adapter: all HTTP and auth live in the ``meriknow`` Python SDK.
+Thin adapter: all HTTP and auth live in the ``unorag`` Python SDK.
 This module does not embed RAG, embeddings, or Qdrant.
 """
 
@@ -10,28 +10,28 @@ from collections.abc import Callable
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
-from meriknow import MeriKnow, MeriKnowError
+from unorag import UnoRAG, UnoRAGError
 
-from meriknow_mcp.formatting import (
+from unorag_mcp.formatting import (
     error_text,
     filters_mapping,
     response_to_dict,
 )
 
-ClientFactory = Callable[[], MeriKnow]
+ClientFactory = Callable[[], UnoRAG]
 
 
 def create_server(
     *,
     client_factory: Optional[ClientFactory] = None,
-    name: str = "meriknow",
+    name: str = "unorag",
 ) -> FastMCP:
     """Build an MCP server whose tools map 1:1 to public API v1.
 
-    ``client_factory`` defaults to ``MeriKnow`` (env: ``MERIKNOW_BASE_URL``,
-    ``MERIKNOW_SERVICE_KEY``). Tests inject a mock factory — no live HTTP.
+    ``client_factory`` defaults to ``UnoRAG`` (env: ``UNORAG_BASE_URL``,
+    ``UNORAG_SERVICE_KEY``). Tests inject a mock factory — no live HTTP.
     """
-    factory: ClientFactory = client_factory or MeriKnow
+    factory: ClientFactory = client_factory or UnoRAG
     mcp = FastMCP(name)
 
     @mcp.tool()
@@ -41,7 +41,7 @@ def create_server(
         top_k: Optional[int] = None,
         filters: Optional[dict[str, str]] = None,
     ) -> dict[str, Any]:
-        """Retrieve evidence from a MeriKnow library (POST /api/v1/retrieve).
+        """Retrieve evidence from a UnoRAG library (POST /api/v1/retrieve).
 
         Params match frozen public API v1. ``refused`` with empty citations is a
         normal business outcome, not a tool error.
@@ -68,7 +68,7 @@ def create_server(
                 close = getattr(client, "close", None)
                 if callable(close):
                     close()
-        except MeriKnowError as exc:
+        except UnoRAGError as exc:
             raise RuntimeError(error_text(exc)) from exc
 
     @mcp.tool()
@@ -77,7 +77,7 @@ def create_server(
         library_id: str,
         session_id: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Ask a grounded question against a MeriKnow library (POST /api/v1/ask).
+        """Ask a grounded question against a UnoRAG library (POST /api/v1/ask).
 
         Params match frozen public API v1. ``refused`` with empty citations is a
         normal business outcome, not a tool error.
@@ -101,7 +101,7 @@ def create_server(
                 close = getattr(client, "close", None)
                 if callable(close):
                     close()
-        except MeriKnowError as exc:
+        except UnoRAGError as exc:
             raise RuntimeError(error_text(exc)) from exc
 
     return mcp

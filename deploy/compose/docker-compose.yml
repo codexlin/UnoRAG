@@ -1,4 +1,4 @@
-# MeriKnow private-deployment reference topology (L8).
+# UnoRAG private-deployment reference topology (L8).
 #
 # Config model (split by lifecycle / sensitivity):
 #   ../config/runtime.env      — non-secret (ConfigMap)
@@ -19,18 +19,18 @@
 # Browser → Caddy :${HTTP_PORT} → web :3000
 # FastAPI / lifecycle-worker / outbox-worker are NOT published.
 
-name: ${COMPOSE_PROJECT_NAME:-meriknow}
+name: ${COMPOSE_PROJECT_NAME:-unorag}
 
 services:
-  # Named volumes default to root:root; web runs as uid 10001 (meriknow).
+  # Named volumes default to root:root; web runs as uid 10001 (unorag).
   document-storage-init:
-    image: ${MERIKNOW_WEB_IMAGE:-meriknow-web:local}
+    image: ${UNORAG_WEB_IMAGE:-unorag-web:local}
     user: "0:0"
     volumes:
-      - document_storage:/var/lib/meriknow/documents
+      - document_storage:/var/lib/unorag/documents
     entrypoint: ["sh", "-c"]
     command:
-      - "chown -R meriknow:meriknow /var/lib/meriknow/documents && chmod 775 /var/lib/meriknow/documents"
+      - "chown -R unorag:unorag /var/lib/unorag/documents && chmod 775 /var/lib/unorag/documents"
     restart: "no"
     networks:
       - internal
@@ -50,7 +50,7 @@ services:
       - internal
 
   web:
-    image: ${MERIKNOW_WEB_IMAGE:-meriknow-web:local}
+    image: ${UNORAG_WEB_IMAGE:-unorag-web:local}
     build:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
@@ -61,13 +61,13 @@ services:
       RAG_API_URL: http://api:8000
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
-      MERIKNOW_INTERNAL_SECRET: ${MERIKNOW_INTERNAL_SECRET:?MERIKNOW_INTERNAL_SECRET required}
-      MERIKNOW_SESSION_SECRET: ${MERIKNOW_SESSION_SECRET:?MERIKNOW_SESSION_SECRET required}
+      UNORAG_INTERNAL_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
+      UNORAG_SESSION_SECRET: ${UNORAG_SESSION_SECRET:?UNORAG_SESSION_SECRET required}
       # Container-internal path only (named volume). Do not pass host absolute paths.
-      DOCUMENT_STORAGE_ROOT: /var/lib/meriknow/documents
+      DOCUMENT_STORAGE_ROOT: /var/lib/unorag/documents
       DOCUMENT_MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-52428800}
     volumes:
-      - document_storage:/var/lib/meriknow/documents
+      - document_storage:/var/lib/unorag/documents
     depends_on:
       document-storage-init:
         condition: service_completed_successfully
@@ -90,21 +90,21 @@ services:
       - edge
 
   api:
-    image: ${MERIKNOW_API_IMAGE:-meriknow-api:local}
+    image: ${UNORAG_API_IMAGE:-unorag-api:local}
     build:
       context: ../..
       dockerfile: deploy/docker/api.Dockerfile
     restart: unless-stopped
     environment:
       APP_ENV: ${APP_ENV:-production}
-      APP_NAME: MeriKnow API
+      APP_NAME: UnoRAG API
       API_PREFIX: /v1
       CORS_ORIGINS: http://localhost,http://127.0.0.1
       # Product invariants (not customer-tunable env knobs)
       ASK_MODE: live
       METADATA_BACKEND: postgres
       INTERNAL_AUTH_ENABLED: "true"
-      INTERNAL_AUTH_SECRET: ${MERIKNOW_INTERNAL_SECRET:?MERIKNOW_INTERNAL_SECRET required}
+      INTERNAL_AUTH_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
       INTERNAL_AUTH_REPLAY_BACKEND: redis
       ACTIVE_GENERATION_GATE_ENABLED: "true"
       ACTIVE_GENERATION_CACHE_TTL_SECONDS: "0"
@@ -112,9 +112,9 @@ services:
       DATABASE_URL: ${API_DATABASE_URL:?API_DATABASE_URL required}
       RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:?RAG_READ_DATABASE_URL required}
       QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
-      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-meriknow_chunks}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
       REDIS_URL: ${REDIS_URL:?REDIS_URL required}
-      DOCUMENT_STORAGE_ROOT: /var/lib/meriknow/documents
+      DOCUMENT_STORAGE_ROOT: /var/lib/unorag/documents
       MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-52428800}
       # Transitional mapping: deploy name LLM_* → app OPENAI_*
       OPENAI_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}
@@ -143,12 +143,12 @@ services:
       MINERU_302_DAILY_BUDGET: ${MINERU_302_DAILY_BUDGET:-0}
       MINERU_302_BUDGET_WARN_RATIO: ${MINERU_302_BUDGET_WARN_RATIO:-0.8}
       MINERU_302_LONG_PENDING_S: ${MINERU_302_LONG_PENDING_S:-300}
-      LIFECYCLE_WORKER_READY_FILE: /tmp/meriknow-lifecycle-ready
+      LIFECYCLE_WORKER_READY_FILE: /tmp/unorag-lifecycle-ready
       LIFECYCLE_WORKER_POLL_SECONDS: ${LIFECYCLE_WORKER_POLL_SECONDS:-1}
       LIFECYCLE_WORKER_LEASE_SECONDS: ${LIFECYCLE_WORKER_LEASE_SECONDS:-120}
       LIFECYCLE_WORKER_HEARTBEAT_SECONDS: ${LIFECYCLE_WORKER_HEARTBEAT_SECONDS:-30}
     volumes:
-      - document_storage:/var/lib/meriknow/documents
+      - document_storage:/var/lib/unorag/documents
     depends_on:
       document-storage-init:
         condition: service_completed_successfully
@@ -173,7 +173,7 @@ services:
       - internal
 
   lifecycle-worker:
-    image: ${MERIKNOW_API_IMAGE:-meriknow-api:local}
+    image: ${UNORAG_API_IMAGE:-unorag-api:local}
     build:
       context: ../..
       dockerfile: deploy/docker/api.Dockerfile
@@ -185,7 +185,7 @@ services:
       ASK_MODE: live
       METADATA_BACKEND: postgres
       INTERNAL_AUTH_ENABLED: "true"
-      INTERNAL_AUTH_SECRET: ${MERIKNOW_INTERNAL_SECRET:?MERIKNOW_INTERNAL_SECRET required}
+      INTERNAL_AUTH_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
       INTERNAL_AUTH_REPLAY_BACKEND: redis
       ACTIVE_GENERATION_GATE_ENABLED: "true"
       ACTIVE_GENERATION_CACHE_TTL_SECONDS: "0"
@@ -195,9 +195,9 @@ services:
       # Settings.database_url fallback; worker DSN is authoritative via WORKER_*
       DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL required}
       QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
-      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-meriknow_chunks}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
       REDIS_URL: ${REDIS_URL:?REDIS_URL required}
-      DOCUMENT_STORAGE_ROOT: /var/lib/meriknow/documents
+      DOCUMENT_STORAGE_ROOT: /var/lib/unorag/documents
       MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-52428800}
       OPENAI_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}
       OPENAI_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL required}
@@ -224,14 +224,14 @@ services:
       MINERU_302_DAILY_BUDGET: ${MINERU_302_DAILY_BUDGET:-0}
       MINERU_302_BUDGET_WARN_RATIO: ${MINERU_302_BUDGET_WARN_RATIO:-0.8}
       MINERU_302_LONG_PENDING_S: ${MINERU_302_LONG_PENDING_S:-300}
-      LIFECYCLE_WORKER_READY_FILE: /tmp/meriknow-lifecycle-ready
+      LIFECYCLE_WORKER_READY_FILE: /tmp/unorag-lifecycle-ready
       LIFECYCLE_WORKER_POLL_SECONDS: ${LIFECYCLE_WORKER_POLL_SECONDS:-1}
       LIFECYCLE_WORKER_LEASE_SECONDS: ${LIFECYCLE_WORKER_LEASE_SECONDS:-120}
       LIFECYCLE_WORKER_HEARTBEAT_SECONDS: ${LIFECYCLE_WORKER_HEARTBEAT_SECONDS:-30}
       LIFECYCLE_LOCAL_CAPACITY: ${LIFECYCLE_LOCAL_CAPACITY:-2}
       LIFECYCLE_MINERU_CAPACITY: ${LIFECYCLE_MINERU_CAPACITY:-1}
     volumes:
-      - document_storage:/var/lib/meriknow/documents
+      - document_storage:/var/lib/unorag/documents
     depends_on:
       document-storage-init:
         condition: service_completed_successfully
@@ -245,7 +245,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "test -f /tmp/meriknow-lifecycle-ready || exit 1",
+          "test -f /tmp/unorag-lifecycle-ready || exit 1",
         ]
       interval: 10s
       timeout: 3s
@@ -258,7 +258,7 @@ services:
   # Library mutation projection: app.outbox_events → FastAPI internal projectors.
   # Required for create/update/delete library to reach the RAG read model.
   outbox-worker:
-    image: ${MERIKNOW_WEB_MIGRATOR_IMAGE:-meriknow-web-migrator:local}
+    image: ${UNORAG_WEB_MIGRATOR_IMAGE:-unorag-web-migrator:local}
     build:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
@@ -269,7 +269,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       RAG_API_URL: http://api:8000
-      MERIKNOW_INTERNAL_SECRET: ${MERIKNOW_INTERNAL_SECRET:?MERIKNOW_INTERNAL_SECRET required}
+      UNORAG_INTERNAL_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-20}
       OUTBOX_POLL_MS: ${OUTBOX_POLL_MS:-2000}
       OUTBOX_LOCK_TIMEOUT_SECONDS: ${OUTBOX_LOCK_TIMEOUT_SECONDS:-300}
@@ -287,8 +287,8 @@ services:
     image: ${POSTGRES_IMAGE:-postgres:17-alpine}
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-meriknow}
-      POSTGRES_USER: ${POSTGRES_USER:-meriknow}
+      POSTGRES_DB: ${POSTGRES_DB:-unorag}
+      POSTGRES_USER: ${POSTGRES_USER:-unorag}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -296,7 +296,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-meriknow} -d ${POSTGRES_DB:-meriknow}",
+          "pg_isready -U ${POSTGRES_USER:-unorag} -d ${POSTGRES_DB:-unorag}",
         ]
       interval: 5s
       timeout: 5s
@@ -339,7 +339,7 @@ services:
   migrate-web:
     profiles: ["migrate"]
     # Distinct tag so migrator layers are not overwritten by the runtime web image.
-    image: ${MERIKNOW_WEB_MIGRATOR_IMAGE:-meriknow-web-migrator:local}
+    image: ${UNORAG_WEB_MIGRATOR_IMAGE:-unorag-web-migrator:local}
     build:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
@@ -355,7 +355,7 @@ services:
 
   migrate-rag:
     profiles: ["migrate"]
-    image: ${MERIKNOW_API_IMAGE:-meriknow-api:local}
+    image: ${UNORAG_API_IMAGE:-unorag-api:local}
     build:
       context: ../..
       dockerfile: deploy/docker/api.Dockerfile
@@ -375,7 +375,7 @@ services:
 
   bootstrap:
     profiles: ["migrate"]
-    image: ${MERIKNOW_WEB_MIGRATOR_IMAGE:-meriknow-web-migrator:local}
+    image: ${UNORAG_WEB_MIGRATOR_IMAGE:-unorag-web-migrator:local}
     build:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
@@ -385,18 +385,18 @@ services:
       # Bootstrap-only vars: use defaults so `compose config` works without
       # bootstrap.env. The bootstrap script still requires a real password at run.
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
-      MERIKNOW_ORGANIZATION_ID: ${MERIKNOW_ORGANIZATION_ID:-00000000-0000-4000-8000-000000000001}
-      MERIKNOW_WORKSPACE_ID: ${MERIKNOW_WORKSPACE_ID:-00000000-0000-4000-8000-000000000002}
-      MERIKNOW_PRINCIPAL_ID: ${MERIKNOW_PRINCIPAL_ID:-00000000-0000-4000-8000-000000000003}
-      MERIKNOW_ORGANIZATION_SLUG: ${MERIKNOW_ORGANIZATION_SLUG:-default}
-      MERIKNOW_ORGANIZATION_NAME: ${MERIKNOW_ORGANIZATION_NAME:-MeriKnow Private Deployment}
-      MERIKNOW_WORKSPACE_SLUG: ${MERIKNOW_WORKSPACE_SLUG:-default}
-      MERIKNOW_WORKSPACE_NAME: ${MERIKNOW_WORKSPACE_NAME:-Default Workspace}
-      MERIKNOW_ADMIN_SUBJECT: ${MERIKNOW_ADMIN_SUBJECT:-local-admin}
-      MERIKNOW_ADMIN_EMAIL: ${MERIKNOW_ADMIN_EMAIL:-admin@example.com}
-      MERIKNOW_ADMIN_NAME: ${MERIKNOW_ADMIN_NAME:-Local Administrator}
-      MERIKNOW_ADMIN_PASSWORD: ${MERIKNOW_ADMIN_PASSWORD:-}
-      MERIKNOW_ADMIN_PASSWORD_UPSERT: ${MERIKNOW_ADMIN_PASSWORD_UPSERT:-}
+      UNORAG_ORGANIZATION_ID: ${UNORAG_ORGANIZATION_ID:-00000000-0000-4000-8000-000000000001}
+      UNORAG_WORKSPACE_ID: ${UNORAG_WORKSPACE_ID:-00000000-0000-4000-8000-000000000002}
+      UNORAG_PRINCIPAL_ID: ${UNORAG_PRINCIPAL_ID:-00000000-0000-4000-8000-000000000003}
+      UNORAG_ORGANIZATION_SLUG: ${UNORAG_ORGANIZATION_SLUG:-default}
+      UNORAG_ORGANIZATION_NAME: ${UNORAG_ORGANIZATION_NAME:-UnoRAG Private Deployment}
+      UNORAG_WORKSPACE_SLUG: ${UNORAG_WORKSPACE_SLUG:-default}
+      UNORAG_WORKSPACE_NAME: ${UNORAG_WORKSPACE_NAME:-Default Workspace}
+      UNORAG_ADMIN_SUBJECT: ${UNORAG_ADMIN_SUBJECT:-local-admin}
+      UNORAG_ADMIN_EMAIL: ${UNORAG_ADMIN_EMAIL:-admin@example.com}
+      UNORAG_ADMIN_NAME: ${UNORAG_ADMIN_NAME:-Local Administrator}
+      UNORAG_ADMIN_PASSWORD: ${UNORAG_ADMIN_PASSWORD:-}
+      UNORAG_ADMIN_PASSWORD_UPSERT: ${UNORAG_ADMIN_PASSWORD_UPSERT:-}
     command: ["node", "scripts/bootstrap-control-plane.mjs"]
     depends_on:
       migrate-rag:

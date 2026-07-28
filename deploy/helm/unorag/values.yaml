@@ -1,4 +1,4 @@
-# MeriKnow Helm starter values (L8 deferred slice).
+# UnoRAG Helm starter values (L8 deferred slice).
 # External Postgres / Qdrant / Redis / object storage are customer-managed by default.
 # Do not commit real secrets — use --set-file / ExternalSecret / sealed-secrets.
 
@@ -10,11 +10,11 @@ imagePullSecrets: []
 # Pin tags before customer handoff. Digest locking / SBOM scanning are follow-ups.
 images:
   web:
-    repository: meriknow-web
+    repository: unorag-web
     tag: local
     pullPolicy: IfNotPresent
   api:
-    repository: meriknow-api
+    repository: unorag-api
     tag: local
     pullPolicy: IfNotPresent
 
@@ -74,14 +74,14 @@ worker:
   # Ready file written by lifecycle worker after first successful poll loop.
   readinessProbe:
     exec:
-      command: ["test", "-f", "/tmp/meriknow-lifecycle-ready"]
+      command: ["test", "-f", "/tmp/unorag-lifecycle-ready"]
     initialDelaySeconds: 10
     periodSeconds: 10
     timeoutSeconds: 3
     failureThreshold: 6
   livenessProbe:
     exec:
-      command: ["test", "-f", "/tmp/meriknow-lifecycle-ready"]
+      command: ["test", "-f", "/tmp/unorag-lifecycle-ready"]
     initialDelaySeconds: 30
     periodSeconds: 30
     timeoutSeconds: 3
@@ -115,14 +115,14 @@ ingress:
   className: ""
   annotations: {}
   hosts:
-    - host: meriknow.example.com
+    - host: unorag.example.com
       paths:
         - path: /
           pathType: Prefix
   tls: []
   # tls:
-  #   - secretName: meriknow-tls
-  #     hosts: [meriknow.example.com]
+  #   - secretName: unorag-tls
+  #     hosts: [unorag.example.com]
 
 # ---------------------------------------------------------------------------
 # Document object storage
@@ -136,9 +136,9 @@ persistence:
   accessModes:
     - ReadWriteMany
   size: 50Gi
-  # existingClaim: meriknow-documents
+  # existingClaim: unorag-documents
 
-documentStorageRoot: /var/lib/meriknow/documents
+documentStorageRoot: /var/lib/unorag/documents
 
 # ---------------------------------------------------------------------------
 # External dependencies (customer-managed; not chart-installed)
@@ -153,7 +153,7 @@ external:
     existingSecret: ""
   qdrant:
     url: http://qdrant.external:6333
-    collection: meriknow_chunks
+    collection: unorag_chunks
   redis:
     url: redis://redis.external:6379
   # Object notes: prefer customer S3/MinIO later; PVC is the starter path.
@@ -171,7 +171,7 @@ config:
   internalAuthReplayBackend: redis
   activeGenerationGateEnabled: "true"
   activeGenerationCacheTtlSeconds: "0"
-  corsOrigins: https://meriknow.example.com
+  corsOrigins: https://unorag.example.com
   chatModel: qwen-plus
   embeddingModel: text-embedding-v3
   embeddingDim: "1024"
@@ -211,7 +211,7 @@ config:
 # ---------------------------------------------------------------------------
 # Prefer existingSecret. Pods inject least-privilege keys (not full Secret via envFrom).
 # Required keys (align with deploy/config/runtime.secret):
-#   MERIKNOW_INTERNAL_SECRET, MERIKNOW_SESSION_SECRET
+#   UNORAG_INTERNAL_SECRET, UNORAG_SESSION_SECRET
 #   DATABASE_URL, API_DATABASE_URL, WORKER_DATABASE_URL, RAG_READ_DATABASE_URL
 #   MIGRATOR_DATABASE_URL (migrate jobs only)
 #   LLM_API_KEY  (mapped to OPENAI_API_KEY for api/worker)
@@ -219,11 +219,11 @@ config:
 # Bootstrap admin password must NOT live in the long-running runtime Secret.
 secret:
   create: false
-  existingSecret: meriknow-runtime
+  existingSecret: unorag-runtime
   # When create=true, fill placeholders locally via --set / values overlay (never commit):
   # data:
-  #   MERIKNOW_INTERNAL_SECRET: ""
-  #   MERIKNOW_SESSION_SECRET: ""
+  #   UNORAG_INTERNAL_SECRET: ""
+  #   UNORAG_SESSION_SECRET: ""
   #   DATABASE_URL: ""
   #   API_DATABASE_URL: ""
   #   WORKER_DATABASE_URL: ""
@@ -239,7 +239,7 @@ migrate:
   web:
     enabled: false
     image:
-      repository: meriknow-web-migrator
+      repository: unorag-web-migrator
       tag: local
       pullPolicy: IfNotPresent
   rag:

@@ -1,13 +1,13 @@
 /**
  * Optional process-local rate limit for Public API v1.
- * Disabled when MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE is unset/0.
+ * Disabled when UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE is unset/0.
  * Multi-instance deployments should use Redis/Ingress; this only hardens single-node.
  */
 
 const buckets = new Map();
 
 export function publicApiRateLimitPerMinute() {
-	const raw = process.env.MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
+	const raw = process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
 	if (raw === undefined || raw === null || String(raw).trim() === "") {
 		return 0;
 	}

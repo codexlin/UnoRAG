@@ -134,7 +134,7 @@ def test_document_delete_processor_cleans_qdrant_storage_and_metadata(monkeypatc
 	meta = FakeMeta()
 	settings = Settings(
 		ask_mode="stub",
-		document_storage_root="/tmp/meriknow-test-storage",
+		document_storage_root="/tmp/unorag-test-storage",
 		worker_database_url="postgresql://unused",
 	)
 	processor = DocumentDeleteProcessor(
@@ -183,7 +183,7 @@ def test_document_delete_processor_marks_retryable_failure(monkeypatch):
 
 	settings = Settings(
 		ask_mode="stub",
-		document_storage_root="/tmp/meriknow-test-storage",
+		document_storage_root="/tmp/unorag-test-storage",
 		worker_database_url="postgresql://unused",
 	)
 	processor = DocumentDeleteProcessor(

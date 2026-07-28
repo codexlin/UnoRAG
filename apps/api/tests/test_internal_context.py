@@ -17,15 +17,15 @@ from app.security.internal_context import verify_internal_context
 from app.settings import Settings, get_settings
 
 NODE_TOKEN = (
-	"eyJ2IjoxLCJpc3MiOiJtZXJpa25vdy1jb250cm9sLXBsYW5lIiwidGVuYW50X2lkIjoi"
-	"b3JnLTEiLCJ3b3Jrc3BhY2VfaWQiOiJ3cy0xIiwicHJpbmNpcGFsX2lkIjoidXNlci0x"
-	"IiwiZ3JvdXBfaWRzIjpbImdyb3VwLTEiXSwicmVxdWVzdF9pZCI6InJlcS0xIiwianRp"
-	"IjoianRpLTEiLCJhdXRoX3NvdXJjZSI6InNlc3Npb24iLCJtZXRob2QiOiJQT1NUIiwi"
-	"dGFyZ2V0IjoiL3YxL2Fzaz9tb2RlPWh5YnJpZCIsImJvZHlfc2hhMjU2IjoiZjUyZmZm"
-	"NzVlNTRhODIyZmU4MGFlMDkwMGFkZDEzNDk2NTE2Zjg5OTJhMmMyOGFkZjIzMGIxZmE5"
-	"MmQ2YzFkZCIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMDYwfQ"
+	"eyJ2IjoxLCJpc3MiOiJ1bm9yYWctY29udHJvbC1wbGFuZSIsInRlbmFudF9pZCI6Im9y"
+	"Zy0xIiwid29ya3NwYWNlX2lkIjoid3MtMSIsInByaW5jaXBhbF9pZCI6InVzZXItMSIs"
+	"Imdyb3VwX2lkcyI6WyJncm91cC0xIl0sInJlcXVlc3RfaWQiOiJyZXEtMSIsImp0aSI6"
+	"Imp0aS0xIiwiYXV0aF9zb3VyY2UiOiJzZXNzaW9uIiwibWV0aG9kIjoiUE9TVCIsInRh"
+	"cmdldCI6Ii92MS9hc2s_bW9kZT1oeWJyaWQiLCJib2R5X3NoYTI1NiI6ImY1MmZmZjc1"
+	"ZTU0YTgyMmZlODBhZTA5MDBhZGQxMzQ5NjUxNmY4OTkyYTJjMjhhZGYyMzBiMWZhOTJk"
+	"NmMxZGQiLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MH0"
 )
-NODE_SIGNATURE = "agSGvYulQybCN_0IBnaSDnWckoXlelqqOHOpKsYYYro"
+NODE_SIGNATURE = "TLQXz-qyvFRo_PPWIILrY2VDLNcZDA1WR1UvCdgD8ek"
 TEST_SECRET = "test-secret-32-characters-minimum!"
 
 
@@ -44,7 +44,7 @@ def _signed_headers(
 	request_id = jti or str(uuid4())
 	payload = {
 		"v": 1,
-		"iss": "meriknow-control-plane",
+		"iss": "unorag-control-plane",
 		"tenant_id": tenant_id,
 		"workspace_id": workspace_id,
 		"principal_id": principal_id,
@@ -65,8 +65,8 @@ def _signed_headers(
 		hmac.new(TEST_SECRET.encode(), token.encode(), hashlib.sha256).digest()
 	).decode().rstrip("=")
 	return {
-		"x-meriknow-context": token,
-		"x-meriknow-signature": signature,
+		"x-unorag-context": token,
+		"x-unorag-signature": signature,
 	}
 
 
@@ -304,8 +304,8 @@ def _production_kwargs(**overrides):
 		openai_base_url="https://example.com/v1",
 		redis_url="redis://localhost:6379",
 		qdrant_url="http://localhost:6333",
-		document_storage_root="/var/lib/meriknow/documents",
-		database_url="postgresql+psycopg://meriknow:meriknow@localhost:5432/meriknow",
+		document_storage_root="/var/lib/unorag/documents",
+		database_url="postgresql+psycopg://unorag:unorag@localhost:5432/unorag",
 		_env_file=None,
 	)
 	base.update(overrides)

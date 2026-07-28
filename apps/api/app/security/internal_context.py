@@ -15,8 +15,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.settings import Settings, get_settings
 
-CONTEXT_HEADER = "x-meriknow-context"
-SIGNATURE_HEADER = "x-meriknow-signature"
+CONTEXT_HEADER = "x-unorag-context"
+SIGNATURE_HEADER = "x-unorag-signature"
 
 
 class InternalBodyDigestMiddleware:
@@ -126,7 +126,7 @@ def verify_internal_context(
 		)
 
 	payload = _decode_payload(token)
-	if payload.get("v") != 1 or payload.get("iss") != "meriknow-control-plane":
+	if payload.get("v") != 1 or payload.get("iss") != "unorag-control-plane":
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
 			detail="unsupported internal request context",
@@ -218,7 +218,7 @@ async def _reserve_jti(
 		client = await _redis_client(settings.redis_url)
 		ttl = max(1, context.expires_at - now + 5)
 		result = await client.set(
-			f"meriknow:internal-jti:{context.jti}",
+			f"unorag:internal-jti:{context.jti}",
 			"1",
 			ex=ttl,
 			nx=True,

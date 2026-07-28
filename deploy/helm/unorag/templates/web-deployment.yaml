@@ -2,20 +2,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "meriknow.fullname" . }}-web
+  name: {{ include "unorag.fullname" . }}-web
   labels:
-    {{- include "meriknow.labels" . | nindent 4 }}
+    {{- include "unorag.labels" . | nindent 4 }}
     app.kubernetes.io/component: web
 spec:
   replicas: {{ .Values.web.replicaCount }}
   selector:
     matchLabels:
-      {{- include "meriknow.selectorLabels" . | nindent 6 }}
+      {{- include "unorag.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: web
   template:
     metadata:
       labels:
-        {{- include "meriknow.selectorLabels" . | nindent 8 }}
+        {{- include "unorag.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: web
     spec:
       {{- with .Values.imagePullSecrets }}
@@ -35,7 +35,7 @@ spec:
             - name: PORT
               value: {{ .Values.web.port | quote }}
             - name: RAG_API_URL
-              value: {{ printf "http://%s-api:%v" (include "meriknow.fullname" .) .Values.service.api.port | quote }}
+              value: {{ printf "http://%s-api:%v" (include "unorag.fullname" .) .Values.service.api.port | quote }}
             - name: DATABASE_POOL_MAX
               value: {{ .Values.config.databasePoolMax | default "10" | quote }}
             - name: DOCUMENT_STORAGE_ROOT
@@ -45,18 +45,18 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "meriknow.secretName" . }}
+                  name: {{ include "unorag.secretName" . }}
                   key: DATABASE_URL
-            - name: MERIKNOW_INTERNAL_SECRET
+            - name: UNORAG_INTERNAL_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "meriknow.secretName" . }}
-                  key: MERIKNOW_INTERNAL_SECRET
-            - name: MERIKNOW_SESSION_SECRET
+                  name: {{ include "unorag.secretName" . }}
+                  key: UNORAG_INTERNAL_SECRET
+            - name: UNORAG_SESSION_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "meriknow.secretName" . }}
-                  key: MERIKNOW_SESSION_SECRET
+                  name: {{ include "unorag.secretName" . }}
+                  key: UNORAG_SESSION_SECRET
           volumeMounts:
             {{- if .Values.persistence.enabled }}
             - name: documents
@@ -74,6 +74,6 @@ spec:
         {{- if .Values.persistence.enabled }}
         - name: documents
           persistentVolumeClaim:
-            claimName: {{ include "meriknow.documentsPvcName" . }}
+            claimName: {{ include "unorag.documentsPvcName" . }}
         {{- end }}
 {{- end }}

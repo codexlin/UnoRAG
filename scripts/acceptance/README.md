@@ -35,47 +35,47 @@
 
 ## B2（独立恢复）
 
-- **不会**对主开发 `.meriknow` 或根 `docker-compose.yml` 卷做 destructive restore。  
-- 默认 `hybrid`：独立 project `meriknow-b2-src` / `meriknow-b2-dst` + 临时 API/Worker + Docker `meriknow-web:local`。  
-- 需要镜像：`docker build -f deploy/docker/web.Dockerfile -t meriknow-web:local .`  
+- **不会**对主开发 `.unorag` 或根 `docker-compose.yml` 卷做 destructive restore。
+- 默认 `hybrid`：独立 project `unorag-b2-src` / `unorag-b2-dst` + 临时 API/Worker + Docker `unorag-web:local`。
+- 需要镜像：`docker build -f deploy/docker/web.Dockerfile -t unorag-web:local .`
 - 复用 backup/restore 语义（PG → documents → Qdrant）；产物在 `scripts/acceptance/.b2-work/`（gitignore）。
 
 ```bash
-MERIKNOW_RC_SHA=b98f01438045c92804204449d3172ceb201490e6 \
+UNORAG_RC_SHA=b98f01438045c92804204449d3172ceb201490e6 \
   ./scripts/acceptance/b2_restore_drill.sh
 ```
 
 ## B3 / B4（升级 + 回滚）
 
-- **不会**触碰主开发 `.meriknow` 或根 `docker-compose.yml` 卷。  
-- 独立 project（默认 `meriknow-b3` / `meriknow-b3-restore`）+ 端口 `15532/16433/16479/13001/18001`。  
-- **版本策略**：`MERIKNOW_B3_OLD_SHA`（默认 RC1 `b98f014`）与 `MERIKNOW_B3_NEW_SHA`/HEAD 分别创建 detached worktree；migration、API、Web 均从对应 SHA 运行。
+- **不会**触碰主开发 `.unorag` 或根 `docker-compose.yml` 卷。
+- 独立 project（默认 `unorag-b3` / `unorag-b3-restore`）+ 端口 `15532/16433/16479/13001/18001`。
+- **版本策略**：`UNORAG_B3_OLD_SHA`（默认 RC1 `b98f014`）与 `UNORAG_B3_NEW_SHA`/HEAD 分别创建 detached worktree；migration、API、Web 均从对应 SHA 运行。
 - **Schema 证据**：源数据库只应用旧 SHA migration；升级阶段才应用新 SHA migration。脚本核对 Drizzle journal 与数据库 migration 数，避免在已升级 schema 上误报 B3 PASS。
-- **Web 镜像**：默认使用 `meriknow-web:b3-old-<sha>` / `meriknow-web:b3-new-<sha>`；本地不存在时按需构建，可用环境变量覆盖。
-- **B3**：旧版 seed → 升级前备份 → migrate → 新版 → smoke（active generation / ACL / Ask / Retrieve / citation / Service Key / lifecycle / Qdrant↔PG）。  
-- **B4A**：仅应用回滚（旧 API 接升级后 DB；schema 不兼容则记 FAIL 并继续 B4B）。  
-- **B4B**：数据恢复回滚（复用 B2 restore：PG → documents → Qdrant）。  
+- **Web 镜像**：默认使用 `unorag-web:b3-old-<sha>` / `unorag-web:b3-new-<sha>`；本地不存在时按需构建，可用环境变量覆盖。
+- **B3**：旧版 seed → 升级前备份 → migrate → 新版 → smoke（active generation / ACL / Ask / Retrieve / citation / Service Key / lifecycle / Qdrant↔PG）。
+- **B4A**：仅应用回滚（旧 API 接升级后 DB；schema 不兼容则记 FAIL 并继续 B4B）。
+- **B4B**：数据恢复回滚（复用 B2 restore：PG → documents → Qdrant）。
 - 产物：`scripts/acceptance/.b3-work/`、`.b3_b4_last_run.json`（gitignore；`0600`；无完整 key）。
 
 ```bash
 # 须在干净工作树上执行（证据绑定时）
 test -z "$(git status --porcelain)"
-MERIKNOW_RC_SHA=a79d2a53c5ecb32423dae179bdb05784af187a46 \
+UNORAG_RC_SHA=a79d2a53c5ecb32423dae179bdb05784af187a46 \
   ./scripts/acceptance/b3_b4_upgrade_rollback.sh
 
 # 可选：只跑部分阶段
-MERIKNOW_B3_CASES='B3 B4B' ./scripts/acceptance/b3_b4_upgrade_rollback.sh
+UNORAG_B3_CASES='B3 B4B' ./scripts/acceptance/b3_b4_upgrade_rollback.sh
 ```
 
 | 环境变量 | 默认 | 含义 |
 |---|---|---|
-| `MERIKNOW_B3_OLD_SHA` | `b98f014…` | 旧版本 git commit |
-| `MERIKNOW_B3_NEW_SHA` | `HEAD` | 新版本 git commit |
-| `MERIKNOW_B3_CASES` | `B3 B4A B4B` | 要跑的阶段 |
-| `MERIKNOW_B3_KEEP` | `0` | `1` 保留 workdir/stacks |
+| `UNORAG_B3_OLD_SHA` | `b98f014…` | 旧版本 git commit |
+| `UNORAG_B3_NEW_SHA` | `HEAD` | 新版本 git commit |
+| `UNORAG_B3_CASES` | `B3 B4A B4B` | 要跑的阶段 |
+| `UNORAG_B3_KEEP` | `0` | `1` 保留 workdir/stacks |
 | `B3_*_PORT` | 见上 | 端口覆盖 |
-| `MERIKNOW_B3_WEB_OLD_TAG` / `_NEW_TAG` | SHA-scoped 本地标签 | Web 镜像标签 |
-| `MERIKNOW_B3_BUILD_WEB_IMAGES` | `auto` | `auto` 缺失才构建；也可设 `always` / `never` |
+| `UNORAG_B3_WEB_OLD_TAG` / `_NEW_TAG` | SHA-scoped 本地标签 | Web 镜像标签 |
+| `UNORAG_B3_BUILD_WEB_IMAGES` | `auto` | `auto` 缺失才构建；也可设 `always` / `never` |
 
 退出码同表：`0` PASS · `1` FAIL · `2` BLOCKED。
 
@@ -88,7 +88,7 @@ MERIKNOW_B3_CASES='B3 B4B' ./scripts/acceptance/b3_b4_upgrade_rollback.sh
 - 结果写入 `.ocr_policy_last_run.json` 与 SHA-256 文件（gitignore，`0600`）。
 
 ```bash
-MERIKNOW_RC_SHA="$(git rev-parse HEAD)" \
+UNORAG_RC_SHA="$(git rev-parse HEAD)" \
   ./scripts/acceptance/ocr_policy_smoke.sh
 ```
 
@@ -97,37 +97,37 @@ MERIKNOW_RC_SHA="$(git rev-parse HEAD)" \
 在**正在运行的混合栈**上注入；R2 会短暂 stop 共享 Qdrant 容器并自动 start；R3/R4 临时改 `apps/api/.env` 并在 EXIT 还原。
 
 ```bash
-MERIKNOW_BASE_URL=http://localhost:3000 \
-  MERIKNOW_RC_SHA=b98f01438045c92804204449d3172ceb201490e6 \
+UNORAG_BASE_URL=http://localhost:3000 \
+  UNORAG_RC_SHA=b98f01438045c92804204449d3172ceb201490e6 \
   ./scripts/acceptance/r_fault_injection.sh
 ```
 
 ## B5（最低告警）
 
-- 依赖本机混合栈（web/api + `meriknow-qdrant-1`）与 `DATABASE_URL`。  
-- 启动 mock webhook → 对五信号制造故障 → 断言 firing 送达（含定位字段）→ 恢复 → resolved。  
-- **不**清空主开发卷；仅短暂 stop/start Qdrant；插入一条标记 stuck job 并在 EXIT 删除。  
-- 磁盘：真实 `df` 测量 + `MERIKNOW_ALERT_DISK_FORCE_PERCENT` 注入 webhook 路径（本机不填满磁盘）。  
+- 依赖本机混合栈（web/api + `unorag-qdrant-1`）与 `DATABASE_URL`。
+- 启动 mock webhook → 对五信号制造故障 → 断言 firing 送达（含定位字段）→ 恢复 → resolved。
+- **不**清空主开发卷；仅短暂 stop/start Qdrant；插入一条标记 stuck job 并在 EXIT 删除。
+- 磁盘：真实 `df` 测量 + `UNORAG_ALERT_DISK_FORCE_PERCENT` 注入 webhook 路径（本机不填满磁盘）。
 - 实现：[`../../ops/min_alerts/`](../../ops/min_alerts/)。
 
 ```bash
 ./scripts/acceptance/b5_min_alerts.sh
-# 可选：MERIKNOW_B5_CASES='S1 S2' MERIKNOW_B5_KEEP=1
+# 可选：UNORAG_B5_CASES='S1 S2' UNORAG_B5_KEEP=1
 ```
 
 ## 本地结果文件（勿提交）
 
-- `.s1_s2_last_run.json` / `.isolation-topology.json`  
-- `.b2_last_run.json` / `.b2-work/`  
-- `.b3_b4_last_run.json` / `.b3-work/`  
+- `.s1_s2_last_run.json` / `.isolation-topology.json`
+- `.b2_last_run.json` / `.b2-work/`
+- `.b3_b4_last_run.json` / `.b3-work/`
 - `.ocr_policy_last_run.json`
-- `.b5_last_run.json`  
-- `.r_fault_last_run.json`  
+- `.b5_last_run.json`
+- `.r_fault_last_run.json`
 
 ## 报告
 
-- [`../../docs/acceptance/reports/2026-07-26-pilot-rc-s1-s2.md`](../../docs/acceptance/reports/2026-07-26-pilot-rc-s1-s2.md)  
-- [`../../docs/acceptance/reports/2026-07-26-pilot-rc-b2-r-fault.md`](../../docs/acceptance/reports/2026-07-26-pilot-rc-b2-r-fault.md)  
-- [`../../docs/acceptance/reports/2026-07-27-pilot-rc-b3-b4.md`](../../docs/acceptance/reports/2026-07-27-pilot-rc-b3-b4.md)  
-- [`../../docs/acceptance/reports/2026-07-27-pilot-rc-b5-min-alerts.md`](../../docs/acceptance/reports/2026-07-27-pilot-rc-b5-min-alerts.md)  
-- 观测：[`../../docs/acceptance/observability-min-runbook.md`](../../docs/acceptance/observability-min-runbook.md)  
+- [`../../docs/acceptance/reports/2026-07-26-pilot-rc-s1-s2.md`](../../docs/acceptance/reports/2026-07-26-pilot-rc-s1-s2.md)
+- [`../../docs/acceptance/reports/2026-07-26-pilot-rc-b2-r-fault.md`](../../docs/acceptance/reports/2026-07-26-pilot-rc-b2-r-fault.md)
+- [`../../docs/acceptance/reports/2026-07-27-pilot-rc-b3-b4.md`](../../docs/acceptance/reports/2026-07-27-pilot-rc-b3-b4.md)
+- [`../../docs/acceptance/reports/2026-07-27-pilot-rc-b5-min-alerts.md`](../../docs/acceptance/reports/2026-07-27-pilot-rc-b5-min-alerts.md)
+- 观测：[`../../docs/acceptance/observability-min-runbook.md`](../../docs/acceptance/observability-min-runbook.md)

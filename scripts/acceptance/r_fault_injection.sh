@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# R1–R4 fault injection against the running hybrid stack (or MERIKNOW_BASE_URL).
+# R1–R4 fault injection against the running hybrid stack (or UNORAG_BASE_URL).
 #
 # Safety:
-#   - Does NOT wipe .meriknow / Postgres volumes.
+#   - Does NOT wipe .unorag / Postgres volumes.
 #   - R2 briefly stops the shared Qdrant container then starts it again.
 #   - R3/R4 temporarily patch apps/api/.env and restore on EXIT (uvicorn --reload).
 #
 # Exit: 0=all selected PASS  1=FAIL  2=BLOCKED
-# Select: MERIKNOW_R_CASES="R1 R2 R3 R4" (default all)
+# Select: UNORAG_R_CASES="R1 R2 R3 R4" (default all)
 set -euo pipefail
 
 ACC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,19 +16,19 @@ ROOT="$(cd "$ACC_DIR/../.." && pwd)"
 source "$ACC_DIR/lib/common.sh"
 cd "$ROOT"
 
-RC_SHA="${MERIKNOW_RC_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
+RC_SHA="${UNORAG_RC_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
 SCRIPT_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
-BASE_URL="${MERIKNOW_BASE_URL:-http://localhost:3000}"
+BASE_URL="${UNORAG_BASE_URL:-http://localhost:3000}"
 BASE_URL="${BASE_URL%/}"
 API_ENV="$ROOT/apps/api/.env"
-REPORT_JSON="${MERIKNOW_R_REPORT:-$ACC_DIR/.r_fault_last_run.json}"
-CASES="${MERIKNOW_R_CASES:-R1 R2 R3 R4}"
-JOB_TIMEOUT_SEC="${MERIKNOW_PILOT_JOB_TIMEOUT_SEC:-300}"
-POLL_INTERVAL_SEC="${MERIKNOW_PILOT_POLL_INTERVAL_SEC:-3}"
-PASSWORD="${MERIKNOW_R_PASSWORD:-${MERIKNOW_ADMIN_PASSWORD:-}}"
-EMAIL="${MERIKNOW_ADMIN_EMAIL:-admin@example.com}"
+REPORT_JSON="${UNORAG_R_REPORT:-$ACC_DIR/.r_fault_last_run.json}"
+CASES="${UNORAG_R_CASES:-R1 R2 R3 R4}"
+JOB_TIMEOUT_SEC="${UNORAG_PILOT_JOB_TIMEOUT_SEC:-300}"
+POLL_INTERVAL_SEC="${UNORAG_PILOT_POLL_INTERVAL_SEC:-3}"
+PASSWORD="${UNORAG_R_PASSWORD:-${UNORAG_ADMIN_PASSWORD:-}}"
+EMAIL="${UNORAG_ADMIN_EMAIL:-admin@example.com}"
 
-WORKDIR="$(mktemp -d -t meriknow-r-fault.XXXXXX)"
+WORKDIR="$(mktemp -d -t unorag-r-fault.XXXXXX)"
 COOKIE_JAR="$WORKDIR/cookies.jar"
 CHECKS_FILE="$WORKDIR/checks.jsonl"
 : >"$CHECKS_FILE"
@@ -41,11 +41,11 @@ log() { printf '==> %s\n' "$*"; }
 warn() { printf '!!  %s\n' "$*" >&2; }
 
 load_env_file_keys "$ROOT/apps/web/.env.local" \
-	MERIKNOW_ADMIN_PASSWORD MERIKNOW_ADMIN_EMAIL MERIKNOW_BASE_URL DATABASE_URL
+	UNORAG_ADMIN_PASSWORD UNORAG_ADMIN_EMAIL UNORAG_BASE_URL DATABASE_URL
 load_env_file_keys "$API_ENV" \
 	ASK_MODE OPENAI_BASE_URL MINERU_ENABLED MINERU_URL MINERU_MODE
-[[ -n "$PASSWORD" ]] || PASSWORD="${MERIKNOW_ADMIN_PASSWORD:-}"
-[[ -n "${MERIKNOW_ADMIN_EMAIL:-}" ]] && EMAIL="$MERIKNOW_ADMIN_EMAIL"
+[[ -n "$PASSWORD" ]] || PASSWORD="${UNORAG_ADMIN_PASSWORD:-}"
+[[ -n "${UNORAG_ADMIN_EMAIL:-}" ]] && EMAIL="$UNORAG_ADMIN_EMAIL"
 
 record() {
 	python3 - "$CHECKS_FILE" "$1" "$2" "$3" <<'PY'
@@ -122,7 +122,7 @@ restore_api_env() {
 
 restore_qdrant() {
 	if [[ "$QDRANT_WAS_STOPPED" == "1" ]]; then
-		docker start meriknow-qdrant-1 >/dev/null 2>&1 || true
+		docker start unorag-qdrant-1 >/dev/null 2>&1 || true
 		# wait ready
 		for _ in $(seq 1 30); do
 			if curl -sf http://127.0.0.1:6333/readyz >/dev/null 2>&1; then
@@ -161,7 +161,7 @@ if [[ "$HEALTH_CODE" != "200" ]]; then
 	write_report BLOCKED "edge not ready at $BASE_URL (HTTP $HEALTH_CODE)"
 	exit 2
 fi
-[[ -n "$PASSWORD" ]] || { write_report BLOCKED "set MERIKNOW_ADMIN_PASSWORD or MERIKNOW_R_PASSWORD"; exit 2; }
+[[ -n "$PASSWORD" ]] || { write_report BLOCKED "set UNORAG_ADMIN_PASSWORD or UNORAG_R_PASSWORD"; exit 2; }
 
 login() {
 	local body="$WORKDIR/login.json" code
@@ -227,7 +227,7 @@ ensure_lifecycle_worker() {
 	log "  starting lifecycle_worker"
 	(
 		cd "$ROOT/apps/api"
-		export DOCUMENT_STORAGE_ROOT="${DOCUMENT_STORAGE_ROOT:-$ROOT/.meriknow/documents}"
+		export DOCUMENT_STORAGE_ROOT="${DOCUMENT_STORAGE_ROOT:-$ROOT/.unorag/documents}"
 		mkdir -p "$DOCUMENT_STORAGE_ROOT"
 		nohup uv run python -m app.lifecycle_worker >"$WORKDIR/lifecycle-ensure.log" 2>&1 &
 	)
@@ -346,12 +346,12 @@ EOF
 # ---------- R2 ----------
 run_r2() {
 	log "R2: pause Qdrant — API must fail/degrade, not fabricate answers"
-	local inject="docker stop meriknow-qdrant-1"
+	local inject="docker stop unorag-qdrant-1"
 	local expect="health/ask shows qdrant failure or explicit error; no fake citations"
 	local lib_id ask_req ask_body health code
 
-	if ! docker ps --format '{{.Names}}' | grep -qx 'meriknow-qdrant-1'; then
-		block_case "R2" "container meriknow-qdrant-1 not running"
+	if ! docker ps --format '{{.Names}}' | grep -qx 'unorag-qdrant-1'; then
+		block_case "R2" "container unorag-qdrant-1 not running"
 		return
 	fi
 
@@ -372,7 +372,7 @@ run_r2() {
 	fi
 
 	log "  inject: $inject"
-	docker stop meriknow-qdrant-1 >/dev/null
+	docker stop unorag-qdrant-1 >/dev/null
 	QDRANT_WAS_STOPPED=1
 	sleep 2
 	pass_case "R2.inject" "$inject"
@@ -445,8 +445,8 @@ PY
 		pass_case "R2.ask" "explicit fail/refuse/degrade HTTP=$code (no fake citations)"
 	fi
 
-	log "  recover: docker start meriknow-qdrant-1"
-	docker start meriknow-qdrant-1 >/dev/null
+	log "  recover: docker start unorag-qdrant-1"
+	docker start unorag-qdrant-1 >/dev/null
 	QDRANT_WAS_STOPPED=0
 	for _ in $(seq 1 40); do
 		curl -sf http://127.0.0.1:6333/readyz >/dev/null 2>&1 && break
@@ -684,7 +684,7 @@ run_r4() {
 	fi
 	(
 		cd "$ROOT/apps/api"
-		export DOCUMENT_STORAGE_ROOT="${DOCUMENT_STORAGE_ROOT:-$ROOT/.meriknow/documents}"
+		export DOCUMENT_STORAGE_ROOT="${DOCUMENT_STORAGE_ROOT:-$ROOT/.unorag/documents}"
 		# Force env for worker process (more reliable than .env alone)
 		MINERU_ENABLED=true MINERU_URL="http://127.0.0.1:1" MINERU_MODE=auto \
 			nohup uv run python -m app.lifecycle_worker >"$WORKDIR/r4-worker.log" 2>&1 &
@@ -706,7 +706,7 @@ run_r4() {
 	pass_case "R4.enqueue" "job_id=$job_id"
 
 	# Allow long parse window
-	status="$(wait_job_status "$job_id" "${MERIKNOW_R4_TIMEOUT_SEC:-420}" || true)"
+	status="$(wait_job_status "$job_id" "${UNORAG_R4_TIMEOUT_SEC:-420}" || true)"
 	body="$WORKDIR/job-$job_id.json"
 	auth_curl -o "$body" "$BASE_URL/api/jobs/${job_id}" >/dev/null || true
 

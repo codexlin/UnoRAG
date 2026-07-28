@@ -152,7 +152,7 @@ export function extractBearerServiceKey(request: Request): string | null {
 	return extractBearerFromHeaders(
 		request.headers.get("authorization") ??
 			request.headers.get("Authorization"),
-		request.headers.get("x-meriknow-service-key"),
+		request.headers.get("x-unorag-service-key"),
 	);
 }
 

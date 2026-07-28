@@ -24,7 +24,7 @@ function storageRoot(): string {
 	if (process.env.NODE_ENV === "production") {
 		throw new Error("DOCUMENT_STORAGE_ROOT is required in production");
 	}
-	return path.resolve(process.cwd(), ".meriknow", "documents");
+	return path.resolve(process.cwd(), ".unorag", "documents");
 }
 
 export function documentUploadMaxBytes(): number {

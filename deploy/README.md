@@ -1,4 +1,4 @@
-# MeriKnow 私有化部署包（L8 + L9 入口）
+# UnoRAG 私有化部署包（L8 + L9 入口）
 
 本目录是客户可安装的私有部署参考包。首片以 **Docker Compose 单机拓扑** 为主；
 **Helm/K8s 起步骨架** 已提供；SBOM/镜像安全扫描仍后置。
@@ -34,7 +34,7 @@ deploy/
     web.Dockerfile
   helm/
     README.md               # Helm 安装说明
-    meriknow/               # chart：web / api / lifecycle-worker / outbox-worker
+    unorag/               # chart：web / api / lifecycle-worker / outbox-worker
 ```
 
 ## 快速开始
@@ -87,7 +87,7 @@ cd deploy/compose
 完整 SBOM + CVE 扫描流水线仍后置，不阻塞通用受控试点 P0。交付前建议：
 
 1. 确认 `deploy/config/runtime.env.example` / Helm values 中基础镜像 tag 已 pin；
-2. 对构建出的 `meriknow-web` / `meriknow-api` 镜像自行运行 `syft` / `trivy`（或客户等价工具）并归档；
+2. 对构建出的 `unorag-web` / `unorag-api` 镜像自行运行 `syft` / `trivy`（或客户等价工具）并归档；
 3. 未扫描时写入发布「已知限制」，勿暗示已完成镜像安全认证。
 
 ## 明确后置

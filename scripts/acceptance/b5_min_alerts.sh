@@ -5,13 +5,13 @@
 #   inject fault → firing webhook delivered (with locators) → recover → resolved
 #
 # Safety:
-#   - Does NOT wipe .meriknow / Postgres volumes.
+#   - Does NOT wipe .unorag / Postgres volumes.
 #   - Briefly stops shared Qdrant (like R2) and restarts it.
 #   - Inserts one marked stuck test job and deletes it in EXIT.
-#   - Disk inject uses MERIKNOW_ALERT_DISK_FORCE_PERCENT (real df also measured).
+#   - Disk inject uses UNORAG_ALERT_DISK_FORCE_PERCENT (real df also measured).
 #
 # Exit: 0=PASS  1=FAIL  2=BLOCKED
-# Select: MERIKNOW_B5_CASES="S1 S2 S3 S4 S5" (default all)
+# Select: UNORAG_B5_CASES="S1 S2 S3 S4 S5" (default all)
 set -euo pipefail
 
 ACC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,20 +20,20 @@ ROOT="$(cd "$ACC_DIR/../.." && pwd)"
 source "$ACC_DIR/lib/common.sh"
 cd "$ROOT"
 
-RC_SHA="${MERIKNOW_RC_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
+RC_SHA="${UNORAG_RC_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
 SCRIPT_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
-BASE_URL="${MERIKNOW_BASE_URL:-http://localhost:3000}"
+BASE_URL="${UNORAG_BASE_URL:-http://localhost:3000}"
 BASE_URL="${BASE_URL%/}"
 API_ENV="$ROOT/apps/api/.env"
-REPORT_JSON="${MERIKNOW_B5_REPORT:-$ACC_DIR/.b5_last_run.json}"
-CASES="${MERIKNOW_B5_CASES:-S1 S2 S3 S4 S5}"
-PASSWORD="${MERIKNOW_B5_PASSWORD:-${MERIKNOW_ADMIN_PASSWORD:-}}"
-EMAIL="${MERIKNOW_ADMIN_EMAIL:-admin@example.com}"
+REPORT_JSON="${UNORAG_B5_REPORT:-$ACC_DIR/.b5_last_run.json}"
+CASES="${UNORAG_B5_CASES:-S1 S2 S3 S4 S5}"
+PASSWORD="${UNORAG_B5_PASSWORD:-${UNORAG_ADMIN_PASSWORD:-}}"
+EMAIL="${UNORAG_ADMIN_EMAIL:-admin@example.com}"
 CHECKER="$ROOT/ops/min_alerts/check.py"
-PY_API="${MERIKNOW_B5_PYTHON:-$ROOT/apps/api/.venv/bin/python}"
+PY_API="${UNORAG_B5_PYTHON:-$ROOT/apps/api/.venv/bin/python}"
 [[ -x "$PY_API" ]] || PY_API="$(command -v python3)"
 
-WORKDIR="${MERIKNOW_B5_WORKDIR:-$(mktemp -d -t meriknow-b5.XXXXXX)}"
+WORKDIR="${UNORAG_B5_WORKDIR:-$(mktemp -d -t unorag-b5.XXXXXX)}"
 mkdir -p "$WORKDIR"
 COOKIE_JAR="$WORKDIR/cookies.jar"
 CHECKS_FILE="$WORKDIR/checks.jsonl"
@@ -55,13 +55,13 @@ log() { printf '==> %s\n' "$*"; }
 warn() { printf '!!  %s\n' "$*" >&2; }
 
 load_env_file_keys "$ROOT/apps/web/.env.local" \
-	MERIKNOW_ADMIN_PASSWORD MERIKNOW_ADMIN_EMAIL MERIKNOW_BASE_URL DATABASE_URL \
-	DOCUMENT_STORAGE_ROOT DEFAULT_WORKSPACE_ID MERIKNOW_WORKSPACE_ID
+	UNORAG_ADMIN_PASSWORD UNORAG_ADMIN_EMAIL UNORAG_BASE_URL DATABASE_URL \
+	DOCUMENT_STORAGE_ROOT DEFAULT_WORKSPACE_ID UNORAG_WORKSPACE_ID
 load_env_file_keys "$API_ENV" \
 	DOCUMENT_STORAGE_ROOT DATABASE_URL DEFAULT_WORKSPACE_ID DEFAULT_TENANT_ID
-[[ -n "$PASSWORD" ]] || PASSWORD="${MERIKNOW_ADMIN_PASSWORD:-}"
-[[ -n "${MERIKNOW_ADMIN_EMAIL:-}" ]] && EMAIL="$MERIKNOW_ADMIN_EMAIL"
-DOC_ROOT="${DOCUMENT_STORAGE_ROOT:-$ROOT/.meriknow/documents}"
+[[ -n "$PASSWORD" ]] || PASSWORD="${UNORAG_ADMIN_PASSWORD:-}"
+[[ -n "${UNORAG_ADMIN_EMAIL:-}" ]] && EMAIL="$UNORAG_ADMIN_EMAIL"
+DOC_ROOT="${DOCUMENT_STORAGE_ROOT:-$ROOT/.unorag/documents}"
 DATABASE_URL="${DATABASE_URL:-}"
 
 record() {
@@ -150,7 +150,7 @@ PY
 
 restore_qdrant() {
 	if [[ "$QDRANT_WAS_STOPPED" == "1" ]]; then
-		docker start meriknow-qdrant-1 >/dev/null 2>&1 || true
+		docker start unorag-qdrant-1 >/dev/null 2>&1 || true
 		for _ in $(seq 1 40); do
 			curl -sf http://127.0.0.1:6333/readyz >/dev/null 2>&1 && break
 			sleep 1
@@ -172,8 +172,8 @@ cleanup() {
 	delete_test_job
 	restore_qdrant
 	stop_mock
-	# keep workdir if MERIKNOW_B5_KEEP=1
-	if [[ "${MERIKNOW_B5_KEEP:-0}" != "1" ]]; then
+	# keep workdir if UNORAG_B5_KEEP=1
+	if [[ "${UNORAG_B5_KEEP:-0}" != "1" ]]; then
 		rm -rf "$WORKDIR"
 	else
 		log "kept workdir $WORKDIR"
@@ -202,7 +202,7 @@ if [[ "$HEALTH_CODE" != "200" ]]; then
 	write_report BLOCKED "edge not ready at $BASE_URL (HTTP $HEALTH_CODE)"
 	exit 2
 fi
-[[ -n "$PASSWORD" ]] || { write_report BLOCKED "set MERIKNOW_ADMIN_PASSWORD or MERIKNOW_B5_PASSWORD"; exit 2; }
+[[ -n "$PASSWORD" ]] || { write_report BLOCKED "set UNORAG_ADMIN_PASSWORD or UNORAG_B5_PASSWORD"; exit 2; }
 
 # Resolve org/workspace for job inject + annotations
 read_org_ws() {
@@ -254,11 +254,11 @@ ensure_library() {
 start_mock() {
 	stop_mock
 	: >"$ALERTS_JSONL"
-	"$PY_API" "$CHECKER" mock-receiver --host 127.0.0.1 --port "${MERIKNOW_B5_MOCK_PORT:-18999}" --out "$ALERTS_JSONL" \
+	"$PY_API" "$CHECKER" mock-receiver --host 127.0.0.1 --port "${UNORAG_B5_MOCK_PORT:-18999}" --out "$ALERTS_JSONL" \
 		>"$WORKDIR/mock.log" 2>&1 &
 	MOCK_PID=$!
 	for _ in $(seq 1 30); do
-		if curl -sf "http://127.0.0.1:${MERIKNOW_B5_MOCK_PORT:-18999}/" >/dev/null 2>&1; then
+		if curl -sf "http://127.0.0.1:${UNORAG_B5_MOCK_PORT:-18999}/" >/dev/null 2>&1; then
 			return 0
 		fi
 		sleep 0.2
@@ -267,16 +267,16 @@ start_mock() {
 }
 
 # Common checker env for this run
-export ALERT_WEBHOOK_URL="http://127.0.0.1:${MERIKNOW_B5_MOCK_PORT:-18999}/alert"
-export MERIKNOW_HEALTH_URL="$BASE_URL/api/rag/health"
+export ALERT_WEBHOOK_URL="http://127.0.0.1:${UNORAG_B5_MOCK_PORT:-18999}/alert"
+export UNORAG_HEALTH_URL="$BASE_URL/api/rag/health"
 export LIFECYCLE_WORKER_READY_FILE="$READY_FILE"
 export DOCUMENT_STORAGE_ROOT="$DOC_ROOT"
 export DATABASE_URL
-export MERIKNOW_ALERT_STATE_FILE="$STATE_FILE"
-export MERIKNOW_ALERT_HEARTBEAT_MAX_AGE_SEC="${MERIKNOW_ALERT_HEARTBEAT_MAX_AGE_SEC:-15}"
+export UNORAG_ALERT_STATE_FILE="$STATE_FILE"
+export UNORAG_ALERT_HEARTBEAT_MAX_AGE_SEC="${UNORAG_ALERT_HEARTBEAT_MAX_AGE_SEC:-15}"
 export DEFAULT_WORKSPACE_ID="$WS_ID"
-export MERIKNOW_ALERT_DISK_PATHS
-MERIKNOW_ALERT_DISK_PATHS="$(python3 - "$DOC_ROOT" "$ROOT" <<'PY'
+export UNORAG_ALERT_DISK_PATHS
+UNORAG_ALERT_DISK_PATHS="$(python3 - "$DOC_ROOT" "$ROOT" <<'PY'
 import json, sys
 doc, root = sys.argv[1], sys.argv[2]
 print(json.dumps({
@@ -293,7 +293,7 @@ run_checker() {
 	shift
 	env "$@" "$PY_API" "$CHECKER" once \
 		--webhook-url "$ALERT_WEBHOOK_URL" \
-		--health-url "$MERIKNOW_HEALTH_URL" \
+		--health-url "$UNORAG_HEALTH_URL" \
 		--ready-file "$READY_FILE" \
 		--database-url "$DATABASE_URL" \
 		--document-root "$DOC_ROOT" \
@@ -301,7 +301,7 @@ run_checker() {
 		--qdrant-path "$ROOT" \
 		--state-file "$STATE_FILE" \
 		--workspace-id "$WS_ID" \
-		--heartbeat-max-age-sec "${MERIKNOW_ALERT_HEARTBEAT_MAX_AGE_SEC}" \
+		--heartbeat-max-age-sec "${UNORAG_ALERT_HEARTBEAT_MAX_AGE_SEC}" \
 		--ask-probe-url "${ASK_PROBE_URL:-}" \
 		--ask-probe-body "${ASK_PROBE_BODY:-}" \
 		--ask-cookie-jar "${ASK_COOKIE_JAR:-}" \
@@ -367,7 +367,7 @@ if ! start_mock; then
 	write_report BLOCKED "mock webhook receiver failed to start"
 	exit 2
 fi
-pass_case "boot.mock" "receiver on :${MERIKNOW_B5_MOCK_PORT:-18999}"
+pass_case "boot.mock" "receiver on :${UNORAG_B5_MOCK_PORT:-18999}"
 
 # Fresh ready file + baseline state (no fires expected for jobs/disk/worker)
 printf 'b5-acceptor\n%s\n' "$(now_epoch)" >"$READY_FILE"
@@ -379,8 +379,8 @@ pass_case "boot.baseline" "initial once ok (sets jobs baseline)"
 run_s1() {
 	log "S1: Qdrant/Ask health unavailable"
 	local name="health.qdrant_ask"
-	if ! docker ps --format '{{.Names}}' | grep -qx 'meriknow-qdrant-1'; then
-		block_case "S1" "container meriknow-qdrant-1 not running"
+	if ! docker ps --format '{{.Names}}' | grep -qx 'unorag-qdrant-1'; then
+		block_case "S1" "container unorag-qdrant-1 not running"
 		return
 	fi
 	reset_state_and_alerts
@@ -388,8 +388,8 @@ run_s1() {
 	printf 'b5-acceptor\n%s\n' "$(now_epoch)" >"$READY_FILE"
 	run_checker "$WORKDIR/s1-base.json"
 
-	log "  inject: docker stop meriknow-qdrant-1"
-	docker stop meriknow-qdrant-1 >/dev/null
+	log "  inject: docker stop unorag-qdrant-1"
+	docker stop unorag-qdrant-1 >/dev/null
 	QDRANT_WAS_STOPPED=1
 	sleep 2
 	run_checker "$WORKDIR/s1-fire.json"
@@ -399,8 +399,8 @@ run_s1() {
 		fail_case "S1.firing" "no firing webhook; checker=$(head -c 300 "$WORKDIR/s1-fire.json")"
 	fi
 
-	log "  recover: docker start meriknow-qdrant-1"
-	docker start meriknow-qdrant-1 >/dev/null
+	log "  recover: docker start unorag-qdrant-1"
+	docker start unorag-qdrant-1 >/dev/null
 	QDRANT_WAS_STOPPED=0
 	for _ in $(seq 1 40); do
 		curl -sf http://127.0.0.1:6333/readyz >/dev/null 2>&1 && break
@@ -529,8 +529,8 @@ PY
 run_s4() {
 	log "S4: Ask 5xx/503 anomaly"
 	local name="ask.http_5xx"
-	if ! docker ps --format '{{.Names}}' | grep -qx 'meriknow-qdrant-1'; then
-		block_case "S4" "container meriknow-qdrant-1 not running"
+	if ! docker ps --format '{{.Names}}' | grep -qx 'unorag-qdrant-1'; then
+		block_case "S4" "container unorag-qdrant-1 not running"
 		return
 	fi
 	reset_state_and_alerts
@@ -538,7 +538,7 @@ run_s4() {
 	run_checker "$WORKDIR/s4-base.json"
 
 	log "  inject: stop qdrant → Ask probe 5xx/503"
-	docker stop meriknow-qdrant-1 >/dev/null
+	docker stop unorag-qdrant-1 >/dev/null
 	QDRANT_WAS_STOPPED=1
 	sleep 2
 	run_checker "$WORKDIR/s4-fire.json"
@@ -562,7 +562,7 @@ PY
 		fail_case "S4.firing" "no firing webhook; $(head -c 300 "$WORKDIR/s4-fire.json")"
 	fi
 
-	docker start meriknow-qdrant-1 >/dev/null
+	docker start unorag-qdrant-1 >/dev/null
 	QDRANT_WAS_STOPPED=0
 	for _ in $(seq 1 40); do
 		curl -sf http://127.0.0.1:6333/readyz >/dev/null 2>&1 && break
@@ -596,14 +596,14 @@ PY
 	)"
 	pass_case "S5.measure" "real documents volume usage=${real_pct}% path=$DOC_ROOT"
 
-	log "  inject: MERIKNOW_ALERT_DISK_FORCE_PERCENT=90 (webhook path; host disk not filled)"
-	run_checker "$WORKDIR/s5-fire.json" MERIKNOW_ALERT_DISK_FORCE_PERCENT=90
+	log "  inject: UNORAG_ALERT_DISK_FORCE_PERCENT=90 (webhook path; host disk not filled)"
+	run_checker "$WORKDIR/s5-fire.json" UNORAG_ALERT_DISK_FORCE_PERCENT=90
 	# Also pass via CLI for the same effect
 	if ! wait_alert "$name" firing 10; then
 		# retry with explicit CLI flag in case env was ignored by wrapper
-		env MERIKNOW_ALERT_DISK_FORCE_PERCENT=90 "$PY_API" "$CHECKER" once \
+		env UNORAG_ALERT_DISK_FORCE_PERCENT=90 "$PY_API" "$CHECKER" once \
 			--webhook-url "$ALERT_WEBHOOK_URL" \
-			--health-url "$MERIKNOW_HEALTH_URL" \
+			--health-url "$UNORAG_HEALTH_URL" \
 			--ready-file "$READY_FILE" \
 			--database-url "$DATABASE_URL" \
 			--document-root "$DOC_ROOT" \

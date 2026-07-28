@@ -48,9 +48,7 @@ test("policy-parity JS resolves all fixture cases", () => {
 				resolveAskPolicy(inp.raw, {
 					question: inp.question ?? null,
 					policyVersion:
-						typeof inp.policy_version === "number"
-							? inp.policy_version
-							: null,
+						typeof inp.policy_version === "number" ? inp.policy_version : null,
 				}),
 			);
 			assert.ok(snap.public && snap.resolved);

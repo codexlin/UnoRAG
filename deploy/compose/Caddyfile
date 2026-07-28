@@ -1,4 +1,4 @@
-# MeriKnow private-deployment edge proxy.
+# UnoRAG private-deployment edge proxy.
 # Only the Next.js control plane is exposed. FastAPI stays on the internal network.
 
 {

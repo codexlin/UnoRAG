@@ -29,12 +29,12 @@ jobs:
           uv run python scripts/run_release_gates.py \
             --mode ci \
             --baseline tests/eval/baselines/ci-deterministic.json \
-            --report-out /tmp/meriknow-ci-gate.json
+            --report-out /tmp/unorag-ci-gate.json
       - name: Show gate report summary
         if: always()
         run: |
-          if [[ -f /tmp/meriknow-ci-gate.json ]]; then
-            python3 -c "import json; d=json.load(open('/tmp/meriknow-ci-gate.json')); print(json.dumps({k:d.get(k) for k in ('ok','mode','failed','fuse_failures') if k in d or True}, indent=2, default=str)[:2000])"
+          if [[ -f /tmp/unorag-ci-gate.json ]]; then
+            python3 -c "import json; d=json.load(open('/tmp/unorag-ci-gate.json')); print(json.dumps({k:d.get(k) for k in ('ok','mode','failed','fuse_failures') if k in d or True}, indent=2, default=str)[:2000])"
           fi
 
   policy-parity:

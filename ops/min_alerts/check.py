@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MeriKnow minimum alerts: evaluate five signals and notify via webhook and/or Resend email.
+"""UnoRAG minimum alerts: evaluate five signals and notify via webhook and/or Resend email.
 
 Signals:
   1. health.qdrant_ask   — /health qdrant_ok=false or ask_ready=false
@@ -14,19 +14,19 @@ Env (also CLI flags):
   ALERT_EMAIL_FROM              Resend verified from (or EMAIL_FROM)
   ALERT_EMAIL_TO                comma-separated recipients
   ALERT_RESEND_API_URL          override Resend endpoint (tests / dry local mock)
-  MERIKNOW_HEALTH_URL            default http://127.0.0.1:3000/api/rag/health
-  MERIKNOW_ALERT_ASK_PROBE_URL   optional Ask probe URL
-  MERIKNOW_ALERT_ASK_PROBE_BODY  JSON body for Ask probe
-  MERIKNOW_ALERT_ASK_COOKIE_JAR  Netscape cookie jar for Ask probe
+  UNORAG_HEALTH_URL            default http://127.0.0.1:3000/api/rag/health
+  UNORAG_ALERT_ASK_PROBE_URL   optional Ask probe URL
+  UNORAG_ALERT_ASK_PROBE_BODY  JSON body for Ask probe
+  UNORAG_ALERT_ASK_COOKIE_JAR  Netscape cookie jar for Ask probe
   DATABASE_URL                   for dead/stuck SQL (preferred over lifecycle JSON)
   LIFECYCLE_WORKER_READY_FILE    heartbeat file path
   DOCUMENT_STORAGE_ROOT          documents disk path
-  MERIKNOW_ALERT_DISK_PATHS      JSON {"documents":"...","postgres":"...","qdrant":"..."}
-  MERIKNOW_ALERT_DISK_FORCE_PERCENT  int — force all disk signals (acceptance inject)
-  MERIKNOW_ALERT_STATE_FILE      default /tmp/meriknow-min-alerts-state.json
-  MERIKNOW_ALERT_DISK_THRESHOLD  default 85
-  MERIKNOW_ALERT_HEARTBEAT_MAX_AGE_SEC  default 120
-  MERIKNOW_ALERT_SEVERITY        default warning
+  UNORAG_ALERT_DISK_PATHS      JSON {"documents":"...","postgres":"...","qdrant":"..."}
+  UNORAG_ALERT_DISK_FORCE_PERCENT  int — force all disk signals (acceptance inject)
+  UNORAG_ALERT_STATE_FILE      default /tmp/unorag-min-alerts-state.json
+  UNORAG_ALERT_DISK_THRESHOLD  default 85
+  UNORAG_ALERT_HEARTBEAT_MAX_AGE_SEC  default 120
+  UNORAG_ALERT_SEVERITY        default warning
 
 Notify: configure webhook and/or Resend. Delivery is fail-soft per channel
 (exceptions become delivery notes; checker does not crash). Need at least one
@@ -97,7 +97,7 @@ def http_json(
 	timeout: float = 8.0,
 	cookie_jar: Path | None = None,
 ) -> tuple[int, dict[str, str], Any]:
-	hdrs = {"Accept": "application/json", "User-Agent": "meriknow-min-alerts/1"}
+	hdrs = {"Accept": "application/json", "User-Agent": "unorag-min-alerts/1"}
 	if headers:
 		hdrs.update(headers)
 	if cookie_jar and cookie_jar.exists():
@@ -165,8 +165,8 @@ def format_alert_email(payload: dict[str, Any]) -> tuple[str, str]:
 	status = str(payload.get("status") or "")
 	name = str(payload.get("alert_name") or "alert")
 	severity = str(payload.get("severity") or "")
-	ns = str(payload.get("namespace") or "meriknow")
-	subject = f"[MeriKnow {status}] {name} ({severity or 'n/a'})"
+	ns = str(payload.get("namespace") or "unorag")
+	subject = f"[UnoRAG {status}] {name} ({severity or 'n/a'})"
 	lines = [
 		f"status: {status}",
 		f"alert_name: {name}",
@@ -629,9 +629,9 @@ def build_payload(
 ) -> dict[str, Any]:
 	ann = dict(signal.get("annotations") or {})
 	labels = dict(signal.get("labels") or {})
-	ns = str(labels.get("namespace") or "meriknow")
+	ns = str(labels.get("namespace") or "unorag")
 	return {
-		"version": "meriknow.min_alerts/1",
+		"version": "unorag.min_alerts/1",
 		"status": status,
 		"alert_name": signal["name"],
 		"namespace": ns,
@@ -723,12 +723,12 @@ def apply_transitions(
 
 def build_config(args: argparse.Namespace) -> dict[str, Any]:
 	disk_paths: dict[str, str] = {}
-	raw_paths = env("MERIKNOW_ALERT_DISK_PATHS")
+	raw_paths = env("UNORAG_ALERT_DISK_PATHS")
 	if raw_paths:
 		try:
 			disk_paths = {str(k): str(v) for k, v in json.loads(raw_paths).items()}
 		except Exception as exc:
-			raise SystemExit(f"invalid MERIKNOW_ALERT_DISK_PATHS: {exc}") from exc
+			raise SystemExit(f"invalid UNORAG_ALERT_DISK_PATHS: {exc}") from exc
 	doc_root = args.document_root or env("DOCUMENT_STORAGE_ROOT")
 	if doc_root and "documents" not in disk_paths:
 		disk_paths["documents"] = doc_root
@@ -739,8 +739,8 @@ def build_config(args: argparse.Namespace) -> dict[str, Any]:
 		disk_paths["qdrant"] = args.qdrant_path
 	# If still missing postgres/qdrant, fall back to documents parent / repo data root.
 	force = args.disk_force_percent
-	if force is None and env("MERIKNOW_ALERT_DISK_FORCE_PERCENT"):
-		force = float(env("MERIKNOW_ALERT_DISK_FORCE_PERCENT"))
+	if force is None and env("UNORAG_ALERT_DISK_FORCE_PERCENT"):
+		force = float(env("UNORAG_ALERT_DISK_FORCE_PERCENT"))
 	return {
 		"webhook_url": args.webhook_url or env("ALERT_WEBHOOK_URL"),
 		"resend": {
@@ -750,36 +750,36 @@ def build_config(args: argparse.Namespace) -> dict[str, Any]:
 			"api_url": env("ALERT_RESEND_API_URL", "https://api.resend.com/emails"),
 		},
 		"health_url": args.health_url
-		or env("MERIKNOW_HEALTH_URL", "http://127.0.0.1:3000/api/rag/health"),
-		"ask_probe_url": args.ask_probe_url or env("MERIKNOW_ALERT_ASK_PROBE_URL"),
+		or env("UNORAG_HEALTH_URL", "http://127.0.0.1:3000/api/rag/health"),
+		"ask_probe_url": args.ask_probe_url or env("UNORAG_ALERT_ASK_PROBE_URL"),
 		"ask_probe_body": args.ask_probe_body
 		or env(
-			"MERIKNOW_ALERT_ASK_PROBE_BODY",
+			"UNORAG_ALERT_ASK_PROBE_BODY",
 			'{"library_id":"00000000-0000-4000-8000-000000000099","question":"min-alert probe"}',
 		),
-		"ask_cookie_jar": args.ask_cookie_jar or env("MERIKNOW_ALERT_ASK_COOKIE_JAR"),
+		"ask_cookie_jar": args.ask_cookie_jar or env("UNORAG_ALERT_ASK_COOKIE_JAR"),
 		"database_url": args.database_url or env("DATABASE_URL") or env("WORKER_DATABASE_URL"),
-		"lifecycle_json": args.lifecycle_json or env("MERIKNOW_ALERT_LIFECYCLE_JSON"),
+		"lifecycle_json": args.lifecycle_json or env("UNORAG_ALERT_LIFECYCLE_JSON"),
 		"ready_file": args.ready_file or env("LIFECYCLE_WORKER_READY_FILE"),
 		"disk_paths": disk_paths,
 		"disk_threshold": float(
 			args.disk_threshold
 			if args.disk_threshold is not None
-			else env("MERIKNOW_ALERT_DISK_THRESHOLD", "85")
+			else env("UNORAG_ALERT_DISK_THRESHOLD", "85")
 		),
 		"disk_force_percent": force,
 		"heartbeat_max_age_sec": float(
 			args.heartbeat_max_age_sec
 			if args.heartbeat_max_age_sec is not None
-			else env("MERIKNOW_ALERT_HEARTBEAT_MAX_AGE_SEC", "120")
+			else env("UNORAG_ALERT_HEARTBEAT_MAX_AGE_SEC", "120")
 		),
 		"state_file": args.state_file
-		or env("MERIKNOW_ALERT_STATE_FILE", "/tmp/meriknow-min-alerts-state.json"),
-		"severity": args.severity or env("MERIKNOW_ALERT_SEVERITY", "warning"),
-		"namespace": args.namespace or env("MERIKNOW_ALERT_NAMESPACE", "meriknow"),
+		or env("UNORAG_ALERT_STATE_FILE", "/tmp/unorag-min-alerts-state.json"),
+		"severity": args.severity or env("UNORAG_ALERT_SEVERITY", "warning"),
+		"namespace": args.namespace or env("UNORAG_ALERT_NAMESPACE", "unorag"),
 		"default_workspace_id": args.workspace_id
 		or env("DEFAULT_WORKSPACE_ID")
-		or env("MERIKNOW_WORKSPACE_ID"),
+		or env("UNORAG_WORKSPACE_ID"),
 		"dry_run": bool(args.dry_run),
 	}
 
@@ -863,7 +863,7 @@ def cmd_mock_receiver(args: argparse.Namespace) -> int:
 			self.wfile.write(body)
 
 		def do_GET(self) -> None:  # noqa: N802
-			body = b'{"ok":true,"service":"meriknow-min-alerts-mock"}\n'
+			body = b'{"ok":true,"service":"unorag-min-alerts-mock"}\n'
 			self.send_response(200)
 			self.send_header("Content-Type", "application/json")
 			self.send_header("Content-Length", str(len(body)))
@@ -891,7 +891,7 @@ def cmd_mock_receiver(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-	p = argparse.ArgumentParser(description="MeriKnow minimum alerts checker")
+	p = argparse.ArgumentParser(description="UnoRAG minimum alerts checker")
 	sub = p.add_subparsers(dest="cmd", required=True)
 
 	def add_common(sp: argparse.ArgumentParser) -> None:

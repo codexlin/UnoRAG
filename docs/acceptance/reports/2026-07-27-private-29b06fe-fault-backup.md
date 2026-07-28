@@ -4,7 +4,7 @@
 |----|----|
 | 日期 | 2026-07-27 |
 | 发布候选 / 远端 tip SHA | `29b06feef67923e254d3167b486be459f3c0ca8c` |
-| 拓扑 | Compose `meriknow-private` · `HTTP_PORT=8088` · 含 **outbox-worker** |
+| 拓扑 | Compose `unorag-private` · `HTTP_PORT=8088` · 含 **outbox-worker** |
 | 结论（本切片） | **PASS** — 故障矩阵 4/4；备份→破坏→恢复→冒烟 PASS |
 | 明确跳过 | 24–72h soak（按授权不做） |
 | 前置 | 补齐黑盒报告 [`2026-07-27-private-0170ba8-blackbox.md`](./2026-07-27-private-0170ba8-blackbox.md) 未覆盖项 |
@@ -19,8 +19,8 @@
 
 ## 1. 故障矩阵（真实私有栈）
 
-操作约定：`cd deploy/compose && source scripts/compose-env.sh` 后使用 `mk_compose`。  
-证据目录（本机，勿提交）：`/tmp/meriknow-fault-29b06fe/`（`checks.jsonl`、`run.log`、各 ask/health JSON）。
+操作约定：`cd deploy/compose && source scripts/compose-env.sh` 后使用 `mk_compose`。
+证据目录（本机，勿提交）：`/tmp/unorag-fault-29b06fe/`（`checks.jsonl`、`run.log`、各 ask/health JSON）。
 
 | ID | 场景 | 结果 | 证据摘要 |
 |----|------|------|----------|
@@ -43,14 +43,14 @@
 
 ## 2. 备份 / 恢复
 
-清单：[`../backup-restore-verification.md`](../backup-restore-verification.md)。  
-备份目录（gitignore，本机）：`deploy/compose/backups/pilot-29b06fe-20260727T235730/`。  
-证据：`/tmp/meriknow-backup-29b06fe/`。
+清单：[`../backup-restore-verification.md`](../backup-restore-verification.md)。
+备份目录（gitignore，本机）：`deploy/compose/backups/pilot-29b06fe-20260727T235730/`。
+证据：`/tmp/unorag-backup-29b06fe/`。
 
 | 步骤 | 结果 | 证据 |
 |------|------|------|
 | 备份前对照 | PASS | lib=`067c900a-…` doc=`4ee2ca2a-…` ver=`46983f9b-…` gen=`914bb3c7-…` marker=`BACKUP_CONTROL_MARKER_1785167845_3066`；Ask 基线含 marker |
-| `./scripts/backup.sh` | PASS | `postgres.sql` 269KB · `documents.tgz` 229KB · `qdrant.tgz` 3.1MB · `MANIFEST.txt`（project=`meriknow-private`） |
+| `./scripts/backup.sh` | PASS | `postgres.sql` 269KB · `documents.tgz` 229KB · `qdrant.tgz` 3.1MB · `MANIFEST.txt`（project=`unorag-private`） |
 | 备份后毒丸文档 | PASS | doc=`aa28c403-…` marker=`SHOULD_DISAPPEAR_…` ingest completed；恢复前库内 2 docs |
 | 恢复 | PASS* | 见下「修复」；顺序 PG → documents → Qdrant → 启 app（含 outbox-worker） |
 | 恢复后一致性 | PASS | 对照 doc 仍在且 `ready`/chunks=6；ver/gen 与备份前一致；毒丸 doc **消失**；health `ok`/`ask_ready`；Ask 返 marker；citation `document_version_id=46983f9b-…` |

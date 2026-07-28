@@ -2,9 +2,9 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "meriknow.fullname" . }}-migrate-web
+  name: {{ include "unorag.fullname" . }}-migrate-web
   labels:
-    {{- include "meriknow.labels" . | nindent 4 }}
+    {{- include "unorag.labels" . | nindent 4 }}
     app.kubernetes.io/component: migrate-web
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
@@ -14,7 +14,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "meriknow.selectorLabels" . | nindent 8 }}
+        {{- include "unorag.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: migrate-web
     spec:
       restartPolicy: Never
@@ -26,7 +26,7 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "meriknow.secretName" . }}
+                  name: {{ include "unorag.secretName" . }}
                   key: MIGRATOR_DATABASE_URL
 {{- end }}
 ---
@@ -34,9 +34,9 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "meriknow.fullname" . }}-migrate-rag
+  name: {{ include "unorag.fullname" . }}-migrate-rag
   labels:
-    {{- include "meriknow.labels" . | nindent 4 }}
+    {{- include "unorag.labels" . | nindent 4 }}
     app.kubernetes.io/component: migrate-rag
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
@@ -46,7 +46,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "meriknow.selectorLabels" . | nindent 8 }}
+        {{- include "unorag.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: migrate-rag
     spec:
       restartPolicy: Never
@@ -59,6 +59,6 @@ spec:
             - name: MIGRATOR_DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "meriknow.secretName" . }}
+                  name: {{ include "unorag.secretName" . }}
                   key: MIGRATOR_DATABASE_URL
 {{- end }}

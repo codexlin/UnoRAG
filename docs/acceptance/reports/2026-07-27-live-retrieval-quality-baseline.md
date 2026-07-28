@@ -1,7 +1,7 @@
 # Live Retrieval / Ask 质量基线
 
-> 日期：2026-07-27  
-> 结论：**质量基线已建立，当前不满足建议发布质量门槛**  
+> 日期：2026-07-27
+> 结论：**质量基线已建立，当前不满足建议发布质量门槛**
 > 测试方式：真实控制面上传 → lifecycle worker → PostgreSQL / Qdrant →
 > live embedding / LLM → Ask
 
@@ -10,7 +10,7 @@
 | 字段 | 值 |
 |---|---|
 | 仓库 HEAD | `e95411b9f2702817655c08955884a76cb2be5ff0` |
-| API 镜像 | `meriknow-api:local` |
+| API 镜像 | `unorag-api:local` |
 | API 镜像 ID | `sha256:dcc290a76e83e1d0939cd2a899bc3c93033735f1077d861e9d61a16d1ea0d2e5` |
 | 环境 | `production` / `ASK_MODE=live` |
 | 模型 | `qwen-plus` |

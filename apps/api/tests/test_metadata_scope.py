@@ -26,16 +26,16 @@ def scope(workspace_id: str, *, tenant_id: str = "tenant-a") -> AccessScope:
 	("configured", "resolved"),
 	[
 		(
-			"postgresql://user:pass@db/meriknow",
-			"postgresql+psycopg://user:pass@db/meriknow",
+			"postgresql://user:pass@db/unorag",
+			"postgresql+psycopg://user:pass@db/unorag",
 		),
 		(
-			"postgres://user:pass@db/meriknow",
-			"postgresql+psycopg://user:pass@db/meriknow",
+			"postgres://user:pass@db/unorag",
+			"postgresql+psycopg://user:pass@db/unorag",
 		),
 		(
-			"postgresql+psycopg://user:pass@db/meriknow",
-			"postgresql+psycopg://user:pass@db/meriknow",
+			"postgresql+psycopg://user:pass@db/unorag",
+			"postgresql+psycopg://user:pass@db/unorag",
 		),
 	],
 )

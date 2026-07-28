@@ -1,4 +1,4 @@
-"""LangGraph ask pipelines for MeriKnow."""
+"""LangGraph ask pipelines for UnoRAG."""
 
 from app.graph.ask_graph import AskGraphService
 

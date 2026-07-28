@@ -83,7 +83,7 @@ def build_release_report(
 		and not baseline_compare.get("blocked")
 	)
 	return {
-		"schema_version": "meriknow.release_gate.v1",
+		"schema_version": "unorag.release_gate.v1",
 		"generated_at": datetime.now(timezone.utc).isoformat(),
 		"mode": mode,
 		"gate_ok": gate_ok,

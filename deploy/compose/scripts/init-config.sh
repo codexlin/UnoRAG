@@ -92,7 +92,7 @@ llm_base = (legacy.get("LLM_BASE_URL") or legacy.get("OPENAI_BASE_URL") or "").s
 
 runtime_keys = [
     "APP_ENV", "COMPOSE_PROJECT_NAME", "HTTP_PORT",
-    "MERIKNOW_WEB_IMAGE", "MERIKNOW_WEB_MIGRATOR_IMAGE", "MERIKNOW_API_IMAGE",
+    "UNORAG_WEB_IMAGE", "UNORAG_WEB_MIGRATOR_IMAGE", "UNORAG_API_IMAGE",
     "POSTGRES_IMAGE", "QDRANT_IMAGE", "REDIS_IMAGE", "CADDY_IMAGE",
     "POSTGRES_DB", "POSTGRES_USER",
     "QDRANT_URL", "QDRANT_COLLECTION", "REDIS_URL",
@@ -110,16 +110,16 @@ runtime_keys = [
     "LIFECYCLE_MINERU_CAPACITY",
 ]
 secret_keys = [
-    "POSTGRES_PASSWORD", "MERIKNOW_INTERNAL_SECRET", "MERIKNOW_SESSION_SECRET",
+    "POSTGRES_PASSWORD", "UNORAG_INTERNAL_SECRET", "UNORAG_SESSION_SECRET",
     "LLM_API_KEY", "MINERU_302_API_KEY",
     "DATABASE_URL", "API_DATABASE_URL", "WORKER_DATABASE_URL",
     "RAG_READ_DATABASE_URL", "MIGRATOR_DATABASE_URL",
 ]
 bootstrap_keys = [
-    "MERIKNOW_ORGANIZATION_ID", "MERIKNOW_ORGANIZATION_SLUG", "MERIKNOW_ORGANIZATION_NAME",
-    "MERIKNOW_WORKSPACE_ID", "MERIKNOW_WORKSPACE_SLUG", "MERIKNOW_WORKSPACE_NAME",
-    "MERIKNOW_PRINCIPAL_ID", "MERIKNOW_ADMIN_SUBJECT", "MERIKNOW_ADMIN_EMAIL",
-    "MERIKNOW_ADMIN_NAME", "MERIKNOW_ADMIN_PASSWORD",
+    "UNORAG_ORGANIZATION_ID", "UNORAG_ORGANIZATION_SLUG", "UNORAG_ORGANIZATION_NAME",
+    "UNORAG_WORKSPACE_ID", "UNORAG_WORKSPACE_SLUG", "UNORAG_WORKSPACE_NAME",
+    "UNORAG_PRINCIPAL_ID", "UNORAG_ADMIN_SUBJECT", "UNORAG_ADMIN_EMAIL",
+    "UNORAG_ADMIN_NAME", "UNORAG_ADMIN_PASSWORD",
 ]
 
 runtime_updates = {k: legacy[k] for k in runtime_keys if k in legacy and legacy[k]}
@@ -127,15 +127,15 @@ if llm_base:
     runtime_updates["LLM_BASE_URL"] = llm_base
 if "DOCUMENT_MAX_UPLOAD_BYTES" not in runtime_updates and legacy.get("MAX_UPLOAD_BYTES"):
     runtime_updates["DOCUMENT_MAX_UPLOAD_BYTES"] = legacy["MAX_UPLOAD_BYTES"]
-# DOCUMENT_STORAGE_ROOT is a Compose invariant (/var/lib/meriknow/documents);
+# DOCUMENT_STORAGE_ROOT is a Compose invariant (/var/lib/unorag/documents);
 # never migrate a host path into runtime.env as a tunable knob.
 
 secret_updates = {k: legacy[k] for k in secret_keys if k in legacy and legacy[k]}
 if llm_key:
     secret_updates["LLM_API_KEY"] = llm_key
-# Prefer MERIKNOW_INTERNAL_SECRET; fall back to INTERNAL_AUTH_SECRET
-if not secret_updates.get("MERIKNOW_INTERNAL_SECRET") and legacy.get("INTERNAL_AUTH_SECRET"):
-    secret_updates["MERIKNOW_INTERNAL_SECRET"] = legacy["INTERNAL_AUTH_SECRET"]
+# Prefer UNORAG_INTERNAL_SECRET; fall back to INTERNAL_AUTH_SECRET
+if not secret_updates.get("UNORAG_INTERNAL_SECRET") and legacy.get("INTERNAL_AUTH_SECRET"):
+    secret_updates["UNORAG_INTERNAL_SECRET"] = legacy["INTERNAL_AUTH_SECRET"]
 
 bootstrap_updates = {k: legacy[k] for k in bootstrap_keys if k in legacy and legacy[k]}
 

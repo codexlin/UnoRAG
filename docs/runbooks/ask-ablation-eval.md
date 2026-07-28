@@ -33,7 +33,7 @@
 cd apps/api
 uv run python scripts/run_ablation_matrix.py \
   --cases tests/eval/ablation_cases.jsonl \
-  --report-out /tmp/meriknow-ablation.json
+  --report-out /tmp/unorag-ablation.json
 ```
 
 Live 消融与真实数据集就绪后，再研究 rerank → hybrid → retry → 复杂图节点。

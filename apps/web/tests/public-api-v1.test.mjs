@@ -211,7 +211,10 @@ test("success projection exposes stable citations and strips internal debug", ()
 	assert.equal(projected.api_version, PUBLIC_API_VERSION_BODY);
 	assert.equal(projected.trace_id, "11111111-1111-4111-8111-111111111111");
 	assert.equal(projected.citations[0].document_id, "doc-1");
-	assert.deepEqual(Object.keys(projected).sort(), [...PUBLIC_ASK_SUCCESS_KEYS].sort());
+	assert.deepEqual(
+		Object.keys(projected).sort(),
+		[...PUBLIC_ASK_SUCCESS_KEYS].sort(),
+	);
 	assert.deepEqual(
 		Object.keys(projected.citations[0]).sort(),
 		[...PUBLIC_CITATION_KEYS].sort(),
@@ -294,8 +297,8 @@ test("OpenAPI artifact matches the enforced v1 surface", () => {
 
 test("optional process-local rate limit returns frozen 429 shape inputs", () => {
 	resetPublicApiRateLimitBuckets();
-	const previous = process.env.MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
-	process.env.MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE = "2";
+	const previous = process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
+	process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE = "2";
 	try {
 		assert.equal(checkPublicApiRateLimit("key-a").ok, true);
 		assert.equal(checkPublicApiRateLimit("key-a").ok, true);
@@ -305,9 +308,9 @@ test("optional process-local rate limit returns frozen 429 shape inputs", () => 
 		assert.equal(checkPublicApiRateLimit("key-b").ok, true);
 	} finally {
 		if (previous === undefined) {
-			delete process.env.MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
+			delete process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
 		} else {
-			process.env.MERIKNOW_PUBLIC_API_RATE_LIMIT_PER_MINUTE = previous;
+			process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE = previous;
 		}
 		resetPublicApiRateLimitBuckets();
 	}

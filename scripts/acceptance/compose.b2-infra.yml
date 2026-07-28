@@ -1,15 +1,15 @@
 # Isolated infra for B2 backup/restore drill.
-# NEVER point this at the main hybrid volumes (root docker-compose.yml / .meriknow).
+# NEVER point this at the main hybrid volumes (root docker-compose.yml / .unorag).
 # Usage (via b2_restore_drill.sh):
-#   COMPOSE_PROJECT_NAME=meriknow-b2-src docker compose -f compose.b2-infra.yml up -d
-name: ${COMPOSE_PROJECT_NAME:-meriknow-b2}
+#   COMPOSE_PROJECT_NAME=unorag-b2-src docker compose -f compose.b2-infra.yml up -d
+name: ${COMPOSE_PROJECT_NAME:-unorag-b2}
 
 services:
   postgres:
     image: ${POSTGRES_IMAGE:-postgres:17-alpine}
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-meriknow}
-      POSTGRES_USER: ${POSTGRES_USER:-meriknow}
+      POSTGRES_DB: ${POSTGRES_DB:-unorag}
+      POSTGRES_USER: ${POSTGRES_USER:-unorag}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
     ports:
       - "${B2_POSTGRES_PORT:-15432}:5432"
@@ -19,7 +19,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-meriknow} -d ${POSTGRES_DB:-meriknow}",
+          "pg_isready -U ${POSTGRES_USER:-unorag} -d ${POSTGRES_DB:-unorag}",
         ]
       interval: 5s
       timeout: 5s

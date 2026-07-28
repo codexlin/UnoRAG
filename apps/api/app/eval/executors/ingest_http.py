@@ -31,7 +31,7 @@ def run_ingest_http(case: EvalCase) -> EvalCaseResult:
 		"STUB_INGEST_SIMULATE",
 	)
 	previous = {key: os.environ.get(key) for key in keys}
-	with TemporaryDirectory(prefix="meriknow-eval-http-") as tmp_dir:
+	with TemporaryDirectory(prefix="unorag-eval-http-") as tmp_dir:
 		os.environ.update(
 			{
 				"ASK_MODE": "stub",

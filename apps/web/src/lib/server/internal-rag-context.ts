@@ -8,7 +8,7 @@ export type InternalAuthSource = "session" | "service";
 
 export type InternalRagContext = {
 	v: 1;
-	iss: "meriknow-control-plane";
+	iss: "unorag-control-plane";
 	tenant_id: string;
 	workspace_id: string;
 	principal_id: string;
@@ -39,10 +39,10 @@ export function createInternalRagHeaders(
 	now = Math.floor(Date.now() / 1000),
 	options?: { authSource?: InternalAuthSource; requestId?: string },
 ): Headers {
-	const secret = process.env.MERIKNOW_INTERNAL_SECRET?.trim();
+	const secret = process.env.UNORAG_INTERNAL_SECRET?.trim();
 	if (!secret || secret.length < 32) {
 		throw new Error(
-			"MERIKNOW_INTERNAL_SECRET must contain at least 32 characters",
+			"UNORAG_INTERNAL_SECRET must contain at least 32 characters",
 		);
 	}
 
@@ -50,7 +50,7 @@ export function createInternalRagHeaders(
 	const authSource = options?.authSource ?? "session";
 	const context: InternalRagContext = {
 		v: 1,
-		iss: "meriknow-control-plane",
+		iss: "unorag-control-plane",
 		tenant_id: identity.tenantId,
 		workspace_id: identity.workspaceId,
 		principal_id: identity.principalId,
@@ -72,8 +72,8 @@ export function createInternalRagHeaders(
 		.digest("base64url");
 
 	return new Headers({
-		"x-meriknow-context": token,
-		"x-meriknow-signature": signature,
+		"x-unorag-context": token,
+		"x-unorag-signature": signature,
 		"x-request-id": context.request_id,
 	});
 }

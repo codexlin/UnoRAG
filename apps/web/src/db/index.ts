@@ -6,7 +6,7 @@ import { Pool } from "pg";
 import * as schema from "./schema";
 
 const globalForDatabase = globalThis as typeof globalThis & {
-	meriknowPool?: Pool;
+	unoragPool?: Pool;
 };
 
 function createPool(): Pool {
@@ -23,7 +23,7 @@ function createPool(): Pool {
 }
 
 export function getDatabase() {
-	const pool = globalForDatabase.meriknowPool ?? createPool();
-	globalForDatabase.meriknowPool = pool;
+	const pool = globalForDatabase.unoragPool ?? createPool();
+	globalForDatabase.unoragPool = pool;
 	return drizzle(pool, { schema });
 }

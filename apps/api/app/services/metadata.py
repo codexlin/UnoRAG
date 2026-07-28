@@ -1703,7 +1703,7 @@ def get_metadata_store(settings: Any | None = None) -> MetadataStore:
 			logger.exception("metadata.postgres_failed")
 			raise RuntimeError(
 				f"Postgres metadata store failed to initialize ({exc}). "
-				"Fix DATABASE_URL / docker compose postgres — MeriKnow does not fall back to JSON."
+				"Fix DATABASE_URL / docker compose postgres — UnoRAG does not fall back to JSON."
 			) from exc
 		logger.info("metadata.backend=postgres")
 		return _store

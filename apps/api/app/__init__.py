@@ -1,1 +1,1 @@
-"""MeriKnow API package."""
+"""UnoRAG API package."""

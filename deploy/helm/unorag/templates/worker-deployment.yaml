@@ -1,43 +1,36 @@
-{{- if .Values.api.enabled }}
+{{- if .Values.worker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "meriknow.fullname" . }}-api
+  name: {{ include "unorag.fullname" . }}-worker
   labels:
-    {{- include "meriknow.labels" . | nindent 4 }}
-    app.kubernetes.io/component: api
+    {{- include "unorag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: lifecycle-worker
 spec:
-  replicas: {{ .Values.api.replicaCount }}
+  replicas: {{ .Values.worker.replicaCount }}
   selector:
     matchLabels:
-      {{- include "meriknow.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: api
+      {{- include "unorag.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: lifecycle-worker
   template:
     metadata:
       labels:
-        {{- include "meriknow.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: api
+        {{- include "unorag.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: lifecycle-worker
     spec:
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: api
+        - name: lifecycle-worker
           image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"
           imagePullPolicy: {{ .Values.images.api.pullPolicy }}
-          ports:
-            - name: http
-              containerPort: {{ .Values.api.port }}
+          command: ["python", "-m", "app.lifecycle_worker"]
           env:
             - name: APP_ENV
               value: {{ .Values.config.appEnv | quote }}
-            - name: APP_NAME
-              value: MeriKnow API
-            - name: API_PREFIX
-              value: /v1
-            - name: CORS_ORIGINS
-              value: {{ .Values.config.corsOrigins | quote }}
             - name: ASK_MODE
               value: {{ .Values.config.askMode | quote }}
             - name: METADATA_BACKEND
@@ -72,10 +65,6 @@ spec:
               value: {{ .Values.config.embeddingBatchSize | default "10" | quote }}
             - name: LLM_MAX_INFLIGHT
               value: {{ .Values.config.llmMaxInflight | default "4" | quote }}
-            - name: RERANK_MODEL
-              value: {{ .Values.config.rerankModel | quote }}
-            - name: RERANK_BASE_URL
-              value: {{ .Values.config.rerankBaseUrl | quote }}
             - name: MINERU_ENABLED
               value: {{ .Values.config.mineruEnabled | quote }}
             - name: MINERU_PROVIDER
@@ -110,27 +99,44 @@ spec:
               value: {{ .Values.config.mineru302BudgetWarnRatio | quote }}
             - name: MINERU_302_LONG_PENDING_S
               value: {{ .Values.config.mineru302LongPendingSeconds | quote }}
+            - name: MINERU_302_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: MINERU_302_API_KEY
+                  optional: true
             - name: LIFECYCLE_WORKER_READY_FILE
-              value: /tmp/meriknow-lifecycle-ready
+              value: /tmp/unorag-lifecycle-ready
+            - name: LIFECYCLE_WORKER_POLL_SECONDS
+              value: {{ .Values.config.lifecycleWorkerPollSeconds | default "1" | quote }}
+            - name: LIFECYCLE_WORKER_LEASE_SECONDS
+              value: {{ .Values.config.lifecycleWorkerLeaseSeconds | default "120" | quote }}
+            - name: LIFECYCLE_WORKER_HEARTBEAT_SECONDS
+              value: {{ .Values.config.lifecycleWorkerHeartbeatSeconds | default "30" | quote }}
+            - name: WORKER_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: WORKER_DATABASE_URL
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "meriknow.secretName" . }}
-                  key: API_DATABASE_URL
+                  name: {{ include "unorag.secretName" . }}
+                  key: WORKER_DATABASE_URL
             - name: RAG_READ_DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "meriknow.secretName" . }}
+                  name: {{ include "unorag.secretName" . }}
                   key: RAG_READ_DATABASE_URL
             - name: INTERNAL_AUTH_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "meriknow.secretName" . }}
-                  key: MERIKNOW_INTERNAL_SECRET
+                  name: {{ include "unorag.secretName" . }}
+                  key: UNORAG_INTERNAL_SECRET
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "meriknow.secretName" . }}
+                  name: {{ include "unorag.secretName" . }}
                   key: LLM_API_KEY
             - name: OPENAI_BASE_URL
               value: {{ .Values.config.openaiBaseUrl | default .Values.config.llmBaseUrl | quote }}
@@ -140,10 +146,10 @@ spec:
               mountPath: {{ .Values.documentStorageRoot }}
             {{- end }}
           readinessProbe:
-            {{- toYaml .Values.api.readinessProbe | nindent 12 }}
+            {{- toYaml .Values.worker.readinessProbe | nindent 12 }}
           livenessProbe:
-            {{- toYaml .Values.api.livenessProbe | nindent 12 }}
-          {{- with .Values.api.resources }}
+            {{- toYaml .Values.worker.livenessProbe | nindent 12 }}
+          {{- with .Values.worker.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -151,6 +157,6 @@ spec:
         {{- if .Values.persistence.enabled }}
         - name: documents
           persistentVolumeClaim:
-            claimName: {{ include "meriknow.documentsPvcName" . }}
+            claimName: {{ include "unorag.documentsPvcName" . }}
         {{- end }}
 {{- end }}

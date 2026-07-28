@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "meriknow.fullname" . }}-web
+  name: {{ include "unorag.fullname" . }}-web
   labels:
-    {{- include "meriknow.labels" . | nindent 4 }}
+    {{- include "unorag.labels" . | nindent 4 }}
     app.kubernetes.io/component: web
   {{- with .Values.ingress.annotations }}
   annotations:
@@ -28,7 +28,7 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "meriknow.fullname" $ }}-web
+                name: {{ include "unorag.fullname" $ }}-web
                 port:
                   number: {{ $.Values.service.web.port }}
           {{- end }}

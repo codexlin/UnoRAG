@@ -2,7 +2,7 @@
 /**
  * Emit standardized policy-parity JSON from JS ask-policy / document-policy.
  *
- * Usage (from MeriKnow repo root):
+ * Usage (from UnoRAG repo root):
  *   node scripts/policy_parity_js.mjs
  *   node scripts/policy_parity_js.mjs --out /tmp/js.json
  */

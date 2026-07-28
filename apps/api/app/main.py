@@ -23,7 +23,7 @@ async def lifespan(_application: FastAPI):
 	ok, backend, detail = probe_metadata_store(settings)
 	if not ok:
 		raise RuntimeError(
-			f"MeriKnow requires Postgres metadata (backend={backend}): {detail}. "
+			f"UnoRAG requires Postgres metadata (backend={backend}): {detail}. "
 			"Run `docker compose up -d` and set DATABASE_URL."
 		)
 	# Force metadata store init (no demo library seed)

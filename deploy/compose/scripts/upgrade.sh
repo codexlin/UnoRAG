@@ -161,26 +161,26 @@ set_runtime_image_keys() {
 		BEGIN {
 			seen_web = 0; seen_api = 0; seen_migrator = 0
 		}
-		/^[[:space:]]*MERIKNOW_WEB_IMAGE=/ {
-			print "MERIKNOW_WEB_IMAGE=" web
+		/^[[:space:]]*UNORAG_WEB_IMAGE=/ {
+			print "UNORAG_WEB_IMAGE=" web
 			seen_web = 1
 			next
 		}
-		/^[[:space:]]*MERIKNOW_API_IMAGE=/ {
-			print "MERIKNOW_API_IMAGE=" api
+		/^[[:space:]]*UNORAG_API_IMAGE=/ {
+			print "UNORAG_API_IMAGE=" api
 			seen_api = 1
 			next
 		}
-		/^[[:space:]]*MERIKNOW_WEB_MIGRATOR_IMAGE=/ {
-			print "MERIKNOW_WEB_MIGRATOR_IMAGE=" migrator
+		/^[[:space:]]*UNORAG_WEB_MIGRATOR_IMAGE=/ {
+			print "UNORAG_WEB_MIGRATOR_IMAGE=" migrator
 			seen_migrator = 1
 			next
 		}
 		{ print }
 		END {
-			if (!seen_web) print "MERIKNOW_WEB_IMAGE=" web
-			if (!seen_api) print "MERIKNOW_API_IMAGE=" api
-			if (!seen_migrator) print "MERIKNOW_WEB_MIGRATOR_IMAGE=" migrator
+			if (!seen_web) print "UNORAG_WEB_IMAGE=" web
+			if (!seen_api) print "UNORAG_API_IMAGE=" api
+			if (!seen_migrator) print "UNORAG_WEB_MIGRATOR_IMAGE=" migrator
 		}
 	' "$RUNTIME_ENV" >"$tmp"
 	mv "$tmp" "$RUNTIME_ENV"
@@ -199,18 +199,18 @@ resolve_service_digest() {
 
 save_previous_images() {
 	local web api migrator
-	web="$(env_file_get "$RUNTIME_ENV" MERIKNOW_WEB_IMAGE || true)"
-	api="$(env_file_get "$RUNTIME_ENV" MERIKNOW_API_IMAGE || true)"
-	migrator="$(env_file_get "$RUNTIME_ENV" MERIKNOW_WEB_MIGRATOR_IMAGE || true)"
+	web="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE || true)"
+	api="$(env_file_get "$RUNTIME_ENV" UNORAG_API_IMAGE || true)"
+	migrator="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
 	{
 		echo "# previous pins captured $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-		echo "MERIKNOW_WEB_IMAGE=${web}"
-		echo "MERIKNOW_API_IMAGE=${api}"
-		echo "MERIKNOW_WEB_MIGRATOR_IMAGE=${migrator}"
-		echo "MERIKNOW_PREV_WEB_DIGEST=$(resolve_service_digest web)"
-		echo "MERIKNOW_PREV_API_DIGEST=$(resolve_service_digest api)"
-		echo "MERIKNOW_PREV_LIFECYCLE_DIGEST=$(resolve_service_digest lifecycle-worker)"
-		echo "MERIKNOW_PREV_OUTBOX_DIGEST=$(resolve_service_digest outbox-worker)"
+		echo "UNORAG_WEB_IMAGE=${web}"
+		echo "UNORAG_API_IMAGE=${api}"
+		echo "UNORAG_WEB_MIGRATOR_IMAGE=${migrator}"
+		echo "UNORAG_PREV_WEB_DIGEST=$(resolve_service_digest web)"
+		echo "UNORAG_PREV_API_DIGEST=$(resolve_service_digest api)"
+		echo "UNORAG_PREV_LIFECYCLE_DIGEST=$(resolve_service_digest lifecycle-worker)"
+		echo "UNORAG_PREV_OUTBOX_DIGEST=$(resolve_service_digest outbox-worker)"
 	} >"$PREV_ENV"
 	chmod 600 "$PREV_ENV" 2>/dev/null || true
 	log "saved previous image pins → $PREV_ENV"
@@ -221,9 +221,9 @@ rollback_apps() {
 	warn "application rollback: redeploying previous image pins (no DB down-migrate)"
 	[[ -f "$PREV_ENV" ]] || die "missing $PREV_ENV; cannot rollback automatically"
 
-	web="$(env_file_get "$PREV_ENV" MERIKNOW_WEB_IMAGE || true)"
-	api="$(env_file_get "$PREV_ENV" MERIKNOW_API_IMAGE || true)"
-	migrator="$(env_file_get "$PREV_ENV" MERIKNOW_WEB_MIGRATOR_IMAGE || true)"
+	web="$(env_file_get "$PREV_ENV" UNORAG_WEB_IMAGE || true)"
+	api="$(env_file_get "$PREV_ENV" UNORAG_API_IMAGE || true)"
+	migrator="$(env_file_get "$PREV_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
 	[[ -n "$web" && -n "$api" && -n "$migrator" ]] || die "previous image pins incomplete in $PREV_ENV"
 
 	set_runtime_image_keys "$web" "$api" "$migrator"
@@ -251,13 +251,13 @@ rollback_apps() {
 # --- resolve target images ---
 if [[ -n "$MANIFEST" ]]; then
 	[[ -f "$MANIFEST" ]] || die "manifest not found: $MANIFEST"
-	WEB_IMAGE="$(env_file_get "$MANIFEST" MERIKNOW_WEB_IMAGE || true)"
-	API_IMAGE="$(env_file_get "$MANIFEST" MERIKNOW_API_IMAGE || true)"
-	MIGRATOR_IMAGE="$(env_file_get "$MANIFEST" MERIKNOW_WEB_MIGRATOR_IMAGE || true)"
+	WEB_IMAGE="$(env_file_get "$MANIFEST" UNORAG_WEB_IMAGE || true)"
+	API_IMAGE="$(env_file_get "$MANIFEST" UNORAG_API_IMAGE || true)"
+	MIGRATOR_IMAGE="$(env_file_get "$MANIFEST" UNORAG_WEB_MIGRATOR_IMAGE || true)"
 elif [[ "$FROM_RUNTIME" -eq 1 ]]; then
-	WEB_IMAGE="$(env_file_get "$RUNTIME_ENV" MERIKNOW_WEB_IMAGE || true)"
-	API_IMAGE="$(env_file_get "$RUNTIME_ENV" MERIKNOW_API_IMAGE || true)"
-	MIGRATOR_IMAGE="$(env_file_get "$RUNTIME_ENV" MERIKNOW_WEB_MIGRATOR_IMAGE || true)"
+	WEB_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE || true)"
+	API_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_API_IMAGE || true)"
+	MIGRATOR_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
 elif [[ -n "$WEB_IMAGE" || -n "$API_IMAGE" || -n "$MIGRATOR_IMAGE" ]]; then
 	[[ -n "$WEB_IMAGE" && -n "$API_IMAGE" && -n "$MIGRATOR_IMAGE" ]] || \
 		die "when using --web/--api/--migrator, all three are required"
@@ -265,15 +265,15 @@ else
 	die "specify --manifest PATH, or --web/--api/--migrator, or --from-runtime"
 fi
 
-assert_pinned_image MERIKNOW_WEB_IMAGE "$WEB_IMAGE"
-assert_pinned_image MERIKNOW_API_IMAGE "$API_IMAGE"
-assert_pinned_image MERIKNOW_WEB_MIGRATOR_IMAGE "$MIGRATOR_IMAGE"
+assert_pinned_image UNORAG_WEB_IMAGE "$WEB_IMAGE"
+assert_pinned_image UNORAG_API_IMAGE "$API_IMAGE"
+assert_pinned_image UNORAG_WEB_MIGRATOR_IMAGE "$MIGRATOR_IMAGE"
 
 {
 	echo "# target pins $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-	echo "MERIKNOW_WEB_IMAGE=${WEB_IMAGE}"
-	echo "MERIKNOW_API_IMAGE=${API_IMAGE}"
-	echo "MERIKNOW_WEB_MIGRATOR_IMAGE=${MIGRATOR_IMAGE}"
+	echo "UNORAG_WEB_IMAGE=${WEB_IMAGE}"
+	echo "UNORAG_API_IMAGE=${API_IMAGE}"
+	echo "UNORAG_WEB_MIGRATOR_IMAGE=${MIGRATOR_IMAGE}"
 } >"$NEW_ENV"
 chmod 600 "$NEW_ENV" 2>/dev/null || true
 
@@ -331,7 +331,7 @@ if ! mk_compose up -d --no-deps api \
 fi
 
 log "post-upgrade probes"
-if ! curl -sf "http://localhost:${HTTP_PORT}/api/rag/health" | tee /tmp/meriknow-upgrade-health.json; then
+if ! curl -sf "http://localhost:${HTTP_PORT}/api/rag/health" | tee /tmp/unorag-upgrade-health.json; then
 	echo
 	warn "health probe failed — attempting app rollback to previous pins"
 	rollback_apps

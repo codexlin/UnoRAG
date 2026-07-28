@@ -11,7 +11,7 @@
 **/.ruff_cache
 **/*.pyc
 
-.meriknow
+.unorag
 scripts/acceptance/.b2-work
 scripts/acceptance/.b3-work
 scripts/acceptance/.b4-work

@@ -1,4 +1,4 @@
-export const ASK_LIBRARY_STORAGE_KEY = "meriknow.ask.last_library_id";
+export const ASK_LIBRARY_STORAGE_KEY = "unorag.ask.last_library_id";
 
 /**
  * Select the Ask library without letting a newly-created empty library displace

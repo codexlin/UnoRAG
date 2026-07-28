@@ -7,7 +7,7 @@ set -euo pipefail
 
 ACC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$ACC_DIR/../.." && pwd)"
-REPORT="${MERIKNOW_OCR_SMOKE_REPORT:-$ACC_DIR/.ocr_policy_last_run.json}"
+REPORT="${UNORAG_OCR_SMOKE_REPORT:-$ACC_DIR/.ocr_policy_last_run.json}"
 
 command -v uv >/dev/null 2>&1 || {
 	printf 'BLOCKED: uv is required\n' >&2
@@ -15,7 +15,7 @@ command -v uv >/dev/null 2>&1 || {
 }
 
 cd "$ROOT/apps/api"
-UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/meriknow-uv}" \
-	PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/tmp/meriknow-ocr-smoke-pycache}" \
+UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/unorag-uv}" \
+	PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/tmp/unorag-ocr-smoke-pycache}" \
 	PYTHONPATH=. \
 	uv run python "$ACC_DIR/ocr_policy_smoke.py" --report "$REPORT"

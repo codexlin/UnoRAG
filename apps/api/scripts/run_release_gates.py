@@ -10,7 +10,7 @@ Examples:
   uv run python scripts/run_release_gates.py --mode ci
   uv run python scripts/run_release_gates.py --mode release \\
     --baseline tests/eval/baselines/release.json \\
-    --report-out /tmp/meriknow-release-gate.json
+    --report-out /tmp/unorag-release-gate.json
 
   # Explicit approval to ship despite layer floor regression (never clears fuse trips):
   uv run python scripts/run_release_gates.py --mode release --allow-regression

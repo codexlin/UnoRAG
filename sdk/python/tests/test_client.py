@@ -1,4 +1,4 @@
-"""Tests for MeriKnow Python SDK using httpx.MockTransport (no live server)."""
+"""Tests for UnoRAG Python SDK using httpx.MockTransport (no live server)."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ import json
 import httpx
 import pytest
 
-from meriknow import (
+from unorag import (
     ErrorCode,
-    MeriKnow,
-    MeriKnowAPIError,
-    MeriKnowVersionError,
+    UnoRAG,
+    UnoRAGAPIError,
+    UnoRAGVersionError,
     RetrieveFilters,
 )
 
@@ -20,13 +20,13 @@ TRACE = "11111111-1111-4111-8111-111111111111"
 HEADERS = {
     "Content-Type": "application/json",
     "X-Request-Id": TRACE,
-    "X-MeriKnow-Api-Version": "1",
+    "X-UnoRAG-Api-Version": "1",
 }
 
 
-def _client(handler) -> MeriKnow:
+def _client(handler) -> UnoRAG:
     transport = httpx.MockTransport(handler)
-    return MeriKnow(
+    return UnoRAG(
         base_url="http://example.test",
         service_key="mk_svc_test_key_not_real",
         transport=transport,
@@ -38,7 +38,7 @@ def test_retrieve_success_matches_contract():
         assert request.method == "POST"
         assert request.url.path == "/api/v1/retrieve"
         assert request.headers["Authorization"] == "Bearer mk_svc_test_key_not_real"
-        assert request.headers["X-MeriKnow-Api-Version"] == "1"
+        assert request.headers["X-UnoRAG-Api-Version"] == "1"
         assert request.headers["Content-Type"] == "application/json"
         body = json.loads(request.content)
         assert body == {
@@ -178,7 +178,7 @@ def test_api_error_maps_stable_code():
         )
 
     with _client(handler) as client:
-        with pytest.raises(MeriKnowAPIError) as caught:
+        with pytest.raises(UnoRAGAPIError) as caught:
             client.ask(question="q", library_id="lib_1")
 
     err = caught.value
@@ -205,7 +205,7 @@ def test_rate_limit_includes_retry_after():
         )
 
     with _client(handler) as client:
-        with pytest.raises(MeriKnowAPIError) as caught:
+        with pytest.raises(UnoRAGAPIError) as caught:
             client.retrieve(query="q", library_id="lib_1")
 
     assert caught.value.code == ErrorCode.RATE_LIMIT_EXCEEDED
@@ -220,19 +220,19 @@ def test_rejects_unexpected_api_version_header():
             headers={
                 "Content-Type": "application/json",
                 "X-Request-Id": TRACE,
-                "X-MeriKnow-Api-Version": "2",
+                "X-UnoRAG-Api-Version": "2",
             },
             json={"api_version": "v2"},
         )
 
     with _client(handler) as client:
-        with pytest.raises(MeriKnowVersionError):
+        with pytest.raises(UnoRAGVersionError):
             client.retrieve(query="q", library_id="lib_1")
 
 
 def test_env_defaults(monkeypatch):
-    monkeypatch.setenv("MERIKNOW_BASE_URL", "http://env.test")
-    monkeypatch.setenv("MERIKNOW_SERVICE_KEY", "mk_svc_from_env")
+    monkeypatch.setenv("UNORAG_BASE_URL", "http://env.test")
+    monkeypatch.setenv("UNORAG_SERVICE_KEY", "mk_svc_from_env")
 
     seen = {}
 
@@ -255,7 +255,7 @@ def test_env_defaults(monkeypatch):
         )
 
     transport = httpx.MockTransport(handler)
-    with MeriKnow(transport=transport) as client:
+    with UnoRAG(transport=transport) as client:
         client.retrieve(query="q", library_id="lib_1")
 
     assert seen["auth"] == "Bearer mk_svc_from_env"
@@ -264,4 +264,4 @@ def test_env_defaults(monkeypatch):
 
 def test_rejects_non_service_key():
     with pytest.raises(Exception, match="mk_svc_"):
-        MeriKnow(base_url="http://example.test", service_key="sk-wrong")
+        UnoRAG(base_url="http://example.test", service_key="sk-wrong")

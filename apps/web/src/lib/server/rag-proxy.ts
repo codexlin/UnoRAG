@@ -22,8 +22,8 @@ const REQUEST_HEADER_DENYLIST = new Set([
 	"cookie",
 	"host",
 	"transfer-encoding",
-	"x-meriknow-context",
-	"x-meriknow-signature",
+	"x-unorag-context",
+	"x-unorag-signature",
 	"x-request-id",
 ]);
 
@@ -84,7 +84,7 @@ async function bodyLibraryId(
 				: null;
 		}
 		if (contentType.startsWith("multipart/form-data")) {
-			const parsed = new Request("http://meriknow.internal", {
+			const parsed = new Request("http://unorag.internal", {
 				method: "POST",
 				headers: { "content-type": contentType },
 				body: Buffer.from(body),

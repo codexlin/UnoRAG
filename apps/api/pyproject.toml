@@ -1,7 +1,7 @@
 [project]
-name = "meriknow-api"
+name = "unorag-api"
 version = "0.1.0"
-description = "MeriKnow API — FastAPI + LangChain + LangGraph enterprise knowledge Q&A"
+description = "UnoRAG API — FastAPI + LangChain + LangGraph enterprise knowledge Q&A"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

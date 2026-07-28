@@ -10,16 +10,16 @@ source "${ROOT}/scripts/compose-env.sh"
 
 OUT="${1:-}"
 if [[ -z "$OUT" ]]; then
-	OUT="$ROOT/backups/meriknow-$(date +%Y%m%dT%H%M%S)"
+	OUT="$ROOT/backups/unorag-$(date +%Y%m%dT%H%M%S)"
 fi
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 
-PROJECT="$(mk_config_get COMPOSE_PROJECT_NAME || echo meriknow)"
+PROJECT="$(mk_config_get COMPOSE_PROJECT_NAME || echo unorag)"
 # Compose invariant — must match docker-compose named-volume mount (not runtime.env).
-STORAGE_ROOT="/var/lib/meriknow/documents"
-POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo meriknow)"
-POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo meriknow)"
+STORAGE_ROOT="/var/lib/unorag/documents"
+POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo unorag)"
+POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo unorag)"
 
 echo "==> postgres dump → $OUT/postgres.sql"
 mk_compose exec -T postgres \

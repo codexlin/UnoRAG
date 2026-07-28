@@ -53,7 +53,7 @@ export function createInternalHeaders({
 }) {
 	if (!secret || secret.trim().length < 32) {
 		throw new Error(
-			"MERIKNOW_INTERNAL_SECRET must contain at least 32 characters",
+			"UNORAG_INTERNAL_SECRET must contain at least 32 characters",
 		);
 	}
 	const requestId = randomUUID();
@@ -61,7 +61,7 @@ export function createInternalHeaders({
 		event.payload && typeof event.payload === "object" ? event.payload : {};
 	const context = {
 		v: 1,
-		iss: "meriknow-control-plane",
+		iss: "unorag-control-plane",
 		tenant_id: requiredText(event.organization_id, "organization_id"),
 		workspace_id: requiredText(event.workspace_id, "workspace_id"),
 		principal_id: requiredText(
@@ -86,8 +86,8 @@ export function createInternalHeaders({
 		.digest("base64url");
 	return {
 		"content-type": request.body ? "application/json" : undefined,
-		"x-meriknow-context": token,
-		"x-meriknow-signature": signature,
+		"x-unorag-context": token,
+		"x-unorag-signature": signature,
 		"x-request-id": requestId,
 	};
 }

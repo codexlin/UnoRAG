@@ -42,9 +42,7 @@ export function resolveParsePlan(input?: {
 };
 export function rejectDeployOnlyParseFields(
 	body: Record<string, unknown> | null | undefined,
-):
-	| { ok: true }
-	| { ok: false; detail: string; fields: string[] };
+): { ok: true } | { ok: false; detail: string; fields: string[] };
 export function validateDocumentProfile(
 	value: unknown,
 ): { ok: true; value: string } | { ok: false; detail: string };

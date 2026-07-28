@@ -1,4 +1,4 @@
-"""Synchronous MeriKnow Knowledge API v1 HTTP client."""
+"""Synchronous UnoRAG Knowledge API v1 HTTP client."""
 
 from __future__ import annotations
 
@@ -7,26 +7,26 @@ from typing import Any, Mapping, Optional, Union
 
 import httpx
 
-from meriknow.errors import (
-    MeriKnowAPIError,
-    MeriKnowError,
-    MeriKnowTransportError,
-    MeriKnowVersionError,
+from unorag.errors import (
+    UnoRAGAPIError,
+    UnoRAGError,
+    UnoRAGTransportError,
+    UnoRAGVersionError,
 )
-from meriknow.models import AskResponse, RetrieveFilters, RetrieveResponse
+from unorag.models import AskResponse, RetrieveFilters, RetrieveResponse
 
-API_VERSION_HEADER = "X-MeriKnow-Api-Version"
+API_VERSION_HEADER = "X-UnoRAG-Api-Version"
 API_VERSION_VALUE = "1"
 DEFAULT_TIMEOUT = 60.0
 
 
-class MeriKnow:
+class UnoRAG:
     """Thin sync adapter over ``POST /api/v1/retrieve`` and ``POST /api/v1/ask``.
 
     Environment defaults (when constructor args are omitted):
 
-    - ``MERIKNOW_BASE_URL``
-    - ``MERIKNOW_SERVICE_KEY``
+    - ``UNORAG_BASE_URL``
+    - ``UNORAG_SERVICE_KEY``
     """
 
     def __init__(
@@ -38,21 +38,21 @@ class MeriKnow:
         transport: Optional[httpx.BaseTransport] = None,
         client: Optional[httpx.Client] = None,
     ) -> None:
-        resolved_base = (base_url or os.environ.get("MERIKNOW_BASE_URL") or "").rstrip(
+        resolved_base = (base_url or os.environ.get("UNORAG_BASE_URL") or "").rstrip(
             "/"
         )
-        resolved_key = service_key or os.environ.get("MERIKNOW_SERVICE_KEY") or ""
+        resolved_key = service_key or os.environ.get("UNORAG_SERVICE_KEY") or ""
         if not resolved_base:
-            raise MeriKnowError(
-                "base_url is required (or set MERIKNOW_BASE_URL)"
+            raise UnoRAGError(
+                "base_url is required (or set UNORAG_BASE_URL)"
             )
         if not resolved_key:
-            raise MeriKnowError(
-                "service_key is required (or set MERIKNOW_SERVICE_KEY)"
+            raise UnoRAGError(
+                "service_key is required (or set UNORAG_SERVICE_KEY)"
             )
         if not resolved_key.startswith("mk_svc_"):
-            raise MeriKnowError(
-                "service_key must start with 'mk_svc_' (MeriKnow Service Key)"
+            raise UnoRAGError(
+                "service_key must start with 'mk_svc_' (UnoRAG Service Key)"
             )
 
         self._base_url = resolved_base
@@ -77,7 +77,7 @@ class MeriKnow:
         if self._owns_client:
             self._client.close()
 
-    def __enter__(self) -> MeriKnow:
+    def __enter__(self) -> UnoRAG:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -131,15 +131,15 @@ class MeriKnow:
         try:
             response = self._client.request(method, path, json=dict(body))
         except httpx.TimeoutException as exc:
-            raise MeriKnowTransportError("request timed out", cause=exc) from exc
+            raise UnoRAGTransportError("request timed out", cause=exc) from exc
         except httpx.HTTPError as exc:
-            raise MeriKnowTransportError(f"transport error: {exc}", cause=exc) from exc
+            raise UnoRAGTransportError(f"transport error: {exc}", cause=exc) from exc
 
         header_map = {k.lower(): v for k, v in response.headers.items()}
-        api_version = header_map.get("x-meriknow-api-version")
+        api_version = header_map.get("x-unorag-api-version")
         if api_version is not None and api_version != API_VERSION_VALUE:
-            raise MeriKnowVersionError(
-                f"unexpected X-MeriKnow-Api-Version: {api_version!r}",
+            raise UnoRAGVersionError(
+                f"unexpected X-UnoRAG-Api-Version: {api_version!r}",
                 expected=API_VERSION_VALUE,
                 actual=api_version,
             )
@@ -147,7 +147,7 @@ class MeriKnow:
         try:
             payload: Any = response.json() if response.content else {}
         except ValueError as exc:
-            raise MeriKnowAPIError(
+            raise UnoRAGAPIError(
                 code=f"http_{response.status_code}",
                 message="response body is not valid JSON",
                 request_id=header_map.get("x-request-id"),
@@ -157,7 +157,7 @@ class MeriKnow:
             ) from exc
 
         if not isinstance(payload, dict):
-            raise MeriKnowAPIError(
+            raise UnoRAGAPIError(
                 code=f"http_{response.status_code}",
                 message="response body must be a JSON object",
                 request_id=header_map.get("x-request-id"),
@@ -167,7 +167,7 @@ class MeriKnow:
             )
 
         if response.status_code >= 400:
-            raise MeriKnowAPIError.from_response(
+            raise UnoRAGAPIError.from_response(
                 status_code=response.status_code,
                 body=payload,
                 headers=header_map,
@@ -175,7 +175,7 @@ class MeriKnow:
 
         body_version = payload.get("api_version")
         if body_version is not None and body_version != "v1":
-            raise MeriKnowVersionError(
+            raise UnoRAGVersionError(
                 f"unexpected api_version in body: {body_version!r}",
                 expected="v1",
                 actual=str(body_version),
@@ -185,4 +185,4 @@ class MeriKnow:
 
 
 # Alias matching common client naming.
-MeriKnowClient = MeriKnow
+UnoRAGClient = UnoRAG

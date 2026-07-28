@@ -1,4 +1,4 @@
-# Shared helpers for MeriKnow acceptance scripts.
+# Shared helpers for UnoRAG acceptance scripts.
 # shellcheck shell=bash
 
 acc_root() {
