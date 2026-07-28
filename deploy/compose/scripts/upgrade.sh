@@ -13,10 +13,12 @@
 #
 # Usage:
 #   ./scripts/upgrade.sh --manifest /path/to/release.env
-#   ./scripts/upgrade.sh --web IMG --api IMG --migrator IMG
+#   ./scripts/upgrade.sh --web IMG --api IMG --migrator IMG [--outbox IMG]
 #   ./scripts/upgrade.sh --from-runtime   # pull+redeploy pins already in runtime.env
 #
-# Manifest / flags must pin all three app images. Rejects empty tags and :latest.
+# Manifest must pin web/api/migrator. Outbox pin (UNORAG_OUTBOX_IMAGE) is required
+# for current compose; older 3-key manifests fall back to migrator (legacy only).
+# Rejects empty tags and :latest.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,6 +36,7 @@ SMOKE_SCRIPT="${ROOT}/scripts/pilot-smoke.sh"
 WEB_IMAGE=""
 API_IMAGE=""
 MIGRATOR_IMAGE=""
+OUTBOX_IMAGE=""
 MANIFEST=""
 FROM_RUNTIME=0
 ALLOW_BUILD=0
@@ -46,7 +49,7 @@ Rolling upgrade via registry pull (not local build).
 
 Usage:
   ./scripts/upgrade.sh --manifest /path/to/release.env
-  ./scripts/upgrade.sh --web IMG --api IMG --migrator IMG
+  ./scripts/upgrade.sh --web IMG --api IMG --migrator IMG [--outbox IMG]
   ./scripts/upgrade.sh --from-runtime
 
 Options:
@@ -80,6 +83,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--migrator)
 			MIGRATOR_IMAGE="${2:-}"
+			shift 2
+			;;
+		--outbox)
+			OUTBOX_IMAGE="${2:-}"
 			shift 2
 			;;
 		--from-runtime)
@@ -153,13 +160,13 @@ assert_pinned_image() {
 }
 
 set_runtime_image_keys() {
-	local web="$1" api="$2" migrator="$3"
+	local web="$1" api="$2" migrator="$3" outbox="$4"
 	local tmp
 	tmp="$(mktemp)"
 	# shellcheck disable=SC2016
-	awk -v web="$web" -v api="$api" -v migrator="$migrator" '
+	awk -v web="$web" -v api="$api" -v migrator="$migrator" -v outbox="$outbox" '
 		BEGIN {
-			seen_web = 0; seen_api = 0; seen_migrator = 0
+			seen_web = 0; seen_api = 0; seen_migrator = 0; seen_outbox = 0
 		}
 		/^[[:space:]]*UNORAG_WEB_IMAGE=/ {
 			print "UNORAG_WEB_IMAGE=" web
@@ -176,11 +183,17 @@ set_runtime_image_keys() {
 			seen_migrator = 1
 			next
 		}
+		/^[[:space:]]*UNORAG_OUTBOX_IMAGE=/ {
+			print "UNORAG_OUTBOX_IMAGE=" outbox
+			seen_outbox = 1
+			next
+		}
 		{ print }
 		END {
 			if (!seen_web) print "UNORAG_WEB_IMAGE=" web
 			if (!seen_api) print "UNORAG_API_IMAGE=" api
 			if (!seen_migrator) print "UNORAG_WEB_MIGRATOR_IMAGE=" migrator
+			if (!seen_outbox) print "UNORAG_OUTBOX_IMAGE=" outbox
 		}
 	' "$RUNTIME_ENV" >"$tmp"
 	mv "$tmp" "$RUNTIME_ENV"
@@ -198,15 +211,18 @@ resolve_service_digest() {
 }
 
 save_previous_images() {
-	local web api migrator
+	local web api migrator outbox
 	web="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE || true)"
 	api="$(env_file_get "$RUNTIME_ENV" UNORAG_API_IMAGE || true)"
 	migrator="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
+	outbox="$(env_file_get "$RUNTIME_ENV" UNORAG_OUTBOX_IMAGE || true)"
+	[[ -n "$outbox" ]] || outbox="$migrator"
 	{
 		echo "# previous pins captured $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		echo "UNORAG_WEB_IMAGE=${web}"
 		echo "UNORAG_API_IMAGE=${api}"
 		echo "UNORAG_WEB_MIGRATOR_IMAGE=${migrator}"
+		echo "UNORAG_OUTBOX_IMAGE=${outbox}"
 		echo "UNORAG_PREV_WEB_DIGEST=$(resolve_service_digest web)"
 		echo "UNORAG_PREV_API_DIGEST=$(resolve_service_digest api)"
 		echo "UNORAG_PREV_LIFECYCLE_DIGEST=$(resolve_service_digest lifecycle-worker)"
@@ -217,20 +233,22 @@ save_previous_images() {
 }
 
 rollback_apps() {
-	local web api migrator
+	local web api migrator outbox
 	warn "application rollback: redeploying previous image pins (no DB down-migrate)"
 	[[ -f "$PREV_ENV" ]] || die "missing $PREV_ENV; cannot rollback automatically"
 
 	web="$(env_file_get "$PREV_ENV" UNORAG_WEB_IMAGE || true)"
 	api="$(env_file_get "$PREV_ENV" UNORAG_API_IMAGE || true)"
 	migrator="$(env_file_get "$PREV_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
-	[[ -n "$web" && -n "$api" && -n "$migrator" ]] || die "previous image pins incomplete in $PREV_ENV"
+	outbox="$(env_file_get "$PREV_ENV" UNORAG_OUTBOX_IMAGE || true)"
+	[[ -n "$outbox" ]] || outbox="$migrator"
+	[[ -n "$web" && -n "$api" && -n "$migrator" && -n "$outbox" ]] || die "previous image pins incomplete in $PREV_ENV"
 
-	set_runtime_image_keys "$web" "$api" "$migrator"
+	set_runtime_image_keys "$web" "$api" "$migrator" "$outbox"
 	if [[ "$ALLOW_BUILD" -eq 1 ]]; then
 		warn "rollback with --allow-build: attempting pull, then local build if needed"
 		mk_compose pull web api lifecycle-worker outbox-worker migrate-web || true
-		mk_compose build web api migrate-web || true
+		mk_compose build web api migrate-web outbox-worker || true
 	else
 		# Previous pins may be local-only tags; pull best-effort.
 		if ! mk_compose pull web api lifecycle-worker outbox-worker migrate-web; then
@@ -254,26 +272,33 @@ if [[ -n "$MANIFEST" ]]; then
 	WEB_IMAGE="$(env_file_get "$MANIFEST" UNORAG_WEB_IMAGE || true)"
 	API_IMAGE="$(env_file_get "$MANIFEST" UNORAG_API_IMAGE || true)"
 	MIGRATOR_IMAGE="$(env_file_get "$MANIFEST" UNORAG_WEB_MIGRATOR_IMAGE || true)"
+	OUTBOX_IMAGE="$(env_file_get "$MANIFEST" UNORAG_OUTBOX_IMAGE || true)"
 elif [[ "$FROM_RUNTIME" -eq 1 ]]; then
 	WEB_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE || true)"
 	API_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_API_IMAGE || true)"
 	MIGRATOR_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
-elif [[ -n "$WEB_IMAGE" || -n "$API_IMAGE" || -n "$MIGRATOR_IMAGE" ]]; then
+	OUTBOX_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_OUTBOX_IMAGE || true)"
+elif [[ -n "$WEB_IMAGE" || -n "$API_IMAGE" || -n "$MIGRATOR_IMAGE" || -n "$OUTBOX_IMAGE" ]]; then
 	[[ -n "$WEB_IMAGE" && -n "$API_IMAGE" && -n "$MIGRATOR_IMAGE" ]] || \
-		die "when using --web/--api/--migrator, all three are required"
+		die "when using --web/--api/--migrator, web+api+migrator are required (--outbox optional)"
 else
 	die "specify --manifest PATH, or --web/--api/--migrator, or --from-runtime"
 fi
 
+# Legacy 3-image manifests: outbox used to share the migrator pin.
+[[ -n "$OUTBOX_IMAGE" ]] || OUTBOX_IMAGE="$MIGRATOR_IMAGE"
+
 assert_pinned_image UNORAG_WEB_IMAGE "$WEB_IMAGE"
 assert_pinned_image UNORAG_API_IMAGE "$API_IMAGE"
 assert_pinned_image UNORAG_WEB_MIGRATOR_IMAGE "$MIGRATOR_IMAGE"
+assert_pinned_image UNORAG_OUTBOX_IMAGE "$OUTBOX_IMAGE"
 
 {
 	echo "# target pins $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	echo "UNORAG_WEB_IMAGE=${WEB_IMAGE}"
 	echo "UNORAG_API_IMAGE=${API_IMAGE}"
 	echo "UNORAG_WEB_MIGRATOR_IMAGE=${MIGRATOR_IMAGE}"
+	echo "UNORAG_OUTBOX_IMAGE=${OUTBOX_IMAGE}"
 } >"$NEW_ENV"
 chmod 600 "$NEW_ENV" 2>/dev/null || true
 
@@ -283,9 +308,10 @@ log "pre-upgrade backup recommended: ./scripts/backup.sh <dir>"
 log "target web=${WEB_IMAGE}"
 log "target api=${API_IMAGE}"
 log "target migrator=${MIGRATOR_IMAGE}"
+log "target outbox=${OUTBOX_IMAGE}"
 
 save_previous_images
-set_runtime_image_keys "$WEB_IMAGE" "$API_IMAGE" "$MIGRATOR_IMAGE"
+set_runtime_image_keys "$WEB_IMAGE" "$API_IMAGE" "$MIGRATOR_IMAGE" "$OUTBOX_IMAGE"
 DID_SWITCH=1
 
 if [[ "$ALLOW_BUILD" -eq 1 ]]; then
@@ -338,13 +364,22 @@ if ! mk_compose up -d --no-deps api \
 fi
 
 log "post-upgrade probes"
-if ! curl -sf "http://localhost:${HTTP_PORT}/api/rag/health" | tee /tmp/unorag-upgrade-health.json; then
+health_ok=0
+for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+	if curl -sf "http://localhost:${HTTP_PORT}/api/rag/health" | tee /tmp/unorag-upgrade-health.json; then
+		echo
+		health_ok=1
+		break
+	fi
 	echo
+	warn "health probe attempt ${_attempt}/10 failed; retrying in 3s"
+	sleep 3
+done
+if [[ "$health_ok" -ne 1 ]]; then
 	warn "health probe failed — attempting app rollback to previous pins"
 	rollback_apps
 	die "health failed after upgrade; previous images redeployed (DB not reverted)"
 fi
-echo
 
 if [[ "$SKIP_SMOKE" -eq 0 && -x "$SMOKE_SCRIPT" ]]; then
 	log "running pilot-smoke.sh"

@@ -1,14 +1,16 @@
 # UnoRAG Next.js Control Plane image.
 # Build from repository root:
-#   docker build -f deploy/docker/web.Dockerfile -t unorag-web:local .
+#   docker build -f deploy/docker/web.Dockerfile --target runner -t unorag-web:local .
 #   docker build -f deploy/docker/web.Dockerfile --target migrator -t unorag-web-migrator:local .
+#   docker build -f deploy/docker/web.Dockerfile --target outbox -t unorag-web-outbox:local .
 
 FROM node:22-bookworm-slim AS deps
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@9.7.1 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/
-RUN pnpm install --filter web... --frozen-lockfile
+RUN pnpm install --filter web... --frozen-lockfile \
+	&& rm -rf /root/.local/share/pnpm/store /root/.cache
 
 FROM node:22-bookworm-slim AS builder
 WORKDIR /repo
@@ -40,6 +42,13 @@ COPY apps/web/src/db/schema.ts ./src/db/schema.ts
 # Avoid Corepack re-fetching pnpm at container start.
 CMD ["./node_modules/.bin/drizzle-kit", "migrate"]
 
+# Outbox + bootstrap ops: workspace node_modules + control-plane scripts (no Next server).
+FROM deps AS outbox
+COPY apps/web/scripts apps/web/scripts
+WORKDIR /repo/apps/web
+ENV NODE_ENV=production
+CMD ["node", "scripts/process-outbox.mjs", "--watch"]
+
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -56,7 +65,7 @@ RUN apt-get update \
 COPY --from=builder --chown=unorag:unorag /repo/apps/web/.next/standalone ./
 COPY --from=builder --chown=unorag:unorag /repo/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder --chown=unorag:unorag /repo/apps/web/public ./apps/web/public
-# Migrator / ops scripts (drizzle SQL + node tools).
+# Ops scripts (drizzle SQL + node tools) for break-glass on the web image.
 COPY --from=builder --chown=unorag:unorag /repo/apps/web/drizzle ./apps/web/drizzle
 COPY --from=builder --chown=unorag:unorag /repo/apps/web/drizzle.config.ts ./apps/web/drizzle.config.ts
 COPY --from=builder --chown=unorag:unorag /repo/apps/web/scripts ./apps/web/scripts

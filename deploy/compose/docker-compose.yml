@@ -258,11 +258,11 @@ services:
   # Library mutation projection: app.outbox_events → FastAPI internal projectors.
   # Required for create/update/delete library to reach the RAG read model.
   outbox-worker:
-    image: ${UNORAG_WEB_MIGRATOR_IMAGE:-unorag-web-migrator:local}
+    image: ${UNORAG_OUTBOX_IMAGE:-unorag-web-outbox:local}
     build:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
-      target: migrator
+      target: outbox
     working_dir: /repo/apps/web
     restart: unless-stopped
     command: ["node", "scripts/process-outbox.mjs", "--watch"]
@@ -377,11 +377,11 @@ services:
 
   bootstrap:
     profiles: ["migrate"]
-    image: ${UNORAG_WEB_MIGRATOR_IMAGE:-unorag-web-migrator:local}
+    image: ${UNORAG_OUTBOX_IMAGE:-unorag-web-outbox:local}
     build:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
-      target: migrator
+      target: outbox
     working_dir: /repo/apps/web
     environment:
       # Bootstrap-only vars: use defaults so `compose config` works without
