@@ -19,7 +19,9 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/*
 
 COPY apps/api/pyproject.toml apps/api/uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+# --no-cache: do not leave /root/.cache/uv in the image (~hundreds of MB).
+RUN uv sync --frozen --no-dev --no-install-project --no-cache \
+	&& rm -f /usr/local/bin/uv
 
 COPY apps/api/app ./app
 COPY apps/api/migrations ./migrations
