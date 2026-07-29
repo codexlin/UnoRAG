@@ -3,15 +3,14 @@
 import {
 	Activity,
 	Archive,
-	Bot,
 	ChevronRight,
 	PanelRightClose,
 	PanelRightOpen,
 	RefreshCw,
 	Send,
 	Square,
-	UserRound,
 } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -64,7 +63,7 @@ import {
 	ASK_LIBRARY_STORAGE_KEY,
 	chooseAskLibraryId,
 } from "@/lib/ask-library-selection.mjs";
-import { formatDateTime, formatDurationMs, formatScore } from "@/lib/format";
+import { formatDateTime, formatDurationMs } from "@/lib/format";
 import type { UiCitation, UiTurn } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
@@ -216,10 +215,10 @@ function SourcesPanelContent({
 			<div className="flex h-12 shrink-0 items-center justify-between border-b border-border/70 px-4">
 				<div>
 					<p className="text-meta font-mono tracking-[0.16em] text-cite uppercase">
-						Sources
+						Evidence
 					</p>
 					<p className="text-[0.9375rem] font-medium leading-snug text-foreground">
-						引用来源
+						证据轨道
 					</p>
 				</div>
 				<Tooltip>
@@ -228,11 +227,10 @@ function SourcesPanelContent({
 							<button
 								type="button"
 								onClick={onClose}
-								className="inline-flex items-center gap-1 rounded-md border border-border/70 px-2 py-1 text-meta text-muted-foreground transition-colors hover:border-cite/40 hover:bg-cite/8 hover:text-cite"
+								className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 								aria-label="收起引用来源面板"
 							>
-								<PanelRightClose className="size-3.5" aria-hidden />
-								收起
+								<PanelRightClose className="size-4" aria-hidden />
 							</button>
 						}
 					/>
@@ -243,16 +241,20 @@ function SourcesPanelContent({
 				<div className="p-4">
 					{activeCitation ? (
 						<div className="desk-enter">
-							<CitationSourceCard citation={activeCitation} active expanded />
+							<CitationSourceCard
+								citation={activeCitation}
+								active
+								expanded
+								showDiagnostics
+							/>
 						</div>
 					) : (
 						<div className="text-ui desk-enter space-y-2 text-muted-foreground">
 							<p>
-								这里展示本轮检索命中的原文片段。点击答案中的引用编号或下方来源卡片即可核对
-								dense / bm25 / rrf 等分数。
+								点击回答中的引用编号或下方依据，即可在这里核对完整原文与文档位置。
 							</p>
 							<p className="text-meta font-mono text-muted-foreground/80">
-								需要时可通过顶栏的「引用来源」再次打开。
+								检索分数收纳在证据卡的诊断区。
 							</p>
 						</div>
 					)}
@@ -271,6 +273,7 @@ export function AskWorkspace() {
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const isMobile = useIsMobile();
+	const reduceMotion = useReducedMotion();
 	const {
 		libraries,
 		error: libsError,
@@ -795,7 +798,7 @@ export function AskWorkspace() {
 	return (
 		<div className="flex min-h-0 flex-1">
 			<section className="flex min-w-0 flex-1 flex-col">
-				<div className="flex h-12 shrink-0 items-center gap-3 border-b border-border/70 bg-card/50 px-4 sm:px-5">
+				<div className="flex h-14 shrink-0 items-center gap-3 border-b border-border/70 bg-card px-4 sm:px-5">
 					<div className="min-w-0 flex-1 sm:max-w-xs">
 						<LibraryCombobox
 							libraries={libraries}
@@ -887,7 +890,7 @@ export function AskWorkspace() {
 										type="button"
 										variant="outline"
 										size="sm"
-										className="rounded-lg"
+										className="rounded-md"
 										disabled={!canArchive}
 										onClick={() => void handleArchive()}
 										aria-label="归档当前会话"
@@ -913,7 +916,7 @@ export function AskWorkspace() {
 										variant={drawerOpen ? "secondary" : "outline"}
 										size="sm"
 										className={cn(
-											"rounded-lg",
+											"rounded-md",
 											drawerOpen
 												? "border-cite/40 bg-cite/10 text-cite hover:bg-cite/15"
 												: "border-cite/35 text-cite hover:border-cite/55 hover:bg-cite/8",
@@ -947,7 +950,7 @@ export function AskWorkspace() {
 							<TooltipContent side="bottom">
 								{drawerOpen
 									? "收起右侧引用来源面板"
-									: "展开右侧引用来源，查看原文与 rank / dense 分数"}
+									: "展开证据轨道，核对完整原文与位置"}
 							</TooltipContent>
 						</Tooltip>
 					</div>
@@ -1006,7 +1009,7 @@ export function AskWorkspace() {
 								</h2>
 								<p className="text-answer desk-enter desk-enter-delay-1 text-muted-foreground">
 									{canAsk
-										? "支持流式回答与来源核对。每条回复会显示耗时、检索模式与引用分数；点击答案中的编号可打开引用来源。"
+										? "支持流式回答与来源核对。点击答案中的引用编号，即可沿证据轨道回到原文。"
 										: healthLoading
 											? "正在连接知识库服务，请稍候。"
 											: !apiReady || libsError
@@ -1047,7 +1050,7 @@ export function AskWorkspace() {
 													key={sample}
 													type="button"
 													onClick={() => setInput(sample)}
-													className="rounded-full border border-border/80 bg-card/90 px-3.5 py-2 text-left text-xs leading-5 text-muted-foreground transition-all hover:border-cite/40 hover:bg-cite/5 hover:text-foreground"
+													className="rounded-md border border-border/80 bg-card px-3.5 py-2 text-left text-xs leading-5 text-muted-foreground transition-colors hover:border-cite/40 hover:bg-cite/5 hover:text-foreground"
 												>
 													{sample}
 												</button>
@@ -1057,39 +1060,38 @@ export function AskWorkspace() {
 								) : null}
 							</div>
 						) : (
-							<ul className="mx-auto flex max-w-3xl flex-col gap-8">
+							<ul className="mx-auto flex max-w-4xl flex-col gap-10">
 								{turns.map((turn, turnIndex) => (
-									<li
+									<motion.li
 										key={turn.id}
-										className="desk-enter space-y-5"
-										style={{
-											animationDelay: `${Math.min(turnIndex, 4) * 40}ms`,
+										className="space-y-4"
+										initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+										animate={{ opacity: 1, y: 0 }}
+										transition={{
+											duration: 0.28,
+											delay: Math.min(turnIndex, 4) * 0.035,
+											ease: [0.22, 1, 0.36, 1],
 										}}
 									>
-										<div className="flex justify-end gap-3">
-											<div className="max-w-[min(85%,36rem)] space-y-1.5">
+										<header className="border-b border-border/80 pb-3">
+											<div className="mb-2 flex items-center justify-between gap-3 font-mono text-[11px] text-muted-foreground">
+												<span>
+													QUERY {String(turnIndex + 1).padStart(2, "0")}
+												</span>
 												{turn.startedAt ? (
-													<p className="text-meta text-right font-mono text-muted-foreground">
-														{formatDateTime(turn.startedAt)}
-													</p>
+													<span>{formatDateTime(turn.startedAt)}</span>
 												) : null}
-												<div className="text-answer rounded-2xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground shadow-sm">
-													{turn.question}
-												</div>
 											</div>
-											<div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary ring-1 ring-primary/20">
-												<UserRound className="size-4" aria-hidden />
-											</div>
-										</div>
+											<p className="text-lg font-medium leading-7 text-foreground">
+												{turn.question}
+											</p>
+										</header>
 
-										<div className="flex gap-3">
-											<div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full border border-cite/30 bg-cite/10 text-cite">
-												<Bot className="size-4" aria-hidden />
-											</div>
-											<div className="min-w-0 max-w-[min(92%,42rem)] flex-1 space-y-3">
-												<div className="rounded-2xl rounded-bl-md border border-border/70 bg-card/95 px-4 py-4 shadow-sm">
+										<div className="space-y-3">
+											<div className="min-w-0 space-y-3">
+												<article className="workbench-surface border-l-2 border-l-cite px-4 py-4 sm:px-5">
 													<div className="flex flex-wrap items-center justify-between gap-2">
-														<p className="text-meta font-mono tracking-[0.14em] text-cite uppercase">
+														<p className="text-meta font-mono tracking-[0.12em] text-cite uppercase">
 															{turn.refused
 																? "Refused"
 																: turn.cancelled
@@ -1113,39 +1115,12 @@ export function AskWorkspace() {
 																	className="meta-chip text-foreground/80"
 																	title="浏览器端到端：点发送到回答完成（含网络）"
 																>
-																	端到端 {formatDurationMs(turn.durationMs)}
-																</span>
-															) : null}
-															{turn.retrieveMs != null ? (
-																<span
-																	className="meta-chip"
-																	title="服务端 retrieve 阶段耗时（与链路抽屉一致）"
-																>
-																	检索 {formatDurationMs(turn.retrieveMs)}
-																</span>
-															) : turn.pending && turn.evidenceMs != null ? (
-																<span
-																	className="meta-chip text-muted-foreground"
-																	title="首包引用到达时间（客户端，生成完成后会换成服务端检索）"
-																>
-																	首包 {formatDurationMs(turn.evidenceMs)}
-																</span>
-															) : null}
-															{turn.retrievalMode || turn.usedHybrid ? (
-																<span className="meta-chip">
-																	{turn.usedHybrid
-																		? "hybrid"
-																		: turn.retrievalMode || "dense"}
-																</span>
-															) : null}
-															{typeof turn.topScore === "number" ? (
-																<span className="meta-chip">
-																	top {formatScore(turn.topScore)}
+																	{formatDurationMs(turn.durationMs)}
 																</span>
 															) : null}
 															{turn.citations.length > 0 ? (
 																<span className="meta-chip">
-																	{turn.citations.length} 引用
+																	{turn.citations.length} 条依据
 																</span>
 															) : null}
 															{hasAskTrace(turn.retrievalDebug) ? (
@@ -1255,7 +1230,7 @@ export function AskWorkspace() {
 															</Button>
 														</div>
 													) : null}
-												</div>
+												</article>
 
 												{canRetryTurn(turn) ? (
 													<div>
@@ -1274,25 +1249,26 @@ export function AskWorkspace() {
 												) : null}
 
 												{turn.citations.length > 0 ? (
-													<div className="space-y-2">
+													<section className="space-y-2 border-t border-border/70 pt-3">
 														<p className="font-mono text-[11px] text-muted-foreground">
-															引用来源 · {turn.citations.length} 条
+															回答依据 · {turn.citations.length} 条
 															{turn.completedAt
 																? ` · 完成于 ${formatDateTime(turn.completedAt)}`
 																: ""}
 														</p>
-														<ul className="space-y-2">
+														<ul className="grid gap-2 sm:grid-cols-2">
 															{turn.citations.map((citation) => (
 																<li key={citation.id}>
 																	<CitationSourceCard
 																		citation={citation}
 																		active={activeCitation?.id === citation.id}
 																		onSelect={openCitation}
+																		compact
 																	/>
 																</li>
 															))}
 														</ul>
-													</div>
+													</section>
 												) : turn.refused && !turn.pending && !turn.error ? (
 													<p className="font-mono text-[11px] text-muted-foreground">
 														无可用引用来源
@@ -1300,7 +1276,7 @@ export function AskWorkspace() {
 												) : null}
 											</div>
 										</div>
-									</li>
+									</motion.li>
 								))}
 							</ul>
 						)}
@@ -1309,13 +1285,13 @@ export function AskWorkspace() {
 
 				<form
 					onSubmit={onSubmit}
-					className="bg-linear-to-t from-background via-background/90 to-transparent px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5"
+					className="border-t border-border/70 bg-card px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5"
 				>
-					<div className="mx-auto max-w-3xl">
+					<div className="mx-auto max-w-4xl">
 						<div
 							className={cn(
-								"flex items-end gap-2 rounded-3xl border border-border/60 bg-card/95 px-3.5 py-2 shadow-[0_8px_30px_-12px_rgba(15,23,42,0.18)] ring-1 ring-black/4 backdrop-blur-md transition-[border-color,box-shadow] dark:ring-white/6",
-								"focus-within:border-cite/35 focus-within:shadow-[0_10px_36px_-14px_rgba(26,122,109,0.28)] focus-within:ring-cite/15",
+								"flex items-end gap-2 rounded-lg border border-border bg-background px-3 py-2 shadow-sm transition-[border-color,box-shadow]",
+								"focus-within:border-cite/45 focus-within:shadow-[0_0_0_3px_color-mix(in_oklab,var(--cite)_12%,transparent)]",
 								!canAsk && "opacity-80",
 							)}
 						>
@@ -1348,7 +1324,7 @@ export function AskWorkspace() {
 									aria-label="停止生成"
 									title="停止生成"
 									onClick={cancelAsk}
-									className="mb-0.5 size-9 shrink-0 rounded-full border-survey/40 text-survey shadow-sm transition-transform hover:bg-survey/10 active:scale-[0.96]"
+									className="mb-0.5 size-9 shrink-0 rounded-md border-survey/40 text-survey shadow-sm transition-transform hover:bg-survey/10 active:scale-[0.96]"
 								>
 									<Square className="size-3.5 fill-current" />
 								</Button>
@@ -1358,7 +1334,7 @@ export function AskWorkspace() {
 									size="icon"
 									disabled={!canAsk || !input.trim()}
 									aria-label="发送"
-									className="mb-0.5 size-9 shrink-0 rounded-full bg-primary text-primary-foreground shadow-sm transition-transform hover:bg-primary/90 active:scale-[0.96] disabled:shadow-none"
+									className="mb-0.5 size-9 shrink-0 rounded-md bg-primary text-primary-foreground shadow-sm transition-transform hover:bg-primary/90 active:scale-[0.96] disabled:shadow-none"
 								>
 									<Send className="size-4" />
 								</Button>
@@ -1389,7 +1365,7 @@ export function AskWorkspace() {
 						className="text-meta font-mono tracking-[0.18em] uppercase [writing-mode:vertical-rl]"
 						aria-hidden
 					>
-						Sources
+						Evidence
 					</span>
 				</button>
 			) : null}
@@ -1399,12 +1375,12 @@ export function AskWorkspace() {
 					<SheetContent
 						side="right"
 						showCloseButton={false}
-						className="w-[min(92vw,360px)] p-0"
+						className="p-0 data-[side=right]:w-[min(92vw,384px)] data-[side=right]:sm:max-w-96"
 					>
 						<SheetHeader className="sr-only">
-							<SheetTitle>引用来源</SheetTitle>
+							<SheetTitle>证据轨道</SheetTitle>
 							<SheetDescription>
-								查看回答所依据的原文片段与检索分数
+								查看回答所依据的完整原文、文档位置与检索诊断
 							</SheetDescription>
 						</SheetHeader>
 						<SourcesPanelContent
@@ -1414,20 +1390,30 @@ export function AskWorkspace() {
 					</SheetContent>
 				</Sheet>
 			) : (
-				<aside
+				<motion.aside
 					className={cn(
-						"hidden shrink-0 overflow-hidden border-l border-border/80 bg-card/85 backdrop-blur-sm transition-[width,opacity] duration-200 md:block",
-						drawerOpen ? "w-[360px] opacity-100" : "w-0 border-l-0 opacity-0",
+						"hidden shrink-0 overflow-hidden border-l border-border/80 bg-card md:block",
+						!drawerOpen && "border-l-0",
 					)}
+					initial={false}
+					animate={{
+						width: drawerOpen ? 384 : 0,
+						opacity: drawerOpen ? 1 : 0,
+					}}
+					transition={
+						reduceMotion
+							? { duration: 0 }
+							: { duration: 0.22, ease: [0.22, 1, 0.36, 1] }
+					}
 					aria-hidden={!drawerOpen}
 				>
-					<div className="h-full w-[360px]">
+					<div className="h-full w-96">
 						<SourcesPanelContent
 							activeCitation={activeCitation}
 							onClose={() => setDrawerOpen(false)}
 						/>
 					</div>
-				</aside>
+				</motion.aside>
 			)}
 
 			<AskTraceDrawer

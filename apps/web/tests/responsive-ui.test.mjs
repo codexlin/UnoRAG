@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-test("Ask sources use a mobile sheet instead of a fixed desktop rail", () => {
+test("Ask evidence uses a mobile sheet and a responsive desktop rail", () => {
 	const ask = readFileSync(
 		path.join(root, "src/components/app/ask-workspace.tsx"),
 		"utf8",
@@ -15,8 +15,10 @@ test("Ask sources use a mobile sheet instead of a fixed desktop rail", () => {
 	assert.match(ask, /useIsMobile/);
 	assert.match(ask, /isMobile\s*\?\s*\(/);
 	assert.match(ask, /<Sheet open=\{drawerOpen\}/);
-	assert.match(ask, /w-\[min\(92vw,360px\)\]/);
+	assert.match(ask, /data-\[side=right\]:w-\[min\(92vw,384px\)\]/);
 	assert.match(ask, /hidden shrink-0[\s\S]*md:block/);
+	assert.match(ask, /width: drawerOpen \? 384 : 0/);
+	assert.match(ask, /useReducedMotion/);
 });
 
 test("public landing page describes the shipped product rather than a scaffold", () => {

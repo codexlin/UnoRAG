@@ -11,19 +11,9 @@ import { cn } from "@/lib/utils";
 export function AppTopbar() {
 	const pathname = usePathname();
 	const current = getAppNavItem(pathname);
-	const { health, apiReady, loading, healthProbedAt, healthProbeMs } =
-		useHealth();
+	const { apiReady, loading, healthProbedAt, healthProbeMs } = useHealth();
 
 	const apiStatus = loading ? "checking" : apiReady ? "online" : "offline";
-
-	const bits: string[] = [];
-	if (health) {
-		bits.push(health.effective_mode || health.ask_mode);
-		if (health.hybrid_enabled) bits.push("hybrid");
-		if (health.qdrant_ok) bits.push("qdrant");
-		if (health.metadata_backend) bits.push(health.metadata_backend);
-		if (!apiReady) bits.push("不可用");
-	}
 
 	return (
 		<header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border/80 bg-card/80 px-3 backdrop-blur-md sm:px-5">
@@ -52,10 +42,10 @@ export function AppTopbar() {
 							aria-hidden
 						/>
 						{apiStatus === "checking"
-							? "API 探测中"
+							? "知识服务检查中"
 							: apiStatus === "online"
-								? `API · ${bits.join(" · ") || "ok"}`
-								: `API 离线${bits.length ? ` · ${bits.join(" · ")}` : ""}`}
+								? "知识服务在线"
+								: "知识服务不可用"}
 					</span>
 					{(healthProbedAt || healthProbeMs != null) && (
 						<span className="text-meta font-mono text-muted-foreground/80">

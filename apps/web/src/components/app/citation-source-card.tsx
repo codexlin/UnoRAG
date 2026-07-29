@@ -55,11 +55,13 @@ function CitationBody({
 	active,
 	compact,
 	expanded,
+	showDiagnostics,
 }: {
 	citation: UiCitation;
 	active?: boolean;
 	compact?: boolean;
 	expanded?: boolean;
+	showDiagnostics?: boolean;
 }) {
 	const preview = (citation.snippet || citation.text || "")
 		.replace(/\s+/g, " ")
@@ -70,7 +72,7 @@ function CitationBody({
 		<div className="flex items-start gap-2.5">
 			<span
 				className={cn(
-					"text-meta mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg font-mono font-semibold",
+					"text-meta mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-sm font-mono font-semibold",
 					active
 						? "bg-cite text-cite-foreground"
 						: "bg-primary/10 text-primary",
@@ -84,12 +86,12 @@ function CitationBody({
 						{citation.title}
 					</p>
 					{citation.usedRerank ? (
-						<span className="text-meta rounded-md bg-survey/15 px-1.5 py-0.5 font-mono text-accent-foreground">
+						<span className="text-meta rounded-sm bg-survey/15 px-1.5 py-0.5 font-mono text-accent-foreground">
 							rerank
 						</span>
 					) : null}
 					{citation.usedHybrid ? (
-						<span className="text-meta rounded-md bg-primary/10 px-1.5 py-0.5 font-mono text-primary">
+						<span className="text-meta rounded-sm bg-primary/10 px-1.5 py-0.5 font-mono text-primary">
 							hybrid
 						</span>
 					) : null}
@@ -118,13 +120,13 @@ function CitationBody({
 					) : null}
 				</div>
 				{citation.preamble && expanded ? (
-					<p className="text-meta rounded-md border border-border/60 bg-card/50 px-2 py-1.5 text-muted-foreground">
+					<p className="text-meta border-l-2 border-cite/40 bg-muted/45 px-2.5 py-2 text-muted-foreground">
 						定位 {citation.preamble}
 					</p>
 				) : null}
 				{expanded ? (
-					<ScrollArea className="h-[min(45vh,24rem)] rounded-md border border-border/60 bg-card/50">
-						<p className="text-answer whitespace-pre-wrap px-2.5 py-2 text-foreground/90">
+					<ScrollArea className="evidence-surface h-[min(45vh,24rem)]">
+						<p className="text-answer whitespace-pre-wrap px-3 py-3 text-foreground/90">
 							{fullText || "（无正文）"}
 						</p>
 					</ScrollArea>
@@ -133,27 +135,38 @@ function CitationBody({
 						{preview || "（无预览）"}
 					</p>
 				) : null}
-				<div className="flex flex-wrap gap-3 pt-0.5">
-					<ScoreBar label="rank" value={citation.score} tone="cite" />
-					{citation.denseScore != null ? (
-						<ScoreBar
-							label="dense"
-							value={citation.denseScore}
-							tone="primary"
-						/>
-					) : null}
-					{citation.bm25Score != null ? (
-						<ScoreBar label="bm25" value={citation.bm25Score} tone="survey" />
-					) : null}
-					{citation.rrfScore != null ? (
-						<ScoreBar
-							label="rrf"
-							value={citation.rrfScore}
-							tone="cite"
-							barScale={10}
-						/>
-					) : null}
-				</div>
+				{showDiagnostics ? (
+					<details className="group border-t border-border/70 pt-2">
+						<summary className="cursor-pointer list-none text-meta font-mono text-muted-foreground transition-colors hover:text-foreground">
+							检索诊断
+						</summary>
+						<div className="mt-2 flex flex-wrap gap-3">
+							<ScoreBar label="rank" value={citation.score} tone="cite" />
+							{citation.denseScore != null ? (
+								<ScoreBar
+									label="dense"
+									value={citation.denseScore}
+									tone="primary"
+								/>
+							) : null}
+							{citation.bm25Score != null ? (
+								<ScoreBar
+									label="bm25"
+									value={citation.bm25Score}
+									tone="survey"
+								/>
+							) : null}
+							{citation.rrfScore != null ? (
+								<ScoreBar
+									label="rrf"
+									value={citation.rrfScore}
+									tone="cite"
+									barScale={10}
+								/>
+							) : null}
+						</div>
+					</details>
+				) : null}
 			</div>
 		</div>
 	);
@@ -165,6 +178,7 @@ export function CitationSourceCard({
 	onSelect,
 	compact = false,
 	expanded = false,
+	showDiagnostics = false,
 }: {
 	citation: UiCitation;
 	active?: boolean;
@@ -172,11 +186,13 @@ export function CitationSourceCard({
 	compact?: boolean;
 	/** Show full text + preamble (for evidence drawer). */
 	expanded?: boolean;
+	/** Reveal retrieval scores behind a secondary disclosure. */
+	showDiagnostics?: boolean;
 }) {
 	const className = cn(
-		"w-full rounded-xl border px-3 py-2.5 text-left transition-all",
+		"w-full rounded-md border px-3 py-2.5 text-left transition-[border-color,background-color,box-shadow]",
 		active
-			? "border-cite/45 bg-cite/8 shadow-sm ring-1 ring-cite/15"
+			? "border-cite/45 bg-cite/8 shadow-sm"
 			: "border-border/80 bg-background/90 hover:border-cite/30 hover:bg-card",
 		!onSelect && "cursor-default hover:border-cite/45 hover:bg-cite/8",
 	);
@@ -187,6 +203,7 @@ export function CitationSourceCard({
 			active={active}
 			compact={compact}
 			expanded={expanded}
+			showDiagnostics={showDiagnostics}
 		/>
 	);
 
