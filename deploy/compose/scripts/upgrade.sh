@@ -317,7 +317,7 @@ DID_SWITCH=1
 if [[ "$ALLOW_BUILD" -eq 1 ]]; then
 	warn "BREAK-GLASS --allow-build: pull preferred, then compose build"
 	mk_compose pull web api lifecycle-worker outbox-worker migrate-web || true
-	mk_compose build web api migrate-web
+	mk_compose build web api migrate-web outbox-worker
 else
 	log "pulling release images (no local build)"
 	# Prefer explicit service pulls; local-only tags (e.g. legacy migrator) must not
