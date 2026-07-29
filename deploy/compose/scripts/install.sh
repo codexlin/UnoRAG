@@ -16,6 +16,7 @@ INTERNAL="$(mk_config_get UNORAG_INTERNAL_SECRET || true)"
 SESSION="$(mk_config_get UNORAG_SESSION_SECRET || true)"
 ADMIN_PW="$(mk_config_get UNORAG_ADMIN_PASSWORD || true)"
 LLM_KEY="$(mk_config_get LLM_API_KEY || true)"
+POSTGRES_PW="$(mk_config_get POSTGRES_PASSWORD || true)"
 
 if [[ -z "$INTERNAL" || "$INTERNAL" == *"replace-with-random"* || "${#INTERNAL}" -lt 32 ]]; then
 	echo "refusing to install: UNORAG_INTERNAL_SECRET missing/placeholder/<32 chars" >&2
@@ -37,6 +38,22 @@ if [[ -z "$LLM_KEY" ]]; then
 	echo "refusing to install: set LLM_API_KEY in ../config/runtime.secret" >&2
 	exit 1
 fi
+for db_secret_name in \
+	UNORAG_WEB_DB_PASSWORD \
+	UNORAG_API_DB_PASSWORD \
+	UNORAG_WORKER_DB_PASSWORD \
+	UNORAG_OUTBOX_DB_PASSWORD \
+	UNORAG_RAG_READ_DB_PASSWORD; do
+	db_secret="$(mk_config_get "$db_secret_name" || true)"
+	if [[ "${#db_secret}" -lt 32 || ! "$db_secret" =~ ^[A-Za-z0-9._~-]+$ ]]; then
+		echo "refusing to install: ${db_secret_name} must be >=32 URL-safe characters" >&2
+		exit 1
+	fi
+	if [[ "$db_secret" == "$POSTGRES_PW" ]]; then
+		echo "refusing to install: ${db_secret_name} must differ from POSTGRES_PASSWORD" >&2
+		exit 1
+	fi
+done
 
 HTTP_PORT="$(mk_config_get HTTP_PORT || echo 80)"
 
@@ -51,16 +68,8 @@ echo "==> applying migrations (migrator credential; not runtime DDL)"
 mk_compose --profile migrate run --rm migrate-web
 mk_compose --profile migrate run --rm migrate-rag
 
-echo "==> configuring least-privilege roles (idempotent)"
-POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo unorag)"
-POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo unorag)"
-if [[ -f ../../ops/postgres/configure-runtime-roles.sql ]]; then
-	mk_compose exec -T postgres \
-		psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
-		< ../../ops/postgres/configure-runtime-roles.sql
-else
-	echo "warn: ops/postgres/configure-runtime-roles.sql not found; skip" >&2
-fi
+echo "==> configuring least-privilege roles and logins (idempotent)"
+mk_compose --profile migrate run --rm configure-db-roles
 
 echo "==> bootstrapping control-plane admin/workspace (create-only password)"
 # Password is create-only: re-running install does not reset an existing admin.

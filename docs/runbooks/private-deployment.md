@@ -40,9 +40,20 @@ cd deploy/compose
 # 生成密钥（示例）：openssl rand -base64 48
 ```
 
-至少填写：`POSTGRES_PASSWORD`、`UNORAG_INTERNAL_SECRET`、
-`UNORAG_SESSION_SECRET`（必须与 INTERNAL 不同）、`LLM_API_KEY`、
-各 `*_DATABASE_URL`，以及 `bootstrap.env` 中的 `UNORAG_ADMIN_PASSWORD`。
+至少填写：`POSTGRES_PASSWORD`、五个 `UNORAG_*_DB_PASSWORD`、
+`UNORAG_INTERNAL_SECRET`、`UNORAG_SESSION_SECRET`（必须与 INTERNAL 不同）、
+`LLM_API_KEY`，以及 `bootstrap.env` 中的 `UNORAG_ADMIN_PASSWORD`。数据库密码使用
+`openssl rand -hex 32` 等 URL-safe 值，且不得复用管理员密码。
+
+旧版 bundled-Postgres 部署升级前可执行：
+
+```bash
+./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
+```
+
+脚本只更新 gitignored 的 `runtime.secret`，生成五个独立密码并移除旧共享 DSN
+override，不输出密码。外部托管 PostgreSQL 不运行该脚本，由数据库管理员创建登录
+账号、授予对应 runtime role，并填写 `WEB/API/WORKER/OUTBOX/RAG_READ_DATABASE_URL`。
 Compose 会把 `UNORAG_INTERNAL_SECRET` 映射为 API 的 `INTERNAL_AUTH_SECRET`，
 无需再填第二份。
 
@@ -67,7 +78,7 @@ chmod +x scripts/*.sh
 1. 构建 `web` / `api` / `web-migrator` 镜像
 2. 启动 Postgres / Qdrant / Redis
 3. `migrate-web`（Drizzle `app.*`）→ `migrate-rag`（`rag.*`）
-4. 应用 `ops/postgres/configure-runtime-roles.sql`
+4. 幂等应用 runtime roles、独立登录账号和权限断言
 5. `bootstrap` 控制面组织/工作区/管理员
 6. 启动 Caddy / web / api / lifecycle-worker / outbox-worker
 
@@ -79,9 +90,7 @@ mk_compose build web api migrate-web
 mk_compose up -d --wait postgres qdrant redis
 mk_compose --profile migrate run --rm migrate-web
 mk_compose --profile migrate run --rm migrate-rag
-mk_compose exec -T postgres \
-  psql -U unorag -d unorag \
-  < ../../ops/postgres/configure-runtime-roles.sql
+mk_compose --profile migrate run --rm configure-db-roles
 mk_compose_bootstrap --profile migrate run --rm bootstrap
 mk_compose up -d caddy web api lifecycle-worker outbox-worker
 ```
@@ -134,8 +143,9 @@ release（拒绝 `latest` / 空 tag）。详见
 1. **先迁移、再切流量**（**additive** schema；迁移失败 **不**自动回滚数据库）。
 2. **worker drain**：SIGTERM `lifecycle-worker`（`stop_grace_period: 2m`）。
 3. 滚动 `api` → `web` → `lifecycle-worker` → **`outbox-worker`** → `caddy`。
-4. Health 后自动跑 `pilot-smoke.sh`（若可执行；SKIP=exit 2 不触发回滚）。
-5. 应用失败时脚本可按 `.upgrade-state/previous-images.env` **回切旧镜像**（应用回滚 ≠ DB 回滚）。
+4. 重置并验证 runtime role 权限，再切换运行服务。
+5. Health 后自动跑 `pilot-smoke.sh`（若可执行；SKIP=exit 2 不触发回滚）。
+6. 应用失败时脚本可按 `.upgrade-state/previous-images.env` **回切旧镜像**（应用回滚 ≠ DB 回滚）。
 
 升级后验收：health、上传/替换一文档、Ask 引用、`lifecycle:inspect` 无异常堆积。
 
@@ -205,8 +215,11 @@ override 文件中加 `mem_limit` / `cpus`，并外接日志栈。
 - `.env` 权限 `600`；不进 Git。
 - 轮换 `UNORAG_INTERNAL_SECRET` 时 web 与 api **同时**更新并滚动重启。
 - 生产禁用：`MINERU_USE_FAKE`、浏览器直连 FastAPI、legacy ingest writes。
-- 运行登录应授予 `unorag_web` / `unorag_worker` / `unorag_rag_read`
-  （见 `ops/postgres/configure-runtime-roles.sql`），不要用 migrator 跑业务。
+- 长期服务分别使用 `unorag_web_login`、`unorag_api_login`、
+  `unorag_worker_login`、`unorag_outbox_login`、`unorag_rag_read_login`；
+  每个登录只继承一个同名职责 role。不要用 migrator 跑业务。
+- `migrate-web` / `migrate-rag` 是唯一 DDL 路径；FastAPI metadata 启动只校验
+  schema，不再执行 `CREATE TABLE` / `ALTER TABLE`。
 
 ### 8.1 解析配置边界（deploy vs 产品）
 

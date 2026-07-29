@@ -915,101 +915,31 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		self._TurnRow = TurnRow
 		self._select = select
 		self._engine = create_engine(database_url, pool_pre_ping=True)
-		Base.metadata.create_all(self._engine)
-		# 已有库补列（create_all 不会 ALTER）
 		try:
 			from sqlalchemy import text as sql_text
 
-			with self._engine.begin() as conn:
+			with self._engine.connect() as conn:
 				conn.execute(
 					sql_text(
-						"ALTER TABLE documents ADD COLUMN IF NOT EXISTS parser_report TEXT"
+						"""
+						SELECT
+							library.tenant_id,
+							document.parser_report,
+							thread.principal_id,
+							turn.retrieval_debug_json
+						FROM public.libraries AS library
+						LEFT JOIN public.documents AS document ON false
+						LEFT JOIN public.threads AS thread ON false
+						LEFT JOIN public.turns AS turn ON false
+						LIMIT 0
+						"""
 					)
 				)
-				conn.execute(
-					sql_text(
-						"ALTER TABLE documents ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"
-					)
-				)
-				conn.execute(
-					sql_text(
-						"ALTER TABLE documents ADD COLUMN IF NOT EXISTS size_bytes INTEGER"
-					)
-				)
-				conn.execute(
-					sql_text(
-						"ALTER TABLE libraries ADD COLUMN IF NOT EXISTS description TEXT"
-					)
-				)
-				for stmt in (
-					"ALTER TABLE libraries ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128)",
-					"ALTER TABLE libraries ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(128)",
-					"ALTER TABLE documents ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128)",
-					"ALTER TABLE documents ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(128)",
-					"""
-					DO $$
-					BEGIN
-						IF to_regclass('app.libraries') IS NOT NULL THEN
-							EXECUTE '
-								UPDATE public.libraries AS public_library
-								SET tenant_id = control_library.organization_id::text,
-									workspace_id = control_library.workspace_id::text
-								FROM app.libraries AS control_library
-								WHERE control_library.rag_library_id = public_library.id
-									AND (
-										public_library.tenant_id IS NULL
-										OR public_library.workspace_id IS NULL
-									)
-							';
-						END IF;
-					END $$;
-					""",
-					"""
-					DO $$
-					BEGIN
-						IF (
-							to_regclass('app.documents') IS NOT NULL
-							AND to_regclass('app.libraries') IS NOT NULL
-						) THEN
-							EXECUTE '
-								UPDATE public.documents AS public_document
-								SET tenant_id = control_document.organization_id::text,
-									workspace_id = control_document.workspace_id::text
-								FROM app.documents AS control_document
-								JOIN app.libraries AS control_library
-									ON control_library.id = control_document.library_id
-								WHERE control_document.rag_document_id = public_document.id
-									AND control_library.rag_library_id = public_document.library_id
-									AND (
-										public_document.tenant_id IS NULL
-										OR public_document.workspace_id IS NULL
-									)
-							';
-						END IF;
-					END $$;
-					""",
-					"CREATE INDEX IF NOT EXISTS ix_libraries_scope ON libraries (tenant_id, workspace_id)",
-					"CREATE INDEX IF NOT EXISTS ix_documents_scope ON documents (tenant_id, workspace_id)",
-					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS query_type VARCHAR(64)",
-					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS rewrite VARCHAR(64)",
-					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS rewritten_query TEXT",
-					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS judge_json TEXT",
-					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS retrieval_plan_json TEXT",
-					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS retrieval_debug_json TEXT",
-					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS document_version_id VARCHAR(256)",
-					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128)",
-					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(128)",
-					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS principal_id VARCHAR(128)",
-					"ALTER TABLE turns ADD COLUMN IF NOT EXISTS thread_id VARCHAR(128)",
-					"CREATE INDEX IF NOT EXISTS ix_turns_thread_id ON turns (thread_id)",
-					"CREATE INDEX IF NOT EXISTS ix_threads_scope ON threads (tenant_id, workspace_id, principal_id)",
-				):
-					conn.execute(sql_text(stmt))
 		except Exception as exc:
-			logger.exception("metadata.schema_upgrade_failed")
+			logger.exception("metadata.schema_validation_failed")
 			raise RuntimeError(
-				"Postgres metadata schema upgrade failed; "
-				"verify ALTER permission and apply the required columns before startup"
+				"Postgres metadata schema is missing or outdated; "
+				"run scripts/apply_rag_migrations.py with MIGRATOR_DATABASE_URL"
 			) from exc
 		self._Session = sessionmaker(bind=self._engine, expire_on_commit=False, class_=Session)
 

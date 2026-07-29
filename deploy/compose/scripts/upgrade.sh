@@ -365,6 +365,11 @@ if ! mk_compose --profile migrate run --rm migrate-rag; then
 	rollback_apps
 	die "migration failed; restore from backup if schema is partial/corrupt"
 fi
+if ! mk_compose --profile migrate run --rm configure-db-roles; then
+	warn "runtime role/login configuration failed — apps not rolled to new images"
+	rollback_apps
+	die "least-privilege database configuration failed"
+fi
 
 log "draining lifecycle-worker (SIGTERM; finishes current step, no new claims)"
 mk_compose stop lifecycle-worker

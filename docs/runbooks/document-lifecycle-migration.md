@@ -55,15 +55,20 @@ This runner serializes migrations with a PostgreSQL advisory lock and rejects
 checksum changes to an already-applied file. It also requeues L2 jobs parked at
 `completed/awaiting_activation`.
 
-Configure the non-login runtime roles as the PostgreSQL owner after both app
-and rag migrations exist:
+Configure non-login roles and deployment-specific logins as the PostgreSQL
+owner after both app and rag migrations exist:
 
 ```bash
 psql "$DATABASE_URL" -f ops/postgres/configure-runtime-roles.sql
+psql "$DATABASE_URL" -f ops/postgres/configure-runtime-logins.sql
+psql "$DATABASE_URL" -f ops/postgres/verify-runtime-roles.sql
 ```
 
-Create customer-specific login roles and grant exactly one runtime role to
-each login. Do not reuse the migrator credential at runtime.
+`configure-runtime-logins.sql` reads the five `UNORAG_*_DB_PASSWORD` values
+from its process environment. Compose runs this through the one-shot
+`configure-db-roles` service. External PostgreSQL operators may create
+customer-specific login names instead, but each login must inherit exactly one
+runtime role. Do not reuse the migrator credential at runtime.
 
 ## Verify
 

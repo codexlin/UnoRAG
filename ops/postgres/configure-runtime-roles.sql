@@ -11,13 +11,43 @@ BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'unorag_worker') THEN
 		CREATE ROLE unorag_worker NOLOGIN;
 	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'unorag_api') THEN
+		CREATE ROLE unorag_api NOLOGIN;
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'unorag_outbox') THEN
+		CREATE ROLE unorag_outbox NOLOGIN;
+	END IF;
 	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'unorag_rag_read') THEN
 		CREATE ROLE unorag_rag_read NOLOGIN;
 	END IF;
 END $$;
 
-GRANT USAGE ON SCHEMA app TO unorag_web, unorag_worker, unorag_rag_read;
+REVOKE ALL PRIVILEGES ON SCHEMA app, rag, public FROM
+	unorag_web,
+	unorag_api,
+	unorag_worker,
+	unorag_outbox,
+	unorag_rag_read;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA app, rag, public FROM
+	unorag_web,
+	unorag_api,
+	unorag_worker,
+	unorag_outbox,
+	unorag_rag_read;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA app, rag, public FROM
+	unorag_web,
+	unorag_api,
+	unorag_worker,
+	unorag_outbox,
+	unorag_rag_read;
+
+GRANT USAGE ON SCHEMA app TO
+	unorag_web,
+	unorag_worker,
+	unorag_outbox,
+	unorag_rag_read;
 GRANT USAGE ON SCHEMA rag TO unorag_worker, unorag_rag_read;
+GRANT USAGE ON SCHEMA public TO unorag_api, unorag_worker;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA app TO unorag_migrator;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA app TO unorag_migrator;
 
@@ -102,6 +132,22 @@ TO unorag_worker;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app TO unorag_worker;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA rag TO unorag_worker;
 
+-- The lifecycle worker only removes the legacy public.* document projection
+-- after authoritative app.* cleanup. It cannot read threads or turns.
+GRANT SELECT, DELETE ON public.documents TO unorag_worker;
+GRANT SELECT ON public.libraries TO unorag_worker;
+GRANT UPDATE (status, doc_count, ready_count, updated_at)
+ON public.libraries TO unorag_worker;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+	public.libraries,
+	public.documents,
+	public.threads,
+	public.turns
+TO unorag_api;
+
+GRANT SELECT, UPDATE ON app.outbox_events TO unorag_outbox;
+
 GRANT SELECT ON
 	app.documents,
 	app.document_versions,
@@ -115,5 +161,7 @@ GRANT SELECT ON rag.active_document_generations TO unorag_rag_read;
 -- Login roles are deployment-specific. Operators create them with customer
 -- secret policy, then grant exactly one runtime role:
 --   GRANT unorag_web TO <web_login>;
+--   GRANT unorag_api TO <api_login>;
 --   GRANT unorag_worker TO <worker_login>;
+--   GRANT unorag_outbox TO <outbox_login>;
 --   GRANT unorag_rag_read TO <rag_api_login>;

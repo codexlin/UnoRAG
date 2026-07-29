@@ -59,7 +59,7 @@ services:
     environment:
       NODE_ENV: production
       RAG_API_URL: http://api:8000
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      DATABASE_URL: ${WEB_DATABASE_URL:-postgresql://unorag_web_login:${UNORAG_WEB_DB_PASSWORD:?UNORAG_WEB_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
       UNORAG_INTERNAL_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
       UNORAG_SESSION_SECRET: ${UNORAG_SESSION_SECRET:?UNORAG_SESSION_SECRET required}
@@ -111,8 +111,8 @@ services:
       ACTIVE_GENERATION_GATE_ENABLED: "true"
       ACTIVE_GENERATION_CACHE_TTL_SECONDS: "0"
       MINERU_USE_FAKE: "false"
-      DATABASE_URL: ${API_DATABASE_URL:?API_DATABASE_URL required}
-      RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:?RAG_READ_DATABASE_URL required}
+      DATABASE_URL: ${API_DATABASE_URL:-postgresql+psycopg://unorag_api_login:${UNORAG_API_DB_PASSWORD:?UNORAG_API_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
+      RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:-postgresql://unorag_rag_read_login:${UNORAG_RAG_READ_DB_PASSWORD:?UNORAG_RAG_READ_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
       QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
       REDIS_URL: ${REDIS_URL:?REDIS_URL required}
@@ -192,10 +192,10 @@ services:
       ACTIVE_GENERATION_GATE_ENABLED: "true"
       ACTIVE_GENERATION_CACHE_TTL_SECONDS: "0"
       MINERU_USE_FAKE: "false"
-      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL required}
-      RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:?RAG_READ_DATABASE_URL required}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://unorag_worker_login:${UNORAG_WORKER_DB_PASSWORD:?UNORAG_WORKER_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
+      RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:-postgresql://unorag_rag_read_login:${UNORAG_RAG_READ_DB_PASSWORD:?UNORAG_RAG_READ_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
       # Settings.database_url fallback; worker DSN is authoritative via WORKER_*
-      DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL required}
+      DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://unorag_worker_login:${UNORAG_WORKER_DB_PASSWORD:?UNORAG_WORKER_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
       QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
       REDIS_URL: ${REDIS_URL:?REDIS_URL required}
@@ -269,7 +269,7 @@ services:
     restart: unless-stopped
     command: ["node", "scripts/process-outbox.mjs", "--watch"]
     environment:
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      DATABASE_URL: ${OUTBOX_DATABASE_URL:-postgresql://unorag_outbox_login:${UNORAG_OUTBOX_DB_PASSWORD:?UNORAG_OUTBOX_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
       RAG_API_URL: http://api:8000
       UNORAG_INTERNAL_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-20}
@@ -305,6 +305,35 @@ services:
       retries: 20
     networks:
       - internal
+
+  configure-db-roles:
+    profiles: ["migrate"]
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    environment:
+      PGHOST: postgres
+      PGDATABASE: ${POSTGRES_DB:-unorag}
+      PGUSER: ${POSTGRES_USER:-unorag}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      UNORAG_WEB_DB_PASSWORD: ${UNORAG_WEB_DB_PASSWORD:?UNORAG_WEB_DB_PASSWORD required}
+      UNORAG_API_DB_PASSWORD: ${UNORAG_API_DB_PASSWORD:?UNORAG_API_DB_PASSWORD required}
+      UNORAG_WORKER_DB_PASSWORD: ${UNORAG_WORKER_DB_PASSWORD:?UNORAG_WORKER_DB_PASSWORD required}
+      UNORAG_OUTBOX_DB_PASSWORD: ${UNORAG_OUTBOX_DB_PASSWORD:?UNORAG_OUTBOX_DB_PASSWORD required}
+      UNORAG_RAG_READ_DB_PASSWORD: ${UNORAG_RAG_READ_DB_PASSWORD:?UNORAG_RAG_READ_DB_PASSWORD required}
+    volumes:
+      - ../../ops/postgres:/opt/unorag/postgres:ro
+    command:
+      - sh
+      - -ec
+      - |
+        psql -f /opt/unorag/postgres/configure-runtime-roles.sql
+        psql -f /opt/unorag/postgres/configure-runtime-logins.sql
+        psql -f /opt/unorag/postgres/verify-runtime-roles.sql
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: "no"
 
   qdrant:
     image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.13.2}
@@ -347,7 +376,7 @@ services:
       dockerfile: deploy/docker/web.Dockerfile
       target: migrator
     environment:
-      DATABASE_URL: ${MIGRATOR_DATABASE_URL:?MIGRATOR_DATABASE_URL required}
+      DATABASE_URL: ${MIGRATOR_DATABASE_URL:-postgresql://${POSTGRES_USER:-unorag}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
     depends_on:
       postgres:
         condition: service_healthy
@@ -363,7 +392,7 @@ services:
       dockerfile: deploy/docker/api.Dockerfile
     working_dir: /app
     environment:
-      MIGRATOR_DATABASE_URL: ${MIGRATOR_DATABASE_URL:?MIGRATOR_DATABASE_URL required}
+      MIGRATOR_DATABASE_URL: ${MIGRATOR_DATABASE_URL:-postgresql://${POSTGRES_USER:-unorag}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
       PYTHONPATH: /app
     command: ["python", "scripts/apply_rag_migrations.py"]
     depends_on:
@@ -386,7 +415,7 @@ services:
     environment:
       # Bootstrap-only vars: use defaults so `compose config` works without
       # bootstrap.env. The bootstrap script still requires a real password at run.
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      DATABASE_URL: ${WEB_DATABASE_URL:-postgresql://unorag_web_login:${UNORAG_WEB_DB_PASSWORD:?UNORAG_WEB_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
       UNORAG_ORGANIZATION_ID: ${UNORAG_ORGANIZATION_ID:-00000000-0000-4000-8000-000000000001}
       UNORAG_WORKSPACE_ID: ${UNORAG_WORKSPACE_ID:-00000000-0000-4000-8000-000000000002}
       UNORAG_PRINCIPAL_ID: ${UNORAG_PRINCIPAL_ID:-00000000-0000-4000-8000-000000000003}

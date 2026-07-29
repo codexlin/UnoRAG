@@ -14,8 +14,10 @@ from app.repositories.job_repository import (
 	LostJobLeaseError,
 )
 from app.security.access_scope import AccessScope
+from app.services.document_metadata_projection import (
+	DocumentMetadataProjectionCleaner,
+)
 from app.services.hybrid import get_bm25_cache
-from app.services.metadata import get_metadata_store
 from app.services.qdrant_store import QdrantStore
 from app.services.retrieval import IngestService
 from app.services.source_object_storage import LocalSourceObjectStorage
@@ -66,9 +68,13 @@ class DocumentDeleteProcessor:
 		self._qdrant_store_factory = qdrant_store_factory or (
 			lambda: QdrantStore(settings)
 		)
-		self._metadata_store_factory = metadata_store_factory or (
-			lambda: get_metadata_store(settings)
-		)
+		if metadata_store_factory is None:
+			metadata_projection = DocumentMetadataProjectionCleaner(
+				settings.worker_database_dsn
+			)
+			self._metadata_store_factory = lambda: metadata_projection
+		else:
+			self._metadata_store_factory = metadata_store_factory
 		self._ingest_service_factory = ingest_service_factory or (
 			lambda scope: IngestService(settings, access_scope=scope)
 		)
