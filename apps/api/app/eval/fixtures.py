@@ -28,6 +28,7 @@ def resolve_fixture_path(fixture_name: str) -> Path:
 				TESTDATA / "txt" / name,
 				TESTDATA / "pdf" / name,
 				TESTDATA / "docx" / name,
+				TESTDATA / "csv" / name,
 				TESTDATA / "unsupported" / name,
 			]
 		)
@@ -38,10 +39,11 @@ def resolve_fixture_path(fixture_name: str) -> Path:
 
 
 def load_ir_for_fixture(fixture_name: str) -> Any:
-	"""加载 MD/TXT/PDF/DOCX 固定件，或合成 PDF page / DOCX table 样本。"""
+	"""加载生产格式固定件，或合成 PDF page / DOCX table 样本。"""
 	from app.services.ingest.parsers.docx import parse_docx
 	from app.services.ingest.parsers.md import parse_markdown
 	from app.services.ingest.parsers.pdf import parse_pdf
+	from app.services.ingest.parsers.tabular import parse_csv, parse_xlsx
 	from app.services.ingest.parsers.txt import parse_txt
 
 	if fixture_name == "synthetic:pdf_page":
@@ -107,6 +109,10 @@ def load_ir_for_fixture(fixture_name: str) -> Any:
 		return parse_pdf(content=content, filename=filename, title=filename)
 	if suffix == ".docx":
 		return parse_docx(content=content, filename=filename, title=filename)
+	if suffix == ".csv":
+		return parse_csv(content=content, filename=filename, title=filename)
+	if suffix == ".xlsx":
+		return parse_xlsx(content=content, filename=filename, title=filename)
 	raise ValueError(f"unsupported fixture type: {fixture_name}")
 
 

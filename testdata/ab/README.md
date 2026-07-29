@@ -22,5 +22,5 @@ uv run python scripts/ab_chunk_profiles.py
 
 The runner loads this directory and `golds.jsonl` directly. Generated reports
 land in `apps/api/.eval_reports/`; one-off live outputs under `_e2e_out/` are
-ignored. Keep old `testdata/pdf/leave-scanned.pdf` etc. for the 39-case core
+ignored. Keep old `testdata/pdf/leave-scanned.pdf` etc. for the 40-case core
 golden eval, MinerU controls, and unsupported-file negatives.

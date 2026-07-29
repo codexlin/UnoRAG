@@ -1,6 +1,7 @@
 # 开发者指南
 
 > 产品定位：[PRODUCT.md](./PRODUCT.md) · 架构：[ARCHITECTURE.md](./ARCHITECTURE.md)
+> · 接手与清理：[HANDOFF.md](./HANDOFF.md)
 
 ## 仓库布局
 
@@ -130,4 +131,5 @@ pnpm test:postgres   # 需 OUTBOX_TEST_DATABASE_URL
 | [`apps/web/README.md`](../apps/web/README.md) | 邀请、outbox、Drizzle |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 入库 / ask / 会话路径 |
 | [INTEGRATION.md](./INTEGRATION.md) | 模式 B |
+| [HANDOFF.md](./HANDOFF.md) | 代码地图、测试分层、文档与本地产物清理规则 |
 | ADR-0004 | 控制面 / 数据面边界 |

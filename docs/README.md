@@ -12,6 +12,7 @@
 | [INTEGRATION.md](./INTEGRATION.md) | Knowledge API：已实现 vs 规划中契约 |
 | [contracts/retrieve-ask-v1.md](./contracts/retrieve-ask-v1.md) | Retrieve/Ask 公共 API v1 冻结契约 |
 | [DEV.md](./DEV.md) | 本地启动与 env 分层 |
+| [HANDOFF.md](./HANDOFF.md) | 接手阅读顺序、代码连接、测试体系与仓库清理规则 |
 
 仓库根 [README.md](../README.md) / [README.zh-CN.md](../README.zh-CN.md)
 是英文 / 中文产品入口。

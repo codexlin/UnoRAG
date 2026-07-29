@@ -146,6 +146,7 @@ UnoRAG 当前优先服务私有化部署：
 - [路线图](./docs/ROADMAP.md)
 - [Knowledge API](./docs/INTEGRATION.md)
 - [开发指南](./docs/DEV.md)
+- [接手与仓库维护](./docs/HANDOFF.md)
 - [验收与运维](./docs/acceptance/README.md)
 
 ## 许可

@@ -5,6 +5,5 @@
 | 文件 | 期望 |
 |------|------|
 | `sample.html` | 413/400 类错误，提示 unsupported file type |
-| `notes.csv` | 同上（xlsx/csv 尚未进生产路径） |
 
-Phase 2+ 若接入 HTML/表格文件，再把这里的样例迁到正式 fixture。
+CSV / XLSX 已进入生产解析路径，正例放在对应格式目录；本目录只保留当前明确拒收的格式。

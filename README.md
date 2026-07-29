@@ -159,6 +159,7 @@ objectives, monitoring ownership, and security policy.
 - [Roadmap](./docs/ROADMAP.md)
 - [Knowledge API](./docs/INTEGRATION.md)
 - [Developer guide](./docs/DEV.md)
+- [Repository handoff](./docs/HANDOFF.md)
 - [Acceptance and operations](./docs/acceptance/README.md)
 
 ## License
