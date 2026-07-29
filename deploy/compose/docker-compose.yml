@@ -335,6 +335,26 @@ services:
       - internal
     restart: "no"
 
+  inspect-lifecycle:
+    profiles: ["ops"]
+    image: ${UNORAG_OUTBOX_IMAGE:?UNORAG_OUTBOX_IMAGE required}
+    working_dir: /repo/apps/web
+    environment:
+      # Operator-invoked, short-lived inspection. Runtime services never receive
+      # this DDL-owner credential.
+      DATABASE_URL: ${MIGRATOR_DATABASE_URL:-postgresql://${POSTGRES_USER:-unorag}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
+    command:
+      - node
+      - scripts/inspect-lifecycle.mjs
+      - --fail-on-dead
+      - --fail-on-stuck
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: "no"
+
   qdrant:
     image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.13.2}
     restart: unless-stopped

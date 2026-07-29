@@ -33,6 +33,7 @@ health、Ask、lifecycle jobs 与 outbox 均无阻断状态。
 | Worker 故障 | PASS | lifecycle/outbox 暂停产生积压，恢复后继续处理；dead=0 |
 | 备份完整性 | PASS | PostgreSQL、documents、Qdrant 与 manifest 非空、可解包 |
 | 非破坏恢复 | PASS | sidecar PostgreSQL 恢复成功，`app`/`rag`/`drizzle` schema 可读 |
+| 数据库最小权限 | PASS | 五个独立运行登录、migrator-only DDL、权限断言与真实 lifecycle pilot |
 | 生产原地恢复 | DEFERRED | 破坏性操作，不在无正式维护窗口的预发布环境覆盖 |
 | 容量与并发 | DEFERRED | 未在目标客户规格上形成 P50/P95 与最大并发承诺 |
 
@@ -61,6 +62,24 @@ Compose pilot smoke 和真实 Chromium 复验：
   `POST_FAULT_RECOVER_OK_TOKEN_20260728` 并返回引用；
 - Chromium 控制台 0 error，桌面视口无横向溢出；
 - lifecycle `dead=0`、`stuck=0`，outbox `dead=0`。
+
+### 数据库运行身份复验
+
+2026-07-29 部署 `81778c5` 后：
+
+- Web、FastAPI metadata、lifecycle worker、outbox worker 与 RAG read 使用五个
+  独立 PostgreSQL 登录，运行服务不再持有 migrator 凭据；
+- FastAPI metadata 建表与补列迁入 `0003_metadata_runtime_schema.sql`，启动阶段
+  仅执行只读 schema 校验；
+- 升级流程幂等重置角色、轮换登录密码并执行允许/禁止权限断言；
+- lifecycle worker 对兼容投影仅可删除 `public.documents` 并更新
+  `public.libraries` 的状态和计数字段，不能读取 `threads` / `turns`；
+- 真实 HTTPS pilot 的 upload、Ask、Service Key、跨 Library 隔离、replace、
+  delete 全部 PASS，删除任务 3 秒完成，没有 retry/dead；
+- 发布脚本支持 `UNORAG_BASE_URL`，TLS 环境的 health 与 pilot 不再因 HTTP 308
+  被误记为 SKIP；
+- 全生命周期巡检使用短生命周期 `inspect-lifecycle` ops job，不向受限的
+  outbox runtime role 扩权。
 
 证据截图：
 

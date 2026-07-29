@@ -91,7 +91,7 @@ llm_key = (legacy.get("LLM_API_KEY") or legacy.get("OPENAI_API_KEY") or legacy.g
 llm_base = (legacy.get("LLM_BASE_URL") or legacy.get("OPENAI_BASE_URL") or "").strip()
 
 runtime_keys = [
-    "APP_ENV", "COMPOSE_PROJECT_NAME", "HTTP_PORT",
+    "APP_ENV", "COMPOSE_PROJECT_NAME", "HTTP_PORT", "UNORAG_BASE_URL",
     "UNORAG_WEB_IMAGE", "UNORAG_WEB_MIGRATOR_IMAGE", "UNORAG_OUTBOX_IMAGE", "UNORAG_API_IMAGE",
     "POSTGRES_IMAGE", "QDRANT_IMAGE", "REDIS_IMAGE", "CADDY_IMAGE",
     "POSTGRES_DB", "POSTGRES_USER",

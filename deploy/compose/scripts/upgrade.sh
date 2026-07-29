@@ -322,6 +322,11 @@ assert_pinned_image UNORAG_OUTBOX_IMAGE "$OUTBOX_IMAGE"
 chmod 600 "$NEW_ENV" 2>/dev/null || true
 
 HTTP_PORT="$(mk_config_get HTTP_PORT || echo 80)"
+BASE_URL="$(mk_config_get UNORAG_BASE_URL || true)"
+BASE_URL="${BASE_URL%/}"
+if [[ -z "$BASE_URL" ]]; then
+	BASE_URL="http://localhost:${HTTP_PORT}"
+fi
 
 log "pre-upgrade backup recommended: ./scripts/backup.sh <dir>"
 log "target web=${WEB_IMAGE}"
@@ -390,7 +395,7 @@ fi
 log "post-upgrade probes"
 health_ok=0
 for _attempt in 1 2 3 4 5 6 7 8 9 10; do
-	if curl -sf "http://localhost:${HTTP_PORT}/api/rag/health" | tee /tmp/unorag-upgrade-health.json; then
+	if curl -sf "${BASE_URL}/api/rag/health" | tee /tmp/unorag-upgrade-health.json; then
 		echo
 		health_ok=1
 		break
@@ -407,7 +412,7 @@ fi
 
 if [[ "$SKIP_SMOKE" -eq 0 && -x "$SMOKE_SCRIPT" ]]; then
 	log "running pilot-smoke.sh"
-	if "$SMOKE_SCRIPT"; then
+	if UNORAG_BASE_URL="$BASE_URL" "$SMOKE_SCRIPT"; then
 		:
 	else
 		smoke_rc=$?
@@ -425,7 +430,7 @@ else
 	warn "pilot-smoke.sh not found/executable — skip smoke"
 fi
 
-log "upgrade complete — previous pins in $PREV_ENV; verify ask/upload and run: docker compose exec -T outbox-worker node scripts/inspect-lifecycle.mjs --fail-on-dead --fail-on-stuck"
+log "upgrade complete — previous pins in $PREV_ENV; verify ask/upload and run: ./scripts/compose-env.sh is sourced, then mk_compose --profile ops run --rm inspect-lifecycle"
 if [[ "$DID_SWITCH" -eq 1 ]]; then
 	true
 fi

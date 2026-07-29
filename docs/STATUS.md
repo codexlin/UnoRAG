@@ -89,6 +89,7 @@
 | 能力 | 状态 | 当前实现与边界 |
 |---|---|---|
 | Docker Compose | 可用 | web、migrator、api、lifecycle worker、outbox worker 与依赖服务 |
+| 数据库运行身份 | 可用 | Web、API、lifecycle worker、outbox、RAG read 使用五个独立登录；DDL 仅 migrator；升级时重置并验证权限 |
 | Helm | 部分可用 | 起步 chart；未包含 HPA、PDB、NetworkPolicy 和完整容量策略 |
 | 发布镜像 | 可用 | web、migrator、api、outbox 四目标；ACR/GHCR、digest manifest、Trivy HIGH/CRITICAL gate |
 | 升级/回滚 | 可用 | preflight、pull、migration、drain、smoke 与回滚 runbook |
@@ -132,5 +133,6 @@
   Secret 变量；下一次破坏性大版本再移除兼容分支。
 - edge health 返回控制面/数据面协议与各自 build ref，发布清单继续使用
   digest。协议缺失或不一致必须阻断升级。
-- 运行时数据库最小权限角色已定义；独立登录账号与 Compose DSN 切换仍是
-  当前生产收口项，完成前不得勾选 production-ready 的最小权限门禁。
+- `81778c5` 已将运行时数据库切换为五个独立登录，FastAPI 启动不再执行 DDL；
+  `webch` 已通过迁移、权限断言与 upload → ask → isolation → replace → delete
+  pilot。全生命周期巡检改由短生命周期 ops job 执行，不扩大 outbox 账号权限。

@@ -76,3 +76,25 @@ test("upgrade configures and verifies database roles before rolling services", a
 	assert.ok(rolePosition > 0);
 	assert.ok(drainPosition > rolePosition);
 });
+
+test("upgrade and pilot smoke honor the configured public edge URL", async () => {
+	const upgrade = await source("deploy/compose/scripts/upgrade.sh");
+	const smoke = await source("deploy/compose/scripts/pilot-smoke.sh");
+	const runtime = await source("deploy/config/runtime.env.example");
+	assert.match(runtime, /UNORAG_BASE_URL=/);
+	assert.match(upgrade, /mk_config_get UNORAG_BASE_URL/);
+	assert.match(upgrade, /UNORAG_BASE_URL="\$BASE_URL" "\$SMOKE_SCRIPT"/);
+	assert.match(smoke, /mk_config_get UNORAG_BASE_URL/);
+});
+
+test("lifecycle inspection is an operator job, not an outbox runtime privilege", async () => {
+	const compose = await source("deploy/compose/docker-compose.yml");
+	const upgrade = await source("deploy/compose/scripts/upgrade.sh");
+	assert.match(compose, /inspect-lifecycle:\s+profiles: \["ops"\]/s);
+	assert.match(
+		compose,
+		/inspect-lifecycle:[\s\S]*MIGRATOR_DATABASE_URL[\s\S]*--fail-on-stuck/,
+	);
+	assert.doesNotMatch(upgrade, /exec -T outbox-worker node scripts\/inspect-lifecycle/);
+	assert.match(upgrade, /--profile ops run --rm inspect-lifecycle/);
+});

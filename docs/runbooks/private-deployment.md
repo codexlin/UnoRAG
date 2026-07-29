@@ -54,6 +54,8 @@ cd deploy/compose
 脚本只更新 gitignored 的 `runtime.secret`，生成五个独立密码并移除旧共享 DSN
 override，不输出密码。外部托管 PostgreSQL 不运行该脚本，由数据库管理员创建登录
 账号、授予对应 runtime role，并填写 `WEB/API/WORKER/OUTBOX/RAG_READ_DATABASE_URL`。
+HTTPS 部署还应在 `runtime.env` 设置 `UNORAG_BASE_URL=https://你的域名`，供升级
+健康检查与 pilot smoke 使用；本地 HTTP 部署可留空。
 Compose 会把 `UNORAG_INTERNAL_SECRET` 映射为 API 的 `INTERNAL_AUTH_SECRET`，
 无需再填第二份。
 
@@ -148,6 +150,13 @@ release（拒绝 `latest` / 空 tag）。详见
 6. 应用失败时脚本可按 `.upgrade-state/previous-images.env` **回切旧镜像**（应用回滚 ≠ DB 回滚）。
 
 升级后验收：health、上传/替换一文档、Ask 引用、`lifecycle:inspect` 无异常堆积。
+
+全生命周期巡检使用短生命周期 ops job，不复用 outbox worker 的受限账号：
+
+```bash
+source scripts/compose-env.sh
+mk_compose --profile ops run --rm inspect-lifecycle
+```
 
 ## 5. 回滚
 

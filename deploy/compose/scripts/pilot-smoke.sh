@@ -23,8 +23,11 @@ if [[ -z "${UNORAG_ADMIN_EMAIL:-}" ]]; then
 	UNORAG_ADMIN_EMAIL="$(mk_config_get UNORAG_ADMIN_EMAIL 2>/dev/null || true)"
 fi
 if [[ -z "${UNORAG_BASE_URL:-}" ]]; then
-	_HTTP_PORT="$(mk_config_get HTTP_PORT 2>/dev/null || echo 80)"
-	UNORAG_BASE_URL="http://localhost:${_HTTP_PORT}"
+	UNORAG_BASE_URL="$(mk_config_get UNORAG_BASE_URL 2>/dev/null || true)"
+	if [[ -z "$UNORAG_BASE_URL" ]]; then
+		_HTTP_PORT="$(mk_config_get HTTP_PORT 2>/dev/null || echo 80)"
+		UNORAG_BASE_URL="http://localhost:${_HTTP_PORT}"
+	fi
 fi
 
 BASE_URL="${UNORAG_BASE_URL:-http://localhost}"
