@@ -266,6 +266,25 @@ rollback_apps() {
 	mk_compose up -d --no-deps caddy
 }
 
+restore_runtime_pins_on_failure() {
+	local rc=$?
+	local web api migrator outbox
+	trap - EXIT
+	if [[ "$rc" -ne 0 && "$DID_SWITCH" -eq 1 && -f "$PREV_ENV" ]]; then
+		web="$(env_file_get "$PREV_ENV" UNORAG_WEB_IMAGE || true)"
+		api="$(env_file_get "$PREV_ENV" UNORAG_API_IMAGE || true)"
+		migrator="$(env_file_get "$PREV_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
+		outbox="$(env_file_get "$PREV_ENV" UNORAG_OUTBOX_IMAGE || true)"
+		if [[ -n "$web" && -n "$api" && -n "$migrator" && -n "$outbox" ]]; then
+			set_runtime_image_keys "$web" "$api" "$migrator" "$outbox"
+			warn "restored previous runtime image pins after failed upgrade"
+		fi
+	fi
+	exit "$rc"
+}
+
+trap restore_runtime_pins_on_failure EXIT
+
 # --- resolve target images ---
 if [[ -n "$MANIFEST" ]]; then
 	[[ -f "$MANIFEST" ]] || die "manifest not found: $MANIFEST"
