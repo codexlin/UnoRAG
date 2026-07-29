@@ -1,6 +1,6 @@
 # UnoRAG 路线图
 
-> 状态：现行（2026-07-26）
+> 状态：现行（2026-07-29）
 >
 > 产品定位见 [PRODUCT.md](./PRODUCT.md)，产品层级与商业方向见 [STRATEGY.md](./STRATEGY.md)。
 > 已完成的 Document Lifecycle L0–L8 工程细节以代码与 runbook 为准；旧「私有化落地计划」长文已退役，剩余缺口收敛到本文。
@@ -9,14 +9,14 @@
 
 | 领域 | 状态 |
 |------|------|
-| Control Plane（Next.js） | 身份、工作区、文库、原生文档 API、Job、Outbox、邀请 |
+| Control Plane（Next.js） | 身份、工作区创建/切换、文库、原生文档 API、Job、Outbox、邀请 |
 | Data Plane（FastAPI） | Ask 图、检索、拒答/裁决、archive/threads、内部 HMAC |
 | 入库 | Next → `app.jobs` → lifecycle_worker；FastAPI `/v1/ingest*` **永久 410** |
 | 解析 | DocumentIR / TableIR / PyMuPDF + 可选 MinerU；策略化切分（ADR-0001–0003） |
 | 检索门禁 | active generation + tenant/workspace/ACL |
 | 会话 | 默认临时；主动归档；thread 续聊 + rewrite |
 | Ask 旋钮 | 工作区设置 ⊕ `ask_defaults.py`（不读 `HYBRID_ENABLED` 等产品 env） |
-| 私有化 | Compose 参考拓扑 + Helm 骨架；验收包在 `docs/acceptance/` |
+| 私有化 | Compose 参考拓扑 + Helm 骨架；webch 预发布基线通过，客户生产仍按部署验收 |
 | 质量门禁 | CI fuse / release gates（见 `docs/runbooks/quality-release-gates.md`） |
 
 ## 开始前先决条件（团队 checklist）
@@ -168,7 +168,7 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 
 ## 明确不做（路线图纪律）
 
-与 [PRODUCT.md](./PRODUCT.md) 及 [architecture/convergence-plan.md](./architecture/convergence-plan.md) §7 一致，下列项不得挤占近期容量：
+与 [PRODUCT.md](./PRODUCT.md) 及 [STATUS.md](./STATUS.md) 一致，下列项不得挤占近期容量：
 
 ### 冻结（私有化上线 / 试点正式 GO 前）
 
@@ -192,3 +192,4 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 |--------|------|
 | `docs/plans/2026-07-24-private-deployment-production-roadmap.md` | 已删；完成项以代码/runbook 为准，缺口并入本文 |
 | `docs/architecture/enterprise-rag-saas-design.md` | 已删；现行架构见 [ARCHITECTURE.md](./ARCHITECTURE.md) |
+| `docs/architecture/convergence-plan.md` | 已删；阶段性任务已完成，现状与缺口分别进入 STATUS / ROADMAP |

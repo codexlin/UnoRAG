@@ -1,6 +1,6 @@
 # UnoRAG 架构（与代码一致）
 
-> 状态：现行（2026-07-26）
+> 状态：现行（2026-07-29）
 >
 > 决策记录：[ADR-0004](./adr/0004-nextjs-control-plane.md) · 解析/切分：[ADR-0001](./adr/0001-ocr-vlm-adapters.md)–[0003](./adr/0003-policy-driven-chunking.md)
 
@@ -209,7 +209,7 @@ Customer Backend
 | rag-api | `uvicorn app.main:app` |
 | lifecycle_worker | `python -m app.lifecycle_worker` |
 | outbox | `pnpm outbox:run` |
-| 可选 sweeper | generation cleanup 等 |
+| generation cleanup | lifecycle worker 周期执行；也可用独立 sweeper 入口 |
 
 依赖：PostgreSQL、Qdrant、Redis（生产 replay）、对象卷/存储、OpenAI-compatible LLM/embedding、可选 MinerU。
 

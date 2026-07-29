@@ -91,7 +91,7 @@ MIGRATOR_DATABASE_URL=postgresql://... \
 
 ## Lifecycle 解析与错误
 
-支持 `.txt` / `.md` / `.markdown` / `.docx` / `.pdf`。文本 PDF→PyMuPDF；扫描/双栏/复杂表可由 `MINERU_MODE=auto` 升级 MinerU。
+支持 `.txt` / `.md` / `.markdown` / `.docx` / `.pdf` / `.csv` / `.xlsx`。文本 PDF→PyMuPDF；扫描/双栏/复杂表可由 `MINERU_MODE=auto` 升级 MinerU。
 
 `MINERU_PROVIDER=self_hosted`（默认）使用同步 `/file_parse`，并兼容旧
 `MINERU_URL`；推荐新部署使用 `MINERU_SELF_HOSTED_URL`。云解析使用

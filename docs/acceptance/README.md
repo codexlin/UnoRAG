@@ -5,6 +5,15 @@
 
 产品北极星与剩余工程缺口见 [`../PRODUCT.md`](../PRODUCT.md) · [`../ROADMAP.md`](../ROADMAP.md)。
 
+## 最新基线
+
+| 报告 | 结论 |
+|---|---|
+| [`reports/2026-07-29-webch-preproduction-baseline.md`](./reports/2026-07-29-webch-preproduction-baseline.md) | webch 真实浏览器、真实文件、多 Workspace、隔离、故障与非破坏恢复 **PASS**；环境定位为预发布模拟，不是客户生产 |
+
+日期报告只证明绑定版本和环境。当前产品能力以
+[`../STATUS.md`](../STATUS.md) 为准，不能用旧报告反推最新代码状态。
+
 ## 文档
 
 | 文档 | 用途 |
@@ -36,6 +45,7 @@
 | [`reports/2026-07-27-private-v1-rc3-browser.md`](./reports/2026-07-27-private-v1-rc3-browser.md) | Private Deployment v1.0 RC3 真实浏览器与质量门禁验收 |
 | [`reports/2026-07-27-private-v1-rc3-formal-go-no-go.md`](./reports/2026-07-27-private-v1-rc3-formal-go-no-go.md) | **RC3 专属签字稿**（唯一产品审批对象 `a255752`；建议 Conditional GO） |
 | [`reports/2026-07-27-live-retrieval-quality-baseline.md`](./reports/2026-07-27-live-retrieval-quality-baseline.md) | 真实入库 / Qdrant / live 模型质量基线（Recall、MRR、引用噪声、拒答与延迟） |
+| [`reports/2026-07-28-webch-aliyun-pilot-go-no-go.md`](./reports/2026-07-28-webch-aliyun-pilot-go-no-go.md) | webch 阿里云预发布拓扑的历史 Conditional GO 签字证据 |
 
 退出码约定（上述脚本一致）：
 

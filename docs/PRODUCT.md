@@ -1,6 +1,6 @@
 # UnoRAG 产品说明
 
-> 状态：现行北极星（2026-07-26）
+> 状态：现行北极星（2026-07-29）
 >
 > 关联：[产品策略](./STRATEGY.md) · [架构](./ARCHITECTURE.md) · [路线图](./ROADMAP.md) · [集成](./INTEGRATION.md)
 
@@ -137,7 +137,10 @@ Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客
 
 ## 成功标准（产品层）
 
-**当前发布口径：受控私有化试点的 Conditional GO。** 这不表示 UnoRAG 已达到适用于任意客户和环境的通用生产 GA。每个试点仍须结合目标部署完成隔离、安全、容量、恢复和运维责任验收，结论记录在 `docs/acceptance/`。
+**当前发布口径：私有部署的预发布参考基线已通过。** `webch` 用于模拟真实线上拓扑，
+不是正式客户生产环境；其持续 soak 不阻塞代码基线提交。这不表示 UnoRAG 已达到适用于
+任意客户和环境的通用生产 GA。每个客户部署仍须完成隔离、安全、容量、恢复和运维责任
+验收，结论记录在 `docs/acceptance/`。
 
 | 维度 | 产品标准 | 当前判定 |
 |------|----------|----------|
@@ -145,7 +148,7 @@ Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客
 | 隔离 | 跨 organization / workspace / ACL 零泄漏（发布熔断） | 必须通过目标环境门禁 |
 | 版本 | 未激活 generation 不可召回；替换失败旧版仍可用 | 核心能力已实现；纳入回归 |
 | 会话 | 临时不强制落库；归档可续聊且 rewrite 可用 | Workspace 主路径可用 |
-| Workspace | 新用户能完成：上传 → 问答 → 归档 → 续聊 | 主路径可用 |
+| Workspace | 新用户能完成：创建/切换工作区 → 上传 → 问答 → 归档 → 续聊 | 主路径可用 |
 | Knowledge API | 外部系统无需嵌 UI 即可管理知识生命周期并 retrieve/answer | Service Key + Retrieve/Ask v1.0 契约已冻结；完整生命周期 API 规划中 |
 | 接入 | SDK/MCP/OpenAI adapter 不产生第二套权限、版本和检索真相 | Python SDK / MCP 0.1.0 已交付；OpenAI-compatible 仍规划中 |
 | 交付 | 私有化可安装、升级、备份和恢复 | 按具体部署完成验收后才可 Conditional GO |

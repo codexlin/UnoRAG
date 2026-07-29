@@ -1,6 +1,6 @@
 # UnoRAG 产品策略
 
-> 状态：现行方向（2026-07-26）
+> 状态：现行方向（2026-07-29）
 >
 > 产品边界见 [PRODUCT.md](./PRODUCT.md)，工程实现见 [ARCHITECTURE.md](./ARCHITECTURE.md)，执行顺序见 [ROADMAP.md](./ROADMAP.md)。
 

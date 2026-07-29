@@ -18,6 +18,10 @@ pnpm dev
 打开 <http://localhost:3000/app>。浏览器走同源 `/api/rag/*` → `RAG_API_URL`。
 登录：`UNORAG_ADMIN_EMAIL` / `UNORAG_ADMIN_PASSWORD`。
 
+organization owner/admin 可在侧栏创建 Workspace；用户可在其有效 membership
+之间切换。切换会重新签发 session 并完整导航，文库、文档和 Ask 上下文不会沿用
+前一个 Workspace。
+
 产品上传走原生文档 API（默认 Lifecycle V2），**不**再代理 FastAPI ingest。需同时运行 api 的 `lifecycle_worker`，并与本进程共享 `DOCUMENT_STORAGE_ROOT`。
 
 ### 工作区邀请
@@ -32,7 +36,8 @@ EMAIL_PROVIDER=none          # 默认：仅复制链接
 # APP_BASE_URL=http://localhost:3000
 ```
 
-角色：`viewer` | `editor` | `admin`（非 `owner`）。OIDC SSO 后置。
+角色：`viewer` | `editor` | `admin`（非 `owner`）。OIDC provider 接口已预留，
+但实际 OIDC callback / SSO 仍后置。
 
 ## 数据库
 

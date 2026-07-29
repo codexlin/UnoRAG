@@ -1,113 +1,167 @@
-# UnoRAG
+<div align="center">
+  <img src="./apps/web/public/brand/unorag-mark.png" alt="UnoRAG" width="88" />
+  <h1>UnoRAG</h1>
+  <p><strong>Private, permission-aware enterprise knowledge that answers with evidence.</strong></p>
+  <p>
+    <a href="./README.zh-CN.md">简体中文</a> ·
+    <a href="./docs/STATUS.md">Project status</a> ·
+    <a href="./docs/ARCHITECTURE.md">Architecture</a> ·
+    <a href="./deploy/README.md">Private deployment</a>
+  </p>
+</div>
 
-**可私有化部署、权限感知、版本安全、结果可追溯的企业知识服务。**
+UnoRAG turns internal documents into a governed knowledge service. It combines a
+ready-to-use workspace with stable Retrieve and Ask APIs, so teams can use the
+official interface or embed the same evidence layer in an existing portal,
+support product, or agent.
 
-UnoRAG 独立部署和治理知识，但不要求客户采用我们的最终业务 UI：
+It is designed around the parts that make enterprise RAG trustworthy: access
+control before retrieval, atomic document versions, structure-aware ingestion,
+traceable citations, explicit refusal, and deployment-level acceptance.
 
-- 核心产品是 **UnoRAG Knowledge Service**：文档生命周期、ACL、检索、有据回答、评测与可观测性。
-- **UnoRAG Workspace** 是官方管理控制台和参考客户端，也可直接作为企业知识助手使用。
-- 客户已有业务系统或 Agent 时，通过 HTTP API 接入；Python SDK、MCP 与 OpenAI-compatible adapter 是同一 API 的薄适配层。
+## Why UnoRAG
 
-| 使用方式 | 何时用 | 得到什么 |
-|------|--------|----------|
-| **官方 Workspace** | 公司需要开箱即用的知识助手与管理台 | 工作区、文库、有据问答、追问、主动归档、调试 |
-| **嵌入现有系统** | 已有客服、售后、门户、Chat 或 Agent | 通过稳定 API 接入 retrieve/answer，不更换现有 UI/Agent |
-| **协议适配** | 希望用现有开发工具快速集成 | [Python SDK](./sdk/python/) · [MCP](./sdk/mcp/) 已可用；OpenAI-compatible adapter 按路线图提供 |
+| Need | What UnoRAG provides |
+|---|---|
+| Answers people can verify | Clickable citations, evidence preview, confidence adjudication, and refusal when coverage is insufficient |
+| Knowledge that stays private | Organization, workspace, principal, and group context is enforced in metadata and Qdrant retrieval |
+| Safe document updates | New generations are indexed in staging and activated atomically; a failed replacement leaves the old version serving |
+| Complex document support | TXT, Markdown, PDF, DOCX, CSV, and XLSX; optional MinerU escalation for scanned and complex PDFs |
+| More than generic chunking | DocumentIR and TableIR preserve headings, pages, tables, code, units, and row provenance before policy-driven chunking |
+| A product and a platform | Official Workspace for people; Service Key APIs, Python SDK, and MCP for existing applications |
+| A deployable system | Docker Compose delivery, Helm starter, migrations, workers, backup/restore, health checks, release gates, and runbooks |
 
-> 边界与成功标准见 [`docs/PRODUCT.md`](./docs/PRODUCT.md)。
-> 后面做什么、开始前先做好什么见 [`docs/ROADMAP.md`](./docs/ROADMAP.md)。
+## Product Experience
 
-## 快速链接
+**UnoRAG Workspace** gives administrators and employees one place to:
 
-| 文档 | 说明 |
-|------|------|
-| [产品说明](./docs/PRODUCT.md) | 核心定位、使用方式、做/不做 |
-| [产品策略](./docs/STRATEGY.md) | 目标客户、首发场景、产品层级、商业化与面试叙事 |
-| [路线图](./docs/ROADMAP.md) | 近中远期 + 开工 checklist |
-| [架构](./docs/ARCHITECTURE.md) | 控制面 vs 数据面、入库、会话、Ask |
-| [Knowledge API](./docs/INTEGRATION.md) | 已实现 vs 规划中契约 |
-| [开发者指南](./docs/DEV.md) | 本机启动与 env 分层 |
-| [文档索引](./docs/README.md) | ADR / runbook / 验收 |
-| [私有化部署](./deploy/README.md) | Compose / Helm 交付包 |
+- create and switch workspaces;
+- invite members and assign viewer, editor, or admin roles;
+- create libraries and configure document access;
+- upload, replace, reindex, and delete documents with visible job progress;
+- ask streaming questions, inspect evidence, and continue follow-up questions;
+- archive selected conversations and inspect retrieval traces;
+- create scoped Service Keys for application integration.
 
-## 技术栈
+**UnoRAG Knowledge API** lets customer systems use the same governed retrieval
+kernel without adopting the Workspace UI. Retrieve and Ask v1 are available
+today; the Python SDK and MCP server are thin clients of that API.
 
-| 层 | 选型 |
-|----|------|
-| Control Plane | Next.js · Drizzle · PostgreSQL `app` schema |
-| RAG Data Plane | FastAPI · LangGraph · Qdrant · OpenAI-compatible LLM |
-| 入库 Worker | Python lifecycle_worker ← `app.jobs`（非 ARQ） |
-| 兼容元数据 | PostgreSQL `public` / `rag`（Python）；测试可 `METADATA_BACKEND=json` |
+## How Knowledge Becomes an Answer
 
-## 仓库结构
-
-```text
-UnoRAG/
-  docker-compose.yml   # 本机 Postgres + Qdrant + Redis
-  apps/web/            # Northline 工作台（控制面）
-  apps/api/            # FastAPI + LangGraph + lifecycle_worker
-  deploy/              # 客户式私有化参考拓扑
-  docs/                # 产品 / 架构 / 路线图 / runbook
+```mermaid
+flowchart LR
+    A["Upload or replace"] --> B["Lifecycle job"]
+    B --> C["Local parser or MinerU"]
+    C --> D["DocumentIR and TableIR"]
+    D --> E["Policy-driven chunks"]
+    E --> F["Embedding and staging index"]
+    F --> G{"Validation passes?"}
+    G -- "Yes" --> H["Atomic active-generation switch"]
+    G -- "No" --> I["Keep previous version active"]
+    H --> J["ACL-filtered retrieval"]
+    J --> K["Query route and evidence judge"]
+    K --> L["Answer with citations"]
+    K --> M["Refuse or clarify"]
 ```
 
-## 一键启动（开发）
+The default chunking policy is structure first. Heading, page, table, and code
+boundaries take priority; recursive splitting enforces hard size limits, and
+semantic splitting is reserved for long narrative regions where it adds value.
+Tables are normalized and indexed with headers, units, row ranges, and source
+coordinates so row-level answers do not lose column meaning.
 
-完整说明与 env 分层见 [`docs/DEV.md`](./docs/DEV.md)。摘要：
+## Architecture
 
-```bash
-cd UnoRAG
-docker compose up -d
+```mermaid
+flowchart TB
+    Browser["Browser / UnoRAG Workspace"]
+    Apps["Customer apps and agents"]
+    SDK["Python SDK / MCP"]
+    Web["Next.js control plane and Knowledge API"]
+    API["FastAPI RAG data plane"]
+    Life["Lifecycle worker"]
+    Outbox["Outbox worker"]
+    PG[("PostgreSQL")]
+    QD[("Qdrant")]
+    Redis[("Redis")]
+    Files[("Shared document storage")]
 
-cd apps/web
-cp -n .env.example .env.local
-pnpm install && pnpm db:migrate && pnpm db:bootstrap
-pnpm outbox:run &    # 另开终端亦可
-pnpm dev
-
-cd apps/api
-cp -n .env.example .env
-uv sync
-uv run uvicorn app.main:app --reload --port 8000
-# 另开终端：DOCUMENT_STORAGE_ROOT=... uv run python -m app.lifecycle_worker
+    Browser --> Web
+    Apps --> Web
+    SDK --> Web
+    Web -->|"signed RequestContext"| API
+    Web --> PG
+    Web --> Files
+    Outbox --> PG
+    Outbox --> API
+    Life --> PG
+    Life --> Files
+    Life --> QD
+    API --> PG
+    API --> QD
+    API --> Redis
 ```
 
-- 工作台：<http://localhost:3000/app>
-- 同源健康：`GET http://localhost:3000/api/rag/health`
-- 浏览器**只**访问 Next；FastAPI `:8000` 仅内网
+Next.js owns product identity, organizations, workspaces, libraries, document
+lifecycle metadata, audit, and the browser security boundary. FastAPI owns
+parsing, indexing, retrieval, LangGraph execution, citations, and archived
+turns. PostgreSQL jobs and an outbox connect both planes without making either
+one a second source of truth.
 
-生产密钥对齐：
+## Current Capability
 
-```bash
-# apps/web/.env.local
-UNORAG_INTERNAL_SECRET=...   # = api INTERNAL_AUTH_SECRET
-UNORAG_SESSION_SECRET=...    # 独立；≠ internal
-UNORAG_ADMIN_PASSWORD=...
+| Area | Status |
+|---|---|
+| Workspace, local authentication, invitations, roles, multi-workspace creation and switching | Available |
+| Workspace and document ACL enforcement through retrieval | Available; group-management UI is not yet included |
+| Atomic versions, lifecycle jobs, retries, cancellation, cleanup, and old-version fallback | Available |
+| Structure-aware ingestion, MinerU adapters, TableIR, hybrid retrieval, reranking, query routing, citations, and refusal | Available |
+| Retrieve/Ask v1, Service Keys, Python SDK, and MCP | Available |
+| OIDC/SSO, public document lifecycle APIs, OpenAI-compatible endpoint, first-class S3, and hardened Kubernetes autoscaling/network policy | Planned |
+| ChartIR and database execution for very large tables | Planned |
 
-# apps/api/.env
-APP_ENV=production
-INTERNAL_AUTH_ENABLED=true
-INTERNAL_AUTH_SECRET=...
-INTERNAL_AUTH_REPLAY_BACKEND=redis
-```
+The detailed, code-backed matrix lives in [Project status](./docs/STATUS.md).
+Historical acceptance reports are evidence for specific builds and
+environments, not a timeless product claim.
 
-## 能力一览
+## Deployment
 
-- **文库**：txt/md/docx/pdf → 结构优先切片 → Job/版本/激活 → 问答
-- **流式问答**：SSE；`[n]` 可点；证据预览；弱相关/无命中拒答
-- **会话**：默认临时；主动归档；可续聊；query rewrite
-- **工作区旋钮**：hybrid / rerank / 裁决等在设置页（**不是** `HYBRID_ENABLED` env）
-- **入库**：仅控制面 → lifecycle_worker；FastAPI ingest **永久 410**
-- **对外 API（v1.0 已冻结）**：工作区 Service Key → `POST /api/v1/retrieve`、`POST /api/v1/ask`；严格输入、稳定错误与 citation 契约、OpenAPI
-- **协议适配**：[Python SDK](./sdk/python/) · [MCP Server](./sdk/mcp/)（0.1.0）；**仍在规划**：外部 Documents/Versions/Jobs、Answer 契约、OpenAI-compatible adapter
+UnoRAG is currently optimized for private deployment:
 
-## 测试
+- **Docker Compose** is the reference single-node delivery topology.
+- **Helm** is a starter for customer-managed Kubernetes infrastructure.
+- Model, embedding, parser, database, and registry credentials are supplied by
+  the customer deployment and are never baked into images.
+- FastAPI remains private; the browser and external clients enter through the
+  Next.js control plane.
 
-```bash
-cd apps/api
-uv run pytest
-uv run python scripts/run_eval_cases.py
-```
+Start with the [private deployment guide](./deploy/README.md). For local
+development, see [docs/DEV.md](./docs/DEV.md).
 
-## 与 SAG / RAG-Anything
+## Engineering Confidence
 
-借鉴解析与编排能力，**不照搬**「通用 Agent / 万能框架」定位。UnoRAG 坚持企业知识服务内核 + 多种客户端/接入面。
+The repository includes API and web test suites, deterministic RAG golden sets,
+Python/JavaScript policy parity checks, cross-tenant isolation fuses, real-file
+ingestion fixtures, browser acceptance, backup/restore drills, failure
+injection, image CVE scanning, and digest-pinned release manifests.
+
+The current `webch` environment is a **preproduction simulation**, not a formal
+customer production deployment. Customer production approval remains
+deployment-specific and must cover capacity, identity integration, recovery
+objectives, monitoring ownership, and security policy.
+
+## Documentation
+
+- [Product boundaries](./docs/PRODUCT.md)
+- [Implementation status](./docs/STATUS.md)
+- [Architecture](./docs/ARCHITECTURE.md)
+- [Roadmap](./docs/ROADMAP.md)
+- [Knowledge API](./docs/INTEGRATION.md)
+- [Developer guide](./docs/DEV.md)
+- [Acceptance and operations](./docs/acceptance/README.md)
+
+## License
+
+The repository does not currently declare a public open-source license. Confirm
+commercial or source-distribution terms before external distribution.

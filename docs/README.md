@@ -5,15 +5,16 @@
 | 文档 | 内容 |
 |------|------|
 | [PRODUCT.md](./PRODUCT.md) | 一句话定位、使用方式、边界、成功标准 |
+| [STATUS.md](./STATUS.md) | 与代码对应的已完成 / 部分完成 / 规划中能力矩阵 |
 | [STRATEGY.md](./STRATEGY.md) | 产品层级、目标客户、首发场景、商业化与面试叙事 |
 | [ROADMAP.md](./ROADMAP.md) | 近中远期、开始前 checklist、交付优先级 |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 控制面 / 数据面、入库、会话、Ask 流水线 |
-| [architecture/convergence-plan.md](./architecture/convergence-plan.md) | 事实源收敛、兼容路径、Step 1 backlog（临近私有化） |
 | [INTEGRATION.md](./INTEGRATION.md) | Knowledge API：已实现 vs 规划中契约 |
 | [contracts/retrieve-ask-v1.md](./contracts/retrieve-ask-v1.md) | Retrieve/Ask 公共 API v1 冻结契约 |
 | [DEV.md](./DEV.md) | 本地启动与 env 分层 |
 
-仓库根 [README.md](../README.md) 是入口摘要。
+仓库根 [README.md](../README.md) / [README.zh-CN.md](../README.zh-CN.md)
+是英文 / 中文产品入口。
 
 ## ADR（已接受决策）
 
@@ -39,3 +40,4 @@
 |--------|------|
 | `docs/architecture/enterprise-rag-saas-design.md` | 能力盘点与差距已过时；由 PRODUCT + ARCHITECTURE + ROADMAP 替代 |
 | `docs/plans/2026-07-24-private-deployment-production-roadmap.md` | 文首现状描述已不符（ARQ/代理入库）；完成项以代码为准，缺口并入 ROADMAP |
+| `docs/architecture/convergence-plan.md` | 阶段性收敛计划已完成且混入过时状态；事实迁入 STATUS / ARCHITECTURE / ROADMAP |

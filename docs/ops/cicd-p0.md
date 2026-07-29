@@ -83,7 +83,8 @@ cd deploy/compose
 
 ## 4. 与 Step 3 / 正式 GO
 
-- **停止**把工程带宽花在结构硬删上；硬删仍受「正式 GO 后的下一 major」约束（见 `docs/architecture/convergence-plan.md`）。
+- **停止**把工程带宽花在无收益的结构硬删上；兼容入口的删除按
+  [PRODUCT.md](../PRODUCT.md) 与公开契约中的 deprecation 条件执行。
 - **正式 GO 门禁**除试点黑盒 / 告警 / 恢复外，须含 **发布闭环**：CI 绿 →（后续）digest 推送 → 人工批准 → `upgrade.sh` pull 部署可重复。
 
 密钥与凭据只存在于部署机 / GitHub Secrets / 客户 Secret 存储，**永不**提交进 git。
