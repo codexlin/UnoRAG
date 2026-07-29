@@ -121,3 +121,14 @@
 4. **部署容量基线**：在目标规格上记录并发、队列、模型与 MinerU 限额。
 5. **Kubernetes 与供应链硬化**：HPA/PDB/NetworkPolicy、SBOM、签名。
 6. **产品治理补齐**：Workspace rename/archive/delete、用户组管理与反馈闭环。
+
+## 待统一收口
+
+以下问题在 2026-07-29 Northline 2.0 真实浏览器验收中发现，集中到同一兼容批次
+处理，不分散到各 UI 提交：
+
+| 问题 | 当前风险 | 收口与验收标准 |
+|---|---|---|
+| 预发布数据库迁移滞后 | 当前源码读取 `app.users.organization_role`，但 webch 数据卷尚未应用 `0012_organization-workspaces.sql`；新 Web 镜像若跳过 migrator 会在登录后失败 | 在预发布数据副本完整执行 upgrade；Web 启动前 migrator 成功；登录、Workspace 创建/切换与回滚 smoke 通过 |
+| 内部 HMAC 品牌命名漂移 | 已收口：`x-unorag-*`、`unorag-control-plane` 与 `UNORAG_*` 为规范名；API 暂时兼容一代 `x-meriknow-*` / issuer，Web 暂时兼容旧 Secret 变量，并可通过 `UNORAG_INTERNAL_AUTH_HEADER_FAMILY=meriknow` 显式连接旧 API。混合 Header 会被拒绝 | 下一次破坏性大版本移除兼容分支；此前保持双代契约测试和 API → Web 的升级顺序。兼容签发仅用于回滚窗口，不进入标准部署配置 |
+| 运行镜像与源码版本可追溯性 | 已收口：edge health 返回控制面/数据面协议与各自 build ref，发布 smoke 要求二者均为 `unorag-hmac-v1` | 发布清单继续使用 digest；任何协议缺失或不一致均阻断升级 |

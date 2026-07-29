@@ -23,6 +23,8 @@ def test_health() -> None:
 	assert payload["ask_ready"] is True
 	assert "qdrant_ok" in payload
 	assert "live_ready" in payload
+	assert payload["internal_auth_protocol"] == "unorag-hmac-v1"
+	assert payload["build_ref"] == "development"
 
 
 def test_live_unavailable_hard_fails_not_stub(monkeypatch: pytest.MonkeyPatch) -> None:

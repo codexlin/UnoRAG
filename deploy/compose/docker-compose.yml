@@ -63,6 +63,7 @@ services:
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
       UNORAG_INTERNAL_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
       UNORAG_SESSION_SECRET: ${UNORAG_SESSION_SECRET:?UNORAG_SESSION_SECRET required}
+      UNORAG_BUILD_REF: ${UNORAG_WEB_IMAGE:-unorag-web:local}
       # Container-internal path only (named volume). Do not pass host absolute paths.
       DOCUMENT_STORAGE_ROOT: /var/lib/unorag/documents
       DOCUMENT_MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-52428800}
@@ -98,6 +99,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-production}
       APP_NAME: UnoRAG API
+      BUILD_REF: ${UNORAG_API_IMAGE:-unorag-api:local}
       API_PREFIX: /v1
       CORS_ORIGINS: http://localhost,http://127.0.0.1
       # Product invariants (not customer-tunable env knobs)

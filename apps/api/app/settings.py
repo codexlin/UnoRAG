@@ -52,6 +52,7 @@ class Settings(BaseSettings):
 
 	app_name: str = "UnoRAG API"
 	app_env: str = "development"
+	build_ref: str = "development"
 	api_prefix: str = "/v1"
 	cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 

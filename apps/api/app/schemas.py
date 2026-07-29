@@ -7,6 +7,8 @@ class HealthResponse(BaseModel):
 	status: str = "ok"
 	service: str
 	env: str
+	build_ref: str = "development"
+	internal_auth_protocol: str = "unorag-hmac-v1"
 	ask_mode: str
 	effective_mode: str = "live"
 	graph: str = "ask_v1"

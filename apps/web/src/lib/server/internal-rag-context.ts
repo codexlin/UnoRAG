@@ -3,12 +3,18 @@ import "server-only";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 
 import type { AuthIdentity } from "./auth/provider";
+import {
+	resolveInternalHeaderFamily,
+	resolveInternalSecret,
+} from "./auth/secrets.mjs";
+
+export const INTERNAL_AUTH_PROTOCOL = "unorag-hmac-v1";
 
 export type InternalAuthSource = "session" | "service";
 
 export type InternalRagContext = {
 	v: 1;
-	iss: "unorag-control-plane";
+	iss: "unorag-control-plane" | "meriknow-control-plane";
 	tenant_id: string;
 	workspace_id: string;
 	principal_id: string;
@@ -39,18 +45,17 @@ export function createInternalRagHeaders(
 	now = Math.floor(Date.now() / 1000),
 	options?: { authSource?: InternalAuthSource; requestId?: string },
 ): Headers {
-	const secret = process.env.UNORAG_INTERNAL_SECRET?.trim();
-	if (!secret || secret.length < 32) {
-		throw new Error(
-			"UNORAG_INTERNAL_SECRET must contain at least 32 characters",
-		);
-	}
+	const secret = resolveInternalSecret();
+	const headerFamily = resolveInternalHeaderFamily();
 
 	const requestId = options?.requestId ?? randomUUID();
 	const authSource = options?.authSource ?? "session";
 	const context: InternalRagContext = {
 		v: 1,
-		iss: "unorag-control-plane",
+		iss:
+			headerFamily === "unorag"
+				? "unorag-control-plane"
+				: "meriknow-control-plane",
 		tenant_id: identity.tenantId,
 		workspace_id: identity.workspaceId,
 		principal_id: identity.principalId,
@@ -72,8 +77,8 @@ export function createInternalRagHeaders(
 		.digest("base64url");
 
 	return new Headers({
-		"x-unorag-context": token,
-		"x-unorag-signature": signature,
+		[`x-${headerFamily}-context`]: token,
+		[`x-${headerFamily}-signature`]: signature,
 		"x-request-id": context.request_id,
 	});
 }

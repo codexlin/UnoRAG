@@ -2,7 +2,10 @@ import "server-only";
 
 import { injectAskOverrides } from "./ask-overrides-inject.mjs";
 import { resolveRequestSession } from "./auth/session";
-import { createInternalRagHeaders } from "./internal-rag-context";
+import {
+	createInternalRagHeaders,
+	INTERNAL_AUTH_PROTOCOL,
+} from "./internal-rag-context";
 import {
 	canWriteLibraries,
 	findAuthorizedDocument,
@@ -24,6 +27,8 @@ const REQUEST_HEADER_DENYLIST = new Set([
 	"transfer-encoding",
 	"x-unorag-context",
 	"x-unorag-signature",
+	"x-meriknow-context",
+	"x-meriknow-signature",
 	"x-request-id",
 ]);
 
@@ -264,6 +269,22 @@ export async function proxyRagRequest(
 		// L6: no dual-write / document-list probe sync into app.documents.
 		// Control-plane routes own product metadata; Ask/retrieval stay HMAC-proxied.
 		const headers = downstreamHeaders(upstream);
+		if (
+			safeSegments[0] === "health" &&
+			upstream.ok &&
+			headers.get("content-type")?.includes("application/json")
+		) {
+			const health = (await upstream.json()) as Record<string, unknown>;
+			return Response.json(
+				{
+					...health,
+					control_plane_protocol: INTERNAL_AUTH_PROTOCOL,
+					control_plane_build:
+						process.env.UNORAG_BUILD_REF?.trim() || "development",
+				},
+				{ status: upstream.status, headers },
+			);
+		}
 		// Echo the internal request id on every proxied response (incl. upstream 5xx)
 		// so fault drills / operators can correlate without relying on body shape.
 		const requestId = signedHeaders.get("x-request-id");

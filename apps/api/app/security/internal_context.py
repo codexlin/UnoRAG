@@ -17,6 +17,10 @@ from app.settings import Settings, get_settings
 
 CONTEXT_HEADER = "x-unorag-context"
 SIGNATURE_HEADER = "x-unorag-signature"
+LEGACY_CONTEXT_HEADER = "x-meriknow-context"
+LEGACY_SIGNATURE_HEADER = "x-meriknow-signature"
+INTERNAL_AUTH_PROTOCOL = "unorag-hmac-v1"
+_ACCEPTED_ISSUERS = {"unorag-control-plane", "meriknow-control-plane"}
 
 
 class InternalBodyDigestMiddleware:
@@ -126,7 +130,7 @@ def verify_internal_context(
 		)
 
 	payload = _decode_payload(token)
-	if payload.get("v") != 1 or payload.get("iss") != "unorag-control-plane":
+	if payload.get("v") != 1 or payload.get("iss") not in _ACCEPTED_ISSUERS:
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
 			detail="unsupported internal request context",
@@ -242,6 +246,23 @@ def _canonical_target(request: Request) -> str:
 	return f"{path}?{query}" if query else path
 
 
+def _signed_header_pair(request: Request) -> tuple[str, str]:
+	canonical = (
+		request.headers.get(CONTEXT_HEADER, ""),
+		request.headers.get(SIGNATURE_HEADER, ""),
+	)
+	legacy = (
+		request.headers.get(LEGACY_CONTEXT_HEADER, ""),
+		request.headers.get(LEGACY_SIGNATURE_HEADER, ""),
+	)
+	if all(canonical) and not any(legacy):
+		return canonical
+	if all(legacy) and not any(canonical):
+		return legacy
+	# Reject partial and mixed families so token/signature provenance is explicit.
+	return "", ""
+
+
 async def require_internal_context(
 	request: Request,
 	settings: Settings = Depends(get_settings),
@@ -270,8 +291,7 @@ async def require_internal_context(
 			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
 			detail="internal authentication is enabled but not configured",
 		)
-	token = request.headers.get(CONTEXT_HEADER, "")
-	signature = request.headers.get(SIGNATURE_HEADER, "")
+	token, signature = _signed_header_pair(request)
 	if not token or not signature:
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,

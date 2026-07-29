@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.schemas import HealthResponse
+from app.security.internal_context import INTERNAL_AUTH_PROTOCOL
 from app.services.active_generations import probe_active_generation_store
 from app.services.ask_defaults import ASK_DEFAULTS
 from app.services.metadata import probe_metadata_store
@@ -40,6 +41,8 @@ def health() -> HealthResponse:
 		status=status,
 		service=settings.app_name,
 		env=settings.app_env,
+		build_ref=settings.build_ref,
+		internal_auth_protocol=INTERNAL_AUTH_PROTOCOL,
 		ask_mode=capability.requested_mode,
 		effective_mode=capability.effective_mode,
 		graph=capability.graph,

@@ -104,13 +104,32 @@ http_code() {
 
 # --- readiness ---
 log "checking edge health at $BASE_URL/api/rag/health"
-HEALTH_CODE="$(http_code "$BASE_URL/api/rag/health")"
+HEALTH_BODY="$WORKDIR/health.json"
+HEALTH_CODE="$(
+	curl -sS -o "$HEALTH_BODY" -w '%{http_code}' --max-time 5 \
+		"$BASE_URL/api/rag/health" || true
+)"
 if [[ "$HEALTH_CODE" == "000" || -z "$HEALTH_CODE" ]]; then
 	skip "edge not reachable at $BASE_URL (is compose up? install.sh done?)"
 fi
 if [[ "$HEALTH_CODE" != "200" ]]; then
 	skip "health returned HTTP $HEALTH_CODE (want 200); fix stack before pilot smoke"
 fi
+python3 - "$HEALTH_BODY" <<'PY' || fail "control/data-plane internal auth protocol mismatch"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    health = json.load(handle)
+expected = "unorag-hmac-v1"
+actual = {
+    "control_plane_protocol": health.get("control_plane_protocol"),
+    "internal_auth_protocol": health.get("internal_auth_protocol"),
+}
+if set(actual.values()) != {expected}:
+    print(f"protocol mismatch: {actual}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 
 if [[ -z "$PASSWORD" || "$PASSWORD" == "change-this-before-deployment" ]]; then
 	skip "set UNORAG_ADMIN_PASSWORD in deploy/config/bootstrap.env (or .smoke-admin-password)"

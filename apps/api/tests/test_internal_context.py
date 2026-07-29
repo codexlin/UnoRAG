@@ -39,12 +39,14 @@ def _signed_headers(
 	workspace_id: str = "ws-1",
 	principal_id: str = "user-1",
 	auth_source: str = "session",
+	issuer: str = "unorag-control-plane",
+	header_family: str = "unorag",
 ) -> dict[str, str]:
 	now = int(time.time())
 	request_id = jti or str(uuid4())
 	payload = {
 		"v": 1,
-		"iss": "unorag-control-plane",
+		"iss": issuer,
 		"tenant_id": tenant_id,
 		"workspace_id": workspace_id,
 		"principal_id": principal_id,
@@ -65,8 +67,8 @@ def _signed_headers(
 		hmac.new(TEST_SECRET.encode(), token.encode(), hashlib.sha256).digest()
 	).decode().rstrip("=")
 	return {
-		"x-unorag-context": token,
-		"x-unorag-signature": signature,
+		f"x-{header_family}-context": token,
+		f"x-{header_family}-signature": signature,
 	}
 
 
@@ -136,6 +138,49 @@ def test_v1_requires_context_when_internal_auth_enabled(monkeypatch) -> None:
 	client = TestClient(app)
 
 	response = client.get("/v1/libraries")
+
+	assert response.status_code == 401
+	assert response.json()["detail"] == "internal request context required"
+
+
+def test_legacy_meriknow_context_is_accepted_during_rolling_upgrade(
+	monkeypatch,
+) -> None:
+	monkeypatch.setenv("INTERNAL_AUTH_ENABLED", "true")
+	monkeypatch.setenv("INTERNAL_AUTH_SECRET", TEST_SECRET)
+	monkeypatch.setenv("INTERNAL_AUTH_REPLAY_BACKEND", "memory")
+	get_settings.cache_clear()
+	client = TestClient(app)
+
+	response = client.get(
+		"/v1/libraries",
+		headers=_signed_headers(
+			method="GET",
+			target="/v1/libraries",
+			issuer="meriknow-control-plane",
+			header_family="meriknow",
+		),
+	)
+
+	assert response.status_code == 200
+
+
+def test_mixed_internal_header_families_are_rejected(monkeypatch) -> None:
+	monkeypatch.setenv("INTERNAL_AUTH_ENABLED", "true")
+	monkeypatch.setenv("INTERNAL_AUTH_SECRET", TEST_SECRET)
+	monkeypatch.setenv("INTERNAL_AUTH_REPLAY_BACKEND", "memory")
+	get_settings.cache_clear()
+	client = TestClient(app)
+	headers = _signed_headers(method="GET", target="/v1/libraries")
+	legacy = _signed_headers(
+		method="GET",
+		target="/v1/libraries",
+		issuer="meriknow-control-plane",
+		header_family="meriknow",
+	)
+	headers["x-meriknow-signature"] = legacy["x-meriknow-signature"]
+
+	response = client.get("/v1/libraries", headers=headers)
 
 	assert response.status_code == 401
 	assert response.json()["detail"] == "internal request context required"
