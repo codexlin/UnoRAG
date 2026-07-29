@@ -19,17 +19,15 @@ if (!databaseUrl) {
 const client = new pg.Client({ connectionString: databaseUrl });
 await client.connect();
 try {
-	const [deadJobs, stuckJobs, deletingDocs, cleanupErrors, deletingLibraries] =
-		await Promise.all([
-			client.query(`
+	const deadJobs = await client.query(`
 				SELECT id, type, status, error_code, attempt, max_attempts,
 				       claimed_by, updated_at
 				FROM app.jobs
 				WHERE status = 'dead'
 				ORDER BY updated_at DESC
 				LIMIT 50
-			`),
-			client.query(`
+			`);
+	const stuckJobs = await client.query(`
 				SELECT id, type, status, stage, claimed_by, lease_expires_at,
 				       heartbeat_at, updated_at
 				FROM app.jobs
@@ -37,33 +35,32 @@ try {
 				  AND (
 				    lease_expires_at <= now()
 				    OR heartbeat_at < now() - interval '10 minutes'
-				  )
+				)
 				ORDER BY lease_expires_at NULLS FIRST, updated_at
 				LIMIT 50
-			`),
-			client.query(`
+			`);
+	const deletingDocs = await client.query(`
 				SELECT id, rag_document_id, status, latest_job_id, deleted_at, updated_at
 				FROM app.documents
 				WHERE status = 'deleting'
 				ORDER BY updated_at
 				LIMIT 50
-			`),
-			client.query(`
+			`);
+	const cleanupErrors = await client.query(`
 				SELECT generation_id, document_id, sweep_status, hint_status,
 				       last_error, delete_after, updated_at
 				FROM rag.generation_cleanup_queue
 				WHERE sweep_status = 'error' OR hint_status = 'error'
 				ORDER BY updated_at DESC
 				LIMIT 50
-			`),
-			client.query(`
+			`);
+	const deletingLibraries = await client.query(`
 				SELECT id, rag_library_id, name, status, doc_count, updated_at
 				FROM app.libraries
 				WHERE status IN ('deleting', 'deleted')
 				ORDER BY updated_at DESC
 				LIMIT 50
-			`),
-		]);
+			`);
 
 	const report = {
 		summary: {

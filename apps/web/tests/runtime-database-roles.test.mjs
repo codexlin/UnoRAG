@@ -90,11 +90,16 @@ test("upgrade and pilot smoke honor the configured public edge URL", async () =>
 test("lifecycle inspection is an operator job, not an outbox runtime privilege", async () => {
 	const compose = await source("deploy/compose/docker-compose.yml");
 	const upgrade = await source("deploy/compose/scripts/upgrade.sh");
+	const inspection = await source("apps/web/scripts/inspect-lifecycle.mjs");
 	assert.match(compose, /inspect-lifecycle:\s+profiles: \["ops"\]/s);
 	assert.match(
 		compose,
 		/inspect-lifecycle:[\s\S]*MIGRATOR_DATABASE_URL[\s\S]*--fail-on-stuck/,
 	);
-	assert.doesNotMatch(upgrade, /exec -T outbox-worker node scripts\/inspect-lifecycle/);
+	assert.doesNotMatch(
+		upgrade,
+		/exec -T outbox-worker node scripts\/inspect-lifecycle/,
+	);
 	assert.match(upgrade, /--profile ops run --rm inspect-lifecycle/);
+	assert.doesNotMatch(inspection, /Promise\.all/);
 });
