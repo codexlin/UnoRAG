@@ -24,9 +24,12 @@ test("Ask evidence uses a mobile sheet and a responsive desktop rail", () => {
 test("public landing page describes the shipped product rather than a scaffold", () => {
 	const page = readFileSync(path.join(root, "src/app/page.tsx"), "utf8");
 
-	assert.match(page, /Private Deployment · v1\.0/);
-	assert.match(page, /Knowledge Service/);
-	assert.match(page, /Public API/);
+	assert.match(page, /PRIVATE DEPLOYMENT · V1/);
+	assert.match(page, /Enterprise Knowledge Infrastructure/);
+	assert.match(page, /landing-evidence-desk\.png/);
+	assert.match(page, /product-library-workbench\.png/);
+	assert.match(page, /Retrieve \/ Ask API/);
+	assert.match(page, /先让一份真实资料开口说话/);
 	assert.doesNotMatch(page, /v0 · scaffold/);
 });
 
@@ -52,11 +55,14 @@ test("libraries stack list and documents on mobile while preserving desktop colu
 	);
 
 	assert.match(libraries, /flex-col md:flex-row/);
-	assert.match(libraries, /h-\[min\(42vh,22rem\)\][\s\S]*md:w-65/);
+	assert.match(libraries, /h-\[min\(40vh,21rem\)\][\s\S]*md:w-72/);
 	assert.match(libraries, /max-w-full overflow-x-auto rounded-md border/);
 	assert.match(libraries, /table-fixed md:table-auto/);
 	assert.match(libraries, /hidden md:table-cell/);
 	assert.match(libraries, /w-24 md:w-auto/);
+	assert.match(libraries, /aria-label="搜索文档"/);
+	assert.match(libraries, /documentSummary\.ready/);
+	assert.match(libraries, /filteredDocuments\.map/);
 });
 
 test("deleted archive library requires an explicit replacement selection", () => {

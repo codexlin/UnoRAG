@@ -5,8 +5,9 @@ import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 export const metadata: Metadata = {
-	title: "UnoRAG",
-	description: "有据可依的企业知识问答",
+	title: "UnoRAG | 可治理、可核验的企业知识服务",
+	description:
+		"私有化部署的企业知识基础设施，统一文档生命周期、权限隔离、复杂解析、检索与有据回答。",
 	icons: {
 		icon: [
 			{

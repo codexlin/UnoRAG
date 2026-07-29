@@ -2,10 +2,13 @@
 
 import {
 	FileUp,
+	MessageSquareText,
 	MoreHorizontal,
 	Pencil,
 	Plus,
 	RefreshCw,
+	Search,
+	Settings2,
 	Trash2,
 } from "lucide-react";
 import Link from "next/link";
@@ -275,6 +278,7 @@ export function LibrariesPanel() {
 	const { tick: ingestTick, trackProcessing } = useIngestJobs();
 	const [selectedId, setSelectedId] = useState<string>("");
 	const [documents, setDocuments] = useState<ApiDocument[]>([]);
+	const [documentQuery, setDocumentQuery] = useState("");
 	const [uploading, setUploading] = useState(false);
 	const [savingLibrary, setSavingLibrary] = useState(false);
 	const [busyDocId, setBusyDocId] = useState<string | null>(null);
@@ -322,6 +326,29 @@ export function LibrariesPanel() {
 		[documents, deleteDocId],
 	);
 
+	const filteredDocuments = useMemo(() => {
+		const query = documentQuery.trim().toLocaleLowerCase();
+		if (!query) return documents;
+		return documents.filter((doc) =>
+			`${doc.name} ${doc.filename}`.toLocaleLowerCase().includes(query),
+		);
+	}, [documents, documentQuery]);
+
+	const documentSummary = useMemo(
+		() => ({
+			ready: documents.filter((doc) => doc.status === "ready").length,
+			processing: documents.filter((doc) =>
+				["processing", "indexing", "queued"].includes(doc.status),
+			).length,
+			failed: documents.filter((doc) => doc.status === "failed").length,
+			chunks: documents.reduce(
+				(sum, doc) => sum + Math.max(0, doc.chunk_count || 0),
+				0,
+			),
+		}),
+		[documents],
+	);
+
 	const loadDocuments = useCallback(
 		async (libraryId: string, signal?: AbortSignal) => {
 			if (!libraryId) {
@@ -351,12 +378,14 @@ export function LibrariesPanel() {
 	useEffect(() => {
 		if (libraries.length === 0) {
 			if (selectedId) setSelectedId("");
+			setDocumentQuery("");
 			setDocuments([]);
 			return;
 		}
 		const stillExists = libraries.some((item) => item.id === selectedId);
 		if (!selectedId || !stillExists) {
 			setSelectedId(libraries[0].id);
+			setDocumentQuery("");
 		}
 	}, [libraries, selectedId]);
 
@@ -547,6 +576,7 @@ export function LibrariesPanel() {
 				setLibraryDialogOpen(false);
 				await loadLibraries();
 				setSelectedId(created.id);
+				setDocumentQuery("");
 			} else if (libraryDialogMode === "edit" && editingLibrary) {
 				const updated = await updateLibrary({
 					libraryId: editingLibrary.id,
@@ -607,6 +637,7 @@ export function LibrariesPanel() {
 			setDeleteDocId(null);
 			if (selectedId === target.id) {
 				setSelectedId(nextSelectedId);
+				setDocumentQuery("");
 				setDocuments([]);
 			}
 			await loadLibraries();
@@ -817,18 +848,16 @@ export function LibrariesPanel() {
 		<div className="flex min-h-0 flex-1 flex-col">
 			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
 				{/* 左栏：知识库列表 */}
-				<aside className="flex h-[min(42vh,22rem)] w-full shrink-0 flex-col border-b border-border/80 bg-card/40 md:h-auto md:w-65 md:border-r md:border-b-0">
+				<aside className="flex h-[min(40vh,21rem)] w-full shrink-0 flex-col border-b border-border/80 bg-card md:h-auto md:w-72 md:border-r md:border-b-0">
 					<div className="space-y-1 border-b border-border/70 px-4 py-4">
-						<p className="text-meta font-mono tracking-[0.2em] text-cite uppercase">
-							Libraries
+						<p className="text-meta font-mono tracking-[0.16em] text-cite uppercase">
+							Knowledge registry
 						</p>
-						<h2 className="font-heading text-lg font-semibold tracking-tight">
-							知识库
-						</h2>
-						<p className="text-meta text-muted-foreground">
+						<h2 className="font-heading text-base font-semibold">资料空间</h2>
+						<p className="text-meta font-mono text-muted-foreground">
 							{libraries.length} 个库 ·{" "}
 							{libraries.reduce((sum, item) => sum + (item.doc_count || 0), 0)}{" "}
-							文档
+							份资料
 						</p>
 					</div>
 					<ScrollArea className="min-h-0 flex-1">
@@ -844,13 +873,14 @@ export function LibrariesPanel() {
 										type="button"
 										onClick={() => {
 											setSelectedId(library.id);
+											setDocumentQuery("");
 											setDetailDocId(null);
 										}}
 										className={cn(
-											"flex w-full items-start gap-2.5 rounded-md px-2.5 py-2.5 text-left transition-colors",
+											"flex w-full items-start gap-2.5 rounded-sm border-l-2 px-2.5 py-2.5 text-left transition-colors",
 											selectedId === library.id
-												? "bg-cite/10 text-foreground"
-												: "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+												? "border-l-cite bg-cite/8 text-foreground"
+												: "border-l-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
 										)}
 									>
 										<LibStatusDot status={library.status} />
@@ -865,10 +895,10 @@ export function LibrariesPanel() {
 											) : null}
 											<span className="text-meta mt-0.5 block font-mono text-muted-foreground">
 												{library.status === "indexing"
-													? `${library.ready_count}/${library.doc_count} 索引中`
+													? `${library.ready_count}/${library.doc_count} 可用 · 处理中`
 													: library.status === "empty"
-														? "空库"
-														: `${library.ready_count}/${library.doc_count} 就绪`}
+														? "等待资料"
+														: `${library.ready_count}/${library.doc_count} 可检索`}
 											</span>
 										</span>
 									</button>
@@ -881,12 +911,12 @@ export function LibrariesPanel() {
 							<Button
 								type="button"
 								variant="outline"
-								className="w-full rounded-md"
+								className="w-full rounded-md border-dashed"
 								disabled={savingLibrary}
 								onClick={openCreateLibraryDialog}
 							>
 								<Plus data-icon="inline-start" />
-								新建知识库
+								新建资料空间
 							</Button>
 						</div>
 					</Can>
@@ -894,9 +924,12 @@ export function LibrariesPanel() {
 
 				{/* 右栏：文档表 */}
 				<section className="flex min-w-0 flex-1 flex-col">
-					<div className="flex flex-wrap items-end justify-between gap-3 border-b border-border/70 px-5 py-4">
+					<div className="flex flex-wrap items-start justify-between gap-4 border-b border-border/70 bg-card px-5 py-4">
 						<div className="min-w-0 space-y-1">
-							<h3 className="font-heading truncate text-xl font-semibold tracking-tight">
+							<p className="text-meta font-mono tracking-[0.14em] text-cite uppercase">
+								Library workspace
+							</p>
+							<h3 className="font-heading truncate text-xl font-semibold">
 								{selectedLibrary?.name ?? "选择知识库"}
 							</h3>
 							{selectedLibrary?.description?.trim() ? (
@@ -904,17 +937,29 @@ export function LibrariesPanel() {
 									{selectedLibrary.description.trim()}
 								</p>
 							) : null}
-							<p className="text-ui text-muted-foreground">
-								{selectedLibrary
-									? canWriteLibraries
-										? "上传 txt / md / docx / pdf。点行查看详情；支持重索引、下载与删除。"
-										: "点行查看详情与下载。当前角色为只读，无法上传或删除。"
-									: canManageLibraries
-										? "从左侧选择或新建知识库。"
-										: "从左侧选择知识库。"}
-							</p>
+							{selectedLibrary ? (
+								<div className="flex flex-wrap gap-1.5 pt-1">
+									<span className="meta-chip">
+										{selectedLibrary.document_profile || "auto"} 分块
+									</span>
+									<span className="meta-chip">
+										{selectedLibrary.parse_preference || "auto"} 解析
+									</span>
+									{selectedLibrary.requires_reindex ? (
+										<span className="meta-chip border-survey/35 bg-accent text-accent-foreground">
+											需要重索引
+										</span>
+									) : null}
+								</div>
+							) : (
+								<p className="text-ui text-muted-foreground">
+									{canManageLibraries
+										? "从左侧选择或新建资料空间。"
+										: "从左侧选择资料空间。"}
+								</p>
+							)}
 						</div>
-						<div className="flex flex-wrap items-end gap-2">
+						<div className="flex flex-wrap items-center gap-2">
 							<Can cap="writeLibraries">
 								<input
 									ref={fileInputRef}
@@ -932,55 +977,6 @@ export function LibrariesPanel() {
 									onChange={(event) => onReplaceFilePicked(event.target.files)}
 								/>
 							</Can>
-							<Button
-								type="button"
-								variant="outline"
-								className="rounded-md"
-								disabled={loading || !selectedId}
-								onClick={() => {
-									void loadLibraries();
-									if (selectedId) void loadDocuments(selectedId);
-								}}
-							>
-								<RefreshCw data-icon="inline-start" />
-								刷新
-							</Button>
-							<AuthButton
-								cap="writeLibraries"
-								type="button"
-								className="rounded-md"
-								disabled={uploadDisabled}
-								onClick={() => fileInputRef.current?.click()}
-							>
-								<FileUp data-icon="inline-start" />
-								{uploading ? "上传中…" : "上传"}
-							</AuthButton>
-							<AuthButton
-								cap="manageLibraries"
-								type="button"
-								variant="outline"
-								className="rounded-md"
-								disabled={!selectedLibrary || savingLibrary || deletingLibrary}
-								onClick={() => {
-									if (selectedLibrary) openEditLibraryDialog(selectedLibrary);
-								}}
-							>
-								<Pencil data-icon="inline-start" />
-								编辑
-							</AuthButton>
-							<AuthButton
-								cap="manageLibraries"
-								type="button"
-								variant="outline"
-								className="rounded-md"
-								disabled={!selectedLibrary || savingLibrary || deletingLibrary}
-								onClick={() => {
-									if (selectedLibrary) setDeleteLibraryTarget(selectedLibrary);
-								}}
-							>
-								<Trash2 data-icon="inline-start" />
-								删除
-							</AuthButton>
 							{selectedLibrary ? (
 								<Link
 									href="/app/ask"
@@ -989,11 +985,106 @@ export function LibrariesPanel() {
 										"rounded-md",
 									)}
 								>
-									去问答
+									<MessageSquareText data-icon="inline-start" />
+									开始提问
 								</Link>
 							) : null}
+							<AuthButton
+								cap="writeLibraries"
+								type="button"
+								className="rounded-md"
+								disabled={uploadDisabled}
+								onClick={() => fileInputRef.current?.click()}
+							>
+								<FileUp data-icon="inline-start" />
+								{uploading ? "上传中…" : "上传资料"}
+							</AuthButton>
+							<Button
+								type="button"
+								variant="outline"
+								size="icon-sm"
+								className="rounded-md"
+								disabled={loading || !selectedId}
+								onClick={() => {
+									void loadLibraries();
+									if (selectedId) void loadDocuments(selectedId);
+								}}
+							>
+								<RefreshCw />
+								<span className="sr-only">刷新资料</span>
+							</Button>
+							<Can cap="manageLibraries">
+								<DropdownMenu>
+									<DropdownMenuTrigger
+										render={
+											<Button
+												type="button"
+												variant="outline"
+												size="icon-sm"
+												className="rounded-md"
+												disabled={
+													!selectedLibrary || savingLibrary || deletingLibrary
+												}
+											/>
+										}
+									>
+										<Settings2 />
+										<span className="sr-only">资料空间设置</span>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="end" className="min-w-40">
+										<DropdownMenuItem
+											onClick={() => {
+												if (selectedLibrary)
+													openEditLibraryDialog(selectedLibrary);
+											}}
+										>
+											<Pencil />
+											编辑设置
+										</DropdownMenuItem>
+										<DropdownMenuSeparator />
+										<DropdownMenuItem
+											variant="destructive"
+											onClick={() => {
+												if (selectedLibrary)
+													setDeleteLibraryTarget(selectedLibrary);
+											}}
+										>
+											<Trash2 />
+											删除资料空间
+										</DropdownMenuItem>
+									</DropdownMenuContent>
+								</DropdownMenu>
+							</Can>
 						</div>
 					</div>
+
+					{selectedLibrary ? (
+						<div className="grid shrink-0 grid-cols-2 border-b border-border/70 bg-background sm:grid-cols-4">
+							{[
+								["可检索", documentSummary.ready],
+								["处理中", documentSummary.processing],
+								["需处理", documentSummary.failed],
+								["知识片段", documentSummary.chunks],
+							].map(([label, value], index) => (
+								<div
+									key={label}
+									className={cn(
+										"px-5 py-3",
+										index > 0 && "border-l border-border/60",
+										index === 2 && "border-t sm:border-t-0",
+										index === 3 && "border-t sm:border-t-0",
+									)}
+								>
+									<p className="text-meta font-mono text-muted-foreground">
+										{label}
+									</p>
+									<p className="mt-1 text-lg font-semibold tabular-nums text-foreground">
+										{value}
+									</p>
+								</div>
+							))}
+						</div>
+					) : null}
 
 					{(error || librariesError) && (
 						<p className="text-ui mx-5 mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive">
@@ -1008,6 +1099,31 @@ export function LibrariesPanel() {
 					) : null}
 
 					<div className="min-h-0 flex-1 px-5 py-4">
+						{selectedId && documents.length > 0 ? (
+							<div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+								<div>
+									<p className="text-sm font-medium text-foreground">
+										文档台账
+									</p>
+									<p className="text-meta mt-0.5 font-mono text-muted-foreground">
+										显示 {filteredDocuments.length} / {documents.length} 份资料
+									</p>
+								</div>
+								<div className="relative w-full sm:w-72">
+									<Search
+										className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+										aria-hidden
+									/>
+									<Input
+										value={documentQuery}
+										onChange={(event) => setDocumentQuery(event.target.value)}
+										placeholder="搜索显示名或原文件"
+										className="h-9 rounded-md pl-8"
+										aria-label="搜索文档"
+									/>
+								</div>
+							</div>
+						) : null}
 						{!selectedId ? (
 							<div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-border/80 bg-muted/20 px-6 text-center">
 								<p className="text-ui text-muted-foreground">
@@ -1044,6 +1160,24 @@ export function LibrariesPanel() {
 									上传文档
 								</AuthButton>
 							</div>
+						) : filteredDocuments.length === 0 ? (
+							<div className="flex min-h-48 flex-col items-center justify-center border border-dashed border-border/80 bg-muted/20 px-6 text-center">
+								<p className="text-sm font-medium text-foreground">
+									没有匹配的资料
+								</p>
+								<p className="text-ui mt-1 text-muted-foreground">
+									换一个名称或文件名关键词试试。
+								</p>
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									className="mt-2"
+									onClick={() => setDocumentQuery("")}
+								>
+									清除搜索
+								</Button>
+							</div>
 						) : (
 							<div className="max-w-full overflow-x-auto rounded-md border border-border/80">
 								<Table className="table-fixed md:table-auto">
@@ -1067,7 +1201,7 @@ export function LibrariesPanel() {
 										</TableRow>
 									</TableHeader>
 									<TableBody>
-										{documents.map((doc) => {
+										{filteredDocuments.map((doc) => {
 											const busy = busyDocId === doc.id;
 											const processing = doc.status === "processing";
 											const actionCtx: DocActionContext = {
