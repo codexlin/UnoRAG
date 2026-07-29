@@ -9,6 +9,7 @@
 
 | 报告 | 结论 |
 |---|---|
+| [`reports/2026-07-30-webch-unorag-clean-reset.md`](./reports/2026-07-30-webch-unorag-clean-reset.md) | webch 备份后全新重置为纯 UnoRAG 运行栈；公网纵向冒烟与生命周期巡检 **PASS** |
 | [`reports/2026-07-29-webch-preproduction-baseline.md`](./reports/2026-07-29-webch-preproduction-baseline.md) | webch 真实浏览器、真实文件、多 Workspace、隔离、故障与非破坏恢复 **PASS**；环境定位为预发布模拟，不是客户生产 |
 
 日期报告只证明绑定版本和环境。当前产品能力以
@@ -56,7 +57,7 @@
 | 解析与质量 | [`live retrieval baseline`](./reports/2026-07-27-live-retrieval-quality-baseline.md) · [`MinerU provider`](./reports/2026-07-27-mineru-302-provider-smoke.md) · [`MinerU lifecycle`](./reports/2026-07-27-mineru-302-lifecycle-e2e.md) · [`policy upgrade`](./reports/2026-07-27-post-pilot-policy-upgrade-smoke.md) |
 | 私有部署 RC | [`0170ba8 black-box`](./reports/2026-07-27-private-0170ba8-blackbox.md) · [`29b06fe fault/backup`](./reports/2026-07-27-private-29b06fe-fault-backup.md) · [`RC3 browser`](./reports/2026-07-27-private-v1-rc3-browser.md) |
 | API 与签字稿 | [`Public API v1 E2E`](./reports/2026-07-27-public-api-v1-e2e.md) · [`pilot formal`](./reports/2026-07-27-pilot-formal-go-no-go.md) · [`RC3 formal`](./reports/2026-07-27-private-v1-rc3-formal-go-no-go.md) |
-| webch 预发布 | [`2026-07-28 conditional GO`](./reports/2026-07-28-webch-aliyun-pilot-go-no-go.md) · [`2026-07-29 baseline`](./reports/2026-07-29-webch-preproduction-baseline.md) |
+| webch 预发布 | [`2026-07-28 conditional GO`](./reports/2026-07-28-webch-aliyun-pilot-go-no-go.md) · [`2026-07-29 baseline`](./reports/2026-07-29-webch-preproduction-baseline.md) · [`2026-07-30 clean reset`](./reports/2026-07-30-webch-unorag-clean-reset.md) |
 
 历史报告不因后续修复而回写。需要判断当前状态时，回到
 [`../STATUS.md`](../STATUS.md) 和最新目标环境报告。

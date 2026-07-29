@@ -1,6 +1,6 @@
 # UnoRAG 实现状态
 
-> 更新：2026-07-29
+> 更新：2026-07-30
 >
 > 本页是“代码已经做到了什么”的权威摘要。产品定位见
 > [PRODUCT.md](./PRODUCT.md)，技术设计见 [ARCHITECTURE.md](./ARCHITECTURE.md)，
@@ -104,6 +104,12 @@
 非破坏恢复和发布后健康检查，未发现阻断故障。24 小时 soak 属于持续观察项，
 不阻塞预发布基线提交。
 
+2026-07-30 已在校验备份后将 webch 全新重置为纯 UnoRAG 运行栈。新环境使用
+`unorag-webch` Compose project、`unorag` PostgreSQL database/user、
+`unorag_chunks` Qdrant collection 与 `/opt/unorag` 源码目录；公网
+upload → ask → isolation → replace → delete 与生命周期巡检通过，旧运行容器、
+volume 和路径已退出当前运行面。
+
 这不等于对任意客户环境宣称通用 production-ready。正式交付仍必须根据客户环境确认：
 
 1. OIDC/本地身份选择与组织权限模型；
@@ -130,6 +136,8 @@
   创建/切换、Library 状态收敛和回滚 smoke；预发布迁移滞后已关闭。
 - `x-unorag-*`、`unorag-control-plane` 与 `UNORAG_*` 是唯一内部 HMAC
   命名；旧品牌 Header、issuer 和 Secret fallback 已在纯 UnoRAG 基线中移除。
+- webch 已在 2026-07-30 以全新数据卷完成纯 UnoRAG bootstrap；重置前备份和旧
+  源码仅保留在 `/opt/backups`，不属于当前运行路径。
 - edge health 返回控制面/数据面协议与各自 build ref，发布清单继续使用
   digest。协议缺失或不一致必须阻断升级。
 - `81778c5` 已将运行时数据库切换为五个独立登录，FastAPI 启动不再执行 DDL；

@@ -1,6 +1,6 @@
 # UnoRAG 路线图
 
-> 状态：现行（2026-07-29）
+> 状态：现行（2026-07-30）
 >
 > 产品定位、目标客户与商业方向见 [PRODUCT.md](./PRODUCT.md)。
 > 已完成的 Document Lifecycle L0–L8 工程细节以代码与 runbook 为准；旧「私有化落地计划」长文已退役，剩余缺口收敛到本文。
@@ -16,7 +16,7 @@
 | 检索门禁 | active generation + tenant/workspace/ACL |
 | 会话 | 默认临时；主动归档；thread 续聊 + rewrite |
 | Ask 旋钮 | 工作区设置 ⊕ `ask_defaults.py`（不读 `HYBRID_ENABLED` 等产品 env） |
-| 私有化 | Compose 参考拓扑 + Helm 骨架；webch 预发布基线通过，客户生产仍按部署验收 |
+| 私有化 | Compose 参考拓扑 + Helm 骨架；webch 已以纯 UnoRAG 全新重置并通过预发布纵向冒烟，客户生产仍按部署验收 |
 | 质量门禁 | CI fuse / release gates（见 `docs/runbooks/quality-release-gates.md`） |
 
 ## 开始前先决条件（团队 checklist）
