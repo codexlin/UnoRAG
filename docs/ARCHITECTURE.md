@@ -69,7 +69,7 @@ Outbox worker (web)  ──service HMAC──►  FastAPI /v1/internal/projectio
 ```text
 Browser multipart/stream
   → POST /api/libraries/{id}/documents  (Next)
-  → 写入对象存储 (DOCUMENT_STORAGE_ROOT 或客户对象存储)
+  → 写入文档存储（当前为共享 DOCUMENT_STORAGE_ROOT / PVC）
   → 同一事务：document + version + job + audit
   → 202 + job_id
 
@@ -211,7 +211,8 @@ Customer Backend
 | outbox | `pnpm outbox:run` |
 | generation cleanup | lifecycle worker 周期执行；也可用独立 sweeper 入口 |
 
-依赖：PostgreSQL、Qdrant、Redis（生产 replay）、对象卷/存储、OpenAI-compatible LLM/embedding、可选 MinerU。
+依赖：PostgreSQL、Qdrant、Redis（生产 replay）、共享文档卷/PVC、
+OpenAI-compatible LLM/embedding、可选 MinerU。S3/MinIO adapter 尚未交付。
 
 ## 文档地图
 

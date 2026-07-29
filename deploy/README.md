@@ -1,4 +1,4 @@
-# UnoRAG 私有化部署包（L8 + L9 入口）
+# UnoRAG 私有化部署包
 
 本目录是客户可安装的私有部署参考包。首片以 **Docker Compose 单机拓扑** 为主；
 **Helm/K8s 起步骨架** 已提供；镜像 CVE 扫描已进入发布门禁，SBOM 与签名后置。
@@ -24,11 +24,11 @@ deploy/
       init-config.sh        # 复制 example → 真实文件（不覆盖）
       compose-env.sh        # mk_compose / --env-file 助手
       install.sh            # 安装：infra → migrate → app
-      upgrade.sh            # 滚动升级：compose pull + drain + outbox；见 docs/ops/cicd-p0.md
+      upgrade.sh            # 滚动升级：compose pull + drain + outbox；见 docs/ops/cicd.md
       backup.sh             # PostgreSQL / 对象 / Qdrant
       restore.sh            # 恢复（需显式确认）
-      pilot-preflight.sh    # L9：隔离单测 + CI gate（可无 Compose）
-      pilot-smoke.sh        # L9：upload→ask→replace→delete 冒烟
+      pilot-preflight.sh    # 隔离单测 + CI gate（可无 Compose）
+      pilot-smoke.sh        # upload→ask→replace→delete 冒烟
   docker/
     api.Dockerfile
     web.Dockerfile
@@ -68,7 +68,7 @@ cd deploy/compose
 见 [`deploy/helm/README.md`](./helm/README.md)。默认假设 Postgres / Qdrant / Redis
 由客户托管；chart 只部署 web / api / lifecycle-worker / outbox-worker（+ 可选 Ingress / 迁移 Job / PVC）。
 
-## 试点冒烟（L9）
+## 试点冒烟
 
 ```bash
 # 离线（不需要 Compose）：隔离单测 + CI 质量门禁

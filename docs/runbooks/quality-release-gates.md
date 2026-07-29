@@ -1,4 +1,4 @@
-# Quality Release Gates (L7)
+# Quality Release Gates
 
 Golden-set eval is the publish contract. Scores alone never override a fuse.
 
@@ -24,8 +24,9 @@ uv run python scripts/run_release_gates.py --mode release \
 ```
 
 CI：`.github/workflows/ci.yml`（PR + `main` 入口）调用可复用工作流
-`.github/workflows/eval-gates.yml`（L7 deterministic + policy parity）。
-全量 API pytest / web / Docker 构建验证也在 `ci.yml`。见 [`docs/ops/cicd-p0.md`](../ops/cicd-p0.md)。
+`.github/workflows/eval-gates.yml`（deterministic + policy parity）。
+全量 API pytest / web / Docker 构建验证也在 `ci.yml`。见
+[`docs/ops/cicd.md`](../ops/cicd.md)。
 
 ## Layers
 

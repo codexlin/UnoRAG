@@ -1,4 +1,4 @@
-"""UnoRAG Python SDK (v0.1.0)
+# UnoRAG Python SDK (v0.1.0)
 
 Thin HTTP adapter for the frozen Knowledge Retrieve/Ask **public API v1**.
 This package does **not** embed RAG, embeddings, MinerU, or Qdrant — it only

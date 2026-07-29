@@ -34,7 +34,7 @@ Knowledge API 是核心产品契约；Workspace、Python SDK、MCP 和 OpenAI-co
 | 外部 Documents / Versions / Jobs API | **规划中（优先）** | 让业务系统完成知识生命周期接入，不绕过 Control Plane |
 | Python SDK | **可用（0.1.0）** — [`sdk/python/`](../sdk/python/) | 薄 HTTP client（`retrieve` / `ask`），不是嵌入式第二引擎 |
 | MCP server | **已交付 0.1.0**（[`sdk/mcp/`](../sdk/mcp/)） | stdio 工具 `retrieve` / `ask`，经 Python SDK 调同一 HTTP 契约 |
-| OpenAI-compatible endpoint | **规划中（下一项）** | 降低迁移成本；UnoRAG 原生 citation/refusal/trace 契约仍权威 |
+| OpenAI-compatible endpoint | **规划中** | 在公共生命周期 API 之后降低迁移成本；UnoRAG 原生 citation/refusal/trace 契约仍权威 |
 | OAuth-for-apps | **当前产品非目标** | 服务间集成使用可审计、可限制 scope 的 Service Key；只有明确建设公网多租户开发者平台时才重新评估 |
 | 公网多租户 SaaS 网关 | **非目标（远期可选）** | 首版私有化内网集成 |
 
@@ -361,7 +361,7 @@ SDK 不负责：
 
 删除文档、修改 ACL、成员管理等高影响动作不进入首版 MCP。
 
-## OpenAI-compatible 方向（规划 · 下一项）
+## OpenAI-compatible 方向（规划）
 
 兼容层用于让现有 OpenAI client 快速试用，例如将 `model` 映射到指定 knowledge base。标准响应无法完整表达 UnoRAG 的 citation、refusal 和 trace，因此兼容响应需使用扩展字段，同时保留原生 API：
 
@@ -405,7 +405,7 @@ OpenAI-compatible endpoint 不成为新的业务事实源，也不允许绕过 S
 ```text
 同一 Qdrant + active generation + ACL
 同一 Ask 图与 citation/refuse 语义
-同一工作区 ask 默认（可被请求级 overrides 覆盖）
+同一工作区 ask 策略（由网关解析并注入；外部请求不能覆盖算法旋钮）
 ```
 
 差异仅在**调用面与身份模型**，不在两套检索真相。

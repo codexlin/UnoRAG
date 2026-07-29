@@ -110,7 +110,7 @@ Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客
 | 每轮问答强制入库 | 默认临时；主动归档 |
 | 用户画像 / 长期跨会话记忆 | 企业合规与产品边界；会话窗口够用即可 |
 | 云 SaaS 计费套餐、跨 region active-active | 首版私有化优先 |
-| 全量 antivirus/DLP 产品化、SBOM 流水线 | 运维增强，不挡核心路径 |
+| 全量 antivirus/DLP 产品化、SBOM 与镜像签名 | Trivy 镜像扫描已交付；其余属于运维与合规增强 |
 | OAuth-for-apps | 当前产品非目标；服务间接入使用可审计、可限制 scope 的 Service Key。只有明确建设公网多租户开发者平台时才重新评估 |
 
 ## 会话模型（产品合同）

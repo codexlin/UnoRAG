@@ -77,8 +77,9 @@ Payload 含 `status=firing|resolved` 与 `workspace_id` / `trace_id` / `job_id` 
 | R3 模型 | 同上 | 明确失败；active 不变 |
 | R4 MinerU | 同上 | `error_code`/stage 可诊断；队列可继续 |
 
-## 5. 非目标（本草稿不覆盖）
+## 5. 非目标（本 runbook 不覆盖）
 
 - 完整 Grafana/Tempo/Loki 大盘
-- 成本面板、OIDC、MCP
+- 成本面板与 OIDC 运维
+- MCP adapter 的宿主进程配置与监控
 - 客户侧 PagerDuty 集成细则（由部署方按上表映射）

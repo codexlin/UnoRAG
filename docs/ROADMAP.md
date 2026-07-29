@@ -78,15 +78,6 @@
 
 Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功能挤占隔离、一致性、API 契约、可观测和交付工作。所有 SDK/协议适配必须调用同一 HTTP API，不产生第二套权限、版本、索引或检索真相。
 
-### 私有化稳固工作包（进行中）
-
-| 项 | 说明 |
-|----|------|
-| Ask 消融最小骨架 | `docs/runbooks/ask-ablation-eval.md`（实验，**不进** release gate） |
-| 稳定性电池 | `deploy/compose/scripts/private-stability.sh`（发布 go/no-go） |
-| Outbox | Compose/Helm `outbox-worker` 投影文库变更 |
-| 安全 fuse | ACL / tenant / active generation / 拒答契约（release gate） |
-
 ## 近 / 中 / 远期
 
 时间盒按「受控私有化试点 Conditional GO → Knowledge API 可稳定嵌入 → 协议与场景扩展」排列，不按虚构日期硬锁。
@@ -105,6 +96,7 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 | 最低可运维观测 | 运行 | 关联 ID、结构化日志、健康指标和核心告警可用；保留业务 Trace Drawer。完整 OTel 覆盖和集中平台不阻塞 P0 |
 | Usage 原始采集 | 运行 | 采集 Chat/Embedding token 与模型维度到 trace/usage ledger；成本核算和 Workspace 面板后置 |
 | 控制面 E2E | 工程 | 覆盖上传→ready→ask→替换→ACL→删除 |
+| 目标容量基线 | 交付 | 在目标规格记录并发、队列、模型/MinerU 限额和 P50/P95；形成扩容与限流建议 |
 | 试点 go/no-go 签字 | 交付 | 根据目标环境完成隔离、故障注入、恢复与运维责任验收，形成书面 Conditional GO |
 
 ### P1 / 中期：稳定 Knowledge API
@@ -118,6 +110,8 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 | 稳定 OpenAPI | API | **Retrieve/Ask v1.0 已落地**；后续资源逐项补入，不从路线图隐式承诺契约 |
 | Documents / Versions / Jobs | API | 外部上传、替换、删除、状态查询复用 Control Plane 与 `app.jobs`；支持 idempotency key |
 | Service Key scopes v2 | 安全 | `documents:read/write`、`retrieve`、`answer` 等最小权限 scope；集群级限流与更深审计 |
+| OIDC Provider | 身份 | 接通至少一个真实企业 IdP，验证 callback、账号绑定、组织归属与退出 |
+| S3/MinIO adapter | 存储 | 用受支持对象存储替代共享 PVC，保持 storage key、版本和 Worker 读取不变量 |
 | Feedback / Trace API | 质量 | 集成方可回传反馈并按 trace_id 获取脱敏调试信息 |
 | 对外流式 Answer | API | 事件名已在 v1 契约冻结；公开路径待 Answer 资源落地 |
 | 表格 / 受限多步加强 | 内核 | 在现有 table path 上加深，不做开放工具生态 |
@@ -125,13 +119,14 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 
 ### P2 / 中后期：开发者接入面
 
-目标：在稳定 HTTP 契约上降低集成成本。**下一项：OpenAI-compatible API（薄适配本契约）。**
+目标：在 P1 公共生命周期契约稳定后降低集成成本。开发者接入层的下一项是
+OpenAI-compatible API，但它不应越过 Public Documents / Versions / Jobs。
 
 | 项 | 说明 |
 |----|------|
 | Python SDK | **已交付 0.1.0**（[`sdk/python/`](../sdk/python/)）：同步 `retrieve`/`ask`、类型模型、稳定错误码；后续可加 async/SSE/重试 |
 | MCP Server | **已交付 0.1.0**（[`sdk/mcp/`](../sdk/mcp/)）：stdio 工具 `retrieve`/`ask`（1:1 HTTP）；经 Python SDK，不嵌入引擎 |
-| OpenAI-compatible adapter | **下一项**：兼容现有 client；citation/refusal/trace 放扩展字段，原生 API 仍权威 |
+| OpenAI-compatible adapter | **规划中**：兼容现有 client；citation/refusal/trace 放扩展字段，原生 API 仍权威 |
 | TypeScript SDK | 在 Python SDK 和 OpenAPI 经真实集成验证后生成或实现 |
 | Reference integrations | 客服/售后、企业 Agent、内部门户示例，而不只提供 curl |
 
@@ -139,8 +134,8 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 
 | 项 | 说明 |
 |----|------|
-| OIDC / SSO 与组织同步 | 企业增强；本地密码 + 邀请不阻塞受控试点 |
-| SBOM / 镜像扫描 | 采购与供应链安全增强；按客户合规要求进入具体交付，不绑定通用 P0 |
+| 多 IdP / SCIM 与组织同步 | 在首个 OIDC Provider 之上扩展目录同步和企业生命周期管理 |
+| SBOM / 镜像签名 | Trivy 镜像扫描与 digest manifest 已交付；SBOM、Cosign 与 provenance 按客户合规要求进入具体交付 |
 | Audit / Archive 深化 | actor/IP/UA、异步导出、更多 query/plan/judge/版本字段 |
 | 成本分析面板 | 基于已采集 usage ledger 提供工作区、模型和时间维度分析 |
 | Group ACL 管理 | 在现有 workspace / 指定成员 ACL 上补 group UI 和组织映射 |
@@ -185,11 +180,3 @@ Workspace 继续作为官方客户端和管理控制台，但不得让纯 UI 功
 - 每轮强制归档 / 用户画像长期记忆
 - 为「看起来像 SaaS 平台」而堆计费与多 region
 - OAuth-for-apps；只有明确建设公网多租户开发者平台时才重新评估
-
-## 已退役文档
-
-| 原文档 | 处理 |
-|--------|------|
-| `docs/plans/2026-07-24-private-deployment-production-roadmap.md` | 已删；完成项以代码/runbook 为准，缺口并入本文 |
-| `docs/architecture/enterprise-rag-saas-design.md` | 已删；现行架构见 [ARCHITECTURE.md](./ARCHITECTURE.md) |
-| `docs/architecture/convergence-plan.md` | 已删；阶段性任务已完成，现状与缺口分别进入 STATUS / ROADMAP |

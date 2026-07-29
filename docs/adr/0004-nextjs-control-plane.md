@@ -70,9 +70,11 @@ gone (permanent HTTP 410). Existing FastAPI `public.*` metadata remains a derive
 compatibility representation until backfill and projection cleanup finish.
 
 Document ingestion does not add a second set of Next.js claim, heartbeat,
-progress, and completion endpoints. Next.js streams the source to
-customer-owned object storage and transactionally creates document, version,
-job, and audit rows. A Python worker claims the PostgreSQL job directly,
+progress, and completion endpoints. Next.js streams the source to the
+deployment-provided document store and transactionally creates document,
+version, job, and audit rows. The current production reference uses a shared
+volume/PVC; S3/MinIO requires the planned storage adapter. A Python worker
+claims the PostgreSQL job directly,
 indexes an isolated generation, and uses a guarded PostgreSQL transaction to
 switch the product active pointer and the RAG active-generation read model.
 Qdrant active hints and old-generation cleanup are recoverable side effects;

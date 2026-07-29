@@ -1,4 +1,4 @@
-# 试点验收 Runbook（L9）
+# 试点验收 Runbook
 
 目标：用真实（或客户书面同意的）工作负载验证产品承诺，形成版本化
 **go / no-go**。配套模板与清单见 [`docs/acceptance/`](../acceptance/README.md)。
@@ -60,7 +60,7 @@ Viewer 账号（若已配置）：上传/删除应 403。
 覆盖：
 
 - `apps/api/tests/test_access_scope.py`（Qdrant tenant/workspace/group）
-- L7 CI gate（`fuse` / `isolation` / 拒答硬熔断）
+- CI release gate（`fuse` / `isolation` / 拒答硬熔断）
 
 ### 3.2 运行时抽检（试点环境）
 
@@ -123,10 +123,12 @@ dead/stuck/orphan 进入监控和运维队列
 
 **仓库内验收文档与脚本就绪 ≠ 已获得客户/试点 GO。**
 
-## 8. 供应链（SBOM）说明
+## 8. 供应链说明
 
-受控试点 P0 不阻塞完整 SBOM 流水线。操作建议：
+受控试点不强制完整 SBOM 与签名流水线。操作建议：
 
 - Compose / Helm 已 pin 基础镜像 tag（见 `deploy/compose/env.example`）。
-- 客户交付前可自行对构建产物运行 `syft` / `trivy` 等并归档。
-- 未接入 CI 扫描时，必须写入已知限制，不得暗示「已完成镜像安全认证」。
+- 发布 workflow 已对四张镜像执行 Trivy `HIGH/CRITICAL` 门禁并产出 digest manifest；
+  客户交付时归档该版本的扫描日志与 manifest。
+- 客户要求 SBOM、签名或 provenance 时，另行运行 `syft` / `cosign` 等并纳入
+  本次交付门禁；未执行时写入已知限制。

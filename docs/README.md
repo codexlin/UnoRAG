@@ -31,14 +31,7 @@
 | 目录 | 用途 |
 |------|------|
 | [runbooks/](./runbooks/) | 私有化部署、lifecycle 迁移、质量门禁、试点操作 |
-| [acceptance/](./acceptance/) | L9 试点 go/no-go 与 production-ready 清单 |
+| [ops/cicd.md](./ops/cicd.md) | CI、四镜像发布、digest manifest 与升级闭环 |
+| [acceptance/](./acceptance/) | 试点 go/no-go、production-ready 清单与历史验收证据 |
 | [case-studies/](./case-studies/) | 真实问题复盘、根因分析、修复设计与面试叙事 |
 | [design/northline-theme.md](./design/northline-theme.md) | UI 主题 Northline |
-
-## 已删除的过时文档
-
-| 原路径 | 原因 |
-|--------|------|
-| `docs/architecture/enterprise-rag-saas-design.md` | 能力盘点与差距已过时；由 PRODUCT + ARCHITECTURE + ROADMAP 替代 |
-| `docs/plans/2026-07-24-private-deployment-production-roadmap.md` | 文首现状描述已不符（ARQ/代理入库）；完成项以代码为准，缺口并入 ROADMAP |
-| `docs/architecture/convergence-plan.md` | 阶段性收敛计划已完成且混入过时状态；事实迁入 STATUS / ARCHITECTURE / ROADMAP |

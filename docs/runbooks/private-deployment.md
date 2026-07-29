@@ -1,4 +1,4 @@
-# Private Deployment Runbook（L8）
+# Private Deployment Runbook
 
 客户环境安装、升级、回滚与备份恢复。配套包：[`deploy/`](../../deploy/README.md)。
 
@@ -46,8 +46,10 @@ cd deploy/compose
 Compose 会把 `UNORAG_INTERNAL_SECRET` 映射为 API 的 `INTERNAL_AUTH_SECRET`，
 无需再填第二份。
 
-外部托管 Postgres/Qdrant/Redis/S3 时，改 `runtime.env` / `runtime.secret` 中的 URL 即可；
-可去掉对应 Compose 服务（需自行保证网络可达）。
+外部托管 Postgres/Qdrant/Redis 时，改 `runtime.env` / `runtime.secret` 中的连接即可，
+并可在部署覆盖中去掉对应 Compose 服务（需自行保证网络可达）。当前文档存储必须由
+web 与 lifecycle worker 共享 `DOCUMENT_STORAGE_ROOT`；S3/MinIO adapter 尚未交付，
+不能只填 URL 就切换。
 勿 `source` secret 文件污染宿主机 shell，也不要直接执行
 `docker compose --env-file ...`（宿主机同名变量优先级更高）。统一使用
 `source scripts/compose-env.sh && mk_compose ...`；需要 bootstrap 配置时使用
@@ -116,12 +118,14 @@ DATABASE_URL=... pnpm lifecycle:inspect
 
 ## 4. 升级
 
-默认路径是 **Registry pull**（不是本机 `compose build`）。须提供 pin 过的 release（拒绝 `latest` / 空 tag）。详见 [`docs/ops/cicd-p0.md`](../ops/cicd-p0.md)。
+默认路径是 **Registry pull**（不是本机 `compose build`）。须提供 pin 过的
+release（拒绝 `latest` / 空 tag）。详见
+[`docs/ops/cicd.md`](../ops/cicd.md)。
 
 ```bash
 ./scripts/backup.sh ./backups/pre-upgrade
 ./scripts/upgrade.sh --manifest /path/to/release.env
-# 或：./scripts/upgrade.sh --web IMG --api IMG --migrator IMG
+# 或：./scripts/upgrade.sh --web IMG --api IMG --migrator IMG --outbox IMG
 # 或：./scripts/upgrade.sh --from-runtime   # 使用 runtime.env 已有 pin
 ```
 
@@ -138,7 +142,9 @@ DATABASE_URL=... pnpm lifecycle:inspect
 ## 5. 回滚
 
 1. 停止写入（或 drain worker）。
-2. 将 `UNORAG_WEB_IMAGE` / `UNORAG_WEB_MIGRATOR_IMAGE` / `UNORAG_API_IMAGE` 指回上一版本（或重跑升级脚本的自动应用回滚），
+2. 将 `UNORAG_WEB_IMAGE` / `UNORAG_WEB_MIGRATOR_IMAGE` /
+   `UNORAG_API_IMAGE` / `UNORAG_OUTBOX_IMAGE` 指回上一版本
+   （或重跑升级脚本的自动应用回滚），
    `source scripts/compose-env.sh && mk_compose up -d api web lifecycle-worker outbox-worker caddy`。
 3. **不要**盲目 down-migrate Schema。Additive 列可保留；若版本要求恢复数据，
    使用备份按第 6 节 restore。
@@ -217,7 +223,7 @@ override 文件中加 `mem_limit` / `cpus`，并外接日志栈。
 私有试点优先用 Resend 邮件接 `ops/min_alerts`（飞书 webhook 可选后置）。复制 `ops/min_alerts/env.example` → `ops/min_alerts/.env`，至少配置：
 
 - `RESEND_API_KEY` · `ALERT_EMAIL_FROM` · `ALERT_EMAIL_TO`
-- `UNORAG_HEALTH_URL`（经边缘，如 `https://webch.cn/api/rag/health`）
+- `UNORAG_HEALTH_URL`（经边缘，如 `https://unorag.example.com/api/rag/health`）
 - 可选：`DATABASE_URL`、`LIFECYCLE_WORKER_READY_FILE`、`DOCUMENT_STORAGE_ROOT`
 
 周期执行：`python3 ops/min_alerts/check.py once`（详见 [`ops/min_alerts/README.md`](../../ops/min_alerts/README.md)）。密钥勿入库。
@@ -244,14 +250,15 @@ helm upgrade --install unorag ./deploy/helm/unorag -n unorag \
 
 细节与密钥键名见 [`deploy/helm/README.md`](../../deploy/helm/README.md)。
 
-## 10. 本片后置
+## 10. 当前后置
 
 - Helm 容量参数、HPA、PDB、NetworkPolicy 硬化
-- SBOM、镜像 digest 锁定、依赖/镜像 CVE 扫描流水线
+- SBOM、Cosign 签名与 provenance
 - MinIO/S3 作为一等对象后端（当前默认共享卷 / PVC）
 
-**SBOM 薄说明：** Compose/Helm 已 pin 镜像 tag。完整 SBOM/CVE CI 后置；
-客户交付前可对构建镜像自行跑 `syft`/`trivy` 并归档。未扫描须写入已知限制。
+**供应链说明：** release workflow 已对 web / api / migrator / outbox 四张镜像执行
+Trivy `HIGH/CRITICAL` 门禁，并产出 digest manifest。客户交付时应归档对应扫描日志；
+完整 SBOM、Cosign 签名和 provenance 仍后置。
 
 ## 11. 本地验证清单
 
@@ -264,7 +271,7 @@ curl -sf http://localhost/api/rag/health
 # 上传一个 md，等待 ready，Ask 一次
 DATABASE_URL=postgresql://... pnpm --dir ../../apps/web lifecycle:inspect
 
-# L9 冒烟（可选；栈/密钥不可用时 exit 2 干净跳过）
+# 试点冒烟（可选；栈/密钥不可用时 exit 2 干净跳过）
 ./scripts/pilot-smoke.sh
 ```
 

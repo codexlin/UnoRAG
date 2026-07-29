@@ -1,4 +1,4 @@
-# 备份 / 恢复验收清单（绑定 L8）
+# 备份 / 恢复验收清单
 
 脚本：
 
@@ -68,7 +68,7 @@ CONFIRM=YES ./scripts/restore.sh ./backups/pilot-YYYYMMDDTHHMMSS
 
 ## 6. 失败判定
 
-以下任一即 **FAIL**（L9 备份项 NO-GO）：
+以下任一即 **FAIL**（备份项 NO-GO）：
 
 - 恢复后 active pointer 与 Qdrant 可见 generation 不一致导致混答或空答且无法解释  
 - citation 指向不存在的 version / 缺失对象  

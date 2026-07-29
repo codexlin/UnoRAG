@@ -165,7 +165,7 @@ Tests mock the `unorag` client — no live UnoRAG server required.
 
 ## Out of scope (0.1.0)
 
-- OpenAI-compatible HTTP API (next roadmap item)
+- OpenAI-compatible HTTP API (planned after the public lifecycle API)
 - Documents / Versions / Jobs tools
 - Public streaming Ask
 - High-impact write / ACL / membership actions

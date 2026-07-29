@@ -250,8 +250,21 @@ API PostgreSQL 测试按测试文件中的环境变量说明配置。SKIP 不是
 | 操作步骤 | `docs/runbooks/` | 必须可执行，不放产品宣传 |
 | 验收证据 | `docs/acceptance/reports/` | 日期 + 环境 + commit；写明 PASS/FAIL/SKIP |
 
-历史报告不删除，也不回写成当前状态。数量明显增长后按月份移动到
-`docs/acceptance/reports/archive/YYYY-MM/`，同时更新索引和相对链接。
+历史报告不删除，也不回写成当前状态。先在 `docs/acceptance/README.md` 按主题和
+日期完整索引；只有报告数量影响浏览时才按月份移动到
+`docs/acceptance/reports/archive/YYYY-MM/`，并在同一提交更新全部相对链接。
+
+### Markdown 文件分类
+
+| 路径 | 性质 | 维护方式 |
+|---|---|---|
+| `README*.md`、`docs/*.md` | 产品与当前事实 | 能力变化时同步更新，避免阶段编号和聊天背景 |
+| `docs/adr/*.md` | 已接受决策 | 保留当时动机；实现边界变化可补充现状说明 |
+| `docs/runbooks/`、`docs/ops/`、`deploy/**/README.md` | 可执行运维说明 | 必须与脚本、镜像、配置和探针逐项一致 |
+| `docs/acceptance/reports/` | 版本化历史证据 | 不回写结果；由 acceptance 索引解释新旧关系 |
+| `apps/*/README.md`、`sdk/*/README.md`、`examples/*/README.md` | 子系统入口 | 只描述该目录的安装、契约和边界 |
+| `testdata/**/*.md`、`apps/api/tests/fixtures/*.md` | 黄金集/解析 fixture | 内容即测试数据，不按产品文案清理 |
+| `apps/web/AGENTS.md`、`apps/web/CLAUDE.md` | 工具指令 | 不属于产品文档，随框架工具规则维护 |
 
 ## 清理规则
 

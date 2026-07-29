@@ -1,9 +1,10 @@
-# UnoRAG Helm chart (L8 starter)
+# UnoRAG Helm chart
 
 Kubernetes starter for customer private deployments. Complements
 [`deploy/compose/`](../compose/) — Compose remains the single-node reference;
-this chart targets multi-replica production with **external** Postgres / Qdrant /
-Redis / object storage.
+this starter chart targets multi-replica deployments with **external**
+Postgres / Qdrant / Redis and a shared `ReadWriteMany` documents PVC. S3/MinIO
+is not yet a supported storage adapter.
 
 ## Layout
 

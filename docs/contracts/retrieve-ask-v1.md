@@ -210,11 +210,11 @@ When public stream ships (planned `/api/v1/answer/stream`), it must reuse these 
 
 - **Python SDK (0.1.0):** [`../../sdk/python/`](../../sdk/python/) — sync `retrieve` / `ask` only; no embedded engine
 - **MCP Server (0.1.0):** [`../../sdk/mcp/`](../../sdk/mcp/) — stdio tools `retrieve` / `ask` (1:1 over the Python SDK); no embedded engine
-- **Next:** OpenAI-compatible API (still thin over this HTTP surface)
+- **Planned:** OpenAI-compatible API (still thin over this HTTP surface)
 
 ## Non-goals (explicitly out of v1)
 
-- OpenAI-compatible adapter (next roadmap item; thin on this kernel)
+- OpenAI-compatible adapter (planned; thin on this kernel)
 - External Documents / Versions / Jobs HTTP API
 - Public streaming Ask/Answer path
 - Client-supplied algorithm knobs (`ask_overrides`, hybrid/rerank/top_k policy internals)
