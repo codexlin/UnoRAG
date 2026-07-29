@@ -22,6 +22,24 @@ BEGIN
 		'unorag_worker_login',
 		'app.jobs',
 		'SELECT,UPDATE'
+	) OR NOT has_column_privilege(
+		'unorag_worker_login',
+		'app.jobs',
+		'payload',
+		'UPDATE'
+	) OR NOT has_table_privilege(
+		'unorag_worker_login',
+		'app.outbox_events',
+		'INSERT'
+	) OR NOT has_column_privilege(
+		'unorag_worker_login',
+		'app.outbox_events',
+		'idempotency_key',
+		'SELECT'
+	) OR has_table_privilege(
+		'unorag_worker_login',
+		'app.outbox_events',
+		'SELECT'
 	) OR NOT has_table_privilege(
 		'unorag_worker_login',
 		'public.documents',

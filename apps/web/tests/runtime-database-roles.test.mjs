@@ -39,9 +39,33 @@ test("runtime roles grant API and outbox only their owned tables", async () => {
 		roles,
 		/GRANT UPDATE \(status, doc_count, ready_count, updated_at\)\s+ON public\.libraries TO unorag_worker;/s,
 	);
+	assert.match(
+		roles,
+		/GRANT UPDATE \([\s\S]*\bpayload,[\s\S]*\) ON app\.jobs TO unorag_worker;/,
+	);
+	assert.match(
+		roles,
+		/GRANT SELECT \(idempotency_key\) ON app\.outbox_events TO unorag_worker;/,
+	);
 	assert.doesNotMatch(
 		roles,
 		/GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO unorag_api/,
+	);
+});
+
+test("runtime verification covers complex parse and library finalization grants", async () => {
+	const verification = await source("ops/postgres/verify-runtime-roles.sql");
+	assert.match(
+		verification,
+		/'app\.jobs',\s*'payload',\s*'UPDATE'/s,
+	);
+	assert.match(
+		verification,
+		/'app\.outbox_events',\s*'idempotency_key',\s*'SELECT'/s,
+	);
+	assert.match(
+		verification,
+		/'app\.outbox_events',\s*'SELECT'/s,
 	);
 });
 

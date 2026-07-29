@@ -71,6 +71,7 @@ GRANT UPDATE (
 	progress_total,
 	attempt,
 	next_attempt_at,
+	payload,
 	result,
 	error_code,
 	error,
@@ -125,6 +126,9 @@ GRANT UPDATE (
 
 GRANT INSERT, UPDATE, DELETE ON app.document_active_versions TO unorag_worker;
 GRANT INSERT ON app.audit_logs, app.outbox_events TO unorag_worker;
+-- ON CONFLICT (idempotency_key) needs read access to the conflict target.
+-- Keep this column-scoped so the worker cannot inspect unrelated outbox payloads.
+GRANT SELECT (idempotency_key) ON app.outbox_events TO unorag_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
 	rag.active_document_generations,
 	rag.generation_cleanup_queue
