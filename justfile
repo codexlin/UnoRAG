@@ -46,14 +46,14 @@ check: brand
 
 # --- images ---
 
-# Build three images locally (no push). Writes dist/release/release-local.env
+# Build four images locally (no push). Writes dist/release/release-local.env
 # Usage: just images v0.0.1 [linux/amd64|local]
 images tag platform=default_platform:
 	#!/usr/bin/env bash
 	[[ -n "{{tag}}" ]] || { echo "error: pass tag (never latest), e.g. just images v0.0.1" >&2; exit 1; }
 	./scripts/release/local-images.sh build --tag "{{tag}}" --platform "{{platform}}" --out "{{out}}"
 
-# Build + push to REGISTRY/unorag:{web,api,migrator}-TAG + digest manifest
+# Build + push web, migrator, API, and outbox images + digest manifest
 # Usage: just push v0.0.1 registry.example.com/ns [linux/amd64]
 push tag registry platform=default_platform:
 	#!/usr/bin/env bash

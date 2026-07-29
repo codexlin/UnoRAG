@@ -2,7 +2,7 @@ name: ci
 
 # P0 CI closed loop (build / test / scan-in-repo / image build verify).
 # Does NOT push to registry, read production secrets, or SSH deploy.
-# Release image push: see release-images.yml (skeleton; needs ACR secrets).
+# Release image push: see release-images.yml (requires ACR secrets for real push).
 # Deploy with approval: deploy.yml (deferred).
 #
 # Specialized L7 gates also live in eval-gates.yml (reusable); this workflow
@@ -103,6 +103,15 @@ jobs:
           push: false
           load: true
           tags: unorag-web-migrator:ci
+      - name: Build outbox worker (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/web.Dockerfile
+          target: outbox
+          push: false
+          load: true
+          tags: unorag-outbox:ci
       - name: Build api (no push)
         uses: docker/build-push-action@v6
         with:

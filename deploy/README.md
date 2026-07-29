@@ -1,7 +1,7 @@
 # UnoRAG 私有化部署包（L8 + L9 入口）
 
 本目录是客户可安装的私有部署参考包。首片以 **Docker Compose 单机拓扑** 为主；
-**Helm/K8s 起步骨架** 已提供；SBOM/镜像安全扫描仍后置。
+**Helm/K8s 起步骨架** 已提供；镜像 CVE 扫描已进入发布门禁，SBOM 与签名后置。
 
 产品定位与开工 checklist：[`docs/PRODUCT.md`](../docs/PRODUCT.md) ·
 [`docs/ROADMAP.md`](../docs/ROADMAP.md)。
@@ -84,7 +84,7 @@ cd deploy/compose
 
 ## 供应链 / SBOM（薄说明）
 
-`release-images.yml` 已对 web / api / migrator 三张发布镜像执行 Trivy
+`release-images.yml` 已对 web / api / migrator / outbox 四张发布镜像执行 Trivy
 `HIGH/CRITICAL` CVE 门禁；扫描未通过时不产出 release manifest。完整 SBOM、签名和
 证明材料仍后置。交付前：
 

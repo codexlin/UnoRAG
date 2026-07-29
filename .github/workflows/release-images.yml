@@ -78,18 +78,22 @@ jobs:
             ghcr_repo="ghcr.io/${owner}/unorag"
             echo "web_tags=${acr_repo}:web-${tag},${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
             echo "api_tags=${acr_repo}:api-${tag},${ghcr_repo}:api-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "outbox_tags=${acr_repo}:outbox-${tag},${ghcr_repo}:outbox-${tag}" >> "${GITHUB_OUTPUT}"
             echo "migrator_tags=${acr_repo}:migrator-${tag},${ghcr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
             echo "acr_repo=${acr_repo}" >> "${GITHUB_OUTPUT}"
             echo "ghcr_repo=${ghcr_repo}" >> "${GITHUB_OUTPUT}"
             echo "web_scan_ref=${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
             echo "api_scan_ref=${ghcr_repo}:api-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "outbox_scan_ref=${ghcr_repo}:outbox-${tag}" >> "${GITHUB_OUTPUT}"
             echo "migrator_scan_ref=${ghcr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
           else
             echo "web_tags=unorag-web:${tag}" >> "${GITHUB_OUTPUT}"
             echo "api_tags=unorag-api:${tag}" >> "${GITHUB_OUTPUT}"
+            echo "outbox_tags=unorag-outbox:${tag}" >> "${GITHUB_OUTPUT}"
             echo "migrator_tags=unorag-web-migrator:${tag}" >> "${GITHUB_OUTPUT}"
             echo "web_scan_ref=unorag-web:${tag}" >> "${GITHUB_OUTPUT}"
             echo "api_scan_ref=unorag-api:${tag}" >> "${GITHUB_OUTPUT}"
+            echo "outbox_scan_ref=unorag-outbox:${tag}" >> "${GITHUB_OUTPUT}"
             echo "migrator_scan_ref=unorag-web-migrator:${tag}" >> "${GITHUB_OUTPUT}"
           fi
 
@@ -158,6 +162,17 @@ jobs:
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.api_tags }}
 
+      - name: Build and publish outbox worker
+        id: outbox
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/web.Dockerfile
+          target: outbox
+          push: ${{ steps.meta.outputs.dry_run != 'true' }}
+          load: ${{ steps.meta.outputs.dry_run == 'true' }}
+          tags: ${{ steps.meta.outputs.outbox_tags }}
+
       - name: Scan web image
         uses: aquasecurity/trivy-action@0.33.1
         with:
@@ -185,6 +200,15 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
 
+      - name: Scan outbox worker image
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ steps.meta.outputs.outbox_scan_ref }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
       - name: Emit release manifests
         env:
           DRY_RUN: ${{ steps.meta.outputs.dry_run }}
@@ -193,6 +217,7 @@ jobs:
           GHCR_REPO: ${{ steps.meta.outputs.ghcr_repo }}
           WEB_DIGEST: ${{ steps.web.outputs.digest }}
           API_DIGEST: ${{ steps.api.outputs.digest }}
+          OUTBOX_DIGEST: ${{ steps.outbox.outputs.digest }}
           MIGRATOR_DIGEST: ${{ steps.migrator.outputs.digest }}
         run: |
           set -euo pipefail
@@ -203,20 +228,23 @@ jobs:
           UNORAG_WEB_IMAGE=unorag-web:${TAG}
           UNORAG_WEB_MIGRATOR_IMAGE=unorag-web-migrator:${TAG}
           UNORAG_API_IMAGE=unorag-api:${TAG}
+          UNORAG_OUTBOX_IMAGE=unorag-outbox:${TAG}
           EOF
           else
-            for digest in "${WEB_DIGEST}" "${API_DIGEST}" "${MIGRATOR_DIGEST}"; do
+            for digest in "${WEB_DIGEST}" "${API_DIGEST}" "${OUTBOX_DIGEST}" "${MIGRATOR_DIGEST}"; do
               [[ "${digest}" == sha256:* ]] || { echo "missing image digest" >&2; exit 1; }
             done
             cat > /tmp/unorag-release/release-acr.env <<EOF
           UNORAG_WEB_IMAGE=${ACR_REPO}@${WEB_DIGEST}
           UNORAG_WEB_MIGRATOR_IMAGE=${ACR_REPO}@${MIGRATOR_DIGEST}
           UNORAG_API_IMAGE=${ACR_REPO}@${API_DIGEST}
+          UNORAG_OUTBOX_IMAGE=${ACR_REPO}@${OUTBOX_DIGEST}
           EOF
             cat > /tmp/unorag-release/release-ghcr.env <<EOF
           UNORAG_WEB_IMAGE=${GHCR_REPO}@${WEB_DIGEST}
           UNORAG_WEB_MIGRATOR_IMAGE=${GHCR_REPO}@${MIGRATOR_DIGEST}
           UNORAG_API_IMAGE=${GHCR_REPO}@${API_DIGEST}
+          UNORAG_OUTBOX_IMAGE=${GHCR_REPO}@${OUTBOX_DIGEST}
           EOF
           fi
 

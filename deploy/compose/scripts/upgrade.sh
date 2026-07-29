@@ -383,7 +383,9 @@ fi
 
 if [[ "$SKIP_SMOKE" -eq 0 && -x "$SMOKE_SCRIPT" ]]; then
 	log "running pilot-smoke.sh"
-	if ! "$SMOKE_SCRIPT"; then
+	if "$SMOKE_SCRIPT"; then
+		:
+	else
 		smoke_rc=$?
 		if [[ "$smoke_rc" -eq 2 ]]; then
 			warn "pilot-smoke SKIP (exit 2) — upgrade continues; investigate credentials/stack"
