@@ -17,6 +17,42 @@ UnoRAG 将企业内部文档转化为可治理、可调用、可核验的知识�
 它关注的不是“把文档塞进向量库”，而是企业 RAG 真正困难的部分：检索前权限过滤、
 文档版本原子切换、复杂文档结构保留、有据引用、证据不足时拒答，以及可执行的交付验收。
 
+## 快速开始
+
+### 私有部署
+
+需要 Docker 与 Docker Compose。初始化后填写生成的三个配置文件，再执行安装：
+
+```bash
+cd deploy/compose
+./scripts/init-config.sh
+# 编辑 ../config/runtime.env、runtime.secret、bootstrap.env
+./scripts/install.sh
+```
+
+安装完成后访问 <http://localhost/>，健康检查：
+
+```bash
+curl -sf http://localhost/api/rag/health
+```
+
+升级、回滚、备份、恢复与 Helm 见[私有化部署指南](./deploy/README.md)。
+
+### 本地开发
+
+需要 Docker、Node.js 22、pnpm 9、Python 3.12+ 与
+[uv](https://docs.astral.sh/uv/)：
+
+```bash
+docker compose up -d
+cp -n apps/web/.env.example apps/web/.env.local
+cp -n apps/api/.env.example apps/api/.env
+```
+
+这一步只启动 PostgreSQL、Qdrant 和 Redis。还需配置共享密钥、文档目录和模型，
+并分别启动 Web、API、lifecycle worker 与 outbox worker。完整可复制流程见
+[本地开发指南](./docs/DEV.md)。
+
 ## 为什么选择 UnoRAG
 
 | 企业需求 | UnoRAG 的处理方式 |

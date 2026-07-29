@@ -19,6 +19,45 @@ It is designed around the parts that make enterprise RAG trustworthy: access
 control before retrieval, atomic document versions, structure-aware ingestion,
 traceable citations, explicit refusal, and deployment-level acceptance.
 
+## Quick Start
+
+### Private deployment
+
+Docker and Docker Compose are required. Initialize the split configuration,
+fill the three generated files, and run the installer:
+
+```bash
+cd deploy/compose
+./scripts/init-config.sh
+# Edit ../config/runtime.env, runtime.secret, and bootstrap.env
+./scripts/install.sh
+```
+
+Open <http://localhost/> after installation. Check readiness with:
+
+```bash
+curl -sf http://localhost/api/rag/health
+```
+
+See the [private deployment guide](./deploy/README.md) for upgrades, rollback,
+backup/restore, and Helm.
+
+### Local development
+
+Local development requires Docker, Node.js 22, pnpm 9, Python 3.12+, and
+[uv](https://docs.astral.sh/uv/):
+
+```bash
+docker compose up -d
+cp -n apps/web/.env.example apps/web/.env.local
+cp -n apps/api/.env.example apps/api/.env
+```
+
+This starts PostgreSQL, Qdrant, and Redis only. Configure the shared secret,
+document directory, and model, then run the web, API, lifecycle worker, and
+outbox worker as separate processes. Follow the copyable
+[developer workflow](./docs/DEV.md).
+
 ## Why UnoRAG
 
 | Need | What UnoRAG provides |

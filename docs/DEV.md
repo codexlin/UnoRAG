@@ -15,35 +15,89 @@ UnoRAG/
   testdata/              # 评测与样例文件
 ```
 
-## 本机一键联调
+## 本机联调
+
+### 前置
+
+- Docker + Docker Compose
+- Node.js 22、pnpm 9
+- Python 3.12+、`uv`
+
+本地拓扑包含 PostgreSQL/Qdrant/Redis 基础设施，以及 Web、API、
+lifecycle worker、outbox worker 四个应用进程。根目录 `pnpm dev` **只启动 Web**，
+不是完整应用。
+
+### 1. 启动基础设施
 
 ```bash
 cd UnoRAG
 docker compose up -d
 # Qdrant :6333 · Postgres :5432 · Redis :6379
+```
 
-# —— Control Plane ——
-cd apps/web
-cp -n .env.example .env.local
+### 2. 首次配置
+
+```bash
+cp -n apps/web/.env.example apps/web/.env.local
+cp -n apps/api/.env.example apps/api/.env
+mkdir -p .unorag/documents
+```
+
+编辑两个配置文件，至少确认：
+
+| 配置 | 要求 |
+|------|------|
+| web `UNORAG_INTERNAL_SECRET` | 与 API `INTERNAL_AUTH_SECRET` 完全相同，至少 32 字符 |
+| web `UNORAG_SESSION_SECRET` | 至少 32 字符，且不能等于 internal secret |
+| 两侧 `DOCUMENT_STORAGE_ROOT` | 同一个绝对路径，例如 `<repo>/.unorag/documents` |
+| API `ASK_MODE` | 无模型密钥时用 `stub` 验证链路；真实问答使用 `live` 并配置一个模型 key |
+
+不要直接沿用两个 example 中不同的 internal secret 占位值。
+
+### 3. 安装依赖并迁移
+
+```bash
+# 仓库根目录
 pnpm install
-pnpm db:migrate
-pnpm db:bootstrap
-pnpm outbox:run &          # 文库投影；另开终端亦可
-pnpm dev                   # http://localhost:3000/app
+pnpm --dir apps/web db:migrate
+pnpm --dir apps/web db:bootstrap
 
-# —— Data Plane ——
 cd apps/api
-cp -n .env.example .env
-# 填 DATABASE_URL、INTERNAL_AUTH_*、模型 key（ASK_MODE=live）
 uv sync
-uv run uvicorn app.main:app --reload --port 8000
+MIGRATOR_DATABASE_URL=postgresql://unorag:unorag@localhost:5432/unorag \
+  uv run python scripts/apply_rag_migrations.py
+cd ../..
+```
 
-# —— Lifecycle worker（产品上传必需）——
-# 与 web 共用 DOCUMENT_STORAGE_ROOT（本地可先建目录）
-export DOCUMENT_STORAGE_ROOT="${DOCUMENT_STORAGE_ROOT:-$PWD/../../.unorag/documents}"
-mkdir -p "$DOCUMENT_STORAGE_ROOT"
+### 4. 启动四个应用进程
+
+以下命令分别放在四个终端中运行：
+
+```bash
+# Terminal 1 · FastAPI data plane
+cd apps/api
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+```bash
+# Terminal 2 · document lifecycle
+cd apps/api
 uv run python -m app.lifecycle_worker
 ```
+
+```bash
+# Terminal 3 · library projection
+cd apps/web
+pnpm outbox:run
+```
+
+```bash
+# Terminal 4 · Next.js control plane
+cd apps/web
+pnpm dev
+```
+
+### 5. 验证
 
 | 检查 | URL / 命令 |
 |------|------------|
@@ -52,7 +106,8 @@ uv run python -m app.lifecycle_worker
 | API 健康 | `GET http://localhost:8000/health` |
 | 登录 | `.env.local` 中 `UNORAG_ADMIN_EMAIL` / `UNORAG_ADMIN_PASSWORD` |
 
-私有化客户式安装见 [`deploy/README.md`](../deploy/README.md) 与 [`runbooks/private-deployment.md`](./runbooks/private-deployment.md)。
+私有化客户式安装见 [`deploy/README.md`](../deploy/README.md) 与
+[`runbooks/private-deployment.md`](./runbooks/private-deployment.md)。
 
 ## 环境变量分层
 
