@@ -420,7 +420,7 @@ else
 	warn "pilot-smoke.sh not found/executable — skip smoke"
 fi
 
-log "upgrade complete — previous pins in $PREV_ENV; verify ask/upload + lifecycle:inspect before pruning old images"
+log "upgrade complete — previous pins in $PREV_ENV; verify ask/upload and run: docker compose exec -T outbox-worker node scripts/inspect-lifecycle.mjs --fail-on-dead --fail-on-stuck"
 if [[ "$DID_SWITCH" -eq 1 ]]; then
 	true
 fi

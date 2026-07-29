@@ -48,6 +48,28 @@ health、Ask、lifecycle jobs 与 outbox 均无阻断状态。
 - Workspace 下拉菜单真实浏览器运行正常。
 - 创建/切换第二 Workspace 的产品纵向切片已补齐。
 
+### Library 终态一致性复验
+
+2026-07-29 部署 `d37181f` 与 Web 收口提交 `5be31e0` 后，完成数据库迁移、
+Compose pilot smoke 和真实 Chromium 复验：
+
+- Library 汇总状态与 document/job 终态在同一事务内收敛；
+- 历史漂移已修复，`302CN3 = failed (0/1)`，不再显示处理中或已索引；
+- `302CN-rewrite = degraded (3/5)`，旧 active generation 仍可正常检索；
+- 失败且无可检索文档的 Library 禁用“开始提问”，不会静默切换到其他 Library；
+- 从可检索 Library 进入 Ask 后保持正确选择，真实回答命中
+  `POST_FAULT_RECOVER_OK_TOKEN_20260728` 并返回引用；
+- Chromium 控制台 0 error，桌面视口无横向溢出；
+- lifecycle `dead=0`、`stuck=0`，outbox `dead=0`。
+
+证据截图：
+
+- [Landing 桌面视口](assets/2026-07-29-webch-landing-desktop.png)
+- [Landing 移动视口](assets/2026-07-29-webch-landing-mobile.png)
+- [失败 Library 的终态与禁用入口](assets/2026-07-29-webch-status-fixed-failed.png)
+- [部分可检索 Library 的 3/5 状态](assets/2026-07-29-webch-status-fixed-libraries.png)
+- [真实问答与引用](assets/2026-07-29-webch-status-fixed-ask.png)
+
 ## 自动化门禁
 
 本轮功能提交前的最终数字以 CI / 本地完整测试输出为准。已执行的预发布门禁包含：
