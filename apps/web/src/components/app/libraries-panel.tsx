@@ -90,7 +90,10 @@ import {
 	updateLibrary,
 	uploadDocument,
 } from "@/lib/api";
-import { ASK_LIBRARY_STORAGE_KEY } from "@/lib/ask-library-selection.mjs";
+import {
+	ASK_LIBRARY_STORAGE_KEY,
+	isAskableLibrary,
+} from "@/lib/ask-library-selection.mjs";
 import { filterByCap } from "@/lib/client-permissions";
 import { TERMINAL_JOB_STATUSES } from "@/lib/document-lifecycle-contract";
 import { formatDateTime, formatDurationMs, formatFileSize } from "@/lib/format";
@@ -978,7 +981,7 @@ export function LibrariesPanel() {
 									onChange={(event) => onReplaceFilePicked(event.target.files)}
 								/>
 							</Can>
-							{selectedLibrary ? (
+							{selectedLibrary && isAskableLibrary(selectedLibrary) ? (
 								<Link
 									href="/app/ask"
 									onClick={() => {
@@ -999,6 +1002,17 @@ export function LibrariesPanel() {
 									<MessageSquareText data-icon="inline-start" />
 									开始提问
 								</Link>
+							) : selectedLibrary ? (
+								<Button
+									type="button"
+									variant="outline"
+									className="rounded-md"
+									disabled
+									title="暂无可检索文档"
+								>
+									<MessageSquareText data-icon="inline-start" />
+									开始提问
+								</Button>
 							) : null}
 							<AuthButton
 								cap="writeLibraries"
