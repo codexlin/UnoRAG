@@ -4,9 +4,8 @@
 
 | 文档 | 内容 |
 |------|------|
-| [PRODUCT.md](./PRODUCT.md) | 一句话定位、使用方式、边界、成功标准 |
+| [PRODUCT.md](./PRODUCT.md) | 产品定位、目标客户、使用方式、商业路径、边界与成功标准 |
 | [STATUS.md](./STATUS.md) | 与代码对应的已完成 / 部分完成 / 规划中能力矩阵 |
-| [STRATEGY.md](./STRATEGY.md) | 产品层级、目标客户、首发场景、商业化与面试叙事 |
 | [ROADMAP.md](./ROADMAP.md) | 近中远期、开始前 checklist、交付优先级 |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 控制面 / 数据面、入库、会话、Ask 流水线 |
 | [INTEGRATION.md](./INTEGRATION.md) | Knowledge API：已实现 vs 规划中契约 |

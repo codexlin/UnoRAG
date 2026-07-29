@@ -4,7 +4,7 @@
 >
 > **权威契约**：[`contracts/retrieve-ask-v1.md`](./contracts/retrieve-ask-v1.md) · OpenAPI [`../contracts/public-api-v1.openapi.json`](../contracts/public-api-v1.openapi.json) · 示例 [`../examples/public-api-v1/`](../examples/public-api-v1/)
 >
-> 产品语境见 [PRODUCT.md](./PRODUCT.md)，产品层级见 [STRATEGY.md](./STRATEGY.md)
+> 产品语境与产品层级见 [PRODUCT.md](./PRODUCT.md)
 
 ## 目标
 

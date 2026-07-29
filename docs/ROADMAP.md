@@ -2,7 +2,7 @@
 
 > 状态：现行（2026-07-29）
 >
-> 产品定位见 [PRODUCT.md](./PRODUCT.md)，产品层级与商业方向见 [STRATEGY.md](./STRATEGY.md)。
+> 产品定位、目标客户与商业方向见 [PRODUCT.md](./PRODUCT.md)。
 > 已完成的 Document Lifecycle L0–L8 工程细节以代码与 runbook 为准；旧「私有化落地计划」长文已退役，剩余缺口收敛到本文。
 
 ## 当前基线（已落地）

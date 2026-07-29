@@ -2,11 +2,14 @@
 
 > 状态：现行北极星（2026-07-29）
 >
-> 关联：[产品策略](./STRATEGY.md) · [架构](./ARCHITECTURE.md) · [路线图](./ROADMAP.md) · [集成](./INTEGRATION.md)
+> 关联：[架构](./ARCHITECTURE.md) · [路线图](./ROADMAP.md) · [集成](./INTEGRATION.md)
 
 ## 一句话
 
 **UnoRAG 是一个可私有化部署、权限感知、版本安全、结果可追溯的企业知识服务，为现有业务系统、Agent 和员工知识助手提供 Retrieve 与 Answer 能力。**
+
+> A deployable, permission-aware and evidence-grounded knowledge service for
+> enterprise applications and agents.
 
 产品结构遵循：
 
@@ -28,6 +31,33 @@
 | 知识/IT 管理员 | 私有化部署、文库与成员、工作区问答旋钮、任务巡检 |
 | 业务员工 | 在工作台提问、看引用、追问、主动归档会话 |
 | 平台/助手团队 | 已有业务系统、Agent 或 Chat UI，需要稳定的 retrieve/answer 能力 |
+
+## 目标客户与首发场景
+
+首要买方是需要私有化部署的企业 IT / AI 平台团队、已有客服或门户但缺少可靠知识层的
+产品团队，以及有文档权限、版本、引用和审计要求的知识管理团队。
+
+技术内核保持横向，首发销售场景保持具体：
+
+1. **产品与售后知识服务**：产品手册、安装说明、故障 SOP、参数表、报价表和历史解决方案。
+2. **内部制度与流程助手**：HR、财务、差旅、信息安全和合规制度。
+
+优先验证错误回答成本高、文档更新频繁、需要来源核对的场景。
+
+## 产品层级
+
+```text
+官方 Workspace：管理、问答、归档、调试、验收
+        ↓
+接入适配：Python SDK / MCP / OpenAI-compatible
+        ↓
+Knowledge API：Documents / Jobs / Retrieve / Answer
+        ↓
+企业知识内核：ACL / Version / Parse / Index / Eval
+```
+
+API 是核心产品契约，不是 Workspace 的附属接口；Workspace 是官方客户端、管理控制台
+和参考实现。所有层级共享唯一的权限、版本、索引、引用和评测真相。
 
 ## 一个核心产品，多种使用方式
 
@@ -113,6 +143,12 @@ Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客
 | 全量 antivirus/DLP 产品化、SBOM 与镜像签名 | Trivy 镜像扫描已交付；其余属于运维与合规增强 |
 | OAuth-for-apps | 当前产品非目标；服务间接入使用可审计、可限制 scope 的 Service Key。只有明确建设公网多租户开发者平台时才重新评估 |
 
+每项新能力都应回答：
+
+1. 是否增强 Knowledge Service 的可靠性、可接入性或可交付性？
+2. 是否有真实场景或评测证明收益？
+3. 是否保持唯一的权限、版本和检索真相？
+
 ## 会话模型（产品合同）
 
 ```text
@@ -134,6 +170,17 @@ Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客
 | DustyKB 类产品经验 | 工作区、文库、有据体验 | 具体 UI/品牌 |
 | QueryNest / 多步编排 | 受限表格与 query route | 通用 Agent 工具市场 |
 | SAG / RAG-Anything | 解析、多模态、复杂文档能力 | 「万能 Agent / 万能框架」定位 |
+
+## 交付与商业化路径
+
+| 阶段 | 目标 |
+|------|------|
+| 可信开源产品 | 可重复部署的 Compose、Workspace、Retrieve/Ask API、示例数据、质量门禁与运维文档 |
+| 收费试点与实施 | 私有部署、模型/身份对接、文档迁移、评测集、验收和升级支持 |
+| 企业增强 | OIDC/组织同步、Connector、高可用、合规、SLA 和更深治理 |
+
+先通过受控试点获得真实约束，再把重复交付内容产品化。公网多租户 SaaS、复杂计费和
+多 region 不作为当前前置条件。
 
 ## 成功标准（产品层）
 

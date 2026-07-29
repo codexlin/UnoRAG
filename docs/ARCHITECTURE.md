@@ -218,8 +218,7 @@ OpenAI-compatible LLM/embedding、可选 MinerU。S3/MinIO adapter 尚未交付�
 
 | 文档 | 内容 |
 |------|------|
-| [PRODUCT.md](./PRODUCT.md) | 为什么做、核心产品与使用方式 |
-| [STRATEGY.md](./STRATEGY.md) | 产品层级、目标客户与交付策略 |
+| [PRODUCT.md](./PRODUCT.md) | 产品定位、层级、目标客户、使用方式与交付策略 |
 | [ROADMAP.md](./ROADMAP.md) | 下一步与先决条件 |
 | [DEV.md](./DEV.md) | 如何本地跑 |
 | [INTEGRATION.md](./INTEGRATION.md) | Knowledge API 与适配层契约 |
