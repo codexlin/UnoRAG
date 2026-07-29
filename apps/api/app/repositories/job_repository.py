@@ -1454,7 +1454,8 @@ class JobRepository:
                 cursor.execute(
                     """
                     UPDATE app.libraries AS library
-                    SET ready_count = counts.ready_count,
+                    SET doc_count = counts.document_count,
+                        ready_count = counts.ready_count,
                         status = CASE
                             WHEN library.status = 'deleting' THEN 'deleting'
                             WHEN counts.document_count = 0 THEN 'empty'

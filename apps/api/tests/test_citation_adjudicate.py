@@ -129,7 +129,8 @@ def test_weak_match_still_refuses() -> None:
 	)
 	assert result.refused is True
 	assert result.refuse_reason == "weak_match"
-	assert len(result.citations) >= 1
+	assert result.citations == []
+	assert result.retrieval_debug["retrieved_candidate_count"] >= 1
 
 
 def test_renumber_indexes_unique_1_to_n() -> None:

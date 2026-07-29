@@ -25,5 +25,9 @@ def test_reap_expired_status_updates_cast_params_to_varchar() -> None:
 
 def test_document_delete_completion_refreshes_library_document_count() -> None:
 	"""Deleting a document must not leave the library summary counter stale."""
-	assert "SET doc_count = counts.document_count," in REPO_SQL
-	assert "SET status = 'deleted',\n                                doc_count = 0," in REPO_SQL
+	delete_completion = REPO_SQL.split("def complete_document_delete(", 1)[1]
+	assert "SET doc_count = counts.document_count," in delete_completion
+	assert (
+		"SET status = 'deleted',\n                                doc_count = 0,"
+		in delete_completion
+	)

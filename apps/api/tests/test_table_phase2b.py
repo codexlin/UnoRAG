@@ -635,6 +635,48 @@ def test_matched_row_evidence_citations_replace_vector_hits() -> None:
 	)
 
 
+def test_matched_table_evidence_is_ranked_before_unrelated_citations() -> None:
+	target = {
+		"id": "target-vector-hit",
+		"index": 2,
+		"record_type": "table",
+		"doc_id": "quote-doc",
+		"document_version_id": "quote-doc:v1",
+		"table_id": "quote-table",
+		"title": "报价清单",
+		"headers": ["项目", "总价"],
+		"rows": [["服务器", "120000"]],
+		"row_start": 0,
+		"row_end": 0,
+		"body": "项目 | 总价\n服务器 | 120000",
+	}
+	unrelated = {
+		"id": "unrelated",
+		"index": 1,
+		"record_type": "table",
+		"doc_id": "other-doc",
+		"document_version_id": "other-doc:v1",
+		"table_id": "other-table",
+		"title": "考勤表",
+		"headers": ["姓名", "天数"],
+		"rows": [["李四", "2"]],
+	}
+
+	final, _meta = citations_with_matched_evidence(
+		[unrelated, target],
+		groups=[target],
+		matched_rows=[{"项目": "服务器", "总价": "120000", "_row_index": 0}],
+		matched_row_indices=[0],
+		target_key=table_instance_key(target),
+		seed_citation=target,
+	)
+
+	assert final[0]["table_id"] == "quote-table"
+	assert final[0]["index"] == 1
+	assert final[1]["table_id"] == "other-table"
+	assert final[1]["index"] == 2
+
+
 def test_seq_lookup_and_device_name_entity() -> None:
 	"""序号 lookup + 设备名称实体列（不绑死供应商）。"""
 	headers = [

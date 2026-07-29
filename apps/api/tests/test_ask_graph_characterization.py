@@ -122,6 +122,40 @@ def test_ask_stub_refuse_no_hit() -> None:
 	assert "没有找到" in result.answer
 
 
+def test_live_style_no_coverage_answer_has_no_supporting_citations() -> None:
+	def retrieve(
+		_query: str,
+		_library_id: str | None,
+		_top_k: int,
+		_filters: dict | None = None,
+	):
+		return [
+			{
+				"id": "candidate-only",
+				"index": 1,
+				"title": "无关资料",
+				"snippet": "与问题无关的内容",
+				"text": "与问题无关的内容",
+				"score": 0.9,
+			}
+		]
+
+	service = AskGraphService(
+		Settings(ask_mode="stub", internal_auth_enabled=False),
+		retrieve_fn=retrieve,
+		generate_fn=lambda _messages, _citations: "资料未覆盖该主题。",
+	)
+	result = service.ask(
+		question="火星基地负责人是谁？",
+		library_id="lib-model-refuse",
+		session_id="char-model-refuse",
+	)
+	assert result.refused is True
+	assert result.refuse_reason == "model_no_coverage"
+	assert result.citations == []
+	assert result.retrieval_debug["retrieved_candidate_count"] >= 1
+
+
 def test_ask_stub_retry_then_generate() -> None:
 	calls = {"n": 0}
 

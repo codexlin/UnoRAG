@@ -58,8 +58,9 @@ def looks_like_high_confidence_table_shortcircuit(question: str) -> bool:
 		return True
 	if looks_like_table_summary_lookup(q):
 		return True
-	# 「表格/表中/表里」本身已足够明显，可直接短路（含概述类问法）
-	if any(token in q for token in ("表格", "表中", "表里")):
+	# 「表格」是明确结构信号；「表中/表里」可能只是“申请表中”这类
+	# 扫描文本表单，必须先走统一召回，实际命中 TableIR 后再阶段2升级。
+	if "表格" in q:
 		return True
 	has_surface = any(token in q for token in _TABLE_SURFACE)
 	has_strong_price = any(token in q for token in _STRONG_PRICE_HINTS)

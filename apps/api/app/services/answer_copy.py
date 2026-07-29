@@ -3,6 +3,14 @@
 from __future__ import annotations
 
 
+def answer_signals_no_coverage(answer: str) -> bool:
+	"""Detect the canonical no-evidence response produced by the live LLM."""
+	text = (answer or "").strip()
+	if not text:
+		return False
+	return text.startswith("资料未覆盖") or text.startswith("材料未覆盖")
+
+
 def no_match_answer(*, library_name: str = "当前知识库") -> str:
 	name = (library_name or "当前知识库").strip() or "当前知识库"
 	return (

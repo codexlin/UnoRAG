@@ -28,6 +28,7 @@ from app.graph.state import GenerateFn, LoadTableGroupsFn, RetrieveFn
 from app.graph.stubs import stub_generate, stub_load_table_groups, stub_retrieve
 from app.security.access_scope import AccessScope, resolve_access_scope
 from app.schemas import AskResponse, Citation
+from app.services.answer_copy import answer_signals_no_coverage
 from app.services.ask_trace import (
 	append_stage,
 	emit_ask_trace,
@@ -488,6 +489,15 @@ class AskGraphService:
 			allowed_hits=raw,
 			debug=debug,
 		)
+		model_refused = answer_signals_no_coverage(final_answer)
+		if model_refused and not state.get("refused"):
+			state["refused"] = True
+			state["refuse_reason"] = "model_no_coverage"
+			debug["refuse_reason"] = "model_no_coverage"
+			debug["retrieved_candidate_count"] = len(citations)
+		if state.get("refused"):
+			# Retrieved candidates are diagnostic data, not supporting citations.
+			citations = []
 		# Sync historical order: temp memory before debug finalize / persist.
 		# Stream finish sets append_memory=False and appends after tokens.
 		if append_memory:

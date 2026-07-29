@@ -52,6 +52,41 @@ def test_stage1_uncertain_text_goes_fast() -> None:
 	assert plan["record_type"] == "chunk+table_summary"
 
 
+def test_scanned_form_lookup_does_not_shortcircuit_on_compound_biaozhong() -> None:
+	q = "扫描请假申请表中的姓名、部门和请假天数分别是什么？"
+	assert looks_like_high_confidence_table_shortcircuit(q) is False
+	qt, reason = classify_query(q)
+	assert (qt, reason) == ("fact", "default_fact")
+
+
+def test_stage2_bare_table_surface_does_not_upgrade_on_unrelated_table_hit() -> None:
+	q = "表中的姓名、部门和请假天数分别是什么？"
+	ok, reason = should_upgrade_fast_to_precise_table(
+		q,
+		[
+			{
+				"record_type": "table_summary",
+				"table_id": "t-form",
+				"score": 0.88,
+				"body": "请假表字段摘要",
+			}
+		],
+	)
+	assert (ok, reason) == (False, "")
+
+	ok, reason = should_upgrade_fast_to_precise_table(
+		q,
+		[
+			{
+				"record_type": "chunk",
+				"score": 0.88,
+				"body": "扫描件 OCR：姓名张三，部门技术研发部，请假3天",
+			}
+		],
+	)
+	assert (ok, reason) == (False, "")
+
+
 def test_stage2_upgrade_condition_and_reason() -> None:
 	q = "这个数额最大是多少？"  # 无表表面词，阶段1不短路
 	assert looks_like_high_confidence_table_shortcircuit(q) is False

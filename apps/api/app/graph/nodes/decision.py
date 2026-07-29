@@ -130,21 +130,29 @@ def build_decision_nodes(
 			),
 		}
 	def refuse_node(state: AskState) -> AskState:
-		reason = (state.get("judgement") or {}).get("reason") or state.get("refuse_reason") or "no_hit"
+		reason = (
+			(state.get("judgement") or {}).get("reason")
+			or state.get("refuse_reason")
+			or "no_hit"
+		)
 		library_name = _library_label(state.get("library_id"))
 		if reason == "weak_match":
 			answer = weak_match_answer(library_name=library_name)
-			# Keep weak citations for transparency (DustyKB behavior).
-			citations = state.get("citations") or []
 		else:
 			answer = no_match_answer(library_name=library_name)
-			citations = []
 		return {
 			"answer": answer,
-			"citations": citations,
+			# “引用”只代表支持最终答案的证据；弱召回候选留在 debug，
+			# 不作为支持证据返回给用户或写入归档。
+			"citations": [],
 			"refused": True,
 			"refuse_reason": reason,
-			"retrieval_debug": _merge_debug(state, generate="refuse", refuse_reason=reason),
+			"retrieval_debug": _merge_debug(
+				state,
+				generate="refuse",
+				refuse_reason=reason,
+				retrieved_candidate_count=len(state.get("citations") or []),
+			),
 		}
 	return SimpleNamespace(
 		judge=judge_node,

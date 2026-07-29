@@ -134,8 +134,8 @@ def test_ask_refuse_weak_match() -> None:
 	assert payload["refused"] is True
 	assert payload["refuse_reason"] == "weak_match"
 	assert "相关度不够高" in payload["answer"]
-	assert len(payload["citations"]) >= 1
-	assert payload["citations"][0]["score"] < 0.35
+	assert payload["citations"] == []
+	assert payload["retrieval_debug"]["retrieved_candidate_count"] >= 1
 
 
 def test_judge_with_injected_weak_retrieve() -> None:
