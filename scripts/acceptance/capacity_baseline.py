@@ -216,6 +216,30 @@ class CapacityClient:
             time.sleep(poll_seconds)
         raise TimeoutError(f"job {job_id} did not finish within {timeout_seconds}s")
 
+    def delete_library_and_wait(
+        self,
+        library_id: str,
+        *,
+        poll_seconds: float,
+        timeout_seconds: float,
+    ) -> tuple[float, dict[str, Any]]:
+        started = time.perf_counter()
+        deadline = started + timeout_seconds
+        last_body: dict[str, Any] = {}
+        while time.perf_counter() < deadline:
+            status, last_body, _ = self.session_json(
+                "DELETE",
+                f"/api/libraries/{library_id}",
+                expected={200, 202},
+            )
+            if status == 200 or last_body.get("already_deleted") is True:
+                return (time.perf_counter() - started) * 1000, last_body
+            time.sleep(poll_seconds)
+        raise TimeoutError(
+            f"library {library_id} did not finish deletion within "
+            f"{timeout_seconds}s; last response={last_body}"
+        )
+
 
 def run_parallel(
     *,
@@ -314,6 +338,28 @@ def parse_stages(raw: str) -> list[tuple[int, int]]:
             )
         stages.append((concurrency, count))
     return stages
+
+
+def parser_report_summary(job: dict[str, Any]) -> dict[str, Any]:
+    raw = job.get("parser_report")
+    report = raw if isinstance(raw, dict) else {}
+    raw_metrics = report.get("metrics")
+    metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+    raw_warnings = report.get("warnings")
+    warnings = raw_warnings if isinstance(raw_warnings, list) else []
+    parse_status = job.get("parse_status")
+    status = parse_status if isinstance(parse_status, dict) else {}
+    return {
+        "backend": report.get("backend"),
+        "parser": report.get("parser"),
+        "mode": report.get("mode"),
+        "partial": report.get("partial"),
+        "route": metrics.get("route"),
+        "parser_latency_ms": report.get("latency_ms"),
+        "external_status": status.get("external_status"),
+        "degraded": status.get("degraded"),
+        "warnings": [str(item)[:300] for item in warnings[:5]],
+    }
 
 
 def parser() -> argparse.ArgumentParser:
@@ -652,6 +698,7 @@ def main() -> int:
                     "ready_ms": round(accepted_ms + ready_ms, 2),
                     "status": job.get("status"),
                     "stage": job.get("stage"),
+                    "parser": parser_report_summary(job),
                 }
                 if job.get("status") != PASS_JOB_STATUS:
                     overall_failures.append("mineru_probe")
@@ -673,10 +720,16 @@ def main() -> int:
                 overall_failures.append("cleanup_service_key")
         if library_id:
             try:
-                client.session_json(
-                    "DELETE", f"/api/libraries/{library_id}", expected={200, 202, 204}
+                delete_ms, delete_body = client.delete_library_and_wait(
+                    library_id,
+                    poll_seconds=args.poll_seconds,
+                    timeout_seconds=args.job_timeout,
                 )
-                report["cleanup"]["library"] = "delete_accepted"
+                report["cleanup"]["library"] = {
+                    "status": "deleted",
+                    "latency_ms": round(delete_ms, 2),
+                    "already_deleted": bool(delete_body.get("already_deleted")),
+                }
             except Exception as exc:
                 report["cleanup"]["library"] = f"failed: {type(exc).__name__}"
                 overall_failures.append("cleanup_library")
