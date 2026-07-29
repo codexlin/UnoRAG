@@ -92,6 +92,13 @@
       "when": 1785247142066,
       "tag": "0012_organization-workspaces",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785334200000,
+      "tag": "0013_reconcile_library_terminal_status",
+      "breakpoints": true
     }
   ]
 }

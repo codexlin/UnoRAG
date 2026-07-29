@@ -61,6 +61,10 @@ GRANT UPDATE (
 	parser_backend,
 	chunk_profile,
 	parser_report,
+	ingest_policy_version,
+	document_profile,
+	scan_handling,
+	parse_preference,
 	point_count,
 	chunk_count,
 	section_count,
@@ -83,7 +87,9 @@ GRANT UPDATE (
 
 GRANT UPDATE (
 	status,
+	doc_count,
 	ready_count,
+	applied_document_profile,
 	updated_at
 ) ON app.libraries TO unorag_worker;
 

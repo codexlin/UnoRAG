@@ -1031,40 +1031,7 @@ class JobRepository:
                 )
                 if cursor.rowcount != 1:
                     raise StaleDocumentVersionError("document activation CAS failed")
-                cursor.execute(
-                    """
-                    UPDATE app.libraries AS library
-                    SET doc_count = counts.document_count,
-                        ready_count = counts.ready_count,
-                        status = CASE
-                            WHEN library.status = 'deleting' THEN 'deleting'
-                            WHEN counts.document_count = 0 THEN 'empty'
-                            WHEN counts.processing_count > 0 THEN 'indexing'
-                            WHEN counts.problem_count > 0 THEN 'degraded'
-                            ELSE 'ready'
-                        END,
-                        updated_at = now()
-                    FROM (
-                        SELECT
-                            count(*) FILTER (
-                                WHERE status NOT IN ('deleting', 'deleted')
-                            )::integer AS document_count,
-                            count(*) FILTER (
-                                WHERE status IN ('ready', 'degraded')
-                            )::integer AS ready_count,
-                            count(*) FILTER (
-                                WHERE status = 'processing'
-                            )::integer AS processing_count,
-                            count(*) FILTER (
-                                WHERE status IN ('degraded', 'failed')
-                            )::integer AS problem_count
-                        FROM app.documents
-                        WHERE library_id = %(library_id)s
-                    ) AS counts
-                    WHERE library.id = %(library_id)s
-                    """,
-                    {"library_id": context.library_id},
-                )
+                self._refresh_library_status(cursor, context.library_id)
                 activation_result = {
                     "activation": "active",
                     "document_id": str(context.document_id),
@@ -1451,40 +1418,7 @@ class JobRepository:
                     """,
                     {"document_id": context.document_id},
                 )
-                cursor.execute(
-                    """
-                    UPDATE app.libraries AS library
-                    SET doc_count = counts.document_count,
-                        ready_count = counts.ready_count,
-                        status = CASE
-                            WHEN library.status = 'deleting' THEN 'deleting'
-                            WHEN counts.document_count = 0 THEN 'empty'
-                            WHEN counts.processing_count > 0 THEN 'indexing'
-                            WHEN counts.problem_count > 0 THEN 'degraded'
-                            ELSE 'ready'
-                        END,
-                        updated_at = now()
-                    FROM (
-                        SELECT
-                            count(*) FILTER (
-                                WHERE status NOT IN ('deleting', 'deleted')
-                            )::integer AS document_count,
-                            count(*) FILTER (
-                                WHERE status IN ('ready', 'degraded')
-                            )::integer AS ready_count,
-                            count(*) FILTER (
-                                WHERE status IN ('processing', 'deleting')
-                            )::integer AS processing_count,
-                            count(*) FILTER (
-                                WHERE status IN ('degraded', 'failed')
-                            )::integer AS problem_count
-                        FROM app.documents
-                        WHERE library_id = %(library_id)s
-                    ) AS counts
-                    WHERE library.id = %(library_id)s
-                    """,
-                    {"library_id": context.library_id},
-                )
+                self._refresh_library_status(cursor, context.library_id)
                 library_finalized = False
                 if context.library_status == "deleting" or context.library_delete:
                     cursor.execute(
@@ -1919,10 +1853,13 @@ class JobRepository:
                         job.attempt,
                         job.max_attempts,
                         job.document_version_id,
-                        version.document_id
+                        version.document_id,
+                        document.library_id
                     FROM app.jobs AS job
                     LEFT JOIN app.document_versions AS version
                       ON version.id = job.document_version_id
+                    LEFT JOIN app.documents AS document
+                      ON document.id = version.document_id
                     WHERE job.status IN ('running', 'cancelling')
                       AND job.lease_expires_at <= now()
                     ORDER BY job.lease_expires_at, job.id
@@ -2013,6 +1950,17 @@ class JobRepository:
                                 ),
                             },
                         )
+                        if row["document_id"]:
+                            self._refresh_document_failure_status(
+                                cursor,
+                                row["document_id"],
+                                row["document_version_id"],
+                            )
+                        if row["library_id"]:
+                            self._refresh_library_status(
+                                cursor,
+                                row["library_id"],
+                            )
                     elif target == JobStatus.RETRY and row["document_version_id"]:
                         cursor.execute(
                             """
@@ -2029,12 +1977,6 @@ class JobRepository:
                             """,
                             {"version_id": row["document_version_id"]},
                         )
-                        if row["document_id"]:
-                            self._refresh_document_failure_status(
-                                cursor,
-                                row["document_id"],
-                                row["document_version_id"],
-                            )
                 return len(rows)
 
     @staticmethod
@@ -2096,6 +2038,7 @@ class JobRepository:
             context.document_id,
             context.document_version_id,
         )
+        cls._refresh_library_status(cursor, context.library_id)
 
     @staticmethod
     def _refresh_document_failure_status(
@@ -2124,6 +2067,46 @@ class JobRepository:
                 "document_id": document_id,
                 "document_version_id": document_version_id,
             },
+        )
+
+    @staticmethod
+    def _refresh_library_status(cursor: Any, library_id: UUID) -> None:
+        """Recompute the parent summary in the same transaction as document state."""
+        cursor.execute(
+            """
+            UPDATE app.libraries AS library
+            SET doc_count = counts.document_count,
+                ready_count = counts.ready_count,
+                status = CASE
+                    WHEN library.status = 'deleting' THEN 'deleting'
+                    WHEN counts.document_count = 0 THEN 'empty'
+                    WHEN counts.processing_count > 0 THEN 'indexing'
+                    WHEN counts.ready_count = counts.document_count THEN 'ready'
+                    WHEN counts.ready_count > 0 THEN 'degraded'
+                    WHEN counts.failed_count > 0 THEN 'failed'
+                    ELSE 'empty'
+                END,
+                updated_at = now()
+            FROM (
+                SELECT
+                    count(*) FILTER (
+                        WHERE status NOT IN ('deleting', 'deleted')
+                    )::integer AS document_count,
+                    count(*) FILTER (
+                        WHERE status IN ('ready', 'degraded')
+                    )::integer AS ready_count,
+                    count(*) FILTER (
+                        WHERE status = 'processing'
+                    )::integer AS processing_count,
+                    count(*) FILTER (
+                        WHERE status = 'failed'
+                    )::integer AS failed_count
+                FROM app.documents
+                WHERE library_id = %(library_id)s
+            ) AS counts
+            WHERE library.id = %(library_id)s
+            """,
+            {"library_id": library_id},
         )
 
     @staticmethod

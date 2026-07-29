@@ -66,9 +66,9 @@ test("delete request immediately projects non-deleting library counters", () => 
 	assert.match(enqueue, /when greatest\([\s\S]*then 'empty'/);
 });
 
-test("upgrade migration reconciles historical library counters", () => {
+test("upgrade migrations reconcile historical counters and terminal status", () => {
 	const migration = readFileSync(
-		path.join(root, "drizzle/0010_reconcile_library_counts.sql"),
+		path.join(root, "drizzle/0013_reconcile_library_terminal_status.sql"),
 		"utf8",
 	);
 
@@ -76,5 +76,7 @@ test("upgrade migration reconciles historical library counters", () => {
 	assert.match(migration, /doc_count = desired\.document_count/);
 	assert.match(migration, /ready_count = desired\.ready_count/);
 	assert.match(migration, /document_count = 0 THEN 'empty'/);
+	assert.match(migration, /ready_count > 0 THEN 'degraded'/);
+	assert.match(migration, /failed_count > 0 THEN 'failed'/);
 	assert.match(migration, /IS DISTINCT FROM/);
 });

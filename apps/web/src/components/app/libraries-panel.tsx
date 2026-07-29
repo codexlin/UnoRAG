@@ -90,6 +90,7 @@ import {
 	updateLibrary,
 	uploadDocument,
 } from "@/lib/api";
+import { ASK_LIBRARY_STORAGE_KEY } from "@/lib/ask-library-selection.mjs";
 import { filterByCap } from "@/lib/client-permissions";
 import { TERMINAL_JOB_STATUSES } from "@/lib/document-lifecycle-contract";
 import { formatDateTime, formatDurationMs, formatFileSize } from "@/lib/format";
@@ -980,6 +981,16 @@ export function LibrariesPanel() {
 							{selectedLibrary ? (
 								<Link
 									href="/app/ask"
+									onClick={() => {
+										try {
+											window.localStorage.setItem(
+												ASK_LIBRARY_STORAGE_KEY,
+												selectedLibrary.id,
+											);
+										} catch {
+											// Navigation remains usable in hardened browser contexts.
+										}
+									}}
 									className={cn(
 										buttonVariants({ variant: "outline" }),
 										"rounded-md",

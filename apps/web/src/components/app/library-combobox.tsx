@@ -24,9 +24,13 @@ function toOption(library: ApiLibrary): LibraryOption {
 	const suffix =
 		library.status === "indexing"
 			? " · 索引中"
-			: library.status === "empty"
-				? " · 空"
-				: "";
+			: library.status === "degraded"
+				? " · 部分可检索"
+				: library.status === "failed"
+					? " · 不可用"
+					: library.status === "empty"
+						? " · 空"
+						: "";
 	return {
 		value: library.id,
 		label: `${library.name}${suffix}`,

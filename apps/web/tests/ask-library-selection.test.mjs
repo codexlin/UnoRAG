@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { chooseAskLibraryId } from "../src/lib/ask-library-selection.mjs";
+import {
+	chooseAskLibraryId,
+	isAskableLibrary,
+} from "../src/lib/ask-library-selection.mjs";
 
 const libraries = [
 	{
@@ -24,8 +27,8 @@ const libraries = [
 	},
 ];
 
-test("Ask restores the last valid library even when it is empty", () => {
-	assert.equal(chooseAskLibraryId(libraries, "empty-new"), "empty-new");
+test("Ask replaces a non-queryable stored library when usable content exists", () => {
+	assert.equal(chooseAskLibraryId(libraries, "empty-new"), "ready-recent");
 });
 
 test("Ask defaults to the most recent ready library with content", () => {
@@ -49,6 +52,38 @@ test("Ask places empty libraries after usable indexing libraries", () => {
 		),
 		"indexing",
 	);
+});
+
+test("Ask allows degraded or indexing libraries with active content", () => {
+	const available = [
+		{
+			id: "degraded",
+			status: "degraded",
+			doc_count: 3,
+			ready_count: 2,
+		},
+		{
+			id: "indexing-with-active",
+			status: "indexing",
+			doc_count: 2,
+			ready_count: 1,
+		},
+	];
+	assert.equal(isAskableLibrary(available[0]), true);
+	assert.equal(isAskableLibrary(available[1]), true);
+	assert.equal(
+		chooseAskLibraryId(available, "indexing-with-active"),
+		"indexing-with-active",
+	);
+});
+
+test("Ask preserves a non-queryable preference when no usable library exists", () => {
+	const unavailable = [
+		{ id: "failed", status: "failed", doc_count: 1, ready_count: 0 },
+		{ id: "empty", status: "empty", doc_count: 0, ready_count: 0 },
+	];
+	assert.equal(chooseAskLibraryId(unavailable, "failed"), "failed");
+	assert.equal(isAskableLibrary(unavailable[0]), false);
 });
 
 test("Ask ignores deleting libraries and handles an empty workspace", () => {

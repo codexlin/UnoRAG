@@ -231,9 +231,15 @@ def ingest_job_scope():
         connection.execute(
             """
             INSERT INTO app.libraries (
-                id, organization_id, workspace_id, rag_library_id, name
+                id,
+                organization_id,
+                workspace_id,
+                rag_library_id,
+                name,
+                status,
+                doc_count
             )
-            VALUES (%s, %s, %s, %s, 'Lifecycle library')
+            VALUES (%s, %s, %s, %s, 'Lifecycle library', 'indexing', 1)
             """,
             (library_id, organization_id, workspace_id, f"library-{library_id}"),
         )
@@ -309,6 +315,7 @@ def ingest_job_scope():
     try:
         yield {
             "organization_id": organization_id,
+            "library_id": library_id,
             "document_id": document_id,
             "version_id": version_id,
             "generation_id": generation_id,
@@ -489,7 +496,17 @@ def test_expired_leases_retry_then_dead(ingest_job_scope):
             "SELECT status FROM app.jobs WHERE id = %s",
             (ids["job_id"],),
         ).fetchone()[0]
+        retry_document_status = connection.execute(
+            "SELECT status FROM app.documents WHERE id = %s",
+            (ids["document_id"],),
+        ).fetchone()[0]
+        retry_library = connection.execute(
+            "SELECT status, ready_count, doc_count FROM app.libraries WHERE id = %s",
+            (ids["library_id"],),
+        ).fetchone()
         assert status == JobStatus.RETRY.value
+        assert retry_document_status == "processing"
+        assert retry_library == ("indexing", 0, 1)
 
         [second] = repository.claim(
             worker_id="lifecycle-worker-2",
@@ -514,10 +531,48 @@ def test_expired_leases_retry_then_dead(ingest_job_scope):
             "SELECT status FROM app.documents WHERE id = %s",
             (ids["document_id"],),
         ).fetchone()[0]
+        library = connection.execute(
+            "SELECT status, ready_count, doc_count FROM app.libraries WHERE id = %s",
+            (ids["library_id"],),
+        ).fetchone()
 
     assert job_status == JobStatus.DEAD.value
     assert version_status == "failed"
     assert document_status == "failed"
+    assert library == ("failed", 0, 1)
+
+
+def test_terminal_ingest_failure_refreshes_parent_library(ingest_job_scope):
+    ids = ingest_job_scope
+    with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
+        connection.execute("SET ROLE unorag_worker")
+        repository = JobRepository(connection)
+        [lease] = repository.claim(
+            worker_id="lifecycle-worker-failure",
+            job_types=["test.document.ingest"],
+            capacity=1,
+        )
+        context = repository.load_document_ingest_context(lease)
+        repository.begin_document_ingest(lease, context)
+        failure = repository.fail(
+            lease,
+            context,
+            error_code="parse_failed",
+            error="fixture parse failed",
+            retryable=False,
+        )
+        document = connection.execute(
+            "SELECT status FROM app.documents WHERE id = %s",
+            (ids["document_id"],),
+        ).fetchone()
+        library = connection.execute(
+            "SELECT status, ready_count, doc_count FROM app.libraries WHERE id = %s",
+            (ids["library_id"],),
+        ).fetchone()
+
+    assert failure.status == JobStatus.FAILED
+    assert document == ("failed",)
+    assert library == ("failed", 0, 1)
 
 
 def test_late_job_is_superseded_before_activation(ingest_job_scope):

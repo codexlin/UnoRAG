@@ -1,5 +1,13 @@
 export const ASK_LIBRARY_STORAGE_KEY = "unorag.ask.last_library_id";
 
+export function isAskableLibrary(library) {
+	return Boolean(
+		library &&
+			["ready", "degraded", "indexing"].includes(library.status) &&
+			Number(library.ready_count) > 0,
+	);
+}
+
 /**
  * Select the Ask library without letting a newly-created empty library displace
  * useful content. The API returns libraries by updated_at descending, so each
@@ -21,18 +29,18 @@ export function chooseAskLibraryId(libraries, preferredId) {
 			library.status !== "deleting",
 	);
 	const preferred = String(preferredId ?? "").trim();
-	if (preferred && selectable.some((library) => library.id === preferred)) {
+	const preferredLibrary = selectable.find(
+		(library) => library.id === preferred,
+	);
+	if (
+		preferredLibrary &&
+		(isAskableLibrary(preferredLibrary) || !selectable.some(isAskableLibrary))
+	) {
 		return preferred;
 	}
 
 	return (
-		selectable.find(
-			(library) =>
-				library.status === "ready" && Number(library.ready_count) > 0,
-		)?.id ??
-		selectable.find(
-			(library) => library.status === "ready" && Number(library.doc_count) > 0,
-		)?.id ??
+		selectable.find(isAskableLibrary)?.id ??
 		selectable.find((library) => library.status === "indexing")?.id ??
 		selectable.find((library) => library.status === "ready")?.id ??
 		selectable.find((library) => library.status !== "empty")?.id ??

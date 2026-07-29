@@ -62,6 +62,7 @@ import {
 import {
 	ASK_LIBRARY_STORAGE_KEY,
 	chooseAskLibraryId,
+	isAskableLibrary,
 } from "@/lib/ask-library-selection.mjs";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
 import type { UiCitation, UiTurn } from "@/lib/ui-types";
@@ -436,7 +437,7 @@ export function AskWorkspace() {
 		[libraries, libraryId],
 	);
 
-	const canAsk = Boolean(library && library.status === "ready" && apiReady);
+	const canAsk = Boolean(isAskableLibrary(library) && apiReady);
 
 	const sampleQuestions = useMemo(() => {
 		if (!canAsk || !docsLoaded) return [];
@@ -852,7 +853,7 @@ export function AskWorkspace() {
 								<span className="tabular-nums text-foreground/80">
 									{library.ready_count}/{library.doc_count}
 								</span>
-								<span>文档已索引</span>
+								<span>可检索文档</span>
 							</span>
 						)}
 						<span className="text-border" aria-hidden>
@@ -1005,7 +1006,9 @@ export function AskWorkspace() {
 														: "请选择知识库"
 													: library.status === "empty"
 														? "知识库还是空的"
-														: "文档仍在索引中"}
+														: library.status === "failed"
+															? "文档处理失败"
+															: "文档仍在索引中"}
 								</h2>
 								<p className="text-answer desk-enter desk-enter-delay-1 text-muted-foreground">
 									{canAsk
@@ -1020,7 +1023,9 @@ export function AskWorkspace() {
 														: "从上方选择一个已就绪的知识库。"
 													: library.status === "empty"
 														? "先上传文档完成索引，再回来提问。"
-														: "索引完成后即可提问，可先到知识库查看进度。"}
+														: library.status === "failed"
+															? "当前没有可检索文档，请到知识库查看失败原因并重试。"
+															: "索引完成后即可提问，可先到知识库查看进度。"}
 								</p>
 								{!canAsk ? (
 									<Link
