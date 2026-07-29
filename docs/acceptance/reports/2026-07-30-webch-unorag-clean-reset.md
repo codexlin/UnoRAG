@@ -26,8 +26,8 @@ HTTPS 纵向冒烟均通过。验收结束时 lifecycle 巡检为
 | 数据迁移 | PASS：Web、RAG metadata migration 与运行角色权限断言通过 |
 | 私有部署 bootstrap | PASS：organization、初始 workspace 与 admin 幂等创建 |
 | 应用启动 | PASS：web、api、lifecycle、outbox、Caddy 全部健康 |
-| 旧运行标识 | PASS：运行容器、volume、新部署目录中无 `MeriKnow` 标识 |
-| 旧源码 | PASS：从 `/opt/meriknow` 移出，保留在带日期的备份目录 |
+| 旧运行标识 | PASS：运行容器、volume、新部署目录中无旧品牌标识 |
+| 旧源码 | PASS：从旧运行路径移出，保留在带日期的备份目录 |
 
 ## 真实 HTTPS 纵向冒烟
 
@@ -82,10 +82,9 @@ API/BFF 纵向冒烟。
 - Next.js production build：PASS
 - Biome：PASS
 - `git diff --check`：PASS
-- 受版本控制文件中的 `MeriKnow` 文本：0
+- 受版本控制文件中的旧品牌文本：0
 
 ## 回滚与保留
 
 重置前备份保存在 `/opt/backups/unorag-pre-reset-20260730`。旧源码保存在独立的
 带日期备份目录。它们仅用于事故追溯或人工恢复，不属于当前运行路径。
-
