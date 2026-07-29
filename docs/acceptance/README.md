@@ -9,6 +9,7 @@
 
 | 报告 | 结论 |
 |---|---|
+| [`reports/2026-07-30-webch-capacity-baseline.md`](./reports/2026-07-30-webch-capacity-baseline.md) | 2 vCPU / 1.8 GiB 最低规格真实 Retrieve/Ask/入库/MinerU 阶梯基线 **PASS**；记录 Ask 饱和点与建议并发预算 |
 | [`reports/2026-07-30-webch-unorag-clean-reset.md`](./reports/2026-07-30-webch-unorag-clean-reset.md) | webch 备份后全新重置为纯 UnoRAG 运行栈；公网纵向冒烟与生命周期巡检 **PASS** |
 | [`reports/2026-07-29-webch-preproduction-baseline.md`](./reports/2026-07-29-webch-preproduction-baseline.md) | webch 真实浏览器、真实文件、多 Workspace、隔离、故障与非破坏恢复 **PASS**；环境定位为预发布模拟，不是客户生产 |
 
@@ -37,6 +38,7 @@
 | [`../../scripts/acceptance/b2_restore_drill.sh`](../../scripts/acceptance/b2_restore_drill.sh) | **B2** 独立 Compose volumes backup→restore（不碰主开发数据） |
 | [`../../scripts/acceptance/b3_b4_upgrade_rollback.sh`](../../scripts/acceptance/b3_b4_upgrade_rollback.sh) | **B3/B4** 独立环境升级冒烟 + 应用回滚 / 数据恢复回滚 |
 | [`../../scripts/acceptance/r_fault_injection.sh`](../../scripts/acceptance/r_fault_injection.sh) | **R1–R4** Worker / Qdrant / 模型 / MinerU 故障注入 |
+| [`../../scripts/acceptance/capacity_baseline.py`](../../scripts/acceptance/capacity_baseline.py) | 目标环境真实 Retrieve/Ask 阶梯并发、生命周期并发与可选 MinerU 探针 |
 | [`../../scripts/acceptance/README.md`](../../scripts/acceptance/README.md) | 验收脚本如何跑、依赖、退出码 |
 
 退出码约定（上述脚本一致）：
@@ -57,7 +59,7 @@
 | 解析与质量 | [`live retrieval baseline`](./reports/2026-07-27-live-retrieval-quality-baseline.md) · [`MinerU provider`](./reports/2026-07-27-mineru-302-provider-smoke.md) · [`MinerU lifecycle`](./reports/2026-07-27-mineru-302-lifecycle-e2e.md) · [`policy upgrade`](./reports/2026-07-27-post-pilot-policy-upgrade-smoke.md) |
 | 私有部署 RC | [`0170ba8 black-box`](./reports/2026-07-27-private-0170ba8-blackbox.md) · [`29b06fe fault/backup`](./reports/2026-07-27-private-29b06fe-fault-backup.md) · [`RC3 browser`](./reports/2026-07-27-private-v1-rc3-browser.md) |
 | API 与签字稿 | [`Public API v1 E2E`](./reports/2026-07-27-public-api-v1-e2e.md) · [`pilot formal`](./reports/2026-07-27-pilot-formal-go-no-go.md) · [`RC3 formal`](./reports/2026-07-27-private-v1-rc3-formal-go-no-go.md) |
-| webch 预发布 | [`2026-07-28 conditional GO`](./reports/2026-07-28-webch-aliyun-pilot-go-no-go.md) · [`2026-07-29 baseline`](./reports/2026-07-29-webch-preproduction-baseline.md) · [`2026-07-30 clean reset`](./reports/2026-07-30-webch-unorag-clean-reset.md) |
+| webch 预发布 | [`2026-07-28 conditional GO`](./reports/2026-07-28-webch-aliyun-pilot-go-no-go.md) · [`2026-07-29 baseline`](./reports/2026-07-29-webch-preproduction-baseline.md) · [`2026-07-30 clean reset`](./reports/2026-07-30-webch-unorag-clean-reset.md) · [`2026-07-30 capacity`](./reports/2026-07-30-webch-capacity-baseline.md) |
 
 历史报告不因后续修复而回写。需要判断当前状态时，回到
 [`../STATUS.md`](../STATUS.md) 和最新目标环境报告。

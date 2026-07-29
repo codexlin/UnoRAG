@@ -110,6 +110,13 @@
 upload → ask → isolation → replace → delete 与生命周期巡检通过，旧运行容器、
 volume 和路径已退出当前运行面。
 
+同日完成 webch 2 vCPU / 1.8 GiB 最低规格短阶梯容量基线：Retrieve、Ask、
+普通入库和真实 MinerU 扫描 PDF 全部通过。该规格下 Ask 在 10 并发后吞吐约
+`0.93 req/s` 不再增长，20 并发 P95 为 `21.13s`；建议低并发试点以 5 个
+Ask in-flight 为初始预算。详细证据见
+[`acceptance/reports/2026-07-30-webch-capacity-baseline.md`](./acceptance/reports/2026-07-30-webch-capacity-baseline.md)。
+这仍不是客户目标硬件或持续负载 SLA。
+
 这不等于对任意客户环境宣称通用 production-ready。正式交付仍必须根据客户环境确认：
 
 1. OIDC/本地身份选择与组织权限模型；
@@ -125,7 +132,8 @@ volume 和路径已退出当前运行面。
    Versions / Jobs。
 2. **OIDC/SSO 真实 Provider**：把现有接口接到至少一个可验收的企业身份源。
 3. **对象存储抽象**：交付 S3/MinIO，消除多副本 Worker 对共享 PVC 的依赖。
-4. **部署容量基线**：在目标规格上记录并发、队列、模型与 MinerU 限额。
+4. **客户目标容量基线**：webch 最低规格短阶梯已完成；仍需在客户目标规格记录
+   稳态并发、队列、模型/MinerU 限额和 P50/P95。
 5. **Kubernetes 与供应链硬化**：HPA/PDB/NetworkPolicy、SBOM、签名。
 6. **产品治理补齐**：Workspace rename/archive/delete、用户组管理与反馈闭环。
 
