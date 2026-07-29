@@ -128,9 +128,8 @@
 - `webch` 已通过完整 upgrade 应用 `0012_organization-workspaces.sql`、
   `0013_reconcile_library_terminal_status.sql`，并完成登录、Workspace
   创建/切换、Library 状态收敛和回滚 smoke；预发布迁移滞后已关闭。
-- `x-unorag-*`、`unorag-control-plane` 与 `UNORAG_*` 是内部 HMAC
-  规范命名。API 暂时兼容一代 `x-meriknow-*` / issuer，Web 暂时兼容旧
-  Secret 变量；下一次破坏性大版本再移除兼容分支。
+- `x-unorag-*`、`unorag-control-plane` 与 `UNORAG_*` 是唯一内部 HMAC
+  命名；旧品牌 Header、issuer 和 Secret fallback 已在纯 UnoRAG 基线中移除。
 - edge health 返回控制面/数据面协议与各自 build ref，发布清单继续使用
   digest。协议缺失或不一致必须阻断升级。
 - `81778c5` 已将运行时数据库切换为五个独立登录，FastAPI 启动不再执行 DDL；

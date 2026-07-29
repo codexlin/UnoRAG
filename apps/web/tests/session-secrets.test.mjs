@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-	resolveInternalHeaderFamily,
 	resolveInternalSecret,
 	resolveSessionSecret,
 } from "../src/lib/server/auth/secrets.mjs";
@@ -30,46 +29,16 @@ test("session and internal signing secrets must be independent", () => {
 	);
 });
 
-test("legacy MeriKnow secret names remain readable during rolling upgrades", () => {
-	assert.equal(
-		resolveSessionSecret({
-			MERIKNOW_SESSION_SECRET: "s".repeat(32),
-			MERIKNOW_INTERNAL_SECRET: "i".repeat(32),
-		}),
-		"s".repeat(32),
+test("internal secret requires the canonical UnoRAG variable", () => {
+	assert.throws(
+		() => resolveInternalSecret({}),
+		/UNORAG_INTERNAL_SECRET.*must contain at least 32 characters/,
 	);
 	assert.equal(
 		resolveInternalSecret({
-			MERIKNOW_INTERNAL_SECRET: "i".repeat(32),
+			UNORAG_INTERNAL_SECRET: "i".repeat(32),
 		}),
 		"i".repeat(32),
-	);
-});
-
-test("canonical UnoRAG secret names take precedence over legacy aliases", () => {
-	assert.equal(
-		resolveInternalSecret({
-			UNORAG_INTERNAL_SECRET: "u".repeat(32),
-			MERIKNOW_INTERNAL_SECRET: "m".repeat(32),
-		}),
-		"u".repeat(32),
-	);
-});
-
-test("legacy header emission is explicit and invalid values fail closed", () => {
-	assert.equal(resolveInternalHeaderFamily({}), "unorag");
-	assert.equal(
-		resolveInternalHeaderFamily({
-			UNORAG_INTERNAL_AUTH_HEADER_FAMILY: "meriknow",
-		}),
-		"meriknow",
-	);
-	assert.throws(
-		() =>
-			resolveInternalHeaderFamily({
-				UNORAG_INTERNAL_AUTH_HEADER_FAMILY: "automatic",
-			}),
-		/must be unorag or meriknow/,
 	);
 });
 

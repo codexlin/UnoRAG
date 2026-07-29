@@ -17,10 +17,8 @@ from app.settings import Settings, get_settings
 
 CONTEXT_HEADER = "x-unorag-context"
 SIGNATURE_HEADER = "x-unorag-signature"
-LEGACY_CONTEXT_HEADER = "x-meriknow-context"
-LEGACY_SIGNATURE_HEADER = "x-meriknow-signature"
 INTERNAL_AUTH_PROTOCOL = "unorag-hmac-v1"
-_ACCEPTED_ISSUERS = {"unorag-control-plane", "meriknow-control-plane"}
+_ACCEPTED_ISSUERS = {"unorag-control-plane"}
 
 
 class InternalBodyDigestMiddleware:
@@ -247,20 +245,10 @@ def _canonical_target(request: Request) -> str:
 
 
 def _signed_header_pair(request: Request) -> tuple[str, str]:
-	canonical = (
+	return (
 		request.headers.get(CONTEXT_HEADER, ""),
 		request.headers.get(SIGNATURE_HEADER, ""),
 	)
-	legacy = (
-		request.headers.get(LEGACY_CONTEXT_HEADER, ""),
-		request.headers.get(LEGACY_SIGNATURE_HEADER, ""),
-	)
-	if all(canonical) and not any(legacy):
-		return canonical
-	if all(legacy) and not any(canonical):
-		return legacy
-	# Reject partial and mixed families so token/signature provenance is explicit.
-	return "", ""
 
 
 async def require_internal_context(

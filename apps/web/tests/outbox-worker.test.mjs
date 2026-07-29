@@ -21,7 +21,10 @@ test("long operations renew their lease", async () => {
 		requestTimeoutSeconds: 1,
 		heartbeatIntervalMs: 5,
 		operation: async () => {
-			await sleep(24);
+			const deadline = Date.now() + 500;
+			while (renewals < 2 && Date.now() < deadline) {
+				await sleep(5);
+			}
 			return "completed";
 		},
 	});

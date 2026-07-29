@@ -27,8 +27,6 @@ const REQUEST_HEADER_DENYLIST = new Set([
 	"transfer-encoding",
 	"x-unorag-context",
 	"x-unorag-signature",
-	"x-meriknow-context",
-	"x-meriknow-signature",
 	"x-request-id",
 ]);
 

@@ -143,47 +143,22 @@ def test_v1_requires_context_when_internal_auth_enabled(monkeypatch) -> None:
 	assert response.json()["detail"] == "internal request context required"
 
 
-def test_legacy_meriknow_context_is_accepted_during_rolling_upgrade(
-	monkeypatch,
-) -> None:
+def test_unsupported_internal_issuer_is_rejected(monkeypatch) -> None:
 	monkeypatch.setenv("INTERNAL_AUTH_ENABLED", "true")
 	monkeypatch.setenv("INTERNAL_AUTH_SECRET", TEST_SECRET)
 	monkeypatch.setenv("INTERNAL_AUTH_REPLAY_BACKEND", "memory")
 	get_settings.cache_clear()
 	client = TestClient(app)
-
-	response = client.get(
-		"/v1/libraries",
-		headers=_signed_headers(
-			method="GET",
-			target="/v1/libraries",
-			issuer="meriknow-control-plane",
-			header_family="meriknow",
-		),
-	)
-
-	assert response.status_code == 200
-
-
-def test_mixed_internal_header_families_are_rejected(monkeypatch) -> None:
-	monkeypatch.setenv("INTERNAL_AUTH_ENABLED", "true")
-	monkeypatch.setenv("INTERNAL_AUTH_SECRET", TEST_SECRET)
-	monkeypatch.setenv("INTERNAL_AUTH_REPLAY_BACKEND", "memory")
-	get_settings.cache_clear()
-	client = TestClient(app)
-	headers = _signed_headers(method="GET", target="/v1/libraries")
-	legacy = _signed_headers(
+	headers = _signed_headers(
 		method="GET",
 		target="/v1/libraries",
-		issuer="meriknow-control-plane",
-		header_family="meriknow",
+		issuer="unsupported-control-plane",
 	)
-	headers["x-meriknow-signature"] = legacy["x-meriknow-signature"]
 
 	response = client.get("/v1/libraries", headers=headers)
 
 	assert response.status_code == 401
-	assert response.json()["detail"] == "internal request context required"
+	assert response.json()["detail"] == "unsupported internal request context"
 
 
 @pytest.mark.asyncio
