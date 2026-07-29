@@ -1,6 +1,7 @@
 # 验收自动化脚本
 
-可重复的试点验收：隔离（S1/S2）、独立恢复（B2）、升级/回滚（B3/B4）、故障注入（R1–R4）。
+可重复的试点验收：隔离（S1/S2）、独立恢复（B2）、升级/回滚（B3/B4）、
+故障注入（R1–R4）和目标环境容量基线。
 
 ## 脚本一览
 
@@ -12,6 +13,7 @@
 | [`r_fault_injection.sh`](./r_fault_injection.sh) | R1–R4 | Worker / Qdrant / 模型 / MinerU |
 | [`ocr_policy_smoke.sh`](./ocr_policy_smoke.sh) | OCR policy | 严格 text-only + MinerU 连接失败降级/失败语义 |
 | [`b5_min_alerts.sh`](./b5_min_alerts.sh) | B5 | 五信号 → 通用 webhook（本地 mock receiver） |
+| [`capacity_baseline.py`](./capacity_baseline.py) | Capacity | 真实登录、入库、Public Retrieve/Ask 阶梯并发与生命周期并发 |
 | [`compose.b2-infra.yml`](./compose.b2-infra.yml) | B2/B3 基建 | 仅 Postgres/Qdrant/Redis；**禁止**指向主开发卷 |
 | [`hooks/README.md`](./hooks/README.md) | 索引 | 钩子入口 |
 
@@ -123,6 +125,31 @@ UNORAG_BASE_URL=http://localhost:3000 \
 - `.ocr_policy_last_run.json`
 - `.b5_last_run.json`
 - `.r_fault_last_run.json`
+- `.capacity_last_run.json`
+
+## Capacity（目标环境容量基线）
+
+脚本只通过 HTTPS 产品边界运行：先登录并创建临时文库，完成真实入库后创建
+仅限该文库的 Service Key，再对 Public Retrieve/Ask 执行阶梯并发。生命周期阶段
+并发上传真实 Markdown 并等待每个 Job 进入终态。结束时吊销 Key、删除临时文库；
+原始密码和 Key 不写入结果。
+
+默认阶梯：
+
+- Retrieve：`1:5,5:10,10:20,20:40`（并发数:请求数）
+- Ask：`1:2,5:5,10:10,20:20`
+- Lifecycle：并发 `1,2,4`
+
+```bash
+UNORAG_BASE_URL=https://example.internal \
+UNORAG_ADMIN_EMAIL=admin@example.com \
+UNORAG_ADMIN_PASSWORD='...' \
+  python3 ./scripts/acceptance/capacity_baseline.py
+```
+
+可用 `--mineru-file testdata/ab/twocolumn.pdf` 增加一个真实复杂 PDF 探针。
+结果写入 `.capacity_last_run.json`（`0600`、gitignore）。容量数字只绑定测试环境、
+资源规格、模型 Provider、语料规模和该次 commit，不可直接外推。
 
 ## 报告
 
