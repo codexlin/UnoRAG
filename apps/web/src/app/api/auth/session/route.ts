@@ -5,15 +5,8 @@ import {
 	localIdentityProvider,
 	resolveRequestSession,
 	SESSION_COOKIE,
+	sessionCookieOptions,
 } from "@/lib/server/auth/session";
-
-const COOKIE_OPTIONS = {
-	httpOnly: true,
-	sameSite: "lax" as const,
-	secure: process.env.NODE_ENV === "production",
-	path: "/",
-	maxAge: 8 * 60 * 60,
-};
 
 export async function GET(request: Request) {
 	const identity = await resolveRequestSession(request);
@@ -56,13 +49,16 @@ export async function POST(request: Request) {
 	response.cookies.set(
 		SESSION_COOKIE,
 		createSessionToken(identity),
-		COOKIE_OPTIONS,
+		sessionCookieOptions(),
 	);
 	return response;
 }
 
 export async function DELETE() {
 	const response = NextResponse.json({ ok: true });
-	response.cookies.set(SESSION_COOKIE, "", { ...COOKIE_OPTIONS, maxAge: 0 });
+	response.cookies.set(SESSION_COOKIE, "", {
+		...sessionCookieOptions(),
+		maxAge: 0,
+	});
 	return response;
 }

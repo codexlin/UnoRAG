@@ -15,6 +15,7 @@ import {
 	groupMembers,
 	groups,
 	localCredentials,
+	organizations,
 	users,
 	workspaceMembers,
 	workspaces,
@@ -27,8 +28,9 @@ import type {
 import { resolveSessionSecret } from "./secrets.mjs";
 
 export const SESSION_COOKIE = "unorag_session";
+export const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 const SESSION_ISSUER = "unorag-control-plane";
-const SESSION_TTL_SECONDS = 8 * 60 * 60;
+const SESSION_TTL_SECONDS = SESSION_MAX_AGE_SECONDS;
 const scrypt = promisify(scryptCallback);
 
 type SessionClaims = {
@@ -111,12 +113,21 @@ export async function hydrateIdentity(
 		.select({
 			tenantId: users.organizationId,
 			workspaceId: workspaces.id,
+			workspaceName: workspaces.name,
 			principalId: users.id,
+			organizationRole: users.organizationRole,
 			role: workspaceMembers.role,
 			email: users.email,
 			displayName: users.displayName,
 		})
 		.from(users)
+		.innerJoin(
+			organizations,
+			and(
+				eq(organizations.id, users.organizationId),
+				eq(organizations.status, "active"),
+			),
+		)
 		.innerJoin(
 			workspaceMembers,
 			and(
@@ -189,6 +200,16 @@ export function createSessionToken(identity: AuthIdentity): string {
 	};
 	const encoded = Buffer.from(JSON.stringify(claims)).toString("base64url");
 	return `${encoded}.${sign(encoded)}`;
+}
+
+export function sessionCookieOptions() {
+	return {
+		httpOnly: true,
+		sameSite: "lax" as const,
+		secure: process.env.NODE_ENV === "production",
+		path: "/",
+		maxAge: SESSION_MAX_AGE_SECONDS,
+	};
 }
 
 async function verifyPassword(

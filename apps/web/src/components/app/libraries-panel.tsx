@@ -1045,16 +1045,24 @@ export function LibrariesPanel() {
 								</AuthButton>
 							</div>
 						) : (
-							<div className="overflow-x-auto rounded-md border border-border/80">
-								<Table>
+							<div className="max-w-full overflow-x-auto rounded-md border border-border/80">
+								<Table className="table-fixed md:table-auto">
 									<TableHeader>
 										<TableRow className="hover:bg-transparent">
 											<TableHead>显示名</TableHead>
-											<TableHead>原文件</TableHead>
-											<TableHead>状态</TableHead>
-											<TableHead className="text-right">大小</TableHead>
-											<TableHead className="text-right">Chunks</TableHead>
-											<TableHead>更新时间</TableHead>
+											<TableHead className="hidden md:table-cell">
+												原文件
+											</TableHead>
+											<TableHead className="w-24 md:w-auto">状态</TableHead>
+											<TableHead className="hidden text-right md:table-cell">
+												大小
+											</TableHead>
+											<TableHead className="hidden text-right md:table-cell">
+												Chunks
+											</TableHead>
+											<TableHead className="hidden md:table-cell">
+												更新时间
+											</TableHead>
 											<TableHead className="w-12 text-right">操作</TableHead>
 										</TableRow>
 									</TableHeader>
@@ -1094,12 +1102,12 @@ export function LibrariesPanel() {
 															{doc.name}
 														</span>
 													</TableCell>
-													<TableCell className="max-w-40">
+													<TableCell className="hidden max-w-40 md:table-cell">
 														<span className="text-meta block truncate font-mono text-muted-foreground">
 															{doc.filename}
 														</span>
 													</TableCell>
-													<TableCell>
+													<TableCell className="w-24 md:w-auto">
 														<DocStatusBadge
 															status={doc.status}
 															parserReport={doc.parser_report}
@@ -1115,13 +1123,13 @@ export function LibrariesPanel() {
 															</span>
 														) : null}
 													</TableCell>
-													<TableCell className="text-right font-mono text-meta text-muted-foreground">
+													<TableCell className="hidden text-right font-mono text-meta text-muted-foreground md:table-cell">
 														{formatFileSize(doc.size_bytes)}
 													</TableCell>
-													<TableCell className="text-right font-mono text-meta">
+													<TableCell className="hidden text-right font-mono text-meta md:table-cell">
 														{doc.chunk_count}
 													</TableCell>
-													<TableCell className="text-meta font-mono text-muted-foreground">
+													<TableCell className="hidden text-meta font-mono text-muted-foreground md:table-cell">
 														{formatDateTime(doc.updated_at)}
 													</TableCell>
 													<TableCell
@@ -1452,8 +1460,8 @@ export function LibrariesPanel() {
 						<AlertDialogTitle>替换文件？</AlertDialogTitle>
 						<AlertDialogDescription>
 							将用「{replaceFile?.name}」覆盖「{replaceDoc?.name}
-							」：清除旧向量与原文后按新文件重新索引，文档 ID
-							不变。此操作不可恢复旧版内容。
+							」并创建新版本。新版本索引成功前继续服务当前活跃版本；成功后原子切换，
+							文档 ID 不变。旧版本保留在版本历史中。
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>

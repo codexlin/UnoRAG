@@ -85,6 +85,13 @@
       "when": 1785150000000,
       "tag": "0011_parse_preference",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785247142066,
+      "tag": "0012_organization-workspaces",
+      "breakpoints": true
     }
   ]
 }

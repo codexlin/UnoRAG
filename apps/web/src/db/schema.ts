@@ -52,6 +52,9 @@ export const users = appSchema.table(
 		externalSubject: varchar("external_subject", { length: 256 }).notNull(),
 		email: varchar("email", { length: 320 }),
 		displayName: varchar("display_name", { length: 256 }).notNull(),
+		organizationRole: varchar("organization_role", { length: 32 })
+			.default("member")
+			.notNull(),
 		status: varchar("status", { length: 32 }).default("active").notNull(),
 		lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
 		...timestamps,
@@ -62,6 +65,10 @@ export const users = appSchema.table(
 			table.externalSubject,
 		),
 		index("users_org_email_idx").on(table.organizationId, table.email),
+		check(
+			"users_organization_role_check",
+			sql`${table.organizationRole} in ('owner', 'admin', 'member')`,
+		),
 	],
 );
 

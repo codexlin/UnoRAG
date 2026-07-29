@@ -3,8 +3,10 @@ import "server-only";
 export type AuthIdentity = {
 	tenantId: string;
 	workspaceId: string;
+	workspaceName: string;
 	principalId: string;
 	groupIds: string[];
+	organizationRole: string;
 	role: string;
 	email: string | null;
 	displayName: string;

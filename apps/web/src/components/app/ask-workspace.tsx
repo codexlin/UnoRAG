@@ -276,7 +276,7 @@ export function AskWorkspace() {
 		error: libsError,
 		loading: librariesLoading,
 	} = useLibraries();
-	const { apiReady } = useHealth();
+	const { apiReady, loading: healthLoading } = useHealth();
 	const [libraryId, setLibraryId] = useState("");
 	const [input, setInput] = useState("");
 	const [sessionId, setSessionId] = useState<string | undefined>();
@@ -284,6 +284,9 @@ export function AskWorkspace() {
 	const [threadTitle, setThreadTitle] = useState<string | null>(null);
 	const [archiving, setArchiving] = useState(false);
 	const [archiveError, setArchiveError] = useState<string | null>(null);
+	const [resumeLibraryMissing, setResumeLibraryMissing] = useState<
+		string | null
+	>(null);
 	const [turns, setTurns] = useState<LocalTurn[]>([]);
 	const [activeCitation, setActiveCitation] = useState<UiCitation | null>(null);
 	const [drawerOpen, setDrawerOpen] = useState(false);
@@ -307,6 +310,7 @@ export function AskWorkspace() {
 
 	useEffect(() => {
 		if (librariesLoading) return;
+		if (resumeLibraryMissing) return;
 		if (libraries.length === 0) {
 			setLibraryId("");
 			try {
@@ -336,7 +340,7 @@ export function AskWorkspace() {
 				// Selection still works when persistence is unavailable.
 			}
 		}
-	}, [libraries, librariesLoading, libraryId]);
+	}, [libraries, librariesLoading, libraryId, resumeLibraryMissing]);
 
 	useEffect(() => {
 		return () => {
@@ -348,6 +352,7 @@ export function AskWorkspace() {
 		const resumeId = (searchParams.get("thread") || "").trim();
 		if (!resumeId || resumeThreadRef.current === resumeId) return;
 		if (!apiReady) return;
+		if (librariesLoading) return;
 		resumeThreadRef.current = resumeId;
 		const controller = new AbortController();
 		void (async () => {
@@ -357,7 +362,17 @@ export function AskWorkspace() {
 				setThreadId(detail.id);
 				setThreadTitle(detail.title);
 				setSessionId(detail.session_id || detail.id);
-				if (detail.library_id) setLibraryId(detail.library_id);
+				const archivedLibraryId = (detail.library_id || "").trim();
+				if (
+					archivedLibraryId &&
+					!libraries.some((item) => item.id === archivedLibraryId)
+				) {
+					setResumeLibraryMissing(archivedLibraryId);
+					setLibraryId("");
+				} else {
+					setResumeLibraryMissing(null);
+					if (archivedLibraryId) setLibraryId(archivedLibraryId);
+				}
 				setTurns(
 					detail.turns.map((turn, index) => ({
 						id: turn.id || `resume-${index}`,
@@ -379,7 +394,7 @@ export function AskWorkspace() {
 			}
 		})();
 		return () => controller.abort();
-	}, [apiReady, searchParams]);
+	}, [apiReady, libraries, librariesLoading, searchParams]);
 
 	useEffect(() => {
 		if (!libraryId || !apiReady) {
@@ -785,7 +800,10 @@ export function AskWorkspace() {
 						<LibraryCombobox
 							libraries={libraries}
 							value={libraryId}
-							onValueChange={setLibraryId}
+							onValueChange={(nextId) => {
+								setResumeLibraryMissing(null);
+								setLibraryId(nextId);
+							}}
 							showLabel={false}
 							className="w-full"
 						/>
@@ -944,51 +962,62 @@ export function AskWorkspace() {
 						{archiveError}
 					</p>
 				) : null}
+				{resumeLibraryMissing ? (
+					<p className="border-b border-survey/35 bg-accent px-5 py-2 text-sm text-accent-foreground">
+						原知识库已删除，历史回答与引用快照仍可回放。请从上方明确选择一个已就绪的知识库后继续对话。
+					</p>
+				) : null}
 
 				<ScrollArea className="min-h-0 flex-1">
 					<div className="px-5 py-6">
 						{turns.length === 0 ? (
 							<div className="desk-enter mx-auto flex max-w-xl flex-col gap-5 py-10">
 								<p className="text-meta font-mono tracking-[0.14em] text-cite">
-									{!apiReady
-										? "服务状态 · 暂不可用"
-										: library
-											? `知识库 · ${library.name}${
-													library.status === "empty"
-														? " · 空"
-														: library.status === "indexing"
-															? " · 索引中"
-															: ""
-												}`
-											: libraries.length === 0
-												? "知识库 · 尚未创建"
-												: "知识库 · 请选择"}
+									{healthLoading
+										? "服务状态 · 探测中"
+										: !apiReady
+											? "服务状态 · 暂不可用"
+											: library
+												? `知识库 · ${library.name}${
+														library.status === "empty"
+															? " · 空"
+															: library.status === "indexing"
+																? " · 索引中"
+																: ""
+													}`
+												: libraries.length === 0
+													? "知识库 · 尚未创建"
+													: "知识库 · 请选择"}
 								</p>
 								<h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground">
 									{canAsk
 										? "向知识库提问，答案可追溯到原文"
-										: !apiReady
-											? "服务暂不可用"
-											: !library
-												? libraries.length === 0
-													? "还没有知识库"
-													: "请选择知识库"
-												: library.status === "empty"
-													? "知识库还是空的"
-													: "文档仍在索引中"}
+										: healthLoading
+											? "正在检查服务状态"
+											: !apiReady
+												? "服务暂不可用"
+												: !library
+													? libraries.length === 0
+														? "还没有知识库"
+														: "请选择知识库"
+													: library.status === "empty"
+														? "知识库还是空的"
+														: "文档仍在索引中"}
 								</h2>
 								<p className="text-answer desk-enter desk-enter-delay-1 text-muted-foreground">
 									{canAsk
 										? "支持流式回答与来源核对。每条回复会显示耗时、检索模式与引用分数；点击答案中的编号可打开引用来源。"
-										: !apiReady || libsError
-											? "请先恢复 API 连接后再提问。"
-											: !library
-												? libraries.length === 0
-													? "先到「知识库」创建空间并上传文档。"
-													: "从上方选择一个已就绪的知识库。"
-												: library.status === "empty"
-													? "先上传文档完成索引，再回来提问。"
-													: "索引完成后即可提问，可先到知识库查看进度。"}
+										: healthLoading
+											? "正在连接知识库服务，请稍候。"
+											: !apiReady || libsError
+												? "请先恢复 API 连接后再提问。"
+												: !library
+													? libraries.length === 0
+														? "先到「知识库」创建空间并上传文档。"
+														: "从上方选择一个已就绪的知识库。"
+													: library.status === "empty"
+														? "先上传文档完成索引，再回来提问。"
+														: "索引完成后即可提问，可先到知识库查看进度。"}
 								</p>
 								{!canAsk ? (
 									<Link
@@ -1303,9 +1332,11 @@ export function AskWorkspace() {
 								placeholder={
 									isStreaming
 										? "生成中… 可点击停止"
-										: canAsk
-											? "向知识库提问…"
-											: "知识库就绪后再提问…"
+										: healthLoading
+											? "正在检查服务状态…"
+											: canAsk
+												? "向知识库提问…"
+												: "知识库就绪后再提问…"
 								}
 								className="text-answer max-h-50 min-h-11 flex-1 resize-none border-0 bg-transparent px-0 py-2.5 shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
 							/>

@@ -102,6 +102,12 @@ test("control plane keys routes require canManageMembers and never list plaintex
 	assert.match(publicRow, /prefix:/);
 	assert.doesNotMatch(publicRow, /^\s*key:/m);
 	assert.match(serviceKeys, /key:\s*rawKey/);
+	assert.match(serviceKeys, /workspace\.service_key_created/);
+	assert.match(serviceKeys, /workspace\.service_key_revoked/);
+	assert.match(serviceKeys, /resourceType:\s*"service_key"/);
+	assert.match(serviceKeys, /db\.transaction/);
+	assert.doesNotMatch(serviceKeys, /details:\s*\{[\s\S]{0,300}keyHash/);
+	assert.doesNotMatch(serviceKeys, /details:\s*\{[\s\S]{0,300}rawKey/);
 });
 
 test("authenticateServiceKey rejects revoked keys (revoked_at IS NULL filter)", () => {

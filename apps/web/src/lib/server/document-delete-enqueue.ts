@@ -2,10 +2,16 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 
 import type { getDatabase } from "@/db";
-import { auditLogs, documents, documentVersions, jobs } from "@/db/schema";
+import {
+	auditLogs,
+	documents,
+	documentVersions,
+	jobs,
+	libraries,
+} from "@/db/schema";
 import {
 	buildDocumentDeletePayload,
 	documentDeleteIdempotencyKey,
@@ -201,6 +207,26 @@ export async function enqueueDocumentDelete(input: {
 			updatedAt: now,
 		})
 		.where(eq(documents.id, document.id));
+
+	if (!libraryDelete) {
+		const wasReady = document.status === "ready";
+		await tx
+			.update(libraries)
+			.set({
+				docCount: sql`greatest(${libraries.docCount} - 1, 0)`,
+				readyCount: wasReady
+					? sql`greatest(${libraries.readyCount} - 1, 0)`
+					: libraries.readyCount,
+				status: sql`case
+					when greatest(${libraries.docCount} - 1, 0) = 0 then 'empty'
+					when greatest(${libraries.readyCount} - ${wasReady ? 1 : 0}, 0)
+						= greatest(${libraries.docCount} - 1, 0) then 'ready'
+					else 'indexing'
+				end`,
+				updatedAt: now,
+			})
+			.where(eq(libraries.id, library.id));
+	}
 
 	await tx.insert(auditLogs).values({
 		organizationId: identity.tenantId,

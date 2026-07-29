@@ -3,7 +3,7 @@ import "server-only";
 import { and, desc, eq, isNull } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import { workspaceServiceKeys } from "@/db/schema";
+import { auditLogs, workspaceServiceKeys } from "@/db/schema";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import {
 	serviceKeyAllowsLibrary as allowsLibrary,
@@ -87,19 +87,38 @@ export async function createWorkspaceServiceKey(input: {
 	const { rawKey, prefix } = generateServiceKeyRaw();
 	const keyHash = hashServiceKey(rawKey);
 	const db = getDatabase();
-	const [row] = await db
-		.insert(workspaceServiceKeys)
-		.values({
+	const row = await db.transaction(async (tx) => {
+		const [created] = await tx
+			.insert(workspaceServiceKeys)
+			.values({
+				organizationId: input.identity.tenantId,
+				workspaceId: input.identity.workspaceId,
+				name,
+				prefix,
+				keyHash,
+				scopes,
+				libraryIds,
+				createdBy: input.identity.principalId,
+			})
+			.returning();
+		if (!created) return null;
+		await tx.insert(auditLogs).values({
 			organizationId: input.identity.tenantId,
 			workspaceId: input.identity.workspaceId,
-			name,
-			prefix,
-			keyHash,
-			scopes,
-			libraryIds,
-			createdBy: input.identity.principalId,
-		})
-		.returning();
+			actorId: input.identity.principalId,
+			action: "workspace.service_key_created",
+			resourceType: "service_key",
+			resourceId: created.id,
+			details: {
+				name: created.name,
+				prefix: created.prefix,
+				scopes,
+				library_count: libraryIds?.length ?? 0,
+				restricted_to_libraries: libraryIds !== null,
+			},
+		});
+		return created;
+	});
 	if (!row) {
 		return { ok: false, status: 500, detail: "failed to create service key" };
 	}
@@ -121,30 +140,59 @@ export async function revokeWorkspaceServiceKey(input: {
 		return { ok: false, status: 400, detail: "key id is required" };
 	}
 	const db = getDatabase();
-	const [existing] = await db
-		.select({
-			id: workspaceServiceKeys.id,
-			revokedAt: workspaceServiceKeys.revokedAt,
-		})
-		.from(workspaceServiceKeys)
-		.where(
-			and(
-				eq(workspaceServiceKeys.id, keyId),
-				eq(workspaceServiceKeys.workspaceId, input.identity.workspaceId),
-			),
-		)
-		.limit(1);
-	if (!existing) {
+	const now = new Date();
+	const outcome = await db.transaction(async (tx) => {
+		const [revoked] = await tx
+			.update(workspaceServiceKeys)
+			.set({ revokedAt: now, updatedAt: now })
+			.where(
+				and(
+					eq(workspaceServiceKeys.id, keyId),
+					eq(workspaceServiceKeys.workspaceId, input.identity.workspaceId),
+					isNull(workspaceServiceKeys.revokedAt),
+				),
+			)
+			.returning({
+				id: workspaceServiceKeys.id,
+				name: workspaceServiceKeys.name,
+				prefix: workspaceServiceKeys.prefix,
+				scopes: workspaceServiceKeys.scopes,
+				libraryIds: workspaceServiceKeys.libraryIds,
+			});
+		if (!revoked) {
+			const [existing] = await tx
+				.select({ id: workspaceServiceKeys.id })
+				.from(workspaceServiceKeys)
+				.where(
+					and(
+						eq(workspaceServiceKeys.id, keyId),
+						eq(workspaceServiceKeys.workspaceId, input.identity.workspaceId),
+					),
+				)
+				.limit(1);
+			return existing ? "already_revoked" : "not_found";
+		}
+		await tx.insert(auditLogs).values({
+			organizationId: input.identity.tenantId,
+			workspaceId: input.identity.workspaceId,
+			actorId: input.identity.principalId,
+			action: "workspace.service_key_revoked",
+			resourceType: "service_key",
+			resourceId: revoked.id,
+			details: {
+				name: revoked.name,
+				prefix: revoked.prefix,
+				scopes: Array.isArray(revoked.scopes) ? revoked.scopes : [],
+				library_count: Array.isArray(revoked.libraryIds)
+					? revoked.libraryIds.length
+					: 0,
+			},
+		});
+		return "revoked";
+	});
+	if (outcome === "not_found") {
 		return { ok: false, status: 404, detail: "service key not found" };
 	}
-	if (existing.revokedAt) {
-		return { ok: true };
-	}
-	const now = new Date();
-	await db
-		.update(workspaceServiceKeys)
-		.set({ revokedAt: now, updatedAt: now })
-		.where(eq(workspaceServiceKeys.id, keyId));
 	return { ok: true };
 }
 
@@ -224,8 +272,10 @@ export function serviceKeyToIdentity(
 	return {
 		tenantId: key.organizationId,
 		workspaceId: key.workspaceId,
+		workspaceName: "",
 		principalId: key.principalId,
 		groupIds: [],
+		organizationRole: "member",
 		role: "service",
 		email: null,
 		displayName: key.name,

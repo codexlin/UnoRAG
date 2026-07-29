@@ -51,5 +51,51 @@ test("libraries stack list and documents on mobile while preserving desktop colu
 
 	assert.match(libraries, /flex-col md:flex-row/);
 	assert.match(libraries, /h-\[min\(42vh,22rem\)\][\s\S]*md:w-65/);
-	assert.match(libraries, /overflow-x-auto rounded-md border/);
+	assert.match(libraries, /max-w-full overflow-x-auto rounded-md border/);
+	assert.match(libraries, /table-fixed md:table-auto/);
+	assert.match(libraries, /hidden md:table-cell/);
+	assert.match(libraries, /w-24 md:w-auto/);
+});
+
+test("deleted archive library requires an explicit replacement selection", () => {
+	const ask = readFileSync(
+		path.join(root, "src/components/app/ask-workspace.tsx"),
+		"utf8",
+	);
+
+	assert.match(ask, /resumeLibraryMissing/);
+	assert.match(ask, /原知识库已删除/);
+	assert.match(ask, /setResumeLibraryMissing\(null\)/);
+	assert.match(ask, /onValueChange=\{\(nextId\)/);
+});
+
+test("settings labels hybrid health as a global default", () => {
+	const settings = readFileSync(
+		path.join(root, "src/app/app/settings/page.tsx"),
+		"utf8",
+	);
+	assert.match(settings, /全局默认混合检索/);
+	assert.match(settings, /自动策略可按问法开启/);
+});
+
+test("Ask keeps the initial health probe distinct from an outage", () => {
+	const ask = readFileSync(
+		path.join(root, "src/components/app/ask-workspace.tsx"),
+		"utf8",
+	);
+	assert.match(ask, /loading: healthLoading/);
+	assert.match(ask, /服务状态 · 探测中/);
+	assert.match(ask, /正在检查服务状态/);
+	assert.match(ask, /正在连接知识库服务/);
+});
+
+test("replace copy matches desired to active atomic version behavior", () => {
+	const libraries = readFileSync(
+		path.join(root, "src/components/app/libraries-panel.tsx"),
+		"utf8",
+	);
+	assert.match(libraries, /新版本索引成功前继续服务当前活跃版本/);
+	assert.match(libraries, /成功后原子切换/);
+	assert.match(libraries, /旧版本保留在版本历史中/);
+	assert.doesNotMatch(libraries, /此操作不可恢复旧版内容/);
 });

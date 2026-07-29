@@ -54,6 +54,18 @@ test("delete idempotency key is stable for alreadyQueued reassert", () => {
 	assert.match(key, /^document\.delete:same-doc:/);
 });
 
+test("delete request immediately projects non-deleting library counters", () => {
+	const enqueue = readFileSync(
+		path.join(root, "src/lib/server/document-delete-enqueue.ts"),
+		"utf8",
+	);
+
+	assert.match(enqueue, /if \(!libraryDelete\)/);
+	assert.match(enqueue, /greatest\(\$\{libraries\.docCount\} - 1, 0\)/);
+	assert.match(enqueue, /greatest\(\$\{libraries\.readyCount\} - 1, 0\)/);
+	assert.match(enqueue, /when greatest\([\s\S]*then 'empty'/);
+});
+
 test("upgrade migration reconciles historical library counters", () => {
 	const migration = readFileSync(
 		path.join(root, "drizzle/0010_reconcile_library_counts.sql"),

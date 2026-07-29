@@ -9,6 +9,7 @@ import {
 	getAppNavItemsByGroup,
 } from "@/components/app/nav-items";
 import { UnoRAGMark } from "@/components/app/unorag-logo";
+import { WorkspaceSwitcher } from "@/components/app/workspace-switcher";
 import {
 	Sidebar,
 	SidebarContent,
@@ -103,6 +104,9 @@ export function AppSidebar() {
 			</SidebarHeader>
 
 			<SidebarContent className="pt-1">
+				<SidebarGroup className="pb-0">
+					<WorkspaceSwitcher />
+				</SidebarGroup>
 				<SidebarGroup>
 					<SidebarGroupLabel className="text-meta font-mono tracking-[0.14em] text-muted-foreground uppercase">
 						导航

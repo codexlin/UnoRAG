@@ -84,12 +84,14 @@ try {
 	await client.query(
 		`
 			INSERT INTO app.users (
-				id, organization_id, external_subject, email, display_name, status
+				id, organization_id, external_subject, email, display_name,
+				organization_role, status
 			)
-			VALUES ($1, $2, $3, $4, $5, 'active')
+			VALUES ($1, $2, $3, $4, $5, 'owner', 'active')
 			ON CONFLICT (id) DO UPDATE
 			SET email = EXCLUDED.email,
 				display_name = EXCLUDED.display_name,
+				organization_role = 'owner',
 				updated_at = now()
 		`,
 		[

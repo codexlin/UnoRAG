@@ -23,8 +23,10 @@ export default async function AppLayout({
 	const session: SessionIdentity = {
 		tenantId: identity.tenantId,
 		workspaceId: identity.workspaceId,
+		workspaceName: identity.workspaceName,
 		principalId: identity.principalId,
 		groupIds: identity.groupIds,
+		organizationRole: identity.organizationRole,
 		role: identity.role,
 		email: identity.email,
 		displayName: identity.displayName,
@@ -32,7 +34,7 @@ export default async function AppLayout({
 	};
 
 	return (
-		<SessionProvider identity={session}>
+		<SessionProvider key={session.workspaceId} identity={session}>
 			<AppDataProvider>
 				<IngestJobsProvider>
 					<TooltipProvider>

@@ -99,9 +99,13 @@ export default function SettingsPage() {
 										</span>
 									</li>
 									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">混合检索</span>
+										<span className="text-muted-foreground">
+											全局默认混合检索
+										</span>
 										<span className="font-mono text-[0.8125rem]">
-											{health.hybrid_enabled ? "开启" : "关闭"}
+											{health.hybrid_enabled
+												? "默认开启"
+												: "默认关闭（自动策略可按问法开启）"}
 										</span>
 									</li>
 									<li className="flex justify-between gap-3">
