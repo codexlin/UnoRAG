@@ -464,6 +464,14 @@ export const documents = appSchema.table(
 		filename: varchar("filename", { length: 512 }).notNull(),
 		contentType: varchar("content_type", { length: 128 }).notNull(),
 		status: varchar("status", { length: 32 }).default("processing").notNull(),
+		aclFingerprint: varchar("acl_fingerprint", { length: 64 })
+			.default(
+				"250f383c79d9c1a77d4b4def892e992dc3d463713270b6d5fb9b41d529e5bd6e",
+			)
+			.notNull(),
+		projectedAclFingerprint: varchar("projected_acl_fingerprint", {
+			length: 64,
+		}),
 		// Composite pointer FKs live in migration 0004 to avoid an ORM type cycle.
 		desiredVersionId: uuid("desired_version_id"),
 		latestJobId: uuid("latest_job_id"),
@@ -482,6 +490,12 @@ export const documents = appSchema.table(
 		check(
 			"documents_status_check",
 			sql`${table.status} in ('empty', 'processing', 'ready', 'degraded', 'failed', 'deleting', 'deleted')`,
+		),
+		check(
+			"documents_acl_fingerprint_check",
+			sql`${table.aclFingerprint} ~ '^[a-f0-9]{64}$'
+				and (${table.projectedAclFingerprint} is null
+					or ${table.projectedAclFingerprint} ~ '^[a-f0-9]{64}$')`,
 		),
 	],
 );

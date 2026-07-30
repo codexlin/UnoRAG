@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type {
+	DocumentAclProjectionJob,
 	DocumentDeleteJob,
 	DocumentIngestJob,
 	DurableJobInput,
@@ -76,7 +77,22 @@ const deletion: DocumentDeleteJob = {
 	},
 };
 
-test("registers exactly three named workflows with strict input contracts", () => {
+const aclProjection: DocumentAclProjectionJob = {
+	jobId: "40000000-0000-4000-8000-000000000001",
+	organizationId: ingest.organizationId,
+	workspaceId: ingest.workspaceId,
+	documentVersionId: ingest.documentVersionId,
+	idempotencyKey: "document.acl.project:test",
+	type: "document.acl.project",
+	payload: {
+		document_id: ingest.payload.document_id,
+		rag_document_id: "rag-document",
+		library_id: ingest.payload.library_id,
+		acl_fingerprint: "a".repeat(64),
+	},
+};
+
+test("registers every named workflow with strict input contracts", () => {
 	const registrations: Array<{
 		name: string;
 		parse: (input: unknown) => unknown;
@@ -99,6 +115,21 @@ test("registers exactly three named workflows with strict input contracts", () =
 	for (const registration of registrations) {
 		assert.throws(() => registration.parse([{ type: "unknown" }]));
 	}
+});
+
+test("ACL projection is a durable external step", async () => {
+	const events: string[] = [];
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		successfulPorts(events),
+		operations(events),
+	);
+
+	assert.deepEqual(await workflows.documentAclProjection(aclProjection), {
+		outcome: "completed",
+		result: { pointCount: 1 },
+	});
+	assert.deepEqual(events, ["step:document-acl-project-1", "acl:projected"]);
 });
 
 test("ingest fails closed until its staged workflow is wired", async () => {
@@ -179,6 +210,33 @@ test("text ingest cancellation records compensation and never stages points", as
 	assert.equal(events.includes("ingest:stage"), false);
 });
 
+test("text ingest cancellation after staging compensates without activation", async () => {
+	const events: string[] = [];
+	const ports = successfulIngestPorts(events);
+	if (!ports.documentIngest) throw new Error("ingest test port is required");
+	ports.documentIngest.transactions.markProgress = async (_input, progress) => {
+		events.push(`ingest:progress:${progress.stage}:${progress.percent}`);
+		return progress.stage === "validating" ? "cancelled" : "continue";
+	};
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		ports,
+		operations(events),
+	);
+
+	assert.deepEqual(await workflows.documentIngest(textIngest()), {
+		outcome: "failed",
+		errorCode: "job_cancelled",
+	});
+	assert.ok(events.includes("ingest:stage"));
+	assert.ok(events.includes("ingest:error:job_cancelled:false:true"));
+	assert.equal(
+		events.some((event) => event.includes("ingest:visibility")),
+		false,
+	);
+	assert.equal(events.includes("ingest:activate"), false);
+});
+
 test("post-activation visibility failure remains a cleanup warning", async () => {
 	const events: string[] = [];
 	const ports = successfulIngestPorts(events);
@@ -196,6 +254,7 @@ test("post-activation visibility failure remains a cleanup warning", async () =>
 				"transient",
 			);
 		}
+		return { pointCount: 4, aclFingerprint: "a".repeat(64) };
 	};
 	const workflows = registerDurableWorkflows(
 		passthroughRegistrar,
@@ -501,6 +560,15 @@ function operations(events: string[]): DurableOperationPort {
 
 function successfulPorts(events: string[]): WorkerPorts {
 	return {
+		documentAclProjection: {
+			async project() {
+				events.push("acl:projected");
+				return { pointCount: 1 };
+			},
+			async markError(_input, error) {
+				events.push(`acl:error:${error.code}`);
+			},
+		},
 		documentDelete: {
 			external: {
 				async deleteGeneration(_input, generationId) {
@@ -593,6 +661,7 @@ function successfulIngestPorts(events: string[]): WorkerPorts {
 			},
 			async setGenerationVisibility(_input, generationId, visibility) {
 				events.push(`ingest:visibility:${generationId}:${visibility}`);
+				return { pointCount: 4, aclFingerprint: "a".repeat(64) };
 			},
 		},
 		transactions: {

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const durableJobKinds = [
 	"document.ingest",
+	"document.acl.project",
 	"document.delete",
 	"generation.cleanup",
 ] as const;
@@ -34,6 +35,7 @@ export const documentIngestPayloadSchema = z
 		parse_preference: z.string().trim().min(1).default("auto"),
 		ingest_policy_version: z.number().int().positive().default(1),
 		queue_class: z.enum(["local", "auto", "mineru"]),
+		retry_of_job_id: uuid.optional(),
 	})
 	.strict();
 
@@ -47,6 +49,15 @@ export const documentDeletePayloadSchema = z
 		generation_ids: z.array(uuid).default([]),
 		library_delete: z.boolean().default(false),
 		retry_of_job_id: uuid.optional(),
+	})
+	.strict();
+
+export const documentAclProjectionPayloadSchema = z
+	.object({
+		document_id: uuid,
+		rag_document_id: nonEmpty,
+		library_id: nonEmpty,
+		acl_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
 	})
 	.strict();
 
@@ -79,6 +90,14 @@ export const documentDeleteJobSchema = z
 	})
 	.strict();
 
+export const documentAclProjectionJobSchema = z
+	.object({
+		...jobEnvelope,
+		type: z.literal("document.acl.project"),
+		payload: documentAclProjectionPayloadSchema,
+	})
+	.strict();
+
 export const generationCleanupJobSchema = z
 	.object({
 		...jobEnvelope,
@@ -89,12 +108,16 @@ export const generationCleanupJobSchema = z
 
 export const durableJobSchema = z.discriminatedUnion("type", [
 	documentIngestJobSchema,
+	documentAclProjectionJobSchema,
 	documentDeleteJobSchema,
 	generationCleanupJobSchema,
 ]);
 
 export const documentIngestWorkflowInputSchema = z.tuple([
 	documentIngestJobSchema,
+]);
+export const documentAclProjectionWorkflowInputSchema = z.tuple([
+	documentAclProjectionJobSchema,
 ]);
 export const documentDeleteWorkflowInputSchema = z.tuple([
 	documentDeleteJobSchema,
@@ -104,6 +127,9 @@ export const generationCleanupWorkflowInputSchema = z.tuple([
 ]);
 
 export type DocumentIngestJob = z.infer<typeof documentIngestJobSchema>;
+export type DocumentAclProjectionJob = z.infer<
+	typeof documentAclProjectionJobSchema
+>;
 export type DocumentDeleteJob = z.infer<typeof documentDeleteJobSchema>;
 export type GenerationCleanupJob = z.infer<typeof generationCleanupJobSchema>;
 export type DurableJobInput = z.infer<typeof durableJobSchema>;

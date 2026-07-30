@@ -106,7 +106,10 @@ export function DocumentAclDialog({
 			setScope(saved.scope);
 			setSelectedIds(saved.principal_ids);
 			setCanEdit(saved.can_edit);
-			if (saved.projection === "reindex_required") {
+			if (saved.projection === "projection_queued") {
+				onProjected?.(doc);
+				toast.success(`已保存「${doc.name}」可见性，正在投影到检索`);
+			} else if (saved.projection === "reindex_required") {
 				const result = await reindexDocument({
 					libraryId,
 					docId: doc.id,

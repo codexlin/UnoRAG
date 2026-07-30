@@ -1,12 +1,21 @@
 import { QdrantClient, type Schemas } from "@qdrant/js-client-rest";
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
+import { QdrantIngestWriteStore } from "../core/ingest";
+import { OpenAICompatibleEmbeddingProvider } from "../core/retrieval/embedding/provider";
 import type { WorkerRuntimeConfig } from "./config";
 import type { GenerationCleanupJob } from "./contracts";
+import { DocumentAclProjectionOperations } from "./document-acl-projection";
 import {
 	DocumentDeleteExternalOperations,
 	PostgresDocumentDeleteTransactions,
 } from "./document-delete-ports";
+import {
+	LocalDocumentIngestSource,
+	PostgresDocumentIngestScope,
+} from "./document-ingest-production";
+import { TextDocumentIngestStager } from "./document-ingest-staging";
+import { PostgresDocumentIngestTransactions } from "./document-ingest-transactions";
 import { WorkerTaskError } from "./errors";
 import type {
 	GenerationCleanupDeleteResult,
@@ -84,6 +93,10 @@ function positiveInteger(name: string, fallback: number): number {
 		throw new Error(`${name} must be a positive integer`);
 	}
 	return value;
+}
+
+function enabled(name: string): boolean {
+	return ["1", "true"].includes(process.env[name]?.trim().toLowerCase() ?? "");
 }
 
 function scopedCleanupFilter(input: GenerationCleanupJob): QdrantFilter {
@@ -552,36 +565,88 @@ export class QdrantGenerationCleanupStep implements GenerationCleanupStepPort {
 	}
 }
 
-export function createWorkerPorts(_config: WorkerRuntimeConfig): WorkerPorts {
+export function createWorkerPorts(config: WorkerRuntimeConfig): WorkerPorts {
+	const databaseUrl = requiredEnvironment("DATABASE_URL");
+	const qdrantUrl = requiredEnvironment("QDRANT_URL", "http://localhost:6333");
+	const qdrantCollection = requiredEnvironment(
+		"QDRANT_COLLECTION",
+		"unorag_chunks",
+	);
+	const documentStorageRoot = requiredEnvironment("DOCUMENT_STORAGE_ROOT");
+	const textIngestEnabled = enabled("UNORAG_DBOS_TEXT_INGEST_ENABLED");
+	if (textIngestEnabled && !config.listenQueues.includes("ingest-local")) {
+		throw new Error(
+			"UNORAG_DBOS_TEXT_INGEST_ENABLED requires ingest-local in UNORAG_DBOS_LISTEN_QUEUES",
+		);
+	}
+	const textIngestConfig = textIngestEnabled
+		? {
+				apiKey: requiredEnvironment("OPENAI_API_KEY"),
+				baseUrl: requiredEnvironment("OPENAI_BASE_URL"),
+				model: requiredEnvironment("EMBEDDING_MODEL"),
+				dimensions: positiveInteger("EMBEDDING_DIM", 1_024),
+				batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
+				maxUploadBytes: positiveInteger(
+					"DOCUMENT_MAX_UPLOAD_BYTES",
+					50 * 1024 * 1024,
+				),
+			}
+		: null;
 	const pool = new Pool({
-		connectionString: requiredEnvironment("DATABASE_URL"),
+		connectionString: databaseUrl,
 		max: positiveInteger("DATABASE_POOL_MAX", 10),
 		idleTimeoutMillis: 30_000,
 		connectionTimeoutMillis: 5_000,
 	});
 	const qdrant = new QdrantClient({
-		url: requiredEnvironment("QDRANT_URL", "http://localhost:6333"),
+		url: qdrantUrl,
 		apiKey: process.env.QDRANT_API_KEY?.trim() || undefined,
 		timeout: positiveInteger("QDRANT_TIMEOUT_MS", 5_000),
 		checkCompatibility: true,
 	});
-	return {
+	const ports: WorkerPorts = {
+		documentAclProjection: new DocumentAclProjectionOperations(
+			pool,
+			new QdrantIngestWriteStore(qdrant, qdrantCollection),
+		),
 		documentDelete: {
 			transactions: new PostgresDocumentDeleteTransactions(pool),
 			external: new DocumentDeleteExternalOperations(
 				qdrant,
-				requiredEnvironment("QDRANT_COLLECTION", "unorag_chunks"),
-				requiredEnvironment("DOCUMENT_STORAGE_ROOT"),
+				qdrantCollection,
+				documentStorageRoot,
 				pool,
 			),
 		},
 		transactions: new PostgresGenerationCleanupTransactions(pool),
 		generationCleanup: new QdrantGenerationCleanupStep(
 			qdrant,
-			requiredEnvironment("QDRANT_COLLECTION", "unorag_chunks"),
+			qdrantCollection,
 		),
 		async close() {
 			await pool.end();
 		},
 	};
+	if (textIngestConfig) {
+		const embeddings = new OpenAICompatibleEmbeddingProvider({
+			apiKey: textIngestConfig.apiKey,
+			baseUrl: textIngestConfig.baseUrl,
+			model: textIngestConfig.model,
+			dimensions: textIngestConfig.dimensions,
+			batchSize: textIngestConfig.batchSize,
+		});
+		ports.documentIngest = {
+			transactions: new PostgresDocumentIngestTransactions(pool),
+			external: new TextDocumentIngestStager(
+				new LocalDocumentIngestSource(
+					documentStorageRoot,
+					textIngestConfig.maxUploadBytes,
+				),
+				new PostgresDocumentIngestScope(pool),
+				embeddings,
+				new QdrantIngestWriteStore(qdrant, qdrantCollection),
+			),
+		};
+	}
+	return ports;
 }

@@ -32,4 +32,8 @@ test("active generation resolution excludes deleted libraries and documents", as
 	);
 	assert.match(value, /isNull\(documents\.deletedAt\)/);
 	assert.match(value, /eq\(documentVersions\.status, "active"\)/);
+	assert.match(
+		value,
+		/eq\(documents\.aclFingerprint, documents\.projectedAclFingerprint\)/,
+	);
 });

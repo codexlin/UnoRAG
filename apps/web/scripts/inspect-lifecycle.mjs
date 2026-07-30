@@ -10,6 +10,7 @@ import pg from "pg";
 
 const failOnDead = process.argv.includes("--fail-on-dead");
 const failOnStuck = process.argv.includes("--fail-on-stuck");
+const failOnAclProjection = process.argv.includes("--fail-on-acl-projection");
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
 	console.error("DATABASE_URL is required");
@@ -62,6 +63,25 @@ try {
 				ORDER BY updated_at DESC
 				LIMIT 50
 			`);
+	const pendingAclProjections = await client.query(`
+				SELECT
+					document.id,
+					document.organization_id,
+					document.workspace_id,
+					document.rag_document_id,
+					active.version_id AS active_version_id,
+					document.acl_fingerprint,
+					document.projected_acl_fingerprint,
+					document.updated_at
+				FROM app.documents AS document
+				JOIN app.document_active_versions AS active
+				  ON active.document_id = document.id
+				WHERE document.status NOT IN ('deleting', 'deleted')
+				  AND document.acl_fingerprint IS DISTINCT FROM
+				      document.projected_acl_fingerprint
+				ORDER BY document.updated_at, document.id
+				LIMIT 50
+			`);
 
 	const report = {
 		summary: {
@@ -70,16 +90,21 @@ try {
 			deleting_documents: deletingDocs.rowCount,
 			cleanup_errors: cleanupErrors.rowCount,
 			libraries_deleting_or_deleted: deletingLibraries.rowCount,
+			pending_acl_projections: pendingAclProjections.rowCount,
 		},
 		dead_jobs: deadJobs.rows,
 		stuck_jobs: stuckJobs.rows,
 		deleting_documents: deletingDocs.rows,
 		cleanup_errors: cleanupErrors.rows,
 		libraries: deletingLibraries.rows,
+		pending_acl_projections: pendingAclProjections.rows,
 	};
 	console.log(JSON.stringify(report, null, 2));
 	if (failOnDead && deadJobs.rowCount > 0) process.exitCode = 2;
 	if (failOnStuck && stuckJobs.rowCount > 0) process.exitCode = 3;
+	if (failOnAclProjection && pendingAclProjections.rowCount > 0) {
+		process.exitCode = 4;
+	}
 } finally {
 	await client.end();
 }

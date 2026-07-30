@@ -17,6 +17,8 @@ function validatePorts(value: unknown): asserts value is WorkerPorts {
 	if (
 		!candidate ||
 		typeof candidate !== "object" ||
+		typeof candidate.documentAclProjection?.project !== "function" ||
+		typeof candidate.documentAclProjection?.markError !== "function" ||
 		typeof candidate.generationCleanup?.deleteGeneration !== "function" ||
 		typeof candidate.documentDelete?.transactions?.markRunning !== "function" ||
 		typeof candidate.documentDelete?.transactions?.drainIngest !== "function" ||

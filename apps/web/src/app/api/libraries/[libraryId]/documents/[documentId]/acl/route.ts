@@ -17,6 +17,7 @@ import {
 	replaceDocumentAcl,
 } from "@/lib/server/document-acl-db";
 import { documentLifecycleV2Enabled } from "@/lib/server/document-lifecycle";
+import { dbosAclProjectionEnabled } from "@/lib/server/document-lifecycle-flag.mjs";
 import { findAuthorizedLibrary } from "@/lib/server/library-access";
 
 export const runtime = "nodejs";
@@ -137,12 +138,17 @@ export async function PUT(request: Request, context: RouteContext) {
 		}
 	}
 
+	const projectionJobId = randomUUID();
 	const replaced = await replaceDocumentAcl({
 		documentId: found.document.id,
+		organizationId: identity.tenantId,
 		actorId: identity.principalId,
 		principalIds: parsed.principalIds,
 		groupIds: parsed.groupIds,
 		workspaceId: identity.workspaceId,
+		ragLibraryId: library.ragLibraryId,
+		projectionJobId,
+		projectionEnabled: dbosAclProjectionEnabled(),
 	});
 	if (!replaced.ok) {
 		return Response.json(
@@ -151,10 +157,12 @@ export async function PUT(request: Request, context: RouteContext) {
 		);
 	}
 
-	const projection = resolveAclProjection({
-		status: found.document.status,
-		hasStorageKey: found.hasStorageKey,
-	});
+	const projection = replaced.projectionJobId
+		? "projection_queued"
+		: resolveAclProjection({
+				status: replaced.documentStatus,
+				hasStorageKey: found.hasStorageKey,
+			});
 	const requestId = request.headers.get("x-request-id") ?? randomUUID();
 	const db = getDatabase();
 	await db.insert(auditLogs).values({
@@ -172,6 +180,7 @@ export async function PUT(request: Request, context: RouteContext) {
 			principal_ids: parsed.principalIds,
 			group_ids: parsed.groupIds,
 			projection,
+			projection_job_id: replaced.projectionJobId,
 		},
 	});
 
@@ -182,6 +191,7 @@ export async function PUT(request: Request, context: RouteContext) {
 		document_id: found.document.id,
 		...replaced.acl,
 		projection,
+		projection_job_id: replaced.projectionJobId,
 		can_edit: true,
 	});
 }

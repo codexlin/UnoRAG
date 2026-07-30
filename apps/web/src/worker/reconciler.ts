@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "pg";
 
 import type { DurableJobInput } from "./contracts";
 import type { DbosJobEnqueuer, DbosWorkflowStatus } from "./dbos-runtime";
+import { PostgresDocumentIngestTransactions } from "./document-ingest-transactions";
 import { parseOrQuarantineDurableJob } from "./job-quarantine";
 
 const ACTIVE_DBOS_STATUSES = new Set(["PENDING", "ENQUEUED", "DELAYED"]);
@@ -141,7 +142,12 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 			[
 				input.staleBefore,
 				input.limit,
-				["document.delete", "generation.cleanup"],
+				[
+					"document.ingest",
+					"document.acl.project",
+					"document.delete",
+					"generation.cleanup",
+				],
 			],
 		);
 		const candidates: ReconciliationCandidate[] = [];
@@ -188,6 +194,14 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 		candidate: ReconciliationCandidate,
 		status: DbosWorkflowStatus,
 	): Promise<void> {
+		if (candidate.job.type === "document.ingest") {
+			await this.applyIngestTerminal(candidate, status);
+			return;
+		}
+		if (candidate.job.type === "document.acl.project") {
+			await this.applyAclProjectionTerminal(candidate, status);
+			return;
+		}
 		const client = await this.pool.connect();
 		try {
 			await client.query("BEGIN");
@@ -357,6 +371,109 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 		} finally {
 			client.release();
 		}
+	}
+
+	private async applyAclProjectionTerminal(
+		candidate: ReconciliationCandidate,
+		status: DbosWorkflowStatus,
+	): Promise<void> {
+		if (
+			candidate.job.type !== "document.acl.project" ||
+			candidate.appStatus === "completed"
+		) {
+			return;
+		}
+		const output =
+			status.output && typeof status.output === "object"
+				? (status.output as { outcome?: unknown; errorCode?: unknown })
+				: {};
+		const workflowReportedFailure =
+			status.status === "SUCCESS" && output.outcome === "failed";
+		const appStatus = status.status === "CANCELLED" ? "cancelled" : "failed";
+		const errorCode =
+			status.status === "SUCCESS"
+				? workflowReportedFailure && typeof output.errorCode === "string"
+					? output.errorCode
+					: "dbos_projection_mismatch"
+				: status.status === "CANCELLED"
+					? "job_cancelled"
+					: "dbos_workflow_terminal_error";
+		const error =
+			status.status === "SUCCESS"
+				? "DBOS document ACL projection completed without a terminal application projection"
+				: normalizeWorkflowError(status.error);
+		const updated = await this.pool.query(
+			`
+			UPDATE app.jobs
+			SET status = $2,
+				stage = 'indexing',
+				error_code = $3,
+				error = $4,
+				finished_at = coalesce(finished_at, now()),
+				updated_at = now()
+			WHERE id = $1
+			  AND organization_id = $5
+			  AND workspace_id = $6
+			  AND document_version_id IS NOT DISTINCT FROM $7
+			  AND type = 'document.acl.project'
+			  AND execution_engine = 'dbos'
+			  AND workflow_id = id::text
+			  AND payload->>'acl_fingerprint' = $8
+			  AND status <> 'completed'
+			`,
+			[
+				candidate.job.jobId,
+				appStatus,
+				errorCode,
+				error,
+				candidate.job.organizationId,
+				candidate.job.workspaceId,
+				candidate.job.documentVersionId ?? null,
+				candidate.job.payload.acl_fingerprint,
+			],
+		);
+		if (updated.rowCount !== 1) {
+			throw new Error(
+				`DBOS ACL projection terminal repair failed for job ${candidate.job.jobId}`,
+			);
+		}
+	}
+
+	private async applyIngestTerminal(
+		candidate: ReconciliationCandidate,
+		status: DbosWorkflowStatus,
+	): Promise<void> {
+		if (candidate.job.type !== "document.ingest") return;
+		if (candidate.appStatus === "completed") return;
+		const output =
+			status.output && typeof status.output === "object"
+				? (status.output as { outcome?: unknown; errorCode?: unknown })
+				: {};
+		const cancelled = status.status === "CANCELLED";
+		const workflowReportedFailure =
+			status.status === "SUCCESS" && output.outcome === "failed";
+		const code = cancelled
+			? "job_cancelled"
+			: workflowReportedFailure && typeof output.errorCode === "string"
+				? output.errorCode
+				: status.status === "SUCCESS"
+					? "dbos_projection_mismatch"
+					: "dbos_workflow_terminal_error";
+		const message =
+			status.status === "SUCCESS"
+				? workflowReportedFailure
+					? "DBOS document ingest workflow reported failure"
+					: "DBOS document ingest completed without a terminal application projection"
+				: normalizeWorkflowError(status.error);
+		await new PostgresDocumentIngestTransactions(this.pool).markError(
+			candidate.job,
+			{
+				code,
+				message,
+				retryable: false,
+				cancelled,
+			},
+		);
 	}
 
 	private async markMissingDeleteScope(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -47,6 +49,25 @@ class CancelRequestedError(RuntimeError):
 
 class StaleDocumentVersionError(RuntimeError):
     pass
+
+
+def _acl_fingerprint(
+    principal_ids: Sequence[UUID],
+    group_ids: Sequence[UUID],
+) -> str:
+    principals = sorted({str(value) for value in principal_ids})
+    groups = sorted({str(value) for value in group_ids})
+    restricted = bool(principals or groups)
+    canonical = json.dumps(
+        {
+            "scope": "restricted" if restricted else "workspace",
+            "principalIds": principals if restricted else [],
+            "groupIds": groups if restricted else [],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -1014,6 +1035,39 @@ class JobRepository:
                     )
                 cursor.execute(
                     """
+                    SELECT subject_type, subject_id
+                    FROM app.document_acl
+                    WHERE document_id = %(document_id)s
+                      AND permission = 'read'
+                    ORDER BY subject_type, subject_id
+                    """,
+                    {"document_id": context.document_id},
+                )
+                principal_ids: list[UUID] = []
+                group_ids: list[UUID] = []
+                for subject_type, subject_id in cursor.fetchall():
+                    if str(subject_type) in {"principal", "user"}:
+                        principal_ids.append(subject_id)
+                    elif str(subject_type) == "group":
+                        group_ids.append(subject_id)
+                    else:
+                        raise StaleDocumentVersionError(
+                            f"unsupported ACL subject type: {subject_type}"
+                        )
+                current_acl_fingerprint = _acl_fingerprint(
+                    principal_ids,
+                    group_ids,
+                )
+                staged_acl_fingerprint = _acl_fingerprint(
+                    context.allowed_principal_ids,
+                    context.allowed_group_ids,
+                )
+                if current_acl_fingerprint != staged_acl_fingerprint:
+                    raise StaleDocumentVersionError(
+                        "document ACL changed while generation was indexing"
+                    )
+                cursor.execute(
+                    """
                     SELECT sweep_status
                     FROM rag.generation_cleanup_queue
                     WHERE generation_id = %(generation_id)s
@@ -1166,6 +1220,8 @@ class JobRepository:
                     """
                     UPDATE app.documents
                     SET status = 'ready',
+                        acl_fingerprint = %(acl_fingerprint)s,
+                        projected_acl_fingerprint = %(acl_fingerprint)s,
                         updated_at = now()
                     WHERE id = %(document_id)s
                       AND desired_version_id = %(version_id)s
@@ -1174,6 +1230,7 @@ class JobRepository:
                     {
                         "document_id": context.document_id,
                         "version_id": context.document_version_id,
+                        "acl_fingerprint": current_acl_fingerprint,
                     },
                 )
                 if cursor.rowcount != 1:

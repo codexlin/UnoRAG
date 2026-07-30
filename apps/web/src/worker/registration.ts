@@ -1,8 +1,10 @@
 import {
+	type DocumentAclProjectionJob,
 	type DocumentDeleteJob,
 	type DocumentIngestJob,
 	type DurableJobInput,
 	type DurableJobKind,
+	documentAclProjectionWorkflowInputSchema,
 	documentDeleteWorkflowInputSchema,
 	documentIngestWorkflowInputSchema,
 	type GenerationCleanupJob,
@@ -11,6 +13,7 @@ import {
 import { UnknownDurableJobError } from "./errors";
 import type { DurableOperationPort, WorkerPorts } from "./ports";
 import {
+	createDocumentAclProjectionWorkflow,
 	createDocumentDeleteWorkflow,
 	createDocumentIngestWorkflow,
 	createGenerationCleanupWorkflow,
@@ -21,6 +24,7 @@ export const DBOS_LIFECYCLE_QUEUE = "unorag-lifecycle";
 
 export const durableWorkflowNames = {
 	"document.ingest": "unorag.document.ingest.v1",
+	"document.acl.project": "unorag.document.acl.project.v1",
 	"document.delete": "unorag.document.delete.v1",
 	"generation.cleanup": "unorag.generation.cleanup.v1",
 } as const satisfies Record<DurableJobKind, string>;
@@ -42,6 +46,9 @@ export interface WorkflowRegistrar {
 
 export interface RegisteredDurableWorkflows {
 	documentIngest: (input: DocumentIngestJob) => Promise<DurableWorkflowResult>;
+	documentAclProjection: (
+		input: DocumentAclProjectionJob,
+	) => Promise<DurableWorkflowResult>;
 	documentDelete: (input: DocumentDeleteJob) => Promise<DurableWorkflowResult>;
 	generationCleanup: (
 		input: GenerationCleanupJob,
@@ -60,6 +67,14 @@ export function registerDurableWorkflows(
 				name: durableWorkflowNames["document.ingest"],
 				maxRecoveryAttempts: 10,
 				inputSchema: documentIngestWorkflowInputSchema,
+			},
+		),
+		documentAclProjection: registrar.register(
+			createDocumentAclProjectionWorkflow(ports, operations),
+			{
+				name: durableWorkflowNames["document.acl.project"],
+				maxRecoveryAttempts: 10,
+				inputSchema: documentAclProjectionWorkflowInputSchema,
 			},
 		),
 		documentDelete: registrar.register(
@@ -88,6 +103,10 @@ export function workflowForJob(
 	switch (input.type) {
 		case "document.ingest":
 			return workflows.documentIngest as (
+				input: never,
+			) => Promise<DurableWorkflowResult>;
+		case "document.acl.project":
+			return workflows.documentAclProjection as (
 				input: never,
 			) => Promise<DurableWorkflowResult>;
 		case "document.delete":

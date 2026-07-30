@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from app.security.access_scope import AccessScope
-from app.services.active_generations import ActiveGenerationResolver
+from app.services.active_generations import (
+	ActiveGenerationResolver,
+	probe_active_generation_store,
+)
 from app.settings import Settings
 
 
@@ -58,6 +61,8 @@ def test_active_generation_resolver_scopes_and_caches_snapshot(monkeypatch) -> N
 	assert first.cache_key == "generation-b,generation-a"
 	assert connect_calls == ["postgresql://db/unorag"]
 	assert connection.calls[0][1] == ("tenant-a", "workspace-a", "library-a")
+	assert "document.acl_fingerprint" in connection.calls[0][0]
+	assert "document.projected_acl_fingerprint" in connection.calls[0][0]
 
 	resolver.invalidate(
 		organization_id="tenant-a",
@@ -66,3 +71,11 @@ def test_active_generation_resolver_scopes_and_caches_snapshot(monkeypatch) -> N
 	)
 	resolver.resolve(scope=scope, library_id="library-a")
 	assert len(connect_calls) == 2
+
+
+def test_generation_gate_defaults_on_and_only_stub_mode_skips_probe() -> None:
+	live = Settings(_env_file=None)
+	assert live.active_generation_gate_enabled is True
+
+	stub = Settings(ask_mode="stub")
+	assert probe_active_generation_store(stub) == (True, "stub-disabled")

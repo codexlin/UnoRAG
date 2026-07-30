@@ -21,7 +21,7 @@ class HealthResponse(BaseModel):
 	hybrid_enabled: bool = False
 	metadata_backend: str = "postgres"
 	metadata_ok: bool = True
-	active_generation_gate_enabled: bool = False
+	active_generation_gate_enabled: bool = True
 	active_generation_gate_ok: bool = True
 
 

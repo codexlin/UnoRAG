@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
 	authorizeDocumentAclRead,
@@ -8,6 +11,9 @@ import {
 	resolveAclProjection,
 	toDocumentAclResponse,
 } from "../src/lib/server/document-acl.mjs";
+import { dbosAclProjectionEnabled } from "../src/lib/server/document-lifecycle-flag.mjs";
+
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("viewer cannot edit document ACL", () => {
 	assert.deepEqual(authorizeDocumentAclWrite({ role: "viewer" }), {
@@ -35,6 +41,16 @@ test("editor and admin can edit document ACL", () => {
 	assert.equal(authorizeDocumentAclWrite({ role: "editor" }).ok, true);
 	assert.equal(authorizeDocumentAclWrite({ role: "admin" }).ok, true);
 	assert.equal(authorizeDocumentAclWrite({ role: "owner" }).ok, true);
+});
+
+test("durable ACL projection is an explicit deployment capability", () => {
+	assert.equal(dbosAclProjectionEnabled({}), false);
+	assert.equal(
+		dbosAclProjectionEnabled({
+			UNORAG_DBOS_ACL_PROJECTION_ENABLED: "true",
+		}),
+		true,
+	);
 });
 
 test("parse workspace scope clears principals", () => {
@@ -139,4 +155,48 @@ test("projection: ready docs with storage need reindex", () => {
 		resolveAclProjection({ status: "deleting", hasStorageKey: true }),
 		"none",
 	);
+});
+
+test("ACL mutation locks the document and durably queues its projection", () => {
+	const repository = readFileSync(
+		path.join(root, "src/lib/server/document-acl-db.ts"),
+		"utf8",
+	);
+	const route = readFileSync(
+		path.join(
+			root,
+			"src/app/api/libraries/[libraryId]/documents/[documentId]/acl/route.ts",
+		),
+		"utf8",
+	);
+	const lock = repository.indexOf('.for("update")');
+	const replacement = repository.indexOf(".delete(documentAcl)");
+	const projection = repository.indexOf(".insert(jobs)");
+	assert.ok(lock > -1 && replacement > lock);
+	assert.ok(projection > replacement);
+	assert.match(route, /status: replaced\.documentStatus/);
+	assert.match(route, /projection_queued/);
+	assert.match(route, /dbosAclProjectionEnabled\(\)/);
+	assert.match(repository, /durable ACL projection is not available/);
+	assert.match(
+		repository,
+		/eq\(documents\.organizationId, input\.organizationId\)/,
+	);
+	assert.match(repository, /eq\(documents\.workspaceId, input\.workspaceId\)/);
+});
+
+test("ACL projection migration fails closed for existing restricted documents", () => {
+	const migration = readFileSync(
+		path.join(root, "drizzle/0017_acl-projection-gate.sql"),
+		"utf8",
+	);
+	assert.match(migration, /ADD COLUMN "acl_fingerprint"/);
+	assert.match(migration, /ADD COLUMN "projected_acl_fingerprint"/);
+	assert.match(
+		migration,
+		/SET "projected_acl_fingerprint" = document\."acl_fingerprint"/,
+	);
+	assert.match(migration, /WHERE NOT EXISTS \(/);
+	assert.match(migration, /FROM "app"\."document_acl"/);
+	assert.match(migration, /acl\."permission" = 'read'/);
 });

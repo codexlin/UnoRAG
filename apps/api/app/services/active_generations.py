@@ -59,12 +59,19 @@ class ActiveGenerationResolver:
 		with psycopg.connect(self.database_dsn, autocommit=True) as connection:
 			rows = connection.execute(
 				"""
-				SELECT generation_id
-				FROM rag.active_document_generations
-				WHERE organization_id = %s
-				  AND workspace_id = %s
-				  AND rag_library_id = %s
-				ORDER BY document_id
+				SELECT active.generation_id
+				FROM rag.active_document_generations AS active
+				JOIN app.documents AS document
+				  ON document.id = active.document_id
+				 AND document.organization_id = active.organization_id
+				 AND document.workspace_id = active.workspace_id
+				WHERE active.organization_id = %s
+				  AND active.workspace_id = %s
+				  AND active.rag_library_id = %s
+				  AND document.status NOT IN ('deleting', 'deleted')
+				  AND document.acl_fingerprint =
+				      document.projected_acl_fingerprint
+				ORDER BY active.document_id
 				""",
 				(scope.tenant_id, scope.workspace_id, library_id),
 			).fetchall()
@@ -88,6 +95,8 @@ class ActiveGenerationResolver:
 
 
 def probe_active_generation_store(settings: Settings) -> tuple[bool, str]:
+	if settings.ask_mode == "stub":
+		return True, "stub-disabled"
 	if not settings.active_generation_gate_enabled:
 		return True, "disabled"
 	try:
@@ -97,7 +106,15 @@ def probe_active_generation_store(settings: Settings) -> tuple[bool, str]:
 			connect_timeout=2,
 		) as connection:
 			connection.execute(
-				"SELECT 1 FROM rag.active_document_generations LIMIT 1"
+				"""
+				SELECT 1
+				FROM rag.active_document_generations AS active
+				JOIN app.documents AS document
+				  ON document.id = active.document_id
+				WHERE document.acl_fingerprint =
+				      document.projected_acl_fingerprint
+				LIMIT 1
+				"""
 			).fetchone()
 		return True, "ok"
 	except Exception as exc:

@@ -26,6 +26,14 @@ export {
 	tableSummaryRecordId,
 } from "./index-records";
 export {
+	type AclProjectionScope,
+	type IngestAclSnapshot,
+	type IngestPointScope,
+	ingestAclFingerprint,
+	type QdrantIngestClient,
+	QdrantIngestWriteStore,
+} from "./qdrant-write-store";
+export {
 	type ParseTextDocumentInput,
 	parseTextDocument,
 } from "./text-parser";

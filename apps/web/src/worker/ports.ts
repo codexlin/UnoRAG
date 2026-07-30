@@ -1,8 +1,26 @@
 import type {
+	DocumentAclProjectionJob,
 	DocumentDeleteJob,
 	DocumentIngestJob,
 	GenerationCleanupJob,
 } from "./contracts";
+
+export interface DocumentAclProjectionResult extends Record<string, unknown> {
+	pointCount: number;
+	generationId?: string;
+	superseded?: boolean;
+	noActiveGeneration?: boolean;
+}
+
+export interface DocumentAclProjectionPort {
+	project(
+		input: DocumentAclProjectionJob,
+	): Promise<DocumentAclProjectionResult>;
+	markError(
+		input: DocumentAclProjectionJob,
+		error: { code: string; message: string; retryable: boolean },
+	): Promise<void>;
+}
 
 export interface DocumentIngestStageResult extends Record<string, unknown> {
 	pointCount: number;
@@ -15,6 +33,11 @@ export interface DocumentIngestStageResult extends Record<string, unknown> {
 
 export interface DocumentIngestResult extends DocumentIngestStageResult {
 	previousGenerationId?: string;
+}
+
+export interface DocumentIngestVisibilityResult {
+	pointCount: number;
+	aclFingerprint: string;
 }
 
 export interface DocumentIngestTransactionPort {
@@ -42,6 +65,7 @@ export interface DocumentIngestTransactionPort {
 	activate(
 		input: DocumentIngestJob,
 		staged: DocumentIngestStageResult,
+		visibility: DocumentIngestVisibilityResult,
 	): Promise<DocumentIngestResult>;
 	markError(
 		input: DocumentIngestJob,
@@ -67,7 +91,7 @@ export interface DocumentIngestExternalPort {
 		input: DocumentIngestJob,
 		generationId: string,
 		visibility: "active" | "inactive",
-	): Promise<void>;
+	): Promise<DocumentIngestVisibilityResult>;
 }
 
 export interface DocumentIngestPort {
@@ -152,6 +176,7 @@ export interface DocumentDeletePort {
 }
 
 export interface WorkerPorts {
+	documentAclProjection: DocumentAclProjectionPort;
 	generationCleanup: GenerationCleanupStepPort;
 	transactions: JobTransactionPort;
 	documentDelete: DocumentDeletePort;

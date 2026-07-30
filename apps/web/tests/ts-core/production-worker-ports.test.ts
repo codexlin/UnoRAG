@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { QueryResult, QueryResultRow } from "pg";
-
+import type { WorkerRuntimeConfig } from "../../src/worker/config";
 import type { GenerationCleanupJob } from "../../src/worker/contracts";
 import { WorkerTaskError } from "../../src/worker/errors";
 import {
+	createWorkerPorts,
 	PostgresGenerationCleanupTransactions,
 	type QdrantDeleteClient,
 	QdrantGenerationCleanupStep,
@@ -205,6 +206,57 @@ function fakePool(overrides: Partial<FakeState> = {}): {
 }
 
 describe("production generation cleanup ports", () => {
+	it("fails before constructing canary resources when ingest-local is not selected", () => {
+		const names = [
+			"DATABASE_URL",
+			"QDRANT_URL",
+			"QDRANT_COLLECTION",
+			"DOCUMENT_STORAGE_ROOT",
+			"UNORAG_DBOS_TEXT_INGEST_ENABLED",
+		];
+		const previous = Object.fromEntries(
+			names.map((name) => [name, process.env[name]]),
+		);
+		Object.assign(process.env, {
+			DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/unorag",
+			QDRANT_URL: "http://localhost:6333",
+			QDRANT_COLLECTION: "unorag_chunks",
+			DOCUMENT_STORAGE_ROOT: "/tmp/unorag",
+			UNORAG_DBOS_TEXT_INGEST_ENABLED: "true",
+		});
+		const config: WorkerRuntimeConfig = {
+			systemDatabaseUrl: "postgresql://postgres:postgres@localhost:5432/dbos",
+			applicationVersion: "test",
+			executorId: "test",
+			systemDatabasePoolSize: 1,
+			queueConcurrency: {
+				"ingest-local": 1,
+				"ingest-auto": 1,
+				"ingest-mineru": 1,
+				lifecycle: 1,
+			},
+			listenQueues: ["lifecycle"],
+			controlPollMs: 1_000,
+			logLevel: "error",
+		};
+
+		try {
+			assert.throws(
+				() => createWorkerPorts(config),
+				/UNORAG_DBOS_TEXT_INGEST_ENABLED requires ingest-local/,
+			);
+		} finally {
+			for (const name of names) {
+				const value = previous[name];
+				if (value === undefined) {
+					delete process.env[name];
+				} else {
+					process.env[name] = value;
+				}
+			}
+		}
+	});
+
 	it("claims pending cleanup with a scoped CAS and marks the job running", async () => {
 		const { pool, state } = fakePool();
 		const transactions = new PostgresGenerationCleanupTransactions(pool);

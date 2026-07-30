@@ -5,6 +5,7 @@ import type { GenerationCleanupJob } from "../../src/worker/contracts";
 import {
 	type DispatchCandidateStore,
 	dispatchDbosJobs,
+	enabledDbosJobTypes,
 } from "../../src/worker/dispatcher";
 
 const cleanup: GenerationCleanupJob = {
@@ -22,6 +23,23 @@ const cleanup: GenerationCleanupJob = {
 		reason: "superseded",
 	},
 };
+
+test("dispatcher enables document ingest only for the explicit text canary", () => {
+	assert.deepEqual(enabledDbosJobTypes({}), [
+		"document.acl.project",
+		"document.delete",
+		"generation.cleanup",
+	]);
+	assert.deepEqual(
+		enabledDbosJobTypes({ UNORAG_DBOS_TEXT_INGEST_ENABLED: "true" }),
+		[
+			"document.ingest",
+			"document.acl.project",
+			"document.delete",
+			"generation.cleanup",
+		],
+	);
+});
 
 test("dispatcher marks a job only after DBOS accepts its stable workflow ID", async () => {
 	const events: string[] = [];

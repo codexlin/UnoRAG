@@ -1,4 +1,5 @@
 import type {
+	DocumentAclProjectionJob,
 	DocumentDeleteJob,
 	DocumentIngestJob,
 	GenerationCleanupJob,
@@ -21,6 +22,37 @@ const DOCUMENT_DELETE_BACKOFF_MS = [1_000, 5_000, 30_000, 120_000] as const;
 const DOCUMENT_TRANSACTION_BACKOFF_MS = [100, 500, 2_000] as const;
 const DOCUMENT_INGEST_DRAIN_POLL_MS = 5_000;
 const DOCUMENT_INGEST_DRAIN_MAX_POLLS = 360;
+
+export function createDocumentAclProjectionWorkflow(
+	ports: WorkerPorts,
+	operations: DurableOperationPort,
+) {
+	return async (
+		input: DocumentAclProjectionJob,
+	): Promise<DurableWorkflowResult> => {
+		try {
+			const result = await runRetriedStep(
+				operations,
+				"document-acl-project",
+				() => ports.documentAclProjection.project(input),
+			);
+			return { outcome: "completed", result };
+		} catch (error) {
+			const classified = classifyWorkerError(error);
+			await runRetriedTransaction(
+				operations,
+				"document-acl-project-mark-error",
+				() =>
+					ports.documentAclProjection.markError(input, {
+						code: classified.code,
+						message: classified.message,
+						retryable: classified.retryable,
+					}),
+			);
+			return { outcome: "failed", errorCode: classified.code };
+		}
+	};
+}
 
 function unavailableWorkflow(kind: string): never {
 	throw new WorkerTaskError(
@@ -98,7 +130,7 @@ export function createDocumentIngestWorkflow(
 				"activating",
 				95,
 			);
-			await runRetriedStep(
+			const visibility = await runRetriedStep(
 				operations,
 				"document-ingest-generation-active",
 				() =>
@@ -108,10 +140,17 @@ export function createDocumentIngestWorkflow(
 						"active",
 					),
 			);
+			if (visibility.pointCount !== staged.pointCount) {
+				throw new WorkerTaskError(
+					"Active Qdrant generation count differs from staged count",
+					"document_ingest_visibility_count_mismatch",
+					"permanent",
+				);
+			}
 			const result = await runRetriedTransaction(
 				operations,
 				"document-ingest-activate",
-				() => ingest.transactions.activate(input, staged),
+				() => ingest.transactions.activate(input, staged, visibility),
 			);
 			const previousGenerationId = result.previousGenerationId;
 			if (

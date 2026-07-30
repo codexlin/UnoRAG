@@ -561,10 +561,12 @@ export type ApiDocumentAcl = {
 	group_ids: string[];
 	projection:
 		| "none"
+		| "projection_queued"
 		| "deferred_to_ingest"
 		| "reindex_required"
 		| "control_plane_only";
 	can_edit: boolean;
+	projection_job_id?: string | null;
 	ok?: boolean;
 };
 

@@ -455,7 +455,10 @@ def test_document_ingest_repository_completes_staging_generation(
         ).fetchone()
         document = connection.execute(
             """
-            SELECT status
+            SELECT
+                status,
+                acl_fingerprint,
+                projected_acl_fingerprint
             FROM app.documents
             WHERE id = %s
             """,
@@ -474,7 +477,11 @@ def test_document_ingest_repository_completes_staging_generation(
     assert activation.activated is True
     assert job == ("completed", "done", 100)
     assert version == ("active", 3, 1, 1, 1)
-    assert document == ("ready",)
+    assert document == (
+        "ready",
+        "250f383c79d9c1a77d4b4def892e992dc3d463713270b6d5fb9b41d529e5bd6e",
+        "250f383c79d9c1a77d4b4def892e992dc3d463713270b6d5fb9b41d529e5bd6e",
+    )
     assert active == (ids["version_id"], ids["generation_id"])
 
 
@@ -688,6 +695,65 @@ def test_activate_generation_preserves_library_deleting_status(ingest_job_scope)
     assert preparation.should_activate is True
     assert activation.activated is True
     assert library_status == "deleting"
+
+
+def test_activate_generation_refuses_acl_changed_after_staging(ingest_job_scope):
+    ids = ingest_job_scope
+    principal_id = uuid4()
+    with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
+        connection.execute("SET ROLE unorag_worker")
+        repository = JobRepository(connection)
+        [lease] = repository.claim(
+            worker_id="lifecycle-worker-acl-race",
+            job_types=["test.document.ingest"],
+            capacity=1,
+        )
+        context = repository.load_document_ingest_context(lease)
+        repository.begin_document_ingest(lease, context)
+        repository.complete_indexing(
+            lease,
+            context,
+            parser_backend="markdown",
+            chunk_profile="balanced",
+            parser_report={"parser": "markdown"},
+            point_count=1,
+            chunk_count=1,
+            section_count=0,
+            table_count=0,
+        )
+        assert repository.prepare_activation(lease, context).should_activate is True
+
+        connection.execute("RESET ROLE")
+        connection.execute(
+            """
+            INSERT INTO app.document_acl (
+                document_id,
+                subject_type,
+                subject_id,
+                permission
+            )
+            VALUES (%s, 'principal', %s, 'read')
+            """,
+            (ids["document_id"], principal_id),
+        )
+        connection.execute("SET ROLE unorag_worker")
+
+        with pytest.raises(
+            StaleDocumentVersionError,
+            match="ACL changed",
+        ):
+            repository.activate_generation(lease, context)
+
+        active = connection.execute(
+            """
+            SELECT 1
+            FROM rag.active_document_generations
+            WHERE generation_id = %s
+            """,
+            (ids["generation_id"],),
+        ).fetchone()
+
+    assert active is None
 
 
 def test_activate_generation_refuses_cleanup_that_has_started(ingest_job_scope):

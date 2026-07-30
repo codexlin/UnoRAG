@@ -173,7 +173,7 @@ class Settings(BaseSettings):
 	lifecycle_mineru_capacity: int = 1
 	lifecycle_cleanup_enabled: bool = True
 	lifecycle_cleanup_batch_size: int = 20
-	active_generation_gate_enabled: bool = False
+	active_generation_gate_enabled: bool = True
 	active_generation_cache_ttl_seconds: float = 0.0
 	rag_read_database_url: str = ""
 

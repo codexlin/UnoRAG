@@ -36,6 +36,7 @@ export class DrizzleActiveGenerationResolver
 					eq(documents.libraryId, libraries.id),
 					isNull(documents.deletedAt),
 					notInArray(documents.status, ["deleting", "deleted"]),
+					eq(documents.aclFingerprint, documents.projectedAclFingerprint),
 				),
 			)
 			.leftJoin(

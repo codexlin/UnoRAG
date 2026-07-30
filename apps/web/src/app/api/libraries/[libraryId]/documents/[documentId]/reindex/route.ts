@@ -13,6 +13,7 @@ import {
 } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import { documentLifecycleV2Enabled } from "@/lib/server/document-lifecycle";
+import { documentIngestExecutionIdentity } from "@/lib/server/document-lifecycle-flag.mjs";
 import {
 	buildDocumentIngestPayload,
 	documentIngestIdempotencyKey,
@@ -240,29 +241,31 @@ export async function POST(request: Request, context: RouteContext) {
 				createdAt: now,
 				updatedAt: now,
 			});
+			const ingestPayload = buildDocumentIngestPayload({
+				documentId: document.id,
+				versionId,
+				generationId,
+				ragLibraryId: library.ragLibraryId,
+				storageKey: sourceVersion.storageKey,
+				contentHash: sourceVersion.contentHash,
+				filename: document.filename,
+				contentType: document.contentType,
+				documentProfile: library.documentProfile ?? "auto",
+				scanHandling: library.scanHandling ?? "auto",
+				parsePreference: library.parsePreference ?? "auto",
+				ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
+			});
 			await tx.insert(jobs).values({
 				id: jobId,
 				organizationId: identity.tenantId,
 				workspaceId: identity.workspaceId,
 				documentVersionId: versionId,
 				type: "document.ingest",
+				...documentIngestExecutionIdentity(jobId, ingestPayload),
 				status: "queued",
 				stage: "accepted",
 				idempotencyKey: documentIngestIdempotencyKey(versionId, generationId),
-				payload: buildDocumentIngestPayload({
-					documentId: document.id,
-					versionId,
-					generationId,
-					ragLibraryId: library.ragLibraryId,
-					storageKey: sourceVersion.storageKey,
-					contentHash: sourceVersion.contentHash,
-					filename: document.filename,
-					contentType: document.contentType,
-					documentProfile: library.documentProfile ?? "auto",
-					scanHandling: library.scanHandling ?? "auto",
-					parsePreference: library.parsePreference ?? "auto",
-					ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
-				}),
+				payload: ingestPayload,
 				createdAt: now,
 				updatedAt: now,
 			});

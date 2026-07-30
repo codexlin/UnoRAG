@@ -17,6 +17,7 @@ import {
 	documentStorageKey,
 	validateDocumentUpload,
 } from "@/lib/server/document-lifecycle";
+import { documentIngestExecutionIdentity } from "@/lib/server/document-lifecycle-flag.mjs";
 import {
 	buildDocumentIngestPayload,
 	contentTypeForUpload,
@@ -258,29 +259,31 @@ export async function POST(request: Request, context: RouteContext) {
 				createdAt: now,
 				updatedAt: now,
 			});
+			const ingestPayload = buildDocumentIngestPayload({
+				documentId,
+				versionId,
+				generationId,
+				ragLibraryId: lockedLibrary.ragLibraryId,
+				storageKey: stored.key,
+				contentHash: stored.contentHash,
+				filename: originalFilename,
+				contentType,
+				documentProfile: lockedLibrary.documentProfile ?? "auto",
+				scanHandling: lockedLibrary.scanHandling ?? "auto",
+				parsePreference: lockedLibrary.parsePreference ?? "auto",
+				ingestPolicyVersion: lockedLibrary.ingestPolicyVersion ?? 1,
+			});
 			await tx.insert(jobs).values({
 				id: jobId,
 				organizationId: identity.tenantId,
 				workspaceId: identity.workspaceId,
 				documentVersionId: versionId,
 				type: "document.ingest",
+				...documentIngestExecutionIdentity(jobId, ingestPayload),
 				status: "queued",
 				stage: "accepted",
 				idempotencyKey: documentIngestIdempotencyKey(versionId, generationId),
-				payload: buildDocumentIngestPayload({
-					documentId,
-					versionId,
-					generationId,
-					ragLibraryId: lockedLibrary.ragLibraryId,
-					storageKey: stored.key,
-					contentHash: stored.contentHash,
-					filename: originalFilename,
-					contentType,
-					documentProfile: lockedLibrary.documentProfile ?? "auto",
-					scanHandling: lockedLibrary.scanHandling ?? "auto",
-					parsePreference: lockedLibrary.parsePreference ?? "auto",
-					ingestPolicyVersion: lockedLibrary.ingestPolicyVersion ?? 1,
-				}),
+				payload: ingestPayload,
 				createdAt: now,
 				updatedAt: now,
 			});

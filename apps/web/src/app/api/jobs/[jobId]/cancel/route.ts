@@ -9,6 +9,7 @@ import {
 	documents,
 	documentVersions,
 	jobs,
+	libraries,
 } from "@/db/schema";
 import { TERMINAL_JOB_STATUSES } from "@/lib/document-lifecycle-contract";
 import { resolveRequestSession } from "@/lib/server/auth/session";
@@ -41,11 +42,10 @@ export async function POST(request: Request, context: RouteContext) {
 	if (!current) {
 		return Response.json({ detail: "job not found" }, { status: 404 });
 	}
-	if (current.job.type === "document.delete") {
+	if (current.job.type !== "document.ingest") {
 		return Response.json(
 			{
-				detail:
-					"document delete jobs cannot be cancelled; restore requires a separate workflow",
+				detail: "only document ingest jobs can be cancelled",
 			},
 			{ status: 409 },
 		);
@@ -57,10 +57,57 @@ export async function POST(request: Request, context: RouteContext) {
 	const now = new Date();
 	const db = getDatabase();
 	const changed = await db.transaction(async (tx) => {
+		const [lockedLibrary] = await tx
+			.select({ id: libraries.id })
+			.from(libraries)
+			.where(
+				and(
+					eq(libraries.id, current.library.id),
+					eq(libraries.organizationId, identity.tenantId),
+					eq(libraries.workspaceId, identity.workspaceId),
+				),
+			)
+			.for("update");
+		if (!lockedLibrary) return false;
+
+		const [lockedDocument] = await tx
+			.select({ id: documents.id })
+			.from(documents)
+			.where(
+				and(
+					eq(documents.id, current.document.id),
+					eq(documents.libraryId, lockedLibrary.id),
+					eq(documents.organizationId, identity.tenantId),
+					eq(documents.workspaceId, identity.workspaceId),
+				),
+			)
+			.for("update");
+		if (!lockedDocument) return false;
+
+		const [lockedVersion] = await tx
+			.select({ id: documentVersions.id })
+			.from(documentVersions)
+			.where(
+				and(
+					eq(documentVersions.id, current.version.id),
+					eq(documentVersions.documentId, lockedDocument.id),
+				),
+			)
+			.for("update");
+		if (!lockedVersion) return false;
+
 		const [locked] = await tx
 			.select({ status: jobs.status })
 			.from(jobs)
-			.where(eq(jobs.id, current.job.id))
+			.where(
+				and(
+					eq(jobs.id, current.job.id),
+					eq(jobs.organizationId, identity.tenantId),
+					eq(jobs.workspaceId, identity.workspaceId),
+					eq(jobs.documentVersionId, lockedVersion.id),
+					eq(jobs.type, "document.ingest"),
+				),
+			)
 			.for("update");
 		if (!locked || TERMINAL_JOB_STATUSES.has(locked.status)) return false;
 		if (locked.status === "cancelling") return false;
@@ -69,9 +116,9 @@ export async function POST(request: Request, context: RouteContext) {
 			const [active] = await tx
 				.select({ versionId: documentActiveVersions.versionId })
 				.from(documentActiveVersions)
-				.where(eq(documentActiveVersions.documentId, current.document.id))
+				.where(eq(documentActiveVersions.documentId, lockedDocument.id))
 				.limit(1);
-			await tx
+			const cancelledJob = await tx
 				.update(jobs)
 				.set({
 					status: "cancelled",
@@ -85,20 +132,22 @@ export async function POST(request: Request, context: RouteContext) {
 						eq(jobs.id, current.job.id),
 						inArray(jobs.status, ["queued", "retry"]),
 					),
-				);
+				)
+				.returning({ id: jobs.id });
+			if (cancelledJob.length !== 1) return false;
 			await tx
 				.update(documentVersions)
 				.set({ status: "cancelled", updatedAt: now })
-				.where(eq(documentVersions.id, current.version.id));
+				.where(eq(documentVersions.id, lockedVersion.id));
 			await tx
 				.update(documents)
 				.set({
 					status: active ? "degraded" : "failed",
 					updatedAt: now,
 				})
-				.where(eq(documents.id, current.document.id));
+				.where(eq(documents.id, lockedDocument.id));
 		} else {
-			await tx
+			const cancellingJob = await tx
 				.update(jobs)
 				.set({
 					status: "cancelling",
@@ -110,7 +159,9 @@ export async function POST(request: Request, context: RouteContext) {
 						eq(jobs.id, current.job.id),
 						inArray(jobs.status, ["running", "cancelling"]),
 					),
-				);
+				)
+				.returning({ id: jobs.id });
+			if (cancellingJob.length !== 1) return false;
 		}
 		await tx.insert(auditLogs).values({
 			organizationId: identity.tenantId,
@@ -121,8 +172,8 @@ export async function POST(request: Request, context: RouteContext) {
 			resourceId: current.job.id,
 			requestId: request.headers.get("x-request-id") ?? randomUUID(),
 			details: {
-				document_id: current.document.id,
-				document_version_id: current.version.id,
+				document_id: lockedDocument.id,
+				document_version_id: lockedVersion.id,
 				previous_status: locked.status,
 			},
 		});

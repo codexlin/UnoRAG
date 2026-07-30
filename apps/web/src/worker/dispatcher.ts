@@ -6,10 +6,23 @@ import type { DurableJobInput } from "./contracts";
 import type { EnqueueResult } from "./dbos-runtime";
 import { parseOrQuarantineDurableJob } from "./job-quarantine";
 
-const ENABLED_DBOS_JOB_TYPES = [
-	"document.delete",
-	"generation.cleanup",
-] as const;
+export function enabledDbosJobTypes(
+	environment: Record<string, string | undefined> = process.env,
+): Array<DurableJobInput["type"]> {
+	const types: Array<DurableJobInput["type"]> = [
+		"document.acl.project",
+		"document.delete",
+		"generation.cleanup",
+	];
+	if (
+		["1", "true"].includes(
+			environment.UNORAG_DBOS_TEXT_INGEST_ENABLED?.trim().toLowerCase() ?? "",
+		)
+	) {
+		types.unshift("document.ingest");
+	}
+	return types;
+}
 
 export interface DispatchCandidateStore {
 	materializeDueGenerationCleanupJobs(limit: number): Promise<number>;
@@ -86,7 +99,14 @@ export async function dispatchDbosJobs(
 }
 
 export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
-	constructor(private readonly pool: Pool) {}
+	private readonly enabledJobTypes: Array<DurableJobInput["type"]>;
+
+	constructor(
+		private readonly pool: Pool,
+		environment: Record<string, string | undefined> = process.env,
+	) {
+		this.enabledJobTypes = enabledDbosJobTypes(environment);
+	}
 
 	async adoptPendingGenerationCleanups(limit: number): Promise<number> {
 		const candidates = await this.pool.query<{ generation_id: string }>(
@@ -394,7 +414,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 			ORDER BY coalesce(next_attempt_at, created_at), created_at, id
 			LIMIT $3
 			`,
-			[[...ENABLED_DBOS_JOB_TYPES], input.redispatchBefore, input.limit],
+			[this.enabledJobTypes, input.redispatchBefore, input.limit],
 		);
 		const candidates: DurableJobInput[] = [];
 		for (const row of result.rows) {

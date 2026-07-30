@@ -333,6 +333,7 @@ class RetrievalService:
 		if (
 			self.active_generation_resolver is None
 			and settings.active_generation_gate_enabled
+			and settings.ask_mode != "stub"
 		):
 			self.active_generation_resolver = ActiveGenerationResolver(settings)
 		if reranker is not None:
