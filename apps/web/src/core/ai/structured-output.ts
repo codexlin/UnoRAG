@@ -5,6 +5,7 @@ import {
 	Output,
 } from "ai";
 import { z } from "zod";
+import { type TableQueryPlan, TableQueryPlanSchema } from "../ask-graph/table";
 
 const STRUCTURED_TEMPERATURE = 0;
 
@@ -59,36 +60,12 @@ export const JudgeOutputSchema = z
 	})
 	.strict();
 
-export const TablePlanOutputSchema = z
-	.object({
-		operation: z.enum([
-			"fallback",
-			"count",
-			"lookup",
-			"filter",
-			"max",
-			"min",
-			"sum",
-			"avg",
-			"join_lookup",
-		]),
-		column: z.string().trim().min(1).nullable().default(null),
-		operator: z.enum([">", ">=", "<", "<=", "=="]).nullable().default(null),
-		value: z.union([z.string(), z.number()]).nullable().default(null),
-		entity_column: z.string().trim().min(1).nullable().default(null),
-		entity_value: z.string().trim().min(1).nullable().default(null),
-		select_columns: z.array(z.string().trim().min(1)).default([]),
-		required_columns: z.array(z.string().trim().min(1)).default([]),
-		confident: z.boolean(),
-		reason: z.string().trim().min(1),
-		exclude_summary_rows: z.boolean().default(true),
-	})
-	.strict();
+export const TablePlanOutputSchema = TableQueryPlanSchema;
 
 export type RouterOutput = z.infer<typeof RouterOutputSchema>;
 export type RewriteOutput = z.infer<typeof RewriteOutputSchema>;
 export type JudgeOutput = z.infer<typeof JudgeOutputSchema>;
-export type TablePlanOutput = z.infer<typeof TablePlanOutputSchema>;
+export type TablePlanOutput = TableQueryPlan;
 
 type StructuredKind = "router" | "rewrite" | "judge" | "table_plan";
 
@@ -134,7 +111,8 @@ const JUDGE_SYSTEM_PROMPT =
 	"你是证据充分性判断器。仅根据给定候选证据判断 generate、retry、refuse 或 clarify。资料未覆盖时必须 refuse，不能用模型常识补足。";
 
 const TABLE_PLAN_SYSTEM_PROMPT =
-	"你是表格执行计划器。只根据问题和真实表头制定计划；不确定列名或运算时必须 confident=false 且 operation=fallback，禁止猜数。";
+	"你是表格执行计划器。只根据问题和真实表头制定严格计划；列名必须逐字来自所给表头。" +
+	"单表使用 mode=single，双表显式给出 join 键；无法确定列名、连接键或运算时不要猜测，由调用方拒答或澄清。";
 
 async function defaultStructuredExecutor(
 	request: StructuredGenerationRequest,
@@ -249,7 +227,10 @@ export class StructuredOutputAdapter {
 	}
 
 	planTable(
-		input: { question: string; headers?: string[] },
+		input: {
+			question: string;
+			tables?: Array<{ tableId: string; headers: string[] }>;
+		},
 		options: { abortSignal?: AbortSignal } = {},
 	): Promise<TablePlanOutput> {
 		return this.request(
@@ -258,7 +239,7 @@ export class StructuredOutputAdapter {
 			[
 				systemMessage(TABLE_PLAN_SYSTEM_PROMPT),
 				userMessage(
-					`问题：${input.question.trim()}\n真实表头：${JSON.stringify(input.headers ?? [])}`,
+					`问题：${input.question.trim()}\n候选表与真实表头：${JSON.stringify(input.tables ?? [])}`,
 				),
 			],
 			options.abortSignal,

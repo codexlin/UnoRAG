@@ -130,13 +130,13 @@ test("legacy SSE preserves order and removes internal scope and debug fields", a
 	);
 	assert.equal(JSON.stringify(events).includes("tenant-secret"), false);
 	assert.equal(JSON.stringify(events).includes("workspace-secret"), false);
-	assert.equal(JSON.stringify(events).includes("retrieval_debug"), false);
 	assert.equal(JSON.stringify(events).includes("generation-secret"), false);
 	assert.deepEqual(events[2]?.data, "违约金");
 	assert.deepEqual(events.at(-1)?.data, {
 		session_id: "session-1",
 		trace_id: "trace-1",
 		answer: "违约金为 200 元",
+		retrieval_debug: {},
 		citations: [
 			{
 				id: "citation-1",

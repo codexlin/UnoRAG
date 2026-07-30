@@ -8,6 +8,7 @@ const PUBLIC_META_KEYS = [
 	"hybrid_failed",
 	"rerank_failed",
 	"retrieval_mode",
+	"retrieval_debug",
 ] as const;
 
 const PUBLIC_DONE_KEYS = [
@@ -100,6 +101,62 @@ function publicCitation(value: unknown): Record<string, unknown> | null {
 	return citation;
 }
 
+export function projectPublicCitations(
+	values: unknown[],
+): Record<string, unknown>[] {
+	return values
+		.map(publicCitation)
+		.filter((item): item is Record<string, unknown> => item !== null);
+}
+
+export function projectPublicRetrievalDebug(
+	value: unknown,
+): Record<string, unknown> {
+	if (!isRecord(value)) return {};
+	const result: Record<string, unknown> = {};
+	const mappings = {
+		trace_id: ["trace_id"],
+		query_type: ["query_type"],
+		route_reason: ["route_reason"],
+		top_score: ["top_score"],
+		used_hybrid: ["used_hybrid", "usedHybrid"],
+		hybrid_failed: ["hybrid_failed", "hybridFailed"],
+		rerank_failed: ["rerank_failed", "rerankFailed"],
+		retrieval_mode: ["retrieval_mode", "retrievalMode"],
+		dense_hit_count: ["dense_hit_count", "denseHitCount"],
+		active_generation_count: [
+			"active_generation_count",
+			"activeGenerationCount",
+		],
+		candidate_count_before_policy: [
+			"candidate_count_before_policy",
+			"candidateCountBeforePolicy",
+		],
+		evidence_threshold: ["evidence_threshold", "evidenceThreshold"],
+		table_candidate_count: ["table_candidate_count"],
+	} as const;
+	for (const [target, sources] of Object.entries(mappings)) {
+		const source = sources.find((name) => value[name] !== undefined);
+		if (source) result[target] = value[source];
+	}
+	if (Array.isArray(value.stages)) {
+		result.stages = value.stages.flatMap((stage) => {
+			if (!isRecord(stage)) return [];
+			const name = stage.stage;
+			const duration = stage.duration_ms;
+			if (typeof name !== "string" || typeof duration !== "number") return [];
+			return [
+				{
+					stage: name,
+					duration_ms: duration,
+					ok: stage.ok !== false,
+				},
+			];
+		});
+	}
+	return result;
+}
+
 export function encodeLegacySseEvent(
 	event: LegacySseEventName,
 	data: unknown,
@@ -121,9 +178,7 @@ export async function* streamLegacyAskSse(
 	input: LegacyAskSseInput,
 ): AsyncGenerator<string> {
 	const meta = project(input.meta, PUBLIC_META_KEYS);
-	const citations = input.citations
-		.map(publicCitation)
-		.filter((item): item is Record<string, unknown> => item !== null);
+	const citations = projectPublicCitations(input.citations);
 
 	yield encodeLegacySseEvent("meta", meta);
 	yield encodeLegacySseEvent("citations", citations);
@@ -148,6 +203,9 @@ export async function* streamLegacyAskSse(
 			return;
 		}
 		const done = project(input.done, PUBLIC_DONE_KEYS);
+		done.retrieval_debug = projectPublicRetrievalDebug(
+			input.done.retrieval_debug,
+		);
 		done.answer = answer || String(done.answer ?? "");
 		done.citations = citations;
 		done.truncated = false;

@@ -1,5 +1,13 @@
 import "server-only";
 
+import {
+	handleNativeConversationRequest,
+	isNativeConversationPath,
+} from "@/server/http/ask/conversation-handler";
+import {
+	handleNativeAskRequest,
+	isNativeAskPath,
+} from "@/server/http/ask/native-handler";
 import { injectAskOverrides } from "./ask-overrides-inject.mjs";
 import { resolveRequestSession } from "./auth/session";
 import {
@@ -175,7 +183,6 @@ export async function proxyRagRequest(
 			{ status: 403 },
 		);
 	}
-
 	const incomingUrl = new URL(request.url);
 	const path = safeSegments.map(encodeURIComponent).join("/");
 	const target = `/${path}${incomingUrl.search}`;
@@ -234,6 +241,29 @@ export async function proxyRagRequest(
 					);
 				}
 				signedBody = injected.body;
+			}
+			if (
+				isNativeConversationPath(safeSegments) ||
+				isNativeAskPath(safeSegments)
+			) {
+				const nativeRequest = new Request(request.url, {
+					method: request.method,
+					headers: request.headers,
+					body: signedBody?.length ? Buffer.from(signedBody) : undefined,
+					signal: request.signal,
+				});
+				const native = isNativeConversationPath(safeSegments)
+					? await handleNativeConversationRequest({
+							request: nativeRequest,
+							path: safeSegments,
+							identity,
+						})
+					: await handleNativeAskRequest({
+							request: nativeRequest,
+							path: safeSegments,
+							identity,
+						});
+				if (native) return native;
 			}
 		}
 		let signedHeaders = new Headers();

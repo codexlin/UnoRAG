@@ -138,6 +138,31 @@ test("retry broadens the query and returns to retrieve", async () => {
 	assert.equal(result.refused, false);
 });
 
+test("retry is bounded and fails closed after two retrieval attempts", async () => {
+	let retrieveCalls = 0;
+	const result = await new AskGraphService(
+		createContext({
+			retrieve: (state) => {
+				retrieveCalls += 1;
+				return {
+					citations: [],
+					retrieval_attempts: (state.retrieval_attempts ?? 0) + 1,
+				};
+			},
+			judge: () => ({
+				sufficient: false,
+				action: "retry",
+				reason: "no_hit",
+				can_retry: true,
+			}),
+		}),
+	).invoke({ question: "Missing policy" });
+
+	assert.equal(retrieveCalls, 2);
+	assert.equal(result.refused, true);
+	assert.equal(result.answer, "refuse:no_hit");
+});
+
 test("judge refusal clears unsupported citations", async () => {
 	const result = await new AskGraphService(
 		createContext({
@@ -163,8 +188,8 @@ test("table route invokes all injected table ports before generation", async () 
 	).invoke({ question: "How many rows exceed 100000?" });
 
 	assert.deepEqual(calls, [
-		"build_table_plan",
 		"table_retrieve",
+		"build_table_plan",
 		"table_execute",
 		"generate",
 	]);

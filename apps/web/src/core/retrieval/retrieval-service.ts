@@ -24,6 +24,8 @@ export type RetrievalDebug = {
 	retrievalMode: "dense" | "hybrid";
 	denseHitCount: number;
 	activeGenerationCount: number;
+	candidateCountBeforePolicy?: number;
+	evidenceThreshold?: number;
 };
 
 export type RetrievalResult = {
@@ -193,6 +195,10 @@ export class DefaultRetrievalService {
 		scope: AuthorizedScope;
 		topK: number;
 		filters?: RetrievalFilters;
+		options?: {
+			hybridEnabled?: boolean;
+			rerankEnabled?: boolean;
+		};
 		signal?: AbortSignal;
 	}): Promise<RetrievalResult> {
 		const query = input.query.trim();
@@ -220,7 +226,11 @@ export class DefaultRetrievalService {
 		let candidates = dense;
 		let usedHybrid = false;
 		let hybridError: string | null = null;
-		if (this.options.hybridEnabled) {
+		const hybridEnabled =
+			input.options?.hybridEnabled ?? this.options.hybridEnabled;
+		const rerankEnabled =
+			input.options?.rerankEnabled ?? this.options.rerankEnabled;
+		if (hybridEnabled) {
 			try {
 				const corpus = assertAuthorizedHits(
 					await this.store.listCorpus({
@@ -248,7 +258,7 @@ export class DefaultRetrievalService {
 
 		let rerankFailed = false;
 		let usedRerank = false;
-		if (this.options.rerankEnabled && this.reranker && candidates.length > 1) {
+		if (rerankEnabled && this.reranker && candidates.length > 1) {
 			try {
 				const ranked = await this.reranker.rerank({
 					query,
@@ -293,7 +303,7 @@ export class DefaultRetrievalService {
 			citations,
 			debug: {
 				usedHybrid,
-				hybridEnabled: this.options.hybridEnabled,
+				hybridEnabled,
 				hybridFailed: hybridError !== null,
 				hybridError,
 				usedRerank,

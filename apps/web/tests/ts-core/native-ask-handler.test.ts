@@ -9,9 +9,6 @@ import type {
 	ConversationScope,
 } from "../../src/server/conversations/types";
 
-type NativeHandlerModule =
-	typeof import("../../src/server/http/ask/native-handler");
-
 type ResolveFilename = (
 	request: string,
 	parent?: unknown,
@@ -23,8 +20,7 @@ const require = createRequire(import.meta.url);
 const nodeModule = require("node:module") as {
 	_resolveFilename: ResolveFilename;
 };
-const originalResolveFilename =
-	nodeModule._resolveFilename.bind(nodeModule);
+const originalResolveFilename = nodeModule._resolveFilename.bind(nodeModule);
 const inertServerOnlyModule = require.resolve("next/package.json");
 
 // `server-only` is a framework marker with no behavior used by this unit.
@@ -33,11 +29,11 @@ nodeModule._resolveFilename = (request, parent, isMain, options) =>
 		? inertServerOnlyModule
 		: originalResolveFilename(request, parent, isMain, options);
 
-const handlerModule = import("../../src/server/http/ask/native-handler").finally(
-	() => {
-		nodeModule._resolveFilename = originalResolveFilename;
-	},
-);
+const handlerModule = import(
+	"../../src/server/http/ask/native-handler"
+).finally(() => {
+	nodeModule._resolveFilename = originalResolveFilename;
+});
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
@@ -100,11 +96,36 @@ class FakeConversationRepository {
 		input: AppendConversationExchangeInput,
 	) {
 		const thread = await this.getThread(scope, threadId);
-		if (!thread || thread.status !== "active") {
+		if (thread?.status !== "active") {
 			throw new Error("thread not found");
 		}
 		this.exchanges.push({ scope, threadId, input });
 		return [];
+	}
+}
+
+class FakeSessionMemory {
+	readonly appended: Array<{
+		scope: ConversationScope;
+		sessionId: string;
+		messages: Array<{ role: "user" | "assistant"; content: string }>;
+		maxTurns: number;
+	}> = [];
+
+	async load() {
+		return [
+			{ role: "user" as const, content: "临时上一问" },
+			{ role: "assistant" as const, content: "临时上一答" },
+		];
+	}
+
+	async append(
+		scope: ConversationScope,
+		sessionId: string,
+		messages: Array<{ role: "user" | "assistant"; content: string }>,
+		maxTurns: number,
+	) {
+		this.appended.push({ scope, sessionId, messages, maxTurns });
 	}
 }
 
@@ -287,9 +308,7 @@ test("foreign, hidden, or wrong-library thread returns 404", async () => {
 			}),
 			path: ["v1", "ask"],
 			identity,
-			repository: repositoryInput(
-				new FakeConversationRepository([thread]),
-			),
+			repository: repositoryInput(new FakeConversationRepository([thread])),
 			runtimeFactory: runtimeFactory(runtime),
 		});
 
@@ -403,7 +422,10 @@ test("stream ask preserves SSE order and persists after all tokens", async () =>
 	});
 
 	assert.equal(response?.status, 200);
-	assert.match(response?.headers.get("content-type") ?? "", /text\/event-stream/);
+	assert.match(
+		response?.headers.get("content-type") ?? "",
+		/text\/event-stream/,
+	);
 	assert.equal(repository.exchanges.length, 0);
 
 	const events = parseSse((await response?.text()) ?? "");
@@ -413,19 +435,71 @@ test("stream ask preserves SSE order and persists after all tokens", async () =>
 	);
 	assert.deepEqual(events[2]?.data, "违约金");
 	assert.deepEqual(events[3]?.data, "为 200 元");
-	assert.equal(
-		(events.at(-1)?.data as Record<string, unknown>).persisted,
-		true,
-	);
-	assert.equal(
-		(events.at(-1)?.data as Record<string, unknown>).answer,
-		"违约金为 200 元",
-	);
+	const done = events.at(-1)?.data as Record<string, unknown> | undefined;
+	assert.equal(done?.persisted, true);
+	assert.equal(done?.answer, "违约金为 200 元");
 	assert.equal(repository.exchanges.length, 1);
 	assert.equal(
 		repository.exchanges[0]?.input.assistant.content,
 		"违约金为 200 元",
 	);
+});
+
+test("temporary session memory is scoped, bounded, and receives policy settings", async () => {
+	process.env.UNORAG_ASK_RUNTIME = "typescript";
+	const { handleNativeAskRequest } = await handlerModule;
+	const memory = new FakeSessionMemory();
+	const runtime = new FakeRuntime(askState(), ["临时回答"]);
+	let observedPolicy: Record<string, unknown> | undefined;
+
+	const response = await handleNativeAskRequest({
+		request: request({
+			question: "临时追问",
+			library_id: LIBRARY_ID,
+			session_id: "temporary-session",
+			ask_overrides: {
+				retrieve_top_k: 4,
+				answer_min_score: 0.5,
+				hybrid_enabled: true,
+				rerank_enabled: true,
+				citation_adjudicate_enabled: true,
+				citation_adjudicate_absolute_floor: 0.45,
+				session_memory_enabled: true,
+				session_memory_max_turns: 3,
+			},
+		}),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		memoryStore: memory as never,
+		runtimeFactory: ((input: { policy: Record<string, unknown> }) => {
+			observedPolicy = input.policy;
+			return runtime;
+		}) as never,
+	});
+
+	assert.equal(response?.status, 200);
+	assert.deepEqual(runtime.invocations[0]?.history, [
+		{ role: "user", content: "临时上一问" },
+		{ role: "assistant", content: "临时上一答" },
+	]);
+	assert.equal(observedPolicy?.retrieve_top_k, 4);
+	assert.equal(observedPolicy?.hybrid_enabled, true);
+	assert.deepEqual(memory.appended, [
+		{
+			scope: {
+				organizationId: ORGANIZATION_ID,
+				workspaceId: WORKSPACE_ID,
+				principalId: PRINCIPAL_ID,
+			},
+			sessionId: "temporary-session",
+			messages: [
+				{ role: "user", content: "临时追问" },
+				{ role: "assistant", content: "临时回答" },
+			],
+			maxTurns: 3,
+		},
+	]);
 });
 
 test("model configuration and runtime failures return sanitized 503", async () => {

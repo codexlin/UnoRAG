@@ -34,7 +34,13 @@ export type RouteAfterJudge = "retry" | "generate" | "refuse";
 
 export function routeAfterJudge(state: AskState): RouteAfterJudge {
 	const action = state.judgement?.action;
-	if (action === "retry" || action === "generate") {
+	if (action === "retry") {
+		return state.judgement?.can_retry !== false &&
+			(state.retrieval_attempts ?? 0) < 2
+			? "retry"
+			: "refuse";
+	}
+	if (action === "generate") {
 		return action;
 	}
 	return "refuse";

@@ -183,6 +183,28 @@ test("hybrid corpus failure falls back to dense without failing retrieval", asyn
 	assert.equal(result.debug.retrievalMode, "dense");
 });
 
+test("request policy can enable hybrid retrieval without rebuilding runtime", async () => {
+	const store = new FakeStore();
+	const service = new DefaultRetrievalService(embeddings, store, null, {
+		hybridEnabled: false,
+		rerankEnabled: false,
+		rerankTopK: 6,
+		bm25TopK: 20,
+		rrfK: 60,
+	});
+	const result = await service.retrieve({
+		query: "合同违约金",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+		options: { hybridEnabled: true },
+	});
+
+	assert.equal(result.debug.hybridEnabled, true);
+	assert.equal(result.debug.usedHybrid, true);
+	assert.equal(result.debug.retrievalMode, "hybrid");
+});
+
 test("a vector store scope violation fails the entire retrieval", async () => {
 	const store = new FakeStore();
 	store.search = async () => [

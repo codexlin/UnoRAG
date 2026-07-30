@@ -63,19 +63,19 @@ export function compileAskGraph(context: AskGraphContext) {
 			refuse: "refuse",
 		})
 		.addEdge("clarify", END)
-		.addEdge("build_table_plan", "table_retrieve")
-		.addEdge("table_retrieve", "table_execute")
+		.addEdge("table_retrieve", "build_table_plan")
+		.addEdge("build_table_plan", "table_execute")
 		.addConditionalEdges("table_execute", routeAfterTableExecute, {
 			judge: "judge",
 			end: END,
 		})
 		.addConditionalEdges("rewrite", routeAfterRewrite, {
 			retrieve: "retrieve",
-			table: "build_table_plan",
+			table: "table_retrieve",
 			refuse: "refuse",
 		})
 		.addConditionalEdges("retrieve", routeAfterRetrieve, {
-			upgrade_precise: "build_table_plan",
+			upgrade_precise: "table_retrieve",
 			judge: "judge",
 		})
 		.addConditionalEdges("judge", routeAfterJudge, {

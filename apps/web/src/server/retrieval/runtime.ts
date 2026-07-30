@@ -69,16 +69,14 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
 	});
 	const rerankEnabled = enabled("TS_RETRIEVAL_RERANK_ENABLED");
-	const reranker = rerankEnabled
-		? new OpenAICompatibleRerankProvider({
-				apiKey,
-				baseUrl: required(
-					"RERANK_BASE_URL",
-					"https://dashscope.aliyuncs.com/compatible-api/v1",
-				),
-				model: required("RERANK_MODEL", "qwen3-rerank"),
-			})
-		: null;
+	const reranker = new OpenAICompatibleRerankProvider({
+		apiKey,
+		baseUrl: required(
+			"RERANK_BASE_URL",
+			"https://dashscope.aliyuncs.com/compatible-api/v1",
+		),
+		model: required("RERANK_MODEL", "qwen3-rerank"),
+	});
 	runtime = new DefaultRetrievalService(
 		embeddings,
 		new QdrantRetrievalStore(
