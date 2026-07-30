@@ -61,14 +61,19 @@ services:
       RAG_API_URL: http://api:8000
       DATABASE_URL: ${WEB_DATABASE_URL:-postgresql://unorag_web_login:${UNORAG_WEB_DB_PASSWORD:?UNORAG_WEB_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL required}
+      SESSION_MEMORY_TTL_SECONDS: ${SESSION_MEMORY_TTL_SECONDS:-3600}
       UNORAG_INTERNAL_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
       UNORAG_SESSION_SECRET: ${UNORAG_SESSION_SECRET:?UNORAG_SESSION_SECRET required}
       UNORAG_BUILD_REF: ${UNORAG_WEB_IMAGE:-unorag-web:local}
       UNORAG_TS_RETRIEVAL_MODE: ${UNORAG_TS_RETRIEVAL_MODE:-off}
+      UNORAG_ASK_RUNTIME: ${UNORAG_ASK_RUNTIME:-python}
       QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
       OPENAI_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}
       OPENAI_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL required}
+      CHAT_MODEL: ${CHAT_MODEL:-qwen-plus}
+      AI_SUPPORTS_STRUCTURED_OUTPUTS: ${AI_SUPPORTS_STRUCTURED_OUTPUTS:-true}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:?EMBEDDING_MODEL required}
       EMBEDDING_DIM: ${EMBEDDING_DIM:?EMBEDDING_DIM required}
       EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-10}
@@ -86,6 +91,8 @@ services:
       document-storage-init:
         condition: service_completed_successfully
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       api:
         condition: service_healthy
@@ -125,6 +132,8 @@ services:
       ACTIVE_GENERATION_CACHE_TTL_SECONDS: "0"
       MINERU_USE_FAKE: "false"
       DATABASE_URL: ${API_DATABASE_URL:-postgresql+psycopg://unorag_api_login:${UNORAG_API_DB_PASSWORD:?UNORAG_API_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
+      CONVERSATION_STORE_SCHEMA: ${CONVERSATION_STORE_SCHEMA:-public}
+      CONVERSATION_DATABASE_URL: ${CONVERSATION_DATABASE_URL:-}
       RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:-postgresql://unorag_rag_read_login:${UNORAG_RAG_READ_DB_PASSWORD:?UNORAG_RAG_READ_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
       QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
