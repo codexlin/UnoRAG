@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+\getenv dbos_database UNORAG_DBOS_DATABASE
 
 DO $$
 BEGIN
@@ -27,6 +28,16 @@ BEGIN
 		'app.jobs',
 		'payload',
 		'UPDATE'
+	) OR NOT has_column_privilege(
+		'unorag_worker_login',
+		'app.jobs',
+		'workflow_id',
+		'UPDATE'
+	) OR NOT has_column_privilege(
+		'unorag_worker_login',
+		'app.jobs',
+		'execution_engine',
+		'INSERT'
 	) OR NOT has_table_privilege(
 		'unorag_worker_login',
 		'app.outbox_events',
@@ -105,6 +116,22 @@ BEGIN
 		RAISE EXCEPTION 'unorag_rag_read_login privilege boundary is invalid';
 	END IF;
 
+	IF has_schema_privilege('unorag_dbos_login', 'app', 'USAGE')
+		OR has_schema_privilege('unorag_dbos_login', 'rag', 'USAGE')
+		OR has_database_privilege(
+			'unorag_dbos_login',
+			current_database(),
+			'CONNECT'
+		)
+		OR has_table_privilege('unorag_dbos_login', 'app.jobs', 'SELECT')
+		OR has_table_privilege(
+			'unorag_dbos_login',
+			'rag.generation_cleanup_queue',
+			'SELECT'
+		) THEN
+		RAISE EXCEPTION 'unorag_dbos_login can access application data';
+	END IF;
+
 	IF EXISTS (
 		SELECT 1
 		FROM pg_roles
@@ -113,7 +140,8 @@ BEGIN
 			'unorag_api_login',
 			'unorag_worker_login',
 			'unorag_outbox_login',
-			'unorag_rag_read_login'
+			'unorag_rag_read_login',
+			'unorag_dbos_login'
 		)
 		  AND (rolsuper OR rolcreatedb OR rolcreaterole)
 	) THEN
@@ -170,6 +198,37 @@ BEGIN
 	) THEN
 		RAISE EXCEPTION 'runtime login membership set is invalid';
 	END IF;
+
 END $$;
+
+SELECT EXISTS (
+	SELECT 1
+	FROM pg_database AS database
+	JOIN pg_roles AS owner ON owner.oid = database.datdba
+	WHERE database.datname = :'dbos_database'
+	  AND owner.rolname = 'unorag_dbos_login'
+) AS dbos_database_owner_valid
+\gset
+\if :dbos_database_owner_valid
+\else
+	DO $$
+	BEGIN
+		RAISE EXCEPTION 'DBOS system database is missing or has the wrong owner';
+	END $$;
+\endif
+
+SELECT has_database_privilege(
+	'unorag_dbos_login',
+	:'dbos_database',
+	'CONNECT'
+) AS dbos_database_connect_valid
+\gset
+\if :dbos_database_connect_valid
+\else
+	DO $$
+	BEGIN
+		RAISE EXCEPTION 'DBOS login cannot connect to its system database';
+	END $$;
+\endif
 
 SELECT 'runtime role verification passed' AS result;

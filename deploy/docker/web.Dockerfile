@@ -3,6 +3,7 @@
 #   docker build -f deploy/docker/web.Dockerfile --target runner -t unorag-web:local .
 #   docker build -f deploy/docker/web.Dockerfile --target migrator -t unorag-web-migrator:local .
 #   docker build -f deploy/docker/web.Dockerfile --target outbox -t unorag-web-outbox:local .
+#   docker build -f deploy/docker/web.Dockerfile --target worker -t unorag-web-worker:local .
 
 FROM node:22-bookworm-slim AS deps
 WORKDIR /repo
@@ -48,6 +49,15 @@ COPY apps/web/scripts apps/web/scripts
 WORKDIR /repo/apps/web
 ENV NODE_ENV=production
 CMD ["node", "scripts/process-outbox.mjs", "--watch"]
+
+# DBOS executor and control loop. Keep the complete worker module together so
+# dynamic production-port imports resolve identically in both processes.
+FROM deps AS worker
+COPY apps/web/src/worker apps/web/src/worker
+COPY apps/web/tsconfig.json apps/web/
+WORKDIR /repo/apps/web
+ENV NODE_ENV=production
+CMD ["./node_modules/.bin/tsx", "src/worker/entry.ts"]
 
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app

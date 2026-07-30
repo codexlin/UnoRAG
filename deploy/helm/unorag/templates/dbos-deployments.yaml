@@ -1,0 +1,193 @@
+{{- if .Values.dbos.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "unorag.fullname" . }}-dbos-worker
+  labels:
+    {{- include "unorag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dbos-worker
+spec:
+  serviceName: {{ include "unorag.fullname" . }}-dbos-worker
+  replicas: {{ .Values.dbos.workerReplicaCount }}
+  selector:
+    matchLabels:
+      {{- include "unorag.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dbos-worker
+  template:
+    metadata:
+      labels:
+        {{- include "unorag.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dbos-worker
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.dbos.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: dbos-worker
+          image: "{{ .Values.images.dbosWorker.repository }}:{{ .Values.images.dbosWorker.tag }}"
+          imagePullPolicy: {{ .Values.images.dbosWorker.pullPolicy }}
+          workingDir: /repo/apps/web
+          command: ["./node_modules/.bin/tsx", "src/worker/entry.ts"]
+          ports:
+            - name: dbos-admin
+              containerPort: 3001
+              protocol: TCP
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: WORKER_DATABASE_URL
+            - name: DBOS_SYSTEM_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: DBOS_SYSTEM_DATABASE_URL
+            - name: UNORAG_DBOS_APPLICATION_VERSION
+              value: {{ .Values.dbos.applicationVersion | quote }}
+            - name: UNORAG_DBOS_EXECUTOR_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: UNORAG_DBOS_LISTEN_QUEUES
+              value: lifecycle
+            - name: UNORAG_DBOS_CLEANUP_ENABLED
+              value: "true"
+            - name: DBOS_SYSTEM_DATABASE_POOL_SIZE
+              value: {{ .Values.dbos.systemDatabasePoolSize | quote }}
+            - name: DBOS_LIFECYCLE_CONCURRENCY
+              value: {{ .Values.dbos.lifecycleConcurrency | quote }}
+            - name: DBOS_ADMIN_PORT
+              value: "3001"
+            - name: DATABASE_POOL_MAX
+              value: {{ .Values.config.databasePoolMax | quote }}
+            - name: QDRANT_URL
+              value: {{ .Values.external.qdrant.url | quote }}
+            - name: QDRANT_COLLECTION
+              value: {{ .Values.external.qdrant.collection | quote }}
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: QDRANT_API_KEY
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /dbos-healthz
+              port: dbos-admin
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /dbos-healthz
+              port: dbos-admin
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          {{- with .Values.dbos.workerResources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "unorag.fullname" . }}-dbos-worker
+  labels:
+    {{- include "unorag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dbos-worker
+spec:
+  clusterIP: None
+  selector:
+    {{- include "unorag.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dbos-worker
+  ports:
+    - name: dbos-admin
+      port: 3001
+      targetPort: dbos-admin
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "unorag.fullname" . }}-dbos-control
+  labels:
+    {{- include "unorag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dbos-control
+spec:
+  replicas: {{ .Values.dbos.controlReplicaCount }}
+  selector:
+    matchLabels:
+      {{- include "unorag.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dbos-control
+  template:
+    metadata:
+      labels:
+        {{- include "unorag.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dbos-control
+    spec:
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: dbos-control
+          image: "{{ .Values.images.dbosWorker.repository }}:{{ .Values.images.dbosWorker.tag }}"
+          imagePullPolicy: {{ .Values.images.dbosWorker.pullPolicy }}
+          workingDir: /repo/apps/web
+          command: ["./node_modules/.bin/tsx", "src/worker/control-entry.ts"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: WORKER_DATABASE_URL
+            - name: DBOS_SYSTEM_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: DBOS_SYSTEM_DATABASE_URL
+            - name: UNORAG_DBOS_APPLICATION_VERSION
+              value: {{ .Values.dbos.applicationVersion | quote }}
+            - name: UNORAG_DBOS_EXECUTOR_ID
+              value: {{ printf "%s-dbos-control" (include "unorag.fullname" .) | quote }}
+            - name: UNORAG_DBOS_LISTEN_QUEUES
+              value: lifecycle
+            - name: UNORAG_DBOS_CLEANUP_ENABLED
+              value: "true"
+            - name: DBOS_SYSTEM_DATABASE_POOL_SIZE
+              value: {{ .Values.dbos.systemDatabasePoolSize | quote }}
+            - name: DBOS_LIFECYCLE_CONCURRENCY
+              value: {{ .Values.dbos.lifecycleConcurrency | quote }}
+            - name: DBOS_CONTROL_POLL_MS
+              value: {{ .Values.dbos.controlPollMs | quote }}
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - find /tmp/unorag-dbos-control-ready -mmin -1 -print 2>/dev/null | grep -q .
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - find /tmp/unorag-dbos-control-ready -mmin -1 -print 2>/dev/null | grep -q .
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          {{- with .Values.dbos.controlResources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

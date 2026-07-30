@@ -32,9 +32,10 @@ export async function loadWorkerPorts(
 	config: WorkerRuntimeConfig,
 ): Promise<WorkerPorts> {
 	if (!config.portsModule) {
-		throw new Error(
-			"UNORAG_DBOS_PORTS_MODULE is required when starting the DBOS worker",
-		);
+		const { createWorkerPorts } = await import("./production-ports");
+		const ports = await createWorkerPorts(config);
+		validatePorts(ports);
+		return ports;
 	}
 	const specifier = config.portsModule.startsWith("file:")
 		? config.portsModule

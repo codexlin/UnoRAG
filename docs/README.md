@@ -31,7 +31,7 @@
 | 目录 | 用途 |
 |------|------|
 | [runbooks/](./runbooks/) | 私有化部署、lifecycle 迁移、质量门禁、试点操作 |
-| [ops/cicd.md](./ops/cicd.md) | CI、四镜像发布、digest manifest 与升级闭环 |
+| [ops/cicd.md](./ops/cicd.md) | CI、五镜像发布、digest manifest 与升级闭环 |
 | [acceptance/](./acceptance/) | 试点 go/no-go、production-ready 清单与历史验收证据 |
 | [case-studies/](./case-studies/) | 真实问题复盘、根因分析、修复设计与面试叙事 |
 | [design/northline-theme.md](./design/northline-theme.md) | UI 主题 Northline |

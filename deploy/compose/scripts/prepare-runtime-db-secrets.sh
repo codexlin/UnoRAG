@@ -45,6 +45,7 @@ API_PASSWORD="$(resolve_password UNORAG_API_DB_PASSWORD)"
 WORKER_PASSWORD="$(resolve_password UNORAG_WORKER_DB_PASSWORD)"
 OUTBOX_PASSWORD="$(resolve_password UNORAG_OUTBOX_DB_PASSWORD)"
 RAG_READ_PASSWORD="$(resolve_password UNORAG_RAG_READ_DB_PASSWORD)"
+DBOS_PASSWORD="$(resolve_password UNORAG_DBOS_DB_PASSWORD)"
 
 tmp="$(mktemp "${SECRET_FILE}.tmp.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
@@ -64,6 +65,8 @@ awk '
 		skip["UNORAG_WORKER_DB_PASSWORD"] = 1
 		skip["UNORAG_OUTBOX_DB_PASSWORD"] = 1
 		skip["UNORAG_RAG_READ_DB_PASSWORD"] = 1
+		skip["UNORAG_DBOS_DB_PASSWORD"] = 1
+		skip["DBOS_SYSTEM_DATABASE_URL"] = 1
 	}
 	{
 		key = $0
@@ -79,6 +82,7 @@ awk '
 	printf 'UNORAG_WORKER_DB_PASSWORD=%s\n' "$WORKER_PASSWORD"
 	printf 'UNORAG_OUTBOX_DB_PASSWORD=%s\n' "$OUTBOX_PASSWORD"
 	printf 'UNORAG_RAG_READ_DB_PASSWORD=%s\n' "$RAG_READ_PASSWORD"
+	printf 'UNORAG_DBOS_DB_PASSWORD=%s\n' "$DBOS_PASSWORD"
 } >>"$tmp"
 
 mv "$tmp" "$SECRET_FILE"

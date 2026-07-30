@@ -128,7 +128,7 @@ dead/stuck/orphan 进入监控和运维队列
 受控试点不强制完整 SBOM 与签名流水线。操作建议：
 
 - Compose / Helm 已 pin 基础镜像 tag（见 `deploy/compose/env.example`）。
-- 发布 workflow 已对四张镜像执行 Trivy `HIGH/CRITICAL` 门禁并产出 digest manifest；
+- 发布 workflow 已对五张镜像执行 Trivy `HIGH/CRITICAL` 门禁并产出 digest manifest；
   客户交付时归档该版本的扫描日志与 manifest。
 - 客户要求 SBOM、签名或 provenance 时，另行运行 `syft` / `cosign` 等并纳入
   本次交付门禁；未执行时写入已知限制。

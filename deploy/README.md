@@ -25,7 +25,7 @@ deploy/
       compose-env.sh        # mk_compose / --env-file 助手
       install.sh            # 安装：infra → migrate → app
       upgrade.sh            # 滚动升级：compose pull + drain + outbox；见 docs/ops/cicd.md
-      backup.sh             # PostgreSQL / 对象 / Qdrant
+      backup.sh             # 维护窗口：PostgreSQL / DBOS / 对象 / Qdrant 冷备
       restore.sh            # 恢复（需显式确认）
       pilot-preflight.sh    # 隔离单测 + CI gate（可无 Compose）
       pilot-smoke.sh        # upload→ask→replace→delete 冒烟
@@ -34,7 +34,7 @@ deploy/
     web.Dockerfile
   helm/
     README.md               # Helm 安装说明
-    unorag/               # chart：web / api / lifecycle-worker / outbox-worker
+    unorag/               # chart：web / api / workers；DBOS migration cohort 可选
 ```
 
 ## 快速开始
@@ -56,17 +56,18 @@ cd deploy/compose
 
 ## 本片已覆盖
 
-- Compose 参考拓扑（Caddy → web；api / lifecycle-worker / outbox-worker 仅内网）
+- Compose 参考拓扑（Caddy → web；api / lifecycle-worker / outbox-worker 仅内网；DBOS cohort 可选）
 - 客户托管连接与模型 endpoint（全部经环境变量）
 - secret 仅从环境注入；镜像不含密钥
 - production fail-closed 与 readiness 说明
 - migration 独立步骤（migrator 凭据，运行账号无 DDL）
-- 安装 / 升级 / 回滚 / 备份 / 恢复 runbook 与脚本
+- 安装 / 升级 / 回滚 / 一致性备份 / 校验恢复 runbook 与脚本
 
 ## Helm 起步
 
 见 [`deploy/helm/README.md`](./helm/README.md)。默认假设 Postgres / Qdrant / Redis
-由客户托管；chart 只部署 web / api / lifecycle-worker / outbox-worker（+ 可选 Ingress / 迁移 Job / PVC）。
+由客户托管；chart 部署 web / api / lifecycle-worker / outbox-worker，并可显式启用
+DBOS cleanup worker/control（+ 可选 Ingress / 迁移 Job / PVC）。
 
 ## 试点冒烟
 
@@ -84,7 +85,7 @@ cd deploy/compose
 
 ## 供应链 / SBOM（薄说明）
 
-`release-images.yml` 已对 web / api / migrator / outbox 四张发布镜像执行 Trivy
+`release-images.yml` 已对 web / api / migrator / outbox / DBOS worker 五张发布镜像执行 Trivy
 `HIGH/CRITICAL` CVE 门禁；扫描未通过时不产出 release manifest。完整 SBOM、签名和
 证明材料仍后置。交付前：
 

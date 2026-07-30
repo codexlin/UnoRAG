@@ -43,7 +43,8 @@ for db_secret_name in \
 	UNORAG_API_DB_PASSWORD \
 	UNORAG_WORKER_DB_PASSWORD \
 	UNORAG_OUTBOX_DB_PASSWORD \
-	UNORAG_RAG_READ_DB_PASSWORD; do
+	UNORAG_RAG_READ_DB_PASSWORD \
+	UNORAG_DBOS_DB_PASSWORD; do
 	db_secret="$(mk_config_get "$db_secret_name" || true)"
 	if [[ "${#db_secret}" -lt 32 || ! "$db_secret" =~ ^[A-Za-z0-9._~-]+$ ]]; then
 		echo "refusing to install: ${db_secret_name} must be >=32 URL-safe characters" >&2
@@ -58,7 +59,7 @@ done
 HTTP_PORT="$(mk_config_get HTTP_PORT || echo 80)"
 
 echo "==> building images"
-mk_compose build web api migrate-web
+mk_compose build web api migrate-web dbos-worker
 
 echo "==> starting infrastructure"
 mk_compose up -d postgres qdrant redis

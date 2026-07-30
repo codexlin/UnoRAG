@@ -38,7 +38,7 @@ UnoRAG 版本与部署环境宣称 **production-ready**（私有化企业知识�
 - [ ] migration 与 rollback/runbook 完整
 - [ ] FastAPI ingest 写路径永久 410；生产仅 lifecycle_worker 入库（无 ARQ）
 - [ ] CI deterministic / isolation gate 通过；release gate 按发布流程执行或书面豁免
-- [ ] web / api / migrator / outbox 四张镜像通过 Trivy `HIGH/CRITICAL` 门禁，并使用 digest manifest
+- [ ] web / api / migrator / outbox / DBOS worker 五张镜像通过 Trivy `HIGH/CRITICAL` 门禁，并使用 digest manifest
 - [ ] 关键控制面操作可在 audit 页面查询并导出 CSV
 
 ## E. 交付

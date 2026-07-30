@@ -619,6 +619,11 @@ export const jobs = appSchema.table(
 			{ onDelete: "cascade" },
 		),
 		type: varchar("type", { length: 64 }).notNull(),
+		executionEngine: varchar("execution_engine", { length: 16 })
+			.default("python")
+			.notNull(),
+		workflowId: varchar("workflow_id", { length: 256 }),
+		dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
 		status: varchar("status", { length: 32 }).default("queued").notNull(),
 		stage: varchar("stage", { length: 64 }).default("accepted").notNull(),
 		progress: integer("progress").default(0).notNull(),
@@ -668,6 +673,14 @@ export const jobs = appSchema.table(
 		check(
 			"jobs_status_check",
 			sql`${table.status} in ('queued', 'running', 'retry', 'cancelling', 'cancelled', 'completed', 'failed', 'dead')`,
+		),
+		check(
+			"jobs_execution_engine_check",
+			sql`${table.executionEngine} in ('python', 'dbos')`,
+		),
+		check(
+			"jobs_dbos_workflow_id_check",
+			sql`(${table.executionEngine} = 'python' and ${table.workflowId} is null) or (${table.executionEngine} = 'dbos' and ${table.workflowId} = ${table.id}::text)`,
 		),
 		check(
 			"jobs_stage_check",

@@ -82,9 +82,25 @@ GRANT UPDATE (
 	heartbeat_at,
 	cancel_requested_at,
 	worker_version,
+	workflow_id,
+	dispatched_at,
 	started_at,
 	finished_at,
 	updated_at
+) ON app.jobs TO unorag_worker;
+
+GRANT INSERT (
+	id,
+	organization_id,
+	workspace_id,
+	document_version_id,
+	type,
+	execution_engine,
+	workflow_id,
+	status,
+	stage,
+	idempotency_key,
+	payload
 ) ON app.jobs TO unorag_worker;
 
 GRANT UPDATE (

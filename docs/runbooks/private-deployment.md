@@ -12,6 +12,8 @@ Browser
            -> PostgreSQL / Qdrant / Redis
       -> Python lifecycle-worker (unpublished; claims app.jobs)
       -> Node outbox-worker (unpublished; projects app.outbox_events → RAG)
+      -> DBOS worker + control (optional migration cohort; unpublished)
+           -> dedicated DBOS system database
   -> DOCUMENT_STORAGE_ROOT shared volume (web + worker)
   -> Customer LLM / embedding / rerank / MinerU endpoints
 ```
@@ -40,7 +42,8 @@ cd deploy/compose
 # 生成密钥（示例）：openssl rand -base64 48
 ```
 
-至少填写：`POSTGRES_PASSWORD`、五个 `UNORAG_*_DB_PASSWORD`、
+至少填写：`POSTGRES_PASSWORD`、六个 `UNORAG_*_DB_PASSWORD`（含独立
+`UNORAG_DBOS_DB_PASSWORD`）、
 `UNORAG_INTERNAL_SECRET`、`UNORAG_SESSION_SECRET`（必须与 INTERNAL 不同）、
 `LLM_API_KEY`，以及 `bootstrap.env` 中的 `UNORAG_ADMIN_PASSWORD`。数据库密码使用
 `openssl rand -hex 32` 等 URL-safe 值，且不得复用管理员密码。
@@ -51,7 +54,7 @@ cd deploy/compose
 ./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
 ```
 
-脚本只更新 gitignored 的 `runtime.secret`，生成五个独立密码并移除旧共享 DSN
+脚本只更新 gitignored 的 `runtime.secret`，生成六个独立密码并移除旧共享 DSN
 override，不输出密码。外部托管 PostgreSQL 不运行该脚本，由数据库管理员创建登录
 账号、授予对应 runtime role，并填写 `WEB/API/WORKER/OUTBOX/RAG_READ_DATABASE_URL`。
 HTTPS 部署还应在 `runtime.env` 设置 `UNORAG_BASE_URL=https://你的域名`，供升级
@@ -77,7 +80,7 @@ chmod +x scripts/*.sh
 
 脚本顺序：
 
-1. 构建 `web` / `api` / `web-migrator` 镜像
+1. 构建 `web` / `api` / `web-migrator` / `outbox` / `DBOS worker` 镜像
 2. 启动 Postgres / Qdrant / Redis
 3. `migrate-web`（Drizzle `app.*`）→ `migrate-rag`（`rag.*`）
 4. 幂等应用 runtime roles、独立登录账号和权限断言
@@ -97,6 +100,29 @@ mk_compose_bootstrap --profile migrate run --rm bootstrap
 mk_compose up -d caddy web api lifecycle-worker outbox-worker
 ```
 
+### 2.4 DBOS cleanup cohort（显式启用）
+
+DBOS 只负责被明确分配的 cleanup 行。默认安装不会启动 profile，也不会修改
+`execution_engine=python` 的队列行。
+
+```bash
+# 1. 启动 executor + control；两者不对外暴露端口
+mk_compose --profile dbos up -d --wait dbos-worker dbos-control
+
+# 2. 小批接管到期且仍为 pending/error 的 Python cleanup
+mk_compose --profile dbos run --rm --no-deps \
+  -e UNORAG_DBOS_ADOPTION_CONFIRMED=true \
+  dbos-control \
+  ./node_modules/.bin/tsx src/worker/dispatch-entry.ts \
+  --adopt-pending-cleanup --adopt-limit 10
+```
+
+接管采用 document advisory lock + 行锁和 CAS；不会接管 `sweeping` 行，也不会删除
+active generation。停止 cohort 时先停 `dbos-control`，等待 `dbos-worker` 完成已物化
+任务；确认不存在非终态 DBOS job 后再停 executor。已接管行不反向改回 Python；
+未接管的新行仍由 Python 处理。不得直接改已有
+`app.jobs.execution_engine/workflow_id`，这两个字段由数据库触发器保护为不可变。
+
 生命周期迁移细节另见
 [`document-lifecycle-migration.md`](./document-lifecycle-migration.md)。
 
@@ -108,6 +134,8 @@ mk_compose up -d caddy web api lifecycle-worker outbox-worker
 | FastAPI | 容器内 `GET /health` | `status=ok` 时需 metadata + active-generation gate + ask_ready；否则 `unavailable`/`degraded` |
 | lifecycle-worker | 文件 `/tmp/unorag-lifecycle-ready` | 进入主循环后创建；SIGTERM 删除 |
 | outbox-worker | 进程常驻 `process-outbox.mjs --watch` | 投影文库变更；无单独 ready 文件 |
+| DBOS worker（可选） | `GET :3001/dbos-healthz`（仅容器/Pod 内） | executor 已连接独立 system DB |
+| DBOS control（可选） | 常驻进程 + `dbos.control.tick` 日志 | dispatch/reconcile 无持续失败 |
 | Postgres | `pg_isready` | healthy |
 | Qdrant | TCP `:6333` / `readyz` | healthy |
 | Redis | `redis-cli ping` | `PONG` |
@@ -162,9 +190,12 @@ mk_compose --profile ops run --rm inspect-lifecycle
 
 1. 停止写入（或 drain worker）。
 2. 将 `UNORAG_WEB_IMAGE` / `UNORAG_WEB_MIGRATOR_IMAGE` /
-   `UNORAG_API_IMAGE` / `UNORAG_OUTBOX_IMAGE` 指回上一版本
+   `UNORAG_API_IMAGE` / `UNORAG_OUTBOX_IMAGE` / `UNORAG_DBOS_WORKER_IMAGE`
+   与 `UNORAG_DBOS_APPLICATION_VERSION` 指回上一发布清单
    （或重跑升级脚本的自动应用回滚），
    `source scripts/compose-env.sh && mk_compose up -d api web lifecycle-worker outbox-worker caddy`。
+   DBOS profile 原本已运行时，`upgrade.sh` 会一并 drain/恢复 `dbos-worker` 与
+   `dbos-control`。
 3. **不要**盲目 down-migrate Schema。Additive 列可保留；若版本要求恢复数据，
    使用备份按第 6 节 restore。
 4. 若仅应用回归：回滚镜像即可；若出现数据损坏或不兼容迁移，走 backup restore。
@@ -182,20 +213,27 @@ mk_compose --profile ops run --rm inspect-lifecycle
 产物：
 
 - `postgres.sql` — `app` / `rag` / 相关 schema
+- `dbos-system.dump` — durable workflow 状态与 step checkpoints
 - `documents.tgz` — container path `/var/lib/unorag/documents` (Compose invariant)
 - `qdrant.tgz` — 向量存储
 - `MANIFEST.txt`
+- `CHECKSUMS.sha256` — 恢复前强制校验的归档摘要
 
-一致性建议：短暂暂停上传或在低峰备份；严格一致性需要短停写窗口。
+脚本会进入短维护窗口：记录当前运行服务，停止 Caddy 与全部业务写入者，
+优雅停止 DBOS executor/control，完成两库 dump、文档对象归档与 Qdrant 冷备，
+然后只恢复备份前实际运行的服务。该路径以短暂停机换取跨存储一致性。
 
 ### 6.2 恢复顺序（必须）
 
 ```text
-1. 停止 app（web/api/worker/caddy）
-2. 恢复 PostgreSQL（事实源：active version / ACL / jobs）
-3. 恢复 document objects（storage_key 指向的文件）
-4. 恢复 Qdrant
-5. 启动 app，跑 readiness + 抽样 citation
+1. 停止 app 与 DBOS control/executor
+2. 校验 `CHECKSUMS.sha256`
+3. 恢复 PostgreSQL 业务库（事实源：active version / ACL / jobs）
+4. 重建并验证 runtime login / grants 与独立 DBOS database
+5. 恢复 DBOS system database（durable workflow/checkpoints）
+6. 恢复 document objects（storage_key 指向的文件）
+7. 恢复 Qdrant
+8. 启动 app，跑 readiness + 抽样 citation
 ```
 
 ```bash
@@ -259,7 +297,10 @@ Compose 适合单机；多副本生产使用 [`deploy/helm/unorag`](../../deploy
 - 部署 **web / api / lifecycle-worker / outbox-worker**；**不**内置 Postgres、Qdrant、Redis、MinIO。
 - `values.external.*` 填客户托管连接；密钥走 `secret.existingSecret`（勿提交明文）。
 - Ingress（可选）只暴露 **web**；api 保持 ClusterIP（fail-closed）。
-- readiness：web `GET /api/rag/health`、api `GET /health`、worker 就绪文件。
+- readiness：web `GET /api/rag/health`、api `GET /health`、Python/DBOS control
+  就绪文件、DBOS executor `GET /dbos-healthz`。
+- DBOS executor 使用 StatefulSet ordinal 作为稳定 executor identity；不要在
+  非兼容 workflow 仍运行时缩容对应 ordinal。
 - 文档对象：默认 `ReadWriteMany` PVC；S3/MinIO 适配仍后置。
 - 迁移：`migrate.web` / `migrate.rag` 为可选 Helm hook Job。
 
@@ -278,7 +319,7 @@ helm upgrade --install unorag ./deploy/helm/unorag -n unorag \
 - SBOM、Cosign 签名与 provenance
 - MinIO/S3 作为一等对象后端（当前默认共享卷 / PVC）
 
-**供应链说明：** release workflow 已对 web / api / migrator / outbox 四张镜像执行
+**供应链说明：** release workflow 已对 web / api / migrator / outbox / DBOS worker 五张镜像执行
 Trivy `HIGH/CRITICAL` 门禁，并产出 digest manifest。客户交付时应归档对应扫描日志；
 完整 SBOM、Cosign 签名和 provenance 仍后置。
 

@@ -17,6 +17,7 @@ deploy/helm/unorag/
     api-deployment.yaml / api-service.yaml   # ClusterIP only
     worker-deployment.yaml                   # lifecycle-worker
     outbox-worker-deployment.yaml            # outbox-worker（必需）
+    dbos-deployments.yaml                    # 可选 StatefulSet executor + control
     configmap.yaml / secret.yaml / pvc.yaml
     ingress.yaml
     migrate-jobs.yaml                        # opt-in Helm hooks
@@ -45,6 +46,7 @@ kubectl -n unorag create secret generic unorag-runtime \
   --from-literal=API_DATABASE_URL=postgresql+psycopg://... \
   --from-literal=WORKER_DATABASE_URL=postgresql://... \
   --from-literal=RAG_READ_DATABASE_URL=postgresql://... \
+  --from-literal=DBOS_SYSTEM_DATABASE_URL=postgresql://... \
   --from-literal=MIGRATOR_DATABASE_URL=postgresql://...
 
 # Optional: enable migration Jobs for this install
@@ -58,6 +60,7 @@ helm upgrade --install unorag ./deploy/helm/unorag \
   --set external.redis.url=redis://redis.infra:6379 \
   --set migrate.web.enabled=true \
   --set migrate.rag.enabled=true \
+  --set dbos.enabled=false \
   --set ingress.enabled=true \
   --set ingress.hosts[0].host=unorag.example.com
 ```
@@ -65,7 +68,13 @@ helm upgrade --install unorag ./deploy/helm/unorag \
 ## Fail-closed edge
 
 - Ingress (when enabled) only fronts **web**.
-- **api** 仅通过 ClusterIP 在集群内暴露；**lifecycle-worker** 与 **outbox-worker** 不创建 Service，三者均不对外暴露（均为私有部署必需进程）。
+- **api** 仅通过 ClusterIP 在集群内暴露；**lifecycle-worker**、**outbox-worker**
+  与可选 **DBOS control** 不创建 Service。DBOS worker 仅创建 headless Service
+  以稳定 StatefulSet identity，均不对外暴露。
+- `dbos.enabled=true` 前必须准备独立 DBOS system database；它不能和业务
+  `DATABASE_URL` 指向同一个数据库。
+- `dbos.applicationVersion` 是 workflow 兼容版本，不是任意镜像 tag；只有
+  workflow 契约不兼容时才升级，并须先处理旧版本非终态 workflow。
 - Production flags default to gate-on / legacy-writes-off (see `values.yaml` `config`).
 
 ## Explicitly deferred

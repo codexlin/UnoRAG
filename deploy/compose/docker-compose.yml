@@ -21,6 +21,18 @@
 
 name: ${COMPOSE_PROJECT_NAME:-unorag}
 
+x-dbos-environment: &dbos-environment
+  DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://unorag_worker_login:${UNORAG_WORKER_DB_PASSWORD:?UNORAG_WORKER_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
+  # Compose interpolates inactive profiles. The sentinel keeps legacy installs
+  # parseable; the DBOS process rejects it if the profile is actually started.
+  DBOS_SYSTEM_DATABASE_URL: ${DBOS_SYSTEM_DATABASE_URL:-postgresql://unorag_dbos_login:${UNORAG_DBOS_DB_PASSWORD:-dbos-profile-disabled}@postgres:5432/${UNORAG_DBOS_DATABASE:-unorag_dbos}}
+  UNORAG_DBOS_APPLICATION_VERSION: ${UNORAG_DBOS_APPLICATION_VERSION:-cleanup-v1}
+  UNORAG_DBOS_LISTEN_QUEUES: lifecycle
+  UNORAG_DBOS_CLEANUP_ENABLED: "true"
+  DBOS_SYSTEM_DATABASE_POOL_SIZE: ${DBOS_SYSTEM_DATABASE_POOL_SIZE:-10}
+  DBOS_LIFECYCLE_CONCURRENCY: ${DBOS_LIFECYCLE_CONCURRENCY:-2}
+  DBOS_CONTROL_POLL_MS: ${DBOS_CONTROL_POLL_MS:-5000}
+
 services:
   # Named volumes default to root:root; web runs as uid 10001 (unorag).
   document-storage-init:
@@ -279,6 +291,82 @@ services:
     networks:
       - internal
 
+  # Optional migration cohort. It remains behind the explicit `dbos` profile
+  # until cleanup rows are adopted by the operator.
+  dbos-worker:
+    profiles: ["dbos"]
+    image: ${UNORAG_DBOS_WORKER_IMAGE:-unorag-web-worker:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/web.Dockerfile
+      target: worker
+    working_dir: /repo/apps/web
+    restart: unless-stopped
+    command: ["./node_modules/.bin/tsx", "src/worker/entry.ts"]
+    environment:
+      <<: *dbos-environment
+      UNORAG_DBOS_EXECUTOR_ID: dbos-worker
+      DBOS_ADMIN_PORT: "3001"
+      QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
+      QDRANT_TIMEOUT_MS: ${QDRANT_TIMEOUT_MS:-5000}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/dbos-healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 2m
+    networks:
+      - internal
+
+  # Dispatch/reconciliation is deliberately separate from the executor: this
+  # process uses DBOSClient and never recovers or executes workflows itself.
+  dbos-control:
+    profiles: ["dbos"]
+    image: ${UNORAG_DBOS_WORKER_IMAGE:-unorag-web-worker:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/web.Dockerfile
+      target: worker
+    working_dir: /repo/apps/web
+    restart: unless-stopped
+    command: ["./node_modules/.bin/tsx", "src/worker/control-entry.ts"]
+    environment:
+      <<: *dbos-environment
+      UNORAG_DBOS_EXECUTOR_ID: dbos-control
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dbos-worker:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "find /tmp/unorag-dbos-control-ready -mmin -1 -print 2>/dev/null | grep -q .",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    stop_grace_period: 30s
+    networks:
+      - internal
+
   # Library mutation projection: app.outbox_events → FastAPI internal projectors.
   # Required for create/update/delete library to reach the RAG read model.
   outbox-worker:
@@ -341,12 +429,18 @@ services:
       UNORAG_WORKER_DB_PASSWORD: ${UNORAG_WORKER_DB_PASSWORD:?UNORAG_WORKER_DB_PASSWORD required}
       UNORAG_OUTBOX_DB_PASSWORD: ${UNORAG_OUTBOX_DB_PASSWORD:?UNORAG_OUTBOX_DB_PASSWORD required}
       UNORAG_RAG_READ_DB_PASSWORD: ${UNORAG_RAG_READ_DB_PASSWORD:?UNORAG_RAG_READ_DB_PASSWORD required}
+      UNORAG_DBOS_DB_PASSWORD: ${UNORAG_DBOS_DB_PASSWORD:-dbos-profile-disabled}
+      UNORAG_DBOS_DATABASE: ${UNORAG_DBOS_DATABASE:-unorag_dbos}
     volumes:
       - ../../ops/postgres:/opt/unorag/postgres:ro
     command:
       - sh
       - -ec
       - |
+        test "$$UNORAG_DBOS_DB_PASSWORD" != "dbos-profile-disabled" || {
+          echo "UNORAG_DBOS_DB_PASSWORD is required for database role configuration" >&2
+          exit 1
+        }
         psql -f /opt/unorag/postgres/configure-runtime-roles.sql
         psql -f /opt/unorag/postgres/configure-runtime-logins.sql
         psql -f /opt/unorag/postgres/verify-runtime-roles.sql

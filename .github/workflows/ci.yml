@@ -118,6 +118,15 @@ jobs:
           push: false
           load: true
           tags: unorag-outbox:ci
+      - name: Build DBOS worker (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/web.Dockerfile
+          target: worker
+          push: false
+          load: true
+          tags: unorag-web-worker:ci
       - name: Build api (no push)
         uses: docker/build-push-action@v6
         with:

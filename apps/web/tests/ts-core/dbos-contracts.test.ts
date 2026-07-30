@@ -112,6 +112,16 @@ test("DBOS environment configuration is fail closed", () => {
 			}),
 		/postgres/,
 	);
+	assert.throws(
+		() =>
+			loadWorkerConfig({
+				DBOS_SYSTEM_DATABASE_URL:
+					"postgresql://unorag_dbos_login:dbos-profile-disabled@postgres/unorag_dbos",
+				UNORAG_DBOS_APPLICATION_VERSION: "test",
+				UNORAG_DBOS_EXECUTOR_ID: "worker-1",
+			}),
+		/DBOS profile requires/,
+	);
 
 	assert.deepEqual(
 		loadWorkerConfig({
@@ -134,6 +144,7 @@ test("DBOS environment configuration is fail closed", () => {
 				lifecycle: 2,
 			},
 			listenQueues: ["ingest-local", "lifecycle"],
+			controlPollMs: 5_000,
 			adminPort: undefined,
 			logLevel: "info",
 		},

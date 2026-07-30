@@ -1,26 +1,6 @@
 import { loadWorkerConfig } from "./config";
 import { durableJobSchema } from "./contracts";
-import { enqueueDbosJob, shutdownDbos } from "./dbos-runtime";
-import type { WorkerPorts } from "./ports";
-
-const enqueueOnlyPorts: WorkerPorts = {
-	generationCleanup: {
-		async deleteGeneration() {
-			throw new Error("enqueue process must not execute workflows");
-		},
-	},
-	transactions: {
-		async markGenerationSweeping() {
-			throw new Error("enqueue process must not execute workflows");
-		},
-		async markGenerationDeleted() {
-			throw new Error("enqueue process must not execute workflows");
-		},
-		async markGenerationError() {
-			throw new Error("enqueue process must not execute workflows");
-		},
-	},
-};
+import { enqueueDbosJob } from "./dbos-runtime";
 
 async function readInput(): Promise<unknown> {
 	const payloadIndex = process.argv.indexOf("--payload");
@@ -45,17 +25,12 @@ async function readInput(): Promise<unknown> {
 async function main(): Promise<void> {
 	const config = loadWorkerConfig();
 	const input = durableJobSchema.parse(await readInput());
-	try {
-		const result = await enqueueDbosJob(config, enqueueOnlyPorts, input);
-		process.stdout.write(`${JSON.stringify(result)}\\n`);
-	} finally {
-		await shutdownDbos();
-	}
+	const result = await enqueueDbosJob(config, input);
+	process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
-main().catch(async (error: unknown) => {
+main().catch((error: unknown) => {
 	const message = error instanceof Error ? error.message : String(error);
-	process.stderr.write(`DBOS enqueue failed: ${message}\\n`);
-	await shutdownDbos();
+	process.stderr.write(`DBOS enqueue failed: ${message}\n`);
 	process.exitCode = 1;
 });

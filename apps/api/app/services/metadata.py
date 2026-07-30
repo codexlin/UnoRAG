@@ -971,7 +971,7 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		except Exception as exc:
 			logger.exception("metadata.schema_validation_failed")
 			migration_hint = (
-				"run the web Drizzle migrations through 0015"
+				"run the web Drizzle migrations through 0016"
 				if self._conversation_store_schema == "app"
 				else "run scripts/apply_rag_migrations.py with MIGRATOR_DATABASE_URL"
 			)

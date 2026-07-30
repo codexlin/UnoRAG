@@ -12,7 +12,9 @@ export interface GenerationCleanupDeleteResult extends Record<string, unknown> {
  * process crash.
  */
 export interface JobTransactionPort {
-	markGenerationSweeping(input: GenerationCleanupJob): Promise<void>;
+	markGenerationSweeping(
+		input: GenerationCleanupJob,
+	): Promise<"sweep" | "already_deleted">;
 	markGenerationDeleted(
 		input: GenerationCleanupJob,
 		result: GenerationCleanupDeleteResult,
@@ -36,10 +38,12 @@ export interface GenerationCleanupStepPort {
 export interface WorkerPorts {
 	generationCleanup: GenerationCleanupStepPort;
 	transactions: JobTransactionPort;
+	close?(): Promise<void>;
 }
 
 export interface DurableOperationPort {
 	runStep<T>(name: string, operation: () => Promise<T>): Promise<T>;
 	runTransaction<T>(name: string, operation: () => Promise<T>): Promise<T>;
+	sleepFor(milliseconds: number): Promise<void>;
 	sleepUntil(instant: string): Promise<void>;
 }

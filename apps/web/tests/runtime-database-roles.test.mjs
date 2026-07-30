@@ -15,8 +15,29 @@ test("Compose assigns independent database identities to every runtime", async (
 	assert.match(compose, /WORKER_DATABASE_URL/);
 	assert.match(compose, /OUTBOX_DATABASE_URL/);
 	assert.match(compose, /RAG_READ_DATABASE_URL/);
+	assert.match(compose, /DBOS_SYSTEM_DATABASE_URL/);
 	assert.match(compose, /configure-db-roles:/);
 	assert.match(compose, /verify-runtime-roles\.sql/);
+});
+
+test("DBOS owns a separate system database and no application role", async () => {
+	const logins = await source("ops/postgres/configure-runtime-logins.sql");
+	const verification = await source("ops/postgres/verify-runtime-roles.sql");
+	const compose = await source("deploy/compose/docker-compose.yml");
+
+	assert.match(logins, /CREATE DATABASE %I OWNER unorag_dbos_login/);
+	assert.match(
+		logins,
+		/REVOKE ALL PRIVILEGES ON SCHEMA app, rag, public FROM unorag_dbos_login/,
+	);
+	assert.doesNotMatch(logins, /GRANT unorag_worker TO unorag_dbos_login/);
+	assert.match(
+		verification,
+		/has_table_privilege\('unorag_dbos_login', 'app\.jobs', 'SELECT'\)/,
+	);
+	assert.match(compose, /dbos-worker:\s+profiles: \["dbos"\]/s);
+	assert.match(compose, /dbos-control:\s+profiles: \["dbos"\]/s);
+	assert.match(compose, /\/dbos-healthz/);
 });
 
 test("runtime roles grant API and outbox only their owned tables", async () => {
@@ -93,6 +114,9 @@ test("upgrade configures and verifies database roles before rolling services", a
 	const drainPosition = upgrade.lastIndexOf("stop lifecycle-worker");
 	assert.ok(rolePosition > 0);
 	assert.ok(drainPosition > rolePosition);
+	assert.match(upgrade, /UNORAG_DBOS_WORKER_IMAGE/);
+	assert.match(upgrade, /DBOS_WAS_RUNNING/);
+	assert.match(upgrade, /--profile dbos stop dbos-control dbos-worker/);
 });
 
 test("upgrade and pilot smoke honor the configured public edge URL", async () => {

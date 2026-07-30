@@ -1,6 +1,6 @@
 apiVersion: v2
 name: unorag
-description: UnoRAG private-deployment Helm starter (web / api / lifecycle-worker / outbox-worker)
+description: UnoRAG private-deployment Helm chart (web / api / lifecycle / outbox / optional DBOS)
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

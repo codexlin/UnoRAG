@@ -169,10 +169,11 @@ class JobRepository:
         worker_version: str | None = None,
         queue_classes: Sequence[str] | None = None,
     ) -> list[JobLease]:
-        """Claim queued jobs with SKIP LOCKED.
+        """Claim Python-owned queued jobs with SKIP LOCKED.
 
         ``queue_classes`` filters ``payload.queue_class`` (default ``local`` when
         missing). Pass ``None`` to claim any class (legacy single-queue behaviour).
+        DBOS-owned jobs are never eligible for a Python lease.
         """
         if not worker_id.strip():
             raise ValueError("worker_id is required")
@@ -192,6 +193,7 @@ class JobRepository:
                         SELECT id
                         FROM app.jobs
                         WHERE status IN ('queued', 'retry')
+                          AND execution_engine = 'python'
                           AND attempt < max_attempts
                           AND (next_attempt_at IS NULL OR next_attempt_at <= now())
                           AND cancel_requested_at IS NULL
@@ -845,6 +847,14 @@ class JobRepository:
                 self._assert_live_lease(cursor, lease, require_running=True)
                 cursor.execute(
                     """
+                    SELECT pg_advisory_xact_lock(
+                        hashtextextended(%(document_id)s::text, 0)
+                    )
+                    """,
+                    {"document_id": context.document_id},
+                )
+                cursor.execute(
+                    """
                     SELECT
                         document.desired_version_id,
                         document.status,
@@ -893,6 +903,34 @@ class JobRepository:
                     raise StaleDocumentVersionError(
                         f"version cannot activate from status {version_status}"
                     )
+                cursor.execute(
+                    """
+                    SELECT sweep_status
+                    FROM rag.generation_cleanup_queue
+                    WHERE generation_id = %(generation_id)s
+                    FOR UPDATE
+                    """,
+                    {"generation_id": context.generation_id},
+                )
+                cleanup_row = cursor.fetchone()
+                if cleanup_row is not None:
+                    cleanup_status = str(cleanup_row[0])
+                    if cleanup_status != "pending":
+                        raise StaleDocumentVersionError(
+                            "generation cannot activate after cleanup has started"
+                        )
+                    cursor.execute(
+                        """
+                        DELETE FROM rag.generation_cleanup_queue
+                        WHERE generation_id = %(generation_id)s
+                          AND sweep_status = 'pending'
+                        """,
+                        {"generation_id": context.generation_id},
+                    )
+                    if cursor.rowcount != 1:
+                        raise StaleDocumentVersionError(
+                            "generation cleanup cancellation CAS failed"
+                        )
 
                 cursor.execute(
                     """
@@ -1157,6 +1195,7 @@ class JobRepository:
         capacity: int = 20,
         sweeping_stale_seconds: int = 300,
     ) -> list[GenerationCleanupClaim]:
+        """Claim due cleanup rows explicitly owned by the Python sweeper."""
         if capacity < 1:
             raise ValueError("capacity must be positive")
         if sweeping_stale_seconds < 1:
@@ -1173,7 +1212,7 @@ class JobRepository:
                               queue.sweep_status IN ('pending', 'error')
                               OR (
                                   queue.sweep_status = 'sweeping'
-                                  AND queue.updated_at
+                                  AND queue.sweep_updated_at
                                       <= now()
                                           - make_interval(
                                               secs => %(sweeping_stale_seconds)s
@@ -1185,6 +1224,8 @@ class JobRepository:
                               FROM rag.active_document_generations AS active
                               WHERE active.generation_id = queue.generation_id
                           )
+                          AND queue.execution_engine = 'python'
+                          AND queue.cleanup_job_id IS NULL
                         ORDER BY queue.delete_after, queue.generation_id
                         FOR UPDATE OF queue SKIP LOCKED
                         LIMIT %(capacity)s
@@ -1192,7 +1233,8 @@ class JobRepository:
                     UPDATE rag.generation_cleanup_queue AS queue
                     SET sweep_status = 'sweeping',
                         sweep_attempts = queue.sweep_attempts + 1,
-                        last_error = NULL,
+                        sweep_last_error = NULL,
+                        sweep_updated_at = now(),
                         updated_at = now()
                     FROM candidates
                     WHERE queue.generation_id = candidates.generation_id
@@ -1238,10 +1280,13 @@ class JobRepository:
                     """
                     UPDATE rag.generation_cleanup_queue
                     SET sweep_status = 'deleted',
-                        last_error = NULL,
+                        sweep_last_error = NULL,
+                        sweep_updated_at = now(),
                         updated_at = now()
                     WHERE generation_id = %(generation_id)s
                       AND sweep_status = 'sweeping'
+                      AND execution_engine = 'python'
+                      AND cleanup_job_id IS NULL
                     """,
                     {"generation_id": generation_id},
                 )
@@ -1258,10 +1303,13 @@ class JobRepository:
                     """
                     UPDATE rag.generation_cleanup_queue
                     SET sweep_status = 'error',
-                        last_error = %(error)s,
+                        sweep_last_error = %(error)s,
+                        sweep_updated_at = now(),
                         updated_at = now()
                     WHERE generation_id = %(generation_id)s
                       AND sweep_status = 'sweeping'
+                      AND execution_engine = 'python'
+                      AND cleanup_job_id IS NULL
                     """,
                     {
                         "generation_id": generation_id,
@@ -1861,6 +1909,7 @@ class JobRepository:
                     LEFT JOIN app.documents AS document
                       ON document.id = version.document_id
                     WHERE job.status IN ('running', 'cancelling')
+                      AND job.execution_engine = 'python'
                       AND job.lease_expires_at <= now()
                     ORDER BY job.lease_expires_at, job.id
                     FOR UPDATE OF job SKIP LOCKED

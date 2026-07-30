@@ -30,7 +30,10 @@
 		"conversations:backfill": "node scripts/backfill-conversations.mjs",
 		"conversations:backfill:apply": "node scripts/backfill-conversations.mjs --apply",
 		"worker:dbos": "tsx src/worker/entry.ts",
-		"worker:enqueue": "tsx src/worker/enqueue.ts"
+		"worker:control": "tsx src/worker/control-entry.ts",
+		"worker:enqueue": "tsx src/worker/enqueue.ts",
+		"worker:dispatch": "tsx src/worker/dispatch-entry.ts",
+		"worker:reconcile": "tsx src/worker/reconcile-entry.ts"
 	},
 	"dependencies": {
 		"@ai-sdk/openai-compatible": "3.0.17",

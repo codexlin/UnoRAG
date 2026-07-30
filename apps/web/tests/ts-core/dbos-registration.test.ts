@@ -113,7 +113,7 @@ test("generation cleanup has sleep, TX, delete step, and completion TX boundarie
 		"sleep:2030-01-01T00:00:00.000Z",
 		"tx:generation-mark-sweeping",
 		"state:sweeping",
-		"step:generation-delete",
+		"step:generation-delete-1",
 		"delete:generation",
 		"tx:generation-mark-deleted",
 		"state:deleted",
@@ -121,7 +121,7 @@ test("generation cleanup has sleep, TX, delete step, and completion TX boundarie
 	assert.equal(events.includes("step:execute-job"), false);
 });
 
-test("generation cleanup writes an error transaction and preserves retries", async () => {
+test("generation cleanup delegates transient retries to the durable DBOS step", async () => {
 	const events: string[] = [];
 	const ports = successfulPorts(events);
 	ports.generationCleanup.deleteGeneration = async () => {
@@ -137,20 +137,53 @@ test("generation cleanup writes an error transaction and preserves retries", asy
 		operations(events),
 	);
 
-	await assert.rejects(
-		() =>
-			workflows.generationCleanup({
-				...cleanup,
-				payload: { ...cleanup.payload, delete_after: undefined },
-			}),
-		/MinerU timeout/,
+	assert.deepEqual(
+		await workflows.generationCleanup({
+			...cleanup,
+			payload: { ...cleanup.payload, delete_after: undefined },
+		}),
+		{ outcome: "failed", errorCode: "dependency_timeout" },
 	);
 	assert.deepEqual(events, [
 		"tx:generation-mark-sweeping",
 		"state:sweeping",
-		"step:generation-delete",
+		"step:generation-delete-1",
+		"sleep-for:1000",
+		"step:generation-delete-2",
+		"sleep-for:5000",
+		"step:generation-delete-3",
+		"sleep-for:30000",
+		"step:generation-delete-4",
+		"sleep-for:120000",
+		"step:generation-delete-5",
 		"tx:generation-mark-error",
-		"state:error:true",
+		"state:error:false",
+	]);
+});
+
+test("generation cleanup completes its job without deleting an already deleted generation", async () => {
+	const events: string[] = [];
+	const ports = successfulPorts(events);
+	ports.transactions.markGenerationSweeping = async () => {
+		events.push("state:already-deleted");
+		return "already_deleted";
+	};
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		ports,
+		operations(events),
+	);
+
+	assert.deepEqual(await workflows.generationCleanup(cleanup), {
+		outcome: "completed",
+		result: { alreadyDeleted: true },
+	});
+	assert.deepEqual(events, [
+		"sleep:2030-01-01T00:00:00.000Z",
+		"tx:generation-mark-sweeping",
+		"state:already-deleted",
+		"tx:generation-mark-deleted",
+		"state:deleted",
 	]);
 });
 
@@ -186,6 +219,9 @@ function operations(events: string[]): DurableOperationPort {
 			events.push(`tx:${name}`);
 			return operation();
 		},
+		async sleepFor(milliseconds) {
+			events.push(`sleep-for:${milliseconds}`);
+		},
 		async sleepUntil(instant) {
 			events.push(`sleep:${instant}`);
 		},
@@ -203,6 +239,7 @@ function successfulPorts(events: string[]): WorkerPorts {
 		transactions: {
 			async markGenerationSweeping() {
 				events.push("state:sweeping");
+				return "sweep";
 			},
 			async markGenerationDeleted() {
 				events.push("state:deleted");

@@ -123,6 +123,83 @@ def test_workers_claim_disjoint_jobs_and_enforce_lease(job_scope):
             )
 
 
+def test_python_claim_excludes_dbos_cohort_and_schema_enforces_engine(job_scope):
+    organization_id = job_scope
+    with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
+        workspace_id = connection.execute(
+            "SELECT id FROM app.workspaces WHERE organization_id = %s",
+            (organization_id,),
+        ).fetchone()[0]
+        dbos_job_id = uuid4()
+        connection.execute(
+            """
+            INSERT INTO app.jobs (
+                id,
+                organization_id,
+                workspace_id,
+                type,
+                execution_engine,
+                workflow_id,
+                dispatched_at,
+                idempotency_key
+            )
+            VALUES (
+                %s,
+                %s,
+                %s,
+                'document.ingest',
+                'dbos',
+                %s,
+                now(),
+                %s
+            )
+            """,
+            (
+                dbos_job_id,
+                organization_id,
+                workspace_id,
+                str(dbos_job_id),
+                f"dbos-job:{organization_id}",
+            ),
+        )
+        default_engine = connection.execute(
+            """
+            SELECT execution_engine
+            FROM app.jobs
+            WHERE organization_id = %s
+              AND id <> %s
+            LIMIT 1
+            """,
+            (organization_id, dbos_job_id),
+        ).fetchone()[0]
+
+        assert default_engine == "python"
+
+        repository = JobRepository(connection)
+        claimed = repository.claim(
+            worker_id="python-worker",
+            job_types=["document.ingest"],
+            capacity=10,
+        )
+
+        assert claimed
+        assert dbos_job_id not in {lease.id for lease in claimed}
+        assert connection.execute(
+            "SELECT status FROM app.jobs WHERE id = %s",
+            (dbos_job_id,),
+        ).fetchone()[0] == "queued"
+
+        with pytest.raises(psycopg.errors.CheckViolation):
+            connection.execute(
+                """
+                UPDATE app.jobs
+                SET execution_engine = 'unknown'
+                WHERE id = %s
+                """,
+                (dbos_job_id,),
+            )
+
+
 def test_lifecycle_constraints_reject_invalid_state_and_cross_document_pointer(
     job_scope,
 ):
@@ -474,6 +551,78 @@ def test_activate_generation_preserves_library_deleting_status(ingest_job_scope)
     assert library_status == "deleting"
 
 
+def test_activate_generation_refuses_cleanup_that_has_started(ingest_job_scope):
+    ids = ingest_job_scope
+    with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
+        connection.execute("SET ROLE unorag_worker")
+        repository = JobRepository(connection)
+        [lease] = repository.claim(
+            worker_id="lifecycle-worker-1",
+            job_types=["test.document.ingest"],
+            capacity=1,
+        )
+        context = repository.load_document_ingest_context(lease)
+        repository.begin_document_ingest(lease, context)
+        repository.complete_indexing(
+            lease,
+            context,
+            parser_backend="markdown",
+            chunk_profile="balanced",
+            parser_report={"parser": "markdown"},
+            point_count=1,
+            chunk_count=1,
+            section_count=0,
+            table_count=0,
+        )
+        assert repository.prepare_activation(lease, context).should_activate is True
+        connection.execute("RESET ROLE")
+        connection.execute(
+            """
+            INSERT INTO rag.generation_cleanup_queue (
+                generation_id,
+                organization_id,
+                workspace_id,
+                library_id,
+                document_id,
+                document_version_id,
+                delete_after,
+                sweep_status
+            )
+            SELECT
+                version.generation_id,
+                document.organization_id,
+                document.workspace_id,
+                document.library_id,
+                document.id,
+                version.id,
+                now(),
+                'sweeping'
+            FROM app.document_versions AS version
+            JOIN app.documents AS document ON document.id = version.document_id
+            WHERE version.id = %s
+            """,
+            (ids["version_id"],),
+        )
+        connection.execute("SET ROLE unorag_worker")
+
+        with pytest.raises(
+            StaleDocumentVersionError,
+            match="cleanup has started",
+        ):
+            repository.activate_generation(lease, context)
+
+        active = connection.execute(
+            """
+            SELECT 1
+            FROM rag.active_document_generations
+            WHERE generation_id = %s
+            """,
+            (ids["generation_id"],),
+        ).fetchone()
+
+    assert active is None
+
+
 def test_expired_leases_retry_then_dead(ingest_job_scope):
     ids = ingest_job_scope
     with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
@@ -697,6 +846,8 @@ def test_claim_cleanup_due_skips_active_and_marks_sweep(ingest_job_scope):
             pytest.skip("rag.generation_cleanup_queue.sweep_status not migrated")
 
         inactive_generation_id = uuid4()
+        dbos_generation_id = uuid4()
+        dbos_cleanup_job_id = uuid4()
         active_generation_id = ids["generation_id"]
         connection.execute(
             """
@@ -721,6 +872,71 @@ def test_claim_cleanup_due_skips_active_and_marks_sweep(ingest_job_scope):
             WHERE document.id = %s
             """,
             (inactive_generation_id, ids["version_id"], ids["document_id"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO rag.generation_cleanup_queue (
+                generation_id,
+                organization_id,
+                workspace_id,
+                library_id,
+                document_id,
+                document_version_id,
+                delete_after
+            )
+            SELECT
+                %s,
+                document.organization_id,
+                document.workspace_id,
+                document.library_id,
+                document.id,
+                %s,
+                now() - interval '1 minute'
+            FROM app.documents AS document
+            WHERE document.id = %s
+            """,
+            (dbos_generation_id, ids["version_id"], ids["document_id"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO app.jobs (
+                id,
+                organization_id,
+                workspace_id,
+                type,
+                execution_engine,
+                workflow_id,
+                idempotency_key,
+                payload
+            )
+            SELECT
+                %s,
+                document.organization_id,
+                document.workspace_id,
+                'generation.cleanup',
+                'dbos',
+                %s,
+                %s,
+                jsonb_build_object('generation_id', %s::text)
+            FROM app.documents AS document
+            WHERE document.id = %s
+            """,
+            (
+                dbos_cleanup_job_id,
+                str(dbos_cleanup_job_id),
+                f"cleanup-job:{dbos_generation_id}",
+                dbos_generation_id,
+                ids["document_id"],
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE rag.generation_cleanup_queue
+            SET execution_engine = 'dbos',
+                cleanup_job_id = %s
+            WHERE generation_id = %s
+            """,
+            (dbos_cleanup_job_id, dbos_generation_id),
         )
         connection.execute(
             """
@@ -778,7 +994,18 @@ def test_claim_cleanup_due_skips_active_and_marks_sweep(ingest_job_scope):
         claims = repository.claim_cleanup_due(capacity=10)
         claimed_ids = {claim.generation_id for claim in claims}
         assert inactive_generation_id in claimed_ids
+        assert dbos_generation_id not in claimed_ids
         assert active_generation_id not in claimed_ids
+
+        dbos_sweep_status = connection.execute(
+            """
+            SELECT sweep_status
+            FROM rag.generation_cleanup_queue
+            WHERE generation_id = %s
+            """,
+            (dbos_generation_id,),
+        ).fetchone()[0]
+        assert dbos_sweep_status == "pending"
 
         repository.mark_cleanup_swept(generation_id=inactive_generation_id)
         status = connection.execute(

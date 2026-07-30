@@ -17,6 +17,10 @@ images:
     repository: unorag-api
     tag: local
     pullPolicy: IfNotPresent
+  dbosWorker:
+    repository: unorag-web-worker
+    tag: local
+    pullPolicy: IfNotPresent
 
 # ---------------------------------------------------------------------------
 # Workloads
@@ -99,6 +103,20 @@ outboxWorker:
   maxAttempts: "8"
   terminationGracePeriodSeconds: 60
 
+# Optional generation-cleanup migration cohort. Enable only after provisioning
+# a dedicated DBOS system database and explicitly adopting selected cleanup rows.
+dbos:
+  enabled: false
+  workerReplicaCount: 1
+  controlReplicaCount: 1
+  applicationVersion: cleanup-v1
+  systemDatabasePoolSize: "10"
+  lifecycleConcurrency: "2"
+  controlPollMs: "5000"
+  workerResources: {}
+  controlResources: {}
+  terminationGracePeriodSeconds: 120
+
 # ---------------------------------------------------------------------------
 # Networking
 # ---------------------------------------------------------------------------
@@ -149,7 +167,8 @@ external:
   # postgresql://…  (control-plane / drizzle)
   # postgresql+psycopg://… for FastAPI DATABASE_URL if required by Settings
   postgres:
-    # Set secret keys: DATABASE_URL, WORKER_DATABASE_URL, RAG_READ_DATABASE_URL, API_DATABASE_URL
+    # Set secret keys: DATABASE_URL, WORKER_DATABASE_URL, RAG_READ_DATABASE_URL,
+    # API_DATABASE_URL, and DBOS_SYSTEM_DATABASE_URL when dbos.enabled=true.
     existingSecret: ""
   qdrant:
     url: http://qdrant.external:6333
@@ -213,6 +232,7 @@ config:
 # Required keys (align with deploy/config/runtime.secret):
 #   UNORAG_INTERNAL_SECRET, UNORAG_SESSION_SECRET
 #   DATABASE_URL, API_DATABASE_URL, WORKER_DATABASE_URL, RAG_READ_DATABASE_URL
+#   DBOS_SYSTEM_DATABASE_URL (only when dbos.enabled=true; dedicated database)
 #   MIGRATOR_DATABASE_URL (migrate jobs only)
 #   LLM_API_KEY  (mapped to OPENAI_API_KEY for api/worker)
 #   MINERU_302_API_KEY (required only for config.mineruProvider=302ai)
@@ -228,6 +248,7 @@ secret:
   #   API_DATABASE_URL: ""
   #   WORKER_DATABASE_URL: ""
   #   RAG_READ_DATABASE_URL: ""
+  #   DBOS_SYSTEM_DATABASE_URL: ""
   #   MIGRATOR_DATABASE_URL: ""
   #   LLM_API_KEY: ""
   #   MINERU_302_API_KEY: ""

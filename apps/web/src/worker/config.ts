@@ -14,6 +14,10 @@ const workerEnvironmentSchema = z
 				(value) =>
 					value.startsWith("postgres://") || value.startsWith("postgresql://"),
 				"DBOS_SYSTEM_DATABASE_URL must use postgres:// or postgresql://",
+			)
+			.refine(
+				(value) => !value.includes("dbos-profile-disabled"),
+				"DBOS profile requires UNORAG_DBOS_DB_PASSWORD or DBOS_SYSTEM_DATABASE_URL",
 			),
 		UNORAG_DBOS_APPLICATION_VERSION: z.string().trim().min(1),
 		UNORAG_DBOS_EXECUTOR_ID: z.string().trim().min(1),
@@ -24,6 +28,7 @@ const workerEnvironmentSchema = z
 		DBOS_INGEST_AUTO_CONCURRENCY: positiveInteger.max(100).default(2),
 		DBOS_INGEST_MINERU_CONCURRENCY: positiveInteger.max(100).default(2),
 		DBOS_LIFECYCLE_CONCURRENCY: positiveInteger.max(100).default(2),
+		DBOS_CONTROL_POLL_MS: positiveInteger.max(300_000).default(5_000),
 		DBOS_ADMIN_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
 		DBOS_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 	})
@@ -37,6 +42,7 @@ export interface WorkerRuntimeConfig {
 	systemDatabasePoolSize: number;
 	queueConcurrency: Record<WorkerQueueKey, number>;
 	listenQueues: WorkerQueueKey[];
+	controlPollMs: number;
 	adminPort?: number;
 	logLevel: "debug" | "info" | "warn" | "error";
 }
@@ -76,6 +82,7 @@ export function loadWorkerConfig(
 			lifecycle: parsed.DBOS_LIFECYCLE_CONCURRENCY,
 		},
 		listenQueues: parseListenQueues(parsed.UNORAG_DBOS_LISTEN_QUEUES),
+		controlPollMs: parsed.DBOS_CONTROL_POLL_MS,
 		adminPort: parsed.DBOS_ADMIN_PORT,
 		logLevel: parsed.DBOS_LOG_LEVEL,
 	};

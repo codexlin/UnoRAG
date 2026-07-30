@@ -12,6 +12,8 @@ export interface DurableWorkflowResult {
 	errorCode?: string;
 }
 
+const GENERATION_DELETE_BACKOFF_MS = [1_000, 5_000, 30_000, 120_000] as const;
+
 function unavailableWorkflow(kind: string): never {
 	throw new WorkerTaskError(
 		`${kind} DBOS workflow stages are not wired`,
@@ -41,30 +43,90 @@ export function createGenerationCleanupWorkflow(
 			await operations.sleepUntil(input.payload.delete_after);
 		}
 
-		await operations.runTransaction("generation-mark-sweeping", () =>
-			ports.transactions.markGenerationSweeping(input),
-		);
-
 		try {
-			const result = await operations.runStep("generation-delete", () =>
-				ports.generationCleanup.deleteGeneration(input),
+			const disposition = await operations.runTransaction(
+				"generation-mark-sweeping",
+				() => ports.transactions.markGenerationSweeping(input),
 			);
-			await operations.runTransaction("generation-mark-deleted", () =>
-				ports.transactions.markGenerationDeleted(input, result),
+			if (disposition === "already_deleted") {
+				await operations.runTransaction("generation-mark-deleted", () =>
+					ports.transactions.markGenerationDeleted(input, {
+						alreadyDeleted: true,
+					}),
+				);
+				return {
+					outcome: "completed",
+					result: { alreadyDeleted: true },
+				};
+			}
+			let lastError: ReturnType<typeof classifyWorkerError> | undefined;
+			for (
+				let attempt = 0;
+				attempt <= GENERATION_DELETE_BACKOFF_MS.length;
+				attempt += 1
+			) {
+				const outcome = await operations.runStep(
+					`generation-delete-${attempt + 1}`,
+					async () => {
+						try {
+							return {
+								ok: true as const,
+								result: await ports.generationCleanup.deleteGeneration(input),
+							};
+						} catch (error) {
+							const classified = classifyWorkerError(error);
+							return {
+								ok: false as const,
+								error: {
+									code: classified.code,
+									message: classified.message,
+									retryable: classified.retryable,
+								},
+							};
+						}
+					},
+				);
+				if (outcome.ok) {
+					await operations.runTransaction("generation-mark-deleted", () =>
+						ports.transactions.markGenerationDeleted(input, outcome.result),
+					);
+					return { outcome: "completed", result: outcome.result };
+				}
+				lastError = {
+					...outcome.error,
+					category: outcome.error.retryable ? "transient" : "permanent",
+				};
+				if (
+					!outcome.error.retryable ||
+					attempt === GENERATION_DELETE_BACKOFF_MS.length
+				) {
+					break;
+				}
+				await operations.sleepFor(GENERATION_DELETE_BACKOFF_MS[attempt]);
+			}
+			const exhausted = lastError ?? {
+				code: "generation_cleanup_failed",
+				message: "Generation cleanup failed without an error",
+				retryable: false,
+				category: "permanent" as const,
+			};
+			await operations.runTransaction("generation-mark-error", () =>
+				ports.transactions.markGenerationError(input, {
+					code: exhausted.code,
+					message: exhausted.message,
+					retryable: false,
+				}),
 			);
-			return { outcome: "completed", result };
+			return { outcome: "failed", errorCode: exhausted.code };
 		} catch (error) {
 			const classified = classifyWorkerError(error);
 			await operations.runTransaction("generation-mark-error", () =>
 				ports.transactions.markGenerationError(input, {
 					code: classified.code,
 					message: classified.message,
-					retryable: classified.retryable,
+					retryable: false,
 				}),
 			);
-			if (classified.retryable) {
-				throw error;
-			}
 			return { outcome: "failed", errorCode: classified.code };
 		}
 	};
