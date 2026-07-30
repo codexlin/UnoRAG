@@ -147,6 +147,12 @@ class Settings(BaseSettings):
 	# postgres required in product; json is test-only escape hatch.
 	metadata_backend: str = "postgres"
 	database_url: str = "postgresql+psycopg://unorag:unorag@localhost:5432/unorag"
+	# Temporary Python Ask rollback switch. app reads/writes the TS-owned
+	# message-level conversation tables; public preserves the legacy model.
+	conversation_store_schema: str = "public"
+	# Optional least-privilege connection for app conversation rollback.
+	# Falls back to DATABASE_URL for local development.
+	conversation_database_url: str = ""
 	metadata_path: str = "data/metadata.json"
 	# Preferred shared volume with Next.js. Falls back to document_storage_dir.
 	document_storage_root: str = ""
@@ -173,6 +179,8 @@ class Settings(BaseSettings):
 
 	@model_validator(mode="after")
 	def validate_settings(self) -> "Settings":
+		if self.conversation_store_schema.strip().lower() not in {"public", "app"}:
+			raise ValueError("CONVERSATION_STORE_SCHEMA must be public or app")
 		if self.mineru_timeout_s <= 0:
 			raise ValueError("MINERU_TIMEOUT_S must be positive")
 		if self.mineru_soft_timeout_s > 0 and self.mineru_soft_timeout_s > self.mineru_timeout_s:
@@ -280,6 +288,10 @@ class Settings(BaseSettings):
 		return {
 			"app_env": self.app_env,
 			"database": "configured" if self.database_url.strip() else "missing",
+			"conversation_store_schema": self.conversation_store_schema.strip().lower(),
+			"conversation_database": (
+				"configured" if self.conversation_database_url.strip() else "default"
+			),
 			"rag_read_database": "configured" if self.rag_read_database_url.strip() else "default",
 			"worker_database": "configured" if self.worker_database_url.strip() else "default",
 			"qdrant_host": _redacted_url_host(self.qdrant_url),

@@ -7,9 +7,9 @@ from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Integer, MetaData, String, Text, create_engine, func, select
+from sqlalchemy import DateTime, Integer, MetaData, String, Text, create_engine, func, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from app.security.access_scope import AccessScope
@@ -799,7 +799,18 @@ class JsonMetadataStore(MetadataStore):
 class SqlAlchemyMetadataStore(MetadataStore):
 	"""Optional Postgres-backed metadata when DATABASE_URL is set."""
 
-	def __init__(self, database_url: str) -> None:
+	def __init__(
+		self,
+		database_url: str,
+		*,
+		conversation_store_schema: str = "public",
+		conversation_database_url: str | None = None,
+	) -> None:
+		resolved_conversation_schema = conversation_store_schema.strip().lower()
+		if resolved_conversation_schema not in {"public", "app"}:
+			raise ValueError("conversation_store_schema must be public or app")
+		self._conversation_store_schema = resolved_conversation_schema
+
 		class Base(DeclarativeBase):
 			metadata = MetaData()
 
@@ -915,6 +926,11 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		self._TurnRow = TurnRow
 		self._select = select
 		self._engine = create_engine(database_url, pool_pre_ping=True)
+		self._conversation_engine = (
+			create_engine(conversation_database_url, pool_pre_ping=True)
+			if self._conversation_store_schema == "app" and conversation_database_url
+			else self._engine
+		)
 		try:
 			from sqlalchemy import text as sql_text
 
@@ -935,13 +951,39 @@ class SqlAlchemyMetadataStore(MetadataStore):
 						"""
 					)
 				)
+			if self._conversation_store_schema == "app":
+				with self._conversation_engine.connect() as conn:
+					conn.execute(
+						sql_text(
+							"""
+							SELECT
+								thread.organization_id,
+								thread.session_id,
+								turn.sequence,
+								turn.citations,
+								turn.debug
+							FROM app.threads AS thread
+							LEFT JOIN app.turns AS turn ON false
+							LIMIT 0
+							"""
+						)
+					)
 		except Exception as exc:
 			logger.exception("metadata.schema_validation_failed")
+			migration_hint = (
+				"run the web Drizzle migrations through 0015"
+				if self._conversation_store_schema == "app"
+				else "run scripts/apply_rag_migrations.py with MIGRATOR_DATABASE_URL"
+			)
 			raise RuntimeError(
-				"Postgres metadata schema is missing or outdated; "
-				"run scripts/apply_rag_migrations.py with MIGRATOR_DATABASE_URL"
+				f"Postgres metadata schema is missing or outdated; {migration_hint}"
 			) from exc
 		self._Session = sessionmaker(bind=self._engine, expire_on_commit=False, class_=Session)
+		self._ConversationSession = sessionmaker(
+			bind=self._conversation_engine,
+			expire_on_commit=False,
+			class_=Session,
+		)
 
 	@staticmethod
 	def _dt(value: datetime | None) -> str:
@@ -1052,6 +1094,159 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		if turn_count is not None:
 			payload["turn_count"] = turn_count
 		return payload
+
+	@staticmethod
+	def _app_uuid(value: str | UUID | None, field: str) -> UUID:
+		if value is None or not str(value).strip():
+			raise ValueError(f"{field} is required in app conversation mode")
+		try:
+			return UUID(str(value))
+		except (TypeError, ValueError) as exc:
+			raise ValueError(f"{field} must be a UUID in app conversation mode") from exc
+
+	@staticmethod
+	def _app_optional_uuid(value: str | UUID | None) -> UUID | None:
+		if value is None or not str(value).strip():
+			return None
+		try:
+			return UUID(str(value))
+		except (TypeError, ValueError):
+			return None
+
+	def _app_scope(
+		self,
+		*,
+		tenant_id: str | None,
+		workspace_id: str | None,
+		principal_id: str | None,
+	) -> dict[str, UUID]:
+		return {
+			"organization_id": self._app_uuid(tenant_id, "tenant_id"),
+			"workspace_id": self._app_uuid(workspace_id, "workspace_id"),
+			"principal_id": self._app_uuid(principal_id, "principal_id"),
+		}
+
+	def _app_thread_payload(
+		self,
+		row: Any,
+		*,
+		turn_count: int | None = None,
+	) -> dict[str, Any]:
+		payload = {
+			"id": str(row["id"]),
+			"session_id": row["session_id"],
+			"library_id": row["rag_library_id"],
+			"title": row["title"] or "未命名会话",
+			"status": row["status"],
+			"tenant_id": str(row["organization_id"]),
+			"workspace_id": str(row["workspace_id"]),
+			"principal_id": str(row["principal_id"]),
+			"created_at": self._dt(row["created_at"]),
+			"updated_at": self._dt(row["updated_at"]),
+		}
+		if turn_count is not None:
+			payload["turn_count"] = int(turn_count)
+		return payload
+
+	def _app_turn_payload(self, row: Any) -> dict[str, Any]:
+		debug = row["debug"] if isinstance(row["debug"], dict) else {}
+		citations = row["citations"] if isinstance(row["citations"], list) else []
+
+		def _debug_object(key: str) -> dict[str, Any] | None:
+			value = debug.get(key)
+			return value if isinstance(value, dict) else None
+
+		return {
+			"id": str(row["id"]),
+			"session_id": str(row["session_id"]),
+			"thread_id": str(row["thread_id"]),
+			"library_id": row["rag_library_id"],
+			"question": row["question"],
+			"answer": row["answer"],
+			"citations": citations,
+			"mode": debug.get("mode") if isinstance(debug.get("mode"), str) else "live",
+			"refused": debug.get("refused") is True,
+			"refuse_reason": (
+				debug.get("refuse_reason")
+				if isinstance(debug.get("refuse_reason"), str)
+				else None
+			),
+			"query_type": (
+				debug.get("query_type")
+				if isinstance(debug.get("query_type"), str)
+				else None
+			),
+			"rewrite": debug.get("rewrite") if isinstance(debug.get("rewrite"), str) else None,
+			"rewritten_query": (
+				debug.get("rewritten_query")
+				if isinstance(debug.get("rewritten_query"), str)
+				else None
+			),
+			"judge": _debug_object("judge"),
+			"retrieval_plan": _debug_object("retrieval_plan"),
+			"retrieval_debug": _debug_object("retrieval_debug"),
+			"document_version_id": (
+				debug.get("document_version_id")
+				if isinstance(debug.get("document_version_id"), str)
+				else None
+			),
+			"tenant_id": str(row["organization_id"]),
+			"workspace_id": str(row["workspace_id"]),
+			"principal_id": str(row["principal_id"]),
+			"created_at": self._dt(row["created_at"]),
+		}
+
+	@staticmethod
+	def _app_pairs_sql(extra_where: str = "") -> str:
+		return f"""
+			SELECT
+				assistant.id,
+				assistant.thread_id,
+				assistant.organization_id,
+				assistant.workspace_id,
+				assistant.principal_id,
+				COALESCE(thread.session_id, thread.id::text) AS session_id,
+				thread.rag_library_id,
+				question.content AS question,
+				assistant.content AS answer,
+				assistant.citations,
+				assistant.debug,
+				assistant.created_at
+			FROM app.turns AS assistant
+			JOIN app.threads AS thread
+				ON thread.id = assistant.thread_id
+				AND thread.organization_id = assistant.organization_id
+				AND thread.workspace_id = assistant.workspace_id
+				AND thread.principal_id = assistant.principal_id
+			JOIN LATERAL (
+				SELECT candidate.content
+				FROM app.turns AS candidate
+				WHERE candidate.thread_id = assistant.thread_id
+					AND candidate.organization_id = assistant.organization_id
+					AND candidate.workspace_id = assistant.workspace_id
+					AND candidate.principal_id = assistant.principal_id
+					AND candidate.role = 'user'
+					AND candidate.sequence < assistant.sequence
+					AND NOT EXISTS (
+						SELECT 1
+						FROM app.turns AS consumed
+						WHERE consumed.thread_id = assistant.thread_id
+							AND consumed.organization_id = assistant.organization_id
+							AND consumed.workspace_id = assistant.workspace_id
+							AND consumed.principal_id = assistant.principal_id
+							AND consumed.role = 'assistant'
+							AND consumed.sequence > candidate.sequence
+							AND consumed.sequence < assistant.sequence
+					)
+				ORDER BY candidate.sequence DESC
+				LIMIT 1
+			) AS question ON true
+			WHERE assistant.role = 'assistant'
+				AND assistant.organization_id = :organization_id
+				AND assistant.workspace_id = :workspace_id
+				AND assistant.principal_id = :principal_id
+				{extra_where}
+		"""
 
 	def list_libraries(self, *, scope: AccessScope) -> list[dict[str, Any]]:
 		with self._Session() as session:
@@ -1368,6 +1563,42 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		workspace_id: str | None = None,
 		principal_id: str | None = None,
 	) -> dict[str, Any]:
+		if self._conversation_store_schema == "app":
+			scope = self._app_scope(
+				tenant_id=tenant_id,
+				workspace_id=workspace_id,
+				principal_id=principal_id,
+			)
+			resolved = self._app_uuid(thread_id, "thread_id") if thread_id else uuid4()
+			resolved_status = status if status in {"active", "hidden"} else "active"
+			if session_id is not None and len(session_id) > 128:
+				raise ValueError("session_id exceeds 128 characters")
+			with self._ConversationSession.begin() as session:
+				row = session.execute(
+					text(
+						"""
+						INSERT INTO app.threads (
+							id, organization_id, workspace_id, principal_id,
+							session_id, rag_library_id, title, status
+						)
+						VALUES (
+							:id, :organization_id, :workspace_id, :principal_id,
+							:session_id, :rag_library_id, :title, :status
+						)
+						RETURNING *
+						"""
+					),
+					{
+						**scope,
+						"id": resolved,
+						"session_id": session_id,
+						"rag_library_id": library_id,
+						"title": (title or "").strip()[:256] or "未命名会话",
+						"status": resolved_status,
+					},
+				).mappings().one()
+				return self._app_thread_payload(row, turn_count=0)
+
 		resolved = thread_id or str(uuid4())
 		resolved_status = status if status in {"active", "hidden"} else "active"
 		with self._Session() as session:
@@ -1395,6 +1626,43 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		status: str | None = "active",
 		limit: int = 50,
 	) -> list[dict[str, Any]]:
+		if self._conversation_store_schema == "app":
+			scope = self._app_scope(
+				tenant_id=tenant_id,
+				workspace_id=workspace_id,
+				principal_id=principal_id,
+			)
+			capped = max(1, min(limit, 200))
+			status_clause = "AND thread.status = :status" if status else ""
+			with self._ConversationSession() as session:
+				rows = session.execute(
+					text(
+						f"""
+						SELECT
+							thread.*,
+							COUNT(turn.id) FILTER (WHERE turn.role = 'assistant') AS turn_count
+						FROM app.threads AS thread
+						LEFT JOIN app.turns AS turn
+							ON turn.thread_id = thread.id
+							AND turn.organization_id = thread.organization_id
+							AND turn.workspace_id = thread.workspace_id
+							AND turn.principal_id = thread.principal_id
+						WHERE thread.organization_id = :organization_id
+							AND thread.workspace_id = :workspace_id
+							AND thread.principal_id = :principal_id
+							{status_clause}
+						GROUP BY thread.id
+						ORDER BY thread.updated_at DESC, thread.created_at DESC, thread.id DESC
+						LIMIT :limit
+						"""
+					),
+					{**scope, "status": status, "limit": capped},
+				).mappings().all()
+				return [
+					self._app_thread_payload(row, turn_count=row["turn_count"])
+					for row in rows
+				]
+
 		capped = max(1, min(limit, 200))
 		with self._Session() as session:
 			stmt = (
@@ -1433,6 +1701,43 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		workspace_id: str,
 		principal_id: str,
 	) -> dict[str, Any] | None:
+		if self._conversation_store_schema == "app":
+			resolved_thread_id = self._app_optional_uuid(thread_id)
+			if resolved_thread_id is None:
+				return None
+			scope = self._app_scope(
+				tenant_id=tenant_id,
+				workspace_id=workspace_id,
+				principal_id=principal_id,
+			)
+			with self._ConversationSession() as session:
+				row = session.execute(
+					text(
+						"""
+						SELECT
+							thread.*,
+							COUNT(turn.id) FILTER (WHERE turn.role = 'assistant') AS turn_count
+						FROM app.threads AS thread
+						LEFT JOIN app.turns AS turn
+							ON turn.thread_id = thread.id
+							AND turn.organization_id = thread.organization_id
+							AND turn.workspace_id = thread.workspace_id
+							AND turn.principal_id = thread.principal_id
+						WHERE thread.id = :thread_id
+							AND thread.organization_id = :organization_id
+							AND thread.workspace_id = :workspace_id
+							AND thread.principal_id = :principal_id
+						GROUP BY thread.id
+						"""
+					),
+					{**scope, "thread_id": resolved_thread_id},
+				).mappings().one_or_none()
+				return (
+					self._app_thread_payload(row, turn_count=row["turn_count"])
+					if row
+					else None
+				)
+
 		with self._Session() as session:
 			row = session.scalar(
 				self._select(self._ThreadRow).where(
@@ -1460,6 +1765,40 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		principal_id: str,
 		title: str | None = None,
 	) -> dict[str, Any] | None:
+		if self._conversation_store_schema == "app":
+			resolved_thread_id = self._app_optional_uuid(thread_id)
+			if resolved_thread_id is None:
+				return None
+			scope = self._app_scope(
+				tenant_id=tenant_id,
+				workspace_id=workspace_id,
+				principal_id=principal_id,
+			)
+			values = {
+				**scope,
+				"thread_id": resolved_thread_id,
+				"title": title.strip()[:256] if title and title.strip() else None,
+			}
+			with self._ConversationSession.begin() as session:
+				row = session.execute(
+					text(
+						"""
+						UPDATE app.threads
+						SET
+							title = COALESCE(:title, title),
+							updated_at = now()
+						WHERE id = :thread_id
+							AND organization_id = :organization_id
+							AND workspace_id = :workspace_id
+							AND principal_id = :principal_id
+							AND status = 'active'
+						RETURNING *
+						"""
+					),
+					values,
+				).mappings().one_or_none()
+				return self._app_thread_payload(row) if row else None
+
 		with self._Session() as session:
 			row = session.scalar(
 				self._select(self._ThreadRow).where(
@@ -1502,6 +1841,116 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		workspace_id: str | None = None,
 		principal_id: str | None = None,
 	) -> dict[str, Any]:
+		if self._conversation_store_schema == "app":
+			scope = self._app_scope(
+				tenant_id=tenant_id,
+				workspace_id=workspace_id,
+				principal_id=principal_id,
+			)
+			resolved_thread_id = self._app_uuid(thread_id, "thread_id")
+			resolved_turn_id = self._app_uuid(turn_id, "turn_id") if turn_id else uuid4()
+			user_turn_id = uuid4()
+			debug = {
+				"mode": mode,
+				"refused": bool(refused),
+				"refuse_reason": refuse_reason,
+				"query_type": query_type,
+				"rewrite": rewrite,
+				"rewritten_query": rewritten_query,
+				"judge": judge,
+				"retrieval_plan": retrieval_plan,
+				"retrieval_debug": retrieval_debug,
+				"document_version_id": document_version_id,
+			}
+			with self._ConversationSession.begin() as session:
+				thread = session.execute(
+					text(
+						"""
+						SELECT id, session_id, rag_library_id
+						FROM app.threads
+						WHERE id = :thread_id
+							AND organization_id = :organization_id
+							AND workspace_id = :workspace_id
+							AND principal_id = :principal_id
+							AND status = 'active'
+						FOR UPDATE
+						"""
+					),
+					{**scope, "thread_id": resolved_thread_id},
+				).mappings().one_or_none()
+				if thread is None:
+					raise ValueError("active thread not found in the requested scope")
+				if library_id != thread["rag_library_id"]:
+					raise ValueError("library_id does not match the scoped thread")
+				if thread["session_id"] is not None and session_id != thread["session_id"]:
+					raise ValueError("session_id does not match the scoped thread")
+
+				latest = session.execute(
+					text(
+						"""
+						SELECT COALESCE(MAX(sequence), 0)
+						FROM app.turns
+						WHERE thread_id = :thread_id
+							AND organization_id = :organization_id
+							AND workspace_id = :workspace_id
+							AND principal_id = :principal_id
+						"""
+					),
+					{**scope, "thread_id": resolved_thread_id},
+				).scalar_one()
+				user_sequence = int(latest) + 1
+				session.execute(
+					text(
+						"""
+						INSERT INTO app.turns (
+							id, thread_id, organization_id, workspace_id, principal_id,
+							sequence, role, content, citations, debug, status
+						)
+						VALUES
+							(
+								:user_id, :thread_id, :organization_id, :workspace_id,
+								:principal_id, :user_sequence, 'user', :question,
+								'[]'::jsonb, NULL, 'complete'
+							),
+							(
+								:assistant_id, :thread_id, :organization_id, :workspace_id,
+								:principal_id, :assistant_sequence, 'assistant', :answer,
+								CAST(:citations AS jsonb), CAST(:debug AS jsonb), 'complete'
+							)
+						"""
+					),
+					{
+						**scope,
+						"thread_id": resolved_thread_id,
+						"user_id": user_turn_id,
+						"assistant_id": resolved_turn_id,
+						"user_sequence": user_sequence,
+						"assistant_sequence": user_sequence + 1,
+						"question": question,
+						"answer": answer,
+						"citations": json.dumps(citations, ensure_ascii=False),
+						"debug": json.dumps(debug, ensure_ascii=False),
+					},
+				)
+				session.execute(
+					text(
+						"""
+						UPDATE app.threads
+						SET updated_at = now()
+						WHERE id = :thread_id
+							AND organization_id = :organization_id
+							AND workspace_id = :workspace_id
+							AND principal_id = :principal_id
+						"""
+					),
+					{**scope, "thread_id": resolved_thread_id},
+				)
+				created = session.execute(
+					text(self._app_pairs_sql("AND assistant.id = :turn_id")),
+					{**scope, "turn_id": resolved_turn_id},
+				).mappings().one()
+				return self._app_turn_payload(created)
+
 		resolved = turn_id or str(uuid4())
 		with self._Session() as session:
 			row = self._TurnRow(
@@ -1558,6 +2007,39 @@ class SqlAlchemyMetadataStore(MetadataStore):
 	) -> list[dict[str, Any]]:
 		if not tenant_id or not workspace_id or not principal_id:
 			raise ValueError("tenant_id, workspace_id and principal_id are required")
+		if self._conversation_store_schema == "app":
+			scope = self._app_scope(
+				tenant_id=tenant_id,
+				workspace_id=workspace_id,
+				principal_id=principal_id,
+			)
+			parameters: dict[str, Any] = {
+				**scope,
+				"limit": max(1, min(limit, 200)),
+			}
+			clauses: list[str] = []
+			if library_id:
+				clauses.append("AND thread.rag_library_id = :library_id")
+				parameters["library_id"] = library_id
+			if session_id:
+				clauses.append(
+					"AND COALESCE(thread.session_id, thread.id::text) = :session_id"
+				)
+				parameters["session_id"] = session_id
+			if thread_id:
+				resolved_thread_id = self._app_optional_uuid(thread_id)
+				if resolved_thread_id is None:
+					return []
+				clauses.append("AND assistant.thread_id = :thread_id")
+				parameters["thread_id"] = resolved_thread_id
+			query = (
+				self._app_pairs_sql("\n".join(clauses))
+				+ "\nORDER BY assistant.sequence DESC, assistant.id DESC\nLIMIT :limit"
+			)
+			with self._ConversationSession() as session:
+				rows = session.execute(text(query), parameters).mappings().all()
+				return [self._app_turn_payload(row) for row in rows]
+
 		capped = max(1, min(limit, 200))
 		with self._Session() as session:
 			stmt = self._select(self._TurnRow).order_by(self._TurnRow.created_at.desc())
@@ -1585,6 +2067,22 @@ class SqlAlchemyMetadataStore(MetadataStore):
 		workspace_id: str,
 		principal_id: str,
 	) -> dict[str, Any] | None:
+		if self._conversation_store_schema == "app":
+			resolved_turn_id = self._app_optional_uuid(turn_id)
+			if resolved_turn_id is None:
+				return None
+			scope = self._app_scope(
+				tenant_id=tenant_id,
+				workspace_id=workspace_id,
+				principal_id=principal_id,
+			)
+			with self._ConversationSession() as session:
+				row = session.execute(
+					text(self._app_pairs_sql("AND assistant.id = :turn_id")),
+					{**scope, "turn_id": resolved_turn_id},
+				).mappings().one_or_none()
+				return self._app_turn_payload(row) if row else None
+
 		with self._Session() as session:
 			row = session.scalar(
 				self._select(self._TurnRow).where(
@@ -1628,7 +2126,21 @@ def get_metadata_store(settings: Any | None = None) -> MetadataStore:
 				"Start Postgres via `docker compose up -d`, or set METADATA_BACKEND=json only for local tests."
 			)
 		try:
-			_store = SqlAlchemyMetadataStore(_sqlalchemy_database_url(database_url))
+			_store = SqlAlchemyMetadataStore(
+				_sqlalchemy_database_url(database_url),
+				conversation_store_schema=getattr(
+					cfg,
+					"conversation_store_schema",
+					"public",
+				),
+				conversation_database_url=(
+					_sqlalchemy_database_url(
+						getattr(cfg, "conversation_database_url", "")
+					)
+					if getattr(cfg, "conversation_database_url", "").strip()
+					else None
+				),
+			)
 		except Exception as exc:
 			logger.exception("metadata.postgres_failed")
 			raise RuntimeError(
