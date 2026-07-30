@@ -416,6 +416,10 @@ Exit gate:
 - Dual-run Python and TS retrieval against the same active generation.
 - Keep response generation in Python.
 
+Implementation note: the M1 kernel and opt-in `shadow` execution mode are
+implemented. Shadow mode never changes the customer response and remains off
+by default. Production cutover is still an M4 decision.
+
 Exit gate:
 
 - Cross-organization/workspace/ACL leakage is zero.

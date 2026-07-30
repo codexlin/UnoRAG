@@ -5,6 +5,7 @@ import { mapQdrantHitToInternalCitation } from "../../src/core/retrieval/citatio
 import {
 	buildMandatoryQdrantFilter,
 	NO_ACTIVE_GENERATION_SENTINELS,
+	NO_ALLOWED_DOCUMENT_SENTINELS,
 } from "../../src/core/retrieval/filters/qdrant-filter";
 import {
 	parseQdrantSearchHit,
@@ -102,6 +103,23 @@ test("empty active generation snapshot produces an explicit match-none filter", 
 			return Array.isArray(match.any) && match.any.length === 0;
 		}),
 		false,
+	);
+});
+
+test("document allow-list is mandatory and an empty list matches none", () => {
+	const limited = buildMandatoryQdrantFilter({
+		scope: { ...scope, documentIds: ["document-a", "document-b"] },
+	});
+	assert.deepEqual(conditionFor(limited, "doc_id"), [
+		{ key: "doc_id", match: { any: ["document-a", "document-b"] } },
+	]);
+
+	const empty = buildMandatoryQdrantFilter({
+		scope: { ...scope, documentIds: [] },
+	});
+	assert.deepEqual(
+		conditionFor(empty, "doc_id").map((condition) => condition.match),
+		NO_ALLOWED_DOCUMENT_SENTINELS.map((value) => ({ value })),
 	);
 });
 

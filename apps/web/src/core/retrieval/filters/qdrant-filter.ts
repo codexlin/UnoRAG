@@ -13,6 +13,10 @@ export const NO_ACTIVE_GENERATION_SENTINELS = [
 	"__unorag_no_active_generation_a__",
 	"__unorag_no_active_generation_b__",
 ] as const;
+export const NO_ALLOWED_DOCUMENT_SENTINELS = [
+	"__unorag_no_allowed_document_a__",
+	"__unorag_no_allowed_document_b__",
+] as const;
 
 function matchValue(key: string, value: string): QdrantFieldCondition {
 	return { key, match: { value } };
@@ -96,6 +100,17 @@ export function buildMandatoryQdrantFilter(input: {
 		generationCondition(scope.activeGenerationIds),
 		matchValue("library_id", scope.libraryId),
 	];
+	if (scope.documentIds) {
+		if (scope.documentIds.length) {
+			must.push(matchAny("doc_id", scope.documentIds));
+		} else {
+			must.push(
+				...NO_ALLOWED_DOCUMENT_SENTINELS.map((value) =>
+					matchValue("doc_id", value),
+				),
+			);
+		}
+	}
 
 	const recordType = recordTypeCondition(userFilters.record_type);
 	if (recordType) must.push(recordType);

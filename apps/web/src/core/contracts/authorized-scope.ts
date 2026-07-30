@@ -7,6 +7,7 @@ export const AuthorizedScopeSchema = z
 		organizationId: IdentifierSchema,
 		workspaceId: IdentifierSchema,
 		principalIds: z.array(IdentifierSchema).min(1),
+		groupIds: z.array(IdentifierSchema),
 		libraryIds: z.array(IdentifierSchema).min(1),
 		documentIds: z.array(IdentifierSchema).optional(),
 		activeGenerationIds: z.array(IdentifierSchema),

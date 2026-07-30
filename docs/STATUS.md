@@ -83,7 +83,7 @@
 | Answer/stream 公共资源 | 规划中 | 当前公开契约名称仍为 Ask；内部 Workspace 支持 SSE |
 | OpenAI-compatible | 规划中 | 不存在可承诺 endpoint |
 | TypeScript SDK | 规划中 | 等完整公共契约稳定后再生成或实现 |
-| TypeScript 核心迁移 | 部分可用 | M0 已开始：`apps/web` 内的 DocumentIR/Ask/作用域/ParserProvider 契约与 Elysia characterization 已落地；生产流量仍固定走 ADR-0004 |
+| TypeScript 核心迁移 | 部分可用 | M0 契约基线完成；M1 Retrieval 内核、权威 generation/ACL filter 与 shadow 模式已落地；`app.threads/turns` 和 MinerU Provider 前置已建立。生产输出仍固定走 Python，切换前遵循 ADR-0005 门禁 |
 
 ## 部署与运行
 

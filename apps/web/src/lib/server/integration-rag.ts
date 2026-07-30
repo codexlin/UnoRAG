@@ -4,7 +4,10 @@ import { randomUUID } from "node:crypto";
 
 import { getDatabase } from "@/db";
 import { auditLogs } from "@/db/schema";
-
+import {
+	observeRetrievalShadow,
+	startRetrievalShadow,
+} from "@/server/retrieval/shadow";
 import { injectAskOverrides } from "./ask-overrides-inject.mjs";
 import { createInternalRagHeaders } from "./internal-rag-context";
 import {
@@ -457,6 +460,10 @@ export async function forwardIntegrationRag(input: {
 	}
 
 	const identity = serviceKeyToIdentity(input.key);
+	const retrievalShadow =
+		publicTarget === "retrieve"
+			? startRetrievalShadow({ identity, payload })
+			: null;
 	let signedHeaders: Headers;
 	try {
 		signedHeaders = createInternalRagHeaders(
@@ -541,6 +548,13 @@ export async function forwardIntegrationRag(input: {
 			libraryId,
 		});
 		return response;
+	}
+	if (retrievalShadow) {
+		void observeRetrievalShadow({
+			execution: retrievalShadow,
+			pythonPayload: upstreamPayload,
+			requestId: input.requestId,
+		});
 	}
 	if (!upstream.ok) {
 		const normalizedError = normalizeUpstreamError(

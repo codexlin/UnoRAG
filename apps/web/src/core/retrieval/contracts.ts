@@ -37,6 +37,7 @@ export const RetrievalScopeSchema = z
 		tenantId: IdentifierSchema,
 		workspaceId: IdentifierSchema,
 		libraryId: IdentifierSchema,
+		documentIds: z.array(IdentifierSchema).optional(),
 		principalIds: z.array(IdentifierSchema).min(1),
 		groupIds: z.array(IdentifierSchema).default([]),
 		activeGenerationIds: z.array(IdentifierSchema),
