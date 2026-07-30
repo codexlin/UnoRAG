@@ -115,6 +115,105 @@ test("ingest fails closed until its staged workflow is wired", async () => {
 	);
 });
 
+test("text ingest checkpoints staging and activates before retiring the previous generation", async () => {
+	const events: string[] = [];
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		successfulIngestPorts(events),
+		operations(events),
+	);
+
+	assert.deepEqual(await workflows.documentIngest(textIngest()), {
+		outcome: "completed",
+		result: {
+			pointCount: 4,
+			chunkCount: 2,
+			sectionCount: 2,
+			tableCount: 0,
+			parserBackend: "native-text",
+			parserReport: { source_format: "txt" },
+			previousGenerationId: "10000000-0000-4000-8000-000000000099",
+		},
+	});
+	assert.deepEqual(events, [
+		"tx:document-ingest-begin-1",
+		"ingest:begin",
+		"tx:document-ingest-progress-downloading-1",
+		"ingest:progress:downloading:5",
+		"step:document-ingest-stage-text-1",
+		"ingest:stage",
+		"tx:document-ingest-progress-validating-1",
+		"ingest:progress:validating:85",
+		"tx:document-ingest-prepare-activation-1",
+		"ingest:prepare",
+		"tx:document-ingest-progress-activating-1",
+		"ingest:progress:activating:95",
+		"step:document-ingest-generation-active-1",
+		`ingest:visibility:${ingest.payload.generation_id}:active`,
+		"tx:document-ingest-activate-1",
+		"ingest:activate",
+		"step:document-ingest-previous-generation-inactive-1",
+		"ingest:visibility:10000000-0000-4000-8000-000000000099:inactive",
+	]);
+});
+
+test("text ingest cancellation records compensation and never stages points", async () => {
+	const events: string[] = [];
+	const ports = successfulIngestPorts(events);
+	if (!ports.documentIngest) throw new Error("ingest test port is required");
+	ports.documentIngest.transactions.markProgress = async (_input, progress) => {
+		events.push(`ingest:progress:${progress.stage}:${progress.percent}`);
+		return "cancelled";
+	};
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		ports,
+		operations(events),
+	);
+
+	assert.deepEqual(await workflows.documentIngest(textIngest()), {
+		outcome: "failed",
+		errorCode: "job_cancelled",
+	});
+	assert.ok(events.includes("ingest:error:job_cancelled:false:true"));
+	assert.equal(events.includes("ingest:stage"), false);
+});
+
+test("post-activation visibility failure remains a cleanup warning", async () => {
+	const events: string[] = [];
+	const ports = successfulIngestPorts(events);
+	if (!ports.documentIngest) throw new Error("ingest test port is required");
+	ports.documentIngest.external.setGenerationVisibility = async (
+		_input,
+		generationId,
+		visibility,
+	) => {
+		events.push(`ingest:visibility:${generationId}:${visibility}`);
+		if (visibility === "inactive") {
+			throw new WorkerTaskError(
+				"Qdrant unavailable",
+				"qdrant_visibility_failed",
+				"transient",
+			);
+		}
+	};
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		ports,
+		operations(events),
+	);
+
+	const result = await workflows.documentIngest(textIngest());
+
+	assert.equal(result.outcome, "completed");
+	assert.equal(result.result?.previousGenerationVisibilityUpdated, false);
+	assert.equal(result.result?.cleanupWarningCode, "qdrant_visibility_failed");
+	assert.equal(
+		events.some((event) => event.startsWith("ingest:error:")),
+		false,
+	);
+});
+
 test("document delete drains ingest and checkpoints every external boundary", async () => {
 	const events: string[] = [];
 	const workflows = registerDurableWorkflows(
@@ -462,4 +561,66 @@ function successfulPorts(events: string[]): WorkerPorts {
 			},
 		},
 	};
+}
+
+function textIngest(): DocumentIngestJob {
+	return {
+		...ingest,
+		payload: {
+			...ingest.payload,
+			storage_key: "documents/test.txt",
+			filename: "test.txt",
+			content_type: "text/plain",
+			queue_class: "local",
+		},
+	};
+}
+
+function successfulIngestPorts(events: string[]): WorkerPorts {
+	const ports = successfulPorts(events);
+	ports.documentIngest = {
+		external: {
+			async stageTextDocument() {
+				events.push("ingest:stage");
+				return {
+					pointCount: 4,
+					chunkCount: 2,
+					sectionCount: 2,
+					tableCount: 0,
+					parserBackend: "native-text",
+					parserReport: { source_format: "txt" },
+				};
+			},
+			async setGenerationVisibility(_input, generationId, visibility) {
+				events.push(`ingest:visibility:${generationId}:${visibility}`);
+			},
+		},
+		transactions: {
+			async begin() {
+				events.push("ingest:begin");
+				return "ingest";
+			},
+			async markProgress(_input, progress) {
+				events.push(`ingest:progress:${progress.stage}:${progress.percent}`);
+				return "continue";
+			},
+			async prepareActivation() {
+				events.push("ingest:prepare");
+				return "activate";
+			},
+			async activate(_input, staged) {
+				events.push("ingest:activate");
+				return {
+					...staged,
+					previousGenerationId: "10000000-0000-4000-8000-000000000099",
+				};
+			},
+			async markError(_input, error) {
+				events.push(
+					`ingest:error:${error.code}:${error.retryable}:${error.cancelled}`,
+				);
+			},
+		},
+	};
+	return ports;
 }

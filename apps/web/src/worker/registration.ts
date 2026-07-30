@@ -54,11 +54,14 @@ export function registerDurableWorkflows(
 	operations: DurableOperationPort,
 ): RegisteredDurableWorkflows {
 	return {
-		documentIngest: registrar.register(createDocumentIngestWorkflow(), {
-			name: durableWorkflowNames["document.ingest"],
-			maxRecoveryAttempts: 1,
-			inputSchema: documentIngestWorkflowInputSchema,
-		}),
+		documentIngest: registrar.register(
+			createDocumentIngestWorkflow(ports, operations),
+			{
+				name: durableWorkflowNames["document.ingest"],
+				maxRecoveryAttempts: 10,
+				inputSchema: documentIngestWorkflowInputSchema,
+			},
+		),
 		documentDelete: registrar.register(
 			createDocumentDeleteWorkflow(ports, operations),
 			{

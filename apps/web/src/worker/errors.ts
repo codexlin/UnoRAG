@@ -51,6 +51,24 @@ export function classifyWorkerError(error: unknown): WorkerErrorClassification {
 		};
 	}
 
+	const providerError =
+		error &&
+		typeof error === "object" &&
+		"code" in error &&
+		typeof error.code === "string" &&
+		"retryable" in error &&
+		typeof error.retryable === "boolean"
+			? { code: error.code, retryable: error.retryable }
+			: undefined;
+	if (providerError) {
+		return {
+			category: providerError.retryable ? "transient" : "permanent",
+			code: providerError.code,
+			message: safeMessage(error),
+			retryable: providerError.retryable,
+		};
+	}
+
 	const databaseCode =
 		error &&
 		typeof error === "object" &&

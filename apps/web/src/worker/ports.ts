@@ -1,4 +1,79 @@
-import type { DocumentDeleteJob, GenerationCleanupJob } from "./contracts";
+import type {
+	DocumentDeleteJob,
+	DocumentIngestJob,
+	GenerationCleanupJob,
+} from "./contracts";
+
+export interface DocumentIngestStageResult extends Record<string, unknown> {
+	pointCount: number;
+	chunkCount: number;
+	sectionCount: number;
+	tableCount: number;
+	parserBackend: string;
+	parserReport: Record<string, unknown>;
+}
+
+export interface DocumentIngestResult extends DocumentIngestStageResult {
+	previousGenerationId?: string;
+}
+
+export interface DocumentIngestTransactionPort {
+	begin(
+		input: DocumentIngestJob,
+	): Promise<"ingest" | "already_active" | "cancelled">;
+	markProgress(
+		input: DocumentIngestJob,
+		progress: {
+			stage:
+				| "downloading"
+				| "chunking"
+				| "embedding"
+				| "indexing"
+				| "validating"
+				| "awaiting_activation"
+				| "activating";
+			percent: number;
+		},
+	): Promise<"continue" | "cancelled">;
+	prepareActivation(
+		input: DocumentIngestJob,
+		staged: DocumentIngestStageResult,
+	): Promise<"activate" | "already_active" | "cancelled">;
+	activate(
+		input: DocumentIngestJob,
+		staged: DocumentIngestStageResult,
+	): Promise<DocumentIngestResult>;
+	markError(
+		input: DocumentIngestJob,
+		error: {
+			code: string;
+			message: string;
+			retryable: boolean;
+			cancelled: boolean;
+		},
+	): Promise<void>;
+}
+
+export interface DocumentIngestExternalPort {
+	/**
+	 * Canary boundary: validates source/hash, parses text, chunks, embeds,
+	 * stages deterministic points, and verifies their count. Implementations
+	 * must be idempotent by generation_id.
+	 */
+	stageTextDocument(
+		input: DocumentIngestJob,
+	): Promise<DocumentIngestStageResult>;
+	setGenerationVisibility(
+		input: DocumentIngestJob,
+		generationId: string,
+		visibility: "active" | "inactive",
+	): Promise<void>;
+}
+
+export interface DocumentIngestPort {
+	transactions: DocumentIngestTransactionPort;
+	external: DocumentIngestExternalPort;
+}
 
 export interface GenerationCleanupDeleteResult extends Record<string, unknown> {
 	deletedPoints?: number;
@@ -80,6 +155,11 @@ export interface WorkerPorts {
 	generationCleanup: GenerationCleanupStepPort;
 	transactions: JobTransactionPort;
 	documentDelete: DocumentDeletePort;
+	/**
+	 * Absent in production until the explicit TXT canary implementation is
+	 * configured. The workflow fails closed when this port is unavailable.
+	 */
+	documentIngest?: DocumentIngestPort;
 	close?(): Promise<void>;
 }
 

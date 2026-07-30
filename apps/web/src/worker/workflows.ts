@@ -4,7 +4,11 @@ import type {
 	GenerationCleanupJob,
 } from "./contracts";
 import { classifyWorkerError, WorkerTaskError } from "./errors";
-import type { DurableOperationPort, WorkerPorts } from "./ports";
+import type {
+	DocumentIngestStageResult,
+	DurableOperationPort,
+	WorkerPorts,
+} from "./ports";
 
 export interface DurableWorkflowResult {
 	outcome: "completed" | "failed";
@@ -26,9 +30,162 @@ function unavailableWorkflow(kind: string): never {
 	);
 }
 
-export function createDocumentIngestWorkflow() {
-	return async (_input: DocumentIngestJob): Promise<DurableWorkflowResult> =>
-		unavailableWorkflow("document.ingest");
+export function createDocumentIngestWorkflow(
+	ports: WorkerPorts,
+	operations: DurableOperationPort,
+) {
+	return async (input: DocumentIngestJob): Promise<DurableWorkflowResult> => {
+		const ingest = ports.documentIngest;
+		if (!ingest) unavailableWorkflow("document.ingest");
+		try {
+			const disposition = await runRetriedTransaction(
+				operations,
+				"document-ingest-begin",
+				() => ingest.transactions.begin(input),
+			);
+			if (disposition === "cancelled") {
+				return { outcome: "failed", errorCode: "job_cancelled" };
+			}
+			if (disposition === "already_active") {
+				return {
+					outcome: "completed",
+					result: { alreadyActive: true },
+				};
+			}
+
+			await requireIngestContinuation(
+				operations,
+				input,
+				ingest.transactions,
+				"downloading",
+				5,
+			);
+			const staged: DocumentIngestStageResult = await runRetriedStep(
+				operations,
+				"document-ingest-stage-text",
+				() => ingest.external.stageTextDocument(input),
+			);
+			await requireIngestContinuation(
+				operations,
+				input,
+				ingest.transactions,
+				"validating",
+				85,
+			);
+			const activation = await runRetriedTransaction(
+				operations,
+				"document-ingest-prepare-activation",
+				() => ingest.transactions.prepareActivation(input, staged),
+			);
+			if (activation === "cancelled") {
+				throw new WorkerTaskError(
+					"Document ingest was cancelled before activation",
+					"job_cancelled",
+					"cancelled",
+				);
+			}
+			if (activation === "already_active") {
+				return {
+					outcome: "completed",
+					result: { ...staged, alreadyActive: true },
+				};
+			}
+
+			await requireIngestContinuation(
+				operations,
+				input,
+				ingest.transactions,
+				"activating",
+				95,
+			);
+			await runRetriedStep(
+				operations,
+				"document-ingest-generation-active",
+				() =>
+					ingest.external.setGenerationVisibility(
+						input,
+						input.payload.generation_id,
+						"active",
+					),
+			);
+			const result = await runRetriedTransaction(
+				operations,
+				"document-ingest-activate",
+				() => ingest.transactions.activate(input, staged),
+			);
+			const previousGenerationId = result.previousGenerationId;
+			if (
+				previousGenerationId &&
+				previousGenerationId !== input.payload.generation_id
+			) {
+				try {
+					await runRetriedStep(
+						operations,
+						"document-ingest-previous-generation-inactive",
+						() =>
+							ingest.external.setGenerationVisibility(
+								input,
+								previousGenerationId,
+								"inactive",
+							),
+					);
+				} catch (error) {
+					const cleanupError = classifyWorkerError(error);
+					return {
+						outcome: "completed",
+						result: {
+							...result,
+							previousGenerationVisibilityUpdated: false,
+							cleanupWarningCode: cleanupError.code,
+						},
+					};
+				}
+			}
+			return { outcome: "completed", result };
+		} catch (error) {
+			const classified = classifyWorkerError(error);
+			await runRetriedTransaction(
+				operations,
+				"document-ingest-mark-error",
+				() =>
+					ingest.transactions.markError(input, {
+						code: classified.code,
+						message: classified.message,
+						retryable: classified.retryable,
+						cancelled: classified.category === "cancelled",
+					}),
+			);
+			return { outcome: "failed", errorCode: classified.code };
+		}
+	};
+}
+
+async function requireIngestContinuation(
+	operations: DurableOperationPort,
+	input: DocumentIngestJob,
+	transactions: NonNullable<WorkerPorts["documentIngest"]>["transactions"],
+	stage:
+		| "downloading"
+		| "chunking"
+		| "embedding"
+		| "indexing"
+		| "validating"
+		| "awaiting_activation"
+		| "activating",
+	percent: number,
+): Promise<void> {
+	const disposition = await runRetriedTransaction(
+		operations,
+		`document-ingest-progress-${stage}`,
+		() => transactions.markProgress(input, { stage, percent }),
+	);
+	if (disposition === "cancelled") {
+		throw new WorkerTaskError(
+			"Document ingest was cancelled",
+			"job_cancelled",
+			"cancelled",
+		);
+	}
 }
 
 async function runRetriedStep<T>(
