@@ -1,8 +1,17 @@
 import "server-only";
 
+import { and, count, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import { z } from "zod";
 
 import { getDatabase } from "@/db";
+import {
+	conversationTurns,
+	documentAcl,
+	documentActiveVersions,
+	documents,
+	documentVersions,
+	libraries,
+} from "@/db/schema";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { ConversationRepository } from "@/server/conversations/repository";
 import type { ConversationScope } from "@/server/conversations/types";
@@ -31,6 +40,200 @@ const ArchiveThreadInputSchema = z
 const ThreadIdSchema = z.uuid();
 
 type Repository = ConversationRepository;
+type Citation = Record<string, unknown>;
+
+export type HistoricalCitationAuthorizationInput = {
+	identity: AuthIdentity;
+	libraryId: string | null;
+	citations: Citation[];
+};
+
+export interface HistoricalCitationAuthorizer {
+	filterAuthorized(
+		input: HistoricalCitationAuthorizationInput,
+	): Promise<Citation[]>;
+}
+
+export interface ConversationTurnCounter {
+	countAssistantTurns(
+		scope: ConversationScope,
+		threadIds: string[],
+	): Promise<Map<string, number>>;
+}
+
+export class DrizzleConversationTurnCounter implements ConversationTurnCounter {
+	constructor(private readonly db = getDatabase()) {}
+
+	async countAssistantTurns(
+		scope: ConversationScope,
+		threadIds: string[],
+	): Promise<Map<string, number>> {
+		if (threadIds.length === 0) return new Map();
+		const rows = await this.db
+			.select({
+				threadId: conversationTurns.threadId,
+				value: count(),
+			})
+			.from(conversationTurns)
+			.where(
+				and(
+					eq(conversationTurns.organizationId, scope.organizationId),
+					eq(conversationTurns.workspaceId, scope.workspaceId),
+					eq(conversationTurns.principalId, scope.principalId),
+					eq(conversationTurns.role, "assistant"),
+					inArray(conversationTurns.threadId, threadIds),
+				),
+			)
+			.groupBy(conversationTurns.threadId);
+		return new Map(rows.map((row) => [row.threadId, Number(row.value)]));
+	}
+}
+
+type CitationReference = {
+	citation: Citation;
+	documentId: string;
+	documentVersionId: string;
+	generationId: string | null;
+};
+
+function nonEmptyString(value: unknown): string | null {
+	return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function citationReference(
+	input: HistoricalCitationAuthorizationInput,
+	citation: Citation,
+): CitationReference | null {
+	const citationLibraryId = nonEmptyString(citation.library_id);
+	const citationTenantId = nonEmptyString(citation.tenant_id);
+	const citationWorkspaceId = nonEmptyString(citation.workspace_id);
+	if (
+		!input.libraryId ||
+		(citationLibraryId !== null && citationLibraryId !== input.libraryId) ||
+		(citationTenantId !== null &&
+			citationTenantId !== input.identity.tenantId) ||
+		(citationWorkspaceId !== null &&
+			citationWorkspaceId !== input.identity.workspaceId)
+	) {
+		return null;
+	}
+	const documentId =
+		nonEmptyString(citation.doc_id) ?? nonEmptyString(citation.document_id);
+	const documentVersionId = nonEmptyString(citation.document_version_id);
+	if (!documentId || !documentVersionId) return null;
+	return {
+		citation,
+		documentId,
+		documentVersionId,
+		generationId: nonEmptyString(citation.generation_id),
+	};
+}
+
+export class DrizzleHistoricalCitationAuthorizer
+	implements HistoricalCitationAuthorizer
+{
+	constructor(private readonly db = getDatabase()) {}
+
+	async filterAuthorized(
+		input: HistoricalCitationAuthorizationInput,
+	): Promise<Citation[]> {
+		if (!input.libraryId || input.citations.length === 0) return [];
+		const references = input.citations
+			.map((citation) => citationReference(input, citation))
+			.filter((value): value is CitationReference => value !== null);
+		if (references.length === 0) return [];
+
+		const documentIds = [...new Set(references.map((item) => item.documentId))];
+		const rows = await this.db
+			.select({
+				documentUuid: documents.id,
+				documentId: documents.ragDocumentId,
+				documentVersionId: documentVersions.id,
+				generationId: documentVersions.generationId,
+				subjectType: documentAcl.subjectType,
+				subjectId: documentAcl.subjectId,
+			})
+			.from(libraries)
+			.innerJoin(
+				documents,
+				and(
+					eq(documents.libraryId, libraries.id),
+					eq(documents.organizationId, input.identity.tenantId),
+					eq(documents.workspaceId, input.identity.workspaceId),
+					inArray(documents.ragDocumentId, documentIds),
+					notInArray(documents.status, ["deleting", "deleted"]),
+					isNull(documents.deletedAt),
+				),
+			)
+			.innerJoin(
+				documentActiveVersions,
+				eq(documentActiveVersions.documentId, documents.id),
+			)
+			.innerJoin(
+				documentVersions,
+				and(
+					eq(documentVersions.id, documentActiveVersions.versionId),
+					eq(documentVersions.documentId, documents.id),
+					eq(documentVersions.status, "active"),
+				),
+			)
+			.leftJoin(
+				documentAcl,
+				and(
+					eq(documentAcl.documentId, documents.id),
+					eq(documentAcl.permission, "read"),
+				),
+			)
+			.where(
+				and(
+					eq(libraries.organizationId, input.identity.tenantId),
+					eq(libraries.workspaceId, input.identity.workspaceId),
+					eq(libraries.ragLibraryId, input.libraryId),
+					notInArray(libraries.status, ["deleting", "deleted"]),
+				),
+			);
+
+		const authorizationByVersion = new Map<
+			string,
+			{
+				generationId: string;
+				hasAcl: boolean;
+				allowed: boolean;
+			}
+		>();
+		for (const row of rows) {
+			const key = `${row.documentId}\u0000${row.documentVersionId}`;
+			const current = authorizationByVersion.get(key) ?? {
+				generationId: row.generationId,
+				hasAcl: false,
+				allowed: false,
+			};
+			if (row.subjectId && row.subjectType) {
+				current.hasAcl = true;
+				current.allowed ||=
+					(["principal", "user"].includes(row.subjectType) &&
+						row.subjectId === input.identity.principalId) ||
+					(row.subjectType === "group" &&
+						input.identity.groupIds.includes(row.subjectId));
+			}
+			authorizationByVersion.set(key, current);
+		}
+
+		return references
+			.filter((reference) => {
+				const authorization = authorizationByVersion.get(
+					`${reference.documentId}\u0000${reference.documentVersionId}`,
+				);
+				return Boolean(
+					authorization &&
+						(!authorization.hasAcl || authorization.allowed) &&
+						(reference.generationId === null ||
+							reference.generationId === authorization.generationId),
+				);
+			})
+			.map((reference) => reference.citation);
+	}
+}
 
 function scope(identity: AuthIdentity): ConversationScope {
 	return {
@@ -59,10 +262,24 @@ type StoredThread = Awaited<
 	ReturnType<ConversationRepository["listThreads"]>
 >[number];
 
-function legacyTurns(
+async function legacyTurns(
 	thread: StoredThread,
 	turns: StoredTurn[],
-): Record<string, unknown>[] {
+	identity: AuthIdentity,
+	citationAuthorizer: HistoricalCitationAuthorizer,
+): Promise<Record<string, unknown>[]> {
+	const storedCitations = turns.flatMap((turn) =>
+		turn.role === "assistant" && Array.isArray(turn.citations)
+			? turn.citations
+			: [],
+	);
+	const authorizedCitations = new Set(
+		await citationAuthorizer.filterAuthorized({
+			identity,
+			libraryId: thread.ragLibraryId,
+			citations: storedCitations,
+		}),
+	);
 	const result: Record<string, unknown>[] = [];
 	let pendingQuestion: StoredTurn | null = null;
 	for (const turn of turns) {
@@ -73,6 +290,9 @@ function legacyTurns(
 		if (turn.role !== "assistant" || !pendingQuestion) continue;
 		const debug =
 			turn.debug && typeof turn.debug === "object" ? turn.debug : {};
+		const citations = Array.isArray(turn.citations)
+			? turn.citations.filter((citation) => authorizedCitations.has(citation))
+			: [];
 		result.push({
 			id: turn.id,
 			session_id: thread.sessionId || thread.id,
@@ -80,7 +300,7 @@ function legacyTurns(
 			library_id: thread.ragLibraryId,
 			question: pendingQuestion.content,
 			answer: turn.content,
-			citations: Array.isArray(turn.citations) ? turn.citations : [],
+			citations,
 			mode: typeof debug.mode === "string" ? debug.mode : "live",
 			refused: debug.refused === true,
 			refuse_reason:
@@ -100,7 +320,7 @@ function legacyTurns(
 
 function threadResponse(
 	thread: StoredThread,
-	turns: StoredTurn[],
+	assistantTurnCount: number,
 ): Record<string, unknown> {
 	return {
 		id: thread.id,
@@ -108,7 +328,7 @@ function threadResponse(
 		library_id: thread.ragLibraryId,
 		title: thread.title || "未命名会话",
 		status: thread.status,
-		turn_count: turns.filter((turn) => turn.role === "assistant").length,
+		turn_count: assistantTurnCount,
 		created_at: iso(thread.createdAt),
 		updated_at: iso(thread.updatedAt),
 	};
@@ -118,12 +338,17 @@ async function detail(
 	repository: Repository,
 	conversationScope: ConversationScope,
 	threadId: string,
+	identity: AuthIdentity,
+	citationAuthorizer: HistoricalCitationAuthorizer,
 ): Promise<Record<string, unknown> | null> {
 	const value = await repository.getThread(conversationScope, threadId);
 	if (value?.status !== "active") return null;
 	return {
-		...threadResponse(value, value.turns),
-		turns: legacyTurns(value, value.turns),
+		...threadResponse(
+			value,
+			value.turns.filter((turn) => turn.role === "assistant").length,
+		),
+		turns: await legacyTurns(value, value.turns, identity, citationAuthorizer),
 	};
 }
 
@@ -163,10 +388,14 @@ export async function handleNativeConversationRequest(input: {
 	path: string[];
 	identity: AuthIdentity;
 	repository?: Repository;
+	citationAuthorizer?: HistoricalCitationAuthorizer;
+	turnCounter?: ConversationTurnCounter;
 }): Promise<Response | null> {
 	if (!enabled() || !isNativeConversationPath(input.path)) return null;
 	const repository =
 		input.repository ?? new ConversationRepository(getDatabase());
+	const citationAuthorizer =
+		input.citationAuthorizer ?? new DrizzleHistoricalCitationAuthorizer();
 	const conversationScope = scope(input.identity);
 	const threadId = input.path[2];
 
@@ -182,15 +411,14 @@ export async function handleNativeConversationRequest(input: {
 			const threads = await repository.listThreads(conversationScope, {
 				limit,
 			});
-			const response = await Promise.all(
-				threads.map(async (thread) => {
-					const turns = await repository.listTurns(
-						conversationScope,
-						thread.id,
-						200,
-					);
-					return threadResponse(thread, turns);
-				}),
+			const turnCounter =
+				input.turnCounter ?? new DrizzleConversationTurnCounter();
+			const counts = await turnCounter.countAssistantTurns(
+				conversationScope,
+				threads.map((thread) => thread.id),
+			);
+			const response = threads.map((thread) =>
+				threadResponse(thread, counts.get(thread.id) ?? 0),
 			);
 			return Response.json(response, {
 				headers: { "cache-control": "no-store" },
@@ -232,8 +460,16 @@ export async function handleNativeConversationRequest(input: {
 				},
 			);
 			return Response.json({
-				...threadResponse(created, created.turns),
-				turns: legacyTurns(created, created.turns),
+				...threadResponse(
+					created,
+					created.turns.filter((turn) => turn.role === "assistant").length,
+				),
+				turns: await legacyTurns(
+					created,
+					created.turns,
+					input.identity,
+					citationAuthorizer,
+				),
 			});
 		}
 
@@ -242,6 +478,8 @@ export async function handleNativeConversationRequest(input: {
 				repository,
 				conversationScope,
 				ThreadIdSchema.parse(threadId),
+				input.identity,
+				citationAuthorizer,
 			);
 			return value
 				? Response.json(value, {
@@ -268,6 +506,8 @@ export async function handleNativeConversationRequest(input: {
 				repository,
 				conversationScope,
 				validatedThreadId,
+				input.identity,
+				citationAuthorizer,
 			);
 			return value
 				? Response.json(value, {

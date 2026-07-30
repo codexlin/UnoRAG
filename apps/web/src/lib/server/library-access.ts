@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, notInArray, sql } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import { documents, libraries } from "@/db/schema";
@@ -24,6 +24,7 @@ export async function findAuthorizedLibrary(
 				eq(libraries.organizationId, identity.tenantId),
 				eq(libraries.workspaceId, identity.workspaceId),
 				eq(libraries.ragLibraryId, ragLibraryId),
+				notInArray(libraries.status, ["deleting", "deleted"]),
 			),
 		)
 		.limit(1);
@@ -55,6 +56,9 @@ export async function findAuthorizedDocument(
 				eq(documents.organizationId, identity.tenantId),
 				eq(documents.workspaceId, identity.workspaceId),
 				eq(documents.ragDocumentId, ragDocumentId),
+				notInArray(documents.status, ["deleting", "deleted"]),
+				isNull(documents.deletedAt),
+				notInArray(libraries.status, ["deleting", "deleted"]),
 			),
 		)
 		.limit(1);

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, notInArray } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import {
@@ -32,7 +32,11 @@ export class DrizzleActiveGenerationResolver
 			.from(libraries)
 			.leftJoin(
 				documents,
-				and(eq(documents.libraryId, libraries.id), isNull(documents.deletedAt)),
+				and(
+					eq(documents.libraryId, libraries.id),
+					isNull(documents.deletedAt),
+					notInArray(documents.status, ["deleting", "deleted"]),
+				),
 			)
 			.leftJoin(
 				documentActiveVersions,
@@ -51,6 +55,7 @@ export class DrizzleActiveGenerationResolver
 					eq(libraries.organizationId, input.organizationId),
 					eq(libraries.workspaceId, input.workspaceId),
 					eq(libraries.ragLibraryId, input.libraryId),
+					notInArray(libraries.status, ["deleting", "deleted"]),
 				),
 			)
 			.orderBy(asc(documents.id));
