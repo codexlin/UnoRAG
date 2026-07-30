@@ -25,3 +25,7 @@ export {
 	tableRecordId,
 	tableSummaryRecordId,
 } from "./index-records";
+export {
+	type ParseTextDocumentInput,
+	parseTextDocument,
+} from "./text-parser";
