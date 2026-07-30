@@ -20,6 +20,7 @@ function tableRecord(input: {
 	pageStart?: number;
 	pageEnd?: number;
 	docId?: string;
+	tableRowCount?: number;
 }): StoredQdrantPayload {
 	return {
 		library_id: "library-a",
@@ -38,7 +39,7 @@ function tableRecord(input: {
 		rows: input.rows,
 		row_start: input.rowStart ?? 0,
 		row_end: (input.rowStart ?? 0) + input.rows.length - 1,
-		table_row_count: input.rows.length,
+		table_row_count: input.tableRowCount ?? input.rows.length,
 		page_start: input.pageStart ?? 1,
 		page_end: input.pageEnd ?? input.pageStart ?? 1,
 	};
@@ -56,6 +57,7 @@ const quote: TableDatasetInput = {
 				["2", "服务器", "120,000元", "24万元"],
 			],
 			pageStart: 1,
+			tableRowCount: 6,
 		}),
 		tableRecord({
 			id: "quote-p2",
@@ -69,6 +71,7 @@ const quote: TableDatasetInput = {
 			],
 			rowStart: 2,
 			pageStart: 2,
+			tableRowCount: 6,
 		}),
 	],
 	summaryRows: [{ raw_text: "合计 |  |  | 730000" }],
@@ -77,6 +80,7 @@ const quote: TableDatasetInput = {
 test("strict plan rejects unknown and executable expression fields", () => {
 	const maliciousPlan = {
 		mode: "single",
+		tableId: "quote",
 		operation: "sum",
 		column: "合计（元）",
 		selectColumns: [],
@@ -92,6 +96,7 @@ test("strict plan rejects unknown and executable expression fields", () => {
 	const result = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "filter",
 			where: {
 				column: "单价（元）",
@@ -122,6 +127,7 @@ test("ASCII comparison >= 10万 preserves cross-page row-group evidence", () => 
 	const result = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "filter",
 			where: { column: "单价", operator: ">=", value: "10万" },
 			selectColumns: ["设备名称", "单价"],
@@ -147,6 +153,7 @@ test("Chinese comparison operators use the same unit-safe path", () => {
 	const result = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "filter",
 			where: { column: "单价", operator: "不少于", value: "10万" },
 			selectColumns: ["设备名称", "单价"],
@@ -165,6 +172,7 @@ test("lookup, sort and topN are deterministic over irregular rows", () => {
 	const lookup = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "lookup",
 			entity: { column: "设备名称", value: "服务器", match: "exact" },
 			selectColumns: ["设备名称", "合计"],
@@ -178,6 +186,7 @@ test("lookup, sort and topN are deterministic over irregular rows", () => {
 	const top = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "topN",
 			column: "单价",
 			direction: "desc",
@@ -195,6 +204,7 @@ test("lookup, sort and topN are deterministic over irregular rows", () => {
 	const sorted = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "sort",
 			column: "单价",
 			direction: "asc",
@@ -214,6 +224,7 @@ test("count and aggregates exclude summary rows and retain contributing evidence
 	const count = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "count",
 			selectColumns: ["设备名称"],
 			includeSummaryRows: false,
@@ -224,6 +235,7 @@ test("count and aggregates exclude summary rows and retain contributing evidence
 	const countWithSummary = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "count",
 			selectColumns: ["设备名称"],
 			includeSummaryRows: true,
@@ -235,6 +247,7 @@ test("count and aggregates exclude summary rows and retain contributing evidence
 	const sum = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "sum",
 			column: "合计",
 			selectColumns: ["设备名称", "合计"],
@@ -249,6 +262,7 @@ test("count and aggregates exclude summary rows and retain contributing evidence
 	const avg = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "avg",
 			column: "合计",
 			selectColumns: ["设备名称", "合计"],
@@ -261,6 +275,7 @@ test("count and aggregates exclude summary rows and retain contributing evidence
 	const min = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "min",
 			column: "合计",
 			selectColumns: ["设备名称", "合计"],
@@ -274,6 +289,7 @@ test("count and aggregates exclude summary rows and retain contributing evidence
 	const max = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "max",
 			column: "合计",
 			selectColumns: ["设备名称", "合计"],
@@ -283,6 +299,64 @@ test("count and aggregates exclude summary rows and retain contributing evidence
 	);
 	assert.equal(max.answerValue, 300_000);
 	assert.equal(max.matchedRows[0].设备名称, "存储阵列");
+});
+
+test("global operations refuse incomplete semantic TopK table coverage", () => {
+	const incomplete: TableDatasetInput = {
+		records: quote.records.slice(0, 1),
+		summaryRows: quote.summaryRows,
+	};
+	for (const plan of [
+		{
+			mode: "single" as const,
+			tableId: "quote",
+			operation: "count" as const,
+			selectColumns: ["设备名称"],
+			includeSummaryRows: false,
+		},
+		{
+			mode: "single" as const,
+			tableId: "quote",
+			operation: "sum" as const,
+			column: "合计",
+			selectColumns: ["设备名称", "合计"],
+			includeSummaryRows: false,
+		},
+		{
+			mode: "single" as const,
+			tableId: "quote",
+			operation: "topN" as const,
+			column: "单价",
+			direction: "desc" as const,
+			limit: 2,
+			selectColumns: ["设备名称", "单价"],
+			includeSummaryRows: false,
+		},
+	]) {
+		const result = executeTableQuery(plan, incomplete);
+		assert.equal(result.status, "refuse");
+		assert.equal(result.reason, "incomplete_table_coverage:row_gap");
+	}
+});
+
+test("complete cross-page coverage permits deterministic aggregation", () => {
+	const result = executeTableQuery(
+		{
+			mode: "single",
+			tableId: "quote",
+			operation: "sum",
+			column: "合计",
+			selectColumns: ["设备名称", "合计"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.equal(result.status, "success");
+	assert.equal(result.answerValue, 730_000);
+	assert.deepEqual(
+		result.evidence.map((item) => item.citationId),
+		["quote-p1", "quote-p2"],
+	);
 });
 
 test("M1 InternalCitation rows are accepted without a parallel table DTO", () => {
@@ -299,6 +373,7 @@ test("M1 InternalCitation rows are accepted without a parallel table DTO", () =>
 	const result = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "citation-table",
 			operation: "lookup",
 			entity: { column: "项目", value: "安全审计", match: "exact" },
 			selectColumns: ["项目", "金额"],
@@ -344,6 +419,8 @@ test("dual tables join only on explicit keys and preserve evidence from both tab
 	const result = executeTableQuery(
 		{
 			mode: "dual",
+			leftTableId: "inventory",
+			rightTableId: "maintenance",
 			operation: "join",
 			join: { leftColumn: "设备号", rightColumn: "设备号" },
 			entity: {
@@ -370,6 +447,8 @@ test("dual table compare uses normalized units and explicit value columns", () =
 	const result = executeTableQuery(
 		{
 			mode: "dual",
+			leftTableId: "inventory",
+			rightTableId: "maintenance",
 			operation: "compare",
 			join: { leftColumn: "设备号", rightColumn: "设备号" },
 			leftValueColumn: "left.预算（万元）",
@@ -389,10 +468,42 @@ test("dual table compare uses normalized units and explicit value columns", () =
 	);
 });
 
+test("dual compare refuses when either table lacks global row coverage", () => {
+	const incompleteInventory: TableDatasetInput = {
+		records: [
+			tableRecord({
+				id: "inventory-partial",
+				tableId: "inventory",
+				headers: ["设备号", "设备名称", "安装位置", "预算（万元）"],
+				rows: [["GW-01", "边缘网关", "机房A-01", "12"]],
+				tableRowCount: 2,
+			}),
+		],
+	};
+	const result = executeTableQuery(
+		{
+			mode: "dual",
+			leftTableId: "inventory",
+			rightTableId: "maintenance",
+			operation: "compare",
+			join: { leftColumn: "设备号", rightColumn: "设备号" },
+			leftValueColumn: "left.预算（万元）",
+			rightValueColumn: "right.实际费用（元）",
+			comparison: "difference",
+			selectColumns: ["left.设备号"],
+			limit: 10,
+		},
+		{ left: incompleteInventory, right: maintenance },
+	);
+	assert.equal(result.status, "refuse");
+	assert.equal(result.reason, "incomplete_table_coverage:left");
+});
+
 test("unknown columns and absent join keys return typed outcomes", () => {
 	const missing = executeTableQuery(
 		{
 			mode: "single",
+			tableId: "quote",
 			operation: "sum",
 			column: "不存在",
 			selectColumns: [],
@@ -408,6 +519,8 @@ test("unknown columns and absent join keys return typed outcomes", () => {
 	const badJoin = executeTableQuery(
 		{
 			mode: "dual",
+			leftTableId: "inventory",
+			rightTableId: "maintenance",
 			operation: "join",
 			join: { leftColumn: "设备号", rightColumn: "合同号" },
 			selectColumns: ["left.设备名称"],

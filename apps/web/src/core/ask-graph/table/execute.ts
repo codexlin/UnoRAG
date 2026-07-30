@@ -8,6 +8,7 @@ import {
 } from "./contracts";
 import { buildTableEvidence } from "./evidence";
 import {
+	assessTableCoverage,
 	type NormalizedTable,
 	type NormalizedTableRow,
 	normalizeTable,
@@ -204,8 +205,25 @@ function executeSingle(
 	plan: Extract<TableQueryPlan, { mode: "single" }>,
 	input: TableDatasetInput,
 ): TableExecutionResult {
+	if (
+		["count", "sum", "avg", "min", "max", "sort", "topN"].includes(
+			plan.operation,
+		)
+	) {
+		const coverage = assessTableCoverage(input);
+		if (!coverage.complete) {
+			return failure(
+				"refuse",
+				plan.operation,
+				`incomplete_table_coverage:${coverage.reason}`,
+			);
+		}
+	}
 	const table = normalizeTable(input, plan.includeSummaryRows);
 	if (!table) return failure("refuse", plan.operation, "table_unavailable");
+	if (table.tableId !== plan.tableId) {
+		return failure("refuse", plan.operation, "table_id_mismatch");
+	}
 	const selected = resolveColumns(plan.selectColumns, table, plan.operation);
 	if ("result" in selected) return selected.result;
 
@@ -352,6 +370,23 @@ function executeDual(
 	const right = normalizeTable(rightInput);
 	if (!left || !right) {
 		return failure("refuse", plan.operation, "dual_table_unavailable");
+	}
+	if (
+		left.tableId !== plan.leftTableId ||
+		right.tableId !== plan.rightTableId
+	) {
+		return failure("refuse", plan.operation, "table_id_mismatch");
+	}
+	if (plan.operation === "compare") {
+		const leftCoverage = assessTableCoverage(leftInput);
+		const rightCoverage = assessTableCoverage(rightInput);
+		if (!leftCoverage.complete || !rightCoverage.complete) {
+			return failure(
+				"refuse",
+				plan.operation,
+				`incomplete_table_coverage:${!leftCoverage.complete ? "left" : "right"}`,
+			);
+		}
 	}
 	const leftKey = resolve(plan.join.leftColumn, left, plan.operation);
 	if ("result" in leftKey) return leftKey.result;

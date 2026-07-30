@@ -40,6 +40,7 @@ export const TablePredicateSchema = z
 
 const CommonSingleFields = {
 	mode: z.literal("single"),
+	tableId: z.string().trim().min(1).max(512),
 	selectColumns: z.array(ColumnNameSchema).max(32).default([]),
 	where: TablePredicateSchema.optional(),
 	includeSummaryRows: z.boolean().default(false),
@@ -122,6 +123,8 @@ export const JoinTableQueryPlanSchema = z
 	.object({
 		mode: z.literal("dual"),
 		operation: z.literal("join"),
+		leftTableId: z.string().trim().min(1).max(512),
+		rightTableId: z.string().trim().min(1).max(512),
 		join: JoinKeySchema,
 		entity: z
 			.object({
@@ -140,6 +143,8 @@ export const CompareTableQueryPlanSchema = z
 	.object({
 		mode: z.literal("dual"),
 		operation: z.literal("compare"),
+		leftTableId: z.string().trim().min(1).max(512),
+		rightTableId: z.string().trim().min(1).max(512),
 		join: JoinKeySchema,
 		leftValueColumn: ColumnNameSchema,
 		rightValueColumn: ColumnNameSchema,

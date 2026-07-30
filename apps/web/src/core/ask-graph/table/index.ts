@@ -12,11 +12,13 @@ export {
 } from "./contracts";
 export { executeTableQuery } from "./execute";
 export {
+	assessTableCoverage,
 	type NormalizedTable,
 	type NormalizedTableRow,
 	normalizeTable,
 	parseTableNumber,
 	resolveColumn,
+	type TableCoverage,
 	type TableDatasetInput,
 	type TableSourceRecord,
 } from "./normalize";

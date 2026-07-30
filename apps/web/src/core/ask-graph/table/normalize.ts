@@ -27,6 +27,21 @@ export interface NormalizedTable {
 	rows: NormalizedTableRow[];
 }
 
+export interface TableCoverage {
+	complete: boolean;
+	expectedRowCount: number | null;
+	coveredRowCount: number;
+	reason:
+		| "complete"
+		| "table_unavailable"
+		| "missing_row_metadata"
+		| "inconsistent_row_count"
+		| "invalid_row_range"
+		| "row_range_out_of_bounds"
+		| "inconsistent_headers"
+		| "row_gap";
+}
+
 const SUMMARY_ROW = /^(合计|总计|小计|汇总|汇总说明|备注|注[:：])/u;
 
 function sourceId(record: TableSourceRecord): string {
@@ -152,6 +167,122 @@ export function normalizeTable(
 		documentVersionId: seed.document_version_id,
 		headers,
 		rows,
+	};
+}
+
+export function assessTableCoverage(input: TableDatasetInput): TableCoverage {
+	const records = [...input.records].filter(
+		(record) =>
+			record.record_type === "table" &&
+			Boolean(record.table_id) &&
+			(record.headers?.length ?? 0) > 0 &&
+			Array.isArray(record.rows),
+	);
+	const seed = records[0];
+	if (!seed?.table_id) {
+		return {
+			complete: false,
+			expectedRowCount: null,
+			coveredRowCount: 0,
+			reason: "table_unavailable",
+		};
+	}
+	const compatible = records.filter(
+		(record) =>
+			record.table_id === seed.table_id &&
+			record.doc_id === seed.doc_id &&
+			record.document_version_id === seed.document_version_id,
+	);
+	const expectedCounts = new Set<number>();
+	const covered = new Set<number>();
+	const seedHeaders = seed.headers ?? [];
+
+	for (const record of compatible) {
+		const start = record.row_start;
+		const end = record.row_end;
+		const expected = record.table_row_count;
+		if (
+			start === null ||
+			start === undefined ||
+			end === null ||
+			end === undefined ||
+			expected === null ||
+			expected === undefined
+		) {
+			return {
+				complete: false,
+				expectedRowCount: null,
+				coveredRowCount: covered.size,
+				reason: "missing_row_metadata",
+			};
+		}
+		expectedCounts.add(expected);
+		if (expectedCounts.size > 1) {
+			return {
+				complete: false,
+				expectedRowCount: null,
+				coveredRowCount: covered.size,
+				reason: "inconsistent_row_count",
+			};
+		}
+		if (
+			(record.headers?.length ?? 0) !== seedHeaders.length ||
+			!(record.headers ?? []).every(
+				(header, index) =>
+					header.normalize("NFKC").trim() ===
+					seedHeaders[index]?.normalize("NFKC").trim(),
+			)
+		) {
+			return {
+				complete: false,
+				expectedRowCount: expected,
+				coveredRowCount: covered.size,
+				reason: "inconsistent_headers",
+			};
+		}
+		if (
+			expected === 0 &&
+			start === 0 &&
+			end === -1 &&
+			(record.rows?.length ?? 0) === 0
+		) {
+			continue;
+		}
+		if (
+			start < 0 ||
+			end < start ||
+			end - start + 1 !== (record.rows?.length ?? 0)
+		) {
+			return {
+				complete: false,
+				expectedRowCount: expected,
+				coveredRowCount: covered.size,
+				reason: "invalid_row_range",
+			};
+		}
+		if (end >= expected) {
+			return {
+				complete: false,
+				expectedRowCount: expected,
+				coveredRowCount: covered.size,
+				reason: "row_range_out_of_bounds",
+			};
+		}
+		for (let index = start; index <= end; index += 1) covered.add(index);
+	}
+
+	const expectedRowCount = expectedCounts.values().next().value ?? null;
+	const complete =
+		expectedRowCount !== null &&
+		covered.size === expectedRowCount &&
+		Array.from({ length: expectedRowCount }, (_, index) => index).every(
+			(index) => covered.has(index),
+		);
+	return {
+		complete,
+		expectedRowCount,
+		coveredRowCount: covered.size,
+		reason: complete ? "complete" : "row_gap",
 	};
 }
 
