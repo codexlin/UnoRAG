@@ -1,6 +1,6 @@
 # ADR-0005: TypeScript Core Runtime
 
-- Status: Accepted, implementation pending
+- Status: Accepted, implementation in progress
 - Date: 2026-07-30
 - Branch: `refactor/ts-core-runtime`
 - Supersedes: ADR-0004 as the target architecture after cutover
@@ -86,7 +86,7 @@ There is no UnoRAG-owned Python application in the target topology.
 | Durable workflow execution | DBOS system schema |
 | Parser selection and provider policy | TypeScript worker |
 | Heavy parsing | LiteParse locally or external `ParserProvider` |
-| DocumentIR, TableIR, chunk policy | TypeScript packages |
+| DocumentIR, TableIR, chunk policy | TypeScript core modules |
 | Embedding and Qdrant writes | TypeScript worker |
 | Retrieval and mandatory security filters | TypeScript `RetrievalService` |
 | Ask control flow | LangGraph.js |
@@ -99,7 +99,8 @@ not imply removing the Python SDK or MCP adapter.
 
 ## Process Topology
 
-The target deployment has two UnoRAG application processes:
+The target deployment has two UnoRAG application processes built from the
+same `apps/web` TypeScript application package:
 
 | Process | Responsibility | Scaling |
 |---|---|---|
@@ -109,6 +110,13 @@ The target deployment has two UnoRAG application processes:
 Heavy parsing must not execute in the Next.js request process. Native modules
 such as LiteParse belong in the worker dependency boundary so they do not
 inflate or complicate the web server bundle.
+
+UnoRAG does not introduce internal npm workspace packages for this migration.
+Domain and transport boundaries live under `apps/web/src/core`,
+`apps/web/src/server`, and `apps/web/src/worker`. A module may be extracted
+into a separately versioned package only when a real second application or
+external consumer needs to depend on it. Process isolation does not require
+package or repository isolation.
 
 Elysia is initially mounted in a Next.js App Router catch-all route. It is a
 code boundary, not a third network service. Business handlers and domain
@@ -383,7 +391,8 @@ This is a strangler migration, not a rewrite-and-replace release.
 
 ### M0: Contracts and Characterization
 
-- Create `packages/contracts`, `packages/document-ir`, and shared Zod schemas.
+- Create `apps/web/src/core/contracts`,
+  `apps/web/src/core/document-ir`, and shared Zod schemas.
 - Create a transport-independent domain service boundary and an embedded
   Elysia API characterization route.
 - Serialize representative Python DocumentIR/TableIR fixtures.
@@ -401,7 +410,7 @@ Exit gate:
 
 ### M1: TypeScript Retrieval
 
-- Create `packages/retrieval`.
+- Create `apps/web/src/core/retrieval`.
 - Implement Qdrant payload schema, collection manager, mandatory scope filter,
   dense/sparse hybrid query, and result mapping.
 - Dual-run Python and TS retrieval against the same active generation.
@@ -415,7 +424,7 @@ Exit gate:
 
 ### M2: TypeScript Ask Graph
 
-- Create `packages/ask-graph` and `packages/ai`.
+- Create `apps/web/src/core/ask-graph` and `apps/web/src/core/ai`.
 - Port deterministic nodes first, then table nodes, then generation.
 - Load conversation history from `app.threads` / `app.turns`.
 - Shadow Python and TS graphs for deterministic and live evaluation.
@@ -428,7 +437,8 @@ Exit gate:
 
 ### M3: DBOS Lifecycle and Parser Providers
 
-- Create `apps/worker`.
+- Create a worker entrypoint under `apps/web/src/worker` and run it as an
+  independently scalable process/image from the same application package.
 - Add DBOS system schema and least-privilege worker identity.
 - Implement `ParserProvider`, MinerU provider, LiteParse provider, optional
   LlamaParse provider, and DocumentIR normalizers.

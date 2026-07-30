@@ -1,0 +1,40 @@
+{
+	"contract_version": "ask-graph-v1",
+	"node_names": [
+		"query_router",
+		"build_retrieval_plan",
+		"clarify",
+		"build_table_plan",
+		"table_retrieve",
+		"table_execute",
+		"rewrite",
+		"retrieve",
+		"judge",
+		"retry",
+		"generate",
+		"refuse"
+	],
+	"state_fields": [
+		"session_id",
+		"question",
+		"library_id",
+		"history",
+		"rewritten_question",
+		"citations",
+		"answer",
+		"refused",
+		"refuse_reason",
+		"retrieval_attempts",
+		"judgement",
+		"retrieval_debug",
+		"trace_id",
+		"query_type",
+		"route_reason",
+		"retrieval_plan",
+		"table_query_plan",
+		"table_execution",
+		"upgrade",
+		"upgrade_reason",
+		"downgrade_reason"
+	]
+}

@@ -5,7 +5,9 @@
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
     "lint": "pnpm --filter web lint",
-    "format": "pnpm --filter web format"
+    "format": "pnpm --filter web format",
+    "test:ts-core": "pnpm --filter web test:ts-core",
+    "typecheck:ts-core": "pnpm --filter web typecheck"
   },
   "packageManager": "pnpm@9.7.1"
 }

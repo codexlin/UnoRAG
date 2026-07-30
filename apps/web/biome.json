@@ -32,6 +32,14 @@
 			"tailwindDirectives": true
 		}
 	},
+	"overrides": [
+		{
+			"includes": ["tests/fixtures/ts-core/*.json"],
+			"formatter": {
+				"enabled": false
+			}
+		}
+	],
 	"assist": {
 		"enabled": true,
 		"actions": {

@@ -55,18 +55,12 @@ test("runtime roles grant API and outbox only their owned tables", async () => {
 
 test("runtime verification covers complex parse and library finalization grants", async () => {
 	const verification = await source("ops/postgres/verify-runtime-roles.sql");
-	assert.match(
-		verification,
-		/'app\.jobs',\s*'payload',\s*'UPDATE'/s,
-	);
+	assert.match(verification, /'app\.jobs',\s*'payload',\s*'UPDATE'/s);
 	assert.match(
 		verification,
 		/'app\.outbox_events',\s*'idempotency_key',\s*'SELECT'/s,
 	);
-	assert.match(
-		verification,
-		/'app\.outbox_events',\s*'SELECT'/s,
-	);
+	assert.match(verification, /'app\.outbox_events',\s*'SELECT'/s);
 });
 
 test("document delete uses a narrow metadata projection cleaner", async () => {

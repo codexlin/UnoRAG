@@ -52,6 +52,8 @@ jobs:
           enable-cache: true
       - name: Install API deps
         run: uv sync --group dev
+      - name: Check TypeScript contract fixtures
+        run: uv run python -m scripts.export_ts_contract_fixtures --check
       - name: Full pytest
         run: uv run pytest -q
 
@@ -69,6 +71,10 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: Install
         run: pnpm install --frozen-lockfile
+      - name: TypeScript core contracts
+        run: |
+          pnpm typecheck:ts-core
+          pnpm test:ts-core
       - name: Test
         run: pnpm --filter web test
       - name: Lint
