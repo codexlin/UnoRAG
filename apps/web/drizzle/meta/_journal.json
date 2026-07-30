@@ -99,6 +99,13 @@
       "when": 1785334200000,
       "tag": "0013_reconcile_library_terminal_status",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1785423205561,
+      "tag": "0014_scoped_conversations",
+      "breakpoints": true
     }
   ]
 }

@@ -64,6 +64,7 @@ export const users = appSchema.table(
 			table.organizationId,
 			table.externalSubject,
 		),
+		uniqueIndex("users_org_id_uq").on(table.organizationId, table.id),
 		index("users_org_email_idx").on(table.organizationId, table.email),
 		check(
 			"users_organization_role_check",
@@ -140,6 +141,7 @@ export const workspaces = appSchema.table(
 	},
 	(table) => [
 		uniqueIndex("workspaces_org_slug_uq").on(table.organizationId, table.slug),
+		uniqueIndex("workspaces_org_id_uq").on(table.organizationId, table.id),
 	],
 );
 
@@ -322,7 +324,124 @@ export const libraries = appSchema.table(
 	},
 	(table) => [
 		uniqueIndex("libraries_rag_id_uq").on(table.ragLibraryId),
+		uniqueIndex("libraries_scope_rag_id_uq").on(
+			table.organizationId,
+			table.workspaceId,
+			table.ragLibraryId,
+		),
 		index("libraries_workspace_idx").on(table.workspaceId, table.updatedAt),
+	],
+);
+
+export const conversationThreads = appSchema.table(
+	"threads",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		workspaceId: uuid("workspace_id").notNull(),
+		principalId: uuid("principal_id").notNull(),
+		ragLibraryId: varchar("rag_library_id", { length: 128 }),
+		title: varchar("title", { length: 256 }),
+		status: varchar("status", { length: 32 }).default("active").notNull(),
+		...timestamps,
+	},
+	(table) => [
+		foreignKey({
+			name: "threads_org_workspace_fk",
+			columns: [table.organizationId, table.workspaceId],
+			foreignColumns: [workspaces.organizationId, workspaces.id],
+		}).onDelete("cascade"),
+		foreignKey({
+			name: "threads_org_principal_fk",
+			columns: [table.organizationId, table.principalId],
+			foreignColumns: [users.organizationId, users.id],
+		}).onDelete("cascade"),
+		foreignKey({
+			name: "threads_workspace_principal_fk",
+			columns: [table.workspaceId, table.principalId],
+			foreignColumns: [workspaceMembers.workspaceId, workspaceMembers.userId],
+		}).onDelete("cascade"),
+		foreignKey({
+			name: "threads_scope_library_fk",
+			columns: [table.organizationId, table.workspaceId, table.ragLibraryId],
+			foreignColumns: [
+				libraries.organizationId,
+				libraries.workspaceId,
+				libraries.ragLibraryId,
+			],
+		}).onDelete("restrict"),
+		uniqueIndex("threads_id_scope_uq").on(
+			table.id,
+			table.organizationId,
+			table.workspaceId,
+			table.principalId,
+		),
+		index("threads_scope_updated_idx").on(
+			table.organizationId,
+			table.workspaceId,
+			table.principalId,
+			table.updatedAt,
+			table.id,
+		),
+		check("threads_status_check", sql`${table.status} in ('active', 'hidden')`),
+	],
+);
+
+export const conversationTurns = appSchema.table(
+	"turns",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		threadId: uuid("thread_id").notNull(),
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		principalId: uuid("principal_id").notNull(),
+		sequence: integer("sequence").notNull(),
+		role: varchar("role", { length: 32 }).notNull(),
+		content: text("content").notNull(),
+		citations: jsonb("citations")
+			.$type<Record<string, unknown>[]>()
+			.default([])
+			.notNull(),
+		debug: jsonb("debug").$type<Record<string, unknown> | null>(),
+		status: varchar("status", { length: 32 }).default("complete").notNull(),
+		usage: jsonb("usage").$type<Record<string, unknown> | null>(),
+		...timestamps,
+	},
+	(table) => [
+		foreignKey({
+			name: "turns_thread_scope_fk",
+			columns: [
+				table.threadId,
+				table.organizationId,
+				table.workspaceId,
+				table.principalId,
+			],
+			foreignColumns: [
+				conversationThreads.id,
+				conversationThreads.organizationId,
+				conversationThreads.workspaceId,
+				conversationThreads.principalId,
+			],
+		}).onDelete("cascade"),
+		uniqueIndex("turns_thread_sequence_uq").on(table.threadId, table.sequence),
+		index("turns_scope_thread_sequence_idx").on(
+			table.organizationId,
+			table.workspaceId,
+			table.principalId,
+			table.threadId,
+			table.sequence,
+		),
+		check("turns_sequence_check", sql`${table.sequence} > 0`),
+		check(
+			"turns_role_check",
+			sql`${table.role} in ('system', 'user', 'assistant', 'tool')`,
+		),
+		check(
+			"turns_status_check",
+			sql`${table.status} in ('pending', 'complete', 'failed', 'cancelled', 'truncated')`,
+		),
 	],
 );
 
