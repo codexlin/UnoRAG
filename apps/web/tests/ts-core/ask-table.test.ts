@@ -1,0 +1,420 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+	executeTableQuery,
+	parseTableNumber,
+	type TableDatasetInput,
+	TableExecutionResultSchema,
+	TableQueryPlanSchema,
+} from "../../src/core/ask-graph/table";
+import type { StoredQdrantPayload } from "../../src/core/retrieval";
+import { mapQdrantHitToInternalCitation } from "../../src/core/retrieval/citation-mapper";
+
+function tableRecord(input: {
+	id: string;
+	tableId: string;
+	headers: string[];
+	rows: string[][];
+	rowStart?: number;
+	pageStart?: number;
+	pageEnd?: number;
+	docId?: string;
+}): StoredQdrantPayload {
+	return {
+		library_id: "library-a",
+		doc_id: input.docId ?? `doc-${input.tableId}`,
+		title: input.tableId,
+		chunk_index: input.rowStart ?? 0,
+		text: input.rows.map((row) => row.join(" | ")).join("\n"),
+		document_version_id: "version-a",
+		generation_id: "generation-a",
+		tenant_id: "tenant-a",
+		workspace_id: "workspace-a",
+		record_type: "table",
+		record_id: input.id,
+		table_id: input.tableId,
+		headers: input.headers,
+		rows: input.rows,
+		row_start: input.rowStart ?? 0,
+		row_end: (input.rowStart ?? 0) + input.rows.length - 1,
+		table_row_count: input.rows.length,
+		page_start: input.pageStart ?? 1,
+		page_end: input.pageEnd ?? input.pageStart ?? 1,
+	};
+}
+
+const quoteHeaders = ["序号", "设备名称", "单价（元）", "合计（元）"];
+const quote: TableDatasetInput = {
+	records: [
+		tableRecord({
+			id: "quote-p1",
+			tableId: "quote",
+			headers: quoteHeaders,
+			rows: [
+				["1", "边缘网关", "9万", "90000"],
+				["2", "服务器", "120,000元", "24万元"],
+			],
+			pageStart: 1,
+		}),
+		tableRecord({
+			id: "quote-p2",
+			tableId: "quote",
+			headers: quoteHeaders,
+			rows: [
+				["3", "交换机", "10万", "100000"],
+				["4", "存储阵列", "15万元", "300000"],
+				["合计", "", "", "730000"],
+				["", "", ""],
+			],
+			rowStart: 2,
+			pageStart: 2,
+		}),
+	],
+	summaryRows: [{ raw_text: "合计 |  |  | 730000" }],
+};
+
+test("strict plan rejects unknown and executable expression fields", () => {
+	const maliciousPlan = {
+		mode: "single",
+		operation: "sum",
+		column: "合计（元）",
+		selectColumns: [],
+		includeSummaryRows: false,
+		expression: "process.exit(1)",
+	};
+	assert.equal(TableQueryPlanSchema.safeParse(maliciousPlan).success, false);
+	const refused = executeTableQuery(maliciousPlan, quote);
+	assert.deepEqual(
+		{ status: refused.status, reason: refused.reason },
+		{ status: "refuse", reason: "invalid_plan" },
+	);
+	const result = executeTableQuery(
+		{
+			mode: "single",
+			operation: "filter",
+			where: {
+				column: "单价（元）",
+				operator: ">",
+				value: "require('fs').readFileSync('/etc/passwd')",
+			},
+			selectColumns: [],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.equal(result.status, "clarify");
+	assert.match(result.reason, /non_numeric_comparison/);
+	assert.equal(TableExecutionResultSchema.safeParse(result).success, true);
+});
+
+test("unit parser handles Chinese units, header units, percentages and rejects expressions", () => {
+	assert.equal(parseTableNumber(">= 10万"), null);
+	assert.equal(parseTableNumber("10万"), 100_000);
+	assert.equal(parseTableNumber("十万"), 100_000);
+	assert.equal(parseTableNumber("一亿二千万"), 120_000_000);
+	assert.equal(parseTableNumber("12", "预算（万元）"), 120_000);
+	assert.ok(Math.abs((parseTableNumber("58.7%") ?? 0) - 0.587) < 1e-12);
+	assert.equal(parseTableNumber("1+2"), null);
+});
+
+test("ASCII comparison >= 10万 preserves cross-page row-group evidence", () => {
+	const result = executeTableQuery(
+		{
+			mode: "single",
+			operation: "filter",
+			where: { column: "单价", operator: ">=", value: "10万" },
+			selectColumns: ["设备名称", "单价"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.equal(result.status, "success");
+	assert.equal(result.matchedCount, 3);
+	assert.deepEqual(
+		result.matchedRows.map((row) => row.设备名称),
+		["服务器", "交换机", "存储阵列"],
+	);
+	assert.deepEqual(
+		result.evidence.map((item) => item.citationId),
+		["quote-p1", "quote-p2"],
+	);
+	assert.deepEqual(result.evidence[1].rowIndices, [2, 3]);
+	assert.equal(result.evidence[1].pageStart, 2);
+});
+
+test("Chinese comparison operators use the same unit-safe path", () => {
+	const result = executeTableQuery(
+		{
+			mode: "single",
+			operation: "filter",
+			where: { column: "单价", operator: "不少于", value: "10万" },
+			selectColumns: ["设备名称", "单价"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.equal(result.status, "success");
+	assert.deepEqual(
+		result.matchedRows.map((row) => row.设备名称),
+		["服务器", "交换机", "存储阵列"],
+	);
+});
+
+test("lookup, sort and topN are deterministic over irregular rows", () => {
+	const lookup = executeTableQuery(
+		{
+			mode: "single",
+			operation: "lookup",
+			entity: { column: "设备名称", value: "服务器", match: "exact" },
+			selectColumns: ["设备名称", "合计"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.equal(lookup.status, "success");
+	assert.equal(lookup.matchedRows[0]["合计（元）"], "24万元");
+
+	const top = executeTableQuery(
+		{
+			mode: "single",
+			operation: "topN",
+			column: "单价",
+			direction: "desc",
+			limit: 2,
+			selectColumns: ["设备名称", "单价"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.deepEqual(
+		top.matchedRows.map((row) => row.设备名称),
+		["存储阵列", "服务器"],
+	);
+
+	const sorted = executeTableQuery(
+		{
+			mode: "single",
+			operation: "sort",
+			column: "单价",
+			direction: "asc",
+			limit: 2,
+			selectColumns: ["设备名称", "单价"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.deepEqual(
+		sorted.matchedRows.map((row) => row.设备名称),
+		["边缘网关", "交换机"],
+	);
+});
+
+test("count and aggregates exclude summary rows and retain contributing evidence", () => {
+	const count = executeTableQuery(
+		{
+			mode: "single",
+			operation: "count",
+			selectColumns: ["设备名称"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.equal(count.answerValue, 4);
+	const countWithSummary = executeTableQuery(
+		{
+			mode: "single",
+			operation: "count",
+			selectColumns: ["设备名称"],
+			includeSummaryRows: true,
+		},
+		quote,
+	);
+	assert.equal(countWithSummary.answerValue, 5);
+
+	const sum = executeTableQuery(
+		{
+			mode: "single",
+			operation: "sum",
+			column: "合计",
+			selectColumns: ["设备名称", "合计"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.equal(sum.answerValue, 730_000);
+	assert.equal(sum.evidence.length, 2);
+	assert.equal(sum.evidence.flatMap((item) => item.rows).length, 4);
+
+	const avg = executeTableQuery(
+		{
+			mode: "single",
+			operation: "avg",
+			column: "合计",
+			selectColumns: ["设备名称", "合计"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.equal(avg.answerValue, 182_500);
+
+	const min = executeTableQuery(
+		{
+			mode: "single",
+			operation: "min",
+			column: "合计",
+			selectColumns: ["设备名称", "合计"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.equal(min.answerValue, 90_000);
+	assert.equal(min.matchedRows[0].设备名称, "边缘网关");
+
+	const max = executeTableQuery(
+		{
+			mode: "single",
+			operation: "max",
+			column: "合计",
+			selectColumns: ["设备名称", "合计"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.equal(max.answerValue, 300_000);
+	assert.equal(max.matchedRows[0].设备名称, "存储阵列");
+});
+
+test("M1 InternalCitation rows are accepted without a parallel table DTO", () => {
+	const payload = tableRecord({
+		id: "citation-source",
+		tableId: "citation-table",
+		headers: ["项目", "金额（元）"],
+		rows: [["安全审计", "120000"]],
+	});
+	const citation = mapQdrantHitToInternalCitation(
+		{ id: "citation-hit", score: 0.91, payload },
+		1,
+	);
+	const result = executeTableQuery(
+		{
+			mode: "single",
+			operation: "lookup",
+			entity: { column: "项目", value: "安全审计", match: "exact" },
+			selectColumns: ["项目", "金额"],
+			includeSummaryRows: false,
+		},
+		{ records: [citation] },
+	);
+	assert.equal(result.status, "success");
+	assert.equal(result.evidence[0].citationId, "citation-hit");
+	assert.equal(result.matchedRows[0]["金额（元）"], "120000");
+});
+
+const inventory: TableDatasetInput = {
+	records: [
+		tableRecord({
+			id: "inventory",
+			tableId: "inventory",
+			headers: ["设备号", "设备名称", "安装位置", "预算（万元）"],
+			rows: [
+				["GW-01", "边缘网关", "机房A-01", "12"],
+				["SV-02", "服务器", "机房B-12", "30"],
+			],
+		}),
+	],
+};
+
+const maintenance: TableDatasetInput = {
+	records: [
+		tableRecord({
+			id: "maintenance",
+			tableId: "maintenance",
+			headers: ["设备号", "最近检修", "实际费用（元）"],
+			rows: [
+				["GW-01", "2026-03-01", "100000"],
+				["SV-02", "2026-01-15", "350000"],
+			],
+			docId: "doc-maintenance",
+		}),
+	],
+};
+
+test("dual tables join only on explicit keys and preserve evidence from both tables", () => {
+	const result = executeTableQuery(
+		{
+			mode: "dual",
+			operation: "join",
+			join: { leftColumn: "设备号", rightColumn: "设备号" },
+			entity: {
+				column: "left.设备号",
+				value: "GW-01",
+				match: "exact",
+			},
+			selectColumns: ["left.设备名称", "left.安装位置", "right.最近检修"],
+			limit: 10,
+		},
+		{ left: inventory, right: maintenance },
+	);
+	assert.equal(result.status, "success");
+	assert.equal(result.matchedCount, 1);
+	assert.equal(result.matchedRows[0]["left.安装位置"], "机房A-01");
+	assert.equal(result.matchedRows[0]["right.最近检修"], "2026-03-01");
+	assert.deepEqual(
+		new Set(result.evidence.map((item) => item.tableId)),
+		new Set(["inventory", "maintenance"]),
+	);
+});
+
+test("dual table compare uses normalized units and explicit value columns", () => {
+	const result = executeTableQuery(
+		{
+			mode: "dual",
+			operation: "compare",
+			join: { leftColumn: "设备号", rightColumn: "设备号" },
+			leftValueColumn: "left.预算（万元）",
+			rightValueColumn: "right.实际费用（元）",
+			comparison: "difference",
+			selectColumns: ["left.设备号", "left.设备名称"],
+			limit: 10,
+		},
+		{ left: inventory, right: maintenance },
+	);
+	assert.equal(result.status, "success");
+	assert.deepEqual(
+		(result.answerValue as { comparison: number }[]).map(
+			(item) => item.comparison,
+		),
+		[20_000, -50_000],
+	);
+});
+
+test("unknown columns and absent join keys return typed outcomes", () => {
+	const missing = executeTableQuery(
+		{
+			mode: "single",
+			operation: "sum",
+			column: "不存在",
+			selectColumns: [],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.deepEqual(
+		{ status: missing.status, reason: missing.reason },
+		{ status: "clarify", reason: "missing_column:不存在" },
+	);
+
+	const badJoin = executeTableQuery(
+		{
+			mode: "dual",
+			operation: "join",
+			join: { leftColumn: "设备号", rightColumn: "合同号" },
+			selectColumns: ["left.设备名称"],
+			limit: 10,
+		},
+		{ left: inventory, right: maintenance },
+	);
+	assert.equal(badJoin.status, "clarify");
+	assert.equal(badJoin.reason, "missing_column:合同号");
+});
