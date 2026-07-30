@@ -6,9 +6,11 @@ import { conversationThreads, conversationTurns } from "@/db/schema";
 
 import { ConversationThreadNotFoundError } from "./errors";
 import type {
+	AppendConversationExchangeInput,
 	AppendConversationTurnInput,
 	ConversationScope,
 	CreateConversationThreadInput,
+	CreateConversationThreadWithTurnsInput,
 	ListConversationThreadsInput,
 } from "./types";
 
@@ -54,6 +56,7 @@ export class ConversationRepository {
 				organizationId: scope.organizationId,
 				workspaceId: scope.workspaceId,
 				principalId: scope.principalId,
+				sessionId: input.sessionId?.trim() || null,
 				ragLibraryId: input.ragLibraryId?.trim() || null,
 				title: input.title?.trim() || null,
 			})
@@ -62,6 +65,49 @@ export class ConversationRepository {
 			throw new Error("failed to create conversation thread");
 		}
 		return created;
+	}
+
+	async createThreadWithTurns(
+		scope: ConversationScope,
+		input: CreateConversationThreadWithTurnsInput,
+	) {
+		return this.db.transaction(async (tx) => {
+			const [thread] = await tx
+				.insert(conversationThreads)
+				.values({
+					organizationId: scope.organizationId,
+					workspaceId: scope.workspaceId,
+					principalId: scope.principalId,
+					sessionId: input.sessionId?.trim() || null,
+					ragLibraryId: input.ragLibraryId?.trim() || null,
+					title: input.title?.trim() || null,
+				})
+				.returning();
+			if (!thread) {
+				throw new Error("failed to create conversation thread");
+			}
+			const createdTurns = input.turns.length
+				? await tx
+						.insert(conversationTurns)
+						.values(
+							input.turns.map((turn, index) => ({
+								threadId: thread.id,
+								organizationId: scope.organizationId,
+								workspaceId: scope.workspaceId,
+								principalId: scope.principalId,
+								sequence: index + 1,
+								role: turn.role,
+								content: turn.content,
+								citations: turn.citations ?? [],
+								debug: turn.debug ?? null,
+								status: turn.status ?? "complete",
+								usage: turn.usage ?? null,
+							})),
+						)
+						.returning()
+				: [];
+			return { ...thread, turns: createdTurns };
+		});
 	}
 
 	async getThread(scope: ConversationScope, threadId: string) {
@@ -112,6 +158,15 @@ export class ConversationRepository {
 			.limit(normalizeLimit(limit));
 	}
 
+	async touchThread(scope: ConversationScope, threadId: string) {
+		const [updated] = await this.db
+			.update(conversationThreads)
+			.set({ updatedAt: new Date() })
+			.where(threadScope(scope, threadId, "active"))
+			.returning();
+		return updated ?? null;
+	}
+
 	async appendTurn(
 		scope: ConversationScope,
 		threadId: string,
@@ -156,6 +211,54 @@ export class ConversationRepository {
 				throw new Error("failed to append conversation turn");
 			}
 
+			await tx
+				.update(conversationThreads)
+				.set({ updatedAt: new Date() })
+				.where(threadScope(scope, threadId));
+			return created;
+		});
+	}
+
+	async appendExchange(
+		scope: ConversationScope,
+		threadId: string,
+		input: AppendConversationExchangeInput,
+	) {
+		return this.db.transaction(async (tx) => {
+			const [thread] = await tx
+				.select({ id: conversationThreads.id })
+				.from(conversationThreads)
+				.where(threadScope(scope, threadId, "active"))
+				.for("update")
+				.limit(1);
+			if (!thread) {
+				throw new ConversationThreadNotFoundError();
+			}
+			const [latest] = await tx
+				.select({ sequence: conversationTurns.sequence })
+				.from(conversationTurns)
+				.where(turnScope(scope, threadId))
+				.orderBy(desc(conversationTurns.sequence))
+				.limit(1);
+			const sequence = (latest?.sequence ?? 0) + 1;
+			const created = await tx
+				.insert(conversationTurns)
+				.values(
+					[input.user, input.assistant].map((turn, index) => ({
+						threadId,
+						organizationId: scope.organizationId,
+						workspaceId: scope.workspaceId,
+						principalId: scope.principalId,
+						sequence: sequence + index,
+						role: turn.role,
+						content: turn.content,
+						citations: turn.citations ?? [],
+						debug: turn.debug ?? null,
+						status: turn.status ?? "complete",
+						usage: turn.usage ?? null,
+					})),
+				)
+				.returning();
 			await tx
 				.update(conversationThreads)
 				.set({ updatedAt: new Date() })

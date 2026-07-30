@@ -1,0 +1,1 @@
+ALTER TABLE "app"."threads" ADD COLUMN "session_id" varchar(128);

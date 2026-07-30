@@ -20,6 +20,7 @@ export type ConversationDebug = Record<string, unknown>;
 export type ConversationUsage = Record<string, unknown>;
 
 export type CreateConversationThreadInput = {
+	sessionId?: string | null;
 	ragLibraryId?: string | null;
 	title?: string | null;
 };
@@ -36,4 +37,14 @@ export type AppendConversationTurnInput = {
 	debug?: ConversationDebug | null;
 	status?: ConversationTurnStatus;
 	usage?: ConversationUsage | null;
+};
+
+export type CreateConversationThreadWithTurnsInput =
+	CreateConversationThreadInput & {
+		turns: AppendConversationTurnInput[];
+	};
+
+export type AppendConversationExchangeInput = {
+	user: AppendConversationTurnInput;
+	assistant: AppendConversationTurnInput;
 };

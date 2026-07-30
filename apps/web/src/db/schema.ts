@@ -342,6 +342,7 @@ export const conversationThreads = appSchema.table(
 			.references(() => organizations.id, { onDelete: "cascade" }),
 		workspaceId: uuid("workspace_id").notNull(),
 		principalId: uuid("principal_id").notNull(),
+		sessionId: varchar("session_id", { length: 128 }),
 		ragLibraryId: varchar("rag_library_id", { length: 128 }),
 		title: varchar("title", { length: 256 }),
 		status: varchar("status", { length: 32 }).default("active").notNull(),
