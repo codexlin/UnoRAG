@@ -21,6 +21,10 @@ images:
     repository: unorag-web-worker
     tag: local
     pullPolicy: IfNotPresent
+  outbox:
+    repository: unorag-web-outbox
+    tag: local
+    pullPolicy: IfNotPresent
 
 # ---------------------------------------------------------------------------
 # Workloads
@@ -168,8 +172,9 @@ external:
   # postgresql://…  (control-plane / drizzle)
   # postgresql+psycopg://… for FastAPI DATABASE_URL if required by Settings
   postgres:
-    # Set secret keys: DATABASE_URL, WORKER_DATABASE_URL, RAG_READ_DATABASE_URL,
-    # API_DATABASE_URL, and DBOS_SYSTEM_DATABASE_URL when dbos.enabled=true.
+    # Set secret keys: DATABASE_URL, OUTBOX_DATABASE_URL, WORKER_DATABASE_URL,
+    # RAG_READ_DATABASE_URL, API_DATABASE_URL, and DBOS_SYSTEM_DATABASE_URL
+    # when dbos.enabled=true.
     existingSecret: ""
   qdrant:
     url: http://qdrant.external:6333
@@ -189,6 +194,12 @@ config:
   documentLifecycleV2: "true"
   # Opt-in cohort: only newly inserted document.delete jobs use DBOS.
   dbosDocumentDeleteEnabled: "false"
+  # Opt-in cohort: only newly inserted local TXT/Markdown ingest jobs use DBOS.
+  dbosTextIngestEnabled: "false"
+  # Disable this first to stop routing; keep dbosTextIngestEnabled on to drain.
+  dbosTextIngestRouteEnabled: "false"
+  # Required for ACL edits on documents with an active generation.
+  dbosAclProjectionEnabled: "false"
   internalAuthEnabled: "true"
   internalAuthReplayBackend: redis
   activeGenerationGateEnabled: "true"
@@ -234,7 +245,8 @@ config:
 # Prefer existingSecret. Pods inject least-privilege keys (not full Secret via envFrom).
 # Required keys (align with deploy/config/runtime.secret):
 #   UNORAG_INTERNAL_SECRET, UNORAG_SESSION_SECRET
-#   DATABASE_URL, API_DATABASE_URL, WORKER_DATABASE_URL, RAG_READ_DATABASE_URL
+#   DATABASE_URL, OUTBOX_DATABASE_URL, API_DATABASE_URL, WORKER_DATABASE_URL,
+#   RAG_READ_DATABASE_URL
 #   DBOS_SYSTEM_DATABASE_URL (only when dbos.enabled=true; dedicated database)
 #   MIGRATOR_DATABASE_URL (migrate jobs only)
 #   LLM_API_KEY  (mapped to OPENAI_API_KEY for api/worker)
@@ -248,6 +260,7 @@ secret:
   #   UNORAG_INTERNAL_SECRET: ""
   #   UNORAG_SESSION_SECRET: ""
   #   DATABASE_URL: ""
+  #   OUTBOX_DATABASE_URL: ""
   #   API_DATABASE_URL: ""
   #   WORKER_DATABASE_URL: ""
   #   RAG_READ_DATABASE_URL: ""
@@ -260,6 +273,14 @@ secret:
 # Migration Jobs (opt-in; run as separate release step)
 # ---------------------------------------------------------------------------
 migrate:
+  aclProjectionGate:
+    # Independent from schema migrations so externally managed migrations
+    # cannot silently bypass restricted-document convergence.
+    enabled: true
+  runtimeRoles:
+    # Replays grants and verifies that every runtime DSN authenticates as the
+    # fixed least-privilege login role documented by the chart.
+    enabled: true
   web:
     enabled: false
     image:

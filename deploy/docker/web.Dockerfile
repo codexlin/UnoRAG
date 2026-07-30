@@ -25,11 +25,15 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
 	NODE_ENV=production
 RUN pnpm --filter web build
 
-# One-shot control-plane migrator (drizzle-kit only — no Next/node_modules monorepo).
+# One-shot control-plane migrator plus PostgreSQL runtime-role configurator.
 FROM node:22-bookworm-slim AS migrator
 WORKDIR /migrate
 # Keep NODE_ENV unset during install so tooling resolves cleanly; set at runtime via compose if needed.
-RUN corepack enable && corepack prepare pnpm@9.7.1 --activate
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends postgresql-client \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& corepack enable \
+	&& corepack prepare pnpm@9.7.1 --activate
 # Pin the same ranges as apps/web; install only migration tooling.
 COPY apps/web/package.json /tmp/web.package.json
 RUN node -e 'const fs=require("fs"); const web=JSON.parse(fs.readFileSync("/tmp/web.package.json","utf8")); fs.writeFileSync("package.json", JSON.stringify({name:"unorag-web-migrator",private:true,packageManager:"pnpm@9.7.1",scripts:{"db:migrate":"drizzle-kit migrate"},dependencies:{"drizzle-orm":web.dependencies["drizzle-orm"],pg:web.dependencies.pg,"drizzle-kit":web.devDependencies["drizzle-kit"]}},null,"\t")+"\n");' \
@@ -40,6 +44,7 @@ COPY apps/web/drizzle.config.ts ./
 COPY apps/web/drizzle ./drizzle
 # Referenced by drizzle.config schema path (migrate applies SQL in ./drizzle).
 COPY apps/web/src/db/schema.ts ./src/db/schema.ts
+COPY ops/postgres/configure-runtime-roles.sql ./ops/postgres/configure-runtime-roles.sql
 # Avoid Corepack re-fetching pnpm at container start.
 CMD ["./node_modules/.bin/drizzle-kit", "migrate"]
 
@@ -54,6 +59,9 @@ CMD ["node", "scripts/process-outbox.mjs", "--watch"]
 # dynamic production-port imports resolve identically in both processes.
 FROM deps AS worker
 COPY apps/web/src/worker apps/web/src/worker
+COPY apps/web/src/core/document-ir apps/web/src/core/document-ir
+COPY apps/web/src/core/ingest apps/web/src/core/ingest
+COPY apps/web/src/core/retrieval/embedding apps/web/src/core/retrieval/embedding
 COPY apps/web/tsconfig.json apps/web/
 WORKDIR /repo/apps/web
 ENV NODE_ENV=production

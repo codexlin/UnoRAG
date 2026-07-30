@@ -27,9 +27,10 @@ x-dbos-environment: &dbos-environment
   # parseable; the DBOS process rejects it if the profile is actually started.
   DBOS_SYSTEM_DATABASE_URL: ${DBOS_SYSTEM_DATABASE_URL:-postgresql://unorag_dbos_login:${UNORAG_DBOS_DB_PASSWORD:-dbos-profile-disabled}@postgres:5432/${UNORAG_DBOS_DATABASE:-unorag_dbos}}
   UNORAG_DBOS_APPLICATION_VERSION: ${UNORAG_DBOS_APPLICATION_VERSION:-lifecycle-v2}
-  UNORAG_DBOS_LISTEN_QUEUES: lifecycle
+  UNORAG_DBOS_LISTEN_QUEUES: ${UNORAG_DBOS_LISTEN_QUEUES:-lifecycle}
   UNORAG_DBOS_CLEANUP_ENABLED: "true"
   UNORAG_DBOS_DOCUMENT_DELETE_ENABLED: ${UNORAG_DBOS_DOCUMENT_DELETE_ENABLED:-false}
+  UNORAG_DBOS_TEXT_INGEST_ENABLED: ${UNORAG_DBOS_TEXT_INGEST_ENABLED:-false}
   DBOS_SYSTEM_DATABASE_POOL_SIZE: ${DBOS_SYSTEM_DATABASE_POOL_SIZE:-10}
   DBOS_LIFECYCLE_CONCURRENCY: ${DBOS_LIFECYCLE_CONCURRENCY:-2}
   DBOS_CONTROL_POLL_MS: ${DBOS_CONTROL_POLL_MS:-5000}
@@ -82,6 +83,9 @@ services:
       UNORAG_TS_RETRIEVAL_MODE: ${UNORAG_TS_RETRIEVAL_MODE:-off}
       UNORAG_ASK_RUNTIME: ${UNORAG_ASK_RUNTIME:-python}
       UNORAG_DBOS_DOCUMENT_DELETE_ENABLED: ${UNORAG_DBOS_DOCUMENT_DELETE_ENABLED:-false}
+      UNORAG_DBOS_TEXT_INGEST_ENABLED: ${UNORAG_DBOS_TEXT_INGEST_ENABLED:-false}
+      UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED: ${UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED:-false}
+      UNORAG_DBOS_ACL_PROJECTION_ENABLED: ${UNORAG_DBOS_ACL_PROJECTION_ENABLED:-false}
       QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
       OPENAI_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}
@@ -315,6 +319,12 @@ services:
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
       DOCUMENT_STORAGE_ROOT: /var/lib/unorag/documents
+      DOCUMENT_MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-52428800}
+      OPENAI_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_BASE_URL: ${LLM_BASE_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-10}
     volumes:
       - document_storage:/var/lib/unorag/documents
     depends_on:
@@ -471,6 +481,26 @@ services:
       - scripts/inspect-lifecycle.mjs
       - --fail-on-dead
       - --fail-on-stuck
+      - --fail-on-acl-projection
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: "no"
+
+  backfill-acl-projections:
+    profiles: ["ops"]
+    image: ${UNORAG_OUTBOX_IMAGE:?UNORAG_OUTBOX_IMAGE required}
+    working_dir: /repo/apps/web
+    environment:
+      # Upgrade-only mutation with the migrator credential. Runtime services
+      # retain their least-privilege identities.
+      DATABASE_URL: ${MIGRATOR_DATABASE_URL:-postgresql://${POSTGRES_USER:-unorag}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
+    command:
+      - node
+      - scripts/backfill-acl-projections.mjs
+      - --apply
     depends_on:
       postgres:
         condition: service_healthy

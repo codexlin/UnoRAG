@@ -25,8 +25,8 @@ spec:
       {{- end }}
       containers:
         - name: outbox-worker
-          image: "{{ .Values.migrate.web.image.repository }}:{{ .Values.migrate.web.image.tag }}"
-          imagePullPolicy: {{ .Values.migrate.web.image.pullPolicy }}
+          image: "{{ .Values.images.outbox.repository }}:{{ .Values.images.outbox.tag }}"
+          imagePullPolicy: {{ .Values.images.outbox.pullPolicy }}
           workingDir: /repo/apps/web
           command: ["node", "scripts/process-outbox.mjs", "--watch"]
           env:
@@ -46,7 +46,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "unorag.secretName" . }}
-                  key: DATABASE_URL
+                  key: OUTBOX_DATABASE_URL
             - name: UNORAG_INTERNAL_SECRET
               valueFrom:
                 secretKeyRef:

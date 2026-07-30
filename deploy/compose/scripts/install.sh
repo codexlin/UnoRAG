@@ -11,6 +11,11 @@ if [[ ! -f ../config/runtime.env || ! -f ../config/runtime.secret || ! -f ../con
 	echo "missing split config — run ./scripts/init-config.sh and fill secrets first" >&2
 	exit 1
 fi
+mk_validate_dbos_config
+DBOS_REQUIRED=0
+if mk_dbos_required; then
+	DBOS_REQUIRED=1
+fi
 
 INTERNAL="$(mk_config_get UNORAG_INTERNAL_SECRET || true)"
 SESSION="$(mk_config_get UNORAG_SESSION_SECRET || true)"
@@ -59,7 +64,7 @@ done
 HTTP_PORT="$(mk_config_get HTTP_PORT || echo 80)"
 
 echo "==> building images"
-mk_compose build web api migrate-web dbos-worker
+mk_compose build web api migrate-web outbox-worker dbos-worker
 
 echo "==> starting infrastructure"
 mk_compose up -d postgres qdrant redis
@@ -77,6 +82,18 @@ echo "==> bootstrapping control-plane admin/workspace (create-only password)"
 # To rotate: ./scripts/rotate-admin-password.sh
 mk_compose_bootstrap --profile migrate run --rm bootstrap
 
+if [[ "$DBOS_REQUIRED" -eq 1 ]]; then
+	echo "==> starting required DBOS executor and control loop"
+	mk_compose --profile dbos up -d dbos-worker dbos-control
+	mk_compose --profile dbos up -d --wait dbos-worker dbos-control
+	echo "==> reconciling restricted ACL projections"
+	mk_compose --profile ops run --rm backfill-acl-projections
+fi
+
+echo "==> verifying ACL projection gate"
+mk_compose --profile ops run --rm inspect-lifecycle \
+	node scripts/inspect-lifecycle.mjs --fail-on-acl-projection
+
 echo "==> starting application stack"
 mk_compose up -d caddy web api lifecycle-worker outbox-worker
 mk_compose up -d --wait caddy web api lifecycle-worker outbox-worker || true
@@ -88,5 +105,8 @@ echo "  health: curl -sf http://localhost:${HTTP_PORT}/api/rag/health"
 echo "  note:   FastAPI is not published; only Caddy→web is on the edge"
 echo "  note:   admin password is only in bootstrap.env (not in web runtime)"
 echo "  note:   outbox-worker projects library mutations to the RAG API"
+if [[ "$DBOS_REQUIRED" -eq 1 ]]; then
+	echo "  note:   DBOS executor/control are required by enabled lifecycle capabilities"
+fi
 echo
 echo "next: review docs/runbooks/private-deployment.md (readiness + backup)"

@@ -38,6 +38,16 @@ BEGIN
 		'app.jobs',
 		'execution_engine',
 		'INSERT'
+	) OR NOT has_column_privilege(
+		'unorag_worker_login',
+		'app.documents',
+		'acl_fingerprint',
+		'UPDATE'
+	) OR NOT has_column_privilege(
+		'unorag_worker_login',
+		'app.documents',
+		'projected_acl_fingerprint',
+		'UPDATE'
 	) OR NOT has_table_privilege(
 		'unorag_worker_login',
 		'app.outbox_events',
@@ -107,6 +117,16 @@ BEGIN
 	IF NOT has_table_privilege(
 		'unorag_rag_read_login',
 		'rag.active_document_generations',
+		'SELECT'
+	) OR NOT has_column_privilege(
+		'unorag_rag_read_login',
+		'app.documents',
+		'acl_fingerprint',
+		'SELECT'
+	) OR has_column_privilege(
+		'unorag_rag_read_login',
+		'app.documents',
+		'filename',
 		'SELECT'
 	) OR has_table_privilege(
 		'unorag_rag_read_login',

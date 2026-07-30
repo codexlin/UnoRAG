@@ -1,6 +1,21 @@
 {{- if and .Values.dbos.enabled (eq (toString .Values.config.dbosDocumentDeleteEnabled) "true") (not .Values.persistence.enabled) }}
 {{- fail "config.dbosDocumentDeleteEnabled=true requires persistence.enabled=true for local document storage" }}
 {{- end }}
+{{- if and (eq (toString .Values.config.dbosTextIngestEnabled) "true") (not .Values.dbos.enabled) }}
+{{- fail "config.dbosTextIngestEnabled=true requires dbos.enabled=true" }}
+{{- end }}
+{{- if and (eq (toString .Values.config.dbosAclProjectionEnabled) "true") (not .Values.dbos.enabled) }}
+{{- fail "config.dbosAclProjectionEnabled=true requires dbos.enabled=true" }}
+{{- end }}
+{{- if and (eq (toString .Values.config.dbosTextIngestRouteEnabled) "true") (ne (toString .Values.config.dbosTextIngestEnabled) "true") }}
+{{- fail "config.dbosTextIngestRouteEnabled=true requires config.dbosTextIngestEnabled=true" }}
+{{- end }}
+{{- if and .Values.dbos.enabled (eq (toString .Values.config.dbosTextIngestEnabled) "true") (not .Values.persistence.enabled) }}
+{{- fail "config.dbosTextIngestEnabled=true requires persistence.enabled=true for local document storage" }}
+{{- end }}
+{{- if and .Values.dbos.enabled (eq (toString .Values.config.dbosTextIngestEnabled) "true") (not .Values.config.openaiBaseUrl) (not .Values.config.llmBaseUrl) }}
+{{- fail "config.dbosTextIngestEnabled=true requires config.openaiBaseUrl or config.llmBaseUrl" }}
+{{- end }}
 {{- if .Values.dbos.enabled }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -55,11 +70,13 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: UNORAG_DBOS_LISTEN_QUEUES
-              value: lifecycle
+              value: {{ ternary "ingest-local,lifecycle" "lifecycle" (eq (toString .Values.config.dbosTextIngestEnabled) "true") | quote }}
             - name: UNORAG_DBOS_CLEANUP_ENABLED
               value: "true"
             - name: UNORAG_DBOS_DOCUMENT_DELETE_ENABLED
               value: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
+            - name: UNORAG_DBOS_TEXT_INGEST_ENABLED
+              value: {{ .Values.config.dbosTextIngestEnabled | quote }}
             - name: DBOS_SYSTEM_DATABASE_POOL_SIZE
               value: {{ .Values.dbos.systemDatabasePoolSize | quote }}
             - name: DBOS_LIFECYCLE_CONCURRENCY
@@ -80,6 +97,21 @@ spec:
                   optional: true
             - name: DOCUMENT_STORAGE_ROOT
               value: {{ .Values.documentStorageRoot | quote }}
+            - name: DOCUMENT_MAX_UPLOAD_BYTES
+              value: {{ .Values.config.documentMaxUploadBytes | quote }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: LLM_API_KEY
+            - name: OPENAI_BASE_URL
+              value: {{ .Values.config.openaiBaseUrl | default .Values.config.llmBaseUrl | quote }}
+            - name: EMBEDDING_MODEL
+              value: {{ .Values.config.embeddingModel | quote }}
+            - name: EMBEDDING_DIM
+              value: {{ .Values.config.embeddingDim | quote }}
+            - name: EMBEDDING_BATCH_SIZE
+              value: {{ .Values.config.embeddingBatchSize | quote }}
           {{- if .Values.persistence.enabled }}
           volumeMounts:
             - name: documents
@@ -180,6 +212,8 @@ spec:
               value: "true"
             - name: UNORAG_DBOS_DOCUMENT_DELETE_ENABLED
               value: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
+            - name: UNORAG_DBOS_TEXT_INGEST_ENABLED
+              value: {{ .Values.config.dbosTextIngestEnabled | quote }}
             - name: DBOS_SYSTEM_DATABASE_POOL_SIZE
               value: {{ .Values.dbos.systemDatabasePoolSize | quote }}
             - name: DBOS_LIFECYCLE_CONCURRENCY

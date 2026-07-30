@@ -40,6 +40,7 @@ REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA app, rag, public FROM
 	unorag_worker,
 	unorag_outbox,
 	unorag_rag_read;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA app, rag FROM PUBLIC;
 
 GRANT USAGE ON SCHEMA app TO
 	unorag_web,
@@ -126,6 +127,8 @@ GRANT UPDATE (
 
 GRANT UPDATE (
 	status,
+	acl_fingerprint,
+	projected_acl_fingerprint,
 	desired_version_id,
 	latest_job_id,
 	deleted_at,
@@ -168,8 +171,16 @@ TO unorag_api;
 
 GRANT SELECT, UPDATE ON app.outbox_events TO unorag_outbox;
 
+GRANT SELECT (
+	id,
+	organization_id,
+	workspace_id,
+	status,
+	acl_fingerprint,
+	projected_acl_fingerprint
+) ON app.documents TO unorag_rag_read;
+
 GRANT SELECT ON
-	app.documents,
 	app.document_versions,
 	app.document_active_versions,
 	app.document_acl,

@@ -56,18 +56,21 @@ cd deploy/compose
 
 ## 本片已覆盖
 
-- Compose 参考拓扑（Caddy → web；api / lifecycle-worker / outbox-worker 仅内网；DBOS lifecycle cohort 可选）
+- Compose 参考拓扑（Caddy → web；api / lifecycle-worker / outbox-worker 仅内网；启用 DBOS 能力时自动要求 executor/control）
 - 客户托管连接与模型 endpoint（全部经环境变量）
 - secret 仅从环境注入；镜像不含密钥
 - production fail-closed 与 readiness 说明
 - migration 独立步骤（migrator 凭据，运行账号无 DDL）
 - 安装 / 升级 / 回滚 / 一致性备份 / 校验恢复 runbook 与脚本
+- restricted ACL 双指纹门禁、可重入回填与升级前零 pending 检查
 
 ## Helm 起步
 
 见 [`deploy/helm/README.md`](./helm/README.md)。默认假设 Postgres / Qdrant / Redis
 由客户托管；chart 部署 web / api / lifecycle-worker / outbox-worker，并可显式启用
 DBOS lifecycle worker/control（+ 可选 Ingress / 迁移 Job / PVC）。
+迁移与 outbox 使用职责分离的镜像；Helm 客户升级必须使用 `--atomic --wait`，
+ACL projection 首次启用按“能力部署 → 回填收敛 → 开启路由”两次 release 执行。
 
 ## 试点冒烟
 

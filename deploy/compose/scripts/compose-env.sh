@@ -156,3 +156,36 @@ mk_config_get() {
 	done
 	return 1
 }
+
+mk_config_enabled() {
+	local _mk_value
+	_mk_value="$(mk_config_get "$1" || true)"
+	case "$_mk_value" in
+		true | TRUE | True | 1) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+mk_dbos_required() {
+	mk_config_enabled UNORAG_DBOS_ACL_PROJECTION_ENABLED \
+		|| mk_config_enabled UNORAG_DBOS_TEXT_INGEST_ENABLED \
+		|| mk_config_enabled UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED \
+		|| mk_config_enabled UNORAG_DBOS_DOCUMENT_DELETE_ENABLED
+}
+
+mk_validate_dbos_config() {
+	if mk_config_enabled UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED \
+		&& ! mk_config_enabled UNORAG_DBOS_TEXT_INGEST_ENABLED; then
+		echo "UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED=true requires UNORAG_DBOS_TEXT_INGEST_ENABLED=true" >&2
+		return 1
+	fi
+	if mk_config_enabled UNORAG_DBOS_TEXT_INGEST_ENABLED; then
+		local _mk_queues
+		_mk_queues="$(mk_config_get UNORAG_DBOS_LISTEN_QUEUES || true)"
+		_mk_queues="${_mk_queues//[[:space:]]/}"
+		if [[ ",${_mk_queues}," != *",ingest-local,"* ]]; then
+			echo "UNORAG_DBOS_TEXT_INGEST_ENABLED=true requires ingest-local in UNORAG_DBOS_LISTEN_QUEUES" >&2
+			return 1
+		fi
+	fi
+}

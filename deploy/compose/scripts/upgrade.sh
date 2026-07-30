@@ -13,11 +13,11 @@
 #
 # Usage:
 #   ./scripts/upgrade.sh --manifest /path/to/release.env
-#   ./scripts/upgrade.sh --web IMG --api IMG --migrator IMG [--outbox IMG] [--worker IMG]
+#   ./scripts/upgrade.sh --web IMG --api IMG --migrator IMG --outbox IMG [--worker IMG]
 #   ./scripts/upgrade.sh --from-runtime   # pull+redeploy pins already in runtime.env
 #
-# Manifest must pin web/api/migrator. Outbox and DBOS worker pins are required
-# for current releases; legacy manifests retain the existing runtime worker pin.
+# Manifest must pin web/api/migrator/outbox. The DBOS worker pin is required
+# when a DBOS capability is enabled; otherwise the existing runtime pin is kept.
 # Rejects empty tags and :latest.
 set -euo pipefail
 
@@ -45,6 +45,7 @@ ALLOW_BUILD=0
 SKIP_SMOKE=0
 DID_SWITCH=0
 DBOS_WAS_RUNNING=0
+DBOS_SHOULD_RUN=0
 
 usage() {
 	cat <<'EOF'
@@ -52,7 +53,7 @@ Rolling upgrade via registry pull (not local build).
 
 Usage:
   ./scripts/upgrade.sh --manifest /path/to/release.env
-  ./scripts/upgrade.sh --web IMG --api IMG --migrator IMG [--outbox IMG] [--worker IMG] [--dbos-version VERSION]
+  ./scripts/upgrade.sh --web IMG --api IMG --migrator IMG --outbox IMG [--worker IMG] [--dbos-version VERSION]
   ./scripts/upgrade.sh --from-runtime
 
 Options:
@@ -120,6 +121,10 @@ done
 
 mk_require_runtime_config || exit 1
 [[ -f "$RUNTIME_ENV" ]] || die "missing $RUNTIME_ENV"
+mk_validate_dbos_config || die "invalid DBOS runtime capability configuration"
+if mk_dbos_required; then
+	DBOS_SHOULD_RUN=1
+fi
 
 if [[ -z "$(mk_config_get UNORAG_DBOS_DB_PASSWORD || true)" ]]; then
 	log "preparing missing DBOS credential for an existing bundled-Postgres install"
@@ -227,6 +232,46 @@ set_runtime_release_keys() {
 	mv "$tmp" "$RUNTIME_ENV"
 }
 
+set_runtime_capability_keys() {
+	local delete_enabled="$1" text_enabled="$2" text_route_enabled="$3"
+	local acl_enabled="$4" listen_queues="$5" tmp
+	tmp="$(mktemp)"
+	awk \
+		-v delete_enabled="$delete_enabled" \
+		-v text_enabled="$text_enabled" \
+		-v text_route_enabled="$text_route_enabled" \
+		-v acl_enabled="$acl_enabled" \
+		-v listen_queues="$listen_queues" '
+		BEGIN {
+			seen_delete = 0; seen_text = 0; seen_route = 0; seen_acl = 0; seen_queues = 0
+		}
+		/^[[:space:]]*UNORAG_DBOS_DOCUMENT_DELETE_ENABLED=/ {
+			print "UNORAG_DBOS_DOCUMENT_DELETE_ENABLED=" delete_enabled; seen_delete = 1; next
+		}
+		/^[[:space:]]*UNORAG_DBOS_TEXT_INGEST_ENABLED=/ {
+			print "UNORAG_DBOS_TEXT_INGEST_ENABLED=" text_enabled; seen_text = 1; next
+		}
+		/^[[:space:]]*UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED=/ {
+			print "UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED=" text_route_enabled; seen_route = 1; next
+		}
+		/^[[:space:]]*UNORAG_DBOS_ACL_PROJECTION_ENABLED=/ {
+			print "UNORAG_DBOS_ACL_PROJECTION_ENABLED=" acl_enabled; seen_acl = 1; next
+		}
+		/^[[:space:]]*UNORAG_DBOS_LISTEN_QUEUES=/ {
+			print "UNORAG_DBOS_LISTEN_QUEUES=" listen_queues; seen_queues = 1; next
+		}
+		{ print }
+		END {
+			if (!seen_delete) print "UNORAG_DBOS_DOCUMENT_DELETE_ENABLED=" delete_enabled
+			if (!seen_text) print "UNORAG_DBOS_TEXT_INGEST_ENABLED=" text_enabled
+			if (!seen_route) print "UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED=" text_route_enabled
+			if (!seen_acl) print "UNORAG_DBOS_ACL_PROJECTION_ENABLED=" acl_enabled
+			if (!seen_queues) print "UNORAG_DBOS_LISTEN_QUEUES=" listen_queues
+		}
+	' "$RUNTIME_ENV" >"$tmp"
+	mv "$tmp" "$RUNTIME_ENV"
+}
+
 resolve_service_digest() {
 	local service="$1"
 	local id
@@ -238,18 +283,44 @@ resolve_service_digest() {
 	docker inspect --format '{{.Image}}' "$id" 2>/dev/null || printf ''
 }
 
+resolve_service_image_ref() {
+	local service="$1" id
+	id="$(mk_compose ps -q "$service" 2>/dev/null | head -n1 || true)"
+	[[ -n "$id" ]] || return 0
+	docker inspect --format '{{.Config.Image}}' "$id" 2>/dev/null || printf ''
+}
+
+resolve_service_env() {
+	local service="$1" key="$2" fallback="$3" id value
+	id="$(mk_compose ps -q "$service" 2>/dev/null | head -n1 || true)"
+	if [[ -n "$id" ]]; then
+		value="$(
+			docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" 2>/dev/null \
+				| awk -F= -v k="$key" '$1 == k { print substr($0, index($0, "=") + 1); exit }'
+		)"
+	fi
+	printf '%s' "${value:-$fallback}"
+}
+
 save_previous_images() {
 	local web api migrator outbox worker dbos_version
+	local delete_enabled text_enabled text_route_enabled acl_enabled listen_queues
 	web="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE || true)"
 	api="$(env_file_get "$RUNTIME_ENV" UNORAG_API_IMAGE || true)"
 	migrator="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
 	outbox="$(env_file_get "$RUNTIME_ENV" UNORAG_OUTBOX_IMAGE || true)"
 	worker="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE || true)"
 	dbos_version="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION || true)"
-	[[ -n "$outbox" ]] || outbox="$migrator"
+	[[ -n "$outbox" ]] || outbox="$(resolve_service_image_ref outbox-worker)"
+	[[ -n "$outbox" ]] || die "cannot determine previous outbox image; set UNORAG_OUTBOX_IMAGE before upgrade"
 	[[ -n "$worker" ]] || worker="unorag-web-worker:local"
 	# A missing key can only come from a pre-lifecycle-v2 installation.
 	[[ -n "$dbos_version" ]] || dbos_version="cleanup-v1"
+	delete_enabled="$(resolve_service_env web UNORAG_DBOS_DOCUMENT_DELETE_ENABLED false)"
+	text_enabled="$(resolve_service_env web UNORAG_DBOS_TEXT_INGEST_ENABLED false)"
+	text_route_enabled="$(resolve_service_env web UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED false)"
+	acl_enabled="$(resolve_service_env web UNORAG_DBOS_ACL_PROJECTION_ENABLED false)"
+	listen_queues="$(resolve_service_env dbos-worker UNORAG_DBOS_LISTEN_QUEUES lifecycle)"
 	{
 		echo "# previous pins captured $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		echo "UNORAG_WEB_IMAGE=${web}"
@@ -258,6 +329,11 @@ save_previous_images() {
 		echo "UNORAG_OUTBOX_IMAGE=${outbox}"
 		echo "UNORAG_DBOS_WORKER_IMAGE=${worker}"
 		echo "UNORAG_DBOS_APPLICATION_VERSION=${dbos_version}"
+		echo "UNORAG_DBOS_DOCUMENT_DELETE_ENABLED=${delete_enabled}"
+		echo "UNORAG_DBOS_TEXT_INGEST_ENABLED=${text_enabled}"
+		echo "UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED=${text_route_enabled}"
+		echo "UNORAG_DBOS_ACL_PROJECTION_ENABLED=${acl_enabled}"
+		echo "UNORAG_DBOS_LISTEN_QUEUES=${listen_queues}"
 		echo "UNORAG_PREV_WEB_DIGEST=$(resolve_service_digest web)"
 		echo "UNORAG_PREV_API_DIGEST=$(resolve_service_digest api)"
 		echo "UNORAG_PREV_LIFECYCLE_DIGEST=$(resolve_service_digest lifecycle-worker)"
@@ -270,6 +346,7 @@ save_previous_images() {
 
 rollback_apps() {
 	local web api migrator outbox worker dbos_version
+	local delete_enabled text_enabled text_route_enabled acl_enabled listen_queues
 	warn "application rollback: redeploying previous image pins (no DB down-migrate)"
 	[[ -f "$PREV_ENV" ]] || die "missing $PREV_ENV; cannot rollback automatically"
 
@@ -279,12 +356,18 @@ rollback_apps() {
 	outbox="$(env_file_get "$PREV_ENV" UNORAG_OUTBOX_IMAGE || true)"
 	worker="$(env_file_get "$PREV_ENV" UNORAG_DBOS_WORKER_IMAGE || true)"
 	dbos_version="$(env_file_get "$PREV_ENV" UNORAG_DBOS_APPLICATION_VERSION || true)"
-	[[ -n "$outbox" ]] || outbox="$migrator"
 	[[ -n "$worker" ]] || worker="unorag-web-worker:local"
 	[[ -n "$dbos_version" ]] || dbos_version="cleanup-v1"
 	[[ -n "$web" && -n "$api" && -n "$migrator" && -n "$outbox" && -n "$worker" && -n "$dbos_version" ]] || die "previous release pins incomplete in $PREV_ENV"
+	delete_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_DOCUMENT_DELETE_ENABLED || echo false)"
+	text_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_TEXT_INGEST_ENABLED || echo false)"
+	text_route_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED || echo false)"
+	acl_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_ACL_PROJECTION_ENABLED || echo false)"
+	listen_queues="$(env_file_get "$PREV_ENV" UNORAG_DBOS_LISTEN_QUEUES || echo lifecycle)"
 
 	set_runtime_release_keys "$web" "$api" "$migrator" "$outbox" "$worker" "$dbos_version"
+	set_runtime_capability_keys \
+		"$delete_enabled" "$text_enabled" "$text_route_enabled" "$acl_enabled" "$listen_queues"
 	if [[ "$ALLOW_BUILD" -eq 1 ]]; then
 		warn "rollback with --allow-build: attempting pull, then local build if needed"
 		mk_compose pull web api lifecycle-worker outbox-worker migrate-web || true
@@ -307,6 +390,8 @@ rollback_apps() {
 	mk_compose up -d --no-deps outbox-worker
 	if [[ "$DBOS_WAS_RUNNING" -eq 1 ]]; then
 		mk_compose --profile dbos up -d --no-deps dbos-worker dbos-control
+	else
+		mk_compose --profile dbos stop dbos-control dbos-worker || true
 	fi
 	mk_compose up -d --no-deps caddy
 }
@@ -314,6 +399,7 @@ rollback_apps() {
 restore_runtime_pins_on_failure() {
 	local rc=$?
 	local web api migrator outbox worker dbos_version
+	local delete_enabled text_enabled text_route_enabled acl_enabled listen_queues
 	trap - EXIT
 	if [[ "$rc" -ne 0 && "$DID_SWITCH" -eq 1 && -f "$PREV_ENV" ]]; then
 		web="$(env_file_get "$PREV_ENV" UNORAG_WEB_IMAGE || true)"
@@ -324,6 +410,13 @@ restore_runtime_pins_on_failure() {
 		dbos_version="$(env_file_get "$PREV_ENV" UNORAG_DBOS_APPLICATION_VERSION || true)"
 		if [[ -n "$web" && -n "$api" && -n "$migrator" && -n "$outbox" && -n "$worker" && -n "$dbos_version" ]]; then
 			set_runtime_release_keys "$web" "$api" "$migrator" "$outbox" "$worker" "$dbos_version"
+			delete_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_DOCUMENT_DELETE_ENABLED || echo false)"
+			text_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_TEXT_INGEST_ENABLED || echo false)"
+			text_route_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED || echo false)"
+			acl_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_ACL_PROJECTION_ENABLED || echo false)"
+			listen_queues="$(env_file_get "$PREV_ENV" UNORAG_DBOS_LISTEN_QUEUES || echo lifecycle)"
+			set_runtime_capability_keys \
+				"$delete_enabled" "$text_enabled" "$text_route_enabled" "$acl_enabled" "$listen_queues"
 			warn "restored previous runtime release pins after failed upgrade"
 		fi
 	fi
@@ -349,14 +442,13 @@ elif [[ "$FROM_RUNTIME" -eq 1 ]]; then
 	WORKER_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE || true)"
 	DBOS_APPLICATION_VERSION="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION || true)"
 elif [[ -n "$WEB_IMAGE" || -n "$API_IMAGE" || -n "$MIGRATOR_IMAGE" || -n "$OUTBOX_IMAGE" || -n "$WORKER_IMAGE" ]]; then
-	[[ -n "$WEB_IMAGE" && -n "$API_IMAGE" && -n "$MIGRATOR_IMAGE" ]] || \
-		die "when using --web/--api/--migrator, web+api+migrator are required (--outbox optional)"
+	[[ -n "$WEB_IMAGE" && -n "$API_IMAGE" && -n "$MIGRATOR_IMAGE" && -n "$OUTBOX_IMAGE" ]] || \
+		die "when using explicit images, web+api+migrator+outbox are required"
 else
 	die "specify --manifest PATH, or --web/--api/--migrator, or --from-runtime"
 fi
 
-# Legacy 3-image manifests: outbox used to share the migrator pin.
-[[ -n "$OUTBOX_IMAGE" ]] || OUTBOX_IMAGE="$MIGRATOR_IMAGE"
+[[ -n "$OUTBOX_IMAGE" ]] || die "UNORAG_OUTBOX_IMAGE is required; migrator images do not contain runtime scripts"
 if [[ -z "$WORKER_IMAGE" ]]; then
 	WORKER_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE || true)"
 fi
@@ -414,19 +506,18 @@ if [[ "$ALLOW_BUILD" -eq 1 ]]; then
 	mk_compose --profile dbos build dbos-worker
 else
 	log "pulling release images (no local build)"
-	# Prefer explicit service pulls; local-only tags (e.g. legacy migrator) must not
-	# fail the upgrade when Docker Hub is unreachable.
 	if ! mk_compose pull web api lifecycle-worker; then
 		die "failed to pull web/api images from registry"
 	fi
 	if ! mk_compose pull outbox-worker migrate-web; then
-		warn "outbox/migrator pull failed (ok if pins are local-only tags); continuing"
+		die "failed to pull required outbox/migrator images from registry"
 	fi
 	if ! mk_compose --profile dbos pull dbos-worker; then
-		warn "DBOS worker pull failed (ok only while the dbos profile remains disabled)"
-		if [[ "$DBOS_WAS_RUNNING" -eq 1 ]]; then
-			die "DBOS worker is running, so its release image must be pullable"
+		warn "DBOS worker pull failed"
+		if [[ "$DBOS_SHOULD_RUN" -eq 1 || "$DBOS_WAS_RUNNING" -eq 1 ]]; then
+			die "DBOS worker is required or already running, so its release image must be pullable"
 		fi
+		warn "continuing because the DBOS profile is disabled"
 	fi
 fi
 
@@ -452,9 +543,40 @@ if ! mk_compose --profile migrate run --rm configure-db-roles; then
 	die "least-privilege database configuration failed"
 fi
 
+if [[ "$DBOS_SHOULD_RUN" -eq 1 ]]; then
+	log "starting required DBOS services before ACL projection backfill"
+	if ! mk_compose --profile dbos up -d --wait dbos-worker dbos-control; then
+		rollback_apps
+		die "required DBOS services failed before ACL projection backfill"
+	fi
+	log "backfilling restricted ACL projections"
+	if ! mk_compose --profile ops run --rm backfill-acl-projections; then
+		rollback_apps
+		die "ACL projection backfill failed"
+	fi
+fi
+
+log "waiting for active document ACL projections to converge"
+acl_projection_ok=0
+for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+	if mk_compose --profile ops run --rm inspect-lifecycle \
+		node scripts/inspect-lifecycle.mjs --fail-on-acl-projection; then
+		acl_projection_ok=1
+		break
+	fi
+	if [[ "$DBOS_SHOULD_RUN" -ne 1 ]]; then
+		break
+	fi
+	sleep 2
+done
+if [[ "$acl_projection_ok" -ne 1 ]]; then
+	rollback_apps
+	die "active ACL projections are pending; enable DBOS ACL projection and rerun upgrade"
+fi
+
 log "draining lifecycle-worker (SIGTERM; finishes current step, no new claims)"
 mk_compose stop lifecycle-worker
-if [[ "$DBOS_WAS_RUNNING" -eq 1 ]]; then
+if [[ "$DBOS_SHOULD_RUN" -eq 1 || "$DBOS_WAS_RUNNING" -eq 1 ]]; then
 	log "draining DBOS control/executor"
 	mk_compose --profile dbos stop dbos-control dbos-worker
 fi
@@ -471,8 +593,8 @@ if ! mk_compose up -d --no-deps api \
 	rollback_apps
 	die "upgrade roll failed; previous images redeployed (DB not reverted)"
 fi
-	if [[ "$DBOS_WAS_RUNNING" -eq 1 ]]; then
-		if ! mk_compose --profile dbos up -d --no-deps --wait dbos-worker dbos-control; then
+if [[ "$DBOS_SHOULD_RUN" -eq 1 || "$DBOS_WAS_RUNNING" -eq 1 ]]; then
+	if ! mk_compose --profile dbos up -d --no-deps --wait dbos-worker dbos-control; then
 		warn "DBOS service roll failed — attempting app rollback"
 		rollback_apps
 		die "DBOS upgrade roll failed; previous images redeployed"

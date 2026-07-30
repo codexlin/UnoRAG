@@ -10,6 +10,9 @@ data:
   METADATA_BACKEND: {{ .Values.config.metadataBackend | quote }}
   DOCUMENT_LIFECYCLE_V2: {{ .Values.config.documentLifecycleV2 | quote }}
   UNORAG_DBOS_DOCUMENT_DELETE_ENABLED: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
+  UNORAG_DBOS_TEXT_INGEST_ENABLED: {{ .Values.config.dbosTextIngestEnabled | quote }}
+  UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED: {{ .Values.config.dbosTextIngestRouteEnabled | quote }}
+  UNORAG_DBOS_ACL_PROJECTION_ENABLED: {{ .Values.config.dbosAclProjectionEnabled | quote }}
   INTERNAL_AUTH_ENABLED: {{ .Values.config.internalAuthEnabled | quote }}
   INTERNAL_AUTH_REPLAY_BACKEND: {{ .Values.config.internalAuthReplayBackend | quote }}
   ACTIVE_GENERATION_GATE_ENABLED: {{ .Values.config.activeGenerationGateEnabled | quote }}

@@ -44,6 +44,12 @@ spec:
               value: {{ .Values.config.documentMaxUploadBytes | default "52428800" | quote }}
             - name: UNORAG_DBOS_DOCUMENT_DELETE_ENABLED
               value: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
+            - name: UNORAG_DBOS_TEXT_INGEST_ENABLED
+              value: {{ .Values.config.dbosTextIngestRouteEnabled | quote }}
+            - name: UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED
+              value: {{ .Values.config.dbosTextIngestRouteEnabled | quote }}
+            - name: UNORAG_DBOS_ACL_PROJECTION_ENABLED
+              value: {{ .Values.config.dbosAclProjectionEnabled | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

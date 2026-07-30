@@ -102,10 +102,12 @@ mk_compose up -d caddy web api lifecycle-worker outbox-worker
 
 ### 2.4 DBOS lifecycle cohort（显式启用）
 
-DBOS 只负责被明确分配的 lifecycle 工作。默认安装不会启动 profile，不会修改
-`execution_engine=python` 的 cleanup 行，也不会把新 `document.delete` 路由到
-DBOS。`UNORAG_DBOS_APPLICATION_VERSION` 必须随 workflow 代码固定在发布清单；
-当前版本为 `lifecycle-v2`。
+DBOS 只负责被明确分配的 lifecycle 工作。所有 DBOS 能力开关为 `false` 时，
+默认安装不会启动 profile，也不会修改 `execution_engine=python` 的 cleanup 行。
+ACL projection、TS 文本 ingest 或 DBOS delete 任一能力开启后，`install.sh` /
+`upgrade.sh` 会把 executor 与 control 视为必需服务并等待其就绪；不会只让 Web
+入队而没有消费者。`UNORAG_DBOS_APPLICATION_VERSION` 必须随 workflow 代码固定
+在发布清单；当前版本为 `lifecycle-v2`。
 
 ```bash
 # 1. 启动 executor + control；两者不对外暴露端口
@@ -139,6 +141,23 @@ document/library/outbox/audit。最终 Qdrant 删除与 Python ingest 写入使�
 document advisory lock，防止 lease 回收后的迟到写入复活已删除向量。
 该 session-level fence 设置 30 秒锁超时；`WORKER_DATABASE_URL` 必须直连
 PostgreSQL 或使用 session pooling，禁止经 PgBouncer transaction pooling。
+
+ACL 修改使用 `acl_fingerprint / projected_acl_fingerprint` 双指纹门禁。两者不一致时，
+TS 与 Python Ask 都会暂时排除该文档；只有当前 active generation 的全部 Qdrant
+points 精确完成 ACL 投影后才恢复检索。启用已有 active 文档的 ACL 编辑：
+
+```bash
+UNORAG_DBOS_ACL_PROJECTION_ENABLED=true
+```
+
+TS 文本 ingest 灰度还需同时启用 capability 与新任务路由，并让 worker 监听两个
+queue；关闭时先关 route，待已入队任务清空后再关 capability：
+
+```bash
+UNORAG_DBOS_TEXT_INGEST_ENABLED=true
+UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED=true
+UNORAG_DBOS_LISTEN_QUEUES=ingest-local,lifecycle
+```
 
 `document.delete` 不支持通用取消；失败后由运维显式创建一个新的 job/workflow：
 
@@ -204,8 +223,9 @@ release（拒绝 `latest` / 空 tag）。详见
 2. **worker drain**：SIGTERM `lifecycle-worker`（`stop_grace_period: 2m`）。
 3. 滚动 `api` → `web` → `lifecycle-worker` → **`outbox-worker`** → `caddy`。
 4. 重置并验证 runtime role 权限，再切换运行服务。
-5. Health 后自动跑 `pilot-smoke.sh`（若可执行；SKIP=exit 2 不触发回滚）。
-6. 应用失败时脚本可按 `.upgrade-state/previous-images.env` **回切旧镜像**（应用回滚 ≠ DB 回滚）。
+5. 对存量 restricted 文档执行可重入 ACL 回填；未投影 active 文档未归零时拒绝切流。
+6. Health 后自动跑 `pilot-smoke.sh`（若可执行；SKIP=exit 2 不触发回滚）。
+7. 应用失败时脚本可按 `.upgrade-state/previous-images.env` **回切旧镜像**（应用回滚 ≠ DB 回滚）。
 
 升级后验收：health、上传/替换一文档、Ask 引用、`lifecycle:inspect` 无异常堆积。
 
@@ -214,6 +234,15 @@ release（拒绝 `latest` / 空 tag）。详见
 ```bash
 source scripts/compose-env.sh
 mk_compose --profile ops run --rm inspect-lifecycle
+```
+
+手工演练 ACL 回填时先 dry-run，再 apply。脚本按文档加锁、更新当前指纹并幂等创建
+DBOS projection job；不会直接把 projected 指纹标成成功：
+
+```bash
+mk_compose --profile ops run --rm backfill-acl-projections \
+  node scripts/backfill-acl-projections.mjs
+mk_compose --profile ops run --rm backfill-acl-projections
 ```
 
 ## 5. 回滚
@@ -333,9 +362,19 @@ Compose 适合单机；多副本生产使用 [`deploy/helm/unorag`](../../deploy
   非兼容 workflow 仍运行时缩容对应 ordinal。
 - 文档对象：默认 `ReadWriteMany` PVC；S3/MinIO 适配仍后置。
 - 迁移：`migrate.web` / `migrate.rag` 为可选 Helm hook Job。
+- `migrate.web` 镜像同时重放 runtime role grants；outbox 镜像独立承载
+  回填/巡检脚本，两者不可互换。
+- Helm Secret 必须为 web / outbox / api / worker / rag-read 提供五条独立 DSN，
+  且分别使用固定的 `unorag_*_login`。runtime-role hook 会以每条 DSN 实际连接并
+  检查 role membership，不能用一个管理员或 web 账号代替多个运行身份。
+- 首次引入 ACL projection 时分两次 release：先保持
+  `config.dbosAclProjectionEnabled=false` 部署 DBOS 能力并完成 post-upgrade
+  回填（期间暂停 ACL 管理操作），确认零 pending 后再启用该开关。此后每次
+  upgrade 都在 workload 变更前执行 pre-upgrade ACL gate。
 
 ```bash
 helm upgrade --install unorag ./deploy/helm/unorag -n unorag \
+  --atomic --wait \
   --set secret.existingSecret=unorag-runtime \
   --set external.qdrant.url=http://qdrant.infra:6333 \
   --set external.redis.url=redis://redis.infra:6379

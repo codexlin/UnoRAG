@@ -13,6 +13,7 @@ Runtime Secret keys (least-privilege injection — pods do not envFrom the whole
   UNORAG_INTERNAL_SECRET   → web + mapped to INTERNAL_AUTH_SECRET for api/worker
   UNORAG_SESSION_SECRET    → web only
   DATABASE_URL               → web only
+  OUTBOX_DATABASE_URL        → outbox-worker only
   API_DATABASE_URL           → api DATABASE_URL
   WORKER_DATABASE_URL        → worker DATABASE_URL / WORKER_DATABASE_URL
   RAG_READ_DATABASE_URL      → api + worker
