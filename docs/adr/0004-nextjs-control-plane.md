@@ -2,6 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-07-24
+- Target note: [ADR-0005](./0005-typescript-core-runtime.md) supersedes this
+  decision after its migration gates pass. This ADR remains the current
+  production/runtime baseline until that cutover.
 - Revision: 2026-07-25 — FastAPI browser ingest writes are **permanently**
   HTTP 410 (no env re-enable); Document Lifecycle V2 is the default upload
   path; product ask knobs live in workspace settings + code defaults, not

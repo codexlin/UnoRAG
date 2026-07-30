@@ -24,6 +24,7 @@
 | [0002](./adr/0002-mineru-complex-pdf.md) | MinerU 复杂 PDF |
 | [0003](./adr/0003-policy-driven-chunking.md) | 策略化切分 |
 | [0004](./adr/0004-nextjs-control-plane.md) | Next 控制面 + Python 数据面 |
+| [0005](./adr/0005-typescript-core-runtime.md) | TypeScript 核心运行时迁移（已接受，尚未切换） |
 
 ## Runbooks / 验收 / 设计
 

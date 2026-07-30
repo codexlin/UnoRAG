@@ -19,6 +19,25 @@
 | 私有化 | Compose 参考拓扑 + Helm 骨架；webch 已以纯 UnoRAG 全新重置并通过预发布纵向冒烟，客户生产仍按部署验收 |
 | 质量门禁 | CI fuse / release gates（见 `docs/runbooks/quality-release-gates.md`） |
 
+## 已接受的架构迁移
+
+[ADR-0005](./adr/0005-typescript-core-runtime.md) 已接受 TypeScript 核心运行时
+作为目标架构：Next.js 内嵌 Elysia API，TypeScript 统一拥有业务数据、DBOS
+文档工作流、Qdrant 索引与检索、LangGraph.js Ask 和 AI SDK 流式生成；
+LiteParse、本地/托管 MinerU、可选 LlamaParse 等解析能力通过
+`ParserProvider` 策略路由。当前生产实现仍以 ADR-0004 的 FastAPI/Python
+数据面为准，在 ADR-0005 的 M0-M4 契约、隔离、质量、故障和回滚门禁通过前
+不切换，也不提前删除现有 Python 路径。
+
+迁移优先级高于新增平行 Ask 功能，执行顺序为：
+
+1. M0 契约和行为刻画；
+2. M1 TypeScript Retrieval 影子运行；
+3. M2 LangGraph.js Ask 对齐；
+4. M3 DBOS 生命周期与 ParserProvider；
+5. M4 受控切换；
+6. M5 观察期后退役 Python 服务和兼容投影。
+
 ## 开始前先决条件（团队 checklist）
 
 在开新功能或接客户试点前，先完成下列事项。细节见 [DEV.md](./DEV.md) 与 [INTEGRATION.md](./INTEGRATION.md)。

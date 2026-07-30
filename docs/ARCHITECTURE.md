@@ -3,6 +3,9 @@
 > 状态：现行（2026-07-29）
 >
 > 决策记录：[ADR-0004](./adr/0004-nextjs-control-plane.md) · 解析/切分：[ADR-0001](./adr/0001-ocr-vlm-adapters.md)–[0003](./adr/0003-policy-driven-chunking.md)
+>
+> 目标迁移：[ADR-0005](./adr/0005-typescript-core-runtime.md) 已接受
+> TypeScript 核心运行时，但在迁移门禁通过前，本页仍描述当前生产实现。
 
 ## 产品与技术分层
 
