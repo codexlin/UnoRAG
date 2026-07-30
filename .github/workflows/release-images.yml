@@ -255,7 +255,7 @@ jobs:
           UNORAG_API_IMAGE=unorag-api:${TAG}
           UNORAG_OUTBOX_IMAGE=unorag-outbox:${TAG}
           UNORAG_DBOS_WORKER_IMAGE=unorag-web-worker:${TAG}
-          UNORAG_DBOS_APPLICATION_VERSION=cleanup-v1
+          UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
           EOF
           else
             for digest in "${WEB_DIGEST}" "${API_DIGEST}" "${OUTBOX_DIGEST}" "${WORKER_DIGEST}" "${MIGRATOR_DIGEST}"; do
@@ -267,7 +267,7 @@ jobs:
           UNORAG_API_IMAGE=${ACR_REPO}@${API_DIGEST}
           UNORAG_OUTBOX_IMAGE=${ACR_REPO}@${OUTBOX_DIGEST}
           UNORAG_DBOS_WORKER_IMAGE=${ACR_REPO}@${WORKER_DIGEST}
-          UNORAG_DBOS_APPLICATION_VERSION=cleanup-v1
+          UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
           EOF
             cat > /tmp/unorag-release/release-ghcr.env <<EOF
           UNORAG_WEB_IMAGE=${GHCR_REPO}@${WEB_DIGEST}
@@ -275,7 +275,7 @@ jobs:
           UNORAG_API_IMAGE=${GHCR_REPO}@${API_DIGEST}
           UNORAG_OUTBOX_IMAGE=${GHCR_REPO}@${OUTBOX_DIGEST}
           UNORAG_DBOS_WORKER_IMAGE=${GHCR_REPO}@${WORKER_DIGEST}
-          UNORAG_DBOS_APPLICATION_VERSION=cleanup-v1
+          UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
           EOF
           fi
 

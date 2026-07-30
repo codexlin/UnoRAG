@@ -51,6 +51,27 @@ export function classifyWorkerError(error: unknown): WorkerErrorClassification {
 		};
 	}
 
+	const databaseCode =
+		error &&
+		typeof error === "object" &&
+		"code" in error &&
+		typeof error.code === "string"
+			? error.code
+			: "";
+	if (
+		databaseCode.startsWith("08") ||
+		["40001", "40P01", "55P03", "57P01", "57P02", "57P03"].includes(
+			databaseCode,
+		)
+	) {
+		return {
+			category: "transient",
+			code: "database_transaction_retry",
+			message: safeMessage(error),
+			retryable: true,
+		};
+	}
+
 	const message = safeMessage(error);
 	const normalized = message.toLowerCase();
 	if (

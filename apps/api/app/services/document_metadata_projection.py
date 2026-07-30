@@ -20,6 +20,28 @@ class DocumentMetadataProjectionCleaner:
 			with connection.cursor() as cursor:
 				cursor.execute(
 					"""
+					SELECT library_id
+					FROM public.documents
+					WHERE id = %s
+					  AND tenant_id = %s
+					  AND workspace_id = %s
+					""",
+					(doc_id, scope.tenant_id, scope.workspace_id),
+				)
+				projected = cursor.fetchone()
+				if projected is None:
+					return False
+				library_id = str(projected[0])
+				cursor.execute(
+					"""
+					SELECT pg_advisory_xact_lock(
+						hashtextextended(%s::text, 0)
+					)
+					""",
+					(library_id,),
+				)
+				cursor.execute(
+					"""
 					DELETE FROM public.documents
 					WHERE id = %s
 					  AND tenant_id = %s
@@ -32,7 +54,6 @@ class DocumentMetadataProjectionCleaner:
 				if deleted is None:
 					return False
 
-				library_id = str(deleted[0])
 				cursor.execute(
 					"""
 					WITH document_stats AS (

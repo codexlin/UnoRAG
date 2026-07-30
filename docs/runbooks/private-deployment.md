@@ -100,10 +100,12 @@ mk_compose_bootstrap --profile migrate run --rm bootstrap
 mk_compose up -d caddy web api lifecycle-worker outbox-worker
 ```
 
-### 2.4 DBOS cleanup cohort（显式启用）
+### 2.4 DBOS lifecycle cohort（显式启用）
 
-DBOS 只负责被明确分配的 cleanup 行。默认安装不会启动 profile，也不会修改
-`execution_engine=python` 的队列行。
+DBOS 只负责被明确分配的 lifecycle 工作。默认安装不会启动 profile，不会修改
+`execution_engine=python` 的 cleanup 行，也不会把新 `document.delete` 路由到
+DBOS。`UNORAG_DBOS_APPLICATION_VERSION` 必须随 workflow 代码固定在发布清单；
+当前版本为 `lifecycle-v2`。
 
 ```bash
 # 1. 启动 executor + control；两者不对外暴露端口
@@ -122,6 +124,34 @@ active generation。停止 cohort 时先停 `dbos-control`，等待 `dbos-worker
 任务；确认不存在非终态 DBOS job 后再停 executor。已接管行不反向改回 Python；
 未接管的新行仍由 Python 处理。不得直接改已有
 `app.jobs.execution_engine/workflow_id`，这两个字段由数据库触发器保护为不可变。
+
+新建文档删除任务可独立灰度。Web、DBOS worker 和 DBOS control 必须使用相同配置，
+且 Web 与 worker 必须挂载同一个持久化文档卷：
+
+```bash
+UNORAG_DBOS_DOCUMENT_DELETE_ENABLED=true
+```
+
+该开关只影响启用后的新任务；任务创建时会冻结
+`execution_engine=dbos, workflow_id=job_id`。删除 workflow 依次停止 ingest 写入、
+冻结 generation/storage 清单、清理 Qdrant、存储与兼容投影，最后原子完成
+document/library/outbox/audit。最终 Qdrant 删除与 Python ingest 写入使用同一
+document advisory lock，防止 lease 回收后的迟到写入复活已删除向量。
+该 session-level fence 设置 30 秒锁超时；`WORKER_DATABASE_URL` 必须直连
+PostgreSQL 或使用 session pooling，禁止经 PgBouncer transaction pooling。
+
+`document.delete` 不支持通用取消；失败后由运维显式创建一个新的 job/workflow：
+
+```bash
+mk_compose --profile dbos run --rm --no-deps dbos-control \
+  ./node_modules/.bin/tsx src/worker/dispatch-entry.ts \
+  --retry-document-delete <failed-job-uuid>
+```
+
+每次重试保留 `retry_of_job_id`，不会修改或复用旧 workflow。
+坏 payload 会逐任务隔离；cleanup 行同步进入 `error`，document delete 重试从
+权威 version/document/library 关系重建 payload。scope 丢失会终止为 `dead` 并写入
+`document.delete.scope_missing` 审计事件，必须接入 lifecycle dead-job 告警。
 
 生命周期迁移细节另见
 [`document-lifecycle-migration.md`](./document-lifecycle-migration.md)。

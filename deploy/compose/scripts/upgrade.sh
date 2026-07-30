@@ -248,6 +248,7 @@ save_previous_images() {
 	dbos_version="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION || true)"
 	[[ -n "$outbox" ]] || outbox="$migrator"
 	[[ -n "$worker" ]] || worker="unorag-web-worker:local"
+	# A missing key can only come from a pre-lifecycle-v2 installation.
 	[[ -n "$dbos_version" ]] || dbos_version="cleanup-v1"
 	{
 		echo "# previous pins captured $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -363,7 +364,7 @@ fi
 if [[ -z "$DBOS_APPLICATION_VERSION" ]]; then
 	DBOS_APPLICATION_VERSION="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION || true)"
 fi
-[[ -n "$DBOS_APPLICATION_VERSION" ]] || DBOS_APPLICATION_VERSION="cleanup-v1"
+[[ -n "$DBOS_APPLICATION_VERSION" ]] || DBOS_APPLICATION_VERSION="lifecycle-v2"
 [[ "$DBOS_APPLICATION_VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || \
 	die "invalid UNORAG_DBOS_APPLICATION_VERSION=${DBOS_APPLICATION_VERSION}"
 

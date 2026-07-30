@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type {
+	DocumentDeleteJob,
 	DocumentIngestJob,
 	DurableJobInput,
 	GenerationCleanupJob,
@@ -58,6 +59,23 @@ const cleanup: GenerationCleanupJob = {
 	},
 };
 
+const deletion: DocumentDeleteJob = {
+	jobId: "30000000-0000-4000-8000-000000000001",
+	organizationId: ingest.organizationId,
+	workspaceId: ingest.workspaceId,
+	idempotencyKey: "document.delete:test",
+	type: "document.delete",
+	payload: {
+		document_id: ingest.payload.document_id,
+		rag_document_id: "rag-document",
+		library_id: "10000000-0000-4000-8000-000000000007",
+		rag_library_id: "rag-library",
+		storage_keys: ["documents/test.pdf"],
+		generation_ids: [ingest.payload.generation_id],
+		library_delete: false,
+	},
+};
+
 test("registers exactly three named workflows with strict input contracts", () => {
 	const registrations: Array<{
 		name: string;
@@ -83,7 +101,7 @@ test("registers exactly three named workflows with strict input contracts", () =
 	}
 });
 
-test("ingest and delete fail closed until staged workflows are wired", async () => {
+test("ingest fails closed until its staged workflow is wired", async () => {
 	const workflows = registerDurableWorkflows(
 		passthroughRegistrar,
 		successfulPorts([]),
@@ -95,6 +113,160 @@ test("ingest and delete fail closed until staged workflows are wired", async () 
 			error instanceof WorkerTaskError &&
 			error.code === "workflow_not_implemented",
 	);
+});
+
+test("document delete drains ingest and checkpoints every external boundary", async () => {
+	const events: string[] = [];
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		successfulPorts(events),
+		operations(events),
+	);
+
+	assert.deepEqual(await workflows.documentDelete(deletion), {
+		outcome: "completed",
+		result: {
+			storageDeleted: 1,
+			generationsDeleted: 1,
+			libraryFinalized: false,
+		},
+	});
+	assert.deepEqual(events, [
+		"tx:document-delete-mark-running-1",
+		"delete:running",
+		"tx:document-delete-drain-ingest-1-1",
+		"delete:drained",
+		"tx:document-delete-freeze-targets-1",
+		"delete:targets",
+		"step:document-delete-generation-1-1",
+		"delete:generation:10000000-0000-4000-8000-000000000006",
+		"step:document-delete-vectors-1",
+		"delete:vectors",
+		"step:document-delete-storage-1-1",
+		"delete:storage:documents/test.pdf",
+		"step:document-delete-projection-1",
+		"delete:projection",
+		"tx:document-delete-finalize-1",
+		"delete:completed",
+	]);
+});
+
+test("document delete durably polls until every ingest writer has stopped", async () => {
+	const events: string[] = [];
+	const ports = successfulPorts(events);
+	let drainPolls = 0;
+	ports.documentDelete.transactions.drainIngest = async () => {
+		drainPolls += 1;
+		events.push(`delete:drain:${drainPolls}`);
+		return drainPolls >= 2;
+	};
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		ports,
+		operations(events),
+	);
+
+	assert.equal((await workflows.documentDelete(deletion)).outcome, "completed");
+	assert.deepEqual(events.slice(0, 8), [
+		"tx:document-delete-mark-running-1",
+		"delete:running",
+		"tx:document-delete-drain-ingest-1-1",
+		"delete:drain:1",
+		"sleep-for:5000",
+		"tx:document-delete-drain-ingest-2-1",
+		"delete:drain:2",
+		"tx:document-delete-freeze-targets-1",
+	]);
+});
+
+test("document delete retries transient boundaries without replaying completed stages", async () => {
+	const events: string[] = [];
+	const ports = successfulPorts(events);
+	let attempts = 0;
+	ports.documentDelete.external.deleteDocumentVectors = async () => {
+		attempts += 1;
+		events.push(`delete:vectors:${attempts}`);
+		if (attempts === 1) {
+			throw new WorkerTaskError(
+				"Qdrant temporarily unavailable",
+				"document_delete_qdrant_failed",
+				"transient",
+			);
+		}
+	};
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		ports,
+		operations(events),
+	);
+
+	assert.equal((await workflows.documentDelete(deletion)).outcome, "completed");
+	assert.equal(
+		events.filter((event) => event.startsWith("delete:generation:")).length,
+		1,
+	);
+	assert.ok(events.includes("step:document-delete-vectors-1"));
+	assert.ok(events.includes("sleep-for:1000"));
+	assert.ok(events.includes("step:document-delete-vectors-2"));
+});
+
+test("document delete retries a transient final transaction in place", async () => {
+	const events: string[] = [];
+	const ports = successfulPorts(events);
+	let finalizations = 0;
+	ports.documentDelete.transactions.markCompleted = async (_input, result) => {
+		finalizations += 1;
+		events.push(`delete:finalize:${finalizations}`);
+		if (finalizations === 1) {
+			throw Object.assign(new Error("serialization failure"), {
+				code: "40001",
+			});
+		}
+		return { ...result, libraryFinalized: false };
+	};
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		ports,
+		operations(events),
+	);
+
+	assert.equal((await workflows.documentDelete(deletion)).outcome, "completed");
+	assert.ok(events.includes("tx:document-delete-finalize-1"));
+	assert.ok(events.includes("sleep-for:100"));
+	assert.ok(events.includes("tx:document-delete-finalize-2"));
+	assert.equal(
+		events.some((event) => event.startsWith("delete:error:")),
+		false,
+	);
+	assert.equal(
+		events.filter((event) => event.startsWith("delete:generation:")).length,
+		1,
+	);
+});
+
+test("document delete records a permanent boundary failure without finalizing", async () => {
+	const events: string[] = [];
+	const ports = successfulPorts(events);
+	ports.documentDelete.external.deleteStorageKey = async () => {
+		throw new WorkerTaskError(
+			"Storage key escaped its root",
+			"document_storage_key_invalid",
+			"permanent",
+		);
+	};
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		ports,
+		operations(events),
+	);
+
+	assert.deepEqual(await workflows.documentDelete(deletion), {
+		outcome: "failed",
+		errorCode: "document_storage_key_invalid",
+	});
+	assert.ok(events.includes("delete:error:document_storage_key_invalid"));
+	assert.equal(events.includes("delete:projection"), false);
+	assert.equal(events.includes("delete:completed"), false);
 });
 
 test("generation cleanup has sleep, TX, delete step, and completion TX boundaries", async () => {
@@ -230,6 +402,47 @@ function operations(events: string[]): DurableOperationPort {
 
 function successfulPorts(events: string[]): WorkerPorts {
 	return {
+		documentDelete: {
+			external: {
+				async deleteGeneration(_input, generationId) {
+					events.push(`delete:generation:${generationId}`);
+				},
+				async deleteDocumentVectors() {
+					events.push("delete:vectors");
+				},
+				async deleteStorageKey(_input, storageKey) {
+					events.push(`delete:storage:${storageKey}`);
+					return true;
+				},
+				async deleteProjection() {
+					events.push("delete:projection");
+				},
+			},
+			transactions: {
+				async markRunning() {
+					events.push("delete:running");
+					return "delete";
+				},
+				async drainIngest() {
+					events.push("delete:drained");
+					return true;
+				},
+				async loadTargets(input) {
+					events.push("delete:targets");
+					return {
+						generationIds: input.payload.generation_ids,
+						storageKeys: input.payload.storage_keys,
+					};
+				},
+				async markCompleted(_input, result) {
+					events.push("delete:completed");
+					return { ...result, libraryFinalized: false };
+				},
+				async markError(_input, error) {
+					events.push(`delete:error:${error.code}`);
+				},
+			},
+		},
 		generationCleanup: {
 			async deleteGeneration() {
 				events.push("delete:generation");

@@ -196,7 +196,7 @@ UNORAG_API_IMAGE=${repo}@${api_d}
 UNORAG_WEB_MIGRATOR_IMAGE=${repo}@${mig_d}
 UNORAG_OUTBOX_IMAGE=${repo}@${out_d}
 UNORAG_DBOS_WORKER_IMAGE=${repo}@${worker_d}
-UNORAG_DBOS_APPLICATION_VERSION=cleanup-v1
+UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
 EOF
 	else
 		cat >"$env_file" <<EOF
@@ -205,7 +205,7 @@ UNORAG_API_IMAGE=${api_ref}
 UNORAG_WEB_MIGRATOR_IMAGE=${mig_ref}
 UNORAG_OUTBOX_IMAGE=${out_ref}
 UNORAG_DBOS_WORKER_IMAGE=${worker_ref}
-UNORAG_DBOS_APPLICATION_VERSION=cleanup-v1
+UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
 EOF
 	fi
 
@@ -215,7 +215,7 @@ EOF
   "git_sha": "$(git rev-parse HEAD 2>/dev/null || echo unknown)",
   "platform": "${PLATFORM:-local}",
   "mode": "${mode}",
-  "dbos_application_version": "cleanup-v1",
+  "dbos_application_version": "lifecycle-v2",
   "images": {
     "web": {"ref": "${web_ref}", "digest": "${web_d}"},
     "api": {"ref": "${api_ref}", "digest": "${api_d}"},

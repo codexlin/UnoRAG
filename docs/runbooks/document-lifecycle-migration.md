@@ -217,6 +217,38 @@ uv run python -m app.lifecycle_worker
    最后一个文档清理完成后，worker 写入 `library.delete` outbox，并标记
    library `deleted`。空库仍立即硬删 + outbox。
 
+DBOS `lifecycle-v2` 已提供可选的 `document.delete` cohort。默认
+`UNORAG_DBOS_DOCUMENT_DELETE_ENABLED=false`，因此现有 Python 路径仍是生产基线。
+启用后只影响新任务；已创建任务的 execution identity 不可修改。DBOS 路径使用
+durable step/transaction、稳定 `workflow_id=job_id`、missing-workflow
+reconciler、逐任务坏 payload 隔离，以及显式 operator retry。
+
+迁移期内 Python ingest 与 TypeScript delete 共享 document advisory write
+fence。删除在最终 doc-level Qdrant 清理时持有 fence；ingest 在 generation
+delete/upsert 前持有同一 fence并重新验证 lease、desired version 和 document
+状态。因此迟到 writer 要么先完成并随后被删除，要么在 tombstone 后拒绝写入。
+该 fence 使用 PostgreSQL session advisory lock 和 30 秒 `lock_timeout`；worker
+必须直连 PostgreSQL 或使用 session pooling，不支持 PgBouncer transaction
+pooling。
+
+启用前必须确认：
+
+- DBOS 使用独立 system database 和固定 application version；
+- Web/worker 共用持久化 `DOCUMENT_STORAGE_ROOT`；
+- Web、DBOS worker、DBOS control 的 delete flag 一致；
+- `document.delete` generic cancel 返回 409；
+- 真实 PostgreSQL 的并发删除、writer fence、坏任务隔离和 retry 测试通过。
+
+失败任务使用新的 workflow 重试：
+
+```bash
+cd apps/web
+DATABASE_URL=postgresql://... \
+UNORAG_DBOS_CLEANUP_ENABLED=true \
+pnpm exec tsx src/worker/dispatch-entry.ts \
+  --retry-document-delete <failed-job-uuid>
+```
+
 运维巡检：
 
 ```bash

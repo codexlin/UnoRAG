@@ -103,13 +103,14 @@ outboxWorker:
   maxAttempts: "8"
   terminationGracePeriodSeconds: 60
 
-# Optional generation-cleanup migration cohort. Enable only after provisioning
-# a dedicated DBOS system database and explicitly adopting selected cleanup rows.
+# Optional DBOS lifecycle migration cohort. Enable only after provisioning a
+# dedicated DBOS system database. Cleanup adoption and document-delete routing
+# remain separately opt-in.
 dbos:
   enabled: false
   workerReplicaCount: 1
   controlReplicaCount: 1
-  applicationVersion: cleanup-v1
+  applicationVersion: lifecycle-v2
   systemDatabasePoolSize: "10"
   lifecycleConcurrency: "2"
   controlPollMs: "5000"
@@ -186,6 +187,8 @@ config:
   askMode: live
   metadataBackend: postgres
   documentLifecycleV2: "true"
+  # Opt-in cohort: only newly inserted document.delete jobs use DBOS.
+  dbosDocumentDeleteEnabled: "false"
   internalAuthEnabled: "true"
   internalAuthReplayBackend: redis
   activeGenerationGateEnabled: "true"

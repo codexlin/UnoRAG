@@ -41,6 +41,15 @@ export async function POST(request: Request, context: RouteContext) {
 	if (!current) {
 		return Response.json({ detail: "job not found" }, { status: 404 });
 	}
+	if (current.job.type === "document.delete") {
+		return Response.json(
+			{
+				detail:
+					"document delete jobs cannot be cancelled; restore requires a separate workflow",
+			},
+			{ status: 409 },
+		);
+	}
 	if (TERMINAL_JOB_STATUSES.has(current.job.status)) {
 		return Response.json(toApiJob(current));
 	}

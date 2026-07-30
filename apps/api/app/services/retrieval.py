@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 from uuid import uuid4
 
@@ -192,6 +193,7 @@ class IngestService:
 		allowed_principal_ids: tuple[str, ...] = (),
 		allowed_group_ids: tuple[str, ...] = (),
 		progress_callback: Callable[[str, int, int], None] | None = None,
+		write_fence: Callable[[], AbstractContextManager[None]] | None = None,
 	) -> dict[str, Any]:
 		"""IR chunks → embed(preamble+body) → Qdrant；payload 含 section/page 新字段。"""
 		resolved_doc_id = doc_id or str(uuid4())
@@ -214,25 +216,29 @@ class IngestService:
 		vectors = self.embeddings.embed_texts(embed_inputs)
 		if progress_callback is not None:
 			progress_callback("indexing", len(vectors), len(embed_inputs))
-		if generation_id:
-			self.store.delete_by_generation(
-				generation_id=generation_id,
+		with write_fence() if write_fence is not None else nullcontext():
+			if generation_id:
+				self.store.delete_by_generation(
+					generation_id=generation_id,
+					access_scope=self.access_scope,
+				)
+			else:
+				self.delete_document_chunks(
+					doc_id=resolved_doc_id,
+					library_id=library_id,
+				)
+			count = self.store.upsert_chunks(
+				library_id=library_id,
+				doc_id=resolved_doc_id,
+				title=title,
+				chunks=payloads,
+				vectors=vectors,
+				filename=filename,
 				access_scope=self.access_scope,
+				acl_scope=acl_scope,  # type: ignore[arg-type]
+				allowed_principal_ids=allowed_principal_ids,
+				allowed_group_ids=allowed_group_ids,
 			)
-		else:
-			self.delete_document_chunks(doc_id=resolved_doc_id, library_id=library_id)
-		count = self.store.upsert_chunks(
-			library_id=library_id,
-			doc_id=resolved_doc_id,
-			title=title,
-			chunks=payloads,
-			vectors=vectors,
-			filename=filename,
-			access_scope=self.access_scope,
-			acl_scope=acl_scope,  # type: ignore[arg-type]
-			allowed_principal_ids=allowed_principal_ids,
-			allowed_group_ids=allowed_group_ids,
-		)
 		chunk_only = sum(1 for item in payloads if item.get("record_type", "chunk") == "chunk")
 		section_only = sum(1 for item in payloads if item.get("record_type") == "section")
 		table_only = sum(1 for item in payloads if item.get("record_type") == "table")

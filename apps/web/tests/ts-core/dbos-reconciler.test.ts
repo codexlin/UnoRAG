@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { GenerationCleanupJob } from "../../src/worker/contracts";
+import type {
+	DocumentDeleteJob,
+	GenerationCleanupJob,
+} from "../../src/worker/contracts";
 import type {
 	DbosJobEnqueuer,
 	DbosWorkflowStatus,
 } from "../../src/worker/dbos-runtime";
 import {
+	documentDeleteTerminalProjection,
 	type ReconciliationCandidate,
 	type ReconciliationStore,
 	reconcileDbosJobs,
@@ -26,6 +30,23 @@ const job: GenerationCleanupJob = {
 		library_id: "10000000-0000-4000-8000-000000000007",
 		storage_keys: [],
 		reason: "superseded",
+	},
+};
+
+const deletion: DocumentDeleteJob = {
+	jobId: "30000000-0000-4000-8000-000000000001",
+	organizationId: job.organizationId,
+	workspaceId: job.workspaceId,
+	idempotencyKey: "document.delete:test",
+	type: "document.delete",
+	payload: {
+		document_id: job.payload.document_id,
+		rag_document_id: "rag-document",
+		library_id: job.payload.library_id,
+		rag_library_id: "rag-library",
+		storage_keys: [],
+		generation_ids: [job.payload.generation_id],
+		library_delete: false,
 	},
 };
 
@@ -60,6 +81,20 @@ test("reconciler repairs metadata after start succeeded before markDispatched", 
 	assert.equal(result.observed, 1);
 	assert.equal(result.terminalRepaired, 0);
 	assert.equal(events.includes(`start:${job.jobId}`), false);
+});
+
+test("reconciler never resurrects a terminal app job without a workflow", async () => {
+	const events: string[] = [];
+	const candidate = cleanupCandidate();
+	candidate.appStatus = "failed";
+	const result = await reconcileDbosJobs(
+		store(events, [candidate]),
+		dbos(events, null),
+	);
+
+	assert.equal(result.started, 0);
+	assert.equal(events.includes(`start:${job.jobId}`), false);
+	assert.match(result.failed[0]?.error ?? "", /operator retry required/);
 });
 
 test("reconciler applies DBOS terminal projection", async () => {
@@ -112,6 +147,59 @@ test("missing cleanup row is obsolete only after the document is deleted", () =>
 	assert.equal(
 		terminalProjection(errored, null, "deleting").errorCode,
 		"dbos_workflow_terminal_error",
+	);
+});
+
+test("document delete terminal projection requires matching durable state", () => {
+	const completed: DbosWorkflowStatus = {
+		workflowId: deletion.jobId,
+		status: "SUCCESS",
+		output: { outcome: "completed" },
+	};
+	assert.deepEqual(documentDeleteTerminalProjection(completed, "deleted"), {
+		appStatus: "completed",
+		errorCode: null,
+		error: null,
+		cleanupError: false,
+	});
+	assert.equal(
+		documentDeleteTerminalProjection(completed, "deleting").errorCode,
+		"dbos_projection_mismatch",
+	);
+	assert.deepEqual(
+		documentDeleteTerminalProjection(
+			{
+				workflowId: deletion.jobId,
+				status: "SUCCESS",
+				output: {
+					outcome: "failed",
+					errorCode: "document_delete_qdrant_failed",
+				},
+			},
+			"deleting",
+		),
+		{
+			appStatus: "failed",
+			errorCode: "document_delete_qdrant_failed",
+			error: "DBOS document delete workflow reported failure",
+			cleanupError: false,
+		},
+	);
+	assert.deepEqual(
+		documentDeleteTerminalProjection(
+			{
+				workflowId: deletion.jobId,
+				status: "ERROR",
+				error: "late executor failure",
+			},
+			"deleted",
+		),
+		{
+			appStatus: "completed",
+			errorCode: null,
+			error: null,
+			cleanupError: false,
+		},
 	);
 });
 

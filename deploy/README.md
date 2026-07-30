@@ -34,7 +34,7 @@ deploy/
     web.Dockerfile
   helm/
     README.md               # Helm 安装说明
-    unorag/               # chart：web / api / workers；DBOS migration cohort 可选
+    unorag/               # chart：web / api / workers；DBOS lifecycle cohort 可选
 ```
 
 ## 快速开始
@@ -56,7 +56,7 @@ cd deploy/compose
 
 ## 本片已覆盖
 
-- Compose 参考拓扑（Caddy → web；api / lifecycle-worker / outbox-worker 仅内网；DBOS cohort 可选）
+- Compose 参考拓扑（Caddy → web；api / lifecycle-worker / outbox-worker 仅内网；DBOS lifecycle cohort 可选）
 - 客户托管连接与模型 endpoint（全部经环境变量）
 - secret 仅从环境注入；镜像不含密钥
 - production fail-closed 与 readiness 说明
@@ -67,7 +67,7 @@ cd deploy/compose
 
 见 [`deploy/helm/README.md`](./helm/README.md)。默认假设 Postgres / Qdrant / Redis
 由客户托管；chart 部署 web / api / lifecycle-worker / outbox-worker，并可显式启用
-DBOS cleanup worker/control（+ 可选 Ingress / 迁移 Job / PVC）。
+DBOS lifecycle worker/control（+ 可选 Ingress / 迁移 Job / PVC）。
 
 ## 试点冒烟
 

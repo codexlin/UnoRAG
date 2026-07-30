@@ -52,6 +52,16 @@ async function main(): Promise<void> {
 					.parse(process.argv[retryIndex + 1]),
 			);
 		}
+		const retryDeleteIndex = process.argv.indexOf("--retry-document-delete");
+		let retriedDocumentDeleteJobId: string | undefined;
+		if (retryDeleteIndex >= 0) {
+			retriedDocumentDeleteJobId = await store.retryFailedDocumentDelete(
+				z
+					.string()
+					.uuid()
+					.parse(process.argv[retryDeleteIndex + 1]),
+			);
+		}
 		const result = await dispatchDbosJobs(store, starter, {
 			limit: positiveIntegerArgument("--limit", 50),
 			redispatchAfterMs: positiveIntegerArgument(
@@ -60,7 +70,12 @@ async function main(): Promise<void> {
 			),
 		});
 		process.stdout.write(
-			`${JSON.stringify({ ...result, adopted, retriedJobId })}\n`,
+			`${JSON.stringify({
+				...result,
+				adopted,
+				retriedJobId,
+				retriedDocumentDeleteJobId,
+			})}\n`,
 		);
 		if (result.failed.length > 0) {
 			process.exitCode = 1;

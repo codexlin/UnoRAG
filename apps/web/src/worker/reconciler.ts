@@ -1,9 +1,16 @@
 import type { Pool, PoolClient } from "pg";
 
-import { type DurableJobInput, durableJobSchema } from "./contracts";
+import type { DurableJobInput } from "./contracts";
 import type { DbosJobEnqueuer, DbosWorkflowStatus } from "./dbos-runtime";
+import { parseOrQuarantineDurableJob } from "./job-quarantine";
 
 const ACTIVE_DBOS_STATUSES = new Set(["PENDING", "ENQUEUED", "DELAYED"]);
+const ACTIVE_APP_JOB_STATUSES = new Set([
+	"queued",
+	"running",
+	"retry",
+	"cancelling",
+]);
 
 export interface ReconciliationCandidate {
 	job: DurableJobInput;
@@ -65,6 +72,11 @@ export async function reconcileDbosJobs(
 		try {
 			const status = await dbos.getWorkflowStatus(jobId);
 			if (!status) {
+				if (!ACTIVE_APP_JOB_STATUSES.has(candidate.appStatus)) {
+					throw new Error(
+						`Terminal app job ${jobId} has no DBOS workflow; operator retry required`,
+					);
+				}
 				const started = await dbos.enqueue(candidate.job);
 				await store.markObserved(jobId, started.workflowId);
 				result.started += 1;
@@ -114,7 +126,7 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 			 AND document.organization_id = job.organization_id
 			 AND document.workspace_id = job.workspace_id
 			WHERE job.execution_engine = 'dbos'
-			  AND job.type = 'generation.cleanup'
+			  AND job.type = ANY($3::varchar[])
 			  AND job.workflow_id = job.id::text
 			  AND (
 				  job.dispatched_at IS NULL
@@ -126,10 +138,15 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 			ORDER BY coalesce(job.dispatched_at, job.created_at), job.id
 			LIMIT $2
 			`,
-			[input.staleBefore, input.limit],
+			[
+				input.staleBefore,
+				input.limit,
+				["document.delete", "generation.cleanup"],
+			],
 		);
-		return result.rows.map((row) => ({
-			job: durableJobSchema.parse({
+		const candidates: ReconciliationCandidate[] = [];
+		for (const row of result.rows) {
+			const job = await parseOrQuarantineDurableJob(this.pool, {
 				jobId: row.jobId,
 				organizationId: row.organizationId,
 				workspaceId: row.workspaceId,
@@ -137,11 +154,16 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 				idempotencyKey: row.idempotencyKey,
 				type: row.type,
 				payload: row.payload,
-			}),
-			appStatus: String(row.appStatus),
-			cleanupStatus: row.cleanupStatus,
-			documentStatus: row.documentStatus,
-		}));
+			});
+			if (!job) continue;
+			candidates.push({
+				job,
+				appStatus: String(row.appStatus),
+				cleanupStatus: row.cleanupStatus,
+				documentStatus: row.documentStatus,
+			});
+		}
+		return candidates;
 	}
 
 	async markObserved(jobId: string, workflowId: string): Promise<void> {
@@ -170,18 +192,72 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 		try {
 			await client.query("BEGIN");
 			const jobId = candidate.job.jobId;
-			if (candidate.job.type !== "generation.cleanup") {
-				throw new Error(
-					`DBOS cleanup reconciliation received ${candidate.job.type}`,
-				);
-			}
 			const documentId = candidate.job.payload.document_id;
+			if (candidate.job.type === "document.delete") {
+				await client.query(
+					"SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+					[candidate.job.payload.library_id],
+				);
+				const library = await client.query(
+					`
+					SELECT id
+					FROM app.libraries
+					WHERE id = $1
+					  AND organization_id = $2
+					  AND workspace_id = $3
+					  AND rag_library_id = $4
+					FOR UPDATE
+					`,
+					[
+						candidate.job.payload.library_id,
+						candidate.job.organizationId,
+						candidate.job.workspaceId,
+						candidate.job.payload.rag_library_id,
+					],
+				);
+				if (library.rowCount !== 1) {
+					await this.markMissingDeleteScope(
+						client,
+						candidate,
+						"library scope is missing",
+					);
+					await client.query("COMMIT");
+					return;
+				}
+			}
 			await client.query(
 				"SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
 				[documentId],
 			);
-			const document = await client.query<{ document_status: string }>(
-				`
+			const document =
+				candidate.job.type === "document.delete"
+					? await client.query<{ document_status: string }>(
+							`
+				SELECT document.status AS document_status
+				FROM app.documents AS document
+				JOIN app.document_versions AS version
+				  ON version.document_id = document.id
+				JOIN app.jobs AS job
+				  ON job.document_version_id = version.id
+				 AND job.id = $6
+				WHERE document.id = $1
+				  AND document.organization_id = $2
+				  AND document.workspace_id = $3
+				  AND document.library_id = $4
+				  AND document.rag_document_id = $5
+				FOR UPDATE OF document, version
+				`,
+							[
+								documentId,
+								candidate.job.organizationId,
+								candidate.job.workspaceId,
+								candidate.job.payload.library_id,
+								candidate.job.payload.rag_document_id,
+								jobId,
+							],
+						)
+					: await client.query<{ document_status: string }>(
+							`
 				SELECT status AS document_status
 				FROM app.documents
 				WHERE id = $1
@@ -189,18 +265,34 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 				  AND workspace_id = $3
 				FOR UPDATE
 				`,
-				[documentId, candidate.job.organizationId, candidate.job.workspaceId],
-			);
-			const cleanup = await client.query<{ cleanup_status: string }>(
-				`
+							[
+								documentId,
+								candidate.job.organizationId,
+								candidate.job.workspaceId,
+							],
+						);
+			if (candidate.job.type === "document.delete" && document.rowCount !== 1) {
+				await this.markMissingDeleteScope(
+					client,
+					candidate,
+					"document scope is missing",
+				);
+				await client.query("COMMIT");
+				return;
+			}
+			const cleanup =
+				candidate.job.type === "generation.cleanup"
+					? await client.query<{ cleanup_status: string }>(
+							`
 				SELECT sweep_status AS cleanup_status
 				FROM rag.generation_cleanup_queue
 				WHERE cleanup_job_id = $1
 				  AND execution_engine = 'dbos'
 				FOR UPDATE
 				`,
-				[jobId],
-			);
+							[jobId],
+						)
+					: { rows: [] };
 			const locked = await client.query<{
 				job_status: string;
 			}>(
@@ -220,11 +312,10 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 			}
 			const cleanupStatus = cleanup.rows[0]?.cleanup_status ?? null;
 			const documentStatus = document.rows[0]?.document_status ?? null;
-			const projection = terminalProjection(
-				status,
-				cleanupStatus,
-				documentStatus,
-			);
+			const projection =
+				candidate.job.type === "document.delete"
+					? documentDeleteTerminalProjection(status, documentStatus)
+					: terminalProjection(status, cleanupStatus, documentStatus);
 			if (projection.cleanupError && cleanupStatus === "sweeping") {
 				await client.query(
 					`
@@ -252,6 +343,7 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 				WHERE id = $1
 				  AND execution_engine = 'dbos'
 				  AND status <> $2
+				  AND status <> 'completed'
 				`,
 				[jobId, projection.appStatus, projection.errorCode, projection.error],
 			);
@@ -266,6 +358,146 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 			client.release();
 		}
 	}
+
+	private async markMissingDeleteScope(
+		client: PoolClient,
+		candidate: ReconciliationCandidate,
+		reason: string,
+	): Promise<void> {
+		const jobId = candidate.job.jobId;
+		const locked = await client.query<{ status: string }>(
+			`
+			SELECT status
+			FROM app.jobs
+			WHERE id = $1
+			  AND execution_engine = 'dbos'
+			  AND workflow_id = id::text
+			FOR UPDATE
+			`,
+			[jobId],
+		);
+		const currentStatus = locked.rows[0]?.status;
+		if (!currentStatus) {
+			throw new Error(`DBOS reconciliation row missing for job ${jobId}`);
+		}
+		if (currentStatus === "completed") return;
+
+		const updated = await client.query(
+			`
+			UPDATE app.jobs
+			SET status = 'dead',
+				stage = 'done',
+				error_code = 'document_delete_scope_missing',
+				error = $2,
+				finished_at = coalesce(finished_at, now()),
+				updated_at = now()
+			WHERE id = $1
+			  AND execution_engine = 'dbos'
+			  AND workflow_id = id::text
+			  AND status <> 'completed'
+			`,
+			[jobId, `Document delete cannot be reconciled because its ${reason}`],
+		);
+		if (updated.rowCount !== 1) {
+			throw new Error(
+				`DBOS missing-scope terminalization failed for job ${jobId}`,
+			);
+		}
+		await client.query(
+			`
+			INSERT INTO app.audit_logs (
+				organization_id,
+				workspace_id,
+				action,
+				resource_type,
+				resource_id,
+				details
+			)
+			VALUES (
+				$1,
+				$2,
+				'document.delete.scope_missing',
+				'job',
+				$3,
+				jsonb_build_object(
+					'reason', $4::text,
+					'document_id', $5::text
+				)
+			)
+			`,
+			[
+				candidate.job.organizationId,
+				candidate.job.workspaceId,
+				jobId,
+				reason,
+				candidate.job.payload.document_id,
+			],
+		);
+	}
+}
+
+export function documentDeleteTerminalProjection(
+	status: DbosWorkflowStatus,
+	documentStatus: string | null,
+): {
+	appStatus: "completed" | "failed" | "dead" | "cancelled";
+	errorCode: string | null;
+	error: string | null;
+	cleanupError: boolean;
+} {
+	if (documentStatus === "deleted") {
+		return {
+			appStatus: "completed",
+			errorCode: null,
+			error: null,
+			cleanupError: false,
+		};
+	}
+	if (status.status === "SUCCESS") {
+		const output =
+			status.output && typeof status.output === "object"
+				? (status.output as { outcome?: unknown; errorCode?: unknown })
+				: {};
+		if (output.outcome === "completed" && documentStatus === "deleted") {
+			return {
+				appStatus: "completed",
+				errorCode: null,
+				error: null,
+				cleanupError: false,
+			};
+		}
+		if (output.outcome === "failed" && documentStatus === "deleting") {
+			return {
+				appStatus: "failed",
+				errorCode:
+					typeof output.errorCode === "string"
+						? output.errorCode
+						: "document_delete_failed",
+				error: "DBOS document delete workflow reported failure",
+				cleanupError: false,
+			};
+		}
+		return {
+			appStatus: "dead",
+			errorCode: "dbos_projection_mismatch",
+			error: `DBOS success conflicts with document status ${documentStatus}`,
+			cleanupError: false,
+		};
+	}
+	if (status.status === "CANCELLED") {
+		return {
+			appStatus: "cancelled",
+			errorCode: "dbos_workflow_cancelled",
+			error: "DBOS document delete workflow was cancelled",
+			cleanupError: false,
+		};
+	}
+	return {
+		appStatus: "dead",
+		errorCode: "dbos_workflow_terminal_error",
+		error: normalizeWorkflowError(status.error),
+		cleanupError: false,
+	};
 }
 
 export function terminalProjection(

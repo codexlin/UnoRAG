@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import os
+from time import sleep
 from uuid import uuid4
 
 import psycopg
 import pytest
+from psycopg.conninfo import make_conninfo
 
 from app.repositories.job_repository import (
     JobRepository,
@@ -12,6 +15,10 @@ from app.repositories.job_repository import (
     JobStatus,
     LostJobLeaseError,
     StaleDocumentVersionError,
+)
+from app.security.access_scope import AccessScope
+from app.services.document_metadata_projection import (
+    DocumentMetadataProjectionCleaner,
 )
 
 
@@ -471,6 +478,138 @@ def test_document_ingest_repository_completes_staging_generation(
     assert active == (ids["version_id"], ids["generation_id"])
 
 
+def test_document_write_fence_serializes_and_rejects_deleting_document(
+    ingest_job_scope,
+):
+    ids = ingest_job_scope
+    with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
+        connection.execute("SET ROLE unorag_worker")
+        repository = JobRepository(connection)
+        [lease] = repository.claim(
+            worker_id="lifecycle-worker-fence",
+            job_types=["test.document.ingest"],
+            capacity=1,
+        )
+        context = repository.load_document_ingest_context(lease)
+
+        with repository.document_write_fence(lease, context):
+            with psycopg.connect(DATABASE_URL, autocommit=True) as contender:
+                acquired = contender.execute(
+                    """
+                    SELECT pg_try_advisory_lock(
+                        hashtextextended(%s::text, 0)
+                    )
+                    """,
+                    (ids["document_id"],),
+                ).fetchone()[0]
+                assert acquired is False
+
+        with psycopg.connect(DATABASE_URL, autocommit=True) as owner:
+            owner.execute(
+                "UPDATE app.documents SET status = 'deleting' WHERE id = %s",
+                (ids["document_id"],),
+            )
+        with pytest.raises(LostJobLeaseError):
+            with repository.document_write_fence(lease, context):
+                pytest.fail("deleting document must not enter the write fence")
+
+
+def test_begin_ingest_locks_version_before_job(ingest_job_scope):
+    ids = ingest_job_scope
+    with psycopg.connect(DATABASE_URL, autocommit=True) as setup:
+        setup.execute("SET ROLE unorag_worker")
+        repository = JobRepository(setup)
+        [lease] = repository.claim(
+            worker_id="lifecycle-worker-begin-order",
+            job_types=["test.document.ingest"],
+            capacity=1,
+        )
+        context = repository.load_document_ingest_context(lease)
+
+    with (
+        psycopg.connect(DATABASE_URL) as version_owner,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        version_owner.execute(
+            "SELECT id FROM app.document_versions WHERE id = %s FOR UPDATE",
+            (ids["version_id"],),
+        )
+
+        def begin_ingest() -> None:
+            with psycopg.connect(DATABASE_URL, autocommit=True) as worker:
+                worker.execute("SET ROLE unorag_worker")
+                JobRepository(worker).begin_document_ingest(lease, context)
+
+        pending = executor.submit(begin_ingest)
+        sleep(0.1)
+        with psycopg.connect(DATABASE_URL, autocommit=True) as probe:
+            probe.execute(
+                "SELECT id FROM app.jobs WHERE id = %s FOR UPDATE NOWAIT",
+                (ids["job_id"],),
+            )
+        version_owner.commit()
+        pending.result(timeout=5)
+
+
+def test_projection_cleaner_uses_worker_role_and_recomputes_library_state():
+    tenant_id = str(uuid4())
+    workspace_id = str(uuid4())
+    library_id = f"projection-library-{uuid4()}"
+    document_ids = [f"projection-document-{uuid4()}" for _ in range(2)]
+    with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
+        connection.execute(
+            """
+            INSERT INTO public.libraries (
+                id, tenant_id, workspace_id, name, status, doc_count, ready_count
+            )
+            VALUES (%s, %s, %s, 'Projection test', 'ready', 2, 2)
+            """,
+            (library_id, tenant_id, workspace_id),
+        )
+        for document_id in document_ids:
+            connection.execute(
+                """
+                INSERT INTO public.documents (
+                    id, library_id, tenant_id, workspace_id, name, filename,
+                    content_type, status, chunk_count
+                )
+                VALUES (
+                    %s, %s, %s, %s, 'Projection test', 'test.pdf',
+                    'application/pdf', 'ready', 1
+                )
+                """,
+                (document_id, library_id, tenant_id, workspace_id),
+            )
+    try:
+        cleaner = DocumentMetadataProjectionCleaner(
+            make_conninfo(DATABASE_URL, options="-c role=unorag_worker")
+        )
+        scope = AccessScope(tenant_id, workspace_id, "worker")
+        assert cleaner.delete_document(document_ids[0], scope=scope) is True
+        assert cleaner.delete_document(document_ids[1], scope=scope) is True
+
+        with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
+            state = connection.execute(
+                """
+                SELECT status, doc_count, ready_count
+                FROM public.libraries
+                WHERE id = %s
+                """,
+                (library_id,),
+            ).fetchone()
+        assert state == ("empty", 0, 0)
+    finally:
+        with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
+            connection.execute(
+                "DELETE FROM public.documents WHERE library_id = %s",
+                (library_id,),
+            )
+            connection.execute(
+                "DELETE FROM public.libraries WHERE id = %s",
+                (library_id,),
+            )
+
+
 def test_activate_generation_refuses_deleting_document(ingest_job_scope):
     ids = ingest_job_scope
     with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
@@ -689,6 +828,54 @@ def test_expired_leases_retry_then_dead(ingest_job_scope):
     assert version_status == "failed"
     assert document_status == "failed"
     assert library == ("failed", 0, 1)
+
+
+def test_expired_lease_reaper_locks_library_before_ingest_job(ingest_job_scope):
+    ids = ingest_job_scope
+    with psycopg.connect(DATABASE_URL, autocommit=True) as setup:
+        setup.execute("SET ROLE unorag_worker")
+        repository = JobRepository(setup)
+        [lease] = repository.claim(
+            worker_id="lifecycle-worker-reaper-order",
+            job_types=["test.document.ingest"],
+            capacity=1,
+        )
+        repository.begin_document_ingest(
+            lease,
+            repository.load_document_ingest_context(lease),
+        )
+        setup.execute(
+            """
+            UPDATE app.jobs
+            SET lease_expires_at = now() - interval '1 second'
+            WHERE id = %s
+            """,
+            (ids["job_id"],),
+        )
+
+    with (
+        psycopg.connect(DATABASE_URL) as library_owner,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        library_owner.execute(
+            "SELECT id FROM app.libraries WHERE id = %s FOR UPDATE",
+            (ids["library_id"],),
+        )
+
+        def reap() -> int:
+            with psycopg.connect(DATABASE_URL, autocommit=True) as worker:
+                worker.execute("SET ROLE unorag_worker")
+                return JobRepository(worker).reap_expired()
+
+        pending = executor.submit(reap)
+        sleep(0.1)
+        with psycopg.connect(DATABASE_URL, autocommit=True) as probe:
+            probe.execute(
+                "SELECT id FROM app.jobs WHERE id = %s FOR UPDATE NOWAIT",
+                (ids["job_id"],),
+            )
+        library_owner.commit()
+        assert pending.result(timeout=5) == 1
 
 
 def test_terminal_ingest_failure_refreshes_parent_library(ingest_job_scope):

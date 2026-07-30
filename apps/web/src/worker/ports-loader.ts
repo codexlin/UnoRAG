@@ -18,12 +18,26 @@ function validatePorts(value: unknown): asserts value is WorkerPorts {
 		!candidate ||
 		typeof candidate !== "object" ||
 		typeof candidate.generationCleanup?.deleteGeneration !== "function" ||
+		typeof candidate.documentDelete?.transactions?.markRunning !== "function" ||
+		typeof candidate.documentDelete?.transactions?.drainIngest !== "function" ||
+		typeof candidate.documentDelete?.transactions?.loadTargets !== "function" ||
+		typeof candidate.documentDelete?.transactions?.markCompleted !==
+			"function" ||
+		typeof candidate.documentDelete?.transactions?.markError !== "function" ||
+		typeof candidate.documentDelete?.external?.deleteGeneration !==
+			"function" ||
+		typeof candidate.documentDelete?.external?.deleteDocumentVectors !==
+			"function" ||
+		typeof candidate.documentDelete?.external?.deleteStorageKey !==
+			"function" ||
+		typeof candidate.documentDelete?.external?.deleteProjection !==
+			"function" ||
 		typeof candidate.transactions?.markGenerationSweeping !== "function" ||
 		typeof candidate.transactions?.markGenerationDeleted !== "function" ||
 		typeof candidate.transactions?.markGenerationError !== "function"
 	) {
 		throw new Error(
-			"UNORAG_DBOS_PORTS_MODULE must return cleanup and app.jobs transaction ports",
+			"UNORAG_DBOS_PORTS_MODULE must return document-delete, cleanup and app.jobs ports",
 		);
 	}
 }

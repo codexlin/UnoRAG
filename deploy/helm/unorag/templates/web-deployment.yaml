@@ -42,6 +42,8 @@ spec:
               value: {{ .Values.documentStorageRoot | quote }}
             - name: DOCUMENT_MAX_UPLOAD_BYTES
               value: {{ .Values.config.documentMaxUploadBytes | default "52428800" | quote }}
+            - name: UNORAG_DBOS_DOCUMENT_DELETE_ENABLED
+              value: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

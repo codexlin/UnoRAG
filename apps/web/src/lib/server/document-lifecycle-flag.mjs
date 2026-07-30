@@ -10,3 +10,24 @@ export function documentLifecycleV2Enabled(
 	// Default on in every environment; opt out only with an explicit false.
 	return true;
 }
+
+/** Route newly created document.delete jobs to the opt-in DBOS cohort. */
+export function dbosDocumentDeleteEnabled(
+	env = typeof process !== "undefined" ? process.env : {},
+) {
+	const configured = String(env.UNORAG_DBOS_DOCUMENT_DELETE_ENABLED ?? "")
+		.trim()
+		.toLowerCase();
+	return configured === "true" || configured === "1";
+}
+
+/** Freeze the execution identity at insert time; existing jobs are never migrated. */
+export function documentDeleteExecutionIdentity(
+	jobId,
+	env = typeof process !== "undefined" ? process.env : {},
+) {
+	if (dbosDocumentDeleteEnabled(env)) {
+		return { executionEngine: "dbos", workflowId: jobId };
+	}
+	return { executionEngine: "python", workflowId: null };
+}

@@ -59,11 +59,14 @@ export function registerDurableWorkflows(
 			maxRecoveryAttempts: 1,
 			inputSchema: documentIngestWorkflowInputSchema,
 		}),
-		documentDelete: registrar.register(createDocumentDeleteWorkflow(), {
-			name: durableWorkflowNames["document.delete"],
-			maxRecoveryAttempts: 1,
-			inputSchema: documentDeleteWorkflowInputSchema,
-		}),
+		documentDelete: registrar.register(
+			createDocumentDeleteWorkflow(ports, operations),
+			{
+				name: durableWorkflowNames["document.delete"],
+				maxRecoveryAttempts: 10,
+				inputSchema: documentDeleteWorkflowInputSchema,
+			},
+		),
 		generationCleanup: registrar.register(
 			createGenerationCleanupWorkflow(ports, operations),
 			{

@@ -450,6 +450,13 @@ Exit gate:
   and cleanup.
 - Keep the Python lifecycle worker available for rollback.
 
+Implementation note: the DBOS runtime, independent system database,
+least-privilege deployment, deterministic dispatch/reconciliation,
+generation-cleanup workflow, and opt-in staged `document.delete` workflow are
+implemented. LiteParse and MinerU provider foundations are also present.
+`document.ingest`, normalization/chunking/embedding/activation, and the
+real-corpus cutover gate are not yet ported, so M3 is still in progress.
+
 Exit gate:
 
 - Real file corpus passes parse/index/Ask tests.

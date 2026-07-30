@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 from uuid import UUID
 
 from psycopg import Connection
@@ -158,6 +159,71 @@ class JobRepository:
 
     def __init__(self, connection: Connection[Any]) -> None:
         self._connection = connection
+
+    @contextmanager
+    def document_write_fence(
+        self,
+        lease: JobLease,
+        context: DocumentIngestContext,
+    ) -> Iterator[None]:
+        """Serialize the final Qdrant write against document deletion."""
+        locked = False
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute("SET lock_timeout = '30s'")
+                cursor.execute(
+                    """
+                    SELECT pg_advisory_lock(
+                        hashtextextended(%(document_id)s::text, 0)
+                    )
+                    """,
+                    {"document_id": context.document_id},
+                )
+                locked = True
+            with self._connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT 1
+                    FROM app.jobs AS job
+                    JOIN app.document_versions AS version
+                      ON version.id = job.document_version_id
+                    JOIN app.documents AS document
+                      ON document.id = version.document_id
+                    WHERE job.id = %(job_id)s
+                      AND job.lease_token = %(lease_token)s
+                      AND job.status = 'running'
+                      AND job.lease_expires_at > now()
+                      AND version.id = %(version_id)s
+                      AND version.generation_id = %(generation_id)s
+                      AND document.id = %(document_id)s
+                      AND document.desired_version_id = version.id
+                      AND document.status NOT IN ('deleting', 'deleted')
+                    """,
+                    {
+                        "job_id": lease.id,
+                        "lease_token": lease.lease_token,
+                        "version_id": context.document_version_id,
+                        "generation_id": context.generation_id,
+                        "document_id": context.document_id,
+                    },
+                )
+                if cursor.fetchone() is None:
+                    raise LostJobLeaseError(
+                        f"document write fence rejected job {lease.id}"
+                    )
+            yield
+        finally:
+            with self._connection.cursor() as cursor:
+                if locked:
+                    cursor.execute(
+                        """
+                        SELECT pg_advisory_unlock(
+                            hashtextextended(%(document_id)s::text, 0)
+                        )
+                        """,
+                        {"document_id": context.document_id},
+                    )
+                cursor.execute("RESET lock_timeout")
 
     def claim(
         self,
@@ -541,20 +607,31 @@ class JobRepository:
     def begin_document_ingest(self, lease: JobLease, context: DocumentIngestContext) -> None:
         with self._connection.transaction():
             with self._connection.cursor() as cursor:
+                self._lock_library_context(cursor, context)
+                self._lock_document_key(cursor, context.document_id)
                 cursor.execute(
                     """
                     SELECT desired_version_id
                     FROM app.documents
                     WHERE id = %(document_id)s
+                      AND organization_id = %(organization_id)s
+                      AND workspace_id = %(workspace_id)s
+                      AND library_id = %(library_id)s
                     FOR UPDATE
                     """,
-                    {"document_id": context.document_id},
+                    {
+                        "document_id": context.document_id,
+                        "organization_id": context.organization_id,
+                        "workspace_id": context.workspace_id,
+                        "library_id": context.library_id,
+                    },
                 )
                 row = cursor.fetchone()
                 if row is None or row[0] != context.document_version_id:
                     raise StaleDocumentVersionError(
                         f"document no longer desires version {context.document_version_id}"
                     )
+                self._lock_document_version_context(cursor, context)
                 self._assert_live_lease(cursor, lease)
                 cursor.execute(
                     """
@@ -638,7 +715,31 @@ class JobRepository:
         }
         with self._connection.transaction():
             with self._connection.cursor() as cursor:
-                self._assert_live_lease(cursor, lease, require_running=True)
+                self._lock_library_context(cursor, context)
+                self._lock_document_key(cursor, context.document_id)
+                cursor.execute(
+                    """
+                    SELECT document.id
+                    FROM app.documents AS document
+                    JOIN app.document_versions AS version
+                      ON version.id = %(version_id)s
+                     AND version.document_id = document.id
+                    WHERE document.id = %(document_id)s
+                      AND document.organization_id = %(organization_id)s
+                      AND document.workspace_id = %(workspace_id)s
+                      AND document.library_id = %(library_id)s
+                    FOR UPDATE OF document, version
+                    """,
+                    {
+                        "document_id": context.document_id,
+                        "version_id": context.document_version_id,
+                        "organization_id": context.organization_id,
+                        "workspace_id": context.workspace_id,
+                        "library_id": context.library_id,
+                    },
+                )
+                if cursor.fetchone() is None:
+                    raise StaleDocumentVersionError("document version no longer exists")
                 cursor.execute(
                     """
                     UPDATE app.document_versions
@@ -755,7 +856,8 @@ class JobRepository:
     ) -> ActivationPreparation:
         with self._connection.transaction():
             with self._connection.cursor() as cursor:
-                self._assert_live_lease(cursor, lease, require_running=True)
+                self._lock_library_context(cursor, context)
+                self._lock_document_key(cursor, context.document_id)
                 cursor.execute(
                     """
                     SELECT
@@ -768,11 +870,17 @@ class JobRepository:
                       ON version.id = %(version_id)s
                      AND version.document_id = document.id
                     WHERE document.id = %(document_id)s
+                      AND document.organization_id = %(organization_id)s
+                      AND document.workspace_id = %(workspace_id)s
+                      AND document.library_id = %(library_id)s
                     FOR UPDATE OF document, version
                     """,
                     {
                         "document_id": context.document_id,
                         "version_id": context.document_version_id,
+                        "organization_id": context.organization_id,
+                        "workspace_id": context.workspace_id,
+                        "library_id": context.library_id,
                     },
                 )
                 row = cursor.fetchone()
@@ -784,6 +892,7 @@ class JobRepository:
                     version_status,
                     generation_id,
                 ) = row
+                self._assert_live_lease(cursor, lease, require_running=True)
                 if document_status in {"deleting", "deleted"}:
                     raise StaleDocumentVersionError(
                         f"document cannot activate while status is {document_status}"
@@ -844,15 +953,8 @@ class JobRepository:
     ) -> ActivationResult:
         with self._connection.transaction():
             with self._connection.cursor() as cursor:
-                self._assert_live_lease(cursor, lease, require_running=True)
-                cursor.execute(
-                    """
-                    SELECT pg_advisory_xact_lock(
-                        hashtextextended(%(document_id)s::text, 0)
-                    )
-                    """,
-                    {"document_id": context.document_id},
-                )
+                self._lock_library_context(cursor, context)
+                self._lock_document_key(cursor, context.document_id)
                 cursor.execute(
                     """
                     SELECT
@@ -871,11 +973,17 @@ class JobRepository:
                     LEFT JOIN app.document_versions AS previous
                       ON previous.id = active.version_id
                     WHERE document.id = %(document_id)s
+                      AND document.organization_id = %(organization_id)s
+                      AND document.workspace_id = %(workspace_id)s
+                      AND document.library_id = %(library_id)s
                     FOR UPDATE OF document, version
                     """,
                     {
                         "document_id": context.document_id,
                         "version_id": context.document_version_id,
+                        "organization_id": context.organization_id,
+                        "workspace_id": context.workspace_id,
+                        "library_id": context.library_id,
                     },
                 )
                 row = cursor.fetchone()
@@ -889,6 +997,7 @@ class JobRepository:
                     previous_version_id,
                     previous_generation_id,
                 ) = row
+                self._assert_live_lease(cursor, lease, require_running=True)
                 if document_status in {"deleting", "deleted"}:
                     raise StaleDocumentVersionError(
                         f"document cannot activate while status is {document_status}"
@@ -1418,6 +1527,27 @@ class JobRepository:
     ) -> DocumentDeleteCompletion:
         with self._connection.transaction():
             with self._connection.cursor() as cursor:
+                self._lock_library_context(cursor, context)
+                self._lock_document_key(cursor, context.document_id)
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM app.documents
+                    WHERE id = %(document_id)s
+                      AND organization_id = %(organization_id)s
+                      AND workspace_id = %(workspace_id)s
+                      AND library_id = %(library_id)s
+                    FOR UPDATE
+                    """,
+                    {
+                        "document_id": context.document_id,
+                        "organization_id": context.organization_id,
+                        "workspace_id": context.workspace_id,
+                        "library_id": context.library_id,
+                    },
+                )
+                if cursor.fetchone() is None:
+                    raise StaleDocumentVersionError("document no longer exists")
                 self._assert_live_lease(cursor, lease)
                 cursor.execute(
                     """
@@ -1734,6 +1864,9 @@ class JobRepository:
     ) -> None:
         with self._connection.transaction():
             with self._connection.cursor() as cursor:
+                self._lock_library_context(cursor, context)
+                self._lock_document_key(cursor, context.document_id)
+                self._lock_document_version_context(cursor, context)
                 self._assert_live_lease(cursor, lease)
                 cursor.execute(
                     """
@@ -1781,6 +1914,9 @@ class JobRepository:
         safe_error = error[:8000]
         with self._connection.transaction():
             with self._connection.cursor() as cursor:
+                self._lock_library_context(cursor, context)
+                self._lock_document_key(cursor, context.document_id)
+                self._lock_document_version_context(cursor, context)
                 self._assert_live_lease(cursor, lease)
                 cursor.execute(
                     """
@@ -1891,34 +2027,106 @@ class JobRepository:
     def reap_expired(self, *, limit: int = 100) -> int:
         if limit < 1:
             return 0
-        with self._connection.transaction():
-            with self._connection.cursor(row_factory=dict_row) as cursor:
-                cursor.execute(
-                    """
-                    SELECT
-                        job.id,
-                        job.status,
-                        job.attempt,
-                        job.max_attempts,
-                        job.document_version_id,
-                        version.document_id,
-                        document.library_id
-                    FROM app.jobs AS job
-                    LEFT JOIN app.document_versions AS version
-                      ON version.id = job.document_version_id
-                    LEFT JOIN app.documents AS document
-                      ON document.id = version.document_id
-                    WHERE job.status IN ('running', 'cancelling')
-                      AND job.execution_engine = 'python'
-                      AND job.lease_expires_at <= now()
-                    ORDER BY job.lease_expires_at, job.id
-                    FOR UPDATE OF job SKIP LOCKED
-                    LIMIT %(limit)s
-                    """,
-                    {"limit": limit},
-                )
-                rows = cursor.fetchall()
-                for row in rows:
+        with self._connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    job.id,
+                    job.document_version_id,
+                    job.organization_id,
+                    job.workspace_id,
+                    version.document_id,
+                    document.library_id
+                FROM app.jobs AS job
+                LEFT JOIN app.document_versions AS version
+                  ON version.id = job.document_version_id
+                LEFT JOIN app.documents AS document
+                  ON document.id = version.document_id
+                WHERE job.status IN ('running', 'cancelling')
+                  AND job.execution_engine = 'python'
+                  AND job.lease_expires_at <= now()
+                ORDER BY
+                    document.library_id NULLS LAST,
+                    version.document_id NULLS LAST,
+                    job.lease_expires_at,
+                    job.id
+                LIMIT %(limit)s
+                """,
+                {"limit": limit},
+            )
+            candidates = cursor.fetchall()
+
+        reaped = 0
+        for candidate in candidates:
+            with self._connection.transaction():
+                with self._connection.cursor(row_factory=dict_row) as cursor:
+                    library_id = candidate["library_id"]
+                    document_id = candidate["document_id"]
+                    version_id = candidate["document_version_id"]
+                    if library_id:
+                        cursor.execute(
+                            """
+                            SELECT pg_advisory_xact_lock(
+                                hashtextextended(%(library_id)s::text, 0)
+                            )
+                            """,
+                            {"library_id": library_id},
+                        )
+                        cursor.execute(
+                            """
+                            SELECT id
+                            FROM app.libraries
+                            WHERE id = %(library_id)s
+                              AND organization_id = %(organization_id)s
+                              AND workspace_id = %(workspace_id)s
+                            FOR UPDATE
+                            """,
+                            candidate,
+                        )
+                        cursor.fetchone()
+                    if document_id:
+                        self._lock_document_key(cursor, document_id)
+                        cursor.execute(
+                            """
+                            SELECT id
+                            FROM app.documents
+                            WHERE id = %(document_id)s
+                              AND organization_id = %(organization_id)s
+                              AND workspace_id = %(workspace_id)s
+                            FOR UPDATE
+                            """,
+                            candidate,
+                        )
+                        cursor.fetchone()
+                    if version_id:
+                        cursor.execute(
+                            """
+                            SELECT id
+                            FROM app.document_versions
+                            WHERE id = %(document_version_id)s
+                              AND document_id = %(document_id)s
+                            FOR UPDATE
+                            """,
+                            candidate,
+                        )
+                        cursor.fetchone()
+
+                    cursor.execute(
+                        """
+                        SELECT status, attempt, max_attempts
+                        FROM app.jobs
+                        WHERE id = %(id)s
+                          AND status IN ('running', 'cancelling')
+                          AND execution_engine = 'python'
+                          AND lease_expires_at <= now()
+                        FOR UPDATE SKIP LOCKED
+                        """,
+                        candidate,
+                    )
+                    row = cursor.fetchone()
+                    if row is None:
+                        continue
+                    reaped += 1
                     cancelled = row["status"] == "cancelling"
                     exhausted = int(row["attempt"]) >= int(row["max_attempts"])
                     target = (
@@ -1948,7 +2156,7 @@ class JobRepository:
                         WHERE id = %(job_id)s
                         """,
                         {
-                            "job_id": row["id"],
+                            "job_id": candidate["id"],
                             "status": target.value,
                             "error_code": (
                                 "cancelled"
@@ -1962,9 +2170,7 @@ class JobRepository:
                             ),
                         },
                     )
-                    if target in {JobStatus.CANCELLED, JobStatus.DEAD} and row[
-                        "document_version_id"
-                    ]:
+                    if target in {JobStatus.CANCELLED, JobStatus.DEAD} and version_id:
                         cursor.execute(
                             """
                             UPDATE app.document_versions
@@ -1981,7 +2187,7 @@ class JobRepository:
                               )
                             """,
                             {
-                                "version_id": row["document_version_id"],
+                                "version_id": version_id,
                                 "status": (
                                     "cancelled"
                                     if target == JobStatus.CANCELLED
@@ -1999,18 +2205,15 @@ class JobRepository:
                                 ),
                             },
                         )
-                        if row["document_id"]:
+                        if document_id:
                             self._refresh_document_failure_status(
                                 cursor,
-                                row["document_id"],
-                                row["document_version_id"],
+                                document_id,
+                                version_id,
                             )
-                        if row["library_id"]:
-                            self._refresh_library_status(
-                                cursor,
-                                row["library_id"],
-                            )
-                    elif target == JobStatus.RETRY and row["document_version_id"]:
+                        if library_id:
+                            self._refresh_library_status(cursor, library_id)
+                    elif target == JobStatus.RETRY and version_id:
                         cursor.execute(
                             """
                             UPDATE app.document_versions
@@ -2024,9 +2227,80 @@ class JobRepository:
                             WHERE id = %(version_id)s
                               AND status IN ('processing', 'indexed', 'activating')
                             """,
-                            {"version_id": row["document_version_id"]},
+                            {"version_id": version_id},
                         )
-                return len(rows)
+        return reaped
+
+    @staticmethod
+    def _lock_library_context(
+        cursor: Any,
+        context: DocumentIngestContext | DocumentDeleteContext,
+    ) -> None:
+        cursor.execute(
+            """
+            SELECT pg_advisory_xact_lock(
+                hashtextextended(%(library_id)s::text, 0)
+            )
+            """,
+            {"library_id": context.library_id},
+        )
+        cursor.execute(
+            """
+            SELECT id
+            FROM app.libraries
+            WHERE id = %(library_id)s
+              AND organization_id = %(organization_id)s
+              AND workspace_id = %(workspace_id)s
+            FOR UPDATE
+            """,
+            {
+                "library_id": context.library_id,
+                "organization_id": context.organization_id,
+                "workspace_id": context.workspace_id,
+            },
+        )
+        if cursor.fetchone() is None:
+            raise StaleDocumentVersionError("document library no longer exists")
+
+    @staticmethod
+    def _lock_document_key(cursor: Any, document_id: UUID) -> None:
+        cursor.execute(
+            """
+            SELECT pg_advisory_xact_lock(
+                hashtextextended(%(document_id)s::text, 0)
+            )
+            """,
+            {"document_id": document_id},
+        )
+
+    @staticmethod
+    def _lock_document_version_context(
+        cursor: Any,
+        context: DocumentIngestContext,
+    ) -> None:
+        cursor.execute(
+            """
+            SELECT document.id
+            FROM app.documents AS document
+            JOIN app.document_versions AS version
+              ON version.id = %(version_id)s
+             AND version.document_id = document.id
+            WHERE document.id = %(document_id)s
+              AND document.organization_id = %(organization_id)s
+              AND document.workspace_id = %(workspace_id)s
+              AND document.library_id = %(library_id)s
+            FOR UPDATE OF document, version
+            """,
+            {
+                "document_id": context.document_id,
+                "version_id": context.document_version_id,
+                "organization_id": context.organization_id,
+                "workspace_id": context.workspace_id,
+                "library_id": context.library_id,
+            },
+        )
+        if cursor.fetchone() is None:
+            raise StaleDocumentVersionError("document version no longer exists")
 
     @staticmethod
     def _assert_live_lease(

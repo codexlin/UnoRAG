@@ -2,10 +2,14 @@ import { randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
 
-import { type DurableJobInput, durableJobSchema } from "./contracts";
+import type { DurableJobInput } from "./contracts";
 import type { EnqueueResult } from "./dbos-runtime";
+import { parseOrQuarantineDurableJob } from "./job-quarantine";
 
-const ENABLED_DBOS_JOB_TYPE = "generation.cleanup";
+const ENABLED_DBOS_JOB_TYPES = [
+	"document.delete",
+	"generation.cleanup",
+] as const;
 
 export interface DispatchCandidateStore {
 	materializeDueGenerationCleanupJobs(limit: number): Promise<number>;
@@ -272,7 +276,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 					workflow_id
 				)
 				VALUES (
-					$1,
+					$1::uuid,
 					$2,
 					$3,
 					$4,
@@ -377,7 +381,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 				payload
 			FROM app.jobs
 			WHERE execution_engine = 'dbos'
-			  AND type = $1
+			  AND type = ANY($1::varchar[])
 			  AND status IN ('queued', 'retry')
 			  AND attempt < max_attempts
 			  AND cancel_requested_at IS NULL
@@ -390,9 +394,14 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 			ORDER BY coalesce(next_attempt_at, created_at), created_at, id
 			LIMIT $3
 			`,
-			[ENABLED_DBOS_JOB_TYPE, input.redispatchBefore, input.limit],
+			[[...ENABLED_DBOS_JOB_TYPES], input.redispatchBefore, input.limit],
 		);
-		return result.rows.map((row) => durableJobSchema.parse(row));
+		const candidates: DurableJobInput[] = [];
+		for (const row of result.rows) {
+			const candidate = await parseOrQuarantineDurableJob(this.pool, row);
+			if (candidate) candidates.push(candidate);
+		}
+		return candidates;
 	}
 
 	async markDispatched(
@@ -516,7 +525,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 					payload
 				)
 				VALUES (
-					$1,
+					$1::uuid,
 					$2,
 					$3,
 					$4,
@@ -563,6 +572,190 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 			if (updated.rowCount !== 1) {
 				throw new Error("Cleanup retry ownership CAS failed");
 			}
+			await client.query("COMMIT");
+			return jobId;
+		} catch (error) {
+			await rollbackQuietly(client);
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
+	async retryFailedDocumentDelete(previousJobId: string): Promise<string> {
+		const client = await this.pool.connect();
+		const jobId = randomUUID();
+		try {
+			await client.query("BEGIN");
+			const previous = await client.query<{
+				organization_id: string;
+				workspace_id: string;
+				document_version_id: string;
+				document_id: string;
+				library_id: string;
+				rag_document_id: string;
+				rag_library_id: string;
+				library_delete: boolean;
+			}>(
+				`
+				SELECT
+					job.organization_id::text,
+					job.workspace_id::text,
+					version.id::text AS document_version_id,
+					document.id::text AS document_id,
+					document.library_id::text AS library_id,
+					document.rag_document_id,
+					library.rag_library_id,
+					(
+						library.status = 'deleting'
+						OR job.payload->>'library_delete' = 'true'
+					) AS library_delete
+				FROM app.jobs AS job
+				JOIN app.document_versions AS version
+				  ON version.id = job.document_version_id
+				JOIN app.documents AS document
+				  ON document.id = version.document_id
+				 AND document.organization_id = job.organization_id
+				 AND document.workspace_id = job.workspace_id
+				JOIN app.libraries AS library
+				  ON library.id = document.library_id
+				 AND library.organization_id = job.organization_id
+				 AND library.workspace_id = job.workspace_id
+				WHERE job.id = $1
+				  AND job.type = 'document.delete'
+				  AND job.execution_engine = 'dbos'
+				  AND job.status IN ('failed', 'dead', 'cancelled')
+				`,
+				[previousJobId],
+			);
+			const candidate = previous.rows[0];
+			if (!candidate) {
+				throw new Error(
+					"Document delete retry requires a terminal job with persisted scope",
+				);
+			}
+			await client.query(
+				"SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+				[candidate.library_id],
+			);
+			const library = await client.query(
+				`
+				SELECT id
+				FROM app.libraries
+				WHERE id = $1
+				  AND organization_id = $2
+				  AND workspace_id = $3
+				FOR UPDATE
+				`,
+				[
+					candidate.library_id,
+					candidate.organization_id,
+					candidate.workspace_id,
+				],
+			);
+			await client.query(
+				"SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+				[candidate.document_id],
+			);
+			const document = await client.query(
+				`
+				SELECT id
+				FROM app.documents
+				WHERE id = $1
+				  AND organization_id = $2
+				  AND workspace_id = $3
+				  AND library_id = $4
+				  AND latest_job_id = $5
+				  AND status = 'deleting'
+				FOR UPDATE
+				`,
+				[
+					candidate.document_id,
+					candidate.organization_id,
+					candidate.workspace_id,
+					candidate.library_id,
+					previousJobId,
+				],
+			);
+			if (library.rowCount !== 1 || document.rowCount !== 1) {
+				throw new Error(
+					"Document delete retry requires its original deleting scope",
+				);
+			}
+			const targets = await client.query<{
+				generation_id: string;
+				storage_key: string;
+			}>(
+				`
+				SELECT generation_id::text, storage_key
+				FROM app.document_versions
+				WHERE document_id = $1
+				ORDER BY version, id
+				`,
+				[candidate.document_id],
+			);
+			const payload = {
+				document_id: candidate.document_id,
+				rag_document_id: candidate.rag_document_id,
+				library_id: candidate.library_id,
+				rag_library_id: candidate.rag_library_id,
+				storage_keys: [
+					...new Set(
+						targets.rows.map((row) => row.storage_key).filter(Boolean),
+					),
+				],
+				generation_ids: [
+					...new Set(targets.rows.map((row) => row.generation_id)),
+				],
+				library_delete: candidate.library_delete,
+				retry_of_job_id: previousJobId,
+			};
+			await client.query(
+				`
+				INSERT INTO app.jobs (
+					id,
+					organization_id,
+					workspace_id,
+					document_version_id,
+					type,
+					execution_engine,
+					workflow_id,
+					status,
+					stage,
+					idempotency_key,
+					payload
+				)
+				VALUES (
+					$1::uuid,
+					$2,
+					$3,
+					$4,
+					'document.delete',
+					'dbos',
+					$1::text,
+					'queued',
+					'cleanup',
+					'document.delete:retry:' || $1::text,
+					$5::jsonb
+				)
+				`,
+				[
+					jobId,
+					candidate.organization_id,
+					candidate.workspace_id,
+					candidate.document_version_id,
+					JSON.stringify(payload),
+				],
+			);
+			await client.query(
+				`
+				UPDATE app.documents
+				SET latest_job_id = $2,
+					updated_at = now()
+				WHERE id = $1
+				`,
+				[candidate.document_id, jobId],
+			);
 			await client.query("COMMIT");
 			return jobId;
 		} catch (error) {

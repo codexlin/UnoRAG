@@ -46,6 +46,7 @@ export const documentDeletePayloadSchema = z
 		storage_keys: z.array(nonEmpty).default([]),
 		generation_ids: z.array(uuid).default([]),
 		library_delete: z.boolean().default(false),
+		retry_of_job_id: uuid.optional(),
 	})
 	.strict();
 

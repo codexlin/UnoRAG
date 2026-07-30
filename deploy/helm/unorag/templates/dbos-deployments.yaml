@@ -1,3 +1,6 @@
+{{- if and .Values.dbos.enabled (eq (toString .Values.config.dbosDocumentDeleteEnabled) "true") (not .Values.persistence.enabled) }}
+{{- fail "config.dbosDocumentDeleteEnabled=true requires persistence.enabled=true for local document storage" }}
+{{- end }}
 {{- if .Values.dbos.enabled }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -55,6 +58,8 @@ spec:
               value: lifecycle
             - name: UNORAG_DBOS_CLEANUP_ENABLED
               value: "true"
+            - name: UNORAG_DBOS_DOCUMENT_DELETE_ENABLED
+              value: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
             - name: DBOS_SYSTEM_DATABASE_POOL_SIZE
               value: {{ .Values.dbos.systemDatabasePoolSize | quote }}
             - name: DBOS_LIFECYCLE_CONCURRENCY
@@ -73,6 +78,13 @@ spec:
                   name: {{ include "unorag.secretName" . }}
                   key: QDRANT_API_KEY
                   optional: true
+            - name: DOCUMENT_STORAGE_ROOT
+              value: {{ .Values.documentStorageRoot | quote }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: documents
+              mountPath: {{ .Values.documentStorageRoot }}
+          {{- end }}
           readinessProbe:
             httpGet:
               path: /dbos-healthz
@@ -93,6 +105,12 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: documents
+          persistentVolumeClaim:
+            claimName: {{ include "unorag.documentsPvcName" . }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -160,6 +178,8 @@ spec:
               value: lifecycle
             - name: UNORAG_DBOS_CLEANUP_ENABLED
               value: "true"
+            - name: UNORAG_DBOS_DOCUMENT_DELETE_ENABLED
+              value: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
             - name: DBOS_SYSTEM_DATABASE_POOL_SIZE
               value: {{ .Values.dbos.systemDatabasePoolSize | quote }}
             - name: DBOS_LIFECYCLE_CONCURRENCY

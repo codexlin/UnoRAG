@@ -1,6 +1,6 @@
 # UnoRAG 实现状态
 
-> 更新：2026-07-30
+> 更新：2026-07-31
 >
 > 本页是“代码已经做到了什么”的权威摘要。产品定位见
 > [PRODUCT.md](./PRODUCT.md)，技术设计见 [ARCHITECTURE.md](./ARCHITECTURE.md)，
@@ -83,7 +83,7 @@
 | Answer/stream 公共资源 | 规划中 | 当前公开契约名称仍为 Ask；内部 Workspace 支持 SSE |
 | OpenAI-compatible | 规划中 | 不存在可承诺 endpoint |
 | TypeScript SDK | 规划中 | 等完整公共契约稳定后再生成或实现 |
-| TypeScript 核心迁移 | 部分可用 | M0 契约基线完成；M1 Retrieval 内核、权威 generation/ACL filter 与 shadow 模式已落地；`app.threads/turns` 和 MinerU Provider 前置已建立。生产输出仍固定走 Python，切换前遵循 ADR-0005 门禁 |
+| TypeScript 核心迁移 | 部分可用 | M0 契约基线、M1 Retrieval shadow、`app.threads/turns`、LiteParse/MinerU Provider 前置已建立；M3 已落地 DBOS 基础、generation cleanup 与默认关闭的 `document.delete` cohort。DBOS ingest、TS Ask 切换和生产输出切换仍未完成，继续遵循 ADR-0005 门禁 |
 
 ## 部署与运行
 

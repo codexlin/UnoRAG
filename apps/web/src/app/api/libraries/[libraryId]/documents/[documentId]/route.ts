@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, ne } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import { documents } from "@/db/schema";
+import { documents, libraries } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import { enqueueDocumentDelete } from "@/lib/server/document-delete-enqueue";
 import { documentLifecycleV2Enabled } from "@/lib/server/document-lifecycle";
@@ -59,6 +59,26 @@ export async function DELETE(request: Request, context: RouteContext) {
 	const now = new Date();
 	const requestId = request.headers.get("x-request-id") ?? randomUUID();
 	const result = await db.transaction(async (tx) => {
+		const [lockedLibrary] = await tx
+			.select()
+			.from(libraries)
+			.where(
+				and(
+					eq(libraries.id, library.id),
+					eq(libraries.organizationId, identity.tenantId),
+					eq(libraries.workspaceId, identity.workspaceId),
+				),
+			)
+			.for("update")
+			.limit(1);
+		if (!lockedLibrary) return { kind: "missing" as const };
+		if (
+			lockedLibrary.status === "deleting" ||
+			lockedLibrary.status === "deleted"
+		) {
+			return { kind: "library_deleting" as const };
+		}
+
 		const [document] = await tx
 			.select()
 			.from(documents)
@@ -73,33 +93,43 @@ export async function DELETE(request: Request, context: RouteContext) {
 			)
 			.for("update")
 			.limit(1);
-		if (!document) return null;
-		return enqueueDocumentDelete({
-			tx,
-			identity,
-			library,
-			document,
-			requestId,
-			now,
-		});
+		if (!document) return { kind: "missing" as const };
+		return {
+			kind: "enqueued" as const,
+			value: await enqueueDocumentDelete({
+				tx,
+				identity,
+				library: lockedLibrary,
+				document,
+				requestId,
+				now,
+			}),
+		};
 	});
 
-	if (!result) {
+	if (result.kind === "library_deleting") {
+		return Response.json(
+			{ detail: "library is being deleted" },
+			{ status: 409 },
+		);
+	}
+	if (result.kind === "missing") {
 		return Response.json({ detail: "document not found" }, { status: 404 });
 	}
 
 	await refreshLibraryCounts(library.id).catch(() => undefined);
+	const enqueued = result.value;
 
 	return Response.json(
 		{
 			ok: true,
 			library_id: library.ragLibraryId,
-			doc_id: result.ragDocumentId,
-			document_id: result.documentId,
-			job_id: result.jobId,
+			doc_id: enqueued.ragDocumentId,
+			document_id: enqueued.documentId,
+			job_id: enqueued.jobId,
 			status: "deleting",
 			accepted: true,
-			already_queued: result.alreadyQueued,
+			already_queued: enqueued.alreadyQueued,
 		},
 		{ status: 202 },
 	);

@@ -304,6 +304,10 @@ class DocumentIngestProcessor:
 						str(value) for value in context.allowed_group_ids
 					),
 					progress_callback=report_index_stage,
+					write_fence=lambda: self.repository.document_write_fence(
+						lease,
+						context,
+					),
 				)
 				progress.checkpoint(
 					JobStage.VALIDATING,
@@ -392,6 +396,7 @@ class DocumentIngestProcessor:
 			)
 			raise
 		except LostJobLeaseError:
+			self._delete_staging_generation(context)
 			raise
 		except Exception as exc:
 			if not indexed:

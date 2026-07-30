@@ -37,6 +37,8 @@ type RouteContext = {
 	params: Promise<{ libraryId: string }>;
 };
 
+class LibraryWriteClosedError extends Error {}
+
 export async function GET(request: Request, context: RouteContext) {
 	const identity = await resolveRequestSession(request);
 	if (!identity) {
@@ -203,6 +205,28 @@ export async function POST(request: Request, context: RouteContext) {
 	const now = new Date();
 	try {
 		await db.transaction(async (tx) => {
+			const [lockedLibrary] = await tx
+				.select()
+				.from(libraries)
+				.where(
+					and(
+						eq(libraries.id, library.id),
+						eq(libraries.organizationId, identity.tenantId),
+						eq(libraries.workspaceId, identity.workspaceId),
+					),
+				)
+				.for("update")
+				.limit(1);
+			if (
+				!lockedLibrary ||
+				lockedLibrary.status === "deleting" ||
+				lockedLibrary.status === "deleted"
+			) {
+				throw new LibraryWriteClosedError(
+					"library is not accepting document uploads",
+				);
+			}
+
 			await tx.insert(documents).values({
 				id: documentId,
 				organizationId: identity.tenantId,
@@ -227,10 +251,10 @@ export async function POST(request: Request, context: RouteContext) {
 				sizeBytes: stored.sizeBytes,
 				status: "pending",
 				pipelineVersion: "document-lifecycle-v2",
-				documentProfile: library.documentProfile ?? "auto",
-				scanHandling: library.scanHandling ?? "auto",
-				parsePreference: library.parsePreference ?? "auto",
-				ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
+				documentProfile: lockedLibrary.documentProfile ?? "auto",
+				scanHandling: lockedLibrary.scanHandling ?? "auto",
+				parsePreference: lockedLibrary.parsePreference ?? "auto",
+				ingestPolicyVersion: lockedLibrary.ingestPolicyVersion ?? 1,
 				createdAt: now,
 				updatedAt: now,
 			});
@@ -247,15 +271,15 @@ export async function POST(request: Request, context: RouteContext) {
 					documentId,
 					versionId,
 					generationId,
-					ragLibraryId: library.ragLibraryId,
+					ragLibraryId: lockedLibrary.ragLibraryId,
 					storageKey: stored.key,
 					contentHash: stored.contentHash,
 					filename: originalFilename,
 					contentType,
-					documentProfile: library.documentProfile ?? "auto",
-					scanHandling: library.scanHandling ?? "auto",
-					parsePreference: library.parsePreference ?? "auto",
-					ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
+					documentProfile: lockedLibrary.documentProfile ?? "auto",
+					scanHandling: lockedLibrary.scanHandling ?? "auto",
+					parsePreference: lockedLibrary.parsePreference ?? "auto",
+					ingestPolicyVersion: lockedLibrary.ingestPolicyVersion ?? 1,
 				}),
 				createdAt: now,
 				updatedAt: now,
@@ -292,10 +316,13 @@ export async function POST(request: Request, context: RouteContext) {
 					docCount: sql`${libraries.docCount} + 1`,
 					updatedAt: now,
 				})
-				.where(eq(libraries.id, library.id));
+				.where(eq(libraries.id, lockedLibrary.id));
 		});
-	} catch {
+	} catch (error) {
 		await storage.delete(stored.key).catch(() => undefined);
+		if (error instanceof LibraryWriteClosedError) {
+			return Response.json({ detail: error.message }, { status: 409 });
+		}
 		return Response.json(
 			{ detail: "document transaction failed" },
 			{ status: 500 },

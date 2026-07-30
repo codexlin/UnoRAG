@@ -3,6 +3,10 @@ import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
 import type { WorkerRuntimeConfig } from "./config";
 import type { GenerationCleanupJob } from "./contracts";
+import {
+	DocumentDeleteExternalOperations,
+	PostgresDocumentDeleteTransactions,
+} from "./document-delete-ports";
 import { WorkerTaskError } from "./errors";
 import type {
 	GenerationCleanupDeleteResult,
@@ -562,6 +566,15 @@ export function createWorkerPorts(_config: WorkerRuntimeConfig): WorkerPorts {
 		checkCompatibility: true,
 	});
 	return {
+		documentDelete: {
+			transactions: new PostgresDocumentDeleteTransactions(pool),
+			external: new DocumentDeleteExternalOperations(
+				qdrant,
+				requiredEnvironment("QDRANT_COLLECTION", "unorag_chunks"),
+				requiredEnvironment("DOCUMENT_STORAGE_ROOT"),
+				pool,
+			),
+		},
 		transactions: new PostgresGenerationCleanupTransactions(pool),
 		generationCleanup: new QdrantGenerationCleanupStep(
 			qdrant,

@@ -16,6 +16,7 @@ import {
 	buildDocumentDeletePayload,
 	documentDeleteIdempotencyKey,
 } from "@/lib/server/document-delete-core.mjs";
+import { documentDeleteExecutionIdentity } from "@/lib/server/document-lifecycle-flag.mjs";
 
 export type DeleteEnqueueResult = {
 	alreadyQueued: boolean;
@@ -165,6 +166,7 @@ export async function enqueueDocumentDelete(input: {
 	await reassertDocumentDeletingSideEffects(tx, document.id, now);
 
 	const jobId = randomUUID();
+	const executionIdentity = documentDeleteExecutionIdentity(jobId);
 	const storageKeys: string[] = [
 		...new Set(
 			versions
@@ -182,6 +184,8 @@ export async function enqueueDocumentDelete(input: {
 		workspaceId: identity.workspaceId,
 		documentVersionId: document.desiredVersionId,
 		type: "document.delete",
+		executionEngine: executionIdentity.executionEngine,
+		workflowId: executionIdentity.workflowId,
 		status: "queued",
 		stage: "accepted",
 		idempotencyKey,

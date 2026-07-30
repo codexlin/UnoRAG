@@ -9,6 +9,7 @@ data:
   ASK_MODE: {{ .Values.config.askMode | quote }}
   METADATA_BACKEND: {{ .Values.config.metadataBackend | quote }}
   DOCUMENT_LIFECYCLE_V2: {{ .Values.config.documentLifecycleV2 | quote }}
+  UNORAG_DBOS_DOCUMENT_DELETE_ENABLED: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
   INTERNAL_AUTH_ENABLED: {{ .Values.config.internalAuthEnabled | quote }}
   INTERNAL_AUTH_REPLAY_BACKEND: {{ .Values.config.internalAuthReplayBackend | quote }}
   ACTIVE_GENERATION_GATE_ENABLED: {{ .Values.config.activeGenerationGateEnabled | quote }}
