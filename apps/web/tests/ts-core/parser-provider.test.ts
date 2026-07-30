@@ -177,6 +177,7 @@ test("MinerU accepts string content_list and validates normalized IR", async () 
 			}
 			return Response.json({
 				filename: "sample.pdf",
+				data: { status: "completed" },
 				results: {
 					"sample.pdf": {
 						content_list: JSON.stringify([

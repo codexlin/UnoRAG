@@ -295,19 +295,27 @@ export function normalizeMinerUResult(
 function extractContentList(
 	payload: Record<string, unknown>,
 ): Record<string, unknown>[] {
+	const contentList = findContentList(payload);
+	if (contentList) return contentList;
+	throw invalidResponse("MinerU response is missing content_list");
+}
+
+function findContentList(
+	payload: Record<string, unknown>,
+): Record<string, unknown>[] | null {
 	const direct = decodeContentList(payload.content_list ?? payload.contentList);
 	if (direct) return direct;
-	const data = isRecord(payload.data) ? extractContentList(payload.data) : null;
+	const data = isRecord(payload.data) ? findContentList(payload.data) : null;
 	if (data) return data;
 	const results = payload.results;
 	if (isRecord(results)) {
 		for (const value of Object.values(results)) {
 			if (!isRecord(value)) continue;
-			const nested = extractContentList(value);
+			const nested = findContentList(value);
 			if (nested) return nested;
 		}
 	}
-	throw invalidResponse("MinerU response is missing content_list");
+	return null;
 }
 
 function decodeContentList(value: unknown): Record<string, unknown>[] | null {
