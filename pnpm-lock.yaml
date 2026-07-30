@@ -34,6 +34,9 @@ importers:
       '@langchain/langgraph':
         specifier: 1.4.8
         version: 1.4.8(@langchain/core@1.1.48(ws@8.21.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.4.3)
+      '@llamaindex/liteparse':
+        specifier: 2.10.1
+        version: 2.10.1
       '@qdrant/js-client-rest':
         specifier: 1.13.0
         version: 1.13.0(typescript@5.9.3)
@@ -1108,6 +1111,49 @@ packages:
 
   '@langchain/protocol@0.0.18':
     resolution: {integrity: sha512-XW1egQtPfsGI41w2AMZNFZrUIwFSQHTjVMZs0OaTpCAvht/QLoaPN8FQcsysMVypOhupG28J29yOorrc70otBQ==}
+
+  '@llamaindex/liteparse-darwin-arm64@2.10.1':
+    resolution: {integrity: sha512-eEngfnfRnKK/0COwehkOl/uWAS/3QMWc84mnJyytNlpxiFnn1lGNVpwB08MagQXX2iRxi/md9BcfVFKGIQuUAA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@llamaindex/liteparse-darwin-x64@2.10.1':
+    resolution: {integrity: sha512-LDOCuPLarZzkePDBM1by9bHreP8qPt9oJtyVVULbwHXI23420P2FLYFYxiXEm3cYgfRGPvuZon0ietXjezTD3w==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@llamaindex/liteparse-linux-arm64-gnu@2.10.1':
+    resolution: {integrity: sha512-9CWqV6rD+J8Bm6n7k3Wpnll+eli78NLnWwfLuO5guC6nDJBNP1r39KBXGD60Sprq3R0vWAOkVV+HuEjZcc2lTQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@llamaindex/liteparse-linux-x64-gnu@2.10.1':
+    resolution: {integrity: sha512-O5Ep8Ykpb4caJsIP3/ohdyWQiXMhjfkxI1oVW7UtnBG8iDsqjQCTYSvcOmnRib7E4ud1dqy+T8m5vAtUcTwA4w==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@llamaindex/liteparse-linux-x64-musl@2.10.1':
+    resolution: {integrity: sha512-3BMr+6a7YBBtD1kiBQR9VAroqWP9iBzuCX3H9CCkwxL61j+ldPbpdTzf75jhXo1/KkDN6eP6A9ntKDfZX1I0dg==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@llamaindex/liteparse-win32-arm64-msvc@2.10.1':
+    resolution: {integrity: sha512-eFzr8i8XaiMJ/jaKr3IeGVnpxoF2dcG5BhMkmf1VfuYSxTEFYKa6i+0tMbfdiiPlLBrOsJl2zw8YVr4jydeQmw==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@llamaindex/liteparse-win32-x64-msvc@2.10.1':
+    resolution: {integrity: sha512-f+TnS0kBR9PW4fj+UIsksy2aMW4aM64IpsvEV3828aQvk3zi/fc32r5ZY+WtHoyfxXJLSxN4qmD9aWNseTGDNw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@llamaindex/liteparse@2.10.1':
+    resolution: {integrity: sha512-BhkY1sBzBX9W5VyrTFMMeJ0mE/Hcu3bXFhesTSWTKIHT7F0OneurGa+30tLPNLbWd5M6Jg2EsQsALprDLArz+Q==}
+    engines: {node: '>=18.0.0'}
+    hasBin: true
 
   '@modelcontextprotocol/sdk@1.29.0':
     resolution: {integrity: sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==}
@@ -4355,6 +4401,39 @@ snapshots:
       - vue
 
   '@langchain/protocol@0.0.18': {}
+
+  '@llamaindex/liteparse-darwin-arm64@2.10.1':
+    optional: true
+
+  '@llamaindex/liteparse-darwin-x64@2.10.1':
+    optional: true
+
+  '@llamaindex/liteparse-linux-arm64-gnu@2.10.1':
+    optional: true
+
+  '@llamaindex/liteparse-linux-x64-gnu@2.10.1':
+    optional: true
+
+  '@llamaindex/liteparse-linux-x64-musl@2.10.1':
+    optional: true
+
+  '@llamaindex/liteparse-win32-arm64-msvc@2.10.1':
+    optional: true
+
+  '@llamaindex/liteparse-win32-x64-msvc@2.10.1':
+    optional: true
+
+  '@llamaindex/liteparse@2.10.1':
+    dependencies:
+      commander: 12.1.0
+    optionalDependencies:
+      '@llamaindex/liteparse-darwin-arm64': 2.10.1
+      '@llamaindex/liteparse-darwin-x64': 2.10.1
+      '@llamaindex/liteparse-linux-arm64-gnu': 2.10.1
+      '@llamaindex/liteparse-linux-x64-gnu': 2.10.1
+      '@llamaindex/liteparse-linux-x64-musl': 2.10.1
+      '@llamaindex/liteparse-win32-arm64-msvc': 2.10.1
+      '@llamaindex/liteparse-win32-x64-msvc': 2.10.1
 
   '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)':
     dependencies:

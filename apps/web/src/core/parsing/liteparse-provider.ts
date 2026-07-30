@@ -188,7 +188,7 @@ export class LiteParseProvider implements DurableParserProvider {
 		} catch (error) {
 			throw classifyError(error);
 		} finally {
-			release();
+			release?.();
 		}
 	}
 
