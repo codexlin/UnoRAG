@@ -9,6 +9,7 @@
 
 | 报告 | 结论 |
 |---|---|
+| [`reports/2026-08-02-ts-rc-clean-install-e2e.md`](./reports/2026-08-02-ts-rc-clean-install-e2e.md) | TypeScript RC 空环境、权限、故障、备份恢复 **PASS**；质量专项后真实正例 33/33、拒答 5/5，**RC/受控试点 GO** |
 | [`reports/2026-07-30-webch-capacity-baseline.md`](./reports/2026-07-30-webch-capacity-baseline.md) | 2 vCPU / 1.8 GiB 最低规格真实 Retrieve/Ask/入库/MinerU 阶梯基线 **PASS**；记录 Ask 饱和点与建议并发预算 |
 | [`reports/2026-07-30-webch-unorag-clean-reset.md`](./reports/2026-07-30-webch-unorag-clean-reset.md) | webch 备份后全新重置为纯 UnoRAG 运行栈；公网纵向冒烟与生命周期巡检 **PASS** |
 | [`reports/2026-07-29-webch-preproduction-baseline.md`](./reports/2026-07-29-webch-preproduction-baseline.md) | webch 真实浏览器、真实文件、多 Workspace、隔离、故障与非破坏恢复 **PASS**；环境定位为预发布模拟，不是客户生产 |
