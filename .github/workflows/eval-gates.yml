@@ -22,6 +22,6 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - name: Ask, retrieval, parser, and lifecycle release gates
-        run: pnpm --filter web test:ts-core
+        run: pnpm test:ts-core
       - name: Public API and policy contracts
-        run: pnpm --filter web test
+        run: pnpm test

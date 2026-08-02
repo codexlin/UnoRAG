@@ -1,71 +1,67 @@
 # Quality Release Gates
 
-> **Historical gate design.** The Python commands and paths below retired with
-> the old runtime. The reference cases remain under
-> [`../../eval/reference/`](../../eval/reference/), but they are not yet a live
-> release gate. Current release evidence is defined by
-> [`../STATUS.md`](../STATUS.md) and the acceptance package.
+UnoRAG separates deterministic code gates from live release acceptance. A score
+cannot override an isolation, authorization, inactive-generation, or refusal fuse.
 
-Golden-set eval is the publish contract. Scores alone never override a fuse.
+## Deterministic Gates
 
-## Modes
-
-| Mode | When | Command |
-|---|---|---|
-| `ci` | Every PR | Cases tagged `ci` (deterministic stub Ask / chunk / retrieval) |
-| `release` | Release candidate | Full `tests/eval/eval_cases.jsonl` |
+Run from the repository root:
 
 ```bash
-cd apps/api
-
-# PR / local fast gate
-uv run python scripts/run_release_gates.py --mode ci \
-  --baseline tests/eval/baselines/ci-deterministic.json \
-  --report-out /tmp/unorag-ci-gate.json
-
-# Release candidate
-uv run python scripts/run_release_gates.py --mode release \
-  --baseline tests/eval/baselines/release.json \
-  --report-out /tmp/unorag-release-gate.json
+pnpm install --frozen-lockfile
+pnpm test
+pnpm test:ts-core
+pnpm typecheck
+pnpm lint
+pnpm db:check
+NEXT_TELEMETRY_DISABLED=1 pnpm build
 ```
 
-CI：`.github/workflows/ci.yml`（PR + `main` 入口）调用可复用工作流
-`.github/workflows/eval-gates.yml`（deterministic + policy parity）。
-全量 API pytest / web / Docker 构建验证也在 `ci.yml`。见
-[`docs/ops/cicd.md`](../ops/cicd.md)。
+The Web suite covers product, authorization, HTTP, schema, deployment, and UI
+contracts. The TS core suite covers routing, refusal, parsers, DocumentIR/TableIR,
+chunking, retrieval scope, Qdrant projection, DBOS workflows, and lifecycle failure
+semantics. Environment-dependent PostgreSQL and Qdrant tests are allowed to skip
+locally but must run during release acceptance.
 
-## Layers
+CI entrypoints:
 
-| Layer | Case kinds |
-|---|---|
-| routing | `classify` |
-| answer | `ask` |
-| ingestion | `ingest_chunk`, `ingest_http` |
-| retrieval | `retrieval` |
+- `.github/workflows/ci.yml`
+- `.github/workflows/eval-gates.yml`
+- `.github/workflows/release-images.yml`
 
-Baseline floors live in `tests/eval/baselines/*.json`. A layer pass_rate below
-its floor blocks the gate unless `--allow-regression` is explicitly passed
-(recorded in the report). Fuse trips are never soft-passed.
+## Live Gates
 
-## Hard fuses (must stay 0 failures)
+Start from the private-deployment Compose topology and run:
 
-Cases tagged `fuse` / `isolation` / `acl` / `tenant_leak` /
-`inactive_generation` / `deleted_generation`, plus ask cases that expect
-`refused=true`, are hard fuses:
+```bash
+cd deploy/compose
+source scripts/compose-env.sh
+mk_compose up -d --wait
+./scripts/pilot-smoke.sh
+mk_compose --profile ops run --rm inspect-lifecycle
+```
 
-- tenant/workspace/group leak
-- section pollution into fact retrieval (`isolation`)
-- refusal contracts (no_hit / weak_match / ambiguous)
+A release candidate must additionally record:
 
-## Report contract
+1. representative real-file ingest, including digital and scanned PDF;
+2. Retrieve/Ask citations, refusal, table execution, and latency;
+3. cross-organization, workspace, principal, and group zero leakage;
+4. replacement failure preserving the previous active generation;
+5. cancellation, deletion, cleanup, worker restart, and Qdrant fault recovery;
+6. backup/restore and upgrade/rollback evidence;
+7. browser workflows for owner, admin, editor, and viewer roles.
 
-Reports use schema `unorag.release_gate.v1` and record:
+## Hard Fuses
 
-- git commit
-- dataset path + sha256
-- ask/embedding/hybrid/rerank/gate config
-- dependency versions
-- per-layer metrics, fuse list, baseline compare, failing case observations
+These must remain at zero failures:
 
-Failed online feedback must be added to `eval_cases.jsonl` before a baseline
-floor is raised.
+- cross-scope or ACL leakage;
+- inactive, superseded, or deleted generation recall;
+- unsupported answers returned without refusal;
+- citations that do not support the answer;
+- table execution without complete contributing evidence;
+- dead or stuck lifecycle jobs at release completion.
+
+Reference corpora remain under `eval/reference/`. They become release evidence only
+when executed through the current product HTTP boundary and bound to the candidate
+commit, image digests, configuration fingerprint, and dated acceptance report.

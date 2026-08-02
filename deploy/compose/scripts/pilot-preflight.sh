@@ -11,13 +11,13 @@ command -v pnpm >/dev/null 2>&1 || {
 }
 
 echo "==> TypeScript core security, retrieval, and lifecycle tests"
-pnpm --filter web test:ts-core
+pnpm test:ts-core
 
 echo "==> Web control-plane contract tests"
-pnpm --filter web test
+pnpm test
 
 echo "==> static types and migration history"
-pnpm --filter web typecheck
-pnpm --filter web db:check
+pnpm typecheck
+pnpm db:check
 
 echo "preflight PASS"

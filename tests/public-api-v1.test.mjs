@@ -25,10 +25,7 @@ import {
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contract = JSON.parse(
-	readFileSync(
-		path.join(root, "../../contracts/public-api-v1.openapi.json"),
-		"utf8",
-	),
+	readFileSync(path.join(root, "contracts/public-api-v1.openapi.json"), "utf8"),
 );
 
 test("ask contract accepts only the stable public fields", () => {

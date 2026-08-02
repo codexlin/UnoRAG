@@ -11,7 +11,7 @@ echo "==> offline preflight"
 	| tee "$REPORT_DIR/preflight.log"
 
 echo "==> formatting and lint"
-pnpm --dir "$ROOT" --filter web lint | tee "$REPORT_DIR/lint.log"
+pnpm --dir "$ROOT" lint | tee "$REPORT_DIR/lint.log"
 
 if command -v helm >/dev/null 2>&1; then
 	echo "==> Helm lint"

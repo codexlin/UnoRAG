@@ -59,7 +59,7 @@ group、未激活 generation 和已删除文档。任一越权召回或 citation
 恢复后执行：
 
 ```bash
-pnpm --dir apps/web lifecycle:inspect
+pnpm lifecycle:inspect
 curl -fsS "$UNORAG_BASE_URL/api/rag/health" | jq .
 ```
 

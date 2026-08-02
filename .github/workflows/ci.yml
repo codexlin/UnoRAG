@@ -56,14 +56,14 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: TypeScript core contracts
         run: |
-          pnpm typecheck:ts-core
+          pnpm typecheck
           pnpm test:ts-core
       - name: Test
-        run: pnpm --filter web test
+        run: pnpm test
       - name: Lint
-        run: pnpm --filter web lint
+        run: pnpm lint
       - name: Production build
-        run: pnpm --filter web build
+        run: pnpm build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
 

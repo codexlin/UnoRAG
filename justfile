@@ -27,11 +27,11 @@ check: brand
 	#!/usr/bin/env bash
 	if command -v pnpm >/dev/null 2>&1; then
 		pnpm install --frozen-lockfile
-		pnpm --filter web test
-		pnpm --filter web test:ts-core
-		pnpm --filter web typecheck
-		pnpm --filter web db:check
-		pnpm --filter web lint
+		pnpm test
+		pnpm test:ts-core
+		pnpm typecheck
+		pnpm db:check
+		pnpm lint
 	else
 		echo "skip web check: pnpm not found" >&2
 	fi

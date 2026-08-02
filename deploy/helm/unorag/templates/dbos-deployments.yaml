@@ -34,7 +34,7 @@ spec:
         - name: dbos-worker
           image: "{{ .Values.images.dbosWorker.repository }}:{{ .Values.images.dbosWorker.tag }}"
           imagePullPolicy: {{ .Values.images.dbosWorker.pullPolicy }}
-          workingDir: /repo/apps/web
+          workingDir: /repo
           command: ["./node_modules/.bin/tsx", "src/worker/entry.ts"]
           ports:
             - name: dbos-admin
@@ -197,7 +197,7 @@ spec:
         - name: dbos-control
           image: "{{ .Values.images.dbosWorker.repository }}:{{ .Values.images.dbosWorker.tag }}"
           imagePullPolicy: {{ .Values.images.dbosWorker.pullPolicy }}
-          workingDir: /repo/apps/web
+          workingDir: /repo
           command: ["./node_modules/.bin/tsx", "src/worker/control-entry.ts"]
           env:
             - name: DATABASE_URL

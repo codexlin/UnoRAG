@@ -101,7 +101,7 @@ not imply removing the Python SDK or MCP adapter.
 ## Process Topology
 
 The target deployment has two UnoRAG application processes built from the
-same `apps/web` TypeScript application package:
+same root TypeScript application package:
 
 | Process | Responsibility | Scaling |
 |---|---|---|
@@ -113,8 +113,8 @@ such as LiteParse belong in the worker dependency boundary so they do not
 inflate or complicate the web server bundle.
 
 UnoRAG does not introduce internal npm workspace packages for this migration.
-Domain and transport boundaries live under `apps/web/src/core`,
-`apps/web/src/server`, and `apps/web/src/worker`. A module may be extracted
+Domain and transport boundaries live under `src/core`,
+`src/server`, and `src/worker`. A module may be extracted
 into a separately versioned package only when a real second application or
 external consumer needs to depend on it. Process isolation does not require
 package or repository isolation.
@@ -392,8 +392,8 @@ This is a strangler migration, not a rewrite-and-replace release.
 
 ### M0: Contracts and Characterization
 
-- Create `apps/web/src/core/contracts`,
-  `apps/web/src/core/document-ir`, and shared Zod schemas.
+- Create `src/core/contracts`,
+  `src/core/document-ir`, and shared Zod schemas.
 - Create a transport-independent domain service boundary and an embedded
   Elysia API characterization route.
 - Serialize representative Python DocumentIR/TableIR fixtures.
@@ -411,7 +411,7 @@ Exit gate:
 
 ### M1: TypeScript Retrieval
 
-- Create `apps/web/src/core/retrieval`.
+- Create `src/core/retrieval`.
 - Implement Qdrant payload schema, collection manager, mandatory scope filter,
   dense/sparse hybrid query, and result mapping.
 - Dual-run Python and TS retrieval against the same active generation.
@@ -429,7 +429,7 @@ Exit gate:
 
 ### M2: TypeScript Ask Graph
 
-- Create `apps/web/src/core/ask-graph` and `apps/web/src/core/ai`.
+- Create `src/core/ask-graph` and `src/core/ai`.
 - Port deterministic nodes first, then table nodes, then generation.
 - Load conversation history from `app.threads` / `app.turns`.
 - Shadow Python and TS graphs for deterministic and live evaluation.
@@ -442,7 +442,7 @@ Exit gate:
 
 ### M3: DBOS Lifecycle and Parser Providers
 
-- Create a worker entrypoint under `apps/web/src/worker` and run it as an
+- Create a worker entrypoint under `src/worker` and run it as an
   independently scalable process/image from the same application package.
 - Add DBOS system schema and least-privilege worker identity.
 - Implement `ParserProvider`, MinerU provider, LiteParse provider, optional

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-const referenceRoot = new URL("../../../../eval/reference/", import.meta.url);
+const referenceRoot = new URL("../../eval/reference/", import.meta.url);
 
 async function readJsonLines(name: string): Promise<Record<string, unknown>[]> {
 	const text = await readFile(new URL(name, referenceRoot), "utf8");

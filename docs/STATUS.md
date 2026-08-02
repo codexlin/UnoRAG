@@ -19,6 +19,9 @@
 | Delivery | four Node images, Compose reference topology, Helm starter, least-privilege PostgreSQL roles, backup/restore and upgrade scripts |
 | Clients | Python SDK and MCP remain thin clients of the public Knowledge API |
 
+The repository is a single root Next.js/TypeScript application. It has no pnpm
+workspace, `apps/` indirection, or placeholder internal packages.
+
 The FastAPI service, Python lifecycle worker, outbox worker, duplicate `rag/public`
 metadata ownership, and Python runtime migrations have been removed.
 

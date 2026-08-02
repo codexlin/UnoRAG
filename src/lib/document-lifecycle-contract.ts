@@ -1,4 +1,4 @@
-import contract from "../../../../contracts/document-lifecycle-v1.json";
+import contract from "../../contracts/document-lifecycle-v1.json";
 
 export const DOCUMENT_LIFECYCLE_CONTRACT_VERSION = contract.version;
 export const DOCUMENT_STATUSES = contract.document_statuses;

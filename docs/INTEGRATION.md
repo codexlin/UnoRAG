@@ -247,7 +247,7 @@ X-UnoRAG-Api-Version: 1
 
 ### 手测（本机）
 
-前置：`pnpm --filter web db:migrate`（含 `workspace_service_keys`）、web + api 已起、INTERNAL_AUTH 对齐。
+前置：`pnpm db:migrate`（含 `workspace_service_keys`）、web + api 已起、INTERNAL_AUTH 对齐。
 
 ```bash
 # 1. 浏览器登录为 owner/admin → 设置 → 创建集成密钥，复制 mk_svc_…

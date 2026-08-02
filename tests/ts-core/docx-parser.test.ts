@@ -6,7 +6,7 @@ import { parseDocxDocument } from "../../src/core/parsing";
 
 test("native DOCX parser preserves paragraphs and table structure", async () => {
 	const fixture = new URL(
-		"../../../../testdata/docx/quote-table.docx",
+		"../../testdata/docx/quote-table.docx",
 		import.meta.url,
 	);
 	const content = new Uint8Array(await readFile(fixture));
@@ -33,7 +33,7 @@ test("native DOCX parser preserves paragraphs and table structure", async () => 
 
 test("native DOCX parser preserves nested heading paths", async () => {
 	const fixture = new URL(
-		"../../../../testdata/docx/policy-headings.docx",
+		"../../testdata/docx/policy-headings.docx",
 		import.meta.url,
 	);
 	const content = new Uint8Array(await readFile(fixture));

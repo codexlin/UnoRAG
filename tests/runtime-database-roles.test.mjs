@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const root = new URL("../../..", import.meta.url);
+const root = new URL("../", import.meta.url);
 const source = (path) => readFile(new URL(path, root), "utf8");
 
 test("Compose uses only web, worker, and DBOS database identities", async () => {
@@ -50,7 +50,7 @@ test("DBOS is a required runtime rather than a migration profile", async () => {
 });
 
 test("operator lifecycle inspection reads only the app source of truth", async () => {
-	const inspection = await source("apps/web/scripts/inspect-lifecycle.mjs");
+	const inspection = await source("scripts/inspect-lifecycle.mjs");
 
 	assert.match(inspection, /FROM app\.generation_cleanup_queue/);
 	assert.doesNotMatch(inspection, /FROM rag\./);

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./apps/web/public/brand/unorag-mark.png" alt="UnoRAG" width="88" />
+  <img src="./public/brand/unorag-mark.png" alt="UnoRAG" width="88" />
   <h1>UnoRAG</h1>
   <p><strong>Private, permission-aware enterprise knowledge that answers with evidence.</strong></p>
   <p>
@@ -48,9 +48,9 @@ Local development requires Docker, Node.js 22, and pnpm 9:
 
 ```bash
 docker compose up -d
-cp -n apps/web/.env.example apps/web/.env.local
+cp -n .env.example .env.local
 pnpm install --frozen-lockfile
-pnpm --filter web dev
+pnpm dev
 ```
 
 Run the DBOS worker in a second terminal after configuring its database and

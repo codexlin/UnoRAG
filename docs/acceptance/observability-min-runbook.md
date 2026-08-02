@@ -25,7 +25,7 @@ Browser or API client
 ```bash
 curl -fsS "$UNORAG_BASE_URL/api/rag/health" | jq .
 curl -fsS -b cookies.jar "$UNORAG_BASE_URL/api/jobs/<job_id>" | jq .
-pnpm --dir apps/web lifecycle:inspect
+pnpm lifecycle:inspect
 curl -fsS http://127.0.0.1:6333/readyz
 ```
 

@@ -13,7 +13,7 @@ ACC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 # Optionally load KEY=VALUE lines without `source` (values may contain spaces).
-# Never print secret values. Node bootstrap also loads apps/web/.env.local via loadEnvFile.
+# Never print secret values. Node bootstrap also loads .env.local via loadEnvFile.
 load_env_keys() {
 	local envfile="$1"
 	[[ -f "$envfile" ]] || return 0
@@ -31,7 +31,7 @@ load_env_keys() {
 		fi
 	done <"$envfile"
 }
-for envfile in "$ROOT/apps/web/.env.local" "$ROOT/deploy/compose/.env" "$ROOT/.env"; do
+for envfile in "$ROOT/.env.local" "$ROOT/deploy/compose/.env" "$ROOT/.env"; do
 	load_env_keys "$envfile"
 done
 

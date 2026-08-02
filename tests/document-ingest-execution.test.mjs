@@ -54,11 +54,11 @@ test("every supported format routes to DBOS without a feature flag", () => {
 
 test("deployment ships the complete TypeScript parser runtime", () => {
 	const compose = readFileSync(
-		path.join(root, "../../deploy/compose/docker-compose.yml"),
+		path.join(root, "deploy/compose/docker-compose.yml"),
 		"utf8",
 	);
 	const dockerfile = readFileSync(
-		path.join(root, "../../deploy/docker/web.Dockerfile"),
+		path.join(root, "deploy/docker/web.Dockerfile"),
 		"utf8",
 	);
 	assert.match(compose, /^ {2}dbos-worker:/m);
@@ -68,7 +68,7 @@ test("deployment ships the complete TypeScript parser runtime", () => {
 	);
 	assert.match(compose, /MINERU_PROVIDER/);
 	assert.match(compose, /LITEPARSE_OCR_LANGUAGE/);
-	assert.match(dockerfile, /COPY apps\/web\/src apps\/web\/src/);
+	assert.match(dockerfile, /COPY src \.\/src/);
 	assert.doesNotMatch(compose, /UNORAG_DBOS_TEXT_INGEST/);
 });
 
@@ -78,7 +78,7 @@ test("Helm renders the TypeScript-only runtime", (t) => {
 		t.skip("helm is not installed");
 		return;
 	}
-	const chart = path.join(root, "../../deploy/helm/unorag");
+	const chart = path.join(root, "deploy/helm/unorag");
 	const render = spawnSync(
 		"helm",
 		["template", "unorag", chart, "--set", "config.openaiBaseUrl=http://llm"],

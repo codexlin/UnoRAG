@@ -7,7 +7,13 @@
 	},
 	"files": {
 		"ignoreUnknown": false,
-		"includes": ["**", "!!drizzle/meta"]
+		"includes": [
+			"src/**",
+			"tests/**/*.{ts,tsx,mts,mjs}",
+			"scripts/**/*.mjs",
+			"*.{json,ts,mjs}",
+			"!!drizzle/meta"
+		]
 	},
 	"formatter": {
 		"enabled": true,

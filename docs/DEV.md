@@ -13,11 +13,11 @@ application; it remains only in optional client or operator utilities.
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm --filter web test
-pnpm --filter web test:ts-core
-pnpm --filter web typecheck
-pnpm --filter web lint
-pnpm --filter web db:check
+pnpm test
+pnpm test:ts-core
+pnpm typecheck
+pnpm lint
+pnpm db:check
 ```
 
 `test` covers the product control plane and deployment contracts. `test:ts-core`
@@ -39,8 +39,8 @@ For UI-only iteration, start local infrastructure and Next.js separately:
 
 ```bash
 docker compose up -d
-cp -n apps/web/.env.example apps/web/.env.local
-pnpm --filter web dev
+cp -n .env.example .env.local
+pnpm dev
 ```
 
 Document lifecycle requires a DBOS system database, worker credentials, Qdrant,
@@ -49,11 +49,11 @@ stack when testing upload, replace, reindex, ACL projection, delete, or cleanup.
 
 ## Database Changes
 
-Edit `apps/web/src/db/schema.ts`, then generate and validate a forward migration:
+Edit `src/db/schema.ts`, then generate and validate a forward migration:
 
 ```bash
-pnpm --filter web db:generate
-pnpm --filter web db:check
+pnpm db:generate
+pnpm db:check
 ```
 
 Review generated SQL. Add explicit preflight checks when a migration retires a
@@ -62,12 +62,12 @@ migrations after they have shipped.
 
 ## Parsing And Retrieval
 
-- Parser contracts: `apps/web/src/core/parsing/`
-- DocumentIR and chunking: `apps/web/src/core/document-ir/`, `core/ingest/`
-- Retrieval and Qdrant: `apps/web/src/core/retrieval/`
-- Ask graph: `apps/web/src/core/ask-graph/`
-- Durable lifecycle: `apps/web/src/worker/`
-- Product routes: `apps/web/src/app/api/`
+- Parser contracts: `src/core/parsing/`
+- DocumentIR and chunking: `src/core/document-ir/`, `src/core/ingest/`
+- Retrieval and Qdrant: `src/core/retrieval/`
+- Ask graph: `src/core/ask-graph/`
+- Durable lifecycle: `src/worker/`
+- Product routes: `src/app/api/`
 
 ParserProviders return DocumentIR and never write business data. Retrieval always
 accepts a server-derived AuthorizedScope; tests must prove missing or empty security

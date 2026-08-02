@@ -146,19 +146,19 @@ test("upload revalidates the locked library before inserting a document", () => 
 
 test("DBOS document delete deployment contract is storage-aware", () => {
 	const compose = readFileSync(
-		path.join(root, "../../deploy/compose/docker-compose.yml"),
+		path.join(root, "deploy/compose/docker-compose.yml"),
 		"utf8",
 	);
 	const helm = readFileSync(
-		path.join(root, "../../deploy/helm/unorag/templates/dbos-deployments.yaml"),
+		path.join(root, "deploy/helm/unorag/templates/dbos-deployments.yaml"),
 		"utf8",
 	);
 	const values = readFileSync(
-		path.join(root, "../../deploy/helm/unorag/values.yaml"),
+		path.join(root, "deploy/helm/unorag/values.yaml"),
 		"utf8",
 	);
 	const runtime = readFileSync(
-		path.join(root, "../../deploy/config/runtime.env.example"),
+		path.join(root, "deploy/config/runtime.env.example"),
 		"utf8",
 	);
 	assert.match(

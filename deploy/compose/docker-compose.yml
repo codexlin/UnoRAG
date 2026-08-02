@@ -125,7 +125,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
       target: worker
-    working_dir: /repo/apps/web
+    working_dir: /repo
     restart: unless-stopped
     command: ["./node_modules/.bin/tsx", "src/worker/entry.ts"]
     environment:
@@ -187,7 +187,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
       target: worker
-    working_dir: /repo/apps/web
+    working_dir: /repo
     restart: unless-stopped
     command: ["./node_modules/.bin/tsx", "src/worker/control-entry.ts"]
     environment:
@@ -268,7 +268,7 @@ services:
   inspect-lifecycle:
     profiles: ["ops"]
     image: ${UNORAG_WEB_OPS_IMAGE:-unorag-web-ops:local}
-    working_dir: /repo/apps/web
+    working_dir: /repo
     environment:
       # Operator-invoked, short-lived inspection. Runtime services never receive
       # this DDL-owner credential.
@@ -289,7 +289,7 @@ services:
   backfill-acl-projections:
     profiles: ["ops"]
     image: ${UNORAG_WEB_OPS_IMAGE:-unorag-web-ops:local}
-    working_dir: /repo/apps/web
+    working_dir: /repo
     environment:
       # Upgrade-only mutation with the migrator credential. Runtime services
       # retain their least-privilege identities.
@@ -361,7 +361,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
       target: ops
-    working_dir: /repo/apps/web
+    working_dir: /repo
     environment:
       # Bootstrap-only vars: use defaults so `compose config` works without
       # bootstrap.env. The bootstrap script still requires a real password at run.

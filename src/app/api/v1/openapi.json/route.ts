@@ -1,4 +1,4 @@
-import contract from "../../../../../../../contracts/public-api-v1.openapi.json";
+import contract from "../../../../../contracts/public-api-v1.openapi.json";
 
 export const dynamic = "force-static";
 

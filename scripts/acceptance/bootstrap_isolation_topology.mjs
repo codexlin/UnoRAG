@@ -8,22 +8,22 @@
  *   Organization B
  *   └── Workspace B1  (owner)
  *
- * Uses control-plane SQL (same pattern as apps/web/scripts/bootstrap-control-plane.mjs).
+ * Uses control-plane SQL (same pattern as scripts/bootstrap-control-plane.mjs).
  * Exit: 0 ok, 1 fail, 2 skip (missing DATABASE_URL / pg).
  */
 import { randomBytes, scryptSync } from "node:crypto";
-import { createRequire } from "node:module";
 import { existsSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "../..");
-// Reuse apps/web dependency (pg) without a separate package root.
-const require = createRequire(join(ROOT, "apps/web/package.json"));
+// Reuse the product runtime dependency without a separate package root.
+const require = createRequire(join(ROOT, "package.json"));
 const pg = require("pg");
 
-for (const rel of ["apps/web/.env.local", "deploy/compose/.env", ".env"]) {
+for (const rel of [".env.local", "deploy/compose/.env", ".env"]) {
 	const path = join(ROOT, rel);
 	if (existsSync(path)) {
 		process.loadEnvFile(path);
@@ -94,16 +94,17 @@ function usage() {
 	console.log(`Usage: node bootstrap_isolation_topology.mjs [--cleanup] [--out path]
 
 Env:
-  DATABASE_URL                 required (apps/web/.env.local or compose .env)
+  DATABASE_URL                 required (.env.local or compose .env)
   UNORAG_ISOLATION_PASSWORD  default IsolationPilot!2026
 `);
 }
 
 async function cleanup(client) {
 	// Cascade from organizations removes workspaces/users/memberships/credentials.
-	await client.query("DELETE FROM app.organizations WHERE id = ANY($1::uuid[])", [
-		[IDS.orgA, IDS.orgB],
-	]);
+	await client.query(
+		"DELETE FROM app.organizations WHERE id = ANY($1::uuid[])",
+		[[IDS.orgA, IDS.orgB]],
+	);
 	console.log("cleanup: removed isolation orgs A/B and cascaded rows");
 }
 

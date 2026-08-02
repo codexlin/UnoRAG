@@ -1,6 +1,5 @@
 /**
- * Load shared policy-parity fixtures against JS ask/document policy.
- * Full Py↔JS equality is scripts/compare_policy_parity.py.
+ * Load deterministic fixtures against the TypeScript ask/document policy.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -17,10 +16,7 @@ import {
 import { resolveDocumentPolicy } from "../src/lib/server/document-policy.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES = join(
-	__dirname,
-	"../../../tests/contracts/policy-parity/fixtures.json",
-);
+const FIXTURES = join(__dirname, "contracts/policy-parity/fixtures.json");
 
 function loadCases() {
 	const payload = JSON.parse(readFileSync(FIXTURES, "utf8"));
@@ -40,7 +36,7 @@ test("policy-parity fixtures cover required kinds", () => {
 	}
 });
 
-test("policy-parity JS resolves all fixture cases", () => {
+test("TypeScript policy resolves all fixture cases", () => {
 	for (const caseDef of loadCases()) {
 		const inp = caseDef.input ?? {};
 		if (caseDef.kind === "ask_resolve") {

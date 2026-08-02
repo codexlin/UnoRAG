@@ -162,7 +162,7 @@ Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客
 ```
 
 配置原则：**少配置**。检索/问答产品旋钮 = 代码默认 ⊕ 工作区覆盖（见
-`apps/web/src/lib/server/ask-policy.mjs`），不要用部署环境变量冒充用户产品设置。
+`src/lib/server/ask-policy.mjs`），不要用部署环境变量冒充用户产品设置。
 
 ## 与同类定位的关系
 

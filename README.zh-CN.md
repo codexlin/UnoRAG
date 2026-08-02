@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./apps/web/public/brand/unorag-mark.png" alt="UnoRAG" width="88" />
+  <img src="./public/brand/unorag-mark.png" alt="UnoRAG" width="88" />
   <h1>UnoRAG</h1>
   <p><strong>可私有化部署、权限感知、以证据为中心的企业知识服务。</strong></p>
   <p>
@@ -44,9 +44,9 @@ curl -sf http://localhost/api/rag/health
 
 ```bash
 docker compose up -d
-cp -n apps/web/.env.example apps/web/.env.local
+cp -n .env.example .env.local
 pnpm install --frozen-lockfile
-pnpm --filter web dev
+pnpm dev
 ```
 
 配置 Worker 数据库与模型环境后，在第二个终端启动 DBOS Worker。完整流程见

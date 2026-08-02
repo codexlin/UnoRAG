@@ -4,7 +4,7 @@
 the retired Python runtime. The data remains useful for rebaselining, but its old
 stub runner and scores are not a release gate for the native TypeScript runtime.
 
-Current executable coverage lives in `apps/web/tests/ts-core/` and includes routing,
+Current executable coverage lives in `tests/ts-core/` and includes routing,
 refusal, table execution, citation, parser, Qdrant scope, ACL, lifecycle, and DBOS
 contracts. A live golden runner will be rebuilt after the local Docker cutover, using
 real indexed fixtures and product HTTP endpoints. Until then, CI must not report the

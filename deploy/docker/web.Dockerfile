@@ -8,22 +8,24 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@9.7.1 --activate
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/web/package.json apps/web/
-RUN pnpm install --filter web... --frozen-lockfile \
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile \
 	&& rm -rf /root/.local/share/pnpm/store /root/.cache
 
 FROM node:22-bookworm-slim AS builder
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@9.7.1 --activate
 COPY --from=deps /repo/node_modules ./node_modules
-COPY --from=deps /repo/apps/web/node_modules ./apps/web/node_modules
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/web ./apps/web
+COPY package.json pnpm-lock.yaml ./
+COPY src ./src
+COPY public ./public
+COPY drizzle ./drizzle
+COPY scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/inspect-lifecycle.mjs ./scripts/
+COPY drizzle.config.ts next.config.ts postcss.config.mjs tsconfig.json ./
 COPY contracts ./contracts
 ENV NEXT_TELEMETRY_DISABLED=1 \
 	NODE_ENV=production
-RUN pnpm --filter web build
+RUN pnpm build
 
 # One-shot control-plane migrator plus PostgreSQL runtime-role configurator.
 FROM node:22-bookworm-slim AS migrator
@@ -34,33 +36,33 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& corepack enable \
 	&& corepack prepare pnpm@9.7.1 --activate
-# Pin the same ranges as apps/web; install only migration tooling.
-COPY apps/web/package.json /tmp/web.package.json
-RUN node -e 'const fs=require("fs"); const web=JSON.parse(fs.readFileSync("/tmp/web.package.json","utf8")); fs.writeFileSync("package.json", JSON.stringify({name:"unorag-web-migrator",private:true,packageManager:"pnpm@9.7.1",scripts:{"db:migrate":"drizzle-kit migrate"},dependencies:{"drizzle-orm":web.dependencies["drizzle-orm"],pg:web.dependencies.pg,"drizzle-kit":web.devDependencies["drizzle-kit"]}},null,"\t")+"\n");' \
+# Pin the same ranges as the application; install only migration tooling.
+COPY package.json /tmp/app.package.json
+RUN node -e 'const fs=require("fs"); const app=JSON.parse(fs.readFileSync("/tmp/app.package.json","utf8")); fs.writeFileSync("package.json", JSON.stringify({name:"unorag-web-migrator",private:true,packageManager:"pnpm@9.7.1",scripts:{"db:migrate":"drizzle-kit migrate"},dependencies:{"drizzle-orm":app.dependencies["drizzle-orm"],pg:app.dependencies.pg,"drizzle-kit":app.devDependencies["drizzle-kit"]}},null,"\t")+"\n");' \
 	&& CI=true pnpm install \
 	&& test -x node_modules/.bin/drizzle-kit \
-	&& rm -rf /root/.local/share/pnpm/store /root/.cache /tmp/web.package.json
-COPY apps/web/drizzle.config.ts ./
-COPY apps/web/drizzle ./drizzle
+	&& rm -rf /root/.local/share/pnpm/store /root/.cache /tmp/app.package.json
+COPY drizzle.config.ts ./
+COPY drizzle ./drizzle
 # Referenced by drizzle.config schema path (migrate applies SQL in ./drizzle).
-COPY apps/web/src/db/schema.ts ./src/db/schema.ts
+COPY src/db/schema.ts ./src/db/schema.ts
 COPY ops/postgres/configure-runtime-roles.sql ./ops/postgres/configure-runtime-roles.sql
 # Avoid Corepack re-fetching pnpm at container start.
 CMD ["./node_modules/.bin/drizzle-kit", "migrate"]
 
 # One-shot bootstrap and operator tooling (no long-running queue consumer).
 FROM deps AS ops
-COPY apps/web/scripts apps/web/scripts
-WORKDIR /repo/apps/web
+COPY scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/inspect-lifecycle.mjs ./scripts/
+WORKDIR /repo
 ENV NODE_ENV=production
 CMD ["node", "scripts/inspect-lifecycle.mjs"]
 
 # DBOS executor and control loop. Keep the complete worker module together so
 # dynamic production-port imports resolve identically in both processes.
 FROM deps AS worker
-COPY apps/web/src apps/web/src
-COPY apps/web/tsconfig.json apps/web/
-WORKDIR /repo/apps/web
+COPY src ./src
+COPY tsconfig.json ./
+WORKDIR /repo
 ENV NODE_ENV=production
 CMD ["./node_modules/.bin/tsx", "src/worker/entry.ts"]
 
@@ -76,18 +78,18 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& useradd --system --uid 10001 --create-home unorag
 
-# Next standalone output (see apps/web/next.config.ts).
-COPY --from=builder --chown=unorag:unorag /repo/apps/web/.next/standalone ./
-COPY --from=builder --chown=unorag:unorag /repo/apps/web/.next/static ./apps/web/.next/static
-COPY --from=builder --chown=unorag:unorag /repo/apps/web/public ./apps/web/public
+# Next standalone output (see next.config.ts).
+COPY --from=builder --chown=unorag:unorag /repo/.next/standalone ./
+COPY --from=builder --chown=unorag:unorag /repo/.next/static ./.next/static
+COPY --from=builder --chown=unorag:unorag /repo/public ./public
 # Ops scripts (drizzle SQL + node tools) for break-glass on the web image.
-COPY --from=builder --chown=unorag:unorag /repo/apps/web/drizzle ./apps/web/drizzle
-COPY --from=builder --chown=unorag:unorag /repo/apps/web/drizzle.config.ts ./apps/web/drizzle.config.ts
-COPY --from=builder --chown=unorag:unorag /repo/apps/web/scripts ./apps/web/scripts
-COPY --from=builder --chown=unorag:unorag /repo/apps/web/package.json ./apps/web/package.json
+COPY --from=builder --chown=unorag:unorag /repo/drizzle ./drizzle
+COPY --from=builder --chown=unorag:unorag /repo/drizzle.config.ts ./drizzle.config.ts
+COPY --from=builder --chown=unorag:unorag /repo/scripts ./scripts
+COPY --from=builder --chown=unorag:unorag /repo/package.json ./package.json
 COPY --from=builder --chown=unorag:unorag /repo/contracts ./contracts
 
 USER unorag
 EXPOSE 3000
-WORKDIR /app/apps/web
+WORKDIR /app
 CMD ["node", "server.js"]

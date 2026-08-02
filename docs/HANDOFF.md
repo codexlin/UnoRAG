@@ -10,7 +10,9 @@
 ## Repository Map
 
 ```text
-apps/web/             Next.js product, native RAG core, DBOS worker, migrations, tests
+src/                  Next.js product, native RAG core, and DBOS worker
+drizzle/              PostgreSQL migrations
+tests/                Product and native runtime tests
 contracts/            public OpenAPI and shared service contracts
 deploy/               Compose, Helm and four-image delivery
 eval/reference/       preserved quality corpus; not yet a live TS release gate
@@ -30,15 +32,15 @@ not part of the build. Do not reintroduce that service as a runtime dependency.
 
 | Concern | Location |
 |---|---|
-| Auth, organizations, workspaces, RBAC | `apps/web/src/lib/server`, `src/app/api` |
-| Database schema and migrations | `apps/web/src/db/schema.ts`, `apps/web/drizzle` |
-| DocumentIR/TableIR and parsing | `apps/web/src/core/document-ir`, `src/core/parsing` |
-| Chunk and index records | `apps/web/src/core/ingest` |
-| Retrieval security and Qdrant | `apps/web/src/core/retrieval` |
-| LangGraph Ask runtime | `apps/web/src/core/ask-graph` |
-| Public/native HTTP handlers | `apps/web/src/server/http`, `src/app/api/v1` |
-| Durable lifecycle | `apps/web/src/worker` |
-| Product UI | `apps/web/src/components/app` |
+| Auth, organizations, workspaces, RBAC | `src/lib/server`, `src/app/api` |
+| Database schema and migrations | `src/db/schema.ts`, `drizzle` |
+| DocumentIR/TableIR and parsing | `src/core/document-ir`, `src/core/parsing` |
+| Chunk and index records | `src/core/ingest` |
+| Retrieval security and Qdrant | `src/core/retrieval` |
+| LangGraph Ask runtime | `src/core/ask-graph` |
+| Public/native HTTP handlers | `src/server/http`, `src/app/api/v1` |
+| Durable lifecycle | `src/worker` |
+| Product UI | `src/components/app` |
 
 ## Invariants
 
@@ -54,11 +56,11 @@ not part of the build. Do not reintroduce that service as a runtime dependency.
 ## Quality Commands
 
 ```bash
-pnpm --filter web test
-pnpm --filter web test:ts-core
-pnpm --filter web typecheck
-pnpm --filter web lint
-pnpm --filter web db:check
+pnpm test
+pnpm test:ts-core
+pnpm typecheck
+pnpm lint
+pnpm db:check
 source deploy/compose/scripts/compose-env.sh && mk_compose config >/tmp/unorag-compose.yml
 helm lint deploy/helm/unorag --set config.openaiBaseUrl=http://llm
 ```
