@@ -83,6 +83,16 @@ function recordTypeCondition(
 			],
 		};
 	}
+	if (recordType === "text") {
+		return {
+			should: [
+				matchValue("record_type", "chunk"),
+				matchValue("record_type", "section"),
+				matchValue("record_type", "table_summary"),
+				{ is_null: { key: "record_type" } },
+			],
+		};
+	}
 	return matchValue("record_type", recordType);
 }
 

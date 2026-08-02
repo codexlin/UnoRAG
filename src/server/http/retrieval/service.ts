@@ -29,6 +29,7 @@ const NativeRetrievalRequestSchema = z
 						"table",
 						"table_summary",
 						"chunk+table_summary",
+						"text",
 					])
 					.optional(),
 				doc_id: z.string().trim().min(1).max(128).optional(),

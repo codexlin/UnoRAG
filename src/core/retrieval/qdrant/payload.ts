@@ -10,6 +10,7 @@ import { RecordTypeSchema } from "../contracts";
 
 const StoredRecordTypeSchema = RecordTypeSchema.exclude([
 	"chunk+table_summary",
+	"text",
 ]);
 
 const StoredQdrantPayloadSchema = z

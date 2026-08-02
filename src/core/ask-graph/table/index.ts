@@ -22,3 +22,4 @@ export {
 	type TableDatasetInput,
 	type TableSourceRecord,
 } from "./normalize";
+export { normalizeTablePlanForQuestion } from "./planning";

@@ -3,11 +3,81 @@ import { test } from "node:test";
 
 import {
 	executeTableQuery,
+	normalizeTablePlanForQuestion,
 	parseTableNumber,
 	type TableDatasetInput,
 	TableExecutionResultSchema,
 	TableQueryPlanSchema,
 } from "../../src/core/ask-graph/table";
+
+test("min/max wording normalizes a single-table sort plan to minMax", () => {
+	const normalized = normalizeTablePlanForQuestion(
+		"中标金额最大和最小的项目分别是什么？",
+		{
+			mode: "single",
+			tableId: "quote",
+			operation: "sort",
+			column: "合计",
+			direction: "desc",
+			limit: 75,
+			selectColumns: ["设备名称", "合计"],
+			includeSummaryRows: false,
+		},
+	);
+
+	assert.deepEqual(normalized, {
+		mode: "single",
+		tableId: "quote",
+		operation: "minMax",
+		column: "合计",
+		selectColumns: ["设备名称", "合计"],
+		where: undefined,
+		includeSummaryRows: false,
+	});
+});
+
+test("min/max wording repairs an unconditional filter plan from table headers", () => {
+	const normalized = normalizeTablePlanForQuestion(
+		"中标金额最大和最小的项目分别是什么？",
+		{
+			mode: "single",
+			tableId: "awards",
+			operation: "filter",
+			where: { column: "项目名称", operator: "contains", value: "项目" },
+			selectColumns: ["项目名称", "中标金额(元)"],
+			includeSummaryRows: false,
+		},
+		[{ tableId: "awards", headers: ["项目名称", "中标金额(元)"] }],
+	);
+
+	assert.equal(normalized.mode, "single");
+	assert.equal(normalized.operation, "minMax");
+	if (normalized.mode === "single" && normalized.operation === "minMax") {
+		assert.equal(normalized.column, "中标金额(元)");
+		assert.equal(normalized.where, undefined);
+	}
+});
+
+test("count wording requesting column names returns the complete table header", () => {
+	const normalized = normalizeTablePlanForQuestion(
+		"报价清单中有多少行设备条目？表头包含哪些列名？",
+		{
+			mode: "single",
+			tableId: "quote",
+			operation: "count",
+			selectColumns: [],
+			includeSummaryRows: false,
+			includeHeaders: false,
+		},
+	);
+
+	assert.equal(normalized.mode, "single");
+	assert.equal(normalized.operation, "count");
+	if (normalized.mode === "single" && normalized.operation === "count") {
+		assert.equal(normalized.includeHeaders, true);
+	}
+});
+
 import type { StoredQdrantPayload } from "../../src/core/retrieval";
 import { mapQdrantHitToInternalCitation } from "../../src/core/retrieval/citation-mapper";
 
@@ -182,6 +252,39 @@ test("lookup, sort and topN are deterministic over irregular rows", () => {
 	);
 	assert.equal(lookup.status, "success");
 	assert.equal(lookup.matchedRows[0]["合计（元）"], "24万元");
+	assert.deepEqual(lookup.answerValue, {
+		设备名称: "服务器",
+		"合计（元）": "24万元",
+	});
+
+	const repeatedLookup = executeTableQuery(
+		{
+			mode: "single",
+			tableId: "quote",
+			operation: "lookup",
+			entity: { column: "设备名称", value: "服务器", match: "exact" },
+			selectColumns: ["设备名称", "单价"],
+			includeSummaryRows: false,
+		},
+		{
+			records: [
+				tableRecord({
+					id: "repeated-servers",
+					tableId: "quote",
+					headers: quoteHeaders,
+					rows: [
+						["1", "服务器", "9万", "180000"],
+						["2", "服务器", "15万元", "300000"],
+					],
+				}),
+			],
+		},
+	);
+	assert.deepEqual(
+		(repeatedLookup.answerValue as { numeric_ranges: Record<string, unknown> })
+			.numeric_ranges,
+		{ "单价（元）": { min: 90_000, max: 150_000 } },
+	);
 
 	const top = executeTableQuery(
 		{
@@ -299,6 +402,43 @@ test("count and aggregates exclude summary rows and retain contributing evidence
 	);
 	assert.equal(max.answerValue, 300_000);
 	assert.equal(max.matchedRows[0].设备名称, "存储阵列");
+
+	const minMax = executeTableQuery(
+		{
+			mode: "single",
+			tableId: "quote",
+			operation: "minMax",
+			column: "合计",
+			selectColumns: ["设备名称", "合计"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.deepEqual(minMax.answerValue, { min: 90_000, max: 300_000 });
+	assert.deepEqual(
+		minMax.matchedRows.map((row) => row.设备名称),
+		["边缘网关", "存储阵列"],
+	);
+	assert.equal(minMax.evidence.length, 2);
+});
+
+test("count includes headers only when the plan explicitly requests them", () => {
+	const result = executeTableQuery(
+		{
+			mode: "single",
+			tableId: "quote",
+			operation: "count",
+			selectColumns: [],
+			includeSummaryRows: false,
+			includeHeaders: true,
+		},
+		quote,
+	);
+
+	assert.equal(
+		result.answerText,
+		"共 4 行；表头列为：序号、设备名称、单价（元）、合计（元）",
+	);
 });
 
 test("global operations refuse incomplete semantic TopK table coverage", () => {
@@ -318,6 +458,14 @@ test("global operations refuse incomplete semantic TopK table coverage", () => {
 			mode: "single" as const,
 			tableId: "quote",
 			operation: "sum" as const,
+			column: "合计",
+			selectColumns: ["设备名称", "合计"],
+			includeSummaryRows: false,
+		},
+		{
+			mode: "single" as const,
+			tableId: "quote",
+			operation: "minMax" as const,
 			column: "合计",
 			selectColumns: ["设备名称", "合计"],
 			includeSummaryRows: false,

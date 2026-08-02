@@ -27,9 +27,24 @@ export function createRewriteNode(context: AskGraphContext) {
 				}),
 			};
 		}
+		const currentPlan = state.retrieval_plan ?? {};
+		const rewrittenPlan = rewritten.plan ?? {};
+		const currentFilters =
+			currentPlan.filters &&
+			typeof currentPlan.filters === "object" &&
+			!Array.isArray(currentPlan.filters)
+				? (currentPlan.filters as Record<string, unknown>)
+				: {};
+		const rewrittenFilters =
+			rewrittenPlan.filters &&
+			typeof rewrittenPlan.filters === "object" &&
+			!Array.isArray(rewrittenPlan.filters)
+				? (rewrittenPlan.filters as Record<string, unknown>)
+				: {};
 		const plan = {
-			...(state.retrieval_plan ?? {}),
-			...(rewritten.plan ?? {}),
+			...currentPlan,
+			...rewrittenPlan,
+			filters: { ...currentFilters, ...rewrittenFilters },
 			rewritten_queries: [query],
 		};
 		return {

@@ -10,9 +10,11 @@ import re
 import statistics
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from decimal import Decimal
 from http.cookiejar import CookieJar
 from pathlib import Path
 
@@ -51,24 +53,139 @@ def load_dotenv(path: Path) -> dict[str, str]:
 	return out
 
 
+_CHINESE_DIGITS = {
+	"零": 0,
+	"〇": 0,
+	"一": 1,
+	"壹": 1,
+	"二": 2,
+	"两": 2,
+	"贰": 2,
+	"三": 3,
+	"叁": 3,
+	"四": 4,
+	"肆": 4,
+	"五": 5,
+	"伍": 5,
+	"六": 6,
+	"陆": 6,
+	"七": 7,
+	"柒": 7,
+	"八": 8,
+	"捌": 8,
+	"九": 9,
+	"玖": 9,
+}
+_CHINESE_UNITS = {
+	"十": 10,
+	"拾": 10,
+	"百": 100,
+	"佰": 100,
+	"千": 1_000,
+	"仟": 1_000,
+	"万": 10_000,
+	"萬": 10_000,
+	"亿": 100_000_000,
+	"億": 100_000_000,
+}
+_CHINESE_NUMBER_RE = re.compile(
+	r"[零〇一二两三四五六七八九十百千万亿"
+	r"壹贰叁肆伍陆柒捌玖拾佰仟萬億]+"
+)
+_ARABIC_MAGNITUDE_RE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)(万|萬|亿|億)")
+
+
+def _parse_chinese_number(value: str) -> int:
+	if not any(character in _CHINESE_UNITS for character in value):
+		return int("".join(str(_CHINESE_DIGITS[character]) for character in value))
+
+	total = 0
+	section = 0
+	number = 0
+	for character in value:
+		if character in _CHINESE_DIGITS:
+			number = _CHINESE_DIGITS[character]
+			continue
+		unit = _CHINESE_UNITS[character]
+		if unit < 10_000:
+			section += (number or 1) * unit
+		else:
+			section += number
+			total += (section or 1) * unit
+			section = 0
+		number = 0
+	return total + section + number
+
+
+def normalize_fact_text(value: str) -> str:
+	"""Canonicalize representation without weakening fact-level matching."""
+	text = unicodedata.normalize("NFKC", value).casefold()
+	text = text.replace(r"\%", "%").replace("$", "")
+	text = text.translate(
+		str.maketrans(
+			{"\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-", "\u2212": "-"}
+		)
+	)
+	text = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", text)
+	text = _ARABIC_MAGNITUDE_RE.sub(
+		lambda match: str(
+			int(Decimal(match.group(1)) * _CHINESE_UNITS[match.group(2)])
+		),
+		text,
+	)
+	text = _CHINESE_NUMBER_RE.sub(
+		lambda match: str(_parse_chinese_number(match.group(0))), text
+	)
+	return re.sub(r"\s+", "", text)
+
+
+def fact_matches_answer(fact: str, answer: str) -> bool:
+	normalized_fact = normalize_fact_text(fact)
+	normalized_answer = normalize_fact_text(answer)
+	pattern = re.escape(normalized_fact)
+	if normalized_fact[0].isdigit():
+		pattern = rf"(?<![\d.]){pattern}"
+	if normalized_fact[-1].isdigit():
+		pattern = rf"{pattern}(?![\d.])"
+	return re.search(pattern, normalized_answer) is not None
+
+
 def key_facts_from(case: dict) -> list[str]:
 	facts = case.get("key_facts")
-	if isinstance(facts, list) and facts:
-		return [str(x) for x in facts]
-	answer = str(case.get("answer") or "")
-	found: list[str] = []
-	found.extend(re.findall(r"[¥￥]?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?", answer))
-	found.extend(re.findall(r"\d+(?:\.\d+)?%", answer))
-	found.extend(re.findall(r"\d{4}年\d{1,2}月\d{1,2}日", answer))
-	found.extend(re.findall(r"[「『\"“]([^」』\"”]{2,40})[」』\"”]", answer))
-	# de-dupe preserve order
-	seen: set[str] = set()
-	uniq: list[str] = []
-	for f in found:
-		if f not in seen:
-			seen.add(f)
-			uniq.append(f)
-	return uniq[:8] if uniq else ([answer[:40]] if answer else [])
+	if not isinstance(facts, list) or not facts:
+		raise ValueError("gold case must define non-empty key_facts")
+	if any(not isinstance(fact, str) for fact in facts):
+		raise ValueError("gold case key_facts must contain strings")
+	normalized = [fact.strip() for fact in facts]
+	if any(not fact for fact in normalized):
+		raise ValueError("gold case key_facts must contain non-empty strings")
+	return normalized
+
+
+def load_gold_cases(path: Path) -> list[dict]:
+	cases: list[dict] = []
+	for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+		if not line.strip():
+			continue
+		try:
+			case = json.loads(line)
+			if not isinstance(case, dict):
+				raise ValueError("gold case must be an object")
+			for field in ("file", "question", "answer"):
+				if not isinstance(case.get(field), str) or not case[field].strip():
+					raise ValueError(f"gold case must define non-empty {field}")
+			facts = key_facts_from(case)
+			missing_from_reference = [
+				fact for fact in facts if not fact_matches_answer(fact, case["answer"])
+			]
+			if missing_from_reference:
+				raise ValueError(
+					f"key_facts not supported by reference answer: {missing_from_reference}"
+				)
+		except (json.JSONDecodeError, ValueError) as exc:
+			raise ValueError(f"invalid gold at line {line_number}: {exc}") from exc
+		cases.append(case)
+	return cases
 
 
 def citation_file(citation: dict) -> str:
@@ -187,10 +304,11 @@ def main() -> int:
 		print("FAIL: missing UNORAG_ADMIN_EMAIL/PASSWORD", file=sys.stderr)
 		return 2
 
-	cases = []
-	for line in GOLDS.read_text(encoding="utf-8").splitlines():
-		if line.strip():
-			cases.append(json.loads(line))
+	try:
+		cases = load_gold_cases(GOLDS)
+	except ValueError as exc:
+		print(f"FAIL: {exc}", file=sys.stderr)
+		return 2
 	files = sorted({c["file"] for c in cases})
 	for f in files:
 		if not (AB / f).is_file():
@@ -389,7 +507,7 @@ def main() -> int:
 		cross_document_citations += sum(
 			1 for citation_name in citation_files if citation_name != target_file
 		)
-		missing = [f for f in facts if f and f not in answer]
+		missing = [f for f in facts if not fact_matches_answer(f, answer)]
 		ok = code == 200 and not refused and not missing
 		if ok:
 			passed += 1

@@ -18,6 +18,67 @@ const KNOWN_QUERY_TYPES = new Set([
 	"section_lookup",
 	"ambiguous",
 ]);
+const EXPLICIT_TABLE_COMPARE_PATTERN =
+	/(?:表格|表中|表内|明细表|清单|台账|逐行|多少行|设备条目|表头|列名|字段|序号\s*(?:为|是)?\s*\d+|rows?|row\s*#?\s*\d+)/i;
+const SUMMARY_PROSE_PATTERN = /(?:文末)?汇总说明(?:中|里|声称|称|显示|指出)?/i;
+const IGNORE_SUMMARY_PROSE_PATTERN =
+	/(?:忽略|不看|排除|不要参考)[^，。；;]{0,16}(?:文末)?汇总说明/i;
+const FIGURE_PROSE_PATTERN =
+	/(?:图\s*\d+|图表|折线图|柱状图|堆叠图|饼图|趋势图)/i;
+const PROSE_SUPERLATIVE_COMPARE_PATTERN =
+	/(?:最高|最低|最大|最小|最多|最少)[^，。？?]{0,16}(?:哪一|哪个|何种|什么)|(?:哪一|哪个|何种|什么)[^，。？?]{0,16}(?:最高|最低|最大|最小|最多|最少)/i;
+
+function executionQueryType(rawQueryType: string, question: string): string {
+	if (
+		["fact", "section_lookup"].includes(rawQueryType) &&
+		PROSE_SUPERLATIVE_COMPARE_PATTERN.test(question) &&
+		!FIGURE_PROSE_PATTERN.test(question) &&
+		!EXPLICIT_TABLE_COMPARE_PATTERN.test(question)
+	) {
+		return "compare";
+	}
+	if (
+		rawQueryType === "table" &&
+		((SUMMARY_PROSE_PATTERN.test(question) &&
+			!IGNORE_SUMMARY_PROSE_PATTERN.test(question)) ||
+			FIGURE_PROSE_PATTERN.test(question) ||
+			!EXPLICIT_TABLE_COMPARE_PATTERN.test(question))
+	) {
+		return "fact";
+	}
+	return rawQueryType === "compare" &&
+		EXPLICIT_TABLE_COMPARE_PATTERN.test(question)
+		? "table"
+		: rawQueryType;
+}
+
+function factOverrideReason(question: string, fallback: string): string {
+	if (
+		SUMMARY_PROSE_PATTERN.test(question) &&
+		!IGNORE_SUMMARY_PROSE_PATTERN.test(question)
+	) {
+		return `summary_prose_cue: ${fallback}`;
+	}
+	if (FIGURE_PROSE_PATTERN.test(question)) {
+		return `figure_prose_cue: ${fallback}`;
+	}
+	return `prose_retrieval_cue: ${fallback}`;
+}
+
+function routeOverrideReason(
+	queryType: string,
+	question: string,
+	fallback: string,
+): string {
+	if (
+		queryType === "compare" &&
+		PROSE_SUPERLATIVE_COMPARE_PATTERN.test(question)
+	) {
+		return `prose_superlative_cue: ${fallback}`;
+	}
+	if (queryType === "fact") return factOverrideReason(question, fallback);
+	return `table_execution_cue: ${fallback}`;
+}
 
 function defaultPlan(queryType: string, reason: string): AskMetadata {
 	if (queryType === "ambiguous") {
@@ -46,33 +107,41 @@ function defaultPlan(queryType: string, reason: string): AskMetadata {
 		route: "short",
 		path: "fast",
 		execute_path: "short",
-		record_type: "chunk+table_summary",
+		filters: { record_type: "text" },
 	};
 }
 
 export function createRoutingNodes(context: AskGraphContext) {
 	return {
 		queryRouter: async (state: AskState): Promise<AskStateUpdate> => {
+			const question = requireQuestion(state);
 			const routed = await context.queryRouter.route({
-				question: requireQuestion(state),
+				question,
 				history: state.history ?? [],
 				libraryId: state.library_id ?? null,
 			});
 			const rawQueryType = routed.queryType?.trim() || "";
-			const queryType = KNOWN_QUERY_TYPES.has(rawQueryType)
-				? rawQueryType
+			const normalizedQueryType = executionQueryType(rawQueryType, question);
+			const queryType = KNOWN_QUERY_TYPES.has(normalizedQueryType)
+				? normalizedQueryType
 				: "ambiguous";
-			const reason =
-				queryType === rawQueryType
-					? routed.reason?.trim() || "unspecified_route"
-					: "invalid_router_result";
+			const reason = !KNOWN_QUERY_TYPES.has(normalizedQueryType)
+				? "invalid_router_result"
+				: queryType !== rawQueryType
+					? routeOverrideReason(
+							queryType,
+							question,
+							routed.reason?.trim() || rawQueryType || "router",
+						)
+					: routed.reason?.trim() || "unspecified_route";
+			const routedPlan = { ...(routed.plan ?? {}) };
 			return {
 				query_type: queryType,
 				route_reason: reason,
 				retrieval_attempts: 0,
 				refused: false,
 				refuse_reason: null,
-				retrieval_plan: routed.plan,
+				retrieval_plan: routedPlan,
 				retrieval_debug: mergeRetrievalDebug(state, {
 					query_type: queryType,
 					route_reason: reason,

@@ -142,6 +142,19 @@ test("retrieval_enhancement off/on/auto resolve hybrid+rerank", () => {
 	);
 	assert.equal(autoLookup.hybrid_enabled, true);
 	assert.equal(autoLookup.rerank_enabled, true);
+
+	for (const question of [
+		"项目组诊断出的第一个主要问题是什么？具体表现如何？",
+		"发生概率最高的风险是哪一类？概率区间和影响程度如何？",
+		"图4中总预算最高的部门是哪个？其基础设施投入占比多少？",
+	]) {
+		const autoSensitive = resolveAskPolicy(
+			{ ...PUBLIC_ASK_DEFAULTS, retrieval_enhancement: "auto" },
+			{ question },
+		);
+		assert.equal(autoSensitive.hybrid_enabled, true);
+		assert.equal(autoSensitive.rerank_enabled, true);
+	}
 });
 
 test("null patch key resets to public default", () => {

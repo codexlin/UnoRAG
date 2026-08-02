@@ -92,13 +92,14 @@ const CountPlanSchema = z
 	.object({
 		...CommonSingleFields,
 		operation: z.literal("count"),
+		includeHeaders: z.boolean().optional(),
 	})
 	.strict();
 
 const AggregatePlanSchema = z
 	.object({
 		...CommonSingleFields,
-		operation: z.enum(["sum", "avg", "min", "max"]),
+		operation: z.enum(["sum", "avg", "min", "max", "minMax"]),
 		column: ColumnNameSchema,
 	})
 	.strict();

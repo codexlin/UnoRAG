@@ -240,6 +240,17 @@ function looksLikePreciseLookup(question) {
 	return false;
 }
 
+function looksRetrievalSensitive(question) {
+	const text = String(question ?? "").trim();
+	if (!text) return false;
+	return (
+		looksLikePreciseLookup(text) ||
+		/(?:分别|第一个|最(?:高|低|大|小|多|少)|排名|占比|概率区间|提升|降低|图\s*\d+|表头|列名|文末汇总说明)/i.test(
+			text,
+		)
+	);
+}
+
 /**
  * @returns {[boolean, boolean, string]} hybrid, rerank, resolved mode
  */
@@ -249,7 +260,7 @@ export function resolveRetrievalEnhancement(mode, question = null) {
 		.toLowerCase();
 	if (normalized === "off") return [false, false, "off"];
 	if (normalized === "on") return [true, true, "on"];
-	if (question && looksLikePreciseLookup(question)) {
+	if (question && looksRetrievalSensitive(question)) {
 		return [true, true, "auto"];
 	}
 	return [

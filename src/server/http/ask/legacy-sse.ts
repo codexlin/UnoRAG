@@ -106,7 +106,8 @@ export function projectPublicCitations(
 ): Record<string, unknown>[] {
 	return values
 		.map(publicCitation)
-		.filter((item): item is Record<string, unknown> => item !== null);
+		.filter((item): item is Record<string, unknown> => item !== null)
+		.map((citation, index) => ({ ...citation, index: index + 1 }));
 }
 
 export function projectPublicRetrievalDebug(

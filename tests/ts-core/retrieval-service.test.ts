@@ -161,6 +161,64 @@ test("hybrid fusion favors overlap and rerank failure degrades safely", async ()
 	assert.equal(result.debug.retrievalMode, "hybrid");
 });
 
+test("reranking preserves requested topK and removes contained duplicates", async () => {
+	const store = new FakeStore();
+	let requestedTopN = 0;
+	store.search = async () => [
+		hit({
+			id: "section-a",
+			text: `风险A ${"完整说明".repeat(40)}`,
+			chunkIndex: 0,
+			score: 0.9,
+		}),
+		hit({
+			id: "chunk-a",
+			text: "完整说明".repeat(30),
+			chunkIndex: 1,
+			score: 0.8,
+		}),
+		hit({
+			id: "risk-b",
+			text: `风险B ${"独立证据".repeat(30)}`,
+			chunkIndex: 2,
+			score: 0.7,
+		}),
+		hit({
+			id: "risk-c",
+			text: `风险C ${"另一证据".repeat(30)}`,
+			chunkIndex: 3,
+			score: 0.6,
+		}),
+	];
+	const reranker: RerankProvider = {
+		async rerank(input) {
+			requestedTopN = input.topN;
+			return [{ index: 0, score: 0.95 }];
+		},
+	};
+	const service = new DefaultRetrievalService(embeddings, store, reranker, {
+		hybridEnabled: false,
+		rerankEnabled: true,
+		rerankTopK: 1,
+		bm25TopK: 1,
+		rrfK: 60,
+	});
+
+	const result = await service.retrieve({
+		query: "最高风险",
+		libraryId: "library-a",
+		scope,
+		topK: 3,
+	});
+
+	assert.deepEqual(
+		result.citations.map((citation) => citation.id),
+		["section-a", "risk-b", "risk-c"],
+	);
+	assert.equal(result.debug.usedRerank, true);
+	assert.equal(requestedTopN, 3);
+});
+
 test("hybrid corpus failure falls back to dense without failing retrieval", async () => {
 	const store = new FakeStore();
 	store.throwCorpus = true;

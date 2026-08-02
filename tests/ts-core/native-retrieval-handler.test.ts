@@ -29,12 +29,16 @@ nodeModule._resolveFilename = (request, parent, isMain, options) =>
 		? inertServerOnlyModule
 		: originalResolveFilename(request, parent, isMain, options);
 
-const handlerModule = import("../../src/server/http/retrieval/native-handler");
-const integrationModule = import(
-	"../../src/lib/server/integration-rag"
-).finally(() => {
+const protectedModules = Promise.all([
+	import("../../src/server/http/retrieval/native-handler"),
+	import("../../src/lib/server/integration-rag"),
+]).finally(() => {
 	nodeModule._resolveFilename = originalResolveFilename;
 });
+const handlerModule = protectedModules.then(([handler]) => handler);
+const integrationModule = protectedModules.then(
+	([, integration]) => integration,
+);
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
@@ -437,6 +441,49 @@ test("public ask keeps the v1 projection and never calls FastAPI", async () => {
 		assert.equal("retrieval_debug" in body, false);
 	} finally {
 		globalThis.fetch = originalFetch;
+		console.info = originalInfo;
+	}
+});
+
+test("public ask masks a foreign library as access denied", async () => {
+	const { forwardIntegrationRag } = await integrationModule;
+	const key: AuthenticatedServiceKey = {
+		id: "service-key-ask-foreign",
+		organizationId: ORGANIZATION_ID,
+		workspaceId: WORKSPACE_ID,
+		name: "Ask integration",
+		prefix: "mk_svc_ask_foreign",
+		scopes: ["ask"],
+		libraryIds: null,
+		createdBy: null,
+		revokedAt: null,
+		lastUsedAt: null,
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		principalId: "service:service-key-ask-foreign",
+	};
+	const originalInfo = console.info;
+	console.info = () => undefined;
+	try {
+		const response = await forwardIntegrationRag({
+			request: retrieveRequest({
+				question: "foreign library",
+				library_id: "foreign-library",
+			}),
+			key,
+			target: "/v1/ask",
+			requestId: "public-ask-foreign",
+			askHandler: async () =>
+				Response.json({ detail: "library not found" }, { status: 404 }),
+		});
+
+		assert.equal(response.status, 403);
+		const body = (await response.json()) as {
+			error?: { code?: string; retryable?: boolean };
+		};
+		assert.equal(body.error?.code, "library_access_denied");
+		assert.equal(body.error?.retryable, false);
+	} finally {
 		console.info = originalInfo;
 	}
 });

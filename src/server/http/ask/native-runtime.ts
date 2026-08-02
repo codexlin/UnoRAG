@@ -15,6 +15,7 @@ import {
 } from "@/core/ask-graph";
 import {
 	executeTableQuery,
+	normalizeTablePlanForQuestion,
 	type TableDatasetInput,
 	type TableQueryPlan,
 	TableQueryPlanSchema,
@@ -39,6 +40,16 @@ export type NativeAskRuntimeDependencies = {
 	structured: StructuredOutputAdapter;
 	answer: AnswerStreamAdapter;
 };
+
+export class NativeAskRequestError extends Error {
+	constructor(
+		readonly status: 404,
+		message: string,
+	) {
+		super(message);
+		this.name = "NativeAskRequestError";
+	}
+}
 
 function query(state: AskState): string {
 	return state.rewritten_question?.trim() || state.question?.trim() || "";
@@ -107,10 +118,30 @@ function selectEvidenceCitations(
 function contextText(state: AskState): string {
 	const citations = (state.citations ?? []) as InternalCitation[];
 	const evidence = citations
-		.map(
-			(citation, index) =>
-				`[${index + 1}] ${citation.title || citation.filename || citation.doc_id}\n${citation.body || citation.text || citation.snippet}`,
-		)
+		.map((citation, index) => {
+			const body = citation.body || citation.text || citation.snippet;
+			const location = [
+				citation.heading_text,
+				citation.section_path,
+				citation.preamble,
+			]
+				.map((value) => value?.trim())
+				.filter(
+					(value, position, values): value is string =>
+						typeof value === "string" &&
+						value.length > 0 &&
+						values.indexOf(value) === position &&
+						!body.includes(value),
+				)
+				.join(" / ");
+			return [
+				`[${index + 1}] ${citation.title || citation.filename || citation.doc_id}`,
+				location,
+				body,
+			]
+				.filter(Boolean)
+				.join("\n");
+		})
 		.join("\n\n");
 	const table =
 		state.table_execution && Object.keys(state.table_execution).length
@@ -141,14 +172,18 @@ export class NativeAskRuntime {
 			libraryId: this.libraryId,
 			resolver: new DrizzleActiveGenerationResolver(),
 		});
-		if (!scope) throw new Error("library is outside the authorized scope");
+		if (!scope) throw new NativeAskRequestError(404, "library not found");
 		return this.dependencies.retrieval.retrieve({
 			query: query(state),
 			libraryId: this.libraryId,
 			scope,
 			topK: input.tableOnly
 				? Math.max(30, this.policy.retrieve_top_k)
-				: this.policy.retrieve_top_k,
+				: state.query_type === "compare"
+					? Math.max(20, this.policy.retrieve_top_k)
+					: state.query_type === "summary"
+						? Math.max(10, this.policy.retrieve_top_k)
+						: this.policy.retrieve_top_k,
 			filters: input.tableOnly
 				? { ...filters(state), record_type: "table" }
 				: filters(state),
@@ -271,7 +306,7 @@ export class NativeAskRuntime {
 							refuse_reason: "table_incomplete",
 						};
 					}
-					const plan = await structured.planTable(
+					const generatedPlan = await structured.planTable(
 						{
 							question: state.question ?? "",
 							tables: candidates.map(({ tableId, headers }) => ({
@@ -280,6 +315,11 @@ export class NativeAskRuntime {
 							})),
 						},
 						{ abortSignal: this.signal },
+					);
+					const plan = normalizeTablePlanForQuestion(
+						state.question ?? "",
+						generatedPlan,
+						candidates,
 					);
 					return { table_query_plan: plan };
 				},
@@ -357,6 +397,22 @@ export class NativeAskRuntime {
 	}
 
 	streamAnswer(state: AskState) {
+		const execution = state.table_execution as
+			| { status?: unknown; operation?: unknown; answerText?: unknown }
+			| undefined;
+		if (
+			execution?.status === "success" &&
+			["count", "sum", "avg", "min", "max", "minMax"].includes(
+				String(execution.operation),
+			) &&
+			typeof execution.answerText === "string" &&
+			execution.answerText.trim()
+		) {
+			const answer = execution.answerText.trim();
+			return (async function* () {
+				yield answer;
+			})();
+		}
 		return this.dependencies.answer.stream(
 			{
 				question: state.question ?? "",

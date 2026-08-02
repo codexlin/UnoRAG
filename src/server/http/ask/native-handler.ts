@@ -21,6 +21,7 @@ import {
 } from "./legacy-sse";
 import {
 	createNativeAskRuntime,
+	NativeAskRequestError,
 	type NativeAskRuntime,
 } from "./native-runtime";
 import { type NativeAskPolicy, NativeAskPolicySchema } from "./policy";
@@ -361,6 +362,9 @@ export async function handleNativeAskRequest(input: {
 		}
 		if (error instanceof ConversationNotFoundError) {
 			return Response.json({ detail: "thread not found" }, { status: 404 });
+		}
+		if (error instanceof NativeAskRequestError) {
+			return Response.json({ detail: error.message }, { status: error.status });
 		}
 		console.error(
 			JSON.stringify({

@@ -14,6 +14,7 @@ import {
 } from "../../src/core/ai";
 import {
 	type LegacySseEventName,
+	projectPublicCitations,
 	streamLegacyAskSse,
 } from "../../src/server/http/ask/legacy-sse";
 
@@ -39,6 +40,19 @@ function parseFrame(frame: string): {
 async function* tokens(...values: string[]): AsyncGenerator<string> {
 	for (const value of values) yield value;
 }
+
+test("public citations are renumbered after evidence filtering", () => {
+	assert.deepEqual(
+		projectPublicCitations([
+			{ id: "citation-a", index: 1 },
+			{ id: "citation-c", index: 3 },
+		]),
+		[
+			{ id: "citation-a", index: 1 },
+			{ id: "citation-c", index: 2 },
+		],
+	);
+});
 
 test("provider configuration fails closed without an API key", () => {
 	assert.throws(

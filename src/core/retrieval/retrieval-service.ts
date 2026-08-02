@@ -114,7 +114,28 @@ function toUserFilters(filters?: RetrievalFilters): RetrievalUserFilters {
 }
 
 function hitText(hit: QdrantSearchHit): string {
-	return hit.payload.body || hit.payload.text;
+	const body = hit.payload.body || hit.payload.text;
+	const heading = hit.payload.heading_text?.trim();
+	return heading && !body.includes(heading) ? `${heading}\n${body}` : body;
+}
+
+function deduplicateOverlappingHits(
+	hits: QdrantSearchHit[],
+): QdrantSearchHit[] {
+	const selected: QdrantSearchHit[] = [];
+	for (const hit of hits) {
+		const body = hitText(hit).replace(/\s+/g, " ").trim();
+		const duplicate = selected.some((candidate) => {
+			if (candidate.payload.doc_id !== hit.payload.doc_id) return false;
+			const candidateBody = hitText(candidate).replace(/\s+/g, " ").trim();
+			return (
+				Math.min(body.length, candidateBody.length) >= 100 &&
+				(body.includes(candidateBody) || candidateBody.includes(body))
+			);
+		});
+		if (!duplicate) selected.push(hit);
+	}
+	return selected;
 }
 
 function fuseHits(input: {
@@ -263,11 +284,7 @@ export class DefaultRetrievalService {
 				const ranked = await this.reranker.rerank({
 					query,
 					documents: candidates.map(hitText),
-					topN: Math.min(
-						this.options.rerankTopK,
-						input.topK,
-						candidates.length,
-					),
+					topN: Math.min(input.topK, candidates.length),
 					signal: input.signal,
 				});
 				const reranked = ranked.flatMap((rank) => {
@@ -283,7 +300,11 @@ export class DefaultRetrievalService {
 						: [];
 				});
 				if (reranked.length) {
-					candidates = reranked;
+					const rerankedIds = new Set(reranked.map((hit) => String(hit.id)));
+					candidates = [
+						...reranked,
+						...candidates.filter((hit) => !rerankedIds.has(String(hit.id))),
+					];
 					usedRerank = true;
 				}
 			} catch {
@@ -291,7 +312,7 @@ export class DefaultRetrievalService {
 			}
 		}
 
-		const citations = candidates
+		const citations = deduplicateOverlappingHits(candidates)
 			.slice(0, input.topK)
 			.map((hit, index) =>
 				mapQdrantHitToInternalCitation(

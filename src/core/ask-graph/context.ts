@@ -65,15 +65,13 @@ export interface AskGraphContext {
 	refuseAnswer?: (state: AskState, reason: string) => string;
 }
 
-export function defaultClarifyAnswer(state: AskState): string {
-	const library = state.library_id || "当前知识库";
-	return `请补充你想在${library}中查询的主题、对象或时间范围。`;
+export function defaultClarifyAnswer(_state: AskState): string {
+	return "请补充你想在当前知识库中查询的主题、对象或时间范围。";
 }
 
-export function defaultRefuseAnswer(state: AskState, reason: string): string {
-	const library = state.library_id || "当前知识库";
+export function defaultRefuseAnswer(_state: AskState, reason: string): string {
 	if (reason === "weak_match") {
-		return `${library}中存在相关内容，但证据不足以可靠回答。`;
+		return "当前知识库中存在相关内容，但证据不足以可靠回答。";
 	}
-	return `${library}中没有找到足以支持回答的内容。`;
+	return "当前知识库中没有找到足以支持回答的内容。";
 }

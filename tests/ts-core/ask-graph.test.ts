@@ -9,7 +9,21 @@ import {
 	ASK_GRAPH_NODE_NAMES,
 	ASK_STATE_FIELD_NAMES,
 	AskGraphService,
+	defaultClarifyAnswer,
+	defaultRefuseAnswer,
 } from "../../src/core/ask-graph";
+
+test("default user-facing fallbacks never expose internal library ids", () => {
+	const state = { library_id: "internal-library-uuid" } as AskState;
+	for (const answer of [
+		defaultClarifyAnswer(state),
+		defaultRefuseAnswer(state, "weak_match"),
+		defaultRefuseAnswer(state, "no_evidence"),
+	]) {
+		assert.doesNotMatch(answer, /internal-library-uuid/);
+		assert.match(answer, /当前知识库/);
+	}
+});
 
 type Scenario = {
 	queryType?: string;
@@ -93,6 +107,7 @@ test("fact route invokes real retrieve and generate ports", async () => {
 	assert.equal(result.answer, "answer:What is the policy?");
 	assert.equal(result.refused, false);
 	assert.equal(result.query_type, "fact");
+	assert.deepEqual(result.retrieval_plan?.filters, { record_type: "text" });
 	assert.deepEqual(calls, ["retrieve", "generate"]);
 });
 
@@ -195,6 +210,108 @@ test("table route invokes all injected table ports before generation", async () 
 	]);
 	assert.equal(result.table_execution?.ok, true);
 	assert.equal(result.refused, false);
+});
+
+test("explicit row comparison upgrades compare to deterministic table execution", async () => {
+	const calls: string[] = [];
+	const result = await new AskGraphService(
+		createContext({ queryType: "compare", calls }),
+	).invoke({
+		question: "按表格75条明细逐行比较，最大和最小金额分别是多少？",
+	});
+
+	assert.equal(result.query_type, "table");
+	assert.match(result.route_reason ?? "", /^table_execution_cue:/);
+	assert.deepEqual(calls, [
+		"table_retrieve",
+		"build_table_plan",
+		"table_execute",
+		"generate",
+	]);
+});
+
+test("prose superlative overrides a fact route to compare retrieval", async () => {
+	const calls: string[] = [];
+	const service = new AskGraphService(
+		createContext({ queryType: "fact", calls }),
+	);
+	const result = await service.invoke({
+		question:
+			"风险分析中认为发生概率最高的风险是哪一类？概率区间和影响程度如何？",
+		library_id: "library-a",
+	});
+
+	assert.equal(result.query_type, "compare");
+	assert.match(result.route_reason ?? "", /prose_superlative_cue/);
+	assert.equal(result.retrieval_plan?.execute_path, "short");
+});
+
+test("explicit prose summary wording overrides a model table misroute", async () => {
+	const calls: string[] = [];
+	const result = await new AskGraphService(
+		createContext({ queryType: "table", calls }),
+	).invoke({
+		question: "文末汇总说明中，直接采购占比和采购方式是什么？",
+	});
+
+	assert.equal(result.query_type, "fact");
+	assert.match(result.route_reason ?? "", /^summary_prose_cue:/);
+	assert.deepEqual(result.retrieval_plan?.filters, {
+		record_type: "text",
+	});
+	assert.deepEqual(calls, ["retrieve", "generate"]);
+});
+
+test("figure questions cannot be misrouted to raw table execution", async () => {
+	const calls: string[] = [];
+	const result = await new AskGraphService(
+		createContext({ queryType: "table", calls }),
+	).invoke({
+		question: "图4（堆叠柱状图）中总预算最高的部门是哪个？",
+	});
+
+	assert.equal(result.query_type, "fact");
+	assert.deepEqual(result.retrieval_plan?.filters, { record_type: "text" });
+	assert.deepEqual(calls, ["retrieve", "generate"]);
+});
+
+test("prose statistics require an explicit table structure cue", async () => {
+	const calls: string[] = [];
+	const result = await new AskGraphService(
+		createContext({ queryType: "table", calls }),
+	).invoke({
+		question: "实验数据集包含多少条标注样本？各类别占比最大的是哪个？",
+	});
+
+	assert.equal(result.query_type, "fact");
+	assert.deepEqual(calls, ["retrieve", "generate"]);
+});
+
+test("ignoring prose summary preserves explicit table execution", async () => {
+	const calls: string[] = [];
+	const result = await new AskGraphService(
+		createContext({ queryType: "table", calls }),
+	).invoke({
+		question: "忽略文末汇总说明，按表格75条明细逐行比较。",
+	});
+
+	assert.equal(result.query_type, "table");
+	assert.deepEqual(calls, [
+		"table_retrieve",
+		"build_table_plan",
+		"table_execute",
+		"generate",
+	]);
+});
+
+test("prose comparison remains on the short retrieval path", async () => {
+	const calls: string[] = [];
+	const result = await new AskGraphService(
+		createContext({ queryType: "compare", calls }),
+	).invoke({ question: "比较两份制度对远程办公的规定。" });
+
+	assert.equal(result.query_type, "compare");
+	assert.deepEqual(calls, ["retrieve", "generate"]);
 });
 
 test("unknown judgement action fails closed", async () => {

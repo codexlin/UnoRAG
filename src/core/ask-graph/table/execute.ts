@@ -164,6 +164,41 @@ function projectRows(
 	}));
 }
 
+function describeRow(
+	row: NormalizedTableRow,
+	columns: readonly string[],
+): string {
+	return columns
+		.map((column) => `${column}：${row.values[column] ?? ""}`)
+		.join("，");
+}
+
+function lookupAnswerValue(
+	rows: readonly NormalizedTableRow[],
+	columns: readonly string[],
+): unknown {
+	const values = rows.map((row) =>
+		Object.fromEntries(columns.map((column) => [column, row.values[column]])),
+	);
+	if (values.length <= 1) return values[0] ?? null;
+	const numericRanges = Object.fromEntries(
+		columns.flatMap((column) => {
+			const parsed = rows.map((row) =>
+				parseTableNumber(row.values[column], column),
+			);
+			if (parsed.some((value) => value === null)) return [];
+			const numbers = parsed as number[];
+			return [
+				[column, { min: Math.min(...numbers), max: Math.max(...numbers) }],
+			];
+		}),
+	);
+	return {
+		rows: values,
+		numeric_ranges: numericRanges,
+	};
+}
+
 function success(
 	operation: string,
 	reason: string,
@@ -206,7 +241,7 @@ function executeSingle(
 	input: TableDatasetInput,
 ): TableExecutionResult {
 	if (
-		["count", "sum", "avg", "min", "max", "sort", "topN"].includes(
+		["count", "sum", "avg", "min", "max", "minMax", "sort", "topN"].includes(
 			plan.operation,
 		)
 	) {
@@ -249,11 +284,7 @@ function executeSingle(
 			rows.length > 0 ? "lookup" : "no_match",
 			rows,
 			selected.columns,
-			rows.length > 0
-				? Object.fromEntries(
-						selected.columns.map((column) => [column, rows[0].values[column]]),
-					)
-				: null,
+			lookupAnswerValue(rows, selected.columns),
 			rows.length > 0 ? `命中 ${rows.length} 行` : "未找到匹配行",
 		);
 	}
@@ -270,13 +301,16 @@ function executeSingle(
 	}
 
 	if (plan.operation === "count") {
+		const headerSuffix = plan.includeHeaders
+			? `；表头列为：${table.headers.join("、")}`
+			: "";
 		return success(
 			plan.operation,
 			"count",
 			rows,
 			selected.columns,
 			rows.length,
-			`共 ${rows.length} 行`,
+			`共 ${rows.length} 行${headerSuffix}`,
 		);
 	}
 
@@ -332,6 +366,27 @@ function executeSingle(
 			selected.columns,
 			answer,
 			`${valueColumn.column}${plan.operation === "sum" ? "合计" : "平均值"}为 ${answer}`,
+		);
+	}
+
+	if (plan.operation === "minMax") {
+		const minimum = numericRows.reduce((best, item) =>
+			item.value < best.value ? item : best,
+		);
+		const maximum = numericRows.reduce((best, item) =>
+			item.value > best.value ? item : best,
+		);
+		const selectedRows =
+			minimum.row.absoluteIndex === maximum.row.absoluteIndex
+				? [minimum.row]
+				: [minimum.row, maximum.row];
+		return success(
+			plan.operation,
+			plan.operation,
+			selectedRows,
+			selected.columns,
+			{ min: minimum.value, max: maximum.value },
+			`${valueColumn.column}最小值为 ${minimum.value}（${describeRow(minimum.row, selected.columns)}）；最大值为 ${maximum.value}（${describeRow(maximum.row, selected.columns)}）`,
 		);
 	}
 

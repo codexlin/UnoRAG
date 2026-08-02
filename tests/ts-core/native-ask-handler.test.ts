@@ -172,6 +172,7 @@ function askState(overrides: Partial<AskState> = {}): AskState {
 		citations: [
 			{
 				id: "citation-1",
+				index: 1,
 				doc_id: "document-1",
 				title: "合同",
 				snippet: "违约金为 200 元",
@@ -309,6 +310,25 @@ test("foreign, hidden, or wrong-library thread returns 404", async () => {
 	}
 });
 
+test("library outside the authorized retrieval scope returns 404", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const { NativeAskRequestError } = await import(
+		"../../src/server/http/ask/native-runtime"
+	);
+	const response = await handleNativeAskRequest({
+		request: request({ question: "问题", library_id: LIBRARY_ID }),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		runtimeFactory: (() => {
+			throw new NativeAskRequestError(404, "library not found");
+		}) as never,
+	});
+
+	assert.equal(response?.status, 404);
+	assert.deepEqual(await response?.json(), { detail: "library not found" });
+});
+
 test("sync ask returns public response and atomically appends the exchange", async () => {
 	const { handleNativeAskRequest } = await handlerModule;
 	const repository = new FakeConversationRepository([
@@ -364,6 +384,7 @@ test("sync ask returns public response and atomically appends the exchange", asy
 				citations: [
 					{
 						id: "citation-1",
+						index: 1,
 						doc_id: "document-1",
 						document_id: "document-1",
 						title: "合同",

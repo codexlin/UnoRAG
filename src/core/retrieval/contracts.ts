@@ -9,6 +9,7 @@ export const RecordTypeSchema = z.enum([
 	"table",
 	"table_summary",
 	"chunk+table_summary",
+	"text",
 ]);
 
 export type RecordType = z.infer<typeof RecordTypeSchema>;
@@ -121,6 +122,7 @@ export const InternalCitationSchema = z
 		page_start: z.number().int().nullable(),
 		page_end: z.number().int().nullable(),
 		section_path: z.string().nullable(),
+		heading_text: z.string().nullable().optional(),
 		preamble: z.string().nullable(),
 		table_id: z.string().nullable(),
 		headers: z.array(z.string()),
@@ -145,7 +147,7 @@ export const InternalCitationSchema = z
 		generation_id: z.string().nullable(),
 		tenant_id: z.string(),
 		workspace_id: z.string(),
-		record_type: RecordTypeSchema.exclude(["chunk+table_summary"]),
+		record_type: RecordTypeSchema.exclude(["chunk+table_summary", "text"]),
 		record_id: z.string().nullable(),
 		source_chunk_ids: z.array(z.string()),
 		source_node_ids: z.array(z.string()),

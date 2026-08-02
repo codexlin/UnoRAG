@@ -33,6 +33,7 @@ const RetrievalRecordTypeSchema = z.enum([
 	"table",
 	"table_summary",
 	"chunk+table_summary",
+	"text",
 ]);
 
 export const RewriteOutputSchema = z
@@ -120,17 +121,18 @@ export type StructuredOutputAdapterOptions = {
 };
 
 const ROUTER_SYSTEM_PROMPT =
-	"你是 UnoRAG 查询路由器。仅输出结构化结果。分类只能是 fact、follow_up、summary、compare、table、section_lookup、ambiguous；不执行检索，不生成答案。";
+	"你是 UnoRAG 查询路由器。仅输出结构化结果。分类只能是 fact、follow_up、summary、compare、table、section_lookup、ambiguous；不执行检索，不生成答案。" +
+	"涉及表格明细的筛选、排序、最大最小、合计、平均、计数、逐行比较或按序号定位必须分类为 table；compare 仅用于多个文档、段落或实体之间的非表格比较。";
 
 const REWRITE_SYSTEM_PROMPT =
-	"你是检索计划助手。semantic_query 可对原问做检索友好改写；无把握则原样。filters 只允许 record_type、doc_id、table_id、document_version_id。不要编造标识，不要输出 tenant_id、workspace_id、library_id、generation 或 ACL 字段。";
+	"你是检索计划助手。semantic_query 可对原问做检索友好改写；无把握则原样。filters 只允许 record_type、doc_id、table_id、document_version_id；普通正文检索保持调用方给出的默认 record_type，不要擅自切换为 table。不要编造标识，不要输出 tenant_id、workspace_id、library_id、generation 或 ACL 字段。";
 
 const JUDGE_SYSTEM_PROMPT =
 	"你是证据充分性判断器。仅根据给定候选证据判断 generate、retry 或 refuse。资料未覆盖时必须 refuse，不能用模型常识补足。问题澄清由查询路由器负责，不输出 clarify。";
 
 const TABLE_PLAN_SYSTEM_PROMPT =
 	"你是表格执行计划器。只根据问题和真实表头制定严格计划；列名必须逐字来自所给表头。" +
-	"单表使用 mode=single，双表显式给出 join 键；无法确定列名、连接键或运算时不要猜测，由调用方拒答或澄清。";
+	"单表使用 mode=single，同时询问同一列最小值和最大值时使用 minMax；计数问题若同时询问表头或列名，设置 includeHeaders=true；双表显式给出 join 键；无法确定列名、连接键或运算时不要猜测，由调用方拒答或澄清。";
 
 async function defaultStructuredExecutor(
 	request: StructuredGenerationRequest,

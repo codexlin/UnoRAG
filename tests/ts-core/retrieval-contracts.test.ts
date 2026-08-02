@@ -73,6 +73,19 @@ test("mandatory filter covers workspace, principal, group and active generation"
 	assert.equal(JSON.stringify(filter).includes("generation-old"), false);
 });
 
+test("text retrieval includes narrative grains and excludes raw table rows", () => {
+	const filter = buildMandatoryQdrantFilter({
+		scope,
+		userFilters: { record_type: "text" },
+	});
+	const recordTypes = conditionFor(filter, "record_type").map(
+		(condition) => (condition.match as { value?: string }).value,
+	);
+
+	assert.deepEqual(recordTypes, ["chunk", "section", "table_summary"]);
+	assert.equal(recordTypes.includes("table"), false);
+});
+
 test("empty group scope keeps principal ACL separate and omits group MatchAny", () => {
 	const filter = buildMandatoryQdrantFilter({
 		scope: { ...scope, groupIds: [] },
@@ -179,6 +192,7 @@ test("Qdrant hit maps to a strict internal citation without unknown payload fiel
 			chunk_index: 3,
 			text: "fallback text",
 			body: "Proof is due within three working days.",
+			heading_text: "Payment deadline",
 			document_version_id: "version-a",
 			generation_id: "generation-current",
 			tenant_id: "tenant-a",
@@ -200,6 +214,7 @@ test("Qdrant hit maps to a strict internal citation without unknown payload fiel
 	assert.equal(citation.id, "42");
 	assert.equal(citation.page, "2");
 	assert.equal(citation.body, "Proof is due within three working days.");
+	assert.equal(citation.heading_text, "Payment deadline");
 	assert.equal(citation.snippet, citation.body);
 	assert.equal(citation.score, 1);
 	assert.equal(citation.dense_score, 0.82);

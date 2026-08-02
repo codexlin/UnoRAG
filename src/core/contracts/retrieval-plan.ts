@@ -10,6 +10,7 @@ export const RetrievalFiltersSchema = z
 				"table",
 				"table_summary",
 				"chunk+table_summary",
+				"text",
 			])
 			.nullable()
 			.optional(),
