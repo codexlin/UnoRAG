@@ -20,11 +20,6 @@ async function main(): Promise<void> {
 	if (!databaseUrl) {
 		throw new Error("DATABASE_URL is required by the DBOS dispatcher");
 	}
-	if (process.env.UNORAG_DBOS_CLEANUP_ENABLED !== "true") {
-		throw new Error(
-			"UNORAG_DBOS_CLEANUP_ENABLED=true is required to dispatch cleanup jobs",
-		);
-	}
 	const config = loadWorkerConfig();
 	const pool = new Pool({ connectionString: databaseUrl, max: 2 });
 	let starter: DbosJobEnqueuer | undefined;

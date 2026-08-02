@@ -137,7 +137,8 @@ test("answer adapter streams injected tokens with current prompt and temperature
 	let observedSystem = "";
 	const adapter = new AnswerStreamAdapter(injectedModel, (request) => {
 		observedTemperature = request.temperature;
-		observedSystem = String(request.messages[0]?.content ?? "");
+		observedSystem = request.instructions;
+		assert.notEqual(request.messages[0]?.role, "system");
 		return tokens("违约金", "是 200 元");
 	});
 

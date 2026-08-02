@@ -124,11 +124,19 @@ class CapacityClient:
         expected: set[int],
     ) -> tuple[int, dict[str, Any], dict[str, str]]:
         data = None if body is None else json.dumps(body).encode("utf-8")
+        headers = {"content-type": "application/json"} if data else {}
+        cookie = self.session_cookie_header()
+        if cookie:
+            # Private installs commonly run production mode behind a local HTTP
+            # edge during acceptance. urllib correctly withholds Secure cookies
+            # on HTTP, so the test client carries its authenticated cookie
+            # explicitly, matching curl/browser localhost behavior.
+            headers["cookie"] = cookie
         request = Request(
             f"{self.base_url}{path}",
             data=data,
             method=method,
-            headers={"content-type": "application/json"} if data else {},
+            headers=headers,
         )
         try:
             with self._cookie_lock:
@@ -230,9 +238,11 @@ class CapacityClient:
             status, last_body, _ = self.session_json(
                 "DELETE",
                 f"/api/libraries/{library_id}",
-                expected={200, 202},
+                expected={200, 202, 404},
             )
-            if status == 200 or last_body.get("already_deleted") is True:
+            if status in {200, 404} or last_body.get("already_deleted") is True:
+                if status == 404:
+                    last_body = {"already_deleted": True}
                 return (time.perf_counter() - started) * 1000, last_body
             time.sleep(poll_seconds)
         raise TimeoutError(
@@ -355,6 +365,8 @@ def parser_report_summary(job: dict[str, Any]) -> dict[str, Any]:
         "mode": report.get("mode"),
         "partial": report.get("partial"),
         "route": metrics.get("route"),
+        "provider": metrics.get("provider"),
+        "external_data_processing": metrics.get("external_data_processing"),
         "parser_latency_ms": report.get("latency_ms"),
         "external_status": status.get("external_status"),
         "degraded": status.get("degraded"),

@@ -78,6 +78,7 @@ interface StructuredSchemaMap {
 
 export interface StructuredGenerationRequest {
 	model: LanguageModel;
+	instructions: string;
 	messages: ModelMessage[];
 	schema: z.ZodType;
 	schemaName: StructuredKind;
@@ -136,6 +137,7 @@ async function defaultStructuredExecutor(
 ): Promise<unknown> {
 	const result = await generateText({
 		model: request.model,
+		instructions: request.instructions,
 		messages: request.messages,
 		temperature: request.temperature,
 		abortSignal: request.abortSignal,
@@ -149,10 +151,6 @@ async function defaultStructuredExecutor(
 
 function userMessage(content: string): ModelMessage {
 	return { role: "user", content };
-}
-
-function systemMessage(content: string): ModelMessage {
-	return { role: "system", content };
 }
 
 export class StructuredOutputAdapter {
@@ -171,6 +169,7 @@ export class StructuredOutputAdapter {
 	private async request<K extends StructuredKind>(
 		kind: K,
 		schema: StructuredSchemaMap[K],
+		instructions: string,
 		messages: ModelMessage[],
 		abortSignal?: AbortSignal,
 	): Promise<z.infer<StructuredSchemaMap[K]>> {
@@ -190,6 +189,7 @@ export class StructuredOutputAdapter {
 				const raw = await Promise.race([
 					this.execute({
 						model: this.model,
+						instructions,
 						messages,
 						schema,
 						schemaName: kind,
@@ -228,8 +228,8 @@ export class StructuredOutputAdapter {
 		return this.request(
 			"router",
 			RouterOutputSchema,
+			ROUTER_SYSTEM_PROMPT,
 			[
-				systemMessage(ROUTER_SYSTEM_PROMPT),
 				userMessage(
 					`问题：${input.question.trim()}\n历史：${JSON.stringify(input.history ?? [])}`,
 				),
@@ -248,8 +248,8 @@ export class StructuredOutputAdapter {
 		return this.request(
 			"rewrite",
 			RewriteOutputSchema,
+			REWRITE_SYSTEM_PROMPT,
 			[
-				systemMessage(REWRITE_SYSTEM_PROMPT),
 				userMessage(
 					`原问题：${input.question.trim()}\n已有改写（可参考）：${input.fallbackSemanticQuery.trim()}`,
 				),
@@ -269,8 +269,8 @@ export class StructuredOutputAdapter {
 		return this.request(
 			"judge",
 			JudgeOutputSchema,
+			JUDGE_SYSTEM_PROMPT,
 			[
-				systemMessage(JUDGE_SYSTEM_PROMPT),
 				userMessage(
 					`问题：${input.question.trim()}\n尝试次数：${input.attempts}\n候选证据：${JSON.stringify(input.citations)}`,
 				),
@@ -289,8 +289,8 @@ export class StructuredOutputAdapter {
 		return this.request(
 			"table_plan",
 			TablePlanOutputSchema,
+			TABLE_PLAN_SYSTEM_PROMPT,
 			[
-				systemMessage(TABLE_PLAN_SYSTEM_PROMPT),
 				userMessage(
 					`问题：${input.question.trim()}\n候选表与真实表头：${JSON.stringify(input.tables ?? [])}`,
 				),

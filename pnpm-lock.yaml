@@ -70,6 +70,9 @@ importers:
       htmlparser2:
         specifier: 10.0.0
         version: 10.0.0
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
       lucide-react:
         specifier: ^1.7.0
         version: 1.25.0(react@19.2.4)

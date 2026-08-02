@@ -4,6 +4,7 @@ import { Pool, type QueryResult, type QueryResultRow } from "pg";
 import { QdrantIngestWriteStore } from "../core/ingest";
 import {
 	LiteParseProvider,
+	MinerU302Provider,
 	MinerUProvider,
 	type ParseSourceLoader,
 	PdfDocumentParser,
@@ -67,14 +68,14 @@ export interface QdrantDeleteClient {
 
 export function configuredMinerUProvider(
 	env: Readonly<Record<string, string | undefined>> = process.env,
-): "self_hosted" {
+): "self_hosted" | "302ai" {
 	const provider = env.MINERU_PROVIDER?.trim().toLowerCase() || "self_hosted";
-	if (provider !== "self_hosted") {
+	if (provider !== "self_hosted" && provider !== "302ai") {
 		throw new Error(
-			`Unsupported MINERU_PROVIDER=${provider}; this runtime supports self_hosted only`,
+			`Unsupported MINERU_PROVIDER=${provider}; expected self_hosted or 302ai`,
 		);
 	}
-	return "self_hosted";
+	return provider;
 }
 
 interface CleanupRow extends QueryResultRow {
@@ -691,32 +692,45 @@ export async function createWorkerPorts(
 		timeoutMs: positiveInteger("LITEPARSE_TIMEOUT_MS", 120_000),
 		maxConcurrency: positiveInteger("LITEPARSE_MAX_CONCURRENCY", 2),
 	});
-	configuredMinerUProvider();
+	const minerUProvider = configuredMinerUProvider();
 	const minerUUrl =
 		process.env.MINERU_SELF_HOSTED_URL?.trim() ||
 		process.env.MINERU_URL?.trim();
-	const minerU = minerUUrl
-		? new MinerUProvider({
-				baseUrl: minerUUrl as string,
-				sourceLoader,
-				version: process.env.MINERU_VERSION?.trim() || "unknown",
-				transport:
-					process.env.MINERU_TRANSPORT?.trim().toLowerCase() === "tasks" ||
-					process.env.MINERU_MODE?.trim().toLowerCase() === "async"
-						? "tasks"
-						: "file-parse",
-				headers: process.env.MINERU_API_KEY?.trim()
-					? {
-							authorization: `Bearer ${process.env.MINERU_API_KEY.trim()}`,
-						}
-					: undefined,
-				externalDataProcessing: false,
-			})
-		: undefined;
+	const externalParserAllowed = enabled("EXTERNAL_PARSER_ALLOWED", false);
+	const minerU =
+		minerUProvider === "302ai"
+			? new MinerU302Provider({
+					baseUrl:
+						process.env.MINERU_302_BASE_URL?.trim() || "https://api.302.ai",
+					sourceLoader,
+					version: process.env.MINERU_VERSION?.trim() || "2.5",
+					parseMethod: parseMethod(process.env.MINERU_MODE),
+					headers: {
+						authorization: `Bearer ${requiredEnvironment("MINERU_API_KEY")}`,
+					},
+				})
+			: minerUUrl
+				? new MinerUProvider({
+						baseUrl: minerUUrl as string,
+						sourceLoader,
+						version: process.env.MINERU_VERSION?.trim() || "unknown",
+						transport:
+							process.env.MINERU_TRANSPORT?.trim().toLowerCase() === "tasks" ||
+							process.env.MINERU_MODE?.trim().toLowerCase() === "async"
+								? "tasks"
+								: "file-parse",
+						headers: process.env.MINERU_API_KEY?.trim()
+							? {
+									authorization: `Bearer ${process.env.MINERU_API_KEY.trim()}`,
+								}
+							: undefined,
+						externalDataProcessing: false,
+					})
+				: undefined;
 	const pdfParser = new PdfDocumentParser({
 		liteParse,
 		minerU,
-		externalParserAllowed: false,
+		externalParserAllowed,
 		pollIntervalMs: positiveInteger("PARSER_POLL_INTERVAL_MS", 250),
 		maxWaitMs: positiveInteger("PARSER_MAX_WAIT_MS", 15 * 60_000),
 	});
@@ -731,4 +745,15 @@ export async function createWorkerPorts(
 		),
 	};
 	return ports;
+}
+
+function enabled(name: string, fallback: boolean): boolean {
+	const raw = process.env[name]?.trim().toLowerCase();
+	if (!raw) return fallback;
+	return ["1", "true", "yes"].includes(raw);
+}
+
+function parseMethod(value: string | undefined): "auto" | "ocr" | "txt" {
+	const normalized = value?.trim().toLowerCase();
+	return normalized === "ocr" || normalized === "txt" ? normalized : "auto";
 }

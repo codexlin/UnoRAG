@@ -118,19 +118,24 @@ fi
 if [[ "$HEALTH_CODE" != "200" ]]; then
 	skip "health returned HTTP $HEALTH_CODE (want 200); fix stack before pilot smoke"
 fi
-python3 - "$HEALTH_BODY" <<'PY' || fail "control/data-plane internal auth protocol mismatch"
+python3 - "$HEALTH_BODY" <<'PY' || fail "TypeScript runtime health contract mismatch"
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     health = json.load(handle)
-expected = "unorag-hmac-v1"
-actual = {
-    "control_plane_protocol": health.get("control_plane_protocol"),
-    "internal_auth_protocol": health.get("internal_auth_protocol"),
+expected = {
+    "status": "ok",
+    "service": "unorag-web",
+    "effective_mode": "typescript",
+    "graph": "langgraph-ts",
+    "metadata_backend": "postgres",
+    "live_ready": True,
+    "ask_ready": True,
 }
-if set(actual.values()) != {expected}:
-    print(f"protocol mismatch: {actual}", file=sys.stderr)
+actual = {key: health.get(key) for key in expected}
+if actual != expected or health.get("degraded") is not False:
+    print(f"health mismatch: expected={expected} actual={actual}", file=sys.stderr)
     raise SystemExit(1)
 PY
 

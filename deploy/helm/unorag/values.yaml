@@ -58,6 +58,9 @@ dbos:
   controlReplicaCount: 1
   applicationVersion: lifecycle-v2
   systemDatabasePoolSize: "10"
+  ingestLocalConcurrency: "4"
+  ingestAutoConcurrency: "2"
+  ingestMineruConcurrency: "2"
   lifecycleConcurrency: "2"
   controlPollMs: "5000"
   workerResources: {}
@@ -133,6 +136,8 @@ config:
   rerankModel: qwen3-rerank
   mineruProvider: self_hosted
   mineruSelfHostedUrl: ""
+  mineru302BaseUrl: https://api.302.ai
+  externalParserAllowed: "false"
   mineruMode: auto
   mineruVersion: "2.5"
   # OpenAI-compatible model endpoint used by the native TypeScript runtime.
@@ -152,7 +157,7 @@ config:
 #   DATABASE_URL, WORKER_DATABASE_URL, DBOS_SYSTEM_DATABASE_URL
 #   MIGRATOR_DATABASE_URL (migrate jobs only)
 #   LLM_API_KEY
-#   MINERU_API_KEY (optional for an authenticated self-hosted MinerU endpoint)
+#   MINERU_API_KEY (optional for an authenticated self-hosted or 302.AI endpoint)
 # Bootstrap admin password must NOT live in the long-running runtime Secret.
 secret:
   create: false

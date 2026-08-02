@@ -17,8 +17,8 @@ DROP TABLE "app"."outbox_events";
 --> statement-breakpoint
 DO $$
 BEGIN
-	IF to_regclass('rag.active_document_generations') IS NOT NULL
-		AND EXISTS (
+	IF to_regclass('rag.active_document_generations') IS NOT NULL THEN
+		IF EXISTS (
 			SELECT 1
 			FROM rag.active_document_generations AS legacy
 			FULL JOIN (
@@ -39,13 +39,10 @@ BEGIN
 				OR canonical.workspace_id <> legacy.workspace_id
 				OR canonical.document_version_id <> legacy.document_version_id
 				OR canonical.generation_id <> legacy.generation_id
-		)
-	THEN
-		RAISE EXCEPTION
-			'cannot retire rag.active_document_generations because app active pointers differ';
-	END IF;
-
-	IF to_regclass('rag.active_document_generations') IS NOT NULL THEN
+		) THEN
+			RAISE EXCEPTION
+				'cannot retire rag.active_document_generations because app active pointers differ';
+		END IF;
 		DROP TABLE rag.active_document_generations;
 	END IF;
 	IF to_regclass('rag.generation_cleanup_queue') IS NOT NULL THEN
@@ -71,3 +68,5 @@ JOIN app.libraries AS library ON library.id = document.library_id
 JOIN app.document_versions AS version
 	ON version.id = active.version_id
 	AND version.document_id = document.id;
+--> statement-breakpoint
+GRANT SELECT ON app.active_document_generations TO unorag_worker;

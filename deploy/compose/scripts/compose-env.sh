@@ -3,6 +3,8 @@
 # Usage (from deploy/compose, bash or zsh):
 #   source scripts/compose-env.sh
 #   mk_compose up -d
+# Optional deployment-specific overlay:
+#   UNORAG_COMPOSE_OVERLAY=./docker-compose.customer.yml mk_compose up -d
 # Does NOT source secrets into the host shell.
 
 _mk_this_file() {
@@ -90,10 +92,17 @@ _mk_run_compose() {
 		_mk_env_unset+=(-u "$_mk_key")
 	done < <(_mk_managed_env_keys "${_mk_files[@]}")
 
-	# Include webch overlay automatically when present (TLS / public ports).
 	local -a _mk_file_args=(-f "${_MK_COMPOSE_DIR}/docker-compose.yml")
-	if [[ -f "${_MK_COMPOSE_DIR}/docker-compose.webch.yml" ]]; then
-		_mk_file_args+=(-f "${_MK_COMPOSE_DIR}/docker-compose.webch.yml")
+	if [[ -n "${UNORAG_COMPOSE_OVERLAY:-}" ]]; then
+		local _mk_overlay="${UNORAG_COMPOSE_OVERLAY}"
+		if [[ "${_mk_overlay}" != /* ]]; then
+			_mk_overlay="${_MK_COMPOSE_DIR}/${_mk_overlay#./}"
+		fi
+		if [[ ! -f "${_mk_overlay}" ]]; then
+			echo "missing Compose overlay: ${_mk_overlay}" >&2
+			return 1
+		fi
+		_mk_file_args+=(-f "${_mk_overlay}")
 	fi
 
 	env "${_mk_env_unset[@]}" docker compose \
@@ -171,14 +180,13 @@ mk_dbos_required() {
 
 mk_validate_dbos_config() {
 	local _mk_queues
-	_mk_queues="$(mk_config_get UNORAG_DBOS_LISTEN_QUEUES || echo ingest-local,lifecycle)"
+	_mk_queues="$(mk_config_get UNORAG_DBOS_LISTEN_QUEUES || echo ingest-local,ingest-auto,ingest-mineru,lifecycle)"
 	_mk_queues="${_mk_queues//[[:space:]]/}"
-	if [[ ",${_mk_queues}," != *",ingest-local,"* ]]; then
-		echo "UNORAG_DBOS_LISTEN_QUEUES must include ingest-local" >&2
-		return 1
-	fi
-	if [[ ",${_mk_queues}," != *",lifecycle,"* ]]; then
-		echo "UNORAG_DBOS_LISTEN_QUEUES must include lifecycle" >&2
-		return 1
-	fi
+	local _mk_required_queue
+	for _mk_required_queue in ingest-local ingest-auto ingest-mineru lifecycle; do
+		if [[ ",${_mk_queues}," != *",${_mk_required_queue},"* ]]; then
+			echo "UNORAG_DBOS_LISTEN_QUEUES must include ${_mk_required_queue}" >&2
+			return 1
+		fi
+	done
 }

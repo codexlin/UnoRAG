@@ -62,7 +62,10 @@ test("deployment ships the complete TypeScript parser runtime", () => {
 		"utf8",
 	);
 	assert.match(compose, /^ {2}dbos-worker:/m);
-	assert.match(compose, /UNORAG_DBOS_LISTEN_QUEUES:.*ingest-local/);
+	assert.match(
+		compose,
+		/UNORAG_DBOS_LISTEN_QUEUES:.*ingest-local,ingest-auto,ingest-mineru,lifecycle/,
+	);
 	assert.match(compose, /MINERU_PROVIDER/);
 	assert.match(compose, /LITEPARSE_OCR_LANGUAGE/);
 	assert.match(dockerfile, /COPY apps\/web\/src apps\/web\/src/);
@@ -84,7 +87,10 @@ test("Helm renders the TypeScript-only runtime", (t) => {
 	assert.equal(render.status, 0, render.stderr);
 	assert.match(render.stdout, /name: unorag-dbos-worker/);
 	assert.match(render.stdout, /name: UNORAG_DBOS_LISTEN_QUEUES/);
-	assert.match(render.stdout, /value: "ingest-local,lifecycle"/);
+	assert.match(
+		render.stdout,
+		/value: "ingest-local,ingest-auto,ingest-mineru,lifecycle"/,
+	);
 	assert.doesNotMatch(
 		render.stdout,
 		/name: unorag-(api|outbox-worker|lifecycle-worker)/,

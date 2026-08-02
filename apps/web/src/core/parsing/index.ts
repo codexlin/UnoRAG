@@ -35,6 +35,10 @@ export {
 	normalizeLiteParseResult,
 } from "./liteparse-provider";
 export {
+	MinerU302Provider,
+	type MinerU302ProviderOptions,
+} from "./mineru-302-provider";
+export {
 	MinerUProvider,
 	type MinerUProviderOptions,
 	normalizeMinerUResult,

@@ -74,6 +74,28 @@ test("ParserRouter keeps strict-private routing on private providers", () => {
 	);
 });
 
+test("ParserRouter honors an explicitly allowed enhanced cloud parser", () => {
+	const local = fakeProvider("liteparse", false);
+	const cloud = fakeProvider("mineru", true);
+	const decision = new ParserRouter([local, cloud]).route({
+		input,
+		analysis: {
+			hasTextLayer: false,
+			needsOcr: true,
+			hasTables: false,
+			hasFigures: false,
+			complexityScore: 0.8,
+			warnings: [],
+		},
+		deploymentPolicy: "private-preferred",
+		externalParserAllowed: true,
+		preferredProviders: ["mineru", "liteparse"],
+	});
+
+	assert.equal(decision.provider.name, "mineru");
+	assert.ok(decision.reasons.includes("processing:external"));
+});
+
 test("MinerU async submit sends caller idempotency and request identifiers", async () => {
 	const seen: Array<{ url: string; init?: RequestInit }> = [];
 	const provider = new MinerUProvider({

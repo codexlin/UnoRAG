@@ -51,7 +51,7 @@ try {
 				SELECT generation_id, document_id, sweep_status, hint_status,
 				       last_error AS hint_error, sweep_last_error,
 				       delete_after, sweep_updated_at, updated_at
-				FROM rag.generation_cleanup_queue
+				FROM app.generation_cleanup_queue
 				WHERE sweep_status = 'error' OR hint_status = 'error'
 				ORDER BY updated_at DESC
 				LIMIT 50

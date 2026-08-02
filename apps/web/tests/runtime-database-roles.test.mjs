@@ -38,7 +38,43 @@ test("DBOS is a required runtime rather than a migration profile", async () => {
 	assert.match(compose, /^ {2}dbos-worker:/m);
 	assert.match(compose, /^ {2}dbos-control:/m);
 	assert.doesNotMatch(compose, /dbos-worker:\s+profiles:/s);
-	assert.match(compose, /UNORAG_DBOS_LISTEN_QUEUES:.*ingest-local/);
-	assert.doesNotMatch(compose, /UNORAG_DBOS_(DOCUMENT|TEXT|ACL).*ENABLED/);
+	assert.match(
+		compose,
+		/UNORAG_DBOS_LISTEN_QUEUES:.*ingest-local,ingest-auto,ingest-mineru,lifecycle/,
+	);
+	assert.doesNotMatch(
+		compose,
+		/UNORAG_DBOS_(DOCUMENT|TEXT|ACL|CLEANUP).*ENABLED/,
+	);
 	assert.match(compose, /\/dbos-healthz/);
+});
+
+test("operator lifecycle inspection reads only the app source of truth", async () => {
+	const inspection = await source("apps/web/scripts/inspect-lifecycle.mjs");
+
+	assert.match(inspection, /FROM app\.generation_cleanup_queue/);
+	assert.doesNotMatch(inspection, /FROM rag\./);
+});
+
+test("Compose overlays are explicit and cannot change the default install", async () => {
+	const helper = await source("deploy/compose/scripts/compose-env.sh");
+
+	assert.match(helper, /UNORAG_COMPOSE_OVERLAY/);
+	assert.doesNotMatch(helper, /docker-compose\.webch\.yml/);
+	assert.match(helper, /missing Compose overlay/);
+});
+
+test("config reconciliation separates DashScope model and rerank endpoints", async () => {
+	const initializer = await source("deploy/compose/scripts/init-config.sh");
+	const runtimeExample = await source("deploy/config/runtime.env.example");
+
+	assert.match(initializer, /known_value_migrations/);
+	assert.match(
+		runtimeExample,
+		/LLM_BASE_URL=https:\/\/dashscope\.aliyuncs\.com\/compatible-mode\/v1/,
+	);
+	assert.match(
+		runtimeExample,
+		/RERANK_BASE_URL=https:\/\/dashscope\.aliyuncs\.com\/compatible-api\/v1/,
+	);
 });

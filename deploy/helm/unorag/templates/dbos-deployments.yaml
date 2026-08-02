@@ -58,11 +58,15 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: UNORAG_DBOS_LISTEN_QUEUES
-              value: "ingest-local,lifecycle"
-            - name: UNORAG_DBOS_CLEANUP_ENABLED
-              value: "true"
+              value: "ingest-local,ingest-auto,ingest-mineru,lifecycle"
             - name: DBOS_SYSTEM_DATABASE_POOL_SIZE
               value: {{ .Values.dbos.systemDatabasePoolSize | quote }}
+            - name: DBOS_INGEST_LOCAL_CONCURRENCY
+              value: {{ .Values.dbos.ingestLocalConcurrency | quote }}
+            - name: DBOS_INGEST_AUTO_CONCURRENCY
+              value: {{ .Values.dbos.ingestAutoConcurrency | quote }}
+            - name: DBOS_INGEST_MINERU_CONCURRENCY
+              value: {{ .Values.dbos.ingestMineruConcurrency | quote }}
             - name: DBOS_LIFECYCLE_CONCURRENCY
               value: {{ .Values.dbos.lifecycleConcurrency | quote }}
             - name: DBOS_ADMIN_PORT
@@ -100,6 +104,10 @@ spec:
               value: {{ .Values.config.mineruProvider | quote }}
             - name: MINERU_SELF_HOSTED_URL
               value: {{ .Values.config.mineruSelfHostedUrl | quote }}
+            - name: MINERU_302_BASE_URL
+              value: {{ .Values.config.mineru302BaseUrl | quote }}
+            - name: EXTERNAL_PARSER_ALLOWED
+              value: {{ .Values.config.externalParserAllowed | quote }}
             - name: MINERU_URL
               value: {{ .Values.config.mineruUrl | quote }}
             - name: MINERU_MODE
@@ -208,8 +216,6 @@ spec:
               value: {{ printf "%s-dbos-control" (include "unorag.fullname" .) | quote }}
             - name: UNORAG_DBOS_LISTEN_QUEUES
               value: lifecycle
-            - name: UNORAG_DBOS_CLEANUP_ENABLED
-              value: "true"
             - name: DBOS_SYSTEM_DATABASE_POOL_SIZE
               value: {{ .Values.dbos.systemDatabasePoolSize | quote }}
             - name: DBOS_LIFECYCLE_CONCURRENCY

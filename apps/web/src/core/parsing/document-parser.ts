@@ -51,6 +51,12 @@ export class PdfDocumentParser {
 			this.options.liteParse,
 			...(this.options.minerU ? [this.options.minerU] : []),
 		];
+		const prefersEnhancedParser =
+			input.policy.parsePreference === "quality" ||
+			analysis.needsOcr ||
+			analysis.hasTables ||
+			analysis.hasFigures ||
+			analysis.complexityScore >= 0.7;
 		const decision = new ParserRouter(providers).route({
 			input: input.input,
 			analysis,
@@ -58,10 +64,9 @@ export class PdfDocumentParser {
 			externalParserAllowed:
 				Boolean(this.options.externalParserAllowed) &&
 				input.policy.externalParserAllowed,
-			preferredProviders:
-				input.policy.parsePreference === "quality"
-					? ["mineru", "liteparse"]
-					: ["liteparse", "mineru"],
+			preferredProviders: prefersEnhancedParser
+				? ["mineru", "liteparse"]
+				: ["liteparse", "mineru"],
 		});
 		const result = await executeProvider(decision.provider, {
 			input: input.input,

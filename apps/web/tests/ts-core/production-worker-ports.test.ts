@@ -21,12 +21,16 @@ describe("MinerU deployment provider", () => {
 			configuredMinerUProvider({ MINERU_PROVIDER: " SELF_HOSTED " }),
 			"self_hosted",
 		);
+		assert.equal(
+			configuredMinerUProvider({ MINERU_PROVIDER: "302ai" }),
+			"302ai",
+		);
 	});
 
 	it("fails closed for providers without a transport adapter", () => {
 		assert.throws(
-			() => configuredMinerUProvider({ MINERU_PROVIDER: "302ai" }),
-			/Unsupported MINERU_PROVIDER=302ai/,
+			() => configuredMinerUProvider({ MINERU_PROVIDER: "llamaparse" }),
+			/Unsupported MINERU_PROVIDER=llamaparse/,
 		);
 	});
 });

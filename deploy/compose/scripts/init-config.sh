@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Copy example configs → real gitignored files (0600). Never overwrites existing.
-# Optionally migrates legacy deploy/compose/.env into the split files once.
+# Reconcile example configs into gitignored files (0600) without overwriting values.
+# New keys are appended, retired runtime keys are removed, and a legacy monolithic
+# deploy/compose/.env is imported at most once.
 set -euo pipefail
 
 COMPOSE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,6 +27,97 @@ echo "==> ensuring deploy/config examples → real files"
 copy_if_missing "${CONFIG_DIR}/runtime.env.example" "${CONFIG_DIR}/runtime.env"
 copy_if_missing "${CONFIG_DIR}/runtime.secret.example" "${CONFIG_DIR}/runtime.secret"
 copy_if_missing "${CONFIG_DIR}/bootstrap.env.example" "${CONFIG_DIR}/bootstrap.env"
+
+echo "==> reconciling split config schema"
+python3 - <<'PY' "$CONFIG_DIR"
+import sys
+from pathlib import Path
+
+config_dir = Path(sys.argv[1])
+
+retired_runtime = {
+    "UNORAG_API_IMAGE",
+    "UNORAG_OUTBOX_IMAGE",
+    "MINERU_ENABLED",
+    "MINERU_PARSE_METHOD",
+    "LIFECYCLE_WORKER_POLL_SECONDS",
+    "LIFECYCLE_WORKER_LEASE_SECONDS",
+    "LIFECYCLE_WORKER_HEARTBEAT_SECONDS",
+    "LIFECYCLE_LOCAL_CAPACITY",
+    "LIFECYCLE_MINERU_CAPACITY",
+    "UNORAG_DBOS_CLEANUP_ENABLED",
+}
+retired_secrets = {
+    "UNORAG_INTERNAL_SECRET",
+    "INTERNAL_AUTH_SECRET",
+    "UNORAG_API_DB_PASSWORD",
+    "UNORAG_OUTBOX_DB_PASSWORD",
+    "UNORAG_RAG_READ_DB_PASSWORD",
+    "API_DATABASE_URL",
+    "OUTBOX_DATABASE_URL",
+    "RAG_READ_DATABASE_URL",
+}
+known_value_migrations = {
+    (
+        "LLM_BASE_URL",
+        "https://dashscope.aliyuncs.com/compatible-api/v1",
+    ): "https://dashscope.aliyuncs.com/compatible-mode/v1",
+}
+
+def assignment(line):
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in line:
+        return None
+    key, value = line.split("=", 1)
+    key = key.strip()
+    if not key or not all(ch.isupper() or ch.isdigit() or ch == "_" for ch in key):
+        return None
+    return key, value
+
+def reconcile(name, retired):
+    example = config_dir / f"{name}.example"
+    target = config_dir / name
+    example_assignments = [
+        parsed
+        for line in example.read_text(encoding="utf-8").splitlines()
+        if (parsed := assignment(line)) is not None
+    ]
+    output = []
+    seen = set()
+    removed = []
+    migrated = []
+    for line in target.read_text(encoding="utf-8").splitlines():
+        parsed = assignment(line)
+        if parsed is not None and parsed[0] in retired:
+            removed.append(parsed[0])
+            continue
+        if parsed is not None:
+            key, value = parsed
+            seen.add(key)
+            replacement = known_value_migrations.get((key, value.strip()))
+            if replacement is not None:
+                line = f"{key}={replacement}"
+                migrated.append(key)
+        output.append(line)
+
+    added = [(key, value) for key, value in example_assignments if key not in seen]
+    if added:
+        if output and output[-1].strip():
+            output.append("")
+        output.append("# Added by init-config.sh for the current runtime schema.")
+        output.extend(f"{key}={value}" for key, value in added)
+
+    target.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+    target.chmod(0o600)
+    print(
+        f"reconciled {name}: added={len(added)} "
+        f"retired={len(set(removed))} migrated={len(set(migrated))}"
+    )
+
+reconcile("runtime.env", retired_runtime)
+reconcile("runtime.secret", retired_secrets)
+reconcile("bootstrap.env", set())
+PY
 
 if [[ -f "$ALERTS_EXAMPLE" ]]; then
 	copy_if_missing "$ALERTS_EXAMPLE" "$ALERTS_ENV"
@@ -100,11 +192,13 @@ runtime_keys = [
     "DOCUMENT_MAX_UPLOAD_BYTES",
     "LLM_BASE_URL", "CHAT_MODEL", "EMBEDDING_MODEL", "EMBEDDING_DIM",
     "RERANK_BASE_URL", "RERANK_MODEL",
-    "MINERU_ENABLED", "MINERU_PROVIDER", "MINERU_SELF_HOSTED_URL", "MINERU_URL",
-    "MINERU_MODE", "MINERU_VERSION", "MINERU_PARSE_METHOD",
+    "MINERU_PROVIDER", "MINERU_SELF_HOSTED_URL", "MINERU_URL",
+    "MINERU_MODE", "MINERU_VERSION",
     "DATABASE_POOL_MAX", "LLM_MAX_INFLIGHT", "EMBEDDING_BATCH_SIZE",
     "UNORAG_DBOS_LISTEN_QUEUES", "UNORAG_DBOS_APPLICATION_VERSION",
-    "DBOS_SYSTEM_DATABASE_POOL_SIZE", "DBOS_LIFECYCLE_CONCURRENCY",
+    "DBOS_SYSTEM_DATABASE_POOL_SIZE", "DBOS_INGEST_LOCAL_CONCURRENCY",
+    "DBOS_INGEST_AUTO_CONCURRENCY", "DBOS_INGEST_MINERU_CONCURRENCY",
+    "DBOS_LIFECYCLE_CONCURRENCY",
     "DBOS_CONTROL_POLL_MS",
 ]
 secret_keys = [

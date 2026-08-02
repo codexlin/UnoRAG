@@ -14,11 +14,6 @@ async function main(): Promise<void> {
 	if (!databaseUrl) {
 		throw new Error("DATABASE_URL is required by the DBOS control process");
 	}
-	if (process.env.UNORAG_DBOS_CLEANUP_ENABLED !== "true") {
-		throw new Error(
-			"UNORAG_DBOS_CLEANUP_ENABLED=true is required by the DBOS control process",
-		);
-	}
 	const config = loadWorkerConfig();
 	const pool = new Pool({ connectionString: databaseUrl, max: 4 });
 	let dbos: DbosJobEnqueuer | undefined;

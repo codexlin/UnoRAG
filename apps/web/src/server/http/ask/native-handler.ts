@@ -192,6 +192,19 @@ function answerTokens(runtime: NativeAskRuntime, state: AskState) {
 	return runtime.streamAnswer(state);
 }
 
+function operationalErrorCode(error: unknown): string {
+	if (!(error instanceof Error)) return "UnknownError";
+	const providerHttp = error.message.match(
+		/^(embedding|rerank) provider failed with HTTP (\d{3})$/,
+	);
+	if (providerHttp) return `${providerHttp[1]}_http_${providerHttp[2]}`;
+	if (error.message.includes("unexpected dimension")) {
+		return "embedding_dimension_mismatch";
+	}
+	if (error.message.includes("Qdrant")) return "qdrant_error";
+	return error.name;
+}
+
 function streamResponse(frames: AsyncIterable<string>): Response {
 	const iterator = frames[Symbol.asyncIterator]();
 	const encoder = new TextEncoder();
@@ -349,6 +362,12 @@ export async function handleNativeAskRequest(input: {
 		if (error instanceof ConversationNotFoundError) {
 			return Response.json({ detail: "thread not found" }, { status: 404 });
 		}
+		console.error(
+			JSON.stringify({
+				event: "ask.native.failed",
+				error: operationalErrorCode(error),
+			}),
+		);
 		return Response.json(
 			{ detail: "Ask service unavailable" },
 			{ status: 503 },

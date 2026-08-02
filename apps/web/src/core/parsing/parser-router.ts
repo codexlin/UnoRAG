@@ -146,5 +146,5 @@ function preferenceScore(
 	preferred: ReadonlyMap<string, number>,
 ): number {
 	const index = preferred.get(name.toLowerCase());
-	return index === undefined ? 0 : Math.max(1, 10 - index);
+	return index === undefined ? 0 : Math.max(1, 100 - index * 80);
 }

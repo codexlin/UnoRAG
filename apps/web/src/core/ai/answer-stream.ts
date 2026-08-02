@@ -17,6 +17,7 @@ export interface AnswerMessage {
 
 export interface AnswerStreamRequest {
 	model: LanguageModel;
+	instructions: string;
 	messages: ModelMessage[];
 	temperature: number;
 	abortSignal?: AbortSignal;
@@ -38,9 +39,7 @@ export function buildAnswerMessages(input: {
 	context: string;
 	history?: AnswerMessage[];
 }): ModelMessage[] {
-	const messages: ModelMessage[] = [
-		{ role: "system", content: CHAT_SYSTEM_PROMPT },
-	];
+	const messages: ModelMessage[] = [];
 	for (const item of input.history ?? []) {
 		const content = item.content.trim();
 		if (content) messages.push({ role: item.role, content });
@@ -57,6 +56,7 @@ function defaultAnswerStreamExecutor(
 ): AsyncIterable<string> {
 	return streamText({
 		model: request.model,
+		instructions: request.instructions,
 		messages: request.messages,
 		temperature: request.temperature,
 		abortSignal: request.abortSignal,
@@ -82,6 +82,7 @@ export class AnswerStreamAdapter {
 		}
 		const tokens = await this.execute({
 			model: this.model,
+			instructions: CHAT_SYSTEM_PROMPT,
 			messages: buildAnswerMessages(input),
 			temperature: ANSWER_TEMPERATURE,
 			abortSignal: options.abortSignal,

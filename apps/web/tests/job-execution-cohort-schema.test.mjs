@@ -84,3 +84,16 @@ test("runtime retirement migration closes Python execution ownership", () => {
 	assert.match(migration, /generation_cleanup_ownership_check/);
 	assert.match(migration, /execution_engine" = 'dbos'/);
 });
+
+test("runtime ownership migration supports a fresh database without rag tables", () => {
+	const migration = read("drizzle/0018_deep_maria_hill.sql");
+
+	assert.match(
+		migration,
+		/IF to_regclass\('rag\.active_document_generations'\) IS NOT NULL THEN[\s\S]*IF EXISTS \([\s\S]*FROM rag\.active_document_generations AS legacy/,
+	);
+	assert.doesNotMatch(
+		migration,
+		/to_regclass\('rag\.active_document_generations'\) IS NOT NULL\s+AND EXISTS/,
+	);
+});
