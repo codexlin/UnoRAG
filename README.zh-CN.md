@@ -40,17 +40,16 @@ curl -sf http://localhost/api/rag/health
 
 ### 本地开发
 
-需要 Docker、Node.js 22、pnpm 9、Python 3.12+ 与
-[uv](https://docs.astral.sh/uv/)：
+需要 Docker、Node.js 22 与 pnpm 9：
 
 ```bash
 docker compose up -d
 cp -n apps/web/.env.example apps/web/.env.local
-cp -n apps/api/.env.example apps/api/.env
+pnpm install --frozen-lockfile
+pnpm --filter web dev
 ```
 
-这一步只启动 PostgreSQL、Qdrant 和 Redis。还需配置共享密钥、文档目录和模型，
-并分别启动 Web、API、lifecycle worker 与 outbox worker。完整可复制流程见
+配置 Worker 数据库与模型环境后，在第二个终端启动 DBOS Worker。完整流程见
 [本地开发指南](./docs/DEV.md)。
 
 ## 为什么选择 UnoRAG
@@ -109,10 +108,9 @@ flowchart TB
     Browser["浏览器 / UnoRAG Workspace"]
     Apps["客户应用与 Agent"]
     SDK["Python SDK / MCP"]
-    Web["Next.js 控制面与 Knowledge API"]
-    API["FastAPI RAG 数据面"]
-    Life["Lifecycle Worker"]
-    Outbox["Outbox Worker"]
+    Web["Next.js 产品、控制面与 Knowledge API"]
+    Worker["DBOS 文档 Worker"]
+    Parser["LiteParse / MinerU ParserProvider"]
     PG[("PostgreSQL")]
     QD[("Qdrant")]
     Redis[("Redis")]
@@ -121,22 +119,19 @@ flowchart TB
     Browser --> Web
     Apps --> Web
     SDK --> Web
-    Web -->|"签名 RequestContext"| API
     Web --> PG
     Web --> Files
-    Outbox --> PG
-    Outbox --> API
-    Life --> PG
-    Life --> Files
-    Life --> QD
-    API --> PG
-    API --> QD
-    API --> Redis
+    Web --> QD
+    Web --> Redis
+    Worker --> PG
+    Worker --> Files
+    Worker --> QD
+    Worker --> Parser
 ```
 
-Next.js 负责身份、组织、Workspace、文库、文档生命周期元数据、审计和浏览器安全边界；
-FastAPI 负责解析、索引、检索、LangGraph 执行、引用和归档问答。两者通过 PostgreSQL
-Job 与 Outbox 协作，各自拥有明确的数据所有权，不维护两套业务事实。
+Next.js 负责身份、组织、Workspace、文库、公开 API、原生检索、LangGraph、引用、
+会话与浏览器安全边界；DBOS Worker 负责持久化解析、Embedding、索引、ACL 投影、
+删除和 generation 清理。PostgreSQL 是唯一业务事实源，Qdrant 只保存带作用域的检索投影。
 
 ## 当前能力边界
 
@@ -160,16 +155,16 @@ UnoRAG 当前优先服务私有化部署：
 - Docker Compose 是单机参考交付拓扑；
 - Helm 是客户 Kubernetes 环境的起步骨架；
 - 模型、Embedding、解析器、数据库和镜像仓库凭据由客户部署提供，不写入镜像；
-- FastAPI 只在内网运行，浏览器和外部客户端统一经过 Next.js 控制面。
+- Worker 与数据存储只在内网运行，浏览器和外部客户端统一经过 Next.js 产品边界。
 
 部署从 [私有化部署指南](./deploy/README.md) 开始，本地开发见
 [docs/DEV.md](./docs/DEV.md)。
 
 ## 工程可信度
 
-仓库包含 API/Web 测试、RAG 黄金集、Python/JavaScript 策略一致性检查、跨租户隔离
-熔断门禁、真实文件入库样例、真实浏览器验收、备份恢复与故障注入、镜像 CVE 扫描和
-基于 digest 的发布清单。
+仓库包含 Web 与原生 RAG 测试、保留的评测语料、跨租户隔离熔断门禁、真实文件入库
+样例、真实浏览器验收、镜像 CVE 扫描和基于 digest 的发布清单。备份恢复与故障注入
+自动化正在按 TS-only 拓扑重新建立基线。
 
 当前 `webch` 是模拟线上条件的**预发布环境**，不是正式客户生产环境。客户正式上线
 仍需针对实际机器规格、身份系统、RPO/RTO、监控责任和安全策略完成部署级验收。

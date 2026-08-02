@@ -150,7 +150,6 @@ services:
       MINERU_MODE: ${MINERU_MODE:-auto}
       MINERU_VERSION: ${MINERU_VERSION:-2.5}
       MINERU_TRANSPORT: ${MINERU_TRANSPORT:-sync}
-      EXTERNAL_PARSER_ALLOWED: ${EXTERNAL_PARSER_ALLOWED:-false}
       LITEPARSE_OCR_LANGUAGE: ${LITEPARSE_OCR_LANGUAGE:-ch}
     volumes:
       - document_storage:/var/lib/unorag/documents

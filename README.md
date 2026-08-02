@@ -44,18 +44,17 @@ backup/restore, and Helm.
 
 ### Local development
 
-Local development requires Docker, Node.js 22, pnpm 9, Python 3.12+, and
-[uv](https://docs.astral.sh/uv/):
+Local development requires Docker, Node.js 22, and pnpm 9:
 
 ```bash
 docker compose up -d
 cp -n apps/web/.env.example apps/web/.env.local
-cp -n apps/api/.env.example apps/api/.env
+pnpm install --frozen-lockfile
+pnpm --filter web dev
 ```
 
-This starts PostgreSQL, Qdrant, and Redis only. Configure the shared secret,
-document directory, and model, then run the web, API, lifecycle worker, and
-outbox worker as separate processes. Follow the copyable
+Run the DBOS worker in a second terminal after configuring its database and
+model environment. Follow the copyable
 [developer workflow](./docs/DEV.md).
 
 ## Why UnoRAG
@@ -117,10 +116,9 @@ flowchart TB
     Browser["Browser / UnoRAG Workspace"]
     Apps["Customer apps and agents"]
     SDK["Python SDK / MCP"]
-    Web["Next.js control plane and Knowledge API"]
-    API["FastAPI RAG data plane"]
-    Life["Lifecycle worker"]
-    Outbox["Outbox worker"]
+    Web["Next.js product, control plane, and Knowledge API"]
+    Worker["DBOS document worker"]
+    Parser["LiteParse / MinerU ParserProvider"]
     PG[("PostgreSQL")]
     QD[("Qdrant")]
     Redis[("Redis")]
@@ -129,24 +127,21 @@ flowchart TB
     Browser --> Web
     Apps --> Web
     SDK --> Web
-    Web -->|"signed RequestContext"| API
     Web --> PG
     Web --> Files
-    Outbox --> PG
-    Outbox --> API
-    Life --> PG
-    Life --> Files
-    Life --> QD
-    API --> PG
-    API --> QD
-    API --> Redis
+    Web --> QD
+    Web --> Redis
+    Worker --> PG
+    Worker --> Files
+    Worker --> QD
+    Worker --> Parser
 ```
 
-Next.js owns product identity, organizations, workspaces, libraries, document
-lifecycle metadata, audit, and the browser security boundary. FastAPI owns
-parsing, indexing, retrieval, LangGraph execution, citations, and archived
-turns. PostgreSQL jobs and an outbox connect both planes without making either
-one a second source of truth.
+Next.js owns product identity, organizations, workspaces, libraries, public APIs,
+native retrieval, LangGraph execution, citations, conversations, and the browser
+security boundary. DBOS executes durable parsing, embedding, indexing, ACL
+projection, deletion, and generation cleanup. PostgreSQL is the only business
+source of truth; Qdrant stores scoped retrieval projections.
 
 ## Current Capability
 
@@ -172,18 +167,18 @@ UnoRAG is currently optimized for private deployment:
 - **Helm** is a starter for customer-managed Kubernetes infrastructure.
 - Model, embedding, parser, database, and registry credentials are supplied by
   the customer deployment and are never baked into images.
-- FastAPI remains private; the browser and external clients enter through the
-  Next.js control plane.
+- Workers and data stores remain private; browser and external clients enter
+  through the Next.js product edge.
 
 Start with the [private deployment guide](./deploy/README.md). For local
 development, see [docs/DEV.md](./docs/DEV.md).
 
 ## Engineering Confidence
 
-The repository includes API and web test suites, deterministic RAG golden sets,
-Python/JavaScript policy parity checks, cross-tenant isolation fuses, real-file
-ingestion fixtures, browser acceptance, backup/restore drills, failure
-injection, image CVE scanning, and digest-pinned release manifests.
+The repository includes Web and native RAG test suites, a preserved evaluation
+corpus, cross-tenant isolation fuses, real-file ingestion fixtures, browser
+acceptance, image CVE scanning, and digest-pinned release manifests. Recovery
+and fault-injection automation is being rebaselined for the TS-only topology.
 
 The current `webch` environment is a **preproduction simulation**, not a formal
 customer production deployment. Customer production approval remains

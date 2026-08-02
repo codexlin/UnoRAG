@@ -57,7 +57,7 @@
 | S3 | 受限 ACL / group 不泄漏 | | | |
 | S4 | 未激活 generation 不可召回 | | | |
 | S5 | 已删除文档不可召回 | | | |
-| S6 | 浏览器不可直连 FastAPI 写接口（边缘只暴露 web） | | | |
+| S6 | 边缘只暴露 web；Worker、Postgres、Qdrant 不可由浏览器直连 | | | |
 | S7 | `pilot-preflight.sh`（隔离单测 + CI gate）通过 | | | 或记录 SKIP 原因 |
 
 任一 S* 为 FAIL → **强制 NO-GO**。
@@ -66,7 +66,7 @@
 
 | ID | 演练 | 结果 | 观察 | 备注 |
 |---|---|---|---|---|
-| R1 | lifecycle-worker SIGTERM drain 后可恢复 claim | | | |
+| R1 | DBOS worker SIGTERM 后 workflow 可恢复执行 | | | |
 | R2 | 短暂停止 Qdrant：health degraded；恢复后 Ask/ingest 正常 | | | |
 | R3 | 模型 endpoint 不可用：Ask **明确**失败/拒答（禁止「HTTP 200 + 空 answer」算 PASS）；须有 `refused`+reason/error_code 或 4xx/5xx+标准错误，并带 trace/request id；active version 不被破坏 | | | |
 | R4 | MinerU/解析超时或 429：job retry/dead 可定位 | | | 无 MinerU 可 SKIP |

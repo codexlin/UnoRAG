@@ -1,6 +1,11 @@
 # ADR 0002 — MinerU 补充复杂 / 扫描 PDF
 
-**状态：** Accepted（2026-07-23）；产品配置边界补充（2026-07-27）
+**状态：** 部分被 [ADR-0005](./0005-typescript-core-runtime.md) 取代
+
+> 本文保留 Python 阶段的解析决策依据。当前 TypeScript 运行时只实现
+> `self_hosted` MinerU；`302ai` 传输和下文对应环境变量均为历史设计，不能作为
+> 当前部署配置。
+
 **上下文：** Phase 2C 需处理扫描件、双栏、复杂表、公式页；不得替换已验证的 PyMuPDF 数字 PDF 路径。
 
 ## 决策

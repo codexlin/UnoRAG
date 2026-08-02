@@ -24,17 +24,16 @@ deploy/
       init-config.sh        # 复制 example → 真实文件（不覆盖）
       compose-env.sh        # mk_compose / --env-file 助手
       install.sh            # 安装：infra → migrate → app
-      upgrade.sh            # 滚动升级：compose pull + drain + outbox；见 docs/ops/cicd.md
+      upgrade.sh            # 四镜像 pull、迁移、DBOS/Web 滚动升级
       backup.sh             # 维护窗口：PostgreSQL / DBOS / 对象 / Qdrant 冷备
       restore.sh            # 恢复（需显式确认）
       pilot-preflight.sh    # 隔离单测 + CI gate（可无 Compose）
       pilot-smoke.sh        # upload→ask→replace→delete 冒烟
   docker/
-    api.Dockerfile
     web.Dockerfile
   helm/
     README.md               # Helm 安装说明
-    unorag/               # chart：web / api / workers；DBOS lifecycle cohort 可选
+    unorag/                 # chart：web / DBOS worker / migrator / ops
 ```
 
 ## 快速开始
@@ -56,7 +55,7 @@ cd deploy/compose
 
 ## 本片已覆盖
 
-- Compose 参考拓扑（Caddy → web；api / lifecycle-worker / outbox-worker 仅内网；启用 DBOS 能力时自动要求 executor/control）
+- Compose 参考拓扑（Caddy → web；DBOS worker/control 与数据存储仅内网）
 - 客户托管连接与模型 endpoint（全部经环境变量）
 - secret 仅从环境注入；镜像不含密钥
 - production fail-closed 与 readiness 说明
@@ -67,10 +66,9 @@ cd deploy/compose
 ## Helm 起步
 
 见 [`deploy/helm/README.md`](./helm/README.md)。默认假设 Postgres / Qdrant / Redis
-由客户托管；chart 部署 web / api / lifecycle-worker / outbox-worker，并可显式启用
-DBOS lifecycle worker/control（+ 可选 Ingress / 迁移 Job / PVC）。
-迁移与 outbox 使用职责分离的镜像；Helm 客户升级必须使用 `--atomic --wait`，
-ACL projection 首次启用按“能力部署 → 回填收敛 → 开启路由”两次 release 执行。
+由客户托管；chart 部署 web、DBOS worker/control、迁移 Job 与 ops 能力
+（+ 可选 Ingress / PVC）。迁移使用职责分离镜像；Helm 客户升级必须使用
+`--atomic --wait`，并在切流前确认 lifecycle 与 ACL projection 收敛。
 
 ## 试点冒烟
 
@@ -88,7 +86,7 @@ cd deploy/compose
 
 ## 供应链 / SBOM（薄说明）
 
-`release-images.yml` 已对 web / api / migrator / outbox / DBOS worker 五张发布镜像执行 Trivy
+`release-images.yml` 已对 web / migrator / ops / DBOS worker 四张发布镜像执行 Trivy
 `HIGH/CRITICAL` CVE 门禁；扫描未通过时不产出 release manifest。完整 SBOM、签名和
 证明材料仍后置。交付前：
 

@@ -6,12 +6,30 @@ import type { WorkerRuntimeConfig } from "../../src/worker/config";
 import type { GenerationCleanupJob } from "../../src/worker/contracts";
 import { WorkerTaskError } from "../../src/worker/errors";
 import {
+	configuredMinerUProvider,
 	createWorkerPorts,
 	PostgresGenerationCleanupTransactions,
 	type QdrantDeleteClient,
 	QdrantGenerationCleanupStep,
 	type SqlPool,
 } from "../../src/worker/production-ports";
+
+describe("MinerU deployment provider", () => {
+	it("defaults to the supported self-hosted transport", () => {
+		assert.equal(configuredMinerUProvider({}), "self_hosted");
+		assert.equal(
+			configuredMinerUProvider({ MINERU_PROVIDER: " SELF_HOSTED " }),
+			"self_hosted",
+		);
+	});
+
+	it("fails closed for providers without a transport adapter", () => {
+		assert.throws(
+			() => configuredMinerUProvider({ MINERU_PROVIDER: "302ai" }),
+			/Unsupported MINERU_PROVIDER=302ai/,
+		);
+	});
+});
 
 const input: GenerationCleanupJob = {
 	jobId: "00000000-0000-4000-8000-000000000001",

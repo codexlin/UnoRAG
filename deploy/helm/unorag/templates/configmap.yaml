@@ -13,16 +13,6 @@ data:
   MINERU_SELF_HOSTED_URL: {{ .Values.config.mineruSelfHostedUrl | quote }}
   MINERU_MODE: {{ .Values.config.mineruMode | quote }}
   MINERU_VERSION: {{ .Values.config.mineruVersion | quote }}
-  EXTERNAL_PARSER_ALLOWED: {{ .Values.config.externalParserAllowed | quote }}
-  MINERU_302_BASE_URL: {{ .Values.config.mineru302BaseUrl | quote }}
-  MINERU_302_UPLOAD_PATH: {{ .Values.config.mineru302UploadPath | quote }}
-  MINERU_302_TASK_PATH: {{ .Values.config.mineru302TaskPath | quote }}
-  MINERU_302_POLL_INTERVAL_S: {{ .Values.config.mineru302PollIntervalSeconds | quote }}
-  MINERU_302_MAX_WAIT_S: {{ .Values.config.mineru302MaxWaitSeconds | quote }}
-  MINERU_302_COST_PER_PAGE: {{ .Values.config.mineru302CostPerPage | quote }}
-  MINERU_302_DAILY_BUDGET: {{ .Values.config.mineru302DailyBudget | quote }}
-  MINERU_302_BUDGET_WARN_RATIO: {{ .Values.config.mineru302BudgetWarnRatio | quote }}
-  MINERU_302_LONG_PENDING_S: {{ .Values.config.mineru302LongPendingSeconds | quote }}
   OPENAI_BASE_URL: {{ .Values.config.openaiBaseUrl | quote }}
   RERANK_BASE_URL: {{ .Values.config.rerankBaseUrl | quote }}
   MINERU_URL: {{ .Values.config.mineruUrl | quote }}

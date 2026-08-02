@@ -39,11 +39,11 @@ cd deploy/compose
 ## 4. 恢复顺序（不得颠倒）
 
 ```text
-1. 停止 app（web / api / lifecycle-worker / outbox-worker / caddy）
+1. 停止 app（web / dbos-worker / dbos-control / caddy）
 2. 恢复 PostgreSQL
 3. 恢复 document objects
 4. 恢复 Qdrant
-5. 启动 app（含 outbox-worker）→ readiness → 抽样 Ask
+5. 启动 app（含 DBOS worker/control）→ readiness → 抽样 Ask
 ```
 
 ```bash

@@ -12,7 +12,7 @@
 
 - 使用 UnoRAG UI
 - 采用我们的通用 Agent / 工具运行时
-- 把 FastAPI 裸暴露到公网
+- 暴露 Worker、Qdrant 或内部数据存储端口
 
 Knowledge API 是核心产品契约；Workspace、Python SDK、MCP 和 OpenAI-compatible endpoint 都是它的客户端或薄适配层。
 
@@ -27,7 +27,7 @@ Knowledge API 是核心产品契约；Workspace、Python SDK、MCP 和 OpenAI-co
 | Active generation + ACL 过滤 | **已实现** | 与 Workspace 共享同一数据面 |
 | 浏览器经 Next BFF 调用 | **已实现** | Workspace 主路径（session） |
 | **Service key** | **已实现（v1.0）** | 工作区级；hash 存储；scopes=`ask`/`retrieve`；可选 `library_ids` |
-| **对外 HTTP**：`POST /api/v1/retrieve`、`POST /api/v1/ask` | **已冻结（v1.0）** | `Authorization: Bearer mk_svc_…` → Next 校验 → HMAC 转发 FastAPI |
+| **对外 HTTP**：`POST /api/v1/retrieve`、`POST /api/v1/ask` | **已冻结（v1.0）** | `Authorization: Bearer mk_svc_…` → Next 校验 scope → 原生 Retrieve/Ask |
 | 控制面密钥管理 API / UI | **已实现** | owner/admin；明文只创建时返回一次 |
 | 对外术语 `answer` + `ask` 兼容期 | **规划中** | 原生产品契约使用 Answer；已有 `/ask` 在明确版本周期内兼容 |
 | 稳定 OpenAPI / 错误码 / citation 版本化 | **已实现（v1.0）** | `GET /api/v1/openapi.json`；仓库源文件 `contracts/public-api-v1.openapi.json` |
@@ -46,7 +46,7 @@ Customer Backend
   → Next.js  /api/v1/retrieve | /api/v1/ask
        · 校验 service key（hash、scopes、library_ids、revoked）
        · 签发内部 HMAC（auth_source=service，principal=service:<key_id>）
-  → FastAPI  /v1/retrieve | /v1/ask   （仅内网）
+  → Native Retrieve / LangGraph Ask runtime
 ```
 
 与内部 HMAC、`UNORAG_SESSION_SECRET`、用户 cookie **分离**。生产仍禁止公网裸暴露 `:8000`。
@@ -301,7 +301,7 @@ GET    /api/v1/traces/{trace_id}
 
 约束：
 
-1. Documents/Versions/Jobs 必须复用 Next Control Plane、对象存储和 `app.jobs`，不得复活 FastAPI ingest。
+1. Documents/Versions/Jobs 必须复用 Next 产品边界、对象存储和 `app.jobs`，不得新增旁路 ingest。
 2. 所有写接口提供 idempotency key、明确的异步 Job 和版本化错误码。
 3. Retrieve/Answer 共享 active generation、ACL、citation、refusal 和 trace。
 4. Trace Debug 默认不返回原文、密钥或内部高敏字段。
@@ -392,7 +392,7 @@ OpenAI-compatible endpoint 不成为新的业务事实源，也不允许绕过 S
 
 | 反模式 | 正确做法 |
 |--------|----------|
-| 浏览器直连 FastAPI | 经 `/api/v1/*` 或客户自有 BFF |
+| 浏览器直连 Worker/Qdrant | 经 `/api/v1/*` 或客户自有 BFF |
 | 用 internal HMAC secret 当客户 key | 独立 `mk_svc_` service key |
 | 调用 `/v1/ingest` 上传 | 控制面文档 API |
 | 期望 UnoRAG 托管客户 Agent 工具链 | Knowledge API 只提供可治理的知识能力 |

@@ -1,5 +1,11 @@
 # Quality Release Gates
 
+> **Historical gate design.** The Python commands and paths below retired with
+> the old runtime. The reference cases remain under
+> [`../../eval/reference/`](../../eval/reference/), but they are not yet a live
+> release gate. Current release evidence is defined by
+> [`../STATUS.md`](../STATUS.md) and the acceptance package.
+
 Golden-set eval is the publish contract. Scores alone never override a fuse.
 
 ## Modes

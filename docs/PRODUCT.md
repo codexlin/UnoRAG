@@ -135,7 +135,7 @@ Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客
 | 项 | 原因 |
 |----|------|
 | 开放式通用 Agent 工具生态 | 偏离「有据知识」主线；借鉴 SAG/RAG-Anything 能力，不照搬定位 |
-| 公网裸暴露 FastAPI `:8000` | 安全边界：仅内网给 Next / worker |
+| 公网暴露 Worker、Qdrant 或数据库 | 安全边界：仅 Next.js 产品入口对外 |
 | 立刻拆独立 PyPI 引擎包 | 先把契约与私有化交付做稳 |
 | 每轮问答强制入库 | 默认临时；主动归档 |
 | 用户画像 / 长期跨会话记忆 | 企业合规与产品边界；会话窗口够用即可 |
@@ -161,7 +161,8 @@ Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客
   → 续聊生成多轮 messages + 检索 query 改写
 ```
 
-配置原则：**少配置**。检索/问答产品旋钮 = 代码默认 ⊕ 工作区覆盖（见 `apps/api/app/services/ask_defaults.py`），**不要**用已废弃的 `HYBRID_ENABLED` 等 env 当产品开关。
+配置原则：**少配置**。检索/问答产品旋钮 = 代码默认 ⊕ 工作区覆盖（见
+`apps/web/src/lib/server/ask-policy.mjs`），不要用部署环境变量冒充用户产品设置。
 
 ## 与同类定位的关系
 

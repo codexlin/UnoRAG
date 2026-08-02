@@ -126,40 +126,22 @@ external:
 # ---------------------------------------------------------------------------
 config:
   appEnv: production
-  corsOrigins: https://unorag.example.com
   chatModel: qwen-plus
   embeddingModel: text-embedding-v3
   embeddingDim: "1024"
   embeddingBatchSize: "10"
-  llmMaxInflight: "4"
   rerankModel: qwen3-rerank
-  mineruEnabled: "false"
   mineruProvider: self_hosted
   mineruSelfHostedUrl: ""
   mineruMode: auto
   mineruVersion: "2.5"
-  mineruParseMethod: auto
-  externalParserAllowed: "false"
-  mineru302BaseUrl: https://api.302.ai
-  mineru302UploadPath: /302/upload-file
-  mineru302TaskPath: /302/v2/mineru/task
-  mineru302PollIntervalSeconds: "5"
-  mineru302MaxWaitSeconds: "900"
-  # Placeholder cost rate; set from 302 billing. Budget 0 = gate off.
-  mineru302CostPerPage: "0.02"
-  mineru302DailyBudget: "0"
-  mineru302BudgetWarnRatio: "0.8"
-  mineru302LongPendingSeconds: "300"
-  # Transitional: chart maps LLM_BASE_URL / openaiBaseUrl → OPENAI_BASE_URL for api/worker
+  # OpenAI-compatible model endpoint used by the native TypeScript runtime.
   openaiBaseUrl: ""
   llmBaseUrl: ""
   rerankBaseUrl: ""
   mineruUrl: ""
   databasePoolMax: "10"
   documentMaxUploadBytes: "52428800"
-  lifecycleWorkerPollSeconds: "1"
-  lifecycleWorkerLeaseSeconds: "120"
-  lifecycleWorkerHeartbeatSeconds: "30"
 
 # ---------------------------------------------------------------------------
 # Secrets
@@ -170,7 +152,7 @@ config:
 #   DATABASE_URL, WORKER_DATABASE_URL, DBOS_SYSTEM_DATABASE_URL
 #   MIGRATOR_DATABASE_URL (migrate jobs only)
 #   LLM_API_KEY
-#   MINERU_302_API_KEY (required only for config.mineruProvider=302ai)
+#   MINERU_API_KEY (optional for an authenticated self-hosted MinerU endpoint)
 # Bootstrap admin password must NOT live in the long-running runtime Secret.
 secret:
   create: false
@@ -183,7 +165,7 @@ secret:
   #   DBOS_SYSTEM_DATABASE_URL: ""
   #   MIGRATOR_DATABASE_URL: ""
   #   LLM_API_KEY: ""
-  #   MINERU_302_API_KEY: ""
+  #   MINERU_API_KEY: ""
 
 # ---------------------------------------------------------------------------
 # Migration Jobs (opt-in; run as separate release step)

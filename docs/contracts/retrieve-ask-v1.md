@@ -27,7 +27,7 @@ Breaking changes require a new major (`/api/v2` + new OpenAPI). Additive optiona
 |------|-------|----------|--------|
 | **Service Key (public v1)** | `POST /api/v1/retrieve` · `POST /api/v1/ask` | `Authorization: Bearer mk_svc_…` (alt: `X-UnoRAG-Service-Key`) | `retrieve`, `ask` |
 | **Session (Workspace)** | `/api/rag/v1/*` via browser BFF | Cookie session + workspace membership | Not part of public v1 |
-| **Internal HMAC** | FastAPI `/v1/*` (private network only) | Signed internal headers | Not customer-facing |
+| **Session (internal UI)** | `/api/rag/v1/*` | Cookie session + workspace membership | Not part of public v1 |
 
 Service Key rules (v1):
 
@@ -39,10 +39,10 @@ Service Key rules (v1):
 
 ## Paths (public v1 surface)
 
-| Method | Path | Scope | Upstream |
+| Method | Path | Scope | Implementation |
 |--------|------|-------|----------|
-| `POST` | `/api/v1/retrieve` | `retrieve` | FastAPI `POST /v1/retrieve` |
-| `POST` | `/api/v1/ask` | `ask` | FastAPI `POST /v1/ask` |
+| `POST` | `/api/v1/retrieve` | `retrieve` | Native TypeScript retrieval runtime |
+| `POST` | `/api/v1/ask` | `ask` | Native TypeScript Ask runtime |
 | `GET` | `/api/v1/openapi.json` | none | static contract |
 
 No other `/api/v1/*` resources are in this freeze.
@@ -219,7 +219,7 @@ When public stream ships (planned `/api/v1/answer/stream`), it must reuse these 
 - Public streaming Ask/Answer path
 - Client-supplied algorithm knobs (`ask_overrides`, hybrid/rerank/top_k policy internals)
 - OAuth-for-apps / cross-workspace keys
-- Exposing FastAPI `:8000` to the public internet
+- Exposing DBOS workers, PostgreSQL, Qdrant, or Provider credentials publicly
 - Returning `retrieval_debug` or full chunk bodies on the public surface
 
 ## Compatibility checklist for adapters
@@ -228,4 +228,4 @@ When public stream ships (planned `/api/v1/answer/stream`), it must reuse these 
 2. Treat success key sets and `ErrorCode` enum as closed for the major.
 3. Read `api_version` / `X-UnoRAG-Api-Version`; reject unexpected majors.
 4. Handle `refused` + empty `citations` as a normal business outcome, not a transport error.
-5. Do not depend on undocumented FastAPI fields.
+5. Do not depend on undocumented internal runtime fields.

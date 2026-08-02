@@ -65,6 +65,18 @@ export interface QdrantDeleteClient {
 	}>;
 }
 
+export function configuredMinerUProvider(
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): "self_hosted" {
+	const provider = env.MINERU_PROVIDER?.trim().toLowerCase() || "self_hosted";
+	if (provider !== "self_hosted") {
+		throw new Error(
+			`Unsupported MINERU_PROVIDER=${provider}; this runtime supports self_hosted only`,
+		);
+	}
+	return "self_hosted";
+}
+
 interface CleanupRow extends QueryResultRow {
 	generation_id: string;
 	organization_id: string;
@@ -106,10 +118,6 @@ function positiveInteger(name: string, fallback: number): number {
 		throw new Error(`${name} must be a positive integer`);
 	}
 	return value;
-}
-
-function enabled(name: string): boolean {
-	return ["1", "true"].includes(process.env[name]?.trim().toLowerCase() ?? "");
 }
 
 function enabledByDefault(name: string): boolean {
@@ -683,6 +691,7 @@ export async function createWorkerPorts(
 		timeoutMs: positiveInteger("LITEPARSE_TIMEOUT_MS", 120_000),
 		maxConcurrency: positiveInteger("LITEPARSE_MAX_CONCURRENCY", 2),
 	});
+	configuredMinerUProvider();
 	const minerUUrl =
 		process.env.MINERU_SELF_HOSTED_URL?.trim() ||
 		process.env.MINERU_URL?.trim();
@@ -701,15 +710,13 @@ export async function createWorkerPorts(
 							authorization: `Bearer ${process.env.MINERU_API_KEY.trim()}`,
 						}
 					: undefined,
-				externalDataProcessing:
-					(process.env.MINERU_PROVIDER?.trim().toLowerCase() ||
-						"self_hosted") !== "self_hosted",
+				externalDataProcessing: false,
 			})
 		: undefined;
 	const pdfParser = new PdfDocumentParser({
 		liteParse,
 		minerU,
-		externalParserAllowed: enabled("EXTERNAL_PARSER_ALLOWED"),
+		externalParserAllowed: false,
 		pollIntervalMs: positiveInteger("PARSER_POLL_INTERVAL_MS", 250),
 		maxWaitMs: positiveInteger("PARSER_MAX_WAIT_MS", 15 * 60_000),
 	});

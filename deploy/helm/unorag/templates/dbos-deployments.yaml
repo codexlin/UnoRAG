@@ -106,8 +106,6 @@ spec:
               value: {{ .Values.config.mineruMode | quote }}
             - name: MINERU_VERSION
               value: {{ .Values.config.mineruVersion | quote }}
-            - name: EXTERNAL_PARSER_ALLOWED
-              value: {{ .Values.config.externalParserAllowed | quote }}
             - name: MINERU_API_KEY
               valueFrom:
                 secretKeyRef:

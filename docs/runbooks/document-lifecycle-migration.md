@@ -1,5 +1,10 @@
 # Document Lifecycle Migration Runbook
 
+> **Historical migration record.** This runbook describes the retired
+> Next.js-to-FastAPI transition. It must not be used to operate the current
+> TypeScript/DBOS runtime. See [private-deployment.md](./private-deployment.md)
+> and [ADR-0005](../adr/0005-typescript-core-runtime.md).
+
 ## Scope
 
 This runbook applies migration `0004_cloudy_madripoor` and configures the

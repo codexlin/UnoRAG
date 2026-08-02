@@ -20,7 +20,7 @@ UnoRAG 版本与部署环境宣称 **production-ready**（私有化企业知识�
 - [ ] 跨 organization / workspace / group 零泄漏（硬熔断 0）
 - [ ] viewer 不能上传、retry、cancel、删除
 - [ ] worker / runtime DB 角色最小化（非 migrator 跑业务）
-- [ ] 浏览器只访问控制面；FastAPI 写路径对边缘不可达
+- [ ] 浏览器只访问 Next.js 产品边界；内部 Worker/数据库/Qdrant 不暴露公网
 - [ ] 对象 key 与日志不泄露原文
 
 ## C. 可靠性
@@ -36,9 +36,9 @@ UnoRAG 版本与部署环境宣称 **production-ready**（私有化企业知识�
 - [ ] API / Web / PostgreSQL / Qdrant / 真实文件相关测试在发布流水线绿
 - [ ] production build 通过
 - [ ] migration 与 rollback/runbook 完整
-- [ ] FastAPI ingest 写路径永久 410；生产仅 lifecycle_worker 入库（无 ARQ）
+- [ ] 文档生命周期只有 DBOS workflow 一条生产执行路径
 - [ ] CI deterministic / isolation gate 通过；release gate 按发布流程执行或书面豁免
-- [ ] web / api / migrator / outbox / DBOS worker 五张镜像通过 Trivy `HIGH/CRITICAL` 门禁，并使用 digest manifest
+- [ ] web / worker / migrator / ops 四张镜像通过 Trivy `HIGH/CRITICAL` 门禁，并使用 digest manifest
 - [ ] 关键控制面操作可在 audit 页面查询并导出 CSV
 
 ## E. 交付

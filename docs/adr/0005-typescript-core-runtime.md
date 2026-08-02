@@ -1,11 +1,12 @@
 # ADR-0005: TypeScript Core Runtime
 
-- Status: Accepted, implementation in progress
+- Status: Implemented; live re-acceptance in progress
 - Date: 2026-07-30
 - Branch: `refactor/ts-core-runtime`
-- Supersedes: ADR-0004 as the target architecture after cutover
-- Current production baseline: ADR-0004 remains authoritative until the
-  migration gates in this ADR pass
+- Supersedes: ADR-0004
+- Implementation: `5061ac0` ports the native core; `8b38294` retires the Python
+  service, outbox and old deployment topology. A new Docker/browser acceptance
+  report is still required before production promotion.
 
 ## Context
 
