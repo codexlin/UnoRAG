@@ -14,6 +14,7 @@ import {
 	parseQdrantDistance,
 	QdrantCollectionManager,
 } from "../core/retrieval/qdrant/collection-manager";
+import { observePostgresPoolErrors } from "../db/pool-observability";
 import type { WorkerRuntimeConfig } from "./config";
 import type { GenerationCleanupJob } from "./contracts";
 import { DocumentAclProjectionOperations } from "./document-acl-projection";
@@ -618,12 +619,15 @@ export async function createWorkerPorts(
 			50 * 1024 * 1024,
 		),
 	};
-	const pool = new Pool({
-		connectionString: databaseUrl,
-		max: positiveInteger("DATABASE_POOL_MAX", 10),
-		idleTimeoutMillis: 30_000,
-		connectionTimeoutMillis: 5_000,
-	});
+	const pool = observePostgresPoolErrors(
+		new Pool({
+			connectionString: databaseUrl,
+			max: positiveInteger("DATABASE_POOL_MAX", 10),
+			idleTimeoutMillis: 30_000,
+			connectionTimeoutMillis: 5_000,
+		}),
+		"dbos-worker",
+	);
 	const qdrant = new QdrantClient({
 		url: qdrantUrl,
 		apiKey: process.env.QDRANT_API_KEY?.trim() || undefined,

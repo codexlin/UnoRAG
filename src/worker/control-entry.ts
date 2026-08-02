@@ -2,6 +2,7 @@ import { unlink, writeFile } from "node:fs/promises";
 
 import { Pool } from "pg";
 
+import { observePostgresPoolErrors } from "../db/pool-observability";
 import { loadWorkerConfig } from "./config";
 import { createDbosJobEnqueuer, type DbosJobEnqueuer } from "./dbos-runtime";
 import { dispatchDbosJobs, PostgresDispatchCandidateStore } from "./dispatcher";
@@ -15,7 +16,10 @@ async function main(): Promise<void> {
 		throw new Error("DATABASE_URL is required by the DBOS control process");
 	}
 	const config = loadWorkerConfig();
-	const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+	const pool = observePostgresPoolErrors(
+		new Pool({ connectionString: databaseUrl, max: 4 }),
+		"dbos-control",
+	);
 	let dbos: DbosJobEnqueuer | undefined;
 	let stopping = false;
 	const stopSignal = new AbortController();

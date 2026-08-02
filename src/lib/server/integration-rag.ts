@@ -631,6 +631,21 @@ export async function forwardIntegrationRag(input: {
 			});
 			return response;
 		}
+		if (nativeResponse.status === 404) {
+			const response = publicErrorResponse({
+				status: 403,
+				code: "library_access_denied",
+				message: "library_id not allowed for this service key",
+				requestId: input.requestId,
+				details: { library_id: libraryId },
+			});
+			finishObservability({
+				status: 403,
+				code: "library_access_denied",
+				libraryId,
+			});
+			return response;
+		}
 		const normalizedError = normalizeUpstreamError(
 			nativeResponse.status,
 			nativePayload,

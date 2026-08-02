@@ -2,7 +2,7 @@ import "server-only";
 
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-
+import { observePostgresPoolErrors } from "./pool-observability";
 import * as schema from "./schema";
 
 const globalForDatabase = globalThis as typeof globalThis & {
@@ -14,12 +14,15 @@ function createPool(): Pool {
 	if (!connectionString) {
 		throw new Error("DATABASE_URL is required for the Next.js control plane");
 	}
-	return new Pool({
-		connectionString,
-		max: Number(process.env.DATABASE_POOL_MAX ?? 10),
-		idleTimeoutMillis: 30_000,
-		connectionTimeoutMillis: 5_000,
-	});
+	return observePostgresPoolErrors(
+		new Pool({
+			connectionString,
+			max: Number(process.env.DATABASE_POOL_MAX ?? 10),
+			idleTimeoutMillis: 30_000,
+			connectionTimeoutMillis: 5_000,
+		}),
+		"web",
+	);
 }
 
 export function getDatabase() {

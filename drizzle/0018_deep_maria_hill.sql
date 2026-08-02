@@ -69,4 +69,12 @@ JOIN app.document_versions AS version
 	ON version.id = active.version_id
 	AND version.document_id = document.id;
 --> statement-breakpoint
-GRANT SELECT ON app.active_document_generations TO unorag_worker;
+DO $$
+BEGIN
+	-- Existing deployments already have the runtime role during an upgrade,
+	-- while a fresh install creates it after migrations have completed.
+	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'unorag_worker') THEN
+		GRANT SELECT ON app.active_document_generations TO unorag_worker;
+	END IF;
+END
+$$;

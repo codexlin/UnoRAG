@@ -33,6 +33,19 @@ test("runtime roles match the TypeScript ownership boundary", async () => {
 	assert.match(verification, /unorag_dbos_login can access application data/);
 });
 
+test("fresh migrations do not require runtime roles to exist", async () => {
+	const migration = await source("drizzle/0018_deep_maria_hill.sql");
+
+	assert.match(
+		migration,
+		/IF EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'unorag_worker'\)/,
+	);
+	assert.doesNotMatch(
+		migration,
+		/^GRANT SELECT ON app\.active_document_generations TO unorag_worker;/m,
+	);
+});
+
 test("DBOS is a required runtime rather than a migration profile", async () => {
 	const compose = await source("deploy/compose/docker-compose.yml");
 	assert.match(compose, /^ {2}dbos-worker:/m);

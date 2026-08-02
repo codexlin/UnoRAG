@@ -21,12 +21,14 @@ nodeModule._resolveFilename = (request, parent, isMain, options) =>
 		? inertServerOnlyModule
 		: originalResolveFilename(request, parent, isMain, options);
 
-const healthModule = import("../../src/server/http/health/native-handler");
-const downloadModule = import(
-	"../../src/server/http/document/download-handler"
-).finally(() => {
+const protectedModules = Promise.all([
+	import("../../src/server/http/health/native-handler"),
+	import("../../src/server/http/document/download-handler"),
+]).finally(() => {
 	nodeModule._resolveFilename = originalResolveFilename;
 });
+const healthModule = protectedModules.then(([health]) => health);
+const downloadModule = protectedModules.then(([, download]) => download);
 
 test("native health reports ready only when all required dependencies are ready", async () => {
 	const previousKey = process.env.OPENAI_API_KEY;
