@@ -1,36 +1,10 @@
-UnoRAG {{ .Chart.Version }} installed as release {{ .Release.Name }}.
+UnoRAG {{ .Chart.AppVersion }}
 
-Workloads
-  web:    {{ include "unorag.fullname" . }}-web
-  api:    {{ include "unorag.fullname" . }}-api   (ClusterIP only — do not Ingress)
-  worker: {{ include "unorag.fullname" . }}-worker
+Runtime workloads:
+  - web: product UI, authentication, business APIs, Ask and Retrieval
+  - dbos-worker: parsing, embedding, indexing and lifecycle workflows
+  - dbos-control: durable dispatch and reconciliation
 
-External deps (not installed by this chart)
-  Postgres / Qdrant / Redis must be reachable via secret + values.external.*
-  Object storage: PVC (default) or customer S3/MinIO later.
-
-Runtime Secret keys (least-privilege injection — pods do not envFrom the whole Secret):
-  UNORAG_INTERNAL_SECRET   → web + mapped to INTERNAL_AUTH_SECRET for api/worker
-  UNORAG_SESSION_SECRET    → web only
-  DATABASE_URL               → web only
-  OUTBOX_DATABASE_URL        → outbox-worker only
-  API_DATABASE_URL           → api DATABASE_URL
-  WORKER_DATABASE_URL        → worker DATABASE_URL / WORKER_DATABASE_URL
-  RAG_READ_DATABASE_URL      → api + worker
-  LLM_API_KEY                → api/worker OPENAI_API_KEY
-  MIGRATOR_DATABASE_URL      → migrate jobs only
-
-Do NOT put UNORAG_ADMIN_PASSWORD in the long-running runtime Secret.
-Admin bootstrap is a one-shot Job / Compose profile (create-only password by default).
-
-helm upgrade --install {{ .Release.Name }} deploy/helm/unorag \
-  -n {{ .Release.Namespace }} \
-  --set secret.existingSecret=unorag-runtime \
-  --set ingress.enabled=true
-
-Readiness
-  web  GET /api/rag/health
-  api  GET /health
-  worker file /tmp/unorag-lifecycle-ready
-
-CVE scanning and digest manifests are provided by release CI; SBOM/signing remain deferred.
+Required Secret keys:
+  DATABASE_URL, WORKER_DATABASE_URL, DBOS_SYSTEM_DATABASE_URL,
+  MIGRATOR_DATABASE_URL, UNORAG_SESSION_SECRET, LLM_API_KEY

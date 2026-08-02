@@ -1,119 +1,35 @@
-/** L6: document lifecycle v2 is the only production upload path. */
-export function documentLifecycleV2Enabled(
-	env = typeof process !== "undefined" ? process.env : {},
-) {
-	const configured = String(env.DOCUMENT_LIFECYCLE_V2 ?? "")
-		.trim()
-		.toLowerCase();
-	if (configured === "false" || configured === "0") return false;
-	if (configured === "true" || configured === "1") return true;
-	// Default on in every environment; opt out only with an explicit false.
+/** The TypeScript control plane and DBOS own every document lifecycle job. */
+export function documentLifecycleV2Enabled(_environment = process.env) {
 	return true;
 }
 
-/** Route newly created document.delete jobs to the opt-in DBOS cohort. */
-export function dbosDocumentDeleteEnabled(
-	env = typeof process !== "undefined" ? process.env : {},
-) {
-	const configured = String(env.UNORAG_DBOS_DOCUMENT_DELETE_ENABLED ?? "")
-		.trim()
-		.toLowerCase();
-	return configured === "true" || configured === "1";
+export function dbosDocumentDeleteEnabled(_environment = process.env) {
+	return true;
 }
 
-/** Freeze the execution identity at insert time; existing jobs are never migrated. */
 export function documentDeleteExecutionIdentity(
 	jobId,
-	env = typeof process !== "undefined" ? process.env : {},
+	_environment = process.env,
 ) {
-	if (dbosDocumentDeleteEnabled(env)) {
-		return { executionEngine: "dbos", workflowId: jobId };
-	}
-	return { executionEngine: "python", workflowId: null };
+	return { executionEngine: "dbos", workflowId: jobId };
 }
 
-/** Enable worker/control capability for DBOS document ingest. */
-export function dbosDocumentIngestEnabled(
-	env = typeof process !== "undefined" ? process.env : {},
-) {
-	const configured = String(
-		env.UNORAG_DBOS_DOCUMENT_INGEST_ENABLED ??
-			env.UNORAG_DBOS_TEXT_INGEST_ENABLED ??
-			"",
-	)
-		.trim()
-		.toLowerCase();
-	return configured === "true" || configured === "1";
+export function dbosDocumentIngestEnabled(_environment = process.env) {
+	return true;
 }
 
-/** Stop creating a cohort independently while already-routed jobs drain. */
-export function dbosDocumentIngestRouteEnabled(
-	env = typeof process !== "undefined" ? process.env : {},
-) {
-	const configured = String(
-		env.UNORAG_DBOS_DOCUMENT_INGEST_ROUTE_ENABLED ??
-			env.UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED ??
-			env.UNORAG_DBOS_DOCUMENT_INGEST_ENABLED ??
-			env.UNORAG_DBOS_TEXT_INGEST_ENABLED ??
-			"",
-	)
-		.trim()
-		.toLowerCase();
-	return (
-		(configured === "true" || configured === "1") &&
-		dbosDocumentIngestEnabled(env)
-	);
+export function dbosDocumentIngestRouteEnabled(_environment = process.env) {
+	return true;
 }
 
-// Compatibility aliases for existing deployment variables during cutover.
-export const dbosTextIngestEnabled = dbosDocumentIngestEnabled;
-export const dbosTextIngestRouteEnabled = dbosDocumentIngestRouteEnabled;
-
-/** Enable the mandatory DBOS executor for durable document ACL projection. */
-export function dbosAclProjectionEnabled(
-	env = typeof process !== "undefined" ? process.env : {},
-) {
-	const configured = String(env.UNORAG_DBOS_ACL_PROJECTION_ENABLED ?? "")
-		.trim()
-		.toLowerCase();
-	return configured === "true" || configured === "1";
+export function dbosAclProjectionEnabled(_environment = process.env) {
+	return true;
 }
 
-/** Freeze the ingest execution identity at insert time. */
 export function documentIngestExecutionIdentity(
 	jobId,
-	payload,
-	env = typeof process !== "undefined" ? process.env : {},
+	_payload = {},
+	_environment = process.env,
 ) {
-	const filename = String(payload?.filename ?? "").toLowerCase();
-	const contentType = String(payload?.content_type ?? "")
-		.split(";", 1)[0]
-		.trim()
-		.toLowerCase();
-	const textSupported =
-		payload?.queue_class === "local" &&
-		((contentType === "text/plain" && filename.endsWith(".txt")) ||
-			(["text/markdown", "text/x-markdown", "text/plain"].includes(
-				contentType,
-			) &&
-				(filename.endsWith(".md") || filename.endsWith(".markdown"))));
-	const supported =
-		textSupported ||
-		(payload?.queue_class === "local" &&
-			contentType ===
-				"application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
-			filename.endsWith(".docx")) ||
-		((payload?.queue_class === "auto" || payload?.queue_class === "mineru") &&
-			contentType === "application/pdf" &&
-			filename.endsWith(".pdf"));
-	const documentCohortConfigured =
-		env.UNORAG_DBOS_DOCUMENT_INGEST_ENABLED !== undefined ||
-		env.UNORAG_DBOS_DOCUMENT_INGEST_ROUTE_ENABLED !== undefined;
-	if (
-		dbosDocumentIngestRouteEnabled(env) &&
-		(documentCohortConfigured ? supported : textSupported)
-	) {
-		return { executionEngine: "dbos", workflowId: jobId };
-	}
-	return { executionEngine: "python", workflowId: null };
+	return { executionEngine: "dbos", workflowId: jobId };
 }

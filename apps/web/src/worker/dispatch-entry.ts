@@ -31,17 +31,6 @@ async function main(): Promise<void> {
 	try {
 		starter = await createDbosJobEnqueuer(config);
 		const store = new PostgresDispatchCandidateStore(pool);
-		let adopted = 0;
-		if (process.argv.includes("--adopt-pending-cleanup")) {
-			if (process.env.UNORAG_DBOS_ADOPTION_CONFIRMED !== "true") {
-				throw new Error(
-					"UNORAG_DBOS_ADOPTION_CONFIRMED=true is required for cleanup adoption",
-				);
-			}
-			adopted = await store.adoptPendingGenerationCleanups(
-				positiveIntegerArgument("--adopt-limit", 50),
-			);
-		}
 		const retryIndex = process.argv.indexOf("--retry-generation");
 		let retriedJobId: string | undefined;
 		if (retryIndex >= 0) {
@@ -72,7 +61,6 @@ async function main(): Promise<void> {
 		process.stdout.write(
 			`${JSON.stringify({
 				...result,
-				adopted,
 				retriedJobId,
 				retriedDocumentDeleteJobId,
 			})}\n`,

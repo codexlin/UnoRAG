@@ -633,7 +633,7 @@ export const jobs = appSchema.table(
 		),
 		type: varchar("type", { length: 64 }).notNull(),
 		executionEngine: varchar("execution_engine", { length: 16 })
-			.default("python")
+			.default("dbos")
 			.notNull(),
 		workflowId: varchar("workflow_id", { length: 256 }),
 		dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
@@ -689,7 +689,7 @@ export const jobs = appSchema.table(
 		),
 		check(
 			"jobs_execution_engine_check",
-			sql`${table.executionEngine} in ('python', 'dbos')`,
+			sql`${table.executionEngine} = 'dbos' or (${table.executionEngine} = 'python' and ${table.status} in ('cancelled', 'completed', 'failed', 'dead'))`,
 		),
 		check(
 			"jobs_dbos_workflow_id_check",
@@ -778,11 +778,11 @@ export const generationCleanupQueue = appSchema.table(
 		),
 		check(
 			"generation_cleanup_execution_engine_check",
-			sql`${table.executionEngine} in ('python', 'dbos')`,
+			sql`${table.executionEngine} = 'dbos'`,
 		),
 		check(
 			"generation_cleanup_ownership_check",
-			sql`(${table.executionEngine} = 'python' and ${table.cleanupJobId} is null) or ${table.executionEngine} = 'dbos'`,
+			sql`${table.executionEngine} = 'dbos'`,
 		),
 		check(
 			"generation_cleanup_sweeping_owner_check",

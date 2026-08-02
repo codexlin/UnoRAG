@@ -12,7 +12,7 @@
 
 ## 快速用
 
-配置模板：`ops/min_alerts/env.example`（复制为 `.env`，勿放进 `apps/api`）。
+配置模板：`ops/min_alerts/env.example`（复制为 `.env`，不要提交）。
 
 ```bash
 # 本地 mock receiver（写入 JSONL）— webhook 通道
@@ -41,14 +41,19 @@ Webhook 仍用 `ALERT_WEBHOOK_URL`（可与邮件并存；任一成功即 `deliv
 
 在主机 `/opt/unorag`（或 compose 工作目录）准备 `ops/min_alerts/.env`，填入上表三键 + 既有 `UNORAG_HEALTH_URL` / `DATABASE_URL` / heartbeat / disk 路径。
 
-生产 Compose 主机优先通过 `run-docker.sh` 复用当前 API 镜像的 Python 运行时。脚本会从正在运行的 API 容器读取镜像引用，升级后无需同步修改 cron。默认容器、网络和 documents volume 可分别用 `UNORAG_ALERT_API_CONTAINER`、`UNORAG_ALERT_DOCKER_NETWORK`、`UNORAG_ALERT_DOCUMENTS_VOLUME` 覆盖。
+生产主机使用独立的 Python 虚拟环境运行该运维工具，不复用产品运行时镜像：
+
+```bash
+python3 -m venv /opt/unorag-alerts-venv
+/opt/unorag-alerts-venv/bin/pip install 'psycopg[binary]'
+```
 
 cron 示例（`flock` 防止上一次检查未结束时重叠执行）：
 
 ```cron
-*/5 * * * * /usr/bin/flock -n /run/lock/unorag-alerts.lock /opt/unorag/ops/min_alerts/run-docker.sh once >> /var/log/unorag-alerts.log 2>&1
+*/5 * * * * /usr/bin/flock -n /run/lock/unorag-alerts.lock /opt/unorag-alerts-venv/bin/python /opt/unorag/ops/min_alerts/check.py once >> /var/log/unorag-alerts.log 2>&1
 ```
 
 首次建议 `--dry-run` 看 signals，再去掉 dry-run 发真实邮件。飞书 webhook 可后续加 `ALERT_WEBHOOK_URL`，无需改代码。
 
-验收：`scripts/acceptance/b5_min_alerts.sh`（webhook mock）；Resend 单测：`python3 -m pytest ops/min_alerts/test_resend_delivery.py -q`。
+Resend 单测：`python3 -m pytest ops/min_alerts/test_resend_delivery.py -q`。

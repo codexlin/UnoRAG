@@ -2,8 +2,8 @@
 # Build from repository root:
 #   docker build -f deploy/docker/web.Dockerfile --target runner -t unorag-web:local .
 #   docker build -f deploy/docker/web.Dockerfile --target migrator -t unorag-web-migrator:local .
-#   docker build -f deploy/docker/web.Dockerfile --target outbox -t unorag-web-outbox:local .
 #   docker build -f deploy/docker/web.Dockerfile --target worker -t unorag-web-worker:local .
+#   docker build -f deploy/docker/web.Dockerfile --target ops -t unorag-web-ops:local .
 
 FROM node:22-bookworm-slim AS deps
 WORKDIR /repo
@@ -48,20 +48,17 @@ COPY ops/postgres/configure-runtime-roles.sql ./ops/postgres/configure-runtime-r
 # Avoid Corepack re-fetching pnpm at container start.
 CMD ["./node_modules/.bin/drizzle-kit", "migrate"]
 
-# Outbox + bootstrap ops: workspace node_modules + control-plane scripts (no Next server).
-FROM deps AS outbox
+# One-shot bootstrap and operator tooling (no long-running queue consumer).
+FROM deps AS ops
 COPY apps/web/scripts apps/web/scripts
 WORKDIR /repo/apps/web
 ENV NODE_ENV=production
-CMD ["node", "scripts/process-outbox.mjs", "--watch"]
+CMD ["node", "scripts/inspect-lifecycle.mjs"]
 
 # DBOS executor and control loop. Keep the complete worker module together so
 # dynamic production-port imports resolve identically in both processes.
 FROM deps AS worker
-COPY apps/web/src/worker apps/web/src/worker
-COPY apps/web/src/core/document-ir apps/web/src/core/document-ir
-COPY apps/web/src/core/ingest apps/web/src/core/ingest
-COPY apps/web/src/core/retrieval/embedding apps/web/src/core/retrieval/embedding
+COPY apps/web/src apps/web/src
 COPY apps/web/tsconfig.json apps/web/
 WORKDIR /repo/apps/web
 ENV NODE_ENV=production

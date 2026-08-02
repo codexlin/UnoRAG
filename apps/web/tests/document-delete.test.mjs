@@ -58,15 +58,15 @@ test("delete idempotency key is stable for alreadyQueued reassert", () => {
 	assert.match(key, /^document\.delete:same-doc:/);
 });
 
-test("document delete DBOS cohort is opt-in and freezes workflow identity", () => {
-	assert.equal(dbosDocumentDeleteEnabled({}), false);
+test("document delete always uses DBOS and freezes workflow identity", () => {
+	assert.equal(dbosDocumentDeleteEnabled({}), true);
 	assert.deepEqual(documentDeleteExecutionIdentity("job-default", {}), {
-		executionEngine: "python",
-		workflowId: null,
+		executionEngine: "dbos",
+		workflowId: "job-default",
 	});
 	assert.deepEqual(
 		documentDeleteExecutionIdentity("job-dbos", {
-			UNORAG_DBOS_DOCUMENT_DELETE_ENABLED: "true",
+			UNORAG_DBOS_DOCUMENT_DELETE_ENABLED: "false",
 		}),
 		{
 			executionEngine: "dbos",
@@ -144,7 +144,7 @@ test("upload revalidates the locked library before inserting a document", () => 
 	assert.match(route, /\{ status: 409 \}/);
 });
 
-test("DBOS document delete deployment contract is opt-in and storage-aware", () => {
+test("DBOS document delete deployment contract is storage-aware", () => {
 	const compose = readFileSync(
 		path.join(root, "../../deploy/compose/docker-compose.yml"),
 		"utf8",
@@ -161,43 +161,14 @@ test("DBOS document delete deployment contract is opt-in and storage-aware", () 
 		path.join(root, "../../deploy/config/runtime.env.example"),
 		"utf8",
 	);
-	const webService = compose.slice(
-		compose.indexOf("\n  web:"),
-		compose.indexOf("\n  api:"),
-	);
-	const dbosEnvironment = compose.slice(
-		compose.indexOf("x-dbos-environment:"),
-		compose.indexOf("\nservices:"),
-	);
-
-	assert.match(
-		webService,
-		/UNORAG_DBOS_DOCUMENT_DELETE_ENABLED: \$\{UNORAG_DBOS_DOCUMENT_DELETE_ENABLED:-false\}/,
-	);
-	assert.match(
-		dbosEnvironment,
-		/UNORAG_DBOS_DOCUMENT_DELETE_ENABLED: \$\{UNORAG_DBOS_DOCUMENT_DELETE_ENABLED:-false\}/,
-	);
 	assert.match(
 		compose,
 		/dbos-worker:[\s\S]*DOCUMENT_STORAGE_ROOT: \/var\/lib\/unorag\/documents[\s\S]*document_storage:\/var\/lib\/unorag\/documents/,
 	);
-	assert.match(
-		helm,
-		/UNORAG_DBOS_DOCUMENT_DELETE_ENABLED[\s\S]*dbosDocumentDeleteEnabled/,
-	);
-	assert.equal(
-		helm.match(/name: UNORAG_DBOS_DOCUMENT_DELETE_ENABLED/g)?.length,
-		2,
-	);
 	assert.match(helm, /DOCUMENT_STORAGE_ROOT[\s\S]*documentStorageRoot/);
 	assert.match(helm, /claimName:.*documentsPvcName/);
-	assert.match(
-		helm,
-		/dbosDocumentDeleteEnabled[\s\S]*persistence\.enabled[\s\S]*fail/,
-	);
-	assert.match(values, /dbosDocumentDeleteEnabled: "false"/);
-	assert.match(runtime, /UNORAG_DBOS_DOCUMENT_DELETE_ENABLED=false/);
+	assert.doesNotMatch(values, /dbosDocumentDeleteEnabled/);
+	assert.doesNotMatch(runtime, /UNORAG_DBOS_DOCUMENT_DELETE_ENABLED/);
 });
 
 test("delete request immediately projects non-deleting library counters", () => {

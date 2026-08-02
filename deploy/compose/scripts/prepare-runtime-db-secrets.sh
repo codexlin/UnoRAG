@@ -41,10 +41,7 @@ resolve_password() {
 }
 
 WEB_PASSWORD="$(resolve_password UNORAG_WEB_DB_PASSWORD)"
-API_PASSWORD="$(resolve_password UNORAG_API_DB_PASSWORD)"
 WORKER_PASSWORD="$(resolve_password UNORAG_WORKER_DB_PASSWORD)"
-OUTBOX_PASSWORD="$(resolve_password UNORAG_OUTBOX_DB_PASSWORD)"
-RAG_READ_PASSWORD="$(resolve_password UNORAG_RAG_READ_DB_PASSWORD)"
 DBOS_PASSWORD="$(resolve_password UNORAG_DBOS_DB_PASSWORD)"
 
 tmp="$(mktemp "${SECRET_FILE}.tmp.XXXXXX")"
@@ -55,16 +52,10 @@ awk '
 	BEGIN {
 		skip["DATABASE_URL"] = 1
 		skip["WEB_DATABASE_URL"] = 1
-		skip["API_DATABASE_URL"] = 1
 		skip["WORKER_DATABASE_URL"] = 1
-		skip["OUTBOX_DATABASE_URL"] = 1
-		skip["RAG_READ_DATABASE_URL"] = 1
 		skip["MIGRATOR_DATABASE_URL"] = 1
 		skip["UNORAG_WEB_DB_PASSWORD"] = 1
-		skip["UNORAG_API_DB_PASSWORD"] = 1
 		skip["UNORAG_WORKER_DB_PASSWORD"] = 1
-		skip["UNORAG_OUTBOX_DB_PASSWORD"] = 1
-		skip["UNORAG_RAG_READ_DB_PASSWORD"] = 1
 		skip["UNORAG_DBOS_DB_PASSWORD"] = 1
 		skip["DBOS_SYSTEM_DATABASE_URL"] = 1
 	}
@@ -78,10 +69,7 @@ awk '
 {
 	printf '\n# Bundled PostgreSQL least-privilege runtime logins (generated; URL-safe)\n'
 	printf 'UNORAG_WEB_DB_PASSWORD=%s\n' "$WEB_PASSWORD"
-	printf 'UNORAG_API_DB_PASSWORD=%s\n' "$API_PASSWORD"
 	printf 'UNORAG_WORKER_DB_PASSWORD=%s\n' "$WORKER_PASSWORD"
-	printf 'UNORAG_OUTBOX_DB_PASSWORD=%s\n' "$OUTBOX_PASSWORD"
-	printf 'UNORAG_RAG_READ_DB_PASSWORD=%s\n' "$RAG_READ_PASSWORD"
 	printf 'UNORAG_DBOS_DB_PASSWORD=%s\n' "$DBOS_PASSWORD"
 } >>"$tmp"
 

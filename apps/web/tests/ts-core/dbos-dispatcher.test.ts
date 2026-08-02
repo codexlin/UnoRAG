@@ -24,14 +24,15 @@ const cleanup: GenerationCleanupJob = {
 	},
 };
 
-test("dispatcher enables document ingest only for the explicit text canary", () => {
+test("dispatcher always enables every native lifecycle job type", () => {
 	assert.deepEqual(enabledDbosJobTypes({}), [
+		"document.ingest",
 		"document.acl.project",
 		"document.delete",
 		"generation.cleanup",
 	]);
 	assert.deepEqual(
-		enabledDbosJobTypes({ UNORAG_DBOS_TEXT_INGEST_ENABLED: "true" }),
+		enabledDbosJobTypes({ UNORAG_DBOS_TEXT_INGEST_ENABLED: "false" }),
 		[
 			"document.ingest",
 			"document.acl.project",

@@ -1,24 +1,5 @@
 #!/usr/bin/env bash
-# Rolling upgrade via registry pull (not local build).
-#
-# Migration assumption (additive only):
-#   Schema migrations are forward-only / additive. If migrate fails, this script
-#   does NOT auto down-migrate or restore the database. Use ./scripts/backup.sh
-#   beforehand and ./scripts/restore.sh if data-plane recovery is required.
-#   Application rollback = redeploy previous image digests/tags (app-only).
-#
-# Default path: docker compose pull → migrate → drain → roll services → health
-# → optional pilot-smoke. Local `compose build` is NOT the upgrade path
-# (break-glass: --allow-build).
-#
-# Usage:
-#   ./scripts/upgrade.sh --manifest /path/to/release.env
-#   ./scripts/upgrade.sh --web IMG --api IMG --migrator IMG --outbox IMG [--worker IMG]
-#   ./scripts/upgrade.sh --from-runtime   # pull+redeploy pins already in runtime.env
-#
-# Manifest must pin web/api/migrator/outbox. The DBOS worker pin is required
-# when a DBOS capability is enabled; otherwise the existing runtime pin is kept.
-# Rejects empty tags and :latest.
+# Forward-only rolling upgrade for the TypeScript runtime.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,620 +7,202 @@ cd "$ROOT"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/compose-env.sh"
 
-CONFIG_DIR="$(cd "${ROOT}/../config" && pwd)"
-RUNTIME_ENV="${CONFIG_DIR}/runtime.env"
+RUNTIME_ENV="$(cd "${ROOT}/../config" && pwd)/runtime.env"
 STATE_DIR="${ROOT}/.upgrade-state"
-PREV_ENV="${STATE_DIR}/previous-images.env"
-NEW_ENV="${STATE_DIR}/target-images.env"
-SMOKE_SCRIPT="${ROOT}/scripts/pilot-smoke.sh"
-
-WEB_IMAGE=""
-API_IMAGE=""
-MIGRATOR_IMAGE=""
-OUTBOX_IMAGE=""
-WORKER_IMAGE=""
-DBOS_APPLICATION_VERSION=""
+PREVIOUS_ENV="${STATE_DIR}/previous-images.env"
 MANIFEST=""
+WEB_IMAGE=""
+MIGRATOR_IMAGE=""
+OPS_IMAGE=""
+WORKER_IMAGE=""
+DBOS_VERSION=""
 FROM_RUNTIME=0
 ALLOW_BUILD=0
 SKIP_SMOKE=0
-DID_SWITCH=0
-DBOS_WAS_RUNNING=0
-DBOS_SHOULD_RUN=0
+SWITCHED=0
 
 usage() {
 	cat <<'EOF'
-Rolling upgrade via registry pull (not local build).
-
 Usage:
-  ./scripts/upgrade.sh --manifest /path/to/release.env
-  ./scripts/upgrade.sh --web IMG --api IMG --migrator IMG --outbox IMG [--worker IMG] [--dbos-version VERSION]
-  ./scripts/upgrade.sh --from-runtime
+  upgrade.sh --manifest /path/to/release.env
+  upgrade.sh --web IMG --migrator IMG --ops IMG --worker IMG [--dbos-version VERSION]
+  upgrade.sh --from-runtime
 
 Options:
-  --allow-build   break-glass local compose build
-  --skip-smoke    skip pilot-smoke.sh after health
-  -h, --help      show this help
+  --allow-build  Build local images when registry pull is unavailable.
+  --skip-smoke   Skip pilot-smoke.sh after health checks.
 
-Rejects empty tags and :latest. Migration is additive; DB is never auto down-migrated.
+Database migrations are forward-only. Application rollback restores image pins,
+but never down-migrates data.
 EOF
-	exit "${1:-0}"
 }
 
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 log() { printf '==> %s\n' "$*"; }
 warn() { printf '!!  %s\n' "$*" >&2; }
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-while [[ $# -gt 0 ]]; do
-	case "$1" in
-		-h | --help) usage 0 ;;
-		--manifest)
-			MANIFEST="${2:-}"
-			shift 2
-			;;
-		--web)
-			WEB_IMAGE="${2:-}"
-			shift 2
-			;;
-		--api)
-			API_IMAGE="${2:-}"
-			shift 2
-			;;
-		--migrator)
-			MIGRATOR_IMAGE="${2:-}"
-			shift 2
-			;;
-		--outbox)
-			OUTBOX_IMAGE="${2:-}"
-			shift 2
-			;;
-		--worker)
-			WORKER_IMAGE="${2:-}"
-			shift 2
-			;;
-		--dbos-version)
-			DBOS_APPLICATION_VERSION="${2:-}"
-			shift 2
-			;;
-		--from-runtime)
-			FROM_RUNTIME=1
-			shift
-			;;
-		--allow-build)
-			ALLOW_BUILD=1
-			shift
-			;;
-		--skip-smoke)
-			SKIP_SMOKE=1
-			shift
-			;;
-		*)
-			die "unknown argument: $1 (see --help)"
-			;;
-	esac
-done
-
-mk_require_runtime_config || exit 1
-[[ -f "$RUNTIME_ENV" ]] || die "missing $RUNTIME_ENV"
-mk_validate_dbos_config || die "invalid DBOS runtime capability configuration"
-if mk_dbos_required; then
-	DBOS_SHOULD_RUN=1
-fi
-
-if [[ -z "$(mk_config_get UNORAG_DBOS_DB_PASSWORD || true)" ]]; then
-	log "preparing missing DBOS credential for an existing bundled-Postgres install"
-	"${ROOT}/scripts/prepare-runtime-db-secrets.sh" --bundled-postgres
-fi
-
-mkdir -p "$STATE_DIR"
-chmod 700 "$STATE_DIR" 2>/dev/null || true
-
-# Read KEY=value from a dotenv-style file (last wins).
-env_file_get() {
-	local file="$1" key="$2" value=""
-	[[ -f "$file" ]] || return 1
-	value="$(
-		awk -F= -v k="$key" '
-			/^[[:space:]]*#/ { next }
-			/^[[:space:]]*$/ { next }
-			$1 == k { v = substr($0, index($0, "=") + 1) }
-			END { if (v != "") print v }
-		' "$file" 2>/dev/null || true
-	)"
-	[[ -n "$value" ]] || return 1
-	printf '%s' "$value"
+env_get() {
+	local file="$1" key="$2"
+	awk -F= -v key="$key" '
+		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+		$1 == key { value = substr($0, index($0, "=") + 1) }
+		END { if (value != "") print value }
+	' "$file"
 }
 
-# Validate image ref: must have a tag or digest; tag must not be latest.
-assert_pinned_image() {
-	local name="$1" ref="$2"
-	local tag=""
-
-	[[ -n "$ref" ]] || die "$name is empty (pin a digest or version tag)"
-
-	if [[ "$ref" == *@sha256:* ]]; then
-		return 0
-	fi
-
-	if [[ "$ref" != *:* ]]; then
-		die "$name='$ref' has no tag/digest (refusing untagged / floating ref)"
-	fi
-
-	# registry:port/name:tag — take substring after last '/' then after first ':' of that
-	tag="${ref##*/}"
-	if [[ "$tag" == *:* ]]; then
-		tag="${tag#*:}"
-	else
-		# host:port/name with no tag after last slash — treat whole after last : as tag
-		tag="${ref##*:}"
-	fi
-
-	[[ -n "$tag" ]] || die "$name='$ref' has empty tag"
-	if [[ "$tag" == "latest" || "$tag" == latest@* ]]; then
-		die "$name='$ref' uses forbidden tag 'latest' (pin digest or version)"
-	fi
+assert_pinned() {
+	local name="$1" value="$2"
+	[[ -n "$value" ]] || die "$name is required"
+	[[ "$value" != "latest" && "$value" != *":latest" ]] || die "$name may not use latest"
+	[[ "$value" == *@sha256:* || "$value" == *:* ]] || die "$name must contain a tag or digest"
 }
 
-set_runtime_release_keys() {
-	local web="$1" api="$2" migrator="$3" outbox="$4" worker="$5" dbos_version="$6"
-	local tmp
+write_runtime_pins() {
+	local web="$1" migrator="$2" ops="$3" worker="$4" version="$5" tmp
 	tmp="$(mktemp)"
-	# shellcheck disable=SC2016
-	awk -v web="$web" -v api="$api" -v migrator="$migrator" -v outbox="$outbox" -v worker="$worker" -v dbos_version="$dbos_version" '
-		BEGIN {
-			seen_web = 0; seen_api = 0; seen_migrator = 0; seen_outbox = 0; seen_worker = 0; seen_dbos_version = 0
-		}
-		/^[[:space:]]*UNORAG_WEB_IMAGE=/ {
-			print "UNORAG_WEB_IMAGE=" web
-			seen_web = 1
-			next
-		}
-		/^[[:space:]]*UNORAG_API_IMAGE=/ {
-			print "UNORAG_API_IMAGE=" api
-			seen_api = 1
-			next
-		}
-		/^[[:space:]]*UNORAG_WEB_MIGRATOR_IMAGE=/ {
-			print "UNORAG_WEB_MIGRATOR_IMAGE=" migrator
-			seen_migrator = 1
-			next
-		}
-		/^[[:space:]]*UNORAG_OUTBOX_IMAGE=/ {
-			print "UNORAG_OUTBOX_IMAGE=" outbox
-			seen_outbox = 1
-			next
-		}
-		/^[[:space:]]*UNORAG_DBOS_WORKER_IMAGE=/ {
-			print "UNORAG_DBOS_WORKER_IMAGE=" worker
-			seen_worker = 1
-			next
-		}
-		/^[[:space:]]*UNORAG_DBOS_APPLICATION_VERSION=/ {
-			print "UNORAG_DBOS_APPLICATION_VERSION=" dbos_version
-			seen_dbos_version = 1
-			next
-		}
+	awk -F= \
+		-v web="$web" -v migrator="$migrator" -v ops="$ops" \
+		-v worker="$worker" -v version="$version" '
+		BEGIN { seen_web=seen_migrator=seen_ops=seen_worker=seen_version=0 }
+		$1 == "UNORAG_WEB_IMAGE" { print "UNORAG_WEB_IMAGE=" web; seen_web=1; next }
+		$1 == "UNORAG_WEB_MIGRATOR_IMAGE" { print "UNORAG_WEB_MIGRATOR_IMAGE=" migrator; seen_migrator=1; next }
+		$1 == "UNORAG_WEB_OPS_IMAGE" { print "UNORAG_WEB_OPS_IMAGE=" ops; seen_ops=1; next }
+		$1 == "UNORAG_DBOS_WORKER_IMAGE" { print "UNORAG_DBOS_WORKER_IMAGE=" worker; seen_worker=1; next }
+		$1 == "UNORAG_DBOS_APPLICATION_VERSION" { print "UNORAG_DBOS_APPLICATION_VERSION=" version; seen_version=1; next }
 		{ print }
 		END {
 			if (!seen_web) print "UNORAG_WEB_IMAGE=" web
-			if (!seen_api) print "UNORAG_API_IMAGE=" api
 			if (!seen_migrator) print "UNORAG_WEB_MIGRATOR_IMAGE=" migrator
-			if (!seen_outbox) print "UNORAG_OUTBOX_IMAGE=" outbox
+			if (!seen_ops) print "UNORAG_WEB_OPS_IMAGE=" ops
 			if (!seen_worker) print "UNORAG_DBOS_WORKER_IMAGE=" worker
-			if (!seen_dbos_version) print "UNORAG_DBOS_APPLICATION_VERSION=" dbos_version
+			if (!seen_version) print "UNORAG_DBOS_APPLICATION_VERSION=" version
 		}
 	' "$RUNTIME_ENV" >"$tmp"
 	mv "$tmp" "$RUNTIME_ENV"
+	chmod 600 "$RUNTIME_ENV"
 }
 
-set_runtime_capability_keys() {
-	local delete_enabled="$1" text_enabled="$2" text_route_enabled="$3"
-	local acl_enabled="$4" listen_queues="$5" tmp
-	tmp="$(mktemp)"
-	awk \
-		-v delete_enabled="$delete_enabled" \
-		-v text_enabled="$text_enabled" \
-		-v text_route_enabled="$text_route_enabled" \
-		-v acl_enabled="$acl_enabled" \
-		-v listen_queues="$listen_queues" '
-		BEGIN {
-			seen_delete = 0; seen_text = 0; seen_route = 0; seen_acl = 0; seen_queues = 0
-		}
-		/^[[:space:]]*UNORAG_DBOS_DOCUMENT_DELETE_ENABLED=/ {
-			print "UNORAG_DBOS_DOCUMENT_DELETE_ENABLED=" delete_enabled; seen_delete = 1; next
-		}
-		/^[[:space:]]*UNORAG_DBOS_TEXT_INGEST_ENABLED=/ {
-			print "UNORAG_DBOS_TEXT_INGEST_ENABLED=" text_enabled; seen_text = 1; next
-		}
-		/^[[:space:]]*UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED=/ {
-			print "UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED=" text_route_enabled; seen_route = 1; next
-		}
-		/^[[:space:]]*UNORAG_DBOS_ACL_PROJECTION_ENABLED=/ {
-			print "UNORAG_DBOS_ACL_PROJECTION_ENABLED=" acl_enabled; seen_acl = 1; next
-		}
-		/^[[:space:]]*UNORAG_DBOS_LISTEN_QUEUES=/ {
-			print "UNORAG_DBOS_LISTEN_QUEUES=" listen_queues; seen_queues = 1; next
-		}
-		{ print }
-		END {
-			if (!seen_delete) print "UNORAG_DBOS_DOCUMENT_DELETE_ENABLED=" delete_enabled
-			if (!seen_text) print "UNORAG_DBOS_TEXT_INGEST_ENABLED=" text_enabled
-			if (!seen_route) print "UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED=" text_route_enabled
-			if (!seen_acl) print "UNORAG_DBOS_ACL_PROJECTION_ENABLED=" acl_enabled
-			if (!seen_queues) print "UNORAG_DBOS_LISTEN_QUEUES=" listen_queues
-		}
-	' "$RUNTIME_ENV" >"$tmp"
-	mv "$tmp" "$RUNTIME_ENV"
-}
-
-resolve_service_digest() {
-	local service="$1"
-	local id
-	id="$(mk_compose ps -q "$service" 2>/dev/null | head -n1 || true)"
-	if [[ -z "$id" ]]; then
-		printf ''
-		return 0
-	fi
-	docker inspect --format '{{.Image}}' "$id" 2>/dev/null || printf ''
-}
-
-resolve_service_image_ref() {
-	local service="$1" id
-	id="$(mk_compose ps -q "$service" 2>/dev/null | head -n1 || true)"
-	[[ -n "$id" ]] || return 0
-	docker inspect --format '{{.Config.Image}}' "$id" 2>/dev/null || printf ''
-}
-
-resolve_service_env() {
-	local service="$1" key="$2" fallback="$3" id value
-	id="$(mk_compose ps -q "$service" 2>/dev/null | head -n1 || true)"
-	if [[ -n "$id" ]]; then
-		value="$(
-			docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" 2>/dev/null \
-				| awk -F= -v k="$key" '$1 == k { print substr($0, index($0, "=") + 1); exit }'
-		)"
-	fi
-	printf '%s' "${value:-$fallback}"
-}
-
-save_previous_images() {
-	local web api migrator outbox worker dbos_version
-	local delete_enabled text_enabled text_route_enabled acl_enabled listen_queues
-	web="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE || true)"
-	api="$(env_file_get "$RUNTIME_ENV" UNORAG_API_IMAGE || true)"
-	migrator="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
-	outbox="$(env_file_get "$RUNTIME_ENV" UNORAG_OUTBOX_IMAGE || true)"
-	worker="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE || true)"
-	dbos_version="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION || true)"
-	[[ -n "$outbox" ]] || outbox="$(resolve_service_image_ref outbox-worker)"
-	[[ -n "$outbox" ]] || die "cannot determine previous outbox image; set UNORAG_OUTBOX_IMAGE before upgrade"
-	[[ -n "$worker" ]] || worker="unorag-web-worker:local"
-	# A missing key can only come from a pre-lifecycle-v2 installation.
-	[[ -n "$dbos_version" ]] || dbos_version="cleanup-v1"
-	delete_enabled="$(resolve_service_env web UNORAG_DBOS_DOCUMENT_DELETE_ENABLED false)"
-	text_enabled="$(resolve_service_env web UNORAG_DBOS_TEXT_INGEST_ENABLED false)"
-	text_route_enabled="$(resolve_service_env web UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED false)"
-	acl_enabled="$(resolve_service_env web UNORAG_DBOS_ACL_PROJECTION_ENABLED false)"
-	listen_queues="$(resolve_service_env dbos-worker UNORAG_DBOS_LISTEN_QUEUES lifecycle)"
+capture_previous() {
+	mkdir -p "$STATE_DIR"
+	chmod 700 "$STATE_DIR"
 	{
-		echo "# previous pins captured $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-		echo "UNORAG_WEB_IMAGE=${web}"
-		echo "UNORAG_API_IMAGE=${api}"
-		echo "UNORAG_WEB_MIGRATOR_IMAGE=${migrator}"
-		echo "UNORAG_OUTBOX_IMAGE=${outbox}"
-		echo "UNORAG_DBOS_WORKER_IMAGE=${worker}"
-		echo "UNORAG_DBOS_APPLICATION_VERSION=${dbos_version}"
-		echo "UNORAG_DBOS_DOCUMENT_DELETE_ENABLED=${delete_enabled}"
-		echo "UNORAG_DBOS_TEXT_INGEST_ENABLED=${text_enabled}"
-		echo "UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED=${text_route_enabled}"
-		echo "UNORAG_DBOS_ACL_PROJECTION_ENABLED=${acl_enabled}"
-		echo "UNORAG_DBOS_LISTEN_QUEUES=${listen_queues}"
-		echo "UNORAG_PREV_WEB_DIGEST=$(resolve_service_digest web)"
-		echo "UNORAG_PREV_API_DIGEST=$(resolve_service_digest api)"
-		echo "UNORAG_PREV_LIFECYCLE_DIGEST=$(resolve_service_digest lifecycle-worker)"
-		echo "UNORAG_PREV_OUTBOX_DIGEST=$(resolve_service_digest outbox-worker)"
-		echo "UNORAG_PREV_DBOS_WORKER_DIGEST=$(resolve_service_digest dbos-worker)"
-	} >"$PREV_ENV"
-	chmod 600 "$PREV_ENV" 2>/dev/null || true
-	log "saved previous image pins → $PREV_ENV"
+		echo "UNORAG_WEB_IMAGE=$(env_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE)"
+		echo "UNORAG_WEB_MIGRATOR_IMAGE=$(env_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
+		echo "UNORAG_WEB_OPS_IMAGE=$(env_get "$RUNTIME_ENV" UNORAG_WEB_OPS_IMAGE)"
+		echo "UNORAG_DBOS_WORKER_IMAGE=$(env_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE)"
+		echo "UNORAG_DBOS_APPLICATION_VERSION=$(env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+	} >"$PREVIOUS_ENV"
+	chmod 600 "$PREVIOUS_ENV"
 }
 
-rollback_apps() {
-	local web api migrator outbox worker dbos_version
-	local delete_enabled text_enabled text_route_enabled acl_enabled listen_queues
-	warn "application rollback: redeploying previous image pins (no DB down-migrate)"
-	[[ -f "$PREV_ENV" ]] || die "missing $PREV_ENV; cannot rollback automatically"
-
-	web="$(env_file_get "$PREV_ENV" UNORAG_WEB_IMAGE || true)"
-	api="$(env_file_get "$PREV_ENV" UNORAG_API_IMAGE || true)"
-	migrator="$(env_file_get "$PREV_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
-	outbox="$(env_file_get "$PREV_ENV" UNORAG_OUTBOX_IMAGE || true)"
-	worker="$(env_file_get "$PREV_ENV" UNORAG_DBOS_WORKER_IMAGE || true)"
-	dbos_version="$(env_file_get "$PREV_ENV" UNORAG_DBOS_APPLICATION_VERSION || true)"
-	[[ -n "$worker" ]] || worker="unorag-web-worker:local"
-	[[ -n "$dbos_version" ]] || dbos_version="cleanup-v1"
-	[[ -n "$web" && -n "$api" && -n "$migrator" && -n "$outbox" && -n "$worker" && -n "$dbos_version" ]] || die "previous release pins incomplete in $PREV_ENV"
-	delete_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_DOCUMENT_DELETE_ENABLED || echo false)"
-	text_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_TEXT_INGEST_ENABLED || echo false)"
-	text_route_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED || echo false)"
-	acl_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_ACL_PROJECTION_ENABLED || echo false)"
-	listen_queues="$(env_file_get "$PREV_ENV" UNORAG_DBOS_LISTEN_QUEUES || echo lifecycle)"
-
-	set_runtime_release_keys "$web" "$api" "$migrator" "$outbox" "$worker" "$dbos_version"
-	set_runtime_capability_keys \
-		"$delete_enabled" "$text_enabled" "$text_route_enabled" "$acl_enabled" "$listen_queues"
-	if [[ "$ALLOW_BUILD" -eq 1 ]]; then
-		warn "rollback with --allow-build: attempting pull, then local build if needed"
-		mk_compose pull web api lifecycle-worker outbox-worker migrate-web || true
-		mk_compose build web api migrate-web outbox-worker || true
-		mk_compose --profile dbos build dbos-worker || true
-	else
-		# Previous pins may be local-only tags; pull best-effort.
-		if ! mk_compose pull web api lifecycle-worker outbox-worker migrate-web; then
-			warn "rollback pull failed (ok if previous pins were local-only); continuing with local images"
-		fi
-		mk_compose --profile dbos pull dbos-worker || true
-	fi
-
-	mk_compose stop lifecycle-worker || true
-	mk_compose up -d --no-deps api
-	mk_compose up -d --no-deps --wait api
-	mk_compose up -d --no-deps web
-	mk_compose up -d --no-deps --wait web
-	mk_compose up -d --no-deps lifecycle-worker
-	mk_compose up -d --no-deps outbox-worker
-	if [[ "$DBOS_WAS_RUNNING" -eq 1 ]]; then
-		mk_compose --profile dbos up -d --no-deps dbos-worker dbos-control
-	else
-		mk_compose --profile dbos stop dbos-control dbos-worker || true
-	fi
-	mk_compose up -d --no-deps caddy
+rollback_images() {
+	[[ -f "$PREVIOUS_ENV" ]] || return 0
+	local web migrator ops worker version
+	web="$(env_get "$PREVIOUS_ENV" UNORAG_WEB_IMAGE)"
+	migrator="$(env_get "$PREVIOUS_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
+	ops="$(env_get "$PREVIOUS_ENV" UNORAG_WEB_OPS_IMAGE)"
+	worker="$(env_get "$PREVIOUS_ENV" UNORAG_DBOS_WORKER_IMAGE)"
+	version="$(env_get "$PREVIOUS_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+	write_runtime_pins "$web" "$migrator" "$ops" "$worker" "$version"
+	mk_compose up -d --no-deps dbos-worker dbos-control web caddy || true
 }
 
-restore_runtime_pins_on_failure() {
+on_exit() {
 	local rc=$?
-	local web api migrator outbox worker dbos_version
-	local delete_enabled text_enabled text_route_enabled acl_enabled listen_queues
-	trap - EXIT
-	if [[ "$rc" -ne 0 && "$DID_SWITCH" -eq 1 && -f "$PREV_ENV" ]]; then
-		web="$(env_file_get "$PREV_ENV" UNORAG_WEB_IMAGE || true)"
-		api="$(env_file_get "$PREV_ENV" UNORAG_API_IMAGE || true)"
-		migrator="$(env_file_get "$PREV_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
-		outbox="$(env_file_get "$PREV_ENV" UNORAG_OUTBOX_IMAGE || true)"
-		worker="$(env_file_get "$PREV_ENV" UNORAG_DBOS_WORKER_IMAGE || true)"
-		dbos_version="$(env_file_get "$PREV_ENV" UNORAG_DBOS_APPLICATION_VERSION || true)"
-		if [[ -n "$web" && -n "$api" && -n "$migrator" && -n "$outbox" && -n "$worker" && -n "$dbos_version" ]]; then
-			set_runtime_release_keys "$web" "$api" "$migrator" "$outbox" "$worker" "$dbos_version"
-			delete_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_DOCUMENT_DELETE_ENABLED || echo false)"
-			text_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_TEXT_INGEST_ENABLED || echo false)"
-			text_route_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED || echo false)"
-			acl_enabled="$(env_file_get "$PREV_ENV" UNORAG_DBOS_ACL_PROJECTION_ENABLED || echo false)"
-			listen_queues="$(env_file_get "$PREV_ENV" UNORAG_DBOS_LISTEN_QUEUES || echo lifecycle)"
-			set_runtime_capability_keys \
-				"$delete_enabled" "$text_enabled" "$text_route_enabled" "$acl_enabled" "$listen_queues"
-			warn "restored previous runtime release pins after failed upgrade"
-		fi
+	if [[ $rc -ne 0 && $SWITCHED -eq 1 ]]; then
+		warn "upgrade failed; restoring previous application image pins"
+		rollback_images
 	fi
 	exit "$rc"
 }
+trap on_exit EXIT
 
-trap restore_runtime_pins_on_failure EXIT
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--manifest) MANIFEST="${2:-}"; shift 2 ;;
+		--web) WEB_IMAGE="${2:-}"; shift 2 ;;
+		--migrator) MIGRATOR_IMAGE="${2:-}"; shift 2 ;;
+		--ops) OPS_IMAGE="${2:-}"; shift 2 ;;
+		--worker) WORKER_IMAGE="${2:-}"; shift 2 ;;
+		--dbos-version) DBOS_VERSION="${2:-}"; shift 2 ;;
+		--from-runtime) FROM_RUNTIME=1; shift ;;
+		--allow-build) ALLOW_BUILD=1; shift ;;
+		--skip-smoke) SKIP_SMOKE=1; shift ;;
+		-h|--help) usage; exit 0 ;;
+		*) die "unknown argument: $1" ;;
+	esac
+done
 
-# --- resolve target images ---
+mk_require_runtime_config
+mk_validate_dbos_config
+[[ -f "$RUNTIME_ENV" ]] || die "missing $RUNTIME_ENV"
+
 if [[ -n "$MANIFEST" ]]; then
 	[[ -f "$MANIFEST" ]] || die "manifest not found: $MANIFEST"
-	WEB_IMAGE="$(env_file_get "$MANIFEST" UNORAG_WEB_IMAGE || true)"
-	API_IMAGE="$(env_file_get "$MANIFEST" UNORAG_API_IMAGE || true)"
-	MIGRATOR_IMAGE="$(env_file_get "$MANIFEST" UNORAG_WEB_MIGRATOR_IMAGE || true)"
-	OUTBOX_IMAGE="$(env_file_get "$MANIFEST" UNORAG_OUTBOX_IMAGE || true)"
-	WORKER_IMAGE="$(env_file_get "$MANIFEST" UNORAG_DBOS_WORKER_IMAGE || true)"
-	DBOS_APPLICATION_VERSION="$(env_file_get "$MANIFEST" UNORAG_DBOS_APPLICATION_VERSION || true)"
-elif [[ "$FROM_RUNTIME" -eq 1 ]]; then
-	WEB_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE || true)"
-	API_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_API_IMAGE || true)"
-	MIGRATOR_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE || true)"
-	OUTBOX_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_OUTBOX_IMAGE || true)"
-	WORKER_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE || true)"
-	DBOS_APPLICATION_VERSION="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION || true)"
-elif [[ -n "$WEB_IMAGE" || -n "$API_IMAGE" || -n "$MIGRATOR_IMAGE" || -n "$OUTBOX_IMAGE" || -n "$WORKER_IMAGE" ]]; then
-	[[ -n "$WEB_IMAGE" && -n "$API_IMAGE" && -n "$MIGRATOR_IMAGE" && -n "$OUTBOX_IMAGE" ]] || \
-		die "when using explicit images, web+api+migrator+outbox are required"
+	WEB_IMAGE="$(env_get "$MANIFEST" UNORAG_WEB_IMAGE)"
+	MIGRATOR_IMAGE="$(env_get "$MANIFEST" UNORAG_WEB_MIGRATOR_IMAGE)"
+	OPS_IMAGE="$(env_get "$MANIFEST" UNORAG_WEB_OPS_IMAGE)"
+	WORKER_IMAGE="$(env_get "$MANIFEST" UNORAG_DBOS_WORKER_IMAGE)"
+	DBOS_VERSION="$(env_get "$MANIFEST" UNORAG_DBOS_APPLICATION_VERSION)"
+elif [[ $FROM_RUNTIME -eq 1 ]]; then
+	WEB_IMAGE="$(env_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE)"
+	MIGRATOR_IMAGE="$(env_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
+	OPS_IMAGE="$(env_get "$RUNTIME_ENV" UNORAG_WEB_OPS_IMAGE)"
+	WORKER_IMAGE="$(env_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE)"
+	DBOS_VERSION="$(env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+fi
+
+DBOS_VERSION="${DBOS_VERSION:-lifecycle-v2}"
+assert_pinned UNORAG_WEB_IMAGE "$WEB_IMAGE"
+assert_pinned UNORAG_WEB_MIGRATOR_IMAGE "$MIGRATOR_IMAGE"
+assert_pinned UNORAG_WEB_OPS_IMAGE "$OPS_IMAGE"
+assert_pinned UNORAG_DBOS_WORKER_IMAGE "$WORKER_IMAGE"
+[[ "$DBOS_VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die "invalid DBOS version"
+
+capture_previous
+write_runtime_pins "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION"
+SWITCHED=1
+
+if [[ $ALLOW_BUILD -eq 1 ]]; then
+	warn "using break-glass local image builds"
+	mk_compose build web migrate-web bootstrap inspect-lifecycle dbos-worker
 else
-	die "specify --manifest PATH, or --web/--api/--migrator, or --from-runtime"
+	log "pulling four pinned release images"
+	mk_compose pull web migrate-web bootstrap dbos-worker
 fi
 
-[[ -n "$OUTBOX_IMAGE" ]] || die "UNORAG_OUTBOX_IMAGE is required; migrator images do not contain runtime scripts"
-if [[ -z "$WORKER_IMAGE" ]]; then
-	WORKER_IMAGE="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE || true)"
-fi
-[[ -n "$WORKER_IMAGE" ]] || WORKER_IMAGE="unorag-web-worker:local"
-if [[ -z "$DBOS_APPLICATION_VERSION" ]]; then
-	DBOS_APPLICATION_VERSION="$(env_file_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION || true)"
-fi
-[[ -n "$DBOS_APPLICATION_VERSION" ]] || DBOS_APPLICATION_VERSION="lifecycle-v2"
-[[ "$DBOS_APPLICATION_VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || \
-	die "invalid UNORAG_DBOS_APPLICATION_VERSION=${DBOS_APPLICATION_VERSION}"
+log "applying forward-only database migration"
+mk_compose up -d --wait postgres
+mk_compose --profile migrate run --rm migrate-web
+mk_compose --profile migrate run --rm configure-db-roles
 
-assert_pinned_image UNORAG_WEB_IMAGE "$WEB_IMAGE"
-assert_pinned_image UNORAG_API_IMAGE "$API_IMAGE"
-assert_pinned_image UNORAG_WEB_MIGRATOR_IMAGE "$MIGRATOR_IMAGE"
-assert_pinned_image UNORAG_OUTBOX_IMAGE "$OUTBOX_IMAGE"
-assert_pinned_image UNORAG_DBOS_WORKER_IMAGE "$WORKER_IMAGE"
+log "rolling DBOS execution and control"
+mk_compose stop dbos-control dbos-worker || true
+mk_compose up -d --wait dbos-worker dbos-control
 
-{
-	echo "# target pins $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-	echo "UNORAG_WEB_IMAGE=${WEB_IMAGE}"
-	echo "UNORAG_API_IMAGE=${API_IMAGE}"
-	echo "UNORAG_WEB_MIGRATOR_IMAGE=${MIGRATOR_IMAGE}"
-	echo "UNORAG_OUTBOX_IMAGE=${OUTBOX_IMAGE}"
-	echo "UNORAG_DBOS_WORKER_IMAGE=${WORKER_IMAGE}"
-	echo "UNORAG_DBOS_APPLICATION_VERSION=${DBOS_APPLICATION_VERSION}"
-} >"$NEW_ENV"
-chmod 600 "$NEW_ENV" 2>/dev/null || true
+log "reconciling ACL projections"
+mk_compose --profile ops run --rm backfill-acl-projections
+mk_compose --profile ops run --rm inspect-lifecycle
+
+log "rolling web and edge"
+mk_compose up -d --no-deps --wait web
+mk_compose up -d --no-deps caddy
 
 HTTP_PORT="$(mk_config_get HTTP_PORT || echo 80)"
-BASE_URL="$(mk_config_get UNORAG_BASE_URL || true)"
+BASE_URL="$(mk_config_get UNORAG_BASE_URL || echo "http://localhost:${HTTP_PORT}")"
 BASE_URL="${BASE_URL%/}"
-if [[ -z "$BASE_URL" ]]; then
-	BASE_URL="http://localhost:${HTTP_PORT}"
-fi
-
-log "pre-upgrade backup recommended: ./scripts/backup.sh <dir>"
-log "target web=${WEB_IMAGE}"
-log "target api=${API_IMAGE}"
-log "target migrator=${MIGRATOR_IMAGE}"
-log "target outbox=${OUTBOX_IMAGE}"
-log "target dbos-worker=${WORKER_IMAGE}"
-log "target dbos-version=${DBOS_APPLICATION_VERSION}"
-
-save_previous_images
-if [[ -n "$(mk_compose --profile dbos ps -q dbos-worker 2>/dev/null || true)" ]]; then
-	DBOS_WAS_RUNNING=1
-fi
-set_runtime_release_keys "$WEB_IMAGE" "$API_IMAGE" "$MIGRATOR_IMAGE" "$OUTBOX_IMAGE" "$WORKER_IMAGE" "$DBOS_APPLICATION_VERSION"
-DID_SWITCH=1
-
-if [[ "$ALLOW_BUILD" -eq 1 ]]; then
-	warn "BREAK-GLASS --allow-build: pull preferred, then compose build"
-	mk_compose pull web api lifecycle-worker outbox-worker migrate-web || true
-	mk_compose build web api migrate-web outbox-worker
-	mk_compose --profile dbos build dbos-worker
-else
-	log "pulling release images (no local build)"
-	if ! mk_compose pull web api lifecycle-worker; then
-		die "failed to pull web/api images from registry"
-	fi
-	if ! mk_compose pull outbox-worker migrate-web; then
-		die "failed to pull required outbox/migrator images from registry"
-	fi
-	if ! mk_compose --profile dbos pull dbos-worker; then
-		warn "DBOS worker pull failed"
-		if [[ "$DBOS_SHOULD_RUN" -eq 1 || "$DBOS_WAS_RUNNING" -eq 1 ]]; then
-			die "DBOS worker is required or already running, so its release image must be pullable"
-		fi
-		warn "continuing because the DBOS profile is disabled"
-	fi
-fi
-
-log "migrations (additive; run before switching traffic)"
-log "NOTE: migration failure will NOT auto-rollback the database"
-mk_compose up -d postgres
-mk_compose up -d --wait postgres
-if ! mk_compose --profile migrate run --rm migrate-web; then
-	warn "migrate-web failed — DB left as-is (no down-migrate)"
-	warn "restoring previous image pins in runtime.env; apps not rolled to new images"
-	rollback_apps
-	die "migration failed; restore from backup if schema is partial/corrupt"
-fi
-if ! mk_compose --profile migrate run --rm migrate-rag; then
-	warn "migrate-rag failed — DB left as-is (no down-migrate)"
-	warn "restoring previous image pins; apps not rolled to new images"
-	rollback_apps
-	die "migration failed; restore from backup if schema is partial/corrupt"
-fi
-if ! mk_compose --profile migrate run --rm configure-db-roles; then
-	warn "runtime role/login configuration failed — apps not rolled to new images"
-	rollback_apps
-	die "least-privilege database configuration failed"
-fi
-
-if [[ "$DBOS_SHOULD_RUN" -eq 1 ]]; then
-	log "starting required DBOS services before ACL projection backfill"
-	if ! mk_compose --profile dbos up -d --wait dbos-worker dbos-control; then
-		rollback_apps
-		die "required DBOS services failed before ACL projection backfill"
-	fi
-	log "backfilling restricted ACL projections"
-	if ! mk_compose --profile ops run --rm backfill-acl-projections; then
-		rollback_apps
-		die "ACL projection backfill failed"
-	fi
-fi
-
-log "waiting for active document ACL projections to converge"
-acl_projection_ok=0
-for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
-	if mk_compose --profile ops run --rm inspect-lifecycle \
-		node scripts/inspect-lifecycle.mjs --fail-on-acl-projection; then
-		acl_projection_ok=1
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+	if curl -fsS "${BASE_URL}/api/rag/health" >/dev/null; then
 		break
 	fi
-	if [[ "$DBOS_SHOULD_RUN" -ne 1 ]]; then
-		break
-	fi
-	sleep 2
-done
-if [[ "$acl_projection_ok" -ne 1 ]]; then
-	rollback_apps
-	die "active ACL projections are pending; enable DBOS ACL projection and rerun upgrade"
-fi
-
-log "draining lifecycle-worker (SIGTERM; finishes current step, no new claims)"
-mk_compose stop lifecycle-worker
-if [[ "$DBOS_SHOULD_RUN" -eq 1 || "$DBOS_WAS_RUNNING" -eq 1 ]]; then
-	log "draining DBOS control/executor"
-	mk_compose --profile dbos stop dbos-control dbos-worker
-fi
-
-log "rolling api → web → lifecycle-worker → outbox-worker → caddy"
-if ! mk_compose up -d --no-deps api \
-	|| ! mk_compose up -d --no-deps --wait api \
-	|| ! mk_compose up -d --no-deps web \
-	|| ! mk_compose up -d --no-deps --wait web \
-	|| ! mk_compose up -d --no-deps lifecycle-worker \
-	|| ! mk_compose up -d --no-deps outbox-worker \
-	|| ! mk_compose up -d --no-deps caddy; then
-	warn "service roll failed — attempting app rollback to previous pins"
-	rollback_apps
-	die "upgrade roll failed; previous images redeployed (DB not reverted)"
-fi
-if [[ "$DBOS_SHOULD_RUN" -eq 1 || "$DBOS_WAS_RUNNING" -eq 1 ]]; then
-	if ! mk_compose --profile dbos up -d --no-deps --wait dbos-worker dbos-control; then
-		warn "DBOS service roll failed — attempting app rollback"
-		rollback_apps
-		die "DBOS upgrade roll failed; previous images redeployed"
-	fi
-fi
-
-log "post-upgrade probes"
-health_ok=0
-for _attempt in 1 2 3 4 5 6 7 8 9 10; do
-	if curl -sf "${BASE_URL}/api/rag/health" | tee /tmp/unorag-upgrade-health.json; then
-		echo
-		health_ok=1
-		break
-	fi
-	echo
-	warn "health probe attempt ${_attempt}/10 failed; retrying in 3s"
+	[[ $attempt -lt 10 ]] || die "health probe failed after upgrade"
 	sleep 3
 done
-if [[ "$health_ok" -ne 1 ]]; then
-	warn "health probe failed — attempting app rollback to previous pins"
-	rollback_apps
-	die "health failed after upgrade; previous images redeployed (DB not reverted)"
+
+if [[ $SKIP_SMOKE -eq 0 && -x "${ROOT}/scripts/pilot-smoke.sh" ]]; then
+	UNORAG_BASE_URL="$BASE_URL" "${ROOT}/scripts/pilot-smoke.sh"
 fi
 
-if [[ "$SKIP_SMOKE" -eq 0 && -x "$SMOKE_SCRIPT" ]]; then
-	log "running pilot-smoke.sh"
-	if UNORAG_BASE_URL="$BASE_URL" "$SMOKE_SCRIPT"; then
-		:
-	else
-		smoke_rc=$?
-		if [[ "$smoke_rc" -eq 2 ]]; then
-			warn "pilot-smoke SKIP (exit 2) — upgrade continues; investigate credentials/stack"
-		else
-			warn "pilot-smoke FAIL — attempting app rollback to previous pins"
-			rollback_apps
-			die "pilot-smoke failed; previous images redeployed (DB not reverted)"
-		fi
-	fi
-elif [[ "$SKIP_SMOKE" -eq 1 ]]; then
-	log "skipping pilot-smoke (--skip-smoke)"
-else
-	warn "pilot-smoke.sh not found/executable — skip smoke"
-fi
-
-log "upgrade complete — previous pins in $PREV_ENV; verify ask/upload and run: ./scripts/compose-env.sh is sourced, then mk_compose --profile ops run --rm inspect-lifecycle"
-if [[ "$DID_SWITCH" -eq 1 ]]; then
-	true
-fi
+SWITCHED=0
+trap - EXIT
+log "upgrade complete; previous image pins are in $PREVIOUS_ENV"

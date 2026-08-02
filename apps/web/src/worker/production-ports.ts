@@ -595,28 +595,20 @@ export async function createWorkerPorts(
 	);
 	const documentStorageRoot = requiredEnvironment("DOCUMENT_STORAGE_ROOT");
 	const embeddingDimensions = positiveInteger("EMBEDDING_DIM", 1_024);
-	const documentIngestEnabled =
-		enabled("UNORAG_DBOS_DOCUMENT_INGEST_ENABLED") ||
-		enabled("UNORAG_DBOS_TEXT_INGEST_ENABLED");
-	if (
-		documentIngestEnabled &&
-		!config.listenQueues.some((queue) => queue.startsWith("ingest-"))
-	) {
+	if (!config.listenQueues.some((queue) => queue.startsWith("ingest-"))) {
 		throw new Error("DBOS document ingest requires at least one ingest queue");
 	}
-	const documentIngestConfig = documentIngestEnabled
-		? {
-				apiKey: requiredEnvironment("OPENAI_API_KEY"),
-				baseUrl: requiredEnvironment("OPENAI_BASE_URL"),
-				model: requiredEnvironment("EMBEDDING_MODEL"),
-				dimensions: embeddingDimensions,
-				batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
-				maxUploadBytes: positiveInteger(
-					"DOCUMENT_MAX_UPLOAD_BYTES",
-					50 * 1024 * 1024,
-				),
-			}
-		: null;
+	const documentIngestConfig = {
+		apiKey: requiredEnvironment("OPENAI_API_KEY"),
+		baseUrl: requiredEnvironment("OPENAI_BASE_URL"),
+		model: requiredEnvironment("EMBEDDING_MODEL"),
+		dimensions: embeddingDimensions,
+		batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
+		maxUploadBytes: positiveInteger(
+			"DOCUMENT_MAX_UPLOAD_BYTES",
+			50 * 1024 * 1024,
+		),
+	};
 	const pool = new Pool({
 		connectionString: databaseUrl,
 		max: positiveInteger("DATABASE_POOL_MAX", 10),
@@ -662,77 +654,74 @@ export async function createWorkerPorts(
 			await pool.end();
 		},
 	};
-	if (documentIngestConfig) {
-		const embeddings = new OpenAICompatibleEmbeddingProvider({
-			apiKey: documentIngestConfig.apiKey,
-			baseUrl: documentIngestConfig.baseUrl,
-			model: documentIngestConfig.model,
-			dimensions: documentIngestConfig.dimensions,
-			batchSize: documentIngestConfig.batchSize,
-		});
-		const source = new LocalDocumentIngestSource(
-			documentStorageRoot,
-			documentIngestConfig.maxUploadBytes,
-		);
-		const sourceLoader: ParseSourceLoader = async (input, signal) => {
-			if (signal?.aborted) throw signal.reason;
-			const prefix = "storage://";
-			if (!input.sourceUri.startsWith(prefix)) {
-				throw new Error("Parser source URI must use storage://");
-			}
-			const content = await source.load(input.sourceUri.slice(prefix.length));
-			assertDocumentContentHash(content, input.contentHash);
-			if (signal?.aborted) throw signal.reason;
-			return content;
-		};
-		const liteParse = new LiteParseProvider({
-			sourceLoader,
-			ocrEnabled: enabledByDefault("LITEPARSE_OCR_ENABLED"),
-			ocrLanguage: process.env.LITEPARSE_OCR_LANGUAGE?.trim(),
-			timeoutMs: positiveInteger("LITEPARSE_TIMEOUT_MS", 120_000),
-			maxConcurrency: positiveInteger("LITEPARSE_MAX_CONCURRENCY", 2),
-		});
-		const minerUUrl =
-			process.env.MINERU_SELF_HOSTED_URL?.trim() ||
-			process.env.MINERU_URL?.trim();
-		const minerUEnabled = enabled("MINERU_ENABLED") && Boolean(minerUUrl);
-		const minerU = minerUEnabled
-			? new MinerUProvider({
-					baseUrl: minerUUrl as string,
-					sourceLoader,
-					version: process.env.MINERU_VERSION?.trim() || "unknown",
-					transport:
-						process.env.MINERU_TRANSPORT?.trim().toLowerCase() === "tasks" ||
-						process.env.MINERU_MODE?.trim().toLowerCase() === "async"
-							? "tasks"
-							: "file-parse",
-					headers: process.env.MINERU_API_KEY?.trim()
-						? {
-								authorization: `Bearer ${process.env.MINERU_API_KEY.trim()}`,
-							}
-						: undefined,
-					externalDataProcessing:
-						(process.env.MINERU_PROVIDER?.trim().toLowerCase() ||
-							"self_hosted") !== "self_hosted",
-				})
-			: undefined;
-		const pdfParser = new PdfDocumentParser({
-			liteParse,
-			minerU,
-			externalParserAllowed: enabled("EXTERNAL_PARSER_ALLOWED"),
-			pollIntervalMs: positiveInteger("PARSER_POLL_INTERVAL_MS", 250),
-			maxWaitMs: positiveInteger("PARSER_MAX_WAIT_MS", 15 * 60_000),
-		});
-		ports.documentIngest = {
-			transactions: new PostgresDocumentIngestTransactions(pool),
-			external: new DocumentIngestStager(
-				source,
-				new PostgresDocumentIngestScope(pool),
-				embeddings,
-				new QdrantIngestWriteStore(qdrant, qdrantCollection),
-				pdfParser,
-			),
-		};
-	}
+	const embeddings = new OpenAICompatibleEmbeddingProvider({
+		apiKey: documentIngestConfig.apiKey,
+		baseUrl: documentIngestConfig.baseUrl,
+		model: documentIngestConfig.model,
+		dimensions: documentIngestConfig.dimensions,
+		batchSize: documentIngestConfig.batchSize,
+	});
+	const source = new LocalDocumentIngestSource(
+		documentStorageRoot,
+		documentIngestConfig.maxUploadBytes,
+	);
+	const sourceLoader: ParseSourceLoader = async (input, signal) => {
+		if (signal?.aborted) throw signal.reason;
+		const prefix = "storage://";
+		if (!input.sourceUri.startsWith(prefix)) {
+			throw new Error("Parser source URI must use storage://");
+		}
+		const content = await source.load(input.sourceUri.slice(prefix.length));
+		assertDocumentContentHash(content, input.contentHash);
+		if (signal?.aborted) throw signal.reason;
+		return content;
+	};
+	const liteParse = new LiteParseProvider({
+		sourceLoader,
+		ocrEnabled: enabledByDefault("LITEPARSE_OCR_ENABLED"),
+		ocrLanguage: process.env.LITEPARSE_OCR_LANGUAGE?.trim(),
+		timeoutMs: positiveInteger("LITEPARSE_TIMEOUT_MS", 120_000),
+		maxConcurrency: positiveInteger("LITEPARSE_MAX_CONCURRENCY", 2),
+	});
+	const minerUUrl =
+		process.env.MINERU_SELF_HOSTED_URL?.trim() ||
+		process.env.MINERU_URL?.trim();
+	const minerU = minerUUrl
+		? new MinerUProvider({
+				baseUrl: minerUUrl as string,
+				sourceLoader,
+				version: process.env.MINERU_VERSION?.trim() || "unknown",
+				transport:
+					process.env.MINERU_TRANSPORT?.trim().toLowerCase() === "tasks" ||
+					process.env.MINERU_MODE?.trim().toLowerCase() === "async"
+						? "tasks"
+						: "file-parse",
+				headers: process.env.MINERU_API_KEY?.trim()
+					? {
+							authorization: `Bearer ${process.env.MINERU_API_KEY.trim()}`,
+						}
+					: undefined,
+				externalDataProcessing:
+					(process.env.MINERU_PROVIDER?.trim().toLowerCase() ||
+						"self_hosted") !== "self_hosted",
+			})
+		: undefined;
+	const pdfParser = new PdfDocumentParser({
+		liteParse,
+		minerU,
+		externalParserAllowed: enabled("EXTERNAL_PARSER_ALLOWED"),
+		pollIntervalMs: positiveInteger("PARSER_POLL_INTERVAL_MS", 250),
+		maxWaitMs: positiveInteger("PARSER_MAX_WAIT_MS", 15 * 60_000),
+	});
+	ports.documentIngest = {
+		transactions: new PostgresDocumentIngestTransactions(pool),
+		external: new DocumentIngestStager(
+			source,
+			new PostgresDocumentIngestScope(pool),
+			embeddings,
+			new QdrantIngestWriteStore(qdrant, qdrantCollection),
+			pdfParser,
+		),
+	};
 	return ports;
 }

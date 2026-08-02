@@ -1,9 +1,5 @@
 name: eval-gates
 
-# L7 deterministic release gates + Py↔JS policy parity.
-# Called from ci.yml (single PR/main entrypoint). Also callable manually.
-# Ablation eval is intentionally NOT a release gate.
-
 on:
   workflow_call:
   workflow_dispatch:
@@ -12,50 +8,20 @@ permissions:
   contents: read
 
 jobs:
-  ci-deterministic:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/api
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - name: Install API deps
-        run: uv sync --group dev
-      - name: L7 CI release gates
-        run: |
-          uv run python scripts/run_release_gates.py \
-            --mode ci \
-            --baseline tests/eval/baselines/ci-deterministic.json \
-            --report-out /tmp/unorag-ci-gate.json
-      - name: Show gate report summary
-        if: always()
-        run: |
-          if [[ -f /tmp/unorag-ci-gate.json ]]; then
-            python3 -c "import json; d=json.load(open('/tmp/unorag-ci-gate.json')); print(json.dumps({k:d.get(k) for k in ('ok','mode','failed','fuse_failures') if k in d or True}, indent=2, default=str)[:2000])"
-          fi
-
-  policy-parity:
+  deterministic-ts-core:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: pnpm/action-setup@v4
         with:
-          enable-cache: true
+          version: 9.7.1
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install API deps
-        working-directory: apps/api
-        run: uv sync --group dev
-      - name: Python policy unit + fixture contract
-        working-directory: apps/api
-        run: |
-          uv run pytest tests/test_policy_profiles.py tests/test_policy_parity_contract.py -q
-      - name: JS policy fixture contract
-        working-directory: apps/web
-        run: node --test tests/policy-parity.test.mjs
-      - name: Py↔JS policy parity compare
-        run: python3 scripts/compare_policy_parity.py
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Ask, retrieval, parser, and lifecycle release gates
+        run: pnpm --filter web test:ts-core
+      - name: Public API and policy contracts
+        run: pnpm --filter web test

@@ -87,7 +87,7 @@ test("staging overwrites security scope, batches points, and validates exact cou
 	});
 });
 
-test("staging and retrieval preserve the complete Python TableIR payload", async () => {
+test("staging and retrieval preserve the complete TableIR payload", async () => {
 	const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
 	const store = new QdrantIngestWriteStore(fakeClient(calls, 1), "chunks");
 	const tableRecord: IndexWritePayload = {

@@ -43,11 +43,11 @@ test("editor and admin can edit document ACL", () => {
 	assert.equal(authorizeDocumentAclWrite({ role: "owner" }).ok, true);
 });
 
-test("durable ACL projection is an explicit deployment capability", () => {
-	assert.equal(dbosAclProjectionEnabled({}), false);
+test("durable ACL projection always uses DBOS", () => {
+	assert.equal(dbosAclProjectionEnabled({}), true);
 	assert.equal(
 		dbosAclProjectionEnabled({
-			UNORAG_DBOS_ACL_PROJECTION_ENABLED: "true",
+			UNORAG_DBOS_ACL_PROJECTION_ENABLED: "false",
 		}),
 		true,
 	);

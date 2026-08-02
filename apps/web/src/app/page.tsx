@@ -279,7 +279,7 @@ export default function Home() {
 							[
 								Database,
 								"Knowledge Plane",
-								"FastAPI · Qdrant · PostgreSQL · Redis",
+								"Next.js · LangGraph · Qdrant · DBOS",
 							],
 							[
 								LockKeyhole,

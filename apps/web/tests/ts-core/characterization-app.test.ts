@@ -5,11 +5,11 @@ import { test } from "node:test";
 import { createCharacterizationApp } from "../../src/server/http/characterization-app";
 
 const fixtureUrl = new URL(
-	"../fixtures/ts-core/python-document-ir-v1.json",
+	"../fixtures/ts-core/document-ir-v1.json",
 	import.meta.url,
 );
 
-test("characterization app validates a Python DocumentIR fixture", async () => {
+test("characterization app validates a DocumentIR fixture", async () => {
 	const fixture = await readFile(fixtureUrl, "utf8");
 	const response = await createCharacterizationApp().handle(
 		new Request("http://local/api/internal/ts-core/document-ir/validate", {

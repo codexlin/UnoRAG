@@ -3,7 +3,7 @@
 	"info": {
 		"title": "UnoRAG Knowledge API",
 		"version": "1.0.0",
-		"description": "Stable service-to-service Retrieve and Ask contract. Canonical human doc: docs/contracts/retrieve-ask-v1.md. FastAPI data-plane endpoints are internal and are not part of this public contract."
+		"description": "Stable service-to-service Retrieve and Ask contract. Canonical human doc: docs/contracts/retrieve-ask-v1.md. Internal runtime endpoints are not part of this public contract."
 	},
 	"servers": [
 		{

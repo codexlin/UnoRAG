@@ -22,7 +22,7 @@ import {
 } from "../../src/core/ingest";
 
 const fixtureUrl = new URL(
-	"../fixtures/ts-core/python-document-ir-v1.json",
+	"../fixtures/ts-core/document-ir-v1.json",
 	import.meta.url,
 );
 
@@ -35,7 +35,7 @@ const recordOptions = {
 	filename: "fixture.txt",
 };
 
-test("chunks representative Python DocumentIR and preserves table structure", async () => {
+test("chunks representative DocumentIR and preserves table structure", async () => {
 	const fixture = JSON.parse(await readFile(fileURLToPath(fixtureUrl), "utf8"));
 	const document = DocumentIRSchema.parse(fixture);
 
@@ -240,7 +240,7 @@ test("section records preserve adjacent occurrences including root runs", () => 
 	);
 });
 
-test("deterministic record and generation IDs match the Python implementation", () => {
+test("deterministic record and generation IDs remain backward compatible", () => {
 	assert.equal(
 		recordPointId("chk:document-1:0"),
 		"8a678823-3e97-5bd4-8207-68ca7d8dba3b",

@@ -8,14 +8,14 @@ test("lifecycle v2 defaults on without env", () => {
 	assert.equal(documentLifecycleV2Enabled({ NODE_ENV: "production" }), true);
 });
 
-test("lifecycle v2 can be explicitly disabled", () => {
+test("legacy environment flags cannot disable the native lifecycle", () => {
 	assert.equal(
 		documentLifecycleV2Enabled({ DOCUMENT_LIFECYCLE_V2: "false" }),
-		false,
+		true,
 	);
 	assert.equal(
 		documentLifecycleV2Enabled({ DOCUMENT_LIFECYCLE_V2: "0" }),
-		false,
+		true,
 	);
 });
 

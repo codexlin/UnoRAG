@@ -25,20 +25,12 @@ brand:
 # Fast local gates (not full CI). Skip with JUST_SKIP_CHECK=1 on release.
 check: brand
 	#!/usr/bin/env bash
-	cd apps/api
-	if command -v uv >/dev/null 2>&1; then
-		uv sync --group dev
-		uv run python scripts/run_release_gates.py \
-			--mode ci \
-			--baseline tests/eval/baselines/ci-deterministic.json \
-			--report-out /tmp/unorag-ci-gate.json
-	else
-		echo "skip api gates: uv not found" >&2
-	fi
-	cd ../..
 	if command -v pnpm >/dev/null 2>&1; then
 		pnpm install --frozen-lockfile
 		pnpm --filter web test
+		pnpm --filter web test:ts-core
+		pnpm --filter web typecheck
+		pnpm --filter web db:check
 		pnpm --filter web lint
 	else
 		echo "skip web check: pnpm not found" >&2
@@ -53,7 +45,7 @@ images tag platform=default_platform:
 	[[ -n "{{tag}}" ]] || { echo "error: pass tag (never latest), e.g. just images v0.0.1" >&2; exit 1; }
 	./scripts/release/local-images.sh build --tag "{{tag}}" --platform "{{platform}}" --out "{{out}}"
 
-# Build + push web, migrator, API, outbox, and DBOS worker images + digest manifest
+# Build + push web, migrator, ops, and DBOS worker images + digest manifest
 # Usage: just push v0.0.1 registry.example.com/ns [linux/amd64]
 push tag registry platform=default_platform:
 	#!/usr/bin/env bash

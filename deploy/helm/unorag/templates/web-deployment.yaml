@@ -29,42 +29,41 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.web.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "unorag.fullname" . }}-config
           env:
             - name: NODE_ENV
               value: production
             - name: PORT
               value: {{ .Values.web.port | quote }}
-            - name: RAG_API_URL
-              value: {{ printf "http://%s-api:%v" (include "unorag.fullname" .) .Values.service.api.port | quote }}
             - name: DATABASE_POOL_MAX
               value: {{ .Values.config.databasePoolMax | default "10" | quote }}
             - name: DOCUMENT_STORAGE_ROOT
               value: {{ .Values.documentStorageRoot | quote }}
             - name: DOCUMENT_MAX_UPLOAD_BYTES
               value: {{ .Values.config.documentMaxUploadBytes | default "52428800" | quote }}
-            - name: UNORAG_DBOS_DOCUMENT_DELETE_ENABLED
-              value: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
-            - name: UNORAG_DBOS_TEXT_INGEST_ENABLED
-              value: {{ .Values.config.dbosTextIngestRouteEnabled | quote }}
-            - name: UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED
-              value: {{ .Values.config.dbosTextIngestRouteEnabled | quote }}
-            - name: UNORAG_DBOS_ACL_PROJECTION_ENABLED
-              value: {{ .Values.config.dbosAclProjectionEnabled | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "unorag.secretName" . }}
                   key: DATABASE_URL
-            - name: UNORAG_INTERNAL_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "unorag.secretName" . }}
-                  key: UNORAG_INTERNAL_SECRET
             - name: UNORAG_SESSION_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "unorag.secretName" . }}
                   key: UNORAG_SESSION_SECRET
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: LLM_API_KEY
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: QDRANT_API_KEY
+                  optional: true
           volumeMounts:
             {{- if .Values.persistence.enabled }}
             - name: documents

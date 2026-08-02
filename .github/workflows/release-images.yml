@@ -77,26 +77,22 @@ jobs:
             acr_repo="${ACR_REGISTRY}/${ACR_NAMESPACE}/unorag"
             ghcr_repo="ghcr.io/${owner}/unorag"
             echo "web_tags=${acr_repo}:web-${tag},${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
-            echo "api_tags=${acr_repo}:api-${tag},${ghcr_repo}:api-${tag}" >> "${GITHUB_OUTPUT}"
-            echo "outbox_tags=${acr_repo}:outbox-${tag},${ghcr_repo}:outbox-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "ops_tags=${acr_repo}:ops-${tag},${ghcr_repo}:ops-${tag}" >> "${GITHUB_OUTPUT}"
             echo "worker_tags=${acr_repo}:worker-${tag},${ghcr_repo}:worker-${tag}" >> "${GITHUB_OUTPUT}"
             echo "migrator_tags=${acr_repo}:migrator-${tag},${ghcr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
             echo "acr_repo=${acr_repo}" >> "${GITHUB_OUTPUT}"
             echo "ghcr_repo=${ghcr_repo}" >> "${GITHUB_OUTPUT}"
             echo "web_scan_ref=${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
-            echo "api_scan_ref=${ghcr_repo}:api-${tag}" >> "${GITHUB_OUTPUT}"
-            echo "outbox_scan_ref=${ghcr_repo}:outbox-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "ops_scan_ref=${ghcr_repo}:ops-${tag}" >> "${GITHUB_OUTPUT}"
             echo "worker_scan_ref=${ghcr_repo}:worker-${tag}" >> "${GITHUB_OUTPUT}"
             echo "migrator_scan_ref=${ghcr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
           else
             echo "web_tags=unorag-web:${tag}" >> "${GITHUB_OUTPUT}"
-            echo "api_tags=unorag-api:${tag}" >> "${GITHUB_OUTPUT}"
-            echo "outbox_tags=unorag-outbox:${tag}" >> "${GITHUB_OUTPUT}"
+            echo "ops_tags=unorag-web-ops:${tag}" >> "${GITHUB_OUTPUT}"
             echo "worker_tags=unorag-web-worker:${tag}" >> "${GITHUB_OUTPUT}"
             echo "migrator_tags=unorag-web-migrator:${tag}" >> "${GITHUB_OUTPUT}"
             echo "web_scan_ref=unorag-web:${tag}" >> "${GITHUB_OUTPUT}"
-            echo "api_scan_ref=unorag-api:${tag}" >> "${GITHUB_OUTPUT}"
-            echo "outbox_scan_ref=unorag-outbox:${tag}" >> "${GITHUB_OUTPUT}"
+            echo "ops_scan_ref=unorag-web-ops:${tag}" >> "${GITHUB_OUTPUT}"
             echo "worker_scan_ref=unorag-web-worker:${tag}" >> "${GITHUB_OUTPUT}"
             echo "migrator_scan_ref=unorag-web-migrator:${tag}" >> "${GITHUB_OUTPUT}"
           fi
@@ -156,26 +152,16 @@ jobs:
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.migrator_tags }}
 
-      - name: Build and publish API
-        id: api
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/docker/api.Dockerfile
-          push: ${{ steps.meta.outputs.dry_run != 'true' }}
-          load: ${{ steps.meta.outputs.dry_run == 'true' }}
-          tags: ${{ steps.meta.outputs.api_tags }}
-
-      - name: Build and publish outbox worker
-        id: outbox
+      - name: Build and publish ops image
+        id: ops
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/docker/web.Dockerfile
-          target: outbox
+          target: ops
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
-          tags: ${{ steps.meta.outputs.outbox_tags }}
+          tags: ${{ steps.meta.outputs.ops_tags }}
 
       - name: Build and publish DBOS worker
         id: worker
@@ -206,19 +192,10 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
 
-      - name: Scan API image
+      - name: Scan ops image
         uses: aquasecurity/trivy-action@0.33.1
         with:
-          image-ref: ${{ steps.meta.outputs.api_scan_ref }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-
-      - name: Scan outbox worker image
-        uses: aquasecurity/trivy-action@0.33.1
-        with:
-          image-ref: ${{ steps.meta.outputs.outbox_scan_ref }}
+          image-ref: ${{ steps.meta.outputs.ops_scan_ref }}
           format: table
           exit-code: "1"
           ignore-unfixed: true
@@ -240,8 +217,7 @@ jobs:
           ACR_REPO: ${{ steps.meta.outputs.acr_repo }}
           GHCR_REPO: ${{ steps.meta.outputs.ghcr_repo }}
           WEB_DIGEST: ${{ steps.web.outputs.digest }}
-          API_DIGEST: ${{ steps.api.outputs.digest }}
-          OUTBOX_DIGEST: ${{ steps.outbox.outputs.digest }}
+          OPS_DIGEST: ${{ steps.ops.outputs.digest }}
           WORKER_DIGEST: ${{ steps.worker.outputs.digest }}
           MIGRATOR_DIGEST: ${{ steps.migrator.outputs.digest }}
         run: |
@@ -252,28 +228,25 @@ jobs:
             cat > /tmp/unorag-release/release-local.env <<EOF
           UNORAG_WEB_IMAGE=unorag-web:${TAG}
           UNORAG_WEB_MIGRATOR_IMAGE=unorag-web-migrator:${TAG}
-          UNORAG_API_IMAGE=unorag-api:${TAG}
-          UNORAG_OUTBOX_IMAGE=unorag-outbox:${TAG}
+          UNORAG_WEB_OPS_IMAGE=unorag-web-ops:${TAG}
           UNORAG_DBOS_WORKER_IMAGE=unorag-web-worker:${TAG}
           UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
           EOF
           else
-            for digest in "${WEB_DIGEST}" "${API_DIGEST}" "${OUTBOX_DIGEST}" "${WORKER_DIGEST}" "${MIGRATOR_DIGEST}"; do
+            for digest in "${WEB_DIGEST}" "${OPS_DIGEST}" "${WORKER_DIGEST}" "${MIGRATOR_DIGEST}"; do
               [[ "${digest}" == sha256:* ]] || { echo "missing image digest" >&2; exit 1; }
             done
             cat > /tmp/unorag-release/release-acr.env <<EOF
           UNORAG_WEB_IMAGE=${ACR_REPO}@${WEB_DIGEST}
           UNORAG_WEB_MIGRATOR_IMAGE=${ACR_REPO}@${MIGRATOR_DIGEST}
-          UNORAG_API_IMAGE=${ACR_REPO}@${API_DIGEST}
-          UNORAG_OUTBOX_IMAGE=${ACR_REPO}@${OUTBOX_DIGEST}
+          UNORAG_WEB_OPS_IMAGE=${ACR_REPO}@${OPS_DIGEST}
           UNORAG_DBOS_WORKER_IMAGE=${ACR_REPO}@${WORKER_DIGEST}
           UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
           EOF
             cat > /tmp/unorag-release/release-ghcr.env <<EOF
           UNORAG_WEB_IMAGE=${GHCR_REPO}@${WEB_DIGEST}
           UNORAG_WEB_MIGRATOR_IMAGE=${GHCR_REPO}@${MIGRATOR_DIGEST}
-          UNORAG_API_IMAGE=${GHCR_REPO}@${API_DIGEST}
-          UNORAG_OUTBOX_IMAGE=${GHCR_REPO}@${OUTBOX_DIGEST}
+          UNORAG_WEB_OPS_IMAGE=${GHCR_REPO}@${OPS_DIGEST}
           UNORAG_DBOS_WORKER_IMAGE=${GHCR_REPO}@${WORKER_DIGEST}
           UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
           EOF

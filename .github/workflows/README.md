@@ -2,9 +2,9 @@
 
 | Workflow | Role |
 |----------|-----------|
-| [`ci.yml`](./ci.yml) | **PR + main** entrypoint: lint-diff, eval-gates, full API pytest, web test/lint/build, Docker build-verify (no push). `permissions: contents: read` only. |
-| [`eval-gates.yml`](./eval-gates.yml) | Reusable deterministic release gate + Py↔JS policy parity. Called by `ci.yml`. |
-| [`release-images.yml`](./release-images.yml) | Manual/tag build of five image targets (web, migrator, API, outbox, DBOS worker); one build per target is pushed to ACR + GHCR, gated by Trivy `HIGH/CRITICAL` image scans, and emitted with the DBOS workflow compatibility version. Tags publish automatically; manual runs require ACR secrets and `dry_run=false`. |
+| [`ci.yml`](./ci.yml) | **PR + main** entrypoint: lint-diff, TypeScript release gates, web test/lint/build, and Docker build verification. |
+| [`eval-gates.yml`](./eval-gates.yml) | Reusable deterministic TypeScript core and public-contract gates. |
+| [`release-images.yml`](./release-images.yml) | Manual/tag build of four Node targets (web, migrator, ops, DBOS worker), published to ACR + GHCR and scanned with Trivy. |
 | `promote-images.yml` | **Not in repo yet** — TCR/Harbor promote deferred. |
 | `deploy.yml` | **Deferred** — human-approved SSH deploy after `upgrade.sh` pull path is proven. |
 

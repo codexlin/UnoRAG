@@ -1,5 +1,5 @@
 # UnoRAG edge for webch.cn (Aliyun pilot — simulated real user).
-# HTTP-01 ACME on :80; HTTPS on :443. FastAPI stays unpublished.
+# HTTP-01 ACME on :80; HTTPS on :443. Workers and data stores stay unpublished.
 
 {
 	email admin@webch.cn

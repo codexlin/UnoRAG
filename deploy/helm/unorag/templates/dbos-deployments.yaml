@@ -1,20 +1,8 @@
-{{- if and .Values.dbos.enabled (eq (toString .Values.config.dbosDocumentDeleteEnabled) "true") (not .Values.persistence.enabled) }}
-{{- fail "config.dbosDocumentDeleteEnabled=true requires persistence.enabled=true for local document storage" }}
+{{- if and .Values.dbos.enabled (not .Values.persistence.enabled) }}
+{{- fail "dbos.enabled=true requires persistence.enabled=true for document ingest and deletion" }}
 {{- end }}
-{{- if and (eq (toString .Values.config.dbosTextIngestEnabled) "true") (not .Values.dbos.enabled) }}
-{{- fail "config.dbosTextIngestEnabled=true requires dbos.enabled=true" }}
-{{- end }}
-{{- if and (eq (toString .Values.config.dbosAclProjectionEnabled) "true") (not .Values.dbos.enabled) }}
-{{- fail "config.dbosAclProjectionEnabled=true requires dbos.enabled=true" }}
-{{- end }}
-{{- if and (eq (toString .Values.config.dbosTextIngestRouteEnabled) "true") (ne (toString .Values.config.dbosTextIngestEnabled) "true") }}
-{{- fail "config.dbosTextIngestRouteEnabled=true requires config.dbosTextIngestEnabled=true" }}
-{{- end }}
-{{- if and .Values.dbos.enabled (eq (toString .Values.config.dbosTextIngestEnabled) "true") (not .Values.persistence.enabled) }}
-{{- fail "config.dbosTextIngestEnabled=true requires persistence.enabled=true for local document storage" }}
-{{- end }}
-{{- if and .Values.dbos.enabled (eq (toString .Values.config.dbosTextIngestEnabled) "true") (not .Values.config.openaiBaseUrl) (not .Values.config.llmBaseUrl) }}
-{{- fail "config.dbosTextIngestEnabled=true requires config.openaiBaseUrl or config.llmBaseUrl" }}
+{{- if and .Values.dbos.enabled (not .Values.config.openaiBaseUrl) (not .Values.config.llmBaseUrl) }}
+{{- fail "dbos.enabled=true requires config.openaiBaseUrl or config.llmBaseUrl" }}
 {{- end }}
 {{- if .Values.dbos.enabled }}
 apiVersion: apps/v1
@@ -70,13 +58,9 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: UNORAG_DBOS_LISTEN_QUEUES
-              value: {{ ternary "ingest-local,lifecycle" "lifecycle" (eq (toString .Values.config.dbosTextIngestEnabled) "true") | quote }}
+              value: "ingest-local,lifecycle"
             - name: UNORAG_DBOS_CLEANUP_ENABLED
               value: "true"
-            - name: UNORAG_DBOS_DOCUMENT_DELETE_ENABLED
-              value: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
-            - name: UNORAG_DBOS_TEXT_INGEST_ENABLED
-              value: {{ .Values.config.dbosTextIngestEnabled | quote }}
             - name: DBOS_SYSTEM_DATABASE_POOL_SIZE
               value: {{ .Values.dbos.systemDatabasePoolSize | quote }}
             - name: DBOS_LIFECYCLE_CONCURRENCY
@@ -112,6 +96,24 @@ spec:
               value: {{ .Values.config.embeddingDim | quote }}
             - name: EMBEDDING_BATCH_SIZE
               value: {{ .Values.config.embeddingBatchSize | quote }}
+            - name: MINERU_PROVIDER
+              value: {{ .Values.config.mineruProvider | quote }}
+            - name: MINERU_SELF_HOSTED_URL
+              value: {{ .Values.config.mineruSelfHostedUrl | quote }}
+            - name: MINERU_URL
+              value: {{ .Values.config.mineruUrl | quote }}
+            - name: MINERU_MODE
+              value: {{ .Values.config.mineruMode | quote }}
+            - name: MINERU_VERSION
+              value: {{ .Values.config.mineruVersion | quote }}
+            - name: EXTERNAL_PARSER_ALLOWED
+              value: {{ .Values.config.externalParserAllowed | quote }}
+            - name: MINERU_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: MINERU_API_KEY
+                  optional: true
           {{- if .Values.persistence.enabled }}
           volumeMounts:
             - name: documents
@@ -210,10 +212,6 @@ spec:
               value: lifecycle
             - name: UNORAG_DBOS_CLEANUP_ENABLED
               value: "true"
-            - name: UNORAG_DBOS_DOCUMENT_DELETE_ENABLED
-              value: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
-            - name: UNORAG_DBOS_TEXT_INGEST_ENABLED
-              value: {{ .Values.config.dbosTextIngestEnabled | quote }}
             - name: DBOS_SYSTEM_DATABASE_POOL_SIZE
               value: {{ .Values.dbos.systemDatabasePoolSize | quote }}
             - name: DBOS_LIFECYCLE_CONCURRENCY

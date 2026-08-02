@@ -17,7 +17,7 @@ if [[ "${CONFIRM:-}" != "YES" ]]; then
 	echo "refusing restore without CONFIRM=YES (destructive)" >&2
 	exit 1
 fi
-for required in postgres.sql documents.tgz qdrant.tgz; do
+for required in postgres.sql dbos-system.dump documents.tgz qdrant.tgz; do
 	if [[ ! -f "$BACKUP_DIR/$required" ]]; then
 		echo "refusing restore: missing $BACKUP_DIR/$required" >&2
 		exit 1
@@ -41,15 +41,9 @@ PROJECT="$(mk_config_get COMPOSE_PROJECT_NAME || echo unorag)"
 POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo unorag)"
 POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo unorag)"
 DBOS_DB="$(mk_config_get UNORAG_DBOS_DATABASE || echo unorag_dbos)"
-DBOS_WAS_RUNNING=0
-
-if [[ -n "$(mk_compose --profile dbos ps -q dbos-worker 2>/dev/null || true)" ]]; then
-	DBOS_WAS_RUNNING=1
-fi
 
 echo "==> stopping app services (keeping volumes)"
-mk_compose stop caddy web api lifecycle-worker outbox-worker || true
-mk_compose --profile dbos stop dbos-control dbos-worker || true
+mk_compose stop caddy web dbos-control dbos-worker || true
 
 echo "==> ensuring infra is up"
 mk_compose up -d postgres qdrant redis
@@ -76,7 +70,8 @@ if [[ -f "$BACKUP_DIR/dbos-system.dump" ]]; then
 		--role=unorag_dbos_login --exit-on-error \
 		< "$BACKUP_DIR/dbos-system.dump"
 else
-	echo "warning: legacy backup has no dbos-system.dump; DBOS profile must remain disabled" >&2
+	echo "refusing restore: backup has no dbos-system.dump required by DBOS" >&2
+	exit 1
 fi
 
 echo "==> verify restored runtime boundaries"
@@ -96,11 +91,8 @@ docker run --rm \
 	alpine:3.21 sh -c 'rm -rf /data/* /data/.[!.]* 2>/dev/null; tar -C /data -xzf /backup/qdrant.tgz'
 mk_compose up -d --wait qdrant
 
-echo "==> starting application stack (incl. outbox-worker)"
-mk_compose up -d caddy web api lifecycle-worker outbox-worker
-if [[ "$DBOS_WAS_RUNNING" -eq 1 && -f "$BACKUP_DIR/dbos-system.dump" ]]; then
-	mk_compose --profile dbos up -d dbos-worker dbos-control
-fi
+echo "==> starting DBOS and application stack"
+mk_compose up -d --wait dbos-worker dbos-control web caddy
 
 echo "restore complete — verify /api/rag/health, citations, and active versions"
 echo "see docs/runbooks/private-deployment.md"

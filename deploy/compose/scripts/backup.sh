@@ -25,7 +25,7 @@ DBOS_WAS_RUNNING=0
 QDRANT_WAS_RUNNING=0
 APP_WAS_RUNNING=()
 
-for service in caddy web api lifecycle-worker outbox-worker; do
+for service in caddy web; do
 	if [[ -n "$(mk_compose ps --status running -q "$service" 2>/dev/null || true)" ]]; then
 		APP_WAS_RUNNING+=("$service")
 	fi
@@ -93,7 +93,7 @@ project=${PROJECT}
 consistency=maintenance-window
 dbos_application_version=$(mk_config_get UNORAG_DBOS_APPLICATION_VERSION || echo lifecycle-v2)
 web_image=$(mk_config_get UNORAG_WEB_IMAGE || true)
-api_image=$(mk_config_get UNORAG_API_IMAGE || true)
+ops_image=$(mk_config_get UNORAG_WEB_OPS_IMAGE || true)
 dbos_worker_image=$(mk_config_get UNORAG_DBOS_WORKER_IMAGE || true)
 EOF
 

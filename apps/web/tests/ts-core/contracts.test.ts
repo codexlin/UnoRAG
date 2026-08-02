@@ -11,7 +11,7 @@ import {
 } from "../../src/core/contracts";
 
 const askFixtureUrl = new URL(
-	"../fixtures/ts-core/python-ask-contract-v1.json",
+	"../fixtures/ts-core/ask-contract-v1.json",
 	import.meta.url,
 );
 
@@ -50,7 +50,7 @@ test("retrieval plan rejects model-invented security filters", () => {
 	);
 });
 
-test("Ask state accepts the current Python graph surface", () => {
+test("Ask state accepts the stable graph contract", () => {
 	assert.equal(
 		AskStateSchema.safeParse({
 			session_id: "session-1",
@@ -63,7 +63,7 @@ test("Ask state accepts the current Python graph surface", () => {
 	);
 });
 
-test("Ask state fields and node names match the exported Python source", async () => {
+test("Ask state fields and node names match the frozen contract fixture", async () => {
 	const fixture = JSON.parse(await readFile(askFixtureUrl, "utf8")) as {
 		node_names: string[];
 		state_fields: string[];

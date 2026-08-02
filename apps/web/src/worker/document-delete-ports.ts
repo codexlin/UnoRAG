@@ -297,7 +297,6 @@ export class DocumentDeleteExternalOperations
 			);
 		}
 	}
-
 }
 
 export class PostgresDocumentDeleteTransactions

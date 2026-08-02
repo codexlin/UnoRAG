@@ -5,29 +5,14 @@ metadata:
   labels:
     {{- include "unorag.labels" . | nindent 4 }}
 data:
-  APP_ENV: {{ .Values.config.appEnv | quote }}
-  ASK_MODE: {{ .Values.config.askMode | quote }}
-  METADATA_BACKEND: {{ .Values.config.metadataBackend | quote }}
-  DOCUMENT_LIFECYCLE_V2: {{ .Values.config.documentLifecycleV2 | quote }}
-  UNORAG_DBOS_DOCUMENT_DELETE_ENABLED: {{ .Values.config.dbosDocumentDeleteEnabled | quote }}
-  UNORAG_DBOS_TEXT_INGEST_ENABLED: {{ .Values.config.dbosTextIngestEnabled | quote }}
-  UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED: {{ .Values.config.dbosTextIngestRouteEnabled | quote }}
-  UNORAG_DBOS_ACL_PROJECTION_ENABLED: {{ .Values.config.dbosAclProjectionEnabled | quote }}
-  INTERNAL_AUTH_ENABLED: {{ .Values.config.internalAuthEnabled | quote }}
-  INTERNAL_AUTH_REPLAY_BACKEND: {{ .Values.config.internalAuthReplayBackend | quote }}
-  ACTIVE_GENERATION_GATE_ENABLED: {{ .Values.config.activeGenerationGateEnabled | quote }}
-  ACTIVE_GENERATION_CACHE_TTL_SECONDS: {{ .Values.config.activeGenerationCacheTtlSeconds | quote }}
-  CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
   CHAT_MODEL: {{ .Values.config.chatModel | quote }}
   EMBEDDING_MODEL: {{ .Values.config.embeddingModel | quote }}
   EMBEDDING_DIM: {{ .Values.config.embeddingDim | quote }}
   RERANK_MODEL: {{ .Values.config.rerankModel | quote }}
-  MINERU_ENABLED: {{ .Values.config.mineruEnabled | quote }}
   MINERU_PROVIDER: {{ .Values.config.mineruProvider | quote }}
   MINERU_SELF_HOSTED_URL: {{ .Values.config.mineruSelfHostedUrl | quote }}
   MINERU_MODE: {{ .Values.config.mineruMode | quote }}
   MINERU_VERSION: {{ .Values.config.mineruVersion | quote }}
-  MINERU_PARSE_METHOD: {{ .Values.config.mineruParseMethod | quote }}
   EXTERNAL_PARSER_ALLOWED: {{ .Values.config.externalParserAllowed | quote }}
   MINERU_302_BASE_URL: {{ .Values.config.mineru302BaseUrl | quote }}
   MINERU_302_UPLOAD_PATH: {{ .Values.config.mineru302UploadPath | quote }}
@@ -45,6 +30,3 @@ data:
   QDRANT_COLLECTION: {{ .Values.external.qdrant.collection | quote }}
   REDIS_URL: {{ .Values.external.redis.url | quote }}
   DOCUMENT_STORAGE_ROOT: {{ .Values.documentStorageRoot | quote }}
-  RAG_API_URL: {{ printf "http://%s-api:%v" (include "unorag.fullname" .) .Values.service.api.port | quote }}
-  API_PREFIX: /v1
-  LIFECYCLE_WORKER_READY_FILE: /tmp/unorag-lifecycle-ready

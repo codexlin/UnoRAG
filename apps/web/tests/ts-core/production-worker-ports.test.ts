@@ -212,7 +212,6 @@ describe("production generation cleanup ports", () => {
 			"QDRANT_URL",
 			"QDRANT_COLLECTION",
 			"DOCUMENT_STORAGE_ROOT",
-			"UNORAG_DBOS_TEXT_INGEST_ENABLED",
 		];
 		const previous = Object.fromEntries(
 			names.map((name) => [name, process.env[name]]),
@@ -222,7 +221,6 @@ describe("production generation cleanup ports", () => {
 			QDRANT_URL: "http://localhost:6333",
 			QDRANT_COLLECTION: "unorag_chunks",
 			DOCUMENT_STORAGE_ROOT: "/tmp/unorag",
-			UNORAG_DBOS_TEXT_INGEST_ENABLED: "true",
 		});
 		const config: WorkerRuntimeConfig = {
 			systemDatabaseUrl: "postgresql://postgres:postgres@localhost:5432/dbos",

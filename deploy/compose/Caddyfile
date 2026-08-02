@@ -1,5 +1,5 @@
 # UnoRAG private-deployment edge proxy.
-# Only the Next.js control plane is exposed. FastAPI stays on the internal network.
+# Only the Next.js product edge is exposed; workers and data stores stay internal.
 
 {
 	admin off

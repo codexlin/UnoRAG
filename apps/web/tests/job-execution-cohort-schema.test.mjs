@@ -17,7 +17,7 @@ test("jobs schema declares durable execution ownership fields", () => {
 		schema,
 		/executionEngine: varchar\("execution_engine", \{ length: 16 \}\)/,
 	);
-	assert.match(schema, /\.default\("python"\)\s*\.notNull\(\)/);
+	assert.match(schema, /\.default\("dbos"\)\s*\.notNull\(\)/);
 	assert.match(
 		schema,
 		/workflowId: varchar\("workflow_id", \{ length: 256 \}\)/,
@@ -29,7 +29,7 @@ test("jobs schema declares durable execution ownership fields", () => {
 	assert.match(schema, /"jobs_execution_engine_check"/);
 	assert.match(
 		schema,
-		/sql`\$\{table\.executionEngine\} in \('python', 'dbos'\)`/,
+		/\$\{table\.executionEngine\} = 'python' and \$\{table\.status\} in \('cancelled', 'completed', 'failed', 'dead'\)/,
 	);
 	assert.match(schema, /"jobs_dbos_workflow_id_check"/);
 	assert.match(
@@ -72,19 +72,15 @@ test("jobs cohort migration is safe for existing rows", () => {
 	assert.match(migration, /NEW\.payload IS DISTINCT FROM OLD\.payload/);
 });
 
-test("RAG cleanup migration closes Python and DBOS ownership invariants", () => {
-	const migration = read(
-		"../api/migrations/0004_generation_cleanup_dbos_ownership.sql",
-	);
+test("runtime retirement migration closes Python execution ownership", () => {
+	const migration = read("drizzle/0020_clean_annihilus.sql");
 
+	assert.match(migration, /non-terminal Python jobs exist/);
+	assert.match(
+		migration,
+		/status NOT IN \('cancelled', 'completed', 'failed', 'dead'\)/,
+	);
+	assert.match(migration, /SET "execution_engine" = 'dbos'/);
 	assert.match(migration, /generation_cleanup_ownership_check/);
-	assert.match(
-		migration,
-		/execution_engine = 'python' AND cleanup_job_id IS NULL/,
-	);
-	assert.match(migration, /generation_cleanup_sweeping_owner_check/);
-	assert.match(
-		migration,
-		/execution_engine <> 'dbos'[\s\S]*sweep_status <> 'sweeping'[\s\S]*cleanup_job_id IS NOT NULL/,
-	);
+	assert.match(migration, /execution_engine" = 'dbos'/);
 });

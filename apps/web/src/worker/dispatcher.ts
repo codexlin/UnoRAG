@@ -7,27 +7,14 @@ import type { EnqueueResult } from "./dbos-runtime";
 import { parseOrQuarantineDurableJob } from "./job-quarantine";
 
 export function enabledDbosJobTypes(
-	environment: Record<string, string | undefined> = process.env,
+	_environment: Record<string, string | undefined> = process.env,
 ): Array<DurableJobInput["type"]> {
-	const types: Array<DurableJobInput["type"]> = [
+	return [
+		"document.ingest",
 		"document.acl.project",
 		"document.delete",
 		"generation.cleanup",
 	];
-	if (
-		["1", "true"].includes(
-			(
-				environment.UNORAG_DBOS_DOCUMENT_INGEST_ENABLED ??
-				environment.UNORAG_DBOS_TEXT_INGEST_ENABLED ??
-				""
-			)
-				.trim()
-				.toLowerCase(),
-		)
-	) {
-		types.unshift("document.ingest");
-	}
-	return types;
 }
 
 export interface DispatchCandidateStore {
@@ -112,84 +99,6 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 		environment: Record<string, string | undefined> = process.env,
 	) {
 		this.enabledJobTypes = enabledDbosJobTypes(environment);
-	}
-
-	async adoptPendingGenerationCleanups(limit: number): Promise<number> {
-		const candidates = await this.pool.query<{ generation_id: string }>(
-			`
-			SELECT generation_id::text
-			FROM app.generation_cleanup_queue
-			WHERE execution_engine = 'python'
-			  AND cleanup_job_id IS NULL
-			  AND sweep_status IN ('pending', 'error')
-			  AND delete_after <= now()
-			ORDER BY delete_after, generation_id
-			LIMIT $1
-			`,
-			[limit],
-		);
-		let adopted = 0;
-		for (const candidate of candidates.rows) {
-			if (await this.adoptOneCleanup(candidate.generation_id)) adopted += 1;
-		}
-		return adopted;
-	}
-
-	private async adoptOneCleanup(generationId: string): Promise<boolean> {
-		const client = await this.pool.connect();
-		try {
-			await client.query("BEGIN");
-			const scope = await client.query<{
-				document_id: string;
-				document_version_id: string;
-			}>(
-				`
-				SELECT document_id::text, document_version_id::text
-				FROM app.generation_cleanup_queue
-				WHERE generation_id = $1
-				  AND execution_engine = 'python'
-				  AND cleanup_job_id IS NULL
-				  AND sweep_status IN ('pending', 'error')
-				  AND delete_after <= now()
-				`,
-				[generationId],
-			);
-			const candidate = scope.rows[0];
-			if (!candidate) {
-				await client.query("ROLLBACK");
-				return false;
-			}
-			await this.lockCleanupDocument(
-				client,
-				candidate.document_id,
-				candidate.document_version_id,
-			);
-			const updated = await client.query(
-				`
-				UPDATE app.generation_cleanup_queue AS queue
-				SET execution_engine = 'dbos',
-					updated_at = now()
-				WHERE queue.generation_id = $1
-				  AND queue.execution_engine = 'python'
-				  AND queue.cleanup_job_id IS NULL
-				  AND queue.sweep_status IN ('pending', 'error')
-				  AND queue.delete_after <= now()
-				  AND NOT EXISTS (
-					  SELECT 1
-					  FROM app.active_document_generations AS active
-					  WHERE active.generation_id = queue.generation_id
-				  )
-				`,
-				[generationId],
-			);
-			await client.query("COMMIT");
-			return updated.rowCount === 1;
-		} catch (error) {
-			await rollbackQuietly(client);
-			throw error;
-		} finally {
-			client.release();
-		}
 	}
 
 	async materializeDueGenerationCleanupJobs(limit: number): Promise<number> {

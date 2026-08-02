@@ -10,8 +10,8 @@
 #   ./scripts/release/local-images.sh release --tag v0.0.1 --registry registry.example.com/ns --out dist/release
 #
 # Image naming (aligned with release-images.yml):
-#   local:    web / api / migrator / outbox / DBOS worker
-#   registry: REGISTRY/unorag:web-TAG | :api-TAG | :migrator-TAG | :outbox-TAG | :worker-TAG
+#   local:    web / migrator / ops / DBOS worker
+#   registry: REGISTRY/unorag:web-TAG | :migrator-TAG | :ops-TAG | :worker-TAG
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -33,7 +33,7 @@ Usage:
   local-images.sh push    --tag TAG --registry HOST/NAMESPACE [--platform ...]
   local-images.sh release --tag TAG --registry HOST/NAMESPACE [--out DIR] [--platform ...]
 
-  build    Build five targets into the local Docker engine (no push).
+  build    Build four targets into the local Docker engine (no push).
   push     Build (if needed), tag for registry, push, write digest manifest.
   release  Alias for push + always write manifest under --out.
 
@@ -61,9 +61,8 @@ resolve_platform() {
 }
 
 local_web() { echo "unorag-web:${TAG}"; }
-local_api() { echo "unorag-api:${TAG}"; }
 local_migrator() { echo "unorag-web-migrator:${TAG}"; }
-local_outbox() { echo "unorag-web-outbox:${TAG}"; }
+local_ops() { echo "unorag-web-ops:${TAG}"; }
 local_worker() { echo "unorag-web-worker:${TAG}"; }
 
 remote_repo() {
@@ -73,9 +72,8 @@ remote_repo() {
 }
 
 remote_web() { echo "$(remote_repo):web-${TAG}"; }
-remote_api() { echo "$(remote_repo):api-${TAG}"; }
 remote_migrator() { echo "$(remote_repo):migrator-${TAG}"; }
-remote_outbox() { echo "$(remote_repo):outbox-${TAG}"; }
+remote_ops() { echo "$(remote_repo):ops-${TAG}"; }
 remote_worker() { echo "$(remote_repo):worker-${TAG}"; }
 
 build_images() {
@@ -101,11 +99,11 @@ build_images() {
 		-t "$(local_migrator)" \
 		.
 
-	log "build web outbox → $(local_outbox)"
+	log "build web operations image → $(local_ops)"
 	docker build "${plat_args[@]}" \
 		-f deploy/docker/web.Dockerfile \
-		--target outbox \
-		-t "$(local_outbox)" \
+		--target ops \
+		-t "$(local_ops)" \
 		.
 
 	log "build DBOS worker → $(local_worker)"
@@ -114,31 +112,22 @@ build_images() {
 		--target worker \
 		-t "$(local_worker)" \
 		.
-
-	log "build api → $(local_api)"
-	docker build "${plat_args[@]}" \
-		-f deploy/docker/api.Dockerfile \
-		-t "$(local_api)" \
-		.
 }
 
 tag_for_registry() {
 	docker tag "$(local_web)" "$(remote_web)"
-	docker tag "$(local_api)" "$(remote_api)"
 	docker tag "$(local_migrator)" "$(remote_migrator)"
-	docker tag "$(local_outbox)" "$(remote_outbox)"
+	docker tag "$(local_ops)" "$(remote_ops)"
 	docker tag "$(local_worker)" "$(remote_worker)"
 }
 
 push_images() {
 	log "push $(remote_web)"
 	docker push "$(remote_web)"
-	log "push $(remote_api)"
-	docker push "$(remote_api)"
 	log "push $(remote_migrator)"
 	docker push "$(remote_migrator)"
-	log "push $(remote_outbox)"
-	docker push "$(remote_outbox)"
+	log "push $(remote_ops)"
+	docker push "$(remote_ops)"
 	log "push $(remote_worker)"
 	docker push "$(remote_worker)"
 }
@@ -160,31 +149,28 @@ write_manifest() {
 	local out="$1"
 	local mode="$2" # local | registry
 	mkdir -p "$out"
-	local web_ref api_ref mig_ref out_ref worker_ref web_d api_d mig_d out_d worker_d
+	local web_ref mig_ref ops_ref worker_ref web_d mig_d ops_d worker_d
 	local env_file json_file
 
 	if [[ "$mode" == "registry" ]]; then
 		web_ref="$(remote_web)"
-		api_ref="$(remote_api)"
 		mig_ref="$(remote_migrator)"
-		out_ref="$(remote_outbox)"
+		ops_ref="$(remote_ops)"
 		worker_ref="$(remote_worker)"
 		env_file="${out}/release-registry.env"
 		json_file="${out}/release-manifest.json"
 	else
 		web_ref="$(local_web)"
-		api_ref="$(local_api)"
 		mig_ref="$(local_migrator)"
-		out_ref="$(local_outbox)"
+		ops_ref="$(local_ops)"
 		worker_ref="$(local_worker)"
 		env_file="${out}/release-local.env"
 		json_file="${out}/release-manifest.local.json"
 	fi
 
 	web_d="$(digest_of "$web_ref")"
-	api_d="$(digest_of "$api_ref")"
 	mig_d="$(digest_of "$mig_ref")"
-	out_d="$(digest_of "$out_ref")"
+	ops_d="$(digest_of "$ops_ref")"
 	worker_d="$(digest_of "$worker_ref")"
 
 	if [[ "$mode" == "registry" ]]; then
@@ -192,18 +178,16 @@ write_manifest() {
 		repo="$(remote_repo)"
 		cat >"$env_file" <<EOF
 UNORAG_WEB_IMAGE=${repo}@${web_d}
-UNORAG_API_IMAGE=${repo}@${api_d}
 UNORAG_WEB_MIGRATOR_IMAGE=${repo}@${mig_d}
-UNORAG_OUTBOX_IMAGE=${repo}@${out_d}
+UNORAG_WEB_OPS_IMAGE=${repo}@${ops_d}
 UNORAG_DBOS_WORKER_IMAGE=${repo}@${worker_d}
 UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
 EOF
 	else
 		cat >"$env_file" <<EOF
 UNORAG_WEB_IMAGE=${web_ref}
-UNORAG_API_IMAGE=${api_ref}
 UNORAG_WEB_MIGRATOR_IMAGE=${mig_ref}
-UNORAG_OUTBOX_IMAGE=${out_ref}
+UNORAG_WEB_OPS_IMAGE=${ops_ref}
 UNORAG_DBOS_WORKER_IMAGE=${worker_ref}
 UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
 EOF
@@ -218,9 +202,8 @@ EOF
   "dbos_application_version": "lifecycle-v2",
   "images": {
     "web": {"ref": "${web_ref}", "digest": "${web_d}"},
-    "api": {"ref": "${api_ref}", "digest": "${api_d}"},
     "migrator": {"ref": "${mig_ref}", "digest": "${mig_d}"},
-    "outbox": {"ref": "${out_ref}", "digest": "${out_d}"},
+    "ops": {"ref": "${ops_ref}", "digest": "${ops_d}"},
     "worker": {"ref": "${worker_ref}", "digest": "${worker_d}"}
   },
   "manifest_env": "$(basename "$env_file")"

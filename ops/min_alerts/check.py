@@ -322,7 +322,7 @@ def query_jobs(database_url: str) -> dict[str, Any]:
 	try:
 		import psycopg
 	except ImportError as exc:
-		raise RuntimeError("psycopg not installed; set PYTHONPATH to apps/api .venv") from exc
+		raise RuntimeError("psycopg not installed; install psycopg[binary] for SQL alerts") from exc
 	with psycopg.connect(dsn) as conn:
 		with conn.cursor() as cur:
 			cur.execute(

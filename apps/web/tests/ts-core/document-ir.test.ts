@@ -9,11 +9,11 @@ import {
 } from "../../src/core/document-ir";
 
 const fixtureUrl = new URL(
-	"../fixtures/ts-core/python-document-ir-v1.json",
+	"../fixtures/ts-core/document-ir-v1.json",
 	import.meta.url,
 );
 
-test("accepts the representative Python DocumentIR fixture", async () => {
+test("accepts the representative DocumentIR fixture", async () => {
 	const fixture = JSON.parse(await readFile(fileURLToPath(fixtureUrl), "utf8"));
 	const document = DocumentIRSchema.parse(fixture);
 

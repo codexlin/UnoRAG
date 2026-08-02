@@ -37,7 +37,7 @@ export function isInternalRagPath(pathSegments) {
 }
 
 /**
- * L6: browser must not reach FastAPI product write paths via the BFF proxy.
+ * Browser requests cannot bypass product RBAC through the internal RAG surface.
  * Ask/stream, archive, download, and health remain allowed.
  *
  * @param {string} method

@@ -33,7 +33,7 @@ type RouteContext = {
 
 /**
  * Reindex by creating a new document version that reuses the source object's
- * storage_key/content_hash (roadmap §7.3). Does not call FastAPI/ARQ.
+ * storage_key/content_hash (roadmap §7.3). The DBOS worker performs reindexing.
  */
 export async function POST(request: Request, context: RouteContext) {
 	if (!documentLifecycleV2Enabled()) {

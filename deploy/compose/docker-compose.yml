@@ -17,7 +17,7 @@
 # mk_compose does NOT require bootstrap.env; mk_compose_bootstrap does.
 #
 # Browser → Caddy :${HTTP_PORT} → web :3000
-# FastAPI / lifecycle-worker / outbox-worker are NOT published.
+# The application runtime is Node.js only; external parsers are HTTP providers.
 
 name: ${COMPOSE_PROJECT_NAME:-unorag}
 
@@ -27,10 +27,8 @@ x-dbos-environment: &dbos-environment
   # parseable; the DBOS process rejects it if the profile is actually started.
   DBOS_SYSTEM_DATABASE_URL: ${DBOS_SYSTEM_DATABASE_URL:-postgresql://unorag_dbos_login:${UNORAG_DBOS_DB_PASSWORD:-dbos-profile-disabled}@postgres:5432/${UNORAG_DBOS_DATABASE:-unorag_dbos}}
   UNORAG_DBOS_APPLICATION_VERSION: ${UNORAG_DBOS_APPLICATION_VERSION:-lifecycle-v2}
-  UNORAG_DBOS_LISTEN_QUEUES: ${UNORAG_DBOS_LISTEN_QUEUES:-lifecycle}
+  UNORAG_DBOS_LISTEN_QUEUES: ${UNORAG_DBOS_LISTEN_QUEUES:-ingest-local,lifecycle}
   UNORAG_DBOS_CLEANUP_ENABLED: "true"
-  UNORAG_DBOS_DOCUMENT_DELETE_ENABLED: ${UNORAG_DBOS_DOCUMENT_DELETE_ENABLED:-false}
-  UNORAG_DBOS_TEXT_INGEST_ENABLED: ${UNORAG_DBOS_TEXT_INGEST_ENABLED:-false}
   DBOS_SYSTEM_DATABASE_POOL_SIZE: ${DBOS_SYSTEM_DATABASE_POOL_SIZE:-10}
   DBOS_LIFECYCLE_CONCURRENCY: ${DBOS_LIFECYCLE_CONCURRENCY:-2}
   DBOS_CONTROL_POLL_MS: ${DBOS_CONTROL_POLL_MS:-5000}
@@ -72,20 +70,12 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      RAG_API_URL: http://api:8000
       DATABASE_URL: ${WEB_DATABASE_URL:-postgresql://unorag_web_login:${UNORAG_WEB_DB_PASSWORD:?UNORAG_WEB_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
       REDIS_URL: ${REDIS_URL:?REDIS_URL required}
       SESSION_MEMORY_TTL_SECONDS: ${SESSION_MEMORY_TTL_SECONDS:-3600}
-      UNORAG_INTERNAL_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
       UNORAG_SESSION_SECRET: ${UNORAG_SESSION_SECRET:?UNORAG_SESSION_SECRET required}
       UNORAG_BUILD_REF: ${UNORAG_WEB_IMAGE:-unorag-web:local}
-      UNORAG_TS_RETRIEVAL_MODE: ${UNORAG_TS_RETRIEVAL_MODE:-off}
-      UNORAG_ASK_RUNTIME: ${UNORAG_ASK_RUNTIME:-python}
-      UNORAG_DBOS_DOCUMENT_DELETE_ENABLED: ${UNORAG_DBOS_DOCUMENT_DELETE_ENABLED:-false}
-      UNORAG_DBOS_TEXT_INGEST_ENABLED: ${UNORAG_DBOS_TEXT_INGEST_ENABLED:-false}
-      UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED: ${UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED:-false}
-      UNORAG_DBOS_ACL_PROJECTION_ENABLED: ${UNORAG_DBOS_ACL_PROJECTION_ENABLED:-false}
       QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
       OPENAI_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}
@@ -112,8 +102,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      api:
-        condition: service_healthy
     healthcheck:
       test:
         [
@@ -128,179 +116,8 @@ services:
       - internal
       - edge
 
-  api:
-    image: ${UNORAG_API_IMAGE:-unorag-api:local}
-    build:
-      context: ../..
-      dockerfile: deploy/docker/api.Dockerfile
-    restart: unless-stopped
-    environment:
-      APP_ENV: ${APP_ENV:-production}
-      APP_NAME: UnoRAG API
-      BUILD_REF: ${UNORAG_API_IMAGE:-unorag-api:local}
-      API_PREFIX: /v1
-      CORS_ORIGINS: http://localhost,http://127.0.0.1
-      # Product invariants (not customer-tunable env knobs)
-      ASK_MODE: live
-      METADATA_BACKEND: postgres
-      INTERNAL_AUTH_ENABLED: "true"
-      INTERNAL_AUTH_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
-      INTERNAL_AUTH_REPLAY_BACKEND: redis
-      ACTIVE_GENERATION_GATE_ENABLED: "true"
-      ACTIVE_GENERATION_CACHE_TTL_SECONDS: "0"
-      MINERU_USE_FAKE: "false"
-      DATABASE_URL: ${API_DATABASE_URL:-postgresql+psycopg://unorag_api_login:${UNORAG_API_DB_PASSWORD:?UNORAG_API_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
-      CONVERSATION_STORE_SCHEMA: ${CONVERSATION_STORE_SCHEMA:-public}
-      CONVERSATION_DATABASE_URL: ${CONVERSATION_DATABASE_URL:-}
-      RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:-postgresql://unorag_rag_read_login:${UNORAG_RAG_READ_DB_PASSWORD:?UNORAG_RAG_READ_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
-      QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
-      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
-      REDIS_URL: ${REDIS_URL:?REDIS_URL required}
-      DOCUMENT_STORAGE_ROOT: /var/lib/unorag/documents
-      MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-52428800}
-      # Transitional mapping: deploy name LLM_* → app OPENAI_*
-      OPENAI_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}
-      OPENAI_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL required}
-      CHAT_MODEL: ${CHAT_MODEL:?CHAT_MODEL required}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:?EMBEDDING_MODEL required}
-      EMBEDDING_DIM: ${EMBEDDING_DIM:?EMBEDDING_DIM required}
-      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-10}
-      LLM_MAX_INFLIGHT: ${LLM_MAX_INFLIGHT:-4}
-      RERANK_BASE_URL: ${RERANK_BASE_URL:-}
-      RERANK_MODEL: ${RERANK_MODEL:-qwen3-rerank}
-      MINERU_ENABLED: ${MINERU_ENABLED:-false}
-      MINERU_PROVIDER: ${MINERU_PROVIDER:-self_hosted}
-      MINERU_SELF_HOSTED_URL: ${MINERU_SELF_HOSTED_URL:-}
-      MINERU_URL: ${MINERU_URL:-}
-      MINERU_MODE: ${MINERU_MODE:-auto}
-      MINERU_VERSION: ${MINERU_VERSION:-2.5}
-      MINERU_PARSE_METHOD: ${MINERU_PARSE_METHOD:-auto}
-      EXTERNAL_PARSER_ALLOWED: ${EXTERNAL_PARSER_ALLOWED:-false}
-      MINERU_302_BASE_URL: ${MINERU_302_BASE_URL:-https://api.302.ai}
-      MINERU_302_UPLOAD_PATH: ${MINERU_302_UPLOAD_PATH:-/302/upload-file}
-      MINERU_302_TASK_PATH: ${MINERU_302_TASK_PATH:-/302/v2/mineru/task}
-      MINERU_302_POLL_INTERVAL_S: ${MINERU_302_POLL_INTERVAL_S:-5}
-      MINERU_302_MAX_WAIT_S: ${MINERU_302_MAX_WAIT_S:-900}
-      MINERU_302_COST_PER_PAGE: ${MINERU_302_COST_PER_PAGE:-0.02}
-      MINERU_302_DAILY_BUDGET: ${MINERU_302_DAILY_BUDGET:-0}
-      MINERU_302_BUDGET_WARN_RATIO: ${MINERU_302_BUDGET_WARN_RATIO:-0.8}
-      MINERU_302_LONG_PENDING_S: ${MINERU_302_LONG_PENDING_S:-300}
-      LIFECYCLE_WORKER_READY_FILE: /tmp/unorag-lifecycle-ready
-      LIFECYCLE_WORKER_POLL_SECONDS: ${LIFECYCLE_WORKER_POLL_SECONDS:-1}
-      LIFECYCLE_WORKER_LEASE_SECONDS: ${LIFECYCLE_WORKER_LEASE_SECONDS:-120}
-      LIFECYCLE_WORKER_HEARTBEAT_SECONDS: ${LIFECYCLE_WORKER_HEARTBEAT_SECONDS:-30}
-    volumes:
-      - document_storage:/var/lib/unorag/documents
-    depends_on:
-      document-storage-init:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS http://127.0.0.1:8000/health | grep -q '\"status\"' || exit 1",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 30s
-    # Intentionally no ports: — FastAPI is internal-only (fail-closed edge).
-    networks:
-      - internal
-
-  lifecycle-worker:
-    image: ${UNORAG_API_IMAGE:-unorag-api:local}
-    build:
-      context: ../..
-      dockerfile: deploy/docker/api.Dockerfile
-    restart: unless-stopped
-    command: ["python", "-m", "app.lifecycle_worker"]
-    environment:
-      APP_ENV: ${APP_ENV:-production}
-      # Invariants required by Settings production validator
-      ASK_MODE: live
-      METADATA_BACKEND: postgres
-      INTERNAL_AUTH_ENABLED: "true"
-      INTERNAL_AUTH_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
-      INTERNAL_AUTH_REPLAY_BACKEND: redis
-      ACTIVE_GENERATION_GATE_ENABLED: "true"
-      ACTIVE_GENERATION_CACHE_TTL_SECONDS: "0"
-      MINERU_USE_FAKE: "false"
-      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://unorag_worker_login:${UNORAG_WORKER_DB_PASSWORD:?UNORAG_WORKER_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
-      RAG_READ_DATABASE_URL: ${RAG_READ_DATABASE_URL:-postgresql://unorag_rag_read_login:${UNORAG_RAG_READ_DB_PASSWORD:?UNORAG_RAG_READ_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
-      # Settings.database_url fallback; worker DSN is authoritative via WORKER_*
-      DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://unorag_worker_login:${UNORAG_WORKER_DB_PASSWORD:?UNORAG_WORKER_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
-      QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
-      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
-      REDIS_URL: ${REDIS_URL:?REDIS_URL required}
-      DOCUMENT_STORAGE_ROOT: /var/lib/unorag/documents
-      MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-52428800}
-      OPENAI_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}
-      OPENAI_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL required}
-      CHAT_MODEL: ${CHAT_MODEL:?CHAT_MODEL required}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:?EMBEDDING_MODEL required}
-      EMBEDDING_DIM: ${EMBEDDING_DIM:?EMBEDDING_DIM required}
-      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-10}
-      LLM_MAX_INFLIGHT: ${LLM_MAX_INFLIGHT:-4}
-      MINERU_ENABLED: ${MINERU_ENABLED:-false}
-      MINERU_PROVIDER: ${MINERU_PROVIDER:-self_hosted}
-      MINERU_SELF_HOSTED_URL: ${MINERU_SELF_HOSTED_URL:-}
-      MINERU_URL: ${MINERU_URL:-}
-      MINERU_MODE: ${MINERU_MODE:-auto}
-      MINERU_VERSION: ${MINERU_VERSION:-2.5}
-      MINERU_PARSE_METHOD: ${MINERU_PARSE_METHOD:-auto}
-      EXTERNAL_PARSER_ALLOWED: ${EXTERNAL_PARSER_ALLOWED:-false}
-      MINERU_302_API_KEY: ${MINERU_302_API_KEY:-}
-      MINERU_302_BASE_URL: ${MINERU_302_BASE_URL:-https://api.302.ai}
-      MINERU_302_UPLOAD_PATH: ${MINERU_302_UPLOAD_PATH:-/302/upload-file}
-      MINERU_302_TASK_PATH: ${MINERU_302_TASK_PATH:-/302/v2/mineru/task}
-      MINERU_302_POLL_INTERVAL_S: ${MINERU_302_POLL_INTERVAL_S:-5}
-      MINERU_302_MAX_WAIT_S: ${MINERU_302_MAX_WAIT_S:-900}
-      MINERU_302_COST_PER_PAGE: ${MINERU_302_COST_PER_PAGE:-0.02}
-      MINERU_302_DAILY_BUDGET: ${MINERU_302_DAILY_BUDGET:-0}
-      MINERU_302_BUDGET_WARN_RATIO: ${MINERU_302_BUDGET_WARN_RATIO:-0.8}
-      MINERU_302_LONG_PENDING_S: ${MINERU_302_LONG_PENDING_S:-300}
-      LIFECYCLE_WORKER_READY_FILE: /tmp/unorag-lifecycle-ready
-      LIFECYCLE_WORKER_POLL_SECONDS: ${LIFECYCLE_WORKER_POLL_SECONDS:-1}
-      LIFECYCLE_WORKER_LEASE_SECONDS: ${LIFECYCLE_WORKER_LEASE_SECONDS:-120}
-      LIFECYCLE_WORKER_HEARTBEAT_SECONDS: ${LIFECYCLE_WORKER_HEARTBEAT_SECONDS:-30}
-      LIFECYCLE_LOCAL_CAPACITY: ${LIFECYCLE_LOCAL_CAPACITY:-2}
-      LIFECYCLE_MINERU_CAPACITY: ${LIFECYCLE_MINERU_CAPACITY:-1}
-    volumes:
-      - document_storage:/var/lib/unorag/documents
-    depends_on:
-      document-storage-init:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "test -f /tmp/unorag-lifecycle-ready || exit 1",
-        ]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-      start_period: 20s
-    stop_grace_period: 2m
-    networks:
-      - internal
-
-  # Optional migration cohort. It remains behind the explicit `dbos` profile
-  # until cleanup rows are adopted by the operator.
+  # Durable executor for ingest, ACL projection, deletion, and cleanup.
   dbos-worker:
-    profiles: ["dbos"]
     image: ${UNORAG_DBOS_WORKER_IMAGE:-unorag-web-worker:local}
     build:
       context: ../..
@@ -317,6 +134,7 @@ services:
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
       QDRANT_TIMEOUT_MS: ${QDRANT_TIMEOUT_MS:-5000}
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_DISTANCE: ${QDRANT_DISTANCE:-Cosine}
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
       DOCUMENT_STORAGE_ROOT: /var/lib/unorag/documents
       DOCUMENT_MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-52428800}
@@ -325,6 +143,15 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
       EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-10}
+      MINERU_PROVIDER: ${MINERU_PROVIDER:-self_hosted}
+      MINERU_SELF_HOSTED_URL: ${MINERU_SELF_HOSTED_URL:-}
+      MINERU_URL: ${MINERU_URL:-}
+      MINERU_API_KEY: ${MINERU_API_KEY:-}
+      MINERU_MODE: ${MINERU_MODE:-auto}
+      MINERU_VERSION: ${MINERU_VERSION:-2.5}
+      MINERU_TRANSPORT: ${MINERU_TRANSPORT:-sync}
+      EXTERNAL_PARSER_ALLOWED: ${EXTERNAL_PARSER_ALLOWED:-false}
+      LITEPARSE_OCR_LANGUAGE: ${LITEPARSE_OCR_LANGUAGE:-ch}
     volumes:
       - document_storage:/var/lib/unorag/documents
     depends_on:
@@ -350,10 +177,8 @@ services:
     networks:
       - internal
 
-  # Dispatch/reconciliation is deliberately separate from the executor: this
-  # process uses DBOSClient and never recovers or executes workflows itself.
+  # Dispatch/reconciliation is separate from workflow execution.
   dbos-control:
-    profiles: ["dbos"]
     image: ${UNORAG_DBOS_WORKER_IMAGE:-unorag-web-worker:local}
     build:
       context: ../..
@@ -381,34 +206,6 @@ services:
       retries: 12
       start_period: 20s
     stop_grace_period: 30s
-    networks:
-      - internal
-
-  # Library mutation projection: app.outbox_events → FastAPI internal projectors.
-  # Required for create/update/delete library to reach the RAG read model.
-  outbox-worker:
-    image: ${UNORAG_OUTBOX_IMAGE:-unorag-web-outbox:local}
-    build:
-      context: ../..
-      dockerfile: deploy/docker/web.Dockerfile
-      target: outbox
-    working_dir: /repo/apps/web
-    restart: unless-stopped
-    command: ["node", "scripts/process-outbox.mjs", "--watch"]
-    environment:
-      DATABASE_URL: ${OUTBOX_DATABASE_URL:-postgresql://unorag_outbox_login:${UNORAG_OUTBOX_DB_PASSWORD:?UNORAG_OUTBOX_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
-      RAG_API_URL: http://api:8000
-      UNORAG_INTERNAL_SECRET: ${UNORAG_INTERNAL_SECRET:?UNORAG_INTERNAL_SECRET required}
-      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-20}
-      OUTBOX_POLL_MS: ${OUTBOX_POLL_MS:-2000}
-      OUTBOX_LOCK_TIMEOUT_SECONDS: ${OUTBOX_LOCK_TIMEOUT_SECONDS:-300}
-      OUTBOX_REQUEST_TIMEOUT_SECONDS: ${OUTBOX_REQUEST_TIMEOUT_SECONDS:-1800}
-      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-8}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      api:
-        condition: service_healthy
     networks:
       - internal
 
@@ -442,10 +239,7 @@ services:
       PGUSER: ${POSTGRES_USER:-unorag}
       PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       UNORAG_WEB_DB_PASSWORD: ${UNORAG_WEB_DB_PASSWORD:?UNORAG_WEB_DB_PASSWORD required}
-      UNORAG_API_DB_PASSWORD: ${UNORAG_API_DB_PASSWORD:?UNORAG_API_DB_PASSWORD required}
       UNORAG_WORKER_DB_PASSWORD: ${UNORAG_WORKER_DB_PASSWORD:?UNORAG_WORKER_DB_PASSWORD required}
-      UNORAG_OUTBOX_DB_PASSWORD: ${UNORAG_OUTBOX_DB_PASSWORD:?UNORAG_OUTBOX_DB_PASSWORD required}
-      UNORAG_RAG_READ_DB_PASSWORD: ${UNORAG_RAG_READ_DB_PASSWORD:?UNORAG_RAG_READ_DB_PASSWORD required}
       UNORAG_DBOS_DB_PASSWORD: ${UNORAG_DBOS_DB_PASSWORD:-dbos-profile-disabled}
       UNORAG_DBOS_DATABASE: ${UNORAG_DBOS_DATABASE:-unorag_dbos}
     volumes:
@@ -470,7 +264,7 @@ services:
 
   inspect-lifecycle:
     profiles: ["ops"]
-    image: ${UNORAG_OUTBOX_IMAGE:?UNORAG_OUTBOX_IMAGE required}
+    image: ${UNORAG_WEB_OPS_IMAGE:-unorag-web-ops:local}
     working_dir: /repo/apps/web
     environment:
       # Operator-invoked, short-lived inspection. Runtime services never receive
@@ -491,7 +285,7 @@ services:
 
   backfill-acl-projections:
     profiles: ["ops"]
-    image: ${UNORAG_OUTBOX_IMAGE:?UNORAG_OUTBOX_IMAGE required}
+    image: ${UNORAG_WEB_OPS_IMAGE:-unorag-web-ops:local}
     working_dir: /repo/apps/web
     environment:
       # Upgrade-only mutation with the migrator credential. Runtime services
@@ -557,33 +351,13 @@ services:
       - internal
     restart: "no"
 
-  migrate-rag:
-    profiles: ["migrate"]
-    image: ${UNORAG_API_IMAGE:-unorag-api:local}
-    build:
-      context: ../..
-      dockerfile: deploy/docker/api.Dockerfile
-    working_dir: /app
-    environment:
-      MIGRATOR_DATABASE_URL: ${MIGRATOR_DATABASE_URL:-postgresql://${POSTGRES_USER:-unorag}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
-      PYTHONPATH: /app
-    command: ["python", "scripts/apply_rag_migrations.py"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrate-web:
-        condition: service_completed_successfully
-    networks:
-      - internal
-    restart: "no"
-
   bootstrap:
     profiles: ["migrate"]
-    image: ${UNORAG_OUTBOX_IMAGE:-unorag-web-outbox:local}
+    image: ${UNORAG_WEB_OPS_IMAGE:-unorag-web-ops:local}
     build:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
-      target: outbox
+      target: ops
     working_dir: /repo/apps/web
     environment:
       # Bootstrap-only vars: use defaults so `compose config` works without
@@ -603,19 +377,17 @@ services:
       UNORAG_ADMIN_PASSWORD_UPSERT: ${UNORAG_ADMIN_PASSWORD_UPSERT:-}
     command: ["node", "scripts/bootstrap-control-plane.mjs"]
     depends_on:
-      migrate-rag:
+      migrate-web:
         condition: service_completed_successfully
     networks:
       - internal
     restart: "no"
 
 networks:
-  # Edge: reverse proxy only. Do not attach FastAPI here.
+  # Edge: reverse proxy only.
   edge:
     driver: bridge
-  # App backend. Ports for api/worker are unpublished (network isolation via
-  # non-publish, not Docker "internal: true") so the data plane can still reach
-  # customer LLM / embedding / MinerU endpoints.
+  # App backend can reach customer LLM, embedding, and parser endpoints.
   internal:
     driver: bridge
 

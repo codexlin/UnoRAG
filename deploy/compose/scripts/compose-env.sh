@@ -44,11 +44,10 @@ _mk_managed_env_keys() {
 	{
 		# Always strip these even if absent from current files (hybrid / aliases).
 		printf '%s\n' \
-			DATABASE_URL WEB_DATABASE_URL API_DATABASE_URL WORKER_DATABASE_URL \
-			OUTBOX_DATABASE_URL RAG_READ_DATABASE_URL DBOS_SYSTEM_DATABASE_URL \
-			MIGRATOR_DATABASE_URL \
+			DATABASE_URL WEB_DATABASE_URL WORKER_DATABASE_URL \
+			DBOS_SYSTEM_DATABASE_URL MIGRATOR_DATABASE_URL \
 			OPENAI_API_KEY OPENAI_BASE_URL DASHSCOPE_API_KEY DASHSCOPE_BASE_URL \
-			INTERNAL_AUTH_SECRET HTTP_PORT COMPOSE_PROJECT_NAME
+			HTTP_PORT COMPOSE_PROJECT_NAME
 		local _mk_file
 		for _mk_file in "$@"; do
 			[[ -f "$_mk_file" ]] || continue
@@ -167,25 +166,19 @@ mk_config_enabled() {
 }
 
 mk_dbos_required() {
-	mk_config_enabled UNORAG_DBOS_ACL_PROJECTION_ENABLED \
-		|| mk_config_enabled UNORAG_DBOS_TEXT_INGEST_ENABLED \
-		|| mk_config_enabled UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED \
-		|| mk_config_enabled UNORAG_DBOS_DOCUMENT_DELETE_ENABLED
+	return 0
 }
 
 mk_validate_dbos_config() {
-	if mk_config_enabled UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED \
-		&& ! mk_config_enabled UNORAG_DBOS_TEXT_INGEST_ENABLED; then
-		echo "UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED=true requires UNORAG_DBOS_TEXT_INGEST_ENABLED=true" >&2
+	local _mk_queues
+	_mk_queues="$(mk_config_get UNORAG_DBOS_LISTEN_QUEUES || echo ingest-local,lifecycle)"
+	_mk_queues="${_mk_queues//[[:space:]]/}"
+	if [[ ",${_mk_queues}," != *",ingest-local,"* ]]; then
+		echo "UNORAG_DBOS_LISTEN_QUEUES must include ingest-local" >&2
 		return 1
 	fi
-	if mk_config_enabled UNORAG_DBOS_TEXT_INGEST_ENABLED; then
-		local _mk_queues
-		_mk_queues="$(mk_config_get UNORAG_DBOS_LISTEN_QUEUES || true)"
-		_mk_queues="${_mk_queues//[[:space:]]/}"
-		if [[ ",${_mk_queues}," != *",ingest-local,"* ]]; then
-			echo "UNORAG_DBOS_TEXT_INGEST_ENABLED=true requires ingest-local in UNORAG_DBOS_LISTEN_QUEUES" >&2
-			return 1
-		fi
+	if [[ ",${_mk_queues}," != *",lifecycle,"* ]]; then
+		echo "UNORAG_DBOS_LISTEN_QUEUES must include lifecycle" >&2
+		return 1
 	fi
 }

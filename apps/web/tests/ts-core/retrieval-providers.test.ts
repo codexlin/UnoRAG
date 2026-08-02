@@ -81,7 +81,7 @@ test("rerank provider clamps scores and ignores invalid indexes", async () => {
 	);
 });
 
-test("mixed Chinese and English BM25 matches Python token semantics", () => {
+test("mixed Chinese and English BM25 keeps the established token semantics", () => {
 	assert.deepEqual(tokenize("合同 penalty"), ["penalty", "合", "同", "合同"]);
 	const index = new Bm25Index([
 		{ id: "a", text: "合同违约金 200 元", value: "contract" },

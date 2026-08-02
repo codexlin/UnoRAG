@@ -13,16 +13,16 @@ images:
     repository: unorag-web
     tag: local
     pullPolicy: IfNotPresent
-  api:
-    repository: unorag-api
+  migrator:
+    repository: unorag-web-migrator
     tag: local
     pullPolicy: IfNotPresent
   dbosWorker:
     repository: unorag-web-worker
     tag: local
     pullPolicy: IfNotPresent
-  outbox:
-    repository: unorag-web-outbox
+  ops:
+    repository: unorag-web-ops
     tag: local
     pullPolicy: IfNotPresent
 
@@ -52,66 +52,8 @@ web:
     timeoutSeconds: 5
     failureThreshold: 3
 
-api:
-  enabled: true
-  replicaCount: 1
-  port: 8000
-  resources: {}
-  # ClusterIP only — do not expose via Ingress (fail-closed edge).
-  readinessProbe:
-    httpGet:
-      path: /health
-      port: http
-    initialDelaySeconds: 10
-    periodSeconds: 10
-    timeoutSeconds: 5
-    failureThreshold: 6
-  livenessProbe:
-    httpGet:
-      path: /health
-      port: http
-    initialDelaySeconds: 30
-    periodSeconds: 20
-    timeoutSeconds: 5
-    failureThreshold: 3
-
-worker:
-  enabled: true
-  replicaCount: 1
-  resources: {}
-  # Ready file written by lifecycle worker after first successful poll loop.
-  readinessProbe:
-    exec:
-      command: ["test", "-f", "/tmp/unorag-lifecycle-ready"]
-    initialDelaySeconds: 10
-    periodSeconds: 10
-    timeoutSeconds: 3
-    failureThreshold: 6
-  livenessProbe:
-    exec:
-      command: ["test", "-f", "/tmp/unorag-lifecycle-ready"]
-    initialDelaySeconds: 30
-    periodSeconds: 30
-    timeoutSeconds: 3
-    failureThreshold: 3
-  terminationGracePeriodSeconds: 120
-
-outboxWorker:
-  enabled: true
-  replicaCount: 1
-  resources: {}
-  batchSize: "20"
-  pollMs: "2000"
-  lockTimeoutSeconds: "300"
-  requestTimeoutSeconds: "1800"
-  maxAttempts: "8"
-  terminationGracePeriodSeconds: 60
-
-# Optional DBOS lifecycle migration cohort. Enable only after provisioning a
-# dedicated DBOS system database. Cleanup adoption and document-delete routing
-# remain separately opt-in.
 dbos:
-  enabled: false
+  enabled: true
   workerReplicaCount: 1
   controlReplicaCount: 1
   applicationVersion: lifecycle-v2
@@ -129,9 +71,6 @@ service:
   web:
     type: ClusterIP
     port: 3000
-  api:
-    type: ClusterIP
-    port: 8000
 
 ingress:
   enabled: false
@@ -170,11 +109,9 @@ documentStorageRoot: /var/lib/unorag/documents
 # Chart does NOT deploy Postgres / Qdrant / Redis / MinIO.
 external:
   # postgresql://…  (control-plane / drizzle)
-  # postgresql+psycopg://… for FastAPI DATABASE_URL if required by Settings
   postgres:
-    # Set secret keys: DATABASE_URL, OUTBOX_DATABASE_URL, WORKER_DATABASE_URL,
-    # RAG_READ_DATABASE_URL, API_DATABASE_URL, and DBOS_SYSTEM_DATABASE_URL
-    # when dbos.enabled=true.
+    # Set secret keys: DATABASE_URL, WORKER_DATABASE_URL, and
+    # DBOS_SYSTEM_DATABASE_URL.
     existingSecret: ""
   qdrant:
     url: http://qdrant.external:6333
@@ -189,21 +126,6 @@ external:
 # ---------------------------------------------------------------------------
 config:
   appEnv: production
-  askMode: live
-  metadataBackend: postgres
-  documentLifecycleV2: "true"
-  # Opt-in cohort: only newly inserted document.delete jobs use DBOS.
-  dbosDocumentDeleteEnabled: "false"
-  # Opt-in cohort: only newly inserted local TXT/Markdown ingest jobs use DBOS.
-  dbosTextIngestEnabled: "false"
-  # Disable this first to stop routing; keep dbosTextIngestEnabled on to drain.
-  dbosTextIngestRouteEnabled: "false"
-  # Required for ACL edits on documents with an active generation.
-  dbosAclProjectionEnabled: "false"
-  internalAuthEnabled: "true"
-  internalAuthReplayBackend: redis
-  activeGenerationGateEnabled: "true"
-  activeGenerationCacheTtlSeconds: "0"
   corsOrigins: https://unorag.example.com
   chatModel: qwen-plus
   embeddingModel: text-embedding-v3
@@ -244,12 +166,10 @@ config:
 # ---------------------------------------------------------------------------
 # Prefer existingSecret. Pods inject least-privilege keys (not full Secret via envFrom).
 # Required keys (align with deploy/config/runtime.secret):
-#   UNORAG_INTERNAL_SECRET, UNORAG_SESSION_SECRET
-#   DATABASE_URL, OUTBOX_DATABASE_URL, API_DATABASE_URL, WORKER_DATABASE_URL,
-#   RAG_READ_DATABASE_URL
-#   DBOS_SYSTEM_DATABASE_URL (only when dbos.enabled=true; dedicated database)
+#   UNORAG_SESSION_SECRET
+#   DATABASE_URL, WORKER_DATABASE_URL, DBOS_SYSTEM_DATABASE_URL
 #   MIGRATOR_DATABASE_URL (migrate jobs only)
-#   LLM_API_KEY  (mapped to OPENAI_API_KEY for api/worker)
+#   LLM_API_KEY
 #   MINERU_302_API_KEY (required only for config.mineruProvider=302ai)
 # Bootstrap admin password must NOT live in the long-running runtime Secret.
 secret:
@@ -257,13 +177,9 @@ secret:
   existingSecret: unorag-runtime
   # When create=true, fill placeholders locally via --set / values overlay (never commit):
   # data:
-  #   UNORAG_INTERNAL_SECRET: ""
   #   UNORAG_SESSION_SECRET: ""
   #   DATABASE_URL: ""
-  #   OUTBOX_DATABASE_URL: ""
-  #   API_DATABASE_URL: ""
   #   WORKER_DATABASE_URL: ""
-  #   RAG_READ_DATABASE_URL: ""
   #   DBOS_SYSTEM_DATABASE_URL: ""
   #   MIGRATOR_DATABASE_URL: ""
   #   LLM_API_KEY: ""
@@ -287,9 +203,5 @@ migrate:
       repository: unorag-web-migrator
       tag: local
       pullPolicy: IfNotPresent
-  rag:
-    enabled: false
-    # Uses api image + scripts/apply_rag_migrations.py
-    # Requires MIGRATOR_DATABASE_URL in secret.
 
 # Release CI gates CVEs and emits digest manifests; SBOM/signing are deferred.

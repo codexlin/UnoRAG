@@ -224,7 +224,7 @@ test("unknown query type fails closed through clarify", async () => {
 	assert.equal(result.refuse_reason, "ambiguous");
 });
 
-test("node names and all 21 state fields match Python graph parity", () => {
+test("node names and all 21 state fields match the stable graph contract", () => {
 	assert.deepEqual(ASK_GRAPH_NODE_NAMES, [
 		"query_router",
 		"build_retrieval_plan",
