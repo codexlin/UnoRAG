@@ -88,10 +88,11 @@ idempotent, and Qdrant staging points are invisible until activation.
 
 ## Parsing And Chunking
 
-`ParserProvider` is the stable boundary. LiteParse is local and default. A configured
-self-hosted MinerU endpoint inside the customer trust boundary is registered for OCR,
-complex layouts, figures, and tables. Cloud ParserProviders are not implemented in
-the current runtime and unsupported provider names fail worker startup.
+`ParserProvider` is the stable boundary. LiteParse is local and default. MinerU can
+run through a self-hosted endpoint inside the customer trust boundary or through the
+302.AI upload/task/ZIP API. The external provider is fail-closed unless deployment
+configuration explicitly allows document egress; credentials exist only in the
+worker Secret. Unsupported provider names fail worker startup.
 
 Parsing produces DocumentIR before chunking. The policy is structure-first:
 

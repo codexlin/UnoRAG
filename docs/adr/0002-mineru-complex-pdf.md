@@ -1,24 +1,24 @@
 # ADR 0002 — MinerU 补充复杂 / 扫描 PDF
 
-**状态：** 部分被 [ADR-0005](./0005-typescript-core-runtime.md) 取代
+**状态：** 已迁移到 TypeScript；运行时边界以 [ADR-0005](./0005-typescript-core-runtime.md) 为准
 
-> 本文保留 Python 阶段的解析决策依据。当前 TypeScript 运行时只实现
-> `self_hosted` MinerU；`302ai` 传输和下文对应环境变量均为历史设计，不能作为
-> 当前部署配置。
+> 当前 TypeScript 运行时已实现 `self_hosted` 与 `302ai` 两种 MinerU Provider。
+> 302 的成本预算、完整结构化指标和跨重启去重仍是后续工作；下文对应段落会
+> 明确标记为计划项。
 
 **上下文：** Phase 2C 需处理扫描件、双栏、复杂表、公式页；不得替换已验证的 PyMuPDF 数字 PDF 路径。
 
 ## 决策
 
-1. **契约：** `DocumentParserBackend`；PyMuPDF 与 MinerU 均输出 `DocumentIR`。
-2. **路由（`mineru_mode=auto`）：** 先 PyMuPDF；仅当扫描/失败/复杂页信号触发时升级整本 MinerU。正常数字 PDF 不调用 MinerU。知识库 `parse_preference=quality` 可将路由提升为偏好增强解析（仍不选择 Provider）。
+1. **契约：** `DurableParserProvider`；LiteParse 与 MinerU 均输出 `DocumentIR`。
+2. **路由：** 先由 LiteParse 分析；OCR、表格、图形、高复杂度或知识库
+   `parse_preference=quality` 会偏好 MinerU。Provider 的实际选择仍受部署与出域策略约束。
 3. **统一语义、分离传输：** `self_hosted` 遵循同步 `POST /file_parse` +
    multipart `files` 契约；`302ai` 使用 upload → create task → poll → ZIP。
    两者只在 provider adapter 内不同，统一输出 `DocumentIR`，失败显式
    degrade（有 PyMuPDF 节点则 partial）或 fail（无节点），禁止静默空文档。
-4. **异步任务不占 worker：** 302 task id 持久化到 job payload，poll 未完成时
-   释放 lease 并延迟续跑，且不消耗 attempt；最长等待由
-   `MINERU_302_MAX_WAIT_S` 限制。
+4. **耐久执行：** 302 提交、轮询和结果获取运行在 DBOS ingest workflow 中；
+   取消和超时检查贯穿轮询。跨进程重启的外部提交去重仍需专项故障验收。
 5. **文档出域必须显式授权：** 302 provider 要求
    `EXTERNAL_PARSER_ALLOWED=true`；API key 仅由运行时 Secret 注入 worker，不能进入
    ConfigMap、payload、日志或 parser report。结果下载不向文件域转发 Bearer
@@ -26,7 +26,9 @@
 6. **适配器：** 支持直接 `content_list` 及 `results[filename].content_list` 包装；`content_list` 可为数组或 JSON 字符串，非法字符串显式失败。输出 heading/table/figure/equation + page/bbox/reading_order，表格进入既有 table IndexRecord 链。
 7. **表格边界：** 展开 `rowspan` / `colspan`，无 `<th>` 时不臆造表头；页眉、页脚、页码等辅助块不进入正文且不打断续表。仅对相邻页、列结构兼容且有明确 continuation 信号（或相同上游 table id）的表做跨页合并；`第 N 页` 只参与 caption 归一化，不能单独触发合并。
 8. **标题路径：** 按 `text_level` 维护 heading stack，向 chunker 提供完整 section path。
-9. **默认关闭：** `MINERU_ENABLED=false`；测试可用 `MINERU_USE_FAKE=true`。
+9. **默认私有：** 默认 Provider 为 `self_hosted`；302 必须同时设置
+   `MINERU_PROVIDER=302ai`、`EXTERNAL_PARSER_ALLOWED=true` 和 worker Secret 中的
+   `MINERU_API_KEY`。
 
 ## 产品配置边界（P1）
 
@@ -34,7 +36,7 @@
 
 | 层 | 可配置项 | 禁止暴露给终端用户 |
 |---|---|---|
-| **Deploy-only**（`runtime.env` / Secret / Helm） | `MINERU_PROVIDER`、`MINERU_302_API_KEY`（worker-only）、`EXTERNAL_PARSER_ALLOWED`、Base URL、成本单价/日预算、超时、容量 | Provider URL、API Key、超时、容量、成本费率 |
+| **Deploy-only**（`runtime.env` / Secret / Helm） | `MINERU_PROVIDER`、`MINERU_API_KEY`（worker-only）、`EXTERNAL_PARSER_ALLOWED`、Base URL、超时、容量 | Provider URL、API Key、超时、容量、成本费率 |
 | **Library intent**（`parse_preference` + `scan_handling`） | `auto` 自动识别；`quality` 强制高质量解析；`local_only` 严格不出域；`scan_handling` 控制是否允许扫描件 / 仅文本 | 不得选择 `self_hosted` vs `302ai` |
 
 **映射（fail-closed）：**
@@ -55,7 +57,7 @@ UI / API 展示（来自 `parser_report` + job）：实际解析器（PyMuPDF / 
 - 无 MinerU 时扫描件仍诚实失败（错误信息提示启用 MinerU/OCR）。
 - 可在自建与 302 MinerU 间切换而不改 chunker / retrieval；切换权仅在部署层。
 
-## Ops：302 可观测性与成本（P1）
+## Ops：302 可观测性与成本（计划项）
 
 **关联字段：** `trace_id`（可选，job payload）→ `job_id` → `document_id` →
 `provider_task_id`（外部仅脱敏：`first8…last4`）。完整 task id 只留在 job

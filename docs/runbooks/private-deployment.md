@@ -50,6 +50,18 @@ The installer builds four targets, starts infrastructure, applies Drizzle migrat
 configures roles, bootstraps the first organization/workspace/admin, starts DBOS, runs
 ACL reconciliation, and starts Web/Caddy.
 
+The base Compose file is always the default. A deployment-specific override must be
+selected explicitly for every command so an unrelated local file cannot change ports,
+TLS, volumes, or routing:
+
+```bash
+export UNORAG_COMPOSE_OVERLAY=./docker-compose.customer.yml
+./scripts/install.sh
+```
+
+Relative overlay paths are resolved from `deploy/compose`. Keep the same variable set
+for later upgrade, backup, restore, inspection, and manual `mk_compose` commands.
+
 ## Parser Configuration
 
 LiteParse is always available in the worker. Configure self-hosted MinerU with:
@@ -62,11 +74,26 @@ MINERU_TRANSPORT=sync
 
 The URL itself registers MinerU; there is no separate enable switch. The endpoint must
 remain inside the customer-approved trust boundary. Cloud ParserProviders are not part
-of the current release.
+of the default private profile.
 
-The current TS runtime supports the standard MinerU `/file_parse` contract and the
-generic `/tasks` contract. The retired 302.AI-specific upload/task/ZIP adapter is not
-ported; any `MINERU_PROVIDER` other than `self_hosted` fails worker startup.
+302.AI MinerU is available as an explicit cloud profile. It uploads each selected PDF
+outside the customer network, so both provider selection and the egress gate are
+required; the API key remains worker-only:
+
+```dotenv
+MINERU_PROVIDER=302ai
+MINERU_302_BASE_URL=https://api.302.ai
+EXTERNAL_PARSER_ALLOWED=true
+MINERU_API_KEY=... # runtime.secret, never runtime.env
+```
+
+With the egress gate disabled, the router cannot select 302.AI. `local_only` library
+policy also blocks it regardless of deployment configuration. The provider validates
+302 result hosts and never forwards the API credential when downloading result ZIPs.
+
+The current TS runtime supports self-hosted MinerU `/file_parse` and `/tasks`, plus the
+302.AI upload, task polling, and result-ZIP transport. Other provider values fail worker
+startup.
 
 ## Readiness
 

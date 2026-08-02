@@ -14,13 +14,12 @@ Legacy eval fixtures stay under `testdata/{pdf,docx,md,txt,unsupported}/` — do
 | `mixed-charts.pdf` | `mixed_charts` (charts) | Figures + charts mixed with text |
 | `golds.jsonl` | — | Gold Q/A + mode + file hints for AB eval |
 
-Run the profile A/B suite from `apps/api`:
+Run the live profile A/B suite from the repository root against a running product:
 
 ```bash
-uv run python scripts/ab_chunk_profiles.py
+UNORAG_BASE_URL=http://127.0.0.1:8088 python3 scripts/run_ab_live_e2e.py
 ```
 
 The runner loads this directory and `golds.jsonl` directly. Generated reports
-land in `apps/api/.eval_reports/`; one-off live outputs under `_e2e_out/` are
-ignored. Keep old `testdata/pdf/leave-scanned.pdf` etc. for the 40-case core
-golden eval, MinerU controls, and unsupported-file negatives.
+land under `_e2e_out/` and are ignored. Keep old `testdata/pdf/leave-scanned.pdf`
+and related fixtures for MinerU controls and unsupported-file negatives.

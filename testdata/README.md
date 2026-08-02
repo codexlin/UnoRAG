@@ -1,8 +1,9 @@
 # 测试数据集 (`testdata/`)
 
 用于 **ingest 上传 + 问答手工/回归** 的核心 fixture。  
-上传支持：`txt` / `md` / `pdf` / `docx` / `csv` / `xlsx`
+当前产品上传支持：`txt` / `md` / `pdf` / `docx`
 （单文件硬上限 50MB；本集均远小于该上限）。
+`csv/` 保留为后续结构化文件支持的 fixture；仓库当前没有 XLSX fixture。
 
 设计原则：
 
@@ -72,7 +73,7 @@ testdata/
 ### `pdf/leave-scanned.pdf`
 | 问法 | 期望 |
 |------|------|
-| 能否直接抽字？ | 无 MinerU/OCR：显式 fail（错误含 extractable/MinerU）；启用 `MINERU_ENABLED`+服务或 `MINERU_USE_FAKE` → `ready`/`partial`，`parser_report.backend=mineru` |
+| 能否直接抽字？ | 无可用 MinerU：显式失败；配置自建 MinerU，或显式允许 302.AI 出域后应 `ready`，且 `parser_report.backend=mineru` |
 
 ### `pdf/manual-with-figure.pdf`
 | 问法 | 期望片段 |
@@ -108,9 +109,8 @@ testdata/
 ## 建议用法
 
 ```bash
-# 产品上传走控制面（FastAPI /v1/ingest* 永久 410）
-# 例：登录 Web UI 后 POST /api/libraries/{id}/documents
-# 或使用已有 seed / lifecycle 路径；勿再 curl FastAPI ingest。
+# 登录 Web UI 后，产品上传入口为 POST /api/libraries/{id}/documents
+# 完整本地冒烟：deploy/compose/scripts/pilot-smoke.sh
 ```
 
 黄金集已覆盖部分本目录文件：`ingest_chunk` / `retrieval`（**Recall@3**）以及

@@ -41,7 +41,7 @@ before every blocking item has evidence for the same commit.
 - [ ] Query-router and refusal regression set based on real customer question classes
 - [ ] citation precision/coverage adjudication and answer-support scoring
 - [ ] ParserProvider scorecard for LiteParse, self-hosted MinerU and future external providers
-- [ ] complete 302.AI-specific Provider only if customers need the cloud transport
+- [ ] add cost controls and restart/idempotency fault acceptance for the live-tested TypeScript 302.AI Provider
 - [ ] ChartIR for chart evidence and provenance
 - [ ] optional summary indexes based on measured recall gains
 
