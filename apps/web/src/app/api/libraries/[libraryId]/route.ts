@@ -3,10 +3,9 @@ import { randomUUID } from "node:crypto";
 import { and, eq, ne, notInArray } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import { documents, libraries, outboxEvents } from "@/db/schema";
+import { documents, libraries } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import { enqueueDocumentDelete } from "@/lib/server/document-delete-enqueue";
-import { documentLifecycleV2Enabled } from "@/lib/server/document-lifecycle";
 import {
 	rejectDeployOnlyParseFields,
 	validateDocumentProfile,
@@ -20,7 +19,6 @@ import {
 } from "@/lib/server/library-access";
 import { toApiLibrary } from "@/lib/server/library-api.mjs";
 import { staleActiveVersionsSql } from "@/lib/server/library-reindex-sql";
-import { runOutboxMutation } from "@/lib/server/outbox-transaction.mjs";
 
 type RouteContext = {
 	params: Promise<{ libraryId: string }>;
@@ -124,63 +122,35 @@ export async function PATCH(request: Request, context: RouteContext) {
 
 	const db = getDatabase();
 	const now = new Date();
-	const updated = await runOutboxMutation(
-		db,
-		async (tx) => {
-			const [row] = await tx
-				.update(libraries)
-				.set({
-					...(body.name !== undefined
-						? { name: body.name.trim().slice(0, 256) }
-						: {}),
-					...(body.description !== undefined
-						? { description: body.description?.trim().slice(0, 2000) || null }
-						: {}),
-					...(nextProfile !== undefined
-						? { documentProfile: nextProfile }
-						: {}),
-					...(nextScan !== undefined ? { scanHandling: nextScan } : {}),
-					...(nextPreference !== undefined
-						? { parsePreference: nextPreference }
-						: {}),
-					...(policyChanged
-						? {
-								ingestPolicyVersion: (current.ingestPolicyVersion ?? 1) + 1,
-							}
-						: {}),
-					updatedAt: now,
-				})
-				.where(
-					and(
-						eq(libraries.id, current.id),
-						eq(libraries.organizationId, identity.tenantId),
-						eq(libraries.workspaceId, identity.workspaceId),
-					),
-				)
-				.returning();
-			return row;
-		},
-		(tx, row) =>
-			tx.insert(outboxEvents).values({
-				organizationId: identity.tenantId,
-				workspaceId: identity.workspaceId,
-				aggregateType: "library",
-				aggregateId: row.ragLibraryId,
-				eventType: "library.upsert",
-				idempotencyKey: `library.upsert:${row.ragLibraryId}:${randomUUID()}`,
-				payload: {
-					library_id: row.ragLibraryId,
-					name: row.name,
-					description: row.description,
-					document_profile: row.documentProfile,
-					scan_handling: row.scanHandling,
-					parse_preference: row.parsePreference,
-					principal_id: identity.principalId,
-				},
-				createdAt: now,
-				updatedAt: now,
-			}),
-	);
+	const [updated] = await db
+		.update(libraries)
+		.set({
+			...(body.name !== undefined
+				? { name: body.name.trim().slice(0, 256) }
+				: {}),
+			...(body.description !== undefined
+				? { description: body.description?.trim().slice(0, 2000) || null }
+				: {}),
+			...(nextProfile !== undefined ? { documentProfile: nextProfile } : {}),
+			...(nextScan !== undefined ? { scanHandling: nextScan } : {}),
+			...(nextPreference !== undefined
+				? { parsePreference: nextPreference }
+				: {}),
+			...(policyChanged
+				? {
+						ingestPolicyVersion: (current.ingestPolicyVersion ?? 1) + 1,
+					}
+				: {}),
+			updatedAt: now,
+		})
+		.where(
+			and(
+				eq(libraries.id, current.id),
+				eq(libraries.organizationId, identity.tenantId),
+				eq(libraries.workspaceId, identity.workspaceId),
+			),
+		)
+		.returning();
 	const [withStale] = await db
 		.select({
 			ragLibraryId: libraries.ragLibraryId,
@@ -242,43 +212,6 @@ export async function DELETE(request: Request, context: RouteContext) {
 	const now = new Date();
 	const requestId = request.headers.get("x-request-id") ?? randomUUID();
 
-	if (!documentLifecycleV2Enabled()) {
-		await runOutboxMutation(
-			db,
-			(tx) =>
-				tx
-					.delete(libraries)
-					.where(
-						and(
-							eq(libraries.id, current.id),
-							eq(libraries.organizationId, identity.tenantId),
-							eq(libraries.workspaceId, identity.workspaceId),
-						),
-					),
-			(tx) =>
-				tx.insert(outboxEvents).values({
-					organizationId: identity.tenantId,
-					workspaceId: identity.workspaceId,
-					aggregateType: "library",
-					aggregateId: current.ragLibraryId,
-					eventType: "library.delete",
-					idempotencyKey: `library.delete:${current.ragLibraryId}:${randomUUID()}`,
-					payload: {
-						library_id: current.ragLibraryId,
-						principal_id: identity.principalId,
-					},
-					createdAt: now,
-					updatedAt: now,
-				}),
-		);
-		return Response.json({
-			ok: true,
-			library_id: libraryId,
-			deleted_documents: current.docCount,
-			cleanup_queued: true,
-		});
-	}
-
 	const outcome = await db.transaction(async (tx) => {
 		const [locked] = await tx
 			.select()
@@ -317,20 +250,6 @@ export async function DELETE(request: Request, context: RouteContext) {
 				);
 			if (deletingDocs.length === 0) {
 				await tx.delete(libraries).where(eq(libraries.id, locked.id));
-				await tx.insert(outboxEvents).values({
-					organizationId: identity.tenantId,
-					workspaceId: identity.workspaceId,
-					aggregateType: "library",
-					aggregateId: locked.ragLibraryId,
-					eventType: "library.delete",
-					idempotencyKey: `library.delete:${locked.ragLibraryId}:${randomUUID()}`,
-					payload: {
-						library_id: locked.ragLibraryId,
-						principal_id: identity.principalId,
-					},
-					createdAt: now,
-					updatedAt: now,
-				});
 				return {
 					queuedJobs: 0,
 					documentCount: 0,

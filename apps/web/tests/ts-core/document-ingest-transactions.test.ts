@@ -355,7 +355,7 @@ test("begin terminalizes a pre-cancelled job without entering processing", async
 	assert.match(
 		findCall(
 			fake,
-			/WITH cleanup_identity AS .*INSERT INTO rag\.generation_cleanup_queue/,
+			/WITH cleanup_identity AS .*INSERT INTO app\.generation_cleanup_queue/,
 		).normalized,
 		/'reason', 'failed_staging'/,
 	);
@@ -440,14 +440,14 @@ test("prepareActivation persists staging metadata but does not change active poi
 		-1,
 	);
 	assert.equal(
-		callIndex(fake, /INSERT INTO rag\.active_document_generations/),
+		callIndex(fake, /INSERT INTO app\.active_document_generations/),
 		-1,
 	);
 	assertLockOrderAndScope(fake);
 	assertTransactionCommitted(fake);
 });
 
-test("activate atomically flips both active projections and queues the old generation", async () => {
+test("activate atomically flips the canonical active pointer and queues the old generation", async () => {
 	const fake = new FakeSqlPool({
 		versionStatus: "activating",
 		jobStatus: "running",
@@ -463,17 +463,13 @@ test("activate atomically flips both active projections and queues the old gener
 		fake,
 		/INSERT INTO app\.document_active_versions/,
 	);
-	const ragPointer = callIndex(
-		fake,
-		/INSERT INTO rag\.active_document_generations/,
-	);
 	const supersede = callIndex(
 		fake,
 		/UPDATE app\.document_versions SET status = 'superseded'/,
 	);
 	const cleanup = callIndex(
 		fake,
-		/INSERT INTO rag\.generation_cleanup_queue.*execution_engine/,
+		/INSERT INTO app\.generation_cleanup_queue.*execution_engine/,
 	);
 	const activateVersion = callIndex(
 		fake,
@@ -488,22 +484,12 @@ test("activate atomically flips both active projections and queues the old gener
 		/UPDATE app\.jobs SET status = 'completed'/,
 	);
 	assert.ok(
-		appPointer < ragPointer &&
-			ragPointer < supersede &&
+		appPointer < supersede &&
 			supersede < cleanup &&
 			cleanup < activateVersion &&
 			activateVersion < activateDocument &&
 			activateDocument < completeJob,
 	);
-	assert.deepEqual(fake.calls[ragPointer]?.values, [
-		organizationId,
-		workspaceId,
-		appLibraryId,
-		ragLibraryId,
-		documentId,
-		versionId,
-		generationId,
-	]);
 	assert.deepEqual(fake.calls[cleanup]?.values, [
 		previousGenerationId,
 		organizationId,
@@ -585,12 +571,12 @@ test("markError preserves old active and creates an idempotent failed_staging cl
 		-1,
 	);
 	assert.equal(
-		callIndex(fake, /INSERT INTO rag\.active_document_generations \(/),
+		callIndex(fake, /INSERT INTO app\.active_document_generations \(/),
 		-1,
 	);
 	const cleanup = findCall(
 		fake,
-		/WITH cleanup_identity AS .*INSERT INTO rag\.generation_cleanup_queue/,
+		/WITH cleanup_identity AS .*INSERT INTO app\.generation_cleanup_queue/,
 	);
 	assert.match(cleanup.normalized, /'reason', 'failed_staging'/);
 	assert.match(

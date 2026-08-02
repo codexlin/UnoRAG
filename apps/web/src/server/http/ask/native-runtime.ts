@@ -387,7 +387,16 @@ export function createNativeAskRuntime(input: {
 		const registry = createAiProviderRegistry(aiConfigFromEnv());
 		dependencies = {
 			retrieval: getTypeScriptRetrievalService(),
-			structured: new StructuredOutputAdapter(registry.model),
+			structured: new StructuredOutputAdapter(registry.model, undefined, {
+				timeoutMs: positiveEnvironmentInteger(
+					"ASK_STRUCTURED_TIMEOUT_MS",
+					15_000,
+				),
+				maxAttempts: positiveEnvironmentInteger(
+					"ASK_STRUCTURED_MAX_ATTEMPTS",
+					2,
+				),
+			}),
 			answer: new AnswerStreamAdapter(registry.model),
 		};
 	}
@@ -398,4 +407,14 @@ export function createNativeAskRuntime(input: {
 		input.policy,
 		dependencies,
 	);
+}
+
+function positiveEnvironmentInteger(name: string, fallback: number): number {
+	const raw = process.env[name]?.trim();
+	if (!raw) return fallback;
+	const value = Number(raw);
+	if (!Number.isInteger(value) || value <= 0) {
+		throw new Error(`${name} must be a positive integer`);
+	}
+	return value;
 }

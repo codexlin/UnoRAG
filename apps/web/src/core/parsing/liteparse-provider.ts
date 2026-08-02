@@ -19,6 +19,7 @@ import type {
 	DurableParseOptions,
 	DurableParserProvider,
 	FetchLike,
+	ParseSourceLoader,
 } from "./http-parser-provider";
 
 export type LiteParseTextItem = {
@@ -89,6 +90,7 @@ export type LiteParseProviderOptions = {
 	ocrEnabled?: boolean;
 	ocrLanguage?: string;
 	minOcrConfidence?: number;
+	sourceLoader?: ParseSourceLoader;
 };
 
 type TaskStatus = ParseProgress["status"];
@@ -136,6 +138,7 @@ export class LiteParseProvider implements DurableParserProvider {
 	private readonly ocrEnabled: boolean;
 	private readonly ocrLanguage: string | undefined;
 	private readonly minOcrConfidence: number;
+	private readonly sourceLoader?: ParseSourceLoader;
 	private readonly tasks = new Map<string, LocalTask>();
 	private readonly idempotencyTasks = new Map<string, string>();
 
@@ -148,6 +151,7 @@ export class LiteParseProvider implements DurableParserProvider {
 		this.ocrEnabled = options.ocrEnabled ?? false;
 		this.ocrLanguage = options.ocrLanguage?.trim() || undefined;
 		this.minOcrConfidence = confidence(options.minOcrConfidence, 0.6);
+		this.sourceLoader = options.sourceLoader;
 		this.capabilities = {
 			formats: ["pdf"],
 			ocr: this.ocrEnabled,
@@ -362,6 +366,9 @@ export class LiteParseProvider implements DurableParserProvider {
 		input: ParseInput,
 		signal: AbortSignal,
 	): Promise<Uint8Array> {
+		if (this.sourceLoader) {
+			return this.sourceLoader(input, signal);
+		}
 		let response: Response;
 		try {
 			response = await this.fetchImpl(input.sourceUri, { signal });

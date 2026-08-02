@@ -94,8 +94,8 @@ export function createDocumentIngestWorkflow(
 			);
 			const staged: DocumentIngestStageResult = await runRetriedStep(
 				operations,
-				"document-ingest-stage-text",
-				() => ingest.external.stageTextDocument(input),
+				"document-ingest-stage-document",
+				() => ingest.external.stageDocument(input),
 			);
 			await requireIngestContinuation(
 				operations,
@@ -381,9 +381,6 @@ export function createDocumentDeleteWorkflow(
 				);
 				if (deleted) storageDeleted += 1;
 			}
-			await runRetriedStep(operations, "document-delete-projection", () =>
-				ports.documentDelete.external.deleteProjection(input),
-			);
 			const result = await runRetriedTransaction(
 				operations,
 				"document-delete-finalize",

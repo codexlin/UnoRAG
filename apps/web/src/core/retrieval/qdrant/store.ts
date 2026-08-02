@@ -25,6 +25,7 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 	constructor(
 		private readonly client: QdrantClient,
 		private readonly collection: string,
+		private readonly ready: Promise<unknown> = Promise.resolve(),
 	) {
 		if (!collection.trim()) throw new Error("Qdrant collection is required");
 	}
@@ -35,6 +36,7 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		userFilters?: RetrievalUserFilters;
 		limit: number;
 	}): Promise<QdrantSearchHit[]> {
+		await this.ready;
 		const filter = buildMandatoryQdrantFilter({
 			scope: input.scope,
 			userFilters: input.userFilters,
@@ -57,6 +59,7 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		userFilters?: RetrievalUserFilters;
 		limit: number;
 	}): Promise<QdrantSearchHit[]> {
+		await this.ready;
 		const filter = buildMandatoryQdrantFilter({
 			scope: input.scope,
 			userFilters: input.userFilters,

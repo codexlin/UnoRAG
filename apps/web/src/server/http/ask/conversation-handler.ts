@@ -243,10 +243,6 @@ function scope(identity: AuthIdentity): ConversationScope {
 	};
 }
 
-function enabled(): boolean {
-	return process.env.UNORAG_ASK_RUNTIME?.trim().toLowerCase() === "typescript";
-}
-
 export function isNativeConversationPath(path: string[]): boolean {
 	return path[0] === "v1" && path[1] === "threads" && path.length <= 4;
 }
@@ -391,7 +387,7 @@ export async function handleNativeConversationRequest(input: {
 	citationAuthorizer?: HistoricalCitationAuthorizer;
 	turnCounter?: ConversationTurnCounter;
 }): Promise<Response | null> {
-	if (!enabled() || !isNativeConversationPath(input.path)) return null;
+	if (!isNativeConversationPath(input.path)) return null;
 	const repository =
 		input.repository ?? new ConversationRepository(getDatabase());
 	const citationAuthorizer =

@@ -32,8 +32,6 @@ function validatePorts(value: unknown): asserts value is WorkerPorts {
 			"function" ||
 		typeof candidate.documentDelete?.external?.deleteStorageKey !==
 			"function" ||
-		typeof candidate.documentDelete?.external?.deleteProjection !==
-			"function" ||
 		typeof candidate.transactions?.markGenerationSweeping !== "function" ||
 		typeof candidate.transactions?.markGenerationDeleted !== "function" ||
 		typeof candidate.transactions?.markGenerationError !== "function"

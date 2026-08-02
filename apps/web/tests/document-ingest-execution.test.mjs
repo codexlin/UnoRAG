@@ -6,6 +6,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+	dbosDocumentIngestEnabled,
+	dbosDocumentIngestRouteEnabled,
 	dbosTextIngestEnabled,
 	dbosTextIngestRouteEnabled,
 	documentIngestExecutionIdentity,
@@ -47,7 +49,45 @@ test("DBOS text ingest is opt-in and freezes identity at job creation", () => {
 	);
 });
 
-test("DBOS text ingest never captures parser or disguised binary work", () => {
+test("DBOS document ingest primary flags route every supported format", () => {
+	const enabled = {
+		UNORAG_DBOS_DOCUMENT_INGEST_ENABLED: "true",
+		UNORAG_DBOS_DOCUMENT_INGEST_ROUTE_ENABLED: "true",
+	};
+	assert.equal(dbosDocumentIngestEnabled(enabled), true);
+	assert.equal(dbosDocumentIngestRouteEnabled(enabled), true);
+	for (const payload of [
+		textPayload,
+		{
+			filename: "policy.md",
+			content_type: "text/markdown",
+			queue_class: "local",
+		},
+		{
+			filename: "policy.docx",
+			content_type:
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			queue_class: "local",
+		},
+		{
+			filename: "contract.pdf",
+			content_type: "application/pdf",
+			queue_class: "auto",
+		},
+		{
+			filename: "contract.pdf",
+			content_type: "application/pdf",
+			queue_class: "mineru",
+		},
+	]) {
+		assert.deepEqual(
+			documentIngestExecutionIdentity("job-document", payload, enabled),
+			{ executionEngine: "dbos", workflowId: "job-document" },
+		);
+	}
+});
+
+test("legacy DBOS text cohort does not expand to binary formats during upgrade", () => {
 	const enabled = { UNORAG_DBOS_TEXT_INGEST_ENABLED: "1" };
 	for (const payload of [
 		{
@@ -55,6 +95,19 @@ test("DBOS text ingest never captures parser or disguised binary work", () => {
 			content_type: "application/pdf",
 			queue_class: "auto",
 		},
+		{
+			filename: "policy.docx",
+			content_type:
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			queue_class: "local",
+		},
+	]) {
+		assert.deepEqual(
+			documentIngestExecutionIdentity("job-2", payload, enabled),
+			{ executionEngine: "python", workflowId: null },
+		);
+	}
+	for (const payload of [
 		{
 			filename: "contract.pdf",
 			content_type: "text/plain",

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, notInArray } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import { libraries, outboxEvents } from "@/db/schema";
+import { libraries } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
 	DOCUMENT_PROFILE_DEFAULT,
@@ -17,7 +17,6 @@ import {
 import { canWriteLibraries } from "@/lib/server/library-access";
 import { toApiLibrary } from "@/lib/server/library-api.mjs";
 import { staleActiveVersionsSql } from "@/lib/server/library-reindex-sql";
-import { runOutboxMutation } from "@/lib/server/outbox-transaction.mjs";
 
 const RAG_LIBRARY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -127,49 +126,23 @@ export async function POST(request: Request) {
 		);
 	}
 	const db = getDatabase();
-	const created = await runOutboxMutation(
-		db,
-		async (tx) => {
-			const [row] = await tx
-				.insert(libraries)
-				.values({
-					id,
-					organizationId: identity.tenantId,
-					workspaceId: identity.workspaceId,
-					ragLibraryId,
-					name: name.slice(0, 256),
-					description: body.description?.trim().slice(0, 2000) || null,
-					documentProfile: profileResult.value,
-					scanHandling: scanResult.value,
-					parsePreference: preferenceResult.value,
-					ingestPolicyVersion: 1,
-					createdBy: identity.principalId,
-					createdAt: now,
-					updatedAt: now,
-				})
-				.returning();
-			return row;
-		},
-		(tx, row) =>
-			tx.insert(outboxEvents).values({
-				organizationId: identity.tenantId,
-				workspaceId: identity.workspaceId,
-				aggregateType: "library",
-				aggregateId: row.ragLibraryId,
-				eventType: "library.upsert",
-				idempotencyKey: `library.upsert:${row.ragLibraryId}:${randomUUID()}`,
-				payload: {
-					library_id: row.ragLibraryId,
-					name: row.name,
-					description: row.description,
-					document_profile: row.documentProfile,
-					scan_handling: row.scanHandling,
-					parse_preference: row.parsePreference,
-					principal_id: identity.principalId,
-				},
-				createdAt: now,
-				updatedAt: now,
-			}),
-	);
+	const [created] = await db
+		.insert(libraries)
+		.values({
+			id,
+			organizationId: identity.tenantId,
+			workspaceId: identity.workspaceId,
+			ragLibraryId,
+			name: name.slice(0, 256),
+			description: body.description?.trim().slice(0, 2000) || null,
+			documentProfile: profileResult.value,
+			scanHandling: scanResult.value,
+			parsePreference: preferenceResult.value,
+			ingestPolicyVersion: 1,
+			createdBy: identity.principalId,
+			createdAt: now,
+			updatedAt: now,
+		})
+		.returning();
 	return Response.json(toApiLibrary(created), { status: 201 });
 }

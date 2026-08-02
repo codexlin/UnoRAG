@@ -171,7 +171,7 @@ test("text ingest checkpoints staging and activates before retiring the previous
 		"ingest:begin",
 		"tx:document-ingest-progress-downloading-1",
 		"ingest:progress:downloading:5",
-		"step:document-ingest-stage-text-1",
+		"step:document-ingest-stage-document-1",
 		"ingest:stage",
 		"tx:document-ingest-progress-validating-1",
 		"ingest:progress:validating:85",
@@ -302,8 +302,6 @@ test("document delete drains ingest and checkpoints every external boundary", as
 		"delete:vectors",
 		"step:document-delete-storage-1-1",
 		"delete:storage:documents/test.pdf",
-		"step:document-delete-projection-1",
-		"delete:projection",
 		"tx:document-delete-finalize-1",
 		"delete:completed",
 	]);
@@ -581,9 +579,6 @@ function successfulPorts(events: string[]): WorkerPorts {
 					events.push(`delete:storage:${storageKey}`);
 					return true;
 				},
-				async deleteProjection() {
-					events.push("delete:projection");
-				},
 			},
 			transactions: {
 				async markRunning() {
@@ -648,7 +643,7 @@ function successfulIngestPorts(events: string[]): WorkerPorts {
 	const ports = successfulPorts(events);
 	ports.documentIngest = {
 		external: {
-			async stageTextDocument() {
+			async stageDocument() {
 				events.push("ingest:stage");
 				return {
 					pointCount: 4,

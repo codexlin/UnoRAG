@@ -8,17 +8,18 @@ import {
 	handleNativeAskRequest,
 	isNativeAskPath,
 } from "@/server/http/ask/native-handler";
+import {
+	handleNativeDocumentDownloadRequest,
+	isNativeDocumentDownloadPath,
+} from "@/server/http/document/download-handler";
+import { handleNativeHealthRequest } from "@/server/http/health/native-handler";
+import {
+	handleNativeRetrievalRequest,
+	isNativeRetrievalPath,
+} from "@/server/http/retrieval/native-handler";
 import { injectAskOverrides } from "./ask-overrides-inject.mjs";
 import { resolveRequestSession } from "./auth/session";
-import {
-	createInternalRagHeaders,
-	INTERNAL_AUTH_PROTOCOL,
-} from "./internal-rag-context";
-import {
-	canWriteLibraries,
-	findAuthorizedDocument,
-	findAuthorizedLibrary,
-} from "./library-access";
+import { canWriteLibraries, findAuthorizedLibrary } from "./library-access";
 import {
 	isDeprecatedBrowserRagWritePath,
 	isInternalRagPath,
@@ -26,101 +27,31 @@ import {
 } from "./rag-permissions.mjs";
 import { getWorkspaceAskSettings } from "./workspace-settings";
 
-const REQUEST_HEADER_DENYLIST = new Set([
-	"authorization",
-	"connection",
-	"content-length",
-	"cookie",
-	"host",
-	"transfer-encoding",
-	"x-unorag-context",
-	"x-unorag-signature",
-	"x-request-id",
-]);
-
-const RESPONSE_HEADER_DENYLIST = new Set([
-	"connection",
-	"content-encoding",
-	"content-length",
-	"transfer-encoding",
-]);
-
-function ragBaseUrl(): string {
-	return (process.env.RAG_API_URL?.trim() || "http://localhost:8000").replace(
-		/\/$/,
-		"",
-	);
-}
-
-function upstreamHeaders(request: Request, signedHeaders: Headers): Headers {
-	const headers = new Headers();
-	request.headers.forEach((value, key) => {
-		if (!REQUEST_HEADER_DENYLIST.has(key.toLowerCase())) {
-			headers.set(key, value);
-		}
-	});
-	signedHeaders.forEach((value, key) => {
-		headers.set(key, value);
-	});
-	return headers;
-}
-
-function downstreamHeaders(upstream: Response): Headers {
-	const headers = new Headers();
-	upstream.headers.forEach((value, key) => {
-		if (!RESPONSE_HEADER_DENYLIST.has(key.toLowerCase())) {
-			headers.set(key, value);
-		}
-	});
-	headers.set("cache-control", "no-store");
-	if (headers.get("content-type")?.includes("text/event-stream")) {
-		headers.set("x-accel-buffering", "no");
-	}
-	return headers;
-}
-
 async function bodyLibraryId(
-	request: Request,
 	body: Uint8Array | undefined,
 ): Promise<string | null> {
 	if (!body?.length) return null;
-	const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
 	try {
-		if (contentType.startsWith("application/json")) {
-			const payload = JSON.parse(new TextDecoder().decode(body)) as {
-				library_id?: unknown;
-			};
-			return typeof payload.library_id === "string"
-				? payload.library_id.trim() || null
-				: null;
-		}
-		if (contentType.startsWith("multipart/form-data")) {
-			const parsed = new Request("http://unorag.internal", {
-				method: "POST",
-				headers: { "content-type": contentType },
-				body: Buffer.from(body),
-			});
-			const value = (await parsed.formData()).get("library_id");
-			return typeof value === "string" ? value.trim() || null : null;
-		}
+		const payload = JSON.parse(new TextDecoder().decode(body)) as {
+			library_id?: unknown;
+		};
+		return typeof payload.library_id === "string"
+			? payload.library_id.trim() || null
+			: null;
 	} catch {
 		return null;
 	}
-	return null;
 }
 
-function isAskPath(safeSegments: string[]): boolean {
+function isAskPath(path: string[]): boolean {
 	return (
-		safeSegments[0] === "v1" &&
-		safeSegments[1] === "ask" &&
-		(safeSegments.length === 2 ||
-			(safeSegments.length === 3 && safeSegments[2] === "stream"))
+		path[0] === "v1" &&
+		path[1] === "ask" &&
+		(path.length === 2 || (path.length === 3 && path[2] === "stream"))
 	);
 }
 
-/** Inject resolved ask knobs + public policy meta (server-authoritative, fail-closed). */
 async function withAskOverrides(
-	request: Request,
 	body: Uint8Array | undefined,
 	workspaceId: string,
 ): Promise<
@@ -128,10 +59,20 @@ async function withAskOverrides(
 	| { ok: false; status: 400 | 503; detail: string }
 > {
 	if (!body?.length) return { ok: true, body };
-	const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
-	if (!contentType.startsWith("application/json")) return { ok: true, body };
 	return injectAskOverrides(body, workspaceId, getWorkspaceAskSettings, {
 		questionKeys: ["question"],
+	});
+}
+
+function nativeRequest(
+	request: Request,
+	body: Uint8Array | undefined,
+): Request {
+	return new Request(request.url, {
+		method: request.method,
+		headers: request.headers,
+		body: body?.length ? Buffer.from(body) : undefined,
+		signal: request.signal,
 	});
 }
 
@@ -139,30 +80,33 @@ export async function proxyRagRequest(
 	request: Request,
 	pathSegments: string[],
 ): Promise<Response> {
-	const safeSegments = pathSegments.filter(
+	const path = pathSegments.filter(
 		(segment) => segment && segment !== "." && segment !== "..",
 	);
-	if (safeSegments.length !== pathSegments.length) {
+	if (path.length !== pathSegments.length) {
 		return Response.json({ detail: "invalid RAG path" }, { status: 400 });
 	}
-	if (
-		safeSegments[0] !== "health" &&
-		!(safeSegments[0] === "v1" && safeSegments.length > 1)
-	) {
+	if (path.length === 1 && path[0] === "health") {
+		if (request.method !== "GET" && request.method !== "HEAD") {
+			return Response.json({ detail: "method not allowed" }, { status: 405 });
+		}
+		return handleNativeHealthRequest();
+	}
+	if (path[0] !== "v1" || path.length < 2) {
 		return Response.json({ detail: "RAG path not exposed" }, { status: 404 });
 	}
-	const identity =
-		safeSegments[0] === "v1" ? await resolveRequestSession(request) : null;
-	if (safeSegments[0] === "v1" && !identity) {
+
+	const identity = await resolveRequestSession(request);
+	if (!identity) {
 		return Response.json(
 			{ detail: "authentication required" },
 			{ status: 401 },
 		);
 	}
-	if (identity && isInternalRagPath(safeSegments)) {
+	if (isInternalRagPath(path)) {
 		return Response.json({ detail: "RAG path not exposed" }, { status: 404 });
 	}
-	if (isDeprecatedBrowserRagWritePath(request.method, safeSegments)) {
+	if (isDeprecatedBrowserRagWritePath(request.method, path)) {
 		return Response.json(
 			{
 				detail:
@@ -173,9 +117,7 @@ export async function proxyRagRequest(
 		);
 	}
 	if (
-		identity &&
-		safeSegments[0] === "v1" &&
-		requiresLibraryWritePermission(request.method, safeSegments) &&
+		requiresLibraryWritePermission(request.method, path) &&
 		!canWriteLibraries(identity)
 	) {
 		return Response.json(
@@ -183,152 +125,82 @@ export async function proxyRagRequest(
 			{ status: 403 },
 		);
 	}
-	const incomingUrl = new URL(request.url);
-	const path = safeSegments.map(encodeURIComponent).join("/");
-	const target = `/${path}${incomingUrl.search}`;
-	const upstreamUrl = `${ragBaseUrl()}${target}`;
-	const hasBody = request.method !== "GET" && request.method !== "HEAD";
 
 	try {
-		let signedBody: Uint8Array | undefined =
+		const hasBody = request.method !== "GET" && request.method !== "HEAD";
+		let body: Uint8Array | undefined =
 			hasBody && request.body
 				? new Uint8Array(await request.arrayBuffer())
 				: undefined;
-		if (identity && safeSegments[0] === "v1") {
-			if (safeSegments[1] === "libraries" && safeSegments.length === 2) {
-				return Response.json(
-					{ detail: "use the control plane library API" },
-					{ status: 404 },
-				);
-			}
-			const queryLibraryId = incomingUrl.searchParams.get("library_id");
-			const pathLibraryId =
-				safeSegments[1] === "libraries" && safeSegments.length > 2
-					? safeSegments[2]
-					: null;
-			const requestedLibraryId =
-				pathLibraryId ??
-				queryLibraryId ??
-				(await bodyLibraryId(request, signedBody));
-			if (
-				requestedLibraryId &&
-				!(await findAuthorizedLibrary(identity, requestedLibraryId))
-			) {
-				return Response.json({ detail: "library not found" }, { status: 404 });
-			}
-			if (safeSegments[1] === "documents" && safeSegments[2]) {
-				const document = await findAuthorizedDocument(
-					identity,
-					safeSegments[2],
-				);
-				if (!document) {
-					return Response.json(
-						{ detail: "document not found" },
-						{ status: 404 },
-					);
-				}
-			}
-			if (isAskPath(safeSegments)) {
-				const injected = await withAskOverrides(
-					request,
-					signedBody,
-					identity.workspaceId,
-				);
-				if (!injected.ok) {
-					return Response.json(
-						{ detail: injected.detail },
-						{ status: injected.status },
-					);
-				}
-				signedBody = injected.body;
-			}
-			if (
-				isNativeConversationPath(safeSegments) ||
-				isNativeAskPath(safeSegments)
-			) {
-				const nativeRequest = new Request(request.url, {
-					method: request.method,
-					headers: request.headers,
-					body: signedBody?.length ? Buffer.from(signedBody) : undefined,
-					signal: request.signal,
-				});
-				const native = isNativeConversationPath(safeSegments)
-					? await handleNativeConversationRequest({
-							request: nativeRequest,
-							path: safeSegments,
-							identity,
-						})
-					: await handleNativeAskRequest({
-							request: nativeRequest,
-							path: safeSegments,
-							identity,
-						});
-				if (native) return native;
-			}
-		}
-		let signedHeaders = new Headers();
-		if (safeSegments[0] === "v1") {
-			if (!identity) {
-				return Response.json(
-					{ detail: "authentication required" },
-					{ status: 401 },
-				);
-			}
-			signedHeaders = createInternalRagHeaders(
-				{
-					method: request.method,
-					target,
-					body: signedBody,
-				},
-				identity,
-			);
-		}
-		const init: RequestInit = {
-			method: request.method,
-			headers: upstreamHeaders(request, signedHeaders),
-			cache: "no-store",
-			redirect: "manual",
-			signal: request.signal,
-		};
-		if (signedBody) {
-			init.body = Buffer.from(signedBody);
-		}
-		const upstream = await fetch(upstreamUrl, init);
-		// L6: no dual-write / document-list probe sync into app.documents.
-		// Control-plane routes own product metadata; Ask/retrieval stay HMAC-proxied.
-		const headers = downstreamHeaders(upstream);
+		const url = new URL(request.url);
+		const requestedLibraryId =
+			url.searchParams.get("library_id") ?? (await bodyLibraryId(body));
 		if (
-			safeSegments[0] === "health" &&
-			upstream.ok &&
-			headers.get("content-type")?.includes("application/json")
+			requestedLibraryId &&
+			!(await findAuthorizedLibrary(identity, requestedLibraryId))
 		) {
-			const health = (await upstream.json()) as Record<string, unknown>;
-			return Response.json(
-				{
-					...health,
-					control_plane_protocol: INTERNAL_AUTH_PROTOCOL,
-					control_plane_build:
-						process.env.UNORAG_BUILD_REF?.trim() || "development",
-				},
-				{ status: upstream.status, headers },
+			return Response.json({ detail: "library not found" }, { status: 404 });
+		}
+		if (isAskPath(path)) {
+			const injected = await withAskOverrides(body, identity.workspaceId);
+			if (!injected.ok) {
+				return Response.json(
+					{ detail: injected.detail },
+					{ status: injected.status },
+				);
+			}
+			body = injected.body;
+		}
+
+		const routedRequest = nativeRequest(request, body);
+		if (isNativeRetrievalPath(path)) {
+			return (
+				(await handleNativeRetrievalRequest({
+					request: routedRequest,
+					path,
+					identity,
+				})) ?? Response.json({ detail: "not found" }, { status: 404 })
 			);
 		}
-		// Echo the internal request id on every proxied response (incl. upstream 5xx)
-		// so fault drills / operators can correlate without relying on body shape.
-		const requestId = signedHeaders.get("x-request-id");
-		if (requestId && !headers.get("x-request-id")) {
-			headers.set("x-request-id", requestId);
+		if (isNativeAskPath(path)) {
+			return (
+				(await handleNativeAskRequest({
+					request: routedRequest,
+					path,
+					identity,
+				})) ?? Response.json({ detail: "not found" }, { status: 404 })
+			);
 		}
-		return new Response(upstream.body, {
-			status: upstream.status,
-			statusText: upstream.statusText,
-			headers,
-		});
+		if (isNativeConversationPath(path)) {
+			return (
+				(await handleNativeConversationRequest({
+					request: routedRequest,
+					path,
+					identity,
+				})) ?? Response.json({ detail: "not found" }, { status: 404 })
+			);
+		}
+		if (isNativeDocumentDownloadPath(path)) {
+			return (
+				(await handleNativeDocumentDownloadRequest({
+					request: routedRequest,
+					path,
+					identity,
+				})) ?? Response.json({ detail: "not found" }, { status: 404 })
+			);
+		}
+		return Response.json({ detail: "RAG path not exposed" }, { status: 404 });
 	} catch (error) {
-		const message =
-			error instanceof Error && error.name === "AbortError"
-				? "RAG request cancelled"
-				: "RAG service unavailable";
-		return Response.json({ detail: message }, { status: 502 });
+		console.error(
+			JSON.stringify({
+				event: "rag.native.route.failed",
+				path: path.join("/"),
+				error: error instanceof Error ? error.name : "UnknownError",
+			}),
+		);
+		return Response.json(
+			{ detail: "Knowledge service unavailable" },
+			{ status: 503 },
+		);
 	}
 }

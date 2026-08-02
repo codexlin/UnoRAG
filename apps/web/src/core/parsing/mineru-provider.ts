@@ -12,6 +12,7 @@ import {
 	type DocumentNode,
 	ParserReportSchema,
 } from "../document-ir";
+import { normalizeHtmlTable } from "./html-table";
 import {
 	type DurableParseOptions,
 	type DurableParserProvider,
@@ -344,14 +345,30 @@ function contentListToNodes(
 	const nodes: DocumentNode[] = [];
 	for (const [index, item] of contentList.entries()) {
 		const kind = textValue(item.type).toLowerCase();
+		const tableId = kind === "table" ? `${documentId}:table:${index}` : null;
+		const tableHtml = textValue(item.table_body ?? item.html);
+		const table =
+			tableId && tableHtml
+				? normalizeHtmlTable({
+						html: tableHtml,
+						tableId,
+						caption: joinedText(item.table_caption ?? item.caption),
+						page: pageNumber(item.page_idx ?? item.page),
+					})
+				: null;
 		const text =
+			table?.text ||
 			textValue(
 				item.text ??
 					item.table_caption ??
 					item.img_caption ??
 					item.image_caption ??
 					item.equation,
-			) || stripHtml(textValue(item.table_body));
+			) ||
+			joinedText(
+				item.table_caption ?? item.img_caption ?? item.image_caption,
+			) ||
+			stripHtml(tableHtml);
 		if (!text && !["table", "image", "figure"].includes(kind)) continue;
 		const page = pageNumber(item.page_idx ?? item.page);
 		const level = positiveNumber(item.text_level ?? item.level);
@@ -376,13 +393,15 @@ function contentListToNodes(
 			table_json:
 				nodeType === "table"
 					? {
-							html: textValue(item.table_body),
+							html: tableHtml,
+							headers: table?.headers ?? [],
+							rows: table?.rows ?? [],
 						}
 					: null,
-			table_ir: null,
+			table_ir: nodeType === "table" ? (table?.tableIr ?? null) : null,
 			figure_desc: nodeType === "figure" ? text : null,
 			confidence: confidence(item.confidence ?? item.score),
-			table_id: nodeType === "table" ? `${documentId}:table:${index}` : null,
+			table_id: nodeType === "table" ? tableId : null,
 			figure_id: nodeType === "figure" ? `${documentId}:figure:${index}` : null,
 			meta: {
 				reading_order: index,
@@ -438,6 +457,13 @@ function invalidResponse(message: string): ParserProviderHttpError {
 
 function textValue(value: unknown): string {
 	return typeof value === "string" ? value.trim() : "";
+}
+
+function joinedText(value: unknown): string {
+	if (Array.isArray(value)) {
+		return value.map(textValue).filter(Boolean).join(" ");
+	}
+	return textValue(value);
 }
 
 function positiveNumber(value: unknown): number | undefined {

@@ -27,7 +27,7 @@ export async function parseOrQuarantineDurableJob(
 		await client.query(
 			`
 				SELECT generation_id
-				FROM rag.generation_cleanup_queue
+				FROM app.generation_cleanup_queue
 				WHERE cleanup_job_id = $1
 				FOR UPDATE
 			`,
@@ -53,7 +53,7 @@ export async function parseOrQuarantineDurableJob(
 		if (quarantined.rows[0]?.type === "generation.cleanup") {
 			await client.query(
 				`
-					UPDATE rag.generation_cleanup_queue
+					UPDATE app.generation_cleanup_queue
 					SET sweep_status = 'error',
 						sweep_last_error = $2,
 						sweep_updated_at = now(),

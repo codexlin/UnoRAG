@@ -115,10 +115,6 @@ test("document delete serializes library finalization and preserves cleanup hist
 		);
 		await external.deleteDocumentVectors(fixture.deletions[0]);
 		assert.equal(qdrantDeletes.length, 1);
-		await Promise.all(
-			fixture.deletions.map((job) => external.deleteProjection(job)),
-		);
-
 		const targets = await transactions.loadTargets(fixture.deletions[0]);
 		assert.deepEqual(targets.generationIds, [fixture.generationIds[0]]);
 		assert.deepEqual(targets.storageKeys, [
@@ -157,9 +153,6 @@ test("document delete serializes library finalization and preserves cleanup hist
 			document_count: number;
 			completed_jobs: number;
 			deleted_cleanup_rows: number;
-			delete_events: number;
-			projection_status: string;
-			projection_count: number;
 		}>(
 			`
 					SELECT
@@ -172,27 +165,15 @@ test("document delete serializes library finalization and preserves cleanup hist
 						 WHERE id = ANY($2::uuid[]) AND status = 'completed')
 							AS completed_jobs,
 						(SELECT count(*)::integer
-						 FROM rag.generation_cleanup_queue
+						 FROM app.generation_cleanup_queue
 						 WHERE document_id = ANY($3::uuid[])
 						   AND sweep_status = 'deleted')
-							AS deleted_cleanup_rows,
-						(SELECT count(*)::integer
-						 FROM app.outbox_events
-						 WHERE organization_id = $4
-						   AND aggregate_id = $5
-						   AND event_type = 'library.delete')
-							AS delete_events,
-						(SELECT status FROM public.libraries WHERE id = $5)
-							AS projection_status,
-						(SELECT doc_count FROM public.libraries WHERE id = $5)
-							AS projection_count
+							AS deleted_cleanup_rows
 				`,
 			[
 				fixture.libraryId,
 				fixture.deletions.map((job) => job.jobId),
 				fixture.documentIds,
-				fixture.organizationId,
-				fixture.ragLibraryId,
 			],
 		);
 		assert.deepEqual(state.rows[0], {
@@ -200,9 +181,6 @@ test("document delete serializes library finalization and preserves cleanup hist
 			document_count: 2,
 			completed_jobs: 2,
 			deleted_cleanup_rows: 2,
-			delete_events: 1,
-			projection_status: "empty",
-			projection_count: 0,
 		});
 	} finally {
 		await runtimePool.end();
@@ -309,7 +287,7 @@ test("malformed DBOS rows are quarantined without blocking valid jobs", {
 		);
 		await pool.query(
 			`
-				UPDATE rag.generation_cleanup_queue
+				UPDATE app.generation_cleanup_queue
 				SET execution_engine = 'dbos',
 					cleanup_job_id = $2,
 					sweep_status = 'sweeping'
@@ -332,7 +310,7 @@ test("malformed DBOS rows are quarantined without blocking valid jobs", {
 			await cleanupOwner.query(
 				`
 						SELECT generation_id
-						FROM rag.generation_cleanup_queue
+						FROM app.generation_cleanup_queue
 						WHERE cleanup_job_id = $1
 						FOR UPDATE
 					`,
@@ -421,7 +399,7 @@ test("malformed DBOS rows are quarantined without blocking valid jobs", {
 					job.error_code,
 					queue.sweep_status
 				FROM app.jobs AS job
-				JOIN rag.generation_cleanup_queue AS queue
+				JOIN app.generation_cleanup_queue AS queue
 				  ON queue.cleanup_job_id = job.id
 				WHERE job.id = $1
 			`,
@@ -558,7 +536,7 @@ test("delete targets cannot escape the document persisted in another tenant", {
 					document.status AS document_status,
 					queue.sweep_status AS generation_status
 				FROM app.documents AS document
-				JOIN rag.generation_cleanup_queue AS queue
+				JOIN app.generation_cleanup_queue AS queue
 				  ON queue.document_id = document.id
 				WHERE document.id = $1
 			`,
@@ -776,16 +754,6 @@ async function seedFixture(
 			principalId,
 		],
 	);
-	await pool.query(
-		`
-			INSERT INTO public.libraries (
-				id, tenant_id, workspace_id, name, status, doc_count, ready_count
-			)
-			VALUES ($1, $2, $3, 'Delete test', 'ready', $4, $4)
-		`,
-		[ragLibraryId, organizationId, workspaceId, documentCount],
-	);
-
 	for (let index = 0; index < documentCount; index += 1) {
 		const documentId = randomUUID();
 		const versionId = randomUUID();
@@ -822,19 +790,6 @@ async function seedFixture(
 				ragDocumentId,
 				principalId,
 			],
-		);
-		await pool.query(
-			`
-				INSERT INTO public.documents (
-					id, library_id, tenant_id, workspace_id, name, filename,
-					content_type, status, chunk_count
-				)
-				VALUES (
-					$1, $2, $3, $4, 'Delete test', 'test.pdf',
-					'application/pdf', 'ready', 1
-				)
-			`,
-			[ragDocumentId, ragLibraryId, organizationId, workspaceId],
 		);
 		await pool.query(
 			`
@@ -903,7 +858,7 @@ async function seedFixture(
 		);
 		await pool.query(
 			`
-				INSERT INTO rag.generation_cleanup_queue (
+				INSERT INTO app.generation_cleanup_queue (
 					generation_id, organization_id, workspace_id, library_id,
 					document_id, document_version_id, delete_after
 				)
@@ -948,15 +903,6 @@ async function cleanupFixture(
 	pool: pg.Pool,
 	organizationId: string,
 ): Promise<void> {
-	await pool.query("DELETE FROM public.documents WHERE tenant_id = $1", [
-		organizationId,
-	]);
-	await pool.query("DELETE FROM public.libraries WHERE tenant_id = $1", [
-		organizationId,
-	]);
-	await pool.query("DELETE FROM app.outbox_events WHERE organization_id = $1", [
-		organizationId,
-	]);
 	await pool.query("DELETE FROM app.organizations WHERE id = $1", [
 		organizationId,
 	]);

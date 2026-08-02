@@ -236,32 +236,24 @@ function parseSse(text: string): Array<{ event: string; data: unknown }> {
 		});
 }
 
-test("runtime flag off returns null without invoking dependencies", async () => {
-	const previous = process.env.UNORAG_ASK_RUNTIME;
-	delete process.env.UNORAG_ASK_RUNTIME;
-	try {
-		const { handleNativeAskRequest } = await handlerModule;
-		const repository = new FakeConversationRepository();
-		const runtime = new FakeRuntime(askState());
-		const response = await handleNativeAskRequest({
-			request: request({ question: "问题", library_id: LIBRARY_ID }),
-			path: ["v1", "ask"],
-			identity,
-			repository: repositoryInput(repository),
-			runtimeFactory: runtimeFactory(runtime),
-		});
+test("unrelated path returns null without invoking dependencies", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const repository = new FakeConversationRepository();
+	const runtime = new FakeRuntime(askState());
+	const response = await handleNativeAskRequest({
+		request: request({ question: "问题", library_id: LIBRARY_ID }),
+		path: ["v1", "retrieve"],
+		identity,
+		repository: repositoryInput(repository),
+		runtimeFactory: runtimeFactory(runtime),
+	});
 
-		assert.equal(response, null);
-		assert.equal(runtime.invocations.length, 0);
-		assert.equal(repository.exchanges.length, 0);
-	} finally {
-		if (previous === undefined) delete process.env.UNORAG_ASK_RUNTIME;
-		else process.env.UNORAG_ASK_RUNTIME = previous;
-	}
+	assert.equal(response, null);
+	assert.equal(runtime.invocations.length, 0);
+	assert.equal(repository.exchanges.length, 0);
 });
 
 test("invalid native ask payload returns 400", async () => {
-	process.env.UNORAG_ASK_RUNTIME = "typescript";
 	const { handleNativeAskRequest } = await handlerModule;
 	const repository = new FakeConversationRepository();
 	const runtime = new FakeRuntime(askState());
@@ -287,7 +279,6 @@ test("invalid native ask payload returns 400", async () => {
 });
 
 test("foreign, hidden, or wrong-library thread returns 404", async () => {
-	process.env.UNORAG_ASK_RUNTIME = "typescript";
 	const { handleNativeAskRequest } = await handlerModule;
 	const cases = [
 		activeThread({
@@ -319,7 +310,6 @@ test("foreign, hidden, or wrong-library thread returns 404", async () => {
 });
 
 test("sync ask returns public response and atomically appends the exchange", async () => {
-	process.env.UNORAG_ASK_RUNTIME = "typescript";
 	const { handleNativeAskRequest } = await handlerModule;
 	const repository = new FakeConversationRepository([
 		activeThread({
@@ -401,7 +391,6 @@ test("sync ask returns public response and atomically appends the exchange", asy
 });
 
 test("stream ask preserves SSE order and persists after all tokens", async () => {
-	process.env.UNORAG_ASK_RUNTIME = "typescript";
 	const { handleNativeAskRequest } = await handlerModule;
 	const repository = new FakeConversationRepository([activeThread()]);
 	const runtime = new FakeRuntime(askState(), ["违约金", "为 200 元"]);
@@ -446,7 +435,6 @@ test("stream ask preserves SSE order and persists after all tokens", async () =>
 });
 
 test("temporary session memory is scoped, bounded, and receives policy settings", async () => {
-	process.env.UNORAG_ASK_RUNTIME = "typescript";
 	const { handleNativeAskRequest } = await handlerModule;
 	const memory = new FakeSessionMemory();
 	const runtime = new FakeRuntime(askState(), ["临时回答"]);
@@ -503,7 +491,6 @@ test("temporary session memory is scoped, bounded, and receives policy settings"
 });
 
 test("model configuration and runtime failures return sanitized 503", async () => {
-	process.env.UNORAG_ASK_RUNTIME = "typescript";
 	const { handleNativeAskRequest } = await handlerModule;
 	const failures = [
 		() => {

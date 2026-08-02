@@ -165,7 +165,6 @@ function queryRows(rows: Record<string, unknown>[]) {
 }
 
 test("thread detail preserves the legacy shape but filters revoked citations", async () => {
-	process.env.UNORAG_ASK_RUNTIME = "typescript";
 	const { handleNativeConversationRequest } = await handlerModule;
 	const calls: unknown[] = [];
 	const response = await handleNativeConversationRequest({
@@ -198,7 +197,6 @@ test("thread detail preserves the legacy shape but filters revoked citations", a
 });
 
 test("thread list does not authorize or load citation bodies", async () => {
-	process.env.UNORAG_ASK_RUNTIME = "typescript";
 	const { handleNativeConversationRequest } = await handlerModule;
 	let authorizationCalls = 0;
 	const response = await handleNativeConversationRequest({

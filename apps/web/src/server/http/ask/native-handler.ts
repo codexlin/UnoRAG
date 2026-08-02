@@ -29,7 +29,7 @@ const AskRequestSchema = z
 	.object({
 		question: z.string().trim().min(1).max(4_000),
 		library_id: z.string().trim().min(1).max(128),
-		session_id: z.string().trim().min(1).max(128).optional(),
+		session_id: z.string().trim().min(1).max(256).optional(),
 		thread_id: z.uuid().optional(),
 		ask_overrides: NativeAskPolicySchema.optional(),
 	})
@@ -42,10 +42,6 @@ type RuntimeFactory = (input: {
 	signal?: AbortSignal;
 	policy: NativeAskPolicy;
 }) => NativeAskRuntime;
-
-function enabled(): boolean {
-	return process.env.UNORAG_ASK_RUNTIME?.trim().toLowerCase() === "typescript";
-}
 
 export function isNativeAskPath(path: string[]): boolean {
 	return (
@@ -228,7 +224,7 @@ export async function handleNativeAskRequest(input: {
 	memoryStore?: SessionMemoryStore;
 	runtimeFactory?: RuntimeFactory;
 }): Promise<Response | null> {
-	if (!enabled() || !isNativeAskPath(input.path)) return null;
+	if (!isNativeAskPath(input.path)) return null;
 	if (input.request.method !== "POST") {
 		return Response.json({ detail: "method not allowed" }, { status: 405 });
 	}

@@ -9,6 +9,7 @@ import {
 	AnswerStreamAdapter,
 	aiConfigFromEnv,
 	StructuredOutputAdapter,
+	StructuredOutputTimeoutError,
 	StructuredOutputValidationError,
 } from "../../src/core/ai";
 import {
@@ -67,6 +68,68 @@ test("structured adapter rejects invalid model output and fixes temperature at z
 			error.kind === "router",
 	);
 	assert.equal(temperature, 0);
+});
+
+test("structured adapter retries a transient failure within the configured bound", async () => {
+	let attempts = 0;
+	const adapter = new StructuredOutputAdapter(
+		injectedModel,
+		async () => {
+			attempts += 1;
+			if (attempts === 1) throw new Error("temporary provider failure");
+			return { query_type: "fact", reason: "direct question" };
+		},
+		{ maxAttempts: 2, timeoutMs: 1_000 },
+	);
+
+	assert.deepEqual(await adapter.route({ question: "合同期限是什么？" }), {
+		query_type: "fact",
+		reason: "direct question",
+	});
+	assert.equal(attempts, 2);
+});
+
+test("structured adapter reports a bounded timeout and does not invent clarify judge actions", async () => {
+	const adapter = new StructuredOutputAdapter(
+		injectedModel,
+		(request) =>
+			new Promise((_, reject) => {
+				request.abortSignal?.addEventListener(
+					"abort",
+					() => reject(request.abortSignal?.reason),
+					{ once: true },
+				);
+			}),
+		{ maxAttempts: 1, timeoutMs: 5 },
+	);
+
+	await assert.rejects(
+		adapter.route({ question: "合同期限是什么？" }),
+		(error) =>
+			error instanceof StructuredOutputTimeoutError &&
+			error.kind === "router" &&
+			error.timeoutMs === 5,
+	);
+
+	const invalidJudge = new StructuredOutputAdapter(
+		injectedModel,
+		async () => ({
+			sufficient: false,
+			action: "clarify",
+			reason: "ambiguous",
+		}),
+		{ maxAttempts: 1 },
+	);
+	await assert.rejects(
+		invalidJudge.judge({
+			question: "合同期限是什么？",
+			citations: [],
+			attempts: 1,
+		}),
+		(error) =>
+			error instanceof StructuredOutputValidationError &&
+			error.kind === "judge",
+	);
 });
 
 test("answer adapter streams injected tokens with current prompt and temperature", async () => {

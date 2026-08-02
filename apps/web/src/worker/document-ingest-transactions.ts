@@ -517,38 +517,6 @@ export class PostgresDocumentIngestTransactions
 				`,
 				[input.payload.document_id, input.payload.document_version_id],
 			);
-			await client.query(
-				`
-				INSERT INTO rag.active_document_generations (
-					organization_id,
-					workspace_id,
-					library_id,
-					rag_library_id,
-					document_id,
-					document_version_id,
-					generation_id,
-					activated_at
-				)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, now())
-				ON CONFLICT (organization_id, workspace_id, document_id)
-				DO UPDATE SET
-					library_id = excluded.library_id,
-					rag_library_id = excluded.rag_library_id,
-					document_version_id = excluded.document_version_id,
-					generation_id = excluded.generation_id,
-					activated_at = excluded.activated_at
-				`,
-				[
-					input.organizationId,
-					input.workspaceId,
-					context.libraryId,
-					context.ragLibraryId,
-					input.payload.document_id,
-					input.payload.document_version_id,
-					input.payload.generation_id,
-				],
-			);
-
 			const previousVersionId = context.activeVersionId;
 			const previousGenerationId = context.activeGenerationId;
 			if (
@@ -1126,7 +1094,7 @@ export class PostgresDocumentIngestTransactions
 		}>(
 			`
 			SELECT sweep_status, cleanup_job_id::text
-			FROM rag.generation_cleanup_queue
+			FROM app.generation_cleanup_queue
 			WHERE generation_id = $1
 			  AND organization_id = $2
 			  AND workspace_id = $3
@@ -1155,7 +1123,7 @@ export class PostgresDocumentIngestTransactions
 		}
 		const deleted = await client.query(
 			`
-			DELETE FROM rag.generation_cleanup_queue
+			DELETE FROM app.generation_cleanup_queue
 			WHERE generation_id = $1
 			  AND organization_id = $2
 			  AND workspace_id = $3
@@ -1180,7 +1148,7 @@ export class PostgresDocumentIngestTransactions
 	): Promise<void> {
 		await client.query(
 			`
-			INSERT INTO rag.generation_cleanup_queue (
+			INSERT INTO app.generation_cleanup_queue (
 				generation_id,
 				organization_id,
 				workspace_id,
@@ -1258,7 +1226,7 @@ export class PostgresDocumentIngestTransactions
 				SET updated_at = app.jobs.updated_at
 				RETURNING id
 			)
-			INSERT INTO rag.generation_cleanup_queue (
+			INSERT INTO app.generation_cleanup_queue (
 				generation_id,
 				organization_id,
 				workspace_id,
@@ -1284,7 +1252,7 @@ export class PostgresDocumentIngestTransactions
 			FROM cleanup_job AS cleanup
 			WHERE NOT EXISTS (
 				SELECT 1
-				FROM rag.active_document_generations AS active
+				FROM app.active_document_generations AS active
 				WHERE active.organization_id = $1
 				  AND active.workspace_id = $2
 				  AND active.generation_id = $3

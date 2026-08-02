@@ -4,12 +4,13 @@ import { randomUUID } from "node:crypto";
 
 import { getDatabase } from "@/db";
 import { auditLogs } from "@/db/schema";
+import { handleNativeAskRequest } from "@/server/http/ask/native-handler";
 import {
-	observeRetrievalShadow,
-	startRetrievalShadow,
-} from "@/server/retrieval/shadow";
+	executeNativeRetrieval,
+	NativeRetrievalRequestError,
+	type NativeRetrievalResponse,
+} from "@/server/http/retrieval/service";
 import { injectAskOverrides } from "./ask-overrides-inject.mjs";
-import { createInternalRagHeaders } from "./internal-rag-context";
 import {
 	normalizePublicApiRequest,
 	normalizeUpstreamError,
@@ -33,13 +34,6 @@ import {
 	serviceKeyToIdentity,
 } from "./service-keys";
 import { getWorkspaceAskSettings } from "./workspace-settings";
-
-function ragBaseUrl(): string {
-	return (process.env.RAG_API_URL?.trim() || "http://localhost:8000").replace(
-		/\/$/,
-		"",
-	);
-}
 
 export type IntegrationAuthResult =
 	| { ok: true; key: AuthenticatedServiceKey }
@@ -301,16 +295,15 @@ export async function handlePublicApiV1(input: {
 	});
 }
 
-/**
- * Mode B gateway: validate service key → HMAC sign → FastAPI /v1/*.
- * Does not expose the rest of the FastAPI surface.
- */
+/** Knowledge API gateway backed exclusively by the TypeScript data plane. */
 export async function forwardIntegrationRag(input: {
 	request: Request;
 	key: AuthenticatedServiceKey;
 	target: "/v1/ask" | "/v1/retrieve";
 	injectAskOverrides?: boolean;
 	requestId: string;
+	retrieveExecutor?: typeof executeNativeRetrieval;
+	askHandler?: typeof handleNativeAskRequest;
 }): Promise<Response> {
 	const started = Date.now();
 	const publicTarget: PublicApiTarget =
@@ -460,85 +453,158 @@ export async function forwardIntegrationRag(input: {
 	}
 
 	const identity = serviceKeyToIdentity(input.key);
-	const retrievalShadow =
-		publicTarget === "retrieve"
-			? startRetrievalShadow({ identity, payload })
-			: null;
-	let signedHeaders: Headers;
-	try {
-		signedHeaders = createInternalRagHeaders(
-			{
-				method: "POST",
-				target: input.target,
-				body: bodyBytes,
-			},
-			identity,
-			undefined,
-			{ authSource: "service", requestId: input.requestId },
+	if (publicTarget === "retrieve") {
+		const timeoutSignal = AbortSignal.timeout(PUBLIC_API_UPSTREAM_TIMEOUT_MS);
+		let native: NativeRetrievalResponse;
+		try {
+			native = await (input.retrieveExecutor ?? executeNativeRetrieval)({
+				identity,
+				payload,
+				requestId: input.requestId,
+				signal: AbortSignal.any([input.request.signal, timeoutSignal]),
+			});
+		} catch (error) {
+			if (timeoutSignal.aborted) {
+				const response = publicErrorResponse({
+					status: 504,
+					code: "upstream_timeout",
+					message: "Knowledge API request timed out",
+					requestId: input.requestId,
+					retryable: true,
+				});
+				finishObservability({
+					status: 504,
+					code: "upstream_timeout",
+					libraryId,
+				});
+				return response;
+			}
+			if (
+				error instanceof NativeRetrievalRequestError &&
+				error.status === 404
+			) {
+				const response = publicErrorResponse({
+					status: 403,
+					code: "library_access_denied",
+					message: "library_id not allowed for this service key",
+					requestId: input.requestId,
+					details: { library_id: libraryId },
+				});
+				finishObservability({
+					status: 403,
+					code: "library_access_denied",
+					libraryId,
+				});
+				return response;
+			}
+			const normalizedError =
+				error instanceof NativeRetrievalRequestError
+					? normalizeUpstreamError(error.status, { detail: error.message })
+					: normalizeUpstreamError(503, null);
+			const response = publicErrorResponse({
+				...normalizedError,
+				requestId: input.requestId,
+			});
+			finishObservability({
+				status: normalizedError.status,
+				code: normalizedError.code,
+				libraryId,
+			});
+			return response;
+		}
+		const projected = projectPublicApiSuccess(
+			"retrieve",
+			native,
+			input.requestId,
 		);
-	} catch {
-		const response = publicErrorResponse({
-			status: 503,
-			code: "gateway_misconfigured",
-			message: "Knowledge API gateway is unavailable",
-			requestId: input.requestId,
-			retryable: true,
-		});
+		if (!projected) {
+			const response = publicErrorResponse({
+				status: 502,
+				code: "invalid_upstream_response",
+				message: "RAG data plane response does not match the v1 contract",
+				requestId: input.requestId,
+				retryable: true,
+			});
+			finishObservability({
+				status: 502,
+				code: "invalid_upstream_response",
+				libraryId,
+			});
+			return response;
+		}
 		finishObservability({
-			status: 503,
-			code: "gateway_misconfigured",
+			status: 200,
 			libraryId,
+			refused: projected.refused === true,
+			citationCount: Array.isArray(projected.citations)
+				? projected.citations.length
+				: 0,
 		});
-		return response;
+		return Response.json(projected, {
+			status: 200,
+			headers: publicHeaders(input.requestId),
+		});
 	}
 
-	const headers = new Headers({
-		"content-type": "application/json",
-		accept: "application/json",
-	});
-	signedHeaders.forEach((value, key) => {
-		headers.set(key, value);
-	});
-
-	const upstreamUrl = `${ragBaseUrl()}${input.target}`;
-	let upstream: Response;
 	const timeoutSignal = AbortSignal.timeout(PUBLIC_API_UPSTREAM_TIMEOUT_MS);
+	let nativeResponse: Response | null;
 	try {
-		upstream = await fetch(upstreamUrl, {
-			method: "POST",
-			headers,
-			body: Buffer.from(bodyBytes),
-			cache: "no-store",
-			signal: AbortSignal.any([input.request.signal, timeoutSignal]),
+		nativeResponse = await (input.askHandler ?? handleNativeAskRequest)({
+			request: new Request(input.request.url, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					accept: "application/json",
+				},
+				body: Buffer.from(bodyBytes),
+				signal: AbortSignal.any([input.request.signal, timeoutSignal]),
+			}),
+			path: ["v1", "ask"],
+			identity,
 		});
 	} catch {
 		const timedOut = timeoutSignal.aborted;
-		const code = timedOut ? "upstream_timeout" : "upstream_unavailable";
+		const code = timedOut ? "upstream_timeout" : "service_unavailable";
 		const response = publicErrorResponse({
-			status: timedOut ? 504 : 502,
+			status: timedOut ? 504 : 503,
 			code,
 			message: timedOut
 				? "Knowledge API request timed out"
-				: "RAG data plane unavailable",
+				: "Knowledge service is temporarily unavailable",
 			requestId: input.requestId,
 			retryable: true,
 		});
 		finishObservability({
-			status: timedOut ? 504 : 502,
+			status: timedOut ? 504 : 503,
 			code,
 			libraryId,
 		});
 		return response;
 	}
 
-	let upstreamPayload: unknown;
+	if (!nativeResponse) {
+		const response = publicErrorResponse({
+			status: 500,
+			code: "route_not_implemented",
+			message: "Knowledge API route is not implemented",
+			requestId: input.requestId,
+		});
+		finishObservability({
+			status: 500,
+			code: "route_not_implemented",
+			libraryId,
+		});
+		return response;
+	}
+
+	let nativePayload: unknown;
 	try {
-		upstreamPayload = await upstream.json();
+		nativePayload = await nativeResponse.json();
 	} catch {
 		const response = publicErrorResponse({
 			status: 502,
 			code: "invalid_upstream_response",
-			message: "RAG data plane returned an invalid response",
+			message: "Knowledge service returned an invalid response",
 			requestId: input.requestId,
 			retryable: true,
 		});
@@ -549,22 +615,30 @@ export async function forwardIntegrationRag(input: {
 		});
 		return response;
 	}
-	if (retrievalShadow) {
-		void observeRetrievalShadow({
-			execution: retrievalShadow,
-			pythonPayload: upstreamPayload,
-			requestId: input.requestId,
-		});
-	}
-	if (!upstream.ok) {
+	if (!nativeResponse.ok) {
+		if (timeoutSignal.aborted) {
+			const response = publicErrorResponse({
+				status: 504,
+				code: "upstream_timeout",
+				message: "Knowledge API request timed out",
+				requestId: input.requestId,
+				retryable: true,
+			});
+			finishObservability({
+				status: 504,
+				code: "upstream_timeout",
+				libraryId,
+			});
+			return response;
+		}
 		const normalizedError = normalizeUpstreamError(
-			upstream.status,
-			upstreamPayload,
+			nativeResponse.status,
+			nativePayload,
 		);
 		const response = publicErrorResponse({
 			...normalizedError,
 			requestId: input.requestId,
-			retryAfter: upstream.headers.get("retry-after"),
+			retryAfter: nativeResponse.headers.get("retry-after"),
 		});
 		finishObservability({
 			status: normalizedError.status,
@@ -575,7 +649,7 @@ export async function forwardIntegrationRag(input: {
 	}
 	const projected = projectPublicApiSuccess(
 		publicTarget,
-		upstreamPayload,
+		nativePayload,
 		input.requestId,
 	);
 	if (!projected) {
@@ -594,7 +668,7 @@ export async function forwardIntegrationRag(input: {
 		return response;
 	}
 	finishObservability({
-		status: upstream.status,
+		status: nativeResponse.status,
 		libraryId,
 		refused: projected.refused === true,
 		citationCount: Array.isArray(projected.citations)
@@ -602,7 +676,7 @@ export async function forwardIntegrationRag(input: {
 			: 0,
 	});
 	return Response.json(projected, {
-		status: upstream.status,
+		status: nativeResponse.status,
 		headers: publicHeaders(input.requestId),
 	});
 }

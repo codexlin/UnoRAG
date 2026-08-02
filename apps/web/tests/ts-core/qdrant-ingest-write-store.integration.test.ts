@@ -14,7 +14,7 @@ import {
 import type { EmbeddingProvider } from "../../src/core/retrieval/embedding/provider";
 import type { DocumentIngestJob } from "../../src/worker/contracts";
 import { LocalDocumentIngestSource } from "../../src/worker/document-ingest-production";
-import { TextDocumentIngestStager } from "../../src/worker/document-ingest-staging";
+import { DocumentIngestStager } from "../../src/worker/document-ingest-staging";
 
 const qdrantUrl = process.env.QDRANT_INGEST_E2E_URL?.trim();
 
@@ -115,7 +115,7 @@ test("real local TXT parsing and chunking stages scoped points in Qdrant", {
 	try {
 		const scope = createScope();
 		const job = createJob(scope, storageKey, content);
-		const stager = new TextDocumentIngestStager(
+		const stager = new DocumentIngestStager(
 			new LocalDocumentIngestSource(storageRoot),
 			{
 				async load() {
@@ -131,7 +131,7 @@ test("real local TXT parsing and chunking stages scoped points in Qdrant", {
 			new QdrantIngestWriteStore(client, collection),
 		);
 
-		const result = await stager.stageTextDocument(job);
+		const result = await stager.stageDocument(job);
 		assert.equal(result.parserBackend, "native-text");
 		assert.equal(result.chunkCount, 1);
 		assert.equal(result.sectionCount, 1);

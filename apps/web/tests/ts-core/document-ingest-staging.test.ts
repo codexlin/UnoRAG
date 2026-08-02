@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import {
+	DocumentIRSchema,
+	ParserReportSchema,
+} from "../../src/core/document-ir";
 import type {
 	IndexWritePayload,
 	IngestPointScope,
@@ -9,7 +13,7 @@ import type { EmbeddingProvider } from "../../src/core/retrieval/embedding/provi
 import type { DocumentIngestJob } from "../../src/worker/contracts";
 import {
 	type DocumentIngestScopePort,
-	TextDocumentIngestStager,
+	DocumentIngestStager,
 } from "../../src/worker/document-ingest-staging";
 import { WorkerTaskError } from "../../src/worker/errors";
 
@@ -24,7 +28,7 @@ test("text stager runs source, parser, chunks, embeddings, and scoped Qdrant wri
 		vectors?: number[][];
 		scope?: IngestPointScope;
 	} = {};
-	const stager = new TextDocumentIngestStager(
+	const stager = new DocumentIngestStager(
 		{
 			async load(key) {
 				assert.equal(key, "documents/handbook.txt");
@@ -44,7 +48,7 @@ test("text stager runs source, parser, chunks, embeddings, and scoped Qdrant wri
 		},
 	);
 
-	const result = await stager.stageTextDocument(job());
+	const result = await stager.stageDocument(job());
 
 	assert.deepEqual(result, {
 		pointCount: 2,
@@ -99,8 +103,8 @@ test("text stager runs source, parser, chunks, embeddings, and scoped Qdrant wri
 	});
 });
 
-test("text stager rejects unsupported formats and source hash mismatches", async () => {
-	const stager = new TextDocumentIngestStager(
+test("document stager rejects unsupported formats and source hash mismatches", async () => {
+	const stager = new DocumentIngestStager(
 		{
 			async load() {
 				return content;
@@ -120,13 +124,13 @@ test("text stager rejects unsupported formats and source hash mismatches", async
 
 	await assert.rejects(
 		() =>
-			stager.stageTextDocument({
+			stager.stageDocument({
 				...job(),
 				payload: {
 					...job().payload,
-					filename: "contract.pdf",
-					content_type: "application/pdf",
-					queue_class: "auto",
+					filename: "contract.html",
+					content_type: "text/html",
+					queue_class: "local",
 				},
 			}),
 		(error: unknown) =>
@@ -135,7 +139,7 @@ test("text stager rejects unsupported formats and source hash mismatches", async
 	);
 	await assert.rejects(
 		() =>
-			stager.stageTextDocument({
+			stager.stageDocument({
 				...job(),
 				payload: { ...job().payload, content_hash: `sha256:${"0".repeat(64)}` },
 			}),
@@ -147,7 +151,7 @@ test("text stager rejects unsupported formats and source hash mismatches", async
 
 test("visibility can target a previous generation without changing document scope", async () => {
 	let observed: IngestPointScope | undefined;
-	const stager = new TextDocumentIngestStager(
+	const stager = new DocumentIngestStager(
 		{
 			async load() {
 				return content;
@@ -176,10 +180,88 @@ test("visibility can target a previous generation without changing document scop
 	assert.equal(observed?.documentId, "rag-document");
 });
 
+test("PDF staging uses the parser result before shared chunk/embed/Qdrant steps", async () => {
+	const pdf = new Uint8Array([37, 80, 68, 70]);
+	const hash = `sha256:${createHash("sha256").update(pdf).digest("hex")}`;
+	let parserInput: unknown;
+	let records: IndexWritePayload[] = [];
+	const stager = new DocumentIngestStager(
+		{
+			async load() {
+				return pdf;
+			},
+		},
+		scopePort(),
+		embeddingProvider(),
+		{
+			async stage(input) {
+				records = input.records;
+				return input.records.length;
+			},
+			async setVisibility() {
+				return 1;
+			},
+		},
+		{
+			async parse(input) {
+				parserInput = input;
+				const report = ParserReportSchema.parse({
+					source_format: "pdf",
+					parser: "mineru",
+					backend: "mineru-http",
+					parser_version: "test",
+					mode: "structured",
+				});
+				return DocumentIRSchema.parse({
+					id: "rag-document",
+					library_id: "rag-library",
+					source: input.input.sourceUri,
+					source_format: "pdf",
+					title: "Employee handbook",
+					filename: input.input.filename,
+					content_hash: input.input.contentHash,
+					nodes: [
+						{
+							id: "pdf-node-1",
+							type: "paragraph",
+							page_start: 1,
+							page_end: 1,
+							text: "Payment is due within thirty days.",
+						},
+					],
+					parser_report: report,
+				});
+			},
+		},
+	);
+	const pdfJob = {
+		...job(),
+		payload: {
+			...job().payload,
+			filename: "contract.pdf",
+			content_type: "application/pdf",
+			content_hash: hash,
+			storage_key: "documents/contract.pdf",
+			queue_class: "auto" as const,
+			parse_preference: "quality",
+		},
+	};
+
+	const result = await stager.stageDocument(pdfJob);
+
+	assert.equal(result.parserBackend, "mineru");
+	assert.equal(result.chunkCount, 1);
+	assert.equal(records.length, 2);
+	assert.equal(
+		(parserInput as { idempotencyKey: string }).idempotencyKey,
+		pdfJob.idempotencyKey,
+	);
+});
+
 test("text staging observes cancellation between compute and Qdrant batches", async () => {
 	let checks = 0;
 	let staged = false;
-	const stager = new TextDocumentIngestStager(
+	const stager = new DocumentIngestStager(
 		{
 			async load() {
 				return content;
@@ -207,7 +289,7 @@ test("text staging observes cancellation between compute and Qdrant batches", as
 	);
 
 	await assert.rejects(
-		() => stager.stageTextDocument(job()),
+		() => stager.stageDocument(job()),
 		(error: unknown) =>
 			error instanceof WorkerTaskError && error.code === "job_cancelled",
 	);

@@ -22,10 +22,16 @@ export type FetchLike = (
 	init?: RequestInit,
 ) => Promise<Response>;
 
+export type ParseSourceLoader = (
+	input: ParseInput,
+	signal?: AbortSignal,
+) => Promise<Uint8Array>;
+
 export type HttpParserProviderOptions = {
 	baseUrl: string;
 	fetch?: FetchLike;
 	headers?: Readonly<Record<string, string>>;
+	sourceLoader?: ParseSourceLoader;
 };
 
 export class ParserProviderHttpError extends Error {
@@ -54,6 +60,7 @@ export abstract class HttpParserProvider {
 	protected readonly baseUrl: string;
 	protected readonly fetchImpl: FetchLike;
 	protected readonly defaultHeaders: Readonly<Record<string, string>>;
+	protected readonly sourceLoader?: ParseSourceLoader;
 
 	protected constructor(options: HttpParserProviderOptions) {
 		const baseUrl = options.baseUrl.trim().replace(/\/+$/, "");
@@ -61,6 +68,7 @@ export abstract class HttpParserProvider {
 		this.baseUrl = baseUrl;
 		this.fetchImpl = options.fetch ?? fetch;
 		this.defaultHeaders = options.headers ?? {};
+		this.sourceLoader = options.sourceLoader;
 	}
 
 	protected endpoint(path: string): string {
@@ -109,6 +117,11 @@ export abstract class HttpParserProvider {
 	}
 
 	protected async sourceBlob(input: ParseInput): Promise<Blob> {
+		if (this.sourceLoader) {
+			return new Blob([Buffer.from(await this.sourceLoader(input))], {
+				type: input.mimeType,
+			});
+		}
 		let response: Response;
 		try {
 			response = await this.fetchImpl(input.sourceUri);

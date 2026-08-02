@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+import {
+	TableColumnSchema,
+	TableQualityReportSchema,
+	TableRowSchema,
+	TableSummaryRowSchema,
+} from "../../document-ir";
 import { RecordTypeSchema } from "../contracts";
 
 const StoredRecordTypeSchema = RecordTypeSchema.exclude([
@@ -27,20 +33,45 @@ const StoredQdrantPayloadSchema = z
 		acl_group_ids: z.array(z.string()).optional(),
 		record_type: StoredRecordTypeSchema.default("chunk"),
 		record_id: z.string().nullable().optional(),
+		parent_record_id: z.string().nullable().optional(),
 		preamble: z.string().nullable().optional(),
 		section_path: z.string().nullable().optional(),
+		heading_text: z.string().nullable().optional(),
 		page: z.union([z.string(), z.number()]).nullable().optional(),
 		page_start: z.number().int().nullable().optional(),
 		page_end: z.number().int().nullable().optional(),
 		table_id: z.string().nullable().optional(),
+		figure_id: z.string().nullable().optional(),
+		node_ids: z.array(z.string()).optional(),
+		split_strategy: z.string().nullable().optional(),
+		chunk_policy_version: z.string().nullable().optional(),
+		chunk_profile: z.string().nullable().optional(),
+		split_reason: z.string().nullable().optional(),
+		target_chars: z.number().int().positive().nullable().optional(),
+		max_chars: z.number().int().positive().nullable().optional(),
+		table_rows_per_record: z.number().int().positive().nullable().optional(),
+		table_tokens_per_record: z.number().int().positive().nullable().optional(),
+		semantic_distance_threshold: z.number().nullable().optional(),
+		semantic_unit_count: z.number().int().positive().nullable().optional(),
+		semantic_fallback: z.union([z.boolean(), z.string()]).nullable().optional(),
+		source_format: z.string().nullable().optional(),
+		content_hash: z.string().nullable().optional(),
 		headers: z.array(z.string()).optional(),
 		rows: z.array(z.array(z.string())).optional(),
 		row_start: z.number().int().nullable().optional(),
 		row_end: z.number().int().nullable().optional(),
 		table_row_count: z.number().int().nonnegative().nullable().optional(),
+		table_caption: z.string().nullable().optional(),
+		table_quality: TableQualityReportSchema.nullable().optional(),
+		summary_rows: z.array(TableSummaryRowSchema).optional(),
+		footnotes: z.array(z.string()).optional(),
+		header_rows: z.array(z.array(z.string())).optional(),
+		table_columns: z.array(TableColumnSchema).optional(),
+		cell_rows: z.array(TableRowSchema).optional(),
 		filename: z.string().nullable().optional(),
 		source_chunk_ids: z.array(z.string()).optional(),
 		source_node_ids: z.array(z.string()).optional(),
+		deactivated_at: z.string().nullable().optional(),
 	})
 	.strict();
 

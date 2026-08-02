@@ -8,6 +8,10 @@ import {
 	OpenAICompatibleRerankProvider,
 	QdrantRetrievalStore,
 } from "@/core/retrieval";
+import {
+	parseQdrantDistance,
+	QdrantCollectionManager,
+} from "@/core/retrieval/qdrant/collection-manager";
 
 function required(name: string, fallback?: string): string {
 	const value = process.env[name]?.trim() || fallback?.trim();
@@ -61,11 +65,21 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		timeout: positiveInteger("QDRANT_TIMEOUT_MS", 5_000),
 		checkCompatibility: true,
 	});
+	const collection = required("QDRANT_COLLECTION", "unorag_chunks");
+	const dimensions = positiveInteger("EMBEDDING_DIM", 1_024);
+	const collectionReady = new QdrantCollectionManager(qdrant, {
+		collection,
+		vectorSize: dimensions,
+		distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
+	}).ensure();
+	// The store awaits the original promise. This observer prevents an
+	// unhandled rejection if Qdrant fails before the first request arrives.
+	void collectionReady.catch(() => undefined);
 	const embeddings = new OpenAICompatibleEmbeddingProvider({
 		apiKey,
 		baseUrl: llmBaseUrl(),
 		model: required("EMBEDDING_MODEL", "text-embedding-v3"),
-		dimensions: positiveInteger("EMBEDDING_DIM", 1_024),
+		dimensions,
 		batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
 	});
 	const rerankEnabled = enabled("TS_RETRIEVAL_RERANK_ENABLED");
@@ -79,10 +93,7 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 	});
 	runtime = new DefaultRetrievalService(
 		embeddings,
-		new QdrantRetrievalStore(
-			qdrant,
-			required("QDRANT_COLLECTION", "unorag_chunks"),
-		),
+		new QdrantRetrievalStore(qdrant, collection, collectionReady),
 		reranker,
 		{
 			hybridEnabled: enabled("TS_RETRIEVAL_HYBRID_ENABLED"),

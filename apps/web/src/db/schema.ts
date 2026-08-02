@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
 	bigint,
-	bigserial,
 	check,
 	foreignKey,
 	index,
@@ -712,45 +711,82 @@ export const jobs = appSchema.table(
 	],
 );
 
-export const outboxEvents = appSchema.table(
-	"outbox_events",
+export const generationCleanupQueue = appSchema.table(
+	"generation_cleanup_queue",
 	{
-		id: uuid("id").defaultRandom().primaryKey(),
-		sequence: bigserial("sequence", { mode: "number" }),
-		organizationId: uuid("organization_id").notNull(),
-		workspaceId: uuid("workspace_id").notNull(),
-		aggregateType: varchar("aggregate_type", { length: 64 }).notNull(),
-		aggregateId: varchar("aggregate_id", { length: 256 }).notNull(),
-		eventType: varchar("event_type", { length: 128 }).notNull(),
-		idempotencyKey: varchar("idempotency_key", { length: 512 }).notNull(),
-		payload: jsonb("payload").default({}).notNull(),
-		status: varchar("status", { length: 32 }).default("pending").notNull(),
-		attempts: integer("attempts").default(0).notNull(),
-		availableAt: timestamp("available_at", { withTimezone: true })
+		generationId: uuid("generation_id").primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		workspaceId: uuid("workspace_id")
+			.notNull()
+			.references(() => workspaces.id, { onDelete: "cascade" }),
+		libraryId: uuid("library_id")
+			.notNull()
+			.references(() => libraries.id, { onDelete: "cascade" }),
+		documentId: uuid("document_id")
+			.notNull()
+			.references(() => documents.id, { onDelete: "cascade" }),
+		documentVersionId: uuid("document_version_id")
+			.notNull()
+			.references(() => documentVersions.id, { onDelete: "cascade" }),
+		deleteAfter: timestamp("delete_after", { withTimezone: true })
+			.default(sql`now() + interval '7 days'`)
+			.notNull(),
+		hintStatus: varchar("hint_status", { length: 32 })
+			.default("pending")
+			.notNull(),
+		hintAttempts: integer("hint_attempts").default(0).notNull(),
+		lastError: text("last_error"),
+		sweepStatus: varchar("sweep_status", { length: 32 })
+			.default("pending")
+			.notNull(),
+		sweepAttempts: integer("sweep_attempts").default(0).notNull(),
+		executionEngine: varchar("execution_engine", { length: 16 })
+			.default("dbos")
+			.notNull(),
+		cleanupJobId: uuid("cleanup_job_id").references(() => jobs.id, {
+			onDelete: "set null",
+		}),
+		sweepLastError: text("sweep_last_error"),
+		sweepUpdatedAt: timestamp("sweep_updated_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),
-		lockedBy: varchar("locked_by", { length: 256 }),
-		lockedAt: timestamp("locked_at", { withTimezone: true }),
-		lastError: text("last_error"),
-		processedAt: timestamp("processed_at", { withTimezone: true }),
 		...timestamps,
 	},
 	(table) => [
-		uniqueIndex("outbox_events_idempotency_uq").on(table.idempotencyKey),
-		index("outbox_events_claim_idx").on(
-			table.status,
-			table.availableAt,
-			table.sequence,
+		uniqueIndex("generation_cleanup_job_uq")
+			.on(table.cleanupJobId)
+			.where(sql`${table.cleanupJobId} is not null`),
+		index("generation_cleanup_sweep_due_idx")
+			.on(table.deleteAfter, table.generationId)
+			.where(sql`${table.sweepStatus} in ('pending', 'error')`),
+		index("generation_cleanup_engine_due_idx")
+			.on(table.executionEngine, table.deleteAfter, table.generationId)
+			.where(sql`${table.sweepStatus} in ('pending', 'error', 'sweeping')`),
+		check(
+			"generation_cleanup_hint_status_check",
+			sql`${table.hintStatus} in ('pending', 'applied', 'error')`,
 		),
-		index("outbox_events_aggregate_idx").on(
-			table.aggregateType,
-			table.aggregateId,
-			table.sequence,
+		check(
+			"generation_cleanup_sweep_status_check",
+			sql`${table.sweepStatus} in ('pending', 'sweeping', 'deleted', 'error')`,
 		),
-		index("outbox_events_workspace_idx").on(
-			table.organizationId,
-			table.workspaceId,
-			table.createdAt,
+		check(
+			"generation_cleanup_attempts_check",
+			sql`${table.hintAttempts} >= 0 and ${table.sweepAttempts} >= 0`,
+		),
+		check(
+			"generation_cleanup_execution_engine_check",
+			sql`${table.executionEngine} in ('python', 'dbos')`,
+		),
+		check(
+			"generation_cleanup_ownership_check",
+			sql`(${table.executionEngine} = 'python' and ${table.cleanupJobId} is null) or ${table.executionEngine} = 'dbos'`,
+		),
+		check(
+			"generation_cleanup_sweeping_owner_check",
+			sql`${table.executionEngine} <> 'dbos' or ${table.sweepStatus} <> 'sweeping' or ${table.cleanupJobId} is not null`,
 		),
 	],
 );

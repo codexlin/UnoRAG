@@ -298,72 +298,6 @@ export class DocumentDeleteExternalOperations
 		}
 	}
 
-	async deleteProjection(input: DocumentDeleteJob): Promise<void> {
-		const client = await this.pool.connect();
-		try {
-			await client.query("BEGIN");
-			await client.query(
-				"SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
-				[input.payload.rag_library_id],
-			);
-			await client.query(
-				`
-				DELETE FROM public.documents
-				WHERE id = $1
-				  AND library_id = $2
-				  AND tenant_id = $3
-				  AND workspace_id = $4
-				`,
-				[
-					input.payload.rag_document_id,
-					input.payload.rag_library_id,
-					input.organizationId,
-					input.workspaceId,
-				],
-			);
-			await client.query(
-				`
-				WITH document_stats AS (
-					SELECT
-						count(*)::integer AS doc_count,
-						count(*) FILTER (WHERE status = 'ready')::integer AS ready_count,
-						bool_or(status = 'processing') AS has_processing
-					FROM public.documents
-					WHERE library_id = $1
-					  AND tenant_id = $2
-					  AND workspace_id = $3
-				)
-				UPDATE public.libraries AS library
-				SET doc_count = stats.doc_count,
-					ready_count = stats.ready_count,
-					status = CASE
-						WHEN stats.doc_count = 0 THEN 'empty'
-						WHEN coalesce(stats.has_processing, false)
-							OR stats.ready_count < stats.doc_count THEN 'indexing'
-						ELSE 'ready'
-					END,
-					updated_at = now()
-				FROM document_stats AS stats
-				WHERE library.id = $1
-				  AND library.tenant_id = $2
-				  AND library.workspace_id = $3
-				`,
-				[input.payload.rag_library_id, input.organizationId, input.workspaceId],
-			);
-			await client.query("COMMIT");
-		} catch (error) {
-			await rollbackQuietly(client);
-			throw new WorkerTaskError(
-				error instanceof Error
-					? error.message
-					: "Document metadata projection delete failed",
-				"document_delete_projection_failed",
-				"transient",
-			);
-		} finally {
-			client.release();
-		}
-	}
 }
 
 export class PostgresDocumentDeleteTransactions
@@ -444,16 +378,7 @@ export class PostgresDocumentDeleteTransactions
 			);
 			await client.query(
 				`
-				DELETE FROM rag.active_document_generations
-				WHERE organization_id = $1
-				  AND workspace_id = $2
-				  AND document_id = $3
-				`,
-				[input.organizationId, input.workspaceId, input.payload.document_id],
-			);
-			await client.query(
-				`
-				UPDATE rag.generation_cleanup_queue
+				UPDATE app.generation_cleanup_queue
 				SET sweep_status = 'deleted',
 					sweep_last_error = NULL,
 					sweep_updated_at = now(),
@@ -505,45 +430,6 @@ export class PostgresDocumentDeleteTransactions
 						[input.payload.library_id],
 					);
 					if (finalized.rowCount === 1) {
-						await client.query(
-							`
-							INSERT INTO app.outbox_events (
-								organization_id,
-								workspace_id,
-								aggregate_type,
-								aggregate_id,
-								event_type,
-								idempotency_key,
-								payload,
-								status,
-								created_at,
-								updated_at
-							)
-							VALUES (
-								$1::uuid,
-								$2::uuid,
-								'library',
-								$3::varchar,
-								'library.delete',
-								$4::varchar,
-								jsonb_build_object(
-									'library_id', $3::varchar,
-									'principal_id', $5::uuid::text
-								),
-								'pending',
-								now(),
-								now()
-							)
-							ON CONFLICT (idempotency_key) DO NOTHING
-							`,
-							[
-								input.organizationId,
-								input.workspaceId,
-								input.payload.rag_library_id,
-								`library.delete:${input.payload.rag_library_id}:${input.payload.document_id}`,
-								context.document_created_by ?? input.organizationId,
-							],
-						);
 						libraryFinalized = true;
 					}
 				}

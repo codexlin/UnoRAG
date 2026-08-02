@@ -128,7 +128,7 @@ test("authenticateServiceKey rejects revoked keys (revoked_at IS NULL filter)", 
 	assert.match(integration, /status:\s*401/);
 });
 
-test("Mode B integration routes use Bearer service key and HMAC service auth_source", () => {
+test("integration routes use Bearer service keys and native Ask/Retrieve", () => {
 	const ask = readFileSync(
 		path.join(root, "src/app/api/v1/ask/route.ts"),
 		"utf8",
@@ -141,8 +141,8 @@ test("Mode B integration routes use Bearer service key and HMAC service auth_sou
 		path.join(root, "src/lib/server/integration-rag.ts"),
 		"utf8",
 	);
-	const contextSrc = readFileSync(
-		path.join(root, "src/lib/server/internal-rag-context.ts"),
+	const ragProxy = readFileSync(
+		path.join(root, "src/lib/server/rag-proxy.ts"),
 		"utf8",
 	);
 
@@ -150,11 +150,14 @@ test("Mode B integration routes use Bearer service key and HMAC service auth_sou
 	assert.match(ask, /scope:\s*"ask"/);
 	assert.match(retrieve, /handlePublicApiV1/);
 	assert.match(retrieve, /scope:\s*"retrieve"/);
-	assert.match(integration, /authSource:\s*"service"/);
+	assert.match(integration, /executeNativeRetrieval/);
+	assert.match(integration, /handleNativeAskRequest/);
+	assert.match(integration, /publicTarget\s*===\s*"retrieve"/);
+	assert.match(ragProxy, /handleNativeRetrievalRequest/);
+	assert.match(ragProxy, /isNativeRetrievalPath/);
 	assert.match(integration, /\/v1\/ask/);
 	assert.match(integration, /\/v1\/retrieve/);
-	assert.match(contextSrc, /auth_source:\s*InternalAuthSource/);
-	assert.match(contextSrc, /"session"\s*\|\s*"service"/);
+	assert.doesNotMatch(integration, /RAG_API_URL|createInternalRagHeaders/);
 });
 
 test("settings page mounts integration keys panel", () => {

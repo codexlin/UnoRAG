@@ -53,7 +53,7 @@ export const RewriteOutputSchema = z
 export const JudgeOutputSchema = z
 	.object({
 		sufficient: z.boolean(),
-		action: z.enum(["generate", "retry", "refuse", "clarify"]),
+		action: z.enum(["generate", "retry", "refuse"]),
 		reason: z.string().trim().min(1),
 		can_retry: z.boolean().optional(),
 		top_score: z.number().min(0).max(1).optional(),
@@ -101,6 +101,23 @@ export class StructuredOutputValidationError extends Error {
 	}
 }
 
+export class StructuredOutputTimeoutError extends Error {
+	readonly kind: StructuredKind;
+	readonly timeoutMs: number;
+
+	constructor(kind: StructuredKind, timeoutMs: number) {
+		super(`${kind} structured output timed out after ${timeoutMs}ms`);
+		this.name = "StructuredOutputTimeoutError";
+		this.kind = kind;
+		this.timeoutMs = timeoutMs;
+	}
+}
+
+export type StructuredOutputAdapterOptions = {
+	timeoutMs?: number;
+	maxAttempts?: number;
+};
+
 const ROUTER_SYSTEM_PROMPT =
 	"你是 UnoRAG 查询路由器。仅输出结构化结果。分类只能是 fact、follow_up、summary、compare、table、section_lookup、ambiguous；不执行检索，不生成答案。";
 
@@ -108,7 +125,7 @@ const REWRITE_SYSTEM_PROMPT =
 	"你是检索计划助手。semantic_query 可对原问做检索友好改写；无把握则原样。filters 只允许 record_type、doc_id、table_id、document_version_id。不要编造标识，不要输出 tenant_id、workspace_id、library_id、generation 或 ACL 字段。";
 
 const JUDGE_SYSTEM_PROMPT =
-	"你是证据充分性判断器。仅根据给定候选证据判断 generate、retry、refuse 或 clarify。资料未覆盖时必须 refuse，不能用模型常识补足。";
+	"你是证据充分性判断器。仅根据给定候选证据判断 generate、retry 或 refuse。资料未覆盖时必须 refuse，不能用模型常识补足。问题澄清由查询路由器负责，不输出 clarify。";
 
 const TABLE_PLAN_SYSTEM_PROMPT =
 	"你是表格执行计划器。只根据问题和真实表头制定严格计划；列名必须逐字来自所给表头。" +
@@ -139,10 +156,17 @@ function systemMessage(content: string): ModelMessage {
 }
 
 export class StructuredOutputAdapter {
+	private readonly timeoutMs: number;
+	private readonly maxAttempts: number;
+
 	constructor(
 		private readonly model: LanguageModel,
 		private readonly execute: StructuredGenerationExecutor = defaultStructuredExecutor,
-	) {}
+		options: StructuredOutputAdapterOptions = {},
+	) {
+		this.timeoutMs = positiveInteger(options.timeoutMs, 15_000, "timeoutMs");
+		this.maxAttempts = positiveInteger(options.maxAttempts, 2, "maxAttempts");
+	}
 
 	private async request<K extends StructuredKind>(
 		kind: K,
@@ -150,19 +174,48 @@ export class StructuredOutputAdapter {
 		messages: ModelMessage[],
 		abortSignal?: AbortSignal,
 	): Promise<z.infer<StructuredSchemaMap[K]>> {
-		const raw = await this.execute({
-			model: this.model,
-			messages,
-			schema,
-			schemaName: kind,
-			temperature: STRUCTURED_TEMPERATURE,
-			abortSignal,
-		});
-		const parsed = schema.safeParse(raw);
-		if (!parsed.success) {
-			throw new StructuredOutputValidationError(kind, parsed.error);
+		let lastError: unknown;
+		for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+			if (abortSignal?.aborted) throw abortSignal.reason;
+			const timeoutController = new AbortController();
+			const operationSignal = abortSignal
+				? AbortSignal.any([abortSignal, timeoutController.signal])
+				: timeoutController.signal;
+			let timeout: NodeJS.Timeout | undefined;
+			try {
+				const timeoutError = new StructuredOutputTimeoutError(
+					kind,
+					this.timeoutMs,
+				);
+				const raw = await Promise.race([
+					this.execute({
+						model: this.model,
+						messages,
+						schema,
+						schemaName: kind,
+						temperature: STRUCTURED_TEMPERATURE,
+						abortSignal: operationSignal,
+					}),
+					new Promise<never>((_, reject) => {
+						timeout = setTimeout(() => {
+							timeoutController.abort(timeoutError);
+							reject(timeoutError);
+						}, this.timeoutMs);
+					}),
+				]);
+				const parsed = schema.safeParse(raw);
+				if (!parsed.success) {
+					throw new StructuredOutputValidationError(kind, parsed.error);
+				}
+				return parsed.data as z.infer<StructuredSchemaMap[K]>;
+			} catch (error) {
+				if (abortSignal?.aborted) throw error;
+				lastError = error;
+			} finally {
+				if (timeout) clearTimeout(timeout);
+			}
 		}
-		return parsed.data as z.infer<StructuredSchemaMap[K]>;
+		throw lastError;
 	}
 
 	route(
@@ -245,4 +298,16 @@ export class StructuredOutputAdapter {
 			options.abortSignal,
 		);
 	}
+}
+
+function positiveInteger(
+	value: number | undefined,
+	fallback: number,
+	name: string,
+): number {
+	const resolved = value ?? fallback;
+	if (!Number.isInteger(resolved) || resolved <= 0) {
+		throw new Error(`${name} must be a positive integer`);
+	}
+	return resolved;
 }

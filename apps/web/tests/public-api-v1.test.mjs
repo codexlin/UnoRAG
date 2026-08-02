@@ -321,10 +321,6 @@ test("gateway enforces request IDs, limits, timeout, audit, and response project
 		path.join(root, "src/lib/server/integration-rag.ts"),
 		"utf8",
 	);
-	const context = readFileSync(
-		path.join(root, "src/lib/server/internal-rag-context.ts"),
-		"utf8",
-	);
 	assert.match(integration, /readBodyWithLimit/);
 	assert.match(integration, /PUBLIC_API_MAX_BODY_BYTES/);
 	assert.match(integration, /PUBLIC_API_UPSTREAM_TIMEOUT_MS/);
@@ -334,5 +330,6 @@ test("gateway enforces request IDs, limits, timeout, audit, and response project
 	assert.match(integration, /knowledge\.api\.usage/);
 	assert.match(integration, /knowledge\.retrieve/);
 	assert.match(integration, /knowledge\.ask/);
-	assert.match(context, /options\?\.requestId\s*\?\?\s*randomUUID\(\)/);
+	assert.match(integration, /handleNativeAskRequest/);
+	assert.doesNotMatch(integration, /RAG_API_URL|createInternalRagHeaders/);
 });

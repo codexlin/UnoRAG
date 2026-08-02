@@ -101,7 +101,7 @@ function fakePool(overrides: Partial<FakeState> = {}): {
 						]) as unknown as QueryResult<R>;
 					}
 					if (
-						normalized.includes("FROM rag.generation_cleanup_queue") &&
+						normalized.includes("FROM app.generation_cleanup_queue") &&
 						normalized.includes("FOR UPDATE")
 					) {
 						return result([
@@ -129,13 +129,13 @@ function fakePool(overrides: Partial<FakeState> = {}): {
 							},
 						]) as unknown as QueryResult<R>;
 					}
-					if (normalized.includes("FROM rag.active_document_generations")) {
+					if (normalized.includes("FROM app.active_document_generations")) {
 						return result(
 							state.active ? [{ generation_id: values?.[0] }] : [],
 						) as unknown as QueryResult<R>;
 					}
 					if (
-						normalized.includes("UPDATE rag.generation_cleanup_queue") &&
+						normalized.includes("UPDATE app.generation_cleanup_queue") &&
 						normalized.includes("sweep_attempts = sweep_attempts + 1")
 					) {
 						if (
@@ -150,7 +150,7 @@ function fakePool(overrides: Partial<FakeState> = {}): {
 						return result([], 1) as QueryResult<R>;
 					}
 					if (
-						normalized.includes("UPDATE rag.generation_cleanup_queue") &&
+						normalized.includes("UPDATE app.generation_cleanup_queue") &&
 						normalized.includes("sweep_status = 'deleted'")
 					) {
 						if (state.cleanupStatus !== "sweeping") {
@@ -161,7 +161,7 @@ function fakePool(overrides: Partial<FakeState> = {}): {
 						return result([], 1) as QueryResult<R>;
 					}
 					if (
-						normalized.includes("UPDATE rag.generation_cleanup_queue") &&
+						normalized.includes("UPDATE app.generation_cleanup_queue") &&
 						normalized.includes("sweep_status = 'error'")
 					) {
 						state.cleanupStatus = "error";
@@ -206,7 +206,7 @@ function fakePool(overrides: Partial<FakeState> = {}): {
 }
 
 describe("production generation cleanup ports", () => {
-	it("fails before constructing canary resources when ingest-local is not selected", () => {
+	it("fails before constructing resources when no ingest queue is selected", async () => {
 		const names = [
 			"DATABASE_URL",
 			"QDRANT_URL",
@@ -241,9 +241,9 @@ describe("production generation cleanup ports", () => {
 		};
 
 		try {
-			assert.throws(
-				() => createWorkerPorts(config),
-				/UNORAG_DBOS_TEXT_INGEST_ENABLED requires ingest-local/,
+			await assert.rejects(
+				createWorkerPorts(config),
+				/DBOS document ingest requires at least one ingest queue/,
 			);
 		} finally {
 			for (const name of names) {
@@ -292,7 +292,7 @@ describe("production generation cleanup ports", () => {
 		);
 		const cleanupPosition = state.queries.findIndex(
 			(query) =>
-				query.text.includes("FROM rag.generation_cleanup_queue") &&
+				query.text.includes("FROM app.generation_cleanup_queue") &&
 				query.text.includes("FOR UPDATE"),
 		);
 		const jobPosition = state.queries.findIndex(

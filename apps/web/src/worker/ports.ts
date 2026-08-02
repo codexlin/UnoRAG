@@ -80,13 +80,11 @@ export interface DocumentIngestTransactionPort {
 
 export interface DocumentIngestExternalPort {
 	/**
-	 * Canary boundary: validates source/hash, parses text, chunks, embeds,
+	 * Validates source/hash, parses a supported document, chunks, embeds,
 	 * stages deterministic points, and verifies their count. Implementations
 	 * must be idempotent by generation_id.
 	 */
-	stageTextDocument(
-		input: DocumentIngestJob,
-	): Promise<DocumentIngestStageResult>;
+	stageDocument(input: DocumentIngestJob): Promise<DocumentIngestStageResult>;
 	setGenerationVisibility(
 		input: DocumentIngestJob,
 		generationId: string,
@@ -167,7 +165,6 @@ export interface DocumentDeleteExternalPort {
 		input: DocumentDeleteJob,
 		storageKey: string,
 	): Promise<boolean>;
-	deleteProjection(input: DocumentDeleteJob): Promise<void>;
 }
 
 export interface DocumentDeletePort {
@@ -181,8 +178,8 @@ export interface WorkerPorts {
 	transactions: JobTransactionPort;
 	documentDelete: DocumentDeletePort;
 	/**
-	 * Absent in production until the explicit TXT canary implementation is
-	 * configured. The workflow fails closed when this port is unavailable.
+	 * Absent when the DBOS ingest capability is disabled. The workflow fails
+	 * closed when a DBOS-routed job reaches an unavailable port.
 	 */
 	documentIngest?: DocumentIngestPort;
 	close?(): Promise<void>;

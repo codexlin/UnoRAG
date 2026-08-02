@@ -32,31 +32,42 @@ export function documentDeleteExecutionIdentity(
 	return { executionEngine: "python", workflowId: null };
 }
 
-/** Enable worker/control capability for DBOS local text ingest. */
-export function dbosTextIngestEnabled(
+/** Enable worker/control capability for DBOS document ingest. */
+export function dbosDocumentIngestEnabled(
 	env = typeof process !== "undefined" ? process.env : {},
 ) {
-	const configured = String(env.UNORAG_DBOS_TEXT_INGEST_ENABLED ?? "")
+	const configured = String(
+		env.UNORAG_DBOS_DOCUMENT_INGEST_ENABLED ??
+			env.UNORAG_DBOS_TEXT_INGEST_ENABLED ??
+			"",
+	)
 		.trim()
 		.toLowerCase();
 	return configured === "true" || configured === "1";
 }
 
 /** Stop creating a cohort independently while already-routed jobs drain. */
-export function dbosTextIngestRouteEnabled(
+export function dbosDocumentIngestRouteEnabled(
 	env = typeof process !== "undefined" ? process.env : {},
 ) {
 	const configured = String(
-		env.UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED ??
+		env.UNORAG_DBOS_DOCUMENT_INGEST_ROUTE_ENABLED ??
+			env.UNORAG_DBOS_TEXT_INGEST_ROUTE_ENABLED ??
+			env.UNORAG_DBOS_DOCUMENT_INGEST_ENABLED ??
 			env.UNORAG_DBOS_TEXT_INGEST_ENABLED ??
 			"",
 	)
 		.trim()
 		.toLowerCase();
 	return (
-		(configured === "true" || configured === "1") && dbosTextIngestEnabled(env)
+		(configured === "true" || configured === "1") &&
+		dbosDocumentIngestEnabled(env)
 	);
 }
+
+// Compatibility aliases for existing deployment variables during cutover.
+export const dbosTextIngestEnabled = dbosDocumentIngestEnabled;
+export const dbosTextIngestRouteEnabled = dbosDocumentIngestRouteEnabled;
 
 /** Enable the mandatory DBOS executor for durable document ACL projection. */
 export function dbosAclProjectionEnabled(
@@ -79,13 +90,29 @@ export function documentIngestExecutionIdentity(
 		.split(";", 1)[0]
 		.trim()
 		.toLowerCase();
-	const supported =
+	const textSupported =
 		payload?.queue_class === "local" &&
-		["text/plain", "text/markdown", "text/x-markdown"].includes(contentType) &&
-		(filename.endsWith(".txt") ||
-			filename.endsWith(".md") ||
-			filename.endsWith(".markdown"));
-	if (dbosTextIngestRouteEnabled(env) && supported) {
+		((contentType === "text/plain" && filename.endsWith(".txt")) ||
+			(["text/markdown", "text/x-markdown", "text/plain"].includes(
+				contentType,
+			) &&
+				(filename.endsWith(".md") || filename.endsWith(".markdown"))));
+	const supported =
+		textSupported ||
+		(payload?.queue_class === "local" &&
+			contentType ===
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
+			filename.endsWith(".docx")) ||
+		((payload?.queue_class === "auto" || payload?.queue_class === "mineru") &&
+			contentType === "application/pdf" &&
+			filename.endsWith(".pdf"));
+	const documentCohortConfigured =
+		env.UNORAG_DBOS_DOCUMENT_INGEST_ENABLED !== undefined ||
+		env.UNORAG_DBOS_DOCUMENT_INGEST_ROUTE_ENABLED !== undefined;
+	if (
+		dbosDocumentIngestRouteEnabled(env) &&
+		(documentCohortConfigured ? supported : textSupported)
+	) {
 		return { executionEngine: "dbos", workflowId: jobId };
 	}
 	return { executionEngine: "python", workflowId: null };

@@ -120,7 +120,7 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 				queue.sweep_status AS "cleanupStatus",
 				document.status AS "documentStatus"
 			FROM app.jobs AS job
-			LEFT JOIN rag.generation_cleanup_queue AS queue
+			LEFT JOIN app.generation_cleanup_queue AS queue
 			  ON queue.cleanup_job_id = job.id
 			LEFT JOIN app.documents AS document
 			  ON document.id::text = job.payload->>'document_id'
@@ -299,7 +299,7 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 					? await client.query<{ cleanup_status: string }>(
 							`
 				SELECT sweep_status AS cleanup_status
-				FROM rag.generation_cleanup_queue
+				FROM app.generation_cleanup_queue
 				WHERE cleanup_job_id = $1
 				  AND execution_engine = 'dbos'
 				FOR UPDATE
@@ -333,7 +333,7 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 			if (projection.cleanupError && cleanupStatus === "sweeping") {
 				await client.query(
 					`
-					UPDATE rag.generation_cleanup_queue
+					UPDATE app.generation_cleanup_queue
 					SET sweep_status = 'error',
 						sweep_last_error = $2,
 						sweep_updated_at = now(),

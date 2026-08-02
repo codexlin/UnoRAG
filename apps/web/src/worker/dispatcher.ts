@@ -16,7 +16,13 @@ export function enabledDbosJobTypes(
 	];
 	if (
 		["1", "true"].includes(
-			environment.UNORAG_DBOS_TEXT_INGEST_ENABLED?.trim().toLowerCase() ?? "",
+			(
+				environment.UNORAG_DBOS_DOCUMENT_INGEST_ENABLED ??
+				environment.UNORAG_DBOS_TEXT_INGEST_ENABLED ??
+				""
+			)
+				.trim()
+				.toLowerCase(),
 		)
 	) {
 		types.unshift("document.ingest");
@@ -112,7 +118,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 		const candidates = await this.pool.query<{ generation_id: string }>(
 			`
 			SELECT generation_id::text
-			FROM rag.generation_cleanup_queue
+			FROM app.generation_cleanup_queue
 			WHERE execution_engine = 'python'
 			  AND cleanup_job_id IS NULL
 			  AND sweep_status IN ('pending', 'error')
@@ -139,7 +145,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 			}>(
 				`
 				SELECT document_id::text, document_version_id::text
-				FROM rag.generation_cleanup_queue
+				FROM app.generation_cleanup_queue
 				WHERE generation_id = $1
 				  AND execution_engine = 'python'
 				  AND cleanup_job_id IS NULL
@@ -160,7 +166,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 			);
 			const updated = await client.query(
 				`
-				UPDATE rag.generation_cleanup_queue AS queue
+				UPDATE app.generation_cleanup_queue AS queue
 				SET execution_engine = 'dbos',
 					updated_at = now()
 				WHERE queue.generation_id = $1
@@ -170,7 +176,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 				  AND queue.delete_after <= now()
 				  AND NOT EXISTS (
 					  SELECT 1
-					  FROM rag.active_document_generations AS active
+					  FROM app.active_document_generations AS active
 					  WHERE active.generation_id = queue.generation_id
 				  )
 				`,
@@ -190,7 +196,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 		const candidates = await this.pool.query<{ generation_id: string }>(
 			`
 			SELECT generation_id::text
-			FROM rag.generation_cleanup_queue
+			FROM app.generation_cleanup_queue
 			WHERE execution_engine = 'dbos'
 			  AND cleanup_job_id IS NULL
 			  AND sweep_status IN ('pending', 'error')
@@ -219,7 +225,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 			}>(
 				`
 				SELECT document_id::text, document_version_id::text
-				FROM rag.generation_cleanup_queue
+				FROM app.generation_cleanup_queue
 				WHERE generation_id = $1
 				  AND execution_engine = 'dbos'
 				  AND cleanup_job_id IS NULL
@@ -252,7 +258,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 					library_id::text,
 					document_id::text,
 					document_version_id::text
-				FROM rag.generation_cleanup_queue
+				FROM app.generation_cleanup_queue
 				WHERE generation_id = $1
 				  AND execution_engine = 'dbos'
 				  AND cleanup_job_id IS NULL
@@ -270,7 +276,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 			const active = await client.query(
 				`
 				SELECT 1
-				FROM rag.active_document_generations
+				FROM app.active_document_generations
 				WHERE generation_id = $1
 				`,
 				[generationId],
@@ -327,7 +333,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 			);
 			const owned = await client.query(
 				`
-				UPDATE rag.generation_cleanup_queue
+				UPDATE app.generation_cleanup_queue
 				SET cleanup_job_id = $2,
 					sweep_status = 'sweeping',
 					sweep_attempts = sweep_attempts + 1,
@@ -456,7 +462,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 			}>(
 				`
 				SELECT document_id::text, document_version_id::text
-				FROM rag.generation_cleanup_queue
+				FROM app.generation_cleanup_queue
 				WHERE generation_id = $1
 				  AND execution_engine = 'dbos'
 				  AND sweep_status = 'error'
@@ -490,13 +496,13 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 					queue.document_id::text,
 					queue.library_id::text,
 					queue.cleanup_job_id::text
-				FROM rag.generation_cleanup_queue AS queue
+				FROM app.generation_cleanup_queue AS queue
 				WHERE queue.generation_id = $1
 				  AND queue.execution_engine = 'dbos'
 				  AND queue.sweep_status = 'error'
 				  AND NOT EXISTS (
 					  SELECT 1
-					  FROM rag.active_document_generations AS active
+					  FROM app.active_document_generations AS active
 					  WHERE active.generation_id = queue.generation_id
 				  )
 				FOR UPDATE
@@ -576,7 +582,7 @@ export class PostgresDispatchCandidateStore implements DispatchCandidateStore {
 			);
 			const updated = await client.query(
 				`
-				UPDATE rag.generation_cleanup_queue
+				UPDATE app.generation_cleanup_queue
 				SET cleanup_job_id = $2,
 					sweep_status = 'sweeping',
 					sweep_attempts = sweep_attempts + 1,

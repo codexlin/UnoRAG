@@ -7,6 +7,7 @@ import {
 	type QdrantIngestClient,
 	QdrantIngestWriteStore,
 } from "../../src/core/ingest";
+import { parseStoredQdrantPayload } from "../../src/core/retrieval/qdrant/payload";
 
 const scope: IngestPointScope = {
 	organizationId: "organization-1",
@@ -84,6 +85,112 @@ test("staging overwrites security scope, batches points, and validates exact cou
 			{ key: "lifecycle_visibility", match: { value: "staging" } },
 		],
 	});
+});
+
+test("staging and retrieval preserve the complete Python TableIR payload", async () => {
+	const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+	const store = new QdrantIngestWriteStore(fakeClient(calls, 1), "chunks");
+	const tableRecord: IndexWritePayload = {
+		...record(0),
+		record_type: "table",
+		table_id: "table-1",
+		table_caption: "报价清单",
+		headers: ["项目", "金额"],
+		rows: [["服务费", "120000"]],
+		row_start: 0,
+		row_end: 0,
+		table_row_count: 1,
+		header_rows: [["项目", "金额（元）"]],
+		table_columns: [
+			{
+				name: "项目",
+				normalized_name: "项目",
+				data_type: "string",
+				unit: null,
+			},
+			{
+				name: "金额",
+				normalized_name: "金额",
+				data_type: "currency",
+				unit: "CNY",
+			},
+		],
+		cell_rows: [
+			{
+				cells: [
+					{
+						raw_text: "服务费",
+						normalized_value: "服务费",
+						page: 2,
+						bbox: [10, 20, 30, 40],
+						confidence: 0.99,
+						rowspan: 1,
+						colspan: 1,
+					},
+					{
+						raw_text: "￥120,000",
+						normalized_value: 120000,
+						page: 2,
+						bbox: [31, 20, 60, 40],
+						confidence: 0.97,
+						rowspan: 1,
+						colspan: 1,
+					},
+				],
+			},
+		],
+		summary_rows: [
+			{
+				raw_text: "合计 ￥120,000",
+				cells: [
+					{
+						raw_text: "合计",
+						normalized_value: "合计",
+						page: 2,
+						bbox: null,
+						confidence: 0.95,
+						rowspan: 1,
+						colspan: 1,
+					},
+				],
+				page: 2,
+			},
+		],
+		footnotes: ["金额含税"],
+		table_quality: {
+			score: 0.96,
+			executable: true,
+			header_inferred: false,
+			header_confidence: 0.99,
+			expected_columns: 2,
+			irregular_row_count: 0,
+			low_confidence_cell_count: 0,
+			cross_page_merged: true,
+			warnings: [],
+		},
+	};
+
+	await store.stage({
+		records: [tableRecord],
+		vectors: [[1, 0]],
+		scope,
+	});
+
+	const point = (
+		calls[0]?.input.points as
+			| Array<{ payload: Record<string, unknown> }>
+			| undefined
+	)?.[0];
+	const stored = parseStoredQdrantPayload(point?.payload);
+	assert.ok(stored);
+	assert.equal(stored.table_caption, "报价清单");
+	assert.equal(stored.table_columns?.[1]?.data_type, "currency");
+	assert.equal(stored.cell_rows?.[0]?.cells[1]?.normalized_value, 120000);
+	assert.deepEqual(stored.cell_rows?.[0]?.cells[1]?.bbox, [31, 20, 60, 40]);
+	assert.equal(stored.cell_rows?.[0]?.cells[1]?.confidence, 0.97);
+	assert.equal(stored.summary_rows?.[0]?.raw_text, "合计 ￥120,000");
+	assert.equal(stored.table_quality?.cross_page_merged, true);
+	assert.deepEqual(stored.footnotes, ["金额含税"]);
 });
 
 test("staging fails closed on scope, vector, count, and restricted ACL mismatches", async () => {

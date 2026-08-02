@@ -2,7 +2,17 @@ import { QdrantClient, type Schemas } from "@qdrant/js-client-rest";
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
 import { QdrantIngestWriteStore } from "../core/ingest";
+import {
+	LiteParseProvider,
+	MinerUProvider,
+	type ParseSourceLoader,
+	PdfDocumentParser,
+} from "../core/parsing";
 import { OpenAICompatibleEmbeddingProvider } from "../core/retrieval/embedding/provider";
+import {
+	parseQdrantDistance,
+	QdrantCollectionManager,
+} from "../core/retrieval/qdrant/collection-manager";
 import type { WorkerRuntimeConfig } from "./config";
 import type { GenerationCleanupJob } from "./contracts";
 import { DocumentAclProjectionOperations } from "./document-acl-projection";
@@ -14,7 +24,10 @@ import {
 	LocalDocumentIngestSource,
 	PostgresDocumentIngestScope,
 } from "./document-ingest-production";
-import { TextDocumentIngestStager } from "./document-ingest-staging";
+import {
+	assertDocumentContentHash,
+	DocumentIngestStager,
+} from "./document-ingest-staging";
 import { PostgresDocumentIngestTransactions } from "./document-ingest-transactions";
 import { WorkerTaskError } from "./errors";
 import type {
@@ -99,6 +112,12 @@ function enabled(name: string): boolean {
 	return ["1", "true"].includes(process.env[name]?.trim().toLowerCase() ?? "");
 }
 
+function enabledByDefault(name: string): boolean {
+	return !["0", "false"].includes(
+		process.env[name]?.trim().toLowerCase() ?? "",
+	);
+}
+
 function scopedCleanupFilter(input: GenerationCleanupJob): QdrantFilter {
 	return {
 		must: [
@@ -170,7 +189,7 @@ export class PostgresGenerationCleanupTransactions
 			) {
 				const updated = await client.query(
 					`
-						UPDATE rag.generation_cleanup_queue
+						UPDATE app.generation_cleanup_queue
 						SET sweep_status = 'sweeping',
 							sweep_attempts = sweep_attempts + 1,
 							sweep_last_error = NULL,
@@ -250,7 +269,7 @@ export class PostgresGenerationCleanupTransactions
 				}
 				const updated = await client.query(
 					`
-						UPDATE rag.generation_cleanup_queue
+						UPDATE app.generation_cleanup_queue
 						SET sweep_status = 'deleted',
 							sweep_last_error = NULL,
 							sweep_updated_at = now(),
@@ -331,7 +350,7 @@ export class PostgresGenerationCleanupTransactions
 			).slice(0, MAX_ERROR_LENGTH);
 			const updatedCleanup = await client.query(
 				`
-						UPDATE rag.generation_cleanup_queue
+						UPDATE app.generation_cleanup_queue
 						SET sweep_status = 'error',
 							sweep_last_error = $4,
 							sweep_updated_at = now(),
@@ -458,7 +477,7 @@ export class PostgresGenerationCleanupTransactions
 					cleanup_job_id::text,
 					execution_engine,
 					sweep_status
-				FROM rag.generation_cleanup_queue
+				FROM app.generation_cleanup_queue
 				WHERE generation_id = $1
 				FOR UPDATE
 			`,
@@ -511,7 +530,7 @@ export class PostgresGenerationCleanupTransactions
 		const active = await client.query(
 			`
 				SELECT generation_id
-				FROM rag.active_document_generations
+				FROM app.active_document_generations
 				WHERE generation_id = $1
 				FOR SHARE
 			`,
@@ -565,7 +584,9 @@ export class QdrantGenerationCleanupStep implements GenerationCleanupStepPort {
 	}
 }
 
-export function createWorkerPorts(config: WorkerRuntimeConfig): WorkerPorts {
+export async function createWorkerPorts(
+	config: WorkerRuntimeConfig,
+): Promise<WorkerPorts> {
 	const databaseUrl = requiredEnvironment("DATABASE_URL");
 	const qdrantUrl = requiredEnvironment("QDRANT_URL", "http://localhost:6333");
 	const qdrantCollection = requiredEnvironment(
@@ -573,18 +594,22 @@ export function createWorkerPorts(config: WorkerRuntimeConfig): WorkerPorts {
 		"unorag_chunks",
 	);
 	const documentStorageRoot = requiredEnvironment("DOCUMENT_STORAGE_ROOT");
-	const textIngestEnabled = enabled("UNORAG_DBOS_TEXT_INGEST_ENABLED");
-	if (textIngestEnabled && !config.listenQueues.includes("ingest-local")) {
-		throw new Error(
-			"UNORAG_DBOS_TEXT_INGEST_ENABLED requires ingest-local in UNORAG_DBOS_LISTEN_QUEUES",
-		);
+	const embeddingDimensions = positiveInteger("EMBEDDING_DIM", 1_024);
+	const documentIngestEnabled =
+		enabled("UNORAG_DBOS_DOCUMENT_INGEST_ENABLED") ||
+		enabled("UNORAG_DBOS_TEXT_INGEST_ENABLED");
+	if (
+		documentIngestEnabled &&
+		!config.listenQueues.some((queue) => queue.startsWith("ingest-"))
+	) {
+		throw new Error("DBOS document ingest requires at least one ingest queue");
 	}
-	const textIngestConfig = textIngestEnabled
+	const documentIngestConfig = documentIngestEnabled
 		? {
 				apiKey: requiredEnvironment("OPENAI_API_KEY"),
 				baseUrl: requiredEnvironment("OPENAI_BASE_URL"),
 				model: requiredEnvironment("EMBEDDING_MODEL"),
-				dimensions: positiveInteger("EMBEDDING_DIM", 1_024),
+				dimensions: embeddingDimensions,
 				batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
 				maxUploadBytes: positiveInteger(
 					"DOCUMENT_MAX_UPLOAD_BYTES",
@@ -604,6 +629,16 @@ export function createWorkerPorts(config: WorkerRuntimeConfig): WorkerPorts {
 		timeout: positiveInteger("QDRANT_TIMEOUT_MS", 5_000),
 		checkCompatibility: true,
 	});
+	try {
+		await new QdrantCollectionManager(qdrant, {
+			collection: qdrantCollection,
+			vectorSize: embeddingDimensions,
+			distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
+		}).ensure();
+	} catch (error) {
+		await pool.end();
+		throw error;
+	}
 	const ports: WorkerPorts = {
 		documentAclProjection: new DocumentAclProjectionOperations(
 			pool,
@@ -627,24 +662,75 @@ export function createWorkerPorts(config: WorkerRuntimeConfig): WorkerPorts {
 			await pool.end();
 		},
 	};
-	if (textIngestConfig) {
+	if (documentIngestConfig) {
 		const embeddings = new OpenAICompatibleEmbeddingProvider({
-			apiKey: textIngestConfig.apiKey,
-			baseUrl: textIngestConfig.baseUrl,
-			model: textIngestConfig.model,
-			dimensions: textIngestConfig.dimensions,
-			batchSize: textIngestConfig.batchSize,
+			apiKey: documentIngestConfig.apiKey,
+			baseUrl: documentIngestConfig.baseUrl,
+			model: documentIngestConfig.model,
+			dimensions: documentIngestConfig.dimensions,
+			batchSize: documentIngestConfig.batchSize,
+		});
+		const source = new LocalDocumentIngestSource(
+			documentStorageRoot,
+			documentIngestConfig.maxUploadBytes,
+		);
+		const sourceLoader: ParseSourceLoader = async (input, signal) => {
+			if (signal?.aborted) throw signal.reason;
+			const prefix = "storage://";
+			if (!input.sourceUri.startsWith(prefix)) {
+				throw new Error("Parser source URI must use storage://");
+			}
+			const content = await source.load(input.sourceUri.slice(prefix.length));
+			assertDocumentContentHash(content, input.contentHash);
+			if (signal?.aborted) throw signal.reason;
+			return content;
+		};
+		const liteParse = new LiteParseProvider({
+			sourceLoader,
+			ocrEnabled: enabledByDefault("LITEPARSE_OCR_ENABLED"),
+			ocrLanguage: process.env.LITEPARSE_OCR_LANGUAGE?.trim(),
+			timeoutMs: positiveInteger("LITEPARSE_TIMEOUT_MS", 120_000),
+			maxConcurrency: positiveInteger("LITEPARSE_MAX_CONCURRENCY", 2),
+		});
+		const minerUUrl =
+			process.env.MINERU_SELF_HOSTED_URL?.trim() ||
+			process.env.MINERU_URL?.trim();
+		const minerUEnabled = enabled("MINERU_ENABLED") && Boolean(minerUUrl);
+		const minerU = minerUEnabled
+			? new MinerUProvider({
+					baseUrl: minerUUrl as string,
+					sourceLoader,
+					version: process.env.MINERU_VERSION?.trim() || "unknown",
+					transport:
+						process.env.MINERU_TRANSPORT?.trim().toLowerCase() === "tasks" ||
+						process.env.MINERU_MODE?.trim().toLowerCase() === "async"
+							? "tasks"
+							: "file-parse",
+					headers: process.env.MINERU_API_KEY?.trim()
+						? {
+								authorization: `Bearer ${process.env.MINERU_API_KEY.trim()}`,
+							}
+						: undefined,
+					externalDataProcessing:
+						(process.env.MINERU_PROVIDER?.trim().toLowerCase() ||
+							"self_hosted") !== "self_hosted",
+				})
+			: undefined;
+		const pdfParser = new PdfDocumentParser({
+			liteParse,
+			minerU,
+			externalParserAllowed: enabled("EXTERNAL_PARSER_ALLOWED"),
+			pollIntervalMs: positiveInteger("PARSER_POLL_INTERVAL_MS", 250),
+			maxWaitMs: positiveInteger("PARSER_MAX_WAIT_MS", 15 * 60_000),
 		});
 		ports.documentIngest = {
 			transactions: new PostgresDocumentIngestTransactions(pool),
-			external: new TextDocumentIngestStager(
-				new LocalDocumentIngestSource(
-					documentStorageRoot,
-					textIngestConfig.maxUploadBytes,
-				),
+			external: new DocumentIngestStager(
+				source,
 				new PostgresDocumentIngestScope(pool),
 				embeddings,
 				new QdrantIngestWriteStore(qdrant, qdrantCollection),
+				pdfParser,
 			),
 		};
 	}
