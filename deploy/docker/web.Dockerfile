@@ -7,7 +7,9 @@
 
 FROM node:22-bookworm-slim AS deps
 WORKDIR /repo
-RUN corepack enable && corepack prepare pnpm@9.7.1 --activate
+RUN useradd --system --uid 10001 --create-home unorag \
+	&& corepack enable \
+	&& corepack prepare pnpm@9.7.1 --activate
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile \
 	&& rm -rf /root/.local/share/pnpm/store /root/.cache
@@ -34,6 +36,7 @@ WORKDIR /migrate
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends postgresql-client \
 	&& rm -rf /var/lib/apt/lists/* \
+	&& useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
 	&& corepack prepare pnpm@9.7.1 --activate
 # Pin the same ranges as the application; install only migration tooling.
@@ -42,27 +45,30 @@ RUN node -e 'const fs=require("fs"); const app=JSON.parse(fs.readFileSync("/tmp/
 	&& CI=true pnpm install \
 	&& test -x node_modules/.bin/drizzle-kit \
 	&& rm -rf /root/.local/share/pnpm/store /root/.cache /tmp/app.package.json
-COPY drizzle.config.ts ./
-COPY drizzle ./drizzle
+COPY --chown=unorag:unorag drizzle.config.ts ./
+COPY --chown=unorag:unorag drizzle ./drizzle
 # Referenced by drizzle.config schema path (migrate applies SQL in ./drizzle).
-COPY src/db/schema.ts ./src/db/schema.ts
+COPY --chown=unorag:unorag src/db/schema.ts ./src/db/schema.ts
 # Avoid Corepack re-fetching pnpm at container start.
+USER unorag
 CMD ["./node_modules/.bin/drizzle-kit", "migrate"]
 
 # One-shot bootstrap and operator tooling (no long-running queue consumer).
 FROM deps AS ops
-COPY scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/inspect-lifecycle.mjs ./scripts/
+COPY --chown=unorag:unorag scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/inspect-lifecycle.mjs ./scripts/
 WORKDIR /repo
 ENV NODE_ENV=production
+USER unorag
 CMD ["node", "scripts/inspect-lifecycle.mjs"]
 
 # DBOS executor and control loop. Keep the complete worker module together so
 # dynamic production-port imports resolve identically in both processes.
 FROM deps AS worker
-COPY src ./src
-COPY tsconfig.json ./
+COPY --chown=unorag:unorag src ./src
+COPY --chown=unorag:unorag tsconfig.json ./
 WORKDIR /repo
 ENV NODE_ENV=production
+USER unorag
 CMD ["./node_modules/.bin/tsx", "src/worker/entry.ts"]
 
 FROM node:22-bookworm-slim AS runner

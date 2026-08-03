@@ -72,6 +72,22 @@ test("deployment ships the complete TypeScript parser runtime", () => {
 	assert.doesNotMatch(compose, /UNORAG_DBOS_TEXT_INGEST/);
 });
 
+test("every shipped application image runs as the non-root product user", () => {
+	const dockerfile = readFileSync(
+		path.join(root, "deploy/docker/web.Dockerfile"),
+		"utf8",
+	);
+	for (const stage of ["migrator", "ops", "worker", "runner"]) {
+		const marker = new RegExp(`^FROM [^\\n]+ AS ${stage}$`, "m");
+		const match = marker.exec(dockerfile);
+		assert.ok(match, `missing Dockerfile stage ${stage}`);
+		const body = dockerfile
+			.slice(match.index + match[0].length)
+			.split(/^FROM /m, 1)[0];
+		assert.match(body, /^USER unorag$/m, `${stage} must not run as root`);
+	}
+});
+
 test("Helm renders the TypeScript-only runtime", (t) => {
 	const probe = spawnSync("helm", ["version", "--short"], { encoding: "utf8" });
 	if (probe.status !== 0) {
