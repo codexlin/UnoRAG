@@ -59,7 +59,8 @@ CMD ["./node_modules/.bin/drizzle-kit", "migrate"]
 
 # One-shot bootstrap and operator tooling (no long-running queue consumer).
 FROM deps AS ops
-RUN pnpm prune --prod
+RUN pnpm prune --prod \
+	&& rm -rf /root/.cache
 COPY --chown=unorag:unorag scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/inspect-lifecycle.mjs ./scripts/
 WORKDIR /repo
 ENV NODE_ENV=production
@@ -69,7 +70,8 @@ CMD ["node", "scripts/inspect-lifecycle.mjs"]
 # DBOS executor and control loop. Keep the complete worker module together so
 # dynamic production-port imports resolve identically in both processes.
 FROM deps AS worker
-RUN pnpm prune --prod
+RUN pnpm prune --prod \
+	&& rm -rf /root/.cache
 COPY --chown=unorag:unorag src ./src
 COPY --chown=unorag:unorag tsconfig.json ./
 WORKDIR /repo
