@@ -4,11 +4,10 @@
 > Machine-readable source: [`contracts/public-api-v1.openapi.json`](../../contracts/public-api-v1.openapi.json)
 > Served at: `GET /api/v1/openapi.json`
 > Integration guide: [`../INTEGRATION.md`](../INTEGRATION.md)
-> Python SDK (thin adapter): [`../../sdk/python/`](../../sdk/python/)
 
 This document is the **canonical human contract** for Knowledge Service Retrieve/Ask v1.
 OpenAPI is the machine source of truth for request/response schemas and error codes.
-Python SDK / MCP / OpenAI-compatible adapters must be **thin clients** of this HTTP surface — they must not invent a second schema.
+Customer integrations must use this HTTP surface and must not invent a second schema.
 
 ## Version markers
 
@@ -182,21 +181,22 @@ Upstream internal names (e.g. `llm_upstream_unavailable`) are **never** passed t
 | Usage | Structured stdout JSON line `event=knowledge.api.usage` with key_id, target, library_id, status, refused, citation_count, duration_ms, request_id. Token ledger / cost panels are **deferred**. |
 | `last_used_at` | Updated on successful key authentication. |
 
-## Streaming Answer (frozen shape; not public path yet)
+## Internal streaming shape (not a public v1 path)
 
 **Public v1 does not expose** `POST /api/v1/ask/stream` or `/answer/stream`.
 
-Internal Workspace SSE (`POST /v1/ask/stream` via session BFF) is the reference for a future public stream. Frozen event names:
+Internal Workspace SSE (`POST /v1/ask/stream` via the Session boundary) uses these event names:
 
 | Event | Data |
 |-------|------|
-| `meta` | `{ session_id, refused, refuse_reason, trace_id, retrieval_mode, … }` — no `retrieval_debug` on future public stream |
+| `meta` | `{ session_id, refused, refuse_reason, trace_id, retrieval_mode, … }` |
 | `citations` | `Citation[]` (same public citation shape) |
 | `token` | string chunk |
 | `done` | final `{ session_id, question, answer, citations, refused, refuse_reason, trace_id, retrieval_mode }` — public projection strips debug |
-| `error` | `{ message }` (future public: wrap in error envelope / code) |
+| `error` | `{ message }` |
 
-When public stream ships (planned `/api/v1/answer/stream`), it must reuse these event names and the same citation/error codes. Until then, integrators use sync Ask.
+This shape is documented to prevent the Workspace implementation from being mistaken for a Service Key API.
+External integrators use synchronous Ask in v1. Any future public stream requires a separately versioned contract.
 
 ## Idempotency & pagination (v1 decisions)
 
@@ -204,19 +204,13 @@ When public stream ships (planned `/api/v1/answer/stream`), it must reuse these 
 |-------|-------------|
 | Idempotency-Key | **Not supported** on Retrieve/Ask. Reserved for future Documents/Jobs writes. |
 | Pagination | **Not supported**. Retrieve uses `top_k` only (1–50). No cursor/`page_token`. |
-| Answer alias paths | `/api/v1/answer` · `/answer/stream` are **planned**, not in this freeze. `/api/v1/ask` remains stable through an explicit deprecation window when Answer lands. |
-
-## Adapters on this kernel
-
-- **Python SDK (0.1.0):** [`../../sdk/python/`](../../sdk/python/) — sync `retrieve` / `ask` only; no embedded engine
-- **MCP Server (0.1.0):** [`../../sdk/mcp/`](../../sdk/mcp/) — stdio tools `retrieve` / `ask` (1:1 over the Python SDK); no embedded engine
-- **Planned:** OpenAI-compatible API (still thin over this HTTP surface)
+| Answer alias paths | `/api/v1/answer` and `/answer/stream` are not part of this contract or the current product target. |
 
 ## Non-goals (explicitly out of v1)
 
-- OpenAI-compatible adapter (planned; thin on this kernel)
+- OpenAI-compatible adapter (not a current product target)
 - External Documents / Versions / Jobs HTTP API
-- Public streaming Ask/Answer path
+- Public streaming Ask path
 - Client-supplied algorithm knobs (`ask_overrides`, hybrid/rerank/top_k policy internals)
 - OAuth-for-apps / cross-workspace keys
 - Exposing DBOS workers, PostgreSQL, Qdrant, or Provider credentials publicly

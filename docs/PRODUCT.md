@@ -1,208 +1,125 @@
 # UnoRAG 产品说明
 
-> 状态：现行北极星（2026-07-29）
->
-> 关联：[架构](./ARCHITECTURE.md) · [路线图](./ROADMAP.md) · [集成](./INTEGRATION.md)
+**UnoRAG 是可私有化部署、权限感知、以证据为中心的企业知识服务。** 它把企业文档转化为
+可治理、可检索、可核验的知识能力，既提供面向员工和管理员的 Workspace，也提供可嵌入
+现有客服、售后、门户和 Agent 的 Retrieve / Ask API。
 
-## 一句话
+> 部署形态独立，使用形态嵌入；运行时 API-first，管理上有控制台。
 
-**UnoRAG 是一个可私有化部署、权限感知、版本安全、结果可追溯的企业知识服务，为现有业务系统、Agent 和员工知识助手提供 Retrieve 与 Answer 能力。**
+## 为什么存在
 
-> A deployable, permission-aware and evidence-grounded knowledge service for
-> enterprise applications and agents.
+企业 RAG 的难点不是“把文本存进向量库”，而是让整个知识生命周期可被信任：
 
-产品结构遵循：
+1. **答案可核对**：返回真实来源和版本；证据不足时拒答或澄清。
+2. **知识不越权**：身份、Workspace、文库、文档和用户组权限在检索前强制生效。
+3. **更新不中断**：新版本独立处理并校验，成功后原子激活，失败继续服务旧版本。
+4. **复杂文档可用**：保留页面、标题、表格、单位、行范围和来源坐标，而不是只做固定字符切分。
+5. **系统可交付**：安装、升级、备份、恢复、监控和验收都有明确操作边界。
 
-> **部署形态独立，使用形态嵌入；运行时 API-first，管理上有控制台。**
+## 面向谁
 
-## 要解决什么问题
+| 角色 | 主要价值 |
+|---|---|
+| 企业 IT / AI 平台团队 | 在自有网络、数据库、模型和密钥边界内交付知识服务 |
+| 知识管理员 | 管理 Workspace、成员、文库、版本、任务和权限 |
+| 业务员工 | 提问、查看引用、追问并归档有价值的会话 |
+| 产品与集成团队 | 通过稳定 HTTP API 为现有产品增加有据检索和问答 |
 
-企业内部文档多、制度/手册/表格难搜、通用 Chat 会编造。业务要的是：
+首发场景聚焦错误回答成本高、文档更新频繁、需要来源核对的知识工作：
 
-1. **能核对**：答案带来源引用，弱证据时拒答或澄清。
-2. **能治理**：多租户工作区、文库权限、版本与任务可追踪。
-3. **能嵌入**：已有客服、售后、门户、Chat 或 Agent 不必推倒重来，可只接入检索与有据问答能力。
-4. **能交付**：可私有化安装、升级、备份、恢复、观测和验收，而不是只在开发机运行。
+- 产品手册、安装说明、故障 SOP、参数表、报价表和售后案例；
+- HR、财务、差旅、信息安全与合规制度。
 
-## 目标用户
-
-| 角色 | 场景 |
-|------|------|
-| 知识/IT 管理员 | 私有化部署、文库与成员、工作区问答旋钮、任务巡检 |
-| 业务员工 | 在工作台提问、看引用、追问、主动归档会话 |
-| 平台/助手团队 | 已有业务系统、Agent 或 Chat UI，需要稳定的 retrieve/answer 能力 |
-
-## 目标客户与首发场景
-
-首要买方是需要私有化部署的企业 IT / AI 平台团队、已有客服或门户但缺少可靠知识层的
-产品团队，以及有文档权限、版本、引用和审计要求的知识管理团队。
-
-技术内核保持横向，首发销售场景保持具体：
-
-1. **产品与售后知识服务**：产品手册、安装说明、故障 SOP、参数表、报价表和历史解决方案。
-2. **内部制度与流程助手**：HR、财务、差旅、信息安全和合规制度。
-
-优先验证错误回答成本高、文档更新频繁、需要来源核对的场景。
-
-## 产品层级
+## 产品形态
 
 ```text
-官方 Workspace：管理、问答、归档、调试、验收
-        ↓
-接入适配：Python SDK / MCP / OpenAI-compatible
-        ↓
-Knowledge API：Documents / Jobs / Retrieve / Answer
-        ↓
-企业知识内核：ACL / Version / Parse / Index / Eval
+UnoRAG Workspace
+  管理 / 问答 / 归档 / 调试 / 验收
+             ↓
+Knowledge API
+  Service Key / Retrieve / Ask
+             ↓
+Enterprise Knowledge Core
+  ACL / Version / Parse / Index / Retrieve / Evaluate
 ```
 
-API 是核心产品契约，不是 Workspace 的附属接口；Workspace 是官方客户端、管理控制台
-和参考实现。所有层级共享唯一的权限、版本、索引、引用和评测真相。
+Workspace 和 API 使用同一套组织、权限、版本、索引、引用和评测事实，不产生第二套数据模型。
 
-## 一个核心产品，多种使用方式
+### Workspace
 
-核心产品是 **UnoRAG Knowledge Service**。它拥有唯一的文档、版本、权限、检索、引用和评测真相。
+- 创建和切换 Workspace，邀请成员并分配 viewer、editor、admin；
+- 创建文库，上传、替换、重索引和删除文档；
+- 查看异步 Job 进度、失败原因、重试与取消；
+- 流式问答、查看证据、连续追问；
+- 主动归档会话，并从历史线程继续；
+- 创建带 scope 的 Service Key。
 
-### 官方 Workspace
+入口：`/app/ask`、`/app/libraries`、`/app/archive`、`/app/settings`。
 
-公司没有现成知识助手时，可直接使用 UnoRAG Workspace；管理员也通过它管理和验收 Knowledge Service：
+### Knowledge API
 
-| 能力 | 说明 |
-|------|------|
-| 工作区 | 组织 / 工作区 / 成员角色 / 邀请 |
-| 文库 | 上传、替换、重索引、删除；Job 状态可见 |
-| 有据问答 | 流式回答、`[n]` 引用、证据片段、拒答 |
-| 追问 | 临时会话短记忆 + query rewrite；归档后按 thread 续聊 |
-| 归档 | 默认临时；用户主动归档；可从档案续聊 |
+`POST /api/v1/retrieve` 和 `POST /api/v1/ask` 已作为 v1 契约提供。调用方通过 Service Key
+进入与 Workspace 相同的授权和检索边界，无需采用 UnoRAG UI。公共 Documents、Versions、
+Jobs 生命周期接口尚未作为稳定外部契约发布。
 
-入口：`/app/ask` · `/app/libraries` · `/app/archive` · `/app/settings`
+## 当前能力
 
-### 嵌入现有系统
+| 领域 | 产品状态 |
+|---|---|
+| 身份与工作区 | 本地管理员、Session、邀请、角色、多个 Workspace 与切换已实现 |
+| 权限 | organization/workspace/document ACL、Service Key scope 与 Qdrant 强制过滤已实现；用户组管理 UI 待增强 |
+| 入库 | TXT、Markdown、DOCX、PDF；DocumentIR/TableIR；LiteParse、自托管或 302.AI MinerU |
+| 切分与索引 | 结构优先 profile、递归硬上限、可选叙事语义切分、chunk/section/table 多粒度记录 |
+| 检索与问答 | Dense、可选 BM25+RRF、rerank、问题路由、表格执行、证据裁决、拒答、引用与 SSE |
+| 版本与任务 | staging、校验、原子 active 切换、旧版兜底、DBOS 重试/取消/删除/清理/对账 |
+| 对外交付 | Compose 参考拓扑、Helm starter、四镜像、最小权限数据库角色、备份恢复和发布门禁 |
 
-公司已有客服、售后、门户、Chat 或 Agent 时：通过稳定 API 接入 **retrieve / answer**，不强迫使用 UnoRAG UI 或 Agent 运行时。
+仓库是单根 Next.js/TypeScript 应用，没有 FastAPI 产品服务、Python 生命周期 Worker、outbox
+投影链路或重复业务数据库。Python 仅保留在宿主机验收和配置辅助脚本中。
 
-| 现状 | 说明 |
-|------|------|
-| 已实现 | 内部 Data Plane：`POST /v1/ask`、`/v1/ask/stream`、`POST /v1/retrieve`；浏览器经 Next BFF；HMAC 内部鉴权 |
-| 已冻结（v1.0） | 工作区 service key + `POST /api/v1/retrieve` · `/api/v1/ask`；契约见 [contracts/retrieve-ask-v1.md](./contracts/retrieve-ask-v1.md) 与 [INTEGRATION.md](./INTEGRATION.md) |
-| 近期扩展 | 对外统一产品术语 `answer`；保持 `ask` 兼容期，补齐 Documents/Versions/Jobs 等知识生命周期接口 |
-| 已交付（0.1.0） | Python SDK、MCP（薄适配 Retrieve/Ask v1；见 `sdk/python/` · `sdk/mcp/`） |
-| 规划中 | 外部 Documents/Versions/Jobs API、OpenAI-compatible adapter |
+## 会话与记忆
 
-产品承诺是「企业知识能力可被治理和调用」，不是「再做一个通用 Agent 框架」。
+默认对话使用短期上下文，不强制把每次提问持久化。用户主动归档后，thread/turns 写入
+PostgreSQL，可从档案继续对话。追问会做 query rewrite，但不得扩大原始身份的访问范围。
 
-### SDK 与协议适配
+## 产品边界
 
-Python SDK、MCP 和 OpenAI-compatible endpoint 只做稳定 Knowledge API 的薄适配：
+UnoRAG 当前不把以下方向作为核心承诺：
 
-```text
-Python SDK ──┐
-MCP Server ──┼──► Knowledge API ──► 同一 ACL / active generation / citation
-OpenAI API ──┘
-```
+- 开放式通用 Agent 工具市场；
+- 同仓维护多语言 SDK 或 MCP Server；
+- 公网暴露 Worker、数据库或向量库；
+- 跨会话用户画像和无限期个人记忆；
+- 公网多租户 SaaS 计费与多 Region active-active；
+- 用 RAG 代替业务数据库处理万行级交易分析。
 
-Python SDK 是 API client，不将数据库、Qdrant 和完整引擎复制进客户业务进程。MCP 首版以只读知识工具为主，OpenAI compatibility 用于降低迁移成本，UnoRAG 原生契约仍是权威。
+超大运营数据应优先查询其源数据库。LlamaIndex 或领域查询引擎只有在真实场景证明收益后，
+才会作为受控工具接入，而不会成为第二套运行时。
 
-## 术语
+## 交付成熟度
 
-| 术语 | 含义 |
-|------|------|
-| Knowledge Service | UnoRAG 核心产品整体 |
-| Workspace | 官方管理控制台和参考客户端 |
-| Library | 当前产品 UI / 内部数据模型中的文库 |
-| Knowledge Base | 规划中的对外 API 资源名称；迁移时映射现有 Library，不复制数据 |
-| Ask | 当前实现、内部 LangGraph 和兼容 API 使用的名称 |
-| Answer | 规划中的对外产品术语；返回生成答案、引用、拒答与 trace |
-| Retrieve | 只返回证据包，不替客户决定最终生成流程 |
+当前 TypeScript 运行时已通过空环境安装、代表性真实文件、浏览器权限、跨作用域隔离、
+故障恢复、备份恢复和质量矩阵的 RC 验收，可用于内部预发布和受控试点。该结论绑定具体
+版本与测试环境，不等于适用于任意客户环境的通用生产认证。
 
-## 做什么 / 不做什么
+生产交付仍须使用不可变镜像完成升级/应用回滚、模型与 ParserProvider 故障验收，并在
+客户目标环境确认容量、RPO/RTO、监控责任、身份系统和安全策略。详见
+[RELEASE.md](./RELEASE.md)。
 
-### 做（当前与近中期）
+## 下一阶段
 
-- 多租户工作区与成员
-- 文库、文档版本、ACL（数据面过滤已落地；产品侧细粒度编辑后置加强）
-- 解析入库：DocumentIR → 结构感知切片 → embedding → 分 generation 激活
-- 检索：dense；可选 hybrid（BM25+RRF）、rerank；表格路径
-- 引用 / 裁决 / 拒答
-- 临时会话 + **主动归档** + 可续聊
-- 工作区级 ask 旋钮（少配置；不靠一堆 env）
-- 受限多步（表格执行等）后置加强，不做开放工具生态
-- 稳定 Knowledge API：Documents / Jobs / Retrieve / Answer / Feedback / Trace
-- Python SDK、MCP、OpenAI-compatible 薄适配
+优先级按“安全、恢复、可观测，再扩展能力”排列：
 
-### 不做 / 明确后置
+1. **封闭发布边界**：digest-pinned 升级/回滚，模型与 ParserProvider 重启和幂等故障门禁。
+2. **私有部署产品化**：OIDC/SSO、S3/MinIO、Kubernetes NetworkPolicy/PDB/HPA、OpenTelemetry 仪表盘。
+3. **知识质量**：真实客户问题分类、引用 precision/coverage、Provider scorecard、ChartIR。
+4. **平台接口**：稳定 Documents/Versions/Jobs 公共 API、用户组管理和目录同步。
 
-| 项 | 原因 |
-|----|------|
-| 开放式通用 Agent 工具生态 | 偏离「有据知识」主线；借鉴 SAG/RAG-Anything 能力，不照搬定位 |
-| 公网暴露 Worker、Qdrant 或数据库 | 安全边界：仅 Next.js 产品入口对外 |
-| 立刻拆独立 PyPI 引擎包 | 先把契约与私有化交付做稳 |
-| 每轮问答强制入库 | 默认临时；主动归档 |
-| 用户画像 / 长期跨会话记忆 | 企业合规与产品边界；会话窗口够用即可 |
-| 云 SaaS 计费套餐、跨 region active-active | 首版私有化优先 |
-| 全量 antivirus/DLP 产品化、SBOM 与镜像签名 | Trivy 镜像扫描已交付；其余属于运维与合规增强 |
-| OAuth-for-apps | 当前产品非目标；服务间接入使用可审计、可限制 scope 的 Service Key。只有明确建设公网多租户开发者平台时才重新评估 |
+每项新能力都必须回答：是否增强可靠性、可接入性或可交付性；是否有真实评测证明收益；
+是否继续保持唯一的权限、版本与检索事实。
 
-每项新能力都应回答：
+## 商业方向
 
-1. 是否增强 Knowledge Service 的可靠性、可接入性或可交付性？
-2. 是否有真实场景或评测证明收益？
-3. 是否保持唯一的权限、版本和检索真相？
-
-## 会话模型（产品合同）
-
-```text
-默认临时
-  → 进程内短记忆（可追问）
-  → 关闭/刷新可能丢失
-主动归档
-  → 写入 thread + turns（Postgres）
-  → 档案列表可打开、可续聊
-  → 续聊生成多轮 messages + 检索 query 改写
-```
-
-配置原则：**少配置**。检索/问答产品旋钮 = 代码默认 ⊕ 工作区覆盖（见
-`src/lib/server/ask-policy.mjs`），不要用部署环境变量冒充用户产品设置。
-
-## 与同类定位的关系
-
-| 参照 | 借鉴 | 不照搬 |
-|------|------|--------|
-| DustyKB 类产品经验 | 工作区、文库、有据体验 | 具体 UI/品牌 |
-| QueryNest / 多步编排 | 受限表格与 query route | 通用 Agent 工具市场 |
-| SAG / RAG-Anything | 解析、多模态、复杂文档能力 | 「万能 Agent / 万能框架」定位 |
-
-## 交付与商业化路径
-
-| 阶段 | 目标 |
-|------|------|
-| 可信开源产品 | 可重复部署的 Compose、Workspace、Retrieve/Ask API、示例数据、质量门禁与运维文档 |
-| 收费试点与实施 | 私有部署、模型/身份对接、文档迁移、评测集、验收和升级支持 |
-| 企业增强 | OIDC/组织同步、Connector、高可用、合规、SLA 和更深治理 |
-
-先通过受控试点获得真实约束，再把重复交付内容产品化。公网多租户 SaaS、复杂计费和
-多 region 不作为当前前置条件。
-
-## 成功标准（产品层）
-
-**当前发布口径：私有部署的预发布参考基线已通过。** `webch` 用于模拟真实线上拓扑，
-不是正式客户生产环境；其持续 soak 不阻塞代码基线提交。这不表示 UnoRAG 已达到适用于
-任意客户和环境的通用生产 GA。每个客户部署仍须完成隔离、安全、容量、恢复和运维责任
-验收，结论记录在 `docs/acceptance/`。
-
-| 维度 | 产品标准 | 当前判定 |
-|------|----------|----------|
-| 证据 | 答案可点到片段；无命中/弱相关走拒答或澄清 | 核心能力已实现；纳入试点验收 |
-| 隔离 | 跨 organization / workspace / ACL 零泄漏（发布熔断） | 必须通过目标环境门禁 |
-| 版本 | 未激活 generation 不可召回；替换失败旧版仍可用 | 核心能力已实现；纳入回归 |
-| 会话 | 临时不强制落库；归档可续聊且 rewrite 可用 | Workspace 主路径可用 |
-| Workspace | 新用户能完成：创建/切换工作区 → 上传 → 问答 → 归档 → 续聊 | 主路径可用 |
-| Knowledge API | 外部系统无需嵌 UI 即可管理知识生命周期并 retrieve/answer | Service Key + Retrieve/Ask v1.0 契约已冻结；完整生命周期 API 规划中 |
-| 接入 | SDK/MCP/OpenAI adapter 不产生第二套权限、版本和检索真相 | Python SDK / MCP 0.1.0 已交付；OpenAI-compatible 仍规划中 |
-| 交付 | 私有化可安装、升级、备份和恢复 | 按具体部署完成验收后才可 Conditional GO |
-
-## 非目标表述（避免误解）
-
-- UnoRAG **不是**「再做一个 ChatGPT」。
-- UnoRAG **不是**「开放 Agent 平台」。
-- UnoRAG **首先是**企业知识服务；Workspace 是官方客户端，API/SDK/MCP/OpenAI adapter 是接入面。
+当前优先采用私有化软件许可与实施服务：客户提供基础设施和模型/解析器密钥，UnoRAG 提供
+软件、部署包、升级、验收和支持。重复出现的客户需求再沉淀为标准企业增强能力；公网 SaaS
+不是当前版本的前置条件。

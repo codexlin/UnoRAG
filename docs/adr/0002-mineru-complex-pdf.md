@@ -6,7 +6,8 @@
 > 302 的成本预算、完整结构化指标和跨重启去重仍是后续工作；下文对应段落会
 > 明确标记为计划项。
 
-**上下文：** Phase 2C 需处理扫描件、双栏、复杂表、公式页；不得替换已验证的 PyMuPDF 数字 PDF 路径。
+**上下文：** 复杂 PDF 需要扫描、双栏、复杂表和公式能力；普通数字 PDF 保留
+LiteParse 本地路径，避免所有文档无条件出域。
 
 ## 决策
 
@@ -16,7 +17,7 @@
 3. **统一语义、分离传输：** `self_hosted` 遵循同步 `POST /file_parse` +
    multipart `files` 契约；`302ai` 使用 upload → create task → poll → ZIP。
    两者只在 provider adapter 内不同，统一输出 `DocumentIR`，失败显式
-   degrade（有 PyMuPDF 节点则 partial）或 fail（无节点），禁止静默空文档。
+   degrade（有 LiteParse 节点则 partial）或 fail（无节点），禁止静默空文档。
 4. **耐久执行：** 302 提交、轮询和结果获取运行在 DBOS ingest workflow 中；
    取消和超时检查贯穿轮询。跨进程重启的外部提交去重仍需专项故障验收。
 5. **文档出域必须显式授权：** 302 provider 要求
@@ -49,7 +50,7 @@ parse_preference=local_only 或 scan_handling=disabled
   → enhanced_parser_allowed=false（本库不出域 / 仅文本）
 ```
 
-UI / API 展示（来自 `parser_report` + job）：实际解析器（PyMuPDF / 自建 MinerU / 302）、是否出域、任务状态（含等待 302）、降级原因、解析质量提示；`provider_task_id` 仅脱敏 `first8…last4`。
+UI / API 展示（来自 `parser_report` + job）：实际解析器（LiteParse / 自建 MinerU / 302）、是否出域、任务状态（含等待 302）、降级原因、解析质量提示；`provider_task_id` 仅脱敏 `first8…last4`。
 
 ## 后果
 
@@ -86,4 +87,4 @@ Worker 另有：`document_ingest.mineru_pending … provider_task_id=… wait_s=
 
 进程内计数器键：`mineru_302_upload|create|complete|fail|429|5xx|timeout|invalid_result|pending|budget_exceeded`。
 无 Prometheus 时靠结构化日志；workspace 日/月汇总 UI 为后续项。
-`ops/min_alerts` 可后续对 `mineru.302.fail` / `long_pending` / `budget_*` 加规则。
+客户监控系统可对 `mineru.302.fail` / `long_pending` / `budget_*` 增加规则。

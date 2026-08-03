@@ -66,5 +66,5 @@ helm template unorag deploy/helm/unorag \
   --set config.openaiBaseUrl=http://llm >/tmp/unorag.yaml
 ```
 
-See the [private deployment runbook](../../docs/runbooks/private-deployment.md)
-and [CI/CD guide](../../docs/ops/cicd.md).
+See the [private deployment guide](../../docs/DEPLOYMENT.md)
+and [operations guide](../../docs/OPERATIONS.md).

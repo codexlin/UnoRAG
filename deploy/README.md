@@ -1,11 +1,11 @@
 # UnoRAG 私有化部署包
 
-本目录是客户可安装的私有部署参考包。首片以 **Docker Compose 单机拓扑** 为主；
+本目录是客户可安装的私有部署参考包。主机需要 Docker、Docker Compose 和 Python 3
+（仅供配置迁移与验收脚本使用，产品镜像不含 Python 运行时）。首片以 **Docker Compose 单机拓扑** 为主；
 **Helm/K8s 起步骨架** 已提供；镜像 CVE 扫描已进入发布门禁，SBOM 与签名后置。
 
-产品定位与开工 checklist：[`docs/PRODUCT.md`](../docs/PRODUCT.md) ·
-[`docs/ROADMAP.md`](../docs/ROADMAP.md)。
-试点 go/no-go 见 [`docs/acceptance/`](../docs/acceptance/README.md)。
+产品定位见 [`docs/PRODUCT.md`](../docs/PRODUCT.md)，安装与生产验收分别见
+[`docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) 和 [`docs/RELEASE.md`](../docs/RELEASE.md)。
 
 ## 目录
 
@@ -29,6 +29,7 @@ deploy/
       restore.sh            # 恢复（需显式确认）
       pilot-preflight.sh    # 隔离单测 + CI gate（可无 Compose）
       pilot-smoke.sh        # upload→ask→replace→delete 冒烟
+  postgres/                 # 最小权限运行角色与验证 SQL
   docker/
     web.Dockerfile
   helm/
@@ -38,7 +39,7 @@ deploy/
 
 ## 快速开始
 
-完整步骤与验收见 [`docs/runbooks/private-deployment.md`](../docs/runbooks/private-deployment.md)。
+完整步骤见 [`docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md)。
 
 ```bash
 cd deploy/compose
@@ -82,7 +83,7 @@ cd deploy/compose
 # 退出 0=PASS；1=FAIL；2=SKIP（栈未起 / 无模型 key 等）
 ```
 
-完整签字流程：[`docs/runbooks/pilot-acceptance.md`](../docs/runbooks/pilot-acceptance.md)。
+完整签字流程：[`docs/RELEASE.md`](../docs/RELEASE.md)。
 
 ## 供应链 / SBOM（薄说明）
 
@@ -103,4 +104,5 @@ cd deploy/compose
 | 客户自有 registry promotion | ACR + GHCR 已双推并产出 digest；TCR/Harbor 按客户策略后置 |
 | MinIO/S3 一等公民对象后端 | 默认共享卷 / PVC；S3 适配另开 |
 
-生产验收以 `docs/acceptance/` 的部署级 go/no-go 签字为准；仅有部署包不能宣称 production-ready。
+生产验收以 [`docs/RELEASE.md`](../docs/RELEASE.md) 的部署级 go/no-go 签字为准；
+仅有部署包不能宣称 production-ready。

@@ -1,8 +1,8 @@
 # UnoRAG 验收自动化
 
 当前脚本只通过产品 HTTP 边界测试原生 TypeScript 运行时。Python FastAPI 时代的
-恢复、升级、故障注入与 OCR 脚本已经退役；历史结果仍保存在
-`docs/acceptance/reports/`，但不能用于证明当前提交。
+恢复、升级、故障注入与 OCR 脚本已经退役。当前证据保存在 `docs/evidence/`，
+但不能用于证明后续提交。
 
 ## 当前入口
 
@@ -32,12 +32,13 @@ UNORAG_ADMIN_PASSWORD='...' \
 容量结果只绑定测试环境、资源规格、模型 Provider、语料和 commit，不可直接外推。
 使用 `--mineru-file testdata/ab/twocolumn.pdf` 可加入真实复杂 PDF 探针。
 
-## 待重建
+## 仍需自动化
 
-在 TS-only Docker 全栈验收稳定后，按新拓扑重建三类自动化：
+TS-only RC 已手工完成独立恢复和依赖故障验收。仍需把以下发布动作固化成可重复自动化：
 
-1. 独立 Compose project 的 backup/restore 演练。
-2. 四镜像升级与前向迁移后的应用镜像回滚。
-3. DBOS worker、Qdrant、模型 Provider、ParserProvider 故障注入。
+1. 四张 digest-pinned 镜像的升级与应用回滚。
+2. 模型 Provider 与 ParserProvider 的重启/幂等故障注入。
+3. 面向具体客户环境的容量和 RPO/RTO 报告归档。
 
-这些缺口在重建并真实执行前必须保持显式，不能用已删除的旧脚本代替。
+独立 Compose backup/restore、PostgreSQL、DBOS worker 和 Qdrant 故障路径已有
+2026-08-02 RC 证据，但仍不能替代最终发布镜像和目标客户环境的验收。

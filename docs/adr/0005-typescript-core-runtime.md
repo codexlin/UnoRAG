@@ -1,12 +1,12 @@
 # ADR-0005: TypeScript Core Runtime
 
-- Status: Implemented; live re-acceptance in progress
+- Status: Implemented and RC-accepted
 - Date: 2026-07-30
 - Branch: `refactor/ts-core-runtime`
 - Supersedes: ADR-0004
 - Implementation: `5061ac0` ports the native core; `8b38294` retires the Python
-  service, outbox and old deployment topology. A new Docker/browser acceptance
-  report is still required before production promotion.
+  service, outbox and old deployment topology. Runtime hardening and the current
+  commit-bound RC evidence are recorded by `902cdae`, `f00bbd7` and `d0272f9`.
 
 ## Context
 
@@ -38,7 +38,7 @@ UnoRAG will migrate to a TypeScript core runtime.
 Browser / Customer Backend
              |
              v
-Next.js + embedded Elysia API
+Next.js + native Route Handlers
   - session, service keys, RBAC, RLS
   - organizations, workspaces, libraries, documents
   - threads, turns, audit, usage
@@ -81,7 +81,7 @@ There is no UnoRAG-owned Python application in the target topology.
 | Area | Target owner |
 |---|---|
 | Product schema and migrations | Drizzle / TypeScript |
-| Public HTTP validation and OpenAPI | Elysia application mounted in Next.js |
+| Public HTTP validation and OpenAPI | Native Next.js Route Handlers and frozen OpenAPI contract |
 | Organization, workspace, users, groups, ACL | Next.js + PostgreSQL RLS |
 | Product jobs and visible progress | `app.jobs` projection |
 | Durable workflow execution | DBOS system schema |
@@ -95,8 +95,9 @@ There is no UnoRAG-owned Python application in the target topology.
 | Conversations and archive | `app.threads` / `app.turns` |
 | Tracing | OpenTelemetry; LangSmith is an optional backend |
 
-The Python SDK remains a supported HTTP client. Removing the Python server does
-not imply removing the Python SDK or MCP adapter.
+The public Service Key HTTP contract remains the supported integration boundary.
+Optional SDK and MCP packages were later removed from this repository to keep the
+licensed private-deployment product focused.
 
 ## Process Topology
 
@@ -119,11 +120,10 @@ into a separately versioned package only when a real second application or
 external consumer needs to depend on it. Process isolation does not require
 package or repository isolation.
 
-Elysia is initially mounted in a Next.js App Router catch-all route. It is a
-code boundary, not a third network service. Business handlers and domain
-services remain independent of Elysia so the same HTTP application can run as
-a standalone Bun process later if profiling or deployment isolation requires
-it.
+The Elysia catch-all was validated during the migration spike, but the final
+runtime uses native Next.js Route Handlers. Domain services remain transport
+independent, so a standalone HTTP process remains possible if profiling later
+justifies it; the repository does not keep an unused Elysia runtime dependency.
 
 Required infrastructure:
 
@@ -143,31 +143,20 @@ Redis is not a document-job source of truth.
 
 ## Library Decisions
 
-### Elysia: Adopt at the HTTP Edge
+### Elysia: Spike Completed, Not Adopted
 
-Use Elysia for request validation, typed route composition, OpenAPI generation,
-error middleware, and streaming responses. Initially export `app.fetch` from a
-Next.js App Router catch-all route:
+The migration spike proved that Elysia could run behind a Next.js catch-all route,
+but the final product did not need a second HTTP framework. Native Route Handlers
+already provide the required browser and public API boundaries, while domain services
+remain transport independent. The characterization route and Elysia-only dependencies
+were removed during RC cleanup.
 
-```text
-browser -> Next.js route -> embedded Elysia app -> domain services
-```
+Shared domain contracts remain Zod-first. Drizzle schemas describe storage and must
+not be returned directly as public authorization-safe response objects. External
+clients depend on the frozen HTTP/OpenAPI contract, not framework-generated types.
 
-This keeps one public origin and one request process while preserving a path to
-an independently deployed Bun API if a measured scaling need appears.
-
-Eden may be used by the first-party web application, but it is not the public
-contract. External clients depend on versioned HTTP and OpenAPI.
-
-Shared domain contracts remain Zod-first. Drizzle schemas describe storage,
-not public authorization-safe response objects. `drizzle-typebox` may reduce
-boilerplate for internal models, but generated database schemas must not be
-returned directly from public endpoints. Pin Elysia peer dependencies,
-especially `@sinclair/typebox`, to avoid schema symbol/version mismatches.
-
-Mounting Elysia in Next.js does not make Next.js execute on Bun or inherit
-standalone Bun throughput. Scale and latency claims must be measured on the
-actual Next.js deployment topology.
+Elysia or a standalone Bun edge may be reconsidered only after profiling demonstrates
+a concrete scaling or isolation requirement. It is not part of the current runtime.
 
 ### DBOS: Adopt
 
@@ -235,7 +224,7 @@ This refactor is not part of the parity cutover.
 ### Qdrant JavaScript Client: Adopt REST First
 
 Use `@qdrant/js-client-rest` behind a single `RetrievalService`. The client must
-never be exposed to route handlers, LangGraph nodes, LlamaIndex tools, MCP, or
+never be exposed to route handlers, LangGraph nodes, LlamaIndex tools, or
 the browser.
 
 Every query must receive a server-derived `AuthorizedScope` and add mandatory
@@ -451,12 +440,10 @@ Exit gate:
   and cleanup.
 - Keep the Python lifecycle worker available for rollback.
 
-Implementation note: the DBOS runtime, independent system database,
-least-privilege deployment, deterministic dispatch/reconciliation,
-generation-cleanup workflow, and opt-in staged `document.delete` workflow are
-implemented. LiteParse and MinerU provider foundations are also present.
-`document.ingest`, normalization/chunking/embedding/activation, and the
-real-corpus cutover gate are not yet ported, so M3 is still in progress.
+Implementation note: DBOS ingest, ACL projection, deletion, generation cleanup,
+dispatch/reconciliation, LiteParse and MinerU providers, normalization, chunking,
+embedding, staging and atomic activation are implemented. The real-file cutover
+gate passed in the 2026-08-02 RC report.
 
 Exit gate:
 
@@ -482,7 +469,7 @@ Exit gate:
 
 ### M5: Retirement
 
-Only after the rollback window expires:
+Completed retirement actions:
 
 - stop FastAPI and the Python lifecycle worker;
 - retire internal HMAC proxy hops that no longer exist;
@@ -490,7 +477,10 @@ Only after the rollback window expires:
   read checks;
 - retire the old outbox paths after DBOS dispatch reconciliation is proven;
 - remove Python server images and dependencies;
-- retain the Python HTTP SDK and MCP adapter.
+- retain the public Service Key HTTP contract as the external integration boundary.
+
+The remaining rollback boundary is image-level: publish one immutable four-image
+RC and exercise upgrade/application rollback using its exact digest manifest.
 
 ## Library Spike Results
 

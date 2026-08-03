@@ -123,4 +123,6 @@
 
 本结论允许合入 RC 分支、制作候选镜像，并在目标预发布环境执行部署与浏览器复验。
 
-它不单独授予“任意客户数据 production-ready”宣称。正式客户发布仍需绑定确切 commit/镜像、客户模型与解析 Provider，在目标环境完成 [`../production-ready-checklist.md`](../production-ready-checklist.md) 和签字型 go/no-go。
+它不单独授予“任意客户数据 production-ready”宣称。正式客户发布仍需绑定确切
+commit/镜像、客户模型与解析 Provider，并按照 [`../RELEASE.md`](../RELEASE.md)
+在目标环境完成签字型 go/no-go。

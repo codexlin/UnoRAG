@@ -1,30 +1,74 @@
 <div align="center">
   <img src="./public/brand/unorag-mark.png" alt="UnoRAG" width="88" />
   <h1>UnoRAG</h1>
-  <p><strong>Private, permission-aware enterprise knowledge that answers with evidence.</strong></p>
+  <p><strong>Private, permission-aware enterprise knowledge grounded in evidence.</strong></p>
   <p>
     <a href="./README.zh-CN.md">简体中文</a> ·
-    <a href="./docs/STATUS.md">Project status</a> ·
+    <a href="./docs/PRODUCT.md">Product</a> ·
     <a href="./docs/ARCHITECTURE.md">Architecture</a> ·
-    <a href="./deploy/README.md">Private deployment</a>
+    <a href="./docs/DEPLOYMENT.md">Deployment</a> ·
+    <a href="./docs/INTEGRATION.md">API</a>
   </p>
 </div>
 
-UnoRAG turns internal documents into a governed knowledge service. It combines a
-ready-to-use workspace with stable Retrieve and Ask APIs, so teams can use the
-official interface or embed the same evidence layer in an existing portal,
-support product, or agent.
+UnoRAG turns internal documents into governed, callable, and verifiable knowledge. Teams can use the
+official Workspace or embed the same Retrieve and Ask capabilities into support products, employee
+portals, and agents.
 
-It is designed around the parts that make enterprise RAG trustworthy: access
-control before retrieval, atomic document versions, structure-aware ingestion,
-traceable citations, explicit refusal, and deployment-level acceptance.
+![UnoRAG library workspace](./public/product-library-workbench.png)
 
-## Quick Start
+## Enterprise RAG Is More Than Chat
 
-### Private deployment
+UnoRAG covers the lifecycle that determines whether RAG can be trusted in production: authorization
+before retrieval, atomic document versions, structure-aware parsing, evidence-backed citations,
+explicit refusal, durable processing, and deployment-level acceptance.
 
-Docker and Docker Compose are required. Initialize the split configuration,
-fill the three generated files, and run the installer:
+| Enterprise requirement | UnoRAG approach |
+|---|---|
+| Answers must be verifiable | Locatable citations, evidence preview and adjudication; refuse or clarify when coverage is weak |
+| Knowledge must not cross boundaries | Organization, workspace, document ACL, and group scope enforced in PostgreSQL and Qdrant |
+| Updates must not interrupt service | Stage and validate a new generation, activate atomically, preserve the previous version on failure |
+| PDFs and tables must retain meaning | DocumentIR and TableIR preserve pages, headings, headers, units, row ranges, and source coordinates |
+| Processing must recover | DBOS runs parsing, embedding, indexing, deletion, and cleanup with retries, cancellation, and reconciliation |
+| Delivery must fit customer infrastructure | Compose reference topology, Helm starter, least-privilege roles, recovery tooling, and release gates |
+
+## One Knowledge Core, Two Product Surfaces
+
+**UnoRAG Workspace** gives administrators and employees a complete product for workspaces, members,
+libraries, document versions, visible jobs, streaming questions, evidence inspection, follow-ups, and archives.
+
+**UnoRAG Knowledge API** lets existing applications use scoped Service Keys with
+`POST /api/v1/retrieve` and `POST /api/v1/ask`. It shares the Workspace authorization, version,
+retrieval, and citation truth instead of creating a second data plane.
+
+## From Document to Grounded Answer
+
+```mermaid
+flowchart LR
+    A["Upload or replace"] --> B["DBOS lifecycle job"]
+    B --> C["LiteParse / MinerU"]
+    C --> D["DocumentIR / TableIR"]
+    D --> E["Policy chunks and embeddings"]
+    E --> F["Qdrant staging"]
+    F --> G{"Validation passes?"}
+    G -- "Yes" --> H["Atomic activation"]
+    G -- "No" --> I["Keep previous version active"]
+    H --> J["ACL retrieval and evidence judge"]
+    J --> K["Cited answer or refusal"]
+```
+
+Chunking is structure first: headings, pages, tables, and code take priority; recursive splitting
+enforces hard limits; semantic splitting is reserved for long narrative regions without explicit
+structure. Retrieval supports dense search, optional BM25+RRF, reranking, and deterministic table
+execution. LangGraph.js orchestrates Ask, while Vercel AI SDK streams model output.
+
+## Private Deployment
+
+Customers retain control of databases, documents, model endpoints, and parser credentials. Only the
+Next.js product edge is public; workers, PostgreSQL, Qdrant, Redis, and ParserProviders remain private.
+
+The host requires Docker, Docker Compose v2, and Python 3. Python is used only by host-side configuration
+migration and acceptance utilities; the product runtime is TypeScript/Node.js.
 
 ```bash
 cd deploy/compose
@@ -33,170 +77,44 @@ cd deploy/compose
 ./scripts/install.sh
 ```
 
-Open <http://localhost/> after installation. Check readiness with:
+Open <http://localhost/> and verify readiness:
 
 ```bash
 curl -sf http://localhost/api/rag/health
 ```
 
-See the [private deployment guide](./deploy/README.md) for upgrades, rollback,
-backup/restore, and Helm.
-
-### Local development
-
-Local development requires Docker, Node.js 22, and pnpm 9:
-
-```bash
-docker compose up -d
-cp -n .env.example .env.local
-pnpm install --frozen-lockfile
-pnpm dev
-```
-
-Run the DBOS worker in a second terminal after configuring its database and
-model environment. Follow the copyable
-[developer workflow](./docs/DEV.md).
-
-## Why UnoRAG
-
-| Need | What UnoRAG provides |
-|---|---|
-| Answers people can verify | Clickable citations, evidence preview, confidence adjudication, and refusal when coverage is insufficient |
-| Knowledge that stays private | Organization, workspace, principal, and group context is enforced in metadata and Qdrant retrieval |
-| Safe document updates | New generations are indexed in staging and activated atomically; a failed replacement leaves the old version serving |
-| Complex document support | TXT, Markdown, PDF, DOCX, CSV, and XLSX; optional MinerU escalation for scanned and complex PDFs |
-| More than generic chunking | DocumentIR and TableIR preserve headings, pages, tables, code, units, and row provenance before policy-driven chunking |
-| A product and a platform | Official Workspace for people; Service Key APIs, Python SDK, and MCP for existing applications |
-| A deployable system | Docker Compose delivery, Helm starter, migrations, workers, backup/restore, health checks, release gates, and runbooks |
-
-## Product Experience
-
-**UnoRAG Workspace** gives administrators and employees one place to:
-
-- create and switch workspaces;
-- invite members and assign viewer, editor, or admin roles;
-- create libraries and configure document access;
-- upload, replace, reindex, and delete documents with visible job progress;
-- ask streaming questions, inspect evidence, and continue follow-up questions;
-- archive selected conversations and inspect retrieval traces;
-- create scoped Service Keys for application integration.
-
-**UnoRAG Knowledge API** lets customer systems use the same governed retrieval
-kernel without adopting the Workspace UI. Retrieve and Ask v1 are available
-today; the Python SDK and MCP server are thin clients of that API.
-
-## How Knowledge Becomes an Answer
-
-```mermaid
-flowchart LR
-    A["Upload or replace"] --> B["Lifecycle job"]
-    B --> C["Local parser or MinerU"]
-    C --> D["DocumentIR and TableIR"]
-    D --> E["Policy-driven chunks"]
-    E --> F["Embedding and staging index"]
-    F --> G{"Validation passes?"}
-    G -- "Yes" --> H["Atomic active-generation switch"]
-    G -- "No" --> I["Keep previous version active"]
-    H --> J["ACL-filtered retrieval"]
-    J --> K["Query route and evidence judge"]
-    K --> L["Answer with citations"]
-    K --> M["Refuse or clarify"]
-```
-
-The default chunking policy is structure first. Heading, page, table, and code
-boundaries take priority; recursive splitting enforces hard size limits, and
-semantic splitting is reserved for long narrative regions where it adds value.
-Tables are normalized and indexed with headers, units, row ranges, and source
-coordinates so row-level answers do not lose column meaning.
+See [Private Deployment](./docs/DEPLOYMENT.md) for upgrades, rollback, backup, restore, and Kubernetes.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    Browser["Browser / UnoRAG Workspace"]
-    Apps["Customer apps and agents"]
-    SDK["Python SDK / MCP"]
-    Web["Next.js product, control plane, and Knowledge API"]
-    Worker["DBOS document worker"]
-    Parser["LiteParse / MinerU ParserProvider"]
-    PG[("PostgreSQL")]
-    QD[("Qdrant")]
-    Redis[("Redis")]
-    Files[("Shared document storage")]
-
-    Browser --> Web
-    Apps --> Web
-    SDK --> Web
-    Web --> PG
-    Web --> Files
-    Web --> QD
-    Web --> Redis
-    Worker --> PG
-    Worker --> Files
+    Users["Workspace / customer applications"] --> Web["Next.js product and Knowledge API"]
+    Web --> PG[("PostgreSQL")]
+    Web --> QD[("Qdrant")]
+    Web --> Redis[("Redis")]
+    Worker["DBOS worker"] --> PG
     Worker --> QD
-    Worker --> Parser
+    Worker --> Files[("Document storage")]
+    Worker --> Parser["LiteParse / MinerU"]
 ```
 
-Next.js owns product identity, organizations, workspaces, libraries, public APIs,
-native retrieval, LangGraph execution, citations, conversations, and the browser
-security boundary. DBOS executes durable parsing, embedding, indexing, ACL
-projection, deletion, and generation cleanup. PostgreSQL is the only business
-source of truth; Qdrant stores scoped retrieval projections.
-
-## Current Capability
-
-| Area | Status |
-|---|---|
-| Workspace, local authentication, invitations, roles, multi-workspace creation and switching | Available |
-| Workspace and document ACL enforcement through retrieval | Available; group-management UI is not yet included |
-| Atomic versions, lifecycle jobs, retries, cancellation, cleanup, and old-version fallback | Available |
-| Structure-aware ingestion, MinerU adapters, TableIR, hybrid retrieval, reranking, query routing, citations, and refusal | Available |
-| Retrieve/Ask v1, Service Keys, Python SDK, and MCP | Available |
-| OIDC/SSO, public document lifecycle APIs, OpenAI-compatible endpoint, first-class S3, and hardened Kubernetes autoscaling/network policy | Planned |
-| ChartIR and database execution for very large tables | Planned |
-
-The detailed, code-backed matrix lives in [Project status](./docs/STATUS.md).
-Historical acceptance reports are evidence for specific builds and
-environments, not a timeless product claim.
-
-## Deployment
-
-UnoRAG is currently optimized for private deployment:
-
-- **Docker Compose** is the reference single-node delivery topology.
-- **Helm** is a starter for customer-managed Kubernetes infrastructure.
-- Model, embedding, parser, database, and registry credentials are supplied by
-  the customer deployment and are never baked into images.
-- Workers and data stores remain private; browser and external clients enter
-  through the Next.js product edge.
-
-Start with the [private deployment guide](./deploy/README.md). For local
-development, see [docs/DEV.md](./docs/DEV.md).
-
-## Engineering Confidence
-
-The repository includes Web and native RAG test suites, a preserved evaluation
-corpus, cross-tenant isolation fuses, real-file ingestion fixtures, browser
-acceptance, image CVE scanning, and digest-pinned release manifests. Recovery
-and fault-injection automation is being rebaselined for the TS-only topology.
-
-The current `webch` environment is a **preproduction simulation**, not a formal
-customer production deployment. Customer production approval remains
-deployment-specific and must cover capacity, identity integration, recovery
-objectives, monitoring ownership, and security policy.
+Next.js owns identity, workspaces, RBAC/ACL, public APIs, retrieval, LangGraph, citations, and
+conversations. DBOS owns durable document workflows. PostgreSQL is the only business source of truth;
+Qdrant contains security-scoped retrieval projections.
 
 ## Documentation
 
-- [Product boundaries](./docs/PRODUCT.md)
-- [Implementation status](./docs/STATUS.md)
-- [Architecture](./docs/ARCHITECTURE.md)
-- [Roadmap](./docs/ROADMAP.md)
+- [Product and capability boundaries](./docs/PRODUCT.md)
+- [System architecture](./docs/ARCHITECTURE.md)
 - [Knowledge API](./docs/INTEGRATION.md)
-- [Developer guide](./docs/DEV.md)
-- [Repository handoff](./docs/HANDOFF.md)
-- [Acceptance and operations](./docs/acceptance/README.md)
+- [Private deployment](./docs/DEPLOYMENT.md)
+- [Operations](./docs/OPERATIONS.md)
+- [Release and acceptance](./docs/RELEASE.md)
+- [Development](./docs/DEVELOPMENT.md)
 
 ## License
 
-The repository does not currently declare a public open-source license. Confirm
-commercial or source-distribution terms before external distribution.
+UnoRAG is currently delivered as commercial private-deployment software. This repository does not grant
+an open-source license for use, redistribution, or production deployment. Production use, source delivery,
+customization, and support are governed by a separate commercial agreement.

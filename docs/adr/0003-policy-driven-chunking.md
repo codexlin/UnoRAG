@@ -8,7 +8,7 @@
 1. **结构优先：** `DocumentIR` 中的 heading、page、table、code 是第一决策信号。table/code 始终独立，heading/page 在不超限时保留边界；超长节点内再递归切分。
 2. **统一 policy：** `ChunkingProfile` 统一承载 `target_chars`、`max_chars`、overlap、标题边界、语义阈值和表格行组大小。当前 profile 为 `precise | balanced | narrative | table_heavy`，默认 `balanced`。
 3. **语义切分受限：** 仅对长、无 section、叙事型文本启用。它使用相邻句向量距离的百分位作为候选边界，并受 `max_chars` 硬上限约束；不会二次切 table/code，也不会覆盖明确标题边界。
-4. **成本显式：** `SEMANTIC_CHUNKING_ENABLED=false` 为默认值。关闭时 ingest 不产生额外 embedding 请求；开启后复用现有 `EmbeddingService`，测试可注入确定性 embedder。
+4. **成本显式：** `ChunkingOptions.semanticEnabled` 默认为 `false`。关闭时 ingest 不产生额外 embedding 请求；启用时必须显式提供 semantic embedder，测试可注入确定性实现。
 5. **可靠降级：** embedding 缺失、超时、维度错误、空向量或语义单元异常时回退 recursive；recursive 无结果才回退 char window。降级不得静默。
 6. **可观测：** chunk 与 Qdrant payload 写入 `chunk_policy_version`、`chunk_profile`、`split_strategy`、`split_reason` 和语义统计；`parser_report.metrics.chunking` 汇总策略数量与 fallback 数量。
 7. **表格 profile 生效：** `table_heavy` 将 table IndexRecord 行组从默认 40 行缩到 20 行，提升精确行召回；原始 table chunk 仍保留。

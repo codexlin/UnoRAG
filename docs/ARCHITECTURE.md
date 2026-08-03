@@ -1,18 +1,16 @@
-# UnoRAG Architecture
+# UnoRAG 系统架构
 
-> Current implementation on `refactor/ts-core-runtime`, updated 2026-08-02.
-> ADR-0005 is implemented by commits `5061ac0` and `8b38294`.
+本文描述当前产品运行时。迁移过程和被取代的设计保存在 [`adr/`](./adr/)，不作为操作指南。
 
-## System Boundary
+## 系统边界
 
-UnoRAG is a private-deployable knowledge product and an embeddable Knowledge API.
-All browser, SDK, MCP, and customer application traffic enters one Next.js product
-edge. Workers and data stores are never public entry points.
+UnoRAG 是可私有化部署的知识产品，也提供可嵌入的 Knowledge API。浏览器通过 Session、
+客户应用通过 Service Key 进入同一个 Next.js 产品边界。Worker 和数据存储永远不是公网入口。
 
 ```mermaid
 flowchart TB
     Browser["UnoRAG Workspace"] --> Web
-    Client["Customer app / SDK / MCP"] --> Web
+    Client["Customer application over HTTP"] --> Web
     Web["Next.js product + Knowledge API"]
     Worker["DBOS durable worker"]
     Parser["LiteParse / MinerU ParserProvider"]
@@ -34,11 +32,9 @@ flowchart TB
     Worker --> Models
 ```
 
-There is no internal FastAPI product service, outbox worker, or Python lifecycle
-worker. Optional Python SDK and MCP packages are clients of the public HTTP API;
-they do not own business logic.
+仓库中没有内部 FastAPI 产品服务、outbox Worker、Python 生命周期 Worker 或单独维护的客户端运行时。
 
-## Ownership
+## 职责所有权
 
 | Component | Owns | Must not own |
 |---|---|---|
@@ -52,7 +48,7 @@ Drizzle is the only application-schema migration owner. Runtime identities are
 separate: `unorag_web`, `unorag_worker`, `unorag_migrator`, and the dedicated DBOS
 system-database login.
 
-## Request Security
+## 请求安全
 
 The authenticated server session or Service Key produces an authoritative scope:
 
@@ -67,7 +63,7 @@ and active-generation filters. Missing dimensions fail closed, and an empty
 allow-list matches nothing. PostgreSQL RLS is defense in depth, not a replacement
 for explicit Qdrant filters.
 
-## Document Lifecycle
+## 文档生命周期
 
 ```mermaid
 flowchart LR
@@ -86,7 +82,7 @@ refuses to retire the old runtime while a non-terminal Python-owned job exists;
 terminal legacy rows remain historical. DBOS dispatch and reconciliation are
 idempotent, and Qdrant staging points are invisible until activation.
 
-## Parsing And Chunking
+## 解析与切分
 
 `ParserProvider` is the stable boundary. LiteParse is local and default. MinerU can
 run through a self-hosted endpoint inside the customer trust boundary or through the
@@ -106,7 +102,7 @@ Small and medium tables remain RAG records with layered row groups and summaries
 Very large SQL-style execution is deliberately deferred; operational data should
 usually be queried from its source database.
 
-## Ask And Retrieval
+## 检索与问答
 
 Native Retrieve resolves scope, embeds the query, applies mandatory Qdrant filters,
 optionally performs BM25 hybrid fusion and reranking, and maps strict citations.
@@ -122,7 +118,7 @@ Vercel AI SDK provides model calls, structured output and streaming. LangChain c
 types are used only where they remove adapter friction. LlamaIndex is not a second
 runtime; it may later appear behind a retrieval or parser tool boundary.
 
-## Deployment
+## 部署模型
 
 The release contains four Node images:
 
@@ -135,5 +131,4 @@ The release contains four Node images:
 
 Compose is the reference single-node private deployment. Helm is the Kubernetes
 starter. Model, parser, database and registry credentials are customer-supplied.
-See [private deployment](./runbooks/private-deployment.md) and
-[implementation status](./STATUS.md).
+安装、升级和恢复见 [DEPLOYMENT.md](./DEPLOYMENT.md)，生产门禁见 [RELEASE.md](./RELEASE.md)。

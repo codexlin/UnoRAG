@@ -95,4 +95,4 @@ echo "==> starting DBOS and application stack"
 mk_compose up -d --wait dbos-worker dbos-control web caddy
 
 echo "restore complete — verify /api/rag/health, citations, and active versions"
-echo "see docs/runbooks/private-deployment.md"
+echo "see docs/DEPLOYMENT.md"
