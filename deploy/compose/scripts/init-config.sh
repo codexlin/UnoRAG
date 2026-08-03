@@ -6,10 +6,7 @@ set -euo pipefail
 
 COMPOSE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_DIR="$(cd "${COMPOSE_DIR}/../config" && pwd)"
-REPO_ROOT="$(cd "${COMPOSE_DIR}/../.." && pwd)"
 LEGACY_ENV="${COMPOSE_DIR}/.env"
-ALERTS_EXAMPLE="${REPO_ROOT}/ops/min_alerts/env.example"
-ALERTS_ENV="${REPO_ROOT}/ops/min_alerts/.env"
 
 copy_if_missing() {
 	local src="$1"
@@ -118,10 +115,6 @@ reconcile("runtime.env", retired_runtime)
 reconcile("runtime.secret", retired_secrets)
 reconcile("bootstrap.env", set())
 PY
-
-if [[ -f "$ALERTS_EXAMPLE" ]]; then
-	copy_if_missing "$ALERTS_EXAMPLE" "$ALERTS_ENV"
-fi
 
 # One-time migration from legacy monolithic compose .env
 if [[ -f "$LEGACY_ENV" ]]; then

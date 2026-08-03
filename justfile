@@ -38,7 +38,7 @@ check: brand
 
 # --- images ---
 
-# Build five images locally (no push). Writes dist/release/release-local.env
+# Build four images locally (no push). Writes dist/release/release-local.env
 # Usage: just images v0.0.1 [linux/amd64|local]
 images tag platform=default_platform:
 	#!/usr/bin/env bash

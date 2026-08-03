@@ -46,7 +46,7 @@ const capabilities = [
 ] as const;
 
 const workflow = [
-	["01", "接入资料", "TXT、Markdown、PDF、DOCX、CSV、XLSX"],
+	["01", "接入资料", "TXT、Markdown、PDF、DOCX"],
 	["02", "解析建模", "结构、表格、页面坐标与质量报告"],
 	["03", "治理索引", "ACL、版本、Job、原子激活与隔离门禁"],
 	["04", "有据回答", "检索、裁决、拒答、引用与链路追踪"],
@@ -286,7 +286,7 @@ export default function Home() {
 								"Security",
 								"HMAC · ACL · Active Generation · Audit",
 							],
-							[Braces, "Integration", "Retrieve / Ask API · Python SDK · MCP"],
+							[Braces, "Integration", "Retrieve / Ask API · Service Keys"],
 						].map(([Icon, title, body], index) => {
 							const ItemIcon = Icon as typeof FileStack;
 							return (

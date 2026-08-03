@@ -3,7 +3,7 @@
 用于 **ingest 上传 + 问答手工/回归** 的核心 fixture。  
 当前产品上传支持：`txt` / `md` / `pdf` / `docx`
 （单文件硬上限 50MB；本集均远小于该上限）。
-`csv/` 保留为后续结构化文件支持的 fixture；仓库当前没有 XLSX fixture。
+CSV / XLSX / HTML 当前均不在生产上传白名单中。
 
 设计原则：
 
@@ -26,9 +26,8 @@ testdata/
 ├── docx/
 │   ├── quote-table.docx        # 真表格报价单
 │   └── policy-headings.docx    # Heading 1/2 样式
-├── csv/
-│   └── notes.csv               # 原生结构化表格
 └── unsupported/
+    ├── notes.csv                # CSV → 期望拒收
     └── sample.html              # HTML → 期望拒收
 ```
 
@@ -44,7 +43,6 @@ testdata/
 | `pdf/messy-headers.pdf` | 页眉/页脚 `内部资料·勿外传`；金句 A/B/C（摩尔斯 / 灯塔 / 量子） |
 | `docx/quote-table.docx` | `甲公司` + `120000`；`36个月` |
 | `docx/policy-headings.docx` | `当哈雷彗星下次回归时人类已在火星建立永久基地` |
-| `csv/notes.csv` | `差旅` + `3200`；`北极狐在极昼时会把影子藏进雪窝` |
 | `unsupported/*` | 仅拒收，不参与检索断言 |
 
 ## 期望问法（手工测 / 日后写 eval）
@@ -100,12 +98,6 @@ testdata/
 | 二级标题有哪些？ | 账号与权限管理、数据分类分级 |
 | 蓝色/加粗金句？ | 哈雷彗星 / 火星 |
 
-### `csv/notes.csv`
-| 问法 | 期望片段 |
-|------|----------|
-| 差旅金额是多少？ | 3200 |
-| 差旅备注里的唯一金句？ | 北极狐在极昼时会把影子藏进雪窝 |
-
 ## 建议用法
 
 ```bash
@@ -113,7 +105,7 @@ testdata/
 # 完整本地冒烟：deploy/compose/scripts/pilot-smoke.sh
 ```
 
-黄金集已覆盖部分本目录文件：`ingest_chunk` / `retrieval`（**Recall@3**）以及
-`ingest_http`（plain→ready、leave-scanned→failed、sample.html→400）。
+当前真实质量矩阵由 `scripts/run_ab_live_e2e.py` 执行；上传拒收测试应覆盖
+`unsupported/` 下的格式。
 
 体积参考：本集 PDF/DOCX 均约数 KB～数十 KB，远低于 50MB 上限。

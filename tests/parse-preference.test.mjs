@@ -8,7 +8,6 @@ import {
 import {
 	rejectDeployOnlyParseFields,
 	resolveDocumentPolicy,
-	resolveParsePlan,
 	validateParsePreference,
 } from "../src/lib/server/document-policy.mjs";
 
@@ -29,28 +28,6 @@ test("parse_preference maps to internal enhanced / prefer flags", () => {
 		scanHandling: "disabled",
 	});
 	assert.equal(disabledScan.enhanced_parser_allowed, false);
-});
-
-test("resolveParsePlan fail-closed when quality wants external but deploy forbids", () => {
-	const blocked = resolveParsePlan({
-		parsePreference: "quality",
-		mineruEnabled: true,
-		mineruProvider: "302ai",
-		externalParserAllowed: false,
-	});
-	assert.equal(blocked.enhanced_parser_allowed, false);
-	assert.equal(blocked.degrade_reason, "external_parser_forbidden");
-	assert.equal(blocked.external_processing_allowed, false);
-
-	const ok = resolveParsePlan({
-		parsePreference: "quality",
-		mineruEnabled: true,
-		mineruProvider: "self_hosted",
-		externalParserAllowed: false,
-	});
-	assert.equal(ok.enhanced_parser_allowed, true);
-	assert.equal(ok.prefer_enhanced, true);
-	assert.equal(ok.degrade_reason, null);
 });
 
 test("library API rejects deploy-only provider/key fields", () => {

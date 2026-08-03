@@ -25,12 +25,6 @@ deploy/compose/backups/
 deploy/config/runtime.env
 deploy/config/runtime.secret
 deploy/config/bootstrap.env
-ops/min_alerts/.env
-sdk/python/.venv
-sdk/python/**/__pycache__/
-sdk/python/.pytest_cache/
-sdk/python/*.egg-info/
-sdk/python/unorag.egg-info/
 testdata/ab/_e2e_out/
 .venv
 __pycache__/

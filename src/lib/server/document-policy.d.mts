@@ -23,23 +23,6 @@ export function resolveDocumentPolicy(input?: {
 	enhanced_parser_allowed: boolean;
 	prefer_enhanced: boolean;
 };
-export function resolveParsePlan(input?: {
-	parsePreference?: unknown;
-	scanHandling?: unknown;
-	documentProfile?: unknown;
-	mineruEnabled?: boolean;
-	mineruProvider?: string;
-	externalParserAllowed?: boolean;
-}): {
-	parse_preference: string;
-	scan_handling: string;
-	enhanced_parser_allowed: boolean;
-	prefer_enhanced: boolean;
-	ocr_enabled: boolean | null;
-	external_processing_allowed: boolean;
-	degrade_reason: string | null;
-	degrade_message: string | null;
-};
 export function rejectDeployOnlyParseFields(
 	body: Record<string, unknown> | null | undefined,
 ): { ok: true } | { ok: false; detail: string; fields: string[] };

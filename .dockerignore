@@ -22,7 +22,6 @@ scripts/acceptance/.b4-work
 !**/.env.example
 deploy/config
 deploy/compose/.smoke-admin-password
-ops/min_alerts/.env
 
 *.log
 coverage

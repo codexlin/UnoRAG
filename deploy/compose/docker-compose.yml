@@ -246,7 +246,7 @@ services:
       UNORAG_DBOS_DB_PASSWORD: ${UNORAG_DBOS_DB_PASSWORD:-dbos-profile-disabled}
       UNORAG_DBOS_DATABASE: ${UNORAG_DBOS_DATABASE:-unorag_dbos}
     volumes:
-      - ../../ops/postgres:/opt/unorag/postgres:ro
+      - ../postgres:/opt/unorag/postgres:ro
     command:
       - sh
       - -ec

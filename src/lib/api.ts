@@ -3,9 +3,6 @@ export type ApiHealth = {
 	service: string;
 	env: string;
 	build_ref?: string;
-	internal_auth_protocol?: string;
-	control_plane_build?: string;
-	control_plane_protocol?: string;
 	ask_mode: string;
 	effective_mode: string;
 	graph: string;

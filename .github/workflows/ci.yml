@@ -5,8 +5,7 @@ name: ci
 # Release image push: see release-images.yml (requires ACR secrets for real push).
 # Deploy with approval: deploy.yml (deferred).
 #
-# Specialized L7 gates also live in eval-gates.yml (reusable); this workflow
-# is the single PR/main entrypoint and calls that workflow.
+# This workflow is the single PR/main entrypoint.
 
 on:
   pull_request:
@@ -37,9 +36,6 @@ jobs:
       - name: Reject conflict markers / whitespace errors
         run: git diff --check origin/main...HEAD || git diff --check HEAD~1...HEAD || git diff --check
 
-  eval-gates:
-    uses: ./.github/workflows/eval-gates.yml
-
   web:
     runs-on: ubuntu-latest
     steps:
@@ -66,6 +62,16 @@ jobs:
         run: pnpm build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+
+  quality-scorer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test live quality scorer
+        run: python -m unittest discover -s tests -p 'test_run_ab_live_e2e.py'
 
   docker-build:
     runs-on: ubuntu-latest

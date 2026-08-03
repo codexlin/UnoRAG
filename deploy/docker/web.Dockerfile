@@ -46,7 +46,6 @@ COPY drizzle.config.ts ./
 COPY drizzle ./drizzle
 # Referenced by drizzle.config schema path (migrate applies SQL in ./drizzle).
 COPY src/db/schema.ts ./src/db/schema.ts
-COPY ops/postgres/configure-runtime-roles.sql ./ops/postgres/configure-runtime-roles.sql
 # Avoid Corepack re-fetching pnpm at container start.
 CMD ["./node_modules/.bin/drizzle-kit", "migrate"]
 

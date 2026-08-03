@@ -8,9 +8,23 @@ import {
 	libraryRequiresReindex,
 	toApiLibrary,
 } from "../src/lib/server/library-api.mjs";
-import { computeRequiresReindex } from "../src/lib/server/library-reindex.mjs";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function computeRequiresReindex({ library, activeVersions }) {
+	const pendingProfile = String(library.documentProfile || "auto");
+	const pendingScan = String(library.scanHandling || "auto");
+	const pendingPreference = String(library.parsePreference || "auto");
+	const pendingVersion = Number(library.ingestPolicyVersion) || 1;
+	if (!activeVersions.length) return false;
+	return activeVersions.some(
+		(version) =>
+			String(version.documentProfile ?? "auto") !== pendingProfile ||
+			String(version.scanHandling ?? "auto") !== pendingScan ||
+			String(version.parsePreference ?? "auto") !== pendingPreference ||
+			(Number(version.ingestPolicyVersion ?? 0) || 0) !== pendingVersion,
+	);
+}
 
 test("requires_reindex false when all active versions match library policy", () => {
 	assert.equal(

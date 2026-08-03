@@ -18,9 +18,9 @@ test("Compose uses only web, worker, and DBOS database identities", async () => 
 });
 
 test("runtime roles match the TypeScript ownership boundary", async () => {
-	const roles = await source("ops/postgres/configure-runtime-roles.sql");
-	const logins = await source("ops/postgres/configure-runtime-logins.sql");
-	const verification = await source("ops/postgres/verify-runtime-roles.sql");
+	const roles = await source("deploy/postgres/configure-runtime-roles.sql");
+	const logins = await source("deploy/postgres/configure-runtime-logins.sql");
+	const verification = await source("deploy/postgres/verify-runtime-roles.sql");
 
 	assert.match(roles, /CREATE ROLE unorag_web NOLOGIN/);
 	assert.match(roles, /CREATE ROLE unorag_worker NOLOGIN/);
