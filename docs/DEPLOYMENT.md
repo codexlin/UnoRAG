@@ -92,7 +92,7 @@ mk_compose --profile ops run --rm inspect-lifecycle
 
 | 组件 | 预期 |
 |---|---|
-| Web | `/api/rag/health` 返回 200，生产配置失败时 fail closed |
+| Web | 读取 `/api/rag/health` 的 `live_ready`、`ask_ready`、`degraded` 与 `reasons`，不能只判断 HTTP 状态码 |
 | DBOS Worker | 私有 `:3001/dbos-healthz` 正常 |
 | DBOS Control | ready marker 持续更新 |
 | PostgreSQL | `pg_isready` 正常 |
@@ -101,8 +101,10 @@ mk_compose --profile ops run --rm inspect-lifecycle
 
 ## 镜像与升级
 
-发布物包含 `web`、`migrator`、`ops` 和 `worker` 四个镜像。生产只使用 digest-pinned
-manifest，禁止使用浮动 `latest`。
+发布物包含 `web`、`migrator`、`ops` 和 `worker` 四个镜像。发布 workflow 会把同一次构建
+推送到镜像仓库，并产出引用四个镜像 digest 的 manifest。生产升级只接受这类已归档的
+digest manifest，禁止直接使用浮动 `latest`。`upgrade.sh` 也接受带版本 tag 的 manifest，
+但该入口只用于本地 RC 验收和无法访问 registry 时的 break-glass 操作，不能替代生产发布物。
 
 ```bash
 cd deploy/compose
@@ -110,9 +112,21 @@ cd deploy/compose
 ./scripts/upgrade.sh --manifest /path/to/release-registry.env
 ```
 
-升级顺序是：拉取镜像、前向迁移、数据库角色验证、DBOS 滚动、ACL 对账、Web 滚动、
-健康检查与冒烟。上一个镜像集合保存在 `.upgrade-state/previous-images.env`。应用升级失败
-可以恢复旧镜像，但数据库不会自动向下迁移；破坏性 schema 变化必须设计兼容窗口。
+升级前应确认备份可读、生命周期巡检无 dead/stuck/pending ACL，并归档当前配置摘要。脚本随后：
+
+1. 保存当前四镜像引用与 DBOS application version；
+2. 拉取候选镜像并执行只向前数据库迁移与运行时角色验证；
+3. 受控替换 DBOS worker/control，执行 ACL 对账与生命周期巡检；
+4. 替换 Web，检查结构化健康状态并运行真实上传、Ask、替换、删除与隔离冒烟。
+
+上一个镜像集合保存在 `.upgrade-state/previous-images.env`。升级过程中任一步失败，脚本会恢复
+旧应用镜像引用；运维人员也可把该文件作为 manifest 再次执行 `upgrade.sh` 完成手工应用回滚。
+数据库不会自动向下迁移，因此旧镜像必须与新 schema 保持兼容，破坏性变化必须采用 expand / migrate /
+contract 窗口。
+
+Compose 是单机参考拓扑：DBOS 替换期间新入库任务会暂留队列，单副本 Web 替换可能产生短暂连接
+中断，不承诺零停机。需要无感更新时，应使用多副本 Kubernetes Deployment、readiness、PDB 与
+负载均衡，并单独完成该客户拓扑的升级验收。
 
 ## 备份与恢复
 

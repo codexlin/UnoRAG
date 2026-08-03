@@ -4,6 +4,7 @@
 
 | 报告 | 证明范围 |
 |---|---|
+| [TS RC 4829e41 全量复验](./2026-08-04-ts-rc-4829e41-full-validation.md) | 当前分支的确定性测试、四镜像、原地升级、真实文件、浏览器与故障恢复 |
 | [TS RC 空环境验收](./2026-08-02-ts-rc-clean-install-e2e.md) | 安装、真实文件、浏览器、隔离、恢复和质量矩阵 |
 | [MinerU 302.AI 实链路](./2026-08-02-ts-mineru-302-live.md) | DBOS Worker 到 302.AI MinerU 的扫描 PDF 入库 |
 
