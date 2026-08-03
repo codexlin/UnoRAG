@@ -8,7 +8,8 @@
 
 UnoRAG 首先是私有化部署产品（见 [PRODUCT.md](../PRODUCT.md)），观测体系必须能在客户内网自托管，
 不能依赖任何公网 SaaS APM。当前仓库里没有任何 OpenTelemetry / Prometheus / 结构化日志依赖
-（`package.json` 未引入，`deploy/compose` 未包含任何监控组件），是一张白纸。
+（`package.json` 未引入，`deploy/compose` 未包含任何监控组件），基本是一张白纸；`src/db/pool-observability.ts`
+新增了一处对 Postgres 连接池 `error` 事件的 JSON 输出，是唯一的雏形，覆盖面极窄，不构成体系。
 
 已经存在、不需要重做的能力：
 
@@ -17,10 +18,13 @@ UnoRAG 首先是私有化部署产品（见 [PRODUCT.md](../PRODUCT.md)），观
 | 管理操作审计日志 | `app.audit_logs` 表，`src/lib/server/workspace-audit-db.ts` | 文档上传/删除/重索引/版本/ACL、Service Key、Job 重试/取消等十余处关键操作，已持久化 + 分页查询 + `/api/workspace/audit/export` 导出 |
 | Ask 链路调试信息 | `AskState.retrieval_debug` / `judgement`，`src/components/app/ask-trace-drawer.tsx` | 每次 Ask 生成 `trace_id`，前端有 stages 时间线可视化面板 |
 | 归档会话的调试落库 | `app.turns.debug`（jsonb） | 会话被主动归档后，`retrieval_debug`/`judgement`/`table_execution` 会随 turn 落库 |
-| 最小告警 | `ops/min_alerts/` | 5 个信号的 cron 巡检 + 邮件/webhook，fail-soft |
+
+> 此前仓库里还有一个最小告警脚本 `ops/min_alerts/`（5 信号 cron 巡检 + 邮件/webhook），已在
+> 2026-08-04 的仓库清理（`chore(repo): remove retired integration surfaces`）中被移除。下文
+> "告警"这一支柱不再是"补强现有方案"，而是**完全从零建**，落地优先级也据此调整（见 §5）。
 
 本文档要解决的是这些能力之外的空白：**没有结构化日志、没有指标、没有分布式追踪、没有 LLM
-专用观测、临时会话没有可追溯记录**。
+专用观测、没有告警、临时会话没有可追溯记录**。
 
 ## 1. 设计原则
 
@@ -50,7 +54,7 @@ flowchart TB
     Tempo --> Grafana
     Loki --> Grafana
     Grafana --> AM["Alertmanager"]
-    AM --> Notify["邮件 / Webhook（复用 min_alerts 通道）"]
+    AM --> Notify["邮件 / Webhook"]
 ```
 
 ### 2.1 四个支柱 + 一个统一入口
@@ -61,13 +65,13 @@ flowchart TB
 | 日志 | **pino**（应用侧结构化输出）+ **Loki**（默认）/ 可路由到客户已有 ELK | 排障用的结构化文本记录 |
 | 指标 | **Prometheus + Grafana**，配 DBOS/Redis/Qdrant/Postgres exporter | 队列深度、依赖组件健康度、检索延迟分布 |
 | 分布式追踪 | **OpenTelemetry SDK + Grafana Tempo** | 一次请求跨 Web/Worker/DBOS/Qdrant/模型调用的全链路 |
-| 告警 | **Alertmanager**（细粒度规则）+ 现有 `ops/min_alerts`（兜底） | 两者并存，不是替代关系 |
+| 告警 | **Alertmanager**（细粒度规则，基于 Prometheus 指标） | `ops/min_alerts` 已被移除，无兜底方案可复用，需完整建设 |
 
 ### 2.2 具体选型理由
 
 - **Langfuse**：原生支持 LangChain/LangGraph.js 的 callback handler，`ask-graph` 已是 LangGraph.js
-  实现，接入成本低；自带评测数据集功能，可以直接用于沉淀和重建 `eval/reference` 评测语料；
-  自带 token/成本看板，是"用量配额"能力的可观测前提。
+  实现，接入成本低；自带评测数据集功能，可以直接用于重建评测语料（`eval/reference` 已在仓库清理中
+  被清空，评测数据集本质上是从零搭建，不是"迁移"）；自带 token/成本看板，是"用量配额"能力的可观测前提。
 - **Loki 而非默认上 ELK**：Loki 只索引标签不做全文倒排，资源占用远低于 Elasticsearch，适合单机
   Compose 场景；同时和 Grafana/Tempo/Prometheus 是一套生态，能在同一个面板里从日志跳到 trace。
   如果客户已有 ELK/Splunk，通过 **OTel Collector 的 exporter 配置**切换目标即可，不改业务代码。
@@ -108,7 +112,7 @@ deploy/compose/
 | 2 | 接 Langfuse（LangGraph callback） | 投入产出比最高，直接服务于问答质量排障和 eval 数据集重建 |
 | 3 | Prometheus + Grafana + DBOS/Redis/Qdrant exporter | 补上后台任务和依赖组件的黑盒问题 |
 | 4 | Loki/Tempo 接入，trace_id 与 OTel trace 统一 | 前三项稳定后再做全链路串联 |
-| 5 | Alertmanager 细粒度规则，`min_alerts` 降级为兜底 | 建立在前面指标都有了的基础上 |
+| 5 | Alertmanager 细粒度规则（无历史脚本可降级为兜底，需完整建设） | 建立在前面指标都有了的基础上 |
 
 ---
 
