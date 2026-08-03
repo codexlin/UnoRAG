@@ -762,24 +762,6 @@ test("real PostgreSQL activation replaces the version atomically and queues old 
 		);
 		await pool.query(
 			`
-				INSERT INTO rag.active_document_generations (
-					organization_id, workspace_id, library_id, rag_library_id,
-					document_id, document_version_id, generation_id
-				)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
-				`,
-			[
-				ids.organization,
-				ids.workspace,
-				ids.library,
-				realRagLibraryId,
-				ids.document,
-				ids.oldVersion,
-				ids.oldGeneration,
-			],
-		);
-		await pool.query(
-			`
 				INSERT INTO app.jobs (
 					id, organization_id, workspace_id, document_version_id,
 					type, execution_engine, workflow_id, status, stage,
@@ -861,7 +843,7 @@ test("real PostgreSQL activation replaces the version atomically and queues old 
 				FROM app.documents AS document
 				JOIN app.document_active_versions AS active
 				  ON active.document_id = document.id
-				JOIN rag.active_document_generations AS generation
+				JOIN app.active_document_generations AS generation
 				  ON generation.document_id = document.id
 				 AND generation.organization_id = document.organization_id
 				 AND generation.workspace_id = document.workspace_id
@@ -871,7 +853,7 @@ test("real PostgreSQL activation replaces the version atomically and queues old 
 				  ON previous.id = $2
 				JOIN app.jobs AS job
 				  ON job.id = $3
-				JOIN rag.generation_cleanup_queue AS cleanup
+				JOIN app.generation_cleanup_queue AS cleanup
 				  ON cleanup.generation_id = $4
 				WHERE document.id = $1
 				`,
@@ -970,7 +952,7 @@ test("real PostgreSQL activation replaces the version atomically and queues old 
 					FROM app.documents AS document
 					JOIN app.document_active_versions AS active
 					  ON active.document_id = document.id
-					JOIN rag.active_document_generations AS generation
+					JOIN app.active_document_generations AS generation
 					  ON generation.document_id = document.id
 					 AND generation.organization_id = document.organization_id
 					 AND generation.workspace_id = document.workspace_id
@@ -978,7 +960,7 @@ test("real PostgreSQL activation replaces the version atomically and queues old 
 					  ON failed.id = $2
 					JOIN app.jobs AS job
 					  ON job.id = $3
-					JOIN rag.generation_cleanup_queue AS cleanup
+					JOIN app.generation_cleanup_queue AS cleanup
 					  ON cleanup.generation_id = $4
 					JOIN app.jobs AS cleanup_job
 					  ON cleanup_job.id = cleanup.cleanup_job_id

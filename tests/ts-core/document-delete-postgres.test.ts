@@ -840,24 +840,6 @@ async function seedFixture(
 		);
 		await pool.query(
 			`
-				INSERT INTO rag.active_document_generations (
-					organization_id, workspace_id, library_id, rag_library_id,
-					document_id, document_version_id, generation_id
-				)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
-			`,
-			[
-				organizationId,
-				workspaceId,
-				libraryId,
-				ragLibraryId,
-				documentId,
-				versionId,
-				generationId,
-			],
-		);
-		await pool.query(
-			`
 				INSERT INTO app.generation_cleanup_queue (
 					generation_id, organization_id, workspace_id, library_id,
 					document_id, document_version_id, delete_after
