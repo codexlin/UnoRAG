@@ -43,7 +43,7 @@ RUN apt-get update \
 	&& corepack prepare pnpm@9.7.1 --activate
 # Pin the same ranges as the application; install only migration tooling.
 COPY package.json /tmp/app.package.json
-RUN node -e 'const fs=require("fs"); const app=JSON.parse(fs.readFileSync("/tmp/app.package.json","utf8")); fs.writeFileSync("package.json", JSON.stringify({name:"unorag-web-migrator",private:true,packageManager:"pnpm@9.7.1",scripts:{"db:migrate":"drizzle-kit migrate"},dependencies:{"drizzle-orm":app.dependencies["drizzle-orm"],pg:app.dependencies.pg,"drizzle-kit":app.devDependencies["drizzle-kit"]}},null,"\t")+"\n");' \
+RUN node -e 'const fs=require("fs"); const app=JSON.parse(fs.readFileSync("/tmp/app.package.json","utf8")); fs.writeFileSync("package.json", JSON.stringify({name:"unorag-web-migrator",private:true,packageManager:"pnpm@9.7.1",pnpm:{overrides:{esbuild:app.pnpm.overrides.esbuild}},scripts:{"db:migrate":"drizzle-kit migrate"},dependencies:{"drizzle-orm":app.dependencies["drizzle-orm"],pg:app.dependencies.pg,"drizzle-kit":app.devDependencies["drizzle-kit"]}},null,"\t")+"\n");' \
 	&& CI=true pnpm install \
 	&& test -x node_modules/.bin/drizzle-kit \
 	&& rm -rf /root/.local/share/pnpm/store /root/.cache /tmp/app.package.json \
@@ -59,6 +59,7 @@ CMD ["./node_modules/.bin/drizzle-kit", "migrate"]
 
 # One-shot bootstrap and operator tooling (no long-running queue consumer).
 FROM deps AS ops
+RUN pnpm prune --prod
 COPY --chown=unorag:unorag scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/inspect-lifecycle.mjs ./scripts/
 WORKDIR /repo
 ENV NODE_ENV=production
@@ -68,6 +69,7 @@ CMD ["node", "scripts/inspect-lifecycle.mjs"]
 # DBOS executor and control loop. Keep the complete worker module together so
 # dynamic production-port imports resolve identically in both processes.
 FROM deps AS worker
+RUN pnpm prune --prod
 COPY --chown=unorag:unorag src ./src
 COPY --chown=unorag:unorag tsconfig.json ./
 WORKDIR /repo
