@@ -22,7 +22,9 @@ export {
 	type AskState,
 	AskStateAnnotation,
 	type AskStateUpdate,
+	appendAskStage,
 	type Citation,
+	finishAskTiming,
 } from "./state";
 export {
 	ASK_GRAPH_NODE_NAMES,

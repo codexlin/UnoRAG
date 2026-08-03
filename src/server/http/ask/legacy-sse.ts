@@ -117,6 +117,7 @@ export function projectPublicRetrievalDebug(
 	const result: Record<string, unknown> = {};
 	const mappings = {
 		trace_id: ["trace_id"],
+		total_duration_ms: ["total_duration_ms"],
 		query_type: ["query_type"],
 		route_reason: ["route_reason"],
 		top_score: ["top_score"],

@@ -4,6 +4,12 @@ export type AskMetadata = Record<string, unknown>;
 export type AskHistoryMessage = Record<string, unknown>;
 export type Citation = Record<string, unknown>;
 
+export interface AskStageTiming {
+	stage: string;
+	duration_ms: number;
+	ok: boolean;
+}
+
 export const ASK_STATE_FIELD_NAMES = [
 	"session_id",
 	"question",
@@ -63,6 +69,40 @@ export function mergeRetrievalDebug(
 	return {
 		...(state.retrieval_debug ?? {}),
 		...extra,
+	};
+}
+
+function durationMs(startedAt: number): number {
+	return Math.max(0, Math.round((performance.now() - startedAt) * 100) / 100);
+}
+
+export function appendAskStage(
+	debug: AskMetadata | undefined,
+	stage: string,
+	startedAt: number,
+	ok: boolean,
+): AskMetadata {
+	const stages = Array.isArray(debug?.stages) ? debug.stages : [];
+	return {
+		...(debug ?? {}),
+		stages: [
+			...stages,
+			{
+				stage,
+				duration_ms: durationMs(startedAt),
+				ok,
+			} satisfies AskStageTiming,
+		],
+	};
+}
+
+export function finishAskTiming(
+	debug: AskMetadata | undefined,
+	startedAt: number,
+): AskMetadata {
+	return {
+		...(debug ?? {}),
+		total_duration_ms: durationMs(startedAt),
 	};
 }
 

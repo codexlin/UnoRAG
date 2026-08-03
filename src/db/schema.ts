@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
 	bigint,
+	boolean,
 	check,
 	foreignKey,
 	index,
@@ -263,6 +264,11 @@ export const workspaceServiceKeys = appSchema.table(
 	},
 	(table) => [
 		uniqueIndex("workspace_service_keys_key_hash_uq").on(table.keyHash),
+		uniqueIndex("workspace_service_keys_scope_id_uq").on(
+			table.organizationId,
+			table.workspaceId,
+			table.id,
+		),
 		index("workspace_service_keys_workspace_idx").on(
 			table.workspaceId,
 			table.createdAt,
@@ -323,6 +329,12 @@ export const libraries = appSchema.table(
 	},
 	(table) => [
 		uniqueIndex("libraries_rag_id_uq").on(table.ragLibraryId),
+		uniqueIndex("libraries_scope_id_rag_id_uq").on(
+			table.organizationId,
+			table.workspaceId,
+			table.id,
+			table.ragLibraryId,
+		),
 		uniqueIndex("libraries_scope_rag_id_uq").on(
 			table.organizationId,
 			table.workspaceId,
@@ -441,6 +453,136 @@ export const conversationTurns = appSchema.table(
 		check(
 			"turns_status_check",
 			sql`${table.status} in ('pending', 'complete', 'failed', 'cancelled', 'truncated')`,
+		),
+	],
+);
+
+/**
+ * Privacy-safe Ask execution metadata for product diagnostics and retention.
+ * Question, answer, prompt, citations, and retrieved content never belong here.
+ */
+export const askRuns = appSchema.table(
+	"ask_runs",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		requestId: uuid("request_id").notNull(),
+		otelTraceId: varchar("otel_trace_id", { length: 32 }),
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		libraryId: uuid("library_id").notNull(),
+		ragLibraryId: varchar("rag_library_id", { length: 128 }).notNull(),
+		principalType: varchar("principal_type", { length: 32 }).notNull(),
+		userId: uuid("user_id"),
+		serviceKeyId: uuid("service_key_id"),
+		threadId: uuid("thread_id"),
+		queryType: varchar("query_type", { length: 32 }),
+		retrievalMode: varchar("retrieval_mode", { length: 32 }),
+		status: varchar("status", { length: 32 }).default("running").notNull(),
+		refuseReason: varchar("refuse_reason", { length: 128 }),
+		usedHybrid: boolean("used_hybrid").default(false).notNull(),
+		usedRerank: boolean("used_rerank").default(false).notNull(),
+		citationCount: integer("citation_count").default(0).notNull(),
+		latencyMs: integer("latency_ms"),
+		errorCode: varchar("error_code", { length: 128 }),
+		startedAt: timestamp("started_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		endedAt: timestamp("ended_at", { withTimezone: true }),
+	},
+	(table) => [
+		foreignKey({
+			name: "ask_runs_org_workspace_fk",
+			columns: [table.organizationId, table.workspaceId],
+			foreignColumns: [workspaces.organizationId, workspaces.id],
+		}).onDelete("cascade"),
+		foreignKey({
+			name: "ask_runs_scope_library_fk",
+			columns: [
+				table.organizationId,
+				table.workspaceId,
+				table.libraryId,
+				table.ragLibraryId,
+			],
+			foreignColumns: [
+				libraries.organizationId,
+				libraries.workspaceId,
+				libraries.id,
+				libraries.ragLibraryId,
+			],
+		}).onDelete("cascade"),
+		foreignKey({
+			name: "ask_runs_org_user_fk",
+			columns: [table.organizationId, table.userId],
+			foreignColumns: [users.organizationId, users.id],
+		}).onDelete("cascade"),
+		foreignKey({
+			name: "ask_runs_workspace_user_fk",
+			columns: [table.workspaceId, table.userId],
+			foreignColumns: [workspaceMembers.workspaceId, workspaceMembers.userId],
+		}).onDelete("cascade"),
+		foreignKey({
+			name: "ask_runs_scope_service_key_fk",
+			columns: [table.organizationId, table.workspaceId, table.serviceKeyId],
+			foreignColumns: [
+				workspaceServiceKeys.organizationId,
+				workspaceServiceKeys.workspaceId,
+				workspaceServiceKeys.id,
+			],
+		}).onDelete("cascade"),
+		foreignKey({
+			name: "ask_runs_thread_scope_fk",
+			columns: [
+				table.threadId,
+				table.organizationId,
+				table.workspaceId,
+				table.userId,
+			],
+			foreignColumns: [
+				conversationThreads.id,
+				conversationThreads.organizationId,
+				conversationThreads.workspaceId,
+				conversationThreads.principalId,
+			],
+		}).onDelete("cascade"),
+		uniqueIndex("ask_runs_request_id_uq").on(table.requestId),
+		index("ask_runs_scope_started_idx").on(
+			table.organizationId,
+			table.workspaceId,
+			table.startedAt,
+			table.id,
+		),
+		index("ask_runs_retention_idx")
+			.on(table.endedAt, table.id)
+			.where(sql`${table.endedAt} is not null`),
+		index("ask_runs_thread_idx")
+			.on(table.threadId, table.startedAt)
+			.where(sql`${table.threadId} is not null`),
+		check(
+			"ask_runs_otel_trace_id_check",
+			sql`${table.otelTraceId} is null or ${table.otelTraceId} ~ '^[a-f0-9]{32}$'`,
+		),
+		check(
+			"ask_runs_principal_check",
+			sql`(${table.principalType} = 'user' and ${table.userId} is not null and ${table.serviceKeyId} is null)
+				or (${table.principalType} = 'service_key' and ${table.userId} is null and ${table.serviceKeyId} is not null and ${table.threadId} is null)`,
+		),
+		check(
+			"ask_runs_status_check",
+			sql`${table.status} in ('running', 'completed', 'refused', 'failed', 'cancelled')`,
+		),
+		check(
+			"ask_runs_terminal_check",
+			sql`(${table.status} = 'running' and ${table.endedAt} is null and ${table.latencyMs} is null)
+				or (${table.status} <> 'running' and ${table.endedAt} is not null and ${table.latencyMs} is not null)`,
+		),
+		check(
+			"ask_runs_refusal_check",
+			sql`(${table.status} = 'refused' and ${table.refuseReason} is not null)
+				or (${table.status} <> 'refused' and ${table.refuseReason} is null)`,
+		),
+		check(
+			"ask_runs_counts_check",
+			sql`${table.citationCount} >= 0 and (${table.latencyMs} is null or ${table.latencyMs} >= 0)`,
 		),
 	],
 );

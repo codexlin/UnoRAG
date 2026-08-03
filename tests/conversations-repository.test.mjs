@@ -70,6 +70,9 @@ test("conversation repository applies scope to every read and append query", () 
 	assert.match(repository, /async listThreads\(/);
 	assert.match(repository, /async listTurns\(/);
 	assert.match(repository, /async appendTurn\(/);
+	assert.match(repository, /async updateTurnDebug\(/);
+	assert.match(repository, /eq\(conversationTurns\.id, turnId\)/);
+	assert.match(repository, /eq\(conversationTurns\.role, "assistant"\)/);
 	assert.match(repository, /this\.db\.transaction/);
 	assert.match(repository, /\.for\("update"\)/);
 	assert.match(

@@ -266,4 +266,24 @@ export class ConversationRepository {
 			return created;
 		});
 	}
+
+	async updateTurnDebug(
+		scope: ConversationScope,
+		threadId: string,
+		turnId: string,
+		debug: Record<string, unknown>,
+	) {
+		const [updated] = await this.db
+			.update(conversationTurns)
+			.set({ debug })
+			.where(
+				and(
+					turnScope(scope, threadId),
+					eq(conversationTurns.id, turnId),
+					eq(conversationTurns.role, "assistant"),
+				),
+			)
+			.returning({ id: conversationTurns.id });
+		return updated ?? null;
+	}
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { getObservabilityContext } from "../../src/lib/observability";
 import type {
 	DocumentAclProjectionJob,
 	DocumentDeleteJob,
@@ -19,6 +20,7 @@ import {
 	type WorkflowRegistrar,
 	workflowForJob,
 } from "../../src/worker/registration";
+import { durableWorkflowId } from "../../src/worker/workflow-id";
 
 const ingest: DocumentIngestJob = {
 	jobId: "10000000-0000-4000-8000-000000000001",
@@ -130,6 +132,30 @@ test("ACL projection is a durable external step", async () => {
 		result: { pointCount: 1 },
 	});
 	assert.deepEqual(events, ["step:document-acl-project-1", "acl:projected"]);
+});
+
+test("workflow execution carries scoped observability identifiers", async () => {
+	let observed = getObservabilityContext();
+	const durableOperations = operations([]);
+	const workflows = registerDurableWorkflows(
+		passthroughRegistrar,
+		successfulPorts([]),
+		{
+			...durableOperations,
+			async runStep(name, operation) {
+				observed = getObservabilityContext();
+				return durableOperations.runStep(name, operation);
+			},
+		},
+	);
+
+	await workflows.documentAclProjection(aclProjection);
+	assert.deepEqual(observed, {
+		organizationId: aclProjection.organizationId,
+		workspaceId: aclProjection.workspaceId,
+		jobId: aclProjection.jobId,
+		workflowId: durableWorkflowId(aclProjection),
+	});
 });
 
 test("ingest fails closed until its staged workflow is wired", async () => {

@@ -1,232 +1,315 @@
 # UnoRAG 可观测性目标架构
 
-> 状态：设计提案（尚未实现，待评审通过后拆入 [OPERATIONS.md](../OPERATIONS.md)）
+> 状态：核心诊断基础已实现，原生运维中心、指标、OTel、Ops Stack 与 Langfuse 仍是后续交付；
+> 本文件同时标明当前能力和目标边界。
 >
-> 关联：[架构](../ARCHITECTURE.md) · [运维指南](../OPERATIONS.md) · [产品说明](../PRODUCT.md)
+> 关联：[产品说明](../PRODUCT.md) · [架构](../ARCHITECTURE.md) · [运维指南](../OPERATIONS.md) · [混合检索设计](./hybrid-retrieval.md)
 
-## 0. 背景
+## 1. 产品背景与目标
 
-UnoRAG 首先是私有化部署产品（见 [PRODUCT.md](../PRODUCT.md)），观测体系必须能在客户内网自托管，
-不能依赖任何公网 SaaS APM。当前仓库里没有任何 OpenTelemetry / Prometheus / 结构化日志依赖
-（`package.json` 未引入，`deploy/compose` 未包含任何监控组件），基本是一张白纸；`src/db/pool-observability.ts`
-新增了一处对 Postgres 连接池 `error` 事件的 JSON 输出，是唯一的雏形，覆盖面极窄，不构成体系。
+UnoRAG 面向需要私有化知识库、但通常没有独立 AI 平台或 SRE 团队的中小企业，以及为这些客户
+交付系统的集成商。可观测性首先要让知识管理员和普通运维人员在 UnoRAG 内看懂问题，而不是要求
+客户先学会 PromQL、Tempo 或 Langfuse。
 
-已经存在、不需要重做的能力：
+目标是建立三层能力：
 
-| 能力 | 位置 | 说明 |
-|---|---|---|
-| 管理操作审计日志 | `app.audit_logs` 表，`src/lib/server/workspace-audit-db.ts` | 文档上传/删除/重索引/版本/ACL、Service Key、Job 重试/取消等十余处关键操作，已持久化 + 分页查询 + `/api/workspace/audit/export` 导出 |
-| Ask 链路调试信息 | `AskState.retrieval_debug` / `judgement`，`src/components/app/ask-trace-drawer.tsx` | 每次 Ask 生成 `trace_id`，前端有 stages 时间线可视化面板 |
-| 归档会话的调试落库 | `app.turns.debug`（jsonb） | 会话被主动归档后，`retrieval_debug`/`judgement`/`table_execution` 会随 turn 落库 |
+1. **核心原生层**随标准版交付并始终可用，保证系统不依赖外部观测组件也能诊断。
+2. **Ops 增强层**作为官方维护的可选部署包，为专业运维提供集中日志、指标、Trace 和告警。
+3. **AI 工程层**按需启用自托管 Langfuse，为调优团队提供模型、Prompt、成本和评测能力。
 
-> 此前仓库里还有一个最小告警脚本 `ops/min_alerts/`（5 信号 cron 巡检 + 邮件/webhook），已在
-> 2026-08-04 的仓库清理（`chore(repo): remove retired integration surfaces`）中被移除。下文
-> "告警"这一支柱不再是"补强现有方案"，而是**完全从零建**，落地优先级也据此调整（见 §5）。
+三层共享请求上下文和 OpenTelemetry 语义，但相互不构成运行依赖。任何观测组件故障都不得阻塞
+Ask、入库、检索或生命周期任务。
 
-本文档要解决的是这些能力之外的空白：**没有结构化日志、没有指标、没有分布式追踪、没有 LLM
-专用观测、没有告警、临时会话没有可追溯记录**。
+## 2. 当前基线
 
-## 1. 设计原则
+以下能力已经存在，应在其上演进，而不是重写：
 
-1. **只用可自托管的开源组件**，不接受任何组件把客户数据发到外部 SaaS。
-2. **默认要轻，加码要容易**：大多数客户是单机 Compose 部署，观测栈做成可选 profile，不强制捆绑。
-3. **一个 trace_id 贯穿到底**：业务语义的 `trace_id`（Ask 链路、ingest 链路）与分布式追踪的
-   trace id 必须是同一个值，不能有两套互相查不到的编号体系。
-4. **LLM 观测与传统 APM 分离建设**：传统 APM 回答"这次请求哪里慢"，LLM 观测要回答"这次检索召回
-   对不对、judge 拒答的理由合不合理、这轮问答花了多少 token"——两者工具不同，不能互相替代。
-5. **不违反"默认临时"的隐私承诺**：`PRODUCT.md` 明确会话默认临时、不强制入库；观测能力的落地
-   不能变相把这条产品承诺破坏掉（见附录 B）。
+| 能力 | 当前状态 |
+|---|---|
+| 管理操作审计 | `app.audit_logs` 已持久化关键管理操作，并支持分页查询和导出 |
+| Ask 业务调试信息 | `AskState` 已承载 `retrieval_debug`、`judgement`、`table_execution` 和业务 `trace_id` |
+| Ask 调试界面 | `AskTraceDrawer` 能展示调试 JSON，并预留 `stages` 时间线 |
+| 归档会话调试信息 | 归档后相关调试字段随 `app.turns.debug` 保存 |
+| 解析诊断 | `parser_report` 已记录 ParserProvider、降级原因和部分质量指标 |
+| 生命周期诊断 | 产品 Job、DBOS workflow、进度、重试和取消已有业务状态 |
+| 关联上下文与日志 | Browser/Public API 和 DBOS workflow 已接入 AsyncLocalStorage 上下文与 Pino JSON |
+| Ask 执行记录 | `app.ask_runs` 已通过 `0021_ask_runs.sql` 落地隐私安全的开始/终态元数据 |
 
-## 2. 目标架构
+TypeScript Ask 主路径现已生成实际执行节点、Token 生成、持久化的 `retrieval_debug.stages` 和
+`total_duration_ms`。当前粒度覆盖路由、计划、重写、检索、裁决、表格路径、生成准备、真实生成和
+持久化；Embedding、dense/lexical、fusion、rerank 等 Provider 子阶段仍待进一步拆分。
+
+当前已有核心路径 Pino JSON 与上下文传播，但还没有 OpenTelemetry SDK/Collector、Prometheus 指标
+体系、集中日志、分布式追踪、原生运维中心或产品告警。基础日志不等于这些后续能力已经落地。
+
+## 3. 三层架构
 
 ```mermaid
 flowchart TB
-    subgraph App["Next.js Web / DBOS Worker"]
-        OTel["OpenTelemetry SDK\n（自动埋点 + trace_id = OTel trace id）"]
+    User["知识管理员 / 支持人员"] -. "目标" .-> Native["UnoRAG 原生运维中心"]
+
+    subgraph Core["第一层：UnoRAG Core，默认启用"]
+        App["Next.js Web / DBOS Worker"]
+        Context["Request Context + Pino\nOTel SDK（目标）"]
+        DB["PostgreSQL\nask_runs / jobs / audit_logs"]
+        Metrics["/metrics（目标）"]
+        App --> Context
+        App --> DB
+        App --> Metrics
+        DB --> Native
     end
-    OTel -->|traces| Tempo["Grafana Tempo\n分布式追踪存储"]
-    OTel -->|metrics| Prom["Prometheus\n指标存储"]
-    OTel -->|logs| Collector["OTel Collector"]
-    Collector --> Loki["Grafana Loki（默认）"]
-    Collector -.可选路由.-> ELK["客户已有 ELK / Splunk（可选）"]
-    App -->|LangGraph callback| Langfuse["Langfuse（自托管）\nLLM 专用观测 + 评测数据集"]
-    Prom --> Grafana["Grafana 统一看板"]
-    Tempo --> Grafana
-    Loki --> Grafana
-    Grafana --> AM["Alertmanager"]
-    AM --> Notify["邮件 / Webhook"]
+
+    subgraph Ops["第二层：Ops Stack，可选"]
+        Collector["OpenTelemetry Collector"]
+        Prom["Prometheus"]
+        Grafana["Grafana"]
+        Tempo["Tempo"]
+        Loki["Loki"]
+        Alerts["Alertmanager"]
+        Collector --> Tempo
+        Collector --> Loki
+        Prom --> Grafana
+        Tempo --> Grafana
+        Loki --> Grafana
+        Prom --> Alerts
+    end
+
+    subgraph AI["第三层：AI Engineering，可选"]
+        Langfuse["Langfuse（自托管）\nmetadata-only by default"]
+    end
+
+    Context -. "OTLP" .-> Collector
+    Metrics -. "scrape" .-> Prom
+    Context -. "AI spans" .-> Langfuse
+    Collector -. "可替换 exporter" .-> Existing["客户已有 APM / 日志平台"]
 ```
 
-### 2.1 四个支柱 + 一个统一入口
+### 3.1 第一层：核心原生能力
 
-| 支柱 | 组件 | 解决什么问题 |
-|---|---|---|
-| LLM/Agent 观测 | **Langfuse**（自托管） | ask-graph 逐节点可视化、token/成本统计、评测数据集沉淀 |
-| 日志 | **pino**（应用侧结构化输出）+ **Loki**（默认）/ 可路由到客户已有 ELK | 排障用的结构化文本记录 |
-| 指标 | **Prometheus + Grafana**，配 DBOS/Redis/Qdrant/Postgres exporter | 队列深度、依赖组件健康度、检索延迟分布 |
-| 分布式追踪 | **OpenTelemetry SDK + Grafana Tempo** | 一次请求跨 Web/Worker/DBOS/Qdrant/模型调用的全链路 |
-| 告警 | **Alertmanager**（细粒度规则，基于 Prometheus 指标） | `ops/min_alerts` 已被移除，无兜底方案可复用，需完整建设 |
+第一层属于标准版产品能力，默认启用且不能依赖 Grafana 或 Langfuse。
 
-### 2.2 具体选型理由
+#### Ask 调试契约
 
-- **Langfuse**：原生支持 LangChain/LangGraph.js 的 callback handler，`ask-graph` 已是 LangGraph.js
-  实现，接入成本低；自带评测数据集功能，可以直接用于重建评测语料（`eval/reference` 已在仓库清理中
-  被清空，评测数据集本质上是从零搭建，不是"迁移"）；自带 token/成本看板，是"用量配额"能力的可观测前提。
-- **Loki 而非默认上 ELK**：Loki 只索引标签不做全文倒排，资源占用远低于 Elasticsearch，适合单机
-  Compose 场景；同时和 Grafana/Tempo/Prometheus 是一套生态，能在同一个面板里从日志跳到 trace。
-  如果客户已有 ELK/Splunk，通过 **OTel Collector 的 exporter 配置**切换目标即可，不改业务代码。
-- **Prometheus + Grafana**：事实标准，Helm/Compose 生态成熟，社区 exporter 覆盖 Postgres/Redis/
-  Qdrant，落地成本最低。
-- **Tempo**：与 Loki/Grafana 同厂商，部署形态一致（对象存储后端，单机可用本地盘），比 Jaeger 更
-  贴合"轻量 + 与日志/指标联动"的目标。
-
-## 3. 部署形态：可选 profile,不强制捆绑
+保留现有响应和归档中的业务调试字段。当前稳定阶段包括：
 
 ```text
-deploy/compose/
-  docker-compose.yml                # 现有核心服务（web / worker / pg / qdrant / redis）
-  docker-compose.observability.yml  # 新增可选：prometheus + grafana + loki + tempo + langfuse
+route -> plan -> rewrite -> retrieve -> judge -> prepare_generate
+      -> generate -> persist
 ```
 
-`install.sh --with-observability` 才拉起观测栈。对应到商业化上，可以做成"标准版 / 企业版"的
-分层卖点：企业版含开箱即用的可观测性套件，是可交付、可验收的实物，不是空承诺。
+表格、澄清、拒答和重试路径按实际执行追加阶段。下一步再把 `retrieve` 拆成以下 Provider 子阶段：
 
-## 4. 统一 trace_id 策略
+```text
+route -> rewrite -> embed -> dense_retrieve -> lexical_retrieve
+      -> fusion -> rerank -> judge -> table_execute -> generate -> persist
+```
 
-当前 `ask-graph`（`src/core/ask-graph/state.ts`）的 `trace_id` 是业务代码里 `randomUUID()`
-生成的，只在 Ask 调用内部有意义，和分布式追踪无关。目标改法：
+阶段可以因路由或降级而缺席；每个实际执行的阶段记录 `stage`、`duration_ms` 和 `ok`。未来新增的
+`detail` 只能包含经过允许列表投影的诊断元数据。这份 JSON 是稳定、租户隔离、面向产品支持的诊断
+契约，不由 OTel 或 Langfuse 替代。
+公共 Retrieve/Ask v1 契约仍不得返回内部 `retrieval_debug`。
 
-1. 在请求入口（Next.js middleware / API route）读取或生成 **W3C `traceparent`**，Web 与 Worker
-   两侧都接 OpenTelemetry SDK，让"上传 → DBOS 排队 → 解析 → 切分 → 索引 → 激活"和"提问 → 路由 →
-   检索 → 判定 → 生成"两条链路都能在 Tempo 里用同一个 trace id 串起来。
-2. `AskGraphInput.trace_id` 直接复用这个 OTel trace id，而不是另外生成一个——前端
-   `AskTraceDrawer` 的"复制 trace_id"动作，支持人员拿去就能在 Tempo/Langfuse 里查到完整调用链。
-3. `app.turns.debug` 里继续保留业务语义的调试字段（`retrieval_debug`/`judgement` 等），但增加
-   `trace_id` 作为可查询的顶层字段（而不只是嵌在 jsonb 内部），便于跨表关联。
+#### `app.ask_runs`
 
-## 5. 落地优先级
+`app.ask_runs` 只保存诊断元数据，不命名为 `ask_traces`，以免和分布式 Trace 混淆。当前模型由
+`0021_ask_runs.sql` 固化：
 
-| 顺序 | 内容 | 理由 |
+```text
+id                  uuid primary key
+request_id          uuid, stable business correlation id
+otel_trace_id       varchar(32), nullable
+organization_id     uuid
+workspace_id        uuid
+library_id          uuid
+rag_library_id      varchar(128)
+principal_type      user | service_key
+user_id             uuid, nullable
+service_key_id      uuid, nullable
+thread_id           uuid, nullable
+query_type          varchar(32)
+retrieval_mode      varchar(32)
+status              running | completed | refused | failed | cancelled
+refuse_reason       varchar(128), nullable
+used_hybrid         boolean
+used_rerank         boolean
+citation_count      integer
+latency_ms           integer, nullable
+error_code          varchar(128), nullable
+started_at          timestamptz
+ended_at            timestamptz, nullable
+```
+
+流式 Ask 开始时插入 `running`，正常结束、拒答、取消或失败后更新终态。不得用无法等待的“异步
+fail-soft 写入”制造不可知的数据丢失；写入失败应有结构化错误和指标，但观测表故障仍不得改变 Ask
+业务结果。
+
+默认不保存问题、回答、Prompt、引用正文和完整检索块。当前 repository 支持按组织、Workspace 和时间
+范围批量删除终态记录；按用户删除、配置化调度和 stale-running 收敛由 Phase 1B 补齐。临时会话被
+归档时可以回填 `thread_id`，但 `ask_runs` 不是会话内容存储。
+
+#### 原生运维中心
+
+原生界面应以行动为导向，至少提供：
+
+- Ask 请求量、成功率、拒答率、P50/P95、无引用回答和最近错误；
+- Parser、Embedding、Rerank、LLM Provider 的健康、延迟和错误分类；
+- DBOS queued/running/dead/stuck、最老等待时间、重试和取消结果；
+- 文档解析、索引、替换、删除和 generation cleanup 的进度与失败原因；
+- PostgreSQL、Redis、Qdrant、对象/文档卷和磁盘的基础健康状态；
+- 按 `request_id`、`job_id`、`workflow_id` 搜索诊断上下文；
+- 邮件或 Webhook 基础告警，以及明确的恢复建议。
+
+核心应用已经输出 Pino JSON；标准 `/metrics` 是 Phase 1B 目标，让客户不启用官方 Ops Stack 也能
+接入已有系统。
+
+### 3.2 第二层：可选 Ops Stack
+
+Ops Stack 随官方部署包提供，但不默认启动，适合有运维团队、多实例、SLA 或长期日志需求的客户：
+
+- OpenTelemetry Collector：统一接收、处理、采样和导出；
+- Prometheus + Grafana：指标、看板和容量趋势；
+- Loki：集中结构化日志；
+- Tempo：跨 Web、Worker、Provider、Qdrant 等组件的分布式 Trace；
+- Alertmanager：细粒度告警、抑制、分组和升级。
+
+目标部署接口：
+
+```bash
+./install.sh --with-ops
+```
+
+客户已有 ELK、Splunk、Datadog 或公司级 OTel 平台时，应允许只配置 Collector exporter，不要求重复
+部署本地全家桶。Ops 数据采用有限保留、采样和资源上限；Grafana 不直接暴露公网，观测存储故障不得
+影响核心服务。
+
+### 3.3 第三层：可选 Langfuse
+
+Langfuse 面向 UnoRAG 开发、实施和模型调优团队，负责：
+
+- LangGraph 节点、路由、检索和裁决的语义追踪；
+- Vercel AI SDK 模型调用、首 Token 延迟、Token 与成本；
+- Prompt 版本、用户反馈、在线评分、数据集和实验比较；
+- 将仓库现有黄金集作为事实源导入实验，而不是另建一套互相漂移的测试数据。
+
+仅接 LangGraph callback 不足以覆盖真实模型调用；实现时还要对 Vercel AI SDK、Embedding、Rerank、
+ParserProvider 和 Qdrant 建立 OTel/SDK 埋点。
+
+Langfuse 默认采用 **metadata-only**：
+
+```text
+LANGFUSE_CAPTURE_CONTENT=false
+LANGFUSE_SAMPLE_RATE=0.10
+LANGFUSE_RETENTION_DAYS=30
+```
+
+默认只记录模型、耗时、Token、路由、错误码和脱敏元数据，不记录问题、回答、Prompt、引用正文或检索块。
+采集内容必须由管理员按 Workspace 明确开启，同时配置角色权限、脱敏、采样、保留期和删除机制。
+自托管不等于可以绕过 UnoRAG 的临时会话隐私承诺。
+
+Langfuse 依赖的 Web、Worker、ClickHouse、Redis、对象存储等组件不应增加标准版的安装和备份负担。
+
+## 4. 标识与上下文模型
+
+业务关联标识和 OTel Trace ID 必须分离：
+
+| 标识 | 格式与生命周期 | 用途 |
 |---|---|---|
-| 1 | Web/Worker 接 `pino` 结构化日志，统一 `traceparent` 透传 | 成本最低，替换掉散落的 `console.error`，是后续所有观测的地基 |
-| 2 | 接 Langfuse（LangGraph callback） | 投入产出比最高，直接服务于问答质量排障和 eval 数据集重建 |
-| 3 | Prometheus + Grafana + DBOS/Redis/Qdrant exporter | 补上后台任务和依赖组件的黑盒问题 |
-| 4 | Loki/Tempo 接入，trace_id 与 OTel trace 统一 | 前三项稳定后再做全链路串联 |
-| 5 | Alertmanager 细粒度规则（无历史脚本可降级为兜底，需完整建设） | 建立在前面指标都有了的基础上 |
+| `request_id` | UUID；一次外部请求稳定不变 | 对外返回、客服报障、业务日志关联 |
+| `otel_trace_id` | W3C 32 位十六进制；一次同步执行 | 在 Tempo/Langfuse/APM 查询本次分布式 Trace |
+| `job_id` | UUID；产品任务生命周期 | 用户可见的入库、删除、重索引等任务 |
+| `workflow_id` | DBOS 稳定工作流标识 | 重试、恢复、幂等和持久执行关联 |
+| `attempt_trace_id` | 每次 Worker 执行/恢复独立 OTel Trace | 分析单次执行尝试的耗时和错误 |
 
----
+为保持 Retrieve/Ask v1 兼容，公共响应现有的 `trace_id` 字段继续作为 `request_id` 的兼容别名，值仍是
+UUID；它不得在不升级 API 版本的情况下改成 `otel_trace_id`。产品界面可同时展示“请求 ID”和仅在
+OTel 启用后出现的“分布式 Trace ID”。
 
-## 附录 A：混合检索（BM25 + RRF）性能优化方案
+Ask 链路：
 
-### A.1 现状问题
-
-`src/core/retrieval/retrieval-service.ts` 中，只要开启 hybrid，**每一次查询**都会：
-
-1. 从 Qdrant `scroll` 出整个 library 最多 `corpusLimit`（默认 10,000）个点（`listCorpus`）；
-2. 在 Node.js 请求处理进程里，用 `src/core/retrieval/hybrid/bm25.ts` **现场重建一遍 BM25
-   倒排索引**（分词、词频、IDF 全部重算）；
-3. 再和稠密检索结果做 RRF 融合。
-
-问题：文库越大、QPS 越高，单次查询的延迟和 CPU 开销越高，且没有任何缓存，无法横向扩展。
-
-### A.2 短期方案（低风险，可立即做）：按 active generation 缓存 BM25 索引
-
-关键洞察：一个 library 的检索语料，只有在 **active generation 发生原子切换**时才会变化（这正是
-`document-ingest-workflow` 里 `setGenerationVisibility` 的显式事件）。切换之间，语料是不可变的，
-天然适合缓存。
-
-- 缓存 key：`(library_id, active_generation_ids 排序后的哈希)`。
-- 缓存内容：已经分词、统计好词频/IDF 的 `Bm25Index` 实例。
-- 失效时机：`document-ingest-workflow` 完成 `activate`（`src/worker/workflows.ts`）或
-  `generation.cleanup` 完成后，通过 Redis Pub/Sub 广播失效事件（多实例 Web 场景下需要跨进程失效，
-  不能只做进程内缓存）。
-- 兜底：缓存未命中或失效事件丢失时，按现有逻辑重建，只是增加了首次查询的延迟，不影响正确性。
-- 收益：绝大多数查询（generation 没变化期间）从"O(corpus size) 现算"降为"O(1) 缓存命中 + 只对
-  query 分词打分"，收益立竿见影,改动量小,不涉及数据模型变更。
-
-### A.3 长期方案（架构性优化）：迁移到 Qdrant 原生稀疏向量,去掉 `listCorpus`
-
-更彻底的做法是不再自己维护一套 BM25，而是用 Qdrant（当前版本 `v1.13.2`，`docker-compose.yml`）
-原生支持的 **稀疏向量（sparse vector）** 能力：
-
-- Ingest 阶段，除了写入稠密向量，额外用 BM25 风格的稀疏编码器（如 fastembed 的
-  `Qdrant/bm25`）为每个 chunk 生成稀疏向量，一并写入同一个 Qdrant point。
-- 检索阶段，用 Qdrant 的 `query` API 一次请求内做 **dense + sparse 服务端融合**（Qdrant 原生支持
-  RRF/DBSF 融合策略），不再需要应用层 `listCorpus` 全量拉取 + 内存重建索引。
-- 收益：词法检索的索引维护、分词、IDF 计算全部下沉到 Qdrant 服务端持久化索引里，天然支持增量更新
-  （新文档写入即可检索，不需要缓存失效逻辑），且不再受限于 `corpusLimit`，可以覆盖全量语料而不是
-  截断到 10,000 个点，扩展性和检索质量同时提升。
-- 代价：需要改动 ingest 写入路径（`src/core/ingest/qdrant-write-store.ts`）为每个 chunk 额外算一份
-  稀疏向量，以及检索路径（`retrieval-service.ts`）改为单次 Qdrant 查询而不是"稠密查询 + 应用层
-  BM25 + RRF"三步走。这是一次架构级改动，建议作为独立的技术任务排期，不和上面的短期缓存方案二选一
-  ——短期缓存可以先上线止血，长期方案按容量评估后再排期。
-
-### A.4 建议顺序
-
-先做 A.2（1-2 天工作量，止住性能退化），再评估是否需要 A.3（视客户库规模是否真的逼近或超过
-`corpusLimit` 而定；如果首发客户库规模在千到万级文档，A.2 可能已经足够支撑相当长时间）。
-
----
-
-## 附录 B：临时会话的可追溯性问题
-
-### B.1 现状问题
-
-`PRODUCT.md` 的会话模型是"默认临时 → 进程内短记忆 → 关闭/刷新可能丢失；主动归档 → 写入
-thread + turns"。对应到代码：
-
-- 没有 `thread_id` 时，`persistConversation`（`src/server/http/ask/native-handler.ts`）只把问答
-  文本写入 Redis 的 `SessionMemoryStore`（有 TTL）。
-- `retrieval_debug` / `judgement` / `trace_id` 这些调试信息**只存在于当次 HTTP 响应里**，前端
-  `AskTraceDrawer` 展示的 JSON，如果用户没有手动复制 `trace_id`、也没有归档这次会话，服务端事后
-  完全查不到——它没有被持久化在任何地方。
-
-后果：客户投诉"某次回答有问题"，但对方没有归档、也没复制 trace_id，支持人员没有任何办法定位。
-
-### B.2 方案：轻量 `ask_traces` 表,只记元数据不记内容
-
-在不违反"默认临时、不强制入库问答内容"这条产品承诺的前提下，增加一张**只存元数据、不存问答原文**
-的轻量表，让每一次 Ask 调用（无论是否归档）都留一条可按 `trace_id` 查询的记录：
-
-```sql
-create table app.ask_traces (
-    trace_id            uuid primary key,
-    organization_id     uuid not null references app.organizations(id),
-    workspace_id        uuid not null references app.workspaces(id),
-    principal_id        uuid not null,
-    library_id          uuid not null,
-    thread_id           uuid,              -- 有值说明这次会话后续被归档了
-    session_id          varchar(256),
-    query_type          varchar(32),
-    retrieval_mode      varchar(16),
-    refused             boolean not null default false,
-    refuse_reason       varchar(64),
-    used_hybrid         boolean,
-    used_rerank         boolean,
-    latency_ms          integer,
-    error_code          varchar(128),      -- 出错时的分类，便于故障统计
-    created_at          timestamptz not null default now()
-);
-
-create index ask_traces_org_created_idx on app.ask_traces (organization_id, created_at);
-create index ask_traces_workspace_created_idx on app.ask_traces (workspace_id, created_at);
+```text
+request_id -> otel_trace_id -> route/retrieve/judge/generate spans
 ```
 
-- **不存问答原文、不存引用内容**——只存"这次调用发生过、走了什么路径、结果怎样"，不破坏"临时会话
-  不落库内容"的隐私边界。
-- 写入时机：`handleNativeAskRequest` 在拿到 `state` 之后、返回响应之前，异步写一条（失败也不影响
-  主流程返回，参照现有 `persistExchange` 的 fail-soft 模式）。
-- 保留策略：按时间滚动清理（比如保留 90 天），配置项化，避免无限增长——这张表的定位是"短期支持
-  排障用的元数据索引"，不是长期审计留存（长期审计已经有 `audit_logs` 覆盖管理操作）。
-- 支持人员拿到客户报的 `trace_id`，先查 `ask_traces` 拿到 `thread_id`/`workspace_id`/发生时间等
-  上下文，如果这次会话恰好被归档了，再去 `app.turns` 里查完整内容和调试信息；如果部署了 Langfuse
-  （见正文第 2 节），则可以直接用同一个 `trace_id` 去 Langfuse 里查到完整的 prompt/completion 和
-  逐节点执行详情——这也是为什么第 4 节强调 `trace_id` 必须和 OTel/Langfuse 的 trace id 是同一个值。
+异步生命周期：
 
-### B.3 与主文档可观测性方案的关系
+```text
+上传 request trace -> enqueue span
+                         -- Span Link --> worker attempt trace
+                                           -> parse/chunk/embed/index/activate
+```
 
-一旦第 2 节的 Langfuse + OTel 方案落地，这个问题会被自然覆盖大半——Langfuse 的 trace 记录独立于
-"是否归档会话"这个业务开关，每次 Ask 调用无论是否归档都会有完整的 Langfuse trace（受 Langfuse 自身
-的数据保留策略控制，与 `PRODUCT.md` 的会话归档语义是两回事,需要在 Langfuse 侧单独配置合理的保留期
-和内容脱敏规则）。`ask_traces` 表的价值在于：即便是还没上观测栈的"基础版"客户，也有一个成本极低的
-兜底,不需要等到完整可观测性栈落地才能解决这个支持痛点。
+DBOS 排队可能持续很久，任务也可能重试或恢复，因此不得构造跨越数小时或数天的单一父子 Trace。
+每次 attempt 使用新 Trace，通过 OTel **Span Link** 关联创建请求，并通过 `job_id`/`workflow_id` 关联
+业务生命周期。日志和指标携带这些标识，但不得把 organization、workspace、document、request 等高基数
+字段作为 Prometheus label；它们属于日志或 Trace attribute。
+
+## 5. 数据安全与保留
+
+1. 日志、指标和 Trace 默认不包含问题、回答、Prompt、引用正文、文档正文、密钥或认证头。
+2. 所有查询、原生看板和导出都必须强制 organization、workspace 与角色范围，支持人员不能绕过 ACL。
+3. `request_id` 等关联标识不应成为授权凭证；仅凭一个 ID 不能读取其他租户诊断数据。
+4. Prometheus 标签必须保持低基数；租户和资源维度进入结构化日志、Trace 或受控数据库聚合。
+5. 默认保留期应有限，并为日志、Trace、指标、`ask_runs` 和 Langfuse 分别配置。
+6. 观测数据与业务备份分开定义；可重建的短期观测数据不应无意扩大客户 RPO/RTO。
+7. 导出到客户外部平台前必须经过 Collector 脱敏和允许列表处理。
+
+## 6. 版本与商业边界
+
+| 交付形态 | 默认状态 | 目标用户 | 完整目标能力 |
+|---|---|---|---|
+| UnoRAG 标准版 | 默认启用 | 中小企业 | 原生运维中心、`ask_runs`、Pino JSON、`/metrics`、基础告警和标准 OTLP 接口 |
+| UnoRAG Ops | 选装 | 中型企业、集成商、运维团队 | Collector、Prometheus/Grafana、Loki/Tempo、Alertmanager 与预置规则 |
+| AI 工程增强 | 选装 | 调优与实施团队 | 自托管 Langfuse、评测、Prompt、模型成本和实验工作流 |
+| 外部平台接入 | 按需配置 | 已有监控体系的客户 | OTLP、Prometheus、Webhook 和 Collector exporter |
+
+标准版必须独立可诊断；商业价值来自生产验证过的部署、看板、告警、保留策略、AI 质量闭环、升级支持
+和 SLA，而不是隐藏开放标准或让社区版成为不可运维的演示品。
+
+## 7. 实施顺序与验收
+
+### Phase 1A：核心诊断基础（已实现）
+
+- 统一 Request Context 和 Pino JSON schema；
+- 明确 `request_id`、`otel_trace_id`、`job_id`、`workflow_id` 契约；
+- 为 Ask 主路径产生真实 stages 和总耗时；
+- 建立 `app.ask_runs` 的开始/终态写入、批量保留删除和数据库租户约束；
+
+验收：核心单元和数据库约束测试覆盖 ID 传播、日志脱敏、成功/拒答/失败终态、跨 Workspace 外键拒绝
+和保留删除；观测写失败不改变 Ask 业务结果。
+
+### Phase 1B：原生运维闭环（下一阶段）
+
+- 实现原生运维中心最小闭环和基础 Webhook/邮件告警；
+- 暴露低基数 `/metrics`。
+- 增加 stale-running sweeper、按用户删除和正式保留调度。
+
+验收：不部署任何外部观测组件，也能定位一次 Ask、一次失败入库和一个 dead/stuck workflow；公共 API
+不泄漏内部调试信息；跨 Workspace 诊断数据零泄漏。
+
+### Phase 2：标准 Ops
+
+- 接入 OTel SDK 和 Collector；
+- 打通 Web、DBOS Worker、Provider、Qdrant 的 Span 与 Span Link；
+- 提供 Prometheus/Grafana、Loki/Tempo、Alertmanager 可选部署包；
+- 提供资源限制、采样、保留、认证和外部 exporter 配置。
+
+验收：从告警可跳转到指标、日志和具体 attempt trace；停用整套 Ops 后核心业务继续运行。
+
+### Phase 3：AI 工程增强
+
+- 接入自托管 Langfuse，默认 metadata-only；
+- 覆盖 LangGraph 与 Vercel AI SDK 的模型/Token/成本语义；
+- 导入现有黄金集，建立版本化 Prompt 和模型实验；
+- 验证内容采集开关、删除、权限和保留策略。
+
+验收：关闭内容采集时 Langfuse 中不存在问题、回答和文档正文；开启时必须有明确的 Workspace 管理动作
+和审计记录；Langfuse 不可用不影响 Ask。
+
+## 8. 非目标
+
+- 不用 Langfuse 替代 UnoRAG 原生运维中心或 Ask 调试 JSON；
+- 不把 Grafana、Tempo、Loki 或 Langfuse 变成核心请求依赖；
+- 不以单一 `trace_id` 强行覆盖业务请求和持久工作流的所有生命周期；
+- 不在本设计中决定 BM25 缓存或 Qdrant sparse 迁移，相关问题见
+  [混合检索设计](./hybrid-retrieval.md)；
+- 不因观测需要改变公共 Retrieve/Ask v1 的安全投影和临时会话语义。

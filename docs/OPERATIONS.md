@@ -9,8 +9,11 @@
 
 | 标识 | 用途 |
 |---|---|
-| `trace_id` / `request_id` | 串联 HTTP、检索、模型和结构化日志 |
-| `job_id` / `workflow_id` | 串联产品任务和 DBOS 执行 |
+| `request_id` | 对外稳定的请求关联号，用于报障和业务日志查询 |
+| `trace_id` | Retrieve/Ask v1 对 `request_id` 的兼容字段，不是 OTel Trace ID |
+| `otel_trace_id` | 一次同步执行的 W3C Trace ID；仅在 OTel 已启用时存在 |
+| `job_id` / `workflow_id` | 串联产品任务、DBOS 持久工作流、重试和恢复 |
+| `attempt_trace_id` | Worker 每次执行尝试的独立 Trace；通过 Span Link 关联创建请求 |
 | `document_id` / `document_version_id` / `generation_id` | 核对 active pointer、对象与向量点 |
 | `organization_id` / `workspace_id` | 限定所有查询和运维动作的安全范围 |
 
@@ -35,10 +38,10 @@ mk_compose --profile ops run --rm inspect-lifecycle
 - Qdrant readiness、集合容量和检索错误；
 - 文档卷、备份卷和宿主机磁盘水位。
 
-UnoRAG 输出健康接口、结构化日志和 `inspect-lifecycle`，客户应接入既有 Prometheus、日志
-平台或云监控。交付时必须记录告警接收人、升级路径、日志保留期和脱敏策略。自建可观测性栈
-（LLM 追踪、指标、日志、分布式追踪）的目标架构设计见
-[design/observability.md](./design/observability.md)（尚未评审通过，未纳入交付承诺）。
+UnoRAG 当前输出健康接口、生命周期检查、核心路径 Pino JSON、Ask stages 与 `app.ask_runs` 诊断
+元数据，但尚未提供 Prometheus 指标、分布式追踪、原生运维中心与告警体系。客户可暂时将 JSON 日志
+接入既有平台；交付时必须记录告警接收人、升级路径、日志保留期和脱敏策略。核心原生、可选 Ops 与
+可选 Langfuse 的完整目标见 [design/observability.md](./design/observability.md)。
 
 ## 生命周期故障
 
@@ -101,6 +104,10 @@ just release v0.1.0 REGISTRY/NAMESPACE
 manifest 记录四个镜像 digest 和 DBOS application version。升级只能引用该不可变 manifest；
 扫描失败不得发布。SBOM、签名和 provenance 目前不是通用交付能力，客户合同要求时必须在
 该项目的发布门禁中补齐。
+
+`0021_ask_runs.sql` 会在既有 `libraries` 和 `workspace_service_keys` 上建立复合唯一索引。大型客户库
+升级时应安排维护窗口并先在副本测量锁等待；后续若这些表增长到需要在线迁移，应将索引改为独立的
+`CREATE UNIQUE INDEX CONCURRENTLY` 运维步骤。
 
 ## 事故记录
 

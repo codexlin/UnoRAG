@@ -1,9 +1,12 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
-
 import { getDatabase } from "@/db";
 import { auditLogs } from "@/db/schema";
+import {
+	logger,
+	resolveRequestId,
+	runWithObservabilityContext,
+} from "@/lib/observability";
 import { handleNativeAskRequest } from "@/server/http/ask/native-handler";
 import {
 	executeNativeRetrieval,
@@ -133,13 +136,11 @@ function publicErrorResponse(input: {
 
 function emitPublicApiUsage(payload: Record<string, unknown>): void {
 	try {
-		console.info(
-			JSON.stringify({
-				event: "knowledge.api.usage",
-				api_version: PUBLIC_API_VERSION_BODY,
-				...payload,
-			}),
-		);
+		logger.info({
+			event: "knowledge.api.usage",
+			api_version: PUBLIC_API_VERSION_BODY,
+			...payload,
+		});
 	} catch {
 		/* never fail the request on observability */
 	}
@@ -254,7 +255,7 @@ export async function handlePublicApiV1(input: {
 	target: "/v1/ask" | "/v1/retrieve";
 	injectAskOverrides?: boolean;
 }): Promise<Response> {
-	const requestId = randomUUID();
+	const requestId = resolveRequestId();
 	let auth: IntegrationAuthResult;
 	try {
 		auth = await requireIntegrationServiceKey(input.request, input.scope);
@@ -288,11 +289,20 @@ export async function handlePublicApiV1(input: {
 		});
 	}
 
-	return forwardIntegrationRag({
-		...input,
-		key: auth.key,
-		requestId,
-	});
+	return runWithObservabilityContext(
+		{
+			requestId,
+			organizationId: auth.key.organizationId,
+			workspaceId: auth.key.workspaceId,
+			principalId: auth.key.id,
+		},
+		() =>
+			forwardIntegrationRag({
+				...input,
+				key: auth.key,
+				requestId,
+			}),
+	);
 }
 
 /** Knowledge API gateway backed exclusively by the TypeScript data plane. */
@@ -561,6 +571,8 @@ export async function forwardIntegrationRag(input: {
 			}),
 			path: ["v1", "ask"],
 			identity,
+			requestId: input.requestId,
+			askRunPrincipal: { type: "service_key", id: input.key.id },
 		});
 	} catch {
 		const timedOut = timeoutSignal.aborted;

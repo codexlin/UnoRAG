@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
+import { logger } from "@/lib/observability";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 
 import {
@@ -62,13 +63,10 @@ export async function handleNativeRetrievalRequest(input: {
 				{ status: error.status, headers },
 			);
 		}
-		console.error(
-			JSON.stringify({
-				event: "retrieval.native.failed",
-				request_id: requestId,
-				error: error instanceof Error ? error.name : "UnknownError",
-			}),
-		);
+		logger.error({
+			event: "retrieval.native.failed",
+			error: error instanceof Error ? error.name : "UnknownError",
+		});
 		return Response.json(
 			{ detail: "Retrieve service unavailable" },
 			{ status: 503, headers },

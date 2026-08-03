@@ -12,6 +12,7 @@ import {
 } from "./contracts";
 import { UnknownDurableJobError } from "./errors";
 import type { DurableOperationPort, WorkerPorts } from "./ports";
+import { durableWorkflowId } from "./workflow-id";
 import {
 	createDocumentAclProjectionWorkflow,
 	createDocumentDeleteWorkflow,
@@ -55,6 +56,21 @@ export interface RegisteredDurableWorkflows {
 	) => Promise<DurableWorkflowResult>;
 }
 
+function withWorkflowContext<I extends DurableJobInput>(
+	workflow: (input: I) => Promise<DurableWorkflowResult>,
+): (input: I) => Promise<DurableWorkflowResult> {
+	return (input) =>
+		runWithObservabilityContext(
+			{
+				organizationId: input.organizationId,
+				workspaceId: input.workspaceId,
+				jobId: input.jobId,
+				workflowId: durableWorkflowId(input),
+			},
+			() => workflow(input),
+		);
+}
+
 export function registerDurableWorkflows(
 	registrar: WorkflowRegistrar,
 	ports: WorkerPorts,
@@ -62,7 +78,7 @@ export function registerDurableWorkflows(
 ): RegisteredDurableWorkflows {
 	return {
 		documentIngest: registrar.register(
-			createDocumentIngestWorkflow(ports, operations),
+			withWorkflowContext(createDocumentIngestWorkflow(ports, operations)),
 			{
 				name: durableWorkflowNames["document.ingest"],
 				maxRecoveryAttempts: 10,
@@ -70,7 +86,9 @@ export function registerDurableWorkflows(
 			},
 		),
 		documentAclProjection: registrar.register(
-			createDocumentAclProjectionWorkflow(ports, operations),
+			withWorkflowContext(
+				createDocumentAclProjectionWorkflow(ports, operations),
+			),
 			{
 				name: durableWorkflowNames["document.acl.project"],
 				maxRecoveryAttempts: 10,
@@ -78,7 +96,7 @@ export function registerDurableWorkflows(
 			},
 		),
 		documentDelete: registrar.register(
-			createDocumentDeleteWorkflow(ports, operations),
+			withWorkflowContext(createDocumentDeleteWorkflow(ports, operations)),
 			{
 				name: durableWorkflowNames["document.delete"],
 				maxRecoveryAttempts: 10,
@@ -86,7 +104,7 @@ export function registerDurableWorkflows(
 			},
 		),
 		generationCleanup: registrar.register(
-			createGenerationCleanupWorkflow(ports, operations),
+			withWorkflowContext(createGenerationCleanupWorkflow(ports, operations)),
 			{
 				name: durableWorkflowNames["generation.cleanup"],
 				maxRecoveryAttempts: 10,
@@ -121,3 +139,5 @@ export function workflowForJob(
 			throw new UnknownDurableJobError((input as { type?: unknown }).type);
 	}
 }
+
+import { runWithObservabilityContext } from "@/lib/observability";

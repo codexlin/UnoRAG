@@ -8,6 +8,11 @@ import type {
 	AppendConversationExchangeInput,
 	ConversationScope,
 } from "../../src/server/conversations/types";
+import {
+	AskRunsRepository,
+	type FinalizeAskRunInput,
+	type StartAskRunInput,
+} from "../../src/server/observability/ask-runs-repository";
 
 type ResolveFilename = (
 	request: string,
@@ -75,6 +80,10 @@ class FakeConversationRepository {
 		threadId: string;
 		input: AppendConversationExchangeInput;
 	}> = [];
+	readonly debugUpdates: Array<{
+		turnId: string;
+		debug: Record<string, unknown>;
+	}> = [];
 
 	constructor(private readonly threads: StoredThread[] = []) {}
 
@@ -100,7 +109,28 @@ class FakeConversationRepository {
 			throw new Error("thread not found");
 		}
 		this.exchanges.push({ scope, threadId, input });
-		return [];
+		return [
+			{ id: `user-${this.exchanges.length}`, role: "user" },
+			{ id: `assistant-${this.exchanges.length}`, role: "assistant" },
+		] as never;
+	}
+
+	async updateTurnDebug(
+		_scope: ConversationScope,
+		_threadId: string,
+		turnId: string,
+		debug: Record<string, unknown>,
+	) {
+		this.debugUpdates.push({ turnId, debug });
+		const exchange = this.exchanges.at(-1);
+		if (exchange) exchange.input.assistant.debug = debug;
+		return { id: turnId };
+	}
+}
+
+class FailingConversationRepository extends FakeConversationRepository {
+	async appendExchange(): Promise<never> {
+		throw new Error("private persistence failure");
 	}
 }
 
@@ -222,6 +252,25 @@ function repositoryInput(repository: FakeConversationRepository) {
 
 function runtimeFactory(runtime: FakeRuntime) {
 	return (() => runtime) as never;
+}
+
+function askRunRecorder() {
+	const starts: StartAskRunInput[] = [];
+	const finalizations: FinalizeAskRunInput[] = [];
+	const repository = new AskRunsRepository({
+		async start(input) {
+			starts.push(input);
+			return { id: "77777777-7777-4777-8777-777777777777" } as never;
+		},
+		async finalize(input) {
+			finalizations.push(input);
+			return { id: input.id, status: input.status } as never;
+		},
+		async deleteExpired() {
+			return 0;
+		},
+	});
+	return { repository, starts, finalizations };
 }
 
 function parseSse(text: string): Array<{ event: string; data: unknown }> {
@@ -364,51 +413,166 @@ test("sync ask returns public response and atomically appends the exchange", asy
 	assert.equal(body.persisted, true);
 	assert.equal(body.retrieval_mode, "hybrid");
 	assert.equal(JSON.stringify(body).includes(ORGANIZATION_ID), false);
+	const retrievalDebug = body.retrieval_debug as Record<string, unknown>;
+	const stages = retrievalDebug.stages as Array<{
+		stage: string;
+		duration_ms: number;
+		ok: boolean;
+	}>;
+	assert.deepEqual(
+		stages.map((stage) => stage.stage),
+		["generate", "persist"],
+	);
+	assert.equal(
+		stages.every((stage) => stage.duration_ms >= 0),
+		true,
+	);
+	assert.equal(
+		stages.every((stage) => stage.ok),
+		true,
+	);
+	assert.equal(typeof retrievalDebug.total_duration_ms, "number");
+	assert.equal(JSON.stringify(retrievalDebug).includes("违约金是多少"), false);
+	assert.equal(
+		JSON.stringify(retrievalDebug).includes("违约金为 200 元"),
+		false,
+	);
 	assert.deepEqual(runtime.invocations[0]?.history, [
 		{ role: "user", content: "上一问" },
 		{ role: "assistant", content: "上一答" },
 	]);
 	assert.equal(repository.exchanges.length, 1);
-	assert.deepEqual(repository.exchanges[0], {
-		scope: {
-			organizationId: ORGANIZATION_ID,
-			workspaceId: WORKSPACE_ID,
-			principalId: PRINCIPAL_ID,
-		},
-		threadId: THREAD_ID,
-		input: {
-			user: { role: "user", content: "违约金是多少？" },
-			assistant: {
-				role: "assistant",
-				content: "违约金为 200 元",
-				citations: [
-					{
-						id: "citation-1",
-						index: 1,
-						doc_id: "document-1",
-						document_id: "document-1",
-						title: "合同",
-						snippet: "违约金为 200 元",
-						score: 0.98,
-					},
-				],
-				debug: {
-					mode: "live",
-					refused: false,
-					refuse_reason: null,
-					query_type: "fact",
-					retrieval_plan: null,
-					retrieval_debug: {
-						retrievalMode: "hybrid",
-						hybridFailed: false,
-						rerankFailed: false,
-					},
-					judge: null,
-					table_execution: null,
-				},
-			},
-		},
+	assert.deepEqual(repository.exchanges[0]?.scope, {
+		organizationId: ORGANIZATION_ID,
+		workspaceId: WORKSPACE_ID,
+		principalId: PRINCIPAL_ID,
 	});
+	assert.equal(repository.exchanges[0]?.threadId, THREAD_ID);
+	assert.deepEqual(repository.exchanges[0]?.input.user, {
+		role: "user",
+		content: "违约金是多少？",
+	});
+	assert.equal(
+		repository.exchanges[0]?.input.assistant.content,
+		"违约金为 200 元",
+	);
+	assert.deepEqual(repository.exchanges[0]?.input.assistant.citations, [
+		{
+			id: "citation-1",
+			index: 1,
+			doc_id: "document-1",
+			document_id: "document-1",
+			title: "合同",
+			snippet: "违约金为 200 元",
+			score: 0.98,
+		},
+	]);
+	const archivedDebug = repository.exchanges[0]?.input.assistant
+		.debug as Record<string, unknown>;
+	assert.equal(archivedDebug.mode, "live");
+	assert.equal(archivedDebug.refused, false);
+	assert.equal(archivedDebug.query_type, "fact");
+	const archivedRetrievalDebug = archivedDebug.retrieval_debug as Record<
+		string,
+		unknown
+	>;
+	assert.deepEqual(
+		(
+			archivedRetrievalDebug.stages as Array<{ stage: string; ok: boolean }>
+		).map((stage) => stage.stage),
+		["generate", "persist"],
+	);
+	assert.equal(typeof archivedRetrievalDebug.total_duration_ms, "number");
+	assert.equal(repository.debugUpdates.length, 1);
+});
+
+test("Ask run uses the response request ID and reaches a privacy-safe terminal state", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const runs = askRunRecorder();
+	const requestId = "88888888-8888-4888-8888-888888888888";
+	const runtime = new FakeRuntime(askState(), ["答案"]);
+
+	const response = await handleNativeAskRequest({
+		request: request({ question: "敏感问题", library_id: LIBRARY_ID }),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		runtimeFactory: runtimeFactory(runtime),
+		requestId,
+		askRunsRepository: runs.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
+	});
+
+	assert.equal(response?.status, 200);
+	const body = (await response?.json()) as Record<string, unknown>;
+	assert.equal(body.trace_id, requestId);
+	assert.equal(runtime.invocations[0]?.trace_id, requestId);
+	assert.equal(runs.starts.length, 1);
+	assert.equal(runs.starts[0]?.requestId, requestId);
+	assert.deepEqual(runs.starts[0]?.principal, {
+		type: "user",
+		id: PRINCIPAL_ID,
+		threadId: null,
+	});
+	assert.equal(runs.finalizations.length, 1);
+	assert.equal(runs.finalizations[0]?.status, "completed");
+	assert.equal(runs.finalizations[0]?.queryType, "fact");
+	assert.equal(runs.finalizations[0]?.retrievalMode, "hybrid");
+	assert.equal(runs.finalizations[0]?.citationCount, 1);
+	assert.equal("question" in (runs.starts[0] ?? {}), false);
+	assert.equal("answer" in (runs.finalizations[0] ?? {}), false);
+});
+
+test("Ask run records refusal and runtime failure without changing HTTP behavior", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const refusedRuns = askRunRecorder();
+	const refused = await handleNativeAskRequest({
+		request: request({ question: "无法回答", library_id: LIBRARY_ID }),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		runtimeFactory: runtimeFactory(
+			new FakeRuntime(
+				askState({
+					refused: true,
+					refuse_reason: "insufficient_evidence",
+					answer: "证据不足",
+					citations: [],
+				}),
+			),
+		),
+		askRunsRepository: refusedRuns.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
+	});
+	assert.equal(refused?.status, 200);
+	assert.equal(refusedRuns.finalizations[0]?.status, "refused");
+	assert.equal(
+		refusedRuns.finalizations[0]?.status === "refused" &&
+			refusedRuns.finalizations[0].refuseReason,
+		"insufficient_evidence",
+	);
+
+	const failedRuns = askRunRecorder();
+	const failed = await handleNativeAskRequest({
+		request: request({ question: "触发失败", library_id: LIBRARY_ID }),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		runtimeFactory: runtimeFactory(
+			new FakeRuntime(askState(), [], new Error("private provider failure")),
+		),
+		askRunsRepository: failedRuns.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
+	});
+	assert.equal(failed?.status, 503);
+	assert.equal(failedRuns.finalizations[0]?.status, "failed");
+	assert.equal(failedRuns.finalizations[0]?.errorCode, "Error");
 });
 
 test("stream ask preserves SSE order and persists after all tokens", async () => {
@@ -448,11 +612,94 @@ test("stream ask preserves SSE order and persists after all tokens", async () =>
 	const done = events.at(-1)?.data as Record<string, unknown> | undefined;
 	assert.equal(done?.persisted, true);
 	assert.equal(done?.answer, "违约金为 200 元");
+	const doneDebug = done?.retrieval_debug as Record<string, unknown>;
+	assert.deepEqual(
+		(
+			doneDebug.stages as Array<{
+				stage: string;
+				ok: boolean;
+			}>
+		).map((stage) => [stage.stage, stage.ok]),
+		[
+			["generate", true],
+			["persist", true],
+		],
+	);
+	assert.equal(typeof doneDebug.total_duration_ms, "number");
+	assert.equal(JSON.stringify(doneDebug).includes("违约金是多少"), false);
+	assert.equal(JSON.stringify(doneDebug).includes("违约金为 200 元"), false);
 	assert.equal(repository.exchanges.length, 1);
 	assert.equal(
 		repository.exchanges[0]?.input.assistant.content,
 		"违约金为 200 元",
 	);
+});
+
+test("stream aborted before token iteration finalizes the Ask run as cancelled", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const runs = askRunRecorder();
+	const controller = new AbortController();
+	controller.abort();
+	const abortedRequest = new Request("http://local/v1/ask/stream", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ question: "取消请求", library_id: LIBRARY_ID }),
+		signal: controller.signal,
+	});
+	const response = await handleNativeAskRequest({
+		request: abortedRequest,
+		path: ["v1", "ask", "stream"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		runtimeFactory: runtimeFactory(new FakeRuntime(askState(), ["不应生成"])),
+		askRunsRepository: runs.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
+	});
+
+	assert.equal(response?.status, 200);
+	const events = parseSse((await response?.text()) ?? "");
+	assert.equal(events.at(-1)?.event, "error");
+	assert.equal(runs.finalizations.length, 1);
+	assert.equal(runs.finalizations[0]?.status, "cancelled");
+	assert.equal(runs.finalizations[0]?.errorCode, "request_aborted");
+});
+
+test("persist stage reports a sanitized failure without failing the answer", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const runtime = new FakeRuntime(askState(), ["可用回答"]);
+	const response = await handleNativeAskRequest({
+		request: request({
+			question: "测试持久化",
+			library_id: LIBRARY_ID,
+			thread_id: THREAD_ID,
+		}),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(
+			new FailingConversationRepository([activeThread()]),
+		),
+		runtimeFactory: runtimeFactory(runtime),
+	});
+
+	assert.equal(response?.status, 200);
+	const body = (await response?.json()) as Record<string, unknown>;
+	assert.equal(body.persisted, false);
+	assert.equal(body.persist_error, "conversation persistence failed");
+	const debug = body.retrieval_debug as Record<string, unknown>;
+	assert.deepEqual(
+		(debug.stages as Array<{ stage: string; ok: boolean }>).map((stage) => [
+			stage.stage,
+			stage.ok,
+		]),
+		[
+			["generate", true],
+			["persist", false],
+		],
+	);
+	assert.equal(JSON.stringify(debug).includes("测试持久化"), false);
+	assert.equal(JSON.stringify(debug).includes("可用回答"), false);
 });
 
 test("temporary session memory is scoped, bounded, and receives policy settings", async () => {

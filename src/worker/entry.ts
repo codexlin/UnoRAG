@@ -11,7 +11,7 @@ async function main(): Promise<void> {
 			return;
 		}
 		stopping = true;
-		process.stderr.write(`DBOS worker received ${signal}; shutting down\n`);
+		logger.info({ event: "worker.shutdown.requested", signal });
 		await shutdownDbos();
 		await ports.close?.();
 	};
@@ -25,14 +25,20 @@ async function main(): Promise<void> {
 		await ports.close?.();
 		throw error;
 	}
-	process.stdout.write(
-		`DBOS worker started application=${config.applicationVersion} executor=${config.executorId}\n`,
-	);
+	logger.info({
+		event: "worker.started",
+		application_version: config.applicationVersion,
+		executor_id: config.executorId,
+	});
 }
 
 main().catch(async (error: unknown) => {
-	const message = error instanceof Error ? error.message : String(error);
-	process.stderr.write(`DBOS worker failed to start: ${message}\n`);
+	logger.fatal({
+		event: "worker.start_failed",
+		error: error instanceof Error ? error.name : "UnknownError",
+	});
 	await shutdownDbos();
 	process.exitCode = 1;
 });
+
+import { logger } from "@/lib/observability";

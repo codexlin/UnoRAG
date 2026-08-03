@@ -1,6 +1,11 @@
 import "server-only";
 
 import {
+	logger,
+	resolveRequestId,
+	runWithObservabilityContext,
+} from "@/lib/observability";
+import {
 	handleNativeConversationRequest,
 	isNativeConversationPath,
 } from "@/server/http/ask/conversation-handler";
@@ -76,9 +81,20 @@ function nativeRequest(
 	});
 }
 
-export async function proxyRagRequest(
+export function proxyRagRequest(
 	request: Request,
 	pathSegments: string[],
+): Promise<Response> {
+	const requestId = resolveRequestId();
+	return runWithObservabilityContext({ requestId }, () =>
+		proxyRagRequestInContext(request, pathSegments, requestId),
+	);
+}
+
+async function proxyRagRequestInContext(
+	request: Request,
+	pathSegments: string[],
+	requestId: string,
 ): Promise<Response> {
 	const path = pathSegments.filter(
 		(segment) => segment && segment !== "." && segment !== "..",
@@ -126,81 +142,96 @@ export async function proxyRagRequest(
 		);
 	}
 
-	try {
-		const hasBody = request.method !== "GET" && request.method !== "HEAD";
-		let body: Uint8Array | undefined =
-			hasBody && request.body
-				? new Uint8Array(await request.arrayBuffer())
-				: undefined;
-		const url = new URL(request.url);
-		const requestedLibraryId =
-			url.searchParams.get("library_id") ?? (await bodyLibraryId(body));
-		if (
-			requestedLibraryId &&
-			!(await findAuthorizedLibrary(identity, requestedLibraryId))
-		) {
-			return Response.json({ detail: "library not found" }, { status: 404 });
-		}
-		if (isAskPath(path)) {
-			const injected = await withAskOverrides(body, identity.workspaceId);
-			if (!injected.ok) {
+	return runWithObservabilityContext(
+		{
+			organizationId: identity.tenantId,
+			workspaceId: identity.workspaceId,
+			principalId: identity.principalId,
+		},
+		async () => {
+			try {
+				const hasBody = request.method !== "GET" && request.method !== "HEAD";
+				let body: Uint8Array | undefined =
+					hasBody && request.body
+						? new Uint8Array(await request.arrayBuffer())
+						: undefined;
+				const url = new URL(request.url);
+				const requestedLibraryId =
+					url.searchParams.get("library_id") ?? (await bodyLibraryId(body));
+				if (
+					requestedLibraryId &&
+					!(await findAuthorizedLibrary(identity, requestedLibraryId))
+				) {
+					return Response.json(
+						{ detail: "library not found" },
+						{ status: 404 },
+					);
+				}
+				if (isAskPath(path)) {
+					const injected = await withAskOverrides(body, identity.workspaceId);
+					if (!injected.ok) {
+						return Response.json(
+							{ detail: injected.detail },
+							{ status: injected.status },
+						);
+					}
+					body = injected.body;
+				}
+
+				const routedRequest = nativeRequest(request, body);
+				if (isNativeRetrievalPath(path)) {
+					return (
+						(await handleNativeRetrievalRequest({
+							request: routedRequest,
+							path,
+							identity,
+							requestId,
+						})) ?? Response.json({ detail: "not found" }, { status: 404 })
+					);
+				}
+				if (isNativeAskPath(path)) {
+					return (
+						(await handleNativeAskRequest({
+							request: routedRequest,
+							path,
+							identity,
+							requestId,
+						})) ?? Response.json({ detail: "not found" }, { status: 404 })
+					);
+				}
+				if (isNativeConversationPath(path)) {
+					return (
+						(await handleNativeConversationRequest({
+							request: routedRequest,
+							path,
+							identity,
+						})) ?? Response.json({ detail: "not found" }, { status: 404 })
+					);
+				}
+				if (isNativeDocumentDownloadPath(path)) {
+					return (
+						(await handleNativeDocumentDownloadRequest({
+							request: routedRequest,
+							path,
+							identity,
+						})) ?? Response.json({ detail: "not found" }, { status: 404 })
+					);
+				}
 				return Response.json(
-					{ detail: injected.detail },
-					{ status: injected.status },
+					{ detail: "RAG path not exposed" },
+					{ status: 404 },
+				);
+			} catch (error) {
+				logger.error({
+					event: "rag.native.route.failed",
+					path: path.join("/"),
+					error: error instanceof Error ? error.name : "UnknownError",
+				});
+				return Response.json(
+					{ detail: "Knowledge service unavailable" },
+					{ status: 503 },
 				);
 			}
-			body = injected.body;
-		}
-
-		const routedRequest = nativeRequest(request, body);
-		if (isNativeRetrievalPath(path)) {
-			return (
-				(await handleNativeRetrievalRequest({
-					request: routedRequest,
-					path,
-					identity,
-				})) ?? Response.json({ detail: "not found" }, { status: 404 })
-			);
-		}
-		if (isNativeAskPath(path)) {
-			return (
-				(await handleNativeAskRequest({
-					request: routedRequest,
-					path,
-					identity,
-				})) ?? Response.json({ detail: "not found" }, { status: 404 })
-			);
-		}
-		if (isNativeConversationPath(path)) {
-			return (
-				(await handleNativeConversationRequest({
-					request: routedRequest,
-					path,
-					identity,
-				})) ?? Response.json({ detail: "not found" }, { status: 404 })
-			);
-		}
-		if (isNativeDocumentDownloadPath(path)) {
-			return (
-				(await handleNativeDocumentDownloadRequest({
-					request: routedRequest,
-					path,
-					identity,
-				})) ?? Response.json({ detail: "not found" }, { status: 404 })
-			);
-		}
-		return Response.json({ detail: "RAG path not exposed" }, { status: 404 });
-	} catch (error) {
-		console.error(
-			JSON.stringify({
-				event: "rag.native.route.failed",
-				path: path.join("/"),
-				error: error instanceof Error ? error.name : "UnknownError",
-			}),
-		);
-		return Response.json(
-			{ detail: "Knowledge service unavailable" },
-			{ status: 503 },
-		);
-	}
+		},
+	);
 }

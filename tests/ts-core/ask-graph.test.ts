@@ -109,6 +109,25 @@ test("fact route invokes real retrieve and generate ports", async () => {
 	assert.equal(result.query_type, "fact");
 	assert.deepEqual(result.retrieval_plan?.filters, { record_type: "text" });
 	assert.deepEqual(calls, ["retrieve", "generate"]);
+	const stages = result.retrieval_debug?.stages as Array<{
+		stage: string;
+		duration_ms: number;
+		ok: boolean;
+	}>;
+	assert.deepEqual(
+		stages.map((stage) => stage.stage),
+		["route", "plan", "rewrite", "retrieve", "judge", "prepare_generate"],
+	);
+	assert.equal(
+		stages.every((stage) => stage.duration_ms >= 0),
+		true,
+	);
+	assert.equal(
+		stages.every((stage) => stage.ok),
+		true,
+	);
+	assert.equal(typeof result.retrieval_debug?.total_duration_ms, "number");
+	assert.equal(JSON.stringify(stages).includes("What is the policy?"), false);
 });
 
 test("ambiguous route short-circuits to clarify", async () => {
@@ -166,6 +185,10 @@ test("retry broadens the query and returns to retrieve", async () => {
 	assert.equal(queries[0], "Annual leave");
 	assert.equal(queries[1], "Annual leave 关键词 概要");
 	assert.equal(result.refused, false);
+	const stages = result.retrieval_debug?.stages as Array<
+		Record<string, unknown>
+	>;
+	assert.equal(JSON.stringify(stages).includes("Annual leave"), false);
 });
 
 test("retry is bounded and fails closed after two retrieval attempts", async () => {
