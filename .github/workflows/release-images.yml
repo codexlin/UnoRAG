@@ -175,7 +175,7 @@ jobs:
           tags: ${{ steps.meta.outputs.worker_tags }}
 
       - name: Scan web image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.web_scan_ref }}
           format: table
@@ -184,7 +184,7 @@ jobs:
           severity: HIGH,CRITICAL
 
       - name: Scan web migrator image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.migrator_scan_ref }}
           format: table
@@ -193,7 +193,7 @@ jobs:
           severity: HIGH,CRITICAL
 
       - name: Scan ops image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.ops_scan_ref }}
           format: table
@@ -202,7 +202,7 @@ jobs:
           severity: HIGH,CRITICAL
 
       - name: Scan DBOS worker image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.worker_scan_ref }}
           format: table

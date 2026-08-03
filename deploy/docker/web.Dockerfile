@@ -12,7 +12,9 @@ RUN useradd --system --uid 10001 --create-home unorag \
 	&& corepack prepare pnpm@9.7.1 --activate
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile \
-	&& rm -rf /root/.local/share/pnpm/store /root/.cache
+	&& rm -rf /root/.local/share/pnpm/store /root/.cache \
+		/usr/local/lib/node_modules/npm \
+	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
 
 FROM node:22-bookworm-slim AS builder
 WORKDIR /repo
@@ -44,7 +46,9 @@ COPY package.json /tmp/app.package.json
 RUN node -e 'const fs=require("fs"); const app=JSON.parse(fs.readFileSync("/tmp/app.package.json","utf8")); fs.writeFileSync("package.json", JSON.stringify({name:"unorag-web-migrator",private:true,packageManager:"pnpm@9.7.1",scripts:{"db:migrate":"drizzle-kit migrate"},dependencies:{"drizzle-orm":app.dependencies["drizzle-orm"],pg:app.dependencies.pg,"drizzle-kit":app.devDependencies["drizzle-kit"]}},null,"\t")+"\n");' \
 	&& CI=true pnpm install \
 	&& test -x node_modules/.bin/drizzle-kit \
-	&& rm -rf /root/.local/share/pnpm/store /root/.cache /tmp/app.package.json
+	&& rm -rf /root/.local/share/pnpm/store /root/.cache /tmp/app.package.json \
+		/usr/local/lib/node_modules/npm \
+	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
 COPY --chown=unorag:unorag drizzle.config.ts ./
 COPY --chown=unorag:unorag drizzle ./drizzle
 # Referenced by drizzle.config schema path (migrate applies SQL in ./drizzle).
@@ -81,6 +85,8 @@ ENV NODE_ENV=production \
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends curl \
 	&& rm -rf /var/lib/apt/lists/* \
+		/usr/local/lib/node_modules/npm \
+	&& rm -f /usr/local/bin/npm /usr/local/bin/npx \
 	&& useradd --system --uid 10001 --create-home unorag
 
 # Next standalone output (see next.config.ts).

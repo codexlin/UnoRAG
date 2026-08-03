@@ -3,6 +3,11 @@
 	"version": "0.1.0",
 	"private": true,
 	"packageManager": "pnpm@9.7.1",
+	"pnpm": {
+		"overrides": {
+			"sharp": "0.35.3"
+		}
+	},
 	"scripts": {
 		"dev": "next dev --port 3000",
 		"build": "next build",
