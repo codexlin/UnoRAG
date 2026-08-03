@@ -27,8 +27,23 @@ const FIGURE_PROSE_PATTERN =
 	/(?:图\s*\d+|图表|折线图|柱状图|堆叠图|饼图|趋势图)/i;
 const PROSE_SUPERLATIVE_COMPARE_PATTERN =
 	/(?:最高|最低|最大|最小|最多|最少)[^，。？?]{0,16}(?:哪一|哪个|何种|什么)|(?:哪一|哪个|何种|什么)[^，。？?]{0,16}(?:最高|最低|最大|最小|最多|最少)/i;
+const SELF_CONTAINED_RETRIEVAL_PATTERN =
+	/(?:根据|依据|关于|针对|规定|要求|提到|说明|显示|列出|包括|中|里)/i;
+
+function hasSelfContainedRetrievalScope(question: string): boolean {
+	return (
+		Array.from(question.trim()).length >= 10 &&
+		SELF_CONTAINED_RETRIEVAL_PATTERN.test(question)
+	);
+}
 
 function executionQueryType(rawQueryType: string, question: string): string {
+	if (
+		rawQueryType === "ambiguous" &&
+		hasSelfContainedRetrievalScope(question)
+	) {
+		return "fact";
+	}
 	if (
 		["fact", "section_lookup"].includes(rawQueryType) &&
 		PROSE_SUPERLATIVE_COMPARE_PATTERN.test(question) &&
@@ -61,6 +76,9 @@ function factOverrideReason(question: string, fallback: string): string {
 	}
 	if (FIGURE_PROSE_PATTERN.test(question)) {
 		return `figure_prose_cue: ${fallback}`;
+	}
+	if (hasSelfContainedRetrievalScope(question)) {
+		return `self_contained_retrieval_cue: ${fallback}`;
 	}
 	return `prose_retrieval_cue: ${fallback}`;
 }

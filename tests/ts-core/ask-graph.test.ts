@@ -123,6 +123,21 @@ test("ambiguous route short-circuits to clarify", async () => {
 	assert.deepEqual(calls, []);
 });
 
+test("self-contained compound retrieval overrides an ambiguous model route", async () => {
+	const calls: string[] = [];
+	const graph = new AskGraphService(
+		createContext({ queryType: "ambiguous", calls }),
+	);
+	const result = await graph.invoke({
+		question:
+			"数据安全风险的应对措施中提到了几个等保标准？审计日志保留期多久？",
+	});
+	assert.equal(result.query_type, "fact");
+	assert.equal(result.refused, false);
+	assert.match(result.route_reason ?? "", /self_contained_retrieval_cue/);
+	assert.ok(calls.includes("retrieve"));
+});
+
 test("retry broadens the query and returns to retrieve", async () => {
 	let retrieveCalls = 0;
 	const queries: string[] = [];
