@@ -12,7 +12,7 @@ RUN useradd --system --uid 10001 --create-home unorag \
 	&& corepack prepare pnpm@9.7.1 --activate
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile \
-	&& rm -rf /root/.local/share/pnpm/store /root/.cache \
+	&& rm -rf /root/.local/share/pnpm/store \
 		/usr/local/lib/node_modules/npm \
 	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
 
