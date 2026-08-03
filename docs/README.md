@@ -25,3 +25,6 @@
 
 文档中的“已实现”描述代码能力；“已验收”只适用于证据中明确绑定的版本和环境。
 客户生产上线仍须按照 [RELEASE.md](./RELEASE.md) 完成目标环境签字。
+
+未评审的设计提案（如 [design/observability.md](./design/observability.md)）不进入本索引，
+在被接受前只从相关正式文档（如 [OPERATIONS.md](./OPERATIONS.md)）交叉引用。

@@ -36,7 +36,9 @@ mk_compose --profile ops run --rm inspect-lifecycle
 - 文档卷、备份卷和宿主机磁盘水位。
 
 UnoRAG 输出健康接口、结构化日志和 `inspect-lifecycle`，客户应接入既有 Prometheus、日志
-平台或云监控。交付时必须记录告警接收人、升级路径、日志保留期和脱敏策略。
+平台或云监控。交付时必须记录告警接收人、升级路径、日志保留期和脱敏策略。自建可观测性栈
+（LLM 追踪、指标、日志、分布式追踪）的目标架构设计见
+[design/observability.md](./design/observability.md)（尚未评审通过，未纳入交付承诺）。
 
 ## 生命周期故障
 
