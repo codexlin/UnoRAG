@@ -14,6 +14,7 @@ import {
 	type AskState,
 } from "@/core/ask-graph";
 import {
+	deriveDeterministicTablePlan,
 	executeTableQuery,
 	normalizeTablePlanForQuestion,
 	type TableDatasetInput,
@@ -371,13 +372,21 @@ export class NativeAskRuntime {
 							refuse_reason: "table_incomplete",
 						};
 					}
+					const candidateHeaders = candidates.map(({ tableId, headers }) => ({
+						tableId,
+						headers,
+					}));
+					const deterministicPlan = deriveDeterministicTablePlan(
+						state.question ?? "",
+						candidateHeaders,
+					);
+					if (deterministicPlan) {
+						return { table_query_plan: deterministicPlan };
+					}
 					const generatedPlan = await structured.planTable(
 						{
 							question: state.question ?? "",
-							tables: candidates.map(({ tableId, headers }) => ({
-								tableId,
-								headers,
-							})),
+							tables: candidateHeaders,
 						},
 						{ abortSignal: this.signal },
 					);

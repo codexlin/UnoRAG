@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+	deriveDeterministicTablePlan,
 	executeTableQuery,
 	normalizeTablePlanForQuestion,
 	parseTableNumber,
@@ -9,6 +10,131 @@ import {
 	TableExecutionResultSchema,
 	TableQueryPlanSchema,
 } from "../../src/core/ask-graph/table";
+
+test("deterministic planner covers explicit single-table golden operations", () => {
+	const quote = [
+		{
+			tableId: "quote",
+			headers: [
+				"序号",
+				"设备名称",
+				"品牌/型号",
+				"规格参数",
+				"数量",
+				"单价（元）",
+				"合计（元）",
+				"交货周期",
+			],
+		},
+	];
+	assert.deepEqual(
+		deriveDeterministicTablePlan(
+			"报价清单中有多少行设备条目？表头包含哪些列名？",
+			quote,
+		),
+		{
+			mode: "single",
+			tableId: "quote",
+			operation: "count",
+			selectColumns: [],
+			includeSummaryRows: false,
+			includeHeaders: true,
+		},
+	);
+	assert.deepEqual(
+		deriveDeterministicTablePlan(
+			"序号为1的设备是什么？单价和合计金额是多少？",
+			quote,
+		),
+		{
+			mode: "single",
+			tableId: "quote",
+			operation: "lookup",
+			entity: { column: "序号", value: "1", match: "exact" },
+			selectColumns: [],
+			includeSummaryRows: false,
+		},
+	);
+	assert.deepEqual(
+		deriveDeterministicTablePlan(
+			"报价清单中哪些设备的单价超过10万元？请列出设备名称和大致单价。",
+			quote,
+		),
+		{
+			mode: "single",
+			tableId: "quote",
+			operation: "filter",
+			where: { column: "单价（元）", operator: ">", value: "10万元" },
+			selectColumns: [],
+			includeSummaryRows: false,
+		},
+	);
+});
+
+test("deterministic planner handles min/max and defers ambiguous tables", () => {
+	const awards = [
+		{
+			tableId: "awards",
+			headers: ["序号", "项目名称", "中标金额(元)"],
+		},
+	];
+	assert.deepEqual(
+		deriveDeterministicTablePlan(
+			"中标金额最大和最小的项目分别是什么？",
+			awards,
+		),
+		{
+			mode: "single",
+			tableId: "awards",
+			operation: "minMax",
+			column: "中标金额(元)",
+			selectColumns: [],
+			includeSummaryRows: false,
+		},
+	);
+	assert.equal(
+		deriveDeterministicTablePlan("表中有多少行？", [
+			...awards,
+			{ tableId: "other", headers: ["序号"] },
+		]),
+		null,
+	);
+});
+
+test("deterministic planner selects a uniquely mentioned table by real headers", () => {
+	const tables = [
+		{
+			tableId: "quote",
+			headers: ["序号", "设备名称", "单价（元）", "合计（元）"],
+		},
+		{
+			tableId: "awards",
+			headers: ["序号", "项目名称", "采购单位", "中标供应商", "中标金额(元)"],
+		},
+	];
+	const quotePlan = deriveDeterministicTablePlan(
+		"报价清单中有多少行设备条目？表头包含哪些列名？",
+		tables,
+	);
+	assert.equal(quotePlan?.mode, "single");
+	assert.equal(
+		quotePlan?.mode === "single" ? quotePlan.tableId : null,
+		"quote",
+	);
+	const awardsPlan = deriveDeterministicTablePlan(
+		"序号25的项目名称、采购单位和中标供应商分别是什么？",
+		tables,
+	);
+	assert.equal(awardsPlan?.mode, "single");
+	assert.equal(
+		awardsPlan?.mode === "single" ? awardsPlan.tableId : null,
+		"awards",
+	);
+	assert.equal(
+		deriveDeterministicTablePlan("序号1的记录是什么？", tables),
+		null,
+	);
+});
 
 test("min/max wording normalizes a single-table sort plan to minMax", () => {
 	const normalized = normalizeTablePlanForQuestion(

@@ -22,4 +22,7 @@ export {
 	type TableDatasetInput,
 	type TableSourceRecord,
 } from "./normalize";
-export { normalizeTablePlanForQuestion } from "./planning";
+export {
+	deriveDeterministicTablePlan,
+	normalizeTablePlanForQuestion,
+} from "./planning";
