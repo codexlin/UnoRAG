@@ -8,6 +8,8 @@
 
 webch.cn, www.webch.cn {
 	encode gzip
+	@internalMetrics path /metrics /api/metrics
+	respond @internalMetrics 404
 
 	reverse_proxy web:3000
 

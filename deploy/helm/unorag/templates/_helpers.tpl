@@ -5,6 +5,32 @@ Expand the name of the chart.
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{/* OpenTelemetry environment shared by web and DBOS processes. */}}
+{{- define "unorag.otelEnv" -}}
+{{- $root := index . 0 -}}
+{{- $serviceName := index . 1 -}}
+- name: OTEL_SDK_DISABLED
+  value: {{ ternary "false" "true" $root.Values.observability.otel.enabled | quote }}
+{{- if $root.Values.observability.otel.enabled }}
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: {{ $root.Values.observability.otel.endpoint | quote }}
+- name: OTEL_EXPORTER_OTLP_PROTOCOL
+  value: "http/protobuf"
+- name: OTEL_TRACES_SAMPLER
+  value: {{ $root.Values.observability.otel.tracesSampler | quote }}
+- name: OTEL_TRACES_SAMPLER_ARG
+  value: {{ $root.Values.observability.otel.tracesSamplerArg | quote }}
+- name: OTEL_SERVICE_NAME
+  value: {{ $serviceName | quote }}
+- name: OTEL_EXPORTER_OTLP_HEADERS
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "unorag.secretName" $root }}
+      key: {{ $root.Values.observability.otel.headersSecretKey | quote }}
+      optional: true
+{{- end }}
+{{- end }}
+
 {{/*
 Create a default fully qualified app name.
 */}}

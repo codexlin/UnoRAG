@@ -1,0 +1,27 @@
+groups:
+  - name: unorag-core
+    rules:
+      - alert: UnoRAGMetricsTargetDown
+        expr: up{job="unorag-web"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: UnoRAG Web metrics target is unavailable
+      - alert: UnoRAGHighServerErrorRate
+        expr: |
+          sum(rate(unorag_web_requests_total{outcome="server_error"}[5m]))
+          /
+          clamp_min(sum(rate(unorag_web_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: UnoRAG server error rate is above 5 percent
+      - alert: UnoRAGCollectorExportFailures
+        expr: rate(otelcol_exporter_send_failed_spans_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: OpenTelemetry Collector cannot export spans

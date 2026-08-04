@@ -111,7 +111,8 @@ UnoRAG 当前不把以下方向作为核心承诺：
 优先级按“安全、恢复、可观测，再扩展能力”排列：
 
 1. **封闭发布边界**：digest-pinned 升级/回滚，模型与 ParserProvider 重启和幂等故障门禁。
-2. **私有部署产品化**：OIDC/SSO、S3/MinIO、Kubernetes NetworkPolicy/PDB/HPA、OpenTelemetry 仪表盘。
+2. **私有部署产品化**：OIDC/SSO、S3/MinIO、Kubernetes NetworkPolicy/PDB/HPA，以及 Ops Stack 的
+   客户环境容量与故障验收。
 3. **知识质量**：真实客户问题分类、引用 precision/coverage、Provider scorecard、ChartIR。
 4. **平台接口**：稳定 Documents/Versions/Jobs 公共 API、用户组管理和目录同步。
 

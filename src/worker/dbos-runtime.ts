@@ -1,4 +1,5 @@
 import { DBOS, DBOSClient, WorkflowQueue } from "@dbos-inc/dbos-sdk";
+import { tracingConfigured } from "@/lib/observability/telemetry";
 
 import type { WorkerRuntimeConfig } from "./config";
 import { type DurableJobInput, durableJobSchema } from "./contracts";
@@ -73,6 +74,9 @@ function setDbosConfig(
 		applicationVersion: config.applicationVersion,
 		executorID: config.executorId,
 		logLevel: config.logLevel,
+		tracingEnabled: tracingConfigured(),
+		enableOTLP: false,
+		otelAttributeFormat: "semconv",
 		runAdminServer: config.adminPort !== undefined,
 		adminPort: config.adminPort,
 		listenQueues,

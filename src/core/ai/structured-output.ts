@@ -5,6 +5,7 @@ import {
 	Output,
 } from "ai";
 import { z } from "zod";
+import { withActiveSpan } from "@/lib/observability/tracing";
 import { type TableQueryPlan, TableQueryPlanSchema } from "../ask-graph/table";
 
 const STRUCTURED_TEMPERATURE = 0;
@@ -188,23 +189,32 @@ export class StructuredOutputAdapter {
 					kind,
 					this.timeoutMs,
 				);
-				const raw = await Promise.race([
-					this.execute({
-						model: this.model,
-						instructions,
-						messages,
-						schema,
-						schemaName: kind,
-						temperature: STRUCTURED_TEMPERATURE,
-						abortSignal: operationSignal,
-					}),
-					new Promise<never>((_, reject) => {
-						timeout = setTimeout(() => {
-							timeoutController.abort(timeoutError);
-							reject(timeoutError);
-						}, this.timeoutMs);
-					}),
-				]);
+				const raw = await withActiveSpan(
+					"unorag.ai.structured",
+					{
+						"gen_ai.operation.name": "chat",
+						"unorag.ai.structured_kind": kind,
+						"unorag.retry.attempt": attempt,
+					},
+					() =>
+						Promise.race([
+							this.execute({
+								model: this.model,
+								instructions,
+								messages,
+								schema,
+								schemaName: kind,
+								temperature: STRUCTURED_TEMPERATURE,
+								abortSignal: operationSignal,
+							}),
+							new Promise<never>((_, reject) => {
+								timeout = setTimeout(() => {
+									timeoutController.abort(timeoutError);
+									reject(timeoutError);
+								}, this.timeoutMs);
+							}),
+						]),
+				);
 				const parsed = schema.safeParse(raw);
 				if (!parsed.success) {
 					throw new StructuredOutputValidationError(kind, parsed.error);

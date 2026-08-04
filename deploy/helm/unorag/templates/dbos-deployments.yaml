@@ -4,6 +4,9 @@
 {{- if and .Values.dbos.enabled (not .Values.config.openaiBaseUrl) (not .Values.config.llmBaseUrl) }}
 {{- fail "dbos.enabled=true requires config.openaiBaseUrl or config.llmBaseUrl" }}
 {{- end }}
+{{- if and .Values.observability.otel.enabled (not .Values.observability.otel.endpoint) }}
+{{- fail "observability.otel.enabled=true requires observability.otel.endpoint" }}
+{{- end }}
 {{- if .Values.dbos.enabled }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -41,6 +44,7 @@ spec:
               containerPort: 3001
               protocol: TCP
           env:
+            {{- include "unorag.otelEnv" (list . "unorag-dbos-worker") | nindent 12 }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -200,6 +204,7 @@ spec:
           workingDir: /repo
           command: ["./node_modules/.bin/tsx", "src/worker/control-entry.ts"]
           env:
+            {{- include "unorag.otelEnv" (list . "unorag-dbos-control") | nindent 12 }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

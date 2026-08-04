@@ -29,6 +29,7 @@ DBOS_SYSTEM_DATABASE_URL
 MIGRATOR_DATABASE_URL
 LLM_API_KEY
 MINERU_API_KEY             # optional, self-hosted or 302.AI MinerU auth
+OTEL_EXPORTER_OTLP_HEADERS # optional, customer Collector authentication
 ```
 
 The application and DBOS system DSNs must not point to the same database.
@@ -57,6 +58,24 @@ helm upgrade --install unorag ./deploy/helm/unorag \
 Run schema migration as a controlled release step by enabling the migration jobs
 defined in [`values.yaml`](./unorag/values.yaml). Migrations are forward-only;
 application rollback switches image pins and does not down-migrate data.
+
+## External OpenTelemetry Collector
+
+The chart does not install Grafana, Prometheus, Loki, Tempo, or Alertmanager.
+Kubernetes deployments should send telemetry to the customer's existing
+Collector or APM endpoint:
+
+```bash
+helm upgrade --install unorag ./deploy/helm/unorag \
+  --set config.openaiBaseUrl=http://llm \
+  --set observability.otel.enabled=true \
+  --set observability.otel.endpoint=http://otel-collector.monitoring:4318
+```
+
+The chart fails rendering when telemetry is enabled without an endpoint. The
+optional `OTEL_EXPORTER_OTLP_HEADERS` Secret key is injected only into runtime
+pods. Telemetry is fail-soft and must never become an application readiness
+dependency.
 
 ## Validate
 

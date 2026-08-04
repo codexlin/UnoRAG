@@ -35,6 +35,15 @@ cd deploy/compose
 ./scripts/install.sh
 ```
 
+需要集中指标、日志和 Trace 时，设置 `runtime.secret` 中的 `GRAFANA_ADMIN_PASSWORD` 后显式启用：
+
+```bash
+./scripts/install.sh --with-observability
+```
+
+该选项增加 Collector、Prometheus、Grafana、Loki、Tempo 和 Alertmanager，但不改变业务数据事实源。
+Grafana 默认仅监听 `127.0.0.1:3300`，其它观测后端不发布宿主机端口；停止它们不会停止 UnoRAG。
+
 必要 Secret 包括：
 
 - `POSTGRES_PASSWORD`
@@ -110,6 +119,8 @@ digest manifest，禁止直接使用浮动 `latest`。`upgrade.sh` 也接受带�
 cd deploy/compose
 ./scripts/backup.sh ./backups/pre-upgrade
 ./scripts/upgrade.sh --manifest /path/to/release-registry.env
+# 已部署 Ops Stack 时保留 OTLP 连接和看板：
+./scripts/upgrade.sh --manifest /path/to/release-registry.env --with-observability
 ```
 
 升级前应确认备份可读、生命周期巡检无 dead/stuck/pending ACL，并归档当前配置摘要。脚本随后：
@@ -146,6 +157,10 @@ CONFIRM=YES ./scripts/restore.sh ./backups/<backup-id>
 Chart 位于 [`deploy/helm/unorag`](../deploy/helm/unorag)，默认使用客户托管的 PostgreSQL、
 Qdrant 和 Redis。Helm starter 尚不承诺完整 HPA、PDB、NetworkPolicy 或 S3；这些能力应按
 客户基础设施和 [PRODUCT.md](./PRODUCT.md) 的当前边界评估。
+
+Helm 不安装官方单机 Ops Stack；Kubernetes 客户应复用现有 Collector/APM，设置
+`observability.otel.enabled=true` 与 `observability.otel.endpoint`。启用但未提供 endpoint 时 Chart
+会拒绝渲染。可选认证头通过 Runtime Secret 的 `OTEL_EXPORTER_OTLP_HEADERS` 注入。
 
 详细配置项见 [`deploy/README.md`](../deploy/README.md) 和
 [`deploy/helm/README.md`](../deploy/helm/README.md)。上线判定以 [RELEASE.md](./RELEASE.md) 为准。

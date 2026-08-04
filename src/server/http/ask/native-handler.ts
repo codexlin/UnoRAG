@@ -10,7 +10,12 @@ import {
 	finishAskTiming,
 } from "@/core/ask-graph";
 import { getDatabase } from "@/db";
-import { getObservabilityContext, logger } from "@/lib/observability";
+import {
+	getObservabilityContext,
+	logger,
+	recordActiveSpanFailure,
+	withActiveHttpSpan,
+} from "@/lib/observability";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { findAuthorizedLibrary } from "@/lib/server/library-access";
 import { ConversationRepository } from "@/server/conversations/repository";
@@ -402,6 +407,7 @@ async function startAskRun(input: {
 				: input.principal;
 		const result = await input.repository.start({
 			requestId: input.requestId,
+			otelTraceId: getObservabilityContext()?.otelTraceId ?? null,
 			organizationId: input.identity.tenantId,
 			workspaceId: input.identity.workspaceId,
 			libraryId: library.id,
@@ -469,6 +475,35 @@ export async function handleNativeAskRequest(input: {
 	observeMetrics?: boolean;
 }): Promise<Response | null> {
 	if (!isNativeAskPath(input.path)) return null;
+	return withActiveHttpSpan(
+		"unorag.ask",
+		{
+			"unorag.operation": "ask",
+			"unorag.organization.id": input.identity.tenantId,
+			"unorag.workspace.id": input.identity.workspaceId,
+			"request.id":
+				input.requestId ?? getObservabilityContext()?.requestId ?? "",
+			"http.request.method": input.request.method,
+			"unorag.ask.streaming": input.path[2] === "stream",
+		},
+		() => handleNativeAskRequestInSpan(input),
+		{ streamResponseBody: input.path[2] === "stream" },
+	);
+}
+
+async function handleNativeAskRequestInSpan(input: {
+	request: Request;
+	path: string[];
+	identity: AuthIdentity;
+	repository?: Repository;
+	memoryStore?: SessionMemoryStore;
+	runtimeFactory?: RuntimeFactory;
+	requestId?: string;
+	askRunsRepository?: AskRunsRepository | null;
+	askRunPrincipal?: AskRunPrincipal;
+	resolveLibrary?: LibraryResolver;
+	observeMetrics?: boolean;
+}): Promise<Response | null> {
 	const metricsStartedAt = performance.now();
 	let metricsSettled = false;
 	const settleMetrics = (outcome: WebMetricOutcome) => {
@@ -638,6 +673,7 @@ export async function handleNativeAskRequest(input: {
 				await settleActiveRun(state.refused ? "refused" : "completed", state);
 				settleMetrics(state.refused ? "refused" : "success");
 			} catch (error) {
+				recordActiveSpanFailure(error);
 				await settleActiveRun(
 					input.request.signal.aborted ? "cancelled" : "failed",
 					state,

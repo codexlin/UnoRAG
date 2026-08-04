@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { withActiveSpan } from "@/lib/observability/tracing";
 
 const RerankResponseSchema = z
 	.object({
@@ -49,6 +50,24 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 		signal?: AbortSignal;
 	}): Promise<RerankResult[]> {
 		if (!input.documents.length) return [];
+		return withActiveSpan(
+			"unorag.rerank",
+			{
+				"gen_ai.operation.name": "rerank",
+				"gen_ai.request.model": this.config.model,
+				"unorag.rerank.document_count": input.documents.length,
+				"unorag.rerank.top_n": Math.min(input.topN, input.documents.length),
+			},
+			() => this.rerankInSpan(input),
+		);
+	}
+
+	private async rerankInSpan(input: {
+		query: string;
+		documents: string[];
+		topN: number;
+		signal?: AbortSignal;
+	}): Promise<RerankResult[]> {
 		const response = await this.fetch(
 			`${this.config.baseUrl.replace(/\/$/, "")}/reranks`,
 			{

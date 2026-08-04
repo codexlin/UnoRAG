@@ -1,4 +1,5 @@
 import { type LanguageModel, type ModelMessage, streamText } from "ai";
+import { traceAsyncIterable } from "@/lib/observability/tracing";
 
 export const ANSWER_TEMPERATURE = 0.2;
 
@@ -81,14 +82,23 @@ export class AnswerStreamAdapter {
 		if (options.abortSignal?.aborted) {
 			throw new AnswerStreamAbortedError();
 		}
-		const tokens = await this.execute({
-			model: this.model,
-			instructions: CHAT_SYSTEM_PROMPT,
-			messages: buildAnswerMessages(input),
-			temperature: ANSWER_TEMPERATURE,
-			abortSignal: options.abortSignal,
-		});
-		for await (const token of tokens) {
+		const execute = this.execute;
+		const model = this.model;
+		const tokens = (async function* () {
+			const source = await execute({
+				model,
+				instructions: CHAT_SYSTEM_PROMPT,
+				messages: buildAnswerMessages(input),
+				temperature: ANSWER_TEMPERATURE,
+				abortSignal: options.abortSignal,
+			});
+			yield* source;
+		})();
+		for await (const token of traceAsyncIterable(
+			"unorag.ai.generate",
+			{ "gen_ai.operation.name": "chat" },
+			tokens,
+		)) {
 			if (options.abortSignal?.aborted) {
 				throw new AnswerStreamAbortedError();
 			}

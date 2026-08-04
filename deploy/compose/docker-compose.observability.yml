@@ -1,0 +1,191 @@
+services:
+  web:
+    environment:
+      OTEL_SDK_DISABLED: "false"
+      OTEL_SERVICE_NAME: unorag-web
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    networks:
+      - telemetry-ingest
+
+  dbos-worker:
+    environment:
+      OTEL_SDK_DISABLED: "false"
+      OTEL_SERVICE_NAME: unorag-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    networks:
+      - telemetry-ingest
+
+  dbos-control:
+    environment:
+      OTEL_SDK_DISABLED: "false"
+      OTEL_SERVICE_NAME: unorag-dbos-control
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    networks:
+      - telemetry-ingest
+
+  otel-collector:
+    profiles: ["observability"]
+    image: ${OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.135.0}
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    depends_on:
+      tempo:
+        condition: service_started
+      loki:
+        condition: service_started
+    networks:
+      - telemetry-ingest
+      - observability-backend
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  prometheus:
+    profiles: ["observability"]
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-10GB}
+      - --web.enable-lifecycle
+    volumes:
+      - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - alertmanager
+    networks:
+      - observability-backend
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  alertmanager:
+    profiles: ["observability"]
+    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.28.1}
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --data.retention=${ALERTMANAGER_RETENTION_TIME:-120h}
+    volumes:
+      - ./observability/alertmanager.yaml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    networks:
+      - observability-backend
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.25
+    pids_limit: 128
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  tempo:
+    profiles: ["observability"]
+    image: ${TEMPO_IMAGE:-grafana/tempo:2.8.2}
+    command: ["-config.file=/etc/tempo/config.yaml", "-config.expand-env=true"]
+    environment:
+      TEMPO_RETENTION_TIME: ${TEMPO_RETENTION_TIME:-72h}
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo/config.yaml:ro
+      - tempo_data:/var/tempo
+    networks:
+      - observability-backend
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  loki-storage-init:
+    profiles: ["observability"]
+    image: ${LOKI_IMAGE:-grafana/loki:3.5.3}
+    user: "0:0"
+    entrypoint: ["sh", "-c"]
+    command: ["chown -R 10001:10001 /var/loki"]
+    volumes:
+      - loki_data:/var/loki
+    network_mode: none
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN"]
+
+  loki:
+    profiles: ["observability"]
+    image: ${LOKI_IMAGE:-grafana/loki:3.5.3}
+    command: ["-config.file=/etc/loki/config.yaml", "-config.expand-env=true"]
+    environment:
+      LOKI_RETENTION_PERIOD: ${LOKI_RETENTION_PERIOD:-168h}
+    volumes:
+      - ./observability/loki.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/var/loki
+    depends_on:
+      loki-storage-init:
+        condition: service_completed_successfully
+    networks:
+      - observability-backend
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  grafana:
+    profiles: ["observability"]
+    image: ${GRAFANA_IMAGE:-grafana/grafana:12.1.1}
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3300}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ALLOW_EMBEDDING: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_PLUGIN_ADMIN_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+    networks:
+      - observability-backend
+      - grafana-access
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+networks:
+  telemetry-ingest:
+    driver: bridge
+    internal: true
+  observability-backend:
+    driver: bridge
+    internal: true
+  grafana-access:
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  alertmanager_data:
+  tempo_data:
+  loki_data:
+  grafana_data:

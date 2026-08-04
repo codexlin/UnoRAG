@@ -25,6 +25,7 @@ deploy/
       compose-env.sh        # mk_compose / --env-file 助手
       install.sh            # 安装：infra → migrate → app
       upgrade.sh            # 四镜像 pull、迁移、DBOS/Web 滚动升级
+      observability-smoke.sh # 可选 Ops Stack 数据源与容器健康检查
       backup.sh             # 维护窗口：PostgreSQL / DBOS / 对象 / Qdrant 冷备
       restore.sh            # 恢复（需显式确认）
       pilot-preflight.sh    # 隔离单测 + CI gate（可无 Compose）
@@ -51,6 +52,10 @@ cd deploy/compose
 # 健康：curl -sf http://localhost/api/rag/health
 ```
 
+需要官方单机 Ops Stack 时使用 `./scripts/install.sh --with-observability`。它提供 Collector、
+Prometheus/Grafana、Loki/Tempo 和 Alertmanager，Grafana 仅绑定宿主机回环地址；默认安装不启动这些
+组件，也不增加核心运行依赖。
+
 根目录 `docker-compose.yml` 仍只提供本机联调基础设施（Postgres/Qdrant/Redis）。
 客户式全栈安装请使用 `deploy/compose/`。
 
@@ -63,6 +68,7 @@ cd deploy/compose
 - migration 独立步骤（migrator 凭据，运行账号无 DDL）
 - 安装 / 升级 / 回滚 / 一致性备份 / 校验恢复 runbook 与脚本
 - restricted ACL 双指纹门禁、可重入回填与升级前零 pending 检查
+- 可选、具备进程资源限制和有限保留期的 OTel Ops Stack，以及外部 Collector 标准接口（磁盘配额由部署基础设施负责）
 
 ## Helm 起步
 

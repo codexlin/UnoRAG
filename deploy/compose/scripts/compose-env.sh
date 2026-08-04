@@ -93,6 +93,9 @@ _mk_run_compose() {
 	done < <(_mk_managed_env_keys "${_mk_files[@]}")
 
 	local -a _mk_file_args=(-f "${_MK_COMPOSE_DIR}/docker-compose.yml")
+	if [[ -n "${UNORAG_COMPOSE_BUILTIN_OVERLAY:-}" ]]; then
+		_mk_file_args+=(-f "${UNORAG_COMPOSE_BUILTIN_OVERLAY}")
+	fi
 	if [[ -n "${UNORAG_COMPOSE_OVERLAY:-}" ]]; then
 		local _mk_overlay="${UNORAG_COMPOSE_OVERLAY}"
 		if [[ "${_mk_overlay}" != /* ]]; then
@@ -119,6 +122,21 @@ mk_compose() {
 		-- \
 		--env-file "${_MK_CONFIG_DIR}/runtime.env" \
 		--env-file "${_MK_CONFIG_DIR}/runtime.secret" \
+		"$@"
+}
+
+# Runtime plus the official, opt-in observability stack. The customer overlay,
+# when configured, remains the final Compose layer.
+mk_compose_observability() {
+	mk_require_runtime_config || return 1
+	local UNORAG_COMPOSE_BUILTIN_OVERLAY="${_MK_COMPOSE_DIR}/docker-compose.observability.yml"
+	_mk_run_compose \
+		"${_MK_CONFIG_DIR}/runtime.env" \
+		"${_MK_CONFIG_DIR}/runtime.secret" \
+		-- \
+		--env-file "${_MK_CONFIG_DIR}/runtime.env" \
+		--env-file "${_MK_CONFIG_DIR}/runtime.secret" \
+		--profile observability \
 		"$@"
 }
 

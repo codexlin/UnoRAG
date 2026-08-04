@@ -1,3 +1,4 @@
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import pino, {
 	type DestinationStream,
 	type LogFn,
@@ -16,8 +17,33 @@ const SENSITIVE_KEYS = new Set([
 	"cookie",
 	"password",
 ]);
+const TELEMETRY_BODY_KEYS = new Set([
+	"event",
+	"component",
+	"operation",
+	"status",
+	"outcome",
+	"error",
+	"code",
+	"durationms",
+	"attempt",
+	"queue",
+	"signal",
+	"model",
+	"provider",
+]);
 
 type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
+
+const telemetryLogger = logs.getLogger("unorag");
+const TELEMETRY_SEVERITY: Record<LogLevel, SeverityNumber> = {
+	fatal: SeverityNumber.FATAL,
+	error: SeverityNumber.ERROR,
+	warn: SeverityNumber.WARN,
+	info: SeverityNumber.INFO,
+	debug: SeverityNumber.DEBUG,
+	trace: SeverityNumber.TRACE,
+};
 
 export type LoggerBindings = Record<string, unknown>;
 
@@ -91,11 +117,48 @@ function redactBindings(bindings: LoggerBindings): LoggerBindings {
 	return redactValue(bindings) as LoggerBindings;
 }
 
-function wrapLogger(sink: PinoLogger): ObservabilityLogger {
+function wrapLogger(
+	sink: PinoLogger,
+	telemetryBindings: LoggerBindings = {},
+): ObservabilityLogger {
 	const method = (level: LogLevel): LogFn =>
 		((...args: unknown[]) => {
+			if (!sink.isLevelEnabled(level)) return;
 			const sanitized = args.map((argument) => redactValue(argument));
 			(sink[level] as (...values: unknown[]) => void).apply(sink, sanitized);
+			try {
+				const first = sanitized[0];
+				const rawEvent =
+					first && typeof first === "object" && "event" in first
+						? String((first as { event?: unknown }).event ?? "")
+						: "";
+				const event = /^[a-z0-9_.:-]{1,128}$/i.test(rawEvent)
+					? rawEvent
+					: "log.event";
+				const active = getObservabilityContext();
+				telemetryLogger.emit({
+					eventName: event || undefined,
+					severityNumber: TELEMETRY_SEVERITY[level],
+					severityText: level.toUpperCase(),
+					body: safeTelemetryLogBody(telemetryBindings, first),
+					attributes: {
+						event,
+						...(active?.requestId ? { "request.id": active.requestId } : {}),
+						...(active?.organizationId
+							? { "unorag.organization.id": active.organizationId }
+							: {}),
+						...(active?.workspaceId
+							? { "unorag.workspace.id": active.workspaceId }
+							: {}),
+						...(active?.jobId ? { "unorag.job.id": active.jobId } : {}),
+						...(active?.workflowId
+							? { "unorag.workflow.id": active.workflowId }
+							: {}),
+					},
+				});
+			} catch {
+				// Telemetry is fail-soft; stdout remains the authoritative local sink.
+			}
 		}) as LogFn;
 
 	return {
@@ -106,9 +169,36 @@ function wrapLogger(sink: PinoLogger): ObservabilityLogger {
 		debug: method("debug"),
 		trace: method("trace"),
 		child(bindings) {
-			return wrapLogger(sink.child(redactBindings(bindings)));
+			const redacted = redactBindings(bindings);
+			return wrapLogger(sink.child(redacted), {
+				...telemetryBindings,
+				...redacted,
+			});
 		},
 	};
+}
+
+function safeTelemetryLogBody(
+	bindings: LoggerBindings,
+	first: unknown,
+): string {
+	try {
+		const fields = {
+			...bindings,
+			...(first && typeof first === "object"
+				? (first as Record<string, unknown>)
+				: {}),
+		};
+		const projected: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(fields)) {
+			if (TELEMETRY_BODY_KEYS.has(normalizedKey(key))) {
+				projected[key] = value;
+			}
+		}
+		return JSON.stringify(projected);
+	} catch {
+		return JSON.stringify({ event: "log.serialization_failed" });
+	}
 }
 
 export function createObservabilityLogger(

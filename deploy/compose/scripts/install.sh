@@ -7,6 +7,26 @@ cd "$ROOT"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/compose-env.sh"
 
+WITH_OBSERVABILITY=0
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--with-ops|--with-observability) WITH_OBSERVABILITY=1; shift ;;
+		-h|--help)
+			echo "usage: $0 [--with-observability]"
+			exit 0
+			;;
+		*) echo "unknown argument: $1" >&2; exit 1 ;;
+	esac
+done
+
+runtime_compose() {
+	if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
+		mk_compose_observability "$@"
+	else
+		mk_compose "$@"
+	fi
+}
+
 for file in ../config/runtime.env ../config/runtime.secret ../config/bootstrap.env; do
 	[[ -f "$file" ]] || {
 		echo "missing $file; run ./scripts/init-config.sh and fill it first" >&2
@@ -45,6 +65,14 @@ for name in UNORAG_WEB_DB_PASSWORD UNORAG_WORKER_DB_PASSWORD UNORAG_DBOS_DB_PASS
 	}
 done
 
+if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
+	GRAFANA_PW="$(mk_config_get GRAFANA_ADMIN_PASSWORD || true)"
+	[[ ${#GRAFANA_PW} -ge 16 ]] || {
+		echo "refusing Ops install: GRAFANA_ADMIN_PASSWORD must contain at least 16 characters" >&2
+		exit 1
+	}
+fi
+
 HTTP_PORT="$(mk_config_get HTTP_PORT || echo 80)"
 
 echo "==> building TypeScript runtime images"
@@ -63,14 +91,22 @@ echo "==> bootstrapping organization, workspace, and administrator"
 mk_compose_bootstrap --profile migrate run --rm bootstrap
 
 echo "==> starting DBOS worker and control loop"
-mk_compose up -d --wait dbos-worker dbos-control
+if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
+	echo "==> starting optional observability backends"
+	mk_compose_observability up -d tempo loki alertmanager otel-collector prometheus grafana
+fi
+runtime_compose up -d --wait dbos-worker dbos-control
 
 echo "==> reconciling and verifying lifecycle state"
 mk_compose --profile ops run --rm backfill-acl-projections
 mk_compose --profile ops run --rm inspect-lifecycle
 
 echo "==> starting the product edge"
-mk_compose up -d --wait web caddy
+runtime_compose up -d --wait web caddy
+
+if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
+	"${ROOT}/scripts/observability-smoke.sh"
+fi
 
 echo
 echo "install complete"
@@ -78,3 +114,6 @@ echo "  UI:     http://localhost:${HTTP_PORT}/"
 echo "  health: curl -sf http://localhost:${HTTP_PORT}/api/rag/health"
 echo "  runtime: Next.js control plane + native RAG + DBOS worker"
 echo "  parser: external HTTP providers selected by ParserProvider"
+if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
+	echo "  Grafana: http://127.0.0.1:$(mk_config_get GRAFANA_PORT || echo 3300)/"
+fi

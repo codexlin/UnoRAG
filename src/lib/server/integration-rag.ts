@@ -6,6 +6,7 @@ import {
 	logger,
 	resolveRequestId,
 	runWithObservabilityContext,
+	withActiveSpan,
 } from "@/lib/observability";
 import { handleNativeAskRequest } from "@/server/http/ask/native-handler";
 import {
@@ -480,12 +481,23 @@ export async function forwardIntegrationRag(input: {
 		const timeoutSignal = AbortSignal.timeout(PUBLIC_API_UPSTREAM_TIMEOUT_MS);
 		let native: NativeRetrievalResponse;
 		try {
-			native = await (input.retrieveExecutor ?? executeNativeRetrieval)({
-				identity,
-				payload,
-				requestId: input.requestId,
-				signal: AbortSignal.any([input.request.signal, timeoutSignal]),
-			});
+			native = await withActiveSpan(
+				"unorag.retrieve",
+				{
+					"unorag.operation": "retrieve",
+					"unorag.organization.id": identity.tenantId,
+					"unorag.workspace.id": identity.workspaceId,
+					"request.id": input.requestId,
+					"http.request.method": input.request.method,
+				},
+				() =>
+					(input.retrieveExecutor ?? executeNativeRetrieval)({
+						identity,
+						payload,
+						requestId: input.requestId,
+						signal: AbortSignal.any([input.request.signal, timeoutSignal]),
+					}),
+			);
 		} catch (error) {
 			if (timeoutSignal.aborted) {
 				const response = publicErrorResponse({

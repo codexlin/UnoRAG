@@ -1,7 +1,7 @@
 # UnoRAG 可观测性目标架构
 
-> 状态：核心诊断、原生运行中心、基础指标、组件健康、持久告警及可选 Webhook/邮件投递已实现；
-> OTel、Ops Stack 与 Langfuse 仍是后续交付；
+> 状态：核心诊断、原生运行中心、OpenTelemetry SDK、Compose Ops Stack、基础指标、组件健康、
+> 持久告警及可选 Webhook/邮件投递已实现；Langfuse 仍是后续交付；
 > 本文件同时标明当前能力和目标边界。
 >
 > 关联：[产品说明](../PRODUCT.md) · [架构](../ARCHITECTURE.md) · [运维指南](../OPERATIONS.md) · [混合检索设计](./hybrid-retrieval.md)
@@ -33,17 +33,19 @@ Ask、入库、检索或生命周期任务。
 | 归档会话调试信息 | 归档后相关调试字段随 `app.turns.debug` 保存 |
 | 解析诊断 | `parser_report` 已记录 ParserProvider、降级原因和部分质量指标 |
 | 生命周期诊断 | 产品 Job、DBOS workflow、进度、重试和取消已有业务状态 |
-| 关联上下文与日志 | Browser/Public API 和 DBOS workflow 已接入 AsyncLocalStorage 上下文与 Pino JSON |
+| 关联上下文与日志 | Browser/Public API 和 DBOS workflow 已接入 AsyncLocalStorage、Pino JSON 与 OTel SDK |
 | Ask 执行记录 | `app.ask_runs` 已通过 `0021_ask_runs.sql` 落地隐私安全的开始/终态元数据 |
 | 运行健康与告警 | `0022_easy_synch.sql` 已落地作用域健康快照、告警状态机、不可变转换和持久投递记录 |
 
 TypeScript Ask 主路径现已生成实际执行节点、Token 生成、持久化的 `retrieval_debug.stages` 和
 `total_duration_ms`。当前粒度覆盖路由、计划、重写、检索、裁决、表格路径、生成准备、真实生成和
-持久化；Embedding、dense/lexical、fusion、rerank 等 Provider 子阶段仍待进一步拆分。
+持久化；OTel Span 进一步覆盖 Ask、Retrieve、生成、结构化输出、Embedding、Rerank 与 Qdrant 边界。
+dense/lexical、fusion 等检索内部子阶段仍可按实际调优需要继续细分。
 
 当前已有核心路径 Pino JSON、上下文传播、低基数 Prometheus 指标、原生运行中心和产品告警。
-尚未实现 OpenTelemetry SDK/Collector、集中日志、分布式追踪和可选 Ops Stack；基础日志与原生告警
-不等于这些增强能力已经落地。
+OpenTelemetry 默认关闭并 fail-soft；Compose 可显式启用 Collector、Prometheus、Grafana、Loki、
+Tempo 与 Alertmanager。Kubernetes Chart 只提供到客户托管 Collector 的标准 OTLP 接口，不替客户
+安装第二套监控平台。
 
 ## 3. 三层架构
 
@@ -53,7 +55,7 @@ flowchart TB
 
     subgraph Core["第一层：UnoRAG Core，默认启用"]
         App["Next.js Web / DBOS Worker"]
-        Context["Request Context + Pino\nOTel SDK（目标）"]
+        Context["Request Context + Pino\nOTel SDK"]
         DB["PostgreSQL\nask_runs / jobs / alerts"]
         Metrics["/metrics（已实现）"]
         App --> Context
@@ -175,19 +177,25 @@ Ops Stack 随官方部署包提供，但不默认启动，适合有运维团队�
 
 - OpenTelemetry Collector：统一接收、处理、采样和导出；
 - Prometheus + Grafana：指标、看板和容量趋势；
-- Loki：集中结构化日志；
+- Loki：集中 UnoRAG 结构化应用事件（全容器 stdout 由部署方日志采集器负责）；
 - Tempo：跨 Web、Worker、Provider、Qdrant 等组件的分布式 Trace；
 - Alertmanager：细粒度告警、抑制、分组和升级。
 
-目标部署接口：
+Compose 部署接口：
 
 ```bash
-./install.sh --with-ops
+./scripts/install.sh --with-observability
 ```
 
+该模式只把 Grafana 绑定到宿主机回环地址；Collector、Prometheus、Loki、Tempo 和 Alertmanager
+不发布宿主机端口。Prometheus 从容器内抓取 `/metrics`，Caddy 对公网 `/metrics` 与
+`/api/metrics` 返回 404。默认采样率为 10%，日志 7 天、Trace 72 小时、指标 15 天，均可通过部署
+配置调整。Alertmanager 默认使用本地空 receiver，避免和 UnoRAG 原生 Webhook/邮件告警重复投递。
+
 客户已有 ELK、Splunk、Datadog 或公司级 OTel 平台时，应允许只配置 Collector exporter，不要求重复
-部署本地全家桶。Ops 数据采用有限保留、采样和资源上限；Grafana 不直接暴露公网，观测存储故障不得
-影响核心服务。
+部署本地全家桶。Ops 数据采用有限保留、采样及进程 CPU/内存上限；Docker 命名卷不提供磁盘硬配额，
+生产必须置于有容量告警和配额控制的文件系统，或改用客户托管存储。Grafana 不直接暴露公网，观测
+存储故障不得影响核心服务。
 
 ### 3.3 第三层：可选 Langfuse
 
@@ -295,14 +303,17 @@ DBOS 排队可能持续很久，任务也可能重试或恢复，因此不得构
 验收：不部署任何外部观测组件，也能定位一次 Ask、一次失败入库和一个 dead/stuck workflow；公共 API
 不泄漏内部调试信息；跨 Workspace 诊断数据零泄漏。
 
-### Phase 2：标准 Ops
+### Phase 2A：标准 Ops（已实现）
 
 - 接入 OTel SDK 和 Collector；
-- 打通 Web、DBOS Worker、Provider、Qdrant 的 Span 与 Span Link；
+- 打通 Web、DBOS Worker、Provider、Qdrant 的 Span；异步 enqueue 到 attempt 的显式 Span Link
+  仍可在后续增强；
 - 提供 Prometheus/Grafana、Loki/Tempo、Alertmanager 可选部署包；
-- 提供资源限制、采样、保留、认证和外部 exporter 配置。
+- 提供进程资源限制、采样、保留、认证和外部 exporter 配置；磁盘配额由部署基础设施负责。
 
-验收：从告警可跳转到指标、日志和具体 attempt trace；停用整套 Ops 后核心业务继续运行。
+验收：Compose/Helm 配置契约、隐私 allowlist、内部网络、回环 Grafana、独立 exporter 开关均已有
+自动化测试；部署级验收已实际启动隔离组件、写入并按同一 Trace ID 反查 Tempo/Loki、查询 Prometheus，
+并验证停用 Ops 后两套既有核心环境继续健康。正式发布仍需在目标部署环境重复该 smoke。
 
 ### Phase 3：AI 工程增强
 

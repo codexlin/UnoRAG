@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 import type { AskGraphInput, AskState } from "../../src/core/ask-graph";
+import { runWithObservabilityContext } from "../../src/lib/observability/context";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
 import type {
 	AppendConversationExchangeInput,
@@ -490,20 +491,23 @@ test("Ask run uses the response request ID and reaches a privacy-safe terminal s
 	const { handleNativeAskRequest } = await handlerModule;
 	const runs = askRunRecorder();
 	const requestId = "88888888-8888-4888-8888-888888888888";
+	const otelTraceId = "a".repeat(32);
 	const runtime = new FakeRuntime(askState(), ["答案"]);
 
-	const response = await handleNativeAskRequest({
-		request: request({ question: "敏感问题", library_id: LIBRARY_ID }),
-		path: ["v1", "ask"],
-		identity,
-		repository: repositoryInput(new FakeConversationRepository()),
-		runtimeFactory: runtimeFactory(runtime),
-		requestId,
-		askRunsRepository: runs.repository,
-		resolveLibrary: async () => ({
-			id: "99999999-9999-4999-8999-999999999999",
+	const response = await runWithObservabilityContext({ otelTraceId }, () =>
+		handleNativeAskRequest({
+			request: request({ question: "敏感问题", library_id: LIBRARY_ID }),
+			path: ["v1", "ask"],
+			identity,
+			repository: repositoryInput(new FakeConversationRepository()),
+			runtimeFactory: runtimeFactory(runtime),
+			requestId,
+			askRunsRepository: runs.repository,
+			resolveLibrary: async () => ({
+				id: "99999999-9999-4999-8999-999999999999",
+			}),
 		}),
-	});
+	);
 
 	assert.equal(response?.status, 200);
 	const body = (await response?.json()) as Record<string, unknown>;
@@ -511,6 +515,7 @@ test("Ask run uses the response request ID and reaches a privacy-safe terminal s
 	assert.equal(runtime.invocations[0]?.trace_id, requestId);
 	assert.equal(runs.starts.length, 1);
 	assert.equal(runs.starts[0]?.requestId, requestId);
+	assert.equal(runs.starts[0]?.otelTraceId, otelTraceId);
 	assert.deepEqual(runs.starts[0]?.principal, {
 		type: "user",
 		id: PRINCIPAL_ID,

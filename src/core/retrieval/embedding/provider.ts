@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { withActiveSpan } from "@/lib/observability/tracing";
 
 const EmbeddingResponseSchema = z
 	.object({
@@ -52,6 +53,22 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 
 	async embedTexts(texts: string[], signal?: AbortSignal): Promise<number[][]> {
 		if (!texts.length) return [];
+		return withActiveSpan(
+			"unorag.embedding",
+			{
+				"gen_ai.operation.name": "embeddings",
+				"gen_ai.request.model": this.config.model,
+				"unorag.embedding.input_count": texts.length,
+				"unorag.embedding.dimensions": this.config.dimensions,
+			},
+			() => this.embedTextsInSpan(texts, signal),
+		);
+	}
+
+	private async embedTextsInSpan(
+		texts: string[],
+		signal?: AbortSignal,
+	): Promise<number[][]> {
 		const vectors: number[][] = [];
 		for (let offset = 0; offset < texts.length; offset += this.batchSize) {
 			const batch = texts.slice(offset, offset + this.batchSize);

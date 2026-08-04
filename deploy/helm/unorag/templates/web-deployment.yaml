@@ -1,4 +1,7 @@
 {{- if .Values.web.enabled }}
+{{- if and .Values.observability.otel.enabled (not .Values.observability.otel.endpoint) }}
+{{- fail "observability.otel.enabled=true requires observability.otel.endpoint" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,10 +36,13 @@ spec:
             - configMapRef:
                 name: {{ include "unorag.fullname" . }}-config
           env:
+            {{- include "unorag.otelEnv" (list . "unorag-web") | nindent 12 }}
             - name: NODE_ENV
               value: production
             - name: PORT
               value: {{ .Values.web.port | quote }}
+            - name: METRICS_INTERNAL_ENABLED
+              value: "false"
             - name: DATABASE_POOL_MAX
               value: {{ .Values.config.databasePoolMax | default "10" | quote }}
             - name: DOCUMENT_STORAGE_ROOT

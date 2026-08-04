@@ -19,6 +19,8 @@ DBOS_VERSION=""
 FROM_RUNTIME=0
 ALLOW_BUILD=0
 SKIP_SMOKE=0
+WITH_OBSERVABILITY=0
+OBSERVABILITY_MODE=auto
 SWITCHED=0
 
 usage() {
@@ -31,6 +33,8 @@ Usage:
 Options:
   --allow-build  Build local images when registry pull is unavailable.
   --skip-smoke   Skip pilot-smoke.sh after health checks.
+  --with-observability  Preserve/start the optional Ops Stack and validate it.
+  --without-observability  Explicitly disconnect the application from Ops.
 
 Database migrations are forward-only. Application rollback restores image pins,
 but never down-migrates data.
@@ -40,6 +44,14 @@ EOF
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 log() { printf '==> %s\n' "$*"; }
 warn() { printf '!!  %s\n' "$*" >&2; }
+
+runtime_compose() {
+	if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
+		mk_compose_observability "$@"
+	else
+		mk_compose "$@"
+	fi
+}
 
 env_get() {
 	local file="$1" key="$2"
@@ -104,7 +116,7 @@ rollback_images() {
 	worker="$(env_get "$PREVIOUS_ENV" UNORAG_DBOS_WORKER_IMAGE)"
 	version="$(env_get "$PREVIOUS_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
 	write_runtime_pins "$web" "$migrator" "$ops" "$worker" "$version"
-	mk_compose up -d --no-deps dbos-worker dbos-control web caddy || true
+	runtime_compose up -d --no-deps dbos-worker dbos-control web caddy || true
 }
 
 on_exit() {
@@ -128,6 +140,8 @@ while [[ $# -gt 0 ]]; do
 		--from-runtime) FROM_RUNTIME=1; shift ;;
 		--allow-build) ALLOW_BUILD=1; shift ;;
 		--skip-smoke) SKIP_SMOKE=1; shift ;;
+		--with-ops|--with-observability) WITH_OBSERVABILITY=1; OBSERVABILITY_MODE=enabled; shift ;;
+		--without-observability) WITH_OBSERVABILITY=0; OBSERVABILITY_MODE=disabled; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) die "unknown argument: $1" ;;
 	esac
@@ -136,6 +150,15 @@ done
 mk_require_runtime_config
 mk_validate_dbos_config
 [[ -f "$RUNTIME_ENV" ]] || die "missing $RUNTIME_ENV"
+
+if [[ "$OBSERVABILITY_MODE" == "auto" ]]; then
+	GRAFANA_PW="$(mk_config_get GRAFANA_ADMIN_PASSWORD || true)"
+	if [[ ${#GRAFANA_PW} -ge 16 ]] &&
+		[[ -n "$(mk_compose_observability ps -aq grafana 2>/dev/null || true)" ]]; then
+		WITH_OBSERVABILITY=1
+		log "detected existing Ops Stack; preserving observability during upgrade"
+	fi
+fi
 
 if [[ -n "$MANIFEST" ]]; then
 	[[ -f "$MANIFEST" ]] || die "manifest not found: $MANIFEST"
@@ -159,9 +182,19 @@ assert_pinned UNORAG_WEB_OPS_IMAGE "$OPS_IMAGE"
 assert_pinned UNORAG_DBOS_WORKER_IMAGE "$WORKER_IMAGE"
 [[ "$DBOS_VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die "invalid DBOS version"
 
+if [[ $WITH_OBSERVABILITY -eq 1 ]]; then
+	GRAFANA_PW="$(mk_config_get GRAFANA_ADMIN_PASSWORD || true)"
+	[[ ${#GRAFANA_PW} -ge 16 ]] || die "GRAFANA_ADMIN_PASSWORD must contain at least 16 characters"
+fi
+
 capture_previous
 write_runtime_pins "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION"
 SWITCHED=1
+
+if [[ $WITH_OBSERVABILITY -eq 1 ]]; then
+	log "starting optional observability backends"
+	mk_compose_observability up -d tempo loki alertmanager otel-collector prometheus grafana
+fi
 
 if [[ $ALLOW_BUILD -eq 1 ]]; then
 	warn "using break-glass local image builds"
@@ -178,15 +211,15 @@ mk_compose --profile migrate run --rm configure-db-roles
 
 log "rolling DBOS execution and control"
 mk_compose stop dbos-control dbos-worker || true
-mk_compose up -d --wait dbos-worker dbos-control
+runtime_compose up -d --wait dbos-worker dbos-control
 
 log "reconciling ACL projections"
 mk_compose --profile ops run --rm backfill-acl-projections
 mk_compose --profile ops run --rm inspect-lifecycle
 
 log "rolling web and edge"
-mk_compose up -d --no-deps --wait web
-mk_compose up -d --no-deps caddy
+runtime_compose up -d --no-deps --wait web
+runtime_compose up -d --no-deps caddy
 
 HTTP_PORT="$(mk_config_get HTTP_PORT || echo 80)"
 BASE_URL="$(mk_config_get UNORAG_BASE_URL || echo "http://localhost:${HTTP_PORT}")"
@@ -203,6 +236,12 @@ if [[ $SKIP_SMOKE -eq 0 && -x "${ROOT}/scripts/pilot-smoke.sh" ]]; then
 	UNORAG_BASE_URL="$BASE_URL" "${ROOT}/scripts/pilot-smoke.sh"
 fi
 
+# Core release is accepted at this point. Optional Ops validation must not roll
+# business images back after a successful forward-only migration.
 SWITCHED=0
+if [[ $WITH_OBSERVABILITY -eq 1 ]]; then
+	"${ROOT}/scripts/observability-smoke.sh"
+fi
+
 trap - EXIT
 log "upgrade complete; previous image pins are in $PREVIOUS_ENV"

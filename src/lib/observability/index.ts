@@ -11,3 +11,10 @@ export {
 	logger,
 	type ObservabilityLogger,
 } from "./logger";
+export {
+	currentOtelTraceId,
+	recordActiveSpanFailure,
+	traceAsyncIterable,
+	withActiveHttpSpan,
+	withActiveSpan,
+} from "./tracing";

@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { logger } from "@/lib/observability";
+import { logger, withActiveHttpSpan } from "@/lib/observability";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import {
 	observeWebRequest,
@@ -35,6 +35,27 @@ export async function handleNativeRetrievalRequest(input: {
 	observeMetrics?: boolean;
 }): Promise<Response | null> {
 	if (!isNativeRetrievalPath(input.path)) return null;
+	return withActiveHttpSpan(
+		"unorag.retrieve",
+		{
+			"unorag.operation": "retrieve",
+			"unorag.organization.id": input.identity.tenantId,
+			"unorag.workspace.id": input.identity.workspaceId,
+			"request.id": input.requestId ?? "",
+			"http.request.method": input.request.method,
+		},
+		() => handleNativeRetrievalRequestInSpan(input),
+	);
+}
+
+async function handleNativeRetrievalRequestInSpan(input: {
+	request: Request;
+	path: string[];
+	identity: AuthIdentity;
+	requestId?: string;
+	dependencies?: NativeRetrievalDependencies;
+	observeMetrics?: boolean;
+}): Promise<Response | null> {
 	const startedAt = performance.now();
 	const observe = (outcome: WebMetricOutcome) => {
 		if (input.observeMetrics === false) return;

@@ -13,7 +13,7 @@
 | `trace_id` | Retrieve/Ask v1 对 `request_id` 的兼容字段，不是 OTel Trace ID |
 | `otel_trace_id` | 一次同步执行的 W3C Trace ID；仅在 OTel 已启用时存在 |
 | `job_id` / `workflow_id` | 串联产品任务、DBOS 持久工作流、重试和恢复 |
-| `attempt_trace_id` | Worker 每次执行尝试的独立 Trace；通过 Span Link 关联创建请求 |
+| `attempt_trace_id` | Worker 每次执行尝试的独立 Trace；当前用 job/workflow ID 关联，Span Link 为后续增强 |
 | `document_id` / `document_version_id` / `generation_id` | 核对 active pointer、对象与向量点 |
 | `organization_id` / `workspace_id` | 限定所有查询和运维动作的安全范围 |
 
@@ -21,7 +21,6 @@
 
 ```bash
 curl -fsS "$UNORAG_BASE_URL/api/rag/health" | jq .
-curl -fsS "$UNORAG_BASE_URL/metrics"
 pnpm lifecycle:inspect
 pnpm ask-runs:maintain
 
@@ -29,6 +28,14 @@ cd deploy/compose
 source scripts/compose-env.sh
 mk_compose ps
 mk_compose --profile ops run --rm inspect-lifecycle
+```
+
+`/metrics` 只供内网 Prometheus 抓取，Caddy 对公网路径返回 404。未启用 Ops Stack 时，可进入 Web
+容器读取，或让客户已有监控系统通过私有网络抓取：
+
+```bash
+mk_compose exec -T web node -e \
+  'fetch("http://127.0.0.1:3000/metrics").then(r => r.text()).then(console.log)'
 ```
 
 至少监控以下信号：
@@ -43,9 +50,42 @@ mk_compose --profile ops run --rm inspect-lifecycle
 UnoRAG 默认提供管理员可见的“运行中心”、低基数 `/metrics`、核心路径 Pino JSON、Ask stages 与
 `app.ask_runs` 诊断元数据。运行中心按当前 organization/workspace 强制隔离，展示 Ask 终态、P50/P95、
 引用覆盖、dead/stuck 任务、组件健康、持久告警和恢复建议；不会返回问题、回答、Prompt、引用正文、
-Provider 地址、通知目标或 Job 错误正文。Webhook/邮件是默认关闭的核心可选投递，分布式追踪、集中
-日志与 Alertmanager 仍属于后续可选 Ops 能力，完整边界见
+Provider 地址、通知目标或 Job 错误正文。Webhook/邮件是默认关闭的核心可选投递；分布式追踪、集中
+日志与 Alertmanager 由可选 Ops Stack 提供，完整边界见
 [design/observability.md](./design/observability.md)。
+
+## 可选 Ops Stack
+
+Compose 私有部署可在安装或升级时显式启用：
+
+```bash
+cd deploy/compose
+./scripts/install.sh --with-observability
+./scripts/upgrade.sh --manifest /path/to/release.env --with-observability
+./scripts/observability-smoke.sh
+```
+
+启用前必须在 `runtime.secret` 设置至少 16 字符的 `GRAFANA_ADMIN_PASSWORD`。Grafana 默认只监听
+`127.0.0.1:3300`，远程访问应使用客户 VPN、堡垒机或 SSH tunnel，不应改成公网匿名访问。
+Collector 会删除认证头、Cookie、Prompt、Completion、数据库语句、进程命令行和宿主机名；应用 Span
+本身也只写入诊断元数据，不写问题、回答、文档正文或凭据。Loki 汇聚 UnoRAG 通过统一 logger 输出的
+结构化应用事件；Caddy 或第三方组件的完整 stdout/stderr 仍应由客户现有容器日志采集器负责。
+
+停止整套 Ops 不应停止产品：
+
+```bash
+source scripts/compose-env.sh
+mk_compose_observability stop grafana prometheus alertmanager tempo loki otel-collector
+curl -fsS "$UNORAG_BASE_URL/api/rag/health" | jq .
+```
+
+OTLP exporter 采用有界批处理并 fail-soft。短期指标、日志与 Trace 卷不进入 UnoRAG 业务备份；它们
+可独立清理和重建。Alertmanager 默认不向外投递，正式接入 PagerDuty、邮件或客户告警平台前，应由
+客户运维提供 receiver Secret 并完成一次故障与恢复通知演练。
+
+Compose 为组件设置 CPU、内存限制和有限保留期，但 Docker 命名卷本身不是磁盘硬配额。生产宿主机应
+把观测卷放在有水位告警与配额/容量控制的独立文件系统，或改接客户托管的 Prometheus、Loki、Tempo；
+磁盘告警必须早于业务数据卷告警阈值。
 
 `dbos-control` 默认每 15 分钟把超过 30 分钟的 `running` Ask 收敛为失败，并按 30 天保留期有界删除
 终态记录。以下部署参数可调整或关闭该调度：

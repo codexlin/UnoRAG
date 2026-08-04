@@ -29,7 +29,7 @@
 设计提案不进入上面的正式产品文档表，也不自动成为交付承诺。已确认方向但尚未完整实现的方案由相关
 正式文档（如 [OPERATIONS.md](./OPERATIONS.md)）交叉引用，并在下方集中列出。
 
-当前设计提案：
+设计与演进说明：
 
-- [可观测性目标架构](./design/observability.md)：核心原生、可选 Ops 和可选 Langfuse 三层方案；
+- [可观测性架构](./design/observability.md)：已落地的核心原生、可选 Ops，以及后续 Langfuse 三层方案；
 - [混合检索演进设计](./design/hybrid-retrieval.md)：应用层 BM25、ACL 缓存风险与 Qdrant sparse 评测门禁。

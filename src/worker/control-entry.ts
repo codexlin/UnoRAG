@@ -5,6 +5,10 @@ import { Pool } from "pg";
 import { observePostgresPoolErrors } from "../db/pool-observability";
 import * as schema from "../db/schema";
 import { logger } from "../lib/observability";
+import {
+	initializeTelemetry,
+	shutdownTelemetry,
+} from "../lib/observability/telemetry";
 import { runAskRunsMaintenance } from "../server/observability/ask-runs-maintenance";
 import { createAskRunsRepository } from "../server/observability/ask-runs-repository";
 import { runObservabilityCycle } from "../server/observability/control-cycle";
@@ -16,6 +20,9 @@ import { PostgresReconciliationStore, reconcileDbosJobs } from "./reconciler";
 const READY_FILE = "/tmp/unorag-dbos-control-ready";
 
 async function main(): Promise<void> {
+	initializeTelemetry(
+		process.env.OTEL_SERVICE_NAME?.trim() || "unorag-dbos-control",
+	);
 	const databaseUrl = process.env.DATABASE_URL?.trim();
 	if (!databaseUrl) {
 		throw new Error("DATABASE_URL is required by the DBOS control process");
@@ -45,9 +52,10 @@ async function main(): Promise<void> {
 		await touchReadyFile();
 		readinessHeartbeat = setInterval(() => {
 			void touchReadyFile().catch((error) => {
-				process.stderr.write(
-					`${JSON.stringify({ event: "dbos.control.heartbeat_failed", error: error instanceof Error ? error.message : String(error) })}\n`,
-				);
+				logger.error({
+					event: "dbos.control.heartbeat_failed",
+					error: error instanceof Error ? error.name : "UnknownError",
+				});
 			});
 		}, 15_000);
 		const dispatcher = new PostgresDispatchCandidateStore(pool);
@@ -116,32 +124,28 @@ async function main(): Promise<void> {
 						});
 					}
 				}
-				process.stdout.write(
-					`${JSON.stringify({
-						event: "dbos.control.tick",
-						durationMs: Date.now() - startedAt,
-						dispatch,
-						reconciliation,
-						askRunsMaintenance,
-						observability,
-					})}\n`,
-				);
+				maintenanceLogger.info({
+					event: "dbos.control.tick",
+					durationMs: Date.now() - startedAt,
+					dispatch,
+					reconciliation,
+					askRunsMaintenance,
+					observability,
+				});
 				await touchReadyFile();
 			} catch (error) {
-				process.stderr.write(
-					`${JSON.stringify({
-						event: "dbos.control.error",
-						error: error instanceof Error ? error.message : String(error),
-					})}\n`,
-				);
+				maintenanceLogger.error({
+					event: "dbos.control.error",
+					error: error instanceof Error ? error.name : "UnknownError",
+				});
 			}
 			if (!stopping) await sleep(config.controlPollMs, stopSignal.signal);
 		}
 	} finally {
 		if (readinessHeartbeat) clearInterval(readinessHeartbeat);
 		await removeReadyFile();
-		await dbos?.close();
-		await pool.end();
+		await Promise.allSettled([dbos?.close(), pool.end()]);
+		await shutdownTelemetry();
 	}
 }
 
@@ -175,11 +179,12 @@ function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
 	});
 }
 
-main().catch((error: unknown) => {
+main().catch(async (error: unknown) => {
 	process.stderr.write(
 		`DBOS control process failed: ${
 			error instanceof Error ? error.message : String(error)
 		}\n`,
 	);
+	await shutdownTelemetry();
 	process.exitCode = 1;
 });

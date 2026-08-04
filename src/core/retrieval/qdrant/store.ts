@@ -1,4 +1,5 @@
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
+import { withActiveSpan } from "@/lib/observability/tracing";
 
 import type { RetrievalScope, RetrievalUserFilters } from "../contracts";
 import { buildMandatoryQdrantFilter } from "../filters/qdrant-filter";
@@ -36,6 +37,23 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		userFilters?: RetrievalUserFilters;
 		limit: number;
 	}): Promise<QdrantSearchHit[]> {
+		return withActiveSpan(
+			"unorag.qdrant.search",
+			{
+				"db.system.name": "qdrant",
+				"db.operation.name": "search",
+				"unorag.retrieval.limit": input.limit,
+			},
+			() => this.searchInSpan(input),
+		);
+	}
+
+	private async searchInSpan(input: {
+		vector: number[];
+		scope: RetrievalScope;
+		userFilters?: RetrievalUserFilters;
+		limit: number;
+	}): Promise<QdrantSearchHit[]> {
 		await this.ready;
 		const filter = buildMandatoryQdrantFilter({
 			scope: input.scope,
@@ -55,6 +73,22 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 	}
 
 	async listCorpus(input: {
+		scope: RetrievalScope;
+		userFilters?: RetrievalUserFilters;
+		limit: number;
+	}): Promise<QdrantSearchHit[]> {
+		return withActiveSpan(
+			"unorag.qdrant.scroll",
+			{
+				"db.system.name": "qdrant",
+				"db.operation.name": "scroll",
+				"unorag.retrieval.limit": input.limit,
+			},
+			() => this.listCorpusInSpan(input),
+		);
+	}
+
+	private async listCorpusInSpan(input: {
 		scope: RetrievalScope;
 		userFilters?: RetrievalUserFilters;
 		limit: number;

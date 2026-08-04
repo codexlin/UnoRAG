@@ -4,6 +4,9 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export function GET(): Response {
+	if (process.env.METRICS_INTERNAL_ENABLED !== "true") {
+		return new Response(null, { status: 404 });
+	}
 	return new Response(renderPrometheusMetrics(), {
 		status: 200,
 		headers: {
