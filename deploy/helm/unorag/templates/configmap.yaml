@@ -22,3 +22,6 @@ data:
   QDRANT_COLLECTION: {{ .Values.external.qdrant.collection | quote }}
   REDIS_URL: {{ .Values.external.redis.url | quote }}
   DOCUMENT_STORAGE_ROOT: {{ .Values.documentStorageRoot | quote }}
+  EMAIL_PROVIDER: {{ .Values.config.emailProvider | quote }}
+  OBSERVABILITY_ALERT_WEBHOOK_ENABLED: {{ .Values.config.observabilityAlertWebhookEnabled | quote }}
+  OBSERVABILITY_ALERT_EMAIL_ENABLED: {{ .Values.config.observabilityAlertEmailEnabled | quote }}

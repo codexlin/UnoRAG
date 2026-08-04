@@ -10,6 +10,10 @@ type HealthDependencies = {
 	checkQdrant: () => Promise<void>;
 };
 
+let defaultHealthCache:
+	| { expiresAt: number; response: Promise<Response> }
+	| undefined;
+
 function positiveInteger(name: string, fallback: number): number {
 	const value = Number(process.env[name] ?? fallback);
 	return Number.isInteger(value) && value > 0 ? value : fallback;
@@ -25,7 +29,7 @@ function defaultDependencies(): HealthDependencies {
 				url: process.env.QDRANT_URL?.trim() || "http://localhost:6333",
 				apiKey: process.env.QDRANT_API_KEY?.trim() || undefined,
 				timeout: positiveInteger("QDRANT_TIMEOUT_MS", 5_000),
-				checkCompatibility: true,
+				checkCompatibility: false,
 			});
 			const collection =
 				process.env.QDRANT_COLLECTION?.trim() || "unorag_chunks";
@@ -35,10 +39,9 @@ function defaultDependencies(): HealthDependencies {
 	};
 }
 
-export async function handleNativeHealthRequest(input?: {
-	dependencies?: HealthDependencies;
-}): Promise<Response> {
-	const dependencies = input?.dependencies ?? defaultDependencies();
+async function buildHealthResponse(
+	dependencies: HealthDependencies,
+): Promise<Response> {
 	const [database, qdrant] = await Promise.allSettled([
 		dependencies.checkDatabase(),
 		dependencies.checkQdrant(),
@@ -77,4 +80,18 @@ export async function handleNativeHealthRequest(input?: {
 			headers: { "cache-control": "no-store" },
 		},
 	);
+}
+
+export async function handleNativeHealthRequest(input?: {
+	dependencies?: HealthDependencies;
+}): Promise<Response> {
+	if (input?.dependencies) return buildHealthResponse(input.dependencies);
+	const now = Date.now();
+	if (!defaultHealthCache || defaultHealthCache.expiresAt <= now) {
+		defaultHealthCache = {
+			expiresAt: now + 5_000,
+			response: buildHealthResponse(defaultDependencies()),
+		};
+	}
+	return (await defaultHealthCache.response).clone();
 }

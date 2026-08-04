@@ -2,7 +2,12 @@ import { and, desc, eq, gte, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import type * as schema from "@/db/schema";
-import { askRuns, jobs } from "@/db/schema";
+import {
+	askRuns,
+	jobs,
+	observabilityAlerts,
+	observabilityComponentHealth,
+} from "@/db/schema";
 
 type Database = NodePgDatabase<typeof schema>;
 
@@ -32,6 +37,37 @@ export interface OperationsRecentError {
 	error_code: string;
 	occurred_at: string;
 	job_type: string | null;
+}
+
+export interface OperationsAlert {
+	id: string;
+	code: string;
+	source: string;
+	severity: "critical" | "warning" | "info";
+	status: "active" | "resolved";
+	title: string;
+	detail: string;
+	recovery: string;
+	first_triggered_at: string;
+	last_observed_at: string;
+	resolved_at: string | null;
+	occurrence_count: number;
+	last_delivery_status: string | null;
+	last_delivery_at: string | null;
+}
+
+export interface OperationsComponentHealth {
+	code: string;
+	label: string;
+	kind: "infrastructure" | "ai" | "parser";
+	status: "healthy" | "degraded" | "disabled" | "unknown";
+	mode: "active" | "configuration";
+	latency_ms: number | null;
+	error_code: string | null;
+	recovery: string;
+	checked_at: string;
+	last_success_at: string | null;
+	stale: boolean;
 }
 
 export interface OperationsSnapshot {
@@ -66,6 +102,8 @@ export interface OperationsSnapshot {
 			created_at: string;
 		} | null;
 	};
+	components: OperationsComponentHealth[];
+	alerts: OperationsAlert[];
 	recent_errors: OperationsRecentError[];
 }
 
@@ -103,6 +141,10 @@ export interface OperationsDataSource {
 		since: Date,
 		limit: number,
 	): Promise<OperationsRecentError[]>;
+	listAlerts(scope: OperationsScope, limit: number): Promise<OperationsAlert[]>;
+	listComponentHealth(
+		scope: OperationsScope,
+	): Promise<Omit<OperationsComponentHealth, "stale">[]>;
 }
 
 function boundedInteger(
@@ -128,6 +170,13 @@ function nullableNumber(value: unknown): number | null {
 
 function iso(value: Date | string): string {
 	return (value instanceof Date ? value : new Date(value)).toISOString();
+}
+
+function safeErrorCode(value: string | null | undefined): string {
+	const normalized = value?.trim().toLowerCase() ?? "";
+	return /^[a-z0-9][a-z0-9_.:-]{0,127}$/.test(normalized)
+		? normalized
+		: "unclassified_error";
 }
 
 class DrizzleOperationsDataSource implements OperationsDataSource {
@@ -261,7 +310,7 @@ class DrizzleOperationsDataSource implements OperationsDataSource {
 			source: "ask",
 			id: row.id,
 			status: row.status,
-			error_code: row.errorCode ?? "unknown_error",
+			error_code: safeErrorCode(row.errorCode),
 			occurred_at: iso(row.occurredAt ?? since),
 			job_type: null,
 		}));
@@ -296,9 +345,106 @@ class DrizzleOperationsDataSource implements OperationsDataSource {
 			source: "job",
 			id: row.id,
 			status: row.status,
-			error_code: row.errorCode ?? "unknown_error",
+			error_code: safeErrorCode(row.errorCode),
 			occurred_at: iso(row.occurredAt),
 			job_type: row.type,
+		}));
+	}
+
+	async listAlerts(
+		scope: OperationsScope,
+		limit: number,
+	): Promise<OperationsAlert[]> {
+		const rows = await this.db
+			.select({
+				id: observabilityAlerts.id,
+				code: observabilityAlerts.code,
+				source: observabilityAlerts.source,
+				severity: observabilityAlerts.severity,
+				status: observabilityAlerts.status,
+				title: observabilityAlerts.title,
+				detail: observabilityAlerts.detail,
+				recovery: observabilityAlerts.recovery,
+				firstTriggeredAt: observabilityAlerts.firstTriggeredAt,
+				lastObservedAt: observabilityAlerts.lastObservedAt,
+				resolvedAt: observabilityAlerts.resolvedAt,
+				occurrenceCount: observabilityAlerts.occurrenceCount,
+				lastDeliveryStatus: sql<string | null>`(
+					select delivery.status
+					from app.observability_alert_deliveries delivery
+					join app.observability_alert_transitions transition
+						on transition.id = delivery.transition_id
+					where transition.alert_id = "app"."observability_alerts"."id"
+					order by delivery.updated_at desc, delivery.id desc
+					limit 1
+				)`,
+				lastDeliveryAt: sql<Date | null>`(
+					select delivery.delivered_at
+					from app.observability_alert_deliveries delivery
+					join app.observability_alert_transitions transition
+						on transition.id = delivery.transition_id
+					where transition.alert_id = "app"."observability_alerts"."id"
+					order by delivery.updated_at desc, delivery.id desc
+					limit 1
+				)`,
+			})
+			.from(observabilityAlerts)
+			.where(
+				and(
+					eq(observabilityAlerts.organizationId, scope.organizationId),
+					eq(observabilityAlerts.workspaceId, scope.workspaceId),
+				),
+			)
+			.orderBy(
+				desc(sql`(${observabilityAlerts.status} = 'active')`),
+				desc(observabilityAlerts.lastObservedAt),
+			)
+			.limit(limit);
+		return rows.map((row) => ({
+			id: row.id,
+			code: row.code,
+			source: row.source,
+			severity: row.severity as OperationsAlert["severity"],
+			status: row.status as OperationsAlert["status"],
+			title: row.title,
+			detail: row.detail,
+			recovery: row.recovery,
+			first_triggered_at: iso(row.firstTriggeredAt),
+			last_observed_at: iso(row.lastObservedAt),
+			resolved_at: row.resolvedAt ? iso(row.resolvedAt) : null,
+			occurrence_count: row.occurrenceCount,
+			last_delivery_status: row.lastDeliveryStatus,
+			last_delivery_at: row.lastDeliveryAt ? iso(row.lastDeliveryAt) : null,
+		}));
+	}
+
+	async listComponentHealth(
+		scope: OperationsScope,
+	): Promise<Omit<OperationsComponentHealth, "stale">[]> {
+		const rows = await this.db
+			.select()
+			.from(observabilityComponentHealth)
+			.where(
+				and(
+					eq(observabilityComponentHealth.organizationId, scope.organizationId),
+					eq(observabilityComponentHealth.workspaceId, scope.workspaceId),
+				),
+			)
+			.orderBy(
+				observabilityComponentHealth.kind,
+				observabilityComponentHealth.code,
+			);
+		return rows.map((row) => ({
+			code: row.code,
+			label: row.label,
+			kind: row.kind as OperationsComponentHealth["kind"],
+			status: row.status as OperationsComponentHealth["status"],
+			mode: row.mode as OperationsComponentHealth["mode"],
+			latency_ms: row.latencyMs,
+			error_code: row.errorCode,
+			recovery: row.recovery,
+			checked_at: iso(row.checkedAt),
+			last_success_at: row.lastSuccessAt ? iso(row.lastSuccessAt) : null,
 		}));
 	}
 }
@@ -341,13 +487,16 @@ export class OperationsService {
 			now.getTime() - stuckAfterMinutes * 60 * 1_000,
 		);
 
-		const [ask, jobSummary, oldest, askErrors, jobErrors] = await Promise.all([
-			this.dataSource.readAskSummary(scope, since),
-			this.dataSource.readJobSummary(scope, since, stuckBefore, now),
-			this.dataSource.findOldestActiveJob(scope),
-			this.dataSource.listAskErrors(scope, since, errorLimit),
-			this.dataSource.listJobErrors(scope, since, errorLimit),
-		]);
+		const [ask, jobSummary, oldest, askErrors, jobErrors, alerts, components] =
+			await Promise.all([
+				this.dataSource.readAskSummary(scope, since),
+				this.dataSource.readJobSummary(scope, since, stuckBefore, now),
+				this.dataSource.findOldestActiveJob(scope),
+				this.dataSource.listAskErrors(scope, since, errorLimit),
+				this.dataSource.listJobErrors(scope, since, errorLimit),
+				this.dataSource.listAlerts(scope, errorLimit),
+				this.dataSource.listComponentHealth(scope),
+			]);
 		const recentErrors = [...askErrors, ...jobErrors]
 			.sort(
 				(left, right) =>
@@ -388,6 +537,16 @@ export class OperationsService {
 						}
 					: null,
 			},
+			components: components.map((component) => {
+				const stale =
+					now.getTime() - Date.parse(component.checked_at) > 5 * 60 * 1_000;
+				return {
+					...component,
+					status: stale ? ("unknown" as const) : component.status,
+					stale,
+				};
+			}),
+			alerts,
 			recent_errors: recentErrors,
 		};
 	}

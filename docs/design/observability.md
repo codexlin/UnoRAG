@@ -1,7 +1,7 @@
 # UnoRAG 可观测性目标架构
 
-> 状态：核心诊断、原生运行中心、基础指标与 `ask_runs` 维护闭环已实现；OTel、外部告警、Ops Stack
-> 与 Langfuse 仍是后续交付；
+> 状态：核心诊断、原生运行中心、基础指标、组件健康、持久告警及可选 Webhook/邮件投递已实现；
+> OTel、Ops Stack 与 Langfuse 仍是后续交付；
 > 本文件同时标明当前能力和目标边界。
 >
 > 关联：[产品说明](../PRODUCT.md) · [架构](../ARCHITECTURE.md) · [运维指南](../OPERATIONS.md) · [混合检索设计](./hybrid-retrieval.md)
@@ -35,13 +35,15 @@ Ask、入库、检索或生命周期任务。
 | 生命周期诊断 | 产品 Job、DBOS workflow、进度、重试和取消已有业务状态 |
 | 关联上下文与日志 | Browser/Public API 和 DBOS workflow 已接入 AsyncLocalStorage 上下文与 Pino JSON |
 | Ask 执行记录 | `app.ask_runs` 已通过 `0021_ask_runs.sql` 落地隐私安全的开始/终态元数据 |
+| 运行健康与告警 | `0022_easy_synch.sql` 已落地作用域健康快照、告警状态机、不可变转换和持久投递记录 |
 
 TypeScript Ask 主路径现已生成实际执行节点、Token 生成、持久化的 `retrieval_debug.stages` 和
 `total_duration_ms`。当前粒度覆盖路由、计划、重写、检索、裁决、表格路径、生成准备、真实生成和
 持久化；Embedding、dense/lexical、fusion、rerank 等 Provider 子阶段仍待进一步拆分。
 
-当前已有核心路径 Pino JSON 与上下文传播，但还没有 OpenTelemetry SDK/Collector、Prometheus 指标
-体系、集中日志、分布式追踪、原生运维中心或产品告警。基础日志不等于这些后续能力已经落地。
+当前已有核心路径 Pino JSON、上下文传播、低基数 Prometheus 指标、原生运行中心和产品告警。
+尚未实现 OpenTelemetry SDK/Collector、集中日志、分布式追踪和可选 Ops Stack；基础日志与原生告警
+不等于这些增强能力已经落地。
 
 ## 3. 三层架构
 
@@ -52,8 +54,8 @@ flowchart TB
     subgraph Core["第一层：UnoRAG Core，默认启用"]
         App["Next.js Web / DBOS Worker"]
         Context["Request Context + Pino\nOTel SDK（目标）"]
-        DB["PostgreSQL\nask_runs / jobs / audit_logs"]
-        Metrics["/metrics（目标）"]
+        DB["PostgreSQL\nask_runs / jobs / alerts"]
+        Metrics["/metrics（已实现）"]
         App --> Context
         App --> DB
         App --> Metrics
@@ -161,8 +163,11 @@ fail-soft 写入”制造不可知的数据丢失；写入失败应有结构化�
 - 邮件或 Webhook 基础告警，以及明确的恢复建议。
 
 核心应用已经输出 Pino JSON 和低基数 `/metrics`，让客户不启用官方 Ops Stack 也能接入已有系统。
-当前运行中心覆盖 Ask、任务队列、dead/stuck 和最近错误；Provider/基础设施健康与 Webhook/邮件投递
-仍在后续批次。
+当前运行中心覆盖 Ask、任务队列、dead/stuck、最近错误、PostgreSQL/Redis/Qdrant 主动探测，以及
+LLM、Embedding、Rerank、LiteParse、MinerU 配置健康。LLM 等付费 Provider 不做周期真实调用；真实调用
+错误仍由 Ask/Job 诊断反映。告警 open、连续两轮健康后的 resolved、reopen 和投递均持久化，转换与投递
+快照在同一事务生成；Webhook 使用稳定事件 ID 与 HMAC，邮件使用 Resend 幂等键。投递超时、退避和
+最终失败只改变诊断状态，不阻塞 Ask、检索、入库或生命周期任务。
 
 ### 3.2 第二层：可选 Ops Stack
 
@@ -279,12 +284,13 @@ DBOS 排队可能持续很久，任务也可能重试或恢复，因此不得构
 验收：核心单元和数据库约束测试覆盖 ID 传播、日志脱敏、成功/拒答/失败终态、跨 Workspace 外键拒绝
 和保留删除；观测写失败不改变 Ask 业务结果。
 
-### Phase 1B：原生运维闭环（核心已实现）
+### Phase 1B：原生运维闭环（已实现）
 
-- 已实现管理员原生运行中心和产品内基础告警信号；
+- 已实现管理员原生运行中心、组件健康和持久告警状态机；
 - 已暴露低基数 `/metrics`；
 - 已增加 stale-running sweeper、按用户删除和正式保留调度；
-- 待补 Provider/基础设施健康与 Webhook/邮件告警投递。
+- 已提供默认关闭的持久 Webhook/邮件投递、去重、lease、退避和恢复通知；
+- Provider 真实调用的被动时间序列与按 ID 搜索仍归入 Phase 2 的 Trace/集中日志能力。
 
 验收：不部署任何外部观测组件，也能定位一次 Ask、一次失败入库和一个 dead/stuck workflow；公共 API
 不泄漏内部调试信息；跨 Workspace 诊断数据零泄漏。

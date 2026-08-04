@@ -155,6 +155,13 @@
       "when": 1785793827465,
       "tag": "0021_ask_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1785846546818,
+      "tag": "0022_easy_synch",
+      "breakpoints": true
     }
   ]
 }

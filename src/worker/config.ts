@@ -40,6 +40,10 @@ const workerEnvironmentSchema = z
 		ASK_RUN_STALE_AFTER_MINUTES: positiveInteger.max(10_080).default(30),
 		ASK_RUN_RETENTION_DAYS: positiveInteger.max(3_650).default(30),
 		ASK_RUN_MAINTENANCE_BATCH_SIZE: positiveInteger.max(10_000).default(1_000),
+		OBSERVABILITY_CYCLE_ENABLED: environmentBoolean,
+		OBSERVABILITY_CYCLE_INTERVAL_MS: positiveInteger
+			.max(86_400_000)
+			.default(60_000),
 		DBOS_ADMIN_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
 		DBOS_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 	})
@@ -60,6 +64,10 @@ export interface WorkerRuntimeConfig {
 		staleAfterMinutes: number;
 		retentionDays: number;
 		batchSize: number;
+	};
+	observabilityCycle: {
+		enabled: boolean;
+		intervalMs: number;
 	};
 	adminPort?: number;
 	logLevel: "debug" | "info" | "warn" | "error";
@@ -107,6 +115,10 @@ export function loadWorkerConfig(
 			staleAfterMinutes: parsed.ASK_RUN_STALE_AFTER_MINUTES,
 			retentionDays: parsed.ASK_RUN_RETENTION_DAYS,
 			batchSize: parsed.ASK_RUN_MAINTENANCE_BATCH_SIZE,
+		},
+		observabilityCycle: {
+			enabled: parsed.OBSERVABILITY_CYCLE_ENABLED,
+			intervalMs: parsed.OBSERVABILITY_CYCLE_INTERVAL_MS,
 		},
 		adminPort: parsed.DBOS_ADMIN_PORT,
 		logLevel: parsed.DBOS_LOG_LEVEL,

@@ -3,28 +3,47 @@
 import {
 	AlertTriangle,
 	Ban,
+	BellRing,
 	CheckCircle2,
 	Clock3,
+	Database,
 	RefreshCw,
 	ShieldAlert,
 	TimerReset,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useCan } from "@/components/app/can";
+import { useSession } from "@/components/app/session-provider";
 import { Button } from "@/components/ui/button";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type AlertSeverity = "critical" | "warning" | "info";
 type OperationsAlert = {
+	id: string;
 	code: string;
 	severity: AlertSeverity;
+	status: "active" | "resolved";
 	title: string;
 	detail: string;
+	recovery: string;
+	first_triggered_at: string;
+	last_observed_at: string;
+	resolved_at: string | null;
+	occurrence_count: number;
+	last_delivery_status: string | null;
+	last_delivery_at: string | null;
 };
 
 type OperationsSnapshot = {
+	scope: { workspace_id: string };
+	overall: {
+		status: "healthy" | "degraded" | "unavailable" | "unknown";
+		evaluated_at: string;
+		stale: boolean;
+	};
+	notifications: { webhook: boolean; email: boolean };
 	generated_at: string;
 	window: {
 		from: string;
@@ -56,6 +75,20 @@ type OperationsSnapshot = {
 			created_at: string;
 		} | null;
 	};
+	components: Array<{
+		code: string;
+		label: string;
+		kind: "infrastructure" | "ai" | "parser";
+		status: "healthy" | "degraded" | "disabled" | "unknown";
+		mode: "active" | "configuration";
+		latency_ms: number | null;
+		error_code: string | null;
+		recovery: string;
+		checked_at: string;
+		last_success_at: string | null;
+		stale: boolean;
+	}>;
+	alerts: OperationsAlert[];
 	recent_errors: Array<{
 		id: string;
 		source: "ask" | "job";
@@ -72,61 +105,6 @@ function percent(value: number): string {
 
 function latency(value: number | null): string {
 	return value == null ? "--" : formatDurationMs(value);
-}
-
-function deriveAlerts(snapshot: OperationsSnapshot | null): OperationsAlert[] {
-	if (!snapshot) return [];
-	const alerts: OperationsAlert[] = [];
-	const terminal =
-		snapshot.ask.completed +
-		snapshot.ask.refused +
-		snapshot.ask.failed +
-		snapshot.ask.cancelled;
-	const citationCoverage = snapshot.ask.completed
-		? (snapshot.ask.completed - snapshot.ask.without_citations) /
-			snapshot.ask.completed
-		: 1;
-	if (snapshot.jobs.dead > 0) {
-		alerts.push({
-			code: "jobs_dead",
-			severity: "critical",
-			title: "存在终止任务",
-			detail: `${snapshot.jobs.dead} 个任务已进入 dead，需要人工处理。`,
-		});
-	}
-	if (snapshot.jobs.stuck > 0) {
-		alerts.push({
-			code: "jobs_stuck",
-			severity: "critical",
-			title: "任务心跳超时",
-			detail: `${snapshot.jobs.stuck} 个执行中任务已超过 ${snapshot.window.stuck_after_minutes} 分钟无有效心跳。`,
-		});
-	}
-	if (terminal >= 5 && snapshot.ask.failed / terminal >= 0.05) {
-		alerts.push({
-			code: "ask_failure_rate",
-			severity: "warning",
-			title: "Ask 失败率偏高",
-			detail: `${snapshot.ask.failed}/${terminal} 个终态请求失败。`,
-		});
-	}
-	if (snapshot.ask.completed >= 5 && citationCoverage < 0.9) {
-		alerts.push({
-			code: "citation_coverage",
-			severity: "warning",
-			title: "引用覆盖不足",
-			detail: `${snapshot.ask.without_citations} 个完成回答没有引用。`,
-		});
-	}
-	if ((snapshot.ask.latency_ms.p95 ?? 0) > 8_000) {
-		alerts.push({
-			code: "ask_p95_latency",
-			severity: "warning",
-			title: "Ask P95 延迟偏高",
-			detail: `当前 P95 为 ${formatDurationMs(snapshot.ask.latency_ms.p95 ?? 0)}。`,
-		});
-	}
-	return alerts;
 }
 
 function MetricCell({
@@ -164,10 +142,12 @@ function SignalBar({
 	label,
 	value,
 	tone,
+	empty = false,
 }: {
 	label: string;
 	value: number;
 	tone: "cite" | "survey" | "destructive";
+	empty?: boolean;
 }) {
 	const bounded = Math.max(0, Math.min(1, value));
 	return (
@@ -185,7 +165,7 @@ function SignalBar({
 				/>
 			</div>
 			<span className="text-right font-mono text-xs tabular-nums">
-				{percent(bounded)}
+				{empty ? "--" : percent(bounded)}
 			</span>
 		</div>
 	);
@@ -193,26 +173,46 @@ function SignalBar({
 
 export function OperationsDashboard() {
 	const canManage = useCan("manageMembers");
+	const { identity } = useSession();
 	const [snapshot, setSnapshot] = useState<OperationsSnapshot | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [autoRefresh, setAutoRefresh] = useState(true);
+	const hasSnapshot = useRef(false);
+	const requestSequence = useRef(0);
 
 	const load = useCallback(async () => {
 		if (!canManage) return;
+		const sequence = ++requestSequence.current;
+		setLoading(true);
 		setError(null);
+		const controller = new AbortController();
+		const timeout = window.setTimeout(() => controller.abort(), 8_000);
 		try {
 			const response = await fetch("/api/workspace/operations", {
 				cache: "no-store",
+				signal: controller.signal,
 			});
 			if (!response.ok) throw new Error(`operations_http_${response.status}`);
-			setSnapshot((await response.json()) as OperationsSnapshot);
+			const payload = (await response.json()) as OperationsSnapshot;
+			if (payload.scope.workspace_id !== identity.workspaceId) {
+				throw new Error("operations_scope_mismatch");
+			}
+			if (sequence !== requestSequence.current) return;
+			setSnapshot(payload);
+			hasSnapshot.current = true;
 		} catch {
-			setError("运行数据暂时不可用");
+			if (sequence !== requestSequence.current) return;
+			setError(
+				hasSnapshot.current
+					? "刷新失败，当前显示上一次成功快照"
+					: "运行数据暂时不可用",
+			);
 		} finally {
-			setLoading(false);
+			window.clearTimeout(timeout);
+			if (sequence === requestSequence.current) setLoading(false);
 		}
-	}, [canManage]);
+	}, [canManage, identity.workspaceId]);
 
 	useEffect(() => {
 		void load();
@@ -224,8 +224,18 @@ export function OperationsDashboard() {
 		return () => window.clearInterval(timer);
 	}, [autoRefresh, canManage, load]);
 
-	const activeAlerts = useMemo(() => deriveAlerts(snapshot), [snapshot]);
+	const activeAlerts = useMemo(
+		() => snapshot?.alerts.filter((alert) => alert.status === "active") ?? [],
+		[snapshot],
+	);
 	const releaseState = useMemo(() => {
+		if (!snapshot || error || snapshot.overall.status === "unknown") {
+			return {
+				label: error ? "状态已过期" : "状态未知",
+				tone: "warning" as const,
+				icon: AlertTriangle,
+			};
+		}
 		const alerts = activeAlerts;
 		if (alerts.some((alert) => alert.severity === "critical")) {
 			return { label: "发布阻断", tone: "danger" as const, icon: Ban };
@@ -242,7 +252,7 @@ export function OperationsDashboard() {
 			tone: "good" as const,
 			icon: CheckCircle2,
 		};
-	}, [activeAlerts]);
+	}, [activeAlerts, error, snapshot]);
 
 	if (!canManage) {
 		return (
@@ -343,7 +353,7 @@ export function OperationsDashboard() {
 					/>
 					<MetricCell
 						label="Success"
-						value={percent(successRate)}
+						value={terminalAskCount ? percent(successRate) : "--"}
 						hint={`${ask?.completed ?? 0} 次完成`}
 						tone={
 							terminalAskCount === 0 || successRate >= 0.98 ? "good" : "warning"
@@ -351,13 +361,13 @@ export function OperationsDashboard() {
 					/>
 					<MetricCell
 						label="Refusal"
-						value={percent(refusalRate)}
+						value={terminalAskCount ? percent(refusalRate) : "--"}
 						hint={`${ask?.refused ?? 0} 次证据拒答`}
 						tone={refusalRate > 0.2 ? "warning" : "default"}
 					/>
 					<MetricCell
 						label="Citation"
-						value={percent(citationCoverage)}
+						value={ask?.completed ? percent(citationCoverage) : "--"}
 						hint="完成回答引用覆盖"
 						tone={
 							!ask?.completed || citationCoverage >= 0.9 ? "good" : "danger"
@@ -378,17 +388,29 @@ export function OperationsDashboard() {
 							<TimerReset className="size-4 text-muted-foreground" />
 						</div>
 						<div className="space-y-4 px-4 py-5">
-							<SignalBar label="完成率" value={successRate} tone="cite" />
+							<SignalBar
+								label="完成率"
+								value={successRate}
+								tone="cite"
+								empty={terminalAskCount === 0}
+							/>
 							<SignalBar
 								label="引用覆盖"
 								value={citationCoverage}
 								tone="cite"
+								empty={!ask?.completed}
 							/>
-							<SignalBar label="拒答率" value={refusalRate} tone="survey" />
+							<SignalBar
+								label="拒答率"
+								value={refusalRate}
+								tone="survey"
+								empty={terminalAskCount === 0}
+							/>
 							<SignalBar
 								label="失败率"
 								value={ask?.total ? ask.failed / ask.total : 0}
 								tone="destructive"
+								empty={!ask?.total}
 							/>
 						</div>
 					</section>
@@ -442,17 +464,77 @@ export function OperationsDashboard() {
 
 				<section className="min-w-0 border border-border/80 bg-card">
 					<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
-						<h3 className="text-ui font-semibold">活动告警</h3>
+						<div className="flex items-center gap-2">
+							<Database className="size-4 text-muted-foreground" />
+							<h3 className="text-ui font-semibold">组件健康</h3>
+						</div>
 						<span className="font-mono text-xs text-muted-foreground">
-							{activeAlerts.length}
+							{snapshot?.components.length ?? 0}
+						</span>
+					</div>
+					{snapshot?.components.length ? (
+						<div className="grid sm:grid-cols-2 xl:grid-cols-4">
+							{snapshot.components.map((component) => (
+								<div
+									key={component.code}
+									className="min-w-0 border-border/70 border-b px-4 py-3 sm:border-r xl:[&:nth-last-child(-n+4)]:border-b-0"
+								>
+									<div className="flex items-center justify-between gap-3">
+										<span className="text-ui font-medium">
+											{component.label}
+										</span>
+										<span
+											className={cn(
+												"font-mono text-[10px] uppercase",
+												component.status === "healthy" && "text-cite",
+												component.status === "degraded" && "text-destructive",
+												(component.status === "unknown" ||
+													component.status === "disabled") &&
+													"text-muted-foreground",
+											)}
+										>
+											{component.status}
+										</span>
+									</div>
+									<p className="text-meta mt-1 font-mono text-muted-foreground">
+										{component.mode === "active" ? "主动探测" : "配置检查"}
+										{component.latency_ms == null
+											? ""
+											: ` · ${component.latency_ms}ms`}
+									</p>
+									{component.status === "degraded" || component.stale ? (
+										<p className="text-ui mt-2 text-muted-foreground">
+											{component.recovery}
+										</p>
+									) : null}
+								</div>
+							))}
+						</div>
+					) : (
+						<p className="text-ui px-4 py-5 text-muted-foreground">
+							等待首次健康评估。
+						</p>
+					)}
+				</section>
+
+				<section className="min-w-0 border border-border/80 bg-card">
+					<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
+						<div className="flex items-center gap-2">
+							<BellRing className="size-4 text-muted-foreground" />
+							<h3 className="text-ui font-semibold">活动告警</h3>
+						</div>
+						<span className="font-mono text-xs text-muted-foreground">
+							{activeAlerts.length} · webhook{" "}
+							{snapshot?.notifications.webhook ? "on" : "off"} · email{" "}
+							{snapshot?.notifications.email ? "on" : "off"}
 						</span>
 					</div>
 					{activeAlerts.length ? (
 						<div className="divide-y divide-border/70">
 							{activeAlerts.map((alert) => (
 								<div
-									key={alert.code}
-									className="grid gap-1 px-4 py-3 sm:grid-cols-[8rem_12rem_minmax(0,1fr)] sm:items-center sm:gap-4"
+									key={alert.id}
+									className="grid gap-1 px-4 py-3 sm:grid-cols-[7rem_12rem_minmax(0,1fr)_8rem] sm:items-center sm:gap-4"
 								>
 									<span
 										className={cn(
@@ -468,8 +550,16 @@ export function OperationsDashboard() {
 										{alert.severity}
 									</span>
 									<span className="text-ui font-medium">{alert.title}</span>
-									<span className="text-ui text-muted-foreground">
-										{alert.detail}
+									<div className="min-w-0">
+										<p className="text-ui text-muted-foreground">
+											{alert.detail}
+										</p>
+										<p className="text-meta mt-1 text-muted-foreground">
+											{alert.recovery}
+										</p>
+									</div>
+									<span className="text-right font-mono text-xs text-muted-foreground">
+										{alert.last_delivery_status ?? "in-app"}
 									</span>
 								</div>
 							))}

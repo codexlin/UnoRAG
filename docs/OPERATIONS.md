@@ -42,8 +42,9 @@ mk_compose --profile ops run --rm inspect-lifecycle
 
 UnoRAG 默认提供管理员可见的“运行中心”、低基数 `/metrics`、核心路径 Pino JSON、Ask stages 与
 `app.ask_runs` 诊断元数据。运行中心按当前 organization/workspace 强制隔离，展示 Ask 终态、P50/P95、
-引用覆盖、dead/stuck 任务和最近错误；不会返回问题、回答、Prompt、引用正文或 Job 错误正文。
-分布式追踪、集中日志与外部告警仍属于后续可选 Ops 能力，完整边界见
+引用覆盖、dead/stuck 任务、组件健康、持久告警和恢复建议；不会返回问题、回答、Prompt、引用正文、
+Provider 地址、通知目标或 Job 错误正文。Webhook/邮件是默认关闭的核心可选投递，分布式追踪、集中
+日志与 Alertmanager 仍属于后续可选 Ops 能力，完整边界见
 [design/observability.md](./design/observability.md)。
 
 `dbos-control` 默认每 15 分钟把超过 30 分钟的 `running` Ask 收敛为失败，并按 30 天保留期有界删除
@@ -55,7 +56,18 @@ ASK_RUN_MAINTENANCE_INTERVAL_MS=900000
 ASK_RUN_STALE_AFTER_MINUTES=30
 ASK_RUN_RETENTION_DAYS=30
 ASK_RUN_MAINTENANCE_BATCH_SIZE=1000
+OBSERVABILITY_CYCLE_ENABLED=true
+OBSERVABILITY_CYCLE_INTERVAL_MS=60000
+OBSERVABILITY_ALERT_WEBHOOK_ENABLED=false
+OBSERVABILITY_ALERT_EMAIL_ENABLED=false
 ```
+
+健康评估使用 advisory lock 支持多个 control 副本，并把结果按 organization/workspace 投影。Webhook
+需同时配置 `OBSERVABILITY_ALERT_WEBHOOK_URL` 和 `OBSERVABILITY_ALERT_WEBHOOK_SECRET`；邮件需设置
+`EMAIL_PROVIDER=resend`、`OBSERVABILITY_ALERT_EMAIL_TO`、`EMAIL_FROM` 和 `RESEND_API_KEY`。这些值
+属于部署密钥，不在运行中心返回。启用对应通知时，还需把非敏感的
+`OBSERVABILITY_ALERT_WEBHOOK_ENABLED` / `OBSERVABILITY_ALERT_EMAIL_ENABLED` 设为 `true`，供 Web
+端展示配置状态；Web 容器不会获得通知密钥。通知失败采用有界退避，且不影响核心业务。
 
 手工命令默认只预览；确认后才执行：
 

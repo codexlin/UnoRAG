@@ -64,6 +64,13 @@ spec:
                   name: {{ include "unorag.secretName" . }}
                   key: QDRANT_API_KEY
                   optional: true
+            {{- range $key := list "OBSERVABILITY_ALERT_WEBHOOK_ENABLED" "OBSERVABILITY_ALERT_EMAIL_ENABLED" }}
+            - name: {{ $key }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "unorag.fullname" $ }}-config
+                  key: {{ $key }}
+            {{- end }}
           volumeMounts:
             {{- if .Values.persistence.enabled }}
             - name: documents

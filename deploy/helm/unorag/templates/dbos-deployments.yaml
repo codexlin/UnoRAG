@@ -232,6 +232,46 @@ spec:
               value: {{ .Values.dbos.askRunRetentionDays | quote }}
             - name: ASK_RUN_MAINTENANCE_BATCH_SIZE
               value: {{ .Values.dbos.askRunMaintenanceBatchSize | quote }}
+            - name: OBSERVABILITY_CYCLE_ENABLED
+              value: {{ .Values.dbos.observabilityCycleEnabled | quote }}
+            - name: OBSERVABILITY_CYCLE_INTERVAL_MS
+              value: {{ .Values.dbos.observabilityCycleIntervalMs | quote }}
+            - name: REDIS_URL
+              value: {{ .Values.external.redis.url | quote }}
+            - name: QDRANT_URL
+              value: {{ .Values.external.qdrant.url | quote }}
+            - name: QDRANT_COLLECTION
+              value: {{ .Values.external.qdrant.collection | quote }}
+            - name: CHAT_MODEL
+              value: {{ .Values.config.chatModel | quote }}
+            - name: EMBEDDING_MODEL
+              value: {{ .Values.config.embeddingModel | quote }}
+            - name: EMBEDDING_DIM
+              value: {{ .Values.config.embeddingDim | quote }}
+            - name: RERANK_BASE_URL
+              value: {{ .Values.config.rerankBaseUrl | quote }}
+            - name: RERANK_MODEL
+              value: {{ .Values.config.rerankModel | quote }}
+            - name: EXTERNAL_PARSER_ALLOWED
+              value: {{ .Values.config.externalParserAllowed | quote }}
+            - name: MINERU_SELF_HOSTED_URL
+              value: {{ .Values.config.mineruSelfHostedUrl | quote }}
+            - name: MINERU_URL
+              value: {{ .Values.config.mineruUrl | quote }}
+            - name: EMAIL_PROVIDER
+              value: {{ .Values.config.emailProvider | quote }}
+            - name: OBSERVABILITY_ALERT_WEBHOOK_ENABLED
+              value: {{ .Values.config.observabilityAlertWebhookEnabled | quote }}
+            - name: OBSERVABILITY_ALERT_EMAIL_ENABLED
+              value: {{ .Values.config.observabilityAlertEmailEnabled | quote }}
+            {{- range $key := list "QDRANT_API_KEY" "LLM_API_KEY" "MINERU_API_KEY" "OBSERVABILITY_ALERT_WEBHOOK_URL" "OBSERVABILITY_ALERT_WEBHOOK_SECRET" "OBSERVABILITY_ALERT_EMAIL_TO" "EMAIL_FROM" "RESEND_API_KEY" }}
+            - name: {{ if eq $key "LLM_API_KEY" }}OPENAI_API_KEY{{ else }}{{ $key }}{{ end }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" $ }}
+                  key: {{ $key }}
+                  optional: true
+            {{- end }}
           readinessProbe:
             exec:
               command:

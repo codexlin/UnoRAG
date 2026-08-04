@@ -7,6 +7,7 @@ import * as schema from "../db/schema";
 import { logger } from "../lib/observability";
 import { runAskRunsMaintenance } from "../server/observability/ask-runs-maintenance";
 import { createAskRunsRepository } from "../server/observability/ask-runs-repository";
+import { runObservabilityCycle } from "../server/observability/control-cycle";
 import { loadWorkerConfig } from "./config";
 import { createDbosJobEnqueuer, type DbosJobEnqueuer } from "./dbos-runtime";
 import { dispatchDbosJobs, PostgresDispatchCandidateStore } from "./dispatcher";
@@ -27,6 +28,8 @@ async function main(): Promise<void> {
 	let dbos: DbosJobEnqueuer | undefined;
 	let stopping = false;
 	let nextMaintenanceAt = 0;
+	let nextObservabilityAt = 0;
+	let readinessHeartbeat: ReturnType<typeof setInterval> | undefined;
 	const stopSignal = new AbortController();
 	const stop = () => {
 		stopping = true;
@@ -39,6 +42,14 @@ async function main(): Promise<void> {
 	try {
 		await removeReadyFile();
 		dbos = await createDbosJobEnqueuer(config);
+		await touchReadyFile();
+		readinessHeartbeat = setInterval(() => {
+			void touchReadyFile().catch((error) => {
+				process.stderr.write(
+					`${JSON.stringify({ event: "dbos.control.heartbeat_failed", error: error instanceof Error ? error.message : String(error) })}\n`,
+				);
+			});
+		}, 15_000);
 		const dispatcher = new PostgresDispatchCandidateStore(pool);
 		const reconciler = new PostgresReconciliationStore(pool);
 		const maintenanceLogger = logger.child({ component: "dbos_control" });
@@ -59,6 +70,9 @@ async function main(): Promise<void> {
 				const reconciliation = await reconcileDbosJobs(reconciler, dbos);
 				let askRunsMaintenance:
 					| Awaited<ReturnType<typeof runAskRunsMaintenance>>
+					| undefined;
+				let observability:
+					| Awaited<ReturnType<typeof runObservabilityCycle>>
 					| undefined;
 				if (
 					config.askRunMaintenance.enabled &&
@@ -85,6 +99,23 @@ async function main(): Promise<void> {
 						});
 					}
 				}
+				if (
+					config.observabilityCycle.enabled &&
+					Date.now() >= nextObservabilityAt
+				) {
+					nextObservabilityAt =
+						Date.now() + config.observabilityCycle.intervalMs;
+					try {
+						observability = await runObservabilityCycle(pool, {
+							workerId: config.executorId,
+						});
+					} catch (error) {
+						maintenanceLogger.error({
+							event: "observability_cycle_failed",
+							error,
+						});
+					}
+				}
 				process.stdout.write(
 					`${JSON.stringify({
 						event: "dbos.control.tick",
@@ -92,9 +123,10 @@ async function main(): Promise<void> {
 						dispatch,
 						reconciliation,
 						askRunsMaintenance,
+						observability,
 					})}\n`,
 				);
-				await writeFile(READY_FILE, `${new Date().toISOString()}\n`, "utf8");
+				await touchReadyFile();
 			} catch (error) {
 				process.stderr.write(
 					`${JSON.stringify({
@@ -106,10 +138,15 @@ async function main(): Promise<void> {
 			if (!stopping) await sleep(config.controlPollMs, stopSignal.signal);
 		}
 	} finally {
+		if (readinessHeartbeat) clearInterval(readinessHeartbeat);
 		await removeReadyFile();
 		await dbos?.close();
 		await pool.end();
 	}
+}
+
+async function touchReadyFile(): Promise<void> {
+	await writeFile(READY_FILE, `${new Date().toISOString()}\n`, "utf8");
 }
 
 async function removeReadyFile(): Promise<void> {

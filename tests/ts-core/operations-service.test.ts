@@ -63,6 +63,12 @@ function dataSource(
 		async listJobErrors() {
 			return [error("job", "job-2", "2026-08-04T11:55:00.000Z")];
 		},
+		async listAlerts() {
+			return [];
+		},
+		async listComponentHealth() {
+			return [];
+		},
 		...overrides,
 	};
 }
@@ -123,10 +129,18 @@ test("operations queries always receive both scope identifiers", async () => {
 			observed.push([received, since, limit]);
 			return [];
 		},
+		async listAlerts(received) {
+			observed.push([received]);
+			return [];
+		},
+		async listComponentHealth(received) {
+			observed.push([received]);
+			return [];
+		},
 	});
 
 	await new OperationsService(source).readSnapshot(scope, { now });
-	assert.equal(observed.length, 5);
+	assert.equal(observed.length, 7);
 	for (const call of observed) assert.deepEqual(call[0], scope);
 });
 

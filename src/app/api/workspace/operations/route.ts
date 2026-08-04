@@ -11,6 +11,10 @@ function optionalNumber(value: string | null): number | undefined {
 	return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function enabled(value: string | undefined): boolean {
+	return value?.trim().toLowerCase() === "true" || value?.trim() === "1";
+}
+
 export async function GET(request: Request) {
 	const identity = await resolveRequestSession(request);
 	if (!identity) {
@@ -39,5 +43,32 @@ export async function GET(request: Request) {
 			),
 		},
 	);
-	return NextResponse.json(snapshot);
+	const hasUnknown =
+		snapshot.components.length === 0 ||
+		snapshot.components.some((component) => component.status === "unknown");
+	const hasCritical = snapshot.alerts.some(
+		(alert) => alert.status === "active" && alert.severity === "critical",
+	);
+	const hasWarning = snapshot.alerts.some(
+		(alert) => alert.status === "active" && alert.severity === "warning",
+	);
+	return NextResponse.json({
+		...snapshot,
+		scope: { workspace_id: identity.workspaceId },
+		overall: {
+			status: hasCritical
+				? "unavailable"
+				: hasWarning
+					? "degraded"
+					: hasUnknown
+						? "unknown"
+						: "healthy",
+			evaluated_at: snapshot.generated_at,
+			stale: hasUnknown,
+		},
+		notifications: {
+			webhook: enabled(process.env.OBSERVABILITY_ALERT_WEBHOOK_ENABLED),
+			email: enabled(process.env.OBSERVABILITY_ALERT_EMAIL_ENABLED),
+		},
+	});
 }

@@ -9,6 +9,10 @@ BEGIN
 	END IF;
 	IF NOT has_table_privilege('unorag_worker_login', 'app.jobs', 'SELECT,INSERT,UPDATE')
 		OR NOT has_table_privilege('unorag_worker_login', 'app.generation_cleanup_queue', 'SELECT,INSERT,UPDATE,DELETE')
+		OR NOT has_table_privilege('unorag_worker_login', 'app.observability_alerts', 'SELECT,INSERT,UPDATE')
+		OR NOT has_table_privilege('unorag_worker_login', 'app.observability_alert_transitions', 'SELECT,INSERT')
+		OR NOT has_table_privilege('unorag_worker_login', 'app.observability_alert_deliveries', 'SELECT,INSERT,UPDATE')
+		OR NOT has_table_privilege('unorag_worker_login', 'app.observability_component_health', 'SELECT,INSERT,UPDATE')
 		OR has_table_privilege('unorag_worker_login', 'app.users', 'SELECT')
 		OR has_schema_privilege('unorag_worker_login', 'app', 'CREATE') THEN
 		RAISE EXCEPTION 'unorag_worker_login privilege boundary is invalid';

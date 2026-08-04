@@ -152,6 +152,10 @@ test("DBOS environment configuration is fail closed", () => {
 				retentionDays: 30,
 				batchSize: 1_000,
 			},
+			observabilityCycle: {
+				enabled: true,
+				intervalMs: 60_000,
+			},
 			adminPort: undefined,
 			logLevel: "info",
 		},

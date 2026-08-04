@@ -587,6 +587,246 @@ export const askRuns = appSchema.table(
 	],
 );
 
+/**
+ * Durable, workspace-scoped operational signals. One row represents the
+ * current lifecycle of a rule; generation increments when a resolved signal
+ * becomes active again.
+ */
+export const observabilityAlerts = appSchema.table(
+	"observability_alerts",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		code: varchar("code", { length: 128 }).notNull(),
+		source: varchar("source", { length: 64 }).notNull(),
+		severity: varchar("severity", { length: 16 }).notNull(),
+		status: varchar("status", { length: 16 }).default("active").notNull(),
+		title: varchar("title", { length: 256 }).notNull(),
+		detail: text("detail").notNull(),
+		recovery: text("recovery").notNull(),
+		evidence: jsonb("evidence")
+			.$type<Record<string, number | string | boolean | null>>()
+			.default({})
+			.notNull(),
+		generation: integer("generation").default(1).notNull(),
+		occurrenceCount: integer("occurrence_count").default(1).notNull(),
+		consecutiveBreachCount: integer("consecutive_breach_count")
+			.default(1)
+			.notNull(),
+		consecutiveHealthyCount: integer("consecutive_healthy_count")
+			.default(0)
+			.notNull(),
+		firstTriggeredAt: timestamp("first_triggered_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		lastObservedAt: timestamp("last_observed_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+		...timestamps,
+	},
+	(table) => [
+		foreignKey({
+			name: "observability_alerts_org_workspace_fk",
+			columns: [table.organizationId, table.workspaceId],
+			foreignColumns: [workspaces.organizationId, workspaces.id],
+		}).onDelete("cascade"),
+		uniqueIndex("observability_alerts_scope_code_uq").on(
+			table.organizationId,
+			table.workspaceId,
+			table.code,
+		),
+		uniqueIndex("observability_alerts_scope_id_uq").on(
+			table.organizationId,
+			table.workspaceId,
+			table.id,
+		),
+		index("observability_alerts_scope_status_idx").on(
+			table.organizationId,
+			table.workspaceId,
+			table.status,
+			table.updatedAt,
+		),
+		check(
+			"observability_alerts_severity_check",
+			sql`${table.severity} in ('critical', 'warning', 'info')`,
+		),
+		check(
+			"observability_alerts_status_check",
+			sql`${table.status} in ('active', 'resolved')`,
+		),
+		check(
+			"observability_alerts_generation_check",
+			sql`${table.generation} > 0 and ${table.occurrenceCount} > 0
+				and ${table.consecutiveBreachCount} >= 0
+				and ${table.consecutiveHealthyCount} >= 0`,
+		),
+	],
+);
+
+/** Last bounded dependency check projected per workspace for read-only UI use. */
+export const observabilityComponentHealth = appSchema.table(
+	"observability_component_health",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		code: varchar("code", { length: 128 }).notNull(),
+		label: varchar("label", { length: 128 }).notNull(),
+		kind: varchar("kind", { length: 32 }).notNull(),
+		status: varchar("status", { length: 16 }).notNull(),
+		mode: varchar("mode", { length: 24 }).notNull(),
+		latencyMs: integer("latency_ms"),
+		errorCode: varchar("error_code", { length: 128 }),
+		recovery: text("recovery").notNull(),
+		checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+		lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+		...timestamps,
+	},
+	(table) => [
+		foreignKey({
+			name: "observability_component_health_org_workspace_fk",
+			columns: [table.organizationId, table.workspaceId],
+			foreignColumns: [workspaces.organizationId, workspaces.id],
+		}).onDelete("cascade"),
+		uniqueIndex("observability_component_health_scope_code_uq").on(
+			table.organizationId,
+			table.workspaceId,
+			table.code,
+		),
+		index("observability_component_health_scope_checked_idx").on(
+			table.organizationId,
+			table.workspaceId,
+			table.checkedAt,
+		),
+		check(
+			"observability_component_health_status_check",
+			sql`${table.status} in ('healthy', 'degraded', 'disabled')`,
+		),
+		check(
+			"observability_component_health_kind_check",
+			sql`${table.kind} in ('infrastructure', 'ai', 'parser')`,
+		),
+		check(
+			"observability_component_health_mode_check",
+			sql`${table.mode} in ('active', 'configuration')`,
+		),
+		check(
+			"observability_component_health_latency_check",
+			sql`${table.latencyMs} is null or ${table.latencyMs} >= 0`,
+		),
+	],
+);
+
+/** Immutable alert lifecycle event and safe payload snapshot. */
+export const observabilityAlertTransitions = appSchema.table(
+	"observability_alert_transitions",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		alertId: uuid("alert_id").notNull(),
+		generation: integer("generation").notNull(),
+		transition: varchar("transition", { length: 16 }).notNull(),
+		payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+		observedAt: timestamp("observed_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		foreignKey({
+			name: "observability_alert_transitions_scope_alert_fk",
+			columns: [table.organizationId, table.workspaceId, table.alertId],
+			foreignColumns: [
+				observabilityAlerts.organizationId,
+				observabilityAlerts.workspaceId,
+				observabilityAlerts.id,
+			],
+		}).onDelete("cascade"),
+		uniqueIndex("observability_alert_transitions_identity_uq").on(
+			table.alertId,
+			table.generation,
+			table.transition,
+		),
+		uniqueIndex("observability_alert_transitions_scope_id_uq").on(
+			table.organizationId,
+			table.workspaceId,
+			table.id,
+		),
+		check(
+			"observability_alert_transitions_generation_check",
+			sql`${table.generation} > 0`,
+		),
+		check(
+			"observability_alert_transitions_transition_check",
+			sql`${table.transition} in ('opened', 'resolved', 'reopened')`,
+		),
+	],
+);
+
+/** At-least-once notification work created from immutable transitions. */
+export const observabilityAlertDeliveries = appSchema.table(
+	"observability_alert_deliveries",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		transitionId: uuid("transition_id").notNull(),
+		channel: varchar("channel", { length: 16 }).notNull(),
+		destinationKey: varchar("destination_key", { length: 64 }).notNull(),
+		configVersion: varchar("config_version", { length: 64 }).notNull(),
+		payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+		status: varchar("status", { length: 16 }).default("pending").notNull(),
+		attempt: integer("attempt").default(0).notNull(),
+		maxAttempts: integer("max_attempts").default(5).notNull(),
+		nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		claimedBy: varchar("claimed_by", { length: 128 }),
+		claimedAt: timestamp("claimed_at", { withTimezone: true }),
+		leaseToken: uuid("lease_token"),
+		leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+		errorCode: varchar("error_code", { length: 128 }),
+		deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+		...timestamps,
+	},
+	(table) => [
+		foreignKey({
+			name: "observability_alert_deliveries_scope_transition_fk",
+			columns: [table.organizationId, table.workspaceId, table.transitionId],
+			foreignColumns: [
+				observabilityAlertTransitions.organizationId,
+				observabilityAlertTransitions.workspaceId,
+				observabilityAlertTransitions.id,
+			],
+		}).onDelete("cascade"),
+		uniqueIndex("observability_alert_delivery_transition_uq").on(
+			table.transitionId,
+			table.channel,
+			table.destinationKey,
+			table.configVersion,
+		),
+		index("observability_alert_delivery_claim_idx").on(
+			table.status,
+			table.nextAttemptAt,
+			table.createdAt,
+		),
+		check(
+			"observability_alert_delivery_attempt_check",
+			sql`${table.attempt} >= 0 and ${table.maxAttempts} > 0`,
+		),
+		check(
+			"observability_alert_delivery_channel_check",
+			sql`${table.channel} in ('webhook', 'email')`,
+		),
+		check(
+			"observability_alert_delivery_status_check",
+			sql`${table.status} in ('pending', 'sending', 'retry', 'sent', 'dead')`,
+		),
+	],
+);
+
 export const documents = appSchema.table(
 	"documents",
 	{
