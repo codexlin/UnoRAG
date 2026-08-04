@@ -3,6 +3,10 @@ import { z } from "zod";
 import { type WorkerQueueKey, workerQueueKeys } from "./queues";
 
 const positiveInteger = z.coerce.number().int().positive();
+const environmentBoolean = z
+	.enum(["true", "false"])
+	.default("true")
+	.transform((value) => value === "true");
 const queueKeySchema = z.enum(workerQueueKeys);
 
 const workerEnvironmentSchema = z
@@ -29,6 +33,13 @@ const workerEnvironmentSchema = z
 		DBOS_INGEST_MINERU_CONCURRENCY: positiveInteger.max(100).default(2),
 		DBOS_LIFECYCLE_CONCURRENCY: positiveInteger.max(100).default(2),
 		DBOS_CONTROL_POLL_MS: positiveInteger.max(300_000).default(5_000),
+		ASK_RUN_MAINTENANCE_ENABLED: environmentBoolean,
+		ASK_RUN_MAINTENANCE_INTERVAL_MS: positiveInteger
+			.max(86_400_000)
+			.default(900_000),
+		ASK_RUN_STALE_AFTER_MINUTES: positiveInteger.max(10_080).default(30),
+		ASK_RUN_RETENTION_DAYS: positiveInteger.max(3_650).default(30),
+		ASK_RUN_MAINTENANCE_BATCH_SIZE: positiveInteger.max(10_000).default(1_000),
 		DBOS_ADMIN_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
 		DBOS_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 	})
@@ -43,6 +54,13 @@ export interface WorkerRuntimeConfig {
 	queueConcurrency: Record<WorkerQueueKey, number>;
 	listenQueues: WorkerQueueKey[];
 	controlPollMs: number;
+	askRunMaintenance: {
+		enabled: boolean;
+		intervalMs: number;
+		staleAfterMinutes: number;
+		retentionDays: number;
+		batchSize: number;
+	};
 	adminPort?: number;
 	logLevel: "debug" | "info" | "warn" | "error";
 }
@@ -83,6 +101,13 @@ export function loadWorkerConfig(
 		},
 		listenQueues: parseListenQueues(parsed.UNORAG_DBOS_LISTEN_QUEUES),
 		controlPollMs: parsed.DBOS_CONTROL_POLL_MS,
+		askRunMaintenance: {
+			enabled: parsed.ASK_RUN_MAINTENANCE_ENABLED,
+			intervalMs: parsed.ASK_RUN_MAINTENANCE_INTERVAL_MS,
+			staleAfterMinutes: parsed.ASK_RUN_STALE_AFTER_MINUTES,
+			retentionDays: parsed.ASK_RUN_RETENTION_DAYS,
+			batchSize: parsed.ASK_RUN_MAINTENANCE_BATCH_SIZE,
+		},
 		adminPort: parsed.DBOS_ADMIN_PORT,
 		logLevel: parsed.DBOS_LOG_LEVEL,
 	};

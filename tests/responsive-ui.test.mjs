@@ -107,3 +107,25 @@ test("replace copy matches desired to active atomic version behavior", () => {
 	assert.match(libraries, /旧版本保留在版本历史中/);
 	assert.doesNotMatch(libraries, /此操作不可恢复旧版内容/);
 });
+
+test("operations center is scoped, responsive, and permission-gated", () => {
+	const operations = readFileSync(
+		path.join(root, "src/components/app/operations-dashboard.tsx"),
+		"utf8",
+	);
+	const nav = readFileSync(
+		path.join(root, "src/components/app/nav-items.ts"),
+		"utf8",
+	);
+	const sidebar = readFileSync(
+		path.join(root, "src/components/app/app-sidebar.tsx"),
+		"utf8",
+	);
+
+	assert.match(operations, /useCan\("manageMembers"\)/);
+	assert.match(operations, /\/api\/workspace\/operations/);
+	assert.match(operations, /overflow-x-auto/);
+	assert.match(operations, /min-w-\[44rem\]/);
+	assert.match(nav, /href: "\/app\/operations"[\s\S]*cap: "manageMembers"/);
+	assert.match(sidebar, /allowsCap\(caps, item\.cap\)/);
+});

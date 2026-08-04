@@ -1,6 +1,7 @@
 # UnoRAG 可观测性目标架构
 
-> 状态：核心诊断基础已实现，原生运维中心、指标、OTel、Ops Stack 与 Langfuse 仍是后续交付；
+> 状态：核心诊断、原生运行中心、基础指标与 `ask_runs` 维护闭环已实现；OTel、外部告警、Ops Stack
+> 与 Langfuse 仍是后续交付；
 > 本文件同时标明当前能力和目标边界。
 >
 > 关联：[产品说明](../PRODUCT.md) · [架构](../ARCHITECTURE.md) · [运维指南](../OPERATIONS.md) · [混合检索设计](./hybrid-retrieval.md)
@@ -144,7 +145,7 @@ fail-soft 写入”制造不可知的数据丢失；写入失败应有结构化�
 业务结果。
 
 默认不保存问题、回答、Prompt、引用正文和完整检索块。当前 repository 支持按组织、Workspace 和时间
-范围批量删除终态记录；按用户删除、配置化调度和 stale-running 收敛由 Phase 1B 补齐。临时会话被
+范围批量删除终态记录；按用户删除、配置化调度和 stale-running 收敛已由 Phase 1B 补齐。临时会话被
 归档时可以回填 `thread_id`，但 `ask_runs` 不是会话内容存储。
 
 #### 原生运维中心
@@ -159,8 +160,9 @@ fail-soft 写入”制造不可知的数据丢失；写入失败应有结构化�
 - 按 `request_id`、`job_id`、`workflow_id` 搜索诊断上下文；
 - 邮件或 Webhook 基础告警，以及明确的恢复建议。
 
-核心应用已经输出 Pino JSON；标准 `/metrics` 是 Phase 1B 目标，让客户不启用官方 Ops Stack 也能
-接入已有系统。
+核心应用已经输出 Pino JSON 和低基数 `/metrics`，让客户不启用官方 Ops Stack 也能接入已有系统。
+当前运行中心覆盖 Ask、任务队列、dead/stuck 和最近错误；Provider/基础设施健康与 Webhook/邮件投递
+仍在后续批次。
 
 ### 3.2 第二层：可选 Ops Stack
 
@@ -277,11 +279,12 @@ DBOS 排队可能持续很久，任务也可能重试或恢复，因此不得构
 验收：核心单元和数据库约束测试覆盖 ID 传播、日志脱敏、成功/拒答/失败终态、跨 Workspace 外键拒绝
 和保留删除；观测写失败不改变 Ask 业务结果。
 
-### Phase 1B：原生运维闭环（下一阶段）
+### Phase 1B：原生运维闭环（核心已实现）
 
-- 实现原生运维中心最小闭环和基础 Webhook/邮件告警；
-- 暴露低基数 `/metrics`。
-- 增加 stale-running sweeper、按用户删除和正式保留调度。
+- 已实现管理员原生运行中心和产品内基础告警信号；
+- 已暴露低基数 `/metrics`；
+- 已增加 stale-running sweeper、按用户删除和正式保留调度；
+- 待补 Provider/基础设施健康与 Webhook/邮件告警投递。
 
 验收：不部署任何外部观测组件，也能定位一次 Ask、一次失败入库和一个 dead/stuck workflow；公共 API
 不泄漏内部调试信息；跨 Workspace 诊断数据零泄漏。

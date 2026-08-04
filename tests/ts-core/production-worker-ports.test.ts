@@ -257,6 +257,13 @@ describe("production generation cleanup ports", () => {
 			},
 			listenQueues: ["lifecycle"],
 			controlPollMs: 1_000,
+			askRunMaintenance: {
+				enabled: true,
+				intervalMs: 900_000,
+				staleAfterMinutes: 30,
+				retentionDays: 30,
+				batchSize: 1_000,
+			},
 			logLevel: "error",
 		};
 

@@ -24,6 +24,10 @@ import {
 	type AskRunsRepository,
 	createAskRunsRepository,
 } from "@/server/observability/ask-runs-repository";
+import {
+	observeWebRequest,
+	type WebMetricOutcome,
+} from "@/server/observability/metrics";
 
 import {
 	projectPublicCitations,
@@ -462,9 +466,22 @@ export async function handleNativeAskRequest(input: {
 	askRunsRepository?: AskRunsRepository | null;
 	askRunPrincipal?: AskRunPrincipal;
 	resolveLibrary?: LibraryResolver;
+	observeMetrics?: boolean;
 }): Promise<Response | null> {
 	if (!isNativeAskPath(input.path)) return null;
+	const metricsStartedAt = performance.now();
+	let metricsSettled = false;
+	const settleMetrics = (outcome: WebMetricOutcome) => {
+		if (input.observeMetrics === false || metricsSettled) return;
+		metricsSettled = true;
+		observeWebRequest({
+			operation: "ask",
+			outcome,
+			durationMs: Math.max(0, performance.now() - metricsStartedAt),
+		});
+	};
 	if (input.request.method !== "POST") {
+		settleMetrics("client_error");
 		return Response.json({ detail: "method not allowed" }, { status: 405 });
 	}
 	const repository =
@@ -575,6 +592,7 @@ export async function handleNativeAskRequest(input: {
 			);
 			const retrievalDebug = completeRetrievalDebug(state, askStartedAt);
 			await settleActiveRun(state.refused ? "refused" : "completed", state);
+			settleMetrics(state.refused ? "refused" : "success");
 			return Response.json({
 				...common,
 				answer,
@@ -618,11 +636,15 @@ export async function handleNativeAskRequest(input: {
 				);
 				done.retrieval_debug = completeRetrievalDebug(state, askStartedAt);
 				await settleActiveRun(state.refused ? "refused" : "completed", state);
+				settleMetrics(state.refused ? "refused" : "success");
 			} catch (error) {
 				await settleActiveRun(
 					input.request.signal.aborted ? "cancelled" : "failed",
 					state,
 					operationalErrorCode(error),
+				);
+				settleMetrics(
+					input.request.signal.aborted ? "cancelled" : "server_error",
 				);
 				throw error;
 			} finally {
@@ -654,9 +676,10 @@ export async function handleNativeAskRequest(input: {
 				);
 			}
 		})();
-		return streamResponse(frames, () =>
-			settleActiveRun("cancelled", state, "request_cancelled"),
-		);
+		return streamResponse(frames, async () => {
+			await settleActiveRun("cancelled", state, "request_cancelled");
+			settleMetrics("cancelled");
+		});
 	} catch (error) {
 		await settleActiveRun(
 			input.request.signal.aborted ? "cancelled" : "failed",
@@ -664,14 +687,18 @@ export async function handleNativeAskRequest(input: {
 			operationalErrorCode(error),
 		);
 		if (error instanceof z.ZodError) {
+			settleMetrics("client_error");
 			return Response.json({ detail: "invalid ask request" }, { status: 400 });
 		}
 		if (error instanceof ConversationNotFoundError) {
+			settleMetrics("client_error");
 			return Response.json({ detail: "thread not found" }, { status: 404 });
 		}
 		if (error instanceof NativeAskRequestError) {
+			settleMetrics(error.status >= 500 ? "server_error" : "client_error");
 			return Response.json({ detail: error.message }, { status: error.status });
 		}
+		settleMetrics(input.request.signal.aborted ? "cancelled" : "server_error");
 		logger.error({
 			event: "ask.native.failed",
 			error: operationalErrorCode(error),

@@ -26,6 +26,8 @@
 		"db:studio": "drizzle-kit studio",
 		"lifecycle:inspect": "node scripts/inspect-lifecycle.mjs",
 		"lifecycle:check": "node scripts/inspect-lifecycle.mjs --fail-on-dead --fail-on-stuck",
+		"ask-runs:maintain": "tsx scripts/maintain-ask-runs.ts --dry-run",
+		"ask-runs:maintain:apply": "tsx scripts/maintain-ask-runs.ts --execute",
 		"conversations:backfill": "node scripts/backfill-conversations.mjs",
 		"conversations:backfill:apply": "node scripts/backfill-conversations.mjs --apply",
 		"acl:backfill-projections": "node scripts/backfill-acl-projections.mjs",

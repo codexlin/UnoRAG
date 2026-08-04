@@ -1,20 +1,28 @@
 import {
+	Activity,
 	BookOpen,
 	Clock3,
 	type LucideIcon,
 	MessagesSquare,
 	Settings2,
 } from "lucide-react";
+import type { Cap } from "@/lib/client-permissions";
 
 export type AppNavGroup = "nav" | "settings";
 
 export type AppNavItem = {
-	href: "/app/ask" | "/app/libraries" | "/app/archive" | "/app/settings";
+	href:
+		| "/app/ask"
+		| "/app/libraries"
+		| "/app/archive"
+		| "/app/operations"
+		| "/app/settings";
 	code: string;
 	label: string;
 	hint: string;
 	icon: LucideIcon;
 	group: AppNavGroup;
+	cap?: Cap;
 };
 
 export const APP_NAV_ITEMS: AppNavItem[] = [
@@ -43,8 +51,17 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
 		group: "nav",
 	},
 	{
-		href: "/app/settings",
+		href: "/app/operations",
 		code: "04",
+		label: "运行中心",
+		hint: "请求质量、任务队列与发布熔断信号",
+		icon: Activity,
+		group: "settings",
+		cap: "manageMembers",
+	},
+	{
+		href: "/app/settings",
+		code: "05",
 		label: "工作区",
 		hint: "服务健康与运行配置",
 		icon: Settings2,

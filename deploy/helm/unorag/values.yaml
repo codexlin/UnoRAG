@@ -63,6 +63,11 @@ dbos:
   ingestMineruConcurrency: "2"
   lifecycleConcurrency: "2"
   controlPollMs: "5000"
+  askRunMaintenanceEnabled: "true"
+  askRunMaintenanceIntervalMs: "900000"
+  askRunStaleAfterMinutes: "30"
+  askRunRetentionDays: "30"
+  askRunMaintenanceBatchSize: "1000"
   workerResources: {}
   controlResources: {}
   terminationGracePeriodSeconds: 120

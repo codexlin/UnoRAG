@@ -13,6 +13,10 @@ import {
 	NativeRetrievalRequestError,
 	type NativeRetrievalResponse,
 } from "@/server/http/retrieval/service";
+import {
+	observeWebRequest,
+	type WebMetricOutcome,
+} from "@/server/observability/metrics";
 import { injectAskOverrides } from "./ask-overrides-inject.mjs";
 import {
 	normalizePublicApiRequest,
@@ -329,6 +333,15 @@ export async function forwardIntegrationRag(input: {
 		citationCount?: number | null;
 	}) => {
 		const durationMs = Date.now() - started;
+		let outcome: WebMetricOutcome;
+		if (input.request.signal.aborted) outcome = "cancelled";
+		else if (opts.status >= 500) outcome = "server_error";
+		else if (opts.status >= 400) outcome = "client_error";
+		else if (publicTarget === "retrieve" && opts.citationCount === 0)
+			outcome = "empty";
+		else if (opts.refused === true) outcome = "refused";
+		else outcome = "success";
+		observeWebRequest({ operation: publicTarget, outcome, durationMs });
 		const libraryId = opts.libraryId ?? "";
 		emitPublicApiUsage({
 			request_id: input.requestId,
@@ -573,6 +586,7 @@ export async function forwardIntegrationRag(input: {
 			identity,
 			requestId: input.requestId,
 			askRunPrincipal: { type: "service_key", id: input.key.id },
+			observeMetrics: false,
 		});
 	} catch {
 		const timedOut = timeoutSignal.aborted;

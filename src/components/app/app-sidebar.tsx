@@ -8,6 +8,7 @@ import {
 	type AppNavItem,
 	getAppNavItemsByGroup,
 } from "@/components/app/nav-items";
+import { useSession } from "@/components/app/session-provider";
 import { UnoRAGMark } from "@/components/app/unorag-logo";
 import { WorkspaceSwitcher } from "@/components/app/workspace-switcher";
 import {
@@ -23,6 +24,7 @@ import {
 	SidebarMenuItem,
 	SidebarRail,
 } from "@/components/ui/sidebar";
+import { allowsCap } from "@/lib/client-permissions";
 import { cn } from "@/lib/utils";
 
 const PRIMARY_NAV = getAppNavItemsByGroup("nav");
@@ -75,6 +77,13 @@ function NavLink({ item }: { item: AppNavItem }) {
 }
 
 export function AppSidebar() {
+	const { caps } = useSession();
+	const primaryNav = PRIMARY_NAV.filter(
+		(item) => !item.cap || allowsCap(caps, item.cap),
+	);
+	const settingsNav = SETTINGS_NAV.filter(
+		(item) => !item.cap || allowsCap(caps, item.cap),
+	);
 	return (
 		<Sidebar
 			collapsible="icon"
@@ -113,7 +122,7 @@ export function AppSidebar() {
 					</SidebarGroupLabel>
 					<SidebarGroupContent>
 						<SidebarMenu className="gap-1.5">
-							{PRIMARY_NAV.map((item) => (
+							{primaryNav.map((item) => (
 								<NavLink key={item.href} item={item} />
 							))}
 						</SidebarMenu>
@@ -127,7 +136,7 @@ export function AppSidebar() {
 					</SidebarGroupLabel>
 					<SidebarGroupContent>
 						<SidebarMenu className="gap-1.5">
-							{SETTINGS_NAV.map((item) => (
+							{settingsNav.map((item) => (
 								<NavLink key={item.href} item={item} />
 							))}
 						</SidebarMenu>

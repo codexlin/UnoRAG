@@ -33,6 +33,7 @@ GRANT SELECT ON
 	app.document_versions,
 	app.document_active_versions,
 	app.active_document_generations,
+	app.ask_runs,
 	app.document_acl,
 	app.libraries,
 	app.generation_cleanup_queue
@@ -42,4 +43,5 @@ GRANT UPDATE ON app.document_versions, app.documents, app.libraries TO unorag_wo
 GRANT INSERT, UPDATE, DELETE ON app.document_active_versions TO unorag_worker;
 GRANT INSERT, UPDATE, DELETE ON app.generation_cleanup_queue TO unorag_worker;
 GRANT INSERT ON app.audit_logs TO unorag_worker;
+GRANT UPDATE, DELETE ON app.ask_runs TO unorag_worker;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app TO unorag_worker;

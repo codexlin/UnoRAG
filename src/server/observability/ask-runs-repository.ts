@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt, ne } from "drizzle-orm";
+import { and, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import type * as schema from "@/db/schema";
@@ -52,25 +52,41 @@ export interface DeleteExpiredAskRunsInput {
 	before: Date;
 	organizationId?: string;
 	workspaceId?: string;
+	userId?: string;
 	limit?: number;
 }
+
+export interface ReconcileStaleAskRunsInput {
+	before: Date;
+	status: "failed" | "cancelled";
+	errorCode: string;
+	limit?: number;
+	endedAt?: Date;
+}
+
+export const STALE_ASK_RUN_FAILED_ERROR_CODE = "ASK_RUN_STALE_TIMEOUT";
+export const STALE_ASK_RUN_CANCELLED_ERROR_CODE = "ASK_RUN_STALE_CANCELLED";
 
 export type AskRunWriteResult<T> =
 	| { ok: true; value: T }
 	| { ok: false; error: Error };
 
 export type AskRunWriteFailureReporter = (event: {
-	operation: "start" | "finalize" | "delete_expired";
+	operation: "start" | "finalize" | "reconcile_stale" | "delete_expired";
 	error: Error;
 	requestId?: string;
 	runId?: string;
 	organizationId?: string;
 	workspaceId?: string;
+	userId?: string;
 }) => void;
 
 export interface AskRunsPersistence {
 	start(input: StartAskRunInput): Promise<AskRun>;
 	finalize(input: FinalizeAskRunInput): Promise<AskRun | null>;
+	countStaleRunning?(input: ReconcileStaleAskRunsInput): Promise<number>;
+	reconcileStaleRunning?(input: ReconcileStaleAskRunsInput): Promise<number>;
+	countExpired?(input: DeleteExpiredAskRunsInput): Promise<number>;
 	deleteExpired(input: DeleteExpiredAskRunsInput): Promise<number>;
 }
 
@@ -88,7 +104,15 @@ function normalizeTraceId(traceId: string | null | undefined) {
 }
 
 function normalizeLimit(limit: number | undefined): number {
-	return Math.max(1, Math.min(Math.trunc(limit ?? 1_000), 10_000));
+	if (limit === undefined) return 1_000;
+	if (!Number.isFinite(limit)) throw new Error("limit must be a finite number");
+	return Math.max(1, Math.min(Math.trunc(limit), 10_000));
+}
+
+function validDate(value: Date, field: string): Date {
+	if (Number.isNaN(value.getTime()))
+		throw new Error(`${field} must be a valid date`);
+	return value;
 }
 
 function nonNegativeInteger(value: number, field: string): number {
@@ -102,6 +126,36 @@ function nonEmpty(value: string, field: string): string {
 	const normalized = value.trim();
 	if (!normalized) throw new Error(`${field} must not be empty`);
 	return normalized;
+}
+
+function boundedCode(value: string, field: string): string {
+	const normalized = nonEmpty(value, field);
+	if (normalized.length > 128) {
+		throw new Error(`${field} must be at most 128 characters`);
+	}
+	return normalized;
+}
+
+function retentionConditions(input: DeleteExpiredAskRunsInput) {
+	validDate(input.before, "before");
+	if (input.workspaceId && !input.organizationId) {
+		throw new Error("organizationId is required when workspaceId is provided");
+	}
+	if (input.userId && !input.organizationId) {
+		throw new Error("organizationId is required when userId is provided");
+	}
+	const conditions = [
+		ne(askRuns.status, "running"),
+		lt(askRuns.endedAt, input.before),
+	];
+	if (input.organizationId) {
+		conditions.push(eq(askRuns.organizationId, input.organizationId));
+	}
+	if (input.workspaceId) {
+		conditions.push(eq(askRuns.workspaceId, input.workspaceId));
+	}
+	if (input.userId) conditions.push(eq(askRuns.userId, input.userId));
+	return conditions;
 }
 
 class DrizzleAskRunsPersistence implements AskRunsPersistence {
@@ -174,22 +228,83 @@ class DrizzleAskRunsPersistence implements AskRunsPersistence {
 		return updated ?? null;
 	}
 
+	async countStaleRunning(input: ReconcileStaleAskRunsInput): Promise<number> {
+		boundedCode(input.errorCode, "errorCode");
+		validDate(input.before, "before");
+		const candidates = await this.db
+			.select({ id: askRuns.id })
+			.from(askRuns)
+			.where(
+				and(eq(askRuns.status, "running"), lt(askRuns.startedAt, input.before)),
+			)
+			.orderBy(askRuns.startedAt, askRuns.id)
+			.limit(normalizeLimit(input.limit));
+		return candidates.length;
+	}
+
+	async reconcileStaleRunning(
+		input: ReconcileStaleAskRunsInput,
+	): Promise<number> {
+		const errorCode = boundedCode(input.errorCode, "errorCode");
+		validDate(input.before, "before");
+		const endedAt = validDate(input.endedAt ?? new Date(), "endedAt");
+		return this.db.transaction(async (tx) => {
+			const candidates = await tx
+				.select({ id: askRuns.id })
+				.from(askRuns)
+				.where(
+					and(
+						eq(askRuns.status, "running"),
+						lt(askRuns.startedAt, input.before),
+					),
+				)
+				.orderBy(askRuns.startedAt, askRuns.id)
+				.limit(normalizeLimit(input.limit))
+				.for("update", { skipLocked: true });
+			if (candidates.length === 0) return 0;
+
+			const updated = await tx
+				.update(askRuns)
+				.set({
+					status: input.status,
+					refuseReason: null,
+					errorCode,
+					endedAt,
+					latencyMs: sql<number>`least(
+						2147483647,
+						greatest(
+							0,
+							floor(extract(epoch from (${endedAt}::timestamptz - ${askRuns.startedAt})) * 1000)
+						)
+					)::integer`,
+				})
+				.where(
+					and(
+						inArray(
+							askRuns.id,
+							candidates.map((candidate) => candidate.id),
+						),
+						eq(askRuns.status, "running"),
+						lt(askRuns.startedAt, input.before),
+					),
+				)
+				.returning({ id: askRuns.id });
+			return updated.length;
+		});
+	}
+
+	async countExpired(input: DeleteExpiredAskRunsInput): Promise<number> {
+		const candidates = await this.db
+			.select({ id: askRuns.id })
+			.from(askRuns)
+			.where(and(...retentionConditions(input)))
+			.orderBy(askRuns.endedAt, askRuns.id)
+			.limit(normalizeLimit(input.limit));
+		return candidates.length;
+	}
+
 	async deleteExpired(input: DeleteExpiredAskRunsInput): Promise<number> {
-		if (input.workspaceId && !input.organizationId) {
-			throw new Error(
-				"organizationId is required when workspaceId is provided",
-			);
-		}
-		const conditions = [
-			ne(askRuns.status, "running"),
-			lt(askRuns.endedAt, input.before),
-		];
-		if (input.organizationId) {
-			conditions.push(eq(askRuns.organizationId, input.organizationId));
-		}
-		if (input.workspaceId) {
-			conditions.push(eq(askRuns.workspaceId, input.workspaceId));
-		}
+		const conditions = retentionConditions(input);
 
 		return this.db.transaction(async (tx) => {
 			const candidates = await tx
@@ -197,7 +312,8 @@ class DrizzleAskRunsPersistence implements AskRunsPersistence {
 				.from(askRuns)
 				.where(and(...conditions))
 				.orderBy(askRuns.endedAt, askRuns.id)
-				.limit(normalizeLimit(input.limit));
+				.limit(normalizeLimit(input.limit))
+				.for("update", { skipLocked: true });
 			if (candidates.length === 0) return 0;
 			const deleted = await tx
 				.delete(askRuns)
@@ -207,8 +323,7 @@ class DrizzleAskRunsPersistence implements AskRunsPersistence {
 							askRuns.id,
 							candidates.map((candidate) => candidate.id),
 						),
-						ne(askRuns.status, "running"),
-						lt(askRuns.endedAt, input.before),
+						...retentionConditions(input),
 					),
 				)
 				.returning({ id: askRuns.id });
@@ -245,6 +360,39 @@ export class AskRunsRepository {
 		);
 	}
 
+	async countStaleRunning(
+		input: ReconcileStaleAskRunsInput,
+	): Promise<AskRunWriteResult<number>> {
+		return this.failSoft("reconcile_stale", {}, async () => {
+			if (!this.persistence.countStaleRunning) {
+				throw new Error("countStaleRunning persistence is not configured");
+			}
+			return this.persistence.countStaleRunning(input);
+		});
+	}
+
+	async reconcileStaleRunning(
+		input: ReconcileStaleAskRunsInput,
+	): Promise<AskRunWriteResult<number>> {
+		return this.failSoft("reconcile_stale", {}, async () => {
+			if (!this.persistence.reconcileStaleRunning) {
+				throw new Error("reconcileStaleRunning persistence is not configured");
+			}
+			return this.persistence.reconcileStaleRunning(input);
+		});
+	}
+
+	async countExpired(
+		input: DeleteExpiredAskRunsInput,
+	): Promise<AskRunWriteResult<number>> {
+		return this.failSoft("delete_expired", input, async () => {
+			if (!this.persistence.countExpired) {
+				throw new Error("countExpired persistence is not configured");
+			}
+			return this.persistence.countExpired(input);
+		});
+	}
+
 	async deleteExpired(
 		input: DeleteExpiredAskRunsInput,
 	): Promise<AskRunWriteResult<number>> {
@@ -254,12 +402,13 @@ export class AskRunsRepository {
 	}
 
 	private async failSoft<T>(
-		operation: "start" | "finalize" | "delete_expired",
+		operation: "start" | "finalize" | "reconcile_stale" | "delete_expired",
 		context: {
 			requestId?: string;
 			id?: string;
 			organizationId?: string;
 			workspaceId?: string;
+			userId?: string;
 		},
 		execute: () => Promise<T>,
 	): Promise<AskRunWriteResult<T>> {
@@ -275,6 +424,7 @@ export class AskRunsRepository {
 					runId: context.id,
 					organizationId: context.organizationId,
 					workspaceId: context.workspaceId,
+					userId: context.userId,
 				});
 			} catch {
 				// Observability reporting must not turn a fail-soft write into a failure.

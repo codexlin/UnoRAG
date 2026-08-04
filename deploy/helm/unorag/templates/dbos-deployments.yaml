@@ -222,6 +222,16 @@ spec:
               value: {{ .Values.dbos.lifecycleConcurrency | quote }}
             - name: DBOS_CONTROL_POLL_MS
               value: {{ .Values.dbos.controlPollMs | quote }}
+            - name: ASK_RUN_MAINTENANCE_ENABLED
+              value: {{ .Values.dbos.askRunMaintenanceEnabled | quote }}
+            - name: ASK_RUN_MAINTENANCE_INTERVAL_MS
+              value: {{ .Values.dbos.askRunMaintenanceIntervalMs | quote }}
+            - name: ASK_RUN_STALE_AFTER_MINUTES
+              value: {{ .Values.dbos.askRunStaleAfterMinutes | quote }}
+            - name: ASK_RUN_RETENTION_DAYS
+              value: {{ .Values.dbos.askRunRetentionDays | quote }}
+            - name: ASK_RUN_MAINTENANCE_BATCH_SIZE
+              value: {{ .Values.dbos.askRunMaintenanceBatchSize | quote }}
           readinessProbe:
             exec:
               command:

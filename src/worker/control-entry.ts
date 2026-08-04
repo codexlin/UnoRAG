@@ -1,8 +1,12 @@
 import { unlink, writeFile } from "node:fs/promises";
 
+import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-
 import { observePostgresPoolErrors } from "../db/pool-observability";
+import * as schema from "../db/schema";
+import { logger } from "../lib/observability";
+import { runAskRunsMaintenance } from "../server/observability/ask-runs-maintenance";
+import { createAskRunsRepository } from "../server/observability/ask-runs-repository";
 import { loadWorkerConfig } from "./config";
 import { createDbosJobEnqueuer, type DbosJobEnqueuer } from "./dbos-runtime";
 import { dispatchDbosJobs, PostgresDispatchCandidateStore } from "./dispatcher";
@@ -22,6 +26,7 @@ async function main(): Promise<void> {
 	);
 	let dbos: DbosJobEnqueuer | undefined;
 	let stopping = false;
+	let nextMaintenanceAt = 0;
 	const stopSignal = new AbortController();
 	const stop = () => {
 		stopping = true;
@@ -36,17 +41,57 @@ async function main(): Promise<void> {
 		dbos = await createDbosJobEnqueuer(config);
 		const dispatcher = new PostgresDispatchCandidateStore(pool);
 		const reconciler = new PostgresReconciliationStore(pool);
+		const maintenanceLogger = logger.child({ component: "dbos_control" });
+		const askRunsRepository = createAskRunsRepository(
+			drizzle(pool, { schema }),
+			(event) => {
+				maintenanceLogger.error({
+					event: "ask_runs_maintenance_repository_error",
+					operation: event.operation,
+					error: event.error,
+				});
+			},
+		);
 		while (!stopping) {
 			const startedAt = Date.now();
 			try {
 				const dispatch = await dispatchDbosJobs(dispatcher, dbos);
 				const reconciliation = await reconcileDbosJobs(reconciler, dbos);
+				let askRunsMaintenance:
+					| Awaited<ReturnType<typeof runAskRunsMaintenance>>
+					| undefined;
+				if (
+					config.askRunMaintenance.enabled &&
+					Date.now() >= nextMaintenanceAt
+				) {
+					nextMaintenanceAt = Date.now() + config.askRunMaintenance.intervalMs;
+					try {
+						askRunsMaintenance = await runAskRunsMaintenance(
+							{
+								execute: true,
+								maintainStale: true,
+								maintainRetention: true,
+								staleAfterMinutes: config.askRunMaintenance.staleAfterMinutes,
+								retentionDays: config.askRunMaintenance.retentionDays,
+								staleStatus: "failed",
+								limit: config.askRunMaintenance.batchSize,
+							},
+							{ repository: askRunsRepository, logger: maintenanceLogger },
+						);
+					} catch (error) {
+						maintenanceLogger.error({
+							event: "ask_runs_maintenance_failed",
+							error,
+						});
+					}
+				}
 				process.stdout.write(
 					`${JSON.stringify({
 						event: "dbos.control.tick",
 						durationMs: Date.now() - startedAt,
 						dispatch,
 						reconciliation,
+						askRunsMaintenance,
 					})}\n`,
 				);
 				await writeFile(READY_FILE, `${new Date().toISOString()}\n`, "utf8");

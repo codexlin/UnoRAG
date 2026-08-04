@@ -21,7 +21,9 @@
 
 ```bash
 curl -fsS "$UNORAG_BASE_URL/api/rag/health" | jq .
+curl -fsS "$UNORAG_BASE_URL/metrics"
 pnpm lifecycle:inspect
+pnpm ask-runs:maintain
 
 cd deploy/compose
 source scripts/compose-env.sh
@@ -38,10 +40,29 @@ mk_compose --profile ops run --rm inspect-lifecycle
 - Qdrant readiness、集合容量和检索错误；
 - 文档卷、备份卷和宿主机磁盘水位。
 
-UnoRAG 当前输出健康接口、生命周期检查、核心路径 Pino JSON、Ask stages 与 `app.ask_runs` 诊断
-元数据，但尚未提供 Prometheus 指标、分布式追踪、原生运维中心与告警体系。客户可暂时将 JSON 日志
-接入既有平台；交付时必须记录告警接收人、升级路径、日志保留期和脱敏策略。核心原生、可选 Ops 与
-可选 Langfuse 的完整目标见 [design/observability.md](./design/observability.md)。
+UnoRAG 默认提供管理员可见的“运行中心”、低基数 `/metrics`、核心路径 Pino JSON、Ask stages 与
+`app.ask_runs` 诊断元数据。运行中心按当前 organization/workspace 强制隔离，展示 Ask 终态、P50/P95、
+引用覆盖、dead/stuck 任务和最近错误；不会返回问题、回答、Prompt、引用正文或 Job 错误正文。
+分布式追踪、集中日志与外部告警仍属于后续可选 Ops 能力，完整边界见
+[design/observability.md](./design/observability.md)。
+
+`dbos-control` 默认每 15 分钟把超过 30 分钟的 `running` Ask 收敛为失败，并按 30 天保留期有界删除
+终态记录。以下部署参数可调整或关闭该调度：
+
+```text
+ASK_RUN_MAINTENANCE_ENABLED=true
+ASK_RUN_MAINTENANCE_INTERVAL_MS=900000
+ASK_RUN_STALE_AFTER_MINUTES=30
+ASK_RUN_RETENTION_DAYS=30
+ASK_RUN_MAINTENANCE_BATCH_SIZE=1000
+```
+
+手工命令默认只预览；确认后才执行：
+
+```bash
+pnpm ask-runs:maintain
+pnpm ask-runs:maintain:apply -- --limit 1000
+```
 
 ## 生命周期故障
 

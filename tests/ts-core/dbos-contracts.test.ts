@@ -145,6 +145,13 @@ test("DBOS environment configuration is fail closed", () => {
 			},
 			listenQueues: ["ingest-local", "lifecycle"],
 			controlPollMs: 5_000,
+			askRunMaintenance: {
+				enabled: true,
+				intervalMs: 900_000,
+				staleAfterMinutes: 30,
+				retentionDays: 30,
+				batchSize: 1_000,
+			},
 			adminPort: undefined,
 			logLevel: "info",
 		},
@@ -159,4 +166,18 @@ test("DBOS environment configuration is fail closed", () => {
 			}),
 		/Invalid option/,
 	);
+	const maintenanceDisabled = loadWorkerConfig({
+		DBOS_SYSTEM_DATABASE_URL: "postgresql://db/test",
+		UNORAG_DBOS_APPLICATION_VERSION: "git-sha",
+		UNORAG_DBOS_EXECUTOR_ID: "worker-1",
+		ASK_RUN_MAINTENANCE_ENABLED: "false",
+		ASK_RUN_RETENTION_DAYS: "90",
+	});
+	assert.deepEqual(maintenanceDisabled.askRunMaintenance, {
+		enabled: false,
+		intervalMs: 900_000,
+		staleAfterMinutes: 30,
+		retentionDays: 90,
+		batchSize: 1_000,
+	});
 });
