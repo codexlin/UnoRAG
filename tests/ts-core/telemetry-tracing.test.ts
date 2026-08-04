@@ -8,7 +8,9 @@ import {
 	InMemorySpanExporter,
 	SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
-
+import type { AskGraphContext } from "../../src/core/ask-graph";
+import { AskGraphService } from "../../src/core/ask-graph";
+import { metadataOnlyAiTelemetry } from "../../src/lib/observability/ai-telemetry";
 import {
 	getObservabilityContext,
 	runWithObservabilityContext,
@@ -48,6 +50,19 @@ test("trace and log exporters can be configured independently", () => {
 	);
 });
 
+test("AI SDK telemetry is permanently metadata-only", () => {
+	assert.deepEqual(metadataOnlyAiTelemetry("unorag.answer.generate"), {
+		isEnabled: true,
+		recordInputs: false,
+		recordOutputs: false,
+		functionId: "unorag.answer.generate",
+	});
+	assert.throws(
+		() => metadataOnlyAiTelemetry("question content is not an id"),
+		/invalid/,
+	);
+});
+
 test("business request IDs remain separate from valid OTel trace IDs", async () => {
 	const exporter = new InMemorySpanExporter();
 	const provider = new BasicTracerProvider({
@@ -72,7 +87,83 @@ test("business request IDs remain separate from valid OTel trace IDs", async () 
 	const [span] = exporter.getFinishedSpans();
 	assert.equal(span?.name, "unorag.test");
 	assert.equal(span?.spanContext().traceId, observedTraceId);
-	assert.deepEqual(span?.attributes, { "unorag.operation": "test" });
+	assert.deepEqual(span?.attributes, {
+		"unorag.operation": "test",
+		"request.id": requestId,
+		"langfuse.observation.metadata.request_id": requestId,
+	});
+
+	exporter.reset();
+	const question = "What is the confidential policy text?";
+	const graphContext: AskGraphContext = {
+		queryRouter: {
+			route: () => ({ queryType: "fact", reason: "telemetry_test" }),
+		},
+		queryRewriter: {
+			rewrite: ({ question: value }) => ({
+				query: value,
+				mode: "deterministic",
+			}),
+		},
+		judge: {
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "ok",
+			}),
+		},
+		ports: {
+			retrieve: () => ({
+				citations: [{ id: "chunk-1", score: 0.9 }],
+				retrieval_attempts: 1,
+			}),
+			buildTablePlan: () => ({}),
+			tableRetrieve: () => ({}),
+			tableExecute: () => ({}),
+			generate: () => ({
+				answer: "metadata-only answer",
+				refused: false,
+				refuse_reason: null,
+			}),
+		},
+	};
+	await runWithObservabilityContext({ requestId }, () =>
+		new AskGraphService(graphContext).invoke({
+			question,
+			session_id: "session-telemetry-test",
+		}),
+	);
+	await provider.forceFlush();
+	const graphSpans = exporter.getFinishedSpans();
+	const graphSpanNames = new Set(graphSpans.map((item) => item.name));
+	for (const expectedName of [
+		"unorag.ask.node.query_router",
+		"unorag.ask.node.build_retrieval_plan",
+		"unorag.ask.node.retrieve",
+		"unorag.ask.node.generate",
+	]) {
+		assert.equal(graphSpanNames.has(expectedName), true, expectedName);
+	}
+	const retrieveSpan = graphSpans.find(
+		(item) => item.name === "unorag.ask.node.retrieve",
+	);
+	assert.equal(
+		retrieveSpan?.attributes["langfuse.observation.type"],
+		"retriever",
+	);
+	assert.equal(
+		retrieveSpan?.attributes["langfuse.session.id"],
+		"session-telemetry-test",
+	);
+	const exportedGraphData = graphSpans.map((item) => ({
+		name: item.name,
+		attributes: item.attributes,
+		events: item.events.map((event) => ({
+			name: event.name,
+			attributes: event.attributes,
+		})),
+	}));
+	assert.equal(JSON.stringify(exportedGraphData).includes(question), false);
 
 	const streamingResponse = await withActiveHttpSpan(
 		"unorag.streaming-test",

@@ -1,0 +1,10 @@
+services:
+  otel-collector:
+    command:
+      - --config=/etc/otelcol/config.yaml
+      - --config=/etc/otelcol/langfuse.yaml
+    environment:
+      LANGFUSE_OTLP_ENDPOINT: ${LANGFUSE_OTLP_ENDPOINT:?LANGFUSE_OTLP_ENDPOINT required}
+      LANGFUSE_OTLP_AUTHORIZATION: ${LANGFUSE_OTLP_AUTHORIZATION:?LANGFUSE_OTLP_AUTHORIZATION required}
+    volumes:
+      - ./observability/otel-collector.langfuse.yaml:/etc/otelcol/langfuse.yaml:ro

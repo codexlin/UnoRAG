@@ -41,6 +41,7 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 			"unorag.qdrant.search",
 			{
 				"db.system.name": "qdrant",
+				"langfuse.observation.type": "retriever",
 				"db.operation.name": "search",
 				"unorag.retrieval.limit": input.limit,
 			},
@@ -81,6 +82,7 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 			"unorag.qdrant.scroll",
 			{
 				"db.system.name": "qdrant",
+				"langfuse.observation.type": "retriever",
 				"db.operation.name": "scroll",
 				"unorag.retrieval.limit": input.limit,
 			},

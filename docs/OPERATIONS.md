@@ -54,6 +54,9 @@ Provider 地址、通知目标或 Job 错误正文。Webhook/邮件是默认关�
 日志与 Alertmanager 由可选 Ops Stack 提供，完整边界见
 [design/observability.md](./design/observability.md)。
 
+需要模型、Token、LangGraph 节点和后续评测实验视图时，可选启用 metadata-only Langfuse 出口；配置、
+权限和排障见 [LANGFUSE.md](./LANGFUSE.md)。Langfuse exporter 告警不得升级为 UnoRAG 业务不可用告警。
+
 ## 可选 Ops Stack
 
 Compose 私有部署可在安装或升级时显式启用：

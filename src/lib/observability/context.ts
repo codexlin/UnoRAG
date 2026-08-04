@@ -7,6 +7,7 @@ export type ObservabilityContext = Readonly<{
 	organizationId?: string;
 	workspaceId?: string;
 	principalId?: string;
+	sessionId?: string;
 	jobId?: string;
 	workflowId?: string;
 }>;

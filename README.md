@@ -30,7 +30,7 @@ explicit refusal, durable processing, and deployment-level acceptance.
 | Updates must not interrupt service | Stage and validate a new generation, activate atomically, preserve the previous version on failure |
 | PDFs and tables must retain meaning | DocumentIR and TableIR preserve pages, headings, headers, units, row ranges, and source coordinates |
 | Processing must recover | DBOS runs parsing, embedding, indexing, deletion, and cleanup with retries, cancellation, and reconciliation |
-| Operators need a product-level view | The scoped Operations Center works standalone; an optional OTel Ops Stack adds Grafana, centralized logs, metrics, traces, and alert routing |
+| Operators need a product-level view | The scoped Operations Center works standalone; optional OTel Ops and metadata-only Langfuse integrations add infrastructure and AI-engineering views |
 | Delivery must fit customer infrastructure | Compose reference topology, Helm starter, least-privilege roles, recovery tooling, and release gates |
 
 ## One Knowledge Core, Two Product Surfaces

@@ -20,6 +20,7 @@ FROM_RUNTIME=0
 ALLOW_BUILD=0
 SKIP_SMOKE=0
 WITH_OBSERVABILITY=0
+WITH_LANGFUSE=0
 OBSERVABILITY_MODE=auto
 SWITCHED=0
 
@@ -35,6 +36,8 @@ Options:
   --skip-smoke   Skip pilot-smoke.sh after health checks.
   --with-observability  Preserve/start the optional Ops Stack and validate it.
   --without-observability  Explicitly disconnect the application from Ops.
+  --with-langfuse  Enable metadata-only Langfuse fan-out (implies Ops Stack).
+  --without-langfuse  Keep Ops enabled but disable Langfuse fan-out.
 
 Database migrations are forward-only. Application rollback restores image pins,
 but never down-migrates data.
@@ -45,8 +48,18 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 log() { printf '==> %s\n' "$*"; }
 warn() { printf '!!  %s\n' "$*" >&2; }
 
+existing_langfuse_enabled() {
+	local collector_id
+	collector_id="$(mk_compose_observability ps -q otel-collector 2>/dev/null || true)"
+	[[ -n "$collector_id" ]] || return 1
+	docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$collector_id" \
+		2>/dev/null | grep -q '^LANGFUSE_OTLP_ENDPOINT='
+}
+
 runtime_compose() {
-	if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
+	if [[ "$WITH_LANGFUSE" -eq 1 ]]; then
+		mk_compose_langfuse "$@"
+	elif [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
 		mk_compose_observability "$@"
 	else
 		mk_compose "$@"
@@ -141,7 +154,9 @@ while [[ $# -gt 0 ]]; do
 		--allow-build) ALLOW_BUILD=1; shift ;;
 		--skip-smoke) SKIP_SMOKE=1; shift ;;
 		--with-ops|--with-observability) WITH_OBSERVABILITY=1; OBSERVABILITY_MODE=enabled; shift ;;
-		--without-observability) WITH_OBSERVABILITY=0; OBSERVABILITY_MODE=disabled; shift ;;
+		--without-observability) WITH_OBSERVABILITY=0; WITH_LANGFUSE=0; OBSERVABILITY_MODE=disabled; shift ;;
+		--with-langfuse) WITH_LANGFUSE=1; WITH_OBSERVABILITY=1; OBSERVABILITY_MODE=enabled; shift ;;
+		--without-langfuse) WITH_LANGFUSE=0; WITH_OBSERVABILITY=1; OBSERVABILITY_MODE=enabled; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) die "unknown argument: $1" ;;
 	esac
@@ -157,6 +172,14 @@ if [[ "$OBSERVABILITY_MODE" == "auto" ]]; then
 		[[ -n "$(mk_compose_observability ps -aq grafana 2>/dev/null || true)" ]]; then
 		WITH_OBSERVABILITY=1
 		log "detected existing Ops Stack; preserving observability during upgrade"
+		LANGFUSE_ENDPOINT="$(mk_config_get LANGFUSE_OTLP_ENDPOINT || true)"
+		LANGFUSE_AUTH="$(mk_config_get LANGFUSE_OTLP_AUTHORIZATION || true)"
+		if existing_langfuse_enabled &&
+			[[ "$LANGFUSE_ENDPOINT" =~ ^https?://.+/api/public/otel/?$ ]] &&
+			[[ "$LANGFUSE_AUTH" =~ ^Basic\ [A-Za-z0-9+/=]+$ ]]; then
+			WITH_LANGFUSE=1
+			log "detected active Langfuse fan-out; preserving it during upgrade"
+		fi
 	fi
 fi
 
@@ -187,13 +210,24 @@ if [[ $WITH_OBSERVABILITY -eq 1 ]]; then
 	[[ ${#GRAFANA_PW} -ge 16 ]] || die "GRAFANA_ADMIN_PASSWORD must contain at least 16 characters"
 fi
 
+if [[ $WITH_LANGFUSE -eq 1 ]]; then
+	LANGFUSE_ENDPOINT="$(mk_config_get LANGFUSE_OTLP_ENDPOINT || true)"
+	LANGFUSE_AUTH="$(mk_config_get LANGFUSE_OTLP_AUTHORIZATION || true)"
+	[[ "$LANGFUSE_ENDPOINT" =~ ^https?://.+/api/public/otel/?$ ]] || die "LANGFUSE_OTLP_ENDPOINT must end in /api/public/otel"
+	[[ "$LANGFUSE_AUTH" =~ ^Basic\ [A-Za-z0-9+/=]+$ ]] || die "LANGFUSE_OTLP_AUTHORIZATION must be a Basic authorization value"
+fi
+
 capture_previous
 write_runtime_pins "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION"
 SWITCHED=1
 
 if [[ $WITH_OBSERVABILITY -eq 1 ]]; then
 	log "starting optional observability backends"
-	mk_compose_observability up -d tempo loki alertmanager otel-collector prometheus grafana
+	if [[ $WITH_LANGFUSE -eq 1 ]]; then
+		mk_compose_langfuse up -d tempo loki alertmanager otel-collector prometheus grafana
+	else
+		mk_compose_observability up -d tempo loki alertmanager otel-collector prometheus grafana
+	fi
 fi
 
 if [[ $ALLOW_BUILD -eq 1 ]]; then

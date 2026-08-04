@@ -76,6 +76,18 @@ test("Collector strips sensitive content and exports only traces and logs", () =
 		"gen_ai.prompt",
 		"gen_ai.completion",
 		"db.statement",
+		"gen_ai.input.messages",
+		"gen_ai.output.messages",
+		"ai.prompt",
+		"ai.prompt.messages",
+		"ai.response.text",
+		"ai.response.object",
+		"ai.toolCall.args",
+		"ai.toolCall.result",
+		"ai.embedding",
+		"ai.embeddings",
+		"langfuse.observation.input",
+		"langfuse.observation.output",
 	]) {
 		assert.match(collector, new RegExp(`key: ${key.replaceAll(".", "\\.")}`));
 	}
@@ -100,6 +112,20 @@ test("Collector strips sensitive content and exports only traces and logs", () =
 	assert.doesNotMatch(collector, /^ {4}metrics:\n {6}receivers: \[otlp\]/m);
 });
 
+test("Langfuse is a Collector-only metadata trace fan-out", () => {
+	const overlay = read("deploy/compose/docker-compose.langfuse.yml");
+	const collector = read(
+		"deploy/compose/observability/otel-collector.langfuse.yaml",
+	);
+	assert.match(overlay, /^ {2}otel-collector:/m);
+	assert.doesNotMatch(overlay, /^ {2}(web|dbos-worker|dbos-control):/m);
+	assert.match(overlay, /LANGFUSE_OTLP_AUTHORIZATION/);
+	assert.match(collector, /otlphttp\/langfuse:/);
+	assert.match(collector, /x-langfuse-ingestion-version: "4"/);
+	assert.match(collector, /exporters: \[otlphttp\/tempo, otlphttp\/langfuse\]/);
+	assert.doesNotMatch(collector, /logs:[\s\S]*otlphttp\/langfuse/);
+});
+
 test("install and upgrade preserve the explicit observability mode", () => {
 	const install = read("deploy/compose/scripts/install.sh");
 	const upgrade = read("deploy/compose/scripts/upgrade.sh");
@@ -107,7 +133,10 @@ test("install and upgrade preserve the explicit observability mode", () => {
 		assert.match(script, /--with-ops\|--with-observability/);
 		assert.match(script, /mk_compose_observability/);
 		assert.match(script, /observability-smoke\.sh/);
+		assert.match(script, /--with-langfuse/);
+		assert.match(script, /mk_compose_langfuse/);
 	}
+	assert.match(upgrade, /existing_langfuse_enabled/);
 	assert.match(
 		upgrade,
 		/runtime_compose up -d --wait dbos-worker dbos-control/,

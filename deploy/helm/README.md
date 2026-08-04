@@ -77,6 +77,10 @@ optional `OTEL_EXPORTER_OTLP_HEADERS` Secret key is injected only into runtime
 pods. Telemetry is fail-soft and must never become an application readiness
 dependency.
 
+For Langfuse, configure a v4 OTLP exporter on the customer-managed Collector.
+Do not inject Langfuse project keys into UnoRAG pods. See
+[`docs/LANGFUSE.md`](../../docs/LANGFUSE.md).
+
 ## Validate
 
 ```bash

@@ -8,11 +8,13 @@ cd "$ROOT"
 source "${ROOT}/scripts/compose-env.sh"
 
 WITH_OBSERVABILITY=0
+WITH_LANGFUSE=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--with-ops|--with-observability) WITH_OBSERVABILITY=1; shift ;;
+		--with-langfuse) WITH_LANGFUSE=1; WITH_OBSERVABILITY=1; shift ;;
 		-h|--help)
-			echo "usage: $0 [--with-observability]"
+			echo "usage: $0 [--with-observability] [--with-langfuse]"
 			exit 0
 			;;
 		*) echo "unknown argument: $1" >&2; exit 1 ;;
@@ -20,7 +22,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 runtime_compose() {
-	if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
+	if [[ "$WITH_LANGFUSE" -eq 1 ]]; then
+		mk_compose_langfuse "$@"
+	elif [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
 		mk_compose_observability "$@"
 	else
 		mk_compose "$@"
@@ -73,6 +77,19 @@ if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
 	}
 fi
 
+if [[ "$WITH_LANGFUSE" -eq 1 ]]; then
+	LANGFUSE_ENDPOINT="$(mk_config_get LANGFUSE_OTLP_ENDPOINT || true)"
+	LANGFUSE_AUTH="$(mk_config_get LANGFUSE_OTLP_AUTHORIZATION || true)"
+	[[ "$LANGFUSE_ENDPOINT" =~ ^https?://.+/api/public/otel/?$ ]] || {
+		echo "refusing Langfuse install: LANGFUSE_OTLP_ENDPOINT must end in /api/public/otel" >&2
+		exit 1
+	}
+	[[ "$LANGFUSE_AUTH" =~ ^Basic\ [A-Za-z0-9+/=]+$ ]] || {
+		echo "refusing Langfuse install: LANGFUSE_OTLP_AUTHORIZATION must be a Basic authorization value" >&2
+		exit 1
+	}
+fi
+
 HTTP_PORT="$(mk_config_get HTTP_PORT || echo 80)"
 
 echo "==> building TypeScript runtime images"
@@ -93,7 +110,11 @@ mk_compose_bootstrap --profile migrate run --rm bootstrap
 echo "==> starting DBOS worker and control loop"
 if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
 	echo "==> starting optional observability backends"
-	mk_compose_observability up -d tempo loki alertmanager otel-collector prometheus grafana
+	if [[ "$WITH_LANGFUSE" -eq 1 ]]; then
+		mk_compose_langfuse up -d tempo loki alertmanager otel-collector prometheus grafana
+	else
+		mk_compose_observability up -d tempo loki alertmanager otel-collector prometheus grafana
+	fi
 fi
 runtime_compose up -d --wait dbos-worker dbos-control
 
@@ -116,4 +137,7 @@ echo "  runtime: Next.js control plane + native RAG + DBOS worker"
 echo "  parser: external HTTP providers selected by ParserProvider"
 if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then
 	echo "  Grafana: http://127.0.0.1:$(mk_config_get GRAFANA_PORT || echo 3300)/"
+fi
+if [[ "$WITH_LANGFUSE" -eq 1 ]]; then
+	echo "  Langfuse: metadata-only OTLP fan-out enabled"
 fi

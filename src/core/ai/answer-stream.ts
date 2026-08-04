@@ -1,4 +1,5 @@
 import { type LanguageModel, type ModelMessage, streamText } from "ai";
+import { metadataOnlyAiTelemetry } from "@/lib/observability/ai-telemetry";
 import { traceAsyncIterable } from "@/lib/observability/tracing";
 
 export const ANSWER_TEMPERATURE = 0.2;
@@ -62,6 +63,7 @@ function defaultAnswerStreamExecutor(
 		messages: request.messages,
 		temperature: request.temperature,
 		abortSignal: request.abortSignal,
+		experimental_telemetry: metadataOnlyAiTelemetry("unorag.answer.generate"),
 	}).textStream;
 }
 
@@ -96,7 +98,11 @@ export class AnswerStreamAdapter {
 		})();
 		for await (const token of traceAsyncIterable(
 			"unorag.ai.generate",
-			{ "gen_ai.operation.name": "chat" },
+			{
+				"gen_ai.operation.name": "chat",
+				"langfuse.observation.type": "chain",
+				"langfuse.observation.metadata.capture_content": false,
+			},
 			tokens,
 		)) {
 			if (options.abortSignal?.aborted) {

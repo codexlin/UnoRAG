@@ -1,7 +1,8 @@
 # UnoRAG 可观测性目标架构
 
 > 状态：核心诊断、原生运行中心、OpenTelemetry SDK、Compose Ops Stack、基础指标、组件健康、
-> 持久告警及可选 Webhook/邮件投递已实现；Langfuse 仍是后续交付；
+> 持久告警及可选 Webhook/邮件投递已实现；Langfuse metadata-only Trace 出口和 AI 语义已实现；
+> Prompt 管理、黄金集实验导入和内容采集仍是后续交付；
 > 本文件同时标明当前能力和目标边界。
 >
 > 关联：[产品说明](../PRODUCT.md) · [架构](../ARCHITECTURE.md) · [运维指南](../OPERATIONS.md) · [混合检索设计](./hybrid-retrieval.md)
@@ -16,7 +17,7 @@ UnoRAG 面向需要私有化知识库、但通常没有独立 AI 平台或 SRE �
 
 1. **核心原生层**随标准版交付并始终可用，保证系统不依赖外部观测组件也能诊断。
 2. **Ops 增强层**作为官方维护的可选部署包，为专业运维提供集中日志、指标、Trace 和告警。
-3. **AI 工程层**按需启用自托管 Langfuse，为调优团队提供模型、Prompt、成本和评测能力。
+3. **AI 工程层**按需接入自托管或 Cloud Langfuse，为调优团队提供模型、Prompt、成本和评测能力。
 
 三层共享请求上下文和 OpenTelemetry 语义，但相互不构成运行依赖。任何观测组件故障都不得阻塞
 Ask、入库、检索或生命周期任务。
@@ -80,12 +81,12 @@ flowchart TB
     end
 
     subgraph AI["第三层：AI Engineering，可选"]
-        Langfuse["Langfuse（自托管）\nmetadata-only by default"]
+        Langfuse["Langfuse（自托管或 Cloud）\nmetadata-only by default"]
     end
 
     Context -. "OTLP" .-> Collector
     Metrics -. "scrape" .-> Prom
-    Context -. "AI spans" .-> Langfuse
+    Collector -. "metadata-only AI spans" .-> Langfuse
     Collector -. "可替换 exporter" .-> Existing["客户已有 APM / 日志平台"]
 ```
 
@@ -209,19 +210,18 @@ Langfuse 面向 UnoRAG 开发、实施和模型调优团队，负责：
 仅接 LangGraph callback 不足以覆盖真实模型调用；实现时还要对 Vercel AI SDK、Embedding、Rerank、
 ParserProvider 和 Qdrant 建立 OTel/SDK 埋点。
 
-Langfuse 默认采用 **metadata-only**：
-
-```text
-LANGFUSE_CAPTURE_CONTENT=false
-LANGFUSE_SAMPLE_RATE=0.10
-LANGFUSE_RETENTION_DAYS=30
-```
+Phase 3A 已通过 Collector 双出口落地，Langfuse 强制采用 **metadata-only**。当前没有内容采集环境变量；
+应用代码固定关闭 AI SDK Input/Output 记录，部署变量不能绕过这条边界。Trace 采样沿用标准
+`OTEL_TRACES_SAMPLER*` 配置，Langfuse 数据保留期由独立 Langfuse 项目设置。
 
 默认只记录模型、耗时、Token、路由、错误码和脱敏元数据，不记录问题、回答、Prompt、引用正文或检索块。
-采集内容必须由管理员按 Workspace 明确开启，同时配置角色权限、脱敏、采样、保留期和删除机制。
+未来若支持采集内容，必须由管理员按 Workspace 明确开启，同时配置角色权限、脱敏、采样、保留期和删除机制。
 自托管不等于可以绕过 UnoRAG 的临时会话隐私承诺。
 
-Langfuse 依赖的 Web、Worker、ClickHouse、Redis、对象存储等组件不应增加标准版的安装和备份负担。
+AI SDK 调用显式关闭 Input/Output 记录；Collector 再删除模型消息、工具参数/结果、Embedding 内容等
+字段。Langfuse 地址与 Basic Auth 只进入 Collector，不进入 Web/Worker。Langfuse 依赖的 Web、Worker、
+ClickHouse、Redis、对象存储等组件不应增加标准版的安装和备份负担，因此使用官方独立部署或 Cloud，
+UnoRAG 不复制其基础设施清单。
 
 ## 4. 标识与上下文模型
 
@@ -315,12 +315,23 @@ DBOS 排队可能持续很久，任务也可能重试或恢复，因此不得构
 自动化测试；部署级验收已实际启动隔离组件、写入并按同一 Trace ID 反查 Tempo/Loki、查询 Prometheus，
 并验证停用 Ops 后两套既有核心环境继续健康。正式发布仍需在目标部署环境重复该 smoke。
 
-### Phase 3：AI 工程增强
+### Phase 3A：AI Trace 语义与出口（已实现）
 
-- 接入自托管 Langfuse，默认 metadata-only；
-- 覆盖 LangGraph 与 Vercel AI SDK 的模型/Token/成本语义；
+- Collector 可选双写 Tempo 与 Langfuse v4 OTLP；
+- LangGraph 路由、改写、检索、判断、表格和生成节点具有稳定 observation type；
+- Vercel AI SDK 开启 OTel 用量语义，同时强制 `recordInputs=false`、`recordOutputs=false`；
+- 模型、Token、延迟、Session 与作用域诊断元数据可关联，Langfuse 密钥不进入应用；
+- Langfuse exporter 有独立有界队列，失败不影响 Tempo 或业务请求。
+
+验收：Collector 双配置可由固定镜像解析；自动化测试锁定隐私字段、overlay 和安装/升级模式；真实故障
+注入已验证 Langfuse 不可达时同一 Trace 仍进入 Tempo，Collector 保持运行。
+
+### Phase 3B：评测与 Prompt 生命周期
+
 - 导入现有黄金集，建立版本化 Prompt 和模型实验；
-- 验证内容采集开关、删除、权限和保留策略。
+- 增加 Scores/Observations API v2 适配和实验结果回写；
+- Prompt 仍以仓库版本为发布事实源，Langfuse 作为实验与发布候选层；
+- 内容采集若实现，必须验证开关、删除、权限、审计和保留策略。
 
 验收：关闭内容采集时 Langfuse 中不存在问题、回答和文档正文；开启时必须有明确的 Workspace 管理动作
 和审计记录；Langfuse 不可用不影响 Ask。

@@ -5,6 +5,7 @@ import {
 	Output,
 } from "ai";
 import { z } from "zod";
+import { metadataOnlyAiTelemetry } from "@/lib/observability/ai-telemetry";
 import { withActiveSpan } from "@/lib/observability/tracing";
 import { type TableQueryPlan, TableQueryPlanSchema } from "../ask-graph/table";
 
@@ -148,6 +149,9 @@ async function defaultStructuredExecutor(
 			schema: request.schema,
 			name: request.schemaName,
 		}),
+		experimental_telemetry: metadataOnlyAiTelemetry(
+			`unorag.structured.${request.schemaName}`,
+		),
 	});
 	return result.output;
 }
@@ -193,6 +197,8 @@ export class StructuredOutputAdapter {
 					"unorag.ai.structured",
 					{
 						"gen_ai.operation.name": "chat",
+						"langfuse.observation.type": "chain",
+						"langfuse.observation.metadata.capture_content": false,
 						"unorag.ai.structured_kind": kind,
 						"unorag.retry.attempt": attempt,
 					},

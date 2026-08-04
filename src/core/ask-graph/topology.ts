@@ -1,4 +1,8 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
+import {
+	setActiveSpanAttributes,
+	withActiveSpan,
+} from "@/lib/observability/tracing";
 import type { AskGraphContext, AskNodePort } from "./context";
 import { createDecisionNode, routeAfterJudge } from "./nodes/decision";
 import { createRefuseNode } from "./nodes/refuse";
@@ -46,58 +50,106 @@ function routeAfterTableExecute(state: AskState): "judge" | "end" {
 }
 
 function timedNode(
-	name: string,
+	stageName: string,
 	node: AskNodePort,
+	graphNodeName: AskGraphNodeName,
 ): (state: AskState) => Promise<AskStateUpdate> {
 	return async (state) => {
-		const startedAt = performance.now();
-		try {
-			const update = await node(state);
-			return {
-				...update,
-				retrieval_debug: appendAskStage(
-					update.retrieval_debug ?? state.retrieval_debug,
-					name,
-					startedAt,
-					true,
-				),
-			};
-		} catch (error) {
-			state.retrieval_debug = appendAskStage(
-				state.retrieval_debug,
-				name,
-				startedAt,
-				false,
-			);
-			throw error;
-		}
+		return withActiveSpan(
+			`unorag.ask.node.${graphNodeName}`,
+			{
+				"langfuse.observation.type":
+					graphNodeName === "retrieve" || graphNodeName === "table_retrieve"
+						? "retriever"
+						: "chain",
+				"langfuse.observation.metadata.ask_node": graphNodeName,
+				...(state.session_id
+					? { "langfuse.session.id": state.session_id }
+					: {}),
+			},
+			async () => {
+				const startedAt = performance.now();
+				try {
+					const update = await node(state);
+					setActiveSpanAttributes({
+						...(typeof update.query_type === "string"
+							? {
+									"langfuse.observation.metadata.query_type": update.query_type,
+								}
+							: {}),
+						...(Array.isArray(update.citations)
+							? {
+									"langfuse.observation.metadata.citation_count":
+										update.citations.length,
+								}
+							: {}),
+					});
+					return {
+						...update,
+						retrieval_debug: appendAskStage(
+							update.retrieval_debug ?? state.retrieval_debug,
+							stageName,
+							startedAt,
+							true,
+						),
+					};
+				} catch (error) {
+					state.retrieval_debug = appendAskStage(
+						state.retrieval_debug,
+						stageName,
+						startedAt,
+						false,
+					);
+					throw error;
+				}
+			},
+		);
 	};
 }
 
 export function compileAskGraph(context: AskGraphContext) {
 	const routing = createRoutingNodes(context);
 	const graph = new StateGraph(AskStateAnnotation)
-		.addNode("query_router", timedNode("route", routing.queryRouter))
-		.addNode("build_retrieval_plan", timedNode("plan", routing.buildPlan))
-		.addNode("clarify", timedNode("clarify", routing.clarify))
+		.addNode(
+			"query_router",
+			timedNode("route", routing.queryRouter, "query_router"),
+		)
+		.addNode(
+			"build_retrieval_plan",
+			timedNode("plan", routing.buildPlan, "build_retrieval_plan"),
+		)
+		.addNode("clarify", timedNode("clarify", routing.clarify, "clarify"))
 		.addNode(
 			"build_table_plan",
-			timedNode("table_plan", context.ports.buildTablePlan),
+			timedNode("table_plan", context.ports.buildTablePlan, "build_table_plan"),
 		)
 		.addNode(
 			"table_retrieve",
-			timedNode("table_retrieve", context.ports.tableRetrieve),
+			timedNode(
+				"table_retrieve",
+				context.ports.tableRetrieve,
+				"table_retrieve",
+			),
 		)
 		.addNode(
 			"table_execute",
-			timedNode("table_execute", context.ports.tableExecute),
+			timedNode("table_execute", context.ports.tableExecute, "table_execute"),
 		)
-		.addNode("rewrite", timedNode("rewrite", createRewriteNode(context)))
-		.addNode("retrieve", timedNode("retrieve", context.ports.retrieve))
-		.addNode("judge", timedNode("judge", createDecisionNode(context)))
-		.addNode("retry", timedNode("retry", retryNode))
-		.addNode("generate", timedNode("prepare_generate", context.ports.generate))
-		.addNode("refuse", timedNode("refuse", createRefuseNode(context)))
+		.addNode(
+			"rewrite",
+			timedNode("rewrite", createRewriteNode(context), "rewrite"),
+		)
+		.addNode(
+			"retrieve",
+			timedNode("retrieve", context.ports.retrieve, "retrieve"),
+		)
+		.addNode("judge", timedNode("judge", createDecisionNode(context), "judge"))
+		.addNode("retry", timedNode("retry", retryNode, "retry"))
+		.addNode(
+			"generate",
+			timedNode("prepare_generate", context.ports.generate, "generate"),
+		)
+		.addNode("refuse", timedNode("refuse", createRefuseNode(context), "refuse"))
 		.addEdge(START, "query_router")
 		.addEdge("query_router", "build_retrieval_plan")
 		.addConditionalEdges("build_retrieval_plan", routeAfterPlan, {

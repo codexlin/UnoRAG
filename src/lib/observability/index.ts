@@ -1,3 +1,4 @@
+export { metadataOnlyAiTelemetry } from "./ai-telemetry";
 export {
 	getObservabilityContext,
 	type ObservabilityContext,
@@ -14,6 +15,7 @@ export {
 export {
 	currentOtelTraceId,
 	recordActiveSpanFailure,
+	setActiveSpanAttributes,
 	traceAsyncIterable,
 	withActiveHttpSpan,
 	withActiveSpan,

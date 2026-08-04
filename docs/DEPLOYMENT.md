@@ -44,6 +44,10 @@ cd deploy/compose
 该选项增加 Collector、Prometheus、Grafana、Loki、Tempo 和 Alertmanager，但不改变业务数据事实源。
 Grafana 默认仅监听 `127.0.0.1:3300`，其它观测后端不发布宿主机端口；停止它们不会停止 UnoRAG。
 
+已有独立 Langfuse 或 Langfuse Cloud 项目时，可再配置 `LANGFUSE_OTLP_ENDPOINT` 和 Collector-only
+`LANGFUSE_OTLP_AUTHORIZATION`，使用 `./scripts/install.sh --with-langfuse`。该模式自动包含 Ops Stack，
+并由 Collector 将脱敏后的同一 Trace 双写 Tempo/Langfuse；详见 [LANGFUSE.md](./LANGFUSE.md)。
+
 必要 Secret 包括：
 
 - `POSTGRES_PASSWORD`

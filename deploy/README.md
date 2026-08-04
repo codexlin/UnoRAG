@@ -56,6 +56,10 @@ cd deploy/compose
 Prometheus/Grafana、Loki/Tempo 和 Alertmanager，Grafana 仅绑定宿主机回环地址；默认安装不启动这些
 组件，也不增加核心运行依赖。
 
+已有独立 Langfuse 项目时可使用 `./scripts/install.sh --with-langfuse`，由 Collector 仅把脱敏 Trace
+双写到 Langfuse。UnoRAG 不内置 Langfuse 的 ClickHouse/Redis/对象存储；完整配置见
+[`docs/LANGFUSE.md`](../docs/LANGFUSE.md)。
+
 根目录 `docker-compose.yml` 仍只提供本机联调基础设施（Postgres/Qdrant/Redis）。
 客户式全栈安装请使用 `deploy/compose/`。
 

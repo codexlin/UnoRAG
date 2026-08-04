@@ -39,6 +39,8 @@ export async function handleNativeRetrievalRequest(input: {
 		"unorag.retrieve",
 		{
 			"unorag.operation": "retrieve",
+			"langfuse.observation.type": "retriever",
+			"langfuse.observation.metadata.capture_content": false,
 			"unorag.organization.id": input.identity.tenantId,
 			"unorag.workspace.id": input.identity.workspaceId,
 			"request.id": input.requestId ?? "",

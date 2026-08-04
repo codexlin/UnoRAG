@@ -31,5 +31,6 @@
 
 设计与演进说明：
 
-- [可观测性架构](./design/observability.md)：已落地的核心原生、可选 Ops，以及后续 Langfuse 三层方案；
+- [可观测性架构](./design/observability.md)：已落地的核心原生、可选 Ops 与 Langfuse 三层方案；
+- [Langfuse AI 工程接入](./LANGFUSE.md)：metadata-only 双出口、密钥边界、启用和故障排查；
 - [混合检索演进设计](./design/hybrid-retrieval.md)：应用层 BM25、ACL 缓存风险与 Qdrant sparse 评测门禁。

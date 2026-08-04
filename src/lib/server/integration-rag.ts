@@ -485,6 +485,8 @@ export async function forwardIntegrationRag(input: {
 				"unorag.retrieve",
 				{
 					"unorag.operation": "retrieve",
+					"langfuse.observation.type": "retriever",
+					"langfuse.observation.metadata.capture_content": false,
 					"unorag.organization.id": identity.tenantId,
 					"unorag.workspace.id": identity.workspaceId,
 					"request.id": input.requestId,

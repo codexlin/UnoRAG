@@ -54,6 +54,8 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 			"unorag.rerank",
 			{
 				"gen_ai.operation.name": "rerank",
+				"langfuse.observation.type": "span",
+				"langfuse.observation.metadata.capture_content": false,
 				"gen_ai.request.model": this.config.model,
 				"unorag.rerank.document_count": input.documents.length,
 				"unorag.rerank.top_n": Math.min(input.topN, input.documents.length),

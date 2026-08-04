@@ -57,6 +57,8 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 			"unorag.embedding",
 			{
 				"gen_ai.operation.name": "embeddings",
+				"langfuse.observation.type": "embedding",
+				"langfuse.observation.metadata.capture_content": false,
 				"gen_ai.request.model": this.config.model,
 				"unorag.embedding.input_count": texts.length,
 				"unorag.embedding.dimensions": this.config.dimensions,

@@ -36,6 +36,40 @@ processors:
         action: delete
       - key: gen_ai.completion
         action: delete
+      - key: gen_ai.input.messages
+        action: delete
+      - key: gen_ai.output.messages
+        action: delete
+      - key: ai.prompt
+        action: delete
+      - key: ai.prompt.messages
+        action: delete
+      - key: ai.prompt.tools
+        action: delete
+      - key: ai.response.text
+        action: delete
+      - key: ai.response.object
+        action: delete
+      - key: ai.toolCall.args
+        action: delete
+      - key: ai.toolCall.result
+        action: delete
+      - key: ai.value
+        action: delete
+      - key: ai.values
+        action: delete
+      - key: ai.embedding
+        action: delete
+      - key: ai.embeddings
+        action: delete
+      - key: langfuse.observation.input
+        action: delete
+      - key: langfuse.observation.output
+        action: delete
+      - key: langfuse.trace.input
+        action: delete
+      - key: langfuse.trace.output
+        action: delete
       - key: db.statement
         action: delete
   resource/privacy:

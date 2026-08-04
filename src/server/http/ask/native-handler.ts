@@ -14,6 +14,7 @@ import {
 	getObservabilityContext,
 	logger,
 	recordActiveSpanFailure,
+	setActiveSpanAttributes,
 	withActiveHttpSpan,
 } from "@/lib/observability";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
@@ -542,6 +543,11 @@ async function handleNativeAskRequestInSpan(input: {
 		const conversationScope = scope(input.identity);
 		const policy = NativeAskPolicySchema.parse(payload.ask_overrides ?? {});
 		const sessionId = payload.session_id ?? randomUUID();
+		setActiveSpanAttributes({
+			"langfuse.observation.type": "chain",
+			"langfuse.session.id": sessionId,
+			"langfuse.observation.metadata.capture_content": false,
+		});
 		const memoryStore =
 			input.memoryStore ??
 			(input.runtimeFactory ? undefined : getSessionMemoryStore());

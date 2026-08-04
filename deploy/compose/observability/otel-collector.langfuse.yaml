@@ -1,0 +1,18 @@
+exporters:
+  otlphttp/langfuse:
+    endpoint: ${env:LANGFUSE_OTLP_ENDPOINT}
+    headers:
+      Authorization: ${env:LANGFUSE_OTLP_AUTHORIZATION}
+      x-langfuse-ingestion-version: "4"
+    timeout: 5s
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 30s
+
+service:
+  pipelines:
+    traces:
+      exporters: [otlphttp/tempo, otlphttp/langfuse]

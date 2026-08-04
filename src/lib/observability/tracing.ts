@@ -6,9 +6,52 @@ import {
 	trace,
 } from "@opentelemetry/api";
 
-import { runWithObservabilityContext } from "./context";
+import {
+	getObservabilityContext,
+	runWithObservabilityContext,
+} from "./context";
 
 const tracer = trace.getTracer("unorag");
+
+function contextualAttributes(attributes: Attributes): Attributes {
+	const active = getObservabilityContext();
+	return {
+		...attributes,
+		...(active?.requestId
+			? {
+					"request.id": active.requestId,
+					"langfuse.observation.metadata.request_id": active.requestId,
+				}
+			: {}),
+		...(active?.organizationId
+			? {
+					"unorag.organization.id": active.organizationId,
+					"langfuse.observation.metadata.organization_id":
+						active.organizationId,
+				}
+			: {}),
+		...(active?.workspaceId
+			? {
+					"unorag.workspace.id": active.workspaceId,
+					"langfuse.observation.metadata.workspace_id": active.workspaceId,
+				}
+			: {}),
+		...(active?.principalId ? { "langfuse.user.id": active.principalId } : {}),
+		...(active?.sessionId ? { "langfuse.session.id": active.sessionId } : {}),
+		...(active?.jobId
+			? {
+					"unorag.job.id": active.jobId,
+					"langfuse.observation.metadata.job_id": active.jobId,
+				}
+			: {}),
+		...(active?.workflowId
+			? {
+					"unorag.workflow.id": active.workflowId,
+					"langfuse.observation.metadata.workflow_id": active.workflowId,
+				}
+			: {}),
+	};
+}
 
 function validTraceId(value: string): string | undefined {
 	return /^[a-f0-9]{32}$/.test(value) && value !== "0".repeat(32)
@@ -28,6 +71,10 @@ export function recordActiveSpanFailure(error: unknown): void {
 	if (span) recordFailure(span, error);
 }
 
+export function setActiveSpanAttributes(attributes: Attributes): void {
+	trace.getActiveSpan()?.setAttributes(attributes);
+}
+
 export function currentOtelTraceId(): string | undefined {
 	const spanContext = trace.getActiveSpan()?.spanContext();
 	return spanContext ? validTraceId(spanContext.traceId) : undefined;
@@ -38,19 +85,23 @@ export async function withActiveSpan<T>(
 	attributes: Attributes,
 	operation: () => Promise<T> | T,
 ): Promise<T> {
-	return tracer.startActiveSpan(name, { attributes }, async (span) => {
-		try {
-			return await runWithObservabilityContext(
-				{ otelTraceId: validTraceId(span.spanContext().traceId) },
-				operation,
-			);
-		} catch (error) {
-			recordFailure(span, error);
-			throw error;
-		} finally {
-			span.end();
-		}
-	});
+	return tracer.startActiveSpan(
+		name,
+		{ attributes: contextualAttributes(attributes) },
+		async (span) => {
+			try {
+				return await runWithObservabilityContext(
+					{ otelTraceId: validTraceId(span.spanContext().traceId) },
+					operation,
+				);
+			} catch (error) {
+				recordFailure(span, error);
+				throw error;
+			} finally {
+				span.end();
+			}
+		},
+	);
 }
 
 export async function* traceAsyncIterable<T>(
@@ -58,7 +109,9 @@ export async function* traceAsyncIterable<T>(
 	attributes: Attributes,
 	source: AsyncIterable<T>,
 ): AsyncGenerator<T> {
-	const span = tracer.startSpan(name, { attributes });
+	const span = tracer.startSpan(name, {
+		attributes: contextualAttributes(attributes),
+	});
 	const activeContext = trace.setSpan(context.active(), span);
 	const iterator = context.with(activeContext, () =>
 		source[Symbol.asyncIterator](),
@@ -101,7 +154,9 @@ export async function withActiveHttpSpan(
 	operation: () => Promise<Response | null>,
 	options: { streamResponseBody?: boolean } = {},
 ): Promise<Response | null> {
-	const span = tracer.startSpan(name, { attributes });
+	const span = tracer.startSpan(name, {
+		attributes: contextualAttributes(attributes),
+	});
 	const activeContext = trace.setSpan(context.active(), span);
 	let ended = false;
 	const end = () => {
