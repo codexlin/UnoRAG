@@ -152,6 +152,9 @@ importers:
       '@biomejs/biome':
         specifier: 2.5.5
         version: 2.5.5
+      '@langfuse/client':
+        specifier: 5.10.0
+        version: 5.10.0(@opentelemetry/api@1.9.1)
       '@tailwindcss/postcss':
         specifier: ^4
         version: 4.3.3
@@ -864,6 +867,22 @@ packages:
 
   '@langchain/protocol@0.0.18':
     resolution: {integrity: sha512-XW1egQtPfsGI41w2AMZNFZrUIwFSQHTjVMZs0OaTpCAvht/QLoaPN8FQcsysMVypOhupG28J29yOorrc70otBQ==}
+
+  '@langfuse/client@5.10.0':
+    resolution: {integrity: sha512-WI//PooxMyFEFtDy77XNv6WxOpd52U6HNgI8cqhPX+S2aJ8Mz2UTWz7olwzLlrwToJpsy5aZNtpdhsol2Umubw==}
+    peerDependencies:
+      '@opentelemetry/api': ^1.9.0
+
+  '@langfuse/core@5.10.0':
+    resolution: {integrity: sha512-XXz1DBEwGMpNXz8DZHFsixqo+3vBkfYpat3oLLldRMuT8ur6OWQ81Kgh5Obh0CZ31adaR4FrLTHh4N9eBXo64A==}
+    peerDependencies:
+      '@opentelemetry/api': ^1.9.0
+
+  '@langfuse/tracing@5.10.0':
+    resolution: {integrity: sha512-//S9dcZszmEk2yx+h7eg10mEMswyU7MYLkGIJlO6gUfrXA+3Y5pvNiZNZU3cfDus94OAr16dHQpg3nNFiziZjg==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@opentelemetry/api': ^1.9.0
 
   '@llamaindex/liteparse-darwin-arm64@2.10.1':
     resolution: {integrity: sha512-eEngfnfRnKK/0COwehkOl/uWAS/3QMWc84mnJyytNlpxiFnn1lGNVpwB08MagQXX2iRxi/md9BcfVFKGIQuUAA==}
@@ -4144,6 +4163,22 @@ snapshots:
       - vue
 
   '@langchain/protocol@0.0.18': {}
+
+  '@langfuse/client@5.10.0(@opentelemetry/api@1.9.1)':
+    dependencies:
+      '@langfuse/core': 5.10.0(@opentelemetry/api@1.9.1)
+      '@langfuse/tracing': 5.10.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/api': 1.9.1
+      mustache: 4.2.0
+
+  '@langfuse/core@5.10.0(@opentelemetry/api@1.9.1)':
+    dependencies:
+      '@opentelemetry/api': 1.9.1
+
+  '@langfuse/tracing@5.10.0(@opentelemetry/api@1.9.1)':
+    dependencies:
+      '@langfuse/core': 5.10.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/api': 1.9.1
 
   '@llamaindex/liteparse-darwin-arm64@2.10.1':
     optional: true

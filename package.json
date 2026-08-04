@@ -24,6 +24,7 @@
 		"db:bootstrap": "node scripts/bootstrap-control-plane.mjs",
 		"db:check": "drizzle-kit check",
 		"db:studio": "drizzle-kit studio",
+		"eval:live": "tsx scripts/run-ab-live-e2e.ts",
 		"lifecycle:inspect": "node scripts/inspect-lifecycle.mjs",
 		"lifecycle:check": "node scripts/inspect-lifecycle.mjs --fail-on-dead --fail-on-stuck",
 		"ask-runs:maintain": "tsx scripts/maintain-ask-runs.ts --dry-run",
@@ -87,6 +88,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.5",
+		"@langfuse/client": "5.10.0",
 		"@tailwindcss/postcss": "^4",
 		"@types/node": "^20",
 		"@types/pg": "^8.20.0",

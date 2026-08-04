@@ -78,7 +78,8 @@ mk_compose --profile ops run --rm inspect-lifecycle
 | Viewer 操作 | 读权限符合策略，所有写操作被拒绝 |
 | 归档与续聊 | 归档可恢复，追问 rewrite 不扩大访问范围 |
 
-运行 `scripts/run_ab_live_e2e.py` 记录正例、拒答、Recall、MRR、citation coverage 和延迟。
+运行 `pnpm eval:live` 记录正例、拒答、事实覆盖、Recall、MRR、citation coverage 和延迟；流程、凭据和
+可选 Langfuse 分数发布见 [EVALUATION.md](./EVALUATION.md)。
 Parser、模型、切分、检索或裁决策略变化后必须重跑，不能继承旧分数。
 
 ## 4. 安全熔断

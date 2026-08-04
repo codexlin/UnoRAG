@@ -90,6 +90,10 @@ v4 ingestion header。
 当前没有内容采集开关。后续若提供，必须是 Workspace 管理员显式动作，并具备审计、保留与删除策略；
 部署变量不得绕过该产品权限边界。
 
+评测 CLI 可使用独立 Langfuse 项目 API Key 发布 Session 级确定性分数，但只发送 case/run/release
+标识和数值，不发送黄金集或回答内容。项目 API Key 不进入产品容器，具体见
+[质量评测与 Prompt 生命周期](./EVALUATION.md)。
+
 ## 验证与排障
 
 先运行 Ops smoke，再发起一次真实 Ask：

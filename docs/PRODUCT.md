@@ -113,7 +113,8 @@ UnoRAG 当前不把以下方向作为核心承诺：
 1. **封闭发布边界**：digest-pinned 升级/回滚，模型与 ParserProvider 重启和幂等故障门禁。
 2. **私有部署产品化**：OIDC/SSO、S3/MinIO、Kubernetes NetworkPolicy/PDB/HPA，以及 Ops Stack 的
    客户环境容量与故障验收。
-3. **知识质量**：真实客户问题分类、引用 precision/coverage、Provider scorecard、ChartIR。
+3. **知识质量**：在现有真实文件黄金集与 Prompt 门禁上扩充客户问题分类、引用 precision、
+   Provider scorecard 和 ChartIR。
 4. **平台接口**：稳定 Documents/Versions/Jobs 公共 API、用户组管理和目录同步。
 
 每项新能力都必须回答：是否增强可靠性、可接入性或可交付性；是否有真实评测证明收益；

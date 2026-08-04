@@ -2,7 +2,8 @@
 
 > 状态：核心诊断、原生运行中心、OpenTelemetry SDK、Compose Ops Stack、基础指标、组件健康、
 > 持久告警及可选 Webhook/邮件投递已实现；Langfuse metadata-only Trace 出口和 AI 语义已实现；
-> Prompt 管理、黄金集实验导入和内容采集仍是后续交付；
+> 仓库 Prompt Registry、TypeScript 黄金集评测、发布门禁和可选 Session 分数回写已实现；
+> Langfuse 托管 Dataset/Prompt、LLM Judge 和内容采集仍是后续可选能力；
 > 本文件同时标明当前能力和目标边界。
 >
 > 关联：[产品说明](../PRODUCT.md) · [架构](../ARCHITECTURE.md) · [运维指南](../OPERATIONS.md) · [混合检索设计](./hybrid-retrieval.md)
@@ -326,15 +327,24 @@ DBOS 排队可能持续很久，任务也可能重试或恢复，因此不得构
 验收：Collector 双配置可由固定镜像解析；自动化测试锁定隐私字段、overlay 和安装/升级模式；真实故障
 注入已验证 Langfuse 不可达时同一 Trace 仍进入 Tempo，Collector 保持运行。
 
-### Phase 3B：评测与 Prompt 生命周期
+### Phase 3B：评测与 Prompt 生命周期（已实现）
 
-- 导入现有黄金集，建立版本化 Prompt 和模型实验；
-- 增加 Scores/Observations API v2 适配和实验结果回写；
-- Prompt 仍以仓库版本为发布事实源，Langfuse 作为实验与发布候选层；
+- 正例与拒答黄金集是仓库发布事实源，TypeScript scorer 统一事实覆盖、Citation、拒答和延迟口径；
+- Prompt Registry 固定名称、语义版本与 digest，Prompt 变更随代码评审和发布；
+- Live runner 对真实文件执行上传、入库和 Ask，入库失败按失败计入门禁而不是跳过；
+- 使用官方 `@langfuse/client` 可显式回写 Session 级 Scores，只发送 case/run/release 标识和数值；
+- Langfuse 分数发布失败不改变本地门禁结果，生产运行时不持有项目 API Key。
+
+验收：黄金集 schema、中文数字/单位、Prompt digest、分数 payload 隐私和 CLI 配置均有自动化测试；
+真实 runner 生成版本化 JSON/Markdown 并按事实覆盖、Recall 和拒答准确率退出。完整操作见
+[质量评测与 Prompt 生命周期](../EVALUATION.md)。
+
+### Phase 3C：托管实验增强（按需）
+
+- 是否同步 Langfuse Dataset 必须由操作者显式确认测试内容允许出域；
+- Langfuse Prompt 只作为候选编辑/实验层，晋升后仍需固化回仓库；
+- LLM Judge、人工标注和生产反馈不得替代确定性发布门禁；
 - 内容采集若实现，必须验证开关、删除、权限、审计和保留策略。
-
-验收：关闭内容采集时 Langfuse 中不存在问题、回答和文档正文；开启时必须有明确的 Workspace 管理动作
-和审计记录；Langfuse 不可用不影响 Ask。
 
 ## 8. 非目标
 

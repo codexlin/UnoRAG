@@ -105,7 +105,7 @@ testdata/
 # 完整本地冒烟：deploy/compose/scripts/pilot-smoke.sh
 ```
 
-当前真实质量矩阵由 `scripts/run_ab_live_e2e.py` 执行；上传拒收测试应覆盖
+当前真实质量矩阵由 `pnpm eval:live` 执行；上传拒收测试应覆盖
 `unsupported/` 下的格式。
 
 体积参考：本集 PDF/DOCX 均约数 KB～数十 KB，远低于 50MB 上限。
