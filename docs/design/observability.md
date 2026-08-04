@@ -116,6 +116,11 @@ route -> rewrite -> embed -> dense_retrieve -> lexical_retrieve
 契约，不由 OTel 或 Langfuse 替代。
 公共 Retrieve/Ask v1 契约仍不得返回内部 `retrieval_debug`。
 
+Judge 额外记录 `judge_mode`、模型、Provider、尝试次数、耗时和输入/输出 Token。模式区分
+`model`、`model_error`、`deterministic_no_evidence` 与 `deterministic_table_execution`；这些字段不含
+问题、Prompt 或候选证据。`JUDGE_MODEL` 未配置时严格继承 `CHAT_MODEL`，独立模型只能在黄金集与拒答
+门禁不退化后启用。
+
 #### `app.ask_runs`
 
 `app.ask_runs` 只保存诊断元数据，不命名为 `ask_traces`，以免和分布式 Trace 混淆。当前模型由

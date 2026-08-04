@@ -8,6 +8,7 @@ import {
 	ANSWER_TEMPERATURE,
 	AnswerStreamAdapter,
 	aiConfigFromEnv,
+	judgeAiConfigFromEnv,
 	StructuredOutputAdapter,
 	StructuredOutputTimeoutError,
 	StructuredOutputValidationError,
@@ -15,6 +16,7 @@ import {
 import {
 	type LegacySseEventName,
 	projectPublicCitations,
+	projectPublicRetrievalDebug,
 	streamLegacyAskSse,
 } from "../../src/server/http/ask/legacy-sse";
 
@@ -61,6 +63,32 @@ test("provider configuration fails closed without an API key", () => {
 	);
 });
 
+test("judge provider inherits the answer provider unless explicitly overridden", () => {
+	const base = {
+		OPENAI_API_KEY: "test-key",
+		OPENAI_BASE_URL: "https://models.example/v1",
+		CHAT_MODEL: "answer-model",
+		AI_PROVIDER_NAME: "primary",
+	} as unknown as NodeJS.ProcessEnv;
+	assert.deepEqual(judgeAiConfigFromEnv(base), aiConfigFromEnv(base));
+	assert.deepEqual(
+		judgeAiConfigFromEnv({
+			...base,
+			JUDGE_BASE_URL: "https://judge.example/v1",
+			JUDGE_MODEL: "judge-model",
+			JUDGE_PROVIDER_NAME: "judge-provider",
+			JUDGE_SUPPORTS_STRUCTURED_OUTPUTS: "false",
+		} as NodeJS.ProcessEnv),
+		{
+			apiKey: "test-key",
+			baseUrl: "https://judge.example/v1",
+			chatModel: "judge-model",
+			providerName: "judge-provider",
+			supportsStructuredOutputs: false,
+		},
+	);
+});
+
 test("structured adapter rejects invalid model output and fixes temperature at zero", async () => {
 	let temperature: number | undefined;
 	const adapter = new StructuredOutputAdapter(
@@ -101,6 +129,60 @@ test("structured adapter retries a transient failure within the configured bound
 		reason: "direct question",
 	});
 	assert.equal(attempts, 2);
+});
+
+test("judge metadata is content-free and carries bounded execution details", async () => {
+	let maxOutputTokens = 0;
+	const adapter = new StructuredOutputAdapter(
+		injectedModel,
+		async (request) => {
+			maxOutputTokens = request.maxOutputTokens ?? 0;
+			return {
+				sufficient: true,
+				action: "generate",
+				reason: "supported",
+			};
+		},
+		{ maxAttempts: 1, maxOutputTokens: 96 },
+	);
+	const judged = await adapter.judgeWithMetadata({
+		question: "secret question",
+		citations: [{ text: "secret evidence" }],
+		attempts: 1,
+	});
+
+	assert.equal(judged.output.action, "generate");
+	assert.equal(judged.metadata.attempts, 1);
+	assert.equal(judged.metadata.durationMs >= 0, true);
+	assert.equal(maxOutputTokens, 96);
+	assert.equal(JSON.stringify(judged.metadata).includes("secret"), false);
+});
+
+test("public retrieval debug exposes only safe Judge diagnostics", () => {
+	assert.deepEqual(
+		projectPublicRetrievalDebug({
+			judge_mode: "model",
+			judge_model: "judge-model",
+			judge_provider: "judge-provider",
+			judge_attempts: 1,
+			judge_duration_ms: 123.4,
+			judge_input_tokens: 800,
+			judge_output_tokens: 20,
+			judge_total_tokens: 820,
+			question: "must not pass",
+			evidence: "must not pass",
+		}),
+		{
+			judge_mode: "model",
+			judge_model: "judge-model",
+			judge_provider: "judge-provider",
+			judge_attempts: 1,
+			judge_duration_ms: 123.4,
+			judge_input_tokens: 800,
+			judge_output_tokens: 20,
+			judge_total_tokens: 820,
+		},
+	);
 });
 
 test("structured adapter reports a bounded timeout and does not invent clarify judge actions", async () => {

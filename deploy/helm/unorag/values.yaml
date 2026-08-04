@@ -148,6 +148,14 @@ external:
 config:
   appEnv: production
   chatModel: qwen-plus
+  # Empty keeps the Judge on chatModel; set only after evaluation gates pass.
+  judgeModel: ""
+  judgeBaseUrl: ""
+  judgeProviderName: ""
+  judgeSupportsStructuredOutputs: "true"
+  askJudgeTimeoutMs: "15000"
+  askJudgeMaxAttempts: "2"
+  askJudgeMaxOutputTokens: "1024"
   embeddingModel: text-embedding-v3
   embeddingDim: "1024"
   embeddingBatchSize: "10"

@@ -75,6 +75,23 @@ export function aiConfigFromEnv(
 	};
 }
 
+/** Judge defaults to the answer provider, while allowing a separately tuned model. */
+export function judgeAiConfigFromEnv(
+	env: NodeJS.ProcessEnv = process.env,
+): OpenAICompatibleAiConfig {
+	const base = aiConfigFromEnv(env);
+	return {
+		apiKey: base.apiKey,
+		baseUrl: env.JUDGE_BASE_URL?.trim() || base.baseUrl,
+		chatModel: env.JUDGE_MODEL?.trim() || base.chatModel,
+		providerName: env.JUDGE_PROVIDER_NAME?.trim() || base.providerName,
+		supportsStructuredOutputs:
+			env.JUDGE_SUPPORTS_STRUCTURED_OUTPUTS?.trim().toLowerCase() === "false"
+				? false
+				: base.supportsStructuredOutputs,
+	};
+}
+
 export function createAiProviderRegistry(
 	config: OpenAICompatibleAiConfig,
 ): AiProviderRegistry {

@@ -234,6 +234,33 @@ test("judge refusal clears unsupported citations", async () => {
 	assert.deepEqual(result.citations, []);
 });
 
+test("Judge diagnostics are projected without question or evidence content", async () => {
+	const result = await new AskGraphService(
+		createContext({
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "supported",
+				judge_mode: "model",
+				judge_model: "judge-model",
+				judge_provider: "judge-provider",
+				judge_attempts: 1,
+				judge_duration_ms: 123,
+				judge_total_tokens: 456,
+			}),
+		}),
+	).invoke({ question: "Private question" });
+
+	assert.equal(result.retrieval_debug?.judge_mode, "model");
+	assert.equal(result.retrieval_debug?.judge_model, "judge-model");
+	assert.equal(result.retrieval_debug?.judge_total_tokens, 456);
+	assert.equal(
+		JSON.stringify(result.judgement).includes("Private question"),
+		false,
+	);
+	assert.equal(JSON.stringify(result.judgement).includes("evidence"), false);
+});
+
 test("table route invokes all injected table ports before generation", async () => {
 	const calls: string[] = [];
 	const result = await new AskGraphService(

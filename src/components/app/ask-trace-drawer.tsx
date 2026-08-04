@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 const STAGE_LABELS: Record<string, string> = {
 	route: "路由",
 	retrieve: "检索",
+	judge: "证据判断",
 	/** Product term: 裁决（adjudicate）. */
 	adjudicate: "裁决",
 	/** Legacy stage key `gate` — historical traces only. */
@@ -109,6 +110,27 @@ function summaryRows(
 		rows.push({
 			label: "端到端",
 			value: formatDurationMs(clientDurationMs),
+		});
+	}
+	if (typeof debug.judge_mode === "string") {
+		rows.push({ label: "Judge 模式", value: debug.judge_mode });
+	}
+	if (typeof debug.judge_model === "string") {
+		rows.push({ label: "Judge 模型", value: debug.judge_model });
+	}
+	if (typeof debug.judge_duration_ms === "number") {
+		rows.push({
+			label: "Judge 耗时",
+			value: formatDurationMs(debug.judge_duration_ms),
+		});
+	}
+	if (
+		typeof debug.judge_input_tokens === "number" ||
+		typeof debug.judge_output_tokens === "number"
+	) {
+		rows.push({
+			label: "Judge tokens",
+			value: `${formatDebugValue(debug.judge_input_tokens)} / ${formatDebugValue(debug.judge_output_tokens)}`,
 		});
 	}
 	return rows;

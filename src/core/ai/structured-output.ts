@@ -1,6 +1,7 @@
 import {
 	generateText,
 	type LanguageModel,
+	type LanguageModelUsage,
 	type ModelMessage,
 	Output,
 } from "ai";
@@ -92,6 +93,7 @@ export interface StructuredGenerationRequest {
 	schema: z.ZodType;
 	schemaName: StructuredKind;
 	temperature: number;
+	maxOutputTokens?: number;
 	abortSignal?: AbortSignal;
 }
 
@@ -126,7 +128,23 @@ export class StructuredOutputTimeoutError extends Error {
 export type StructuredOutputAdapterOptions = {
 	timeoutMs?: number;
 	maxAttempts?: number;
+	maxOutputTokens?: number;
 };
+
+export type StructuredRequestMetadata = {
+	attempts: number;
+	durationMs: number;
+	inputTokens?: number;
+	outputTokens?: number;
+	totalTokens?: number;
+};
+
+class DefaultStructuredResult {
+	constructor(
+		readonly output: unknown,
+		readonly usage: LanguageModelUsage,
+	) {}
+}
 
 async function defaultStructuredExecutor(
 	request: StructuredGenerationRequest,
@@ -136,6 +154,9 @@ async function defaultStructuredExecutor(
 		instructions: request.instructions,
 		messages: request.messages,
 		temperature: request.temperature,
+		...(request.maxOutputTokens !== undefined
+			? { maxOutputTokens: request.maxOutputTokens }
+			: {}),
 		abortSignal: request.abortSignal,
 		output: Output.object({
 			schema: request.schema,
@@ -145,7 +166,7 @@ async function defaultStructuredExecutor(
 			`unorag.structured.${request.schemaName}`,
 		),
 	});
-	return result.output;
+	return new DefaultStructuredResult(result.output, result.usage);
 }
 
 function userMessage(content: string): ModelMessage {
@@ -155,6 +176,7 @@ function userMessage(content: string): ModelMessage {
 export class StructuredOutputAdapter {
 	private readonly timeoutMs: number;
 	private readonly maxAttempts: number;
+	private readonly maxOutputTokens: number | undefined;
 
 	constructor(
 		private readonly model: LanguageModel,
@@ -163,6 +185,10 @@ export class StructuredOutputAdapter {
 	) {
 		this.timeoutMs = positiveInteger(options.timeoutMs, 15_000, "timeoutMs");
 		this.maxAttempts = positiveInteger(options.maxAttempts, 2, "maxAttempts");
+		this.maxOutputTokens =
+			options.maxOutputTokens === undefined
+				? undefined
+				: positiveInteger(options.maxOutputTokens, 1, "maxOutputTokens");
 	}
 
 	private async request<K extends StructuredKind>(
@@ -171,7 +197,11 @@ export class StructuredOutputAdapter {
 		prompt: VersionedPrompt,
 		messages: ModelMessage[],
 		abortSignal?: AbortSignal,
-	): Promise<z.infer<StructuredSchemaMap[K]>> {
+	): Promise<{
+		output: z.infer<StructuredSchemaMap[K]>;
+		metadata: StructuredRequestMetadata;
+	}> {
+		const startedAt = performance.now();
 		let lastError: unknown;
 		for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
 			if (abortSignal?.aborted) throw abortSignal.reason;
@@ -204,6 +234,7 @@ export class StructuredOutputAdapter {
 								schema,
 								schemaName: kind,
 								temperature: STRUCTURED_TEMPERATURE,
+								maxOutputTokens: this.maxOutputTokens,
 								abortSignal: operationSignal,
 							}),
 							new Promise<never>((_, reject) => {
@@ -214,11 +245,30 @@ export class StructuredOutputAdapter {
 							}),
 						]),
 				);
-				const parsed = schema.safeParse(raw);
+				const output =
+					raw instanceof DefaultStructuredResult ? raw.output : raw;
+				const parsed = schema.safeParse(output);
 				if (!parsed.success) {
 					throw new StructuredOutputValidationError(kind, parsed.error);
 				}
-				return parsed.data as z.infer<StructuredSchemaMap[K]>;
+				const usage =
+					raw instanceof DefaultStructuredResult ? raw.usage : undefined;
+				return {
+					output: parsed.data as z.infer<StructuredSchemaMap[K]>,
+					metadata: {
+						attempts: attempt,
+						durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+						...(usage?.inputTokens !== undefined
+							? { inputTokens: usage.inputTokens }
+							: {}),
+						...(usage?.outputTokens !== undefined
+							? { outputTokens: usage.outputTokens }
+							: {}),
+						...(usage?.totalTokens !== undefined
+							? { totalTokens: usage.totalTokens }
+							: {}),
+					},
+				};
 			} catch (error) {
 				if (abortSignal?.aborted) throw error;
 				lastError = error;
@@ -246,7 +296,7 @@ export class StructuredOutputAdapter {
 				),
 			],
 			options.abortSignal,
-		);
+		).then((result) => result.output);
 	}
 
 	rewrite(
@@ -266,7 +316,7 @@ export class StructuredOutputAdapter {
 				),
 			],
 			options.abortSignal,
-		);
+		).then((result) => result.output);
 	}
 
 	judge(
@@ -277,6 +327,19 @@ export class StructuredOutputAdapter {
 		},
 		options: { abortSignal?: AbortSignal } = {},
 	): Promise<JudgeOutput> {
+		return this.judgeWithMetadata(input, options).then(
+			(result) => result.output,
+		);
+	}
+
+	judgeWithMetadata(
+		input: {
+			question: string;
+			citations: unknown[];
+			attempts: number;
+		},
+		options: { abortSignal?: AbortSignal } = {},
+	): Promise<{ output: JudgeOutput; metadata: StructuredRequestMetadata }> {
 		return this.request(
 			"judge",
 			JudgeOutputSchema,
@@ -307,7 +370,7 @@ export class StructuredOutputAdapter {
 				),
 			],
 			options.abortSignal,
-		);
+		).then((result) => result.output);
 	}
 }
 

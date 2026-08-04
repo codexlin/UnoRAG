@@ -5,6 +5,7 @@ import {
 	AnswerStreamAdapter,
 	aiConfigFromEnv,
 	createAiProviderRegistry,
+	judgeAiConfigFromEnv,
 	StructuredOutputAdapter,
 } from "@/core/ai";
 import {
@@ -44,6 +45,8 @@ const FALLBACK_FOLLOW_UP_PATTERN =
 export type NativeAskRuntimeDependencies = {
 	retrieval: RetrievalService;
 	structured: StructuredOutputAdapter;
+	judgeStructured?: StructuredOutputAdapter;
+	judgeIdentity?: { modelId: string; providerName: string };
 	answer: AnswerStreamAdapter;
 };
 
@@ -273,6 +276,11 @@ export class NativeAskRuntime {
 
 	private context(): AskGraphContext {
 		const structured = this.dependencies.structured;
+		const judgeStructured = this.dependencies.judgeStructured ?? structured;
+		const judgeIdentity = this.dependencies.judgeIdentity ?? {
+			modelId: "shared",
+			providerName: "injected",
+		};
 		return {
 			queryRouter: {
 				route: ({ question, history }) =>
@@ -309,10 +317,13 @@ export class NativeAskRuntime {
 							action: canRetry ? "retry" : "refuse",
 							reason: "no_evidence",
 							can_retry: canRetry,
+							judge_mode: "deterministic_no_evidence",
+							judge_model: null,
+							judge_provider: null,
 						};
 					}
 					try {
-						return await structured.judge(
+						const judged = await judgeStructured.judgeWithMetadata(
 							{
 								question: state.question ?? "",
 								citations: [
@@ -325,6 +336,23 @@ export class NativeAskRuntime {
 							},
 							{ abortSignal: this.signal },
 						);
+						return {
+							...judged.output,
+							judge_mode: "model",
+							judge_model: judgeIdentity.modelId,
+							judge_provider: judgeIdentity.providerName,
+							judge_attempts: judged.metadata.attempts,
+							judge_duration_ms: judged.metadata.durationMs,
+							...(judged.metadata.inputTokens !== undefined
+								? { judge_input_tokens: judged.metadata.inputTokens }
+								: {}),
+							...(judged.metadata.outputTokens !== undefined
+								? { judge_output_tokens: judged.metadata.outputTokens }
+								: {}),
+							...(judged.metadata.totalTokens !== undefined
+								? { judge_total_tokens: judged.metadata.totalTokens }
+								: {}),
+						};
 					} catch (error) {
 						throwIfAborted(this.signal, error);
 						return {
@@ -332,6 +360,9 @@ export class NativeAskRuntime {
 							action: "refuse",
 							reason: "judge_unavailable",
 							can_retry: false,
+							judge_mode: "model_error",
+							judge_model: judgeIdentity.modelId,
+							judge_provider: judgeIdentity.providerName,
 						};
 					}
 				},
@@ -447,6 +478,12 @@ export class NativeAskRuntime {
 					}
 					return {
 						table_execution: execution,
+						retrieval_debug: {
+							...(state.retrieval_debug ?? {}),
+							judge_mode: "deterministic_table_execution",
+							judge_model: null,
+							judge_provider: null,
+						},
 						citations: selectEvidenceCitations(
 							citations,
 							execution.evidence.map((item) => item.citationId),
@@ -515,6 +552,7 @@ export function createNativeAskRuntime(input: {
 	let dependencies = input.dependencies;
 	if (!dependencies) {
 		const registry = createAiProviderRegistry(aiConfigFromEnv());
+		const judgeRegistry = createAiProviderRegistry(judgeAiConfigFromEnv());
 		dependencies = {
 			retrieval: getTypeScriptRetrievalService(),
 			structured: new StructuredOutputAdapter(registry.model, undefined, {
@@ -527,6 +565,22 @@ export function createNativeAskRuntime(input: {
 					2,
 				),
 			}),
+			judgeStructured: new StructuredOutputAdapter(
+				judgeRegistry.model,
+				undefined,
+				{
+					timeoutMs: positiveEnvironmentInteger("ASK_JUDGE_TIMEOUT_MS", 15_000),
+					maxAttempts: positiveEnvironmentInteger("ASK_JUDGE_MAX_ATTEMPTS", 2),
+					maxOutputTokens: positiveEnvironmentInteger(
+						"ASK_JUDGE_MAX_OUTPUT_TOKENS",
+						1024,
+					),
+				},
+			),
+			judgeIdentity: {
+				modelId: judgeRegistry.modelId,
+				providerName: judgeRegistry.providerName,
+			},
 			answer: new AnswerStreamAdapter(registry.model),
 		};
 	}

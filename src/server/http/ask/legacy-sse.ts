@@ -137,6 +137,14 @@ export function projectPublicRetrievalDebug(
 		],
 		evidence_threshold: ["evidence_threshold", "evidenceThreshold"],
 		table_candidate_count: ["table_candidate_count"],
+		judge_mode: ["judge_mode"],
+		judge_model: ["judge_model"],
+		judge_provider: ["judge_provider"],
+		judge_attempts: ["judge_attempts"],
+		judge_duration_ms: ["judge_duration_ms"],
+		judge_input_tokens: ["judge_input_tokens"],
+		judge_output_tokens: ["judge_output_tokens"],
+		judge_total_tokens: ["judge_total_tokens"],
 	} as const;
 	for (const [target, sources] of Object.entries(mappings)) {
 		const source = sources.find((name) => value[name] !== undefined);

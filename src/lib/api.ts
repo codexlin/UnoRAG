@@ -71,6 +71,14 @@ export type ApiRetrievalDebug = {
 	hybrid_failed?: boolean;
 	rerank_failed?: boolean;
 	retrieval_mode?: string;
+	judge_mode?: string;
+	judge_model?: string | null;
+	judge_provider?: string | null;
+	judge_attempts?: number;
+	judge_duration_ms?: number;
+	judge_input_tokens?: number;
+	judge_output_tokens?: number;
+	judge_total_tokens?: number;
 	[key: string]: unknown;
 };
 

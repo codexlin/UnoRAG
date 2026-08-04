@@ -43,6 +43,7 @@ mk_compose exec -T web node -e \
 - Web readiness、Ask 5xx、P50/P95 延迟和并发拒绝；
 - DBOS workflow queued/running/dead/stuck、Worker 心跳和重试；
 - Parser、Embedding、Rerank、LLM 的错误率、延迟和限额；
+- Judge 的 mode/model、P50/P95、重试和 Token；独立 Judge 模型变更必须先通过发布黄金集；
 - PostgreSQL 连接、锁、容量与备份状态；
 - Qdrant readiness、集合容量和检索错误；
 - 文档卷、备份卷和宿主机磁盘水位。

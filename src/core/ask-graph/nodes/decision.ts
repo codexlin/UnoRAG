@@ -22,10 +22,27 @@ function failClosedJudgement(judgement: Judgement): Judgement {
 export function createDecisionNode(context: AskGraphContext) {
 	return async (state: AskState): Promise<AskStateUpdate> => {
 		const judgement = failClosedJudgement(await context.judge.judge(state));
+		const judgeDebug = Object.fromEntries(
+			[
+				"judge_mode",
+				"judge_model",
+				"judge_provider",
+				"judge_attempts",
+				"judge_duration_ms",
+				"judge_input_tokens",
+				"judge_output_tokens",
+				"judge_total_tokens",
+			].flatMap((key) =>
+				judgement[key] !== undefined ? [[key, judgement[key]]] : [],
+			),
+		);
 		return {
 			judgement,
 			refuse_reason: judgement.action === "refuse" ? judgement.reason : null,
-			retrieval_debug: mergeRetrievalDebug(state, { judgement }),
+			retrieval_debug: mergeRetrievalDebug(state, {
+				judgement,
+				...judgeDebug,
+			}),
 		};
 	};
 }
