@@ -511,13 +511,27 @@ async function deleteEvaluationLibrary(input: {
 	}
 	const deadline = Date.now() + input.timeoutMs;
 	while (Date.now() < deadline) {
-		const current = await input.client.json("GET", path, undefined, 30_000);
-		if (current.status === 404) return;
+		const current = await input.client.json(
+			"GET",
+			"/api/libraries",
+			undefined,
+			30_000,
+		);
 		if (current.status >= 500) {
 			throw new Error(
 				`evaluation library cleanup check failed: HTTP ${current.status}`,
 			);
 		}
+		if (current.status !== 200 || !Array.isArray(current.body)) {
+			throw new Error(
+				`evaluation library cleanup check returned an invalid response: HTTP ${current.status}`,
+			);
+		}
+		const stillVisible = current.body.some((item) => {
+			const library = asObject(item);
+			return stringValue(library.id) === input.libraryId;
+		});
+		if (!stillVisible) return;
 		await sleep(input.pollIntervalMs);
 	}
 	throw new Error(`evaluation library cleanup timed out: ${input.libraryId}`);

@@ -21,6 +21,7 @@ export const SplitStrategySchema = z.enum([
 	"heading",
 	"table",
 	"code",
+	"figure",
 	"page",
 	"recursive",
 	"semantic",

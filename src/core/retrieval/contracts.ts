@@ -8,6 +8,7 @@ export const RecordTypeSchema = z.enum([
 	"document",
 	"table",
 	"table_summary",
+	"figure",
 	"chunk+table_summary",
 	"text",
 ]);
@@ -125,6 +126,7 @@ export const InternalCitationSchema = z
 		heading_text: z.string().nullable().optional(),
 		preamble: z.string().nullable(),
 		table_id: z.string().nullable(),
+		figure_id: z.string().nullable().optional(),
 		headers: z.array(z.string()),
 		rows: z.array(z.array(z.string())),
 		row_start: z.number().int().nullable(),

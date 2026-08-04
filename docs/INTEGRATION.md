@@ -72,7 +72,7 @@ curl -sS -X POST "$UNORAG_URL/api/v1/retrieve" \
   }'
 ```
 
-可选过滤字段包括 `record_type`、`doc_id`、`table_id` 和 `document_version_id`。调用方过滤只能
+可选过滤字段包括 `record_type`（含 `figure`）、`doc_id`、`table_id` 和 `document_version_id`。调用方过滤只能
 缩小服务端授权范围，不能扩大范围。
 
 ```json

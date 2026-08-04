@@ -27,6 +27,8 @@ function hit(input: {
 	text: string;
 	chunkIndex: number;
 	score: number;
+	recordType?: QdrantSearchHit["payload"]["record_type"];
+	figureId?: string;
 }): QdrantSearchHit {
 	return {
 		id: input.id,
@@ -42,7 +44,8 @@ function hit(input: {
 			tenant_id: "tenant-a",
 			workspace_id: "workspace-a",
 			acl_scope: "workspace",
-			record_type: "chunk",
+			record_type: input.recordType ?? "chunk",
+			...(input.figureId ? { figure_id: input.figureId } : {}),
 		},
 	};
 }
@@ -217,6 +220,52 @@ test("reranking preserves requested topK and removes contained duplicates", asyn
 	);
 	assert.equal(result.debug.usedRerank, true);
 	assert.equal(requestedTopN, 3);
+});
+
+test("overlap deduplication preserves the more specific figure evidence", async () => {
+	const body = `${"Quarterly revenue evidence ".repeat(8)}Q2 45.8 million`;
+	class FigureStore extends FakeStore {
+		override async search() {
+			return [
+				hit({
+					id: "section",
+					text: body,
+					chunkIndex: 0,
+					score: 0.95,
+					recordType: "section",
+				}),
+				hit({
+					id: "figure",
+					text: body,
+					chunkIndex: 1,
+					score: 0.9,
+					recordType: "figure",
+					figureId: "document-a:figure:1",
+				}),
+			];
+		}
+	}
+	const service = new DefaultRetrievalService(
+		embeddings,
+		new FigureStore(),
+		null,
+		{
+			hybridEnabled: false,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	const result = await service.retrieve({
+		query: "Q2 revenue",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+	});
+	assert.equal(result.citations.length, 1);
+	assert.equal(result.citations[0]?.record_type, "figure");
+	assert.equal(result.citations[0]?.figure_id, "document-a:figure:1");
 });
 
 test("hybrid corpus failure falls back to dense without failing retrieval", async () => {

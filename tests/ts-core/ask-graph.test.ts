@@ -268,6 +268,24 @@ test("explicit row comparison upgrades compare to deterministic table execution"
 	]);
 });
 
+test("multiple column-value cues keep product lookup on table execution", async () => {
+	const calls: string[] = [];
+	const result = await new AskGraphService(
+		createContext({ queryType: "table", calls }),
+	).invoke({
+		question:
+			"服务器主机（CloudMax CM-R7425）的单价大约是多少？它的规格参数要点有哪些？",
+	});
+
+	assert.equal(result.query_type, "table");
+	assert.deepEqual(calls, [
+		"table_retrieve",
+		"build_table_plan",
+		"table_execute",
+		"generate",
+	]);
+});
+
 test("prose superlative overrides a fact route to compare retrieval", async () => {
 	const calls: string[] = [];
 	const service = new AskGraphService(

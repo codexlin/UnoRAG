@@ -89,6 +89,7 @@ function recordTypeCondition(
 				matchValue("record_type", "chunk"),
 				matchValue("record_type", "section"),
 				matchValue("record_type", "table_summary"),
+				matchValue("record_type", "figure"),
 				{ is_null: { key: "record_type" } },
 			],
 		};

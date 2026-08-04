@@ -326,7 +326,11 @@ function splitIntoSections(
 			if (node.level > boundaryLevel && node.text) bodyParts.push(node.text);
 			continue;
 		}
-		if (node.type === "table" || node.type === "code") {
+		if (
+			node.type === "table" ||
+			node.type === "code" ||
+			node.type === "figure"
+		) {
 			specialNodes.push(node);
 			nodeIds.push(node.id);
 			[pageStart, pageEnd] = extendPages(pageStart, pageEnd, node);
@@ -373,6 +377,9 @@ function specialNodeDecision(type: DocumentNode["type"]): ChunkDecision {
 	}
 	if (type === "code") {
 		return { strategy: "code", reason: "structured_code" };
+	}
+	if (type === "figure") {
+		return { strategy: "figure", reason: "structured_figure" };
 	}
 	throw new Error(`unsupported special node type: ${type}`);
 }

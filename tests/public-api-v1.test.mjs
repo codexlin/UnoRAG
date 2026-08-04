@@ -200,6 +200,7 @@ test("success projection exposes stable citations and strips internal debug", ()
 					body: "full internal body",
 					tenant_id: "tenant-secret",
 					generation_id: "generation-internal",
+					figure_id: "doc-1:figure:1",
 				},
 			],
 		},
@@ -208,6 +209,7 @@ test("success projection exposes stable citations and strips internal debug", ()
 	assert.equal(projected.api_version, PUBLIC_API_VERSION_BODY);
 	assert.equal(projected.trace_id, "11111111-1111-4111-8111-111111111111");
 	assert.equal(projected.citations[0].document_id, "doc-1");
+	assert.equal(projected.citations[0].figure_id, "doc-1:figure:1");
 	assert.deepEqual(
 		Object.keys(projected).sort(),
 		[...PUBLIC_ASK_SUCCESS_KEYS].sort(),

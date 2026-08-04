@@ -125,7 +125,7 @@ function deduplicateOverlappingHits(
 	const selected: QdrantSearchHit[] = [];
 	for (const hit of hits) {
 		const body = hitText(hit).replace(/\s+/g, " ").trim();
-		const duplicate = selected.some((candidate) => {
+		const duplicateIndex = selected.findIndex((candidate) => {
 			if (candidate.payload.doc_id !== hit.payload.doc_id) return false;
 			const candidateBody = hitText(candidate).replace(/\s+/g, " ").trim();
 			return (
@@ -133,9 +133,29 @@ function deduplicateOverlappingHits(
 				(body.includes(candidateBody) || candidateBody.includes(body))
 			);
 		});
-		if (!duplicate) selected.push(hit);
+		if (duplicateIndex < 0) {
+			selected.push(hit);
+			continue;
+		}
+		const duplicate = selected[duplicateIndex];
+		if (
+			duplicate &&
+			recordSpecificity(hit.payload.record_type) >
+				recordSpecificity(duplicate.payload.record_type)
+		) {
+			selected[duplicateIndex] = hit;
+		}
 	}
 	return selected;
+}
+
+function recordSpecificity(
+	recordType: QdrantSearchHit["payload"]["record_type"],
+): number {
+	if (recordType === "figure" || recordType === "table") return 3;
+	if (recordType === "chunk" || recordType === "table_summary") return 2;
+	if (recordType === "section") return 1;
+	return 0;
 }
 
 function fuseHits(input: {

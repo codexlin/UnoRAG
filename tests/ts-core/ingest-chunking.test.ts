@@ -56,7 +56,7 @@ test("chunks representative DocumentIR and preserves table structure", async () 
 		policy_version: "v1",
 		profile: "balanced",
 		chunk_count: 2,
-		strategies: { table: 1, heading: 1 },
+		strategies: { table: 1, figure: 1 },
 		fallback_count: 0,
 	});
 
@@ -79,6 +79,50 @@ test("chunks representative DocumentIR and preserves table structure", async () 
 	assert.ok(
 		payloads.every((payload) => payload.workspace_id === "workspace-1"),
 	);
+});
+
+test("preserves figures as independently retrievable records", async () => {
+	const document = documentWithNodes([
+		{
+			id: "heading-1",
+			type: "heading",
+			text: "Quarterly revenue",
+			level: 1,
+			path: "Quarterly revenue",
+			page_start: 2,
+		},
+		{
+			id: "figure-1",
+			type: "figure",
+			text: "Figure 1: Q2 revenue was 45.8 million yuan, up 95.7%.",
+			figure_id: "document-1:figure:1",
+			page_start: 2,
+		},
+		{
+			id: "paragraph-1",
+			type: "paragraph",
+			text: "The narrative continues after the chart.",
+			page_start: 2,
+		},
+	]);
+
+	const chunks = await chunkDocument(document, { chunkSize: 200 });
+	const figure = chunks.find((item) => item.figure_id);
+	assert.ok(figure);
+	assert.equal(figure.split_strategy, "figure");
+	assert.deepEqual(figure.node_ids, ["figure-1"]);
+	assert.match(figure.body, /95\.7%/);
+
+	const payloads = buildIndexPayloads(chunks, {
+		...recordOptions,
+		generationId: "11111111-1111-4111-8111-111111111111",
+	});
+	const figurePayload = payloads.find(
+		(payload) => payload.record_type === "figure",
+	);
+	assert.ok(figurePayload);
+	assert.equal(figurePayload.figure_id, "document-1:figure:1");
+	assert.deepEqual(figurePayload.source_node_ids, ["figure-1"]);
 });
 
 test("keeps a page between target and max intact, then recursively splits over max", async () => {

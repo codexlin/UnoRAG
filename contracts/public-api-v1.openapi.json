@@ -292,6 +292,7 @@
 					"page_end",
 					"section_path",
 					"table_id",
+					"figure_id",
 					"row_start",
 					"row_end",
 					"record_type"
@@ -333,6 +334,9 @@
 						"type": ["string", "null"]
 					},
 					"table_id": {
+						"type": ["string", "null"]
+					},
+					"figure_id": {
 						"type": ["string", "null"]
 					},
 					"row_start": {

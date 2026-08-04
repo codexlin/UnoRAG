@@ -69,6 +69,7 @@ interface AclRow extends QueryResultRow {
 
 type ProgressStage =
 	| "downloading"
+	| "parsing"
 	| "chunking"
 	| "embedding"
 	| "indexing"

@@ -134,3 +134,23 @@ test("runtime refuses absent or ambiguous table identifiers", async () => {
 		null,
 	);
 });
+
+test("structured router fallback remains deterministic and conservative", async () => {
+	const { fallbackQueryRoute } = await runtimeModule;
+	assert.deepEqual(fallbackQueryRoute("表中有多少行？"), {
+		queryType: "table",
+		reason: "structured_router_fallback_table",
+	});
+	assert.deepEqual(fallbackQueryRoute("那么它的金额呢？", 2), {
+		queryType: "follow_up",
+		reason: "structured_router_fallback_follow_up",
+	});
+	assert.deepEqual(fallbackQueryRoute("2029年春节团建预算是多少？"), {
+		queryType: "fact",
+		reason: "structured_router_fallback_fact",
+	});
+	assert.deepEqual(fallbackQueryRoute("这个"), {
+		queryType: "ambiguous",
+		reason: "structured_router_fallback_ambiguous",
+	});
+});

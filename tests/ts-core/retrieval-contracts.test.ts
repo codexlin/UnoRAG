@@ -73,7 +73,7 @@ test("mandatory filter covers workspace, principal, group and active generation"
 	assert.equal(JSON.stringify(filter).includes("generation-old"), false);
 });
 
-test("text retrieval includes narrative grains and excludes raw table rows", () => {
+test("text retrieval includes narrative and figure grains but excludes raw table rows", () => {
 	const filter = buildMandatoryQdrantFilter({
 		scope,
 		userFilters: { record_type: "text" },
@@ -82,7 +82,12 @@ test("text retrieval includes narrative grains and excludes raw table rows", () 
 		(condition) => (condition.match as { value?: string }).value,
 	);
 
-	assert.deepEqual(recordTypes, ["chunk", "section", "table_summary"]);
+	assert.deepEqual(recordTypes, [
+		"chunk",
+		"section",
+		"table_summary",
+		"figure",
+	]);
 	assert.equal(recordTypes.includes("table"), false);
 });
 
@@ -197,7 +202,8 @@ test("Qdrant hit maps to a strict internal citation without unknown payload fiel
 			generation_id: "generation-current",
 			tenant_id: "tenant-a",
 			workspace_id: "workspace-a",
-			record_type: "chunk",
+			record_type: "figure",
+			figure_id: "document-a:figure:3",
 			page: 2,
 			source_chunk_ids: ["chunk-a"],
 			unknown_secret: "drop-me",
@@ -220,6 +226,8 @@ test("Qdrant hit maps to a strict internal citation without unknown payload fiel
 	assert.equal(citation.dense_score, 0.82);
 	assert.equal(citation.used_hybrid, true);
 	assert.equal(citation.generation_id, "generation-current");
+	assert.equal(citation.record_type, "figure");
+	assert.equal(citation.figure_id, "document-a:figure:3");
 	assert.deepEqual(citation.source_chunk_ids, ["chunk-a"]);
 	assert.equal("unknown_secret" in citation, false);
 });

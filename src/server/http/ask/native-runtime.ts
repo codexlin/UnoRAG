@@ -35,6 +35,11 @@ import type { NativeAskPolicy } from "./policy";
 
 type RetrievalService = Pick<DefaultRetrievalService, "retrieve">;
 
+const FALLBACK_TABLE_PATTERN =
+	/(?:表格|表中|表内|明细表|清单|台账|逐行|多少行|表头|列名|字段|序号\s*(?:为|是)?\s*\d+|rows?|row\s*#?\s*\d+)/i;
+const FALLBACK_FOLLOW_UP_PATTERN =
+	/^(?:那|那么|这个|它|上述|前者|后者|还有|为什么|具体呢|分别呢)/i;
+
 export type NativeAskRuntimeDependencies = {
 	retrieval: RetrievalService;
 	structured: StructuredOutputAdapter;
@@ -49,6 +54,33 @@ export class NativeAskRequestError extends Error {
 		super(message);
 		this.name = "NativeAskRequestError";
 	}
+}
+
+export function fallbackQueryRoute(
+	question: string,
+	historyCount = 0,
+): { queryType: string; reason: string } {
+	const normalized = question.trim();
+	if (FALLBACK_TABLE_PATTERN.test(normalized)) {
+		return { queryType: "table", reason: "structured_router_fallback_table" };
+	}
+	if (historyCount > 0 && FALLBACK_FOLLOW_UP_PATTERN.test(normalized)) {
+		return {
+			queryType: "follow_up",
+			reason: "structured_router_fallback_follow_up",
+		};
+	}
+	if (Array.from(normalized).length >= 4) {
+		return { queryType: "fact", reason: "structured_router_fallback_fact" };
+	}
+	return {
+		queryType: "ambiguous",
+		reason: "structured_router_fallback_ambiguous",
+	};
+}
+
+function throwIfAborted(signal: AbortSignal | undefined, error: unknown): void {
+	if (signal?.aborted) throw error;
 }
 
 function query(state: AskState): string {
@@ -221,54 +253,75 @@ export class NativeAskRuntime {
 		return {
 			queryRouter: {
 				route: async ({ question, history }) => {
-					const routed = await structured.route(
-						{
-							question,
-							history: history.flatMap((item) => {
-								const role = item.role;
-								const content = item.content;
-								return (role === "user" || role === "assistant") &&
-									typeof content === "string"
-									? [{ role, content }]
-									: [];
-							}),
-						},
-						{ abortSignal: this.signal },
-					);
-					return {
-						queryType: routed.query_type,
-						reason: routed.reason,
-					};
+					try {
+						const routed = await structured.route(
+							{
+								question,
+								history: history.flatMap((item) => {
+									const role = item.role;
+									const content = item.content;
+									return (role === "user" || role === "assistant") &&
+										typeof content === "string"
+										? [{ role, content }]
+										: [];
+								}),
+							},
+							{ abortSignal: this.signal },
+						);
+						return {
+							queryType: routed.query_type,
+							reason: routed.reason,
+						};
+					} catch (error) {
+						throwIfAborted(this.signal, error);
+						return fallbackQueryRoute(question, history.length);
+					}
 				},
 			},
 			queryRewriter: {
 				rewrite: async ({ question }) => {
-					const rewritten = await structured.rewrite(
-						{ question, fallbackSemanticQuery: question },
-						{ abortSignal: this.signal },
-					);
-					return {
-						query: rewritten.semantic_query,
-						mode: "structured",
-						plan: { filters: rewritten.filters },
-					};
+					try {
+						const rewritten = await structured.rewrite(
+							{ question, fallbackSemanticQuery: question },
+							{ abortSignal: this.signal },
+						);
+						return {
+							query: rewritten.semantic_query,
+							mode: "structured",
+							plan: { filters: rewritten.filters },
+						};
+					} catch (error) {
+						throwIfAborted(this.signal, error);
+						return { query: question, mode: "structured_fallback" };
+					}
 				},
 			},
 			judge: {
-				judge: (state) =>
-					structured.judge(
-						{
-							question: state.question ?? "",
-							citations: [
-								...(state.citations ?? []),
-								...(state.table_execution
-									? [{ table_execution: state.table_execution }]
-									: []),
-							],
-							attempts: state.retrieval_attempts ?? 0,
-						},
-						{ abortSignal: this.signal },
-					),
+				judge: async (state) => {
+					try {
+						return await structured.judge(
+							{
+								question: state.question ?? "",
+								citations: [
+									...(state.citations ?? []),
+									...(state.table_execution
+										? [{ table_execution: state.table_execution }]
+										: []),
+								],
+								attempts: state.retrieval_attempts ?? 0,
+							},
+							{ abortSignal: this.signal },
+						);
+					} catch (error) {
+						throwIfAborted(this.signal, error);
+						return {
+							sufficient: false,
+							action: "refuse",
+							reason: "judge_unavailable",
+							can_retry: false,
+						};
+					}
+				},
 			},
 			ports: {
 				retrieve: async (state) => {

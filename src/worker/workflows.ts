@@ -95,7 +95,20 @@ export function createDocumentIngestWorkflow(
 			const staged: DocumentIngestStageResult = await runRetriedStep(
 				operations,
 				"document-ingest-stage-document",
-				() => ingest.external.stageDocument(input),
+				() =>
+					ingest.external.stageDocument(input, async (progress) => {
+						const disposition = await ingest.transactions.markProgress(
+							input,
+							progress,
+						);
+						if (disposition === "cancelled") {
+							throw new WorkerTaskError(
+								"Document ingest was cancelled",
+								"job_cancelled",
+								"cancelled",
+							);
+						}
+					}),
 			);
 			await requireIngestContinuation(
 				operations,
@@ -205,6 +218,7 @@ async function requireIngestContinuation(
 	transactions: NonNullable<WorkerPorts["documentIngest"]>["transactions"],
 	stage:
 		| "downloading"
+		| "parsing"
 		| "chunking"
 		| "embedding"
 		| "indexing"

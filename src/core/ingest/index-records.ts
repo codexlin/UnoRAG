@@ -12,6 +12,7 @@ export const indexRecordTypes = [
 	"document",
 	"table",
 	"table_summary",
+	"figure",
 ] as const;
 
 export type IndexRecordType = (typeof indexRecordTypes)[number];
@@ -504,7 +505,7 @@ function chunkPayload(
 		embed_text: embedText(chunk),
 		split_strategy: chunk.split_strategy,
 		source_format: chunk.source_format,
-		record_type: "chunk",
+		record_type: chunk.figure_id ? "figure" : "chunk",
 		record_id: recordId,
 		document_version_id: options.documentVersionId,
 		tenant_id: options.organizationId,
@@ -522,7 +523,10 @@ function chunkPayload(
 	copy(payload, "page_end", chunk.page_end);
 	copy(payload, "table_id", chunk.table_id);
 	copy(payload, "figure_id", chunk.figure_id);
-	if (chunk.node_ids.length > 0) payload.node_ids = [...chunk.node_ids];
+	if (chunk.node_ids.length > 0) {
+		payload.node_ids = [...chunk.node_ids];
+		payload.source_node_ids = [...chunk.node_ids];
+	}
 	copy(payload, "content_hash", chunk.content_hash);
 	for (const key of [
 		"chunk_policy_version",

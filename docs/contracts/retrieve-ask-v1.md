@@ -135,7 +135,7 @@ Required keys (nullable location fields stay present as `null`):
 id · index · title · snippet · score
 document_id · filename
 page · page_start · page_end · section_path
-table_id · row_start · row_end · record_type
+table_id · figure_id · row_start · row_end · record_type
 ```
 
 `score` is a display float in `[0, 1]`. Internal score decomposition is not public.

@@ -24,6 +24,8 @@ type PromptDefinition = Omit<VersionedPrompt, "digest">;
 export const PROMPT_VERSION_HISTORY = Object.freeze({
 	chat: Object.freeze({
 		"1.0.0": "1844dc7b6bad62e3d3b06b8ea5818a5ea6ccedf475baa29c682b45fae7026132",
+		"1.1.0": "0ce38d37e4cbfc6ac34def9b5ca78fcdbc1a54a480c9b1a65ce11b83631c5696",
+		"1.2.0": "0b9386aad530cc800bd97fd1cce4ca79eaeb1a4eb603fd3a8fbcd38ae4c46690",
 	}),
 	router: Object.freeze({
 		"1.0.0": "4f586e259c1fb7b4991d7014038887dd885168785edfd5fe0705cfb8a5862353",
@@ -62,13 +64,15 @@ export const PROMPT_REGISTRY = Object.freeze({
 	chat: definePrompt({
 		key: "chat",
 		name: "unorag.chat.answer",
-		version: "1.0.0",
+		version: "1.2.0",
 		text:
 			"你是 UnoRAG 企业知识库助手：根据已收录资料回答，并便于核对原文。" +
 			"只根据「资料」回答；资料没写到的内容直接说「资料未覆盖」，不要编造。" +
 			"只回答用户所问，不要主动列举「未使用的技术 / 未提及的框架」等对比注脚；" +
 			"除非用户明确问技术对比或用了哪些框架。" +
 			"直接覆盖问题中的每个子问，保留资料中的数字、单位和型号原文，不做无关计算或延伸；" +
+			"不得省略或改写影响事实边界的限定词，例如超过、突破、至少、至多、约、近、余；" +
+			"回答最高、最低、最大、最小等比较问题时，必须比较资料中所有候选项的显式数值并按数值作答；不得根据标题顺序、出现次数或定性等级臆断排序；" +
 			"语气简洁专业，用中文，通常不超过300字；必要时分点。引用资料时可用 [1]、[2] 对应来源编号。" +
 			"若有多轮对话历史，结合上文理解指代与追问，但仍以当前资料为准。",
 	}),

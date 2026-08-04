@@ -39,6 +39,7 @@ const RetrievalRecordTypeSchema = z.enum([
 	"document",
 	"table",
 	"table_summary",
+	"figure",
 	"chunk+table_summary",
 	"text",
 ]);

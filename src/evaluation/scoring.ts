@@ -65,7 +65,7 @@ function citationMatchesExpectedRecordType(
 	if (expected === "table") {
 		return actual === "table" || actual === "table_summary";
 	}
-	return actual === "image";
+	return actual === "image" || actual === "figure";
 }
 
 export function scorePositiveCase(

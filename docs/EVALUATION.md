@@ -75,7 +75,7 @@ pnpm eval:live
 
 每条正例必须包含目标文档 Citation，且该目标文档必须提供黄金集声明的内容模态；平均分不能抵消单题
 无 Citation 或类型错误。黄金集的 `text` 模态兼容运行时 `text`、`chunk`、`section`，`table` 兼容
-`table`、`table_summary`，`image` 必须由 `image` Citation 支撑。原子事实覆盖是带数字、单位、边界和
+`table`、`table_summary`，`image` 由规范化的 `figure` Citation 支撑（兼容历史 `image` 值）。原子事实覆盖是带数字、单位、边界和
 显式否定保护的确定性词法门禁，不宣称替代语义正确性或人工复核。
 
 门禁失败时命令退出码为 `1`；配置、清理或显式发布失败为 `2`。报告同时保留 MRR、跨文档 Citation 比例及

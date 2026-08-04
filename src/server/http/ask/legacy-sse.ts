@@ -42,6 +42,7 @@ const PUBLIC_CITATION_KEYS = [
 	"section_path",
 	"preamble",
 	"table_id",
+	"figure_id",
 	"row_start",
 	"row_end",
 	"headers",

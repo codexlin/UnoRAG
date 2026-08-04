@@ -21,12 +21,20 @@ import {
 } from "../../src/core/ai";
 
 const EXPECTED_DIGESTS = {
-	chat: "1844dc7b6bad62e3d3b06b8ea5818a5ea6ccedf475baa29c682b45fae7026132",
+	chat: "0b9386aad530cc800bd97fd1cce4ca79eaeb1a4eb603fd3a8fbcd38ae4c46690",
 	router: "4f586e259c1fb7b4991d7014038887dd885168785edfd5fe0705cfb8a5862353",
 	rewrite: "81002875e2bfbf97afaee365f896b5a7a7c6528cea3c2242c4e26a40ab7d4104",
 	judge: "e7021ca6445ae3a89d24eb88650f3c5124edc06b4c5520370c183f2c0d7e7870",
 	table_plan:
 		"074c2f67f29bc44f7a72be0b1525490ef51719be3a9ba9ac4677b33198d5aab7",
+} as const;
+
+const EXPECTED_VERSIONS = {
+	chat: "1.2.0",
+	router: "1.0.0",
+	rewrite: "1.0.0",
+	judge: "1.0.0",
+	table_plan: "1.0.0",
 } as const;
 
 const EXPECTED_NAMES = {
@@ -51,9 +59,12 @@ test("prompt registry is complete and locks stable names, versions, and digests"
 		const prompt = getPrompt(key);
 		assert.equal(prompt.key, key);
 		assert.equal(prompt.name, EXPECTED_NAMES[key]);
-		assert.equal(prompt.version, "1.0.0");
+		assert.equal(prompt.version, EXPECTED_VERSIONS[key]);
 		assert.equal(prompt.digest, EXPECTED_DIGESTS[key]);
-		assert.equal(PROMPT_VERSION_HISTORY[key][prompt.version], prompt.digest);
+		const history = PROMPT_VERSION_HISTORY[key] as Readonly<
+			Record<string, string>
+		>;
+		assert.equal(history[prompt.version], prompt.digest);
 		assert.match(prompt.digest, /^[a-f0-9]{64}$/);
 		assert.ok(prompt.text.length > 20);
 		assert.equal(Object.isFrozen(prompt), true);

@@ -19,7 +19,7 @@ const KNOWN_QUERY_TYPES = new Set([
 	"ambiguous",
 ]);
 const EXPLICIT_TABLE_COMPARE_PATTERN =
-	/(?:表格|表中|表内|明细表|清单|台账|逐行|多少行|设备条目|表头|列名|字段|序号\s*(?:为|是)?\s*\d+|rows?|row\s*#?\s*\d+)/i;
+	/(?:表格|表中|表内|明细表|清单|台账|逐行|多少行|设备条目|表头|列名|字段|序号\s*(?:为|是)?\s*\d+|rows?|row\s*#?\s*\d+|(?:单价|合计金额?|规格参数|品牌\s*\/\s*型号|采购单位|中标供应商).{0,40}(?:单价|合计金额?|规格参数|品牌\s*\/\s*型号|采购单位|中标供应商))/i;
 const SUMMARY_PROSE_PATTERN = /(?:文末)?汇总说明(?:中|里|声称|称|显示|指出)?/i;
 const IGNORE_SUMMARY_PROSE_PATTERN =
 	/(?:忽略|不看|排除|不要参考)[^，。；;]{0,16}(?:文末)?汇总说明/i;

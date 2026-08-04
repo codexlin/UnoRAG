@@ -177,3 +177,26 @@ test("deterministic scorer measures facts, citations, refusal, and release gates
 	assert.equal(failed.ok, false);
 	assert.match(failed.failures[0] ?? "", /meanFactCoverage/);
 });
+
+test("image expectations accept the canonical figure record type", () => {
+	const [gold] = parseGoldenJsonl(
+		JSON.stringify({
+			file: "chart.pdf",
+			mode: "chart",
+			question: "图1是多少？",
+			answer: "图1是42。",
+			key_facts: ["42"],
+			expect_record_type: "image",
+		}),
+	);
+	assert.ok(gold);
+	const score = scorePositiveCase(gold, {
+		httpStatus: 200,
+		answer: "图1是42。",
+		refused: false,
+		citations: [{ filename: "chart.pdf", record_type: "figure" }],
+		latencyMs: 10,
+	});
+	assert.equal(score.ok, true);
+	assert.equal(score.recordTypeMatched, true);
+});

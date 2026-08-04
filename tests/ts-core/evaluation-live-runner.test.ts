@@ -235,12 +235,8 @@ test("live runner exercises login, upload, jobs, asks, strict gates, reports, an
 			send(202, { status: "deleting" });
 			return;
 		}
-		if (
-			request.method === "GET" &&
-			url.pathname === "/api/libraries/library-eval" &&
-			deleted
-		) {
-			send(404, { detail: "not found" });
+		if (request.method === "GET" && url.pathname === "/api/libraries") {
+			send(200, deleted ? [] : [{ id: "library-eval", status: "ready" }]);
 			return;
 		}
 		send(404, { detail: "not found" });

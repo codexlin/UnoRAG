@@ -28,6 +28,7 @@ test("text stager runs source, parser, chunks, embeddings, and scoped Qdrant wri
 		vectors?: number[][];
 		scope?: IngestPointScope;
 	} = {};
+	const progress: Array<{ stage: string; percent: number }> = [];
 	const stager = new DocumentIngestStager(
 		{
 			async load(key) {
@@ -48,7 +49,9 @@ test("text stager runs source, parser, chunks, embeddings, and scoped Qdrant wri
 		},
 	);
 
-	const result = await stager.stageDocument(job());
+	const result = await stager.stageDocument(job(), async (update) => {
+		progress.push(update);
+	});
 
 	assert.deepEqual(result, {
 		pointCount: 2,
@@ -101,6 +104,12 @@ test("text stager runs source, parser, chunks, embeddings, and scoped Qdrant wri
 			groupIds: [],
 		},
 	});
+	assert.deepEqual(progress, [
+		{ stage: "parsing", percent: 15 },
+		{ stage: "chunking", percent: 45 },
+		{ stage: "embedding", percent: 60 },
+		{ stage: "indexing", percent: 80 },
+	]);
 });
 
 test("document stager rejects unsupported formats and source hash mismatches", async () => {

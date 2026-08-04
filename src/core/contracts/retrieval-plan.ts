@@ -9,6 +9,7 @@ export const RetrievalFiltersSchema = z
 				"document",
 				"table",
 				"table_summary",
+				"figure",
 				"chunk+table_summary",
 				"text",
 			])

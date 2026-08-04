@@ -28,6 +28,7 @@ const NativeRetrievalRequestSchema = z
 						"document",
 						"table",
 						"table_summary",
+						"figure",
 						"chunk+table_summary",
 						"text",
 					])
@@ -100,6 +101,7 @@ const CITATION_KEYS = [
 	"section_path",
 	"preamble",
 	"table_id",
+	"figure_id",
 	"row_start",
 	"row_end",
 	"headers",

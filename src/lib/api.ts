@@ -27,6 +27,7 @@ export type ApiCitation = {
 	section_path?: string | null;
 	preamble?: string | null;
 	table_id?: string | null;
+	figure_id?: string | null;
 	snippet: string;
 	/** Chunk body used in LLM context / drawer (no preamble). */
 	text?: string;

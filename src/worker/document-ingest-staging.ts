@@ -16,6 +16,7 @@ import type { DocumentIngestJob } from "./contracts";
 import { WorkerTaskError } from "./errors";
 import type {
 	DocumentIngestExternalPort,
+	DocumentIngestProgress,
 	DocumentIngestStageResult,
 } from "./ports";
 
@@ -71,6 +72,7 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 
 	async stageDocument(
 		input: DocumentIngestJob,
+		onProgress?: (progress: DocumentIngestProgress) => Promise<void>,
 	): Promise<DocumentIngestStageResult> {
 		const format = supportedFormat(input);
 		const [content, snapshot] = await Promise.all([
@@ -79,6 +81,7 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 		]);
 		await this.assertContinuing(input);
 		assertDocumentContentHash(content, input.payload.content_hash);
+		await onProgress?.({ stage: "parsing", percent: 15 });
 		const document = await this.parseDocument(input, snapshot, content, format);
 		await this.assertContinuing(input);
 		const profileName = CHUNK_PROFILES.has(
@@ -86,6 +89,7 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 		)
 			? (input.payload.document_profile as ChunkProfileName)
 			: "balanced";
+		await onProgress?.({ stage: "chunking", percent: 45 });
 		const chunks = await chunkDocument(document, { profileName });
 		if (chunks.length === 0) {
 			throw new WorkerTaskError(
@@ -107,6 +111,7 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 			lifecycleVisibility: "staging",
 		});
 		const vectors: number[][] = [];
+		await onProgress?.({ stage: "embedding", percent: 60 });
 		for (
 			let offset = 0;
 			offset < records.length;
@@ -122,6 +127,7 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 			);
 		}
 		await this.assertContinuing(input);
+		await onProgress?.({ stage: "indexing", percent: 80 });
 		const pointCount = await this.qdrant.stage({
 			records,
 			vectors,
@@ -130,8 +136,10 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 		});
 		return {
 			pointCount,
-			chunkCount: records.filter((record) => record.record_type === "chunk")
-				.length,
+			chunkCount: records.filter(
+				(record) =>
+					record.record_type === "chunk" || record.record_type === "figure",
+			).length,
 			sectionCount: records.filter((record) => record.record_type === "section")
 				.length,
 			tableCount: records.filter(

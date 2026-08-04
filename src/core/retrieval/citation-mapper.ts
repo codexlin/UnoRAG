@@ -39,6 +39,7 @@ export function mapQdrantHitToInternalCitation(
 		heading_text: nullableString(payload.heading_text),
 		preamble: nullableString(payload.preamble),
 		table_id: nullableString(payload.table_id),
+		figure_id: nullableString(payload.figure_id),
 		headers: payload.headers ?? [],
 		rows: payload.rows ?? [],
 		row_start: nullableNumber(payload.row_start),

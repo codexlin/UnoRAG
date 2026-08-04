@@ -31,6 +31,11 @@ export interface DocumentIngestStageResult extends Record<string, unknown> {
 	parserReport: Record<string, unknown>;
 }
 
+export type DocumentIngestProgress = Readonly<{
+	stage: "parsing" | "chunking" | "embedding" | "indexing";
+	percent: number;
+}>;
+
 export interface DocumentIngestResult extends DocumentIngestStageResult {
 	previousGenerationId?: string;
 }
@@ -49,6 +54,7 @@ export interface DocumentIngestTransactionPort {
 		progress: {
 			stage:
 				| "downloading"
+				| "parsing"
 				| "chunking"
 				| "embedding"
 				| "indexing"
@@ -84,7 +90,10 @@ export interface DocumentIngestExternalPort {
 	 * stages deterministic points, and verifies their count. Implementations
 	 * must be idempotent by generation_id.
 	 */
-	stageDocument(input: DocumentIngestJob): Promise<DocumentIngestStageResult>;
+	stageDocument(
+		input: DocumentIngestJob,
+		onProgress?: (progress: DocumentIngestProgress) => Promise<void>,
+	): Promise<DocumentIngestStageResult>;
 	setGenerationVisibility(
 		input: DocumentIngestJob,
 		generationId: string,
