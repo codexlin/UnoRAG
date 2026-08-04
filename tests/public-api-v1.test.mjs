@@ -28,6 +28,17 @@ const contract = JSON.parse(
 	readFileSync(path.join(root, "contracts/public-api-v1.openapi.json"), "utf8"),
 );
 
+test("pilot smoke citation assertion follows the public v1 contract", () => {
+	const smoke = readFileSync(
+		path.join(root, "deploy/compose/scripts/pilot-smoke.sh"),
+		"utf8",
+	);
+	const required = smoke.match(/required_citation = \{([\s\S]*?)\n\}/)?.[1];
+	assert.ok(required, "pilot smoke required_citation set is missing");
+	const keys = [...required.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+	assert.deepEqual(keys.sort(), [...PUBLIC_CITATION_KEYS].sort());
+});
+
 test("ask contract accepts only the stable public fields", () => {
 	assert.deepEqual(
 		normalizePublicApiRequest("ask", {

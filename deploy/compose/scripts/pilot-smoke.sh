@@ -338,7 +338,7 @@ citations = data.get("citations")
 assert isinstance(citations, list) and citations, "expected at least one citation"
 required_citation = {
 	"id", "index", "title", "snippet", "score", "document_id", "filename",
-	"page", "page_start", "page_end", "section_path", "table_id",
+	"page", "page_start", "page_end", "section_path", "table_id", "figure_id",
 	"row_start", "row_end", "record_type",
 }
 for citation in citations:
