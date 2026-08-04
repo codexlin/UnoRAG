@@ -82,7 +82,7 @@ function createContext(scenario: Scenario = {}): AskGraphContext {
 				scenario.tableExecute ??
 				(() => {
 					calls.push("table_execute");
-					return { table_execution: { ok: true } };
+					return { table_execution: { status: "success", ok: true } };
 				}),
 			generate: (state) => {
 				calls.push("generate");
@@ -248,6 +248,34 @@ test("table route invokes all injected table ports before generation", async () 
 	]);
 	assert.equal(result.table_execution?.ok, true);
 	assert.equal(result.refused, false);
+	const stages = (result.retrieval_debug?.stages ?? []) as Array<{
+		stage: string;
+	}>;
+	assert.equal(
+		stages.some((stage) => stage.stage === "judge"),
+		false,
+	);
+});
+
+test("non-aggregate table success with no evidence is still judged", async () => {
+	const result = await new AskGraphService(
+		createContext({
+			queryType: "table",
+			tableExecute: () => ({
+				table_execution: { status: "success", operation: "lookup" },
+				citations: [],
+			}),
+		}),
+	).invoke({ question: "表中型号 X 的单价是多少？" });
+
+	const stages = (result.retrieval_debug?.stages ?? []) as Array<{
+		stage: string;
+	}>;
+	assert.equal(
+		stages.some((stage) => stage.stage === "judge"),
+		true,
+	);
+	assert.equal(result.refused, true);
 });
 
 test("explicit row comparison upgrades compare to deterministic table execution", async () => {

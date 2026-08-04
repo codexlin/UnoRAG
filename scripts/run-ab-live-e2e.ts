@@ -379,6 +379,12 @@ async function ask(input: {
 		requestId: stringValue(body.trace_id),
 		traceId: null,
 		sessionId: stringValue(body.session_id) ?? input.sessionId,
+		retrievalDebug:
+			body.retrieval_debug &&
+			typeof body.retrieval_debug === "object" &&
+			!Array.isArray(body.retrieval_debug)
+				? (body.retrieval_debug as Readonly<Record<string, unknown>>)
+				: null,
 	});
 }
 

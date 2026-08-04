@@ -149,8 +149,35 @@ test("structured router fallback remains deterministic and conservative", async 
 		queryType: "fact",
 		reason: "structured_router_fallback_fact",
 	});
+	assert.deepEqual(
+		fallbackQueryRoute(
+			"服务器主机（CloudMax CM-R7425）的单价大约是多少？它的规格参数要点有哪些？",
+		),
+		{
+			queryType: "fact",
+			reason: "structured_router_fallback_fact",
+		},
+	);
 	assert.deepEqual(fallbackQueryRoute("这个"), {
 		queryType: "ambiguous",
 		reason: "structured_router_fallback_ambiguous",
 	});
+});
+
+test("judge evidence projection is bounded and excludes raw table rows", async () => {
+	const { projectJudgeEvidence } = await runtimeModule;
+	const source = citation({
+		id: "table-hit",
+		tableId: "budget",
+		device: "服务器",
+		amount: "120000",
+	});
+	const projected = projectJudgeEvidence([
+		{ ...source, body: "证据".repeat(2_000) },
+	]);
+
+	assert.equal(projected.length, 1);
+	assert.equal(projected[0]?.text.length, 2_401);
+	assert.equal("rows" in (projected[0] ?? {}), false);
+	assert.equal("tenant_id" in (projected[0] ?? {}), false);
 });

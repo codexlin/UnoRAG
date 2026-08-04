@@ -17,6 +17,7 @@ export type EvaluationResponse = Readonly<{
 	requestId?: string | null;
 	traceId?: string | null;
 	sessionId?: string | null;
+	retrievalDebug?: Readonly<Record<string, unknown>> | null;
 }>;
 
 export type PositiveCaseScore = Readonly<{

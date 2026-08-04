@@ -37,14 +37,31 @@ export const ASK_GRAPH_NODE_NAMES = [
 
 export type AskGraphNodeName = (typeof ASK_GRAPH_NODE_NAMES)[number];
 
+const AUTHORITATIVE_TABLE_AGGREGATES = new Set([
+	"count",
+	"sum",
+	"avg",
+	"min",
+	"max",
+	"minMax",
+]);
+
 function routeAfterRetrieve(state: AskState): "upgrade_precise" | "judge" {
 	return state.upgrade === "precise" ? "upgrade_precise" : "judge";
 }
 
-function routeAfterTableExecute(state: AskState): "judge" | "end" {
+function routeAfterTableExecute(state: AskState): "judge" | "generate" | "end" {
 	const action = state.judgement?.action;
 	if (action === "clarify" || state.refuse_reason === "table_incomplete") {
 		return "end";
+	}
+	const execution = state.table_execution;
+	if (
+		execution?.status === "success" &&
+		((state.citations?.length ?? 0) > 0 ||
+			AUTHORITATIVE_TABLE_AGGREGATES.has(String(execution.operation)))
+	) {
+		return "generate";
 	}
 	return "judge";
 }
@@ -162,6 +179,7 @@ export function compileAskGraph(context: AskGraphContext) {
 		.addEdge("build_table_plan", "table_execute")
 		.addConditionalEdges("table_execute", routeAfterTableExecute, {
 			judge: "judge",
+			generate: "generate",
 			end: END,
 		})
 		.addConditionalEdges("rewrite", routeAfterRewrite, {

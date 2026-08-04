@@ -208,6 +208,10 @@ test("live runner exercises login, upload, jobs, asks, strict gates, reports, an
 					refused: false,
 					trace_id: `request-${asks}`,
 					session_id: payload.session_id,
+					retrieval_debug: {
+						total_duration_ms: 12.5,
+						stages: [{ stage: "retrieve", duration_ms: 3.5, ok: true }],
+					},
 					citations: [
 						{ filename: gold.file, record_type: gold.expect_record_type },
 					],
@@ -272,8 +276,17 @@ test("live runner exercises login, upload, jobs, asks, strict gates, reports, an
 		);
 		const report = JSON.parse(
 			await readFile(resolve(output, "ab_live_latest.json"), "utf8"),
-		) as { release_gates: { ok: boolean } };
+		) as {
+			release_gates: { ok: boolean };
+			positive_cases: Array<{
+				response: { retrievalDebug?: Record<string, unknown> | null };
+			}>;
+		};
 		assert.equal(report.release_gates.ok, true);
+		assert.deepEqual(report.positive_cases[0]?.response.retrievalDebug, {
+			total_duration_ms: 12.5,
+			stages: [{ stage: "retrieve", duration_ms: 3.5, ok: true }],
+		});
 	} finally {
 		await new Promise<void>((resolveClose, reject) =>
 			server.close((error) => (error ? reject(error) : resolveClose())),

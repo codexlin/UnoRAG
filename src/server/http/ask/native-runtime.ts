@@ -83,6 +83,28 @@ function throwIfAborted(signal: AbortSignal | undefined, error: unknown): void {
 	if (signal?.aborted) throw error;
 }
 
+function boundedEvidenceText(value: unknown, maxLength = 2_400): string {
+	const text = typeof value === "string" ? value.trim() : "";
+	return text.length <= maxLength ? text : `${text.slice(0, maxLength)}…`;
+}
+
+export function projectJudgeEvidence(citations: InternalCitation[]) {
+	return citations.map((citation) => ({
+		id: citation.id,
+		record_type: citation.record_type,
+		filename: citation.filename,
+		title: citation.title,
+		page_start: citation.page_start,
+		page_end: citation.page_end,
+		section_path: citation.section_path,
+		preamble: citation.preamble,
+		score: citation.score,
+		text: boundedEvidenceText(
+			citation.body || citation.text || citation.snippet,
+		),
+	}));
+}
+
 function query(state: AskState): string {
 	return state.rewritten_question?.trim() || state.question?.trim() || "";
 }
@@ -252,34 +274,14 @@ export class NativeAskRuntime {
 		const structured = this.dependencies.structured;
 		return {
 			queryRouter: {
-				route: async ({ question, history }) => {
-					try {
-						const routed = await structured.route(
-							{
-								question,
-								history: history.flatMap((item) => {
-									const role = item.role;
-									const content = item.content;
-									return (role === "user" || role === "assistant") &&
-										typeof content === "string"
-										? [{ role, content }]
-										: [];
-								}),
-							},
-							{ abortSignal: this.signal },
-						);
-						return {
-							queryType: routed.query_type,
-							reason: routed.reason,
-						};
-					} catch (error) {
-						throwIfAborted(this.signal, error);
-						return fallbackQueryRoute(question, history.length);
-					}
-				},
+				route: ({ question, history }) =>
+					fallbackQueryRoute(question, history.length),
 			},
 			queryRewriter: {
-				rewrite: async ({ question }) => {
+				rewrite: async ({ question, history }) => {
+					if (history.length === 0) {
+						return { query: question, mode: "identity_first_turn" };
+					}
 					try {
 						const rewritten = await structured.rewrite(
 							{ question, fallbackSemanticQuery: question },
@@ -298,12 +300,22 @@ export class NativeAskRuntime {
 			},
 			judge: {
 				judge: async (state) => {
+					const citations = (state.citations ?? []) as InternalCitation[];
+					if (citations.length === 0 && !state.table_execution) {
+						const canRetry = (state.retrieval_attempts ?? 0) < 2;
+						return {
+							sufficient: false,
+							action: canRetry ? "retry" : "refuse",
+							reason: "no_evidence",
+							can_retry: canRetry,
+						};
+					}
 					try {
 						return await structured.judge(
 							{
 								question: state.question ?? "",
 								citations: [
-									...(state.citations ?? []),
+									...projectJudgeEvidence(citations),
 									...(state.table_execution
 										? [{ table_execution: state.table_execution }]
 										: []),
