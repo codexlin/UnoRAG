@@ -1,0 +1,3 @@
+# Historical Python test fixture used to verify URL userinfo redaction. The file
+# is no longer in the product tree; this fingerprint ignores only that finding.
+46eb2f489df81f41fa825358f10f187d5592e37b:apps/api/tests/test_internal_context.py:generic-api-key:355

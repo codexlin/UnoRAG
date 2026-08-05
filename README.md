@@ -114,6 +114,7 @@ Qdrant contains security-scoped retrieval projections.
 - [Operations](./docs/OPERATIONS.md)
 - [Release and acceptance](./docs/RELEASE.md)
 - [Development](./docs/DEVELOPMENT.md)
+- [Open-source readiness audit](./docs/OPEN_SOURCE_READINESS.md)
 
 ## Open-source transition
 
@@ -124,3 +125,6 @@ professional deployment, integration, tuning, customization, training, and SLA s
 The repository is still preparing for public release and does not grant an open-source license until provenance,
 security, dependency, and asset reviews are complete and a `LICENSE` file is committed. Apache-2.0 is the current
 candidate, not an active license. See [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md).
+
+Contributions, support, and security reports are described in [CONTRIBUTING.md](./CONTRIBUTING.md),
+[SUPPORT.md](./SUPPORT.md), and [SECURITY.md](./SECURITY.md).

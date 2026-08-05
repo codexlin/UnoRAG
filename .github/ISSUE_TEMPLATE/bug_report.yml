@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible UnoRAG product defect
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include secrets, customer documents, private prompts, or vulnerability details. Use SECURITY.md for security reports.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release, commit, or image digest
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Local development
+        - Docker Compose
+        - Kubernetes
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest sanitized sequence that reproduces the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Include request_id, job_id, status, and relevant logs only after removing content, credentials, and private endpoints.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, customer data, private content, and private endpoints.
+          required: true
+        - label: This is not a vulnerability report.
+          required: true

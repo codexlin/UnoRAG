@@ -13,6 +13,7 @@
 | [OPERATIONS.md](./OPERATIONS.md) | 如何监控生命周期、备份数据、处理故障和发布镜像？ |
 | [RELEASE.md](./RELEASE.md) | 一个版本怎样通过质量、安全和客户环境验收？ |
 | [DEVELOPMENT.md](./DEVELOPMENT.md) | 如何开发、测试和维护仓库？ |
+| [OPEN_SOURCE_READINESS.md](./OPEN_SOURCE_READINESS.md) | 公开仓库前还有哪些安全、许可和权属门禁？ |
 
 机器可读的公开接口以 [Retrieve / Ask v1 契约](./contracts/retrieve-ask-v1.md) 为准。
 根目录 [README](../README.md) 和 [中文 README](../README.zh-CN.md) 是对外产品入口。
