@@ -132,7 +132,7 @@ fi
 echo
 echo "install complete"
 echo "  UI:     http://localhost:${HTTP_PORT}/"
-echo "  health: curl -sf http://localhost:${HTTP_PORT}/api/rag/health"
+echo "  ready:  curl -sf http://localhost:${HTTP_PORT}/api/rag/health/ready"
 echo "  runtime: Next.js control plane + native RAG + DBOS worker"
 echo "  parser: external HTTP providers selected by ParserProvider"
 if [[ "$WITH_OBSERVABILITY" -eq 1 ]]; then

@@ -102,6 +102,8 @@ idempotency key，poll/fetch 重试复用同一远端 task；401/403 等永久�
 ## 健康检查
 
 ```bash
+curl -fsS http://localhost/api/rag/health/live | jq .
+curl -fsS http://localhost/api/rag/health/ready | jq .
 curl -fsS http://localhost/api/rag/health | jq .
 source deploy/compose/scripts/compose-env.sh
 mk_compose ps
@@ -110,7 +112,9 @@ mk_compose --profile ops run --rm inspect-lifecycle
 
 | 组件 | 预期 |
 |---|---|
-| Web | 读取 `/api/rag/health` 的 `live_ready`、`ask_ready`、`degraded` 与 `reasons`，不能只判断 HTTP 状态码 |
+| Web liveness | `/api/rag/health/live` 返回 200；只说明进程可响应，不探测下游依赖 |
+| Web readiness | `/api/rag/health/ready` 仅在 PostgreSQL、Qdrant 和模型凭证均可用时返回 200，否则返回 503 并停止接收新流量 |
+| Web 状态详情 | `/api/rag/health` 保持兼容，返回 `ask_ready`、`degraded` 与 `reasons`，供 UI 和诊断读取 |
 | DBOS Worker | 私有 `:3001/dbos-healthz` 正常 |
 | DBOS Control | ready marker 持续更新 |
 | PostgreSQL | `pg_isready` 正常 |

@@ -58,6 +58,39 @@ test("native health reports ready only when all required dependencies are ready"
 		const degradedBody = (await degraded.json()) as Record<string, unknown>;
 		assert.equal(degradedBody.ask_ready, false);
 		assert.deepEqual(degradedBody.reasons, ["qdrant_unavailable"]);
+
+		const notReady = await handleNativeHealthRequest({
+			probe: "ready",
+			dependencies: {
+				checkDatabase: async () => undefined,
+				checkQdrant: async () => {
+					throw new Error("unavailable");
+				},
+			},
+		});
+		assert.equal(notReady.status, 503);
+		assert.equal(
+			((await notReady.json()) as Record<string, unknown>).ask_ready,
+			false,
+		);
+
+		const live = await handleNativeHealthRequest({
+			probe: "live",
+			dependencies: {
+				checkDatabase: async () => {
+					throw new Error("unavailable");
+				},
+				checkQdrant: async () => {
+					throw new Error("unavailable");
+				},
+			},
+		});
+		assert.equal(live.status, 200);
+		assert.deepEqual(await live.json(), {
+			status: "ok",
+			service: "unorag-web",
+			live_ready: true,
+		});
 	} finally {
 		if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
 		else process.env.OPENAI_API_KEY = previousKey;

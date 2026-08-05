@@ -82,7 +82,7 @@ cd deploy/compose
 Open <http://localhost/> and verify readiness:
 
 ```bash
-curl -sf http://localhost/api/rag/health
+curl -sf http://localhost/api/rag/health/ready
 ```
 
 See [Private Deployment](./docs/DEPLOYMENT.md) for upgrades, rollback, backup, restore, and Kubernetes.

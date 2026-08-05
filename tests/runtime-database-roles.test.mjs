@@ -66,6 +66,19 @@ test("DBOS is a required runtime rather than a migration profile", async () => {
 	assert.match(compose, /\/dbos-healthz/);
 });
 
+test("deployment probes keep liveness separate from dependency readiness", async () => {
+	const [compose, helmValues, upgrade] = await Promise.all([
+		source("deploy/compose/docker-compose.yml"),
+		source("deploy/helm/unorag/values.yaml"),
+		source("deploy/compose/scripts/upgrade.sh"),
+	]);
+
+	assert.match(compose, /\/api\/rag\/health\/live/);
+	assert.match(helmValues, /readinessProbe:[\s\S]*\/api\/rag\/health\/ready/);
+	assert.match(helmValues, /livenessProbe:[\s\S]*\/api\/rag\/health\/live/);
+	assert.match(upgrade, /\/api\/rag\/health\/ready/);
+});
+
 test("operator lifecycle inspection reads only the app source of truth", async () => {
 	const inspection = await source("scripts/inspect-lifecycle.mjs");
 

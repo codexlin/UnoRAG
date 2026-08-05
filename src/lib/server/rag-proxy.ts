@@ -102,11 +102,18 @@ async function proxyRagRequestInContext(
 	if (path.length !== pathSegments.length) {
 		return Response.json({ detail: "invalid RAG path" }, { status: 400 });
 	}
-	if (path.length === 1 && path[0] === "health") {
+	if (
+		path[0] === "health" &&
+		(path.length === 1 ||
+			(path.length === 2 && ["live", "ready"].includes(path[1])))
+	) {
 		if (request.method !== "GET" && request.method !== "HEAD") {
 			return Response.json({ detail: "method not allowed" }, { status: 405 });
 		}
-		return handleNativeHealthRequest();
+		return handleNativeHealthRequest({
+			probe:
+				path[1] === "live" ? "live" : path[1] === "ready" ? "ready" : "summary",
+		});
 	}
 	if (path[0] !== "v1" || path.length < 2) {
 		return Response.json({ detail: "RAG path not exposed" }, { status: 404 });
