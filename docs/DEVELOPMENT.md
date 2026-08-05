@@ -20,6 +20,7 @@ pnpm test
 pnpm test:ts-core
 pnpm typecheck
 pnpm lint
+pnpm audit:prod
 pnpm db:check
 pnpm build
 ```
@@ -27,6 +28,9 @@ pnpm build
 `pnpm test` 覆盖产品、授权、HTTP、数据库和部署契约；`pnpm test:ts-core` 覆盖
 DocumentIR/TableIR、解析、切分、检索过滤、Qdrant 投影、Ask 图、DBOS 工作流及失败语义。
 依赖真实 PostgreSQL 或 Qdrant 的用例可以在纯本地检查中跳过，但发布验收不能把跳过记为通过。
+CI 会创建临时 PostgreSQL、执行 Drizzle migration，并真实运行文档 replace/reindex 共享事务测试；本地
+可通过 `DOCUMENT_VERSION_COMMAND_TEST_DATABASE_URL` 指向已迁移的隔离测试库复现。不要使用客户库或
+共享开发数据执行环境依赖测试。
 
 ## 本地运行
 

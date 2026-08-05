@@ -48,6 +48,25 @@ Drizzle is the only application-schema migration owner. Runtime identities are
 separate: `unorag_web`, `unorag_worker`, `unorag_migrator`, and the dedicated DBOS
 system-database login.
 
+## Web 请求与状态边界
+
+`src/proxy.ts` 只在进入 `/app/*` 前快速校验签名 Session Cookie 的格式、签名和有效期，减少无效请求
+进入 React Server Component 渲染。它不是完整授权层，也不保护 Route Handler。页面和 API 仍必须通过
+服务端 Session/DAL 重新读取成员关系、Workspace 和权限；所有写操作都在对应 Route Handler 内再次校验
+capability。
+
+浏览器中的服务端状态由 TanStack Query React Adapter 管理：
+
+- query key 必须包含 organization 和 workspace，切换 Workspace 时 Session Provider 会重建 Query Client；
+- library、document、version 和 health 使用独立 query，不建立第二份全局业务状态；
+- mutation 完成后的权威刷新会先取消同 key 的旧请求，避免旧快照覆盖新结果；
+- 后台健康探测失败时可以保留上次成功载荷用于诊断，但 readiness 必须立即 fail closed；
+- Ask token 流仍使用显式 SSE reducer，因为它是有顺序的事件流，不是普通请求缓存。
+
+PostgreSQL 始终是业务事实源，TanStack Query 只是 Workspace 内的短期客户端投影。Replace 和 reindex
+Route Handler 共用 `document-version-command.ts`：按 library -> document -> source version 顺序加锁，并在
+一个事务中完成旧任务取消、新 version/job 创建、desired pointer、library 状态和审计写入。
+
 ## 请求安全
 
 The authenticated server session or Service Key produces an authoritative scope:
