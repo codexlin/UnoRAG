@@ -56,6 +56,7 @@ async function buildHealthResponse(
 	if (!qdrantOk) reasons.push("qdrant_unavailable");
 	if (!hasLlmKey) reasons.push("llm_key_missing");
 	const askReady = metadataOk && qdrantOk && hasLlmKey;
+	const chatModel = process.env.CHAT_MODEL?.trim() || "qwen-plus";
 
 	return Response.json(
 		{
@@ -63,6 +64,12 @@ async function buildHealthResponse(
 			service: "unorag-web",
 			env: process.env.NODE_ENV || "development",
 			build_ref: process.env.UNORAG_BUILD_REF?.trim() || "development",
+			image_digest: process.env.UNORAG_IMAGE_DIGEST?.trim() || null,
+			chat_model: chatModel,
+			judge_model: process.env.JUDGE_MODEL?.trim() || chatModel,
+			embedding_model:
+				process.env.EMBEDDING_MODEL?.trim() || "text-embedding-v3",
+			rerank_model: process.env.RERANK_MODEL?.trim() || null,
 			ask_mode: "typescript",
 			effective_mode: "typescript",
 			graph: "langgraph-ts",

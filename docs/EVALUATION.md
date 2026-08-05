@@ -12,6 +12,7 @@ Langfuse 是可选的实验与分数视图，不是生产 Ask 的配置中心或
 | Prompt | `src/core/ai/prompt-registry.ts` | 名称、语义版本、正文与 SHA-256 digest |
 | 评分逻辑 | `src/evaluation/` | 中文数字/单位归一化、事实覆盖、Citation、拒答和门禁 |
 | Live runner | `scripts/run-ab-live-e2e.ts` | 真实上传、入库、Ask、报告与可选分数发布 |
+| Stability runner | `scripts/run-ab-stability.ts` | 连续三轮真实评测、逐题稳定性与 RC 发布门禁 |
 
 不要在 Langfuse 中维护另一份独立黄金集作为发布门禁。否则代码评测与平台评测会随时间漂移，CI 无法
 证明线上版本使用了哪一份数据。
@@ -109,3 +110,20 @@ Publisher 使用官方 `@langfuse/client`，按每个评测 Session 写入：
 参考答案、关键事实或 Citation 正文。Langfuse 发布失败不会改写报告中的本地门禁结论，但显式要求发布
 时命令会返回退出码 `2`，避免 CI 把未完成的发布动作记为成功。
 当前没有自动同步 Langfuse Dataset；未来若增加，必须使用独立显式命令并确认测试数据允许出域。
+
+## Release Candidate 稳定性门禁
+
+单轮 `eval:live` 用于开发诊断；正式 RC 使用连续三轮门禁：
+
+```bash
+pnpm eval:stability
+```
+
+默认要求三轮中每个正例和拒答用例全部通过、`model_error` 为零、运行指纹完全一致，且任一轮 Ask
+延迟 P95 不超过 15 秒。运行指纹包含仓库 Git commit、工作树 clean 状态、运行镜像 ref/digest、模型
+名称及所有生产 Prompt 的版本和 digest；任一项缺失或工作树有未提交改动也会失败，避免对不可追溯
+产物放行。
+
+可通过 `--rounds=N` 和 `--max-p95-ms=N` 调整轮数与环境延迟预算。稳定性报告写入
+`testdata/ab/_e2e_out/ab_stability_*.json|md`，逐题记录通过次数、失败轮次和 ingest、retrieval、
+judge、table_answer、generation 等失败阶段。退出码仍为 `0` 通过、`1` 质量门禁失败、`2` 环境阻塞。

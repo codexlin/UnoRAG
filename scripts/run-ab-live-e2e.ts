@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { PROMPT_KEYS, PROMPT_REGISTRY } from "../src/core/ai/prompt-registry";
 import {
 	evaluateReleaseGates,
 	loadGoldenJsonl,
@@ -406,6 +407,71 @@ function compactTimestamp(date = new Date()): string {
 	return date.toISOString().replace(/[-:]/gu, "").replace(/\.\d{3}Z$/u, "Z");
 }
 
+function repositoryCommit(): string | null {
+	try {
+		return execFileSync("git", ["rev-parse", "HEAD"], {
+			cwd: ROOT,
+			encoding: "utf8",
+		}).trim();
+	} catch {
+		return null;
+	}
+}
+
+function repositoryDirty(): boolean | null {
+	try {
+		return (
+			execFileSync("git", ["status", "--porcelain", "--untracked-files=normal"], {
+				cwd: ROOT,
+				encoding: "utf8",
+			}).trim().length > 0
+		);
+	} catch {
+		return null;
+	}
+}
+
+function localImageDigest(baseUrl: string, buildRef: string | null): string | null {
+	const explicit = process.env.UNORAG_EVAL_IMAGE_DIGEST?.trim();
+	if (explicit) return explicit;
+	if (!buildRef) return null;
+	const hostname = new URL(baseUrl).hostname;
+	if (!["localhost", "127.0.0.1", "::1"].includes(hostname)) return null;
+	try {
+		return execFileSync(
+			"docker",
+			["image", "inspect", "--format={{.Id}}", buildRef],
+			{ encoding: "utf8" },
+		).trim();
+	} catch {
+		return null;
+	}
+}
+
+function buildFingerprint(baseUrl: string, healthBody: unknown): JsonObject {
+	const health = asObject(healthBody);
+	const buildRef = stringValue(health.build_ref);
+	return {
+		git_commit: repositoryCommit(),
+		git_dirty: repositoryDirty(),
+		runtime_build_ref: buildRef,
+		image_digest:
+			stringValue(health.image_digest) ?? localImageDigest(baseUrl, buildRef),
+		models: {
+			chat: stringValue(health.chat_model),
+			judge: stringValue(health.judge_model),
+			embedding: stringValue(health.embedding_model),
+			rerank: stringValue(health.rerank_model),
+		},
+		prompts: Object.fromEntries(
+			PROMPT_KEYS.map((key) => {
+				const prompt = PROMPT_REGISTRY[key];
+				return [key, { version: prompt.version, digest: prompt.digest }];
+			}),
+		),
+	};
+}
+
 function markdownReport(report: JsonObject): string {
 	const summary = asObject(report.summary);
 	const gates = asObject(report.release_gates);
@@ -682,6 +748,7 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 			evaluated_at: new Date().toISOString(),
 			release: options.release,
 			base_url: options.baseUrl,
+			build_fingerprint: buildFingerprint(options.baseUrl, health.body),
 			library_id: libraryId,
 			jobs: Object.fromEntries(jobs),
 			summary,

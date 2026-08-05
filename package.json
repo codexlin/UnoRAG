@@ -25,6 +25,7 @@
 		"db:check": "drizzle-kit check",
 		"db:studio": "drizzle-kit studio",
 		"eval:live": "tsx scripts/run-ab-live-e2e.ts",
+		"eval:stability": "tsx scripts/run-ab-stability.ts",
 		"lifecycle:inspect": "node scripts/inspect-lifecycle.mjs",
 		"lifecycle:check": "node scripts/inspect-lifecycle.mjs --fail-on-dead --fail-on-stuck",
 		"ask-runs:maintain": "tsx scripts/maintain-ask-runs.ts --dry-run",

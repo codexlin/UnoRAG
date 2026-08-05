@@ -29,6 +29,7 @@ const ENV_KEYS = [
 	"UNORAG_AB_POLL_INTERVAL_MS",
 	"UNORAG_AB_CLEANUP_TIMEOUT_SEC",
 	"UNORAG_EVAL_RELEASE",
+	"UNORAG_EVAL_IMAGE_DIGEST",
 ] as const;
 
 function withEnvironment(
@@ -160,7 +161,15 @@ test("live runner exercises login, upload, jobs, asks, strict gates, reports, an
 			response.end(JSON.stringify(body));
 		};
 		if (request.method === "GET" && url.pathname === "/api/rag/health") {
-			send(200, { status: "ok" });
+			send(200, {
+				status: "ok",
+				build_ref: "unorag-web:test",
+				image_digest: "sha256:test-image",
+				chat_model: "chat-test",
+				judge_model: "judge-test",
+				embedding_model: "embedding-test",
+				rerank_model: "rerank-test",
+			});
 			return;
 		}
 		if (request.method === "POST" && url.pathname === "/api/auth/session") {
@@ -278,11 +287,25 @@ test("live runner exercises login, upload, jobs, asks, strict gates, reports, an
 			await readFile(resolve(output, "ab_live_latest.json"), "utf8"),
 		) as {
 			release_gates: { ok: boolean };
+			build_fingerprint: {
+				git_commit: string;
+				git_dirty: boolean;
+				runtime_build_ref: string;
+				image_digest: string;
+				models: Record<string, string>;
+				prompts: Record<string, { version: string; digest: string }>;
+			};
 			positive_cases: Array<{
 				response: { retrievalDebug?: Record<string, unknown> | null };
 			}>;
 		};
 		assert.equal(report.release_gates.ok, true);
+		assert.match(report.build_fingerprint.git_commit, /^[0-9a-f]{40}$/u);
+		assert.equal(typeof report.build_fingerprint.git_dirty, "boolean");
+		assert.equal(report.build_fingerprint.runtime_build_ref, "unorag-web:test");
+		assert.equal(report.build_fingerprint.image_digest, "sha256:test-image");
+		assert.equal(report.build_fingerprint.models.judge, "judge-test");
+		assert.ok(Object.keys(report.build_fingerprint.prompts).length >= 5);
 		assert.deepEqual(report.positive_cases[0]?.response.retrievalDebug, {
 			total_duration_ms: 12.5,
 			stages: [{ stage: "retrieve", duration_ms: 3.5, ok: true }],
