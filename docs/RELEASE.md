@@ -51,6 +51,9 @@ git diff --check
 - 测试数据集版本。
 
 Trivy HIGH/CRITICAL 门禁失败、使用浮动镜像标签或无法复现配置时，不得进入试点验收。
+官方 manifest 将 DBOS application version 固定为 `unorag-<git-sha>`。它是 durable workflow 的代码
+兼容边界，不是可手改的营销版本；不同代码提交不得复用同一值，同一发布的 Web/control/worker 必须
+使用同一值。
 
 ## 3. 真实纵向验收
 
@@ -112,6 +115,8 @@ Parser、模型、切分、检索或裁决策略变化后必须重跑，不能�
 - submit/poll 重启不会重复计费、重复激活或产生不可恢复任务；
 - 替换失败继续服务旧 active；
 - digest-pinned 升级和应用镜像回滚；
+- DBOS version 变化时入口先关闭，旧业务任务与旧 workflow 均排空；活动任务存在时升级必须等待或
+  超时拒绝，不能把旧任务留给新版本 Worker；
 - PostgreSQL、DBOS、文档对象与 Qdrant 的破坏性恢复演练；
 - 恢复后 Ask、引用、上传、删除和跨 Workspace 隔离。
 
@@ -131,6 +136,7 @@ Parser、模型、切分、检索或裁决策略变化后必须重跑，不能�
 ### 可靠性与交付
 
 - [ ] 四镜像 digest、CVE 结果和配置摘要已归档
+- [ ] manifest 的 DBOS application version 与 Git commit 一致，排空/拒绝升级演练通过
 - [ ] 全新安装、升级、应用回滚、备份恢复均通过
 - [ ] 目标硬件容量、P50/P95、并发预算、RPO/RTO 已记录
 - [ ] lifecycle 巡检、Provider 错误、磁盘和依赖故障均有告警负责人

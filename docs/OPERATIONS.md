@@ -29,6 +29,9 @@ cd deploy/compose
 source scripts/compose-env.sh
 mk_compose ps
 mk_compose --profile ops run --rm inspect-lifecycle
+mk_compose --profile ops run --rm check-dbos-drain \
+  --application-version "$(mk_config_get UNORAG_DBOS_APPLICATION_VERSION)" \
+  --scope all --timeout-seconds 0
 ```
 
 `/metrics` 只供内网 Prometheus 抓取，Caddy 对公网路径返回 404。未启用 Ops Stack 时，可进入 Web
@@ -48,6 +51,10 @@ mk_compose exec -T web node -e \
 - PostgreSQL 连接、锁、容量与备份状态；
 - Qdrant readiness、集合容量和检索错误；
 - 文档卷、备份卷和宿主机磁盘水位。
+
+`check-dbos-drain` 同时读取 `app.jobs` 与 DBOS `workflow_status`。前者覆盖尚未派发和正在执行业务
+状态，后者覆盖 `PENDING`、`ENQUEUED`、`DELAYED` durable workflow；任一侧非零都不能切换 DBOS
+application version。`upgrade.sh` 会自动执行该门禁，日常命令只用于发布前诊断。
 
 UnoRAG 默认提供管理员可见的“运行中心”、低基数 `/metrics`、核心路径 Pino JSON、Ask stages 与
 `app.ask_runs` 诊断元数据。运行中心按当前 organization/workspace 强制隔离，展示 Ask 终态、P50/P95、

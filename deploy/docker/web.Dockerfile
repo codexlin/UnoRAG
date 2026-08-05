@@ -61,7 +61,7 @@ CMD ["./node_modules/.bin/drizzle-kit", "migrate"]
 FROM deps AS ops
 RUN pnpm prune --prod \
 	&& rm -rf /root/.cache
-COPY --chown=unorag:unorag scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/inspect-lifecycle.mjs ./scripts/
+COPY --chown=unorag:unorag scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/check-dbos-drain.mjs scripts/inspect-lifecycle.mjs ./scripts/
 WORKDIR /repo
 ENV NODE_ENV=production
 USER unorag

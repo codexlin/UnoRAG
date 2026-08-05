@@ -136,21 +136,29 @@ cd deploy/compose
 ./scripts/upgrade.sh --manifest /path/to/release-registry.env --with-observability
 ```
 
-升级前应确认备份可读、生命周期巡检无 dead/stuck/pending ACL，并归档当前配置摘要。脚本随后：
+升级前应确认备份可读、生命周期巡检无 dead/stuck/pending ACL，并归档当前配置摘要。正式发布
+manifest 会从 Git commit 生成 `unorag-<sha>` DBOS application version；不得在不同提交间复用
+`dev-local` 或历史版本。脚本随后：
 
 1. 保存当前四镜像引用与 DBOS application version；
-2. 拉取候选镜像并执行只向前数据库迁移与运行时角色验证；
-3. 受控替换 DBOS worker/control，执行 ACL 对账与生命周期巡检；
-4. 替换 Web，检查结构化健康状态并运行真实上传、Ask、替换、删除与隔离冒烟。
+2. 拉取候选镜像；若 DBOS version 改变，停止 Web/edge 接收新写入，并等待业务任务表与旧版本
+   DBOS workflow 同时归零；
+3. 停止旧 control/worker，执行只向前数据库迁移与运行时角色验证；
+4. 启动新版本 DBOS worker/control，执行 ACL 对账与生命周期巡检；
+5. 替换 Web，检查结构化健康状态并运行真实上传、Ask、替换、删除与隔离冒烟。
+
+排空默认最多等待 1800 秒，可通过 `DBOS_UPGRADE_DRAIN_TIMEOUT_SECONDS` 调整。超时会拒绝版本切换并
+恢复旧服务，不会让新 Worker 接管旧版本 workflow。版本变化后的自动回滚同样先停止入口并排空新版本；
+若无法排空，脚本保留新镜像和维护状态，要求运维处理，而不会做可能遗留任务的强制回滚。
 
 上一个镜像集合保存在 `.upgrade-state/previous-images.env`。升级过程中任一步失败，脚本会恢复
 旧应用镜像引用；运维人员也可把该文件作为 manifest 再次执行 `upgrade.sh` 完成手工应用回滚。
 数据库不会自动向下迁移，因此旧镜像必须与新 schema 保持兼容，破坏性变化必须采用 expand / migrate /
 contract 窗口。
 
-Compose 是单机参考拓扑：DBOS 替换期间新入库任务会暂留队列，单副本 Web 替换可能产生短暂连接
-中断，不承诺零停机。需要无感更新时，应使用多副本 Kubernetes Deployment、readiness、PDB 与
-负载均衡，并单独完成该客户拓扑的升级验收。
+Compose 是单机参考拓扑：DBOS version 变化使用明确的短维护窗口，单副本 Web 替换也可能产生连接
+中断，不承诺零停机。需要无感更新时，不能只增加副本；还要让旧、新 DBOS application version 的
+Worker 并存直至旧 workflow 排空，并使用 readiness、PDB 与负载均衡完成该客户拓扑的专项验收。
 
 ## 备份与恢复
 
