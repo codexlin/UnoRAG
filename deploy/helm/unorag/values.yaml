@@ -56,7 +56,8 @@ dbos:
   enabled: true
   workerReplicaCount: 1
   controlReplicaCount: 1
-  applicationVersion: lifecycle-v2
+  # Release manifests override this with unorag-<git-sha>.
+  applicationVersion: dev-local
   systemDatabasePoolSize: "10"
   ingestLocalConcurrency: "4"
   ingestAutoConcurrency: "2"

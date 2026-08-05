@@ -26,7 +26,7 @@ x-dbos-environment: &dbos-environment
   # Compose interpolates inactive profiles. The sentinel keeps legacy installs
   # parseable; the DBOS process rejects it if the profile is actually started.
   DBOS_SYSTEM_DATABASE_URL: ${DBOS_SYSTEM_DATABASE_URL:-postgresql://unorag_dbos_login:${UNORAG_DBOS_DB_PASSWORD:-dbos-profile-disabled}@postgres:5432/${UNORAG_DBOS_DATABASE:-unorag_dbos}}
-  UNORAG_DBOS_APPLICATION_VERSION: ${UNORAG_DBOS_APPLICATION_VERSION:-lifecycle-v2}
+  UNORAG_DBOS_APPLICATION_VERSION: ${UNORAG_DBOS_APPLICATION_VERSION:-dev-local}
   UNORAG_DBOS_LISTEN_QUEUES: ${UNORAG_DBOS_LISTEN_QUEUES:-ingest-local,ingest-auto,ingest-mineru,lifecycle}
   DBOS_SYSTEM_DATABASE_POOL_SIZE: ${DBOS_SYSTEM_DATABASE_POOL_SIZE:-10}
   DBOS_INGEST_LOCAL_CONCURRENCY: ${DBOS_INGEST_LOCAL_CONCURRENCY:-4}
@@ -337,6 +337,24 @@ services:
       - --fail-on-dead
       - --fail-on-stuck
       - --fail-on-acl-projection
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: "no"
+
+  check-dbos-drain:
+    profiles: ["ops"]
+    image: ${UNORAG_WEB_OPS_IMAGE:-unorag-web-ops:local}
+    working_dir: /repo
+    environment:
+      DATABASE_URL: ${MIGRATOR_DATABASE_URL:-postgresql://${POSTGRES_USER:-unorag}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
+      DBOS_SYSTEM_DATABASE_URL: ${DBOS_SYSTEM_DATABASE_URL:-postgresql://unorag_dbos_login:${UNORAG_DBOS_DB_PASSWORD:-dbos-profile-disabled}@postgres:5432/${UNORAG_DBOS_DATABASE:-unorag_dbos}}
+    entrypoint: ["node", "scripts/check-dbos-drain.mjs"]
+    command:
+      - --application-version
+      - ${UNORAG_DBOS_APPLICATION_VERSION:-dev-local}
     depends_on:
       postgres:
         condition: service_healthy

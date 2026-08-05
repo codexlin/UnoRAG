@@ -23,7 +23,13 @@ const workerEnvironmentSchema = z
 				(value) => !value.includes("dbos-profile-disabled"),
 				"DBOS profile requires UNORAG_DBOS_DB_PASSWORD or DBOS_SYSTEM_DATABASE_URL",
 			),
-		UNORAG_DBOS_APPLICATION_VERSION: z.string().trim().min(1),
+		UNORAG_DBOS_APPLICATION_VERSION: z
+			.string()
+			.trim()
+			.regex(
+				/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/,
+				"UNORAG_DBOS_APPLICATION_VERSION must be a stable release identifier",
+			),
 		UNORAG_DBOS_EXECUTOR_ID: z.string().trim().min(1),
 		UNORAG_DBOS_PORTS_MODULE: z.string().trim().min(1).optional(),
 		UNORAG_DBOS_LISTEN_QUEUES: z.string().trim().optional(),

@@ -54,6 +54,18 @@ assert_tag() {
 	[[ "$t" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die "invalid tag: $t"
 }
 
+dbos_application_version() {
+	local sha
+	sha="$(git rev-parse --verify HEAD 2>/dev/null || true)"
+	if [[ "$sha" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
+		echo "unorag-${sha:0:16}"
+	else
+		# Source archives may not include .git; the validated release tag remains
+		# deterministic and is bounded to DBOS's 128-character identifier limit.
+		echo "unorag-${TAG:0:120}"
+	fi
+}
+
 resolve_platform() {
 	if [[ "$PLATFORM" == "local" ]]; then
 		PLATFORM=""
@@ -150,7 +162,8 @@ write_manifest() {
 	local mode="$2" # local | registry
 	mkdir -p "$out"
 	local web_ref mig_ref ops_ref worker_ref web_d mig_d ops_d worker_d
-	local env_file json_file
+	local env_file json_file dbos_version
+	dbos_version="$(dbos_application_version)"
 
 	if [[ "$mode" == "registry" ]]; then
 		web_ref="$(remote_web)"
@@ -181,7 +194,7 @@ UNORAG_WEB_IMAGE=${repo}@${web_d}
 UNORAG_WEB_MIGRATOR_IMAGE=${repo}@${mig_d}
 UNORAG_WEB_OPS_IMAGE=${repo}@${ops_d}
 UNORAG_DBOS_WORKER_IMAGE=${repo}@${worker_d}
-UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
+UNORAG_DBOS_APPLICATION_VERSION=${dbos_version}
 EOF
 	else
 		cat >"$env_file" <<EOF
@@ -189,7 +202,7 @@ UNORAG_WEB_IMAGE=${web_ref}
 UNORAG_WEB_MIGRATOR_IMAGE=${mig_ref}
 UNORAG_WEB_OPS_IMAGE=${ops_ref}
 UNORAG_DBOS_WORKER_IMAGE=${worker_ref}
-UNORAG_DBOS_APPLICATION_VERSION=lifecycle-v2
+UNORAG_DBOS_APPLICATION_VERSION=${dbos_version}
 EOF
 	fi
 
@@ -199,7 +212,7 @@ EOF
   "git_sha": "$(git rev-parse HEAD 2>/dev/null || echo unknown)",
   "platform": "${PLATFORM:-local}",
   "mode": "${mode}",
-  "dbos_application_version": "lifecycle-v2",
+  "dbos_application_version": "${dbos_version}",
   "images": {
     "web": {"ref": "${web_ref}", "digest": "${web_d}"},
     "migrator": {"ref": "${mig_ref}", "digest": "${mig_d}"},

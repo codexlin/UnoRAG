@@ -248,11 +248,20 @@ async function retryProviderOperation<T>(
 				retryDelayMs: delayMs,
 			});
 			if (!canRetry) throw error;
+			const remainingMs =
+				deadline === undefined ? undefined : Math.max(0, deadline - Date.now());
 			const boundedDelay =
-				deadline === undefined
+				remainingMs === undefined
 					? (delayMs ?? 0)
-					: Math.min(delayMs ?? 0, Math.max(0, deadline - Date.now()));
+					: Math.min(delayMs ?? 0, remainingMs);
 			await cancellableDelay(boundedDelay, input.assertContinuing);
+			if (remainingMs !== undefined && (delayMs ?? 0) >= remainingMs) {
+				throw parserError(
+					"provider_timeout",
+					`${provider.name} exceeded its parser workflow timeout`,
+					true,
+				);
+			}
 		}
 	}
 }

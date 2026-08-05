@@ -122,6 +122,24 @@ test("DBOS environment configuration is fail closed", () => {
 			}),
 		/DBOS profile requires/,
 	);
+	assert.throws(
+		() =>
+			loadWorkerConfig({
+				DBOS_SYSTEM_DATABASE_URL: "postgresql://db/test",
+				UNORAG_DBOS_APPLICATION_VERSION: "invalid version",
+				UNORAG_DBOS_EXECUTOR_ID: "worker-1",
+			}),
+		/stable release identifier/,
+	);
+	assert.throws(
+		() =>
+			loadWorkerConfig({
+				DBOS_SYSTEM_DATABASE_URL: "postgresql://db/test",
+				UNORAG_DBOS_APPLICATION_VERSION: `v${"x".repeat(128)}`,
+				UNORAG_DBOS_EXECUTOR_ID: "worker-1",
+			}),
+		/stable release identifier/,
+	);
 
 	assert.deepEqual(
 		loadWorkerConfig({
