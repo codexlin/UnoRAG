@@ -234,6 +234,129 @@ test("judge refusal clears unsupported citations", async () => {
 	assert.deepEqual(result.citations, []);
 });
 
+test("Judge evidence selection keeps only validated supporting citations", async () => {
+	const result = await new AskGraphService(
+		createContext({
+			retrieve: () => ({
+				citations: [
+					{ id: "chunk-1", index: 1, score: 0.95 },
+					{ id: "chunk-noise", index: 2, score: 0.8 },
+					{ id: "chunk-2", index: 3, score: 0.75 },
+				],
+				retrieval_attempts: 1,
+			}),
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "supported",
+				evidence_ids: ["chunk-1", "chunk-2"],
+			}),
+		}),
+	).invoke({ question: "Supported policy?" });
+
+	assert.deepEqual(
+		result.citations?.map((citation) => [citation.id, citation.index]),
+		[
+			["chunk-1", 1],
+			["chunk-2", 2],
+		],
+	);
+	assert.equal(result.retrieval_debug?.retrieved_evidence_count, 3);
+	assert.equal(result.retrieval_debug?.selected_evidence_count, 2);
+	assert.equal(result.retrieval_debug?.evidence_selection_mode, "judge");
+	assert.equal(result.retrieval_debug?.evidence_selection_valid, true);
+});
+
+test("Judge evidence selection restores same-version structured lineage", async () => {
+	const result = await new AskGraphService(
+		createContext({
+			retrieve: () => ({
+				citations: [
+					{
+						id: "section-hit",
+						index: 1,
+						score: 0.95,
+						record_type: "section",
+						record_id: "section-record",
+						source_chunk_ids: ["figure-record"],
+						source_node_ids: ["node-1"],
+						doc_id: "doc-1",
+						document_version_id: "version-1",
+					},
+					{
+						id: "figure-hit",
+						index: 2,
+						score: 0.85,
+						record_type: "figure",
+						record_id: "figure-record",
+						source_chunk_ids: [],
+						source_node_ids: ["node-1"],
+						doc_id: "doc-1",
+						document_version_id: "version-1",
+					},
+					{
+						id: "foreign-figure",
+						index: 3,
+						score: 0.8,
+						record_type: "figure",
+						record_id: "foreign-record",
+						source_chunk_ids: [],
+						source_node_ids: ["node-1"],
+						doc_id: "doc-2",
+						document_version_id: "version-1",
+					},
+					{
+						id: "table-summary-hit",
+						index: 4,
+						score: 0.78,
+						record_type: "table_summary",
+						record_id: "table-summary-record",
+						source_chunk_ids: ["section-record"],
+						source_node_ids: [],
+						doc_id: "doc-1",
+						document_version_id: "version-1",
+					},
+				],
+				retrieval_attempts: 1,
+			}),
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "supported",
+				evidence_ids: ["section-hit"],
+			}),
+		}),
+	).invoke({ question: "What does the figure show?" });
+
+	assert.deepEqual(
+		result.citations?.map((citation) => citation.id),
+		["section-hit", "figure-hit", "table-summary-hit"],
+	);
+	assert.equal(result.retrieval_debug?.direct_evidence_count, 1);
+	assert.equal(result.retrieval_debug?.lineage_evidence_count, 2);
+	assert.equal(result.retrieval_debug?.selected_evidence_count, 3);
+});
+
+test("Judge evidence selection fails closed for unknown or empty evidence ids", async () => {
+	for (const evidenceIds of [[], ["unknown-chunk"]]) {
+		const result = await new AskGraphService(
+			createContext({
+				judge: () => ({
+					sufficient: true,
+					action: "generate",
+					reason: "supported",
+					evidence_ids: evidenceIds,
+				}),
+			}),
+		).invoke({ question: "Unsupported selection?" });
+
+		assert.equal(result.refused, true);
+		assert.equal(result.refuse_reason, "invalid_evidence_selection");
+		assert.deepEqual(result.citations, []);
+		assert.equal(result.retrieval_debug?.evidence_selection_valid, false);
+	}
+});
+
 test("Judge diagnostics are projected without question or evidence content", async () => {
 	const result = await new AskGraphService(
 		createContext({

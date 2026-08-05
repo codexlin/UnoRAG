@@ -106,11 +106,11 @@ http_code() {
 }
 
 # --- readiness ---
-log "checking edge health at $BASE_URL/api/rag/health"
+log "checking edge readiness at $BASE_URL/api/rag/health/ready"
 HEALTH_BODY="$WORKDIR/health.json"
 HEALTH_CODE="$(
 	curl -sS -o "$HEALTH_BODY" -w '%{http_code}' --max-time 5 \
-		"$BASE_URL/api/rag/health" || true
+		"$BASE_URL/api/rag/health/ready" || true
 )"
 if [[ "$HEALTH_CODE" == "000" || -z "$HEALTH_CODE" ]]; then
 	skip "edge not reachable at $BASE_URL (is compose up? install.sh done?)"

@@ -31,6 +31,9 @@ export type PositiveCaseScore = Readonly<{
 	targetDocumentRecalled: boolean;
 	citationCount: number;
 	crossDocumentCitationCount: number;
+	citationPrecision: number;
+	retrievedEvidenceCount: number | null;
+	selectedEvidenceCount: number | null;
 	recordTypeMatched: boolean | null;
 	latencyMs: number;
 	requestId: string | null;
@@ -69,6 +72,16 @@ function citationMatchesExpectedRecordType(
 	return actual === "image" || actual === "figure";
 }
 
+function debugCount(
+	debug: EvaluationResponse["retrievalDebug"],
+	key: string,
+): number | null {
+	const value = debug?.[key];
+	return typeof value === "number" && Number.isInteger(value) && value >= 0
+		? value
+		: null;
+}
+
 export function scorePositiveCase(
 	gold: GoldenCase,
 	response: EvaluationResponse,
@@ -92,6 +105,15 @@ export function scorePositiveCase(
 		(citation) => citationFilename(citation) === target,
 	);
 	const expectedRecordType = gold.expect_record_type;
+	const citationCount = response.citations.length;
+	const retrievedEvidenceCount = debugCount(
+		response.retrievalDebug,
+		"retrieved_evidence_count",
+	);
+	const selectedEvidenceCount = debugCount(
+		response.retrievalDebug,
+		"selected_evidence_count",
+	);
 	const recordTypeMatched = expectedRecordType
 		? targetCitations.some((citation) =>
 				citationMatchesExpectedRecordType(citation, expectedRecordType),
@@ -112,10 +134,15 @@ export function scorePositiveCase(
 		targetDocumentRank,
 		reciprocalRank: targetDocumentRank ? 1 / targetDocumentRank : 0,
 		targetDocumentRecalled: targetDocumentRank != null,
-		citationCount: response.citations.length,
+		citationCount,
 		crossDocumentCitationCount: response.citations.filter(
 			(citation) => citationFilename(citation) !== target,
 		).length,
+		citationPrecision: citationCount
+			? targetCitations.length / citationCount
+			: 0,
+		retrievedEvidenceCount,
+		selectedEvidenceCount,
 		recordTypeMatched,
 		latencyMs: response.latencyMs,
 		requestId: response.requestId ?? null,
@@ -145,6 +172,10 @@ export type EvaluationSummary = Readonly<{
 	documentRecallAtK: number;
 	documentMrr: number;
 	crossDocumentCitationRate: number;
+	citationPrecision: number;
+	meanRetrievedEvidenceCount: number | null;
+	meanSelectedEvidenceCount: number | null;
+	evidenceSelectionRate: number | null;
 	negativeCases: number;
 	negativePassed: number;
 	refusalAccuracy: number;
@@ -157,6 +188,11 @@ function mean(values: readonly number[]): number {
 	return values.length > 0
 		? values.reduce((sum, value) => sum + value, 0) / values.length
 		: 0;
+}
+
+function nullableMean(values: readonly (number | null)[]): number | null {
+	const present = values.filter((value): value is number => value !== null);
+	return present.length ? mean(present) : null;
 }
 
 export function percentile(
@@ -186,6 +222,19 @@ export function summarizeEvaluation(
 		(sum, score) => sum + score.crossDocumentCitationCount,
 		0,
 	);
+	const retrievedEvidenceCount = positive.reduce(
+		(sum, score) => sum + (score.retrievedEvidenceCount ?? 0),
+		0,
+	);
+	const selectedEvidenceCount = positive.reduce(
+		(sum, score) => sum + (score.selectedEvidenceCount ?? 0),
+		0,
+	);
+	const evidenceSelectionObserved = positive.some(
+		(score) =>
+			score.retrievedEvidenceCount !== null &&
+			score.selectedEvidenceCount !== null,
+	);
 	const latencies = [
 		...positive.map((score) => score.latencyMs),
 		...negative.map((score) => score.latencyMs),
@@ -204,6 +253,19 @@ export function summarizeEvaluation(
 		crossDocumentCitationRate: citationCount
 			? crossDocumentCitationCount / citationCount
 			: 0,
+		citationPrecision: citationCount
+			? (citationCount - crossDocumentCitationCount) / citationCount
+			: 0,
+		meanRetrievedEvidenceCount: nullableMean(
+			positive.map((score) => score.retrievedEvidenceCount),
+		),
+		meanSelectedEvidenceCount: nullableMean(
+			positive.map((score) => score.selectedEvidenceCount),
+		),
+		evidenceSelectionRate:
+			evidenceSelectionObserved && retrievedEvidenceCount > 0
+				? selectedEvidenceCount / retrievedEvidenceCount
+				: null,
 		negativeCases: negative.length,
 		negativePassed,
 		refusalAccuracy: negative.length ? negativePassed / negative.length : 0,

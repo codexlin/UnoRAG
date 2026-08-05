@@ -8,6 +8,25 @@ const WEB_OUTCOMES = [
 	"cancelled",
 ] as const;
 
+const ASK_QUERY_TYPES = [
+	"fact",
+	"follow_up",
+	"summary",
+	"compare",
+	"table",
+	"section_lookup",
+	"ambiguous",
+	"unknown",
+] as const;
+const ASK_RETRIEVAL_MODES = [
+	"dense",
+	"hybrid",
+	"lexical",
+	"table",
+	"unknown",
+] as const;
+const ASK_TERMINAL_OUTCOMES = ["answered", "refused"] as const;
+
 const LATENCY_BUCKETS_SECONDS = [
 	0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60,
 ] as const;
@@ -21,6 +40,15 @@ export type ObserveWebRequestInput = Readonly<{
 	durationMs: number;
 }>;
 
+export type ObserveAskCompletionInput = Readonly<{
+	queryType?: string | null;
+	retrievalMode?: string | null;
+	outcome: (typeof ASK_TERMINAL_OUTCOMES)[number];
+	citationCount: number;
+	retrievedEvidenceCount: number;
+	selectedEvidenceCount: number;
+}>;
+
 type MetricSeries = {
 	requests: number;
 	durationSecondsSum: number;
@@ -29,12 +57,21 @@ type MetricSeries = {
 
 type MetricsRegistry = {
 	series: Map<string, MetricSeries>;
+	askQuality: Map<string, AskQualitySeries>;
+};
+
+type AskQualitySeries = {
+	completions: number;
+	withCitations: number;
+	citations: number;
+	retrievedEvidence: number;
+	selectedEvidence: number;
 };
 
 const registryKey = Symbol.for("unorag.observability.metrics.registry");
 
 function createRegistry(): MetricsRegistry {
-	return { series: new Map() };
+	return { series: new Map(), askQuality: new Map() };
 }
 
 function registry(): MetricsRegistry {
@@ -111,6 +148,45 @@ export function observeWebRequest(input: ObserveWebRequestInput): void {
 	metrics.series.set(key, series);
 }
 
+/** Record privacy-safe Ask quality aggregates with bounded labels only. */
+export function observeAskCompletion(input: ObserveAskCompletionInput): void {
+	const queryType = boundedValue(ASK_QUERY_TYPES, input.queryType, "unknown");
+	const retrievalMode = boundedValue(
+		ASK_RETRIEVAL_MODES,
+		input.retrievalMode,
+		"unknown",
+	);
+	if (!isAllowedValue(ASK_TERMINAL_OUTCOMES, input.outcome)) {
+		throw new TypeError("unsupported Ask terminal outcome");
+	}
+	const citationCount = nonNegativeInteger(
+		input.citationCount,
+		"citationCount",
+	);
+	const retrievedEvidence = nonNegativeInteger(
+		input.retrievedEvidenceCount,
+		"retrievedEvidenceCount",
+	);
+	const selectedEvidence = nonNegativeInteger(
+		input.selectedEvidenceCount,
+		"selectedEvidenceCount",
+	);
+	const key = `${queryType}:${retrievalMode}:${input.outcome}`;
+	const series = registry().askQuality.get(key) ?? {
+		completions: 0,
+		withCitations: 0,
+		citations: 0,
+		retrievedEvidence: 0,
+		selectedEvidence: 0,
+	};
+	series.completions += 1;
+	series.withCitations += citationCount > 0 ? 1 : 0;
+	series.citations += citationCount;
+	series.retrievedEvidence += retrievedEvidence;
+	series.selectedEvidence += selectedEvidence;
+	registry().askQuality.set(key, series);
+}
+
 /** Render the process-local registry in Prometheus text exposition format. */
 export function renderPrometheusMetrics(): string {
 	const lines = [
@@ -146,7 +222,69 @@ export function renderPrometheusMetrics(): string {
 		);
 	}
 
+	lines.push(
+		"# HELP unorag_ask_completions_total Completed Ask requests by bounded quality dimensions.",
+		"# TYPE unorag_ask_completions_total counter",
+		"# HELP unorag_ask_with_citations_total Completed Ask requests with at least one citation.",
+		"# TYPE unorag_ask_with_citations_total counter",
+		"# HELP unorag_ask_citations_total Citations returned by completed Ask requests.",
+		"# TYPE unorag_ask_citations_total counter",
+		"# HELP unorag_ask_retrieved_evidence_total Evidence candidates presented to the judge.",
+		"# TYPE unorag_ask_retrieved_evidence_total counter",
+		"# HELP unorag_ask_selected_evidence_total Evidence records retained after judging.",
+		"# TYPE unorag_ask_selected_evidence_total counter",
+	);
+	for (const [key, series] of [...registry().askQuality.entries()].sort(
+		([left], [right]) => left.localeCompare(right),
+	)) {
+		const [queryType, retrievalMode, outcome] = parseAskQualityKey(key);
+		const qualityLabels = `{query_type="${queryType}",retrieval_mode="${retrievalMode}",outcome="${outcome}"}`;
+		lines.push(
+			`unorag_ask_completions_total${qualityLabels} ${series.completions}`,
+			`unorag_ask_with_citations_total${qualityLabels} ${series.withCitations}`,
+			`unorag_ask_citations_total${qualityLabels} ${series.citations}`,
+			`unorag_ask_retrieved_evidence_total${qualityLabels} ${series.retrievedEvidence}`,
+			`unorag_ask_selected_evidence_total${qualityLabels} ${series.selectedEvidence}`,
+		);
+	}
+
 	return `${lines.join("\n")}\n`;
+}
+
+function boundedValue<T extends string>(
+	allowed: readonly T[],
+	value: string | null | undefined,
+	fallback: T,
+): T {
+	return value && isAllowedValue(allowed, value) ? value : fallback;
+}
+
+function nonNegativeInteger(value: number, name: string): number {
+	if (!Number.isSafeInteger(value) || value < 0) {
+		throw new TypeError(`${name} must be a non-negative integer`);
+	}
+	return value;
+}
+
+function parseAskQualityKey(
+	key: string,
+): readonly [
+	(typeof ASK_QUERY_TYPES)[number],
+	(typeof ASK_RETRIEVAL_MODES)[number],
+	(typeof ASK_TERMINAL_OUTCOMES)[number],
+] {
+	const [queryType, retrievalMode, outcome] = key.split(":");
+	if (
+		!queryType ||
+		!retrievalMode ||
+		!outcome ||
+		!isAllowedValue(ASK_QUERY_TYPES, queryType) ||
+		!isAllowedValue(ASK_RETRIEVAL_MODES, retrievalMode) ||
+		!isAllowedValue(ASK_TERMINAL_OUTCOMES, outcome)
+	) {
+		throw new Error("invalid internal Ask quality metric series");
+	}
+	return [queryType, retrievalMode, outcome];
 }
 
 function parseSeriesKey(
@@ -175,4 +313,5 @@ function labelsWithLe(
 /** Test-only process-local reset. Production callers should not use this. */
 export function resetPrometheusMetricsForTests(): void {
 	registry().series.clear();
+	registry().askQuality.clear();
 }

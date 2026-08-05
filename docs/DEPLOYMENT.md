@@ -94,9 +94,16 @@ MINERU_API_KEY=...
 
 `local_only` 文库策略始终禁止云端解析。外部处理开关关闭时，路由器不得选择 302.AI。
 
+部署管理员可通过 `PARSER_POLL_INTERVAL_MS`、`PARSER_MAX_WAIT_MS` 和逗号分隔的
+`PARSER_RETRY_BACKOFF_MS` 调整解析任务轮询、总等待时间与瞬时故障退避。submit 重试复用同一
+idempotency key，poll/fetch 重试复用同一远端 task；401/403 等永久错误不重试，429 优先服从
+`Retry-After`。这些参数是部署能力，不进入 Workspace 或文库设置。
+
 ## 健康检查
 
 ```bash
+curl -fsS http://localhost/api/rag/health/live | jq .
+curl -fsS http://localhost/api/rag/health/ready | jq .
 curl -fsS http://localhost/api/rag/health | jq .
 source deploy/compose/scripts/compose-env.sh
 mk_compose ps
@@ -105,7 +112,9 @@ mk_compose --profile ops run --rm inspect-lifecycle
 
 | 组件 | 预期 |
 |---|---|
-| Web | 读取 `/api/rag/health` 的 `live_ready`、`ask_ready`、`degraded` 与 `reasons`，不能只判断 HTTP 状态码 |
+| Web liveness | `/api/rag/health/live` 返回 200；只说明进程可响应，不探测下游依赖 |
+| Web readiness | `/api/rag/health/ready` 仅在 PostgreSQL、Qdrant 和模型凭证均可用时返回 200，否则返回 503 并停止接收新流量 |
+| Web 状态详情 | `/api/rag/health` 保持兼容，返回 `ask_ready`、`degraded` 与 `reasons`，供 UI 和诊断读取 |
 | DBOS Worker | 私有 `:3001/dbos-healthz` 正常 |
 | DBOS Control | ready marker 持续更新 |
 | PostgreSQL | `pg_isready` 正常 |

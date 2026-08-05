@@ -78,7 +78,7 @@ cd deploy/compose
 安装后访问 <http://localhost/>，并检查：
 
 ```bash
-curl -sf http://localhost/api/rag/health
+curl -sf http://localhost/api/rag/health/ready
 ```
 
 升级、回滚、备份、恢复和 Kubernetes 说明见[私有化部署](./docs/DEPLOYMENT.md)。

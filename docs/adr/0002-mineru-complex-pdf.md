@@ -19,7 +19,8 @@ LiteParse 本地路径，避免所有文档无条件出域。
    两者只在 provider adapter 内不同，统一输出 `DocumentIR`，失败显式
    degrade（有 LiteParse 节点则 partial）或 fail（无节点），禁止静默空文档。
 4. **耐久执行：** 302 提交、轮询和结果获取运行在 DBOS ingest workflow 中；
-   取消和超时检查贯穿轮询。跨进程重启的外部提交去重仍需专项故障验收。
+   取消和超时检查贯穿轮询。Provider 内层按错误类型退避：同一 idempotency key 重试 submit，
+   同一远端 task 重试 poll/fetch；耗尽后再交给 DBOS 外层恢复。跨进程重启的外部提交去重仍需专项故障验收。
 5. **文档出域必须显式授权：** 302 provider 要求
    `EXTERNAL_PARSER_ALLOWED=true`；API key 仅由运行时 Secret 注入 worker，不能进入
    ConfigMap、payload、日志或 parser report。结果下载不向文件域转发 Bearer

@@ -118,6 +118,12 @@ spec:
               value: {{ .Values.config.mineruMode | quote }}
             - name: MINERU_VERSION
               value: {{ .Values.config.mineruVersion | quote }}
+            - name: PARSER_POLL_INTERVAL_MS
+              value: {{ .Values.config.parserPollIntervalMs | quote }}
+            - name: PARSER_MAX_WAIT_MS
+              value: {{ .Values.config.parserMaxWaitMs | quote }}
+            - name: PARSER_RETRY_BACKOFF_MS
+              value: {{ .Values.config.parserRetryBackoffMs | quote }}
             - name: MINERU_API_KEY
               valueFrom:
                 secretKeyRef:

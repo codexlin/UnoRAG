@@ -1,0 +1,33 @@
+{
+  "annotations": { "list": [] }, "editable": false, "graphTooltip": 1,
+  "links": [{ "asDropdown": true, "icon": "dashboard", "includeVars": true, "keepTime": true, "tags": ["unorag"], "targetBlank": false, "title": "UnoRAG dashboards", "type": "dashboards" }],
+  "panels": [
+    {
+      "datasource": { "type": "loki", "uid": "loki" }, "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 0 }, "id": 1,
+      "targets": [{ "expr": "sum(count_over_time({service_name=\"unorag-dbos-control\"} | json | event=\"dbos.control.tick\" [$__interval]))", "legendFormat": "control ticks", "queryType": "range", "refId": "A" }],
+      "title": "Control loop activity", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" }, "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 0 }, "id": 2,
+      "targets": [{ "expr": "quantile_over_time(0.95, {service_name=\"unorag-dbos-control\"} | json | event=\"dbos.control.tick\" | unwrap durationMs [$__interval])", "legendFormat": "tick P95", "queryType": "range", "refId": "A" }],
+      "title": "Control loop P95", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" }, "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 0 }, "id": 3,
+      "targets": [{ "expr": "sum by (event) (count_over_time({service_name=~\"unorag-(worker|dbos-control)\"} | json | event=~\"dbos\\..*(error|failed)|worker\\..*failed|observability_cycle_failed\" [$__interval]))", "legendFormat": "{{event}}", "queryType": "range", "refId": "A" }],
+      "title": "Lifecycle errors", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" }, "gridPos": { "h": 9, "w": 24, "x": 0, "y": 7 }, "id": 4,
+      "options": { "dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true },
+      "targets": [{ "expr": "{service_name=~\"unorag-(worker|dbos-control)\"} | json | event=~\"dbos\\..+|worker\\..+|ask_runs_maintenance_.+|observability_cycle_failed\"", "refId": "A" }],
+      "title": "Recent lifecycle events", "type": "logs"
+    }
+  ],
+  "refresh": "30s", "schemaVersion": 41, "tags": ["unorag", "lifecycle"],
+  "templating": { "list": [] }, "time": { "from": "now-6h", "to": "now" }, "timezone": "browser",
+  "title": "UnoRAG Lifecycle and DBOS", "uid": "unorag-lifecycle-dbos", "version": 1
+}

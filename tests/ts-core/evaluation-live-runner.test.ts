@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import {
+	cleanupEvaluationLibrary,
 	resolveRunnerOptions,
 	runLiveEvaluation,
 	validateServiceUrl,
@@ -28,7 +29,9 @@ const ENV_KEYS = [
 	"UNORAG_AB_ASK_TIMEOUT_SEC",
 	"UNORAG_AB_POLL_INTERVAL_MS",
 	"UNORAG_AB_CLEANUP_TIMEOUT_SEC",
+	"UNORAG_AB_LIBRARY_ID",
 	"UNORAG_EVAL_RELEASE",
+	"UNORAG_EVAL_IMAGE_DIGEST",
 ] as const;
 
 function withEnvironment(
@@ -136,7 +139,7 @@ test("password files must be private and support home-independent absolute paths
 	}
 });
 
-test("live runner exercises login, upload, jobs, asks, strict gates, reports, and cleanup", async () => {
+test("live runner separates corpus ingestion from repeatable Ask rounds", async () => {
 	const root = resolve(import.meta.dirname, "../..");
 	const [golds, negatives] = await Promise.all([
 		loadGoldenJsonl(resolve(root, "testdata/ab/golds.jsonl")),
@@ -160,7 +163,15 @@ test("live runner exercises login, upload, jobs, asks, strict gates, reports, an
 			response.end(JSON.stringify(body));
 		};
 		if (request.method === "GET" && url.pathname === "/api/rag/health") {
-			send(200, { status: "ok" });
+			send(200, {
+				status: "ok",
+				build_ref: "unorag-web:test",
+				image_digest: "sha256:test-image",
+				chat_model: "chat-test",
+				judge_model: "judge-test",
+				embedding_model: "embedding-test",
+				rerank_model: "rerank-test",
+			});
 			return;
 		}
 		if (request.method === "POST" && url.pathname === "/api/auth/session") {
@@ -251,21 +262,31 @@ test("live runner exercises login, upload, jobs, asks, strict gates, reports, an
 	try {
 		const address = server.address();
 		assert.ok(address && typeof address !== "string");
-		const result = await runLiveEvaluation({
+		const options = {
 			baseUrl: `http://127.0.0.1:${address.port}`,
 			email: "admin@example.com",
 			password: "test-password",
-			keepLibrary: false,
+			keepLibrary: true,
 			publishLangfuseScores: false,
 			jobTimeoutMs: 1_000,
 			askTimeoutMs: 1_000,
 			pollIntervalMs: 1,
 			cleanupTimeoutMs: 1_000,
 			release: "test-release",
-		});
+		};
+		const result = await runLiveEvaluation(options);
 		assert.equal(result, 0);
 		assert.equal(uploads, 7);
 		assert.equal(asks, 38);
+		assert.equal(deleted, false);
+		const repeatResult = await runLiveEvaluation({
+			...options,
+			reuseLibraryId: "library-eval",
+		});
+		assert.equal(repeatResult, 0);
+		assert.equal(uploads, 7);
+		assert.equal(asks, 76);
+		await cleanupEvaluationLibrary(options, "library-eval");
 		assert.equal(deleted, true);
 		assert.ok(authenticatedRequests > asks);
 		const output = resolve(root, "testdata/ab/_e2e_out");
@@ -278,11 +299,25 @@ test("live runner exercises login, upload, jobs, asks, strict gates, reports, an
 			await readFile(resolve(output, "ab_live_latest.json"), "utf8"),
 		) as {
 			release_gates: { ok: boolean };
+			build_fingerprint: {
+				git_commit: string;
+				git_dirty: boolean;
+				runtime_build_ref: string;
+				image_digest: string;
+				models: Record<string, string>;
+				prompts: Record<string, { version: string; digest: string }>;
+			};
 			positive_cases: Array<{
 				response: { retrievalDebug?: Record<string, unknown> | null };
 			}>;
 		};
 		assert.equal(report.release_gates.ok, true);
+		assert.match(report.build_fingerprint.git_commit, /^[0-9a-f]{40}$/u);
+		assert.equal(typeof report.build_fingerprint.git_dirty, "boolean");
+		assert.equal(report.build_fingerprint.runtime_build_ref, "unorag-web:test");
+		assert.equal(report.build_fingerprint.image_digest, "sha256:test-image");
+		assert.equal(report.build_fingerprint.models.judge, "judge-test");
+		assert.ok(Object.keys(report.build_fingerprint.prompts).length >= 5);
 		assert.deepEqual(report.positive_cases[0]?.response.retrievalDebug, {
 			total_duration_ms: 12.5,
 			stages: [{ stage: "retrieve", duration_ms: 3.5, ok: true }],

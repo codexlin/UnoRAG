@@ -2,7 +2,7 @@
 
 | Workflow | Role |
 |----------|-----------|
-| [`ci.yml`](./ci.yml) | **PR + main** entrypoint: lint-diff, TypeScript release gates, Web test/lint/build, live scorer tests, and Docker build verification. |
+| [`ci.yml`](./ci.yml) | **PR + main** entrypoint: lint-diff, TypeScript evaluation and release gates, Web test/lint/build, and Docker build verification. |
 | [`release-images.yml`](./release-images.yml) | Manual/tag build of four Node targets (web, migrator, ops, DBOS worker), published to ACR + GHCR and scanned with Trivy. |
 | `promote-images.yml` | **Not in repo yet** — TCR/Harbor promote deferred. |
 | `deploy.yml` | **Deferred** — human-approved SSH deploy after `upgrade.sh` pull path is proven. |

@@ -20,6 +20,7 @@
 ## 日常检查
 
 ```bash
+curl -fsS "$UNORAG_BASE_URL/api/rag/health/ready" | jq .
 curl -fsS "$UNORAG_BASE_URL/api/rag/health" | jq .
 pnpm lifecycle:inspect
 pnpm ask-runs:maintain

@@ -31,6 +31,16 @@ const TELEMETRY_BODY_KEYS = new Set([
 	"signal",
 	"model",
 	"provider",
+	"parserprovider",
+	"parseroperation",
+	"querytype",
+	"retrievalmode",
+	"citationcount",
+	"retrievedevidencecount",
+	"selectedevidencecount",
+	"errorcode",
+	"httpstatus",
+	"retrydelayms",
 ]);
 
 type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";

@@ -34,10 +34,10 @@ web:
   replicaCount: 1
   port: 3000
   resources: {}
-  # HTTP readiness via control-plane health (proxies RAG readiness).
+  # Readiness rejects traffic when a required Ask dependency is unavailable.
   readinessProbe:
     httpGet:
-      path: /api/rag/health
+      path: /api/rag/health/ready
       port: http
     initialDelaySeconds: 15
     periodSeconds: 10
@@ -45,7 +45,7 @@ web:
     failureThreshold: 6
   livenessProbe:
     httpGet:
-      path: /api/rag/health
+      path: /api/rag/health/live
       port: http
     initialDelaySeconds: 40
     periodSeconds: 20
@@ -166,6 +166,9 @@ config:
   externalParserAllowed: "false"
   mineruMode: auto
   mineruVersion: "2.5"
+  parserPollIntervalMs: "250"
+  parserMaxWaitMs: "900000"
+  parserRetryBackoffMs: "2000,5000,15000,30000"
   # OpenAI-compatible model endpoint used by the native TypeScript runtime.
   openaiBaseUrl: ""
   llmBaseUrl: ""

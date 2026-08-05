@@ -90,6 +90,7 @@ services:
       SESSION_MEMORY_TTL_SECONDS: ${SESSION_MEMORY_TTL_SECONDS:-3600}
       UNORAG_SESSION_SECRET: ${UNORAG_SESSION_SECRET:?UNORAG_SESSION_SECRET required}
       UNORAG_BUILD_REF: ${UNORAG_WEB_IMAGE:-unorag-web:local}
+      UNORAG_IMAGE_DIGEST: ${UNORAG_IMAGE_DIGEST:-}
       QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
       OPENAI_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}
@@ -136,7 +137,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "curl -fsS http://127.0.0.1:3000/api/rag/health >/dev/null || exit 1",
+          "curl -fsS http://127.0.0.1:3000/api/rag/health/live >/dev/null || curl -fsS http://127.0.0.1:3000/api/rag/health >/dev/null || exit 1",
         ]
       interval: 10s
       timeout: 5s
@@ -184,6 +185,9 @@ services:
       MINERU_VERSION: ${MINERU_VERSION:-2.5}
       MINERU_TRANSPORT: ${MINERU_TRANSPORT:-sync}
       LITEPARSE_OCR_LANGUAGE: ${LITEPARSE_OCR_LANGUAGE:-ch}
+      PARSER_POLL_INTERVAL_MS: ${PARSER_POLL_INTERVAL_MS:-250}
+      PARSER_MAX_WAIT_MS: ${PARSER_MAX_WAIT_MS:-900000}
+      PARSER_RETRY_BACKOFF_MS: ${PARSER_RETRY_BACKOFF_MS:-2000,5000,15000,30000}
     volumes:
       - document_storage:/var/lib/unorag/documents
     depends_on:

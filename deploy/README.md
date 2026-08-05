@@ -49,7 +49,7 @@ cd deploy/compose
 
 ./scripts/install.sh
 # 浏览器：http://localhost/
-# 健康：curl -sf http://localhost/api/rag/health
+# 就绪：curl -sf http://localhost/api/rag/health/ready
 ```
 
 需要官方单机 Ops Stack 时使用 `./scripts/install.sh --with-observability`。它提供 Collector、

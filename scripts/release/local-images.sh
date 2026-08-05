@@ -86,28 +86,28 @@ build_images() {
 	fi
 
 	log "build web runner → $(local_web)"
-	docker build "${plat_args[@]}" \
+	docker build ${plat_args[@]+"${plat_args[@]}"} \
 		-f deploy/docker/web.Dockerfile \
 		--target runner \
 		-t "$(local_web)" \
 		.
 
 	log "build web migrator → $(local_migrator)"
-	docker build "${plat_args[@]}" \
+	docker build ${plat_args[@]+"${plat_args[@]}"} \
 		-f deploy/docker/web.Dockerfile \
 		--target migrator \
 		-t "$(local_migrator)" \
 		.
 
 	log "build web operations image → $(local_ops)"
-	docker build "${plat_args[@]}" \
+	docker build ${plat_args[@]+"${plat_args[@]}"} \
 		-f deploy/docker/web.Dockerfile \
 		--target ops \
 		-t "$(local_ops)" \
 		.
 
 	log "build DBOS worker → $(local_worker)"
-	docker build "${plat_args[@]}" \
+	docker build ${plat_args[@]+"${plat_args[@]}"} \
 		-f deploy/docker/web.Dockerfile \
 		--target worker \
 		-t "$(local_worker)" \

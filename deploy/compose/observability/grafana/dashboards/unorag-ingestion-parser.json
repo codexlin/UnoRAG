@@ -1,0 +1,33 @@
+{
+  "annotations": { "list": [] }, "editable": false, "graphTooltip": 1,
+  "links": [{ "asDropdown": true, "icon": "dashboard", "includeVars": true, "keepTime": true, "tags": ["unorag"], "targetBlank": false, "title": "UnoRAG dashboards", "type": "dashboards" }],
+  "panels": [
+    {
+      "datasource": { "type": "loki", "uid": "loki" }, "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 0 }, "id": 1,
+      "targets": [{ "expr": "sum by (parser_provider, parser_operation) (count_over_time({service_name=\"unorag-worker\"} | json | event=\"parser.provider.attempt\" [$__interval]))", "legendFormat": "{{parser_provider}} / {{parser_operation}}", "queryType": "range", "refId": "A" }],
+      "title": "Parser provider attempts", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" }, "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 0 }, "id": 2,
+      "targets": [{ "expr": "sum by (parser_provider, parser_operation, outcome) (count_over_time({service_name=\"unorag-worker\"} | json | event=\"parser.provider.attempt\" | outcome=~\"retry|failed\" [$__interval]))", "legendFormat": "{{parser_provider}} / {{parser_operation}} / {{outcome}}", "queryType": "range", "refId": "A" }],
+      "title": "Parser retries and failures", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" }, "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 0 }, "id": 3,
+      "targets": [{ "expr": "quantile_over_time(0.95, {service_name=\"unorag-worker\"} | json | event=\"parser.provider.attempt\" | unwrap duration_ms [$__interval]) by (parser_provider, parser_operation)", "legendFormat": "{{parser_provider}} / {{parser_operation}} P95", "queryType": "range", "refId": "A" }],
+      "title": "Parser operation P95", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" }, "gridPos": { "h": 9, "w": 24, "x": 0, "y": 7 }, "id": 4,
+      "options": { "dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true },
+      "targets": [{ "expr": "{service_name=\"unorag-worker\"} | json | event=~\"parser\\..+|worker\\..+\"", "refId": "A" }],
+      "title": "Recent parser and worker events", "type": "logs"
+    }
+  ],
+  "refresh": "30s", "schemaVersion": 41, "tags": ["unorag", "ingestion"],
+  "templating": { "list": [] }, "time": { "from": "now-6h", "to": "now" }, "timezone": "browser",
+  "title": "UnoRAG Ingestion and Parser", "uid": "unorag-ingestion-parser", "version": 1
+}

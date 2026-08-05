@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { PROMPT_KEYS, PROMPT_REGISTRY } from "../src/core/ai/prompt-registry";
 import {
 	evaluateReleaseGates,
 	loadGoldenJsonl,
@@ -45,6 +46,8 @@ export type RunnerOptions = Readonly<{
 	pollIntervalMs: number;
 	cleanupTimeoutMs: number;
 	release: string;
+	reuseLibraryId?: string;
+	onLibraryReady?: (libraryId: string) => void;
 }>;
 
 type JobResult = Readonly<{
@@ -192,6 +195,9 @@ export async function resolveRunnerOptions(
 		cleanupTimeoutMs:
 			positiveInteger(process.env.UNORAG_AB_CLEANUP_TIMEOUT_SEC, 120) * 1_000,
 		release: currentRelease(),
+		...(process.env.UNORAG_AB_LIBRARY_ID?.trim()
+			? { reuseLibraryId: process.env.UNORAG_AB_LIBRARY_ID.trim() }
+			: {}),
 	});
 }
 
@@ -406,6 +412,75 @@ function compactTimestamp(date = new Date()): string {
 	return date.toISOString().replace(/[-:]/gu, "").replace(/\.\d{3}Z$/u, "Z");
 }
 
+function repositoryCommit(): string | null {
+	try {
+		return execFileSync("git", ["rev-parse", "HEAD"], {
+			cwd: ROOT,
+			encoding: "utf8",
+		}).trim();
+	} catch {
+		return null;
+	}
+}
+
+function repositoryDirty(): boolean | null {
+	try {
+		return (
+			execFileSync("git", ["status", "--porcelain", "--untracked-files=normal"], {
+				cwd: ROOT,
+				encoding: "utf8",
+			}).trim().length > 0
+		);
+	} catch {
+		return null;
+	}
+}
+
+function localImageDigest(baseUrl: string, buildRef: string | null): string | null {
+	const explicit = process.env.UNORAG_EVAL_IMAGE_DIGEST?.trim();
+	if (explicit) return explicit;
+	if (!buildRef) return null;
+	const hostname = new URL(baseUrl).hostname;
+	if (!["localhost", "127.0.0.1", "::1"].includes(hostname)) return null;
+	try {
+		return execFileSync(
+			"docker",
+			["image", "inspect", "--format={{.Id}}", buildRef],
+			{ encoding: "utf8" },
+		).trim();
+	} catch {
+		return null;
+	}
+}
+
+function buildFingerprint(baseUrl: string, healthBody: unknown): JsonObject {
+	const health = asObject(healthBody);
+	const buildRef = stringValue(health.build_ref);
+	return {
+		git_commit: repositoryCommit(),
+		git_dirty: repositoryDirty(),
+		runtime_build_ref: buildRef,
+		image_digest:
+			stringValue(health.image_digest) ?? localImageDigest(baseUrl, buildRef),
+		models: {
+			chat: stringValue(health.chat_model),
+			judge: stringValue(health.judge_model),
+			embedding: stringValue(health.embedding_model),
+			rerank: stringValue(health.rerank_model),
+		},
+		prompts: Object.fromEntries(
+			PROMPT_KEYS.map((key) => {
+				const prompt = PROMPT_REGISTRY[key];
+				return [key, { version: prompt.version, digest: prompt.digest }];
+			}),
+		),
+	};
+}
+
+function formatPercent(value: number): string {
+	return `${(value * 100).toFixed(1)}%`;
+}
+
 function markdownReport(report: JsonObject): string {
 	const summary = asObject(report.summary);
 	const gates = asObject(report.release_gates);
@@ -421,6 +496,10 @@ function markdownReport(report: JsonObject): string {
 		`- positive: **${summary.positivePassed}/${summary.positiveCases}**`,
 		`- fact coverage: **${Number(summary.meanFactCoverage ?? 0).toFixed(3)}**`,
 		`- document Recall@K / MRR: **${Number(summary.documentRecallAtK ?? 0).toFixed(3)} / ${Number(summary.documentMrr ?? 0).toFixed(3)}**`,
+		`- citation precision: **${formatPercent(Number(summary.citationPrecision ?? 0))}**`,
+		`- cross-document citation rate: **${formatPercent(Number(summary.crossDocumentCitationRate ?? 0))}**`,
+		`- evidence candidates / selected (mean): **${summary.meanRetrievedEvidenceCount == null ? "n/a" : Number(summary.meanRetrievedEvidenceCount).toFixed(2)} / ${summary.meanSelectedEvidenceCount == null ? "n/a" : Number(summary.meanSelectedEvidenceCount).toFixed(2)}**`,
+		`- evidence selection rate: **${summary.evidenceSelectionRate == null ? "n/a" : formatPercent(Number(summary.evidenceSelectionRate))}**`,
 		`- refusal accuracy: **${summary.negativePassed}/${summary.negativeCases}**`,
 		`- latency P50 / P95: **${summary.latencyP50Ms ?? "-"} / ${summary.latencyP95Ms ?? "-"} ms**`,
 		"",
@@ -543,6 +622,26 @@ async function deleteEvaluationLibrary(input: {
 	throw new Error(`evaluation library cleanup timed out: ${input.libraryId}`);
 }
 
+export async function cleanupEvaluationLibrary(
+	options: RunnerOptions,
+	libraryId: string,
+): Promise<void> {
+	const client = new EvaluationClient(options.baseUrl);
+	const login = await client.json("POST", "/api/auth/session", {
+		email: options.email,
+		password: options.password,
+	});
+	if (login.status !== 200) {
+		throw new Error(`cleanup login failed: ${login.status}`);
+	}
+	await deleteEvaluationLibrary({
+		client,
+		libraryId,
+		timeoutMs: options.cleanupTimeoutMs,
+		pollIntervalMs: options.pollIntervalMs,
+	});
+}
+
 export async function runLiveEvaluation(options: RunnerOptions): Promise<number> {
 	const [golds, negativeGolds] = await Promise.all([
 		loadGoldenJsonl(resolve(AB_DIR, "golds.jsonl")),
@@ -564,15 +663,22 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 	});
 	if (login.status !== 200) throw new Error(`login failed: ${login.status}`);
 
-	process.stdout.write("== create evaluation library\n");
-	const libraryResponse = await client.json("POST", "/api/libraries", {
-		name: `AB Live ${runId}`,
-	});
-	const library = asObject(libraryResponse.body);
-	const libraryId = stringValue(library.id);
-	if (![200, 201].includes(libraryResponse.status) || !libraryId) {
-		throw new Error(`library creation failed: ${libraryResponse.status}`);
+	const ownsLibrary = !options.reuseLibraryId;
+	let libraryId = options.reuseLibraryId;
+	if (libraryId) {
+		process.stdout.write(`== reuse evaluation library ${libraryId}\n`);
+	} else {
+		process.stdout.write("== create evaluation library\n");
+		const libraryResponse = await client.json("POST", "/api/libraries", {
+			name: `AB Live ${runId}`,
+		});
+		const library = asObject(libraryResponse.body);
+		libraryId = stringValue(library.id) ?? undefined;
+		if (![200, 201].includes(libraryResponse.status) || !libraryId) {
+			throw new Error(`library creation failed: ${libraryResponse.status}`);
+		}
 	}
+	options.onLibraryReady?.(libraryId);
 
 	let report: JsonObject | null = null;
 	let resultCode = 2;
@@ -582,35 +688,52 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 			{ jobId: string; documentId: string | null }
 		>();
 		const uploadFailures = new Map<string, JobResult>();
-		for (const filename of [...new Set(golds.map((item) => item.file))].sort()) {
-			const response = await client.upload(libraryId, resolve(AB_DIR, filename));
-			const body = asObject(response.body);
-			const jobId = stringValue(body.job_id);
-			process.stdout.write(`  upload ${filename} -> ${response.status}\n`);
-			if (![200, 202].includes(response.status) || !jobId) {
-				uploadFailures.set(filename, {
-					status: "upload_failed",
-					stage: null,
-					error: `HTTP ${response.status}`,
-					parserReport: null,
+		const filenames = [...new Set(golds.map((item) => item.file))].sort();
+		let jobs: Map<string, JobResult>;
+		if (ownsLibrary) {
+			for (const filename of filenames) {
+				const response = await client.upload(libraryId, resolve(AB_DIR, filename));
+				const body = asObject(response.body);
+				const jobId = stringValue(body.job_id);
+				process.stdout.write(`  upload ${filename} -> ${response.status}\n`);
+				if (![200, 202].includes(response.status) || !jobId) {
+					uploadFailures.set(filename, {
+						status: "upload_failed",
+						stage: null,
+						error: `HTTP ${response.status}`,
+						parserReport: null,
+						documentId: stringValue(body.document_id) ?? stringValue(body.id),
+					});
+					continue;
+				}
+				uploads.set(filename, {
+					jobId,
 					documentId: stringValue(body.document_id) ?? stringValue(body.id),
 				});
-				continue;
 			}
-			uploads.set(filename, {
-				jobId,
-				documentId: stringValue(body.document_id) ?? stringValue(body.id),
-			});
-		}
 
-		process.stdout.write("== wait ingestion jobs\n");
-		const jobs = await waitForJobs({
-			client,
-			uploads,
-			timeoutMs: options.jobTimeoutMs,
-			pollIntervalMs: options.pollIntervalMs,
-		});
-		for (const [filename, failure] of uploadFailures) jobs.set(filename, failure);
+			process.stdout.write("== wait ingestion jobs\n");
+			jobs = await waitForJobs({
+				client,
+				uploads,
+				timeoutMs: options.jobTimeoutMs,
+				pollIntervalMs: options.pollIntervalMs,
+			});
+			for (const [filename, failure] of uploadFailures) jobs.set(filename, failure);
+		} else {
+			jobs = new Map(
+				filenames.map((filename) => [
+					filename,
+					{
+						status: "completed",
+						stage: "reused",
+						error: null,
+						parserReport: null,
+						documentId: null,
+					} satisfies JobResult,
+				]),
+			);
+		}
 
 		process.stdout.write(`== evaluate ${golds.length} positive cases\n`);
 		const positiveRows: PositiveRow[] = [];
@@ -682,6 +805,7 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 			evaluated_at: new Date().toISOString(),
 			release: options.release,
 			base_url: options.baseUrl,
+			build_fingerprint: buildFingerprint(options.baseUrl, health.body),
 			library_id: libraryId,
 			jobs: Object.fromEntries(jobs),
 			summary,
@@ -700,7 +824,9 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 				? 2
 				: 0;
 	} finally {
-		if (options.keepLibrary) {
+		if (!ownsLibrary) {
+			process.stdout.write(`== leave reused evaluation library ${libraryId}\n`);
+		} else if (options.keepLibrary) {
 			process.stdout.write(`== keep evaluation library ${libraryId}\n`);
 		} else {
 			await deleteEvaluationLibrary({

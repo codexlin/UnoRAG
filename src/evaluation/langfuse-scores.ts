@@ -112,6 +112,14 @@ export async function publishEvaluationScores(input: {
 			score.targetDocumentRecalled ? 1 : 0,
 			"BOOLEAN",
 		);
+		publish(
+			score.sessionId as string,
+			score.caseId,
+			"positive",
+			"unorag.eval.citation_precision",
+			score.citationPrecision,
+			"NUMERIC",
+		);
 	}
 	for (const score of input.negative) {
 		publish(

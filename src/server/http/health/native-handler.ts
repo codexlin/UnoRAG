@@ -10,6 +10,8 @@ type HealthDependencies = {
 	checkQdrant: () => Promise<void>;
 };
 
+export type HealthProbe = "summary" | "live" | "ready";
+
 let defaultHealthCache:
 	| { expiresAt: number; response: Promise<Response> }
 	| undefined;
@@ -41,6 +43,7 @@ function defaultDependencies(): HealthDependencies {
 
 async function buildHealthResponse(
 	dependencies: HealthDependencies,
+	probe: Exclude<HealthProbe, "live">,
 ): Promise<Response> {
 	const [database, qdrant] = await Promise.allSettled([
 		dependencies.checkDatabase(),
@@ -56,6 +59,7 @@ async function buildHealthResponse(
 	if (!qdrantOk) reasons.push("qdrant_unavailable");
 	if (!hasLlmKey) reasons.push("llm_key_missing");
 	const askReady = metadataOk && qdrantOk && hasLlmKey;
+	const chatModel = process.env.CHAT_MODEL?.trim() || "qwen-plus";
 
 	return Response.json(
 		{
@@ -63,6 +67,12 @@ async function buildHealthResponse(
 			service: "unorag-web",
 			env: process.env.NODE_ENV || "development",
 			build_ref: process.env.UNORAG_BUILD_REF?.trim() || "development",
+			image_digest: process.env.UNORAG_IMAGE_DIGEST?.trim() || null,
+			chat_model: chatModel,
+			judge_model: process.env.JUDGE_MODEL?.trim() || chatModel,
+			embedding_model:
+				process.env.EMBEDDING_MODEL?.trim() || "text-embedding-v3",
+			rerank_model: process.env.RERANK_MODEL?.trim() || null,
 			ask_mode: "typescript",
 			effective_mode: "typescript",
 			graph: "langgraph-ts",
@@ -76,7 +86,8 @@ async function buildHealthResponse(
 			reasons,
 		},
 		{
-			status: metadataOk ? 200 : 503,
+			status:
+				probe === "ready" ? (askReady ? 200 : 503) : metadataOk ? 200 : 503,
 			headers: { "cache-control": "no-store" },
 		},
 	);
@@ -84,13 +95,29 @@ async function buildHealthResponse(
 
 export async function handleNativeHealthRequest(input?: {
 	dependencies?: HealthDependencies;
+	probe?: HealthProbe;
 }): Promise<Response> {
-	if (input?.dependencies) return buildHealthResponse(input.dependencies);
+	const probe = input?.probe ?? "summary";
+	if (probe === "live") {
+		return Response.json(
+			{
+				status: "ok",
+				service: "unorag-web",
+				live_ready: true,
+			},
+			{ headers: { "cache-control": "no-store" } },
+		);
+	}
+	if (input?.dependencies)
+		return buildHealthResponse(input.dependencies, probe);
+	if (probe === "ready") {
+		return buildHealthResponse(defaultDependencies(), "ready");
+	}
 	const now = Date.now();
 	if (!defaultHealthCache || defaultHealthCache.expiresAt <= now) {
 		defaultHealthCache = {
 			expiresAt: now + 5_000,
-			response: buildHealthResponse(defaultDependencies()),
+			response: buildHealthResponse(defaultDependencies(), "summary"),
 		};
 	}
 	return (await defaultHealthCache.response).clone();

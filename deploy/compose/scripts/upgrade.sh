@@ -259,7 +259,7 @@ HTTP_PORT="$(mk_config_get HTTP_PORT || echo 80)"
 BASE_URL="$(mk_config_get UNORAG_BASE_URL || echo "http://localhost:${HTTP_PORT}")"
 BASE_URL="${BASE_URL%/}"
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
-	if curl -fsS "${BASE_URL}/api/rag/health" >/dev/null; then
+	if curl -fsS "${BASE_URL}/api/rag/health/ready" >/dev/null; then
 		break
 	fi
 	[[ $attempt -lt 10 ]] || die "health probe failed after upgrade"
