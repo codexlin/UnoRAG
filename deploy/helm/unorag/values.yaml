@@ -69,6 +69,10 @@ dbos:
   askRunStaleAfterMinutes: "30"
   askRunRetentionDays: "30"
   askRunMaintenanceBatchSize: "1000"
+  tombstoneMaintenanceEnabled: "true"
+  tombstoneMaintenanceIntervalMs: "3600000"
+  tombstoneRetentionDays: "90"
+  tombstoneMaintenanceBatchSize: "100"
   observabilityCycleEnabled: "true"
   observabilityCycleIntervalMs: "60000"
   workerResources: {}

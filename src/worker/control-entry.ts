@@ -9,6 +9,8 @@ import {
 	initializeTelemetry,
 	shutdownTelemetry,
 } from "../lib/observability/telemetry";
+import { runTombstoneMaintenance } from "../server/lifecycle/tombstone-maintenance";
+import { PostgresTombstoneMaintenanceRepository } from "../server/lifecycle/tombstone-repository";
 import { runAskRunsMaintenance } from "../server/observability/ask-runs-maintenance";
 import { createAskRunsRepository } from "../server/observability/ask-runs-repository";
 import { runObservabilityCycle } from "../server/observability/control-cycle";
@@ -35,6 +37,7 @@ async function main(): Promise<void> {
 	let dbos: DbosJobEnqueuer | undefined;
 	let stopping = false;
 	let nextMaintenanceAt = 0;
+	let nextTombstoneMaintenanceAt = 0;
 	let nextObservabilityAt = 0;
 	let readinessHeartbeat: ReturnType<typeof setInterval> | undefined;
 	const stopSignal = new AbortController();
@@ -71,6 +74,9 @@ async function main(): Promise<void> {
 				});
 			},
 		);
+		const tombstoneRepository = new PostgresTombstoneMaintenanceRepository(
+			pool,
+		);
 		while (!stopping) {
 			const startedAt = Date.now();
 			try {
@@ -81,6 +87,9 @@ async function main(): Promise<void> {
 					| undefined;
 				let observability:
 					| Awaited<ReturnType<typeof runObservabilityCycle>>
+					| undefined;
+				let tombstoneMaintenance:
+					| Awaited<ReturnType<typeof runTombstoneMaintenance>>
 					| undefined;
 				if (
 					config.askRunMaintenance.enabled &&
@@ -108,6 +117,31 @@ async function main(): Promise<void> {
 					}
 				}
 				if (
+					config.tombstoneMaintenance.enabled &&
+					Date.now() >= nextTombstoneMaintenanceAt
+				) {
+					nextTombstoneMaintenanceAt =
+						Date.now() + config.tombstoneMaintenance.intervalMs;
+					try {
+						tombstoneMaintenance = await runTombstoneMaintenance(
+							{
+								execute: true,
+								retentionDays: config.tombstoneMaintenance.retentionDays,
+								limit: config.tombstoneMaintenance.batchSize,
+							},
+							{
+								repository: tombstoneRepository,
+								logger: maintenanceLogger,
+							},
+						);
+					} catch (error) {
+						maintenanceLogger.error({
+							event: "tombstone_maintenance_failed",
+							error,
+						});
+					}
+				}
+				if (
 					config.observabilityCycle.enabled &&
 					Date.now() >= nextObservabilityAt
 				) {
@@ -130,6 +164,7 @@ async function main(): Promise<void> {
 					dispatch,
 					reconciliation,
 					askRunsMaintenance,
+					tombstoneMaintenance,
 					observability,
 				});
 				await touchReadyFile();

@@ -34,6 +34,7 @@ GRANT SELECT ON
 	app.document_active_versions,
 	app.active_document_generations,
 	app.ask_runs,
+	app.threads,
 	app.document_acl,
 	app.libraries,
 	app.generation_cleanup_queue
@@ -43,7 +44,8 @@ GRANT SELECT ON
 	,app.observability_component_health
 TO unorag_worker;
 GRANT INSERT, UPDATE ON app.jobs TO unorag_worker;
-GRANT UPDATE ON app.document_versions, app.documents, app.libraries TO unorag_worker;
+GRANT UPDATE ON app.document_versions TO unorag_worker;
+GRANT UPDATE, DELETE ON app.documents, app.libraries TO unorag_worker;
 GRANT INSERT, UPDATE, DELETE ON app.document_active_versions TO unorag_worker;
 GRANT INSERT, UPDATE, DELETE ON app.generation_cleanup_queue TO unorag_worker;
 GRANT INSERT ON app.audit_logs TO unorag_worker;

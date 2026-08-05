@@ -24,6 +24,7 @@ curl -fsS "$UNORAG_BASE_URL/api/rag/health/ready" | jq .
 curl -fsS "$UNORAG_BASE_URL/api/rag/health" | jq .
 pnpm lifecycle:inspect
 pnpm ask-runs:maintain
+pnpm tombstones:maintain
 
 cd deploy/compose
 source scripts/compose-env.sh
@@ -100,7 +101,11 @@ Compose 为组件设置 CPU、内存限制和有限保留期，但 Docker 命名
 磁盘告警必须早于业务数据卷告警阈值。
 
 `dbos-control` 默认每 15 分钟把超过 30 分钟的 `running` Ask 收敛为失败，并按 30 天保留期有界删除
-终态记录。以下部署参数可调整或关闭该调度：
+终态记录。它还会每小时分批回收超过 90 天的删除 tombstone：只有 Qdrant、原文件和 generation cleanup
+均已完成的文档才能物理删除；库仍被文档、历史会话或 Ask 记录引用时会保留并报告为 `blocked`。每次
+物理回收前都会写入 `document.tombstone_purged` / `library.tombstone_purged` 审计事件。
+
+以下部署参数可调整或关闭调度：
 
 ```text
 ASK_RUN_MAINTENANCE_ENABLED=true
@@ -108,6 +113,10 @@ ASK_RUN_MAINTENANCE_INTERVAL_MS=900000
 ASK_RUN_STALE_AFTER_MINUTES=30
 ASK_RUN_RETENTION_DAYS=30
 ASK_RUN_MAINTENANCE_BATCH_SIZE=1000
+TOMBSTONE_MAINTENANCE_ENABLED=true
+TOMBSTONE_MAINTENANCE_INTERVAL_MS=3600000
+TOMBSTONE_RETENTION_DAYS=90
+TOMBSTONE_MAINTENANCE_BATCH_SIZE=100
 OBSERVABILITY_CYCLE_ENABLED=true
 OBSERVABILITY_CYCLE_INTERVAL_MS=60000
 OBSERVABILITY_ALERT_WEBHOOK_ENABLED=false
@@ -126,7 +135,13 @@ OBSERVABILITY_ALERT_EMAIL_ENABLED=false
 ```bash
 pnpm ask-runs:maintain
 pnpm ask-runs:maintain:apply -- --limit 1000
+pnpm tombstones:maintain
+pnpm tombstones:maintain:apply -- --retention-days 90 --limit 100
 ```
+
+`lifecycle:inspect` 将 `deleting`、可回收的过期 tombstone 和被历史记录阻塞的库分别报告。自动化发布
+门禁可额外传 `--fail-on-expired-tombstones`；`blocked_library_tombstones` 是保留策略结果，不触发该
+门禁。Grafana 的 `UnoRAG Lifecycle and DBOS` 看板展示每轮回收量、blocked 数和维护失败事件。
 
 ## 生命周期故障
 

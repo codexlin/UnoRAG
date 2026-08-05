@@ -30,6 +30,8 @@
 		"lifecycle:check": "node scripts/inspect-lifecycle.mjs --fail-on-dead --fail-on-stuck",
 		"ask-runs:maintain": "tsx scripts/maintain-ask-runs.ts --dry-run",
 		"ask-runs:maintain:apply": "tsx scripts/maintain-ask-runs.ts --execute",
+		"tombstones:maintain": "tsx scripts/maintain-tombstones.ts --dry-run",
+		"tombstones:maintain:apply": "tsx scripts/maintain-tombstones.ts --execute",
 		"conversations:backfill": "node scripts/backfill-conversations.mjs",
 		"conversations:backfill:apply": "node scripts/backfill-conversations.mjs --apply",
 		"acl:backfill-projections": "node scripts/backfill-acl-projections.mjs",
