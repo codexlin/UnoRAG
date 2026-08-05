@@ -4,6 +4,8 @@
 - Date: 2026-07-30
 - Branch: `refactor/ts-core-runtime`
 - Supersedes: ADR-0004
+- Partially superseded by: ADR-0006 for repository/package topology only;
+  the runtime, process, ownership and library decisions in this ADR remain current.
 - Implementation: `5061ac0` ports the native core; `8b38294` retires the Python
   service, outbox and old deployment topology. Runtime hardening and the current
   commit-bound RC evidence are recorded by `902cdae`, `f00bbd7` and `d0272f9`.
@@ -113,12 +115,14 @@ Heavy parsing must not execute in the Next.js request process. Native modules
 such as LiteParse belong in the worker dependency boundary so they do not
 inflate or complicate the web server bundle.
 
-UnoRAG does not introduce internal npm workspace packages for this migration.
+UnoRAG did not introduce internal npm workspace packages for this migration.
 Domain and transport boundaries live under `src/core`,
 `src/server`, and `src/worker`. A module may be extracted
 into a separately versioned package only when a real second application or
-external consumer needs to depend on it. Process isolation does not require
-package or repository isolation.
+external consumer needs to depend on it. That migration-scoped decision is
+superseded by ADR-0006 now that multiple edition and process composition roots
+exist. Process isolation still does not, by itself, require package or repository
+isolation.
 
 The Elysia catch-all was validated during the migration spike, but the final
 runtime uses native Next.js Route Handlers. Domain services remain transport

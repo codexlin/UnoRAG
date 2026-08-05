@@ -72,8 +72,9 @@ tests/              产品契约和原生 RAG 测试
 testdata/           代表性真实文件与拒绝格式 fixture
 ```
 
-可复用 RAG 算法放入 `src/core/`，Next.js 应用规则放入 `src/lib/server/`。进程隔离不要求
-拆分 npm workspace；只有出现真实第二个应用或外部消费者时才提取独立包。
+当前根包阶段，可复用 RAG 算法放入 `src/core/`，Next.js 应用规则放入 `src/lib/server/`。
+后续按 [ADR-0006](./adr/0006-private-product-monorepo.md) 渐进迁移为私有 Product Monorepo；只有能
+形成可执行依赖边界或被多个 composition root 使用的模块才提取为 package，不为目录整齐创建空包。
 
 ## 必须保持的约束
 
