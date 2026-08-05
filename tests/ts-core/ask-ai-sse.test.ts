@@ -141,6 +141,7 @@ test("judge metadata is content-free and carries bounded execution details", asy
 				sufficient: true,
 				action: "generate",
 				reason: "supported",
+				evidence_ids: ["citation-1"],
 			};
 		},
 		{ maxAttempts: 1, maxOutputTokens: 96 },
@@ -169,6 +170,10 @@ test("public retrieval debug exposes only safe Judge diagnostics", () => {
 			judge_input_tokens: 800,
 			judge_output_tokens: 20,
 			judge_total_tokens: 820,
+			retrieved_evidence_count: 6,
+			selected_evidence_count: 2,
+			evidence_selection_mode: "judge",
+			evidence_selection_valid: true,
 			question: "must not pass",
 			evidence: "must not pass",
 		}),
@@ -181,6 +186,10 @@ test("public retrieval debug exposes only safe Judge diagnostics", () => {
 			judge_input_tokens: 800,
 			judge_output_tokens: 20,
 			judge_total_tokens: 820,
+			retrieved_evidence_count: 6,
+			selected_evidence_count: 2,
+			evidence_selection_mode: "judge",
+			evidence_selection_valid: true,
 		},
 	);
 });

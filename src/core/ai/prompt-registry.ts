@@ -35,6 +35,7 @@ export const PROMPT_VERSION_HISTORY = Object.freeze({
 	}),
 	judge: Object.freeze({
 		"1.0.0": "e7021ca6445ae3a89d24eb88650f3c5124edc06b4c5520370c183f2c0d7e7870",
+		"1.1.0": "f8671487f0b6fbe394a45718989ba81a7837370466468138ecb7feb21931e1bb",
 	}),
 	table_plan: Object.freeze({
 		"1.0.0": "074c2f67f29bc44f7a72be0b1525490ef51719be3a9ba9ac4677b33198d5aab7",
@@ -93,8 +94,12 @@ export const PROMPT_REGISTRY = Object.freeze({
 	judge: definePrompt({
 		key: "judge",
 		name: "unorag.evidence.judge",
-		version: "1.0.0",
-		text: "你是证据充分性判断器。仅根据给定候选证据判断 generate、retry 或 refuse。资料未覆盖时必须 refuse，不能用模型常识补足。问题澄清由查询路由器负责，不输出 clarify。",
+		version: "1.1.0",
+		text:
+			"你是证据充分性判断器。仅根据给定候选证据判断 generate、retry 或 refuse。" +
+			"资料未覆盖时必须 refuse，不能用模型常识补足。问题澄清由查询路由器负责，不输出 clarify。" +
+			"同时输出 evidence_ids：generate 时必须从候选证据的真实 id 中选择一至六条能够完整支持回答的最小证据集合；" +
+			"不得编造 id，不得选择与问题无关或仅主题相似的证据。retry 或 refuse 时 evidence_ids 必须为空数组。",
 	}),
 	table_plan: definePrompt({
 		key: "table_plan",

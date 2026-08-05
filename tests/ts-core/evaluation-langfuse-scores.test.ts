@@ -33,6 +33,9 @@ test("Langfuse score publication sends only metadata and stable session scores",
 				targetDocumentRecalled: true,
 				citationCount: 1,
 				crossDocumentCitationCount: 0,
+				citationPrecision: 1,
+				retrievedEvidenceCount: 2,
+				selectedEvidenceCount: 1,
 				recordTypeMatched: true,
 				latencyMs: 100,
 				requestId: "request-1",
@@ -53,19 +56,20 @@ test("Langfuse score publication sends only metadata and stable session scores",
 		],
 	});
 
-	assert.equal(result.publishedScores, 4);
+	assert.equal(result.publishedScores, 5);
 	assert.equal(flushed, 1);
-	assert.equal(payloads.length, 4);
+	assert.equal(payloads.length, 5);
 	assert.deepEqual(
 		payloads.map((payload) => payload.name),
 		[
 			"unorag.eval.pass",
 			"unorag.eval.fact_coverage",
 			"unorag.eval.document_recalled",
+			"unorag.eval.citation_precision",
 			"unorag.eval.refusal_correct",
 		],
 	);
-	assert.equal(new Set(payloads.map((payload) => payload.id)).size, 4);
+	assert.equal(new Set(payloads.map((payload) => payload.id)).size, 5);
 	const serialized = JSON.stringify(payloads);
 	for (const content of [
 		"secret question should never leave this process",
@@ -123,6 +127,9 @@ test("Langfuse publication fails closed without correlation or valid environment
 					targetDocumentRecalled: true,
 					citationCount: 1,
 					crossDocumentCitationCount: 0,
+					citationPrecision: 1,
+					retrievedEvidenceCount: 2,
+					selectedEvidenceCount: 1,
 					recordTypeMatched: true,
 					latencyMs: 1,
 					requestId: null,

@@ -472,6 +472,10 @@ function buildFingerprint(baseUrl: string, healthBody: unknown): JsonObject {
 	};
 }
 
+function formatPercent(value: number): string {
+	return `${(value * 100).toFixed(1)}%`;
+}
+
 function markdownReport(report: JsonObject): string {
 	const summary = asObject(report.summary);
 	const gates = asObject(report.release_gates);
@@ -487,6 +491,10 @@ function markdownReport(report: JsonObject): string {
 		`- positive: **${summary.positivePassed}/${summary.positiveCases}**`,
 		`- fact coverage: **${Number(summary.meanFactCoverage ?? 0).toFixed(3)}**`,
 		`- document Recall@K / MRR: **${Number(summary.documentRecallAtK ?? 0).toFixed(3)} / ${Number(summary.documentMrr ?? 0).toFixed(3)}**`,
+		`- citation precision: **${formatPercent(Number(summary.citationPrecision ?? 0))}**`,
+		`- cross-document citation rate: **${formatPercent(Number(summary.crossDocumentCitationRate ?? 0))}**`,
+		`- evidence candidates / selected (mean): **${summary.meanRetrievedEvidenceCount == null ? "n/a" : Number(summary.meanRetrievedEvidenceCount).toFixed(2)} / ${summary.meanSelectedEvidenceCount == null ? "n/a" : Number(summary.meanSelectedEvidenceCount).toFixed(2)}**`,
+		`- evidence selection rate: **${summary.evidenceSelectionRate == null ? "n/a" : formatPercent(Number(summary.evidenceSelectionRate))}**`,
 		`- refusal accuracy: **${summary.negativePassed}/${summary.negativeCases}**`,
 		`- latency P50 / P95: **${summary.latencyP50Ms ?? "-"} / ${summary.latencyP95Ms ?? "-"} ms**`,
 		"",

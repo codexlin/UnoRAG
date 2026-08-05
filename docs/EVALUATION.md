@@ -79,6 +79,17 @@ pnpm eval:live
 `table`、`table_summary`，`image` 由规范化的 `figure` Citation 支撑（兼容历史 `image` 值）。原子事实覆盖是带数字、单位、边界和
 显式否定保护的确定性词法门禁，不宣称替代语义正确性或人工复核。
 
+Ask 将检索与最终证据分成三层：Retriever/Reranker 先产生候选证据，Judge 再从候选 ID 中选择能够
+完整支持回答的最小集合，最后只从本次已召回且同文档、同版本的记录中补齐结构化来源关系。来源补齐
+覆盖原始 `table`、`table_summary` 与 `figure`，必须通过 `table_id`、`figure_id`、source chunk 或
+source node 关系匹配，不会发起隐藏检索，也不会跨文档扩张 Citation。Judge 返回空 ID、虚构 ID 或
+越界 ID 时 Ask fail closed，不生成无依据答案。
+
+报告中的 `evidence candidates / selected` 分别表示进入 Judge 的候选数与最终 Citation 数；
+`evidence selection rate` 是二者之比。`citation precision` 衡量最终 Citation 中属于目标文档的比例，
+`cross-document citation rate` 衡量正例中是否混入其它文档。这些指标用于识别“答案正确但证据过宽”，
+同时类型门禁保证降噪不能丢掉表格或图表来源。
+
 门禁失败时命令退出码为 `1`；配置、清理或显式发布失败为 `2`。报告同时保留 MRR、跨文档 Citation 比例及
 P50/P95/最大延迟，当前不把延迟固定成跨硬件统一阈值。
 
@@ -104,6 +115,7 @@ Publisher 使用官方 `@langfuse/client`，按每个评测 Session 写入：
 - `unorag.eval.pass`；
 - `unorag.eval.fact_coverage`；
 - `unorag.eval.document_recalled`；
+- `unorag.eval.citation_precision`；
 - `unorag.eval.refusal_correct`。
 
 发送内容仅包含 Session ID、哈希 case ID、run ID、release 和数值/布尔分数；不会发送问题、模型回答、

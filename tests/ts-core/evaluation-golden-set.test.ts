@@ -109,12 +109,19 @@ test("deterministic scorer measures facts, citations, refusal, and release gates
 		],
 		latencyMs: 120,
 		requestId: "request-1",
+		retrievalDebug: {
+			retrieved_evidence_count: 6,
+			selected_evidence_count: 2,
+		},
 	});
 	assert.equal(positive.ok, true);
 	assert.equal(positive.factCoverage, 1);
 	assert.equal(positive.targetDocumentRank, 2);
 	assert.equal(positive.reciprocalRank, 0.5);
 	assert.equal(positive.crossDocumentCitationCount, 1);
+	assert.equal(positive.citationPrecision, 0.5);
+	assert.equal(positive.retrievedEvidenceCount, 6);
+	assert.equal(positive.selectedEvidenceCount, 2);
 	assert.equal(positive.recordTypeMatched, true);
 	assert.equal(
 		scorePositiveCase(gold, {
@@ -166,6 +173,10 @@ test("deterministic scorer measures facts, citations, refusal, and release gates
 	assert.equal(summary.refusalAccuracy, 1);
 	assert.equal(summary.documentRecallAtK, 1);
 	assert.equal(summary.documentMrr, 0.5);
+	assert.equal(summary.citationPrecision, 0.5);
+	assert.equal(summary.meanRetrievedEvidenceCount, 6);
+	assert.equal(summary.meanSelectedEvidenceCount, 2);
+	assert.equal(summary.evidenceSelectionRate, 1 / 3);
 	assert.equal(summary.latencyP50Ms, 80);
 	assert.equal(summary.latencyP95Ms, 120);
 	assert.deepEqual(evaluateReleaseGates(summary), { ok: true, failures: [] });

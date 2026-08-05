@@ -145,6 +145,12 @@ export function projectPublicRetrievalDebug(
 		judge_input_tokens: ["judge_input_tokens"],
 		judge_output_tokens: ["judge_output_tokens"],
 		judge_total_tokens: ["judge_total_tokens"],
+		retrieved_evidence_count: ["retrieved_evidence_count"],
+		direct_evidence_count: ["direct_evidence_count"],
+		lineage_evidence_count: ["lineage_evidence_count"],
+		selected_evidence_count: ["selected_evidence_count"],
+		evidence_selection_mode: ["evidence_selection_mode"],
+		evidence_selection_valid: ["evidence_selection_valid"],
 	} as const;
 	for (const [target, sources] of Object.entries(mappings)) {
 		const source = sources.find((name) => value[name] !== undefined);
