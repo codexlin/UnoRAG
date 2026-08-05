@@ -27,6 +27,11 @@ flowchart TB
 宿主机需要 Docker、Docker Compose v2 和 Python 3。Python 只用于配置迁移及验收脚本，
 四个产品镜像均为 Node 运行时。
 
+`v0.1` 发布物当前只认证 `linux/amd64`。生产安装前必须确认宿主机或 Kubernetes 节点提供该架构；
+`linux/arm64` 和 multi-arch 尚不属于支持范围。Apple Silicon 本地验收可以只对四个产品服务显式设置
+`platform: linux/amd64`，但模拟运行不代表生产容量结论，也不得让全局
+`DOCKER_DEFAULT_PLATFORM` 连带改变 PostgreSQL、Qdrant 和 Redis 等基础设施镜像架构。
+
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh
@@ -131,6 +136,7 @@ mk_compose --profile ops run --rm inspect-lifecycle
 推送到镜像仓库，并产出引用四个镜像 digest 的 manifest。生产升级只接受这类已归档的
 digest manifest，禁止直接使用浮动 `latest`。`upgrade.sh` 也接受带版本 tag 的 manifest，
 但该入口只用于本地 RC 验收和无法访问 registry 时的 break-glass 操作，不能替代生产发布物。
+当前镜像架构支持范围以本页 Compose 安装章节为准；上线验收必须在客户实际节点架构上重跑。
 
 ```bash
 cd deploy/compose
