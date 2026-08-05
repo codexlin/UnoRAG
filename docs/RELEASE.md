@@ -55,6 +55,13 @@ Trivy HIGH/CRITICAL 门禁失败、使用浮动镜像标签或无法复现配置
 兼容边界，不是可手改的营销版本；不同代码提交不得复用同一值，同一发布的 Web/control/worker 必须
 使用同一值。
 
+全新客户环境必须直接消费该 manifest，不能在目标机重新构建源码：
+
+```bash
+cd deploy/compose
+./scripts/install.sh --manifest /path/to/release-acr.env
+```
+
 ## 3. 真实纵向验收
 
 ```bash

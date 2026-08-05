@@ -32,8 +32,12 @@ cd deploy/compose
 ./scripts/init-config.sh
 # 编辑 ../config/runtime.env、runtime.secret、bootstrap.env
 ./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
-./scripts/install.sh
+./scripts/install.sh --manifest /path/to/release-acr.env
 ```
+
+正式安装必须使用发布 workflow 生成的 digest manifest。没有 `--manifest` 时安装脚本会构建当前
+工作树镜像，该模式只用于本地开发，不属于可交付安装。manifest 会同时固定四个镜像和 DBOS
+application version；缺少字段、使用 tag、`latest` 或不完整 digest 时安装会直接拒绝。
 
 需要集中指标、日志和 Trace 时，设置 `runtime.secret` 中的 `GRAFANA_ADMIN_PASSWORD` 后显式启用：
 

@@ -6,20 +6,44 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/compose-env.sh"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/release-env.sh"
 
 WITH_OBSERVABILITY=0
 WITH_LANGFUSE=0
+MANIFEST=""
 while [[ $# -gt 0 ]]; do
 	case "$1" in
+		--manifest) MANIFEST="${2:-}"; shift 2 ;;
 		--with-ops|--with-observability) WITH_OBSERVABILITY=1; shift ;;
 		--with-langfuse) WITH_LANGFUSE=1; WITH_OBSERVABILITY=1; shift ;;
 		-h|--help)
-			echo "usage: $0 [--with-observability] [--with-langfuse]"
+			echo "usage: $0 [--manifest /path/to/release.env] [--with-observability] [--with-langfuse]"
 			exit 0
 			;;
 		*) echo "unknown argument: $1" >&2; exit 1 ;;
 	esac
 done
+
+RUNTIME_ENV="$(cd "${ROOT}/../config" && pwd)/runtime.env"
+if [[ -n "$MANIFEST" ]]; then
+	[[ -f "$MANIFEST" ]] || {
+		echo "refusing install: manifest not found: $MANIFEST" >&2
+		exit 1
+	}
+	WEB_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_WEB_IMAGE)"
+	MIGRATOR_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_WEB_MIGRATOR_IMAGE)"
+	OPS_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_WEB_OPS_IMAGE)"
+	WORKER_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_DBOS_WORKER_IMAGE)"
+	DBOS_VERSION="$(mk_release_env_get "$MANIFEST" UNORAG_DBOS_APPLICATION_VERSION)"
+	mk_release_assert_image UNORAG_WEB_IMAGE "$WEB_IMAGE" digest
+	mk_release_assert_image UNORAG_WEB_MIGRATOR_IMAGE "$MIGRATOR_IMAGE" digest
+	mk_release_assert_image UNORAG_WEB_OPS_IMAGE "$OPS_IMAGE" digest
+	mk_release_assert_image UNORAG_DBOS_WORKER_IMAGE "$WORKER_IMAGE" digest
+	mk_release_assert_dbos_version "$DBOS_VERSION"
+	mk_release_write_runtime_pins \
+		"$RUNTIME_ENV" "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION"
+fi
 
 runtime_compose() {
 	if [[ "$WITH_LANGFUSE" -eq 1 ]]; then
@@ -92,8 +116,13 @@ fi
 
 HTTP_PORT="$(mk_config_get HTTP_PORT || echo 80)"
 
-echo "==> building TypeScript runtime images"
-mk_compose build web migrate-web bootstrap inspect-lifecycle dbos-worker
+if [[ -n "$MANIFEST" ]]; then
+	echo "==> pulling four digest-pinned release images"
+	mk_compose pull web migrate-web bootstrap dbos-worker
+else
+	echo "==> building TypeScript runtime images"
+	mk_compose build web migrate-web bootstrap inspect-lifecycle dbos-worker
+fi
 
 echo "==> starting PostgreSQL, Qdrant, and Redis"
 mk_compose up -d --wait postgres qdrant redis
