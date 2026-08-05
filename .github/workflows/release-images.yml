@@ -99,6 +99,7 @@ jobs:
 
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "dbos_version=unorag-${GITHUB_SHA::16}" >> "${GITHUB_OUTPUT}"
+          echo "image_platform=linux/amd64" >> "${GITHUB_OUTPUT}"
           echo "dry_run=${dry_run}" >> "${GITHUB_OUTPUT}"
           echo "Resolved tag=${tag} dbos_version=unorag-${GITHUB_SHA::16} dry_run=${dry_run}"
 
@@ -138,6 +139,7 @@ jobs:
           context: .
           file: deploy/docker/web.Dockerfile
           target: runner
+          platforms: linux/amd64
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.web_tags }}
@@ -149,6 +151,7 @@ jobs:
           context: .
           file: deploy/docker/web.Dockerfile
           target: migrator
+          platforms: linux/amd64
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.migrator_tags }}
@@ -160,6 +163,7 @@ jobs:
           context: .
           file: deploy/docker/web.Dockerfile
           target: ops
+          platforms: linux/amd64
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.ops_tags }}
@@ -171,6 +175,7 @@ jobs:
           context: .
           file: deploy/docker/web.Dockerfile
           target: worker
+          platforms: linux/amd64
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.worker_tags }}
@@ -216,6 +221,7 @@ jobs:
           DRY_RUN: ${{ steps.meta.outputs.dry_run }}
           TAG: ${{ steps.meta.outputs.tag }}
           DBOS_VERSION: ${{ steps.meta.outputs.dbos_version }}
+          IMAGE_PLATFORM: ${{ steps.meta.outputs.image_platform }}
           ACR_REPO: ${{ steps.meta.outputs.acr_repo }}
           GHCR_REPO: ${{ steps.meta.outputs.ghcr_repo }}
           WEB_DIGEST: ${{ steps.web.outputs.digest }}
@@ -233,6 +239,7 @@ jobs:
           UNORAG_WEB_OPS_IMAGE=unorag-web-ops:${TAG}
           UNORAG_DBOS_WORKER_IMAGE=unorag-web-worker:${TAG}
           UNORAG_DBOS_APPLICATION_VERSION=${DBOS_VERSION}
+          UNORAG_IMAGE_PLATFORM=${IMAGE_PLATFORM}
           EOF
           else
             for digest in "${WEB_DIGEST}" "${OPS_DIGEST}" "${WORKER_DIGEST}" "${MIGRATOR_DIGEST}"; do
@@ -244,6 +251,7 @@ jobs:
           UNORAG_WEB_OPS_IMAGE=${ACR_REPO}@${OPS_DIGEST}
           UNORAG_DBOS_WORKER_IMAGE=${ACR_REPO}@${WORKER_DIGEST}
           UNORAG_DBOS_APPLICATION_VERSION=${DBOS_VERSION}
+          UNORAG_IMAGE_PLATFORM=${IMAGE_PLATFORM}
           EOF
             cat > /tmp/unorag-release/release-ghcr.env <<EOF
           UNORAG_WEB_IMAGE=${GHCR_REPO}@${WEB_DIGEST}
@@ -251,6 +259,7 @@ jobs:
           UNORAG_WEB_OPS_IMAGE=${GHCR_REPO}@${OPS_DIGEST}
           UNORAG_DBOS_WORKER_IMAGE=${GHCR_REPO}@${WORKER_DIGEST}
           UNORAG_DBOS_APPLICATION_VERSION=${DBOS_VERSION}
+          UNORAG_IMAGE_PLATFORM=${IMAGE_PLATFORM}
           EOF
           fi
 

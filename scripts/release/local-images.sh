@@ -162,8 +162,13 @@ write_manifest() {
 	local mode="$2" # local | registry
 	mkdir -p "$out"
 	local web_ref mig_ref ops_ref worker_ref web_d mig_d ops_d worker_d
-	local env_file json_file dbos_version
+	local env_file json_file dbos_version image_platform
 	dbos_version="$(dbos_application_version)"
+	if [[ -n "$PLATFORM" ]]; then
+		image_platform="$PLATFORM"
+	else
+		image_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$(local_web)")"
+	fi
 
 	if [[ "$mode" == "registry" ]]; then
 		web_ref="$(remote_web)"
@@ -195,6 +200,7 @@ UNORAG_WEB_MIGRATOR_IMAGE=${repo}@${mig_d}
 UNORAG_WEB_OPS_IMAGE=${repo}@${ops_d}
 UNORAG_DBOS_WORKER_IMAGE=${repo}@${worker_d}
 UNORAG_DBOS_APPLICATION_VERSION=${dbos_version}
+UNORAG_IMAGE_PLATFORM=${image_platform}
 EOF
 	else
 		cat >"$env_file" <<EOF
@@ -203,6 +209,7 @@ UNORAG_WEB_MIGRATOR_IMAGE=${mig_ref}
 UNORAG_WEB_OPS_IMAGE=${ops_ref}
 UNORAG_DBOS_WORKER_IMAGE=${worker_ref}
 UNORAG_DBOS_APPLICATION_VERSION=${dbos_version}
+UNORAG_IMAGE_PLATFORM=${image_platform}
 EOF
 	fi
 
@@ -210,7 +217,7 @@ EOF
 {
   "tag": "${TAG}",
   "git_sha": "$(git rev-parse HEAD 2>/dev/null || echo unknown)",
-  "platform": "${PLATFORM:-local}",
+  "platform": "${image_platform}",
   "mode": "${mode}",
   "dbos_application_version": "${dbos_version}",
   "images": {
