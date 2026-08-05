@@ -110,7 +110,11 @@ services:
     image: ${LOKI_IMAGE:-grafana/loki:3.5.3}
     user: "0:0"
     entrypoint: ["sh", "-c"]
-    command: ["chown -R 10001:10001 /var/loki"]
+    command:
+      - >-
+        if [ "$$(stat -c '%u:%g' /var/loki)" != "10001:10001" ]; then
+          chown -R 10001:10001 /var/loki;
+        fi
     volumes:
       - loki_data:/var/loki
     network_mode: none

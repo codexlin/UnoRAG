@@ -74,6 +74,7 @@ test("deployment probes keep liveness separate from dependency readiness", async
 	]);
 
 	assert.match(compose, /\/api\/rag\/health\/live/);
+	assert.match(compose, /\/api\/rag\/health\/live[\s\S]*\/api\/rag\/health/);
 	assert.match(helmValues, /readinessProbe:[\s\S]*\/api\/rag\/health\/ready/);
 	assert.match(helmValues, /livenessProbe:[\s\S]*\/api\/rag\/health\/live/);
 	assert.match(upgrade, /\/api\/rag\/health\/ready/);

@@ -137,7 +137,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "curl -fsS http://127.0.0.1:3000/api/rag/health/live >/dev/null || exit 1",
+          "curl -fsS http://127.0.0.1:3000/api/rag/health/live >/dev/null || curl -fsS http://127.0.0.1:3000/api/rag/health >/dev/null || exit 1",
         ]
       interval: 10s
       timeout: 5s

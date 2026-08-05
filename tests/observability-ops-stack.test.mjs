@@ -47,6 +47,10 @@ test("Compose Ops Stack is opt-in, private, bounded, and credential-safe", () =>
 	assert.match(ops, /mem_limit:/);
 	assert.match(ops, /cap_drop: \["ALL"\]/);
 	assert.match(ops, /loki-storage-init:[\s\S]*cap_add: \["CHOWN"\]/);
+	assert.match(
+		ops,
+		/loki-storage-init:[\s\S]*stat -c '[^']*%u:%g[^']*'[\s\S]*chown -R 10001:10001/,
+	);
 });
 
 test("edge blocks product metrics while Prometheus scrapes them internally", () => {
