@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+	observeAskCompletion,
 	observeWebRequest,
 	renderPrometheusMetrics,
 	resetPrometheusMetricsForTests,
@@ -60,6 +61,47 @@ test("renders low-cardinality Ask and Retrieve counters and latency histograms",
 	}
 });
 
+test("renders bounded Ask quality aggregates without resource identifiers", () => {
+	observeAskCompletion({
+		queryType: "fact",
+		retrievalMode: "hybrid",
+		outcome: "answered",
+		citationCount: 2,
+		retrievedEvidenceCount: 8,
+		selectedEvidenceCount: 2,
+	});
+	observeAskCompletion({
+		queryType: "future-route",
+		retrievalMode: "future-mode",
+		outcome: "refused",
+		citationCount: 0,
+		retrievedEvidenceCount: 0,
+		selectedEvidenceCount: 0,
+	});
+
+	const output = renderPrometheusMetrics();
+	assert.match(
+		output,
+		/unorag_ask_completions_total\{query_type="fact",retrieval_mode="hybrid",outcome="answered"\} 1/,
+	);
+	assert.match(
+		output,
+		/unorag_ask_with_citations_total\{query_type="fact",retrieval_mode="hybrid",outcome="answered"\} 1/,
+	);
+	assert.match(
+		output,
+		/unorag_ask_retrieved_evidence_total\{query_type="fact",retrieval_mode="hybrid",outcome="answered"\} 8/,
+	);
+	assert.match(
+		output,
+		/unorag_ask_selected_evidence_total\{query_type="fact",retrieval_mode="hybrid",outcome="answered"\} 2/,
+	);
+	assert.match(
+		output,
+		/unorag_ask_completions_total\{query_type="unknown",retrieval_mode="unknown",outcome="refused"\} 1/,
+	);
+});
+
 test("rejects values outside the bounded label and duration contracts", () => {
 	assert.throws(
 		() =>
@@ -87,5 +129,17 @@ test("rejects values outside the bounded label and duration contracts", () => {
 				durationMs: Number.NaN,
 			}),
 		/finite non-negative/,
+	);
+	assert.throws(
+		() =>
+			observeAskCompletion({
+				queryType: "fact",
+				retrievalMode: "dense",
+				outcome: "answered",
+				citationCount: -1,
+				retrievedEvidenceCount: 0,
+				selectedEvidenceCount: 0,
+			}),
+		/non-negative integer/,
 	);
 });

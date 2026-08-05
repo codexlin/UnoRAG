@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -66,6 +66,58 @@ test("edge blocks product metrics while Prometheus scrapes them internally", () 
 		read("deploy/compose/observability/prometheus.yaml"),
 		/targets: \[otel-collector:9464\]/,
 	);
+});
+
+test("Grafana provisions five focused dashboards backed by real signal contracts", () => {
+	const directory = path.join(
+		root,
+		"deploy/compose/observability/grafana/dashboards",
+	);
+	const files = readdirSync(directory).filter((file) => file.endsWith(".json"));
+	assert.equal(files.length, 5);
+	const dashboards = files.map((file) =>
+		JSON.parse(readFileSync(path.join(directory, file), "utf8")),
+	);
+	assert.deepEqual(
+		new Set(dashboards.map((dashboard) => dashboard.uid)),
+		new Set([
+			"unorag-operations",
+			"unorag-rag-quality",
+			"unorag-ingestion-parser",
+			"unorag-lifecycle-dbos",
+			"unorag-infrastructure",
+		]),
+	);
+	const serialized = JSON.stringify(dashboards);
+	for (const signal of [
+		"unorag_ask_completions_total",
+		"parser.provider.attempt",
+		"dbos.control.tick",
+		"otelcol_receiver_accepted_spans_total",
+	]) {
+		assert.match(serialized, new RegExp(signal.replaceAll(".", "\\.")));
+	}
+	for (const forbidden of [
+		'"question"',
+		'"answer"',
+		'"prompt"',
+		"document_id",
+	]) {
+		assert.equal(serialized.toLowerCase().includes(forbidden), false);
+	}
+	const logger = read("src/lib/observability/logger.ts");
+	for (const projectedField of [
+		"parserprovider",
+		"parseroperation",
+		"querytype",
+		"retrievalmode",
+		"citationcount",
+		"errorcode",
+		"httpstatus",
+		"retrydelayms",
+	]) {
+		assert.match(logger, new RegExp(`"${projectedField}"`));
+	}
 });
 
 test("Collector strips sensitive content and exports only traces and logs", () => {

@@ -1,0 +1,45 @@
+{
+  "annotations": { "list": [] }, "editable": false, "graphTooltip": 1,
+  "links": [{ "asDropdown": true, "icon": "dashboard", "includeVars": true, "keepTime": true, "tags": ["unorag"], "targetBlank": false, "title": "UnoRAG dashboards", "type": "dashboards" }],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" }, "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 0 }, "id": 1,
+      "targets": [{ "expr": "up", "legendFormat": "{{job}} / {{instance}}", "refId": "A" }],
+      "title": "Metrics targets", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" }, "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 0 }, "id": 2,
+      "targets": [
+        { "expr": "sum(rate(otelcol_receiver_accepted_spans_total[$__rate_interval]))", "legendFormat": "accepted spans/s", "refId": "A" },
+        { "expr": "sum(rate(otelcol_receiver_accepted_log_records_total[$__rate_interval]))", "legendFormat": "accepted logs/s", "refId": "B" }
+      ],
+      "title": "Telemetry ingress", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" }, "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 0 }, "id": 3,
+      "targets": [
+        { "expr": "sum by (exporter) (rate(otelcol_exporter_send_failed_spans_total[$__rate_interval]))", "legendFormat": "{{exporter}} spans", "refId": "A" },
+        { "expr": "sum by (exporter) (rate(otelcol_exporter_send_failed_log_records_total[$__rate_interval]))", "legendFormat": "{{exporter}} logs", "refId": "B" }
+      ],
+      "title": "Telemetry export failures", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" }, "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 7 }, "id": 4,
+      "targets": [{ "expr": "otelcol_process_memory_rss", "legendFormat": "collector RSS", "refId": "A" }],
+      "title": "Collector memory", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" }, "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 7 }, "id": 5,
+      "targets": [{ "expr": "rate(otelcol_process_cpu_seconds_total[$__rate_interval])", "legendFormat": "collector CPU", "refId": "A" }],
+      "title": "Collector CPU", "type": "timeseries"
+    }
+  ],
+  "refresh": "30s", "schemaVersion": 41, "tags": ["unorag", "infrastructure"],
+  "templating": { "list": [] }, "time": { "from": "now-6h", "to": "now" }, "timezone": "browser",
+  "title": "UnoRAG Infrastructure", "uid": "unorag-infrastructure", "version": 1
+}

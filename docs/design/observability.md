@@ -188,6 +188,11 @@ Ops Stack 随官方部署包提供，但不默认启动，适合有运维团队�
 - Tempo：跨 Web、Worker、Provider、Qdrant 等组件的分布式 Trace；
 - Alertmanager：细粒度告警、抑制、分组和升级。
 
+Grafana 预置五张按职责拆分的看板：Operations Overview、RAG Quality、Ingestion and Parser、
+Lifecycle and DBOS、Infrastructure。质量趋势来自低基数 Prometheus 指标；ParserProvider 重试、错误分类
+和 DBOS 生命周期来自隐私安全的结构化事件；单次请求细节通过同一 Trace ID 进入 Tempo。看板不保存
+问题、答案、Prompt 或检索正文。
+
 Compose 部署接口：
 
 ```bash
@@ -302,9 +307,10 @@ DBOS 排队可能持续很久，任务也可能重试或恢复，因此不得构
 
 - 已实现管理员原生运行中心、组件健康和持久告警状态机；
 - 已暴露低基数 `/metrics`；
+- 已暴露按封闭 query type、retrieval mode 和终态聚合的 Citation/证据选择质量指标；
 - 已增加 stale-running sweeper、按用户删除和正式保留调度；
 - 已提供默认关闭的持久 Webhook/邮件投递、去重、lease、退避和恢复通知；
-- Provider 真实调用的被动时间序列与按 ID 搜索仍归入 Phase 2 的 Trace/集中日志能力。
+- Provider 真实调用的被动时间序列由 Ops Stack 的集中日志与 Trace 提供。
 
 验收：不部署任何外部观测组件，也能定位一次 Ask、一次失败入库和一个 dead/stuck workflow；公共 API
 不泄漏内部调试信息；跨 Workspace 诊断数据零泄漏。
@@ -314,7 +320,7 @@ DBOS 排队可能持续很久，任务也可能重试或恢复，因此不得构
 - 接入 OTel SDK 和 Collector；
 - 打通 Web、DBOS Worker、Provider、Qdrant 的 Span；异步 enqueue 到 attempt 的显式 Span Link
   仍可在后续增强；
-- 提供 Prometheus/Grafana、Loki/Tempo、Alertmanager 可选部署包；
+- 提供 Prometheus/Grafana 五件套看板、Loki/Tempo、Alertmanager 可选部署包；
 - 提供进程资源限制、采样、保留、认证和外部 exporter 配置；磁盘配额由部署基础设施负责。
 
 验收：Compose/Helm 配置契约、隐私 allowlist、内部网络、回环 Grafana、独立 exporter 开关均已有

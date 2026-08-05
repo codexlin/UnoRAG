@@ -2,6 +2,9 @@
   "annotations": { "list": [] },
   "editable": false,
   "graphTooltip": 1,
+  "links": [
+    { "asDropdown": true, "icon": "dashboard", "includeVars": true, "keepTime": true, "tags": ["unorag"], "targetBlank": false, "title": "UnoRAG dashboards", "type": "dashboards" }
+  ],
   "panels": [
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },

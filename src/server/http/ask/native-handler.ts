@@ -31,6 +31,7 @@ import {
 	createAskRunsRepository,
 } from "@/server/observability/ask-runs-repository";
 import {
+	observeAskCompletion,
 	observeWebRequest,
 	type WebMetricOutcome,
 } from "@/server/observability/metrics";
@@ -344,6 +345,12 @@ function retrievalMode(state: AskState): string {
 	return typeof mode === "string" ? mode : "dense";
 }
 
+function metricCount(value: unknown, fallback: number): number {
+	return Number.isSafeInteger(value) && Number(value) >= 0
+		? Number(value)
+		: fallback;
+}
+
 async function finalizeAskRun(input: {
 	run: ActiveAskRun;
 	state?: AskState;
@@ -507,14 +514,46 @@ async function handleNativeAskRequestInSpan(input: {
 }): Promise<Response | null> {
 	const metricsStartedAt = performance.now();
 	let metricsSettled = false;
+	let activeState: AskState | undefined;
 	const settleMetrics = (outcome: WebMetricOutcome) => {
 		if (input.observeMetrics === false || metricsSettled) return;
 		metricsSettled = true;
+		const durationMs = Math.max(0, performance.now() - metricsStartedAt);
 		observeWebRequest({
 			operation: "ask",
 			outcome,
-			durationMs: Math.max(0, performance.now() - metricsStartedAt),
+			durationMs,
 		});
+		if ((outcome === "success" || outcome === "refused") && activeState) {
+			const debug = activeState.retrieval_debug ?? {};
+			const citationCount = activeState.citations?.length ?? 0;
+			const retrievedEvidenceCount = metricCount(
+				debug.retrieved_evidence_count,
+				citationCount,
+			);
+			const selectedEvidenceCount = metricCount(
+				debug.selected_evidence_count,
+				citationCount,
+			);
+			observeAskCompletion({
+				queryType: activeState.query_type,
+				retrievalMode: retrievalMode(activeState),
+				outcome: outcome === "refused" ? "refused" : "answered",
+				citationCount,
+				retrievedEvidenceCount,
+				selectedEvidenceCount,
+			});
+			logger.info({
+				event: "ask.completed",
+				outcome,
+				query_type: activeState.query_type ?? "unknown",
+				retrieval_mode: retrievalMode(activeState),
+				citation_count: citationCount,
+				retrieved_evidence_count: retrievedEvidenceCount,
+				selected_evidence_count: selectedEvidenceCount,
+				duration_ms: Math.round(durationMs),
+			});
+		}
 	};
 	if (input.request.method !== "POST") {
 		settleMetrics("client_error");
@@ -523,7 +562,6 @@ async function handleNativeAskRequestInSpan(input: {
 	const repository =
 		input.repository ?? new ConversationRepository(getDatabase());
 	let activeRun: ActiveAskRun | undefined;
-	let activeState: AskState | undefined;
 	const settleActiveRun = async (
 		status: "completed" | "refused" | "failed" | "cancelled",
 		state?: AskState,
