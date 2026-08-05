@@ -9,6 +9,18 @@ import { type DocumentIR, DocumentIRSchema } from "../document-ir";
 import type { DurableParserProvider } from "./http-parser-provider";
 import { ParserRouter } from "./parser-router";
 
+export type ParserProviderOperation = "submit" | "poll" | "fetch";
+export type ParserProviderAttempt = Readonly<{
+	provider: string;
+	operation: ParserProviderOperation;
+	attempt: number;
+	outcome: "success" | "retry" | "failed";
+	durationMs: number;
+	errorCode?: string;
+	httpStatus?: number;
+	retryDelayMs?: number;
+}>;
+
 export type PdfParsePolicy = {
 	deploymentPolicy: "strict-private" | "private-preferred" | "cloud-allowed";
 	externalParserAllowed: boolean;
@@ -32,15 +44,24 @@ export type PdfDocumentParserOptions = {
 	externalParserAllowed?: boolean;
 	pollIntervalMs?: number;
 	maxWaitMs?: number;
+	retryBackoffMs?: readonly number[];
+	random?: () => number;
+	onProviderAttempt?: (attempt: ParserProviderAttempt) => void;
 };
 
 export class PdfDocumentParser {
 	private readonly pollIntervalMs: number;
 	private readonly maxWaitMs: number;
+	private readonly retryBackoffMs: readonly number[];
+	private readonly random: () => number;
 
 	constructor(private readonly options: PdfDocumentParserOptions) {
 		this.pollIntervalMs = positiveInteger(options.pollIntervalMs, 250);
 		this.maxWaitMs = positiveInteger(options.maxWaitMs, 15 * 60_000);
+		this.retryBackoffMs = options.retryBackoffMs ?? [
+			2_000, 5_000, 15_000, 30_000,
+		];
+		this.random = options.random ?? Math.random;
 	}
 
 	async parse(input: ParsePdfInput): Promise<DocumentIR> {
@@ -78,6 +99,9 @@ export class PdfDocumentParser {
 			assertContinuing: input.assertContinuing,
 			pollIntervalMs: this.pollIntervalMs,
 			maxWaitMs: this.maxWaitMs,
+			retryBackoffMs: this.retryBackoffMs,
+			random: this.random,
+			onProviderAttempt: this.options.onProviderAttempt,
 		});
 		return normalizeResult(result, input);
 	}
@@ -91,17 +115,26 @@ type ExecuteProviderInput = {
 	assertContinuing?: () => Promise<void>;
 	pollIntervalMs: number;
 	maxWaitMs: number;
+	retryBackoffMs: readonly number[];
+	random: () => number;
+	onProviderAttempt?: (attempt: ParserProviderAttempt) => void;
 };
 
 async function executeProvider(
 	provider: DurableParserProvider,
 	input: ExecuteProviderInput,
 ): Promise<ParseResult> {
-	const submission = await provider.submit(input.input, {
-		externalParserAllowed: input.externalParserAllowed,
-		idempotencyKey: input.idempotencyKey,
-		requestId: input.requestId,
-	});
+	const submission = await retryProviderOperation(
+		provider,
+		"submit",
+		input,
+		() =>
+			provider.submit(input.input, {
+				externalParserAllowed: input.externalParserAllowed,
+				idempotencyKey: input.idempotencyKey,
+				requestId: input.requestId,
+			}),
+	);
 	const task: ProviderTask = {
 		providerTaskId: submission.providerTaskId,
 		documentId: input.input.documentId,
@@ -118,7 +151,13 @@ async function executeProvider(
 					true,
 				);
 			}
-			const progress = await provider.poll(task);
+			const progress = await retryProviderOperation(
+				provider,
+				"poll",
+				input,
+				() => provider.poll(task),
+				deadline,
+			);
 			status = progress.status;
 			if (status === "failed") {
 				throw parserError(
@@ -145,11 +184,113 @@ async function executeProvider(
 			}
 		}
 		await input.assertContinuing?.();
-		return provider.fetchResult(task);
+		return retryProviderOperation(
+			provider,
+			"fetch",
+			input,
+			() => provider.fetchResult(task),
+			deadline,
+		);
 	} catch (error) {
-		await provider.cancel(task).catch(() => undefined);
+		if (!retryMetadata(error).retryable) {
+			await provider.cancel(task).catch(() => undefined);
+		}
 		throw error;
 	}
+}
+
+async function retryProviderOperation<T>(
+	provider: DurableParserProvider,
+	operation: ParserProviderOperation,
+	input: ExecuteProviderInput,
+	run: () => Promise<T>,
+	deadline?: number,
+): Promise<T> {
+	for (let attempt = 1; ; attempt += 1) {
+		await input.assertContinuing?.();
+		if (deadline !== undefined && Date.now() >= deadline) {
+			throw parserError(
+				"provider_timeout",
+				`${provider.name} exceeded its parser workflow timeout`,
+				true,
+			);
+		}
+		const startedAt = performance.now();
+		try {
+			const result = await run();
+			input.onProviderAttempt?.({
+				provider: provider.name,
+				operation,
+				attempt,
+				outcome: "success",
+				durationMs: elapsedMilliseconds(startedAt),
+			});
+			return result;
+		} catch (error) {
+			const metadata = retryMetadata(error);
+			const canRetry =
+				metadata.retryable && attempt <= input.retryBackoffMs.length;
+			const delayMs = canRetry
+				? retryDelay(
+						input.retryBackoffMs[attempt - 1] ?? 0,
+						metadata.retryAfterMs,
+						input.random,
+					)
+				: undefined;
+			input.onProviderAttempt?.({
+				provider: provider.name,
+				operation,
+				attempt,
+				outcome: canRetry ? "retry" : "failed",
+				durationMs: elapsedMilliseconds(startedAt),
+				errorCode: metadata.code,
+				httpStatus: metadata.status ?? undefined,
+				retryDelayMs: delayMs,
+			});
+			if (!canRetry) throw error;
+			const boundedDelay =
+				deadline === undefined
+					? (delayMs ?? 0)
+					: Math.min(delayMs ?? 0, Math.max(0, deadline - Date.now()));
+			await cancellableDelay(boundedDelay, input.assertContinuing);
+		}
+	}
+}
+
+function retryMetadata(error: unknown): {
+	code: string;
+	retryable: boolean;
+	status: number | null;
+	retryAfterMs?: number;
+} {
+	if (!error || typeof error !== "object") {
+		return { code: "provider_unknown_error", retryable: false, status: null };
+	}
+	const value = error as Record<string, unknown>;
+	return {
+		code:
+			typeof value.code === "string" ? value.code : "provider_unknown_error",
+		retryable: value.retryable === true,
+		status: typeof value.status === "number" ? value.status : null,
+		retryAfterMs:
+			typeof value.retryAfterMs === "number" && value.retryAfterMs >= 0
+				? value.retryAfterMs
+				: undefined,
+	};
+}
+
+function retryDelay(
+	backoffMs: number,
+	retryAfterMs: number | undefined,
+	random: () => number,
+): number {
+	if (retryAfterMs !== undefined) return retryAfterMs;
+	const jitter = 0.8 + Math.min(1, Math.max(0, random())) * 0.4;
+	return Math.round(backoffMs * jitter);
+}
+
+function elapsedMilliseconds(startedAt: number): number {
+	return Math.max(0, Math.round((performance.now() - startedAt) * 100) / 100);
 }
 
 function normalizeResult(

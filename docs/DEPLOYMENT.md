@@ -94,6 +94,11 @@ MINERU_API_KEY=...
 
 `local_only` 文库策略始终禁止云端解析。外部处理开关关闭时，路由器不得选择 302.AI。
 
+部署管理员可通过 `PARSER_POLL_INTERVAL_MS`、`PARSER_MAX_WAIT_MS` 和逗号分隔的
+`PARSER_RETRY_BACKOFF_MS` 调整解析任务轮询、总等待时间与瞬时故障退避。submit 重试复用同一
+idempotency key，poll/fetch 重试复用同一远端 task；401/403 等永久错误不重试，429 优先服从
+`Retry-After`。这些参数是部署能力，不进入 Workspace 或文库设置。
+
 ## 健康检查
 
 ```bash

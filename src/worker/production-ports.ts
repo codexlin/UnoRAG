@@ -15,6 +15,7 @@ import {
 	QdrantCollectionManager,
 } from "../core/retrieval/qdrant/collection-manager";
 import { observePostgresPoolErrors } from "../db/pool-observability";
+import { logger } from "../lib/observability";
 import type { WorkerRuntimeConfig } from "./config";
 import type { GenerationCleanupJob } from "./contracts";
 import { DocumentAclProjectionOperations } from "./document-acl-projection";
@@ -737,6 +738,26 @@ export async function createWorkerPorts(
 		externalParserAllowed,
 		pollIntervalMs: positiveInteger("PARSER_POLL_INTERVAL_MS", 250),
 		maxWaitMs: positiveInteger("PARSER_MAX_WAIT_MS", 15 * 60_000),
+		retryBackoffMs: parserRetryBackoff(),
+		onProviderAttempt(attempt) {
+			logger[
+				attempt.outcome === "failed"
+					? "error"
+					: attempt.outcome === "retry"
+						? "warn"
+						: "info"
+			]({
+				event: "parser.provider.attempt",
+				parser_provider: attempt.provider,
+				parser_operation: attempt.operation,
+				attempt: attempt.attempt,
+				outcome: attempt.outcome,
+				duration_ms: attempt.durationMs,
+				error_code: attempt.errorCode,
+				http_status: attempt.httpStatus,
+				retry_delay_ms: attempt.retryDelayMs,
+			});
+		},
 	});
 	ports.documentIngest = {
 		transactions: new PostgresDocumentIngestTransactions(pool),
@@ -749,6 +770,24 @@ export async function createWorkerPorts(
 		),
 	};
 	return ports;
+}
+
+function parserRetryBackoff(): readonly number[] {
+	const raw = process.env.PARSER_RETRY_BACKOFF_MS?.trim();
+	if (!raw) return [2_000, 5_000, 15_000, 30_000];
+	const values = raw.split(",").map((value) => Number(value.trim()));
+	if (
+		values.length === 0 ||
+		values.length > 8 ||
+		values.some(
+			(value) => !Number.isInteger(value) || value < 0 || value > 300_000,
+		)
+	) {
+		throw new Error(
+			"PARSER_RETRY_BACKOFF_MS must contain 1-8 comma-separated milliseconds",
+		);
+	}
+	return values;
 }
 
 function enabled(name: string, fallback: boolean): boolean {

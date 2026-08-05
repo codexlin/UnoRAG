@@ -14,6 +14,7 @@ import {
 	type DurableParserProvider,
 	PdfDocumentParser,
 } from "../../src/core/parsing";
+import { ParserProviderHttpError } from "../../src/core/parsing/http-parser-provider";
 
 const parseInput: ParseInput = {
 	documentId: "document-1",
@@ -133,7 +134,7 @@ test("PDF parser cancels the provider task when the ingest cohort is cancelled",
 				},
 				async assertContinuing() {
 					continuationChecks += 1;
-					if (continuationChecks >= 3) throw new Error("job cancelled");
+					if (continuationChecks >= 5) throw new Error("job cancelled");
 				},
 			}),
 		/job cancelled/,
@@ -143,6 +144,133 @@ test("PDF parser cancels the provider task when the ingest cohort is cancelled",
 	assert.ok(calls.includes("liteparse:cancel"));
 	assert.ok(!calls.includes("liteparse:fetch"));
 });
+
+test("PDF parser retries transient submit failures with the same idempotency key", async () => {
+	const calls: string[] = [];
+	const attempts: Array<{ outcome: string; operation: string }> = [];
+	const liteParse = provider("liteparse", { tables: false, calls });
+	let submissions = 0;
+	const keys: string[] = [];
+	liteParse.submit = async (_input, options) => {
+		submissions += 1;
+		keys.push(options.idempotencyKey);
+		if (submissions === 1) {
+			throw new ParserProviderHttpError({
+				message: "busy",
+				code: "provider_service_error",
+				retryable: true,
+				status: 503,
+			});
+		}
+		return {
+			providerTaskId: "stable-task",
+			status: "completed",
+			submittedAt: new Date(0).toISOString(),
+		};
+	};
+	const parser = new PdfDocumentParser({
+		liteParse,
+		retryBackoffMs: [0],
+		random: () => 0.5,
+		onProviderAttempt: (attempt) => attempts.push(attempt),
+	});
+
+	await parser.parse(parseRequest("ingest-retry-submit"));
+
+	assert.equal(submissions, 2);
+	assert.equal(new Set(keys).size, 1);
+	assert.deepEqual(
+		attempts.map(({ operation, outcome }) => [operation, outcome]),
+		[
+			["submit", "retry"],
+			["submit", "success"],
+			["fetch", "success"],
+		],
+	);
+});
+
+test("PDF parser retries polling without cancelling or resubmitting the remote task", async () => {
+	const calls: string[] = [];
+	const liteParse = provider("liteparse", { tables: false, calls });
+	let polls = 0;
+	liteParse.submit = async () => ({
+		providerTaskId: "stable-task",
+		status: "running",
+		submittedAt: new Date(0).toISOString(),
+	});
+	liteParse.poll = async () => {
+		polls += 1;
+		if (polls === 1) {
+			throw new ParserProviderHttpError({
+				message: "rate limited",
+				code: "provider_rate_limited",
+				retryable: true,
+				status: 429,
+				retryAfterMs: 0,
+			});
+		}
+		return { status: "completed" };
+	};
+	const parser = new PdfDocumentParser({
+		liteParse,
+		retryBackoffMs: [0],
+		pollIntervalMs: 1,
+		maxWaitMs: 100,
+	});
+
+	await parser.parse(parseRequest("ingest-retry-poll"));
+
+	assert.equal(polls, 2);
+	assert.ok(!calls.includes("liteparse:cancel"));
+});
+
+test("PDF parser bounds provider retry delays by the workflow deadline", async () => {
+	const calls: string[] = [];
+	const liteParse = provider("liteparse", { tables: false, calls });
+	liteParse.submit = async () => ({
+		providerTaskId: "slow-task",
+		status: "running",
+		submittedAt: new Date(0).toISOString(),
+	});
+	liteParse.poll = async () => {
+		throw new ParserProviderHttpError({
+			message: "rate limited",
+			code: "provider_rate_limited",
+			retryable: true,
+			status: 429,
+			retryAfterMs: 60_000,
+		});
+	};
+	const parser = new PdfDocumentParser({
+		liteParse,
+		retryBackoffMs: [60_000],
+		maxWaitMs: 10,
+	});
+	const startedAt = performance.now();
+
+	await assert.rejects(
+		() => parser.parse(parseRequest("ingest-retry-deadline")),
+		/exceeded its parser workflow timeout/,
+	);
+	assert.ok(performance.now() - startedAt < 500);
+	assert.ok(!calls.includes("liteparse:cancel"));
+});
+
+function parseRequest(idempotencyKey: string) {
+	return {
+		input: parseInput,
+		libraryId: "library-1",
+		title: "Contract",
+		idempotencyKey,
+		requestId: `request-${idempotencyKey}`,
+		policy: {
+			deploymentPolicy: "strict-private" as const,
+			externalParserAllowed: false,
+			parsePreference: "auto" as const,
+			scanHandling: "auto" as const,
+		},
+	};
+}
 
 function provider(
 	name: string,
