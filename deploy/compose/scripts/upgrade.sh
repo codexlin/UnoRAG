@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/compose-env.sh"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/release-env.sh"
 
 RUNTIME_ENV="$(cd "${ROOT}/../config" && pwd)/runtime.env"
 STATE_DIR="${ROOT}/.upgrade-state"
@@ -70,56 +72,19 @@ runtime_compose() {
 	fi
 }
 
-env_get() {
-	local file="$1" key="$2"
-	awk -F= -v key="$key" '
-		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-		$1 == key { value = substr($0, index($0, "=") + 1) }
-		END { if (value != "") print value }
-	' "$file"
-}
-
-assert_pinned() {
-	local name="$1" value="$2"
-	[[ -n "$value" ]] || die "$name is required"
-	[[ "$value" != "latest" && "$value" != *":latest" ]] || die "$name may not use latest"
-	[[ "$value" == *@sha256:* || "$value" == *:* ]] || die "$name must contain a tag or digest"
-}
-
 write_runtime_pins() {
-	local web="$1" migrator="$2" ops="$3" worker="$4" version="$5" tmp
-	tmp="$(mktemp)"
-	awk -F= \
-		-v web="$web" -v migrator="$migrator" -v ops="$ops" \
-		-v worker="$worker" -v version="$version" '
-		BEGIN { seen_web=seen_migrator=seen_ops=seen_worker=seen_version=0 }
-		$1 == "UNORAG_WEB_IMAGE" { print "UNORAG_WEB_IMAGE=" web; seen_web=1; next }
-		$1 == "UNORAG_WEB_MIGRATOR_IMAGE" { print "UNORAG_WEB_MIGRATOR_IMAGE=" migrator; seen_migrator=1; next }
-		$1 == "UNORAG_WEB_OPS_IMAGE" { print "UNORAG_WEB_OPS_IMAGE=" ops; seen_ops=1; next }
-		$1 == "UNORAG_DBOS_WORKER_IMAGE" { print "UNORAG_DBOS_WORKER_IMAGE=" worker; seen_worker=1; next }
-		$1 == "UNORAG_DBOS_APPLICATION_VERSION" { print "UNORAG_DBOS_APPLICATION_VERSION=" version; seen_version=1; next }
-		{ print }
-		END {
-			if (!seen_web) print "UNORAG_WEB_IMAGE=" web
-			if (!seen_migrator) print "UNORAG_WEB_MIGRATOR_IMAGE=" migrator
-			if (!seen_ops) print "UNORAG_WEB_OPS_IMAGE=" ops
-			if (!seen_worker) print "UNORAG_DBOS_WORKER_IMAGE=" worker
-			if (!seen_version) print "UNORAG_DBOS_APPLICATION_VERSION=" version
-		}
-	' "$RUNTIME_ENV" >"$tmp"
-	mv "$tmp" "$RUNTIME_ENV"
-	chmod 600 "$RUNTIME_ENV"
+	mk_release_write_runtime_pins "$RUNTIME_ENV" "$@"
 }
 
 capture_previous() {
 	mkdir -p "$STATE_DIR"
 	chmod 700 "$STATE_DIR"
 	{
-		echo "UNORAG_WEB_IMAGE=$(env_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE)"
-		echo "UNORAG_WEB_MIGRATOR_IMAGE=$(env_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
-		echo "UNORAG_WEB_OPS_IMAGE=$(env_get "$RUNTIME_ENV" UNORAG_WEB_OPS_IMAGE)"
-		echo "UNORAG_DBOS_WORKER_IMAGE=$(env_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE)"
-		echo "UNORAG_DBOS_APPLICATION_VERSION=$(env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+		echo "UNORAG_WEB_IMAGE=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE)"
+		echo "UNORAG_WEB_MIGRATOR_IMAGE=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
+		echo "UNORAG_WEB_OPS_IMAGE=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_OPS_IMAGE)"
+		echo "UNORAG_DBOS_WORKER_IMAGE=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE)"
+		echo "UNORAG_DBOS_APPLICATION_VERSION=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
 	} >"$PREVIOUS_ENV"
 	chmod 600 "$PREVIOUS_ENV"
 }
@@ -160,11 +125,11 @@ rollback_images() {
 			return 1
 		fi
 	fi
-	web="$(env_get "$PREVIOUS_ENV" UNORAG_WEB_IMAGE)"
-	migrator="$(env_get "$PREVIOUS_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
-	ops="$(env_get "$PREVIOUS_ENV" UNORAG_WEB_OPS_IMAGE)"
-	worker="$(env_get "$PREVIOUS_ENV" UNORAG_DBOS_WORKER_IMAGE)"
-	version="$(env_get "$PREVIOUS_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+	web="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_WEB_IMAGE)"
+	migrator="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
+	ops="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_WEB_OPS_IMAGE)"
+	worker="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_DBOS_WORKER_IMAGE)"
+	version="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
 	write_runtime_pins "$web" "$migrator" "$ops" "$worker" "$version"
 	runtime_compose up -d --no-deps dbos-worker dbos-control web caddy || true
 }
@@ -222,27 +187,27 @@ fi
 
 if [[ -n "$MANIFEST" ]]; then
 	[[ -f "$MANIFEST" ]] || die "manifest not found: $MANIFEST"
-	WEB_IMAGE="$(env_get "$MANIFEST" UNORAG_WEB_IMAGE)"
-	MIGRATOR_IMAGE="$(env_get "$MANIFEST" UNORAG_WEB_MIGRATOR_IMAGE)"
-	OPS_IMAGE="$(env_get "$MANIFEST" UNORAG_WEB_OPS_IMAGE)"
-	WORKER_IMAGE="$(env_get "$MANIFEST" UNORAG_DBOS_WORKER_IMAGE)"
-	DBOS_VERSION="$(env_get "$MANIFEST" UNORAG_DBOS_APPLICATION_VERSION)"
+	WEB_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_WEB_IMAGE)"
+	MIGRATOR_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_WEB_MIGRATOR_IMAGE)"
+	OPS_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_WEB_OPS_IMAGE)"
+	WORKER_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_DBOS_WORKER_IMAGE)"
+	DBOS_VERSION="$(mk_release_env_get "$MANIFEST" UNORAG_DBOS_APPLICATION_VERSION)"
 elif [[ $FROM_RUNTIME -eq 1 ]]; then
-	WEB_IMAGE="$(env_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE)"
-	MIGRATOR_IMAGE="$(env_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
-	OPS_IMAGE="$(env_get "$RUNTIME_ENV" UNORAG_WEB_OPS_IMAGE)"
-	WORKER_IMAGE="$(env_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE)"
-	DBOS_VERSION="$(env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+	WEB_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE)"
+	MIGRATOR_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
+	OPS_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_OPS_IMAGE)"
+	WORKER_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE)"
+	DBOS_VERSION="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
 fi
 
-CURRENT_DBOS_VERSION="$(env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+CURRENT_DBOS_VERSION="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
 CURRENT_DBOS_VERSION="${CURRENT_DBOS_VERSION:-lifecycle-v2}"
 DBOS_VERSION="${DBOS_VERSION:-$CURRENT_DBOS_VERSION}"
-assert_pinned UNORAG_WEB_IMAGE "$WEB_IMAGE"
-assert_pinned UNORAG_WEB_MIGRATOR_IMAGE "$MIGRATOR_IMAGE"
-assert_pinned UNORAG_WEB_OPS_IMAGE "$OPS_IMAGE"
-assert_pinned UNORAG_DBOS_WORKER_IMAGE "$WORKER_IMAGE"
-[[ "$DBOS_VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die "invalid DBOS version"
+mk_release_assert_image UNORAG_WEB_IMAGE "$WEB_IMAGE"
+mk_release_assert_image UNORAG_WEB_MIGRATOR_IMAGE "$MIGRATOR_IMAGE"
+mk_release_assert_image UNORAG_WEB_OPS_IMAGE "$OPS_IMAGE"
+mk_release_assert_image UNORAG_DBOS_WORKER_IMAGE "$WORKER_IMAGE"
+mk_release_assert_dbos_version "$DBOS_VERSION"
 if [[ "$DBOS_VERSION" != "$CURRENT_DBOS_VERSION" ]]; then
 	VERSION_CHANGED=1
 fi
