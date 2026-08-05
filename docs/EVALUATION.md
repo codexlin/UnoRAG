@@ -131,6 +131,13 @@ Publisher 使用官方 `@langfuse/client`，按每个评测 Session 写入：
 pnpm eval:stability
 ```
 
+稳定性 runner 将发布结论拆成两段：首轮创建临时知识库、上传全部真实文件并等待入库终态，作为
+**Ingest Reliability Gate**；随后三轮 Ask 复用同一个不可变知识库，作为 **Ask Stability Gate**。
+它不会为每轮重新调用 ParserProvider，也不会把 MinerU 等外部解析服务的偶发故障重复混入 Ask
+稳定性。正常结束、门禁失败、`SIGINT` 或 `SIGTERM` 后均统一删除临时知识库。
+总报告分别写入 `ingest_reliability_gate`、`ask_stability_gate` 和二者合取的 `release_gate`；任一门失败
+都禁止发布，但故障归属保持清晰。
+
 默认要求三轮中每个正例和拒答用例全部通过、`model_error` 为零、运行指纹完全一致，且任一轮 Ask
 延迟 P95 不超过 15 秒。运行指纹包含仓库 Git commit、工作树 clean 状态、运行镜像 ref/digest、模型
 名称及所有生产 Prompt 的版本和 digest；任一项缺失或工作树有未提交改动也会失败，避免对不可追溯
@@ -139,3 +146,6 @@ pnpm eval:stability
 可通过 `--rounds=N` 和 `--max-p95-ms=N` 调整轮数与环境延迟预算。稳定性报告写入
 `testdata/ab/_e2e_out/ab_stability_*.json|md`，逐题记录通过次数、失败轮次和 ingest、retrieval、
 judge、table_answer、generation 等失败阶段。退出码仍为 `0` 通过、`1` 质量门禁失败、`2` 环境阻塞。
+
+开发时可设置 `UNORAG_AB_LIBRARY_ID` 让单轮 `eval:live` 只对已有知识库执行 Ask；该模式从不删除调用方
+提供的知识库。`eval:stability` 不接受该变量，因为 RC runner 必须自己创建并清理可追溯语料。

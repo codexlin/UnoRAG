@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveStabilityOptions } from "../../scripts/run-ab-stability";
+import {
+	evaluateIngestReliability,
+	resolveStabilityOptions,
+} from "../../scripts/run-ab-stability";
 import { summarizeStability } from "../../src/evaluation/stability";
 
 const FINGERPRINT = Object.freeze({
@@ -99,6 +102,25 @@ test("three identical passing rounds satisfy the stability gate", () => {
 		summary.cases.every((item) => item.passCount === 3),
 		true,
 	);
+});
+
+test("ingest reliability is reported independently from Ask stability", () => {
+	assert.deepEqual(
+		evaluateIngestReliability({
+			jobs: {
+				"ready.pdf": { status: "completed" },
+				"failed.pdf": { status: "dead" },
+			},
+		}),
+		{
+			ok: false,
+			failures: ["failed.pdf: ingest status dead"],
+		},
+	);
+	assert.deepEqual(evaluateIngestReliability({}), {
+		ok: false,
+		failures: ["ingest report contains no jobs"],
+	});
 });
 
 test("a table-answer regression is reported as a flaky release blocker", () => {

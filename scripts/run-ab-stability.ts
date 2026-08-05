@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { summarizeStability } from "../src/evaluation/stability";
 import {
+	cleanupEvaluationLibrary,
 	resolveRunnerOptions,
 	runLiveEvaluation,
 } from "./run-ab-live-e2e";
@@ -13,6 +14,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT_DIR = resolve(ROOT, "testdata/ab/_e2e_out");
 
 type JsonObject = Record<string, unknown>;
+type Gate = { ok: boolean; failures: string[] };
 
 function positiveInteger(value: string | undefined, fallback: number): number {
 	if (!value) return fallback;
@@ -57,9 +59,26 @@ function object(value: unknown): JsonObject {
 		: {};
 }
 
+export function evaluateIngestReliability(report: JsonObject): Gate {
+	const jobs = object(report.jobs);
+	const entries = Object.entries(jobs);
+	if (entries.length === 0) {
+		return { ok: false, failures: ["ingest report contains no jobs"] };
+	}
+	const failures = entries.flatMap(([filename, value]) => {
+		const status = object(value).status;
+		return status === "completed"
+			? []
+			: [`${filename}: ingest status ${String(status ?? "missing")}`];
+	});
+	return { ok: failures.length === 0, failures };
+}
+
 function markdown(report: JsonObject): string {
 	const summary = object(report.summary);
-	const gate = object(summary.gate);
+	const gate = object(report.release_gate);
+	const ingestGate = object(report.ingest_reliability_gate);
+	const askGate = object(report.ask_stability_gate);
 	const cases = Array.isArray(summary.cases)
 		? summary.cases.map(object).filter((item) => item.passCount !== item.roundCount)
 		: [];
@@ -68,6 +87,8 @@ function markdown(report: JsonObject): string {
 		"",
 		`- release: \`${report.release}\``,
 		`- gate: **${gate.ok === true ? "PASS" : "FAIL"}**`,
+		`- ingest reliability: **${ingestGate.ok === true ? "PASS" : "FAIL"}**`,
+		`- Ask stability: **${askGate.ok === true ? "PASS" : "FAIL"}**`,
 		`- rounds: **${summary.passedRounds}/${summary.roundCount}**`,
 		`- maximum round P95: **${summary.maxP95Ms} ms**`,
 		`- model errors: **${summary.modelErrorCount}**`,
@@ -117,25 +138,66 @@ export async function runStabilityEvaluation(input: {
 	maxP95Ms: number;
 }): Promise<number> {
 	const options = await resolveRunnerOptions([]);
-	const reports: JsonObject[] = [];
-	for (let round = 1; round <= input.rounds; round += 1) {
-		process.stdout.write(`\n== stability round ${round}/${input.rounds}\n`);
-		const code = await runLiveEvaluation({
-			...options,
-			keepLibrary: false,
-			publishLangfuseScores: false,
-		});
-		if (code === 2) throw new Error(`round ${round} ended with infrastructure error`);
-		reports.push(
-			JSON.parse(
-				await readFile(resolve(OUTPUT_DIR, "ab_live_latest.json"), "utf8"),
-			) as JsonObject,
+	if (options.reuseLibraryId) {
+		throw new Error(
+			"UNORAG_AB_LIBRARY_ID is only supported by eval:live; stability owns its temporary corpus",
 		);
+	}
+	const reports: JsonObject[] = [];
+	let libraryId: string | null = null;
+	let interruptedBy: NodeJS.Signals | null = null;
+	const handleSignal = (signal: NodeJS.Signals) => {
+		interruptedBy = signal;
+		process.stderr.write(
+			`!! ${signal} received; the current bounded operation will finish before cleanup\n`,
+		);
+	};
+	process.once("SIGINT", handleSignal);
+	process.once("SIGTERM", handleSignal);
+	try {
+		for (let round = 1; round <= input.rounds; round += 1) {
+			if (interruptedBy) throw new Error(`interrupted by ${interruptedBy}`);
+			process.stdout.write(`\n== stability round ${round}/${input.rounds}\n`);
+			const code = await runLiveEvaluation({
+				...options,
+				keepLibrary: true,
+				publishLangfuseScores: false,
+				...(libraryId ? { reuseLibraryId: libraryId } : {}),
+				onLibraryReady: (readyLibraryId) => {
+					libraryId = readyLibraryId;
+				},
+			});
+			if (code === 2) {
+				throw new Error(`round ${round} ended with infrastructure error`);
+			}
+			reports.push(
+				JSON.parse(
+					await readFile(resolve(OUTPUT_DIR, "ab_live_latest.json"), "utf8"),
+				) as JsonObject,
+			);
+			if (interruptedBy) throw new Error(`interrupted by ${interruptedBy}`);
+		}
+	} finally {
+		process.removeListener("SIGINT", handleSignal);
+		process.removeListener("SIGTERM", handleSignal);
+		if (libraryId) {
+			await cleanupEvaluationLibrary(options, libraryId);
+			process.stdout.write(`== cleanup stability library ${libraryId} completed\n`);
+		}
 	}
 	const summary = summarizeStability(reports, {
 		expectedRounds: input.rounds,
 		maxP95Ms: input.maxP95Ms,
 	});
+	const ingestReliabilityGate = evaluateIngestReliability(reports[0] ?? {});
+	const askStabilityGate = summary.gate;
+	const releaseGate: Gate = {
+		ok: ingestReliabilityGate.ok && askStabilityGate.ok,
+		failures: [
+			...ingestReliabilityGate.failures,
+			...askStabilityGate.failures,
+		],
+	};
 	const report: JsonObject = {
 		run_id: `ab-stability-${timestamp()}`,
 		evaluated_at: new Date().toISOString(),
@@ -148,11 +210,20 @@ export async function runStabilityEvaluation(input: {
 			build_fingerprint: item.build_fingerprint,
 		})),
 		summary,
+		ingest_reliability_gate: ingestReliabilityGate,
+		ask_stability_gate: askStabilityGate,
+		release_gate: releaseGate,
 	};
 	const path = await writeStabilityReport(report);
 	process.stdout.write(`== stability report ${path}\n`);
-	process.stdout.write(`== stability gate ${summary.gate.ok ? "PASS" : "FAIL"}\n`);
-	return summary.gate.ok ? 0 : 1;
+	process.stdout.write(
+		`== ingest reliability gate ${ingestReliabilityGate.ok ? "PASS" : "FAIL"}\n`,
+	);
+	process.stdout.write(
+		`== Ask stability gate ${askStabilityGate.ok ? "PASS" : "FAIL"}\n`,
+	);
+	process.stdout.write(`== release gate ${releaseGate.ok ? "PASS" : "FAIL"}\n`);
+	return releaseGate.ok ? 0 : 1;
 }
 
 async function main(): Promise<void> {

@@ -78,8 +78,9 @@ mk_compose --profile ops run --rm inspect-lifecycle
 | Viewer 操作 | 读权限符合策略，所有写操作被拒绝 |
 | 归档与续聊 | 归档可恢复，追问 rewrite 不扩大访问范围 |
 
-开发诊断可运行 `pnpm eval:live`；正式 RC 必须运行 `pnpm eval:stability`，连续三轮记录正例、拒答、
-事实覆盖、Recall、MRR、citation coverage、延迟和构建指纹。流程、凭据和可选 Langfuse 分数发布见
+开发诊断可运行 `pnpm eval:live`；正式 RC 必须运行 `pnpm eval:stability`。它先对一轮真实文件入库
+执行可靠性门禁，再在同一不可变知识库上连续运行三轮 Ask，记录正例、拒答、事实覆盖、Recall、MRR、
+citation coverage、延迟和构建指纹。流程、凭据和可选 Langfuse 分数发布见
 [EVALUATION.md](./EVALUATION.md)。
 Parser、模型、切分、检索或裁决策略变化后必须重跑，不能继承旧分数。
 

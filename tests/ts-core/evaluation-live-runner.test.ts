@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import {
+	cleanupEvaluationLibrary,
 	resolveRunnerOptions,
 	runLiveEvaluation,
 	validateServiceUrl,
@@ -28,6 +29,7 @@ const ENV_KEYS = [
 	"UNORAG_AB_ASK_TIMEOUT_SEC",
 	"UNORAG_AB_POLL_INTERVAL_MS",
 	"UNORAG_AB_CLEANUP_TIMEOUT_SEC",
+	"UNORAG_AB_LIBRARY_ID",
 	"UNORAG_EVAL_RELEASE",
 	"UNORAG_EVAL_IMAGE_DIGEST",
 ] as const;
@@ -137,7 +139,7 @@ test("password files must be private and support home-independent absolute paths
 	}
 });
 
-test("live runner exercises login, upload, jobs, asks, strict gates, reports, and cleanup", async () => {
+test("live runner separates corpus ingestion from repeatable Ask rounds", async () => {
 	const root = resolve(import.meta.dirname, "../..");
 	const [golds, negatives] = await Promise.all([
 		loadGoldenJsonl(resolve(root, "testdata/ab/golds.jsonl")),
@@ -260,21 +262,31 @@ test("live runner exercises login, upload, jobs, asks, strict gates, reports, an
 	try {
 		const address = server.address();
 		assert.ok(address && typeof address !== "string");
-		const result = await runLiveEvaluation({
+		const options = {
 			baseUrl: `http://127.0.0.1:${address.port}`,
 			email: "admin@example.com",
 			password: "test-password",
-			keepLibrary: false,
+			keepLibrary: true,
 			publishLangfuseScores: false,
 			jobTimeoutMs: 1_000,
 			askTimeoutMs: 1_000,
 			pollIntervalMs: 1,
 			cleanupTimeoutMs: 1_000,
 			release: "test-release",
-		});
+		};
+		const result = await runLiveEvaluation(options);
 		assert.equal(result, 0);
 		assert.equal(uploads, 7);
 		assert.equal(asks, 38);
+		assert.equal(deleted, false);
+		const repeatResult = await runLiveEvaluation({
+			...options,
+			reuseLibraryId: "library-eval",
+		});
+		assert.equal(repeatResult, 0);
+		assert.equal(uploads, 7);
+		assert.equal(asks, 76);
+		await cleanupEvaluationLibrary(options, "library-eval");
 		assert.equal(deleted, true);
 		assert.ok(authenticatedRequests > asks);
 		const output = resolve(root, "testdata/ab/_e2e_out");
