@@ -264,6 +264,12 @@ describe("production generation cleanup ports", () => {
 				retentionDays: 30,
 				batchSize: 1_000,
 			},
+			tombstoneMaintenance: {
+				enabled: true,
+				intervalMs: 3_600_000,
+				retentionDays: 90,
+				batchSize: 100,
+			},
 			observabilityCycle: { enabled: true, intervalMs: 60_000 },
 			logLevel: "error",
 		};

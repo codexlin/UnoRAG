@@ -243,6 +243,14 @@ spec:
               value: {{ .Values.dbos.askRunRetentionDays | quote }}
             - name: ASK_RUN_MAINTENANCE_BATCH_SIZE
               value: {{ .Values.dbos.askRunMaintenanceBatchSize | quote }}
+            - name: TOMBSTONE_MAINTENANCE_ENABLED
+              value: {{ .Values.dbos.tombstoneMaintenanceEnabled | quote }}
+            - name: TOMBSTONE_MAINTENANCE_INTERVAL_MS
+              value: {{ .Values.dbos.tombstoneMaintenanceIntervalMs | quote }}
+            - name: TOMBSTONE_RETENTION_DAYS
+              value: {{ .Values.dbos.tombstoneRetentionDays | quote }}
+            - name: TOMBSTONE_MAINTENANCE_BATCH_SIZE
+              value: {{ .Values.dbos.tombstoneMaintenanceBatchSize | quote }}
             - name: OBSERVABILITY_CYCLE_ENABLED
               value: {{ .Values.dbos.observabilityCycleEnabled | quote }}
             - name: OBSERVABILITY_CYCLE_INTERVAL_MS

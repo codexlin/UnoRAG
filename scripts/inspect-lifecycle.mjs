@@ -11,6 +11,19 @@ import pg from "pg";
 const failOnDead = process.argv.includes("--fail-on-dead");
 const failOnStuck = process.argv.includes("--fail-on-stuck");
 const failOnAclProjection = process.argv.includes("--fail-on-acl-projection");
+const failOnExpiredTombstones = process.argv.includes(
+	"--fail-on-expired-tombstones",
+);
+const tombstoneRetentionDays = Number(
+	process.env.TOMBSTONE_RETENTION_DAYS ?? "90",
+);
+if (
+	!Number.isSafeInteger(tombstoneRetentionDays) ||
+	tombstoneRetentionDays <= 0
+) {
+	console.error("TOMBSTONE_RETENTION_DAYS must be a positive integer");
+	process.exit(1);
+}
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
 	console.error("DATABASE_URL is required");
@@ -59,10 +72,57 @@ try {
 	const deletingLibraries = await client.query(`
 				SELECT id, rag_library_id, name, status, doc_count, updated_at
 				FROM app.libraries
-				WHERE status IN ('deleting', 'deleted')
+				WHERE status = 'deleting'
 				ORDER BY updated_at DESC
 				LIMIT 50
 			`);
+	const expiredDocumentTombstones = await client.query(
+		`
+			SELECT document.id, document.rag_document_id, document.library_id,
+			       document.deleted_at, document.updated_at
+			FROM app.documents AS document
+			WHERE document.status = 'deleted'
+			  AND document.deleted_at < now() - $1::integer * interval '1 day'
+			  AND NOT EXISTS (
+				SELECT 1 FROM app.generation_cleanup_queue AS cleanup
+				WHERE cleanup.document_id = document.id
+				  AND cleanup.sweep_status <> 'deleted'
+			  )
+			ORDER BY document.deleted_at, document.id
+			LIMIT 50
+		`,
+		[tombstoneRetentionDays],
+	);
+	const expiredLibraryTombstones = await client.query(
+		`
+			SELECT library.id, library.rag_library_id, library.name,
+			       library.updated_at,
+			       EXISTS (
+				 SELECT 1 FROM app.documents AS document
+				 WHERE document.library_id = library.id
+			       ) OR EXISTS (
+				 SELECT 1 FROM app.threads AS thread
+				 WHERE thread.organization_id = library.organization_id
+				   AND thread.workspace_id = library.workspace_id
+				   AND thread.rag_library_id = library.rag_library_id
+			       ) OR EXISTS (
+				 SELECT 1 FROM app.ask_runs AS ask_run
+				 WHERE ask_run.library_id = library.id
+			       ) AS blocked
+			FROM app.libraries AS library
+			WHERE library.status = 'deleted'
+			  AND library.updated_at < now() - $1::integer * interval '1 day'
+			ORDER BY library.updated_at, library.id
+			LIMIT 50
+		`,
+		[tombstoneRetentionDays],
+	);
+	const purgeableLibraries = expiredLibraryTombstones.rows.filter(
+		(row) => !row.blocked,
+	);
+	const blockedLibraries = expiredLibraryTombstones.rows.filter(
+		(row) => row.blocked,
+	);
 	const pendingAclProjections = await client.query(`
 				SELECT
 					document.id,
@@ -89,7 +149,10 @@ try {
 			stuck_jobs: stuckJobs.rowCount,
 			deleting_documents: deletingDocs.rowCount,
 			cleanup_errors: cleanupErrors.rowCount,
-			libraries_deleting_or_deleted: deletingLibraries.rowCount,
+			libraries_deleting: deletingLibraries.rowCount,
+			expired_document_tombstones: expiredDocumentTombstones.rowCount,
+			expired_library_tombstones: purgeableLibraries.length,
+			blocked_library_tombstones: blockedLibraries.length,
 			pending_acl_projections: pendingAclProjections.rowCount,
 		},
 		dead_jobs: deadJobs.rows,
@@ -97,6 +160,9 @@ try {
 		deleting_documents: deletingDocs.rows,
 		cleanup_errors: cleanupErrors.rows,
 		libraries: deletingLibraries.rows,
+		expired_document_tombstones: expiredDocumentTombstones.rows,
+		expired_library_tombstones: purgeableLibraries,
+		blocked_library_tombstones: blockedLibraries,
 		pending_acl_projections: pendingAclProjections.rows,
 	};
 	console.log(JSON.stringify(report, null, 2));
@@ -104,6 +170,12 @@ try {
 	if (failOnStuck && stuckJobs.rowCount > 0) process.exitCode = 3;
 	if (failOnAclProjection && pendingAclProjections.rowCount > 0) {
 		process.exitCode = 4;
+	}
+	if (
+		failOnExpiredTombstones &&
+		(expiredDocumentTombstones.rowCount > 0 || purgeableLibraries.length > 0)
+	) {
+		process.exitCode = 5;
 	}
 } finally {
 	await client.end();

@@ -46,6 +46,12 @@ const workerEnvironmentSchema = z
 		ASK_RUN_STALE_AFTER_MINUTES: positiveInteger.max(10_080).default(30),
 		ASK_RUN_RETENTION_DAYS: positiveInteger.max(3_650).default(30),
 		ASK_RUN_MAINTENANCE_BATCH_SIZE: positiveInteger.max(10_000).default(1_000),
+		TOMBSTONE_MAINTENANCE_ENABLED: environmentBoolean,
+		TOMBSTONE_MAINTENANCE_INTERVAL_MS: positiveInteger
+			.max(86_400_000)
+			.default(3_600_000),
+		TOMBSTONE_RETENTION_DAYS: positiveInteger.max(3_650).default(90),
+		TOMBSTONE_MAINTENANCE_BATCH_SIZE: positiveInteger.max(10_000).default(100),
 		OBSERVABILITY_CYCLE_ENABLED: environmentBoolean,
 		OBSERVABILITY_CYCLE_INTERVAL_MS: positiveInteger
 			.max(86_400_000)
@@ -68,6 +74,12 @@ export interface WorkerRuntimeConfig {
 		enabled: boolean;
 		intervalMs: number;
 		staleAfterMinutes: number;
+		retentionDays: number;
+		batchSize: number;
+	};
+	tombstoneMaintenance: {
+		enabled: boolean;
+		intervalMs: number;
 		retentionDays: number;
 		batchSize: number;
 	};
@@ -121,6 +133,12 @@ export function loadWorkerConfig(
 			staleAfterMinutes: parsed.ASK_RUN_STALE_AFTER_MINUTES,
 			retentionDays: parsed.ASK_RUN_RETENTION_DAYS,
 			batchSize: parsed.ASK_RUN_MAINTENANCE_BATCH_SIZE,
+		},
+		tombstoneMaintenance: {
+			enabled: parsed.TOMBSTONE_MAINTENANCE_ENABLED,
+			intervalMs: parsed.TOMBSTONE_MAINTENANCE_INTERVAL_MS,
+			retentionDays: parsed.TOMBSTONE_RETENTION_DAYS,
+			batchSize: parsed.TOMBSTONE_MAINTENANCE_BATCH_SIZE,
 		},
 		observabilityCycle: {
 			enabled: parsed.OBSERVABILITY_CYCLE_ENABLED,
