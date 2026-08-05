@@ -73,8 +73,10 @@ testdata/           代表性真实文件与拒绝格式 fixture
 ```
 
 当前根包阶段，可复用 RAG 算法放入 `src/core/`，Next.js 应用规则放入 `src/lib/server/`。
-后续按 [ADR-0006](./adr/0006-private-product-monorepo.md) 渐进迁移为私有 Product Monorepo；只有能
-形成可执行依赖边界或被多个 composition root 使用的模块才提取为 package，不为目录整齐创建空包。
+后续按 [ADR-0006](./adr/0006-private-product-monorepo.md) 与
+[ADR-0007](./adr/0007-fully-open-source-product-and-services.md) 渐进迁移为 Product Monorepo；只有能
+形成可执行依赖边界或被多个 composition root 使用的模块才提取为 package，不按商业版本拆包，也不为
+目录整齐创建空包。
 
 ## 必须保持的约束
 

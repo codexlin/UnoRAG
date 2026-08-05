@@ -99,7 +99,7 @@ There is no UnoRAG-owned Python application in the target topology.
 
 The public Service Key HTTP contract remains the supported integration boundary.
 Optional SDK and MCP packages were later removed from this repository to keep the
-licensed private-deployment product focused.
+product and its supported integration surface focused.
 
 ## Process Topology
 
@@ -120,9 +120,10 @@ Domain and transport boundaries live under `src/core`,
 `src/server`, and `src/worker`. A module may be extracted
 into a separately versioned package only when a real second application or
 external consumer needs to depend on it. That migration-scoped decision is
-superseded by ADR-0006 now that multiple edition and process composition roots
-exist. Process isolation still does not, by itself, require package or repository
-isolation.
+superseded by ADR-0006 now that multiple process and tooling composition roots
+exist. ADR-0007 subsequently removed the edition model while preserving that
+package-boundary direction. Process isolation still does not, by itself, require
+package or repository isolation.
 
 The Elysia catch-all was validated during the migration spike, but the final
 runtime uses native Next.js Route Handlers. Domain services remain transport

@@ -115,8 +115,12 @@ Qdrant contains security-scoped retrieval projections.
 - [Release and acceptance](./docs/RELEASE.md)
 - [Development](./docs/DEVELOPMENT.md)
 
-## License
+## Open-source transition
 
-UnoRAG is currently delivered as commercial private-deployment software. This repository does not grant
-an open-source license for use, redistribution, or production deployment. Production use, source delivery,
-customization, and support are governed by a separate commercial agreement.
+UnoRAG is moving toward one fully open-source distribution with no paid feature wall. Private deployment,
+Ops Stack assets, Langfuse integration, evaluation, and generic provider adapters belong to the same product;
+professional deployment, integration, tuning, customization, training, and SLA support remain available as services.
+
+The repository is still preparing for public release and does not grant an open-source license until provenance,
+security, dependency, and asset reviews are complete and a `LICENSE` file is committed. Apache-2.0 is the current
+candidate, not an active license. See [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md).

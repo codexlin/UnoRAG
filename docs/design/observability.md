@@ -16,7 +16,7 @@ UnoRAG 面向需要私有化知识库、但通常没有独立 AI 平台或 SRE �
 
 目标是建立三层能力：
 
-1. **核心原生层**随标准版交付并始终可用，保证系统不依赖外部观测组件也能诊断。
+1. **核心原生层**随产品交付并始终可用，保证系统不依赖外部观测组件也能诊断。
 2. **Ops 增强层**作为官方维护的可选部署包，为专业运维提供集中日志、指标、Trace 和告警。
 3. **AI 工程层**按需接入自托管或 Cloud Langfuse，为调优团队提供模型、Prompt、成本和评测能力。
 
@@ -93,7 +93,7 @@ flowchart TB
 
 ### 3.1 第一层：核心原生能力
 
-第一层属于标准版产品能力，默认启用且不能依赖 Grafana 或 Langfuse。
+第一层属于核心产品能力，默认启用且不能依赖 Grafana 或 Langfuse。
 
 #### Ask 调试契约
 
@@ -231,7 +231,7 @@ Phase 3A 已通过 Collector 双出口落地，Langfuse 强制采用 **metadata-
 
 AI SDK 调用显式关闭 Input/Output 记录；Collector 再删除模型消息、工具参数/结果、Embedding 内容等
 字段。Langfuse 地址与 Basic Auth 只进入 Collector，不进入 Web/Worker。Langfuse 依赖的 Web、Worker、
-ClickHouse、Redis、对象存储等组件不应增加标准版的安装和备份负担，因此使用官方独立部署或 Cloud，
+ClickHouse、Redis、对象存储等组件不应增加核心产品的默认安装和备份负担，因此使用官方独立部署或 Cloud，
 UnoRAG 不复制其基础设施清单。
 
 ## 4. 标识与上下文模型
@@ -279,17 +279,18 @@ DBOS 排队可能持续很久，任务也可能重试或恢复，因此不得构
 6. 观测数据与业务备份分开定义；可重建的短期观测数据不应无意扩大客户 RPO/RTO。
 7. 导出到客户外部平台前必须经过 Collector 脱敏和允许列表处理。
 
-## 6. 版本与商业边界
+## 6. 能力层与部署边界
 
-| 交付形态 | 默认状态 | 目标用户 | 完整目标能力 |
+| 能力层 | 默认状态 | 使用场景 | 完整目标能力 |
 |---|---|---|---|
-| UnoRAG 标准版 | 默认启用 | 中小企业 | 原生运维中心、`ask_runs`、Pino JSON、`/metrics`、基础告警和标准 OTLP 接口 |
-| UnoRAG Ops | 选装 | 中型企业、集成商、运维团队 | Collector、Prometheus/Grafana、Loki/Tempo、Alertmanager 与预置规则 |
-| AI 工程增强 | 选装 | 调优与实施团队 | 自托管 Langfuse、评测、Prompt、模型成本和实验工作流 |
+| UnoRAG 原生诊断 | 默认启用 | 所有部署 | 原生运维中心、`ask_runs`、Pino JSON、`/metrics`、基础告警和标准 OTLP 接口 |
+| UnoRAG Ops Stack | 可选部署 | 集中运维 | Collector、Prometheus/Grafana、Loki/Tempo、Alertmanager 与预置规则 |
+| Langfuse 与评测 | 可选部署 | AI 调优 | 自托管 Langfuse、评测、Prompt、模型成本和实验工作流 |
 | 外部平台接入 | 按需配置 | 已有监控体系的客户 | OTLP、Prometheus、Webhook 和 Collector exporter |
 
-标准版必须独立可诊断；商业价值来自生产验证过的部署、看板、告警、保留策略、AI 质量闭环、升级支持
-和 SLA，而不是隐藏开放标准或让社区版成为不可运维的演示品。
+这些通用能力都属于同一个开源产品。“可选”表示部署复杂度和依赖不同，不是付费版本。原生能力必须在
+不安装外部观测组件时独立可诊断；部署、容量规划、看板适配、保留策略、AI 质量闭环、升级与 SLA 可以
+作为专业服务交付，但不通过隐藏代码制造能力差异。
 
 ## 7. 实施顺序与验收
 
