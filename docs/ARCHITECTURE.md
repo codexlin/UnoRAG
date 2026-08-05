@@ -102,6 +102,11 @@ Small and medium tables remain RAG records with layered row groups and summaries
 Very large SQL-style execution is deliberately deferred; operational data should
 usually be queried from its source database.
 
+Successful structured table operations render their answer directly from the typed
+execution result. They do not pass rows through an LLM for a second lossy rewrite.
+Row previews are bounded and must disclose both the displayed and total row counts
+when truncated; citations continue to point at every contributing row group.
+
 ## 检索与问答
 
 Native Retrieve resolves scope, embeds the query, applies mandatory Qdrant filters,

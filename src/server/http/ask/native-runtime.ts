@@ -19,6 +19,7 @@ import {
 	executeTableQuery,
 	normalizeTablePlanForQuestion,
 	type TableDatasetInput,
+	TableExecutionResultSchema,
 	type TableQueryPlan,
 	TableQueryPlanSchema,
 } from "@/core/ask-graph/table";
@@ -107,6 +108,15 @@ export function projectJudgeEvidence(citations: InternalCitation[]) {
 			citation.body || citation.text || citation.snippet,
 		),
 	}));
+}
+
+export function deterministicTableAnswer(value: unknown): string | null {
+	const parsed = TableExecutionResultSchema.safeParse(value);
+	if (parsed.success && parsed.data.status === "success") {
+		const answer = parsed.data.answerText?.trim();
+		return answer || null;
+	}
+	return null;
 }
 
 function query(state: AskState): string {
@@ -508,20 +518,10 @@ export class NativeAskRuntime {
 	}
 
 	streamAnswer(state: AskState) {
-		const execution = state.table_execution as
-			| { status?: unknown; operation?: unknown; answerText?: unknown }
-			| undefined;
-		if (
-			execution?.status === "success" &&
-			["count", "sum", "avg", "min", "max", "minMax"].includes(
-				String(execution.operation),
-			) &&
-			typeof execution.answerText === "string" &&
-			execution.answerText.trim()
-		) {
-			const answer = execution.answerText.trim();
+		const deterministicAnswer = deterministicTableAnswer(state.table_execution);
+		if (deterministicAnswer) {
 			return (async function* () {
-				yield answer;
+				yield deterministicAnswer;
 			})();
 		}
 		return this.dependencies.answer.stream(

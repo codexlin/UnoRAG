@@ -181,3 +181,27 @@ test("judge evidence projection is bounded and excludes raw table rows", async (
 	assert.equal("rows" in (projected[0] ?? {}), false);
 	assert.equal("tenant_id" in (projected[0] ?? {}), false);
 });
+
+test("successful table execution always prefers its deterministic answer", async () => {
+	const { deterministicTableAnswer } = await runtimeModule;
+	assert.equal(
+		deterministicTableAnswer({
+			status: "success",
+			operation: "filter",
+			reason: "filter",
+			answerValue: [],
+			answerText:
+				"匹配 2 行：\n- 设备：服务器，单价：184,049\n- 设备：服务器，单价：193,268",
+			matchedCount: 2,
+			matchedRows: [],
+			matchedRowsTruncated: false,
+			evidence: [],
+			evidenceTruncated: false,
+		}),
+		"匹配 2 行：\n- 设备：服务器，单价：184,049\n- 设备：服务器，单价：193,268",
+	);
+	assert.equal(
+		deterministicTableAnswer({ status: "success", answerText: "unsafe" }),
+		null,
+	);
+});

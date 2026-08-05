@@ -362,6 +362,46 @@ test("Chinese comparison operators use the same unit-safe path", () => {
 		result.matchedRows.map((row) => row.设备名称),
 		["服务器", "交换机", "存储阵列"],
 	);
+	assert.match(result.answerText ?? "", /服务器/);
+	assert.match(result.answerText ?? "", /120,000元/);
+	assert.match(result.answerText ?? "", /交换机/);
+	assert.match(result.answerText ?? "", /10万/);
+	assert.match(result.answerText ?? "", /存储阵列/);
+	assert.match(result.answerText ?? "", /15万元/);
+});
+
+test("deterministic row answers disclose preview truncation", () => {
+	const rows = Array.from({ length: 51 }, (_, index) => [
+		String(index + 1),
+		`设备${index + 1}`,
+		"120000",
+		"120000",
+	]);
+	const result = executeTableQuery(
+		{
+			mode: "single",
+			tableId: "large-quote",
+			operation: "filter",
+			where: { column: "单价", operator: ">", value: "10万" },
+			selectColumns: ["设备名称", "单价"],
+			includeSummaryRows: false,
+		},
+		{
+			records: [
+				tableRecord({
+					id: "large-quote-record",
+					tableId: "large-quote",
+					headers: quoteHeaders,
+					rows,
+					tableRowCount: rows.length,
+				}),
+			],
+		},
+	);
+
+	assert.equal(result.matchedRowsTruncated, true);
+	assert.match(result.answerText ?? "", /仅展示前 50 行，共 51 行/);
+	assert.doesNotMatch(result.answerText ?? "", /设备51/);
 });
 
 test("lookup, sort and topN are deterministic over irregular rows", () => {

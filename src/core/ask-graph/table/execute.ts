@@ -173,6 +173,41 @@ function describeRow(
 		.join("，");
 }
 
+function renderRowsAnswer(
+	label: string,
+	rows: readonly NormalizedTableRow[],
+	columns: readonly string[],
+): string {
+	if (rows.length === 0) return "未找到匹配行";
+	const visible = rows.slice(0, PREVIEW_LIMIT);
+	const lines = visible.map((row) => `- ${describeRow(row, columns)}`);
+	const truncated =
+		rows.length > visible.length
+			? `\n\n仅展示前 ${visible.length} 行，共 ${rows.length} 行。`
+			: "";
+	return `${label} ${rows.length} 行：\n${lines.join("\n")}${truncated}`;
+}
+
+function renderProjectedRowsAnswer(
+	label: string,
+	rows: readonly Record<string, unknown>[],
+	total: number,
+): string {
+	if (total === 0) return "未找到匹配行";
+	const lines = rows.map(
+		(row) =>
+			`- ${Object.entries(row)
+				.filter(([column]) => !column.startsWith("_"))
+				.map(([column, value]) => `${column}：${String(value ?? "")}`)
+				.join("，")}`,
+	);
+	const truncated =
+		total > rows.length
+			? `\n\n仅展示前 ${rows.length} 行，共 ${total} 行。`
+			: "";
+	return `${label} ${total} 行：\n${lines.join("\n")}${truncated}`;
+}
+
 function lookupAnswerValue(
 	rows: readonly NormalizedTableRow[],
 	columns: readonly string[],
@@ -285,7 +320,7 @@ function executeSingle(
 			rows,
 			selected.columns,
 			lookupAnswerValue(rows, selected.columns),
-			rows.length > 0 ? `命中 ${rows.length} 行` : "未找到匹配行",
+			renderRowsAnswer("命中", rows, selected.columns),
 		);
 	}
 
@@ -296,7 +331,7 @@ function executeSingle(
 			rows,
 			selected.columns,
 			rows.map((row) => row.values),
-			`匹配 ${rows.length} 行`,
+			renderRowsAnswer("匹配", rows, selected.columns),
 		);
 	}
 
@@ -351,7 +386,11 @@ function executeSingle(
 			selectedRows,
 			selected.columns,
 			sorted.slice(0, limit).map((item) => item.value),
-			`按${valueColumn.column}${plan.direction === "asc" ? "升序" : "降序"}返回 ${selectedRows.length} 行`,
+			renderRowsAnswer(
+				`按${valueColumn.column}${plan.direction === "asc" ? "升序" : "降序"}返回`,
+				selectedRows,
+				selected.columns,
+			),
 		);
 	}
 
@@ -562,12 +601,17 @@ function executeDual(
 		_left_row_index: item.left.absoluteIndex,
 		_right_row_index: item.right.absoluteIndex,
 	}));
+	const answerText = renderProjectedRowsAnswer(
+		plan.operation === "join" ? "关联命中" : "比较命中",
+		matchedRows,
+		selected.length,
+	);
 	return {
 		status: "success",
 		operation: plan.operation,
 		reason: plan.operation,
 		answerValue,
-		answerText: `${plan.operation === "join" ? "关联" : "比较"}命中 ${selected.length} 行`,
+		answerText,
 		matchedCount: selected.length,
 		matchedRows,
 		matchedRowsTruncated: selected.length > PREVIEW_LIMIT,
