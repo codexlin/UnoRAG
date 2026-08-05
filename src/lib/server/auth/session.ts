@@ -1,11 +1,6 @@
 import "server-only";
 
-import {
-	createHmac,
-	randomUUID,
-	scrypt as scryptCallback,
-	timingSafeEqual,
-} from "node:crypto";
+import { scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 
 import { and, eq, isNull, lte, or } from "drizzle-orm";
@@ -25,83 +20,15 @@ import type {
 	IdentityProvider,
 	LocalCredentialsInput,
 } from "./provider";
-import { resolveSessionSecret } from "./secrets.mjs";
+import { createSignedSessionToken, readSessionClaims } from "./session-token";
 
-export const SESSION_COOKIE = "unorag_session";
-export const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
-const SESSION_ISSUER = "unorag-control-plane";
-const SESSION_TTL_SECONDS = SESSION_MAX_AGE_SECONDS;
+export {
+	SESSION_COOKIE,
+	SESSION_MAX_AGE_SECONDS,
+	sessionCookieOptions,
+} from "./session-token";
+
 const scrypt = promisify(scryptCallback);
-
-type SessionClaims = {
-	v: 1;
-	iss: typeof SESSION_ISSUER;
-	sid: string;
-	principal_id: string;
-	workspace_id: string;
-	iat: number;
-	exp: number;
-};
-
-function sessionSecret(): string {
-	return resolveSessionSecret();
-}
-
-function sign(value: string): string {
-	return createHmac("sha256", sessionSecret())
-		.update(value, "utf8")
-		.digest("base64url");
-}
-
-function parseCookies(header: string | null): Map<string, string> {
-	const values = new Map<string, string>();
-	for (const part of (header ?? "").split(";")) {
-		const separator = part.indexOf("=");
-		if (separator < 1) continue;
-		values.set(
-			part.slice(0, separator).trim(),
-			decodeURIComponent(part.slice(separator + 1).trim()),
-		);
-	}
-	return values;
-}
-
-function parseSessionToken(token: string): SessionClaims | null {
-	const separator = token.lastIndexOf(".");
-	if (separator < 1) return null;
-	const encoded = token.slice(0, separator);
-	const provided = token.slice(separator + 1);
-	const expected = sign(encoded);
-	const providedBytes = Buffer.from(provided);
-	const expectedBytes = Buffer.from(expected);
-	if (
-		providedBytes.length !== expectedBytes.length ||
-		!timingSafeEqual(providedBytes, expectedBytes)
-	) {
-		return null;
-	}
-	try {
-		const claims = JSON.parse(
-			Buffer.from(encoded, "base64url").toString("utf8"),
-		) as SessionClaims;
-		const now = Math.floor(Date.now() / 1000);
-		if (
-			claims.v !== 1 ||
-			claims.iss !== SESSION_ISSUER ||
-			!claims.sid ||
-			!claims.principal_id ||
-			!claims.workspace_id ||
-			claims.iat > now + 30 ||
-			claims.exp <= now ||
-			claims.exp - claims.iat > SESSION_TTL_SECONDS
-		) {
-			return null;
-		}
-		return claims;
-	} catch {
-		return null;
-	}
-}
 
 export async function hydrateIdentity(
 	principalId: string,
@@ -180,36 +107,13 @@ export async function resolveRequestSession(
 export async function resolveSessionCookieHeader(
 	cookieHeader: string | null,
 ): Promise<AuthIdentity | null> {
-	const token = parseCookies(cookieHeader).get(SESSION_COOKIE);
-	if (!token) return null;
-	const claims = parseSessionToken(token);
+	const claims = readSessionClaims(cookieHeader);
 	if (!claims) return null;
 	return hydrateIdentity(claims.principal_id, claims.workspace_id, "local");
 }
 
 export function createSessionToken(identity: AuthIdentity): string {
-	const now = Math.floor(Date.now() / 1000);
-	const claims: SessionClaims = {
-		v: 1,
-		iss: SESSION_ISSUER,
-		sid: randomUUID(),
-		principal_id: identity.principalId,
-		workspace_id: identity.workspaceId,
-		iat: now,
-		exp: now + SESSION_TTL_SECONDS,
-	};
-	const encoded = Buffer.from(JSON.stringify(claims)).toString("base64url");
-	return `${encoded}.${sign(encoded)}`;
-}
-
-export function sessionCookieOptions() {
-	return {
-		httpOnly: true,
-		sameSite: "lax" as const,
-		secure: process.env.NODE_ENV === "production",
-		path: "/",
-		maxAge: SESSION_MAX_AGE_SECONDS,
-	};
+	return createSignedSessionToken(identity);
 }
 
 async function verifyPassword(

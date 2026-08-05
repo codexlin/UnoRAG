@@ -4,6 +4,7 @@
 
 | 报告 | 证明范围 |
 |---|---|
+| [Registry RC.7 Tombstone 生命周期验收](./2026-08-06-registry-rc7-tombstone-validation.md) | Node 24 Actions、tombstone 保留与回收、最小权限以及 RC.6 原地升级 |
 | [Registry RC.6 平台合同与发布性能验收](./2026-08-06-registry-rc6-platform-validation.md) | manifest 平台预检、镜像瘦身、构建缓存与 RC.5 原地升级 |
 | [Registry RC.5 不可变发布验收](./2026-08-05-registry-rc5-validation.md) | 双 Registry digest、空环境安装、真实浏览器、升级与回滚 |
 | [TS RC 4829e41 全量复验](./2026-08-04-ts-rc-4829e41-full-validation.md) | 当前分支的确定性测试、四镜像、原地升级、真实文件、浏览器与故障恢复 |

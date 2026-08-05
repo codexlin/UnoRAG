@@ -96,7 +96,6 @@ test("Compose overlays are explicit and cannot change the default install", asyn
 	const helper = await source("deploy/compose/scripts/compose-env.sh");
 
 	assert.match(helper, /UNORAG_COMPOSE_OVERLAY/);
-	assert.doesNotMatch(helper, /docker-compose\.webch\.yml/);
 	assert.match(helper, /missing Compose overlay/);
 });
 

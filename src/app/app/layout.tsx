@@ -1,10 +1,10 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { AppDataProvider } from "@/components/app/app-data-provider";
 import { AppSidebar } from "@/components/app/app-sidebar";
 import { AppTopbar } from "@/components/app/app-topbar";
 import { IngestJobsProvider } from "@/components/app/ingest-jobs-provider";
+import { QueryProvider } from "@/components/app/query-provider";
 import { SessionProvider } from "@/components/app/session-provider";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -35,7 +35,7 @@ export default async function AppLayout({
 
 	return (
 		<SessionProvider key={session.workspaceId} identity={session}>
-			<AppDataProvider>
+			<QueryProvider>
 				<IngestJobsProvider>
 					<TooltipProvider>
 						<SidebarProvider
@@ -57,7 +57,7 @@ export default async function AppLayout({
 						</SidebarProvider>
 					</TooltipProvider>
 				</IngestJobsProvider>
-			</AppDataProvider>
+			</QueryProvider>
 		</SessionProvider>
 	);
 }

@@ -23,9 +23,13 @@ pnpm test
 pnpm test:ts-core
 pnpm typecheck
 pnpm lint
+pnpm audit:prod
 pnpm db:check
 NEXT_TELEMETRY_DISABLED=1 pnpm build
 ```
+
+生产依赖审计固定使用 npm 官方 advisory 端点，并以 `moderate` 及以上为失败门槛；本机 npm 镜像
+不提供审计接口时，不得把工具错误记录为通过。
 
 再验证部署产物：
 

@@ -11,7 +11,6 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { codeToHtml } from "shiki";
 
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
@@ -257,10 +256,13 @@ function CodeBlock({
 			return;
 		}
 
-		codeToHtml(code, {
-			lang: normalizedLanguage,
-			theme: "nord",
-		})
+		import("shiki")
+			.then(({ codeToHtml }) =>
+				codeToHtml(code, {
+					lang: normalizedLanguage,
+					theme: "nord",
+				}),
+			)
 			.then((value) => {
 				if (!cancelled) {
 					setHtml(value);

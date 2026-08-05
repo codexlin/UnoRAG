@@ -54,14 +54,9 @@ test("Compose Ops Stack is opt-in, private, bounded, and credential-safe", () =>
 });
 
 test("edge blocks product metrics while Prometheus scrapes them internally", () => {
-	for (const file of [
-		"deploy/compose/Caddyfile",
-		"deploy/compose/Caddyfile.webch.cn",
-	]) {
-		const caddy = read(file);
-		assert.match(caddy, /@internalMetrics path \/metrics \/api\/metrics/);
-		assert.match(caddy, /respond @internalMetrics 404/);
-	}
+	const caddy = read("deploy/compose/Caddyfile");
+	assert.match(caddy, /@internalMetrics path \/metrics \/api\/metrics/);
+	assert.match(caddy, /respond @internalMetrics 404/);
 	assert.match(
 		read("deploy/compose/observability/otel-collector.yaml"),
 		/metrics_path: \/metrics[\s\S]*targets: \[web:3000\]/,

@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	createContext,
 	type ReactNode,
@@ -13,7 +14,9 @@ import {
 import { toast } from "sonner";
 
 import { useLibraries } from "@/hooks/use-libraries";
+import { useQueryScope } from "@/hooks/use-query-scope";
 import { type ApiDocument, fetchDocuments, isAbortError } from "@/lib/api";
+import { queryKeys } from "@/lib/query-keys";
 
 const POLL_MS = 2_000;
 
@@ -34,6 +37,8 @@ const IngestJobsContext = createContext<IngestJobsContextValue | null>(null);
  */
 export function IngestJobsProvider({ children }: { children: ReactNode }) {
 	const { libraries, refresh } = useLibraries();
+	const queryClient = useQueryClient();
+	const scope = useQueryScope();
 	const [processingCount, setProcessingCount] = useState(0);
 	const [tick, setTick] = useState(0);
 	const statusRef = useRef<Record<string, string>>({});
@@ -83,7 +88,11 @@ export function IngestJobsProvider({ children }: { children: ReactNode }) {
 			const batches = await Promise.all(
 				targetIds.map(async (libraryId) => {
 					try {
-						return await fetchDocuments(libraryId);
+						return await queryClient.fetchQuery({
+							queryKey: queryKeys.documents(scope, libraryId),
+							queryFn: ({ signal }) => fetchDocuments(libraryId, signal),
+							staleTime: 0,
+						});
 					} catch (err) {
 						if (isAbortError(err)) return [] as ApiDocument[];
 						return [] as ApiDocument[];
@@ -112,7 +121,7 @@ export function IngestJobsProvider({ children }: { children: ReactNode }) {
 		} catch {
 			/* 下一轮再试 */
 		}
-	}, [refresh]);
+	}, [queryClient, refresh, scope]);
 
 	useEffect(() => {
 		mountedRef.current = true;

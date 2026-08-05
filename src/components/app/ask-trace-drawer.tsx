@@ -68,7 +68,7 @@ export function stageDurationMs(
 	return hit.duration_ms;
 }
 
-export function serverTotalDurationMs(
+function serverTotalDurationMs(
 	debug: ApiRetrievalDebug | null | undefined,
 ): number | null {
 	if (

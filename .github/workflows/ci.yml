@@ -38,6 +38,20 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: unorag_ci
+          POSTGRES_USER: unorag_ci
+          POSTGRES_PASSWORD: unorag_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U unorag_ci -d unorag_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
@@ -50,10 +64,22 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: Install
         run: pnpm install --frozen-lockfile
+      - name: Audit production dependencies
+        run: pnpm audit:prod
       - name: TypeScript core contracts
         run: |
           pnpm typecheck
           pnpm test:ts-core
+      - name: Migrate lifecycle transaction database
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: postgresql://unorag_ci:unorag_ci@127.0.0.1:5432/unorag_ci
+      - name: Test document version transaction against PostgreSQL
+        run: >-
+          pnpm exec tsx --test --test-concurrency=1
+          tests/ts-core/document-version-command-postgres.test.ts
+        env:
+          DOCUMENT_VERSION_COMMAND_TEST_DATABASE_URL: postgresql://unorag_ci:unorag_ci@127.0.0.1:5432/unorag_ci
       - name: Test
         run: pnpm test
       - name: Lint

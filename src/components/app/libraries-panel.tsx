@@ -12,12 +12,13 @@ import {
 	Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-
 import { AuthButton } from "@/components/app/auth-button";
 import { Can, useCan } from "@/components/app/can";
 import { DocumentAclDialog } from "@/components/app/document-acl-dialog";
+import { DocumentDetailSheet } from "@/components/app/document-detail-sheet";
+import { DocumentStatusBadge } from "@/components/app/document-status";
 import { useIngestJobs } from "@/components/app/ingest-jobs-provider";
 import {
 	buildDetailActions,
@@ -55,14 +56,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-	Sheet,
-	SheetContent,
-	SheetDescription,
-	SheetFooter,
-	SheetHeader,
-	SheetTitle,
-} from "@/components/ui/sheet";
-import {
 	Table,
 	TableBody,
 	TableCell,
@@ -71,19 +64,17 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { useDocumentVersions } from "@/hooks/use-document-versions";
+import { useDocuments } from "@/hooks/use-documents";
 import { useLibraries } from "@/hooks/use-libraries";
 import {
 	type ApiDocument,
-	type ApiDocumentVersion,
 	type ApiLibrary,
 	cancelJob,
 	createLibrary,
 	deleteDocument,
 	deleteLibrary,
 	downloadDocument,
-	fetchDocuments,
-	fetchDocumentVersions,
-	isAbortError,
 	reindexDocument,
 	replaceDocument,
 	retryJob,
@@ -97,56 +88,7 @@ import {
 import { filterByCap } from "@/lib/client-permissions";
 import { TERMINAL_JOB_STATUSES } from "@/lib/document-lifecycle-contract";
 import { formatDateTime, formatDurationMs, formatFileSize } from "@/lib/format";
-import {
-	formatParserReportView,
-	isParserReportDegraded,
-	PARSE_DEGRADED_REINDEX_HINT,
-	resolveDocumentStatusDisplay,
-} from "@/lib/parser-report-view.mjs";
 import { cn } from "@/lib/utils";
-
-function DocStatusBadge({
-	status,
-	parserReport,
-}: {
-	status: string;
-	parserReport?: ApiDocument["parser_report"];
-}) {
-	const display = resolveDocumentStatusDisplay(status, parserReport);
-	const tone = display.tone;
-	return (
-		<span
-			className={cn(
-				"text-meta rounded-md border px-2 py-0.5 font-mono uppercase",
-				tone === "ready" && "border-cite/30 bg-cite/10 text-cite",
-				tone === "processing" &&
-					"border-survey/35 bg-accent text-accent-foreground",
-				tone === "failed" &&
-					"border-destructive/30 bg-destructive/10 text-destructive",
-				tone === "degraded" &&
-					"border-survey/35 bg-accent text-accent-foreground",
-				tone === "cancelled" && "border-border bg-muted text-muted-foreground",
-				tone === "indexing" &&
-					"border-survey/35 bg-accent text-accent-foreground",
-				tone === "empty" && "border-border bg-muted text-muted-foreground",
-				tone === "deleting" &&
-					"border-destructive/30 bg-destructive/10 text-destructive",
-				![
-					"ready",
-					"processing",
-					"failed",
-					"degraded",
-					"cancelled",
-					"indexing",
-					"empty",
-					"deleting",
-				].includes(tone) && "border-border bg-muted text-muted-foreground",
-			)}
-		>
-			{display.label}
-		</span>
-	);
-}
 
 function LibStatusDot({ status }: { status: string }) {
 	return (
@@ -167,107 +109,12 @@ function LibStatusDot({ status }: { status: string }) {
 	);
 }
 
-function ParserReportCard({
-	report,
-	parseStatus,
-}: {
-	report: NonNullable<ApiDocument["parser_report"]>;
-	parseStatus?: ApiDocument["parse_status"];
-}) {
-	const reportView = formatParserReportView(report);
-	const status = parseStatus ?? null;
-	return (
-		<div
-			className={cn(
-				"rounded-md border px-3 py-2",
-				reportView.degraded
-					? "border-survey/40 bg-accent/40"
-					: "border-border/80 bg-muted/30",
-			)}
-		>
-			<div className="flex flex-wrap items-center gap-2">
-				<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
-					{reportView.title}
-				</p>
-				{reportView.degraded ? (
-					<span className="text-meta rounded-md border border-survey/35 bg-accent px-1.5 py-0.5 font-mono text-accent-foreground">
-						降级处理
-					</span>
-				) : null}
-			</div>
-			{status?.parser_label ? (
-				<p className="text-ui mt-1">
-					实际解析器：{status.parser_label}
-					{status.external_processing === true
-						? " · 已出域处理"
-						: status.external_processing === false
-							? " · 未出域"
-							: ""}
-				</p>
-			) : null}
-			{status?.task_status ? (
-				<p className="text-ui mt-1 text-muted-foreground">
-					任务状态：{status.task_status}
-				</p>
-			) : null}
-			{status?.parse_quality_hint ? (
-				<p className="text-ui mt-1 text-muted-foreground">
-					{status.parse_quality_hint}
-				</p>
-			) : null}
-			{status?.degrade_reason ? (
-				<p className="text-ui mt-1 text-survey">
-					降级原因：{status.degrade_reason}
-				</p>
-			) : null}
-			{status?.provider_task_id ? (
-				<p className="text-meta mt-1 font-mono text-muted-foreground">
-					任务 ID：{status.provider_task_id}
-				</p>
-			) : null}
-			{reportView.summaries.map((line) => (
-				<p
-					key={line}
-					className={cn(
-						"text-ui mt-1",
-						line.startsWith("建议 OCR")
-							? "text-muted-foreground"
-							: "text-survey",
-					)}
-				>
-					{line}
-				</p>
-			))}
-			{reportView.degraded ? (
-				<p className="text-ui mt-1.5 text-muted-foreground">
-					{PARSE_DEGRADED_REINDEX_HINT}
-				</p>
-			) : null}
-			{reportView.techDetails.length > 0 ? (
-				<details className="group mt-2 rounded-md border border-border/60 bg-background/40">
-					<summary className="cursor-pointer list-none px-2 py-1.5 font-mono text-meta text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground [&::-webkit-details-marker]:hidden">
-						技术详情
-					</summary>
-					<ul className="text-ui space-y-1 border-t border-border/50 px-2 py-1.5 text-muted-foreground">
-						{reportView.techDetails.map((detail) => (
-							<li
-								key={detail}
-								className="break-all font-mono text-[11px] leading-relaxed"
-							>
-								{detail}
-							</li>
-						))}
-					</ul>
-				</details>
-			) : null}
-			{reportView.empty && !status?.parser_label ? (
-				<p className="text-ui mt-1 text-muted-foreground">
-					解析完成，无额外提示
-				</p>
-			) : null}
-		</div>
-	);
-}
+type DocumentOverlay =
+	| { kind: "none" }
+	| { kind: "detail"; docId: string }
+	| { kind: "delete"; docId: string }
+	| { kind: "acl"; doc: ApiDocument }
+	| { kind: "replace"; doc: ApiDocument; file: File | null };
 
 export function LibrariesPanel() {
 	const { caps } = useSession();
@@ -281,18 +128,15 @@ export function LibrariesPanel() {
 	} = useLibraries();
 	const { tick: ingestTick, trackProcessing } = useIngestJobs();
 	const [selectedId, setSelectedId] = useState<string>("");
-	const [documents, setDocuments] = useState<ApiDocument[]>([]);
 	const [documentQuery, setDocumentQuery] = useState("");
 	const [uploading, setUploading] = useState(false);
 	const [savingLibrary, setSavingLibrary] = useState(false);
 	const [busyDocId, setBusyDocId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [lastUploadMs, setLastUploadMs] = useState<number | null>(null);
-	const [detailDocId, setDetailDocId] = useState<string | null>(null);
-	const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
-	const [aclDoc, setAclDoc] = useState<ApiDocument | null>(null);
-	const [replaceDoc, setReplaceDoc] = useState<ApiDocument | null>(null);
-	const [replaceFile, setReplaceFile] = useState<File | null>(null);
+	const [documentOverlay, setDocumentOverlay] = useState<DocumentOverlay>({
+		kind: "none",
+	});
 	const [replacing, setReplacing] = useState(false);
 	// open 与 mode 分离：关闭时只关 open，保留 mode/文案，避免关闭动画闪成「新建」
 	const [libraryDialogOpen, setLibraryDialogOpen] = useState(false);
@@ -310,10 +154,36 @@ export function LibrariesPanel() {
 	const [deleteLibraryTarget, setDeleteLibraryTarget] =
 		useState<ApiLibrary | null>(null);
 	const [deletingLibrary, setDeletingLibrary] = useState(false);
-	const [versionRows, setVersionRows] = useState<ApiDocumentVersion[]>([]);
-	const [versionsLoading, setVersionsLoading] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const replaceInputRef = useRef<HTMLInputElement>(null);
+	const detailDocId =
+		documentOverlay.kind === "detail" ? documentOverlay.docId : null;
+	const deleteDocId =
+		documentOverlay.kind === "delete" ? documentOverlay.docId : null;
+	const aclDoc = documentOverlay.kind === "acl" ? documentOverlay.doc : null;
+	const replaceDoc =
+		documentOverlay.kind === "replace" ? documentOverlay.doc : null;
+	const replaceFile =
+		documentOverlay.kind === "replace" ? documentOverlay.file : null;
+	const selectedLibraryExists = libraries.some(
+		(item) => item.id === selectedId,
+	);
+	const {
+		documents,
+		error: documentsError,
+		refresh: refreshDocuments,
+	} = useDocuments(selectedId, { enabled: selectedLibraryExists });
+	const pageError =
+		error ||
+		librariesError ||
+		(documentsError && !/404|not found/i.test(documentsError)
+			? `文档列表加载失败：${documentsError}`
+			: null);
+	const {
+		versions: versionRows,
+		loading: versionsLoading,
+		refresh: refreshVersions,
+	} = useDocumentVersions(selectedId, detailDocId ?? "");
 
 	const selectedLibrary = useMemo(
 		() => libraries.find((item) => item.id === selectedId) ?? null,
@@ -353,37 +223,10 @@ export function LibrariesPanel() {
 		[documents],
 	);
 
-	const loadDocuments = useCallback(
-		async (libraryId: string, signal?: AbortSignal) => {
-			if (!libraryId) {
-				setDocuments([]);
-				return;
-			}
-			try {
-				const items = await fetchDocuments(libraryId, signal);
-				if (signal?.aborted) return;
-				setDocuments(items);
-				setError(null);
-			} catch (err) {
-				if (signal?.aborted || isAbortError(err)) return;
-				setDocuments([]);
-				const message = err instanceof Error ? err.message : "文档列表加载失败";
-				// 库已不存在 / 无库：不当成页面错误，静默清空
-				if (/404|not found/i.test(message)) {
-					setError(null);
-					return;
-				}
-				setError(`文档列表加载失败：${message}`);
-			}
-		},
-		[],
-	);
-
 	useEffect(() => {
 		if (libraries.length === 0) {
 			if (selectedId) setSelectedId("");
 			setDocumentQuery("");
-			setDocuments([]);
 			return;
 		}
 		const stillExists = libraries.some((item) => item.id === selectedId);
@@ -394,56 +237,9 @@ export function LibrariesPanel() {
 	}, [libraries, selectedId]);
 
 	useEffect(() => {
-		if (!selectedId) {
-			setDocuments([]);
-			return;
-		}
-		// 库列表尚未包含该 id（刚删光 / 切换中）不请求，避免 404 噪点
-		if (!libraries.some((item) => item.id === selectedId)) {
-			return;
-		}
-		const controller = new AbortController();
-		void loadDocuments(selectedId, controller.signal);
-		return () => controller.abort();
-	}, [selectedId, libraries, loadDocuments]);
-
-	// 全局索引轮询 tick：刷新当前库文档表（完成 toast 由 IngestJobsProvider 负责）
-	useEffect(() => {
-		if (!selectedId || ingestTick === 0) return;
-		const selected = libraries.find((item) => item.id === selectedId);
-		if (selected?.status !== "indexing") return;
-		void loadDocuments(selectedId);
-	}, [ingestTick, selectedId, libraries, loadDocuments]);
-
-	useEffect(() => {
-		// ingestTick intentionally refreshes versions while ingest progresses.
-		void ingestTick;
-		if (!detailDocId || !selectedId) {
-			setVersionRows([]);
-			return;
-		}
-		const controller = new AbortController();
-		setVersionsLoading(true);
-		void fetchDocumentVersions({
-			libraryId: selectedId,
-			docId: detailDocId,
-			signal: controller.signal,
-		})
-			.then((payload) => {
-				if (!controller.signal.aborted) {
-					setVersionRows(payload.versions);
-				}
-			})
-			.catch((err) => {
-				if (!isAbortError(err) && !controller.signal.aborted) {
-					setVersionRows([]);
-				}
-			})
-			.finally(() => {
-				if (!controller.signal.aborted) setVersionsLoading(false);
-			});
-		return () => controller.abort();
-	}, [detailDocId, selectedId, ingestTick]);
+		if (!detailDocId || !selectedId || ingestTick === 0) return;
+		void refreshVersions();
+	}, [detailDocId, selectedId, ingestTick, refreshVersions]);
 
 	async function loadLibraries() {
 		setError(null);
@@ -509,7 +305,7 @@ export function LibrariesPanel() {
 				toast.error(message);
 			}
 			await loadLibraries();
-			await loadDocuments(selectedId);
+			await refreshDocuments();
 		} catch (err) {
 			setLastUploadMs(Math.round(performance.now() - started));
 			const message = err instanceof Error ? err.message : "上传失败";
@@ -637,12 +433,10 @@ export function LibrariesPanel() {
 			);
 			setDeleteLibraryTarget(null);
 			setLibraryDialogOpen(false);
-			setDetailDocId(null);
-			setDeleteDocId(null);
+			setDocumentOverlay({ kind: "none" });
 			if (selectedId === target.id) {
 				setSelectedId(nextSelectedId);
 				setDocumentQuery("");
-				setDocuments([]);
 			}
 			await loadLibraries();
 		} catch (err) {
@@ -682,12 +476,12 @@ export function LibrariesPanel() {
 				);
 			}
 			await loadLibraries();
-			if (selectedId) await loadDocuments(selectedId);
+			if (selectedId) await refreshDocuments();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "重索引失败";
 			setError(message);
 			toast.error(message);
-			if (selectedId) await loadDocuments(selectedId);
+			if (selectedId) await refreshDocuments();
 		} finally {
 			setBusyDocId(null);
 		}
@@ -703,7 +497,7 @@ export function LibrariesPanel() {
 				result.status === "cancelling" ? "已请求取消任务" : "任务已取消",
 			);
 			await loadLibraries();
-			if (selectedId) await loadDocuments(selectedId);
+			if (selectedId) await refreshDocuments();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "取消任务失败";
 			setError(message);
@@ -722,7 +516,7 @@ export function LibrariesPanel() {
 			trackProcessing([{ id: result.document_id, name: doc.name }]);
 			toast.success(`已重新提交「${doc.name}」`);
 			await loadLibraries();
-			if (selectedId) await loadDocuments(selectedId);
+			if (selectedId) await refreshDocuments();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "重试任务失败";
 			setError(message);
@@ -761,10 +555,9 @@ export function LibrariesPanel() {
 		try {
 			await deleteDocument({ libraryId: selectedId, docId: id });
 			toast.success("已排队删除文档（后台清理向量、对象与元数据）");
-			if (detailDocId === id) setDetailDocId(null);
-			setDeleteDocId(null);
+			setDocumentOverlay({ kind: "none" });
 			await loadLibraries();
-			if (selectedId) await loadDocuments(selectedId);
+			if (selectedId) await refreshDocuments();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "删除失败";
 			setError(message);
@@ -776,8 +569,7 @@ export function LibrariesPanel() {
 
 	function startReplace(doc: ApiDocument) {
 		if (doc.status === "processing") return;
-		setReplaceDoc(doc);
-		setReplaceFile(null);
+		setDocumentOverlay({ kind: "replace", doc, file: null });
 		replaceInputRef.current?.click();
 	}
 
@@ -785,16 +577,15 @@ export function LibrariesPanel() {
 		const file = files?.[0] ?? null;
 		if (replaceInputRef.current) replaceInputRef.current.value = "";
 		if (!file || !replaceDoc) {
-			setReplaceDoc(null);
+			setDocumentOverlay({ kind: "none" });
 			return;
 		}
-		setReplaceFile(file);
+		setDocumentOverlay({ kind: "replace", doc: replaceDoc, file });
 	}
 
 	function cancelReplace() {
 		if (replacing) return;
-		setReplaceDoc(null);
-		setReplaceFile(null);
+		setDocumentOverlay({ kind: "none" });
 	}
 
 	async function onConfirmReplace() {
@@ -818,10 +609,9 @@ export function LibrariesPanel() {
 					`已替换「${result.title}」· ${result.chunk_count} chunks`,
 				);
 			}
-			setReplaceDoc(null);
-			setReplaceFile(null);
+			setDocumentOverlay({ kind: "none" });
 			await loadLibraries();
-			if (selectedId) await loadDocuments(selectedId);
+			if (selectedId) await refreshDocuments();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "替换失败";
 			setError(message);
@@ -836,7 +626,7 @@ export function LibrariesPanel() {
 	const detailActions = filterByCap(
 		caps,
 		buildDetailActions({
-			onAcl: (doc) => setAclDoc(doc),
+			onAcl: (doc) => setDocumentOverlay({ kind: "acl", doc }),
 			onReplace: startReplace,
 			onReindex: (doc) => {
 				void onReindex(doc);
@@ -844,7 +634,7 @@ export function LibrariesPanel() {
 			onDownload: (doc) => {
 				void onDownload(doc);
 			},
-			onDelete: (doc) => setDeleteDocId(doc.id),
+			onDelete: (doc) => setDocumentOverlay({ kind: "delete", docId: doc.id }),
 		}),
 	);
 
@@ -878,7 +668,7 @@ export function LibrariesPanel() {
 										onClick={() => {
 											setSelectedId(library.id);
 											setDocumentQuery("");
-											setDetailDocId(null);
+											setDocumentOverlay({ kind: "none" });
 										}}
 										className={cn(
 											"flex w-full items-start gap-2.5 rounded-sm border-l-2 px-2.5 py-2.5 text-left transition-colors",
@@ -1032,7 +822,7 @@ export function LibrariesPanel() {
 								disabled={loading || !selectedId}
 								onClick={() => {
 									void loadLibraries();
-									if (selectedId) void loadDocuments(selectedId);
+									if (selectedId) void refreshDocuments();
 								}}
 							>
 								<RefreshCw />
@@ -1111,9 +901,9 @@ export function LibrariesPanel() {
 						</div>
 					) : null}
 
-					{(error || librariesError) && (
+					{pageError && (
 						<p className="text-ui mx-5 mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive">
-							{error || librariesError}
+							{pageError}
 						</p>
 					)}
 
@@ -1232,8 +1022,13 @@ export function LibrariesPanel() {
 											const actionCtx: DocActionContext = {
 												busy,
 												processing,
-												onView: (item) => setDetailDocId(item.id),
-												onAcl: (item) => setAclDoc(item),
+												onView: (item) =>
+													setDocumentOverlay({
+														kind: "detail",
+														docId: item.id,
+													}),
+												onAcl: (item) =>
+													setDocumentOverlay({ kind: "acl", doc: item }),
 												onReplace: startReplace,
 												onReindex: (item) => {
 													void onReindex(item);
@@ -1247,14 +1042,23 @@ export function LibrariesPanel() {
 												onDownload: (item) => {
 													void onDownload(item);
 												},
-												onDelete: (item) => setDeleteDocId(item.id),
+												onDelete: (item) =>
+													setDocumentOverlay({
+														kind: "delete",
+														docId: item.id,
+													}),
 											};
 											const actions = resolveDocActions(caps, doc);
 											return (
 												<TableRow
 													key={doc.id}
 													className="cursor-pointer"
-													onClick={() => setDetailDocId(doc.id)}
+													onClick={() =>
+														setDocumentOverlay({
+															kind: "detail",
+															docId: doc.id,
+														})
+													}
 												>
 													<TableCell className="max-w-50">
 														<span className="block truncate font-medium">
@@ -1267,7 +1071,7 @@ export function LibrariesPanel() {
 														</span>
 													</TableCell>
 													<TableCell className="w-24 md:w-auto">
-														<DocStatusBadge
+														<DocumentStatusBadge
 															status={doc.status}
 															parserReport={doc.parser_report}
 														/>
@@ -1354,222 +1158,27 @@ export function LibrariesPanel() {
 				</section>
 			</div>
 
-			{/* 详情 Sheet */}
-			<Sheet
-				open={detailDocId != null && detailDoc != null}
-				onOpenChange={(open) => {
-					if (!open) setDetailDocId(null);
-				}}
-			>
-				<SheetContent
-					side="right"
-					className="w-full sm:max-w-md"
-					showCloseButton
-				>
-					{detailDoc ? (
-						<>
-							<SheetHeader className="border-b border-border/70">
-								<SheetTitle className="pr-8">{detailDoc.name}</SheetTitle>
-								<SheetDescription>
-									{detailDoc.filename} · {detailDoc.content_type || "未知类型"}
-								</SheetDescription>
-							</SheetHeader>
-							<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-2">
-								<div className="flex flex-wrap items-center gap-2">
-									<DocStatusBadge
-										status={detailDoc.status}
-										parserReport={detailDoc.parser_report}
-									/>
-									<span className="text-meta font-mono text-muted-foreground">
-										{detailDoc.chunk_count} chunks
-									</span>
-									<span className="text-meta font-mono text-muted-foreground">
-										{formatFileSize(detailDoc.size_bytes)}
-									</span>
-									{detailDoc.has_file ? (
-										<span className="text-meta rounded-md border border-cite/30 bg-cite/10 px-2 py-0.5 font-mono text-cite">
-											原文已保留
-										</span>
-									) : (
-										<span className="text-meta rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-muted-foreground">
-											原文未保留
-										</span>
-									)}
-								</div>
-
-								<dl className="grid gap-3 text-ui">
-									<div>
-										<dt className="text-meta font-mono text-muted-foreground uppercase tracking-wide">
-											大小
-										</dt>
-										<dd className="mt-0.5 font-mono text-meta">
-											{formatFileSize(detailDoc.size_bytes)}
-										</dd>
-									</div>
-									<div>
-										<dt className="text-meta font-mono text-muted-foreground uppercase tracking-wide">
-											创建
-										</dt>
-										<dd className="mt-0.5 font-mono text-meta">
-											{formatDateTime(detailDoc.created_at)}
-										</dd>
-									</div>
-									<div>
-										<dt className="text-meta font-mono text-muted-foreground uppercase tracking-wide">
-											更新
-										</dt>
-										<dd className="mt-0.5 font-mono text-meta">
-											{formatDateTime(detailDoc.updated_at)}
-										</dd>
-									</div>
-									{typeof detailDoc.parser_report?.parser === "string" ||
-									detailDoc.parse_status?.parser_label ? (
-										<div>
-											<dt className="text-meta font-mono text-muted-foreground uppercase tracking-wide">
-												解析器
-											</dt>
-											<dd className="mt-0.5 font-mono text-meta">
-												{detailDoc.parse_status?.parser_label ||
-													detailDoc.parser_report?.parser}
-											</dd>
-										</div>
-									) : null}
-									{detailDoc.parse_status?.task_status ? (
-										<div>
-											<dt className="text-meta font-mono text-muted-foreground uppercase tracking-wide">
-												入库状态
-											</dt>
-											<dd className="mt-0.5 font-mono text-meta">
-												{detailDoc.parse_status.task_status}
-												{detailDoc.job_progress != null
-													? ` · ${detailDoc.job_progress}%`
-													: ""}
-											</dd>
-										</div>
-									) : null}
-								</dl>
-
-								{detailDoc.error ? (
-									<div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
-										<p className="text-meta font-mono uppercase tracking-wide text-destructive">
-											错误
-										</p>
-										<p className="text-ui mt-1 text-destructive">
-											{detailDoc.error}
-										</p>
-									</div>
-								) : null}
-
-								<div className="rounded-md border border-border/80 bg-muted/20 px-3 py-2">
-									<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
-										版本历史
-									</p>
-									{versionsLoading ? (
-										<p className="text-ui mt-2 text-muted-foreground">
-											加载中…
-										</p>
-									) : versionRows.length === 0 ? (
-										<p className="text-ui mt-2 text-muted-foreground">
-											暂无版本
-										</p>
-									) : (
-										<ul className="mt-2 space-y-2">
-											{versionRows.map((version) => (
-												<li
-													key={version.id}
-													className="flex items-start justify-between gap-2 border-t border-border/50 pt-2 first:border-t-0 first:pt-0"
-												>
-													<div className="min-w-0">
-														<p className="font-mono text-meta">
-															v{version.version}
-															{version.is_active ? " · active" : ""}
-															{version.is_desired && !version.is_active
-																? " · desired"
-																: ""}
-														</p>
-														<p className="truncate text-meta text-muted-foreground">
-															{version.generation_id.slice(0, 8)}…
-															{version.chunk_count != null
-																? ` · ${version.chunk_count} chunks`
-																: ""}
-														</p>
-													</div>
-													<DocStatusBadge status={version.status} />
-												</li>
-											))}
-										</ul>
-									)}
-								</div>
-
-								{detailDoc.parser_report ? (
-									<ParserReportCard
-										report={detailDoc.parser_report}
-										parseStatus={detailDoc.parse_status}
-									/>
-								) : detailDoc.parse_status?.task_status ? (
-									<div className="rounded-md border border-border/80 bg-muted/30 px-3 py-2">
-										<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
-											入库进度
-										</p>
-										<p className="text-ui mt-1">
-											{detailDoc.parse_status.task_status}
-										</p>
-									</div>
-								) : null}
-
-								{!detailDoc.has_file ? (
-									<p className="text-ui text-muted-foreground">
-										此文档上传时未落盘原文，无法下载或重索引。
-										{canWriteLibraries ? "可用「替换文件」重新上传。" : ""}
-									</p>
-								) : null}
-							</div>
-							<SheetFooter className="border-t border-border/70">
-								<div className="flex flex-wrap gap-2">
-									{detailActions.map((action) => {
-										const Icon = action.icon;
-										const busy = busyDocId === detailDoc.id;
-										const highlightReindex =
-											action.id === "reindex" &&
-											isParserReportDegraded(detailDoc.parser_report) &&
-											Boolean(detailDoc.has_file);
-										return (
-											<AuthButton
-												key={action.id}
-												cap={action.cap}
-												type="button"
-												variant={
-													highlightReindex
-														? "default"
-														: (action.variant ?? "outline")
-												}
-												className="rounded-md"
-												disabled={action.disabled?.(detailDoc, busy) ?? false}
-												onClick={() => action.run(detailDoc)}
-											>
-												<Icon data-icon="inline-start" />
-												{action.label}
-											</AuthButton>
-										);
-									})}
-								</div>
-							</SheetFooter>
-						</>
-					) : null}
-				</SheetContent>
-			</Sheet>
+			<DocumentDetailSheet
+				document={detailDoc}
+				versions={versionRows}
+				versionsLoading={versionsLoading}
+				busy={Boolean(detailDoc && busyDocId === detailDoc.id)}
+				canWrite={canWriteLibraries}
+				actions={detailActions}
+				onClose={() => setDocumentOverlay({ kind: "none" })}
+			/>
 
 			<DocumentAclDialog
 				open={aclDoc != null}
 				libraryId={selectedId || null}
 				doc={aclDoc}
 				onOpenChange={(next) => {
-					if (!next) setAclDoc(null);
+					if (!next) setDocumentOverlay({ kind: "none" });
 				}}
 				onProjected={(item) => {
 					trackProcessing([{ id: item.id, name: item.name }]);
 					void loadLibraries();
-					if (selectedId) void loadDocuments(selectedId);
+					if (selectedId) void refreshDocuments();
 				}}
 			/>
 
@@ -1577,7 +1186,7 @@ export function LibrariesPanel() {
 			<AlertDialog
 				open={deleteDocId != null}
 				onOpenChange={(open) => {
-					if (!open) setDeleteDocId(null);
+					if (!open) setDocumentOverlay({ kind: "none" });
 				}}
 			>
 				<AlertDialogContent size="default">

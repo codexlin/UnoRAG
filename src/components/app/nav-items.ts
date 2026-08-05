@@ -25,7 +25,7 @@ export type AppNavItem = {
 	cap?: Cap;
 };
 
-export const APP_NAV_ITEMS: AppNavItem[] = [
+const APP_NAV_ITEMS: AppNavItem[] = [
 	{
 		href: "/app/ask",
 		code: "01",

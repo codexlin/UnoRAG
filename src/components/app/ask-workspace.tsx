@@ -18,15 +18,23 @@ import {
 	type KeyboardEvent,
 	useEffect,
 	useMemo,
+	useReducer,
 	useRef,
 	useState,
 } from "react";
-
+import { AskSourcesPanel } from "@/components/app/ask-sources-panel";
 import {
 	AskTraceDrawer,
 	hasAskTrace,
 	stageDurationMs,
 } from "@/components/app/ask-trace-drawer";
+import {
+	askTurnsReducer,
+	completedTurn,
+	type LocalTurn,
+	toApiCitation,
+	toUiCitation,
+} from "@/components/app/ask-turn-state";
 import { CitationSourceCard } from "@/components/app/citation-source-card";
 import { LibraryCombobox } from "@/components/app/library-combobox";
 import { MarkdownAnswer } from "@/components/app/markdown-answer";
@@ -46,17 +54,16 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useDocuments } from "@/hooks/use-documents";
 import { useHealth } from "@/hooks/use-health";
 import { useLibraries } from "@/hooks/use-libraries";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
-	type ApiCitation,
 	type ApiDocument,
 	type ApiRetrievalDebug,
 	archiveThread,
 	askQuestionStream,
 	continueThread,
-	fetchDocuments,
 	isAbortError,
 } from "@/lib/api";
 import {
@@ -65,7 +72,7 @@ import {
 	isAskableLibrary,
 } from "@/lib/ask-library-selection.mjs";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
-import type { UiCitation, UiTurn } from "@/lib/ui-types";
+import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
 /** 中性示例：不暗示内置语料，仅在无可用文档标题时使用 */
@@ -103,53 +110,6 @@ function buildSampleQuestions(docs: ApiDocument[]): string[] {
 	return unique.map((title, index) =>
 		DOC_QUESTION_TEMPLATES[index % DOC_QUESTION_TEMPLATES.length](title),
 	);
-}
-
-type LocalTurn = UiTurn & {
-	pending?: boolean;
-	error?: string;
-	cancelled?: boolean;
-	topScore?: number | null;
-	usedHybrid?: boolean;
-	evidenceReady?: boolean;
-	hybridFailed?: boolean;
-	rerankFailed?: boolean;
-	retrievalMode?: string;
-	persisted?: boolean;
-	persistError?: string | null;
-	/** performance.now() mark when request started */
-	startedAtMs?: number;
-	/** wall-clock when request started */
-	startedAt?: number;
-	completedAt?: number;
-	durationMs?: number;
-	/** ms until first citations / evidence event (client wall-clock; not shown as 检索) */
-	evidenceMs?: number;
-	/** server retrieve stage duration_ms from retrieval_debug.stages */
-	retrieveMs?: number;
-};
-
-function toUiCitation(citation: ApiCitation): UiCitation {
-	const text = citation.body || citation.text || citation.snippet || "";
-	return {
-		id: citation.id,
-		index: citation.index,
-		title: citation.title,
-		page: citation.page ?? undefined,
-		sectionPath: citation.section_path ?? undefined,
-		preamble: citation.preamble ?? undefined,
-		snippet: citation.snippet || text.slice(0, 280),
-		text,
-		score: citation.score,
-		denseScore: citation.dense_score,
-		bm25Score: citation.bm25_score,
-		rrfScore: citation.rrf_score,
-		usedRerank: Boolean(citation.used_rerank),
-		usedHybrid: Boolean(citation.used_hybrid),
-		docId: citation.doc_id ?? undefined,
-		chunkIndex: citation.chunk_index ?? undefined,
-		filename: citation.filename ?? undefined,
-	};
 }
 
 function AnswerBody({
@@ -204,67 +164,6 @@ function RetrievalNotice({ turn }: { turn: LocalTurn }) {
 	);
 }
 
-function SourcesPanelContent({
-	activeCitation,
-	onClose,
-}: {
-	activeCitation: UiCitation | null;
-	onClose: () => void;
-}) {
-	return (
-		<div className="flex h-full min-h-0 w-full flex-col">
-			<div className="flex h-12 shrink-0 items-center justify-between border-b border-border/70 px-4">
-				<div>
-					<p className="text-meta font-mono tracking-[0.16em] text-cite uppercase">
-						Evidence
-					</p>
-					<p className="text-[0.9375rem] font-medium leading-snug text-foreground">
-						证据轨道
-					</p>
-				</div>
-				<Tooltip>
-					<TooltipTrigger
-						render={
-							<button
-								type="button"
-								onClick={onClose}
-								className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-								aria-label="收起引用来源面板"
-							>
-								<PanelRightClose className="size-4" aria-hidden />
-							</button>
-						}
-					/>
-					<TooltipContent side="left">关闭引用来源面板</TooltipContent>
-				</Tooltip>
-			</div>
-			<ScrollArea className="min-h-0 flex-1">
-				<div className="p-4">
-					{activeCitation ? (
-						<div className="desk-enter">
-							<CitationSourceCard
-								citation={activeCitation}
-								active
-								expanded
-								showDiagnostics
-							/>
-						</div>
-					) : (
-						<div className="text-ui desk-enter space-y-2 text-muted-foreground">
-							<p>
-								点击回答中的引用编号或下方依据，即可在这里核对完整原文与文档位置。
-							</p>
-							<p className="text-meta font-mono text-muted-foreground/80">
-								检索分数收纳在证据卡的诊断区。
-							</p>
-						</div>
-					)}
-				</div>
-			</ScrollArea>
-		</div>
-	);
-}
-
 function canRetryTurn(turn: LocalTurn): boolean {
 	if (turn.pending) return false;
 	return Boolean(turn.error || turn.cancelled || turn.refused);
@@ -291,18 +190,28 @@ export function AskWorkspace() {
 	const [resumeLibraryMissing, setResumeLibraryMissing] = useState<
 		string | null
 	>(null);
-	const [turns, setTurns] = useState<LocalTurn[]>([]);
+	const [turns, dispatchTurns] = useReducer(askTurnsReducer, []);
 	const [activeCitation, setActiveCitation] = useState<UiCitation | null>(null);
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [traceDebug, setTraceDebug] = useState<ApiRetrievalDebug | null>(null);
 	const [traceClientMs, setTraceClientMs] = useState<number | null>(null);
 	const [traceOpen, setTraceOpen] = useState(false);
-	const [readyDocuments, setReadyDocuments] = useState<ApiDocument[]>([]);
-	const [docsLoaded, setDocsLoaded] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const abortRef = useRef<AbortController | null>(null);
 	const activeTurnIdRef = useRef<string | null>(null);
 	const resumeThreadRef = useRef<string | null>(null);
+	const {
+		documents: libraryDocuments,
+		fetched: documentsFetched,
+		error: documentsError,
+	} = useDocuments(libraryId, { enabled: Boolean(libraryId && apiReady) });
+	const readyDocuments = useMemo(
+		() => libraryDocuments.filter((doc) => doc.status === "ready"),
+		[libraryDocuments],
+	);
+	const docsLoaded = Boolean(
+		libraryId && apiReady && (documentsFetched || documentsError),
+	);
 
 	const isStreaming = turns.some((turn) => turn.pending);
 	const isArchived = Boolean(threadId);
@@ -377,8 +286,9 @@ export function AskWorkspace() {
 					setResumeLibraryMissing(null);
 					if (archivedLibraryId) setLibraryId(archivedLibraryId);
 				}
-				setTurns(
-					detail.turns.map((turn, index) => ({
+				dispatchTurns({
+					type: "hydrate",
+					turns: detail.turns.map((turn, index) => ({
 						id: turn.id || `resume-${index}`,
 						question: turn.question,
 						answer: turn.answer,
@@ -390,7 +300,7 @@ export function AskWorkspace() {
 						persisted: true,
 						retrievalDebug: turn.retrieval_debug || undefined,
 					})),
-				);
+				});
 				setArchiveError(null);
 			} catch (err) {
 				if (controller.signal.aborted || isAbortError(err)) return;
@@ -399,30 +309,6 @@ export function AskWorkspace() {
 		})();
 		return () => controller.abort();
 	}, [apiReady, libraries, librariesLoading, searchParams]);
-
-	useEffect(() => {
-		if (!libraryId || !apiReady) {
-			setReadyDocuments([]);
-			setDocsLoaded(false);
-			return;
-		}
-		const controller = new AbortController();
-		setDocsLoaded(false);
-		setReadyDocuments([]);
-		void (async () => {
-			try {
-				const items = await fetchDocuments(libraryId, controller.signal);
-				if (controller.signal.aborted) return;
-				setReadyDocuments(items.filter((doc) => doc.status === "ready"));
-				setDocsLoaded(true);
-			} catch (err) {
-				if (controller.signal.aborted || isAbortError(err)) return;
-				setReadyDocuments([]);
-				setDocsLoaded(true);
-			}
-		})();
-		return () => controller.abort();
-	}, [libraryId, apiReady]);
 
 	function resizeComposer(
 		el: HTMLTextAreaElement | null = textareaRef.current,
@@ -489,25 +375,7 @@ export function AskWorkspace() {
 				turns: readyTurns.map((turn) => ({
 					question: turn.question,
 					answer: turn.answer,
-					citations: turn.citations.map((citation) => ({
-						id: citation.id,
-						index: citation.index,
-						title: citation.title,
-						page: citation.page ?? null,
-						section_path: citation.sectionPath ?? null,
-						preamble: citation.preamble ?? null,
-						snippet: citation.snippet || citation.text.slice(0, 280),
-						text: citation.text,
-						score: citation.score ?? 0,
-						dense_score: citation.denseScore ?? null,
-						bm25_score: citation.bm25Score ?? null,
-						rrf_score: citation.rrfScore ?? null,
-						used_rerank: Boolean(citation.usedRerank),
-						used_hybrid: Boolean(citation.usedHybrid),
-						doc_id: citation.docId ?? null,
-						chunk_index: citation.chunkIndex ?? null,
-						filename: citation.filename ?? null,
-					})),
+					citations: turn.citations.map(toApiCitation),
 					mode: turn.mode || "stub",
 					refused: Boolean(turn.refused),
 					refuse_reason: turn.refuseReason,
@@ -549,53 +417,21 @@ export function AskWorkspace() {
 		abortRef.current = controller;
 		activeTurnIdRef.current = pendingId;
 
-		if (replaceTurnId) {
-			setTurns((prev) =>
-				prev.map((turn) =>
-					turn.id === replaceTurnId
-						? {
-								id: pendingId,
-								question: trimmed,
-								answer: "",
-								citations: [],
-								pending: true,
-								error: undefined,
-								cancelled: undefined,
-								refused: undefined,
-								refuseReason: undefined,
-								mode: undefined,
-								evidenceReady: false,
-								hybridFailed: undefined,
-								rerankFailed: undefined,
-								retrievalMode: undefined,
-								persisted: undefined,
-								persistError: undefined,
-								topScore: undefined,
-								usedHybrid: undefined,
-								startedAtMs,
-								startedAt,
-								completedAt: undefined,
-								durationMs: undefined,
-								evidenceMs: undefined,
-								retrievalDebug: undefined,
-							}
-						: turn,
-				),
-			);
-		} else {
-			setTurns((prev) => [
-				...prev,
-				{
-					id: pendingId,
-					question: trimmed,
-					answer: "",
-					citations: [],
-					pending: true,
-					evidenceReady: false,
-					startedAtMs,
-					startedAt,
-				},
-			]);
+		dispatchTurns({
+			type: "begin",
+			replaceTurnId,
+			turn: {
+				id: pendingId,
+				question: trimmed,
+				answer: "",
+				citations: [],
+				pending: true,
+				evidenceReady: false,
+				startedAtMs,
+				startedAt,
+			},
+		});
+		if (!replaceTurnId) {
 			setInput("");
 			requestAnimationFrame(() => resizeComposer());
 		}
@@ -615,53 +451,34 @@ export function AskWorkspace() {
 						if (activeTurnIdRef.current !== pendingId) return;
 						setSessionId(meta.session_id);
 						if (meta.thread_id) setThreadId(meta.thread_id);
-						setTurns((prev) =>
-							prev.map((turn) =>
-								turn.id === pendingId
-									? {
-											...turn,
-											refused: meta.refused,
-											refuseReason: meta.refuse_reason,
-											mode: meta.mode,
-											hybridFailed: Boolean(meta.hybrid_failed),
-											rerankFailed: Boolean(meta.rerank_failed),
-											retrievalMode: meta.retrieval_mode,
-										}
-									: turn,
-							),
-						);
+						dispatchTurns({
+							type: "meta",
+							turnId: pendingId,
+							patch: {
+								refused: meta.refused,
+								refuseReason: meta.refuse_reason,
+								mode: meta.mode,
+								hybridFailed: Boolean(meta.hybrid_failed),
+								rerankFailed: Boolean(meta.rerank_failed),
+								retrievalMode: meta.retrieval_mode,
+							},
+						});
 					},
 					onCitations: (citations) => {
 						if (activeTurnIdRef.current !== pendingId) return;
 						const mapped = citations.map(toUiCitation);
 						const evidenceMs = Math.round(performance.now() - startedAtMs);
-						setTurns((prev) =>
-							prev.map((turn) =>
-								turn.id === pendingId
-									? {
-											...turn,
-											citations: mapped,
-											evidenceReady: true,
-											evidenceMs: turn.evidenceMs ?? evidenceMs,
-										}
-									: turn,
-							),
-						);
+						dispatchTurns({
+							type: "citations",
+							turnId: pendingId,
+							citations: mapped,
+							evidenceMs,
+						});
 						setActiveCitation(mapped[0] ?? null);
 					},
 					onToken: (token) => {
 						if (activeTurnIdRef.current !== pendingId) return;
-						setTurns((prev) =>
-							prev.map((turn) =>
-								turn.id === pendingId
-									? {
-											...turn,
-											answer: `${turn.answer}${token}`,
-											pending: true,
-										}
-									: turn,
-							),
-						);
+						dispatchTurns({ type: "token", turnId: pendingId, token });
 					},
 					onDone: (result) => {
 						if (activeTurnIdRef.current !== pendingId) return;
@@ -672,49 +489,37 @@ export function AskWorkspace() {
 						const completedAt = Date.now();
 						const durationMs = Math.round(performance.now() - startedAtMs);
 						const retrieveMs = stageDurationMs(debug, "retrieve");
-						setTurns((prev) =>
-							prev.map((turn) =>
-								turn.id === pendingId
-									? {
-											id: `turn-${Date.now()}`,
-											question: trimmed,
-											answer: result.answer,
-											citations,
-											refused: result.refused,
-											refuseReason: result.refuse_reason,
-											mode: result.mode,
-											pending: false,
-											cancelled: false,
-											error: undefined,
-											evidenceReady: true,
-											startedAt,
-											completedAt,
-											durationMs,
-											evidenceMs: turn.evidenceMs,
-											retrieveMs: retrieveMs ?? undefined,
-											retrievalDebug: debug,
-											topScore:
-												typeof debug.top_score === "number"
-													? debug.top_score
-													: null,
-											usedHybrid: Boolean(debug.used_hybrid),
-											hybridFailed: Boolean(
-												result.hybrid_failed ?? debug.hybrid_failed,
-											),
-											rerankFailed: Boolean(
-												result.rerank_failed ?? debug.rerank_failed,
-											),
-											retrievalMode:
-												result.retrieval_mode ||
-												(typeof debug.retrieval_mode === "string"
-													? debug.retrieval_mode
-													: undefined),
-											persisted: result.persisted === true,
-											persistError: result.persist_error ?? null,
-										}
-									: turn,
-							),
-						);
+						dispatchTurns({
+							type: "complete",
+							turnId: pendingId,
+							turn: completedTurn({
+								id: `turn-${completedAt}`,
+								question: trimmed,
+								answer: result.answer,
+								citations,
+								refused: result.refused,
+								refuseReason: result.refuse_reason,
+								mode: result.mode,
+								startedAt,
+								completedAt,
+								durationMs,
+								retrieveMs: retrieveMs ?? undefined,
+								debug,
+								hybridFailed: Boolean(
+									result.hybrid_failed ?? debug.hybrid_failed,
+								),
+								rerankFailed: Boolean(
+									result.rerank_failed ?? debug.rerank_failed,
+								),
+								retrievalMode:
+									result.retrieval_mode ||
+									(typeof debug.retrieval_mode === "string"
+										? debug.retrieval_mode
+										: undefined),
+								persisted: result.persisted === true,
+								persistError: result.persist_error,
+							}),
+						});
 						setActiveCitation(citations[0] ?? null);
 					},
 					onError: (message) => {
@@ -729,41 +534,26 @@ export function AskWorkspace() {
 			const aborted = controller.signal.aborted || isAbortError(err);
 
 			if (aborted) {
-				setTurns((prev) =>
-					prev.map((turn) =>
-						turn.id === pendingId
-							? {
-									...turn,
-									id: `turn-${Date.now()}`,
-									pending: false,
-									cancelled: true,
-									error: undefined,
-									completedAt,
-									durationMs,
-								}
-							: turn,
-					),
-				);
+				dispatchTurns({
+					type: "terminal",
+					turnId: pendingId,
+					completedAt,
+					durationMs,
+					cancelled: true,
+				});
 				return;
 			}
 
 			const message =
 				err instanceof Error ? err.message : "请求失败，请确认 API 已启动";
-			setTurns((prev) =>
-				prev.map((turn) =>
-					turn.id === pendingId
-						? {
-								...turn,
-								id: `turn-${Date.now()}`,
-								pending: false,
-								cancelled: false,
-								error: message,
-								completedAt,
-								durationMs,
-							}
-						: turn,
-				),
-			);
+			dispatchTurns({
+				type: "terminal",
+				turnId: pendingId,
+				completedAt,
+				durationMs,
+				cancelled: false,
+				error: message,
+			});
 		} finally {
 			if (abortRef.current === controller) {
 				abortRef.current = null;
@@ -1388,7 +1178,7 @@ export function AskWorkspace() {
 								查看回答所依据的完整原文、文档位置与检索诊断
 							</SheetDescription>
 						</SheetHeader>
-						<SourcesPanelContent
+						<AskSourcesPanel
 							activeCitation={activeCitation}
 							onClose={() => setDrawerOpen(false)}
 						/>
@@ -1413,7 +1203,7 @@ export function AskWorkspace() {
 					aria-hidden={!drawerOpen}
 				>
 					<div className="h-full w-96">
-						<SourcesPanelContent
+						<AskSourcesPanel
 							activeCitation={activeCitation}
 							onClose={() => setDrawerOpen(false)}
 						/>

@@ -1,24 +1,15 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import {
-	auditLogs,
-	documentActiveVersions,
-	documents,
-	documentVersions,
-	jobs,
-	libraries,
-} from "@/db/schema";
+import { documents } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import { documentLifecycleV2Enabled } from "@/lib/server/document-lifecycle";
-import { documentIngestExecutionIdentity } from "@/lib/server/document-lifecycle-flag.mjs";
 import {
-	buildDocumentIngestPayload,
-	documentIngestIdempotencyKey,
-	nextDocumentVersionNumber,
-} from "@/lib/server/document-version-core.mjs";
+	createDocumentVersion,
+	DocumentVersionCommandError,
+} from "@/lib/server/document-version-command";
 import {
 	canWriteLibraries,
 	findAuthorizedLibrary,
@@ -31,10 +22,7 @@ type RouteContext = {
 	params: Promise<{ libraryId: string; documentId: string }>;
 };
 
-/**
- * Reindex by creating a new document version that reuses the source object's
- * storage_key/content_hash (roadmap §7.3). The DBOS worker performs reindexing.
- */
+/** Create a new version that reuses the retained source object. */
 export async function POST(request: Request, context: RouteContext) {
 	if (!documentLifecycleV2Enabled()) {
 		return Response.json(
@@ -55,15 +43,15 @@ export async function POST(request: Request, context: RouteContext) {
 			{ status: 403 },
 		);
 	}
+
 	const { libraryId, documentId } = await context.params;
 	const library = await findAuthorizedLibrary(identity, libraryId);
 	if (!library) {
 		return Response.json({ detail: "library not found" }, { status: 404 });
 	}
-
 	const db = getDatabase();
 	const [document] = await db
-		.select()
+		.select({ id: documents.id })
 		.from(documents)
 		.where(
 			and(
@@ -78,253 +66,43 @@ export async function POST(request: Request, context: RouteContext) {
 	if (!document) {
 		return Response.json({ detail: "document not found" }, { status: 404 });
 	}
-	if (document.status === "deleting") {
-		return Response.json(
-			{ detail: "document is being deleted" },
-			{ status: 409 },
-		);
-	}
-	if (document.status === "processing") {
-		return Response.json(
-			{ detail: "document is already processing" },
-			{ status: 409 },
-		);
-	}
 
-	const [active] = await db
-		.select({ versionId: documentActiveVersions.versionId })
-		.from(documentActiveVersions)
-		.where(eq(documentActiveVersions.documentId, document.id))
-		.limit(1);
-	const sourceVersionId = document.desiredVersionId ?? active?.versionId;
-	if (!sourceVersionId) {
-		return Response.json(
-			{ detail: "document has no version to reindex" },
-			{ status: 409 },
-		);
-	}
-	const [sourceVersion] = await db
-		.select()
-		.from(documentVersions)
-		.where(
-			and(
-				eq(documentVersions.id, sourceVersionId),
-				eq(documentVersions.documentId, document.id),
-			),
-		)
-		.limit(1);
-	if (!sourceVersion?.storageKey || !sourceVersion.contentHash) {
-		return Response.json({ detail: "原文未保留，请重新上传" }, { status: 409 });
-	}
-
-	const versionId = randomUUID();
-	const generationId = randomUUID();
-	const jobId = randomUUID();
-	const now = new Date();
-	let versionNumber = 1;
-
+	let created: Awaited<ReturnType<typeof createDocumentVersion>>;
 	try {
-		await db.transaction(async (tx) => {
-			const [locked] = await tx
-				.select()
-				.from(documents)
-				.where(eq(documents.id, document.id))
-				.for("update");
-			if (
-				!locked ||
-				locked.status === "deleted" ||
-				locked.status === "deleting" ||
-				locked.status === "processing"
-			) {
-				throw new Error("document unavailable");
-			}
-
-			const [maxRow] = await tx
-				.select({
-					maxVersion: sql<number>`coalesce(max(${documentVersions.version}), 0)`,
-				})
-				.from(documentVersions)
-				.where(eq(documentVersions.documentId, document.id));
-			versionNumber = nextDocumentVersionNumber(maxRow?.maxVersion);
-
-			const queuedVersions = await tx
-				.select({ id: documentVersions.id })
-				.from(documentVersions)
-				.innerJoin(jobs, eq(jobs.documentVersionId, documentVersions.id))
-				.where(
-					and(
-						eq(documentVersions.documentId, document.id),
-						inArray(jobs.status, ["queued", "retry"]),
-					),
-				);
-			const queuedVersionIds = queuedVersions.map(
-				(row: { id: string }) => row.id,
-			);
-			if (queuedVersionIds.length > 0) {
-				await tx
-					.update(jobs)
-					.set({
-						status: "cancelled",
-						stage: "done",
-						cancelRequestedAt: now,
-						finishedAt: now,
-						updatedAt: now,
-					})
-					.where(
-						and(
-							inArray(jobs.documentVersionId, queuedVersionIds),
-							inArray(jobs.status, ["queued", "retry"]),
-						),
-					);
-				await tx
-					.update(documentVersions)
-					.set({ status: "superseded", supersededAt: now, updatedAt: now })
-					.where(
-						and(
-							inArray(documentVersions.id, queuedVersionIds),
-							inArray(documentVersions.status, [
-								"pending",
-								"processing",
-								"indexed",
-								"activating",
-							]),
-						),
-					);
-			}
-
-			const runningJobs = await tx
-				.select({ id: jobs.id })
-				.from(jobs)
-				.innerJoin(
-					documentVersions,
-					eq(documentVersions.id, jobs.documentVersionId),
-				)
-				.where(
-					and(
-						eq(documentVersions.documentId, document.id),
-						eq(jobs.status, "running"),
-					),
-				);
-			if (runningJobs.length > 0) {
-				await tx
-					.update(jobs)
-					.set({
-						status: "cancelling",
-						cancelRequestedAt: now,
-						updatedAt: now,
-					})
-					.where(
-						and(
-							inArray(
-								jobs.id,
-								runningJobs.map((row: { id: string }) => row.id),
-							),
-							eq(jobs.status, "running"),
-						),
-					);
-			}
-
-			await tx.insert(documentVersions).values({
-				id: versionId,
-				documentId: document.id,
-				version: versionNumber,
-				generationId,
-				contentHash: sourceVersion.contentHash,
-				storageKey: sourceVersion.storageKey,
-				sizeBytes: sourceVersion.sizeBytes,
-				status: "pending",
-				pipelineVersion: "document-lifecycle-v2",
-				documentProfile: library.documentProfile ?? "auto",
-				scanHandling: library.scanHandling ?? "auto",
-				parsePreference: library.parsePreference ?? "auto",
-				ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
-				createdAt: now,
-				updatedAt: now,
-			});
-			const ingestPayload = buildDocumentIngestPayload({
-				documentId: document.id,
-				versionId,
-				generationId,
-				ragLibraryId: library.ragLibraryId,
-				storageKey: sourceVersion.storageKey,
-				contentHash: sourceVersion.contentHash,
-				filename: document.filename,
-				contentType: document.contentType,
-				documentProfile: library.documentProfile ?? "auto",
-				scanHandling: library.scanHandling ?? "auto",
-				parsePreference: library.parsePreference ?? "auto",
-				ingestPolicyVersion: library.ingestPolicyVersion ?? 1,
-			});
-			await tx.insert(jobs).values({
-				id: jobId,
-				organizationId: identity.tenantId,
-				workspaceId: identity.workspaceId,
-				documentVersionId: versionId,
-				type: "document.ingest",
-				...documentIngestExecutionIdentity(jobId, ingestPayload),
-				status: "queued",
-				stage: "accepted",
-				idempotencyKey: documentIngestIdempotencyKey(versionId, generationId),
-				payload: ingestPayload,
-				createdAt: now,
-				updatedAt: now,
-			});
-			await tx
-				.update(documents)
-				.set({
-					status: "processing",
-					desiredVersionId: versionId,
-					latestJobId: jobId,
-					updatedAt: now,
-				})
-				.where(eq(documents.id, document.id));
-			await tx
-				.update(libraries)
-				.set({
-					status: "indexing",
-					updatedAt: now,
-				})
-				.where(eq(libraries.id, library.id));
-			await tx.insert(auditLogs).values({
-				organizationId: identity.tenantId,
-				workspaceId: identity.workspaceId,
-				actorId: identity.principalId,
-				action: "document.reindex_requested",
-				resourceType: "document",
-				resourceId: document.id,
-				requestId: request.headers.get("x-request-id") ?? randomUUID(),
-				details: {
-					library_id: library.ragLibraryId,
-					document_version_id: versionId,
-					generation_id: generationId,
-					job_id: jobId,
-					version: versionNumber,
-					source_version_id: sourceVersion.id,
-					content_hash: sourceVersion.contentHash,
-					reused_storage_key: true,
-				},
-			});
+		created = await createDocumentVersion({
+			identity,
+			libraryId: library.id,
+			documentId: document.id,
+			requestId: request.headers.get("x-request-id") ?? randomUUID(),
+			source: { kind: "reindex" },
 		});
-	} catch {
+	} catch (error) {
+		if (error instanceof DocumentVersionCommandError) {
+			const detail =
+				error.code === "source_missing"
+					? "原文未保留，请重新上传"
+					: error.message;
+			return Response.json({ detail }, { status: 409 });
+		}
 		return Response.json(
 			{ detail: "document reindex transaction failed" },
 			{ status: 500 },
 		);
 	}
 
-	await refreshLibraryCounts(library.id).catch(() => undefined);
+	await refreshLibraryCounts(created.libraryId).catch(() => undefined);
 
 	return Response.json(
 		{
-			library_id: library.ragLibraryId,
-			doc_id: document.ragDocumentId,
-			document_id: document.ragDocumentId,
-			document_version_id: versionId,
-			generation_id: generationId,
-			job_id: jobId,
-			version: versionNumber,
-			title: document.name,
-			filename: document.filename,
+			library_id: created.ragLibraryId,
+			doc_id: created.ragDocumentId,
+			document_id: created.ragDocumentId,
+			document_version_id: created.versionId,
+			generation_id: created.generationId,
+			job_id: created.jobId,
+			version: created.version,
+			title: created.displayName,
+			filename: created.filename,
 			chunk_count: 0,
 			status: "processing",
 			mode: "live",

@@ -429,17 +429,6 @@ export async function uploadDocument(input: {
 	return (await response.json()) as ApiUploadResponse;
 }
 
-export async function fetchJob(jobId: string): Promise<ApiJob> {
-	const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
-		cache: "no-store",
-	});
-	if (!response.ok) {
-		const text = await response.text();
-		throw new Error(parseApiError(text) || `job ${response.status}`);
-	}
-	return (await response.json()) as ApiJob;
-}
-
 export async function retryJob(jobId: string): Promise<ApiJob> {
 	const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/retry`, {
 		method: "POST",
@@ -715,33 +704,6 @@ function parseApiError(text: string): string {
 	return trimmed;
 }
 
-export async function fetchArchive(input?: {
-	libraryId?: string;
-	sessionId?: string;
-	threadId?: string;
-	limit?: number;
-	signal?: AbortSignal;
-}): Promise<ApiArchiveTurn[]> {
-	const params = new URLSearchParams();
-	if (input?.libraryId) params.set("library_id", input.libraryId);
-	if (input?.sessionId) params.set("session_id", input.sessionId);
-	if (input?.threadId) params.set("thread_id", input.threadId);
-	if (input?.limit) params.set("limit", String(input.limit));
-	const query = params.toString();
-	const response = await fetch(
-		`${getApiBaseUrl()}/v1/archive${query ? `?${query}` : ""}`,
-		{
-			method: "GET",
-			signal: input?.signal,
-			cache: "no-store",
-		},
-	);
-	if (!response.ok) {
-		throw new Error(`archive ${response.status}`);
-	}
-	return (await response.json()) as ApiArchiveTurn[];
-}
-
 export async function fetchThreads(input?: {
 	limit?: number;
 	signal?: AbortSignal;
@@ -826,29 +788,6 @@ export async function continueThread(
 		throw new Error(text || `continue thread ${response.status}`);
 	}
 	return (await response.json()) as ApiThreadDetail;
-}
-
-export async function askQuestion(input: {
-	question: string;
-	libraryId: string;
-	sessionId?: string;
-	threadId?: string;
-}): Promise<ApiAskResponse> {
-	const response = await fetch(`${getApiBaseUrl()}/v1/ask`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({
-			question: input.question,
-			library_id: input.libraryId,
-			session_id: input.sessionId,
-			thread_id: input.threadId,
-		}),
-	});
-	if (!response.ok) {
-		const text = await response.text();
-		throw new Error(text || `ask ${response.status}`);
-	}
-	return (await response.json()) as ApiAskResponse;
 }
 
 export type AskStreamHandlers = {

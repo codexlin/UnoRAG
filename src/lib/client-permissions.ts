@@ -42,7 +42,7 @@ export function permissionsFor(
 	};
 }
 
-export function hasCap(caps: PermissionCaps, cap: Cap): boolean {
+function hasCap(caps: PermissionCaps, cap: Cap): boolean {
 	switch (cap) {
 		case "read":
 			return true;

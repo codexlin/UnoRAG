@@ -3,7 +3,7 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 /** Primary UnoRAG brand mark asset. */
-export const UNORAG_MARK_SRC = "/brand/unorag-mark.svg";
+const UNORAG_MARK_SRC = "/brand/unorag-mark.svg";
 
 type UnoRAGLogoProps = {
 	className?: string;
