@@ -89,6 +89,29 @@ test("the ops image and Compose profile include the drain checker", async () => 
 	assert.match(compose, /DBOS_SYSTEM_DATABASE_URL:/);
 });
 
+test("worker images install production dependencies without retaining a dev layer", async () => {
+	const dockerfile = await source("deploy/docker/web.Dockerfile");
+	const ci = await source(".github/workflows/ci.yml");
+	const release = await source(".github/workflows/release-images.yml");
+	assert.match(dockerfile, /FROM node:22-bookworm-slim AS runtime-deps/);
+	assert.match(dockerfile, /pnpm install --prod --frozen-lockfile/);
+	assert.match(dockerfile, /FROM runtime-deps AS ops/);
+	assert.match(dockerfile, /FROM runtime-deps AS worker/);
+	assert.doesNotMatch(dockerfile, /pnpm prune --prod/);
+	for (const workflow of [ci, release]) {
+		for (const scope of ["runner", "migrator", "ops", "worker"]) {
+			assert.match(
+				workflow,
+				new RegExp(`cache-from: type=gha,scope=unorag-${scope}`),
+			);
+			assert.match(
+				workflow,
+				new RegExp(`cache-to: type=gha,mode=max,scope=unorag-${scope}`),
+			);
+		}
+	}
+});
+
 test("fresh registry installs require digest manifests and never build locally", async () => {
 	const install = await source("deploy/compose/scripts/install.sh");
 	const upgrade = await source("deploy/compose/scripts/upgrade.sh");

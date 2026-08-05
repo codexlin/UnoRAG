@@ -69,13 +69,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      # No type=gha cache: would need actions: write; P0 keeps contents: read only.
+      # Target-scoped BuildKit caches are reusable by main/release builds.
       - name: Build web runner (no push)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/docker/web.Dockerfile
           target: runner
+          cache-from: type=gha,scope=unorag-runner
+          cache-to: type=gha,mode=max,scope=unorag-runner
           push: false
           load: true
           tags: unorag-web:ci
@@ -85,6 +87,8 @@ jobs:
           context: .
           file: deploy/docker/web.Dockerfile
           target: migrator
+          cache-from: type=gha,scope=unorag-migrator
+          cache-to: type=gha,mode=max,scope=unorag-migrator
           push: false
           load: true
           tags: unorag-web-migrator:ci
@@ -94,6 +98,8 @@ jobs:
           context: .
           file: deploy/docker/web.Dockerfile
           target: ops
+          cache-from: type=gha,scope=unorag-ops
+          cache-to: type=gha,mode=max,scope=unorag-ops
           push: false
           load: true
           tags: unorag-web-ops:ci
@@ -103,6 +109,8 @@ jobs:
           context: .
           file: deploy/docker/web.Dockerfile
           target: worker
+          cache-from: type=gha,scope=unorag-worker
+          cache-to: type=gha,mode=max,scope=unorag-worker
           push: false
           load: true
           tags: unorag-web-worker:ci

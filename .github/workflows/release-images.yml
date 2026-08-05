@@ -140,6 +140,8 @@ jobs:
           file: deploy/docker/web.Dockerfile
           target: runner
           platforms: linux/amd64
+          cache-from: type=gha,scope=unorag-runner
+          cache-to: type=gha,mode=max,scope=unorag-runner
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.web_tags }}
@@ -152,6 +154,8 @@ jobs:
           file: deploy/docker/web.Dockerfile
           target: migrator
           platforms: linux/amd64
+          cache-from: type=gha,scope=unorag-migrator
+          cache-to: type=gha,mode=max,scope=unorag-migrator
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.migrator_tags }}
@@ -164,6 +168,8 @@ jobs:
           file: deploy/docker/web.Dockerfile
           target: ops
           platforms: linux/amd64
+          cache-from: type=gha,scope=unorag-ops
+          cache-to: type=gha,mode=max,scope=unorag-ops
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.ops_tags }}
@@ -176,6 +182,8 @@ jobs:
           file: deploy/docker/web.Dockerfile
           target: worker
           platforms: linux/amd64
+          cache-from: type=gha,scope=unorag-worker
+          cache-to: type=gha,mode=max,scope=unorag-worker
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.worker_tags }}
