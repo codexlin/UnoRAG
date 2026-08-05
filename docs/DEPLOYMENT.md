@@ -31,6 +31,9 @@ flowchart TB
 `linux/arm64` 和 multi-arch 尚不属于支持范围。Apple Silicon 本地验收可以只对四个产品服务显式设置
 `platform: linux/amd64`，但模拟运行不代表生产容量结论，也不得让全局
 `DOCKER_DEFAULT_PLATFORM` 连带改变 PostgreSQL、Qdrant 和 Redis 等基础设施镜像架构。
+官方 manifest 使用 `UNORAG_IMAGE_PLATFORM` 声明产品镜像架构，安装与升级会在拉取镜像或进入维护
+窗口前校验 Docker Engine。架构不匹配默认直接拒绝；仅本地验收可在已提供产品服务 platform overlay
+后显式传入 `--allow-platform-emulation`。该参数不是生产部署选项。
 
 ```bash
 cd deploy/compose
@@ -38,6 +41,9 @@ cd deploy/compose
 # 编辑 ../config/runtime.env、runtime.secret、bootstrap.env
 ./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
 ./scripts/install.sh --manifest /path/to/release-acr.env
+# 仅 Apple Silicon 本地验收，并且 overlay 只设置 UnoRAG 产品服务：
+UNORAG_COMPOSE_OVERLAY=./docker-compose.local-amd64.yml \
+  ./scripts/install.sh --manifest /path/to/release-acr.env --allow-platform-emulation
 ```
 
 正式安装必须使用发布 workflow 生成的 digest manifest。没有 `--manifest` 时安装脚本会构建当前
@@ -148,7 +154,8 @@ cd deploy/compose
 
 升级前应确认备份可读、生命周期巡检无 dead/stuck/pending ACL，并归档当前配置摘要。正式发布
 manifest 会从 Git commit 生成 `unorag-<sha>` DBOS application version；不得在不同提交间复用
-`dev-local` 或历史版本。脚本随后：
+`dev-local` 或历史版本。升级也会先校验 manifest 的产品镜像架构；本地模拟升级使用与安装相同的
+overlay 和显式开关。脚本随后：
 
 1. 保存当前四镜像引用与 DBOS application version；
 2. 拉取候选镜像；若 DBOS version 改变，停止 Web/edge 接收新写入，并等待业务任务表与旧版本

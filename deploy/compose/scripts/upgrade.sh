@@ -18,10 +18,12 @@ MIGRATOR_IMAGE=""
 OPS_IMAGE=""
 WORKER_IMAGE=""
 DBOS_VERSION=""
+IMAGE_PLATFORM=""
 CURRENT_DBOS_VERSION=""
 DBOS_DRAIN_TIMEOUT_SECONDS=""
 FROM_RUNTIME=0
 ALLOW_BUILD=0
+ALLOW_PLATFORM_EMULATION=0
 SKIP_SMOKE=0
 WITH_OBSERVABILITY=0
 WITH_LANGFUSE=0
@@ -39,6 +41,7 @@ Usage:
 
 Options:
   --allow-build  Build local images when registry pull is unavailable.
+  --allow-platform-emulation  Accept a host/image architecture mismatch for local validation only.
   --skip-smoke   Skip pilot-smoke.sh after health checks.
   --with-observability  Preserve/start the optional Ops Stack and validate it.
   --without-observability  Explicitly disconnect the application from Ops.
@@ -85,6 +88,7 @@ capture_previous() {
 		echo "UNORAG_WEB_OPS_IMAGE=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_OPS_IMAGE)"
 		echo "UNORAG_DBOS_WORKER_IMAGE=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE)"
 		echo "UNORAG_DBOS_APPLICATION_VERSION=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+		echo "UNORAG_IMAGE_PLATFORM=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_IMAGE_PLATFORM)"
 	} >"$PREVIOUS_ENV"
 	chmod 600 "$PREVIOUS_ENV"
 }
@@ -116,7 +120,7 @@ quiesce_dbos_version() {
 
 rollback_images() {
 	[[ -f "$PREVIOUS_ENV" ]] || return 0
-	local web migrator ops worker version
+	local web migrator ops worker version platform
 	if [[ $VERSION_CHANGED -eq 1 && $TARGET_EXECUTION_STARTED -eq 1 ]]; then
 		warn "draining target DBOS version before automatic rollback"
 		if ! quiesce_dbos_version "$DBOS_VERSION"; then
@@ -130,7 +134,8 @@ rollback_images() {
 	ops="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_WEB_OPS_IMAGE)"
 	worker="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_DBOS_WORKER_IMAGE)"
 	version="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
-	write_runtime_pins "$web" "$migrator" "$ops" "$worker" "$version"
+	platform="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_IMAGE_PLATFORM)"
+	write_runtime_pins "$web" "$migrator" "$ops" "$worker" "$version" "$platform"
 	runtime_compose up -d --no-deps dbos-worker dbos-control web caddy || true
 }
 
@@ -154,6 +159,7 @@ while [[ $# -gt 0 ]]; do
 		--dbos-version) DBOS_VERSION="${2:-}"; shift 2 ;;
 		--from-runtime) FROM_RUNTIME=1; shift ;;
 		--allow-build) ALLOW_BUILD=1; shift ;;
+		--allow-platform-emulation) ALLOW_PLATFORM_EMULATION=1; shift ;;
 		--skip-smoke) SKIP_SMOKE=1; shift ;;
 		--with-ops|--with-observability) WITH_OBSERVABILITY=1; OBSERVABILITY_MODE=enabled; shift ;;
 		--without-observability) WITH_OBSERVABILITY=0; WITH_LANGFUSE=0; OBSERVABILITY_MODE=disabled; shift ;;
@@ -192,12 +198,14 @@ if [[ -n "$MANIFEST" ]]; then
 	OPS_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_WEB_OPS_IMAGE)"
 	WORKER_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_DBOS_WORKER_IMAGE)"
 	DBOS_VERSION="$(mk_release_env_get "$MANIFEST" UNORAG_DBOS_APPLICATION_VERSION)"
+	IMAGE_PLATFORM="$(mk_release_resolve_platform "$MANIFEST")"
 elif [[ $FROM_RUNTIME -eq 1 ]]; then
 	WEB_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE)"
 	MIGRATOR_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
 	OPS_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_OPS_IMAGE)"
 	WORKER_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE)"
 	DBOS_VERSION="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+	IMAGE_PLATFORM="$(mk_release_resolve_platform "$RUNTIME_ENV")"
 fi
 
 CURRENT_DBOS_VERSION="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
@@ -208,6 +216,9 @@ mk_release_assert_image UNORAG_WEB_MIGRATOR_IMAGE "$MIGRATOR_IMAGE"
 mk_release_assert_image UNORAG_WEB_OPS_IMAGE "$OPS_IMAGE"
 mk_release_assert_image UNORAG_DBOS_WORKER_IMAGE "$WORKER_IMAGE"
 mk_release_assert_dbos_version "$DBOS_VERSION"
+if [[ -n "$IMAGE_PLATFORM" && $ALLOW_BUILD -eq 0 ]]; then
+	mk_release_assert_host_platform "$IMAGE_PLATFORM" "$ALLOW_PLATFORM_EMULATION"
+fi
 if [[ "$DBOS_VERSION" != "$CURRENT_DBOS_VERSION" ]]; then
 	VERSION_CHANGED=1
 fi
@@ -227,7 +238,7 @@ if [[ $WITH_LANGFUSE -eq 1 ]]; then
 fi
 
 capture_previous
-write_runtime_pins "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION"
+write_runtime_pins "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION" "$IMAGE_PLATFORM"
 SWITCHED=1
 
 if [[ $WITH_OBSERVABILITY -eq 1 ]]; then

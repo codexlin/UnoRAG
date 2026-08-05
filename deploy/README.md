@@ -105,6 +105,10 @@ cd deploy/compose
 2. 使用 workflow 产出的 digest manifest 部署，并归档对应 Trivy 日志；
 3. 客户要求 SBOM / 签名时另行运行 `syft` / `cosign`（或客户等价工具）。
 
+发布 manifest 同时携带 `UNORAG_IMAGE_PLATFORM`。`v0.1` 当前固定为 `linux/amd64`；Compose 安装和
+升级会在拉取前校验 Docker Engine 架构。架构不一致不得作为客户生产部署，仅本地验收可使用产品服务
+overlay 配合显式 `--allow-platform-emulation`。
+
 ## 明确后置
 
 | 项 | 说明 |

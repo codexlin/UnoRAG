@@ -16,6 +16,20 @@ RUN pnpm install --frozen-lockfile \
 		/usr/local/lib/node_modules/npm \
 	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
 
+# Runtime-only dependency tree for ops and worker. Pruning a full install in a
+# later Docker layer does not remove the original dev-dependency bytes from the
+# image, so production dependencies must be installed in their own stage.
+FROM node:22-bookworm-slim AS runtime-deps
+WORKDIR /repo
+RUN useradd --system --uid 10001 --create-home unorag \
+	&& corepack enable \
+	&& corepack prepare pnpm@9.7.1 --activate
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --prod --frozen-lockfile \
+	&& rm -rf /root/.local/share/pnpm/store /root/.cache \
+		/usr/local/lib/node_modules/npm \
+	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
+
 FROM node:22-bookworm-slim AS builder
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@9.7.1 --activate
@@ -58,9 +72,7 @@ USER unorag
 CMD ["./node_modules/.bin/drizzle-kit", "migrate"]
 
 # One-shot bootstrap and operator tooling (no long-running queue consumer).
-FROM deps AS ops
-RUN pnpm prune --prod \
-	&& rm -rf /root/.cache
+FROM runtime-deps AS ops
 COPY --chown=unorag:unorag scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/check-dbos-drain.mjs scripts/inspect-lifecycle.mjs ./scripts/
 WORKDIR /repo
 ENV NODE_ENV=production
@@ -69,9 +81,7 @@ CMD ["node", "scripts/inspect-lifecycle.mjs"]
 
 # DBOS executor and control loop. Keep the complete worker module together so
 # dynamic production-port imports resolve identically in both processes.
-FROM deps AS worker
-RUN pnpm prune --prod \
-	&& rm -rf /root/.cache
+FROM runtime-deps AS worker
 COPY --chown=unorag:unorag src ./src
 COPY --chown=unorag:unorag tsconfig.json ./
 WORKDIR /repo

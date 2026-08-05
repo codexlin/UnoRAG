@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -54,6 +56,10 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 	const releaseWorkflow = await source(".github/workflows/release-images.yml");
 	assert.match(localRelease, /echo "unorag-\$\{sha:0:16\}"/);
 	assert.match(releaseWorkflow, /dbos_version=unorag-\$\{GITHUB_SHA::16\}/);
+	assert.match(releaseWorkflow, /image_platform=linux\/amd64/);
+	assert.match(releaseWorkflow, /platforms: linux\/amd64/);
+	assert.match(releaseWorkflow, /UNORAG_IMAGE_PLATFORM=\$\{IMAGE_PLATFORM\}/);
+	assert.match(localRelease, /UNORAG_IMAGE_PLATFORM=\$\{image_platform\}/);
 	assert.doesNotMatch(localRelease, /DBOS_APPLICATION_VERSION=lifecycle-v2/);
 	assert.doesNotMatch(releaseWorkflow, /DBOS_APPLICATION_VERSION=lifecycle-v2/);
 });
@@ -83,8 +89,32 @@ test("the ops image and Compose profile include the drain checker", async () => 
 	assert.match(compose, /DBOS_SYSTEM_DATABASE_URL:/);
 });
 
+test("worker images install production dependencies without retaining a dev layer", async () => {
+	const dockerfile = await source("deploy/docker/web.Dockerfile");
+	const ci = await source(".github/workflows/ci.yml");
+	const release = await source(".github/workflows/release-images.yml");
+	assert.match(dockerfile, /FROM node:22-bookworm-slim AS runtime-deps/);
+	assert.match(dockerfile, /pnpm install --prod --frozen-lockfile/);
+	assert.match(dockerfile, /FROM runtime-deps AS ops/);
+	assert.match(dockerfile, /FROM runtime-deps AS worker/);
+	assert.doesNotMatch(dockerfile, /pnpm prune --prod/);
+	for (const workflow of [ci, release]) {
+		for (const scope of ["runner", "migrator", "ops", "worker"]) {
+			assert.match(
+				workflow,
+				new RegExp(`cache-from: type=gha,scope=unorag-${scope}`),
+			);
+			assert.match(
+				workflow,
+				new RegExp(`cache-to: type=gha,mode=max,scope=unorag-${scope}`),
+			);
+		}
+	}
+});
+
 test("fresh registry installs require digest manifests and never build locally", async () => {
 	const install = await source("deploy/compose/scripts/install.sh");
+	const upgrade = await source("deploy/compose/scripts/upgrade.sh");
 	const releaseEnv = await source("deploy/compose/scripts/release-env.sh");
 	assert.match(install, /--manifest/);
 	assert.match(
@@ -97,6 +127,20 @@ test("fresh registry installs require digest manifests and never build locally",
 		/if \[\[ -n "\$MANIFEST" \]\]; then[\s\S]*?pull[\s\S]*?else[\s\S]*?build/,
 	);
 	assert.match(releaseEnv, /@sha256:\[a-f0-9\]\{64\}/);
+	assert.match(install, /mk_release_resolve_platform "\$MANIFEST"/);
+	assert.match(
+		install,
+		/mk_release_assert_host_platform "\$IMAGE_PLATFORM" "\$ALLOW_PLATFORM_EMULATION"/,
+	);
+	assert.ok(
+		install.indexOf("mk_release_assert_host_platform") <
+			install.indexOf("mk_release_write_runtime_pins"),
+	);
+	assert.match(upgrade, /mk_release_resolve_platform "\$MANIFEST"/);
+	assert.ok(
+		upgrade.lastIndexOf("mk_release_assert_host_platform") <
+			upgrade.lastIndexOf("\ncapture_previous\n"),
+	);
 
 	const helper = fileURLToPath(
 		new URL("../deploy/compose/scripts/release-env.sh", import.meta.url),
@@ -127,4 +171,72 @@ test("fresh registry installs require digest manifests and never build locally",
 	);
 	assert.notEqual(tagOnly.status, 0);
 	assert.match(tagOnly.stderr, /complete sha256 registry digest/);
+});
+
+test("release platform checks fail closed and require an explicit emulation override", () => {
+	const helper = fileURLToPath(
+		new URL("../deploy/compose/scripts/release-env.sh", import.meta.url),
+	);
+	const run = (actual, expected, allow = "0") =>
+		spawnSync(
+			"bash",
+			[
+				"-c",
+				'source "$1"; UNORAG_DOCKER_PLATFORM_OVERRIDE="$2" mk_release_assert_host_platform "$3" "$4"',
+				"release-platform-test",
+				helper,
+				actual,
+				expected,
+				allow,
+			],
+			{ encoding: "utf8" },
+		);
+
+	const native = run("linux/x86_64", "linux/amd64");
+	assert.equal(native.status, 0, native.stderr);
+
+	const mismatch = run("linux/aarch64", "linux/amd64");
+	assert.notEqual(mismatch.status, 0);
+	assert.match(mismatch.stderr, /release targets linux\/amd64/);
+	assert.match(mismatch.stderr, /--allow-platform-emulation/);
+
+	const emulated = run("linux/arm64", "linux/amd64", "1");
+	assert.equal(emulated.status, 0, emulated.stderr);
+	assert.match(emulated.stderr, /explicit emulation accepted/);
+
+	const invalid = run("linux/riscv64", "linux/amd64");
+	assert.notEqual(invalid.status, 0);
+	assert.match(invalid.stderr, /unsupported release platform/);
+});
+
+test("runtime image pins retain the release platform across upgrades and rollback", async () => {
+	const helper = fileURLToPath(
+		new URL("../deploy/compose/scripts/release-env.sh", import.meta.url),
+	);
+	const directory = await mkdtemp(join(tmpdir(), "unorag-release-platform-"));
+	const runtime = join(directory, "runtime.env");
+	try {
+		await writeFile(
+			runtime,
+			"UNORAG_WEB_IMAGE=old:web\nUNORAG_DBOS_APPLICATION_VERSION=old\nUNORAG_IMAGE_PLATFORM=\n",
+		);
+		const result = spawnSync(
+			"bash",
+			[
+				"-c",
+				'source "$1"; mk_release_write_runtime_pins "$2" web@sha256:1 migrator@sha256:2 ops@sha256:3 worker@sha256:4 unorag-test linux/amd64',
+				"release-pin-test",
+				helper,
+				runtime,
+			],
+			{ encoding: "utf8" },
+		);
+		assert.equal(result.status, 0, result.stderr);
+		const written = await readFile(runtime, "utf8");
+		assert.match(written, /^UNORAG_IMAGE_PLATFORM=linux\/amd64$/m);
+		assert.match(written, /^UNORAG_DBOS_APPLICATION_VERSION=unorag-test$/m);
+		assert.equal((written.match(/^UNORAG_IMAGE_PLATFORM=/gm) ?? []).length, 1);
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
 });

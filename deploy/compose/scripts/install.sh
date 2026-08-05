@@ -12,13 +12,15 @@ source "${ROOT}/scripts/release-env.sh"
 WITH_OBSERVABILITY=0
 WITH_LANGFUSE=0
 MANIFEST=""
+ALLOW_PLATFORM_EMULATION=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--manifest) MANIFEST="${2:-}"; shift 2 ;;
 		--with-ops|--with-observability) WITH_OBSERVABILITY=1; shift ;;
 		--with-langfuse) WITH_LANGFUSE=1; WITH_OBSERVABILITY=1; shift ;;
+		--allow-platform-emulation) ALLOW_PLATFORM_EMULATION=1; shift ;;
 		-h|--help)
-			echo "usage: $0 [--manifest /path/to/release.env] [--with-observability] [--with-langfuse]"
+			echo "usage: $0 [--manifest /path/to/release.env] [--with-observability] [--with-langfuse] [--allow-platform-emulation]"
 			exit 0
 			;;
 		*) echo "unknown argument: $1" >&2; exit 1 ;;
@@ -36,13 +38,15 @@ if [[ -n "$MANIFEST" ]]; then
 	OPS_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_WEB_OPS_IMAGE)"
 	WORKER_IMAGE="$(mk_release_env_get "$MANIFEST" UNORAG_DBOS_WORKER_IMAGE)"
 	DBOS_VERSION="$(mk_release_env_get "$MANIFEST" UNORAG_DBOS_APPLICATION_VERSION)"
+	IMAGE_PLATFORM="$(mk_release_resolve_platform "$MANIFEST")"
 	mk_release_assert_image UNORAG_WEB_IMAGE "$WEB_IMAGE" digest
 	mk_release_assert_image UNORAG_WEB_MIGRATOR_IMAGE "$MIGRATOR_IMAGE" digest
 	mk_release_assert_image UNORAG_WEB_OPS_IMAGE "$OPS_IMAGE" digest
 	mk_release_assert_image UNORAG_DBOS_WORKER_IMAGE "$WORKER_IMAGE" digest
 	mk_release_assert_dbos_version "$DBOS_VERSION"
+	mk_release_assert_host_platform "$IMAGE_PLATFORM" "$ALLOW_PLATFORM_EMULATION"
 	mk_release_write_runtime_pins \
-		"$RUNTIME_ENV" "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION"
+		"$RUNTIME_ENV" "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION" "$IMAGE_PLATFORM"
 fi
 
 runtime_compose() {

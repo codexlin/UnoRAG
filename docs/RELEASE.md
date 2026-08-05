@@ -44,6 +44,7 @@ git diff --check
 
 - Git commit 与分支；
 - `web`、`migrator`、`ops`、`worker` 镜像 digest；
+- manifest 中声明的产品镜像平台与目标 Docker/Kubernetes 节点架构；
 - DBOS application version；
 - Compose overlay 或 Helm values 摘要；
 - 模型、Embedding、Rerank、ParserProvider 名称及版本；
@@ -51,6 +52,8 @@ git diff --check
 - 测试数据集版本。
 
 Trivy HIGH/CRITICAL 门禁失败、使用浮动镜像标签或无法复现配置时，不得进入试点验收。
+官方 `v0.1` manifest 必须包含 `UNORAG_IMAGE_PLATFORM=linux/amd64`。安装和升级前的架构预检失败
+属于 NO-GO；`--allow-platform-emulation` 只供开发机 RC 验证，不能用于客户生产签字。
 官方 manifest 将 DBOS application version 固定为 `unorag-<git-sha>`。它是 durable workflow 的代码
 兼容边界，不是可手改的营销版本；不同代码提交不得复用同一值，同一发布的 Web/control/worker 必须
 使用同一值。
@@ -143,6 +146,7 @@ Parser、模型、切分、检索或裁决策略变化后必须重跑，不能�
 ### 可靠性与交付
 
 - [ ] 四镜像 digest、CVE 结果和配置摘要已归档
+- [ ] manifest 镜像平台与目标节点架构一致，未使用生产模拟运行
 - [ ] manifest 的 DBOS application version 与 Git commit 一致，排空/拒绝升级演练通过
 - [ ] 全新安装、升级、应用回滚、备份恢复均通过
 - [ ] 目标硬件容量、P50/P95、并发预算、RPO/RTO 已记录

@@ -41,18 +41,85 @@ mk_release_assert_dbos_version() {
 	}
 }
 
+mk_release_assert_platform() {
+	local value="$1"
+	case "$value" in
+		linux/amd64|linux/arm64) return 0 ;;
+		*)
+			printf 'error: unsupported release platform: %s (expected linux/amd64 or linux/arm64)\n' "$value" >&2
+			return 1
+			;;
+	esac
+}
+
+mk_release_resolve_platform() {
+	local file="$1" value
+	value="$(mk_release_env_get "$file" UNORAG_IMAGE_PLATFORM)"
+	if [[ -z "$value" ]]; then
+		# Manifests before v0.1.0-rc.6 were built on an amd64-only runner and
+		# did not carry an explicit platform field.
+		printf 'warning: legacy manifest has no UNORAG_IMAGE_PLATFORM; assuming linux/amd64\n' >&2
+		value="linux/amd64"
+	fi
+	mk_release_assert_platform "$value" || return 1
+	printf '%s\n' "$value"
+}
+
+mk_release_docker_platform() {
+	local value os arch
+	if [[ -n "${UNORAG_DOCKER_PLATFORM_OVERRIDE:-}" ]]; then
+		value="$UNORAG_DOCKER_PLATFORM_OVERRIDE"
+	else
+		command -v docker >/dev/null 2>&1 || {
+			printf 'error: docker is required to validate the release platform\n' >&2
+			return 1
+		}
+		value="$(docker info --format '{{.OSType}}/{{.Architecture}}' 2>/dev/null)" || {
+			printf 'error: cannot query Docker Engine platform; ensure Docker is running\n' >&2
+			return 1
+		}
+	fi
+	os="${value%%/*}"
+	arch="${value#*/}"
+	case "$arch" in
+		x86_64) arch="amd64" ;;
+		aarch64) arch="arm64" ;;
+	esac
+	value="${os}/${arch}"
+	mk_release_assert_platform "$value" || return 1
+	printf '%s\n' "$value"
+}
+
+mk_release_assert_host_platform() {
+	local expected="$1" allow_emulation="${2:-0}" actual
+	mk_release_assert_platform "$expected" || return 1
+	actual="$(mk_release_docker_platform)" || return 1
+	if [[ "$actual" == "$expected" ]]; then
+		return 0
+	fi
+	if [[ "$allow_emulation" == "1" ]]; then
+		printf 'warning: release targets %s but Docker Engine is %s; explicit emulation accepted for local validation\n' \
+			"$expected" "$actual" >&2
+		return 0
+	fi
+	printf 'error: release targets %s but Docker Engine is %s\n' "$expected" "$actual" >&2
+	printf 'error: use a matching host; for local acceptance only, add a product-service platform overlay and pass --allow-platform-emulation\n' >&2
+	return 1
+}
+
 mk_release_write_runtime_pins() {
-	local runtime_env="$1" web="$2" migrator="$3" ops="$4" worker="$5" version="$6" tmp
+	local runtime_env="$1" web="$2" migrator="$3" ops="$4" worker="$5" version="$6" platform="${7:-}" tmp
 	tmp="$(mktemp)"
 	awk -F= \
 		-v web="$web" -v migrator="$migrator" -v ops="$ops" \
-		-v worker="$worker" -v version="$version" '
-		BEGIN { seen_web=seen_migrator=seen_ops=seen_worker=seen_version=0 }
+		-v worker="$worker" -v version="$version" -v platform="$platform" '
+		BEGIN { seen_web=seen_migrator=seen_ops=seen_worker=seen_version=seen_platform=0 }
 		$1 == "UNORAG_WEB_IMAGE" { print "UNORAG_WEB_IMAGE=" web; seen_web=1; next }
 		$1 == "UNORAG_WEB_MIGRATOR_IMAGE" { print "UNORAG_WEB_MIGRATOR_IMAGE=" migrator; seen_migrator=1; next }
 		$1 == "UNORAG_WEB_OPS_IMAGE" { print "UNORAG_WEB_OPS_IMAGE=" ops; seen_ops=1; next }
 		$1 == "UNORAG_DBOS_WORKER_IMAGE" { print "UNORAG_DBOS_WORKER_IMAGE=" worker; seen_worker=1; next }
 		$1 == "UNORAG_DBOS_APPLICATION_VERSION" { print "UNORAG_DBOS_APPLICATION_VERSION=" version; seen_version=1; next }
+		$1 == "UNORAG_IMAGE_PLATFORM" { print "UNORAG_IMAGE_PLATFORM=" platform; seen_platform=1; next }
 		{ print }
 		END {
 			if (!seen_web) print "UNORAG_WEB_IMAGE=" web
@@ -60,6 +127,7 @@ mk_release_write_runtime_pins() {
 			if (!seen_ops) print "UNORAG_WEB_OPS_IMAGE=" ops
 			if (!seen_worker) print "UNORAG_DBOS_WORKER_IMAGE=" worker
 			if (!seen_version) print "UNORAG_DBOS_APPLICATION_VERSION=" version
+			if (!seen_platform) print "UNORAG_IMAGE_PLATFORM=" platform
 		}
 	' "$runtime_env" >"$tmp"
 	mv "$tmp" "$runtime_env"
