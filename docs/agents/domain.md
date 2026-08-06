@@ -1,39 +1,33 @@
 # Domain Docs
 
-How the engineering skills should consume this repo's domain documentation when exploring the codebase.
+How engineering agents should orient themselves before changing this repository.
 
-## Before exploring, read these
+## Read in this order
 
-- **`CONTEXT.md`** at the repo root, or
-- **`CONTEXT-MAP.md`** at the repo root if it exists — it points at one `CONTEXT.md` per context. Read each one relevant to the topic.
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in. In multi-context repos, also check `src/<context>/docs/adr/` for context-scoped decisions.
+1. [`../STATUS.md`](../STATUS.md) for shipped capability, known gaps and current priorities.
+2. [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for runtime ownership and security boundaries.
+3. [`../DEVELOPMENT.md`](../DEVELOPMENT.md) for repository rules and verification commands.
+4. [`../adr/README.md`](../adr/README.md) before opening individual ADRs; superseded ADRs are history, not guidance.
 
-If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
+The repository does not currently use `CONTEXT.md` or `CONTEXT-MAP.md`. Do not invent a second documentation
+hierarchy unless a real bounded context needs a glossary that the formal product documents cannot provide.
 
-## File structure
+## Current code map
 
-Single-context repo (this repo):
-
-```
-/
-├── CONTEXT.md
-├── docs/adr/
-│   ├── 0001-ocr-vlm-adapters.md
-│   ├── 0002-mineru-complex-pdf.md
-│   ├── 0003-policy-driven-chunking.md
-│   ├── 0004-nextjs-control-plane.md
-│   └── 0005-typescript-core-runtime.md
-└── src/
+```text
+src/app/          product pages and HTTP routes
+src/core/         parser, IR, chunking, retrieval and Ask graph
+src/lib/server/   identity, authorization and product application services
+src/db/           Drizzle schema and repositories
+src/server/       transport and observability adapters
+src/worker/       DBOS workflows, dispatch and reconciliation
 ```
 
-## Use the glossary's vocabulary
-
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
-
-If the concept you need isn't in the glossary yet, that's a signal — either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
+Use the vocabulary in `PRODUCT.md`, `ARCHITECTURE.md` and runtime contracts. When a proposed change contradicts
+an accepted ADR, identify the conflict explicitly and create a new decision record if the change is adopted.
 
 ## Flag ADR conflicts
 
-If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
+If your output contradicts a current ADR, surface it explicitly rather than silently overriding:
 
-> _Contradicts ADR-0007 (event-sourced orders) — but worth reopening because…_
+> _Contradicts ADR-0005 runtime ownership — reopen the decision before implementation._

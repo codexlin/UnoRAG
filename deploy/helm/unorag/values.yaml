@@ -1,4 +1,4 @@
-# UnoRAG Helm starter values (L8 deferred slice).
+# UnoRAG Helm starter values.
 # External Postgres / Qdrant / Redis / object storage are customer-managed by default.
 # Do not commit real secrets — use --set-file / ExternalSecret / sealed-secrets.
 
@@ -7,7 +7,8 @@ nameOverride: ""
 
 imagePullSecrets: []
 
-# Pin tags before customer handoff. Digest locking / SBOM scanning are follow-ups.
+# Pin immutable release tags before customer handoff. The release pipeline emits
+# digest manifests, but digest-native Helm image fields and SBOM publication remain gaps.
 images:
   web:
     repository: unorag-web

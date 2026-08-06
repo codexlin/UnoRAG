@@ -1,6 +1,6 @@
 # ADR-0006: Private Product Monorepo and Edition Boundaries
 
-- Status: Partially superseded by ADR-0007
+- Status: Superseded in product/edition direction; package-boundary principles only
 - Date: 2026-08-06
 - Scope: repository, package, build and edition topology
 - Partially supersedes: ADR-0005 repository/package-topology decision that deferred npm
@@ -8,8 +8,10 @@
   Next.js boundary, DBOS lifecycle and data ownership.
 
 ADR-0007 supersedes this ADR's private-repository, commercial-edition and
-entitlement decisions. The coordinated monorepo direction, package ownership
-rules and single database migration owner remain accepted.
+entitlement decisions. The current repository remains one root TypeScript package
+with no scheduled monorepo migration. Only the rules “extract packages for a real
+runtime/consumer boundary” and “keep one database migration owner” remain active;
+the edition topology and migration plan below are historical.
 
 ## Context
 

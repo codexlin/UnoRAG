@@ -11,7 +11,9 @@ not a substitute for the repository license or legal review.
 | `public/brand/uno-mark.png`, `public/favicon-32x32.png`, `public/apple-touch-icon.png` | Raster derivatives generated from `uno-mark.svg` | None incorporated | Same as source SVG |
 | `docs/brand/uno-brand-board.svg` | Original layout using the canonical mark and documented brand tokens | None incorporated | Intended to follow the repository license once adopted |
 
-The project names still require jurisdiction- and class-specific trademark clearance before public commercial use.
+These are currently integrated but provisional brand assets. The final identity may replace them before the first public
+release. The project names and final mark still require jurisdiction- and class-specific trademark clearance before public
+commercial use.
 
 ## Awaiting owner attestation
 

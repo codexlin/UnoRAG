@@ -72,11 +72,11 @@ tests/              产品契约和原生 RAG 测试
 testdata/           代表性真实文件与拒绝格式 fixture
 ```
 
-当前根包阶段，可复用 RAG 算法放入 `src/core/`，Next.js 应用规则放入 `src/lib/server/`。
-后续按 [ADR-0006](./adr/0006-private-product-monorepo.md) 与
-[ADR-0007](./adr/0007-fully-open-source-product-and-services.md) 渐进迁移为 Product Monorepo；只有能
-形成可执行依赖边界或被多个 composition root 使用的模块才提取为 package，不按商业版本拆包，也不为
-目录整齐创建空包。
+仓库保持单根 TypeScript package：可复用 RAG 算法放入 `src/core/`，Next.js 应用规则放入
+`src/lib/server/`。当前没有已排期的 monorepo 迁移；只有模块形成独立构建边界或被多个 composition root
+真实复用时才提取为 package，不按产品版本拆包，也不为目录整齐创建空包。历史讨论见
+[ADR-0006](./adr/0006-private-product-monorepo.md)，当前开源产品边界见
+[ADR-0007](./adr/0007-fully-open-source-product-and-services.md)。
 
 ## 必须保持的约束
 

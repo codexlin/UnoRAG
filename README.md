@@ -4,6 +4,7 @@
   <p><strong>Private, permission-aware enterprise knowledge grounded in evidence.</strong></p>
   <p>
     <a href="./README.zh-CN.md">简体中文</a> ·
+    <a href="./docs/STATUS.md">Status</a> ·
     <a href="./docs/PRODUCT.md">Product</a> ·
     <a href="./docs/ARCHITECTURE.md">Architecture</a> ·
     <a href="./docs/DEPLOYMENT.md">Deployment</a> ·
@@ -107,6 +108,7 @@ Qdrant contains security-scoped retrieval projections.
 
 ## Documentation
 
+- [Current status, gaps, and next steps](./docs/STATUS.md)
 - [Product and capability boundaries](./docs/PRODUCT.md)
 - [System architecture](./docs/ARCHITECTURE.md)
 - [Knowledge API](./docs/INTEGRATION.md)

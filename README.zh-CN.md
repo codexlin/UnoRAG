@@ -4,6 +4,7 @@
   <p><strong>可私有化部署、权限感知、以证据为中心的企业知识服务。</strong></p>
   <p>
     <a href="./README.md">English</a> ·
+    <a href="./docs/STATUS.md">现状</a> ·
     <a href="./docs/PRODUCT.md">产品</a> ·
     <a href="./docs/ARCHITECTURE.md">架构</a> ·
     <a href="./docs/DEPLOYMENT.md">部署</a> ·
@@ -102,6 +103,7 @@ Next.js 负责身份、Workspace、RBAC/ACL、公开 API、检索、LangGraph、
 
 ## 文档
 
+- [当前能力、缺口与下一步](./docs/STATUS.md)
 - [产品定位与能力边界](./docs/PRODUCT.md)
 - [系统架构](./docs/ARCHITECTURE.md)
 - [Knowledge API](./docs/INTEGRATION.md)

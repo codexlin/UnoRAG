@@ -108,9 +108,10 @@ UnoRAG 当前不把以下方向作为核心承诺：
 
 ## 下一阶段
 
-优先级按“安全、恢复、可观测，再扩展能力”排列：
+当前实现、缺口与执行顺序由 [STATUS.md](./STATUS.md) 统一维护。产品优先级按“先可安全公开和复验，
+再增强客户部署，最后扩展知识能力”排列：
 
-1. **收敛发布边界**：digest-pinned 升级/回滚，模型与 ParserProvider 重启和幂等故障门禁。
+1. **公开发布准备**：许可证、素材权属、NOTICE/SBOM/签名、正式品牌和精确 commit 的 RC 复验。
 2. **私有部署产品化**：OIDC/SSO、S3/MinIO、Kubernetes NetworkPolicy/PDB/HPA，以及 Ops Stack 的
    客户环境容量与故障验收。
 3. **知识质量**：在现有真实文件黄金集与 Prompt 门禁上扩充客户问题分类、引用 precision、

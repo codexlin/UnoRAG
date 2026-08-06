@@ -5,8 +5,8 @@
 - Scope: source availability, product composition, release readiness and services
 - Supersedes: the private-repository, commercial-edition and entitlement decisions
   in ADR-0006
-- Preserves: ADR-0005 runtime ownership and ADR-0006 coordinated monorepo and
-  package-boundary direction
+- Preserves: ADR-0005 runtime ownership and ADR-0006 package-boundary discipline;
+  it does not require a monorepo migration
 
 ## Context
 
