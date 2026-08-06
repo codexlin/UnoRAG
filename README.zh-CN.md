@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./public/brand/unorag-mark.png" alt="UnoRAG" width="88" />
+  <img src="./public/brand/uno-mark.png" alt="UnoRAG" width="88" />
   <h1>UnoRAG</h1>
   <p><strong>可私有化部署、权限感知、以证据为中心的企业知识服务。</strong></p>
   <p>

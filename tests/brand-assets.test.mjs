@@ -4,13 +4,13 @@ import test from "node:test";
 
 const appRoot = new URL("../", import.meta.url);
 
-test("UnoRAG brand assets use one SVG source without implicit ICO overrides", async () => {
-	const markUrl = new URL("public/brand/unorag-mark.svg", appRoot);
+test("the Uno family uses one canonical SVG source without implicit ICO overrides", async () => {
+	const markUrl = new URL("public/brand/uno-mark.svg", appRoot);
 	const componentUrl = new URL("src/components/app/unorag-logo.tsx", appRoot);
 
 	await Promise.all([
 		access(markUrl),
-		access(new URL("public/brand/unorag-mark.png", appRoot)),
+		access(new URL("public/brand/uno-mark.png", appRoot)),
 		access(new URL("public/favicon-32x32.png", appRoot)),
 		access(new URL("public/apple-touch-icon.png", appRoot)),
 	]);
@@ -19,8 +19,10 @@ test("UnoRAG brand assets use one SVG source without implicit ICO overrides", as
 		readFile(markUrl, "utf8"),
 		readFile(componentUrl, "utf8"),
 	]);
-	assert.match(mark, /<title[^>]*>UnoRAG<\/title>/);
-	assert.match(component, /\/brand\/unorag-mark\.svg/);
+	assert.match(mark, /<title[^>]*>Uno<\/title>/);
+	assert.match(mark, /U, N and O/);
+	assert.match(component, /\/brand\/uno-mark\.svg/);
+	assert.match(component, /suffix=\{withWordmark \? "RAG" : undefined\}/);
 
 	for (const path of ["public/favicon.ico", "src/app/favicon.ico"]) {
 		await assert.rejects(access(new URL(path, appRoot)), { code: "ENOENT" });

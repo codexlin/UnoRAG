@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Uno</title>
+  <desc id="desc">One continuous line forms the letters U, N and O</desc>
+  <rect width="128" height="128" rx="24" fill="#101719"/>
+  <path
+    d="M14 30v45c0 18 8 27 22 27s22-9 22-27V30l27 71V65c0-23 8-35 18-35s18 12 18 36-8 35-18 35-18-10-18-29"
+    fill="none"
+    stroke="#F5F9F9"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="12"
+  />
+  <circle cx="85" cy="101" r="7" fill="#4CCBC0"/>
+</svg>

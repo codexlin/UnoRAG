@@ -9,7 +9,7 @@ import {
 	getAppNavItemsByGroup,
 } from "@/components/app/nav-items";
 import { useSession } from "@/components/app/session-provider";
-import { UnoRAGMark } from "@/components/app/unorag-logo";
+import { UnoMark } from "@/components/app/unorag-logo";
 import { WorkspaceSwitcher } from "@/components/app/workspace-switcher";
 import {
 	Sidebar,
@@ -103,9 +103,9 @@ export function AppSidebar() {
 								"group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-1.5! group-data-[collapsible=icon]:[&_img]:size-6!",
 							)}
 						>
-							<UnoRAGMark decorative />
-							<span className="font-heading text-lg font-semibold tracking-tight text-primary">
-								UnoRAG
+							<UnoMark decorative />
+							<span className="font-heading text-lg font-semibold tracking-normal text-foreground">
+								Uno<span className="text-primary">RAG</span>
 							</span>
 						</SidebarMenuButton>
 					</SidebarMenuItem>

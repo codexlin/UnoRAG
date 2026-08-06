@@ -32,6 +32,7 @@
 
 设计与演进说明：
 
+- [Uno 品牌系统](./brand/uno-brand-system.md)：母品牌图形、产品命名、颜色、尺寸与资产规则；
 - [可观测性架构](./design/observability.md)：已落地的核心原生、可选 Ops 与 Langfuse 三层方案；
 - [Langfuse AI 工程接入](./LANGFUSE.md)：metadata-only 双出口、密钥边界、启用和故障排查；
 - [质量评测与 Prompt 生命周期](./EVALUATION.md)：仓库黄金集、Prompt Registry、发布门禁和可选分数发布；

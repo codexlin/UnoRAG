@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./public/brand/unorag-mark.png" alt="UnoRAG" width="88" />
+  <img src="./public/brand/uno-mark.png" alt="UnoRAG" width="88" />
   <h1>UnoRAG</h1>
   <p><strong>Private, permission-aware enterprise knowledge grounded in evidence.</strong></p>
   <p>

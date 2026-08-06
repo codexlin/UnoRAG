@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 				type: "image/png",
 			},
 			{
-				url: "/brand/unorag-mark.svg",
+				url: "/brand/uno-mark.svg",
 				type: "image/svg+xml",
 			},
 		],

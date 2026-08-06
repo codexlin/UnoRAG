@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 960" role="img" aria-labelledby="title desc">
+  <title id="title">Uno brand system board</title>
+  <desc id="desc">Continuous UNO mark, product family wordmarks, palette and sizing examples</desc>
+  <rect width="1600" height="960" fill="#F5F9F9"/>
+  <path d="M0 0h1600v12H0z" fill="#4CCBC0"/>
+  <g font-family="IBM Plex Sans, sans-serif" fill="#101719">
+    <text x="88" y="92" font-size="24" font-weight="600">UNOBYTE.DEV / IDENTITY 01</text>
+    <text x="88" y="174" font-size="72" font-weight="600">One line. An entire family.</text>
+    <text x="90" y="224" font-size="24" fill="#607077">A continuous U → N → O creates one recognizable parent mark.</text>
+  </g>
+
+  <g transform="translate(88 294) scale(2.45)">
+    <rect width="128" height="128" rx="24" fill="#101719"/>
+    <path d="M14 30v45c0 18 8 27 22 27s22-9 22-27V30l27 71V65c0-23 8-35 18-35s18 12 18 36-8 35-18 35-18-10-18-29" fill="none" stroke="#F5F9F9" stroke-linecap="round" stroke-linejoin="round" stroke-width="12"/>
+    <circle cx="85" cy="101" r="7" fill="#4CCBC0"/>
+  </g>
+
+  <g font-family="IBM Plex Sans, sans-serif" fill="#101719">
+    <text x="470" y="360" font-size="26" font-weight="600">CONTINUOUS UNO</text>
+    <text x="470" y="422" font-size="64" font-weight="600">Unobyte</text>
+    <text x="470" y="502" font-size="64" font-weight="600">Uno<tspan fill="#4CCBC0">RAG</tspan></text>
+    <text x="470" y="582" font-size="64" font-weight="600">Uno<tspan fill="#4CCBC0">Parse</tspan></text>
+    <text x="470" y="662" font-size="64" font-weight="600">Uno<tspan fill="#4CCBC0">Ops</tspan></text>
+  </g>
+
+  <g transform="translate(1080 302)">
+    <text x="0" y="0" font-family="IBM Plex Mono, monospace" font-size="18" fill="#607077">CORE PALETTE</text>
+    <rect y="34" width="96" height="96" rx="8" fill="#101719"/>
+    <rect x="112" y="34" width="96" height="96" rx="8" fill="#4CCBC0"/>
+    <rect x="224" y="34" width="96" height="96" rx="8" fill="#607077"/>
+    <g font-family="IBM Plex Mono, monospace" font-size="16" fill="#101719">
+      <text y="158">INK</text><text y="182">#101719</text>
+      <text x="112" y="158">SIGNAL</text><text x="112" y="182">#4CCBC0</text>
+      <text x="224" y="158">STEEL</text><text x="224" y="182">#607077</text>
+    </g>
+  </g>
+
+  <path d="M88 754H1512" stroke="#CBD7D7"/>
+  <g transform="translate(88 800)">
+    <text x="0" y="0" font-family="IBM Plex Mono, monospace" font-size="18" fill="#607077">DIGITAL SCALE</text>
+    <g transform="translate(0 34)">
+      <g transform="scale(.5)">
+        <rect width="128" height="128" rx="24" fill="#101719"/><path d="M14 30v45c0 18 8 27 22 27s22-9 22-27V30l27 71V65c0-23 8-35 18-35s18 12 18 36-8 35-18 35-18-10-18-29" fill="none" stroke="#F5F9F9" stroke-linecap="round" stroke-linejoin="round" stroke-width="12"/><circle cx="85" cy="101" r="7" fill="#4CCBC0"/>
+      </g>
+      <g transform="translate(100 16) scale(.25)">
+        <rect width="128" height="128" rx="24" fill="#101719"/><path d="M14 30v45c0 18 8 27 22 27s22-9 22-27V30l27 71V65c0-23 8-35 18-35s18 12 18 36-8 35-18 35-18-10-18-29" fill="none" stroke="#F5F9F9" stroke-linecap="round" stroke-linejoin="round" stroke-width="12"/><circle cx="85" cy="101" r="7" fill="#4CCBC0"/>
+      </g>
+      <g transform="translate(164 24) scale(.125)">
+        <rect width="128" height="128" rx="24" fill="#101719"/><path d="M14 30v45c0 18 8 27 22 27s22-9 22-27V30l27 71V65c0-23 8-35 18-35s18 12 18 36-8 35-18 35-18-10-18-29" fill="none" stroke="#F5F9F9" stroke-linecap="round" stroke-linejoin="round" stroke-width="12"/><circle cx="85" cy="101" r="7" fill="#4CCBC0"/>
+      </g>
+    </g>
+    <text x="248" y="70" font-family="IBM Plex Sans, sans-serif" font-size="21" fill="#101719">64 / 32 / 16 px</text>
+    <text x="530" y="70" font-family="IBM Plex Sans, sans-serif" font-size="21" fill="#607077">One symbol. Stable Uno. Flexible product suffix.</text>
+  </g>
+</svg>

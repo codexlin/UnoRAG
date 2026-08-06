@@ -2,15 +2,15 @@ import Image from "next/image";
 
 import { cn } from "@/lib/utils";
 
-/** Primary UnoRAG brand mark asset. */
-const UNORAG_MARK_SRC = "/brand/unorag-mark.svg";
+/** Canonical mark shared by the Uno product family. */
+const UNO_MARK_SRC = "/brand/uno-mark.svg";
 
-type UnoRAGLogoProps = {
+type UnoLogoProps = {
 	className?: string;
 	/** Icon-only mark size. */
 	size?: "sm" | "md" | "lg";
-	/** Show wordmark beside the mark. */
-	withWordmark?: boolean;
+	/** Product suffix appended to the stable Uno mother brand. */
+	suffix?: string;
 	wordmarkClassName?: string;
 };
 
@@ -20,19 +20,21 @@ const sizeClass = {
 	lg: "size-11",
 } as const;
 
-/** UnoRAG U-shaped knowledge graph mark. */
-export function UnoRAGMark({
+/** Continuous U-N-O mother-brand mark. */
+export function UnoMark({
 	className,
 	decorative = true,
+	label = "Uno",
 }: {
 	className?: string;
 	decorative?: boolean;
+	label?: string;
 }) {
 	return (
 		<Image
-			src={UNORAG_MARK_SRC}
-			alt={decorative ? "" : "UnoRAG"}
-			title={decorative ? undefined : "UnoRAG"}
+			src={UNO_MARK_SRC}
+			alt={decorative ? "" : label}
+			title={decorative ? undefined : label}
 			width={128}
 			height={128}
 			draggable={false}
@@ -42,25 +44,44 @@ export function UnoRAGMark({
 	);
 }
 
-export function UnoRAGLogo({
+export function UnoLogo({
 	className,
 	size = "md",
-	withWordmark = false,
+	suffix,
 	wordmarkClassName,
-}: UnoRAGLogoProps) {
+}: UnoLogoProps) {
+	const label = `Uno${suffix ?? ""}`;
+
 	return (
-		<span className={cn("inline-flex min-w-0 items-center gap-2.5", className)}>
-			<UnoRAGMark className={cn(sizeClass[size])} decorative={withWordmark} />
-			{withWordmark ? (
+		<span
+			className={cn("inline-flex min-w-0 items-center gap-2.5", className)}
+			role="img"
+			aria-label={label}
+		>
+			<UnoMark className={cn(sizeClass[size])} decorative />
+			{suffix !== undefined ? (
 				<span
 					className={cn(
-						"font-heading text-lg font-semibold tracking-tight text-primary",
+						"font-heading text-lg font-semibold tracking-normal text-foreground",
 						wordmarkClassName,
 					)}
+					aria-hidden
 				>
-					UnoRAG
+					Uno<span className="text-primary">{suffix}</span>
 				</span>
 			) : null}
 		</span>
 	);
+}
+
+/** Backward-compatible UnoRAG icon export. */
+export function UnoRAGMark(props: React.ComponentProps<typeof UnoMark>) {
+	return <UnoMark {...props} label="UnoRAG" />;
+}
+
+export function UnoRAGLogo({
+	withWordmark = false,
+	...props
+}: Omit<UnoLogoProps, "suffix"> & { withWordmark?: boolean }) {
+	return <UnoLogo {...props} suffix={withWordmark ? "RAG" : undefined} />;
 }
