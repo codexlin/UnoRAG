@@ -124,14 +124,14 @@ Next.js 负责身份、Workspace、RBAC/ACL、公开 API、检索、LangGraph、
 - [开发指南](./docs/DEVELOPMENT.md)
 - [开源发布准备审计](./docs/OPEN_SOURCE_READINESS.md)
 
-## 开源准备
+## 开源许可
 
-UnoRAG 将采用单一、功能完整的开源发行版，不设置付费功能墙。私有化部署、Ops Stack、Langfuse、
+UnoRAG 采用单一、功能完整的开源发行版，不设置付费功能墙。私有化部署、Ops Stack、Langfuse、
 评测和通用 Provider 集成都属于同一产品；部署、集成、调优、定制、培训与 SLA 支持可作为专业服务。
 
-当前仓库仍在准备公开发布。在完成来源、安全、依赖与素材审计并正式提交 `LICENSE` 前，本仓库尚未授予
-开源许可；Apache-2.0 是当前候选许可证，并非已经生效的许可。详见
-[ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md)。
+源代码已采用 [Apache License 2.0](./LICENSE)。仓库可见性和首次公开发行仍须通过素材来源、供应链证明
+与发布候选验收门禁。详见 [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) 和
+[开源发布准备审计](./docs/OPEN_SOURCE_READINESS.md)。
 
 贡献、支持和安全报告方式分别见 [CONTRIBUTING.md](./CONTRIBUTING.md)、[SUPPORT.md](./SUPPORT.md)
 与 [SECURITY.md](./SECURITY.md)。

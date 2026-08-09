@@ -31,6 +31,7 @@ RUN useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
 	&& corepack prepare pnpm@9.7.1 --activate
 COPY package.json pnpm-lock.yaml ./
+COPY LICENSE NOTICE ./
 RUN --mount=type=cache,id=unorag-pnpm-prod,target=/root/.local/share/pnpm/store \
 	pnpm install --prod --frozen-lockfile \
 		--network-concurrency=4 \
@@ -80,6 +81,7 @@ RUN --mount=type=cache,id=unorag-pnpm-migrator,target=/root/.local/share/pnpm/st
 	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
 COPY --chown=unorag:unorag drizzle.config.ts ./
 COPY --chown=unorag:unorag drizzle ./drizzle
+COPY --chown=unorag:unorag LICENSE NOTICE ./
 # Referenced by drizzle.config schema path (migrate applies SQL in ./drizzle).
 COPY --chown=unorag:unorag src/db/schema.ts ./src/db/schema.ts
 # Avoid Corepack re-fetching pnpm at container start.
@@ -128,6 +130,7 @@ COPY --from=builder --chown=unorag:unorag /repo/drizzle.config.ts ./drizzle.conf
 COPY --from=builder --chown=unorag:unorag /repo/scripts ./scripts
 COPY --from=builder --chown=unorag:unorag /repo/package.json ./package.json
 COPY --from=builder --chown=unorag:unorag /repo/contracts ./contracts
+COPY --chown=unorag:unorag LICENSE NOTICE ./
 
 USER unorag
 EXPOSE 3000

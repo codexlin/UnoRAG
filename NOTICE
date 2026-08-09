@@ -1,0 +1,8 @@
+UnoRAG
+Copyright 2026 UnoRAG contributors
+
+This product includes software developed by the UnoRAG contributors.
+
+Third-party components retain their respective copyright and license terms.
+Release container images publish an SBOM and provenance attestation alongside
+the image manifest. See ASSETS.md for repository asset provenance.

@@ -1,11 +1,7 @@
 name: release-images
 
-# Build each target once, then publish the same result to:
-# - ACR for mainland China deployments
-# - GHCR for overseas deployments
-#
-# Required repository secrets:
-#   ACR_REGISTRY / ACR_USERNAME / ACR_PASSWORD / ACR_NAMESPACE
+# Build each target once and publish it to GHCR. When all four ACR secrets are
+# configured, the same image is mirrored to ACR for mainland China deployments.
 
 on:
   workflow_dispatch:
@@ -48,6 +44,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
           ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -70,17 +68,31 @@ jobs:
 
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           if [[ "${dry_run}" == "false" ]]; then
-            if [[ -z "${ACR_REGISTRY:-}" || -z "${ACR_NAMESPACE:-}" ]]; then
-              echo "ACR_REGISTRY and ACR_NAMESPACE secrets are required" >&2
+            ghcr_repo="ghcr.io/${owner}/unorag"
+            acr_values=("${ACR_REGISTRY:-}" "${ACR_NAMESPACE:-}" "${ACR_USERNAME:-}" "${ACR_PASSWORD:-}")
+            configured=0
+            for value in "${acr_values[@]}"; do
+              [[ -n "${value}" ]] && configured=$((configured + 1))
+            done
+            if [[ "${configured}" != "0" && "${configured}" != "4" ]]; then
+              echo "ACR mirroring requires ACR_REGISTRY, ACR_NAMESPACE, ACR_USERNAME and ACR_PASSWORD together" >&2
               exit 1
             fi
-            acr_repo="${ACR_REGISTRY}/${ACR_NAMESPACE}/unorag"
-            ghcr_repo="ghcr.io/${owner}/unorag"
-            echo "web_tags=${acr_repo}:web-${tag},${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
-            echo "ops_tags=${acr_repo}:ops-${tag},${ghcr_repo}:ops-${tag}" >> "${GITHUB_OUTPUT}"
-            echo "worker_tags=${acr_repo}:worker-${tag},${ghcr_repo}:worker-${tag}" >> "${GITHUB_OUTPUT}"
-            echo "migrator_tags=${acr_repo}:migrator-${tag},${ghcr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
-            echo "acr_repo=${acr_repo}" >> "${GITHUB_OUTPUT}"
+            if [[ "${configured}" == "4" ]]; then
+              acr_repo="${ACR_REGISTRY}/${ACR_NAMESPACE}/unorag"
+              echo "web_tags=${ghcr_repo}:web-${tag},${acr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
+              echo "ops_tags=${ghcr_repo}:ops-${tag},${acr_repo}:ops-${tag}" >> "${GITHUB_OUTPUT}"
+              echo "worker_tags=${ghcr_repo}:worker-${tag},${acr_repo}:worker-${tag}" >> "${GITHUB_OUTPUT}"
+              echo "migrator_tags=${ghcr_repo}:migrator-${tag},${acr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
+              echo "acr_repo=${acr_repo}" >> "${GITHUB_OUTPUT}"
+              echo "publish_acr=true" >> "${GITHUB_OUTPUT}"
+            else
+              echo "web_tags=${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
+              echo "ops_tags=${ghcr_repo}:ops-${tag}" >> "${GITHUB_OUTPUT}"
+              echo "worker_tags=${ghcr_repo}:worker-${tag}" >> "${GITHUB_OUTPUT}"
+              echo "migrator_tags=${ghcr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
+              echo "publish_acr=false" >> "${GITHUB_OUTPUT}"
+            fi
             echo "ghcr_repo=${ghcr_repo}" >> "${GITHUB_OUTPUT}"
             echo "web_scan_ref=${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
             echo "ops_scan_ref=${ghcr_repo}:ops-${tag}" >> "${GITHUB_OUTPUT}"
@@ -95,6 +107,7 @@ jobs:
             echo "ops_scan_ref=unorag-web-ops:${tag}" >> "${GITHUB_OUTPUT}"
             echo "worker_scan_ref=unorag-web-worker:${tag}" >> "${GITHUB_OUTPUT}"
             echo "migrator_scan_ref=unorag-web-migrator:${tag}" >> "${GITHUB_OUTPUT}"
+            echo "publish_acr=false" >> "${GITHUB_OUTPUT}"
           fi
 
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
@@ -103,18 +116,8 @@ jobs:
           echo "dry_run=${dry_run}" >> "${GITHUB_OUTPUT}"
           echo "Resolved tag=${tag} dbos_version=unorag-${GITHUB_SHA::16} dry_run=${dry_run}"
 
-      - name: Validate ACR credentials
-        if: steps.meta.outputs.dry_run != 'true'
-        env:
-          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
-        run: |
-          set -euo pipefail
-          [[ -n "${ACR_USERNAME:-}" ]] || { echo "ACR_USERNAME secret is required" >&2; exit 1; }
-          [[ -n "${ACR_PASSWORD:-}" ]] || { echo "ACR_PASSWORD secret is required" >&2; exit 1; }
-
       - name: Log in to ACR
-        if: steps.meta.outputs.dry_run != 'true'
+        if: steps.meta.outputs.publish_acr == 'true'
         uses: docker/login-action@v4
         with:
           registry: ${{ secrets.ACR_REGISTRY }}
@@ -145,6 +148,12 @@ jobs:
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.web_tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+          sbom: ${{ steps.meta.outputs.dry_run != 'true' }}
+          provenance: ${{ steps.meta.outputs.dry_run != 'true' }}
 
       - name: Build and publish web migrator
         id: migrator
@@ -159,6 +168,12 @@ jobs:
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.migrator_tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+          sbom: ${{ steps.meta.outputs.dry_run != 'true' }}
+          provenance: ${{ steps.meta.outputs.dry_run != 'true' }}
 
       - name: Build and publish ops image
         id: ops
@@ -173,6 +188,12 @@ jobs:
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.ops_tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+          sbom: ${{ steps.meta.outputs.dry_run != 'true' }}
+          provenance: ${{ steps.meta.outputs.dry_run != 'true' }}
 
       - name: Build and publish DBOS worker
         id: worker
@@ -187,6 +208,12 @@ jobs:
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
           load: ${{ steps.meta.outputs.dry_run == 'true' }}
           tags: ${{ steps.meta.outputs.worker_tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+          sbom: ${{ steps.meta.outputs.dry_run != 'true' }}
+          provenance: ${{ steps.meta.outputs.dry_run != 'true' }}
 
       - name: Scan web image
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
@@ -230,6 +257,7 @@ jobs:
           TAG: ${{ steps.meta.outputs.tag }}
           DBOS_VERSION: ${{ steps.meta.outputs.dbos_version }}
           IMAGE_PLATFORM: ${{ steps.meta.outputs.image_platform }}
+          PUBLISH_ACR: ${{ steps.meta.outputs.publish_acr }}
           ACR_REPO: ${{ steps.meta.outputs.acr_repo }}
           GHCR_REPO: ${{ steps.meta.outputs.ghcr_repo }}
           WEB_DIGEST: ${{ steps.web.outputs.digest }}
@@ -253,7 +281,8 @@ jobs:
             for digest in "${WEB_DIGEST}" "${OPS_DIGEST}" "${WORKER_DIGEST}" "${MIGRATOR_DIGEST}"; do
               [[ "${digest}" == sha256:* ]] || { echo "missing image digest" >&2; exit 1; }
             done
-            cat > /tmp/unorag-release/release-acr.env <<EOF
+            if [[ "${PUBLISH_ACR}" == "true" ]]; then
+              cat > /tmp/unorag-release/release-acr.env <<EOF
           UNORAG_WEB_IMAGE=${ACR_REPO}@${WEB_DIGEST}
           UNORAG_WEB_MIGRATOR_IMAGE=${ACR_REPO}@${MIGRATOR_DIGEST}
           UNORAG_WEB_OPS_IMAGE=${ACR_REPO}@${OPS_DIGEST}
@@ -261,6 +290,7 @@ jobs:
           UNORAG_DBOS_APPLICATION_VERSION=${DBOS_VERSION}
           UNORAG_IMAGE_PLATFORM=${IMAGE_PLATFORM}
           EOF
+            fi
             cat > /tmp/unorag-release/release-ghcr.env <<EOF
           UNORAG_WEB_IMAGE=${GHCR_REPO}@${WEB_DIGEST}
           UNORAG_WEB_MIGRATOR_IMAGE=${GHCR_REPO}@${MIGRATOR_DIGEST}

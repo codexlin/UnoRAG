@@ -55,7 +55,8 @@ git diff --check
 - 数据库、Qdrant 和宿主机规格；
 - 测试数据集版本。
 
-Trivy HIGH/CRITICAL 门禁失败、使用浮动镜像标签或无法复现配置时，不得进入试点验收。
+Trivy HIGH/CRITICAL 门禁失败、缺失 BuildKit SBOM/provenance、使用浮动镜像标签或无法复现配置时，
+不得进入试点验收。镜像签名门禁落地前，发行材料必须明确标记为未签名 RC。
 官方 `v0.1` manifest 必须包含 `UNORAG_IMAGE_PLATFORM=linux/amd64`。安装和升级前的架构预检失败
 属于 NO-GO；`--allow-platform-emulation` 只供开发机 RC 验证，不能用于客户生产签字。
 官方 manifest 将 DBOS application version 固定为 `unorag-<git-sha>`。它是 durable workflow 的代码

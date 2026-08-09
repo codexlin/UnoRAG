@@ -2,7 +2,7 @@
 
 本目录是客户可安装的私有部署参考包。主机需要 Docker、Docker Compose 和 Python 3
 （仅供配置迁移与验收脚本使用，产品镜像不含 Python 运行时）。首片以 **Docker Compose 单机拓扑** 为主；
-**Helm/K8s 起步骨架** 已提供；镜像 CVE 扫描已进入发布门禁，SBOM 与签名后置。
+**Helm/K8s 起步骨架** 已提供；镜像 CVE 扫描、SBOM 与 provenance 已进入发布门禁，签名后置。
 
 产品定位见 [`docs/PRODUCT.md`](../docs/PRODUCT.md)，安装与生产验收分别见
 [`docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) 和 [`docs/RELEASE.md`](../docs/RELEASE.md)。
@@ -103,15 +103,18 @@ cd deploy/compose
 
 完整签字流程：[`docs/RELEASE.md`](../docs/RELEASE.md)。
 
-## 供应链 / SBOM（薄说明）
+## 供应链 / SBOM
 
 `release-images.yml` 已对 web / migrator / ops / DBOS worker 四张发布镜像执行 Trivy
-`HIGH/CRITICAL` CVE 门禁；扫描未通过时不产出 release manifest。完整 SBOM、签名和
-证明材料仍后置。交付前：
+`HIGH/CRITICAL` CVE 门禁；扫描未通过时不产出 release manifest。正式推送同时发布 BuildKit
+SBOM 与 provenance attestation，并写入源码、提交和 Apache-2.0 OCI 标签。交付前：
 
 1. 确认 `deploy/config/runtime.env.example` / Helm values 中基础镜像 tag 已 pin；
 2. 使用 workflow 产出的 digest manifest 部署，并归档对应 Trivy 日志；
-3. 客户要求 SBOM / 签名时另行运行 `syft` / `cosign`（或客户等价工具）。
+3. 核验镜像 digest 关联的 SBOM / provenance；签名门禁落地前，不得宣称镜像已签名。
+
+GHCR 是默认公开 Registry。完整配置 `ACR_REGISTRY`、`ACR_NAMESPACE`、`ACR_USERNAME` 和
+`ACR_PASSWORD` 后，workflow 才会把同一次构建同步到 ACR；未配置 ACR 不会阻断 GHCR 发布。
 
 发布 manifest 同时携带 `UNORAG_IMAGE_PLATFORM`。`v0.1` 当前固定为 `linux/amd64`；Compose 安装和
 升级会在拉取前校验 Docker Engine 架构。架构不一致不得作为客户生产部署，仅本地验收可使用产品服务
@@ -122,8 +125,8 @@ overlay 配合显式 `--allow-platform-emulation`。
 | 项 | 说明 |
 |---|---|
 | Helm 容量 / HPA / PDB / NetworkPolicy | starter 未纳入；按客户集群硬化 |
-| SBOM 生成与镜像签名 | CVE 镜像扫描已接入发布 CI；SBOM / Cosign 后置 |
-| 客户自有 registry promotion | ACR + GHCR 已双推并产出 digest；TCR/Harbor 按客户策略后置 |
+| 镜像签名与第三方许可证包 | CVE 门禁、SBOM 和 provenance 已接入；Cosign 与完整 notices 包仍后置 |
+| 客户自有 registry promotion | GHCR 默认发布、ACR 可选镜像；TCR/Harbor 按客户策略后置 |
 | MinIO/S3 一等公民对象后端 | 默认共享卷 / PVC；S3 适配另开 |
 
 生产验收以 [`docs/RELEASE.md`](../docs/RELEASE.md) 的部署级 go/no-go 签字为准；

@@ -129,15 +129,16 @@ Qdrant contains security-scoped retrieval projections.
 - [Development](./docs/DEVELOPMENT.md)
 - [Open-source readiness audit](./docs/OPEN_SOURCE_READINESS.md)
 
-## Open-source transition
+## Open Source
 
-UnoRAG is moving toward one fully open-source distribution with no paid feature wall. Private deployment,
+UnoRAG is one fully open-source distribution with no paid feature wall. Private deployment,
 Ops Stack assets, Langfuse integration, evaluation, and generic provider adapters belong to the same product;
 professional deployment, integration, tuning, customization, training, and SLA support remain available as services.
 
-The repository is still preparing for public release and does not grant an open-source license until provenance,
-security, dependency, and asset reviews are complete and a `LICENSE` file is committed. Apache-2.0 is the current
-candidate, not an active license. See [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md).
+The source code is licensed under [Apache License 2.0](./LICENSE). Repository visibility and the first public release
+remain gated by asset provenance, supply-chain evidence, and release-candidate acceptance. See
+[ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) and the
+[open-source readiness audit](./docs/OPEN_SOURCE_READINESS.md).
 
 Contributions, support, and security reports are described in [CONTRIBUTING.md](./CONTRIBUTING.md),
 [SUPPORT.md](./SUPPORT.md), and [SECURITY.md](./SECURITY.md).

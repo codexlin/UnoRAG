@@ -2,11 +2,24 @@
 	"name": "unorag",
 	"version": "0.1.0",
 	"private": true,
+	"license": "Apache-2.0",
+	"homepage": "https://github.com/codexlin/UnoRAG#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/codexlin/UnoRAG.git"
+	},
+	"bugs": {
+		"url": "https://github.com/codexlin/UnoRAG/issues"
+	},
+	"engines": {
+		"node": ">=22 <23"
+	},
 	"packageManager": "pnpm@9.7.1",
 	"pnpm": {
 		"overrides": {
 			"esbuild": "0.28.1",
-			"hono": "4.12.34"
+			"hono": "4.12.34",
+			"nanoid": "3.3.17"
 		}
 	},
 	"scripts": {

@@ -59,9 +59,29 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 	assert.match(releaseWorkflow, /image_platform=linux\/amd64/);
 	assert.match(releaseWorkflow, /platforms: linux\/amd64/);
 	assert.match(releaseWorkflow, /UNORAG_IMAGE_PLATFORM=\$\{IMAGE_PLATFORM\}/);
+	assert.match(
+		releaseWorkflow,
+		/org\.opencontainers\.image\.licenses=Apache-2\.0/,
+	);
+	assert.match(
+		releaseWorkflow,
+		/sbom: \$\{\{ steps\.meta\.outputs\.dry_run != 'true' \}\}/,
+	);
+	assert.match(
+		releaseWorkflow,
+		/provenance: \$\{\{ steps\.meta\.outputs\.dry_run != 'true' \}\}/,
+	);
+	assert.match(releaseWorkflow, /publish_acr=false/);
+	assert.match(releaseWorkflow, /PUBLISH_ACR/);
 	assert.match(localRelease, /UNORAG_IMAGE_PLATFORM=\$\{image_platform\}/);
 	assert.doesNotMatch(localRelease, /DBOS_APPLICATION_VERSION=lifecycle-v2/);
 	assert.doesNotMatch(releaseWorkflow, /DBOS_APPLICATION_VERSION=lifecycle-v2/);
+});
+
+test("release images carry the project license and notice", async () => {
+	const dockerfile = await source("deploy/docker/web.Dockerfile");
+	assert.match(dockerfile, /COPY LICENSE NOTICE \.\//);
+	assert.match(dockerfile, /COPY --chown=unorag:unorag LICENSE NOTICE \.\//);
 });
 
 test("version-changing upgrades quiesce before migrations and rollback", async () => {

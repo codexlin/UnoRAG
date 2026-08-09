@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-06
+- License activation: 2026-08-10
 - Scope: source availability, product composition, release readiness and services
 - Supersedes: the private-repository, commercial-edition and entitlement decisions
   in ADR-0006
@@ -20,10 +21,10 @@ distribution, earn adoption through product quality and documentation, and offer
 paid expertise around real customer environments. Private deployment remains an
 important deployment mode, but it is not a separate source edition.
 
-The repository is still private and has no open-source license at the time of this
-decision. Making the intent public does not itself grant permission to use,
-redistribute or modify the current source. Publication requires an explicit license
-and the readiness gates below.
+The repository was private and unlicensed when this decision was first accepted.
+Apache-2.0 became effective when the repository added its `LICENSE` on 2026-08-10.
+Changing repository visibility remains a separate release operation governed by the
+readiness gates below.
 
 ## Decision
 
@@ -48,10 +49,9 @@ UnoRAG will have one functionally complete open-source product distribution.
    extensions remain private according to their contract. Reusable fixes and
    generally useful capabilities should be contributed upstream whenever permitted.
 
-Apache-2.0 is the current candidate license because a permissive license best fits
-wide adoption and downstream integration. It is not effective until provenance and
-legal review are complete and a `LICENSE` file is committed. The final license and
-any required notices are established by that release change, not by this ADR alone.
+UnoRAG uses Apache-2.0 because a permissive license best fits wide adoption and
+downstream integration. The repository `LICENSE` is the authoritative grant; this
+ADR records the product and distribution decision without replacing that text.
 
 ## Product Boundaries
 
@@ -99,8 +99,8 @@ Repository visibility must not be changed until all of the following are complet
 8. Review public-facing names, trademarks, support expectations and vulnerability
    disclosure channels.
 
-Until these gates pass, documentation must describe UnoRAG as **preparing for an
-open-source release**, not as already licensed open source.
+Until the remaining gates pass, documentation may describe UnoRAG as Apache-2.0
+licensed, but must distinguish that fact from a completed public release.
 
 ## Consequences
 
@@ -123,7 +123,7 @@ Costs and risks:
 
 ## Non-goals
 
-- This decision does not make the repository public immediately.
+- This decision and license activation do not make the repository public immediately.
 - It does not promise free hosting, consulting, migration or SLA.
 - It does not require publishing customer data, credentials or contract-specific
   extensions.

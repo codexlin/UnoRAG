@@ -2,7 +2,7 @@ name: ci
 
 # P0 CI closed loop (build / test / image build verify).
 # Does NOT push to registry, read production secrets, or SSH deploy.
-# Release image push: see release-images.yml (requires ACR secrets for real push).
+# Release image push: see release-images.yml (GHCR by default; ACR mirror optional).
 # Deploy with approval: deploy.yml (deferred).
 #
 # This workflow is the single PR/main entrypoint.

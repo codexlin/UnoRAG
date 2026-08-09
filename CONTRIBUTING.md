@@ -40,9 +40,8 @@ full acceptance matrix.
 - Update user-facing and operational documentation in the same change.
 - Run `git diff --check` and the relevant commands above.
 - Explain migration, compatibility, privacy and rollback impact.
-- Confirm that contributed code and assets are yours to submit under the repository
-  license once it is adopted.
+- Confirm that contributed code and assets are yours to submit under Apache-2.0.
 
-By contributing, you agree that your contribution may be distributed under the
-project's adopted license. The repository is still preparing for its first
-open-source license; contributions must not be merged under an ambiguous grant.
+Unless you explicitly state otherwise, any contribution intentionally submitted for
+inclusion in UnoRAG is provided under Apache-2.0, without additional terms or
+conditions, as described by Section 5 of the license.

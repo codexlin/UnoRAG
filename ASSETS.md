@@ -7,9 +7,9 @@ not a substitute for the repository license or legal review.
 
 | Files | Origin | Third-party material | Distribution status |
 |---|---|---|---|
-| `public/brand/uno-mark.svg` | Original Continuous UNO vector designed for Unobyte/UnoRAG on 2026-08-06 | None incorporated | Intended to follow the repository license once adopted |
+| `public/brand/uno-mark.svg` | Original Continuous UNO vector designed for Unobyte/UnoRAG on 2026-08-06 | None incorporated | Apache-2.0 |
 | `public/brand/uno-mark.png`, `public/favicon-32x32.png`, `public/apple-touch-icon.png` | Raster derivatives generated from `uno-mark.svg` | None incorporated | Same as source SVG |
-| `docs/brand/uno-brand-board.svg` | Original layout using the canonical mark and documented brand tokens | None incorporated | Intended to follow the repository license once adopted |
+| `docs/brand/uno-brand-board.svg` | Original layout using the canonical mark and documented brand tokens | None incorporated | Apache-2.0 |
 
 These are currently integrated but provisional brand assets. The final identity may replace them before the first public
 release. The project names and final mark still require jurisdiction- and class-specific trademark clearance before public
