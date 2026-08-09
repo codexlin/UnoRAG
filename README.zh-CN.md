@@ -66,20 +66,29 @@ flowchart LR
 客户保有数据库、文档、模型和解析器密钥。公网只暴露 Next.js 产品边界，Worker、PostgreSQL、
 Qdrant、Redis 和 ParserProvider 留在内网。
 
-需要 Docker、Docker Compose v2 和 Python 3；Python 只用于宿主机配置迁移与验收脚本，
-产品运行时为 TypeScript/Node.js。
+本地体验只需先安装 Docker Desktop，或 Docker Engine + Compose v2，然后执行：
+
+```bash
+./start.sh
+```
+
+脚本会安全询问 `LLM_API_KEY`，自动生成本地密钥、构建完整环境并打开
+<http://localhost:8080/>。宿主机没有 Python 时会使用临时 Docker helper，不要求额外安装开发环境。
+
+正式客户安装仍须使用 digest-pinned release manifest 和完整部署流程：
 
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh
 # 编辑 ../config/runtime.env、runtime.secret、bootstrap.env
-./scripts/install.sh
+./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
+./scripts/install.sh --manifest /path/to/release.env
 ```
 
-安装后访问 <http://localhost/>，并检查：
+使用默认本地启动配置时，可这样检查就绪状态：
 
 ```bash
-curl -sf http://localhost/api/rag/health/ready
+curl -sf http://localhost:8080/api/rag/health/ready
 ```
 
 升级、回滚、备份、恢复和 Kubernetes 说明见[私有化部署](./docs/DEPLOYMENT.md)。

@@ -27,6 +27,24 @@ flowchart TB
 宿主机需要 Docker、Docker Compose v2 和 Python 3。Python 只用于配置迁移及验收脚本，
 四个产品镜像均为 Node 运行时。
 
+### 本地体验一键启动
+
+macOS、Linux 或 WSL 已安装并启动 Docker 时，可在仓库根目录运行：
+
+```bash
+./start.sh
+```
+
+首次运行会安全询问 `LLM_API_KEY`，生成 gitignored 的数据库、Session 和管理员密钥，使用默认
+`8080` 端口构建并启动完整 Compose 环境。宿主机没有 Python 时，脚本通过临时 Docker helper 执行
+配置初始化。可使用 `./start.sh --help` 查看端口、Ops Stack、manifest 和无浏览器模式。
+
+该入口用于本地体验和开发，默认构建当前工作树，**不属于正式客户交付**。生产安装必须继续使用下面的
+release manifest、平台预检和显式配置流程。模型凭据不会被内置；非交互环境必须通过
+`LLM_API_KEY` 提供。
+
+### 正式安装
+
 `v0.1` 发布物当前只认证 `linux/amd64`。生产安装前必须确认宿主机或 Kubernetes 节点提供该架构；
 `linux/arm64` 和 multi-arch 尚不属于支持范围。Apple Silicon 本地验收可以只对四个产品服务显式设置
 `platform: linux/amd64`，但模拟运行不代表生产容量结论，也不得让全局

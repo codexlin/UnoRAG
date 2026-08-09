@@ -42,6 +42,14 @@ deploy/
 
 完整步骤见 [`docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md)。
 
+本地体验可直接在仓库根目录运行；只要求 Docker，`LLM_API_KEY` 缺失时会安全询问：
+
+```bash
+./start.sh
+```
+
+正式客户安装继续使用下面的拆分配置与 digest manifest 流程，不用一键入口替代交付门禁。
+
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh

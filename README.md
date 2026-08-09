@@ -70,20 +70,29 @@ execution. LangGraph.js orchestrates Ask, while Vercel AI SDK streams model outp
 Customers retain control of databases, documents, model endpoints, and parser credentials. Only the
 Next.js product edge is public; workers, PostgreSQL, Qdrant, Redis, and ParserProviders remain private.
 
-The host requires Docker, Docker Compose v2, and Python 3. Python is used only by host-side configuration
-migration and acceptance utilities; the product runtime is TypeScript/Node.js.
+For a local evaluation, install Docker Desktop or Docker Engine with Compose v2, then run:
+
+```bash
+./start.sh
+```
+
+The script securely asks for `LLM_API_KEY`, generates local secrets, builds the stack, and opens
+<http://localhost:8080/>. It uses a temporary Docker helper when host Python is unavailable.
+
+Production installation still uses a digest-pinned release manifest and the explicit deployment runbook:
 
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh
 # Edit ../config/runtime.env, runtime.secret, and bootstrap.env
-./scripts/install.sh
+./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
+./scripts/install.sh --manifest /path/to/release.env
 ```
 
-Open <http://localhost/> and verify readiness:
+For the default local launch, verify readiness with:
 
 ```bash
-curl -sf http://localhost/api/rag/health/ready
+curl -sf http://localhost:8080/api/rag/health/ready
 ```
 
 See [Private Deployment](./docs/DEPLOYMENT.md) for upgrades, rollback, backup, restore, and Kubernetes.
