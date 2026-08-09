@@ -78,6 +78,8 @@ For a local evaluation, install Docker Desktop or Docker Engine with Compose v2,
 
 The script securely asks for `LLM_API_KEY`, generates local secrets, builds the stack, and opens
 <http://localhost:8080/>. It uses a temporary Docker helper when host Python is unavailable.
+Where npmjs.org is unreliable, local source builds may use
+`./start.sh --npm-registry https://registry.npmmirror.com` without changing locked dependency versions.
 
 Production installation still uses a digest-pinned release manifest and the explicit deployment runbook:
 

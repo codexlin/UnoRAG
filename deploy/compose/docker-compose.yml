@@ -21,6 +21,9 @@
 
 name: ${COMPOSE_PROJECT_NAME:-unorag}
 
+x-build-args: &build-args
+  NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org/}
+
 x-dbos-environment: &dbos-environment
   DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://unorag_worker_login:${UNORAG_WORKER_DB_PASSWORD:?UNORAG_WORKER_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
   # Compose interpolates inactive profiles. The sentinel keeps legacy installs
@@ -85,6 +88,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
       target: runner
+      args: *build-args
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -158,6 +162,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
       target: worker
+      args: *build-args
     working_dir: /repo
     restart: unless-stopped
     command: ["./node_modules/.bin/tsx", "src/worker/entry.ts"]
@@ -224,6 +229,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
       target: worker
+      args: *build-args
     working_dir: /repo
     restart: unless-stopped
     command: ["./node_modules/.bin/tsx", "src/worker/control-entry.ts"]
@@ -425,6 +431,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
       target: migrator
+      args: *build-args
     environment:
       DATABASE_URL: ${MIGRATOR_DATABASE_URL:-postgresql://${POSTGRES_USER:-unorag}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
     depends_on:
@@ -441,6 +448,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
       target: ops
+      args: *build-args
     working_dir: /repo
     environment:
       # Bootstrap-only vars: use defaults so `compose config` works without

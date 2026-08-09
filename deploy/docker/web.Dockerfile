@@ -6,28 +6,38 @@
 #   docker build -f deploy/docker/web.Dockerfile --target ops -t unorag-web-ops:local .
 
 FROM node:22-bookworm-slim AS deps
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
 WORKDIR /repo
 RUN useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
 	&& corepack prepare pnpm@9.7.1 --activate
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile \
-	&& rm -rf /root/.local/share/pnpm/store \
-		/usr/local/lib/node_modules/npm \
+RUN --mount=type=cache,id=unorag-pnpm-dev,target=/root/.local/share/pnpm/store \
+	pnpm install --frozen-lockfile \
+		--network-concurrency=4 \
+		--fetch-retries=5 \
+		--fetch-retry-mintimeout=10000 \
+		--fetch-retry-maxtimeout=60000 \
+	&& rm -rf /usr/local/lib/node_modules/npm \
 	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
 
 # Runtime-only dependency tree for ops and worker. Pruning a full install in a
 # later Docker layer does not remove the original dev-dependency bytes from the
 # image, so production dependencies must be installed in their own stage.
 FROM node:22-bookworm-slim AS runtime-deps
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
 WORKDIR /repo
 RUN useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
 	&& corepack prepare pnpm@9.7.1 --activate
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --prod --frozen-lockfile \
-	&& rm -rf /root/.local/share/pnpm/store /root/.cache \
-		/usr/local/lib/node_modules/npm \
+RUN --mount=type=cache,id=unorag-pnpm-prod,target=/root/.local/share/pnpm/store \
+	pnpm install --prod --frozen-lockfile \
+		--network-concurrency=4 \
+		--fetch-retries=5 \
+		--fetch-retry-mintimeout=10000 \
+		--fetch-retry-maxtimeout=60000 \
+	&& rm -rf /root/.cache /usr/local/lib/node_modules/npm \
 	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
 
 FROM node:22-bookworm-slim AS builder
@@ -47,6 +57,7 @@ RUN pnpm build
 
 # One-shot control-plane migrator plus PostgreSQL runtime-role configurator.
 FROM node:22-bookworm-slim AS migrator
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
 WORKDIR /migrate
 # Keep NODE_ENV unset during install so tooling resolves cleanly; set at runtime via compose if needed.
 RUN apt-get update \
@@ -57,11 +68,15 @@ RUN apt-get update \
 	&& corepack prepare pnpm@9.7.1 --activate
 # Pin the same ranges as the application; install only migration tooling.
 COPY package.json /tmp/app.package.json
-RUN node -e 'const fs=require("fs"); const app=JSON.parse(fs.readFileSync("/tmp/app.package.json","utf8")); fs.writeFileSync("package.json", JSON.stringify({name:"unorag-web-migrator",private:true,packageManager:"pnpm@9.7.1",pnpm:{overrides:{esbuild:app.pnpm.overrides.esbuild}},scripts:{"db:migrate":"drizzle-kit migrate"},dependencies:{"drizzle-orm":app.dependencies["drizzle-orm"],pg:app.dependencies.pg,"drizzle-kit":app.devDependencies["drizzle-kit"]}},null,"\t")+"\n");' \
+RUN --mount=type=cache,id=unorag-pnpm-migrator,target=/root/.local/share/pnpm/store \
+	node -e 'const fs=require("fs"); const app=JSON.parse(fs.readFileSync("/tmp/app.package.json","utf8")); fs.writeFileSync("package.json", JSON.stringify({name:"unorag-web-migrator",private:true,packageManager:"pnpm@9.7.1",pnpm:{overrides:{esbuild:app.pnpm.overrides.esbuild}},scripts:{"db:migrate":"drizzle-kit migrate"},dependencies:{"drizzle-orm":app.dependencies["drizzle-orm"],pg:app.dependencies.pg,"drizzle-kit":app.devDependencies["drizzle-kit"]}},null,"\t")+"\n");' \
 	&& CI=true pnpm install \
+		--network-concurrency=4 \
+		--fetch-retries=5 \
+		--fetch-retry-mintimeout=10000 \
+		--fetch-retry-maxtimeout=60000 \
 	&& test -x node_modules/.bin/drizzle-kit \
-	&& rm -rf /root/.local/share/pnpm/store /root/.cache /tmp/app.package.json \
-		/usr/local/lib/node_modules/npm \
+	&& rm -rf /root/.cache /tmp/app.package.json /usr/local/lib/node_modules/npm \
 	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
 COPY --chown=unorag:unorag drizzle.config.ts ./
 COPY --chown=unorag:unorag drizzle ./drizzle

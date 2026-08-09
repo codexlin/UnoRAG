@@ -18,7 +18,10 @@ const root = new URL("../", import.meta.url);
 test("one-click startup preserves the production install boundary", async () => {
 	const scriptUrl = new URL("start.sh", root);
 	await access(scriptUrl);
-	const script = await readFile(scriptUrl, "utf8");
+	const [script, dockerfile] = await Promise.all([
+		readFile(scriptUrl, "utf8"),
+		readFile(new URL("deploy/docker/web.Dockerfile", root), "utf8"),
+	]);
 
 	assert.match(script, /docker compose version/);
 	assert.match(script, /docker info/);
@@ -36,7 +39,12 @@ test("one-click startup preserves the production install boundary", async () => 
 	assert.match(script, /scripts\/rotate-admin-password\.sh/);
 	assert.match(script, /--manifest/);
 	assert.match(script, /first run default: 8080/);
+	assert.match(script, /--npm-registry/);
+	assert.match(script, /NPM_CONFIG_REGISTRY/);
 	assert.doesNotMatch(script, /LLM_API_KEY=[A-Za-z0-9_-]{12,}/);
+	assert.match(dockerfile, /--network-concurrency=4/);
+	assert.match(dockerfile, /--fetch-retries=5/);
+	assert.match(dockerfile, /--mount=type=cache,id=unorag-pnpm-dev/);
 });
 
 test("public docs distinguish one-click local use from manifest production installs", async () => {

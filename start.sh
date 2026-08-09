@@ -11,6 +11,7 @@ OPEN_BROWSER=1
 CHECK_ONLY=0
 REQUESTED_PORT="${UNORAG_HTTP_PORT:-}"
 REQUESTED_PROJECT_NAME="${UNORAG_COMPOSE_PROJECT_NAME:-}"
+REQUESTED_NPM_REGISTRY="${UNORAG_NPM_REGISTRY:-}"
 INSTALL_ARGS=()
 NEEDS_GRAFANA_SECRET=0
 
@@ -25,6 +26,7 @@ OpenAI-compatible model API key.
 Options:
   --port PORT              Host HTTP port (first run default: 8080)
   --project-name NAME      Isolated Docker Compose project and volume prefix
+  --npm-registry URL       Alternate npm registry for local image builds
   --with-observability     Start Grafana, Prometheus, Loki, Tempo and Alertmanager
   --with-langfuse          Enable the configured metadata-only Langfuse exporter
   --manifest FILE          Install digest-pinned release images instead of local build
@@ -41,6 +43,7 @@ Environment:
   UNORAG_HTTP_PORT         Same as --port
   UNORAG_COMPOSE_PROJECT_NAME
                            Same as --project-name
+  UNORAG_NPM_REGISTRY      Same as --npm-registry
 
 The default provider/model comes from deploy/config/runtime.env. Edit that file
 before rerunning when using a provider other than the shipped DashScope defaults.
@@ -62,6 +65,11 @@ while [[ $# -gt 0 ]]; do
 		--project-name)
 			[[ -n "${2:-}" ]] || die "--project-name requires a value"
 			REQUESTED_PROJECT_NAME="$2"
+			shift 2
+			;;
+		--npm-registry)
+			[[ -n "${2:-}" ]] || die "--npm-registry requires a URL"
+			REQUESTED_NPM_REGISTRY="$2"
 			shift 2
 			;;
 		--with-observability | --with-ops)
@@ -108,6 +116,9 @@ if [[ -n "$REQUESTED_PORT" && ("$REQUESTED_PORT" -lt 1 || "$REQUESTED_PORT" -gt 
 fi
 if [[ -n "$REQUESTED_PROJECT_NAME" && ! "$REQUESTED_PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
 	die "project name must use lowercase letters, digits, hyphens, or underscores"
+fi
+if [[ -n "$REQUESTED_NPM_REGISTRY" && ! "$REQUESTED_NPM_REGISTRY" =~ ^https://[^[:space:]]+$ ]]; then
+	die "npm registry must be an https URL"
 fi
 
 command -v docker >/dev/null 2>&1 || die "Docker is not installed or not on PATH"
@@ -247,6 +258,9 @@ if [[ "$NEEDS_GRAFANA_SECRET" -eq 1 ]]; then
 fi
 
 echo "==> starting UnoRAG (the first image build may take several minutes)"
+if [[ -n "$REQUESTED_NPM_REGISTRY" ]]; then
+	export NPM_CONFIG_REGISTRY="$REQUESTED_NPM_REGISTRY"
+fi
 if [[ "${#INSTALL_ARGS[@]}" -eq 0 ]]; then
 	(cd "$COMPOSE_DIR" && ./scripts/install.sh)
 else

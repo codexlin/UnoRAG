@@ -74,6 +74,8 @@ Qdrant、Redis 和 ParserProvider 留在内网。
 
 脚本会安全询问 `LLM_API_KEY`，自动生成本地密钥、构建完整环境并打开
 <http://localhost:8080/>。宿主机没有 Python 时会使用临时 Docker helper，不要求额外安装开发环境。
+在 npmjs.org 网络不稳定的环境中，可使用
+`./start.sh --npm-registry https://registry.npmmirror.com`，依赖版本仍由 lockfile 固定。
 
 正式客户安装仍须使用 digest-pinned release manifest 和完整部署流程：
 
