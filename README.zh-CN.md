@@ -3,6 +3,7 @@
   <h1>UnoRAG</h1>
   <p><strong>可私有化部署、权限感知、以证据为中心的企业知识服务。</strong></p>
   <p>
+    <a href="https://unorag.unobyte.dev">在线体验</a> ·
     <a href="./README.md">English</a> ·
     <a href="./docs/STATUS.md">现状</a> ·
     <a href="./docs/PRODUCT.md">产品</a> ·
@@ -11,6 +12,8 @@
     <a href="./docs/INTEGRATION.md">API</a>
   </p>
 </div>
+
+> 在线实例：[unorag.unobyte.dev](https://unorag.unobyte.dev)。该实例用于产品展示与发布验收；自行部署时，数据、模型与解析凭据仍由部署方掌控。
 
 UnoRAG 将企业文档转化为可治理、可调用、可核验的知识服务。团队可以直接使用官方
 Workspace，也可以通过 Retrieve / Ask API，把同一套知识能力嵌入客服、售后、企业门户或 Agent。

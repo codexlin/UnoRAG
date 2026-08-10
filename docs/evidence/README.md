@@ -4,6 +4,7 @@
 
 | 报告 | 证明范围 |
 |---|---|
+| [UnoRAG-HK RC.8 主机验收](./2026-08-10-unorag-hk-production-acceptance.md) | HK 独立主机安装、真实 MinerU 文件矩阵、质量门禁、破坏性恢复与整机重启 |
 | [Registry RC.7 Tombstone 生命周期验收](./2026-08-06-registry-rc7-tombstone-validation.md) | Node 24 Actions、tombstone 保留与回收、最小权限以及 RC.6 原地升级 |
 | [Registry RC.6 平台合同与发布性能验收](./2026-08-06-registry-rc6-platform-validation.md) | manifest 平台预检、镜像瘦身、构建缓存与 RC.5 原地升级 |
 | [Registry RC.5 不可变发布验收](./2026-08-05-registry-rc5-validation.md) | 双 Registry digest、空环境安装、真实浏览器、升级与回滚 |
