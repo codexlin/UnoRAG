@@ -48,14 +48,17 @@ test("settings grid lets the audit table scroll without widening the page", () =
 	assert.match(audit, /max-w-full overflow-x-auto/);
 });
 
-test("libraries stack list and documents on mobile while preserving desktop columns", () => {
+test("libraries use a mobile picker and preserve the desktop registry", () => {
 	const libraries = readFileSync(
 		path.join(root, "src/components/app/libraries-panel.tsx"),
 		"utf8",
 	);
 
 	assert.match(libraries, /flex-col md:flex-row/);
-	assert.match(libraries, /h-\[min\(40vh,21rem\)\][\s\S]*md:w-72/);
+	assert.match(libraries, /hidden w-72[\s\S]*md:flex/);
+	assert.match(libraries, /<LibraryCombobox[\s\S]*label="当前知识库"/);
+	assert.match(libraries, /className="border-b[^"]*md:hidden"/);
+	assert.doesNotMatch(libraries, /资料空间/);
 	assert.match(libraries, /max-w-full overflow-x-auto rounded-md border/);
 	assert.match(libraries, /table-fixed md:table-auto/);
 	assert.match(libraries, /hidden md:table-cell/);
