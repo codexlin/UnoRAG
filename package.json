@@ -104,16 +104,16 @@
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.5",
+		"@biomejs/biome": "2.5.7",
 		"@langfuse/client": "5.10.0",
 		"@tailwindcss/postcss": "^4",
 		"@types/node": "^20",
-		"@types/pg": "^8.20.0",
+		"@types/pg": "^8.20.4",
 		"@types/react": "^19",
 		"@types/react-dom": "^19",
 		"drizzle-kit": "^0.31.10",
-		"postcss": "8.5.25",
-		"shadcn": "^4.2.0",
+		"postcss": "8.5.26",
+		"shadcn": "^4.16.2",
 		"tailwindcss": "^4",
 		"typescript": "^5"
 	}
