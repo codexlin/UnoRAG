@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getDatabase } from "@/db";
+import { resolveReleaseInfo } from "@/lib/release-info";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import { canManageMembers } from "@/lib/server/workspace-permissions.mjs";
 import { OperationsService } from "@/server/observability/operations-service";
@@ -54,6 +55,7 @@ export async function GET(request: Request) {
 	);
 	return NextResponse.json({
 		...snapshot,
+		release: resolveReleaseInfo(process.env),
 		scope: { workspace_id: identity.workspaceId },
 		overall: {
 			status: hasCritical

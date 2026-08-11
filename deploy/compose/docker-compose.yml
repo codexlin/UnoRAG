@@ -23,6 +23,9 @@ name: ${COMPOSE_PROJECT_NAME:-unorag}
 
 x-build-args: &build-args
   NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org/}
+  UNORAG_VERSION: ${UNORAG_VERSION:-0.1.0-dev}
+  UNORAG_REVISION: ${UNORAG_REVISION:-development}
+  UNORAG_BUILD_TIME: ${UNORAG_BUILD_TIME:-}
 
 x-dbos-environment: &dbos-environment
   DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://unorag_worker_login:${UNORAG_WORKER_DB_PASSWORD:?UNORAG_WORKER_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
@@ -99,6 +102,7 @@ services:
       UNORAG_SESSION_SECRET: ${UNORAG_SESSION_SECRET:?UNORAG_SESSION_SECRET required}
       UNORAG_BUILD_REF: ${UNORAG_WEB_IMAGE:-unorag-web:local}
       UNORAG_IMAGE_DIGEST: ${UNORAG_IMAGE_DIGEST:-}
+      UNORAG_DBOS_APPLICATION_VERSION: ${UNORAG_DBOS_APPLICATION_VERSION:-dev-local}
       QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
       OPENAI_API_KEY: ${LLM_API_KEY:?LLM_API_KEY required}

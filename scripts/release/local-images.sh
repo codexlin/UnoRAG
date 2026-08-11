@@ -23,6 +23,9 @@ REGISTRY=""
 OUT_DIR="${ROOT}/dist/release"
 PLATFORM="linux/amd64"
 PUSH=0
+PRODUCT_VERSION=""
+REVISION=""
+BUILD_TIME=""
 
 usage() {
 	cat <<'EOF'
@@ -66,6 +69,23 @@ dbos_application_version() {
 	fi
 }
 
+resolve_release_metadata() {
+	local base_version
+	base_version="$(node -p "require('./package.json').version")"
+	REVISION="$(git rev-parse --verify HEAD 2>/dev/null || true)"
+	if [[ ! "$REVISION" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
+		REVISION="development"
+	fi
+	if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+		PRODUCT_VERSION="${TAG#v}"
+	elif [[ "$REVISION" == "development" ]]; then
+		PRODUCT_VERSION="${base_version}-dev"
+	else
+		PRODUCT_VERSION="${base_version}-dev+${REVISION:0:12}"
+	fi
+	BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+
 resolve_platform() {
 	if [[ "$PLATFORM" == "local" ]]; then
 		PLATFORM=""
@@ -90,6 +110,16 @@ remote_worker() { echo "$(remote_repo):worker-${TAG}"; }
 
 build_images() {
 	local plat_args=()
+	local metadata_args=(
+		--build-arg "UNORAG_VERSION=${PRODUCT_VERSION}"
+		--build-arg "UNORAG_REVISION=${REVISION}"
+		--build-arg "UNORAG_BUILD_TIME=${BUILD_TIME}"
+		--label "org.opencontainers.image.title=UnoRAG"
+		--label "org.opencontainers.image.version=${PRODUCT_VERSION}"
+		--label "org.opencontainers.image.revision=${REVISION}"
+		--label "org.opencontainers.image.created=${BUILD_TIME}"
+		--label "org.opencontainers.image.licenses=Apache-2.0"
+	)
 	if [[ -n "${PLATFORM}" ]]; then
 		plat_args=(--platform "$PLATFORM")
 		log "platform=${PLATFORM}"
@@ -99,6 +129,7 @@ build_images() {
 
 	log "build web runner → $(local_web)"
 	docker build ${plat_args[@]+"${plat_args[@]}"} \
+		"${metadata_args[@]}" \
 		-f deploy/docker/web.Dockerfile \
 		--target runner \
 		-t "$(local_web)" \
@@ -106,6 +137,7 @@ build_images() {
 
 	log "build web migrator → $(local_migrator)"
 	docker build ${plat_args[@]+"${plat_args[@]}"} \
+		"${metadata_args[@]}" \
 		-f deploy/docker/web.Dockerfile \
 		--target migrator \
 		-t "$(local_migrator)" \
@@ -113,6 +145,7 @@ build_images() {
 
 	log "build web operations image → $(local_ops)"
 	docker build ${plat_args[@]+"${plat_args[@]}"} \
+		"${metadata_args[@]}" \
 		-f deploy/docker/web.Dockerfile \
 		--target ops \
 		-t "$(local_ops)" \
@@ -120,6 +153,7 @@ build_images() {
 
 	log "build DBOS worker → $(local_worker)"
 	docker build ${plat_args[@]+"${plat_args[@]}"} \
+		"${metadata_args[@]}" \
 		-f deploy/docker/web.Dockerfile \
 		--target worker \
 		-t "$(local_worker)" \
@@ -201,6 +235,9 @@ UNORAG_WEB_OPS_IMAGE=${repo}@${ops_d}
 UNORAG_DBOS_WORKER_IMAGE=${repo}@${worker_d}
 UNORAG_DBOS_APPLICATION_VERSION=${dbos_version}
 UNORAG_IMAGE_PLATFORM=${image_platform}
+UNORAG_VERSION=${PRODUCT_VERSION}
+UNORAG_REVISION=${REVISION}
+UNORAG_BUILD_TIME=${BUILD_TIME}
 EOF
 	else
 		cat >"$env_file" <<EOF
@@ -210,13 +247,18 @@ UNORAG_WEB_OPS_IMAGE=${ops_ref}
 UNORAG_DBOS_WORKER_IMAGE=${worker_ref}
 UNORAG_DBOS_APPLICATION_VERSION=${dbos_version}
 UNORAG_IMAGE_PLATFORM=${image_platform}
+UNORAG_VERSION=${PRODUCT_VERSION}
+UNORAG_REVISION=${REVISION}
+UNORAG_BUILD_TIME=${BUILD_TIME}
 EOF
 	fi
 
 	cat >"$json_file" <<EOF
 {
   "tag": "${TAG}",
-  "git_sha": "$(git rev-parse HEAD 2>/dev/null || echo unknown)",
+  "version": "${PRODUCT_VERSION}",
+  "git_sha": "${REVISION}",
+  "built_at": "${BUILD_TIME}",
   "platform": "${image_platform}",
   "mode": "${mode}",
   "dbos_application_version": "${dbos_version}",
@@ -278,6 +320,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 assert_tag "$TAG"
+resolve_release_metadata
 resolve_platform
 
 case "$CMD" in

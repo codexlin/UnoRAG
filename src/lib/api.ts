@@ -1,7 +1,10 @@
+import type { ReleaseInfo } from "@/lib/release-info";
+
 export type ApiHealth = {
 	status: string;
 	service: string;
 	env: string;
+	release: ReleaseInfo;
 	build_ref?: string;
 	ask_mode: string;
 	effective_mode: string;

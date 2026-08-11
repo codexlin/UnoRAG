@@ -57,11 +57,20 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 	assert.match(localRelease, /echo "unorag-\$\{sha:0:16\}"/);
 	assert.match(releaseWorkflow, /dbos_version=unorag-\$\{GITHUB_SHA::16\}/);
 	assert.match(releaseWorkflow, /image_platform=linux\/amd64/);
+	assert.match(releaseWorkflow, /version=\$\{product_version\}/);
+	assert.match(releaseWorkflow, /revision=\$\{GITHUB_SHA\}/);
+	assert.match(releaseWorkflow, /UNORAG_VERSION=\$\{VERSION\}/);
+	assert.match(releaseWorkflow, /UNORAG_REVISION=\$\{REVISION\}/);
+	assert.match(releaseWorkflow, /UNORAG_BUILD_TIME=\$\{BUILD_TIME\}/);
 	assert.match(releaseWorkflow, /platforms: linux\/amd64/);
 	assert.match(releaseWorkflow, /UNORAG_IMAGE_PLATFORM=\$\{IMAGE_PLATFORM\}/);
 	assert.match(
 		releaseWorkflow,
 		/org\.opencontainers\.image\.licenses=Apache-2\.0/,
+	);
+	assert.match(
+		releaseWorkflow,
+		/org\.opencontainers\.image\.version=\$\{\{ steps\.meta\.outputs\.version \}\}/,
 	);
 	assert.match(
 		releaseWorkflow,
@@ -74,6 +83,9 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 	assert.match(releaseWorkflow, /publish_acr=false/);
 	assert.match(releaseWorkflow, /PUBLISH_ACR/);
 	assert.match(localRelease, /UNORAG_IMAGE_PLATFORM=\$\{image_platform\}/);
+	assert.match(localRelease, /UNORAG_VERSION=\$\{PRODUCT_VERSION\}/);
+	assert.match(localRelease, /UNORAG_REVISION=\$\{REVISION\}/);
+	assert.match(localRelease, /UNORAG_BUILD_TIME=\$\{BUILD_TIME\}/);
 	assert.doesNotMatch(localRelease, /DBOS_APPLICATION_VERSION=lifecycle-v2/);
 	assert.doesNotMatch(releaseWorkflow, /DBOS_APPLICATION_VERSION=lifecycle-v2/);
 });
@@ -82,6 +94,8 @@ test("release images carry the project license and notice", async () => {
 	const dockerfile = await source("deploy/docker/web.Dockerfile");
 	assert.match(dockerfile, /COPY LICENSE NOTICE \.\//);
 	assert.match(dockerfile, /COPY --chown=unorag:unorag LICENSE NOTICE \.\//);
+	assert.match(dockerfile, /ARG UNORAG_VERSION=0\.1\.0-dev/);
+	assert.match(dockerfile, /UNORAG_REVISION=\$\{UNORAG_REVISION\}/);
 });
 
 test("version-changing upgrades quiesce before migrations and rollback", async () => {

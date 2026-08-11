@@ -63,6 +63,23 @@ Trivy HIGH/CRITICAL 门禁失败、缺失 BuildKit SBOM/provenance、使用浮�
 兼容边界，不是可手改的营销版本；不同代码提交不得复用同一值，同一发布的 Web/control/worker 必须
 使用同一值。
 
+### 版本契约
+
+`package.json` 的 `version` 是产品基础版本的唯一事实源。正式镜像构建时，release workflow 通过构建
+参数写入以下不可变元数据，运行时不得从数据库或浮动 tag 推断版本：
+
+| 字段 | 含义 | 示例 |
+|---|---|---|
+| `UNORAG_VERSION` | 用户可见产品版本；Git tag 去掉前导 `v` | `0.1.0-rc.9` |
+| `UNORAG_REVISION` | 构建对应的完整 Git commit | 40 位 SHA |
+| `UNORAG_BUILD_TIME` | 镜像构建时间 | ISO 8601 UTC |
+| `UNORAG_DBOS_APPLICATION_VERSION` | durable workflow 兼容边界 | `unorag-<git-sha>` |
+| `UNORAG_IMAGE_DIGEST` / `UNORAG_BUILD_REF` | 实际运行镜像身份 | `sha256:<digest>` |
+
+`GET /api/rag/health/ready` 返回 `release` 对象；管理员设置页和运维看板显示相同信息。验收必须确认
+接口中的 version、revision、digest 与发布 manifest 一致。开发构建统一显示
+`<package-version>-dev[+revision]`，不能伪装成正式 RC。
+
 全新客户环境必须直接消费该 manifest，不能在目标机重新构建源码：
 
 ```bash
