@@ -48,6 +48,26 @@ test("settings grid lets the audit table scroll without widening the page", () =
 	assert.match(audit, /max-w-full overflow-x-auto/);
 });
 
+test("user menu keeps release metadata inside a Base UI menu group", () => {
+	const navUser = readFileSync(
+		path.join(root, "src/components/app/app-nav-user.tsx"),
+		"utf8",
+	);
+	const releaseLabel = navUser.indexOf(">UnoRAG</span>");
+	const groupStart = navUser.lastIndexOf("<DropdownMenuGroup>", releaseLabel);
+	const groupEnd = navUser.indexOf("</DropdownMenuGroup>", releaseLabel);
+
+	assert.ok(
+		releaseLabel >= 0,
+		"release label must be rendered in the user menu",
+	);
+	assert.ok(groupStart >= 0, "release label must have an enclosing menu group");
+	assert.ok(
+		groupEnd > releaseLabel,
+		"release label must close inside its menu group",
+	);
+});
+
 test("libraries use a mobile picker and preserve the desktop registry", () => {
 	const libraries = readFileSync(
 		path.join(root, "src/components/app/libraries-panel.tsx"),
