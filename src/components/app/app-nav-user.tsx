@@ -110,12 +110,14 @@ export function AppNavUser() {
 							</DropdownMenuItem>
 						</DropdownMenuGroup>
 						<DropdownMenuSeparator />
-						<DropdownMenuLabel className="flex items-center justify-between gap-3 px-2 py-1.5 font-normal text-muted-foreground">
-							<span className="text-xs">UnoRAG</span>
-							<span className="font-mono text-[11px] tabular-nums">
-								{health ? formatReleaseVersion(health.release) : "version --"}
-							</span>
-						</DropdownMenuLabel>
+						<DropdownMenuGroup>
+							<DropdownMenuLabel className="flex items-center justify-between gap-3 px-2 py-1.5 font-normal text-muted-foreground">
+								<span className="text-xs">UnoRAG</span>
+								<span className="font-mono text-[11px] tabular-nums">
+									{health ? formatReleaseVersion(health.release) : "version --"}
+								</span>
+							</DropdownMenuLabel>
+						</DropdownMenuGroup>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem
 							onClick={() => {
