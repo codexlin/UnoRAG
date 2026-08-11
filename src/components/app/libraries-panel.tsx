@@ -20,6 +20,7 @@ import { DocumentAclDialog } from "@/components/app/document-acl-dialog";
 import { DocumentDetailSheet } from "@/components/app/document-detail-sheet";
 import { DocumentStatusBadge } from "@/components/app/document-status";
 import { useIngestJobs } from "@/components/app/ingest-jobs-provider";
+import { LibraryCombobox } from "@/components/app/library-combobox";
 import {
 	buildDetailActions,
 	type DocActionContext,
@@ -108,6 +109,21 @@ function LibStatusDot({ status }: { status: string }) {
 		/>
 	);
 }
+
+const DOCUMENT_PROFILE_LABELS: Record<string, string> = {
+	auto: "自动",
+	general: "通用",
+	narrative: "长文",
+	table_heavy: "表格",
+	regulatory: "制度",
+	precise_paragraph: "段落",
+};
+
+const PARSE_PREFERENCE_LABELS: Record<string, string> = {
+	auto: "自动",
+	quality: "高质量",
+	local_only: "本地",
+};
 
 type DocumentOverlay =
 	| { kind: "none" }
@@ -642,16 +658,16 @@ export function LibrariesPanel() {
 		<div className="flex min-h-0 flex-1 flex-col">
 			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
 				{/* 左栏：知识库列表 */}
-				<aside className="flex h-[min(40vh,21rem)] w-full shrink-0 flex-col border-b border-border/80 bg-card md:h-auto md:w-72 md:border-r md:border-b-0">
+				<aside className="hidden w-72 shrink-0 flex-col border-r border-border/80 bg-card md:flex">
 					<div className="space-y-1 border-b border-border/70 px-4 py-4">
 						<p className="text-meta font-mono tracking-[0.16em] text-cite uppercase">
 							Knowledge registry
 						</p>
-						<h2 className="font-heading text-base font-semibold">资料空间</h2>
+						<h2 className="font-heading text-base font-semibold">知识库</h2>
 						<p className="text-meta font-mono text-muted-foreground">
-							{libraries.length} 个库 ·{" "}
+							{libraries.length} 个知识库 ·{" "}
 							{libraries.reduce((sum, item) => sum + (item.doc_count || 0), 0)}{" "}
-							份资料
+							份文档
 						</p>
 					</div>
 					<ScrollArea className="min-h-0 flex-1">
@@ -710,7 +726,7 @@ export function LibrariesPanel() {
 								onClick={openCreateLibraryDialog}
 							>
 								<Plus data-icon="inline-start" />
-								新建资料空间
+								新建知识库
 							</Button>
 						</div>
 					</Can>
@@ -718,26 +734,72 @@ export function LibrariesPanel() {
 
 				{/* 右栏：文档表 */}
 				<section className="flex min-w-0 flex-1 flex-col">
-					<div className="flex flex-wrap items-start justify-between gap-4 border-b border-border/70 bg-card px-5 py-4">
+					<div className="border-b border-border/70 bg-card px-4 py-3 md:hidden">
+						<div className="flex items-end gap-2">
+							<LibraryCombobox
+								libraries={libraries}
+								value={selectedId}
+								onValueChange={(libraryId) => {
+									setSelectedId(libraryId);
+									setDocumentQuery("");
+									setDocumentOverlay({ kind: "none" });
+								}}
+								className="min-w-0 flex-1"
+								label="当前知识库"
+							/>
+							<Can cap="manageLibraries">
+								<Button
+									type="button"
+									variant={libraries.length === 0 ? "default" : "outline"}
+									size={libraries.length === 0 ? "default" : "icon"}
+									className="h-10 shrink-0 rounded-md"
+									disabled={savingLibrary}
+									onClick={openCreateLibraryDialog}
+									aria-label="新建知识库"
+								>
+									<Plus aria-hidden="true" />
+									{libraries.length === 0 ? "新建" : null}
+								</Button>
+							</Can>
+						</div>
+					</div>
+
+					<div
+						className={cn(
+							"flex flex-wrap items-start justify-between gap-3 border-b border-border/70 bg-card px-4 py-3 sm:gap-4 sm:px-5 sm:py-4",
+							!selectedLibrary && "hidden md:flex",
+						)}
+					>
 						<div className="min-w-0 space-y-1">
-							<p className="text-meta font-mono tracking-[0.14em] text-cite uppercase">
+							<p className="text-meta hidden font-mono tracking-[0.14em] text-cite uppercase md:block">
 								Library workspace
 							</p>
 							<h3 className="font-heading truncate text-xl font-semibold">
-								{selectedLibrary?.name ?? "选择知识库"}
+								<span className="md:hidden">
+									{selectedLibrary ? "文档" : "知识库"}
+								</span>
+								<span className="hidden md:inline">
+									{selectedLibrary?.name ?? "选择知识库"}
+								</span>
 							</h3>
 							{selectedLibrary?.description?.trim() ? (
-								<p className="text-ui truncate text-muted-foreground">
+								<p className="text-ui hidden truncate text-muted-foreground md:block">
 									{selectedLibrary.description.trim()}
 								</p>
 							) : null}
 							{selectedLibrary ? (
 								<div className="flex flex-wrap gap-1.5 pt-1">
 									<span className="meta-chip">
-										{selectedLibrary.document_profile || "auto"} 分块
+										{DOCUMENT_PROFILE_LABELS[
+											selectedLibrary.document_profile || "auto"
+										] ?? selectedLibrary.document_profile}{" "}
+										分块
 									</span>
 									<span className="meta-chip">
-										{selectedLibrary.parse_preference || "auto"} 解析
+										{PARSE_PREFERENCE_LABELS[
+											selectedLibrary.parse_preference || "auto"
+										] ?? selectedLibrary.parse_preference}{" "}
+										解析
 									</span>
 									{selectedLibrary.requires_reindex ? (
 										<span className="meta-chip border-survey/35 bg-accent text-accent-foreground">
@@ -746,14 +808,14 @@ export function LibrariesPanel() {
 									) : null}
 								</div>
 							) : (
-								<p className="text-ui text-muted-foreground">
+								<p className="text-ui hidden text-muted-foreground md:block">
 									{canManageLibraries
-										? "从左侧选择或新建资料空间。"
-										: "从左侧选择资料空间。"}
+										? "从左侧选择或新建知识库。"
+										: "从左侧选择知识库。"}
 								</p>
 							)}
 						</div>
-						<div className="flex flex-wrap items-center gap-2">
+						<div className="hidden">
 							<Can cap="writeLibraries">
 								<input
 									ref={fileInputRef}
@@ -771,110 +833,123 @@ export function LibrariesPanel() {
 									onChange={(event) => onReplaceFilePicked(event.target.files)}
 								/>
 							</Can>
-							{selectedLibrary && isAskableLibrary(selectedLibrary) ? (
-								<Link
-									href="/app/ask"
-									onClick={() => {
-										try {
-											window.localStorage.setItem(
-												ASK_LIBRARY_STORAGE_KEY,
-												selectedLibrary.id,
-											);
-										} catch {
-											// Navigation remains usable in hardened browser contexts.
-										}
-									}}
-									className={cn(
-										buttonVariants({ variant: "outline" }),
-										"rounded-md",
-									)}
-								>
-									<MessageSquareText data-icon="inline-start" />
-									开始提问
-								</Link>
-							) : selectedLibrary ? (
-								<Button
-									type="button"
-									variant="outline"
-									className="rounded-md"
-									disabled
-									title="暂无可检索文档"
-								>
-									<MessageSquareText data-icon="inline-start" />
-									开始提问
-								</Button>
-							) : null}
-							<AuthButton
-								cap="writeLibraries"
-								type="button"
-								className="rounded-md"
-								disabled={uploadDisabled}
-								onClick={() => fileInputRef.current?.click()}
+						</div>
+						{selectedLibrary ? (
+							<div
+								className={cn(
+									"flex flex-wrap items-center gap-2",
+									documents.length > 0 ? "w-full sm:w-auto" : "w-auto",
+								)}
 							>
-								<FileUp data-icon="inline-start" />
-								{uploading ? "上传中…" : "上传资料"}
-							</AuthButton>
-							<Button
-								type="button"
-								variant="outline"
-								size="icon-sm"
-								className="rounded-md"
-								disabled={loading || !selectedId}
-								onClick={() => {
-									void loadLibraries();
-									if (selectedId) void refreshDocuments();
-								}}
-							>
-								<RefreshCw />
-								<span className="sr-only">刷新资料</span>
-							</Button>
-							<Can cap="manageLibraries">
-								<DropdownMenu>
-									<DropdownMenuTrigger
-										render={
+								{documents.length > 0 ? (
+									<>
+										{isAskableLibrary(selectedLibrary) ? (
+											<Link
+												href="/app/ask"
+												onClick={() => {
+													try {
+														window.localStorage.setItem(
+															ASK_LIBRARY_STORAGE_KEY,
+															selectedLibrary.id,
+														);
+													} catch {
+														// Navigation remains usable in hardened browser contexts.
+													}
+												}}
+												className={cn(
+													buttonVariants({ variant: "outline" }),
+													"h-10 min-w-0 flex-1 rounded-md sm:h-9 sm:flex-none",
+												)}
+											>
+												<MessageSquareText data-icon="inline-start" />
+												开始提问
+											</Link>
+										) : (
 											<Button
 												type="button"
 												variant="outline"
-												size="icon-sm"
-												className="rounded-md"
-												disabled={
-													!selectedLibrary || savingLibrary || deletingLibrary
-												}
-											/>
-										}
-									>
-										<Settings2 />
-										<span className="sr-only">资料空间设置</span>
-									</DropdownMenuTrigger>
-									<DropdownMenuContent align="end" className="min-w-40">
-										<DropdownMenuItem
+												className="h-10 min-w-0 flex-1 rounded-md sm:h-9 sm:flex-none"
+												disabled
+												title="暂无可检索文档"
+											>
+												<MessageSquareText data-icon="inline-start" />
+												开始提问
+											</Button>
+										)}
+										<AuthButton
+											cap="writeLibraries"
+											type="button"
+											className="h-10 min-w-0 flex-1 rounded-md sm:h-9 sm:flex-none"
+											disabled={uploadDisabled}
+											onClick={() => fileInputRef.current?.click()}
+										>
+											<FileUp data-icon="inline-start" />
+											{uploading ? "上传中…" : "上传文档"}
+										</AuthButton>
+										<Button
+											type="button"
+											variant="outline"
+											size="icon-sm"
+											className="size-10 rounded-md sm:size-8"
+											disabled={loading || !selectedId}
 											onClick={() => {
-												if (selectedLibrary)
-													openEditLibraryDialog(selectedLibrary);
+												void loadLibraries();
+												if (selectedId) void refreshDocuments();
 											}}
 										>
-											<Pencil />
-											编辑设置
-										</DropdownMenuItem>
-										<DropdownMenuSeparator />
-										<DropdownMenuItem
-											variant="destructive"
-											onClick={() => {
-												if (selectedLibrary)
-													setDeleteLibraryTarget(selectedLibrary);
-											}}
+											<RefreshCw />
+											<span className="sr-only">刷新文档</span>
+										</Button>
+									</>
+								) : null}
+								<Can cap="manageLibraries">
+									<DropdownMenu>
+										<DropdownMenuTrigger
+											render={
+												<Button
+													type="button"
+													variant="outline"
+													size="icon-sm"
+													className="size-10 rounded-md sm:size-8"
+													disabled={
+														!selectedLibrary || savingLibrary || deletingLibrary
+													}
+												/>
+											}
 										>
-											<Trash2 />
-											删除资料空间
-										</DropdownMenuItem>
-									</DropdownMenuContent>
-								</DropdownMenu>
-							</Can>
-						</div>
+											<Settings2 />
+											<span className="sr-only">知识库设置</span>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent align="end" className="min-w-40">
+											<DropdownMenuItem
+												onClick={() => {
+													if (selectedLibrary)
+														openEditLibraryDialog(selectedLibrary);
+												}}
+											>
+												<Pencil />
+												编辑设置
+											</DropdownMenuItem>
+											<DropdownMenuSeparator />
+											<DropdownMenuItem
+												variant="destructive"
+												onClick={() => {
+													if (selectedLibrary)
+														setDeleteLibraryTarget(selectedLibrary);
+												}}
+											>
+												<Trash2 />
+												删除知识库
+											</DropdownMenuItem>
+										</DropdownMenuContent>
+									</DropdownMenu>
+								</Can>
+							</div>
+						) : null}
 					</div>
 
 					{selectedLibrary ? (
-						<div className="grid shrink-0 grid-cols-2 border-b border-border/70 bg-background sm:grid-cols-4">
+						<div className="grid shrink-0 grid-cols-4 border-b border-border/70 bg-background">
 							{[
 								["可检索", documentSummary.ready],
 								["处理中", documentSummary.processing],
@@ -884,13 +959,11 @@ export function LibrariesPanel() {
 								<div
 									key={label}
 									className={cn(
-										"px-5 py-3",
+										"min-w-0 px-3 py-3 sm:px-5",
 										index > 0 && "border-l border-border/60",
-										index === 2 && "border-t sm:border-t-0",
-										index === 3 && "border-t sm:border-t-0",
 									)}
 								>
-									<p className="text-meta font-mono text-muted-foreground">
+									<p className="truncate font-mono text-[0.6875rem] text-muted-foreground sm:text-xs">
 										{label}
 									</p>
 									<p className="mt-1 text-lg font-semibold tabular-nums text-foreground">
@@ -913,7 +986,7 @@ export function LibrariesPanel() {
 						</p>
 					) : null}
 
-					<div className="min-h-0 flex-1 px-5 py-4">
+					<div className="min-h-0 flex-1 px-4 py-4 sm:px-5">
 						{selectedId && documents.length > 0 ? (
 							<div className="mb-3 flex flex-wrap items-end justify-between gap-3">
 								<div>
@@ -921,7 +994,7 @@ export function LibrariesPanel() {
 										文档台账
 									</p>
 									<p className="text-meta mt-0.5 font-mono text-muted-foreground">
-										显示 {filteredDocuments.length} / {documents.length} 份资料
+										显示 {filteredDocuments.length} / {documents.length} 份文档
 									</p>
 								</div>
 								<div className="relative w-full sm:w-72">
@@ -932,7 +1005,7 @@ export function LibrariesPanel() {
 									<Input
 										value={documentQuery}
 										onChange={(event) => setDocumentQuery(event.target.value)}
-										placeholder="搜索显示名或原文件"
+										placeholder="搜索显示名或原文件…"
 										className="h-9 rounded-md pl-8"
 										aria-label="搜索文档"
 									/>
@@ -943,13 +1016,13 @@ export function LibrariesPanel() {
 							<div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-border/80 bg-muted/20 px-6 text-center">
 								<p className="text-ui text-muted-foreground">
 									{canManageLibraries
-										? "请先创建或选择一个知识库"
-										: "请从左侧选择一个知识库"}
+										? "还没有知识库"
+										: "当前 Workspace 还没有知识库"}
 								</p>
 								<AuthButton
 									cap="manageLibraries"
 									type="button"
-									className="rounded-md"
+									className="hidden rounded-md md:inline-flex"
 									disabled={savingLibrary}
 									onClick={openCreateLibraryDialog}
 								>
@@ -978,7 +1051,7 @@ export function LibrariesPanel() {
 						) : filteredDocuments.length === 0 ? (
 							<div className="flex min-h-48 flex-col items-center justify-center border border-dashed border-border/80 bg-muted/20 px-6 text-center">
 								<p className="text-sm font-medium text-foreground">
-									没有匹配的资料
+									没有匹配的文档
 								</p>
 								<p className="text-ui mt-1 text-muted-foreground">
 									换一个名称或文件名关键词试试。
@@ -1050,20 +1123,20 @@ export function LibrariesPanel() {
 											};
 											const actions = resolveDocActions(caps, doc);
 											return (
-												<TableRow
-													key={doc.id}
-													className="cursor-pointer"
-													onClick={() =>
-														setDocumentOverlay({
-															kind: "detail",
-															docId: doc.id,
-														})
-													}
-												>
+												<TableRow key={doc.id}>
 													<TableCell className="max-w-50">
-														<span className="block truncate font-medium">
+														<button
+															type="button"
+															className="block max-w-full truncate text-left font-medium hover:text-cite focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+															onClick={() =>
+																setDocumentOverlay({
+																	kind: "detail",
+																	docId: doc.id,
+																})
+															}
+														>
 															{doc.name}
-														</span>
+														</button>
 													</TableCell>
 													<TableCell className="hidden max-w-40 md:table-cell">
 														<span className="text-meta block truncate font-mono text-muted-foreground">
@@ -1283,7 +1356,6 @@ export function LibrariesPanel() {
 								placeholder="例如：人事制度库"
 								maxLength={256}
 								disabled={savingLibrary || deletingLibrary}
-								autoFocus
 								aria-invalid={Boolean(libraryFormError && !libraryName.trim())}
 							/>
 						</div>

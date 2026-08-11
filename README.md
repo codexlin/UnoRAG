@@ -3,6 +3,7 @@
   <h1>UnoRAG</h1>
   <p><strong>Private, permission-aware enterprise knowledge grounded in evidence.</strong></p>
   <p>
+    <a href="https://unorag.unobyte.dev">Live Demo</a> ·
     <a href="./README.zh-CN.md">简体中文</a> ·
     <a href="./docs/STATUS.md">Status</a> ·
     <a href="./docs/PRODUCT.md">Product</a> ·
@@ -11,6 +12,8 @@
     <a href="./docs/INTEGRATION.md">API</a>
   </p>
 </div>
+
+> Live instance: [unorag.unobyte.dev](https://unorag.unobyte.dev). It is intended for product demonstration and release acceptance; self-hosted deployments retain control of data, models, and parser credentials.
 
 UnoRAG turns internal documents into governed, callable, and verifiable knowledge. Teams can use the
 official Workspace or embed the same Retrieve and Ask capabilities into support products, employee
