@@ -7,18 +7,52 @@ updates:
       day: monday
       time: "03:00"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     groups:
       production-minor-patch:
         dependency-type: production
         update-types:
           - minor
           - patch
+        exclude-patterns:
+          # Framework, AI, storage, workflow, and parser upgrades need their own
+          # compatibility evidence and rollback boundary.
+          - "@ai-sdk/*"
+          - "@dbos-inc/*"
+          - "@langchain/*"
+          - "@llamaindex/*"
+          - "@opentelemetry/*"
+          - "@qdrant/*"
+          - "ai"
+          - "htmlparser2"
+          - "mammoth"
+          - "next"
+          - "react"
+          - "react-dom"
+          - "redis"
       development-minor-patch:
         dependency-type: development
         update-types:
           - minor
           - patch
+    ignore:
+      # UnoRAG currently supports Node 22 and TypeScript 5. Major migrations
+      # are planned explicitly instead of entering the weekly release queue.
+      - dependency-name: "@types/node"
+        versions:
+          - ">=23"
+      - dependency-name: "typescript"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "redis"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "motion"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "htmlparser2"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: github-actions
     directory: /
@@ -37,3 +71,7 @@ updates:
       time: "04:00"
       timezone: Asia/Shanghai
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: node
+        versions:
+          - ">=23"
