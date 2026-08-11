@@ -7,6 +7,7 @@ import { WorkspaceMembersPanel } from "@/components/app/workspace-members-panel"
 import { useHealth } from "@/hooks/use-health";
 import { getApiBaseUrl } from "@/lib/api";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
+import { formatReleaseVersion } from "@/lib/release-info";
 import { cn } from "@/lib/utils";
 
 export default function SettingsPage() {
@@ -48,6 +49,26 @@ export default function SettingsPage() {
 								<p className="text-ui mt-3 text-destructive">无法连接 API</p>
 							) : health ? (
 								<ul className="text-ui mt-4 space-y-2.5 text-foreground">
+									<li className="flex justify-between gap-3">
+										<span className="text-muted-foreground">版本</span>
+										<span className="font-mono text-[0.8125rem]">
+											{formatReleaseVersion(health.release)}
+										</span>
+									</li>
+									<li className="flex justify-between gap-3">
+										<span className="text-muted-foreground">提交</span>
+										<span className="font-mono text-[0.8125rem]">
+											{health.release.revision_short}
+										</span>
+									</li>
+									<li className="flex justify-between gap-3">
+										<span className="text-muted-foreground">构建时间</span>
+										<span className="text-right font-mono text-[0.8125rem]">
+											{health.release.built_at
+												? formatDateTime(Date.parse(health.release.built_at))
+												: "本地开发"}
+										</span>
+									</li>
 									<li className="flex justify-between gap-3">
 										<span className="text-muted-foreground">请求模式</span>
 										<span className="font-mono text-[0.8125rem]">

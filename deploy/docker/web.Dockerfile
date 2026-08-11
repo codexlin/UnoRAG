@@ -26,7 +26,13 @@ RUN --mount=type=cache,id=unorag-pnpm-dev,target=/root/.local/share/pnpm/store \
 # image, so production dependencies must be installed in their own stage.
 FROM node:22-bookworm-slim AS runtime-deps
 ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
+ARG UNORAG_VERSION=0.1.0-dev
+ARG UNORAG_REVISION=development
+ARG UNORAG_BUILD_TIME=
 WORKDIR /repo
+ENV UNORAG_VERSION=${UNORAG_VERSION} \
+	UNORAG_REVISION=${UNORAG_REVISION} \
+	UNORAG_BUILD_TIME=${UNORAG_BUILD_TIME}
 RUN useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
 	&& corepack prepare pnpm@9.7.1 --activate
@@ -59,7 +65,13 @@ RUN pnpm build
 # One-shot control-plane migrator plus PostgreSQL runtime-role configurator.
 FROM node:22-bookworm-slim AS migrator
 ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
+ARG UNORAG_VERSION=0.1.0-dev
+ARG UNORAG_REVISION=development
+ARG UNORAG_BUILD_TIME=
 WORKDIR /migrate
+ENV UNORAG_VERSION=${UNORAG_VERSION} \
+	UNORAG_REVISION=${UNORAG_REVISION} \
+	UNORAG_BUILD_TIME=${UNORAG_BUILD_TIME}
 # Keep NODE_ENV unset during install so tooling resolves cleanly; set at runtime via compose if needed.
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends postgresql-client \
@@ -107,11 +119,17 @@ USER unorag
 CMD ["./node_modules/.bin/tsx", "src/worker/entry.ts"]
 
 FROM node:22-bookworm-slim AS runner
+ARG UNORAG_VERSION=0.1.0-dev
+ARG UNORAG_REVISION=development
+ARG UNORAG_BUILD_TIME=
 WORKDIR /app
 ENV NODE_ENV=production \
 	NEXT_TELEMETRY_DISABLED=1 \
 	PORT=3000 \
-	HOSTNAME=0.0.0.0
+	HOSTNAME=0.0.0.0 \
+	UNORAG_VERSION=${UNORAG_VERSION} \
+	UNORAG_REVISION=${UNORAG_REVISION} \
+	UNORAG_BUILD_TIME=${UNORAG_BUILD_TIME}
 
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends curl \

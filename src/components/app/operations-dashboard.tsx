@@ -17,6 +17,7 @@ import { useCan } from "@/components/app/can";
 import { useSession } from "@/components/app/session-provider";
 import { Button } from "@/components/ui/button";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
+import { formatReleaseVersion, type ReleaseInfo } from "@/lib/release-info";
 import { cn } from "@/lib/utils";
 
 type AlertSeverity = "critical" | "warning" | "info";
@@ -37,6 +38,7 @@ type OperationsAlert = {
 };
 
 type OperationsSnapshot = {
+	release: ReleaseInfo;
 	scope: { workspace_id: string };
 	overall: {
 		status: "healthy" | "degraded" | "unavailable" | "unknown";
@@ -340,9 +342,44 @@ export function OperationsDashboard() {
 						<ReleaseIcon className="size-4" />
 						<span className="text-ui font-semibold">{releaseState.label}</span>
 					</div>
-					<span className="font-mono text-xs tabular-nums">
-						{activeAlerts.length} signals
-					</span>
+					<div className="flex items-center gap-3 font-mono text-xs tabular-nums">
+						<span>
+							{snapshot ? formatReleaseVersion(snapshot.release) : "--"}
+						</span>
+						<span>{activeAlerts.length} signals</span>
+					</div>
+				</section>
+
+				<section className="grid overflow-hidden border border-border/80 bg-card sm:grid-cols-2 xl:grid-cols-4">
+					{[
+						[
+							"Product",
+							snapshot ? formatReleaseVersion(snapshot.release) : "--",
+						],
+						["Revision", snapshot?.release.revision_short ?? "--"],
+						[
+							"Built",
+							snapshot?.release.built_at
+								? formatDateTime(Date.parse(snapshot.release.built_at))
+								: "development",
+						],
+						["DBOS", snapshot?.release.dbos_application_version ?? "--"],
+					].map(([label, value]) => (
+						<div
+							key={label}
+							className="min-w-0 border-border/80 border-b px-4 py-3 last:border-b-0 sm:border-r sm:[&:nth-last-child(-n+2)]:border-b-0 xl:border-b-0 xl:last:border-r-0"
+						>
+							<p className="text-meta font-mono tracking-[0.12em] text-muted-foreground uppercase">
+								{label}
+							</p>
+							<p
+								className="mt-1 truncate font-mono text-xs text-foreground"
+								title={value}
+							>
+								{value}
+							</p>
+						</div>
+					))}
 				</section>
 
 				<section className="grid overflow-hidden border border-border/80 bg-card sm:grid-cols-2 xl:grid-cols-5">
