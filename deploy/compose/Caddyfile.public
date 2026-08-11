@@ -1,0 +1,18 @@
+# UnoRAG public-deployment edge proxy.
+# Caddy provisions and renews TLS certificates for UNORAG_DOMAIN automatically.
+{
+	admin off
+}
+
+{$UNORAG_DOMAIN} {
+	encode gzip
+	@internalMetrics path /metrics /api/metrics
+	respond @internalMetrics 404
+
+	reverse_proxy web:3000
+
+	log {
+		output stdout
+		format console
+	}
+}

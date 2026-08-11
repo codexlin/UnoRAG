@@ -105,6 +105,27 @@ export UNORAG_COMPOSE_OVERLAY=./docker-compose.customer.yml
 
 同一变量也应供后续升级、备份、恢复和 `mk_compose` 命令使用，避免意外切换拓扑。
 
+### 公网 HTTPS
+
+域名 A 记录指向部署主机并完成公共解析后，在 `runtime.env` 中配置：
+
+```dotenv
+UNORAG_DOMAIN=unorag.example.com
+UNORAG_BASE_URL=https://unorag.example.com
+```
+
+使用仓库内置公网覆盖层启动：
+
+```bash
+cd deploy/compose
+source scripts/compose-env.sh
+UNORAG_COMPOSE_OVERLAY=./docker-compose.public.yml mk_compose up -d
+```
+
+Caddy 会自动申请和续期证书，并将 HTTP 重定向到 HTTPS。该覆盖层只发布 80/443，证书与
+Caddy 状态保存在命名卷中；Web 之外的数据服务和 Worker 仍不发布宿主机端口。UnoRAG 的公开
+参考实例位于 [unorag.unobyte.dev](https://unorag.unobyte.dev)。
+
 ## ParserProvider
 
 LiteParse 是 Worker 内的本地快速路径。自托管 MinerU 示例：

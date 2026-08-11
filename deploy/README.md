@@ -60,6 +60,19 @@ cd deploy/compose
 # 就绪：curl -sf http://localhost/api/rag/health/ready
 ```
 
+### 公网 HTTPS
+
+域名的 A 记录指向部署主机后，在 `runtime.env` 中设置
+`UNORAG_DOMAIN` 和 HTTPS 形式的 `UNORAG_BASE_URL`，再叠加公网配置：
+
+```bash
+source scripts/compose-env.sh
+UNORAG_COMPOSE_OVERLAY=./docker-compose.public.yml mk_compose up -d
+```
+
+该配置仅公开 Caddy 的 80/443 端口。应用、Worker、PostgreSQL、Redis 与
+Qdrant 仍在内部网络；Caddy 的证书和状态保存在命名卷中。
+
 需要官方单机 Ops Stack 时使用 `./scripts/install.sh --with-observability`。它提供 Collector、
 Prometheus/Grafana、Loki/Tempo 和 Alertmanager，Grafana 仅绑定宿主机回环地址；默认安装不启动这些
 组件，也不增加核心运行依赖。
