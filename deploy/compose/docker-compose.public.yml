@@ -1,0 +1,18 @@
+# Public HTTPS overlay. Use only after UNORAG_DOMAIN resolves to this host.
+
+services:
+  caddy:
+    environment:
+      UNORAG_DOMAIN: ${UNORAG_DOMAIN:?UNORAG_DOMAIN required}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.public:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

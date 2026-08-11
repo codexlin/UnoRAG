@@ -90,7 +90,7 @@ export function LibraryCombobox({
 					aria-label={label}
 					placeholder={items.length ? "搜索或选择知识库…" : "暂无知识库"}
 					className="w-full"
-					showClear={Boolean(selected)}
+					showClear={false}
 				/>
 				<ComboboxContent className="min-w-(--anchor-width)">
 					<ComboboxEmpty>无匹配知识库</ComboboxEmpty>
