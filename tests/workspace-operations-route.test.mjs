@@ -14,6 +14,7 @@ test("operations API is admin-only and derives both scopes from session identity
 	assert.match(source, /canManageMembers\(identity\)/);
 	assert.match(source, /organizationId: identity\.tenantId/);
 	assert.match(source, /workspaceId: identity\.workspaceId/);
+	assert.match(source, /release: resolveReleaseInfo\(process\.env\)/);
 	assert.doesNotMatch(
 		source,
 		/searchParams\.get\(["'](?:organization|workspace)/,
