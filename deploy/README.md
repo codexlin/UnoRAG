@@ -66,8 +66,9 @@ cd deploy/compose
 `UNORAG_DOMAIN` 和 HTTPS 形式的 `UNORAG_BASE_URL`，再叠加公网配置：
 
 ```bash
+sed -i.bak 's|^UNORAG_COMPOSE_OVERLAY=.*|UNORAG_COMPOSE_OVERLAY=./docker-compose.public.yml|' ../config/runtime.env
 source scripts/compose-env.sh
-UNORAG_COMPOSE_OVERLAY=./docker-compose.public.yml mk_compose up -d
+mk_compose up -d
 ```
 
 该配置仅公开 Caddy 的 80/443 端口。应用、Worker、PostgreSQL、Redis 与
