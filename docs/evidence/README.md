@@ -4,6 +4,7 @@
 
 | 报告 | 证明范围 |
 |---|---|
+| [RC.12 生产候选验收](./2026-08-12-rc12-production-acceptance.md) | 精确 digest 发布、RC.11 生产问题修复、三轮真实文件稳定性、浏览器 Workspace 隔离、备份 overlay、故障恢复及版本回退前滚 |
 | [UnoRAG-HK RC.8 主机验收](./2026-08-10-unorag-hk-production-acceptance.md) | HK 独立主机安装、真实 MinerU 文件矩阵、质量门禁、破坏性恢复与整机重启 |
 | [Registry RC.7 Tombstone 生命周期验收](./2026-08-06-registry-rc7-tombstone-validation.md) | Node 24 Actions、tombstone 保留与回收、最小权限以及 RC.6 原地升级 |
 | [Registry RC.6 平台合同与发布性能验收](./2026-08-06-registry-rc6-platform-validation.md) | manifest 平台预检、镜像瘦身、构建缓存与 RC.5 原地升级 |
