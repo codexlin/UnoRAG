@@ -27,6 +27,7 @@ updates:
           - "htmlparser2"
           - "mammoth"
           - "next"
+          - "pg"
           - "react"
           - "react-dom"
           - "redis"
