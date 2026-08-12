@@ -10,6 +10,7 @@ import { OpenAICompatibleEmbeddingProvider } from "../../src/core/retrieval/embe
 import { Bm25Index } from "../../src/core/retrieval/hybrid/bm25";
 import { reciprocalRankFusion } from "../../src/core/retrieval/hybrid/rrf";
 import { tokenize } from "../../src/core/retrieval/hybrid/tokenizer";
+import { RetrievalProviderError } from "../../src/core/retrieval/provider-request";
 import { OpenAICompatibleRerankProvider } from "../../src/core/retrieval/rerank/provider";
 
 test("scope binds an authoritative active generation snapshot", () => {
@@ -56,6 +57,107 @@ test("embedding provider orders and validates vectors", async () => {
 		[1, 2],
 		[3, 4],
 	]);
+});
+
+test("embedding provider retries a transient transport failure", async () => {
+	let attempts = 0;
+	const provider = new OpenAICompatibleEmbeddingProvider({
+		apiKey: "secret",
+		baseUrl: "https://example.test/v1",
+		model: "embedding-model",
+		dimensions: 2,
+		retryBackoffMs: [0, 0],
+		fetch: async () => {
+			attempts += 1;
+			if (attempts === 1) throw new TypeError("fetch failed");
+			return Response.json({ data: [{ index: 0, embedding: [1, 2] }] });
+		},
+	});
+	assert.deepEqual(await provider.embedQuery("question"), [1, 2]);
+	assert.equal(attempts, 2);
+});
+
+test("embedding provider exposes a stable code after retry exhaustion", async () => {
+	const provider = new OpenAICompatibleEmbeddingProvider({
+		apiKey: "secret",
+		baseUrl: "https://example.test/v1",
+		model: "embedding-model",
+		dimensions: 2,
+		retryBackoffMs: [0],
+		fetch: async () => {
+			throw new TypeError("fetch failed");
+		},
+	});
+	await assert.rejects(provider.embedQuery("question"), (error) => {
+		assert.ok(error instanceof RetrievalProviderError);
+		assert.equal(error.code, "embedding_transport_error");
+		assert.equal(error.retryable, true);
+		return true;
+	});
+});
+
+test("embedding provider does not retry a permanent HTTP failure", async () => {
+	let attempts = 0;
+	const provider = new OpenAICompatibleEmbeddingProvider({
+		apiKey: "secret",
+		baseUrl: "https://example.test/v1",
+		model: "embedding-model",
+		dimensions: 2,
+		retryBackoffMs: [0, 0],
+		fetch: async () => {
+			attempts += 1;
+			return new Response(null, { status: 401 });
+		},
+	});
+	await assert.rejects(provider.embedQuery("question"), (error) => {
+		assert.ok(error instanceof RetrievalProviderError);
+		assert.equal(error.code, "embedding_http_401");
+		assert.equal(error.retryable, false);
+		return true;
+	});
+	assert.equal(attempts, 1);
+});
+
+test("embedding provider retries a transient HTTP failure", async () => {
+	let attempts = 0;
+	const provider = new OpenAICompatibleEmbeddingProvider({
+		apiKey: "secret",
+		baseUrl: "https://example.test/v1",
+		model: "embedding-model",
+		dimensions: 2,
+		retryBackoffMs: [0],
+		fetch: async () => {
+			attempts += 1;
+			return attempts === 1
+				? new Response(null, { status: 503 })
+				: Response.json({ data: [{ index: 0, embedding: [1, 2] }] });
+		},
+	});
+	assert.deepEqual(await provider.embedQuery("question"), [1, 2]);
+	assert.equal(attempts, 2);
+});
+
+test("embedding provider preserves request cancellation during retry backoff", async () => {
+	const controller = new AbortController();
+	let attempts = 0;
+	const provider = new OpenAICompatibleEmbeddingProvider({
+		apiKey: "secret",
+		baseUrl: "https://example.test/v1",
+		model: "embedding-model",
+		dimensions: 2,
+		retryBackoffMs: [10_000],
+		fetch: async () => {
+			attempts += 1;
+			throw new TypeError("fetch failed");
+		},
+	});
+	const pending = provider.embedQuery("question", controller.signal);
+	controller.abort();
+	await assert.rejects(pending, (error) => {
+		assert.equal((error as Error).name, "AbortError");
+		return true;
+	});
+	assert.equal(attempts, 1);
 });
 
 test("rerank provider clamps scores and ignores invalid indexes", async () => {

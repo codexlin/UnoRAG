@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { withActiveSpan } from "@/lib/observability/tracing";
+import { fetchRetrievalProvider } from "../provider-request";
 
 const EmbeddingResponseSchema = z
 	.object({
@@ -26,6 +27,7 @@ export type OpenAICompatibleEmbeddingConfig = {
 	dimensions: number;
 	batchSize?: number;
 	fetch?: typeof globalThis.fetch;
+	retryBackoffMs?: readonly number[];
 };
 
 function endpoint(baseUrl: string): string {
@@ -74,24 +76,25 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 		const vectors: number[][] = [];
 		for (let offset = 0; offset < texts.length; offset += this.batchSize) {
 			const batch = texts.slice(offset, offset + this.batchSize);
-			const response = await this.fetch(endpoint(this.config.baseUrl), {
-				method: "POST",
-				headers: {
-					authorization: `Bearer ${this.config.apiKey}`,
-					"content-type": "application/json",
-				},
-				body: JSON.stringify({
-					model: this.config.model,
-					input: batch,
-					dimensions: this.config.dimensions,
-				}),
+			const response = await fetchRetrievalProvider({
+				provider: "embedding",
 				signal,
+				retryBackoffMs: this.config.retryBackoffMs,
+				request: () =>
+					this.fetch(endpoint(this.config.baseUrl), {
+						method: "POST",
+						headers: {
+							authorization: `Bearer ${this.config.apiKey}`,
+							"content-type": "application/json",
+						},
+						body: JSON.stringify({
+							model: this.config.model,
+							input: batch,
+							dimensions: this.config.dimensions,
+						}),
+						signal,
+					}),
 			});
-			if (!response.ok) {
-				throw new Error(
-					`embedding provider failed with HTTP ${response.status}`,
-				);
-			}
 			const payload = EmbeddingResponseSchema.parse(await response.json());
 			const ordered = [...payload.data].sort((a, b) => a.index - b.index);
 			if (ordered.length !== batch.length) {

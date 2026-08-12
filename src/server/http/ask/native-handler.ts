@@ -9,6 +9,7 @@ import {
 	appendAskStage,
 	finishAskTiming,
 } from "@/core/ask-graph";
+import { RetrievalProviderError } from "@/core/retrieval/provider-request";
 import { getDatabase } from "@/db";
 import {
 	getObservabilityContext,
@@ -35,7 +36,6 @@ import {
 	observeWebRequest,
 	type WebMetricOutcome,
 } from "@/server/observability/metrics";
-
 import {
 	projectPublicCitations,
 	projectPublicRetrievalDebug,
@@ -329,6 +329,7 @@ function completeRetrievalDebug(state: AskState, startedAt: number) {
 
 function operationalErrorCode(error: unknown): string {
 	if (!(error instanceof Error)) return "UnknownError";
+	if (error instanceof RetrievalProviderError) return error.code;
 	const providerHttp = error.message.match(
 		/^(embedding|rerank) provider failed with HTTP (\d{3})$/,
 	);
@@ -761,10 +762,12 @@ async function handleNativeAskRequestInSpan(input: {
 			settleMetrics("cancelled");
 		});
 	} catch (error) {
+		recordActiveSpanFailure(error);
+		const errorCode = operationalErrorCode(error);
 		await settleActiveRun(
 			input.request.signal.aborted ? "cancelled" : "failed",
 			activeState,
-			operationalErrorCode(error),
+			errorCode,
 		);
 		if (error instanceof z.ZodError) {
 			settleMetrics("client_error");
@@ -781,7 +784,9 @@ async function handleNativeAskRequestInSpan(input: {
 		settleMetrics(input.request.signal.aborted ? "cancelled" : "server_error");
 		logger.error({
 			event: "ask.native.failed",
-			error: operationalErrorCode(error),
+			error: errorCode,
+			retryable:
+				error instanceof RetrievalProviderError ? error.retryable : false,
 		});
 		return Response.json(
 			{ detail: "Ask service unavailable" },

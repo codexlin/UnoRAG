@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { withActiveSpan } from "@/lib/observability/tracing";
+import { fetchRetrievalProvider } from "../provider-request";
 
 const RerankResponseSchema = z
 	.object({
@@ -33,6 +34,7 @@ export type OpenAICompatibleRerankConfig = {
 	baseUrl: string;
 	model: string;
 	fetch?: typeof globalThis.fetch;
+	retryBackoffMs?: readonly number[];
 };
 
 export class OpenAICompatibleRerankProvider implements RerankProvider {
@@ -70,26 +72,26 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 		topN: number;
 		signal?: AbortSignal;
 	}): Promise<RerankResult[]> {
-		const response = await this.fetch(
-			`${this.config.baseUrl.replace(/\/$/, "")}/reranks`,
-			{
-				method: "POST",
-				headers: {
-					authorization: `Bearer ${this.config.apiKey}`,
-					"content-type": "application/json",
-				},
-				body: JSON.stringify({
-					model: this.config.model,
-					query: input.query,
-					documents: input.documents,
-					top_n: Math.min(input.topN, input.documents.length),
+		const response = await fetchRetrievalProvider({
+			provider: "rerank",
+			signal: input.signal,
+			retryBackoffMs: this.config.retryBackoffMs,
+			request: () =>
+				this.fetch(`${this.config.baseUrl.replace(/\/$/, "")}/reranks`, {
+					method: "POST",
+					headers: {
+						authorization: `Bearer ${this.config.apiKey}`,
+						"content-type": "application/json",
+					},
+					body: JSON.stringify({
+						model: this.config.model,
+						query: input.query,
+						documents: input.documents,
+						top_n: Math.min(input.topN, input.documents.length),
+					}),
+					signal: input.signal,
 				}),
-				signal: input.signal,
-			},
-		);
-		if (!response.ok) {
-			throw new Error(`rerank provider failed with HTTP ${response.status}`);
-		}
+		});
 		const payload = RerankResponseSchema.parse(await response.json());
 		return payload.results
 			.filter((item) => item.index < input.documents.length)

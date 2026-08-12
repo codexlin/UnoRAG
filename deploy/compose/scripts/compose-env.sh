@@ -5,6 +5,7 @@
 #   mk_compose up -d
 # Optional deployment-specific overlay:
 #   UNORAG_COMPOSE_OVERLAY=./docker-compose.customer.yml mk_compose up -d
+# Persist it in deploy/config/runtime.env for backup/restore/upgrade scripts.
 # Does NOT source secrets into the host shell.
 
 _mk_this_file() {
@@ -93,14 +94,18 @@ _mk_run_compose() {
 	done < <(_mk_managed_env_keys "${_mk_files[@]}")
 
 	local -a _mk_file_args=(-f "${_MK_COMPOSE_DIR}/docker-compose.yml")
+	local _mk_deployment_overlay="${UNORAG_COMPOSE_OVERLAY:-}"
+	if [[ -z "${_mk_deployment_overlay}" ]]; then
+		_mk_deployment_overlay="$(mk_config_get UNORAG_COMPOSE_OVERLAY || true)"
+	fi
 	if [[ -n "${UNORAG_COMPOSE_BUILTIN_OVERLAY:-}" ]]; then
 		_mk_file_args+=(-f "${UNORAG_COMPOSE_BUILTIN_OVERLAY}")
 	fi
 	if [[ -n "${UNORAG_COMPOSE_BUILTIN_SECOND_OVERLAY:-}" ]]; then
 		_mk_file_args+=(-f "${UNORAG_COMPOSE_BUILTIN_SECOND_OVERLAY}")
 	fi
-	if [[ -n "${UNORAG_COMPOSE_OVERLAY:-}" ]]; then
-		local _mk_overlay="${UNORAG_COMPOSE_OVERLAY}"
+	if [[ -n "${_mk_deployment_overlay}" ]]; then
+		local _mk_overlay="${_mk_deployment_overlay}"
 		if [[ "${_mk_overlay}" != /* ]]; then
 			_mk_overlay="${_MK_COMPOSE_DIR}/${_mk_overlay#./}"
 		fi
