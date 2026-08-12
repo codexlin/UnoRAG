@@ -9,8 +9,9 @@
 ## 一句话结论
 
 UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部署、具备权限和文档生命周期的知识产品**。
-仓库已在 GitHub 公开并采用 Apache-2.0，目前只发布预发行 RC；在素材权属、完整第三方通知、镜像签名和
-精确候选提交复验完成前，不应发布稳定 `v0.1.0`，也不应把历史 RC 结论扩大为通用生产认证。
+仓库已在 GitHub 公开并采用 Apache-2.0，目前最新生产候选为 `v0.1.0-rc.12`；精确候选提交已完成
+HK 真实文件、浏览器、隔离、维护恢复与回退前滚复验。在素材权属、完整第三方通知和镜像签名完成前，
+仍不应发布稳定 `v0.1.0`，也不应把该单机候选结论扩大为所有部署拓扑的通用生产认证。
 
 ## 当前运行时
 
@@ -78,15 +79,16 @@ Next.js product + Knowledge API
 - CI 覆盖全历史密钥扫描、Web/TS Core、真实 PostgreSQL migration、镜像构建、Helm、依赖审计和品牌残留检查。
 - 现有证据覆盖空环境安装、真实文件、浏览器 RBAC、跨 Workspace 隔离、MinerU 302 实链路、故障恢复、
   备份恢复、不可变镜像升级/回滚和 tombstone 生命周期。
-- 这些报告绑定较早的 RC 提交。品牌、开源准备和近期前端边界变更合并后，仍需在发布候选 commit 上重新跑
-  完整验收，不能只引用历史 PASS。
+- RC.12 报告绑定当前精确提交，覆盖三轮真实文件稳定性、真实浏览器 Workspace 隔离、备份 overlay、
+  Qdrant/worker 故障恢复以及 RC.11 回退与 RC.12 再前滚；结论见
+  [RC.12 生产候选验收](./evidence/2026-08-12-rc12-production-acceptance.md)。
 
 ## 尚未完成
 
 ### P0：稳定版发行门禁
 
 1. 完成截图和 `testdata/` fixture 的来源/再分发确认，补齐 `ASSETS.md`；当前 Uno 图形也仍是临时品牌资产。
-2. 生成完整第三方 NOTICE/许可证包，完成 libvips/字体再分发审阅；镜像 SBOM/provenance 已接入但尚未在 RC.11 digest 复验。
+2. 生成完整第三方 NOTICE/许可证包，完成 libvips/字体再分发审阅；RC.12 四镜像已完成 SBOM/provenance 和漏洞扫描复验。
 3. 接入镜像签名；公开仓库已保留完整历史，后续发布仍须扫描所有 refs、tag 和 release assets。
 4. 完成 `UnoRAG` / `Unobyte` 名称与图形在目标地区和软件类别的商标检索。
 
@@ -121,9 +123,8 @@ Secret Scanning 和 Push Protection 均已开启。
 
 1. **发布合规批次**：确认素材/fixture 权属、完整第三方 NOTICE 与镜像签名。
 2. **品牌与对外材料批次**：确定正式名称和 Logo，更新产品截图，避免用临时资产发布首个公开版本。
-3. **精确 RC 批次**：对同一个 commit 构建不可变镜像，重跑 CI、真实文件、浏览器隔离、升级/回滚和恢复。
-4. **稳定 v0.1.0**：发布源码、镜像 digest、SBOM/provenance 和版本绑定验收报告。
-5. **部署增强批次**：按真实试点需求在 OIDC、S3/MinIO、Kubernetes 加固中选择第一条纵向切片。
+3. **稳定 v0.1.0**：签名 RC.12 等价镜像后，发布源码、镜像 digest、SBOM/provenance 和版本绑定验收报告。
+4. **部署增强批次**：按真实试点需求在 OIDC、S3/MinIO、Kubernetes 加固中选择第一条纵向切片。
 
 完成前四项后，UnoRAG 才从“代码和 RC 已成熟”进入“外部用户可安全采用”的阶段。
 
