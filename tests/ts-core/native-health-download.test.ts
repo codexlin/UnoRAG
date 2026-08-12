@@ -32,7 +32,11 @@ const downloadModule = protectedModules.then(([, download]) => download);
 
 test("native health reports ready only when all required dependencies are ready", async () => {
 	const previousKey = process.env.OPENAI_API_KEY;
+	const previousVersion = process.env.UNORAG_VERSION;
+	const previousRevision = process.env.UNORAG_REVISION;
 	process.env.OPENAI_API_KEY = "test-key";
+	process.env.UNORAG_VERSION = "0.1.0-rc.9";
+	process.env.UNORAG_REVISION = "0123456789abcdef0123456789abcdef01234567";
 	try {
 		const { handleNativeHealthRequest } = await healthModule;
 		const ready = await handleNativeHealthRequest({
@@ -45,6 +49,10 @@ test("native health reports ready only when all required dependencies are ready"
 		const readyBody = (await ready.json()) as Record<string, unknown>;
 		assert.equal(readyBody.ask_ready, true);
 		assert.equal(readyBody.effective_mode, "typescript");
+		assert.deepEqual(
+			(readyBody.release as Record<string, unknown>).version,
+			"0.1.0-rc.9",
+		);
 
 		const degraded = await handleNativeHealthRequest({
 			dependencies: {
@@ -94,6 +102,10 @@ test("native health reports ready only when all required dependencies are ready"
 	} finally {
 		if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
 		else process.env.OPENAI_API_KEY = previousKey;
+		if (previousVersion === undefined) delete process.env.UNORAG_VERSION;
+		else process.env.UNORAG_VERSION = previousVersion;
+		if (previousRevision === undefined) delete process.env.UNORAG_REVISION;
+		else process.env.UNORAG_REVISION = previousRevision;
 	}
 });
 

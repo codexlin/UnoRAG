@@ -61,6 +61,14 @@ jobs:
             exit 1
           fi
 
+          base_version="$(node -p "require('./package.json').version")"
+          if [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            product_version="${tag#v}"
+          else
+            product_version="${base_version}-dev+${GITHUB_SHA::12}"
+          fi
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
           dry_run=true
           if [[ "${EVENT_NAME}" == "push" || ( "${EVENT_NAME}" == "workflow_dispatch" && "${INPUT_DRY_RUN}" == "false" ) ]]; then
             dry_run=false
@@ -111,10 +119,13 @@ jobs:
           fi
 
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${product_version}" >> "${GITHUB_OUTPUT}"
+          echo "revision=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "build_time=${build_time}" >> "${GITHUB_OUTPUT}"
           echo "dbos_version=unorag-${GITHUB_SHA::16}" >> "${GITHUB_OUTPUT}"
           echo "image_platform=linux/amd64" >> "${GITHUB_OUTPUT}"
           echo "dry_run=${dry_run}" >> "${GITHUB_OUTPUT}"
-          echo "Resolved tag=${tag} dbos_version=unorag-${GITHUB_SHA::16} dry_run=${dry_run}"
+          echo "Resolved tag=${tag} version=${product_version} dbos_version=unorag-${GITHUB_SHA::16} dry_run=${dry_run}"
 
       - name: Log in to ACR
         if: steps.meta.outputs.publish_acr == 'true'
@@ -143,6 +154,10 @@ jobs:
           file: deploy/docker/web.Dockerfile
           target: runner
           platforms: linux/amd64
+          build-args: |
+            UNORAG_VERSION=${{ steps.meta.outputs.version }}
+            UNORAG_REVISION=${{ steps.meta.outputs.revision }}
+            UNORAG_BUILD_TIME=${{ steps.meta.outputs.build_time }}
           cache-from: type=gha,scope=unorag-runner
           cache-to: type=gha,mode=max,scope=unorag-runner
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
@@ -150,7 +165,10 @@ jobs:
           tags: ${{ steps.meta.outputs.web_tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=UnoRAG
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.build_time }}
             org.opencontainers.image.licenses=Apache-2.0
           sbom: ${{ steps.meta.outputs.dry_run != 'true' }}
           provenance: ${{ steps.meta.outputs.dry_run != 'true' }}
@@ -163,6 +181,10 @@ jobs:
           file: deploy/docker/web.Dockerfile
           target: migrator
           platforms: linux/amd64
+          build-args: |
+            UNORAG_VERSION=${{ steps.meta.outputs.version }}
+            UNORAG_REVISION=${{ steps.meta.outputs.revision }}
+            UNORAG_BUILD_TIME=${{ steps.meta.outputs.build_time }}
           cache-from: type=gha,scope=unorag-migrator
           cache-to: type=gha,mode=max,scope=unorag-migrator
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
@@ -170,7 +192,10 @@ jobs:
           tags: ${{ steps.meta.outputs.migrator_tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=UnoRAG
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.build_time }}
             org.opencontainers.image.licenses=Apache-2.0
           sbom: ${{ steps.meta.outputs.dry_run != 'true' }}
           provenance: ${{ steps.meta.outputs.dry_run != 'true' }}
@@ -183,6 +208,10 @@ jobs:
           file: deploy/docker/web.Dockerfile
           target: ops
           platforms: linux/amd64
+          build-args: |
+            UNORAG_VERSION=${{ steps.meta.outputs.version }}
+            UNORAG_REVISION=${{ steps.meta.outputs.revision }}
+            UNORAG_BUILD_TIME=${{ steps.meta.outputs.build_time }}
           cache-from: type=gha,scope=unorag-ops
           cache-to: type=gha,mode=max,scope=unorag-ops
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
@@ -190,7 +219,10 @@ jobs:
           tags: ${{ steps.meta.outputs.ops_tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=UnoRAG
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.build_time }}
             org.opencontainers.image.licenses=Apache-2.0
           sbom: ${{ steps.meta.outputs.dry_run != 'true' }}
           provenance: ${{ steps.meta.outputs.dry_run != 'true' }}
@@ -203,6 +235,10 @@ jobs:
           file: deploy/docker/web.Dockerfile
           target: worker
           platforms: linux/amd64
+          build-args: |
+            UNORAG_VERSION=${{ steps.meta.outputs.version }}
+            UNORAG_REVISION=${{ steps.meta.outputs.revision }}
+            UNORAG_BUILD_TIME=${{ steps.meta.outputs.build_time }}
           cache-from: type=gha,scope=unorag-worker
           cache-to: type=gha,mode=max,scope=unorag-worker
           push: ${{ steps.meta.outputs.dry_run != 'true' }}
@@ -210,7 +246,10 @@ jobs:
           tags: ${{ steps.meta.outputs.worker_tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=UnoRAG
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.build_time }}
             org.opencontainers.image.licenses=Apache-2.0
           sbom: ${{ steps.meta.outputs.dry_run != 'true' }}
           provenance: ${{ steps.meta.outputs.dry_run != 'true' }}
@@ -255,6 +294,9 @@ jobs:
         env:
           DRY_RUN: ${{ steps.meta.outputs.dry_run }}
           TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          REVISION: ${{ steps.meta.outputs.revision }}
+          BUILD_TIME: ${{ steps.meta.outputs.build_time }}
           DBOS_VERSION: ${{ steps.meta.outputs.dbos_version }}
           IMAGE_PLATFORM: ${{ steps.meta.outputs.image_platform }}
           PUBLISH_ACR: ${{ steps.meta.outputs.publish_acr }}
@@ -276,6 +318,9 @@ jobs:
           UNORAG_DBOS_WORKER_IMAGE=unorag-web-worker:${TAG}
           UNORAG_DBOS_APPLICATION_VERSION=${DBOS_VERSION}
           UNORAG_IMAGE_PLATFORM=${IMAGE_PLATFORM}
+          UNORAG_VERSION=${VERSION}
+          UNORAG_REVISION=${REVISION}
+          UNORAG_BUILD_TIME=${BUILD_TIME}
           EOF
           else
             for digest in "${WEB_DIGEST}" "${OPS_DIGEST}" "${WORKER_DIGEST}" "${MIGRATOR_DIGEST}"; do
@@ -289,6 +334,9 @@ jobs:
           UNORAG_DBOS_WORKER_IMAGE=${ACR_REPO}@${WORKER_DIGEST}
           UNORAG_DBOS_APPLICATION_VERSION=${DBOS_VERSION}
           UNORAG_IMAGE_PLATFORM=${IMAGE_PLATFORM}
+          UNORAG_VERSION=${VERSION}
+          UNORAG_REVISION=${REVISION}
+          UNORAG_BUILD_TIME=${BUILD_TIME}
           EOF
             fi
             cat > /tmp/unorag-release/release-ghcr.env <<EOF
@@ -298,6 +346,9 @@ jobs:
           UNORAG_DBOS_WORKER_IMAGE=${GHCR_REPO}@${WORKER_DIGEST}
           UNORAG_DBOS_APPLICATION_VERSION=${DBOS_VERSION}
           UNORAG_IMAGE_PLATFORM=${IMAGE_PLATFORM}
+          UNORAG_VERSION=${VERSION}
+          UNORAG_REVISION=${REVISION}
+          UNORAG_BUILD_TIME=${BUILD_TIME}
           EOF
           fi
 

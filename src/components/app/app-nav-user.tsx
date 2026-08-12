@@ -20,6 +20,8 @@ import {
 	SidebarMenuItem,
 	useSidebar,
 } from "@/components/ui/sidebar";
+import { useHealth } from "@/hooks/use-health";
+import { formatReleaseVersion } from "@/lib/release-info";
 import { roleLabel } from "@/lib/session-types";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +39,7 @@ function initialsFor(name: string, email: string | null): string {
 export function AppNavUser() {
 	const { isMobile } = useSidebar();
 	const { identity, signOut } = useSession();
+	const { health } = useHealth();
 	const name = identity.displayName;
 	const email = identity.email ?? "";
 	const role = roleLabel(identity.role);
@@ -105,6 +108,15 @@ export function AppNavUser() {
 								<Settings2 />
 								工作区设置
 							</DropdownMenuItem>
+						</DropdownMenuGroup>
+						<DropdownMenuSeparator />
+						<DropdownMenuGroup>
+							<DropdownMenuLabel className="flex items-center justify-between gap-3 px-2 py-1.5 font-normal text-muted-foreground">
+								<span className="text-xs">UnoRAG</span>
+								<span className="font-mono text-[11px] tabular-nums">
+									{health ? formatReleaseVersion(health.release) : "version --"}
+								</span>
+							</DropdownMenuLabel>
 						</DropdownMenuGroup>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem
