@@ -1,13 +1,13 @@
-# UnoRAG 开源发布准备审计
+# UnoRAG 开源与稳定版发行审计
 
-> 审计日期：2026-08-10
+> 审计日期：2026-08-12
 >
-> 审计对象：开源候选树，以及候选树之前的 295 个 Git 提交
+> 审计对象：公开仓库当前树、完整 Git 历史、预发行镜像与 GitHub 安全设置
 >
-> 当前结论：**源码已采用 Apache-2.0，但尚不可切换为 Public；素材权属、第三方通知、签名和公开历史策略仍是发布阻断项。**
+> 当前结论：**仓库已公开并采用 Apache-2.0，目前只适合预发行 RC；素材权属、完整第三方通知、镜像签名和精确 RC 复验仍是稳定 `v0.1.0` 的阻断项。**
 
-本文件记录公开仓库前的事实与门禁，不代替律师意见。许可授权以仓库根目录 `LICENSE` 为准；
-“已开放许可”和“已完成公开发行”是两个不同状态。
+本文件记录公开仓库和稳定版发行的事实与门禁，不代替律师意见。许可授权以仓库根目录 `LICENSE` 为准；
+“仓库公开可见”和“稳定发行材料已完整验证”是两个不同状态。
 产品开源决策见 [ADR-0007](./adr/0007-fully-open-source-product-and-services.md)。
 
 ## 已完成
@@ -23,7 +23,9 @@
 | 生产依赖漏洞审计 | PASS | 修复传递依赖 nanoid GHSA-2v37-7h3g-55p8 后，`pnpm audit --prod` 为 0 已知漏洞 |
 | 主许可证 | PASS | 根目录 `LICENSE`、`NOTICE` 与 `package.json` 统一采用 Apache-2.0 |
 | 依赖更新自动化 | PASS | Dependabot 覆盖 npm、GitHub Actions 和 Docker 基础镜像 |
-| 镜像 SBOM / provenance | IMPLEMENTED, NOT RELEASE-VERIFIED | 正式 GHCR/可选 ACR 推送启用 BuildKit attestations；仍须在首个公开 tag 上核验 |
+| GitHub 安全设置 | PASS | 主干强制 PR 与五项 CI；Private Vulnerability Reporting、Dependabot Security Updates、Secret Scanning 与 Push Protection 已启用 |
+| 公开历史策略 | COMPLETE | 当前公开仓库保留完整历史；公开前完整历史扫描通过，后续发布继续扫描所有 refs、tag 与 release assets |
+| 镜像 SBOM / provenance | IMPLEMENTED, CURRENT RC NOT VERIFIED | 正式 GHCR/可选 ACR 推送启用 BuildKit attestations；仍须在 RC.11 的四个 digest 上核验 |
 | 四镜像构建 | PASS | web、worker、ops、migrator 均按 `linux/amd64` 构建；运行层以 UID 10001 启动并可读取 `LICENSE`/`NOTICE` |
 
 历史扫描例外只覆盖以下指纹：
@@ -35,14 +37,14 @@
 扩大文件、规则或 commit 范围的豁免不应合并。若扫描出现新命中，应先确认并轮换真实凭据，不得用
 allowlist 让 CI 变绿。
 
-## 发布阻断项
+## 稳定版阻断项
 
 ### 1. 第三方通知与镜像内容
 
 生产依赖清点包含 MIT、Apache-2.0、BSD、ISC、OFL-1.1、CC-BY-4.0，以及需要单独审阅的
-`LGPL-3.0-or-later` libvips 二进制。该二进制由 Next.js 的 Sharp 依赖引入。公开发布镜像前必须：
+`LGPL-3.0-or-later` libvips 二进制。该二进制由 Next.js 的 Sharp 依赖引入。稳定发布镜像前必须：
 
-1. 在首个 tag 上验证每个镜像的 BuildKit SBOM 和 provenance 可按 digest 获取；
+1. 在 RC.11 tag 上验证每个镜像的 BuildKit SBOM 和 provenance 可按 digest 获取；
 2. 生成并随源码和镜像分发完整第三方许可证/NOTICE；
 3. 核对 Sharp/libvips 的动态链接、修改、源码获取与通知义务；
 4. 确保字体包的 OFL 文本和 caniuse-lite 的 CC-BY-4.0 归属进入分发材料。
@@ -59,34 +61,37 @@ allowlist 让 CI 变绿。
 - `testdata/` 下 PDF、DOCX、图片化扫描件、文本和黄金集。
 
 `ASSETS.md` 已记录新 Uno 品牌矢量及其派生图片的项目内创作来源；其余素材确认后应继续逐组补充
-来源、作者/生成方式、许可证和是否允许修改。不能确认的素材必须在公开前替换或删除。测试文件为
+来源、作者/生成方式、许可证和是否允许修改。不能确认的素材必须在稳定版前替换或删除。测试文件为
 合成内容也应明确记录，避免未来被误认为客户文档。
 
-### 3. 公开历史策略
+### 3. 公开历史持续审计
 
-现有历史没有扫描到生产密钥，但包含旧品牌、已退役架构、预发布环境名称、个人邮箱和私有交付过程。
-推荐为第一次公开发布创建**经审阅的干净初始历史**，保留当前私有仓库作为内部审计档案；不建议直接
-改写正在使用的私有 `main`。若选择公开完整历史，项目所有者必须明确接受这些元数据永久公开，并再次
-扫描所有 refs、tag 和 release asset。
+当前公开仓库已经保留完整历史。公开前扫描未发现生产密钥，已知的单个历史测试 fixture 使用精确
+allowlist；旧品牌、已退役架构、预发布环境名称和提交者元数据已经成为公开历史的一部分，不再把“重建
+干净历史”列为可执行发布路径。每次稳定发布仍须扫描所有 refs、tag 和 release assets，并保持豁免范围
+不扩大。
 
 ### 4. GitHub 发布设置
 
-公开前还需完成：
+已完成：
 
-- 启用 GitHub Private Vulnerability Reporting，并验证 `SECURITY.md` 中的入口；
-- 配置分支保护和必需 CI；Dependabot 已配置，Actions 最小权限仍须复核；
-- 建立维护者与安全响应渠道，替换临时的个人联系路径；
-- 确认 GHCR 镜像公开权限、签名和不可变 tag 策略，并复验 SBOM/provenance；
-- 决定 ACR 仅作为镜像镜像站，还是从公开文档中移除个人 Registry 证据。
+- GitHub Private Vulnerability Reporting 与 `SECURITY.md` 已可访问；
+- 主干强制 PR 和五项必需 CI，Dependabot、Secret Scanning 与 Push Protection 已启用。
+
+稳定版前仍需：
+
+- 建立长期维护者与安全响应渠道，避免只依赖临时个人联系方式；
+- 确认 GHCR 公开拉取、签名和不可变 tag 策略，并按 digest 复验 SBOM/provenance；
+- 明确 ACR 仅作为可选镜像站，不让个人 Registry 凭据或环境证据进入发行材料。
 
 ## 建议发布顺序
 
 1. 项目所有者确认截图、fixture 和最终品牌资产的来源与再分发权利。
 2. 生成完整第三方通知和许可证包，完成 libvips/字体义务复核。
-3. 决定公开历史策略，在候选公开树再次扫描所有 refs、tag 和 release asset。
+3. 在候选树再次扫描所有 refs、tag 和 release assets。
 4. 在精确 RC commit 执行全量测试、真实文件矩阵、浏览器 RBAC、跨 Workspace 隔离与恢复验收。
-5. 创建公开仓库或切换可见性，开启安全报告和分支保护。
-6. 发布不可变镜像，核验 SBOM/provenance，接入签名后再发布正式 `v0.1.0`。
+5. 发布不可变 RC 镜像并按 digest 核验 SBOM/provenance。
+6. 接入签名并完成上述门禁后，再发布稳定 `v0.1.0`。
 
 ## 复验命令
 

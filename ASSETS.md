@@ -15,10 +15,10 @@ These are currently integrated but provisional brand assets. The final identity 
 release. The project names and final mark still require jurisdiction- and class-specific trademark clearance before public
 commercial use.
 
-## Awaiting owner attestation
+## Awaiting owner attestation before stable release
 
-The origin and redistribution rights for the following groups must still be confirmed before the repository becomes
-public:
+The repository is already public. The origin and redistribution rights for the following groups must still be confirmed
+before the first stable release and promoted container distribution:
 
 - `public/landing-evidence-desk.png` and `public/product-library-workbench.png`;
 - all documents, scans, images and golden cases under `testdata/`.
