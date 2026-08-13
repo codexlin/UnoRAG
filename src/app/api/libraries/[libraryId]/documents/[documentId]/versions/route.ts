@@ -26,9 +26,9 @@ import {
 	refreshLibraryCounts,
 } from "@/lib/server/library-access";
 import {
+	documentObjectStorage,
 	documentUploadMaxBytes,
-	localObjectStorage,
-} from "@/lib/server/object-storage/local";
+} from "@/lib/server/object-storage";
 
 export const runtime = "nodejs";
 
@@ -206,7 +206,7 @@ export async function POST(request: Request, context: RouteContext) {
 		versionId,
 		filename: originalFilename,
 	});
-	const storage = localObjectStorage();
+	const storage = documentObjectStorage();
 	let stored: Awaited<ReturnType<typeof storage.putFile>>;
 	try {
 		stored = await storage.putFile(storageKey, upload, {

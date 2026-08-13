@@ -15,7 +15,7 @@ ParserProvider endpoints remain private.
 
 1. PostgreSQL application and DBOS system databases.
 2. Qdrant and Redis reachable from the namespace.
-3. A `ReadWriteMany` document PVC, or `persistence.existingClaim`.
+3. A `ReadWriteMany` document PVC, or a private Tencent COS bucket.
 4. Four pinned images in a registry the cluster can pull.
 5. A runtime Secret with least-privilege DSNs and provider credentials.
 
@@ -30,9 +30,26 @@ MIGRATOR_DATABASE_URL
 LLM_API_KEY
 MINERU_API_KEY             # optional, self-hosted or 302.AI MinerU auth
 OTEL_EXPORTER_OTLP_HEADERS # optional, customer Collector authentication
+COS_SECRET_ID              # required only for objectStorage.driver=cos
+COS_SECRET_KEY             # required only for objectStorage.driver=cos
+COS_SECURITY_TOKEN         # optional temporary STS credential
 ```
 
 The application and DBOS system DSNs must not point to the same database.
+
+For Tencent COS, keep the bucket private and disable the document PVC:
+
+```bash
+helm upgrade --install unorag ./deploy/helm/unorag \
+  --set objectStorage.driver=cos \
+  --set objectStorage.cos.bucket=example-1250000000 \
+  --set objectStorage.cos.region=ap-hongkong \
+  --set objectStorage.cos.publicBaseUrl=https://cos.example.com \
+  --set persistence.enabled=false
+```
+
+Original-document downloads continue through UnoRAG session, Workspace, and
+document ACL checks. The branded COS domain does not need public bucket access.
 
 ## Install Sketch
 

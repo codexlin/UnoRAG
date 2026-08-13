@@ -17,12 +17,30 @@ if [[ "${CONFIRM:-}" != "YES" ]]; then
 	echo "refusing restore without CONFIRM=YES (destructive)" >&2
 	exit 1
 fi
-for required in postgres.sql dbos-system.dump documents.tgz qdrant.tgz; do
+BACKUP_STORAGE_DRIVER="local"
+if [[ -f "$BACKUP_DIR/MANIFEST.txt" ]]; then
+	BACKUP_STORAGE_DRIVER="$(sed -n 's/^document_storage_driver=//p' "$BACKUP_DIR/MANIFEST.txt" | head -n 1)"
+	BACKUP_STORAGE_DRIVER="${BACKUP_STORAGE_DRIVER:-local}"
+fi
+for required in postgres.sql dbos-system.dump qdrant.tgz; do
 	if [[ ! -f "$BACKUP_DIR/$required" ]]; then
 		echo "refusing restore: missing $BACKUP_DIR/$required" >&2
 		exit 1
 	fi
 done
+if [[ "$BACKUP_STORAGE_DRIVER" == "local" && ! -f "$BACKUP_DIR/documents.tgz" ]]; then
+	echo "refusing restore: missing $BACKUP_DIR/documents.tgz" >&2
+	exit 1
+fi
+if [[ "$BACKUP_STORAGE_DRIVER" == "cos" && ! -f "$BACKUP_DIR/documents.cos.txt" ]]; then
+	echo "refusing restore: missing $BACKUP_DIR/documents.cos.txt" >&2
+	exit 1
+fi
+RUNTIME_STORAGE_DRIVER="$(mk_config_get DOCUMENT_STORAGE_DRIVER || echo local)"
+if [[ "$BACKUP_STORAGE_DRIVER" != "$RUNTIME_STORAGE_DRIVER" ]]; then
+	echo "refusing restore: backup storage driver $BACKUP_STORAGE_DRIVER does not match runtime $RUNTIME_STORAGE_DRIVER" >&2
+	exit 1
+fi
 if [[ -f "$BACKUP_DIR/CHECKSUMS.sha256" ]]; then
 	echo "==> verifying backup checksums"
 	(
@@ -77,11 +95,16 @@ fi
 echo "==> verify restored runtime boundaries"
 mk_compose --profile migrate run --rm configure-db-roles
 
-echo "==> restore document storage"
-docker run --rm \
-	-v "${PROJECT}_document_storage:/data" \
-	-v "$BACKUP_DIR:/backup:ro" \
-	alpine:3.21 sh -c 'rm -rf /data/* /data/.[!.]* 2>/dev/null; tar -C /data -xzf /backup/documents.tgz'
+if [[ "$BACKUP_STORAGE_DRIVER" == "local" ]]; then
+	echo "==> restore document storage"
+	docker run --rm \
+		-v "${PROJECT}_document_storage:/data" \
+		-v "$BACKUP_DIR:/backup:ro" \
+		alpine:3.21 sh -c 'rm -rf /data/* /data/.[!.]* 2>/dev/null; tar -C /data -xzf /backup/documents.tgz'
+else
+	echo "==> COS objects are external and are not overwritten by this restore"
+	echo "    verify bucket versioning/replication recovery before starting writers"
+fi
 
 echo "==> restore qdrant (stop first)"
 mk_compose stop qdrant

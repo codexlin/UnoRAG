@@ -18,6 +18,7 @@ OUT="$(cd "$OUT" && pwd)"
 PROJECT="$(mk_config_get COMPOSE_PROJECT_NAME || echo unorag)"
 # Compose invariant — must match docker-compose named-volume mount (not runtime.env).
 STORAGE_ROOT="/var/lib/unorag/documents"
+STORAGE_DRIVER="$(mk_config_get DOCUMENT_STORAGE_DRIVER || echo local)"
 POSTGRES_USER="$(mk_config_get POSTGRES_USER || echo unorag)"
 POSTGRES_DB="$(mk_config_get POSTGRES_DB || echo unorag)"
 DBOS_DB="$(mk_config_get UNORAG_DBOS_DATABASE || echo unorag_dbos)"
@@ -70,9 +71,25 @@ mk_compose exec -T postgres \
 	--format=custom --no-owner --no-acl \
 	> "$OUT/dbos-system.dump"
 
-echo "==> document storage → $OUT/documents.tgz"
-mk_compose run --rm --no-deps --user root --entrypoint "" web \
-	tar -C "$STORAGE_ROOT" -czf - . > "$OUT/documents.tgz"
+if [[ "$STORAGE_DRIVER" == "local" ]]; then
+	DOCUMENTS_ARTIFACT="documents.tgz"
+	echo "==> document storage → $OUT/documents.tgz"
+	mk_compose run --rm --no-deps --user root --entrypoint "" web \
+		tar -C "$STORAGE_ROOT" -czf - . > "$OUT/documents.tgz"
+elif [[ "$STORAGE_DRIVER" == "cos" ]]; then
+	DOCUMENTS_ARTIFACT="documents.cos.txt"
+	echo "==> COS objects remain in the private bucket; recording remote storage boundary"
+	cat > "$OUT/documents.cos.txt" <<EOF
+driver=cos
+bucket=$(mk_config_get COS_BUCKET)
+region=$(mk_config_get COS_REGION)
+public_base_url=$(mk_config_get COS_PUBLIC_BASE_URL || true)
+backup_requirement=Enable COS versioning and an independent replication or inventory policy.
+EOF
+else
+	echo "unsupported DOCUMENT_STORAGE_DRIVER=$STORAGE_DRIVER" >&2
+	exit 1
+fi
 
 echo "==> qdrant cold storage → $OUT/qdrant.tgz"
 if [[ "$QDRANT_WAS_RUNNING" -eq 1 ]]; then
@@ -87,7 +104,8 @@ cat > "$OUT/MANIFEST.txt" <<EOF
 created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 postgres=postgres.sql
 dbos_system=dbos-system.dump
-documents=documents.tgz
+documents=${DOCUMENTS_ARTIFACT}
+document_storage_driver=${STORAGE_DRIVER}
 qdrant=qdrant.tgz
 project=${PROJECT}
 consistency=maintenance-window
@@ -99,10 +117,16 @@ EOF
 
 (
 	cd "$OUT"
-	if command -v sha256sum >/dev/null 2>&1; then
-		sha256sum postgres.sql dbos-system.dump documents.tgz qdrant.tgz MANIFEST.txt
+	ARTIFACTS=(postgres.sql dbos-system.dump qdrant.tgz MANIFEST.txt)
+	if [[ "$STORAGE_DRIVER" == "local" ]]; then
+		ARTIFACTS+=(documents.tgz)
 	else
-		shasum -a 256 postgres.sql dbos-system.dump documents.tgz qdrant.tgz MANIFEST.txt
+		ARTIFACTS+=(documents.cos.txt)
+	fi
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "${ARTIFACTS[@]}"
+	else
+		shasum -a 256 "${ARTIFACTS[@]}"
 	fi
 ) >"$OUT/CHECKSUMS.sha256"
 

@@ -13,7 +13,7 @@ import {
 	libraries,
 } from "@/db/schema";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
-import { localObjectStorage } from "@/lib/server/object-storage/local";
+import { documentObjectStorage } from "@/lib/server/object-storage";
 
 export function isNativeDocumentDownloadPath(path: string[]): boolean {
 	return (
@@ -117,7 +117,7 @@ export async function handleNativeDocumentDownloadRequest(input: {
 			{ status: 409 },
 		);
 	}
-	const storage = localObjectStorage();
+	const storage = documentObjectStorage();
 	if (!(await storage.exists(document.storageKey))) {
 		return Response.json(
 			{ detail: "original document is not available" },

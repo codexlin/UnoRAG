@@ -2,6 +2,7 @@ import { QdrantClient, type Schemas } from "@qdrant/js-client-rest";
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
 import { QdrantIngestWriteStore } from "../core/ingest";
+import { documentObjectStorage } from "../core/object-storage/factory";
 import {
 	LiteParseProvider,
 	MinerU302Provider,
@@ -25,6 +26,7 @@ import {
 } from "./document-delete-ports";
 import {
 	LocalDocumentIngestSource,
+	ObjectStorageDocumentIngestSource,
 	PostgresDocumentIngestScope,
 } from "./document-ingest-production";
 import {
@@ -604,7 +606,16 @@ export async function createWorkerPorts(
 		"QDRANT_COLLECTION",
 		"unorag_chunks",
 	);
-	const documentStorageRoot = requiredEnvironment("DOCUMENT_STORAGE_ROOT");
+	const storageDriver = process.env.DOCUMENT_STORAGE_DRIVER?.trim() || "local";
+	if (storageDriver !== "local" && storageDriver !== "cos") {
+		throw new Error(`unsupported DOCUMENT_STORAGE_DRIVER: ${storageDriver}`);
+	}
+	const documentStorageRoot =
+		storageDriver === "local"
+			? requiredEnvironment("DOCUMENT_STORAGE_ROOT")
+			: undefined;
+	const remoteStorage =
+		storageDriver === "cos" ? documentObjectStorage() : undefined;
 	const embeddingDimensions = positiveInteger("EMBEDDING_DIM", 1_024);
 	if (!config.listenQueues.some((queue) => queue.startsWith("ingest-"))) {
 		throw new Error("DBOS document ingest requires at least one ingest queue");
@@ -655,7 +666,7 @@ export async function createWorkerPorts(
 			external: new DocumentDeleteExternalOperations(
 				qdrant,
 				qdrantCollection,
-				documentStorageRoot,
+				remoteStorage ?? requiredEnvironment("DOCUMENT_STORAGE_ROOT"),
 				pool,
 			),
 		},
@@ -675,10 +686,15 @@ export async function createWorkerPorts(
 		dimensions: documentIngestConfig.dimensions,
 		batchSize: documentIngestConfig.batchSize,
 	});
-	const source = new LocalDocumentIngestSource(
-		documentStorageRoot,
-		documentIngestConfig.maxUploadBytes,
-	);
+	const source = remoteStorage
+		? new ObjectStorageDocumentIngestSource(
+				remoteStorage,
+				documentIngestConfig.maxUploadBytes,
+			)
+		: new LocalDocumentIngestSource(
+				documentStorageRoot ?? requiredEnvironment("DOCUMENT_STORAGE_ROOT"),
+				documentIngestConfig.maxUploadBytes,
+			);
 	const sourceLoader: ParseSourceLoader = async (input, signal) => {
 		if (signal?.aborted) throw signal.reason;
 		const prefix = "storage://";

@@ -1,5 +1,5 @@
-{{- if and .Values.dbos.enabled (not .Values.persistence.enabled) }}
-{{- fail "dbos.enabled=true requires persistence.enabled=true for document ingest and deletion" }}
+{{- if and .Values.dbos.enabled (eq .Values.objectStorage.driver "local") (not .Values.persistence.enabled) }}
+{{- fail "dbos.enabled=true with local storage requires persistence.enabled=true" }}
 {{- end }}
 {{- if and .Values.dbos.enabled (not .Values.config.openaiBaseUrl) (not .Values.config.llmBaseUrl) }}
 {{- fail "dbos.enabled=true requires config.openaiBaseUrl or config.llmBaseUrl" }}
@@ -91,6 +91,16 @@ spec:
               value: {{ .Values.documentStorageRoot | quote }}
             - name: DOCUMENT_MAX_UPLOAD_BYTES
               value: {{ .Values.config.documentMaxUploadBytes | quote }}
+            {{- if eq .Values.objectStorage.driver "cos" }}
+            {{- range $key := list "COS_SECRET_ID" "COS_SECRET_KEY" "COS_SECURITY_TOKEN" }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" $ }}
+                  key: {{ $key }}
+                  optional: {{ eq $key "COS_SECURITY_TOKEN" }}
+            {{- end }}
+            {{- end }}
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:

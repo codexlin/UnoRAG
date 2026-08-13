@@ -1,3 +1,15 @@
+{{- if not (has .Values.objectStorage.driver (list "local" "cos")) }}
+{{- fail "objectStorage.driver must be local or cos" }}
+{{- end }}
+{{- if and (eq .Values.objectStorage.driver "local") (not .Values.persistence.enabled) }}
+{{- fail "local object storage requires persistence.enabled=true" }}
+{{- end }}
+{{- if and (eq .Values.objectStorage.driver "cos") .Values.persistence.enabled }}
+{{- fail "COS object storage requires persistence.enabled=false" }}
+{{- end }}
+{{- if and (eq .Values.objectStorage.driver "cos") (or (not .Values.objectStorage.cos.bucket) (not .Values.objectStorage.cos.region)) }}
+{{- fail "COS object storage requires objectStorage.cos.bucket and objectStorage.cos.region" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -29,6 +41,10 @@ data:
   QDRANT_COLLECTION: {{ .Values.external.qdrant.collection | quote }}
   REDIS_URL: {{ .Values.external.redis.url | quote }}
   DOCUMENT_STORAGE_ROOT: {{ .Values.documentStorageRoot | quote }}
+  DOCUMENT_STORAGE_DRIVER: {{ .Values.objectStorage.driver | quote }}
+  COS_BUCKET: {{ .Values.objectStorage.cos.bucket | quote }}
+  COS_REGION: {{ .Values.objectStorage.cos.region | quote }}
+  COS_PUBLIC_BASE_URL: {{ .Values.objectStorage.cos.publicBaseUrl | quote }}
   EMAIL_PROVIDER: {{ .Values.config.emailProvider | quote }}
   OBSERVABILITY_ALERT_WEBHOOK_ENABLED: {{ .Values.config.observabilityAlertWebhookEnabled | quote }}
   OBSERVABILITY_ALERT_EMAIL_ENABLED: {{ .Values.config.observabilityAlertEmailEnabled | quote }}

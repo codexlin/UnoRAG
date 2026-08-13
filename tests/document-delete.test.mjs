@@ -166,6 +166,13 @@ test("DBOS document delete deployment contract is storage-aware", () => {
 		/dbos-worker:[\s\S]*DOCUMENT_STORAGE_ROOT: \/var\/lib\/unorag\/documents[\s\S]*document_storage:\/var\/lib\/unorag\/documents/,
 	);
 	assert.match(helm, /DOCUMENT_STORAGE_ROOT[\s\S]*documentStorageRoot/);
+	assert.match(
+		compose,
+		/DOCUMENT_STORAGE_DRIVER: \$\{DOCUMENT_STORAGE_DRIVER:-local\}/,
+	);
+	assert.match(compose, /COS_BUCKET: \$\{COS_BUCKET:-\}/);
+	assert.match(helm, /COS_SECRET_ID[\s\S]*COS_SECRET_KEY/);
+	assert.match(values, /driver: local # local \| cos/);
 	assert.match(helm, /claimName:.*documentsPvcName/);
 	assert.doesNotMatch(values, /dbosDocumentDeleteEnabled/);
 	assert.doesNotMatch(runtime, /UNORAG_DBOS_DOCUMENT_DELETE_ENABLED/);

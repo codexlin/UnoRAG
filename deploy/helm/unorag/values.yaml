@@ -116,9 +116,9 @@ observability:
 # ---------------------------------------------------------------------------
 # Document object storage
 # ---------------------------------------------------------------------------
-# Default: shared PVC mounted by web + worker (+ api if needed for local files).
-# For customer MinIO/S3: leave persistence disabled and point app config at S3
-# once the object backend lands (currently Compose uses DOCUMENT_STORAGE_ROOT).
+# Default: shared PVC mounted by web and worker. Tencent COS is supported as a
+# private remote backend; set driver=cos, disable persistence, and provide the
+# two COS credential keys in secret.existingSecret.
 persistence:
   enabled: true
   storageClass: ""
@@ -128,6 +128,13 @@ persistence:
   # existingClaim: unorag-documents
 
 documentStorageRoot: /var/lib/unorag/documents
+
+objectStorage:
+  driver: local # local | cos
+  cos:
+    bucket: ""
+    region: ""
+    publicBaseUrl: ""
 
 # ---------------------------------------------------------------------------
 # External dependencies (customer-managed; not chart-installed)
@@ -145,8 +152,6 @@ external:
     collection: unorag_chunks
   redis:
     url: redis://redis.external:6379
-  # Object notes: prefer customer S3/MinIO later; PVC is the starter path.
-  objectStorage: pvc # pvc | s3 (s3 adapter deferred)
 
 # ---------------------------------------------------------------------------
 # Application config (non-secret)

@@ -71,6 +71,7 @@ SESSION="$(mk_config_get UNORAG_SESSION_SECRET || true)"
 ADMIN_PW="$(mk_config_get UNORAG_ADMIN_PASSWORD || true)"
 LLM_KEY="$(mk_config_get LLM_API_KEY || true)"
 POSTGRES_PW="$(mk_config_get POSTGRES_PASSWORD || true)"
+STORAGE_DRIVER="$(mk_config_get DOCUMENT_STORAGE_DRIVER || echo local)"
 
 [[ ${#SESSION} -ge 32 && "$SESSION" != *"replace-with-random"* ]] || {
 	echo "refusing install: UNORAG_SESSION_SECRET must contain at least 32 characters" >&2
@@ -84,6 +85,19 @@ POSTGRES_PW="$(mk_config_get POSTGRES_PASSWORD || true)"
 	echo "refusing install: set LLM_API_KEY in ../config/runtime.secret" >&2
 	exit 1
 }
+
+if [[ "$STORAGE_DRIVER" == "cos" ]]; then
+	for name in COS_BUCKET COS_REGION COS_SECRET_ID COS_SECRET_KEY; do
+		value="$(mk_config_get "$name" || true)"
+		[[ -n "$value" ]] || {
+			echo "refusing install: $name is required for DOCUMENT_STORAGE_DRIVER=cos" >&2
+			exit 1
+		}
+	done
+elif [[ "$STORAGE_DRIVER" != "local" ]]; then
+	echo "refusing install: DOCUMENT_STORAGE_DRIVER must be local or cos" >&2
+	exit 1
+fi
 
 for name in UNORAG_WEB_DB_PASSWORD UNORAG_WORKER_DB_PASSWORD UNORAG_DBOS_DB_PASSWORD; do
 	secret="$(mk_config_get "$name" || true)"
