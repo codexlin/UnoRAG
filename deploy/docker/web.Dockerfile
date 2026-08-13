@@ -12,12 +12,14 @@ RUN useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
 	&& corepack prepare pnpm@9.7.1 --activate
 COPY package.json pnpm-lock.yaml ./
+COPY scripts/generate-third-party-notices.mjs ./scripts/generate-third-party-notices.mjs
 RUN --mount=type=cache,id=unorag-pnpm-dev,target=/root/.local/share/pnpm/store \
 	pnpm install --frozen-lockfile \
 		--network-concurrency=4 \
 		--fetch-retries=5 \
 		--fetch-retry-mintimeout=10000 \
 		--fetch-retry-maxtimeout=60000 \
+	&& node scripts/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.txt \
 	&& rm -rf /usr/local/lib/node_modules/npm \
 	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
 
@@ -38,6 +40,7 @@ RUN useradd --system --uid 10001 --create-home unorag \
 	&& corepack prepare pnpm@9.7.1 --activate
 COPY package.json pnpm-lock.yaml ./
 COPY LICENSE NOTICE ./
+COPY --from=deps /repo/THIRD_PARTY_NOTICES.txt ./
 RUN --mount=type=cache,id=unorag-pnpm-prod,target=/root/.local/share/pnpm/store \
 	pnpm install --prod --frozen-lockfile \
 		--network-concurrency=4 \
@@ -94,6 +97,7 @@ RUN --mount=type=cache,id=unorag-pnpm-migrator,target=/root/.local/share/pnpm/st
 COPY --chown=unorag:unorag drizzle.config.ts ./
 COPY --chown=unorag:unorag drizzle ./drizzle
 COPY --chown=unorag:unorag LICENSE NOTICE ./
+COPY --from=deps --chown=unorag:unorag /repo/THIRD_PARTY_NOTICES.txt ./
 # Referenced by drizzle.config schema path (migrate applies SQL in ./drizzle).
 COPY --chown=unorag:unorag src/db/schema.ts ./src/db/schema.ts
 # Avoid Corepack re-fetching pnpm at container start.
@@ -149,6 +153,7 @@ COPY --from=builder --chown=unorag:unorag /repo/scripts ./scripts
 COPY --from=builder --chown=unorag:unorag /repo/package.json ./package.json
 COPY --from=builder --chown=unorag:unorag /repo/contracts ./contracts
 COPY --chown=unorag:unorag LICENSE NOTICE ./
+COPY --from=deps --chown=unorag:unorag /repo/THIRD_PARTY_NOTICES.txt ./
 
 USER unorag
 EXPOSE 3000

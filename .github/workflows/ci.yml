@@ -89,6 +89,10 @@ jobs:
         run: pnpm audit:prod
       - name: Reject unreviewed production licenses
         run: pnpm licenses:check
+      - name: Verify asset provenance and third-party notices
+        run: |
+          pnpm assets:check
+          pnpm notices:check
       - name: TypeScript core contracts
         run: |
           pnpm typecheck

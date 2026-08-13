@@ -1,0 +1,74 @@
+{
+	"schema_version": 1,
+	"reviewed_at": "2026-08-14",
+	"reviewed_by": "UnoRAG maintainers",
+	"scope": "Redistributable project assets and synthetic evaluation fixtures",
+	"groups": [
+		{
+			"id": "uno-brand",
+			"origin": "Original Uno identity created in this repository; PNG icons are raster derivatives of the canonical SVG.",
+			"author": "UnoRAG maintainers",
+			"license": "Apache-2.0",
+			"redistribution": "Original project work approved for redistribution with UnoRAG under Apache-2.0.",
+			"evidence": "Git history e754634 and the canonical source public/brand/uno-mark.svg.",
+			"files": {
+				"docs/brand/uno-brand-board.svg": "fc479ed849c6bdd75a65e7333fbde4b9ed38b3521e4630ea456003089e44a48b",
+				"public/apple-touch-icon.png": "ab2aa305fc75141014ea7c51905af9c7bea692e52e64ff68e4decc91a15aed5d",
+				"public/brand/uno-mark.png": "e63fef252142d9e8f89c7b76ab88e4b5de6e62aa3a935bdcebba2a3c791fc068",
+				"public/brand/uno-mark.svg": "a3ab2a5f1c60961118f1d18383a9d91097022b643d4222861ba19eb0917aa84a",
+				"public/favicon-32x32.png": "fb0153c3f18d0175423d74bd493cd616f51571e523673c835b017515f03dbdb2"
+			}
+		},
+		{
+			"id": "product-visuals",
+			"origin": "Project-created landing artwork and a UnoRAG UI screenshot containing synthetic demonstration data only.",
+			"author": "UnoRAG maintainers",
+			"license": "Apache-2.0",
+			"redistribution": "Original project artwork and product capture approved for redistribution with UnoRAG under Apache-2.0.",
+			"evidence": "Git history fe7eebe; visual inspection confirmed synthetic content and the non-routable example.local domain.",
+			"files": {
+				"public/landing-evidence-desk.png": "1fbe02c82a64158ef24441d5c1e8f027f285a660514e4d1aa69b2deba47dfc1f",
+				"public/product-library-workbench.png": "3bd452d7760f62989bd4524b99f77b005dc60cce3920232bef68740078602530"
+			}
+		},
+		{
+			"id": "core-fixtures",
+			"origin": "Synthetic policies, manuals, quotes, scans and unsupported-format samples authored and generated for UnoRAG regression testing; no customer documents or personal data.",
+			"author": "UnoRAG maintainers",
+			"license": "Apache-2.0",
+			"redistribution": "Synthetic project test material approved for redistribution with UnoRAG under Apache-2.0.",
+			"evidence": "Git history fdbdd6e and repository fixture documentation; PDF/DOCX metadata and content were inspected during the 2026-08-14 release review.",
+			"files": {
+				"testdata/docx/policy-headings.docx": "8b4d73a0e815b44182b31ea50d7a94d0f7bc2f7c78582360096b088be2cc6372",
+				"testdata/docx/quote-table.docx": "2812bea75d1d6784ad30c94137e781a336368df10db953434b23fbdbf62f1be4",
+				"testdata/md/handbook.md": "da4b1f99725bd160ea7491f078c6027fbc6ec86b41ae099828b00adfd5a921d0",
+				"testdata/pdf/leave-digital.pdf": "3b53912d422da54c60801c7e02ee8f3184af35f1a0c8a9e9b802a91e5ea4cc3e",
+				"testdata/pdf/leave-scanned.pdf": "5e4ec0d9325aeac19bf0bb2493ad85261c16b1dd03f9c38e2a0af84bdac772a9",
+				"testdata/pdf/manual-with-figure.pdf": "93bbb7125ef15226089e4c7b01206fbbb87de2ef44629ede2440b91cc62aff5c",
+				"testdata/pdf/messy-headers.pdf": "8c83b62ba596a57b27e5beb6333310cfa4fcfc5075ea3b18e55490d5f908e49c",
+				"testdata/txt/plain.txt": "64b3475c2f03ad5e0639df97c62e811732f37cd4a6d9116917eb9e5675db135f",
+				"testdata/unsupported/notes.csv": "6aa5fa53984e032086d3e007b7e781bd66fdbfa01c1b6e9796440851abc68f30",
+				"testdata/unsupported/sample.html": "bb2f8bf700a044bf827b155aa29826d59ccc1bad467e7c6513c8ed05fb97d3b8"
+			}
+		},
+		{
+			"id": "layout-evaluation-fixtures",
+			"origin": "Synthetic contracts, tables, reports, charts, scans and golden cases authored and generated for UnoRAG layout and retrieval evaluation; all named entities and identifiers are fictional.",
+			"author": "UnoRAG maintainers",
+			"license": "Apache-2.0",
+			"redistribution": "Synthetic project test material approved for redistribution with UnoRAG under Apache-2.0.",
+			"evidence": "Git history 47fd576 and tracked generator testdata/ab/generate_scan_lowcontrast.py; fixture metadata and content were inspected during the 2026-08-14 release review.",
+			"files": {
+				"testdata/ab/contract-long.docx": "ae211166ed2bc6aeac9d1b01e2d26273131afc5def55b1b6c71361b05f03f45a",
+				"testdata/ab/crosstable-large.pdf": "3942f1be2ed07fc20549914d8199ac207b4bf91c1bbc826a38a7244f9477aa80",
+				"testdata/ab/golds.jsonl": "22fd9452361045af1a7d9d2598443641c8760f39dec75ac615056e17c77b8994",
+				"testdata/ab/mixed-charts.pdf": "47ee42c88072ee5a8dab754728dde8ececc58006ef81481afa5e9d358c7a17ce",
+				"testdata/ab/negative-golds.jsonl": "b5d45f99b0484f62a01cf7fdd2354743251ac18108bcafe1c0faca31793a3b69",
+				"testdata/ab/quote-big-80rows.docx": "49d7006ebc592d069474029abb828dc2e48806f59da758936eb41b0f55db596b",
+				"testdata/ab/report-narrative-5k.md": "886c15d1806b7bb2b0de71c616417a3b4864aad82fd3b0b568f643e7cc1127d0",
+				"testdata/ab/scan-lowcontrast.pdf": "b9deaab8b864ebe514c5e7e5293d7c9c4369fc5c3d68aa8df8e2b99879131dc3",
+				"testdata/ab/twocolumn.pdf": "4de80204853e83a1b8ab2b052c6cd35e5765bf33302bd1e93445589bd1c879e3"
+			}
+		}
+	]
+}
