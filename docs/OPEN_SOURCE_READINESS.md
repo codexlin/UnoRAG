@@ -19,7 +19,7 @@
 | 当前树内部环境检索 | PASS | 未发现真实密钥、客户数据、私钥或本机绝对路径；本地和 Compose 示例地址不计入泄漏 |
 | 敏感本地产物隔离 | PASS | `.env*`、运行密钥、备份、验收输出、`.next`、`node_modules` 和本地文档存储均被忽略 |
 | 自动防回归 | PASS | CI 全历史 Gitleaks；PR 模板要求隐私与来源确认 |
-| 依赖许可证清点 | REVIEWED | 生产依赖共 379 个 package entries、14 种许可证表达式；CI 拒绝未经审阅的表达式漂移 |
+| 依赖许可证清点 | REVIEWED | 生产依赖（含可选 COS provider）共 441 个 package entries、15 种许可证表达式；CI 拒绝未经审阅的表达式漂移 |
 | 素材与 fixture 溯源 | PASS | `assets/provenance.json` 对公开视觉资产与合成测试资料逐文件绑定 SHA-256；CI 拒绝遗漏和未登记修改 |
 | 第三方许可证分发 | PASS | 构建时从生产依赖树生成完整 `THIRD_PARTY_NOTICES.txt`，四类发行镜像均携带该文件；缺失许可证文本时构建失败 |
 | 生产依赖漏洞审计 | PASS | 修复传递依赖 nanoid GHSA-2v37-7h3g-55p8 后，`pnpm audit --prod` 为 0 已知漏洞 |
@@ -46,7 +46,7 @@ allowlist 让 CI 变绿。
 
 ### 1. 第三方通知与镜像内容（已工程化）
 
-生产依赖清点包含 MIT、Apache-2.0、BSD、ISC、OFL-1.1、CC-BY-4.0，以及
+生产依赖清点包含 MIT、Apache-2.0、BSD、ISC、Unlicense、OFL-1.1、CC-BY-4.0，以及
 `LGPL-3.0-or-later` libvips 二进制。构建会从实际 Linux 生产依赖树收集许可证原文，按内容去重生成
 `THIRD_PARTY_NOTICES.txt` 并放入 web、worker、ops 和 migrator 镜像。CI 同时保留许可证表达式白名单门禁。
 

@@ -179,12 +179,16 @@ cd deploy/compose
 CONFIRM=YES ./scripts/restore.sh ./backups/<backup-id>
 ```
 
-备份必须包含 PostgreSQL、DBOS、文档对象、Qdrant 和 manifest 校验值。恢复只允许在维护窗口
+备份必须覆盖 PostgreSQL、DBOS、文档对象、Qdrant 和 manifest 校验值。`local` 文档对象由脚本归档；
+`cos` 文档对象必须由桶版本控制及独立复制/备份覆盖，Compose 清单只记录远程边界。恢复只允许在维护窗口
 或可丢弃环境执行，顺序见 [DEPLOYMENT.md](./DEPLOYMENT.md)。每个目标环境都要实际恢复一次，
 并记录 RPO、RTO、数据对照值和恢复后的隔离检查。
 
 以下任一情况表示恢复失败：active pointer 与可见 generation 不一致、引用指向不存在版本、
 对象缺失、跨租户数据出现，或必须手工改库才能恢复。
+
+COS 模式还必须监控 4xx/5xx、请求延迟、存储容量、版本保留和复制状态。轮换 CAM 密钥时先让 Web 与
+Worker 同时获得新凭证，验证上传、入库、下载和删除后再撤销旧凭证，避免半套运行时使用不同身份。
 
 ## CI 与镜像发布
 

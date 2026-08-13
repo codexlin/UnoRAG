@@ -218,22 +218,55 @@ Worker 并存直至旧 workflow 排空，并使用 readiness、PDB 与负载均�
 
 ## 备份与恢复
 
-参考 Compose 备份覆盖 PostgreSQL、DBOS、文档对象与 Qdrant。Redis 会话可重建，不属于恢复集。
+参考 Compose 备份覆盖 PostgreSQL、DBOS 与 Qdrant。`local` 模式同时归档文档卷；`cos` 模式只记录
+远程桶边界，文档对象依赖 COS 自身的版本控制、跨地域复制或独立备份策略。Redis 会话可重建，
+不属于恢复集。
 
 ```bash
 ./scripts/backup.sh ./backups/$(date +%Y%m%dT%H%M%S)
 CONFIRM=YES ./scripts/restore.sh ./backups/<backup-id>
 ```
 
-恢复顺序固定为：停止应用、恢复 PostgreSQL、恢复文档对象、恢复 Qdrant、启动应用并验证。
+恢复顺序固定为：停止应用、恢复 PostgreSQL、恢复或核验文档对象、恢复 Qdrant、启动应用并验证。
 恢复后必须检查登录、active version、既有引用、新上传、Retrieve/Ask、删除、生命周期巡检和
 跨 Workspace 隔离。只生成备份文件而未做过恢复演练，不算具备恢复能力。
 
 ## Kubernetes
 
 Chart 位于 [`deploy/helm/unorag`](../deploy/helm/unorag)，默认使用客户托管的 PostgreSQL、
-Qdrant 和 Redis。Helm starter 尚不承诺完整 HPA、PDB、NetworkPolicy 或 S3；这些能力应按
+Qdrant 和 Redis，并支持共享 PVC 或腾讯云 COS 文档存储。Helm starter 尚不承诺完整 HPA、PDB、
+NetworkPolicy 或通用 S3；这些能力应按
 客户基础设施和 [PRODUCT.md](./PRODUCT.md) 的当前边界评估。
+
+### 腾讯云 COS
+
+COS 必须保持私有。Web 与 DBOS Worker 使用同一 Bucket、Region 和受限 CAM 凭证；原文下载仍由
+UnoRAG 校验 Session、Organization、Workspace、文档 ACL 和 active version 后代理返回。自定义域名
+仅用于受控访问标识，不应通过公共读权限绕过应用鉴权。
+
+```dotenv
+DOCUMENT_STORAGE_DRIVER=cos
+COS_BUCKET=example-1250000000
+COS_REGION=ap-hongkong
+COS_PUBLIC_BASE_URL=https://cos.example.com
+```
+
+`COS_SECRET_ID`、`COS_SECRET_KEY` 与可选 `COS_SECURITY_TOKEN` 必须放在 `runtime.secret` 或 Kubernetes
+Secret。凭证应使用专用 CAM 子账号或临时角色，只授权目标 Bucket 中 UnoRAG 对象前缀的
+GetObject、PutObject、HeadObject 和 DeleteObject；不要使用主账号永久密钥。
+
+凭证写入部署环境后，先运行不依赖数据库的对象存储冒烟：
+
+```bash
+set -a
+source deploy/config/runtime.env
+source deploy/config/runtime.secret
+set +a
+pnpm smoke:cos
+```
+
+脚本只操作随机 `_unorag-smoke/` 键并在结束时删除，用于验证签名、上传、Head、完整读取、流式读取
+和幂等删除。通过后仍需从产品 UI 完成一次真实上传、DBOS 入库、下载和删除验收。
 
 Helm 不安装官方单机 Ops Stack；Kubernetes 客户应复用现有 Collector/APM，设置
 `observability.otel.enabled=true` 与 `observability.otel.endpoint`。启用但未提供 endpoint 时 Chart

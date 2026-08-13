@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Schemas } from "@qdrant/js-client-rest";
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
 
+import type { DocumentObjectStorage } from "../core/object-storage/contracts";
 import type { DocumentDeleteJob } from "./contracts";
 import { WorkerTaskError } from "./errors";
 import type {
@@ -162,20 +163,26 @@ export class DocumentDeleteExternalOperations
 	implements DocumentDeleteExternalPort
 {
 	private readonly storageRoot: string;
+	private readonly objectStorage?: Pick<DocumentObjectStorage, "delete">;
 
 	constructor(
 		private readonly qdrant: DocumentDeleteQdrantClient,
 		private readonly collection: string,
-		storageRoot: string,
+		storage: string | Pick<DocumentObjectStorage, "delete">,
 		private readonly pool: Pool,
 	) {
 		if (!collection.trim()) throw new Error("Qdrant collection is required");
-		if (!storageRoot.trim()) {
+		if (typeof storage !== "string") {
+			this.storageRoot = "";
+			this.objectStorage = storage;
+			return;
+		}
+		if (!storage.trim()) {
 			throw new Error(
 				"DOCUMENT_STORAGE_ROOT is required for document deletion",
 			);
 		}
-		this.storageRoot = path.resolve(storageRoot);
+		this.storageRoot = path.resolve(storage);
 	}
 
 	async deleteGeneration(
@@ -276,6 +283,19 @@ export class DocumentDeleteExternalOperations
 		storageKey: string,
 	): Promise<boolean> {
 		void input;
+		if (this.objectStorage) {
+			try {
+				return await this.objectStorage.delete(storageKey);
+			} catch (error) {
+				throw new WorkerTaskError(
+					error instanceof Error
+						? error.message
+						: "Document storage delete failed",
+					"document_delete_storage_failed",
+					"transient",
+				);
+			}
+		}
 		const target = await resolveStorageTarget(this.storageRoot, storageKey);
 		try {
 			await unlink(target);

@@ -4,6 +4,8 @@ import path from "node:path";
 
 import type { QueryResult, QueryResultRow } from "pg";
 
+import type { DocumentObjectStorage } from "../core/object-storage/contracts";
+import { ObjectStorageNotFoundError } from "../core/object-storage/contracts";
 import type { DocumentIngestJob } from "./contracts";
 import type {
 	DocumentIngestScopePort,
@@ -84,6 +86,45 @@ export class LocalDocumentIngestSource implements DocumentIngestSourcePort {
 			);
 		} finally {
 			await handle?.close().catch(() => undefined);
+		}
+	}
+}
+
+export class ObjectStorageDocumentIngestSource
+	implements DocumentIngestSourcePort
+{
+	constructor(
+		private readonly storage: Pick<DocumentObjectStorage, "load">,
+		private readonly maxBytes = 50 * 1024 * 1024,
+	) {
+		if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+			throw new Error("document source maxBytes must be positive");
+		}
+	}
+
+	async load(storageKey: string): Promise<Uint8Array> {
+		try {
+			return await this.storage.load(storageKey, this.maxBytes);
+		} catch (error) {
+			if (error instanceof WorkerTaskError) throw error;
+			const missing = error instanceof ObjectStorageNotFoundError;
+			const invalidSize =
+				error instanceof Error && /size is outside/.test(error.message);
+			throw new WorkerTaskError(
+				missing
+					? "Document storage object does not exist"
+					: invalidSize
+						? "Document storage object size is outside the allowed range"
+						: error instanceof Error
+							? error.message
+							: "Document storage read failed",
+				missing
+					? "document_storage_object_missing"
+					: invalidSize
+						? "document_storage_size_invalid"
+						: "document_storage_read_failed",
+				missing || invalidSize ? "permanent" : "transient",
+			);
 		}
 	}
 }

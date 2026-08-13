@@ -15,7 +15,7 @@ import { resolveRequestSession } from "@/lib/server/auth/session";
 import { documentIngestExecutionIdentity } from "@/lib/server/document-lifecycle-flag.mjs";
 import { findAuthorizedJob, toApiJob } from "@/lib/server/job-access";
 import { canWriteLibraries } from "@/lib/server/library-access";
-import { localObjectStorage } from "@/lib/server/object-storage/local";
+import { documentObjectStorage } from "@/lib/server/object-storage";
 import { documentIngestPayloadSchema } from "@/worker/contracts";
 
 type RouteContext = {
@@ -66,7 +66,7 @@ export async function POST(request: Request, context: RouteContext) {
 			{ status: 409 },
 		);
 	}
-	if (!(await localObjectStorage().exists(current.version.storageKey))) {
+	if (!(await documentObjectStorage().exists(current.version.storageKey))) {
 		return Response.json(
 			{ detail: "source object is no longer available" },
 			{ status: 409 },

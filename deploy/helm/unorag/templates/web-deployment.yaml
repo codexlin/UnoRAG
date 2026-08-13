@@ -49,6 +49,16 @@ spec:
               value: {{ .Values.documentStorageRoot | quote }}
             - name: DOCUMENT_MAX_UPLOAD_BYTES
               value: {{ .Values.config.documentMaxUploadBytes | default "52428800" | quote }}
+            {{- if eq .Values.objectStorage.driver "cos" }}
+            {{- range $key := list "COS_SECRET_ID" "COS_SECRET_KEY" "COS_SECURITY_TOKEN" }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" $ }}
+                  key: {{ $key }}
+                  optional: {{ eq $key "COS_SECURITY_TOKEN" }}
+            {{- end }}
+            {{- end }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

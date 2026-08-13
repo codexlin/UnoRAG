@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 
-// Every expression here was reviewed as part of the 2026-08-06 inventory. This
+// Every expression here was reviewed through the 2026-08-14 inventory. This
 // gate detects dependency drift; it does not replace attribution or legal review.
 const reviewedExpressions = new Set([
 	"(AFL-2.1 OR BSD-3-Clause)",
@@ -19,6 +19,7 @@ const reviewedExpressions = new Set([
 	"LGPL-3.0-or-later",
 	"MIT",
 	"OFL-1.1",
+	"Unlicense",
 ]);
 
 const result = spawnSync("pnpm", ["licenses", "list", "--prod", "--json"], {

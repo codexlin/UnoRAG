@@ -5,7 +5,7 @@ import type { AuthIdentity } from "./auth/provider";
 export { documentLifecycleV2Enabled } from "./document-lifecycle-flag.mjs";
 export { validateDocumentUpload } from "./document-upload-core.mjs";
 
-import { safeStorageFilename } from "./object-storage/local";
+import { safeStorageFilename } from "./object-storage";
 
 export function documentStorageKey(input: {
 	identity: AuthIdentity;

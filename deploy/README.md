@@ -90,6 +90,7 @@ Prometheus/Grafana、Loki/Tempo 和 Alertmanager，Grafana 仅绑定宿主机回
 - Compose 参考拓扑（Caddy → web；DBOS worker/control 与数据存储仅内网）
 - 客户托管连接与模型 endpoint（全部经环境变量）
 - secret 仅从环境注入；镜像不含密钥
+- 文档存储可选本地共享卷或私有腾讯 COS；下载始终经过产品 ACL
 - production fail-closed 与 readiness 说明
 - migration 独立步骤（migrator 凭据，运行账号无 DDL）
 - 安装 / 升级 / 回滚 / 一致性备份 / 校验恢复 runbook 与脚本
