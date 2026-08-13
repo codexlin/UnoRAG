@@ -1,24 +1,44 @@
 # Asset provenance
 
-This file records the origin and redistribution status of visual assets and test fixtures. It is an inventory,
-not a substitute for the repository license or legal review.
+This document describes the origin and redistribution status of UnoRAG visual
+assets and evaluation fixtures. The machine-readable, SHA-256-bound inventory
+is [`assets/provenance.json`](./assets/provenance.json); CI rejects unregistered,
+removed, or modified assets.
 
-## Project-created brand assets
+The UnoRAG maintainers completed the recorded engineering review on 2026-08-14
+using repository history, generator sources, embedded file metadata and visual
+inspection. This review found no third-party or customer material in scope.
 
-| Files | Origin | Third-party material | Distribution status |
-|---|---|---|---|
-| `public/brand/uno-mark.svg` | Original Continuous UNO vector designed for Unobyte/UnoRAG on 2026-08-06 | None incorporated | Apache-2.0 |
-| `public/brand/uno-mark.png`, `public/favicon-32x32.png`, `public/apple-touch-icon.png` | Raster derivatives generated from `uno-mark.svg` | None incorporated | Same as source SVG |
-| `docs/brand/uno-brand-board.svg` | Original layout using the canonical mark and documented brand tokens | None incorporated | Apache-2.0 |
+## Uno identity
 
-These are currently integrated but provisional brand assets. The final identity may replace them before the first public
-release. The project names and final mark still require jurisdiction- and class-specific trademark clearance before public
-commercial use.
+`public/brand/uno-mark.svg` and `docs/brand/uno-brand-board.svg` are original
+project work created for Unobyte/UnoRAG. The PNG mark, favicon and Apple touch
+icon are raster derivatives of the canonical SVG. They are distributed under
+Apache-2.0 with the rest of this repository, subject to the separate brand-use
+policy tracked for the stable release.
 
-## Awaiting owner attestation before stable release
+## Product visuals
 
-The repository is already public. The origin and redistribution rights for the following groups must still be confirmed
-before the first stable release and promoted container distribution:
+`public/landing-evidence-desk.png` is project-created landing artwork.
+`public/product-library-workbench.png` is a screenshot of UnoRAG using synthetic
+demonstration content and the non-routable `example.local` domain. Neither image
+contains customer documents, production credentials, or personal information.
 
-- `public/landing-evidence-desk.png` and `public/product-library-workbench.png`;
-- all documents, scans, images and golden cases under `testdata/`.
+## Evaluation fixtures
+
+Everything under `testdata/` is synthetic material authored or generated for
+UnoRAG parser, chunking, retrieval, refusal and citation regression tests.
+Company names, people, identifiers, prices and policies are fictional test
+content. The DOCX files were generated with python-docx; the PDF fixtures were
+generated with project scripts and ReportLab-compatible tooling. They are not
+customer documents and are distributed under Apache-2.0.
+
+Generated evaluation reports under `testdata/ab/_e2e_out/` are local evidence,
+are ignored by Git, and are not release assets.
+
+## Change policy
+
+New or changed files in the governed paths must update the provenance manifest
+with origin, license and SHA-256. Material without a clear right to redistribute
+must be replaced or removed before merge. This inventory records engineering
+evidence and is not legal advice.
