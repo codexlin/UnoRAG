@@ -33,6 +33,18 @@ test("backup and restore fail closed across local and COS storage boundaries", a
 	assert.match(restore, /COS objects are external and are not overwritten/);
 });
 
+test("deployment docs record the working CAM user-policy shape", async () => {
+	const deployment = await source("docs/DEPLOYMENT.md");
+	assert.match(deployment, /cos:PutObjectACL/);
+	assert.match(
+		deployment,
+		/qcs::cos:ap-hongkong:uid\/1311896385:unobyte-1311896385\/org\/\*/,
+	);
+	assert.match(deployment, /name\/cos:PutObject/);
+	assert.match(deployment, /prefix\/\//);
+	assert.match(deployment, /pnpm smoke:cos/);
+});
+
 test("Helm rejects incomplete or contradictory object storage topology", async () => {
 	const template = await source("deploy/helm/unorag/templates/configmap.yaml");
 	assert.match(template, /objectStorage\.driver must be local or cos/);

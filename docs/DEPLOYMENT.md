@@ -244,18 +244,94 @@ COS 必须保持私有。Web 与 DBOS Worker 使用同一 Bucket、Region 和受
 UnoRAG 校验 Session、Organization、Workspace、文档 ACL 和 active version 后代理返回。自定义域名
 仅用于受控访问标识，不应通过公共读权限绕过应用鉴权。
 
-```dotenv
-DOCUMENT_STORAGE_DRIVER=cos
-COS_BUCKET=example-1250000000
-COS_REGION=ap-hongkong
-COS_PUBLIC_BASE_URL=https://cos.example.com
+桶在香港、应用在本地或其它地域都可以：UnoRAG 通过 HTTPS 调用 COS API，不要求把 Web/Worker
+部署在同一地域。生产切存储前，先在 Compose 开发环境用同一套驱动和密钥跑通冒烟与产品链路。
+
+#### 1. 主账号创建私有桶
+
+用主账号（或有建桶权限的管理员）在 [对象存储](https://console.cloud.tencent.com/cos) 创建桶：
+
+- 访问权限选 **私有读写**。不要公有读、不要匿名 `GetObject`。
+- 记下 `桶名-APPID`（例如 `unobyte-1311896385`）、地域（例如 `ap-hongkong`）和 APPID。
+- 不要用后面那个 API 子用户去建桶；它不应拥有 `PutBucket` / `DeleteBucket`。
+
+#### 2. 专用 CAM 子用户和 API 密钥
+
+在 [访问管理 → 用户](https://console.cloud.tencent.com/cam/user) 新建子用户：
+
+- 勾选 **编程访问**。控制台访问可选，不是 UnoRAG 运行时需要的。
+- 在该子用户页创建 API 密钥。SecretKey 只在创建时显示一次。
+- `runtime.secret` 必须使用这个子用户、且状态为 **已启用** 的密钥。禁用密钥会表现为 PUT `AccessDenied`。
+- 不要使用主账号永久密钥。
+
+#### 3. CAM 用户策略（主配置）
+
+在 [访问管理 → 策略](https://console.cloud.tencent.com/cam/policy) 新建自定义策略，并 **授权给上一步那个子用户**。
+不要把 COS 控制台的「关联 CAM 策略」或「所有用户 / 可匿名访问」当作主路径。
+
+CAM **用户策略** 与 COS **桶 Policy** 语法不同。用户策略必须用 `cos:PutObject` 这种 action，
+资源用 `qcs::cos:<region>:uid/<APPID>:<bucket-appid>/<prefix>/*`。以下写法能保存但运行时 403：
+
+- `name/cos:PutObject`（桶策略语法）
+- `qcs:cos:...`（`qcs` 后少一个冒号，六段式会错位）
+- `prefix//<bucket>/...`（CAM 校验能过，对象 API 不按这个路径求值）
+
+UnoRAG 上传会带 `ACL: private`，因此还要 `cos:PutObjectACL`。产品对象键以 `org/` 开头，
+冒烟脚本使用 `_unorag-smoke/`。将 `<APPID>`、`<bucket-appid>`、`<region>` 换成实际值：
+
+```json
+{
+  "version": "2.0",
+  "statement": [
+    {
+      "effect": "allow",
+      "action": [
+        "cos:PutObject",
+        "cos:PutObjectACL",
+        "cos:HeadObject",
+        "cos:GetObject",
+        "cos:DeleteObject"
+      ],
+      "resource": [
+        "qcs::cos:ap-hongkong:uid/1311896385:unobyte-1311896385/org/*",
+        "qcs::cos:ap-hongkong:uid/1311896385:unobyte-1311896385/_unorag-smoke/*"
+      ]
+    }
+  ]
+}
 ```
 
-`COS_SECRET_ID`、`COS_SECRET_KEY` 与可选 `COS_SECURITY_TOKEN` 必须放在 `runtime.secret` 或 Kubernetes
-Secret。凭证应使用专用 CAM 子账号或临时角色，只授权目标 Bucket 中 UnoRAG 对象前缀的
-GetObject、PutObject、HeadObject 和 DeleteObject；不要使用主账号永久密钥。
+不要长期挂 `QcloudCOSDataFullControl`。仅在自定义策略 403 时临时挂上对照：FullControl 能通、自定义不能，
+说明 action/resource 语法仍不对，而不是桶或密钥坏了。对照结束后立刻摘掉。
 
-凭证写入部署环境后，先运行不依赖数据库的对象存储冒烟：
+可选：在桶的「用户权限」里把该子用户加成 **数据读取 + 数据写入**。公共权限保持私有读写。
+不要在桶 Policy 里授权所有用户。
+
+#### 4. 写入部署配置
+
+`deploy/config/runtime.env`（gitignored）：
+
+```dotenv
+DOCUMENT_STORAGE_DRIVER=cos
+COS_BUCKET=unobyte-1311896385
+COS_REGION=ap-hongkong
+COS_PUBLIC_BASE_URL=
+```
+
+`deploy/config/runtime.secret`（gitignored）：
+
+```dotenv
+COS_SECRET_ID=
+COS_SECRET_KEY=
+COS_SECURITY_TOKEN=
+```
+
+从仓库模板复制：`runtime.env.example` → `runtime.env`，`runtime.secret.example` → `runtime.secret`。
+Compose 安装脚本在 `DOCUMENT_STORAGE_DRIVER=cos` 时会拒绝缺少桶、地域或密钥的配置。
+
+#### 5. 对象存储冒烟
+
+不依赖数据库。脚本只读写随机 `_unorag-smoke/` 键并在结束时删除：
 
 ```bash
 set -a
@@ -265,8 +341,24 @@ set +a
 pnpm smoke:cos
 ```
 
-脚本只操作随机 `_unorag-smoke/` 键并在结束时删除，用于验证签名、上传、Head、完整读取、流式读取
-和幂等删除。通过后仍需从产品 UI 完成一次真实上传、DBOS 入库、下载和删除验收。
+PowerShell 没有 `set -a`；把同一组变量导入当前会话后再运行 `pnpm smoke:cos`。
+
+#### 6. 产品链路验收
+
+冒烟通过后，用完整 Compose（Web + DBOS Worker，不要只跑 `pnpm dev`）再验收：
+
+1. 登录 Workspace，向文库上传一个小的 Markdown 或 TXT。
+2. 等待 DBOS ingest 任务 `completed`。
+3. 从产品 UI 下载原文（必须走 UnoRAG 鉴权代理，不能用 COS 匿名 URL）。
+4. Ask 一句能命中该文档的问题，确认引用。
+5. 删除文档，确认任务完成；COS 中对应 `org/...` 对象消失。
+
+| 现象 | 常见原因 |
+|---|---|
+| PUT `AccessDenied` | 密钥已禁用、密钥不属于被授权子用户、用户策略用了 `name/cos:` 或 `prefix//`、漏了 `PutObjectACL` |
+| `NoSuchBucket` | `COS_BUCKET` 未带 APPID，或 `COS_REGION` 写错 |
+| 冒烟过、产品上传卡住 | 只起了 Next.js，没有 DBOS Worker，或 Worker 未注入同一套 COS 变量 |
+| 匿名 URL 能下载 | 桶不是私有，或自定义域名开了公有读 |
 
 Helm 不安装官方单机 Ops Stack；Kubernetes 客户应复用现有 Collector/APM，设置
 `observability.otel.enabled=true` 与 `observability.otel.endpoint`。启用但未提供 endpoint 时 Chart
