@@ -25,3 +25,10 @@ groups:
           severity: warning
         annotations:
           summary: OpenTelemetry Collector cannot export spans
+      - alert: UnoRAGLlmQueueSustained
+        expr: sum(unorag_ai_llm_queue_depth) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: UnoRAG LLM calls have been continuously queued for 10 minutes

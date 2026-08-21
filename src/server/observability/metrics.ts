@@ -1,3 +1,5 @@
+import type { AiConcurrencyEvent } from "@/core/ai";
+
 const WEB_OPERATIONS = ["ask", "retrieve"] as const;
 const WEB_OUTCOMES = [
 	"success",
@@ -58,6 +60,7 @@ type MetricSeries = {
 type MetricsRegistry = {
 	series: Map<string, MetricSeries>;
 	askQuality: Map<string, AskQualitySeries>;
+	aiConcurrency: AiConcurrencySeries;
 };
 
 type AskQualitySeries = {
@@ -68,10 +71,36 @@ type AskQualitySeries = {
 	selectedEvidence: number;
 };
 
+type AiConcurrencySeries = {
+	active: number;
+	queued: number;
+	limit: number;
+	acquired: number;
+	cancelled: number;
+	overloaded: number;
+	timedOut: number;
+	waitSecondsSum: number;
+	waitBucketCounts: number[];
+};
+
 const registryKey = Symbol.for("unorag.observability.metrics.registry");
 
 function createRegistry(): MetricsRegistry {
-	return { series: new Map(), askQuality: new Map() };
+	return {
+		series: new Map(),
+		askQuality: new Map(),
+		aiConcurrency: {
+			active: 0,
+			queued: 0,
+			limit: 0,
+			acquired: 0,
+			cancelled: 0,
+			overloaded: 0,
+			timedOut: 0,
+			waitSecondsSum: 0,
+			waitBucketCounts: LATENCY_BUCKETS_SECONDS.map(() => 0),
+		},
+	};
 }
 
 function registry(): MetricsRegistry {
@@ -187,6 +216,33 @@ export function observeAskCompletion(input: ObserveAskCompletionInput): void {
 	registry().askQuality.set(key, series);
 }
 
+/** Record bounded process-local LLM pressure without request or tenant labels. */
+export function observeAiConcurrency(event: AiConcurrencyEvent): void {
+	const series = registry().aiConcurrency;
+	series.active = event.snapshot.active;
+	series.queued = event.snapshot.queued;
+	series.limit = event.snapshot.limit;
+	if (event.type === "snapshot") return;
+	if (event.outcome === "cancelled") {
+		series.cancelled += 1;
+		return;
+	}
+	if (event.outcome === "overloaded") {
+		series.overloaded += 1;
+		return;
+	}
+	if (event.outcome === "timed_out") {
+		series.timedOut += 1;
+		return;
+	}
+	series.acquired += 1;
+	const waitSeconds = event.waitDurationMs / 1_000;
+	series.waitSecondsSum += waitSeconds;
+	for (const [index, upperBound] of LATENCY_BUCKETS_SECONDS.entries()) {
+		if (waitSeconds <= upperBound) series.waitBucketCounts[index] += 1;
+	}
+}
+
 /** Render the process-local registry in Prometheus text exposition format. */
 export function renderPrometheusMetrics(): string {
 	const lines = [
@@ -247,6 +303,37 @@ export function renderPrometheusMetrics(): string {
 			`unorag_ask_selected_evidence_total${qualityLabels} ${series.selectedEvidence}`,
 		);
 	}
+
+	const ai = registry().aiConcurrency;
+	lines.push(
+		"# HELP unorag_ai_llm_inflight LLM operations currently holding a process-local permit.",
+		"# TYPE unorag_ai_llm_inflight gauge",
+		`unorag_ai_llm_inflight ${ai.active}`,
+		"# HELP unorag_ai_llm_queue_depth LLM operations waiting for a process-local permit.",
+		"# TYPE unorag_ai_llm_queue_depth gauge",
+		`unorag_ai_llm_queue_depth ${ai.queued}`,
+		"# HELP unorag_ai_llm_concurrency_limit Configured process-local LLM concurrency limit.",
+		"# TYPE unorag_ai_llm_concurrency_limit gauge",
+		`unorag_ai_llm_concurrency_limit ${ai.limit}`,
+		"# HELP unorag_ai_llm_acquisitions_total LLM concurrency gate outcomes.",
+		"# TYPE unorag_ai_llm_acquisitions_total counter",
+		`unorag_ai_llm_acquisitions_total{outcome="acquired"} ${ai.acquired}`,
+		`unorag_ai_llm_acquisitions_total{outcome="cancelled"} ${ai.cancelled}`,
+		`unorag_ai_llm_acquisitions_total{outcome="overloaded"} ${ai.overloaded}`,
+		`unorag_ai_llm_acquisitions_total{outcome="timed_out"} ${ai.timedOut}`,
+		"# HELP unorag_ai_llm_queue_wait_seconds Time spent waiting for an LLM concurrency permit.",
+		"# TYPE unorag_ai_llm_queue_wait_seconds histogram",
+	);
+	for (const [index, upperBound] of LATENCY_BUCKETS_SECONDS.entries()) {
+		lines.push(
+			`unorag_ai_llm_queue_wait_seconds_bucket{le="${upperBound}"} ${ai.waitBucketCounts[index]}`,
+		);
+	}
+	lines.push(
+		`unorag_ai_llm_queue_wait_seconds_bucket{le="+Inf"} ${ai.acquired}`,
+		`unorag_ai_llm_queue_wait_seconds_sum ${formatNumber(ai.waitSecondsSum)}`,
+		`unorag_ai_llm_queue_wait_seconds_count ${ai.acquired}`,
+	);
 
 	return `${lines.join("\n")}\n`;
 }
@@ -314,4 +401,5 @@ function labelsWithLe(
 export function resetPrometheusMetricsForTests(): void {
 	registry().series.clear();
 	registry().askQuality.clear();
+	registry().aiConcurrency = createRegistry().aiConcurrency;
 }

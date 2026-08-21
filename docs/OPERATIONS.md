@@ -67,6 +67,16 @@ Provider 地址、通知目标或 Job 错误正文。Webhook/邮件是默认关�
 需要模型、Token、LangGraph 节点和后续评测实验视图时，可选启用 metadata-only Langfuse 出口；配置、
 权限和排障见 [LANGFUSE.md](./LANGFUSE.md)。Langfuse exporter 告警不得升级为 UnoRAG 业务不可用告警。
 
+LLM 调用由 Web 进程内的共享 FIFO 门控统一约束，Router、Rewrite、Judge、TablePlan 和最终回答不会各自
+绕过额度。`LLM_MAX_INFLIGHT` 是每个 Web 副本的在途上限，因此集群总上限约为“副本数 × 该值”；
+`LLM_MAX_QUEUE` 限制每个副本的排队数，`LLM_QUEUE_TIMEOUT_MS` 限制等待时间。队列满返回
+`llm_overloaded`，等待超时返回 `llm_queue_timeout`，两者均可重试且不包含 Prompt 内容。调整这些参数
+需要重启 Web，不支持运行中漂移。
+
+容量调优应同时观察 `unorag_ai_llm_inflight`、`unorag_ai_llm_queue_depth` 和
+`unorag_ai_llm_queue_wait_seconds`，并核对 Provider 限额、Ask P95、拒答率和引用覆盖。不要只提高并发；
+持续排队会触发 `UnoRAGLlmQueueSustained`，应先确认是突发流量、Provider 限流还是模型延迟上升。
+
 ## 可选 Ops Stack
 
 Compose 私有部署可在安装或升级时显式启用：

@@ -4,6 +4,9 @@ import test from "node:test";
 import type { LanguageModel } from "ai";
 
 import {
+	AiConcurrencyGate,
+	AiConcurrencyOverloadedError,
+	AiConcurrencyWaitTimeoutError,
 	AiProviderConfigurationError,
 	ANSWER_TEMPERATURE,
 	AnswerStreamAdapter,
@@ -195,6 +198,7 @@ test("public retrieval debug exposes only safe Judge diagnostics", () => {
 });
 
 test("structured adapter reports a bounded timeout and does not invent clarify judge actions", async () => {
+	const concurrencyGate = new AiConcurrencyGate(1);
 	const adapter = new StructuredOutputAdapter(
 		injectedModel,
 		(request) =>
@@ -205,8 +209,13 @@ test("structured adapter reports a bounded timeout and does not invent clarify j
 					{ once: true },
 				);
 			}),
-		{ maxAttempts: 1, timeoutMs: 5 },
+		{ maxAttempts: 1, timeoutMs: 5, concurrencyGate },
 	);
+	assert.deepEqual(concurrencyGate.snapshot(), {
+		active: 0,
+		queued: 0,
+		limit: 1,
+	});
 
 	await assert.rejects(
 		adapter.route({ question: "合同期限是什么？" }),
@@ -348,6 +357,31 @@ test("legacy SSE emits a truncated error after a partial stream failure", async 
 		truncated: true,
 	});
 	assert.equal(JSON.stringify(events).includes("provider secret"), false);
+});
+
+test("legacy SSE exposes stable bounded LLM pressure outcomes", async () => {
+	for (const [error, code] of [
+		[new AiConcurrencyOverloadedError(), "llm_overloaded"],
+		[new AiConcurrencyWaitTimeoutError(30_000), "llm_queue_timeout"],
+	] as const) {
+		async function* unavailable(): AsyncGenerator<string> {
+			yield await Promise.reject(error);
+		}
+		const events = (
+			await collect(
+				streamLegacyAskSse({
+					meta: {},
+					citations: [],
+					tokens: unavailable(),
+					done: {},
+				}),
+			)
+		).map(parseFrame);
+		const terminal = events.at(-1);
+		assert.equal(terminal?.event, "error");
+		assert.equal((terminal?.data as { code?: string } | undefined)?.code, code);
+		assert.equal(JSON.stringify(events).includes("30000"), false);
+	}
 });
 
 test("legacy SSE terminates aborted streams without done", async () => {

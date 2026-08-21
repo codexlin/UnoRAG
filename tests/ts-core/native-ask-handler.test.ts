@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
 
+import {
+	AiConcurrencyOverloadedError,
+	AiConcurrencyWaitTimeoutError,
+} from "../../src/core/ai";
 import type { AskGraphInput, AskState } from "../../src/core/ask-graph";
 import { runWithObservabilityContext } from "../../src/lib/observability/context";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
@@ -791,5 +795,28 @@ test("model configuration and runtime failures return sanitized 503", async () =
 		assert.deepEqual(body, { detail: "Ask service unavailable" });
 		assert.equal(JSON.stringify(body).includes("secret"), false);
 		assert.equal(JSON.stringify(body).includes("private"), false);
+	}
+});
+
+test("LLM pressure failures return stable retryable 503 outcomes", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	for (const [error, code] of [
+		[new AiConcurrencyOverloadedError(), "llm_overloaded"],
+		[new AiConcurrencyWaitTimeoutError(30_000), "llm_queue_timeout"],
+	] as const) {
+		const response = await handleNativeAskRequest({
+			request: request({ question: "问题", library_id: LIBRARY_ID }),
+			path: ["v1", "ask"],
+			identity,
+			repository: repositoryInput(new FakeConversationRepository()),
+			runtimeFactory: runtimeFactory(new FakeRuntime(askState(), [], error)),
+		});
+
+		assert.equal(response?.status, 503);
+		assert.equal(response?.headers.get("retry-after"), "1");
+		assert.deepEqual(await response?.json(), {
+			detail: "AI provider is busy",
+			code,
+		});
 	}
 });

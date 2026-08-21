@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+	observeAiConcurrency,
 	observeAskCompletion,
 	observeWebRequest,
 	renderPrometheusMetrics,
@@ -99,6 +100,62 @@ test("renders bounded Ask quality aggregates without resource identifiers", () =
 	assert.match(
 		output,
 		/unorag_ask_completions_total\{query_type="unknown",retrieval_mode="unknown",outcome="refused"\} 1/,
+	);
+});
+
+test("renders process-local LLM concurrency pressure and queue latency", () => {
+	observeAiConcurrency({
+		type: "snapshot",
+		snapshot: { active: 2, queued: 3, limit: 4 },
+	});
+	observeAiConcurrency({
+		type: "acquire",
+		outcome: "overloaded",
+		waitDurationMs: 0,
+		snapshot: { active: 4, queued: 32, limit: 4 },
+	});
+	observeAiConcurrency({
+		type: "acquire",
+		outcome: "timed_out",
+		waitDurationMs: 30_000,
+		snapshot: { active: 4, queued: 31, limit: 4 },
+	});
+	observeAiConcurrency({
+		type: "acquire",
+		outcome: "acquired",
+		waitDurationMs: 125,
+		snapshot: { active: 3, queued: 2, limit: 4 },
+	});
+	observeAiConcurrency({
+		type: "acquire",
+		outcome: "cancelled",
+		waitDurationMs: 250,
+		snapshot: { active: 3, queued: 1, limit: 4 },
+	});
+
+	const output = renderPrometheusMetrics();
+	assert.match(output, /unorag_ai_llm_inflight 3/);
+	assert.match(output, /unorag_ai_llm_queue_depth 1/);
+	assert.match(output, /unorag_ai_llm_concurrency_limit 4/);
+	assert.match(
+		output,
+		/unorag_ai_llm_acquisitions_total\{outcome="acquired"\} 1/,
+	);
+	assert.match(
+		output,
+		/unorag_ai_llm_acquisitions_total\{outcome="overloaded"\} 1/,
+	);
+	assert.match(
+		output,
+		/unorag_ai_llm_acquisitions_total\{outcome="timed_out"\} 1/,
+	);
+	assert.match(
+		output,
+		/unorag_ai_llm_acquisitions_total\{outcome="cancelled"\} 1/,
+	);
+	assert.match(
+		output,
+		/unorag_ai_llm_queue_wait_seconds_bucket\{le="0.25"\} 1/,
 	);
 });
 
