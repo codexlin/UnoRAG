@@ -7,3 +7,6 @@ Third-party components retain their respective copyright and license terms.
 Release container images include THIRD_PARTY_NOTICES.txt and publish an SBOM
 and provenance attestation alongside the image manifest. See ASSETS.md and
 assets/provenance.json for repository asset provenance.
+
+The UnoRAG name, the UnoRAG and Uno logos, and related Uno product marks are
+not licensed under Apache License 2.0. See TRADEMARKS.md for permitted uses.

@@ -16,6 +16,9 @@
 | [DEVELOPMENT.md](./DEVELOPMENT.md) | 如何开发、测试和维护仓库？ |
 | [OPEN_SOURCE_READINESS.md](./OPEN_SOURCE_READINESS.md) | 公开仓库与稳定版发行还剩哪些安全、许可和权属门禁？ |
 
+源代码许可见根目录 [LICENSE](../LICENSE)，名称、Logo、fork、托管服务和截图的使用边界见
+[TRADEMARKS.md](../TRADEMARKS.md)。两者授予的是不同权利。
+
 机器可读的公开接口以 [Retrieve / Ask v1 契约](./contracts/retrieve-ask-v1.md) 为准。
 根目录 [README](../README.md) 和 [中文 README](../README.zh-CN.md) 是对外产品入口。
 
@@ -33,7 +36,8 @@
 
 设计与演进说明：
 
-- [Uno 品牌系统](./brand/uno-brand-system.md)：母品牌图形、产品命名、颜色、尺寸与资产规则；
+- [Uno 品牌系统](./brand/uno-brand-system.md)：母品牌图形、产品命名、颜色、尺寸与资产规则；对外使用仍须遵守
+  [商标使用政策](../TRADEMARKS.md)；
 - [可观测性架构](./design/observability.md)：已落地的核心原生、可选 Ops 与 Langfuse 三层方案；
 - [Langfuse AI 工程接入](./LANGFUSE.md)：metadata-only 双出口、密钥边界、启用和故障排查；
 - [质量评测与 Prompt 生命周期](./EVALUATION.md)：仓库黄金集、Prompt Registry、发布门禁和可选分数发布；

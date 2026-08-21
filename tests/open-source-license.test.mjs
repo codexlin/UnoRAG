@@ -32,6 +32,27 @@ test("repository metadata consistently activates Apache-2.0", async () => {
 	}
 });
 
+test("trademark policy remains separate from the source-code license", async () => {
+	const [policy, notice, readme, readmeZh, docsIndex] = await Promise.all([
+		source("TRADEMARKS.md"),
+		source("NOTICE"),
+		source("README.md"),
+		source("README.zh-CN.md"),
+		source("docs/README.md"),
+	]);
+
+	assert.match(policy, /The Apache License 2\.0 grants broad rights/);
+	assert.match(policy, /Forks and modified distributions/);
+	assert.match(policy, /Hosted services/);
+	assert.match(policy, /screenshots or short screen recordings/);
+	assert.match(policy, /UnoRAG Knowledge API/);
+	assert.match(policy, /UnoRAG 商标使用政策/);
+	assert.match(notice, /not licensed under Apache License 2\.0/);
+	assert.match(readme, /\[trademark policy\]\(\.\/TRADEMARKS\.md\)/);
+	assert.match(readmeZh, /\[商标使用政策\]\(\.\/TRADEMARKS\.md\)/);
+	assert.match(docsIndex, /\[TRADEMARKS\.md\]\(\.\.\/TRADEMARKS\.md\)/);
+});
+
 test("release workflow publishes GHCR without requiring an ACR mirror", async () => {
 	const workflow = await source(".github/workflows/release-images.yml");
 	assert.match(workflow, /ghcr_repo="ghcr\.io\/\$\{owner\}\/unorag"/);

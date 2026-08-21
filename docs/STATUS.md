@@ -91,7 +91,8 @@ Next.js product + Knowledge API
 1. 完成截图和 `testdata/` fixture 的来源/再分发确认，补齐 `ASSETS.md`；当前 Uno 图形也仍是临时品牌资产。
 2. 生成完整第三方 NOTICE/许可证包，完成 libvips/字体再分发审阅；RC.12 四镜像已完成 SBOM/provenance 和漏洞扫描复验。
 3. 接入镜像签名；公开仓库已保留完整历史，后续发布仍须扫描所有 refs、tag 和 release assets。
-4. 完成 `UnoRAG` / `Unobyte` 名称与图形在目标地区和软件类别的商标检索。
+4. 商标使用政策已覆盖代码许可、fork、托管服务、截图与规范命名；仍须完成 `UnoRAG` / `Unobyte`
+   名称与图形在目标地区和软件类别的正式检索。
 
 公开仓库治理已启用：主干强制 PR 与五项 CI，Private Vulnerability Reporting、Dependabot 安全更新、
 Secret Scanning 和 Push Protection 均已开启。
