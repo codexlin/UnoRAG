@@ -33,6 +33,24 @@ test("HTML table normalization expands spans and preserves summaries", () => {
 	assert.equal(table.tableIr.quality_report.header_inferred, false);
 });
 
+test("HTML table normalization follows browser-style implicit cell and row closing", () => {
+	const table = normalizeHtmlTable({
+		tableId: "table-malformed",
+		page: 1,
+		html: "<table><tr><th>Item<th>Amount<tr><td>Service<td>800<tr><td>Total<td>800</table>",
+	});
+
+	assert.ok(table);
+	assert.deepEqual(table.headers, ["Item", "Amount"]);
+	assert.deepEqual(table.rows, [
+		["Service", "800"],
+		["Total", "800"],
+	]);
+	assert.equal(table.tableIr.rows.length, 1);
+	assert.equal(table.tableIr.summary_rows[0]?.raw_text, "Total | 800");
+	assert.equal(table.tableIr.quality_report.executable, true);
+});
+
 test("MinerU normalization emits executable TableIR", () => {
 	const result = normalizeMinerUResult(
 		{
