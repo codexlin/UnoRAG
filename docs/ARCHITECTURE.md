@@ -6,6 +6,8 @@
 
 UnoRAG 是可私有化部署的知识产品，也提供可嵌入的 Knowledge API。浏览器通过 Session、
 客户应用通过 Service Key 进入同一个 Next.js 产品边界。Worker 和数据存储永远不是公网入口。
+当前默认交付模型是一位客户一套独立实例；Organization 表示该客户企业，Workspace 用于企业内部
+部门、项目和权限隔离，而不是让互不相关的客户共享一个公网 SaaS 实例。
 
 ```mermaid
 flowchart TB
@@ -16,7 +18,7 @@ flowchart TB
     Parser["LiteParse / MinerU ParserProvider"]
     PG[("PostgreSQL app schema")]
     QD[("Qdrant scoped projections")]
-    Redis[("Redis sessions")]
+    Redis[("Redis Ask memory")]
     Files[("Document object storage")]
     Models["LLM / embedding / rerank"]
 
@@ -79,8 +81,10 @@ organization_id + workspace_id + principal_ids + group_ids
 Routes resolve this scope from PostgreSQL. Callers cannot supply or widen it.
 Every Qdrant search composes mandatory organization, workspace, ACL, document,
 and active-generation filters. Missing dimensions fail closed, and an empty
-allow-list matches nothing. PostgreSQL RLS is defense in depth, not a replacement
-for explicit Qdrant filters.
+allow-list matches nothing. PostgreSQL currently relies on explicitly scoped
+application queries, composite constraints, and separated runtime roles; it does
+not install Row-Level Security policies. RLS remains an optional defense-in-depth
+hardening item, not a claimed runtime guarantee.
 
 ## 文档生命周期
 
@@ -129,7 +133,10 @@ when truncated; citations continue to point at every contributing row group.
 ## 检索与问答
 
 Native Retrieve resolves scope, embeds the query, applies mandatory Qdrant filters,
-optionally performs BM25 hybrid fusion and reranking, and maps strict citations.
+optionally reranks results, and maps strict citations. The current BM25+RRF path
+builds an application-level lexical index from a bounded corpus and is intended for
+small and medium knowledge bases; server-side sparse retrieval remains an evaluated
+future upgrade rather than a current scale claim.
 
 Native Ask uses LangGraph.js for orchestration:
 

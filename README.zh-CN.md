@@ -28,13 +28,13 @@ UnoRAG 关注真正影响企业上线的完整链路：检索前权限过滤、�
 | 企业要求 | UnoRAG 的处理方式 |
 |---|---|
 | 回答必须可核对 | 可定位引用、证据预览与裁决；覆盖不足时拒答或澄清 |
-| 知识不能越权 | organization、Workspace、文档 ACL 和用户组贯穿 PostgreSQL 与 Qdrant |
+| 知识不能越权 | PostgreSQL 业务查询显式绑定 organization、Workspace 与资源权限；Qdrant 强制作用域过滤并复核召回结果 |
 | 更新不能影响在线服务 | 新 generation 独立索引并校验，成功后原子激活，失败继续服务旧版本 |
 | PDF 和表格不能切坏 | DocumentIR / TableIR 保留页面、标题、表头、单位、行范围和来源坐标 |
 | 任务必须可恢复 | DBOS 执行解析、Embedding、索引、删除和清理，支持重试、取消与对账 |
 | 质量变更必须可衡量 | 版本化 Prompt 与真实文件黄金集门禁事实覆盖、文档召回、拒答准确率和延迟 |
 | 运维必须看得懂 | 原生运行中心可独立工作；可选 OTel Ops 与 metadata-only Langfuse 接入分别补充基础设施和 AI 工程视图 |
-| 必须进入客户基础设施 | Compose 参考拓扑、Helm starter、最小权限数据库角色、备份恢复和发布门禁 |
+| 必须进入客户基础设施 | Compose 参考拓扑、Helm starter、分离的 Web / Worker / Migrator 数据库角色、备份恢复和发布门禁 |
 
 ## 一个知识内核，两种使用方式
 
@@ -61,13 +61,17 @@ flowchart LR
 ```
 
 默认切分策略是**结构优先**：标题、页面、表格和代码边界优先；递归切分负责硬上限；
-语义切分只用于较长、缺少显式结构的叙事区域。检索支持 Dense、可选 BM25+RRF、Rerank
-和确定性表格执行，Ask 使用 LangGraph.js 编排并通过 Vercel AI SDK 流式生成。
+语义切分只用于较长、缺少显式结构的叙事区域。检索默认使用 Dense，可选 Rerank；当前还提供
+面向小中型知识库的应用层 BM25+RRF，并支持确定性表格执行。Ask 使用 LangGraph.js 编排并通过
+Vercel AI SDK 流式生成。
 
 ## 私有部署
 
 客户保有数据库、文档、模型和解析器密钥。公网只暴露 Next.js 产品边界，Worker、PostgreSQL、
 Qdrant、Redis 和 ParserProvider 留在内网。
+
+UnoRAG 当前以**单客户独立实例**为默认交付模型。Organization 表示部署所属企业，Workspace
+用于企业内部部门、项目和权限隔离；当前不提供公网共享多租户 SaaS。
 
 本地体验只需先安装 Docker Desktop，或 Docker Engine + Compose v2，然后执行：
 
@@ -105,7 +109,7 @@ flowchart TB
     Users["Workspace / 客户应用"] --> Web["Next.js 产品与 Knowledge API"]
     Web --> PG[("PostgreSQL")]
     Web --> QD[("Qdrant")]
-    Web --> Redis[("Redis")]
+    Web --> Redis[("Redis · Ask 短期记忆")]
     Worker["DBOS Worker"] --> PG
     Worker --> QD
     Worker --> Files[("文档存储")]
@@ -129,11 +133,11 @@ Next.js 负责身份、Workspace、RBAC/ACL、公开 API、检索、LangGraph、
 
 ## 开源许可
 
-UnoRAG 采用单一、功能完整的开源发行版，不设置付费功能墙。私有化部署、Ops Stack、Langfuse、
+UnoRAG 采用单一开源发行版，不设置付费功能墙。私有化部署、Ops Stack、Langfuse、
 评测和通用 Provider 集成都属于同一产品；部署、集成、调优、定制、培训与 SLA 支持可作为专业服务。
 
-源代码已采用 [Apache License 2.0](./LICENSE)。仓库可见性和首次公开发行仍须通过素材来源、供应链证明
-与发布候选验收门禁。详见 [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) 和
+源代码已采用 [Apache License 2.0](./LICENSE)，GitHub 仓库已经公开。稳定版 `v0.1.0` 仍须通过素材来源、
+供应链证明、镜像签名与发布候选验收门禁。详见 [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) 和
 [开源发布准备审计](./docs/OPEN_SOURCE_READINESS.md)。
 
 贡献、支持和安全报告方式分别见 [CONTRIBUTING.md](./CONTRIBUTING.md)、[SUPPORT.md](./SUPPORT.md)

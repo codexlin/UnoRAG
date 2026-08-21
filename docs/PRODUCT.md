@@ -4,6 +4,9 @@
 可治理、可检索、可核验的知识能力，既提供面向员工和管理员的 Workspace，也提供可嵌入
 现有客服、售后、门户和 Agent 的 Retrieve / Ask API。
 
+当前默认交付是一位客户一套独立实例。Organization 表示部署所属企业，Workspace 用于该企业内部
+部门、项目和权限隔离；公网共享多租户 SaaS 不在当前产品范围内。
+
 > 部署形态独立，使用形态嵌入；运行时 API-first，管理上有控制台。
 
 ## 为什么存在
@@ -67,12 +70,12 @@ Jobs 生命周期接口尚未作为稳定外部契约发布。
 | 领域 | 产品状态 |
 |---|---|
 | 身份与工作区 | 本地管理员、Session、邀请、角色、多个 Workspace 与切换已实现 |
-| 权限 | organization/workspace/document ACL、Service Key scope 与 Qdrant 强制过滤已实现；用户组管理 UI 待增强 |
+| 权限 | PostgreSQL 显式作用域查询、document ACL、Service Key scope、Qdrant 强制过滤与召回复核已实现；PostgreSQL RLS 和用户组管理 UI 待增强 |
 | 入库 | TXT、Markdown、DOCX、PDF；DocumentIR/TableIR；LiteParse、自托管或 302.AI MinerU |
 | 切分与索引 | 结构优先 profile、递归硬上限、可选叙事语义切分、chunk/section/table 多粒度记录 |
-| 检索与问答 | Dense、可选 BM25+RRF、rerank、问题路由、表格执行、证据裁决、拒答、引用与 SSE |
+| 检索与问答 | Dense、可选 rerank、面向小中型知识库的应用层 BM25+RRF、问题路由、表格执行、证据裁决、拒答、引用与 SSE |
 | 版本与任务 | staging、校验、原子 active 切换、旧版兜底、DBOS 重试/取消/删除/清理/对账 |
-| 对外交付 | Compose 参考拓扑、Helm starter、四镜像、最小权限数据库角色、备份恢复和发布门禁 |
+| 对外交付 | Compose 参考拓扑、Helm starter、四镜像、分离的运行时数据库角色、备份恢复和发布门禁 |
 
 仓库是单根 Next.js/TypeScript 应用，没有 FastAPI 产品服务、Python 生命周期 Worker、outbox
 投影链路或重复业务数据库。Python 仅保留在宿主机验收和配置辅助脚本中。
@@ -112,8 +115,8 @@ UnoRAG 当前不把以下方向作为核心承诺：
 再增强客户部署，最后扩展知识能力”排列：
 
 1. **公开发布准备**：素材权属、完整第三方 NOTICE、镜像签名、正式品牌和精确 commit 的 RC 复验。
-2. **私有部署产品化**：OIDC/SSO、S3/MinIO、Kubernetes NetworkPolicy/PDB/HPA，以及 Ops Stack 的
-   客户环境容量与故障验收。
+2. **私有部署产品化**：完成腾讯云 COS 真实凭证验收，并按试点需求推进 OIDC/SSO、其他 S3 兼容存储、
+   Kubernetes NetworkPolicy/PDB/HPA，以及 Ops Stack 的客户环境容量与故障验收。
 3. **知识质量**：在现有真实文件黄金集与 Prompt 门禁上扩充客户问题分类、引用 precision、
    Provider scorecard 和 ChartIR。
 4. **平台接口**：稳定 Documents/Versions/Jobs 公共 API、用户组管理和目录同步。

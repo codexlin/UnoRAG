@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-08-12
+> 更新日期：2026-08-17
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -11,7 +11,8 @@
 UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部署、具备权限和文档生命周期的知识产品**。
 仓库已在 GitHub 公开并采用 Apache-2.0，目前最新生产候选为 `v0.1.0-rc.12`；精确候选提交已完成
 HK 真实文件、浏览器、隔离、维护恢复与回退前滚复验。在素材权属、完整第三方通知和镜像签名完成前，
-仍不应发布稳定 `v0.1.0`，也不应把该单机候选结论扩大为所有部署拓扑的通用生产认证。
+仍不应发布稳定 `v0.1.0`，也不应把该单机候选结论扩大为所有部署拓扑的通用生产认证。当前默认
+交付是一位客户一套独立实例；Workspace 服务于客户企业内部治理，不代表公网共享多租户 SaaS。
 
 ## 当前运行时
 
@@ -20,7 +21,7 @@ Browser / customer application
              ↓
 Next.js product + Knowledge API
      ├── PostgreSQL: 唯一业务事实源
-     ├── Redis: Session 与短期运行状态
+     ├── Redis: Ask 短期会话记忆
      ├── Qdrant: 带作用域的检索投影
      └── DBOS Worker
             ├── LiteParse / MinerU
@@ -54,7 +55,7 @@ Next.js product + Knowledge API
 | 中间表示 | DocumentIR / TableIR 保留章节、页面、表头、单位、行组和来源信息 |
 | 切分 | 结构优先；递归硬上限；长叙事可选语义切分；表格按原表、摘要和行组分层 |
 | 索引 | chunk / section / table 多粒度 Qdrant 记录，包含 ACL、版本和 generation 载荷 |
-| 检索 | Dense、可选应用层 BM25 + RRF、可选 rerank、强制作用域过滤与引用映射 |
+| 检索 | Dense、可选 rerank、面向小中型知识库的应用层 BM25 + RRF、强制作用域过滤与引用映射 |
 | Ask | LangGraph.js 路由、计划、改写、检索、证据裁决、拒答、表格执行和 SSE 生成 |
 | 表格回答 | 支持条件、比较、单位和聚合的确定性执行，并引用实际贡献行组 |
 | 会话 | 临时追问上下文与主动归档；归档 thread/turn 可继续对话 |
@@ -98,7 +99,7 @@ Secret Scanning 和 Push Protection 均已开启。
 ### P1：私有部署产品化
 
 1. **OIDC / SSO**：已有 Provider 边界和 Session 类型，但没有可交付的 OIDC 实现。
-2. **S3 / MinIO**：当前文档存储使用共享目录或 PVC；一等公民对象存储适配尚未实现。
+2. **对象存储**：腾讯云 COS 适配器、Compose/Helm 配置及 Mock 契约测试已实现；真实 CAM 凭证下的上传、下载、替换、删除与备份恢复仍待绑定环境验收。其他 S3 兼容存储按试点需求扩展。
 3. **Kubernetes 加固**：Helm 是 starter，尚未内置 NetworkPolicy、PDB、HPA 或 digest-native 镜像字段。
 4. **身份目录**：group ACL 数据面已存在，用户组管理 UI、SCIM/目录同步尚未完成。
 5. **公共生命周期 API**：Documents / Versions / Jobs 仍是 Workspace 内部接口，不是稳定 v1 契约。
@@ -106,7 +107,7 @@ Secret Scanning 和 Push Protection 均已开启。
 ### P2：知识质量扩展
 
 1. ChartIR 与图表数值理解尚未实现；`mixed-charts.pdf` 当前只验证叙事文字恢复。
-2. 应用层 BM25 + RRF 已可用，但 Qdrant native sparse 是否值得迁移仍需客户语料评测证明。
+2. 应用层 BM25 + RRF 仅作为小中型知识库模式；Qdrant native sparse 是否值得迁移仍需客户语料与容量评测证明。
 3. Provider scorecard、更多客户问题类型、引用 precision 与复杂跨页表金标仍需扩充。
 4. 万行级表格 SQL 执行被有意排除；这类数据应优先接入源数据库或独立查询工具。
 
@@ -124,7 +125,7 @@ Secret Scanning 和 Push Protection 均已开启。
 1. **发布合规批次**：确认素材/fixture 权属、完整第三方 NOTICE 与镜像签名。
 2. **品牌与对外材料批次**：确定正式名称和 Logo，更新产品截图，避免用临时资产发布首个公开版本。
 3. **稳定 v0.1.0**：签名 RC.12 等价镜像后，发布源码、镜像 digest、SBOM/provenance 和版本绑定验收报告。
-4. **部署增强批次**：按真实试点需求在 OIDC、S3/MinIO、Kubernetes 加固中选择第一条纵向切片。
+4. **部署增强批次**：先完成 COS 真实凭证验收，再按真实试点需求在 OIDC、其他对象存储、Kubernetes 加固中选择下一条纵向切片。
 
 完成前四项后，UnoRAG 才从“代码和 RC 已成熟”进入“外部用户可安全采用”的阶段。
 
