@@ -8,7 +8,8 @@ nameOverride: ""
 imagePullSecrets: []
 
 # Pin immutable release tags before customer handoff. The release pipeline emits
-# digest manifests, but digest-native Helm image fields and SBOM publication remain gaps.
+# digest manifests with SBOM, provenance and Cosign signatures; digest-native
+# Helm image fields remain a gap.
 images:
   web:
     repository: unorag-web
@@ -243,4 +244,4 @@ migrate:
       tag: local
       pullPolicy: IfNotPresent
 
-# Release CI gates CVEs and emits digest manifests; SBOM/signing are deferred.
+# Release CI gates CVEs and emits signed digest manifests with SBOM/provenance.

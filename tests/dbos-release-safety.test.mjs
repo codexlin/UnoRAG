@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -83,6 +83,11 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 	assert.match(releaseWorkflow, /publish_acr=false/);
 	assert.match(releaseWorkflow, /PUBLISH_ACR/);
 	assert.match(releaseWorkflow, /Mirror runtime manifests to ACR/);
+	assert.match(releaseWorkflow, /id-token: write/);
+	assert.match(releaseWorkflow, /sigstore\/cosign-installer@6f9f177/);
+	assert.match(releaseWorkflow, /cosign sign --yes/);
+	assert.match(releaseWorkflow, /--certificate-identity "\$\{identity\}"/);
+	assert.match(releaseWorkflow, /UNORAG_VERIFY_IMAGE_SIGNATURES=true/);
 	assert.match(
 		releaseWorkflow,
 		/docker pull --platform "\$\{IMAGE_PLATFORM\}"/,
@@ -102,6 +107,71 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 	assert.match(localRelease, /UNORAG_BUILD_TIME=\$\{BUILD_TIME\}/);
 	assert.doesNotMatch(localRelease, /DBOS_APPLICATION_VERSION=lifecycle-v2/);
 	assert.doesNotMatch(releaseWorkflow, /DBOS_APPLICATION_VERSION=lifecycle-v2/);
+});
+
+test("release signature verification fails closed for missing and invalid signatures", async () => {
+	const helper = fileURLToPath(
+		new URL("../deploy/compose/scripts/release-env.sh", import.meta.url),
+	);
+	const directory = await mkdtemp(join(tmpdir(), "unorag-cosign-test-"));
+	const binary = join(directory, "cosign");
+	const log = join(directory, "cosign.log");
+	const image = `ghcr.io/codexlin/unorag@sha256:${"a".repeat(64)}`;
+	const command =
+		'source "$1"; mk_release_verify_signature UNORAG_WEB_IMAGE "$2"';
+	const baseEnvironment = {
+		...process.env,
+		PATH: `${directory}:${process.env.PATH ?? ""}`,
+		UNORAG_VERIFY_IMAGE_SIGNATURES: "true",
+		UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP:
+			"^https://github.com/codexlin/UnoRAG/.github/workflows/release-images.yml@refs/tags/v.*$",
+		UNORAG_COSIGN_OIDC_ISSUER: "https://token.actions.githubusercontent.com",
+		COSIGN_LOG: log,
+	};
+
+	try {
+		await writeFile(
+			binary,
+			'#!/bin/sh\nprintf "%s\\n" "$*" >> "$COSIGN_LOG"\n[ "$COSIGN_RESULT" != invalid ]\n',
+		);
+		await chmod(binary, 0o755);
+
+		const valid = spawnSync(
+			"bash",
+			["-c", command, "signature-test", helper, image],
+			{ encoding: "utf8", env: { ...baseEnvironment, COSIGN_RESULT: "valid" } },
+		);
+		assert.equal(valid.status, 0, valid.stderr);
+		const invocation = await readFile(log, "utf8");
+		assert.match(invocation, /verify/);
+		assert.match(invocation, /--certificate-identity-regexp/);
+		assert.ok(invocation.includes(image));
+
+		const invalid = spawnSync(
+			"bash",
+			["-c", command, "signature-test", helper, image],
+			{
+				encoding: "utf8",
+				env: { ...baseEnvironment, COSIGN_RESULT: "invalid" },
+			},
+		);
+		assert.notEqual(invalid.status, 0);
+		assert.match(invalid.stderr, /signature verification failed/);
+
+		await rm(binary);
+		const actuallyMissing = spawnSync(
+			"bash",
+			["-c", command, "signature-test", helper, image],
+			{
+				encoding: "utf8",
+				env: { ...baseEnvironment, PATH: "/usr/bin:/bin" },
+			},
+		);
+		assert.notEqual(actuallyMissing.status, 0);
+		assert.match(actuallyMissing.stderr, /cosign is required/);
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
 });
 
 test("release images carry the project license and notice", async () => {

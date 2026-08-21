@@ -205,7 +205,7 @@ Worker 同时获得新凭证，验证上传、入库、下载和删除后再撤�
 | Workflow | 责任 |
 |---|---|
 | `.github/workflows/ci.yml` | Web/TS 测试、评分器、类型、Lint、迁移与四镜像构建 |
-| `.github/workflows/release-images.yml` | ACR/GHCR 推送、Trivy HIGH/CRITICAL 门禁和 digest manifest |
+| `.github/workflows/release-images.yml` | ACR/GHCR 推送、Trivy HIGH/CRITICAL 门禁、SBOM/provenance、Cosign 签名和 digest manifest |
 
 本地候选镜像：
 
@@ -215,9 +215,19 @@ just images v0.1.0
 just release v0.1.0 REGISTRY/NAMESPACE
 ```
 
-manifest 记录四个镜像 digest 和 DBOS application version。升级只能引用该不可变 manifest；
-扫描失败不得发布。SBOM、签名和 provenance 目前不是通用交付能力，客户合同要求时必须在
-该项目的发布门禁中补齐。
+manifest 记录四个镜像 digest、DBOS application version 和 Cosign 验证策略。升级只能引用该
+不可变 manifest；扫描、签名或发布后的自验任一失败都不得发布。正式 workflow 使用 GitHub OIDC
+短期身份做 Sigstore keyless 签名，不保存长期私钥。安装机需预装 `cosign`；正式 manifest 默认启用
+fail-closed 验签，并在拉取镜像前校验证书身份和 OIDC issuer。
+
+运营人员也可以独立验证任一 manifest 镜像：
+
+```bash
+cosign verify \
+  --certificate-identity-regexp '^https://github.com/codexlin/UnoRAG/.github/workflows/release-images.yml@refs/(heads/main|tags/v.*)$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  'ghcr.io/codexlin/unorag@sha256:<64-hex-digest>'
+```
 
 `0021_ask_runs.sql` 会在既有 `libraries` 和 `workspace_service_keys` 上建立复合唯一索引。大型客户库
 升级时应安排维护窗口并先在副本测量锁等待；后续若这些表增长到需要在线迁移，应将索引改为独立的

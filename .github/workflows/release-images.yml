@@ -22,6 +22,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 concurrency:
   group: release-images-${{ github.ref }}
@@ -143,6 +144,10 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Install Cosign
+        if: steps.meta.outputs.dry_run != 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Build and publish web runner
         id: web
@@ -318,6 +323,50 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
 
+      - name: Sign and verify release image digests
+        if: steps.meta.outputs.dry_run != 'true'
+        env:
+          GHCR_REPO: ${{ steps.meta.outputs.ghcr_repo }}
+          WEB_DIGEST: ${{ steps.web.outputs.digest }}
+          MIGRATOR_DIGEST: ${{ steps.migrator.outputs.digest }}
+          OPS_DIGEST: ${{ steps.ops.outputs.digest }}
+          WORKER_DIGEST: ${{ steps.worker.outputs.digest }}
+          PUBLISH_ACR: ${{ steps.meta.outputs.publish_acr }}
+          ACR_REPO: ${{ steps.meta.outputs.acr_repo }}
+          ACR_WEB_DIGEST: ${{ steps.acr.outputs.web_digest }}
+          ACR_MIGRATOR_DIGEST: ${{ steps.acr.outputs.migrator_digest }}
+          ACR_OPS_DIGEST: ${{ steps.acr.outputs.ops_digest }}
+          ACR_WORKER_DIGEST: ${{ steps.acr.outputs.worker_digest }}
+        run: |
+          set -euo pipefail
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-images.yml@${GITHUB_REF}"
+          issuer="https://token.actions.githubusercontent.com"
+
+          sign_and_verify() {
+            local repository="$1" digest="$2" image
+            [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+              echo "invalid image digest for signing: ${repository}@${digest}" >&2
+              exit 1
+            }
+            image="${repository}@${digest}"
+            cosign sign --yes "${image}"
+            cosign verify \
+              --certificate-identity "${identity}" \
+              --certificate-oidc-issuer "${issuer}" \
+              "${image}" >/dev/null
+          }
+
+          sign_and_verify "${GHCR_REPO}" "${WEB_DIGEST}"
+          sign_and_verify "${GHCR_REPO}" "${MIGRATOR_DIGEST}"
+          sign_and_verify "${GHCR_REPO}" "${OPS_DIGEST}"
+          sign_and_verify "${GHCR_REPO}" "${WORKER_DIGEST}"
+          if [[ "${PUBLISH_ACR}" == "true" ]]; then
+            sign_and_verify "${ACR_REPO}" "${ACR_WEB_DIGEST}"
+            sign_and_verify "${ACR_REPO}" "${ACR_MIGRATOR_DIGEST}"
+            sign_and_verify "${ACR_REPO}" "${ACR_OPS_DIGEST}"
+            sign_and_verify "${ACR_REPO}" "${ACR_WORKER_DIGEST}"
+          fi
+
       - name: Emit release manifests
         env:
           DRY_RUN: ${{ steps.meta.outputs.dry_run }}
@@ -334,6 +383,7 @@ jobs:
           ACR_WORKER_DIGEST: ${{ steps.acr.outputs.worker_digest }}
           ACR_MIGRATOR_DIGEST: ${{ steps.acr.outputs.migrator_digest }}
           GHCR_REPO: ${{ steps.meta.outputs.ghcr_repo }}
+          SIGNATURE_IDENTITY_REGEXP: ^https://github.com/${{ github.repository }}/.github/workflows/release-images.yml@refs/(heads/main|tags/v.*)$
           WEB_DIGEST: ${{ steps.web.outputs.digest }}
           OPS_DIGEST: ${{ steps.ops.outputs.digest }}
           WORKER_DIGEST: ${{ steps.worker.outputs.digest }}
@@ -353,6 +403,9 @@ jobs:
           UNORAG_VERSION=${VERSION}
           UNORAG_REVISION=${REVISION}
           UNORAG_BUILD_TIME=${BUILD_TIME}
+          UNORAG_VERIFY_IMAGE_SIGNATURES=false
+          UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP=${SIGNATURE_IDENTITY_REGEXP}
+          UNORAG_COSIGN_OIDC_ISSUER=https://token.actions.githubusercontent.com
           EOF
           else
             for digest in "${WEB_DIGEST}" "${OPS_DIGEST}" "${WORKER_DIGEST}" "${MIGRATOR_DIGEST}"; do
@@ -372,6 +425,9 @@ jobs:
           UNORAG_VERSION=${VERSION}
           UNORAG_REVISION=${REVISION}
           UNORAG_BUILD_TIME=${BUILD_TIME}
+          UNORAG_VERIFY_IMAGE_SIGNATURES=true
+          UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP=${SIGNATURE_IDENTITY_REGEXP}
+          UNORAG_COSIGN_OIDC_ISSUER=https://token.actions.githubusercontent.com
           EOF
             fi
             cat > /tmp/unorag-release/release-ghcr.env <<EOF
@@ -384,6 +440,9 @@ jobs:
           UNORAG_VERSION=${VERSION}
           UNORAG_REVISION=${REVISION}
           UNORAG_BUILD_TIME=${BUILD_TIME}
+          UNORAG_VERIFY_IMAGE_SIGNATURES=true
+          UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP=${SIGNATURE_IDENTITY_REGEXP}
+          UNORAG_COSIGN_OIDC_ISSUER=https://token.actions.githubusercontent.com
           EOF
           fi
 

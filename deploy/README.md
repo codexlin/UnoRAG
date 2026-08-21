@@ -2,7 +2,7 @@
 
 本目录是客户可安装的私有部署参考包。主机需要 Docker、Docker Compose 和 Python 3
 （仅供配置迁移与验收脚本使用，产品镜像不含 Python 运行时）。首片以 **Docker Compose 单机拓扑** 为主；
-**Helm/K8s 起步骨架** 已提供；镜像 CVE 扫描、SBOM 与 provenance 已进入发布门禁，签名后置。
+**Helm/K8s 起步骨架** 已提供；镜像 CVE 扫描、SBOM、provenance 与 Cosign 签名已进入发布门禁。
 
 产品定位见 [`docs/PRODUCT.md`](../docs/PRODUCT.md)，安装与生产验收分别见
 [`docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) 和 [`docs/RELEASE.md`](../docs/RELEASE.md)。
@@ -126,7 +126,8 @@ SBOM 与 provenance attestation，并写入源码、提交和 Apache-2.0 OCI 标
 
 1. 确认 `deploy/config/runtime.env.example` / Helm values 中基础镜像 tag 已 pin；
 2. 使用 workflow 产出的 digest manifest 部署，并归档对应 Trivy 日志；
-3. 核验镜像 digest 关联的 SBOM / provenance；签名门禁落地前，不得宣称镜像已签名。
+3. 核验镜像 digest 关联的 SBOM / provenance 和 Cosign keyless 签名；正式 manifest 会在安装、
+   升级拉取镜像前 fail-closed 验签。
 
 GHCR 是默认公开 Registry。完整配置 `ACR_REGISTRY`、`ACR_NAMESPACE`、`ACR_USERNAME` 和
 `ACR_PASSWORD` 后，workflow 才会把同一次构建同步到 ACR；未配置 ACR 不会阻断 GHCR 发布。
@@ -140,7 +141,7 @@ overlay 配合显式 `--allow-platform-emulation`。
 | 项 | 说明 |
 |---|---|
 | Helm 容量 / HPA / PDB / NetworkPolicy | starter 未纳入；按客户集群硬化 |
-| 镜像签名与第三方许可证包 | CVE 门禁、SBOM 和 provenance 已接入；Cosign 与完整 notices 包仍后置 |
+| 第三方许可证包 | CVE、SBOM、provenance 和 Cosign 签名已接入；完整 notices 交付包仍后置 |
 | 客户自有 registry promotion | GHCR 默认发布、ACR 可选镜像；TCR/Harbor 按客户策略后置 |
 | MinIO/S3 一等公民对象后端 | 默认共享卷 / PVC；S3 适配另开 |
 

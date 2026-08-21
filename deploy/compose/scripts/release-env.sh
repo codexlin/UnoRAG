@@ -33,6 +33,47 @@ mk_release_assert_image() {
 	}
 }
 
+mk_release_verify_signature() {
+	local name="$1" image="$2"
+	case "${UNORAG_VERIFY_IMAGE_SIGNATURES:-false}" in
+		1|true|TRUE|yes|YES) ;;
+		0|false|FALSE|no|NO|"") return 0 ;;
+		*)
+			printf 'error: UNORAG_VERIFY_IMAGE_SIGNATURES must be true or false\n' >&2
+			return 1
+			;;
+	esac
+	mk_release_assert_image "$name" "$image" digest || return 1
+	command -v cosign >/dev/null 2>&1 || {
+		printf 'error: cosign is required to verify signed release images\n' >&2
+		return 1
+	}
+	local identity="${UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP:-}"
+	local issuer="${UNORAG_COSIGN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
+	[[ -n "$identity" ]] || {
+		printf 'error: UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP is required\n' >&2
+		return 1
+	}
+	cosign verify \
+		--certificate-identity-regexp "$identity" \
+		--certificate-oidc-issuer "$issuer" \
+		"$image" >/dev/null || {
+		printf 'error: signature verification failed for %s\n' "$name" >&2
+		return 1
+	}
+}
+
+mk_release_verify_images() {
+	[[ "$#" -gt 0 && $(( $# % 2 )) -eq 0 ]] || {
+		printf 'error: signature verification requires NAME IMAGE pairs\n' >&2
+		return 1
+	}
+	while [[ "$#" -gt 0 ]]; do
+		mk_release_verify_signature "$1" "$2" || return 1
+		shift 2
+	done
+}
+
 mk_release_assert_dbos_version() {
 	local value="$1"
 	[[ "$value" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || {
