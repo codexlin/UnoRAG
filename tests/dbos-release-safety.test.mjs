@@ -54,6 +54,8 @@ test("drain snapshot blocks on either application or DBOS work", () => {
 test("release manifests derive DBOS version from the immutable git SHA", async () => {
 	const localRelease = await source("scripts/release/local-images.sh");
 	const releaseWorkflow = await source(".github/workflows/release-images.yml");
+	const install = await source("deploy/compose/scripts/install.sh");
+	const upgrade = await source("deploy/compose/scripts/upgrade.sh");
 	assert.match(localRelease, /echo "unorag-\$\{sha:0:16\}"/);
 	assert.match(releaseWorkflow, /dbos_version=unorag-\$\{GITHUB_SHA::16\}/);
 	assert.match(releaseWorkflow, /image_platform=linux\/amd64/);
@@ -88,6 +90,17 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 	assert.match(releaseWorkflow, /cosign sign --yes/);
 	assert.match(releaseWorkflow, /--certificate-identity "\$\{identity\}"/);
 	assert.match(releaseWorkflow, /UNORAG_VERIFY_IMAGE_SIGNATURES=true/);
+	assert.match(
+		releaseWorkflow,
+		/sign_and_verify "\$\{ACR_REPO\}" "\$\{ACR_WEB_DIGEST\}" legacy/,
+	);
+	assert.match(releaseWorkflow, /--registry-referrers-mode=legacy/);
+	assert.match(releaseWorkflow, /UNORAG_COSIGN_NEW_BUNDLE_FORMAT=false/);
+	assert.match(releaseWorkflow, /UNORAG_COSIGN_REGISTRY_REFERRERS_MODE=legacy/);
+	for (const deploymentScript of [install, upgrade]) {
+		assert.match(deploymentScript, /UNORAG_COSIGN_NEW_BUNDLE_FORMAT/);
+		assert.match(deploymentScript, /UNORAG_COSIGN_REGISTRY_REFERRERS_MODE/);
+	}
 	assert.match(
 		releaseWorkflow,
 		/docker pull --platform "\$\{IMAGE_PLATFORM\}"/,
@@ -145,7 +158,41 @@ test("release signature verification fails closed for missing and invalid signat
 		const invocation = await readFile(log, "utf8");
 		assert.match(invocation, /verify/);
 		assert.match(invocation, /--certificate-identity-regexp/);
+		assert.match(invocation, /--new-bundle-format=true/);
 		assert.ok(invocation.includes(image));
+
+		await writeFile(log, "");
+		const legacy = spawnSync(
+			"bash",
+			["-c", command, "signature-test", helper, image],
+			{
+				encoding: "utf8",
+				env: {
+					...baseEnvironment,
+					COSIGN_RESULT: "valid",
+					UNORAG_COSIGN_NEW_BUNDLE_FORMAT: "false",
+					UNORAG_COSIGN_REGISTRY_REFERRERS_MODE: "legacy",
+				},
+			},
+		);
+		assert.equal(legacy.status, 0, legacy.stderr);
+		assert.match(await readFile(log, "utf8"), /--new-bundle-format=false/);
+
+		const incompatibleLayout = spawnSync(
+			"bash",
+			["-c", command, "signature-test", helper, image],
+			{
+				encoding: "utf8",
+				env: {
+					...baseEnvironment,
+					COSIGN_RESULT: "valid",
+					UNORAG_COSIGN_NEW_BUNDLE_FORMAT: "true",
+					UNORAG_COSIGN_REGISTRY_REFERRERS_MODE: "legacy",
+				},
+			},
+		);
+		assert.notEqual(incompatibleLayout.status, 0);
+		assert.match(incompatibleLayout.stderr, /storage mode and bundle format/);
 
 		const invalid = spawnSync(
 			"bash",

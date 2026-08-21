@@ -343,14 +343,27 @@ jobs:
           issuer="https://token.actions.githubusercontent.com"
 
           sign_and_verify() {
-            local repository="$1" digest="$2" image
+            local repository="$1" digest="$2" storage_mode="${3:-oci-1-1}" image
+            local -a sign_args=() verify_args=()
             [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || {
               echo "invalid image digest for signing: ${repository}@${digest}" >&2
               exit 1
             }
             image="${repository}@${digest}"
-            cosign sign --yes "${image}"
+            case "${storage_mode}" in
+              oci-1-1) ;;
+              legacy)
+                # Some ACR editions reject the OCI 1.1 empty manifest used by
+                # Cosign v3. Keep the same keyless identity and digest while
+                # storing the signature under the legacy digest tag.
+                sign_args+=(--new-bundle-format=false --registry-referrers-mode=legacy)
+                verify_args+=(--new-bundle-format=false)
+                ;;
+              *) echo "invalid Cosign storage mode: ${storage_mode}" >&2; exit 1 ;;
+            esac
+            cosign sign --yes "${sign_args[@]}" "${image}"
             cosign verify \
+              "${verify_args[@]}" \
               --certificate-identity "${identity}" \
               --certificate-oidc-issuer "${issuer}" \
               "${image}" >/dev/null
@@ -361,10 +374,10 @@ jobs:
           sign_and_verify "${GHCR_REPO}" "${OPS_DIGEST}"
           sign_and_verify "${GHCR_REPO}" "${WORKER_DIGEST}"
           if [[ "${PUBLISH_ACR}" == "true" ]]; then
-            sign_and_verify "${ACR_REPO}" "${ACR_WEB_DIGEST}"
-            sign_and_verify "${ACR_REPO}" "${ACR_MIGRATOR_DIGEST}"
-            sign_and_verify "${ACR_REPO}" "${ACR_OPS_DIGEST}"
-            sign_and_verify "${ACR_REPO}" "${ACR_WORKER_DIGEST}"
+            sign_and_verify "${ACR_REPO}" "${ACR_WEB_DIGEST}" legacy
+            sign_and_verify "${ACR_REPO}" "${ACR_MIGRATOR_DIGEST}" legacy
+            sign_and_verify "${ACR_REPO}" "${ACR_OPS_DIGEST}" legacy
+            sign_and_verify "${ACR_REPO}" "${ACR_WORKER_DIGEST}" legacy
           fi
 
       - name: Emit release manifests
@@ -406,6 +419,8 @@ jobs:
           UNORAG_VERIFY_IMAGE_SIGNATURES=false
           UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP=${SIGNATURE_IDENTITY_REGEXP}
           UNORAG_COSIGN_OIDC_ISSUER=https://token.actions.githubusercontent.com
+          UNORAG_COSIGN_NEW_BUNDLE_FORMAT=true
+          UNORAG_COSIGN_REGISTRY_REFERRERS_MODE=oci-1-1
           EOF
           else
             for digest in "${WEB_DIGEST}" "${OPS_DIGEST}" "${WORKER_DIGEST}" "${MIGRATOR_DIGEST}"; do
@@ -428,6 +443,8 @@ jobs:
           UNORAG_VERIFY_IMAGE_SIGNATURES=true
           UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP=${SIGNATURE_IDENTITY_REGEXP}
           UNORAG_COSIGN_OIDC_ISSUER=https://token.actions.githubusercontent.com
+          UNORAG_COSIGN_NEW_BUNDLE_FORMAT=false
+          UNORAG_COSIGN_REGISTRY_REFERRERS_MODE=legacy
           EOF
             fi
             cat > /tmp/unorag-release/release-ghcr.env <<EOF
@@ -443,6 +460,8 @@ jobs:
           UNORAG_VERIFY_IMAGE_SIGNATURES=true
           UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP=${SIGNATURE_IDENTITY_REGEXP}
           UNORAG_COSIGN_OIDC_ISSUER=https://token.actions.githubusercontent.com
+          UNORAG_COSIGN_NEW_BUNDLE_FORMAT=true
+          UNORAG_COSIGN_REGISTRY_REFERRERS_MODE=oci-1-1
           EOF
           fi
 
