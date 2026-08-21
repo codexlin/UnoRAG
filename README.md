@@ -30,13 +30,13 @@ explicit refusal, durable processing, and deployment-level acceptance.
 | Enterprise requirement | UnoRAG approach |
 |---|---|
 | Answers must be verifiable | Locatable citations, evidence preview and adjudication; refuse or clarify when coverage is weak |
-| Knowledge must not cross boundaries | Organization, workspace, document ACL, and group scope enforced in PostgreSQL and Qdrant |
+| Knowledge must not cross boundaries | PostgreSQL business queries bind organization, workspace, and resource scope; Qdrant applies mandatory filters and verifies returned hits |
 | Updates must not interrupt service | Stage and validate a new generation, activate atomically, preserve the previous version on failure |
 | PDFs and tables must retain meaning | DocumentIR and TableIR preserve pages, headings, headers, units, row ranges, and source coordinates |
 | Processing must recover | DBOS runs parsing, embedding, indexing, deletion, and cleanup with retries, cancellation, and reconciliation |
 | Quality changes must be measurable | Versioned prompts and real-file golden sets gate fact coverage, document recall, refusal accuracy, and latency |
 | Operators need a product-level view | The scoped Operations Center works standalone; optional OTel Ops and metadata-only Langfuse integrations add infrastructure and AI-engineering views |
-| Delivery must fit customer infrastructure | Compose reference topology, Helm starter, least-privilege roles, recovery tooling, and release gates |
+| Delivery must fit customer infrastructure | Compose reference topology, Helm starter, separate Web / Worker / Migrator database roles, recovery tooling, and release gates |
 
 ## One Knowledge Core, Two Product Surfaces
 
@@ -65,13 +65,18 @@ flowchart LR
 
 Chunking is structure first: headings, pages, tables, and code take priority; recursive splitting
 enforces hard limits; semantic splitting is reserved for long narrative regions without explicit
-structure. Retrieval supports dense search, optional BM25+RRF, reranking, and deterministic table
-execution. LangGraph.js orchestrates Ask, while Vercel AI SDK streams model output.
+structure. Retrieval defaults to dense search with optional reranking. Application-level BM25+RRF
+is available for small and medium knowledge bases, alongside deterministic table execution.
+LangGraph.js orchestrates Ask, while Vercel AI SDK streams model output.
 
 ## Private Deployment
 
 Customers retain control of databases, documents, model endpoints, and parser credentials. Only the
 Next.js product edge is public; workers, PostgreSQL, Qdrant, Redis, and ParserProviders remain private.
+
+UnoRAG currently targets **one isolated deployment per customer**. Organization identifies that
+enterprise, while workspaces separate internal departments, projects, and permissions. A shared
+public multi-tenant SaaS is not part of the current product boundary.
 
 For a local evaluation, install Docker Desktop or Docker Engine with Compose v2, then run:
 
@@ -109,7 +114,7 @@ flowchart TB
     Users["Workspace / customer applications"] --> Web["Next.js product and Knowledge API"]
     Web --> PG[("PostgreSQL")]
     Web --> QD[("Qdrant")]
-    Web --> Redis[("Redis")]
+    Web --> Redis[("Redis · short-term Ask memory")]
     Worker["DBOS worker"] --> PG
     Worker --> QD
     Worker --> Files[("Document storage")]
@@ -138,8 +143,9 @@ UnoRAG is one fully open-source distribution with no paid feature wall. Private 
 Ops Stack assets, Langfuse integration, evaluation, and generic provider adapters belong to the same product;
 professional deployment, integration, tuning, customization, training, and SLA support remain available as services.
 
-The source code is licensed under [Apache License 2.0](./LICENSE). Repository visibility and the first public release
-remain gated by asset provenance, supply-chain evidence, and release-candidate acceptance. See
+The source code is licensed under [Apache License 2.0](./LICENSE), and the GitHub repository is public.
+The stable `v0.1.0` release remains gated by asset provenance, supply-chain evidence, image signing,
+and release-candidate acceptance. See
 [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) and the
 [open-source readiness audit](./docs/OPEN_SOURCE_READINESS.md).
 
