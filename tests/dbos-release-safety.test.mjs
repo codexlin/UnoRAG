@@ -95,6 +95,7 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 		/sign_and_verify "\$\{ACR_REPO\}" "\$\{ACR_WEB_DIGEST\}" legacy/,
 	);
 	assert.match(releaseWorkflow, /--registry-referrers-mode=legacy/);
+	assert.match(releaseWorkflow, /--use-signing-config=false/);
 	assert.match(releaseWorkflow, /UNORAG_COSIGN_NEW_BUNDLE_FORMAT=false/);
 	assert.match(releaseWorkflow, /UNORAG_COSIGN_REGISTRY_REFERRERS_MODE=legacy/);
 	for (const deploymentScript of [install, upgrade]) {
