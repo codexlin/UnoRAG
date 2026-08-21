@@ -38,6 +38,7 @@ class RequestResult:
     latency_ms: float
     quality_ok: bool
     refused: bool
+    refuse_reason: str | None
     citations: int
     request_id: str | None
     error: str | None
@@ -81,6 +82,13 @@ def summarize(
         "quality_passes": len(quality_passes),
         "quality_failures": len(successes) - len(quality_passes),
         "refused": sum(1 for result in successes if result.refused),
+        "refuse_reason_counts": dict(
+            Counter(
+                result.refuse_reason
+                for result in successes
+                if result.refuse_reason
+            ).most_common(5)
+        ),
         "status_counts": dict(sorted(status_counts.items())),
         "error_counts": dict(errors.most_common(5)),
         "wall_seconds": round(wall_seconds, 3),
@@ -298,6 +306,7 @@ def public_request(
             latency_ms=round((time.perf_counter() - started) * 1000, 2),
             quality_ok=False,
             refused=False,
+            refuse_reason=None,
             citations=0,
             request_id=None,
             error=type(exc).__name__,
@@ -310,6 +319,11 @@ def public_request(
         citations = citations if isinstance(citations, list) else []
         citation_blob = json.dumps(citations, ensure_ascii=False)
         refused = bool(data.get("refused")) if isinstance(data, dict) else False
+        refuse_reason = (
+            str(data.get("refuse_reason"))
+            if isinstance(data, dict) and data.get("refuse_reason")
+            else None
+        )
         quality_ok = marker in citation_blob and not refused
         error = None
         if status < 200 or status >= 300:
@@ -318,6 +332,7 @@ def public_request(
     except (UnicodeDecodeError, json.JSONDecodeError):
         citations = []
         refused = False
+        refuse_reason = None
         quality_ok = False
         error = "invalid_json"
     return RequestResult(
@@ -326,6 +341,7 @@ def public_request(
         latency_ms=latency_ms,
         quality_ok=quality_ok,
         refused=refused,
+        refuse_reason=refuse_reason,
         citations=len(citations),
         request_id=request_id,
         error=error,
