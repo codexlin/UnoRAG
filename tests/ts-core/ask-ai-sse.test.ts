@@ -224,6 +224,11 @@ test("structured adapter reports a bounded timeout and does not invent clarify j
 			error.kind === "router" &&
 			error.timeoutMs === 5,
 	);
+	assert.deepEqual(concurrencyGate.snapshot(), {
+		active: 0,
+		queued: 0,
+		limit: 1,
+	});
 
 	const invalidJudge = new StructuredOutputAdapter(
 		injectedModel,

@@ -214,33 +214,23 @@ export class StructuredOutputAdapter {
 		let lastError: unknown;
 		for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
 			if (abortSignal?.aborted) throw abortSignal.reason;
-			const timeoutController = new AbortController();
-			const operationSignal = abortSignal
-				? AbortSignal.any([abortSignal, timeoutController.signal])
-				: timeoutController.signal;
+			let lease:
+				| Awaited<ReturnType<AiConcurrencyGateLike["acquire"]>>
+				| undefined;
 			let timeout: NodeJS.Timeout | undefined;
 			try {
+				// Admission has its own queue bound and timeout. Provider execution gets
+				// the full structured-output budget after a permit is granted.
+				lease = await this.concurrencyGate?.acquire(abortSignal);
+				if (abortSignal?.aborted) throw abortSignal.reason;
+				const timeoutController = new AbortController();
+				const operationSignal = abortSignal
+					? AbortSignal.any([abortSignal, timeoutController.signal])
+					: timeoutController.signal;
 				const timeoutError = new StructuredOutputTimeoutError(
 					kind,
 					this.timeoutMs,
 				);
-				const invoke = async () => {
-					const lease = await this.concurrencyGate?.acquire(operationSignal);
-					try {
-						return await this.execute({
-							model: this.model,
-							instructions: prompt.text,
-							messages,
-							schema,
-							schemaName: kind,
-							temperature: STRUCTURED_TEMPERATURE,
-							maxOutputTokens: this.maxOutputTokens,
-							abortSignal: operationSignal,
-						});
-					} finally {
-						lease?.release();
-					}
-				};
 				const raw = await withActiveSpan(
 					"unorag.ai.structured",
 					{
@@ -253,7 +243,16 @@ export class StructuredOutputAdapter {
 					},
 					() =>
 						Promise.race([
-							invoke(),
+							this.execute({
+								model: this.model,
+								instructions: prompt.text,
+								messages,
+								schema,
+								schemaName: kind,
+								temperature: STRUCTURED_TEMPERATURE,
+								maxOutputTokens: this.maxOutputTokens,
+								abortSignal: operationSignal,
+							}),
 							new Promise<never>((_, reject) => {
 								timeout = setTimeout(() => {
 									timeoutController.abort(timeoutError);
@@ -297,6 +296,7 @@ export class StructuredOutputAdapter {
 				lastError = error;
 			} finally {
 				if (timeout) clearTimeout(timeout);
+				lease?.release();
 			}
 		}
 		throw lastError;

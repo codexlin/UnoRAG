@@ -9,6 +9,7 @@ import {
 	AiConcurrencyWaitTimeoutError,
 	AnswerStreamAbortedError,
 	AnswerStreamAdapter,
+	StructuredOutputAdapter,
 } from "../../src/core/ai";
 
 const model = {} as LanguageModel;
@@ -92,6 +93,27 @@ test("telemetry failures cannot leak permits or block queued callers", async () 
 	const second = await secondPromise;
 	second.release();
 	assert.equal(gate.snapshot().active, 0);
+});
+
+test("structured provider timeout starts after concurrency admission", async () => {
+	const gate = new AiConcurrencyGate(1, undefined, { waitTimeoutMs: 100 });
+	const held = await gate.acquire();
+	const adapter = new StructuredOutputAdapter(
+		model,
+		async () => ({ query_type: "fact", reason: "supported" }),
+		{ concurrencyGate: gate, maxAttempts: 1, timeoutMs: 10 },
+	);
+
+	const queued = adapter.route({ question: "What is covered?" });
+	await new Promise((resolve) => setTimeout(resolve, 25));
+	assert.deepEqual(gate.snapshot(), { active: 1, queued: 1, limit: 1 });
+	held.release();
+
+	assert.deepEqual(await queued, {
+		query_type: "fact",
+		reason: "supported",
+	});
+	assert.deepEqual(gate.snapshot(), { active: 0, queued: 0, limit: 1 });
 });
 
 test("answer streams hold a permit until completion and normalize cancellation", async () => {
