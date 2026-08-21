@@ -220,6 +220,11 @@ manifest 记录四个镜像 digest、DBOS application version 和 Cosign 验证�
 短期身份做 Sigstore keyless 签名，不保存长期私钥。安装机需预装 `cosign`；正式 manifest 默认启用
 fail-closed 验签，并在拉取镜像前校验证书身份和 OIDC issuer。
 
+GHCR 使用 Cosign v3 的 OCI 1.1 referrer 与新 bundle；部分 ACR 版本不接受 OCI 1.1 签名 manifest，
+因此 ACR manifest 显式使用 Cosign `legacy` referrer 和旧 bundle 布局。两者签署的仍是各 Registry 中
+精确的镜像 digest，使用同一 GitHub OIDC 身份，并在发布端和部署端按 manifest 自验；不得手工删除这些
+字段或把验签降级为可选警告。
+
 运营人员也可以独立验证任一 manifest 镜像：
 
 ```bash

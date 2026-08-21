@@ -50,11 +50,37 @@ mk_release_verify_signature() {
 	}
 	local identity="${UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP:-}"
 	local issuer="${UNORAG_COSIGN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
+	local new_bundle="${UNORAG_COSIGN_NEW_BUNDLE_FORMAT:-true}"
+	local storage_mode="${UNORAG_COSIGN_REGISTRY_REFERRERS_MODE:-oci-1-1}"
+	local normalized_bundle
+	local -a verify_args=()
 	[[ -n "$identity" ]] || {
 		printf 'error: UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP is required\n' >&2
 		return 1
 	}
+	case "$storage_mode" in
+		oci-1-1) ;;
+		legacy) ;;
+		*)
+			printf 'error: UNORAG_COSIGN_REGISTRY_REFERRERS_MODE must be oci-1-1 or legacy\n' >&2
+			return 1
+			;;
+	esac
+	case "$new_bundle" in
+		1|true|TRUE|yes|YES) normalized_bundle=true ;;
+		0|false|FALSE|no|NO) normalized_bundle=false ;;
+		*)
+			printf 'error: UNORAG_COSIGN_NEW_BUNDLE_FORMAT must be true or false\n' >&2
+			return 1
+			;;
+	esac
+	if [[ "$storage_mode:$normalized_bundle" != oci-1-1:true && "$storage_mode:$normalized_bundle" != legacy:false ]]; then
+		printf 'error: Cosign storage mode and bundle format are incompatible\n' >&2
+		return 1
+	fi
+	verify_args+=("--new-bundle-format=$normalized_bundle")
 	cosign verify \
+		"${verify_args[@]}" \
 		--certificate-identity-regexp "$identity" \
 		--certificate-oidc-issuer "$issuer" \
 		"$image" >/dev/null || {
