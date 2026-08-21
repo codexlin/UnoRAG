@@ -10,6 +10,11 @@ import { metadataOnlyAiTelemetry } from "@/lib/observability/ai-telemetry";
 import { withActiveSpan } from "@/lib/observability/tracing";
 import { type TableQueryPlan, TableQueryPlanSchema } from "../ask-graph/table";
 import {
+	type AiConcurrencyGateLike,
+	AiConcurrencyOverloadedError,
+	AiConcurrencyWaitTimeoutError,
+} from "./concurrency-gate";
+import {
 	getPrompt,
 	promptSpanAttributes,
 	type VersionedPrompt,
@@ -130,6 +135,7 @@ export type StructuredOutputAdapterOptions = {
 	timeoutMs?: number;
 	maxAttempts?: number;
 	maxOutputTokens?: number;
+	concurrencyGate?: AiConcurrencyGateLike;
 };
 
 export type StructuredRequestMetadata = {
@@ -178,6 +184,7 @@ export class StructuredOutputAdapter {
 	private readonly timeoutMs: number;
 	private readonly maxAttempts: number;
 	private readonly maxOutputTokens: number | undefined;
+	private readonly concurrencyGate: AiConcurrencyGateLike | undefined;
 
 	constructor(
 		private readonly model: LanguageModel,
@@ -190,6 +197,7 @@ export class StructuredOutputAdapter {
 			options.maxOutputTokens === undefined
 				? undefined
 				: positiveInteger(options.maxOutputTokens, 1, "maxOutputTokens");
+		this.concurrencyGate = options.concurrencyGate;
 	}
 
 	private async request<K extends StructuredKind>(
@@ -216,6 +224,23 @@ export class StructuredOutputAdapter {
 					kind,
 					this.timeoutMs,
 				);
+				const invoke = async () => {
+					const lease = await this.concurrencyGate?.acquire(operationSignal);
+					try {
+						return await this.execute({
+							model: this.model,
+							instructions: prompt.text,
+							messages,
+							schema,
+							schemaName: kind,
+							temperature: STRUCTURED_TEMPERATURE,
+							maxOutputTokens: this.maxOutputTokens,
+							abortSignal: operationSignal,
+						});
+					} finally {
+						lease?.release();
+					}
+				};
 				const raw = await withActiveSpan(
 					"unorag.ai.structured",
 					{
@@ -228,16 +253,7 @@ export class StructuredOutputAdapter {
 					},
 					() =>
 						Promise.race([
-							this.execute({
-								model: this.model,
-								instructions: prompt.text,
-								messages,
-								schema,
-								schemaName: kind,
-								temperature: STRUCTURED_TEMPERATURE,
-								maxOutputTokens: this.maxOutputTokens,
-								abortSignal: operationSignal,
-							}),
+							invoke(),
 							new Promise<never>((_, reject) => {
 								timeout = setTimeout(() => {
 									timeoutController.abort(timeoutError);
@@ -272,6 +288,12 @@ export class StructuredOutputAdapter {
 				};
 			} catch (error) {
 				if (abortSignal?.aborted) throw error;
+				if (
+					error instanceof AiConcurrencyOverloadedError ||
+					error instanceof AiConcurrencyWaitTimeoutError
+				) {
+					throw error;
+				}
 				lastError = error;
 			} finally {
 				if (timeout) clearTimeout(timeout);

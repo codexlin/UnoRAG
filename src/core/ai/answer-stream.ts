@@ -1,6 +1,10 @@
 import { type LanguageModel, type ModelMessage, streamText } from "ai";
 import { metadataOnlyAiTelemetry } from "@/lib/observability/ai-telemetry";
 import { traceAsyncIterable } from "@/lib/observability/tracing";
+import type {
+	AiConcurrencyGateLike,
+	AiConcurrencyLease,
+} from "./concurrency-gate";
 import { getPrompt, promptSpanAttributes } from "./prompt-registry";
 
 export const ANSWER_TEMPERATURE = 0.2;
@@ -25,6 +29,10 @@ export interface AnswerStreamRequest {
 export type AnswerStreamExecutor = (
 	request: AnswerStreamRequest,
 ) => AsyncIterable<string> | Promise<AsyncIterable<string>>;
+
+export type AnswerStreamAdapterOptions = {
+	concurrencyGate?: AiConcurrencyGateLike;
+};
 
 export class AnswerStreamAbortedError extends Error {
 	constructor() {
@@ -67,6 +75,7 @@ export class AnswerStreamAdapter {
 	constructor(
 		private readonly model: LanguageModel,
 		private readonly execute: AnswerStreamExecutor = defaultAnswerStreamExecutor,
+		private readonly options: AnswerStreamAdapterOptions = {},
 	) {}
 
 	async *stream(
@@ -80,35 +89,41 @@ export class AnswerStreamAdapter {
 		if (options.abortSignal?.aborted) {
 			throw new AnswerStreamAbortedError();
 		}
-		const execute = this.execute;
-		const model = this.model;
-		const tokens = (async function* () {
-			const source = await execute({
-				model,
+		let lease: AiConcurrencyLease | undefined;
+		try {
+			lease = await this.options.concurrencyGate?.acquire(options.abortSignal);
+			const source = await this.execute({
+				model: this.model,
 				instructions: CHAT_SYSTEM_PROMPT,
 				messages: buildAnswerMessages(input),
 				temperature: ANSWER_TEMPERATURE,
 				abortSignal: options.abortSignal,
 			});
-			yield* source;
-		})();
-		for await (const token of traceAsyncIterable(
-			"unorag.ai.generate",
-			{
-				"gen_ai.operation.name": "chat",
-				"langfuse.observation.type": "chain",
-				"langfuse.observation.metadata.capture_content": false,
-				...promptSpanAttributes(CHAT_PROMPT),
-			},
-			tokens,
-		)) {
+			for await (const token of traceAsyncIterable(
+				"unorag.ai.generate",
+				{
+					"gen_ai.operation.name": "chat",
+					"langfuse.observation.type": "chain",
+					"langfuse.observation.metadata.capture_content": false,
+					...promptSpanAttributes(CHAT_PROMPT),
+				},
+				source,
+			)) {
+				if (options.abortSignal?.aborted) {
+					throw new AnswerStreamAbortedError();
+				}
+				if (token) yield token;
+			}
 			if (options.abortSignal?.aborted) {
 				throw new AnswerStreamAbortedError();
 			}
-			if (token) yield token;
-		}
-		if (options.abortSignal?.aborted) {
-			throw new AnswerStreamAbortedError();
+		} catch (error) {
+			if (options.abortSignal?.aborted) {
+				throw new AnswerStreamAbortedError();
+			}
+			throw error;
+		} finally {
+			lease?.release();
 		}
 	}
 }

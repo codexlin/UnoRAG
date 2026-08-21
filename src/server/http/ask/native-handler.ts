@@ -5,6 +5,10 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import {
+	AiConcurrencyOverloadedError,
+	AiConcurrencyWaitTimeoutError,
+} from "@/core/ai";
+import {
 	type AskState,
 	appendAskStage,
 	finishAskTiming,
@@ -329,6 +333,12 @@ function completeRetrievalDebug(state: AskState, startedAt: number) {
 
 function operationalErrorCode(error: unknown): string {
 	if (!(error instanceof Error)) return "UnknownError";
+	if (
+		error instanceof AiConcurrencyOverloadedError ||
+		error instanceof AiConcurrencyWaitTimeoutError
+	) {
+		return error.code;
+	}
 	if (error instanceof RetrievalProviderError) return error.code;
 	const providerHttp = error.message.match(
 		/^(embedding|rerank) provider failed with HTTP (\d{3})$/,
@@ -780,6 +790,16 @@ async function handleNativeAskRequestInSpan(input: {
 		if (error instanceof NativeAskRequestError) {
 			settleMetrics(error.status >= 500 ? "server_error" : "client_error");
 			return Response.json({ detail: error.message }, { status: error.status });
+		}
+		if (
+			error instanceof AiConcurrencyOverloadedError ||
+			error instanceof AiConcurrencyWaitTimeoutError
+		) {
+			settleMetrics("server_error");
+			return Response.json(
+				{ detail: "AI provider is busy", code: error.code },
+				{ status: 503, headers: { "retry-after": "1" } },
+			);
 		}
 		settleMetrics(input.request.signal.aborted ? "cancelled" : "server_error");
 		logger.error({

@@ -167,6 +167,10 @@ config:
   askJudgeTimeoutMs: "15000"
   askJudgeMaxAttempts: "2"
   askJudgeMaxOutputTokens: "1024"
+  # Shared Router/Judge/Answer provider concurrency per Web replica.
+  llmMaxInflight: "4"
+  llmMaxQueue: "32"
+  llmQueueTimeoutMs: "30000"
   embeddingModel: text-embedding-v3
   embeddingDim: "1024"
   embeddingBatchSize: "10"

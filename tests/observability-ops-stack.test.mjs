@@ -90,12 +90,18 @@ test("Grafana provisions five focused dashboards backed by real signal contracts
 	const serialized = JSON.stringify(dashboards);
 	for (const signal of [
 		"unorag_ask_completions_total",
+		"unorag_ai_llm_inflight",
+		"unorag_ai_llm_queue_wait_seconds_bucket",
 		"parser.provider.attempt",
 		"dbos.control.tick",
 		"otelcol_receiver_accepted_spans_total",
 	]) {
 		assert.match(serialized, new RegExp(signal.replaceAll(".", "\\.")));
 	}
+	assert.match(
+		read("deploy/compose/observability/rules/unorag.yaml"),
+		/UnoRAGLlmQueueSustained[\s\S]*unorag_ai_llm_queue_depth/,
+	);
 	for (const forbidden of [
 		'"question"',
 		'"answer"',

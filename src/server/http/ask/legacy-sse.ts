@@ -1,3 +1,8 @@
+import {
+	AiConcurrencyOverloadedError,
+	AiConcurrencyWaitTimeoutError,
+} from "@/core/ai";
+
 const PUBLIC_META_KEYS = [
 	"session_id",
 	"thread_id",
@@ -182,10 +187,18 @@ export function encodeLegacySseEvent(
 }
 
 function terminalError(
-	code: "aborted" | "stream_failed",
+	code: "aborted" | "llm_overloaded" | "llm_queue_timeout" | "stream_failed",
 ): Record<string, unknown> {
+	const message =
+		code === "aborted"
+			? "流式生成已取消"
+			: code === "llm_overloaded"
+				? "AI 服务繁忙，请稍后重试"
+				: code === "llm_queue_timeout"
+					? "AI 服务排队超时，请稍后重试"
+					: "流式生成失败";
 	return {
-		message: code === "aborted" ? "流式生成已取消" : "流式生成失败",
+		message,
 		code,
 		truncated: true,
 	};
@@ -227,10 +240,14 @@ export async function* streamLegacyAskSse(
 		done.citations = citations;
 		done.truncated = false;
 		yield encodeLegacySseEvent("done", done);
-	} catch {
-		yield encodeLegacySseEvent(
-			"error",
-			terminalError(input.abortSignal?.aborted ? "aborted" : "stream_failed"),
-		);
+	} catch (error) {
+		const code = input.abortSignal?.aborted
+			? "aborted"
+			: error instanceof AiConcurrencyOverloadedError
+				? "llm_overloaded"
+				: error instanceof AiConcurrencyWaitTimeoutError
+					? "llm_queue_timeout"
+					: "stream_failed";
+		yield encodeLegacySseEvent("error", terminalError(code));
 	}
 }

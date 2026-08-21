@@ -2,6 +2,8 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import {
+	AiConcurrencyOverloadedError,
+	AiConcurrencyWaitTimeoutError,
 	AnswerStreamAdapter,
 	aiConfigFromEnv,
 	createAiProviderRegistry,
@@ -33,7 +35,7 @@ import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { DrizzleActiveGenerationResolver } from "@/server/retrieval/active-generation-resolver";
 import { resolveAuthorizedRetrievalScope } from "@/server/retrieval/authorized-scope";
 import { getTypeScriptRetrievalService } from "@/server/retrieval/runtime";
-
+import { getSharedAiConcurrencyGate } from "./ai-concurrency";
 import type { NativeAskPolicy } from "./policy";
 
 type RetrievalService = Pick<DefaultRetrievalService, "retrieve">;
@@ -86,6 +88,15 @@ export function fallbackQueryRoute(
 
 function throwIfAborted(signal: AbortSignal | undefined, error: unknown): void {
 	if (signal?.aborted) throw error;
+}
+
+function throwIfConcurrencyUnavailable(error: unknown): void {
+	if (
+		error instanceof AiConcurrencyOverloadedError ||
+		error instanceof AiConcurrencyWaitTimeoutError
+	) {
+		throw error;
+	}
 }
 
 function boundedEvidenceText(value: unknown, maxLength = 2_400): string {
@@ -313,6 +324,7 @@ export class NativeAskRuntime {
 						};
 					} catch (error) {
 						throwIfAborted(this.signal, error);
+						throwIfConcurrencyUnavailable(error);
 						return { query: question, mode: "structured_fallback" };
 					}
 				},
@@ -365,6 +377,7 @@ export class NativeAskRuntime {
 						};
 					} catch (error) {
 						throwIfAborted(this.signal, error);
+						throwIfConcurrencyUnavailable(error);
 						return {
 							sufficient: false,
 							action: "refuse",
@@ -553,6 +566,7 @@ export function createNativeAskRuntime(input: {
 	if (!dependencies) {
 		const registry = createAiProviderRegistry(aiConfigFromEnv());
 		const judgeRegistry = createAiProviderRegistry(judgeAiConfigFromEnv());
+		const concurrencyGate = getSharedAiConcurrencyGate();
 		dependencies = {
 			retrieval: getTypeScriptRetrievalService(),
 			structured: new StructuredOutputAdapter(registry.model, undefined, {
@@ -564,6 +578,7 @@ export function createNativeAskRuntime(input: {
 					"ASK_STRUCTURED_MAX_ATTEMPTS",
 					2,
 				),
+				concurrencyGate,
 			}),
 			judgeStructured: new StructuredOutputAdapter(
 				judgeRegistry.model,
@@ -575,13 +590,16 @@ export function createNativeAskRuntime(input: {
 						"ASK_JUDGE_MAX_OUTPUT_TOKENS",
 						1024,
 					),
+					concurrencyGate,
 				},
 			),
 			judgeIdentity: {
 				modelId: judgeRegistry.modelId,
 				providerName: judgeRegistry.providerName,
 			},
-			answer: new AnswerStreamAdapter(registry.model),
+			answer: new AnswerStreamAdapter(registry.model, undefined, {
+				concurrencyGate,
+			}),
 		};
 	}
 	return new NativeAskRuntime(

@@ -37,6 +37,22 @@
       "gridPos": { "h": 7, "w": 12, "x": 12, "y": 7 }, "id": 5,
       "targets": [{ "expr": "rate(otelcol_process_cpu_seconds_total[$__rate_interval])", "legendFormat": "collector CPU", "refId": "A" }],
       "title": "Collector CPU", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" }, "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 14 }, "id": 6,
+      "targets": [
+        { "expr": "sum(unorag_ai_llm_inflight)", "legendFormat": "in flight", "refId": "A" },
+        { "expr": "sum(unorag_ai_llm_queue_depth)", "legendFormat": "queued", "refId": "B" },
+        { "expr": "sum(unorag_ai_llm_concurrency_limit)", "legendFormat": "limit", "refId": "C" }
+      ],
+      "title": "LLM provider pressure", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" }, "fieldConfig": { "defaults": { "min": 0, "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 14 }, "id": 7,
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le) (rate(unorag_ai_llm_queue_wait_seconds_bucket[$__rate_interval])))", "legendFormat": "permit wait P95", "refId": "A" }],
+      "title": "LLM queue wait", "type": "timeseries"
     }
   ],
   "refresh": "30s", "schemaVersion": 41, "tags": ["unorag", "infrastructure"],

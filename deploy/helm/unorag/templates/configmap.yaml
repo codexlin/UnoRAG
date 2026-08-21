@@ -25,6 +25,9 @@ data:
   ASK_JUDGE_TIMEOUT_MS: {{ .Values.config.askJudgeTimeoutMs | quote }}
   ASK_JUDGE_MAX_ATTEMPTS: {{ .Values.config.askJudgeMaxAttempts | quote }}
   ASK_JUDGE_MAX_OUTPUT_TOKENS: {{ .Values.config.askJudgeMaxOutputTokens | quote }}
+  LLM_MAX_INFLIGHT: {{ .Values.config.llmMaxInflight | quote }}
+  LLM_MAX_QUEUE: {{ .Values.config.llmMaxQueue | quote }}
+  LLM_QUEUE_TIMEOUT_MS: {{ .Values.config.llmQueueTimeoutMs | quote }}
   EMBEDDING_MODEL: {{ .Values.config.embeddingModel | quote }}
   EMBEDDING_DIM: {{ .Values.config.embeddingDim | quote }}
   EMBEDDING_TIMEOUT_MS: {{ .Values.config.embeddingTimeoutMs | quote }}
