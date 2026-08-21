@@ -170,7 +170,9 @@ config:
   embeddingModel: text-embedding-v3
   embeddingDim: "1024"
   embeddingBatchSize: "10"
+  embeddingTimeoutMs: "15000"
   rerankModel: qwen3-rerank
+  rerankTimeoutMs: "10000"
   mineruProvider: self_hosted
   mineruSelfHostedUrl: ""
   mineru302BaseUrl: https://api.302.ai

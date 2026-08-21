@@ -27,7 +27,9 @@ data:
   ASK_JUDGE_MAX_OUTPUT_TOKENS: {{ .Values.config.askJudgeMaxOutputTokens | quote }}
   EMBEDDING_MODEL: {{ .Values.config.embeddingModel | quote }}
   EMBEDDING_DIM: {{ .Values.config.embeddingDim | quote }}
+  EMBEDDING_TIMEOUT_MS: {{ .Values.config.embeddingTimeoutMs | quote }}
   RERANK_MODEL: {{ .Values.config.rerankModel | quote }}
+  RERANK_TIMEOUT_MS: {{ .Values.config.rerankTimeoutMs | quote }}
   MINERU_PROVIDER: {{ .Values.config.mineruProvider | quote }}
   MINERU_SELF_HOSTED_URL: {{ .Values.config.mineruSelfHostedUrl | quote }}
   MINERU_302_BASE_URL: {{ .Values.config.mineru302BaseUrl | quote }}

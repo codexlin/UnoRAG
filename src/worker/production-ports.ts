@@ -626,6 +626,7 @@ export async function createWorkerPorts(
 		model: requiredEnvironment("EMBEDDING_MODEL"),
 		dimensions: embeddingDimensions,
 		batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
+		timeoutMs: positiveInteger("EMBEDDING_TIMEOUT_MS", 15_000),
 		maxUploadBytes: positiveInteger(
 			"DOCUMENT_MAX_UPLOAD_BYTES",
 			50 * 1024 * 1024,
@@ -685,6 +686,7 @@ export async function createWorkerPorts(
 		model: documentIngestConfig.model,
 		dimensions: documentIngestConfig.dimensions,
 		batchSize: documentIngestConfig.batchSize,
+		timeoutMs: documentIngestConfig.timeoutMs,
 	});
 	const source = remoteStorage
 		? new ObjectStorageDocumentIngestSource(
