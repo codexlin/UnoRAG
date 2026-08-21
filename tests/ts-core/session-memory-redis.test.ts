@@ -97,6 +97,42 @@ test("Redis session memory is scoped, bounded, and expiring", {
 	}
 });
 
+test("Redis session memory reconnects after an initial configuration failure", {
+	skip: redisUrl ? false : "REDIS_INTEGRATION_TEST_URL is not configured",
+}, async () => {
+	assert.ok(redisUrl);
+	const { closeSessionMemoryForTests, RedisSessionMemoryStore } =
+		await sessionMemoryModule;
+	delete process.env.REDIS_URL;
+	const store = new RedisSessionMemoryStore();
+	const scope: ConversationScope = {
+		organizationId: "10000000-0000-4000-8000-000000000001",
+		workspaceId: "20000000-0000-4000-8000-000000000001",
+		principalId: "30000000-0000-4000-8000-000000000001",
+	};
+
+	try {
+		await assert.rejects(store.load(scope, "reconnect-session", 2));
+		process.env.REDIS_URL = redisUrl;
+		await store.append(
+			scope,
+			"reconnect-session",
+			[{ role: "user", content: "recovered" }],
+			2,
+		);
+		assert.deepEqual(await store.load(scope, "reconnect-session", 2), [
+			{ role: "user", content: "recovered" },
+		]);
+	} finally {
+		process.env.REDIS_URL = redisUrl;
+		await closeSessionMemoryForTests();
+		const inspector = createClient({ url: redisUrl });
+		await inspector.connect();
+		await inspector.del(testMemoryKey(scope, "reconnect-session"));
+		await inspector.close();
+	}
+});
+
 function testMemoryKey(scope: ConversationScope, sessionId: string): string {
 	const digest = createHash("sha256")
 		.update(
