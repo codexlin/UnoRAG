@@ -37,6 +37,8 @@ test("release workflow publishes GHCR without requiring an ACR mirror", async ()
 	assert.match(workflow, /ghcr_repo="ghcr\.io\/\$\{owner\}\/unorag"/);
 	assert.match(workflow, /publish_acr=false/);
 	assert.match(workflow, /if: steps\.meta\.outputs\.publish_acr == 'true'/);
+	assert.match(workflow, /Mirror runtime manifests to ACR/);
+	assert.match(workflow, /ACR_WEB_DIGEST/);
 	assert.doesNotMatch(workflow, /ACR_USERNAME secret is required/);
 });
 
