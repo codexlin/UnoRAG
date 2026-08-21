@@ -73,6 +73,19 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      qdrant:
+        image: qdrant/qdrant:v1.13.2
+        ports:
+          - 6333:6333
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -101,12 +114,12 @@ jobs:
         run: pnpm db:migrate
         env:
           DATABASE_URL: postgresql://unorag_ci:unorag_ci@127.0.0.1:5432/unorag_ci
-      - name: Test document version transaction against PostgreSQL
-        run: >-
-          pnpm exec tsx --test --test-concurrency=1
-          tests/ts-core/document-version-command-postgres.test.ts
+      - name: Test real PostgreSQL, Qdrant, and Redis integrations
+        run: pnpm test:integration
         env:
-          DOCUMENT_VERSION_COMMAND_TEST_DATABASE_URL: postgresql://unorag_ci:unorag_ci@127.0.0.1:5432/unorag_ci
+          INTEGRATION_DATABASE_URL: postgresql://unorag_ci:unorag_ci@127.0.0.1:5432/unorag_ci
+          INTEGRATION_QDRANT_URL: http://127.0.0.1:6333
+          INTEGRATION_REDIS_URL: redis://127.0.0.1:6379/15
       - name: Test
         run: pnpm test
       - name: Lint

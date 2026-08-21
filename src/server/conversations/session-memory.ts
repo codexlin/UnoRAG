@@ -113,3 +113,12 @@ export function resetSessionMemoryForTests(): void {
 	clientPromise = undefined;
 	memoryStore = undefined;
 }
+
+export async function closeSessionMemoryForTests(): Promise<void> {
+	const pendingClient = clientPromise;
+	clientPromise = undefined;
+	memoryStore = undefined;
+	if (!pendingClient) return;
+	const client = await pendingClient.catch(() => undefined);
+	if (client?.isOpen) await client.close();
+}

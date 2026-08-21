@@ -21,6 +21,8 @@ UnoRAG 的发布结论必须绑定明确的 commit、四个镜像 digest、配�
 pnpm install --frozen-lockfile
 pnpm test
 pnpm test:ts-core
+# CI 或隔离基础设施中运行，必须 0 skip
+pnpm test:integration
 pnpm typecheck
 pnpm lint
 pnpm audit:prod
@@ -40,7 +42,8 @@ helm lint deploy/helm/unorag --set config.openaiBaseUrl=http://llm
 git diff --check
 ```
 
-环境依赖测试本地可以 skip，但候选版本必须在真实 PostgreSQL/Qdrant 和 Compose 环境中补齐。
+普通本地测试中的环境依赖用例可以 skip，但 CI 的 `test:integration` 必须在临时 PostgreSQL、Qdrant、
+Redis 上 0 skip 通过；候选版本还必须在完整 Compose 环境中补齐产品纵向验收。
 
 ## 2. 建立不可变候选版本
 

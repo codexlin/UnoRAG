@@ -27,10 +27,20 @@ pnpm build
 
 `pnpm test` 覆盖产品、授权、HTTP、数据库和部署契约；`pnpm test:ts-core` 覆盖
 DocumentIR/TableIR、解析、切分、检索过滤、Qdrant 投影、Ask 图、DBOS 工作流及失败语义。
-依赖真实 PostgreSQL 或 Qdrant 的用例可以在纯本地检查中跳过，但发布验收不能把跳过记为通过。
-CI 会创建临时 PostgreSQL、执行 Drizzle migration，并真实运行文档 replace/reindex 共享事务测试；本地
-可通过 `DOCUMENT_VERSION_COMMAND_TEST_DATABASE_URL` 指向已迁移的隔离测试库复现。不要使用客户库或
-共享开发数据执行环境依赖测试。
+依赖真实基础设施的用例可以在纯本地检查中跳过，但发布验收不能把跳过记为通过。CI 会创建临时
+PostgreSQL、Qdrant 和 Redis，执行 Drizzle migration 与运行时角色初始化，再运行无 skip 的真实集成套件。
+本地可用以下统一入口复现：
+
+```bash
+DATABASE_URL="$INTEGRATION_DATABASE_URL" pnpm db:migrate
+INTEGRATION_DATABASE_URL=postgresql://... \
+INTEGRATION_QDRANT_URL=http://127.0.0.1:6333 \
+INTEGRATION_REDIS_URL=redis://127.0.0.1:6379/15 \
+pnpm test:integration
+```
+
+该 PostgreSQL 登录必须能创建测试用 NOLOGIN 角色。只允许使用一次性或专用测试实例，不要指向客户库或
+共享开发数据。
 
 ## 本地运行
 

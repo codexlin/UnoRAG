@@ -28,6 +28,7 @@
 		"start": "next start",
 		"test": "node --test tests/*.test.mjs",
 		"test:ts-core": "tsx --test --test-concurrency=1 tests/ts-core/*.test.ts",
+		"test:integration": "node scripts/run-integration-tests.mjs",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
 		"audit:prod": "pnpm audit --prod --audit-level moderate --registry=https://registry.npmjs.org/",
