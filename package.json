@@ -118,7 +118,7 @@
 		"@types/react": "^19",
 		"@types/react-dom": "^19",
 		"drizzle-kit": "^0.31.10",
-		"license-checker-rseidelsohn": "4.4.2",
+		"license-checker-rseidelsohn": "5.0.1",
 		"postcss": "8.5.26",
 		"shadcn": "^4.16.2",
 		"spdx-license-list": "6.12.0",
