@@ -552,11 +552,11 @@ Important findings:
 2. LiteParse OCR did not complete within 60 seconds in an environment without
    preinstalled tessdata. Language assets and cold-start behavior require
    explicit image engineering before OCR can be enabled.
-3. The repository currently pins Qdrant server `v1.13.2`, while the tested JS
-   clients are `1.18.0`. Functional REST/gRPC checks passed, but the official
-   compatibility check reports the version gap. M0 must either pin a matching
-   1.13 client or perform a backed-up, tested Qdrant upgrade before production
-   TS traffic.
+3. At the time of this spike, the repository pinned Qdrant server `v1.13.2`
+   while the tested JS clients were `1.18.0`, and the official compatibility
+   check reported the version gap. The follow-up migration aligned both the
+   server image and REST client on `1.19.0` and added live query, write, and ACL
+   isolation coverage.
 
 Approximate installed package footprints from the isolated spike:
 

@@ -66,7 +66,7 @@ export interface QdrantDeleteClient {
 		},
 	): Promise<{
 		operation_id?: number | null;
-		status: "acknowledged" | "completed";
+		status: Schemas["UpdateStatus"];
 	}>;
 }
 

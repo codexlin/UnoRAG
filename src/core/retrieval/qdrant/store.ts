@@ -60,14 +60,14 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 			scope: input.scope,
 			userFilters: input.userFilters,
 		}) as QdrantFilter;
-		const points = await this.client.search(this.collection, {
-			vector: input.vector,
+		const response = await this.client.query(this.collection, {
+			query: input.vector,
 			filter,
 			limit: input.limit,
 			with_payload: true,
 			with_vector: false,
 		});
-		return points.flatMap((point) => {
+		return response.points.flatMap((point) => {
 			const hit = parseQdrantSearchHit(point);
 			return hit ? [hit] : [];
 		});

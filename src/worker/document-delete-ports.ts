@@ -25,7 +25,7 @@ export interface DocumentDeleteQdrantClient {
 		},
 	): Promise<{
 		operation_id?: number | null;
-		status: "acknowledged" | "completed";
+		status: Schemas["UpdateStatus"];
 	}>;
 }
 

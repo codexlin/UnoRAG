@@ -416,7 +416,7 @@ services:
     restart: "no"
 
   qdrant:
-    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.13.2}
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.19.0}
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage

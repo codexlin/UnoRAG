@@ -12,6 +12,7 @@ import {
 	QdrantIngestWriteStore,
 } from "../../src/core/ingest";
 import type { EmbeddingProvider } from "../../src/core/retrieval/embedding/provider";
+import { QdrantRetrievalStore } from "../../src/core/retrieval/qdrant/store";
 import type { DocumentIngestJob } from "../../src/worker/contracts";
 import { LocalDocumentIngestSource } from "../../src/worker/document-ingest-production";
 import { DocumentIngestStager } from "../../src/worker/document-ingest-staging";
@@ -144,6 +145,70 @@ test("real local TXT parsing and chunking stages scoped points in Qdrant", {
 			client.deleteCollection(collection),
 			rm(storageRoot, { recursive: true, force: true }),
 		]);
+	}
+});
+
+test("real Qdrant query enforces workspace and principal ACL isolation", {
+	skip: qdrantUrl ? false : "QDRANT_INGEST_E2E_URL is not configured",
+}, async () => {
+	assert.ok(qdrantUrl);
+	const client = new QdrantClient({ url: qdrantUrl, checkCompatibility: true });
+	const collection = `unorag_acl_e2e_${randomUUID().replaceAll("-", "")}`;
+	await client.createCollection(collection, {
+		vectors: { size: 2, distance: "Cosine" },
+	});
+
+	try {
+		const scope = createScope();
+		const writeStore = new QdrantIngestWriteStore(client, collection);
+		await writeStore.stage({
+			records: [record(scope, 0)],
+			vectors: [[1, 0]],
+			scope,
+		});
+		await writeStore.setVisibility(scope, "active");
+		const retrieval = new QdrantRetrievalStore(client, collection);
+		const retrievalScope = {
+			tenantId: scope.organizationId,
+			workspaceId: scope.workspaceId,
+			libraryId: scope.libraryId,
+			principalIds: scope.acl.principalIds,
+			groupIds: [],
+			activeGenerationIds: [scope.generationId],
+		};
+
+		assert.equal(
+			(
+				await retrieval.search({
+					vector: [1, 0],
+					scope: retrievalScope,
+					limit: 5,
+				})
+			).length,
+			1,
+		);
+		assert.equal(
+			(
+				await retrieval.search({
+					vector: [1, 0],
+					scope: { ...retrievalScope, principalIds: [randomUUID()] },
+					limit: 5,
+				})
+			).length,
+			0,
+		);
+		assert.equal(
+			(
+				await retrieval.search({
+					vector: [1, 0],
+					scope: { ...retrievalScope, workspaceId: randomUUID() },
+					limit: 5,
+				})
+			).length,
+			0,
+		);
+	} finally {
+		await client.deleteCollection(collection);
 	}
 });
 
