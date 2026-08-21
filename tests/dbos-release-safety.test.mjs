@@ -82,6 +82,20 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 	);
 	assert.match(releaseWorkflow, /publish_acr=false/);
 	assert.match(releaseWorkflow, /PUBLISH_ACR/);
+	assert.match(releaseWorkflow, /Mirror runtime manifests to ACR/);
+	assert.match(
+		releaseWorkflow,
+		/docker pull --platform "\$\{IMAGE_PLATFORM\}"/,
+	);
+	assert.match(releaseWorkflow, /ACR_WEB_DIGEST/);
+	assert.match(
+		releaseWorkflow,
+		/UNORAG_WEB_IMAGE=\$\{ACR_REPO\}@\$\{ACR_WEB_DIGEST\}/,
+	);
+	assert.doesNotMatch(
+		releaseWorkflow,
+		/web_tags=\$\{ghcr_repo\}[^\n]*,\$\{acr_repo\}/,
+	);
 	assert.match(localRelease, /UNORAG_IMAGE_PLATFORM=\$\{image_platform\}/);
 	assert.match(localRelease, /UNORAG_VERSION=\$\{PRODUCT_VERSION\}/);
 	assert.match(localRelease, /UNORAG_REVISION=\$\{REVISION\}/);

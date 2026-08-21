@@ -88,19 +88,17 @@ jobs:
             fi
             if [[ "${configured}" == "4" ]]; then
               acr_repo="${ACR_REGISTRY}/${ACR_NAMESPACE}/unorag"
-              echo "web_tags=${ghcr_repo}:web-${tag},${acr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
-              echo "ops_tags=${ghcr_repo}:ops-${tag},${acr_repo}:ops-${tag}" >> "${GITHUB_OUTPUT}"
-              echo "worker_tags=${ghcr_repo}:worker-${tag},${acr_repo}:worker-${tag}" >> "${GITHUB_OUTPUT}"
-              echo "migrator_tags=${ghcr_repo}:migrator-${tag},${acr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
               echo "acr_repo=${acr_repo}" >> "${GITHUB_OUTPUT}"
               echo "publish_acr=true" >> "${GITHUB_OUTPUT}"
             else
-              echo "web_tags=${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
-              echo "ops_tags=${ghcr_repo}:ops-${tag}" >> "${GITHUB_OUTPUT}"
-              echo "worker_tags=${ghcr_repo}:worker-${tag}" >> "${GITHUB_OUTPUT}"
-              echo "migrator_tags=${ghcr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
               echo "publish_acr=false" >> "${GITHUB_OUTPUT}"
             fi
+            # BuildKit attestations are published to GHCR. ACR rejects their
+            # OCI artifact manifests, so runtime manifests are mirrored later.
+            echo "web_tags=${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "ops_tags=${ghcr_repo}:ops-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "worker_tags=${ghcr_repo}:worker-${tag}" >> "${GITHUB_OUTPUT}"
+            echo "migrator_tags=${ghcr_repo}:migrator-${tag}" >> "${GITHUB_OUTPUT}"
             echo "ghcr_repo=${ghcr_repo}" >> "${GITHUB_OUTPUT}"
             echo "web_scan_ref=${ghcr_repo}:web-${tag}" >> "${GITHUB_OUTPUT}"
             echo "ops_scan_ref=${ghcr_repo}:ops-${tag}" >> "${GITHUB_OUTPUT}"
@@ -254,6 +252,36 @@ jobs:
           sbom: ${{ steps.meta.outputs.dry_run != 'true' }}
           provenance: ${{ steps.meta.outputs.dry_run != 'true' }}
 
+      - name: Mirror runtime manifests to ACR
+        id: acr
+        if: steps.meta.outputs.publish_acr == 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          IMAGE_PLATFORM: ${{ steps.meta.outputs.image_platform }}
+          GHCR_REPO: ${{ steps.meta.outputs.ghcr_repo }}
+          ACR_REPO: ${{ steps.meta.outputs.acr_repo }}
+        run: |
+          set -euo pipefail
+
+          mirror() {
+            local target="$1" output digest
+            docker pull --platform "${IMAGE_PLATFORM}" "${GHCR_REPO}:${target}-${TAG}"
+            docker tag "${GHCR_REPO}:${target}-${TAG}" "${ACR_REPO}:${target}-${TAG}"
+            output="$(docker push "${ACR_REPO}:${target}-${TAG}" 2>&1)"
+            printf '%s\n' "${output}"
+            digest="$(sed -n 's/^.*digest: \(sha256:[a-f0-9]\{64\}\).*$/\1/p' <<<"${output}" | tail -n 1)"
+            [[ "${digest}" == sha256:* ]] || {
+              echo "missing ACR digest for ${target}" >&2
+              exit 1
+            }
+            echo "${target}_digest=${digest}" >> "${GITHUB_OUTPUT}"
+          }
+
+          mirror web
+          mirror migrator
+          mirror ops
+          mirror worker
+
       - name: Scan web image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -301,6 +329,10 @@ jobs:
           IMAGE_PLATFORM: ${{ steps.meta.outputs.image_platform }}
           PUBLISH_ACR: ${{ steps.meta.outputs.publish_acr }}
           ACR_REPO: ${{ steps.meta.outputs.acr_repo }}
+          ACR_WEB_DIGEST: ${{ steps.acr.outputs.web_digest }}
+          ACR_OPS_DIGEST: ${{ steps.acr.outputs.ops_digest }}
+          ACR_WORKER_DIGEST: ${{ steps.acr.outputs.worker_digest }}
+          ACR_MIGRATOR_DIGEST: ${{ steps.acr.outputs.migrator_digest }}
           GHCR_REPO: ${{ steps.meta.outputs.ghcr_repo }}
           WEB_DIGEST: ${{ steps.web.outputs.digest }}
           OPS_DIGEST: ${{ steps.ops.outputs.digest }}
@@ -327,11 +359,14 @@ jobs:
               [[ "${digest}" == sha256:* ]] || { echo "missing image digest" >&2; exit 1; }
             done
             if [[ "${PUBLISH_ACR}" == "true" ]]; then
+              for digest in "${ACR_WEB_DIGEST}" "${ACR_OPS_DIGEST}" "${ACR_WORKER_DIGEST}" "${ACR_MIGRATOR_DIGEST}"; do
+                [[ "${digest}" == sha256:* ]] || { echo "missing ACR image digest" >&2; exit 1; }
+              done
               cat > /tmp/unorag-release/release-acr.env <<EOF
-          UNORAG_WEB_IMAGE=${ACR_REPO}@${WEB_DIGEST}
-          UNORAG_WEB_MIGRATOR_IMAGE=${ACR_REPO}@${MIGRATOR_DIGEST}
-          UNORAG_WEB_OPS_IMAGE=${ACR_REPO}@${OPS_DIGEST}
-          UNORAG_DBOS_WORKER_IMAGE=${ACR_REPO}@${WORKER_DIGEST}
+          UNORAG_WEB_IMAGE=${ACR_REPO}@${ACR_WEB_DIGEST}
+          UNORAG_WEB_MIGRATOR_IMAGE=${ACR_REPO}@${ACR_MIGRATOR_DIGEST}
+          UNORAG_WEB_OPS_IMAGE=${ACR_REPO}@${ACR_OPS_DIGEST}
+          UNORAG_DBOS_WORKER_IMAGE=${ACR_REPO}@${ACR_WORKER_DIGEST}
           UNORAG_DBOS_APPLICATION_VERSION=${DBOS_VERSION}
           UNORAG_IMAGE_PLATFORM=${IMAGE_PLATFORM}
           UNORAG_VERSION=${VERSION}
