@@ -39,7 +39,7 @@ export interface QdrantIngestClient {
 			ordering: "strong";
 			points: QdrantPoint[];
 		},
-	): Promise<{ status: "acknowledged" | "completed" }>;
+	): Promise<{ status: Schemas["UpdateStatus"] }>;
 	count(
 		collection: string,
 		input: {
@@ -55,7 +55,7 @@ export interface QdrantIngestClient {
 			wait: true;
 			ordering: "strong";
 		},
-	): Promise<{ status: "acknowledged" | "completed" }>;
+	): Promise<{ status: Schemas["UpdateStatus"] }>;
 }
 
 export class QdrantIngestWriteStore {

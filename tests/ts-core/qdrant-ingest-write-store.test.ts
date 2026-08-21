@@ -246,6 +246,30 @@ test("staging fails closed on scope, vector, count, and restricted ACL mismatche
 	);
 });
 
+test("writes fail closed when Qdrant reaches its wait timeout", async () => {
+	const client: QdrantIngestClient = {
+		async upsert() {
+			return { status: "wait_timeout" };
+		},
+		async count() {
+			return { count: 1 };
+		},
+		async setPayload() {
+			return { status: "wait_timeout" };
+		},
+	};
+	const store = new QdrantIngestWriteStore(client, "chunks");
+
+	await assert.rejects(
+		store.stage({ records: [record(0)], vectors: [[1, 0]], scope }),
+		/Qdrant upsert returned wait_timeout/,
+	);
+	await assert.rejects(
+		store.setVisibility(scope, "active"),
+		/Qdrant setPayload returned wait_timeout/,
+	);
+});
+
 test("visibility updates use every authoritative scope dimension", async () => {
 	const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
 	const store = new QdrantIngestWriteStore(fakeClient(calls, 1), "chunks");

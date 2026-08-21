@@ -467,7 +467,7 @@ describe("production generation cleanup ports", () => {
 	it("treats an incomplete Qdrant operation as retryable", async () => {
 		const qdrant: QdrantDeleteClient = {
 			async delete() {
-				return { status: "acknowledged" };
+				return { status: "wait_timeout" };
 			},
 		};
 		const cleanup = new QdrantGenerationCleanupStep(qdrant, "unorag_chunks");

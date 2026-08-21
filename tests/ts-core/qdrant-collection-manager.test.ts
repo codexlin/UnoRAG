@@ -262,9 +262,9 @@ test("distance parser normalizes supported values and rejects unknown values", (
 test("retrieval store never queries before collection readiness succeeds", async () => {
 	let searches = 0;
 	const client = {
-		async search() {
+		async query() {
 			searches += 1;
-			return [];
+			return { points: [] };
 		},
 	} as unknown as QdrantClient;
 	const store = new QdrantRetrievalStore(
@@ -289,4 +289,57 @@ test("retrieval store never queries before collection readiness succeeds", async
 		/collection contract mismatch/,
 	);
 	assert.equal(searches, 0);
+});
+
+test("retrieval store uses the universal query API with mandatory scope", async () => {
+	const calls: unknown[] = [];
+	const client = {
+		async query(_collection: string, input: unknown) {
+			calls.push(input);
+			return { points: [] };
+		},
+	} as unknown as QdrantClient;
+	const store = new QdrantRetrievalStore(client, "unorag_chunks");
+
+	assert.deepEqual(
+		await store.search({
+			vector: [1, 0],
+			scope: {
+				tenantId: "tenant",
+				workspaceId: "workspace",
+				libraryId: "library",
+				principalIds: ["principal"],
+				groupIds: [],
+				activeGenerationIds: ["generation"],
+			},
+			limit: 3,
+		}),
+		[],
+	);
+	const request = calls[0] as {
+		query: number[];
+		filter: { must: Array<Record<string, unknown>> };
+		limit: number;
+		with_payload: boolean;
+		with_vector: boolean;
+	};
+	assert.deepEqual(request.query, [1, 0]);
+	assert.equal(request.limit, 3);
+	assert.equal(request.with_payload, true);
+	assert.equal(request.with_vector, false);
+	assert.ok(
+		request.filter.must.some(
+			(condition) =>
+				condition.key === "tenant_id" &&
+				JSON.stringify(condition.match) === JSON.stringify({ value: "tenant" }),
+		),
+	);
+	assert.ok(
+		request.filter.must.some(
+			(condition) =>
+				condition.key === "workspace_id" &&
+				JSON.stringify(condition.match) ===
+					JSON.stringify({ value: "workspace" }),
+		),
+	);
 });
