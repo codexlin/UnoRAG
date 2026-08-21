@@ -58,8 +58,9 @@ Redis 上 0 skip 通过；候选版本还必须在完整 Compose 环境中补齐
 - 数据库、Qdrant 和宿主机规格；
 - 测试数据集版本。
 
-Trivy HIGH/CRITICAL 门禁失败、缺失 BuildKit SBOM/provenance、使用浮动镜像标签或无法复现配置时，
-不得进入试点验收。镜像签名门禁落地前，发行材料必须明确标记为未签名 RC。
+Trivy HIGH/CRITICAL 门禁失败、缺失 BuildKit SBOM/provenance、Cosign 签名或发布后自验失败、使用
+浮动镜像标签或无法复现配置时，不得进入试点验收。正式 manifest 必须启用签名验证并绑定 UnoRAG
+release workflow 的 GitHub OIDC 身份；安装和升级在镜像拉取前 fail-closed 验签。
 官方 `v0.1` manifest 必须包含 `UNORAG_IMAGE_PLATFORM=linux/amd64`。安装和升级前的架构预检失败
 属于 NO-GO；`--allow-platform-emulation` 只供开发机 RC 验证，不能用于客户生产签字。
 官方 manifest 将 DBOS application version 固定为 `unorag-<git-sha>`。它是 durable workflow 的代码
