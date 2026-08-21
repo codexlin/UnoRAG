@@ -26,6 +26,7 @@ export type OpenAICompatibleEmbeddingConfig = {
 	model: string;
 	dimensions: number;
 	batchSize?: number;
+	timeoutMs?: number;
 	fetch?: typeof globalThis.fetch;
 	retryBackoffMs?: readonly number[];
 };
@@ -37,6 +38,7 @@ function endpoint(baseUrl: string): string {
 export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 	private readonly fetch: typeof globalThis.fetch;
 	private readonly batchSize: number;
+	private readonly timeoutMs: number;
 
 	constructor(private readonly config: OpenAICompatibleEmbeddingConfig) {
 		if (!config.apiKey.trim()) throw new Error("embedding API key is required");
@@ -45,6 +47,10 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 		}
 		this.fetch = config.fetch ?? globalThis.fetch;
 		this.batchSize = Math.max(1, config.batchSize ?? 10);
+		this.timeoutMs = config.timeoutMs ?? 15_000;
+		if (!Number.isInteger(this.timeoutMs) || this.timeoutMs <= 0) {
+			throw new Error("embedding timeout must be a positive integer");
+		}
 	}
 
 	async embedQuery(query: string, signal?: AbortSignal): Promise<number[]> {
@@ -79,8 +85,9 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 			const response = await fetchRetrievalProvider({
 				provider: "embedding",
 				signal,
+				timeoutMs: this.timeoutMs,
 				retryBackoffMs: this.config.retryBackoffMs,
-				request: () =>
+				request: (requestSignal) =>
 					this.fetch(endpoint(this.config.baseUrl), {
 						method: "POST",
 						headers: {
@@ -92,7 +99,7 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 							input: batch,
 							dimensions: this.config.dimensions,
 						}),
-						signal,
+						signal: requestSignal,
 					}),
 			});
 			const payload = EmbeddingResponseSchema.parse(await response.json());

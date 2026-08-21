@@ -160,6 +160,26 @@ test("embedding provider preserves request cancellation during retry backoff", a
 	assert.equal(attempts, 1);
 });
 
+test("embedding provider enforces one hard deadline across retry backoff", async () => {
+	const provider = new OpenAICompatibleEmbeddingProvider({
+		apiKey: "secret",
+		baseUrl: "https://example.test/v1",
+		model: "embedding-model",
+		dimensions: 2,
+		timeoutMs: 5,
+		retryBackoffMs: [10_000],
+		fetch: async () => {
+			throw new TypeError("fetch failed");
+		},
+	});
+	await assert.rejects(provider.embedQuery("question"), (error) => {
+		assert.ok(error instanceof RetrievalProviderError);
+		assert.equal(error.code, "embedding_timeout");
+		assert.equal(error.retryable, true);
+		return true;
+	});
+});
+
 test("rerank provider clamps scores and ignores invalid indexes", async () => {
 	const provider = new OpenAICompatibleRerankProvider({
 		apiKey: "secret",
@@ -180,6 +200,43 @@ test("rerank provider clamps scores and ignores invalid indexes", async () => {
 			topN: 2,
 		}),
 		[{ index: 1, score: 1 }],
+	);
+});
+
+test("rerank provider aborts a hanging request at its configured deadline", async () => {
+	const provider = new OpenAICompatibleRerankProvider({
+		apiKey: "secret",
+		baseUrl: "https://example.test/v1",
+		model: "rerank-model",
+		timeoutMs: 5,
+		fetch: async (_input, init) =>
+			new Promise<Response>((_resolve, reject) => {
+				const signal = init?.signal;
+				if (!signal) {
+					reject(new Error("request signal is required"));
+					return;
+				}
+				if (signal.aborted) {
+					reject(signal.reason);
+					return;
+				}
+				signal.addEventListener("abort", () => reject(signal.reason), {
+					once: true,
+				});
+			}),
+	});
+	await assert.rejects(
+		provider.rerank({
+			query: "quote",
+			documents: ["one", "two"],
+			topN: 2,
+		}),
+		(error) => {
+			assert.ok(error instanceof RetrievalProviderError);
+			assert.equal(error.code, "rerank_timeout");
+			assert.equal(error.retryable, true);
+			return true;
+		},
 	);
 });
 

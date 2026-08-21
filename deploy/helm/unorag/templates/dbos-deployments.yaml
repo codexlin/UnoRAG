@@ -114,6 +114,8 @@ spec:
               value: {{ .Values.config.embeddingDim | quote }}
             - name: EMBEDDING_BATCH_SIZE
               value: {{ .Values.config.embeddingBatchSize | quote }}
+            - name: EMBEDDING_TIMEOUT_MS
+              value: {{ .Values.config.embeddingTimeoutMs | quote }}
             - name: MINERU_PROVIDER
               value: {{ .Values.config.mineruProvider | quote }}
             - name: MINERU_SELF_HOSTED_URL

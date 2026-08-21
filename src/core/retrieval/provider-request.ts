@@ -6,7 +6,7 @@ export class RetrievalProviderError extends Error {
 
 	constructor(input: {
 		provider: RetrievalProvider;
-		kind: "transport" | "http";
+		kind: "transport" | "http" | "timeout";
 		httpStatus?: number;
 		retryable: boolean;
 		cause?: unknown;
@@ -14,13 +14,17 @@ export class RetrievalProviderError extends Error {
 		const suffix =
 			input.kind === "http" && input.httpStatus
 				? ` failed with HTTP ${input.httpStatus}`
-				: " transport failed";
+				: input.kind === "timeout"
+					? " timed out"
+					: " transport failed";
 		super(`${input.provider} provider${suffix}`, { cause: input.cause });
 		this.name = "RetrievalProviderError";
 		this.code =
 			input.kind === "http" && input.httpStatus
 				? `${input.provider}_http_${input.httpStatus}`
-				: `${input.provider}_transport_error`;
+				: input.kind === "timeout"
+					? `${input.provider}_timeout`
+					: `${input.provider}_transport_error`;
 		this.retryable = input.retryable;
 	}
 }
@@ -56,44 +60,85 @@ async function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
 
 export async function fetchRetrievalProvider(input: {
 	provider: RetrievalProvider;
-	request: () => Promise<Response>;
+	request: (signal: AbortSignal) => Promise<Response>;
 	signal?: AbortSignal;
+	timeoutMs: number;
 	retryBackoffMs?: readonly number[];
 }): Promise<Response> {
+	if (!Number.isInteger(input.timeoutMs) || input.timeoutMs <= 0) {
+		throw new RangeError(
+			"retrieval provider timeout must be a positive integer",
+		);
+	}
+	const deadline = new AbortController();
+	const timeout = setTimeout(
+		() =>
+			deadline.abort(
+				new DOMException("provider deadline exceeded", "TimeoutError"),
+			),
+		input.timeoutMs,
+	);
+	const signal = input.signal
+		? AbortSignal.any([input.signal, deadline.signal])
+		: deadline.signal;
 	const backoff = input.retryBackoffMs ?? [100, 300];
-	for (let attempt = 0; ; attempt += 1) {
-		if (input.signal?.aborted) throw abortError(input.signal);
-		try {
-			const response = await input.request();
-			if (response.ok) return response;
-			const retryable = RETRYABLE_HTTP_STATUSES.has(response.status);
-			if (retryable && attempt < backoff.length) {
-				await response.body?.cancel().catch(() => undefined);
-				await wait(backoff[attempt] ?? 0, input.signal);
-				continue;
-			}
-			throw new RetrievalProviderError({
-				provider: input.provider,
-				kind: "http",
-				httpStatus: response.status,
-				retryable,
-			});
-		} catch (error) {
-			if (error instanceof RetrievalProviderError) throw error;
-			if (input.signal?.aborted) throw abortError(input.signal);
-			if (error instanceof TypeError) {
-				if (attempt < backoff.length) {
-					await wait(backoff[attempt] ?? 0, input.signal);
+	try {
+		for (let attempt = 0; ; attempt += 1) {
+			if (signal.aborted) throw abortError(signal);
+			try {
+				const response = await input.request(signal);
+				if (response.ok) return response;
+				const retryable = RETRYABLE_HTTP_STATUSES.has(response.status);
+				if (retryable && attempt < backoff.length) {
+					await response.body?.cancel().catch(() => undefined);
+					await wait(backoff[attempt] ?? 0, signal);
 					continue;
 				}
 				throw new RetrievalProviderError({
 					provider: input.provider,
-					kind: "transport",
-					retryable: true,
-					cause: error,
+					kind: "http",
+					httpStatus: response.status,
+					retryable,
 				});
+			} catch (error) {
+				if (error instanceof RetrievalProviderError) throw error;
+				if (input.signal?.aborted) throw abortError(input.signal);
+				if (deadline.signal.aborted) {
+					throw new RetrievalProviderError({
+						provider: input.provider,
+						kind: "timeout",
+						retryable: true,
+						cause: error,
+					});
+				}
+				if (error instanceof TypeError) {
+					if (attempt < backoff.length) {
+						await wait(backoff[attempt] ?? 0, signal);
+						continue;
+					}
+					throw new RetrievalProviderError({
+						provider: input.provider,
+						kind: "transport",
+						retryable: true,
+						cause: error,
+					});
+				}
+				throw error;
 			}
-			throw error;
 		}
+	} catch (error) {
+		if (error instanceof RetrievalProviderError) throw error;
+		if (input.signal?.aborted) throw abortError(input.signal);
+		if (deadline.signal.aborted) {
+			throw new RetrievalProviderError({
+				provider: input.provider,
+				kind: "timeout",
+				retryable: true,
+				cause: error,
+			});
+		}
+		throw error;
+	} finally {
+		clearTimeout(timeout);
 	}
 }

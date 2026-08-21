@@ -33,16 +33,22 @@ export type OpenAICompatibleRerankConfig = {
 	apiKey: string;
 	baseUrl: string;
 	model: string;
+	timeoutMs?: number;
 	fetch?: typeof globalThis.fetch;
 	retryBackoffMs?: readonly number[];
 };
 
 export class OpenAICompatibleRerankProvider implements RerankProvider {
 	private readonly fetch: typeof globalThis.fetch;
+	private readonly timeoutMs: number;
 
 	constructor(private readonly config: OpenAICompatibleRerankConfig) {
 		if (!config.apiKey.trim()) throw new Error("rerank API key is required");
 		this.fetch = config.fetch ?? globalThis.fetch;
+		this.timeoutMs = config.timeoutMs ?? 10_000;
+		if (!Number.isInteger(this.timeoutMs) || this.timeoutMs <= 0) {
+			throw new Error("rerank timeout must be a positive integer");
+		}
 	}
 
 	async rerank(input: {
@@ -75,8 +81,9 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 		const response = await fetchRetrievalProvider({
 			provider: "rerank",
 			signal: input.signal,
+			timeoutMs: this.timeoutMs,
 			retryBackoffMs: this.config.retryBackoffMs,
-			request: () =>
+			request: (requestSignal) =>
 				this.fetch(`${this.config.baseUrl.replace(/\/$/, "")}/reranks`, {
 					method: "POST",
 					headers: {
@@ -89,7 +96,7 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 						documents: input.documents,
 						top_n: Math.min(input.topN, input.documents.length),
 					}),
-					signal: input.signal,
+					signal: requestSignal,
 				}),
 		});
 		const payload = RerankResponseSchema.parse(await response.json());

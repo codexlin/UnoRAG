@@ -81,6 +81,7 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		model: required("EMBEDDING_MODEL", "text-embedding-v3"),
 		dimensions,
 		batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
+		timeoutMs: positiveInteger("EMBEDDING_TIMEOUT_MS", 15_000),
 	});
 	const rerankEnabled = enabled("TS_RETRIEVAL_RERANK_ENABLED");
 	const reranker = new OpenAICompatibleRerankProvider({
@@ -90,6 +91,7 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 			"https://dashscope.aliyuncs.com/compatible-api/v1",
 		),
 		model: required("RERANK_MODEL", "qwen3-rerank"),
+		timeoutMs: positiveInteger("RERANK_TIMEOUT_MS", 10_000),
 	});
 	runtime = new DefaultRetrievalService(
 		embeddings,
