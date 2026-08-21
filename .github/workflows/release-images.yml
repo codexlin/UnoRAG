@@ -356,7 +356,7 @@ jobs:
                 # Some ACR editions reject the OCI 1.1 empty manifest used by
                 # Cosign v3. Keep the same keyless identity and digest while
                 # storing the signature under the legacy digest tag.
-                sign_args+=(--new-bundle-format=false --registry-referrers-mode=legacy)
+                sign_args+=(--use-signing-config=false --new-bundle-format=false --registry-referrers-mode=legacy)
                 verify_args+=(--new-bundle-format=false)
                 ;;
               *) echo "invalid Cosign storage mode: ${storage_mode}" >&2; exit 1 ;;
