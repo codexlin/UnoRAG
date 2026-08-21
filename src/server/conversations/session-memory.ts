@@ -48,14 +48,23 @@ let clientPromise: Promise<RedisClientType> | undefined;
 
 async function redisClient(): Promise<RedisClientType> {
 	if (!clientPromise) {
-		clientPromise = (async () => {
+		const connecting = (async () => {
 			const url = process.env.REDIS_URL?.trim();
 			if (!url) throw new Error("REDIS_URL is required for session memory");
 			const client = createClient({ url });
 			client.on("error", () => undefined);
-			await client.connect();
+			try {
+				await client.connect();
+			} catch (error) {
+				client.destroy();
+				throw error;
+			}
 			return client as RedisClientType;
 		})();
+		clientPromise = connecting;
+		void connecting.catch(() => {
+			if (clientPromise === connecting) clientPromise = undefined;
+		});
 	}
 	return clientPromise;
 }
