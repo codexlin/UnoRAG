@@ -144,6 +144,8 @@ Ops Stack assets, Langfuse integration, evaluation, and generic provider adapter
 professional deployment, integration, tuning, customization, training, and SLA support remain available as services.
 
 The source code is licensed under [Apache License 2.0](./LICENSE), and the GitHub repository is public.
+Product names and logos are governed separately by the [trademark policy](./TRADEMARKS.md); forks and
+hosted services remain welcome when they use distinct branding and describe their UnoRAG relationship truthfully.
 The stable `v0.1.0` release remains gated by asset provenance, supply-chain evidence, image signing,
 and release-candidate acceptance. See
 [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) and the
