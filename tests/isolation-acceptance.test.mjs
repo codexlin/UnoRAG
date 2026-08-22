@@ -12,7 +12,13 @@ const script = await readFile(
 
 test("isolation acceptance can bootstrap through the pinned Ops image", () => {
 	assert.match(script, /run_topology\(\)/);
-	assert.match(script, /mk_compose --profile ops run --rm --user 0/);
+	assert.match(script, /host_uid="\$\(id -u\)"/);
+	assert.match(script, /host_gid="\$\(id -g\)"/);
+	assert.match(
+		script,
+		/mk_compose --profile ops run --rm --user "\$host_uid:\$host_gid"/,
+	);
+	assert.doesNotMatch(script, /mk_compose --profile ops run --rm --user 0/);
 	assert.match(script, /--entrypoint node inspect-lifecycle/);
 	assert.match(script, /run_topology bootstrap/);
 	assert.match(script, /run_topology cleanup/);
