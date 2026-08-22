@@ -23,6 +23,7 @@ import {
 	contentTypeForUpload,
 	documentIngestIdempotencyKey,
 } from "@/lib/server/document-version-core.mjs";
+import { documentMetadataVisibilitySql } from "@/lib/server/document-visibility";
 import {
 	canWriteLibraries,
 	findAuthorizedLibrary,
@@ -72,6 +73,7 @@ export async function GET(request: Request, context: RouteContext) {
 				eq(documents.workspaceId, identity.workspaceId),
 				eq(documents.libraryId, library.id),
 				ne(documents.status, "deleted"),
+				documentMetadataVisibilitySql(identity, documents.id),
 			),
 		)
 		.orderBy(desc(documents.updatedAt));

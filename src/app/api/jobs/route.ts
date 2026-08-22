@@ -3,6 +3,7 @@ import { and, desc, eq, type SQL } from "drizzle-orm";
 import { getDatabase } from "@/db";
 import { documents, documentVersions, jobs, libraries } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
+import { documentMetadataVisibilitySql } from "@/lib/server/document-visibility";
 import { toApiJob } from "@/lib/server/job-access";
 
 export async function GET(request: Request) {
@@ -25,6 +26,7 @@ export async function GET(request: Request) {
 		eq(jobs.workspaceId, identity.workspaceId),
 		eq(documents.organizationId, identity.tenantId),
 		eq(documents.workspaceId, identity.workspaceId),
+		documentMetadataVisibilitySql(identity, documents.id),
 	];
 	if (libraryId) conditions.push(eq(libraries.ragLibraryId, libraryId));
 

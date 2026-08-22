@@ -20,6 +20,7 @@ import {
 	DocumentVersionCommandError,
 } from "@/lib/server/document-version-command";
 import { contentTypeForUpload } from "@/lib/server/document-version-core.mjs";
+import { documentMetadataVisibilitySql } from "@/lib/server/document-visibility";
 import {
 	canWriteLibraries,
 	findAuthorizedLibrary,
@@ -61,6 +62,7 @@ export async function GET(request: Request, context: RouteContext) {
 				eq(documents.libraryId, library.id),
 				eq(documents.ragDocumentId, documentId),
 				ne(documents.status, "deleted"),
+				documentMetadataVisibilitySql(identity, documents.id),
 			),
 		)
 		.limit(1);

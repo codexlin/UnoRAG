@@ -115,6 +115,21 @@ print(cur)
 PY
 }
 
+json_array_contains_id() {
+	local file="$1" expected="$2"
+	python3 - "$file" "$expected" <<'PY'
+import json, sys
+path, expected = sys.argv[1:3]
+with open(path, encoding="utf-8") as f:
+	data = json.load(f)
+rows = data if isinstance(data, list) else data.get("items") or data.get("documents") or []
+for row in rows:
+	if isinstance(row, dict) and str(row.get("id") or row.get("document_id") or "") == expected:
+		sys.exit(0)
+sys.exit(1)
+PY
+}
+
 http_code() {
 	local code
 	code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$@" || true)"
@@ -124,7 +139,45 @@ http_code() {
 require_cmds() {
 	command -v curl >/dev/null 2>&1 || skip "curl is required"
 	command -v python3 >/dev/null 2>&1 || skip "python3 is required"
-	command -v node >/dev/null 2>&1 || skip "node is required for topology bootstrap"
+	if ! command -v node >/dev/null 2>&1 &&
+		! command -v docker >/dev/null 2>&1; then
+		skip "node or Docker is required for topology bootstrap"
+	fi
+}
+
+run_topology() {
+	local action="${1:-bootstrap}"
+	local -a args=(--out "$TOPOLOGY_JSON")
+	if [[ "$action" == "cleanup" ]]; then
+		args=(--cleanup "${args[@]}")
+	fi
+
+	if command -v node >/dev/null 2>&1; then
+		node "$ACC_DIR/bootstrap_isolation_topology.mjs" "${args[@]}"
+		return
+	fi
+
+	local compose_dir="$ROOT/deploy/compose"
+	local compose_env="$compose_dir/scripts/compose-env.sh"
+	[[ -f "$compose_env" ]] || return 2
+	local output_dir output_name
+	output_dir="$(cd "$(dirname "$TOPOLOGY_JSON")" && pwd)"
+	output_name="$(basename "$TOPOLOGY_JSON")"
+	local -a container_args=(--out "/out/$output_name")
+	if [[ "$action" == "cleanup" ]]; then
+		container_args=(--cleanup "${container_args[@]}")
+	fi
+	(
+		cd "$compose_dir"
+		# shellcheck disable=SC1091
+		source "$compose_env"
+		mk_compose --profile ops run --rm --user 0 \
+			-v "$ACC_DIR/bootstrap_isolation_topology.mjs:/repo/scripts/acceptance/bootstrap_isolation_topology.mjs:ro" \
+			-v "$output_dir:/out" \
+			--entrypoint node inspect-lifecycle \
+			/repo/scripts/acceptance/bootstrap_isolation_topology.mjs \
+			"${container_args[@]}"
+	)
 }
 
 login() {
@@ -195,19 +248,21 @@ create_library() {
 
 upload_marker_doc() {
 	local label="$1" lib_id="$2" marker="$3" out="$4"
+	local display_label="${5:-$label}"
+	local control_fact="${6:-This sentence exists only for S1/S2 cross-tenant / cross-workspace probes.}"
 	local file="$WORKDIR/${label}-marker.md"
 	cat >"$file" <<EOF
 # Isolation Marker Document (${label})
 
 Unique isolation marker: \`${marker}\`.
 
-This sentence exists only for S1/S2 cross-tenant / cross-workspace probes.
+${control_fact}
 EOF
 	local code
 	code="$(
 		auth_curl "$label" -o "$out" -w '%{http_code}' \
 			-F "file=@${file};filename=${label}-marker.md;type=text/markdown" \
-			-F "display_name=ISO ${label} Marker" \
+			-F "display_name=ISO ${display_label} Marker" \
 			"$BASE_URL/api/libraries/${lib_id}/documents" || true
 	)"
 	[[ "$code" == "202" ]] || fail "upload ($label) HTTP $code $(head -c 400 "$out")"
@@ -229,11 +284,16 @@ create_service_key() {
 # Neutral question — NEVER embed the foreign marker (model echo would false-positive).
 ISOLATION_QUESTION='What unique isolation marker string appears in the documents? Reply with the exact marker token only.'
 ISOLATION_RETRIEVE_QUERY='unique isolation marker string ISO_MARKER documents'
+POSITIVE_A1_RETRIEVE_QUERY='designated review window ISO A1 Primary Marker'
+RESTRICTED_RETRIEVE_QUERY='approval retention period ISO Restricted ACL Marker'
 
 write_json_body() {
-	# write_json_body <out> <kind:ask|retrieve> <library_id>
+	# write_json_body <out> <kind:ask|retrieve> <library_id> [question-or-query]
 	local out="$1" kind="$2" lib_id="$3"
-	python3 - "$out" "$kind" "$lib_id" "$ISOLATION_QUESTION" "$ISOLATION_RETRIEVE_QUERY" <<'PY'
+	local prompt="${4:-}"
+	local question="${prompt:-$ISOLATION_QUESTION}"
+	local query="${prompt:-$ISOLATION_RETRIEVE_QUERY}"
+	python3 - "$out" "$kind" "$lib_id" "$question" "$query" <<'PY'
 import json, sys
 out, kind, lib_id, question, query = sys.argv[1:6]
 payload = {"library_id": lib_id}
@@ -249,15 +309,16 @@ PY
 # Returns 0 if marker appears in answer/citations/hits; 1 if clean miss; 3 if HTTP soft-fail.
 # Checks answer + citations/hits only (not the whole envelope) to avoid echo false positives.
 probe_no_marker() {
-	local mode="$1" # session_ask | svc_ask | svc_retrieve
+	local mode="$1" # session_ask | session_retrieve | svc_ask | svc_retrieve
 	local label_or_keyfile="$2"
 	local lib_id="$3"
 	local marker="$4"
 	local out="$5"
+	local question="${6:-$ISOLATION_QUESTION}"
 	local code req="$WORKDIR/probe-req-$$.json"
 	case "$mode" in
 		session_ask)
-			write_json_body "$req" ask "$lib_id"
+			write_json_body "$req" ask "$lib_id" "$question"
 			code="$(
 				auth_curl "$label_or_keyfile" -o "$out" -w '%{http_code}' \
 					-H 'content-type: application/json' \
@@ -265,10 +326,19 @@ probe_no_marker() {
 					"$BASE_URL/api/rag/v1/ask" || true
 			)"
 			;;
+		session_retrieve)
+			write_json_body "$req" retrieve "$lib_id" "$question"
+			code="$(
+				auth_curl "$label_or_keyfile" -o "$out" -w '%{http_code}' \
+					-H 'content-type: application/json' \
+					-d @"$req" \
+					"$BASE_URL/api/rag/v1/retrieve" || true
+			)"
+			;;
 		svc_ask)
 			local key
 			key="$(json_get "$label_or_keyfile" key)"
-			write_json_body "$req" ask "$lib_id"
+			write_json_body "$req" ask "$lib_id" "$question"
 			code="$(
 				curl -sS -o "$out" -w '%{http_code}' \
 					-H 'content-type: application/json' \
@@ -328,15 +398,17 @@ PY
 
 probe_has_marker() {
 	local mode="$1" label_or_keyfile="$2" lib_id="$3" marker="$4" out="$5"
+	local question="${6:-$ISOLATION_QUESTION}"
 	local rc=0
-	probe_no_marker "$mode" "$label_or_keyfile" "$lib_id" "$marker" "$out" || rc=$?
+	probe_no_marker "$mode" "$label_or_keyfile" "$lib_id" "$marker" "$out" "$question" || rc=$?
 	[[ $rc -eq 0 ]]
 }
 
 assert_no_leak() {
 	local check_id="$1" mode="$2" actor="$3" lib_id="$4" marker="$5" out="$6"
+	local question="${7:-$ISOLATION_QUESTION}"
 	set +e
-	probe_no_marker "$mode" "$actor" "$lib_id" "$marker" "$out"
+	probe_no_marker "$mode" "$actor" "$lib_id" "$marker" "$out" "$question"
 	local rc=$?
 	set -e
 	if [[ $rc -eq 3 ]]; then
@@ -364,7 +436,7 @@ fi
 
 log "bootstrap isolation topology"
 set +e
-node "$ACC_DIR/bootstrap_isolation_topology.mjs" --out "$TOPOLOGY_JSON"
+run_topology bootstrap
 BOOT_RC=$?
 set -e
 if [[ $BOOT_RC -eq 2 ]]; then
@@ -405,10 +477,10 @@ UP_A1="$WORKDIR/up_a1.json"
 UP_A2="$WORKDIR/up_a2.json"
 UP_B1="$WORKDIR/up_b1.json"
 UP_REST="$WORKDIR/up_rest.json"
-upload_marker_doc A1 "$LIB_A1" "$MARKER_A1" "$UP_A1"
+upload_marker_doc A1 "$LIB_A1" "$MARKER_A1" "$UP_A1" "A1 Primary" "The designated review window is 17 business days."
 upload_marker_doc A2 "$LIB_A2" "$MARKER_A2" "$UP_A2"
 upload_marker_doc B1 "$LIB_B1" "$MARKER_B1" "$UP_B1"
-upload_marker_doc A1 "$LIB_A1" "$MARKER_REST" "$UP_REST"
+upload_marker_doc A1 "$LIB_A1" "$MARKER_REST" "$UP_REST" "Restricted ACL" "The approval retention period is 29 calendar days."
 
 DOC_A1="$(json_get "$UP_A1" document_id)"
 DOC_A2="$(json_get "$UP_A2" document_id)"
@@ -434,7 +506,7 @@ create_service_key B1 "iso-b1-$TOKEN" "$KEY_B1"
 # Positive controls (own marker) — if these fail soft, stack cannot validate isolation.
 POS="$WORKDIR/pos.json"
 set +e
-probe_has_marker session_ask A1 "$LIB_A1" "$MARKER_A1" "$POS"
+probe_has_marker session_retrieve A1 "$LIB_A1" "$DOC_A1" "$POS" "$POSITIVE_A1_RETRIEVE_QUERY"
 POS_RC=$?
 set -e
 if [[ $POS_RC -ne 0 ]]; then
@@ -444,8 +516,8 @@ if [[ $POS_RC -ne 0 ]]; then
 	fi
 	skip "positive A1 ask missing own marker — ingestion/retrieval not ready for isolation probe"
 fi
-record "S2.positive_A1" pass "own marker visible"
-log "PASS S2.positive_A1 (own marker)"
+record "S2.positive_A1" pass "own document citation visible"
+log "PASS S2.positive_A1 (own document citation)"
 
 # --- S2: A1 must not see A2 / B1 markers (session + Mode B) ---
 assert_no_leak "S2.A1_session_no_A2" session_ask A1 "$LIB_A1" "$MARKER_A2" "$WORKDIR/s2_a1_a2.json"
@@ -554,7 +626,11 @@ ACL_CODE="$(
 )"
 [[ "$ACL_CODE" == "200" ]] || fail "ACL update HTTP $ACL_CODE $(head -c 300 "$ACL_BODY")"
 PROJ="$(json_get "$ACL_BODY" projection || true)"
-if [[ "$PROJ" == "reindex_required" ]]; then
+if [[ "$PROJ" == "projection_queued" ]]; then
+	ACL_JOB="$(json_get "$ACL_BODY" projection_job_id || true)"
+	[[ -n "$ACL_JOB" ]] || fail "ACL projection queued without projection_job_id"
+	wait_job A1 "$ACL_JOB" "acl-projection"
+elif [[ "$PROJ" == "reindex_required" ]]; then
 	REIDX="$WORKDIR/reidx.json"
 	REIDX_CODE="$(
 		auth_curl A1 -o "$REIDX" -w '%{http_code}' \
@@ -570,16 +646,96 @@ if [[ "$PROJ" == "reindex_required" ]]; then
 fi
 
 # Viewer must not see restricted marker; owner must.
-assert_no_leak "S3.viewer_no_restricted" session_ask A1V "$LIB_A1" "$MARKER_REST" "$WORKDIR/s3_viewer.json"
+assert_no_leak "S3.viewer_no_restricted" session_retrieve A1V "$LIB_A1" "$DOC_REST" "$WORKDIR/s3_viewer.json" "$RESTRICTED_RETRIEVE_QUERY"
 set +e
-probe_has_marker session_ask A1 "$LIB_A1" "$MARKER_REST" "$WORKDIR/s3_owner.json"
+probe_has_marker session_retrieve A1 "$LIB_A1" "$DOC_REST" "$WORKDIR/s3_owner.json" "$RESTRICTED_RETRIEVE_QUERY"
 OWN_RC=$?
 set -e
 if [[ $OWN_RC -ne 0 ]]; then
-	skip "restricted owner positive control missing marker after ACL (embedding/ACL projection)"
+	skip "restricted owner positive control missing document citation after ACL (embedding/ACL projection)"
 fi
-record "S3.owner_has_restricted" pass "owner still sees marker"
+record "S3.owner_has_restricted" pass "owner still sees restricted document citation"
 log "PASS S3.owner_has_restricted"
+
+# Metadata follows the same ACL boundary as retrieval. Writers keep the full
+# governance inventory; read-only members only see documents they can read.
+log "restricted ACL metadata depth"
+VIEWER_DOCS="$WORKDIR/s3_viewer_docs.json"
+VIEWER_DOCS_CODE="$(
+	auth_curl A1V -o "$VIEWER_DOCS" -w '%{http_code}' \
+		"$BASE_URL/api/libraries/${LIB_A1}/documents" || true
+)"
+[[ "$VIEWER_DOCS_CODE" == "200" ]] || fail "viewer document list HTTP $VIEWER_DOCS_CODE"
+json_array_contains_id "$VIEWER_DOCS" "$DOC_A1" \
+	|| fail "viewer document list omitted readable workspace document"
+if json_array_contains_id "$VIEWER_DOCS" "$DOC_REST"; then
+	record "S3.metadata_document_list" fail "restricted document visible to viewer"
+	fail "viewer document list leaked restricted document metadata"
+fi
+record "S3.metadata_document_list" pass "readable present; restricted absent"
+log "PASS S3.metadata_document_list"
+
+OWNER_DOCS="$WORKDIR/s3_owner_docs.json"
+OWNER_DOCS_CODE="$(
+	auth_curl A1 -o "$OWNER_DOCS" -w '%{http_code}' \
+		"$BASE_URL/api/libraries/${LIB_A1}/documents" || true
+)"
+[[ "$OWNER_DOCS_CODE" == "200" ]] || fail "owner document list HTTP $OWNER_DOCS_CODE"
+json_array_contains_id "$OWNER_DOCS" "$DOC_REST" \
+	|| fail "owner document list omitted restricted governance metadata"
+record "S3.metadata_owner_inventory" pass "restricted document visible to owner"
+log "PASS S3.metadata_owner_inventory"
+
+VIEWER_LIBS="$WORKDIR/s3_viewer_libs.json"
+VIEWER_LIBS_CODE="$(
+	auth_curl A1V -o "$VIEWER_LIBS" -w '%{http_code}' \
+		"$BASE_URL/api/libraries" || true
+)"
+[[ "$VIEWER_LIBS_CODE" == "200" ]] || fail "viewer library list HTTP $VIEWER_LIBS_CODE"
+python3 - "$VIEWER_LIBS" "$LIB_A1" <<'PY' \
+	|| fail "viewer library counts include ACL-hidden documents"
+import json, sys
+path, library_id = sys.argv[1:3]
+with open(path, encoding="utf-8") as f:
+	rows = json.load(f)
+row = next((item for item in rows if isinstance(item, dict) and item.get("id") == library_id), None)
+if not row or row.get("doc_count") != 1 or row.get("ready_count") != 1:
+	print(row, file=sys.stderr)
+	sys.exit(1)
+PY
+record "S3.metadata_library_counts" pass "viewer counts only readable documents"
+log "PASS S3.metadata_library_counts"
+
+for probe in \
+	"versions:/api/libraries/${LIB_A1}/documents/${DOC_REST}/versions" \
+	"acl:/api/libraries/${LIB_A1}/documents/${DOC_REST}/acl" \
+	"job:/api/jobs/${JOB_REST}" \
+	"download:/api/rag/v1/documents/${DOC_REST}/download"; do
+	probe_name="${probe%%:*}"
+	probe_path="${probe#*:}"
+	probe_body="$WORKDIR/s3_${probe_name}.json"
+	probe_code="$(
+		auth_curl A1V -o "$probe_body" -w '%{http_code}' \
+			"$BASE_URL${probe_path}" || true
+	)"
+	[[ "$probe_code" == "404" ]] \
+		|| fail "viewer restricted ${probe_name} expected 404, got HTTP $probe_code"
+	record "S3.metadata_${probe_name}" pass "HTTP 404"
+	log "PASS S3.metadata_${probe_name} (HTTP 404)"
+done
+
+VIEWER_JOBS="$WORKDIR/s3_viewer_jobs.json"
+VIEWER_JOBS_CODE="$(
+	auth_curl A1V -o "$VIEWER_JOBS" -w '%{http_code}' \
+		"$BASE_URL/api/jobs?library_id=${LIB_A1}&limit=200" || true
+)"
+[[ "$VIEWER_JOBS_CODE" == "200" ]] || fail "viewer jobs list HTTP $VIEWER_JOBS_CODE"
+if json_array_contains_id "$VIEWER_JOBS" "$JOB_REST"; then
+	record "S3.metadata_job_list" fail "restricted job visible to viewer"
+	fail "viewer jobs list leaked restricted document job"
+fi
+record "S3.metadata_job_list" pass "restricted document jobs absent"
+log "PASS S3.metadata_job_list"
 
 # --- Lifecycle smoke: replace + delete on A2 doc (API-level) ---
 log "lifecycle: replace + delete on A2 document"
@@ -621,7 +777,7 @@ assert_no_leak "S2.post_delete_no_A2_marker" session_ask A2 "$LIB_A2" "$MARKER_A
 if [[ "$KEEP_TOPOLOGY" != "1" ]]; then
 	log "cleanup topology (set UNORAG_ISOLATION_KEEP=1 to retain)"
 	set +e
-	node "$ACC_DIR/bootstrap_isolation_topology.mjs" --cleanup --out "$TOPOLOGY_JSON"
+	run_topology cleanup
 	set -e
 fi
 
