@@ -859,7 +859,7 @@ export async function askQuestionStream(
 	});
 	if (!response.ok || !response.body) {
 		const text = await response.text();
-		throw new Error(text || `ask stream ${response.status}`);
+		throw new Error(parseApiError(text) || `ask stream ${response.status}`);
 	}
 
 	const reader = response.body.getReader();

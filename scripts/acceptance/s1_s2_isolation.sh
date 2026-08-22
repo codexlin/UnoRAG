@@ -328,10 +328,8 @@ PY
 
 probe_has_marker() {
 	local mode="$1" label_or_keyfile="$2" lib_id="$3" marker="$4" out="$5"
-	set +e
-	probe_no_marker "$mode" "$label_or_keyfile" "$lib_id" "$marker" "$out"
-	local rc=$?
-	set -e
+	local rc=0
+	probe_no_marker "$mode" "$label_or_keyfile" "$lib_id" "$marker" "$out" || rc=$?
 	[[ $rc -eq 0 ]]
 }
 
