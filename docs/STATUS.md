@@ -9,11 +9,11 @@
 ## 一句话结论
 
 UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部署、具备权限和文档生命周期的知识产品**。
-仓库已在 GitHub 公开并采用 Apache-2.0，目前最新生产候选为 `v0.1.0-rc.18`。素材溯源、第三方通知、
-SBOM/provenance、镜像漏洞扫描和 Cosign 签名均已工程化并在 RC.18 验证；COS 真链路、真实文件、浏览器
-权限、隔离、维护恢复、回退前滚和受控容量也已有版本绑定证据。稳定 `v0.1.0` 只剩在同一精确候选上
-重跑完整门禁并发布稳定标签，不能把该单机候选结论扩大为所有部署拓扑的通用生产认证。当前默认交付是
-一位客户一套独立实例；Workspace 服务于客户企业内部治理，不代表公网共享多租户 SaaS。
+仓库已在 GitHub 公开并采用 Apache-2.0，首个稳定版 [`v0.1.0`](https://github.com/codexlin/UnoRAG/releases/tag/v0.1.0)
+已经发布。素材溯源、第三方通知、SBOM/provenance、镜像漏洞扫描和 Cosign 签名均已工程化；COS 真链路、
+真实文件、浏览器权限、29 项隔离熔断、维护恢复、回退前滚和受控容量已在最终提交与香港参考环境复验。
+这不应扩大为所有部署拓扑的通用生产认证。当前默认交付是一位客户一套独立实例；Workspace 服务于客户
+企业内部治理，不代表公网共享多租户 SaaS。
 
 ## 当前运行时
 
@@ -81,24 +81,20 @@ Next.js product + Knowledge API
 - CI 覆盖全历史密钥扫描、Web/TS Core、真实 PostgreSQL migration、镜像构建、Helm、依赖审计和品牌残留检查。
 - 现有证据覆盖空环境安装、真实文件、浏览器 RBAC、跨 Workspace 隔离、MinerU 302 实链路、故障恢复、
   备份恢复、不可变镜像升级/回滚和 tombstone 生命周期。
-- RC.18 已以四个 digest 固定、Trivy 扫描和 Cosign 签名发布；香港环境通过原位升级、pilot smoke、
-  Retrieve 75/75、Ask 37/37、生命周期 7/7 和真实 MinerU 图表 PDF。结论见
-  [RC.18 LLM 背压与容量验收](./evidence/2026-08-22-rc18-llm-backpressure.md)。
-- RC.12 的浏览器 RBAC、跨 Workspace 隔离、备份恢复、Qdrant/worker 故障恢复和回退前滚证据仍然有效，
-  但稳定发布必须在最终精确提交重新执行，不能把历史 PASS 自动继承给 `v0.1.0`。
+- `v0.1.0` 已以四个独立稳定 digest 固定、Trivy 扫描和 Cosign 签名发布；香港环境通过原位升级、
+  pilot smoke、29 项隔离熔断、Retrieve 75/75、Ask 37/37、生命周期 7/7、真实 MinerU 图表 PDF、
+  Qdrant/worker 故障恢复和应用回滚前滚。结论见
+  [v0.1.0 稳定版验收](./evidence/2026-08-23-v0.1.0-release-acceptance.md)。
+- 备份产物完整性和可解析性已在最终候选验证；当前在线实例未执行破坏性原地 restore，客户环境仍须按自己的
+  RPO/RTO 和维护窗口演练。
 
 ## 尚未完成
 
-### P0：稳定版发行门禁
+### P0：稳定版维护门禁
 
-素材与 fixture 溯源、完整第三方 NOTICE、四镜像 SBOM/provenance、漏洞扫描和 Cosign 签名均已完成。
-稳定版剩余工作是一次不可拆分的精确版本验收：
-
-1. 从最终 `main` 提交发布 `v0.1.0` 四镜像和 digest manifest，扫描所有 refs、tag 与 release assets；
-2. 对稳定 digest 复验匿名拉取、SPDX SBOM、SLSA provenance、Cosign 身份和镜像内许可证包；
-3. 在 UnoRAG-HK 完成空环境/升级、真实文件、浏览器 RBAC/ACL、COS 生命周期、故障恢复、备份恢复、
-   应用回滚再前滚和容量门禁，并形成版本绑定证据；
-4. 发布 release notes、已知限制、升级路径和校验清单，确认线上版本与稳定 manifest 完全一致。
+`v0.1.0` 的源码标签、四镜像、digest manifest、校验和、release notes、供应链材料和版本绑定验收均已
+完成。后续补丁版本必须继续执行同一门禁，历史 PASS 不自动传递给新提交、新模型、ParserProvider 或客户
+环境。当前在线版本与稳定 manifest 完全一致。
 
 `UnoRAG` / `Unobyte` 的正式商标检索仍是维护者的外部法律风险事项，本仓库只记录工程来源和使用政策，
 不宣称名称或图形已在任一地区注册。首个稳定版沿用当前项目创建的 UnoRAG 标识；未来视觉升级不改变
@@ -131,15 +127,12 @@ Secret Scanning 和 Push Protection 均已开启。
 
 ## 建议的下一步
 
-当前最有杠杆的工作不是继续增加 RAG 路径，而是完成第一个可复验的稳定版本：
+当前最有杠杆的工作不是继续增加通用 RAG 路径，而是围绕稳定版补齐真实采用链路：
 
-1. **稳定 v0.1.0**：在同一精确提交完成供应链、安装升级、真实产品、隔离、恢复和容量门禁，发布源码、
-   四镜像 digest、SBOM/provenance、签名 manifest 与版本绑定报告；
-2. **OIDC / SSO 纵向切片**：稳定版后优先补齐私有部署最常见的企业身份接入，并保持本地管理员恢复路径；
-3. **身份治理**：实现用户组管理 UI，再根据真实客户目录选择 SCIM 或特定 Provider 同步；
+1. **OIDC / SSO 纵向切片**：优先补齐私有部署最常见的企业身份接入，并保持本地管理员恢复路径；
+2. **身份治理**：实现用户组管理 UI，再根据真实客户目录选择 SCIM 或特定 Provider 同步；
+3. **客户环境验收模板**：把容量、备份恢复、Provider、责任人和 Go/No-Go 固化为可复用交付清单；
 4. **知识质量扩展**：以客户金标决定 ChartIR、Provider scorecard、native sparse 和复杂跨页表的顺序。
-
-完成第一项后，UnoRAG 才从“代码和 RC 已成熟”进入“外部用户可按稳定版本采用”的阶段。
 
 ## 文档权威顺序
 

@@ -4,6 +4,7 @@
 
 | 报告 | 证明范围 |
 |---|---|
+| [v0.1.0 稳定版验收](./2026-08-23-v0.1.0-release-acceptance.md) | 稳定 digest、供应链、产品链路、29 项隔离熔断、容量、真实 MinerU、故障恢复、备份完整性和应用回滚前滚 |
 | [RC.18 LLM 背压与容量验收](./2026-08-22-rc18-llm-backpressure.md) | 共享且可取消的 LLM 并发门、队列与 provider 独立超时、真实容量校准、Qdrant 逐 minor 升级和复杂 PDF 入库 |
 | [RC.14 COS 与容量基线](./2026-08-22-rc14-cos-capacity.md) | 空环境 COS 安装、产品全链路、Retrieve/Ask/入库阶梯并发和真实 302.AI MinerU 图表 PDF |
 | [RC.12 生产候选验收](./2026-08-12-rc12-production-acceptance.md) | 精确 digest 发布、RC.11 生产问题修复、三轮真实文件稳定性、浏览器 Workspace 隔离、备份 overlay、故障恢复及版本回退前滚 |
