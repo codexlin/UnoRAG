@@ -134,6 +134,7 @@ Qdrant contains security-scoped retrieval projections.
 - [Private deployment](./docs/DEPLOYMENT.md)
 - [Operations](./docs/OPERATIONS.md)
 - [Release and acceptance](./docs/RELEASE.md)
+- [Changelog and known limitations](./CHANGELOG.md)
 - [Development](./docs/DEVELOPMENT.md)
 - [Open-source readiness audit](./docs/OPEN_SOURCE_READINESS.md)
 
