@@ -114,9 +114,10 @@ UnoRAG 当前不把以下方向作为核心承诺：
 当前实现、缺口与执行顺序由 [STATUS.md](./STATUS.md) 统一维护。产品优先级按“先可安全公开和复验，
 再增强客户部署，最后扩展知识能力”排列：
 
-1. **公开发布准备**：素材权属、完整第三方 NOTICE、镜像签名、正式品牌和精确 commit 的 RC 复验。
-2. **私有部署产品化**：完成腾讯云 COS 真实凭证验收，并按试点需求推进 OIDC/SSO、其他 S3 兼容存储、
-   Kubernetes NetworkPolicy/PDB/HPA，以及 Ops Stack 的客户环境容量与故障验收。
+1. **稳定版发布**：素材、NOTICE、SBOM/provenance 和镜像签名已经工程化；在最终精确提交重跑完整
+   产品、安全、恢复与容量门禁后发布 `v0.1.0`。
+2. **私有部署产品化**：COS 已通过真实环境验收；稳定版后优先推进 OIDC/SSO，再按试点需求选择
+   S3 兼容存储、Kubernetes NetworkPolicy/PDB/HPA，以及 Ops Stack 的客户环境容量与故障验收。
 3. **知识质量**：在现有真实文件黄金集与 Prompt 门禁上扩充客户问题分类、引用 precision、
    Provider scorecard 和 ChartIR。
 4. **平台接口**：稳定 Documents/Versions/Jobs 公共 API、用户组管理和目录同步。
@@ -133,6 +134,7 @@ Ops Stack、Langfuse、评测与通用 Provider 集成在实现后都属于同�
 项目可通过架构咨询、部署升级、系统集成、迁移、RAG 评测与调优、客户定制、培训和 SLA 支持获得收入。
 客户数据、密钥、基础设施配置和合同特定扩展继续保持私有，通用修复与能力在合同允许时回馈主仓库。
 
-源码已经采用 Apache-2.0，GitHub 仓库目前公开可见并仅发布预发行 RC。仓库公开不等于素材权属、
-第三方通知、签名与稳定版候选验收已经完成；这些仍是正式 `v0.1.0` 的发行门禁。具体决策与发布门槛见
-[ADR-0007](./adr/0007-fully-open-source-product-and-services.md)。公网 SaaS 不是当前版本的前置条件。
+源码已经采用 Apache-2.0，GitHub 仓库目前公开可见并仅发布预发行 RC。素材溯源、第三方通知、
+SBOM/provenance 与签名已经完成；正式 `v0.1.0` 仍须绑定最终提交执行完整验收并发布稳定材料。
+具体决策与发布门槛见 [ADR-0007](./adr/0007-fully-open-source-product-and-services.md)。公网 SaaS 不是
+当前版本的前置条件。

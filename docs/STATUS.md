@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-08-17
+> 更新日期：2026-08-23
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -9,10 +9,11 @@
 ## 一句话结论
 
 UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部署、具备权限和文档生命周期的知识产品**。
-仓库已在 GitHub 公开并采用 Apache-2.0，目前最新生产候选为 `v0.1.0-rc.12`；精确候选提交已完成
-HK 真实文件、浏览器、隔离、维护恢复与回退前滚复验。在素材权属、完整第三方通知和镜像签名完成前，
-仍不应发布稳定 `v0.1.0`，也不应把该单机候选结论扩大为所有部署拓扑的通用生产认证。当前默认
-交付是一位客户一套独立实例；Workspace 服务于客户企业内部治理，不代表公网共享多租户 SaaS。
+仓库已在 GitHub 公开并采用 Apache-2.0，目前最新生产候选为 `v0.1.0-rc.18`。素材溯源、第三方通知、
+SBOM/provenance、镜像漏洞扫描和 Cosign 签名均已工程化并在 RC.18 验证；COS 真链路、真实文件、浏览器
+权限、隔离、维护恢复、回退前滚和受控容量也已有版本绑定证据。稳定 `v0.1.0` 只剩在同一精确候选上
+重跑完整门禁并发布稳定标签，不能把该单机候选结论扩大为所有部署拓扑的通用生产认证。当前默认交付是
+一位客户一套独立实例；Workspace 服务于客户企业内部治理，不代表公网共享多租户 SaaS。
 
 ## 当前运行时
 
@@ -76,23 +77,32 @@ Next.js product + Knowledge API
 
 ## 已经验证到什么程度
 
-- 当前仓库跟踪 106 个测试文件和 23 个测试数据文件；生成的本地 A/B 报告位于忽略目录，不进入 Git。
+- 当前仓库跟踪 111 个 TypeScript/Node 测试文件和 23 个测试数据文件；生成的本地 A/B 报告位于忽略目录，不进入 Git。
 - CI 覆盖全历史密钥扫描、Web/TS Core、真实 PostgreSQL migration、镜像构建、Helm、依赖审计和品牌残留检查。
 - 现有证据覆盖空环境安装、真实文件、浏览器 RBAC、跨 Workspace 隔离、MinerU 302 实链路、故障恢复、
   备份恢复、不可变镜像升级/回滚和 tombstone 生命周期。
-- RC.12 报告绑定当前精确提交，覆盖三轮真实文件稳定性、真实浏览器 Workspace 隔离、备份 overlay、
-  Qdrant/worker 故障恢复以及 RC.11 回退与 RC.12 再前滚；结论见
-  [RC.12 生产候选验收](./evidence/2026-08-12-rc12-production-acceptance.md)。
+- RC.18 已以四个 digest 固定、Trivy 扫描和 Cosign 签名发布；香港环境通过原位升级、pilot smoke、
+  Retrieve 75/75、Ask 37/37、生命周期 7/7 和真实 MinerU 图表 PDF。结论见
+  [RC.18 LLM 背压与容量验收](./evidence/2026-08-22-rc18-llm-backpressure.md)。
+- RC.12 的浏览器 RBAC、跨 Workspace 隔离、备份恢复、Qdrant/worker 故障恢复和回退前滚证据仍然有效，
+  但稳定发布必须在最终精确提交重新执行，不能把历史 PASS 自动继承给 `v0.1.0`。
 
 ## 尚未完成
 
 ### P0：稳定版发行门禁
 
-1. 完成截图和 `testdata/` fixture 的来源/再分发确认，补齐 `ASSETS.md`；当前 Uno 图形也仍是临时品牌资产。
-2. 生成完整第三方 NOTICE/许可证包，完成 libvips/字体再分发审阅；RC.12 四镜像已完成 SBOM/provenance 和漏洞扫描复验。
-3. 接入镜像签名；公开仓库已保留完整历史，后续发布仍须扫描所有 refs、tag 和 release assets。
-4. 商标使用政策已覆盖代码许可、fork、托管服务、截图与规范命名；仍须完成 `UnoRAG` / `Unobyte`
-   名称与图形在目标地区和软件类别的正式检索。
+素材与 fixture 溯源、完整第三方 NOTICE、四镜像 SBOM/provenance、漏洞扫描和 Cosign 签名均已完成。
+稳定版剩余工作是一次不可拆分的精确版本验收：
+
+1. 从最终 `main` 提交发布 `v0.1.0` 四镜像和 digest manifest，扫描所有 refs、tag 与 release assets；
+2. 对稳定 digest 复验匿名拉取、SPDX SBOM、SLSA provenance、Cosign 身份和镜像内许可证包；
+3. 在 UnoRAG-HK 完成空环境/升级、真实文件、浏览器 RBAC/ACL、COS 生命周期、故障恢复、备份恢复、
+   应用回滚再前滚和容量门禁，并形成版本绑定证据；
+4. 发布 release notes、已知限制、升级路径和校验清单，确认线上版本与稳定 manifest 完全一致。
+
+`UnoRAG` / `Unobyte` 的正式商标检索仍是维护者的外部法律风险事项，本仓库只记录工程来源和使用政策，
+不宣称名称或图形已在任一地区注册。首个稳定版沿用当前项目创建的 UnoRAG 标识；未来视觉升级不改变
+代码、数据或 API 兼容性，也不再阻塞工程发布。
 
 公开仓库治理已启用：主干强制 PR 与五项 CI，Private Vulnerability Reporting、Dependabot 安全更新、
 Secret Scanning 和 Push Protection 均已开启。
@@ -100,10 +110,10 @@ Secret Scanning 和 Push Protection 均已开启。
 ### P1：私有部署产品化
 
 1. **OIDC / SSO**：已有 Provider 边界和 Session 类型，但没有可交付的 OIDC 实现。
-2. **对象存储**：腾讯云 COS 适配器、Compose/Helm 配置及 Mock 契约测试已实现；真实 CAM 凭证下的上传、下载、替换、删除与备份恢复仍待绑定环境验收。其他 S3 兼容存储按试点需求扩展。
-3. **Kubernetes 加固**：Helm 是 starter，尚未内置 NetworkPolicy、PDB、HPA 或 digest-native 镜像字段。
-4. **身份目录**：group ACL 数据面已存在，用户组管理 UI、SCIM/目录同步尚未完成。
-5. **公共生命周期 API**：Documents / Versions / Jobs 仍是 Workspace 内部接口，不是稳定 v1 契约。
+2. **Kubernetes 加固**：Helm 是 starter，尚未内置 NetworkPolicy、PDB、HPA 或 digest-native 镜像字段。
+3. **身份目录**：group ACL 数据面已存在，用户组管理 UI、SCIM/目录同步尚未完成。
+4. **公共生命周期 API**：Documents / Versions / Jobs 仍是 Workspace 内部接口，不是稳定 v1 契约。
+5. **其他对象存储**：腾讯云 COS 已通过真实生命周期与容量验收；S3 兼容 Provider 按真实试点需求扩展。
 
 ### P2：知识质量扩展
 
@@ -123,12 +133,13 @@ Secret Scanning 和 Push Protection 均已开启。
 
 当前最有杠杆的工作不是继续增加 RAG 路径，而是完成第一个可复验的稳定版本：
 
-1. **发布合规批次**：确认素材/fixture 权属、完整第三方 NOTICE 与镜像签名。
-2. **品牌与对外材料批次**：确定正式名称和 Logo，更新产品截图，避免用临时资产发布首个公开版本。
-3. **稳定 v0.1.0**：签名 RC.12 等价镜像后，发布源码、镜像 digest、SBOM/provenance 和版本绑定验收报告。
-4. **部署增强批次**：先完成 COS 真实凭证验收，再按真实试点需求在 OIDC、其他对象存储、Kubernetes 加固中选择下一条纵向切片。
+1. **稳定 v0.1.0**：在同一精确提交完成供应链、安装升级、真实产品、隔离、恢复和容量门禁，发布源码、
+   四镜像 digest、SBOM/provenance、签名 manifest 与版本绑定报告；
+2. **OIDC / SSO 纵向切片**：稳定版后优先补齐私有部署最常见的企业身份接入，并保持本地管理员恢复路径；
+3. **身份治理**：实现用户组管理 UI，再根据真实客户目录选择 SCIM 或特定 Provider 同步；
+4. **知识质量扩展**：以客户金标决定 ChartIR、Provider scorecard、native sparse 和复杂跨页表的顺序。
 
-完成前四项后，UnoRAG 才从“代码和 RC 已成熟”进入“外部用户可安全采用”的阶段。
+完成第一项后，UnoRAG 才从“代码和 RC 已成熟”进入“外部用户可按稳定版本采用”的阶段。
 
 ## 文档权威顺序
 

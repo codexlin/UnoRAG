@@ -138,8 +138,8 @@ UnoRAG 采用单一开源发行版，不设置付费功能墙。私有化部署�
 
 源代码已采用 [Apache License 2.0](./LICENSE)，GitHub 仓库已经公开。产品名称与 Logo 另受
 [商标使用政策](./TRADEMARKS.md)约束；项目欢迎 fork 和托管服务，但应使用独立品牌并如实说明与 UnoRAG 的关系。
-稳定版 `v0.1.0` 仍须通过素材来源、
-供应链证明、镜像签名与发布候选验收门禁。详见 [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) 和
+素材溯源、第三方通知、SBOM/provenance 与镜像签名已经完成。稳定版 `v0.1.0` 只剩一次绑定最终提交的
+完整产品与恢复验收。详见 [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) 和
 [开源发布准备审计](./docs/OPEN_SOURCE_READINESS.md)。
 
 贡献、支持和安全报告方式分别见 [CONTRIBUTING.md](./CONTRIBUTING.md)、[SUPPORT.md](./SUPPORT.md)
