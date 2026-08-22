@@ -163,6 +163,9 @@ run_topology() {
 	local output_dir output_name
 	output_dir="$(cd "$(dirname "$TOPOLOGY_JSON")" && pwd)"
 	output_name="$(basename "$TOPOLOGY_JSON")"
+	local host_uid host_gid
+	host_uid="$(id -u)"
+	host_gid="$(id -g)"
 	local -a container_args=(--out "/out/$output_name")
 	if [[ "$action" == "cleanup" ]]; then
 		container_args=(--cleanup "${container_args[@]}")
@@ -171,7 +174,7 @@ run_topology() {
 		cd "$compose_dir"
 		# shellcheck disable=SC1091
 		source "$compose_env"
-		mk_compose --profile ops run --rm --user 0 \
+		mk_compose --profile ops run --rm --user "$host_uid:$host_gid" \
 			-v "$ACC_DIR/bootstrap_isolation_topology.mjs:/repo/scripts/acceptance/bootstrap_isolation_topology.mjs:ro" \
 			-v "$output_dir:/out" \
 			--entrypoint node inspect-lifecycle \
