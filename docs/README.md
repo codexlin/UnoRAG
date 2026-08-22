@@ -13,6 +13,7 @@
 | [INTEGRATION.md](./INTEGRATION.md) | 外部系统如何使用 Service Key 调用 Retrieve / Ask？ |
 | [OPERATIONS.md](./OPERATIONS.md) | 如何监控生命周期、备份数据、处理故障和发布镜像？ |
 | [RELEASE.md](./RELEASE.md) | 一个版本怎样通过质量、安全和客户环境验收？ |
+| [CHANGELOG.md](../CHANGELOG.md) | 当前稳定版提供什么、公共契约和已知限制是什么？ |
 | [DEVELOPMENT.md](./DEVELOPMENT.md) | 如何开发、测试和维护仓库？ |
 | [OPEN_SOURCE_READINESS.md](./OPEN_SOURCE_READINESS.md) | 公开仓库与稳定版发行还剩哪些安全、许可和权属门禁？ |
 

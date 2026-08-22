@@ -128,6 +128,7 @@ Next.js 负责身份、Workspace、RBAC/ACL、公开 API、检索、LangGraph、
 - [私有化部署](./docs/DEPLOYMENT.md)
 - [运维指南](./docs/OPERATIONS.md)
 - [发布与验收](./docs/RELEASE.md)
+- [版本变更与已知限制](./CHANGELOG.md)
 - [开发指南](./docs/DEVELOPMENT.md)
 - [开源发布准备审计](./docs/OPEN_SOURCE_READINESS.md)
 
