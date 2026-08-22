@@ -18,6 +18,7 @@ import {
 } from "@/lib/server/document-acl-db";
 import { documentLifecycleV2Enabled } from "@/lib/server/document-lifecycle";
 import { dbosAclProjectionEnabled } from "@/lib/server/document-lifecycle-flag.mjs";
+import { canReadDocumentMetadata } from "@/lib/server/document-visibility";
 import { findAuthorizedLibrary } from "@/lib/server/library-access";
 
 export const runtime = "nodejs";
@@ -71,6 +72,14 @@ async function resolveDocumentContext(
 		ragDocumentId: documentId,
 	});
 	if (!found) {
+		return {
+			error: Response.json({ detail: "document not found" }, { status: 404 }),
+		};
+	}
+	if (
+		mode === "read" &&
+		!(await canReadDocumentMetadata(identity, found.document.id))
+	) {
 		return {
 			error: Response.json({ detail: "document not found" }, { status: 404 }),
 		};

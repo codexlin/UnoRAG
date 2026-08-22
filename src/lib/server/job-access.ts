@@ -6,6 +6,7 @@ import { getDatabase } from "@/db";
 import { documents, documentVersions, jobs, libraries } from "@/db/schema";
 import { formatParseStatusView } from "@/lib/parse-status-view.mjs";
 import type { AuthIdentity } from "./auth/provider";
+import { documentMetadataVisibilitySql } from "./document-visibility";
 
 export async function findAuthorizedJob(identity: AuthIdentity, jobId: string) {
 	const db = getDatabase();
@@ -30,6 +31,7 @@ export async function findAuthorizedJob(identity: AuthIdentity, jobId: string) {
 				eq(jobs.workspaceId, identity.workspaceId),
 				eq(documents.organizationId, identity.tenantId),
 				eq(documents.workspaceId, identity.workspaceId),
+				documentMetadataVisibilitySql(identity, documents.id),
 			),
 		)
 		.limit(1);

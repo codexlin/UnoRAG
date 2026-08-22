@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq, notInArray } from "drizzle-orm";
+import { and, desc, eq, notInArray, sql } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import { libraries } from "@/db/schema";
+import { documents, libraries } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
 	DOCUMENT_PROFILE_DEFAULT,
@@ -14,6 +14,7 @@ import {
 	validateParsePreference,
 	validateScanHandling,
 } from "@/lib/server/document-policy.mjs";
+import { documentMetadataVisibilitySql } from "@/lib/server/document-visibility";
 import { canWriteLibraries } from "@/lib/server/library-access";
 import { toApiLibrary } from "@/lib/server/library-api.mjs";
 import { staleActiveVersionsSql } from "@/lib/server/library-reindex-sql";
@@ -31,6 +32,7 @@ export async function GET(request: Request) {
 	const db = getDatabase();
 	const rows = await db
 		.select({
+			id: libraries.id,
 			ragLibraryId: libraries.ragLibraryId,
 			name: libraries.name,
 			description: libraries.description,
@@ -55,7 +57,62 @@ export async function GET(request: Request) {
 			),
 		)
 		.orderBy(desc(libraries.updatedAt));
-	return Response.json(rows.map(toApiLibrary));
+	if (canWriteLibraries(identity)) {
+		return Response.json(rows.map(toApiLibrary));
+	}
+
+	const visibleCounts = await db
+		.select({
+			libraryId: documents.libraryId,
+			total: sql<number>`count(*) filter (where ${documents.status} not in ('deleted'))`,
+			live: sql<number>`count(*) filter (where ${documents.status} not in ('deleting', 'deleted'))`,
+			ready: sql<number>`count(*) filter (where ${documents.status} in ('ready', 'degraded'))`,
+			processing: sql<number>`count(*) filter (where ${documents.status} in ('processing', 'deleting'))`,
+			failed: sql<number>`count(*) filter (where ${documents.status} = 'failed')`,
+		})
+		.from(documents)
+		.where(
+			and(
+				eq(documents.organizationId, identity.tenantId),
+				eq(documents.workspaceId, identity.workspaceId),
+				documentMetadataVisibilitySql(identity, documents.id),
+			),
+		)
+		.groupBy(documents.libraryId);
+	const countsByLibrary = new Map(
+		visibleCounts.map((counts) => [counts.libraryId, counts]),
+	);
+	return Response.json(
+		rows.map((row) => {
+			const counts = countsByLibrary.get(row.id);
+			const total = Number(counts?.total ?? 0);
+			const live = Number(counts?.live ?? 0);
+			const ready = Number(counts?.ready ?? 0);
+			const processing = Number(counts?.processing ?? 0);
+			const failed = Number(counts?.failed ?? 0);
+			const status =
+				row.status === "deleting"
+					? "deleting"
+					: live === 0
+						? "empty"
+						: processing > 0
+							? "indexing"
+							: ready === live
+								? "ready"
+								: ready > 0
+									? "degraded"
+									: failed > 0
+										? "failed"
+										: "empty";
+			return toApiLibrary({
+				...row,
+				status,
+				docCount: total,
+				readyCount: ready,
+				staleActiveVersions: 0,
+			});
+		}),
+	);
 }
 
 export async function POST(request: Request) {
