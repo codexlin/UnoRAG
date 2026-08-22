@@ -91,6 +91,20 @@ cd deploy/compose
 ./scripts/install.sh --manifest /path/to/release-acr.env
 ```
 
+### 首个稳定版附加门禁
+
+`v0.1.0` 必须从已经通过主分支 CI 的精确提交创建，且不得复用 RC digest 或只把 RC tag 改名。稳定标签
+触发 release workflow 后，应把以下材料作为同一个发布单元验证和归档：
+
+- GHCR 四镜像 digest manifest；ACR 仅作为可选镜像站，不是唯一下载源；
+- 每个 GHCR digest 的 SPDX SBOM、SLSA provenance 与 GitHub OIDC Cosign 签名；
+- 四镜像内的 `LICENSE`、`NOTICE`、`THIRD_PARTY_NOTICES.txt` 和非 root UID；
+- release notes、已知限制、升级路径、版本绑定验收报告和 manifest 校验和；
+- 所有 refs、稳定 tag 和 release assets 的密钥扫描结果。
+
+稳定发布不创建或依赖浮动 `latest` 标签。用户安装和升级继续使用 release asset 中的 digest manifest；
+源代码归档由 GitHub 稳定 tag 提供。
+
 ## 3. 真实纵向验收
 
 ```bash
