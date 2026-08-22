@@ -15,7 +15,7 @@
 | [RELEASE.md](./RELEASE.md) | 一个版本怎样通过质量、安全和客户环境验收？ |
 | [CHANGELOG.md](../CHANGELOG.md) | 当前稳定版提供什么、公共契约和已知限制是什么？ |
 | [DEVELOPMENT.md](./DEVELOPMENT.md) | 如何开发、测试和维护仓库？ |
-| [OPEN_SOURCE_READINESS.md](./OPEN_SOURCE_READINESS.md) | 公开仓库与稳定版发行还剩哪些安全、许可和权属门禁？ |
+| [OPEN_SOURCE_READINESS.md](./OPEN_SOURCE_READINESS.md) | 公开仓库与稳定版已完成哪些安全、许可和供应链门禁？ |
 
 源代码许可见根目录 [LICENSE](../LICENSE)，名称、Logo、fork、托管服务和截图的使用边界见
 [TRADEMARKS.md](../TRADEMARKS.md)。两者授予的是不同权利。
