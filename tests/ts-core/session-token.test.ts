@@ -33,8 +33,23 @@ test("session token verifies valid claims and rejects tampering and expiry", () 
 		const claims = verifySessionToken(token, NOW + 1);
 		assert.equal(claims?.principal_id, "principal-1");
 		assert.equal(claims?.workspace_id, "workspace-1");
+		assert.equal(claims?.provider, "local");
 		assert.equal(verifySessionToken(`${token}x`, NOW + 1), null);
 		assert.equal(verifySessionToken(token, NOW + 8 * 60 * 60), null);
+	});
+});
+
+test("session token preserves the OIDC authentication source", () => {
+	withSecret(() => {
+		const token = createSignedSessionToken(
+			{
+				principalId: "principal-1",
+				workspaceId: "workspace-1",
+				provider: "oidc",
+			},
+			NOW,
+		);
+		assert.equal(verifySessionToken(token, NOW + 1)?.provider, "oidc");
 	});
 });
 

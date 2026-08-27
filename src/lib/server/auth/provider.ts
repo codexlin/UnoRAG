@@ -20,9 +20,11 @@ export type LocalCredentialsInput = {
 };
 
 export type OidcCallbackInput = {
-	code: string;
-	state: string;
+	currentUrl: URL;
 	redirectUri: string;
+	codeVerifier: string;
+	expectedState: string;
+	expectedNonce: string;
 };
 
 export interface IdentityProvider<TInput> {
@@ -35,6 +37,7 @@ export interface OidcIdentityProvider
 	authorizationUrl(input: {
 		state: string;
 		nonce: string;
+		codeChallenge: string;
 		redirectUri: string;
 	}): Promise<string>;
 }

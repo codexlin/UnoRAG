@@ -78,6 +78,7 @@ for file in ../config/runtime.env ../config/runtime.secret ../config/bootstrap.e
 	}
 done
 mk_validate_dbos_config
+mk_validate_auth_config
 
 SESSION="$(mk_config_get UNORAG_SESSION_SECRET || true)"
 ADMIN_PW="$(mk_config_get UNORAG_ADMIN_PASSWORD || true)"

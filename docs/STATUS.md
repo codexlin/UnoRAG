@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-08-23
+> 更新日期：2026-08-24
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -40,7 +40,7 @@ Next.js product + Knowledge API
 
 | 能力 | 当前状态 |
 |---|---|
-| 本地登录与恢复管理员 | 已实现；Session Cookie、密码轮换与最小密钥要求有测试 |
+| 本地登录与企业 SSO | 已实现恢复管理员、通用 OIDC Code + PKCE、邀请式 JIT、独立身份绑定与 Session 来源保持 |
 | Organization / 多 Workspace | 已实现创建、切换、成员邀请与 viewer/editor/admin/owner 权限 |
 | 文库与文档治理 | 已实现创建、上传、替换、重索引、删除、版本和任务视图 |
 | 文档 ACL | 已实现 Workspace / principal / group 作用域及 Qdrant 检索前强制过滤 |
@@ -105,9 +105,9 @@ Secret Scanning 和 Push Protection 均已开启。
 
 ### P1：私有部署产品化
 
-1. **OIDC / SSO**：已有 Provider 边界和 Session 类型，但没有可交付的 OIDC 实现。
+1. **OIDC 客户环境验收**：通用 OIDC 纵向切片已实现；仍需绑定一个真实客户 IdP 完成发现、回调、邀请、禁用与故障回退证据。
 2. **Kubernetes 加固**：Helm 是 starter，尚未内置 NetworkPolicy、PDB、HPA 或 digest-native 镜像字段。
-3. **身份目录**：group ACL 数据面已存在，用户组管理 UI、SCIM/目录同步尚未完成。
+3. **身份目录**：group ACL 数据面已存在，用户组管理 UI、SCIM/目录同步和 IdP 单点登出尚未完成。
 4. **公共生命周期 API**：Documents / Versions / Jobs 仍是 Workspace 内部接口，不是稳定 v1 契约。
 5. **其他对象存储**：腾讯云 COS 已通过真实生命周期与容量验收；S3 兼容 Provider 按真实试点需求扩展。
 
@@ -129,7 +129,7 @@ Secret Scanning 和 Push Protection 均已开启。
 
 当前最有杠杆的工作不是继续增加通用 RAG 路径，而是围绕稳定版补齐真实采用链路：
 
-1. **OIDC / SSO 纵向切片**：优先补齐私有部署最常见的企业身份接入，并保持本地管理员恢复路径；
+1. **OIDC / SSO 实境验收**：选定 Keycloak、Entra ID 或真实客户 IdP，验证邀请式首次登录、账号绑定、禁用、回退与审计；
 2. **身份治理**：实现用户组管理 UI，再根据真实客户目录选择 SCIM 或特定 Provider 同步；
 3. **客户环境验收模板**：把容量、备份恢复、Provider、责任人和 Go/No-Go 固化为可复用交付清单；
 4. **知识质量扩展**：以客户金标决定 ChartIR、Provider scorecard、native sparse 和复杂跨页表的顺序。

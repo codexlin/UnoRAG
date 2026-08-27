@@ -109,7 +109,11 @@ export async function resolveSessionCookieHeader(
 ): Promise<AuthIdentity | null> {
 	const claims = readSessionClaims(cookieHeader);
 	if (!claims) return null;
-	return hydrateIdentity(claims.principal_id, claims.workspace_id, "local");
+	return hydrateIdentity(
+		claims.principal_id,
+		claims.workspace_id,
+		claims.provider ?? "local",
+	);
 }
 
 export function createSessionToken(identity: AuthIdentity): string {

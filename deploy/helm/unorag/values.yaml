@@ -103,6 +103,22 @@ ingress:
   #   - secretName: unorag-tls
   #     hosts: [unorag.example.com]
 
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+auth:
+  appBaseUrl: ""
+  organizationId: 00000000-0000-4000-8000-000000000001
+  localEnabled: true
+  oidc:
+    enabled: false
+    issuerUrl: ""
+    clientId: ""
+    clientAuthMethod: client_secret_post
+    scopes: openid profile email
+    buttonLabel: 使用企业账号登录
+    trustEmailClaim: false
+
 # Send traces and structured logs to a customer-managed OpenTelemetry Collector.
 # The chart deliberately does not install Grafana/Tempo/Loki/Prometheus.
 observability:
@@ -204,6 +220,7 @@ config:
 # Prefer existingSecret. Pods inject least-privilege keys (not full Secret via envFrom).
 # Required keys (align with deploy/config/runtime.secret):
 #   UNORAG_SESSION_SECRET
+#   OIDC_CLIENT_SECRET (required only when auth.oidc.enabled=true)
 #   DATABASE_URL, WORKER_DATABASE_URL, DBOS_SYSTEM_DATABASE_URL
 #   MIGRATOR_DATABASE_URL (migrate jobs only)
 #   LLM_API_KEY

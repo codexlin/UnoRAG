@@ -172,6 +172,7 @@ done
 
 mk_require_runtime_config
 mk_validate_dbos_config
+mk_validate_auth_config
 [[ -f "$RUNTIME_ENV" ]] || die "missing $RUNTIME_ENV"
 
 if [[ "$OBSERVABILITY_MODE" == "auto" ]]; then

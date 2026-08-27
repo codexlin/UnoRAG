@@ -9,11 +9,12 @@ const SESSION_ISSUER = "unorag-control-plane";
 const SESSION_TTL_SECONDS = SESSION_MAX_AGE_SECONDS;
 
 export type SessionClaims = {
-	v: 1;
+	v: 1 | 2;
 	iss: typeof SESSION_ISSUER;
 	sid: string;
 	principal_id: string;
 	workspace_id: string;
+	provider?: "local" | "oidc";
 	iat: number;
 	exp: number;
 };
@@ -21,6 +22,7 @@ export type SessionClaims = {
 type SessionSubject = {
 	principalId: string;
 	workspaceId: string;
+	provider?: "local" | "oidc";
 };
 
 function sign(value: string): string {
@@ -69,14 +71,17 @@ export function verifySessionToken(
 			Buffer.from(encoded, "base64url").toString("utf8"),
 		) as SessionClaims;
 		if (
-			claims.v !== 1 ||
+			(claims.v !== 1 && claims.v !== 2) ||
 			claims.iss !== SESSION_ISSUER ||
 			!claims.sid ||
 			!claims.principal_id ||
 			!claims.workspace_id ||
 			claims.iat > nowSeconds + 30 ||
 			claims.exp <= nowSeconds ||
-			claims.exp - claims.iat > SESSION_TTL_SECONDS
+			claims.exp - claims.iat > SESSION_TTL_SECONDS ||
+			(claims.v === 2 &&
+				claims.provider !== "local" &&
+				claims.provider !== "oidc")
 		) {
 			return null;
 		}
@@ -98,11 +103,12 @@ export function createSignedSessionToken(
 	nowSeconds = Math.floor(Date.now() / 1000),
 ): string {
 	const claims: SessionClaims = {
-		v: 1,
+		v: 2,
 		iss: SESSION_ISSUER,
 		sid: randomUUID(),
 		principal_id: subject.principalId,
 		workspace_id: subject.workspaceId,
+		provider: subject.provider ?? "local",
 		iat: nowSeconds,
 		exp: nowSeconds + SESSION_TTL_SECONDS,
 	};

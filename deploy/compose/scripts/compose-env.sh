@@ -50,6 +50,9 @@ _mk_managed_env_keys() {
 			DATABASE_URL WEB_DATABASE_URL WORKER_DATABASE_URL \
 			DBOS_SYSTEM_DATABASE_URL MIGRATOR_DATABASE_URL \
 			OPENAI_API_KEY OPENAI_BASE_URL DASHSCOPE_API_KEY DASHSCOPE_BASE_URL \
+			LOCAL_AUTH_ENABLED OIDC_ENABLED APP_BASE_URL OIDC_ISSUER_URL \
+			OIDC_CLIENT_ID OIDC_CLIENT_SECRET OIDC_CLIENT_AUTH_METHOD \
+			OIDC_SCOPES OIDC_BUTTON_LABEL OIDC_TRUST_EMAIL_CLAIM OIDC_ORGANIZATION_ID \
 			HTTP_PORT COMPOSE_PROJECT_NAME
 		local _mk_file
 		for _mk_file in "$@"; do
@@ -230,4 +233,51 @@ mk_validate_dbos_config() {
 			return 1
 		fi
 	done
+}
+
+mk_validate_auth_config() {
+	local _mk_local_enabled=0 _mk_oidc_enabled=0
+	local _mk_local_value
+	_mk_local_value="$(mk_config_get LOCAL_AUTH_ENABLED || true)"
+	if [[ -z "$_mk_local_value" ]] || mk_config_enabled LOCAL_AUTH_ENABLED; then
+		_mk_local_enabled=1
+	fi
+	mk_config_enabled OIDC_ENABLED && _mk_oidc_enabled=1
+	if [[ "$_mk_local_enabled" -eq 0 && "$_mk_oidc_enabled" -eq 0 ]]; then
+		echo "at least one of LOCAL_AUTH_ENABLED or OIDC_ENABLED must be true" >&2
+		return 1
+	fi
+	[[ "$_mk_oidc_enabled" -eq 1 ]] || return 0
+
+	local _mk_name _mk_value
+	for _mk_name in APP_BASE_URL OIDC_ISSUER_URL OIDC_CLIENT_ID OIDC_CLIENT_SECRET OIDC_ORGANIZATION_ID; do
+		_mk_value="$(mk_config_get "$_mk_name" || true)"
+		if [[ -z "$_mk_value" ]]; then
+			echo "${_mk_name} is required when OIDC_ENABLED=true" >&2
+			return 1
+		fi
+	done
+	_mk_value="$(mk_config_get APP_BASE_URL)"
+	[[ "$_mk_value" =~ ^https://[^[:space:]]+$ ]] || {
+		echo "APP_BASE_URL must be an HTTPS origin when OIDC is enabled" >&2
+		return 1
+	}
+	_mk_value="$(mk_config_get OIDC_ISSUER_URL)"
+	[[ "$_mk_value" =~ ^https://[^[:space:]]+$ ]] || {
+		echo "OIDC_ISSUER_URL must use HTTPS" >&2
+		return 1
+	}
+	_mk_value="$(mk_config_get OIDC_CLIENT_AUTH_METHOD || echo client_secret_post)"
+	case "$_mk_value" in
+		client_secret_post | client_secret_basic) ;;
+		*)
+			echo "OIDC_CLIENT_AUTH_METHOD must be client_secret_post or client_secret_basic" >&2
+			return 1
+			;;
+	esac
+	_mk_value="$(mk_config_get OIDC_ORGANIZATION_ID)"
+	[[ "$_mk_value" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || {
+		echo "OIDC_ORGANIZATION_ID must be a canonical UUID" >&2
+		return 1
+	}
 }

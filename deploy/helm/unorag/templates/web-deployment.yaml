@@ -69,6 +69,12 @@ spec:
                 secretKeyRef:
                   name: {{ include "unorag.secretName" . }}
                   key: UNORAG_SESSION_SECRET
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" . }}
+                  key: OIDC_CLIENT_SECRET
+                  optional: {{ not .Values.auth.oidc.enabled }}
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:

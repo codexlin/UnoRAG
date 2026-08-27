@@ -10,6 +10,7 @@
 | [PRODUCT.md](./PRODUCT.md) | UnoRAG 为谁服务、解决什么问题、当前能交付到什么程度？ |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 系统如何划分职责，权限、版本、解析、检索和问答如何工作？ |
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | 如何在客户环境安装、升级、回滚和恢复？ |
+| [AUTHENTICATION.md](./AUTHENTICATION.md) | 如何配置本地恢复账号、企业 OIDC、邀请式开通和身份边界？ |
 | [INTEGRATION.md](./INTEGRATION.md) | 外部系统如何使用 Service Key 调用 Retrieve / Ask？ |
 | [OPERATIONS.md](./OPERATIONS.md) | 如何监控生命周期、备份数据、处理故障和发布镜像？ |
 | [RELEASE.md](./RELEASE.md) | 一个版本怎样通过质量、安全和客户环境验收？ |

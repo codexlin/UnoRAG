@@ -88,6 +88,40 @@ export const localCredentials = appSchema.table("local_credentials", {
 		.notNull(),
 });
 
+/** External login bindings are separate from users so local break-glass stays usable. */
+export const authIdentities = appSchema.table(
+	"auth_identities",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id").notNull(),
+		userId: uuid("user_id").notNull(),
+		provider: varchar("provider", { length: 32 }).notNull(),
+		issuer: varchar("issuer", { length: 2048 }).notNull(),
+		subject: varchar("subject", { length: 512 }).notNull(),
+		lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+		...timestamps,
+	},
+	(table) => [
+		uniqueIndex("auth_identities_issuer_subject_uq").on(
+			table.organizationId,
+			table.issuer,
+			table.subject,
+		),
+		uniqueIndex("auth_identities_user_provider_issuer_uq").on(
+			table.userId,
+			table.provider,
+			table.issuer,
+		),
+		index("auth_identities_user_idx").on(table.userId),
+		foreignKey({
+			name: "auth_identities_org_user_fk",
+			columns: [table.organizationId, table.userId],
+			foreignColumns: [users.organizationId, users.id],
+		}).onDelete("cascade"),
+		check("auth_identities_provider_check", sql`${table.provider} in ('oidc')`),
+	],
+);
+
 export const groups = appSchema.table(
 	"groups",
 	{

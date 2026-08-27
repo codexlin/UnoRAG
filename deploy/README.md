@@ -6,6 +6,7 @@
 
 产品定位见 [`docs/PRODUCT.md`](../docs/PRODUCT.md)，安装与生产验收分别见
 [`docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) 和 [`docs/RELEASE.md`](../docs/RELEASE.md)。
+企业身份接入见 [`docs/AUTHENTICATION.md`](../docs/AUTHENTICATION.md)。
 
 ## 目录
 
@@ -92,6 +93,7 @@ Prometheus/Grafana、Loki/Tempo 和 Alertmanager，Grafana 仅绑定宿主机回
 - secret 仅从环境注入；镜像不含密钥
 - 文档存储可选本地共享卷或私有腾讯 COS；下载始终经过产品 ACL
 - production fail-closed 与 readiness 说明
+- 本地恢复管理员与通用 OIDC Code + PKCE，外部身份不绕过 Workspace / ACL 授权
 - migration 独立步骤（migrator 凭据，运行账号无 DDL）
 - 安装 / 升级 / 回滚 / 一致性备份 / 校验恢复 runbook 与脚本
 - restricted ACL 双指纹门禁、可重入回填与升级前零 pending 检查

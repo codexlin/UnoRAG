@@ -43,6 +43,7 @@ const testEnvironment = {
 	DOCUMENT_INGEST_TEST_DATABASE_URL: postgresUrl,
 	DOCUMENT_VERSION_COMMAND_TEST_DATABASE_URL: postgresUrl,
 	OBSERVABILITY_TEST_DATABASE_URL: postgresUrl,
+	OIDC_AUTH_TEST_DATABASE_URL: postgresUrl,
 	QDRANT_INGEST_E2E_URL: required.INTEGRATION_QDRANT_URL,
 	REDIS_INTEGRATION_TEST_URL: required.INTEGRATION_REDIS_URL,
 	TOMBSTONE_MAINTENANCE_TEST_DATABASE_URL: postgresUrl,
@@ -74,4 +75,22 @@ const result = spawnSync(
 );
 
 if (result.error) throw result.error;
-process.exit(result.status ?? 1);
+if ((result.status ?? 1) !== 0) process.exit(result.status ?? 1);
+
+const oidcResult = spawnSync(
+	process.execPath,
+	[
+		"--conditions=react-server",
+		"--import",
+		"tsx",
+		"--test",
+		"--test-concurrency=1",
+		"tests/integration/oidc-identity-postgres.test.ts",
+	],
+	{
+		stdio: "inherit",
+		env: testEnvironment,
+	},
+);
+if (oidcResult.error) throw oidcResult.error;
+process.exit(oidcResult.status ?? 1);

@@ -10,6 +10,12 @@
 {{- if and (eq .Values.objectStorage.driver "cos") (or (not .Values.objectStorage.cos.bucket) (not .Values.objectStorage.cos.region)) }}
 {{- fail "COS object storage requires objectStorage.cos.bucket and objectStorage.cos.region" }}
 {{- end }}
+{{- if and (not .Values.auth.localEnabled) (not .Values.auth.oidc.enabled) }}
+{{- fail "at least one authentication method must be enabled" }}
+{{- end }}
+{{- if and .Values.auth.oidc.enabled (or (not .Values.auth.appBaseUrl) (not .Values.auth.oidc.issuerUrl) (not .Values.auth.oidc.clientId)) }}
+{{- fail "OIDC requires auth.appBaseUrl, auth.oidc.issuerUrl, and auth.oidc.clientId" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,6 +23,16 @@ metadata:
   labels:
     {{- include "unorag.labels" . | nindent 4 }}
 data:
+  APP_BASE_URL: {{ .Values.auth.appBaseUrl | quote }}
+  OIDC_ORGANIZATION_ID: {{ .Values.auth.organizationId | quote }}
+  LOCAL_AUTH_ENABLED: {{ .Values.auth.localEnabled | quote }}
+  OIDC_ENABLED: {{ .Values.auth.oidc.enabled | quote }}
+  OIDC_ISSUER_URL: {{ .Values.auth.oidc.issuerUrl | quote }}
+  OIDC_CLIENT_ID: {{ .Values.auth.oidc.clientId | quote }}
+  OIDC_CLIENT_AUTH_METHOD: {{ .Values.auth.oidc.clientAuthMethod | quote }}
+  OIDC_SCOPES: {{ .Values.auth.oidc.scopes | quote }}
+  OIDC_BUTTON_LABEL: {{ .Values.auth.oidc.buttonLabel | quote }}
+  OIDC_TRUST_EMAIL_CLAIM: {{ .Values.auth.oidc.trustEmailClaim | quote }}
   CHAT_MODEL: {{ .Values.config.chatModel | quote }}
   JUDGE_MODEL: {{ .Values.config.judgeModel | quote }}
   JUDGE_BASE_URL: {{ .Values.config.judgeBaseUrl | quote }}

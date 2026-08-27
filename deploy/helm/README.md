@@ -28,6 +28,7 @@ WORKER_DATABASE_URL
 DBOS_SYSTEM_DATABASE_URL
 MIGRATOR_DATABASE_URL
 LLM_API_KEY
+OIDC_CLIENT_SECRET          # optional; required when auth.oidc.enabled=true
 MINERU_API_KEY             # optional, self-hosted or 302.AI MinerU auth
 OTEL_EXPORTER_OTLP_HEADERS # optional, customer Collector authentication
 COS_SECRET_ID              # required only for objectStorage.driver=cos
@@ -36,6 +37,10 @@ COS_SECURITY_TOKEN         # optional temporary STS credential
 ```
 
 The application and DBOS system DSNs must not point to the same database.
+
+Enterprise OIDC is configured under `auth` in `values.yaml`. Register
+`<auth.appBaseUrl>/api/auth/oidc/callback` at the IdP and keep local auth enabled
+as the controlled break-glass path. See [authentication](../../docs/AUTHENTICATION.md).
 
 For Tencent COS, keep the bucket private and disable the document PVC:
 

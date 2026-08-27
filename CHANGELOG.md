@@ -3,6 +3,16 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## Unreleased
+
+### Added
+
+- Generic enterprise OIDC Authorization Code + PKCE login for private deployments, with signed
+  short-lived flow state, invitation-gated first login, independent external identity bindings,
+  OIDC-aware UnoRAG sessions, audit events, and a retained local break-glass administrator path.
+- Fail-closed Compose and Helm OIDC configuration, migration, deployment tests, and an enterprise
+  authentication runbook.
+
 ## [0.1.0] - 2026-08-23
 
 UnoRAG 0.1.0 is the first stable, fully open-source release of the TypeScript runtime. It targets one

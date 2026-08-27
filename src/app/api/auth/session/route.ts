@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-
+import { isLocalLoginEnabled } from "@/lib/server/auth/config";
 import {
 	createSessionToken,
 	localIdentityProvider,
@@ -20,6 +20,12 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+	if (!isLocalLoginEnabled()) {
+		return NextResponse.json(
+			{ detail: "local login is disabled" },
+			{ status: 404 },
+		);
+	}
 	let body: { email?: string; password?: string; workspace_id?: string };
 	try {
 		body = (await request.json()) as typeof body;
