@@ -68,7 +68,7 @@
 		"@fontsource-variable/fraunces": "^5.3.0",
 		"@fontsource-variable/ibm-plex-sans": "^5.3.0",
 		"@fontsource/ibm-plex-mono": "^5.3.0",
-		"@langchain/core": "1.2.8",
+		"@langchain/core": "1.2.9",
 		"@langchain/langgraph": "1.4.9",
 		"@llamaindex/liteparse": "2.10.1",
 		"@opentelemetry/api": "1.9.1",
