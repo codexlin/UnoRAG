@@ -38,8 +38,8 @@ importers:
         specifier: 1.4.9
         version: 1.4.9(@langchain/core@1.2.9(@opentelemetry/api@1.9.1)(@opentelemetry/exporter-trace-otlp-proto@0.221.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(ws@8.21.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3)
       '@llamaindex/liteparse':
-        specifier: 2.10.1
-        version: 2.10.1
+        specifier: 2.14.1
+        version: 2.14.1
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1
@@ -205,12 +205,6 @@ packages:
 
   '@ai-sdk/openai-compatible@3.0.32':
     resolution: {integrity: sha512-G4zNrIHW965LuyVJz7KJrmqO6y7xgwVJZ2RmYo8TA3cPhpKSmbjw7fLF6Z9iZbqiz+oBvHHbSXl4HH8xlro8AQ==}
-    engines: {node: '>=22'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
-  '@ai-sdk/provider-utils@5.0.25':
-    resolution: {integrity: sha512-xscPPHCSjCHWrdhai25sbHCJeKNLW/3D1uSpUZa4cEtTKXA8OnPQ3+Rfu1SmM5Ea/Mf8Dfn3cllw9zeMzo/zFA==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -896,43 +890,43 @@ packages:
     peerDependencies:
       '@opentelemetry/api': ^1.9.0
 
-  '@llamaindex/liteparse-darwin-arm64@2.10.1':
-    resolution: {integrity: sha512-eEngfnfRnKK/0COwehkOl/uWAS/3QMWc84mnJyytNlpxiFnn1lGNVpwB08MagQXX2iRxi/md9BcfVFKGIQuUAA==}
+  '@llamaindex/liteparse-darwin-arm64@2.14.1':
+    resolution: {integrity: sha512-nMmi1naa5UZWfUrYsDOT5L2LfCeu1fDb19HDcyyN5mZkkTkjsYdRxkR/QE11FBazLIsxJnD865g4fkYCJ5pOpQ==}
     cpu: [arm64]
     os: [darwin]
 
-  '@llamaindex/liteparse-darwin-x64@2.10.1':
-    resolution: {integrity: sha512-LDOCuPLarZzkePDBM1by9bHreP8qPt9oJtyVVULbwHXI23420P2FLYFYxiXEm3cYgfRGPvuZon0ietXjezTD3w==}
+  '@llamaindex/liteparse-darwin-x64@2.14.1':
+    resolution: {integrity: sha512-eAvbMDJ+W4j6Xp6dAD05/+7CfU3HwQNyMuy0KzznXTqTCYBo8p3Tq+RAN10VP93bhhIStok73h2U8H8UzrfIOA==}
     cpu: [x64]
     os: [darwin]
 
-  '@llamaindex/liteparse-linux-arm64-gnu@2.10.1':
-    resolution: {integrity: sha512-9CWqV6rD+J8Bm6n7k3Wpnll+eli78NLnWwfLuO5guC6nDJBNP1r39KBXGD60Sprq3R0vWAOkVV+HuEjZcc2lTQ==}
+  '@llamaindex/liteparse-linux-arm64-gnu@2.14.1':
+    resolution: {integrity: sha512-RHYNXNipSnS/MY1PnQsyzVihE74P0exMhuLBpbjSpPSC0o6OTYaJM51Vn4k8csVBqmEtcONNjdeMjm/yN+Y0KA==}
     cpu: [arm64]
     os: [linux]
 
-  '@llamaindex/liteparse-linux-x64-gnu@2.10.1':
-    resolution: {integrity: sha512-O5Ep8Ykpb4caJsIP3/ohdyWQiXMhjfkxI1oVW7UtnBG8iDsqjQCTYSvcOmnRib7E4ud1dqy+T8m5vAtUcTwA4w==}
+  '@llamaindex/liteparse-linux-x64-gnu@2.14.1':
+    resolution: {integrity: sha512-hZ4/nLtZZkQbyn7ific+2CSFt8FqT4dRofRxoQYbA9P4r+/0EHy+ubv0m1e2GDrh5OpDH206MrtL3mOqb6c45g==}
     cpu: [x64]
     os: [linux]
 
-  '@llamaindex/liteparse-linux-x64-musl@2.10.1':
-    resolution: {integrity: sha512-3BMr+6a7YBBtD1kiBQR9VAroqWP9iBzuCX3H9CCkwxL61j+ldPbpdTzf75jhXo1/KkDN6eP6A9ntKDfZX1I0dg==}
+  '@llamaindex/liteparse-linux-x64-musl@2.14.1':
+    resolution: {integrity: sha512-c3b5PSDxWI+w2FCa2piAUpBDtzWNBwdey4QgDYW3XaLn1OsjdXFQ4HM1MnuJTrjjd3Zu3r8u0xxOXp2BpgkoJg==}
     cpu: [x64]
     os: [linux]
 
-  '@llamaindex/liteparse-win32-arm64-msvc@2.10.1':
-    resolution: {integrity: sha512-eFzr8i8XaiMJ/jaKr3IeGVnpxoF2dcG5BhMkmf1VfuYSxTEFYKa6i+0tMbfdiiPlLBrOsJl2zw8YVr4jydeQmw==}
+  '@llamaindex/liteparse-win32-arm64-msvc@2.14.1':
+    resolution: {integrity: sha512-b5btxLyJnHJto2izJkRwF3e0ULff1Q9n6ytAtJH/uGAgwmyDxJ9NQiJk0Ygzb+N85IkotVJgKWcGub5PSmePsw==}
     cpu: [arm64]
     os: [win32]
 
-  '@llamaindex/liteparse-win32-x64-msvc@2.10.1':
-    resolution: {integrity: sha512-f+TnS0kBR9PW4fj+UIsksy2aMW4aM64IpsvEV3828aQvk3zi/fc32r5ZY+WtHoyfxXJLSxN4qmD9aWNseTGDNw==}
+  '@llamaindex/liteparse-win32-x64-msvc@2.14.1':
+    resolution: {integrity: sha512-sqR+c802FiqD2L4x+hbTX/dq//fTd2MD7E/+cZgVM5DCA6srcd88pGrcAlto7FSj9GdkGPS83SPcHY5wtMUdcA==}
     cpu: [x64]
     os: [win32]
 
-  '@llamaindex/liteparse@2.10.1':
-    resolution: {integrity: sha512-BhkY1sBzBX9W5VyrTFMMeJ0mE/Hcu3bXFhesTSWTKIHT7F0OneurGa+30tLPNLbWd5M6Jg2EsQsALprDLArz+Q==}
+  '@llamaindex/liteparse@2.14.1':
+    resolution: {integrity: sha512-QPbR6NRqt+StSe6PtZZUDrm4rZiBJACuME4ZwZiNGwBQRAxdbKHLXGhZ7lysi0CJ++vPlZNhlwEke0tlVoZO/g==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -4148,15 +4142,6 @@ snapshots:
       '@ai-sdk/provider-utils': 5.0.28(zod@4.4.3)
       zod: 4.4.3
 
-  '@ai-sdk/provider-utils@5.0.25(zod@4.4.3)':
-    dependencies:
-      '@ai-sdk/provider': 4.0.7
-      '@standard-schema/spec': 1.1.0
-      '@workflow/serde': 4.1.0
-      eventsource-parser: 3.1.1
-      undici: 7.29.0
-      zod: 4.4.3
-
   '@ai-sdk/provider-utils@5.0.28(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 4.0.7
@@ -4787,38 +4772,38 @@ snapshots:
       '@langfuse/core': 5.10.1(@opentelemetry/api@1.9.1)
       '@opentelemetry/api': 1.9.1
 
-  '@llamaindex/liteparse-darwin-arm64@2.10.1':
+  '@llamaindex/liteparse-darwin-arm64@2.14.1':
     optional: true
 
-  '@llamaindex/liteparse-darwin-x64@2.10.1':
+  '@llamaindex/liteparse-darwin-x64@2.14.1':
     optional: true
 
-  '@llamaindex/liteparse-linux-arm64-gnu@2.10.1':
+  '@llamaindex/liteparse-linux-arm64-gnu@2.14.1':
     optional: true
 
-  '@llamaindex/liteparse-linux-x64-gnu@2.10.1':
+  '@llamaindex/liteparse-linux-x64-gnu@2.14.1':
     optional: true
 
-  '@llamaindex/liteparse-linux-x64-musl@2.10.1':
+  '@llamaindex/liteparse-linux-x64-musl@2.14.1':
     optional: true
 
-  '@llamaindex/liteparse-win32-arm64-msvc@2.10.1':
+  '@llamaindex/liteparse-win32-arm64-msvc@2.14.1':
     optional: true
 
-  '@llamaindex/liteparse-win32-x64-msvc@2.10.1':
+  '@llamaindex/liteparse-win32-x64-msvc@2.14.1':
     optional: true
 
-  '@llamaindex/liteparse@2.10.1':
+  '@llamaindex/liteparse@2.14.1':
     dependencies:
       commander: 12.1.0
     optionalDependencies:
-      '@llamaindex/liteparse-darwin-arm64': 2.10.1
-      '@llamaindex/liteparse-darwin-x64': 2.10.1
-      '@llamaindex/liteparse-linux-arm64-gnu': 2.10.1
-      '@llamaindex/liteparse-linux-x64-gnu': 2.10.1
-      '@llamaindex/liteparse-linux-x64-musl': 2.10.1
-      '@llamaindex/liteparse-win32-arm64-msvc': 2.10.1
-      '@llamaindex/liteparse-win32-x64-msvc': 2.10.1
+      '@llamaindex/liteparse-darwin-arm64': 2.14.1
+      '@llamaindex/liteparse-darwin-x64': 2.14.1
+      '@llamaindex/liteparse-linux-arm64-gnu': 2.14.1
+      '@llamaindex/liteparse-linux-x64-gnu': 2.14.1
+      '@llamaindex/liteparse-linux-x64-musl': 2.14.1
+      '@llamaindex/liteparse-win32-arm64-msvc': 2.14.1
+      '@llamaindex/liteparse-win32-x64-msvc': 2.14.1
 
   '@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)':
     dependencies:
