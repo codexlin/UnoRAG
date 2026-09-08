@@ -37,6 +37,11 @@ test("one-click startup preserves the production install boundary", async () => 
 	);
 	assert.match(script, /\.\/scripts\/install\.sh/);
 	assert.match(script, /scripts\/rotate-admin-password\.sh/);
+	assert.match(script, /bootstrap_existed.*-eq 0/);
+	assert.match(
+		script,
+		/generated_admin_password="\$configured_admin_password"/,
+	);
 	assert.match(script, /--manifest/);
 	assert.match(script, /first run default: 8080/);
 	assert.match(script, /--npm-registry/);
@@ -87,9 +92,15 @@ test("one-click startup initializes secrets and rotates an explicit password on 
 		`#!/usr/bin/env bash
 set -euo pipefail
 mkdir -p "${sandbox}/deploy/config"
-for file in runtime.env runtime.secret bootstrap.env; do
+for file in runtime.env runtime.secret; do
 	[[ -f "${sandbox}/deploy/config/$file" ]] || : >"${sandbox}/deploy/config/$file"
 done
+if [[ ! -f "${sandbox}/deploy/config/bootstrap.env" ]]; then
+	printf '%s\n' \
+		'UNORAG_ADMIN_EMAIL=admin@unorag.local' \
+		'UNORAG_ADMIN_PASSWORD=Aa${"a".repeat(62)}' \
+		>"${sandbox}/deploy/config/bootstrap.env"
+fi
 `,
 	);
 	await writeExecutable(
@@ -127,17 +138,18 @@ printf '%s\\n' "$*" >"${sandbox}/install.args"
 	assert.match(secrets, /^LLM_API_KEY=test-model-key$/m);
 	assert.match(secrets, /^POSTGRES_PASSWORD=[a-f0-9]{64}$/m);
 	assert.match(secrets, /^UNORAG_SESSION_SECRET=[a-f0-9]{64}$/m);
-	assert.match(bootstrap, /^UNORAG_ADMIN_PASSWORD=[a-f0-9]{64}$/m);
+	assert.match(bootstrap, /^UNORAG_ADMIN_PASSWORD=Aa[A-Za-z0-9]{62}$/m);
+	assert.match(first.stdout, /Initial password: Aa[A-Za-z0-9]{62}/);
 	assert.doesNotMatch(first.stdout, /test-model-key/);
 
 	const second = runSandboxStart(sandbox, {
 		LLM_API_KEY: "test-model-key",
-		UNORAG_ADMIN_PASSWORD: "chosen-admin-password",
+		UNORAG_ADMIN_PASSWORD: "Chosen-admin-password",
 	});
 	assert.equal(second.status, 0, second.stderr || second.stdout);
 	assert.match(
 		await readFile(join(sandbox, "deploy", "config", "bootstrap.env"), "utf8"),
-		/^UNORAG_ADMIN_PASSWORD=chosen-admin-password$/m,
+		/^UNORAG_ADMIN_PASSWORD=Chosen-admin-password$/m,
 	);
 	await access(join(sandbox, "password.rotated"));
 });

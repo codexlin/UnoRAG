@@ -9,6 +9,7 @@ export type SessionIdentity = {
 	email: string | null;
 	displayName: string;
 	provider: "local" | "oidc";
+	mustChangePassword: boolean;
 };
 
 export const ORGANIZATION_ROLE_LABELS: Record<string, string> = {

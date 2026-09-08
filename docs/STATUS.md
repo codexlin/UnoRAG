@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-08-23
+> 更新日期：2026-09-08
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -40,7 +40,7 @@ Next.js product + Knowledge API
 
 | 能力 | 当前状态 |
 |---|---|
-| 本地登录与恢复管理员 | 已实现；Session Cookie、密码轮换与最小密钥要求有测试 |
+| 本地登录与恢复管理员 | 已实现；每实例唯一初始密码、首次强制改密、Session Cookie、密码轮换与最小密钥要求有测试 |
 | Organization / 多 Workspace | 已实现创建、切换、成员邀请与 viewer/editor/admin/owner 权限 |
 | 文库与文档治理 | 已实现创建、上传、替换、重索引、删除、版本和任务视图 |
 | 文档 ACL | 已实现 Workspace / principal / group 作用域及 Qdrant 检索前强制过滤 |
@@ -77,7 +77,7 @@ Next.js product + Knowledge API
 
 ## 已经验证到什么程度
 
-- 当前仓库跟踪 111 个 TypeScript/Node 测试文件和 23 个测试数据文件；生成的本地 A/B 报告位于忽略目录，不进入 Git。
+- 当前仓库跟踪超过 100 个 TypeScript/Node 测试文件及版本化测试数据；生成的本地 A/B 报告位于忽略目录，不进入 Git。
 - CI 覆盖全历史密钥扫描、Web/TS Core、真实 PostgreSQL migration、镜像构建、Helm、依赖审计和品牌残留检查。
 - 现有证据覆盖空环境安装、真实文件、浏览器 RBAC、跨 Workspace 隔离、MinerU 302 实链路、故障恢复、
   备份恢复、不可变镜像升级/回滚和 tombstone 生命周期。

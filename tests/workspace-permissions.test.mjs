@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import {
 	hashPassword,
+	validatePassword,
 	verifyPasswordSync,
 } from "../src/lib/server/auth/passwords.mjs";
 import {
@@ -66,6 +67,26 @@ test("password hash roundtrip", () => {
 	const encoded = hashPassword("invite-secret-12");
 	assert.equal(verifyPasswordSync("invite-secret-12", encoded), true);
 	assert.equal(verifyPasswordSync("wrong", encoded), false);
+});
+
+test("password policy requires seven characters with upper and lower case", () => {
+	assert.equal(validatePassword("Abcdefg"), null);
+	assert.equal(
+		validatePassword("Abcdef"),
+		"password must be at least 7 characters",
+	);
+	assert.equal(
+		validatePassword("abcdefg"),
+		"password must contain uppercase and lowercase letters",
+	);
+	assert.equal(
+		validatePassword("ABCDEFG"),
+		"password must contain uppercase and lowercase letters",
+	);
+	assert.equal(
+		validatePassword(`Aa${"x".repeat(255)}`),
+		"password must be at most 256 characters",
+	);
 });
 
 test("invite token hash is sha256 hex", () => {

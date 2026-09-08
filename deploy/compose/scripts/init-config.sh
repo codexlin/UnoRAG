@@ -263,9 +263,33 @@ else:
 PY
 fi
 
+# Every new instance gets a unique bootstrap password. Existing values are kept
+# so rerunning config reconciliation never rotates a live administrator.
+BOOTSTRAP_FILE="${CONFIG_DIR}/bootstrap.env"
+BOOTSTRAP_PASSWORD="$(awk -F= '$1 == "UNORAG_ADMIN_PASSWORD" { print substr($0, index($0, "=") + 1) }' "$BOOTSTRAP_FILE")"
+if [[ -z "$BOOTSTRAP_PASSWORD" || "$BOOTSTRAP_PASSWORD" == "change-this-before-deployment" ]]; then
+	BOOTSTRAP_PASSWORD="Aa$(od -An -N31 -tx1 /dev/urandom | tr -d ' \n')"
+	BOOTSTRAP_TMP="$(mktemp "${BOOTSTRAP_FILE}.tmp.XXXXXX")"
+	chmod 600 "$BOOTSTRAP_TMP"
+	awk -v value="$BOOTSTRAP_PASSWORD" '
+		BEGIN { found = 0 }
+		$0 ~ /^UNORAG_ADMIN_PASSWORD=/ {
+			print "UNORAG_ADMIN_PASSWORD=" value
+			found = 1
+			next
+		}
+		{ print }
+		END { if (!found) print "UNORAG_ADMIN_PASSWORD=" value }
+	' "$BOOTSTRAP_FILE" >"$BOOTSTRAP_TMP"
+	mv "$BOOTSTRAP_TMP" "$BOOTSTRAP_FILE"
+	chmod 600 "$BOOTSTRAP_FILE"
+	echo "generated a unique initial administrator password in ${BOOTSTRAP_FILE}"
+fi
+unset BOOTSTRAP_PASSWORD BOOTSTRAP_TMP
+
 echo
 echo "next:"
 echo "  1. Edit ${CONFIG_DIR}/runtime.env"
 echo "  2. Fill ${CONFIG_DIR}/runtime.secret (database/session secrets >= 32 characters)"
-echo "  3. Fill ${CONFIG_DIR}/bootstrap.env (admin password for one-time job)"
+echo "  3. Review ${CONFIG_DIR}/bootstrap.env (one-time administrator credentials)"
 echo "  4. cd ${COMPOSE_DIR} && ./scripts/install.sh"

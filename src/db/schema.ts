@@ -78,6 +78,7 @@ export const localCredentials = appSchema.table("local_credentials", {
 		.primaryKey()
 		.references(() => users.id, { onDelete: "cascade" }),
 	passwordHash: text("password_hash").notNull(),
+	mustChangePassword: boolean("must_change_password").default(false).notNull(),
 	failedAttempts: integer("failed_attempts").default(0).notNull(),
 	lockedUntil: timestamp("locked_until", { withTimezone: true }),
 	passwordChangedAt: timestamp("password_changed_at", { withTimezone: true })

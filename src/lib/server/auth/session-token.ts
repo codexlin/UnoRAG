@@ -14,6 +14,7 @@ export type SessionClaims = {
 	sid: string;
 	principal_id: string;
 	workspace_id: string;
+	must_change_password?: boolean;
 	iat: number;
 	exp: number;
 };
@@ -21,6 +22,7 @@ export type SessionClaims = {
 type SessionSubject = {
 	principalId: string;
 	workspaceId: string;
+	mustChangePassword?: boolean;
 };
 
 function sign(value: string): string {
@@ -103,6 +105,7 @@ export function createSignedSessionToken(
 		sid: randomUUID(),
 		principal_id: subject.principalId,
 		workspace_id: subject.workspaceId,
+		must_change_password: subject.mustChangePassword === true,
 		iat: nowSeconds,
 		exp: nowSeconds + SESSION_TTL_SECONDS,
 	};

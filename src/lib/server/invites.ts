@@ -14,7 +14,10 @@ import {
 	workspaceMembers,
 	workspaces,
 } from "@/db/schema";
-import { hashPassword } from "@/lib/server/auth/passwords.mjs";
+import {
+	hashPassword,
+	validatePassword,
+} from "@/lib/server/auth/passwords.mjs";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { hydrateIdentity } from "@/lib/server/auth/session";
 import { sendInviteEmail } from "@/lib/server/email";
@@ -286,11 +289,12 @@ export async function acceptInvite(input: {
 	| { ok: false; status: number; detail: string }
 > {
 	const password = input.password;
-	if (password.length < 8) {
+	const passwordError = validatePassword(password);
+	if (passwordError) {
 		return {
 			ok: false,
 			status: 400,
-			detail: "password must be at least 8 characters",
+			detail: passwordError,
 		};
 	}
 	const db = getDatabase();

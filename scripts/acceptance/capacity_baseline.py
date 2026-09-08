@@ -397,7 +397,7 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument(
         "--admin-email",
-        default=os.getenv("UNORAG_ADMIN_EMAIL", "admin@example.com"),
+        default=os.getenv("UNORAG_ADMIN_EMAIL", "admin@unorag.local"),
     )
     result.add_argument(
         "--admin-password-env", default="UNORAG_ADMIN_PASSWORD", metavar="NAME"

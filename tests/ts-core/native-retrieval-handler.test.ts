@@ -57,6 +57,7 @@ const identity: AuthIdentity = {
 	email: "viewer@example.com",
 	displayName: "Viewer",
 	provider: "local",
+	mustChangePassword: false,
 };
 
 function citation(): InternalCitation {

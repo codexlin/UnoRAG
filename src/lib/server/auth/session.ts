@@ -1,12 +1,17 @@
 import "server-only";
 
-import { scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import {
+	randomBytes,
+	scrypt as scryptCallback,
+	timingSafeEqual,
+} from "node:crypto";
 import { promisify } from "node:util";
 
 import { and, eq, isNull, lte, or } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import {
+	auditLogs,
 	groupMembers,
 	groups,
 	localCredentials,
@@ -15,6 +20,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from "@/db/schema";
+import { validatePassword } from "./passwords.mjs";
 import type {
 	AuthIdentity,
 	IdentityProvider,
@@ -46,6 +52,7 @@ export async function hydrateIdentity(
 			role: workspaceMembers.role,
 			email: users.email,
 			displayName: users.displayName,
+			mustChangePassword: localCredentials.mustChangePassword,
 		})
 		.from(users)
 		.innerJoin(
@@ -55,6 +62,7 @@ export async function hydrateIdentity(
 				eq(organizations.status, "active"),
 			),
 		)
+		.leftJoin(localCredentials, eq(localCredentials.userId, users.id))
 		.innerJoin(
 			workspaceMembers,
 			and(
@@ -95,13 +103,25 @@ export async function hydrateIdentity(
 		...membership,
 		groupIds: memberships.map((item) => item.id),
 		provider,
+		mustChangePassword:
+			provider === "local" && membership.mustChangePassword === true,
 	};
 }
 
 export async function resolveRequestSession(
 	request: Request,
+	options: { allowPasswordChangeRequired?: boolean } = {},
 ): Promise<AuthIdentity | null> {
-	return resolveSessionCookieHeader(request.headers.get("cookie"));
+	const identity = await resolveSessionCookieHeader(
+		request.headers.get("cookie"),
+	);
+	if (
+		identity?.mustChangePassword &&
+		options.allowPasswordChangeRequired !== true
+	) {
+		return null;
+	}
+	return identity;
 }
 
 export async function resolveSessionCookieHeader(
@@ -116,6 +136,10 @@ export function createSessionToken(identity: AuthIdentity): string {
 	return createSignedSessionToken(identity);
 }
 
+export type ChangePasswordResult =
+	| { ok: true; identity: AuthIdentity }
+	| { ok: false; status: number; detail: string };
+
 async function verifyPassword(
 	password: string,
 	encoded: string,
@@ -129,6 +153,104 @@ async function verifyPassword(
 		expected.length,
 	)) as Buffer;
 	return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+async function hashPassword(password: string): Promise<string> {
+	const salt = randomBytes(16);
+	const hash = (await scrypt(password, salt, 64)) as Buffer;
+	return `scrypt$${salt.toString("hex")}$${hash.toString("hex")}`;
+}
+
+export async function changeLocalPassword(input: {
+	identity: AuthIdentity;
+	currentPassword: string;
+	newPassword: string;
+}): Promise<ChangePasswordResult> {
+	if (input.identity.provider !== "local") {
+		return {
+			ok: false,
+			status: 400,
+			detail: "password is managed by the identity provider",
+		};
+	}
+	const passwordError = validatePassword(input.newPassword);
+	if (passwordError) {
+		return {
+			ok: false,
+			status: 400,
+			detail: passwordError,
+		};
+	}
+	if (input.currentPassword === input.newPassword) {
+		return {
+			ok: false,
+			status: 400,
+			detail: "new password must differ from the current password",
+		};
+	}
+
+	const db = getDatabase();
+	const [credential] = await db
+		.select({ passwordHash: localCredentials.passwordHash })
+		.from(localCredentials)
+		.where(eq(localCredentials.userId, input.identity.principalId))
+		.limit(1);
+	if (
+		!credential ||
+		!(await verifyPassword(input.currentPassword, credential.passwordHash))
+	) {
+		return { ok: false, status: 401, detail: "current password is incorrect" };
+	}
+
+	const now = new Date();
+	const nextHash = await hashPassword(input.newPassword);
+	const changed = await db.transaction(async (tx) => {
+		const rows = await tx
+			.update(localCredentials)
+			.set({
+				passwordHash: nextHash,
+				mustChangePassword: false,
+				failedAttempts: 0,
+				lockedUntil: null,
+				passwordChangedAt: now,
+				updatedAt: now,
+			})
+			.where(
+				and(
+					eq(localCredentials.userId, input.identity.principalId),
+					eq(localCredentials.passwordHash, credential.passwordHash),
+				),
+			)
+			.returning({ userId: localCredentials.userId });
+		if (rows.length !== 1) return false;
+		await tx.insert(auditLogs).values({
+			organizationId: input.identity.tenantId,
+			workspaceId: input.identity.workspaceId,
+			actorId: input.identity.principalId,
+			action: "auth.password_changed",
+			resourceType: "user",
+			resourceId: input.identity.principalId,
+			details: { provider: "local" },
+		});
+		return true;
+	});
+	if (!changed) {
+		return {
+			ok: false,
+			status: 409,
+			detail: "password changed concurrently; sign in again",
+		};
+	}
+
+	const identity = await hydrateIdentity(
+		input.identity.principalId,
+		input.identity.workspaceId,
+		"local",
+	);
+	if (!identity) {
+		return { ok: false, status: 401, detail: "authentication required" };
+	}
+	return { ok: true, identity };
 }
 
 export const localIdentityProvider: IdentityProvider<LocalCredentialsInput> = {

@@ -191,6 +191,8 @@ fi
 echo
 echo "install complete"
 echo "  UI:     http://localhost:${HTTP_PORT}/"
+echo "  admin:  $(mk_config_get UNORAG_ADMIN_EMAIL || echo admin@unorag.local)"
+echo "  initial password: deploy/config/bootstrap.env (change required at first login)"
 echo "  ready:  curl -sf http://localhost:${HTTP_PORT}/api/rag/health/ready"
 echo "  runtime: Next.js control plane + native RAG + DBOS worker"
 echo "  parser: external HTTP providers selected by ParserProvider"

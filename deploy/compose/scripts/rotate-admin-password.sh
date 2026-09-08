@@ -16,8 +16,8 @@ if [[ ! -f ../config/bootstrap.env ]]; then
 fi
 
 ADMIN_PW="$(mk_config_get UNORAG_ADMIN_PASSWORD || true)"
-if [[ -z "$ADMIN_PW" || "$ADMIN_PW" == "change-this-before-deployment" ]]; then
-	echo "set UNORAG_ADMIN_PASSWORD in ../config/bootstrap.env to the new password first" >&2
+if [[ ${#ADMIN_PW} -lt 7 || ${#ADMIN_PW} -gt 256 || ! "$ADMIN_PW" =~ [[:lower:]] || ! "$ADMIN_PW" =~ [[:upper:]] || "$ADMIN_PW" == "change-this-before-deployment" ]]; then
+	echo "set UNORAG_ADMIN_PASSWORD to 7-256 characters with uppercase and lowercase letters first" >&2
 	exit 1
 fi
 
@@ -26,4 +26,8 @@ UNORAG_ADMIN_PASSWORD_UPSERT=1 mk_compose_bootstrap --profile migrate run --rm \
 	-e UNORAG_ADMIN_PASSWORD_UPSERT=1 \
 	bootstrap
 
-echo "admin password rotated (value not printed)"
+umask 077
+printf '%s\n' "$ADMIN_PW" >"${ROOT}/.smoke-admin-password"
+chmod 600 "${ROOT}/.smoke-admin-password"
+
+echo "admin password rotated; first-login change required (value not printed)"

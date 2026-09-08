@@ -280,5 +280,6 @@ export function serviceKeyToIdentity(
 		email: null,
 		displayName: key.name,
 		provider: "local",
+		mustChangePassword: false,
 	};
 }

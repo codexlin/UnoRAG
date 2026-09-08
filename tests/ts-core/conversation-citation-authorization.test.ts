@@ -52,6 +52,7 @@ const identity: AuthIdentity = {
 	email: "viewer@example.com",
 	displayName: "Viewer",
 	provider: "local",
+	mustChangePassword: false,
 };
 
 function citation(overrides: Record<string, unknown> = {}) {

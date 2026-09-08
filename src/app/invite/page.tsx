@@ -64,21 +64,37 @@ function InviteForm() {
 		setSubmitting(true);
 		setError(null);
 		const form = new FormData(event.currentTarget);
+		const password = String(form.get("password") ?? "");
+		if (password.length < 7) {
+			setError("密码至少需要 7 个字符");
+			setSubmitting(false);
+			return;
+		}
+		if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) {
+			setError("密码必须同时包含大写和小写字母");
+			setSubmitting(false);
+			return;
+		}
 		const response = await fetch("/api/auth/invite", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
 				token,
 				display_name: form.get("display_name"),
-				password: form.get("password"),
+				password,
 			}),
 		});
 		if (!response.ok) {
 			const detail = await response.json().catch(() => null);
+			const messages: Record<string, string> = {
+				"password must be at least 7 characters": "密码至少需要 7 个字符",
+				"password must contain uppercase and lowercase letters":
+					"密码必须同时包含大写和小写字母",
+				"password must be at most 256 characters": "密码最多允许 256 个字符",
+			};
 			setError(
-				typeof detail?.detail === "string"
-					? detail.detail
-					: "接受邀请失败，请稍后重试",
+				(typeof detail?.detail === "string" && messages[detail.detail]) ||
+					"接受邀请失败，请稍后重试",
 			);
 			setSubmitting(false);
 			return;
@@ -129,9 +145,13 @@ function InviteForm() {
 									name="password"
 									type="password"
 									autoComplete="new-password"
-									minLength={8}
+									minLength={7}
+									maxLength={256}
 									required
 								/>
+								<p className="text-xs text-muted-foreground">
+									至少 7 个字符，并同时包含大写和小写字母。
+								</p>
 							</div>
 							{error ? (
 								<p className="text-sm text-destructive" role="alert">

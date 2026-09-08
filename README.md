@@ -94,7 +94,7 @@ Production installation still uses a digest-pinned release manifest and the expl
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh
-# Edit ../config/runtime.env, runtime.secret, and bootstrap.env
+# Review ../config/runtime.env, runtime.secret, and bootstrap.env
 ./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
 ./scripts/install.sh --manifest /path/to/release.env
 ```
