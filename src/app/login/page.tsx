@@ -33,7 +33,10 @@ export default function LoginPage() {
 			setSubmitting(false);
 			return;
 		}
-		router.replace("/app");
+		const identity = (await response.json()) as {
+			mustChangePassword?: boolean;
+		};
+		router.replace(identity.mustChangePassword ? "/change-password" : "/app");
 		router.refresh();
 	}
 
@@ -51,6 +54,7 @@ export default function LoginPage() {
 							name="email"
 							type="email"
 							autoComplete="username"
+							placeholder="admin@unorag.local"
 							required
 						/>
 					</div>

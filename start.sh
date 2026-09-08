@@ -39,7 +39,7 @@ Options:
 Environment:
   LLM_API_KEY              Avoid the interactive API-key prompt
   UNORAG_ADMIN_PASSWORD    Use a chosen initial admin password
-  UNORAG_ADMIN_EMAIL       Override admin@example.com on first bootstrap
+  UNORAG_ADMIN_EMAIL       Override admin@unorag.local on first bootstrap
   UNORAG_HTTP_PORT         Same as --port
   UNORAG_COMPOSE_PROJECT_NAME
                            Same as --project-name
@@ -188,6 +188,10 @@ random_hex() {
 	od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
 }
 
+random_admin_password() {
+	printf 'Aa%s' "$(od -An -N31 -tx1 /dev/urandom | tr -d ' \n')"
+}
+
 ensure_random_secret() {
 	local file="$1" key="$2" current
 	current="$(get_value "$file" "$key")"
@@ -240,8 +244,11 @@ if [[ -n "$host_admin_password" ]]; then
 	if [[ "$bootstrap_existed" -eq 1 ]]; then
 		rotate_admin_after_install=1
 	fi
+elif [[ "$bootstrap_existed" -eq 0 && -n "$configured_admin_password" ]]; then
+	# init-config.sh generated this credential during the current first run.
+	generated_admin_password="$configured_admin_password"
 elif [[ -z "$configured_admin_password" || "$configured_admin_password" == "change-this-before-deployment" ]]; then
-	generated_admin_password="$(random_hex)"
+	generated_admin_password="$(random_admin_password)"
 	set_value "$BOOTSTRAP_ENV" UNORAG_ADMIN_PASSWORD "$generated_admin_password"
 	if [[ "$bootstrap_existed" -eq 1 ]]; then
 		rotate_admin_after_install=1
@@ -284,7 +291,7 @@ admin_email="$(get_value "$BOOTSTRAP_ENV" UNORAG_ADMIN_EMAIL)"
 echo
 echo "UnoRAG is ready."
 echo "  URL:   ${product_url}"
-echo "  Email: ${admin_email:-admin@example.com}"
+echo "  Email: ${admin_email:-admin@unorag.local}"
 if [[ -n "$generated_admin_password" ]]; then
 	echo "  Initial password: ${generated_admin_password}"
 	echo "  Change this password after the first login."

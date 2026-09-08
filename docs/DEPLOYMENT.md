@@ -56,7 +56,7 @@ release manifest、平台预检和显式配置流程。模型凭据不会被内�
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh
-# 编辑 ../config/runtime.env、runtime.secret、bootstrap.env
+# 检查 ../config/runtime.env、runtime.secret、bootstrap.env
 ./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
 ./scripts/install.sh --manifest /path/to/release-acr.env
 # 仅 Apple Silicon 本地验收，并且 overlay 只设置 UnoRAG 产品服务：
@@ -89,7 +89,15 @@ Grafana 默认仅监听 `127.0.0.1:3300`，其它观测后端不发布宿主机�
 - 独立的 `UNORAG_WEB_DB_PASSWORD`、`UNORAG_WORKER_DB_PASSWORD`、`UNORAG_DBOS_DB_PASSWORD`
 - 至少 32 字符的 `UNORAG_SESSION_SECRET`
 - `LLM_API_KEY`
-- 仅用于首次初始化的 `UNORAG_ADMIN_PASSWORD`
+- 仅用于首次初始化的 `UNORAG_ADMIN_PASSWORD`；`init-config.sh` 会为新实例随机生成
+
+新实例默认管理员为 `admin@unorag.local`，可以在安装前通过 `bootstrap.env` 修改。每个实例的初始密码
+独立生成并保存在同一文件中，不存在跨部署共用的产品默认密码。首次登录必须修改密码；服务端重置密码后
+也会重新进入该流程。重复安装不会覆盖已有凭据。需要重置时，先更新 `bootstrap.env` 中的密码，再运行
+`deploy/compose/scripts/rotate-admin-password.sh`。
+
+新密码长度为 7–256 个字符，并且必须同时包含大写和小写字母。该规则适用于首次改密、邀请用户设置密码
+和管理员主动重置；升级不会强制改写已有用户密码。
 
 外部 PostgreSQL 应由客户创建等价最小权限角色，并分别配置 `WEB_DATABASE_URL`、
 `WORKER_DATABASE_URL`、`DBOS_SYSTEM_DATABASE_URL` 与 `MIGRATOR_DATABASE_URL`。

@@ -10,14 +10,14 @@ cd "$ROOT"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/compose-env.sh"
 
-# Prefer split config (bootstrap.env) over a local smoke helper file.
-# .smoke-admin-password is only a fallback so rotation of bootstrap.env is not shadowed.
+# Prefer an explicit current password, then the smoke credential created after
+# bootstrap rotation. bootstrap.env intentionally keeps the one-time password.
 _SMOKE_PW_FILE="${ROOT}/.smoke-admin-password"
-if [[ -z "${UNORAG_ADMIN_PASSWORD:-}" ]]; then
-	UNORAG_ADMIN_PASSWORD="$(mk_config_get UNORAG_ADMIN_PASSWORD 2>/dev/null || true)"
-fi
 if [[ -z "${UNORAG_ADMIN_PASSWORD:-}" && -f "$_SMOKE_PW_FILE" ]]; then
 	UNORAG_ADMIN_PASSWORD="$(tr -d '\n' < "$_SMOKE_PW_FILE")"
+fi
+if [[ -z "${UNORAG_ADMIN_PASSWORD:-}" ]]; then
+	UNORAG_ADMIN_PASSWORD="$(mk_config_get UNORAG_ADMIN_PASSWORD 2>/dev/null || true)"
 fi
 if [[ -z "${UNORAG_ADMIN_EMAIL:-}" ]]; then
 	UNORAG_ADMIN_EMAIL="$(mk_config_get UNORAG_ADMIN_EMAIL 2>/dev/null || true)"
@@ -32,7 +32,7 @@ fi
 
 BASE_URL="${UNORAG_BASE_URL:-http://localhost}"
 BASE_URL="${BASE_URL%/}"
-EMAIL="${UNORAG_ADMIN_EMAIL:-admin@example.com}"
+EMAIL="${UNORAG_ADMIN_EMAIL:-admin@unorag.local}"
 PASSWORD="${UNORAG_ADMIN_PASSWORD:-}"
 JOB_TIMEOUT_SEC="${UNORAG_PILOT_JOB_TIMEOUT_SEC:-300}"
 POLL_INTERVAL_SEC="${UNORAG_PILOT_POLL_INTERVAL_SEC:-3}"
@@ -146,11 +146,16 @@ fi
 # --- login ---
 log "login as $EMAIL"
 LOGIN_BODY="$WORKDIR/login.json"
+LOGIN_PAYLOAD="$(python3 - "$EMAIL" "$PASSWORD" <<'PY'
+import json, sys
+print(json.dumps({"email": sys.argv[1], "password": sys.argv[2]}))
+PY
+)"
 LOGIN_CODE="$(
 	curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
 		-o "$LOGIN_BODY" -w '%{http_code}' \
 		-H 'content-type: application/json' \
-		-d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" \
+		-d "$LOGIN_PAYLOAD" \
 		"$BASE_URL/api/auth/session" || true
 )"
 if [[ "$LOGIN_CODE" == "000" ]]; then
@@ -158,6 +163,32 @@ if [[ "$LOGIN_CODE" == "000" ]]; then
 fi
 if [[ "$LOGIN_CODE" != "200" ]]; then
 	fail "login HTTP $LOGIN_CODE body=$(head -c 400 "$LOGIN_BODY" 2>/dev/null || true)"
+fi
+
+MUST_CHANGE_PASSWORD="$(json_get "$LOGIN_BODY" mustChangePassword 2>/dev/null || echo false)"
+if [[ "$MUST_CHANGE_PASSWORD" == "True" || "$MUST_CHANGE_PASSWORD" == "true" ]]; then
+	log "replacing the one-time administrator password"
+	NEXT_PASSWORD="${UNORAG_PILOT_ROTATED_ADMIN_PASSWORD:-Aa$(od -An -N31 -tx1 /dev/urandom | tr -d ' \n')}"
+	CHANGE_PAYLOAD="$(python3 - "$PASSWORD" "$NEXT_PASSWORD" <<'PY'
+import json, sys
+print(json.dumps({"current_password": sys.argv[1], "new_password": sys.argv[2]}))
+PY
+)"
+	CHANGE_BODY="$WORKDIR/change-password.json"
+	CHANGE_CODE="$(
+		curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+			-o "$CHANGE_BODY" -w '%{http_code}' \
+			-H 'content-type: application/json' \
+			-d "$CHANGE_PAYLOAD" \
+			"$BASE_URL/api/auth/password" || true
+	)"
+	[[ "$CHANGE_CODE" == "200" ]] || \
+		fail "initial password change HTTP $CHANGE_CODE body=$(head -c 400 "$CHANGE_BODY" 2>/dev/null || true)"
+	PASSWORD="$NEXT_PASSWORD"
+	umask 077
+	printf '%s\n' "$PASSWORD" >"$_SMOKE_PW_FILE"
+	chmod 600 "$_SMOKE_PW_FILE"
+	log "stored the current smoke credential in deploy/compose/.smoke-admin-password (mode 0600)"
 fi
 
 auth_curl() {

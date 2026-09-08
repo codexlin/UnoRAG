@@ -75,6 +75,7 @@ test("createDocumentVersion atomically supersedes queued work and queues a reind
 		email: `version-${suffix}@example.test`,
 		displayName: "Version test",
 		provider: "local",
+		mustChangePassword: false,
 	};
 
 	try {

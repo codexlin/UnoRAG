@@ -1,0 +1,1 @@
+ALTER TABLE "app"."local_credentials" ADD COLUMN "must_change_password" boolean DEFAULT false NOT NULL;

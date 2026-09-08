@@ -19,6 +19,7 @@ export default async function AppLayout({
 	const cookieStore = await cookies();
 	const identity = await resolveSessionCookieHeader(cookieStore.toString());
 	if (!identity) redirect("/login");
+	if (identity.mustChangePassword) redirect("/change-password");
 
 	const session: SessionIdentity = {
 		tenantId: identity.tenantId,
@@ -31,6 +32,7 @@ export default async function AppLayout({
 		email: identity.email,
 		displayName: identity.displayName,
 		provider: identity.provider,
+		mustChangePassword: identity.mustChangePassword,
 	};
 
 	return (

@@ -9,7 +9,9 @@ import {
 } from "@/lib/server/auth/session";
 
 export async function GET(request: Request) {
-	const identity = await resolveRequestSession(request);
+	const identity = await resolveRequestSession(request, {
+		allowPasswordChangeRequired: true,
+	});
 	if (!identity) {
 		return NextResponse.json(
 			{ detail: "authentication required" },

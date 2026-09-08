@@ -11,6 +11,7 @@ export type AuthIdentity = {
 	email: string | null;
 	displayName: string;
 	provider: "local" | "oidc";
+	mustChangePassword: boolean;
 };
 
 export type LocalCredentialsInput = {

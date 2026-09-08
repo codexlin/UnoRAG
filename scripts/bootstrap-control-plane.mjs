@@ -48,7 +48,7 @@ const config = {
 	workspaceName: required("UNORAG_WORKSPACE_NAME"),
 	adminId: requiredUuid("UNORAG_PRINCIPAL_ID"),
 	adminSubject: required("UNORAG_ADMIN_SUBJECT"),
-	adminEmail: required("UNORAG_ADMIN_EMAIL"),
+	adminEmail: required("UNORAG_ADMIN_EMAIL").toLowerCase(),
 	adminName: required("UNORAG_ADMIN_NAME"),
 	adminPassword: required("UNORAG_ADMIN_PASSWORD"),
 };
@@ -58,6 +58,21 @@ await client.connect();
 
 try {
 	await client.query("BEGIN");
+	const existingCredential = await client.query(
+		"SELECT 1 FROM app.local_credentials WHERE user_id = $1",
+		[config.adminId],
+	);
+	if (
+		(upsertPassword || existingCredential.rowCount === 0) &&
+		(config.adminPassword.length < 7 ||
+			config.adminPassword.length > 256 ||
+			!/[a-z]/.test(config.adminPassword) ||
+			!/[A-Z]/.test(config.adminPassword))
+	) {
+		throw new Error(
+			"UNORAG_ADMIN_PASSWORD must contain 7 to 256 characters with uppercase and lowercase letters",
+		);
+	}
 	await client.query(
 		`
 			INSERT INTO app.organizations (id, slug, name, deployment_mode, status)
@@ -116,12 +131,16 @@ try {
 	if (upsertPassword) {
 		await client.query(
 			`
-				INSERT INTO app.local_credentials (user_id, password_hash)
-				VALUES ($1, $2)
+				INSERT INTO app.local_credentials (
+					user_id, password_hash, must_change_password
+				)
+				VALUES ($1, $2, true)
 				ON CONFLICT (user_id) DO UPDATE
 				SET password_hash = EXCLUDED.password_hash,
+					must_change_password = true,
 					failed_attempts = 0,
 					locked_until = NULL,
+					password_changed_at = now(),
 					updated_at = now()
 			`,
 			[config.adminId, hashPassword(config.adminPassword)],
@@ -132,8 +151,10 @@ try {
 	} else {
 		const inserted = await client.query(
 			`
-				INSERT INTO app.local_credentials (user_id, password_hash)
-				VALUES ($1, $2)
+				INSERT INTO app.local_credentials (
+					user_id, password_hash, must_change_password
+				)
+				VALUES ($1, $2, true)
 				ON CONFLICT (user_id) DO NOTHING
 				RETURNING user_id
 			`,

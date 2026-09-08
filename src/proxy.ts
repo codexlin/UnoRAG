@@ -8,7 +8,12 @@ import {
 
 export function proxy(request: NextRequest) {
 	const token = request.cookies.get(SESSION_COOKIE)?.value;
-	if (token && verifySessionToken(token)) {
+	const claims = token ? verifySessionToken(token) : null;
+	if (claims) {
+		const changingPassword = request.nextUrl.pathname === "/change-password";
+		if (claims.must_change_password && !changingPassword) {
+			return NextResponse.redirect(new URL("/change-password", request.url));
+		}
 		return NextResponse.next();
 	}
 
@@ -16,5 +21,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-	matcher: ["/app/:path*"],
+	matcher: ["/app/:path*", "/change-password"],
 };
