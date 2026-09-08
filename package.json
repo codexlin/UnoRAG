@@ -113,8 +113,8 @@
 		"zod": "^4.5.4"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.9",
-		"@langfuse/client": "5.10.1",
+		"@biomejs/biome": "2.5.12",
+		"@langfuse/client": "5.11.0",
 		"@tailwindcss/postcss": "^4",
 		"@types/node": "^22.20.1",
 		"@types/pg": "^8.23.1",
@@ -122,8 +122,8 @@
 		"@types/react-dom": "^19",
 		"drizzle-kit": "^0.31.10",
 		"license-checker-rseidelsohn": "5.0.1",
-		"postcss": "8.5.26",
-		"shadcn": "^4.18.0",
+		"postcss": "8.5.28",
+		"shadcn": "^4.21.0",
 		"spdx-license-list": "6.12.0",
 		"tailwindcss": "^4",
 		"typescript": "^5"
