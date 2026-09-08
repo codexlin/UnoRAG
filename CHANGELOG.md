@@ -3,6 +3,42 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [0.1.1] - 2026-09-09
+
+UnoRAG 0.1.1 is a security and maintenance release for private deployments. It strengthens the
+first-run administrator flow and refreshes the supported web, AI, parsing, workflow, and developer
+toolchain dependencies without changing the public Knowledge API contracts.
+
+### Added
+
+- A unique, cryptographically generated initial administrator password for every new installation,
+  written only to the local bootstrap credential file with owner-only permissions.
+- A mandatory first-login password-change flow, including a dedicated authenticated endpoint,
+  guarded application routing, session state, and audit event.
+- A shared password policy for administrator bootstrap, recovery, invitations, and password changes:
+  7 to 256 characters with at least one uppercase and one lowercase letter.
+
+### Changed
+
+- Updated Next.js, AI SDK, LiteParse, DBOS, LangChain Core, Base UI, TanStack Query, Lucide, Motion,
+  Zod, and the supported development toolchain to their validated patch or minor releases.
+- Updated one-click installation, production bootstrap, administrator recovery, pilot smoke tests,
+  and deployment documentation for the generated initial credential and first-login flow.
+
+### Security
+
+- Removed the shared default administrator credential from new installations.
+- Patched audited transitive `qs`, `@xmldom/xmldom`, and `fast-uri` vulnerabilities; the production
+  dependency audit and GitHub Dependabot alert set are clean at release preparation time.
+
+### Upgrade notes
+
+- Existing administrators are not forced to rotate their password by the migration. The mandatory
+  change applies to newly bootstrapped or explicitly reset administrator credentials.
+- The database migration is forward-only. Application rollback follows the documented image
+  rollback procedure and does not reverse schema migrations.
+- Public `POST /api/v1/retrieve` and `POST /api/v1/ask` request and response contracts are unchanged.
+
 ## [0.1.0] - 2026-08-23
 
 UnoRAG 0.1.0 is the first stable, fully open-source release of the TypeScript runtime. It targets one
@@ -72,4 +108,5 @@ in [`docs/INTEGRATION.md`](./docs/INTEGRATION.md).
 - Existing RC deployments use the forward-only upgrade and application rollback process in
   [`docs/RELEASE.md`](./docs/RELEASE.md). Database migrations are not rolled back.
 
+[0.1.1]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.1
 [0.1.0]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.0
