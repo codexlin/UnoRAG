@@ -86,7 +86,13 @@ test("native text parser strips BOM and rejects invalid or empty UTF-8", () => {
 				contentHash: "sha256:fixture",
 				content: new Uint8Array([0xc3, 0x28]),
 			}),
-		/not valid UTF-8/,
+		(error) =>
+			error instanceof Error &&
+			error.message.includes("not valid UTF-8") &&
+			"code" in error &&
+			error.code === "document_parse_invalid" &&
+			"retryable" in error &&
+			error.retryable === false,
 	);
 	assert.throws(
 		() =>
@@ -97,6 +103,12 @@ test("native text parser strips BOM and rejects invalid or empty UTF-8", () => {
 				contentHash: "sha256:fixture",
 				content: encoder.encode(" \n\t"),
 			}),
-		/no readable content/,
+		(error) =>
+			error instanceof Error &&
+			error.message.includes("no readable content") &&
+			"code" in error &&
+			error.code === "document_ingest_empty" &&
+			"retryable" in error &&
+			error.retryable === false,
 	);
 });
