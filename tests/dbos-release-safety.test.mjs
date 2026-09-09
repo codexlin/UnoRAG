@@ -224,9 +224,13 @@ test("release signature verification fails closed for missing and invalid signat
 
 test("release images carry the project license and notice", async () => {
 	const dockerfile = await source("deploy/docker/web.Dockerfile");
+	const compose = await source("deploy/compose/docker-compose.yml");
 	assert.match(dockerfile, /COPY LICENSE NOTICE \.\//);
 	assert.match(dockerfile, /COPY --chown=unorag:unorag LICENSE NOTICE \.\//);
-	assert.match(dockerfile, /ARG UNORAG_VERSION=0\.1\.0-dev/);
+	assert.match(dockerfile, /^ARG UNORAG_VERSION$/m);
+	assert.doesNotMatch(dockerfile, /ARG UNORAG_VERSION=\d/);
+	assert.match(compose, /UNORAG_VERSION: \$\{UNORAG_VERSION:-\}/);
+	assert.doesNotMatch(compose, /UNORAG_VERSION:[^\n]*\d+\.\d+\.\d+-dev/);
 	assert.match(dockerfile, /UNORAG_REVISION=\$\{UNORAG_REVISION\}/);
 });
 

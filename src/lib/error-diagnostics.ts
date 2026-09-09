@@ -71,6 +71,12 @@ const EXACT_GUIDANCE: Record<string, ErrorGuidance> = {
 		cause: "检索或索引期间无法完成 Qdrant 操作。",
 		recovery: "检查 Qdrant 健康、磁盘、Collection 配置与网络，再重试任务。",
 	},
+	provider_parse_failed: {
+		title: "文档解析失败",
+		cause: "当前解析 Provider 无法从文件中生成可用的结构化内容。",
+		recovery:
+			"检查文件是否损坏、解析器健康与凭证；复杂或扫描 PDF 请启用 MinerU 后重新索引。",
+	},
 };
 
 export function errorGuidance(code: string): ErrorGuidance {
