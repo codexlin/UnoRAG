@@ -120,6 +120,9 @@ export function toAuditListItem(row) {
 		},
 		metadata_summary: summarizeAuditDetails(row.details),
 		request_id: row.requestId ?? null,
+		details: row.details && typeof row.details === "object" ? row.details : {},
+		ip_address: row.ipAddress ?? null,
+		user_agent: row.userAgent ?? null,
 	};
 }
 
@@ -133,6 +136,8 @@ export const AUDIT_CSV_HEADERS = [
 	"resource_id",
 	"metadata_summary",
 	"request_id",
+	"ip_address",
+	"user_agent",
 ];
 
 function csvEscape(value) {
@@ -157,6 +162,8 @@ export function formatAuditCsv(items) {
 				item.resource?.id ?? "",
 				item.metadata_summary ?? "",
 				item.request_id ?? "",
+				item.ip_address ?? "",
+				item.user_agent ?? "",
 			]
 				.map(csvEscape)
 				.join(","),

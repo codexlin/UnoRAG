@@ -29,14 +29,15 @@ Ask、入库、检索或生命周期任务。
 
 | 能力 | 当前状态 |
 |---|---|
-| 管理操作审计 | `app.audit_logs` 已持久化关键管理操作，并支持分页查询和导出 |
+| 管理操作审计 | `app.audit_logs` 已持久化关键管理操作，并支持独立页面、详情下钻、分页查询和 CSV 导出 |
 | Ask 业务调试信息 | `AskState` 已承载 `retrieval_debug`、`judgement`、`table_execution` 和业务 `trace_id` |
-| Ask 调试界面 | `AskTraceDrawer` 能展示调试 JSON，并预留 `stages` 时间线 |
+| Ask 调试界面 | `AskTraceDrawer` 已展示按真实耗时比例绘制的阶段瀑布与调试 JSON |
 | 归档会话调试信息 | 归档后相关调试字段随 `app.turns.debug` 保存 |
 | 解析诊断 | `parser_report` 已记录 ParserProvider、降级原因和部分质量指标 |
 | 生命周期诊断 | 产品 Job、DBOS workflow、进度、重试和取消已有业务状态 |
 | 关联上下文与日志 | Browser/Public API 和 DBOS workflow 已接入 AsyncLocalStorage、Pino JSON 与 OTel SDK |
 | Ask 执行记录 | `app.ask_runs` 已通过 `0021_ask_runs.sql` 落地隐私安全的开始/终态元数据 |
+| 执行阶段账本 | `0024_lovely_mephistopheles.sql` 已落地 `ask_run_stages`、`job_stage_runs` 与原子 Job 触发器 |
 | 运行健康与告警 | `0022_easy_synch.sql` 已落地作用域健康快照、告警状态机、不可变转换和持久投递记录 |
 
 TypeScript Ask 主路径现已生成实际执行节点、Token 生成、持久化的 `retrieval_debug.stages` 和
@@ -58,7 +59,7 @@ flowchart TB
     subgraph Core["第一层：UnoRAG Core，默认启用"]
         App["Next.js Web / DBOS Worker"]
         Context["Request Context + Pino\nOTel SDK"]
-        DB["PostgreSQL\nask_runs / jobs / alerts"]
+        DB["PostgreSQL\nask_runs / stage runs / jobs / audit / alerts"]
         Metrics["/metrics（已实现）"]
         App --> Context
         App --> DB
@@ -116,6 +117,11 @@ route -> rewrite -> embed -> dense_retrieve -> lexical_retrieve
 契约，不由 OTel 或 Langfuse 替代。
 公共 Retrieve/Ask v1 契约仍不得返回内部 `retrieval_debug`。
 
+Ask 结束时，阶段会和 `ask_runs` 终态在同一数据库事务写入 `app.ask_run_stages`。页面据此绘制真实
+耗时比例的瀑布图，原生运行中心按阶段聚合 P50/P95；Prometheus 同时输出封闭阶段集合的低基数直方图。
+阶段 `detail` 只能保存数字、布尔值、枚举和 ID 等允许的诊断元数据，不保存问题、回答、Prompt、引用
+正文或检索块。这样即使浏览器刷新或进程重启，诊断结果仍可重复读取，同时不会把内容数据复制进观测表。
+
 Judge 额外记录 `judge_mode`、模型、Provider、尝试次数、耗时和输入/输出 Token。模式区分
 `model`、`model_error`、`deterministic_no_evidence` 与 `deterministic_table_execution`；这些字段不含
 问题、Prompt 或候选证据。`JUDGE_MODEL` 未配置时严格继承 `CHAT_MODEL`，独立模型只能在黄金集与拒答
@@ -159,22 +165,35 @@ fail-soft 写入”制造不可知的数据丢失；写入失败应有结构化�
 范围批量删除终态记录；按用户删除、配置化调度和 stale-running 收敛已由 Phase 1B 补齐。临时会话被
 归档时可以回填 `thread_id`，但 `ask_runs` 不是会话内容存储。
 
+#### Job 阶段与尝试账本
+
+`app.job_stage_runs` 是入库和生命周期任务的不可变阶段账本。数据库触发器在 Job 的状态、阶段或尝试次数
+变化时原子关闭上一阶段并开启下一阶段，记录 `attempt`、`sequence`、`outcome`、`error_code`、起止时间和
+耗时。它不依赖 Worker 记得额外写一份日志，因此进程中断、失败重试和并发状态更新都不会留下“当前状态
+已经成功，旧失败却消失”的诊断盲区。
+
+`jobs` 仍是当前业务状态，`job_stage_runs` 回答执行过程和历史失败，`audit_logs` 回答哪个用户发起了什么
+管理操作。三者职责不同：技术阶段不写入审计账本，用户操作也不靠阶段表推断。阶段记录随所属 Job 删除，
+沿用 Job 的保留策略，不成为无限增长的第二套任务系统。
+
 #### 原生运维中心
 
 原生界面应以行动为导向，至少提供：
 
-- Ask 请求量、成功率、拒答率、P50/P95、无引用回答和最近错误；
+- Ask 请求量、成功率、拒答率、总耗时及各阶段 P50/P95、无引用回答和最近错误；
 - Parser、Embedding、Rerank、LLM Provider 的健康、延迟和错误分类；
 - DBOS queued/running/dead/stuck、最老等待时间、重试和取消结果；
-- 文档解析、索引、替换、删除和 generation cleanup 的进度与失败原因；
+- 文档解析、索引、替换、删除和 generation cleanup 的进度、阶段瀑布与失败原因；
 - PostgreSQL、Redis、Qdrant、对象/文档卷和磁盘的基础健康状态；
 - 按 `request_id`、`job_id`、`workflow_id` 搜索诊断上下文；
 - 邮件或 Webhook 基础告警，以及明确的恢复建议。
 
 核心应用已经输出 Pino JSON 和低基数 `/metrics`，让客户不启用官方 Ops Stack 也能接入已有系统。
-当前运行中心覆盖 Ask、任务队列、dead/stuck、最近错误、PostgreSQL/Redis/Qdrant 主动探测，以及
+当前运行中心覆盖 Ask、任务队列、dead/stuck、Ask/入库阶段 P50/P95、可点击的历史错误、
+PostgreSQL/Redis/Qdrant 主动探测，以及
 LLM、Embedding、Rerank、LiteParse、MinerU 配置健康。LLM 等付费 Provider 不做周期真实调用；真实调用
-错误仍由 Ask/Job 诊断反映。告警 open、连续两轮健康后的 resolved、reopen 和投递均持久化，转换与投递
+错误仍由 Ask/Job 诊断反映。错误详情提供阶段瀑布、相关业务 ID、技术错误和确定性的恢复建议；管理操作
+另由独立审计页面按操作者、动作、资源和 `request_id` 查询。告警 open、连续两轮健康后的 resolved、reopen 和投递均持久化，转换与投递
 快照在同一事务生成；Webhook 使用稳定事件 ID 与 HMAC，邮件使用 Resend 幂等键。投递超时、退避和
 最终失败只改变诊断状态，不阻塞 Ask、检索、入库或生命周期任务。
 
@@ -300,13 +319,16 @@ DBOS 排队可能持续很久，任务也可能重试或恢复，因此不得构
 - 明确 `request_id`、`otel_trace_id`、`job_id`、`workflow_id` 契约；
 - 为 Ask 主路径产生真实 stages 和总耗时；
 - 建立 `app.ask_runs` 的开始/终态写入、批量保留删除和数据库租户约束；
+- 建立 `app.ask_run_stages` 和 `app.job_stage_runs` 阶段账本，以数据库触发器原子记录 Job 阶段切换；
 
 验收：核心单元和数据库约束测试覆盖 ID 传播、日志脱敏、成功/拒答/失败终态、跨 Workspace 外键拒绝
-和保留删除；观测写失败不改变 Ask 业务结果。
+和保留删除；真实 PostgreSQL 验证阶段顺序、终态关闭，以及成功重试后旧失败仍可追溯；观测写失败不改变
+Ask 业务结果。
 
 ### Phase 1B：原生运维闭环（已实现）
 
 - 已实现管理员原生运行中心、组件健康和持久告警状态机；
+- 已实现 Ask 与入库阶段瀑布、阶段 P50/P95、历史错误下钻和独立审计浏览页；
 - 已暴露低基数 `/metrics`；
 - 已暴露按封闭 query type、retrieval mode 和终态聚合的 Citation/证据选择质量指标；
 - 已增加 stale-running sweeper、按用户删除和正式保留调度；

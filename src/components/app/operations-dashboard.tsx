@@ -14,7 +14,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useCan } from "@/components/app/can";
+import {
+	OperationsErrorDrawer,
+	type OperationsErrorRef,
+} from "@/components/app/operations-error-drawer";
 import { useSession } from "@/components/app/session-provider";
+import { stageDisplayName } from "@/components/app/stage-waterfall";
 import { Button } from "@/components/ui/button";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
 import { formatReleaseVersion, type ReleaseInfo } from "@/lib/release-info";
@@ -61,6 +66,7 @@ type OperationsSnapshot = {
 		cancelled: number;
 		running: number;
 		latency_ms: { p50: number | null; p95: number | null };
+		stage_latency_ms: StageLatency[];
 		without_citations: number;
 	};
 	jobs: {
@@ -76,6 +82,7 @@ type OperationsSnapshot = {
 			age_ms: number;
 			created_at: string;
 		} | null;
+		stage_latency_ms: StageLatency[];
 	};
 	components: Array<{
 		code: string;
@@ -93,12 +100,23 @@ type OperationsSnapshot = {
 	alerts: OperationsAlert[];
 	recent_errors: Array<{
 		id: string;
+		resource_id: string;
 		source: "ask" | "job";
 		status: string;
 		error_code: string;
 		occurred_at: string;
 		job_type: string | null;
+		stage: string | null;
+		attempt: number | null;
 	}>;
+};
+
+type StageLatency = {
+	stage: string;
+	count: number;
+	failed: number;
+	p50: number | null;
+	p95: number | null;
 };
 
 function percent(value: number): string {
@@ -173,6 +191,57 @@ function SignalBar({
 	);
 }
 
+function StageLatencyTable({
+	title,
+	rows,
+}: {
+	title: string;
+	rows: StageLatency[];
+}) {
+	return (
+		<section className="min-w-0 border border-border/80 bg-card">
+			<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
+				<h3 className="text-ui font-semibold">{title}</h3>
+				<span className="font-mono text-[11px] text-muted-foreground">
+					P50 / P95
+				</span>
+			</div>
+			{rows.length ? (
+				<div className="divide-y divide-border/60">
+					{rows.slice(0, 8).map((row) => (
+						<div
+							key={row.stage}
+							className="grid grid-cols-[minmax(5rem,1fr)_3.25rem_3.75rem_2.5rem] items-center gap-1 px-3 py-2.5 sm:grid-cols-[minmax(7rem,1fr)_4rem_5rem_3rem] sm:gap-2 sm:px-4"
+						>
+							<span className="truncate text-ui" title={row.stage}>
+								{stageDisplayName(row.stage)}
+							</span>
+							<span className="text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+								{latency(row.p50)}
+							</span>
+							<span className="text-right font-mono text-[11px] tabular-nums">
+								{latency(row.p95)}
+							</span>
+							<span
+								className={cn(
+									"text-right font-mono text-[10px] tabular-nums text-muted-foreground",
+									row.failed > 0 && "text-destructive",
+								)}
+							>
+								{row.failed}/{row.count}
+							</span>
+						</div>
+					))}
+				</div>
+			) : (
+				<p className="px-4 py-5 text-ui text-muted-foreground">
+					等待阶段样本。
+				</p>
+			)}
+		</section>
+	);
+}
+
 export function OperationsDashboard() {
 	const canManage = useCan("manageMembers");
 	const { identity } = useSession();
@@ -180,6 +249,9 @@ export function OperationsDashboard() {
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [autoRefresh, setAutoRefresh] = useState(true);
+	const [selectedError, setSelectedError] = useState<OperationsErrorRef | null>(
+		null,
+	);
 	const hasSnapshot = useRef(false);
 	const requestSequence = useRef(0);
 
@@ -418,6 +490,17 @@ export function OperationsDashboard() {
 					/>
 				</section>
 
+				<div className="grid min-w-0 gap-6 lg:grid-cols-2">
+					<StageLatencyTable
+						title="Ask 阶段延迟"
+						rows={ask?.stage_latency_ms ?? []}
+					/>
+					<StageLatencyTable
+						title="入库阶段延迟"
+						rows={jobs?.stage_latency_ms ?? []}
+					/>
+				</div>
+
 				<div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(22rem,0.9fr)]">
 					<section className="min-w-0 border border-border/80 bg-card">
 						<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
@@ -629,12 +712,20 @@ export function OperationsDashboard() {
 							<tbody className="divide-y divide-border/70">
 								{snapshot?.recent_errors.length ? (
 									snapshot.recent_errors.map((item) => (
-										<tr key={`${item.source}-${item.id}`}>
+										<tr
+											key={`${item.source}-${item.id}`}
+											className="cursor-pointer transition-colors hover:bg-muted/40"
+											onClick={() =>
+												setSelectedError({ source: item.source, id: item.id })
+											}
+										>
 											<td className="px-4 py-2.5">
 												{item.source === "ask" ? "Ask" : "Job"}
 											</td>
 											<td className="px-4 py-2.5 font-mono text-xs">
-												{item.status}
+												{item.stage
+													? stageDisplayName(item.stage)
+													: item.status}
 											</td>
 											<td className="px-4 py-2.5 font-mono text-xs text-destructive">
 												{item.error_code}
@@ -661,6 +752,10 @@ export function OperationsDashboard() {
 						</table>
 					</div>
 				</section>
+				<OperationsErrorDrawer
+					selected={selectedError}
+					onOpenChange={(open) => !open && setSelectedError(null)}
+				/>
 			</div>
 		</div>
 	);
