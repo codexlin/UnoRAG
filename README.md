@@ -148,8 +148,9 @@ The source code is licensed under [Apache License 2.0](./LICENSE), and the GitHu
 Product names and logos are governed separately by the [trademark policy](./TRADEMARKS.md); forks and
 hosted services remain welcome when they use distinct branding and describe their UnoRAG relationship truthfully.
 Asset provenance, third-party notices, SBOM/provenance, and image signing are in place. Stable
-[`v0.1.1`](https://github.com/codexlin/UnoRAG/releases/tag/v0.1.1) is published and has completed commit-bound supply-chain, upgrade, product, and three-round real-file quality acceptance. See the
-[v0.1.1 acceptance report](./docs/evidence/2026-09-09-v0.1.1-release-acceptance.md),
+[`v0.1.2`](https://github.com/codexlin/UnoRAG/releases/tag/v0.1.2) is published and has completed
+commit-bound local product, real-file quality, recovery, browser, and supply-chain acceptance. See the
+[v0.1.2 acceptance report](./docs/evidence/2026-09-10-v0.1.2-local-release-gate.md),
 [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) and the
 [open-source readiness audit](./docs/OPEN_SOURCE_READINESS.md).
 
