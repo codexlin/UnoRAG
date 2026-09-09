@@ -10,6 +10,7 @@ import {
 	jobs,
 	libraries,
 } from "@/db/schema";
+import { redactDiagnosticMessage } from "@/lib/error-diagnostics";
 import { formatParseStatusView } from "@/lib/parse-status-view.mjs";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
@@ -99,7 +100,7 @@ export async function GET(request: Request, context: RouteContext) {
 				status: document.status,
 				chunk_count: version?.chunkCount ?? 0,
 				size_bytes: version?.sizeBytes ?? null,
-				error: version?.error ?? job?.error ?? null,
+				error: redactDiagnosticMessage(version?.error ?? job?.error ?? null),
 				has_file: Boolean(version?.storageKey),
 				parser_report,
 				parse_status,

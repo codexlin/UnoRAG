@@ -48,6 +48,13 @@ const EXACT_GUIDANCE: Record<string, ErrorGuidance> = {
 		recovery:
 			"使用 request ID 检查网关与模型 Provider 日志，并确认流式超时配置。",
 	},
+	conversation_persist_failed: {
+		title: "会话持久化失败",
+		cause:
+			"回答已经生成并返回，但会话或消息未能写入 PostgreSQL，历史记录可能不完整。",
+		recovery:
+			"使用 request ID 检查数据库连接、事务冲突和容量；恢复后重新提问以补全会话记录。",
+	},
 	llm_overloaded: {
 		title: "模型并发已满",
 		cause: "当前模型 Provider 的并发槽位已耗尽。",

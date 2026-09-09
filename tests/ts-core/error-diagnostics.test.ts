@@ -18,9 +18,13 @@ test("diagnostic messages redact credentials and remain bounded", () => {
 	assert.equal(redactDiagnosticMessage("x".repeat(3_000))?.length, 2_000);
 });
 
-test("error guidance groups parser, embedding, timeout, and unknown failures", () => {
+test("error guidance groups known providers, persistence, and unknown failures", () => {
 	assert.equal(errorGuidance("mineru_unauthorized").title, "文档解析异常");
 	assert.equal(errorGuidance("embedding_http_429").title, "Embedding 异常");
 	assert.equal(errorGuidance("provider_timeout").title, "执行超时");
+	assert.equal(
+		errorGuidance("conversation_persist_failed").title,
+		"会话持久化失败",
+	);
 	assert.equal(errorGuidance("novel_failure").title, "未分类运行异常");
 });

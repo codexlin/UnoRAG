@@ -9,6 +9,7 @@ import {
 	documents,
 	documentVersions,
 } from "@/db/schema";
+import { redactDiagnosticMessage } from "@/lib/error-diagnostics";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
 	documentLifecycleV2Enabled,
@@ -99,7 +100,7 @@ export async function GET(request: Request, context: RouteContext) {
 			pipeline_version: version.pipelineVersion,
 			parser_backend: version.parserBackend,
 			failure_code: version.failureCode,
-			error: version.error,
+			error: redactDiagnosticMessage(version.error),
 			indexed_at: version.indexedAt?.toISOString() ?? null,
 			activated_at: version.activatedAt?.toISOString() ?? null,
 			superseded_at: version.supersededAt?.toISOString() ?? null,

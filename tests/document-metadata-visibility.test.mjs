@@ -43,3 +43,14 @@ test("library summaries and ACL reads cannot disclose restricted documents", asy
 	);
 	assert.match(aclRoute, /detail: "document not found"/);
 });
+
+test("document and job read APIs redact diagnostic messages", async () => {
+	const targets = [
+		"src/app/api/libraries/[libraryId]/documents/route.ts",
+		"src/app/api/libraries/[libraryId]/documents/[documentId]/versions/route.ts",
+		"src/lib/server/job-access.ts",
+	];
+	for (const target of targets) {
+		assert.match(await source(target), /redactDiagnosticMessage\(/, target);
+	}
+});

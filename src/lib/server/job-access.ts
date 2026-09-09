@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import { documents, documentVersions, jobs, libraries } from "@/db/schema";
+import { redactDiagnosticMessage } from "@/lib/error-diagnostics";
 import { formatParseStatusView } from "@/lib/parse-status-view.mjs";
 import type { AuthIdentity } from "./auth/provider";
 import { documentMetadataVisibilitySql } from "./document-visibility";
@@ -69,7 +70,7 @@ export function toApiJob(
 		attempt: row.job.attempt,
 		max_attempts: row.job.maxAttempts,
 		error_code: row.job.errorCode,
-		error: row.job.error,
+		error: redactDiagnosticMessage(row.job.error),
 		parser_report,
 		parse_status: formatParseStatusView({
 			parserReport: parser_report as Record<string, unknown> | null,
