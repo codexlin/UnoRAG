@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-09-09
+> 更新日期：2026-09-10
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -9,7 +9,7 @@
 ## 一句话结论
 
 UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部署、具备权限和文档生命周期的知识产品**。
-仓库已在 GitHub 公开并采用 Apache-2.0，当前稳定版 [`v0.1.1`](https://github.com/codexlin/UnoRAG/releases/tag/v0.1.1)
+仓库已在 GitHub 公开并采用 Apache-2.0，当前稳定版 [`v0.1.2`](https://github.com/codexlin/UnoRAG/releases/tag/v0.1.2)
 已经发布。素材溯源、第三方通知、SBOM/provenance、镜像漏洞扫描和 Cosign 签名均已工程化；COS 真链路、
 真实文件、浏览器权限、29 项隔离熔断、维护恢复、回退前滚和受控容量已在最终提交与香港参考环境复验。
 这不应扩大为所有部署拓扑的通用生产认证。当前默认交付是一位客户一套独立实例；Workspace 服务于客户
@@ -81,6 +81,9 @@ Next.js product + Knowledge API
 - CI 覆盖全历史密钥扫描、Web/TS Core、真实 PostgreSQL migration、镜像构建、Helm、依赖审计和品牌残留检查。
 - 现有证据覆盖空环境安装、真实文件、浏览器 RBAC、跨 Workspace 隔离、MinerU 302 实链路、故障恢复、
   备份恢复、不可变镜像升级/回滚和 tombstone 生命周期。
+- `v0.1.2` 已完成空环境 Compose、真实 PostgreSQL/Qdrant/Redis、两轮产品 smoke、Qdrant/Worker 重启恢复、
+  浏览器诊断、7/7 真实文件、33/33 正例、5/5 拒答，以及双 Registry 四镜像的扫描、签名和 digest manifest
+  发布。结论见 [v0.1.2 本地与供应链验收](./evidence/2026-09-10-v0.1.2-local-release-gate.md)。
 - `v0.1.1` 已完成双 Registry 不可变发布、`0.1.0 -> 0.1.1` 香港环境原位升级、公网产品烟测与
   三轮真实文件稳定性门禁。每轮 33/33 正例、5/5 拒答，模型错误和跨文档引用均为 0，最大 P95
   `14.539s`。结论见 [v0.1.1 稳定版验收](./evidence/2026-09-09-v0.1.1-release-acceptance.md)。
@@ -95,9 +98,9 @@ Next.js product + Knowledge API
 
 ### P0：稳定版维护门禁
 
-`v0.1.1` 的源码标签、四镜像、digest manifest、校验和、release notes、供应链材料、原位升级和版本绑定验收均已
-完成。后续补丁版本必须继续执行同一门禁，历史 PASS 不自动传递给新提交、新模型、ParserProvider 或客户
-环境。当前在线版本与稳定 manifest 完全一致。
+`v0.1.2` 的源码标签、四镜像、digest manifest、校验和、release notes 与供应链材料已经完成；目标服务器的
+digest-pinned 升级与公网 smoke 尚未执行，因此当前在线实例不能仅凭该发布记录宣称已经运行 `v0.1.2`。
+历史 PASS 不自动传递给新提交、新模型、ParserProvider 或客户环境。
 
 `UnoRAG` / `Unobyte` 的正式商标检索仍是维护者的外部法律风险事项，本仓库只记录工程来源和使用政策，
 不宣称名称或图形已在任一地区注册。首个稳定版沿用当前项目创建的 UnoRAG 标识；未来视觉升级不改变
