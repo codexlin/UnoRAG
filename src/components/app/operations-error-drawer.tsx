@@ -53,7 +53,7 @@ function CopyValue({ value }: { value: string }) {
 				setCopied(true);
 				window.setTimeout(() => setCopied(false), 1_200);
 			}}
-			className="group flex min-w-0 items-center gap-1.5 text-left font-mono text-[11px] text-foreground/85 hover:text-foreground"
+			className="group flex w-full min-w-0 items-center gap-1.5 text-left font-mono text-[11px] text-foreground/85 hover:text-foreground"
 			title="复制"
 		>
 			<span className="truncate">{value}</span>

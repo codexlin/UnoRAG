@@ -152,3 +152,13 @@ test("operations center is scoped, responsive, and permission-gated", () => {
 	assert.match(nav, /href: "\/app\/operations"[\s\S]*cap: "manageMembers"/);
 	assert.match(sidebar, /allowsCap\(caps, item\.cap\)/);
 });
+
+test("side sheets use the full mobile viewport without changing desktop caps", () => {
+	const sheet = readFileSync(
+		path.join(root, "src/components/ui/sheet.tsx"),
+		"utf8",
+	);
+	assert.match(sheet, /data-\[side=right\]:w-full/);
+	assert.match(sheet, /data-\[side=left\]:w-full/);
+	assert.match(sheet, /sm:max-w-sm/);
+});
