@@ -33,6 +33,7 @@ function snapshot(): OperationsSnapshot {
 			cancelled: 0,
 			running: 0,
 			latency_ms: { p50: 500, p95: 9_000 },
+			stage_latency_ms: [],
 			without_citations: 2,
 		},
 		jobs: {
@@ -41,6 +42,7 @@ function snapshot(): OperationsSnapshot {
 			dead: 1,
 			stuck: 1,
 			oldest_active: null,
+			stage_latency_ms: [],
 		},
 		components: [],
 		alerts: [],

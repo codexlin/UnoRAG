@@ -169,6 +169,13 @@
       "when": 1788857202677,
       "tag": "0023_misty_the_initiative",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788946511278,
+      "tag": "0024_lovely_mephistopheles",
+      "breakpoints": true
     }
   ]
 }

@@ -531,6 +531,10 @@ test("Ask run uses the response request ID and reaches a privacy-safe terminal s
 	assert.equal(runs.finalizations[0]?.queryType, "fact");
 	assert.equal(runs.finalizations[0]?.retrievalMode, "hybrid");
 	assert.equal(runs.finalizations[0]?.citationCount, 1);
+	assert.deepEqual(
+		runs.finalizations[0]?.stages?.map((stage) => stage.stage),
+		["generate", "persist"],
+	);
 	assert.equal("question" in (runs.starts[0] ?? {}), false);
 	assert.equal("answer" in (runs.finalizations[0] ?? {}), false);
 });
@@ -674,11 +678,13 @@ test("stream aborted before token iteration finalizes the Ask run as cancelled",
 	assert.equal(runs.finalizations.length, 1);
 	assert.equal(runs.finalizations[0]?.status, "cancelled");
 	assert.equal(runs.finalizations[0]?.errorCode, "request_aborted");
+	assert.equal(runs.finalizations[0]?.stages?.at(-1)?.outcome, "cancelled");
 });
 
 test("persist stage reports a sanitized failure without failing the answer", async () => {
 	const { handleNativeAskRequest } = await handlerModule;
 	const runtime = new FakeRuntime(askState(), ["可用回答"]);
+	const runs = askRunRecorder();
 	const response = await handleNativeAskRequest({
 		request: request({
 			question: "测试持久化",
@@ -691,6 +697,10 @@ test("persist stage reports a sanitized failure without failing the answer", asy
 			new FailingConversationRepository([activeThread()]),
 		),
 		runtimeFactory: runtimeFactory(runtime),
+		askRunsRepository: runs.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
 	});
 
 	assert.equal(response?.status, 200);
@@ -710,6 +720,12 @@ test("persist stage reports a sanitized failure without failing the answer", asy
 	);
 	assert.equal(JSON.stringify(debug).includes("测试持久化"), false);
 	assert.equal(JSON.stringify(debug).includes("可用回答"), false);
+	assert.equal(runs.finalizations.length, 1);
+	const persistStage = runs.finalizations[0]?.stages?.find(
+		(stage) => stage.stage === "persist",
+	);
+	assert.equal(persistStage?.outcome, "failed");
+	assert.equal(persistStage?.errorCode, "conversation_persist_failed");
 });
 
 test("temporary session memory is scoped, bounded, and receives policy settings", async () => {

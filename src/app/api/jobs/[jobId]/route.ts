@@ -1,3 +1,8 @@
+import { eq } from "drizzle-orm";
+import { z } from "zod";
+
+import { getDatabase } from "@/db";
+import { jobStageRuns } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import { findAuthorizedJob, toApiJob } from "@/lib/server/job-access";
 
@@ -14,9 +19,17 @@ export async function GET(request: Request, context: RouteContext) {
 		);
 	}
 	const { jobId } = await context.params;
+	if (!z.uuid().safeParse(jobId).success) {
+		return Response.json({ detail: "job not found" }, { status: 404 });
+	}
 	const row = await findAuthorizedJob(identity, jobId);
 	if (!row) {
 		return Response.json({ detail: "job not found" }, { status: 404 });
 	}
-	return Response.json(toApiJob(row));
+	const stages = await getDatabase()
+		.select()
+		.from(jobStageRuns)
+		.where(eq(jobStageRuns.jobId, row.job.id))
+		.orderBy(jobStageRuns.sequence);
+	return Response.json(toApiJob(row, stages));
 }

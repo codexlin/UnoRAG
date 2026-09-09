@@ -241,6 +241,19 @@ export type ApiJob = {
 	started_at?: string | null;
 	finished_at?: string | null;
 	updated_at: string;
+	stage_runs?: ApiExecutionStage[];
+};
+
+export type ApiExecutionStage = {
+	id: string;
+	sequence: number;
+	attempt: number | null;
+	stage: string;
+	outcome: "running" | "completed" | "failed" | "cancelled" | string;
+	error_code?: string | null;
+	started_at?: string | null;
+	ended_at?: string | null;
+	duration_ms?: number | null;
 };
 
 export function getApiBaseUrl() {
@@ -451,6 +464,22 @@ export async function cancelJob(jobId: string): Promise<ApiJob> {
 	if (response.status !== 200 && response.status !== 202) {
 		const text = await response.text();
 		throw new Error(parseApiError(text) || `cancel job ${response.status}`);
+	}
+	return (await response.json()) as ApiJob;
+}
+
+export async function fetchJob(
+	jobId: string,
+	signal?: AbortSignal,
+): Promise<ApiJob> {
+	const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+		method: "GET",
+		cache: "no-store",
+		signal,
+	});
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(parseApiError(text) || `job ${response.status}`);
 	}
 	return (await response.json()) as ApiJob;
 }

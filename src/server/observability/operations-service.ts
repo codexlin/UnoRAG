@@ -3,7 +3,9 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import type * as schema from "@/db/schema";
 import {
+	askRunStages,
 	askRuns,
+	jobStageRuns,
 	jobs,
 	observabilityAlerts,
 	observabilityComponentHealth,
@@ -33,10 +35,21 @@ export interface OperationsReadOptions {
 export interface OperationsRecentError {
 	source: "ask" | "job";
 	id: string;
+	resource_id: string;
 	status: string;
 	error_code: string;
 	occurred_at: string;
 	job_type: string | null;
+	stage: string | null;
+	attempt: number | null;
+}
+
+export interface OperationsStageLatency {
+	stage: string;
+	count: number;
+	failed: number;
+	p50: number | null;
+	p95: number | null;
 }
 
 export interface OperationsAlert {
@@ -86,6 +99,7 @@ export interface OperationsSnapshot {
 		cancelled: number;
 		running: number;
 		latency_ms: { p50: number | null; p95: number | null };
+		stage_latency_ms: OperationsStageLatency[];
 		without_citations: number;
 	};
 	jobs: {
@@ -101,18 +115,25 @@ export interface OperationsSnapshot {
 			age_ms: number;
 			created_at: string;
 		} | null;
+		stage_latency_ms: OperationsStageLatency[];
 	};
 	components: OperationsComponentHealth[];
 	alerts: OperationsAlert[];
 	recent_errors: OperationsRecentError[];
 }
 
-type AskSummary = Omit<OperationsSnapshot["ask"], "latency_ms"> & {
+type AskSummary = Omit<
+	OperationsSnapshot["ask"],
+	"latency_ms" | "stage_latency_ms"
+> & {
 	latencyP50: number | null;
 	latencyP95: number | null;
 };
 
-type JobSummary = Omit<OperationsSnapshot["jobs"], "oldest_active">;
+type JobSummary = Omit<
+	OperationsSnapshot["jobs"],
+	"oldest_active" | "stage_latency_ms"
+>;
 
 interface OldestActiveJob {
 	id: string;
@@ -141,6 +162,14 @@ export interface OperationsDataSource {
 		since: Date,
 		limit: number,
 	): Promise<OperationsRecentError[]>;
+	readAskStageLatency(
+		scope: OperationsScope,
+		since: Date,
+	): Promise<OperationsStageLatency[]>;
+	readJobStageLatency(
+		scope: OperationsScope,
+		since: Date,
+	): Promise<OperationsStageLatency[]>;
 	listAlerts(scope: OperationsScope, limit: number): Promise<OperationsAlert[]>;
 	listComponentHealth(
 		scope: OperationsScope,
@@ -177,6 +206,22 @@ function safeErrorCode(value: string | null | undefined): string {
 	return /^[a-z0-9][a-z0-9_.:-]{0,127}$/.test(normalized)
 		? normalized
 		: "unclassified_error";
+}
+
+function stageLatency(row: {
+	stage: string;
+	count: unknown;
+	failed: unknown;
+	p50: unknown;
+	p95: unknown;
+}): OperationsStageLatency {
+	return {
+		stage: row.stage,
+		count: count(row.count),
+		failed: count(row.failed),
+		p50: nullableNumber(row.p50),
+		p95: nullableNumber(row.p95),
+	};
 }
 
 class DrizzleOperationsDataSource implements OperationsDataSource {
@@ -290,9 +335,29 @@ class DrizzleOperationsDataSource implements OperationsDataSource {
 		const rows = await this.db
 			.select({
 				id: askRuns.id,
+				requestId: askRuns.requestId,
 				status: askRuns.status,
-				errorCode: askRuns.errorCode,
+				errorCode: sql<string | null>`coalesce(
+					${askRuns.errorCode},
+					(
+						select stage.error_code
+						from app.ask_run_stages stage
+						where stage.ask_run_id = "app"."ask_runs"."id"
+							and stage.outcome = 'failed'
+							and stage.error_code is not null
+						order by stage.sequence desc
+						limit 1
+					)
+				)`,
 				occurredAt: askRuns.endedAt,
+				stage: sql<string | null>`(
+					select stage.stage
+					from app.ask_run_stages stage
+					where stage.ask_run_id = "app"."ask_runs"."id"
+						and stage.outcome in ('failed', 'cancelled')
+					order by stage.sequence desc
+					limit 1
+				)`,
 			})
 			.from(askRuns)
 			.where(
@@ -300,8 +365,20 @@ class DrizzleOperationsDataSource implements OperationsDataSource {
 					eq(askRuns.organizationId, scope.organizationId),
 					eq(askRuns.workspaceId, scope.workspaceId),
 					gte(askRuns.startedAt, since),
-					eq(askRuns.status, "failed"),
-					isNotNull(askRuns.errorCode),
+					or(
+						and(eq(askRuns.status, "failed"), isNotNull(askRuns.errorCode)),
+						and(
+							eq(askRuns.status, "completed"),
+							sql`exists (
+								select 1
+								from app.ask_run_stages stage
+								where stage.ask_run_id = ${askRuns.id}
+									and stage.stage = 'persist'
+									and stage.outcome = 'failed'
+									and stage.error_code is not null
+							)`,
+						),
+					),
 				),
 			)
 			.orderBy(desc(askRuns.endedAt), desc(askRuns.id))
@@ -309,10 +386,13 @@ class DrizzleOperationsDataSource implements OperationsDataSource {
 		return rows.map((row) => ({
 			source: "ask",
 			id: row.id,
+			resource_id: row.id,
 			status: row.status,
 			error_code: safeErrorCode(row.errorCode),
 			occurred_at: iso(row.occurredAt ?? since),
 			job_type: null,
+			stage: row.stage,
+			attempt: null,
 		}));
 	}
 
@@ -323,32 +403,105 @@ class DrizzleOperationsDataSource implements OperationsDataSource {
 	): Promise<OperationsRecentError[]> {
 		const rows = await this.db
 			.select({
-				id: jobs.id,
+				id: jobStageRuns.id,
+				jobId: jobs.id,
 				type: jobs.type,
-				status: jobs.status,
-				errorCode: jobs.errorCode,
-				occurredAt: jobs.updatedAt,
+				status: jobStageRuns.outcome,
+				errorCode: jobStageRuns.errorCode,
+				occurredAt: jobStageRuns.endedAt,
+				stage: jobStageRuns.stage,
+				attempt: jobStageRuns.attempt,
 			})
-			.from(jobs)
+			.from(jobStageRuns)
+			.innerJoin(jobs, eq(jobs.id, jobStageRuns.jobId))
 			.where(
 				and(
-					eq(jobs.organizationId, scope.organizationId),
-					eq(jobs.workspaceId, scope.workspaceId),
-					gte(jobs.updatedAt, since),
-					or(eq(jobs.status, "failed"), eq(jobs.status, "dead")),
-					isNotNull(jobs.errorCode),
+					eq(jobStageRuns.organizationId, scope.organizationId),
+					eq(jobStageRuns.workspaceId, scope.workspaceId),
+					gte(jobStageRuns.startedAt, since),
+					inArray(jobStageRuns.outcome, ["failed", "cancelled"]),
+					isNotNull(jobStageRuns.errorCode),
 				),
 			)
-			.orderBy(desc(jobs.updatedAt), desc(jobs.id))
+			.orderBy(desc(jobStageRuns.endedAt), desc(jobStageRuns.id))
 			.limit(limit);
 		return rows.map((row) => ({
 			source: "job",
 			id: row.id,
+			resource_id: row.jobId,
 			status: row.status,
 			error_code: safeErrorCode(row.errorCode),
-			occurred_at: iso(row.occurredAt),
+			occurred_at: iso(row.occurredAt ?? since),
 			job_type: row.type,
+			stage: row.stage,
+			attempt: row.attempt,
 		}));
+	}
+
+	async readAskStageLatency(
+		scope: OperationsScope,
+		since: Date,
+	): Promise<OperationsStageLatency[]> {
+		const rows = await this.db
+			.select({
+				stage: askRunStages.stage,
+				count: sql<number>`count(*)`,
+				failed: sql<number>`count(*) filter (where ${askRunStages.outcome} <> 'completed')`,
+				p50: sql<
+					number | null
+				>`percentile_cont(0.5) within group (order by ${askRunStages.durationMs})`,
+				p95: sql<
+					number | null
+				>`percentile_cont(0.95) within group (order by ${askRunStages.durationMs})`,
+			})
+			.from(askRunStages)
+			.where(
+				and(
+					eq(askRunStages.organizationId, scope.organizationId),
+					eq(askRunStages.workspaceId, scope.workspaceId),
+					gte(askRunStages.createdAt, since),
+				),
+			)
+			.groupBy(askRunStages.stage)
+			.orderBy(
+				desc(
+					sql`percentile_cont(0.95) within group (order by ${askRunStages.durationMs})`,
+				),
+			);
+		return rows.map(stageLatency);
+	}
+
+	async readJobStageLatency(
+		scope: OperationsScope,
+		since: Date,
+	): Promise<OperationsStageLatency[]> {
+		const rows = await this.db
+			.select({
+				stage: jobStageRuns.stage,
+				count: sql<number>`count(*)`,
+				failed: sql<number>`count(*) filter (where ${jobStageRuns.outcome} in ('failed', 'cancelled'))`,
+				p50: sql<
+					number | null
+				>`percentile_cont(0.5) within group (order by ${jobStageRuns.durationMs}) filter (where ${jobStageRuns.durationMs} is not null)`,
+				p95: sql<
+					number | null
+				>`percentile_cont(0.95) within group (order by ${jobStageRuns.durationMs}) filter (where ${jobStageRuns.durationMs} is not null)`,
+			})
+			.from(jobStageRuns)
+			.where(
+				and(
+					eq(jobStageRuns.organizationId, scope.organizationId),
+					eq(jobStageRuns.workspaceId, scope.workspaceId),
+					gte(jobStageRuns.startedAt, since),
+				),
+			)
+			.groupBy(jobStageRuns.stage)
+			.orderBy(
+				desc(
+					sql`percentile_cont(0.95) within group (order by ${jobStageRuns.durationMs}) filter (where ${jobStageRuns.durationMs} is not null)`,
+				),
+			);
+		return rows.map(stageLatency);
 	}
 
 	async listAlerts(
@@ -487,16 +640,27 @@ export class OperationsService {
 			now.getTime() - stuckAfterMinutes * 60 * 1_000,
 		);
 
-		const [ask, jobSummary, oldest, askErrors, jobErrors, alerts, components] =
-			await Promise.all([
-				this.dataSource.readAskSummary(scope, since),
-				this.dataSource.readJobSummary(scope, since, stuckBefore, now),
-				this.dataSource.findOldestActiveJob(scope),
-				this.dataSource.listAskErrors(scope, since, errorLimit),
-				this.dataSource.listJobErrors(scope, since, errorLimit),
-				this.dataSource.listAlerts(scope, errorLimit),
-				this.dataSource.listComponentHealth(scope),
-			]);
+		const [
+			ask,
+			jobSummary,
+			oldest,
+			askErrors,
+			jobErrors,
+			askStageLatency,
+			jobStageLatency,
+			alerts,
+			components,
+		] = await Promise.all([
+			this.dataSource.readAskSummary(scope, since),
+			this.dataSource.readJobSummary(scope, since, stuckBefore, now),
+			this.dataSource.findOldestActiveJob(scope),
+			this.dataSource.listAskErrors(scope, since, errorLimit),
+			this.dataSource.listJobErrors(scope, since, errorLimit),
+			this.dataSource.readAskStageLatency(scope, since),
+			this.dataSource.readJobStageLatency(scope, since),
+			this.dataSource.listAlerts(scope, errorLimit),
+			this.dataSource.listComponentHealth(scope),
+		]);
 		const recentErrors = [...askErrors, ...jobErrors]
 			.sort(
 				(left, right) =>
@@ -522,10 +686,12 @@ export class OperationsService {
 					p50: ask.latencyP50,
 					p95: ask.latencyP95,
 				},
+				stage_latency_ms: askStageLatency,
 				without_citations: ask.without_citations,
 			},
 			jobs: {
 				...jobSummary,
+				stage_latency_ms: jobStageLatency,
 				oldest_active: oldest
 					? {
 							id: oldest.id,

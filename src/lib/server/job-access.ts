@@ -38,12 +38,25 @@ export async function findAuthorizedJob(identity: AuthIdentity, jobId: string) {
 	return row ?? null;
 }
 
-export function toApiJob(row: {
-	job: typeof jobs.$inferSelect;
-	version: typeof documentVersions.$inferSelect;
-	document: typeof documents.$inferSelect;
-	library: typeof libraries.$inferSelect;
-}) {
+export function toApiJob(
+	row: {
+		job: typeof jobs.$inferSelect;
+		version: typeof documentVersions.$inferSelect;
+		document: typeof documents.$inferSelect;
+		library: typeof libraries.$inferSelect;
+	},
+	stageRuns?: Array<{
+		id: string;
+		sequence: number;
+		attempt: number;
+		stage: string;
+		outcome: string;
+		errorCode: string | null;
+		startedAt: Date;
+		endedAt: Date | null;
+		durationMs: number | null;
+	}>,
+) {
 	const parser_report = row.version.parserReport;
 	return {
 		id: row.job.id,
@@ -74,5 +87,20 @@ export function toApiJob(row: {
 		started_at: row.job.startedAt?.toISOString() ?? null,
 		finished_at: row.job.finishedAt?.toISOString() ?? null,
 		updated_at: row.job.updatedAt.toISOString(),
+		...(stageRuns
+			? {
+					stage_runs: stageRuns.map((stage) => ({
+						id: stage.id,
+						sequence: stage.sequence,
+						attempt: stage.attempt,
+						stage: stage.stage,
+						outcome: stage.outcome,
+						error_code: stage.errorCode,
+						started_at: stage.startedAt.toISOString(),
+						ended_at: stage.endedAt?.toISOString() ?? null,
+						duration_ms: stage.durationMs,
+					})),
+				}
+			: {}),
 	};
 }

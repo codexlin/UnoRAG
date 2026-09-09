@@ -65,3 +65,26 @@ test("Ask runs migration enforces lifecycle and retention indexes", () => {
 		/WHERE (?:"app"\."ask_runs"\.)?"ended_at" is not null/,
 	);
 });
+
+test("execution diagnostics migration keeps Ask and job stages privacy-safe and durable", () => {
+	const migration = read("drizzle/0024_lovely_mephistopheles.sql");
+
+	assert.match(migration, /CREATE TABLE "app"\."ask_run_stages"/);
+	assert.match(migration, /CREATE TABLE "app"\."job_stage_runs"/);
+	assert.match(migration, /CREATE TRIGGER "jobs_record_stage_run"/);
+	assert.match(migration, /SECURITY DEFINER/);
+	assert.match(migration, /SET search_path = pg_catalog, app/);
+	assert.match(
+		migration,
+		/REVOKE ALL ON FUNCTION "app"\."record_job_stage_run"\(\) FROM PUBLIC/,
+	);
+	assert.match(
+		migration,
+		/AFTER INSERT OR UPDATE OF "status", "stage", "attempt"/,
+	);
+	assert.match(migration, /INSERT INTO "app"\."job_stage_runs"/);
+	assert.doesNotMatch(
+		migration,
+		/"(?:question|answer|prompt|content|citations|retrieved_chunks)"/,
+	);
+});

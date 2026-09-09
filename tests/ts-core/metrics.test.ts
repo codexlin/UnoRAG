@@ -4,6 +4,7 @@ import test from "node:test";
 import {
 	observeAiConcurrency,
 	observeAskCompletion,
+	observeAskStage,
 	observeWebRequest,
 	renderPrometheusMetrics,
 	resetPrometheusMetricsForTests,
@@ -100,6 +101,24 @@ test("renders bounded Ask quality aggregates without resource identifiers", () =
 	assert.match(
 		output,
 		/unorag_ask_completions_total\{query_type="unknown",retrieval_mode="unknown",outcome="refused"\} 1/,
+	);
+});
+
+test("renders bounded Ask stage latency histograms", () => {
+	observeAskStage({ stage: "retrieve", outcome: "completed", durationMs: 125 });
+	observeAskStage({
+		stage: "future-stage",
+		outcome: "failed",
+		durationMs: 500,
+	});
+	const output = renderPrometheusMetrics();
+	assert.match(
+		output,
+		/unorag_ask_stage_duration_seconds_count\{stage="retrieve",outcome="completed"\} 1/,
+	);
+	assert.match(
+		output,
+		/unorag_ask_stage_duration_seconds_count\{stage="unknown",outcome="failed"\} 1/,
 	);
 });
 

@@ -28,6 +28,24 @@ const ASK_RETRIEVAL_MODES = [
 	"unknown",
 ] as const;
 const ASK_TERMINAL_OUTCOMES = ["answered", "refused"] as const;
+const ASK_STAGES = [
+	"request",
+	"route",
+	"plan",
+	"clarify",
+	"table_plan",
+	"table_retrieve",
+	"table_execute",
+	"rewrite",
+	"retrieve",
+	"judge",
+	"retry",
+	"prepare_generate",
+	"refuse",
+	"generate",
+	"persist",
+	"unknown",
+] as const;
 
 const LATENCY_BUCKETS_SECONDS = [
 	0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60,
@@ -51,6 +69,12 @@ export type ObserveAskCompletionInput = Readonly<{
 	selectedEvidenceCount: number;
 }>;
 
+export type ObserveAskStageInput = Readonly<{
+	stage: string;
+	outcome: "completed" | "failed";
+	durationMs: number;
+}>;
+
 type MetricSeries = {
 	requests: number;
 	durationSecondsSum: number;
@@ -60,6 +84,7 @@ type MetricSeries = {
 type MetricsRegistry = {
 	series: Map<string, MetricSeries>;
 	askQuality: Map<string, AskQualitySeries>;
+	askStages: Map<string, MetricSeries>;
 	aiConcurrency: AiConcurrencySeries;
 };
 
@@ -89,6 +114,7 @@ function createRegistry(): MetricsRegistry {
 	return {
 		series: new Map(),
 		askQuality: new Map(),
+		askStages: new Map(),
 		aiConcurrency: {
 			active: 0,
 			queued: 0,
@@ -216,6 +242,32 @@ export function observeAskCompletion(input: ObserveAskCompletionInput): void {
 	registry().askQuality.set(key, series);
 }
 
+/** Record Ask stage latency with a closed stage/outcome label set. */
+export function observeAskStage(input: ObserveAskStageInput): void {
+	const stage = boundedValue(ASK_STAGES, input.stage, "unknown");
+	if (input.outcome !== "completed" && input.outcome !== "failed") {
+		throw new TypeError("unsupported Ask stage outcome");
+	}
+	if (!Number.isFinite(input.durationMs) || input.durationMs < 0) {
+		throw new TypeError(
+			"Ask stage durationMs must be a finite non-negative number",
+		);
+	}
+	const key = `${stage}:${input.outcome}`;
+	const series = registry().askStages.get(key) ?? {
+		requests: 0,
+		durationSecondsSum: 0,
+		durationBucketCounts: LATENCY_BUCKETS_SECONDS.map(() => 0),
+	};
+	const seconds = input.durationMs / 1_000;
+	series.requests += 1;
+	series.durationSecondsSum += seconds;
+	for (const [index, upperBound] of LATENCY_BUCKETS_SECONDS.entries()) {
+		if (seconds <= upperBound) series.durationBucketCounts[index] += 1;
+	}
+	registry().askStages.set(key, series);
+}
+
 /** Record bounded process-local LLM pressure without request or tenant labels. */
 export function observeAiConcurrency(event: AiConcurrencyEvent): void {
 	const series = registry().aiConcurrency;
@@ -301,6 +353,27 @@ export function renderPrometheusMetrics(): string {
 			`unorag_ask_citations_total${qualityLabels} ${series.citations}`,
 			`unorag_ask_retrieved_evidence_total${qualityLabels} ${series.retrievedEvidence}`,
 			`unorag_ask_selected_evidence_total${qualityLabels} ${series.selectedEvidence}`,
+		);
+	}
+
+	lines.push(
+		"# HELP unorag_ask_stage_duration_seconds Ask execution stage latency in seconds.",
+		"# TYPE unorag_ask_stage_duration_seconds histogram",
+	);
+	for (const [key, series] of [...registry().askStages.entries()].sort(
+		([left], [right]) => left.localeCompare(right),
+	)) {
+		const [stage, outcome] = key.split(":");
+		const stageLabels = `{stage="${stage}",outcome="${outcome}"`;
+		for (const [index, upperBound] of LATENCY_BUCKETS_SECONDS.entries()) {
+			lines.push(
+				`unorag_ask_stage_duration_seconds_bucket${stageLabels},le="${upperBound}"} ${series.durationBucketCounts[index]}`,
+			);
+		}
+		lines.push(
+			`unorag_ask_stage_duration_seconds_bucket${stageLabels},le="+Inf"} ${series.requests}`,
+			`unorag_ask_stage_duration_seconds_sum${stageLabels}} ${formatNumber(series.durationSecondsSum)}`,
+			`unorag_ask_stage_duration_seconds_count${stageLabels}} ${series.requests}`,
 		);
 	}
 
@@ -401,5 +474,6 @@ function labelsWithLe(
 export function resetPrometheusMetricsForTests(): void {
 	registry().series.clear();
 	registry().askQuality.clear();
+	registry().askStages.clear();
 	registry().aiConcurrency = createRegistry().aiConcurrency;
 }
