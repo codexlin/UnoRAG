@@ -3,6 +3,40 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [0.1.2] - 2026-09-10
+
+UnoRAG 0.1.2 is an observability and reliability patch for private deployments. It adds native
+diagnostic waterfalls for document ingestion and Ask execution, while tightening cleanup and error
+classification around failed document parsing.
+
+### Added
+
+- Native ingestion and Ask stage waterfalls with queue, parsing, indexing, retrieval, generation,
+  and end-to-end timing in the operations and document views.
+- Actionable recent-error diagnostics with stable error codes, sanitized detail, recovery guidance,
+  and correlated request, workflow, job, document-version, and trace identifiers.
+- Release and runtime metadata in the operations surface so administrators can bind diagnostics to
+  the exact application build.
+
+### Fixed
+
+- Generation cleanup no longer requests a PostgreSQL row lock through the least-privilege active
+  generation view; document-level advisory and row locks continue to serialize activation safely.
+- Empty text documents and invalid UTF-8 now preserve `document_ingest_empty` and
+  `document_parse_invalid` instead of collapsing into a generic worker failure.
+- Local Compose builds no longer report a stale hard-coded development version.
+
+### Validation
+
+- 216 static tests, 353 TypeScript core tests, and 50 real PostgreSQL/Qdrant/Redis integration tests
+  passed with only environment-dependent cases skipped in the non-integration suites; all
+  deterministic build, lint, type, license, asset, NOTICE, and dependency-audit gates passed.
+- A fresh isolated Compose installation passed the full product smoke flow, parser-failure cleanup,
+  worker/Qdrant restart recovery, desktop and mobile browser checks, and a seven-file real MinerU
+  matrix with 33/33 positive and 5/5 refusal cases.
+
+Public `POST /api/v1/retrieve` and `POST /api/v1/ask` contracts are unchanged.
+
 ## [0.1.1] - 2026-09-09
 
 UnoRAG 0.1.1 is a security and maintenance release for private deployments. It strengthens the
@@ -108,5 +142,6 @@ in [`docs/INTEGRATION.md`](./docs/INTEGRATION.md).
 - Existing RC deployments use the forward-only upgrade and application rollback process in
   [`docs/RELEASE.md`](./docs/RELEASE.md). Database migrations are not rolled back.
 
+[0.1.2]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.2
 [0.1.1]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.1
 [0.1.0]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.0
