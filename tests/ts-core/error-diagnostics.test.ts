@@ -20,6 +20,8 @@ test("diagnostic messages redact credentials and remain bounded", () => {
 
 test("error guidance groups known providers, persistence, and unknown failures", () => {
 	assert.equal(errorGuidance("mineru_unauthorized").title, "文档解析异常");
+	assert.equal(errorGuidance("document_ingest_empty").title, "没有可索引内容");
+	assert.equal(errorGuidance("document_parse_invalid").title, "文档格式无效");
 	assert.equal(errorGuidance("provider_parse_failed").title, "文档解析失败");
 	assert.match(errorGuidance("provider_parse_failed").recovery, /MinerU/);
 	assert.equal(errorGuidance("embedding_http_429").title, "Embedding 异常");

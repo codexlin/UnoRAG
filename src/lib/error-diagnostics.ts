@@ -32,6 +32,11 @@ const EXACT_GUIDANCE: Record<string, ErrorGuidance> = {
 		cause: "解析结果为空，常见于无文字层扫描件、空文件或解析器未识别内容。",
 		recovery: "检查原文是否可读，并尝试 MinerU/OCR 解析策略后重新索引。",
 	},
+	document_parse_invalid: {
+		title: "文档格式无效",
+		cause: "文件内容与声明格式不一致，或文本编码、二进制内容不符合解析要求。",
+		recovery: "确认文件未损坏且扩展名正确，重新导出为受支持格式后再次上传。",
+	},
 	embedding_dimension_mismatch: {
 		title: "向量维度不一致",
 		cause: "Embedding 模型输出维度与当前 Qdrant Collection 配置不一致。",

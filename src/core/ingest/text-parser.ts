@@ -16,6 +16,19 @@ type PendingNode = {
 	path: string | null;
 };
 
+class TextDocumentParseError extends Error {
+	readonly retryable = false;
+
+	constructor(
+		message: string,
+		readonly code: "document_ingest_empty" | "document_parse_invalid",
+		options?: ErrorOptions,
+	) {
+		super(message, options);
+		this.name = "TextDocumentParseError";
+	}
+}
+
 /**
  * Native UTF-8 parser used by the first DBOS ingest canary. It intentionally
  * handles text only; binary formats remain behind ParserProvider.
@@ -26,20 +39,35 @@ export function parseTextDocument(input: ParseTextDocumentInput): DocumentIR {
 	requireValue(input.filename, "filename");
 	requireValue(input.contentHash, "contentHash");
 	if (input.content.byteLength === 0) {
-		throw new Error("text document is empty");
+		throw new TextDocumentParseError(
+			"text document is empty",
+			"document_ingest_empty",
+		);
 	}
 
 	let decoded: string;
 	try {
 		decoded = new TextDecoder("utf-8", { fatal: true }).decode(input.content);
 	} catch (error) {
-		throw new Error("text document is not valid UTF-8", { cause: error });
+		throw new TextDocumentParseError(
+			"text document is not valid UTF-8",
+			"document_parse_invalid",
+			{ cause: error },
+		);
 	}
 	if (decoded.includes("\0")) {
-		throw new Error("text document contains binary NUL bytes");
+		throw new TextDocumentParseError(
+			"text document contains binary NUL bytes",
+			"document_parse_invalid",
+		);
 	}
 	const text = decoded.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
-	if (!text.trim()) throw new Error("text document has no readable content");
+	if (!text.trim()) {
+		throw new TextDocumentParseError(
+			"text document has no readable content",
+			"document_ingest_empty",
+		);
+	}
 
 	const headings: string[] = [];
 	const nodes: Array<Record<string, unknown>> = [];
@@ -95,8 +123,12 @@ export function parseTextDocument(input: ParseTextDocumentInput): DocumentIR {
 		pending.lines.push(line.trim());
 	}
 	flush();
-	if (nodes.length === 0)
-		throw new Error("text document has no readable nodes");
+	if (nodes.length === 0) {
+		throw new TextDocumentParseError(
+			"text document has no readable nodes",
+			"document_ingest_empty",
+		);
+	}
 
 	return DocumentIRSchema.parse({
 		id: input.documentId,
