@@ -23,7 +23,7 @@ name: ${COMPOSE_PROJECT_NAME:-unorag}
 
 x-build-args: &build-args
   NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org/}
-  UNORAG_VERSION: ${UNORAG_VERSION:-0.1.0-dev}
+  UNORAG_VERSION: ${UNORAG_VERSION:-}
   UNORAG_REVISION: ${UNORAG_REVISION:-development}
   UNORAG_BUILD_TIME: ${UNORAG_BUILD_TIME:-}
 

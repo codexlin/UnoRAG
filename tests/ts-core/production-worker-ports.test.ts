@@ -338,6 +338,11 @@ describe("production generation cleanup ports", () => {
 		assert.ok(advisoryPosition < documentPosition);
 		assert.ok(documentPosition < cleanupPosition);
 		assert.ok(cleanupPosition < jobPosition);
+		const activeGenerationQuery = state.queries.find((query) =>
+			query.text.includes("FROM app.active_document_generations"),
+		);
+		assert.ok(activeGenerationQuery);
+		assert.doesNotMatch(activeGenerationQuery.text, /FOR (SHARE|UPDATE)/);
 	});
 
 	it("refuses to sweep an authoritative active generation", async () => {

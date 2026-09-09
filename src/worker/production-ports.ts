@@ -545,7 +545,6 @@ export class PostgresGenerationCleanupTransactions
 				SELECT generation_id
 				FROM app.active_document_generations
 				WHERE generation_id = $1
-				FOR SHARE
 			`,
 			[input.payload.generation_id],
 		);
