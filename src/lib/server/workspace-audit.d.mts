@@ -29,6 +29,9 @@ export type AuditListItem = {
 	};
 	metadata_summary: string;
 	request_id: string | null;
+	details: Record<string, unknown>;
+	ip_address: string | null;
+	user_agent: string | null;
 };
 
 export function authorizeAuditAccess(
@@ -61,6 +64,8 @@ export function toAuditListItem(row: {
 	resourceId?: string | null;
 	requestId?: string | null;
 	details?: unknown;
+	ipAddress?: string | null;
+	userAgent?: string | null;
 }): AuditListItem;
 
 export const AUDIT_CSV_HEADERS: string[];

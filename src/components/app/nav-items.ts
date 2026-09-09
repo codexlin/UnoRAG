@@ -2,6 +2,7 @@ import {
 	Activity,
 	BookOpen,
 	Clock3,
+	History,
 	type LucideIcon,
 	MessagesSquare,
 	Settings2,
@@ -16,6 +17,7 @@ export type AppNavItem = {
 		| "/app/libraries"
 		| "/app/archive"
 		| "/app/operations"
+		| "/app/audit"
 		| "/app/settings";
 	code: string;
 	label: string;
@@ -60,8 +62,17 @@ const APP_NAV_ITEMS: AppNavItem[] = [
 		cap: "manageMembers",
 	},
 	{
-		href: "/app/settings",
+		href: "/app/audit",
 		code: "05",
+		label: "操作记录",
+		hint: "追溯操作者、资源变更与请求标识",
+		icon: History,
+		group: "settings",
+		cap: "manageMembers",
+	},
+	{
+		href: "/app/settings",
+		code: "06",
 		label: "工作区",
 		hint: "服务健康与运行配置",
 		icon: Settings2,

@@ -2,7 +2,7 @@
 
 import { Check, ChevronDown, Copy } from "lucide-react";
 import { useState } from "react";
-
+import { StageWaterfall } from "@/components/app/stage-waterfall";
 import {
 	Sheet,
 	SheetContent,
@@ -10,27 +10,8 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
-import type { ApiAskStage, ApiRetrievalDebug } from "@/lib/api";
+import type { ApiRetrievalDebug } from "@/lib/api";
 import { formatDurationMs } from "@/lib/format";
-import { cn } from "@/lib/utils";
-
-const STAGE_LABELS: Record<string, string> = {
-	route: "路由",
-	retrieve: "检索",
-	judge: "证据判断",
-	/** Product term: 裁决（adjudicate）. */
-	adjudicate: "裁决",
-	/** Legacy stage key `gate` — historical traces only. */
-	gate: "裁决（历史）",
-	table_load: "表加载",
-	table_execute: "表执行",
-	generate: "生成",
-	persist: "持久化",
-};
-
-function stageLabel(name: string): string {
-	return STAGE_LABELS[name] || name;
-}
 
 function formatDebugValue(value: unknown): string {
 	if (value == null) return "—";
@@ -134,79 +115,6 @@ function summaryRows(
 		});
 	}
 	return rows;
-}
-
-function StageRow({ stage }: { stage: ApiAskStage }) {
-	const [open, setOpen] = useState(false);
-	const detail = stage.detail ?? {};
-	const detailEntries = Object.entries(detail);
-	const hasDetail = detailEntries.length > 0;
-	const label = stageLabel(stage.stage);
-	const duration = formatDurationMs(stage.duration_ms);
-
-	return (
-		<li className="border-b border-border/50 last:border-b-0">
-			<button
-				type="button"
-				disabled={!hasDetail}
-				onClick={() => hasDetail && setOpen((v) => !v)}
-				aria-label={`${label}（${stage.stage}）${duration}`}
-				className={cn(
-					"flex w-full items-center gap-2 px-0 py-2.5 text-left",
-					hasDetail
-						? "cursor-pointer hover:bg-muted/40"
-						: "cursor-default opacity-90",
-				)}
-			>
-				<span
-					className={cn(
-						"mt-0.5 size-1.5 shrink-0 rounded-full",
-						stage.ok ? "bg-cite" : "bg-destructive",
-					)}
-					aria-hidden
-				/>
-				<span className="min-w-0 flex-1">
-					<span className="text-ui font-medium text-foreground">{label}</span>
-					<span className="ml-2 font-mono text-[11px] text-muted-foreground">
-						{stage.stage}
-					</span>
-				</span>
-				<span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
-					{duration}
-				</span>
-				{!stage.ok ? (
-					<span className="shrink-0 font-mono text-[10px] text-destructive">
-						失败
-					</span>
-				) : null}
-				{hasDetail ? (
-					<ChevronDown
-						className={cn(
-							"size-3.5 shrink-0 text-muted-foreground transition-transform",
-							open && "rotate-180",
-						)}
-						aria-hidden
-					/>
-				) : (
-					<span className="size-3.5 shrink-0" aria-hidden />
-				)}
-			</button>
-			{open && hasDetail ? (
-				<dl className="mb-2 ml-3.5 space-y-1.5 border-l border-border/60 pl-3">
-					{detailEntries.map(([key, value]) => (
-						<div key={key} className="flex flex-wrap gap-x-2 gap-y-0.5">
-							<dt className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
-								{key}
-							</dt>
-							<dd className="break-all font-mono text-[11px] text-foreground/85">
-								{formatDebugValue(value)}
-							</dd>
-						</div>
-					))}
-				</dl>
-			) : null}
-		</li>
-	);
 }
 
 function CopyTraceId({ traceId }: { traceId: string }) {
@@ -349,14 +257,7 @@ export function AskTraceDrawer({
 										暂无 stage 记录
 									</p>
 								) : (
-									<ul className="divide-y-0">
-										{stages.map((stage) => (
-											<StageRow
-												key={`${stage.stage}:${stage.ok ? "ok" : "fail"}:${stage.duration_ms}`}
-												stage={stage}
-											/>
-										))}
-									</ul>
+									<StageWaterfall stages={stages} />
 								)}
 							</section>
 

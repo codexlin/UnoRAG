@@ -6,6 +6,7 @@ import {
 	ParserReportCard,
 } from "@/components/app/document-status";
 import type { DetailAction } from "@/components/app/library-doc-actions";
+import { StageWaterfall } from "@/components/app/stage-waterfall";
 import {
 	Sheet,
 	SheetContent,
@@ -14,14 +15,16 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
-import type { ApiDocument, ApiDocumentVersion } from "@/lib/api";
-import { formatDateTime, formatFileSize } from "@/lib/format";
+import type { ApiDocument, ApiDocumentVersion, ApiJob } from "@/lib/api";
+import { formatDateTime, formatDurationMs, formatFileSize } from "@/lib/format";
 import { isParserReportDegraded } from "@/lib/parser-report-view.mjs";
 
 type Props = {
 	document: ApiDocument | null;
 	versions: ApiDocumentVersion[];
 	versionsLoading: boolean;
+	job: ApiJob | null;
+	jobLoading: boolean;
 	busy: boolean;
 	canWrite: boolean;
 	actions: DetailAction[];
@@ -32,6 +35,8 @@ export function DocumentDetailSheet({
 	document,
 	versions,
 	versionsLoading,
+	job,
+	jobLoading,
 	busy,
 	canWrite,
 	actions,
@@ -115,6 +120,8 @@ export function DocumentDetailSheet({
 
 							<VersionHistory versions={versions} loading={versionsLoading} />
 
+							<JobTimeline job={job} loading={jobLoading} />
+
 							{document.parser_report ? (
 								<ParserReportCard
 									report={document.parser_report}
@@ -169,6 +176,55 @@ export function DocumentDetailSheet({
 				) : null}
 			</SheetContent>
 		</Sheet>
+	);
+}
+
+function JobTimeline({
+	job,
+	loading,
+}: {
+	job: ApiJob | null;
+	loading: boolean;
+}) {
+	if (loading) {
+		return <p className="text-ui text-muted-foreground">正在读取入库链路…</p>;
+	}
+	if (!job) return null;
+	const total =
+		job.started_at && job.finished_at
+			? Math.max(0, Date.parse(job.finished_at) - Date.parse(job.started_at))
+			: null;
+	return (
+		<section className="border border-border/80 bg-muted/15 px-3 py-3">
+			<div className="flex items-baseline justify-between gap-3">
+				<div>
+					<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
+						入库链路
+					</p>
+					<p className="mt-1 font-mono text-[10px] text-muted-foreground">
+						{job.id}
+					</p>
+				</div>
+				<span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+					{total == null ? `${job.progress}%` : formatDurationMs(total)}
+				</span>
+			</div>
+			<div className="mt-3">
+				<StageWaterfall stages={job.stage_runs ?? []} compact />
+			</div>
+			<dl className="mt-3 grid grid-cols-2 gap-2 border-t border-border/60 pt-3">
+				<Detail label="创建" value={formatDateTime(job.created_at)} />
+				<Detail
+					label="开始"
+					value={job.started_at ? formatDateTime(job.started_at) : "等待执行"}
+				/>
+				<Detail
+					label="结束"
+					value={job.finished_at ? formatDateTime(job.finished_at) : "尚未结束"}
+				/>
+				<Detail label="尝试" value={String(job.attempt)} />
+			</dl>
+		</section>
 	);
 }
 

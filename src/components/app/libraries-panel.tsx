@@ -67,6 +67,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useDocumentVersions } from "@/hooks/use-document-versions";
 import { useDocuments } from "@/hooks/use-documents";
+import { useJob } from "@/hooks/use-job";
 import { useLibraries } from "@/hooks/use-libraries";
 import {
 	type ApiDocument,
@@ -209,6 +210,9 @@ export function LibrariesPanel() {
 	const detailDoc = useMemo(
 		() => documents.find((doc) => doc.id === detailDocId) ?? null,
 		[documents, detailDocId],
+	);
+	const { job: detailJob, loading: detailJobLoading } = useJob(
+		detailDoc?.job_id,
 	);
 
 	const deleteDoc = useMemo(
@@ -1235,6 +1239,8 @@ export function LibrariesPanel() {
 				document={detailDoc}
 				versions={versionRows}
 				versionsLoading={versionsLoading}
+				job={detailJob}
+				jobLoading={detailJobLoading}
 				busy={Boolean(detailDoc && busyDocId === detailDoc.id)}
 				canWrite={canWriteLibraries}
 				actions={detailActions}

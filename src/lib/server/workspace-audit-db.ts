@@ -53,6 +53,8 @@ async function queryAuditRows(opts: {
 			resourceId: auditLogs.resourceId,
 			requestId: auditLogs.requestId,
 			details: auditLogs.details,
+			ipAddress: auditLogs.ipAddress,
+			userAgent: auditLogs.userAgent,
 			actorDisplayName: users.displayName,
 			actorEmail: users.email,
 		})

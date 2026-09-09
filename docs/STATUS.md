@@ -45,7 +45,7 @@ Next.js product + Knowledge API
 | 文库与文档治理 | 已实现创建、上传、替换、重索引、删除、版本和任务视图 |
 | 文档 ACL | 已实现 Workspace / principal / group 作用域及 Qdrant 检索前强制过滤 |
 | Service Key | 已实现带 scope 的密钥创建、撤销和 Retrieve / Ask 调用 |
-| 审计 | 已实现 Workspace 作用域审计查询与 CSV 导出 |
+| 审计 | 已实现 Workspace 作用域审计独立页面、搜索、详情下钻、分页查询和 CSV 导出 |
 
 ### 文档、检索与回答
 
@@ -68,7 +68,7 @@ Next.js product + Knowledge API
 | 持久任务 | DBOS 执行 ingest、ACL projection、delete、cleanup，支持重试、取消、对账与隔离 |
 | 原子版本 | 新 generation 校验通过后激活；失败时旧版本继续服务 |
 | 清理 | 旧 generation、Ask runs 和 tombstone 有维护命令与可观测结果 |
-| 原生运行中心 | 已实现作用域内健康、任务、解析、模型、生命周期与告警状态 |
+| 原生运行中心 | 已实现健康、任务、解析、模型、生命周期、告警、Ask/入库阶段瀑布与 P50/P95；历史错误可下钻原因和关联 ID |
 | 标准观测 | 可选 OTel Collector、Prometheus、Grafana、Loki、Tempo 与 Alertmanager |
 | AI 工程观测 | 可选 metadata-only Langfuse Trace 与评测分数发布，不采集问题或文档正文 |
 | 评测 | 版本化黄金集、真实文件矩阵、Prompt Registry、稳定性和延迟门禁 |

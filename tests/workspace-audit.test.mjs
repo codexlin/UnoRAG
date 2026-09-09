@@ -57,6 +57,11 @@ test("list item maps stored fields without inventing actor", () => {
 	assert.equal(withActor.resource.id, "doc-1");
 	assert.match(withActor.metadata_summary, /library_id=lib-1/);
 	assert.match(withActor.metadata_summary, /job_id=job-1/);
+	assert.deepEqual(withActor.details, {
+		library_id: "lib-1",
+		job_id: "job-1",
+		size_bytes: 12,
+	});
 
 	const worker = toAuditListItem({
 		id: "log-2",
@@ -74,6 +79,7 @@ test("list item maps stored fields without inventing actor", () => {
 	assert.equal(worker.actor.label, null);
 	assert.equal(worker.request_id, null);
 	assert.equal(worker.metadata_summary, "point_count=3");
+	assert.equal(worker.ip_address, null);
 });
 
 test("CSV export includes header and data rows", () => {
