@@ -2,7 +2,7 @@ import { and, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import type * as schema from "@/db/schema";
-import { askRuns } from "@/db/schema";
+import { askRunStages, askRuns } from "@/db/schema";
 
 type Database = NodePgDatabase<typeof schema>;
 type AskRun = typeof askRuns.$inferSelect;
@@ -38,7 +38,16 @@ interface FinalizeAskRunBase {
 	citationCount?: number;
 	latencyMs: number;
 	errorCode?: string | null;
+	stages?: AskRunStageInput[];
 	endedAt?: Date;
+}
+
+export interface AskRunStageInput {
+	stage: string;
+	durationMs: number;
+	outcome: "completed" | "failed" | "cancelled";
+	errorCode?: string | null;
+	detail?: Record<string, number | string | boolean | null>;
 }
 
 export type FinalizeAskRunInput =
@@ -136,6 +145,20 @@ function boundedCode(value: string, field: string): string {
 	return normalized;
 }
 
+function normalizedStages(stages: AskRunStageInput[] | undefined) {
+	return (stages ?? []).slice(0, 64).map((stage, index) => ({
+		sequence: index + 1,
+		stage: boundedCode(stage.stage, `stages[${index}].stage`).slice(0, 64),
+		durationMs: nonNegativeInteger(
+			Math.round(stage.durationMs),
+			`stages[${index}].durationMs`,
+		),
+		outcome: stage.outcome,
+		errorCode: stage.errorCode?.trim().slice(0, 128) || null,
+		detail: stage.detail ?? {},
+	}));
+}
+
 function retentionConditions(input: DeleteExpiredAskRunsInput) {
 	validDate(input.before, "before");
 	if (input.workspaceId && !input.organizationId) {
@@ -194,38 +217,52 @@ class DrizzleAskRunsPersistence implements AskRunsPersistence {
 			"citationCount",
 		);
 		const latencyMs = nonNegativeInteger(input.latencyMs, "latencyMs");
-		const [updated] = await this.db
-			.update(askRuns)
-			.set({
-				status: input.status,
-				...(input.queryType !== undefined
-					? { queryType: input.queryType?.trim() || null }
-					: {}),
-				...(input.retrievalMode !== undefined
-					? { retrievalMode: input.retrievalMode?.trim() || null }
-					: {}),
-				usedHybrid: input.usedHybrid ?? false,
-				usedRerank: input.usedRerank ?? false,
-				citationCount,
-				latencyMs,
-				refuseReason:
-					input.status === "refused"
-						? nonEmpty(input.refuseReason, "refuseReason")
-						: null,
-				errorCode: input.errorCode?.trim() || null,
-				endedAt: input.endedAt ?? new Date(),
-			})
-			.where(
-				and(
-					eq(askRuns.id, input.id),
-					eq(askRuns.requestId, input.requestId),
-					eq(askRuns.organizationId, input.organizationId),
-					eq(askRuns.workspaceId, input.workspaceId),
-					eq(askRuns.status, "running"),
-				),
-			)
-			.returning();
-		return updated ?? null;
+		const stages = normalizedStages(input.stages);
+		return this.db.transaction(async (tx) => {
+			const [updated] = await tx
+				.update(askRuns)
+				.set({
+					status: input.status,
+					...(input.queryType !== undefined
+						? { queryType: input.queryType?.trim() || null }
+						: {}),
+					...(input.retrievalMode !== undefined
+						? { retrievalMode: input.retrievalMode?.trim() || null }
+						: {}),
+					usedHybrid: input.usedHybrid ?? false,
+					usedRerank: input.usedRerank ?? false,
+					citationCount,
+					latencyMs,
+					refuseReason:
+						input.status === "refused"
+							? nonEmpty(input.refuseReason, "refuseReason")
+							: null,
+					errorCode: input.errorCode?.trim() || null,
+					endedAt: input.endedAt ?? new Date(),
+				})
+				.where(
+					and(
+						eq(askRuns.id, input.id),
+						eq(askRuns.requestId, input.requestId),
+						eq(askRuns.organizationId, input.organizationId),
+						eq(askRuns.workspaceId, input.workspaceId),
+						eq(askRuns.status, "running"),
+					),
+				)
+				.returning();
+			if (!updated) return null;
+			if (stages.length > 0) {
+				await tx.insert(askRunStages).values(
+					stages.map((stage) => ({
+						...stage,
+						askRunId: updated.id,
+						organizationId: updated.organizationId,
+						workspaceId: updated.workspaceId,
+					})),
+				);
+			}
+			return updated;
+		});
 	}
 
 	async countStaleRunning(input: ReconcileStaleAskRunsInput): Promise<number> {

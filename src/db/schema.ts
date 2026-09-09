@@ -589,6 +589,57 @@ export const askRuns = appSchema.table(
 );
 
 /**
+ * Ordered, privacy-safe stage timings for an Ask run. Stage details are
+ * deliberately restricted to operational metadata by the repository.
+ */
+export const askRunStages = appSchema.table(
+	"ask_run_stages",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		askRunId: uuid("ask_run_id")
+			.notNull()
+			.references(() => askRuns.id, { onDelete: "cascade" }),
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		sequence: integer("sequence").notNull(),
+		stage: varchar("stage", { length: 64 }).notNull(),
+		durationMs: integer("duration_ms").notNull(),
+		outcome: varchar("outcome", { length: 16 }).notNull(),
+		errorCode: varchar("error_code", { length: 128 }),
+		detail: jsonb("detail")
+			.$type<Record<string, number | string | boolean | null>>()
+			.default({})
+			.notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		foreignKey({
+			name: "ask_run_stages_org_workspace_fk",
+			columns: [table.organizationId, table.workspaceId],
+			foreignColumns: [workspaces.organizationId, workspaces.id],
+		}).onDelete("cascade"),
+		uniqueIndex("ask_run_stages_run_sequence_uq").on(
+			table.askRunId,
+			table.sequence,
+		),
+		index("ask_run_stages_scope_stage_created_idx").on(
+			table.organizationId,
+			table.workspaceId,
+			table.stage,
+			table.createdAt,
+		),
+		check("ask_run_stages_sequence_check", sql`${table.sequence} > 0`),
+		check("ask_run_stages_duration_check", sql`${table.durationMs} >= 0`),
+		check(
+			"ask_run_stages_outcome_check",
+			sql`${table.outcome} in ('completed', 'failed', 'cancelled')`,
+		),
+	],
+);
+
+/**
  * Durable, workspace-scoped operational signals. One row represents the
  * current lifecycle of a rule; generation increments when a resolved signal
  * becomes active again.
@@ -1090,6 +1141,70 @@ export const jobs = appSchema.table(
 				and (${table.progressCurrent} is null or ${table.progressCurrent} >= 0)
 				and (${table.progressTotal} is null or ${table.progressTotal} >= 0)
 				and (${table.progressCurrent} is null or ${table.progressTotal} is null or ${table.progressCurrent} <= ${table.progressTotal})`,
+		),
+	],
+);
+
+/**
+ * Append-only execution history for durable jobs. Rows are opened and closed
+ * by a database trigger so lifecycle changes and diagnostics cannot diverge.
+ */
+export const jobStageRuns = appSchema.table(
+	"job_stage_runs",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		jobId: uuid("job_id")
+			.notNull()
+			.references(() => jobs.id, { onDelete: "cascade" }),
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		attempt: integer("attempt").notNull(),
+		sequence: integer("sequence").notNull(),
+		stage: varchar("stage", { length: 64 }).notNull(),
+		outcome: varchar("outcome", { length: 16 }).default("running").notNull(),
+		errorCode: varchar("error_code", { length: 128 }),
+		startedAt: timestamp("started_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		endedAt: timestamp("ended_at", { withTimezone: true }),
+		durationMs: integer("duration_ms"),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		foreignKey({
+			name: "job_stage_runs_org_workspace_fk",
+			columns: [table.organizationId, table.workspaceId],
+			foreignColumns: [workspaces.organizationId, workspaces.id],
+		}).onDelete("cascade"),
+		uniqueIndex("job_stage_runs_job_sequence_uq").on(
+			table.jobId,
+			table.sequence,
+		),
+		index("job_stage_runs_scope_stage_started_idx").on(
+			table.organizationId,
+			table.workspaceId,
+			table.stage,
+			table.startedAt,
+		),
+		index("job_stage_runs_scope_error_started_idx")
+			.on(table.organizationId, table.workspaceId, table.startedAt)
+			.where(sql`${table.outcome} in ('failed', 'cancelled')`),
+		check("job_stage_runs_attempt_check", sql`${table.attempt} >= 0`),
+		check("job_stage_runs_sequence_check", sql`${table.sequence} > 0`),
+		check(
+			"job_stage_runs_outcome_check",
+			sql`${table.outcome} in ('running', 'completed', 'failed', 'cancelled')`,
+		),
+		check(
+			"job_stage_runs_terminal_check",
+			sql`(${table.outcome} = 'running' and ${table.endedAt} is null and ${table.durationMs} is null)
+				or (${table.outcome} <> 'running' and ${table.endedAt} is not null and ${table.durationMs} is not null)`,
+		),
+		check(
+			"job_stage_runs_duration_check",
+			sql`${table.durationMs} is null or ${table.durationMs} >= 0`,
 		),
 	],
 );

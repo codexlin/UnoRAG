@@ -37,6 +37,7 @@ import {
 } from "@/server/observability/ask-runs-repository";
 import {
 	observeAskCompletion,
+	observeAskStage,
 	observeWebRequest,
 	type WebMetricOutcome,
 } from "@/server/observability/metrics";
@@ -372,6 +373,56 @@ async function finalizeAskRun(input: {
 	const mode = state ? retrievalMode(state) : null;
 	const debug = state?.retrieval_debug;
 	const citations = state?.citations ?? [];
+	const persistedStages = Array.isArray(debug?.stages)
+		? debug.stages.flatMap((value) => {
+				if (!value || typeof value !== "object" || Array.isArray(value))
+					return [];
+				const stage = value as Record<string, unknown>;
+				if (
+					typeof stage.stage !== "string" ||
+					typeof stage.duration_ms !== "number" ||
+					!Number.isFinite(stage.duration_ms)
+				) {
+					return [];
+				}
+				return [
+					{
+						stage: stage.stage,
+						durationMs: Math.max(0, stage.duration_ms),
+						outcome:
+							stage.ok !== false
+								? ("completed" as const)
+								: input.status === "cancelled"
+									? ("cancelled" as const)
+									: ("failed" as const),
+						...(stage.ok === false && stage.stage === "persist"
+							? { errorCode: "conversation_persist_failed" }
+							: {}),
+					},
+				];
+			})
+		: [];
+	const latencyMs = Math.max(
+		0,
+		Math.round(performance.now() - input.run.startedAt),
+	);
+	if (
+		input.status !== "completed" &&
+		input.status !== "refused" &&
+		!persistedStages.some((stage) => stage.outcome !== "completed")
+	) {
+		persistedStages.push({
+			stage: "request",
+			durationMs: persistedStages.length === 0 ? latencyMs : 0,
+			outcome: input.status === "cancelled" ? "cancelled" : "failed",
+		});
+	}
+	if (input.errorCode && persistedStages.length > 0) {
+		const failed = [...persistedStages]
+			.reverse()
+			.find((stage) => stage.outcome !== "completed");
+		if (failed) Object.assign(failed, { errorCode: input.errorCode });
+	}
 	const base = {
 		id: input.run.id,
 		requestId: input.run.requestId,
@@ -384,8 +435,9 @@ async function finalizeAskRun(input: {
 			debug?.usedRerank === true ||
 			citations.some((citation) => citation.used_rerank === true),
 		citationCount: citations.length,
-		latencyMs: Math.max(0, Math.round(performance.now() - input.run.startedAt)),
+		latencyMs,
 		errorCode: input.errorCode ?? null,
+		stages: persistedStages,
 	};
 	await input.run.repository.finalize(
 		input.status === "refused"
@@ -535,6 +587,24 @@ async function handleNativeAskRequestInSpan(input: {
 			outcome,
 			durationMs,
 		});
+		if (activeState && Array.isArray(activeState.retrieval_debug?.stages)) {
+			for (const value of activeState.retrieval_debug.stages) {
+				if (!value || typeof value !== "object" || Array.isArray(value))
+					continue;
+				const stage = value as Record<string, unknown>;
+				if (
+					typeof stage.stage === "string" &&
+					typeof stage.duration_ms === "number" &&
+					Number.isFinite(stage.duration_ms)
+				) {
+					observeAskStage({
+						stage: stage.stage,
+						outcome: stage.ok === false ? "failed" : "completed",
+						durationMs: Math.max(0, stage.duration_ms),
+					});
+				}
+			}
+		}
 		if ((outcome === "success" || outcome === "refused") && activeState) {
 			const debug = activeState.retrieval_debug ?? {};
 			const citationCount = activeState.citations?.length ?? 0;

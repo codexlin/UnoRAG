@@ -7,6 +7,7 @@ import { Pool } from "pg";
 
 import * as schema from "../src/db/schema";
 import { createAskRunsRepository } from "../src/server/observability/ask-runs-repository";
+import { OperationsService } from "../src/server/observability/operations-service";
 
 const databaseUrl = process.env.ASK_RUNS_TEST_DATABASE_URL?.trim();
 const enabled = Boolean(databaseUrl);
@@ -134,9 +135,34 @@ test("Ask runs persist scoped user and service-key metadata through retention", 
 		refuseReason: "insufficient_evidence",
 		latencyMs: 42,
 		citationCount: 0,
+		stages: [
+			{ stage: "retrieve", durationMs: 30.4, outcome: "completed" },
+			{
+				stage: "judge",
+				durationMs: 11.6,
+				outcome: "failed",
+				errorCode: "insufficient_evidence",
+			},
+		],
 	});
 	assert.equal(userFinalized.ok, true);
 	assert.equal(userFinalized.ok && userFinalized.value?.status, "refused");
+	const persistedStages = await db
+		.select()
+		.from(schema.askRunStages)
+		.where(eq(schema.askRunStages.askRunId, userStarted.value.id))
+		.orderBy(schema.askRunStages.sequence);
+	assert.deepEqual(
+		persistedStages.map((stage) => [
+			stage.stage,
+			stage.durationMs,
+			stage.outcome,
+		]),
+		[
+			["retrieve", 30, "completed"],
+			["judge", 12, "failed"],
+		],
+	);
 
 	const serviceRequestId = "77000000-0000-4000-8000-000000000002";
 	const serviceStarted = await repository.start({
@@ -162,8 +188,37 @@ test("Ask runs persist scoped user and service-key metadata through retention", 
 		latencyMs: 100,
 		citationCount: 3,
 		endedAt: new Date("2026-06-01T00:00:00.100Z"),
+		stages: [
+			{ stage: "generate", durationMs: 80, outcome: "completed" },
+			{
+				stage: "persist",
+				durationMs: 20,
+				outcome: "failed",
+				errorCode: "conversation_persist_failed",
+			},
+		],
 	});
 	assert.equal(serviceFinalized.ok, true);
+	const operations = await OperationsService.fromDatabase(db).readSnapshot(
+		{ organizationId: ids.organization, workspaceId: ids.workspaceA },
+		{ now: new Date("2026-06-02T00:00:00.000Z") },
+	);
+	assert.deepEqual(
+		operations.recent_errors.map((error) => [
+			error.resource_id,
+			error.status,
+			error.stage,
+			error.error_code,
+		]),
+		[
+			[
+				serviceStarted.value.id,
+				"completed",
+				"persist",
+				"conversation_persist_failed",
+			],
+		],
+	);
 
 	const crossWorkspace = await repository.start({
 		requestId: "77000000-0000-4000-8000-000000000003",

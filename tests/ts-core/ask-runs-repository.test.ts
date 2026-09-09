@@ -34,6 +34,10 @@ const finalizeInput: FinalizeAskRunInput = {
 	usedRerank: true,
 	citationCount: 2,
 	latencyMs: 125,
+	stages: [
+		{ stage: "retrieve", durationMs: 80, outcome: "completed" },
+		{ stage: "generate", durationMs: 45, outcome: "completed" },
+	],
 };
 
 function persistence(
@@ -85,6 +89,7 @@ test("Ask run writes return values without exposing content fields", async () =>
 	assert.deepEqual(calls, ["start:service_key", "finalize:completed"]);
 	assert.equal("question" in startInput, false);
 	assert.equal("answer" in finalizeInput, false);
+	assert.equal(JSON.stringify(finalizeInput.stages).includes("content"), false);
 });
 
 test("Ask run writes fail soft and report only diagnostic identifiers", async () => {

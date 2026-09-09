@@ -47,5 +47,5 @@ export async function GET(request: Request) {
 		.where(and(...conditions))
 		.orderBy(desc(jobs.updatedAt))
 		.limit(limit);
-	return Response.json(rows.map(toApiJob));
+	return Response.json(rows.map((row) => toApiJob(row)));
 }

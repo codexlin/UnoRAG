@@ -21,10 +21,13 @@ function error(
 	return {
 		source,
 		id,
+		resource_id: `${source}-resource-${id}`,
 		status: "failed",
 		error_code: "provider_timeout",
 		occurred_at: occurredAt,
 		job_type: source === "job" ? "document.ingest" : null,
+		stage: source === "job" ? "parsing" : "retrieve",
+		attempt: source === "job" ? 1 : null,
 	};
 }
 
@@ -63,6 +66,12 @@ function dataSource(
 		async listJobErrors() {
 			return [error("job", "job-2", "2026-08-04T11:55:00.000Z")];
 		},
+		async readAskStageLatency() {
+			return [{ stage: "retrieve", count: 20, failed: 1, p50: 40, p95: 90 }];
+		},
+		async readJobStageLatency() {
+			return [{ stage: "parsing", count: 5, failed: 1, p50: 400, p95: 900 }];
+		},
 		async listAlerts() {
 			return [];
 		},
@@ -91,6 +100,9 @@ test("operations snapshot combines privacy-safe Ask and job health data", async 
 		cancelled: 1,
 		running: 0,
 		latency_ms: { p50: 125, p95: 890 },
+		stage_latency_ms: [
+			{ stage: "retrieve", count: 20, failed: 1, p50: 40, p95: 90 },
+		],
 		without_citations: 4,
 	});
 	assert.equal(snapshot.jobs.oldest_active?.age_ms, 3_600_000);
@@ -129,6 +141,14 @@ test("operations queries always receive both scope identifiers", async () => {
 			observed.push([received, since, limit]);
 			return [];
 		},
+		async readAskStageLatency(received, since) {
+			observed.push([received, since]);
+			return [];
+		},
+		async readJobStageLatency(received, since) {
+			observed.push([received, since]);
+			return [];
+		},
 		async listAlerts(received) {
 			observed.push([received]);
 			return [];
@@ -140,7 +160,7 @@ test("operations queries always receive both scope identifiers", async () => {
 	});
 
 	await new OperationsService(source).readSnapshot(scope, { now });
-	assert.equal(observed.length, 7);
+	assert.equal(observed.length, 9);
 	for (const call of observed) assert.deepEqual(call[0], scope);
 });
 
