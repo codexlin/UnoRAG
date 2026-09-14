@@ -3,6 +3,31 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [0.1.3] - 2026-09-14
+
+UnoRAG 0.1.3 is a least-privilege deployment hotfix for the native operations dashboard introduced
+in 0.1.2.
+
+### Fixed
+
+- The DBOS control process can read the privacy-safe Ask and job execution-stage tables required to
+  refresh operational signals and stage latency summaries.
+- Runtime role verification now fails the install or upgrade when either diagnostic read grant is
+  missing.
+- The real PostgreSQL integration suite validates effective role privileges in addition to static
+  deployment SQL contracts.
+
+### Validation
+
+- 51/51 real PostgreSQL, Qdrant, and Redis integration tests passed with zero skips.
+- Repository tests, 378 TypeScript core tests, lint, type checking, production build, image build,
+  secret scanning, and protected-branch CI passed.
+- The same grants restored consecutive observability cycles on UnoRAG-HK; lifecycle inspection
+  returned zero dead, stuck, deleting, cleanup-error, tombstone, and ACL-projection rows.
+
+Public `POST /api/v1/retrieve` and `POST /api/v1/ask` contracts are unchanged. No schema migration
+is required.
+
 ## [0.1.2] - 2026-09-10
 
 UnoRAG 0.1.2 is an observability and reliability patch for private deployments. It adds native
@@ -142,6 +167,7 @@ in [`docs/INTEGRATION.md`](./docs/INTEGRATION.md).
 - Existing RC deployments use the forward-only upgrade and application rollback process in
   [`docs/RELEASE.md`](./docs/RELEASE.md). Database migrations are not rolled back.
 
+[0.1.3]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.3
 [0.1.2]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.2
 [0.1.1]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.1
 [0.1.0]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.0
