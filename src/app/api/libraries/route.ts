@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, notInArray, sql } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import { documents, libraries } from "@/db/schema";
+import { auditLogs, documents, libraries } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
 	DOCUMENT_PROFILE_DEFAULT,
@@ -17,6 +17,10 @@ import {
 import { documentMetadataVisibilitySql } from "@/lib/server/document-visibility";
 import { canWriteLibraries } from "@/lib/server/library-access";
 import { toApiLibrary } from "@/lib/server/library-api.mjs";
+import {
+	libraryAuditRequestContext,
+	libraryCreatedAuditDetails,
+} from "@/lib/server/library-audit.mjs";
 import { staleActiveVersionsSql } from "@/lib/server/library-reindex-sql";
 
 const RAG_LIBRARY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -183,23 +187,41 @@ export async function POST(request: Request) {
 		);
 	}
 	const db = getDatabase();
-	const [created] = await db
-		.insert(libraries)
-		.values({
-			id,
+	const auditContext = libraryAuditRequestContext(request);
+	const created = await db.transaction(async (tx) => {
+		const [library] = await tx
+			.insert(libraries)
+			.values({
+				id,
+				organizationId: identity.tenantId,
+				workspaceId: identity.workspaceId,
+				ragLibraryId,
+				name: name.slice(0, 256),
+				description: body.description?.trim().slice(0, 2000) || null,
+				documentProfile: profileResult.value,
+				scanHandling: scanResult.value,
+				parsePreference: preferenceResult.value,
+				ingestPolicyVersion: 1,
+				createdBy: identity.principalId,
+				createdAt: now,
+				updatedAt: now,
+			})
+			.returning();
+		if (!library) throw new Error("library insert returned no row");
+		await tx.insert(auditLogs).values({
 			organizationId: identity.tenantId,
 			workspaceId: identity.workspaceId,
-			ragLibraryId,
-			name: name.slice(0, 256),
-			description: body.description?.trim().slice(0, 2000) || null,
-			documentProfile: profileResult.value,
-			scanHandling: scanResult.value,
-			parsePreference: preferenceResult.value,
-			ingestPolicyVersion: 1,
-			createdBy: identity.principalId,
+			actorId: identity.principalId,
+			action: "library.created",
+			resourceType: "library",
+			resourceId: library.id,
+			requestId: auditContext.requestId,
+			ipAddress: auditContext.ipAddress,
+			userAgent: auditContext.userAgent,
+			details: libraryCreatedAuditDetails(library),
 			createdAt: now,
-			updatedAt: now,
-		})
-		.returning();
+		});
+		return library;
+	});
 	return Response.json(toApiLibrary(created), { status: 201 });
 }

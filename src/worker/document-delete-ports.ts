@@ -32,6 +32,7 @@ export interface DocumentDeleteQdrantClient {
 interface DeleteContextRow extends QueryResultRow {
 	document_status: string;
 	document_created_by: string | null;
+	library_name: string;
 	library_status: string;
 	rag_document_id: string;
 	rag_library_id: string;
@@ -503,6 +504,73 @@ export class PostgresDocumentDeleteTransactions
 					JSON.stringify(completion),
 				],
 			);
+			if (libraryFinalized) {
+				await client.query(
+					`
+						WITH request_event AS (
+							SELECT actor_id, request_id, ip_address, user_agent
+							FROM app.audit_logs
+							WHERE organization_id = $1
+							  AND workspace_id = $2
+							  AND action = 'library.delete_requested'
+							  AND resource_type = 'library'
+							  AND resource_id = $3
+							ORDER BY created_at DESC, id DESC
+							LIMIT 1
+						)
+						INSERT INTO app.audit_logs (
+							organization_id,
+							workspace_id,
+							actor_id,
+							action,
+							resource_type,
+							resource_id,
+							request_id,
+							ip_address,
+							user_agent,
+							details
+						)
+						SELECT
+							$1,
+							$2,
+							request_event.actor_id,
+							'library.deleted',
+							'library',
+							$3,
+							request_event.request_id,
+							request_event.ip_address,
+							request_event.user_agent,
+								jsonb_build_object(
+									'library_id', $4::text,
+									'name', $5::text,
+									'job_id', $6::text,
+									'document_id', $7::text,
+									'status', 'deleted',
+								'completion_source', 'dbos_worker'
+							)
+						FROM (SELECT 1) AS singleton
+						LEFT JOIN request_event ON true
+						WHERE NOT EXISTS (
+							SELECT 1
+							FROM app.audit_logs AS existing
+							WHERE existing.organization_id = $1
+							  AND existing.workspace_id = $2
+							  AND existing.action = 'library.deleted'
+							  AND existing.resource_type = 'library'
+							  AND existing.resource_id = $3
+						)
+						`,
+					[
+						input.organizationId,
+						input.workspaceId,
+						input.payload.library_id,
+						input.payload.rag_library_id,
+						context.library_name,
+						input.jobId,
+						input.payload.document_id,
+					],
+				);
+			}
 			return completion;
 		});
 	}
@@ -540,6 +608,81 @@ export class PostgresDocumentDeleteTransactions
 					"Document delete error CAS failed",
 					"document_delete_job_cas_failed",
 					"transient",
+				);
+			}
+			if (
+				input.payload.library_delete ||
+				context.library_status === "deleting"
+			) {
+				await client.query(
+					`
+						WITH request_event AS (
+							SELECT actor_id, request_id, ip_address, user_agent
+							FROM app.audit_logs
+							WHERE organization_id = $1
+							  AND workspace_id = $2
+							  AND action = 'library.delete_requested'
+							  AND resource_type = 'library'
+							  AND resource_id = $3
+							ORDER BY created_at DESC, id DESC
+							LIMIT 1
+						)
+						INSERT INTO app.audit_logs (
+							organization_id,
+							workspace_id,
+							actor_id,
+							action,
+							resource_type,
+							resource_id,
+							request_id,
+							ip_address,
+							user_agent,
+							details
+						)
+						SELECT
+							$1,
+							$2,
+							request_event.actor_id,
+							'library.delete_failed',
+							'library',
+							$3,
+							request_event.request_id,
+							request_event.ip_address,
+							request_event.user_agent,
+								jsonb_build_object(
+									'library_id', $4::text,
+									'name', $5::text,
+									'job_id', $6::text,
+									'document_id', $7::text,
+									'status', 'failed',
+									'error_code', $8::text,
+									'reason', $9::text,
+								'completion_source', 'dbos_worker'
+							)
+						FROM (SELECT 1) AS singleton
+						LEFT JOIN request_event ON true
+						WHERE NOT EXISTS (
+							SELECT 1
+							FROM app.audit_logs AS existing
+							WHERE existing.organization_id = $1
+							  AND existing.workspace_id = $2
+							  AND existing.action = 'library.delete_failed'
+							  AND existing.resource_type = 'library'
+							  AND existing.resource_id = $3
+								  AND existing.details->>'job_id' = $6::text
+						)
+						`,
+					[
+						input.organizationId,
+						input.workspaceId,
+						input.payload.library_id,
+						input.payload.rag_library_id,
+						context.library_name,
+						input.jobId,
+						input.payload.document_id,
+						error.code,
+						safeError.slice(0, 1_000),
+					],
 				);
 			}
 		});
@@ -659,11 +802,12 @@ export class PostgresDocumentDeleteTransactions
 			[input.payload.library_id],
 		);
 		const library = await client.query<{
+			library_name: string;
 			library_status: string;
 			rag_library_id: string;
 		}>(
 			`
-			SELECT status AS library_status, rag_library_id
+			SELECT name AS library_name, status AS library_status, rag_library_id
 			FROM app.libraries
 			WHERE id = $1
 			  AND organization_id = $2

@@ -12,6 +12,7 @@ BEGIN
 		OR NOT has_table_privilege('unorag_worker_login', 'app.active_document_generations', 'SELECT')
 		OR NOT has_table_privilege('unorag_worker_login', 'app.ask_run_stages', 'SELECT')
 		OR NOT has_table_privilege('unorag_worker_login', 'app.job_stage_runs', 'SELECT')
+		OR NOT has_table_privilege('unorag_worker_login', 'app.audit_logs', 'SELECT,INSERT')
 		OR NOT has_table_privilege('unorag_worker_login', 'app.observability_alerts', 'SELECT,INSERT,UPDATE')
 		OR NOT has_table_privilege('unorag_worker_login', 'app.observability_alert_transitions', 'SELECT,INSERT')
 		OR NOT has_table_privilege('unorag_worker_login', 'app.observability_alert_deliveries', 'SELECT,INSERT,UPDATE')
