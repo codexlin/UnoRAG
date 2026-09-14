@@ -74,9 +74,14 @@ export function summarizeAuditDetails(details, maxLen = 160) {
 
 	const preferredKeys = [
 		"library_id",
+		"name",
 		"job_id",
 		"document_version_id",
 		"generation_id",
+		"changed_fields",
+		"error_code",
+		"document_count",
+		"delete_job_count",
 		"content_hash",
 		"size_bytes",
 		"reason",

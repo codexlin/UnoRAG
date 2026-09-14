@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-09-14
+> 更新日期：2026-09-15
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -85,6 +85,10 @@ Next.js product + Knowledge API
   `0.1.2 -> 0.1.4` 原位升级、完整产品 smoke、生命周期全零和真实浏览器运行中心复核。四个镜像均使用
   已修复的 Debian `libpcre2-8-0`，运行中心显示正确版本且无最近错误。结论见
   [v0.1.4 香港环境发布验收](./evidence/2026-09-14-v0.1.4-hk-release-acceptance.md)。
+- Library 创建、更新、删除请求、删除完成与删除失败现在使用统一审计语义；事务内事件与异步 Worker
+  终态通过同一 Request ID 关联，描述正文不会进入审计。真实 PostgreSQL 和本地 Docker 浏览器链路已验证
+  空库同步删除与带文件异步删除，结论见
+  [Library CRUD 审计验收](./evidence/2026-09-15-library-crud-audit.md)。
 - `v0.1.2` 已完成空环境 Compose、真实 PostgreSQL/Qdrant/Redis、两轮产品 smoke、Qdrant/Worker 重启恢复、
   浏览器诊断、7/7 真实文件、33/33 正例、5/5 拒答，以及双 Registry 四镜像的扫描、签名和 digest manifest
   发布。结论见 [v0.1.2 本地与供应链验收](./evidence/2026-09-10-v0.1.2-local-release-gate.md)。
@@ -141,7 +145,7 @@ Secret Scanning 和 Push Protection 均已开启。
 
 1. **质量回归扩充**：补复杂跨页表、低质量扫描、引用 precision 和 Provider scorecard，以失败样本驱动优化；
 2. **稳定性与恢复**：固化客户环境验收模板，覆盖容量、备份 restore、队列拥塞、Provider 降级和责任人；
-3. **审计完整性**：统一 Library CRUD 审计语义，并验证操作记录、任务、文档版本和 Trace 的关联下钻；
+3. **审计故障演练**：在发布候选环境注入对象存储或 Qdrant 删除失败，验证失败事件、告警、重试与恢复闭环；
 4. **按证据扩展检索**：只有客户语料证明收益后再推进 ChartIR、Qdrant native sparse 或更复杂执行路径；
 5. **企业身份后置**：OIDC/SSO、用户组管理和 SCIM 保留清晰边界，但不先于知识质量与稳定性投入。
 

@@ -37,6 +37,7 @@ test("runtime roles match the TypeScript ownership boundary", async () => {
 	assert.match(roles, /app\.observability_alerts TO unorag_worker/);
 	assert.match(roles, /app\.observability_alert_deliveries TO unorag_worker/);
 	assert.match(roles, /app\.observability_component_health TO unorag_worker/);
+	assert.match(roles, /app\.audit_logs[\s\S]*TO unorag_worker/);
 	assert.doesNotMatch(roles, /unorag_api|unorag_outbox|unorag_rag_read/);
 	assert.match(logins, /CREATE DATABASE %I OWNER unorag_dbos_login/);
 	assert.doesNotMatch(logins, /GRANT unorag_worker TO unorag_dbos_login/);
@@ -48,6 +49,10 @@ test("runtime roles match the TypeScript ownership boundary", async () => {
 	assert.match(
 		verification,
 		/has_table_privilege\('unorag_worker_login', 'app\.job_stage_runs', 'SELECT'\)/,
+	);
+	assert.match(
+		verification,
+		/has_table_privilege\('unorag_worker_login', 'app\.audit_logs', 'SELECT,INSERT'\)/,
 	);
 	assert.match(verification, /unorag_dbos_login can access application data/);
 });

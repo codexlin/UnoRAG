@@ -139,3 +139,17 @@ test("summarizeAuditDetails falls back to JSON for unknown shape", () => {
 	assert.equal(summarizeAuditDetails({ weird: true }), '{"weird":true}');
 	assert.equal(summarizeAuditDetails(null), "");
 });
+
+test("library audit summaries surface lifecycle and failure fields", () => {
+	const summary = summarizeAuditDetails({
+		library_id: "policies",
+		name: "Policies",
+		changed_fields: ["name", "document_profile"],
+		error_code: "storage_delete_failed",
+		document_count: 3,
+		delete_job_count: 3,
+	});
+	assert.match(summary, /library_id=policies/);
+	assert.match(summary, /changed_fields=name,document_profile/);
+	assert.match(summary, /error_code=storage_delete_failed/);
+});

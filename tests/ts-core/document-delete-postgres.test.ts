@@ -182,6 +182,43 @@ test("document delete serializes library finalization and preserves cleanup hist
 			completed_jobs: 2,
 			deleted_cleanup_rows: 2,
 		});
+		const libraryAudit = await pool.query<{
+			action: string;
+			actor_id: string | null;
+			request_id: string | null;
+			details: Record<string, unknown>;
+		}>(
+			`
+					SELECT action, actor_id::text, request_id, details
+					FROM app.audit_logs
+					WHERE organization_id = $1
+					  AND workspace_id = $2
+					  AND resource_type = 'library'
+					  AND resource_id = $3
+					ORDER BY created_at, id
+				`,
+			[fixture.organizationId, fixture.workspaceId, fixture.libraryId],
+		);
+		assert.deepEqual(
+			libraryAudit.rows.map((row) => row.action),
+			["library.delete_requested", "library.deleted"],
+		);
+		assert.equal(
+			libraryAudit.rows[1]?.actor_id,
+			libraryAudit.rows[0]?.actor_id,
+		);
+		assert.equal(
+			libraryAudit.rows[1]?.request_id,
+			`library-delete:${fixture.libraryId}`,
+		);
+		assert.equal(libraryAudit.rows[1]?.details.status, "deleted");
+		assert.equal(libraryAudit.rows[1]?.details.name, "Delete test");
+		assert.equal(
+			fixture.deletions.some(
+				(job) => job.jobId === libraryAudit.rows[1]?.details.job_id,
+			),
+			true,
+		);
 	} finally {
 		await runtimePool.end();
 		await cleanupFixture(pool, fixture.organizationId);
@@ -463,6 +500,7 @@ test("reconciliation terminalizes a document delete whose scope disappeared", {
 				error: "scope disappeared",
 			},
 		);
+
 		const terminal = await pool.query<{
 			status: string;
 			error_code: string;
@@ -488,6 +526,58 @@ test("reconciliation terminalizes a document delete whose scope disappeared", {
 			error_code: "document_delete_scope_missing",
 			incidents: 1,
 		});
+	} finally {
+		await runtimePool.end();
+		await cleanupFixture(pool, fixture.organizationId);
+		await pool.end();
+	}
+});
+
+test("library delete failure audit is correlated and idempotent", {
+	skip,
+}, async () => {
+	const pool = new pg.Pool({ connectionString: databaseUrl, max: 3 });
+	const runtimePool = createWorkerPool(3);
+	const fixture = await seedFixture(pool, 1);
+	const transactions = new PostgresDocumentDeleteTransactions(runtimePool);
+	try {
+		assert.equal(
+			await transactions.markRunning(fixture.deletions[0]),
+			"delete",
+		);
+		const failure = {
+			code: "storage_delete_failed",
+			message: "object storage rejected delete",
+		};
+		await transactions.markError(fixture.deletions[0], failure);
+		await transactions.markError(fixture.deletions[0], failure);
+
+		const audit = await pool.query<{
+			actor_id: string | null;
+			request_id: string | null;
+			details: Record<string, unknown>;
+		}>(
+			`
+				SELECT actor_id::text, request_id, details
+				FROM app.audit_logs
+				WHERE organization_id = $1
+				  AND workspace_id = $2
+				  AND action = 'library.delete_failed'
+				  AND resource_type = 'library'
+				  AND resource_id = $3
+			`,
+			[fixture.organizationId, fixture.workspaceId, fixture.libraryId],
+		);
+		assert.equal(audit.rowCount, 1);
+		assert.ok(audit.rows[0]?.actor_id);
+		assert.equal(
+			audit.rows[0]?.request_id,
+			`library-delete:${fixture.libraryId}`,
+		);
+		assert.equal(audit.rows[0]?.details.job_id, fixture.deletions[0].jobId);
+		assert.equal(audit.rows[0]?.details.name, "Delete test");
+		assert.equal(audit.rows[0]?.details.error_code, failure.code);
+		assert.equal(audit.rows[0]?.details.reason, failure.message);
 	} finally {
 		await runtimePool.end();
 		await cleanupFixture(pool, fixture.organizationId);
@@ -752,6 +842,26 @@ async function seedFixture(
 			ragLibraryId,
 			documentCount,
 			principalId,
+		],
+	);
+	await pool.query(
+		`
+			INSERT INTO app.audit_logs (
+				organization_id, workspace_id, actor_id, action,
+				resource_type, resource_id, request_id, details
+			)
+			VALUES (
+				$1, $2, $3, 'library.delete_requested',
+				'library', $4, $5, jsonb_build_object('library_id', $6::text)
+			)
+		`,
+		[
+			organizationId,
+			workspaceId,
+			principalId,
+			libraryId,
+			`library-delete:${libraryId}`,
+			ragLibraryId,
 		],
 	);
 	for (let index = 0; index < documentCount; index += 1) {

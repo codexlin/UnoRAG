@@ -45,6 +45,11 @@ const ACTION_LABELS: Record<string, string> = {
 	"document.delete_requested": "请求删除文档",
 	"document.deleted": "删除文档",
 	"document.acl_updated": "更新文档权限",
+	"library.created": "创建知识库",
+	"library.updated": "更新知识库",
+	"library.delete_requested": "请求删除知识库",
+	"library.deleted": "删除知识库",
+	"library.delete_failed": "知识库删除失败",
 	"job.cancel_requested": "取消任务",
 	"job.retried": "重试任务",
 	"workspace.created": "创建工作区",
@@ -130,7 +135,7 @@ export function WorkspaceAuditPanel({
 		const normalized = query.trim().toLocaleLowerCase();
 		if (!normalized) return items;
 		return items.filter((item) =>
-			`${item.action} ${actionLabel(item.action)} ${actorLabel(item)} ${resourceLabel(item)} ${item.metadata_summary}`
+			`${item.action} ${actionLabel(item.action)} ${actorLabel(item)} ${resourceLabel(item)} ${item.metadata_summary} ${item.request_id ?? ""} ${JSON.stringify(item.details)}`
 				.toLocaleLowerCase()
 				.includes(normalized),
 		);

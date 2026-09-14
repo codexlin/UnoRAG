@@ -39,7 +39,8 @@ GRANT SELECT ON
 	app.threads,
 	app.document_acl,
 	app.libraries,
-	app.generation_cleanup_queue
+	app.generation_cleanup_queue,
+	app.audit_logs
 	,app.observability_alerts
 	,app.observability_alert_transitions
 	,app.observability_alert_deliveries

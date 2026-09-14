@@ -4,6 +4,7 @@
 
 | 报告 | 证明范围 |
 |---|---|
+| [Library CRUD 审计验收](./2026-09-15-library-crud-audit.md) | Library 创建、更新、同步/异步删除审计，Request ID 关联、隐私约束、真实 PostgreSQL 幂等测试与本地 Docker 浏览器链路 |
 | [v0.1.4 香港环境发布验收](./2026-09-14-v0.1.4-hk-release-acceptance.md) | 镜像 CVE 与运行时权限修复、双 Registry 供应链、`0.1.2 -> 0.1.4` 原位升级、完整产品 smoke、生命周期和真实浏览器运行中心复核 |
 | [v0.1.2 本地与供应链验收](./2026-09-10-v0.1.2-local-release-gate.md) | 空环境 Compose、真实 MinerU 文件矩阵、真实基础设施集成、诊断瀑布图、失败清理、重启恢复和双 Registry 不可变发布 |
 | [v0.1.1 稳定版验收](./2026-09-09-v0.1.1-release-acceptance.md) | 安全维护版本、双 Registry 供应链、`0.1.0 -> 0.1.1` 原位升级、产品烟测和三轮真实文件质量门禁 |
