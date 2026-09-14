@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-09-10
+> 更新日期：2026-09-14
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -9,7 +9,7 @@
 ## 一句话结论
 
 UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部署、具备权限和文档生命周期的知识产品**。
-仓库已在 GitHub 公开并采用 Apache-2.0，当前稳定版 [`v0.1.2`](https://github.com/codexlin/UnoRAG/releases/tag/v0.1.2)
+仓库已在 GitHub 公开并采用 Apache-2.0，当前稳定版 [`v0.1.4`](https://github.com/codexlin/UnoRAG/releases/tag/v0.1.4)
 已经发布。素材溯源、第三方通知、SBOM/provenance、镜像漏洞扫描和 Cosign 签名均已工程化；COS 真链路、
 真实文件、浏览器权限、29 项隔离熔断、维护恢复、回退前滚和受控容量已在最终提交与香港参考环境复验。
 这不应扩大为所有部署拓扑的通用生产认证。当前默认交付是一位客户一套独立实例；Workspace 服务于客户
@@ -81,6 +81,10 @@ Next.js product + Knowledge API
 - CI 覆盖全历史密钥扫描、Web/TS Core、真实 PostgreSQL migration、镜像构建、Helm、依赖审计和品牌残留检查。
 - 现有证据覆盖空环境安装、真实文件、浏览器 RBAC、跨 Workspace 隔离、MinerU 302 实链路、故障恢复、
   备份恢复、不可变镜像升级/回滚和 tombstone 生命周期。
+- `v0.1.4` 已完成双 Registry 四镜像扫描、签名与 digest manifest 发布，并在香港参考环境完成
+  `0.1.2 -> 0.1.4` 原位升级、完整产品 smoke、生命周期全零和真实浏览器运行中心复核。四个镜像均使用
+  已修复的 Debian `libpcre2-8-0`，运行中心显示正确版本且无最近错误。结论见
+  [v0.1.4 香港环境发布验收](./evidence/2026-09-14-v0.1.4-hk-release-acceptance.md)。
 - `v0.1.2` 已完成空环境 Compose、真实 PostgreSQL/Qdrant/Redis、两轮产品 smoke、Qdrant/Worker 重启恢复、
   浏览器诊断、7/7 真实文件、33/33 正例、5/5 拒答，以及双 Registry 四镜像的扫描、签名和 digest manifest
   发布。结论见 [v0.1.2 本地与供应链验收](./evidence/2026-09-10-v0.1.2-local-release-gate.md)。
@@ -98,9 +102,9 @@ Next.js product + Knowledge API
 
 ### P0：稳定版维护门禁
 
-`v0.1.2` 的源码标签、四镜像、digest manifest、校验和、release notes 与供应链材料已经完成；目标服务器的
-digest-pinned 升级与公网 smoke 尚未执行，因此当前在线实例不能仅凭该发布记录宣称已经运行 `v0.1.2`。
-历史 PASS 不自动传递给新提交、新模型、ParserProvider 或客户环境。
+`v0.1.4` 的源码标签、四镜像、digest manifest、校验和、release notes、供应链材料、香港环境升级与
+公网 smoke 已完成。历史 PASS 不自动传递给新提交、新模型、ParserProvider 或客户环境；每个正式交付
+仍需执行自己的备份恢复、容量、Provider 和故障演练门禁。
 
 `UnoRAG` / `Unobyte` 的正式商标检索仍是维护者的外部法律风险事项，本仓库只记录工程来源和使用政策，
 不宣称名称或图形已在任一地区注册。首个稳定版沿用当前项目创建的 UnoRAG 标识；未来视觉升级不改变
@@ -133,12 +137,13 @@ Secret Scanning 和 Push Protection 均已开启。
 
 ## 建议的下一步
 
-当前最有杠杆的工作不是继续增加通用 RAG 路径，而是围绕稳定版补齐真实采用链路：
+当前最有杠杆的工作不是继续增加通用 RAG 路径，而是把现有能力做得更稳定、更可解释：
 
-1. **OIDC / SSO 纵向切片**：优先补齐私有部署最常见的企业身份接入，并保持本地管理员恢复路径；
-2. **身份治理**：实现用户组管理 UI，再根据真实客户目录选择 SCIM 或特定 Provider 同步；
-3. **客户环境验收模板**：把容量、备份恢复、Provider、责任人和 Go/No-Go 固化为可复用交付清单；
-4. **知识质量扩展**：以客户金标决定 ChartIR、Provider scorecard、native sparse 和复杂跨页表的顺序。
+1. **质量回归扩充**：补复杂跨页表、低质量扫描、引用 precision 和 Provider scorecard，以失败样本驱动优化；
+2. **稳定性与恢复**：固化客户环境验收模板，覆盖容量、备份 restore、队列拥塞、Provider 降级和责任人；
+3. **审计完整性**：统一 Library CRUD 审计语义，并验证操作记录、任务、文档版本和 Trace 的关联下钻；
+4. **按证据扩展检索**：只有客户语料证明收益后再推进 ChartIR、Qdrant native sparse 或更复杂执行路径；
+5. **企业身份后置**：OIDC/SSO、用户组管理和 SCIM 保留清晰边界，但不先于知识质量与稳定性投入。
 
 ## 文档权威顺序
 
