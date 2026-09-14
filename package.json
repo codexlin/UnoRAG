@@ -114,10 +114,10 @@
 		"zod": "^4.5.4"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.12",
-		"@langfuse/client": "5.11.0",
+		"@biomejs/biome": "2.5.13",
+		"@langfuse/client": "5.11.1",
 		"@tailwindcss/postcss": "^4",
-		"@types/node": "^22.20.1",
+		"@types/node": "^22.20.2",
 		"@types/pg": "^8.23.1",
 		"@types/react": "^19",
 		"@types/react-dom": "^19.2.7",
