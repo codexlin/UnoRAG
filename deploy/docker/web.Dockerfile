@@ -35,7 +35,10 @@ WORKDIR /repo
 ENV UNORAG_VERSION=${UNORAG_VERSION} \
 	UNORAG_REVISION=${UNORAG_REVISION} \
 	UNORAG_BUILD_TIME=${UNORAG_BUILD_TIME}
-RUN useradd --system --uid 10001 --create-home unorag \
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends libpcre2-8-0 \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
 	&& corepack prepare pnpm@9.7.1 --activate
 COPY package.json pnpm-lock.yaml ./
@@ -77,7 +80,7 @@ ENV UNORAG_VERSION=${UNORAG_VERSION} \
 	UNORAG_BUILD_TIME=${UNORAG_BUILD_TIME}
 # Keep NODE_ENV unset during install so tooling resolves cleanly; set at runtime via compose if needed.
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends postgresql-client \
+	&& apt-get install -y --no-install-recommends postgresql-client libpcre2-8-0 \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
@@ -136,7 +139,7 @@ ENV NODE_ENV=production \
 	UNORAG_BUILD_TIME=${UNORAG_BUILD_TIME}
 
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends curl \
+	&& apt-get install -y --no-install-recommends curl libpcre2-8-0 \
 	&& rm -rf /var/lib/apt/lists/* \
 		/usr/local/lib/node_modules/npm \
 	&& rm -f /usr/local/bin/npm /usr/local/bin/npx \
