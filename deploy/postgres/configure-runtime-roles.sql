@@ -34,6 +34,8 @@ GRANT SELECT ON
 	app.document_active_versions,
 	app.active_document_generations,
 	app.ask_runs,
+	app.ask_run_stages,
+	app.job_stage_runs,
 	app.threads,
 	app.document_acl,
 	app.libraries,
