@@ -3,10 +3,11 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
-## [0.1.3] - 2026-09-14
+## [0.1.4] - 2026-09-14
 
-UnoRAG 0.1.3 is a least-privilege deployment hotfix for the native operations dashboard introduced
-in 0.1.2.
+UnoRAG 0.1.4 is a least-privilege and runtime-image security hotfix for the native operations
+dashboard introduced in 0.1.2. It supersedes the unpublished 0.1.3 release candidate, whose
+security gate stopped before signing or release publication.
 
 ### Fixed
 
@@ -16,6 +17,13 @@ in 0.1.2.
   missing.
 - The real PostgreSQL integration suite validates effective role privileges in addition to static
   deployment SQL contracts.
+
+### Security
+
+- All four published Node runtime image families explicitly install the current Debian
+  `libpcre2-8-0` security revision, addressing CVE-2026-86145 and CVE-2026-89161.
+- Release-safety tests ensure the web, migrator, operations, and DBOS worker image paths continue
+  to receive the package update before publication.
 
 ### Validation
 
@@ -167,7 +175,7 @@ in [`docs/INTEGRATION.md`](./docs/INTEGRATION.md).
 - Existing RC deployments use the forward-only upgrade and application rollback process in
   [`docs/RELEASE.md`](./docs/RELEASE.md). Database migrations are not rolled back.
 
-[0.1.3]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.3
+[0.1.4]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.4
 [0.1.2]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.2
 [0.1.1]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.1
 [0.1.0]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.0
