@@ -158,7 +158,12 @@ pnpm tombstones:maintain:apply -- --retention-days 90 --limit 100
 任务失败时先按 `job_id` 查询产品状态，再按 `workflow_id` 检查 DBOS。不得直接修改业务表
 “修复”状态。确认根因消失后，通过产品重试或幂等运维命令恢复。
 
-删除失败可重新创建持久化任务：
+删除失败会在运行中心显示为“待恢复删除”，并触发 `jobs.delete_failed` critical 告警。管理员或
+Workspace owner 应先打开“最近错误”确认失败边界，恢复 Qdrant 或对象存储后点击“重试清理”。产品会
+创建新的 DBOS 持久化任务，旧失败任务、阶段瀑布和 `library.delete_failed` 审计继续保留；新的任务接管
+文档后，“待恢复删除”立即归零，告警在连续两个健康控制周期后自动恢复。
+
+产品页面不可用时，可使用同一套幂等状态机从 CLI 重新创建任务：
 
 ```bash
 cd deploy/compose
@@ -168,8 +173,9 @@ mk_compose run --rm --no-deps dbos-control \
   --retry-document-delete <failed-job-uuid>
 ```
 
-故障恢复后应验证：无 dead/stuck workflow、无 pending ACL、旧 generation 不可召回、
-active 文档仍能返回正确引用。
+故障恢复后应验证：待恢复删除为零、无 dead/stuck workflow、无 pending ACL、对象存储原文件和 Qdrant
+generation 已删除、旧 generation 不可召回，未参与删除的 active 文档仍能返回正确引用。不要通过修改
+`app.jobs`、`app.documents` 或 `app.libraries` 绕过状态机。
 
 ## 依赖故障原则
 

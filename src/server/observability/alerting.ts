@@ -43,6 +43,7 @@ type AlertPayload = {
 };
 
 const MANAGED_CODES = [
+	"jobs.delete_failed",
 	"jobs.dead",
 	"jobs.stuck",
 	"ask.failure_rate",
@@ -122,6 +123,17 @@ export function deriveOperationalSignals(
 		? (snapshot.ask.completed - snapshot.ask.without_citations) /
 			snapshot.ask.completed
 		: 1;
+	if (snapshot.jobs.delete_failed > 0) {
+		signals.push({
+			code: "jobs.delete_failed",
+			source: "job",
+			severity: "critical",
+			title: "删除清理等待恢复",
+			detail: `${snapshot.jobs.delete_failed} 个文档删除任务重试耗尽。`,
+			recovery: "打开最近错误确认依赖恢复后，使用“重试清理”创建新的幂等任务。",
+			evidence: { count: snapshot.jobs.delete_failed },
+		});
+	}
 	if (snapshot.jobs.dead > 0) {
 		signals.push({
 			code: "jobs.dead",

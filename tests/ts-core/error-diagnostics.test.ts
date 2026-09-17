@@ -27,6 +27,14 @@ test("error guidance groups known providers, persistence, and unknown failures",
 	assert.equal(errorGuidance("embedding_http_429").title, "Embedding 异常");
 	assert.equal(errorGuidance("provider_timeout").title, "执行超时");
 	assert.equal(
+		errorGuidance("document_delete_qdrant_failed").title,
+		"向量清理失败",
+	);
+	assert.equal(
+		errorGuidance("document_delete_storage_failed").title,
+		"原文件清理失败",
+	);
+	assert.equal(
 		errorGuidance("conversation_persist_failed").title,
 		"会话持久化失败",
 	);

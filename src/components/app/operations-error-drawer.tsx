@@ -1,7 +1,14 @@
 "use client";
 
-import { Check, Copy, ExternalLink, LoaderCircle } from "lucide-react";
+import {
+	Check,
+	Copy,
+	ExternalLink,
+	LoaderCircle,
+	RotateCcw,
+} from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 import {
 	StageWaterfall,
@@ -14,6 +21,7 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
+import { retryJob } from "@/lib/api";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
 
 export type OperationsErrorRef = {
@@ -40,6 +48,7 @@ type ErrorDetail = {
 	ended_at: string | null;
 	latency_ms: number | null;
 	message: string | null;
+	can_retry?: boolean;
 	stages: WaterfallStage[];
 };
 
@@ -69,18 +78,22 @@ function CopyValue({ value }: { value: string }) {
 export function OperationsErrorDrawer({
 	selected,
 	onOpenChange,
+	onRecovered,
 }: {
 	selected: OperationsErrorRef | null;
 	onOpenChange: (open: boolean) => void;
+	onRecovered?: () => void;
 }) {
 	const [detail, setDetail] = useState<ErrorDetail | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [retrying, setRetrying] = useState(false);
 
 	useEffect(() => {
 		if (!selected) return;
 		const controller = new AbortController();
 		setDetail(null);
 		setError(null);
+		setRetrying(false);
 		void fetch(
 			`/api/workspace/operations/events/${selected.source}/${encodeURIComponent(selected.id)}`,
 			{ cache: "no-store", signal: controller.signal },
@@ -153,6 +166,35 @@ export function OperationsErrorDrawer({
 									<pre className="mt-3 max-h-32 overflow-auto border-t border-destructive/20 pt-3 font-mono text-[10px] whitespace-pre-wrap break-all text-muted-foreground">
 										{detail.message}
 									</pre>
+								) : null}
+								{detail.can_retry && detail.resource_id ? (
+									<button
+										type="button"
+										disabled={retrying}
+										onClick={async () => {
+											setRetrying(true);
+											try {
+												await retryJob(detail.resource_id as string);
+												toast.success("已创建新的删除清理任务");
+												onRecovered?.();
+											} catch (cause) {
+												toast.error(
+													cause instanceof Error
+														? cause.message
+														: "重试清理失败",
+												);
+												setRetrying(false);
+											}
+										}}
+										className="mt-3 inline-flex h-8 items-center gap-1.5 border border-destructive/30 bg-background px-3 text-xs font-medium text-foreground hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
+									>
+										{retrying ? (
+											<LoaderCircle className="size-3.5 animate-spin" />
+										) : (
+											<RotateCcw className="size-3.5" />
+										)}
+										重试清理
+									</button>
 								) : null}
 							</section>
 

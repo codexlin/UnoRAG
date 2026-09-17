@@ -39,6 +39,7 @@ function snapshot(): OperationsSnapshot {
 		jobs: {
 			queued: 0,
 			running: 1,
+			delete_failed: 1,
 			dead: 1,
 			stuck: 1,
 			oldest_active: null,
@@ -107,6 +108,7 @@ test("operational rules create deterministic scoped signal codes", () => {
 	assert.deepEqual(
 		signals.map((signal) => signal.code),
 		[
+			"jobs.delete_failed",
 			"jobs.dead",
 			"jobs.stuck",
 			"ask.failure_rate",

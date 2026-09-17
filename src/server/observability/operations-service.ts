@@ -105,6 +105,7 @@ export interface OperationsSnapshot {
 	jobs: {
 		queued: number;
 		running: number;
+		delete_failed: number;
 		dead: number;
 		stuck: number;
 		oldest_active: {
@@ -282,6 +283,19 @@ class DrizzleOperationsDataSource implements OperationsDataSource {
 			.select({
 				queued: sql<number>`count(*) filter (where ${jobs.status} in ('queued', 'retry'))`,
 				running: sql<number>`count(*) filter (where ${jobs.status} in ('running', 'cancelling'))`,
+				deleteFailed: sql<number>`(
+					select count(*)::integer
+					from app.jobs failed_job
+					join app.documents document
+					  on document.latest_job_id = failed_job.id
+					where failed_job.organization_id = ${scope.organizationId}::uuid
+					  and failed_job.workspace_id = ${scope.workspaceId}::uuid
+					  and failed_job.type = 'document.delete'
+					  and failed_job.status in ('failed', 'dead', 'cancelled')
+					  and document.organization_id = failed_job.organization_id
+					  and document.workspace_id = failed_job.workspace_id
+					  and document.status = 'deleting'
+				)`,
 				dead: sql<number>`count(*) filter (where ${jobs.status} = 'dead' and ${jobs.updatedAt} >= ${since})`,
 				stuck: sql<number>`count(*) filter (where ${jobs.status} in ('running', 'cancelling') and (${jobs.leaseExpiresAt} <= ${now} or ${jobs.heartbeatAt} < ${stuckBefore}))`,
 			})
@@ -291,6 +305,10 @@ class DrizzleOperationsDataSource implements OperationsDataSource {
 					scoped,
 					or(
 						inArray(jobs.status, ["queued", "retry", "running", "cancelling"]),
+						and(
+							eq(jobs.type, "document.delete"),
+							inArray(jobs.status, ["failed", "dead", "cancelled"]),
+						),
 						and(eq(jobs.status, "dead"), gte(jobs.updatedAt, since)),
 					),
 				),
@@ -298,6 +316,7 @@ class DrizzleOperationsDataSource implements OperationsDataSource {
 		return {
 			queued: count(row?.queued),
 			running: count(row?.running),
+			delete_failed: count(row?.deleteFailed),
 			dead: count(row?.dead),
 			stuck: count(row?.stuck),
 		};
