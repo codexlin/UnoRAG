@@ -180,6 +180,11 @@ export class OperationsEventService {
 						)
 					: null,
 			message: redactDiagnosticMessage(event.job.error),
+			can_retry:
+				event.job.type === "document.delete" &&
+				["failed", "dead", "cancelled"].includes(event.job.status) &&
+				event.document?.status === "deleting" &&
+				event.document.latestJobId === event.job.id,
 			stages: stages.map(jobStage),
 		};
 	}

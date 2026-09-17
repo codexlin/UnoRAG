@@ -3,8 +3,11 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 
+import * as schema from "../../src/db/schema";
+import { OperationsService } from "../../src/server/observability/operations-service";
 import type { DocumentDeleteJob } from "../../src/worker/contracts";
 import { PostgresDispatchCandidateStore } from "../../src/worker/dispatcher";
 import {
@@ -279,6 +282,72 @@ test("operator retry creates a new workflow and rejects a stale predecessor", {
 			() => store.retryFailedDocumentDelete(previousJobId),
 			/requires its original deleting scope/,
 		);
+	} finally {
+		await runtimePool.end();
+		await cleanupFixture(pool, fixture.organizationId);
+		await pool.end();
+	}
+});
+
+test("actionable delete failure clears after a retry takes ownership", {
+	skip,
+}, async () => {
+	const pool = new pg.Pool({ connectionString: databaseUrl, max: 3 });
+	const runtimePool = createWorkerPool(3);
+	const fixture = await seedFixture(pool, 1, "failed");
+	const store = new PostgresDispatchCandidateStore(runtimePool);
+	const service = OperationsService.fromDatabase(drizzle(pool, { schema }));
+	try {
+		const scope = {
+			organizationId: fixture.organizationId,
+			workspaceId: fixture.workspaceId,
+		};
+		const actionable = await pool.query<{ count: number }>(
+			`SELECT count(*)::integer AS count
+			 FROM app.jobs job
+			 WHERE job.organization_id = $1
+			   AND job.workspace_id = $2
+			   AND job.type = 'document.delete'
+			   AND job.status IN ('failed', 'dead', 'cancelled')
+			   AND EXISTS (
+				 SELECT 1 FROM app.documents document
+				 WHERE document.latest_job_id = job.id
+				   AND document.status = 'deleting'
+			   )`,
+			[scope.organizationId, scope.workspaceId],
+		);
+		assert.equal(actionable.rows[0]?.count, 1);
+		const before = await service.readSnapshot(scope);
+		assert.equal(before.jobs.delete_failed, 1);
+
+		const previousJobId = fixture.deletions[0].jobId;
+		const retryJobId = await store.retryFailedDocumentDelete(previousJobId);
+		const after = await service.readSnapshot(scope);
+		assert.equal(after.jobs.delete_failed, 0);
+		const lineage = await pool.query<{
+			retry_job_id: string;
+			retry_audits: number;
+		}>(
+			`
+			SELECT
+				job.result->>'retry_job_id' AS retry_job_id,
+				(
+					SELECT count(*)::integer
+					FROM app.audit_logs audit
+					WHERE audit.organization_id = job.organization_id
+					  AND audit.workspace_id = job.workspace_id
+					  AND audit.action = 'job.retried'
+					  AND audit.resource_id = $2
+				) AS retry_audits
+			FROM app.jobs job
+			WHERE job.id = $1
+			`,
+			[previousJobId, retryJobId],
+		);
+		assert.deepEqual(lineage.rows[0], {
+			retry_job_id: retryJobId,
+			retry_audits: 1,
+		});
 	} finally {
 		await runtimePool.end();
 		await cleanupFixture(pool, fixture.organizationId);

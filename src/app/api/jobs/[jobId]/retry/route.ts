@@ -10,11 +10,18 @@ import {
 	jobs,
 	libraries,
 } from "@/db/schema";
+import {
+	DocumentDeleteRetryError,
+	retryFailedDocumentDelete,
+} from "@/lib/document-delete-retry";
 import { RETRYABLE_JOB_STATUSES } from "@/lib/document-lifecycle-contract";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import { documentIngestExecutionIdentity } from "@/lib/server/document-lifecycle-flag.mjs";
 import { findAuthorizedJob, toApiJob } from "@/lib/server/job-access";
-import { canWriteLibraries } from "@/lib/server/library-access";
+import {
+	canManageLibraries,
+	canWriteLibraries,
+} from "@/lib/server/library-access";
 import { documentObjectStorage } from "@/lib/server/object-storage";
 import { documentIngestPayloadSchema } from "@/worker/contracts";
 
@@ -41,9 +48,35 @@ export async function POST(request: Request, context: RouteContext) {
 	if (!current) {
 		return Response.json({ detail: "job not found" }, { status: 404 });
 	}
+	if (current.job.type === "document.delete") {
+		if (!canManageLibraries(identity)) {
+			return Response.json(
+				{ detail: "library owner permission required" },
+				{ status: 403 },
+			);
+		}
+		try {
+			const retried = await retryFailedDocumentDelete(getDatabase(), {
+				previousJobId: current.job.id,
+				organizationId: identity.tenantId,
+				workspaceId: identity.workspaceId,
+				actorId: identity.principalId,
+				requestId: request.headers.get("x-request-id"),
+			});
+			const row = await findAuthorizedJob(identity, retried.jobId);
+			return row
+				? Response.json(toApiJob(row), { status: 202 })
+				: Response.json({ detail: "retried job not found" }, { status: 500 });
+		} catch (error) {
+			if (error instanceof DocumentDeleteRetryError) {
+				return Response.json({ detail: error.message }, { status: 409 });
+			}
+			throw error;
+		}
+	}
 	if (current.job.type !== "document.ingest") {
 		return Response.json(
-			{ detail: "only document ingest jobs can be retried" },
+			{ detail: "only document ingest and delete jobs can be retried" },
 			{ status: 409 },
 		);
 	}

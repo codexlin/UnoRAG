@@ -49,7 +49,7 @@ function dataSource(
 			};
 		},
 		async readJobSummary() {
-			return { queued: 2, running: 1, dead: 1, stuck: 1 };
+			return { queued: 2, running: 1, delete_failed: 1, dead: 1, stuck: 1 };
 		},
 		async findOldestActiveJob() {
 			return {
@@ -127,7 +127,7 @@ test("operations queries always receive both scope identifiers", async () => {
 		},
 		async readJobSummary(received, since, stuckBefore, current) {
 			observed.push([received, since, stuckBefore, current]);
-			return { queued: 0, running: 0, dead: 0, stuck: 0 };
+			return { queued: 0, running: 0, delete_failed: 0, dead: 0, stuck: 0 };
 		},
 		async findOldestActiveJob(received) {
 			observed.push([received]);

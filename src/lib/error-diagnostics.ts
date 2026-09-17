@@ -76,6 +76,17 @@ const EXACT_GUIDANCE: Record<string, ErrorGuidance> = {
 		cause: "检索或索引期间无法完成 Qdrant 操作。",
 		recovery: "检查 Qdrant 健康、磁盘、Collection 配置与网络，再重试任务。",
 	},
+	document_delete_qdrant_failed: {
+		title: "向量清理失败",
+		cause: "删除任务在有限重试后仍无法从 Qdrant 清理文档向量。",
+		recovery:
+			"确认 Qdrant 已恢复且 Collection 可写，然后在本页发起“重试清理”。",
+	},
+	document_delete_storage_failed: {
+		title: "原文件清理失败",
+		cause: "删除任务在有限重试后仍无法删除对象存储中的原文件。",
+		recovery: "检查存储凭证、Bucket 权限和网络，恢复后在本页发起“重试清理”。",
+	},
 	provider_parse_failed: {
 		title: "文档解析失败",
 		cause: "当前解析 Provider 无法从文件中生成可用的结构化内容。",

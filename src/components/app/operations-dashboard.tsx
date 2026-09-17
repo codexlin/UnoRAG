@@ -72,6 +72,7 @@ type OperationsSnapshot = {
 	jobs: {
 		queued: number;
 		running: number;
+		delete_failed: number;
 		dead: number;
 		stuck: number;
 		oldest_active: {
@@ -557,7 +558,18 @@ export function OperationsDashboard() {
 								</div>
 							))}
 						</div>
-						<div className="grid grid-cols-2 gap-px bg-border/80">
+						<div className="grid grid-cols-3 gap-px bg-border/80">
+							<div className="bg-card px-4 py-3">
+								<p className="text-meta text-muted-foreground">待恢复删除</p>
+								<p
+									className={cn(
+										"mt-1 font-mono text-sm",
+										(jobs?.delete_failed ?? 0) > 0 && "text-destructive",
+									)}
+								>
+									{jobs?.delete_failed ?? 0}
+								</p>
+							</div>
 							<div className="bg-card px-4 py-3">
 								<p className="text-meta text-muted-foreground">Dead / Stuck</p>
 								<p
@@ -755,6 +767,10 @@ export function OperationsDashboard() {
 				<OperationsErrorDrawer
 					selected={selectedError}
 					onOpenChange={(open) => !open && setSelectedError(null)}
+					onRecovered={() => {
+						setSelectedError(null);
+						void load();
+					}}
 				/>
 			</div>
 		</div>

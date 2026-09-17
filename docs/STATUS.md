@@ -89,6 +89,10 @@ Next.js product + Knowledge API
   终态通过同一 Request ID 关联，描述正文不会进入审计。真实 PostgreSQL 和本地 Docker 浏览器链路已验证
   空库同步删除与带文件异步删除，结论见
   [Library CRUD 审计验收](./evidence/2026-09-15-library-crud-audit.md)。
+- 删除恢复闭环已通过真实 Qdrant 停机和本地对象存储权限故障验证：运行中心展示原因、阶段瀑布和
+  `jobs.delete_failed` 告警，管理员可从页面创建新的幂等 DBOS 清理任务，恢复后对象和向量均被删除，
+  旧失败记录继续保留。结论见
+  [删除故障恢复验收](./evidence/2026-09-17-library-delete-fault-recovery.md)。
 - `v0.1.2` 已完成空环境 Compose、真实 PostgreSQL/Qdrant/Redis、两轮产品 smoke、Qdrant/Worker 重启恢复、
   浏览器诊断、7/7 真实文件、33/33 正例、5/5 拒答，以及双 Registry 四镜像的扫描、签名和 digest manifest
   发布。结论见 [v0.1.2 本地与供应链验收](./evidence/2026-09-10-v0.1.2-local-release-gate.md)。
@@ -145,9 +149,8 @@ Secret Scanning 和 Push Protection 均已开启。
 
 1. **质量回归扩充**：补复杂跨页表、低质量扫描、引用 precision 和 Provider scorecard，以失败样本驱动优化；
 2. **稳定性与恢复**：固化客户环境验收模板，覆盖容量、备份 restore、队列拥塞、Provider 降级和责任人；
-3. **审计故障演练**：在发布候选环境注入对象存储或 Qdrant 删除失败，验证失败事件、告警、重试与恢复闭环；
-4. **按证据扩展检索**：只有客户语料证明收益后再推进 ChartIR、Qdrant native sparse 或更复杂执行路径；
-5. **企业身份后置**：OIDC/SSO、用户组管理和 SCIM 保留清晰边界，但不先于知识质量与稳定性投入。
+3. **按证据扩展检索**：只有客户语料证明收益后再推进 ChartIR、Qdrant native sparse 或更复杂执行路径；
+4. **企业身份后置**：OIDC/SSO、用户组管理和 SCIM 保留清晰边界，但不先于知识质量与稳定性投入。
 
 ## 文档权威顺序
 
