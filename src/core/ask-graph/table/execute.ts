@@ -307,12 +307,16 @@ function executeSingle(
 	if (plan.operation === "lookup") {
 		const entityColumn = resolve(plan.entity.column, table, plan.operation);
 		if ("result" in entityColumn) return entityColumn.result;
+		const expectedValues = Array.isArray(plan.entity.value)
+			? plan.entity.value
+			: [plan.entity.value];
 		rows = rows.filter((row) => {
 			const raw = row.values[entityColumn.column] ?? "";
-			return plan.entity.match === "contains"
-				? raw.includes(String(plan.entity.value))
-				: compareScalar(raw, "==", plan.entity.value, entityColumn.column) ===
-						true;
+			return expectedValues.some((expected) =>
+				plan.entity.match === "contains"
+					? raw.includes(String(expected))
+					: compareScalar(raw, "==", expected, entityColumn.column) === true,
+			);
 		});
 		return success(
 			plan.operation,

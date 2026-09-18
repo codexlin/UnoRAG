@@ -106,6 +106,9 @@ export function scorePositiveCase(
 	);
 	const expectedRecordType = gold.expect_record_type;
 	const citationCount = response.citations.length;
+	const crossDocumentCitationCount = response.citations.filter(
+		(citation) => citationFilename(citation) !== target,
+	).length;
 	const retrievedEvidenceCount = debugCount(
 		response.retrievalDebug,
 		"retrieved_evidence_count",
@@ -127,6 +130,7 @@ export function scorePositiveCase(
 			!response.refused &&
 			missingFacts.length === 0 &&
 			targetDocumentRank != null &&
+			crossDocumentCitationCount === 0 &&
 			(!expectedRecordType || recordTypeMatched === true),
 		factCoverage: matchedFacts.length / gold.key_facts.length,
 		matchedFacts: Object.freeze(matchedFacts),
@@ -135,9 +139,7 @@ export function scorePositiveCase(
 		reciprocalRank: targetDocumentRank ? 1 / targetDocumentRank : 0,
 		targetDocumentRecalled: targetDocumentRank != null,
 		citationCount,
-		crossDocumentCitationCount: response.citations.filter(
-			(citation) => citationFilename(citation) !== target,
-		).length,
+		crossDocumentCitationCount,
 		citationPrecision: citationCount
 			? targetCitations.length / citationCount
 			: 0,
@@ -279,6 +281,7 @@ export const DEFAULT_RELEASE_GATES = Object.freeze({
 	positivePassRate: 1,
 	meanFactCoverage: 1,
 	documentRecallAtK: 1,
+	citationPrecision: 1,
 	refusalAccuracy: 1,
 });
 

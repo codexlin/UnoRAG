@@ -13,7 +13,7 @@ Legacy eval fixtures stay under `testdata/{pdf,docx,md,txt,unsupported}/` — do
 | `scan-lowcontrast.pdf` | `scan_ocr` (scan) | Low-contrast scan → OCR / MinerU path |
 | `twocolumn.pdf` | `twocolumn` | Two-column layout → reading-order / layout |
 | `mixed-charts.pdf` | `mixed_charts` (charts) | Figures + charts mixed with text |
-| `golds.jsonl` | — | Gold Q/A + mode + file hints for AB eval |
+| `golds.jsonl` | — | 36 条 Gold Q/A + mode + file hints + quality dimensions |
 | `negative-golds.jsonl` | — | Stable refusal cases for unsupported facts |
 
 Run the live profile A/B suite from the repository root against a running product:
@@ -25,3 +25,9 @@ UNORAG_BASE_URL=http://127.0.0.1:8088 pnpm eval:live
 The runner loads this directory and both golden sets directly. Generated reports
 land under `_e2e_out/` and are ignored. Keep old `testdata/pdf/leave-scanned.pdf`
 and related fixtures for MinerU controls and unsupported-file negatives.
+
+Release-critical dimensions are explicit in each relevant gold: six
+`cross_page_table` cases cover both physical page boundaries and full-table
+reasoning; five `low_contrast_scan` cases cover OCR facts on both pages. The
+runner reports and gates these dimensions independently so aggregate accuracy
+cannot hide a parser-specific regression.

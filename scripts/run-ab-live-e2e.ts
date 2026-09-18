@@ -8,12 +8,16 @@ import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { PROMPT_KEYS, PROMPT_REGISTRY } from "../src/core/ai/prompt-registry";
 import {
+	buildProviderScorecard,
+	evaluateProviderGates,
+	evaluateQualityDimensionGates,
 	evaluateReleaseGates,
 	loadGoldenJsonl,
 	loadNegativeGoldenJsonl,
 	publishEvaluationScores,
 	scoreNegativeCase,
 	scorePositiveCase,
+	summarizeQualityDimensions,
 	summarizeEvaluation,
 	type EvaluationCitation,
 	type EvaluationResponse,
@@ -21,6 +25,7 @@ import {
 	type NegativeCaseScore,
 	type NegativeGoldenCase,
 	type PositiveCaseScore,
+	type ProviderJob,
 } from "../src/evaluation";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -55,6 +60,7 @@ type JobResult = Readonly<{
 	stage: string | null;
 	error: string | null;
 	parserReport: unknown;
+	stageRuns: unknown;
 	documentId: string | null;
 }>;
 
@@ -326,6 +332,7 @@ async function waitForJobs(input: {
 				stage: stringValue(job.stage),
 				error: stringValue(job.last_error) ?? stringValue(job.error_code),
 				parserReport: job.parser_report ?? null,
+				stageRuns: job.stage_runs ?? null,
 				documentId: upload.documentId,
 			});
 			pending.delete(filename);
@@ -338,6 +345,7 @@ async function waitForJobs(input: {
 			stage: null,
 			error: "job wait timeout",
 			parserReport: null,
+			stageRuns: null,
 			documentId: upload.documentId,
 		});
 	}
@@ -484,6 +492,13 @@ function formatPercent(value: number): string {
 function markdownReport(report: JsonObject): string {
 	const summary = asObject(report.summary);
 	const gates = asObject(report.release_gates);
+	const qualityScorecard = Array.isArray(report.quality_scorecard)
+		? (report.quality_scorecard as JsonObject[])
+		: [];
+	const providerScorecard = asObject(report.provider_scorecard);
+	const providers = Array.isArray(providerScorecard.providers)
+		? (providerScorecard.providers as JsonObject[])
+		: [];
 	const rows = Array.isArray(report.positive_cases)
 		? (report.positive_cases as JsonObject[])
 		: [];
@@ -503,11 +518,39 @@ function markdownReport(report: JsonObject): string {
 		`- refusal accuracy: **${summary.negativePassed}/${summary.negativeCases}**`,
 		`- latency P50 / P95: **${summary.latencyP50Ms ?? "-"} / ${summary.latencyP95Ms ?? "-"} ms**`,
 		"",
+		"## Quality Dimensions",
+		"",
+		"| dimension | cases | pass | facts | recall | citation precision | record type |",
+		"|---|---:|---:|---:|---:|---:|---:|",
+		"",
+	];
+	for (const score of qualityScorecard) {
+		lines.push(
+			`| ${score.dimension ?? "-"} | ${score.cases ?? 0} | ${formatPercent(Number(score.passRate ?? 0))} | ${formatPercent(Number(score.meanFactCoverage ?? 0))} | ${formatPercent(Number(score.documentRecallAtK ?? 0))} | ${formatPercent(Number(score.citationPrecision ?? 0))} | ${score.recordTypeAccuracy == null ? "n/a" : formatPercent(Number(score.recordTypeAccuracy))} |`,
+		);
+	}
+	lines.push(
+		"",
+		"## Parser Providers",
+		"",
+		`- status: **${providerScorecard.status ?? "unknown"}**`,
+		`- missing reports: **${Array.isArray(providerScorecard.missingReports) ? providerScorecard.missingReports.length : 0}**`,
+		"",
+		"| provider | files | completed | partial | failed pages | latency P50/P95 | cases | pass | citation precision |",
+		"|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+	);
+	for (const provider of providers) {
+		lines.push(
+			`| ${provider.provider ?? "-"} | ${provider.files ?? 0} | ${provider.completedFiles ?? 0} | ${provider.partialFiles ?? 0} | ${provider.failedPages ?? 0} | ${provider.latencyP50Ms ?? "-"}/${provider.latencyP95Ms ?? "-"} ms | ${provider.positiveCases ?? 0} | ${formatPercent(Number(provider.positivePassRate ?? 0))} | ${formatPercent(Number(provider.citationPrecision ?? 0))} |`,
+		);
+	}
+	lines.push(
+		"",
 		"## Cases",
 		"",
 		"| case | file | ingest | pass | fact coverage | doc rank | latency |",
 		"|---|---|---|---:|---:|---:|---:|",
-	];
+	);
 	for (const row of rows) {
 		const score = asObject(row.score);
 		lines.push(
@@ -702,6 +745,7 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 						stage: null,
 						error: `HTTP ${response.status}`,
 						parserReport: null,
+						stageRuns: null,
 						documentId: stringValue(body.document_id) ?? stringValue(body.id),
 					});
 					continue;
@@ -729,6 +773,7 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 						stage: "reused",
 						error: null,
 						parserReport: null,
+						stageRuns: null,
 						documentId: null,
 					} satisfies JobResult,
 				]),
@@ -785,7 +830,27 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 		const positiveScores = positiveRows.map((row) => row.score);
 		const negativeScores = negativeRows.map((row) => row.score);
 		const summary = summarizeEvaluation(positiveScores, negativeScores);
-		const releaseGates = evaluateReleaseGates(summary);
+		const qualityScorecard = summarizeQualityDimensions(positiveRows);
+		const qualityGates = evaluateQualityDimensionGates(qualityScorecard);
+		const providerJobs = Object.fromEntries(jobs) as Record<string, ProviderJob>;
+		const providerScorecard = buildProviderScorecard({
+			jobs: providerJobs,
+			positive: positiveRows,
+			freshIngestion: ownsLibrary,
+		});
+		const providerGates = evaluateProviderGates({
+			scorecard: providerScorecard,
+			jobs: providerJobs,
+		});
+		const metricGates = evaluateReleaseGates(summary);
+		const releaseGates = Object.freeze({
+			ok: metricGates.ok && qualityGates.ok && providerGates.ok,
+			failures: Object.freeze([
+				...metricGates.failures,
+				...qualityGates.failures,
+				...providerGates.failures,
+			]),
+		});
 		let langfuse: JsonObject;
 		try {
 			langfuse = await maybePublishLangfuse({
@@ -809,6 +874,11 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 			library_id: libraryId,
 			jobs: Object.fromEntries(jobs),
 			summary,
+			metric_gates: metricGates,
+			quality_scorecard: qualityScorecard,
+			quality_gates: qualityGates,
+			provider_scorecard: providerScorecard,
+			provider_gates: providerGates,
 			release_gates: releaseGates,
 			prompt_policy: "repository-versioned",
 			langfuse,

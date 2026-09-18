@@ -2,6 +2,13 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 
+export const QualityDimensionSchema = z.enum([
+	"cross_page_table",
+	"low_contrast_scan",
+]);
+
+export type QualityDimension = z.infer<typeof QualityDimensionSchema>;
+
 export const GoldenCaseSchema = z
 	.object({
 		id: z.string().trim().min(1).optional(),
@@ -12,6 +19,7 @@ export const GoldenCaseSchema = z
 		key_facts: z.array(z.string().trim().min(1)).min(1),
 		chunk_hint: z.string().trim().min(1).optional(),
 		expect_record_type: z.enum(["text", "table", "image"]).optional(),
+		quality_dimensions: z.array(QualityDimensionSchema).default([]),
 	})
 	.strict();
 
@@ -162,6 +170,7 @@ export function parseGoldenCase(value: unknown): GoldenCase {
 		...parsed,
 		id: parsed.id ?? stableCaseId(parsed),
 		key_facts: Object.freeze([...parsed.key_facts]),
+		quality_dimensions: Object.freeze([...parsed.quality_dimensions]),
 	}) as GoldenCase;
 }
 

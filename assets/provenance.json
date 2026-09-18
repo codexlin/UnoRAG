@@ -61,7 +61,7 @@
 			"files": {
 				"testdata/ab/contract-long.docx": "ae211166ed2bc6aeac9d1b01e2d26273131afc5def55b1b6c71361b05f03f45a",
 				"testdata/ab/crosstable-large.pdf": "3942f1be2ed07fc20549914d8199ac207b4bf91c1bbc826a38a7244f9477aa80",
-				"testdata/ab/golds.jsonl": "22fd9452361045af1a7d9d2598443641c8760f39dec75ac615056e17c77b8994",
+				"testdata/ab/golds.jsonl": "0269e65379da23e3b4e30d7c2487723b16da271ab861590e1d3d8163b901f46f",
 				"testdata/ab/mixed-charts.pdf": "47ee42c88072ee5a8dab754728dde8ececc58006ef81481afa5e9d358c7a17ce",
 				"testdata/ab/negative-golds.jsonl": "b5d45f99b0484f62a01cf7fdd2354743251ac18108bcafe1c0faca31793a3b69",
 				"testdata/ab/quote-big-80rows.docx": "49d7006ebc592d069474029abb828dc2e48806f59da758936eb41b0f55db596b",
