@@ -83,6 +83,14 @@ test("number and unit normalization is strict across Chinese and Arabic forms", 
 		factMatchesAnswer("三十六个月", "合同期限并非三十六个月，而是三十五个月"),
 		false,
 	);
+	assert.equal(
+		factMatchesAnswer(
+			"正常状态",
+			"占比最大的是正常状态；若仅统计非正常状态，则拥堵事件占比最大。",
+		),
+		true,
+	);
+	assert.equal(factMatchesAnswer("正常状态", "该类别并非正常状态。"), false);
 });
 
 test("golden parser fails closed on missing facts and duplicate stable IDs", () => {
