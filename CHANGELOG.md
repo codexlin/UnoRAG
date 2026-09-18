@@ -3,6 +3,23 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [0.2.1] - 2026-09-19
+
+UnoRAG 0.2.1 is a focused DOCX parser security maintenance release. It contains no public API,
+schema, retrieval, or product UI changes.
+
+### Security
+
+- Updated Mammoth from `1.12.2` to `1.12.3`. The upstream fix prevents excessive regular-expression
+  backtracking when a maliciously crafted DOCX contains an unterminated string with many escape
+  sequences, reducing the risk of parser CPU denial of service.
+
+### Upgrade notes
+
+- Existing `v0.2.0` deployments can use the normal digest-manifest upgrade path. No database
+  migration or configuration change is required.
+- Public `POST /api/v1/retrieve` and `POST /api/v1/ask` contracts are unchanged.
+
 ## [0.2.0] - 2026-09-19
 
 UnoRAG 0.2.0 turns complex-document quality from an aggregate test result into explicit release
@@ -215,6 +232,7 @@ in [`docs/INTEGRATION.md`](./docs/INTEGRATION.md).
 - Existing RC deployments use the forward-only upgrade and application rollback process in
   [`docs/RELEASE.md`](./docs/RELEASE.md). Database migrations are not rolled back.
 
+[0.2.1]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.1
 [0.2.0]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.0
 [0.1.4]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.4
 [0.1.2]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.2

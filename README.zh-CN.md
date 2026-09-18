@@ -139,8 +139,9 @@ UnoRAG 采用单一开源发行版，不设置付费功能墙。私有化部署�
 
 源代码已采用 [Apache License 2.0](./LICENSE)，GitHub 仓库已经公开。产品名称与 Logo 另受
 [商标使用政策](./TRADEMARKS.md)约束；项目欢迎 fork 和托管服务，但应使用独立品牌并如实说明与 UnoRAG 的关系。
-素材溯源、第三方通知、SBOM/provenance 与镜像签名已经完成；稳定版 [`v0.2.0`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.0)
-在现有产品与供应链门禁上增加了跨页表、低对比扫描、引用精度、解析 Provider、审计和删除恢复门禁。
+素材溯源、第三方通知、SBOM/provenance 与镜像签名已经完成；稳定版 [`v0.2.1`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.1)
+在 `v0.2.0` 的跨页表、低对比扫描、引用精度、解析 Provider、审计和删除恢复门禁之上，增加了 Mammoth
+DOCX 解析器安全修复。
 详见[当前状态](./docs/STATUS.md)、[ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) 和
 [开源发布准备审计](./docs/OPEN_SOURCE_READINESS.md)。
 
