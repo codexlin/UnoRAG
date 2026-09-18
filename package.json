@@ -117,7 +117,7 @@
 		"@biomejs/biome": "2.5.14",
 		"@langfuse/client": "5.11.1",
 		"@tailwindcss/postcss": "^4",
-		"@types/node": "^22.20.1",
+		"@types/node": "^22.20.3",
 		"@types/pg": "^8.23.1",
 		"@types/react": "^19",
 		"@types/react-dom": "^19.2.7",
