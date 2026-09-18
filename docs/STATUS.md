@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-09-15
+> 更新日期：2026-09-19
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -9,7 +9,7 @@
 ## 一句话结论
 
 UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部署、具备权限和文档生命周期的知识产品**。
-仓库已在 GitHub 公开并采用 Apache-2.0，当前稳定版 [`v0.1.4`](https://github.com/codexlin/UnoRAG/releases/tag/v0.1.4)
+仓库已在 GitHub 公开并采用 Apache-2.0，当前稳定版 [`v0.2.0`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.0)
 已经发布。素材溯源、第三方通知、SBOM/provenance、镜像漏洞扫描和 Cosign 签名均已工程化；COS 真链路、
 真实文件、浏览器权限、29 项隔离熔断、维护恢复、回退前滚和受控容量已在最终提交与香港参考环境复验。
 这不应扩大为所有部署拓扑的通用生产认证。当前默认交付是一位客户一套独立实例；Workspace 服务于客户
@@ -81,6 +81,9 @@ Next.js product + Knowledge API
 - CI 覆盖全历史密钥扫描、Web/TS Core、真实 PostgreSQL migration、镜像构建、Helm、依赖审计和品牌残留检查。
 - 现有证据覆盖空环境安装、真实文件、浏览器 RBAC、跨 Workspace 隔离、MinerU 302 实链路、故障恢复、
   备份恢复、不可变镜像升级/回滚和 tombstone 生命周期。
+- `v0.2.0` 质量门禁使用 7 份真实文件完成新鲜入库，36/36 正例与 5/5 拒答通过；跨页表 6/6、
+  低对比扫描 5/5，事实覆盖、文档召回、Citation precision 和证据类型均为 100%，跨文档引用为 0。
+  Provider scorecard 覆盖全部文件且无缺失报告或失败页，解析耗时直接来自任务阶段瀑布。
 - `v0.1.4` 已完成双 Registry 四镜像扫描、签名与 digest manifest 发布，并在香港参考环境完成
   `0.1.2 -> 0.1.4` 原位升级、完整产品 smoke、生命周期全零和真实浏览器运行中心复核。四个镜像均使用
   已修复的 Debian `libpcre2-8-0`，运行中心显示正确版本且无最近错误。结论见
@@ -110,7 +113,7 @@ Next.js product + Knowledge API
 
 ### P0：稳定版维护门禁
 
-`v0.1.4` 的源码标签、四镜像、digest manifest、校验和、release notes、供应链材料、香港环境升级与
+`v0.2.0` 的源码标签、四镜像、digest manifest、校验和、release notes、供应链材料、香港环境升级与
 公网 smoke 已完成。历史 PASS 不自动传递给新提交、新模型、ParserProvider 或客户环境；每个正式交付
 仍需执行自己的备份恢复、容量、Provider 和故障演练门禁。
 
@@ -133,7 +136,8 @@ Secret Scanning 和 Push Protection 均已开启。
 
 1. ChartIR 与图表数值理解尚未实现；`mixed-charts.pdf` 当前只验证叙事文字恢复。
 2. 应用层 BM25 + RRF 仅作为小中型知识库模式；Qdrant native sparse 是否值得迁移仍需客户语料与容量评测证明。
-3. Provider scorecard、更多客户问题类型、引用 precision 与复杂跨页表金标仍需扩充。
+3. Provider scorecard、Citation precision、复杂跨页表和低对比扫描已经成为发布硬门禁；后续按真实失败
+   样本继续扩充客户问题类型与 fixture，而不是为数量堆用例。
 4. 万行级表格 SQL 执行被有意排除；这类数据应优先接入源数据库或独立查询工具。
 
 ### 当前明确不做
@@ -147,8 +151,8 @@ Secret Scanning 和 Push Protection 均已开启。
 
 当前最有杠杆的工作不是继续增加通用 RAG 路径，而是把现有能力做得更稳定、更可解释：
 
-1. **质量回归扩充**：补复杂跨页表、低质量扫描、引用 precision 和 Provider scorecard，以失败样本驱动优化；
-2. **稳定性与恢复**：固化客户环境验收模板，覆盖容量、备份 restore、队列拥塞、Provider 降级和责任人；
+1. **稳定性与恢复**：固化客户环境验收模板，覆盖容量、备份 restore、队列拥塞、Provider 降级和责任人；
+2. **质量回归运营**：保留现有硬门禁，以线上失败样本扩充问题类型、文档布局和 Provider 基线；
 3. **按证据扩展检索**：只有客户语料证明收益后再推进 ChartIR、Qdrant native sparse 或更复杂执行路径；
 4. **企业身份后置**：OIDC/SSO、用户组管理和 SCIM 保留清晰边界，但不先于知识质量与稳定性投入。
 

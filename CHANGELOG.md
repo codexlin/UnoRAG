@@ -3,6 +3,46 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [0.2.0] - 2026-09-19
+
+UnoRAG 0.2.0 turns complex-document quality from an aggregate test result into explicit release
+contracts. It also completes the administrator-facing audit and recovery loop for library deletion.
+The public Knowledge API request and response contracts remain unchanged.
+
+### Added
+
+- Independent release scorecards for cross-page tables and low-contrast scanned documents. Missing
+  required dimensions, a single failed case, incorrect evidence type, or cross-document citation now
+  fails the release instead of being hidden by an average.
+- Parser-provider scorecards covering file completion, partial results, failed pages, warnings,
+  parsing P50/P95, downstream question quality, document recall, and citation precision.
+- Real-file golden coverage for both cross-page row boundaries and cross-page OCR facts: 36 positive
+  cases and 5 refusal cases across seven Markdown, DOCX, and PDF fixtures.
+- Library create, update, synchronous delete, asynchronous delete, failure, and retry audit events
+  linked by request ID, plus an administrator-visible idempotent recovery action for failed deletion.
+
+### Changed
+
+- Deterministic table lookup accepts a bounded list of up to 50 exact values, allowing one question
+  to retrieve adjacent rows split across pages or row-group records without weakening table evidence.
+- Citation precision is now a hard global gate. Any citation from a document other than the declared
+  golden source fails that case even when the answer text is otherwise correct.
+- Provider parsing latency falls back to the existing durable job-stage waterfall when a parser does
+  not report its own latency. Benign partial-parser warnings remain visible without blocking a release;
+  failed pages, missing reports, and non-completed jobs still fail closed.
+- Applied controlled patch updates for JSZip, Lucide React, Zod, Biome, and the Langfuse client. The
+  OpenTelemetry family remains coordinated to avoid incompatible mixed-version updates.
+
+### Validation
+
+- A fresh local production stack ingested all seven real files through Tencent COS, TypeScript
+  parsers, and the configured 302.AI MinerU provider. All 36 positive and 5 refusal cases passed.
+- Cross-page table and low-contrast scan scorecards both reached 100% fact coverage, document recall,
+  citation precision, and expected evidence-type accuracy; cross-document citation rate was 0%.
+- Provider reports covered all seven files with zero missing reports and zero failed pages. Observed
+  parsing P50 was 22.981 seconds for 302.AI MinerU and 262 milliseconds for native TypeScript parsing
+  in the recorded local environment.
+
 ## [0.1.4] - 2026-09-14
 
 UnoRAG 0.1.4 is a least-privilege and runtime-image security hotfix for the native operations
@@ -175,6 +215,7 @@ in [`docs/INTEGRATION.md`](./docs/INTEGRATION.md).
 - Existing RC deployments use the forward-only upgrade and application rollback process in
   [`docs/RELEASE.md`](./docs/RELEASE.md). Database migrations are not rolled back.
 
+[0.2.0]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.0
 [0.1.4]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.4
 [0.1.2]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.2
 [0.1.1]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.1
