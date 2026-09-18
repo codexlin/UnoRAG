@@ -53,7 +53,7 @@ const LookupPlanSchema = z
 		entity: z
 			.object({
 				column: ColumnNameSchema,
-				value: ScalarSchema,
+				value: z.union([ScalarSchema, z.array(ScalarSchema).min(1).max(50)]),
 				match: z.enum(["exact", "contains"]).default("exact"),
 			})
 			.strict(),

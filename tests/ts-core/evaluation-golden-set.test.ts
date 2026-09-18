@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+	buildProviderScorecard,
 	DEFAULT_RELEASE_GATES,
+	evaluateProviderGates,
+	evaluateQualityDimensionGates,
 	evaluateReleaseGates,
 	factMatchesAnswer,
 	parseGoldenJsonl,
@@ -10,6 +13,7 @@ import {
 	scoreNegativeCase,
 	scorePositiveCase,
 	summarizeEvaluation,
+	summarizeQualityDimensions,
 } from "../../src/evaluation";
 
 const GOLD_PATH = new URL("../../testdata/ab/golds.jsonl", import.meta.url);
@@ -18,9 +22,9 @@ const NEGATIVE_GOLD_PATH = new URL(
 	import.meta.url,
 );
 
-test("repository golden set has 33 valid atomic cases with stable IDs", async () => {
+test("repository golden set has 36 valid atomic cases with stable IDs", async () => {
 	const cases = parseGoldenJsonl(await readFile(GOLD_PATH, "utf8"));
-	assert.equal(cases.length, 33);
+	assert.equal(cases.length, 36);
 	assert.equal(new Set(cases.map((item) => item.id)).size, cases.length);
 	for (const item of cases) {
 		assert.ok(item.key_facts.length > 0);
@@ -33,6 +37,17 @@ test("repository golden set has 33 valid atomic cases with stable IDs", async ()
 	assert.equal(
 		parseGoldenJsonl(await readFile(GOLD_PATH, "utf8"))[0]?.id,
 		cases[0]?.id,
+	);
+	assert.equal(
+		cases.filter((item) => item.quality_dimensions.includes("cross_page_table"))
+			.length,
+		6,
+	);
+	assert.equal(
+		cases.filter((item) =>
+			item.quality_dimensions.includes("low_contrast_scan"),
+		).length,
+		5,
 	);
 });
 
@@ -114,7 +129,7 @@ test("deterministic scorer measures facts, citations, refusal, and release gates
 			selected_evidence_count: 2,
 		},
 	});
-	assert.equal(positive.ok, true);
+	assert.equal(positive.ok, false);
 	assert.equal(positive.factCoverage, 1);
 	assert.equal(positive.targetDocumentRank, 2);
 	assert.equal(positive.reciprocalRank, 0.5);
@@ -123,6 +138,20 @@ test("deterministic scorer measures facts, citations, refusal, and release gates
 	assert.equal(positive.retrievedEvidenceCount, 6);
 	assert.equal(positive.selectedEvidenceCount, 2);
 	assert.equal(positive.recordTypeMatched, true);
+	const cleanPositive = scorePositiveCase(gold, {
+		httpStatus: 200,
+		answer:
+			"服务期限持续至终止或解除之日，初始期限36个月，从2026年8月1日起算。",
+		refused: false,
+		citations: [{ filename: "/tmp/contract-long.docx", record_type: "text" }],
+		latencyMs: 120,
+		requestId: "request-2",
+		retrievalDebug: {
+			retrieved_evidence_count: 6,
+			selected_evidence_count: 2,
+		},
+	});
+	assert.equal(cleanPositive.ok, true);
 	assert.equal(
 		scorePositiveCase(gold, {
 			...positive,
@@ -168,18 +197,22 @@ test("deterministic scorer measures facts, citations, refusal, and release gates
 		latencyMs: 80,
 	});
 	assert.equal(negative.ok, true);
-	const summary = summarizeEvaluation([positive], [negative]);
+	const summary = summarizeEvaluation([cleanPositive], [negative]);
 	assert.equal(summary.positivePassRate, 1);
 	assert.equal(summary.refusalAccuracy, 1);
 	assert.equal(summary.documentRecallAtK, 1);
-	assert.equal(summary.documentMrr, 0.5);
-	assert.equal(summary.citationPrecision, 0.5);
+	assert.equal(summary.documentMrr, 1);
+	assert.equal(summary.citationPrecision, 1);
 	assert.equal(summary.meanRetrievedEvidenceCount, 6);
 	assert.equal(summary.meanSelectedEvidenceCount, 2);
 	assert.equal(summary.evidenceSelectionRate, 1 / 3);
 	assert.equal(summary.latencyP50Ms, 80);
 	assert.equal(summary.latencyP95Ms, 120);
 	assert.deepEqual(evaluateReleaseGates(summary), { ok: true, failures: [] });
+	assert.equal(
+		evaluateReleaseGates(summarizeEvaluation([positive], [negative])).ok,
+		false,
+	);
 
 	const failed = evaluateReleaseGates(
 		{ ...summary, meanFactCoverage: 0.9 },
@@ -187,6 +220,144 @@ test("deterministic scorer measures facts, citations, refusal, and release gates
 	);
 	assert.equal(failed.ok, false);
 	assert.match(failed.failures[0] ?? "", /meanFactCoverage/);
+});
+
+test("quality dimensions and parser providers have independent hard gates", () => {
+	const [crossPage, lowContrast] = parseGoldenJsonl(
+		[
+			{
+				file: "cross.pdf",
+				mode: "table_heavy",
+				question: "跨页表中的金额是多少？",
+				answer: "金额为42元。",
+				key_facts: ["42"],
+				expect_record_type: "table",
+				quality_dimensions: ["cross_page_table"],
+			},
+			{
+				file: "scan.pdf",
+				mode: "scan_ocr",
+				question: "扫描件中的金额是多少？",
+				answer: "金额为84元。",
+				key_facts: ["84"],
+				expect_record_type: "text",
+				quality_dimensions: ["low_contrast_scan"],
+			},
+		]
+			.map((item) => JSON.stringify(item))
+			.join("\n"),
+	);
+	assert.ok(crossPage && lowContrast);
+	const rows = [crossPage, lowContrast].map((gold, index) => ({
+		gold,
+		score: scorePositiveCase(gold, {
+			httpStatus: 200,
+			answer: gold.answer,
+			refused: false,
+			citations: [
+				{ filename: gold.file, record_type: gold.expect_record_type },
+			],
+			latencyMs: 10 + index,
+		}),
+	}));
+	const dimensions = summarizeQualityDimensions(rows);
+	assert.equal(dimensions.length, 2);
+	assert.deepEqual(evaluateQualityDimensionGates(dimensions), {
+		ok: true,
+		failures: [],
+	});
+
+	const jobs = {
+		"cross.pdf": {
+			status: "completed",
+			parserReport: {
+				parser: "mineru",
+				latency_ms: 150,
+				partial: false,
+				failed_pages: [],
+				warnings: [],
+				metrics: { provider: "302ai" },
+			},
+		},
+		"scan.pdf": {
+			status: "completed",
+			parserReport: {
+				parser: "mineru",
+				partial: true,
+				failed_pages: [],
+				warnings: ["low contrast"],
+			},
+			stageRuns: [
+				{ stage: "downloading", duration_ms: 25 },
+				{ stage: "parsing", duration_ms: 200 },
+				{ stage: "parsing", duration_ms: 50 },
+			],
+		},
+	};
+	const providers = buildProviderScorecard({
+		jobs,
+		positive: rows,
+		freshIngestion: true,
+	});
+	assert.equal(providers.status, "observed");
+	assert.deepEqual(
+		providers.providers.map((item) => item.provider),
+		["302ai", "mineru"],
+	);
+	assert.equal(
+		providers.providers.find((item) => item.provider === "mineru")
+			?.latencyP50Ms,
+		250,
+	);
+	assert.deepEqual(evaluateProviderGates({ scorecard: providers, jobs }), {
+		ok: true,
+		skipped: false,
+		failures: [],
+	});
+
+	const missing = buildProviderScorecard({
+		jobs: { "scan.pdf": { status: "completed", parserReport: null } },
+		positive: rows,
+		freshIngestion: true,
+	});
+	assert.equal(
+		evaluateProviderGates({
+			scorecard: missing,
+			jobs: { "scan.pdf": { status: "completed", parserReport: null } },
+		}).ok,
+		false,
+	);
+	const failedPageJobs = {
+		"scan.pdf": {
+			...jobs["scan.pdf"],
+			parserReport: {
+				...jobs["scan.pdf"].parserReport,
+				failed_pages: [2],
+			},
+		},
+	};
+	assert.equal(
+		evaluateProviderGates({
+			scorecard: buildProviderScorecard({
+				jobs: failedPageJobs,
+				positive: rows,
+				freshIngestion: true,
+			}),
+			jobs: failedPageJobs,
+		}).ok,
+		false,
+	);
+	assert.equal(
+		evaluateProviderGates({
+			scorecard: buildProviderScorecard({
+				jobs,
+				positive: rows,
+				freshIngestion: false,
+			}),
+			jobs,
+		}).skipped,
+		true,
+	);
 });
 
 test("image expectations accept the canonical figure record type", () => {

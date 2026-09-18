@@ -7,7 +7,7 @@ Langfuse 是可选的实验与分数视图，不是生产 Ask 的配置中心或
 
 | 内容 | 事实源 | 说明 |
 |---|---|---|
-| 正例黄金集 | `testdata/ab/golds.jsonl` | 33 条真实文件问题、原子事实和目标文件 |
+| 正例黄金集 | `testdata/ab/golds.jsonl` | 36 条真实文件问题、原子事实、目标文件和专项质量维度 |
 | 拒答黄金集 | `testdata/ab/negative-golds.jsonl` | 5 条资料未覆盖问题 |
 | Prompt | `src/core/ai/prompt-registry.ts` | 名称、语义版本、正文与 SHA-256 digest |
 | 评分逻辑 | `src/evaluation/` | 中文数字/单位归一化、事实覆盖、Citation、拒答和门禁 |
@@ -59,7 +59,7 @@ pnpm eval:live
 1. 检查健康并登录；
 2. 创建临时知识库并上传 7 份代表性真实文件；
 3. 等待每个 DBOS 入库任务终态；
-4. 执行 33 条正例和 5 条拒答用例；
+4. 执行 36 条正例和 5 条拒答用例；
 5. 写入 `testdata/ab/_e2e_out/ab_live_*.json|md`；
 6. 默认发起删除并轮询临时知识库消失，`--keep-library` 可保留现场。
 
@@ -72,12 +72,24 @@ pnpm eval:live
 | 正例通过率 | 100% |
 | 平均原子事实覆盖 | 100% |
 | 目标文档 Recall@K | 100% |
+| Citation precision | 100% |
 | 拒答准确率 | 100% |
 
-每条正例必须包含目标文档 Citation，且该目标文档必须提供黄金集声明的内容模态；平均分不能抵消单题
-无 Citation 或类型错误。黄金集的 `text` 模态兼容运行时 `text`、`chunk`、`section`，`table` 兼容
+每条正例必须只引用目标文档，且该目标文档必须提供黄金集声明的内容模态；混入任意其它文档的 Citation
+会直接让该题失败，平均分不能抵消单题无 Citation、跨文档 Citation 或类型错误。黄金集的 `text` 模态兼容运行时 `text`、`chunk`、`section`，`table` 兼容
 `table`、`table_summary`，`image` 由规范化的 `figure` Citation 支撑（兼容历史 `image` 值）。原子事实覆盖是带数字、单位、边界和
 显式否定保护的确定性词法门禁，不宣称替代语义正确性或人工复核。
+
+黄金集还通过 `quality_dimensions` 把复杂能力从总体分数中拆开。目前发布必须同时满足：
+
+| 专项维度 | 用例 | 独立门禁 |
+|---|---:|---|
+| `cross_page_table` | 6 | 单题通过、事实覆盖、目标文档召回、Citation precision 和记录类型均为 100% |
+| `low_contrast_scan` | 5 | 单题通过、事实覆盖、目标文档召回、Citation precision 和记录类型均为 100% |
+
+跨页表用例覆盖第 1→2 页和第 2→3 页边界、明细全表比较与汇总冲突；低对比扫描用例覆盖两页 OCR、
+编号、金额、百分比和跨页事实组合。若某个必需维度被意外从黄金集删除，发布同样失败，而不是把它当作
+零样本通过。
 
 Ask 将检索与最终证据分成三层：Retriever/Reranker 先产生候选证据，Judge 再从候选 ID 中选择能够
 完整支持回答的最小集合，最后只从本次已召回且同文档、同版本的记录中补齐结构化来源关系。来源补齐
@@ -92,6 +104,12 @@ source node 关系匹配，不会发起隐藏检索，也不会跨文档扩张 C
 
 门禁失败时命令退出码为 `1`；配置、清理或显式发布失败为 `2`。报告同时保留 MRR、跨文档 Citation 比例及
 P50/P95/最大延迟，当前不把延迟固定成跨硬件统一阈值。
+
+新鲜入库还会生成 `provider_scorecard`：按实际 parser/provider 汇总文件数、完成/部分成功、失败页、警告、
+解析 P50/P95，以及对应文件的问答通过率、事实覆盖、文档召回和 Citation precision。新鲜入库缺少可识别的
+`parser_report`、存在失败页或非完成任务都会阻止发布；`partial` 和 warnings 会展示在
+Provider scorecard 中供排查，但只有可确认的数据丢失才阻断发布。使用 `UNORAG_AB_LIBRARY_ID` 复用
+已有知识库时，Provider 门禁明确标记为 `skipped_reused_library`；它只用于 Ask 调试，不能冒充解析验收。
 
 本地 JSON 报告包含问题、回答和参考事实，应视为敏感测试产物。Runner 将输出目录设为 `0700`、文件
 设为 `0600`；报告目录已被 Git 忽略，操作者应按客户数据保留策略定期删除。

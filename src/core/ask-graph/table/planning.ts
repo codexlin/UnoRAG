@@ -6,7 +6,8 @@ const HEADER_CUE = /(?:表头|列名|哪些列|字段名|columns?)/i;
 const COUNT_CUE = /(?:多少|几)\s*(?:行|条|项|个)|(?:行|条|项)数/i;
 const SUM_CUE = /(?:合计|总计|总和|sum)/i;
 const AVERAGE_CUE = /(?:平均|均值|average|\bavg\b)/i;
-const ORDINAL_LOOKUP_CUE = /(?:序号|编号)\s*(?:为|是|#)?\s*(\d+)/i;
+const ORDINAL_LOOKUP_CUE =
+	/(?:序号|编号)\s*(?:为|是|#)?\s*(\d+(?:\s*[、,，和与及/]\s*\d+)*)/i;
 
 const FILTER_OPERATORS = [
 	{ cue: /(?:大于等于|不少于|不低于|至少|>=|≥)/i, operator: ">=" },
@@ -142,10 +143,18 @@ export function deriveDeterministicTablePlan(
 	if (ordinal?.[1]) {
 		const column = inferOrdinalColumn(table.headers);
 		if (!column) return null;
+		const values = ordinal[1]
+			.split(/\s*[、,，和与及/]\s*/u)
+			.filter(Boolean)
+			.slice(0, 50);
 		return {
 			...base,
 			operation: "lookup",
-			entity: { column, value: ordinal[1], match: "exact" },
+			entity: {
+				column,
+				value: values.length === 1 ? values[0] : values,
+				match: "exact",
+			},
 		};
 	}
 

@@ -57,6 +57,20 @@ test("deterministic planner covers explicit single-table golden operations", () 
 	);
 	assert.deepEqual(
 		deriveDeterministicTablePlan(
+			"序号36和37的项目名称与中标金额分别是什么？",
+			quote,
+		),
+		{
+			mode: "single",
+			tableId: "quote",
+			operation: "lookup",
+			entity: { column: "序号", value: ["36", "37"], match: "exact" },
+			selectColumns: [],
+			includeSummaryRows: false,
+		},
+	);
+	assert.deepEqual(
+		deriveDeterministicTablePlan(
 			"报价清单中哪些设备的单价超过10万元？请列出设备名称和大致单价。",
 			quote,
 		),
@@ -405,6 +419,25 @@ test("deterministic row answers disclose preview truncation", () => {
 });
 
 test("lookup, sort and topN are deterministic over irregular rows", () => {
+	const pageBoundaryLookup = executeTableQuery(
+		{
+			mode: "single",
+			tableId: "quote",
+			operation: "lookup",
+			entity: { column: "序号", value: ["2", "3"], match: "exact" },
+			selectColumns: ["序号", "设备名称"],
+			includeSummaryRows: false,
+		},
+		quote,
+	);
+	assert.equal(pageBoundaryLookup.status, "success");
+	assert.equal(pageBoundaryLookup.matchedCount, 2);
+	assert.deepEqual(
+		pageBoundaryLookup.matchedRows.map((row) => row["序号"]),
+		["2", "3"],
+	);
+	assert.equal(pageBoundaryLookup.evidence.length, 2);
+
 	const lookup = executeTableQuery(
 		{
 			mode: "single",

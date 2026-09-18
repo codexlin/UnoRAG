@@ -201,7 +201,18 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 			return;
 		}
 		if (request.method === "GET" && url.pathname.startsWith("/api/jobs/")) {
-			send(200, { status: "completed", stage: "done" });
+			send(200, {
+				status: "completed",
+				stage: "done",
+				parser_report: {
+					parser: "fixture-parser",
+					backend: "fixture-parser",
+					latency_ms: 25,
+					partial: false,
+					failed_pages: [],
+					warnings: [],
+				},
+			});
 			return;
 		}
 		if (request.method === "POST" && url.pathname === "/api/rag/v1/ask") {
@@ -277,7 +288,7 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		const result = await runLiveEvaluation(options);
 		assert.equal(result, 0);
 		assert.equal(uploads, 7);
-		assert.equal(asks, 38);
+		assert.equal(asks, 41);
 		assert.equal(deleted, false);
 		const repeatResult = await runLiveEvaluation({
 			...options,
@@ -285,7 +296,7 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		});
 		assert.equal(repeatResult, 0);
 		assert.equal(uploads, 7);
-		assert.equal(asks, 76);
+		assert.equal(asks, 82);
 		await cleanupEvaluationLibrary(options, "library-eval");
 		assert.equal(deleted, true);
 		assert.ok(authenticatedRequests > asks);
@@ -310,6 +321,11 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 			positive_cases: Array<{
 				response: { retrievalDebug?: Record<string, unknown> | null };
 			}>;
+			quality_scorecard: Array<{ dimension: string; passRate: number }>;
+			provider_scorecard: {
+				status: string;
+				providers: Array<{ provider: string; files: number }>;
+			};
 		};
 		assert.equal(report.release_gates.ok, true);
 		assert.match(report.build_fingerprint.git_commit, /^[0-9a-f]{40}$/u);
@@ -318,6 +334,8 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		assert.equal(report.build_fingerprint.image_digest, "sha256:test-image");
 		assert.equal(report.build_fingerprint.models.judge, "judge-test");
 		assert.ok(Object.keys(report.build_fingerprint.prompts).length >= 5);
+		assert.equal(report.quality_scorecard.length, 2);
+		assert.equal(report.provider_scorecard.status, "skipped_reused_library");
 		assert.deepEqual(report.positive_cases[0]?.response.retrievalDebug, {
 			total_duration_ms: 12.5,
 			stages: [{ stage: "retrieve", duration_ms: 3.5, ok: true }],
