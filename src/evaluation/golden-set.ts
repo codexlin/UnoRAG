@@ -139,14 +139,12 @@ export function factMatchesAnswer(fact: string, answer: string): boolean {
 	let pattern = escapeRegularExpression(normalizedFact);
 	if (/^\d/u.test(normalizedFact)) pattern = `(?<![\\d.])${pattern}`;
 	if (/\d$/u.test(normalizedFact)) pattern = `${pattern}(?![\\d.])`;
-	if (
-		new RegExp(`(?:并非|不是|不为|不等于|非)${pattern}`, "u").test(
-			normalizedAnswer,
-		)
-	) {
-		return false;
+	const negations = ["并非", "不是", "不为", "不等于", "非"];
+	for (const match of normalizedAnswer.matchAll(new RegExp(pattern, "gu"))) {
+		const prefix = normalizedAnswer.slice(0, match.index);
+		if (!negations.some((negation) => prefix.endsWith(negation))) return true;
 	}
-	return new RegExp(pattern, "u").test(normalizedAnswer);
+	return false;
 }
 
 function stableCaseId(input: z.infer<typeof GoldenCaseSchema>): string {
