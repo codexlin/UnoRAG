@@ -9,7 +9,7 @@
 ## 一句话结论
 
 UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部署、具备权限和文档生命周期的知识产品**。
-仓库已在 GitHub 公开并采用 Apache-2.0，当前稳定版 [`v0.2.0`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.0)
+仓库已在 GitHub 公开并采用 Apache-2.0，当前稳定版 [`v0.2.1`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.1)
 已经发布。素材溯源、第三方通知、SBOM/provenance、镜像漏洞扫描和 Cosign 签名均已工程化；COS 真链路、
 真实文件、浏览器权限、29 项隔离熔断、维护恢复、回退前滚和受控容量已在最终提交与香港参考环境复验。
 这不应扩大为所有部署拓扑的通用生产认证。当前默认交付是一位客户一套独立实例；Workspace 服务于客户
@@ -117,8 +117,9 @@ Next.js product + Knowledge API
 
 ### P0：稳定版维护门禁
 
-`v0.2.0` 的源码标签、四镜像、digest manifest、校验和、release notes、供应链材料、香港环境升级与
-公网 smoke 已完成。历史 PASS 不自动传递给新提交、新模型、ParserProvider 或客户环境；每个正式交付
+`v0.2.1` 在 `v0.2.0` 质量基线上加入 Mammoth DOCX 解析器的正则回溯 DoS 防护；源码标签、四镜像、
+digest manifest、校验和、release notes、供应链材料、香港环境升级与公网 smoke 已完成。历史 PASS
+不自动传递给新提交、新模型、ParserProvider 或客户环境；每个正式交付
 仍需执行自己的备份恢复、容量、Provider 和故障演练门禁。
 
 `UnoRAG` / `Unobyte` 的正式商标检索仍是维护者的外部法律风险事项，本仓库只记录工程来源和使用政策，
