@@ -9,6 +9,12 @@ updates:
       timezone: Asia/Shanghai
     open-pull-requests-limit: 5
     groups:
+      opentelemetry-minor-patch:
+        patterns:
+          - "@opentelemetry/*"
+        update-types:
+          - minor
+          - patch
       production-minor-patch:
         dependency-type: production
         update-types:
