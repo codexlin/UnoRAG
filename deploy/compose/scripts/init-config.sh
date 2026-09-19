@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Reconcile example configs into gitignored files (0600) without overwriting values.
-# New keys are appended, retired runtime keys are removed, and a legacy monolithic
-# deploy/compose/.env is imported at most once.
+# Reconcile example configs into gitignored files (0600) while preserving values.
+# Runtime settings are layered into common and advanced files, retired keys are
+# removed, and a legacy monolithic deploy/compose/.env is imported at most once.
 set -euo pipefail
 
 COMPOSE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,6 +22,7 @@ copy_if_missing() {
 
 echo "==> ensuring deploy/config examples → real files"
 copy_if_missing "${CONFIG_DIR}/runtime.env.example" "${CONFIG_DIR}/runtime.env"
+copy_if_missing "${CONFIG_DIR}/runtime.advanced.env.example" "${CONFIG_DIR}/runtime.advanced.env"
 copy_if_missing "${CONFIG_DIR}/runtime.secret.example" "${CONFIG_DIR}/runtime.secret"
 copy_if_missing "${CONFIG_DIR}/bootstrap.env.example" "${CONFIG_DIR}/bootstrap.env"
 
@@ -61,10 +62,6 @@ known_value_migrations = {
         "https://dashscope.aliyuncs.com/compatible-api/v1",
     ): "https://dashscope.aliyuncs.com/compatible-mode/v1",
 }
-renamed_runtime_keys = {
-    "MINERU_URL": "MINERU_SELF_HOSTED_URL",
-}
-
 def assignment(line):
     stripped = line.strip()
     if not stripped or stripped.startswith("#") or "=" not in line:
@@ -75,6 +72,71 @@ def assignment(line):
         return None
     return key, value
 
+def assignments(path):
+    return {
+        key: value
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if (parsed := assignment(line)) is not None
+        for key, value in [parsed]
+    }
+
+def render_example(example, values, extras=None):
+    output = []
+    known = set()
+    for line in example.read_text(encoding="utf-8").splitlines():
+        parsed = assignment(line)
+        if parsed is None:
+            output.append(line)
+            continue
+        key, default = parsed
+        known.add(key)
+        output.append(f"{key}={values.get(key, default)}")
+    extra_items = [
+        (key, value)
+        for key, value in (extras or {}).items()
+        if key not in known and key not in retired_runtime
+    ]
+    if extra_items:
+        output.extend(["", "# Preserved custom advanced settings."])
+        output.extend(f"{key}={value}" for key, value in sorted(extra_items))
+    return "\n".join(output).rstrip() + "\n"
+
+def reconcile_layered_runtime():
+    base_example = config_dir / "runtime.env.example"
+    advanced_example = config_dir / "runtime.advanced.env.example"
+    base_path = config_dir / "runtime.env"
+    advanced_path = config_dir / "runtime.advanced.env"
+    base_defaults = assignments(base_example)
+    advanced_defaults = assignments(advanced_example)
+    base_current = assignments(base_path)
+    advanced_current = assignments(advanced_path)
+
+    # Existing single-file runtime values win over newly copied advanced
+    # defaults. The retired MinerU alias is migrated once, then removed.
+    combined = {**advanced_current, **base_current}
+    legacy_mineru_url = combined.get("MINERU_URL", "").strip()
+    if legacy_mineru_url and not combined.get("MINERU_SELF_HOSTED_URL", "").strip():
+        combined["MINERU_SELF_HOSTED_URL"] = legacy_mineru_url
+    combined.pop("MINERU_URL", None)
+    for (key, old_value), replacement in known_value_migrations.items():
+        if combined.get(key, "").strip() == old_value:
+            combined[key] = replacement
+
+    known = set(base_defaults) | set(advanced_defaults) | retired_runtime
+    extras = {key: value for key, value in combined.items() if key not in known}
+    base_path.write_text(render_example(base_example, combined), encoding="utf-8")
+    advanced_path.write_text(
+        render_example(advanced_example, combined, extras), encoding="utf-8"
+    )
+    base_path.chmod(0o600)
+    advanced_path.chmod(0o600)
+    moved = sum(1 for key in base_current if key in advanced_defaults)
+    retired = sum(1 for key in base_current if key in retired_runtime)
+    print(
+        f"reconciled layered runtime: common={len(base_defaults)} "
+        f"advanced={len(advanced_defaults)} moved={moved} retired={retired}"
+    )
+
 def reconcile(name, retired):
     example = config_dir / f"{name}.example"
     target = config_dir / name
@@ -84,20 +146,6 @@ def reconcile(name, retired):
         if (parsed := assignment(line)) is not None
     ]
     target_lines = target.read_text(encoding="utf-8").splitlines()
-    current = {
-        key: value
-        for line in target_lines
-        if (parsed := assignment(line)) is not None
-        for key, value in [parsed]
-    }
-    renamed_values = {}
-    if name == "runtime.env":
-        for old_key, new_key in renamed_runtime_keys.items():
-            old_value = current.get(old_key, "").strip()
-            new_value = current.get(new_key, "").strip()
-            if old_value and not new_value:
-                renamed_values[new_key] = old_value
-
     output = []
     seen = set()
     removed = []
@@ -110,21 +158,13 @@ def reconcile(name, retired):
         if parsed is not None:
             key, value = parsed
             seen.add(key)
-            if key in renamed_values and not value.strip():
-                line = f"{key}={renamed_values[key]}"
-                migrated.append(key)
             replacement = known_value_migrations.get((key, value.strip()))
             if replacement is not None:
                 line = f"{key}={replacement}"
                 migrated.append(key)
         output.append(line)
 
-    added = [
-        (key, renamed_values.get(key, value))
-        for key, value in example_assignments
-        if key not in seen
-    ]
-    migrated.extend(key for key, _ in added if key in renamed_values)
+    added = [(key, value) for key, value in example_assignments if key not in seen]
     if added:
         if output and output[-1].strip():
             output.append("")
@@ -138,7 +178,7 @@ def reconcile(name, retired):
         f"retired={len(set(removed))} migrated={len(set(migrated))}"
     )
 
-reconcile("runtime.env", retired_runtime)
+reconcile_layered_runtime()
 reconcile("runtime.secret", retired_secrets)
 reconcile("bootstrap.env", set())
 PY
@@ -146,7 +186,6 @@ PY
 # One-time migration from legacy monolithic compose .env
 if [[ -f "$LEGACY_ENV" ]]; then
 	python3 - <<'PY' "$LEGACY_ENV" "$CONFIG_DIR"
-import re
 import sys
 from pathlib import Path
 
@@ -202,53 +241,9 @@ legacy = parse_env(legacy_path)
 llm_key = (legacy.get("LLM_API_KEY") or legacy.get("OPENAI_API_KEY") or legacy.get("DASHSCOPE_API_KEY") or "").strip()
 llm_base = (legacy.get("LLM_BASE_URL") or legacy.get("OPENAI_BASE_URL") or "").strip()
 
-runtime_keys = [
-    "APP_ENV", "COMPOSE_PROJECT_NAME", "HTTP_PORT", "UNORAG_BASE_URL",
-    "UNORAG_WEB_IMAGE", "UNORAG_WEB_MIGRATOR_IMAGE", "UNORAG_WEB_OPS_IMAGE",
-    "UNORAG_DBOS_WORKER_IMAGE",
-    "POSTGRES_IMAGE", "QDRANT_IMAGE", "REDIS_IMAGE", "CADDY_IMAGE",
-    "POSTGRES_DB", "POSTGRES_USER", "UNORAG_DBOS_DATABASE",
-    "QDRANT_URL", "QDRANT_COLLECTION", "REDIS_URL", "SESSION_MEMORY_TTL_SECONDS",
-    "AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS", "AUTH_LOGIN_RATE_LIMIT_PER_ACCOUNT",
-    "AUTH_LOGIN_RATE_LIMIT_PER_IP", "UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE",
-    "DOCUMENT_STORAGE_DRIVER", "COS_BUCKET", "COS_REGION", "COS_PUBLIC_BASE_URL",
-    "DOCUMENT_MAX_UPLOAD_BYTES",
-    "LLM_BASE_URL", "CHAT_MODEL", "AI_SUPPORTS_STRUCTURED_OUTPUTS",
-    "JUDGE_MODEL", "JUDGE_BASE_URL", "JUDGE_PROVIDER_NAME",
-    "JUDGE_SUPPORTS_STRUCTURED_OUTPUTS", "ASK_JUDGE_TIMEOUT_MS",
-    "ASK_JUDGE_MAX_ATTEMPTS", "ASK_JUDGE_MAX_OUTPUT_TOKENS",
-    "EMBEDDING_MODEL", "EMBEDDING_DIM", "EMBEDDING_TIMEOUT_MS",
-    "RERANK_BASE_URL", "RERANK_MODEL", "RERANK_TIMEOUT_MS",
-    "MINERU_PROVIDER", "MINERU_SELF_HOSTED_URL",
-    "MINERU_MODE", "MINERU_VERSION",
-    "PARSER_POLL_INTERVAL_MS", "PARSER_MAX_WAIT_MS",
-    "PARSER_RETRY_BACKOFF_MS",
-    "DATABASE_POOL_MAX", "LLM_MAX_INFLIGHT", "EMBEDDING_BATCH_SIZE",
-    "UNORAG_DBOS_LISTEN_QUEUES", "UNORAG_DBOS_APPLICATION_VERSION",
-    "DBOS_SYSTEM_DATABASE_POOL_SIZE", "DBOS_INGEST_LOCAL_CONCURRENCY",
-    "DBOS_INGEST_AUTO_CONCURRENCY", "DBOS_INGEST_MINERU_CONCURRENCY",
-    "DBOS_LIFECYCLE_CONCURRENCY",
-    "DBOS_CONTROL_POLL_MS", "DBOS_UPGRADE_DRAIN_TIMEOUT_SECONDS",
-    "ASK_RUN_MAINTENANCE_ENABLED", "ASK_RUN_MAINTENANCE_INTERVAL_MS",
-    "ASK_RUN_STALE_AFTER_MINUTES", "ASK_RUN_RETENTION_DAYS",
-    "ASK_RUN_MAINTENANCE_BATCH_SIZE",
-    "TOMBSTONE_MAINTENANCE_ENABLED", "TOMBSTONE_MAINTENANCE_INTERVAL_MS",
-    "TOMBSTONE_RETENTION_DAYS", "TOMBSTONE_MAINTENANCE_BATCH_SIZE",
-    "OBSERVABILITY_CYCLE_ENABLED", "OBSERVABILITY_CYCLE_INTERVAL_MS",
-    "OBSERVABILITY_ASK_MIN_SAMPLES", "OBSERVABILITY_ASK_FAILURE_RATE_WARNING",
-    "OBSERVABILITY_ASK_CITATION_COVERAGE_MIN",
-    "OBSERVABILITY_ASK_P95_WARNING_MS", "OBSERVABILITY_ASK_P95_CRITICAL_MS",
-    "OBSERVABILITY_ALERT_RECOVERY_CYCLES",
-    "EMAIL_PROVIDER", "OBSERVABILITY_ALERT_WEBHOOK_ENABLED",
-    "OBSERVABILITY_ALERT_EMAIL_ENABLED",
-    "OTEL_SDK_DISABLED", "OTEL_EXPORTER_OTLP_ENDPOINT",
-    "OTEL_TRACES_SAMPLER", "OTEL_TRACES_SAMPLER_ARG",
-    "OTEL_COLLECTOR_IMAGE", "PROMETHEUS_IMAGE", "ALERTMANAGER_IMAGE",
-    "GRAFANA_IMAGE", "LOKI_IMAGE", "TEMPO_IMAGE", "GRAFANA_PORT",
-    "GRAFANA_ADMIN_USER", "PROMETHEUS_RETENTION_TIME",
-    "PROMETHEUS_RETENTION_SIZE", "ALERTMANAGER_RETENTION_TIME",
-    "TEMPO_RETENTION_TIME", "LOKI_RETENTION_PERIOD",
-]
+common_keys = set(parse_env(config_dir / "runtime.env.example"))
+advanced_keys = set(parse_env(config_dir / "runtime.advanced.env.example"))
+runtime_keys = common_keys | advanced_keys
 secret_keys = [
     "POSTGRES_PASSWORD", "UNORAG_SESSION_SECRET",
     "LLM_API_KEY", "MINERU_API_KEY",
@@ -273,7 +268,10 @@ if llm_base:
 if "DOCUMENT_MAX_UPLOAD_BYTES" not in runtime_updates and legacy.get("MAX_UPLOAD_BYTES"):
     runtime_updates["DOCUMENT_MAX_UPLOAD_BYTES"] = legacy["MAX_UPLOAD_BYTES"]
 # DOCUMENT_STORAGE_ROOT is a Compose invariant (/var/lib/unorag/documents);
-# never migrate a host path into runtime.env as a tunable knob.
+# never migrate a host path into either runtime configuration layer.
+
+common_updates = {k: v for k, v in runtime_updates.items() if k in common_keys}
+advanced_updates = {k: v for k, v in runtime_updates.items() if k in advanced_keys}
 
 secret_updates = {k: legacy[k] for k in secret_keys if k in legacy and legacy[k]}
 if llm_key:
@@ -286,12 +284,18 @@ marker = config_dir / ".legacy-env-migrated"
 if marker.exists():
     print("skip legacy .env migration (already migrated once)")
 else:
-    r = upsert(config_dir / "runtime.env", runtime_updates, only_empty=True)
+    r = upsert(config_dir / "runtime.env", common_updates, only_empty=True)
+    a = upsert(
+        config_dir / "runtime.advanced.env", advanced_updates, only_empty=True
+    )
     s = upsert(config_dir / "runtime.secret", secret_updates, only_empty=True)
     b = upsert(config_dir / "bootstrap.env", bootstrap_updates, only_empty=True)
     marker.write_text("migrated\n", encoding="utf-8")
     marker.chmod(0o600)
-    print(f"migrated_from_legacy_env keys_runtime={len(r)} keys_secret={len(s)} keys_bootstrap={len(b)}")
+    print(
+        f"migrated_from_legacy_env keys_runtime={len(r)} "
+        f"keys_advanced={len(a)} keys_secret={len(s)} keys_bootstrap={len(b)}"
+    )
     print("note: legacy deploy/compose/.env left in place; scripts now prefer deploy/config/*")
 PY
 fi
@@ -323,6 +327,7 @@ unset BOOTSTRAP_PASSWORD BOOTSTRAP_TMP
 echo
 echo "next:"
 echo "  1. Edit ${CONFIG_DIR}/runtime.env"
-echo "  2. Fill ${CONFIG_DIR}/runtime.secret (database/session secrets >= 32 characters)"
-echo "  3. Review ${CONFIG_DIR}/bootstrap.env (one-time administrator credentials)"
-echo "  4. cd ${COMPOSE_DIR} && ./scripts/install.sh"
+echo "  2. Review ${CONFIG_DIR}/runtime.advanced.env only when tuning is required"
+echo "  3. Fill ${CONFIG_DIR}/runtime.secret (database/session secrets >= 32 characters)"
+echo "  4. Review ${CONFIG_DIR}/bootstrap.env (one-time administrator credentials)"
+echo "  5. cd ${COMPOSE_DIR} && ./scripts/install.sh"

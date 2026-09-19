@@ -10,6 +10,7 @@ source "${ROOT}/scripts/compose-env.sh"
 source "${ROOT}/scripts/release-env.sh"
 
 RUNTIME_ENV="$(cd "${ROOT}/../config" && pwd)/runtime.env"
+RUNTIME_ADVANCED_ENV="$(cd "${ROOT}/../config" && pwd)/runtime.advanced.env"
 STATE_DIR="${ROOT}/.upgrade-state"
 PREVIOUS_ENV="${STATE_DIR}/previous-images.env"
 MANIFEST=""
@@ -76,19 +77,19 @@ runtime_compose() {
 }
 
 write_runtime_pins() {
-	mk_release_write_runtime_pins "$RUNTIME_ENV" "$@"
+	mk_release_write_runtime_pins "$RUNTIME_ADVANCED_ENV" "$@"
 }
 
 capture_previous() {
 	mkdir -p "$STATE_DIR"
 	chmod 700 "$STATE_DIR"
 	{
-		echo "UNORAG_WEB_IMAGE=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE)"
-		echo "UNORAG_WEB_MIGRATOR_IMAGE=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
-		echo "UNORAG_WEB_OPS_IMAGE=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_OPS_IMAGE)"
-		echo "UNORAG_DBOS_WORKER_IMAGE=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE)"
-		echo "UNORAG_DBOS_APPLICATION_VERSION=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
-		echo "UNORAG_IMAGE_PLATFORM=$(mk_release_env_get "$RUNTIME_ENV" UNORAG_IMAGE_PLATFORM)"
+		echo "UNORAG_WEB_IMAGE=$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_WEB_IMAGE)"
+		echo "UNORAG_WEB_MIGRATOR_IMAGE=$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
+		echo "UNORAG_WEB_OPS_IMAGE=$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_WEB_OPS_IMAGE)"
+		echo "UNORAG_DBOS_WORKER_IMAGE=$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_DBOS_WORKER_IMAGE)"
+		echo "UNORAG_DBOS_APPLICATION_VERSION=$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+		echo "UNORAG_IMAGE_PLATFORM=$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_IMAGE_PLATFORM)"
 	} >"$PREVIOUS_ENV"
 	chmod 600 "$PREVIOUS_ENV"
 }
@@ -170,9 +171,10 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+"${ROOT}/scripts/init-config.sh"
 mk_require_runtime_config
 mk_validate_dbos_config
-[[ -f "$RUNTIME_ENV" ]] || die "missing $RUNTIME_ENV"
+[[ -f "$RUNTIME_ENV" && -f "$RUNTIME_ADVANCED_ENV" ]] || die "missing runtime configuration"
 
 if [[ "$OBSERVABILITY_MODE" == "auto" ]]; then
 	GRAFANA_PW="$(mk_config_get GRAFANA_ADMIN_PASSWORD || true)"
@@ -207,15 +209,15 @@ if [[ -n "$MANIFEST" ]]; then
 	export UNORAG_VERIFY_IMAGE_SIGNATURES UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP UNORAG_COSIGN_OIDC_ISSUER
 	export UNORAG_COSIGN_NEW_BUNDLE_FORMAT UNORAG_COSIGN_REGISTRY_REFERRERS_MODE
 elif [[ $FROM_RUNTIME -eq 1 ]]; then
-	WEB_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_IMAGE)"
-	MIGRATOR_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
-	OPS_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_WEB_OPS_IMAGE)"
-	WORKER_IMAGE="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_WORKER_IMAGE)"
-	DBOS_VERSION="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
-	IMAGE_PLATFORM="$(mk_release_resolve_platform "$RUNTIME_ENV")"
+	WEB_IMAGE="$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_WEB_IMAGE)"
+	MIGRATOR_IMAGE="$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_WEB_MIGRATOR_IMAGE)"
+	OPS_IMAGE="$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_WEB_OPS_IMAGE)"
+	WORKER_IMAGE="$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_DBOS_WORKER_IMAGE)"
+	DBOS_VERSION="$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+	IMAGE_PLATFORM="$(mk_release_resolve_platform "$RUNTIME_ADVANCED_ENV")"
 fi
 
-CURRENT_DBOS_VERSION="$(mk_release_env_get "$RUNTIME_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
+CURRENT_DBOS_VERSION="$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
 CURRENT_DBOS_VERSION="${CURRENT_DBOS_VERSION:-lifecycle-v2}"
 DBOS_VERSION="${DBOS_VERSION:-$CURRENT_DBOS_VERSION}"
 mk_release_assert_image UNORAG_WEB_IMAGE "$WEB_IMAGE"

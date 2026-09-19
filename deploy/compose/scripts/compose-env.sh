@@ -6,6 +6,7 @@
 # Optional deployment-specific overlay:
 #   UNORAG_COMPOSE_OVERLAY=./docker-compose.customer.yml mk_compose up -d
 # Persist it in deploy/config/runtime.env for backup/restore/upgrade scripts.
+# Advanced non-secret tuning lives in runtime.advanced.env.
 # Does NOT source secrets into the host shell.
 
 _mk_this_file() {
@@ -30,7 +31,7 @@ _MK_CONFIG_DIR="$(cd "${_MK_COMPOSE_DIR}/../config" && pwd)"
 mk_require_runtime_config() {
 	local missing=0
 	local f
-	for f in runtime.env runtime.secret; do
+	for f in runtime.advanced.env runtime.env runtime.secret; do
 		if [[ ! -f "${_MK_CONFIG_DIR}/${f}" ]]; then
 			echo "missing ${_MK_CONFIG_DIR}/${f}" >&2
 			missing=1
@@ -121,13 +122,15 @@ _mk_run_compose() {
 		"${_mk_compose_args[@]}"
 }
 
-# docker compose with runtime + secret only (bootstrap.env NOT required).
+# docker compose with advanced + common runtime + secret (bootstrap not required).
 mk_compose() {
 	mk_require_runtime_config || return 1
 	_mk_run_compose \
+		"${_MK_CONFIG_DIR}/runtime.advanced.env" \
 		"${_MK_CONFIG_DIR}/runtime.env" \
 		"${_MK_CONFIG_DIR}/runtime.secret" \
 		-- \
+		--env-file "${_MK_CONFIG_DIR}/runtime.advanced.env" \
 		--env-file "${_MK_CONFIG_DIR}/runtime.env" \
 		--env-file "${_MK_CONFIG_DIR}/runtime.secret" \
 		"$@"
@@ -139,9 +142,11 @@ mk_compose_observability() {
 	mk_require_runtime_config || return 1
 	local UNORAG_COMPOSE_BUILTIN_OVERLAY="${_MK_COMPOSE_DIR}/docker-compose.observability.yml"
 	_mk_run_compose \
+		"${_MK_CONFIG_DIR}/runtime.advanced.env" \
 		"${_MK_CONFIG_DIR}/runtime.env" \
 		"${_MK_CONFIG_DIR}/runtime.secret" \
 		-- \
+		--env-file "${_MK_CONFIG_DIR}/runtime.advanced.env" \
 		--env-file "${_MK_CONFIG_DIR}/runtime.env" \
 		--env-file "${_MK_CONFIG_DIR}/runtime.secret" \
 		--profile observability \
@@ -154,9 +159,11 @@ mk_compose_langfuse() {
 	local UNORAG_COMPOSE_BUILTIN_OVERLAY="${_MK_COMPOSE_DIR}/docker-compose.observability.yml"
 	local UNORAG_COMPOSE_BUILTIN_SECOND_OVERLAY="${_MK_COMPOSE_DIR}/docker-compose.langfuse.yml"
 	_mk_run_compose \
+		"${_MK_CONFIG_DIR}/runtime.advanced.env" \
 		"${_MK_CONFIG_DIR}/runtime.env" \
 		"${_MK_CONFIG_DIR}/runtime.secret" \
 		-- \
+		--env-file "${_MK_CONFIG_DIR}/runtime.advanced.env" \
 		--env-file "${_MK_CONFIG_DIR}/runtime.env" \
 		--env-file "${_MK_CONFIG_DIR}/runtime.secret" \
 		--profile observability \
@@ -171,10 +178,12 @@ mk_compose_bootstrap() {
 		return 1
 	fi
 	_mk_run_compose \
+		"${_MK_CONFIG_DIR}/runtime.advanced.env" \
 		"${_MK_CONFIG_DIR}/runtime.env" \
 		"${_MK_CONFIG_DIR}/runtime.secret" \
 		"${_MK_CONFIG_DIR}/bootstrap.env" \
 		-- \
+		--env-file "${_MK_CONFIG_DIR}/runtime.advanced.env" \
 		--env-file "${_MK_CONFIG_DIR}/runtime.env" \
 		--env-file "${_MK_CONFIG_DIR}/runtime.secret" \
 		--env-file "${_MK_CONFIG_DIR}/bootstrap.env" \
@@ -182,7 +191,7 @@ mk_compose_bootstrap() {
 }
 
 # Read a single key from split config files (for scripts that need a value).
-# Order: bootstrap.env → runtime.secret → runtime.env
+# Order: bootstrap.env → runtime.secret → runtime.env → runtime.advanced.env
 # Avoid variable name `line` — zsh can leak `line=''` into command substitution.
 mk_config_get() {
 	local _mk_key="$1"
@@ -190,7 +199,8 @@ mk_config_get() {
 	for _mk_file in \
 		"${_MK_CONFIG_DIR}/bootstrap.env" \
 		"${_MK_CONFIG_DIR}/runtime.secret" \
-		"${_MK_CONFIG_DIR}/runtime.env"; do
+		"${_MK_CONFIG_DIR}/runtime.env" \
+		"${_MK_CONFIG_DIR}/runtime.advanced.env"; do
 		[[ -f "$_mk_file" ]] || continue
 		_mk_value="$(
 			awk -F= -v k="${_mk_key}" '

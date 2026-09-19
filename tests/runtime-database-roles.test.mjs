@@ -117,6 +117,9 @@ test("Compose overlays are explicit and cannot change the default install", asyn
 test("config reconciliation separates DashScope model and rerank endpoints", async () => {
 	const initializer = await source("deploy/compose/scripts/init-config.sh");
 	const runtimeExample = await source("deploy/config/runtime.env.example");
+	const advancedExample = await source(
+		"deploy/config/runtime.advanced.env.example",
+	);
 
 	assert.match(initializer, /known_value_migrations/);
 	assert.match(
@@ -124,7 +127,7 @@ test("config reconciliation separates DashScope model and rerank endpoints", asy
 		/LLM_BASE_URL=https:\/\/dashscope\.aliyuncs\.com\/compatible-mode\/v1/,
 	);
 	assert.match(
-		runtimeExample,
+		advancedExample,
 		/RERANK_BASE_URL=https:\/\/dashscope\.aliyuncs\.com\/compatible-api\/v1/,
 	);
 });

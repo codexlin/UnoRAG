@@ -56,13 +56,25 @@ release manifest、平台预检和显式配置流程。模型凭据不会被内�
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh
-# 检查 ../config/runtime.env、runtime.secret、bootstrap.env
+# 检查 ../config/runtime.env、runtime.secret；高级调优按需修改
 ./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
 ./scripts/install.sh --manifest /path/to/release-acr.env
 # 仅 Apple Silicon 本地验收，并且 overlay 只设置 UnoRAG 产品服务：
 UNORAG_COMPOSE_OVERLAY=./docker-compose.local-amd64.yml \
   ./scripts/install.sh --manifest /path/to/release-acr.env --allow-platform-emulation
 ```
+
+配置按操作频率分层，脚本会以 `0600` 创建实际文件，并在升级时保留已有值：
+
+| 文件 | 用途 | 通常是否修改 |
+|---|---|---|
+| `runtime.env` | 端口、域名、存储、模型与核心数据服务，共 15 项 | 是 |
+| `runtime.advanced.env` | 镜像 pin、限流、MinerU、DBOS、维护周期与 OTel | 仅调优或发布时 |
+| `runtime.secret` | 数据库、Session、模型、COS 与通知凭据 | 是 |
+| `bootstrap.env` | 首次管理员与组织初始化 | 首次安装时 |
+
+旧版本把所有非敏感项放在 `runtime.env`。首次运行新版本的 `init-config.sh` 或
+`upgrade.sh` 会自动把高级项移入 `runtime.advanced.env`；未知的大写自定义项也会保留在高级层。
 
 正式安装必须使用发布 workflow 生成的 digest manifest。没有 `--manifest` 时安装脚本会构建当前
 工作树镜像，该模式只用于本地开发，不属于可交付安装。manifest 会同时固定四个镜像和 DBOS
@@ -98,7 +110,7 @@ Grafana 默认仅监听 `127.0.0.1:3300`，其它观测后端不发布宿主机�
 
 Redis 是 Web 的必需依赖，用于可撤销浏览器会话、登录/Public API 分布式限流和 Ask 短期记忆。它必须
 保持内网可达且不应发布宿主机端口；Redis 故障时安全相关入口 fail closed，已有业务数据仍以 PostgreSQL、
-对象存储和 Qdrant 为准。限流默认值位于 `runtime.env`，多 Web 副本共享同一 Redis 后无需额外的进程内
+对象存储和 Qdrant 为准。限流默认值位于 `runtime.advanced.env`，多 Web 副本共享同一 Redis 后无需额外的进程内
 计数器。
 
 新密码长度为 7–256 个字符，并且必须同时包含大写和小写字母。该规则适用于首次改密、邀请用户设置密码
@@ -110,7 +122,8 @@ Web 和 Worker 运行身份不得拥有 DDL 权限。
 
 Compose 的模型端点只配置 `runtime.env` 中的 `LLM_BASE_URL`；Helm 使用
 `config.llmBaseUrl`。两个部署入口都会映射为应用内部的 `OPENAI_BASE_URL`，不要再为 Web 和
-Worker 分别维护端点。自托管 MinerU 地址只使用 `MINERU_SELF_HOSTED_URL`；升级初始化会将历史
+Worker 分别维护端点。自托管 MinerU 地址只使用 `runtime.advanced.env` 中的
+`MINERU_SELF_HOSTED_URL`；升级初始化会将历史
 `MINERU_URL` 一次性迁移并删除旧键。
 
 安装程序依次启动基础设施、执行 Drizzle 迁移、配置数据库角色、初始化首个组织、Workspace
@@ -346,7 +359,9 @@ COS_SECRET_KEY=
 COS_SECURITY_TOKEN=
 ```
 
-从仓库模板复制：`runtime.env.example` → `runtime.env`，`runtime.secret.example` → `runtime.secret`。
+从仓库模板复制：`runtime.env.example` → `runtime.env`、
+`runtime.advanced.env.example` → `runtime.advanced.env`、
+`runtime.secret.example` → `runtime.secret`。
 Compose 安装脚本在 `DOCUMENT_STORAGE_DRIVER=cos` 时会拒绝缺少桶、地域或密钥的配置。
 
 #### 5. 对象存储冒烟

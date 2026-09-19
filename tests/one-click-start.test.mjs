@@ -92,7 +92,7 @@ test("one-click startup initializes secrets and rotates an explicit password on 
 		`#!/usr/bin/env bash
 set -euo pipefail
 mkdir -p "${sandbox}/deploy/config"
-for file in runtime.env runtime.secret; do
+for file in runtime.env runtime.advanced.env runtime.secret; do
 	[[ -f "${sandbox}/deploy/config/$file" ]] || : >"${sandbox}/deploy/config/$file"
 done
 if [[ ! -f "${sandbox}/deploy/config/bootstrap.env" ]]; then
