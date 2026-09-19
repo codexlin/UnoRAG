@@ -86,8 +86,10 @@ test("conversation repository applies scope to every read and append query", () 
 });
 
 test("conversation schema uses composite scope constraints and stable statuses", () => {
-	const schema = read("src/db/schema.ts");
+	const schema = read("src/db/schema-core.ts");
+	const facade = read("src/db/schema.ts");
 
+	assert.match(facade, /export \* from "\.\/schema-core"/);
 	assert.match(schema, /export const conversationThreads = appSchema\.table/);
 	assert.match(schema, /export const conversationTurns = appSchema\.table/);
 	assert.match(schema, /name: "threads_org_workspace_fk"/);
