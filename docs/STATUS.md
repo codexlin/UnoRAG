@@ -88,6 +88,10 @@ Next.js product + Knowledge API
   签名，并在香港参考环境完成 `0.1.4 -> 0.2.0` 原位升级。公网环境重新执行 7/7 真实文件、36/36
   正例与 5/5 拒答，生命周期全零，桌面 Landing 与 `390x844` 移动登录页无横向溢出或控制台错误。
   结论见 [v0.2.0 发布与香港环境验收](./evidence/2026-09-19-v0.2.0-release-acceptance.md)。
+- `v0.2.1` 已完成 Mammoth DOCX 解析安全升级、四镜像扫描与签名，并在香港环境完成 `0.2.0 -> 0.2.1`
+  原位升级。公网重新执行 7/7 真实文件、36/36 正例与 5/5 拒答；事实覆盖、Recall/MRR、Citation
+  precision 均为 100%，跨文档引用为 0，生命周期全零。评测中发现并修复了混合正向/否定语句的假失败，
+  结论见 [v0.2.1 安全维护发布验收](./evidence/2026-09-19-v0.2.1-security-release.md)。
 - `v0.1.4` 已完成双 Registry 四镜像扫描、签名与 digest manifest 发布，并在香港参考环境完成
   `0.1.2 -> 0.1.4` 原位升级、完整产品 smoke、生命周期全零和真实浏览器运行中心复核。四个镜像均使用
   已修复的 Debian `libpcre2-8-0`，运行中心显示正确版本且无最近错误。结论见
@@ -118,7 +122,7 @@ Next.js product + Knowledge API
 ### P0：稳定版维护门禁
 
 `v0.2.1` 在 `v0.2.0` 质量基线上加入 Mammoth DOCX 解析器的正则回溯 DoS 防护；源码标签、四镜像、
-digest manifest、校验和、release notes、供应链材料、香港环境升级与公网 smoke 已完成。历史 PASS
+digest manifest、校验和、release notes、供应链材料、香港环境升级、公网 smoke 与完整真实文件门禁均已完成。历史 PASS
 不自动传递给新提交、新模型、ParserProvider 或客户环境；每个正式交付
 仍需执行自己的备份恢复、容量、Provider 和故障演练门禁。
 
