@@ -183,6 +183,13 @@
       "when": 1789841090271,
       "tag": "0025_amazing_zombie",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1789854103445,
+      "tag": "0026_migrate_ask_profiles",
+      "breakpoints": true
     }
   ]
 }

@@ -26,7 +26,6 @@ import { injectAskOverrides } from "./ask-overrides-inject.mjs";
 import { resolveRequestSession } from "./auth/session";
 import { canWriteLibraries, findAuthorizedLibrary } from "./library-access";
 import {
-	isDeprecatedBrowserRagWritePath,
 	isInternalRagPath,
 	requiresLibraryWritePermission,
 } from "./rag-permissions.mjs";
@@ -128,16 +127,6 @@ async function proxyRagRequestInContext(
 	}
 	if (isInternalRagPath(path)) {
 		return Response.json({ detail: "RAG path not exposed" }, { status: 404 });
-	}
-	if (isDeprecatedBrowserRagWritePath(request.method, path)) {
-		return Response.json(
-			{
-				detail:
-					"legacy RAG write path retired; use the control plane document API",
-				code: "legacy_ingest_writes_disabled",
-			},
-			{ status: 410 },
-		);
 	}
 	if (
 		requiresLibraryWritePermission(request.method, path) &&

@@ -1,7 +1,6 @@
 /**
  * Business-intent ask policy → internal knobs.
  *
- * 权威映射需 Py↔JS 手工同步；改一侧必须改另一侧：
  * Public policy profiles are resolved here before entering the native Ask graph.
  *
  * Conflict rule (refusal/citation): take the stricter of answer_profile and
@@ -17,35 +16,6 @@ export const ASK_PUBLIC_KEYS = [
 	"retrieval_enhancement",
 	"session_memory_enabled",
 	"evidence_requirement",
-];
-
-/** Keys that uniquely identify the public contract (memory is shared with legacy). */
-export const ASK_PUBLIC_PROFILE_KEYS = [
-	"answer_profile",
-	"retrieval_enhancement",
-	"evidence_requirement",
-];
-
-/** Legacy knobs (one-release compat / resolved inject shape). */
-export const ASK_LEGACY_KEYS = [
-	"retrieve_top_k",
-	"answer_min_score",
-	"hybrid_enabled",
-	"rerank_enabled",
-	"citation_adjudicate_enabled",
-	"citation_adjudicate_absolute_floor",
-	"session_memory_enabled",
-	"session_memory_max_turns",
-];
-
-const LEGACY_ONLY_KEYS = [
-	"retrieve_top_k",
-	"answer_min_score",
-	"hybrid_enabled",
-	"rerank_enabled",
-	"citation_adjudicate_enabled",
-	"citation_adjudicate_absolute_floor",
-	"session_memory_max_turns",
 ];
 
 /** Matches API ASK_DEFAULTS for balanced profile. */
@@ -110,17 +80,6 @@ const EVIDENCE_FLOORS = {
 	},
 };
 
-export function isPublicAskPayload(raw) {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
-	return ASK_PUBLIC_PROFILE_KEYS.some((key) => Object.hasOwn(raw, key));
-}
-
-export function isLegacyAskPayload(raw) {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
-	const hasLegacy = LEGACY_ONLY_KEYS.some((key) => Object.hasOwn(raw, key));
-	return hasLegacy && !isPublicAskPayload(raw);
-}
-
 /**
  * @param {unknown} raw
  * @returns {typeof PUBLIC_ASK_DEFAULTS}
@@ -158,72 +117,6 @@ export function normalizePublicAsk(raw) {
 		retrieval_enhancement: enhancement,
 		session_memory_enabled: memory,
 		evidence_requirement: evidence,
-	};
-}
-
-/**
- * Map legacy numeric knobs → closest public profiles.
- * @param {unknown} raw
- */
-export function migrateLegacyAskToPublic(raw) {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-		return { ...PUBLIC_ASK_DEFAULTS };
-	}
-	if (isPublicAskPayload(raw)) {
-		return normalizePublicAsk(raw);
-	}
-
-	const topK = Number(
-		raw.retrieve_top_k ?? ASK_INTERNAL_DEFAULTS.retrieve_top_k,
-	);
-	const minScore = Number(
-		raw.answer_min_score ?? ASK_INTERNAL_DEFAULTS.answer_min_score,
-	);
-	const topKi = Number.isFinite(topK)
-		? Math.trunc(topK)
-		: ASK_INTERNAL_DEFAULTS.retrieve_top_k;
-	const minScoreF = Number.isFinite(minScore)
-		? minScore
-		: ASK_INTERNAL_DEFAULTS.answer_min_score;
-
-	let answer_profile = "balanced";
-	if (minScoreF >= 0.5 || topKi <= 4) answer_profile = "precise";
-	else if (minScoreF <= 0.3 || topKi >= 9) answer_profile = "exploratory";
-
-	const hybrid = raw.hybrid_enabled;
-	const rerank = raw.rerank_enabled;
-	let retrieval_enhancement = "auto";
-	if (hybrid === true && rerank === true) retrieval_enhancement = "on";
-	else if (hybrid === false && rerank === false) retrieval_enhancement = "off";
-	else if (hybrid === undefined && rerank === undefined)
-		retrieval_enhancement = "auto";
-	else if (hybrid || rerank) retrieval_enhancement = "on";
-	else retrieval_enhancement = "off";
-
-	const floor = Number(
-		raw.citation_adjudicate_absolute_floor ??
-			ASK_INTERNAL_DEFAULTS.citation_adjudicate_absolute_floor,
-	);
-	const floorF = Number.isFinite(floor)
-		? floor
-		: ASK_INTERNAL_DEFAULTS.citation_adjudicate_absolute_floor;
-	let evidence_requirement = "standard";
-	if (raw.citation_adjudicate_enabled === false || floorF <= 0.28) {
-		evidence_requirement = "relaxed";
-	} else if (floorF >= 0.4 || minScoreF >= 0.5) {
-		evidence_requirement = "strict";
-	}
-
-	const session_memory_enabled =
-		typeof raw.session_memory_enabled === "boolean"
-			? raw.session_memory_enabled
-			: PUBLIC_ASK_DEFAULTS.session_memory_enabled;
-
-	return {
-		answer_profile,
-		retrieval_enhancement,
-		session_memory_enabled,
-		evidence_requirement,
 	};
 }
 
@@ -278,22 +171,6 @@ export function resolveAskPolicy(raw, opts = {}) {
 	const question = opts.question ?? null;
 	const policyVersion =
 		typeof opts.policyVersion === "number" ? opts.policyVersion : null;
-
-	if (isLegacyAskPayload(raw)) {
-		const publicView = migrateLegacyAskToPublic(raw);
-		const merged = { ...ASK_INTERNAL_DEFAULTS };
-		for (const key of ASK_LEGACY_KEYS) {
-			if (Object.hasOwn(raw, key) && raw[key] != null) {
-				merged[key] = raw[key];
-			}
-		}
-		return {
-			public: publicView,
-			...merged,
-			retrieval_enhancement_resolved_from: publicView.retrieval_enhancement,
-			policy_version: policyVersion,
-		};
-	}
 
 	const publicView = normalizePublicAsk(raw);
 	const base = { ...ANSWER_PROFILE_BASE[publicView.answer_profile] };

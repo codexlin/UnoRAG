@@ -1,7 +1,6 @@
 /**
  * Library document_profile / scan_handling / parse_preference → internal knobs.
  *
- * 权威映射需 Py↔JS 手工同步；改一侧必须改另一侧：
  * Document policy profiles are resolved here before DBOS ingest is enqueued.
  *
  * OCR (scan_handling): auto = deploy default; disabled = strict text-only
@@ -145,7 +144,7 @@ export function rejectDeployOnlyParseFields(body) {
 		ok: false,
 		detail:
 			"deploy-only parser fields are not accepted on library settings " +
-			`(rejected: ${hit.join(", ")}). Configure via runtime.env / secrets.`,
+			`(rejected: ${hit.join(", ")}). Configure via advanced runtime settings or secrets.`,
 		fields: hit,
 	};
 }

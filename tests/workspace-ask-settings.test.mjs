@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
 	resolveDocumentPolicy,
@@ -7,10 +8,8 @@ import {
 import {
 	ASK_INTERNAL_DEFAULTS,
 	mergeAskPatch,
-	migrateLegacyAskToPublic,
 	PUBLIC_ASK_DEFAULTS,
 	resolveAskPolicy,
-	sanitizeStoredAsk,
 	validateAskPatch,
 } from "../src/lib/server/workspace-ask-settings.mjs";
 import { canManageMembers } from "../src/lib/server/workspace-permissions.mjs";
@@ -62,27 +61,21 @@ test("validateAskPatch rejects algorithm knobs and unknown keys", () => {
 	assert.equal(validateAskPatch(null).ok, false);
 });
 
-test("legacy numeric settings migrate to closest profiles", () => {
-	assert.deepEqual(
-		migrateLegacyAskToPublic({
-			retrieve_top_k: 4,
-			answer_min_score: 0.55,
-			hybrid_enabled: true,
-			rerank_enabled: true,
-			citation_adjudicate_absolute_floor: 0.45,
-		}),
-		{
-			answer_profile: "precise",
-			retrieval_enhancement: "on",
-			session_memory_enabled: true,
-			evidence_requirement: "strict",
-		},
+test("legacy Ask settings migrate once and preserve their previous value", () => {
+	const migration = readFileSync(
+		new URL("../drizzle/0026_migrate_ask_profiles.sql", import.meta.url),
+		"utf8",
 	);
-	assert.equal(
-		sanitizeStoredAsk({ retrieve_top_k: 10, answer_min_score: 0.2 })
-			.answer_profile,
-		"exploratory",
+	assert.match(migration, /WITH legacy_settings AS/);
+	assert.match(migration, /jsonb_build_object\(/);
+	assert.match(migration, /'answer_profile'/);
+	assert.match(migration, /'retrieval_enhancement'/);
+	assert.match(migration, /'evidence_requirement'/);
+	assert.match(
+		migration,
+		/ask_previous = COALESCE\(settings\.ask_previous, mapped\.previous_ask\)/,
 	);
+	assert.match(migration, /policy_version = settings\.policy_version \+ 1/);
 });
 
 test("evidence_requirement takes stricter refusal vs answer_profile", () => {

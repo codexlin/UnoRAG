@@ -222,7 +222,7 @@ export const workspaceSettings = appSchema.table("workspace_settings", {
 		.primaryKey()
 		.references(() => workspaces.id, { onDelete: "cascade" }),
 	ask: jsonb("ask").$type<Record<string, unknown>>().default({}).notNull(),
-	/** Previous public ask JSON after a change (minimal rollback aid). */
+	/** Previous ask JSON after a change or one-time profile migration. */
 	askPrevious: jsonb("ask_previous").$type<Record<string, unknown> | null>(),
 	policyVersion: integer("policy_version").default(1).notNull(),
 	updatedBy: uuid("updated_by").references(() => users.id, {

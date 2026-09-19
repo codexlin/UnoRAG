@@ -23,5 +23,9 @@ test("browser RAG boundary exposes only explicit TypeScript handlers", () => {
 	assert.doesNotMatch(proxy, /RAG_API_URL/);
 	assert.doesNotMatch(proxy, /createInternalRagHeaders/);
 	assert.doesNotMatch(proxy, /fetch\s*\(/);
+	assert.doesNotMatch(
+		proxy,
+		/legacy_ingest_writes_disabled|isDeprecatedBrowserRagWritePath/,
+	);
 	assert.match(proxy, /RAG path not exposed/);
 });

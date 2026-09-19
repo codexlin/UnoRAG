@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Shared Py↔JS policy parity fixtures. Both sides must emit identical sorted JSON for each case.",
+  "description": "Stable business policy fixtures for Ask and document ingestion.",
   "cases": [
     {
       "id": "ask-public-balanced-default",
@@ -73,58 +73,6 @@
       }
     },
     {
-      "id": "ask-legacy-pass-through",
-      "kind": "ask_resolve",
-      "input": {
-        "raw": {
-          "retrieve_top_k": 3,
-          "answer_min_score": 0.6,
-          "hybrid_enabled": true,
-          "rerank_enabled": false,
-          "citation_adjudicate_enabled": true,
-          "citation_adjudicate_absolute_floor": 0.5,
-          "session_memory_enabled": false,
-          "session_memory_max_turns": 5
-        },
-        "question": null,
-        "policy_version": null
-      }
-    },
-    {
-      "id": "ask-migrate-precise-on-strict",
-      "kind": "ask_migrate",
-      "input": {
-        "raw": {
-          "retrieve_top_k": 4,
-          "answer_min_score": 0.55,
-          "hybrid_enabled": true,
-          "rerank_enabled": true,
-          "citation_adjudicate_absolute_floor": 0.45
-        }
-      }
-    },
-    {
-      "id": "ask-migrate-exploratory-off-relaxed",
-      "kind": "ask_migrate",
-      "input": {
-        "raw": {
-          "retrieve_top_k": 10,
-          "answer_min_score": 0.25,
-          "hybrid_enabled": false,
-          "rerank_enabled": false,
-          "citation_adjudicate_enabled": false,
-          "citation_adjudicate_absolute_floor": 0.2
-        }
-      }
-    },
-    {
-      "id": "ask-migrate-empty",
-      "kind": "ask_migrate",
-      "input": {
-        "raw": null
-      }
-    },
-    {
       "id": "doc-auto-defaults",
       "kind": "document_resolve",
       "input": {
@@ -168,11 +116,6 @@
         "scan_handling": "weird",
         "parse_preference": "quality"
       }
-    },
-    {
-      "id": "override-keys-list",
-      "kind": "override_keys",
-      "input": {}
-    }
+	}
   ]
 }

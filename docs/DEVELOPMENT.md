@@ -113,7 +113,7 @@ pnpm db:check
 
 - `/api/rag/*` 是 Workspace 的同源接口与健康边界，不是 FastAPI 代理。
 - `legacy-sse.ts` 维持当前 Workspace SSE 事件契约。
-- 旧 Ask 设置迁移在首个 TS-only 升级窗口内继续读取历史客户配置。
+- 旧 Ask 数值设置由 `0026_migrate_ask_profiles.sql` 一次性转换；运行时只读取业务 profile。
 - PyMuPDF 标签只用于展示历史 `parser_report`；新 PDF 使用 LiteParse 或 MinerU。
 - `init-config.sh` 负责升级时迁移或移除已经退役的环境变量。
 - 历史 Drizzle 迁移即使包含旧 outbox/Python 名称也必须保持不变。
