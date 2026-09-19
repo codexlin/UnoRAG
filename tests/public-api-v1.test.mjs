@@ -18,10 +18,7 @@ import {
 	publicSuccessKeySet,
 	upstreamErrorMessage,
 } from "../src/lib/server/public-api-v1-core.mjs";
-import {
-	checkPublicApiRateLimit,
-	resetPublicApiRateLimitBuckets,
-} from "../src/lib/server/public-api-v1-rate-limit.mjs";
+import { publicApiRateLimitPerMinute } from "../src/lib/server/public-api-v1-rate-limit.mjs";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contract = JSON.parse(
@@ -305,25 +302,21 @@ test("OpenAPI artifact matches the enforced v1 surface", () => {
 	assert.equal(JSON.stringify(contract).includes("ask_overrides"), false);
 });
 
-test("optional process-local rate limit returns frozen 429 shape inputs", () => {
-	resetPublicApiRateLimitBuckets();
-	const previous = process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
-	process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE = "2";
-	try {
-		assert.equal(checkPublicApiRateLimit("key-a").ok, true);
-		assert.equal(checkPublicApiRateLimit("key-a").ok, true);
-		const limited = checkPublicApiRateLimit("key-a");
-		assert.equal(limited.ok, false);
-		assert.ok(limited.retryAfterSeconds >= 1);
-		assert.equal(checkPublicApiRateLimit("key-b").ok, true);
-	} finally {
-		if (previous === undefined) {
-			delete process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
-		} else {
-			process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE = previous;
-		}
-		resetPublicApiRateLimitBuckets();
-	}
+test("public API rate limit configuration is bounded and explicit", () => {
+	assert.equal(publicApiRateLimitPerMinute({}), 0);
+	assert.equal(
+		publicApiRateLimitPerMinute({
+			UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE: "120",
+		}),
+		120,
+	);
+	assert.throws(
+		() =>
+			publicApiRateLimitPerMinute({
+				UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE: "-1",
+			}),
+		/integer from 0/,
+	);
 });
 
 test("gateway enforces request IDs, limits, timeout, audit, and response projection", () => {
@@ -336,7 +329,7 @@ test("gateway enforces request IDs, limits, timeout, audit, and response project
 	assert.match(integration, /PUBLIC_API_UPSTREAM_TIMEOUT_MS/);
 	assert.match(integration, /projectPublicApiSuccess/);
 	assert.match(integration, /requestId:\s*input\.requestId/);
-	assert.match(integration, /checkPublicApiRateLimit/);
+	assert.match(integration, /await checkPublicApiRateLimit/);
 	assert.match(integration, /knowledge\.api\.usage/);
 	assert.match(integration, /knowledge\.retrieve/);
 	assert.match(integration, /knowledge\.ask/);

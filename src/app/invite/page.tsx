@@ -99,7 +99,8 @@ function InviteForm() {
 			setSubmitting(false);
 			return;
 		}
-		router.replace("/app");
+		const result = (await response.json()) as { session_created?: boolean };
+		router.replace(result.session_created === false ? "/login" : "/app");
 		router.refresh();
 	}
 

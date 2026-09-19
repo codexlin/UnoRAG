@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 
+import { logger } from "@/lib/observability";
 import {
 	changeLocalPassword,
-	createSessionToken,
+	replacePrincipalSessionToken,
 	resolveRequestSession,
 	SESSION_COOKIE,
 	sessionCookieOptions,
@@ -47,11 +48,21 @@ export async function POST(request: Request) {
 		);
 	}
 
+	let token: string;
+	try {
+		token = await replacePrincipalSessionToken(result.identity);
+	} catch (error) {
+		logger.error({
+			event: "auth.password.session_replace_failed",
+			component: "redis",
+			error,
+		});
+		return NextResponse.json(
+			{ detail: "password changed; sign in again" },
+			{ status: 503, headers: { "Retry-After": "5" } },
+		);
+	}
 	const response = NextResponse.json(result.identity);
-	response.cookies.set(
-		SESSION_COOKIE,
-		createSessionToken(result.identity),
-		sessionCookieOptions(),
-	);
+	response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
 	return response;
 }

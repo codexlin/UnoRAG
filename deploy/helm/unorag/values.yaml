@@ -202,6 +202,10 @@ config:
   mineruUrl: ""
   databasePoolMax: "10"
   documentMaxUploadBytes: "52428800"
+  authLoginRateLimitWindowSeconds: "900"
+  authLoginRateLimitPerAccount: "10"
+  authLoginRateLimitPerIp: "60"
+  publicApiRateLimitPerMinute: "120"
   emailProvider: none
   observabilityAlertWebhookEnabled: "false"
   observabilityAlertEmailEnabled: "false"

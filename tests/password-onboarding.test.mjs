@@ -48,7 +48,7 @@ test("password change has an authenticated API and clears the bootstrap gate", a
 
 	assert.match(route, /allowPasswordChangeRequired: true/);
 	assert.match(route, /changeLocalPassword/);
-	assert.match(route, /createSessionToken\(result\.identity\)/);
+	assert.match(route, /replacePrincipalSessionToken\(result\.identity\)/);
 	assert.match(session, /validatePassword\(input\.newPassword\)/);
 	assert.match(session, /mustChangePassword: false/);
 	assert.match(session, /auth\.password_changed/);

@@ -114,7 +114,7 @@ flowchart TB
     Users["Workspace / customer applications"] --> Web["Next.js product and Knowledge API"]
     Web --> PG[("PostgreSQL")]
     Web --> QD[("Qdrant")]
-    Web --> Redis[("Redis · short-term Ask memory")]
+    Web --> Redis[("Redis · sessions, rate limits, Ask memory")]
     Worker["DBOS worker"] --> PG
     Worker --> QD
     Worker --> Files[("Document storage")]

@@ -96,6 +96,11 @@ Grafana 默认仅监听 `127.0.0.1:3300`，其它观测后端不发布宿主机�
 也会重新进入该流程。重复安装不会覆盖已有凭据。需要重置时，先更新 `bootstrap.env` 中的密码，再运行
 `deploy/compose/scripts/rotate-admin-password.sh`。
 
+Redis 是 Web 的必需依赖，用于可撤销浏览器会话、登录/Public API 分布式限流和 Ask 短期记忆。它必须
+保持内网可达且不应发布宿主机端口；Redis 故障时安全相关入口 fail closed，已有业务数据仍以 PostgreSQL、
+对象存储和 Qdrant 为准。限流默认值位于 `runtime.env`，多 Web 副本共享同一 Redis 后无需额外的进程内
+计数器。
+
 新密码长度为 7–256 个字符，并且必须同时包含大写和小写字母。该规则适用于首次改密、邀请用户设置密码
 和管理员主动重置；升级不会强制改写已有用户密码。
 

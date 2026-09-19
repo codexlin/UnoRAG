@@ -8,6 +8,7 @@ import {
 	useContext,
 	useMemo,
 } from "react";
+import { toast } from "sonner";
 
 import {
 	allowsCap,
@@ -37,7 +38,11 @@ export function SessionProvider({
 	const caps = useMemo(() => permissionsFor(identity), [identity]);
 
 	const signOut = useCallback(async () => {
-		await fetch("/api/auth/session", { method: "DELETE" });
+		const response = await fetch("/api/auth/session", { method: "DELETE" });
+		if (!response.ok) {
+			toast.error("退出失败，请稍后重试");
+			return;
+		}
 		router.replace("/login");
 		router.refresh();
 	}, [router]);

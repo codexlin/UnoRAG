@@ -109,7 +109,7 @@ flowchart TB
     Users["Workspace / 客户应用"] --> Web["Next.js 产品与 Knowledge API"]
     Web --> PG[("PostgreSQL")]
     Web --> QD[("Qdrant")]
-    Web --> Redis[("Redis · Ask 短期记忆")]
+    Web --> Redis[("Redis · 会话、限流、Ask 短期记忆")]
     Worker["DBOS Worker"] --> PG
     Worker --> QD
     Worker --> Files[("文档存储")]

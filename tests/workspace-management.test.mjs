@@ -105,7 +105,7 @@ test("workspace switch rehydrates membership and rotates the signed session", ()
 	assert.match(route, /resolveRequestSession/);
 	assert.match(route, /validateWorkspaceId/);
 	assert.match(route, /resolveWorkspaceSwitchIdentity/);
-	assert.match(route, /createSessionToken\(nextIdentity\)/);
+	assert.match(route, /rotateSessionToken\(nextIdentity, currentClaims\)/);
 	assert.doesNotMatch(route, /organization_id/);
 	assert.match(service, /hydrateIdentity\(/);
 	assert.match(service, /nextIdentity\.tenantId !== currentIdentity\.tenantId/);

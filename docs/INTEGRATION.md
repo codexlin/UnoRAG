@@ -148,7 +148,8 @@ tenant、generation 或内部 retrieval debug。
 
 成功和错误响应均返回 `X-Request-Id` 与 `X-UnoRAG-Api-Version: 1`。JSON body 最大 65,536
 bytes，问句最大 4,000 字符，`top_k` 范围 1-50，请求预算最多 60 秒。多副本限流应由
-Redis 或 Ingress 统一执行。
+UnoRAG 内置 Redis 固定窗口统一执行；Ingress 可再增加边缘总流量保护，但不能替代按 Service Key 的
+产品限流。
 
 ## 版本边界
 

@@ -31,7 +31,7 @@ import {
 	projectPublicApiSuccess,
 	publicApiErrorPayload,
 } from "./public-api-v1-core.mjs";
-import { checkPublicApiRateLimit } from "./public-api-v1-rate-limit.mjs";
+import { checkPublicApiRateLimit } from "./public-api-v1-distributed-rate-limit";
 import {
 	type AuthenticatedServiceKey,
 	authenticateServiceKey,
@@ -281,7 +281,24 @@ export async function handlePublicApiV1(input: {
 		});
 	}
 
-	const rate = checkPublicApiRateLimit(auth.key.id);
+	let rate: Awaited<ReturnType<typeof checkPublicApiRateLimit>>;
+	try {
+		rate = await checkPublicApiRateLimit(auth.key.id);
+	} catch (error) {
+		logger.error({
+			event: "knowledge.api.rate_limit_unavailable",
+			component: "redis",
+			error,
+		});
+		return publicErrorResponse({
+			status: 503,
+			code: "service_unavailable",
+			message: "Knowledge API rate limit is unavailable",
+			requestId,
+			retryable: true,
+			retryAfter: "5",
+		});
+	}
 	if (!rate.ok) {
 		return publicErrorResponse({
 			status: 429,
