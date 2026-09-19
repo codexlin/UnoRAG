@@ -148,10 +148,10 @@ The source code is licensed under [Apache License 2.0](./LICENSE), and the GitHu
 Product names and logos are governed separately by the [trademark policy](./TRADEMARKS.md); forks and
 hosted services remain welcome when they use distinct branding and describe their UnoRAG relationship truthfully.
 Asset provenance, third-party notices, SBOM/provenance, and image signing are in place. Stable
-[`v0.2.1`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.1) adds the Mammoth DOCX parser
-security fix on top of the `v0.2.0` cross-page table,
-low-contrast scans, citation precision, parser providers, audit, and deletion recovery in addition to
-the existing product and supply-chain checks. See the [current status](./docs/STATUS.md),
+[`v0.2.2`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.2) hardens native alert recovery,
+distributed login and API limits, immediate session revocation, and the production configuration
+contract on top of the existing complex-document, citation, lifecycle, and supply-chain gates. See
+the [current status](./docs/STATUS.md),
 [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) and the
 [open-source readiness audit](./docs/OPEN_SOURCE_READINESS.md).
 
