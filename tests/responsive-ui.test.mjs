@@ -69,23 +69,31 @@ test("user menu keeps release metadata inside a Base UI menu group", () => {
 });
 
 test("libraries use a mobile picker and preserve the desktop registry", () => {
-	const libraries = readFileSync(
+	const panel = readFileSync(
 		path.join(root, "src/components/app/libraries-panel.tsx"),
 		"utf8",
 	);
+	const registry = readFileSync(
+		path.join(root, "src/components/app/libraries/library-registry.tsx"),
+		"utf8",
+	);
+	const ledger = readFileSync(
+		path.join(root, "src/components/app/libraries/library-document-ledger.tsx"),
+		"utf8",
+	);
 
-	assert.match(libraries, /flex-col md:flex-row/);
-	assert.match(libraries, /hidden w-72[\s\S]*md:flex/);
-	assert.match(libraries, /<LibraryCombobox[\s\S]*label="当前知识库"/);
-	assert.match(libraries, /className="border-b[^"]*md:hidden"/);
-	assert.doesNotMatch(libraries, /资料空间/);
-	assert.match(libraries, /max-w-full overflow-x-auto rounded-md border/);
-	assert.match(libraries, /table-fixed md:table-auto/);
-	assert.match(libraries, /hidden md:table-cell/);
-	assert.match(libraries, /w-24 md:w-auto/);
-	assert.match(libraries, /aria-label="搜索文档"/);
-	assert.match(libraries, /documentSummary\.ready/);
-	assert.match(libraries, /filteredDocuments\.map/);
+	assert.match(panel, /flex-col md:flex-row/);
+	assert.match(registry, /hidden w-72[\s\S]*md:flex/);
+	assert.match(registry, /<LibraryCombobox[\s\S]*label="当前知识库"/);
+	assert.match(registry, /className="border-b[^"]*md:hidden"/);
+	assert.doesNotMatch(`${panel}${registry}${ledger}`, /资料空间/);
+	assert.match(ledger, /max-w-full overflow-x-auto rounded-md border/);
+	assert.match(ledger, /table-fixed md:table-auto/);
+	assert.match(ledger, /hidden md:table-cell/);
+	assert.match(ledger, /w-24 md:w-auto/);
+	assert.match(ledger, /aria-label="搜索文档"/);
+	assert.match(ledger, /summary\.ready/);
+	assert.match(ledger, /filteredDocuments\.map/);
 });
 
 test("deleted archive library requires an explicit replacement selection", () => {
@@ -122,7 +130,7 @@ test("Ask keeps the initial health probe distinct from an outage", () => {
 
 test("replace copy matches desired to active atomic version behavior", () => {
 	const libraries = readFileSync(
-		path.join(root, "src/components/app/libraries-panel.tsx"),
+		path.join(root, "src/components/app/libraries/library-dialogs.tsx"),
 		"utf8",
 	);
 	assert.match(libraries, /新版本索引成功前继续服务当前活跃版本/);
