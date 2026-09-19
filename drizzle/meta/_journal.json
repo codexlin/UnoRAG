@@ -176,6 +176,13 @@
       "when": 1788946511278,
       "tag": "0024_lovely_mephistopheles",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1789841090271,
+      "tag": "0025_amazing_zombie",
+      "breakpoints": true
     }
   ]
 }

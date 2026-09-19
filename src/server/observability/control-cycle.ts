@@ -2,7 +2,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
 import * as schema from "@/db/schema";
-
+import { type AlertPolicy, resolveAlertPolicy } from "./alert-policy";
 import {
 	claimAlertDeliveries,
 	configuredAlertDestinations,
@@ -89,10 +89,12 @@ export async function runObservabilityCycle(
 		workerId: string;
 		now?: Date;
 		environment?: Record<string, string | undefined>;
+		policy?: AlertPolicy;
 	} = { workerId: "dbos-control" },
 ): Promise<ObservabilityCycleResult> {
 	const now = input.now ?? new Date();
 	const environment = input.environment ?? process.env;
+	const policy = input.policy ?? resolveAlertPolicy(environment);
 	const base: ObservabilityCycleResult = {
 		evaluated: false,
 		workspaces: 0,
@@ -136,8 +138,9 @@ export async function runObservabilityCycle(
 			const result = await reconcileWorkspaceAlerts(pool, {
 				organizationId: scope.organization_id,
 				workspaceId: scope.workspace_id,
-				signals: deriveOperationalSignals(snapshot, providers),
+				signals: deriveOperationalSignals(snapshot, providers, policy),
 				destinations,
+				recoveryCycles: policy.recoveryCycles,
 				now,
 			});
 			counts.opened += result.opened;

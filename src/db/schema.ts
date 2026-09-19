@@ -812,7 +812,7 @@ export const observabilityAlertTransitions = appSchema.table(
 		),
 		check(
 			"observability_alert_transitions_transition_check",
-			sql`${table.transition} in ('opened', 'resolved', 'reopened')`,
+			sql`${table.transition} in ('opened', 'escalated', 'resolved', 'reopened')`,
 		),
 	],
 );

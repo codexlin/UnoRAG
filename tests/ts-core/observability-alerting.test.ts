@@ -5,7 +5,10 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 
 import pg from "pg";
-
+import {
+	DEFAULT_ALERT_POLICY,
+	resolveAlertPolicy,
+} from "../../src/server/observability/alert-policy";
 import {
 	claimAlertDeliveries,
 	configuredAlertDestinations,
@@ -26,13 +29,13 @@ function snapshot(): OperationsSnapshot {
 			stuck_after_minutes: 10,
 		},
 		ask: {
-			total: 10,
-			completed: 7,
+			total: 14,
+			completed: 10,
 			refused: 1,
-			failed: 2,
+			failed: 3,
 			cancelled: 0,
 			running: 0,
-			latency_ms: { p50: 500, p95: 9_000 },
+			latency_ms: { p50: 500, p95: 26_000 },
 			stage_latency_ms: [],
 			without_citations: 2,
 		},
@@ -118,7 +121,79 @@ test("operational rules create deterministic scoped signal codes", () => {
 		],
 	);
 	assert.equal(signals.at(-1)?.severity, "critical");
+	assert.equal(
+		signals.find((signal) => signal.code === "ask.p95_latency")?.severity,
+		"critical",
+	);
 	assert.doesNotMatch(JSON.stringify(signals), /authorization|api[_-]?key/i);
+});
+
+test("Ask SLO rules require enough samples and honor bounded policy overrides", () => {
+	const lowSample = snapshot();
+	lowSample.ask = {
+		...lowSample.ask,
+		total: 4,
+		completed: 3,
+		refused: 0,
+		failed: 1,
+		latency_ms: { p50: 500, p95: 60_000 },
+		without_citations: 2,
+	};
+	lowSample.jobs = {
+		...lowSample.jobs,
+		running: 0,
+		delete_failed: 0,
+		dead: 0,
+		stuck: 0,
+	};
+	assert.deepEqual(
+		deriveOperationalSignals(lowSample, {
+			checked_at: new Date().toISOString(),
+			items: [],
+		}),
+		[],
+	);
+
+	const policy = resolveAlertPolicy({
+		OBSERVABILITY_ASK_MIN_SAMPLES: "2",
+		OBSERVABILITY_ASK_FAILURE_RATE_WARNING: "0.9",
+		OBSERVABILITY_ASK_CITATION_COVERAGE_MIN: "0.1",
+		OBSERVABILITY_ASK_P95_WARNING_MS: "10000",
+		OBSERVABILITY_ASK_P95_CRITICAL_MS: "20000",
+		OBSERVABILITY_ALERT_RECOVERY_CYCLES: "3",
+	});
+	assert.deepEqual(policy, {
+		askMinSamples: 2,
+		askFailureRateWarning: 0.9,
+		askCitationCoverageMinimum: 0.1,
+		askP95WarningMs: 10_000,
+		askP95CriticalMs: 20_000,
+		recoveryCycles: 3,
+	});
+	const signals = deriveOperationalSignals(
+		{
+			...lowSample,
+			ask: {
+				...lowSample.ask,
+				latency_ms: { p50: 500, p95: 15_000 },
+			},
+		},
+		{ checked_at: new Date().toISOString(), items: [] },
+		policy,
+	);
+	assert.deepEqual(
+		signals.map(({ code, severity }) => ({ code, severity })),
+		[{ code: "ask.p95_latency", severity: "warning" }],
+	);
+	assert.throws(
+		() =>
+			resolveAlertPolicy({
+				OBSERVABILITY_ASK_P95_WARNING_MS: "20000",
+				OBSERVABILITY_ASK_P95_CRITICAL_MS: "20000",
+			}),
+		/CRITICAL_MS must be greater/,
+	);
+	assert.deepEqual(resolveAlertPolicy({}), DEFAULT_ALERT_POLICY);
 });
 
 test("notification configuration stores only destination and config digests", () => {
@@ -166,8 +241,10 @@ test("alert lifecycle is durable, deduplicated and workspace isolated", {
 	const signal = deriveOperationalSignals(snapshot(), {
 		checked_at: new Date().toISOString(),
 		items: [],
-	})[0];
+	}).find((item) => item.code === "ask.p95_latency");
 	assert.ok(signal);
+	const warningSignal = { ...signal, severity: "warning" as const };
+	const criticalSignal = { ...signal, severity: "critical" as const };
 	const destinations = [
 		{
 			channel: "webhook" as const,
@@ -189,13 +266,19 @@ test("alert lifecycle is durable, deduplicated and workspace isolated", {
 		await reconcileWorkspaceAlerts(pool, {
 			organizationId,
 			workspaceId,
-			signals: [signal],
+			signals: [warningSignal],
 			destinations,
 		});
 		await reconcileWorkspaceAlerts(pool, {
 			organizationId,
 			workspaceId,
-			signals: [signal],
+			signals: [criticalSignal],
+			destinations,
+		});
+		await reconcileWorkspaceAlerts(pool, {
+			organizationId,
+			workspaceId,
+			signals: [warningSignal],
 			destinations,
 		});
 		let counts = await pool.query<{
@@ -214,9 +297,32 @@ test("alert lifecycle is durable, deduplicated and workspace isolated", {
 		);
 		assert.deepEqual(counts.rows[0], {
 			alerts: "1",
-			transitions: "1",
-			deliveries: "1",
+			transitions: "2",
+			deliveries: "2",
 		});
+		assert.equal(
+			(
+				await pool.query<{ severity: string }>(
+					`SELECT severity
+					 FROM app.observability_alerts
+					 WHERE organization_id = $1 AND workspace_id = $2`,
+					[organizationId, workspaceId],
+				)
+			).rows[0]?.severity,
+			"critical",
+		);
+		assert.deepEqual(
+			(
+				await pool.query<{ transition: string }>(
+					`SELECT transition
+					 FROM app.observability_alert_transitions
+					 WHERE organization_id = $1 AND workspace_id = $2
+					 ORDER BY observed_at, id`,
+					[organizationId, workspaceId],
+				)
+			).rows.map((row) => row.transition),
+			["opened", "escalated"],
+		);
 
 		await reconcileWorkspaceAlerts(pool, {
 			organizationId,
@@ -233,7 +339,7 @@ test("alert lifecycle is durable, deduplicated and workspace isolated", {
 		await reconcileWorkspaceAlerts(pool, {
 			organizationId,
 			workspaceId,
-			signals: [signal],
+			signals: [warningSignal],
 			destinations,
 		});
 		const state = await pool.query<{
@@ -263,8 +369,8 @@ test("alert lifecycle is durable, deduplicated and workspace isolated", {
 		);
 		assert.deepEqual(counts.rows[0], {
 			alerts: "1",
-			transitions: "3",
-			deliveries: "3",
+			transitions: "4",
+			deliveries: "4",
 		});
 		const other = await pool.query<{ count: string }>(
 			`SELECT count(*) FROM app.observability_alerts
@@ -360,12 +466,41 @@ test("signed webhook delivery retries with one stable event payload", {
 			await deliverClaimedAlert(pool, second, { environment }),
 			"sent",
 		);
-		assert.equal(requests.length, 2);
+		await reconcileWorkspaceAlerts(pool, {
+			organizationId,
+			workspaceId,
+			signals: [],
+			destinations: configuredAlertDestinations(environment),
+		});
+		await reconcileWorkspaceAlerts(pool, {
+			organizationId,
+			workspaceId,
+			signals: [],
+			destinations: configuredAlertDestinations(environment),
+		});
+		const resolved = (
+			await claimAlertDeliveries(pool, {
+				workerId: "delivery-test",
+				limit: 1,
+				now: new Date(Date.now() + 31_000),
+			})
+		)[0];
+		assert.ok(resolved);
+		assert.equal(
+			await deliverClaimedAlert(pool, resolved, { environment }),
+			"sent",
+		);
+		assert.equal(requests.length, 3);
 		assert.equal(requests[0]?.body, requests[1]?.body);
 		assert.equal(
 			requests[0]?.headers["x-unorag-event-id"],
 			requests[1]?.headers["x-unorag-event-id"],
 		);
+		assert.notEqual(
+			requests[1]?.headers["x-unorag-event-id"],
+			requests[2]?.headers["x-unorag-event-id"],
+		);
+		assert.equal(JSON.parse(requests[2]?.body ?? "{}").transition, "resolved");
 		for (const request of requests) {
 			const timestamp = request.headers["x-unorag-timestamp"];
 			assert.ok(timestamp);
@@ -377,6 +512,20 @@ test("signed webhook delivery retries with one stable event payload", {
 			);
 			assert.doesNotMatch(request.body, /integration-secret|127\.0\.0\.1/);
 		}
+		await reconcileWorkspaceAlerts(pool, {
+			organizationId,
+			workspaceId,
+			signals: [],
+			destinations: configuredAlertDestinations(environment),
+		});
+		assert.deepEqual(
+			await claimAlertDeliveries(pool, {
+				workerId: "delivery-test",
+				limit: 1,
+				now: new Date(Date.now() + 31_000),
+			}),
+			[],
+		);
 	} finally {
 		await pool
 			.query("DELETE FROM app.organizations WHERE id = $1", [organizationId])

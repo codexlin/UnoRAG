@@ -1,0 +1,2 @@
+ALTER TABLE "app"."observability_alert_transitions" DROP CONSTRAINT "observability_alert_transitions_transition_check";--> statement-breakpoint
+ALTER TABLE "app"."observability_alert_transitions" ADD CONSTRAINT "observability_alert_transitions_transition_check" CHECK ("app"."observability_alert_transitions"."transition" in ('opened', 'escalated', 'resolved', 'reopened'));

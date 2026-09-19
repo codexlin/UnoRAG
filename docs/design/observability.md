@@ -193,8 +193,10 @@ fail-soft 写入”制造不可知的数据丢失；写入失败应有结构化�
 PostgreSQL/Redis/Qdrant 主动探测，以及
 LLM、Embedding、Rerank、LiteParse、MinerU 配置健康。LLM 等付费 Provider 不做周期真实调用；真实调用
 错误仍由 Ask/Job 诊断反映。错误详情提供阶段瀑布、相关业务 ID、技术错误和确定性的恢复建议；管理操作
-另由独立审计页面按操作者、动作、资源和 `request_id` 查询。告警 open、连续两轮健康后的 resolved、reopen 和投递均持久化，转换与投递
-快照在同一事务生成；Webhook 使用稳定事件 ID 与 HMAC，邮件使用 Resend 幂等键。投递超时、退避和
+另由独立审计页面按操作者、动作、资源和 `request_id` 查询。Ask 统计告警先满足最小样本，再按可配置的
+失败率、引用覆盖和 P95 warning/critical 阈值判断；任务与 Provider 故障仍立即生效。告警 open、连续健康
+周期后的 resolved、reopen、warning → critical 的 escalated 和投递均持久化，转换与投递快照在同一事务生成；Webhook 使用稳定事件 ID 与
+HMAC，邮件使用 Resend 幂等键。投递超时、退避和
 最终失败只改变诊断状态，不阻塞 Ask、检索、入库或生命周期任务。
 
 ### 3.2 第二层：可选 Ops Stack
