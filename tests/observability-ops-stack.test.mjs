@@ -222,7 +222,7 @@ test("Helm exposes fail-closed external OTLP integration", (t) => {
 		"unorag",
 		chart,
 		"--set",
-		"config.openaiBaseUrl=http://model.invalid/v1",
+		"config.llmBaseUrl=http://model.invalid/v1",
 	];
 	const disabled = spawnSync("helm", baseArgs, { encoding: "utf8" });
 	assert.equal(disabled.status, 0, disabled.stderr);

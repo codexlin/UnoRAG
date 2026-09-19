@@ -242,10 +242,14 @@ export async function readProviderHealth(
 		environment,
 		"EXTERNAL_PARSER_ALLOWED",
 	);
+	const mineruProvider =
+		environment.MINERU_PROVIDER?.trim().toLowerCase() || "self_hosted";
 	const mineruConfigured =
-		configured(environment.MINERU_SELF_HOSTED_URL) ||
-		configured(environment.MINERU_URL) ||
-		(configured(environment.MINERU_API_KEY) && externalParserAllowed);
+		mineruProvider === "self_hosted"
+			? configured(environment.MINERU_SELF_HOSTED_URL)
+			: mineruProvider === "302ai"
+				? configured(environment.MINERU_API_KEY) && externalParserAllowed
+				: false;
 	return {
 		checked_at: (options.now ?? new Date()).toISOString(),
 		items: [

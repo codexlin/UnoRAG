@@ -38,7 +38,7 @@ NEXT_TELEMETRY_DISABLED=1 pnpm build
 ```bash
 source deploy/compose/scripts/compose-env.sh
 mk_compose config >/tmp/unorag-compose.yml
-helm lint deploy/helm/unorag --set config.openaiBaseUrl=http://llm
+helm lint deploy/helm/unorag --set config.llmBaseUrl=http://llm
 git diff --check
 ```
 

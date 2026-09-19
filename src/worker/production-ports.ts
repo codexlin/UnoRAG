@@ -715,9 +715,7 @@ export async function createWorkerPorts(
 		maxConcurrency: positiveInteger("LITEPARSE_MAX_CONCURRENCY", 2),
 	});
 	const minerUProvider = configuredMinerUProvider();
-	const minerUUrl =
-		process.env.MINERU_SELF_HOSTED_URL?.trim() ||
-		process.env.MINERU_URL?.trim();
+	const minerUUrl = process.env.MINERU_SELF_HOSTED_URL?.trim();
 	const externalParserAllowed = enabled("EXTERNAL_PARSER_ALLOWED", false);
 	const minerU =
 		minerUProvider === "302ai"

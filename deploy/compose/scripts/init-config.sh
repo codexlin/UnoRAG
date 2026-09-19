@@ -43,6 +43,7 @@ retired_runtime = {
     "LIFECYCLE_LOCAL_CAPACITY",
     "LIFECYCLE_MINERU_CAPACITY",
     "UNORAG_DBOS_CLEANUP_ENABLED",
+    "MINERU_URL",
 }
 retired_secrets = {
     "UNORAG_INTERNAL_SECRET",
@@ -59,6 +60,9 @@ known_value_migrations = {
         "LLM_BASE_URL",
         "https://dashscope.aliyuncs.com/compatible-api/v1",
     ): "https://dashscope.aliyuncs.com/compatible-mode/v1",
+}
+renamed_runtime_keys = {
+    "MINERU_URL": "MINERU_SELF_HOSTED_URL",
 }
 
 def assignment(line):
@@ -79,11 +83,26 @@ def reconcile(name, retired):
         for line in example.read_text(encoding="utf-8").splitlines()
         if (parsed := assignment(line)) is not None
     ]
+    target_lines = target.read_text(encoding="utf-8").splitlines()
+    current = {
+        key: value
+        for line in target_lines
+        if (parsed := assignment(line)) is not None
+        for key, value in [parsed]
+    }
+    renamed_values = {}
+    if name == "runtime.env":
+        for old_key, new_key in renamed_runtime_keys.items():
+            old_value = current.get(old_key, "").strip()
+            new_value = current.get(new_key, "").strip()
+            if old_value and not new_value:
+                renamed_values[new_key] = old_value
+
     output = []
     seen = set()
     removed = []
     migrated = []
-    for line in target.read_text(encoding="utf-8").splitlines():
+    for line in target_lines:
         parsed = assignment(line)
         if parsed is not None and parsed[0] in retired:
             removed.append(parsed[0])
@@ -91,13 +110,21 @@ def reconcile(name, retired):
         if parsed is not None:
             key, value = parsed
             seen.add(key)
+            if key in renamed_values and not value.strip():
+                line = f"{key}={renamed_values[key]}"
+                migrated.append(key)
             replacement = known_value_migrations.get((key, value.strip()))
             if replacement is not None:
                 line = f"{key}={replacement}"
                 migrated.append(key)
         output.append(line)
 
-    added = [(key, value) for key, value in example_assignments if key not in seen]
+    added = [
+        (key, renamed_values.get(key, value))
+        for key, value in example_assignments
+        if key not in seen
+    ]
+    migrated.extend(key for key, _ in added if key in renamed_values)
     if added:
         if output and output[-1].strip():
             output.append("")
@@ -192,7 +219,7 @@ runtime_keys = [
     "ASK_JUDGE_MAX_ATTEMPTS", "ASK_JUDGE_MAX_OUTPUT_TOKENS",
     "EMBEDDING_MODEL", "EMBEDDING_DIM", "EMBEDDING_TIMEOUT_MS",
     "RERANK_BASE_URL", "RERANK_MODEL", "RERANK_TIMEOUT_MS",
-    "MINERU_PROVIDER", "MINERU_SELF_HOSTED_URL", "MINERU_URL",
+    "MINERU_PROVIDER", "MINERU_SELF_HOSTED_URL",
     "MINERU_MODE", "MINERU_VERSION",
     "PARSER_POLL_INTERVAL_MS", "PARSER_MAX_WAIT_MS",
     "PARSER_RETRY_BACKOFF_MS",

@@ -168,6 +168,7 @@ external:
 config:
   appEnv: production
   chatModel: qwen-plus
+  aiSupportsStructuredOutputs: "true"
   # Empty keeps the Judge on chatModel; set only after evaluation gates pass.
   judgeModel: ""
   judgeBaseUrl: ""
@@ -184,6 +185,9 @@ config:
   embeddingDim: "1024"
   embeddingBatchSize: "10"
   embeddingTimeoutMs: "15000"
+  retrievalHybridEnabled: "false"
+  retrievalRerankEnabled: "false"
+  retrievalCorpusLimit: "10000"
   rerankModel: qwen3-rerank
   rerankTimeoutMs: "10000"
   mineruProvider: self_hosted
@@ -195,12 +199,12 @@ config:
   parserPollIntervalMs: "250"
   parserMaxWaitMs: "900000"
   parserRetryBackoffMs: "2000,5000,15000,30000"
-  # OpenAI-compatible model endpoint used by the native TypeScript runtime.
-  openaiBaseUrl: ""
+  # Canonical deployment input. Templates map it to the application's
+  # OPENAI_BASE_URL environment variable.
   llmBaseUrl: ""
   rerankBaseUrl: ""
-  mineruUrl: ""
   databasePoolMax: "10"
+  sessionMemoryTtlSeconds: "3600"
   documentMaxUploadBytes: "52428800"
   authLoginRateLimitWindowSeconds: "900"
   authLoginRateLimitPerAccount: "10"

@@ -28,6 +28,7 @@ x-build-args: &build-args
   UNORAG_BUILD_TIME: ${UNORAG_BUILD_TIME:-}
 
 x-dbos-environment: &dbos-environment
+  APP_ENV: ${APP_ENV:-production}
   DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://unorag_worker_login:${UNORAG_WORKER_DB_PASSWORD:?UNORAG_WORKER_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
   # Compose interpolates inactive profiles. The sentinel keeps legacy installs
   # parseable; the DBOS process rejects it if the profile is actually started.
@@ -95,6 +96,7 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: ${WEB_DATABASE_URL:-postgresql://unorag_web_login:${UNORAG_WEB_DB_PASSWORD:?UNORAG_WEB_DB_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
       LLM_MAX_INFLIGHT: ${LLM_MAX_INFLIGHT:-4}
@@ -216,7 +218,6 @@ services:
       MINERU_302_BASE_URL: ${MINERU_302_BASE_URL:-https://api.302.ai}
       EXTERNAL_PARSER_ALLOWED: ${EXTERNAL_PARSER_ALLOWED:-false}
       MINERU_SELF_HOSTED_URL: ${MINERU_SELF_HOSTED_URL:-}
-      MINERU_URL: ${MINERU_URL:-}
       MINERU_API_KEY: ${MINERU_API_KEY:-}
       MINERU_MODE: ${MINERU_MODE:-auto}
       MINERU_VERSION: ${MINERU_VERSION:-2.5}
@@ -279,7 +280,6 @@ services:
       TS_RETRIEVAL_RERANK_ENABLED: ${TS_RETRIEVAL_RERANK_ENABLED:-false}
       EXTERNAL_PARSER_ALLOWED: ${EXTERNAL_PARSER_ALLOWED:-false}
       MINERU_SELF_HOSTED_URL: ${MINERU_SELF_HOSTED_URL:-}
-      MINERU_URL: ${MINERU_URL:-}
       MINERU_API_KEY: ${MINERU_API_KEY:-}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-none}
       EMAIL_FROM: ${EMAIL_FROM:-}

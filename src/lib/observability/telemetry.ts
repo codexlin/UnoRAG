@@ -65,7 +65,7 @@ export function initializeTelemetry(
 			resource: resourceFromAttributes({
 				"service.name": serviceName,
 				"service.namespace": "unorag",
-				"service.version": environment.UNORAG_RELEASE_VERSION?.trim() || "dev",
+				"service.version": environment.UNORAG_VERSION?.trim() || "dev",
 				"deployment.environment.name":
 					environment.APP_ENV?.trim() || "development",
 			}),
