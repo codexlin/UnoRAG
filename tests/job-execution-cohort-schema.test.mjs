@@ -11,8 +11,10 @@ function read(relativePath) {
 }
 
 test("jobs schema declares durable execution ownership fields", () => {
-	const schema = read("src/db/schema.ts");
+	const schema = read("src/db/schema-operations.ts");
+	const facade = read("src/db/schema.ts");
 
+	assert.match(facade, /export \* from "\.\/schema-operations"/);
 	assert.match(
 		schema,
 		/executionEngine: varchar\("execution_engine", \{ length: 16 \}\)/,
