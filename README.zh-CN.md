@@ -89,7 +89,7 @@ UnoRAG 当前以**单客户独立实例**为默认交付模型。Organization �
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh
-# 检查 ../config/runtime.env、runtime.secret、bootstrap.env
+# 检查 runtime.env 与 runtime.secret；高级调优按需修改
 ./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
 ./scripts/install.sh --manifest /path/to/release.env
 ```

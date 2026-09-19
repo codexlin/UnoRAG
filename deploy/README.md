@@ -13,7 +13,8 @@
 deploy/
   README.md                 # 本文件
   config/
-    runtime.env.example     # 非敏感运行期配置 → runtime.env
+    runtime.env.example     # 15 项常用非敏感配置 → runtime.env
+    runtime.advanced.env.example # 高级调优与发布 pin → runtime.advanced.env
     runtime.secret.example  # Secret 名称模板 → runtime.secret
     bootstrap.env.example   # 一次性 bootstrap → bootstrap.env
   compose/
@@ -21,7 +22,7 @@ deploy/
     env.example             # 指向 deploy/config 的简短说明（勿再填大而全 .env）
     Caddyfile               # 反向代理：仅暴露控制面
     scripts/
-      init-config.sh        # 复制 example → 真实文件（不覆盖）
+      init-config.sh        # 初始化/迁移分层配置（保留已有值）
       compose-env.sh        # mk_compose / --env-file 助手
       install.sh            # 安装：infra → migrate → app
       upgrade.sh            # 四镜像 pull、迁移、DBOS/Web 滚动升级
@@ -53,7 +54,7 @@ deploy/
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh
-# 编辑 ../config/runtime.env、runtime.secret、bootstrap.env
+# 编辑 ../config/runtime.env、runtime.secret；高级调优按需修改
 
 ./scripts/install.sh
 # 浏览器：http://localhost/
@@ -124,7 +125,7 @@ cd deploy/compose
 `HIGH/CRITICAL` CVE 门禁；扫描未通过时不产出 release manifest。正式推送同时发布 BuildKit
 SBOM 与 provenance attestation，并写入源码、提交和 Apache-2.0 OCI 标签。交付前：
 
-1. 确认 `deploy/config/runtime.env.example` / Helm values 中基础镜像 tag 已 pin；
+1. 确认 `deploy/config/runtime.advanced.env.example` / Helm values 中基础镜像 tag 已 pin；
 2. 使用 workflow 产出的 digest manifest 部署，并归档对应 Trivy 日志；
 3. 核验镜像 digest 关联的 SBOM / provenance 和 Cosign keyless 签名；正式 manifest 会在安装、
    升级拉取镜像前 fail-closed 验签。

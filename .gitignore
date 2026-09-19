@@ -23,6 +23,7 @@ deploy/compose/.env
 deploy/compose/.smoke-admin-password
 deploy/compose/backups/
 deploy/config/runtime.env
+deploy/config/runtime.advanced.env
 deploy/config/runtime.secret
 deploy/config/bootstrap.env
 testdata/ab/_e2e_out/
