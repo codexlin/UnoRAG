@@ -3,6 +3,42 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [0.2.2] - 2026-09-20
+
+UnoRAG 0.2.2 is a production-hardening release for private deployments. It strengthens native
+alerting, login and API security, and long-term maintainability without changing the public
+Knowledge API request or response contracts.
+
+### Added
+
+- Configurable Ask P95 alert thresholds, minimum sample counts, consecutive-breach and recovery
+  windows, and persisted alert streaks so transient samples do not page operators and recovered
+  incidents close correctly.
+- Redis-backed login throttling and public Knowledge API rate limiting, with fail-closed production
+  behavior when the shared limiter is unavailable.
+- A server-side session registry that immediately revokes existing sessions after password changes,
+  administrator recovery, user disablement, or credential replacement.
+- Production security headers covering CSP, HSTS, clickjacking, MIME sniffing, referrer policy, and
+  browser capability restrictions.
+- Deployment contract tests that keep Compose and Helm runtime settings aligned.
+
+### Changed
+
+- Split deployment configuration into a concise common file and an optional advanced file. Existing
+  values are migrated and preserved by the standard install and upgrade scripts.
+- Removed the retired legacy Ask policy, proxy, and write-permission runtime paths after migrating
+  persisted Ask profiles to the current TypeScript contract.
+- Split the Library workspace, Ask workspace, ingestion transaction implementation, and Drizzle
+  schema into domain-owned modules while retaining their existing public import surfaces.
+
+### Upgrade notes
+
+- The normal digest-manifest upgrade path applies two forward-only migrations for persisted alert
+  streaks and normalized Ask profiles. Take the standard pre-upgrade backup; no manual SQL is needed.
+- Redis is required for production authentication and public API rate limiting. The bundled Compose
+  topology already provides it; external deployments must configure the shared Redis endpoint.
+- Public `POST /api/v1/retrieve` and `POST /api/v1/ask` contracts are unchanged.
+
 ## [0.2.1] - 2026-09-19
 
 UnoRAG 0.2.1 is a focused DOCX parser security maintenance release. It contains no public API,
@@ -232,6 +268,7 @@ in [`docs/INTEGRATION.md`](./docs/INTEGRATION.md).
 - Existing RC deployments use the forward-only upgrade and application rollback process in
   [`docs/RELEASE.md`](./docs/RELEASE.md). Database migrations are not rolled back.
 
+[0.2.2]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.2
 [0.2.1]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.1
 [0.2.0]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.0
 [0.1.4]: https://github.com/codexlin/UnoRAG/releases/tag/v0.1.4
