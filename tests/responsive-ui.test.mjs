@@ -101,11 +101,16 @@ test("deleted archive library requires an explicit replacement selection", () =>
 		path.join(root, "src/components/app/ask-workspace.tsx"),
 		"utf8",
 	);
+	const header = readFileSync(
+		path.join(root, "src/components/app/ask-workspace-header.tsx"),
+		"utf8",
+	);
 
 	assert.match(ask, /resumeLibraryMissing/);
 	assert.match(ask, /原知识库已删除/);
 	assert.match(ask, /setResumeLibraryMissing\(null\)/);
-	assert.match(ask, /onValueChange=\{\(nextId\)/);
+	assert.match(ask, /onLibraryChange=\{\(nextId\)/);
+	assert.match(header, /onValueChange=\{onLibraryChange\}/);
 });
 
 test("settings labels hybrid health as a global default", () => {

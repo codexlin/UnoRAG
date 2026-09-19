@@ -1,15 +1,6 @@
 "use client";
 
-import {
-	Activity,
-	Archive,
-	ChevronRight,
-	PanelRightClose,
-	PanelRightOpen,
-	RefreshCw,
-	Send,
-	Square,
-} from "lucide-react";
+import { ChevronRight, PanelRightOpen } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -22,10 +13,11 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { AskComposer } from "@/components/app/ask-composer";
+import { AskConversationList } from "@/components/app/ask-conversation-list";
 import { AskSourcesPanel } from "@/components/app/ask-sources-panel";
 import {
 	AskTraceDrawer,
-	hasAskTrace,
 	stageDurationMs,
 } from "@/components/app/ask-trace-drawer";
 import {
@@ -35,12 +27,9 @@ import {
 	toApiCitation,
 	toUiCitation,
 } from "@/components/app/ask-turn-state";
-import { CitationSourceCard } from "@/components/app/citation-source-card";
-import { LibraryCombobox } from "@/components/app/library-combobox";
-import { MarkdownAnswer } from "@/components/app/markdown-answer";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { AskWorkspaceHeader } from "@/components/app/ask-workspace-header";
+import { buttonVariants } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import {
 	Sheet,
 	SheetContent,
@@ -48,12 +37,6 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
-import { Textarea } from "@/components/ui/textarea";
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useDocuments } from "@/hooks/use-documents";
 import { useHealth } from "@/hooks/use-health";
 import { useLibraries } from "@/hooks/use-libraries";
@@ -71,7 +54,6 @@ import {
 	chooseAskLibraryId,
 	isAskableLibrary,
 } from "@/lib/ask-library-selection.mjs";
-import { formatDateTime, formatDurationMs } from "@/lib/format";
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
@@ -109,58 +91,6 @@ function buildSampleQuestions(docs: ApiDocument[]): string[] {
 	}
 	return unique.map((title, index) =>
 		DOC_QUESTION_TEMPLATES[index % DOC_QUESTION_TEMPLATES.length](title),
-	);
-}
-
-function AnswerBody({
-	answer,
-	citations,
-	pending,
-	onCite,
-}: {
-	answer: string;
-	citations: UiCitation[];
-	pending?: boolean;
-	onCite: (citation: UiCitation) => void;
-}) {
-	return (
-		<MarkdownAnswer
-			content={answer}
-			citations={citations}
-			onCite={onCite}
-			pending={pending}
-			enhanced={!pending}
-		/>
-	);
-}
-
-function RetrievalNotice({ turn }: { turn: LocalTurn }) {
-	const notices: string[] = [];
-	if (turn.hybridFailed) {
-		notices.push(
-			turn.retrievalMode === "dense" || !turn.usedHybrid
-				? "hybrid 失败，已回退 dense"
-				: "hybrid 失败",
-		);
-	}
-	if (turn.rerankFailed) {
-		notices.push("rerank 失败，已跳过重排");
-	}
-	if (turn.persistError) {
-		notices.push(`归档写入失败：${turn.persistError}`);
-	}
-	if (notices.length === 0) return null;
-	return (
-		<div className="mt-2 space-y-1">
-			{notices.map((notice) => (
-				<p
-					key={notice}
-					className="rounded-md border border-survey/35 bg-accent px-2.5 py-1.5 font-mono text-[11px] text-accent-foreground"
-				>
-					{notice}
-				</p>
-			))}
-		</div>
 	);
 }
 
@@ -589,163 +519,26 @@ export function AskWorkspace() {
 	return (
 		<div className="flex min-h-0 flex-1">
 			<section className="flex min-w-0 flex-1 flex-col">
-				<div className="flex h-14 shrink-0 items-center gap-3 border-b border-border/70 bg-card px-4 sm:px-5">
-					<div className="min-w-0 flex-1 sm:max-w-xs">
-						<LibraryCombobox
-							libraries={libraries}
-							value={libraryId}
-							onValueChange={(nextId) => {
-								setResumeLibraryMissing(null);
-								setLibraryId(nextId);
-							}}
-							showLabel={false}
-							className="w-full"
-						/>
-					</div>
-
-					<Separator orientation="vertical" className="hidden h-6 sm:block" />
-
-					<div className="hidden min-w-0 items-center gap-2.5 text-ui text-muted-foreground md:flex">
-						{libraries.length === 0 ? (
-							<Link
-								href="/app/libraries"
-								className="inline-flex items-center gap-1 font-medium text-cite underline-offset-4 hover:underline"
-							>
-								去创建知识库
-								<ChevronRight className="size-3.5" />
-							</Link>
-						) : !library ? (
-							<span>请选择知识库</span>
-						) : library.doc_count === 0 || library.status === "empty" ? (
-							<Link
-								href="/app/libraries"
-								className="inline-flex items-center gap-1 font-medium text-cite underline-offset-4 hover:underline"
-							>
-								知识库为空，去上传文档
-								<ChevronRight className="size-3.5" />
-							</Link>
-						) : (
-							<span
-								className="inline-flex items-center gap-1.5"
-								title="已完成索引、可检索的文档数 / 知识库内文档总数"
-							>
-								<span
-									className={cn(
-										"size-1.5 rounded-full",
-										library.status === "ready"
-											? "bg-cite"
-											: library.status === "indexing"
-												? "animate-pulse bg-survey"
-												: "bg-muted-foreground/50",
-									)}
-									aria-hidden
-								/>
-								<span className="tabular-nums text-foreground/80">
-									{library.ready_count}/{library.doc_count}
-								</span>
-								<span>可检索文档</span>
-							</span>
-						)}
-						<span className="text-border" aria-hidden>
-							|
-						</span>
-						<span className="inline-flex items-center gap-1 tabular-nums">
-							<span className="text-foreground/80">{turns.length}</span>
-							<span>问</span>
-						</span>
-						{isArchived ? (
-							<>
-								<span className="text-border" aria-hidden>
-									|
-								</span>
-								<span className="truncate text-cite" title={threadTitle || ""}>
-									已归档
-									{threadTitle ? ` · ${threadTitle}` : ""}
-								</span>
-							</>
-						) : turns.length > 0 ? (
-							<>
-								<span className="text-border" aria-hidden>
-									|
-								</span>
-								<span title="关闭或刷新后可能丢失">未归档</span>
-							</>
-						) : null}
-					</div>
-
-					<div className="ml-auto flex shrink-0 items-center gap-2">
-						<Tooltip>
-							<TooltipTrigger
-								render={
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										className="rounded-md"
-										disabled={!canArchive}
-										onClick={() => void handleArchive()}
-										aria-label="归档当前会话"
-									>
-										<Archive data-icon="inline-start" />
-										<span className="hidden sm:inline">
-											{archiving ? "归档中…" : isArchived ? "已归档" : "归档"}
-										</span>
-									</Button>
-								}
-							/>
-							<TooltipContent side="bottom">
-								{isArchived
-									? "当前为归档会话，续聊会自动保存"
-									: "把当前临时会话写入档案，之后可继续对话"}
-							</TooltipContent>
-						</Tooltip>
-						<Tooltip>
-							<TooltipTrigger
-								render={
-									<Button
-										type="button"
-										variant={drawerOpen ? "secondary" : "outline"}
-										size="sm"
-										className={cn(
-											"rounded-md",
-											drawerOpen
-												? "border-cite/40 bg-cite/10 text-cite hover:bg-cite/15"
-												: "border-cite/35 text-cite hover:border-cite/55 hover:bg-cite/8",
-										)}
-										onClick={() => {
-											setDrawerOpen((open) => {
-												const next = !open;
-												if (next) setTraceOpen(false);
-												return next;
-											});
-										}}
-										aria-pressed={drawerOpen}
-										aria-label={
-											drawerOpen ? "收起引用来源面板" : "展开引用来源面板"
-										}
-									>
-										{drawerOpen ? (
-											<PanelRightClose data-icon="inline-start" />
-										) : (
-											<PanelRightOpen data-icon="inline-start" />
-										)}
-										<span className="hidden sm:inline">
-											{drawerOpen ? "收起引用" : "引用来源"}
-										</span>
-										<span className="sm:hidden">
-											{drawerOpen ? "收起" : "引用"}
-										</span>
-									</Button>
-								}
-							/>
-							<TooltipContent side="bottom">
-								{drawerOpen
-									? "收起右侧引用来源面板"
-									: "展开证据轨道，核对完整原文与位置"}
-							</TooltipContent>
-						</Tooltip>
-					</div>
-				</div>
+				<AskWorkspaceHeader
+					archiving={archiving}
+					canArchive={canArchive}
+					drawerOpen={drawerOpen}
+					isArchived={isArchived}
+					libraries={libraries}
+					library={library}
+					libraryId={libraryId}
+					onArchive={() => void handleArchive()}
+					onDrawerOpenChange={(open) => {
+						if (open) setTraceOpen(false);
+						setDrawerOpen(open);
+					}}
+					onLibraryChange={(nextId) => {
+						setResumeLibraryMissing(null);
+						setLibraryId(nextId);
+					}}
+					threadTitle={threadTitle}
+					turnCount={turns.length}
+				/>
 				{libsError ? (
 					<p className="border-b border-destructive/30 bg-destructive/10 px-5 py-1.5 text-sm text-destructive">
 						{libsError}
@@ -855,293 +648,35 @@ export function AskWorkspace() {
 								) : null}
 							</div>
 						) : (
-							<ul className="mx-auto flex max-w-4xl flex-col gap-10">
-								{turns.map((turn, turnIndex) => (
-									<motion.li
-										key={turn.id}
-										className="space-y-4"
-										initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-										animate={{ opacity: 1, y: 0 }}
-										transition={{
-											duration: 0.28,
-											delay: Math.min(turnIndex, 4) * 0.035,
-											ease: [0.22, 1, 0.36, 1],
-										}}
-									>
-										<header className="border-b border-border/80 pb-3">
-											<div className="mb-2 flex items-center justify-between gap-3 font-mono text-[11px] text-muted-foreground">
-												<span>
-													QUERY {String(turnIndex + 1).padStart(2, "0")}
-												</span>
-												{turn.startedAt ? (
-													<span>{formatDateTime(turn.startedAt)}</span>
-												) : null}
-											</div>
-											<p className="text-lg font-medium leading-7 text-foreground">
-												{turn.question}
-											</p>
-										</header>
-
-										<div className="space-y-3">
-											<div className="min-w-0 space-y-3">
-												<article className="workbench-surface border-l-2 border-l-cite px-4 py-4 sm:px-5">
-													<div className="flex flex-wrap items-center justify-between gap-2">
-														<p className="text-meta font-mono tracking-[0.12em] text-cite uppercase">
-															{turn.refused
-																? "Refused"
-																: turn.cancelled
-																	? "Cancelled"
-																	: "Answer"}
-															{turn.mode ? ` · ${turn.mode}` : ""}
-														</p>
-														<div className="flex flex-wrap gap-1.5">
-															{turn.pending ? (
-																<span className="meta-chip animate-pulse text-cite">
-																	处理中…
-																</span>
-															) : null}
-															{turn.cancelled ? (
-																<span className="meta-chip text-survey">
-																	已取消
-																</span>
-															) : null}
-															{turn.durationMs != null ? (
-																<span
-																	className="meta-chip text-foreground/80"
-																	title="浏览器端到端：点发送到回答完成（含网络）"
-																>
-																	{formatDurationMs(turn.durationMs)}
-																</span>
-															) : null}
-															{turn.citations.length > 0 ? (
-																<span className="meta-chip">
-																	{turn.citations.length} 条依据
-																</span>
-															) : null}
-															{hasAskTrace(turn.retrievalDebug) ? (
-																<Tooltip>
-																	<TooltipTrigger
-																		render={
-																			<button
-																				type="button"
-																				className={cn(
-																					"meta-chip inline-flex cursor-pointer items-center gap-1 border-cite/45 bg-cite/12 font-medium text-cite shadow-[0_0_0_1px_color-mix(in_oklab,var(--cite)_18%,transparent)]",
-																					"transition-colors hover:border-cite/70 hover:bg-cite/20 hover:text-cite",
-																				)}
-																				aria-label="查看请求链路：路由、检索、裁决与生成各阶段耗时"
-																				onClick={() => {
-																					if (turn.retrievalDebug) {
-																						openTrace(
-																							turn.retrievalDebug,
-																							turn.durationMs,
-																						);
-																					}
-																				}}
-																			>
-																				<Activity
-																					className="size-3 shrink-0"
-																					aria-hidden
-																				/>
-																				链路
-																			</button>
-																		}
-																	/>
-																	<TooltipContent
-																		side="top"
-																		className="max-w-[16rem]"
-																	>
-																		查看请求链路：路由 / 检索 / 裁决 /
-																		生成各阶段耗时与 trace_id
-																	</TooltipContent>
-																</Tooltip>
-															) : null}
-														</div>
-													</div>
-													{turn.pending &&
-													!turn.answer &&
-													!turn.evidenceReady ? (
-														<p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
-															<span className="inline-block size-1.5 animate-pulse rounded-full bg-cite" />
-															正在检索并整理引用来源…
-														</p>
-													) : turn.error ? (
-														<p className="mt-2 text-sm text-destructive">
-															{turn.error}
-															{turn.durationMs != null
-																? ` · ${formatDurationMs(turn.durationMs)}`
-																: ""}
-														</p>
-													) : (
-														<>
-															{turn.cancelled && !turn.answer ? (
-																<p className="mt-2 text-sm text-muted-foreground">
-																	已停止生成。可重试本问题，或继续提问。
-																</p>
-															) : null}
-															{turn.refused ? (
-																<p className="mt-2 font-mono text-[11px] text-survey">
-																	{turn.refuseReason === "weak_match"
-																		? "弱相关 · 未调用生成"
-																		: "无命中 · 未调用生成"}
-																</p>
-															) : null}
-															<RetrievalNotice turn={turn} />
-															{turn.answer ? (
-																<>
-																	<AnswerBody
-																		answer={turn.answer}
-																		citations={turn.citations}
-																		pending={turn.pending}
-																		onCite={openCitation}
-																	/>
-																	{turn.cancelled ? (
-																		<p className="mt-2 font-mono text-[11px] text-muted-foreground">
-																			生成已中止 · 保留已输出内容
-																		</p>
-																	) : null}
-																</>
-															) : turn.pending ? (
-																<p className="mt-2 text-sm text-muted-foreground">
-																	引用来源已就绪，正在生成回答…
-																	<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-cite/70 align-text-bottom" />
-																</p>
-															) : null}
-														</>
-													)}
-													{turn.pending ? (
-														<div className="mt-3">
-															<Button
-																type="button"
-																variant="outline"
-																size="sm"
-																onClick={cancelAsk}
-																className="rounded-md"
-															>
-																<Square
-																	data-icon="inline-start"
-																	className="size-3 fill-current"
-																/>
-																停止生成
-															</Button>
-														</div>
-													) : null}
-												</article>
-
-												{canRetryTurn(turn) ? (
-													<div>
-														<Button
-															type="button"
-															variant="outline"
-															size="sm"
-															disabled={!canAsk || isStreaming}
-															onClick={() => retryTurn(turn)}
-															className="rounded-md"
-														>
-															<RefreshCw data-icon="inline-start" />
-															重试
-														</Button>
-													</div>
-												) : null}
-
-												{turn.citations.length > 0 ? (
-													<section className="space-y-2 border-t border-border/70 pt-3">
-														<p className="font-mono text-[11px] text-muted-foreground">
-															回答依据 · {turn.citations.length} 条
-															{turn.completedAt
-																? ` · 完成于 ${formatDateTime(turn.completedAt)}`
-																: ""}
-														</p>
-														<ul className="grid gap-2 sm:grid-cols-2">
-															{turn.citations.map((citation) => (
-																<li key={citation.id}>
-																	<CitationSourceCard
-																		citation={citation}
-																		active={activeCitation?.id === citation.id}
-																		onSelect={openCitation}
-																		compact
-																	/>
-																</li>
-															))}
-														</ul>
-													</section>
-												) : turn.refused && !turn.pending && !turn.error ? (
-													<p className="font-mono text-[11px] text-muted-foreground">
-														无可用引用来源
-													</p>
-												) : null}
-											</div>
-										</div>
-									</motion.li>
-								))}
-							</ul>
+							<AskConversationList
+								activeCitation={activeCitation}
+								canAsk={canAsk}
+								isStreaming={isStreaming}
+								onCancel={cancelAsk}
+								onOpenCitation={openCitation}
+								onOpenTrace={openTrace}
+								onRetry={retryTurn}
+								reduceMotion={reduceMotion}
+								turns={turns}
+							/>
 						)}
 					</div>
 				</ScrollArea>
 
-				<form
+				<AskComposer
+					canAsk={canAsk}
+					healthLoading={healthLoading}
+					input={input}
+					isStreaming={isStreaming}
+					onCancel={cancelAsk}
+					onChange={(value, element) => {
+						setInput(value);
+						resizeComposer(element);
+					}}
+					onKeyDown={onKeyDown}
 					onSubmit={onSubmit}
-					className="border-t border-border/70 bg-card px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5"
-				>
-					<div className="mx-auto max-w-4xl">
-						<div
-							className={cn(
-								"flex items-end gap-2 rounded-lg border border-border bg-background px-3 py-2 shadow-sm transition-[border-color,box-shadow]",
-								"focus-within:border-cite/45 focus-within:shadow-[0_0_0_3px_color-mix(in_oklab,var(--cite)_12%,transparent)]",
-								!canAsk && "opacity-80",
-							)}
-						>
-							<Textarea
-								ref={textareaRef}
-								value={input}
-								onChange={(event) => {
-									setInput(event.target.value);
-									resizeComposer(event.target);
-								}}
-								onKeyDown={onKeyDown}
-								disabled={!canAsk || isStreaming}
-								rows={1}
-								placeholder={
-									isStreaming
-										? "生成中… 可点击停止"
-										: healthLoading
-											? "正在检查服务状态…"
-											: canAsk
-												? "向知识库提问…"
-												: "知识库就绪后再提问…"
-								}
-								className="text-answer max-h-50 min-h-11 flex-1 resize-none border-0 bg-transparent px-0 py-2.5 shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
-							/>
-							{isStreaming ? (
-								<Button
-									type="button"
-									size="icon"
-									variant="outline"
-									aria-label="停止生成"
-									title="停止生成"
-									onClick={cancelAsk}
-									className="mb-0.5 size-9 shrink-0 rounded-md border-survey/40 text-survey shadow-sm transition-transform hover:bg-survey/10 active:scale-[0.96]"
-								>
-									<Square className="size-3.5 fill-current" />
-								</Button>
-							) : (
-								<Button
-									type="submit"
-									size="icon"
-									disabled={!canAsk || !input.trim()}
-									aria-label="发送"
-									className="mb-0.5 size-9 shrink-0 rounded-md bg-primary text-primary-foreground shadow-sm transition-transform hover:bg-primary/90 active:scale-[0.96] disabled:shadow-none"
-								>
-									<Send className="size-4" />
-								</Button>
-							)}
-						</div>
-						<p className="text-meta mt-2 text-center font-mono tracking-wide text-muted-foreground/60">
-							{isStreaming
-								? "点击停止按钮取消当前回答"
-								: "Enter 发送 · Shift+Enter 换行"}
-						</p>
-					</div>
-				</form>
+					textareaRef={textareaRef}
+				/>
 			</section>
 
 			{!isMobile && !drawerOpen ? (
