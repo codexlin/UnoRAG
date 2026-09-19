@@ -1,17 +1,26 @@
 import { NextResponse } from "next/server";
 
+import { logger } from "@/lib/observability";
 import {
-	createSessionToken,
 	resolveRequestSession,
+	rotateSessionToken,
 	SESSION_COOKIE,
 	sessionCookieOptions,
 } from "@/lib/server/auth/session";
+import { readSessionClaims } from "@/lib/server/auth/session-token";
 import { validateWorkspaceId } from "@/lib/server/workspace-core.mjs";
 import { resolveWorkspaceSwitchIdentity } from "@/lib/server/workspaces";
 
 export async function POST(request: Request) {
 	const currentIdentity = await resolveRequestSession(request);
 	if (!currentIdentity) {
+		return NextResponse.json(
+			{ detail: "authentication required" },
+			{ status: 401 },
+		);
+	}
+	const currentClaims = readSessionClaims(request.headers.get("cookie"));
+	if (!currentClaims) {
 		return NextResponse.json(
 			{ detail: "authentication required" },
 			{ status: 401 },
@@ -43,11 +52,21 @@ export async function POST(request: Request) {
 		);
 	}
 
+	let token: string;
+	try {
+		token = await rotateSessionToken(nextIdentity, currentClaims);
+	} catch (error) {
+		logger.error({
+			event: "auth.session.workspace_rotation_failed",
+			component: "redis",
+			error,
+		});
+		return NextResponse.json(
+			{ detail: "session rotation is unavailable" },
+			{ status: 503, headers: { "Retry-After": "5" } },
+		);
+	}
 	const response = NextResponse.json(nextIdentity);
-	response.cookies.set(
-		SESSION_COOKIE,
-		createSessionToken(nextIdentity),
-		sessionCookieOptions(),
-	);
+	response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
 	return response;
 }

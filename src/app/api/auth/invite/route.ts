@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { createSessionToken, SESSION_COOKIE } from "@/lib/server/auth/session";
+import { logger } from "@/lib/observability";
+import {
+	issueSessionToken,
+	SESSION_COOKIE,
+	sessionCookieOptions,
+} from "@/lib/server/auth/session";
 import { acceptInvite, previewInvite } from "@/lib/server/invites";
-
-const COOKIE_OPTIONS = {
-	httpOnly: true,
-	sameSite: "lax" as const,
-	secure: process.env.NODE_ENV === "production",
-	path: "/",
-	maxAge: 8 * 60 * 60,
-};
 
 export async function GET(request: Request) {
 	const token = new URL(request.url).searchParams.get("token")?.trim() ?? "";
@@ -41,11 +38,24 @@ export async function POST(request: Request) {
 			{ status: result.status },
 		);
 	}
-	const response = NextResponse.json(result.identity);
-	response.cookies.set(
-		SESSION_COOKIE,
-		createSessionToken(result.identity),
-		COOKIE_OPTIONS,
-	);
+	let token: string;
+	try {
+		token = await issueSessionToken(result.identity);
+	} catch (error) {
+		logger.error({
+			event: "auth.invite.session_issue_failed",
+			component: "redis",
+			error,
+		});
+		return NextResponse.json(
+			{ ...result.identity, session_created: false },
+			{ status: 201 },
+		);
+	}
+	const response = NextResponse.json({
+		...result.identity,
+		session_created: true,
+	});
+	response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
 	return response;
 }

@@ -9,19 +9,26 @@ const SESSION_ISSUER = "unorag-control-plane";
 const SESSION_TTL_SECONDS = SESSION_MAX_AGE_SECONDS;
 
 export type SessionClaims = {
-	v: 1;
+	v: 2;
 	iss: typeof SESSION_ISSUER;
 	sid: string;
 	principal_id: string;
 	workspace_id: string;
+	credential_version: string;
 	must_change_password?: boolean;
 	iat: number;
 	exp: number;
 };
 
+export type SignedSession = {
+	token: string;
+	claims: SessionClaims;
+};
+
 type SessionSubject = {
 	principalId: string;
 	workspaceId: string;
+	credentialVersion: string;
 	mustChangePassword?: boolean;
 };
 
@@ -71,11 +78,12 @@ export function verifySessionToken(
 			Buffer.from(encoded, "base64url").toString("utf8"),
 		) as SessionClaims;
 		if (
-			claims.v !== 1 ||
+			claims.v !== 2 ||
 			claims.iss !== SESSION_ISSUER ||
 			!claims.sid ||
 			!claims.principal_id ||
 			!claims.workspace_id ||
+			!claims.credential_version ||
 			claims.iat > nowSeconds + 30 ||
 			claims.exp <= nowSeconds ||
 			claims.exp - claims.iat > SESSION_TTL_SECONDS
@@ -99,18 +107,26 @@ export function createSignedSessionToken(
 	subject: SessionSubject,
 	nowSeconds = Math.floor(Date.now() / 1000),
 ): string {
+	return createSignedSession(subject, nowSeconds).token;
+}
+
+export function createSignedSession(
+	subject: SessionSubject,
+	nowSeconds = Math.floor(Date.now() / 1000),
+): SignedSession {
 	const claims: SessionClaims = {
-		v: 1,
+		v: 2,
 		iss: SESSION_ISSUER,
 		sid: randomUUID(),
 		principal_id: subject.principalId,
 		workspace_id: subject.workspaceId,
+		credential_version: subject.credentialVersion,
 		must_change_password: subject.mustChangePassword === true,
 		iat: nowSeconds,
 		exp: nowSeconds + SESSION_TTL_SECONDS,
 	};
 	const encoded = Buffer.from(JSON.stringify(claims)).toString("base64url");
-	return `${encoded}.${sign(encoded)}`;
+	return { token: `${encoded}.${sign(encoded)}`, claims };
 }
 
 export function sessionCookieOptions() {
@@ -120,5 +136,6 @@ export function sessionCookieOptions() {
 		secure: process.env.NODE_ENV === "production",
 		path: "/",
 		maxAge: SESSION_MAX_AGE_SECONDS,
+		priority: "high" as const,
 	};
 }

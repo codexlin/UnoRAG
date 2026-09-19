@@ -7,7 +7,7 @@ import {
 } from "node:crypto";
 import { promisify } from "node:util";
 
-import { and, eq, isNull, lte, or } from "drizzle-orm";
+import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import {
@@ -26,7 +26,18 @@ import type {
 	IdentityProvider,
 	LocalCredentialsInput,
 } from "./provider";
-import { createSignedSessionToken, readSessionClaims } from "./session-token";
+import {
+	isSessionActive,
+	registerSession,
+	replacePrincipalSessions,
+	revokeSession,
+	rotateSession,
+} from "./session-registry";
+import {
+	createSignedSession,
+	readSessionClaims,
+	type SessionClaims,
+} from "./session-token";
 
 export {
 	SESSION_COOKIE,
@@ -35,11 +46,13 @@ export {
 } from "./session-token";
 
 const scrypt = promisify(scryptCallback);
+const DUMMY_PASSWORD_HASH = `scrypt$${"00".repeat(16)}$${"00".repeat(64)}`;
 
 export async function hydrateIdentity(
 	principalId: string,
 	workspaceId: string,
 	provider: "local" | "oidc" = "local",
+	expectedCredentialVersion?: string,
 ): Promise<AuthIdentity | null> {
 	const db = getDatabase();
 	const [membership] = await db
@@ -53,6 +66,7 @@ export async function hydrateIdentity(
 			email: users.email,
 			displayName: users.displayName,
 			mustChangePassword: localCredentials.mustChangePassword,
+			passwordChangedAt: localCredentials.passwordChangedAt,
 		})
 		.from(users)
 		.innerJoin(
@@ -86,6 +100,14 @@ export async function hydrateIdentity(
 		)
 		.limit(1);
 	if (!membership) return null;
+	if (
+		provider === "local" &&
+		expectedCredentialVersion !== undefined &&
+		String(membership.passwordChangedAt?.getTime() ?? 0) !==
+			expectedCredentialVersion
+	) {
+		return null;
+	}
 
 	const memberships = await db
 		.select({ id: groups.id })
@@ -99,8 +121,9 @@ export async function hydrateIdentity(
 		)
 		.where(eq(groupMembers.userId, membership.principalId));
 
+	const { passwordChangedAt: _passwordChangedAt, ...identity } = membership;
 	return {
-		...membership,
+		...identity,
 		groupIds: memberships.map((item) => item.id),
 		provider,
 		mustChangePassword:
@@ -129,11 +152,59 @@ export async function resolveSessionCookieHeader(
 ): Promise<AuthIdentity | null> {
 	const claims = readSessionClaims(cookieHeader);
 	if (!claims) return null;
-	return hydrateIdentity(claims.principal_id, claims.workspace_id, "local");
+	if (!(await isSessionActive(claims))) return null;
+	return hydrateIdentity(
+		claims.principal_id,
+		claims.workspace_id,
+		"local",
+		claims.credential_version,
+	);
 }
 
-export function createSessionToken(identity: AuthIdentity): string {
-	return createSignedSessionToken(identity);
+async function sessionFor(identity: AuthIdentity) {
+	const db = getDatabase();
+	const [credential] = await db
+		.select({ passwordChangedAt: localCredentials.passwordChangedAt })
+		.from(localCredentials)
+		.where(eq(localCredentials.userId, identity.principalId))
+		.limit(1);
+	if (!credential) throw new Error("local credentials not found");
+	return createSignedSession({
+		...identity,
+		credentialVersion: String(credential.passwordChangedAt.getTime()),
+	});
+}
+
+export async function issueSessionToken(
+	identity: AuthIdentity,
+): Promise<string> {
+	const session = await sessionFor(identity);
+	await registerSession(session.claims);
+	return session.token;
+}
+
+export async function rotateSessionToken(
+	identity: AuthIdentity,
+	previousClaims: SessionClaims,
+): Promise<string> {
+	const session = await sessionFor(identity);
+	await rotateSession(previousClaims, session.claims);
+	return session.token;
+}
+
+export async function replacePrincipalSessionToken(
+	identity: AuthIdentity,
+): Promise<string> {
+	const session = await sessionFor(identity);
+	await replacePrincipalSessions(session.claims);
+	return session.token;
+}
+
+export async function revokeSessionCookieHeader(
+	cookieHeader: string | null,
+): Promise<void> {
+	const claims = readSessionClaims(cookieHeader);
+	if (claims) await revokeSession(claims);
 }
 
 export type ChangePasswordResult =
@@ -263,7 +334,6 @@ export const localIdentityProvider: IdentityProvider<LocalCredentialsInput> = {
 				principalId: users.id,
 				workspaceId: workspaceMembers.workspaceId,
 				passwordHash: localCredentials.passwordHash,
-				failedAttempts: localCredentials.failedAttempts,
 			})
 			.from(users)
 			.innerJoin(localCredentials, eq(localCredentials.userId, users.id))
@@ -280,7 +350,12 @@ export const localIdentityProvider: IdentityProvider<LocalCredentialsInput> = {
 						lte(localCredentials.lockedUntil, now),
 					),
 				),
-			);
+			)
+			.limit(1);
+		if (rows.length === 0) {
+			await verifyPassword(input.password, DUMMY_PASSWORD_HASH);
+			return null;
+		}
 		for (const row of rows) {
 			if (await verifyPassword(input.password, row.passwordHash)) {
 				await db
@@ -297,18 +372,26 @@ export const localIdentityProvider: IdentityProvider<LocalCredentialsInput> = {
 					.where(eq(users.id, row.principalId));
 				return hydrateIdentity(row.principalId, row.workspaceId, "local");
 			}
-			const failedAttempts = row.failedAttempts + 1;
 			await db
 				.update(localCredentials)
 				.set({
-					failedAttempts,
-					lockedUntil:
-						failedAttempts >= 5
-							? new Date(now.getTime() + 15 * 60 * 1000)
-							: null,
+					failedAttempts: sql`${localCredentials.failedAttempts} + 1`,
+					lockedUntil: sql`CASE
+						WHEN ${localCredentials.failedAttempts} + 1 >= 5
+						THEN ${new Date(now.getTime() + 15 * 60 * 1000)}
+						ELSE ${localCredentials.lockedUntil}
+					END`,
 					updatedAt: now,
 				})
-				.where(eq(localCredentials.userId, row.principalId));
+				.where(
+					and(
+						eq(localCredentials.userId, row.principalId),
+						or(
+							isNull(localCredentials.lockedUntil),
+							lte(localCredentials.lockedUntil, now),
+						),
+					),
+				);
 		}
 		return null;
 	},

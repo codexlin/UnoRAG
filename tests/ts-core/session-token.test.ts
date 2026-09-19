@@ -27,7 +27,11 @@ function withSecret<T>(run: () => T): T {
 test("session token verifies valid claims and rejects tampering and expiry", () => {
 	withSecret(() => {
 		const token = createSignedSessionToken(
-			{ principalId: "principal-1", workspaceId: "workspace-1" },
+			{
+				principalId: "principal-1",
+				workspaceId: "workspace-1",
+				credentialVersion: "1",
+			},
 			NOW,
 		);
 		const claims = verifySessionToken(token, NOW + 1);
@@ -43,6 +47,7 @@ test("cookie parsing fails closed for malformed values", () => {
 		const token = createSignedSessionToken({
 			principalId: "principal-1",
 			workspaceId: "workspace-1",
+			credentialVersion: "1",
 		});
 		assert.equal(
 			readSessionClaims(`${SESSION_COOKIE}=${encodeURIComponent(token)}`)
@@ -67,6 +72,7 @@ test("proxy redirects invalid sessions and lets valid sessions reach the DAL", (
 		const token = createSignedSessionToken({
 			principalId: "principal-1",
 			workspaceId: "workspace-1",
+			credentialVersion: "1",
 		});
 		const authorized = proxy(
 			new NextRequest("https://unorag.test/app/libraries", {
@@ -83,6 +89,7 @@ test("proxy keeps bootstrap sessions inside the password change flow", () => {
 		const token = createSignedSessionToken({
 			principalId: "principal-1",
 			workspaceId: "workspace-1",
+			credentialVersion: "1",
 			mustChangePassword: true,
 		});
 		const claims = verifySessionToken(token);
@@ -113,6 +120,7 @@ test("password setup reaches the DAL so server-side resets cannot redirect-loop"
 		const token = createSignedSessionToken({
 			principalId: "principal-1",
 			workspaceId: "workspace-1",
+			credentialVersion: "1",
 		});
 		const response = proxy(
 			new NextRequest("https://unorag.test/change-password", {

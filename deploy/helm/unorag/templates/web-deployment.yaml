@@ -45,6 +45,13 @@ spec:
               value: "false"
             - name: DATABASE_POOL_MAX
               value: {{ .Values.config.databasePoolMax | default "10" | quote }}
+            {{- range $key := list "AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS" "AUTH_LOGIN_RATE_LIMIT_PER_ACCOUNT" "AUTH_LOGIN_RATE_LIMIT_PER_IP" "UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE" }}
+            - name: {{ $key }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "unorag.fullname" $ }}-config
+                  key: {{ $key }}
+            {{- end }}
             - name: DOCUMENT_STORAGE_ROOT
               value: {{ .Values.documentStorageRoot | quote }}
             - name: DOCUMENT_MAX_UPLOAD_BYTES

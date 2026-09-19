@@ -22,7 +22,7 @@ Browser / customer application
              ↓
 Next.js product + Knowledge API
      ├── PostgreSQL: 唯一业务事实源
-     ├── Redis: Ask 短期会话记忆
+     ├── Redis: 可撤销登录会话、分布式限流、Ask 短期记忆
      ├── Qdrant: 带作用域的检索投影
      └── DBOS Worker
             ├── LiteParse / MinerU

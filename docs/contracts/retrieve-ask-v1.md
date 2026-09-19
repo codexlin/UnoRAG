@@ -176,7 +176,7 @@ Upstream internal names (e.g. `llm_upstream_unavailable`) are **never** passed t
 
 | Concern | v1 behavior |
 |---------|-------------|
-| Rate limit | Error shape frozen (`429` + `rate_limit_exceeded` + optional `Retry-After`). Optional process-local limiter via `UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE` (per service key). Multi-instance / cluster limits: Redis or Ingress — out of band. |
+| Rate limit | Error shape frozen (`429` + `rate_limit_exceeded` + optional `Retry-After`). Redis fixed-window enforcement is shared by all Web replicas and keyed by Service Key; `UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE=0` explicitly disables it. |
 | Audit | Each public retrieve/ask attempt writes `audit_logs` action `knowledge.retrieve` / `knowledge.ask` (service key id in `details`; `actor_id` null). Key create/revoke remain control-plane audits. |
 | Usage | Structured stdout JSON line `event=knowledge.api.usage` with key_id, target, library_id, status, refused, citation_count, duration_ms, request_id. Token ledger / cost panels are **deferred**. |
 | `last_used_at` | Updated on successful key authentication. |

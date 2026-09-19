@@ -18,7 +18,7 @@ flowchart TB
     Parser["LiteParse / MinerU ParserProvider"]
     PG[("PostgreSQL app schema")]
     QD[("Qdrant scoped projections")]
-    Redis[("Redis Ask memory")]
+    Redis[("Redis sessions, rate limits, Ask memory")]
     Files[("Document object storage")]
     Models["LLM / embedding / rerank"]
 
@@ -54,8 +54,9 @@ system-database login.
 
 `src/proxy.ts` 只在进入 `/app/*` 前快速校验签名 Session Cookie 的格式、签名和有效期，减少无效请求
 进入 React Server Component 渲染。它不是完整授权层，也不保护 Route Handler。页面和 API 仍必须通过
-服务端 Session/DAL 重新读取成员关系、Workspace 和权限；所有写操作都在对应 Route Handler 内再次校验
-capability。
+服务端 Session/DAL 校验 Redis 活跃 `sid`、PostgreSQL 密码版本、成员关系、Workspace 和权限；所有写操作
+都在对应 Route Handler 内再次校验 capability。密码变更由 PostgreSQL 版本使旧 Cookie 失效，登出与
+Workspace 切换由 Redis 即时撤销旧 `sid`。
 
 浏览器中的服务端状态由 TanStack Query React Adapter 管理：
 

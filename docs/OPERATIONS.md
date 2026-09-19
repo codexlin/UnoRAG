@@ -57,6 +57,28 @@ mk_compose exec -T web node -e \
 状态，后者覆盖 `PENDING`、`ENQUEUED`、`DELAYED` durable workflow；任一侧非零都不能切换 DBOS
 application version。`upgrade.sh` 会自动执行该门禁，日常命令只用于发布前诊断。
 
+## 认证与限流
+
+浏览器会话使用短期 HMAC Cookie，并在 Redis 登记活跃 `sid`。退出登录、切换 Workspace 会原子撤销
+旧 `sid`；修改密码会用 PostgreSQL 的 `password_changed_at` 使该用户全部旧 Cookie 立即失效，再在
+Redis 登记新会话。Redis 不保存用户、成员关系或权限事实，但 Redis 不可用时登录、会话校验与 Public
+Knowledge API 会 fail closed，避免绕过撤销或分布式限流。
+
+```text
+AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS=900
+AUTH_LOGIN_RATE_LIMIT_PER_ACCOUNT=10
+AUTH_LOGIN_RATE_LIMIT_PER_IP=60
+UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE=120
+```
+
+登录限流同时按规范化账户和边缘代理确认的客户端 IP 计数；响应 `429` 时带 `Retry-After`。数据库仍在
+连续 5 次密码失败后锁定本地账户 15 分钟。只允许 Caddy/Ingress 访问 Web 容器，不能把 Web 端口直接
+暴露到公网后继续信任客户端自带的 `X-Forwarded-For`。所有限流 key 都只保存 SHA-256 摘要。
+
+会话与限流 Redis key 可丢弃重建；恢复后用户需要重新登录。它们不进入业务备份，也不能替代 PostgreSQL
+中的用户状态、密码版本、RBAC 或审计记录。发布本次会话格式变更会使升级前 Cookie 失效一次，这是预期
+的安全迁移行为。
+
 UnoRAG 默认提供管理员可见的“运行中心”、低基数 `/metrics`、核心路径 Pino JSON、Ask stages 与
 `app.ask_runs` 诊断元数据。运行中心按当前 organization/workspace 强制隔离，展示 Ask 终态、P50/P95、
 引用覆盖、dead/stuck 任务、组件健康、持久告警和恢复建议；不会返回问题、回答、Prompt、引用正文、

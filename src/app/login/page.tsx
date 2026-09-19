@@ -28,7 +28,11 @@ export default function LoginPage() {
 		});
 		if (!response.ok) {
 			setError(
-				response.status === 401 ? "邮箱或密码不正确" : "登录服务暂时不可用",
+				response.status === 401
+					? "邮箱或密码不正确"
+					: response.status === 429
+						? "登录尝试过多，请稍后再试"
+						: "登录服务暂时不可用",
 			);
 			setSubmitting(false);
 			return;
