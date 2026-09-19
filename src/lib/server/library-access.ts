@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, isNull, ne, notInArray, sql } from "drizzle-orm";
+import { and, eq, isNull, notInArray, sql } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import { documents, libraries } from "@/db/schema";
@@ -65,59 +65,6 @@ export async function findAuthorizedDocument(
 	return document ?? null;
 }
 
-/** @deprecated L6: browser dual-write removed; keep for optional backfill scripts. */
-export async function syncRagDocument(
-	identity: AuthIdentity,
-	payload: {
-		library_id: string;
-		doc_id: string;
-		title: string;
-		filename: string;
-		status: string;
-		content_type?: string;
-	},
-) {
-	const library = await findAuthorizedLibrary(identity, payload.library_id);
-	if (!library) throw new Error("library not found during document sync");
-	const db = getDatabase();
-	const now = new Date();
-	await db
-		.delete(documents)
-		.where(
-			and(
-				eq(documents.libraryId, library.id),
-				eq(documents.filename, payload.filename),
-				ne(documents.ragDocumentId, payload.doc_id),
-			),
-		);
-	await db
-		.insert(documents)
-		.values({
-			organizationId: identity.tenantId,
-			workspaceId: identity.workspaceId,
-			libraryId: library.id,
-			ragDocumentId: payload.doc_id,
-			name: payload.title,
-			filename: payload.filename,
-			contentType: payload.content_type || "application/octet-stream",
-			status: payload.status,
-			createdBy: identity.principalId,
-			createdAt: now,
-			updatedAt: now,
-		})
-		.onConflictDoUpdate({
-			target: [documents.libraryId, documents.ragDocumentId],
-			set: {
-				name: payload.title,
-				filename: payload.filename,
-				status: payload.status,
-				...(payload.content_type ? { contentType: payload.content_type } : {}),
-				updatedAt: now,
-			},
-		});
-	await refreshLibraryCounts(library.id);
-}
-
 export async function refreshLibraryCounts(libraryId: string) {
 	const db = getDatabase();
 	const now = new Date();
@@ -161,17 +108,4 @@ export async function refreshLibraryCounts(libraryId: string) {
 			updatedAt: now,
 		})
 		.where(eq(libraries.id, libraryId));
-}
-
-export async function removeRagDocument(
-	identity: AuthIdentity,
-	ragDocumentId: string,
-) {
-	const document = await findAuthorizedDocument(identity, ragDocumentId);
-	if (!document) return false;
-	const db = getDatabase();
-	await db.delete(documents).where(eq(documents.id, document.id));
-	const library = await findAuthorizedLibrary(identity, document.ragLibraryId);
-	if (library) await refreshLibraryCounts(library.id);
-	return true;
 }

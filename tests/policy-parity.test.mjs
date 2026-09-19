@@ -8,9 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-	ASK_LEGACY_KEYS,
 	askPolicySnapshot,
-	migrateLegacyAskToPublic,
 	resolveAskPolicy,
 } from "../src/lib/server/ask-policy.mjs";
 import { resolveDocumentPolicy } from "../src/lib/server/document-policy.mjs";
@@ -26,12 +24,7 @@ function loadCases() {
 
 test("policy-parity fixtures cover required kinds", () => {
 	const kinds = new Set(loadCases().map((c) => c.kind));
-	for (const required of [
-		"ask_resolve",
-		"ask_migrate",
-		"document_resolve",
-		"override_keys",
-	]) {
+	for (const required of ["ask_resolve", "document_resolve"]) {
 		assert.ok(kinds.has(required), `missing kind ${required}`);
 	}
 });
@@ -48,9 +41,6 @@ test("TypeScript policy resolves all fixture cases", () => {
 				}),
 			);
 			assert.ok(snap.public && snap.resolved);
-		} else if (caseDef.kind === "ask_migrate") {
-			const publicView = migrateLegacyAskToPublic(inp.raw);
-			assert.ok(publicView.answer_profile);
 		} else if (caseDef.kind === "document_resolve") {
 			const doc = resolveDocumentPolicy({
 				documentProfile: inp.document_profile,
@@ -58,17 +48,6 @@ test("TypeScript policy resolves all fixture cases", () => {
 				parsePreference: inp.parse_preference,
 			});
 			assert.ok(doc.chunk_profile);
-		} else if (caseDef.kind === "override_keys") {
-			assert.deepEqual(ASK_LEGACY_KEYS, [
-				"retrieve_top_k",
-				"answer_min_score",
-				"hybrid_enabled",
-				"rerank_enabled",
-				"citation_adjudicate_enabled",
-				"citation_adjudicate_absolute_floor",
-				"session_memory_enabled",
-				"session_memory_max_turns",
-			]);
 		} else {
 			assert.fail(`unknown kind ${caseDef.kind}`);
 		}

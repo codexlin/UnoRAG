@@ -1,6 +1,6 @@
 /**
  * Workspace ask settings: public business-intent contract.
- * Unset / missing → PUBLIC_ASK_DEFAULTS. Legacy numeric JSON is migrated on read.
+ * Unset / missing → PUBLIC_ASK_DEFAULTS. Stored data uses only public profiles.
  */
 
 import {
@@ -8,9 +8,6 @@ import {
 	ASK_INTERNAL_DEFAULTS,
 	ASK_PUBLIC_KEYS,
 	EVIDENCE_REQUIREMENTS,
-	isLegacyAskPayload,
-	isPublicAskPayload,
-	migrateLegacyAskToPublic,
 	normalizePublicAsk,
 	PUBLIC_ASK_DEFAULTS,
 	RETRIEVAL_ENHANCEMENTS,
@@ -21,7 +18,6 @@ import {
 export {
 	ASK_INTERNAL_DEFAULTS,
 	ASK_PUBLIC_KEYS,
-	migrateLegacyAskToPublic,
 	normalizePublicAsk,
 	PUBLIC_ASK_DEFAULTS,
 	resolveAskPolicy,
@@ -29,7 +25,7 @@ export {
 } from "./ask-policy.mjs";
 
 /**
- * Normalize stored ask JSON to public contract (migrates legacy knobs).
+ * Normalize stored ask JSON to the public contract.
  * @param {unknown} raw
  * @returns {Record<string, unknown>}
  */
@@ -37,25 +33,7 @@ export function sanitizeStoredAsk(raw) {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
 		return { ...PUBLIC_ASK_DEFAULTS };
 	}
-	if (
-		isLegacyAskPayload(raw) ||
-		(!isPublicAskPayload(raw) && hasAnyLegacy(raw))
-	) {
-		return migrateLegacyAskToPublic(raw);
-	}
 	return normalizePublicAsk(raw);
-}
-
-function hasAnyLegacy(raw) {
-	return [
-		"retrieve_top_k",
-		"answer_min_score",
-		"hybrid_enabled",
-		"rerank_enabled",
-		"citation_adjudicate_enabled",
-		"citation_adjudicate_absolute_floor",
-		"session_memory_max_turns",
-	].some((key) => Object.hasOwn(raw, key));
 }
 
 /**
@@ -71,7 +49,7 @@ export function validateAskPatch(partial) {
 	const patch = {};
 	for (const [key, value] of Object.entries(partial)) {
 		if (!ASK_PUBLIC_KEYS.includes(key)) {
-			// One-release: reject raw algorithm knobs from normal API.
+			// Algorithm knobs are internal and never accepted from product APIs.
 			if (
 				[
 					"retrieve_top_k",

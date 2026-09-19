@@ -25,9 +25,6 @@ export function resolveStoredAskOverrides(
 };
 export function publicAskDefaults(): typeof PUBLIC_ASK_DEFAULTS;
 export function internalAskDefaults(): Record<string, unknown>;
-export function migrateLegacyAskToPublic(
-	raw: unknown,
-): typeof PUBLIC_ASK_DEFAULTS;
 export function normalizePublicAsk(raw: unknown): typeof PUBLIC_ASK_DEFAULTS;
 export function resolveAskPolicy(
 	raw: unknown,
