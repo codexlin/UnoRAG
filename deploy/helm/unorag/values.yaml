@@ -106,6 +106,14 @@ ingress:
 # Send traces and structured logs to a customer-managed OpenTelemetry Collector.
 # The chart deliberately does not install Grafana/Tempo/Loki/Prometheus.
 observability:
+  # Native product alerts remain available without an external Ops Stack.
+  nativeAlerts:
+    askMinSamples: "10"
+    askFailureRateWarning: "0.05"
+    askCitationCoverageMin: "0.90"
+    askP95WarningMs: "15000"
+    askP95CriticalMs: "25000"
+    recoveryCycles: "2"
   otel:
     enabled: false
     endpoint: ""

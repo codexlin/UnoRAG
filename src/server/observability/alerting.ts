@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
 
+import { type AlertPolicy, DEFAULT_ALERT_POLICY } from "./alert-policy";
 import type { OperationsSnapshot } from "./operations-service";
 import type { ProviderHealthSnapshot } from "./provider-health";
 
@@ -28,7 +29,7 @@ type Environment = Record<string, string | undefined>;
 type AlertPayload = {
 	event_id: string;
 	product: "UnoRAG";
-	transition: "opened" | "resolved" | "reopened";
+	transition: "opened" | "escalated" | "resolved" | "reopened";
 	organization_id: string;
 	workspace_id: string;
 	alert: {
@@ -51,6 +52,11 @@ const MANAGED_CODES = [
 	"ask.p95_latency",
 ];
 const ALERT_LOCK_ID = 1_067_241_119;
+const SEVERITY_RANK: Record<AlertSeverity, number> = {
+	info: 0,
+	warning: 1,
+	critical: 2,
+};
 
 function digest(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
@@ -112,6 +118,7 @@ export function configuredAlertDestinations(
 export function deriveOperationalSignals(
 	snapshot: OperationsSnapshot,
 	providers: ProviderHealthSnapshot,
+	policy: AlertPolicy = DEFAULT_ALERT_POLICY,
 ): OperationalSignal[] {
 	const signals: OperationalSignal[] = [];
 	const terminal =
@@ -159,7 +166,11 @@ export function deriveOperationalSignals(
 			},
 		});
 	}
-	if (terminal >= 5 && snapshot.ask.failed / terminal >= 0.05) {
+	const failureRate = terminal ? snapshot.ask.failed / terminal : 0;
+	if (
+		terminal >= policy.askMinSamples &&
+		failureRate >= policy.askFailureRateWarning
+	) {
 		signals.push({
 			code: "ask.failure_rate",
 			source: "ask",
@@ -167,10 +178,18 @@ export function deriveOperationalSignals(
 			title: "Ask 失败率偏高",
 			detail: `${snapshot.ask.failed}/${terminal} 个终态请求失败。`,
 			recovery: "按最近错误码检查模型、检索依赖与超时配置。",
-			evidence: { failed: snapshot.ask.failed, terminal },
+			evidence: {
+				failed: snapshot.ask.failed,
+				terminal,
+				failure_rate: failureRate,
+				threshold: policy.askFailureRateWarning,
+			},
 		});
 	}
-	if (snapshot.ask.completed >= 5 && citationCoverage < 0.9) {
+	if (
+		snapshot.ask.completed >= policy.askMinSamples &&
+		citationCoverage < policy.askCitationCoverageMinimum
+	) {
 		signals.push({
 			code: "ask.citation_coverage",
 			source: "ask",
@@ -181,18 +200,31 @@ export function deriveOperationalSignals(
 			evidence: {
 				completed: snapshot.ask.completed,
 				without_citations: snapshot.ask.without_citations,
+				citation_coverage: citationCoverage,
+				threshold: policy.askCitationCoverageMinimum,
 			},
 		});
 	}
-	if ((snapshot.ask.latency_ms.p95 ?? 0) > 8_000) {
+	const p95 = snapshot.ask.latency_ms.p95;
+	if (
+		terminal >= policy.askMinSamples &&
+		p95 !== null &&
+		p95 >= policy.askP95WarningMs
+	) {
+		const severity = p95 >= policy.askP95CriticalMs ? "critical" : "warning";
 		signals.push({
 			code: "ask.p95_latency",
 			source: "ask",
-			severity: "warning",
+			severity,
 			title: "Ask P95 延迟偏高",
-			detail: `当前 P95 为 ${Math.round(snapshot.ask.latency_ms.p95 ?? 0)} ms。`,
+			detail: `当前 P95 为 ${Math.round(p95)} ms。`,
 			recovery: "按阶段耗时定位检索、重排或模型瓶颈。",
-			evidence: { p95_ms: snapshot.ask.latency_ms.p95 },
+			evidence: {
+				p95_ms: p95,
+				sample_count: terminal,
+				warning_threshold_ms: policy.askP95WarningMs,
+				critical_threshold_ms: policy.askP95CriticalMs,
+			},
 		});
 	}
 	for (const provider of providers.items) {
@@ -304,10 +336,15 @@ export async function reconcileWorkspaceAlerts(
 		workspaceId: string;
 		signals: OperationalSignal[];
 		destinations: AlertDestination[];
+		recoveryCycles?: number;
 		now?: Date;
 	},
 ): Promise<{ opened: number; resolved: number; observed: number }> {
 	const now = input.now ?? new Date();
+	const recoveryCycles = Math.max(
+		1,
+		Math.min(input.recoveryCycles ?? DEFAULT_ALERT_POLICY.recoveryCycles, 10),
+	);
 	const client = await pool.connect();
 	let opened = 0;
 	let resolved = 0;
@@ -318,10 +355,11 @@ export async function reconcileWorkspaceAlerts(
 			id: string;
 			code: string;
 			status: "active" | "resolved";
+			severity: AlertSeverity;
 			generation: number;
 			consecutive_healthy_count: number;
 		}>(
-			`SELECT id, code, status, generation, consecutive_healthy_count
+			`SELECT id, code, status, severity, generation, consecutive_healthy_count
 			 FROM app.observability_alerts
 			 WHERE organization_id = $1 AND workspace_id = $2
 			 FOR UPDATE`,
@@ -365,6 +403,9 @@ export async function reconcileWorkspaceAlerts(
 				continue;
 			}
 			if (current.status === "active") {
+				const escalated =
+					SEVERITY_RANK[signal.severity] > SEVERITY_RANK[current.severity];
+				const severity = escalated ? signal.severity : current.severity;
 				await client.query(
 					`UPDATE app.observability_alerts
 					 SET source = $4, severity = $5, title = $6, detail = $7,
@@ -377,7 +418,7 @@ export async function reconcileWorkspaceAlerts(
 						input.workspaceId,
 						current.id,
 						signal.source,
-						signal.severity,
+						severity,
 						signal.title,
 						signal.detail,
 						signal.recovery,
@@ -385,6 +426,16 @@ export async function reconcileWorkspaceAlerts(
 						now,
 					],
 				);
+				if (escalated) {
+					await createTransition(client, {
+						...input,
+						alertId: current.id,
+						generation: current.generation,
+						transition: "escalated",
+						signal,
+						now,
+					});
+				}
 				observed += 1;
 				continue;
 			}
@@ -432,7 +483,7 @@ export async function reconcileWorkspaceAlerts(
 			) {
 				continue;
 			}
-			if (current.consecutive_healthy_count < 1) {
+			if (current.consecutive_healthy_count + 1 < recoveryCycles) {
 				await client.query(
 					`UPDATE app.observability_alerts
 					 SET consecutive_healthy_count = consecutive_healthy_count + 1,

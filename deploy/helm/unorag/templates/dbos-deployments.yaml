@@ -267,6 +267,18 @@ spec:
               value: {{ .Values.dbos.observabilityCycleEnabled | quote }}
             - name: OBSERVABILITY_CYCLE_INTERVAL_MS
               value: {{ .Values.dbos.observabilityCycleIntervalMs | quote }}
+            - name: OBSERVABILITY_ASK_MIN_SAMPLES
+              value: {{ .Values.observability.nativeAlerts.askMinSamples | quote }}
+            - name: OBSERVABILITY_ASK_FAILURE_RATE_WARNING
+              value: {{ .Values.observability.nativeAlerts.askFailureRateWarning | quote }}
+            - name: OBSERVABILITY_ASK_CITATION_COVERAGE_MIN
+              value: {{ .Values.observability.nativeAlerts.askCitationCoverageMin | quote }}
+            - name: OBSERVABILITY_ASK_P95_WARNING_MS
+              value: {{ .Values.observability.nativeAlerts.askP95WarningMs | quote }}
+            - name: OBSERVABILITY_ASK_P95_CRITICAL_MS
+              value: {{ .Values.observability.nativeAlerts.askP95CriticalMs | quote }}
+            - name: OBSERVABILITY_ALERT_RECOVERY_CYCLES
+              value: {{ .Values.observability.nativeAlerts.recoveryCycles | quote }}
             - name: REDIS_URL
               value: {{ .Values.external.redis.url | quote }}
             - name: QDRANT_URL

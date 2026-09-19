@@ -11,6 +11,7 @@ import {
 } from "../lib/observability/telemetry";
 import { runTombstoneMaintenance } from "../server/lifecycle/tombstone-maintenance";
 import { PostgresTombstoneMaintenanceRepository } from "../server/lifecycle/tombstone-repository";
+import { resolveAlertPolicy } from "../server/observability/alert-policy";
 import { runAskRunsMaintenance } from "../server/observability/ask-runs-maintenance";
 import { createAskRunsRepository } from "../server/observability/ask-runs-repository";
 import { runObservabilityCycle } from "../server/observability/control-cycle";
@@ -30,6 +31,7 @@ async function main(): Promise<void> {
 		throw new Error("DATABASE_URL is required by the DBOS control process");
 	}
 	const config = loadWorkerConfig();
+	const alertPolicy = resolveAlertPolicy();
 	const pool = observePostgresPoolErrors(
 		new Pool({ connectionString: databaseUrl, max: 4 }),
 		"dbos-control",
@@ -150,6 +152,7 @@ async function main(): Promise<void> {
 					try {
 						observability = await runObservabilityCycle(pool, {
 							workerId: config.executorId,
+							policy: alertPolicy,
 						});
 					} catch (error) {
 						maintenanceLogger.error({

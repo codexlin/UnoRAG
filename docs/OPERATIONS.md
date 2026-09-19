@@ -129,9 +129,20 @@ TOMBSTONE_RETENTION_DAYS=90
 TOMBSTONE_MAINTENANCE_BATCH_SIZE=100
 OBSERVABILITY_CYCLE_ENABLED=true
 OBSERVABILITY_CYCLE_INTERVAL_MS=60000
+OBSERVABILITY_ASK_MIN_SAMPLES=10
+OBSERVABILITY_ASK_FAILURE_RATE_WARNING=0.05
+OBSERVABILITY_ASK_CITATION_COVERAGE_MIN=0.90
+OBSERVABILITY_ASK_P95_WARNING_MS=15000
+OBSERVABILITY_ASK_P95_CRITICAL_MS=25000
+OBSERVABILITY_ALERT_RECOVERY_CYCLES=2
 OBSERVABILITY_ALERT_WEBHOOK_ENABLED=false
 OBSERVABILITY_ALERT_EMAIL_ENABLED=false
 ```
+
+Ask 统计告警读取运行中心的滚动窗口，只在对应样本数达到
+`OBSERVABILITY_ASK_MIN_SAMPLES` 后评估。P95 达到 warning 阈值产生 warning，达到 critical 阈值升级为
+critical；任务 dead/stuck、删除失败和 Provider 不可用不受最小样本限制。控制周期会重复观察同一个滚动
+窗口，因此不把“连续轮询次数”误当成新的独立样本；降噪依靠样本下限，恢复则要求连续健康周期。
 
 健康评估使用 advisory lock 支持多个 control 副本，并把结果按 organization/workspace 投影。Webhook
 需同时配置 `OBSERVABILITY_ALERT_WEBHOOK_URL` 和 `OBSERVABILITY_ALERT_WEBHOOK_SECRET`；邮件需设置
@@ -161,7 +172,8 @@ pnpm tombstones:maintain:apply -- --retention-days 90 --limit 100
 删除失败会在运行中心显示为“待恢复删除”，并触发 `jobs.delete_failed` critical 告警。管理员或
 Workspace owner 应先打开“最近错误”确认失败边界，恢复 Qdrant 或对象存储后点击“重试清理”。产品会
 创建新的 DBOS 持久化任务，旧失败任务、阶段瀑布和 `library.delete_failed` 审计继续保留；新的任务接管
-文档后，“待恢复删除”立即归零，告警在连续两个健康控制周期后自动恢复。
+文档后，“待恢复删除”立即归零，告警默认在连续两个健康控制周期后自动恢复；现场可通过
+`OBSERVABILITY_ALERT_RECOVERY_CYCLES` 在 1–10 之间调整。
 
 产品页面不可用时，可使用同一套幂等状态机从 CLI 重新创建任务：
 
