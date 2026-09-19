@@ -6,15 +6,16 @@ const root = new URL("../", import.meta.url);
 const source = (path) => readFile(new URL(path, root), "utf8");
 
 test("Compose validates COS configuration and separates credentials", async () => {
-	const [install, runtime, secrets, compose] = await Promise.all([
+	const [install, runtime, advanced, secrets, compose] = await Promise.all([
 		source("deploy/compose/scripts/install.sh"),
 		source("deploy/config/runtime.env.example"),
+		source("deploy/config/runtime.advanced.env.example"),
 		source("deploy/config/runtime.secret.example"),
 		source("deploy/compose/docker-compose.yml"),
 	]);
 	assert.match(install, /COS_BUCKET COS_REGION COS_SECRET_ID COS_SECRET_KEY/);
 	assert.match(runtime, /^DOCUMENT_STORAGE_DRIVER=local$/m);
-	assert.match(runtime, /^COS_PUBLIC_BASE_URL=$/m);
+	assert.match(advanced, /^COS_PUBLIC_BASE_URL=$/m);
 	assert.doesNotMatch(runtime, /^COS_SECRET_(ID|KEY)=/m);
 	assert.match(secrets, /^COS_SECRET_ID=$/m);
 	assert.match(secrets, /^COS_SECRET_KEY=$/m);

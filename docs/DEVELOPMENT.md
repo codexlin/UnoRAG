@@ -49,7 +49,7 @@ pnpm test:integration
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh
-# 填写 ../config/runtime.env、runtime.secret、bootstrap.env
+# 填写 ../config/runtime.env、runtime.secret；高级调优按需修改
 ./scripts/install.sh
 ```
 

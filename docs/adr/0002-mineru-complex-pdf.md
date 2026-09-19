@@ -38,7 +38,7 @@ LiteParse 本地路径，避免所有文档无条件出域。
 
 | 层 | 可配置项 | 禁止暴露给终端用户 |
 |---|---|---|
-| **Deploy-only**（`runtime.env` / Secret / Helm） | `MINERU_PROVIDER`、`MINERU_API_KEY`（worker-only）、`EXTERNAL_PARSER_ALLOWED`、Base URL、超时、容量 | Provider URL、API Key、超时、容量、成本费率 |
+| **Deploy-only**（`runtime.advanced.env` / Secret / Helm） | `MINERU_PROVIDER`、`MINERU_API_KEY`（worker-only）、`EXTERNAL_PARSER_ALLOWED`、Base URL、超时、容量 | Provider URL、API Key、超时、容量、成本费率 |
 | **Library intent**（`parse_preference` + `scan_handling`） | `auto` 自动识别；`quality` 强制高质量解析；`local_only` 严格不出域；`scan_handling` 控制是否允许扫描件 / 仅文本 | 不得选择 `self_hosted` vs `302ai` |
 
 **映射（fail-closed）：**

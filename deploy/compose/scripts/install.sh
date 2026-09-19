@@ -27,7 +27,8 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-RUNTIME_ENV="$(cd "${ROOT}/../config" && pwd)/runtime.env"
+RUNTIME_ADVANCED_ENV="$(cd "${ROOT}/../config" && pwd)/runtime.advanced.env"
+"${ROOT}/scripts/init-config.sh"
 if [[ -n "$MANIFEST" ]]; then
 	[[ -f "$MANIFEST" ]] || {
 		echo "refusing install: manifest not found: $MANIFEST" >&2
@@ -58,7 +59,7 @@ if [[ -n "$MANIFEST" ]]; then
 		UNORAG_WEB_OPS_IMAGE "$OPS_IMAGE" \
 		UNORAG_DBOS_WORKER_IMAGE "$WORKER_IMAGE"
 	mk_release_write_runtime_pins \
-		"$RUNTIME_ENV" "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION" "$IMAGE_PLATFORM"
+		"$RUNTIME_ADVANCED_ENV" "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION" "$IMAGE_PLATFORM"
 fi
 
 runtime_compose() {
@@ -71,7 +72,7 @@ runtime_compose() {
 	fi
 }
 
-for file in ../config/runtime.env ../config/runtime.secret ../config/bootstrap.env; do
+for file in ../config/runtime.env ../config/runtime.advanced.env ../config/runtime.secret ../config/bootstrap.env; do
 	[[ -f "$file" ]] || {
 		echo "missing $file; run ./scripts/init-config.sh and fill it first" >&2
 		exit 1

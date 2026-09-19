@@ -29,7 +29,7 @@ AI 工程平台部署，再通过 OTLP 接入。
 
 ## 配置
 
-在 `deploy/config/runtime.env` 设置 OTLP 基础地址，必须以 `/api/public/otel` 结尾：
+在 `deploy/config/runtime.advanced.env` 设置 OTLP 基础地址，必须以 `/api/public/otel` 结尾：
 
 ```dotenv
 LANGFUSE_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel

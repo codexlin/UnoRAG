@@ -35,6 +35,10 @@ test("Compose maintenance commands reuse the persisted deployment overlay", asyn
 		path.join(config, "runtime.env"),
 		"UNORAG_COMPOSE_OVERLAY=./docker-compose.public.yml\n",
 	);
+	await writeFile(
+		path.join(config, "runtime.advanced.env"),
+		"PLACEHOLDER=value\n",
+	);
 	await writeFile(path.join(config, "runtime.secret"), "PLACEHOLDER=value\n");
 	await writeFile(
 		path.join(bin, "docker"),
