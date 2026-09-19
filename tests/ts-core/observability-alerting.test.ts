@@ -92,6 +92,60 @@ test("provider health isolates timeouts and never exposes configured endpoints",
 	assert.doesNotMatch(JSON.stringify(health), /secret\.example|secret-key/);
 });
 
+test("provider health validates the selected MinerU transport", async () => {
+	const readMineru = async (environment: Record<string, string>) => {
+		const health = await readProviderHealth(
+			{
+				checkDatabase: async () => undefined,
+				checkRedis: async () => undefined,
+				checkQdrant: async () => undefined,
+			},
+			{ environment },
+		);
+		return health.items.find((item) => item.code === "mineru");
+	};
+
+	assert.equal(
+		(
+			await readMineru({
+				MINERU_PROVIDER: "self_hosted",
+				MINERU_SELF_HOSTED_URL: "http://mineru.internal:6006",
+			})
+		)?.status,
+		"healthy",
+	);
+	assert.equal(
+		(
+			await readMineru({
+				MINERU_PROVIDER: "self_hosted",
+				MINERU_API_KEY: "not-a-self-hosted-url",
+				EXTERNAL_PARSER_ALLOWED: "true",
+			})
+		)?.status,
+		"disabled",
+	);
+	assert.equal(
+		(
+			await readMineru({
+				MINERU_PROVIDER: "302ai",
+				MINERU_API_KEY: "cloud-key",
+				EXTERNAL_PARSER_ALLOWED: "true",
+			})
+		)?.status,
+		"healthy",
+	);
+	assert.equal(
+		(
+			await readMineru({
+				MINERU_PROVIDER: "302ai",
+				MINERU_API_KEY: "cloud-key",
+				EXTERNAL_PARSER_ALLOWED: "false",
+			})
+		)?.status,
+		"disabled",
+	);
+});
+
 test("operational rules create deterministic scoped signal codes", () => {
 	const signals = deriveOperationalSignals(snapshot(), {
 		checked_at: "2026-08-04T12:00:00.000Z",

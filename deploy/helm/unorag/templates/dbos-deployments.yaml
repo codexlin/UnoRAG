@@ -1,8 +1,8 @@
 {{- if and .Values.dbos.enabled (eq .Values.objectStorage.driver "local") (not .Values.persistence.enabled) }}
 {{- fail "dbos.enabled=true with local storage requires persistence.enabled=true" }}
 {{- end }}
-{{- if and .Values.dbos.enabled (not .Values.config.openaiBaseUrl) (not .Values.config.llmBaseUrl) }}
-{{- fail "dbos.enabled=true requires config.openaiBaseUrl or config.llmBaseUrl" }}
+{{- if and .Values.dbos.enabled (not .Values.config.llmBaseUrl) }}
+{{- fail "dbos.enabled=true requires config.llmBaseUrl" }}
 {{- end }}
 {{- if and .Values.observability.otel.enabled (not .Values.observability.otel.endpoint) }}
 {{- fail "observability.otel.enabled=true requires observability.otel.endpoint" }}
@@ -45,6 +45,8 @@ spec:
               protocol: TCP
           env:
             {{- include "unorag.otelEnv" (list . "unorag-dbos-worker") | nindent 12 }}
+            - name: APP_ENV
+              value: {{ .Values.config.appEnv | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -107,7 +109,7 @@ spec:
                   name: {{ include "unorag.secretName" . }}
                   key: LLM_API_KEY
             - name: OPENAI_BASE_URL
-              value: {{ .Values.config.openaiBaseUrl | default .Values.config.llmBaseUrl | quote }}
+              value: {{ .Values.config.llmBaseUrl | quote }}
             - name: EMBEDDING_MODEL
               value: {{ .Values.config.embeddingModel | quote }}
             - name: EMBEDDING_DIM
@@ -124,8 +126,6 @@ spec:
               value: {{ .Values.config.mineru302BaseUrl | quote }}
             - name: EXTERNAL_PARSER_ALLOWED
               value: {{ .Values.config.externalParserAllowed | quote }}
-            - name: MINERU_URL
-              value: {{ .Values.config.mineruUrl | quote }}
             - name: MINERU_MODE
               value: {{ .Values.config.mineruMode | quote }}
             - name: MINERU_VERSION
@@ -223,6 +223,8 @@ spec:
           command: ["./node_modules/.bin/tsx", "src/worker/control-entry.ts"]
           env:
             {{- include "unorag.otelEnv" (list . "unorag-dbos-control") | nindent 12 }}
+            - name: APP_ENV
+              value: {{ .Values.config.appEnv | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -299,8 +301,6 @@ spec:
               value: {{ .Values.config.externalParserAllowed | quote }}
             - name: MINERU_SELF_HOSTED_URL
               value: {{ .Values.config.mineruSelfHostedUrl | quote }}
-            - name: MINERU_URL
-              value: {{ .Values.config.mineruUrl | quote }}
             - name: EMAIL_PROVIDER
               value: {{ .Values.config.emailProvider | quote }}
             - name: OBSERVABILITY_ALERT_WEBHOOK_ENABLED

@@ -108,6 +108,11 @@ Redis 是 Web 的必需依赖，用于可撤销浏览器会话、登录/Public A
 `WORKER_DATABASE_URL`、`DBOS_SYSTEM_DATABASE_URL` 与 `MIGRATOR_DATABASE_URL`。
 Web 和 Worker 运行身份不得拥有 DDL 权限。
 
+Compose 的模型端点只配置 `runtime.env` 中的 `LLM_BASE_URL`；Helm 使用
+`config.llmBaseUrl`。两个部署入口都会映射为应用内部的 `OPENAI_BASE_URL`，不要再为 Web 和
+Worker 分别维护端点。自托管 MinerU 地址只使用 `MINERU_SELF_HOSTED_URL`；升级初始化会将历史
+`MINERU_URL` 一次性迁移并删除旧键。
+
 安装程序依次启动基础设施、执行 Drizzle 迁移、配置数据库角色、初始化首个组织、Workspace
 和管理员、启动 DBOS、对账 ACL 投影，最后启动 Web 与 Caddy。
 

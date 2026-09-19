@@ -66,6 +66,7 @@ helm upgrade --install unorag ./deploy/helm/unorag \
   --set images.migrator.tag=1.0.0 \
   --set images.ops.repository=registry.example/unorag-ops \
   --set images.ops.tag=1.0.0 \
+  --set config.llmBaseUrl=https://models.example/v1 \
   --set external.qdrant.url=http://qdrant.infra:6333 \
   --set external.redis.url=redis://redis.infra:6379 \
   --set ingress.enabled=true \
@@ -84,7 +85,7 @@ Collector or APM endpoint:
 
 ```bash
 helm upgrade --install unorag ./deploy/helm/unorag \
-  --set config.openaiBaseUrl=http://llm \
+  --set config.llmBaseUrl=http://llm \
   --set observability.otel.enabled=true \
   --set observability.otel.endpoint=http://otel-collector.monitoring:4318
 ```
@@ -101,9 +102,9 @@ Do not inject Langfuse project keys into UnoRAG pods. See
 ## Validate
 
 ```bash
-helm lint deploy/helm/unorag --set config.openaiBaseUrl=http://llm
+helm lint deploy/helm/unorag --set config.llmBaseUrl=http://llm
 helm template unorag deploy/helm/unorag \
-  --set config.openaiBaseUrl=http://llm >/tmp/unorag.yaml
+  --set config.llmBaseUrl=http://llm >/tmp/unorag.yaml
 ```
 
 See the [private deployment guide](../../docs/DEPLOYMENT.md)

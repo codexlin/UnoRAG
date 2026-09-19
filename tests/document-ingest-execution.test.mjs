@@ -97,7 +97,7 @@ test("Helm renders the TypeScript-only runtime", (t) => {
 	const chart = path.join(root, "deploy/helm/unorag");
 	const render = spawnSync(
 		"helm",
-		["template", "unorag", chart, "--set", "config.openaiBaseUrl=http://llm"],
+		["template", "unorag", chart, "--set", "config.llmBaseUrl=http://llm"],
 		{ encoding: "utf8" },
 	);
 	assert.equal(render.status, 0, render.stderr);
