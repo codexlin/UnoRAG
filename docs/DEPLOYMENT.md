@@ -94,7 +94,8 @@ Grafana 默认仅监听 `127.0.0.1:3300`，其它观测后端不发布宿主机�
 
 已有独立 Langfuse 或 Langfuse Cloud 项目时，可再配置 `LANGFUSE_OTLP_ENDPOINT` 和 Collector-only
 `LANGFUSE_OTLP_AUTHORIZATION`，使用 `./scripts/install.sh --with-langfuse`。该模式自动包含 Ops Stack，
-并由 Collector 将脱敏后的同一 Trace 双写 Tempo/Langfuse；详见 [LANGFUSE.md](./LANGFUSE.md)。
+并由 Collector 将脱敏后的同一 Trace 双写 Tempo/Langfuse；数据边界和排障见
+[OPERATIONS.md](./OPERATIONS.md#可选-langfuse)。
 
 必要 Secret 包括：
 
@@ -270,7 +271,7 @@ CONFIRM=YES ./scripts/restore.sh ./backups/<backup-id>
 Chart 位于 [`deploy/helm/unorag`](../deploy/helm/unorag)，默认使用客户托管的 PostgreSQL、
 Qdrant 和 Redis，并支持共享 PVC 或腾讯云 COS 文档存储。Helm starter 尚不承诺完整 HPA、PDB、
 NetworkPolicy 或通用 S3；这些能力应按
-客户基础设施和 [PRODUCT.md](./PRODUCT.md) 的当前边界评估。
+客户基础设施和 [STATUS.md](./STATUS.md) 的当前边界评估。
 
 ### 腾讯云 COS
 

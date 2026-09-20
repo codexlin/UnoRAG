@@ -97,7 +97,7 @@ dependency.
 
 For Langfuse, configure a v4 OTLP exporter on the customer-managed Collector.
 Do not inject Langfuse project keys into UnoRAG pods. See
-[`docs/LANGFUSE.md`](../../docs/LANGFUSE.md).
+[`docs/OPERATIONS.md`](../../docs/OPERATIONS.md#可选-langfuse).
 
 ## Validate
 

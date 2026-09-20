@@ -11,7 +11,22 @@ const markdownFiles = execFileSync("git", ["ls-files", "-z", "--", "*.md"])
 const documentationFiles = markdownFiles.filter(
 	(file) => !file.startsWith("testdata/"),
 );
+const retiredDocumentationPaths = new Set([
+	"docs/PRODUCT.md",
+	"docs/LANGFUSE.md",
+	"docs/contracts/retrieve-ask-v1.md",
+	"docs/design/observability.md",
+	"docs/design/hybrid-retrieval.md",
+	"docs/evidence/2026-09-15-library-crud-audit.md",
+	"docs/evidence/2026-09-17-library-delete-fault-recovery.md",
+]);
 const errors = [];
+
+for (const file of documentationFiles) {
+	if (retiredDocumentationPaths.has(file)) {
+		errors.push(`${file}: retired documentation path must not be restored`);
+	}
+}
 
 function linkDestination(raw) {
 	const value = raw.trim();

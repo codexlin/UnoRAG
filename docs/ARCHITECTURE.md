@@ -139,6 +139,10 @@ builds an application-level lexical index from a bounded corpus and is intended 
 small and medium knowledge bases; server-side sparse retrieval remains an evaluated
 future upgrade rather than a current scale claim.
 
+应用层 BM25 不得按 library 或 generation 共享高权限主体构建的语料缓存。任何复用都必须包含规范化的
+授权指纹、再次执行 ACL/version 校验并具备可靠失效机制。Qdrant sparse 只有在真实客户语料证明质量、
+容量和回滚收益，并通过跨 Workspace、ACL、active generation 与删除隔离门禁后，才能替换当前路径。
+
 Native Ask uses LangGraph.js for orchestration:
 
 ```text
@@ -149,6 +153,25 @@ route -> plan -> clarify | retrieve -> table execute -> judge
 Vercel AI SDK provides model calls, structured output and streaming. LangChain core
 types are used only where they remove adapter friction. LlamaIndex is not a second
 runtime; it may later appear behind a retrieval or parser tool boundary.
+
+## 可观测性边界
+
+可观测性分为三层，彼此共享上下文但不互相构成运行依赖：
+
+| 层级 | 默认状态 | 责任 |
+|---|---|---|
+| 原生诊断 | 默认启用 | 运行中心、Ask/Job 阶段账本、审计、持久告警、Pino JSON 和低基数 `/metrics` |
+| Ops Stack | 可选 | Collector、Prometheus、Grafana、Loki、Tempo 与 Alertmanager |
+| AI 工程 | 可选 | 通过 Collector 向 Langfuse 输出 metadata-only AI Trace 和确定性评测分数 |
+
+`request_id` 是对外稳定的业务关联号；公共 API 的 `trace_id` 是它的兼容别名，不是 W3C Trace ID。
+`otel_trace_id` 只覆盖一次同步执行。DBOS 任务通过稳定的 `job_id` / `workflow_id` 关联，每次执行尝试使用
+独立 Trace，不能构造跨越排队、重试和恢复周期的超长父子 Trace。
+
+原生诊断表和外部观测默认不保存问题、回答、Prompt、引用正文、检索块、认证头或凭据。高基数的组织、
+Workspace、文档和请求标识只进入受控日志或 Trace attribute，不作为 Prometheus label。任何 Collector、
+Grafana、Tempo、Loki 或 Langfuse 故障都必须 fail-soft，不得改变 Ask、检索、入库和生命周期结果。
+具体启用、保留、告警和排障见 [OPERATIONS.md](./OPERATIONS.md)。
 
 ## 部署模型
 

@@ -83,11 +83,10 @@ UnoRAG 默认提供管理员可见的“运行中心”、低基数 `/metrics`�
 `app.ask_runs` 诊断元数据。运行中心按当前 organization/workspace 强制隔离，展示 Ask 终态、P50/P95、
 引用覆盖、dead/stuck 任务、组件健康、持久告警和恢复建议；不会返回问题、回答、Prompt、引用正文、
 Provider 地址、通知目标或 Job 错误正文。Webhook/邮件是默认关闭的核心可选投递；分布式追踪、集中
-日志与 Alertmanager 由可选 Ops Stack 提供，完整边界见
-[design/observability.md](./design/observability.md)。
+日志与 Alertmanager 由可选 Ops Stack 提供，职责与隐私边界见 [ARCHITECTURE.md](./ARCHITECTURE.md#可观测性边界)。
 
 需要模型、Token、LangGraph 节点和后续评测实验视图时，可选启用 metadata-only Langfuse 出口；配置、
-权限和排障见 [LANGFUSE.md](./LANGFUSE.md)。Langfuse exporter 告警不得升级为 UnoRAG 业务不可用告警。
+权限和排障见下文“可选 Langfuse”。Langfuse exporter 告警不得升级为 UnoRAG 业务不可用告警。
 
 LLM 调用由 Web 进程内的共享 FIFO 门控统一约束，Router、Rewrite、Judge、TablePlan 和最终回答不会各自
 绕过额度。`LLM_MAX_INFLIGHT` 是每个 Web 副本的在途上限，因此集群总上限约为“副本数 × 该值”；
@@ -185,6 +184,59 @@ pnpm tombstones:maintain:apply -- --retention-days 90 --limit 100
 `lifecycle:inspect` 将 `deleting`、可回收的过期 tombstone 和被历史记录阻塞的库分别报告。自动化发布
 门禁可额外传 `--fail-on-expired-tombstones`；`blocked_library_tombstones` 是保留策略结果，不触发该
 门禁。Grafana 的 `UnoRAG Lifecycle and DBOS` 看板展示每轮回收量、blocked 数和维护失败事件。
+
+## 可选 Langfuse
+
+UnoRAG 通过 OpenTelemetry Collector 把同一份 metadata-only Trace 可选发送到 Tempo 和 Langfuse。
+应用只连接 Collector；Langfuse 地址和项目密钥只能存在于 Collector 容器或客户托管 Collector 中。
+Langfuse 不可用时，独立 exporter 只做有界排队和重试，Tempo 与产品请求继续工作。
+
+前置条件是已有 Langfuse Cloud 项目或独立部署的 Langfuse v4。UnoRAG 不复制 Langfuse 自托管所需的
+ClickHouse、Redis/Valkey、对象存储等基础设施；这些组件由独立平台负责容量、升级和备份。
+
+在 `runtime.advanced.env` 设置以 `/api/public/otel` 结尾的基础地址：
+
+```dotenv
+LANGFUSE_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel
+```
+
+使用同一项目的 Public Key 和 Secret Key 生成 Basic Auth，并只写入 `runtime.secret`：
+
+```bash
+AUTH_STRING="$(printf '%s:%s' "$LANGFUSE_PUBLIC_KEY" "$LANGFUSE_SECRET_KEY" | base64 | tr -d '\n')"
+printf 'LANGFUSE_OTLP_AUTHORIZATION=Basic %s\n' "$AUTH_STRING"
+```
+
+安装或升级：
+
+```bash
+cd deploy/compose
+./scripts/install.sh --with-langfuse
+./scripts/upgrade.sh --manifest /path/to/release.env --with-langfuse
+# 保留 Ops Stack 但关闭 Langfuse
+./scripts/upgrade.sh --manifest /path/to/release.env --without-langfuse
+```
+
+`--with-langfuse` 自动包含 Ops Stack。升级脚本会保留已启用模式，除非显式关闭。Helm 不部署 Collector
+或 Langfuse；Kubernetes 客户应把 `observability.otel.endpoint` 指向客户 Collector，并在 Collector 上
+配置 Langfuse OTLP exporter、Basic Auth 和 v4 ingestion header。
+
+数据边界是强制规则：
+
+- AI SDK 固定 `recordInputs=false`、`recordOutputs=false`；
+- Collector 再次删除问题、回答、Prompt、Completion、模型消息、工具输入输出、Embedding 内容、
+  数据库语句、认证头、Cookie、命令行和宿主机名；
+- Langfuse 只接收 Trace，不接收 UnoRAG OTel Logs；
+- 只保留模型、Token、延迟、节点类型、路由/拒答结果、引用数量和作用域诊断元数据；
+- Langfuse 项目权限不能替代 UnoRAG Workspace ACL；当前不存在可由环境变量绕过的内容采集开关。
+
+评测 CLI 可以用独立项目 API Key 发布 Session 级确定性分数，但只发送 case/run/release 标识和数值，
+不发送黄金集、问题或回答；产品运行容器不持有该 Key。详见 [EVALUATION.md](./EVALUATION.md)。
+
+验证时先运行 `./scripts/observability-smoke.sh`，再发起一次真实 Ask。在 Langfuse 中应看到
+`unorag.ask` 及 route/rewrite/retrieve/judge/generate 子节点，模型与 Token 元数据可见而 Input/Output
+为空。没有数据时依次检查 Collector 是否加载 Langfuse 配置、endpoint 后缀、Basic Auth、exporter
+队列，以及同一 Trace 能否在 Tempo 查询。不得因 Langfuse 故障重启或回滚 UnoRAG 业务数据。
 
 ## 生命周期故障
 
