@@ -29,6 +29,7 @@ check: brand
 		pnpm install --frozen-lockfile
 		pnpm test
 		pnpm test:ts-core
+		pnpm docs:check
 		pnpm typecheck
 		pnpm db:check
 		pnpm lint

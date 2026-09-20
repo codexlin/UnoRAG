@@ -127,16 +127,12 @@ Qdrant contains security-scoped retrieval projections.
 
 ## Documentation
 
-- [Current status, gaps, and next steps](./docs/STATUS.md)
-- [Product and capability boundaries](./docs/PRODUCT.md)
-- [System architecture](./docs/ARCHITECTURE.md)
-- [Knowledge API](./docs/INTEGRATION.md)
-- [Private deployment](./docs/DEPLOYMENT.md)
-- [Operations](./docs/OPERATIONS.md)
-- [Release and acceptance](./docs/RELEASE.md)
-- [Changelog and known limitations](./CHANGELOG.md)
-- [Development](./docs/DEVELOPMENT.md)
-- [Current release evidence](./docs/evidence/README.md)
+Use the [documentation portal](./docs/README.md) to follow one role-based path:
+
+- **Evaluate or use:** [product](./docs/PRODUCT.md) → [current status](./docs/STATUS.md)
+- **Deploy or operate:** [deployment](./docs/DEPLOYMENT.md) → [operations](./docs/OPERATIONS.md)
+- **Develop or integrate:** [architecture](./docs/ARCHITECTURE.md) → [development](./docs/DEVELOPMENT.md) → [Knowledge API](./docs/INTEGRATION.md)
+- **Maintain releases:** [release gates](./docs/RELEASE.md) → [current evidence](./docs/evidence/README.md)
 
 ## Open Source
 
