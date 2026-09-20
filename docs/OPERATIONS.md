@@ -251,8 +251,9 @@ Worker 同时获得新凭证，验证上传、入库、下载和删除后再撤�
 
 ```bash
 just check
-just images v0.1.0
-just release v0.1.0 REGISTRY/NAMESPACE
+VERSION=v0.2.2
+just images "$VERSION"
+just release "$VERSION" REGISTRY/NAMESPACE
 ```
 
 manifest 记录四个镜像 digest、DBOS application version 和 Cosign 验证策略。升级只能引用该

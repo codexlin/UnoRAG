@@ -1,31 +1,15 @@
 # 当前验收证据
 
-本目录只保留当前 TypeScript 运行时仍有参考价值的版本绑定证据：
+本目录只保留当前稳定版与仍有独立故障诊断价值的证据：
 
 | 报告 | 证明范围 |
 |---|---|
 | [v0.2.2 Production Hardening 发布验收](./2026-09-20-v0.2.2-production-hardening-release.md) | 告警和公网安全加固、配置分层与运行时清理、四镜像供应链、空环境安装、`0.2.1 -> 0.2.2` 原位升级、三轮真实文件质量、故障恢复、告警开闭环及桌面/移动浏览器复核 |
-| [v0.2.1 安全维护发布验收](./2026-09-19-v0.2.1-security-release.md) | Mammoth DOCX 安全升级、四镜像扫描与签名、`0.2.0 -> 0.2.1` 原位升级、完整产品 smoke、7/7 真实文件、36/36 正例、5/5 拒答及评测器假失败处置 |
-| [v0.2.0 发布与香港环境验收](./2026-09-19-v0.2.0-release-acceptance.md) | 复杂文档硬门禁、Provider scorecard、双 Registry 供应链、`0.1.4 -> 0.2.0` 原位升级、36/36 正例、5/5 拒答、生命周期与公网桌面/移动端复核 |
 | [删除故障恢复验收](./2026-09-17-library-delete-fault-recovery.md) | 真实 Qdrant 停机、对象存储删除拒绝、运行中心诊断与告警、页面幂等重试和最终资源清理 |
 | [Library CRUD 审计验收](./2026-09-15-library-crud-audit.md) | Library 创建、更新、同步/异步删除审计，Request ID 关联、隐私约束、真实 PostgreSQL 幂等测试与本地 Docker 浏览器链路 |
-| [v0.1.4 香港环境发布验收](./2026-09-14-v0.1.4-hk-release-acceptance.md) | 镜像 CVE 与运行时权限修复、双 Registry 供应链、`0.1.2 -> 0.1.4` 原位升级、完整产品 smoke、生命周期和真实浏览器运行中心复核 |
-| [v0.1.2 本地与供应链验收](./2026-09-10-v0.1.2-local-release-gate.md) | 空环境 Compose、真实 MinerU 文件矩阵、真实基础设施集成、诊断瀑布图、失败清理、重启恢复和双 Registry 不可变发布 |
-| [v0.1.1 稳定版验收](./2026-09-09-v0.1.1-release-acceptance.md) | 安全维护版本、双 Registry 供应链、`0.1.0 -> 0.1.1` 原位升级、产品烟测和三轮真实文件质量门禁 |
-| [v0.1.0 稳定版验收](./2026-08-23-v0.1.0-release-acceptance.md) | 稳定 digest、供应链、产品链路、29 项隔离熔断、容量、真实 MinerU、故障恢复、备份完整性和应用回滚前滚 |
-| [RC.18 LLM 背压与容量验收](./2026-08-22-rc18-llm-backpressure.md) | 共享且可取消的 LLM 并发门、队列与 provider 独立超时、真实容量校准、Qdrant 逐 minor 升级和复杂 PDF 入库 |
-| [RC.14 COS 与容量基线](./2026-08-22-rc14-cos-capacity.md) | 空环境 COS 安装、产品全链路、Retrieve/Ask/入库阶梯并发和真实 302.AI MinerU 图表 PDF |
-| [RC.12 生产候选验收](./2026-08-12-rc12-production-acceptance.md) | 精确 digest 发布、RC.11 生产问题修复、三轮真实文件稳定性、浏览器 Workspace 隔离、备份 overlay、故障恢复及版本回退前滚 |
-| [UnoRAG-HK RC.8 主机验收](./2026-08-10-unorag-hk-production-acceptance.md) | HK 独立主机安装、真实 MinerU 文件矩阵、质量门禁、破坏性恢复与整机重启 |
-| [Registry RC.7 Tombstone 生命周期验收](./2026-08-06-registry-rc7-tombstone-validation.md) | Node 24 Actions、tombstone 保留与回收、最小权限以及 RC.6 原地升级 |
-| [Registry RC.6 平台合同与发布性能验收](./2026-08-06-registry-rc6-platform-validation.md) | manifest 平台预检、镜像瘦身、构建缓存与 RC.5 原地升级 |
-| [Registry RC.5 不可变发布验收](./2026-08-05-registry-rc5-validation.md) | 双 Registry digest、空环境安装、真实浏览器、升级与回滚 |
-| [TS RC 4829e41 全量复验](./2026-08-04-ts-rc-4829e41-full-validation.md) | 当前分支的确定性测试、四镜像、原地升级、真实文件、浏览器与故障恢复 |
-| [TS RC 空环境验收](./2026-08-02-ts-rc-clean-install-e2e.md) | 安装、真实文件、浏览器、隔离、恢复和质量矩阵 |
-| [MinerU 302.AI 实链路](./2026-08-02-ts-mineru-302-live.md) | DBOS Worker 到 302.AI MinerU 的扫描 PDF 入库 |
 
 报告只证明其记录的 commit、配置和环境。报告中的测试数量是当时快照，不是当前仓库的动态状态。
 当前版本必须重新执行 [发布与验收流程](../RELEASE.md)。
 
-2026-07-25 至 2026-07-30 的 FastAPI、Python Worker、outbox 和 Webch 过渡期报告已从当前
-文档树移除，仍可通过 Git 历史查看。它们不能用于证明现在的 TypeScript 运行时已经通过验收。
+旧版本、RC 和已经被当前稳定版覆盖的报告只通过 Git 历史与 GitHub Releases 保留，不继续堆积在当前
+文档树中。它们不能用于证明当前提交、模型、ParserProvider 或客户环境已经通过验收。

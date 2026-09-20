@@ -61,7 +61,7 @@ Redis 上 0 skip 通过；候选版本还必须在完整 Compose 环境中补齐
 Trivy HIGH/CRITICAL 门禁失败、缺失 BuildKit SBOM/provenance、Cosign 签名或发布后自验失败、使用
 浮动镜像标签或无法复现配置时，不得进入试点验收。正式 manifest 必须启用签名验证并绑定 UnoRAG
 release workflow 的 GitHub OIDC 身份；安装和升级在镜像拉取前 fail-closed 验签。
-官方 `v0.1` manifest 必须包含 `UNORAG_IMAGE_PLATFORM=linux/amd64`。安装和升级前的架构预检失败
+官方 release manifest 必须包含 `UNORAG_IMAGE_PLATFORM=linux/amd64`。安装和升级前的架构预检失败
 属于 NO-GO；`--allow-platform-emulation` 只供开发机 RC 验证，不能用于客户生产签字。
 官方 manifest 将 DBOS application version 固定为 `unorag-<git-sha>`。它是 durable workflow 的代码
 兼容边界，不是可手改的营销版本；不同代码提交不得复用同一值，同一发布的 Web/control/worker 必须
@@ -74,7 +74,7 @@ release workflow 的 GitHub OIDC 身份；安装和升级在镜像拉取前 fail
 
 | 字段 | 含义 | 示例 |
 |---|---|---|
-| `UNORAG_VERSION` | 用户可见产品版本；Git tag 去掉前导 `v` | `0.1.0-rc.9` |
+| `UNORAG_VERSION` | 用户可见产品版本；Git tag 去掉前导 `v` | `0.2.2` |
 | `UNORAG_REVISION` | 构建对应的完整 Git commit | 40 位 SHA |
 | `UNORAG_BUILD_TIME` | 镜像构建时间 | ISO 8601 UTC |
 | `UNORAG_DBOS_APPLICATION_VERSION` | durable workflow 兼容边界 | `unorag-<git-sha>` |
@@ -91,10 +91,10 @@ cd deploy/compose
 ./scripts/install.sh --manifest /path/to/release-acr.env
 ```
 
-### 首个稳定版附加门禁
+### 稳定版供应链门禁
 
-`v0.1.0` 必须从已经通过主分支 CI 的精确提交创建，且不得复用 RC digest 或只把 RC tag 改名。稳定标签
-触发 release workflow 后，应把以下材料作为同一个发布单元验证和归档：
+每个稳定版本必须从已经通过主分支 CI 的精确提交创建，且不得复用其他 tag 的 digest 或只修改镜像标签。
+稳定标签触发 release workflow 后，应把以下材料作为同一个发布单元验证和归档：
 
 - GHCR 四镜像 digest manifest；ACR 仅作为可选镜像站，不是唯一下载源；
 - 每个 GHCR digest 的 SPDX SBOM、SLSA provenance 与 GitHub OIDC Cosign 签名；

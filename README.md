@@ -136,7 +136,7 @@ Qdrant contains security-scoped retrieval projections.
 - [Release and acceptance](./docs/RELEASE.md)
 - [Changelog and known limitations](./CHANGELOG.md)
 - [Development](./docs/DEVELOPMENT.md)
-- [Open-source readiness audit](./docs/OPEN_SOURCE_READINESS.md)
+- [Current release evidence](./docs/evidence/README.md)
 
 ## Open Source
 
@@ -152,8 +152,8 @@ Asset provenance, third-party notices, SBOM/provenance, and image signing are in
 distributed login and API limits, immediate session revocation, and the production configuration
 contract on top of the existing complex-document, citation, lifecycle, and supply-chain gates. See
 the [current status](./docs/STATUS.md),
-[ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) and the
-[open-source readiness audit](./docs/OPEN_SOURCE_READINESS.md).
+[ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md), and the
+[current release evidence](./docs/evidence/README.md).
 
 Contributions, support, and security reports are described in [CONTRIBUTING.md](./CONTRIBUTING.md),
 [SUPPORT.md](./SUPPORT.md), and [SECURITY.md](./SECURITY.md).
