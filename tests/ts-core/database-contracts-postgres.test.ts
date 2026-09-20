@@ -203,6 +203,29 @@ test("migrated job ownership and stage diagnostics enforce their runtime contrac
 		assert.deepEqual(stages?.proconfig, ["search_path=pg_catalog, app"]);
 		assert.equal(stages?.public_execute, false);
 
+		const documentColumns = new Map(
+			(await tableColumns(pool, "documents")).map((column) => [
+				column.column_name,
+				column,
+			]),
+		);
+		assert.equal(
+			documentColumns.get("acl_fingerprint")?.character_maximum_length,
+			64,
+		);
+		assert.equal(documentColumns.get("acl_fingerprint")?.is_nullable, "NO");
+		assert.equal(
+			documentColumns.get("projected_acl_fingerprint")
+				?.character_maximum_length,
+			64,
+		);
+		assert.equal(
+			names(await tableConstraints(pool, "documents")).has(
+				"documents_acl_fingerprint_check",
+			),
+			true,
+		);
+
 		for (const table of ["ask_run_stages", "job_stage_runs"]) {
 			const columns = await tableColumns(pool, table);
 			assert.ok(columns.length > 0, `${table} is installed`);

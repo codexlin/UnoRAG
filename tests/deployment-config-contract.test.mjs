@@ -13,6 +13,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import {
+	hasCommand,
+	renderComposeConfig,
+	renderHelm,
+} from "./helpers/deployment-contracts.mjs";
+
 const root = new URL("../", import.meta.url);
 
 function parseEnvContract(contents) {
@@ -27,44 +33,6 @@ function parseEnvContract(contents) {
 				return [line.slice(0, separator), line.slice(separator + 1)];
 			}),
 	);
-}
-
-function renderComposeConfig() {
-	const composeDir = new URL("deploy/compose/", root).pathname;
-	const result = spawnSync(
-		"docker",
-		[
-			"compose",
-			"--env-file",
-			new URL("deploy/config/runtime.env.example", root).pathname,
-			"--env-file",
-			new URL("deploy/config/runtime.advanced.env.example", root).pathname,
-			"-f",
-			new URL("deploy/compose/docker-compose.yml", root).pathname,
-			"config",
-			"--format",
-			"json",
-		],
-		{
-			cwd: composeDir,
-			encoding: "utf8",
-			env: {
-				...process.env,
-				POSTGRES_PASSWORD: "contract-postgres",
-				UNORAG_WEB_DB_PASSWORD: "contract-web",
-				UNORAG_WORKER_DB_PASSWORD: "contract-worker",
-				UNORAG_SESSION_SECRET: "contract-session-secret-0000000000000000",
-				LLM_API_KEY: "contract-llm-key",
-				LLM_BASE_URL: "https://models.example/v1",
-				QDRANT_URL: "http://qdrant:6333",
-				REDIS_URL: "redis://redis:6379",
-				EMBEDDING_MODEL: "contract-embedding",
-				EMBEDDING_DIM: "1024",
-			},
-		},
-	);
-	assert.equal(result.status, 0, result.stderr || result.stdout);
-	return JSON.parse(result.stdout);
 }
 
 test("deployment inputs map to one application environment contract", async () => {
@@ -131,25 +99,11 @@ test("deployment inputs map to one application environment contract", async () =
 });
 
 test("Helm gives Web and Worker the same canonical model endpoint", (t) => {
-	const probe = spawnSync("helm", ["version", "--short"], {
-		encoding: "utf8",
-	});
-	if (probe.status !== 0) {
+	if (!hasCommand("helm", ["version", "--short"])) {
 		t.skip("helm is not installed");
 		return;
 	}
-	const chart = new URL("deploy/helm/unorag", root).pathname;
-	const render = spawnSync(
-		"helm",
-		[
-			"template",
-			"unorag",
-			chart,
-			"--set",
-			"config.llmBaseUrl=https://models.example/v1",
-		],
-		{ encoding: "utf8" },
-	);
+	const render = renderHelm();
 	assert.equal(render.status, 0, render.stderr);
 	assert.equal(
 		(render.stdout.match(/OPENAI_BASE_URL/g) ?? []).length,

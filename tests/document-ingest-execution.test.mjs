@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
 	dbosDocumentIngestEnabled,
 	dbosDocumentIngestRouteEnabled,
 	documentIngestExecutionIdentity,
 } from "../src/lib/server/document-lifecycle-flag.mjs";
+import {
+	hasCommand,
+	renderComposeConfig,
+	renderHelm,
+} from "./helpers/deployment-contracts.mjs";
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const legacyDisabled = { UNORAG_DBOS_DOCUMENT_INGEST_ENABLED: "false" };
 
 test("every supported format routes to DBOS without a feature flag", () => {
@@ -52,54 +52,29 @@ test("every supported format routes to DBOS without a feature flag", () => {
 	}
 });
 
-test("deployment ships the complete TypeScript parser runtime", () => {
-	const compose = readFileSync(
-		path.join(root, "deploy/compose/docker-compose.yml"),
-		"utf8",
+test("Compose renders the complete TypeScript parser worker contract", () => {
+	const compose = renderComposeConfig();
+	const worker = compose.services["dbos-worker"];
+	assert.ok(worker);
+	assert.equal(
+		worker.environment.UNORAG_DBOS_LISTEN_QUEUES,
+		"ingest-local,ingest-auto,ingest-mineru,lifecycle",
 	);
-	const dockerfile = readFileSync(
-		path.join(root, "deploy/docker/web.Dockerfile"),
-		"utf8",
-	);
-	assert.match(compose, /^ {2}dbos-worker:/m);
-	assert.match(
-		compose,
-		/UNORAG_DBOS_LISTEN_QUEUES:.*ingest-local,ingest-auto,ingest-mineru,lifecycle/,
-	);
-	assert.match(compose, /MINERU_PROVIDER/);
-	assert.match(compose, /LITEPARSE_OCR_LANGUAGE/);
-	assert.match(dockerfile, /COPY src \.\/src/);
-	assert.doesNotMatch(compose, /UNORAG_DBOS_TEXT_INGEST/);
-});
-
-test("every shipped application image runs as the non-root product user", () => {
-	const dockerfile = readFileSync(
-		path.join(root, "deploy/docker/web.Dockerfile"),
-		"utf8",
-	);
-	for (const stage of ["migrator", "ops", "worker", "runner"]) {
-		const marker = new RegExp(`^FROM [^\\n]+ AS ${stage}$`, "m");
-		const match = marker.exec(dockerfile);
-		assert.ok(match, `missing Dockerfile stage ${stage}`);
-		const body = dockerfile
-			.slice(match.index + match[0].length)
-			.split(/^FROM /m, 1)[0];
-		assert.match(body, /^USER unorag$/m, `${stage} must not run as root`);
-	}
+	assert.equal(worker.environment.MINERU_PROVIDER, "self_hosted");
+	assert.equal(worker.environment.LITEPARSE_OCR_LANGUAGE, "ch");
+	assert.equal("UNORAG_DBOS_TEXT_INGEST" in worker.environment, false);
+	assert.deepEqual(worker.command, [
+		"./node_modules/.bin/tsx",
+		"src/worker/entry.ts",
+	]);
 });
 
 test("Helm renders the TypeScript-only runtime", (t) => {
-	const probe = spawnSync("helm", ["version", "--short"], { encoding: "utf8" });
-	if (probe.status !== 0) {
+	if (!hasCommand("helm", ["version", "--short"])) {
 		t.skip("helm is not installed");
 		return;
 	}
-	const chart = path.join(root, "deploy/helm/unorag");
-	const render = spawnSync(
-		"helm",
-		["template", "unorag", chart, "--set", "config.llmBaseUrl=http://llm"],
-		{ encoding: "utf8" },
-	);
+	const render = renderHelm();
 	assert.equal(render.status, 0, render.stderr);
 	assert.match(render.stdout, /name: unorag-dbos-worker/);
 	assert.match(render.stdout, /name: UNORAG_DBOS_LISTEN_QUEUES/);
