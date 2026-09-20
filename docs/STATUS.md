@@ -79,27 +79,10 @@ Next.js product + Knowledge API
 
 - 当前仓库跟踪超过 100 个 TypeScript/Node 测试文件及版本化测试数据；生成的本地 A/B 报告位于忽略目录，不进入 Git。
 - CI 覆盖全历史密钥扫描、Web/TS Core、真实 PostgreSQL migration、镜像构建、Helm、依赖审计和品牌残留检查。
-- 现有证据覆盖空环境安装、真实文件、浏览器 RBAC、跨 Workspace 隔离、MinerU 302 实链路、故障恢复、
-  备份恢复、不可变镜像升级/回滚和 tombstone 生命周期。
-- `v0.2.0` 质量门禁使用 7 份真实文件完成新鲜入库，36/36 正例与 5/5 拒答通过；跨页表 6/6、
-  低对比扫描 5/5，事实覆盖、文档召回、Citation precision 和证据类型均为 100%，跨文档引用为 0。
-  Provider scorecard 覆盖全部文件且无缺失报告或失败页，解析耗时直接来自任务阶段瀑布。
-- `v0.2.0` 的四个正式镜像已通过 GHCR/ACR 推送、HIGH/CRITICAL 扫描、SBOM/provenance 和 Cosign
-  签名，并在香港参考环境完成 `0.1.4 -> 0.2.0` 原位升级。公网环境重新执行 7/7 真实文件、36/36
-  正例与 5/5 拒答，生命周期全零，桌面 Landing 与 `390x844` 移动登录页无横向溢出或控制台错误。
-  结论见 [v0.2.0 发布与香港环境验收](./evidence/2026-09-19-v0.2.0-release-acceptance.md)。
 - `v0.2.2` 已完成原生告警去抖与恢复、Redis 分布式限流、Session 即时撤销、安全响应头、默认/高级
   配置分层、旧运行时清理与大模块职责拆分。四镜像扫描、签名、空环境安装、香港原位升级、公网安全、
   三轮真实文件、故障恢复和浏览器验收全部通过；每轮 36/36 正例、5/5 拒答，最大 P95 `13.677s`，
   结论见 [v0.2.2 Production Hardening 发布验收](./evidence/2026-09-20-v0.2.2-production-hardening-release.md)。
-- `v0.2.1` 已完成 Mammoth DOCX 解析安全升级、四镜像扫描与签名，并在香港环境完成 `0.2.0 -> 0.2.1`
-  原位升级。公网重新执行 7/7 真实文件、36/36 正例与 5/5 拒答；事实覆盖、Recall/MRR、Citation
-  precision 均为 100%，跨文档引用为 0，生命周期全零。评测中发现并修复了混合正向/否定语句的假失败，
-  结论见 [v0.2.1 安全维护发布验收](./evidence/2026-09-19-v0.2.1-security-release.md)。
-- `v0.1.4` 已完成双 Registry 四镜像扫描、签名与 digest manifest 发布，并在香港参考环境完成
-  `0.1.2 -> 0.1.4` 原位升级、完整产品 smoke、生命周期全零和真实浏览器运行中心复核。四个镜像均使用
-  已修复的 Debian `libpcre2-8-0`，运行中心显示正确版本且无最近错误。结论见
-  [v0.1.4 香港环境发布验收](./evidence/2026-09-14-v0.1.4-hk-release-acceptance.md)。
 - Library 创建、更新、删除请求、删除完成与删除失败现在使用统一审计语义；事务内事件与异步 Worker
   终态通过同一 Request ID 关联，描述正文不会进入审计。真实 PostgreSQL 和本地 Docker 浏览器链路已验证
   空库同步删除与带文件异步删除，结论见
@@ -108,18 +91,10 @@ Next.js product + Knowledge API
   `jobs.delete_failed` 告警，管理员可从页面创建新的幂等 DBOS 清理任务，恢复后对象和向量均被删除，
   旧失败记录继续保留。结论见
   [删除故障恢复验收](./evidence/2026-09-17-library-delete-fault-recovery.md)。
-- `v0.1.2` 已完成空环境 Compose、真实 PostgreSQL/Qdrant/Redis、两轮产品 smoke、Qdrant/Worker 重启恢复、
-  浏览器诊断、7/7 真实文件、33/33 正例、5/5 拒答，以及双 Registry 四镜像的扫描、签名和 digest manifest
-  发布。结论见 [v0.1.2 本地与供应链验收](./evidence/2026-09-10-v0.1.2-local-release-gate.md)。
-- `v0.1.1` 已完成双 Registry 不可变发布、`0.1.0 -> 0.1.1` 香港环境原位升级、公网产品烟测与
-  三轮真实文件稳定性门禁。每轮 33/33 正例、5/5 拒答，模型错误和跨文档引用均为 0，最大 P95
-  `14.539s`。结论见 [v0.1.1 稳定版验收](./evidence/2026-09-09-v0.1.1-release-acceptance.md)。
-- `v0.1.0` 已以四个独立稳定 digest 固定、Trivy 扫描和 Cosign 签名发布；香港环境通过原位升级、
-  pilot smoke、29 项隔离熔断、Retrieve 75/75、Ask 37/37、生命周期 7/7、真实 MinerU 图表 PDF、
-  Qdrant/worker 故障恢复和应用回滚前滚。结论见
-  [v0.1.0 稳定版验收](./evidence/2026-08-23-v0.1.0-release-acceptance.md)。
 - 备份产物完整性和可解析性已在最终候选验证；当前在线实例未执行破坏性原地 restore，客户环境仍须按自己的
   RPO/RTO 和维护窗口演练。
+- 旧版本逐版结果不再复制到状态页；需要追溯时使用 [CHANGELOG](../CHANGELOG.md)、
+  [GitHub Releases](https://github.com/codexlin/UnoRAG/releases) 和 Git 历史。
 
 ## 持续门禁与未完成项
 

@@ -2,9 +2,9 @@
 
 ## Supported versions
 
-Security fixes are made against the latest supported UnoRAG release. Until the
-first stable release, only the current `main` branch and newest release candidate
-receive fixes.
+Security fixes are made against the latest stable UnoRAG release and current
+`main`. Older releases receive fixes only when their release notes explicitly
+declare an active support window.
 
 ## Reporting a vulnerability
 

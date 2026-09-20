@@ -15,7 +15,6 @@
 | [RELEASE.md](./RELEASE.md) | 一个版本怎样通过质量、安全和客户环境验收？ |
 | [CHANGELOG.md](../CHANGELOG.md) | 当前稳定版提供什么、公共契约和已知限制是什么？ |
 | [DEVELOPMENT.md](./DEVELOPMENT.md) | 如何开发、测试和维护仓库？ |
-| [OPEN_SOURCE_READINESS.md](./OPEN_SOURCE_READINESS.md) | 公开仓库与稳定版已完成哪些安全、许可和供应链门禁？ |
 
 源代码许可见根目录 [LICENSE](../LICENSE)，名称、Logo、fork、托管服务和截图的使用边界见
 [TRADEMARKS.md](../TRADEMARKS.md)。两者授予的是不同权利。
@@ -26,7 +25,8 @@
 ## 决策与证据
 
 - [ADR 索引](./adr/README.md) 区分当前、已实现、已迁移和被替代的架构决策；历史 ADR 不是操作手册。
-- [`evidence/`](./evidence/) 保存与特定提交、镜像、配置和环境绑定的当前验收证据。
+- [`evidence/`](./evidence/) 只保留当前稳定版和仍有独立诊断价值的验收证据；旧版本报告由 Git 历史与
+  [GitHub Releases](https://github.com/codexlin/UnoRAG/releases) 保存。
 - 已退役 Python/FastAPI 和过渡架构报告只保留在 Git 历史中，不作为当前操作说明。
 
 文档中的“已实现”描述代码能力；“已验收”只适用于证据中明确绑定的版本和环境。

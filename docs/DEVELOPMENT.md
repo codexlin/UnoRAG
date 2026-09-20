@@ -39,6 +39,18 @@ INTEGRATION_REDIS_URL=redis://127.0.0.1:6379/15 \
 pnpm test:integration
 ```
 
+测试按责任分三层，而不是按版本复制：
+
+| 位置 | 责任 | 默认入口 |
+|---|---|---|
+| `tests/*.test.mjs` | 产品、数据库 schema、部署与公开契约 | `pnpm test` |
+| `tests/ts-core/*.test.ts` | RAG 领域行为与运行时实现 | `pnpm test:ts-core` |
+| `scripts/run-integration-tests.mjs` | 显式列出的 PostgreSQL、Qdrant、Redis 真集成用例 | `pnpm test:integration` |
+
+`testdata/` 是版本化 fixture，不是测试输出。`testdata/ab/_e2e_out/`、`.next/`、`dist/` 和容量报告
+是可再生成产物，保持在 `.gitignore` 中，不得提交。新增测试优先放入已有领域文件；只有职责或 fixture
+明显独立时才新建文件，不以减少测试文件数量为目标合并无关安全边界。
+
 该 PostgreSQL 登录必须能创建测试用 NOLOGIN 角色。只允许使用一次性或专用测试实例，不要指向客户库或
 共享开发数据。
 

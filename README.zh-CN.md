@@ -130,7 +130,7 @@ Next.js 负责身份、Workspace、RBAC/ACL、公开 API、检索、LangGraph、
 - [发布与验收](./docs/RELEASE.md)
 - [版本变更与已知限制](./CHANGELOG.md)
 - [开发指南](./docs/DEVELOPMENT.md)
-- [开源发布准备审计](./docs/OPEN_SOURCE_READINESS.md)
+- [当前版本验收证据](./docs/evidence/README.md)
 
 ## 开源许可
 
@@ -143,7 +143,7 @@ UnoRAG 采用单一开源发行版，不设置付费功能墙。私有化部署�
 在现有复杂文档、引用、生命周期和供应链门禁之上，加固了原生告警恢复、分布式登录与 API 限流、
 Session 即时撤销和生产配置契约。
 详见[当前状态](./docs/STATUS.md)、[ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) 和
-[开源发布准备审计](./docs/OPEN_SOURCE_READINESS.md)。
+[当前版本验收证据](./docs/evidence/README.md)。
 
 贡献、支持和安全报告方式分别见 [CONTRIBUTING.md](./CONTRIBUTING.md)、[SUPPORT.md](./SUPPORT.md)
 与 [SECURITY.md](./SECURITY.md)。
