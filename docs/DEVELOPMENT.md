@@ -18,6 +18,7 @@ UnoRAG 是一个根目录 TypeScript 应用：Next.js 提供产品与 HTTP 边�
 pnpm install --frozen-lockfile
 pnpm test
 pnpm test:ts-core
+pnpm docs:check
 pnpm typecheck
 pnpm lint
 pnpm audit:prod

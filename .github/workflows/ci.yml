@@ -106,6 +106,8 @@ jobs:
         run: |
           pnpm assets:check
           pnpm notices:check
+      - name: Check documentation contracts
+        run: pnpm docs:check
       - name: TypeScript core contracts
         run: |
           pnpm typecheck
