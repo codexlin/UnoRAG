@@ -133,9 +133,10 @@ SBOM 与 provenance attestation，并写入源码、提交和 Apache-2.0 OCI 标
 GHCR 是默认公开 Registry。完整配置 `ACR_REGISTRY`、`ACR_NAMESPACE`、`ACR_USERNAME` 和
 `ACR_PASSWORD` 后，workflow 才会把同一次构建同步到 ACR；未配置 ACR 不会阻断 GHCR 发布。
 
-发布 manifest 同时携带 `UNORAG_IMAGE_PLATFORM`。`v0.1` 当前固定为 `linux/amd64`；Compose 安装和
+发布 manifest 同时携带 `UNORAG_IMAGE_PLATFORM`。当前正式镜像固定为 `linux/amd64`；Compose 安装和
 升级会在拉取前校验 Docker Engine 架构。架构不一致不得作为客户生产部署，仅本地验收可使用产品服务
-overlay 配合显式 `--allow-platform-emulation`。
+overlay `docker-compose.local-amd64.yml` 配合显式 `--allow-platform-emulation`。该 overlay 只覆盖使用
+UnoRAG 产品镜像的服务，不改变 PostgreSQL、Qdrant、Redis 或 Caddy 的宿主架构。
 
 ## 明确后置
 

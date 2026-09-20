@@ -45,9 +45,10 @@ release manifest、平台预检和显式配置流程。模型凭据不会被内�
 
 ### 正式安装
 
-`v0.1` 发布物当前只认证 `linux/amd64`。生产安装前必须确认宿主机或 Kubernetes 节点提供该架构；
+当前发布物只认证 `linux/amd64`。生产安装前必须确认宿主机或 Kubernetes 节点提供该架构；
 `linux/arm64` 和 multi-arch 尚不属于支持范围。Apple Silicon 本地验收可以只对四个产品服务显式设置
-`platform: linux/amd64`，但模拟运行不代表生产容量结论，也不得让全局
+`platform: linux/amd64`；仓库提供的 `docker-compose.local-amd64.yml` 会覆盖所有使用四类 UnoRAG
+产品镜像的运行、迁移和运维服务。模拟运行不代表生产容量结论，也不得让全局
 `DOCKER_DEFAULT_PLATFORM` 连带改变 PostgreSQL、Qdrant 和 Redis 等基础设施镜像架构。
 官方 manifest 使用 `UNORAG_IMAGE_PLATFORM` 声明产品镜像架构，安装与升级会在拉取镜像或进入维护
 窗口前校验 Docker Engine。架构不匹配默认直接拒绝；仅本地验收可在已提供产品服务 platform overlay

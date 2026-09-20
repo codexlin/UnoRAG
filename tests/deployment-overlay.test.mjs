@@ -9,6 +9,39 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const root = process.cwd();
 
+test("Apple Silicon overlay emulates product images without pinning infrastructure", async () => {
+	const overlay = await readFile(
+		path.join(root, "deploy/compose/docker-compose.local-amd64.yml"),
+		"utf8",
+	);
+	const pinnedServices = [
+		...overlay.matchAll(/^ {2}([a-z0-9-]+):\n {4}platform: linux\/amd64$/gm),
+	]
+		.map((match) => match[1])
+		.sort();
+
+	assert.deepEqual(pinnedServices, [
+		"backfill-acl-projections",
+		"bootstrap",
+		"check-dbos-drain",
+		"dbos-control",
+		"dbos-worker",
+		"document-storage-init",
+		"inspect-lifecycle",
+		"migrate-web",
+		"web",
+	]);
+	for (const service of [
+		"caddy",
+		"postgres",
+		"configure-db-roles",
+		"qdrant",
+		"redis",
+	]) {
+		assert.doesNotMatch(overlay, new RegExp(`^  ${service}:`, "m"));
+	}
+});
+
 test("Compose maintenance commands reuse the persisted deployment overlay", async () => {
 	const temp = await mkdtemp(path.join(tmpdir(), "unorag-overlay-"));
 	const compose = path.join(temp, "deploy", "compose");

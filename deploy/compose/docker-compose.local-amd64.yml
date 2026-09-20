@@ -1,0 +1,34 @@
+# Apple Silicon local release acceptance only.
+#
+# The published UnoRAG images currently target linux/amd64. This overlay pins
+# only services that use those product images, leaving PostgreSQL, Qdrant,
+# Redis, and Caddy on their native host architecture.
+#
+# Do not use this overlay for production capacity or performance sign-off.
+services:
+  document-storage-init:
+    platform: linux/amd64
+
+  web:
+    platform: linux/amd64
+
+  dbos-worker:
+    platform: linux/amd64
+
+  dbos-control:
+    platform: linux/amd64
+
+  inspect-lifecycle:
+    platform: linux/amd64
+
+  check-dbos-drain:
+    platform: linux/amd64
+
+  backfill-acl-projections:
+    platform: linux/amd64
+
+  migrate-web:
+    platform: linux/amd64
+
+  bootstrap:
+    platform: linux/amd64
