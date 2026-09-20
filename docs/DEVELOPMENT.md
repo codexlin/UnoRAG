@@ -16,20 +16,19 @@ UnoRAG 是一个根目录 TypeScript 应用：Next.js 提供产品与 HTTP 边�
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm test
-pnpm test:ts-core
-pnpm docs:check
-pnpm typecheck
-pnpm lint
+pnpm verify
+pnpm test:fast
+pnpm test:contract
 pnpm audit:prod
 pnpm db:check
 pnpm build
 ```
 
-`pnpm test` 覆盖产品、授权、HTTP、数据库和部署契约；`pnpm test:ts-core` 覆盖
-DocumentIR/TableIR、解析、切分、检索过滤、Qdrant 投影、Ask 图、DBOS 工作流及失败语义。
-依赖真实基础设施的用例可以在纯本地检查中跳过，但发布验收不能把跳过记为通过。CI 会创建临时
-PostgreSQL、Qdrant 和 Redis，执行 Drizzle migration 与运行时角色初始化，再运行无 skip 的真实集成套件。
+`pnpm test:fast` 覆盖不依赖外部服务的产品行为、授权、DocumentIR/TableIR、解析、切分、
+检索过滤、Ask 图、DBOS 工作流及部署契约。`pnpm test:contract` 是公共 API、IR、检索和工作流
+契约的聚焦子集，适合接口变更时快速确认。环境测试不会混入快速套件后以 skip 伪装通过。CI 会创建
+临时 PostgreSQL、Qdrant 和 Redis，执行 Drizzle migration 与运行时角色初始化，再运行 0 skip 的
+真实集成套件。
 本地可用以下统一入口复现：
 
 ```bash
@@ -40,13 +39,29 @@ INTEGRATION_REDIS_URL=redis://127.0.0.1:6379/15 \
 pnpm test:integration
 ```
 
-测试按责任分三层，而不是按版本复制：
+浏览器测试面向已经安装好的候选版本，不隐式启动另一套应用或共享客户环境：
 
-| 位置 | 责任 | 默认入口 |
+```bash
+pnpm exec playwright install chromium
+UNORAG_E2E_BASE_URL=http://127.0.0.1:8080 \
+UNORAG_E2E_ADMIN_EMAIL=admin@unorag.local \
+UNORAG_E2E_ADMIN_PASSWORD='...' \
+pnpm test:e2e
+```
+
+测试按责任分层，而不是按版本复制：
+
+| 层级 | 责任 | 默认入口 |
 |---|---|---|
-| `tests/*.test.mjs` | 产品、数据库 schema、部署与公开契约 | `pnpm test` |
-| `tests/ts-core/*.test.ts` | RAG 领域行为与运行时实现 | `pnpm test:ts-core` |
-| `scripts/run-integration-tests.mjs` | 显式列出的 PostgreSQL、Qdrant、Redis 真集成用例 | `pnpm test:integration` |
+| Fast | 纯函数、领域服务、组件状态和结构化部署契约 | `pnpm test:fast` |
+| Contract | 稳定公共 API、DocumentIR、检索与工作流接口 | `pnpm test:contract` |
+| Integration | 显式列出的 PostgreSQL、Qdrant、Redis 真行为 | `pnpm test:integration` |
+| E2E | 已运行候选版本的登录和桌面/移动端关键旅程 | `pnpm test:e2e` |
+| Acceptance | 真实文件、权限隔离、故障与恢复 | 发布验收脚本 |
+
+旧的 `pnpm test` 和 `pnpm test:ts-core` 暂时保留为兼容入口；新增或调整 CI 应使用分层入口。
+测试应断言调用者可观察的状态、响应和副作用。只有不可执行的历史 migration 或发布清单才允许
+静态契约检查，并应优先使用 SQL/YAML/Compose 解析器，不要锁定函数名、源码调用顺序或 CSS 类字符串。
 
 `testdata/` 是版本化 fixture，不是测试输出。`testdata/ab/_e2e_out/`、`.next/`、`dist/` 和容量报告
 是可再生成产物，保持在 `.gitignore` 中，不得提交。新增测试优先放入已有领域文件；只有职责或 fixture

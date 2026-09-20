@@ -20,9 +20,9 @@ export function AppTopbar() {
 			<div className="flex min-w-0 items-center gap-2">
 				<SidebarTrigger className="-ml-0.5" />
 				<div className="min-w-0">
-					<p className="text-meta font-mono tracking-[0.14em] text-cite">
+					<h1 className="text-meta font-mono tracking-[0.14em] text-cite">
 						{current.label}
-					</p>
+					</h1>
 					<p className="text-ui truncate text-muted-foreground">
 						{current.hint}
 					</p>

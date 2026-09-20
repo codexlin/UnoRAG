@@ -100,18 +100,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Audit production dependencies
         run: pnpm audit:prod
-      - name: Reject unreviewed production licenses
-        run: pnpm licenses:check
-      - name: Verify asset provenance and third-party notices
-        run: |
-          pnpm assets:check
-          pnpm notices:check
-      - name: Check documentation contracts
-        run: pnpm docs:check
-      - name: TypeScript core contracts
-        run: |
-          pnpm typecheck
-          pnpm test:ts-core
+      - name: Verify static contracts
+        run: pnpm verify
+      - name: Test deterministic behavior
+        run: pnpm test:fast
       - name: Migrate lifecycle transaction database
         run: pnpm db:migrate
         env:
@@ -122,10 +114,6 @@ jobs:
           INTEGRATION_DATABASE_URL: postgresql://unorag_ci:unorag_ci@127.0.0.1:5432/unorag_ci
           INTEGRATION_QDRANT_URL: http://127.0.0.1:6333
           INTEGRATION_REDIS_URL: redis://127.0.0.1:6379/15
-      - name: Test
-        run: pnpm test
-      - name: Lint
-        run: pnpm lint
       - name: Production build
         run: pnpm build
         env:

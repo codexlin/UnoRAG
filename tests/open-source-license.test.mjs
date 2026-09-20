@@ -77,11 +77,13 @@ test("release assets and fixtures have a hash-bound provenance gate", async () =
 	assert.ok(parsed.groups.length >= 4);
 	assert.match(assets, /synthetic material authored or generated/);
 	assert.match(checker, /Provenance hash mismatch/);
+	const scripts = JSON.parse(packageJson).scripts;
 	assert.equal(
-		JSON.parse(packageJson).scripts["assets:check"],
+		scripts["assets:check"],
 		"node scripts/check-asset-provenance.mjs",
 	);
-	assert.match(workflow, /pnpm assets:check/);
+	assert.match(scripts.verify, /pnpm assets:check/);
+	assert.match(workflow, /run: pnpm verify/);
 });
 
 test("all release image families carry generated production dependency notices", async () => {
@@ -106,9 +108,11 @@ test("all release image families carry generated production dependency notices",
 		dockerfile,
 		/FROM node:22-bookworm-slim AS runner[\s\S]*THIRD_PARTY_NOTICES\.txt/,
 	);
+	const scripts = JSON.parse(packageJson).scripts;
 	assert.equal(
-		JSON.parse(packageJson).scripts["notices:check"],
+		scripts["notices:check"],
 		"node scripts/generate-third-party-notices.mjs",
 	);
-	assert.match(workflow, /pnpm notices:check/);
+	assert.match(scripts.verify, /pnpm notices:check/);
+	assert.match(workflow, /run: pnpm verify/);
 });

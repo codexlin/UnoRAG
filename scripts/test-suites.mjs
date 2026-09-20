@@ -1,0 +1,32 @@
+export const integrationTestFiles = [
+	"tests/acl-projection-backfill.test.mjs",
+	"tests/ask-runs-postgres.test.ts",
+	"tests/conversations-postgres.test.ts",
+	"tests/ts-core/ask-runs-maintenance-postgres.test.ts",
+	"tests/ts-core/auth-security-redis.test.ts",
+	"tests/ts-core/document-acl-projection.test.ts",
+	"tests/ts-core/document-delete-postgres.test.ts",
+	"tests/ts-core/document-ingest-transactions.test.ts",
+	"tests/ts-core/document-job-routes-postgres.test.ts",
+	"tests/ts-core/document-version-command-postgres.test.ts",
+	"tests/ts-core/dbos-sdk-postgres.integration.test.ts",
+	"tests/ts-core/job-stage-runs-postgres.test.ts",
+	"tests/ts-core/observability-alerting.test.ts",
+	"tests/ts-core/password-onboarding-postgres.test.ts",
+	"tests/ts-core/qdrant-collection-manager.integration.test.ts",
+	"tests/ts-core/qdrant-ingest-write-store.integration.test.ts",
+	"tests/ts-core/runtime-database-roles-postgres.test.ts",
+	"tests/ts-core/session-memory-redis.test.ts",
+	"tests/ts-core/tombstone-maintenance-postgres.test.ts",
+	"tests/ts-core/workspace-management-postgres.test.ts",
+];
+
+export const contractTestFiles = [
+	"tests/deployment-config-contract.test.mjs",
+	"tests/policy-parity.test.mjs",
+	"tests/public-api-v1.test.mjs",
+	"tests/ts-core/contracts.test.ts",
+	"tests/ts-core/dbos-contracts.test.ts",
+	"tests/ts-core/document-ir.test.ts",
+	"tests/ts-core/retrieval-contracts.test.ts",
+];
