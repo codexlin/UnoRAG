@@ -14,7 +14,8 @@ Customer backend
 ```
 
 机器可读契约以 [`contracts/public-api-v1.openapi.json`](../contracts/public-api-v1.openapi.json)
-为准，设计约束见 [Retrieve / Ask v1](./contracts/retrieve-ask-v1.md)。
+为唯一 schema 事实源，并由 `GET /api/v1/openapi.json` 提供。本文负责认证、调用方式、兼容性和
+集成约束，不维护第二份请求/响应 schema。
 
 ## 当前接口
 
@@ -26,6 +27,23 @@ Customer backend
 
 外部 v1 暂不提供流式 Ask 和文档生命周期接口。Workspace 使用的 `/api/rag/*` 是 Session
 接口，不属于 Service Key 公共契约。
+
+## 契约与兼容性
+
+| 标记 | v1 约定 |
+|---|---|
+| 路径 | `/api/v1/...` |
+| 响应头 | `X-UnoRAG-Api-Version: 1` |
+| 成功响应 | `api_version: "v1"` |
+| OpenAPI | `info.version: 1.0.0` |
+
+破坏性变化必须发布 `/api/v2` 和新的 OpenAPI；v1 只允许增加有默认语义的可选字段。未知请求字段返回
+`400 invalid_request`，调用方不得传入 `ask_overrides` 或 hybrid/rerank 等算法参数。Retrieve 的
+`question` 仅作为 `query` 的废弃别名，二者同时出现会返回 400。
+
+调用方应把成功字段集合和错误码看作当前 major 的封闭集合，校验 `api_version`，并把
+`refused=true` 与空 citations 当作正常业务结果。Retrieve/Ask 不支持 `Idempotency-Key` 或分页；
+Retrieve 只使用 `top_k`。公共 v1 不暴露内部 SSE、`retrieval_debug`、完整 chunk 或 generation 信息。
 
 ## Service Key
 
@@ -120,9 +138,10 @@ curl -sS -X POST "$UNORAG_URL/api/v1/ask" \
 
 ## Citation
 
-公开引用只包含稳定展示字段：标题、片段、分数、文档 ID、文件名、页码、section path、
-table/row 范围和 record type。不存在的定位字段返回 `null`。公共接口不暴露完整 chunk、
-tenant、generation 或内部 retrieval debug。
+公开引用的稳定字段为 `id`、`index`、`title`、`snippet`、`score`、`document_id`、`filename`、`page`、
+`page_start`、`page_end`、`section_path`、`table_id`、`figure_id`、`row_start`、`row_end` 和
+`record_type`。定位字段不存在时仍返回 `null`；`score` 是 `[0, 1]` 展示值，不公开内部分数组成。
+公共接口不暴露完整 chunk、tenant、generation 或内部 retrieval debug。
 
 ## 错误与限额
 

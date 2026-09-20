@@ -6,7 +6,7 @@
     <a href="https://unorag.unobyte.dev">Live Demo</a> ·
     <a href="./README.zh-CN.md">简体中文</a> ·
     <a href="./docs/STATUS.md">Status</a> ·
-    <a href="./docs/PRODUCT.md">Product</a> ·
+    <a href="./docs/README.md">Docs</a> ·
     <a href="./docs/ARCHITECTURE.md">Architecture</a> ·
     <a href="./docs/DEPLOYMENT.md">Deployment</a> ·
     <a href="./docs/INTEGRATION.md">API</a>
@@ -129,7 +129,7 @@ Qdrant contains security-scoped retrieval projections.
 
 Use the [documentation portal](./docs/README.md) to follow one role-based path:
 
-- **Evaluate or use:** [product](./docs/PRODUCT.md) → [current status](./docs/STATUS.md)
+- **Evaluate or use:** [current status](./docs/STATUS.md) → [architecture](./docs/ARCHITECTURE.md)
 - **Deploy or operate:** [deployment](./docs/DEPLOYMENT.md) → [operations](./docs/OPERATIONS.md)
 - **Develop or integrate:** [architecture](./docs/ARCHITECTURE.md) → [development](./docs/DEVELOPMENT.md) → [Knowledge API](./docs/INTEGRATION.md)
 - **Maintain releases:** [release gates](./docs/RELEASE.md) → [current evidence](./docs/evidence/README.md)

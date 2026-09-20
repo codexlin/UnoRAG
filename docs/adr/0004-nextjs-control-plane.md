@@ -9,7 +9,7 @@
   HTTP 410 (no env re-enable); Document Lifecycle V2 is the default upload
   path; product ask knobs live in workspace settings + code defaults, not
   env flags like `HYBRID_ENABLED`. Product dual-mode context:
-  [`docs/PRODUCT.md`](../PRODUCT.md).
+  [`docs/STATUS.md`](../STATUS.md).
 
 ## Context
 

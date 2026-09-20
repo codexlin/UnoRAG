@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-09-20
+> 更新日期：2026-09-21
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -83,14 +83,11 @@ Next.js product + Knowledge API
   配置分层、旧运行时清理与大模块职责拆分。四镜像扫描、签名、空环境安装、香港原位升级、公网安全、
   三轮真实文件、故障恢复和浏览器验收全部通过；每轮 36/36 正例、5/5 拒答，最大 P95 `13.677s`，
   结论见 [v0.2.2 Production Hardening 发布验收](./evidence/2026-09-20-v0.2.2-production-hardening-release.md)。
-- Library 创建、更新、删除请求、删除完成与删除失败现在使用统一审计语义；事务内事件与异步 Worker
-  终态通过同一 Request ID 关联，描述正文不会进入审计。真实 PostgreSQL 和本地 Docker 浏览器链路已验证
-  空库同步删除与带文件异步删除，结论见
-  [Library CRUD 审计验收](./evidence/2026-09-15-library-crud-audit.md)。
-- 删除恢复闭环已通过真实 Qdrant 停机和本地对象存储权限故障验证：运行中心展示原因、阶段瀑布和
-  `jobs.delete_failed` 告警，管理员可从页面创建新的幂等 DBOS 清理任务，恢复后对象和向量均被删除，
-  旧失败记录继续保留。结论见
-  [删除故障恢复验收](./evidence/2026-09-17-library-delete-fault-recovery.md)。
+- Library 创建、更新、删除请求、删除完成与删除失败使用统一审计语义；事务内事件与异步 Worker 终态通过
+  同一 Request ID 关联，描述正文不会进入审计。空库同步删除、带文件异步删除、真实 Qdrant 停机和本地
+  对象存储权限故障均已验证；运行中心可展示原因、阶段瀑布和 `jobs.delete_failed` 告警，恢复后对象与向量
+  被清理且旧失败记录继续保留。当前汇总结论见
+  [v0.2.2 Production Hardening 发布验收](./evidence/2026-09-20-v0.2.2-production-hardening-release.md)。
 - 备份产物完整性和可解析性已在最终候选验证；当前在线实例未执行破坏性原地 restore，客户环境仍须按自己的
   RPO/RTO 和维护窗口演练。
 - 旧版本逐版结果不再复制到状态页；需要追溯时使用 [CHANGELOG](../CHANGELOG.md)、
@@ -146,8 +143,8 @@ Secret Scanning 和 Push Protection 均已开启。
 ## 文档权威顺序
 
 1. 当前能力和缺口：本文；
-2. 产品承诺：[PRODUCT.md](./PRODUCT.md)；
-3. 当前运行时：[ARCHITECTURE.md](./ARCHITECTURE.md)；
-4. 安装与运维：[DEPLOYMENT.md](./DEPLOYMENT.md)、[OPERATIONS.md](./OPERATIONS.md)；
+2. 当前运行时：[ARCHITECTURE.md](./ARCHITECTURE.md)；
+3. 安装与运维：[DEPLOYMENT.md](./DEPLOYMENT.md)、[OPERATIONS.md](./OPERATIONS.md)；
+4. 对外接口：[INTEGRATION.md](./INTEGRATION.md)；
 5. 发布结论：[RELEASE.md](./RELEASE.md) 与 [`evidence/`](./evidence/)；
 6. 历史原因：[ADR 索引](./adr/README.md)。

@@ -6,7 +6,7 @@
     <a href="https://unorag.unobyte.dev">在线体验</a> ·
     <a href="./README.md">English</a> ·
     <a href="./docs/STATUS.md">现状</a> ·
-    <a href="./docs/PRODUCT.md">产品</a> ·
+    <a href="./docs/README.md">文档</a> ·
     <a href="./docs/ARCHITECTURE.md">架构</a> ·
     <a href="./docs/DEPLOYMENT.md">部署</a> ·
     <a href="./docs/INTEGRATION.md">API</a>
@@ -123,7 +123,7 @@ Next.js 负责身份、Workspace、RBAC/ACL、公开 API、检索、LangGraph、
 
 从[文档导航](./docs/README.md)按角色选择一条路径即可：
 
-- **评估或使用：**[产品说明](./docs/PRODUCT.md) → [当前状态](./docs/STATUS.md)
+- **评估或使用：**[当前状态](./docs/STATUS.md) → [系统架构](./docs/ARCHITECTURE.md)
 - **部署或运维：**[部署指南](./docs/DEPLOYMENT.md) → [运维指南](./docs/OPERATIONS.md)
 - **开发或集成：**[系统架构](./docs/ARCHITECTURE.md) → [开发指南](./docs/DEVELOPMENT.md) → [Knowledge API](./docs/INTEGRATION.md)
 - **维护发布：**[发布门禁](./docs/RELEASE.md) → [当前证据](./docs/evidence/README.md)

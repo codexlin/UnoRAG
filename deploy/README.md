@@ -4,7 +4,7 @@
 （仅供配置迁移与验收脚本使用，产品镜像不含 Python 运行时）。首片以 **Docker Compose 单机拓扑** 为主；
 **Helm/K8s 起步骨架** 已提供；镜像 CVE 扫描、SBOM、provenance 与 Cosign 签名已进入发布门禁。
 
-产品定位见 [`docs/PRODUCT.md`](../docs/PRODUCT.md)，安装与生产验收分别见
+当前能力见 [`docs/STATUS.md`](../docs/STATUS.md)，安装与生产验收分别见
 [`docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) 和 [`docs/RELEASE.md`](../docs/RELEASE.md)。
 
 ## 目录
@@ -81,7 +81,7 @@ Prometheus/Grafana、Loki/Tempo 和 Alertmanager，Grafana 仅绑定宿主机回
 
 已有独立 Langfuse 项目时可使用 `./scripts/install.sh --with-langfuse`，由 Collector 仅把脱敏 Trace
 双写到 Langfuse。UnoRAG 不内置 Langfuse 的 ClickHouse/Redis/对象存储；完整配置见
-[`docs/LANGFUSE.md`](../docs/LANGFUSE.md)。
+[`docs/OPERATIONS.md`](../docs/OPERATIONS.md#可选-langfuse)。
 
 根目录 `docker-compose.yml` 仍只提供本机联调基础设施（Postgres/Qdrant/Redis）。
 客户式全栈安装请使用 `deploy/compose/`。
