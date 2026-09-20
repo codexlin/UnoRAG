@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 
 import pg from "pg";
 
+import { integrationTestFiles } from "./test-suites.mjs";
+
 const required = {
 	INTEGRATION_DATABASE_URL: process.env.INTEGRATION_DATABASE_URL?.trim(),
 	INTEGRATION_QDRANT_URL: process.env.INTEGRATION_QDRANT_URL?.trim(),
@@ -41,38 +43,31 @@ const testEnvironment = {
 	CONVERSATION_TEST_DATABASE_URL: postgresUrl,
 	DOCUMENT_DELETE_TEST_DATABASE_URL: postgresUrl,
 	DOCUMENT_INGEST_TEST_DATABASE_URL: postgresUrl,
+	DOCUMENT_JOB_ROUTE_TEST_DATABASE_URL: postgresUrl,
 	DOCUMENT_VERSION_COMMAND_TEST_DATABASE_URL: postgresUrl,
 	DBOS_SDK_TEST_DATABASE_URL: postgresUrl,
 	OBSERVABILITY_TEST_DATABASE_URL: postgresUrl,
+	PASSWORD_ONBOARDING_TEST_DATABASE_URL: postgresUrl,
 	RUNTIME_ROLES_TEST_DATABASE_URL: postgresUrl,
 	QDRANT_INGEST_E2E_URL: required.INTEGRATION_QDRANT_URL,
+	REDIS_URL: required.INTEGRATION_REDIS_URL,
 	REDIS_INTEGRATION_TEST_URL: required.INTEGRATION_REDIS_URL,
 	TOMBSTONE_MAINTENANCE_TEST_DATABASE_URL: postgresUrl,
+	WORKSPACE_MANAGEMENT_TEST_DATABASE_URL: postgresUrl,
+	UNORAG_SESSION_SECRET:
+		process.env.UNORAG_SESSION_SECRET ||
+		"unorag-integration-session-secret-0000000000000000",
 };
-
-const testFiles = [
-	"tests/acl-projection-backfill.test.mjs",
-	"tests/ask-runs-postgres.test.ts",
-	"tests/conversations-postgres.test.ts",
-	"tests/ts-core/ask-runs-maintenance-postgres.test.ts",
-	"tests/ts-core/auth-security-redis.test.ts",
-	"tests/ts-core/document-acl-projection.test.ts",
-	"tests/ts-core/document-delete-postgres.test.ts",
-	"tests/ts-core/document-ingest-transactions.test.ts",
-	"tests/ts-core/document-version-command-postgres.test.ts",
-	"tests/ts-core/dbos-sdk-postgres.integration.test.ts",
-	"tests/ts-core/job-stage-runs-postgres.test.ts",
-	"tests/ts-core/observability-alerting.test.ts",
-	"tests/ts-core/runtime-database-roles-postgres.test.ts",
-	"tests/ts-core/qdrant-collection-manager.integration.test.ts",
-	"tests/ts-core/qdrant-ingest-write-store.integration.test.ts",
-	"tests/ts-core/session-memory-redis.test.ts",
-	"tests/ts-core/tombstone-maintenance-postgres.test.ts",
-];
 
 const result = spawnSync(
 	process.execPath,
-	["--import", "tsx", "--test", "--test-concurrency=1", ...testFiles],
+	[
+		"--import",
+		"tsx",
+		"--test",
+		"--test-concurrency=1",
+		...integrationTestFiles,
+	],
 	{
 		stdio: "inherit",
 		env: testEnvironment,

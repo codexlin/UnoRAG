@@ -19,15 +19,23 @@ UnoRAG 的发布结论必须绑定明确的 commit、四个镜像 digest、配�
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm test
-pnpm test:ts-core
+pnpm verify
+pnpm test:fast
+pnpm test:contract
 # CI 或隔离基础设施中运行，必须 0 skip
 pnpm test:integration
-pnpm typecheck
-pnpm lint
 pnpm audit:prod
 pnpm db:check
 NEXT_TELEMETRY_DISABLED=1 pnpm build
+```
+
+对已经安装的候选版本执行浏览器门禁：
+
+```bash
+UNORAG_E2E_BASE_URL=https://candidate.example.com \
+UNORAG_E2E_ADMIN_EMAIL=admin@example.com \
+UNORAG_E2E_ADMIN_PASSWORD='...' \
+pnpm test:e2e
 ```
 
 生产依赖审计固定使用 npm 官方 advisory 端点，并以 `moderate` 及以上为失败门槛；本机 npm 镜像
