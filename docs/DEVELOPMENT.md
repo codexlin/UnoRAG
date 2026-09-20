@@ -62,6 +62,9 @@ pnpm test:e2e
 旧的 `pnpm test` 和 `pnpm test:ts-core` 暂时保留为兼容入口；新增或调整 CI 应使用分层入口。
 测试应断言调用者可观察的状态、响应和副作用。只有不可执行的历史 migration 或发布清单才允许
 静态契约检查，并应优先使用 SQL/YAML/Compose 解析器，不要锁定函数名、源码调用顺序或 CSS 类字符串。
+数据库结构契约必须在 Integration 层查询迁移后的 `pg_catalog` / `information_schema`，验证实际列、约束、
+外键、索引、触发器和角色权限。品牌资产、许可证清单、机器可读公共契约与版本化 fixture 本身就是交付物，
+这类测试可以读取文件，但应验证结构、哈希或解析结果，而不是实现源码的排版。
 
 `testdata/` 是版本化 fixture，不是测试输出。`testdata/ab/_e2e_out/`、`.next/`、`dist/` 和容量报告
 是可再生成产物，保持在 `.gitignore` 中，不得提交。新增测试优先放入已有领域文件；只有职责或 fixture

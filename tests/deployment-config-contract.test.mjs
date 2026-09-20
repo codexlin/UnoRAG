@@ -14,69 +14,120 @@ import { join } from "node:path";
 import test from "node:test";
 
 const root = new URL("../", import.meta.url);
-const source = (path) => readFile(new URL(path, root), "utf8");
+
+function parseEnvContract(contents) {
+	return new Map(
+		contents
+			.split(/\r?\n/)
+			.map((line) => line.trim())
+			.filter((line) => line && !line.startsWith("#"))
+			.map((line) => {
+				const separator = line.indexOf("=");
+				assert.notEqual(separator, -1, `invalid env contract line: ${line}`);
+				return [line.slice(0, separator), line.slice(separator + 1)];
+			}),
+	);
+}
+
+function renderComposeConfig() {
+	const composeDir = new URL("deploy/compose/", root).pathname;
+	const result = spawnSync(
+		"docker",
+		[
+			"compose",
+			"--env-file",
+			new URL("deploy/config/runtime.env.example", root).pathname,
+			"--env-file",
+			new URL("deploy/config/runtime.advanced.env.example", root).pathname,
+			"-f",
+			new URL("deploy/compose/docker-compose.yml", root).pathname,
+			"config",
+			"--format",
+			"json",
+		],
+		{
+			cwd: composeDir,
+			encoding: "utf8",
+			env: {
+				...process.env,
+				POSTGRES_PASSWORD: "contract-postgres",
+				UNORAG_WEB_DB_PASSWORD: "contract-web",
+				UNORAG_WORKER_DB_PASSWORD: "contract-worker",
+				UNORAG_SESSION_SECRET: "contract-session-secret-0000000000000000",
+				LLM_API_KEY: "contract-llm-key",
+				LLM_BASE_URL: "https://models.example/v1",
+				QDRANT_URL: "http://qdrant:6333",
+				REDIS_URL: "redis://redis:6379",
+				EMBEDDING_MODEL: "contract-embedding",
+				EMBEDDING_DIM: "1024",
+			},
+		},
+	);
+	assert.equal(result.status, 0, result.stderr || result.stdout);
+	return JSON.parse(result.stdout);
+}
 
 test("deployment inputs map to one application environment contract", async () => {
-	const [
-		runtime,
-		advanced,
-		compose,
-		values,
-		configMap,
-		dbos,
-		telemetry,
-		worker,
-		health,
-	] = await Promise.all([
-		source("deploy/config/runtime.env.example"),
-		source("deploy/config/runtime.advanced.env.example"),
-		source("deploy/compose/docker-compose.yml"),
-		source("deploy/helm/unorag/values.yaml"),
-		source("deploy/helm/unorag/templates/configmap.yaml"),
-		source("deploy/helm/unorag/templates/dbos-deployments.yaml"),
-		source("src/lib/observability/telemetry.ts"),
-		source("src/worker/production-ports.ts"),
-		source("src/server/observability/provider-health.ts"),
+	const [runtimeContents, advancedContents] = await Promise.all([
+		readFile(new URL("deploy/config/runtime.env.example", root), "utf8"),
+		readFile(
+			new URL("deploy/config/runtime.advanced.env.example", root),
+			"utf8",
+		),
 	]);
+	const runtime = parseEnvContract(runtimeContents);
+	const advanced = parseEnvContract(advancedContents);
 
-	assert.match(runtime, /^LLM_BASE_URL=/m);
+	assert.equal(runtime.has("LLM_BASE_URL"), true);
 	assert.equal(
-		(runtime.match(/^[A-Z][A-Z0-9_]*=/gm) ?? []).length,
+		runtime.size,
 		15,
 		"the common runtime surface must stay intentionally small",
 	);
-	assert.doesNotMatch(runtime, /^MINERU_SELF_HOSTED_URL=/m);
-	assert.doesNotMatch(runtime, /^UNORAG_DBOS_/m);
-	assert.doesNotMatch(runtime, /^OTEL_/m);
-	assert.match(advanced, /^MINERU_SELF_HOSTED_URL=/m);
-	assert.match(advanced, /^UNORAG_DBOS_LISTEN_QUEUES=/m);
-	assert.match(advanced, /^OTEL_SDK_DISABLED=/m);
-	assert.doesNotMatch(runtime, /^MINERU_URL=/m);
-	assert.doesNotMatch(advanced, /^MINERU_URL=/m);
+	for (const name of [
+		"MINERU_SELF_HOSTED_URL",
+		"UNORAG_DBOS_LISTEN_QUEUES",
+		"OTEL_SDK_DISABLED",
+	]) {
+		assert.equal(
+			runtime.has(name),
+			false,
+			`${name} stays out of common config`,
+		);
+		assert.equal(
+			advanced.has(name),
+			true,
+			`${name} is available in advanced config`,
+		);
+	}
+	assert.equal(runtime.has("MINERU_URL"), false);
+	assert.equal(advanced.has("MINERU_URL"), false);
 
-	assert.match(compose, /APP_ENV: \$\{APP_ENV:-production\}/);
-	assert.match(
-		compose,
-		/OPENAI_BASE_URL: \$\{LLM_BASE_URL:\?LLM_BASE_URL required\}/,
+	const compose = renderComposeConfig();
+	assert.equal(compose.services.web.environment.APP_ENV, "production");
+	assert.equal(
+		compose.services.web.environment.OPENAI_BASE_URL,
+		"https://models.example/v1",
 	);
-	assert.doesNotMatch(compose, /^\s+MINERU_URL:/m);
-
-	assert.match(values, /^\s+llmBaseUrl: ""$/m);
-	assert.doesNotMatch(values, /^\s+openaiBaseUrl:/m);
-	assert.doesNotMatch(values, /^\s+mineruUrl:/m);
-	assert.match(configMap, /APP_ENV:.*config\.appEnv/);
-	assert.match(configMap, /OPENAI_BASE_URL:.*config\.llmBaseUrl/);
-	assert.match(configMap, /TS_RETRIEVAL_HYBRID_ENABLED/);
-	assert.match(configMap, /TS_RETRIEVAL_RERANK_ENABLED/);
-	assert.match(configMap, /SESSION_MEMORY_TTL_SECONDS/);
-	assert.doesNotMatch(configMap, /MINERU_URL/);
-	assert.doesNotMatch(dbos, /config\.openaiBaseUrl|config\.mineruUrl/);
-	assert.doesNotMatch(dbos, /name: MINERU_URL/);
-
-	assert.match(telemetry, /environment\.UNORAG_VERSION/);
-	assert.doesNotMatch(telemetry, /UNORAG_RELEASE_VERSION/);
-	assert.doesNotMatch(worker, /process\.env\.MINERU_URL/);
-	assert.doesNotMatch(health, /environment\.MINERU_URL/);
+	assert.equal(
+		compose.services["dbos-worker"].environment.OPENAI_BASE_URL,
+		"https://models.example/v1",
+	);
+	assert.equal(
+		compose.services.web.environment.TS_RETRIEVAL_HYBRID_ENABLED,
+		advanced.get("TS_RETRIEVAL_HYBRID_ENABLED"),
+	);
+	assert.equal(
+		compose.services.web.environment.TS_RETRIEVAL_RERANK_ENABLED,
+		advanced.get("TS_RETRIEVAL_RERANK_ENABLED"),
+	);
+	assert.equal(
+		compose.services.web.environment.SESSION_MEMORY_TTL_SECONDS,
+		advanced.get("SESSION_MEMORY_TTL_SECONDS"),
+	);
+	for (const service of Object.values(compose.services)) {
+		assert.equal("MINERU_URL" in (service.environment ?? {}), false);
+	}
 });
 
 test("Helm gives Web and Worker the same canonical model endpoint", (t) => {
