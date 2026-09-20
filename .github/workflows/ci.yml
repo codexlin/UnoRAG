@@ -170,3 +170,18 @@ jobs:
           push: false
           load: true
           tags: unorag-web-worker:ci
+      - name: Verify application images run as the product user
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image in \
+            unorag-web:ci \
+            unorag-web-migrator:ci \
+            unorag-web-ops:ci \
+            unorag-web-worker:ci; do
+            user="$(docker image inspect --format '{{.Config.User}}' "$image")"
+            test "$user" = "unorag" || {
+              echo "$image runs as unexpected user: ${user:-root}" >&2
+              exit 1
+            }
+          done

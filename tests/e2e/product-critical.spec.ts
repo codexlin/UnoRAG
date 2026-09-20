@@ -29,7 +29,19 @@ async function signIn(page: Page) {
 test("public entry and authentication boundary are usable", async ({
 	page,
 }) => {
-	await page.goto("/");
+	const response = await page.goto("/");
+	expect(response).not.toBeNull();
+	const headers = response?.headers() ?? {};
+	expect(headers["content-security-policy"]).toContain(
+		"frame-ancestors 'none'",
+	);
+	expect(headers["content-security-policy"]).toContain("object-src 'none'");
+	expect(headers["strict-transport-security"]).toContain("max-age=31536000");
+	expect(headers["referrer-policy"]).toBe("strict-origin-when-cross-origin");
+	expect(headers["x-content-type-options"]).toBe("nosniff");
+	expect(headers["x-frame-options"]).toBe("DENY");
+	expect(headers["permissions-policy"]).toContain("camera=()");
+	expect(headers["x-powered-by"]).toBeUndefined();
 	await expect(page.getByRole("heading", { name: "UnoRAG" })).toBeVisible();
 	await expect(
 		page.getByText("Enterprise Knowledge Infrastructure", { exact: true }),
@@ -55,5 +67,29 @@ test("authenticated knowledge and settings journeys fit the viewport", async ({
 
 	await page.goto("/app/settings");
 	await expect(page.getByRole("heading", { name: "工作区设置" })).toBeVisible();
+	await expect(page.getByText("明文仅创建时显示一次")).toBeVisible();
+	await expect(page.getByRole("button", { name: "创建密钥" })).toBeVisible();
 	await expectNoHorizontalOverflow(page);
+
+	const sessionBeforeLogout = await page.evaluate(async () => {
+		const response = await fetch("/api/auth/session");
+		return {
+			status: response.status,
+			cacheControl: response.headers.get("cache-control"),
+		};
+	});
+	expect(sessionBeforeLogout.status).toBe(200);
+	expect(sessionBeforeLogout.cacheControl).toContain("no-store");
+	const logoutStatus = await page.evaluate(async () =>
+		fetch("/api/auth/session", { method: "DELETE" }).then(
+			(response) => response.status,
+		),
+	);
+	expect(logoutStatus).toBe(200);
+	const sessionAfterLogout = await page.evaluate(async () =>
+		fetch("/api/auth/session").then((response) => response.status),
+	);
+	expect(sessionAfterLogout).toBe(401);
+	await page.goto("/app/settings");
+	await expect(page).toHaveURL(/\/login$/);
 });
