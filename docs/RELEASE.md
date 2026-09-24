@@ -17,6 +17,9 @@ UnoRAG 的发布结论必须绑定明确的 commit、四个镜像 digest、配�
 
 ## 1. 确定性门禁
 
+所有命令必须由 Node.js 22 执行；`engines` 警告不能作为版本校验。自动 Release Gate 会在其他测试前
+执行硬性运行时检查，版本不符直接失败。
+
 ```bash
 pnpm install --frozen-lockfile
 pnpm verify
@@ -180,6 +183,56 @@ Parser、模型、切分、检索或裁决策略变化后必须重跑，不能�
 
 发布结束时 `dead=0`、`stuck=0`、pending ACL 为 0。无法自动恢复且需要手工改库的流程不得放行。
 
+### 自动化演练入口
+
+以下脚本复用产品真实登录、上传、DBOS、Qdrant、升级和备份恢复路径；不会用 Fake index 或绕过 API
+改库。所有报告与日志都写入被 Git 忽略的本地工作目录，权限为 `0600`，并在写入前递归脱敏。
+
+```bash
+# 只查看步骤，不修改环境
+pnpm acceptance:release:plan
+
+# Provider 故障：LLM 401/429/503、Embedding 超时/失败、可选 MinerU 失败
+UNORAG_ACCEPT_PROVIDER_FAULTS=YES \
+UNORAG_ADMIN_PASSWORD='...' \
+pnpm acceptance:provider-faults -- \
+  --base-url https://candidate.example.com \
+  --mineru-fixture testdata/ab/crosstable-large.pdf
+
+# digest 候选升级 -> 旧版应用回滚 -> 候选恢复
+UNORAG_ACCEPT_UPGRADE_ROLLBACK=YES \
+UNORAG_ADMIN_PASSWORD='...' \
+pnpm acceptance:upgrade-rollback -- \
+  --previous-manifest dist/release/previous.env \
+  --candidate-manifest dist/release/candidate.env \
+  --base-url https://candidate.example.com
+```
+
+破坏性恢复只允许 `COMPOSE_PROJECT_NAME=unorag-acceptance-*` 或 `unorag-rc-*` 的隔离项目，并要求第二个
+显式开关；它会真实执行备份、`down -v`、恢复、active version 与 Ask 校验，不能在日常或客户生产项目
+上运行：
+
+```bash
+UNORAG_ACCEPT_DESTRUCTIVE_RESTORE=YES \
+UNORAG_ADMIN_PASSWORD='...' \
+pnpm acceptance:restore -- --base-url https://isolated-rc.example.com
+```
+
+完整 RC 使用受版本控制的 [`release-gate.example.json`](../scripts/acceptance/release-gate.example.json)
+复制为本地 profile，填入完整 commit 和两个 digest manifest，再运行：
+
+```bash
+UNORAG_ACCEPT_UPGRADE_ROLLBACK=YES \
+UNORAG_ACCEPT_PROVIDER_FAULTS=YES \
+UNORAG_ACCEPT_DESTRUCTIVE_RESTORE=YES \
+UNORAG_ADMIN_PASSWORD='...' \
+pnpm acceptance:release -- --profile /path/to/release-gate.json
+```
+
+profile 只能声明版本、环境、manifest、fixture 和门禁开关，不能保存密码。退出码 `0/1/2` 分别表示
+PASS / FAIL / BLOCKED；BLOCKED 不能计作通过。升级回滚执行态只接受四镜像均为 SHA256 digest 的
+manifest，标签或本地镜像只可用于 `--plan`。
+
 ## 6. 目标环境生产清单
 
 ### 正确性与安全
@@ -223,3 +276,7 @@ OIDC、S3、HPA/PDB/NetworkPolicy、SBOM/签名等功能若由客户合同或安
 
 只有结论明确为 GO，且上述项目都有可访问证据时，才允许对该版本和目标环境使用
 “production-ready”表述。
+
+受控试点结束后使用 [试点反馈模板](./evidence/PILOT-FEEDBACK-TEMPLATE.md)，机器可读记录须符合
+[`pilot-feedback.schema.json`](../scripts/acceptance/pilot-feedback.schema.json)。记录只包含角色数量、场景
+结论、非敏感证据 ID、已知限制和签字，不得包含客户文档、问题、回答、Prompt、凭据或个人信息。

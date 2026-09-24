@@ -1,0 +1,21 @@
+{
+	"schema_version": 1,
+	"release_id": "v0.2.3-rc.1",
+	"expected_git_revision": "0000000000000000000000000000000000000000",
+	"base_url": "https://candidate.example.com",
+	"admin_email": "admin@example.com",
+	"password_env": "UNORAG_ADMIN_PASSWORD",
+	"previous_manifest": "dist/release/previous.env",
+	"candidate_manifest": "dist/release/candidate.env",
+	"mineru_fixture": "testdata/ab/crosstable-large.pdf",
+	"output_directory": "scripts/acceptance/.release-gate-work",
+	"require_clean_worktree": true,
+	"gates": {
+		"code": true,
+		"browser": true,
+		"runtime": true,
+		"upgrade_rollback": true,
+		"provider_faults": true,
+		"restore": true
+	}
+}

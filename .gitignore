@@ -48,6 +48,11 @@ scripts/acceptance/.b3_b4_last_run.json.sha256
 scripts/acceptance/.b5_last_run.json
 scripts/acceptance/.b5_last_run.json.sha256
 scripts/acceptance/.b5-work/
+scripts/acceptance/.provider-faults-work/
+scripts/acceptance/.release-gate-work/
+scripts/acceptance/.restore-work/
+scripts/acceptance/.upgrade-rollback-work/
+scripts/acceptance/.recovery-probe.json
 # Broader acceptance artifact ignores
 *_last_run.json
 *_last_run.json.sha256
