@@ -35,6 +35,7 @@ function validateProfile(input) {
 		"mineru_fixture",
 		"output_directory",
 		"require_clean_worktree",
+		"allow_platform_emulation",
 		"gates",
 	]);
 	for (const key of Object.keys(input))
@@ -60,6 +61,11 @@ function validateProfile(input) {
 		requiredString(input.previous_manifest, "previous_manifest");
 		requiredString(input.candidate_manifest, "candidate_manifest");
 	}
+	if (
+		input.allow_platform_emulation !== undefined &&
+		typeof input.allow_platform_emulation !== "boolean"
+	)
+		throw new Error("allow_platform_emulation must be boolean");
 	const expectedRevision = requiredString(
 		input.expected_git_revision,
 		"expected_git_revision",
@@ -78,6 +84,7 @@ function validateProfile(input) {
 			input.output_directory || "scripts/acceptance/.release-gate-work",
 		),
 		require_clean_worktree: input.require_clean_worktree !== false,
+		allow_platform_emulation: input.allow_platform_emulation === true,
 	};
 }
 
@@ -98,6 +105,7 @@ async function main() {
 		release_id: profile.release_id,
 		expected_git_revision: profile.expected_git_revision,
 		base_url: profile.base_url,
+		allow_platform_emulation: profile.allow_platform_emulation,
 		gates: profile.gates,
 		output_directory: outputDirectory,
 	};
@@ -228,6 +236,9 @@ async function main() {
 					profile.password_env,
 					"--output-dir",
 					resolve(outputDirectory, "upgrade-rollback"),
+					...(profile.allow_platform_emulation
+						? ["--allow-platform-emulation"]
+						: []),
 				],
 				{
 					UNORAG_ACCEPT_UPGRADE_ROLLBACK:

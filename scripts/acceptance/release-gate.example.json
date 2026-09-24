@@ -10,6 +10,7 @@
 	"mineru_fixture": "testdata/ab/crosstable-large.pdf",
 	"output_directory": "scripts/acceptance/.release-gate-work",
 	"require_clean_worktree": true,
+	"allow_platform_emulation": false,
 	"gates": {
 		"code": true,
 		"browser": true,
