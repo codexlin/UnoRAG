@@ -116,6 +116,7 @@ test("release profile is strict and never contains a password", () => {
 		password_env: "UNORAG_ADMIN_PASSWORD",
 		previous_manifest: "previous.env",
 		candidate_manifest: "candidate.env",
+		allow_platform_emulation: true,
 		gates: {
 			code: true,
 			browser: true,
@@ -128,6 +129,16 @@ test("release profile is strict and never contains a password", () => {
 	assert.equal(
 		validateProfile(valid).base_url,
 		"https://candidate.example.com",
+	);
+	assert.equal(validateProfile(valid).allow_platform_emulation, true);
+	assert.equal(
+		validateProfile({ ...valid, allow_platform_emulation: undefined })
+			.allow_platform_emulation,
+		false,
+	);
+	assert.throws(
+		() => validateProfile({ ...valid, allow_platform_emulation: "yes" }),
+		/allow_platform_emulation must be boolean/,
 	);
 	assert.throws(
 		() => validateProfile({ ...valid, password: "should-not-be-here" }),

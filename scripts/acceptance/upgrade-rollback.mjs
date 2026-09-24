@@ -78,6 +78,7 @@ async function main() {
 	const leave = String(args.leave || "candidate");
 	if (!["candidate", "previous"].includes(leave))
 		throw new Error("--leave must be candidate or previous");
+	const allowPlatformEmulation = args["allow-platform-emulation"] === true;
 	const outputDirectory = resolve(
 		String(args["output-dir"] || "scripts/acceptance/.upgrade-rollback-work"),
 	);
@@ -87,6 +88,7 @@ async function main() {
 		previous: releaseIdentity(previous),
 		candidate: releaseIdentity(candidate),
 		leave,
+		allow_platform_emulation: allowPlatformEmulation,
 		base_url: baseUrl,
 		steps: [
 			"verify_previous",
@@ -141,9 +143,17 @@ async function main() {
 		}
 	};
 	const runUpgrade = async (manifest, name) => {
+		const upgradeArgs = [
+			upgradeScript,
+			"--manifest",
+			manifest.path,
+			"--skip-smoke",
+		];
+		if (allowPlatformEmulation)
+			upgradeArgs.push("--allow-platform-emulation");
 		const result = await runCommand({
 			command: "bash",
-			args: [upgradeScript, "--manifest", manifest.path, "--skip-smoke"],
+			args: upgradeArgs,
 			cwd: composeDirectory,
 			logPath: resolve(outputDirectory, `${name}.log`),
 			timeoutMs: Number(args["upgrade-timeout-ms"] || 3_600_000),

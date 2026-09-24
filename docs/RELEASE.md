@@ -212,6 +212,10 @@ pnpm acceptance:upgrade-rollback -- \
   --base-url https://candidate.example.com
 ```
 
+ARM 开发机执行本地 RC 时，可额外传 `--allow-platform-emulation`，并在完整 release profile 中显式设置
+`"allow_platform_emulation": true`。该开关必须出现在验收证据中，只允许验证功能与恢复流程，不能作为
+容量、延迟或客户生产签字依据；默认值始终为 `false`。
+
 破坏性恢复只允许 `COMPOSE_PROJECT_NAME=unorag-acceptance-*` 或 `unorag-rc-*` 的隔离项目，并要求第二个
 显式开关；它会真实执行备份、`down -v`、恢复、active version 与 Ask 校验，不能在日常或客户生产项目
 上运行：
