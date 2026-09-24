@@ -149,8 +149,7 @@ async function main() {
 			manifest.path,
 			"--skip-smoke",
 		];
-		if (allowPlatformEmulation)
-			upgradeArgs.push("--allow-platform-emulation");
+		if (allowPlatformEmulation) upgradeArgs.push("--allow-platform-emulation");
 		const result = await runCommand({
 			command: "bash",
 			args: upgradeArgs,
