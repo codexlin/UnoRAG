@@ -83,6 +83,7 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 		/provenance: \$\{\{ steps\.meta\.outputs\.dry_run != 'true' \}\}/,
 	);
 	assert.match(releaseWorkflow, /publish_acr=false/);
+	assert.match(releaseWorkflow, /INPUT_MIRROR_ACR/);
 	assert.match(releaseWorkflow, /PUBLISH_ACR/);
 	assert.match(releaseWorkflow, /Mirror runtime manifests to ACR/);
 	assert.match(releaseWorkflow, /id-token: write/);
@@ -104,7 +105,11 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 	}
 	assert.match(
 		releaseWorkflow,
-		/docker pull --platform "\$\{IMAGE_PLATFORM\}"/,
+		/timeout --foreground "\$\{ACR_TRANSFER_TIMEOUT\}" docker pull --platform "\$\{IMAGE_PLATFORM\}"/,
+	);
+	assert.match(
+		releaseWorkflow,
+		/timeout --foreground "\$\{ACR_TRANSFER_TIMEOUT\}" docker push/,
 	);
 	assert.match(releaseWorkflow, /ACR_WEB_DIGEST/);
 	assert.match(

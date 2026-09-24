@@ -116,6 +116,10 @@ cd deploy/compose
 稳定发布不创建或依赖浮动 `latest` 标签。用户安装和升级继续使用 release asset 中的 digest manifest；
 源代码归档由 GitHub 稳定 tag 提供。
 
+手动候选构建默认只发布 GHCR。仅在本次候选确实需要验证中国大陆镜像站时，才在
+`release-images` workflow 中显式启用 `mirror_acr`；稳定 tag 在四个 ACR secrets 完整配置时仍自动同步。
+任一 ACR pull 或 push 超过 15 分钟会失败，不能阻塞发布流水线至 GitHub Actions 的全局超时。
+
 ## 3. 真实纵向验收
 
 ```bash

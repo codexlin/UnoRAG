@@ -3,7 +3,7 @@
 | Workflow | Role |
 |----------|-----------|
 | [`ci.yml`](./ci.yml) | **PR + main** entrypoint: lint-diff, TypeScript evaluation and release gates, real PostgreSQL/Qdrant/Redis integration tests, Web test/lint/build, and Docker build verification. |
-| [`release-images.yml`](./release-images.yml) | Manual/tag build of four Node targets (web, migrator, ops, DBOS worker), published to GHCR, optionally mirrored to ACR, scanned with Trivy, and accompanied by SBOM/provenance attestations. |
+| [`release-images.yml`](./release-images.yml) | Manual/tag build of four Node targets (web, migrator, ops, DBOS worker), published to GHCR, optionally mirrored to ACR, scanned with Trivy, and accompanied by SBOM/provenance attestations. Manual candidate runs mirror ACR only when `mirror_acr` is explicitly enabled; stable tag runs preserve automatic mirroring when the four ACR secrets are configured. |
 
 See [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md).
 

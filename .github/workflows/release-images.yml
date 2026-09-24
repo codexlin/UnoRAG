@@ -1,7 +1,7 @@
 name: release-images
 
-# Build each target once and publish it to GHCR. When all four ACR secrets are
-# configured, the same image is mirrored to ACR for mainland China deployments.
+# Build each target once and publish it to GHCR. Stable tags mirror to ACR when
+# all four secrets are configured; manual candidates require explicit opt-in.
 
 on:
   workflow_dispatch:
@@ -15,6 +15,10 @@ on:
         type: string
         required: false
         default: ""
+      mirror_acr:
+        description: "Also mirror runtime images to the configured ACR registry"
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -42,6 +46,7 @@ jobs:
         env:
           INPUT_TAG: ${{ inputs.image_tag }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_MIRROR_ACR: ${{ inputs.mirror_acr }}
           EVENT_NAME: ${{ github.event_name }}
           ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
           ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
@@ -83,11 +88,20 @@ jobs:
             for value in "${acr_values[@]}"; do
               [[ -n "${value}" ]] && configured=$((configured + 1))
             done
-            if [[ "${configured}" != "0" && "${configured}" != "4" ]]; then
+            mirror_acr=false
+            if [[ "${EVENT_NAME}" == "push" && "${configured}" == "4" ]]; then
+              mirror_acr=true
+            elif [[ "${EVENT_NAME}" == "push" && "${configured}" != "0" ]]; then
               echo "ACR mirroring requires ACR_REGISTRY, ACR_NAMESPACE, ACR_USERNAME and ACR_PASSWORD together" >&2
               exit 1
+            elif [[ "${INPUT_MIRROR_ACR:-false}" == "true" ]]; then
+              if [[ "${configured}" != "4" ]]; then
+                echo "ACR mirroring was requested but all four ACR secrets are not configured" >&2
+                exit 1
+              fi
+              mirror_acr=true
             fi
-            if [[ "${configured}" == "4" ]]; then
+            if [[ "${mirror_acr}" == "true" ]]; then
               acr_repo="${ACR_REGISTRY}/${ACR_NAMESPACE}/unorag"
               echo "acr_repo=${acr_repo}" >> "${GITHUB_OUTPUT}"
               echo "publish_acr=true" >> "${GITHUB_OUTPUT}"
@@ -265,14 +279,15 @@ jobs:
           IMAGE_PLATFORM: ${{ steps.meta.outputs.image_platform }}
           GHCR_REPO: ${{ steps.meta.outputs.ghcr_repo }}
           ACR_REPO: ${{ steps.meta.outputs.acr_repo }}
+          ACR_TRANSFER_TIMEOUT: 15m
         run: |
           set -euo pipefail
 
           mirror() {
             local target="$1" output digest
-            docker pull --platform "${IMAGE_PLATFORM}" "${GHCR_REPO}:${target}-${TAG}"
+            timeout --foreground "${ACR_TRANSFER_TIMEOUT}" docker pull --platform "${IMAGE_PLATFORM}" "${GHCR_REPO}:${target}-${TAG}"
             docker tag "${GHCR_REPO}:${target}-${TAG}" "${ACR_REPO}:${target}-${TAG}"
-            output="$(docker push "${ACR_REPO}:${target}-${TAG}" 2>&1)"
+            output="$(timeout --foreground "${ACR_TRANSFER_TIMEOUT}" docker push "${ACR_REPO}:${target}-${TAG}" 2>&1)"
             printf '%s\n' "${output}"
             digest="$(sed -n 's/^.*digest: \(sha256:[a-f0-9]\{64\}\).*$/\1/p' <<<"${output}" | tail -n 1)"
             [[ "${digest}" == sha256:* ]] || {
