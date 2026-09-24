@@ -85,17 +85,17 @@ RUN apt-get update \
 	&& useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
 	&& corepack prepare pnpm@9.7.1 --activate
-# Pin the same ranges as the application; install only migration tooling.
-COPY package.json /tmp/app.package.json
+# The migrator has its own committed lockfile so a release rebuild cannot
+# silently select newer migration tooling than the application was tested with.
+COPY deploy/docker/migrator/package.json deploy/docker/migrator/pnpm-lock.yaml ./
 RUN --mount=type=cache,id=unorag-pnpm-migrator,target=/root/.local/share/pnpm/store \
-	node -e 'const fs=require("fs"); const app=JSON.parse(fs.readFileSync("/tmp/app.package.json","utf8")); fs.writeFileSync("package.json", JSON.stringify({name:"unorag-web-migrator",private:true,packageManager:"pnpm@9.7.1",pnpm:{overrides:{esbuild:app.pnpm.overrides.esbuild}},scripts:{"db:migrate":"drizzle-kit migrate"},dependencies:{"drizzle-orm":app.dependencies["drizzle-orm"],pg:app.dependencies.pg,"drizzle-kit":app.devDependencies["drizzle-kit"]}},null,"\t")+"\n");' \
-	&& CI=true pnpm install \
+	CI=true pnpm install --frozen-lockfile \
 		--network-concurrency=4 \
 		--fetch-retries=5 \
 		--fetch-retry-mintimeout=10000 \
 		--fetch-retry-maxtimeout=60000 \
 	&& test -x node_modules/.bin/drizzle-kit \
-	&& rm -rf /root/.cache /tmp/app.package.json /usr/local/lib/node_modules/npm \
+	&& rm -rf /root/.cache /usr/local/lib/node_modules/npm \
 	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
 COPY --chown=unorag:unorag drizzle.config.ts ./
 COPY --chown=unorag:unorag drizzle ./drizzle

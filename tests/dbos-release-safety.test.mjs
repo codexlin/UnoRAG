@@ -282,6 +282,30 @@ test("worker images install production dependencies without retaining a dev laye
 	}
 });
 
+test("the migrator image installs only from its committed frozen lockfile", async () => {
+	const dockerfile = await source("deploy/docker/web.Dockerfile");
+	const manifest = JSON.parse(
+		await source("deploy/docker/migrator/package.json"),
+	);
+	const lockfile = await source("deploy/docker/migrator/pnpm-lock.yaml");
+
+	assert.match(
+		dockerfile,
+		/COPY deploy\/docker\/migrator\/package\.json deploy\/docker\/migrator\/pnpm-lock\.yaml \.\//,
+	);
+	assert.match(dockerfile, /CI=true pnpm install --frozen-lockfile/);
+	assert.doesNotMatch(dockerfile, /app\.package\.json/);
+	assert.equal(manifest.dependencies["drizzle-kit"], "0.31.10");
+	assert.equal(manifest.dependencies["drizzle-orm"], "0.45.2");
+	assert.equal(manifest.dependencies.pg, "8.23.0");
+	for (const version of ["0.31.10", "0.45.2", "8.23.0"]) {
+		assert.match(
+			lockfile,
+			new RegExp(`version: ${version.replaceAll(".", "\\.")}`),
+		);
+	}
+});
+
 test("all release image families install current Debian runtime security updates", async () => {
 	const dockerfile = await source("deploy/docker/web.Dockerfile");
 	assert.match(

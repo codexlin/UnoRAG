@@ -1,0 +1,43 @@
+services:
+  fault-provider:
+    image: node:22-alpine
+    working_dir: /opt/unorag
+    command: ["node", "fault-provider.mjs"]
+    environment:
+      FAULT_PROVIDER_CONTROL_TOKEN: ${UNORAG_FAULT_PROVIDER_CONTROL_TOKEN:?UNORAG_FAULT_PROVIDER_CONTROL_TOKEN required}
+      FAULT_LLM_UPSTREAM_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL required}
+      FAULT_MINERU_UPSTREAM_BASE_URL: ${MINERU_SELF_HOSTED_URL:-}
+      FAULT_PROVIDER_DELAY_MS: ${UNORAG_FAULT_PROVIDER_DELAY_MS:-30000}
+    volumes:
+      - ../../scripts/acceptance/fault-provider.mjs:/opt/unorag/fault-provider.mjs:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:9080/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    networks:
+      - internal
+    restart: "no"
+
+  web:
+    environment:
+      OPENAI_BASE_URL: http://fault-provider:9080/v1
+      EMBEDDING_TIMEOUT_MS: ${UNORAG_FAULT_EMBEDDING_TIMEOUT_MS:-1500}
+      # Pass-through must accommodate the real Provider baseline. Injected HTTP
+      # faults remain immediate and the acceptance client enforces its own bound.
+      ASK_JUDGE_TIMEOUT_MS: ${UNORAG_FAULT_LLM_TIMEOUT_MS:-12000}
+    depends_on:
+      fault-provider:
+        condition: service_healthy
+
+  dbos-worker:
+    environment:
+      OPENAI_BASE_URL: http://fault-provider:9080/v1
+      EMBEDDING_TIMEOUT_MS: ${UNORAG_FAULT_EMBEDDING_TIMEOUT_MS:-1500}
+      MINERU_PROVIDER: self_hosted
+      MINERU_SELF_HOSTED_URL: http://fault-provider:9080
+      EXTERNAL_PARSER_ALLOWED: "true"
+      PARSER_MAX_WAIT_MS: ${UNORAG_FAULT_PARSER_TIMEOUT_MS:-3000}
+    depends_on:
+      fault-provider:
+        condition: service_healthy
