@@ -303,7 +303,7 @@ Worker 同时获得新凭证，验证上传、入库、下载和删除后再撤�
 
 ```bash
 just check
-VERSION=v0.2.2
+VERSION=v0.2.3
 just images "$VERSION"
 just release "$VERSION" REGISTRY/NAMESPACE
 ```
