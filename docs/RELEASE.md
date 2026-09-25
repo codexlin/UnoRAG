@@ -85,7 +85,7 @@ release workflow 的 GitHub OIDC 身份；安装和升级在镜像拉取前 fail
 
 | 字段 | 含义 | 示例 |
 |---|---|---|
-| `UNORAG_VERSION` | 用户可见产品版本；Git tag 去掉前导 `v` | `0.2.2` |
+| `UNORAG_VERSION` | 用户可见产品版本；Git tag 去掉前导 `v` | `0.2.3` |
 | `UNORAG_REVISION` | 构建对应的完整 Git commit | 40 位 SHA |
 | `UNORAG_BUILD_TIME` | 镜像构建时间 | ISO 8601 UTC |
 | `UNORAG_DBOS_APPLICATION_VERSION` | durable workflow 兼容边界 | `unorag-<git-sha>` |

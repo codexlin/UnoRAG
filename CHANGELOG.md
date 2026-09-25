@@ -25,8 +25,8 @@ API contracts, retrieval behavior, database schema, or required production confi
 
 ### Validation
 
-- The final candidate passed a clean isolated install, `0.2.2 -> 0.2.3 candidate -> 0.2.2 ->
-  0.2.3 candidate` upgrade/rollback cycle, LLM and parser fault injection, active-version
+- The final code candidate passed a clean isolated install, candidate upgrade, `0.2.2` application
+  rollback, and candidate re-upgrade cycle, plus LLM and parser fault injection, active-version
   preservation, and a destructive backup/delete-volumes/restore drill.
 - The restore drill observed zero data loss, restored the stack in 50 seconds, and finished with
   zero dead jobs, stuck jobs, or pending ACL projections.

@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-09-21
+> 更新日期：2026-09-25
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -9,7 +9,7 @@
 ## 一句话结论
 
 UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部署、具备权限和文档生命周期的知识产品**。
-仓库已在 GitHub 公开并采用 Apache-2.0，当前稳定版 [`v0.2.2`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.2)
+仓库已在 GitHub 公开并采用 Apache-2.0，当前稳定版 [`v0.2.3`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.3)
 已经发布。素材溯源、第三方通知、SBOM/provenance、镜像漏洞扫描和 Cosign 签名均已工程化；COS 真链路、
 真实文件、浏览器权限、29 项隔离熔断、维护恢复、回退前滚和受控容量已在最终提交与香港参考环境复验。
 这不应扩大为所有部署拓扑的通用生产认证。当前默认交付是一位客户一套独立实例；Workspace 服务于客户
@@ -79,17 +79,17 @@ Next.js product + Knowledge API
 
 - 当前仓库跟踪超过 100 个 TypeScript/Node 测试文件及版本化测试数据；生成的本地 A/B 报告位于忽略目录，不进入 Git。
 - CI 覆盖全历史密钥扫描、Web/TS Core、真实 PostgreSQL migration、镜像构建、Helm、依赖审计和品牌残留检查。
-- `v0.2.2` 已完成原生告警去抖与恢复、Redis 分布式限流、Session 即时撤销、安全响应头、默认/高级
-  配置分层、旧运行时清理与大模块职责拆分。四镜像扫描、签名、空环境安装、香港原位升级、公网安全、
-  三轮真实文件、故障恢复和浏览器验收全部通过；每轮 36/36 正例、5/5 拒答，最大 P95 `13.677s`，
-  结论见 [v0.2.2 Production Hardening 发布验收](./evidence/2026-09-20-v0.2.2-production-hardening-release.md)。
+- `v0.2.3` 在不改变公开 API、检索实现或数据库 schema 的前提下，把不可变候选、Provider 故障、
+  digest 升级/应用回滚、破坏性恢复和生命周期不变量固化为发布门禁。隔离 RC、香港原位升级、产品 smoke、
+  公网安全头及桌面/移动浏览器均通过；恢复耗时 50 秒、数据丢失为 0，结论见
+  [v0.2.3 Release Confidence 发布验收](./evidence/2026-09-25-v0.2.3-release-confidence.md)。
 - Library 创建、更新、删除请求、删除完成与删除失败使用统一审计语义；事务内事件与异步 Worker 终态通过
   同一 Request ID 关联，描述正文不会进入审计。空库同步删除、带文件异步删除、真实 Qdrant 停机和本地
   对象存储权限故障均已验证；运行中心可展示原因、阶段瀑布和 `jobs.delete_failed` 告警，恢复后对象与向量
   被清理且旧失败记录继续保留。当前汇总结论见
-  [v0.2.2 Production Hardening 发布验收](./evidence/2026-09-20-v0.2.2-production-hardening-release.md)。
-- 备份产物完整性和可解析性已在最终候选验证；当前在线实例未执行破坏性原地 restore，客户环境仍须按自己的
-  RPO/RTO 和维护窗口演练。
+  [v0.2.3 Release Confidence 发布验收](./evidence/2026-09-25-v0.2.3-release-confidence.md)。
+- 备份产物完整性、删卷和恢复已在隔离 RC 真实执行；香港在线实例完成升级前备份及校验，但未做破坏性原地
+  restore。客户环境仍须按自己的 RPO/RTO、对象存储策略和维护窗口单独演练。
 - 旧版本逐版结果不再复制到状态页；需要追溯时使用 [CHANGELOG](../CHANGELOG.md)、
   [GitHub Releases](https://github.com/codexlin/UnoRAG/releases) 和 Git 历史。
 
@@ -97,7 +97,7 @@ Next.js product + Knowledge API
 
 ### 每次发布必须重复的门禁
 
-`v0.2.2` 的不可变镜像、香港环境升级、公网 smoke、完整真实文件和故障恢复门禁已经完成。历史 PASS 不自动
+`v0.2.3` 的不可变镜像、香港环境升级、公网 smoke、Provider 故障和恢复门禁已经完成。历史 PASS 不自动
 传递给新提交、新模型、ParserProvider 或客户环境；每个正式交付仍需执行自己的备份恢复、容量、Provider
 和故障演练门禁。
 
