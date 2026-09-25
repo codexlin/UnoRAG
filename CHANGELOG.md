@@ -3,6 +3,40 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [0.2.3] - 2026-09-25
+
+UnoRAG 0.2.3 is a release-confidence maintenance update. It does not change the public Knowledge
+API contracts, retrieval behavior, database schema, or required production configuration.
+
+### Added
+
+- A version-bound release gate for immutable candidate manifests, Provider fault injection,
+  digest-pinned upgrade and application rollback, destructive backup/restore drills, and final
+  lifecycle invariants.
+- Explicit evidence for ARM development-host platform emulation. Emulated runs remain limited to
+  functional and recovery validation and cannot be used as production capacity evidence.
+
+### Changed
+
+- Manual candidate publishing now defaults to GHCR only. ACR mirroring requires an explicit opt-in,
+  while stable tags continue to mirror automatically when the complete ACR secret set is present.
+- ACR pull and push operations have bounded timeouts so an unavailable mirror cannot consume the
+  entire image-release workflow window.
+
+### Validation
+
+- The final candidate passed a clean isolated install, `0.2.2 -> 0.2.3 candidate -> 0.2.2 ->
+  0.2.3 candidate` upgrade/rollback cycle, LLM and parser fault injection, active-version
+  preservation, and a destructive backup/delete-volumes/restore drill.
+- The restore drill observed zero data loss, restored the stack in 50 seconds, and finished with
+  zero dead jobs, stuck jobs, or pending ACL projections.
+
+### Upgrade notes
+
+- Existing `v0.2.2` deployments use the normal digest-manifest upgrade path. No database migration
+  or configuration change is required.
+- Public `POST /api/v1/retrieve` and `POST /api/v1/ask` contracts are unchanged.
+
 ## [0.2.2] - 2026-09-20
 
 UnoRAG 0.2.2 is a production-hardening release for private deployments. It strengthens native
