@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-09-25
+> 更新日期：2026-11-04
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -14,6 +14,11 @@ UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部�
 真实文件、浏览器权限、29 项隔离熔断、维护恢复、回退前滚和受控容量已在最终提交与香港参考环境复验。
 这不应扩大为所有部署拓扑的通用生产认证。当前默认交付是一位客户一套独立实例；Workspace 服务于客户
 企业内部治理，不代表公网共享多租户 SaaS。
+
+最新 `main` 已加入 Ask 检查点授权、历史来源再授权、流式尝试隔离、入库清单校验和依赖安全更新。
+`a71e14f` 的不可变候选已构建，但本轮三轮 Ask 未通过，完整隔离套件中止，结论为 **NO-GO**；正式实例
+仍为 `v0.2.3`。当前发布阻断和实测边界见
+[候选验收报告](./evidence/2026-11-04-a71e14f-candidate-acceptance.md)，不得把旧版验收当作本轮放行依据。
 
 ## 当前运行时
 
@@ -109,6 +114,10 @@ Next.js product + Knowledge API
 Secret Scanning 和 Push Protection 均已开启。
 
 ### P1：私有部署产品化
+
+先处理当前候选的 [公共拒绝映射](https://github.com/codexlin/UnoRAG/issues/174)、
+[Judge 故障语义与诊断](https://github.com/codexlin/UnoRAG/issues/173) 和
+[多来源黄金集契约](https://github.com/codexlin/UnoRAG/issues/172)，重新验收后再推进下列能力。
 
 1. **OIDC / SSO**：已有 Provider 边界和 Session 类型，但没有可交付的 OIDC 实现。
 2. **Kubernetes 加固**：Helm 是 starter，尚未内置 NetworkPolicy、PDB、HPA 或 digest-native 镜像字段。
