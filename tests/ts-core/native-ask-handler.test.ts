@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { APICallError, type LanguageModel } from "ai";
 
 import {
 	AiConcurrencyOverloadedError,
 	AiConcurrencyWaitTimeoutError,
+	AnswerStreamAdapter,
+	StructuredOutputAdapter,
 } from "../../src/core/ai";
 import type { AskGraphInput, AskState } from "../../src/core/ask-graph";
+import type {
+	InternalCitation,
+	RetrievalResult,
+} from "../../src/core/retrieval";
 import { runWithObservabilityContext } from "../../src/lib/observability/context";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
 import type {
@@ -18,6 +25,10 @@ import {
 	type FinalizeAskRunInput,
 	type StartAskRunInput,
 } from "../../src/server/observability/ask-runs-repository";
+import {
+	renderPrometheusMetrics,
+	resetPrometheusMetricsForTests,
+} from "../../src/server/observability/metrics";
 
 type ResolveFilename = (
 	request: string,
@@ -506,6 +517,148 @@ test("sync ask returns public response and atomically appends the exchange", asy
 	assert.equal(typeof archivedRetrievalDebug.total_duration_ms, "number");
 	assert.equal(repository.debugUpdates.length, 1);
 });
+
+for (const mode of ["sync", "stream"] as const) {
+	for (const failure of ["timeout", "authentication"] as const) {
+		test(`${mode} judge ${failure} fails closed with truthful diagnostics and run ledger`, async (context) => {
+			resetPrometheusMetricsForTests();
+			const { handleNativeAskRequest } = await handlerModule;
+			const { NativeAskRuntime } = await import(
+				"../../src/server/http/ask/native-runtime"
+			);
+			const runs = askRunRecorder();
+			let generated = false;
+			let calls = 0;
+			const model = {} as LanguageModel;
+			const structured = new StructuredOutputAdapter(
+				model,
+				async (input) => {
+					calls += 1;
+					if (failure === "authentication")
+						throw new APICallError({
+							message: "private upstream sk-secret",
+							url: "https://private.invalid",
+							requestBodyValues: { question: "private" },
+							statusCode: 401,
+							isRetryable: false,
+						});
+					return new Promise((_, reject) =>
+						input.abortSignal?.addEventListener(
+							"abort",
+							() => reject(input.abortSignal?.reason),
+							{ once: true },
+						),
+					);
+				},
+				{ timeoutMs: 5, maxAttempts: 2 },
+			);
+			const response = await handleNativeAskRequest({
+				request: request(
+					{ question: "违约金是多少？", library_id: LIBRARY_ID },
+					mode === "stream" ? "stream" : undefined,
+				),
+				path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+				identity,
+				repository: repositoryInput(new FakeConversationRepository()),
+				askRunsRepository: runs.repository,
+				observeMetrics: mode !== "stream",
+				resolveLibrary: async () => ({
+					id: "99999999-9999-4999-8999-999999999999",
+				}),
+				runtimeFactory: (input) => {
+					const runtime = new NativeAskRuntime(
+						input.identity,
+						input.libraryId,
+						input.signal,
+						input.policy,
+						{
+							structured,
+							retrieval: {
+								retrieve: async () => {
+									throw new Error("test retrieval must be injected");
+								},
+							},
+							answer: new AnswerStreamAdapter(model, async function* () {
+								generated = true;
+								yield "must not generate";
+							}),
+						},
+						input.assertAuthorized,
+					);
+					context.mock.method(
+						runtime as unknown as { retrieve: () => Promise<RetrievalResult> },
+						"retrieve",
+						async () => ({
+							citations: askState().citations as unknown as InternalCitation[],
+							debug: {},
+						}),
+					);
+					return runtime;
+				},
+			});
+			assert.equal(response?.status, 200);
+			assert.ok(response);
+			const body =
+				mode === "stream"
+					? (parseSse(await response.text()).at(-1)?.data as Record<
+							string,
+							unknown
+						>)
+					: await response.json();
+			assert.equal(body.refused, true);
+			assert.equal(body.refuse_reason, "judge_unavailable");
+			assert.match(body.answer, /证据校验服务暂不可用/);
+			assert.doesNotMatch(body.answer, /没有找到|证据不足/);
+			assert.deepEqual(body.citations, []);
+			assert.equal(generated, false);
+			const attempts = failure === "timeout" ? 2 : 1;
+			assert.equal(calls, attempts);
+			const debug = body.retrieval_debug;
+			assert.equal(debug.judge_attempts, attempts);
+			assert.equal(debug.judge_error_category, failure);
+			assert.equal(debug.judge_timeout_ms, 5);
+			assert.equal(debug.judge_max_attempts, 2);
+			assert.equal(debug.judge_budget_ms, 10);
+			assert.equal(debug.judge_retryable, failure === "timeout");
+			assert.equal(
+				debug.stages.find((stage: { stage: string }) => stage.stage === "judge")
+					?.ok,
+				false,
+			);
+			assert.doesNotMatch(JSON.stringify(debug), /private|sk-secret|违约金/);
+			assert.equal(runs.finalizations.length, 1);
+			assert.equal(runs.finalizations[0]?.status, "failed");
+			assert.equal(runs.finalizations[0]?.errorCode, "judge_unavailable");
+			const stage = runs.finalizations[0]?.stages?.find(
+				(stage) => stage.stage === "judge",
+			);
+			assert.equal(stage?.outcome, "failed");
+			assert.equal(stage?.errorCode, "judge_unavailable");
+			assert.equal(stage?.detail?.judge_error_category, failure);
+			assert.equal(stage?.detail?.judge_attempts, attempts);
+			const metrics = renderPrometheusMetrics();
+			if (mode !== "stream") {
+				assert.match(
+					metrics,
+					/unorag_web_requests_total\{operation="ask",outcome="server_error"\} 1/,
+				);
+			} else {
+				assert.doesNotMatch(
+					metrics,
+					/unorag_web_requests_total\{operation="ask"/,
+				);
+			}
+			assert.match(
+				metrics,
+				/unorag_ask_stage_duration_seconds_count\{stage="judge",outcome="failed"\} 1/,
+			);
+			assert.doesNotMatch(
+				metrics,
+				/unorag_ask_completions_total\{[^\n]*\} [1-9]/,
+			);
+		});
+	}
+}
 
 test("Ask run uses the response request ID and reaches a privacy-safe terminal state", async () => {
 	const { handleNativeAskRequest } = await handlerModule;

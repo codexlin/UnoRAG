@@ -9,6 +9,10 @@ import type {
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
 import type { AuthenticatedServiceKey } from "../../src/lib/server/service-keys";
 import type { NativeRetrievalDependencies } from "../../src/server/http/retrieval/service";
+import {
+	renderPrometheusMetrics,
+	resetPrometheusMetricsForTests,
+} from "../../src/server/observability/metrics";
 
 type ResolveFilename = (
 	request: string,
@@ -446,6 +450,82 @@ test("public ask keeps the v1 projection and never calls FastAPI", async () => {
 	}
 });
 
+test("public ask sanitizes native authorization denials and preserves retryable failures", async (t) => {
+	const { forwardIntegrationRag } = await integrationModule;
+	const key: AuthenticatedServiceKey = {
+		id: "service-key-ask-errors",
+		organizationId: ORGANIZATION_ID,
+		workspaceId: WORKSPACE_ID,
+		name: "Ask integration",
+		prefix: "mk_svc_ask_errors",
+		scopes: ["ask"],
+		libraryIds: null,
+		createdBy: null,
+		revokedAt: null,
+		lastUsedAt: null,
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		principalId: "service:service-key-ask-errors",
+	};
+	for (const [status, publicStatus, code, message, retryable] of [
+		[
+			401,
+			401,
+			"authentication_failed",
+			"invalid or revoked service key",
+			false,
+		],
+		[
+			403,
+			403,
+			"library_access_denied",
+			"library_id not allowed for this service key",
+			false,
+		],
+		[500, 502, "upstream_unavailable", "RAG data plane unavailable", true],
+		[502, 502, "upstream_unavailable", "RAG data plane unavailable", true],
+		[
+			503,
+			503,
+			"service_unavailable",
+			"Knowledge service is temporarily unavailable",
+			true,
+		],
+		[504, 504, "upstream_timeout", "Knowledge API request timed out", true],
+	] as const) {
+		await t.test(`native HTTP ${status}`, async () => {
+			const requestId = `public-ask-error-${status}`;
+			const response = await forwardIntegrationRag({
+				request: retrieveRequest({ question: "q", library_id: LIBRARY_ID }),
+				key,
+				target: "/v1/ask",
+				requestId,
+				askHandler: async () =>
+					Response.json(
+						{
+							detail: {
+								message: "foreign workspace secret",
+								error_code: "internal",
+							},
+						},
+						{ status },
+					),
+			});
+			assert.equal(response.status, publicStatus);
+			assert.equal(response.headers.get("x-request-id"), requestId);
+			assert.equal(response.headers.get("x-unorag-api-version"), "1");
+			assert.equal(response.headers.get("cache-control"), "no-store");
+			assert.equal(
+				response.headers.get("www-authenticate"),
+				status === 401 ? "Bearer" : null,
+			);
+			assert.deepEqual(await response.json(), {
+				error: { code, message, request_id: requestId, retryable },
+			});
+		});
+	}
+});
+
 test("public ask masks a foreign library as access denied", async () => {
 	const { forwardIntegrationRag } = await integrationModule;
 	const key: AuthenticatedServiceKey = {
@@ -484,6 +564,58 @@ test("public ask masks a foreign library as access denied", async () => {
 		};
 		assert.equal(body.error?.code, "library_access_denied");
 		assert.equal(body.error?.retryable, false);
+	} finally {
+		console.info = originalInfo;
+	}
+});
+
+test("public Ask counts Judge unavailability as a service error, not a knowledge refusal", async () => {
+	const { forwardIntegrationRag } = await integrationModule;
+	resetPrometheusMetricsForTests();
+	const key: AuthenticatedServiceKey = {
+		id: "service-key-judge",
+		organizationId: ORGANIZATION_ID,
+		workspaceId: WORKSPACE_ID,
+		name: "Ask integration",
+		prefix: "test_key",
+		scopes: ["ask"],
+		libraryIds: [LIBRARY_ID],
+		createdBy: null,
+		revokedAt: null,
+		lastUsedAt: null,
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		principalId: "service:service-key-judge",
+	};
+	const originalInfo = console.info;
+	console.info = () => undefined;
+	try {
+		const response = await forwardIntegrationRag({
+			request: retrieveRequest({ question: "问题", library_id: LIBRARY_ID }),
+			key,
+			target: "/v1/ask",
+			requestId: "public-judge-failure",
+			askHandler: async () =>
+				Response.json({
+					session_id: "test",
+					question: "问题",
+					answer: "证据校验服务暂不可用",
+					refused: true,
+					refuse_reason: "judge_unavailable",
+					citations: [],
+				}),
+		});
+		assert.equal(response.status, 200);
+		assert.equal((await response.json()).refuse_reason, "judge_unavailable");
+		const metrics = renderPrometheusMetrics();
+		assert.match(
+			metrics,
+			/unorag_web_requests_total\{operation="ask",outcome="server_error"\} 1/,
+		);
+		assert.doesNotMatch(
+			metrics,
+			/unorag_web_requests_total\{operation="ask",outcome="refused"/,
+		);
 	} finally {
 		console.info = originalInfo;
 	}

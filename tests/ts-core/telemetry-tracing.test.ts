@@ -165,6 +165,34 @@ test("business request IDs remain separate from valid OTel trace IDs", async () 
 	}));
 	assert.equal(JSON.stringify(exportedGraphData).includes(question), false);
 
+	exporter.reset();
+	const failedJudgeContext: AskGraphContext = {
+		...graphContext,
+		judge: {
+			judge: () => ({
+				sufficient: false,
+				action: "refuse",
+				reason: "judge_unavailable",
+				judge_mode: "model_error",
+			}),
+		},
+	};
+	const refused = await new AskGraphService(failedJudgeContext).invoke({
+		question,
+	});
+	assert.equal(refused.refuse_reason, "judge_unavailable");
+	assert.match(refused.answer ?? "", /证据校验服务暂不可用/);
+	await provider.forceFlush();
+	const failedJudgeSpan = exporter
+		.getFinishedSpans()
+		.find((span) => span.name === "unorag.ask.node.judge");
+	assert.equal(failedJudgeSpan?.status.code, SpanStatusCode.ERROR);
+	assert.equal(
+		failedJudgeSpan?.attributes["error.type"],
+		"JudgeUnavailableError",
+	);
+	assert.doesNotMatch(JSON.stringify(failedJudgeSpan?.events), /confidential/);
+
 	const streamingResponse = await withActiveHttpSpan(
 		"unorag.streaming-test",
 		{},

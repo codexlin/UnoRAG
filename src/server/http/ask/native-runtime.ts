@@ -7,6 +7,7 @@ import {
 	AnswerStreamAdapter,
 	aiConfigFromEnv,
 	createAiProviderRegistry,
+	getStructuredFailureMetadata,
 	judgeAiConfigFromEnv,
 	StructuredOutputAdapter,
 } from "@/core/ai";
@@ -383,6 +384,12 @@ export class NativeAskRuntime {
 						);
 						return {
 							...judged.output,
+							reason:
+								judged.output.reason === "judge_unavailable"
+									? judged.output.action === "generate"
+										? "evidence_sufficient"
+										: "insufficient_evidence"
+									: judged.output.reason,
 							judge_mode: "model",
 							judge_model: judgeIdentity.modelId,
 							judge_provider: judgeIdentity.providerName,
@@ -401,6 +408,7 @@ export class NativeAskRuntime {
 					} catch (error) {
 						throwIfAborted(this.signal, error);
 						throwIfConcurrencyUnavailable(error);
+						const failure = getStructuredFailureMetadata(error);
 						return {
 							sufficient: false,
 							action: "refuse",
@@ -409,6 +417,18 @@ export class NativeAskRuntime {
 							judge_mode: "model_error",
 							judge_model: judgeIdentity.modelId,
 							judge_provider: judgeIdentity.providerName,
+							...(failure
+								? {
+										judge_attempts: failure.attempts,
+										judge_duration_ms: failure.durationMs,
+										judge_timeout_ms: failure.timeoutMs,
+										judge_max_attempts: failure.maxAttempts,
+										judge_budget_ms: failure.budgetMs,
+										judge_error_category: failure.category,
+										judge_status_code: failure.statusCode,
+										judge_retryable: failure.retryable,
+									}
+								: {}),
 						};
 					}
 				},

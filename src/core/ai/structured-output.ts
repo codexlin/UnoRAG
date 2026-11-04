@@ -1,9 +1,13 @@
 import {
+	APICallError,
 	generateText,
 	type LanguageModel,
 	type LanguageModelUsage,
 	type ModelMessage,
+	NoObjectGeneratedError,
+	NoOutputGeneratedError,
 	Output,
+	RetryError,
 } from "ai";
 import { z } from "zod";
 import { metadataOnlyAiTelemetry } from "@/lib/observability/ai-telemetry";
@@ -145,6 +149,68 @@ export type StructuredRequestMetadata = {
 	outputTokens?: number;
 	totalTokens?: number;
 };
+
+export type StructuredFailureMetadata = Readonly<{
+	attempts: number;
+	durationMs: number;
+	timeoutMs: number;
+	maxAttempts: number;
+	budgetMs: number;
+	category:
+		| "timeout"
+		| "authentication"
+		| "rate_limit"
+		| "provider_unavailable"
+		| "invalid_output"
+		| "provider_error";
+	statusCode: number | null;
+	retryable: boolean;
+}>;
+
+// Keep the original error identity for cancellation/auth checks; never attach raw
+// provider bodies or prompts to the public diagnostic projection.
+const failureMetadata = new WeakMap<object, StructuredFailureMetadata>();
+
+export function getStructuredFailureMetadata(
+	error: unknown,
+): StructuredFailureMetadata | undefined {
+	return error !== null && typeof error === "object"
+		? failureMetadata.get(error)
+		: undefined;
+}
+
+function classifyFailure(
+	error: unknown,
+): Pick<StructuredFailureMetadata, "category" | "statusCode" | "retryable"> {
+	if (error instanceof StructuredOutputTimeoutError) {
+		return { category: "timeout", statusCode: null, retryable: true };
+	}
+	if (
+		error instanceof StructuredOutputValidationError ||
+		NoObjectGeneratedError.isInstance(error) ||
+		NoOutputGeneratedError.isInstance(error)
+	) {
+		return { category: "invalid_output", statusCode: null, retryable: true };
+	}
+	const cause = RetryError.isInstance(error) ? error.lastError : error;
+	if (APICallError.isInstance(cause)) {
+		const statusCode = cause.statusCode ?? null;
+		const category =
+			statusCode === 401 || statusCode === 403
+				? "authentication"
+				: statusCode === 429
+					? "rate_limit"
+					: statusCode !== null && statusCode >= 500
+						? "provider_unavailable"
+						: "provider_error";
+		return {
+			category,
+			statusCode,
+			retryable: category !== "authentication" && cause.isRetryable,
+		};
+	}
+	return { category: "provider_error", statusCode: null, retryable: true };
+}
 
 class DefaultStructuredResult {
 	constructor(
@@ -299,6 +365,22 @@ export class StructuredOutputAdapter {
 					throw error;
 				}
 				lastError = error;
+				const classification = classifyFailure(error);
+				if (error !== null && typeof error === "object") {
+					failureMetadata.set(
+						error,
+						Object.freeze({
+							...classification,
+							attempts: attempt,
+							durationMs:
+								Math.round((performance.now() - startedAt) * 100) / 100,
+							timeoutMs: this.timeoutMs,
+							maxAttempts: this.maxAttempts,
+							budgetMs: this.timeoutMs * this.maxAttempts,
+						}),
+					);
+				}
+				if (!classification.retryable) break;
 			} finally {
 				if (timeout) clearTimeout(timeout);
 				lease?.release();

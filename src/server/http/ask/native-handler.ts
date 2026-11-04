@@ -422,6 +422,34 @@ async function finalizeAskRun(input: {
 						...(stage.ok === false && stage.stage === "persist"
 							? { errorCode: "conversation_persist_failed" }
 							: {}),
+						...(stage.ok === false &&
+						stage.stage === "judge" &&
+						debug?.judge_mode === "model_error" &&
+						state?.refuse_reason === "judge_unavailable"
+							? {
+									errorCode: "judge_unavailable",
+									detail: Object.fromEntries(
+										[
+											"judge_attempts",
+											"judge_duration_ms",
+											"judge_timeout_ms",
+											"judge_max_attempts",
+											"judge_budget_ms",
+											"judge_error_category",
+											"judge_status_code",
+											"judge_retryable",
+										].flatMap((key) => {
+											const value = debug?.[key];
+											return typeof value === "string" ||
+												typeof value === "number" ||
+												typeof value === "boolean" ||
+												value === null
+												? [[key, value]]
+												: [];
+										}),
+									),
+								}
+							: {}),
 					},
 				];
 			})
@@ -607,14 +635,17 @@ async function handleNativeAskRequestInSpan(input: {
 	let metricsSettled = false;
 	let activeState: AskState | undefined;
 	const settleMetrics = (outcome: WebMetricOutcome) => {
-		if (input.observeMetrics === false || metricsSettled) return;
+		if (metricsSettled) return;
 		metricsSettled = true;
 		const durationMs = Math.max(0, performance.now() - metricsStartedAt);
-		observeWebRequest({
-			operation: "ask",
-			outcome,
-			durationMs,
-		});
+		// The Public API gateway owns request counting, but not native stage metrics.
+		if (input.observeMetrics !== false) {
+			observeWebRequest({
+				operation: "ask",
+				outcome,
+				durationMs,
+			});
+		}
 		if (activeState && Array.isArray(activeState.retrieval_debug?.stages)) {
 			for (const value of activeState.retrieval_debug.stages) {
 				if (!value || typeof value !== "object" || Array.isArray(value))
@@ -776,6 +807,22 @@ async function handleNativeAskRequestInSpan(input: {
 		});
 		state.trace_id = requestId;
 		activeState = state;
+		const judgeUnavailable =
+			state.refuse_reason === "judge_unavailable" &&
+			state.retrieval_debug?.judge_mode === "model_error";
+		if (judgeUnavailable) {
+			const error = new Error("judge_unavailable");
+			error.name = "JudgeUnavailableError";
+			recordActiveSpanFailure(error);
+			logger.warn({
+				event: "ask.judge_unavailable",
+				error_code: "judge_unavailable",
+				error_category:
+					state.retrieval_debug?.judge_error_category ?? "provider_error",
+				attempts: state.retrieval_debug?.judge_attempts ?? null,
+				duration_ms: state.retrieval_debug?.judge_duration_ms ?? null,
+			});
+		}
 		const evidence = [
 			...history.sourceReferences,
 			...(runtime.getEvidenceReferences?.() ?? state.citations ?? []),
@@ -823,8 +870,18 @@ async function handleNativeAskRequestInSpan(input: {
 				askStartedAt,
 			);
 			const retrievalDebug = completeRetrievalDebug(state, askStartedAt);
-			await settleActiveRun(state.refused ? "refused" : "completed", state);
-			settleMetrics(state.refused ? "refused" : "success");
+			await settleActiveRun(
+				judgeUnavailable ? "failed" : state.refused ? "refused" : "completed",
+				state,
+				judgeUnavailable ? "judge_unavailable" : undefined,
+			);
+			settleMetrics(
+				judgeUnavailable
+					? "server_error"
+					: state.refused
+						? "refused"
+						: "success",
+			);
 			return Response.json({
 				...common,
 				answer,
@@ -870,8 +927,18 @@ async function handleNativeAskRequestInSpan(input: {
 					),
 				);
 				done.retrieval_debug = completeRetrievalDebug(state, askStartedAt);
-				await settleActiveRun(state.refused ? "refused" : "completed", state);
-				settleMetrics(state.refused ? "refused" : "success");
+				await settleActiveRun(
+					judgeUnavailable ? "failed" : state.refused ? "refused" : "completed",
+					state,
+					judgeUnavailable ? "judge_unavailable" : undefined,
+				);
+				settleMetrics(
+					judgeUnavailable
+						? "server_error"
+						: state.refused
+							? "refused"
+							: "success",
+				);
 			} catch (error) {
 				recordActiveSpanFailure(error);
 				await settleActiveRun(
