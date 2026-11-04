@@ -183,6 +183,51 @@ test("public error envelope and upstream mapping are stable", () => {
 	);
 });
 
+test("upstream authorization failures are sanitized and nonretryable", () => {
+	for (const status of [401, 403, 404]) {
+		for (const payload of [
+			null,
+			"foreign workspace secret",
+			{ detail: "foreign workspace secret" },
+			{
+				detail: { message: "foreign workspace secret", error_code: "internal" },
+			},
+			{ message: "foreign workspace secret", library_id: "foreign-library" },
+		]) {
+			assert.deepEqual(normalizeUpstreamError(status, payload), {
+				status: status === 401 ? 401 : 403,
+				code:
+					status === 401 ? "authentication_failed" : "library_access_denied",
+				message:
+					status === 401
+						? "invalid or revoked service key"
+						: "library_id not allowed for this service key",
+				retryable: false,
+			});
+		}
+	}
+});
+
+test("upstream provider failures and timeouts remain sanitized and retryable", () => {
+	for (const [status, publicStatus, code, message] of [
+		[500, 502, "upstream_unavailable", "RAG data plane unavailable"],
+		[502, 502, "upstream_unavailable", "RAG data plane unavailable"],
+		[
+			503,
+			503,
+			"service_unavailable",
+			"Knowledge service is temporarily unavailable",
+		],
+		[504, 504, "upstream_timeout", "Knowledge API request timed out"],
+		[429, 429, "rate_limit_exceeded", "Knowledge API rate limit exceeded"],
+	]) {
+		assert.deepEqual(
+			normalizeUpstreamError(status, { detail: "provider credentials secret" }),
+			{ status: publicStatus, code, message, retryable: true },
+		);
+	}
+});
+
 test("success projection exposes stable citations and strips internal debug", () => {
 	const projected = projectPublicApiSuccess(
 		"ask",

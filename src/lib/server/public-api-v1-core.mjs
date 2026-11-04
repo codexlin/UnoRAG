@@ -232,6 +232,22 @@ export function normalizeUpstreamError(status, payload) {
 		};
 	}
 	switch (status) {
+		case 401:
+			return {
+				status,
+				code: "authentication_failed",
+				message: "invalid or revoked service key",
+				retryable: false,
+			};
+		case 403:
+		case 404:
+			// Missing and inaccessible resources share a denial to hide existence.
+			return {
+				status: 403,
+				code: "library_access_denied",
+				message: "library_id not allowed for this service key",
+				retryable: false,
+			};
 		case 413:
 			return {
 				status,
