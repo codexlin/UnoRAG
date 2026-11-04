@@ -5,6 +5,7 @@ import JSZip from "jszip";
 
 import type { ParseInput } from "../../src/core/contracts";
 import { MinerU302Provider } from "../../src/core/parsing";
+import { formatParseStatusView } from "../../src/lib/parse-status-view.mjs";
 
 const input: ParseInput = {
 	documentId: "document-302",
@@ -92,6 +93,13 @@ test("302.AI MinerU uploads, polls, and normalizes the result ZIP", async () => 
 	assert.equal(result.report.metrics.provider, "302ai");
 	assert.equal(result.report.metrics.external_data_processing, true);
 	assert.equal(result.report.metrics.provider_task_id, undefined);
+	const view = formatParseStatusView({
+		parserReport: result.report,
+		jobStatus: "completed",
+	});
+	assert.equal(view.parser_label, "302 云解析");
+	assert.equal(view.external_processing, true);
+	assert.equal(view.provider_task_id, null);
 	const resultDownload = calls.find(
 		(call) => call.url === "https://file.302.ai/output/scan.zip",
 	);
