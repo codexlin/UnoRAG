@@ -16,6 +16,11 @@ import {
 	errorGuidance,
 	redactDiagnosticMessage,
 } from "@/lib/error-diagnostics";
+import type {
+	JudgeDiagnosticDetail,
+	JudgeErrorCategory,
+	OperationsEventDetail,
+} from "@/lib/operations-event-detail";
 
 type Database = NodePgDatabase<typeof schema>;
 
@@ -42,10 +47,81 @@ function jobStage(row: typeof jobStageRuns.$inferSelect) {
 	};
 }
 
+const judgeErrorCategories = new Set<string>([
+	"timeout",
+	"authentication",
+	"rate_limit",
+	"provider_unavailable",
+	"invalid_output",
+	"provider_error",
+] satisfies JudgeErrorCategory[]);
+
+function judgeDetail(
+	stage: typeof askRunStages.$inferSelect,
+): JudgeDiagnosticDetail | null {
+	if (
+		stage.stage !== "judge" ||
+		stage.outcome !== "failed" ||
+		stage.errorCode !== "judge_unavailable" ||
+		!stage.detail ||
+		typeof stage.detail !== "object" ||
+		Array.isArray(stage.detail)
+	)
+		return null;
+
+	const detail: JudgeDiagnosticDetail = {};
+	const category = stage.detail.judge_error_category;
+	if (typeof category === "string" && judgeErrorCategories.has(category)) {
+		detail.judge_error_category = category as JudgeErrorCategory;
+	}
+	for (const key of ["judge_attempts", "judge_max_attempts"] as const) {
+		const value = stage.detail[key];
+		if (
+			typeof value === "number" &&
+			Number.isSafeInteger(value) &&
+			value >= 0
+		) {
+			detail[key] = value;
+		}
+	}
+	for (const key of [
+		"judge_duration_ms",
+		"judge_timeout_ms",
+		"judge_budget_ms",
+	] as const) {
+		const value = stage.detail[key];
+		if (
+			typeof value === "number" &&
+			Number.isFinite(value) &&
+			value >= 0 &&
+			value <= Number.MAX_SAFE_INTEGER
+		) {
+			detail[key] = value;
+		}
+	}
+	const status = stage.detail.judge_status_code;
+	if (
+		typeof status === "number" &&
+		Number.isInteger(status) &&
+		status >= 100 &&
+		status <= 599
+	) {
+		detail.judge_status_code = status;
+	}
+	if (typeof stage.detail.judge_retryable === "boolean") {
+		detail.judge_retryable = stage.detail.judge_retryable;
+	}
+	return Object.keys(detail).length > 0 ? detail : null;
+}
+
 export class OperationsEventService {
 	constructor(private readonly db: Database) {}
 
-	async read(scope: OperationsEventScope, source: "ask" | "job", id: string) {
+	async read(
+		scope: OperationsEventScope,
+		source: "ask" | "job",
+		id: string,
+	): Promise<OperationsEventDetail | null> {
 		return source === "ask" ? this.readAsk(scope, id) : this.readJob(scope, id);
 	}
 
@@ -100,6 +176,7 @@ export class OperationsEventService {
 				started_at: null,
 				ended_at: null,
 				duration_ms: stage.durationMs,
+				detail: judgeDetail(stage),
 			})),
 		};
 	}

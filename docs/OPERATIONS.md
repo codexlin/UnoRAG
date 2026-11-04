@@ -58,7 +58,9 @@ mk_compose exec -T web node -e \
 `refuse_reason=judge_unavailable` 是服务故障，不是资料不足。用户看到“证据校验服务暂不可用”；
 JSON 与 SSE 为兼容仍返回拒答结构和空引用，但 Ask run 为 `failed`、Judge 阶段 `ok=false`，
 OTel 节点为 ERROR，原生与 Public API 请求指标为 `server_error`，不计入正常拒答质量统计。
-按 Request ID 查看运行记录的 Judge 阶段 detail 或内部 `retrieval_debug`：
+按 Request ID 打开运行中心错误详情中的「Judge 诊断」，可查看阶段账本中已记录的类别、应用层尝试次数、
+超时、预算、实际耗时、HTTP 状态与可重试性；旧记录缺失的字段不补造默认值。也可读取 PG 阶段 detail
+或内部 `retrieval_debug`，对外投影只允许下列数值、布尔值与固定类别，不返回任意 detail 正文：
 
 - `judge_error_category` 区分 `timeout`、`authentication`、`rate_limit`、`provider_unavailable`、
   `invalid_output`、`provider_error`；状态码只保留数值，不记录上游原文、密钥或提示词。
