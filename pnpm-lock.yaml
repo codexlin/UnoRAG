@@ -184,6 +184,9 @@ importers:
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
+      js-yaml:
+        specifier: 4.3.2
+        version: 4.3.2
       postcss:
         specifier: 8.5.28
         version: 8.5.28
@@ -1287,6 +1290,9 @@ packages:
   argparse@1.0.10:
     resolution: {integrity: sha512-o5Roy6tNG4SL/FOkCAN6RzjiakZS25RLYFrcMttJqbdd8BWrnA+fGz57iN5Pb06pvBGvl5gQ0B48dJlslXvoTg==}
 
+  argparse@2.0.1:
+    resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
+
   asn1@0.2.6:
     resolution: {integrity: sha512-ix/FxPn0MDjeyJ7i/yoHGFt/EX6LyNbxSEhPPXODPL+KB0VPk86UYfL0lMdy+KCnv+fmvIzySwaK5COwqVbWTQ==}
 
@@ -1785,6 +1791,10 @@ packages:
 
   js-tiktoken@1.0.21:
     resolution: {integrity: sha512-biOj/6M5qdgx5TKjDnFT1ymSpM5tbd3ylwDtrQvFQSu0Z7bBYko2dF+W/aUkXUPuk6IVpRxk/3Q2sHOzGlS36g==}
+
+  js-yaml@4.3.2:
+    resolution: {integrity: sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==}
+    hasBin: true
 
   jsbn@0.1.1:
     resolution: {integrity: sha512-UVU9dibq2JcFWxQPA6KCqj5O42VOmAY3zQUfEKxU0KpTGXwNoCjkX1e13eHNvw/xPynt6pU0rZ1htjWTNTSXsg==}
@@ -3610,6 +3620,8 @@ snapshots:
     dependencies:
       sprintf-js: 1.0.3
 
+  argparse@2.0.1: {}
+
   asn1@0.2.6:
     dependencies:
       safer-buffer: 2.1.2
@@ -4040,6 +4052,10 @@ snapshots:
   js-tiktoken@1.0.21:
     dependencies:
       base64-js: 1.5.1
+
+  js-yaml@4.3.2:
+    dependencies:
+      argparse: 2.0.1
 
   jsbn@0.1.1: {}
 
