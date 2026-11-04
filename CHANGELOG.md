@@ -31,8 +31,9 @@ results remain in [`docs/evidence/`](./docs/evidence/).
   replacement/reindex if needed. Drain existing jobs before upgrading as usual.
 - Changes are not a new release or proof of deployment acceptance; validation remains bound to
   the tested candidate and environment.
-- Dependency audit remediation is still required before release; passing runtime regression tests
-  does not replace the production dependency security gate.
+- Production dependency audit passed for this candidate after reviewed dependency updates;
+  rerun the audit and release gates for the final release artifact. Three development-only
+  advisories remain outside the production dependency tree.
 
 ## [0.2.3] - 2026-09-25
 
