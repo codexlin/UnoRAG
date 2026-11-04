@@ -31,7 +31,7 @@
 | 门禁 | 结果 | 范围 |
 |---|---|---|
 | 精确提交 CI | PASS | 五项必需检查，含真实 PG / Qdrant / Redis 集成与镜像构建 |
-| 新实例安装 | PASS | 从已签名的 `v0.2.3` manifest 安装；独立管理员完成首次改密 |
+| 新实例安装 | PASS | 先验证旧版空安装；最后删卷后用候选 manifest 直接安装空库，首次改密与 smoke 均通过 |
 | 升级 / 回滚 / 再升级 | PASS | 旧版与候选 digest 切换；任务排空；同一资料的 Ask、引用与 active version 前后校验 |
 | 产品 smoke | PASS | 真实上传、Ask、Service Key、Public API、权限范围、替换和删除 |
 | 浏览器 | 20/20 PASS | 桌面 / 移动 Chromium；其中高频流、竞态和部分归档响应为受控 fixture，不冒充真实模型测试 |
@@ -75,8 +75,12 @@ COS 对象保留在原桶中，备份只包含 COS 边界说明；本次恢复�
 源文件。未验证对象误删、桶级恢复或跨区域复制；这些仍是客户对象备份与 RPO/RTO 的独立门禁。
 正式实例没有执行破坏性恢复；本轮临时实例在归档后清理，不保留额外常驻服务。
 
+故障代理恢复后使用 Markdown 探针重新验证了真实 Embedding / Judge / 生成；MinerU 401 验证了失败
+隔离，但未在故障解除后另上传 PDF。四份 PDF 的成功解析证据来自此前的新鲜入库，不能扩大成
+“ParserProvider 故障后重启 / 幂等恢复全部验证”。
+
 原始结果位于私有验收工作目录的 `upgrade-rollback/`、`provider-faults/`、`restore/`、
-`attestations.json`、`conversation-live.json`、`isolation.log`，以及评测输出目录中的
+`attestations.json`、`conversation-live.json`、`isolation.log`、`install-candidate-empty.log`，以及评测输出目录中的
 `ab_live_20261104T121623Z-ea7c3d95.json`、`ab_live_20261104T122328Z-ec160103.json`、
 `ab_live_20261104T122844Z-306fb050.json` 和 `ab_stability_20261104T123409Z.json`。
 公开仓库只保存脱敏汇总；密码、备份、完整问题/回答和环境文件不入 Git。
