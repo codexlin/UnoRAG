@@ -618,6 +618,20 @@ export async function forwardIntegrationRag(input: {
 			requestId: input.requestId,
 			askRunPrincipal: { type: "service_key", id: input.key.id },
 			observeMetrics: false,
+			refreshIdentity: async () => {
+				const current = await requireIntegrationServiceKey(
+					input.request,
+					"ask",
+				);
+				if (
+					!current.ok ||
+					current.key.id !== input.key.id ||
+					!serviceKeyAllowsLibrary(current.key, libraryId)
+				) {
+					return null;
+				}
+				return serviceKeyToIdentity(current.key);
+			},
 		});
 	} catch {
 		const timedOut = timeoutSignal.aborted;

@@ -44,9 +44,9 @@ test("staging overwrites security scope, batches points, and validates exact cou
 
 	assert.deepEqual(
 		calls.map((call) => call.name),
-		["upsert", "upsert", "count"],
+		["scroll", "upsert", "upsert", "count", "scroll", "scroll"],
 	);
-	const firstCall = calls[0];
+	const firstCall = calls.find((call) => call.name === "upsert");
 	assert.ok(firstCall);
 	const firstPoint = (
 		firstCall.input.points as Array<{
@@ -54,6 +54,7 @@ test("staging overwrites security scope, batches points, and validates exact cou
 		}>
 	)[0];
 	assert.deepEqual(firstPoint?.payload, {
+		ingest_manifest_hash: firstPoint?.payload.ingest_manifest_hash,
 		chunk_index: 0,
 		text: "chunk 0",
 		body: "chunk 0",
@@ -72,9 +73,13 @@ test("staging overwrites security scope, batches points, and validates exact cou
 		acl_principal_ids: ["principal-1"],
 		acl_group_ids: ["group-1"],
 	});
+	assert.match(
+		String(firstPoint?.payload.ingest_manifest_hash),
+		/^[a-f0-9]{64}$/,
+	);
 	assert.equal("_point_id" in (firstPoint?.payload ?? {}), false);
 	assert.equal("embed_text" in (firstPoint?.payload ?? {}), false);
-	assert.deepEqual(calls[2]?.input.filter, {
+	assert.deepEqual(calls.find((call) => call.name === "count")?.input.filter, {
 		must: [
 			{ key: "tenant_id", match: { value: "organization-1" } },
 			{ key: "workspace_id", match: { value: "workspace-1" } },
@@ -85,6 +90,114 @@ test("staging overwrites security scope, batches points, and validates exact cou
 			{ key: "lifecycle_visibility", match: { value: "staging" } },
 		],
 	});
+});
+
+test("retries reject same-count changed record sets and content, but resume an identical manifest", async () => {
+	const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+	const client = fakeClient(calls, 2);
+	const store = new QdrantIngestWriteStore(client, "chunks", { batchSize: 1 });
+	const records = [record(0), record(1)];
+	const vectors = [
+		[1, 0],
+		[0, 1],
+	];
+	let checks = 0;
+	await assert.rejects(
+		store.stage({
+			records,
+			vectors,
+			scope,
+			beforeBatch: async () => {
+				if (++checks === 3) throw new Error("interrupted after first batch");
+			},
+		}),
+		/interrupted/,
+	);
+	assert.equal(calls.filter((call) => call.name === "upsert").length, 1);
+
+	for (const changed of [
+		[record(0), record(2)],
+		[record(0), { ...record(1), text: "new boundary", body: "new boundary" }],
+		[record(0), { ...record(1), embed_text: "changed embedding input" }],
+	]) {
+		await assert.rejects(
+			new QdrantIngestWriteStore(client, "chunks").stage({
+				records: changed,
+				vectors,
+				scope,
+			}),
+			/manifest mismatch/,
+		);
+	}
+	assert.equal(calls.filter((call) => call.name === "upsert").length, 1);
+	assert.equal(
+		await store.stage({ records: [...records].reverse(), vectors, scope }),
+		2,
+	);
+	assert.equal(await store.stage({ records, vectors, scope }), 2);
+
+	await store.setVisibility(scope, "active");
+	const writes = calls.filter((call) => call.name === "upsert").length;
+	await assert.rejects(
+		store.stage({ records, vectors, scope }),
+		/manifest mismatch/,
+	);
+	assert.equal(calls.filter((call) => call.name === "upsert").length, writes);
+});
+
+test("exact point-set verification rejects equal counts with substituted IDs", async () => {
+	const client = fakeClient([], 2);
+	const scroll = client.scroll.bind(client);
+	client.scroll = async (collection, input) => {
+		const page = await scroll(collection, input);
+		if (page.points.length)
+			page.points[0] = { ...page.points[0], id: "unexpected-id" };
+		return page;
+	};
+	await assert.rejects(
+		new QdrantIngestWriteStore(client, "chunks").stage({
+			records: [record(0), record(1)],
+			vectors: [
+				[1, 0],
+				[0, 1],
+			],
+			scope,
+		}),
+		/manifest mismatch/,
+	);
+});
+
+test("duplicate IDs and pre-manifest staging fail closed without upserts", async () => {
+	const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+	const client = fakeClient(calls, 1);
+	const store = new QdrantIngestWriteStore(client, "chunks");
+	await assert.rejects(
+		store.stage({
+			records: [record(0), record(0)],
+			vectors: [
+				[1, 0],
+				[1, 0],
+			],
+			scope,
+		}),
+		/duplicate point IDs/,
+	);
+	client.scroll = async () => ({
+		points: [
+			{
+				id: record(0)._point_id,
+				payload: {
+					document_version_id: scope.documentVersionId,
+					lifecycle_visibility: "staging",
+				},
+			},
+		],
+	});
+	await assert.rejects(
+		store.stage({ records: [record(0)], vectors: [[1, 0]], scope }),
+		/manifest mismatch/,
+	);
+	assert.equal(calls.filter((call) => call.name === "upsert").length, 0);
 });
 
 test("staging and retrieval preserve the complete TableIR payload", async () => {
@@ -177,7 +290,7 @@ test("staging and retrieval preserve the complete TableIR payload", async () => 
 	});
 
 	const point = (
-		calls[0]?.input.points as
+		calls.find((call) => call.name === "upsert")?.input.points as
 			| Array<{ payload: Record<string, unknown> }>
 			| undefined
 	)?.[0];
@@ -248,6 +361,9 @@ test("staging fails closed on scope, vector, count, and restricted ACL mismatche
 
 test("writes fail closed when Qdrant reaches its wait timeout", async () => {
 	const client: QdrantIngestClient = {
+		async scroll() {
+			return { points: [] };
+		},
 		async upsert() {
 			return { status: "wait_timeout" };
 		},
@@ -388,9 +504,24 @@ function fakeClient(
 	calls: Array<{ name: string; input: Record<string, unknown> }>,
 	count: number,
 ): QdrantIngestClient {
+	const points = new Map<
+		string | number,
+		{ id: string | number; payload?: Record<string, unknown> | null }
+	>();
 	return {
+		async scroll(_collection, input) {
+			calls.push({ name: "scroll", input });
+			const start = Number(input.offset ?? 0);
+			const page = [...points.values()].slice(start, start + input.limit);
+			return {
+				points: page,
+				next_page_offset:
+					start + page.length < points.size ? start + page.length : null,
+			};
+		},
 		async upsert(_collection, input) {
 			calls.push({ name: "upsert", input });
+			for (const point of input.points) points.set(point.id, point);
 			return { status: "completed" };
 		},
 		async count(_collection, input) {
@@ -399,6 +530,9 @@ function fakeClient(
 		},
 		async setPayload(_collection, input) {
 			calls.push({ name: "setPayload", input });
+			for (const point of points.values()) {
+				point.payload = { ...point.payload, ...input.payload };
+			}
 			return { status: "completed" };
 		},
 	};

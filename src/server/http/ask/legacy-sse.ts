@@ -187,16 +187,23 @@ export function encodeLegacySseEvent(
 }
 
 function terminalError(
-	code: "aborted" | "llm_overloaded" | "llm_queue_timeout" | "stream_failed",
+	code:
+		| "aborted"
+		| "llm_overloaded"
+		| "llm_queue_timeout"
+		| "stream_failed"
+		| "ask_access_changed",
 ): Record<string, unknown> {
 	const message =
 		code === "aborted"
 			? "流式生成已取消"
-			: code === "llm_overloaded"
-				? "AI 服务繁忙，请稍后重试"
-				: code === "llm_queue_timeout"
-					? "AI 服务排队超时，请稍后重试"
-					: "流式生成失败";
+			: code === "ask_access_changed"
+				? "访问权限已变化，请重新发起提问"
+				: code === "llm_overloaded"
+					? "AI 服务繁忙，请稍后重试"
+					: code === "llm_queue_timeout"
+						? "AI 服务排队超时，请稍后重试"
+						: "流式生成失败";
 	return {
 		message,
 		code,
@@ -243,11 +250,15 @@ export async function* streamLegacyAskSse(
 	} catch (error) {
 		const code = input.abortSignal?.aborted
 			? "aborted"
-			: error instanceof AiConcurrencyOverloadedError
-				? "llm_overloaded"
-				: error instanceof AiConcurrencyWaitTimeoutError
-					? "llm_queue_timeout"
-					: "stream_failed";
+			: error instanceof Error &&
+					"code" in error &&
+					error.code === "ask_access_changed"
+				? "ask_access_changed"
+				: error instanceof AiConcurrencyOverloadedError
+					? "llm_overloaded"
+					: error instanceof AiConcurrencyWaitTimeoutError
+						? "llm_queue_timeout"
+						: "stream_failed";
 		yield encodeLegacySseEvent("error", terminalError(code));
 	}
 }

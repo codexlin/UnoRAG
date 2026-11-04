@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 
 import { Pool } from "pg";
@@ -7,62 +8,73 @@ import { PostgresTombstoneMaintenanceRepository } from "../../src/server/lifecyc
 
 const databaseUrl = process.env.TOMBSTONE_MAINTENANCE_TEST_DATABASE_URL?.trim();
 const setupDatabaseUrl =
-	process.env.TOMBSTONE_MAINTENANCE_SETUP_DATABASE_URL?.trim() ?? databaseUrl;
+	process.env.TOMBSTONE_MAINTENANCE_SETUP_DATABASE_URL?.trim() || databaseUrl;
 const enabled = Boolean(databaseUrl);
 const pool = enabled
 	? new Pool({ connectionString: databaseUrl, max: 5 })
 	: null;
-const setupPool = setupDatabaseUrl
-	? new Pool({ connectionString: setupDatabaseUrl, max: 2 })
-	: null;
+const setupPool =
+	enabled && setupDatabaseUrl
+		? new Pool({ connectionString: setupDatabaseUrl, max: 2 })
+		: null;
 const repository = pool
 	? new PostgresTombstoneMaintenanceRepository(pool)
 	: null;
 const ids = {
-	organization: "91000000-0000-4000-8000-000000000001",
-	workspace: "92000000-0000-4000-8000-000000000001",
-	library: "93000000-0000-4000-8000-000000000001",
-	blockedLibrary: "93000000-0000-4000-8000-000000000002",
-	document: "94000000-0000-4000-8000-000000000001",
-	lockedDocument: "94000000-0000-4000-8000-000000000002",
-	recentDocument: "94000000-0000-4000-8000-000000000003",
-	version: "95000000-0000-4000-8000-000000000001",
-	job: "96000000-0000-4000-8000-000000000001",
-	generation: "97000000-0000-4000-8000-000000000001",
+	organization: randomUUID(),
+	workspace: randomUUID(),
+	library: randomUUID(),
+	blockedLibrary: randomUUID(),
+	document: randomUUID(),
+	lockedDocument: randomUUID(),
+	recentDocument: randomUUID(),
+	version: randomUUID(),
+	job: randomUUID(),
+	generation: randomUUID(),
 };
+const fixtureSlug = `tombstone-maintenance-test-${ids.organization}`;
+let ownsOrganization = false;
 const cutoff = new Date("2026-06-01T00:00:00.000Z");
 
 before(async () => {
 	if (!setupPool) return;
 	await setupPool.query(
 		`INSERT INTO app.organizations (id, slug, name)
-		 VALUES ($1, 'tombstone-maintenance-test', 'Tombstone Maintenance Test')`,
-		[ids.organization],
+		 VALUES ($1, $2, 'Tombstone Maintenance Test')`,
+		[ids.organization, fixtureSlug],
 	);
+	ownsOrganization = true;
 	await setupPool.query(
 		`INSERT INTO app.workspaces (id, organization_id, slug, name)
-		 VALUES ($1, $2, 'tombstone-maintenance-test', 'Tombstone Maintenance Test')`,
-		[ids.workspace, ids.organization],
+		 VALUES ($1, $2, $3, 'Tombstone Maintenance Test')`,
+		[ids.workspace, ids.organization, fixtureSlug],
 	);
 	await setupPool.query(
 		`INSERT INTO app.libraries (
 			id, organization_id, workspace_id, rag_library_id, name,
 			status, updated_at
 		 ) VALUES
-			($1, $3, $4, 'rag-tombstone-purge', 'Purge', 'deleted', '2026-01-01'),
-			($2, $3, $4, 'rag-tombstone-blocked', 'Blocked', 'deleted', '2026-01-01')`,
-		[ids.library, ids.blockedLibrary, ids.organization, ids.workspace],
+			($1, $3, $4, $5, 'Purge', 'deleted', '2026-01-01'),
+			($2, $3, $4, $6, 'Blocked', 'deleted', '2026-01-01')`,
+		[
+			ids.library,
+			ids.blockedLibrary,
+			ids.organization,
+			ids.workspace,
+			`rag-tombstone-purge-${ids.library}`,
+			`rag-tombstone-blocked-${ids.blockedLibrary}`,
+		],
 	);
 	await setupPool.query(
 		`INSERT INTO app.documents (
 			id, organization_id, workspace_id, library_id, rag_document_id,
 			name, filename, content_type, status, deleted_at, updated_at
 		 ) VALUES
-			($1, $4, $5, $6, 'rag-doc-purge', 'Purge', 'purge.txt',
+			($1, $4, $5, $6, $8, 'Purge', 'purge.txt',
 			 'text/plain', 'deleted', '2026-01-01', '2026-01-01'),
-			($2, $4, $5, $6, 'rag-doc-locked', 'Locked', 'locked.txt',
+			($2, $4, $5, $6, $9, 'Locked', 'locked.txt',
 			 'text/plain', 'deleted', '2026-01-01', '2026-01-01'),
-			($3, $4, $5, $7, 'rag-doc-recent', 'Recent', 'recent.txt',
+			($3, $4, $5, $7, $10, 'Recent', 'recent.txt',
 			 'text/plain', 'deleted', '2026-08-01', '2026-08-01')`,
 		[
 			ids.document,
@@ -72,6 +84,9 @@ before(async () => {
 			ids.workspace,
 			ids.library,
 			ids.blockedLibrary,
+			`rag-doc-purge-${ids.document}`,
+			`rag-doc-locked-${ids.lockedDocument}`,
+			`rag-doc-recent-${ids.recentDocument}`,
 		],
 	);
 	await setupPool.query(
@@ -88,9 +103,15 @@ before(async () => {
 			idempotency_key, finished_at
 		 ) VALUES (
 			$1::uuid, $2, $3, $4, 'document.delete', 'dbos', $1::text,
-			'completed', 'done', 100, 'tombstone-maintenance-job', '2026-01-01'
+			'completed', 'done', 100, $5, '2026-01-01'
 		 )`,
-		[ids.job, ids.organization, ids.workspace, ids.version],
+		[
+			ids.job,
+			ids.organization,
+			ids.workspace,
+			ids.version,
+			`tombstone-maintenance-job-${ids.job}`,
+		],
 	);
 	await setupPool.query(
 		`UPDATE app.documents
@@ -117,11 +138,24 @@ before(async () => {
 });
 
 after(async () => {
-	if (!setupPool) return;
-	await setupPool.query("DELETE FROM app.organizations WHERE id = $1", [
-		ids.organization,
-	]);
-	await Promise.all([pool?.end(), setupPool.end()]);
+	try {
+		if (!setupPool || !ownsOrganization) return;
+		// Clear restrictive lifecycle pointers even when setup or a test failed.
+		await setupPool.query(
+			`UPDATE app.documents SET desired_version_id = NULL, latest_job_id = NULL
+			 WHERE organization_id = $1 AND id = ANY($2::uuid[])`,
+			[
+				ids.organization,
+				[ids.document, ids.lockedDocument, ids.recentDocument],
+			],
+		);
+		await setupPool.query(
+			"DELETE FROM app.organizations WHERE id = $1 AND slug = $2",
+			[ids.organization, fixtureSlug],
+		);
+	} finally {
+		await Promise.all([pool?.end(), setupPool?.end()]);
+	}
 });
 
 test("PostgreSQL purge skips locked tombstones without waiting", {
@@ -147,9 +181,12 @@ test("PostgreSQL purge skips locked tombstones without waiting", {
 			[ids.lockedDocument],
 		);
 		assert.equal(locked.rowCount, 1);
-		await client.query("ROLLBACK");
 	} finally {
-		client.release();
+		try {
+			await client.query("ROLLBACK");
+		} finally {
+			client.release();
+		}
 	}
 });
 

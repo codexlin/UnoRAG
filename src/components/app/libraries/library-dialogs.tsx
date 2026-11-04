@@ -306,6 +306,7 @@ export function ReplaceDocumentDialog({
 						将用「{file?.name}」覆盖「{document?.name}
 						」并创建新版本。新版本索引成功前继续服务当前活跃版本；成功后原子切换，
 						文档 ID 不变。旧版本保留在版本历史中。
+						多端提交以服务端最后接受的替换为准；目标版本失败时保留当前活跃版本。
 					</AlertDialogDescription>
 				</AlertDialogHeader>
 				<AlertDialogFooter>

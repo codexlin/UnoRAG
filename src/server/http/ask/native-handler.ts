@@ -42,6 +42,20 @@ import {
 	type WebMetricOutcome,
 } from "@/server/observability/metrics";
 import {
+	AskAccessRevokedError,
+	AskAuthorizationCheckpoint,
+	type AskAuthorizationDependencies,
+	createAskAuthorizationDependencies,
+} from "./authorization-checkpoint";
+import {
+	type AuthorizedHistory,
+	authorizeArchivedHistory,
+	authorizeHistory,
+	createMemoryProvenance,
+	type MemoryProvenance,
+} from "./authorized-history";
+import {
+	encodeLegacySseEvent,
 	projectPublicCitations,
 	projectPublicRetrievalDebug,
 	streamLegacyAskSse,
@@ -69,6 +83,7 @@ type RuntimeFactory = (input: {
 	libraryId: string;
 	signal?: AbortSignal;
 	policy: NativeAskPolicy;
+	assertAuthorized?: (citations: Record<string, unknown>[]) => Promise<void>;
 }) => NativeAskRuntime;
 type LibraryResolver = (
 	identity: AuthIdentity,
@@ -108,26 +123,25 @@ async function loadHistory(input: {
 	sessionId: string;
 	policy: NativeAskPolicy;
 	memoryStore?: SessionMemoryStore;
-}) {
+	identity: AuthIdentity;
+	citationAuthorizer: AskAuthorizationDependencies["citationAuthorizer"];
+}): Promise<AuthorizedHistory> {
 	if (!input.threadId) {
-		return input.policy.session_memory_enabled && input.memoryStore
-			? input.memoryStore.load(
-					input.scope,
-					input.sessionId,
-					input.policy.session_memory_max_turns,
-				)
-			: [];
+		const messages =
+			input.policy.session_memory_enabled && input.memoryStore
+				? await input.memoryStore.load(
+						input.scope,
+						input.sessionId,
+						input.policy.session_memory_max_turns,
+					)
+				: [];
+		return authorizeHistory({ ...input, messages });
 	}
 	const thread = await input.repository.getThread(input.scope, input.threadId);
 	if (thread?.status !== "active" || thread.ragLibraryId !== input.libraryId) {
 		throw new ConversationNotFoundError();
 	}
-	return thread.turns.flatMap((turn) =>
-		(turn.role === "user" || turn.role === "assistant") &&
-		turn.status === "complete"
-			? [{ role: turn.role, content: turn.content }]
-			: [],
-	);
+	return authorizeArchivedHistory({ ...input, turns: thread.turns });
 }
 
 class ConversationNotFoundError extends Error {}
@@ -163,6 +177,7 @@ async function persistExchange(input: {
 	answer: string;
 	citations: Record<string, unknown>[];
 	state: AskState;
+	provenance: MemoryProvenance | null;
 }): Promise<{
 	persisted: boolean;
 	persist_error: string | null;
@@ -182,7 +197,10 @@ async function persistExchange(input: {
 					role: "assistant",
 					content: input.answer,
 					citations: input.citations,
-					debug: conversationDebug(input.state),
+					debug: {
+						...conversationDebug(input.state),
+						memory_provenance: input.provenance,
+					},
 				},
 			},
 		);
@@ -211,6 +229,7 @@ async function persistConversation(input: {
 	answer: string;
 	citations: Record<string, unknown>[];
 	state: AskState;
+	provenance: MemoryProvenance | null;
 }): Promise<{
 	persisted: boolean;
 	persist_error: string | null;
@@ -226,7 +245,11 @@ async function persistConversation(input: {
 			input.sessionId,
 			[
 				{ role: "user", content: input.question },
-				{ role: "assistant", content: input.answer },
+				{
+					role: "assistant",
+					content: input.answer,
+					...(input.provenance ? { provenance: input.provenance } : {}),
+				},
 			],
 			input.policy.session_memory_max_turns,
 		);
@@ -306,7 +329,7 @@ async function timedPersistConversation(
 				input.scope,
 				input.threadId,
 				result.assistantTurnId,
-				conversationDebug(state),
+				{ ...conversationDebug(state), memory_provenance: input.provenance },
 			);
 		} catch (error) {
 			logger.warn({
@@ -334,6 +357,7 @@ function completeRetrievalDebug(state: AskState, startedAt: number) {
 
 function operationalErrorCode(error: unknown): string {
 	if (!(error instanceof Error)) return "UnknownError";
+	if (error instanceof AskAccessRevokedError) return error.code;
 	if (
 		error instanceof AiConcurrencyOverloadedError ||
 		error instanceof AiConcurrencyWaitTimeoutError
@@ -518,8 +542,8 @@ function streamResponse(
 				else controller.enqueue(encoder.encode(next.value));
 			},
 			async cancel() {
-				await iterator.return?.();
 				await onCancel?.();
+				await iterator.return?.();
 			},
 		}),
 		{
@@ -544,6 +568,8 @@ export async function handleNativeAskRequest(input: {
 	askRunPrincipal?: AskRunPrincipal;
 	resolveLibrary?: LibraryResolver;
 	observeMetrics?: boolean;
+	authorization?: AskAuthorizationDependencies;
+	refreshIdentity?: AskAuthorizationDependencies["refreshIdentity"];
 }): Promise<Response | null> {
 	if (!isNativeAskPath(input.path)) return null;
 	return withActiveHttpSpan(
@@ -574,6 +600,8 @@ async function handleNativeAskRequestInSpan(input: {
 	askRunPrincipal?: AskRunPrincipal;
 	resolveLibrary?: LibraryResolver;
 	observeMetrics?: boolean;
+	authorization?: AskAuthorizationDependencies;
+	refreshIdentity?: AskAuthorizationDependencies["refreshIdentity"];
 }): Promise<Response | null> {
 	const metricsStartedAt = performance.now();
 	let metricsSettled = false;
@@ -642,6 +670,11 @@ async function handleNativeAskRequestInSpan(input: {
 	}
 	const repository =
 		input.repository ?? new ConversationRepository(getDatabase());
+	const executionAbort = new AbortController();
+	const executionSignal = AbortSignal.any([
+		input.request.signal,
+		executionAbort.signal,
+	]);
 	let activeRun: ActiveAskRun | undefined;
 	const settleActiveRun = async (
 		status: "completed" | "refused" | "failed" | "cancelled",
@@ -662,6 +695,24 @@ async function handleNativeAskRequestInSpan(input: {
 		const conversationScope = scope(input.identity);
 		const policy = NativeAskPolicySchema.parse(payload.ask_overrides ?? {});
 		const sessionId = payload.session_id ?? randomUUID();
+		const authorization =
+			input.authorization ?? createAskAuthorizationDependencies(input);
+		const checkpoint = new AskAuthorizationCheckpoint(
+			input.identity,
+			payload.library_id,
+			authorization,
+		);
+		const checkAccess = async (
+			...args: Parameters<typeof checkpoint.check>
+		) => {
+			try {
+				await checkpoint.check(...args);
+			} catch (error) {
+				executionAbort.abort(error);
+				throw error;
+			}
+		};
+		await checkAccess([], { force: true });
 		setActiveSpanAttributes({
 			"langfuse.observation.type": "chain",
 			"langfuse.session.id": sessionId,
@@ -678,12 +729,18 @@ async function handleNativeAskRequestInSpan(input: {
 			sessionId,
 			policy,
 			memoryStore,
+			identity: input.identity,
+			citationAuthorizer: authorization.citationAuthorizer,
 		});
 		const runtime = (input.runtimeFactory ?? createNativeAskRuntime)({
 			identity: input.identity,
 			libraryId: payload.library_id,
-			signal: input.request.signal,
+			signal: executionSignal,
 			policy,
+			assertAuthorized: (evidence) =>
+				checkAccess([...history.sourceReferences, ...evidence], {
+					force: true,
+				}),
 		});
 		const askRunsRepository =
 			input.askRunsRepository === undefined
@@ -714,11 +771,17 @@ async function handleNativeAskRequestInSpan(input: {
 			session_id: sessionId,
 			question: payload.question,
 			library_id: payload.library_id,
-			history,
+			history: history.messages,
 			trace_id: requestId,
 		});
 		state.trace_id = requestId;
 		activeState = state;
+		const evidence = [
+			...history.sourceReferences,
+			...(runtime.getEvidenceReferences?.() ?? state.citations ?? []),
+		];
+		await checkAccess(evidence, { force: true });
+		const provenance = createMemoryProvenance(payload.library_id, evidence);
 		const citations = projectPublicCitations(state.citations ?? []);
 		const initialRetrievalDebug = completeRetrievalDebug(state, askStartedAt);
 		const common = {
@@ -733,7 +796,15 @@ async function handleNativeAskRequestInSpan(input: {
 		};
 
 		if (input.path[2] !== "stream") {
-			const answer = await collect(timedAnswerTokens(runtime, state));
+			const answer = await collect(
+				(async function* () {
+					for await (const token of timedAnswerTokens(runtime, state)) {
+						await checkAccess(evidence);
+						yield token;
+					}
+				})(),
+			);
+			await checkAccess(evidence, { force: true });
 			const persisted = await timedPersistConversation(
 				state,
 				{
@@ -747,6 +818,7 @@ async function handleNativeAskRequestInSpan(input: {
 					answer,
 					citations,
 					state,
+					provenance,
 				},
 				askStartedAt,
 			);
@@ -772,9 +844,11 @@ async function handleNativeAskRequestInSpan(input: {
 			try {
 				let answer = "";
 				for await (const token of timedAnswerTokens(runtime, state)) {
+					await checkAccess(evidence);
 					answer += token;
 					yield token;
 				}
+				await checkAccess(evidence, { force: true });
 				Object.assign(
 					done,
 					await timedPersistConversation(
@@ -790,6 +864,7 @@ async function handleNativeAskRequestInSpan(input: {
 							answer,
 							citations,
 							state,
+							provenance,
 						},
 						askStartedAt,
 					),
@@ -820,12 +895,27 @@ async function handleNativeAskRequestInSpan(input: {
 		})();
 		const frames = (async function* () {
 			try {
+				await checkAccess(evidence, { force: true });
 				yield* streamLegacyAskSse({
 					meta: common,
 					citations,
 					tokens: persistedTokens,
 					done,
 					abortSignal: input.request.signal,
+				});
+			} catch (error) {
+				await settleActiveRun("failed", state, operationalErrorCode(error));
+				settleMetrics("server_error");
+				yield encodeLegacySseEvent("error", {
+					code:
+						error instanceof AskAccessRevokedError
+							? error.code
+							: "stream_failed",
+					message:
+						error instanceof AskAccessRevokedError
+							? "访问权限已变化，请重新发起提问"
+							: "流式生成失败",
+					truncated: true,
 				});
 			} finally {
 				await settleActiveRun(
@@ -838,10 +928,12 @@ async function handleNativeAskRequestInSpan(input: {
 			}
 		})();
 		return streamResponse(frames, async () => {
+			executionAbort.abort(new DOMException("Request cancelled", "AbortError"));
 			await settleActiveRun("cancelled", state, "request_cancelled");
 			settleMetrics("cancelled");
 		});
 	} catch (error) {
+		executionAbort.abort(error);
 		recordActiveSpanFailure(error);
 		const errorCode = operationalErrorCode(error);
 		await settleActiveRun(
@@ -860,6 +952,13 @@ async function handleNativeAskRequestInSpan(input: {
 		if (error instanceof NativeAskRequestError) {
 			settleMetrics(error.status >= 500 ? "server_error" : "client_error");
 			return Response.json({ detail: error.message }, { status: error.status });
+		}
+		if (error instanceof AskAccessRevokedError) {
+			settleMetrics("client_error");
+			return Response.json(
+				{ detail: error.message, code: error.code },
+				{ status: 403 },
+			);
 		}
 		if (
 			error instanceof AiConcurrencyOverloadedError ||

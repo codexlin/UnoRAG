@@ -2,6 +2,7 @@ export const integrationTestFiles = [
 	"tests/acl-projection-backfill.test.mjs",
 	"tests/ask-runs-postgres.test.ts",
 	"tests/conversations-postgres.test.ts",
+	"tests/ts-core/ask-authorization-postgres.test.ts",
 	"tests/ts-core/ask-runs-maintenance-postgres.test.ts",
 	"tests/ts-core/auth-security-redis.test.ts",
 	"tests/ts-core/database-contracts-postgres.test.ts",

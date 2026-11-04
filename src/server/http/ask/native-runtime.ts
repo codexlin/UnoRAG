@@ -231,6 +231,7 @@ function contextText(state: AskState): string {
 
 export class NativeAskRuntime {
 	private readonly graph: AskGraphService;
+	private readonly retrievedEvidence: Record<string, unknown>[] = [];
 
 	constructor(
 		private readonly identity: AuthIdentity,
@@ -238,6 +239,9 @@ export class NativeAskRuntime {
 		private readonly signal: AbortSignal | undefined,
 		private readonly policy: NativeAskPolicy,
 		private readonly dependencies: NativeAskRuntimeDependencies,
+		private readonly assertAuthorized?: (
+			citations: Record<string, unknown>[],
+		) => Promise<void>,
 	) {
 		this.graph = new AskGraphService(this.context());
 	}
@@ -246,13 +250,14 @@ export class NativeAskRuntime {
 		state: AskState,
 		input: { tableOnly: boolean },
 	): Promise<RetrievalResult> {
+		await this.assertAuthorized?.(this.retrievedEvidence);
 		const scope = await resolveAuthorizedRetrievalScope({
 			identity: this.identity,
 			libraryId: this.libraryId,
 			resolver: new DrizzleActiveGenerationResolver(),
 		});
 		if (!scope) throw new NativeAskRequestError(404, "library not found");
-		return this.dependencies.retrieval.retrieve({
+		const result = await this.dependencies.retrieval.retrieve({
 			query: query(state),
 			libraryId: this.libraryId,
 			scope,
@@ -272,7 +277,17 @@ export class NativeAskRuntime {
 			},
 			signal: this.signal,
 		});
+		this.retrievedEvidence.push(...result.citations);
+		return result;
 	}
+
+	getEvidenceReferences(): Record<string, unknown>[] {
+		return this.retrievedEvidence;
+	}
+
+	private beforeModelRequest = async () => {
+		await this.assertAuthorized?.(this.retrievedEvidence);
+	};
 
 	private adjudicate(result: RetrievalResult): RetrievalResult {
 		const threshold = this.policy.citation_adjudicate_enabled
@@ -312,10 +327,14 @@ export class NativeAskRuntime {
 					if (history.length === 0) {
 						return { query: question, mode: "identity_first_turn" };
 					}
+					await this.assertAuthorized?.(this.retrievedEvidence);
 					try {
 						const rewritten = await structured.rewrite(
 							{ question, fallbackSemanticQuery: question },
-							{ abortSignal: this.signal },
+							{
+								abortSignal: this.signal,
+								beforeRequest: this.beforeModelRequest,
+							},
 						);
 						return {
 							query: rewritten.semantic_query,
@@ -344,6 +363,7 @@ export class NativeAskRuntime {
 							judge_provider: null,
 						};
 					}
+					await this.assertAuthorized?.(this.retrievedEvidence);
 					try {
 						const judged = await judgeStructured.judgeWithMetadata(
 							{
@@ -356,7 +376,10 @@ export class NativeAskRuntime {
 								],
 								attempts: state.retrieval_attempts ?? 0,
 							},
-							{ abortSignal: this.signal },
+							{
+								abortSignal: this.signal,
+								beforeRequest: this.beforeModelRequest,
+							},
 						);
 						return {
 							...judged.output,
@@ -437,12 +460,16 @@ export class NativeAskRuntime {
 					if (deterministicPlan) {
 						return { table_query_plan: deterministicPlan };
 					}
+					await this.assertAuthorized?.(this.retrievedEvidence);
 					const generatedPlan = await structured.planTable(
 						{
 							question: state.question ?? "",
 							tables: candidateHeaders,
 						},
-						{ abortSignal: this.signal },
+						{
+							abortSignal: this.signal,
+							beforeRequest: this.beforeModelRequest,
+						},
 					);
 					const plan = normalizeTablePlanForQuestion(
 						state.question ?? "",
@@ -530,14 +557,14 @@ export class NativeAskRuntime {
 		});
 	}
 
-	streamAnswer(state: AskState) {
+	async *streamAnswer(state: AskState): AsyncGenerator<string> {
+		await this.beforeModelRequest();
 		const deterministicAnswer = deterministicTableAnswer(state.table_execution);
 		if (deterministicAnswer) {
-			return (async function* () {
-				yield deterministicAnswer;
-			})();
+			yield deterministicAnswer;
+			return;
 		}
-		return this.dependencies.answer.stream(
+		yield* this.dependencies.answer.stream(
 			{
 				question: state.question ?? "",
 				context: contextText(state),
@@ -550,7 +577,7 @@ export class NativeAskRuntime {
 						: [];
 				}),
 			},
-			{ abortSignal: this.signal },
+			{ abortSignal: this.signal, beforeRequest: this.beforeModelRequest },
 		);
 	}
 }
@@ -561,6 +588,7 @@ export function createNativeAskRuntime(input: {
 	signal?: AbortSignal;
 	policy: NativeAskPolicy;
 	dependencies?: NativeAskRuntimeDependencies;
+	assertAuthorized?: (citations: Record<string, unknown>[]) => Promise<void>;
 }): NativeAskRuntime {
 	let dependencies = input.dependencies;
 	if (!dependencies) {
@@ -608,6 +636,7 @@ export function createNativeAskRuntime(input: {
 		input.signal,
 		input.policy,
 		dependencies,
+		input.assertAuthorized,
 	);
 }
 

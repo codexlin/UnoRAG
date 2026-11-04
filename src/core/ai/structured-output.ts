@@ -206,6 +206,7 @@ export class StructuredOutputAdapter {
 		prompt: VersionedPrompt,
 		messages: ModelMessage[],
 		abortSignal?: AbortSignal,
+		beforeRequest?: () => Promise<void>,
 	): Promise<{
 		output: z.infer<StructuredSchemaMap[K]>;
 		metadata: StructuredRequestMetadata;
@@ -218,11 +219,14 @@ export class StructuredOutputAdapter {
 				| Awaited<ReturnType<AiConcurrencyGateLike["acquire"]>>
 				| undefined;
 			let timeout: NodeJS.Timeout | undefined;
+			let requestStarted = false;
 			try {
 				// Admission has its own queue bound and timeout. Provider execution gets
 				// the full structured-output budget after a permit is granted.
 				lease = await this.concurrencyGate?.acquire(abortSignal);
+				await beforeRequest?.();
 				if (abortSignal?.aborted) throw abortSignal.reason;
+				requestStarted = true;
 				const timeoutController = new AbortController();
 				const operationSignal = abortSignal
 					? AbortSignal.any([abortSignal, timeoutController.signal])
@@ -286,6 +290,7 @@ export class StructuredOutputAdapter {
 					},
 				};
 			} catch (error) {
+				if (!requestStarted) throw error;
 				if (abortSignal?.aborted) throw error;
 				if (
 					error instanceof AiConcurrencyOverloadedError ||
@@ -307,7 +312,10 @@ export class StructuredOutputAdapter {
 			question: string;
 			history?: Array<{ role: "user" | "assistant"; content: string }>;
 		},
-		options: { abortSignal?: AbortSignal } = {},
+		options: {
+			abortSignal?: AbortSignal;
+			beforeRequest?: () => Promise<void>;
+		} = {},
 	): Promise<RouterOutput> {
 		return this.request(
 			"router",
@@ -319,6 +327,7 @@ export class StructuredOutputAdapter {
 				),
 			],
 			options.abortSignal,
+			options.beforeRequest,
 		).then((result) => result.output);
 	}
 
@@ -327,7 +336,10 @@ export class StructuredOutputAdapter {
 			question: string;
 			fallbackSemanticQuery: string;
 		},
-		options: { abortSignal?: AbortSignal } = {},
+		options: {
+			abortSignal?: AbortSignal;
+			beforeRequest?: () => Promise<void>;
+		} = {},
 	): Promise<RewriteOutput> {
 		return this.request(
 			"rewrite",
@@ -339,6 +351,7 @@ export class StructuredOutputAdapter {
 				),
 			],
 			options.abortSignal,
+			options.beforeRequest,
 		).then((result) => result.output);
 	}
 
@@ -348,7 +361,10 @@ export class StructuredOutputAdapter {
 			citations: unknown[];
 			attempts: number;
 		},
-		options: { abortSignal?: AbortSignal } = {},
+		options: {
+			abortSignal?: AbortSignal;
+			beforeRequest?: () => Promise<void>;
+		} = {},
 	): Promise<JudgeOutput> {
 		return this.judgeWithMetadata(input, options).then(
 			(result) => result.output,
@@ -361,7 +377,10 @@ export class StructuredOutputAdapter {
 			citations: unknown[];
 			attempts: number;
 		},
-		options: { abortSignal?: AbortSignal } = {},
+		options: {
+			abortSignal?: AbortSignal;
+			beforeRequest?: () => Promise<void>;
+		} = {},
 	): Promise<{ output: JudgeOutput; metadata: StructuredRequestMetadata }> {
 		return this.request(
 			"judge",
@@ -373,6 +392,7 @@ export class StructuredOutputAdapter {
 				),
 			],
 			options.abortSignal,
+			options.beforeRequest,
 		);
 	}
 
@@ -381,7 +401,10 @@ export class StructuredOutputAdapter {
 			question: string;
 			tables?: Array<{ tableId: string; headers: string[] }>;
 		},
-		options: { abortSignal?: AbortSignal } = {},
+		options: {
+			abortSignal?: AbortSignal;
+			beforeRequest?: () => Promise<void>;
+		} = {},
 	): Promise<TablePlanOutput> {
 		return this.request(
 			"table_plan",
@@ -393,6 +416,7 @@ export class StructuredOutputAdapter {
 				),
 			],
 			options.abortSignal,
+			options.beforeRequest,
 		).then((result) => result.output);
 	}
 }
