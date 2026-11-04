@@ -496,18 +496,19 @@ exec "$FIXTURE_PYTHON" "$@"
 		);
 		await chmod(path.join(bin, "python3"), 0o755);
 		if (reportSignalPhase === "captured") {
-			// DEBUG runs in the parent shell after write_report's local status is set.
+			// Bash 5 keeps BASH_COMMAND stale inside EXIT traps. Use the caller
+			// and captured status to pause at the same boundary on Bash 3 and 5.
 			bashEnv = path.join(directory, "before-python.bash");
 			await writeFile(
 				bashEnv,
 				`fixture_before_python() {
-  if [[ "$1" == python3* && "\${status:-}" == "PASS" && ! -f "$PASS_REPORT_MARKER" ]]; then
+  if [[ "\${FUNCNAME[1]:-}" == "write_report" && "\${status:-}" == "PASS" && ! -f "$PASS_REPORT_MARKER" ]]; then
     printf '{"status":"PASS"}\\n' > "$PASS_REPORT_MARKER"
     while [[ ! -f "$PASS_REPORT_RELEASE" ]]; do sleep 0.01; done
   fi
 }
 set -T
-trap 'fixture_before_python "$BASH_COMMAND"' DEBUG
+trap 'fixture_before_python' DEBUG
 `,
 			);
 		}
@@ -664,7 +665,15 @@ for (const [phase, description] of [
 			baseUrl: api.baseUrl,
 			reportSignalPhase: phase,
 		});
-		assert.deepEqual(await waitForJsonMarker(fixture.passReportMarker), {
+		const marker = await Promise.race([
+			waitForJsonMarker(fixture.passReportMarker),
+			fixture.done.then((run) =>
+				assert.fail(
+					`shell exited before report boundary: ${JSON.stringify(run)}`,
+				),
+			),
+		]);
+		assert.deepEqual(marker, {
 			status: "PASS",
 		});
 		const beforeSignal = JSON.parse(await readFile(fixture.report, "utf8"));

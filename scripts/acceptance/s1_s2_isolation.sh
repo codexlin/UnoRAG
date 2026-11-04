@@ -203,7 +203,8 @@ run_topology() {
 		UNORAG_BASE_URL="$BASE_URL" UNORAG_ISOLATION_PASSWORD="$PASSWORD" \
 			UNORAG_PILOT_JOB_TIMEOUT_SEC="$JOB_TIMEOUT_SEC" \
 			node "$ACC_DIR/bootstrap_isolation_topology.mjs" "${args[@]}"
-		return
+		# Bash 5's bare return inside EXIT traps can inherit the original exit.
+		return "$?"
 	fi
 
 	local compose_dir="$ROOT/deploy/compose"
