@@ -48,19 +48,65 @@ TOPOLOGY_JSON="${UNORAG_ISOLATION_TOPOLOGY:-$ACC_DIR/.isolation-topology.json}"
 COOKIE_DIR="$(mktemp -d -t unorag-iso-cookies.XXXXXX)"
 WORKDIR="$(mktemp -d -t unorag-iso-work.XXXXXX)"
 RESULT_FILE="$WORKDIR/results.jsonl"
-trap 'rm -rf "$COOKIE_DIR" "$WORKDIR"' EXIT
+FINAL_STATUS=FAIL
+FINAL_DETAIL="unexpected script failure"
+TOPOLOGY_ATTEMPTED=0
+CLEANUP_STATUS=not_needed
+FINAL_SIGNAL=0
 
 log() { printf '==> %s\n' "$*"; }
 warn() { printf '!!  %s\n' "$*" >&2; }
-fail() { warn "FAIL: $*"; write_report FAIL "$*"; exit 1; }
-skip() { warn "BLOCKED/SKIP: $*"; write_report BLOCKED "$*"; exit 2; }
+fail() { warn "FAIL: $*"; FINAL_STATUS=FAIL; FINAL_DETAIL="$*"; exit 1; }
+skip() { warn "BLOCKED/SKIP: $*"; FINAL_STATUS=BLOCKED; FINAL_DETAIL="$*"; exit 2; }
+
+finalize_signal() {
+	# A signal can also arrive after report arguments were expanded. Overwrite
+	# that snapshot and keep the signal authoritative through the final exit.
+	trap '' INT TERM
+	FINAL_SIGNAL="$1"
+	FINAL_STATUS=FAIL
+	FINAL_DETAIL="terminated or interrupted during finalization"
+	write_report FAIL "$FINAL_DETAIL" || warn "could not write interrupted report"
+	trap 'finalize_signal 130' INT
+	trap 'finalize_signal 143' TERM
+}
+
+finalize() {
+	local rc=$?
+	trap - EXIT
+	trap 'finalize_signal 130' INT
+	trap 'finalize_signal 143' TERM
+	if [[ "$TOPOLOGY_ATTEMPTED" == "1" ]]; then
+		if [[ "$KEEP_TOPOLOGY" == "1" ]]; then
+			CLEANUP_STATUS=kept
+		elif run_topology cleanup; then
+			CLEANUP_STATUS=passed
+		else
+			CLEANUP_STATUS=failed
+			FINAL_STATUS=FAIL
+			FINAL_DETAIL="$FINAL_DETAIL; fixture cleanup failed, topology retained for investigation"
+			rc=1
+		fi
+	fi
+	if ! write_report "$FINAL_STATUS" "$FINAL_DETAIL"; then
+		warn "could not write isolation report"
+		rc=1
+	fi
+	if [[ "$FINAL_SIGNAL" != "0" ]]; then
+		# The interrupted writer may have captured PASS before the trap ran.
+		write_report FAIL "$FINAL_DETAIL" || rc=1
+	fi
+	rm -rf "$COOKIE_DIR" "$WORKDIR"
+	log "S1/S2 isolation finished; see $REPORT_JSON"
+	exit "$(( FINAL_SIGNAL != 0 ? FINAL_SIGNAL : rc ))"
+}
 
 write_report() {
 	local status="$1"
 	local detail="$2"
-	python3 - "$REPORT_JSON" "$status" "$detail" "$RC_SHA" "$BASE_URL" "$RESULT_FILE" <<'PY' || true
+	python3 - "$REPORT_JSON" "$status" "$detail" "$RC_SHA" "$BASE_URL" "$RESULT_FILE" "$CLEANUP_STATUS" <<'PY'
 import json, sys, pathlib, time
-out, status, detail, rc, base, results_path = sys.argv[1:7]
+out, status, detail, rc, base, results_path, cleanup = sys.argv[1:8]
 checks = []
 p = pathlib.Path(results_path)
 if p.exists():
@@ -74,8 +120,9 @@ payload = {
 	"detail": detail,
 	"rc_sha": rc,
 	"base_url": base,
-	"finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+	"finished_at": None if status == "RUNNING" else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
 	"checks": checks,
+	"cleanup": cleanup,
 }
 pathlib.Path(out).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 print(f"report → {out}")
@@ -153,8 +200,11 @@ run_topology() {
 	fi
 
 	if command -v node >/dev/null 2>&1; then
-		node "$ACC_DIR/bootstrap_isolation_topology.mjs" "${args[@]}"
-		return
+		UNORAG_BASE_URL="$BASE_URL" UNORAG_ISOLATION_PASSWORD="$PASSWORD" \
+			UNORAG_PILOT_JOB_TIMEOUT_SEC="$JOB_TIMEOUT_SEC" \
+			node "$ACC_DIR/bootstrap_isolation_topology.mjs" "${args[@]}"
+		# Bash 5's bare return inside EXIT traps can inherit the original exit.
+		return "$?"
 	fi
 
 	local compose_dir="$ROOT/deploy/compose"
@@ -175,7 +225,10 @@ run_topology() {
 		# shellcheck disable=SC1091
 		source "$compose_env"
 		mk_compose --profile ops run --rm --user "$host_uid:$host_gid" \
-			-v "$ACC_DIR/bootstrap_isolation_topology.mjs:/repo/scripts/acceptance/bootstrap_isolation_topology.mjs:ro" \
+			-e UNORAG_BASE_URL=http://web:3000 \
+			-e "UNORAG_ISOLATION_PASSWORD=$PASSWORD" \
+			-e "UNORAG_PILOT_JOB_TIMEOUT_SEC=$JOB_TIMEOUT_SEC" \
+			-v "$ACC_DIR:/repo/scripts/acceptance:ro" \
 			-v "$output_dir:/out" \
 			--entrypoint node inspect-lifecycle \
 			/repo/scripts/acceptance/bootstrap_isolation_topology.mjs \
@@ -426,7 +479,12 @@ assert_no_leak() {
 }
 
 # --- main ---
+trap finalize EXIT
+trap 'FINAL_STATUS=FAIL; FINAL_DETAIL="interrupted"; exit 130' INT
+trap 'FINAL_STATUS=FAIL; FINAL_DETAIL="terminated"; exit 143' TERM
+[[ "$KEEP_TOPOLOGY" == "0" || "$KEEP_TOPOLOGY" == "1" ]] || fail "UNORAG_ISOLATION_KEEP must be 0 or 1"
 require_cmds
+write_report RUNNING "isolation probes and cleanup have not completed"
 
 log "RC sha=$RC_SHA base=$BASE_URL"
 HEALTH_CODE="$(http_code "$BASE_URL/api/rag/health")"
@@ -438,11 +496,13 @@ if [[ "$HEALTH_CODE" != "200" ]]; then
 fi
 
 log "bootstrap isolation topology"
+TOPOLOGY_ATTEMPTED=1
 set +e
 run_topology bootstrap
 BOOT_RC=$?
 set -e
 if [[ $BOOT_RC -eq 2 ]]; then
+	TOPOLOGY_ATTEMPTED=0
 	skip "topology bootstrap skipped (DATABASE_URL / pg)"
 fi
 [[ $BOOT_RC -eq 0 ]] || fail "topology bootstrap failed (exit $BOOT_RC)"
@@ -777,13 +837,6 @@ if [[ -n "${DEL_JOB:-}" ]]; then
 fi
 assert_no_leak "S2.post_delete_no_A2_marker" session_ask A2 "$LIB_A2" "$MARKER_A2" "$WORKDIR/s2_post_del.json"
 
-if [[ "$KEEP_TOPOLOGY" != "1" ]]; then
-	log "cleanup topology (set UNORAG_ISOLATION_KEEP=1 to retain)"
-	set +e
-	run_topology cleanup
-	set -e
-fi
-
-write_report PASS "all S1/S2 automated probes passed"
-log "S1/S2 isolation PASS (rc_sha=$RC_SHA)"
+FINAL_STATUS=PASS
+FINAL_DETAIL="all S1/S2 automated probes passed"
 exit 0

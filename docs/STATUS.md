@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-11-04
+> 更新日期：2026-11-05
 >
 > 作用：说明当前 `main` 已经具备什么、尚缺什么，以及下一步按什么顺序推进。
 >
@@ -116,9 +116,10 @@ Secret Scanning 和 Push Protection 均已开启。
 
 ### P1：私有部署产品化
 
-当前候选的公共拒绝映射、Judge 故障语义与诊断、多来源黄金集契约已修复并重新验收。近期优先收口
-[#177 验收脚本清理](https://github.com/codexlin/UnoRAG/issues/177)、解析器版本标签与 Judge 诊断 detail 展示，保持质量和运维优先；
-下列产品化缺口仍未实现，不因此自动进入功能扩张。
+当前候选的公共拒绝映射、Judge 故障语义与诊断、多来源黄金集契约已修复并重新验收。后续代码已补上
+[#177 验收脚本清理](https://github.com/codexlin/UnoRAG/issues/177) 的产品删除与退出收尾、已安装的 Mammoth
+版本标签，以及运行中心 Judge detail 白名单展示；旧候选报告中的边界仍按原提交保留，新代码不继承旧 PASS。
+继续保持质量和运维优先，下列产品化缺口仍未实现，不因此自动进入功能扩张。
 
 1. **OIDC / SSO**：已有 Provider 边界和 Session 类型，但没有可交付的 OIDC 实现。
 2. **Kubernetes 加固**：Helm 是 starter，尚未内置 NetworkPolicy、PDB、HPA 或 digest-native 镜像字段。

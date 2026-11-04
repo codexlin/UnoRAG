@@ -93,3 +93,119 @@ test("authenticated knowledge and settings journeys fit the viewport", async ({
 	await page.goto("/app/settings");
 	await expect(page).toHaveURL(/\/login$/);
 });
+
+test("Judge diagnostics remain readable and omit absent legacy metadata", async ({
+	page,
+}, testInfo) => {
+	await signIn(page);
+	const id = "91000000-0000-4000-8000-000000000001";
+	let legacy = false;
+	await page.route("**/api/workspace/operations", async (route) => {
+		const response = await route.fetch();
+		expect(response.ok()).toBe(true);
+		const snapshot = await response.json();
+		snapshot.recent_errors = [
+			{
+				id,
+				source: "ask",
+				status: "failed",
+				stage: "judge",
+				error_code: "judge_unavailable",
+				occurred_at: new Date().toISOString(),
+			},
+		];
+		await route.fulfill({ response, json: snapshot });
+	});
+	await page.route(
+		`**/api/workspace/operations/events/ask/${id}`,
+		async (route) => {
+			await route.fulfill({
+				json: {
+					source: "ask",
+					id,
+					status: "failed",
+					error_code: "judge_unavailable",
+					guidance: {
+						title: "证据校验服务暂不可用",
+						cause: "模型服务暂时不可用",
+						recovery: "检查服务后重试",
+					},
+					request_id: id,
+					otel_trace_id: null,
+					workflow_id: null,
+					library_id: null,
+					document_id: null,
+					document_version_id: null,
+					query_type: "fact",
+					retrieval_mode: "dense",
+					started_at: new Date().toISOString(),
+					ended_at: new Date().toISOString(),
+					latency_ms: 4_120,
+					message: null,
+					stages: [
+						{
+							id: "judge-stage",
+							sequence: 3,
+							attempt: null,
+							stage: "judge",
+							outcome: "failed",
+							error_code: "judge_unavailable",
+							started_at: null,
+							ended_at: null,
+							duration_ms: 4_120,
+							detail: legacy
+								? null
+								: {
+										judge_error_category: "provider_unavailable",
+										judge_attempts: 2,
+										judge_max_attempts: 2,
+										judge_timeout_ms: 12_000,
+										judge_budget_ms: 24_000,
+										judge_duration_ms: 4_120.25,
+										judge_status_code: 503,
+										judge_retryable: true,
+									},
+						},
+					],
+				},
+			});
+		},
+	);
+	await page.goto("/app/operations");
+	await page.getByRole("row").filter({ hasText: "judge_unavailable" }).click();
+	const dialog = page.getByRole("dialog");
+	await expect(
+		dialog.getByRole("heading", { name: "Judge 诊断 · 阶段 3" }),
+	).toBeVisible();
+	for (const value of [
+		"provider_unavailable",
+		"应用层尝试次数",
+		"24000 ms",
+		"4120.25 ms",
+		"503",
+	])
+		await expect(dialog.getByText(value, { exact: true })).toBeVisible();
+	await expectNoHorizontalOverflow(page);
+	expect(
+		await dialog
+			.locator("dd")
+			.evaluateAll((nodes) =>
+				nodes.every((node) => node.scrollWidth <= node.clientWidth + 1),
+			),
+	).toBe(true);
+	await page.screenshot({
+		path: testInfo.outputPath("judge-diagnostics.png"),
+		fullPage: true,
+	});
+	await page.keyboard.press("Escape");
+	await expect(dialog).toBeHidden();
+	legacy = true;
+	await page.getByRole("row").filter({ hasText: "judge_unavailable" }).click();
+	await expect(dialog).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: /Judge 诊断/ })).toHaveCount(
+		0,
+	);
+	await expect(dialog.getByText("应用层尝试次数", { exact: true })).toHaveCount(
+		0,
+	);
+});

@@ -7,6 +7,7 @@ import { Pool } from "pg";
 
 import * as schema from "../src/db/schema";
 import { createAskRunsRepository } from "../src/server/observability/ask-runs-repository";
+import { OperationsEventService } from "../src/server/observability/operations-event-service";
 import { OperationsService } from "../src/server/observability/operations-service";
 
 const databaseUrl = process.env.ASK_RUNS_TEST_DATABASE_URL?.trim();
@@ -98,6 +99,75 @@ after(async () => {
 		.delete(schema.organizations)
 		.where(eq(schema.organizations.id, ids.organization));
 	await pool.end();
+});
+
+test("recorded Judge failures project safe diagnostics under the real PostgreSQL workspace scope", {
+	skip: !enabled,
+}, async () => {
+	assert.ok(repository);
+	assert.ok(db);
+	const requestId = "77000000-0000-4000-8000-000000000004";
+	const started = await repository.start({
+		requestId,
+		organizationId: ids.organization,
+		workspaceId: ids.workspaceA,
+		libraryId: ids.libraryA,
+		ragLibraryId: "rag-ask-runs-a",
+		principal: { type: "user", id: ids.user, threadId: ids.thread },
+	});
+	assert.equal(started.ok, true);
+	if (!started.ok) return;
+	const diagnostic = {
+		judge_error_category: "rate_limit",
+		judge_attempts: 2,
+		judge_max_attempts: 2,
+		judge_timeout_ms: 5_000,
+		judge_budget_ms: 10_000,
+		judge_duration_ms: 4_120.25,
+		judge_status_code: 429,
+		judge_retryable: true,
+	};
+	const finalized = await repository.finalize({
+		id: started.value.id,
+		requestId,
+		organizationId: ids.organization,
+		workspaceId: ids.workspaceA,
+		status: "failed",
+		errorCode: "judge_unavailable",
+		latencyMs: 4_200,
+		citationCount: 0,
+		stages: [
+			{
+				stage: "judge",
+				outcome: "failed",
+				errorCode: "judge_unavailable",
+				durationMs: 4_120.25,
+				detail: diagnostic,
+			},
+		],
+	});
+	assert.equal(finalized.ok, true);
+	const service = new OperationsEventService(db);
+	const detail = await service.read(
+		{ organizationId: ids.organization, workspaceId: ids.workspaceA },
+		"ask",
+		started.value.id,
+	);
+	assert.ok(detail);
+	assert.deepEqual(detail.stages[0]?.detail, diagnostic);
+	assert.equal(detail.status, "failed");
+	assert.equal(
+		await service.read(
+			{ organizationId: ids.organization, workspaceId: ids.workspaceB },
+			"ask",
+			started.value.id,
+		),
+		null,
+	);
+	// Keep the pre-existing retention/snapshot test independent of this failure.
+	await db
+		.delete(schema.askRuns)
+		.where(eq(schema.askRuns.id, started.value.id));
 });
 
 test("Ask runs persist scoped user and service-key metadata through retention", {

@@ -1,8 +1,31 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import test from "node:test";
 
 import { parseDocxDocument } from "../../src/core/parsing";
+
+test("native DOCX parser reports the installed Mammoth version", async () => {
+	const require = createRequire(import.meta.url);
+	const installedVersion = require("mammoth/package.json").version;
+	const content = await readFile(
+		new URL("../../testdata/docx/quote-table.docx", import.meta.url),
+	);
+	const document = await parseDocxDocument({
+		documentId: "document-version",
+		libraryId: "library-1",
+		filename: "quote-table.docx",
+		title: "Quote table",
+		contentHash: "fixture-hash",
+		content,
+		source: "storage://fixtures/quote-table.docx",
+	});
+
+	assert.equal(typeof installedVersion, "string");
+	assert.ok(installedVersion.length > 0);
+	assert.equal(document.parser_report.parser, "mammoth");
+	assert.equal(document.parser_report.parser_version, installedVersion);
+});
 
 test("native DOCX parser preserves paragraphs and table structure", async () => {
 	const fixture = new URL(

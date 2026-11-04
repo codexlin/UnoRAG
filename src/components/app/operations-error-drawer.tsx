@@ -10,10 +10,7 @@ import {
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import {
-	StageWaterfall,
-	type WaterfallStage,
-} from "@/components/app/stage-waterfall";
+import { StageWaterfall } from "@/components/app/stage-waterfall";
 import {
 	Sheet,
 	SheetContent,
@@ -23,34 +20,76 @@ import {
 } from "@/components/ui/sheet";
 import { retryJob } from "@/lib/api";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
+import type { OperationsEventDetail } from "@/lib/operations-event-detail";
 
 export type OperationsErrorRef = {
 	id: string;
 	source: "ask" | "job";
 };
 
-type ErrorDetail = {
-	source: "ask" | "job";
-	id: string;
-	resource_id?: string;
-	status: string;
-	error_code: string | null;
-	guidance: { title: string; cause: string; recovery: string };
-	request_id: string | null;
-	otel_trace_id: string | null;
-	workflow_id: string | null;
-	library_id: string | null;
-	document_id: string | null;
-	document_version_id: string | null;
-	query_type: string | null;
-	retrieval_mode: string | null;
-	started_at: string;
-	ended_at: string | null;
-	latency_ms: number | null;
-	message: string | null;
-	can_retry?: boolean;
-	stages: WaterfallStage[];
-};
+export function JudgeDiagnostics({
+	stages,
+}: {
+	stages: OperationsEventDetail["stages"];
+}) {
+	return stages.map((stage) => {
+		if (
+			stage.stage !== "judge" ||
+			stage.error_code !== "judge_unavailable" ||
+			!stage.detail
+		)
+			return null;
+		const detail = stage.detail;
+		const fields = [
+			["故障类别", detail.judge_error_category],
+			["应用层尝试次数", detail.judge_attempts],
+			["应用层尝试上限", detail.judge_max_attempts],
+			[
+				"单次超时",
+				detail.judge_timeout_ms == null
+					? null
+					: `${detail.judge_timeout_ms} ms`,
+			],
+			[
+				"总预算",
+				detail.judge_budget_ms == null ? null : `${detail.judge_budget_ms} ms`,
+			],
+			[
+				"实际耗时",
+				detail.judge_duration_ms == null
+					? null
+					: `${detail.judge_duration_ms} ms`,
+			],
+			["HTTP 状态", detail.judge_status_code],
+			[
+				"可重试",
+				detail.judge_retryable == null
+					? null
+					: detail.judge_retryable
+						? "是"
+						: "否",
+			],
+		].filter((field) => field[1] != null);
+		if (fields.length === 0) return null;
+		return (
+			<section key={stage.id} className="border-t border-border/70 pt-4">
+				<h3 className="text-ui font-semibold">
+					Judge 诊断 · 阶段 {stage.sequence}
+				</h3>
+				<dl className="mt-3 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2">
+					{fields.map(([label, value]) => (
+						<div key={label} className="contents">
+							<dt className="text-meta text-muted-foreground">{label}</dt>
+							<dd className="min-w-0 break-words font-mono text-[11px]">
+								{value}
+							</dd>
+						</div>
+					))}
+				</dl>
+			</section>
+		);
+	});
+}
 
 function CopyValue({ value }: { value: string }) {
 	const [copied, setCopied] = useState(false);
@@ -84,7 +123,7 @@ export function OperationsErrorDrawer({
 	onOpenChange: (open: boolean) => void;
 	onRecovered?: () => void;
 }) {
-	const [detail, setDetail] = useState<ErrorDetail | null>(null);
+	const [detail, setDetail] = useState<OperationsEventDetail | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [retrying, setRetrying] = useState(false);
 
@@ -100,7 +139,7 @@ export function OperationsErrorDrawer({
 		)
 			.then(async (response) => {
 				if (!response.ok) throw new Error(`event_http_${response.status}`);
-				return (await response.json()) as ErrorDetail;
+				return (await response.json()) as OperationsEventDetail;
 			})
 			.then(setDetail)
 			.catch((cause) => {
@@ -209,6 +248,7 @@ export function OperationsErrorDrawer({
 								</div>
 								<StageWaterfall stages={detail.stages} />
 							</section>
+							<JudgeDiagnostics stages={detail.stages} />
 
 							<section className="border-t border-border/70 pt-4">
 								<h3 className="text-ui font-semibold">关联信息</h3>
