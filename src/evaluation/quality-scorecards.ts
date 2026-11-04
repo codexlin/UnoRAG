@@ -19,6 +19,9 @@ export type QualityDimensionScore = Readonly<{
 	documentRecallAtK: number;
 	citationPrecision: number;
 	crossDocumentCitationRate: number;
+	supportingCitationRate: number;
+	invalidCrossDocumentCitationRate: number;
+	invalidCitationRate: number;
 	recordTypeAccuracy: number | null;
 }>;
 
@@ -59,6 +62,10 @@ export function summarizeQualityDimensions(
 				documentRecallAtK: summary.documentRecallAtK,
 				citationPrecision: summary.citationPrecision,
 				crossDocumentCitationRate: summary.crossDocumentCitationRate,
+				supportingCitationRate: summary.supportingCitationRate,
+				invalidCrossDocumentCitationRate:
+					summary.invalidCrossDocumentCitationRate,
+				invalidCitationRate: summary.invalidCitationRate,
 				recordTypeAccuracy: observedRecordTypes.length
 					? observedRecordTypes.filter(
 							(score) => score.recordTypeMatched === true,
@@ -88,9 +95,9 @@ export function evaluateQualityDimensionGates(
 		] as const) {
 			if (value < 1) failures.push(`${dimension}.${metric}=${value} below 1`);
 		}
-		if (score.crossDocumentCitationRate > 0) {
+		if (score.invalidCrossDocumentCitationRate > 0) {
 			failures.push(
-				`${dimension}.crossDocumentCitationRate=${score.crossDocumentCitationRate} above 0`,
+				`${dimension}.invalidCrossDocumentCitationRate=${score.invalidCrossDocumentCitationRate} above 0`,
 			);
 		}
 		if (score.recordTypeAccuracy !== null && score.recordTypeAccuracy < 1) {
@@ -126,6 +133,10 @@ export type ProviderScore = Readonly<{
 	meanFactCoverage: number;
 	documentRecallAtK: number;
 	citationPrecision: number;
+	crossDocumentCitationRate: number;
+	supportingCitationRate: number;
+	invalidCrossDocumentCitationRate: number;
+	invalidCitationRate: number;
 }>;
 
 export type ProviderScorecard = Readonly<{
@@ -242,6 +253,11 @@ export function buildProviderScorecard(input: {
 				meanFactCoverage: summary.meanFactCoverage,
 				documentRecallAtK: summary.documentRecallAtK,
 				citationPrecision: summary.citationPrecision,
+				crossDocumentCitationRate: summary.crossDocumentCitationRate,
+				supportingCitationRate: summary.supportingCitationRate,
+				invalidCrossDocumentCitationRate:
+					summary.invalidCrossDocumentCitationRate,
+				invalidCitationRate: summary.invalidCitationRate,
 			});
 		});
 	return Object.freeze({

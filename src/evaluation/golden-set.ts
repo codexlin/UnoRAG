@@ -9,19 +9,82 @@ export const QualityDimensionSchema = z.enum([
 
 export type QualityDimension = z.infer<typeof QualityDimensionSchema>;
 
+const FixtureFilenameSchema = z
+	.string()
+	.min(1)
+	.max(255)
+	.refine(
+		(value) =>
+			value === value.trim() &&
+			value !== "." &&
+			value !== ".." &&
+			!/[\\/:\p{Cc}]/u.test(value),
+		"file must be a fixture basename, not a path",
+	);
+const ExpectedRecordTypeSchema = z.enum(["text", "table", "image"]);
+const KeyFactsSchema = z
+	.array(z.string().trim().min(1).max(512))
+	.min(1)
+	.max(64);
+const SupportingSourceSchema = z
+	.object({
+		file: FixtureFilenameSchema,
+		key_facts: KeyFactsSchema,
+		expect_record_type: ExpectedRecordTypeSchema,
+	})
+	.strict();
+
 export const GoldenCaseSchema = z
 	.object({
 		id: z.string().trim().min(1).optional(),
-		file: z.string().trim().min(1),
+		file: FixtureFilenameSchema,
 		mode: z.string().trim().min(1),
 		question: z.string().trim().min(1),
 		answer: z.string().trim().min(1),
-		key_facts: z.array(z.string().trim().min(1)).min(1),
+		key_facts: KeyFactsSchema,
 		chunk_hint: z.string().trim().min(1).optional(),
-		expect_record_type: z.enum(["text", "table", "image"]).optional(),
+		expect_record_type: ExpectedRecordTypeSchema.optional(),
+		supporting_sources: z
+			.array(SupportingSourceSchema)
+			.min(1)
+			.max(8)
+			.optional(),
 		quality_dimensions: z.array(QualityDimensionSchema).default([]),
 	})
-	.strict();
+	.strict()
+	.superRefine((value, context) => {
+		const uniqueFacts = (facts: string[]) =>
+			new Set(facts.map(normalizeFactText)).size === facts.length;
+		if (!uniqueFacts(value.key_facts)) {
+			context.addIssue({ code: "custom", message: "duplicate key_facts" });
+		}
+		if (value.supporting_sources && !value.expect_record_type) {
+			context.addIssue({
+				code: "custom",
+				message: "multi-source primary requires expect_record_type",
+			});
+		}
+		const files = new Set([value.file]);
+		for (const source of value.supporting_sources ?? []) {
+			if (files.has(source.file)) {
+				context.addIssue({
+					code: "custom",
+					message: "duplicate supporting source or primary file",
+				});
+			}
+			files.add(source.file);
+			if (
+				!uniqueFacts(source.key_facts) ||
+				source.key_facts.some((fact) => !value.key_facts.includes(fact))
+			) {
+				context.addIssue({
+					code: "custom",
+					message:
+						"supporting key_facts must be a unique subset of case key_facts",
+				});
+			}
+		}
+	});
 
 export type GoldenCase = z.infer<typeof GoldenCaseSchema> & {
 	readonly id: string;
@@ -125,6 +188,15 @@ export function normalizeFactText(value: string): string {
 		.replace(CHINESE_NUMBER_PATTERN, (match) =>
 			String(parseChineseNumber(match)),
 		)
+		.replace(
+			/(?<![\d.])(\d+)\.(\d+)(?![\d.])/gu,
+			(_match, integer: string, fraction: string) => {
+				const significantFraction = fraction.replace(/0+$/u, "");
+				return significantFraction
+					? `${integer}.${significantFraction}`
+					: integer;
+			},
+		)
 		.replace(/\s+/gu, "");
 }
 
@@ -169,6 +241,18 @@ export function parseGoldenCase(value: unknown): GoldenCase {
 		id: parsed.id ?? stableCaseId(parsed),
 		key_facts: Object.freeze([...parsed.key_facts]),
 		quality_dimensions: Object.freeze([...parsed.quality_dimensions]),
+		...(parsed.supporting_sources
+			? {
+					supporting_sources: Object.freeze(
+						parsed.supporting_sources.map((source) =>
+							Object.freeze({
+								...source,
+								key_facts: Object.freeze([...source.key_facts]),
+							}),
+						),
+					),
+				}
+			: {}),
 	}) as GoldenCase;
 }
 

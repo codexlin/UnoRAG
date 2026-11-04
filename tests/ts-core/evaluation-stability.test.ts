@@ -4,7 +4,56 @@ import {
 	evaluateIngestReliability,
 	resolveStabilityOptions,
 } from "../../scripts/run-ab-stability";
-import { summarizeStability } from "../../src/evaluation/stability";
+import {
+	classifyEvaluationFailure,
+	summarizeStability,
+} from "../../src/evaluation/stability";
+
+test("failure attribution distinguishes legitimate corroboration from invalid citations", () => {
+	const row = {
+		ingestStatus: "completed",
+		response: { httpStatus: 200 },
+		score: {
+			targetDocumentRecalled: true,
+			crossDocumentCitationCount: 1,
+			invalidCitationCount: 0,
+			missingEvidenceFacts: [],
+			recordTypeMatched: true,
+			factCoverage: 0.5,
+		},
+	};
+	assert.equal(classifyEvaluationFailure("positive", row), "generation");
+	assert.equal(
+		classifyEvaluationFailure("positive", {
+			...row,
+			score: { ...row.score, invalidCitationCount: 1 },
+		}),
+		"citation",
+	);
+	assert.equal(
+		classifyEvaluationFailure("positive", {
+			...row,
+			score: { ...row.score, missingEvidenceFacts: ["24个月"] },
+		}),
+		"citation",
+	);
+	const { invalidCitationCount: _count, ...legacy } = row.score;
+	assert.equal(
+		classifyEvaluationFailure("positive", { ...row, score: legacy }),
+		"citation",
+	);
+	assert.equal(
+		classifyEvaluationFailure("negative", {
+			response: {
+				httpStatus: 200,
+				refused: true,
+				refuseReason: "judge_unavailable",
+				retrievalDebug: { judge_mode: "model_error" },
+			},
+		}),
+		"judge",
+	);
+});
 
 const FINGERPRINT = Object.freeze({
 	git_commit: "a".repeat(40),
