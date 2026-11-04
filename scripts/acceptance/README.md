@@ -12,6 +12,10 @@
 | `deploy/compose/scripts/pilot-smoke.sh` | 登录、上传、Ask、Public API、replace、delete 全链路 |
 | `scripts/acceptance/s1_s2_isolation.sh` | 多组织、多 Workspace、ACL 与 IDOR 零泄漏 |
 | `scripts/acceptance/capacity_baseline.py` | Retrieve、Ask、生命周期阶梯并发与可选 MinerU 探针 |
+| `scripts/acceptance/upgrade-rollback.mjs` | 四镜像 digest 升级、旧版应用回滚、再次升级与数据校验 |
+| `scripts/acceptance/provider-faults.mjs` | 真实 Provider 透传基线、受控故障注入、失败替换保留旧版与恢复 |
+| `scripts/acceptance/restore-drill.mjs` | 隔离实例备份、删卷、恢复、Ask 与生命周期校验 |
+| `scripts/acceptance/release-gate.mjs` | 按绑定 commit / manifest 的 profile 串行执行发布门禁 |
 
 所有验收脚本使用一致退出码：`0` 通过，`1` 失败，`2` 因依赖或配置缺失而
 阻塞。`2` 不能记为产品通过。
@@ -32,13 +36,15 @@ UNORAG_ADMIN_PASSWORD='...' \
 容量结果只绑定测试环境、资源规格、模型 Provider、语料和 commit，不可直接外推。
 使用 `--mineru-file testdata/ab/twocolumn.pdf` 可加入真实复杂 PDF 探针。
 
-## 仍需自动化
+## 发布演练与边界
 
-TS-only RC 已手工完成独立恢复和依赖故障验收。仍需把以下发布动作固化成可重复自动化：
+升级回滚、Provider 故障和隔离恢复已有自动化入口，具体参数、显式授权开关及完整 profile 见
+[RELEASE.md](../../docs/RELEASE.md)。先使用 `--plan` 检查目标，再在独立实例执行；不得在生产实例
+运行破坏性恢复。脚本已有不代表新候选自动通过，必须保留本次运行的版本、环境与结果。
 
-1. 四张 digest-pinned 镜像的升级与应用回滚。
-2. 模型 Provider 与 ParserProvider 的重启/幂等故障注入。
-3. 面向具体客户环境的容量和 RPO/RTO 报告归档。
+Provider 故障脚本使用可控代理注入 HTTP 状态和超时，先后验证真实上游透传与恢复；它不等于对
+外部托管模型或 MinerU 服务执行真实重启。Worker / 数据服务停启仍需按部署环境另外演练。
 
-独立 Compose backup/restore、PostgreSQL、DBOS worker 和 Qdrant 故障路径已有
-2026-08-02 RC 证据，但仍不能替代最终发布镜像和目标客户环境的验收。
+本地对象存储的恢复演练包含文档备份；COS 模式只备份数据库、Qdrant 和对象存储边界说明，远端对象
+仍留在原桶中，不能据此声称已经验证对象误删或桶级灾难恢复。客户容量、对象备份策略和 RPO/RTO
+仍须分别验收并归档。
