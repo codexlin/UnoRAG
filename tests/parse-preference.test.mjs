@@ -88,3 +88,80 @@ test("pending 302 job payload surfaces waiting status", () => {
 	assert.equal(view.task_status, "等待 302 云解析");
 	assert.equal(view.provider_task_id, "aabbccdd…3344");
 });
+
+test("current MinerU cloud reports disclose external processing", () => {
+	const view = formatParseStatusView({
+		parserReport: {
+			backend: "mineru",
+			parser: "mineru",
+			metrics: { provider: "302ai", external_data_processing: true },
+		},
+		jobStatus: "completed",
+	});
+	assert.equal(view.parser_label, "302 云解析");
+	assert.equal(view.external_processing, true);
+	assert.equal(view.task_status, "已完成");
+});
+
+test("egress evidence wins conflicting current and historical metadata", () => {
+	for (const metrics of [
+		{ provider: "302ai", external_data_processing: false },
+		{
+			provider: "302ai",
+			mineru_provider: "self_hosted",
+			mineru_external: false,
+		},
+		{ provider: "self_hosted", mineru_provider: "302ai" },
+		{
+			provider: "self_hosted",
+			external_data_processing: false,
+			mineru_external: true,
+		},
+	]) {
+		const view = formatParseStatusView({
+			parserReport: { backend: "mineru", metrics },
+		});
+		assert.equal(view.parser_label, "302 云解析");
+		assert.equal(view.external_processing, true);
+	}
+});
+
+test("MinerU locality is unknown without explicit provenance", () => {
+	for (const metrics of [{}, { provider: "unknown" }]) {
+		const view = formatParseStatusView({
+			parserReport: { backend: "mineru", metrics },
+		});
+		assert.equal(view.parser_label, "MinerU");
+		assert.equal(view.external_processing, null);
+	}
+	const external = formatParseStatusView({
+		parserReport: {
+			backend: "mineru",
+			metrics: { external_data_processing: true },
+		},
+	});
+	assert.equal(external.parser_label, "MinerU");
+	assert.equal(external.external_processing, true);
+	const selfHosted = formatParseStatusView({
+		parserReport: {
+			backend: "mineru",
+			metrics: { provider: "self_hosted", external_data_processing: false },
+		},
+	});
+	assert.equal(selfHosted.parser_label, "自建 MinerU");
+	assert.equal(selfHosted.external_processing, false);
+});
+
+test("local TypeScript parsers display their actual implementation", () => {
+	for (const [parser, label] of [
+		["liteparse", "LiteParse"],
+		["mammoth", "Mammoth"],
+		["native-text", "原生文本"],
+	]) {
+		const view = formatParseStatusView({
+			parserReport: { backend: "typescript", parser },
+		});
+		assert.equal(view.parser_label, label);
+		assert.equal(view.external_processing, false);
+	}
+});

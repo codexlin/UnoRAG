@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import yaml from "js-yaml";
 
 import {
 	dbosDocumentIngestEnabled,
@@ -61,12 +62,33 @@ test("Compose renders the complete TypeScript parser worker contract", () => {
 		"ingest-local,ingest-auto,ingest-mineru,lifecycle",
 	);
 	assert.equal(worker.environment.MINERU_PROVIDER, "self_hosted");
-	assert.equal(worker.environment.LITEPARSE_OCR_LANGUAGE, "ch");
+	assert.equal(worker.environment.LITEPARSE_OCR_LANGUAGE, "chi_sim");
 	assert.equal("UNORAG_DBOS_TEXT_INGEST" in worker.environment, false);
 	assert.deepEqual(worker.command, [
 		"./node_modules/.bin/tsx",
 		"src/worker/entry.ts",
 	]);
+});
+
+test("Compose control-plane health observes the worker's selected MinerU provider", () => {
+	for (const provider of ["self_hosted", "302ai"]) {
+		const compose = renderComposeConfig({
+			MINERU_PROVIDER: provider,
+			MINERU_API_KEY: "contract-mineru-key",
+			EXTERNAL_PARSER_ALLOWED: "true",
+		});
+		const worker = compose.services["dbos-worker"].environment;
+		const control = compose.services["dbos-control"].environment;
+		assert.equal(control.MINERU_PROVIDER, provider);
+		for (const key of [
+			"MINERU_PROVIDER",
+			"MINERU_API_KEY",
+			"MINERU_SELF_HOSTED_URL",
+			"EXTERNAL_PARSER_ALLOWED",
+		]) {
+			assert.equal(control[key], worker[key], key);
+		}
+	}
 });
 
 test("Helm renders the TypeScript-only runtime", (t) => {
@@ -86,4 +108,44 @@ test("Helm renders the TypeScript-only runtime", (t) => {
 		render.stdout,
 		/name: unorag-(api|outbox-worker|lifecycle-worker)/,
 	);
+});
+
+test("Helm control-plane health observes the worker's selected MinerU provider", (t) => {
+	if (!hasCommand("helm", ["version", "--short"])) {
+		t.skip("helm is not installed");
+		return;
+	}
+	for (const provider of ["self_hosted", "302ai"]) {
+		const render = renderHelm([
+			"--set",
+			`config.mineruProvider=${provider}`,
+			"--set",
+			"config.externalParserAllowed=true",
+		]);
+		assert.equal(render.status, 0, render.stderr);
+		const deployments = yaml
+			.loadAll(render.stdout)
+			.filter((doc) => ["Deployment", "StatefulSet"].includes(doc?.kind));
+		const environment = (name) => {
+			const deployment = deployments.find((doc) => doc.metadata.name === name);
+			assert.ok(deployment, name);
+			return Object.fromEntries(
+				deployment.spec.template.spec.containers[0].env.map((entry) => [
+					entry.name,
+					entry.value ?? entry.valueFrom,
+				]),
+			);
+		};
+		const worker = environment("unorag-dbos-worker");
+		const control = environment("unorag-dbos-control");
+		assert.equal(control.MINERU_PROVIDER, provider);
+		for (const key of [
+			"MINERU_PROVIDER",
+			"MINERU_API_KEY",
+			"MINERU_SELF_HOSTED_URL",
+			"EXTERNAL_PARSER_ALLOWED",
+		]) {
+			assert.deepEqual(control[key], worker[key], key);
+		}
+	}
 });

@@ -163,7 +163,15 @@ Caddy 状态保存在命名卷中；Web 之外的数据服务和 Worker 仍不�
 
 ## ParserProvider
 
-LiteParse 是 Worker 内的本地快速路径。自托管 MinerU 示例：
+LiteParse 是 Worker 内的本地快速路径。
+
+Worker 镜像预装 Tesseract 简体中文（`chi_sim`）与英文（`eng`）语言数据，OCR 不在运行时下载模型。
+Compose 默认使用 `chi_sim`；原 `ch` / `zh` 配置会规范为 `chi_sim`，`en` 规范为 `eng`。
+其它单语言码需要由管理员预装对应 `.traineddata`，通过 Worker 的 `TESSDATA_PREFIX` 指向只读目录；
+缺失数据会显式失败，不会隐式联网。源码开发启用 OCR 时也须设置该路径。
+该本地能力不等于复杂表格结构或任意扫描件的质量保证，仍须用目标文件验收。
+
+自托管 MinerU 示例：
 
 ```dotenv
 MINERU_PROVIDER=self_hosted

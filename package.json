@@ -134,6 +134,7 @@
 		"@types/react": "^19",
 		"@types/react-dom": "^19.2.7",
 		"drizzle-kit": "^0.31.11",
+		"js-yaml": "4.3.2",
 		"postcss": "8.5.28",
 		"spdx-license-list": "6.12.0",
 		"tailwindcss": "^4",

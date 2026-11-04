@@ -39,34 +39,54 @@ export function redactProviderTaskId(raw) {
 	return `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
+/** @param {ParserReportLike} report */
+function processingProvenance(report) {
+	const metrics =
+		report.metrics && typeof report.metrics === "object" ? report.metrics : {};
+	const providers = [metrics.provider, metrics.mineru_provider]
+		.filter((value) => typeof value === "string")
+		.map((value) => value.trim().toLowerCase());
+	const externalFlags = [
+		metrics.external_data_processing,
+		metrics.mineru_external,
+	];
+	// Positive egress evidence must not be hidden by stale or conflicting fields.
+	const cloud = providers.includes("302ai");
+	const external =
+		cloud || externalFlags.includes(true)
+			? true
+			: externalFlags.includes(false) || providers.includes("self_hosted")
+				? false
+				: null;
+	return { metrics, providers, cloud, external };
+}
+
 /**
  * @param {ParserReportLike | null | undefined} report
  * @returns {string | null}
  */
 export function resolveParserLabel(report) {
 	if (!report || typeof report !== "object") return null;
-	const metrics =
-		report.metrics && typeof report.metrics === "object" ? report.metrics : {};
-	const provider =
-		typeof metrics.mineru_provider === "string"
-			? metrics.mineru_provider.trim().toLowerCase()
-			: "";
+	const { metrics, providers, cloud } = processingProvenance(report);
 	const backend = String(report.backend || report.parser || "")
 		.trim()
 		.toLowerCase();
 	const route =
 		typeof metrics.route === "string" ? metrics.route.trim().toLowerCase() : "";
 
-	if (provider === "302ai" || metrics.mineru_external === true) {
+	if (cloud || metrics.mineru_external === true) {
 		return "302 云解析";
 	}
-	if (
-		provider === "self_hosted" ||
-		backend.includes("mineru") ||
-		route.startsWith("mineru")
-	) {
+	if (providers.includes("self_hosted")) {
 		return "自建 MinerU";
 	}
+	if (backend.includes("mineru") || route.startsWith("mineru")) return "MinerU";
+	const parser = String(report.parser || "")
+		.trim()
+		.toLowerCase();
+	if (parser === "liteparse") return "LiteParse";
+	if (parser === "mammoth") return "Mammoth";
+	if (parser === "native-text") return "原生文本";
 	if (
 		backend.includes("pymupdf") ||
 		route.startsWith("pymupdf") ||
@@ -87,20 +107,13 @@ export function resolveParserLabel(report) {
  */
 export function resolveExternalProcessing(report) {
 	if (!report || typeof report !== "object") return null;
-	const metrics =
-		report.metrics && typeof report.metrics === "object" ? report.metrics : {};
-	if (typeof metrics.mineru_external === "boolean") {
-		return metrics.mineru_external;
-	}
-	const provider =
-		typeof metrics.mineru_provider === "string"
-			? metrics.mineru_provider.trim().toLowerCase()
-			: "";
-	if (provider === "302ai") return true;
-	if (provider === "self_hosted") return false;
+	const { external } = processingProvenance(report);
+	if (external !== null) return external;
 	const label = resolveParserLabel(report);
 	if (label === "302 云解析") return true;
-	if (label === "自建 MinerU" || label === "PyMuPDF") return false;
+	if (["PyMuPDF", "LiteParse", "Mammoth", "原生文本"].includes(label)) {
+		return false;
+	}
 	return null;
 }
 
@@ -216,7 +229,7 @@ export function resolveParseQualityHint(report, opts = {}) {
 		return metrics.parse_quality_hint;
 	}
 	const label = resolveParserLabel(report);
-	if (label === "302 云解析" || label === "自建 MinerU") {
+	if (["302 云解析", "自建 MinerU", "MinerU"].includes(label)) {
 		return "已使用增强解析";
 	}
 	if (label === "PyMuPDF") {

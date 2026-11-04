@@ -1,6 +1,7 @@
 # UnoRAG 验收自动化
 
-当前脚本只通过产品 HTTP 边界测试原生 TypeScript 运行时。Python FastAPI 时代的
+生命周期与发布脚本通过产品 HTTP 边界测试原生 TypeScript 运行时；本地解析镜像冒烟
+直接调用 ParserProvider，并在断网容器中验证原生依赖。Python FastAPI 时代的
 恢复、升级、故障注入与 OCR 脚本已经退役。当前证据保存在 `docs/evidence/`，
 但不能用于证明后续提交。
 
@@ -16,6 +17,7 @@
 | `scripts/acceptance/provider-faults.mjs` | 真实 Provider 透传基线、受控故障注入、失败替换保留旧版与恢复 |
 | `scripts/acceptance/restore-drill.mjs` | 隔离实例备份、删卷、恢复、Ask 与生命周期校验 |
 | `scripts/acceptance/release-gate.mjs` | 按绑定 commit / manifest 的 profile 串行执行发布门禁 |
+| `scripts/acceptance/local-parser-smoke.ts` | Worker 镜像断网、只读条件下的真实文字 PDF 与扫描件 OCR；保留低置信度警告，不等于 OCR 质量全通过 |
 
 所有验收脚本使用一致退出码：`0` 通过，`1` 失败，`2` 因依赖或配置缺失而
 阻塞。`2` 不能记为产品通过。

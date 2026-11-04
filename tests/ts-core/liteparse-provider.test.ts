@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import liteParsePackage from "@llamaindex/liteparse/package.json";
 
 import type { ParseInput } from "../../src/core/contracts";
 import {
@@ -23,6 +24,62 @@ const options: DurableParseOptions = {
 	idempotencyKey: "parse:document-1:generation-1",
 	requestId: "request-1",
 };
+
+test("LiteParse uses installed version and canonical local OCR language codes", async () => {
+	for (const [configured, expected] of [
+		["ch", "chi_sim"],
+		[" ZH ", "chi_sim"],
+		["en", "eng"],
+		["chi_sim", "chi_sim"],
+		["fra", "fra"],
+	]) {
+		const provider = new LiteParseProvider({
+			ocrEnabled: true,
+			ocrLanguage: configured,
+			tessdataPath: "/local/models",
+			sourceLoader: async () => new Uint8Array([1]),
+			executor: {
+				async inspect(_source, execution) {
+					assert.equal(execution.ocrLanguage, expected);
+					assert.equal(execution.tessdataPath, "/local/models");
+					return [complexity(1, false)];
+				},
+				async parse() {
+					throw new Error("unexpected parse");
+				},
+			},
+		});
+		assert.equal(provider.version, liteParsePackage.version);
+		await provider.analyze(input);
+	}
+});
+
+test("native OCR fails closed when local models are missing, without downloading", async () => {
+	const provider = new LiteParseProvider({
+		ocrEnabled: true,
+		ocrLanguage: "ch",
+		tessdataPath: "/nonexistent-unorag-models",
+		sourceLoader: async () => new Uint8Array([1]),
+	});
+	const submission = await provider.submit(input, options);
+	await assert.rejects(
+		eventuallyResult(provider, submission.providerTaskId),
+		(error: unknown) =>
+			error instanceof LiteParseProviderError &&
+			error.code === "provider_dependency_missing" &&
+			!error.retryable &&
+			/chi_sim.*TESSDATA_PREFIX/.test(error.message),
+	);
+});
+
+test("local OCR rejects path-like and compound language names", () => {
+	for (const language of ["../eng", "/tmp/eng", "eng+chi_sim", "eng,ch"]) {
+		assert.throws(
+			() => new LiteParseProvider({ ocrLanguage: language }),
+			/single Tesseract language code/,
+		);
+	}
+});
 
 test("LiteParse normalizes digital PDF items instead of Markdown", async () => {
 	const executor = fakeExecutor({

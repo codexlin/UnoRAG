@@ -299,6 +299,8 @@ spec:
               value: {{ .Values.config.rerankModel | quote }}
             - name: EXTERNAL_PARSER_ALLOWED
               value: {{ .Values.config.externalParserAllowed | quote }}
+            - name: MINERU_PROVIDER
+              value: {{ .Values.config.mineruProvider | quote }}
             - name: MINERU_SELF_HOSTED_URL
               value: {{ .Values.config.mineruSelfHostedUrl | quote }}
             - name: EMAIL_PROVIDER
