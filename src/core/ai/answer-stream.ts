@@ -84,14 +84,22 @@ export class AnswerStreamAdapter {
 			context: string;
 			history?: AnswerMessage[];
 		},
-		options: { abortSignal?: AbortSignal } = {},
+		options: {
+			abortSignal?: AbortSignal;
+			beforeRequest?: () => Promise<void>;
+		} = {},
 	): AsyncGenerator<string> {
 		if (options.abortSignal?.aborted) {
 			throw new AnswerStreamAbortedError();
 		}
 		let lease: AiConcurrencyLease | undefined;
+		let checkingRequest = false;
 		try {
 			lease = await this.options.concurrencyGate?.acquire(options.abortSignal);
+			checkingRequest = true;
+			await options.beforeRequest?.();
+			checkingRequest = false;
+			if (options.abortSignal?.aborted) throw new AnswerStreamAbortedError();
 			const source = await this.execute({
 				model: this.model,
 				instructions: CHAT_SYSTEM_PROMPT,
@@ -118,6 +126,7 @@ export class AnswerStreamAdapter {
 				throw new AnswerStreamAbortedError();
 			}
 		} catch (error) {
+			if (checkingRequest) throw error;
 			if (options.abortSignal?.aborted) {
 				throw new AnswerStreamAbortedError();
 			}

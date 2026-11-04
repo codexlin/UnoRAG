@@ -7,15 +7,19 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
 	type FormEvent,
 	type KeyboardEvent,
+	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useReducer,
 	useRef,
 	useState,
+	useSyncExternalStore,
 } from "react";
 import { AskComposer } from "@/components/app/ask-composer";
 import { AskConversationList } from "@/components/app/ask-conversation-list";
 import { AskSourcesPanel } from "@/components/app/ask-sources-panel";
+import { createAskStreamLifecycle } from "@/components/app/ask-stream-lifecycle";
 import {
 	AskTraceDrawer,
 	stageDurationMs,
@@ -99,9 +103,32 @@ function canRetryTurn(turn: LocalTurn): boolean {
 	return Boolean(turn.error || turn.cancelled || turn.refused);
 }
 
+const subscribeToHydration = () => () => undefined;
+
 export function AskWorkspace() {
+	const mounted = useSyncExternalStore(
+		subscribeToHydration,
+		() => true,
+		() => false,
+	);
+	// Parent queries can populate the cache before this Suspense boundary hydrates.
+	if (!mounted) {
+		return (
+			<div
+				role="status"
+				className="flex flex-1 items-center justify-center text-sm text-muted-foreground"
+			>
+				加载问答…
+			</div>
+		);
+	}
+	return <AskWorkspaceContent />;
+}
+
+function AskWorkspaceContent() {
 	const router = useRouter();
 	const searchParams = useSearchParams();
+	const requestedThreadId = (searchParams.get("thread") || "").trim();
 	const isMobile = useIsMobile();
 	const reduceMotion = useReducedMotion();
 	const {
@@ -121,15 +148,18 @@ export function AskWorkspace() {
 		string | null
 	>(null);
 	const [turns, dispatchTurns] = useReducer(askTurnsReducer, []);
+	const contextEpochRef = useRef(0);
 	const [activeCitation, setActiveCitation] = useState<UiCitation | null>(null);
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [traceDebug, setTraceDebug] = useState<ApiRetrievalDebug | null>(null);
 	const [traceClientMs, setTraceClientMs] = useState<number | null>(null);
 	const [traceOpen, setTraceOpen] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
-	const abortRef = useRef<AbortController | null>(null);
-	const activeTurnIdRef = useRef<string | null>(null);
+	const [askStream] = useState(() =>
+		createAskStreamLifecycle(askQuestionStream),
+	);
 	const resumeThreadRef = useRef<string | null>(null);
+	const previousContextRef = useRef({ libraryId, requestedThreadId });
 	const {
 		documents: libraryDocuments,
 		fetched: documentsFetched,
@@ -185,23 +215,63 @@ export function AskWorkspace() {
 		}
 	}, [libraries, librariesLoading, libraryId, resumeLibraryMissing]);
 
-	useEffect(() => {
-		return () => {
-			abortRef.current?.abort();
-		};
-	}, []);
+	const resetConversation = useCallback(() => {
+		contextEpochRef.current += 1;
+		askStream.cancel(false);
+		resumeThreadRef.current = null;
+		setThreadId(undefined);
+		setThreadTitle(null);
+		setSessionId(undefined);
+		setInput("");
+		dispatchTurns({ type: "hydrate", turns: [] });
+		setActiveCitation(null);
+		setDrawerOpen(false);
+		setTraceOpen(false);
+		setArchiveError(null);
+		setArchiving(false);
+		setResumeLibraryMissing(null);
+	}, [askStream]);
+
+	useLayoutEffect(
+		() => () => {
+			contextEpochRef.current += 1;
+			askStream.cancel(false);
+		},
+		[askStream],
+	);
+
+	useLayoutEffect(() => {
+		const previous = previousContextRef.current;
+		if (
+			previous.libraryId === libraryId &&
+			previous.requestedThreadId === requestedThreadId
+		)
+			return;
+		contextEpochRef.current += 1;
+		askStream.cancel();
+		if (
+			!requestedThreadId &&
+			(previous.requestedThreadId ||
+				(previous.libraryId && previous.libraryId !== libraryId))
+		) {
+			resetConversation();
+		}
+		previousContextRef.current = { libraryId, requestedThreadId };
+	}, [askStream, libraryId, requestedThreadId, resetConversation]);
 
 	useEffect(() => {
-		const resumeId = (searchParams.get("thread") || "").trim();
+		const resumeId = requestedThreadId;
 		if (!resumeId || resumeThreadRef.current === resumeId) return;
 		if (!apiReady) return;
 		if (librariesLoading) return;
-		resumeThreadRef.current = resumeId;
 		const controller = new AbortController();
 		void (async () => {
 			try {
 				const detail = await continueThread(resumeId, controller.signal);
 				if (controller.signal.aborted) return;
+				askStream.cancel();
+				resumeThreadRef.current = resumeId;
+				setActiveCitation(null);
 				setThreadId(detail.id);
 				setThreadTitle(detail.title);
 				setSessionId(detail.session_id || detail.id);
@@ -238,7 +308,7 @@ export function AskWorkspace() {
 			}
 		})();
 		return () => controller.abort();
-	}, [apiReady, libraries, librariesLoading, searchParams]);
+	}, [apiReady, askStream, libraries, librariesLoading, requestedThreadId]);
 
 	function resizeComposer(
 		el: HTMLTextAreaElement | null = textareaRef.current,
@@ -253,7 +323,11 @@ export function AskWorkspace() {
 		[libraries, libraryId],
 	);
 
-	const canAsk = Boolean(isAskableLibrary(library) && apiReady);
+	const canAsk = Boolean(
+		isAskableLibrary(library) &&
+			apiReady &&
+			(!requestedThreadId || threadId === requestedThreadId),
+	);
 
 	const sampleQuestions = useMemo(() => {
 		if (!canAsk || !docsLoaded) return [];
@@ -286,7 +360,7 @@ export function AskWorkspace() {
 	}
 
 	function cancelAsk() {
-		abortRef.current?.abort();
+		askStream.cancel();
 	}
 
 	async function handleArchive() {
@@ -295,6 +369,7 @@ export function AskWorkspace() {
 			(turn) => !turn.pending && turn.question.trim() && !turn.error,
 		);
 		if (readyTurns.length === 0) return;
+		const epoch = contextEpochRef.current;
 		setArchiving(true);
 		setArchiveError(null);
 		try {
@@ -312,16 +387,18 @@ export function AskWorkspace() {
 					library_id: libraryId || undefined,
 				})),
 			});
+			if (epoch !== contextEpochRef.current) return;
 			setThreadId(detail.id);
 			setThreadTitle(detail.title);
 			setSessionId(detail.session_id || detail.id);
 			router.replace(`/app/ask?thread=${encodeURIComponent(detail.id)}`);
 		} catch (err) {
+			if (epoch !== contextEpochRef.current) return;
 			setArchiveError(
 				err instanceof Error ? err.message : "归档失败，请稍后重试",
 			);
 		} finally {
-			setArchiving(false);
+			if (epoch === contextEpochRef.current) setArchiving(false);
 		}
 	}
 
@@ -334,18 +411,11 @@ export function AskWorkspace() {
 		if (isStreaming && !options?.replaceTurnId) return;
 
 		const replaceTurnId = options?.replaceTurnId;
-		if (replaceTurnId && isStreaming) {
-			cancelAsk();
-		}
-
-		const pendingId = replaceTurnId ?? `pending-${Date.now()}`;
+		const pendingId = replaceTurnId ?? `pending-${crypto.randomUUID()}`;
 		const startedAtMs = performance.now();
 		const startedAt = Date.now();
 
-		const controller = new AbortController();
-		abortRef.current?.abort();
-		abortRef.current = controller;
-		activeTurnIdRef.current = pendingId;
+		askStream.cancel();
 
 		dispatchTurns({
 			type: "begin",
@@ -368,130 +438,103 @@ export function AskWorkspace() {
 		setTraceOpen(false);
 		setDrawerOpen(true);
 
-		try {
-			await askQuestionStream(
-				{
-					question: trimmed,
-					libraryId,
-					sessionId,
-					threadId,
+		await askStream.run(
+			{
+				question: trimmed,
+				libraryId,
+				sessionId,
+				threadId,
+			},
+			{
+				onMeta: (meta) => {
+					setSessionId(meta.session_id);
+					if (meta.thread_id) setThreadId(meta.thread_id);
+					dispatchTurns({
+						type: "meta",
+						turnId: pendingId,
+						patch: {
+							refused: meta.refused,
+							refuseReason: meta.refuse_reason,
+							mode: meta.mode,
+							hybridFailed: Boolean(meta.hybrid_failed),
+							rerankFailed: Boolean(meta.rerank_failed),
+							retrievalMode: meta.retrieval_mode,
+						},
+					});
 				},
-				{
-					onMeta: (meta) => {
-						if (activeTurnIdRef.current !== pendingId) return;
-						setSessionId(meta.session_id);
-						if (meta.thread_id) setThreadId(meta.thread_id);
-						dispatchTurns({
-							type: "meta",
-							turnId: pendingId,
-							patch: {
-								refused: meta.refused,
-								refuseReason: meta.refuse_reason,
-								mode: meta.mode,
-								hybridFailed: Boolean(meta.hybrid_failed),
-								rerankFailed: Boolean(meta.rerank_failed),
-								retrievalMode: meta.retrieval_mode,
-							},
-						});
-					},
-					onCitations: (citations) => {
-						if (activeTurnIdRef.current !== pendingId) return;
-						const mapped = citations.map(toUiCitation);
-						const evidenceMs = Math.round(performance.now() - startedAtMs);
-						dispatchTurns({
-							type: "citations",
-							turnId: pendingId,
-							citations: mapped,
-							evidenceMs,
-						});
-						setActiveCitation(mapped[0] ?? null);
-					},
-					onToken: (token) => {
-						if (activeTurnIdRef.current !== pendingId) return;
-						dispatchTurns({ type: "token", turnId: pendingId, token });
-					},
-					onDone: (result) => {
-						if (activeTurnIdRef.current !== pendingId) return;
-						setSessionId(result.session_id);
-						if (result.thread_id) setThreadId(result.thread_id);
-						const citations = result.citations.map(toUiCitation);
-						const debug: ApiRetrievalDebug = result.retrieval_debug || {};
-						const completedAt = Date.now();
-						const durationMs = Math.round(performance.now() - startedAtMs);
-						const retrieveMs = stageDurationMs(debug, "retrieve");
-						dispatchTurns({
-							type: "complete",
-							turnId: pendingId,
-							turn: completedTurn({
-								id: `turn-${completedAt}`,
-								question: trimmed,
-								answer: result.answer,
-								citations,
-								refused: result.refused,
-								refuseReason: result.refuse_reason,
-								mode: result.mode,
-								startedAt,
-								completedAt,
-								durationMs,
-								retrieveMs: retrieveMs ?? undefined,
-								debug,
-								hybridFailed: Boolean(
-									result.hybrid_failed ?? debug.hybrid_failed,
-								),
-								rerankFailed: Boolean(
-									result.rerank_failed ?? debug.rerank_failed,
-								),
-								retrievalMode:
-									result.retrieval_mode ||
-									(typeof debug.retrieval_mode === "string"
-										? debug.retrieval_mode
-										: undefined),
-								persisted: result.persisted === true,
-								persistError: result.persist_error,
-							}),
-						});
-						setActiveCitation(citations[0] ?? null);
-					},
-					onError: (message) => {
-						throw new Error(message);
-					},
+				onCitations: (citations) => {
+					const mapped = citations.map(toUiCitation);
+					const evidenceMs = Math.round(performance.now() - startedAtMs);
+					dispatchTurns({
+						type: "citations",
+						turnId: pendingId,
+						citations: mapped,
+						evidenceMs,
+					});
+					setActiveCitation(mapped[0] ?? null);
 				},
-				controller.signal,
-			);
-		} catch (err) {
-			const completedAt = Date.now();
-			const durationMs = Math.round(performance.now() - startedAtMs);
-			const aborted = controller.signal.aborted || isAbortError(err);
-
-			if (aborted) {
-				dispatchTurns({
-					type: "terminal",
-					turnId: pendingId,
-					completedAt,
-					durationMs,
-					cancelled: true,
-				});
-				return;
-			}
-
-			const message =
-				err instanceof Error ? err.message : "请求失败，请确认 API 已启动";
-			dispatchTurns({
-				type: "terminal",
-				turnId: pendingId,
-				completedAt,
-				durationMs,
-				cancelled: false,
-				error: message,
-			});
-		} finally {
-			if (abortRef.current === controller) {
-				abortRef.current = null;
-			}
-			if (activeTurnIdRef.current === pendingId) {
-				activeTurnIdRef.current = null;
-			}
-		}
+				onToken: (token) => {
+					dispatchTurns({ type: "token", turnId: pendingId, token });
+				},
+				onDone: (result) => {
+					setSessionId(result.session_id);
+					if (result.thread_id) setThreadId(result.thread_id);
+					const citations = result.citations.map(toUiCitation);
+					const debug: ApiRetrievalDebug = result.retrieval_debug || {};
+					const completedAt = Date.now();
+					const durationMs = Math.round(performance.now() - startedAtMs);
+					const retrieveMs = stageDurationMs(debug, "retrieve");
+					dispatchTurns({
+						type: "complete",
+						turnId: pendingId,
+						turn: completedTurn({
+							id: `turn-${completedAt}`,
+							question: trimmed,
+							answer: result.answer,
+							citations,
+							refused: result.refused,
+							refuseReason: result.refuse_reason,
+							mode: result.mode,
+							startedAt,
+							completedAt,
+							durationMs,
+							retrieveMs: retrieveMs ?? undefined,
+							debug,
+							hybridFailed: Boolean(
+								result.hybrid_failed ?? debug.hybrid_failed,
+							),
+							rerankFailed: Boolean(
+								result.rerank_failed ?? debug.rerank_failed,
+							),
+							retrievalMode:
+								result.retrieval_mode ||
+								(typeof debug.retrieval_mode === "string"
+									? debug.retrieval_mode
+									: undefined),
+							persisted: result.persisted === true,
+							persistError: result.persist_error,
+						}),
+					});
+					setActiveCitation(citations[0] ?? null);
+				},
+				onTerminal: ({ cancelled, error: err }) => {
+					const completedAt = Date.now();
+					const durationMs = Math.round(performance.now() - startedAtMs);
+					dispatchTurns({
+						type: "terminal",
+						turnId: pendingId,
+						completedAt,
+						durationMs,
+						cancelled,
+						error: cancelled
+							? undefined
+							: err instanceof Error
+								? err.message
+								: "请求失败，请确认 API 已启动",
+					});
+				},
+			},
+		);
 	}
 
 	function retryTurn(turn: LocalTurn) {
@@ -533,8 +576,10 @@ export function AskWorkspace() {
 						setDrawerOpen(open);
 					}}
 					onLibraryChange={(nextId) => {
-						setResumeLibraryMissing(null);
+						if (nextId === libraryId) return;
+						resetConversation();
 						setLibraryId(nextId);
+						if (requestedThreadId) router.replace("/app/ask");
 					}}
 					threadTitle={threadTitle}
 					turnCount={turns.length}
@@ -551,7 +596,7 @@ export function AskWorkspace() {
 				) : null}
 				{resumeLibraryMissing ? (
 					<p className="border-b border-survey/35 bg-accent px-5 py-2 text-sm text-accent-foreground">
-						原知识库已删除，历史回答与引用快照仍可回放。请从上方明确选择一个已就绪的知识库后继续对话。
+						原知识库已删除，历史记录仍可查看。选择其他知识库将开启新会话。
 					</p>
 				) : null}
 

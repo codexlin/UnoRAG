@@ -14,7 +14,12 @@ import {
 } from "@/db/schema";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { ConversationRepository } from "@/server/conversations/repository";
+import {
+	getSessionMemoryStore,
+	type SessionMemoryStore,
+} from "@/server/conversations/session-memory";
 import type { ConversationScope } from "@/server/conversations/types";
+import { recoverArchiveProvenance } from "./authorized-history";
 
 const CitationSchema = z.record(z.string(), z.unknown());
 const ArchiveTurnInputSchema = z
@@ -46,6 +51,8 @@ export type HistoricalCitationAuthorizationInput = {
 	identity: AuthIdentity;
 	libraryId: string | null;
 	citations: Citation[];
+	// Only request-local checkpoints may reuse versions they already admitted.
+	versionPolicy?: "active" | "retained";
 };
 
 export interface HistoricalCitationAuthorizer {
@@ -120,7 +127,12 @@ function citationReference(
 	const documentId =
 		nonEmptyString(citation.doc_id) ?? nonEmptyString(citation.document_id);
 	const documentVersionId = nonEmptyString(citation.document_version_id);
-	if (!documentId || !documentVersionId) return null;
+	if (
+		!documentId ||
+		!documentVersionId ||
+		!z.uuid().safeParse(documentVersionId).success
+	)
+		return null;
 	return {
 		citation,
 		documentId,
@@ -144,6 +156,9 @@ export class DrizzleHistoricalCitationAuthorizer
 		if (references.length === 0) return [];
 
 		const documentIds = [...new Set(references.map((item) => item.documentId))];
+		const versionIds = [
+			...new Set(references.map((item) => item.documentVersionId)),
+		];
 		const rows = await this.db
 			.select({
 				documentUuid: documents.id,
@@ -172,9 +187,14 @@ export class DrizzleHistoricalCitationAuthorizer
 			.innerJoin(
 				documentVersions,
 				and(
-					eq(documentVersions.id, documentActiveVersions.versionId),
 					eq(documentVersions.documentId, documents.id),
-					eq(documentVersions.status, "active"),
+					inArray(documentVersions.id, versionIds),
+					input.versionPolicy === "retained"
+						? inArray(documentVersions.status, ["active", "superseded"])
+						: and(
+								eq(documentVersions.id, documentActiveVersions.versionId),
+								eq(documentVersions.status, "active"),
+							),
 				),
 			)
 			.leftJoin(
@@ -386,6 +406,7 @@ export async function handleNativeConversationRequest(input: {
 	repository?: Repository;
 	citationAuthorizer?: HistoricalCitationAuthorizer;
 	turnCounter?: ConversationTurnCounter;
+	memoryStore?: SessionMemoryStore;
 }): Promise<Response | null> {
 	if (!isNativeConversationPath(input.path)) return null;
 	const repository =
@@ -426,6 +447,17 @@ export async function handleNativeConversationRequest(input: {
 				await input.request.json(),
 			);
 			validateLibraryConsistency(payload.library_id, payload.turns);
+			const provenance =
+				payload.session_id && payload.library_id
+					? recoverArchiveProvenance({
+							identity: input.identity,
+							libraryId: payload.library_id,
+							turns: payload.turns,
+							messages: await (
+								input.memoryStore ?? getSessionMemoryStore()
+							).load(conversationScope, payload.session_id, 50),
+						})
+					: [];
 			const title =
 				payload.title ||
 				payload.turns[0]?.question.slice(0, 80) ||
@@ -436,7 +468,7 @@ export async function handleNativeConversationRequest(input: {
 					sessionId: payload.session_id,
 					ragLibraryId: payload.library_id,
 					title,
-					turns: payload.turns.flatMap((turn) => [
+					turns: payload.turns.flatMap((turn, index) => [
 						{
 							role: "user" as const,
 							content: turn.question,
@@ -450,6 +482,7 @@ export async function handleNativeConversationRequest(input: {
 								refused: turn.refused,
 								refuse_reason: turn.refuse_reason ?? null,
 								retrieval_debug: turn.retrieval_debug ?? null,
+								memory_provenance: provenance[index] ?? null,
 							},
 						},
 					]),

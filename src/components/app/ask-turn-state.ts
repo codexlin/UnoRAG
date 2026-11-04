@@ -99,7 +99,6 @@ export function askTurnsReducer(
 				turn.id === action.turnId
 					? {
 							...turn,
-							id: `turn-${action.completedAt}`,
 							pending: false,
 							cancelled: action.cancelled,
 							error: action.error,
@@ -124,6 +123,7 @@ function patchTurn(
 export function toUiCitation(citation: ApiCitation): UiCitation {
 	const text = citation.body || citation.text || citation.snippet || "";
 	return {
+		source: { ...citation },
 		id: citation.id,
 		index: citation.index,
 		title: citation.title,
@@ -138,13 +138,14 @@ export function toUiCitation(citation: ApiCitation): UiCitation {
 		rrfScore: citation.rrf_score,
 		usedRerank: Boolean(citation.used_rerank),
 		usedHybrid: Boolean(citation.used_hybrid),
-		docId: citation.doc_id ?? undefined,
+		docId: citation.doc_id ?? citation.document_id ?? undefined,
 		chunkIndex: citation.chunk_index ?? undefined,
 		filename: citation.filename ?? undefined,
 	};
 }
 
 export function toApiCitation(citation: UiCitation): ApiCitation {
+	if (citation.source) return { ...citation.source };
 	return {
 		id: citation.id,
 		index: citation.index,

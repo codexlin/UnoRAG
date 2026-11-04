@@ -1,6 +1,6 @@
 /** Shared UI types for ask / evidence panels. */
 
-import type { ApiRetrievalDebug } from "@/lib/api";
+import type { ApiCitation, ApiRetrievalDebug } from "@/lib/api";
 
 export type UiLibrary = {
 	id: string;
@@ -12,6 +12,8 @@ export type UiLibrary = {
 };
 
 export type UiCitation = {
+	/** Preserve the public source snapshot for archiving, not as an auth assertion. */
+	source?: Readonly<ApiCitation>;
 	id: string;
 	index: number;
 	title: string;

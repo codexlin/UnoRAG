@@ -5,16 +5,35 @@ import { createHash } from "node:crypto";
 import { createClient, type RedisClientType } from "redis";
 import { z } from "zod";
 
+import { MemoryProvenanceSchema } from "./memory-provenance";
 import type { ConversationScope } from "./types";
 
-const MessageSchema = z
+export const SessionMemoryMessageSchema = z
 	.object({
 		role: z.enum(["user", "assistant"]),
 		content: z.string().max(100_000),
+		provenance: MemoryProvenanceSchema.optional(),
 	})
 	.strict();
 
-export type SessionMemoryMessage = z.infer<typeof MessageSchema>;
+export type SessionMemoryMessage = z.infer<typeof SessionMemoryMessageSchema>;
+
+export function parseSessionMemoryMessages(
+	values: readonly string[],
+): SessionMemoryMessage[] {
+	const messages: SessionMemoryMessage[] = [];
+	for (const value of values) {
+		try {
+			const parsed = SessionMemoryMessageSchema.safeParse(JSON.parse(value));
+			// Skipping an invalid row could join turns from different exchanges.
+			if (!parsed.success) return [];
+			messages.push(parsed.data);
+		} catch {
+			return [];
+		}
+	}
+	return messages;
+}
 
 export interface SessionMemoryStore {
 	load(
@@ -81,14 +100,7 @@ export class RedisSessionMemoryStore implements SessionMemoryStore {
 			-limit,
 			-1,
 		);
-		return values.flatMap((value) => {
-			try {
-				const parsed = MessageSchema.safeParse(JSON.parse(value));
-				return parsed.success ? [parsed.data] : [];
-			} catch {
-				return [];
-			}
-		});
+		return parseSessionMemoryMessages(values);
 	}
 
 	async append(
@@ -103,7 +115,9 @@ export class RedisSessionMemoryStore implements SessionMemoryStore {
 		const transaction = (await redisClient()).multi();
 		transaction.rPush(
 			key,
-			messages.map((message) => JSON.stringify(MessageSchema.parse(message))),
+			messages.map((message) =>
+				JSON.stringify(SessionMemoryMessageSchema.parse(message)),
+			),
 		);
 		transaction.lTrim(key, -limit, -1);
 		transaction.expire(key, ttlSeconds());

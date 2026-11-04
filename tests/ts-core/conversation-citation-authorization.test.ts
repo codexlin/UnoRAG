@@ -225,6 +225,137 @@ test("thread list does not authorize or load citation bodies", async () => {
 	assert.equal(payload[0].turn_count, 1);
 });
 
+test("archive takes provenance only from scoped server memory, never submitted debug or edited text", async () => {
+	const { handleNativeConversationRequest } = await handlerModule;
+	const { authorizeArchivedHistory } = await import(
+		"../../src/server/http/ask/authorized-history"
+	);
+	const source = {
+		doc_id: "document-a",
+		document_version_id: VERSION_ID,
+		generation_id: GENERATION_ID,
+	};
+	const marker = {
+		version: 1 as const,
+		libraryId: LIBRARY_ID,
+		sourceReferences: [source],
+	};
+	let created: ReturnType<typeof storedThread> | undefined;
+	const memoryReads: unknown[] = [];
+	const response = await handleNativeConversationRequest({
+		request: new Request("http://local/v1/threads", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				session_id: "session-a",
+				library_id: LIBRARY_ID,
+				turns: [
+					{ question: "question", answer: "answer", citations: [] },
+					{
+						question: "question",
+						answer: "edited answer",
+						citations: [source],
+						retrieval_debug: { memory_provenance: marker },
+					},
+				],
+			}),
+		}),
+		path: ["v1", "threads"],
+		identity,
+		repository: {
+			async createThreadWithTurns(_scope: unknown, input: { turns: object[] }) {
+				const base = storedThread();
+				created = {
+					...base,
+					turns: input.turns.map((turn, index) => ({
+						...base.turns[index % 2],
+						...turn,
+					})),
+				} as ReturnType<typeof storedThread>;
+				return created;
+			},
+		} as never,
+		memoryStore: {
+			async load(...args) {
+				memoryReads.push(args);
+				return [
+					{ role: "user", content: "question" },
+					{ role: "assistant", content: "answer", provenance: marker },
+				];
+			},
+			async append() {
+				throw new Error("archive must not rewrite memory");
+			},
+		},
+		citationAuthorizer: {
+			filterAuthorized: async ({ citations }) => citations,
+		},
+	});
+	assert.equal(response?.status, 200);
+	assert.deepEqual(memoryReads, [
+		[
+			{
+				organizationId: ORGANIZATION_ID,
+				workspaceId: WORKSPACE_ID,
+				principalId: PRINCIPAL_ID,
+			},
+			"session-a",
+			50,
+		],
+	]);
+	assert.ok(created);
+	const history = await authorizeArchivedHistory({
+		identity,
+		libraryId: LIBRARY_ID,
+		turns: created.turns,
+		citationAuthorizer: {
+			filterAuthorized: async ({ citations }) => citations,
+		},
+	});
+	assert.deepEqual(history.messages, [
+		{ role: "user", content: "question" },
+		{ role: "assistant", content: "answer" },
+	]);
+});
+
+test("unavailable server memory fails archiving before any database write", async () => {
+	const { handleNativeConversationRequest } = await handlerModule;
+	let writes = 0;
+	const response = await handleNativeConversationRequest({
+		request: new Request("http://local/v1/threads", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				session_id: "session-a",
+				library_id: LIBRARY_ID,
+				turns: [{ question: "question", answer: "answer" }],
+			}),
+		}),
+		path: ["v1", "threads"],
+		identity,
+		repository: {
+			async createThreadWithTurns() {
+				writes++;
+				throw new Error("must not write");
+			},
+		} as never,
+		memoryStore: {
+			async load() {
+				throw new Error("private Redis connection details");
+			},
+			async append() {},
+		},
+		citationAuthorizer: {
+			filterAuthorized: async ({ citations }) => citations,
+		},
+	});
+	assert.equal(response?.status, 503);
+	assert.deepEqual(await response?.json(), {
+		detail: "conversation service unavailable",
+	});
+	assert.equal(writes, 0);
+});
+
 test("default authorizer accepts only the current active version and current ACL", async () => {
 	const { DrizzleHistoricalCitationAuthorizer } = await handlerModule;
 	const authorizer = new DrizzleHistoricalCitationAuthorizer(
@@ -325,6 +456,7 @@ test("scope-mismatched citations are rejected before querying storage", async ()
 			identity,
 			libraryId: LIBRARY_ID,
 			citations: [
+				citation({ document_version_id: "not-a-uuid" }),
 				citation({
 					tenant_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
 				}),

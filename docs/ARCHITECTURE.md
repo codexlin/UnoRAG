@@ -66,6 +66,12 @@ Workspace 切换由 Redis 即时撤销旧 `sid`。
 - 后台健康探测失败时可以保留上次成功载荷用于诊断，但 readiness 必须立即 fail closed；
 - Ask token 流仍使用显式 SSE reducer，因为它是有顺序的事件流，不是普通请求缓存。
 
+Ask 的每次生成尝试使用独立对象身份，而不是复用会话或 turn ID。取消、文库/会话切换和卸载会使旧尝试
+失效，旧 token、错误、结束回调和定时器不得修改新尝试。客户端按短时间窗口或缓冲上限合并 token，
+正常完成以服务端最终结果为准，取消/错误刷新已经接收的尾部内容。
+Ask 的客户端数据面在 SSR/首次水合时使用一致的加载快照，再读取共享 Query cache，避免父级后台查询
+先完成而 Suspense 子树尚未水合时，空列表服务端 HTML 与已填充客户端缓存产生结构不一致。公共首页不受此边界影响。
+
 PostgreSQL 始终是业务事实源，TanStack Query 只是 Workspace 内的短期客户端投影。Replace 和 reindex
 Route Handler 共用 `document-version-command.ts`：按 library -> document -> source version 顺序加锁，并在
 一个事务中完成旧任务取消、新 version/job 创建、desired pointer、library 状态和审计写入。
@@ -87,6 +93,23 @@ application queries, composite constraints, and separated runtime roles; it does
 not install Row-Level Security policies. RLS remains an optional defense-in-depth
 hardening item, not a claimed runtime guarantee.
 
+Ask 采用检查点式授权：进入请求、调用模型前、发出引用前和完成前强制复核，输出期间在下一个片段到达时
+最多复用一秒的成功校验。浏览器重新验证 Session，公共 Ask 重新验证原 Service Key 与文库范围，再按 PG
+当前 ACL 和文档存活状态检查使用过的证据。每份新证据首次校验时必须属于 active version，成功后仅在本次
+请求内固定来源版本；正常发布新版、将旧版标为 superseded 不会中断已经校验过的回答。新请求与新的历史
+上下文仍只接受当前 active version，不允许借此读取任意旧版、失败或已删除版本。身份范围或证据失效则停止后续输出；这不是零延迟撤权，
+不能撤回已经发送给客户端或 Provider 的内容，也不是跨整个模型调用持有数据库锁。
+
+会话隔离不等于历史正文安全。可复用的历史问答必须带服务端记录的文库与完整来源依赖，并在注入模型前
+重新授权；新回答继续携带所使用历史的传递依赖，避免短期记忆截断后丢失来源。缺少来源、来源超出预算、
+跨文库或权限失效的历史不参与模型上下文；原始历史记录仍保留用于查看。历史引用读取权限与模型记忆复用
+是两个独立检查，不能互相替代。
+
+临时会话归档时，从当前 organization / workspace / principal / session 的 Redis 记忆窗口中精确匹配问题和
+回答，迁移服务端来源依赖到 PG；浏览器提交的引用或 debug 不能成为可信记忆标记。重复同文问答合并依赖，
+不截断来源。记忆已过期、被窗口淘汰、被修改或无法验证的内容仍可归档查看，但不进入模型上下文；Redis
+读取故障会让本次归档失败并允许重试，不伪装成成功迁移。切换知识库开启新会话并丢弃旧请求回调，旧归档不修改。
+
 ## 文档生命周期
 
 ```mermaid
@@ -105,6 +128,10 @@ All new jobs use `execution_engine=dbos` and `workflow_id=job_id`. Migration 002
 refuses to retire the old runtime while a non-terminal Python-owned job exists;
 terminal legacy rows remain historical. DBOS dispatch and reconciliation are
 idempotent, and Qdrant staging points are invisible until activation.
+
+同 generation 的写入重试还需匹配规范化记录清单 hash，并验证实际 Point ID 集合；单靠 Point 总数相同
+不足以证明解析重跑结果一致。已推进可见状态的 generation 不得再次 staging。旧的未完成 staging 若没有
+新清单信息会失败关闭，应创建新的替换或重索引任务，而不是改写旧 active 数据；正常升级仍应先排空任务。
 
 ## 解析与切分
 
@@ -153,6 +180,10 @@ route -> plan -> clarify | retrieve -> table execute -> judge
 Vercel AI SDK provides model calls, structured output and streaming. LangChain core
 types are used only where they remove adapter friction. LlamaIndex is not a second
 runtime; it may later appear behind a retrieval or parser tool boundary.
+
+Embedding/Rerank 的 HTTP 重试保留总 deadline 和次数预算，401 等凭证错误不重试；429/503 可遵守
+Retry-After，等待超出本次预算/上限时返回可重试错误，不提前再次请求。默认退避加入随机抖动。Ask AI
+并发门只在单 Web 进程内共享，不能据此宣称跨 Web/Worker 副本共享 Provider 的 RPM/TPM 配额。
 
 ## 可观测性边界
 

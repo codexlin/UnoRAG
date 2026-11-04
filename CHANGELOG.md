@@ -3,6 +3,37 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## Unreleased
+
+### Fixed
+
+- Revalidate Ask identity and evidence at model/output checkpoints and authorize provenance-backed
+  archived and temporary history before reuse, preserving transitive source dependencies.
+- Isolate browser generation attempts from stale stream callbacks and batch token updates without
+  losing received text on cancellation or failure.
+- Keep the initial Ask hydration snapshot stable when parent queries populate the shared cache
+  before the Suspense subtree hydrates.
+- Reject multiple files in one document replacement request and verify exact generation record
+  manifests on ingestion retries instead of relying only on point counts.
+- Honor bounded Provider Retry-After hints without retrying early, retain cancellation/deadline
+  limits, and add jitter to transient Embedding/Rerank retries.
+- Recover trusted temporary-memory provenance during archiving so verified follow-ups keep their
+  context; edited or expired exchanges remain view-only rather than trusting client metadata.
+- Start a clean conversation on library changes and ignore archive responses from the old context.
+- Let in-flight answers finish with already admitted source versions after normal publication,
+  while still enforcing current ACL, deletion, and active-only evidence for new requests.
+
+### Compatibility notes
+
+- Historical answers without verifiable provenance remain viewable but are not reused as model
+  memory. Authorization checkpoints do not recall content already delivered before revocation.
+- Pre-upgrade unfinished staging generations without manifests fail closed; submit a fresh
+  replacement/reindex if needed. Drain existing jobs before upgrading as usual.
+- Changes are not a new release or proof of deployment acceptance; validation remains bound to
+  the tested candidate and environment.
+- Dependency audit remediation is still required before release; passing runtime regression tests
+  does not replace the production dependency security gate.
+
 ## [0.2.3] - 2026-09-25
 
 UnoRAG 0.2.3 is a release-confidence maintenance update. It does not change the public Knowledge

@@ -39,11 +39,26 @@ nodeModule._resolveFilename = (request, parent, isMain, options) =>
 		? inertServerOnlyModule
 		: originalResolveFilename(request, parent, isMain, options);
 
-const handlerModule = import(
-	"../../src/server/http/ask/native-handler"
-).finally(() => {
-	nodeModule._resolveFilename = originalResolveFilename;
-});
+const handlerModule = import("../../src/server/http/ask/native-handler")
+	.then((module) => ({
+		...module,
+		handleNativeAskRequest: (
+			input: Parameters<typeof module.handleNativeAskRequest>[0],
+		) =>
+			module.handleNativeAskRequest({
+				...input,
+				authorization: input.authorization ?? {
+					refreshIdentity: async () => identity,
+					resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
+					citationAuthorizer: {
+						filterAuthorized: async ({ citations }) => citations,
+					},
+				},
+			}),
+	}))
+	.finally(() => {
+		nodeModule._resolveFilename = originalResolveFilename;
+	});
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
@@ -210,6 +225,8 @@ function askState(overrides: Partial<AskState> = {}): AskState {
 				id: "citation-1",
 				index: 1,
 				doc_id: "document-1",
+				document_version_id: "version-1",
+				generation_id: "generation-1",
 				title: "合同",
 				snippet: "违约金为 200 元",
 				score: 0.98,
@@ -443,10 +460,7 @@ test("sync ask returns public response and atomically appends the exchange", asy
 		JSON.stringify(retrievalDebug).includes("违约金为 200 元"),
 		false,
 	);
-	assert.deepEqual(runtime.invocations[0]?.history, [
-		{ role: "user", content: "上一问" },
-		{ role: "assistant", content: "上一答" },
-	]);
+	assert.deepEqual(runtime.invocations[0]?.history, []);
 	assert.equal(repository.exchanges.length, 1);
 	assert.deepEqual(repository.exchanges[0]?.scope, {
 		organizationId: ORGANIZATION_ID,
@@ -468,6 +482,7 @@ test("sync ask returns public response and atomically appends the exchange", asy
 			index: 1,
 			doc_id: "document-1",
 			document_id: "document-1",
+			document_version_id: "version-1",
 			title: "合同",
 			snippet: "违约金为 200 元",
 			score: 0.98,
@@ -761,10 +776,7 @@ test("temporary session memory is scoped, bounded, and receives policy settings"
 	});
 
 	assert.equal(response?.status, 200);
-	assert.deepEqual(runtime.invocations[0]?.history, [
-		{ role: "user", content: "临时上一问" },
-		{ role: "assistant", content: "临时上一答" },
-	]);
+	assert.deepEqual(runtime.invocations[0]?.history, []);
 	assert.equal(observedPolicy?.retrieve_top_k, 4);
 	assert.equal(observedPolicy?.hybrid_enabled, true);
 	assert.deepEqual(memory.appended, [
@@ -777,7 +789,21 @@ test("temporary session memory is scoped, bounded, and receives policy settings"
 			sessionId: "temporary-session",
 			messages: [
 				{ role: "user", content: "临时追问" },
-				{ role: "assistant", content: "临时回答" },
+				{
+					role: "assistant",
+					content: "临时回答",
+					provenance: {
+						version: 1,
+						libraryId: LIBRARY_ID,
+						sourceReferences: [
+							{
+								doc_id: "document-1",
+								document_version_id: "version-1",
+								generation_id: "generation-1",
+							},
+						],
+					},
+				},
 			],
 			maxTurns: 3,
 		},
@@ -836,4 +862,141 @@ test("LLM pressure failures return stable retryable 503 outcomes", async () => {
 			code,
 		});
 	}
+});
+
+test("revocation after retrieval prevents generation and persistence", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	let allowed = true;
+	let generated = false;
+	let executionSignal: AbortSignal | undefined;
+	const repository = new FakeConversationRepository([activeThread()]);
+	const runtime = new FakeRuntime(askState());
+	runtime.invoke = async () => {
+		allowed = false;
+		return askState();
+	};
+	runtime.streamAnswer = async function* () {
+		generated = true;
+		yield "must not be generated";
+	};
+	const response = await handleNativeAskRequest({
+		request: request({
+			question: "question",
+			library_id: LIBRARY_ID,
+			thread_id: THREAD_ID,
+		}),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(repository),
+		runtimeFactory: ((input: { signal: AbortSignal }) => {
+			executionSignal = input.signal;
+			return runtime;
+		}) as never,
+		authorization: {
+			refreshIdentity: async () => identity,
+			resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
+			citationAuthorizer: {
+				filterAuthorized: async ({ citations }) => (allowed ? citations : []),
+			},
+		},
+	});
+	assert.equal(response?.status, 403);
+	assert.ok(response);
+	assert.equal((await response.json()).code, "ask_access_changed");
+	assert.equal(generated, false);
+	assert.equal(executionSignal?.aborted, true);
+	assert.equal(repository.exchanges.length, 0);
+});
+
+test("a revoked stream emits an access error before exposing citations", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	let refreshes = 0;
+	const repository = new FakeConversationRepository([activeThread()]);
+	const response = await handleNativeAskRequest({
+		request: request(
+			{ question: "question", library_id: LIBRARY_ID },
+			"stream",
+		),
+		path: ["v1", "ask", "stream"],
+		identity,
+		repository: repositoryInput(repository),
+		runtimeFactory: runtimeFactory(
+			new FakeRuntime(askState(), ["private answer"]),
+		),
+		authorization: {
+			refreshIdentity: async () => (++refreshes <= 2 ? identity : null),
+			resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
+			citationAuthorizer: {
+				filterAuthorized: async ({ citations }) => citations,
+			},
+		},
+	});
+	assert.equal(response?.status, 200);
+	assert.ok(response);
+	const events = parseSse(await response.text());
+	assert.deepEqual(
+		events.map((event) => event.event),
+		["error"],
+	);
+	assert.equal((events[0].data as { code: string }).code, "ask_access_changed");
+	assert.equal(repository.exchanges.length, 0);
+});
+
+test("revocation while generating blocks sync delivery and memory persistence", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	let current: AuthIdentity | null = identity;
+	const repository = new FakeConversationRepository([activeThread()]);
+	const runtime = new FakeRuntime(askState());
+	runtime.streamAnswer = async function* () {
+		yield "partial answer";
+		current = null;
+		yield "late answer";
+	};
+	const response = await handleNativeAskRequest({
+		request: request({
+			question: "question",
+			library_id: LIBRARY_ID,
+			thread_id: THREAD_ID,
+		}),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(repository),
+		runtimeFactory: runtimeFactory(runtime),
+		authorization: {
+			refreshIdentity: async () => current,
+			resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
+			citationAuthorizer: {
+				filterAuthorized: async ({ citations }) => citations,
+			},
+		},
+	});
+	assert.equal(response?.status, 403);
+	assert.ok(response);
+	assert.equal((await response.json()).code, "ask_access_changed");
+	assert.equal(repository.exchanges.length, 0);
+});
+
+test("cancelling the response aborts upstream execution before returning the iterator", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	let executionSignal: AbortSignal | undefined;
+	const repository = new FakeConversationRepository([activeThread()]);
+	const response = await handleNativeAskRequest({
+		request: request(
+			{ question: "question", library_id: LIBRARY_ID },
+			"stream",
+		),
+		path: ["v1", "ask", "stream"],
+		identity,
+		repository: repositoryInput(repository),
+		runtimeFactory: ((input: { signal: AbortSignal }) => {
+			executionSignal = input.signal;
+			return new FakeRuntime(askState(), ["answer"]);
+		}) as never,
+	});
+	assert.ok(response?.body);
+	const reader = response.body.getReader();
+	await reader.read();
+	await reader.cancel();
+	assert.equal(executionSignal?.aborted, true);
+	assert.equal(repository.exchanges.length, 0);
 });

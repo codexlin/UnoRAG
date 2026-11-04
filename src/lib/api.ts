@@ -42,6 +42,16 @@ export type ApiCitation = {
 	used_rerank?: boolean;
 	used_hybrid?: boolean;
 	doc_id?: string | null;
+	document_id?: string | null;
+	document_version_id?: string | null;
+	record_type?: string | null;
+	record_id?: string | null;
+	row_start?: number | null;
+	row_end?: number | null;
+	headers?: string[];
+	rows?: string[][];
+	source_chunk_ids?: string[];
+	source_node_ids?: string[];
 	chunk_index?: number | null;
 	filename?: string | null;
 };
