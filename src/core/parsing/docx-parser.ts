@@ -1,5 +1,6 @@
 import { DomUtils, parseDocument } from "htmlparser2";
 import mammoth from "mammoth";
+import mammothPackage from "mammoth/package.json";
 
 import {
 	type DocumentIR,
@@ -115,7 +116,7 @@ export async function parseDocxDocument(
 			source_format: "docx",
 			parser: "mammoth",
 			backend: "typescript",
-			parser_version: "1.10.0",
+			parser_version: mammothPackage.version,
 			mode: "structured",
 			warnings: converted.messages.map((message) => message.message),
 			partial: converted.messages.some((message) => message.type === "warning"),
