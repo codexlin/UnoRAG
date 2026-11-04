@@ -17,6 +17,8 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { cleanupIsolationTopology } from "./isolation-cleanup.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "../..");
 // Reuse the product runtime dependency without a separate package root.
@@ -99,13 +101,18 @@ Env:
 `);
 }
 
-async function cleanup(client) {
-	// Cascade from organizations removes workspaces/users/memberships/credentials.
-	await client.query(
-		"DELETE FROM app.organizations WHERE id = ANY($1::uuid[])",
-		[[IDS.orgA, IDS.orgB]],
+async function cleanup(client, password) {
+	await cleanupIsolationTopology({
+		client,
+		organizationIds: [IDS.orgA, IDS.orgB],
+		owners: USERS.filter((user) => user.role === "owner"),
+		baseUrl: process.env.UNORAG_BASE_URL || "http://localhost:3000",
+		password,
+		timeoutMs: Number(process.env.UNORAG_PILOT_JOB_TIMEOUT_SEC || 300) * 1_000,
+	});
+	console.log(
+		"cleanup: product lifecycle completed; removed isolation topology",
 	);
-	console.log("cleanup: removed isolation orgs A/B and cascaded rows");
 }
 
 async function bootstrap(client, password) {
@@ -220,11 +227,11 @@ async function main() {
 
 	try {
 		if (doCleanup) {
-			await cleanup(client);
+			await cleanup(client, password);
 			if (existsSync(outPath)) {
 				writeFileSync(outPath, JSON.stringify({ cleaned: true }, null, 2));
 			}
-			process.exit(0);
+			return;
 		}
 		await bootstrap(client, password);
 		const manifest = {

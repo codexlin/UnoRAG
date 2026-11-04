@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-
+import { QdrantClient } from "@qdrant/js-client-rest";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
+
+import { cleanupIsolationTopology } from "../../scripts/acceptance/isolation-cleanup.mjs";
 
 import * as schema from "../../src/db/schema";
 import { OperationsService } from "../../src/server/observability/operations-service";
@@ -21,6 +26,109 @@ const databaseUrl = process.env.DOCUMENT_DELETE_TEST_DATABASE_URL?.trim();
 const skip = databaseUrl
 	? false
 	: "DOCUMENT_DELETE_TEST_DATABASE_URL is not configured";
+
+test("isolation teardown waits for real lifecycle cleanup before SQL cascade", {
+	skip:
+		skip ||
+		(!process.env.QDRANT_INGEST_E2E_URL &&
+			"QDRANT_INGEST_E2E_URL is not configured"),
+}, async () => {
+	const pool = new pg.Pool({ connectionString: databaseUrl, max: 3 });
+	const runtimePool = createWorkerPool(2);
+	const fixture = await seedFixture(pool, 1);
+	const root = await mkdtemp(path.join(os.tmpdir(), "unorag-cleanup-"));
+	const collection = `cleanup_${randomUUID().replaceAll("-", "")}`;
+	const qdrant = new QdrantClient({ url: process.env.QDRANT_INGEST_E2E_URL });
+	const client = await pool.connect();
+	try {
+		await qdrant.createCollection(collection, {
+			vectors: { size: 2, distance: "Cosine" },
+		});
+		const job = fixture.deletions[0];
+		const sourcePath = path.join(root, job.payload.storage_keys[0]);
+		await mkdir(path.dirname(sourcePath), { recursive: true });
+		await writeFile(sourcePath, "fixture source");
+		await qdrant.upsert(collection, {
+			wait: true,
+			points: [
+				{
+					id: randomUUID(),
+					vector: [1, 0],
+					payload: {
+						tenant_id: fixture.organizationId,
+						workspace_id: fixture.workspaceId,
+						library_id: fixture.ragLibraryId,
+						doc_id: job.payload.rag_document_id,
+						generation_id: fixture.generationIds[0],
+					},
+				},
+			],
+		});
+		const tx = new PostgresDocumentDeleteTransactions(runtimePool);
+		const external = new DocumentDeleteExternalOperations(
+			qdrant,
+			collection,
+			root,
+			runtimePool,
+		);
+		const previousJobId = randomUUID();
+		await pool.query(
+			`INSERT INTO app.jobs (id, organization_id, workspace_id, document_version_id,
+			 type, workflow_id, status, stage, idempotency_key, payload)
+			 SELECT $2::uuid, organization_id, workspace_id, document_version_id,
+			 type, $2::text, 'failed', 'cleanup', $2::text, payload FROM app.jobs WHERE id = $1`,
+			[job.jobId, previousJobId],
+		);
+		let requested = false;
+		const result = await cleanupIsolationTopology({
+			client,
+			organizationIds: [fixture.organizationId],
+			owners: [
+				{ workspace: fixture.workspaceId, email: "fixture-owner@example.test" },
+			],
+			baseUrl: "http://controlled-product-adapter.invalid",
+			password: "not-a-real-password",
+			timeoutMs: 1_000,
+			createSession: () => ({
+				async request(url: string, options?: { method?: string }) {
+					if (options?.method !== "DELETE") return {};
+					assert.equal(url, `/api/libraries/${fixture.ragLibraryId}`);
+					requested = true;
+					assert.equal(await tx.markRunning(job), "delete");
+					await external.deleteDocumentVectors(job);
+					assert.equal(
+						await external.deleteStorageKey(job, job.payload.storage_keys[0]),
+						true,
+					);
+					await tx.markCompleted(job, {
+						storageDeleted: 1,
+						generationsDeleted: 1,
+					});
+					return {};
+				},
+			}),
+		});
+		assert.equal(result.status, "passed");
+		assert.equal(requested, true);
+		await assert.rejects(access(sourcePath), { code: "ENOENT" });
+		assert.equal((await qdrant.count(collection, { exact: true })).count, 0);
+		assert.equal(
+			(
+				await pool.query("SELECT id FROM app.organizations WHERE id = $1", [
+					fixture.organizationId,
+				])
+			).rowCount,
+			0,
+		);
+	} finally {
+		client.release();
+		await qdrant.deleteCollection(collection);
+		await rm(root, { recursive: true, force: true });
+		await runtimePool.end();
+		await cleanupFixture(pool, fixture.organizationId);
+		await pool.end();
+	}
+});
 
 test("document delete serializes library finalization and preserves cleanup history", {
 	skip,

@@ -20,10 +20,14 @@
 所有验收脚本使用一致退出码：`0` 通过，`1` 失败，`2` 因依赖或配置缺失而
 阻塞。`2` 不能记为产品通过。
 
-当前 S1/S2 拓扑清理存在 [#177](https://github.com/codexlin/UnoRAG/issues/177)：末端只级联删除 PG
-fixture，不会先执行 COS/Qdrant 删除生命周期。该套件只能用于一次性隔离环境，不能指向客户或共享数据。
-修复前应显式设置 `UNORAG_ISOLATION_KEEP=1` 保留拓扑，先通过产品 API 删除测试知识库并等待清理终态，
-再执行拓扑清理；中止时也须检查遗留资源，不要为此扩大 COS Bucket listing/deletion 权限。
+S1/S2 使用固定的测试组织和 Workspace，只能用于一次性隔离环境，不能指向客户或共享数据。
+默认在成功、失败、阻塞或可捕获的中断退出时，通过产品 API 删除测试知识库，等待 PG 中的文档、任务和
+generation 清理终态，再级联移除拓扑。清理失败会保留拓扑并令最终结果 FAIL；报告的 `cleanup` 字段
+区分 `passed`、`failed`、`not_needed` 和显式保留的 `kept`，不能把 `kept` 当作清理通过。
+`UNORAG_ISOLATION_KEEP=1` 可保留现场；排障后使用相同连接与密码运行
+`node scripts/acceptance/bootstrap_isolation_topology.mjs --cleanup`，该入口同样先走产品删除流程。
+执行中的报告为 `RUNNING`；可捕获的 INT/TERM 中断最终记为 FAIL，退出码沿用 `130` / `143`。
+强制断电或 SIGKILL 无法触发 EXIT trap，恢复后仍须执行该命令；不要为清理扩大 COS Bucket 权限。
 
 ## 推荐顺序
 
