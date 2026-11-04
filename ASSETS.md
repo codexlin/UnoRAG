@@ -36,6 +36,13 @@ customer documents and are distributed under Apache-2.0.
 Generated evaluation reports under `testdata/ab/_e2e_out/` are local evidence,
 are ignored by Git, and are not release assets.
 
+## UI source attribution
+
+The state variants and scrollbar helper in `src/app/ui-variants.css` are adapted
+from the MIT-licensed `shadcn@4.23.0/dist/tailwind.css`. The full copyright and
+license are preserved in `NOTICE`, which is copied into every release image.
+This source code is separate from the visual/fixture hash inventory above.
+
 ## Change policy
 
 New or changed files in the governed paths must update the provenance manifest

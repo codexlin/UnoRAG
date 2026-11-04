@@ -1,9 +1,107 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import {
+	chmod,
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 async function source(path) {
 	return readFile(new URL(`../${path}`, import.meta.url), "utf8");
+}
+
+for (const scenario of [
+	{
+		name: "packaged license",
+		license: "LicenseRef-Custom",
+		text: "Fixture copyright and license text",
+		expected: "Fixture copyright and license text",
+	},
+	{
+		name: "canonical SPDX fallback",
+		license: "MIT",
+		expected: "Permission is hereby granted",
+	},
+	{
+		name: "unknown license without text",
+		license: "LicenseRef-Unknown",
+		failure: true,
+	},
+]) {
+	test(`notice generation preserves ${scenario.name} without an auxiliary dependency scanner`, async () => {
+		const directory = await mkdtemp(
+			path.join(os.tmpdir(), "unorag-notice-test-"),
+		);
+		try {
+			const bin = path.join(directory, "bin");
+			const pkg = path.join(directory, "package");
+			const output = path.join(directory, "notices.txt");
+			await mkdir(bin);
+			await mkdir(pkg);
+			if (scenario.text)
+				await writeFile(path.join(pkg, "LICENSE"), scenario.text);
+			const inventory = {
+				[scenario.license]: [
+					{
+						name: "fixture-package",
+						versions: ["1.0.0"],
+						paths: [pkg],
+						author: "Fixture",
+						homepage: "https://example.test",
+					},
+				],
+			};
+			await writeFile(
+				path.join(bin, "pnpm"),
+				`#!/bin/sh\nif [ "$*" != "licenses list --prod --json" ]; then exit 99; fi\nprintf '%s' "$FIXTURE_LICENSE_INVENTORY"\n`,
+			);
+			await chmod(path.join(bin, "pnpm"), 0o755);
+			const run = spawnSync(
+				process.execPath,
+				[
+					fileURLToPath(
+						new URL(
+							"../scripts/generate-third-party-notices.mjs",
+							import.meta.url,
+						),
+					),
+					output,
+				],
+				{
+					env: {
+						...process.env,
+						PATH: `${bin}:${process.env.PATH}`,
+						FIXTURE_LICENSE_INVENTORY: JSON.stringify(inventory),
+					},
+					encoding: "utf8",
+					timeout: 10_000,
+				},
+			);
+			if (scenario.failure) {
+				assert.notEqual(run.status, 0);
+				assert.match(
+					run.stderr,
+					/No distributable license text found for fixture-package@1.0.0/,
+				);
+			} else {
+				assert.equal(run.status, 0, run.stderr);
+				const bundle = await readFile(output, "utf8");
+				assert.ok(bundle.includes(scenario.expected));
+				assert.ok(
+					bundle.includes(`fixture-package@1.0.0 [${scenario.license}]`),
+				);
+			}
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
 }
 
 test("repository metadata consistently activates Apache-2.0", async () => {

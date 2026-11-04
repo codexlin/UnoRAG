@@ -119,6 +119,11 @@ testdata/           代表性真实文件与拒绝格式 fixture
 [ADR-0006](./adr/0006-private-product-monorepo.md)，当前开源产品边界见
 [ADR-0007](./adr/0007-fully-open-source-product-and-services.md)。
 
+UI 组件源码由仓库维护，不依赖 shadcn CLI 参与安装或构建。Base UI 状态变体与滚动条工具保存在
+`src/app/ui-variants.css`，来源及 MIT 声明见 `NOTICE`。新增组件时须审核所需样式，不为生成代码
+永久安装整套 CLI。第三方许可证仍按 pnpm 生产依赖清单、包内许可证及 SPDX 正文生成；无法确定的
+许可文本会阻断检查，不静默跳过。
+
 ## 必须保持的约束
 
 - PostgreSQL `app` schema 是唯一业务事实源。

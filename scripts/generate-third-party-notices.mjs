@@ -17,17 +17,7 @@ if (pnpmResult.status !== 0) {
 	);
 }
 
-const checkerResult = spawnSync(
-	"pnpm",
-	["exec", "license-checker-rseidelsohn", "--json", "--start", "."],
-	{ encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-);
-if (checkerResult.status !== 0) {
-	throw new Error(checkerResult.stderr || "license text discovery failed");
-}
-
 const pnpmInventory = JSON.parse(pnpmResult.stdout);
-const checkerInventory = JSON.parse(checkerResult.stdout);
 const groups = new Map();
 const productionPackages = [];
 
@@ -58,17 +48,7 @@ for (const metadata of productionPackages.sort((a, b) =>
 			path.join(packagePath, packagedLicense),
 			"utf8",
 		);
-	else if (
-		checkerInventory[nameVersion]?.licenseFile &&
-		/^(licen[sc]e|copying|notice)(\.|$)/i.test(
-			path.basename(checkerInventory[nameVersion].licenseFile),
-		)
-	) {
-		licenseText = await readFile(
-			checkerInventory[nameVersion].licenseFile,
-			"utf8",
-		);
-	} else if (spdxLicenses[license]?.licenseText) {
+	else if (spdxLicenses[license]?.licenseText) {
 		licenseText = [
 			"The package archive does not contain a standalone license file.",
 			`Declared SPDX license: ${license}`,
