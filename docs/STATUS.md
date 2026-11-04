@@ -16,13 +16,10 @@ UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部�
 企业内部治理，不代表公网共享多租户 SaaS。
 
 最新 `main` 已加入 Ask 检查点授权、历史来源再授权、流式尝试隔离、入库清单校验和依赖安全更新。
-`a71e14f` 的不可变候选已构建，但本轮三轮 Ask 未通过，完整隔离套件中止，结论为 **NO-GO**；正式实例
-仍为 `v0.2.3`。当前发布阻断和实测边界见
-[候选验收报告](./evidence/2026-11-04-a71e14f-candidate-acceptance.md)，不得把旧版验收当作本轮放行依据。
-
-针对本轮发现的三个阻断已补实现与回归：公共授权拒绝保留非重试语义；Judge 故障明确提示并计入失败
-阶段、运行记录与指标；多来源黄金集采用显式事实绑定辅助来源。代码修复不改变上述历史 NO-GO，
-仍须以新提交构建不可变候选，重跑完整隔离、真实文件与三轮稳定性门禁后才能放行。
+修复后的 `59b4f5f` 不可变候选已通过 7 份新鲜入库、三轮 123/123 Ask、29 项完整隔离、20 项浏览器，
+以及升级回滚、Provider 故障诊断和破坏性恢复，结论为 **RC GO，可进入受控试点**。正式实例仍为
+`v0.2.3`，未自动升级。具体结果、原始失败的永久链接及剩余边界见
+[当前候选验收报告](./evidence/2026-11-04-59b4f5f-candidate-acceptance.md)；旧候选的 NO-GO 未改写。
 
 ## 当前运行时
 
@@ -119,9 +116,9 @@ Secret Scanning 和 Push Protection 均已开启。
 
 ### P1：私有部署产品化
 
-先复验当前候选修复的 [公共拒绝映射](https://github.com/codexlin/UnoRAG/issues/174)、
-[Judge 故障语义与诊断](https://github.com/codexlin/UnoRAG/issues/173) 和
-[多来源黄金集契约](https://github.com/codexlin/UnoRAG/issues/172)，重新验收后再推进下列能力。
+当前候选的公共拒绝映射、Judge 故障语义与诊断、多来源黄金集契约已修复并重新验收。近期优先收口
+[#177 验收脚本清理](https://github.com/codexlin/UnoRAG/issues/177)、解析器版本标签与 Judge 诊断 detail 展示，保持质量和运维优先；
+下列产品化缺口仍未实现，不因此自动进入功能扩张。
 
 1. **OIDC / SSO**：已有 Provider 边界和 Session 类型，但没有可交付的 OIDC 实现。
 2. **Kubernetes 加固**：Helm 是 starter，尚未内置 NetworkPolicy、PDB、HPA 或 digest-native 镜像字段。
