@@ -42,6 +42,9 @@ test("ACL projection holds the document lock while updating every scoped generat
 	const events: string[] = [];
 	const pool = fakePool(events, job, acl);
 	const qdrant: QdrantIngestClient = {
+		async scroll() {
+			throw new Error("unexpected scroll");
+		},
 		async upsert() {
 			throw new Error("unexpected upsert");
 		},
@@ -84,6 +87,9 @@ test("superseded ACL projection never reaches Qdrant", async () => {
 		fakePool(events, job, newerAcl),
 		new QdrantIngestWriteStore(
 			{
+				async scroll() {
+					throw new Error("unexpected scroll");
+				},
 				async upsert() {
 					throw new Error("unexpected upsert");
 				},

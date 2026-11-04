@@ -502,6 +502,36 @@ test("activate atomically flips the canonical active pointer and queues the old 
 	assertTransactionCommitted(fake);
 });
 
+test("late older replacement cannot publish when a newer version is desired, even after target failure", async () => {
+	const latestVersionId = "10000000-0000-4000-8000-000000000099";
+	for (const documentStatus of ["processing", "ready", "failed"]) {
+		for (const operation of ["prepareActivation", "activate"] as const) {
+			const fake = new FakeSqlPool({
+				documentStatus,
+				desiredVersionId: latestVersionId,
+				activeVersionId: previousVersionId,
+				activeGenerationId: previousGenerationId,
+				versionStatus: "activating",
+				jobStatus: "running",
+			});
+			const port = transactions(fake);
+			await assert.rejects(
+				operation === "activate"
+					? port.activate(ingest, staged, visibility)
+					: port.prepareActivation(ingest, staged),
+				(error: unknown) =>
+					error instanceof WorkerTaskError &&
+					error.code === "document_ingest_version_superseded",
+			);
+			assert.equal(
+				callIndex(fake, /INSERT INTO app\.document_active_versions/),
+				-1,
+			);
+			assert.equal(fake.calls.at(-1)?.normalized, "ROLLBACK");
+		}
+	}
+});
+
 test("activate rolls back every pointer and status write when a CAS fails", async () => {
 	const fake = new FakeSqlPool({
 		versionStatus: "activating",

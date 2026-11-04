@@ -32,6 +32,22 @@ export type AclProjectionScope = Pick<
 };
 
 export interface QdrantIngestClient {
+	scroll(
+		collection: string,
+		input: {
+			filter: QdrantFilter;
+			limit: number;
+			offset?: string | number;
+			with_payload: string[];
+			with_vector: false;
+		},
+	): Promise<{
+		points: Array<{
+			id: string | number;
+			payload?: Record<string, unknown> | null;
+		}>;
+		next_page_offset?: string | number | Record<string, unknown> | null;
+	}>;
 	upsert(
 		collection: string,
 		input: {
@@ -85,6 +101,13 @@ export class QdrantIngestWriteStore {
 		}
 		const dimensions = input.vectors[0]?.length ?? 0;
 		if (dimensions === 0) throw new Error("embedding vectors are empty");
+		const pointIds = new Set(input.records.map((record) => record._point_id));
+		if (pointIds.size !== input.records.length) {
+			throw new Error("duplicate point IDs in document generation");
+		}
+		const manifestHash = createHash("sha256")
+			.update(JSON.stringify(input.records.map(canonicalRecord).sort()))
+			.digest("hex");
 
 		const points = input.records.map((record, index): QdrantPoint => {
 			const vector = input.vectors[index];
@@ -99,10 +122,17 @@ export class QdrantIngestWriteStore {
 			return {
 				id: record._point_id,
 				vector,
-				payload: storedPayload(record, input.scope),
+				payload: {
+					...storedPayload(record, input.scope),
+					ingest_manifest_hash: manifestHash,
+				},
 			};
 		});
 
+		// A retry may resume the same manifest, but must not mix parser outputs or
+		// overwrite a generation whose visibility has already advanced.
+		await input.beforeBatch?.();
+		await this.verifyManifest(input.scope, pointIds, manifestHash, false);
 		for (let offset = 0; offset < points.length; offset += this.batchSize) {
 			await input.beforeBatch?.();
 			const result = await this.client.upsert(this.collection, {
@@ -124,7 +154,56 @@ export class QdrantIngestWriteStore {
 				`Qdrant generation count mismatch: expected ${points.length}, received ${stored.count}`,
 			);
 		}
+		await this.verifyManifest(input.scope, pointIds, manifestHash, true);
 		return stored.count;
+	}
+
+	private async verifyManifest(
+		scope: IngestPointScope,
+		expectedIds: Set<string>,
+		manifestHash: string,
+		requireComplete: boolean,
+	): Promise<void> {
+		const seen = new Set<string>();
+		let offset: string | number | undefined;
+		do {
+			const page = await this.client.scroll(this.collection, {
+				filter: generationFilter(scope, undefined, false),
+				limit: this.batchSize,
+				...(offset === undefined ? {} : { offset }),
+				with_payload: [
+					"document_version_id",
+					"lifecycle_visibility",
+					"ingest_manifest_hash",
+				],
+				with_vector: false,
+			});
+			for (const point of page.points) {
+				const id = String(point.id);
+				if (
+					!expectedIds.has(id) ||
+					seen.has(id) ||
+					point.payload?.document_version_id !== scope.documentVersionId ||
+					point.payload?.lifecycle_visibility !== "staging" ||
+					point.payload?.ingest_manifest_hash !== manifestHash
+				) {
+					throw new Error("Qdrant generation record manifest mismatch");
+				}
+				seen.add(id);
+			}
+			const next = page.next_page_offset;
+			if (
+				next != null &&
+				typeof next !== "string" &&
+				typeof next !== "number"
+			) {
+				throw new Error("Qdrant returned an invalid scroll offset");
+			}
+			offset = next ?? undefined;
+		} while (offset !== undefined);
+		if (requireComplete && seen.size !== expectedIds.size) {
+			throw new Error("Qdrant generation record set is incomplete");
+		}
 	}
 
 	async setVisibility(
@@ -203,6 +282,18 @@ export class QdrantIngestWriteStore {
 		}
 		return updated.count;
 	}
+}
+
+function canonicalRecord(record: IndexWritePayload): string {
+	return JSON.stringify(record, (_key, value) =>
+		value && typeof value === "object" && !Array.isArray(value)
+			? Object.fromEntries(
+					Object.entries(value).sort(([left], [right]) =>
+						left < right ? -1 : left > right ? 1 : 0,
+					),
+				)
+			: value,
+	);
 }
 
 export function ingestAclFingerprint(acl: IngestAclSnapshot): string {

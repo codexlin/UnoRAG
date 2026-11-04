@@ -239,6 +239,53 @@ test("createDocumentVersion atomically supersedes queued work and queues a reind
 			new_job_status: "queued",
 			audit_count: 1,
 		});
+
+		// Separate callers may replace while processing; acceptance order, not
+		// request creation order or worker completion, owns the desired pointer.
+		const replacements = await Promise.all(
+			["A", "B"].map((name) =>
+				createDocumentVersion({
+					identity,
+					libraryId: ids.library,
+					documentId: ids.document,
+					requestId: `replace-${suffix}-${name}`,
+					source: {
+						kind: "upload",
+						storageKey: `documents/${ids.document}/${name}.txt`,
+						contentHash: "b".repeat(64),
+						sizeBytes: 10,
+						filename: `${name}.txt`,
+						contentType: "text/plain",
+						displayName: name,
+					},
+				}),
+			),
+		);
+		const [older, latest] = replacements.sort(
+			(left, right) => left.version - right.version,
+		);
+		assert.deepEqual(
+			replacements.map((item) => item.version),
+			[5, 6],
+		);
+		const accepted = await pool.query(
+			`SELECT document.desired_version_id::text, document.latest_job_id::text,
+				active.version_id::text AS active_version_id,
+				old_version.status AS older_status, old_job.status AS older_job_status
+			 FROM app.documents AS document
+			 JOIN app.document_active_versions AS active ON active.document_id = document.id
+			 JOIN app.document_versions AS old_version ON old_version.id = $2
+			 JOIN app.jobs AS old_job ON old_job.id = $3
+			 WHERE document.id = $1`,
+			[ids.document, older.versionId, older.jobId],
+		);
+		assert.deepEqual(accepted.rows[0], {
+			desired_version_id: latest.versionId,
+			latest_job_id: latest.jobId,
+			active_version_id: ids.activeVersion,
+			older_status: "superseded",
+			older_job_status: "cancelled",
+		});
 	} finally {
 		await pool.query("DELETE FROM app.organizations WHERE id = $1", [
 			ids.organization,

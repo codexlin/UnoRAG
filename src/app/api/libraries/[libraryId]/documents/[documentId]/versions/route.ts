@@ -155,7 +155,19 @@ export async function POST(request: Request, context: RouteContext) {
 	} catch {
 		return Response.json({ detail: "invalid multipart body" }, { status: 400 });
 	}
-	const upload = form.get("file");
+	const uploads = form.getAll("file");
+	if (
+		uploads.length !== 1 ||
+		[...form.entries()].some(
+			([key, value]) => key !== "file" && value instanceof File,
+		)
+	) {
+		return Response.json(
+			{ detail: "exactly one file is required" },
+			{ status: 400 },
+		);
+	}
+	const upload = uploads[0];
 	if (!(upload instanceof File)) {
 		return Response.json({ detail: "file is required" }, { status: 400 });
 	}

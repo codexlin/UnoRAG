@@ -92,6 +92,73 @@ test("real Qdrant preserves scoped staging and atomic replacement visibility", {
 	}
 });
 
+test("real Qdrant retries never mix same-count parser manifests or rewrite active points", {
+	skip: qdrantUrl ? false : "QDRANT_INGEST_E2E_URL is not configured",
+}, async () => {
+	assert.ok(qdrantUrl);
+	const client = new QdrantClient({ url: qdrantUrl });
+	const collection = `unorag_retry_${randomUUID().replaceAll("-", "")}`;
+	await client.createCollection(collection, {
+		vectors: { size: 2, distance: "Cosine" },
+	});
+	try {
+		const scope = createScope();
+		const records = [record(scope, 0), record(scope, 1)];
+		const vectors = [
+			[1, 0],
+			[0, 1],
+		];
+		const store = new QdrantIngestWriteStore(client, collection, {
+			batchSize: 1,
+		});
+		let checks = 0;
+		await assert.rejects(
+			store.stage({
+				records,
+				vectors,
+				scope,
+				beforeBatch: async () => {
+					if (++checks === 3) throw new Error("interrupted");
+				},
+			}),
+			/interrupted/,
+		);
+		for (const changed of [
+			[records[0], record(scope, 2)],
+			[
+				records[0],
+				{ ...records[1], body: "changed boundary", text: "changed boundary" },
+			],
+		]) {
+			await assert.rejects(
+				store.stage({ records: changed, vectors, scope }),
+				/manifest mismatch/,
+			);
+		}
+		assert.equal((await client.count(collection, { exact: true })).count, 1);
+		assert.equal(await store.stage({ records, vectors, scope }), 2);
+		assert.equal(await store.stage({ records, vectors, scope }), 2);
+		await store.setVisibility(scope, "active");
+		const before = await client.scroll(collection, {
+			with_payload: true,
+			with_vector: true,
+		});
+		await assert.rejects(
+			store.stage({ records, vectors, scope }),
+			/manifest mismatch/,
+		);
+		assert.deepEqual(
+			await client.scroll(collection, {
+				with_payload: true,
+				with_vector: true,
+			}),
+			before,
+		);
+	} finally {
+		await client.deleteCollection(collection);
+	}
+});
+
 test("real local TXT parsing and chunking stages scoped points in Qdrant", {
 	skip: qdrantUrl ? false : "QDRANT_INGEST_E2E_URL is not configured",
 }, async () => {
