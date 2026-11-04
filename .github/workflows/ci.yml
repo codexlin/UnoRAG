@@ -170,6 +170,13 @@ jobs:
           push: false
           load: true
           tags: unorag-web-worker:ci
+      - name: Verify native local PDF and OCR parsing without network access
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,size=128m \
+            -v "$PWD/testdata:/fixtures:ro" \
+            -v "$PWD/scripts/acceptance/local-parser-smoke.ts:/repo/scripts/acceptance/local-parser-smoke.ts:ro" \
+            unorag-web-worker:ci \
+            ./node_modules/.bin/tsx scripts/acceptance/local-parser-smoke.ts /fixtures
       - name: Verify application images run as the product user
         shell: bash
         run: |

@@ -295,7 +295,7 @@ export async function readProviderHealth(
 				label: "LiteParse",
 				kind: "parser",
 				ready: true,
-				recovery: "重新构建运行镜像并验证 LiteParse WASM 资源。",
+				recovery: "检查 LiteParse 本地运行库、OCR 语言码和预装语言数据。",
 			}),
 		],
 	};

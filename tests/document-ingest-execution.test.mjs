@@ -62,7 +62,7 @@ test("Compose renders the complete TypeScript parser worker contract", () => {
 		"ingest-local,ingest-auto,ingest-mineru,lifecycle",
 	);
 	assert.equal(worker.environment.MINERU_PROVIDER, "self_hosted");
-	assert.equal(worker.environment.LITEPARSE_OCR_LANGUAGE, "ch");
+	assert.equal(worker.environment.LITEPARSE_OCR_LANGUAGE, "chi_sim");
 	assert.equal("UNORAG_DBOS_TEXT_INGEST" in worker.environment, false);
 	assert.deepEqual(worker.command, [
 		"./node_modules/.bin/tsx",

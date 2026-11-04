@@ -118,10 +118,14 @@ CMD ["node", "scripts/inspect-lifecycle.mjs"]
 # DBOS executor and control loop. Keep the complete worker module together so
 # dynamic production-port imports resolve identically in both processes.
 FROM runtime-deps AS worker
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends tesseract-ocr-eng tesseract-ocr-chi-sim \
+	&& rm -rf /var/lib/apt/lists/*
 COPY --chown=unorag:unorag src ./src
 COPY --chown=unorag:unorag tsconfig.json ./
 WORKDIR /repo
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+	TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 USER unorag
 CMD ["./node_modules/.bin/tsx", "src/worker/entry.ts"]
 

@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
+import { access, stat } from "node:fs/promises";
+import { join } from "node:path";
+import liteParsePackage from "@llamaindex/liteparse/package.json";
 
 import type {
 	DocumentAnalysis,
@@ -66,6 +70,7 @@ export type LiteParseOutput = {
 export type LiteParseExecutionOptions = {
 	ocrEnabled: boolean;
 	ocrLanguage?: string;
+	tessdataPath?: string;
 	targetPages?: string;
 	signal: AbortSignal;
 };
@@ -89,6 +94,7 @@ export type LiteParseProviderOptions = {
 	maxConcurrency?: number;
 	ocrEnabled?: boolean;
 	ocrLanguage?: string;
+	tessdataPath?: string;
 	minOcrConfidence?: number;
 	sourceLoader?: ParseSourceLoader;
 };
@@ -137,19 +143,22 @@ export class LiteParseProvider implements DurableParserProvider {
 	private readonly semaphore: Semaphore;
 	private readonly ocrEnabled: boolean;
 	private readonly ocrLanguage: string | undefined;
+	private readonly tessdataPath: string | undefined;
 	private readonly minOcrConfidence: number;
 	private readonly sourceLoader?: ParseSourceLoader;
 	private readonly tasks = new Map<string, LocalTask>();
 	private readonly idempotencyTasks = new Map<string, string>();
 
 	constructor(options: LiteParseProviderOptions = {}) {
-		this.version = options.version?.trim() || "2.10.1";
+		this.version = options.version?.trim() || liteParsePackage.version;
 		this.fetchImpl = options.fetch ?? fetch;
 		this.executor = options.executor ?? new NativeLiteParseExecutor();
 		this.timeoutMs = positiveInteger(options.timeoutMs, 120_000);
 		this.semaphore = new Semaphore(positiveInteger(options.maxConcurrency, 2));
 		this.ocrEnabled = options.ocrEnabled ?? false;
-		this.ocrLanguage = options.ocrLanguage?.trim() || undefined;
+		this.ocrLanguage = normalizeOcrLanguage(options.ocrLanguage);
+		this.tessdataPath =
+			options.tessdataPath?.trim() || process.env.TESSDATA_PREFIX?.trim();
 		this.minOcrConfidence = confidence(options.minOcrConfidence, 0.6);
 		this.sourceLoader = options.sourceLoader;
 		this.capabilities = {
@@ -357,6 +366,7 @@ export class LiteParseProvider implements DurableParserProvider {
 		return {
 			ocrEnabled: this.ocrEnabled,
 			ocrLanguage: this.ocrLanguage,
+			tessdataPath: this.tessdataPath,
 			targetPages,
 			signal,
 		};
@@ -574,10 +584,12 @@ class NativeLiteParseExecutor implements LiteParseExecutor {
 		options: LiteParseExecutionOptions,
 	): Promise<LiteParseOutput> {
 		throwIfAborted(options.signal);
+		await requireLocalOcrData(options);
 		const Parser = await loadLiteParse();
 		const parser = new Parser({
 			ocrEnabled: options.ocrEnabled,
 			ocrLanguage: options.ocrLanguage,
+			tessdataPath: options.tessdataPath,
 			includeComplexity: true,
 			outputFormat: "json",
 			targetPages: options.targetPages,
@@ -603,10 +615,42 @@ async function loadLiteParse(): Promise<LiteParseConstructor> {
 	} catch (error) {
 		throw providerError(
 			"provider_dependency_missing",
-			`LiteParse 2.10.1 is unavailable: ${errorMessage(error)}`,
+			`LiteParse ${liteParsePackage.version} is unavailable: ${errorMessage(error)}`,
 			false,
 		);
 	}
+}
+
+function normalizeOcrLanguage(value: string | undefined): string {
+	const language = value?.trim().toLowerCase() || "eng";
+	if (language === "ch" || language === "zh") return "chi_sim";
+	if (language === "en") return "eng";
+	if (!/^[a-z][a-z0-9_]{0,63}$/.test(language)) {
+		throw new Error("LiteParse OCR requires a single Tesseract language code");
+	}
+	return language;
+}
+
+async function requireLocalOcrData(options: LiteParseExecutionOptions) {
+	if (!options.ocrEnabled) return;
+	if (options.tessdataPath) {
+		const path = join(
+			options.tessdataPath,
+			`${options.ocrLanguage || "eng"}.traineddata`,
+		);
+		try {
+			await access(path, constants.R_OK);
+			const info = await stat(path);
+			if (info.isFile() && info.size > 0) return;
+		} catch {
+			// Do not fall back to the library's implicit runtime model download.
+		}
+	}
+	throw providerError(
+		"provider_dependency_missing",
+		`Local OCR data for ${options.ocrLanguage || "eng"} is unavailable; configure TESSDATA_PREFIX with preinstalled traineddata`,
+		false,
+	);
 }
 
 class Semaphore {
