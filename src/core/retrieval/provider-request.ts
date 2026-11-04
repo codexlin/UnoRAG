@@ -30,6 +30,34 @@ export class RetrievalProviderError extends Error {
 }
 
 const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const MAX_RETRY_DELAY_MS = 5_000;
+
+function retryDelayMs(backoffMs: number, response?: Response): number {
+	const capped = Number.isNaN(backoffMs)
+		? 0
+		: Math.max(0, Math.min(backoffMs, MAX_RETRY_DELAY_MS));
+	const jittered = Math.ceil(capped * (0.5 + Math.random() * 0.5));
+	if (!response || (response.status !== 429 && response.status !== 503)) {
+		return jittered;
+	}
+	const value = response.headers.get("retry-after")?.trim();
+	if (!value) return jittered;
+	// The obsolete asctime HTTP-date has no timezone, but still means GMT.
+	const date = /^\w{3} \w{3} /.test(value) ? `${value} GMT` : value;
+	// Guard Date.parse's permissive handling of malformed numeric values.
+	const delay = /^\d+$/.test(value)
+		? Number(value) * 1_000
+		: /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*[ ,]/.test(value)
+			? Date.parse(date) - Date.now()
+			: Number.NaN;
+	const retryAfter = Number.isNaN(delay) ? 0 : Math.max(0, delay);
+	return Math.max(jittered, retryAfter);
+}
+
+function discardResponse(response: Response): void {
+	// Cleanup is best effort: a stalled cancellation must not hold the deadline.
+	void response.body?.cancel().catch(() => undefined);
+}
 
 function abortError(signal: AbortSignal): unknown {
 	return (
@@ -71,6 +99,7 @@ export async function fetchRetrievalProvider(input: {
 		);
 	}
 	const deadline = new AbortController();
+	const deadlineAt = Date.now() + input.timeoutMs;
 	const timeout = setTimeout(
 		() =>
 			deadline.abort(
@@ -87,12 +116,20 @@ export async function fetchRetrievalProvider(input: {
 			if (signal.aborted) throw abortError(signal);
 			try {
 				const response = await input.request(signal);
+				if (signal.aborted) {
+					discardResponse(response);
+					throw abortError(signal);
+				}
 				if (response.ok) return response;
 				const retryable = RETRYABLE_HTTP_STATUSES.has(response.status);
+				discardResponse(response);
 				if (retryable && attempt < backoff.length) {
-					await response.body?.cancel().catch(() => undefined);
-					await wait(backoff[attempt] ?? 0, signal);
-					continue;
+					const delay = retryDelayMs(backoff[attempt] ?? 0, response);
+					// Never shorten the upstream minimum to fit our cap or deadline.
+					if (delay <= MAX_RETRY_DELAY_MS && delay < deadlineAt - Date.now()) {
+						await wait(delay, signal);
+						continue;
+					}
 				}
 				throw new RetrievalProviderError({
 					provider: input.provider,
@@ -113,7 +150,7 @@ export async function fetchRetrievalProvider(input: {
 				}
 				if (error instanceof TypeError) {
 					if (attempt < backoff.length) {
-						await wait(backoff[attempt] ?? 0, signal);
+						await wait(retryDelayMs(backoff[attempt] ?? 0), signal);
 						continue;
 					}
 					throw new RetrievalProviderError({
