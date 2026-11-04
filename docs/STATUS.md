@@ -20,6 +20,10 @@ UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部�
 仍为 `v0.2.3`。当前发布阻断和实测边界见
 [候选验收报告](./evidence/2026-11-04-a71e14f-candidate-acceptance.md)，不得把旧版验收当作本轮放行依据。
 
+针对本轮发现的三个阻断已补实现与回归：公共授权拒绝保留非重试语义；Judge 故障明确提示并计入失败
+阶段、运行记录与指标；多来源黄金集采用显式事实绑定辅助来源。代码修复不改变上述历史 NO-GO，
+仍须以新提交构建不可变候选，重跑完整隔离、真实文件与三轮稳定性门禁后才能放行。
+
 ## 当前运行时
 
 ```text
@@ -115,7 +119,7 @@ Secret Scanning 和 Push Protection 均已开启。
 
 ### P1：私有部署产品化
 
-先处理当前候选的 [公共拒绝映射](https://github.com/codexlin/UnoRAG/issues/174)、
+先复验当前候选修复的 [公共拒绝映射](https://github.com/codexlin/UnoRAG/issues/174)、
 [Judge 故障语义与诊断](https://github.com/codexlin/UnoRAG/issues/173) 和
 [多来源黄金集契约](https://github.com/codexlin/UnoRAG/issues/172)，重新验收后再推进下列能力。
 

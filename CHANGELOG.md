@@ -7,6 +7,11 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ### Fixed
 
+- Preserve sanitized, nonretryable Public API authorization denials instead of reporting retryable 502 errors.
+- Distinguish Judge outages from insufficient evidence in JSON/SSE messages, stage diagnostics, traces,
+  metrics and the Ask run ledger; retain bounded retry metadata and fail fast on nonretryable Provider errors.
+- Allow explicitly declared, fact-bound corroborating sources in golden cases while retaining primary-source,
+  fact-coverage and citation gates; operational refusals no longer pass negative-case evaluation.
 - Revalidate Ask identity and evidence at model/output checkpoints and authorize provenance-backed
   archived and temporary history before reuse, preserving transitive source dependencies.
 - Isolate browser generation attempts from stale stream callbacks and batch token updates without
