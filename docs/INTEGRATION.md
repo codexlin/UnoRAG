@@ -42,7 +42,8 @@ Customer backend
 `question` 仅作为 `query` 的废弃别名，二者同时出现会返回 400。
 
 调用方应把成功字段集合和错误码看作当前 major 的封闭集合，校验 `api_version`，并把
-`refused=true` 与空 citations 当作正常业务结果。Retrieve/Ask 不支持 `Idempotency-Key` 或分页；
+`refused=true` 与空 citations 作为未生成答案处理，同时检查 `refuse_reason` 区分资料不足和服务故障。
+Retrieve/Ask 不支持 `Idempotency-Key` 或分页；
 Retrieve 只使用 `top_k`。公共 v1 不暴露内部 SSE、`retrieval_debug`、完整 chunk 或 generation 信息。
 
 ## Service Key
@@ -133,8 +134,9 @@ curl -sS -X POST "$UNORAG_URL/api/v1/ask" \
 }
 ```
 
-集成方必须把 `refused=true` 和空 citations 作为正常业务结果处理，不能用本地模型补写一个
-无来源答案。
+集成方不得在 `refused=true` 时用本地模型补写无来源答案。`refuse_reason=judge_unavailable`
+表示证据校验服务失败，不代表知识库缺少资料；为兼容现有客户端仍使用 HTTP 200 的拒答结构，
+应提示稍后重试或联系管理员，而不是让用户补充文档。服务端运行记录与指标将其计为故障。
 
 ## Citation
 

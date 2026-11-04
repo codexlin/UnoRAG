@@ -57,7 +57,7 @@ pnpm eval:live
 与 Langfuse 地址必须使用 HTTPS；只有 `localhost`、`127.0.0.1` 和 `::1` 允许 HTTP。Runner 会：
 
 1. 检查健康并登录；
-2. 创建临时知识库并上传 7 份代表性真实文件；
+2. 创建临时知识库并上传主文件与显式辅助文件的去重并集（当前 7 份真实文件）；
 3. 等待每个 DBOS 入库任务终态；
 4. 执行 36 条正例和 5 条拒答用例；
 5. 写入 `testdata/ab/_e2e_out/ab_live_*.json|md`；
@@ -75,10 +75,35 @@ pnpm eval:live
 | Citation precision | 100% |
 | 拒答准确率 | 100% |
 
-每条正例必须只引用目标文档，且该目标文档必须提供黄金集声明的内容模态；混入任意其它文档的 Citation
-会直接让该题失败，平均分不能抵消单题无 Citation、跨文档 Citation 或类型错误。黄金集的 `text` 模态兼容运行时 `text`、`chunk`、`section`，`table` 兼容
+默认每条正例只能引用目标文档。个别用例可显式声明 `supporting_sources`，但不能全局放行其它文档：
+
+```json
+"supporting_sources": [
+  {"file": "mixed-charts.pdf", "key_facts": ["375,000,000"], "expect_record_type": "text"}
+]
+```
+
+每个辅助来源必须指定非空的 `key_facts` 子集和记录类型。每个用例最多 8 个辅助来源、64 个事实，每个事实
+最多 512 字符，文件名最多 255 字符。主、辅文件只能是 fixture basename，不能包含路径、
+盘符或控制字符；重复文件（包括把主文件列为辅助）、重复事实、未知字段或不属于用例的事实均拒绝。
+启用多来源时主文件也必须声明记录类型。没有新增字段的旧用例继续使用原规则；case ID 仍只由主文件与
+问题计算，新增辅助声明不改变历史 ID。
+
+多来源用例仍必须引用原主文件，答案仍必须覆盖全部 `key_facts`。每条主文件引用需匹配主记录类型并在正文
+中支持至少一个事实；每条辅助引用需匹配自己的类型，并在该条正文中支持它声明的全部事实。辅助引用只能为
+声明的事实贡献覆盖，不能凭其它正文替代未授权事实；所有有效引用的正文合并后也必须覆盖完整事实集。
+缺少正文、无关引用、错误预算（如仅出现 3.9 亿元）或显式否定导致事实不匹配、类型错误或主文件缺失都会失败。辅助来源是可选引用，
+不是强制必须引用，也不是同名文件的无条件白名单。已知用例 `0a75cfac32601f6b` 的主文件仍为
+`report-narrative-5k.md`；`mixed-charts.pdf` 仅获准支持投资 `375,000,000`，不能支持 `二十四个月`。
+
+平均分不能抵消单题缺事实、无 Citation、无效跨文档 Citation 或类型错误。黄金集的 `text` 模态兼容运行时 `text`、`chunk`、`section`，`table` 兼容
 `table`、`table_summary`，`image` 由规范化的 `figure` Citation 支撑（兼容历史 `image` 值）。原子事实覆盖是带数字、单位、边界和
 显式否定保护的确定性词法门禁，不宣称替代语义正确性或人工复核。
+引用正文核验也不是语义蕴含判断：同一引用同时提及正确值和矛盾候选值、其它上下文中的相同数字，或复杂
+否定表达，仍可能通过词法匹配。它不提供普适冲突检测，不能据此宣称所有引用均语义正确。
+
+拒答用例中的 `judge_unavailable` 是操作故障，不是正确的资料不足拒答；即使 HTTP 200 且 `refused=true`
+也按失败计算。稳定性门禁继续把 `judge_mode=model_error` 记为 Judge 故障，不改变 API 兼容映射。
 
 黄金集还通过 `quality_dimensions` 把复杂能力从总体分数中拆开。目前发布必须同时满足：
 
@@ -98,8 +123,11 @@ source node 关系匹配，不会发起隐藏检索，也不会跨文档扩张 C
 越界 ID 时 Ask fail closed，不生成无依据答案。
 
 报告中的 `evidence candidates / selected` 分别表示进入 Judge 的候选数与最终 Citation 数；
-`evidence selection rate` 是二者之比。`citation precision` 衡量最终 Citation 中属于目标文档的比例，
-`cross-document citation rate` 衡量正例中是否混入其它文档。这些指标用于识别“答案正确但证据过宽”，
+`evidence selection rate` 是二者之比。`citation precision` 衡量主来源与经核验辅助来源占最终 Citation 的比例。
+`crossDocumentCitationRate` 保留所有非主文件引用（包括合法辅助引用）的真实比例；
+`supportingCitationRate` 单列合法辅助比例，`invalidCrossDocumentCitationRate` 单列无效跨文档比例，
+`invalidCitationRate` 还包含多来源用例中不合格的主来源引用。专项质量门禁仍要求无效跨文档比例为零，
+而不把合法辅助引用误作错误；所有通过率、事实覆盖、召回和 precision 阈值不变。这些指标用于识别“答案正确但证据过宽”，
 同时类型门禁保证降噪不能丢掉表格或图表来源。
 
 门禁失败时命令退出码为 `1`；配置、清理或显式发布失败为 `2`。报告同时保留 MRR、跨文档 Citation 比例及
@@ -111,7 +139,9 @@ P50/P95/最大延迟，当前不把延迟固定成跨硬件统一阈值。
 Provider scorecard 中供排查，但只有可确认的数据丢失才阻断发布。使用 `UNORAG_AB_LIBRARY_ID` 复用
 已有知识库时，Provider 门禁明确标记为 `skipped_reused_library`；它只用于 Ask 调试，不能冒充解析验收。
 
-本地 JSON 报告包含问题、回答和参考事实，应视为敏感测试产物。Runner 将输出目录设为 `0700`、文件
+Runner 内部评测 DTO 保留引用正文（优先 `body`，再 `text`、`snippet`）；登录态产品接口
+`/api/rag/v1/ask` 已提供这些字段，无需修改映射或 Judge。Service Key 的公共 `/api/v1/ask` 仍不暴露完整
+引用正文或内部 debug。本地 JSON 报告包含问题、回答、参考事实及引用正文，应视为敏感测试产物。Runner 将输出目录设为 `0700`、文件
 设为 `0600`；报告目录已被 Git 忽略，操作者应按客户数据保留策略定期删除。
 
 ## 可选 Langfuse 分数发布
@@ -140,6 +170,9 @@ Publisher 使用官方 `@langfuse/client`，按每个评测 Session 写入：
 参考答案、关键事实或 Citation 正文。Langfuse 发布失败不会改写报告中的本地门禁结论，但显式要求发布
 时命令会返回退出码 `2`，避免 CI 把未完成的发布动作记为成功。
 当前没有自动同步 Langfuse Dataset；未来若增加，必须使用独立显式命令并确认测试数据允许出域。
+
+多来源契约修复不追溯改写历史失败。`a71e14f` 候选验收仍为 NO-GO；需在新鲜、版本绑定入库上重新执行
+三轮稳定性门禁，不能以单元测试或重评分旧报告代替发布验收。
 
 ## Release Candidate 稳定性门禁
 

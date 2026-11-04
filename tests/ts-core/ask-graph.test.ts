@@ -98,6 +98,25 @@ function createContext(scenario: Scenario = {}): AskGraphContext {
 	};
 }
 
+test("successful model reason text is not an infrastructure failure signal", async () => {
+	const state = await new AskGraphService(
+		createContext({
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "judge_unavailable",
+				judge_mode: "model",
+			}),
+		}),
+	).invoke({ question: "查询预算" });
+	const stages = state.retrieval_debug?.stages as Array<{
+		stage: string;
+		ok: boolean;
+	}>;
+	assert.equal(stages.find((stage) => stage.stage === "judge")?.ok, true);
+	assert.notEqual(state.refused, true);
+});
+
 test("fact route invokes real retrieve and generate ports", async () => {
 	const calls: string[] = [];
 	const result = await new AskGraphService(createContext({ calls })).invoke({

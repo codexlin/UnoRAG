@@ -1,5 +1,6 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import {
+	recordActiveSpanFailure,
 	setActiveSpanAttributes,
 	withActiveSpan,
 } from "@/lib/observability/tracing";
@@ -88,6 +89,15 @@ function timedNode(
 				const startedAt = performance.now();
 				try {
 					const update = await node(state);
+					const judgeFailed =
+						graphNodeName === "judge" &&
+						update.judgement?.judge_mode === "model_error" &&
+						update.judgement?.reason === "judge_unavailable";
+					if (judgeFailed) {
+						const error = new Error("judge_unavailable");
+						error.name = "JudgeUnavailableError";
+						recordActiveSpanFailure(error);
+					}
 					setActiveSpanAttributes({
 						...(typeof update.query_type === "string"
 							? {
@@ -107,7 +117,7 @@ function timedNode(
 							update.retrieval_debug ?? state.retrieval_debug,
 							stageName,
 							startedAt,
-							true,
+							!judgeFailed,
 						),
 					};
 				} catch (error) {

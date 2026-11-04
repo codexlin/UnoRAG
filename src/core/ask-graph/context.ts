@@ -70,6 +70,9 @@ export function defaultClarifyAnswer(_state: AskState): string {
 }
 
 export function defaultRefuseAnswer(_state: AskState, reason: string): string {
+	if (reason === "judge_unavailable") {
+		return "证据校验服务暂不可用，本次未生成回答。请稍后重试或联系管理员。";
+	}
 	if (reason === "weak_match") {
 		return "当前知识库中存在相关内容，但证据不足以可靠回答。";
 	}

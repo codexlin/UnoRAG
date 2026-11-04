@@ -53,6 +53,22 @@ mk_compose exec -T web node -e \
 - Qdrant readiness、集合容量和检索错误；
 - 文档卷、备份卷和宿主机磁盘水位。
 
+### Judge 故障排查
+
+`refuse_reason=judge_unavailable` 是服务故障，不是资料不足。用户看到“证据校验服务暂不可用”；
+JSON 与 SSE 为兼容仍返回拒答结构和空引用，但 Ask run 为 `failed`、Judge 阶段 `ok=false`，
+OTel 节点为 ERROR，原生与 Public API 请求指标为 `server_error`，不计入正常拒答质量统计。
+按 Request ID 查看运行记录的 Judge 阶段 detail 或内部 `retrieval_debug`：
+
+- `judge_error_category` 区分 `timeout`、`authentication`、`rate_limit`、`provider_unavailable`、
+  `invalid_output`、`provider_error`；状态码只保留数值，不记录上游原文、密钥或提示词。
+- `judge_attempts` 是应用层结构化调用次数，不是 SDK 内部 HTTP 重试次数；401/403 等不可重试错误立即停止。
+- `judge_duration_ms` 为本次调用实际总耗时；`judge_timeout_ms` 为每次执行上限，
+  `judge_max_attempts` 为应用层尝试上限，`judge_budget_ms` 为两者乘积，不包含并发排队预算，
+  不是整个 HTTP 请求的截止时间。外部取消和请求截止仍优先终止执行。
+- 先按错误类别检查 Provider 鉴权、配额、可达性、模型输出契约，再结合阶段耗时与重试诊断；
+  不要仅凭总耗时推断为网络故障，也不要关闭 Judge 或放宽拒答门槛来恢复“成功率”。
+
 `check-dbos-drain` 同时读取 `app.jobs` 与 DBOS `workflow_status`。前者覆盖尚未派发和正在执行业务
 状态，后者覆盖 `PENDING`、`ENQUEUED`、`DELAYED` durable workflow；任一侧非零都不能切换 DBOS
 application version。`upgrade.sh` 会自动执行该门禁，日常命令只用于发布前诊断。

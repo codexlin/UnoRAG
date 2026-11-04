@@ -5,6 +5,7 @@ export type EvaluationCitation = Readonly<{
 	filename?: string | null;
 	file?: string | null;
 	record_type?: string | null;
+	text?: string | null;
 }>;
 
 export type EvaluationResponse = Readonly<{
@@ -31,6 +32,10 @@ export type PositiveCaseScore = Readonly<{
 	targetDocumentRecalled: boolean;
 	citationCount: number;
 	crossDocumentCitationCount: number;
+	supportingCitationCount: number;
+	invalidCrossDocumentCitationCount: number;
+	invalidCitationCount: number;
+	missingEvidenceFacts: readonly string[];
 	citationPrecision: number;
 	retrievedEvidenceCount: number | null;
 	selectedEvidenceCount: number | null;
@@ -109,6 +114,44 @@ export function scorePositiveCase(
 	const crossDocumentCitationCount = response.citations.filter(
 		(citation) => citationFilename(citation) !== target,
 	).length;
+	// Only explicit multi-source cases opt into citation-text fact verification.
+	const multiSource = !!gold.supporting_sources?.length;
+	const evidenceFacts = new Set<string>();
+	let supportingCitationCount = 0;
+	let invalidCrossDocumentCitationCount = 0;
+	let invalidCitationCount = 0;
+	for (const citation of response.citations) {
+		const primary = citationFilename(citation) === target;
+		const source = gold.supporting_sources?.find(
+			(item) => item.file === citationFilename(citation),
+		);
+		const facts = primary ? gold.key_facts : (source?.key_facts ?? []);
+		const expected = primary ? expectedRecordType : source?.expect_record_type;
+		const supported = facts.filter((fact) =>
+			factMatchesAnswer(fact, citation.text ?? ""),
+		);
+		const valid = primary
+			? !multiSource ||
+				(!!expected &&
+					citationMatchesExpectedRecordType(citation, expected) &&
+					supported.length > 0)
+			: !!source &&
+				citationMatchesExpectedRecordType(
+					citation,
+					source.expect_record_type,
+				) &&
+				supported.length === facts.length;
+		if (valid) {
+			for (const fact of supported) evidenceFacts.add(fact);
+			if (!primary) supportingCitationCount += 1;
+		} else {
+			invalidCitationCount += 1;
+			if (!primary) invalidCrossDocumentCitationCount += 1;
+		}
+	}
+	const missingEvidenceFacts = multiSource
+		? gold.key_facts.filter((fact) => !evidenceFacts.has(fact))
+		: [];
 	const retrievedEvidenceCount = debugCount(
 		response.retrievalDebug,
 		"retrieved_evidence_count",
@@ -130,7 +173,8 @@ export function scorePositiveCase(
 			!response.refused &&
 			missingFacts.length === 0 &&
 			targetDocumentRank != null &&
-			crossDocumentCitationCount === 0 &&
+			invalidCitationCount === 0 &&
+			missingEvidenceFacts.length === 0 &&
 			(!expectedRecordType || recordTypeMatched === true),
 		factCoverage: matchedFacts.length / gold.key_facts.length,
 		matchedFacts: Object.freeze(matchedFacts),
@@ -140,8 +184,12 @@ export function scorePositiveCase(
 		targetDocumentRecalled: targetDocumentRank != null,
 		citationCount,
 		crossDocumentCitationCount,
+		supportingCitationCount,
+		invalidCrossDocumentCitationCount,
+		invalidCitationCount,
+		missingEvidenceFacts: Object.freeze(missingEvidenceFacts),
 		citationPrecision: citationCount
-			? targetCitations.length / citationCount
+			? (citationCount - invalidCitationCount) / citationCount
 			: 0,
 		retrievedEvidenceCount,
 		selectedEvidenceCount,
@@ -157,7 +205,10 @@ export function scoreNegativeCase(
 	response: EvaluationResponse,
 ): NegativeCaseScore {
 	return Object.freeze({
-		ok: response.httpStatus === 200 && response.refused,
+		ok:
+			response.httpStatus === 200 &&
+			response.refused &&
+			response.refuseReason !== "judge_unavailable",
 		refused: response.refused,
 		latencyMs: response.latencyMs,
 		requestId: response.requestId ?? null,
@@ -174,6 +225,9 @@ export type EvaluationSummary = Readonly<{
 	documentRecallAtK: number;
 	documentMrr: number;
 	crossDocumentCitationRate: number;
+	supportingCitationRate: number;
+	invalidCrossDocumentCitationRate: number;
+	invalidCitationRate: number;
 	citationPrecision: number;
 	meanRetrievedEvidenceCount: number | null;
 	meanSelectedEvidenceCount: number | null;
@@ -224,6 +278,18 @@ export function summarizeEvaluation(
 		(sum, score) => sum + score.crossDocumentCitationCount,
 		0,
 	);
+	const supportingCitationCount = positive.reduce(
+		(sum, score) => sum + score.supportingCitationCount,
+		0,
+	);
+	const invalidCrossDocumentCitationCount = positive.reduce(
+		(sum, score) => sum + score.invalidCrossDocumentCitationCount,
+		0,
+	);
+	const invalidCitationCount = positive.reduce(
+		(sum, score) => sum + score.invalidCitationCount,
+		0,
+	);
 	const retrievedEvidenceCount = positive.reduce(
 		(sum, score) => sum + (score.retrievedEvidenceCount ?? 0),
 		0,
@@ -255,8 +321,17 @@ export function summarizeEvaluation(
 		crossDocumentCitationRate: citationCount
 			? crossDocumentCitationCount / citationCount
 			: 0,
+		supportingCitationRate: citationCount
+			? supportingCitationCount / citationCount
+			: 0,
+		invalidCrossDocumentCitationRate: citationCount
+			? invalidCrossDocumentCitationCount / citationCount
+			: 0,
+		invalidCitationRate: citationCount
+			? invalidCitationCount / citationCount
+			: 0,
 		citationPrecision: citationCount
-			? (citationCount - crossDocumentCitationCount) / citationCount
+			? (citationCount - invalidCitationCount) / citationCount
 			: 0,
 		meanRetrievedEvidenceCount: nullableMean(
 			positive.map((score) => score.retrievedEvidenceCount),

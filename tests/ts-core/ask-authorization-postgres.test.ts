@@ -44,6 +44,7 @@ const modules = Promise.all([
 	import("../../src/lib/server/integration-rag"),
 	import("../../src/lib/server/service-keys"),
 	import("../../src/server/http/ask/native-handler"),
+	import("../../src/app/api/v1/ask/route"),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolveFilename;
 });
@@ -774,6 +775,93 @@ test("real Redis truncation preserves transitive dependencies and rejects malfor
 		await inspector.close();
 		if (previousRedisUrl === undefined) delete process.env.REDIS_URL;
 		else process.env.REDIS_URL = previousRedisUrl;
+	}
+});
+
+test("public Ask denies foreign-workspace and missing libraries with an unrestricted service key", {
+	skip: databaseUrl ? false : "INTEGRATION_DATABASE_URL is required",
+}, async () => {
+	assert.ok(databaseUrl);
+	const [, , , , , serviceKeys, , publicAskRoute] = await modules;
+	const previousDatabaseUrl = process.env.DATABASE_URL;
+	const previousRateLimit = process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
+	process.env.DATABASE_URL = databaseUrl;
+	process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE = "0";
+	try {
+		await withFixture(async (fixture) => {
+			try {
+				const foreignWorkspaceId = randomUUID();
+				const foreignLibraryId = `foreign-${randomUUID()}`;
+				await fixture.db.insert(schema.workspaces).values({
+					id: foreignWorkspaceId,
+					organizationId: fixture.identity.tenantId,
+					slug: "foreign-workspace",
+					name: "Foreign workspace secret",
+				});
+				await fixture.db.insert(schema.libraries).values({
+					organizationId: fixture.identity.tenantId,
+					workspaceId: foreignWorkspaceId,
+					ragLibraryId: foreignLibraryId,
+					name: "Foreign library secret",
+					status: "ready",
+				});
+				const { rawKey, prefix } = serviceKeys.generateServiceKeyRaw();
+				await fixture.db.insert(schema.workspaceServiceKeys).values({
+					organizationId: fixture.identity.tenantId,
+					workspaceId: fixture.identity.workspaceId,
+					name: "Workspace-wide Ask key",
+					prefix,
+					keyHash: serviceKeys.hashServiceKey(rawKey),
+					scopes: ["ask"],
+					libraryIds: null,
+				});
+				const key = await serviceKeys.authenticateServiceKey(rawKey);
+				assert.ok(key);
+				assert.equal(key.libraryIds, null);
+				assert.equal(
+					serviceKeys.serviceKeyAllowsLibrary(key, foreignLibraryId),
+					true,
+				);
+
+				for (const libraryId of [foreignLibraryId, `missing-${randomUUID()}`]) {
+					const response = await publicAskRoute.POST(
+						new Request("http://local/api/v1/ask", {
+							method: "POST",
+							headers: {
+								"content-type": "application/json",
+								authorization: `Bearer ${rawKey}`,
+							},
+							body: JSON.stringify({
+								question: "Show the foreign content",
+								library_id: libraryId,
+							}),
+						}),
+					);
+					assert.equal(response.status, 403);
+					const requestId = response.headers.get("x-request-id");
+					assert.ok(requestId);
+					assert.equal(response.headers.get("x-unorag-api-version"), "1");
+					assert.equal(response.headers.get("cache-control"), "no-store");
+					assert.deepEqual(await response.json(), {
+						error: {
+							code: "library_access_denied",
+							message: "library_id not allowed for this service key",
+							request_id: requestId,
+							retryable: false,
+						},
+					});
+				}
+			} finally {
+				await closeGlobalDatabasePool();
+			}
+		});
+	} finally {
+		if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+		else process.env.DATABASE_URL = previousDatabaseUrl;
+		if (previousRateLimit === undefined)
+			delete process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE;
+		else
+			process.env.UNORAG_PUBLIC_API_RATE_LIMIT_PER_MINUTE = previousRateLimit;
 	}
 });
 

@@ -353,7 +353,8 @@ export async function forwardIntegrationRag(input: {
 		const durationMs = Date.now() - started;
 		let outcome: WebMetricOutcome;
 		if (input.request.signal.aborted) outcome = "cancelled";
-		else if (opts.status >= 500) outcome = "server_error";
+		else if (opts.status >= 500 || opts.code === "judge_unavailable")
+			outcome = "server_error";
 		else if (opts.status >= 400) outcome = "client_error";
 		else if (publicTarget === "retrieve" && opts.citationCount === 0)
 			outcome = "empty";
@@ -756,6 +757,10 @@ export async function forwardIntegrationRag(input: {
 	finishObservability({
 		status: nativeResponse.status,
 		libraryId,
+		code:
+			projected.refuse_reason === "judge_unavailable"
+				? "judge_unavailable"
+				: null,
 		refused: projected.refused === true,
 		citationCount: Array.isArray(projected.citations)
 			? projected.citations.length

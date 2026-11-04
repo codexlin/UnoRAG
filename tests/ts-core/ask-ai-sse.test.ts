@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { LanguageModel } from "ai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { APICallError, type LanguageModel, RetryError } from "ai";
 
 import {
 	AiConcurrencyGate,
@@ -11,6 +12,7 @@ import {
 	ANSWER_TEMPERATURE,
 	AnswerStreamAdapter,
 	aiConfigFromEnv,
+	getStructuredFailureMetadata,
 	judgeAiConfigFromEnv,
 	StructuredOutputAdapter,
 	StructuredOutputTimeoutError,
@@ -24,6 +26,84 @@ import {
 } from "../../src/server/http/ask/legacy-sse";
 
 const injectedModel = {} as LanguageModel;
+
+test("default SDK executor classifies malformed JSON and schema failures as invalid output", async () => {
+	for (const content of ["private malformed text", '{"sufficient":true}']) {
+		const provider = createOpenAICompatible({
+			name: "test",
+			apiKey: "test",
+			baseURL: "https://provider.invalid/v1",
+			fetch: async () =>
+				Response.json({
+					id: "test",
+					object: "chat.completion",
+					created: 0,
+					model: "judge",
+					choices: [
+						{
+							index: 0,
+							message: { role: "assistant", content },
+							finish_reason: "stop",
+						},
+					],
+					usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+				}),
+		});
+		const adapter = new StructuredOutputAdapter(
+			provider.chatModel("judge"),
+			undefined,
+			{ maxAttempts: 1, timeoutMs: 1000 },
+		);
+		await assert.rejects(
+			adapter.judge({ question: "question", citations: [], attempts: 1 }),
+			(error) => {
+				const metadata = getStructuredFailureMetadata(error);
+				assert.equal(metadata?.category, "invalid_output");
+				assert.equal(metadata?.attempts, 1);
+				assert.doesNotMatch(JSON.stringify(metadata), /private|sufficient/);
+				return true;
+			},
+		);
+	}
+});
+
+test("structured failure diagnostics are bounded and do not leak provider data", async () => {
+	const cause = new APICallError({
+		message: "private provider body and sk-secret",
+		url: "https://private.invalid",
+		requestBodyValues: { secret: "sk-secret" },
+		statusCode: 401,
+		responseBody: "private document content",
+		isRetryable: false,
+	});
+	const error = new RetryError({
+		message: "private",
+		reason: "errorNotRetryable",
+		errors: [cause],
+	});
+	let calls = 0;
+	const adapter = new StructuredOutputAdapter(
+		injectedModel,
+		async () => {
+			calls += 1;
+			throw error;
+		},
+		{ maxAttempts: 2, timeoutMs: 100 },
+	);
+	await assert.rejects(
+		adapter.judge({ question: "private question", citations: [], attempts: 1 }),
+		(caught) => caught === error,
+	);
+	assert.equal(calls, 1);
+	const metadata = getStructuredFailureMetadata(error);
+	assert.equal(metadata?.category, "authentication");
+	assert.equal(metadata?.statusCode, 401);
+	assert.equal(metadata?.retryable, false);
+	assert.equal(metadata?.attempts, 1);
+	assert.equal(metadata?.maxAttempts, 2);
+	assert.equal(metadata?.budgetMs, 200);
+	assert.doesNotMatch(JSON.stringify(metadata), /private|sk-secret/);
+});
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
 	const values: T[] = [];

@@ -360,6 +360,10 @@ function citationsFrom(value: unknown): EvaluationCitation[] {
 			filename: stringValue(citation.filename),
 			file: stringValue(citation.file),
 			record_type: stringValue(citation.record_type),
+			text:
+				stringValue(citation.body) ??
+				stringValue(citation.text) ??
+				stringValue(citation.snippet),
 		};
 	});
 }
@@ -513,6 +517,9 @@ function markdownReport(report: JsonObject): string {
 		`- document Recall@K / MRR: **${Number(summary.documentRecallAtK ?? 0).toFixed(3)} / ${Number(summary.documentMrr ?? 0).toFixed(3)}**`,
 		`- citation precision: **${formatPercent(Number(summary.citationPrecision ?? 0))}**`,
 		`- cross-document citation rate: **${formatPercent(Number(summary.crossDocumentCitationRate ?? 0))}**`,
+		`- legitimate supporting citation rate: **${formatPercent(Number(summary.supportingCitationRate ?? 0))}**`,
+		`- invalid cross-document citation rate: **${formatPercent(Number(summary.invalidCrossDocumentCitationRate ?? 0))}**`,
+		`- invalid citation rate: **${formatPercent(Number(summary.invalidCitationRate ?? 0))}**`,
 		`- evidence candidates / selected (mean): **${summary.meanRetrievedEvidenceCount == null ? "n/a" : Number(summary.meanRetrievedEvidenceCount).toFixed(2)} / ${summary.meanSelectedEvidenceCount == null ? "n/a" : Number(summary.meanSelectedEvidenceCount).toFixed(2)}**`,
 		`- evidence selection rate: **${summary.evidenceSelectionRate == null ? "n/a" : formatPercent(Number(summary.evidenceSelectionRate))}**`,
 		`- refusal accuracy: **${summary.negativePassed}/${summary.negativeCases}**`,
@@ -685,12 +692,24 @@ export async function cleanupEvaluationLibrary(
 	});
 }
 
+export function goldenFixtureFiles(golds: readonly GoldenCase[]): string[] {
+	return [
+		...new Set(
+			golds.flatMap((gold) => [
+				gold.file,
+				...(gold.supporting_sources ?? []).map((source) => source.file),
+			]),
+		),
+	].sort();
+}
+
 export async function runLiveEvaluation(options: RunnerOptions): Promise<number> {
 	const [golds, negativeGolds] = await Promise.all([
 		loadGoldenJsonl(resolve(AB_DIR, "golds.jsonl")),
 		loadNegativeGoldenJsonl(resolve(AB_DIR, "negative-golds.jsonl")),
 	]);
-	for (const filename of new Set(golds.map((item) => item.file))) {
+	const filenames = goldenFixtureFiles(golds);
+	for (const filename of filenames) {
 		await readFile(resolve(AB_DIR, filename));
 	}
 	const runId = `ab-live-${compactTimestamp()}-${randomUUID().slice(0, 8)}`;
@@ -731,7 +750,6 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 			{ jobId: string; documentId: string | null }
 		>();
 		const uploadFailures = new Map<string, JobResult>();
-		const filenames = [...new Set(golds.map((item) => item.file))].sort();
 		let jobs: Map<string, JobResult>;
 		if (ownsLibrary) {
 			for (const filename of filenames) {

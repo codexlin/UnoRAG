@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
-
+import type { LanguageModel } from "ai";
+import { StructuredOutputAdapter } from "../../src/core/ai";
+import type { AskGraphContext, AskState } from "../../src/core/ask-graph";
 import type { InternalCitation } from "../../src/core/retrieval";
+import { NativeAskPolicySchema } from "../../src/server/http/ask/policy";
 
 type ResolveFilename = (
 	request: string,
@@ -180,6 +183,52 @@ test("judge evidence projection is bounded and excludes raw table rows", async (
 	assert.equal(projected[0]?.text.length, 2_401);
 	assert.equal("rows" in (projected[0] ?? {}), false);
 	assert.equal("tenant_id" in (projected[0] ?? {}), false);
+});
+
+test("model reason text cannot impersonate a server-assigned Judge outage", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	for (const action of ["generate", "refuse"] as const) {
+		const structured = new StructuredOutputAdapter(
+			{} as LanguageModel,
+			async () => ({
+				sufficient: action === "generate",
+				action,
+				reason: "judge_unavailable",
+				evidence_ids: ["hit"],
+			}),
+		);
+		const runtime = new NativeAskRuntime(
+			{} as never,
+			"library",
+			undefined,
+			NativeAskPolicySchema.parse({}),
+			{
+				structured,
+				answer: {} as never,
+				retrieval: {} as never,
+			},
+		);
+		const ports = (
+			runtime as unknown as { context: () => AskGraphContext }
+		).context();
+		const judgement = await ports.judge.judge({
+			question: "预算是多少？",
+			citations: [
+				citation({
+					id: "hit",
+					tableId: "budget",
+					device: "服务器",
+					amount: "120000",
+				}),
+			],
+		} as unknown as AskState);
+		assert.equal(judgement.judge_mode, "model");
+		assert.equal(judgement.action, action);
+		assert.equal(
+			judgement.reason,
+			action === "generate" ? "evidence_sufficient" : "insufficient_evidence",
+		);
+	}
 });
 
 test("successful table execution always prefers its deterministic answer", async () => {

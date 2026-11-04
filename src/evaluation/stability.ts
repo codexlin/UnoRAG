@@ -61,7 +61,17 @@ export function classifyEvaluationFailure(
 	if (kind === "negative")
 		return response.refused === true ? "score" : "refusal";
 	if (score.targetDocumentRecalled === false) return "retrieval";
-	if (Number(score.crossDocumentCitationCount ?? 0) > 0) return "citation";
+	if (
+		Number(
+			score.invalidCitationCount ?? score.crossDocumentCitationCount ?? 0,
+		) > 0
+	)
+		return "citation";
+	if (
+		Array.isArray(score.missingEvidenceFacts) &&
+		score.missingEvidenceFacts.length > 0
+	)
+		return "citation";
 	if (score.recordTypeMatched === false) return "citation";
 	if (Number(score.factCoverage ?? 0) < 1) {
 		return stageNames(debug).includes("table_execute")

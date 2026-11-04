@@ -13,11 +13,16 @@ import { resolve } from "node:path";
 import test from "node:test";
 import {
 	cleanupEvaluationLibrary,
+	goldenFixtureFiles,
 	resolveRunnerOptions,
 	runLiveEvaluation,
 	validateServiceUrl,
 } from "../../scripts/run-ab-live-e2e";
-import { loadGoldenJsonl, loadNegativeGoldenJsonl } from "../../src/evaluation";
+import {
+	loadGoldenJsonl,
+	loadNegativeGoldenJsonl,
+	parseGoldenCase,
+} from "../../src/evaluation";
 
 const ENV_KEYS = [
 	"UNORAG_ADMIN_EMAIL",
@@ -33,6 +38,24 @@ const ENV_KEYS = [
 	"UNORAG_EVAL_RELEASE",
 	"UNORAG_EVAL_IMAGE_DIGEST",
 ] as const;
+
+test("upload manifest includes supporting-only fixtures exactly once", () => {
+	const gold = parseGoldenCase({
+		file: "primary.md",
+		mode: "fact",
+		question: "q",
+		answer: "42",
+		key_facts: ["42"],
+		expect_record_type: "text",
+		supporting_sources: [
+			{ file: "auxiliary.pdf", key_facts: ["42"], expect_record_type: "text" },
+		],
+	});
+	assert.deepEqual(goldenFixtureFiles([gold, gold]), [
+		"auxiliary.pdf",
+		"primary.md",
+	]);
+});
 
 function withEnvironment(
 	values: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>,
@@ -235,7 +258,18 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 						stages: [{ stage: "retrieve", duration_ms: 3.5, ok: true }],
 					},
 					citations: [
-						{ filename: gold.file, record_type: gold.expect_record_type },
+						{
+							filename: gold.file,
+							record_type: gold.expect_record_type,
+							text: gold.answer,
+						},
+						...(gold.supporting_sources ?? []).map((source) => ({
+							filename: source.file,
+							record_type: source.expect_record_type,
+							body: "项目总投资3.75亿元。",
+							text: "错误的预算为1元。",
+							snippet: "无关片段",
+						})),
 					],
 				});
 				return;
@@ -319,7 +353,15 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 				prompts: Record<string, { version: string; digest: string }>;
 			};
 			positive_cases: Array<{
-				response: { retrievalDebug?: Record<string, unknown> | null };
+				gold: { id: string };
+				response: {
+					retrievalDebug?: Record<string, unknown> | null;
+					citations: Array<{ text: string | null }>;
+				};
+				score: {
+					supportingCitationCount: number;
+					invalidCrossDocumentCitationCount: number;
+				};
 			}>;
 			quality_scorecard: Array<{ dimension: string; passRate: number }>;
 			provider_scorecard: {
@@ -328,6 +370,15 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 			};
 		};
 		assert.equal(report.release_gates.ok, true);
+		const multiSource = report.positive_cases.find(
+			(row) => row.gold.id === "0a75cfac32601f6b",
+		);
+		assert.equal(
+			multiSource?.response.citations[1]?.text,
+			"项目总投资3.75亿元。",
+		);
+		assert.equal(multiSource?.score.supportingCitationCount, 1);
+		assert.equal(multiSource?.score.invalidCrossDocumentCitationCount, 0);
 		assert.match(report.build_fingerprint.git_commit, /^[0-9a-f]{40}$/u);
 		assert.equal(typeof report.build_fingerprint.git_dirty, "boolean");
 		assert.equal(report.build_fingerprint.runtime_build_ref, "unorag-web:test");
