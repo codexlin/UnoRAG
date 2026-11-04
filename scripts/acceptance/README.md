@@ -20,6 +20,11 @@
 所有验收脚本使用一致退出码：`0` 通过，`1` 失败，`2` 因依赖或配置缺失而
 阻塞。`2` 不能记为产品通过。
 
+当前 S1/S2 拓扑清理存在 [#177](https://github.com/codexlin/UnoRAG/issues/177)：末端只级联删除 PG
+fixture，不会先执行 COS/Qdrant 删除生命周期。该套件只能用于一次性隔离环境，不能指向客户或共享数据。
+修复前应显式设置 `UNORAG_ISOLATION_KEEP=1` 保留拓扑，先通过产品 API 删除测试知识库并等待清理终态，
+再执行拓扑清理；中止时也须检查遗留资源，不要为此扩大 COS Bucket listing/deletion 权限。
+
 ## 推荐顺序
 
 ```bash

@@ -4,7 +4,7 @@
 
 | 报告 | 证明范围 |
 |---|---|
-| [a71e14f 候选发布验收](./2026-11-04-a71e14f-candidate-acceptance.md) | NO-GO：真实文件、三轮 Ask、隔离中止与待修问题；不代表正式实例已升级 |
+| [59b4f5f 候选发布验收](./2026-11-04-59b4f5f-candidate-acceptance.md) | RC GO：新鲜入库、三轮 Ask、完整隔离、浏览器、故障诊断与恢复；正式实例未升级，前序 NO-GO 保留 Git 永久链接 |
 | [v0.2.3 Release Confidence 发布验收](./2026-09-25-v0.2.3-release-confidence.md) | 四镜像供应链、隔离 RC 的候选升级/旧版回滚/候选再升级、Provider 故障、破坏性恢复、香港原位升级、产品 smoke 及桌面/移动浏览器复核 |
 | [试点反馈模板](./PILOT-FEEDBACK-TEMPLATE.md) | 当前候选版本试点的场景结论、证据引用、已知限制与 Go / No-Go 签字格式；模板本身不是通过证据 |
 
