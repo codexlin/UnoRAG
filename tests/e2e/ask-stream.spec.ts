@@ -377,6 +377,8 @@ test("long answer text, links and inline code fit during streaming and after com
 		],
 	]);
 	await submit(page, "Rendering fixture", 0);
+	await page.mouse.move(0, 0);
+	await expect(page.getByRole("tooltip")).toBeHidden();
 	await release(page, 0, 2);
 	const article = page.getByRole("article");
 	const code = article.locator("p code");
@@ -404,11 +406,45 @@ test("long answer text, links and inline code fit during streaming and after com
 				"every text fragment must remain inside the answer, not merely be clipped",
 			).toBe(true);
 		}
-		expect(
-			await page.evaluate(
-				() => document.documentElement.scrollWidth <= window.innerWidth + 1,
-			),
-		).toBe(true);
+		const layout = await page.evaluate(() => ({
+			width: document.documentElement.scrollWidth,
+			viewport: window.innerWidth,
+			asides: Array.from(document.querySelectorAll("aside")).map((element) => ({
+				width: element.getBoundingClientRect().width,
+				overflowX: getComputedStyle(element).overflowX,
+				contain: getComputedStyle(element).contain,
+			})),
+			overflowing: Array.from(document.querySelectorAll("body *"))
+				.filter(
+					(element) =>
+						!element.closest('aside[aria-hidden="true"]') &&
+						element.getBoundingClientRect().right > window.innerWidth + 1,
+				)
+				.map((element) => ({
+					tag: element.tagName,
+					class: element.getAttribute("class"),
+					right: element.getBoundingClientRect().right,
+				}))
+				.slice(0, 15),
+		}));
+		if (layout.width > layout.viewport + 1) {
+			await testInfo.attach("answer-overflow-layout", {
+				body: JSON.stringify(layout, null, 2),
+				contentType: "application/json",
+			});
+		}
+		await expect
+			.poll(
+				() =>
+					page.evaluate(
+						() => document.documentElement.scrollWidth <= window.innerWidth + 1,
+					),
+				{
+					message:
+						"the page must fit after the source-panel tooltip finishes closing",
+				},
+			)
+			.toBe(true);
 	}
 
 	await expectContentFits();
