@@ -7,6 +7,7 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { PROMPT_KEYS, PROMPT_REGISTRY } from "../src/core/ai/prompt-registry";
+import { exportCapturedLiveReport } from "./evaluation/export-live";
 import {
 	buildProviderScorecard,
 	evaluateProviderGates,
@@ -53,6 +54,7 @@ export type RunnerOptions = Readonly<{
 	release: string;
 	reuseLibraryId?: string;
 	onLibraryReady?: (libraryId: string) => void;
+	ragasExport?: { runId: string; captureDirectory: string };
 }>;
 
 type JobResult = Readonly<{
@@ -162,6 +164,7 @@ export async function resolveRunnerOptions(
 	const known = new Set([
 		"--keep-library",
 		"--publish-langfuse-scores",
+		"--export-ragas",
 		"--help",
 	]);
 	for (const arg of normalizedArgs) {
@@ -169,13 +172,17 @@ export async function resolveRunnerOptions(
 	}
 	if (normalizedArgs.includes("--help")) {
 		throw new Error(
-			"usage: pnpm eval:live [--keep-library] [--publish-langfuse-scores]",
+			"usage: pnpm eval:live [--keep-library] [--publish-langfuse-scores] [--export-ragas]",
 		);
 	}
 	const email = process.env.UNORAG_ADMIN_EMAIL?.trim() ?? "";
 	const password = await readPassword();
 	if (!email || !password) {
 		throw new Error("UNORAG_ADMIN_EMAIL and password are required");
+	}
+	const runId = process.env.UNORAG_EVAL_CAPTURE_RUN_ID ?? "";
+	if (normalizedArgs.includes("--export-ragas") && !/^[a-zA-Z0-9_.:-]{1,64}$/.test(runId)) {
+		throw new Error("--export-ragas requires UNORAG_EVAL_CAPTURE_RUN_ID matching the opted-in server");
 	}
 	return Object.freeze({
 		baseUrl: validateServiceUrl(
@@ -201,6 +208,9 @@ export async function resolveRunnerOptions(
 		cleanupTimeoutMs:
 			positiveInteger(process.env.UNORAG_AB_CLEANUP_TIMEOUT_SEC, 120) * 1_000,
 		release: currentRelease(),
+		...(normalizedArgs.includes("--export-ragas") ? {
+			ragasExport: { runId, captureDirectory: resolve(process.env.UNORAG_EVAL_CAPTURE_INPUT_DIR ?? resolve(ROOT, ".unorag/evaluation")) },
+		} : {}),
 		...(process.env.UNORAG_AB_LIBRARY_ID?.trim()
 			? { reuseLibraryId: process.env.UNORAG_AB_LIBRARY_ID.trim() }
 			: {}),
@@ -357,6 +367,7 @@ function citationsFrom(value: unknown): EvaluationCitation[] {
 	return value.map((item) => {
 		const citation = asObject(item);
 		return {
+			index: typeof citation.index === "number" ? citation.index : undefined,
 			filename: stringValue(citation.filename),
 			file: stringValue(citation.file),
 			record_type: stringValue(citation.record_type),
@@ -704,6 +715,9 @@ export function goldenFixtureFiles(golds: readonly GoldenCase[]): string[] {
 }
 
 export async function runLiveEvaluation(options: RunnerOptions): Promise<number> {
+	if (options.ragasExport && !/^[a-zA-Z0-9_.:-]{1,64}$/.test(options.ragasExport.runId)) {
+		throw new Error("Ragas export run ID must be 1..64 safe characters");
+	}
 	const [golds, negativeGolds] = await Promise.all([
 		loadGoldenJsonl(resolve(AB_DIR, "golds.jsonl")),
 		loadNegativeGoldenJsonl(resolve(AB_DIR, "negative-golds.jsonl")),
@@ -712,7 +726,10 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 	for (const filename of filenames) {
 		await readFile(resolve(AB_DIR, filename));
 	}
-	const runId = `ab-live-${compactTimestamp()}-${randomUUID().slice(0, 8)}`;
+	const runId = options.ragasExport?.runId ?? `ab-live-${compactTimestamp()}-${randomUUID().slice(0, 8)}`;
+	if ([...golds, ...negativeGolds].some((gold) => `unorag-eval-${runId}-${gold.id}`.length > 256)) {
+		throw new Error("evaluation session ID exceeds Ask contract limit");
+	}
 	const client = new EvaluationClient(options.baseUrl);
 	process.stdout.write(`== health ${options.baseUrl}\n`);
 	const health = await client.json("GET", "/api/rag/health");
@@ -904,6 +921,14 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 			negative_cases: negativeRows,
 		};
 		const paths = await writeReport(report);
+		if (options.ragasExport) {
+			try {
+				await exportCapturedLiveReport(report, options.ragasExport.captureDirectory, ROOT);
+				process.stdout.write("== private Ragas input exported; no semantic judge called\n");
+			} catch {
+				throw new Error("Ragas export failed: matching full pre-Judge captures required; deterministic report retained");
+			}
+		}
 		process.stdout.write(`== report ${paths.markdownPath}\n`);
 		process.stdout.write(`== release gate ${releaseGates.ok ? "PASS" : "FAIL"}\n`);
 		resultCode = !releaseGates.ok

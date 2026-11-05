@@ -167,6 +167,59 @@ test("structured router fallback remains deterministic and conservative", async 
 	});
 });
 
+test("fact table lookup upgrades through the real graph and bypasses model arithmetic", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const source = {
+		...citation({
+			id: "row-hit",
+			tableId: "catalog",
+			device: "服务器主机",
+			amount: "120000",
+		}),
+		score: 0.0328,
+		used_hybrid: true,
+		used_rerank: false,
+		dense_score: 0.82,
+		headers: ["设备名称", "品牌/型号", "规格参数", "单价（元）"],
+		rows: [["服务器主机", "Acme/X-42", "64GB", "120000"]],
+	};
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{ structured: {} as never, answer: {} as never, retrieval: {} as never },
+	);
+	const calls: boolean[] = [];
+	Object.defineProperty(runtime, "retrieve", {
+		value: async (_state: AskState, input: { tableOnly: boolean }) => {
+			calls.push(input.tableOnly);
+			return {
+				citations: [
+					input.tableOnly
+						? source
+						: { ...source, record_type: "chunk", headers: [], rows: [] },
+				],
+				debug: {},
+			};
+		},
+	});
+	const state = await runtime.invoke({
+		question: "服务器主机Acme X42的单价及规格参数是什么？",
+		session_id: "lookup",
+		history: [],
+	});
+	assert.equal(state.query_type, "fact");
+	assert.equal(state.upgrade_reason, "grounded_table_lookup");
+	assert.equal(state.table_execution?.status, "success");
+	assert.deepEqual(calls, [false, true]);
+	let answer = "";
+	for await (const token of runtime.streamAnswer(state)) answer += token;
+	assert.match(answer, /120000/);
+	assert.match(answer, /64GB/);
+	assert.doesNotMatch(answer, /平均/);
+});
+
 test("judge evidence projection is bounded and excludes raw table rows", async () => {
 	const { projectJudgeEvidence } = await runtimeModule;
 	const source = citation({
@@ -183,6 +236,114 @@ test("judge evidence projection is bounded and excludes raw table rows", async (
 	assert.equal(projected[0]?.text.length, 2_401);
 	assert.equal("rows" in (projected[0] ?? {}), false);
 	assert.equal("tenant_id" in (projected[0] ?? {}), false);
+});
+
+test("semantic adjudication never compares RRF ranks with relevance thresholds", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const base = citation({
+		id: "base",
+		tableId: "catalog",
+		device: "主机",
+		amount: "200",
+	});
+	const hits = [
+		{
+			...base,
+			id: "single-hybrid",
+			score: 0.0328,
+			dense_score: 0.82,
+			used_hybrid: true,
+		},
+		{
+			...base,
+			id: "weak-dense",
+			score: 0.0328,
+			dense_score: 0.2,
+			used_hybrid: true,
+		},
+		{
+			...base,
+			id: "lexical-only",
+			score: 0.9,
+			dense_score: null,
+			used_hybrid: true,
+		},
+		{
+			...base,
+			id: "weak-rerank",
+			score: 0.2,
+			dense_score: 0.9,
+			used_hybrid: true,
+			used_rerank: true,
+		},
+		{
+			...base,
+			id: "good-rerank",
+			score: 0.8,
+			dense_score: 0.2,
+			used_hybrid: true,
+			used_rerank: true,
+		},
+		{ ...base, id: "dense", score: 0.8 },
+	];
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{ structured: {} as never, answer: {} as never, retrieval: {} as never },
+	);
+	const result = (
+		runtime as unknown as {
+			adjudicate: (result: {
+				citations: InternalCitation[];
+				debug: object;
+			}) => { citations: InternalCitation[] };
+		}
+	).adjudicate({ citations: hits, debug: {} });
+	assert.deepEqual(
+		result.citations.map(({ id }) => id),
+		["single-hybrid", "good-rerank", "dense"],
+	);
+});
+
+test("a table identity probe without a grounded lookup preserves fact evidence and retry budget", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const source = citation({
+		id: "projection",
+		tableId: "catalog",
+		device: "服务器",
+		amount: "120000",
+	});
+	const projected = {
+		...source,
+		record_type: "chunk" as const,
+		rows: [],
+		headers: [],
+	};
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{ structured: {} as never, answer: {} as never, retrieval: {} as never },
+	);
+	Object.defineProperty(runtime, "retrieve", {
+		value: async (_state: AskState, input: { tableOnly: boolean }) => ({
+			citations: [input.tableOnly ? source : projected],
+			debug: {},
+		}),
+	});
+	const { ports } = (
+		runtime as unknown as { context: () => AskGraphContext }
+	).context();
+	const result = await ports?.retrieve?.({
+		question: "报价有效期从哪天开始？",
+		retrieval_attempts: 0,
+	} as AskState);
+	assert.deepEqual(result?.citations, [projected]);
+	assert.equal(result?.upgrade, undefined);
+	assert.equal(result?.retrieval_attempts, 1);
 });
 
 test("model reason text cannot impersonate a server-assigned Judge outage", async () => {

@@ -93,7 +93,7 @@ export function MarkdownAnswer({
 							target="_blank"
 							rel="noreferrer"
 						>
-							{wrapText(children)}
+							{children}
 						</a>
 					),
 					blockquote: ({ children }) => (
@@ -159,12 +159,22 @@ function injectCitations(
 		if (typeof child === "string") {
 			return splitCitationText(child, byIndex, onCite, index);
 		}
-		if (!isValidElement<{ children?: ReactNode }>(child)) {
+		if (
+			!isValidElement<{ children?: ReactNode; node?: { tagName?: string } }>(
+				child,
+			)
+		) {
 			return child;
 		}
 		if (child.props.children == null) {
 			return child;
 		}
+		if (
+			["code", "a", "pre"].includes(
+				child.props.node?.tagName ?? String(child.type),
+			)
+		)
+			return child;
 		return cloneElement(child, {
 			children: injectCitations(child.props.children, byIndex, onCite),
 		});
@@ -215,14 +225,7 @@ function splitCitationText(
 				</span>,
 			);
 		} else {
-			nodes.push(
-				<span
-					key={key}
-					className="mx-0.5 inline-flex size-4 translate-y-[-1px] items-center justify-center rounded-sm border border-border align-middle font-mono text-[10px] leading-none text-muted-foreground"
-				>
-					{citeIndex}
-				</span>,
-			);
+			nodes.push(match[0]);
 		}
 		last = match.index + match[0].length;
 		part += 1;

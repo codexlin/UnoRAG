@@ -19,6 +19,7 @@ import {
 } from "@/core/ask-graph";
 import {
 	deriveDeterministicTablePlan,
+	deriveGroundedTableLookup,
 	executeTableQuery,
 	normalizeTablePlanForQuestion,
 	type TableDatasetInput,
@@ -32,6 +33,12 @@ import type {
 	InternalCitation,
 	RetrievalResult,
 } from "@/core/retrieval";
+import {
+	captureAskGenerationStream,
+	isEvaluationCaptureEnabled,
+	recordAskRetrieval,
+	withAskRetrievalCapture,
+} from "@/evaluation/sensitive-capture";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { DrizzleActiveGenerationResolver } from "@/server/retrieval/active-generation-resolver";
 import { resolveAuthorizedRetrievalScope } from "@/server/retrieval/authorized-scope";
@@ -279,6 +286,19 @@ export class NativeAskRuntime {
 			signal: this.signal,
 		});
 		this.retrievedEvidence.push(...result.citations);
+		if (
+			!input.tableOnly &&
+			isEvaluationCaptureEnabled(state.session_id ?? "")
+		) {
+			recordAskRetrieval({
+				requestId: state.trace_id ?? "",
+				sessionId: state.session_id ?? "",
+				question: state.question ?? "",
+				query: query(state),
+				attempt: (state.retrieval_attempts ?? 0) + 1,
+				citations: result.citations.map(({ body }) => ({ body })),
+			});
+		}
 		return result;
 	}
 
@@ -297,9 +317,15 @@ export class NativeAskRuntime {
 					this.policy.citation_adjudicate_absolute_floor,
 				)
 			: this.policy.answer_min_score;
-		const citations = result.citations.filter(
-			(citation) => citation.score >= threshold,
-		);
+		const citations = result.citations.filter((citation) => {
+			// RRF is a rank-fusion score, not semantic relevance. Without rerank,
+			// use the dense score; lexical-only hits cannot clear this threshold.
+			const relevance =
+				citation.used_hybrid && !citation.used_rerank
+					? (citation.dense_score ?? Number.NEGATIVE_INFINITY)
+					: citation.score;
+			return relevance >= threshold;
+		});
 		return {
 			...result,
 			citations,
@@ -435,19 +461,53 @@ export class NativeAskRuntime {
 			},
 			ports: {
 				retrieve: async (state) => {
-					const result = this.adjudicate(
+					let result = this.adjudicate(
 						await this.retrieve(state, { tableOnly: false }),
 					);
+					let groundedPlan = deriveGroundedTableLookup(
+						state.question ?? "",
+						tableCandidates(result.citations),
+					);
+					let tableProbe = false;
+					// Normal recall returns text projections without rows. Resolve their
+					// table identity through the same authorized retrieval boundary.
+					if (
+						!groundedPlan &&
+						result.citations.some((citation) => citation.table_id)
+					) {
+						tableProbe = true;
+						const precise = this.adjudicate(
+							await this.retrieve(state, { tableOnly: true }),
+						);
+						groundedPlan = deriveGroundedTableLookup(
+							state.question ?? "",
+							tableCandidates(precise.citations),
+						);
+						if (groundedPlan) result = precise;
+					}
 					return {
 						citations: result.citations,
+						...(groundedPlan
+							? { upgrade: "precise", upgrade_reason: "grounded_table_lookup" }
+							: {}),
 						retrieval_attempts: (state.retrieval_attempts ?? 0) + 1,
 						retrieval_debug: {
 							...(state.retrieval_debug ?? {}),
 							...result.debug,
+							grounded_lookup_probe: tableProbe,
 						},
 					};
 				},
 				tableRetrieve: async (state) => {
+					if (state.upgrade_reason === "grounded_table_lookup") {
+						return {
+							citations: state.citations ?? [],
+							retrieval_debug: {
+								...(state.retrieval_debug ?? {}),
+								table_candidate_count: state.citations?.length ?? 0,
+							},
+						};
+					}
 					const result = await this.retrieve(state, { tableOnly: true });
 					return {
 						citations: result.citations,
@@ -473,10 +533,25 @@ export class NativeAskRuntime {
 						tableId,
 						headers,
 					}));
-					const deterministicPlan = deriveDeterministicTablePlan(
+					const groundedPlan = deriveGroundedTableLookup(
 						state.question ?? "",
-						candidateHeaders,
+						candidates,
 					);
+					if (
+						state.upgrade_reason === "grounded_table_lookup" &&
+						!groundedPlan
+					) {
+						return {
+							table_query_plan: { invalid: true },
+							refuse_reason: "table_incomplete",
+						};
+					}
+					const deterministicPlan =
+						groundedPlan ??
+						deriveDeterministicTablePlan(
+							state.question ?? "",
+							candidateHeaders,
+						);
 					if (deterministicPlan) {
 						return { table_query_plan: deterministicPlan };
 					}
@@ -570,11 +645,13 @@ export class NativeAskRuntime {
 	}
 
 	invoke(input: AskGraphInput): Promise<AskState> {
-		return this.graph.invoke({
-			...input,
-			library_id: this.libraryId,
-			trace_id: input.trace_id || randomUUID(),
-		});
+		return withAskRetrievalCapture(() =>
+			this.graph.invoke({
+				...input,
+				library_id: this.libraryId,
+				trace_id: input.trace_id || randomUUID(),
+			}),
+		);
 	}
 
 	async *streamAnswer(state: AskState): AsyncGenerator<string> {
@@ -584,20 +661,34 @@ export class NativeAskRuntime {
 			yield deterministicAnswer;
 			return;
 		}
-		yield* this.dependencies.answer.stream(
+		const generationInput = {
+			question: state.question ?? "",
+			context: contextText(state),
+			history: (state.history ?? []).flatMap<{
+				role: "user" | "assistant";
+				content: string;
+			}>((item) => {
+				const role = item.role;
+				const content = item.content;
+				return (role === "user" || role === "assistant") &&
+					typeof content === "string"
+					? [{ role, content }]
+					: [];
+			}),
+		};
+		yield* captureAskGenerationStream(
 			{
-				question: state.question ?? "",
-				context: contextText(state),
-				history: (state.history ?? []).flatMap((item) => {
-					const role = item.role;
-					const content = item.content;
-					return (role === "user" || role === "assistant") &&
-						typeof content === "string"
-						? [{ role, content }]
-						: [];
-				}),
+				requestId: state.trace_id ?? "",
+				sessionId: state.session_id ?? "",
+				...generationInput,
 			},
-			{ abortSignal: this.signal, beforeRequest: this.beforeModelRequest },
+			this.dependencies.answer.stream(generationInput, {
+				allowedCitationIndices: (state.citations ?? []).map(
+					(_, index) => index + 1,
+				),
+				abortSignal: this.signal,
+				beforeRequest: this.beforeModelRequest,
+			}),
 		);
 	}
 }

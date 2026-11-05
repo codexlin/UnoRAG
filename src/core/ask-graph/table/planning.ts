@@ -1,4 +1,5 @@
 import type { TableQueryPlan } from "./contracts";
+import { normalizeTable, type TableDatasetInput } from "./normalize";
 
 const MINIMUM_CUE = /(?:最小|最低|最少|minimum|\bmin\b)/i;
 const MAXIMUM_CUE = /(?:最大|最高|最多|maximum|\bmax\b)/i;
@@ -20,9 +21,96 @@ const FILTER_VALUE = /([+-]?\d[\d,]*(?:\.\d+)?\s*(?:万|亿)?\s*(?:元|%|％)?)/
 
 type TableCandidate = { tableId: string; headers: readonly string[] };
 
+/** Ground an entity lookup in actual cells, never in a model-invented row ID. */
+export function deriveGroundedTableLookup(
+	question: string,
+	tables: readonly (TableCandidate & { dataset: TableDatasetInput })[],
+): TableQueryPlan | null {
+	// Aggregation, comparison and explanatory questions need a separate plan.
+	if (
+		[COUNT_CUE, SUM_CUE, AVERAGE_CUE, MINIMUM_CUE, MAXIMUM_CUE].some((cue) =>
+			cue.test(question),
+		) ||
+		FILTER_OPERATORS.some(({ cue }) => cue.test(question)) ||
+		/(?:为什么|原因|如何|比较|对比|区别|差异|占比|比例|百分比|排名|排行|第[一二三四五六七八九十\d]+|汇总说明|总结|percentage|ratio|ranking|ranked)/iu.test(
+			question,
+		)
+	)
+		return null;
+	const questionKey = normalized(question);
+	const plans: TableQueryPlan[] = [];
+	for (const candidate of tables) {
+		const table = normalizeTable(candidate.dataset);
+		if (!table) continue;
+		const columns = table.headers.filter((header) =>
+			headerTerms(header).some(
+				(term) => term.length >= 2 && questionKey.includes(term),
+			),
+		);
+		if (!columns.length) continue;
+		const matches = table.headers
+			.flatMap((column) => {
+				const values = [
+					...new Set(table.rows.map((row) => row.values[column])),
+				];
+				return values.flatMap((value) => {
+					const key = normalized(value);
+					return key.length >= 3 &&
+						/[a-z\p{Script=Han}]/u.test(key) &&
+						questionKey.includes(key)
+						? [{ column, value, key }]
+						: [];
+				});
+			})
+			.sort((a, b) => b.key.length - a.key.length);
+		const best = matches[0];
+		if (!best) continue;
+		const identifiers =
+			question.match(/[a-z]+(?:[-/][a-z0-9]+)*\d[a-z0-9-]*/gi) ?? [];
+		if (
+			identifiers.some(
+				(identifier) => !best.key.includes(normalized(identifier)),
+			)
+		)
+			continue;
+		// Do not silently pick one of several independently named entities.
+		if (
+			matches.some(
+				(item) =>
+					!table.rows
+						.filter((row) => normalized(row.values[best.column]) === best.key)
+						.every(
+							(row) =>
+								(item.column === best.column && item.key === best.key) ||
+								row.values[item.column] === item.value,
+						),
+			)
+		)
+			continue;
+		const values = matches
+			.filter((item) => item.column === best.column && item.key === best.key)
+			.map((item) => item.value);
+		if (values.length > 50) continue;
+		plans.push({
+			mode: "single",
+			tableId: candidate.tableId,
+			operation: "lookup",
+			entity: {
+				column: best.column,
+				value: values.length === 1 ? values[0] : values,
+				match: "exact",
+			},
+			selectColumns: [...new Set([best.column, ...columns])],
+			includeSummaryRows: false,
+		});
+	}
+	return plans.length === 1 ? plans[0] : null;
+}
+
 function normalized(value: string): string {
 	return value
 		.normalize("NFKC")
+		.replaceAll("/", "")
 		.replace(/[\s()（）【】[\]{}<>《》:：,，。._-]/g, "")
 		.toLowerCase();
 }

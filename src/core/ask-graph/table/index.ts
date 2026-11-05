@@ -24,5 +24,6 @@ export {
 } from "./normalize";
 export {
 	deriveDeterministicTablePlan,
+	deriveGroundedTableLookup,
 	normalizeTablePlanForQuestion,
 } from "./planning";

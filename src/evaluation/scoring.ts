@@ -1,7 +1,12 @@
+import {
+	AnswerCitationGuard,
+	AnswerCitationValidationError,
+} from "../core/ai/answer-citations";
 import type { GoldenCase } from "./golden-set";
 import { factMatchesAnswer } from "./golden-set";
 
 export type EvaluationCitation = Readonly<{
+	index?: number;
 	filename?: string | null;
 	file?: string | null;
 	record_type?: string | null;
@@ -31,6 +36,7 @@ export type PositiveCaseScore = Readonly<{
 	reciprocalRank: number;
 	targetDocumentRecalled: boolean;
 	citationCount: number;
+	inlineCitationsValid: boolean;
 	crossDocumentCitationCount: number;
 	supportingCitationCount: number;
 	invalidCrossDocumentCitationCount: number;
@@ -165,6 +171,17 @@ export function scorePositiveCase(
 				citationMatchesExpectedRecordType(citation, expectedRecordType),
 			)
 		: null;
+	let inlineCitationsValid = true;
+	try {
+		const guard = new AnswerCitationGuard(
+			response.citations.map((citation, index) => citation.index ?? index + 1),
+		);
+		guard.push(response.answer);
+		guard.finish();
+	} catch (error) {
+		if (!(error instanceof AnswerCitationValidationError)) throw error;
+		inlineCitationsValid = false;
+	}
 
 	return Object.freeze({
 		caseId: gold.id,
@@ -174,6 +191,7 @@ export function scorePositiveCase(
 			missingFacts.length === 0 &&
 			targetDocumentRank != null &&
 			invalidCitationCount === 0 &&
+			inlineCitationsValid &&
 			missingEvidenceFacts.length === 0 &&
 			(!expectedRecordType || recordTypeMatched === true),
 		factCoverage: matchedFacts.length / gold.key_facts.length,
@@ -183,6 +201,7 @@ export function scorePositiveCase(
 		reciprocalRank: targetDocumentRank ? 1 / targetDocumentRank : 0,
 		targetDocumentRecalled: targetDocumentRank != null,
 		citationCount,
+		inlineCitationsValid,
 		crossDocumentCitationCount,
 		supportingCitationCount,
 		invalidCrossDocumentCitationCount,
