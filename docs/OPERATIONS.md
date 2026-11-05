@@ -74,7 +74,7 @@ OTel 节点为 ERROR，原生与 Public API 请求指标为 `server_error`，不
 - 先按错误类别检查 Provider 鉴权、配额、可达性、模型输出契约，再结合阶段耗时与重试诊断；
   不要仅凭总耗时推断为网络故障，也不要关闭 Judge 或放宽拒答门槛来恢复“成功率”。
 
-Judge Prompt 1.2.0 明确要求一个完整 JSON 对象、简短理由和无填充空白，保留相同的证据充分性要求、
+Judge Prompt 从 1.2.0 起明确要求一个完整 JSON 对象、简短理由和无填充空白；当前 1.3.0 增加比较范围核对，保留证据充分性要求、
 Zod 契约与候选 ID 校验。模型的原生 JSON Schema 支持应按实际型号配置，不因 OpenAI-compatible
 接口接受请求就认定已强制约束；JSON-object 模式也仍须本地校验。阿里云的两种模式及模型支持范围见
 [官方结构化输出说明](https://www.alibabacloud.com/help/en/model-studio/qwen-structured-output)。
@@ -126,6 +126,21 @@ Ask runs 维护、关联文库/会话的生命周期约束。
 正常拒答不显示成服务故障；错误请求保留原因分类、恢复建议及已记录的 Judge 尝试/预算诊断。
 处理中详情每 5 秒刷新一次；阶段账本主要在请求终态写入，处理中或历史记录可能没有阶段，不能把空记录
 解释成“没有耗时”。抽屉不虚构 Embedding、Qdrant、Rerank 或网络请求子 Span，也不展示完整 Prompt。
+
+新记录还可按真实检索阶段展示 **重排诊断**：类别、已记录的 HTTP 状态/尝试次数、预算、耗时、
+候选/结果数及 figure 在排序、去重和 Top-K 各步的数量。重排降级后 Ask 仍可能已完成，不能只筛失败请求；
+先用 Request ID 查对应成功请求，再检查 timeout/http/transport/invalid_response。空值表示未记录，
+不根据总耗时猜网络故障。复用既有结果不显示成新的 Provider 调用。诊断不含原始异常或响应正文，
+历史 `rerank_failed=true` 也无法倒推原因。验证见 [修复案例](./evidence/2026-11-05-comparison-lineage-fix.md)。
+
+Qdrant 故障的新记录可展示 **Qdrant 诊断**：ready/query/scroll、错误类别、HTTP 状态、固定连接错误码、
+调用耗时、客户端超时及可重试性。Ask 返回 503 不等于 Qdrant 返回 503；HTTP 状态为空时不能这样归因。
+`retryable` 只是原因分类，并不表示已自动重试；unknown 或旧记录缺失时不补猜网络原因。
+这里只记录 SDK 操作尝试，初始化 ready 的等待次数不代表内部 HTTP 请求数。原始异常和响应正文不对外投影。
+
+原生 Ask 的响应头 `X-Request-ID` 与账本 Request ID 一致，错误正文仍保持通用消息；live runner 会在
+正文没有 trace_id 时读取该响应头。图中断的新记录保留实际已完成节点和失败节点的耗时，不只显示 request
+总阶段；图外错误、旧记录或缺少快照时仍可能只有总阶段，不能把没有节点记录解释成节点耗时为零。
 
 该列表及详情只允许当前 Workspace 的管理员读取，查询参数不能指定或扩大 organization/workspace。
 返回的是诊断元数据，不包含问题、回答、检索正文和凭据；自由文本拒答原因不进入新的诊断记录，也不从
