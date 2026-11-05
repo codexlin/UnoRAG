@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "ragas==0.4.3",
-  "openai==2.15.0",
+  "openai==2.26.0",
   "httpx==0.28.1",
   "jsonschema==4.26.0",
   # Ragas 0.4.3 imports the VertexAI compatibility module removed in 0.4.2.
@@ -13,3 +13,4 @@ dependencies = [
 
 [tool.uv]
 package = false
+constraint-dependencies = ["langchain-openai==1.1.14"]
