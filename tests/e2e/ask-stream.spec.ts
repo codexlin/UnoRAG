@@ -2,6 +2,7 @@ import { type Cookie, expect, type Page, test } from "@playwright/test";
 
 import type {
 	ApiAskResponse,
+	ApiCitation,
 	ApiDocument,
 	ApiHealth,
 	ApiLibrary,
@@ -92,13 +93,18 @@ function meta(session = "fixture-session", thread?: string) {
 	});
 }
 
-function done(answer: string, session = "fixture-session", thread?: string) {
+function done(
+	answer: string,
+	session = "fixture-session",
+	thread?: string,
+	citations: ApiCitation[] = [],
+) {
 	return frame("done", {
 		question: "fixture question",
 		answer,
 		session_id: session,
 		thread_id: thread,
-		citations: [],
+		citations,
 		mode: "llm",
 		refused: false,
 		retrieval_debug: {},
@@ -348,6 +354,177 @@ async function closeStream(page: Page, index: number) {
 async function pause(page: Page) {
 	await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
 }
+
+test("long answer text, links and inline code fit during streaming and after completion", async ({
+	page,
+}, testInfo) => {
+	const marker = `RECOVERY_PROOF_${"ABCDEF0123456789".repeat(8)}`;
+	const word = `DOCUMENT_${"LONGTOKEN".repeat(24)}`;
+	const url = `https://example.org/${"long-path-".repeat(24)}`;
+	const answer = `Inline \`${marker}\`[1]\n\n${word}\n\n[${url}](${url})`;
+	const citation: ApiCitation = {
+		id: "wrapping-source",
+		index: 1,
+		title: "Wrapping source",
+		snippet: "A controlled rendering fixture.",
+		score: 1,
+	};
+	await openAsk(page, [
+		[
+			meta(),
+			frame("token", answer),
+			done(answer, undefined, undefined, [citation]),
+		],
+	]);
+	await submit(page, "Rendering fixture", 0);
+	await page.mouse.move(0, 0);
+	await expect(page.getByRole("tooltip")).toBeHidden();
+	await release(page, 0, 2);
+	const article = page.getByRole("article");
+	const code = article.locator("p code");
+	await expect(code).toHaveText(marker);
+
+	async function expectContentFits() {
+		for (const content of [
+			code,
+			article.getByText(word, { exact: true }),
+			article.getByRole("link", { name: url, exact: true }),
+		]) {
+			const fits = await content.evaluate((element) => {
+				const container = element.closest("article");
+				if (!container) throw new Error("answer article missing");
+				const bounds = container.getBoundingClientRect();
+				const range = document.createRange();
+				range.selectNodeContents(element);
+				return Array.from(range.getClientRects()).every(
+					(rect) =>
+						rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1,
+				);
+			});
+			expect(
+				fits,
+				"every text fragment must remain inside the answer, not merely be clipped",
+			).toBe(true);
+		}
+		const layout = await page.evaluate(() => ({
+			width: document.documentElement.scrollWidth,
+			viewport: window.innerWidth,
+			asides: Array.from(document.querySelectorAll("aside")).map((element) => ({
+				width: element.getBoundingClientRect().width,
+				overflowX: getComputedStyle(element).overflowX,
+				contain: getComputedStyle(element).contain,
+			})),
+			overflowing: Array.from(document.querySelectorAll("body *"))
+				.filter(
+					(element) =>
+						!element.closest('aside[aria-hidden="true"]') &&
+						element.getBoundingClientRect().right > window.innerWidth + 1,
+				)
+				.map((element) => ({
+					tag: element.tagName,
+					class: element.getAttribute("class"),
+					right: element.getBoundingClientRect().right,
+				}))
+				.slice(0, 15),
+		}));
+		if (layout.width > layout.viewport + 1) {
+			await testInfo.attach("answer-overflow-layout", {
+				body: JSON.stringify(layout, null, 2),
+				contentType: "application/json",
+			});
+		}
+		await expect
+			.poll(
+				() =>
+					page.evaluate(
+						() => document.documentElement.scrollWidth <= window.innerWidth + 1,
+					),
+				{
+					message:
+						"the page must fit after the source-panel tooltip finishes closing",
+				},
+			)
+			.toBe(true);
+	}
+
+	await expectContentFits();
+	await release(page, 0, 1);
+	await closeStream(page, 0);
+	await expect(page.getByRole("textbox")).toBeEnabled();
+	await expectContentFits();
+	if (testInfo.project.use.isMobile) {
+		for (const width of [320, 360, 393]) {
+			await page.setViewportSize({ width, height: 851 });
+			await expectContentFits();
+		}
+	}
+	await expect(code).toHaveText(marker);
+	await expect(
+		article.getByRole("link", { name: url, exact: true }),
+	).toHaveAttribute("href", url);
+	const screenshot = testInfo.outputPath("answer-wrapping.png");
+	await page.screenshot({ path: screenshot, fullPage: true });
+	await testInfo.attach("answer wrapping", {
+		path: screenshot,
+		contentType: "image/png",
+	});
+	await article.getByRole("button", { name: "1", exact: true }).click();
+	const panel = testInfo.project.use.isMobile
+		? page.getByRole("dialog", { name: "证据轨道" })
+		: page.locator('aside[aria-hidden="false"]');
+	await expect(
+		panel.getByText(citation.snippet, { exact: true }),
+	).toBeVisible();
+});
+
+test("long fenced code stays scrollable and copies unchanged with or without a language", async ({
+	page,
+	context,
+}) => {
+	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+	const snippets = [
+		`const token = "${"CODE_TOKEN_".repeat(40)}";\nconsole.log(token);`,
+		`  ${"PLAIN_CODE_".repeat(40)}\n    indented line`,
+	];
+	const answer = `\`\`\`ts\n${snippets[0]}\n\`\`\`\n\n\`\`\`\n${snippets[1]}\n\`\`\``;
+	await openAsk(page, [[meta(), frame("token", answer), done(answer)]]);
+	await submit(page, "Code fixture", 0);
+	await release(page, 0, 3);
+	await closeStream(page, 0);
+	await expect(page.getByRole("textbox")).toBeEnabled();
+	const article = page.getByRole("article");
+	const blocks = article.locator("pre");
+	await expect(blocks).toHaveCount(2);
+	for (const [index, snippet] of snippets.entries()) {
+		const block = blocks.nth(index);
+		await expect(block.locator("code")).toHaveText(snippet, {
+			useInnerText: false,
+		});
+		expect(
+			await block.evaluate((element) => {
+				const bounds = element.getBoundingClientRect();
+				return (
+					element.scrollWidth > element.clientWidth &&
+					getComputedStyle(element).overflowX === "auto" &&
+					bounds.right <= window.innerWidth + 1
+				);
+			}),
+		).toBe(true);
+		await block.evaluate((element) => {
+			element.scrollLeft = element.scrollWidth;
+		});
+		expect(
+			await block.evaluate((element) => element.scrollLeft),
+		).toBeGreaterThan(0);
+		await article
+			.getByRole("button", { name: /^(复制|已复制)$/ })
+			.nth(index)
+			.click();
+		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+			snippet,
+		);
+	}
+});
 
 test("unmocked initial Ask load has no hydration errors", async ({ page }) => {
 	const data = Promise.all([
