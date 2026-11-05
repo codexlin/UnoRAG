@@ -13,6 +13,7 @@ Langfuse 是可选的实验与分数视图，不是生产 Ask 的配置中心或
 | 评分逻辑 | `src/evaluation/` | 中文数字/单位归一化、事实覆盖、Citation、拒答和门禁 |
 | Live runner | `scripts/run-ab-live-e2e.ts` | 真实上传、入库、Ask、报告与可选分数发布 |
 | Stability runner | `scripts/run-ab-stability.ts` | 连续三轮真实评测、逐题稳定性与 RC 发布门禁 |
+| 离线语义评测 | `scripts/evaluation/` | 可选 Ragas、独立 Python 锁文件、受控输入与预算；不进入产品镜像 |
 
 不要在 Langfuse 中维护另一份独立黄金集作为发布门禁。否则代码评测与平台评测会随时间漂移，CI 无法
 证明线上版本使用了哪一份数据。
@@ -102,6 +103,9 @@ pnpm eval:live
 引用正文核验也不是语义蕴含判断：同一引用同时提及正确值和矛盾候选值、其它上下文中的相同数字，或复杂
 否定表达，仍可能通过词法匹配。它不提供普适冲突检测，不能据此宣称所有引用均语义正确。
 
+现有 `documentRecallAtK` 和 MRR 根据**最终 Citation**中的目标文档出现与排序计算，不是完整候选集上的
+标准检索 Recall/MRR。`123/123` 等结果只表示当次确定性契约通过，不能解释为语义正确率或忠实性满分。
+
 拒答用例中的 `judge_unavailable` 是操作故障，不是正确的资料不足拒答；即使 HTTP 200 且 `refused=true`
 也按失败计算。稳定性门禁继续把 `judge_mode=model_error` 记为 Judge 故障，不改变 API 兼容映射。
 
@@ -122,6 +126,14 @@ Ask 将检索与最终证据分成三层：Retriever/Reranker 先产生候选证
 source node 关系匹配，不会发起隐藏检索，也不会跨文档扩张 Citation。Judge 返回空 ID、虚构 ID 或
 越界 ID 时 Ask fail closed，不生成无依据答案。
 
+另有一条显式的确定性查表入口：普通召回含真实 `table_id` 时，可通过同一授权检索边界探测
+原始表格记录；该探测计入 `retrieve` 阶段，不是上述来源补齐。只有单实体能够对应实际单元格、
+且问题明确提到输出列时，才升级为原有结构化查表执行；不会按文件名或黄金集问题特判。
+聚合、占比、排名、汇总说明和歧义问题不由该入口抢占，无法建立计划时保留原始证据与 Judge 流程。
+Markdown 管道表目前可能仍是普通文本，不保证生成 TableIR，也不保证进入该入口。
+相关性阈值使用 rerank 分数；未重排的混合检索使用 dense 分数，不能拿 RRF 排名分直接与
+相关性阈值比较。缺少 dense 证据的纯词法候选不会因此绕过阈值。
+
 报告中的 `evidence candidates / selected` 分别表示进入 Judge 的候选数与最终 Citation 数；
 `evidence selection rate` 是二者之比。`citation precision` 衡量主来源与经核验辅助来源占最终 Citation 的比例。
 `crossDocumentCitationRate` 保留所有非主文件引用（包括合法辅助引用）的真实比例；
@@ -129,6 +141,13 @@ source node 关系匹配，不会发起隐藏检索，也不会跨文档扩张 C
 `invalidCitationRate` 还包含多来源用例中不合格的主来源引用。专项质量门禁仍要求无效跨文档比例为零，
 而不把合法辅助引用误作错误；所有通过率、事实覆盖、召回和 precision 阈值不变。这些指标用于识别“答案正确但证据过宽”，
 同时类型门禁保证降噪不能丢掉表格或图表来源。
+
+`inlineCitationsValid` 单独校验回答正文的数字引用：只允许引用本次 citations 中存在的独立
+`[n]`，不允许把表格行号、区间或列表写作来源标记。该项失败直接使正例失败，不能被关键词命中
+或结构化 Citation precision 抵消。运行时同样增量校验流式输出，非法标记不发送，记录
+`answer_citation_invalid`，不持久化为成功回答；已经发出的文本可能作为失败尝试保留在页面。
+历史未知引用只展示为原文，不渲染成合法来源按钮。数字字面量应使用代码格式；代码和普通
+Markdown 链接不作为来源引用。这个校验只证明引用 ID 有效，不证明每个事实都被证据支持。
 
 门禁失败时命令退出码为 `1`；配置、清理或显式发布失败为 `2`。报告同时保留 MRR、跨文档 Citation 比例及
 P50/P95/最大延迟，当前不把延迟固定成跨硬件统一阈值。
@@ -143,6 +162,92 @@ Runner 内部评测 DTO 保留引用正文（优先 `body`，再 `text`、`snipp
 `/api/rag/v1/ask` 已提供这些字段，无需修改映射或 Judge。Service Key 的公共 `/api/v1/ask` 仍不暴露完整
 引用正文或内部 debug。本地 JSON 报告包含问题、回答、参考事实及引用正文，应视为敏感测试产物。Runner 将输出目录设为 `0700`、文件
 设为 `0600`；报告目录已被 Git 忽略，操作者应按客户数据保留策略定期删除。
+
+## 可选 Ragas 离线语义评测
+
+Ragas 补充回答忠实性、回答相关性与检索质量，不替换权限隔离、版本、表格确定性计算、拒答或延迟门禁。
+它不参与在线 Ask，不增加 Python 服务；Python 3.12 和 `uv` 只安装在操作者的离线评测环境。
+
+```bash
+uv sync --project scripts/evaluation --frozen
+uv run --project scripts/evaluation --frozen python -m unittest discover -s scripts/evaluation/tests -v
+uv run --project scripts/evaluation --frozen python scripts/evaluation/ragas_offline.py \
+  scripts/evaluation/tests/fixtures/sample-v1.jsonl
+```
+
+最后一条命令默认**只校验，不调用模型，也不生成语义分数**。示例是合成数据，不是产品验收结果。
+依赖版本由 `pyproject.toml` 与 `uv.lock` 固定；输入契约为 `sample-v1.schema.json`，与 TS 导出器保持一致。
+
+### 采集真实 Ask 上下文
+
+只在允许保存敏感测试数据的**隔离验收 Web 进程**显式开启，保持现有 DBOS、数据库、Parser 和模型配置：
+
+```bash
+UNORAG_EVAL_CAPTURE_SENSITIVE=1 \
+UNORAG_EVAL_CAPTURE_RUN_ID=ragas-local-20261105 \
+pnpm dev
+```
+
+另一终端按上文配置该环境的地址和管理员凭据，然后运行：
+
+```bash
+UNORAG_EVAL_CAPTURE_RUN_ID=ragas-local-20261105 pnpm eval:live -- --export-ragas
+```
+
+这两个采集变量默认关闭，不放进正式部署默认配置。Compose 不会因为宿主机 `export` 就自动注入它们，
+容器验收时必须仅向隔离 Web 进程显式注入，并将其私有采集目录提供给离线导出器。
+跨进程目录可通过 `UNORAG_EVAL_CAPTURE_INPUT_DIR` 指定；它必须是可信、受权限保护的测试产物。
+
+导出器按 run/case/request/问题哈希关联数据，不拿最终引用或第二次 Retrieve 请求冒充原 Ask 的召回。
+两组上下文分开保存：
+
+- `retrieved_contexts`：最后一轮基础 Retriever 返回、尚未经策略/Judge 选择的有序候选，供检索指标使用。
+  `full_retrieval` 只声明这一基础检索阶段完整，不涵盖所有表格执行器或其他工具内部查询。
+- `generation_contexts`：生成器实际接收的证据文本（含标题、位置和表格结果）及本次授权历史，供忠实性使用。
+  不能让被 Judge 丢弃的候选为生成答案提供“事后支持”。
+- 生成流正常结束后记录响应 SHA-256，与 live report 的答案核对；流中断、缺失正文或写入失败不补造记录。
+  构建指纹来自 live report，明确标为 `unverified`，不是服务端签名或独立部署证明。
+
+未开启采集的旧报告仍可导出，但上下文为 `unavailable`，不能获得完整语义评测结论。确定性表格短路没有
+模型生成上下文时，忠实性同样跳过，其正确性继续由原表格硬门禁验证。当前黄金集主要面向独立单轮问题；
+多轮历史一致性不等于文档事实正确性，需单独人工校准，不宣称已完成多轮语义验收。
+
+### 执行评分与解释结果
+
+```bash
+uv run --project scripts/evaluation --frozen python scripts/evaluation/ragas_offline.py \
+  .unorag/evaluation/ragas-ragas-local-20261105.jsonl --max-samples=100
+```
+
+确认数据允许发送给评委模型后，再显式执行。以下以本地 OpenAI-compatible 服务为例：
+
+```bash
+uv run --project scripts/evaluation --frozen python scripts/evaluation/ragas_offline.py \
+  .unorag/evaluation/ragas-ragas-local-20261105.jsonl \
+  --execute --judge-base-url=http://127.0.0.1:11434/v1 \
+  --judge-model=YOUR_JUDGE_MODEL --embedding-model=YOUR_EMBEDDING_MODEL \
+  --max-samples=100 --max-requests=800 --max-input-bytes=10000000 --run-timeout=1800
+```
+
+外部评委必须额外设置评测进程的 `UNORAG_RAGAS_API_KEY`、使用 HTTPS 并增加 `--allow-external-judge`；
+这不是修改产品模型配置，也不代表客户资料被默认允许出域。尽量使用独立评委并校准中文问题，避免同模型偏差。
+
+| 指标 | 输入与边界 |
+|---|---|
+| Faithfulness | 使用实际生成上下文；人工提供的上下文明确标为 `provided` |
+| Response relevance | 问题与回答；使用显式配置的评委和 Embedding 模型 |
+| Context precision / recall | 需要完整基础检索候选与参考答案；不足则跳过，不用引用排名代替 |
+| Context utilization | 没有参考答案时的候选利用诊断，不冒充有金标的 recall |
+
+默认最多 20 个样本、串行执行、200 次实际 HTTP 请求；超出必须显式调整。请求次数、输入字节、每次输出
+Token、并发、单次请求、指标与整轮时间均有上限，SDK 内部重试也计入请求预算。不保证固定货币成本。
+遥测和模型正文日志默认关闭，不自动上传 Langfuse，不把 Provider 异常正文写进报告。
+
+输入、采集和报告位于已忽略的 `.unorag/evaluation/`，目录 `0700`、文件 `0600`，包含敏感上下文，须按
+测试数据保留策略清理。语义结果只输出分数、状态、预算使用量和指纹，不重复正文；当前没有 Ragas 产品看板。
+`informational_only=true`、`release_gate=not_evaluated`：分数先用于人工复核和方案对比，尚无通用放行阈值。
+错误、超时、预算耗尽、缺上下文均不当作通过；退出 `0` 表示本次所需诊断完成，不表示质量合格或允许发布，
+`2` 表示错误或诊断不完整。是否存在 `skipped`、缺哪组上下文仍须看逐项报告。
 
 ## 可选 Langfuse 分数发布
 

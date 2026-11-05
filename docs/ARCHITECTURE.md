@@ -204,6 +204,11 @@ Workspace、文档和请求标识只进入受控日志或 Trace attribute，不�
 Grafana、Tempo、Loki 或 Langfuse 故障都必须 fail-soft，不得改变 Ask、检索、入库和生命周期结果。
 具体启用、保留、告警和排障见 [OPERATIONS.md](./OPERATIONS.md)。
 
+质量评测在运行时外分层：确定性黄金集与安全/生命周期/延迟门禁继续负责发布，Ragas 作为可选离线
+Python 工具补充语义诊断。只有隔离验收环境显式开启敏感采集时，才保存最后一轮基础检索候选和独立的
+实际生成上下文；它们不进入公共响应、运行中心或默认 Langfuse 出口。评分需要另行确认评委的数据出域
+权限，未校准语义分数不作为发布放行依据，见 [EVALUATION.md](./EVALUATION.md)。
+
 ## 部署模型
 
 The release contains four Node images:

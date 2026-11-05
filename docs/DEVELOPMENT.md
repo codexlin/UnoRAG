@@ -58,6 +58,7 @@ pnpm test:e2e
 | Integration | 显式列出的 PostgreSQL、Qdrant、Redis 真行为 | `pnpm test:integration` |
 | E2E | 已运行候选版本的登录和桌面/移动端关键旅程 | `pnpm test:e2e` |
 | Acceptance | 真实文件、权限隔离、故障与恢复 | 发布验收脚本 |
+| Offline semantic | 可选 Python/Ragas 数据契约、隐私和预算；CI 使用模拟 HTTP，不调用付费模型 | 见 [EVALUATION.md](./EVALUATION.md#可选-ragas-离线语义评测) |
 
 旧的 `pnpm test` 和 `pnpm test:ts-core` 暂时保留为兼容入口；新增或调整 CI 应使用分层入口。
 测试应断言调用者可观察的状态、响应和副作用。只有不可执行的历史 migration 或发布清单才允许

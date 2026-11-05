@@ -79,10 +79,10 @@ Next.js product + Knowledge API
 | 持久任务 | DBOS 执行 ingest、ACL projection、delete、cleanup，支持重试、取消、对账与隔离 |
 | 原子版本 | 新 generation 校验通过后激活；失败时旧版本继续服务 |
 | 清理 | 旧 generation、Ask runs 和 tombstone 有维护命令与可观测结果 |
-| 原生运行中心 | 已实现健康、任务、解析、模型、生命周期、告警、Ask/入库阶段瀑布与 P50/P95；历史错误可下钻原因和关联 ID |
+| 原生运行中心 | 已实现健康、任务、解析、模型、生命周期、告警、Ask/入库阶段瀑布与 P50/P95；新增 Workspace 管理员请求记录，本地真实请求/浏览器/隔离/Qdrant 故障复测通过，尚待候选发布验收 |
 | 标准观测 | 可选 OTel Collector、Prometheus、Grafana、Loki、Tempo 与 Alertmanager |
 | AI 工程观测 | 可选 metadata-only Langfuse Trace 与评测分数发布，不采集问题或文档正文 |
-| 评测 | 版本化黄金集、真实文件矩阵、Prompt Registry、稳定性和延迟门禁 |
+| 评测 | 版本化黄金集、真实文件矩阵、Prompt Registry、稳定性和延迟门禁；可选 Ragas 已完成首轮 36 条真实语义诊断，额外聚合与非法引用已本地修复；Judge JSON/重试补丁连续两轮真实 Ask 82/82，本地复验通过但未发布，语义评分仍待人工校准 |
 | 交付 | Compose 参考拓扑、Helm starter、四个 Node 镜像、升级/回滚、备份/恢复工具 |
 | 公开接口 | `POST /api/v1/retrieve`、`POST /api/v1/ask` 与 OpenAPI 契约 |
 
