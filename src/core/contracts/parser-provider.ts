@@ -19,6 +19,7 @@ export type ParseInput = {
 };
 
 export type ParseOptions = {
+	signal?: AbortSignal;
 	languageHints?: string[];
 	pageRange?: { start: number; end: number };
 	externalParserAllowed: boolean;
@@ -43,6 +44,7 @@ export type ParseSubmission = {
 };
 
 export type ProviderTask = {
+	signal?: AbortSignal;
 	providerTaskId: string;
 	documentId: string;
 };

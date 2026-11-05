@@ -12,6 +12,8 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ### Fixed
 
+- Enforce one parser Provider budget across submission, polling and result consumption, abort
+  stalled HTTP requests/bodies, and bound best-effort cancellation without changing routing or quality gates.
 - Keep ingestion polling from cancelling the authoritative post-create library refresh, so a
   newly created library remains selected while other documents are indexing.
 - Record PDF analysis, submission, observed task wait, result retrieval/conversion, and application
