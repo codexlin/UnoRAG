@@ -979,6 +979,7 @@ for (const mode of ["sync", "stream"] as const) {
 		);
 		assert.equal(runs.finalizations[0]?.requestId, runs.starts[0]?.requestId);
 		assert.equal(runs.finalizations[0]?.queryType, "fact");
+		assert.equal(runs.finalizations[0]?.retrievalMode, null);
 		assert.equal(runs.finalizations[0]?.errorCode, "qdrant_error");
 		assert.deepEqual(
 			runs.finalizations[0]?.stages?.map((stage) => [

@@ -392,9 +392,11 @@ function operationalErrorCode(error: unknown): string {
 	return error.name;
 }
 
-function retrievalMode(state: AskRunState): string {
+function retrievalMode(state: AskRunState): string | null {
 	const mode = state.retrieval_debug?.retrievalMode;
-	return typeof mode === "string" ? mode : "dense";
+	if (mode === "dense" || mode === "hybrid") return mode;
+	const hybrid = state.retrieval_debug?.usedHybrid;
+	return typeof hybrid === "boolean" ? (hybrid ? "hybrid" : "dense") : null;
 }
 
 function metricCount(value: unknown, fallback: number): number {
