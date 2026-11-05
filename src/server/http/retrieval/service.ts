@@ -8,6 +8,7 @@ import type {
 	InternalCitation,
 	RetrievalResult,
 } from "@/core/retrieval";
+import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { NativeAskPolicySchema } from "@/server/http/ask/policy";
 import { DrizzleActiveGenerationResolver } from "@/server/retrieval/active-generation-resolver";
@@ -133,12 +134,14 @@ function projectDebug(
 	result: RetrievalResult,
 	requestId: string,
 ): Record<string, unknown> {
+	const rerank = projectRerankDiagnostic(result.debug.rerankDiagnostic);
 	return {
 		trace_id: requestId,
 		used_hybrid: result.debug.usedHybrid,
 		hybrid_enabled: result.debug.hybridEnabled,
 		hybrid_failed: result.debug.hybridFailed,
 		rerank_failed: result.debug.rerankFailed,
+		...(rerank ? { rerank_diagnostic: rerank } : {}),
 		retrieval_mode: result.debug.retrievalMode,
 		dense_hit_count: result.debug.denseHitCount,
 		active_generation_count: result.debug.activeGenerationCount,

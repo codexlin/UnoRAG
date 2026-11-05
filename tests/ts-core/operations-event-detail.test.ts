@@ -9,13 +9,56 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
 	JudgeDiagnostics,
+	QdrantDiagnostics,
 	RequestOutcome,
+	RerankDiagnostics,
 } from "../../src/components/app/operations-error-drawer";
+import { RerankDiagnosticSchema } from "../../src/core/retrieval/provider-request";
+import { diagnoseQdrantError } from "../../src/core/retrieval/qdrant/diagnostics";
 import * as schema from "../../src/db/schema";
 import type { OperationsEventDetail } from "../../src/lib/operations-event-detail";
 import { OperationsEventService } from "../../src/server/observability/operations-event-service";
 
 const scope = { organizationId: "org-1", workspaceId: "workspace-1" };
+
+test("Qdrant request failure diagnostics expose cause code without private error content", async () => {
+	const diagnostic = diagnoseQdrantError(
+		"query",
+		new TypeError("private query", {
+			cause: Object.assign(new Error("sk-secret"), { code: "ECONNRESET" }),
+		}),
+		{ durationMs: 201, timeoutMs: 5000 },
+	);
+	const recorded = Object.fromEntries(
+		Object.entries(diagnostic).map(([key, value]) => [`qdrant_${key}`, value]),
+	);
+	const detail = await read(
+		[
+			stage(
+				{ ...recorded, qdrant_message: "private query sk-secret" },
+				{ stage: "request", errorCode: "qdrant_error" },
+			),
+		],
+		{ errorCode: "qdrant_error" },
+	);
+	assert.deepEqual(detail.stages[0]?.detail, { qdrant: diagnostic });
+	const html = renderToStaticMarkup(
+		createElement(QdrantDiagnostics, { stages: detail.stages }),
+	);
+	assert.match(html, /ECONNRESET/);
+	assert.match(html, /Qdrant 诊断/);
+	assert.doesNotMatch(JSON.stringify(detail) + html, /private query|sk-secret/);
+	const old = await read(
+		[stage({}, { stage: "request", errorCode: "qdrant_error" })],
+		{ errorCode: "qdrant_error" },
+	);
+	assert.equal(
+		renderToStaticMarkup(
+			createElement(QdrantDiagnostics, { stages: old.stages }),
+		),
+		"",
+	);
+});
 const run = {
 	id: "ask-1",
 	...scope,
@@ -36,6 +79,66 @@ const recorded = {
 	judge_status_code: 401,
 	judge_retryable: false,
 };
+
+function rerankDiagnostic() {
+	return RerankDiagnosticSchema.parse({
+		...Object.fromEntries(
+			Object.keys(RerankDiagnosticSchema.shape).map((key) => [key, 0]),
+		),
+		category: "timeout",
+		statusCode: null,
+		attempts: 1,
+		durationMs: 10_000,
+		timeoutMs: 10_000,
+		maxAttempts: 3,
+		resultCount: null,
+		inputCount: 12,
+		requestedCount: 6,
+		figureCountBeforeRerank: 2,
+	});
+}
+
+test("completed fallback exposes safe rerank diagnostics without provider content", async () => {
+	const safe = rerankDiagnostic();
+	const flat = Object.fromEntries(
+		Object.entries(safe).map(([key, value]) => [`rerank_${key}`, value]),
+	);
+	const detail = await read(
+		[
+			stage(
+				{
+					...flat,
+					rerank_body: "private provider response",
+					rerank_headers: "private authorization",
+				},
+				{
+					stage: "retrieve",
+					outcome: "completed",
+					errorCode: null,
+				},
+			),
+		],
+		{ status: "completed", errorCode: null },
+	);
+	assert.deepEqual(detail.stages[0]?.detail, { rerank: safe });
+	const html = renderToStaticMarkup(
+		createElement(RerankDiagnostics, { stages: detail.stages }),
+	);
+	assert.match(html, /重排诊断/);
+	assert.match(html, /请求超时/);
+	assert.match(html, /10000 ms/);
+	assert.doesNotMatch(
+		JSON.stringify(detail) + html,
+		/private provider|private authorization/,
+	);
+	const invalid = await read([
+		stage(
+			{ ...flat, rerank_category: "private exception text" },
+			{ stage: "retrieve", outcome: "completed", errorCode: null },
+		),
+	]);
+	assert.equal(invalid.stages[0]?.detail, null);
+});
 
 function row(table: Table, values: Record<string, unknown>) {
 	return Object.keys(getTableColumns(table)).map((key) => values[key] ?? null);

@@ -8,6 +8,7 @@ import type {
 import {
 	ASK_GRAPH_NODE_NAMES,
 	ASK_STATE_FIELD_NAMES,
+	AskGraphExecutionError,
 	AskGraphService,
 	defaultClarifyAnswer,
 	defaultRefuseAnswer,
@@ -32,6 +33,75 @@ type Scenario = {
 	tableExecute?: AskGraphContext["ports"]["tableExecute"];
 	calls?: string[];
 };
+
+test("graph failure carries completed and failed timings without document content", async () => {
+	const cause = new Error("private provider body");
+	const graph = new AskGraphService(
+		createContext({
+			judge: () => {
+				throw cause;
+			},
+			retrieve: (state) => ({
+				citations: [{ id: "private-doc", body: "private evidence" }],
+				retrieval_debug: {
+					...state.retrieval_debug,
+					privateField: "private prompt",
+					retrievalMode: "hybrid",
+				},
+			}),
+		}),
+	);
+	await assert.rejects(
+		graph.invoke({ question: "private question" }),
+		(error) => {
+			assert.ok(error instanceof AskGraphExecutionError);
+			assert.equal(error.cause, cause);
+			assert.deepEqual(
+				error.diagnostics.retrieval_debug.stages.map((s) => [s.stage, s.ok]),
+				[
+					["route", true],
+					["plan", true],
+					["rewrite", true],
+					["retrieve", true],
+					["judge", false],
+				],
+			);
+			assert.equal(error.diagnostics.query_type, "fact");
+			assert.doesNotMatch(JSON.stringify(error), /private/);
+			assert.ok(
+				error.diagnostics.retrieval_debug.stages.every(
+					(s) => Number.isFinite(s.duration_ms) && s.duration_ms >= 0,
+				),
+			);
+			return true;
+		},
+	);
+});
+
+test("concurrent graph failures never share diagnostics even when their original cause is shared", async () => {
+	const cause = new Error("shared private error");
+	const results = await Promise.allSettled(
+		["fact", "compare"].map((queryType) =>
+			new AskGraphService(
+				createContext({
+					queryType,
+					retrieve: () => {
+						throw cause;
+					},
+				}),
+			).invoke({ question: "private question" }),
+		),
+	);
+	assert.deepEqual(
+		results.map((result) =>
+			result.status === "rejected" &&
+			result.reason instanceof AskGraphExecutionError
+				? result.reason.diagnostics.query_type
+				: null,
+		),
+		["fact", "compare"],
+	);
+});
 
 function createContext(scenario: Scenario = {}): AskGraphContext {
 	const calls = scenario.calls ?? [];
@@ -284,6 +354,115 @@ test("Judge evidence selection keeps only validated supporting citations", async
 	assert.equal(result.retrieval_debug?.selected_evidence_count, 2);
 	assert.equal(result.retrieval_debug?.evidence_selection_mode, "judge");
 	assert.equal(result.retrieval_debug?.evidence_selection_valid, true);
+});
+
+test("prose comparison retains alternatives even when Judge selects one paragraph", async () => {
+	const candidates = [
+		{
+			id: "popular",
+			index: 1,
+			score: 0.9,
+			body: "方案甲：完成率 61%，成本低。",
+		},
+		{
+			id: "higher",
+			index: 2,
+			score: 0.6,
+			body: "方案乙：完成率 84%，成本中。",
+		},
+		{ id: "third", index: 3, score: 0.7, body: "方案丙：完成率 72%，成本高。" },
+	];
+	const context = createContext({
+		queryType: "compare",
+		retrieve: () => ({ citations: candidates, retrieval_attempts: 1 }),
+		judge: () => ({
+			sufficient: true,
+			action: "generate",
+			reason: "covered",
+			evidence_ids: ["popular"],
+		}),
+	});
+	let generationEvidence: unknown;
+	context.ports.generate = (state) => {
+		generationEvidence = state.citations;
+		return { answer: "provided context", refused: false };
+	};
+	const result = await new AskGraphService(context).invoke({
+		question: "Which alternative has the highest completion rate?",
+	});
+	assert.deepEqual(generationEvidence, candidates);
+	assert.equal(result.retrieval_debug?.direct_evidence_count, 1);
+	assert.equal(result.retrieval_debug?.selected_evidence_count, 3);
+	assert.equal(result.retrieval_debug?.comparison_context_count, 2);
+	assert.equal(
+		result.retrieval_debug?.evidence_selection_mode,
+		"comparison_context",
+	);
+});
+
+test("comparison refuses an oversized context instead of truncating alternatives", async () => {
+	for (const candidates of [
+		Array.from({ length: 7 }, (_, index) => ({
+			id: `source-${index}`,
+			body: "candidate",
+		})),
+		[{ id: "source-0", body: "x".repeat(14_401) }],
+	]) {
+		const calls: string[] = [];
+		const result = await new AskGraphService(
+			createContext({
+				calls,
+				queryType: "compare",
+				retrieve: () => ({ citations: candidates, retrieval_attempts: 1 }),
+				judge: () => ({
+					sufficient: true,
+					action: "generate",
+					reason: "covered",
+					evidence_ids: ["source-0"],
+				}),
+			}),
+		).invoke({ question: "Compare alternatives" });
+		assert.equal(result.refused, true);
+		assert.equal(result.refuse_reason, "comparison_context_exceeds_budget");
+		assert.equal(calls.includes("generate"), false);
+	}
+});
+
+test("comparison still rejects an untrusted Judge evidence id", async () => {
+	const result = await new AskGraphService(
+		createContext({
+			queryType: "compare",
+			retrieve: () => ({
+				citations: [{ id: "allowed", body: "allowed" }],
+				retrieval_attempts: 1,
+			}),
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "covered",
+				evidence_ids: ["foreign"],
+			}),
+		}),
+	).invoke({ question: "Compare alternatives" });
+	assert.equal(result.refused, true);
+	assert.equal(result.refuse_reason, "invalid_evidence_selection");
+});
+
+test("a contradictory insufficient-generate judgement cannot authorize an answer", async () => {
+	const calls: string[] = [];
+	const result = await new AskGraphService(
+		createContext({
+			calls,
+			queryType: "compare",
+			judge: () => ({
+				sufficient: false,
+				action: "generate",
+				reason: "partial",
+			}),
+		}),
+	).invoke({ question: "Compare alternatives" });
+	assert.equal(result.refused, true);
+	assert.equal(calls.includes("generate"), false);
 });
 
 test("Judge evidence selection restores same-version structured lineage", async () => {

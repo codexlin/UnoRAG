@@ -2,6 +2,7 @@ import {
 	AiConcurrencyOverloadedError,
 	AiConcurrencyWaitTimeoutError,
 } from "@/core/ai";
+import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
 
 const PUBLIC_META_KEYS = [
 	"session_id",
@@ -160,6 +161,7 @@ export function projectPublicRetrievalDebug(
 		direct_evidence_count: ["direct_evidence_count"],
 		lineage_evidence_count: ["lineage_evidence_count"],
 		selected_evidence_count: ["selected_evidence_count"],
+		comparison_context_count: ["comparison_context_count"],
 		evidence_selection_mode: ["evidence_selection_mode"],
 		evidence_selection_valid: ["evidence_selection_valid"],
 	} as const;
@@ -167,17 +169,25 @@ export function projectPublicRetrievalDebug(
 		const source = sources.find((name) => value[name] !== undefined);
 		if (source) result[target] = value[source];
 	}
+	const rerank = projectRerankDiagnostic(
+		value.rerankDiagnostic ?? value.rerank_diagnostic,
+	);
+	if (rerank) result.rerank_diagnostic = rerank;
 	if (Array.isArray(value.stages)) {
 		result.stages = value.stages.flatMap((stage) => {
 			if (!isRecord(stage)) return [];
 			const name = stage.stage;
 			const duration = stage.duration_ms;
+			const rerank = projectRerankDiagnostic(
+				isRecord(stage.detail) ? stage.detail.rerankDiagnostic : null,
+			);
 			if (typeof name !== "string" || typeof duration !== "number") return [];
 			return [
 				{
 					stage: name,
 					duration_ms: duration,
 					ok: stage.ok !== false,
+					...(rerank ? { rerank_diagnostic: rerank } : {}),
 				},
 			];
 		});

@@ -238,6 +238,27 @@ test("judge evidence projection is bounded and excludes raw table rows", async (
 	assert.equal("tenant_id" in (projected[0] ?? {}), false);
 });
 
+test("reusing grounded table evidence does not invent a second rerank attempt", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{ structured: {} as never, answer: {} as never, retrieval: {} as never },
+	);
+	const context = (
+		runtime as unknown as { context: () => AskGraphContext }
+	).context();
+	const result = await context.ports.tableRetrieve({
+		upgrade_reason: "grounded_table_lookup",
+		citations: [{ id: "source" }],
+		retrieval_debug: { rerankDiagnostic: { category: "timeout" } },
+	} as unknown as AskState);
+	assert.equal(result.retrieval_debug?.rerankDiagnostic, null);
+	assert.equal(result.retrieval_debug?.table_candidate_count, 1);
+});
+
 test("semantic adjudication never compares RRF ranks with relevance thresholds", async () => {
 	const { NativeAskRuntime } = await runtimeModule;
 	const base = citation({

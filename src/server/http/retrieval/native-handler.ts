@@ -1,6 +1,8 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { projectQdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
+import { QdrantOperationError } from "@/core/retrieval/qdrant/store";
 
 import { logger, withActiveHttpSpan } from "@/lib/observability";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
@@ -108,6 +110,9 @@ async function handleNativeRetrievalRequestInSpan(input: {
 		logger.error({
 			event: "retrieval.native.failed",
 			error: error instanceof Error ? error.name : "UnknownError",
+			...(error instanceof QdrantOperationError
+				? { qdrant: projectQdrantDiagnostic(error.diagnostics) }
+				: {}),
 		});
 		return Response.json(
 			{ detail: "Retrieve service unavailable" },

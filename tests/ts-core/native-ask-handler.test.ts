@@ -11,10 +11,12 @@ import {
 } from "../../src/core/ai";
 import { AnswerCitationValidationError } from "../../src/core/ai/answer-citations";
 import type { AskGraphInput, AskState } from "../../src/core/ask-graph";
+import { AskGraphExecutionError } from "../../src/core/ask-graph";
 import type {
 	InternalCitation,
 	RetrievalResult,
 } from "../../src/core/retrieval";
+import { RerankDiagnosticSchema } from "../../src/core/retrieval/provider-request";
 import { QdrantOperationError } from "../../src/core/retrieval/qdrant/store";
 import { runWithObservabilityContext } from "../../src/lib/observability/context";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
@@ -662,6 +664,69 @@ for (const mode of ["sync", "stream"] as const) {
 	}
 }
 
+test("rerank degradation is persisted on its own retrieval attempt, not copied from the final attempt", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const runs = askRunRecorder();
+	const diagnostic = RerankDiagnosticSchema.parse({
+		...Object.fromEntries(
+			Object.keys(RerankDiagnosticSchema.shape).map((key) => [key, 0]),
+		),
+		category: "timeout",
+		statusCode: null,
+		attempts: 1,
+		durationMs: 10_000,
+		timeoutMs: 10_000,
+		maxAttempts: 3,
+		resultCount: null,
+	});
+	const recovered = { ...diagnostic, category: "success", durationMs: 120 };
+	const runtime = new FakeRuntime(
+		askState({
+			retrieval_debug: {
+				rerankDiagnostic: recovered,
+				stages: [
+					{
+						stage: "retrieve",
+						duration_ms: 10_100,
+						ok: true,
+						detail: {
+							rerankDiagnostic: {
+								...diagnostic,
+								body: "private provider body",
+							},
+						},
+					},
+					{
+						stage: "retrieve",
+						duration_ms: 300,
+						ok: true,
+						detail: { rerankDiagnostic: recovered },
+					},
+				],
+			},
+		}),
+		["答案"],
+	);
+	await handleNativeAskRequest({
+		request: request({ question: "问题", library_id: LIBRARY_ID }),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		runtimeFactory: runtimeFactory(runtime),
+		askRunsRepository: runs.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
+	});
+	const stages = runs.finalizations[0]?.stages?.filter(
+		(stage) => stage.stage === "retrieve",
+	);
+	assert.equal(stages?.[0]?.detail?.rerank_category, "timeout");
+	assert.equal(stages?.[1]?.detail?.rerank_category, "success");
+	assert.equal(stages?.[0]?.outcome, "completed");
+	assert.doesNotMatch(JSON.stringify(runs.finalizations), /private provider/);
+});
+
 test("Ask run uses the response request ID and reaches a privacy-safe terminal state", async () => {
 	const { handleNativeAskRequest } = await handlerModule;
 	const runs = askRunRecorder();
@@ -786,9 +851,160 @@ test("Qdrant transport failure records a stable dependency diagnosis with a sani
 	assert.deepEqual(await response?.json(), {
 		detail: "Ask service unavailable",
 	});
+	assert.equal(
+		response?.headers.get("x-request-id"),
+		runs.starts[0]?.requestId,
+	);
 	assert.equal(runs.finalizations[0]?.status, "failed");
 	assert.equal(runs.finalizations[0]?.errorCode, "qdrant_error");
+	assert.equal(
+		runs.finalizations[0]?.stages?.[0]?.detail?.qdrant_operation,
+		"query",
+	);
+	assert.equal(
+		runs.finalizations[0]?.stages?.[0]?.detail?.qdrant_category,
+		"transport",
+	);
+	assert.doesNotMatch(
+		JSON.stringify(runs.finalizations),
+		/private provider endpoint/,
+	);
 });
+
+test("graph diagnostic wrapping preserves access revocation response semantics", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const { AskAccessRevokedError } = await import(
+		"../../src/server/http/ask/authorization-checkpoint"
+	);
+	const runs = askRunRecorder();
+	const response = await handleNativeAskRequest({
+		request: request({ question: "private question", library_id: LIBRARY_ID }),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		askRunsRepository: runs.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
+		runtimeFactory: runtimeFactory(
+			new FakeRuntime(
+				askState(),
+				[],
+				new AskGraphExecutionError(new AskAccessRevokedError(), askState(), {
+					stages: [{ stage: "retrieve", duration_ms: 1, ok: false }],
+				}),
+			),
+		),
+	});
+	assert.equal(response?.status, 403);
+	assert.ok(response);
+	assert.equal((await response.json()).code, "ask_access_changed");
+	assert.equal(
+		response?.headers.get("x-request-id"),
+		runs.starts[0]?.requestId,
+	);
+	assert.equal(runs.finalizations[0]?.errorCode, "ask_access_changed");
+});
+
+for (const mode of ["sync", "stream"] as const) {
+	test(`${mode} graph retrieval failure keeps node timings and one stable request ID`, async (context) => {
+		const { handleNativeAskRequest } = await handlerModule;
+		const { NativeAskRuntime } = await import(
+			"../../src/server/http/ask/native-runtime"
+		);
+		const runs = askRunRecorder();
+		const model = {} as LanguageModel;
+		const repository = new FakeConversationRepository();
+		let generated = false;
+		const response = await handleNativeAskRequest({
+			request: request(
+				{ question: "private question", library_id: LIBRARY_ID },
+				mode === "stream" ? "stream" : undefined,
+			),
+			path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+			identity,
+			repository: repositoryInput(repository),
+			askRunsRepository: runs.repository,
+			resolveLibrary: async () => ({
+				id: "99999999-9999-4999-8999-999999999999",
+			}),
+			runtimeFactory: (input) => {
+				const runtime = new NativeAskRuntime(
+					input.identity,
+					input.libraryId,
+					input.signal,
+					input.policy,
+					{
+						structured: new StructuredOutputAdapter(model, async () => {
+							throw new Error("must not invoke model");
+						}),
+						retrieval: {
+							retrieve: async () => {
+								throw new QdrantOperationError(
+									"query",
+									Object.assign(new Error("private connection body"), {
+										code: "ECONNRESET",
+									}),
+									{ durationMs: 2, timeoutMs: 5000 },
+								);
+							},
+						},
+						answer: new AnswerStreamAdapter(model, async function* () {
+							generated = true;
+							yield "must not generate";
+						}),
+					},
+					input.assertAuthorized,
+				);
+				context.mock.method(
+					runtime as unknown as { retrieve: () => Promise<RetrievalResult> },
+					"retrieve",
+					async () => {
+						throw new QdrantOperationError(
+							"query",
+							Object.assign(new Error("private connection body"), {
+								code: "ECONNRESET",
+							}),
+							{ durationMs: 2, timeoutMs: 5000 },
+						);
+					},
+				);
+				return runtime;
+			},
+		});
+		assert.equal(response?.status, 503);
+		assert.equal(
+			response?.headers.get("x-request-id"),
+			runs.starts[0]?.requestId,
+		);
+		assert.equal(runs.finalizations[0]?.requestId, runs.starts[0]?.requestId);
+		assert.equal(runs.finalizations[0]?.queryType, "fact");
+		assert.equal(runs.finalizations[0]?.errorCode, "qdrant_error");
+		assert.deepEqual(
+			runs.finalizations[0]?.stages?.map((stage) => [
+				stage.stage,
+				stage.outcome,
+			]),
+			[
+				["route", "completed"],
+				["plan", "completed"],
+				["rewrite", "completed"],
+				["retrieve", "failed"],
+			],
+		);
+		assert.equal(
+			runs.finalizations[0]?.stages?.at(-1)?.detail?.qdrant_transportCode,
+			"ECONNRESET",
+		);
+		assert.equal(repository.exchanges.length, 0);
+		assert.equal(generated, false);
+		assert.doesNotMatch(
+			JSON.stringify(runs.finalizations) +
+				JSON.stringify(await response?.json()),
+			/private/,
+		);
+	});
+}
 
 test("stream ask preserves SSE order and persists after all tokens", async () => {
 	const { handleNativeAskRequest } = await handlerModule;

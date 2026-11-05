@@ -4,7 +4,9 @@ import {
 	setActiveSpanAttributes,
 	withActiveSpan,
 } from "@/lib/observability/tracing";
+import { projectRerankDiagnostic } from "../retrieval/provider-request";
 import type { AskGraphContext, AskNodePort } from "./context";
+import { AskGraphExecutionError } from "./execution-error";
 import { createDecisionNode, routeAfterJudge } from "./nodes/decision";
 import { createRefuseNode } from "./nodes/refuse";
 import { retryNode, routeAfterRetry } from "./nodes/retry";
@@ -111,6 +113,12 @@ function timedNode(
 								}
 							: {}),
 					});
+					const rerank =
+						stageName === "retrieve" || stageName === "table_retrieve"
+							? projectRerankDiagnostic(
+									update.retrieval_debug?.rerankDiagnostic,
+								)
+							: null;
 					return {
 						...update,
 						retrieval_debug: appendAskStage(
@@ -118,16 +126,17 @@ function timedNode(
 							stageName,
 							startedAt,
 							!judgeFailed,
+							rerank ? { rerankDiagnostic: rerank } : undefined,
 						),
 					};
 				} catch (error) {
-					state.retrieval_debug = appendAskStage(
+					const failedDebug = appendAskStage(
 						state.retrieval_debug,
 						stageName,
 						startedAt,
 						false,
 					);
-					throw error;
+					throw new AskGraphExecutionError(error, state, failedDebug);
 				}
 			},
 		);

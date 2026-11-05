@@ -1,5 +1,7 @@
 import { and, desc, eq, or, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
+import { projectQdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
 
 import type * as schema from "@/db/schema";
 import {
@@ -116,6 +118,31 @@ function judgeDetail(
 	return Object.keys(detail).length > 0 ? detail : null;
 }
 
+function stageDetail(stage: typeof askRunStages.$inferSelect) {
+	const qdrant = projectQdrantDiagnostic(
+		Object.fromEntries(
+			Object.entries(stage.detail ?? {})
+				.filter(([key]) => key.startsWith("qdrant_"))
+				.map(([key, value]) => [key.slice(7), value]),
+		),
+	);
+	const dependency = qdrant ? { qdrant } : {};
+	if (stage.stage !== "retrieve" && stage.stage !== "table_retrieve") {
+		const judge = judgeDetail(stage);
+		return judge || qdrant ? { ...judge, ...dependency } : null;
+	}
+	const rerank = projectRerankDiagnostic(
+		Object.fromEntries(
+			Object.entries(stage.detail ?? {})
+				.filter(([key]) => key.startsWith("rerank_"))
+				.map(([key, value]) => [key.slice(7), value]),
+		),
+	);
+	return rerank || qdrant
+		? { ...(rerank ? { rerank } : {}), ...dependency }
+		: null;
+}
+
 export class OperationsEventService {
 	constructor(private readonly db: Database) {}
 
@@ -184,7 +211,7 @@ export class OperationsEventService {
 				started_at: null,
 				ended_at: null,
 				duration_ms: stage.durationMs,
-				detail: judgeDetail(stage),
+				detail: stageDetail(stage),
 			})),
 		};
 	}

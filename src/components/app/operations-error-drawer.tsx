@@ -153,6 +153,104 @@ export function JudgeDiagnostics({
 	});
 }
 
+const RERANK_CATEGORY_LABELS = {
+	success: "成功",
+	timeout: "请求超时",
+	http: "上游 HTTP 错误",
+	transport: "传输失败",
+	invalid_response: "响应无效",
+	unknown: "未分类错误",
+} as const;
+
+export function RerankDiagnostics({
+	stages,
+}: {
+	stages: OperationsEventDetail["stages"];
+}) {
+	return stages.map((stage) => {
+		const diagnostic =
+			stage.stage === "retrieve" || stage.stage === "table_retrieve"
+				? stage.detail?.rerank
+				: null;
+		if (!diagnostic) return null;
+		const fields = [
+			["执行结果", RERANK_CATEGORY_LABELS[diagnostic.category]],
+			["HTTP 状态", diagnostic.statusCode],
+			["尝试次数", diagnostic.attempts],
+			[
+				"总预算",
+				diagnostic.timeoutMs == null ? null : `${diagnostic.timeoutMs} ms`,
+			],
+			["实际耗时", `${diagnostic.durationMs} ms`],
+			[
+				"候选 / 返回",
+				`${diagnostic.inputCount} / ${diagnostic.resultCount ?? "—"}`,
+			],
+			[
+				"图像记录",
+				`${diagnostic.figureCountBeforeRerank} → ${diagnostic.figureCountAfterRerank} → ${diagnostic.figureCountAfterDedup} → ${diagnostic.figureCountAfterTopK}`,
+			],
+		].filter((field) => field[1] != null);
+		return (
+			<section key={stage.id} className="border-t border-border/70 pt-4">
+				<h3 className="text-ui font-semibold">
+					重排诊断 · 阶段 {stage.sequence}
+				</h3>
+				<dl className="mt-3 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2">
+					{fields.map(([label, value]) => (
+						<div key={label} className="contents">
+							<dt className="text-meta text-muted-foreground">{label}</dt>
+							<dd className="min-w-0 break-words font-mono text-[11px]">
+								{value}
+							</dd>
+						</div>
+					))}
+				</dl>
+			</section>
+		);
+	});
+}
+
+export function QdrantDiagnostics({
+	stages,
+}: {
+	stages: OperationsEventDetail["stages"];
+}) {
+	return stages.map((stage) => {
+		const diagnostic = stage.detail?.qdrant;
+		if (!diagnostic) return null;
+		const labels = { ...RERANK_CATEGORY_LABELS, cancelled: "已取消" };
+		const fields = [
+			["操作", diagnostic.operation],
+			["错误类别", labels[diagnostic.category]],
+			["HTTP 状态", diagnostic.statusCode],
+			["连接错误码", diagnostic.transportCode],
+			["可重试", diagnostic.retryable ? "是" : "否"],
+			["尝试次数", diagnostic.attempts],
+			["调用耗时", `${diagnostic.durationMs} ms`],
+			[
+				"客户端超时",
+				diagnostic.timeoutMs == null ? null : `${diagnostic.timeoutMs} ms`,
+			],
+		].filter((field) => field[1] != null);
+		return (
+			<section key={stage.id} className="border-t border-border/70 pt-4">
+				<h3 className="text-ui font-semibold">Qdrant 诊断</h3>
+				<dl className="mt-3 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2">
+					{fields.map(([label, value]) => (
+						<div key={label} className="contents">
+							<dt className="text-meta text-muted-foreground">{label}</dt>
+							<dd className="min-w-0 break-words font-mono text-[11px]">
+								{value}
+							</dd>
+						</div>
+					))}
+				</dl>
+			</section>
+		);
+	});
+}
+
 function CopyValue({ value }: { value: string }) {
 	const [copied, setCopied] = useState(false);
 	return (
@@ -313,6 +411,8 @@ export function OperationsErrorDrawer({
 								<StageWaterfall stages={detail.stages} />
 							</section>
 							<JudgeDiagnostics stages={detail.stages} />
+							<RerankDiagnostics stages={detail.stages} />
+							<QdrantDiagnostics stages={detail.stages} />
 
 							<section className="border-t border-border/70 pt-4">
 								<h3 className="text-ui font-semibold">关联信息</h3>
