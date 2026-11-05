@@ -27,6 +27,10 @@ export const queryKeys = {
 		["workspace-settings", ...scopeKey(scope)] as const,
 	operations: (scope: QueryScope) =>
 		["operations", ...scopeKey(scope)] as const,
+	operationRequests: (scope: QueryScope, filters: string) =>
+		["operation-requests", ...scopeKey(scope), filters] as const,
+	operationEvent: (scope: QueryScope, source: string, id: string) =>
+		["operation-event", ...scopeKey(scope), source, id] as const,
 	threads: (scope: QueryScope) => ["threads", ...scopeKey(scope)] as const,
 	thread: (scope: QueryScope, threadId: string) =>
 		["thread", ...scopeKey(scope), threadId] as const,

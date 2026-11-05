@@ -3,8 +3,29 @@ export type JudgeErrorCategory =
 	| "authentication"
 	| "rate_limit"
 	| "provider_unavailable"
+	| "output_truncated"
 	| "invalid_output"
 	| "provider_error";
+
+const operationalRefusalCodes = new Set([
+	"insufficient_evidence",
+	"no_evidence",
+	"judge_unavailable",
+	"ambiguous",
+	"table_incomplete",
+	"invalid_rewrite",
+	"invalid_graph_state",
+	"invalid_judgement_action",
+	"invalid_evidence_selection",
+	"refused",
+]);
+
+/** Model-authored refusal prose is content, not operational metadata. */
+export function operationalRefusalCode(value: unknown): string | null {
+	return typeof value === "string" && operationalRefusalCodes.has(value)
+		? value
+		: null;
+}
 
 export type JudgeDiagnosticDetail = {
 	judge_error_category?: JudgeErrorCategory;
@@ -50,5 +71,11 @@ export type OperationsEventDetail = {
 	latency_ms: number | null;
 	message: string | null;
 	can_retry?: boolean;
+	ask?: {
+		refuse_reason: string | null;
+		citation_count: number;
+		used_hybrid: boolean;
+		used_rerank: boolean;
+	};
 	stages: OperationsEventStage[];
 };

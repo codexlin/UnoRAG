@@ -21,6 +21,7 @@ import type {
 	JudgeErrorCategory,
 	OperationsEventDetail,
 } from "@/lib/operations-event-detail";
+import { operationalRefusalCode } from "@/lib/operations-event-detail";
 
 type Database = NodePgDatabase<typeof schema>;
 
@@ -52,6 +53,7 @@ const judgeErrorCategories = new Set<string>([
 	"authentication",
 	"rate_limit",
 	"provider_unavailable",
+	"output_truncated",
 	"invalid_output",
 	"provider_error",
 ] satisfies JudgeErrorCategory[]);
@@ -166,6 +168,12 @@ export class OperationsEventService {
 			ended_at: iso(run.endedAt),
 			latency_ms: run.latencyMs,
 			message: null,
+			ask: {
+				refuse_reason: operationalRefusalCode(run.refuseReason),
+				citation_count: run.citationCount,
+				used_hybrid: run.usedHybrid,
+				used_rerank: run.usedRerank,
+			},
 			stages: stages.map((stage) => ({
 				id: stage.id,
 				sequence: stage.sequence,

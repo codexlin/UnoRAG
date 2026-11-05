@@ -9,7 +9,10 @@ import {
 	QdrantCollectionManager,
 	UNORAG_QDRANT_PAYLOAD_INDEXES,
 } from "../../src/core/retrieval/qdrant/collection-manager";
-import { QdrantRetrievalStore } from "../../src/core/retrieval/qdrant/store";
+import {
+	QdrantOperationError,
+	QdrantRetrievalStore,
+} from "../../src/core/retrieval/qdrant/store";
 
 type CollectionInfo = Awaited<ReturnType<QdrantClient["getCollection"]>>;
 
@@ -270,7 +273,9 @@ test("retrieval store never queries before collection readiness succeeds", async
 	const store = new QdrantRetrievalStore(
 		client,
 		"unorag_chunks",
-		Promise.reject(new Error("collection contract mismatch")),
+		Promise.reject(
+			new QdrantCollectionContractError("collection contract mismatch"),
+		),
 	);
 
 	await assert.rejects(
@@ -290,6 +295,49 @@ test("retrieval store never queries before collection readiness succeeds", async
 	);
 	assert.equal(searches, 0);
 });
+
+for (const operation of ["ready", "query", "scroll"] as const) {
+	test(`retrieval store identifies Qdrant ${operation} failures without exposing provider content`, async () => {
+		const cause = new TypeError(
+			"fetch failed: private endpoint and request content",
+		);
+		const client = {
+			async query() {
+				throw cause;
+			},
+			async scroll() {
+				throw cause;
+			},
+		} as unknown as QdrantClient;
+		const store = new QdrantRetrievalStore(
+			client,
+			"unorag_chunks",
+			operation === "ready" ? Promise.reject(cause) : Promise.resolve(),
+		);
+		const input = {
+			vector: [1, 0],
+			scope: {
+				tenantId: "tenant",
+				workspaceId: "workspace",
+				libraryId: "library",
+				principalIds: ["principal"],
+				groupIds: [],
+				activeGenerationIds: ["generation"],
+			},
+			limit: 1,
+		};
+		await assert.rejects(
+			operation === "scroll" ? store.listCorpus(input) : store.search(input),
+			(error) => {
+				assert.ok(error instanceof QdrantOperationError);
+				assert.equal(error.operation, operation);
+				assert.equal(error.cause, cause);
+				assert.equal(error.message, `Qdrant ${operation} operation failed`);
+				return true;
+			},
+		);
+	});
+}
 
 test("retrieval store uses the universal query API with mandatory scope", async () => {
 	const calls: unknown[] = [];
