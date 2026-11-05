@@ -60,6 +60,7 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 	}
 
 	async embedTexts(texts: string[], signal?: AbortSignal): Promise<number[][]> {
+		signal?.throwIfAborted();
 		if (!texts.length) return [];
 		return withActiveSpan(
 			"unorag.embedding",
@@ -82,11 +83,13 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 		const vectors: number[][] = [];
 		for (let offset = 0; offset < texts.length; offset += this.batchSize) {
 			const batch = texts.slice(offset, offset + this.batchSize);
-			const response = await fetchRetrievalProvider({
+			const payload = await fetchRetrievalProvider({
 				provider: "embedding",
 				signal,
 				timeoutMs: this.timeoutMs,
 				retryBackoffMs: this.config.retryBackoffMs,
+				parse: async (response) =>
+					EmbeddingResponseSchema.parse(await response.json()),
 				request: (requestSignal) =>
 					this.fetch(endpoint(this.config.baseUrl), {
 						method: "POST",
@@ -102,7 +105,6 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 						signal: requestSignal,
 					}),
 			});
-			const payload = EmbeddingResponseSchema.parse(await response.json());
 			const ordered = [...payload.data].sort((a, b) => a.index - b.index);
 			if (ordered.length !== batch.length) {
 				throw new Error(

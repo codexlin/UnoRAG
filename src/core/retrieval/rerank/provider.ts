@@ -8,7 +8,7 @@ const RerankResponseSchema = z
 			z
 				.object({
 					index: z.number().int().nonnegative(),
-					relevance_score: z.number(),
+					relevance_score: z.number().finite(),
 				})
 				.passthrough(),
 		),
@@ -19,6 +19,35 @@ export type RerankResult = {
 	index: number;
 	score: number;
 };
+
+const RerankResultsSchema = z
+	.array(
+		z.object({
+			index: z.number().int().nonnegative(),
+			score: z.number().finite(),
+		}),
+	)
+	.min(1);
+
+export function normalizeRerankResults(
+	results: unknown,
+	documentCount: number,
+): RerankResult[] {
+	const ranked = RerankResultsSchema.parse(results);
+	const seen = new Set<number>();
+	for (const item of ranked) {
+		if (item.index >= documentCount || seen.has(item.index)) {
+			throw new Error("rerank response contains invalid or duplicate indices");
+		}
+		seen.add(item.index);
+	}
+	return ranked
+		.map((item) => ({
+			index: item.index,
+			score: Math.max(0, Math.min(1, item.score)),
+		}))
+		.sort((a, b) => b.score - a.score || a.index - b.index);
+}
 
 export interface RerankProvider {
 	rerank(input: {
@@ -57,6 +86,7 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 		topN: number;
 		signal?: AbortSignal;
 	}): Promise<RerankResult[]> {
+		input.signal?.throwIfAborted();
 		if (!input.documents.length) return [];
 		return withActiveSpan(
 			"unorag.rerank",
@@ -78,11 +108,21 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 		topN: number;
 		signal?: AbortSignal;
 	}): Promise<RerankResult[]> {
-		const response = await fetchRetrievalProvider({
+		return fetchRetrievalProvider({
 			provider: "rerank",
 			signal: input.signal,
 			timeoutMs: this.timeoutMs,
 			retryBackoffMs: this.config.retryBackoffMs,
+			parse: async (response) => {
+				const payload = RerankResponseSchema.parse(await response.json());
+				return normalizeRerankResults(
+					payload.results.map((item) => ({
+						index: item.index,
+						score: item.relevance_score,
+					})),
+					input.documents.length,
+				);
+			},
 			request: (requestSignal) =>
 				this.fetch(`${this.config.baseUrl.replace(/\/$/, "")}/reranks`, {
 					method: "POST",
@@ -99,12 +139,5 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 					signal: requestSignal,
 				}),
 		});
-		const payload = RerankResponseSchema.parse(await response.json());
-		return payload.results
-			.filter((item) => item.index < input.documents.length)
-			.map((item) => ({
-				index: item.index,
-				score: Math.max(0, Math.min(1, item.relevance_score)),
-			}));
 	}
 }
