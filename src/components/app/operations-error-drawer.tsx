@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import {
 	Check,
 	Copy,
@@ -7,9 +8,9 @@ import {
 	LoaderCircle,
 	RotateCcw,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
-
+import { useSession } from "@/components/app/session-provider";
 import { StageWaterfall } from "@/components/app/stage-waterfall";
 import {
 	Sheet,
@@ -21,11 +22,72 @@ import {
 import { retryJob } from "@/lib/api";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
 import type { OperationsEventDetail } from "@/lib/operations-event-detail";
+import { queryKeys } from "@/lib/query-keys";
 
 export type OperationsErrorRef = {
 	id: string;
 	source: "ask" | "job";
 };
+
+const STATUS_LABELS: Record<string, string> = {
+	running: "处理中",
+	completed: "已完成",
+	refused: "已拒答",
+	failed: "失败",
+	cancelled: "已取消",
+};
+
+export function RequestOutcome({ detail }: { detail: OperationsEventDetail }) {
+	const faulty =
+		detail.status === "failed" ||
+		(detail.status === "completed" && detail.error_code != null);
+	const showGuidance =
+		faulty || (detail.source === "job" && detail.error_code != null);
+	return (
+		<section
+			className={
+				faulty
+					? "border border-destructive/30 bg-destructive/5 px-3 py-3"
+					: "border border-border/70 bg-muted/25 px-3 py-3"
+			}
+		>
+			<p className="text-ui font-semibold">
+				{STATUS_LABELS[detail.status] ?? detail.status}
+			</p>
+			{showGuidance ? (
+				<div className="mt-2 space-y-2">
+					<p className="text-ui font-medium">{detail.guidance.title}</p>
+					<p className="font-mono text-[11px] text-destructive break-all">
+						{detail.error_code ?? "unclassified_error"}
+					</p>
+					<p className="text-ui text-foreground/85">{detail.guidance.cause}</p>
+					<p className="text-ui text-muted-foreground">
+						{detail.guidance.recovery}
+					</p>
+				</div>
+			) : null}
+			{detail.ask ? (
+				<dl className="mt-3 grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
+					{[
+						["问题类型", detail.query_type ?? "—"],
+						["检索模式", detail.retrieval_mode ?? "—"],
+						["混合检索", detail.ask.used_hybrid ? "是" : "否"],
+						["重排", detail.ask.used_rerank ? "是" : "否"],
+						["引用数", String(detail.ask.citation_count)],
+						["拒答原因", detail.ask.refuse_reason ?? "—"],
+					].map(([label, value]) => (
+						<div className="contents" key={label}>
+							<dt className="text-muted-foreground">{label}</dt>
+							<dd className="min-w-0 break-all font-mono text-[11px]">
+								{value}
+							</dd>
+						</div>
+					))}
+				</dl>
+			) : null}
+		</section>
+	);
+}
 
 export function JudgeDiagnostics({
 	stages,
@@ -123,31 +185,31 @@ export function OperationsErrorDrawer({
 	onOpenChange: (open: boolean) => void;
 	onRecovered?: () => void;
 }) {
-	const [detail, setDetail] = useState<OperationsEventDetail | null>(null);
-	const [error, setError] = useState<string | null>(null);
+	const { identity, can } = useSession();
 	const [retrying, setRetrying] = useState(false);
-
-	useEffect(() => {
-		if (!selected) return;
-		const controller = new AbortController();
-		setDetail(null);
-		setError(null);
-		setRetrying(false);
-		void fetch(
-			`/api/workspace/operations/events/${selected.source}/${encodeURIComponent(selected.id)}`,
-			{ cache: "no-store", signal: controller.signal },
-		)
-			.then(async (response) => {
-				if (!response.ok) throw new Error(`event_http_${response.status}`);
-				return (await response.json()) as OperationsEventDetail;
-			})
-			.then(setDetail)
-			.catch((cause) => {
-				if ((cause as Error).name !== "AbortError")
-					setError("错误详情暂时不可用");
-			});
-		return () => controller.abort();
-	}, [selected]);
+	const query = useQuery({
+		queryKey: queryKeys.operationEvent(
+			{ organizationId: identity.tenantId, workspaceId: identity.workspaceId },
+			selected?.source ?? "",
+			selected?.id ?? "",
+		),
+		enabled: selected != null && can("manageMembers"),
+		queryFn: async ({ signal }) => {
+			if (!selected) throw new Error("event_not_selected");
+			const response = await fetch(
+				`/api/workspace/operations/events/${selected.source}/${encodeURIComponent(selected.id)}`,
+				{ cache: "no-store", signal },
+			);
+			if (!response.ok) throw new Error(`event_http_${response.status}`);
+			return (await response.json()) as OperationsEventDetail;
+		},
+		staleTime: 0,
+		retry: false,
+		refetchInterval: (current) =>
+			current.state.data?.status === "running" ? 5_000 : false,
+	});
+	const detail = query.data;
+	const error = query.isError;
 
 	const identifiers = detail
 		? [
@@ -167,9 +229,13 @@ export function OperationsErrorDrawer({
 				showCloseButton
 			>
 				<SheetHeader className="border-b border-border/70">
-					<SheetTitle className="pr-8">故障诊断</SheetTitle>
+					<SheetTitle className="pr-8">
+						{selected?.source === "ask" ? "请求链路" : "故障诊断"}
+					</SheetTitle>
 					<SheetDescription>
-						从错误事件定位资源、失败阶段与恢复动作
+						{selected?.source === "ask"
+							? "Ask · 阶段耗时与执行结果"
+							: "Job · 阶段耗时与恢复动作"}
 					</SheetDescription>
 				</SheetHeader>
 				<div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -178,64 +244,62 @@ export function OperationsErrorDrawer({
 							<LoaderCircle className="size-4 animate-spin" /> 正在关联诊断信息
 						</div>
 					) : error ? (
-						<p className="py-8 text-ui text-destructive">{error}</p>
+						<div
+							className="space-y-3 py-8 text-ui text-destructive"
+							role="alert"
+						>
+							<p>详情暂时不可用，记录可能已被清理或当前无权访问。</p>
+							<button
+								type="button"
+								className="inline-flex items-center gap-2 text-xs"
+								onClick={() => void query.refetch()}
+							>
+								<RotateCcw className="size-3.5" />
+								重新加载
+							</button>
+						</div>
 					) : detail ? (
 						<div className="space-y-5">
-							<section className="border border-destructive/30 bg-destructive/5 px-3 py-3">
-								<div className="flex items-start justify-between gap-3">
-									<div>
-										<p className="text-ui font-semibold">
-											{detail.guidance.title}
-										</p>
-										<p className="mt-1 font-mono text-[11px] text-destructive">
-											{detail.error_code ?? "unclassified_error"}
-										</p>
-									</div>
-									<span className="font-mono text-[10px] uppercase text-muted-foreground">
-										{detail.source} · {detail.status}
-									</span>
-								</div>
-								<p className="mt-3 text-ui text-foreground/85">
-									{detail.guidance.cause}
-								</p>
-								<p className="mt-2 text-ui text-muted-foreground">
-									建议：{detail.guidance.recovery}
-								</p>
-								{detail.message ? (
-									<pre className="mt-3 max-h-32 overflow-auto border-t border-destructive/20 pt-3 font-mono text-[10px] whitespace-pre-wrap break-all text-muted-foreground">
-										{detail.message}
-									</pre>
-								) : null}
-								{detail.can_retry && detail.resource_id ? (
-									<button
-										type="button"
-										disabled={retrying}
-										onClick={async () => {
-											setRetrying(true);
-											try {
-												await retryJob(detail.resource_id as string);
-												toast.success("已创建新的删除清理任务");
-												onRecovered?.();
-											} catch (cause) {
-												toast.error(
-													cause instanceof Error
-														? cause.message
-														: "重试清理失败",
-												);
-												setRetrying(false);
-											}
-										}}
-										className="mt-3 inline-flex h-8 items-center gap-1.5 border border-destructive/30 bg-background px-3 text-xs font-medium text-foreground hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
-									>
-										{retrying ? (
-											<LoaderCircle className="size-3.5 animate-spin" />
-										) : (
-											<RotateCcw className="size-3.5" />
-										)}
-										重试清理
-									</button>
-								) : null}
-							</section>
+							<RequestOutcome detail={detail} />
+							{detail.message || detail.can_retry ? (
+								<section>
+									{detail.message ? (
+										<pre className="mt-3 max-h-32 overflow-auto border-t border-destructive/20 pt-3 font-mono text-[10px] whitespace-pre-wrap break-all text-muted-foreground">
+											{detail.message}
+										</pre>
+									) : null}
+									{detail.can_retry && detail.resource_id ? (
+										<button
+											type="button"
+											disabled={retrying}
+											onClick={async () => {
+												setRetrying(true);
+												try {
+													await retryJob(detail.resource_id as string);
+													toast.success("已创建新的删除清理任务");
+													onRecovered?.();
+												} catch (cause) {
+													toast.error(
+														cause instanceof Error
+															? cause.message
+															: "重试清理失败",
+													);
+												} finally {
+													setRetrying(false);
+												}
+											}}
+											className="mt-3 inline-flex h-8 items-center gap-1.5 border border-destructive/30 bg-background px-3 text-xs font-medium text-foreground hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
+										>
+											{retrying ? (
+												<LoaderCircle className="size-3.5 animate-spin" />
+											) : (
+												<RotateCcw className="size-3.5" />
+											)}
+											重试清理
+										</button>
+									) : null}
+								</section>
+							) : null}
 
 							<section>
 								<div className="mb-2 flex items-baseline justify-between">

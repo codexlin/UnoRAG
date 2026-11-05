@@ -21,19 +21,19 @@ import {
 } from "../../src/core/ai";
 
 const EXPECTED_DIGESTS = {
-	chat: "0b9386aad530cc800bd97fd1cce4ca79eaeb1a4eb603fd3a8fbcd38ae4c46690",
+	chat: "d4d2ab2fa459a3239bf617da00951f39695f29a72e52fdddbe4d9017a4df5ede",
 	router: "4f586e259c1fb7b4991d7014038887dd885168785edfd5fe0705cfb8a5862353",
 	rewrite: "81002875e2bfbf97afaee365f896b5a7a7c6528cea3c2242c4e26a40ab7d4104",
-	judge: "f8671487f0b6fbe394a45718989ba81a7837370466468138ecb7feb21931e1bb",
+	judge: "801ff84a436d5965be5502b062f3d6eda1ff373b0a6227a655282f9d31ae9b9b",
 	table_plan:
 		"074c2f67f29bc44f7a72be0b1525490ef51719be3a9ba9ac4677b33198d5aab7",
 } as const;
 
 const EXPECTED_VERSIONS = {
-	chat: "1.2.0",
+	chat: "1.3.0",
 	router: "1.0.0",
 	rewrite: "1.0.0",
-	judge: "1.1.0",
+	judge: "1.2.0",
 	table_plan: "1.0.0",
 } as const;
 

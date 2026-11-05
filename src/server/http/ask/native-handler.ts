@@ -8,6 +8,7 @@ import {
 	AiConcurrencyOverloadedError,
 	AiConcurrencyWaitTimeoutError,
 } from "@/core/ai";
+import { AnswerCitationValidationError } from "@/core/ai/answer-citations";
 import {
 	type AskState,
 	appendAskStage,
@@ -358,6 +359,7 @@ function completeRetrievalDebug(state: AskState, startedAt: number) {
 function operationalErrorCode(error: unknown): string {
 	if (!(error instanceof Error)) return "UnknownError";
 	if (error instanceof AskAccessRevokedError) return error.code;
+	if (error instanceof AnswerCitationValidationError) return error.code;
 	if (
 		error instanceof AiConcurrencyOverloadedError ||
 		error instanceof AiConcurrencyWaitTimeoutError

@@ -15,6 +15,7 @@ export const integrationTestFiles = [
 	"tests/ts-core/dbos-sdk-postgres.integration.test.ts",
 	"tests/ts-core/job-stage-runs-postgres.test.ts",
 	"tests/ts-core/observability-alerting.test.ts",
+	"tests/ts-core/operations-requests-postgres.test.ts",
 	"tests/ts-core/password-onboarding-postgres.test.ts",
 	"tests/ts-core/qdrant-collection-manager.integration.test.ts",
 	"tests/ts-core/qdrant-ingest-write-store.integration.test.ts",

@@ -19,6 +19,10 @@ test("diagnostic messages redact credentials and remain bounded", () => {
 });
 
 test("error guidance groups known providers, persistence, and unknown failures", () => {
+	assert.equal(
+		errorGuidance("answer_citation_invalid").title,
+		"回答引用校验失败",
+	);
 	assert.equal(errorGuidance("mineru_unauthorized").title, "文档解析异常");
 	assert.equal(errorGuidance("document_ingest_empty").title, "没有可索引内容");
 	assert.equal(errorGuidance("document_parse_invalid").title, "文档格式无效");

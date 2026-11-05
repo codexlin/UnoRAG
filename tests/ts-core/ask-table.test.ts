@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
 	deriveDeterministicTablePlan,
+	deriveGroundedTableLookup,
 	executeTableQuery,
 	normalizeTablePlanForQuestion,
 	parseTableNumber,
@@ -256,6 +257,83 @@ function tableRecord(input: {
 }
 
 const quoteHeaders = ["序号", "设备名称", "单价（元）", "合计（元）"];
+
+test("grounded lookup returns original entity rows and requested columns without inventing aggregates", () => {
+	const headers = ["设备名称", "品牌/型号", "规格参数", "单价（元）"];
+	const dataset = {
+		records: [
+			tableRecord({
+				id: "prices",
+				tableId: "catalog",
+				headers,
+				rows: [
+					["服务器主机", "Acme/X-42", "64GB", "120000"],
+					["服务器主机", "Acme/X-42", "128GB", "150000"],
+					["路由设备", "Net Y-12", "8口", "8000"],
+				],
+			}),
+		],
+	};
+	const candidates = [{ tableId: "catalog", headers, dataset }];
+	const question = "服务器主机（Acme X-42）的单价大约是多少？规格参数有哪些？";
+	const plan = deriveGroundedTableLookup(question, candidates);
+	assert.equal(plan?.operation, "lookup");
+	const result = executeTableQuery(plan, dataset);
+	assert.equal(result.status, "success");
+	assert.equal(result.matchedRows.length, 2);
+	assert.match(result.answerText ?? "", /120000/);
+	assert.match(result.answerText ?? "", /150000/);
+	assert.doesNotMatch(result.answerText ?? "", /平均|8000/);
+	for (const ambiguous of [
+		"Acme X-42和Net Y-12的单价是多少？",
+		"Acme X-42的平均单价是多少？",
+		"Acme X-42的单价为什么更贵？",
+		"不存在型号的单价是多少？",
+		"服务器主机Acme X-420的单价是多少？",
+		"服务器主机的单价占比是多少？排名第二的设备是什么？",
+		"汇总说明中，服务器主机的单价是多少？",
+		"服务器主机的单价比例是多少？",
+		"What is the price ratio for Acme X-42?",
+	])
+		assert.equal(deriveGroundedTableLookup(ambiguous, candidates), null);
+	assert.equal(
+		deriveGroundedTableLookup(question, [
+			...candidates,
+			{ ...candidates[0], tableId: "other" },
+		]),
+		null,
+	);
+});
+
+test("grounded lookup keeps normalized spelling variants and does not require full coverage for a row lookup", () => {
+	const headers = ["型号", "价格"];
+	const dataset = {
+		records: [
+			tableRecord({
+				id: "variants",
+				tableId: "catalog",
+				headers,
+				rows: [
+					["Model A-42", "120000"],
+					["Model A42", "150000"],
+				],
+				tableRowCount: 100,
+			}),
+		],
+	};
+	const plan = deriveGroundedTableLookup("Model A42的价格是多少？", [
+		{ tableId: "catalog", headers, dataset },
+	]);
+	const result = executeTableQuery(plan, dataset);
+	assert.equal(result.status, "success");
+	assert.equal(result.matchedRows.length, 2);
+	assert.equal(
+		deriveGroundedTableLookup("120000的价格是多少？", [
+			{ tableId: "catalog", headers, dataset },
+		]),
+		null,
+	);
+});
 const quote: TableDatasetInput = {
 	records: [
 		tableRecord({

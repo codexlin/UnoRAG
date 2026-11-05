@@ -9,11 +9,13 @@ import {
 	AnswerStreamAdapter,
 	StructuredOutputAdapter,
 } from "../../src/core/ai";
+import { AnswerCitationValidationError } from "../../src/core/ai/answer-citations";
 import type { AskGraphInput, AskState } from "../../src/core/ask-graph";
 import type {
 	InternalCitation,
 	RetrievalResult,
 } from "../../src/core/retrieval";
+import { QdrantOperationError } from "../../src/core/retrieval/qdrant/store";
 import { runWithObservabilityContext } from "../../src/lib/observability/context";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
 import type {
@@ -757,6 +759,37 @@ test("Ask run records refusal and runtime failure without changing HTTP behavior
 	assert.equal(failedRuns.finalizations[0]?.errorCode, "Error");
 });
 
+test("Qdrant transport failure records a stable dependency diagnosis with a sanitized response", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const runs = askRunRecorder();
+	const response = await handleNativeAskRequest({
+		request: request({ question: "触发故障", library_id: LIBRARY_ID }),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		runtimeFactory: runtimeFactory(
+			new FakeRuntime(
+				askState(),
+				[],
+				new QdrantOperationError(
+					"query",
+					new TypeError("private provider endpoint"),
+				),
+			),
+		),
+		askRunsRepository: runs.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
+	});
+	assert.equal(response?.status, 503);
+	assert.deepEqual(await response?.json(), {
+		detail: "Ask service unavailable",
+	});
+	assert.equal(runs.finalizations[0]?.status, "failed");
+	assert.equal(runs.finalizations[0]?.errorCode, "qdrant_error");
+});
+
 test("stream ask preserves SSE order and persists after all tokens", async () => {
 	const { handleNativeAskRequest } = await handlerModule;
 	const repository = new FakeConversationRepository([activeThread()]);
@@ -815,6 +848,45 @@ test("stream ask preserves SSE order and persists after all tokens", async () =>
 		repository.exchanges[0]?.input.assistant.content,
 		"违约金为 200 元",
 	);
+});
+
+test("invalid answer citations fail the run without persisting a successful exchange", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	for (const streaming of [false, true]) {
+		const repository = new FakeConversationRepository([activeThread()]);
+		const runs = askRunRecorder();
+		const runtime = new FakeRuntime(askState());
+		runtime.streamAnswer = async function* () {
+			yield "价格200元";
+			throw new AnswerCitationValidationError();
+		};
+		const response = await handleNativeAskRequest({
+			request: request(
+				{
+					question: "价格是多少？",
+					library_id: LIBRARY_ID,
+					thread_id: THREAD_ID,
+				},
+				streaming ? "stream" : undefined,
+			),
+			path: streaming ? ["v1", "ask", "stream"] : ["v1", "ask"],
+			identity,
+			repository: repositoryInput(repository),
+			runtimeFactory: runtimeFactory(runtime),
+			askRunsRepository: runs.repository,
+			resolveLibrary: async () => ({
+				id: "99999999-9999-4999-8999-999999999999",
+			}),
+		});
+		const body = await response?.text();
+		if (streaming) {
+			assert.match(body ?? "", /event: error/);
+			assert.doesNotMatch(body ?? "", /event: done/);
+		} else assert.equal(response?.status, 503);
+		assert.equal(repository.exchanges.length, 0);
+		assert.equal(runs.finalizations[0]?.status, "failed");
+		assert.equal(runs.finalizations[0]?.errorCode, "answer_citation_invalid");
+	}
 });
 
 test("stream aborted before token iteration finalizes the Ask run as cancelled", async () => {

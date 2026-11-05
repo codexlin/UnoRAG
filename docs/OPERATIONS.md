@@ -63,13 +63,21 @@ OTel 节点为 ERROR，原生与 Public API 请求指标为 `server_error`，不
 或内部 `retrieval_debug`，对外投影只允许下列数值、布尔值与固定类别，不返回任意 detail 正文：
 
 - `judge_error_category` 区分 `timeout`、`authentication`、`rate_limit`、`provider_unavailable`、
-  `invalid_output`、`provider_error`；状态码只保留数值，不记录上游原文、密钥或提示词。
-- `judge_attempts` 是应用层结构化调用次数，不是 SDK 内部 HTTP 重试次数；401/403 等不可重试错误立即停止。
+  `output_truncated`、`invalid_output`、`provider_error`；其中 `output_truncated` 表示返回的
+  无效结构化输出已被 Provider 标为长度截断，不能误报为网络超时。状态码只保留数值，不记录上游原文、密钥或提示词。
+- `judge_attempts` 是应用层结构化调用次数。当前默认适配器关闭 AI SDK 的内层重试，每次 Provider
+  HTTP 尝试都重新通过授权检查并计入应用层上限；历史记录可能含 SDK 内层重试，不能反推实际 HTTP 次数。
+  401/403 等不可重试错误立即停止。
 - `judge_duration_ms` 为本次调用实际总耗时；`judge_timeout_ms` 为每次执行上限，
   `judge_max_attempts` 为应用层尝试上限，`judge_budget_ms` 为两者乘积，不包含并发排队预算，
   不是整个 HTTP 请求的截止时间。外部取消和请求截止仍优先终止执行。
 - 先按错误类别检查 Provider 鉴权、配额、可达性、模型输出契约，再结合阶段耗时与重试诊断；
   不要仅凭总耗时推断为网络故障，也不要关闭 Judge 或放宽拒答门槛来恢复“成功率”。
+
+Judge Prompt 1.2.0 明确要求一个完整 JSON 对象、简短理由和无填充空白，保留相同的证据充分性要求、
+Zod 契约与候选 ID 校验。模型的原生 JSON Schema 支持应按实际型号配置，不因 OpenAI-compatible
+接口接受请求就认定已强制约束；JSON-object 模式也仍须本地校验。阿里云的两种模式及模型支持范围见
+[官方结构化输出说明](https://www.alibabacloud.com/help/en/model-studio/qwen-structured-output)。
 
 `check-dbos-drain` 同时读取 `app.jobs` 与 DBOS `workflow_status`。前者覆盖尚未派发和正在执行业务
 状态，后者覆盖 `PENDING`、`ENQUEUED`、`DELAYED` durable workflow；任一侧非零都不能切换 DBOS
@@ -105,6 +113,25 @@ Provider 地址、通知目标或 Job 错误正文。Webhook/邮件是默认关�
 
 需要模型、Token、LangGraph 节点和后续评测实验视图时，可选启用 metadata-only Langfuse 出口；配置、
 权限和排障见下文“可选 Langfuse”。Langfuse exporter 告警不得升级为 UnoRAG 业务不可用告警。
+
+### 查询单次 Ask 请求
+
+管理员在 **运行中心 → 请求记录** 查看当前 Workspace 的 Ask 请求，包括成功、拒答、失败、取消和处理中。
+支持最近 1 小时、24 小时或 7 天，按知识库、问题类型、状态、最低耗时和完整 Request ID 服务端筛选。
+列表每页 25 条，按开始时间和 run ID 倒序；翻页固定查询窗口，游标一小时后过期，届时刷新回到第一页。
+请求视图使用自己的手动刷新，不继承概览的 30 秒自动刷新。它不是永久审计归档：保留和删除继续受
+Ask runs 维护、关联文库/会话的生命周期约束。
+
+点击 Request ID 打开阶段瀑布、实际检索模式、混合检索/重排开关、引用数和白名单拒答原因码。
+正常拒答不显示成服务故障；错误请求保留原因分类、恢复建议及已记录的 Judge 尝试/预算诊断。
+处理中详情每 5 秒刷新一次；阶段账本主要在请求终态写入，处理中或历史记录可能没有阶段，不能把空记录
+解释成“没有耗时”。抽屉不虚构 Embedding、Qdrant、Rerank 或网络请求子 Span，也不展示完整 Prompt。
+
+该列表及详情只允许当前 Workspace 的管理员读取，查询参数不能指定或扩大 organization/workspace。
+返回的是诊断元数据，不包含问题、回答、检索正文和凭据；自由文本拒答原因不进入新的诊断记录，也不从
+历史行直接投影。问答页回答旁的 **链路** 仍用于查看本轮返回的阶段和原始调试 JSON。
+
+### 模型并发与背压
 
 LLM 调用由 Web 进程内的共享 FIFO 门控统一约束，Router、Rewrite、Judge、TablePlan 和最终回答不会各自
 绕过额度。`LLM_MAX_INFLIGHT` 是每个 Web 副本的在途上限，因此集群总上限约为“副本数 × 该值”；

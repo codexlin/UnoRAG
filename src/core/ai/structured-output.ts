@@ -161,6 +161,7 @@ export type StructuredFailureMetadata = Readonly<{
 		| "authentication"
 		| "rate_limit"
 		| "provider_unavailable"
+		| "output_truncated"
 		| "invalid_output"
 		| "provider_error";
 	statusCode: number | null;
@@ -184,6 +185,12 @@ function classifyFailure(
 ): Pick<StructuredFailureMetadata, "category" | "statusCode" | "retryable"> {
 	if (error instanceof StructuredOutputTimeoutError) {
 		return { category: "timeout", statusCode: null, retryable: true };
+	}
+	if (
+		NoObjectGeneratedError.isInstance(error) &&
+		error.finishReason === "length"
+	) {
+		return { category: "output_truncated", statusCode: null, retryable: true };
 	}
 	if (
 		error instanceof StructuredOutputValidationError ||
@@ -224,6 +231,9 @@ async function defaultStructuredExecutor(
 ): Promise<unknown> {
 	const result = await generateText({
 		model: request.model,
+		// The adapter owns retries so each HTTP attempt rechecks authorization
+		// and is counted against the configured structured-output budget.
+		maxRetries: 0,
 		instructions: request.instructions,
 		messages: request.messages,
 		temperature: request.temperature,

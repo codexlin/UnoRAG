@@ -23,6 +23,30 @@ const NEGATIVE_GOLD_PATH = new URL(
 	import.meta.url,
 );
 
+test("gold facts and structured sources cannot mask invalid inline citations", async () => {
+	const gold = parseGoldenJsonl(await readFile(GOLD_PATH, "utf8"))[0];
+	const response = {
+		httpStatus: 200,
+		answer: gold.answer,
+		refused: false,
+		latencyMs: 1,
+		citations: [
+			{ filename: gold.file, record_type: gold.expect_record_type, index: 1 },
+		],
+	};
+	assert.equal(scorePositiveCase(gold, response).ok, true);
+	for (const invalid of ["[78]", "[6–78]", "[6, 18, 30]"]) {
+		const score = scorePositiveCase(gold, {
+			...response,
+			answer: `${gold.answer}${invalid}`,
+		});
+		assert.equal(score.factCoverage, 1);
+		assert.equal(score.citationPrecision, 1);
+		assert.equal(score.inlineCitationsValid, false);
+		assert.equal(score.ok, false);
+	}
+});
+
 test("repository golden set has 36 valid atomic cases with stable IDs", async () => {
 	const cases = parseGoldenJsonl(await readFile(GOLD_PATH, "utf8"));
 	assert.equal(cases.length, 36);

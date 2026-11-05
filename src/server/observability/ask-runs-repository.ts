@@ -3,6 +3,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import type * as schema from "@/db/schema";
 import { askRunStages, askRuns } from "@/db/schema";
+import { operationalRefusalCode } from "@/lib/operations-event-detail";
 
 type Database = NodePgDatabase<typeof schema>;
 type AskRun = typeof askRuns.$inferSelect;
@@ -235,7 +236,9 @@ class DrizzleAskRunsPersistence implements AskRunsPersistence {
 					latencyMs,
 					refuseReason:
 						input.status === "refused"
-							? nonEmpty(input.refuseReason, "refuseReason")
+							? (operationalRefusalCode(
+									nonEmpty(input.refuseReason, "refuseReason"),
+								) ?? "refused")
 							: null,
 					errorCode: input.errorCode?.trim() || null,
 					endedAt: input.endedAt ?? new Date(),

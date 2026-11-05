@@ -7,7 +7,10 @@ import type { Pool } from "pg";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { JudgeDiagnostics } from "../../src/components/app/operations-error-drawer";
+import {
+	JudgeDiagnostics,
+	RequestOutcome,
+} from "../../src/components/app/operations-error-drawer";
 import * as schema from "../../src/db/schema";
 import type { OperationsEventDetail } from "../../src/lib/operations-event-detail";
 import { OperationsEventService } from "../../src/server/observability/operations-event-service";
@@ -164,6 +167,7 @@ test("known Judge categories survive while unrecognized category text cannot lea
 		"authentication",
 		"rate_limit",
 		"provider_unavailable",
+		"output_truncated",
 		"invalid_output",
 		"provider_error",
 	]) {
@@ -288,4 +292,54 @@ test("operations event lookup remains organization/workspace scoped before readi
 		assert.equal(await fixture.service.read(requestedScope, "ask", id), null);
 		assert.equal(fixture.queries.length, 1);
 	}
+});
+
+test("successful, refused and running requests do not display fabricated failure guidance", async () => {
+	for (const status of ["completed", "refused", "running", "cancelled"]) {
+		const detail = await read([], {
+			status,
+			errorCode: null,
+			refuseReason: status === "refused" ? "insufficient_evidence" : null,
+			citationCount: status === "completed" ? 2 : 0,
+			usedHybrid: true,
+			usedRerank: false,
+		});
+		assert.deepEqual(detail.ask, {
+			refuse_reason: status === "refused" ? "insufficient_evidence" : null,
+			citation_count: status === "completed" ? 2 : 0,
+			used_hybrid: true,
+			used_rerank: false,
+		});
+		const html = renderToStaticMarkup(
+			createElement(RequestOutcome, { detail }),
+		);
+		assert.doesNotMatch(html, /unclassified_error|故障原因|text-destructive/);
+		assert.ok(!html.includes(detail.guidance.cause));
+		if (status === "refused") assert.match(html, /insufficient_evidence/);
+	}
+	const failed = await read();
+	const html = renderToStaticMarkup(
+		createElement(RequestOutcome, { detail: failed }),
+	);
+	assert.ok(html.includes(failed.guidance.title));
+	assert.match(html, /judge_unavailable/);
+});
+
+test("operational refusal projection cannot expose model-authored or historical prose", async () => {
+	const detail = await read([], {
+		status: "refused",
+		errorCode: null,
+		refuseReason: "private question and evidence sk-secret",
+	});
+	assert.equal(detail.ask?.refuse_reason, null);
+	assert.doesNotMatch(JSON.stringify(detail), /private question|sk-secret/);
+});
+
+test("cancelled jobs retain neutral diagnostic guidance", async () => {
+	const detail = await read();
+	detail.source = "job";
+	detail.status = "cancelled";
+	const html = renderToStaticMarkup(createElement(RequestOutcome, { detail }));
+	assert.ok(html.includes(detail.guidance.title));
+	assert.ok(html.includes(detail.guidance.recovery));
 });

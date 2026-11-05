@@ -1,6 +1,7 @@
 import { type LanguageModel, type ModelMessage, streamText } from "ai";
 import { metadataOnlyAiTelemetry } from "@/lib/observability/ai-telemetry";
 import { traceAsyncIterable } from "@/lib/observability/tracing";
+import { AnswerCitationGuard } from "./answer-citations";
 import type {
 	AiConcurrencyGateLike,
 	AiConcurrencyLease,
@@ -87,12 +88,16 @@ export class AnswerStreamAdapter {
 		options: {
 			abortSignal?: AbortSignal;
 			beforeRequest?: () => Promise<void>;
+			allowedCitationIndices?: readonly number[];
 		} = {},
 	): AsyncGenerator<string> {
 		if (options.abortSignal?.aborted) {
 			throw new AnswerStreamAbortedError();
 		}
 		let lease: AiConcurrencyLease | undefined;
+		const citations = options.allowedCitationIndices
+			? new AnswerCitationGuard(options.allowedCitationIndices)
+			: undefined;
 		let checkingRequest = false;
 		try {
 			lease = await this.options.concurrencyGate?.acquire(options.abortSignal);
@@ -120,11 +125,14 @@ export class AnswerStreamAdapter {
 				if (options.abortSignal?.aborted) {
 					throw new AnswerStreamAbortedError();
 				}
-				if (token) yield token;
+				const safeToken = citations ? citations.push(token) : token;
+				if (safeToken) yield safeToken;
 			}
 			if (options.abortSignal?.aborted) {
 				throw new AnswerStreamAbortedError();
 			}
+			const tail = citations?.finish();
+			if (tail) yield tail;
 		} catch (error) {
 			if (checkingRequest) throw error;
 			if (options.abortSignal?.aborted) {

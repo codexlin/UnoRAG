@@ -18,6 +18,7 @@ import {
 	OperationsErrorDrawer,
 	type OperationsErrorRef,
 } from "@/components/app/operations-error-drawer";
+import { OperationsRequestsPanel } from "@/components/app/operations-requests-panel";
 import { useSession } from "@/components/app/session-provider";
 import { stageDisplayName } from "@/components/app/stage-waterfall";
 import { Button } from "@/components/ui/button";
@@ -250,6 +251,7 @@ export function OperationsDashboard() {
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [autoRefresh, setAutoRefresh] = useState(true);
+	const [view, setView] = useState<"overview" | "requests">("overview");
 	const [selectedError, setSelectedError] = useState<OperationsErrorRef | null>(
 		null,
 	);
@@ -294,10 +296,10 @@ export function OperationsDashboard() {
 	}, [load]);
 
 	useEffect(() => {
-		if (!autoRefresh || !canManage) return;
+		if (!autoRefresh || !canManage || view !== "overview") return;
 		const timer = window.setInterval(() => void load(), 30_000);
 		return () => window.clearInterval(timer);
-	}, [autoRefresh, canManage, load]);
+	}, [autoRefresh, canManage, load, view]);
 
 	const activeAlerts = useMemo(
 		() => snapshot?.alerts.filter((alert) => alert.status === "active") ?? [],
@@ -365,405 +367,461 @@ export function OperationsDashboard() {
 							运行中心
 						</h2>
 						<p className="text-ui mt-1 text-muted-foreground">
-							{snapshot
-								? `最近 ${snapshot.window.hours} 小时 · ${formatDateTime(new Date(snapshot.generated_at).getTime())}`
-								: "正在读取运行状态"}
+							{view === "requests"
+								? "Ask"
+								: snapshot
+									? `最近 ${snapshot.window.hours} 小时 · ${formatDateTime(new Date(snapshot.generated_at).getTime())}`
+									: "正在读取运行状态"}
 						</p>
 					</div>
-					<div className="flex items-center gap-3">
-						<label className="text-ui inline-flex items-center gap-2 text-muted-foreground">
-							<input
-								type="checkbox"
-								checked={autoRefresh}
-								onChange={(event) => setAutoRefresh(event.target.checked)}
-								className="size-3.5 accent-primary"
-							/>
-							30s 自动刷新
-						</label>
-						<Button
-							variant="outline"
-							size="icon"
-							onClick={() => void load()}
-							disabled={loading}
-							title="刷新运行数据"
-						>
-							<RefreshCw className={cn(loading && "animate-spin")} />
-							<span className="sr-only">刷新运行数据</span>
-						</Button>
-					</div>
-				</header>
-
-				{error ? (
-					<div className="flex items-center gap-2 border border-destructive/30 bg-destructive/5 px-4 py-3 text-ui text-destructive">
-						<ShieldAlert className="size-4" />
-						{error}
-					</div>
-				) : null}
-
-				<section
-					className={cn(
-						"flex items-center justify-between gap-4 border px-4 py-3",
-						releaseState.tone === "good" &&
-							"border-cite/30 bg-cite/5 text-cite",
-						releaseState.tone === "warning" &&
-							"border-survey/35 bg-survey/5 text-survey",
-						releaseState.tone === "danger" &&
-							"border-destructive/35 bg-destructive/5 text-destructive",
-					)}
-				>
-					<div className="flex items-center gap-2.5">
-						<ReleaseIcon className="size-4" />
-						<span className="text-ui font-semibold">{releaseState.label}</span>
-					</div>
-					<div className="flex items-center gap-3 font-mono text-xs tabular-nums">
-						<span>
-							{snapshot ? formatReleaseVersion(snapshot.release) : "--"}
-						</span>
-						<span>{activeAlerts.length} signals</span>
-					</div>
-				</section>
-
-				<section className="grid overflow-hidden border border-border/80 bg-card sm:grid-cols-2 xl:grid-cols-4">
-					{[
-						[
-							"Product",
-							snapshot ? formatReleaseVersion(snapshot.release) : "--",
-						],
-						["Revision", snapshot?.release.revision_short ?? "--"],
-						[
-							"Built",
-							snapshot?.release.built_at
-								? formatDateTime(Date.parse(snapshot.release.built_at))
-								: "development",
-						],
-						["DBOS", snapshot?.release.dbos_application_version ?? "--"],
-					].map(([label, value]) => (
-						<div
-							key={label}
-							className="min-w-0 border-border/80 border-b px-4 py-3 last:border-b-0 sm:border-r sm:[&:nth-last-child(-n+2)]:border-b-0 xl:border-b-0 xl:last:border-r-0"
-						>
-							<p className="text-meta font-mono tracking-[0.12em] text-muted-foreground uppercase">
-								{label}
-							</p>
-							<p
-								className="mt-1 truncate font-mono text-xs text-foreground"
-								title={value}
+					{view === "overview" ? (
+						<div className="flex items-center gap-3">
+							<label className="text-ui inline-flex items-center gap-2 text-muted-foreground">
+								<input
+									type="checkbox"
+									checked={autoRefresh}
+									onChange={(event) => setAutoRefresh(event.target.checked)}
+									className="size-3.5 accent-primary"
+								/>
+								30s 自动刷新
+							</label>
+							<Button
+								variant="outline"
+								size="icon"
+								onClick={() => void load()}
+								disabled={loading}
+								title="刷新运行数据"
 							>
-								{value}
-							</p>
+								<RefreshCw className={cn(loading && "animate-spin")} />
+								<span className="sr-only">刷新运行数据</span>
+							</Button>
 						</div>
+					) : null}
+				</header>
+				<fieldset
+					className="flex min-w-0 gap-1 border-b border-border/70"
+					aria-label="运行中心视图"
+				>
+					{(
+						[
+							["overview", "概览"],
+							["requests", "请求记录"],
+						] as const
+					).map(([value, label]) => (
+						<button
+							key={value}
+							type="button"
+							aria-pressed={view === value}
+							onClick={() => setView(value)}
+							className={cn(
+								"border-b-2 px-4 py-2 text-sm font-medium transition-colors",
+								view === value
+									? "border-cite text-cite"
+									: "border-transparent text-muted-foreground hover:text-foreground",
+							)}
+						>
+							{label}
+						</button>
 					))}
-				</section>
+				</fieldset>
+				{view === "requests" ? (
+					<OperationsRequestsPanel
+						key={`${identity.tenantId}:${identity.workspaceId}`}
+						onSelect={setSelectedError}
+					/>
+				) : (
+					<>
+						{error ? (
+							<div className="flex items-center gap-2 border border-destructive/30 bg-destructive/5 px-4 py-3 text-ui text-destructive">
+								<ShieldAlert className="size-4" />
+								{error}
+							</div>
+						) : null}
 
-				<section className="grid overflow-hidden border border-border/80 bg-card sm:grid-cols-2 xl:grid-cols-5">
-					<MetricCell
-						label="Ask requests"
-						value={String(ask?.total ?? 0)}
-						hint={`${ask?.failed ?? 0} 失败 · ${ask?.cancelled ?? 0} 取消`}
-					/>
-					<MetricCell
-						label="Success"
-						value={terminalAskCount ? percent(successRate) : "--"}
-						hint={`${ask?.completed ?? 0} 次完成`}
-						tone={
-							terminalAskCount === 0 || successRate >= 0.98 ? "good" : "warning"
-						}
-					/>
-					<MetricCell
-						label="Refusal"
-						value={terminalAskCount ? percent(refusalRate) : "--"}
-						hint={`${ask?.refused ?? 0} 次证据拒答`}
-						tone={refusalRate > 0.2 ? "warning" : "default"}
-					/>
-					<MetricCell
-						label="Citation"
-						value={ask?.completed ? percent(citationCoverage) : "--"}
-						hint="完成回答引用覆盖"
-						tone={
-							!ask?.completed || citationCoverage >= 0.9 ? "good" : "danger"
-						}
-					/>
-					<MetricCell
-						label="P95 latency"
-						value={latency(ask?.latency_ms.p95 ?? null)}
-						hint={`P50 ${latency(ask?.latency_ms.p50 ?? null)}`}
-						tone={(ask?.latency_ms.p95 ?? 0) > 8_000 ? "warning" : "default"}
-					/>
-				</section>
+						<section
+							className={cn(
+								"flex items-center justify-between gap-4 border px-4 py-3",
+								releaseState.tone === "good" &&
+									"border-cite/30 bg-cite/5 text-cite",
+								releaseState.tone === "warning" &&
+									"border-survey/35 bg-survey/5 text-survey",
+								releaseState.tone === "danger" &&
+									"border-destructive/35 bg-destructive/5 text-destructive",
+							)}
+						>
+							<div className="flex items-center gap-2.5">
+								<ReleaseIcon className="size-4" />
+								<span className="text-ui font-semibold">
+									{releaseState.label}
+								</span>
+							</div>
+							<div className="flex items-center gap-3 font-mono text-xs tabular-nums">
+								<span>
+									{snapshot ? formatReleaseVersion(snapshot.release) : "--"}
+								</span>
+								<span>{activeAlerts.length} signals</span>
+							</div>
+						</section>
 
-				<div className="grid min-w-0 gap-6 lg:grid-cols-2">
-					<StageLatencyTable
-						title="Ask 阶段延迟"
-						rows={ask?.stage_latency_ms ?? []}
-					/>
-					<StageLatencyTable
-						title="入库阶段延迟"
-						rows={jobs?.stage_latency_ms ?? []}
-					/>
-				</div>
-
-				<div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(22rem,0.9fr)]">
-					<section className="min-w-0 border border-border/80 bg-card">
-						<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
-							<h3 className="text-ui font-semibold">Ask 质量</h3>
-							<TimerReset className="size-4 text-muted-foreground" />
-						</div>
-						<div className="space-y-4 px-4 py-5">
-							<SignalBar
-								label="完成率"
-								value={successRate}
-								tone="cite"
-								empty={terminalAskCount === 0}
-							/>
-							<SignalBar
-								label="引用覆盖"
-								value={citationCoverage}
-								tone="cite"
-								empty={!ask?.completed}
-							/>
-							<SignalBar
-								label="拒答率"
-								value={refusalRate}
-								tone="survey"
-								empty={terminalAskCount === 0}
-							/>
-							<SignalBar
-								label="失败率"
-								value={ask?.total ? ask.failed / ask.total : 0}
-								tone="destructive"
-								empty={!ask?.total}
-							/>
-						</div>
-					</section>
-
-					<section className="min-w-0 border border-border/80 bg-card">
-						<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
-							<h3 className="text-ui font-semibold">任务队列</h3>
-							<Clock3 className="size-4 text-muted-foreground" />
-						</div>
-						<div className="grid grid-cols-3 border-border/80 border-b">
+						<section className="grid overflow-hidden border border-border/80 bg-card sm:grid-cols-2 xl:grid-cols-4">
 							{[
-								["等待", jobs?.queued ?? 0],
-								["执行", jobs?.running ?? 0],
-								["异常", (jobs?.dead ?? 0) + (jobs?.stuck ?? 0)],
+								[
+									"Product",
+									snapshot ? formatReleaseVersion(snapshot.release) : "--",
+								],
+								["Revision", snapshot?.release.revision_short ?? "--"],
+								[
+									"Built",
+									snapshot?.release.built_at
+										? formatDateTime(Date.parse(snapshot.release.built_at))
+										: "development",
+								],
+								["DBOS", snapshot?.release.dbos_application_version ?? "--"],
 							].map(([label, value]) => (
 								<div
 									key={label}
-									className="border-border/80 border-r px-3 py-4 text-center last:border-r-0"
+									className="min-w-0 border-border/80 border-b px-4 py-3 last:border-b-0 sm:border-r sm:[&:nth-last-child(-n+2)]:border-b-0 xl:border-b-0 xl:last:border-r-0"
 								>
-									<p className="font-mono text-xl tabular-nums">{value}</p>
-									<p className="text-meta mt-1 text-muted-foreground">
+									<p className="text-meta font-mono tracking-[0.12em] text-muted-foreground uppercase">
 										{label}
 									</p>
+									<p
+										className="mt-1 truncate font-mono text-xs text-foreground"
+										title={value}
+									>
+										{value}
+									</p>
 								</div>
 							))}
-						</div>
-						<div className="grid grid-cols-3 gap-px bg-border/80">
-							<div className="bg-card px-4 py-3">
-								<p className="text-meta text-muted-foreground">待恢复删除</p>
-								<p
-									className={cn(
-										"mt-1 font-mono text-sm",
-										(jobs?.delete_failed ?? 0) > 0 && "text-destructive",
-									)}
-								>
-									{jobs?.delete_failed ?? 0}
-								</p>
-							</div>
-							<div className="bg-card px-4 py-3">
-								<p className="text-meta text-muted-foreground">Dead / Stuck</p>
-								<p
-									className={cn(
-										"mt-1 font-mono text-sm",
-										(jobs?.dead ?? 0) + (jobs?.stuck ?? 0) > 0 &&
-											"text-destructive",
-									)}
-								>
-									{jobs?.dead ?? 0} / {jobs?.stuck ?? 0}
-								</p>
-							</div>
-							<div className="bg-card px-4 py-3">
-								<p className="text-meta text-muted-foreground">最老活动任务</p>
-								<p className="mt-1 truncate font-mono text-sm">
-									{jobs?.oldest_active
-										? formatDurationMs(jobs.oldest_active.age_ms)
-										: "--"}
-								</p>
-							</div>
-						</div>
-					</section>
-				</div>
+						</section>
 
-				<section className="min-w-0 border border-border/80 bg-card">
-					<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
-						<div className="flex items-center gap-2">
-							<Database className="size-4 text-muted-foreground" />
-							<h3 className="text-ui font-semibold">组件健康</h3>
+						<section className="grid overflow-hidden border border-border/80 bg-card sm:grid-cols-2 xl:grid-cols-5">
+							<MetricCell
+								label="Ask requests"
+								value={String(ask?.total ?? 0)}
+								hint={`${ask?.failed ?? 0} 失败 · ${ask?.cancelled ?? 0} 取消`}
+							/>
+							<MetricCell
+								label="Success"
+								value={terminalAskCount ? percent(successRate) : "--"}
+								hint={`${ask?.completed ?? 0} 次完成`}
+								tone={
+									terminalAskCount === 0 || successRate >= 0.98
+										? "good"
+										: "warning"
+								}
+							/>
+							<MetricCell
+								label="Refusal"
+								value={terminalAskCount ? percent(refusalRate) : "--"}
+								hint={`${ask?.refused ?? 0} 次证据拒答`}
+								tone={refusalRate > 0.2 ? "warning" : "default"}
+							/>
+							<MetricCell
+								label="Citation"
+								value={ask?.completed ? percent(citationCoverage) : "--"}
+								hint="完成回答引用覆盖"
+								tone={
+									!ask?.completed || citationCoverage >= 0.9 ? "good" : "danger"
+								}
+							/>
+							<MetricCell
+								label="P95 latency"
+								value={latency(ask?.latency_ms.p95 ?? null)}
+								hint={`P50 ${latency(ask?.latency_ms.p50 ?? null)}`}
+								tone={
+									(ask?.latency_ms.p95 ?? 0) > 8_000 ? "warning" : "default"
+								}
+							/>
+						</section>
+
+						<div className="grid min-w-0 gap-6 lg:grid-cols-2">
+							<StageLatencyTable
+								title="Ask 阶段延迟"
+								rows={ask?.stage_latency_ms ?? []}
+							/>
+							<StageLatencyTable
+								title="入库阶段延迟"
+								rows={jobs?.stage_latency_ms ?? []}
+							/>
 						</div>
-						<span className="font-mono text-xs text-muted-foreground">
-							{snapshot?.components.length ?? 0}
-						</span>
-					</div>
-					{snapshot?.components.length ? (
-						<div className="grid sm:grid-cols-2 xl:grid-cols-4">
-							{snapshot.components.map((component) => (
-								<div
-									key={component.code}
-									className="min-w-0 border-border/70 border-b px-4 py-3 sm:border-r xl:[&:nth-last-child(-n+4)]:border-b-0"
-								>
-									<div className="flex items-center justify-between gap-3">
-										<span className="text-ui font-medium">
-											{component.label}
-										</span>
-										<span
+
+						<div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(22rem,0.9fr)]">
+							<section className="min-w-0 border border-border/80 bg-card">
+								<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
+									<h3 className="text-ui font-semibold">Ask 质量</h3>
+									<TimerReset className="size-4 text-muted-foreground" />
+								</div>
+								<div className="space-y-4 px-4 py-5">
+									<SignalBar
+										label="完成率"
+										value={successRate}
+										tone="cite"
+										empty={terminalAskCount === 0}
+									/>
+									<SignalBar
+										label="引用覆盖"
+										value={citationCoverage}
+										tone="cite"
+										empty={!ask?.completed}
+									/>
+									<SignalBar
+										label="拒答率"
+										value={refusalRate}
+										tone="survey"
+										empty={terminalAskCount === 0}
+									/>
+									<SignalBar
+										label="失败率"
+										value={ask?.total ? ask.failed / ask.total : 0}
+										tone="destructive"
+										empty={!ask?.total}
+									/>
+								</div>
+							</section>
+
+							<section className="min-w-0 border border-border/80 bg-card">
+								<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
+									<h3 className="text-ui font-semibold">任务队列</h3>
+									<Clock3 className="size-4 text-muted-foreground" />
+								</div>
+								<div className="grid grid-cols-3 border-border/80 border-b">
+									{[
+										["等待", jobs?.queued ?? 0],
+										["执行", jobs?.running ?? 0],
+										["异常", (jobs?.dead ?? 0) + (jobs?.stuck ?? 0)],
+									].map(([label, value]) => (
+										<div
+											key={label}
+											className="border-border/80 border-r px-3 py-4 text-center last:border-r-0"
+										>
+											<p className="font-mono text-xl tabular-nums">{value}</p>
+											<p className="text-meta mt-1 text-muted-foreground">
+												{label}
+											</p>
+										</div>
+									))}
+								</div>
+								<div className="grid grid-cols-3 gap-px bg-border/80">
+									<div className="bg-card px-4 py-3">
+										<p className="text-meta text-muted-foreground">
+											待恢复删除
+										</p>
+										<p
 											className={cn(
-												"font-mono text-[10px] uppercase",
-												component.status === "healthy" && "text-cite",
-												component.status === "degraded" && "text-destructive",
-												(component.status === "unknown" ||
-													component.status === "disabled") &&
-													"text-muted-foreground",
+												"mt-1 font-mono text-sm",
+												(jobs?.delete_failed ?? 0) > 0 && "text-destructive",
 											)}
 										>
-											{component.status}
-										</span>
-									</div>
-									<p className="text-meta mt-1 font-mono text-muted-foreground">
-										{component.mode === "active" ? "主动探测" : "配置检查"}
-										{component.latency_ms == null
-											? ""
-											: ` · ${component.latency_ms}ms`}
-									</p>
-									{component.status === "degraded" || component.stale ? (
-										<p className="text-ui mt-2 text-muted-foreground">
-											{component.recovery}
-										</p>
-									) : null}
-								</div>
-							))}
-						</div>
-					) : (
-						<p className="text-ui px-4 py-5 text-muted-foreground">
-							等待首次健康评估。
-						</p>
-					)}
-				</section>
-
-				<section className="min-w-0 border border-border/80 bg-card">
-					<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
-						<div className="flex items-center gap-2">
-							<BellRing className="size-4 text-muted-foreground" />
-							<h3 className="text-ui font-semibold">活动告警</h3>
-						</div>
-						<span className="font-mono text-xs text-muted-foreground">
-							{activeAlerts.length} · webhook{" "}
-							{snapshot?.notifications.webhook ? "on" : "off"} · email{" "}
-							{snapshot?.notifications.email ? "on" : "off"}
-						</span>
-					</div>
-					{activeAlerts.length ? (
-						<div className="divide-y divide-border/70">
-							{activeAlerts.map((alert) => (
-								<div
-									key={alert.id}
-									className="grid gap-1 px-4 py-3 sm:grid-cols-[7rem_12rem_minmax(0,1fr)_8rem] sm:items-center sm:gap-4"
-								>
-									<span
-										className={cn(
-											"w-fit rounded-sm border px-1.5 py-0.5 font-mono text-[10px] uppercase",
-											alert.severity === "critical" &&
-												"border-destructive/30 bg-destructive/5 text-destructive",
-											alert.severity === "warning" &&
-												"border-survey/30 bg-survey/5 text-survey",
-											alert.severity === "info" &&
-												"border-border text-muted-foreground",
-										)}
-									>
-										{alert.severity}
-									</span>
-									<span className="text-ui font-medium">{alert.title}</span>
-									<div className="min-w-0">
-										<p className="text-ui text-muted-foreground">
-											{alert.detail}
-										</p>
-										<p className="text-meta mt-1 text-muted-foreground">
-											{alert.recovery}
+											{jobs?.delete_failed ?? 0}
 										</p>
 									</div>
-									<span className="text-right font-mono text-xs text-muted-foreground">
-										{alert.last_delivery_status ?? "in-app"}
-									</span>
-								</div>
-							))}
-						</div>
-					) : (
-						<p className="text-ui px-4 py-5 text-muted-foreground">
-							当前没有活动告警。
-						</p>
-					)}
-				</section>
-
-				<section className="min-w-0 overflow-hidden border border-border/80 bg-card">
-					<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
-						<h3 className="text-ui font-semibold">最近错误</h3>
-						<span className="font-mono text-xs text-muted-foreground">
-							最多 20 条
-						</span>
-					</div>
-					<div className="overflow-x-auto">
-						<table className="w-full min-w-[44rem] text-left text-ui">
-							<thead className="bg-muted/45 text-muted-foreground">
-								<tr>
-									<th className="px-4 py-2 font-medium">来源</th>
-									<th className="px-4 py-2 font-medium">状态</th>
-									<th className="px-4 py-2 font-medium">错误码</th>
-									<th className="px-4 py-2 font-medium">标识</th>
-									<th className="px-4 py-2 text-right font-medium">时间</th>
-								</tr>
-							</thead>
-							<tbody className="divide-y divide-border/70">
-								{snapshot?.recent_errors.length ? (
-									snapshot.recent_errors.map((item) => (
-										<tr
-											key={`${item.source}-${item.id}`}
-											className="cursor-pointer transition-colors hover:bg-muted/40"
-											onClick={() =>
-												setSelectedError({ source: item.source, id: item.id })
-											}
+									<div className="bg-card px-4 py-3">
+										<p className="text-meta text-muted-foreground">
+											Dead / Stuck
+										</p>
+										<p
+											className={cn(
+												"mt-1 font-mono text-sm",
+												(jobs?.dead ?? 0) + (jobs?.stuck ?? 0) > 0 &&
+													"text-destructive",
+											)}
 										>
-											<td className="px-4 py-2.5">
-												{item.source === "ask" ? "Ask" : "Job"}
-											</td>
-											<td className="px-4 py-2.5 font-mono text-xs">
-												{item.stage
-													? stageDisplayName(item.stage)
-													: item.status}
-											</td>
-											<td className="px-4 py-2.5 font-mono text-xs text-destructive">
-												{item.error_code}
-											</td>
-											<td className="max-w-48 truncate px-4 py-2.5 font-mono text-xs text-muted-foreground">
-												{item.id}
-											</td>
-											<td className="px-4 py-2.5 text-right font-mono text-xs text-muted-foreground">
-												{formatDateTime(new Date(item.occurred_at).getTime())}
-											</td>
+											{jobs?.dead ?? 0} / {jobs?.stuck ?? 0}
+										</p>
+									</div>
+									<div className="bg-card px-4 py-3">
+										<p className="text-meta text-muted-foreground">
+											最老活动任务
+										</p>
+										<p className="mt-1 truncate font-mono text-sm">
+											{jobs?.oldest_active
+												? formatDurationMs(jobs.oldest_active.age_ms)
+												: "--"}
+										</p>
+									</div>
+								</div>
+							</section>
+						</div>
+
+						<section className="min-w-0 border border-border/80 bg-card">
+							<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
+								<div className="flex items-center gap-2">
+									<Database className="size-4 text-muted-foreground" />
+									<h3 className="text-ui font-semibold">组件健康</h3>
+								</div>
+								<span className="font-mono text-xs text-muted-foreground">
+									{snapshot?.components.length ?? 0}
+								</span>
+							</div>
+							{snapshot?.components.length ? (
+								<div className="grid sm:grid-cols-2 xl:grid-cols-4">
+									{snapshot.components.map((component) => (
+										<div
+											key={component.code}
+											className="min-w-0 border-border/70 border-b px-4 py-3 sm:border-r xl:[&:nth-last-child(-n+4)]:border-b-0"
+										>
+											<div className="flex items-center justify-between gap-3">
+												<span className="text-ui font-medium">
+													{component.label}
+												</span>
+												<span
+													className={cn(
+														"font-mono text-[10px] uppercase",
+														component.status === "healthy" && "text-cite",
+														component.status === "degraded" &&
+															"text-destructive",
+														(component.status === "unknown" ||
+															component.status === "disabled") &&
+															"text-muted-foreground",
+													)}
+												>
+													{component.status}
+												</span>
+											</div>
+											<p className="text-meta mt-1 font-mono text-muted-foreground">
+												{component.mode === "active" ? "主动探测" : "配置检查"}
+												{component.latency_ms == null
+													? ""
+													: ` · ${component.latency_ms}ms`}
+											</p>
+											{component.status === "degraded" || component.stale ? (
+												<p className="text-ui mt-2 text-muted-foreground">
+													{component.recovery}
+												</p>
+											) : null}
+										</div>
+									))}
+								</div>
+							) : (
+								<p className="text-ui px-4 py-5 text-muted-foreground">
+									等待首次健康评估。
+								</p>
+							)}
+						</section>
+
+						<section className="min-w-0 border border-border/80 bg-card">
+							<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
+								<div className="flex items-center gap-2">
+									<BellRing className="size-4 text-muted-foreground" />
+									<h3 className="text-ui font-semibold">活动告警</h3>
+								</div>
+								<span className="font-mono text-xs text-muted-foreground">
+									{activeAlerts.length} · webhook{" "}
+									{snapshot?.notifications.webhook ? "on" : "off"} · email{" "}
+									{snapshot?.notifications.email ? "on" : "off"}
+								</span>
+							</div>
+							{activeAlerts.length ? (
+								<div className="divide-y divide-border/70">
+									{activeAlerts.map((alert) => (
+										<div
+											key={alert.id}
+											className="grid gap-1 px-4 py-3 sm:grid-cols-[7rem_12rem_minmax(0,1fr)_8rem] sm:items-center sm:gap-4"
+										>
+											<span
+												className={cn(
+													"w-fit rounded-sm border px-1.5 py-0.5 font-mono text-[10px] uppercase",
+													alert.severity === "critical" &&
+														"border-destructive/30 bg-destructive/5 text-destructive",
+													alert.severity === "warning" &&
+														"border-survey/30 bg-survey/5 text-survey",
+													alert.severity === "info" &&
+														"border-border text-muted-foreground",
+												)}
+											>
+												{alert.severity}
+											</span>
+											<span className="text-ui font-medium">{alert.title}</span>
+											<div className="min-w-0">
+												<p className="text-ui text-muted-foreground">
+													{alert.detail}
+												</p>
+												<p className="text-meta mt-1 text-muted-foreground">
+													{alert.recovery}
+												</p>
+											</div>
+											<span className="text-right font-mono text-xs text-muted-foreground">
+												{alert.last_delivery_status ?? "in-app"}
+											</span>
+										</div>
+									))}
+								</div>
+							) : (
+								<p className="text-ui px-4 py-5 text-muted-foreground">
+									当前没有活动告警。
+								</p>
+							)}
+						</section>
+
+						<section className="min-w-0 overflow-hidden border border-border/80 bg-card">
+							<div className="flex items-center justify-between border-border/80 border-b px-4 py-3">
+								<h3 className="text-ui font-semibold">最近错误</h3>
+								<span className="font-mono text-xs text-muted-foreground">
+									最多 20 条
+								</span>
+							</div>
+							<div className="overflow-x-auto">
+								<table className="w-full min-w-[44rem] text-left text-ui">
+									<thead className="bg-muted/45 text-muted-foreground">
+										<tr>
+											<th className="px-4 py-2 font-medium">来源</th>
+											<th className="px-4 py-2 font-medium">状态</th>
+											<th className="px-4 py-2 font-medium">错误码</th>
+											<th className="px-4 py-2 font-medium">标识</th>
+											<th className="px-4 py-2 text-right font-medium">时间</th>
 										</tr>
-									))
-								) : (
-									<tr>
-										<td
-											colSpan={5}
-											className="px-4 py-6 text-center text-muted-foreground"
-										>
-											没有最近错误。
-										</td>
-									</tr>
-								)}
-							</tbody>
-						</table>
-					</div>
-				</section>
+									</thead>
+									<tbody className="divide-y divide-border/70">
+										{snapshot?.recent_errors.length ? (
+											snapshot.recent_errors.map((item) => (
+												<tr
+													key={`${item.source}-${item.id}`}
+													className="cursor-pointer transition-colors hover:bg-muted/40"
+													onClick={() =>
+														setSelectedError({
+															source: item.source,
+															id: item.id,
+														})
+													}
+												>
+													<td className="px-4 py-2.5">
+														{item.source === "ask" ? "Ask" : "Job"}
+													</td>
+													<td className="px-4 py-2.5 font-mono text-xs">
+														{item.stage
+															? stageDisplayName(item.stage)
+															: item.status}
+													</td>
+													<td className="px-4 py-2.5 font-mono text-xs text-destructive">
+														{item.error_code}
+													</td>
+													<td className="max-w-48 truncate px-4 py-2.5 font-mono text-xs text-muted-foreground">
+														{item.id}
+													</td>
+													<td className="px-4 py-2.5 text-right font-mono text-xs text-muted-foreground">
+														{formatDateTime(
+															new Date(item.occurred_at).getTime(),
+														)}
+													</td>
+												</tr>
+											))
+										) : (
+											<tr>
+												<td
+													colSpan={5}
+													className="px-4 py-6 text-center text-muted-foreground"
+												>
+													没有最近错误。
+												</td>
+											</tr>
+										)}
+									</tbody>
+								</table>
+							</div>
+						</section>
+					</>
+				)}
 				<OperationsErrorDrawer
 					selected={selectedError}
 					onOpenChange={(open) => !open && setSelectedError(null)}

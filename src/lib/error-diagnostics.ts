@@ -22,6 +22,13 @@ export function redactDiagnosticMessage(value: string | null): string | null {
 }
 
 const EXACT_GUIDANCE: Record<string, ErrorGuidance> = {
+	answer_citation_invalid: {
+		title: "回答引用校验失败",
+		cause:
+			"模型输出了不存在的来源编号或不受支持的引用列表、范围，回答已中止且未写入成功会话。",
+		recovery:
+			"用 request ID 查看本次检索来源与生成阶段；确认模型未把表格行号当来源编号，再重试。",
+	},
 	job_cancelled: {
 		title: "任务已取消",
 		cause: "任务收到用户取消请求，执行链路在安全检查点终止。",

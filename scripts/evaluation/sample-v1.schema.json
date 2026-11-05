@@ -1,0 +1,318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_.:-]{1,160}$"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_.:-]{1,160}$"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_.:-]{1,160}$"
+    },
+    "build_fingerprint": {
+      "type": "object",
+      "properties": {
+        "git_commit": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "git_dirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "runtime_build_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image_digest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "models": {
+          "type": "object",
+          "properties": {
+            "chat": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "judge": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "embedding": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "rerank": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "chat",
+            "judge",
+            "embedding",
+            "rerank"
+          ],
+          "additionalProperties": false
+        },
+        "prompts": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z_]{1,64}$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "version",
+              "digest"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "git_commit",
+        "git_dirty",
+        "runtime_build_ref",
+        "image_digest",
+        "models",
+        "prompts"
+      ],
+      "additionalProperties": false
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768,
+      "pattern": "\\S"
+    },
+    "response": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768,
+      "pattern": "\\S"
+    },
+    "context_scope": {
+      "type": "string",
+      "enum": [
+        "provided",
+        "selected",
+        "full_retrieval",
+        "unavailable"
+      ]
+    },
+    "retrieved_contexts": {
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 32768,
+        "pattern": "\\S"
+      }
+    },
+    "generation_contexts": {
+      "maxItems": 51,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000000,
+        "pattern": "\\S"
+      }
+    },
+    "response_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "response": {
+          "type": "string",
+          "enum": [
+            "server_stream_sha256",
+            "unverified"
+          ]
+        },
+        "build_fingerprint": {
+          "type": "string",
+          "const": "unverified"
+        },
+        "generation_context": {
+          "type": "string",
+          "enum": [
+            "server_model_input",
+            "provided",
+            "unavailable"
+          ]
+        }
+      },
+      "required": [
+        "response",
+        "build_fingerprint",
+        "generation_context"
+      ],
+      "additionalProperties": false
+    },
+    "reference": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32768,
+          "pattern": "\\S"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "retrieval": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "type": "string",
+              "const": "ask_base_retrieval"
+            },
+            "complete": {
+              "type": "boolean",
+              "const": true
+            },
+            "ordered": {
+              "type": "boolean",
+              "const": true
+            },
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768,
+              "pattern": "\\S"
+            },
+            "attempt": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            }
+          },
+          "required": [
+            "stage",
+            "complete",
+            "ordered",
+            "query",
+            "attempt"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "case_id",
+    "run_id",
+    "request_id",
+    "build_fingerprint",
+    "question",
+    "response",
+    "context_scope",
+    "retrieved_contexts",
+    "generation_contexts",
+    "response_sha256",
+    "provenance",
+    "reference",
+    "retrieval"
+  ],
+  "additionalProperties": false
+}

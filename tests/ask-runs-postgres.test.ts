@@ -170,6 +170,38 @@ test("recorded Judge failures project safe diagnostics under the real PostgreSQL
 		.where(eq(schema.askRuns.id, started.value.id));
 });
 
+test("Ask metadata stores a refusal code rather than arbitrary model prose", {
+	skip: !enabled,
+}, async () => {
+	assert.ok(repository);
+	assert.ok(db);
+	const requestId = "77000000-0000-4000-8000-000000000005";
+	const started = await repository.start({
+		requestId,
+		organizationId: ids.organization,
+		workspaceId: ids.workspaceA,
+		libraryId: ids.libraryA,
+		ragLibraryId: "rag-ask-runs-a",
+		principal: { type: "user", id: ids.user, threadId: ids.thread },
+	});
+	assert.equal(started.ok, true);
+	if (!started.ok) return;
+	const result = await repository.finalize({
+		id: started.value.id,
+		requestId,
+		organizationId: ids.organization,
+		workspaceId: ids.workspaceA,
+		status: "refused",
+		refuseReason: "private question and quoted evidence sk-secret",
+		latencyMs: 10,
+	});
+	assert.equal(result.ok, true);
+	if (result.ok) assert.equal(result.value?.refuseReason, "refused");
+	await db
+		.delete(schema.askRuns)
+		.where(eq(schema.askRuns.id, started.value.id));
+});
+
 test("Ask runs persist scoped user and service-key metadata through retention", {
 	skip: !enabled,
 }, async () => {

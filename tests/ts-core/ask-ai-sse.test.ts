@@ -27,8 +27,138 @@ import {
 
 const injectedModel = {} as LanguageModel;
 
+function judgeCompletion() {
+	return Response.json({
+		id: "judge-test",
+		object: "chat.completion",
+		created: 0,
+		model: "judge",
+		choices: [
+			{
+				index: 0,
+				message: {
+					role: "assistant",
+					content: JSON.stringify({
+						sufficient: true,
+						action: "generate",
+						reason: "supported",
+						evidence_ids: ["source-1"],
+					}),
+				},
+				finish_reason: "stop",
+			},
+		],
+		usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+	});
+}
+
+test("SDK HTTP retries are owned by the adapter and reauthorize every attempt", async () => {
+	let calls = 0;
+	let checkpoints = 0;
+	const provider = createOpenAICompatible({
+		name: "test",
+		apiKey: "test",
+		baseURL: "https://provider.invalid/v1",
+		fetch: async () =>
+			++calls === 1
+				? Response.json({ error: { message: "temporary" } }, { status: 503 })
+				: judgeCompletion(),
+	});
+	const adapter = new StructuredOutputAdapter(
+		provider.chatModel("judge"),
+		undefined,
+		{ maxAttempts: 2, timeoutMs: 1000 },
+	);
+	const result = await adapter.judgeWithMetadata(
+		{ question: "question", citations: [], attempts: 1 },
+		{
+			beforeRequest: async () => {
+				checkpoints += 1;
+			},
+		},
+	);
+	assert.equal(result.output.action, "generate");
+	assert.equal(result.metadata.attempts, 2);
+	assert.equal(calls, 2);
+	assert.equal(checkpoints, 2);
+});
+
+test("a revoked authorization checkpoint prevents the SDK HTTP retry", async () => {
+	let calls = 0;
+	let checkpoints = 0;
+	const denied = new Error("access revoked");
+	const provider = createOpenAICompatible({
+		name: "test",
+		apiKey: "test",
+		baseURL: "https://provider.invalid/v1",
+		fetch: async () => {
+			calls += 1;
+			return Response.json(
+				{ error: { message: "temporary" } },
+				{ status: 503 },
+			);
+		},
+	});
+	const adapter = new StructuredOutputAdapter(
+		provider.chatModel("judge"),
+		undefined,
+		{ maxAttempts: 2, timeoutMs: 1000 },
+	);
+	await assert.rejects(
+		adapter.judge(
+			{ question: "question", citations: [], attempts: 1 },
+			{
+				beforeRequest: async () => {
+					if (++checkpoints === 2) throw denied;
+				},
+			},
+		),
+		(error) => error === denied,
+	);
+	assert.equal(calls, 1);
+	assert.equal(checkpoints, 2);
+});
+
+test("Judge explicitly requests JSON in both native schema and JSON-object modes", async () => {
+	for (const supportsStructuredOutputs of [true, false]) {
+		const provider = createOpenAICompatible({
+			name: "test",
+			apiKey: "test",
+			baseURL: "https://provider.invalid/v1",
+			supportsStructuredOutputs,
+			fetch: async (_url, init) => {
+				const body = JSON.parse(String(init?.body));
+				assert.equal(
+					body.response_format.type,
+					supportsStructuredOutputs ? "json_schema" : "json_object",
+				);
+				assert.match(body.messages[0].content, /JSON/u);
+				assert.match(body.messages[0].content, /sufficient/u);
+				assert.match(body.messages[0].content, /evidence_ids/u);
+				return judgeCompletion();
+			},
+		});
+		const adapter = new StructuredOutputAdapter(
+			provider.chatModel("judge"),
+			undefined,
+			{ maxAttempts: 1, timeoutMs: 1000 },
+		);
+		const result = await adapter.judge({
+			question: "question",
+			citations: [],
+			attempts: 1,
+		});
+		assert.equal(result.sufficient, true);
+		assert.deepEqual(result.evidence_ids, ["source-1"]);
+	}
+});
+
 test("default SDK executor classifies malformed JSON and schema failures as invalid output", async () => {
-	for (const content of ["private malformed text", '{"sufficient":true}']) {
+	for (const [content, finishReason, category] of [
+		["private malformed text", "stop", "invalid_output"],
+		['{"sufficient":true}', "stop", "invalid_output"],
+		['{"sufficient":true,    ', "length", "output_truncated"],
+	]) {
 		const provider = createOpenAICompatible({
 			name: "test",
 			apiKey: "test",
@@ -43,7 +173,7 @@ test("default SDK executor classifies malformed JSON and schema failures as inva
 						{
 							index: 0,
 							message: { role: "assistant", content },
-							finish_reason: "stop",
+							finish_reason: finishReason,
 						},
 					],
 					usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
@@ -58,7 +188,7 @@ test("default SDK executor classifies malformed JSON and schema failures as inva
 			adapter.judge({ question: "question", citations: [], attempts: 1 }),
 			(error) => {
 				const metadata = getStructuredFailureMetadata(error);
-				assert.equal(metadata?.category, "invalid_output");
+				assert.equal(metadata?.category, category);
 				assert.equal(metadata?.attempts, 1);
 				assert.doesNotMatch(JSON.stringify(metadata), /private|sufficient/);
 				return true;
