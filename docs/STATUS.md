@@ -19,12 +19,15 @@ UnoRAG 已经不是 RAG 原型，而是一个 **TypeScript-only、可私有部�
 修复后的 `59b4f5f` 不可变候选已通过 7 份新鲜入库、三轮 123/123 Ask、29 项完整隔离、20 项浏览器，
 以及升级回滚、Provider 故障诊断和破坏性恢复，结论为 **RC GO，可进入受控试点**，见
 [该隔离候选报告](./evidence/2026-11-04-59b4f5f-candidate-acceptance.md)；旧候选的 NO-GO 未改写。
-香港参考实例现已手动升级到 `c066377` / `0.2.3-dev+c0663777d819`，补齐本地 OCR 语言数据与解析来源
-展示修复，并完成真实上传与生命周期复验，见
-[解析修复与上传复验](./evidence/2026-11-05-c066377-parser-upload-acceptance.md)。这是候选部署，
-干净检出三轮问答虽为 123/123，但第三轮 P95 16.11 秒超过 15 秒门槛，稳定性总门禁仍为 FAIL，
-见 [#185](https://github.com/codexlin/UnoRAG/issues/185)。未发布新稳定版，也不代表该提交自动继承
-旧 RC 的全部故障、容量与恢复门禁。
+香港参考实例已升级到 `d9b1377` / `0.2.3-dev+d9b1377b6660`，包含请求记录、可选离线 Ragas、
+Judge 与引用修复，以及发布镜像安全补丁。七份新鲜真实文件全部入库，完整隔离 29/29、桌面/移动
+浏览器自动化 28/28 通过；干净检出三轮 Ask 为 **118/123**，P95 9.11 / 8.18 / 8.19 秒。
+延迟满足原有 15 秒要求，但正文比较错误与图表来源类型不稳定使 **总门禁仍为 FAIL**，见
+[当前香港验收](./evidence/2026-11-05-d9b1377-hk-acceptance.md)、
+[#189](https://github.com/codexlin/UnoRAG/issues/189)、[#190](https://github.com/codexlin/UnoRAG/issues/190)。
+旧 `c066377` 的 123/123 与 P95 16.11 秒失败仍保留在
+[解析修复报告](./evidence/2026-11-05-c066377-parser-upload-acceptance.md) 和
+[#185](https://github.com/codexlin/UnoRAG/issues/185)。未发布新稳定版，不自动继承旧 RC 的故障、容量和恢复结论。
 
 ## 当前运行时
 
@@ -79,10 +82,10 @@ Next.js product + Knowledge API
 | 持久任务 | DBOS 执行 ingest、ACL projection、delete、cleanup，支持重试、取消、对账与隔离 |
 | 原子版本 | 新 generation 校验通过后激活；失败时旧版本继续服务 |
 | 清理 | 旧 generation、Ask runs 和 tombstone 有维护命令与可观测结果 |
-| 原生运行中心 | 已实现健康、任务、解析、模型、生命周期、告警、Ask/入库阶段瀑布与 P50/P95；新增 Workspace 管理员请求记录，本地真实请求/浏览器/隔离/Qdrant 故障复测通过，尚待候选发布验收 |
+| 原生运行中心 | 已实现健康、任务、解析、模型、生命周期、告警、Ask/入库阶段瀑布与 P50/P95；Workspace 管理员请求记录已部署香港，真实筛选/详情和桌面/移动复验通过；本地 Qdrant 故障通过不冒充香港故障演练 |
 | 标准观测 | 可选 OTel Collector、Prometheus、Grafana、Loki、Tempo 与 Alertmanager |
 | AI 工程观测 | 可选 metadata-only Langfuse Trace 与评测分数发布，不采集问题或文档正文 |
-| 评测 | 版本化黄金集、真实文件矩阵、Prompt Registry、稳定性和延迟门禁；可选 Ragas 已完成首轮 36 条真实语义诊断，额外聚合与非法引用已本地修复；Judge JSON/重试补丁连续两轮真实 Ask 82/82，本地复验通过但未发布，语义评分仍待人工校准 |
+| 评测 | 版本化黄金集、真实文件矩阵、Prompt Registry、稳定性和延迟门禁；可选 Ragas 已完成首轮 36 条本地语义诊断，评分仍待人工校准；补丁已部署，香港三轮 118/123，正文比较与图表来源门禁待修，不以本地 82/82 覆盖香港失败 |
 | 交付 | Compose 参考拓扑、Helm starter、四个 Node 镜像、升级/回滚、备份/恢复工具 |
 | 公开接口 | `POST /api/v1/retrieve`、`POST /api/v1/ask` 与 OpenAPI 契约 |
 
