@@ -162,16 +162,19 @@ async function executeProvider(
 	>;
 }> {
 	const submissionStarted = performance.now();
+	const deadline = Date.now() + input.maxWaitMs;
 	const submission = await retryProviderOperation(
 		provider,
 		"submit",
 		input,
-		() =>
+		(signal) =>
 			provider.submit(input.input, {
+				signal,
 				externalParserAllowed: input.externalParserAllowed,
 				idempotencyKey: input.idempotencyKey,
 				requestId: input.requestId,
 			}),
+		deadline,
 	);
 	const submissionMs = elapsedMilliseconds(submissionStarted);
 	const task: ProviderTask = {
@@ -183,7 +186,6 @@ async function executeProvider(
 		.digest("hex")
 		.slice(0, 16);
 	const waitStarted = performance.now();
-	const deadline = Date.now() + input.maxWaitMs;
 	try {
 		let status: ParseProgress["status"] = submission.status;
 		while (status !== "completed") {
@@ -199,7 +201,7 @@ async function executeProvider(
 				provider,
 				"poll",
 				input,
-				() => provider.poll(task),
+				(signal) => provider.poll({ ...task, signal }),
 				deadline,
 			);
 			status = progress.status;
@@ -234,7 +236,7 @@ async function executeProvider(
 			provider,
 			"fetch",
 			input,
-			() => provider.fetchResult(task),
+			(signal) => provider.fetchResult({ ...task, signal }),
 			deadline,
 		);
 		return {
@@ -247,7 +249,11 @@ async function executeProvider(
 		};
 	} catch (error) {
 		if (!retryMetadata(error).retryable) {
-			await provider.cancel(task).catch(() => undefined);
+			await runWithinDeadline(
+				(signal) => provider.cancel({ ...task, signal }),
+				Date.now() + 1_000,
+				provider.name,
+			).catch(() => undefined);
 		}
 		throw error;
 	}
@@ -257,12 +263,12 @@ async function retryProviderOperation<T>(
 	provider: DurableParserProvider,
 	operation: ParserProviderOperation,
 	input: ExecuteProviderInput,
-	run: () => Promise<T>,
-	deadline?: number,
+	run: (signal: AbortSignal) => Promise<T>,
+	deadline: number,
 ): Promise<T> {
 	for (let attempt = 1; ; attempt += 1) {
 		await input.assertContinuing?.();
-		if (deadline !== undefined && Date.now() >= deadline) {
+		if (Date.now() >= deadline) {
 			throw parserError(
 				"provider_timeout",
 				`${provider.name} exceeded its parser workflow timeout`,
@@ -271,7 +277,12 @@ async function retryProviderOperation<T>(
 		}
 		const startedAt = performance.now();
 		try {
-			const result = await run();
+			const result = await runWithinDeadline(
+				run,
+				deadline,
+				provider.name,
+				input.assertContinuing,
+			);
 			input.onProviderAttempt?.({
 				requestId: input.requestId,
 				documentId: input.input.documentId,
@@ -287,7 +298,9 @@ async function retryProviderOperation<T>(
 		} catch (error) {
 			const metadata = retryMetadata(error);
 			const canRetry =
-				metadata.retryable && attempt <= input.retryBackoffMs.length;
+				metadata.retryable &&
+				Date.now() < deadline &&
+				attempt <= input.retryBackoffMs.length;
 			const delayMs = canRetry
 				? retryDelay(
 						input.retryBackoffMs[attempt - 1] ?? 0,
@@ -309,14 +322,10 @@ async function retryProviderOperation<T>(
 				retryDelayMs: delayMs,
 			});
 			if (!canRetry) throw error;
-			const remainingMs =
-				deadline === undefined ? undefined : Math.max(0, deadline - Date.now());
-			const boundedDelay =
-				remainingMs === undefined
-					? (delayMs ?? 0)
-					: Math.min(delayMs ?? 0, remainingMs);
+			const remainingMs = Math.max(0, deadline - Date.now());
+			const boundedDelay = Math.min(delayMs ?? 0, remainingMs);
 			await cancellableDelay(boundedDelay, input.assertContinuing);
-			if (remainingMs !== undefined && (delayMs ?? 0) >= remainingMs) {
+			if ((delayMs ?? 0) >= remainingMs) {
 				throw parserError(
 					"provider_timeout",
 					`${provider.name} exceeded its parser workflow timeout`,
@@ -324,6 +333,63 @@ async function retryProviderOperation<T>(
 				);
 			}
 		}
+	}
+}
+
+async function runWithinDeadline<T>(
+	run: (signal: AbortSignal) => Promise<T>,
+	deadline: number,
+	provider: string,
+	assertContinuing?: () => Promise<void>,
+): Promise<T> {
+	const controller = new AbortController();
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let check: ReturnType<typeof setInterval> | undefined;
+	let checking = false;
+	const interrupted = new Promise<never>((_resolve, reject) => {
+		const interrupt = (error: unknown) => {
+			controller.abort(error);
+			reject(error);
+		};
+		timer = setTimeout(
+			() =>
+				interrupt(
+					parserError(
+						"provider_timeout",
+						`${provider} exceeded its parser workflow timeout`,
+						true,
+					),
+				),
+			Math.max(0, deadline - Date.now()),
+		);
+		if (assertContinuing) {
+			check = setInterval(() => {
+				if (checking || controller.signal.aborted) return;
+				checking = true;
+				void assertContinuing()
+					.catch(interrupt)
+					.finally(() => {
+						checking = false;
+					});
+			}, 250);
+		}
+	});
+	try {
+		// Keep the same deadline through response-body consumption, not only headers.
+		const result = await Promise.race([run(controller.signal), interrupted]);
+		if (Date.now() >= deadline) {
+			const error = parserError(
+				"provider_timeout",
+				`${provider} exceeded its parser workflow timeout`,
+				true,
+			);
+			controller.abort(error);
+			throw error;
+		}
+		return result;
+	} finally {
+		if (timer) clearTimeout(timer);
+		if (check) clearInterval(check);
 	}
 }
 

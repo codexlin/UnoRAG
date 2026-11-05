@@ -97,9 +97,14 @@ export class MinerU302Provider
 			);
 		}
 		const form = new FormData();
-		form.append("file", await this.sourceBlob(input), input.filename);
+		form.append(
+			"file",
+			await this.sourceBlob(input, options.signal),
+			input.filename,
+		);
 		const upload = await this.requestValue(this.uploadPath, {
 			method: "POST",
+			signal: options.signal,
 			headers: {
 				"idempotency-key": `${options.idempotencyKey}:upload`,
 				"x-request-id": options.requestId,
@@ -118,6 +123,7 @@ export class MinerU302Provider
 
 		const created = await this.requestValue(this.tasksPath, {
 			method: "POST",
+			signal: options.signal,
 			headers: {
 				"content-type": "application/json",
 				"idempotency-key": `${options.idempotencyKey}:task`,
@@ -147,7 +153,7 @@ export class MinerU302Provider
 	async poll(task: ProviderTask): Promise<ParseProgress> {
 		const response = await this.request(
 			`${this.tasksPath}?task_id=${encodeURIComponent(task.providerTaskId)}`,
-			{ method: "GET" },
+			{ method: "GET", signal: task.signal },
 		);
 		const payload = await responseValue(response);
 		const status = taskStatus(payload);
@@ -168,7 +174,7 @@ export class MinerU302Provider
 	async fetchResult(task: ProviderTask): Promise<ParseResult> {
 		const payload = await this.requestValue(
 			`${this.tasksPath}?task_id=${encodeURIComponent(task.providerTaskId)}`,
-			{ method: "GET" },
+			{ method: "GET", signal: task.signal },
 		);
 		const direct = deepRecord(payload);
 		if (hasContentList(direct)) {
@@ -186,7 +192,10 @@ export class MinerU302Provider
 		let response: Response;
 		try {
 			// Result downloads are pre-signed/public. Never forward the API key.
-			response = await this.fetchImpl(resultUrl, { method: "GET" });
+			response = await this.fetchImpl(resultUrl, {
+				method: "GET",
+				signal: task.signal,
+			});
 		} catch {
 			throw providerError(
 				"provider_unreachable",

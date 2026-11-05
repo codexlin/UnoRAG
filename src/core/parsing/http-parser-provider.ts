@@ -116,15 +116,18 @@ export abstract class HttpParserProvider {
 		return value;
 	}
 
-	protected async sourceBlob(input: ParseInput): Promise<Blob> {
+	protected async sourceBlob(
+		input: ParseInput,
+		signal?: AbortSignal,
+	): Promise<Blob> {
 		if (this.sourceLoader) {
-			return new Blob([Buffer.from(await this.sourceLoader(input))], {
+			return new Blob([Buffer.from(await this.sourceLoader(input, signal))], {
 				type: input.mimeType,
 			});
 		}
 		let response: Response;
 		try {
-			response = await this.fetchImpl(input.sourceUri);
+			response = await this.fetchImpl(input.sourceUri, { signal });
 		} catch (error) {
 			throw new ParserProviderHttpError({
 				message: `parser source is unreachable: ${errorMessage(error)}`,

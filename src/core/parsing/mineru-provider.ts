@@ -103,7 +103,7 @@ export class MinerUProvider
 		options: DurableParseOptions,
 	): Promise<ParseSubmission> {
 		requireSubmissionContext(options);
-		const source = await this.sourceBlob(input);
+		const source = await this.sourceBlob(input, options.signal);
 		const form = new FormData();
 		form.append("files", source, input.filename);
 		form.append("return_content_list", "true");
@@ -124,6 +124,7 @@ export class MinerUProvider
 		if (this.transport === "file-parse") {
 			const payload = await this.requestJson(this.fileParsePath, {
 				method: "POST",
+				signal: options.signal,
 				headers,
 				body: form,
 			});
@@ -141,6 +142,7 @@ export class MinerUProvider
 
 		const payload = await this.requestJson(this.tasksPath, {
 			method: "POST",
+			signal: options.signal,
 			headers,
 			body: form,
 		});
@@ -172,7 +174,7 @@ export class MinerUProvider
 		}
 		const response = await this.request(
 			`${this.tasksPath}/${encodeURIComponent(task.providerTaskId)}`,
-			{ method: "GET" },
+			{ method: "GET", signal: task.signal },
 		);
 		const payload = await responseJsonObject(response);
 		const status = progressStatus(payload.status ?? payload.state);
@@ -210,7 +212,7 @@ export class MinerUProvider
 		} else {
 			payload = await this.requestJson(
 				`${this.tasksPath}/${encodeURIComponent(task.providerTaskId)}/result`,
-				{ method: "GET" },
+				{ method: "GET", signal: task.signal },
 			);
 		}
 		return normalizeMinerUResult(payload, {
@@ -227,7 +229,7 @@ export class MinerUProvider
 		}
 		await this.request(
 			`${this.tasksPath}/${encodeURIComponent(task.providerTaskId)}`,
-			{ method: "DELETE" },
+			{ method: "DELETE", signal: task.signal },
 		);
 	}
 }
