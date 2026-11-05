@@ -172,6 +172,7 @@ Qdrant 故障的新记录可展示 **Qdrant 诊断**：ready/query/scroll、错�
 过期结果不能继续激活；本地预分析仍使用 LiteParse 自身的执行预算。用户取消时，等待中的 HTTP
 操作也会收到中断信号；对上游的取消通知最多等一秒，不把取消通知本身变成无限等待。
 可重试超时保留同一幂等键重试的机制，不保证上游任务已停止，尤其 302.AI 没有远程取消端点。
+这是单次 ParserProvider 执行的预算；DBOS 持久化步骤重试有独立退避，不能将该值当作整个 Job 总时限。
 这不是强制终止同进程内原生 CPU 计算；LiteParse 仍持有其并发槽直到原生执行真正结束。
 
 ### 模型并发与背压
@@ -391,7 +392,7 @@ Worker 同时获得新凭证，验证上传、入库、下载和删除后再撤�
 
 ```bash
 just check
-VERSION=v0.2.3
+VERSION=v0.2.4
 just images "$VERSION"
 just release "$VERSION" REGISTRY/NAMESPACE
 ```
