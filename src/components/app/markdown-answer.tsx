@@ -48,7 +48,10 @@ export function MarkdownAnswer({
 
 	return (
 		<div
-			className={cn("text-answer mt-2 space-y-3.5 text-foreground", className)}
+			className={cn(
+				"text-answer mt-2 min-w-0 space-y-3.5 text-foreground [overflow-wrap:anywhere]",
+				className,
+			)}
 		>
 			<ReactMarkdown
 				remarkPlugins={[remarkGfm]}
@@ -118,27 +121,35 @@ export function MarkdownAnswer({
 							{wrapText(children)}
 						</td>
 					),
-					code({ className: codeClassName, children, ...props }) {
-						const match = /language-(\w+)/.exec(codeClassName || "");
-						const language = match?.[1];
-						if (!language) {
+					pre({ children }) {
+						const child = Children.toArray(children)[0];
+						if (
+							!isValidElement<{ className?: string; children?: ReactNode }>(
+								child,
+							)
+						) {
 							return (
-								<code
-									className="rounded-sm border border-border/70 bg-muted px-1 py-0.5 font-mono text-[0.85em]"
-									{...props}
-								>
+								<pre className="max-w-full overflow-x-auto whitespace-pre [overflow-wrap:normal]">
 									{children}
-								</code>
+								</pre>
 							);
 						}
+						const language = /language-(\w+)/.exec(
+							child.props.className ?? "",
+						)?.[1];
 						return (
 							<CodeBlock
-								code={String(children).replace(/\n$/, "")}
-								language={language}
+								code={String(child.props.children ?? "").replace(/\n$/, "")}
+								language={language ?? "text"}
 								enhanced={enhanced}
 							/>
 						);
 					},
+					code: ({ children }) => (
+						<code className="rounded-sm border border-border/70 bg-muted px-1 py-0.5 font-mono text-[0.85em]">
+							{children}
+						</code>
+					),
 				}}
 			>
 				{content}
@@ -293,7 +304,7 @@ function CodeBlock({
 	}
 
 	return (
-		<div className="overflow-hidden rounded-md border border-primary/30 bg-[#0b1c24] shadow-sm">
+		<div className="min-w-0 max-w-full overflow-hidden rounded-md border border-primary/30 bg-[#0b1c24] shadow-sm [overflow-wrap:normal]">
 			<div className="flex items-center justify-between border-b border-primary/25 bg-[#0f2a33] px-3 py-1 font-mono text-[11px] tracking-[0.16em] text-[#b8d4dc] uppercase">
 				<span>{language || "code"}</span>
 				<div className="flex items-center gap-2">
