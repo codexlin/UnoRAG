@@ -10,11 +10,128 @@ import {
 	UNORAG_QDRANT_PAYLOAD_INDEXES,
 } from "../../src/core/retrieval/qdrant/collection-manager";
 import {
+	diagnoseQdrantError,
+	projectQdrantDiagnostic,
+} from "../../src/core/retrieval/qdrant/diagnostics";
+import {
 	QdrantOperationError,
 	QdrantRetrievalStore,
 } from "../../src/core/retrieval/qdrant/store";
 
 type CollectionInfo = Awaited<ReturnType<QdrantClient["getCollection"]>>;
+
+test("Qdrant cause classification preserves only safe structured metadata", () => {
+	for (const [error, category, status, code, retryable] of [
+		[
+			new TypeError("fetch failed private-url sk-secret", {
+				cause: Object.assign(new Error("private body"), { code: "ECONNRESET" }),
+			}),
+			"transport",
+			null,
+			"ECONNRESET",
+			true,
+		],
+		[
+			Object.assign(new Error("private body"), {
+				name: "ApiError",
+				status: 503,
+			}),
+			"http",
+			503,
+			null,
+			true,
+		],
+		[
+			Object.assign(
+				new Error(
+					"Unexpected Response: 401 Unauthorized\nRaw response content: private body",
+				),
+				{ name: "QdrantClientUnexpectedResponseError" },
+			),
+			"http",
+			401,
+			null,
+			false,
+		],
+		[
+			Object.assign(new Error("private body"), {
+				name: "QdrantClientTimeoutError",
+			}),
+			"timeout",
+			null,
+			null,
+			true,
+		],
+		[
+			Object.assign(new Error("private body"), {
+				name: "QdrantClientResourceExhaustedError",
+			}),
+			"http",
+			429,
+			null,
+			true,
+		],
+		[
+			Object.assign(new Error("private body"), { code: "ENOTFOUND" }),
+			"transport",
+			null,
+			"ENOTFOUND",
+			false,
+		],
+		[
+			new DOMException("private body", "AbortError"),
+			"cancelled",
+			null,
+			null,
+			false,
+		],
+		[new SyntaxError("private body"), "invalid_response", null, null, false],
+		[
+			new TypeError("fetch failed private body"),
+			"transport",
+			null,
+			null,
+			false,
+		],
+		[
+			Object.assign(new Error("private body"), { code: "sk-secret" }),
+			"unknown",
+			null,
+			null,
+			false,
+		],
+	] as const) {
+		const detail = diagnoseQdrantError("query", error, {
+			durationMs: 201,
+			timeoutMs: 5000,
+		});
+		assert.equal(detail.category, category);
+		assert.equal(detail.statusCode, status);
+		assert.equal(detail.transportCode, code);
+		assert.equal(detail.retryable, retryable);
+		assert.equal(detail.attempts, 1);
+		assert.equal(detail.durationMs, 201);
+		assert.doesNotMatch(JSON.stringify(detail), /private|sk-secret/);
+		assert.deepEqual(
+			projectQdrantDiagnostic({
+				...detail,
+				message: "private body",
+				url: "private-url",
+			}),
+			detail,
+		);
+	}
+	assert.equal(
+		projectQdrantDiagnostic({
+			...diagnoseQdrantError("query", null),
+			category: "private body",
+		}),
+		null,
+	);
+	const circular = new Error("private body");
+	circular.cause = circular;
+	assert.equal(diagnoseQdrantError("scroll", circular).category, "unknown");
+});
 
 function collectionInfo(input?: {
 	size?: number;

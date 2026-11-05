@@ -1,4 +1,5 @@
 import { Annotation } from "@langchain/langgraph";
+import type { RerankDiagnostic } from "../retrieval/provider-request";
 
 export type AskMetadata = Record<string, unknown>;
 export type AskHistoryMessage = Record<string, unknown>;
@@ -8,6 +9,7 @@ export interface AskStageTiming {
 	stage: string;
 	duration_ms: number;
 	ok: boolean;
+	detail?: { rerankDiagnostic: RerankDiagnostic };
 }
 
 export const ASK_STATE_FIELD_NAMES = [
@@ -81,6 +83,7 @@ export function appendAskStage(
 	stage: string,
 	startedAt: number,
 	ok: boolean,
+	detail?: AskStageTiming["detail"],
 ): AskMetadata {
 	const stages = Array.isArray(debug?.stages) ? debug.stages : [];
 	return {
@@ -91,6 +94,7 @@ export function appendAskStage(
 				stage,
 				duration_ms: durationMs(startedAt),
 				ok,
+				...(detail ? { detail } : {}),
 			} satisfies AskStageTiming,
 		],
 	};

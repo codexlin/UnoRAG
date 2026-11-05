@@ -10,11 +10,18 @@ import {
 } from "@/core/ai";
 import { AnswerCitationValidationError } from "@/core/ai/answer-citations";
 import {
+	type AskExecutionDiagnostics,
+	AskGraphExecutionError,
 	type AskState,
 	appendAskStage,
 	finishAskTiming,
 } from "@/core/ask-graph";
-import { RetrievalProviderError } from "@/core/retrieval/provider-request";
+import {
+	projectRerankDiagnostic,
+	RetrievalProviderError,
+} from "@/core/retrieval/provider-request";
+import { projectQdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
+import { QdrantOperationError } from "@/core/retrieval/qdrant/store";
 import { getDatabase } from "@/db";
 import {
 	getObservabilityContext,
@@ -99,6 +106,13 @@ type ActiveAskRun = {
 	workspaceId: string;
 	startedAt: number;
 };
+
+type AskRunState = Partial<
+	Pick<
+		AskState,
+		"query_type" | "retrieval_debug" | "citations" | "refuse_reason"
+	>
+>;
 
 export function isNativeAskPath(path: string[]): boolean {
 	return (
@@ -378,9 +392,11 @@ function operationalErrorCode(error: unknown): string {
 	return error.name;
 }
 
-function retrievalMode(state: AskState): string {
+function retrievalMode(state: AskRunState): string | null {
 	const mode = state.retrieval_debug?.retrievalMode;
-	return typeof mode === "string" ? mode : "dense";
+	if (mode === "dense" || mode === "hybrid") return mode;
+	const hybrid = state.retrieval_debug?.usedHybrid;
+	return typeof hybrid === "boolean" ? (hybrid ? "hybrid" : "dense") : null;
 }
 
 function metricCount(value: unknown, fallback: number): number {
@@ -391,9 +407,10 @@ function metricCount(value: unknown, fallback: number): number {
 
 async function finalizeAskRun(input: {
 	run: ActiveAskRun;
-	state?: AskState;
+	state?: AskRunState;
 	status: "completed" | "refused" | "failed" | "cancelled";
 	errorCode?: string;
+	dependencyFailure?: QdrantOperationError;
 }): Promise<void> {
 	const state = input.state;
 	const mode = state ? retrievalMode(state) : null;
@@ -404,6 +421,11 @@ async function finalizeAskRun(input: {
 				if (!value || typeof value !== "object" || Array.isArray(value))
 					return [];
 				const stage = value as Record<string, unknown>;
+				const detail =
+					stage.detail && typeof stage.detail === "object"
+						? (stage.detail as Record<string, unknown>)
+						: {};
+				const rerank = projectRerankDiagnostic(detail.rerankDiagnostic);
 				if (
 					typeof stage.stage !== "string" ||
 					typeof stage.duration_ms !== "number" ||
@@ -423,6 +445,18 @@ async function finalizeAskRun(input: {
 									: ("failed" as const),
 						...(stage.ok === false && stage.stage === "persist"
 							? { errorCode: "conversation_persist_failed" }
+							: {}),
+						...((stage.stage === "retrieve" ||
+							stage.stage === "table_retrieve") &&
+						rerank
+							? {
+									detail: Object.fromEntries(
+										Object.entries(rerank).map(([key, value]) => [
+											`rerank_${key}`,
+											value,
+										]),
+									),
+								}
 							: {}),
 						...(stage.ok === false &&
 						stage.stage === "judge" &&
@@ -475,7 +509,24 @@ async function finalizeAskRun(input: {
 		const failed = [...persistedStages]
 			.reverse()
 			.find((stage) => stage.outcome !== "completed");
-		if (failed) Object.assign(failed, { errorCode: input.errorCode });
+		if (failed) {
+			const diagnostic = projectQdrantDiagnostic(
+				input.dependencyFailure?.diagnostics,
+			);
+			Object.assign(failed, {
+				errorCode: input.errorCode,
+				...(diagnostic
+					? {
+							detail: Object.fromEntries(
+								Object.entries(diagnostic).map(([key, value]) => [
+									`qdrant_${key}`,
+									value,
+								]),
+							),
+						}
+					: {}),
+			});
+		}
 	}
 	const base = {
 		id: input.run.id,
@@ -602,18 +653,26 @@ export async function handleNativeAskRequest(input: {
 	refreshIdentity?: AskAuthorizationDependencies["refreshIdentity"];
 }): Promise<Response | null> {
 	if (!isNativeAskPath(input.path)) return null;
+	const requestId =
+		input.requestId ?? getObservabilityContext()?.requestId ?? randomUUID();
 	return withActiveHttpSpan(
 		"unorag.ask",
 		{
 			"unorag.operation": "ask",
 			"unorag.organization.id": input.identity.tenantId,
 			"unorag.workspace.id": input.identity.workspaceId,
-			"request.id":
-				input.requestId ?? getObservabilityContext()?.requestId ?? "",
+			"request.id": requestId,
 			"http.request.method": input.request.method,
 			"unorag.ask.streaming": input.path[2] === "stream",
 		},
-		() => handleNativeAskRequestInSpan(input),
+		async () => {
+			const response = await handleNativeAskRequestInSpan({
+				...input,
+				requestId,
+			});
+			response?.headers.set("x-request-id", requestId);
+			return response;
+		},
 		{ streamResponseBody: input.path[2] === "stream" },
 	);
 }
@@ -636,6 +695,7 @@ async function handleNativeAskRequestInSpan(input: {
 	const metricsStartedAt = performance.now();
 	let metricsSettled = false;
 	let activeState: AskState | undefined;
+	let failedGraphState: AskExecutionDiagnostics | undefined;
 	const settleMetrics = (outcome: WebMetricOutcome) => {
 		if (metricsSettled) return;
 		metricsSettled = true;
@@ -648,8 +708,9 @@ async function handleNativeAskRequestInSpan(input: {
 				durationMs,
 			});
 		}
-		if (activeState && Array.isArray(activeState.retrieval_debug?.stages)) {
-			for (const value of activeState.retrieval_debug.stages) {
+		const timingState = activeState ?? failedGraphState;
+		if (timingState && Array.isArray(timingState.retrieval_debug?.stages)) {
+			for (const value of timingState.retrieval_debug.stages) {
 				if (!value || typeof value !== "object" || Array.isArray(value))
 					continue;
 				const stage = value as Record<string, unknown>;
@@ -711,13 +772,14 @@ async function handleNativeAskRequestInSpan(input: {
 	let activeRun: ActiveAskRun | undefined;
 	const settleActiveRun = async (
 		status: "completed" | "refused" | "failed" | "cancelled",
-		state?: AskState,
+		state?: AskRunState,
 		errorCode?: string,
+		dependencyFailure?: QdrantOperationError,
 	) => {
 		const run = activeRun;
 		if (!run) return;
 		activeRun = undefined;
-		await finalizeAskRun({ run, state, status, errorCode });
+		await finalizeAskRun({ run, state, status, errorCode, dependencyFailure });
 	};
 	try {
 		const payload = AskRequestSchema.parse(await input.request.json());
@@ -1001,14 +1063,19 @@ async function handleNativeAskRequestInSpan(input: {
 			await settleActiveRun("cancelled", state, "request_cancelled");
 			settleMetrics("cancelled");
 		});
-	} catch (error) {
+	} catch (caught) {
+		const error =
+			caught instanceof AskGraphExecutionError ? caught.cause : caught;
+		failedGraphState =
+			caught instanceof AskGraphExecutionError ? caught.diagnostics : undefined;
 		executionAbort.abort(error);
 		recordActiveSpanFailure(error);
 		const errorCode = operationalErrorCode(error);
 		await settleActiveRun(
 			input.request.signal.aborted ? "cancelled" : "failed",
-			activeState,
+			activeState ?? failedGraphState,
 			errorCode,
+			error instanceof QdrantOperationError ? error : undefined,
 		);
 		if (error instanceof z.ZodError) {
 			settleMetrics("client_error");
@@ -1044,7 +1111,14 @@ async function handleNativeAskRequestInSpan(input: {
 			event: "ask.native.failed",
 			error: errorCode,
 			retryable:
-				error instanceof RetrievalProviderError ? error.retryable : false,
+				error instanceof RetrievalProviderError
+					? error.retryable
+					: error instanceof QdrantOperationError
+						? error.diagnostics.retryable
+						: false,
+			...(error instanceof QdrantOperationError
+				? { qdrant: projectQdrantDiagnostic(error.diagnostics) }
+				: {}),
 		});
 		return Response.json(
 			{ detail: "Ask service unavailable" },

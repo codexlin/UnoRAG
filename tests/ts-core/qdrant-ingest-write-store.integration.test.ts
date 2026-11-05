@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,12 +13,113 @@ import {
 	QdrantIngestWriteStore,
 } from "../../src/core/ingest";
 import type { EmbeddingProvider } from "../../src/core/retrieval/embedding/provider";
-import { QdrantRetrievalStore } from "../../src/core/retrieval/qdrant/store";
+import {
+	QdrantOperationError,
+	QdrantRetrievalStore,
+} from "../../src/core/retrieval/qdrant/store";
 import type { DocumentIngestJob } from "../../src/worker/contracts";
 import { LocalDocumentIngestSource } from "../../src/worker/document-ingest-production";
 import { DocumentIngestStager } from "../../src/worker/document-ingest-staging";
 
 const qdrantUrl = process.env.QDRANT_INGEST_E2E_URL?.trim();
+
+test("real Qdrant read distinguishes a dropped connection from HTTP failure and recovers without retry", {
+	skip: qdrantUrl ? false : "QDRANT_INGEST_E2E_URL is not configured",
+}, async () => {
+	assert.ok(qdrantUrl);
+	const direct = new QdrantClient({
+		url: qdrantUrl,
+		checkCompatibility: false,
+	});
+	const collection = `unorag_transport_${randomUUID().replaceAll("-", "")}`;
+	let dropped = false;
+	let forwarded = 0;
+	const proxy = createServer(async (request, response) => {
+		if (!dropped && request.url?.endsWith("/points/query")) {
+			dropped = true;
+			request.socket.destroy();
+			return;
+		}
+		try {
+			const chunks: Buffer[] = [];
+			for await (const chunk of request) chunks.push(Buffer.from(chunk));
+			const upstream = await fetch(new URL(request.url ?? "/", qdrantUrl), {
+				method: request.method,
+				headers: { "content-type": "application/json" },
+				body: ["GET", "HEAD"].includes(request.method ?? "GET")
+					? undefined
+					: Buffer.concat(chunks),
+			});
+			forwarded++;
+			response.writeHead(upstream.status, {
+				"content-type": "application/json",
+			});
+			response.end(Buffer.from(await upstream.arrayBuffer()));
+		} catch {
+			response.writeHead(502).end();
+		}
+	});
+	await direct.createCollection(collection, {
+		vectors: { size: 2, distance: "Cosine" },
+	});
+	try {
+		const scope = createScope();
+		const writes = new QdrantIngestWriteStore(direct, collection);
+		await writes.stage({
+			records: [record(scope, 0)],
+			vectors: [[1, 0]],
+			scope,
+		});
+		await writes.setVisibility(scope, "active");
+		await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+		const address = proxy.address();
+		assert.ok(address && typeof address !== "string");
+		const client = new QdrantClient({
+			url: `http://127.0.0.1:${address.port}`,
+			checkCompatibility: false,
+			timeout: 5000,
+		});
+		const store = new QdrantRetrievalStore(
+			client,
+			collection,
+			Promise.resolve(),
+			{ timeoutMs: 5000 },
+		);
+		const input = {
+			vector: [1, 0],
+			limit: 6,
+			scope: {
+				tenantId: scope.organizationId,
+				workspaceId: scope.workspaceId,
+				libraryId: scope.libraryId,
+				principalIds: scope.acl.principalIds,
+				groupIds: [],
+				activeGenerationIds: [scope.generationId],
+			},
+		};
+		await assert.rejects(store.search(input), (error) => {
+			assert.ok(error instanceof QdrantOperationError);
+			assert.equal(error.diagnostics.category, "transport");
+			assert.equal(error.diagnostics.statusCode, null);
+			assert.equal(error.diagnostics.transportCode, "UND_ERR_SOCKET");
+			assert.equal(error.diagnostics.attempts, 1);
+			assert.equal(error.diagnostics.retryable, true);
+			return true;
+		});
+		assert.equal(forwarded, 0);
+		const result = await store.search(input);
+		assert.equal(result.length, 1);
+		assert.equal(result[0]?.payload.generation_id, scope.generationId);
+		assert.equal(forwarded, 1);
+	} finally {
+		proxy.closeAllConnections();
+		if (proxy.listening)
+			await new Promise<void>((resolve, reject) =>
+				proxy.close((error) => (error ? reject(error) : resolve())),
+			);
+		await direct.deleteCollection(collection);
+	}
+});
 
 test("real Qdrant preserves scoped staging and atomic replacement visibility", {
 	skip: qdrantUrl ? false : "QDRANT_INGEST_E2E_URL is not configured",

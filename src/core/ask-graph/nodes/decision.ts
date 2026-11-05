@@ -1,3 +1,4 @@
+import { sharesEvidenceLineage } from "../../retrieval/evidence-lineage";
 import type { AskGraphContext, Judgement } from "../context";
 import {
 	type AskState,
@@ -6,6 +7,32 @@ import {
 } from "../state";
 
 const KNOWN_ACTIONS = new Set(["retry", "generate", "refuse"]);
+const MAX_COMPARISON_EVIDENCE = 6;
+const MAX_COMPARISON_CHARACTERS = 14_400;
+
+function comparisonContext(state: AskState) {
+	const citations = state.citations ?? [];
+	const characters = citations.reduce((sum, citation) => {
+		const text = citation.body || citation.text || citation.snippet;
+		return sum + (typeof text === "string" ? text.length : 0);
+	}, 0);
+	const ids = citations.map((citation) => citation.id);
+	const overBudget =
+		citations.length > MAX_COMPARISON_EVIDENCE ||
+		characters > MAX_COMPARISON_CHARACTERS;
+	const invalid =
+		overBudget ||
+		citations.length === 0 ||
+		ids.some((id) => typeof id !== "string" || !id) ||
+		new Set(ids).size !== ids.length;
+	return {
+		citations: invalid
+			? []
+			: citations.map((citation, index) => ({ ...citation, index: index + 1 })),
+		invalid,
+		invalidReason: overBudget ? "comparison_context_exceeds_budget" : undefined,
+	};
+}
 
 function selectedEvidence(
 	state: AskState,
@@ -13,11 +40,21 @@ function selectedEvidence(
 ): {
 	citations?: AskState["citations"];
 	invalid: boolean;
+	invalidReason?: string;
 	directCount: number;
 	lineageCount: number;
 	selectedCount: number;
 } {
 	if (judgement.evidence_ids === undefined) {
+		if (state.query_type === "compare" && judgement.action === "generate") {
+			const context = comparisonContext(state);
+			return {
+				...context,
+				directCount: context.citations.length,
+				lineageCount: 0,
+				selectedCount: context.citations.length,
+			};
+		}
 		return {
 			invalid: false,
 			directCount: state.citations?.length ?? 0,
@@ -56,6 +93,17 @@ function selectedEvidence(
 	const direct = candidates.filter(
 		(citation) => typeof citation.id === "string" && selected.has(citation.id),
 	);
+	// A comparison needs the alternatives, not just the single most relevant
+	// paragraph. These candidates already passed retrieval policy and scope checks.
+	if (state.query_type === "compare") {
+		const context = comparisonContext(state);
+		return {
+			...context,
+			directCount: direct.length,
+			lineageCount: 0,
+			selectedCount: context.citations.length,
+		};
+	}
 	const lineage = candidates.filter(
 		(candidate) =>
 			!selected.has(String(candidate.id)) &&
@@ -76,61 +124,11 @@ function selectedEvidence(
 	};
 }
 
-function stringValues(value: unknown): string[] {
-	return Array.isArray(value)
-		? value.filter((item): item is string => typeof item === "string")
-		: [];
-}
-
-function intersects(left: string[], right: string[]): boolean {
-	const values = new Set(left);
-	return right.some((value) => values.has(value));
-}
-
-function sharesEvidenceLineage(
-	selected: Record<string, unknown>,
-	authoritative: Record<string, unknown>,
-): boolean {
-	if (
-		selected.doc_id !== authoritative.doc_id ||
-		selected.document_version_id !== authoritative.document_version_id
-	) {
-		return false;
-	}
-	if (
-		typeof selected.table_id === "string" &&
-		selected.table_id === authoritative.table_id
-	) {
-		return true;
-	}
-	if (
-		typeof selected.figure_id === "string" &&
-		selected.figure_id === authoritative.figure_id
-	) {
-		return true;
-	}
-	const selectedRecordId =
-		typeof selected.record_id === "string" ? selected.record_id : null;
-	const authoritativeRecordId =
-		typeof authoritative.record_id === "string"
-			? authoritative.record_id
-			: null;
-	const selectedSources = stringValues(selected.source_chunk_ids);
-	const authoritativeSources = stringValues(authoritative.source_chunk_ids);
-	if (
-		(selectedRecordId && authoritativeSources.includes(selectedRecordId)) ||
-		(authoritativeRecordId && selectedSources.includes(authoritativeRecordId))
-	) {
-		return true;
-	}
-	return intersects(
-		stringValues(selected.source_node_ids),
-		stringValues(authoritative.source_node_ids),
-	);
-}
-
 function failClosedJudgement(judgement: Judgement): Judgement {
-	if (KNOWN_ACTIONS.has(judgement.action)) {
+	if (
+		KNOWN_ACTIONS.has(judgement.action) &&
+		(judgement.action !== "generate" || judgement.sufficient === true)
+	) {
 		return judgement;
 	}
 	return {
@@ -150,7 +148,7 @@ export function createDecisionNode(context: AskGraphContext) {
 				...judgement,
 				sufficient: false,
 				action: "refuse",
-				reason: "invalid_evidence_selection",
+				reason: evidence.invalidReason ?? "invalid_evidence_selection",
 				can_retry: false,
 				evidence_ids: [],
 			};
@@ -187,8 +185,16 @@ export function createDecisionNode(context: AskGraphContext) {
 				direct_evidence_count: evidence.invalid ? 0 : evidence.directCount,
 				lineage_evidence_count: evidence.invalid ? 0 : evidence.lineageCount,
 				selected_evidence_count: evidence.invalid ? 0 : evidence.selectedCount,
+				comparison_context_count:
+					!evidence.invalid && state.query_type === "compare"
+						? Math.max(0, evidence.selectedCount - evidence.directCount)
+						: 0,
 				evidence_selection_mode:
-					judgement.evidence_ids === undefined ? "legacy" : "judge",
+					state.query_type === "compare" && judgement.action === "generate"
+						? "comparison_context"
+						: judgement.evidence_ids === undefined
+							? "legacy"
+							: "judge",
 				evidence_selection_valid: !evidence.invalid,
 				...judgeDebug,
 			}),

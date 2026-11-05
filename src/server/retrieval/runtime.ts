@@ -59,10 +59,11 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 			"OPENAI_API_KEY or DASHSCOPE_API_KEY is required for TypeScript retrieval",
 		);
 	}
+	const qdrantTimeoutMs = positiveInteger("QDRANT_TIMEOUT_MS", 5_000);
 	const qdrant = new QdrantClient({
 		url: required("QDRANT_URL", "http://localhost:6333"),
 		apiKey: process.env.QDRANT_API_KEY?.trim() || undefined,
-		timeout: positiveInteger("QDRANT_TIMEOUT_MS", 5_000),
+		timeout: qdrantTimeoutMs,
 		checkCompatibility: true,
 	});
 	const collection = required("QDRANT_COLLECTION", "unorag_chunks");
@@ -95,7 +96,9 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 	});
 	runtime = new DefaultRetrievalService(
 		embeddings,
-		new QdrantRetrievalStore(qdrant, collection, collectionReady),
+		new QdrantRetrievalStore(qdrant, collection, collectionReady, {
+			timeoutMs: qdrantTimeoutMs,
+		}),
 		reranker,
 		{
 			hybridEnabled: enabled("TS_RETRIEVAL_HYBRID_ENABLED"),

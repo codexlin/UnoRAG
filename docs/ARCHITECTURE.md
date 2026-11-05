@@ -181,8 +181,15 @@ Vercel AI SDK provides model calls, structured output and streaming. LangChain c
 types are used only where they remove adapter friction. LlamaIndex is not a second
 runtime; it may later appear behind a retrieval or parser tool boundary.
 
+比较类 Ask 不把 Judge 选出的单段当成完整比较范围：在证据充分时保留全部已准入的有界候选
+（最多 6 条、14,400 个正文字符），超预算拒答，不静默截掉比较对象。这不保证全库穷举覆盖。
+普通 Ask 可在原 Top-K 内保留一条达到原门槛、与已选正文同文档版本且有结构来源关系的 figure；
+仅使用已授权候选，不额外召回、不改变公共 Retrieve 默认顺序，也不等同于 ChartIR 数值理解。
+排查、收益与 Token/延迟代价见 [修复案例](./evidence/2026-11-05-comparison-lineage-fix.md)。
+
 Embedding/Rerank 的 HTTP 重试保留总 deadline 和次数预算，401 等凭证错误不重试；429/503 可遵守
-Retry-After，等待超出本次预算/上限时返回可重试错误，不提前再次请求。默认退避加入随机抖动。Ask AI
+Retry-After，等待超出本次预算/上限时返回可重试错误，不提前再次请求。deadline 覆盖响应头与 JSON body
+消费，调用方取消不转为重排降级。默认退避加入随机抖动。Ask AI
 并发门只在单 Web 进程内共享，不能据此宣称跨 Web/Worker 副本共享 Provider 的 RPM/TPM 配额。
 
 ## 可观测性边界

@@ -13,6 +13,20 @@ function clampScore(score: number): number {
 	return Math.max(0, Math.min(1, score));
 }
 
+export function semanticEvidenceScore(input: {
+	score: number;
+	dense_score?: number | null;
+	used_hybrid?: boolean;
+	used_rerank?: boolean;
+}): number {
+	// Fusion rank is not semantic relevance; lexical-only hits have no dense score.
+	const score =
+		input.used_hybrid && !input.used_rerank
+			? (input.dense_score ?? Number.NEGATIVE_INFINITY)
+			: input.score;
+	return Number.isFinite(score) ? score : Number.NEGATIVE_INFINITY;
+}
+
 export function mapQdrantHitToInternalCitation(
 	input: QdrantSearchHit | unknown,
 	index: number,
@@ -47,7 +61,7 @@ export function mapQdrantHitToInternalCitation(
 		table_row_count: nullableNumber(payload.table_row_count),
 		snippet: body.slice(0, 280),
 		score: clampScore(hit.score),
-		dense_score: hit.dense_score ?? hit.score,
+		dense_score: hit.dense_score === undefined ? hit.score : hit.dense_score,
 		bm25_score: hit.bm25_score ?? null,
 		rrf_score: hit.rrf_score ?? null,
 		used_rerank: hit.used_rerank ?? false,

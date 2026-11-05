@@ -176,6 +176,7 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 	let asks = 0;
 	let deleted = false;
 	let authenticatedRequests = 0;
+	let failAsk = false;
 	const server = createServer(async (request, response) => {
 		const url = new URL(request.url ?? "/", "http://127.0.0.1");
 		const send = (status: number, body: unknown, headers = {}) => {
@@ -246,6 +247,14 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 				session_id: string;
 			};
 			asks += 1;
+			if (failAsk) {
+				send(
+					503,
+					{ detail: "Ask service unavailable" },
+					{ "x-request-id": "failed-request-from-header" },
+				);
+				return;
+			}
 			const gold = positiveByQuestion.get(payload.question);
 			if (gold) {
 				send(200, {
@@ -391,6 +400,19 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 			total_duration_ms: 12.5,
 			stages: [{ stage: "retrieve", duration_ms: 3.5, ok: true }],
 		});
+		failAsk = true;
+		assert.equal(
+			await runLiveEvaluation({ ...options, reuseLibraryId: "library-eval" }),
+			1,
+		);
+		const failedReport = JSON.parse(
+			await readFile(resolve(output, "ab_live_latest.json"), "utf8"),
+		);
+		assert.equal(failedReport.positive_cases[0]?.response.httpStatus, 503);
+		assert.equal(
+			failedReport.positive_cases[0]?.response.requestId,
+			"failed-request-from-header",
+		);
 	} finally {
 		await new Promise<void>((resolveClose, reject) =>
 			server.close((error) => (error ? reject(error) : resolveClose())),

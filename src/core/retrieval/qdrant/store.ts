@@ -1,33 +1,56 @@
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
-import { withActiveSpan } from "@/lib/observability/tracing";
+import {
+	setActiveSpanAttributes,
+	withActiveSpan,
+} from "@/lib/observability/tracing";
 
 import type { RetrievalScope, RetrievalUserFilters } from "../contracts";
 import { buildMandatoryQdrantFilter } from "../filters/qdrant-filter";
 import { QdrantCollectionContractError } from "./collection-manager";
+import { diagnoseQdrantError, type QdrantDiagnostic } from "./diagnostics";
 import { parseQdrantSearchHit, type QdrantSearchHit } from "./payload";
 
 type QdrantFilter = Schemas["Filter"];
 type PointOffset = Schemas["ExtendedPointId"];
 
 export class QdrantOperationError extends Error {
+	readonly diagnostics: Readonly<QdrantDiagnostic>;
 	constructor(
 		readonly operation: "ready" | "query" | "scroll",
 		cause: unknown,
+		metadata?: { durationMs?: number; timeoutMs?: number },
 	) {
 		super(`Qdrant ${operation} operation failed`, { cause });
 		this.name = "QdrantOperationError";
+		this.diagnostics = Object.freeze(
+			diagnoseQdrantError(operation, cause, metadata),
+		);
 	}
 }
 
 async function qdrantOperation<T>(
 	operation: QdrantOperationError["operation"],
 	invoke: () => Promise<T>,
+	options?: { timeoutMs?: number },
 ): Promise<T> {
+	const started = performance.now();
 	try {
 		return await invoke();
 	} catch (error) {
 		if (error instanceof QdrantCollectionContractError) throw error;
-		throw new QdrantOperationError(operation, error);
+		const failure = new QdrantOperationError(operation, error, {
+			durationMs: Math.max(0, Math.round(performance.now() - started)),
+			timeoutMs: options?.timeoutMs,
+		});
+		setActiveSpanAttributes({
+			"unorag.qdrant.operation": operation,
+			"unorag.qdrant.error_category": failure.diagnostics.category,
+			"unorag.qdrant.status_code": failure.diagnostics.statusCode ?? 0,
+			"unorag.qdrant.transport_code":
+				failure.diagnostics.transportCode ?? "none",
+			"unorag.qdrant.retryable": failure.diagnostics.retryable,
+		});
+		throw failure;
 	}
 }
 
@@ -50,6 +73,7 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		private readonly client: QdrantClient,
 		private readonly collection: string,
 		private readonly ready: Promise<unknown> = Promise.resolve(),
+		private readonly options: { timeoutMs?: number } = {},
 	) {
 		if (!collection.trim()) throw new Error("Qdrant collection is required");
 	}
@@ -78,19 +102,22 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		userFilters?: RetrievalUserFilters;
 		limit: number;
 	}): Promise<QdrantSearchHit[]> {
-		await qdrantOperation("ready", () => this.ready);
+		await qdrantOperation("ready", () => this.ready, this.options);
 		const filter = buildMandatoryQdrantFilter({
 			scope: input.scope,
 			userFilters: input.userFilters,
 		}) as QdrantFilter;
-		const response = await qdrantOperation("query", () =>
-			this.client.query(this.collection, {
-				query: input.vector,
-				filter,
-				limit: input.limit,
-				with_payload: true,
-				with_vector: false,
-			}),
+		const response = await qdrantOperation(
+			"query",
+			() =>
+				this.client.query(this.collection, {
+					query: input.vector,
+					filter,
+					limit: input.limit,
+					with_payload: true,
+					with_vector: false,
+				}),
+			this.options,
 		);
 		return response.points.flatMap((point) => {
 			const hit = parseQdrantSearchHit(point);
@@ -120,7 +147,7 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		userFilters?: RetrievalUserFilters;
 		limit: number;
 	}): Promise<QdrantSearchHit[]> {
-		await qdrantOperation("ready", () => this.ready);
+		await qdrantOperation("ready", () => this.ready, this.options);
 		const filter = buildMandatoryQdrantFilter({
 			scope: input.scope,
 			userFilters: input.userFilters,
@@ -128,14 +155,17 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		const hits: QdrantSearchHit[] = [];
 		let offset: PointOffset | undefined;
 		while (hits.length < input.limit) {
-			const page = await qdrantOperation("scroll", () =>
-				this.client.scroll(this.collection, {
-					filter,
-					limit: Math.min(256, input.limit - hits.length),
-					offset,
-					with_payload: true,
-					with_vector: false,
-				}),
+			const page = await qdrantOperation(
+				"scroll",
+				() =>
+					this.client.scroll(this.collection, {
+						filter,
+						limit: Math.min(256, input.limit - hits.length),
+						offset,
+						with_payload: true,
+						with_vector: false,
+					}),
+				this.options,
 			);
 			for (const point of page.points) {
 				const hit = parseQdrantSearchHit({ ...point, score: 0 });

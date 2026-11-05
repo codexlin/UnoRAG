@@ -1,3 +1,6 @@
+import type { RerankDiagnostic } from "@/core/retrieval/provider-request";
+import type { QdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
+
 export type JudgeErrorCategory =
 	| "timeout"
 	| "authentication"
@@ -17,6 +20,7 @@ const operationalRefusalCodes = new Set([
 	"invalid_graph_state",
 	"invalid_judgement_action",
 	"invalid_evidence_selection",
+	"comparison_context_exceeds_budget",
 	"refused",
 ]);
 
@@ -48,7 +52,12 @@ export type OperationsEventStage = {
 	started_at: string | null;
 	ended_at: string | null;
 	duration_ms: number | null;
-	detail?: JudgeDiagnosticDetail | null;
+	detail?:
+		| (JudgeDiagnosticDetail & {
+				rerank?: RerankDiagnostic;
+				qdrant?: QdrantDiagnostic;
+		  })
+		| null;
 };
 
 export type OperationsEventDetail = {

@@ -33,6 +33,7 @@ import type {
 	InternalCitation,
 	RetrievalResult,
 } from "@/core/retrieval";
+import { semanticEvidenceScore } from "@/core/retrieval/citation-mapper";
 import {
 	captureAskGenerationStream,
 	isEvaluationCaptureEnabled,
@@ -282,6 +283,9 @@ export class NativeAskRuntime {
 			options: {
 				hybridEnabled: this.policy.hybrid_enabled,
 				rerankEnabled: this.policy.rerank_enabled,
+				preserveFigureLineage:
+					!input.tableOnly && state.query_type !== "compare",
+				lineageMinScore: this.evidenceThreshold(),
 			},
 			signal: this.signal,
 		});
@@ -310,22 +314,20 @@ export class NativeAskRuntime {
 		await this.assertAuthorized?.(this.retrievedEvidence);
 	};
 
-	private adjudicate(result: RetrievalResult): RetrievalResult {
-		const threshold = this.policy.citation_adjudicate_enabled
+	private evidenceThreshold(): number {
+		return this.policy.citation_adjudicate_enabled
 			? Math.max(
 					this.policy.answer_min_score,
 					this.policy.citation_adjudicate_absolute_floor,
 				)
 			: this.policy.answer_min_score;
-		const citations = result.citations.filter((citation) => {
-			// RRF is a rank-fusion score, not semantic relevance. Without rerank,
-			// use the dense score; lexical-only hits cannot clear this threshold.
-			const relevance =
-				citation.used_hybrid && !citation.used_rerank
-					? (citation.dense_score ?? Number.NEGATIVE_INFINITY)
-					: citation.score;
-			return relevance >= threshold;
-		});
+	}
+
+	private adjudicate(result: RetrievalResult): RetrievalResult {
+		const threshold = this.evidenceThreshold();
+		const citations = result.citations.filter(
+			(citation) => semanticEvidenceScore(citation) >= threshold,
+		);
 		return {
 			...result,
 			citations,
@@ -494,6 +496,7 @@ export class NativeAskRuntime {
 						retrieval_debug: {
 							...(state.retrieval_debug ?? {}),
 							...result.debug,
+							rerankDiagnostic: result.debug.rerankDiagnostic ?? null,
 							grounded_lookup_probe: tableProbe,
 						},
 					};
@@ -505,6 +508,7 @@ export class NativeAskRuntime {
 							retrieval_debug: {
 								...(state.retrieval_debug ?? {}),
 								table_candidate_count: state.citations?.length ?? 0,
+								rerankDiagnostic: null,
 							},
 						};
 					}
@@ -515,6 +519,7 @@ export class NativeAskRuntime {
 						retrieval_debug: {
 							...(state.retrieval_debug ?? {}),
 							...result.debug,
+							rerankDiagnostic: result.debug.rerankDiagnostic ?? null,
 							table_candidate_count: result.citations.length,
 						},
 					};

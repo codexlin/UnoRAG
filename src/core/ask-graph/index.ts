@@ -13,6 +13,10 @@ export {
 	defaultClarifyAnswer,
 	defaultRefuseAnswer,
 } from "./context";
+export {
+	type AskExecutionDiagnostics,
+	AskGraphExecutionError,
+} from "./execution-error";
 export { AskGraphService } from "./service";
 export {
 	ASK_STATE_FIELD_NAMES,

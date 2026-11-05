@@ -13,6 +13,7 @@ import { reciprocalRankFusion } from "../../src/core/retrieval/hybrid/rrf";
 import { tokenize } from "../../src/core/retrieval/hybrid/tokenizer";
 import {
 	fetchRetrievalProvider,
+	RetrievalProviderDiagnosticSchema,
 	RetrievalProviderError,
 } from "../../src/core/retrieval/provider-request";
 import { OpenAICompatibleRerankProvider } from "../../src/core/retrieval/rerank/provider";
@@ -184,17 +185,14 @@ test("embedding provider enforces one hard deadline across retry backoff", async
 	});
 });
 
-test("rerank provider clamps scores and ignores invalid indexes", async () => {
+test("rerank provider preserves partial responses and clamps scores", async () => {
 	const provider = new OpenAICompatibleRerankProvider({
 		apiKey: "secret",
 		baseUrl: "https://example.test/v1",
 		model: "rerank-model",
 		fetch: async () =>
 			Response.json({
-				results: [
-					{ index: 1, relevance_score: 1.2 },
-					{ index: 9, relevance_score: 0.5 },
-				],
+				results: [{ index: 1, relevance_score: 1.2 }],
 			}),
 	});
 	assert.deepEqual(
@@ -206,6 +204,112 @@ test("rerank provider clamps scores and ignores invalid indexes", async () => {
 		[{ index: 1, score: 1 }],
 	);
 });
+
+for (const results of [
+	[],
+	[
+		{ index: 0, relevance_score: 0.7 },
+		{ index: 0, relevance_score: 0.8 },
+	],
+	[
+		{ index: 0, relevance_score: 0.7 },
+		{ index: 2, relevance_score: 0.8 },
+	],
+	[{ index: -1, relevance_score: 0.7 }],
+	[{ index: 0.5, relevance_score: 0.7 }],
+	[{ index: 0, relevance_score: null }],
+	[{ index: 0, relevance_score: "secret response" }],
+]) {
+	test(`rerank rejects the whole malformed list ${JSON.stringify(results)}`, async () => {
+		let attempts = 0;
+		const provider = new OpenAICompatibleRerankProvider({
+			apiKey: "secret",
+			baseUrl: "https://example.test/v1",
+			model: "rerank-model",
+			fetch: async () => {
+				attempts += 1;
+				return Response.json({ results });
+			},
+		});
+		await assert.rejects(
+			provider.rerank({
+				query: "private query",
+				documents: ["one", "two"],
+				topN: 2,
+			}),
+			(error) => {
+				assert.ok(error instanceof RetrievalProviderError);
+				assert.equal(error.code, "rerank_invalid_response");
+				assert.equal(error.retryable, false);
+				assert.ok(error.cause instanceof Error);
+				assert.equal(error.diagnostics.category, "invalid_response");
+				assert.equal(error.diagnostics.statusCode, 200);
+				assert.equal(error.diagnostics.attempts, 1);
+				assert.equal(error.diagnostics.timeoutMs, 10_000);
+				assert.equal(error.diagnostics.maxAttempts, 3);
+				assert.doesNotMatch(JSON.stringify(error), /secret|private query/);
+				return true;
+			},
+		);
+		assert.equal(attempts, 1);
+	});
+}
+
+test("rerank sorts descending with deterministic index ties and finite clamping", async () => {
+	const provider = new OpenAICompatibleRerankProvider({
+		apiKey: "secret",
+		baseUrl: "https://example.test/v1",
+		model: "rerank-model",
+		fetch: async () =>
+			Response.json({
+				results: [
+					{ index: 3, relevance_score: -2 },
+					{ index: 2, relevance_score: 0.8 },
+					{ index: 0, relevance_score: 0.8 },
+					{ index: 1, relevance_score: 2 },
+				],
+			}),
+	});
+	assert.deepEqual(
+		await provider.rerank({
+			query: "q",
+			documents: ["a", "b", "c", "d"],
+			topN: 4,
+		}),
+		[
+			{ index: 1, score: 1 },
+			{ index: 0, score: 0.8 },
+			{ index: 2, score: 0.8 },
+			{ index: 3, score: 0 },
+		],
+	);
+});
+
+for (const body of [
+	'{"results":[{"index":0,"relevance_score":1e999}]}',
+	'{"results":[{"index":0,"relevance_score":0.9},null]}',
+	'{"results":"private malformed list"}',
+	"private invalid JSON",
+]) {
+	test(`rerank rejects malformed JSON/schema without exposing its body: ${body}`, async () => {
+		const provider = new OpenAICompatibleRerankProvider({
+			apiKey: "secret",
+			baseUrl: "https://example.test",
+			model: "test",
+			fetch: async () => new Response(body),
+		});
+		await assert.rejects(
+			provider.rerank({ query: "q", documents: ["a"], topN: 1 }),
+			(error) => {
+				assert.ok(error instanceof RetrievalProviderError);
+				assert.equal(error.diagnostics.category, "invalid_response");
+				assert.ok(error.cause instanceof Error);
+				assert.doesNotMatch(JSON.stringify(error), /private/);
+				return true;
+			},
+		);
+	});
+}
 
 test("rerank provider aborts a hanging request at its configured deadline", async () => {
 	const provider = new OpenAICompatibleRerankProvider({
@@ -255,6 +359,201 @@ function fakeRetryTime(context: TestContext, random = 0) {
 		await setImmediate();
 	};
 }
+
+for (const providerName of ["embedding", "rerank"] as const) {
+	for (const stop of ["caller", "deadline"] as const) {
+		test(`${providerName} ${stop} bounds stalled JSON body within the original retry deadline`, async (context) => {
+			const advance = fakeRetryTime(context);
+			const controller = new AbortController();
+			const reason = new Error("private caller cancellation");
+			let attempts = 0;
+			let requestSignal: AbortSignal | null | undefined;
+			let body: ReadableStreamDefaultController<Uint8Array> | undefined;
+			const config = {
+				apiKey: "secret",
+				baseUrl: "https://example.test/v1",
+				model: "test-model",
+				timeoutMs: 100,
+				retryBackoffMs: [100],
+				fetch: (async (_input, init) => {
+					attempts += 1;
+					requestSignal = init?.signal;
+					if (attempts === 1) return new Response(null, { status: 503 });
+					return new Response(
+						new ReadableStream<Uint8Array>({
+							start(stream) {
+								body = stream;
+								stream.enqueue(new TextEncoder().encode("{"));
+							},
+						}),
+					);
+				}) satisfies typeof fetch,
+			};
+			const provider =
+				providerName === "embedding"
+					? new OpenAICompatibleEmbeddingProvider({ ...config, dimensions: 2 })
+					: new OpenAICompatibleRerankProvider(config);
+			const pending = assert.rejects(
+				provider instanceof OpenAICompatibleEmbeddingProvider
+					? provider.embedQuery("private query", controller.signal)
+					: provider.rerank({
+							query: "private query",
+							documents: ["private document"],
+							topN: 1,
+							signal: controller.signal,
+						}),
+				(error) => {
+					if (stop === "caller") return error === reason;
+					assert.ok(error instanceof RetrievalProviderError);
+					assert.deepEqual(error.diagnostics, {
+						category: "timeout",
+						statusCode: 200,
+						attempts: 2,
+						durationMs: 100,
+						timeoutMs: 100,
+						maxAttempts: 2,
+					});
+					return true;
+				},
+			);
+			await advance(0);
+			await advance(50);
+			assert.equal(attempts, 2);
+			assert.ok(body);
+			assert.equal(requestSignal?.aborted, false);
+			await advance(49);
+			if (stop === "caller") controller.abort(reason);
+			else await advance(1);
+			await pending;
+			assert.equal(requestSignal?.aborted, true);
+			body.close();
+			await advance(1_000);
+			assert.equal(attempts, 2);
+		});
+	}
+}
+
+test("parser errors retain their original private cause without retry or diagnostic leakage", async () => {
+	const cause = new Error("secret body, query, document, key and URL");
+	let attempts = 0;
+	await assert.rejects(
+		fetchRetrievalProvider({
+			provider: "rerank",
+			timeoutMs: 100,
+			request: async () => {
+				attempts += 1;
+				return new Response(null);
+			},
+			parse: async () => {
+				throw cause;
+			},
+		}),
+		(error) => {
+			assert.ok(error instanceof RetrievalProviderError);
+			assert.equal(error.cause, cause);
+			assert.equal(
+				error.message,
+				"rerank provider returned an invalid response",
+			);
+			assert.equal(
+				RetrievalProviderDiagnosticSchema.safeParse(error.diagnostics).success,
+				true,
+			);
+			assert.doesNotMatch(JSON.stringify(error), /secret|document|URL/);
+			return true;
+		},
+	);
+	assert.equal(attempts, 1);
+});
+
+test("body transport errors retain cause and are not retried as HTTP requests", async () => {
+	const cause = new TypeError("private stream transport error");
+	let attempts = 0;
+	await assert.rejects(
+		fetchRetrievalProvider({
+			provider: "rerank",
+			timeoutMs: 100,
+			request: async () => {
+				attempts += 1;
+				return new Response(
+					new ReadableStream({
+						start(controller) {
+							controller.error(cause);
+						},
+					}),
+				);
+			},
+			parse: (response) => response.json(),
+		}),
+		(error) => {
+			assert.ok(error instanceof RetrievalProviderError);
+			assert.equal(error.cause, cause);
+			assert.equal(error.diagnostics.category, "transport");
+			assert.equal(error.diagnostics.statusCode, 200);
+			assert.doesNotMatch(JSON.stringify(error), /private/);
+			return true;
+		},
+	);
+	assert.equal(attempts, 1);
+});
+
+test("non-cooperative fetch cannot hold the deadline and its late body is discarded", async (context) => {
+	const advance = fakeRetryTime(context);
+	let finish: ((response: Response) => void) | undefined;
+	let cancelled = false;
+	const pending = assert.rejects(
+		fetchRetrievalProvider({
+			provider: "rerank",
+			timeoutMs: 10,
+			request: () =>
+				new Promise<Response>((resolve) => {
+					finish = resolve;
+				}),
+		}),
+		(error) => {
+			assert.ok(error instanceof RetrievalProviderError);
+			assert.equal(error.diagnostics.category, "timeout");
+			assert.equal(error.diagnostics.attempts, 1);
+			assert.equal(error.diagnostics.durationMs, 10);
+			return true;
+		},
+	);
+	await advance(10);
+	await pending;
+	assert.ok(finish);
+	finish(
+		new Response(
+			new ReadableStream({
+				cancel() {
+					cancelled = true;
+				},
+			}),
+		),
+	);
+	await advance(0);
+	assert.equal(cancelled, true);
+});
+
+test("unknown request failures keep their original cause and safe classification", async () => {
+	const cause = new Error("private unexpected failure");
+	await assert.rejects(
+		fetchRetrievalProvider({
+			provider: "rerank",
+			timeoutMs: 100,
+			request: async () => {
+				throw cause;
+			},
+		}),
+		(error) => {
+			assert.ok(error instanceof RetrievalProviderError);
+			assert.equal(error.cause, cause);
+			assert.equal(error.diagnostics.category, "unknown");
+			assert.equal(error.diagnostics.attempts, 1);
+			assert.doesNotMatch(JSON.stringify(error), /private/);
+			return true;
+		},
+	);
+});
 
 for (const scenario of [
 	{ status: 429, header: "2", delay: 2_000 },

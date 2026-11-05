@@ -227,6 +227,8 @@ function cookieValues(response: Response): string[] {
 	return fallback ? [fallback] : [];
 }
 
+type EvaluationHttpResponse = { status: number; body: unknown; requestId: string | null };
+
 class EvaluationClient {
 	private readonly cookies = new Map<string, string>();
 
@@ -251,7 +253,7 @@ class EvaluationClient {
 		path: string,
 		init: Omit<RequestInit, "method"> = {},
 		timeoutMs = 60_000,
-	): Promise<{ status: number; body: unknown }> {
+	): Promise<EvaluationHttpResponse> {
 		const headers = new Headers(init.headers);
 		const cookies = this.cookieHeader();
 		if (cookies) headers.set("cookie", cookies);
@@ -262,12 +264,13 @@ class EvaluationClient {
 			signal: AbortSignal.timeout(timeoutMs),
 		});
 		this.rememberCookies(response);
+		const metadata = { status: response.status, requestId: response.headers.get("x-request-id") };
 		const text = await response.text();
-		if (!text) return { status: response.status, body: {} };
+		if (!text) return { ...metadata, body: {} };
 		try {
-			return { status: response.status, body: JSON.parse(text) };
+			return { ...metadata, body: JSON.parse(text) };
 		} catch {
-			return { status: response.status, body: text };
+			return { ...metadata, body: text };
 		}
 	}
 
@@ -276,7 +279,7 @@ class EvaluationClient {
 		path: string,
 		payload?: unknown,
 		timeoutMs?: number,
-	): Promise<{ status: number; body: unknown }> {
+	): Promise<EvaluationHttpResponse> {
 		return this.request(
 			method,
 			path,
@@ -293,7 +296,7 @@ class EvaluationClient {
 	async upload(
 		libraryId: string,
 		filePath: string,
-	): Promise<{ status: number; body: unknown }> {
+	): Promise<EvaluationHttpResponse> {
 		const form = new FormData();
 		form.set(
 			"file",
@@ -405,7 +408,7 @@ async function ask(input: {
 		refuseReason: stringValue(body.refuse_reason),
 		citations: citationsFrom(body.citations),
 		latencyMs: Math.round((performance.now() - startedAt) * 10) / 10,
-		requestId: stringValue(body.trace_id),
+		requestId: stringValue(body.trace_id) ?? response.requestId,
 		traceId: null,
 		sessionId: stringValue(body.session_id) ?? input.sessionId,
 		retrievalDebug:

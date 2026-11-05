@@ -407,6 +407,37 @@ test("public retrieval debug exposes only safe Judge diagnostics", () => {
 	);
 });
 
+test("public rerank diagnostics strip content and reject unclassified strings", () => {
+	const diagnostic = RerankDiagnosticSchema.parse({
+		...Object.fromEntries(
+			Object.keys(RerankDiagnosticSchema.shape).map((key) => [key, 0]),
+		),
+		category: "http",
+		statusCode: 503,
+		attempts: 2,
+		durationMs: 400,
+		timeoutMs: 1000,
+		maxAttempts: 3,
+		resultCount: null,
+	});
+	const projected = projectPublicRetrievalDebug({
+		rerankDiagnostic: {
+			...diagnostic,
+			query: "private query",
+			responseBody: "private response",
+			headers: { authorization: "private auth" },
+		},
+	});
+	assert.deepEqual(projected.rerank_diagnostic, diagnostic);
+	assert.doesNotMatch(JSON.stringify(projected), /private/);
+	assert.deepEqual(
+		projectPublicRetrievalDebug({
+			rerankDiagnostic: { ...diagnostic, category: "private exception" },
+		}),
+		{},
+	);
+});
+
 test("structured adapter reports a bounded timeout and does not invent clarify judge actions", async () => {
 	const concurrencyGate = new AiConcurrencyGate(1);
 	const adapter = new StructuredOutputAdapter(
@@ -628,3 +659,5 @@ test("legacy SSE terminates aborted streams without done", async () => {
 		truncated: true,
 	});
 });
+
+import { RerankDiagnosticSchema } from "../../src/core/retrieval/provider-request";
