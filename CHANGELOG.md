@@ -3,7 +3,7 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
-## Unreleased
+## [0.2.4] - 2026-11-06
 
 ### Added
 
