@@ -8,7 +8,44 @@ import {
 	resolveHealthQueryState,
 	runTimedHealthProbe,
 } from "../../src/lib/health-query-state";
-import { fetchFreshQuery } from "../../src/lib/query-refresh";
+import {
+	fetchBackgroundQuery,
+	fetchFreshQuery,
+} from "../../src/lib/query-refresh";
+
+test("background polls join the post-mutation refresh without cancelling it", async () => {
+	const client = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
+	const key = ["libraries", "organization", "workspace"] as const;
+	let finish!: (rows: string[]) => void;
+	let started!: () => void;
+	const waiting = new Promise<void>((resolve) => {
+		started = resolve;
+	});
+	let refreshSignal: AbortSignal | undefined;
+	const result = new Promise<string[]>((resolve) => {
+		finish = resolve;
+	});
+	const authoritative = fetchFreshQuery(client, key, async ({ signal }) => {
+		refreshSignal = signal;
+		started();
+		return result;
+	});
+	await waiting;
+	let pollExecuted = false;
+	const poll = fetchBackgroundQuery(client, key, async () => {
+		pollExecuted = true;
+		return ["old"];
+	});
+	finish(["new"]);
+	assert.deepEqual(await authoritative, ["new"]);
+	assert.deepEqual(await poll, ["new"]);
+	assert.deepEqual(client.getQueryData(key), ["new"]);
+	assert.equal(pollExecuted, false);
+	assert.equal(refreshSignal?.aborted, false);
+	client.clear();
+});
 
 test("fetchFreshQuery cancels an in-flight pre-mutation snapshot", async () => {
 	const client = new QueryClient({

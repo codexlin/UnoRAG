@@ -10,11 +10,14 @@ import {
 	DocumentIRSchema,
 	ParserReportSchema,
 } from "../../src/core/document-ir";
+import { buildIndexPayloads, chunkDocument } from "../../src/core/ingest";
 import {
 	type DurableParserProvider,
 	PdfDocumentParser,
 } from "../../src/core/parsing";
+import type { ParserProviderAttempt } from "../../src/core/parsing/document-parser";
 import { ParserProviderHttpError } from "../../src/core/parsing/http-parser-provider";
+import { projectParserTiming } from "../../src/core/parsing/parser-diagnostics";
 
 const parseInput: ParseInput = {
 	documentId: "document-1",
@@ -23,6 +26,164 @@ const parseInput: ParseInput = {
 	contentHash: "sha256:fixture",
 	sourceUri: "storage://documents/contract.pdf",
 };
+
+test("PDF diagnostics separate analysis, submission, observed wait and result fetch", async () => {
+	const attempts: ParserProviderAttempt[] = [];
+	const local = provider("liteparse", { tables: false, calls: [] });
+	local.submit = async () => ({
+		providerTaskId: "private-task-id",
+		status: "pending",
+		submittedAt: new Date().toISOString(),
+	});
+	let polls = 0;
+	local.poll = async () => ({
+		status: ++polls === 1 ? "running" : "completed",
+	});
+	const parsed = await new PdfDocumentParser({
+		liteParse: local,
+		pollIntervalMs: 1,
+		onProviderAttempt: (attempt) => attempts.push(attempt),
+	}).parse(parseRequest("timed"));
+	const timing = projectParserTiming(
+		parsed.parser_report.metrics.parser_timing,
+	);
+	assert.ok(timing);
+	assert.equal(timing.poll_count, 2);
+	assert.equal(timing.retry_count, 0);
+	for (const value of [
+		timing.analysis_ms,
+		timing.submission_ms,
+		timing.provider_wait_ms,
+		timing.result_fetch_ms,
+	])
+		assert.ok(Number.isFinite(value) && value >= 0);
+	assert.deepEqual(
+		attempts.map(({ operation, status }) => [operation, status]),
+		[
+			["submit", "pending"],
+			["poll", "running"],
+			["poll", "completed"],
+			["fetch", "completed"],
+		],
+	);
+	assert.ok(
+		attempts.every(
+			(attempt) =>
+				attempt.requestId === "request-timed" &&
+				attempt.documentId === parseInput.documentId,
+		),
+	);
+	const refs = attempts
+		.filter((attempt) => attempt.operation !== "submit")
+		.map((attempt) => attempt.providerTaskRef);
+	assert.equal(new Set(refs).size, 1);
+	assert.match(refs[0] ?? "", /^[a-f0-9]{16}$/);
+	assert.ok(!JSON.stringify(attempts).includes("private-task-id"));
+	assert.ok(!JSON.stringify(attempts).includes(parseInput.sourceUri));
+});
+
+test("parser diagnostic context stays isolated across concurrent documents and retries", async () => {
+	const attempts: ParserProviderAttempt[] = [];
+	const local = provider("liteparse", { tables: false, calls: [] });
+	local.submit = async (input) => ({
+		providerTaskId: `task-${input.documentId}`,
+		status: "running",
+		submittedAt: new Date().toISOString(),
+	});
+	const polls = new Map<string, number>();
+	local.poll = async (task) => {
+		const count = (polls.get(task.documentId) ?? 0) + 1;
+		polls.set(task.documentId, count);
+		if (count === 1)
+			throw new ParserProviderHttpError({
+				code: "provider_service_error",
+				message: "private upstream response",
+				retryable: true,
+				status: 503,
+			});
+		return { status: "completed" };
+	};
+	const parser = new PdfDocumentParser({
+		liteParse: local,
+		retryBackoffMs: [0],
+		onProviderAttempt: (attempt) => attempts.push(attempt),
+	});
+	const results = await Promise.all(
+		["a", "b"].map((id) =>
+			parser.parse({
+				...parseRequest(id),
+				input: { ...parseInput, documentId: id },
+			}),
+		),
+	);
+	for (const [index, id] of ["a", "b"].entries()) {
+		const own = attempts.filter((attempt) => attempt.documentId === id);
+		assert.ok(own.every((attempt) => attempt.requestId === `request-${id}`));
+		assert.equal(
+			projectParserTiming(results[index].parser_report.metrics.parser_timing)
+				?.retry_count,
+			1,
+		);
+		assert.equal(
+			new Set(own.flatMap((attempt) => attempt.providerTaskRef ?? [])).size,
+			1,
+		);
+	}
+	assert.equal(
+		new Set(attempts.flatMap((attempt) => attempt.providerTaskRef ?? [])).size,
+		2,
+	);
+	assert.ok(!JSON.stringify(attempts).includes("private upstream response"));
+});
+
+test("parser timing projection ignores old reports and rejects malformed or nonfinite metrics", () => {
+	assert.equal(projectParserTiming(undefined), null);
+	const valid = {
+		schema_version: 1,
+		analysis_ms: 1,
+		submission_ms: 2,
+		provider_wait_ms: 3,
+		result_fetch_ms: 4,
+		poll_count: 2,
+		retry_count: 0,
+	};
+	assert.deepEqual(projectParserTiming({ ...valid, url: "private" }), valid);
+	for (const value of [NaN, Infinity, -1, "1"])
+		assert.equal(
+			projectParserTiming({ ...valid, provider_wait_ms: value }),
+			null,
+		);
+	assert.equal(projectParserTiming({ ...valid, poll_count: 1.5 }), null);
+});
+
+test("observed parser timings never change index records or their replay manifest", async () => {
+	const local = provider("liteparse", { tables: false, calls: [] });
+	const document = await new PdfDocumentParser({ liteParse: local }).parse(
+		parseRequest("stable-records"),
+	);
+	const later = structuredClone(document);
+	later.parser_report.metrics.parser_timing = {
+		schema_version: 1,
+		analysis_ms: 99,
+		submission_ms: 100,
+		provider_wait_ms: 999,
+		result_fetch_ms: 55,
+		poll_count: 5,
+		retry_count: 2,
+	};
+	const scope = {
+		documentId: parseInput.documentId,
+		documentVersionId: "version-1",
+		generationId: "10000000-0000-4000-8000-000000000001",
+		organizationId: "org-1",
+		workspaceId: "workspace-1",
+		libraryId: "library-1",
+	};
+	assert.deepEqual(
+		buildIndexPayloads(await chunkDocument(document), scope),
+		buildIndexPayloads(await chunkDocument(later), scope),
+	);
+});
 
 test("PDF quality routing selects MinerU for complex tables and normalizes scope", async () => {
 	const calls: string[] = [];

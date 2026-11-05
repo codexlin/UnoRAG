@@ -63,6 +63,7 @@ Workspace 切换由 Redis 即时撤销旧 `sid`。
 - query key 必须包含 organization 和 workspace，切换 Workspace 时 Session Provider 会重建 Query Client；
 - library、document、version 和 health 使用独立 query，不建立第二份全局业务状态；
 - mutation 完成后的权威刷新会先取消同 key 的旧请求，避免旧快照覆盖新结果；
+- 入库后台轮询合并等待同 key 的在途刷新，不反向取消写操作的权威刷新；
 - 后台健康探测失败时可以保留上次成功载荷用于诊断，但 readiness 必须立即 fail closed；
 - Ask token 流仍使用显式 SSE reducer，因为它是有顺序的事件流，不是普通请求缓存。
 

@@ -146,6 +146,27 @@ Qdrant 故障的新记录可展示 **Qdrant 诊断**：ready/query/scroll、错�
 返回的是诊断元数据，不包含问题、回答、检索正文和凭据；自由文本拒答原因不进入新的诊断记录，也不从
 历史行直接投影。问答页回答旁的 **链路** 仍用于查看本轮返回的阶段和原始调试 JSON。
 
+### 查询单次入库
+
+文档详情的入库链路按 Job ID 展示排队、读取文件、解析、切分、向量化、索引和激活。
+`accepted` 到实际执行的时间属于本地队列等待，不应计为 MinerU 解析耗时。
+
+新 PDF 完成后，`parser_report.metrics.parser_timing`（schema_version=1）还记录并展示：
+
+- `analysis_ms`：本地 ParserProvider 的分析调用，包括其读取源文件的时间；
+- `submission_ms`：准备、上传和创建任务，包括应用层重试与退避；
+- `provider_wait_ms`：任务提交后到观察到完成的墙钟等待，包括轮询、轮询网络和间隔；
+- `result_fetch_ms`：获取最终结果、下载、解包及结构转换；
+- `poll_count` / `retry_count`：应用层轮询尝试和退避重试次数，不是全部底层 HTTP 请求数。
+
+这些是互不重叠的调用阶段，不提供上游内部排队或模型计算的精确耗时。旧报告、非 PDF、未完成或失败
+任务可能没有该汇总，不补零、不据此判断“未执行”。本次任务的详细日志可按
+`event=parser.provider.attempt` 与 `parser_request_id` 查询；Worker 传入的该 ID 即 Job ID。
+日志同时保留 `document_id`、`parser_provider`、`parser_operation`、白名单 `provider_status`、
+调用耗时、应用层尝试、错误码及退避值；提交成功后用不可逆的 `provider_task_ref` 关联后续操作，
+不写入完整 Provider task ID、URL、原文或响应正文。归一化的 pending/running 状态只是观测值，
+不能单独用于归因上游排队或计算瓶颈。
+
 ### 模型并发与背压
 
 LLM 调用由 Web 进程内的共享 FIFO 门控统一约束，Router、Rewrite、Judge、TablePlan 和最终回答不会各自

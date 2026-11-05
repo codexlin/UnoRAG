@@ -763,6 +763,10 @@ export async function createWorkerPorts(
 						: "info"
 			]({
 				event: "parser.provider.attempt",
+				parser_request_id: attempt.requestId,
+				document_id: attempt.documentId,
+				provider_task_ref: attempt.providerTaskRef,
+				provider_status: attempt.status,
 				parser_provider: attempt.provider,
 				parser_operation: attempt.operation,
 				attempt: attempt.attempt,
