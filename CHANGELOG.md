@@ -5,8 +5,19 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## Unreleased
 
+### Added
+
+- Workspace administrator request records with scoped filters, safe stage diagnostics and correlated
+  error-response Request IDs; optional offline Ragas semantic evaluation remains outside the product runtime.
+
 ### Fixed
 
+- Keep ingestion polling from cancelling the authoritative post-create library refresh, so a
+  newly created library remains selected while other documents are indexing.
+- Record PDF analysis, submission, observed task wait, result retrieval/conversion, and application
+  poll/retry counts separately; correlate parser status logs without exposing full Provider task IDs.
+- Preserve bounded comparison evidence and figure lineage, and expose correlated failed Qdrant
+  operations and partial Ask graph timings without adding automatic read retries.
 - Preserve sanitized, nonretryable Public API authorization denials instead of reporting retryable 502 errors.
 - Distinguish Judge outages from insufficient evidence in JSON/SSE messages, stage diagnostics, traces,
   metrics and the Ask run ledger; retain bounded retry metadata and fail fast on nonretryable Provider errors.

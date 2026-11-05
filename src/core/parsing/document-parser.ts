@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
 	DocumentAnalysis,
 	ParseInput,
@@ -7,10 +8,15 @@ import type {
 } from "../contracts";
 import { type DocumentIR, DocumentIRSchema } from "../document-ir";
 import type { DurableParserProvider } from "./http-parser-provider";
+import type { ParserTiming } from "./parser-diagnostics";
 import { ParserRouter } from "./parser-router";
 
 export type ParserProviderOperation = "submit" | "poll" | "fetch";
 export type ParserProviderAttempt = Readonly<{
+	requestId: string;
+	documentId: string;
+	providerTaskRef?: string;
+	status?: ParseProgress["status"];
 	provider: string;
 	operation: ParserProviderOperation;
 	attempt: number;
@@ -66,7 +72,9 @@ export class PdfDocumentParser {
 
 	async parse(input: ParsePdfInput): Promise<DocumentIR> {
 		await input.assertContinuing?.();
+		const analysisStarted = performance.now();
 		let analysis = await this.options.liteParse.analyze(input.input);
+		const analysisMs = elapsedMilliseconds(analysisStarted);
 		analysis = applyScanPolicy(analysis, input.policy.scanHandling);
 		const providers = [
 			this.options.liteParse,
@@ -89,7 +97,9 @@ export class PdfDocumentParser {
 				? ["mineru", "liteparse"]
 				: ["liteparse", "mineru"],
 		});
-		const result = await executeProvider(decision.provider, {
+		let pollCount = 0;
+		let retryCount = 0;
+		const { result, timing } = await executeProvider(decision.provider, {
 			input: input.input,
 			idempotencyKey: `${input.idempotencyKey}:parser:${decision.provider.name}`,
 			requestId: input.requestId,
@@ -101,9 +111,29 @@ export class PdfDocumentParser {
 			maxWaitMs: this.maxWaitMs,
 			retryBackoffMs: this.retryBackoffMs,
 			random: this.random,
-			onProviderAttempt: this.options.onProviderAttempt,
+			onProviderAttempt: (attempt) => {
+				if (attempt.operation === "poll") pollCount += 1;
+				if (attempt.outcome === "retry") retryCount += 1;
+				this.options.onProviderAttempt?.(attempt);
+			},
 		});
-		return normalizeResult(result, input);
+		const observed: ParserTiming = {
+			schema_version: 1,
+			analysis_ms: analysisMs,
+			...timing,
+			poll_count: pollCount,
+			retry_count: retryCount,
+		};
+		return normalizeResult(
+			{
+				...result,
+				report: {
+					...result.report,
+					metrics: { ...result.report.metrics, parser_timing: observed },
+				},
+			},
+			input,
+		);
 	}
 }
 
@@ -118,12 +148,20 @@ type ExecuteProviderInput = {
 	retryBackoffMs: readonly number[];
 	random: () => number;
 	onProviderAttempt?: (attempt: ParserProviderAttempt) => void;
+	providerTaskRef?: string;
 };
 
 async function executeProvider(
 	provider: DurableParserProvider,
 	input: ExecuteProviderInput,
-): Promise<ParseResult> {
+): Promise<{
+	result: ParseResult;
+	timing: Pick<
+		ParserTiming,
+		"submission_ms" | "provider_wait_ms" | "result_fetch_ms"
+	>;
+}> {
+	const submissionStarted = performance.now();
 	const submission = await retryProviderOperation(
 		provider,
 		"submit",
@@ -135,10 +173,16 @@ async function executeProvider(
 				requestId: input.requestId,
 			}),
 	);
+	const submissionMs = elapsedMilliseconds(submissionStarted);
 	const task: ProviderTask = {
 		providerTaskId: submission.providerTaskId,
 		documentId: input.input.documentId,
 	};
+	input.providerTaskRef = createHash("sha256")
+		.update(submission.providerTaskId)
+		.digest("hex")
+		.slice(0, 16);
+	const waitStarted = performance.now();
 	const deadline = Date.now() + input.maxWaitMs;
 	try {
 		let status: ParseProgress["status"] = submission.status;
@@ -184,13 +228,23 @@ async function executeProvider(
 			}
 		}
 		await input.assertContinuing?.();
-		return retryProviderOperation(
+		const waitMs = elapsedMilliseconds(waitStarted);
+		const fetchStarted = performance.now();
+		const result = await retryProviderOperation(
 			provider,
 			"fetch",
 			input,
 			() => provider.fetchResult(task),
 			deadline,
 		);
+		return {
+			result,
+			timing: {
+				submission_ms: submissionMs,
+				provider_wait_ms: waitMs,
+				result_fetch_ms: elapsedMilliseconds(fetchStarted),
+			},
+		};
 	} catch (error) {
 		if (!retryMetadata(error).retryable) {
 			await provider.cancel(task).catch(() => undefined);
@@ -219,6 +273,10 @@ async function retryProviderOperation<T>(
 		try {
 			const result = await run();
 			input.onProviderAttempt?.({
+				requestId: input.requestId,
+				documentId: input.input.documentId,
+				providerTaskRef: input.providerTaskRef,
+				status: operation === "fetch" ? "completed" : operationStatus(result),
 				provider: provider.name,
 				operation,
 				attempt,
@@ -238,6 +296,9 @@ async function retryProviderOperation<T>(
 					)
 				: undefined;
 			input.onProviderAttempt?.({
+				requestId: input.requestId,
+				documentId: input.input.documentId,
+				providerTaskRef: input.providerTaskRef,
 				provider: provider.name,
 				operation,
 				attempt,
@@ -264,6 +325,19 @@ async function retryProviderOperation<T>(
 			}
 		}
 	}
+}
+
+function operationStatus(result: unknown): ParseProgress["status"] | undefined {
+	if (!result || typeof result !== "object" || !("status" in result)) return;
+	const status = result.status;
+	if (
+		status === "pending" ||
+		status === "running" ||
+		status === "completed" ||
+		status === "failed" ||
+		status === "cancelled"
+	)
+		return status;
 }
 
 function retryMetadata(error: unknown): {

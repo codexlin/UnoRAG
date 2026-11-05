@@ -6,7 +6,7 @@ import { useCallback, useMemo } from "react";
 import { useQueryScope } from "@/hooks/use-query-scope";
 import { fetchLibraries } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
-import { fetchFreshQuery } from "@/lib/query-refresh";
+import { fetchBackgroundQuery, fetchFreshQuery } from "@/lib/query-refresh";
 
 export function useLibraries() {
 	const scope = useQueryScope();
@@ -22,6 +22,13 @@ export function useLibraries() {
 			fetchLibraries(signal),
 		);
 	}, [queryClient, queryKey]);
+	const refreshInBackground = useCallback(
+		() =>
+			fetchBackgroundQuery(queryClient, queryKey, ({ signal }) =>
+				fetchLibraries(signal),
+			),
+		[queryClient, queryKey],
+	);
 
 	return {
 		libraries: query.data ?? [],
@@ -32,5 +39,6 @@ export function useLibraries() {
 			: null,
 		loading: query.isPending,
 		refresh,
+		refreshInBackground,
 	};
 }

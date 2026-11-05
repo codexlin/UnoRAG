@@ -36,7 +36,7 @@ const IngestJobsContext = createContext<IngestJobsContextValue | null>(null);
  * processing → ready/failed 时右上角 toast。
  */
 export function IngestJobsProvider({ children }: { children: ReactNode }) {
-	const { libraries, refresh } = useLibraries();
+	const { libraries, refreshInBackground: refresh } = useLibraries();
 	const queryClient = useQueryClient();
 	const scope = useQueryScope();
 	const [processingCount, setProcessingCount] = useState(0);

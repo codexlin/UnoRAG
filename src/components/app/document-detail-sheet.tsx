@@ -15,6 +15,7 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
+import { projectParserTiming } from "@/core/parsing/parser-diagnostics";
 import type { ApiDocument, ApiDocumentVersion, ApiJob } from "@/lib/api";
 import { formatDateTime, formatDurationMs, formatFileSize } from "@/lib/format";
 import { isParserReportDegraded } from "@/lib/parser-report-view.mjs";
@@ -194,6 +195,10 @@ function JobTimeline({
 		job.started_at && job.finished_at
 			? Math.max(0, Date.parse(job.finished_at) - Date.parse(job.started_at))
 			: null;
+	const timing = projectParserTiming(
+		(job.parser_report?.metrics as Record<string, unknown> | undefined)
+			?.parser_timing,
+	);
 	return (
 		<section className="border border-border/80 bg-muted/15 px-3 py-3">
 			<div className="flex items-baseline justify-between gap-3">
@@ -212,6 +217,22 @@ function JobTimeline({
 			<div className="mt-3">
 				<StageWaterfall stages={job.stage_runs ?? []} compact />
 			</div>
+			{timing ? (
+				<dl className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 border-t border-border/60 pt-3 text-meta">
+					{[
+						["本地 PDF 分析", formatDurationMs(timing.analysis_ms)],
+						["提交文件与任务", formatDurationMs(timing.submission_ms)],
+						["任务等待（含轮询）", formatDurationMs(timing.provider_wait_ms)],
+						["结果获取与转换", formatDurationMs(timing.result_fetch_ms)],
+						["轮询 / 重试", `${timing.poll_count} / ${timing.retry_count}`],
+					].map(([label, value]) => (
+						<div className="contents" key={label}>
+							<dt className="text-muted-foreground">{label}</dt>
+							<dd className="font-mono text-right tabular-nums">{value}</dd>
+						</div>
+					))}
+				</dl>
+			) : null}
 			<dl className="mt-3 grid grid-cols-2 gap-2 border-t border-border/60 pt-3">
 				<Detail label="创建" value={formatDateTime(job.created_at)} />
 				<Detail
