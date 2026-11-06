@@ -17,6 +17,7 @@ import {
 	AskGraphService,
 	type AskState,
 } from "@/core/ask-graph";
+import { deriveAnswerRequirements } from "@/core/ask-graph/answer-requirements";
 import {
 	deriveDeterministicTablePlan,
 	deriveGroundedTableLookup,
@@ -27,13 +28,19 @@ import {
 	type TableQueryPlan,
 	TableQueryPlanSchema,
 } from "@/core/ask-graph/table";
-import type { RetrievalFilters } from "@/core/contracts";
+import {
+	isFormFieldLookup,
+	isFormTableOperation,
+	isProseChecklistLookup,
+} from "@/core/ask-graph/table/query-intent";
+import type { AuthorizedScope, RetrievalFilters } from "@/core/contracts";
 import type {
 	DefaultRetrievalService,
 	InternalCitation,
 	RetrievalResult,
 } from "@/core/retrieval";
 import { semanticEvidenceScore } from "@/core/retrieval/citation-mapper";
+import type { ActiveDocumentDescriptor } from "@/core/retrieval/document-constraints";
 import {
 	captureAskGenerationStream,
 	isEvaluationCaptureEnabled,
@@ -43,11 +50,17 @@ import {
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { DrizzleActiveGenerationResolver } from "@/server/retrieval/active-generation-resolver";
 import { resolveAuthorizedRetrievalScope } from "@/server/retrieval/authorized-scope";
+import { loadActiveDocumentCatalog } from "@/server/retrieval/document-catalog";
 import { getTypeScriptRetrievalService } from "@/server/retrieval/runtime";
 import { getSharedAiConcurrencyGate } from "./ai-concurrency";
+import {
+	documentEvidenceFilters,
+	resolveAskDocumentEvidence,
+} from "./document-evidence";
 import type { NativeAskPolicy } from "./policy";
 
-type RetrievalService = Pick<DefaultRetrievalService, "retrieve">;
+type RetrievalService = Pick<DefaultRetrievalService, "retrieve"> &
+	Partial<Pick<DefaultRetrievalService, "lookupDocumentRecord">>;
 
 const FALLBACK_TABLE_PATTERN =
 	/(?:表格|表中|表内|明细表|清单|台账|逐行|多少行|表头|列名|字段|序号\s*(?:为|是)?\s*\d+|rows?|row\s*#?\s*\d+)/i;
@@ -60,6 +73,11 @@ export type NativeAskRuntimeDependencies = {
 	judgeStructured?: StructuredOutputAdapter;
 	judgeIdentity?: { modelId: string; providerName: string };
 	answer: AnswerStreamAdapter;
+	loadDocumentCatalog?: (input: {
+		identity: AuthIdentity;
+		libraryId: string;
+		scope: AuthorizedScope;
+	}) => Promise<{ documents: ActiveDocumentDescriptor[]; complete: boolean }>;
 };
 
 export class NativeAskRequestError extends Error {
@@ -77,7 +95,22 @@ export function fallbackQueryRoute(
 	historyCount = 0,
 ): { queryType: string; reason: string } {
 	const normalized = question.trim();
-	if (FALLBACK_TABLE_PATTERN.test(normalized)) {
+	if (isFormFieldLookup(normalized)) {
+		return {
+			queryType: "fact",
+			reason: "structured_router_fallback_form_field",
+		};
+	}
+	if (isProseChecklistLookup(normalized)) {
+		return {
+			queryType: "fact",
+			reason: "structured_router_fallback_checklist_prose",
+		};
+	}
+	if (
+		FALLBACK_TABLE_PATTERN.test(normalized) ||
+		isFormTableOperation(normalized)
+	) {
 		return { queryType: "table", reason: "structured_router_fallback_table" };
 	}
 	if (historyCount > 0 && FALLBACK_FOLLOW_UP_PATTERN.test(normalized)) {
@@ -118,6 +151,7 @@ export function projectJudgeEvidence(citations: InternalCitation[]) {
 		id: citation.id,
 		record_type: citation.record_type,
 		filename: citation.filename,
+		doc_id: citation.doc_id,
 		title: citation.title,
 		page_start: citation.page_start,
 		page_end: citation.page_end,
@@ -241,6 +275,9 @@ function contextText(state: AskState): string {
 export class NativeAskRuntime {
 	private readonly graph: AskGraphService;
 	private readonly retrievedEvidence: Record<string, unknown>[] = [];
+	private documentConstraintStatus = "none";
+	private documentScope: ActiveDocumentDescriptor[] = [];
+	private outlineAnswer: { text: string; citationId: string } | null = null;
 
 	constructor(
 		private readonly identity: AuthIdentity,
@@ -266,10 +303,53 @@ export class NativeAskRuntime {
 			resolver: new DrizzleActiveGenerationResolver(),
 		});
 		if (!scope) throw new NativeAskRequestError(404, "library not found");
+		this.outlineAnswer = null;
+		this.documentScope = [];
+		this.documentConstraintStatus = "none";
+		let retrievalScope = scope;
+		const loadDocumentCatalog = this.dependencies.loadDocumentCatalog;
+		if (loadDocumentCatalog) {
+			const resolution = await resolveAskDocumentEvidence({
+				question: state.question ?? "",
+				libraryId: this.libraryId,
+				scope,
+				filters: documentEvidenceFilters(filters(state)),
+				signal: this.signal,
+				loadCatalog: () =>
+					loadDocumentCatalog({
+						identity: this.identity,
+						libraryId: this.libraryId,
+						scope,
+					}),
+				lookupDocumentRecord: (input) =>
+					this.dependencies.retrieval.lookupDocumentRecord?.(input) ??
+					Promise.resolve(null),
+			});
+			this.documentConstraintStatus = resolution.status;
+			this.documentScope = resolution.documents;
+			retrievalScope = resolution.scope;
+			if (
+				["unavailable", "ambiguous", "outline_unavailable"].includes(
+					resolution.status,
+				)
+			)
+				return this.emptyDocumentResult(scope);
+			if (resolution.outline) {
+				this.outlineAnswer = {
+					text: resolution.outline.text,
+					citationId: resolution.outline.citation.id,
+				};
+				this.retrievedEvidence.push(resolution.outline.citation);
+				return {
+					...this.emptyDocumentResult(scope),
+					citations: [resolution.outline.citation],
+				};
+			}
+		}
 		const result = await this.dependencies.retrieval.retrieve({
 			query: query(state),
 			libraryId: this.libraryId,
-			scope,
+			scope: retrievalScope,
 			topK: input.tableOnly
 				? Math.max(30, this.policy.retrieve_top_k)
 				: state.query_type === "compare"
@@ -303,7 +383,31 @@ export class NativeAskRuntime {
 				citations: result.citations.map(({ body }) => ({ body })),
 			});
 		}
-		return result;
+		return {
+			...result,
+			debug: {
+				...result.debug,
+				documentConstraintStatus: this.documentConstraintStatus,
+			},
+		};
+	}
+
+	private emptyDocumentResult(scope: AuthorizedScope): RetrievalResult {
+		return {
+			citations: [],
+			debug: {
+				usedHybrid: false,
+				hybridEnabled: false,
+				hybridFailed: false,
+				hybridError: null,
+				usedRerank: false,
+				rerankFailed: false,
+				retrievalMode: "dense",
+				denseHitCount: 0,
+				activeGenerationCount: scope.activeGenerationIds.length,
+				documentConstraintStatus: this.documentConstraintStatus,
+			},
+		};
 	}
 
 	getEvidenceReferences(): Record<string, unknown>[] {
@@ -326,7 +430,9 @@ export class NativeAskRuntime {
 	private adjudicate(result: RetrievalResult): RetrievalResult {
 		const threshold = this.evidenceThreshold();
 		const citations = result.citations.filter(
-			(citation) => semanticEvidenceScore(citation) >= threshold,
+			(citation) =>
+				citation.id === this.outlineAnswer?.citationId ||
+				semanticEvidenceScore(citation) >= threshold,
 		);
 		return {
 			...result,
@@ -380,6 +486,35 @@ export class NativeAskRuntime {
 			judge: {
 				judge: async (state) => {
 					const citations = (state.citations ?? []) as InternalCitation[];
+					if (
+						["unavailable", "ambiguous", "outline_unavailable"].includes(
+							this.documentConstraintStatus,
+						)
+					) {
+						return {
+							sufficient: false,
+							action: "refuse",
+							reason: "document_scope_unavailable",
+							can_retry: false,
+							evidence_ids: [],
+							judge_mode: "deterministic_document_scope",
+						};
+					}
+					if (
+						this.outlineAnswer &&
+						citations.some(
+							(citation) => citation.id === this.outlineAnswer?.citationId,
+						)
+					) {
+						await this.assertAuthorized?.(this.retrievedEvidence);
+						return {
+							sufficient: true,
+							action: "generate",
+							reason: "complete_parser_outline",
+							evidence_ids: [this.outlineAnswer.citationId],
+							judge_mode: "deterministic_document_outline",
+						};
+					}
 					if (citations.length === 0 && !state.table_execution) {
 						const canRetry = (state.retrieval_attempts ?? 0) < 2;
 						return {
@@ -394,11 +529,18 @@ export class NativeAskRuntime {
 					}
 					await this.assertAuthorized?.(this.retrievedEvidence);
 					try {
+						const requirements = deriveAnswerRequirements(state.question ?? "");
 						const judged = await judgeStructured.judgeWithMetadata(
 							{
 								question: state.question ?? "",
+								requirements,
 								citations: [
-									...projectJudgeEvidence(citations),
+									...projectJudgeEvidence(citations).map((citation) => ({
+										...citation,
+										document_identity: this.documentScope.find(
+											(doc) => doc.documentId === citation.doc_id,
+										)?.context?.identifiers,
+									})),
 									...(state.table_execution
 										? [{ table_execution: state.table_execution }]
 										: []),
@@ -412,6 +554,7 @@ export class NativeAskRuntime {
 						);
 						return {
 							...judged.output,
+							answer_granularity: requirements.granularity,
 							reason:
 								judged.output.reason === "judge_unavailable"
 									? judged.output.action === "generate"
@@ -661,14 +804,33 @@ export class NativeAskRuntime {
 
 	async *streamAnswer(state: AskState): AsyncGenerator<string> {
 		await this.beforeModelRequest();
-		const deterministicAnswer = deterministicTableAnswer(state.table_execution);
+		const deterministicAnswer =
+			this.outlineAnswer &&
+			state.citations?.some(
+				(citation) => citation.id === this.outlineAnswer?.citationId,
+			)
+				? this.outlineAnswer.text
+				: deterministicTableAnswer(state.table_execution);
 		if (deterministicAnswer) {
 			yield deterministicAnswer;
 			return;
 		}
 		const generationInput = {
 			question: state.question ?? "",
-			context: contextText(state),
+			requirements: deriveAnswerRequirements(state.question ?? ""),
+			context: [
+				...this.documentScope
+					.filter((doc) =>
+						state.citations?.some(
+							(citation) => citation.doc_id === doc.documentId,
+						),
+					)
+					.map(
+						(doc) =>
+							`已定位的文档：${doc.context?.title || doc.filename}；文件编号：${doc.context?.identifiers.join("、") || "未提供"}`,
+					),
+				contextText(state),
+			].join("\n\n"),
 			history: (state.history ?? []).flatMap<{
 				role: "user" | "assistant";
 				content: string;
@@ -713,6 +875,7 @@ export function createNativeAskRuntime(input: {
 		const concurrencyGate = getSharedAiConcurrencyGate();
 		dependencies = {
 			retrieval: getTypeScriptRetrievalService(),
+			loadDocumentCatalog: loadActiveDocumentCatalog,
 			structured: new StructuredOutputAdapter(registry.model, undefined, {
 				timeoutMs: positiveEnvironmentInteger(
 					"ASK_STRUCTURED_TIMEOUT_MS",

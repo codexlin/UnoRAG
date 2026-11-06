@@ -80,6 +80,11 @@ export const JudgeOutputSchema = z
 	})
 	.strict();
 
+export type JudgeAnswerRequirements = {
+	granularity: "named_requirement" | "procedure_details" | "unspecified";
+	formal_name_required: boolean;
+};
+
 export const TablePlanOutputSchema = TableQueryPlanSchema;
 
 export type RouterOutput = z.infer<typeof RouterOutputSchema>;
@@ -452,6 +457,7 @@ export class StructuredOutputAdapter {
 			question: string;
 			citations: unknown[];
 			attempts: number;
+			requirements?: JudgeAnswerRequirements;
 		},
 		options: {
 			abortSignal?: AbortSignal;
@@ -468,6 +474,7 @@ export class StructuredOutputAdapter {
 			question: string;
 			citations: unknown[];
 			attempts: number;
+			requirements?: JudgeAnswerRequirements;
 		},
 		options: {
 			abortSignal?: AbortSignal;
@@ -480,7 +487,7 @@ export class StructuredOutputAdapter {
 			getPrompt("judge"),
 			[
 				userMessage(
-					`问题：${input.question.trim()}\n尝试次数：${input.attempts}\n候选证据：${JSON.stringify(input.citations)}`,
+					`服务端回答粒度：${JSON.stringify(input.requirements ?? { granularity: "unspecified", formal_name_required: false })}\n问题：${input.question.trim()}\n尝试次数：${input.attempts}\n候选证据：${JSON.stringify(input.citations)}`,
 				),
 			],
 			options.abortSignal,

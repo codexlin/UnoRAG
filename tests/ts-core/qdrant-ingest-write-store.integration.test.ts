@@ -305,10 +305,23 @@ test("real local TXT parsing and chunking stages scoped points in Qdrant", {
 		assert.equal(result.parserBackend, "native-text");
 		assert.equal(result.chunkCount, 1);
 		assert.equal(result.sectionCount, 1);
-		assert.equal(result.pointCount, 2);
+		assert.equal(result.pointCount, 3);
 
 		await stager.setGenerationVisibility(job, scope.generationId, "active");
-		assert.equal(await scopedCount(client, collection, scope, "active"), 2);
+		assert.equal(await scopedCount(client, collection, scope, "active"), 3);
+		const outline = await client.scroll(collection, {
+			filter: {
+				must: [
+					{ key: "generation_id", match: { value: scope.generationId } },
+					{ key: "record_type", match: { value: "document" } },
+				],
+			},
+			with_payload: true,
+			with_vector: false,
+			limit: 2,
+		});
+		assert.equal(outline.points.length, 1);
+		assert.match(String(outline.points[0]?.payload?.body), /# Leave policy/);
 	} finally {
 		await Promise.all([
 			client.deleteCollection(collection),

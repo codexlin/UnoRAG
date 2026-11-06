@@ -142,8 +142,13 @@ export function projectPublicRetrievalDebug(
 			"candidateCountBeforePolicy",
 		],
 		evidence_threshold: ["evidence_threshold", "evidenceThreshold"],
+		document_scope_status: [
+			"document_scope_status",
+			"documentConstraintStatus",
+		],
 		table_candidate_count: ["table_candidate_count"],
 		judge_mode: ["judge_mode"],
+		answer_granularity: ["answer_granularity"],
 		judge_model: ["judge_model"],
 		judge_provider: ["judge_provider"],
 		judge_attempts: ["judge_attempts"],

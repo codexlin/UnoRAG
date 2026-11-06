@@ -42,6 +42,7 @@ export type RetrievalDebug = {
 	candidateCountBeforePolicy?: number;
 	evidenceThreshold?: number;
 	rerankDiagnostic?: RerankDiagnostic;
+	documentConstraintStatus?: string;
 };
 
 export type RetrievalResult = {
@@ -338,6 +339,58 @@ export class DefaultRetrievalService {
 		private readonly reranker: RerankProvider | null,
 		private readonly options: RetrievalServiceOptions,
 	) {}
+
+	async lookupDocumentRecord(input: {
+		libraryId: string;
+		scope: AuthorizedScope;
+		documentId: string;
+		generationId: string;
+		expectedBody: string;
+		filters?: RetrievalFilters;
+		signal?: AbortSignal;
+	}): Promise<InternalCitation | null> {
+		input.signal?.throwIfAborted();
+		const scope = toRetrievalScope(input.scope, input.libraryId);
+		if (
+			!scope.activeGenerationIds.includes(input.generationId) ||
+			(scope.documentIds && !scope.documentIds.includes(input.documentId)) ||
+			(input.filters?.doc_id && input.filters.doc_id !== input.documentId) ||
+			input.filters?.table_id ||
+			(input.filters?.record_type && input.filters.record_type !== "document")
+		)
+			return null;
+		const narrowScope = {
+			...scope,
+			documentIds: [input.documentId],
+			activeGenerationIds: [input.generationId],
+		};
+		const hits = assertAuthorizedHits(
+			await this.store.listCorpus({
+				scope: narrowScope,
+				userFilters: {
+					...toUserFilters(input.filters),
+					record_type: "document",
+				},
+				limit: 2,
+			}),
+			narrowScope,
+		);
+		input.signal?.throwIfAborted();
+		const hit = hits.length === 1 ? hits[0] : null;
+		if (
+			hit?.payload.record_type !== "document" ||
+			(input.filters?.document_version_id &&
+				hit.payload.document_version_id !==
+					input.filters.document_version_id) ||
+			(hit.payload.body || hit.payload.text) !== input.expectedBody
+		)
+			return null;
+		// An exact structured lookup is not a semantic similarity score.
+		return mapQdrantHitToInternalCitation(
+			{ ...hit, score: 0, dense_score: null },
+			1,
+		);
+	}
 
 	async retrieve(input: {
 		query: string;

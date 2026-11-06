@@ -6,6 +6,7 @@ import { getDatabase } from "@/db";
 import { documents, documentVersions, jobs, libraries } from "@/db/schema";
 import { redactDiagnosticMessage } from "@/lib/error-diagnostics";
 import { formatParseStatusView } from "@/lib/parse-status-view.mjs";
+import { publicParserReport } from "@/lib/parser-report-public";
 import type { AuthIdentity } from "./auth/provider";
 import { documentMetadataVisibilitySql } from "./document-visibility";
 
@@ -58,7 +59,7 @@ export function toApiJob(
 		durationMs: number | null;
 	}>,
 ) {
-	const parser_report = row.version.parserReport;
+	const parser_report = publicParserReport(row.version.parserReport);
 	return {
 		id: row.job.id,
 		type: row.job.type,

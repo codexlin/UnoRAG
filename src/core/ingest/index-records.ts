@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import type { Chunk } from "../document-ir";
+import type { Chunk, DocumentIR } from "../document-ir";
+import {
+	buildDocumentContext,
+	documentContextText,
+} from "../document-ir/document-context";
 
 const POINT_NAMESPACE = "a6c3e8f0-2b1d-4e9a-9c7f-1d2e3f4a5b6c";
 
@@ -122,6 +126,7 @@ export type BuildIndexPayloadOptions = {
 	lifecycleVisibility?: "staging" | "active" | "inactive";
 	includeSections?: boolean;
 	includeTables?: boolean;
+	document?: DocumentIR;
 };
 
 export function buildIndexPayloads(
@@ -132,6 +137,27 @@ export function buildIndexPayloads(
 	requireText(options.generationId, "generationId");
 	requireText(options.documentId, "documentId");
 	const payloads = chunks.map((chunk) => chunkPayload(chunk, options));
+	if (options.document) {
+		const context = buildDocumentContext(options.document);
+		const body = documentContextText(context);
+		payloads.push(
+			recordPayload(
+				{
+					...baseRecord(options),
+					recordType: "document",
+					recordId: `doc:${options.documentId}`,
+					body,
+					// Full structure is read by exact lookup, not embedded as one huge chunk.
+					embedText: [context.title, ...context.identifiers]
+						.join("\n")
+						.slice(0, 1_400),
+					sourceNodeIds: context.outline.map((entry) => entry.node_id),
+				},
+				options.generationId,
+				options.lifecycleVisibility,
+			),
+		);
+	}
 	if ((options.includeSections ?? true) && chunks.length > 0) {
 		payloads.push(
 			...buildSectionRecords(chunks, options).map((record) =>

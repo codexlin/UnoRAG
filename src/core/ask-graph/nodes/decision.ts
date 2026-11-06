@@ -156,6 +156,7 @@ export function createDecisionNode(context: AskGraphContext) {
 		const judgeDebug = Object.fromEntries(
 			[
 				"judge_mode",
+				"answer_granularity",
 				"judge_model",
 				"judge_provider",
 				"judge_attempts",
