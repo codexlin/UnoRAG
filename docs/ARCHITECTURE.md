@@ -150,6 +150,13 @@ Parsing produces DocumentIR before chunking. The policy is structure-first:
 4. index chunk, section and table records with stable provenance;
 5. keep TableIR headers, normalized units, row groups and contributing citations.
 
+入库还生成一个 generation 绑定的 `document` 记录：正文保存有界的解析标题目录，向量只使用有界的文档
+身份描述，不把整份长目录当普通 chunk 向量化。同一版本的 `parser_report.metrics.document_context`
+保存原始文件名、首级标题、显式编号标签提取结果、标题层级和完整性标记。它属于检索内容，普通文档/任务
+诊断必须移除该字段。解析不完整、层级未知或超过 256 个标题/12,000 个标题字符时，不声明目录完整。
+这里的完整性仅指已保存的解析结构未被截断且 Provider 未标记缺页，不证明 OCR 或标题层级识别绝对正确；
+扫描与复杂 PDF 仍需对应来源和布局的金标验收。
+
 Small and medium tables remain RAG records with layered row groups and summaries.
 Very large SQL-style execution is deliberately deferred; operational data should
 usually be queried from its source database.
@@ -177,6 +184,27 @@ Native Ask uses LangGraph.js for orchestration:
 route -> plan -> clarify | retrieve -> table execute -> judge
       -> rewrite/retry | refuse | stream answer with citations
 ```
+
+指定文件名、已识别文号或可唯一匹配的业务阶段主题时，Ask 先从 PG 的**当前 active 版本**解析文档身份，
+再收窄 Qdrant 的 document/generation 过滤。候选目录最多读取 501 行，超过 500 份授权文档时失败关闭，
+不根据截断目录猜测唯一性；这不是大规模文档目录搜索的实现。PG 查询同时执行组织、Workspace、文库、
+删除状态、ACL 与投影一致性检查，不复用 editor/owner 的元数据管理权限绕过正文 ACL。
+重写和重试保留原问中的来源约束；重复名称、冲突编号或未授权的指定文件不会静默改查其他文档。
+
+纯标题枚举使用完整解析目录的确定性执行，并核对 Qdrant 中同 generation 的完整文档记录，引用真实
+Point；精确结构读取的 score 保持 `0`，不伪造向量相似度，也不降低普通证据门槛。内容解释、复合问题、
+部分目录和缺少结构记录不能使用这条路径。单份表单的字段读取允许 OCR 正文证据；聚合、计数、排序、
+筛选等仍要求结构化表格，不因表单解析扁平化而让模型代算。Judge 必须核对对象、条件和操作阶段，
+不把相关性当充分性，也不自行追加用户未要求的回答精度。
+
+Judge 与生成共享服务端的有界回答粒度提示：名称级要求、具体步骤或未指定；它只描述原问，不宣称
+证据充分，也不能覆盖其他所问字段。名称级回答不应擅自补充未提供的定义与细则，步骤级问题不能以
+名称代替方法。该提示不是答案校验器；引用格式、来源约束和回归评分仍分别执行。
+
+旧 active generation 不会被原地补写。已有文档需要通过正常重索引生成上述元数据；升级前排空旧任务，
+同 generation 写入清单不一致仍失败关闭。新目录能力缺失时可以拒答，不能把已有 Top-K 称作完整目录。
+部分解析不用于证明文号唯一性；精确目录路径也必须保留调用方的文档、版本、表格和记录类型限制。
+本轮问题与环境绑定的验证状态见 [混合业务矩阵](./evidence/2026-11-06-business-matrix-hk.md)。
 
 Vercel AI SDK provides model calls, structured output and streaming. LangChain core
 types are used only where they remove adapter friction. LlamaIndex is not a second
