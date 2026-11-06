@@ -3,7 +3,6 @@ import test from "node:test";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { APICallError, type LanguageModel, RetryError } from "ai";
 import { runEvidenceConflictChecks } from "../../scripts/acceptance/evidence-conflicts";
-
 import {
 	AiConcurrencyGate,
 	AiConcurrencyOverloadedError,
@@ -18,6 +17,8 @@ import {
 	StructuredOutputTimeoutError,
 	StructuredOutputValidationError,
 } from "../../src/core/ai";
+import { assessEvidenceWithMetadata } from "../../src/core/ai/evidence-assessment";
+import { ConflictOutputSchema } from "../../src/core/ai/structured-output";
 import {
 	type LegacySseEventName,
 	projectPublicCitations,
@@ -27,7 +28,224 @@ import {
 
 const injectedModel = {} as LanguageModel;
 
-test("judge control runner keeps mismatch and failure rows instead of treating refusals as success", async () => {
+test("comparison and summary paths retain ordinary judgement without a same-fact conflict pass", async () => {
+	for (const query_type of ["compare", "summary", "table", "section_lookup"]) {
+		const calls: string[] = [];
+		const adapter = new StructuredOutputAdapter(
+			injectedModel,
+			async (request) => {
+				calls.push(request.schemaName);
+				assert.equal(request.schemaName, "judge");
+				return {
+					sufficient: true,
+					action: "generate",
+					reason: "covered",
+					evidence_ids: ["a", "b"],
+				};
+			},
+		);
+		const result = await assessEvidenceWithMetadata(adapter, {
+			query_type,
+			question: "哪个部门预算更高？",
+			attempts: 1,
+			citations: [
+				{ id: "a", text: "销售部120万元" },
+				{ id: "b", text: "研发部240万元" },
+			],
+		});
+		assert.deepEqual(calls, ["judge"]);
+		assert.deepEqual(result.output.evidence_ids, ["a", "b"]);
+		assert.equal(result.output.evidence_resolution, "not_checked");
+		assert.equal(result.output.judge_conflict_attempts, 0);
+	}
+});
+
+test("conflict schema has an object root for structured-output provider compatibility", () => {
+	const schema = ConflictOutputSchema.toJSONSchema();
+	assert.equal(schema.type, "object");
+	assert.equal(schema.anyOf, undefined);
+	assert.deepEqual(schema.required, [
+		"comparison",
+		"resolution",
+		"conflict_evidence",
+	]);
+});
+
+test("conflict scope includes all selected-document candidates, explicit multi-document selections and shared identities only", async () => {
+	for (const selected of [["a"], ["a", "c"]]) {
+		let checked: string[] = [];
+		const adapter = new StructuredOutputAdapter(
+			injectedModel,
+			async (request) => {
+				if (request.schemaName === "judge")
+					return {
+						sufficient: true,
+						action: "generate",
+						reason: "covered",
+						evidence_ids: selected,
+					};
+				checked = JSON.parse(String(request.messages[0].content)).citations.map(
+					(item: { id: string }) => item.id,
+				);
+				return {
+					comparison: "same",
+					resolution: "consistent",
+					conflict_evidence: [],
+				};
+			},
+		);
+		await assessEvidenceWithMetadata(adapter, {
+			question: "期限？",
+			attempts: 1,
+			citations: [
+				{ id: "a", doc_id: "d1", document_identity: ["POL-1"], text: "12日" },
+				{ id: "b", doc_id: "d1", text: "24日" },
+				{ id: "c", doc_id: "d2", text: "其他项目48日" },
+				{ id: "d", doc_id: "d3", document_identity: ["POL-1"], text: "36日" },
+			],
+		});
+		assert.deepEqual(
+			checked,
+			selected.length === 1 ? ["a", "b", "d"] : ["a", "b", "c", "d"],
+		);
+	}
+});
+
+test("separate conflict verification cannot widen ordinary evidence or turn a refusal into an answer", async () => {
+	for (const action of ["generate", "retry", "refuse"] as const) {
+		const calls: string[] = [];
+		const adapter = new StructuredOutputAdapter(
+			injectedModel,
+			async (request) => {
+				calls.push(request.schemaName);
+				if (request.schemaName === "judge")
+					return {
+						sufficient: action === "generate",
+						action,
+						reason: "baseline",
+						evidence_ids: action === "generate" ? ["a"] : [],
+					};
+				const sent = JSON.parse(String(request.messages[0].content));
+				assert.equal(sent.citations.length, 2);
+				assert.deepEqual(sent.evidence_ids, ["a"]);
+				return {
+					comparison: "private comparison",
+					resolution: "consistent",
+					conflict_evidence: [],
+				};
+			},
+		);
+		const result = await assessEvidenceWithMetadata(adapter, {
+			question: "期限？",
+			citations: [
+				{ id: "a", text: "12日" },
+				{ id: "b", text: "其他项目24日" },
+			],
+			attempts: 1,
+		});
+		assert.equal(result.output.action, action);
+		assert.deepEqual(
+			result.output.evidence_ids,
+			action === "generate" ? ["a"] : [],
+		);
+		assert.deepEqual(
+			calls,
+			action === "generate" ? ["judge", "conflict"] : ["judge"],
+		);
+		assert.equal(JSON.stringify(result).includes("private comparison"), false);
+		assert.equal(result.metadata.attempts, calls.length);
+	}
+});
+
+test("conflict verification adds only exact authorized quotes and reauthorizes before the second call", async () => {
+	for (const invalid of ["none", "foreign", "fabricated", "revoked"] as const) {
+		let checkpoints = 0;
+		const adapter = new StructuredOutputAdapter(
+			injectedModel,
+			async (request) => {
+				if (request.schemaName === "judge")
+					return {
+						sufficient: true,
+						action: "generate",
+						reason: "covered",
+						evidence_ids: ["a"],
+					};
+				return {
+					comparison: "different",
+					resolution: "conflict",
+					conflict_evidence: [
+						{ evidence_id: "a", quote: "12日" },
+						{
+							evidence_id: invalid === "foreign" ? "x" : "b",
+							quote: invalid === "fabricated" ? "99日" : "24日",
+						},
+					],
+				};
+			},
+			{ maxAttempts: 1 },
+		);
+		const run = () =>
+			assessEvidenceWithMetadata(
+				adapter,
+				{
+					question: "期限？",
+					citations: [
+						{ id: "a", text: "12日" },
+						{ id: "b", text: "24日" },
+					],
+					attempts: 1,
+				},
+				{
+					beforeRequest: async () => {
+						if (++checkpoints === 2 && invalid === "revoked")
+							throw new Error("revoked");
+					},
+				},
+			);
+		if (invalid !== "none") await assert.rejects(run);
+		else {
+			const result = await run();
+			assert.deepEqual(result.output.evidence_ids, ["a", "b"]);
+			assert.equal(result.output.reason, "evidence_conflict");
+			assert.equal(result.output.judge_conflict_attempts, 1);
+		}
+		assert.equal(checkpoints, 2);
+	}
+});
+
+test("conflict provider failures remain technical errors with an identifiable stage", async () => {
+	const adapter = new StructuredOutputAdapter(
+		injectedModel,
+		async (request) => {
+			if (request.schemaName === "judge")
+				return {
+					sufficient: true,
+					action: "generate",
+					reason: "covered",
+					evidence_ids: ["a"],
+				};
+			throw new Error("private provider body");
+		},
+		{ maxAttempts: 1 },
+	);
+	await assert.rejects(
+		assessEvidenceWithMetadata(adapter, {
+			question: "期限？",
+			citations: [{ id: "a", text: "12日" }],
+			attempts: 1,
+		}),
+		(error) => {
+			assert.equal(getStructuredFailureMetadata(error)?.kind, "conflict");
+			assert.doesNotMatch(
+				JSON.stringify(getStructuredFailureMetadata(error)),
+				/private/,
+			);
+			return true;
+		},
+	);
+});
+
+test("conflict checker controls keep mismatches and provider failures", async () => {
 	const cases = [
 		{
 			id: "control",
@@ -37,13 +255,10 @@ test("judge control runner keeps mismatch and failure rows instead of treating r
 		},
 	];
 	const adapter = {
-		judgeWithMetadata: async () => ({
+		checkConflictWithMetadata: async () => ({
 			output: {
-				sufficient: true,
-				action: "generate" as const,
-				reason: "conflict",
-				evidence_ids: ["a"],
-				evidence_resolution: "conflict" as const,
+				comparison: "different",
+				resolution: "conflict" as const,
 				conflict_evidence: [{ evidence_id: "a", quote: "期限12日或24日" }],
 			},
 			metadata: { attempts: 1, durationMs: 1 },
@@ -62,7 +277,7 @@ test("judge control runner keeps mismatch and failure rows instead of treating r
 		assert.equal(row.ok, false);
 	for await (const row of runEvidenceConflictChecks(
 		{
-			judgeWithMetadata: async () => {
+			checkConflictWithMetadata: async () => {
 				throw new Error("private body");
 			},
 		},
@@ -74,38 +289,35 @@ test("judge control runner keeps mismatch and failure rows instead of treating r
 	}
 });
 
-test("judge rejects contradictory resolution fields and missing conflict assessment", async () => {
-	const base = {
+test("ordinary judge preserves its original contract without conflict fields", async () => {
+	const output = {
 		sufficient: true,
 		action: "generate",
 		reason: "covered",
-		evidence_ids: ["a", "b"],
+		evidence_ids: ["a"],
 	};
+	const adapter = new StructuredOutputAdapter(
+		injectedModel,
+		async () => output,
+	);
+	assert.deepEqual(
+		await adapter.judge({ question: "期限？", citations: [], attempts: 1 }),
+		output,
+	);
+});
+
+test("conflict checker rejects contradictory resolution and missing provenance", async () => {
 	for (const output of [
-		base,
+		{ comparison: "different", resolution: "conflict", conflict_evidence: [] },
 		{
-			...base,
-			evidence_assessment: { resolution: "conflict", conflict_evidence: [] },
+			comparison: "scoped",
+			resolution: "scoped",
+			conflict_evidence: [{ evidence_id: "a", quote: "12日" }],
 		},
 		{
-			...base,
-			evidence_assessment: {
-				resolution: "scoped",
-				conflict_evidence: [
-					{ evidence_id: "a", quote: "12日" },
-					{ evidence_id: "b", quote: "24日" },
-				],
-			},
-		},
-		{
-			...base,
-			evidence_assessment: {
-				resolution: "conflict",
-				conflict_evidence: [
-					{ evidence_id: "a", quote: "12日" },
-					{ evidence_id: "foreign", quote: "24日" },
-				],
-			},
+			comparison: "different",
+			resolution: "conflict",
+			conflict_evidence: [{ quote: "12日" }],
 		},
 	]) {
 		const adapter = new StructuredOutputAdapter(
@@ -114,7 +326,11 @@ test("judge rejects contradictory resolution fields and missing conflict assessm
 			{ maxAttempts: 1 },
 		);
 		await assert.rejects(
-			adapter.judge({ question: "期限？", citations: [], attempts: 1 }),
+			adapter.checkConflictWithMetadata({
+				question: "期限？",
+				citations: [],
+				evidence_ids: [],
+			}),
 			StructuredOutputValidationError,
 		);
 	}
@@ -136,10 +352,6 @@ function judgeCompletion() {
 						action: "generate",
 						reason: "supported",
 						evidence_ids: ["source-1"],
-						evidence_assessment: {
-							resolution: "consistent",
-							conflict_evidence: [],
-						},
 					}),
 				},
 				finish_reason: "stop",
@@ -452,10 +664,6 @@ test("judge metadata is content-free and carries bounded execution details", asy
 				action: "generate",
 				reason: "supported",
 				evidence_ids: ["citation-1"],
-				evidence_assessment: {
-					resolution: "consistent",
-					conflict_evidence: [],
-				},
 			};
 		},
 		{ maxAttempts: 1, maxOutputTokens: 96 },
@@ -481,6 +689,10 @@ test("public retrieval debug exposes only safe Judge diagnostics", () => {
 			judge_provider: "judge-provider",
 			judge_attempts: 1,
 			judge_duration_ms: 123.4,
+			judge_sufficiency_duration_ms: 50,
+			judge_conflict_duration_ms: 73.4,
+			conflict_scope: "selected_documents",
+			conflict_candidate_count: 4,
 			judge_input_tokens: 800,
 			judge_output_tokens: 20,
 			judge_total_tokens: 820,
@@ -490,6 +702,10 @@ test("public retrieval debug exposes only safe Judge diagnostics", () => {
 			evidence_selection_valid: true,
 			question: "must not pass",
 			evidence: "must not pass",
+			comparison: "must not pass",
+			conflict_evidence: [
+				{ evidence_id: "private-id", quote: "must not pass" },
+			],
 		}),
 		{
 			judge_mode: "model",
@@ -497,6 +713,10 @@ test("public retrieval debug exposes only safe Judge diagnostics", () => {
 			judge_provider: "judge-provider",
 			judge_attempts: 1,
 			judge_duration_ms: 123.4,
+			judge_sufficiency_duration_ms: 50,
+			judge_conflict_duration_ms: 73.4,
+			conflict_scope: "selected_documents",
+			conflict_candidate_count: 4,
 			judge_input_tokens: 800,
 			judge_output_tokens: 20,
 			judge_total_tokens: 820,

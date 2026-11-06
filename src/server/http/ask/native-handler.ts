@@ -472,6 +472,7 @@ async function finalizeAskRun(input: {
 									detail: Object.fromEntries(
 										[
 											"judge_attempts",
+											"judge_failed_stage",
 											"judge_duration_ms",
 											"judge_timeout_ms",
 											"judge_max_attempts",

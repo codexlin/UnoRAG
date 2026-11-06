@@ -11,6 +11,7 @@ import {
 	judgeAiConfigFromEnv,
 	StructuredOutputAdapter,
 } from "@/core/ai";
+import { assessEvidenceWithMetadata } from "@/core/ai/evidence-assessment";
 import {
 	type AskGraphContext,
 	type AskGraphInput,
@@ -531,9 +532,11 @@ export class NativeAskRuntime {
 					await this.assertAuthorized?.(this.retrievedEvidence);
 					try {
 						const requirements = deriveAnswerRequirements(state.question ?? "");
-						const judged = await judgeStructured.judgeWithMetadata(
+						const judged = await assessEvidenceWithMetadata(
+							judgeStructured,
 							{
 								question: state.question ?? "",
+								query_type: state.query_type,
 								requirements,
 								citations: [
 									...projectJudgeEvidence(citations).map((citation) => ({
@@ -592,6 +595,7 @@ export class NativeAskRuntime {
 							...(failure
 								? {
 										judge_attempts: failure.attempts,
+										judge_failed_stage: failure.kind,
 										judge_duration_ms: failure.durationMs,
 										judge_timeout_ms: failure.timeoutMs,
 										judge_max_attempts: failure.maxAttempts,

@@ -411,16 +411,19 @@ test("model reason text cannot impersonate a server-assigned Judge outage", asyn
 	for (const action of ["generate", "refuse"] as const) {
 		const structured = new StructuredOutputAdapter(
 			{} as LanguageModel,
-			async () => ({
-				sufficient: action === "generate",
-				action,
-				reason: "judge_unavailable",
-				evidence_ids: ["hit"],
-				evidence_assessment: {
-					resolution: "consistent",
-					conflict_evidence: [],
-				},
-			}),
+			async (request) =>
+				request.schemaName === "conflict"
+					? {
+							comparison: "same fact",
+							resolution: "consistent",
+							conflict_evidence: [],
+						}
+					: {
+							sufficient: action === "generate",
+							action,
+							reason: "judge_unavailable",
+							evidence_ids: ["hit"],
+						},
 		);
 		const runtime = new NativeAskRuntime(
 			{} as never,

@@ -11,6 +11,7 @@ import {
 import { getPrompt } from "../../src/core/ai/prompt-registry";
 import {
 	StructuredOutputAdapter,
+	ConflictOutputSchema,
 	getStructuredFailureMetadata,
 } from "../../src/core/ai/structured-output";
 import { validateConflictEvidence } from "../../src/core/ask-graph/evidence-conflict";
@@ -25,11 +26,18 @@ const FixtureSchema = z
 					.object({
 						id: z.string().min(1),
 						question: z.string().min(1),
+						query_type: z.string().optional(),
 						expect_conflict: z.boolean(),
 						citations: z
 							.array(
 								z
-									.object({ id: z.string().min(1), text: z.string().min(1) })
+									.object({
+										id: z.string().min(1),
+										text: z.string().min(1),
+										doc_id: z.string().optional(),
+										section_path: z.string().optional(),
+										preamble: z.string().optional(),
+									})
 									.strict(),
 							)
 							.min(1)
@@ -49,7 +57,7 @@ const fixtureUrl = new URL(
 );
 
 export async function* runEvidenceConflictChecks(
-	adapter: Pick<StructuredOutputAdapter, "judgeWithMetadata">,
+	adapter: Pick<StructuredOutputAdapter, "checkConflictWithMetadata">,
 	cases: ControlCase[],
 	rounds: number,
 ) {
@@ -63,19 +71,17 @@ export async function* runEvidenceConflictChecks(
 	for (let round = 1; round <= rounds; round++)
 		for (const item of validated) {
 			try {
-				const result = await adapter.judgeWithMetadata({
+				const result = await adapter.checkConflictWithMetadata({
 					question: item.question,
+					query_type: item.query_type,
 					citations: item.citations,
-					attempts: 1,
+					evidence_ids: item.citations.map((citation) => citation.id),
 				});
 				const excerpts = validateConflictEvidence(
 					result.output.conflict_evidence,
 					item.citations,
 				);
-				const ok =
-					result.output.sufficient &&
-					result.output.action === "generate" &&
-					excerpts.length > 0 === item.expect_conflict;
+				const ok = excerpts.length > 0 === item.expect_conflict;
 				yield { round, case_id: item.id, ok, result, error: null };
 			} catch (error) {
 				yield {
@@ -105,13 +111,20 @@ async function main() {
 	const bytes = await readFile(fixtureUrl);
 	const fixture = FixtureSchema.parse(JSON.parse(bytes.toString("utf8")));
 	const plan = {
-		kind: "fixed-evidence-judge-controls",
+		kind: "fixed-evidence-conflict-checker-controls-not-full-pipeline",
 		contract_version: fixture.contract_version,
 		fixture_sha256: createHash("sha256").update(bytes).digest("hex"),
 		prompt_digest: getPrompt("judge").digest,
+		conflict_prompt_digest: getPrompt("conflict").digest,
+		schema_sha256: createHash("sha256")
+			.update(JSON.stringify(ConflictOutputSchema.toJSONSchema()))
+			.digest("hex"),
 		cases: fixture.cases.length,
 		rounds,
 		max_http_attempts: fixture.cases.length * rounds * 2,
+		max_stage_attempts: 2,
+		stage_timeout_ms: 15000,
+		max_case_model_budget_ms: 30000,
 		max_output_tokens: 1024,
 	};
 	if (values.plan) {

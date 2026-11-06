@@ -76,41 +76,25 @@ export const JudgeOutputSchema = z
 		action: z.enum(["generate", "retry", "refuse"]),
 		reason: z.string().trim().min(1),
 		evidence_ids: z.array(z.string().trim().min(1)).max(6),
-		evidence_assessment: z.union([
-			z
-				.object({
-					resolution: z.enum(["consistent", "scoped", "precedence"]),
-					conflict_evidence: ConflictEvidenceSchema.length(0),
-				})
-				.strict(),
-			z
-				.object({
-					resolution: z.literal("conflict"),
-					conflict_evidence: ConflictEvidenceSchema.min(1),
-				})
-				.strict(),
-		]),
 		can_retry: z.boolean().optional(),
 		top_score: z.number().min(0).max(1).optional(),
 	})
+	.strict();
+
+export const ConflictOutputSchema = z
+	.object({
+		comparison: z.string().trim().min(1).max(800),
+		resolution: z.enum(["consistent", "scoped", "precedence", "conflict"]),
+		conflict_evidence: ConflictEvidenceSchema.describe(
+			"Empty unless resolution is conflict; otherwise include exact source quotes from both sides.",
+		),
+	})
 	.strict()
-	.superRefine((value, context) => {
-		const assessment = value.evidence_assessment;
-		const conflict = assessment.resolution === "conflict";
-		if (
-			conflict &&
-			(!value.sufficient ||
-				value.action !== "generate" ||
-				assessment.conflict_evidence.some(
-					(item) => !value.evidence_ids.includes(item.evidence_id),
-				))
-		) {
-			context.addIssue({
-				code: "custom",
-				message: "Inconsistent evidence resolution",
-			});
-		}
-	});
+	.refine(
+		(value) =>
+			(value.resolution === "conflict") === value.conflict_evidence.length > 0,
+		"Inconsistent conflict resolution",
+	);
 
 export type JudgeAnswerRequirements = {
 	granularity: "named_requirement" | "procedure_details" | "unspecified";
@@ -121,19 +105,22 @@ export const TablePlanOutputSchema = TableQueryPlanSchema;
 
 export type RouterOutput = z.infer<typeof RouterOutputSchema>;
 export type RewriteOutput = z.infer<typeof RewriteOutputSchema>;
-type JudgeModelOutput = z.infer<typeof JudgeOutputSchema>;
-export type JudgeOutput = Omit<JudgeModelOutput, "evidence_assessment"> & {
-	evidence_resolution: JudgeModelOutput["evidence_assessment"]["resolution"];
-	conflict_evidence: JudgeModelOutput["evidence_assessment"]["conflict_evidence"];
-};
+export type JudgeOutput = z.infer<typeof JudgeOutputSchema>;
+export type ConflictOutput = z.infer<typeof ConflictOutputSchema>;
 export type TablePlanOutput = TableQueryPlan;
 
-type StructuredKind = "router" | "rewrite" | "judge" | "table_plan";
+type StructuredKind =
+	| "router"
+	| "rewrite"
+	| "judge"
+	| "conflict"
+	| "table_plan";
 
 interface StructuredSchemaMap {
 	router: typeof RouterOutputSchema;
 	rewrite: typeof RewriteOutputSchema;
 	judge: typeof JudgeOutputSchema;
+	conflict: typeof ConflictOutputSchema;
 	table_plan: typeof TablePlanOutputSchema;
 }
 
@@ -192,6 +179,7 @@ export type StructuredRequestMetadata = {
 };
 
 export type StructuredFailureMetadata = Readonly<{
+	kind: StructuredKind;
 	attempts: number;
 	durationMs: number;
 	timeoutMs: number;
@@ -422,6 +410,7 @@ export class StructuredOutputAdapter {
 						error,
 						Object.freeze({
 							...classification,
+							kind,
 							attempts: attempt,
 							durationMs:
 								Math.round((performance.now() - startedAt) * 100) / 100,
@@ -528,17 +517,29 @@ export class StructuredOutputAdapter {
 			],
 			options.abortSignal,
 			options.beforeRequest,
-		).then(({ output, metadata }) => {
-			const { evidence_assessment, ...judgement } = output;
-			return {
-				metadata,
-				output: {
-					...judgement,
-					evidence_resolution: evidence_assessment.resolution,
-					conflict_evidence: evidence_assessment.conflict_evidence,
-				},
-			};
-		});
+		);
+	}
+
+	checkConflictWithMetadata(
+		input: {
+			question: string;
+			citations: unknown[];
+			evidence_ids: string[];
+			query_type?: string;
+		},
+		options: {
+			abortSignal?: AbortSignal;
+			beforeRequest?: () => Promise<void>;
+		} = {},
+	): Promise<{ output: ConflictOutput; metadata: StructuredRequestMetadata }> {
+		return this.request(
+			"conflict",
+			ConflictOutputSchema,
+			getPrompt("conflict"),
+			[userMessage(JSON.stringify(input))],
+			options.abortSignal,
+			options.beforeRequest,
+		);
 	}
 
 	planTable(

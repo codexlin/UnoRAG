@@ -83,7 +83,8 @@ node --import tsx scripts/acceptance/evidence-conflicts.ts --plan
 UNORAG_ACCEPT_JUDGE_CONTROLS=YES node --import tsx scripts/acceptance/evidence-conflicts.ts --allow-external-judge
 ```
 
-默认两轮、每轮七个合成案例、每次至多两次请求/15 秒单次超时/1024 输出 Token，串行执行。
+此入口仅调用独立冲突核验器，不调用普通充分性 Judge，不代表完整问答 pipeline。默认两轮、每轮八个
+合成案例、每次至多两次请求/15 秒单次超时/1024 输出 Token，串行执行。
 `--rounds=1..3` 可调整轮数；分类错误、结构化失败或摘录来源校验失败均保留为 FAIL，不能靠重跑覆盖。
 报告保存在 `.unorag/acceptance/`，固定证据通过不证明检索完整，也不能代替逐条语义复核或发布验收。
 

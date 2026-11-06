@@ -2,6 +2,7 @@
   "contract_version": 1,
   "description": "Synthetic judge controls, not customer documents or end-to-end retrieval evidence.",
   "cases": [
+    {"id":"different-subject-same-document","question":"两个部门中预算较高的是哪个？","query_type":"compare","citations":[{"id":"a","doc_id":"d1","section_path":"年度计划/销售部","text":"预算为120万元。"},{"id":"b","doc_id":"d1","section_path":"年度计划/研发部","text":"预算为240万元。"}],"expect_conflict":false},
     {"id":"different-action","question":"设备甲的首次响应时限是多少？","citations":[{"id":"a","text":"设备甲首次响应时限为10分钟，恢复目标为60分钟。"}],"expect_conflict":false},
     {
       "id": "same-scope",
