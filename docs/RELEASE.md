@@ -119,6 +119,9 @@ cd deploy/compose
 手动候选构建默认只发布 GHCR。仅在本次候选确实需要验证中国大陆镜像站时，才在
 `release-images` workflow 中显式启用 `mirror_acr`；稳定 tag 在四个 ACR secrets 完整配置时仍自动同步。
 任一 ACR pull 或 push 超过 15 分钟会失败，不能阻塞发布流水线至 GitHub Actions 的全局超时。
+ACR push 失败时先输出脱敏诊断，再保留原始退出码（包括 timeout 的 124）；未成功推送的目标不得写入
+digest 输出，也不得继续生成 ACR 交付清单。诊断只用于定位当次失败，不能把恢复后的成功推送反推为
+历史事故根因。失败流水线留下的部分标签不作为交付产物。
 
 ## 3. 真实纵向验收
 

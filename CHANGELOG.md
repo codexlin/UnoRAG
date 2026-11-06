@@ -3,6 +3,15 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [Unreleased]
+
+### Fixed
+
+- Wrap long answer text, links, and inline code without clipping; preserve scrollable,
+  copyable fenced code with or without a language label.
+- Print sanitized ACR push diagnostics before propagating the original failure or timeout
+  status; do not continue mirroring or record a failed target digest.
+
 ## [0.2.4] - 2026-11-06
 
 ### Added
