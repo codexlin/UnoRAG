@@ -156,19 +156,27 @@ test("successful push without a digest fails closed", async (t) => {
 	assert.equal(result.outputs, "");
 });
 
-test("push diagnostic redacts literal credentials and cannot inject Actions commands", async (t) => {
-	const username = "fixture-registry-user";
-	const password = "fixture-[pw]*?/%-literal";
-	const result = await executeMirror(t, {
-		FAIL_OPERATION: "push",
-		LEAK_FIXTURE: "1",
-		ACR_USERNAME: username,
-		ACR_PASSWORD: password,
+for (const [name, username, password] of [
+	["metacharacters", "fixture-registry-user", "fixture-[pw]*?/%-literal"],
+	[
+		"overlapping credentials",
+		"fixture-registry-user",
+		"fixture-registry-user-DistinctPasswordSuffix",
+	],
+]) {
+	test(`push diagnostic redacts ${name} and cannot inject Actions commands`, async (t) => {
+		const result = await executeMirror(t, {
+			FAIL_OPERATION: "push",
+			LEAK_FIXTURE: "1",
+			ACR_USERNAME: username,
+			ACR_PASSWORD: password,
+		});
+		assert.equal(result.status, 17, result.log);
+		assert.equal(result.log.includes(username), false);
+		assert.equal(result.log.includes(password), false);
+		assert.match(result.log, /\[redacted\]/);
+		assert.match(result.log, /\[redacted\] \[redacted\] %3A%3Aerror%3A%3A/);
+		assert.equal(result.log.includes("::error::"), false);
+		assert.match(result.log, /untrusted registry text/);
 	});
-	assert.equal(result.status, 17, result.log);
-	assert.equal(result.log.includes(username), false);
-	assert.equal(result.log.includes(password), false);
-	assert.match(result.log, /\[redacted\]/);
-	assert.equal(result.log.includes("::error::"), false);
-	assert.match(result.log, /untrusted registry text/);
-});
+}

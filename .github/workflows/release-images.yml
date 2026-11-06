@@ -295,7 +295,7 @@ jobs:
               push_status=$?
             fi
             safe_output="${output}"
-            for secret in "${ACR_USERNAME:-}" "${ACR_PASSWORD:-}"; do
+            for secret in "${ACR_PASSWORD:-}" "${ACR_USERNAME:-}"; do
               if [[ -n "${secret}" ]]; then
                 safe_output="${safe_output//"${secret}"/[redacted]}"
               fi
