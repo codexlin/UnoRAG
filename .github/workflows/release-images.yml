@@ -279,16 +279,33 @@ jobs:
           IMAGE_PLATFORM: ${{ steps.meta.outputs.image_platform }}
           GHCR_REPO: ${{ steps.meta.outputs.ghcr_repo }}
           ACR_REPO: ${{ steps.meta.outputs.acr_repo }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
           ACR_TRANSFER_TIMEOUT: 15m
         run: |
           set -euo pipefail
 
           mirror() {
-            local target="$1" output digest
+            local target="$1" output digest safe_output secret push_status=0
             timeout --foreground "${ACR_TRANSFER_TIMEOUT}" docker pull --platform "${IMAGE_PLATFORM}" "${GHCR_REPO}:${target}-${TAG}"
             docker tag "${GHCR_REPO}:${target}-${TAG}" "${ACR_REPO}:${target}-${TAG}"
-            output="$(timeout --foreground "${ACR_TRANSFER_TIMEOUT}" docker push "${ACR_REPO}:${target}-${TAG}" 2>&1)"
-            printf '%s\n' "${output}"
+            if output="$(timeout --foreground "${ACR_TRANSFER_TIMEOUT}" docker push "${ACR_REPO}:${target}-${TAG}" 2>&1)"; then
+              push_status=0
+            else
+              push_status=$?
+            fi
+            safe_output="${output}"
+            for secret in "${ACR_PASSWORD:-}" "${ACR_USERNAME:-}"; do
+              if [[ -n "${secret}" ]]; then
+                safe_output="${safe_output//"${secret}"/[redacted]}"
+              fi
+            done
+            # Registry output is data, never an Actions workflow command.
+            printf '%s\n' "${safe_output//::/%3A%3A}"
+            if [[ "${push_status}" != "0" ]]; then
+              printf 'ACR push failed for %s (exit %s)\n' "${target}" "${push_status}" >&2
+              exit "${push_status}"
+            fi
             digest="$(sed -n 's/^.*digest: \(sha256:[a-f0-9]\{64\}\).*$/\1/p' <<<"${output}" | tail -n 1)"
             [[ "${digest}" == sha256:* ]] || {
               echo "missing ACR digest for ${target}" >&2
