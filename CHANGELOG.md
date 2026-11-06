@@ -363,6 +363,8 @@ in [`docs/INTEGRATION.md`](./docs/INTEGRATION.md).
 - Existing RC deployments use the forward-only upgrade and application rollback process in
   [`docs/RELEASE.md`](./docs/RELEASE.md). Database migrations are not rolled back.
 
+[0.2.5]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.5
+[0.2.4]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.4
 [0.2.2]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.2
 [0.2.1]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.1
 [0.2.0]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.0
