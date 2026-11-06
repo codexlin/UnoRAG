@@ -203,12 +203,20 @@ Judge 与生成共享服务端的有界回答粒度提示：名称级要求、�
 
 旧 active generation 不会被原地补写。已有文档需要通过正常重索引生成上述元数据；升级前排空旧任务，
 同 generation 写入清单不一致仍失败关闭。新目录能力缺失时可以拒答，不能把已有 Top-K 称作完整目录。
-部分解析不用于证明文号唯一性；精确目录路径也必须保留调用方的文档、版本、表格和记录类型限制。
+已识别的文号是正向来源约束，不是“全库没有任何遗漏编号”的证明；无关文档 partial 不应阻断已有明确
+匹配的查询。已观察到的重号仍视为歧义；编号未知且元数据不完整时不得改为宽泛检索。完整标题枚举仍
+要求目标文档结构完整。精确目录路径也必须保留调用方的文档、版本、表格和记录类型限制。
 本轮问题与环境绑定的验证状态见 [混合业务矩阵](./evidence/2026-11-06-business-matrix-hk.md)。
 
 Vercel AI SDK provides model calls, structured output and streaming. LangChain core
 types are used only where they remove adapter friction. LlamaIndex is not a second
 runtime; it may later appear behind a retrieval or parser tool boundary.
+
+模型生成上下文使用 `[source:N]` 作为内部来源标记，系统消息提供本次完整允许清单，避免与条款号、
+页码或表格行号共用裸数字语法。流式守卫只在标记完整且属于本次允许集合时转换为公开的 `[N]`；未知
+来源不会自动映射，列表、范围、残缺与超长标记仍被拒绝。目录与表格的确定性回答继续使用公开格式。
+失败账本、结构化日志和运行中心只记录分类与允许来源数，不保存模型原始错误标记或正文。提示语不能
+代替该校验，也不证明回答语义正确；模型、证据和 Prompt 变化仍需真实质量回归。
 
 比较类 Ask 不把 Judge 选出的单段当成完整比较范围：在证据充分时保留全部已准入的有界候选
 （最多 6 条、14,400 个正文字符），超预算拒答，不静默截掉比较对象。这不保证全库穷举覆盖。
