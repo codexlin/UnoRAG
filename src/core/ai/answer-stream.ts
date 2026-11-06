@@ -99,7 +99,7 @@ export class AnswerStreamAdapter {
 		}
 		let lease: AiConcurrencyLease | undefined;
 		const citations = options.allowedCitationIndices
-			? new AnswerCitationGuard(options.allowedCitationIndices)
+			? new AnswerCitationGuard(options.allowedCitationIndices, true)
 			: undefined;
 		let checkingRequest = false;
 		try {
@@ -110,7 +110,9 @@ export class AnswerStreamAdapter {
 			if (options.abortSignal?.aborted) throw new AnswerStreamAbortedError();
 			const source = await this.execute({
 				model: this.model,
-				instructions: CHAT_SYSTEM_PROMPT,
+				instructions: options.allowedCitationIndices
+					? `${CHAT_SYSTEM_PROMPT}\n服务端来源编号清单（完整）：${JSON.stringify(options.allowedCitationIndices.map((index) => `[source:${index}]`))}；独立来源总数：${options.allowedCitationIndices.length}。`
+					: CHAT_SYSTEM_PROMPT,
 				messages: buildAnswerMessages(input),
 				temperature: ANSWER_TEMPERATURE,
 				abortSignal: options.abortSignal,

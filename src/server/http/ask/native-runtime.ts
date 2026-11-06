@@ -257,7 +257,7 @@ function contextText(state: AskState): string {
 				)
 				.join(" / ");
 			return [
-				`[${index + 1}] ${citation.title || citation.filename || citation.doc_id}`,
+				`[source:${index + 1}] ${citation.title || citation.filename || citation.doc_id}`,
 				location,
 				body,
 			]

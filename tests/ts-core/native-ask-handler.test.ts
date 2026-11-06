@@ -1075,7 +1075,10 @@ test("invalid answer citations fail the run without persisting a successful exch
 		const runtime = new FakeRuntime(askState());
 		runtime.streamAnswer = async function* () {
 			yield "价格200元";
-			throw new AnswerCitationValidationError();
+			throw new AnswerCitationValidationError({
+				category: "unknown_source",
+				allowedSourceCount: 1,
+			});
 		};
 		const response = await handleNativeAskRequest({
 			request: request(
@@ -1103,6 +1106,13 @@ test("invalid answer citations fail the run without persisting a successful exch
 		assert.equal(repository.exchanges.length, 0);
 		assert.equal(runs.finalizations[0]?.status, "failed");
 		assert.equal(runs.finalizations[0]?.errorCode, "answer_citation_invalid");
+		assert.ok(
+			runs.finalizations[0]?.stages?.some(
+				(stage) =>
+					stage.detail?.citation_category === "unknown_source" &&
+					stage.detail?.citation_allowedSourceCount === 1,
+			),
+		);
 	}
 });
 

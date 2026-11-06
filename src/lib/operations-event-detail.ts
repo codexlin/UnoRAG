@@ -56,6 +56,7 @@ export type OperationsEventStage = {
 		| (JudgeDiagnosticDetail & {
 				rerank?: RerankDiagnostic;
 				qdrant?: QdrantDiagnostic;
+				citation?: AnswerCitationDiagnostic;
 		  })
 		| null;
 };
@@ -88,3 +89,5 @@ export type OperationsEventDetail = {
 	};
 	stages: OperationsEventStage[];
 };
+
+import type { AnswerCitationDiagnostic } from "@/core/ai/answer-citations";

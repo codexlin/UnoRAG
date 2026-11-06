@@ -89,6 +89,40 @@ export function RequestOutcome({ detail }: { detail: OperationsEventDetail }) {
 	);
 }
 
+export function CitationDiagnostics({
+	stages,
+}: {
+	stages: OperationsEventDetail["stages"];
+}) {
+	const labels = {
+		unknown_source: "来源编号不在本次清单",
+		invalid_format: "引用格式不合法",
+		incomplete_marker: "引用标记未闭合",
+		marker_too_long: "引用标记超过长度限制",
+	};
+	return stages.map((stage) => {
+		const diagnostic = stage.detail?.citation;
+		if (!diagnostic) return null;
+		return (
+			<section key={stage.id} className="border-t border-border/70 pt-4">
+				<h3 className="text-ui font-semibold">
+					引用诊断 · 阶段 {stage.sequence}
+				</h3>
+				<dl className="mt-3 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2">
+					<dt className="text-meta text-muted-foreground">拦截原因</dt>
+					<dd className="min-w-0 break-words text-xs">
+						{labels[diagnostic.category]}
+					</dd>
+					<dt className="text-meta text-muted-foreground">可用来源数</dt>
+					<dd className="font-mono text-[11px]">
+						{diagnostic.allowedSourceCount}
+					</dd>
+				</dl>
+			</section>
+		);
+	});
+}
+
 export function JudgeDiagnostics({
 	stages,
 }: {
@@ -411,6 +445,7 @@ export function OperationsErrorDrawer({
 								<StageWaterfall stages={detail.stages} />
 							</section>
 							<JudgeDiagnostics stages={detail.stages} />
+							<CitationDiagnostics stages={detail.stages} />
 							<RerankDiagnostics stages={detail.stages} />
 							<QdrantDiagnostics stages={detail.stages} />
 

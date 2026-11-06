@@ -1,5 +1,6 @@
 import { and, desc, eq, or, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { projectAnswerCitationDiagnostic } from "@/core/ai/answer-citations";
 import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
 import { projectQdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
 
@@ -119,6 +120,10 @@ function judgeDetail(
 }
 
 function stageDetail(stage: typeof askRunStages.$inferSelect) {
+	const citation = projectAnswerCitationDiagnostic({
+		category: stage.detail?.citation_category,
+		allowedSourceCount: stage.detail?.citation_allowedSourceCount,
+	});
 	const qdrant = projectQdrantDiagnostic(
 		Object.fromEntries(
 			Object.entries(stage.detail ?? {})
@@ -126,10 +131,13 @@ function stageDetail(stage: typeof askRunStages.$inferSelect) {
 				.map(([key, value]) => [key.slice(7), value]),
 		),
 	);
-	const dependency = qdrant ? { qdrant } : {};
+	const dependency = {
+		...(qdrant ? { qdrant } : {}),
+		...(citation ? { citation } : {}),
+	};
 	if (stage.stage !== "retrieve" && stage.stage !== "table_retrieve") {
 		const judge = judgeDetail(stage);
-		return judge || qdrant ? { ...judge, ...dependency } : null;
+		return judge || qdrant || citation ? { ...judge, ...dependency } : null;
 	}
 	const rerank = projectRerankDiagnostic(
 		Object.fromEntries(
@@ -138,7 +146,7 @@ function stageDetail(stage: typeof askRunStages.$inferSelect) {
 				.map(([key, value]) => [key.slice(7), value]),
 		),
 	);
-	return rerank || qdrant
+	return rerank || qdrant || citation
 		? { ...(rerank ? { rerank } : {}), ...dependency }
 		: null;
 }

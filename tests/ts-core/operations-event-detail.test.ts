@@ -8,6 +8,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+	CitationDiagnostics,
 	JudgeDiagnostics,
 	QdrantDiagnostics,
 	RequestOutcome,
@@ -20,6 +21,42 @@ import type { OperationsEventDetail } from "../../src/lib/operations-event-detai
 import { OperationsEventService } from "../../src/server/observability/operations-event-service";
 
 const scope = { organizationId: "org-1", workspaceId: "workspace-1" };
+
+test("citation detail exposes finite classification, not generated markers or answers", async () => {
+	const detail = await read(
+		[
+			stage(
+				{
+					citation_category: "unknown_source",
+					citation_allowedSourceCount: 1,
+					citation_marker: "private generated content",
+				},
+				{ stage: "generate", errorCode: "answer_citation_invalid" },
+			),
+		],
+		{ errorCode: "answer_citation_invalid" },
+	);
+	assert.deepEqual(detail.stages[0]?.detail, {
+		citation: { category: "unknown_source", allowedSourceCount: 1 },
+	});
+	const html = renderToStaticMarkup(
+		createElement(CitationDiagnostics, { stages: detail.stages }),
+	);
+	assert.match(html, /来源编号不在本次清单/);
+	assert.doesNotMatch(
+		JSON.stringify(detail) + html,
+		/private generated content/,
+	);
+	const old = await read([
+		stage({}, { stage: "generate", errorCode: "answer_citation_invalid" }),
+	]);
+	assert.equal(
+		renderToStaticMarkup(
+			createElement(CitationDiagnostics, { stages: old.stages }),
+		),
+		"",
+	);
+});
 
 test("Qdrant request failure diagnostics expose cause code without private error content", async () => {
 	const diagnostic = diagnoseQdrantError(
