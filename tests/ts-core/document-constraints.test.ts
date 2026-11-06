@@ -97,7 +97,7 @@ test("structure is incomplete for partial parsing, unknown levels and exceeded b
 			],
 			true,
 		).status,
-		"unavailable",
+		"ambiguous",
 	);
 	const unknown = document();
 	required(unknown.nodes[0]).level = null;
@@ -126,7 +126,7 @@ test("structure is incomplete for partial parsing, unknown levels and exceeded b
 			[descriptor({ context: identities })],
 			true,
 		).status,
-		"unavailable",
+		"resolved",
 	);
 	assert.equal(
 		resolveDocumentConstraint(
@@ -205,7 +205,52 @@ test("known document codes anchor while SKUs do not, and contradicting identitie
 			],
 			true,
 		).status,
+		"resolved",
+	);
+	const partial = descriptor({
+		documentId: "unrelated",
+		filename: "partial.docx",
+		context: {
+			...required(allowed.context),
+			identifiers: [],
+			identifiers_complete: false,
+			outline_complete: false,
+		},
+	});
+	assert.equal(
+		resolveDocumentConstraint(
+			"SEC-ACCESS-27 的内容？",
+			[allowed, partial],
+			true,
+		).status,
+		"resolved",
+	);
+	assert.equal(
+		resolveDocumentConstraint(
+			"SEC-MISSING-27 的内容？",
+			[allowed, partial],
+			true,
+		).status,
 		"unavailable",
+	);
+	assert.equal(
+		resolveDocumentConstraint(
+			"partial.docx 的二级标题有哪些？",
+			[partial],
+			true,
+		).status,
+		"resolved",
+	);
+	assert.equal(
+		executeOutlineQuestion(
+			"partial.docx 的二级标题有哪些？",
+			resolveDocumentConstraint(
+				"partial.docx 的二级标题有哪些？",
+				[partial],
+				true,
+			),
+		),
+		null,
 	);
 });
 

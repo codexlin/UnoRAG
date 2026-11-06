@@ -97,8 +97,10 @@ export function resolveDocumentConstraint(
 				return unavailable;
 			continue;
 		}
-		if (catalog.some((doc) => !doc.context?.identifiers_complete))
-			return unavailable;
+		// An observed identifier is a positive source constraint, not a claim that
+		// every unrelated document was parsed in full. Unknown identities above
+		// remain fail-closed when metadata is incomplete; known duplicates below
+		// remain ambiguous.
 		if (
 			filenames.length &&
 			candidates.some(
