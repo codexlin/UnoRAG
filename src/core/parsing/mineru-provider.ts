@@ -415,23 +415,36 @@ function contentListToNodes(
 		// Only page decorations may sit between two parts of one table. Any real
 		// content closes the candidate so A -> B -> A cannot reconnect the ends.
 		previousTable = null;
-		const text =
-			textValue(
-				item.text ??
-					item.table_caption ??
-					item.img_caption ??
-					item.image_caption ??
-					item.equation,
-			) ||
-			joinedText(
-				item.table_caption ?? item.img_caption ?? item.image_caption,
-			) ||
-			stripHtml(tableHtml);
-		if (!text && !["image", "figure"].includes(kind)) continue;
+		const isFigure = ["image", "figure"].includes(kind);
+		const text = isFigure
+			? [
+					...new Set([
+						joinedText(item.text),
+						joinedText(item.img_caption),
+						joinedText(item.image_caption),
+						joinedText(item.caption),
+						joinedText(item.img_footnote),
+						joinedText(item.image_footnote),
+					]),
+				]
+					.filter(Boolean)
+					.join("\n\n")
+			: textValue(
+					item.text ??
+						item.table_caption ??
+						item.img_caption ??
+						item.image_caption ??
+						item.equation,
+				) ||
+				joinedText(
+					item.table_caption ?? item.img_caption ?? item.image_caption,
+				) ||
+				stripHtml(tableHtml);
+		if (!text && !isFigure) continue;
 		const level = positiveNumber(item.text_level ?? item.level);
 		const nodeType = promotedDocumentHeader
 			? "heading"
-			: ["image", "figure"].includes(kind)
+			: isFigure
 				? "figure"
 				: level
 					? "heading"
