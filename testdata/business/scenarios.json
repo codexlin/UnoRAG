@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "contract_version": 2,
   "description": "Repository fixtures plus fictional business documents. Not customer production data or a capacity benchmark.",
   "documents": [
     {"path":"testdata/md/handbook.md"},
@@ -73,8 +74,9 @@
     {"file":"biz-support-contract.txt","mode":"support","question":"旗舰版支持合同的 P1 故障首次响应时限是多少？这是否等于恢复时限？","answer":"首次响应20分钟，不等于20分钟恢复。","key_facts":["20分钟","不等于"]},
     {"file":"biz-support-contract.txt","mode":"support","question":"旗舰版年度支持费是否包含现场驻场服务？","answer":"现场驻场服务需单独签约，不包含在年度支持费中。","key_facts":["单独签约","不包含"]},
     {"file":"biz-release-checklist.md","mode":"release","question":"订单系统上线前需要哪两个角色共同签字？","answer":"测试负责人和运维负责人。","key_facts":["测试负责人","运维负责人"]},
-    {"file":"biz-release-checklist.md","mode":"release","question":"订单系统应用异常时回滚什么？数据库 schema 是否自动逆向回滚？","answer":"回滚应用镜像，数据库迁移按前向修复处理，不自动逆向回滚数据库 schema。","key_facts":["应用镜像","前向修复","不自动"]},
-    {"file":"biz-release-checklist.md","mode":"release","question":"订单系统发布前，数据库备份需要做什么检查，而不是只确认文件存在？","answer":"完成数据库备份校验。","key_facts":["备份校验"]}
+    {"file":"biz-release-checklist.md","mode":"release","question":"订单系统应用异常时回滚什么？数据库 schema 是否自动逆向回滚？","answer":"订单系统应用异常时回滚应用镜像，不自动逆向回滚数据库 schema。","key_facts":["应用镜像","不自动"]},
+    {"file":"biz-release-checklist.md","mode":"release","question":"订单系统发布清单规定，数据库迁移应按什么方式处理？","answer":"订单系统发布清单规定，数据库迁移按前向修复处理。","key_facts":["前向修复"]},
+    {"file":"biz-release-checklist.md","mode":"release","question":"订单系统发布前，数据库备份需要做什么检查，而不是只确认文件存在？","answer":"订单系统发布前必须完成数据库备份校验，不能只确认备份文件存在。","key_facts":["备份校验"]}
   ],
   "negative": [
     {"question":"FIN-INT-26 指定的固定美元兑人民币汇率是多少？请给出确切数值。"},

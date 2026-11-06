@@ -34,6 +34,7 @@ test("business matrix resolves real bytes, varied formats and independently labe
 });
 
 type TestSpecification = {
+	contract_version?: number;
 	documents: {
 		path?: string;
 		filename?: string;
@@ -42,6 +43,35 @@ type TestSpecification = {
 	}[];
 	positive: { file: string; key_facts: string[] }[];
 };
+
+test("contract v2 preserves natural backup wording and all rollback facts", async () => {
+	const plan = await loadBusinessPlan();
+	assert.equal(safePlanSummary(plan).contract_version, 2);
+	assert.equal(plan.positive.length, 83);
+	const backup = plan.positive.find(
+		(item: { id: string }) => item.id === "bc6bbc477c4a4ea7",
+	);
+	assert.ok(backup);
+	assert.deepEqual(backup.key_facts, ["备份校验"]);
+	assert.ok(!backup.question.includes("原文名称"));
+	const rollback = plan.positive.find(
+		(item: { id: string }) => item.id === "4c0d633c9b865946",
+	);
+	assert.ok(rollback);
+	assert.deepEqual(rollback.key_facts, ["应用镜像", "不自动"]);
+	const migration = plan.positive.find((item: { question: string }) =>
+		item.question.includes("数据库迁移应按什么方式"),
+	);
+	assert.ok(migration);
+	assert.equal(migration.file, rollback.file);
+	assert.deepEqual(migration.key_facts, ["前向修复"]);
+});
+
+test("business matrix rejects unknown review contracts", async () => {
+	await invalidManifest((input) => {
+		input.contract_version = 99;
+	}, /unsupported contract/u);
+});
 
 async function invalidManifest(
 	change: (value: TestSpecification) => void,

@@ -28,6 +28,8 @@ const hash = (data) => createHash("sha256").update(data).digest("hex");
 export async function loadBusinessPlan(manifestPath = MANIFEST) {
 	const specification = JSON.parse(await readFile(manifestPath, "utf8"));
 	assert.equal(specification.schema_version, 1);
+	const contractVersion = specification.contract_version ?? 1;
+	assert.ok([1, 2].includes(contractVersion), "unsupported contract version");
 	assert.ok(
 		Array.isArray(specification.documents) &&
 			specification.documents.length > 0,
@@ -105,6 +107,7 @@ export async function loadBusinessPlan(manifestPath = MANIFEST) {
 		"every positive fixture needs an oracle",
 	);
 	return {
+		contractVersion,
 		documents,
 		positive,
 		negative,
@@ -119,6 +122,7 @@ export function safePlanSummary(plan) {
 		origins[document.origin] = (origins[document.origin] ?? 0) + 1;
 	}
 	return {
+		contract_version: plan.contractVersion,
 		files: plan.documents.length,
 		positive: plan.positive.length,
 		negative: plan.negative.length,
