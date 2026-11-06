@@ -38,6 +38,10 @@ if(command==='timeout') {
  process.exit(child.status??99);
 }
 const operation=args[0], ref=args.at(-1);
+if(operation==='push'&&process.env.REQUIRE_RUNTIME_PLATFORM==='1'&&(args[1]!=='--platform'||args[2]!=='linux/amd64')){
+ console.error('error from registry: unknown manifest class for application/vnd.oci.empty.v1+json');
+ process.exit(1);
+}
 if(operation===process.env.FAIL_OPERATION&&ref.includes(':'+process.env.FAIL_TARGET+'-')){
  console.error('fixture registry denied requested access');
  if(process.env.LEAK_FIXTURE==='1')console.error(process.env.ACR_USERNAME+' '+process.env.ACR_PASSWORD+' ::error::untrusted registry text');
@@ -103,6 +107,22 @@ test("mirror executes the workflow step and records four complete digest outputs
 		).length,
 		4,
 	);
+});
+
+test("ACR pushes only the selected runtime platform instead of its attested OCI index", async (t) => {
+	const result = await executeMirror(t, { REQUIRE_RUNTIME_PLATFORM: "1" });
+	assert.equal(result.status, 0, result.log);
+	const pushes = result.calls.filter(
+		(call) => call.command === "docker" && call.args[0] === "push",
+	);
+	assert.equal(pushes.length, 4);
+	for (const call of pushes) {
+		assert.deepEqual(call.args.slice(0, 3), [
+			"push",
+			"--platform",
+			"linux/amd64",
+		]);
+	}
 });
 
 for (const target of ["web", "migrator"]) {
