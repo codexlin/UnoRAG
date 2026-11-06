@@ -9,21 +9,23 @@
 ## 一句话结论
 
 UnoRAG 是一个 **TypeScript-only、可私有部署、具备权限和文档生命周期的开源知识产品**，采用 Apache-2.0。
-当前稳定版 [`v0.2.4`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.4) 已发布，香港正式实例运行
-`0.2.4` / `339307e`。四个应用镜像通过扫描、Cosign 签名与身份核对，本版只提供 GHCR manifest。
+当前稳定版 [`v0.2.5`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.5) 已发布，香港正式实例运行
+`0.2.5` / `e749e2d`。四个应用镜像通过扫描、Cosign 签名与身份核对，提供 GHCR 与可选 ACR manifest。
 
-本轮修复了轮询打断新建库选中的竞态，增加真实 PDF 分阶段计时，并修复在途解析 HTTP 请求越过预算的问题。
-快速测试 **827/827**、真实集成 **82/82**、主干六项 CI 通过。隔离候选完成空数据卷安装、旧稳定版升级/
-回滚/再升级、三轮 **123/123**、隔离 **29/29**、浏览器 **32/32**、Provider 故障、队列背压和恢复。
-七份原文的恢复后摘要及生效版本一致。最终稳定镜像再次在正式 COS 实例完成新鲜入库 **7/7**、黄金集
-**41/41**、浏览器 **32/32**、原文下载摘要 **7/7**，P95 为 **8.83 秒**，没有提高 15 秒门槛。
-完整结论、前后对比和边界见 [v0.2.4 收口验收](./evidence/2026-11-06-v0.2.4-release-closeout.md)。
+本轮修复长正文/链接/行内代码的窄屏越界，以及 ACR 推送错误不可见和 OCI artifact 不兼容；不改变检索、
+Provider、数据库 schema 或公共 API。快速测试 **840/840**、真实集成 **82/82**、主干六项 CI 通过。
+最终稳定镜像在香港 COS 实例新鲜入库 **7/7**、三轮黄金集 **123/123**、原文下载摘要 **7/7**；
+最高轮次 P95 **8.92 秒**，没有提高 15 秒门槛。公网浏览器复验 **36/36**，另有真实无 mock SSE **2/2**。
+首轮 30 秒整项预算下的浏览器 **35/36** 保留，复验只调整公网整项预算，没有放宽功能断言。
+香港独立项目重做空卷安装、旧版升级/回滚/再升级、隔离 **29/29**、Provider/依赖故障、有界背压、
+小样本容量和七份原文恢复对照，结束后已清理。完整归因、前后对比和边界见
+[v0.2.5 收口验收](./evidence/2026-11-06-v0.2.5-release-closeout.md)。
 
 默认交付仍是一位客户一套独立实例；Workspace 服务于企业内部治理，不代表公网共享多租户 SaaS。
 参考环境通过不等于所有客户拓扑、容量或安全场景已经认证。历史失败保留在
 [证据索引](./evidence/README.md)，不被新 PASS 改写。历史 Qdrant 根因继续跟踪
-[#193](https://github.com/codexlin/UnoRAG/issues/193)；可选 ACR 分发故障及诊断缺口跟踪
-[#197](https://github.com/codexlin/UnoRAG/issues/197)，不使用失败流水线的部分标签。
+[#193](https://github.com/codexlin/UnoRAG/issues/193)；可选离线 Ragas/DiskCache 的未修补 advisory 跟踪
+[#202](https://github.com/codexlin/UnoRAG/issues/202)，不属于四个产品镜像内的 Python 依赖。
 
 ## 当前运行时
 
@@ -81,7 +83,7 @@ Next.js product + Knowledge API
 | 原生运行中心 | 已实现健康、任务、解析、模型、生命周期、告警、Ask/入库阶段瀑布与 P50/P95；香港已验证请求筛选/详情、Qdrant 失败节点与 Request ID 关联、桌面/移动展示及同进程恢复 |
 | 标准观测 | 可选 OTel Collector、Prometheus、Grafana、Loki、Tempo 与 Alertmanager |
 | AI 工程观测 | 可选 metadata-only Langfuse Trace 与评测分数发布，不采集问题或文档正文 |
-| 评测 | 版本化黄金集、真实文件矩阵、Prompt Registry、稳定性和延迟门禁；可选 Ragas 首轮 36 条本地诊断待人工校准；本轮隔离候选 123/123、最终稳定镜像 41/41，P95 均低于 15 秒，旧失败保留 |
+| 评测 | 版本化黄金集、真实文件矩阵、Prompt Registry、稳定性和延迟门禁；可选 Ragas 首轮 36 条本地诊断待人工校准并有独立依赖风险跟踪；本轮最终稳定镜像三轮 123/123，P95 均低于 15 秒，旧失败保留 |
 | 交付 | Compose 参考拓扑、Helm starter、四个 Node 镜像、升级/回滚、备份/恢复工具 |
 | 公开接口 | `POST /api/v1/retrieve`、`POST /api/v1/ask` 与 OpenAPI 契约 |
 
@@ -90,9 +92,10 @@ Next.js product + Knowledge API
 - 当前仓库跟踪超过 100 个 TypeScript/Node 测试文件及版本化测试数据；生成的本地 A/B 报告位于忽略目录，不进入 Git。
 - CI 覆盖全历史密钥扫描、Web/TS Core、真实 PostgreSQL migration、镜像构建、原生 PDF/OCR 离线验证、
   依赖审计和品牌残留检查。
-- `v0.2.4` 重复执行不可变候选、Provider 故障、digest 升级/应用回滚、破坏性恢复和生命周期门禁。
-  local 文件卷恢复实测 37 秒，七文件备份重放 33 秒并逐一核对原文摘要与生效版本；这些是小样本实测，
-  不是通用 RTO 或容量 SLA，见 [当前发布验收](./evidence/2026-11-06-v0.2.4-release-closeout.md)。
+- `v0.2.5` 重复执行不可变镜像、Provider 故障、digest 升级/应用回滚、破坏性恢复和生命周期门禁。
+  local 文件卷恢复阶段实测 36 秒，七份原文摘要与生效版本均一致；Retrieve 17/17、Ask 6/6、并发上传
+  3/3 的容量小样本通过。这些不是通用 RTO 或吞吐 SLA，见
+  [当前发布验收](./evidence/2026-11-06-v0.2.5-release-closeout.md)。
 - Library 创建、更新、删除请求、删除完成与删除失败使用统一审计语义；事务内事件与异步 Worker 终态通过
   同一 Request ID 关联，描述正文不会进入审计。空库同步删除、带文件异步删除、真实 Qdrant 停机和本地
   对象存储权限故障均已验证；运行中心可展示原因、阶段瀑布和 `jobs.delete_failed` 告警，恢复后对象与向量
@@ -107,7 +110,7 @@ Next.js product + Knowledge API
 
 ### 每次发布必须重复的门禁
 
-`v0.2.4` 的不可变镜像、香港环境升级、公网 smoke、Provider 故障和恢复门禁已经完成。历史 PASS 不自动
+`v0.2.5` 的不可变镜像、香港环境升级、公网 smoke、Provider 故障和恢复门禁已经完成。历史 PASS 不自动
 传递给新提交、新模型、ParserProvider 或客户环境；每个正式交付仍需执行自己的备份恢复、容量、Provider
 和故障演练门禁。
 
@@ -148,8 +151,9 @@ Secret Scanning 和 Push Protection 均已开启。
 
 当前最有杠杆的工作不是继续增加通用 RAG 路径，而是把现有能力做得更稳定、更可解释：
 
-本轮交付门禁已重复完成。下一步先修复 #197 的发布推送错误可诊断性并重新验证可选镜像通道，
-持续收集 #193 的自然失败证据；如再出现异常，应先关联 Request ID、操作、底层分类和上游记录，
+本轮 #197 的发布诊断/可选 ACR 通道及 #199 窄屏显示问题已完成修复和最终稳定镜像复验。
+下一步以小范围真实用户试用收集反馈，持续收集 #193 的自然失败证据，跟踪 #202 的上游修复；
+如再出现异常，应先关联 Request ID、操作、底层分类和上游记录，
 不把“重试成功”当作根因证明，也不为没有样本的场景堆新框架。
 
 1. **稳定性与恢复**：固化客户环境验收模板，覆盖容量、备份 restore、队列拥塞、Provider 降级和责任人；

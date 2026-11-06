@@ -392,7 +392,7 @@ Worker 同时获得新凭证，验证上传、入库、下载和删除后再撤�
 
 ```bash
 just check
-VERSION=v0.2.4
+VERSION=v0.2.5
 just images "$VERSION"
 just release "$VERSION" REGISTRY/NAMESPACE
 ```
@@ -406,6 +406,9 @@ GHCR 使用 Cosign v3 的 OCI 1.1 referrer 与新 bundle；部分 ACR 版本不�
 因此 ACR manifest 显式使用 Cosign `legacy` referrer 和旧 bundle 布局。两者签署的仍是各 Registry 中
 精确的镜像 digest，使用同一 GitHub OIDC 身份，并在发布端和部署端按 manifest 自验；不得手工删除这些
 字段或把验签降级为可选警告。
+ACR 只分发选定平台的运行时 manifest，完整 SBOM/provenance 保留在 GHCR；不要把两端不同的 index/
+runtime digest 当作代码不一致。推送失败时先查看脱敏后的 Registry 错误和退出码，边界见
+[发布流程](./RELEASE.md)。
 
 运营人员也可以独立验证任一 manifest 镜像：
 
