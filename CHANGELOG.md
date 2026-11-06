@@ -11,6 +11,8 @@ results remain in [`docs/evidence/`](./docs/evidence/).
   copyable fenced code with or without a language label.
 - Print sanitized ACR push diagnostics before propagating the original failure or timeout
   status; do not continue mirroring or record a failed target digest.
+- Mirror only the selected runtime platform to ACR instead of an OCI index containing
+  unsupported artifact manifests; preserve canonical SBOM/provenance in GHCR.
 
 ## [0.2.4] - 2026-11-06
 
