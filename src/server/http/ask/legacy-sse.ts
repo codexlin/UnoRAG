@@ -169,6 +169,8 @@ export function projectPublicRetrievalDebug(
 		comparison_context_count: ["comparison_context_count"],
 		evidence_selection_mode: ["evidence_selection_mode"],
 		evidence_selection_valid: ["evidence_selection_valid"],
+		conflict_evidence_count: ["conflict_evidence_count"],
+		evidence_resolution: ["evidence_resolution"],
 	} as const;
 	for (const [target, sources] of Object.entries(mappings)) {
 		const source = sources.find((name) => value[name] !== undefined);

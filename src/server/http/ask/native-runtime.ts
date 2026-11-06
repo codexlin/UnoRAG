@@ -18,6 +18,7 @@ import {
 	type AskState,
 } from "@/core/ask-graph";
 import { deriveAnswerRequirements } from "@/core/ask-graph/answer-requirements";
+import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
 import {
 	deriveDeterministicTablePlan,
 	deriveGroundedTableLookup,
@@ -804,6 +805,11 @@ export class NativeAskRuntime {
 
 	async *streamAnswer(state: AskState): AsyncGenerator<string> {
 		await this.beforeModelRequest();
+		const conflict = conflictAnswer(state);
+		if (conflict) {
+			yield conflict;
+			return;
+		}
 		const deterministicAnswer =
 			this.outlineAnswer &&
 			state.citations?.some(

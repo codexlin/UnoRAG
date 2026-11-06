@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { APICallError, type LanguageModel, RetryError } from "ai";
+import { runEvidenceConflictChecks } from "../../scripts/acceptance/evidence-conflicts";
 
 import {
 	AiConcurrencyGate,
@@ -27,6 +27,99 @@ import {
 
 const injectedModel = {} as LanguageModel;
 
+test("judge control runner keeps mismatch and failure rows instead of treating refusals as success", async () => {
+	const cases = [
+		{
+			id: "control",
+			question: "期限？",
+			expect_conflict: true,
+			citations: [{ id: "a", text: "期限12日或24日" }],
+		},
+	];
+	const adapter = {
+		judgeWithMetadata: async () => ({
+			output: {
+				sufficient: true,
+				action: "generate" as const,
+				reason: "conflict",
+				evidence_ids: ["a"],
+				evidence_resolution: "conflict" as const,
+				conflict_evidence: [{ evidence_id: "a", quote: "期限12日或24日" }],
+			},
+			metadata: { attempts: 1, durationMs: 1 },
+		}),
+	};
+	const rows = [];
+	for await (const row of runEvidenceConflictChecks(adapter, cases, 2))
+		rows.push(row);
+	assert.equal(rows.length, 2);
+	assert.ok(rows.every((row) => row.ok));
+	for await (const row of runEvidenceConflictChecks(
+		adapter,
+		[{ ...cases[0], expect_conflict: false }],
+		1,
+	))
+		assert.equal(row.ok, false);
+	for await (const row of runEvidenceConflictChecks(
+		{
+			judgeWithMetadata: async () => {
+				throw new Error("private body");
+			},
+		},
+		cases,
+		1,
+	)) {
+		assert.equal(row.ok, false);
+		assert.doesNotMatch(JSON.stringify(row), /private body/);
+	}
+});
+
+test("judge rejects contradictory resolution fields and missing conflict assessment", async () => {
+	const base = {
+		sufficient: true,
+		action: "generate",
+		reason: "covered",
+		evidence_ids: ["a", "b"],
+	};
+	for (const output of [
+		base,
+		{
+			...base,
+			evidence_assessment: { resolution: "conflict", conflict_evidence: [] },
+		},
+		{
+			...base,
+			evidence_assessment: {
+				resolution: "scoped",
+				conflict_evidence: [
+					{ evidence_id: "a", quote: "12日" },
+					{ evidence_id: "b", quote: "24日" },
+				],
+			},
+		},
+		{
+			...base,
+			evidence_assessment: {
+				resolution: "conflict",
+				conflict_evidence: [
+					{ evidence_id: "a", quote: "12日" },
+					{ evidence_id: "foreign", quote: "24日" },
+				],
+			},
+		},
+	]) {
+		const adapter = new StructuredOutputAdapter(
+			injectedModel,
+			async () => output,
+			{ maxAttempts: 1 },
+		);
+		await assert.rejects(
+			adapter.judge({ question: "期限？", citations: [], attempts: 1 }),
+			StructuredOutputValidationError,
+		);
+	}
+});
+
 function judgeCompletion() {
 	return Response.json({
 		id: "judge-test",
@@ -43,6 +136,10 @@ function judgeCompletion() {
 						action: "generate",
 						reason: "supported",
 						evidence_ids: ["source-1"],
+						evidence_assessment: {
+							resolution: "consistent",
+							conflict_evidence: [],
+						},
 					}),
 				},
 				finish_reason: "stop",
@@ -355,6 +452,10 @@ test("judge metadata is content-free and carries bounded execution details", asy
 				action: "generate",
 				reason: "supported",
 				evidence_ids: ["citation-1"],
+				evidence_assessment: {
+					resolution: "consistent",
+					conflict_evidence: [],
+				},
 			};
 		},
 		{ maxAttempts: 1, maxOutputTokens: 96 },

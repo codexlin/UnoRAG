@@ -12,6 +12,7 @@ import {
 import { z } from "zod";
 import { metadataOnlyAiTelemetry } from "@/lib/observability/ai-telemetry";
 import { withActiveSpan } from "@/lib/observability/tracing";
+import { ConflictEvidenceSchema } from "../ask-graph/evidence-conflict";
 import { type TableQueryPlan, TableQueryPlanSchema } from "../ask-graph/table";
 import {
 	type AiConcurrencyGateLike,
@@ -75,10 +76,41 @@ export const JudgeOutputSchema = z
 		action: z.enum(["generate", "retry", "refuse"]),
 		reason: z.string().trim().min(1),
 		evidence_ids: z.array(z.string().trim().min(1)).max(6),
+		evidence_assessment: z.union([
+			z
+				.object({
+					resolution: z.enum(["consistent", "scoped", "precedence"]),
+					conflict_evidence: ConflictEvidenceSchema.length(0),
+				})
+				.strict(),
+			z
+				.object({
+					resolution: z.literal("conflict"),
+					conflict_evidence: ConflictEvidenceSchema.min(1),
+				})
+				.strict(),
+		]),
 		can_retry: z.boolean().optional(),
 		top_score: z.number().min(0).max(1).optional(),
 	})
-	.strict();
+	.strict()
+	.superRefine((value, context) => {
+		const assessment = value.evidence_assessment;
+		const conflict = assessment.resolution === "conflict";
+		if (
+			conflict &&
+			(!value.sufficient ||
+				value.action !== "generate" ||
+				assessment.conflict_evidence.some(
+					(item) => !value.evidence_ids.includes(item.evidence_id),
+				))
+		) {
+			context.addIssue({
+				code: "custom",
+				message: "Inconsistent evidence resolution",
+			});
+		}
+	});
 
 export type JudgeAnswerRequirements = {
 	granularity: "named_requirement" | "procedure_details" | "unspecified";
@@ -89,7 +121,11 @@ export const TablePlanOutputSchema = TableQueryPlanSchema;
 
 export type RouterOutput = z.infer<typeof RouterOutputSchema>;
 export type RewriteOutput = z.infer<typeof RewriteOutputSchema>;
-export type JudgeOutput = z.infer<typeof JudgeOutputSchema>;
+type JudgeModelOutput = z.infer<typeof JudgeOutputSchema>;
+export type JudgeOutput = Omit<JudgeModelOutput, "evidence_assessment"> & {
+	evidence_resolution: JudgeModelOutput["evidence_assessment"]["resolution"];
+	conflict_evidence: JudgeModelOutput["evidence_assessment"]["conflict_evidence"];
+};
 export type TablePlanOutput = TableQueryPlan;
 
 type StructuredKind = "router" | "rewrite" | "judge" | "table_plan";
@@ -492,7 +528,17 @@ export class StructuredOutputAdapter {
 			],
 			options.abortSignal,
 			options.beforeRequest,
-		);
+		).then(({ output, metadata }) => {
+			const { evidence_assessment, ...judgement } = output;
+			return {
+				metadata,
+				output: {
+					...judgement,
+					evidence_resolution: evidence_assessment.resolution,
+					conflict_evidence: evidence_assessment.conflict_evidence,
+				},
+			};
+		});
 	}
 
 	planTable(

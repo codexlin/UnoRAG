@@ -416,6 +416,10 @@ test("model reason text cannot impersonate a server-assigned Judge outage", asyn
 				action,
 				reason: "judge_unavailable",
 				evidence_ids: ["hit"],
+				evidence_assessment: {
+					resolution: "consistent",
+					conflict_evidence: [],
+				},
 			}),
 		);
 		const runtime = new NativeAskRuntime(
@@ -474,4 +478,41 @@ test("successful table execution always prefers its deterministic answer", async
 		deterministicTableAnswer({ status: "success", answerText: "unsafe" }),
 		null,
 	);
+});
+
+test("runtime renders verified conflict excerpts without invoking answer generation and still checks authorization", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	let authorized = 0;
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{
+			structured: {} as never,
+			answer: {
+				stream: () => {
+					throw new Error("must not generate");
+				},
+			} as never,
+			retrieval: {} as never,
+		},
+		async () => {
+			authorized++;
+		},
+	);
+	const result: string[] = [];
+	for await (const text of runtime.streamAnswer({
+		citations: [{ id: "a", body: "规则甲期限12日。规则乙期限24日。" }],
+		judgement: {
+			conflict_evidence: [
+				{ evidence_id: "a", quote: "规则甲期限12日。" },
+				{ evidence_id: "a", quote: "规则乙期限24日。" },
+			],
+		},
+	} as unknown as AskState))
+		result.push(text);
+	assert.equal(authorized, 1);
+	assert.equal(result.length, 1);
+	assert.match(result[0], /口径不一致/);
 });

@@ -1,0 +1,43 @@
+{
+  "contract_version": 1,
+  "description": "Synthetic judge controls, not customer documents or end-to-end retrieval evidence.",
+  "cases": [
+    {"id":"different-action","question":"设备甲的首次响应时限是多少？","citations":[{"id":"a","text":"设备甲首次响应时限为10分钟，恢复目标为60分钟。"}],"expect_conflict":false},
+    {
+      "id": "same-scope",
+      "question": "设备甲保修期限是多少？",
+      "citations": [{"id":"a","text":"设备甲保修期限为12个月。"},{"id":"b","text":"设备甲保修期限为24个月。"}],
+      "expect_conflict": true
+    },
+    {
+      "id": "same-chunk",
+      "question": "设备甲保修期限是多少？",
+      "citations": [{"id":"a","text":"第2条：设备甲保修期限为12个月。第5条：设备甲保修期限为24个月。"}],
+      "expect_conflict": true
+    },
+    {
+      "id": "different-condition",
+      "question": "境内员工的住宿上限是多少？",
+      "citations": [{"id":"a","text":"境内员工住宿上限为480元人民币。"},{"id":"b","text":"境外员工住宿上限为160美元。"}],
+      "expect_conflict": false
+    },
+    {
+      "id": "explicit-precedence",
+      "question": "设备甲保修期限是多少？",
+      "citations": [{"id":"a","text":"原第2条规定设备甲保修期限为12个月。"},{"id":"b","text":"本补充协议取代原第2条：设备甲保修期限为24个月，以本补充协议为准。"}],
+      "expect_conflict": false
+    },
+    {
+      "id": "explicit-clause",
+      "question": "只依据第2条，设备甲保修期限是多少？",
+      "citations": [{"id":"a","text":"第2条：设备甲保修期限为12个月。"},{"id":"b","text":"第5条：设备甲保修期限为24个月。"}],
+      "expect_conflict": false
+    },
+    {
+      "id": "dates-without-precedence",
+      "question": "设备甲保修期限是多少？",
+      "citations": [{"id":"a","text":"记录时间2025年1月：设备甲保修期限为12个月。"},{"id":"b","text":"记录时间2026年1月：设备甲保修期限为24个月。两份记录均未标明适用批次、有效期或替代关系。"}],
+      "expect_conflict": true
+    }
+  ]
+}

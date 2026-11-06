@@ -175,6 +175,8 @@ function visibility(state: AskState) {
 }
 
 function conversationDebug(state: AskState) {
+	const { conflict_evidence: _conflictEvidence, ...judge } =
+		state.judgement ?? {};
 	return {
 		mode: "live",
 		refused: state.refused === true,
@@ -182,7 +184,7 @@ function conversationDebug(state: AskState) {
 		query_type: state.query_type ?? null,
 		retrieval_plan: state.retrieval_plan ?? null,
 		retrieval_debug: state.retrieval_debug ?? null,
-		judge: state.judgement ?? null,
+		judge: state.judgement ? judge : null,
 		table_execution: state.table_execution ?? null,
 	};
 }

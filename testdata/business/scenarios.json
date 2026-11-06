@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract_version": 2,
+  "contract_version": 3,
   "description": "Repository fixtures plus fictional business documents. Not customer production data or a capacity benchmark.",
   "documents": [
     {"path":"testdata/md/handbook.md"},
@@ -30,6 +30,8 @@
     {"filename":"biz-release-checklist.md","origin":"synthetic","content":"# 订单系统发布检查清单\n\n编号 OPS-REL-26。上线前由测试负责人和运维负责人共同签字，不能只凭流水线成功自动放行。\n\n## 上线前\n必须完成数据库备份校验、回归测试和回滚方案检查。\n\n## 回滚边界\n应用异常时回滚应用镜像。数据库迁移按前向修复处理，不自动逆向回滚数据库 schema。涉及不可逆 DDL 时必须在发布前确认维护窗口。\n"}
   ],
   "positive": [
+    {"file":"contract-long.docx","mode":"precise","question":"仅依据 contract-long.docx 第3.2.2条，乙方逾期付款超过多少日甲方有权解除协议？","answer":"第3.2.2条规定逾期超过30日有权解除协议。","key_facts":["30日"],"expect_conflict":false},
+    {"file":"contract-long.docx","mode":"precise","question":"仅依据 contract-long.docx 第4.3.1条，乙方逾期付款超过多少日甲方有权解除协议？","answer":"第4.3.1条规定逾期超过60日有权解除协议。","key_facts":["60日"],"expect_conflict":false},
     {"file":"handbook.md","mode":"hr","question":"《员工手册》规定病假返岗后，应在几个工作日内补交材料？","answer":"三个工作日内补交完整材料。","key_facts":["三个工作日"]},
     {"file":"handbook.md","mode":"hr","question":"《员工手册》规定基本工资在每个自然月的哪一天发放？","answer":"按自然月二十五日发放。","key_facts":["二十五日"]},
     {"file":"handbook.md","mode":"hr","question":"《员工手册》的病假年度天数限制是多少？","answer":"30天/年。","key_facts":["30"]},

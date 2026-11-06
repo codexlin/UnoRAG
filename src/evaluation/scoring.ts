@@ -46,6 +46,7 @@ export type PositiveCaseScore = Readonly<{
 	retrievedEvidenceCount: number | null;
 	selectedEvidenceCount: number | null;
 	recordTypeMatched: boolean | null;
+	conflictExpectationMatched: boolean | null;
 	latencyMs: number;
 	requestId: string | null;
 	traceId: string | null;
@@ -97,6 +98,15 @@ export function scorePositiveCase(
 	gold: GoldenCase,
 	response: EvaluationResponse,
 ): PositiveCaseScore {
+	const conflictCount = debugCount(
+		response.retrievalDebug,
+		"conflict_evidence_count",
+	);
+	const conflictExpectationMatched =
+		gold.expect_conflict === undefined
+			? null
+			: conflictCount !== null &&
+				(gold.expect_conflict ? conflictCount > 0 : conflictCount === 0);
 	const matchedFacts = gold.key_facts.filter((fact) =>
 		factMatchesAnswer(fact, response.answer),
 	);
@@ -193,6 +203,7 @@ export function scorePositiveCase(
 			invalidCitationCount === 0 &&
 			inlineCitationsValid &&
 			missingEvidenceFacts.length === 0 &&
+			conflictExpectationMatched !== false &&
 			(!expectedRecordType || recordTypeMatched === true),
 		factCoverage: matchedFacts.length / gold.key_facts.length,
 		matchedFacts: Object.freeze(matchedFacts),
@@ -213,6 +224,7 @@ export function scorePositiveCase(
 		retrievedEvidenceCount,
 		selectedEvidenceCount,
 		recordTypeMatched,
+		conflictExpectationMatched,
 		latencyMs: response.latencyMs,
 		requestId: response.requestId ?? null,
 		traceId: response.traceId ?? null,

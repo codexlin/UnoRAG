@@ -13,6 +13,8 @@ import {
 	defaultClarifyAnswer,
 	defaultRefuseAnswer,
 } from "../../src/core/ask-graph";
+import { conflictAnswer } from "../../src/core/ask-graph/evidence-conflict";
+import { projectPublicRetrievalDebug } from "../../src/server/http/ask/legacy-sse";
 
 test("default user-facing fallbacks never expose internal library ids", () => {
 	const state = { library_id: "internal-library-uuid" } as AskState;
@@ -24,6 +26,112 @@ test("default user-facing fallbacks never expose internal library ids", () => {
 		assert.doesNotMatch(answer, /internal-library-uuid/);
 		assert.match(answer, /当前知识库/);
 	}
+});
+
+test("conflicting evidence is retained and rendered without a model verdict or diagnostic text", async () => {
+	const conflicts = [
+		{ evidence_id: "a", quote: "甲项期限为12日。" },
+		{ evidence_id: "b", quote: "甲项期限为24日。" },
+	];
+	const result = await new AskGraphService(
+		createContext({
+			retrieve: () => ({
+				citations: [
+					{ id: "a", body: "甲项期限为12日。其他事项。" },
+					{ id: "b", body: "甲项期限为24日。" },
+					{ id: "unused", body: "无关资料" },
+				],
+			}),
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "conflict",
+				evidence_ids: ["a"],
+				conflict_evidence: conflicts,
+			}),
+		}),
+	).invoke({ question: "甲项期限？" });
+	assert.deepEqual(
+		result.citations?.map((c) => c.id),
+		["a", "b"],
+	);
+	assert.equal(result.judgement?.reason, "evidence_conflict");
+	assert.equal(result.retrieval_debug?.conflict_evidence_count, 2);
+	const answer = conflictAnswer(result);
+	assert.match(answer ?? "", /口径不一致/);
+	assert.match(answer ?? "", /12日.*\[1\]/);
+	assert.match(answer ?? "", /24日.*\[2\]/);
+	assert.doesNotMatch(JSON.stringify(result.retrieval_debug), /甲项期限为/);
+	assert.doesNotMatch(
+		JSON.stringify(projectPublicRetrievalDebug(result.retrieval_debug)),
+		/甲项期限/,
+	);
+});
+
+test("invalid conflict provenance fails closed without retry or generation", async () => {
+	for (const conflicts of [
+		[
+			{ evidence_id: "a", quote: "期限12日" },
+			{ evidence_id: "foreign", quote: "期限24日" },
+		],
+		[
+			{ evidence_id: "a", quote: "期限12日" },
+			{ evidence_id: "b", quote: "捏造期限" },
+		],
+		[
+			{ evidence_id: "a", quote: "期限12日" },
+			{ evidence_id: "a", quote: "期限12日" },
+		],
+	]) {
+		const calls: string[] = [];
+		const result = await new AskGraphService(
+			createContext({
+				calls,
+				retrieve: () => ({
+					citations: [
+						{ id: "a", body: "期限12日" },
+						{ id: "b", body: "期限24日" },
+					],
+				}),
+				judge: () => ({
+					sufficient: true,
+					action: "generate",
+					reason: "conflict",
+					evidence_ids: ["a"],
+					conflict_evidence: conflicts,
+				}),
+			}),
+		).invoke({ question: "期限？" });
+		assert.equal(result.refused, true);
+		assert.equal(result.refuse_reason, "invalid_conflict_evidence");
+		assert.ok(!calls.includes("generate"));
+	}
+});
+
+test("conflict excerpts can share one source and cannot inject Markdown citations", () => {
+	const state = {
+		citations: [{ id: "a", body: "规则[99]要求12日。另一规则要求24日。" }],
+		judgement: {
+			conflict_evidence: [
+				{ evidence_id: "a", quote: "规则[99]要求12日。" },
+				{ evidence_id: "a", quote: "另一规则要求24日。" },
+			],
+		},
+	};
+	assert.match(conflictAnswer(state) ?? "", /\\\[99\\\]/);
+	assert.equal(conflictAnswer({ judgement: { conflict_evidence: [] } }), null);
+	assert.equal(conflictAnswer({}), null);
+	assert.match(
+		conflictAnswer({
+			citations: [{ id: "a", body: "规定甲为12日，规定乙为24日。" }],
+			judgement: {
+				conflict_evidence: [
+					{ evidence_id: "a", quote: "规定甲为12日，规定乙为24日。" },
+				],
+			},
+		}) ?? "",
+		/12日.*24日/,
+	);
 });
 
 type Scenario = {

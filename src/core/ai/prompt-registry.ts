@@ -47,6 +47,13 @@ export const PROMPT_VERSION_HISTORY = Object.freeze({
 		"1.4.0": "dcbc3e13fe13096abf664e578fe2d1255667bd149d3f47dbd6a46cab3116b252",
 		"1.5.0": "b7e9435c90603c196f7c981d9a97e613acd0c20c99a85ebc1b42d55e281b7075",
 		"1.6.0": "dcf69ce39ba3ae809ce1472a75193215065e1f7a2cb60e2155cb9b5d4b190abe",
+		"1.7.0": "bfc990aa59891dfebd61f9ffd5bf544b90886eb5366a283400ee54859db8240b",
+		"1.8.0": "d7bfdf56ad0bc87b44d30d102d30f06c40d23f104a5c01c19e9218eaa89d5c1a",
+		"1.9.0": "b675eab5bcb0e321416aaf258e9d9f60a52cc33f7dbe85d27c42344bf3500bf0",
+		"1.10.0":
+			"b89f03410c37073feb5a39e08d1705cce21ee85e45f145400ca2c62d5e0fff96",
+		"1.11.0":
+			"63bc7d58202743a667fb757dfad06a3b7ab8b6b0938ebf9edf3369cef06378e2",
 	}),
 	table_plan: Object.freeze({
 		"1.0.0": "074c2f67f29bc44f7a72be0b1525490ef51719be3a9ba9ac4677b33198d5aab7",
@@ -110,10 +117,13 @@ export const PROMPT_REGISTRY = Object.freeze({
 	judge: definePrompt({
 		key: "judge",
 		name: "unorag.evidence.judge",
-		version: "1.6.0",
+		version: "1.11.0",
 		text:
 			"你是证据充分性判断器。仅输出一个完整的 JSON 对象，不使用 Markdown，不输出对象外的文本或填充空白。" +
-			"字段为 sufficient（布尔值）、action（generate、retry 或 refuse）、reason（一句简短理由）、evidence_ids（字符串数组）；可选 can_retry（布尔值）和 top_score（0到1），不输出其他字段。" +
+			"字段为 sufficient（布尔值）、action（generate、retry 或 refuse）、reason（一句简短理由）、evidence_ids（字符串数组）、evidence_assessment（对象，包含 resolution 和 conflict_evidence）；可选 can_retry（布尔值）和 top_score（0到1），不输出其他字段。resolution 只能是 consistent、scoped、precedence 或 conflict；下述 conflict_evidence 均指 evidence_assessment 内的数组。" +
+			"先检查全部候选中与所问事实有关的条款是否存在未解决的口径不一致，再选择证据。不得只挑支持单一结论的片段而忽略相反规定。适用对象、阶段、条件不同不自动构成冲突；用户明确限定某条款时只回答该条款；材料明确规定优先级或替代关系时按该关系判断，不能自行按日期、章节顺序或相关性决定优先级。" +
+			"逐条核对所问事实的对象、条件、动作、数值、单位和否定极性，将每个数值绑定到其原文动作，不跨分句挪用。暂停与终止、首次响应与恢复完成等不同动作的门槛不可混用。先列清各来源对所问同一动作的规定再判断一致性；重复片段不是多数票，不能因为一种口径出现次数多就忽略另一种口径。" +
+			"如果同一所问事实存在不同规定且无法确定适用口径，输出 sufficient=true、action=generate、reason=evidence_conflict；此时充分仅指足以展示歧义，不代表能够给出唯一结论。conflict_evidence 必须列出一至六个 {evidence_id,quote}，摘录整体须覆盖冲突各方规定及其条件，每个 quote 为不超过600字符的逐字原文，evidence_id 只能来自候选 id。一条摘录可以同时包含双方规定，不必按条款拆块；不得重复同一摘录，不得只截取一方，不得改写或编造。evidence_ids 必须包含所有这些来源。服务端会校验并直接展示原文与歧义提示，不让生成模型裁决。没有未解决冲突时 conflict_evidence 必须为 []；retry/refuse 时也必须为空。" +
 			"仅根据给定候选证据判断 generate、retry 或 refuse。" +
 			"资料未覆盖时必须 refuse，不能用模型常识补足。问题澄清由查询路由器负责，不输出 clarify。" +
 			"同时输出 evidence_ids：generate 时必须从候选证据的真实 id 中选择一至六条能够完整支持回答的最小证据集合；" +
@@ -122,7 +132,8 @@ export const PROMPT_REGISTRY = Object.freeze({
 			"先核对指定文档或文号、业务对象、适用条件和操作阶段，不能用恢复前等相似阶段的规则替代发布前的规则。document_identity 是服务端从同一生效版本解析的文号，可用于确认归属，但本身不证明业务事实。" +
 			"充分性以用户实际询问的精度为准，不增加用户未问的条件；问接收地点而资料给出部门前台时，不因缺少街道地址而拒答。枚举标题必须有完整结构证据，普通 Top-K 片段不足以断言全部标题。" +
 			"问题询问应做哪项检查、采取什么措施等名称时，资料明确写出该检查或措施即可据此回答，不擅自升级为要求实施细则；资料未展开的细则应说明未详述，不能自行补齐。只有用户明确要求详细步骤、具体检查项或更细精度且资料未提供时，才以这些内容缺失判为不足。" +
-			"服务端回答粒度只解释问题要求，并不证明证据充分：named_requirement 表示只需找出原文明示的检查、措施或材料名称，不要求其实施步骤；procedure_details 必须有相应的步骤或方法证据；unspecified 按原问判断。formal_name_required=false 时，不得额外要求原文声称某词是正式名称或标准术语。仍须完整核对来源、对象、条件、阶段与所问事实；材料只给名称不能用于回答明确要求的具体步骤。",
+			"服务端回答粒度只解释问题要求，并不证明证据充分：named_requirement 表示只需找出原文明示的检查、措施或材料名称，不要求其实施步骤；procedure_details 必须有相应的步骤或方法证据；unspecified 按原问判断。formal_name_required=false 时，不得额外要求原文声称某词是正式名称或标准术语。仍须完整核对来源、对象、条件、阶段与所问事实；材料只给名称不能用于回答明确要求的具体步骤。" +
+			"输出前按以下顺序确定 evidence_assessment.resolution：1. 问题已明确限定条款或适用条件，其他条款不在所问范围，选 scoped；2. 材料明示取代旧条款或以某条款为准，选 precedence，不得额外要求未被问到且材料未质疑的签署/生效证明；3. 同一所问事实仍存在无法解决的不同规定，选 conflict；4. 其余选 consistent。scoped、precedence、consistent 的 conflict_evidence 必须为空数组，不能把已经排除的不同口径填入冲突字段。仅 conflict 可以填写冲突摘录，且 evidence_ids 包含全部摘录来源；摘录须兼顾问题的其他明确子问。理由、分类和摘录必须一致。",
 	}),
 	table_plan: definePrompt({
 		key: "table_plan",

@@ -29,7 +29,10 @@ export async function loadBusinessPlan(manifestPath = MANIFEST) {
 	const specification = JSON.parse(await readFile(manifestPath, "utf8"));
 	assert.equal(specification.schema_version, 1);
 	const contractVersion = specification.contract_version ?? 1;
-	assert.ok([1, 2].includes(contractVersion), "unsupported contract version");
+	assert.ok(
+		[1, 2, 3].includes(contractVersion),
+		"unsupported contract version",
+	);
 	assert.ok(
 		Array.isArray(specification.documents) &&
 			specification.documents.length > 0,
@@ -111,7 +114,20 @@ export async function loadBusinessPlan(manifestPath = MANIFEST) {
 		documents,
 		positive,
 		negative,
-		sha256: hash(await readFile(manifestPath)),
+		sha256:
+			contractVersion >= 3
+				? hash(
+						JSON.stringify({
+							specification,
+							positive,
+							negative,
+							documents: documents.map(({ filename, sha256 }) => ({
+								filename,
+								sha256,
+							})),
+						}),
+					)
+				: hash(await readFile(manifestPath)),
 	};
 }
 

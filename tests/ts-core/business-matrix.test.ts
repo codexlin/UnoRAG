@@ -44,10 +44,26 @@ type TestSpecification = {
 	positive: { file: string; key_facts: string[] }[];
 };
 
-test("contract v2 preserves natural backup wording and all rollback facts", async () => {
+test("contract v3 preserves natural wording and checks conflict plus clause-scoped controls", async () => {
 	const plan = await loadBusinessPlan();
-	assert.equal(safePlanSummary(plan).contract_version, 2);
-	assert.equal(plan.positive.length, 83);
+	assert.equal(safePlanSummary(plan).contract_version, 3);
+	assert.equal(plan.positive.length, 85);
+	const conflict = plan.positive.find(
+		(item: { id: string }) => item.id === "48dea4319e71a530",
+	);
+	assert.equal(conflict.expect_conflict, true);
+	assert.deepEqual(conflict.key_facts, [
+		"30日",
+		"60日",
+		"万分之五",
+		"口径不一致",
+	]);
+	assert.equal(
+		plan.positive.filter(
+			(item: { expect_conflict?: boolean }) => item.expect_conflict === false,
+		).length,
+		2,
+	);
 	const backup = plan.positive.find(
 		(item: { id: string }) => item.id === "bc6bbc477c4a4ea7",
 	);
