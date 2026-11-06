@@ -83,6 +83,25 @@ class DataTests(unittest.TestCase):
             with self.assertRaises(evaluation.EvaluationError):
                 limits.validate()
 
+    def test_metric_selection_is_explicit_unique_and_default_compatible(self):
+        self.assertNotIn("factual_correctness", evaluation.METRICS)
+        self.assertEqual(evaluation.selected_metrics(["factual_correctness"]), ("factual_correctness",))
+        for names in ([], ["unknown"], ["faithfulness", "faithfulness"]):
+            with self.assertRaisesRegex(evaluation.EvaluationError, "invalid_metric_selection"):
+                evaluation.selected_metrics(names)
+
+    def test_calibration_fixture_has_no_fabricated_server_provenance(self):
+        rows, _ = evaluation.load_samples(FIXTURE.parent / "semantic-calibration-v1.jsonl")
+        expectations = json.loads((FIXTURE.parent / "semantic-calibration-v1.expected.json").read_text())
+        self.assertEqual({row["case_id"] for row in rows}, set(expectations["cases"]))
+        self.assertEqual(len(rows), 10)
+        for row in rows:
+            self.assertEqual(row["context_scope"], "unavailable")
+            self.assertEqual(row["provenance"]["response"], "unverified")
+            self.assertEqual(row["generation_contexts"], [])
+            self.assertIsNone(row["build_fingerprint"]["git_commit"])
+            self.assertIsNotNone(row["reference"])
+
 
 class FakeMetric:
     def __init__(self, value=0.5, error=None, delay=0):
@@ -99,6 +118,30 @@ class FakeMetric:
 
 
 class ScoringTests(unittest.IsolatedAsyncioTestCase):
+    async def test_factual_correctness_needs_only_response_and_reference_not_embedding_or_retrieval(self):
+        row = deepcopy(ROW)
+        row.update(context_scope="unavailable", retrieved_contexts=[], generation_contexts=[])
+        metric = FakeMetric(value=1)
+        report = await evaluation.score_samples([row], {"factual_correctness": metric}, evaluation.Limits())
+        self.assertEqual(metric.calls, [{"response": row["response"], "reference": row["reference"]}])
+        self.assertEqual(report["selected_metrics"], ["factual_correctness"])
+        self.assertEqual(report["status"], "completed")
+        self.assertEqual(report["release_gate"], "not_evaluated")
+        row["reference"] = None
+        metric = FakeMetric()
+        report = await evaluation.score_samples([row], {"factual_correctness": metric}, evaluation.Limits())
+        self.assertEqual(metric.calls, [])
+        self.assertEqual(report["status"], "incomplete")
+        self.assertEqual(report["rows"][0]["metrics"]["factual_correctness"]["code"], "reference_not_available")
+
+    async def test_optional_metric_failure_is_never_a_quality_pass(self):
+        report = await evaluation.score_samples([ROW], {"factual_correctness": FakeMetric(
+            error=RuntimeError("PRIVATE JUDGE OUTPUT"))}, evaluation.Limits())
+        self.assertEqual(report["status"], "error")
+        self.assertEqual(report["summary"]["factual_correctness"]["errors"], 1)
+        self.assertEqual(report["release_gate"], "not_evaluated")
+        self.assertNotIn("PRIVATE JUDGE OUTPUT", json.dumps(report))
+
     async def test_faithfulness_uses_actual_generation_input_not_discarded_retrieval(self):
         row = full_row()
         row["retrieved_contexts"] = ["Discarded candidate supports the generated claim."]
@@ -205,6 +248,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         from openai import AsyncOpenAI
         calls = []
         outputs = {
+            "ClaimDecompositionOutput": {"claims": [ROW["response"]]},
             "StatementGeneratorOutput": {"statements": [ROW["response"]]},
             "NLIStatementOutput": {"statements": [{"statement": ROW["response"], "reason": "fixture", "verdict": 1}]},
             "AnswerRelevanceOutput": {"question": ROW["question"], "noncommittal": 0},
@@ -239,6 +283,18 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(calls), 8)
         self.assertEqual(report["summary"]["faithfulness"]["mean"], 1.0)
         self.assertEqual(report["summary"]["response_relevance"]["mean"], 1.0)
+
+        calls.clear()
+        transport = evaluation.BudgetTransport("http://127.0.0.1:1/v1", limits, httpx.MockTransport(handler))
+        async with httpx.AsyncClient(transport=transport) as http:
+            async with AsyncOpenAI(api_key="synthetic-no-real-key", base_url="http://127.0.0.1:1/v1", http_client=http, max_retries=0) as client:
+                metrics = evaluation.make_metrics(client, "fixture-model", None, limits, ("factual_correctness",))
+                self.assertEqual(metrics["factual_correctness"].atomicity, "high")
+                self.assertEqual(metrics["factual_correctness"].coverage, "high")
+                report = await evaluation.score_samples([ROW], metrics, limits)
+        self.assertEqual(report["status"], "completed", report)
+        self.assertEqual(report["summary"]["factual_correctness"]["mean"], 1)
+        self.assertEqual(calls, ["/v1/chat/completions"] * 4)
 
 
 if __name__ == "__main__":

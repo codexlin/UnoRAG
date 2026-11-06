@@ -238,6 +238,37 @@ uv run --project scripts/evaluation --frozen python scripts/evaluation/ragas_off
 | Response relevance | 问题与回答；使用显式配置的评委和 Embedding 模型 |
 | Context precision / recall | 需要完整基础检索候选与参考答案；不足则跳过，不用引用排名代替 |
 | Context utilization | 没有参考答案时的候选利用诊断，不冒充有金标的 recall |
+| Factual correctness（可选） | 回答与独立参考答案的双向事实比较；F1、高原子性、高覆盖率，不验证引用或权限 |
+
+### 校准词面差异，而不是强迫模型复述
+
+默认五项指标保持不变。用 `--metrics` 显式选择指标，可以只排查一种问题，减少模型请求和数据出域。
+`factual_correctness` 使用锁定版本的 Ragas `FactualCorrectness`，不需要 Embedding 或召回上下文；
+缺参考答案时跳过并标记不完整。报告记录所选指标、配置和工具指纹，`completed` 只代表所选诊断完成，
+不代表未选择的指标、完整 RAG 链路或发布验收通过。
+此指标本身不读取问题或引用原文，不能代替问答充分性或原文忠实性判断；参考答案遗漏的问题条件会使
+正确回答被低估。`faithfulness` 仍是另一项需要生成上下文的诊断。
+
+先验证仓库内合成校准集，不会调用模型：
+
+```bash
+uv run --project scripts/evaluation --frozen python scripts/evaluation/ragas_offline.py \
+  scripts/evaluation/tests/fixtures/semantic-calibration-v1.jsonl --metrics factual_correctness
+```
+
+显式评分时增加 `--execute --judge-model=YOUR_JUDGE_MODEL` 和上文的评委地址/授权参数；
+仅选此指标时不必提供 `--embedding-model`。十条校准样本包含正确原述、正确改写、漏答、否定、错误阶段、
+无依据细节、回滚部分事实遗漏、正确/错误金额，以及简短参考答案对分数的影响。
+相邻 `semantic-calibration-v1.expected.json` 固定了执行前预期区间；它们仅用于检查评委在这些反例上的
+区分能力，**不是通用发布阈值**。参考答案要包含问题要求的主体、时间和否定条件，且能逐项追溯到原文；
+不能看过分数后为答案量身改写参考答案。即使校准通过，也应抽样复核并考虑同模型偏差。
+
+处理真实失败时保留原 report、manifest SHA、Case/Request ID 和原参考答案，另存离线诊断。
+若对照补全了参考答案，应同时评分原参考与补全参考并记录依据，不覆盖原结果。最终引用不能冒充完整
+召回或生成上下文；没有捕获时仍标为 `unavailable`，人工提供时标为 `provided`。
+
+语义高分不能覆盖错误来源、非法引用、数值/单位、拒答、ACL 或延迟门禁；语义低分也不能直接定性产品有错。
+词面 FAIL 和语义诊断并列展示，是否需要修订评测契约必须单独审查、版本化并重新执行验收。
 
 默认最多 20 个样本、串行执行、200 次实际 HTTP 请求；超出必须显式调整。请求次数、输入字节、每次输出
 Token、并发、单次请求、指标与整轮时间均有上限，SDK 内部重试也计入请求预算。不保证固定货币成本。
