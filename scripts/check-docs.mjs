@@ -1,6 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 const root = process.cwd();
 const markdownFiles = execFileSync("git", [
@@ -39,20 +42,17 @@ for (const file of documentationFiles) {
 	}
 }
 
-function linkDestination(raw) {
-	const value = raw.trim();
-	if (value.startsWith("<")) {
-		const closing = value.indexOf(">");
-		return closing === -1 ? value : value.slice(1, closing);
-	}
-	return value.split(/\s+/u, 1)[0];
-}
-
+const markdown = unified().use(remarkParse).use(remarkGfm);
 function linkDestinations(content) {
-	return [
-		...content.matchAll(/!?\[[^\]]*\]\(([^)\n]+)\)/gu),
-		...content.matchAll(/^ {0,3}\[[^\]\n]+\]:[ \t]*(.+)$/gmu),
-	].map((match) => linkDestination(match[1]));
+	const destinations = [];
+	function visit(node) {
+		if (["link", "image", "definition"].includes(node.type)) {
+			destinations.push(node.url);
+		}
+		for (const child of node.children ?? []) visit(child);
+	}
+	visit(markdown.parse(content));
+	return destinations;
 }
 
 for (const file of documentationFiles) {

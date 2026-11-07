@@ -71,6 +71,43 @@ test("multiple current reports fail even if both are indexed", (t) => {
 	assert.equal(f.run().status, 0);
 });
 
+test("Markdown notes and literal code are not interpreted as links", (t) => {
+	const f = fixture(t);
+	f.write(
+		"docs/guide.md",
+		[
+			"A note[^1].",
+			"",
+			"[^1]: This is an explanatory note.",
+			"",
+			"```md",
+			"[example]: ./not-a-real-link.md",
+			"[example](./also-not-real.md)",
+			"```",
+			"",
+			"    [indented](./not-real.md)",
+			"",
+			"An inline example: `[example](./missing.md)`.",
+		].join("\n"),
+	);
+	assert.equal(f.run().status, 0);
+	f.write(
+		"docs/guide.md",
+		"A note[^1].\n\n[^1]: See [details](./missing.md).\n",
+	);
+	assert.equal(f.run().status, 1);
+});
+
+test("links with parentheses and reference titles are parsed as Markdown", (t) => {
+	const f = fixture(t);
+	f.write(
+		"docs/guide.md",
+		'[More](./more(details).md)\n\n[Details][extra]\n\n[extra]: ./more(details).md "Title with spaces"\n',
+	);
+	f.write("docs/more(details).md", "# Details\n");
+	assert.equal(f.run().status, 0);
+});
+
 test("an evidence filename in prose is not an indexed report", (t) => {
 	const f = fixture(t);
 	f.write("docs/evidence/README.md", "See ./2026-01-01-release.md later.\n");
