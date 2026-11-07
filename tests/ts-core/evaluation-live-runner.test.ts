@@ -263,6 +263,7 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 					trace_id: `request-${asks}`,
 					session_id: payload.session_id,
 					retrieval_debug: {
+						conflict_evidence_count: gold.expect_conflict ? 2 : 0,
 						total_duration_ms: 12.5,
 						stages: [{ stage: "retrieve", duration_ms: 3.5, ok: true }],
 					},
@@ -397,6 +398,7 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		assert.equal(report.quality_scorecard.length, 2);
 		assert.equal(report.provider_scorecard.status, "skipped_reused_library");
 		assert.deepEqual(report.positive_cases[0]?.response.retrievalDebug, {
+			conflict_evidence_count: 0,
 			total_duration_ms: 12.5,
 			stages: [{ stage: "retrieve", duration_ms: 3.5, ok: true }],
 		});

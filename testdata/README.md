@@ -38,7 +38,7 @@ testdata/
 | `md/handbook.md` | `须于返岗后三个工作日内补交`；`基本工资×80%`；`按自然月二十五日发放` |
 | `txt/plain.txt` | `蓝鲸游过赤道时水温恰好为二十六点七度`；`罚款200元` |
 | `pdf/leave-digital.pdf` | `须于返岗后五个自然日内将原件交至人力资源前台`；`HR-POL-2026-003`；`2026年3月1日` |
-| `pdf/leave-scanned.pdf` | 无文字层 → 期望 `needs_ocr` / `partial`（勿当可检索金句） |
+| `pdf/leave-scanned.pdf` | 无文字层；可用且获准使用 MinerU 时应 OCR 入库，没有可用 Provider 时显式失败，不把空文本当作成功 |
 | `pdf/manual-with-figure.pdf` | `见图注：设备须断电`；`内线119` |
 | `pdf/messy-headers.pdf` | 页眉/页脚 `内部资料·勿外传`；金句 A/B/C（摩尔斯 / 灯塔 / 量子） |
 | `docx/quote-table.docx` | `甲公司` + `120000`；`36个月` |
@@ -107,5 +107,15 @@ testdata/
 
 当前真实质量矩阵由 `pnpm eval:live` 执行；上传拒收测试应覆盖
 `unsupported/` 下的格式。
+
+## 混合业务验收
+
+`business/scenarios.json` 将上面的格式 fixture、七份 AB fixture 与十份原创合成业务资料放进同一个库，
+覆盖费用、采购、产品运维、事故响应、备份及支持合同。它明确标注资料来源，不是客户真实生产数据。
+相似术语和不同数值有意共存，用于暴露串文档、条件丢失、错误引用与拒答问题，而不是复制文件凑数量。
+
+通过 `node --import tsx scripts/acceptance/business-matrix.mjs --plan` 查看实际文件与问题数量。
+执行方式见 [验收入口](../scripts/acceptance/README.md)。此矩阵是探索性业务验收，不替代三轮发布黄金集、
+隔离安全门禁或容量压测；新增客户资料前必须确认脱敏、授权及外部模型/解析器的数据出域边界。
 
 体积参考：本集 PDF/DOCX 均约数 KB～数十 KB，远低于 50MB 上限。

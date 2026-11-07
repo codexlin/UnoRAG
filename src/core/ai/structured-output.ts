@@ -12,6 +12,7 @@ import {
 import { z } from "zod";
 import { metadataOnlyAiTelemetry } from "@/lib/observability/ai-telemetry";
 import { withActiveSpan } from "@/lib/observability/tracing";
+import { ConflictEvidenceSchema } from "../ask-graph/evidence-conflict";
 import { type TableQueryPlan, TableQueryPlanSchema } from "../ask-graph/table";
 import {
 	type AiConcurrencyGateLike,
@@ -80,19 +81,46 @@ export const JudgeOutputSchema = z
 	})
 	.strict();
 
+export const ConflictOutputSchema = z
+	.object({
+		comparison: z.string().trim().min(1).max(800),
+		resolution: z.enum(["consistent", "scoped", "precedence", "conflict"]),
+		conflict_evidence: ConflictEvidenceSchema.describe(
+			"Empty unless resolution is conflict; otherwise include exact source quotes from both sides.",
+		),
+	})
+	.strict()
+	.refine(
+		(value) =>
+			(value.resolution === "conflict") === value.conflict_evidence.length > 0,
+		"Inconsistent conflict resolution",
+	);
+
+export type JudgeAnswerRequirements = {
+	granularity: "named_requirement" | "procedure_details" | "unspecified";
+	formal_name_required: boolean;
+};
+
 export const TablePlanOutputSchema = TableQueryPlanSchema;
 
 export type RouterOutput = z.infer<typeof RouterOutputSchema>;
 export type RewriteOutput = z.infer<typeof RewriteOutputSchema>;
 export type JudgeOutput = z.infer<typeof JudgeOutputSchema>;
+export type ConflictOutput = z.infer<typeof ConflictOutputSchema>;
 export type TablePlanOutput = TableQueryPlan;
 
-type StructuredKind = "router" | "rewrite" | "judge" | "table_plan";
+type StructuredKind =
+	| "router"
+	| "rewrite"
+	| "judge"
+	| "conflict"
+	| "table_plan";
 
 interface StructuredSchemaMap {
 	router: typeof RouterOutputSchema;
 	rewrite: typeof RewriteOutputSchema;
 	judge: typeof JudgeOutputSchema;
+	conflict: typeof ConflictOutputSchema;
 	table_plan: typeof TablePlanOutputSchema;
 }
 
@@ -151,6 +179,7 @@ export type StructuredRequestMetadata = {
 };
 
 export type StructuredFailureMetadata = Readonly<{
+	kind: StructuredKind;
 	attempts: number;
 	durationMs: number;
 	timeoutMs: number;
@@ -381,6 +410,7 @@ export class StructuredOutputAdapter {
 						error,
 						Object.freeze({
 							...classification,
+							kind,
 							attempts: attempt,
 							durationMs:
 								Math.round((performance.now() - startedAt) * 100) / 100,
@@ -452,6 +482,7 @@ export class StructuredOutputAdapter {
 			question: string;
 			citations: unknown[];
 			attempts: number;
+			requirements?: JudgeAnswerRequirements;
 		},
 		options: {
 			abortSignal?: AbortSignal;
@@ -468,6 +499,7 @@ export class StructuredOutputAdapter {
 			question: string;
 			citations: unknown[];
 			attempts: number;
+			requirements?: JudgeAnswerRequirements;
 		},
 		options: {
 			abortSignal?: AbortSignal;
@@ -480,9 +512,31 @@ export class StructuredOutputAdapter {
 			getPrompt("judge"),
 			[
 				userMessage(
-					`问题：${input.question.trim()}\n尝试次数：${input.attempts}\n候选证据：${JSON.stringify(input.citations)}`,
+					`服务端回答粒度：${JSON.stringify(input.requirements ?? { granularity: "unspecified", formal_name_required: false })}\n问题：${input.question.trim()}\n尝试次数：${input.attempts}\n候选证据：${JSON.stringify(input.citations)}`,
 				),
 			],
+			options.abortSignal,
+			options.beforeRequest,
+		);
+	}
+
+	checkConflictWithMetadata(
+		input: {
+			question: string;
+			citations: unknown[];
+			evidence_ids: string[];
+			query_type?: string;
+		},
+		options: {
+			abortSignal?: AbortSignal;
+			beforeRequest?: () => Promise<void>;
+		} = {},
+	): Promise<{ output: ConflictOutput; metadata: StructuredRequestMetadata }> {
+		return this.request(
+			"conflict",
+			ConflictOutputSchema,
+			getPrompt("conflict"),
+			[userMessage(JSON.stringify(input))],
 			options.abortSignal,
 			options.beforeRequest,
 		);

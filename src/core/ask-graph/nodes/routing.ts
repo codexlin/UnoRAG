@@ -6,6 +6,10 @@ import {
 	mergeRetrievalDebug,
 	requireQuestion,
 } from "../state";
+import {
+	isFormFieldLookup,
+	isProseChecklistLookup,
+} from "../table/query-intent";
 
 const KNOWN_PATHS = new Set(["fast", "precise", "clarify"]);
 const KNOWN_EXECUTE_PATHS = new Set(["short", "table", "clarify"]);
@@ -38,6 +42,11 @@ function hasSelfContainedRetrievalScope(question: string): boolean {
 }
 
 function executionQueryType(rawQueryType: string, question: string): string {
+	if (
+		rawQueryType === "table" &&
+		(isFormFieldLookup(question) || isProseChecklistLookup(question))
+	)
+		return "fact";
 	if (
 		rawQueryType === "ambiguous" &&
 		hasSelfContainedRetrievalScope(question)

@@ -7,6 +7,7 @@ import type {
 	AiConcurrencyLease,
 } from "./concurrency-gate";
 import { getPrompt, promptSpanAttributes } from "./prompt-registry";
+import type { JudgeAnswerRequirements } from "./structured-output";
 
 export const ANSWER_TEMPERATURE = 0.2;
 
@@ -46,6 +47,7 @@ export function buildAnswerMessages(input: {
 	question: string;
 	context: string;
 	history?: AnswerMessage[];
+	requirements?: JudgeAnswerRequirements;
 }): ModelMessage[] {
 	const messages: ModelMessage[] = [];
 	for (const item of input.history ?? []) {
@@ -54,7 +56,7 @@ export function buildAnswerMessages(input: {
 	}
 	messages.push({
 		role: "user",
-		content: `资料：\n${input.context}\n\n问题：${input.question}`,
+		content: `${input.requirements ? `服务端回答粒度：${JSON.stringify(input.requirements)}\n` : ""}资料：\n${input.context}\n\n问题：${input.question}`,
 	});
 	return messages;
 }
@@ -84,6 +86,7 @@ export class AnswerStreamAdapter {
 			question: string;
 			context: string;
 			history?: AnswerMessage[];
+			requirements?: JudgeAnswerRequirements;
 		},
 		options: {
 			abortSignal?: AbortSignal;
@@ -96,7 +99,7 @@ export class AnswerStreamAdapter {
 		}
 		let lease: AiConcurrencyLease | undefined;
 		const citations = options.allowedCitationIndices
-			? new AnswerCitationGuard(options.allowedCitationIndices)
+			? new AnswerCitationGuard(options.allowedCitationIndices, true)
 			: undefined;
 		let checkingRequest = false;
 		try {
@@ -107,7 +110,9 @@ export class AnswerStreamAdapter {
 			if (options.abortSignal?.aborted) throw new AnswerStreamAbortedError();
 			const source = await this.execute({
 				model: this.model,
-				instructions: CHAT_SYSTEM_PROMPT,
+				instructions: options.allowedCitationIndices
+					? `${CHAT_SYSTEM_PROMPT}\n服务端来源编号清单（完整）：${JSON.stringify(options.allowedCitationIndices.map((index) => `[source:${index}]`))}；独立来源总数：${options.allowedCitationIndices.length}。`
+					: CHAT_SYSTEM_PROMPT,
 				messages: buildAnswerMessages(input),
 				temperature: ANSWER_TEMPERATURE,
 				abortSignal: options.abortSignal,

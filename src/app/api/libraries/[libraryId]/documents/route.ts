@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { redactDiagnosticMessage } from "@/lib/error-diagnostics";
 import { formatParseStatusView } from "@/lib/parse-status-view.mjs";
+import { publicParserReport } from "@/lib/parser-report-public";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
 	documentLifecycleV2Enabled,
@@ -81,7 +82,7 @@ export async function GET(request: Request, context: RouteContext) {
 
 	return Response.json(
 		rows.map(({ document, version, job }) => {
-			const parser_report = version?.parserReport ?? null;
+			const parser_report = publicParserReport(version?.parserReport);
 			const parse_status = formatParseStatusView({
 				parserReport: parser_report as Record<string, unknown> | null,
 				jobStatus: job?.status ?? null,

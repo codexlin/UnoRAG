@@ -47,6 +47,7 @@ const routeModules = Promise.all([
 		"../../src/app/api/libraries/[libraryId]/documents/[documentId]/versions/route"
 	),
 	import("../../src/app/api/jobs/route"),
+	import("../../src/server/retrieval/document-catalog"),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolveFilename;
 });
@@ -209,7 +210,80 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 			documentsRoute,
 			versionsRoute,
 			jobsRoute,
+			catalog,
 		] = await routeModules;
+		await pool.query(
+			`UPDATE app.documents SET projected_acl_fingerprint = acl_fingerprint WHERE id = $1`,
+			[ids.document],
+		);
+		const documentContext = {
+			version: 1,
+			title: "Private document title",
+			filename: "active-source.txt",
+			identifiers: ["ACL-TEST-27"],
+			identifiers_complete: true,
+			outline_complete: true,
+			outline: [
+				{ node_id: "h1", text: "Private heading", level: 1, page: null },
+			],
+		};
+		await pool.query(
+			`UPDATE app.document_versions SET parser_report = $2::jsonb WHERE id = $1`,
+			[
+				ids.version,
+				JSON.stringify({
+					parser: "test",
+					metrics: { document_context: documentContext, heading_count: 1 },
+				}),
+			],
+		);
+		const contentScope = {
+			organizationId: ids.organization,
+			workspaceId: ids.workspace,
+			libraryIds: [ragLibraryId],
+			activeGenerationIds: [ids.generation],
+			principalIds: [ids.viewer],
+			groupIds: [],
+		};
+		const initialCatalog = await catalog.loadActiveDocumentCatalog({
+			identity: viewerIdentity,
+			libraryId: ragLibraryId,
+			scope: contentScope,
+		});
+		assert.equal(initialCatalog.complete, true);
+		assert.equal(initialCatalog.documents.length, 1);
+		assert.deepEqual(initialCatalog.documents[0]?.context, documentContext);
+		assert.equal(initialCatalog.documents[0]?.filename, "active-source.txt");
+		assert.deepEqual(
+			(
+				await catalog.loadActiveDocumentCatalog({
+					identity: { ...viewerIdentity, workspaceId: randomUUID() },
+					libraryId: ragLibraryId,
+					scope: contentScope,
+				})
+			).documents,
+			[],
+		);
+		assert.deepEqual(
+			(
+				await catalog.loadActiveDocumentCatalog({
+					identity: { ...viewerIdentity, tenantId: randomUUID() },
+					libraryId: ragLibraryId,
+					scope: contentScope,
+				})
+			).documents,
+			[],
+		);
+		assert.deepEqual(
+			(
+				await catalog.loadActiveDocumentCatalog({
+					identity: viewerIdentity,
+					libraryId: ragLibraryId,
+					scope: { ...contentScope, activeGenerationIds: [randomUUID()] },
+				})
+			).documents,
+			[],
+		);
 		assert.ok(aclRoute);
 		const ownerToken = await session.issueSessionToken(ownerIdentity);
 		const viewerToken = await session.issueSessionToken(viewerIdentity);
@@ -266,6 +340,10 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 		assert.equal(visibleDocumentRows.length, 1);
 		assert.equal(visibleDocumentRows[0]?.document_id, ids.document);
 		assert.equal(
+			JSON.stringify(visibleDocumentRows).includes("Private heading"),
+			false,
+		);
+		assert.equal(
 			visibleDocumentRows[0]?.error?.includes("job-secret-value"),
 			false,
 		);
@@ -296,6 +374,10 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 		}>;
 		assert.equal(visibleJobRows.length, 1);
 		assert.equal(visibleJobRows[0]?.id, ids.job);
+		assert.equal(
+			JSON.stringify(visibleJobRows).includes("Private heading"),
+			false,
+		);
 		assert.equal(visibleJobRows[0]?.error?.includes("job-secret-value"), false);
 
 		const visibleLibraries = await librariesRoute.GET(
@@ -324,6 +406,46 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 		assert.equal(updatedBody.projection, "projection_queued");
 		assert.ok(updatedBody.projection_job_id);
 		assert.deepEqual(updatedBody.principal_ids, [ids.owner]);
+		// Projection pending hides content even for the owner; metadata role
+		// privileges must never be reused to resolve Ask content identities.
+		assert.deepEqual(
+			(
+				await catalog.loadActiveDocumentCatalog({
+					identity: ownerIdentity,
+					libraryId: ragLibraryId,
+					scope: contentScope,
+				})
+			).documents,
+			[],
+		);
+		await pool.query(
+			`UPDATE app.documents SET projected_acl_fingerprint = acl_fingerprint WHERE id = $1`,
+			[ids.document],
+		);
+		assert.deepEqual(
+			(
+				await catalog.loadActiveDocumentCatalog({
+					identity: {
+						...viewerIdentity,
+						role: "owner",
+						organizationRole: "owner",
+					},
+					libraryId: ragLibraryId,
+					scope: contentScope,
+				})
+			).documents,
+			[],
+		);
+		assert.equal(
+			(
+				await catalog.loadActiveDocumentCatalog({
+					identity: ownerIdentity,
+					libraryId: ragLibraryId,
+					scope: { ...contentScope, principalIds: [ids.owner] },
+				})
+			).documents.length,
+			1,
+		);
 
 		const hidden = await aclRoute.GET(request("GET", viewerToken), context);
 		assert.ok(hidden);

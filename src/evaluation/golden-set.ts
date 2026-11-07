@@ -44,6 +44,7 @@ export const GoldenCaseSchema = z
 		key_facts: KeyFactsSchema,
 		chunk_hint: z.string().trim().min(1).optional(),
 		expect_record_type: ExpectedRecordTypeSchema.optional(),
+		expect_conflict: z.boolean().optional(),
 		supporting_sources: z
 			.array(SupportingSourceSchema)
 			.min(1)

@@ -142,12 +142,24 @@ export function projectPublicRetrievalDebug(
 			"candidateCountBeforePolicy",
 		],
 		evidence_threshold: ["evidence_threshold", "evidenceThreshold"],
+		document_scope_status: [
+			"document_scope_status",
+			"documentConstraintStatus",
+		],
 		table_candidate_count: ["table_candidate_count"],
 		judge_mode: ["judge_mode"],
+		answer_granularity: ["answer_granularity"],
 		judge_model: ["judge_model"],
 		judge_provider: ["judge_provider"],
 		judge_attempts: ["judge_attempts"],
 		judge_duration_ms: ["judge_duration_ms"],
+		judge_sufficiency_attempts: ["judge_sufficiency_attempts"],
+		judge_sufficiency_duration_ms: ["judge_sufficiency_duration_ms"],
+		judge_conflict_attempts: ["judge_conflict_attempts"],
+		judge_conflict_duration_ms: ["judge_conflict_duration_ms"],
+		judge_failed_stage: ["judge_failed_stage"],
+		conflict_scope: ["conflict_scope"],
+		conflict_candidate_count: ["conflict_candidate_count"],
 		judge_timeout_ms: ["judge_timeout_ms"],
 		judge_max_attempts: ["judge_max_attempts"],
 		judge_budget_ms: ["judge_budget_ms"],
@@ -164,6 +176,8 @@ export function projectPublicRetrievalDebug(
 		comparison_context_count: ["comparison_context_count"],
 		evidence_selection_mode: ["evidence_selection_mode"],
 		evidence_selection_valid: ["evidence_selection_valid"],
+		conflict_evidence_count: ["conflict_evidence_count"],
+		evidence_resolution: ["evidence_resolution"],
 	} as const;
 	for (const [target, sources] of Object.entries(mappings)) {
 		const source = sources.find((name) => value[name] !== undefined);

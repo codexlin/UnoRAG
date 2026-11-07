@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "metric": "factual_correctness",
+  "purpose": "Calibration-only expectations fixed before judge execution; never a release threshold. incomplete-reference is observational, not an acceptance assertion.",
+  "cases": {
+    "exact": {
+      "min": 0.9,
+      "max": 1,
+      "asserted": true
+    },
+    "paraphrase": {
+      "min": 0.9,
+      "max": 1,
+      "asserted": true
+    },
+    "existence-only": {
+      "min": 0,
+      "max": 0.5,
+      "asserted": true
+    },
+    "negated": {
+      "min": 0,
+      "max": 0.5,
+      "asserted": true
+    },
+    "wrong-phase": {
+      "min": 0,
+      "max": 0.5,
+      "asserted": true
+    },
+    "unsupported-detail": {
+      "min": 0,
+      "max": 0.8,
+      "asserted": true
+    },
+    "partial-rollback": {
+      "min": 0,
+      "max": 0.9,
+      "asserted": true
+    },
+    "numeric-exact": {
+      "min": 0.9,
+      "max": 1,
+      "asserted": true
+    },
+    "numeric-wrong": {
+      "min": 0,
+      "max": 0.5,
+      "asserted": true
+    },
+    "incomplete-reference": {
+      "min": 0,
+      "max": 1,
+      "asserted": false
+    }
+  }
+}

@@ -26,10 +26,18 @@ from jsonschema import Draft202012Validator
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 METRICS = ("faithfulness", "response_relevance", "context_precision", "context_recall", "context_utilization")
+OPTIONAL_METRICS = ("factual_correctness",)
 
 
 class EvaluationError(Exception):
     """Only fixed, non-sensitive codes may escape the evaluation boundary."""
+
+
+def selected_metrics(names):
+    names = tuple(names)
+    if not names or len(set(names)) != len(names) or any(name not in METRICS + OPTIONAL_METRICS for name in names):
+        raise EvaluationError("invalid_metric_selection")
+    return names
 
 
 def unique_object(pairs):
@@ -176,23 +184,30 @@ class BudgetTransport(httpx.AsyncBaseTransport):
         await self.inner.aclose()
 
 
-def make_metrics(client, model, embedding_model, limits):
+def make_metrics(client, model, embedding_model, limits, names=METRICS):
     from ragas.embeddings.base import embedding_factory
     from ragas.llms import llm_factory
     from ragas.metrics.collections import (AnswerRelevancy, ContextPrecision,
-                                          ContextRecall, ContextUtilization, Faithfulness)
+                                          ContextRecall, ContextUtilization, Faithfulness,
+                                          FactualCorrectness)
 
+    names = selected_metrics(names)
     llm = llm_factory(model, client=client, adapter="instructor", temperature=0,
                       max_tokens=limits.max_output_tokens, max_retries=1)
-    embeddings = embedding_factory("openai", model=embedding_model, client=client)
-    return {"faithfulness": Faithfulness(llm=llm),
-            "response_relevance": AnswerRelevancy(llm=llm, embeddings=embeddings, strictness=3),
-            "context_precision": ContextPrecision(llm=llm),
-            "context_recall": ContextRecall(llm=llm),
-            "context_utilization": ContextUtilization(llm=llm)}
+    factories = {"faithfulness": lambda: Faithfulness(llm=llm),
+                 "response_relevance": lambda: AnswerRelevancy(llm=llm, embeddings=embedding_factory(
+                     "openai", model=embedding_model, client=client), strictness=3),
+                 "context_precision": lambda: ContextPrecision(llm=llm),
+                 "context_recall": lambda: ContextRecall(llm=llm),
+                 "context_utilization": lambda: ContextUtilization(llm=llm),
+                 "factual_correctness": lambda: FactualCorrectness(
+                     llm=llm, mode="f1", atomicity="high", coverage="high")}
+    return {name: factories[name]() for name in names}
 
 
 def metric_arguments(row, name):
+    if name == "factual_correctness":
+        return {"response": row["response"], "reference": row["reference"]}
     args = {"user_input": row["question"]}
     if name in ("faithfulness", "response_relevance", "context_utilization"):
         args["response"] = row["response"]
@@ -204,6 +219,8 @@ def metric_arguments(row, name):
 
 
 def skip_reason(row, name):
+    if name == "factual_correctness":
+        return None if row["reference"] is not None else "reference_not_available"
     if name == "response_relevance":
         return None
     if name == "faithfulness":
@@ -222,15 +239,16 @@ def skip_reason(row, name):
 
 async def score_samples(rows, metrics, limits):
     limits.validate()
+    names = selected_metrics(metrics)
     results = [{"case_id": row["case_id"], "request_id": row["request_id"],
                 "context_scope": row["context_scope"], "provenance": row["provenance"], "metrics": {
-                    name: {"status": "error", "code": "not_run", "value": None} for name in METRICS}}
+                    name: {"status": "error", "code": "not_run", "value": None} for name in names}}
                for row in rows]
     semaphore = asyncio.Semaphore(limits.concurrency)
 
     async def score_row(index, row):
         async with semaphore:
-            for name in METRICS:
+            for name in names:
                 reason = skip_reason(row, name)
                 if reason:
                     results[index]["metrics"][name] = {"status": "skipped", "code": reason, "value": None}
@@ -261,16 +279,22 @@ async def score_samples(rows, metrics, limits):
                 if metric.get("code") == "not_run":
                     metric["code"] = "run_timeout"
     summary = {}
-    for name in METRICS:
+    for name in names:
         values = [result["metrics"][name]["value"] for result in results if result["metrics"][name]["status"] == "ok"]
         summary[name] = {"scored": len(values), "total": len(rows),
                          "mean": sum(values) / len(values) if values else None,
                          "errors": sum(result["metrics"][name]["status"] == "error" for result in results)}
     error = any(metric["status"] == "error" for result in results for metric in result["metrics"].values())
-    incomplete = any(row["context_scope"] != "full_retrieval" or not row["retrieved_contexts"] or not row["generation_contexts"] for row in rows)
+    context_metrics = set(names) - {"factual_correctness", "response_relevance"}
+    incomplete = any(
+        ("faithfulness" in names and not row["generation_contexts"]) or
+        (context_metrics - {"faithfulness"} and
+         (row["context_scope"] != "full_retrieval" or not row["retrieved_contexts"])) or
+        ("factual_correctness" in names and row["reference"] is None)
+        for row in rows)
     return {"status": "error" if error else "incomplete" if incomplete else "completed",
             "informational_only": True, "release_gate": "not_evaluated",
-            "rows": results, "summary": summary}
+            "selected_metrics": list(names), "rows": results, "summary": summary}
 
 
 def write_report(report):
@@ -300,7 +324,8 @@ async def execute(rows, input_digest, args, limits):
     key = os.environ.get("UNORAG_RAGAS_API_KEY", "")
     if not local and not key:
         raise EvaluationError("judge_key_required")
-    if not args.judge_model or not args.embedding_model:
+    names = selected_metrics(args.metrics)
+    if not args.judge_model or ("response_relevance" in names and not args.embedding_model):
         raise EvaluationError("explicit_models_required")
     # Third-party libraries may log model payloads on validation errors.
     logging.disable(logging.CRITICAL)
@@ -309,7 +334,7 @@ async def execute(rows, input_digest, args, limits):
                                 follow_redirects=False, trust_env=False) as http_client:
         async with AsyncOpenAI(base_url=base_url, api_key=key or "local-no-key", max_retries=0,
                                timeout=limits.request_timeout, http_client=http_client) as client:
-            metrics = make_metrics(client, args.judge_model, args.embedding_model, limits)
+            metrics = make_metrics(client, args.judge_model, args.embedding_model, limits, names)
             report = await score_samples(rows, metrics, limits)
     report.update({"schema_version": 1, "evaluated_at": datetime.now(timezone.utc).isoformat(),
                    "input_sha256": input_digest, "run_id": rows[0]["run_id"],
@@ -317,6 +342,9 @@ async def execute(rows, input_digest, args, limits):
                    "judge": {"model": args.judge_model, "embedding_model": args.embedding_model,
                              "endpoint_sha256": hashlib.sha256(base_url.encode()).hexdigest(),
                              "external_opt_in": args.allow_external_judge, "local_endpoint": local},
+                   "metric_configuration": {"factual_correctness": {
+                       "mode": "f1", "atomicity": "high", "coverage": "high"}}
+                       if "factual_correctness" in names else {},
                    "tool_fingerprint": {"ragas": importlib.metadata.version("ragas"),
                                         "uv_lock_sha256": hashlib.sha256((HERE / "uv.lock").read_bytes()).hexdigest(),
                                         "runner_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -336,12 +364,14 @@ def main(argv=None):
     parser.add_argument("--judge-base-url", default="http://127.0.0.1:11434/v1")
     parser.add_argument("--judge-model")
     parser.add_argument("--embedding-model")
+    parser.add_argument("--metrics", nargs="+", choices=METRICS + OPTIONAL_METRICS, default=METRICS)
     for name, value in asdict(Limits()).items():
         parser.add_argument("--" + name.replace("_", "-"), type=type(value), default=value)
     args = parser.parse_args(argv)
     try:
         limits = Limits(**{name: getattr(args, name) for name in asdict(Limits())})
         limits.validate()
+        selected_metrics(args.metrics)
         rows, input_digest = load_samples(args.input, limits.max_samples)
         if not args.execute:
             print(f"Validated {len(rows)} samples. No judge called; no semantic scores produced.")

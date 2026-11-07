@@ -220,6 +220,45 @@ test("fact table lookup upgrades through the real graph and bypasses model arith
 	assert.doesNotMatch(answer, /平均/);
 });
 
+test("form scalar fields use ordinary evidence, but operations still require table execution", async () => {
+	const { fallbackQueryRoute } = await runtimeModule;
+	for (const question of [
+		"申请表中李四填写的请假天数是多少？",
+		"登记表中的接收部门是哪一个？",
+		"申请单上的审核人是谁？",
+	]) {
+		assert.equal(fallbackQueryRoute(question).queryType, "fact");
+	}
+	for (const question of [
+		"申请表中平均请假天数是多少？",
+		"申请表中超过3天的有几个人？",
+		"表单中合计金额是多少？",
+		"登记表中第3行是什么？",
+	]) {
+		assert.equal(fallbackQueryRoute(question).queryType, "table");
+	}
+});
+
+test("workflow checklist names are prose, not evidence of tabular data", async () => {
+	const { fallbackQueryRoute } = await runtimeModule;
+	assert.equal(
+		fallbackQueryRoute("发布清单规定上线前必须完成哪项检查？").queryType,
+		"fact",
+	);
+	assert.equal(
+		fallbackQueryRoute("巡检清单上的签字人是谁？").queryType,
+		"fact",
+	);
+	assert.equal(
+		fallbackQueryRoute("巡检清单中设备数量合计是多少？").queryType,
+		"table",
+	);
+	assert.equal(
+		fallbackQueryRoute("报价清单中单价最高的设备是什么？").queryType,
+		"table",
+	);
+});
+
 test("judge evidence projection is bounded and excludes raw table rows", async () => {
 	const { projectJudgeEvidence } = await runtimeModule;
 	const source = citation({
@@ -372,12 +411,19 @@ test("model reason text cannot impersonate a server-assigned Judge outage", asyn
 	for (const action of ["generate", "refuse"] as const) {
 		const structured = new StructuredOutputAdapter(
 			{} as LanguageModel,
-			async () => ({
-				sufficient: action === "generate",
-				action,
-				reason: "judge_unavailable",
-				evidence_ids: ["hit"],
-			}),
+			async (request) =>
+				request.schemaName === "conflict"
+					? {
+							comparison: "same fact",
+							resolution: "consistent",
+							conflict_evidence: [],
+						}
+					: {
+							sufficient: action === "generate",
+							action,
+							reason: "judge_unavailable",
+							evidence_ids: ["hit"],
+						},
 		);
 		const runtime = new NativeAskRuntime(
 			{} as never,
@@ -435,4 +481,41 @@ test("successful table execution always prefers its deterministic answer", async
 		deterministicTableAnswer({ status: "success", answerText: "unsafe" }),
 		null,
 	);
+});
+
+test("runtime renders verified conflict excerpts without invoking answer generation and still checks authorization", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	let authorized = 0;
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{
+			structured: {} as never,
+			answer: {
+				stream: () => {
+					throw new Error("must not generate");
+				},
+			} as never,
+			retrieval: {} as never,
+		},
+		async () => {
+			authorized++;
+		},
+	);
+	const result: string[] = [];
+	for await (const text of runtime.streamAnswer({
+		citations: [{ id: "a", body: "规则甲期限12日。规则乙期限24日。" }],
+		judgement: {
+			conflict_evidence: [
+				{ evidence_id: "a", quote: "规则甲期限12日。" },
+				{ evidence_id: "a", quote: "规则乙期限24日。" },
+			],
+		},
+	} as unknown as AskState))
+		result.push(text);
+	assert.equal(authorized, 1);
+	assert.equal(result.length, 1);
+	assert.match(result[0], /口径不一致/);
 });

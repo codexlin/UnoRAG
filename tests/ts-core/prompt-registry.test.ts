@@ -21,19 +21,21 @@ import {
 } from "../../src/core/ai";
 
 const EXPECTED_DIGESTS = {
-	chat: "030c6bf9a705e8543bfa97edfd597e704cbb05dd4129d782220f7cdbcd77aa99",
+	chat: "a238093c5173f5d22d31892673d1b1248b56e8ce8b6efe0e22a0d7eb91859f32",
 	router: "4f586e259c1fb7b4991d7014038887dd885168785edfd5fe0705cfb8a5862353",
 	rewrite: "81002875e2bfbf97afaee365f896b5a7a7c6528cea3c2242c4e26a40ab7d4104",
-	judge: "499fb92702c357e348773196ad1be9c99a78e167edcd8fe3b882c735dc8524dc",
+	judge: "dcf69ce39ba3ae809ce1472a75193215065e1f7a2cb60e2155cb9b5d4b190abe",
+	conflict: "b51503bfd463423bf3d08407d285620f109c75c85e04ac862653cb2db0af11d5",
 	table_plan:
 		"074c2f67f29bc44f7a72be0b1525490ef51719be3a9ba9ac4677b33198d5aab7",
 } as const;
 
 const EXPECTED_VERSIONS = {
-	chat: "1.4.0",
+	chat: "1.8.0",
 	router: "1.0.0",
 	rewrite: "1.0.0",
-	judge: "1.3.0",
+	judge: "1.12.0",
+	conflict: "1.3.0",
 	table_plan: "1.0.0",
 } as const;
 
@@ -42,6 +44,7 @@ const EXPECTED_NAMES = {
 	router: "unorag.query.router",
 	rewrite: "unorag.query.rewrite",
 	judge: "unorag.evidence.judge",
+	conflict: "unorag.evidence.conflict",
 	table_plan: "unorag.table.plan",
 } as const;
 
@@ -120,6 +123,12 @@ test("runtime adapters use registry instructions and export no prompt text", asy
 						selectColumns: [],
 						includeSummaryRows: false,
 					};
+				case "conflict":
+					return {
+						comparison: "same fact",
+						resolution: "consistent",
+						conflict_evidence: [],
+					};
 			}
 		},
 		{ maxAttempts: 1 },
@@ -131,6 +140,11 @@ test("runtime adapters use registry instructions and export no prompt text", asy
 		fallbackSemanticQuery: "期限",
 	});
 	await structured.judge({ question: "期限？", citations: [], attempts: 1 });
+	await structured.checkConflictWithMetadata({
+		question: "期限？",
+		citations: [],
+		evidence_ids: [],
+	});
 	await structured.planTable({ question: "多少行？", tables: [] });
 
 	const answer = new AnswerStreamAdapter(model, (request) => {
@@ -154,7 +168,7 @@ test("runtime adapters use registry instructions and export no prompt text", asy
 		.filter((span) =>
 			["unorag.ai.structured", "unorag.ai.generate"].includes(span.name),
 		);
-	assert.equal(spans.length, 5);
+	assert.equal(spans.length, 6);
 	const exportedAttributes = JSON.stringify(
 		spans.map((span) => span.attributes),
 	);

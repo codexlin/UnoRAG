@@ -23,6 +23,67 @@ const NEGATIVE_GOLD_PATH = new URL(
 	import.meta.url,
 );
 
+test("conflict expectations require a classified outcome, not just keyword coverage", () => {
+	const gold = parseGoldenCase({
+		file: "contract.md",
+		mode: "fact",
+		question: "期限？",
+		answer: "口径不一致：12日与24日。",
+		key_facts: ["12日", "24日", "口径不一致"],
+		expect_conflict: true,
+	});
+	const response = {
+		httpStatus: 200,
+		answer: "口径不一致：12日与24日 [1]。",
+		refused: false,
+		latencyMs: 1,
+		citations: [{ filename: "contract.md", index: 1 }],
+	};
+	assert.equal(scorePositiveCase(gold, response).ok, false);
+	assert.equal(
+		scorePositiveCase(gold, {
+			...response,
+			retrievalDebug: { conflict_evidence_count: 2 },
+		}).ok,
+		true,
+	);
+	assert.equal(
+		scorePositiveCase(
+			{ ...gold, expect_conflict: false },
+			{ ...response, retrievalDebug: { conflict_evidence_count: 2 } },
+		).ok,
+		false,
+	);
+	assert.equal(
+		scorePositiveCase(
+			{ ...gold, expect_conflict: false },
+			{ ...response, retrievalDebug: { conflict_evidence_count: 0 } },
+		).ok,
+		true,
+	);
+});
+
+test("semantic review cannot silently override the business lexical gate", () => {
+	const gold = parseGoldenCase({
+		file: "release.md",
+		mode: "fact",
+		question: "发布前数据库备份需要什么检查？",
+		answer: "完成数据库备份校验。",
+		key_facts: ["备份校验"],
+	});
+	const score = scorePositiveCase(gold, {
+		httpStatus: 200,
+		answer: "发布前数据库备份需要做「校验」检查 [1]。",
+		refused: false,
+		latencyMs: 1,
+		citations: [{ filename: "release.md", index: 1 }],
+	});
+	assert.equal(score.ok, false);
+	assert.deepEqual(score.missingFacts, ["备份校验"]);
+	assert.equal(score.targetDocumentRecalled, true);
+	assert.equal(score.inlineCitationsValid, true);
+});
+
 test("gold facts and structured sources cannot mask invalid inline citations", async () => {
 	const gold = parseGoldenJsonl(await readFile(GOLD_PATH, "utf8"))[0];
 	const response = {

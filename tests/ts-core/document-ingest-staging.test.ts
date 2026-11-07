@@ -54,7 +54,7 @@ test("text stager runs source, parser, chunks, embeddings, and scoped Qdrant wri
 	});
 
 	assert.deepEqual(result, {
-		pointCount: 2,
+		pointCount: 3,
 		chunkCount: 1,
 		sectionCount: 1,
 		tableCount: 0,
@@ -76,6 +76,22 @@ test("text stager runs source, parser, chunks, embeddings, and scoped Qdrant wri
 			partial: false,
 			notes: "",
 			metrics: {
+				document_context: {
+					version: 1,
+					title: "Leave policy",
+					filename: "handbook.txt",
+					identifiers: [],
+					identifiers_complete: true,
+					outline_complete: true,
+					outline: [
+						{
+							node_id: "text-heading-0",
+							text: "Leave policy",
+							level: 1,
+							page: null,
+						},
+					],
+				},
 				node_count: 2,
 				heading_count: 1,
 				chunking: {
@@ -88,8 +104,8 @@ test("text stager runs source, parser, chunks, embeddings, and scoped Qdrant wri
 			},
 		},
 	});
-	assert.equal(observed.records?.length, 2);
-	assert.equal(observed.vectors?.length, 2);
+	assert.equal(observed.records?.length, 3);
+	assert.equal(observed.vectors?.length, 3);
 	assert.deepEqual(observed.scope, {
 		organizationId: job().organizationId,
 		workspaceId: job().workspaceId,
@@ -260,7 +276,7 @@ test("PDF staging uses the parser result before shared chunk/embed/Qdrant steps"
 
 	assert.equal(result.parserBackend, "mineru");
 	assert.equal(result.chunkCount, 1);
-	assert.equal(records.length, 2);
+	assert.equal(records.length, 3);
 	assert.equal(
 		(parserInput as { idempotencyKey: string }).idempotencyKey,
 		pdfJob.idempotencyKey,

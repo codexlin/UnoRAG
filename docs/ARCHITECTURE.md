@@ -150,6 +150,13 @@ Parsing produces DocumentIR before chunking. The policy is structure-first:
 4. index chunk, section and table records with stable provenance;
 5. keep TableIR headers, normalized units, row groups and contributing citations.
 
+入库还生成一个 generation 绑定的 `document` 记录：正文保存有界的解析标题目录，向量只使用有界的文档
+身份描述，不把整份长目录当普通 chunk 向量化。同一版本的 `parser_report.metrics.document_context`
+保存原始文件名、首级标题、显式编号标签提取结果、标题层级和完整性标记。它属于检索内容，普通文档/任务
+诊断必须移除该字段。解析不完整、层级未知或超过 256 个标题/12,000 个标题字符时，不声明目录完整。
+这里的完整性仅指已保存的解析结构未被截断且 Provider 未标记缺页，不证明 OCR 或标题层级识别绝对正确；
+扫描与复杂 PDF 仍需对应来源和布局的金标验收。
+
 Small and medium tables remain RAG records with layered row groups and summaries.
 Very large SQL-style execution is deliberately deferred; operational data should
 usually be queried from its source database.
@@ -178,9 +185,59 @@ route -> plan -> clarify | retrieve -> table execute -> judge
       -> rewrite/retry | refuse | stream answer with citations
 ```
 
+指定文件名、已识别文号或可唯一匹配的业务阶段主题时，Ask 先从 PG 的**当前 active 版本**解析文档身份，
+再收窄 Qdrant 的 document/generation 过滤。候选目录最多读取 501 行，超过 500 份授权文档时失败关闭，
+不根据截断目录猜测唯一性；这不是大规模文档目录搜索的实现。PG 查询同时执行组织、Workspace、文库、
+删除状态、ACL 与投影一致性检查，不复用 editor/owner 的元数据管理权限绕过正文 ACL。
+重写和重试保留原问中的来源约束；重复名称、冲突编号或未授权的指定文件不会静默改查其他文档。
+
+纯标题枚举使用完整解析目录的确定性执行，并核对 Qdrant 中同 generation 的完整文档记录，引用真实
+Point；精确结构读取的 score 保持 `0`，不伪造向量相似度，也不降低普通证据门槛。内容解释、复合问题、
+部分目录和缺少结构记录不能使用这条路径。单份表单的字段读取允许 OCR 正文证据；聚合、计数、排序、
+筛选等仍要求结构化表格，不因表单解析扁平化而让模型代算。Judge 必须核对对象、条件和操作阶段，
+不把相关性当充分性，也不自行追加用户未要求的回答精度。
+
+Judge 与生成共享服务端的有界回答粒度提示：名称级要求、具体步骤或未指定；它只描述原问，不宣称
+证据充分，也不能覆盖其他所问字段。名称级回答不应擅自补充未提供的定义与细则，步骤级问题不能以
+名称代替方法。该提示不是答案校验器；引用格式、来源约束和回归评分仍分别执行。
+
+候选分支把普通充分性裁决与冲突核验分开：普通 Judge 先决定拒答、重试或最小回答证据，拒答和重试
+不进入冲突核验，也不会被第二步翻成回答。新增核验仅用于 `fact` / `follow_up`，比较、汇总、表格和目录
+路径保留既有裁决与证据契约，标记 `not_checked`，不冒充已验证一致。事实问题可回答时，再检查已选
+文档范围内的全部召回候选，而非只检查已选片段；明确选中的多个文档以及提供共同文号的来源也可参与。无关文档中的“本项目”不被默认视为
+同一对象。这个边界不等于全库、跨任意文档的实体归一或矛盾检测，也不保证 Top-K 外没有其他适用条款。
+
+独立核验区分一致、问题已限定范围、材料明示优先级与未解决冲突。没有冲突时保持普通 Judge 的来源集合
+不变；有冲突时只补入已校验的原文来源。结构化输出禁止非冲突分类携带冲突摘录；一个片段可能包含双方
+规定，不能按 chunk 数量判断冲突。服务端校验来源、逐字匹配、去重与数量后，确定性展示原文、引用和
+待核实提示，不让回答模型再次选择单一口径。无效摘录或模型故障失败关闭，不算有效拒答验收通过。
+
+两阶段各自有界重试、超时、并发许可和调用前授权检查，并生成独立 metadata-only 模型 span。原生诊断
+成功时保留两段耗时/次数、合计已知 token 和核验范围/候选数；Provider 调用失败时记录失败步骤的
+阶段、次数与耗时，不伪造另一个步骤的成功统计。不记录核验比较正文或额外保存摘录。
+默认每阶段最多 2 次、单次 15 秒、1024 输出 token，单轮证据裁决内顺序执行的最坏模型尝试预算为 60 秒。
+这不含重检索、排队和生成，不是完整请求的时限保证，也不能误称仍只有一次裁决成本；验收的端到端
+P95 15 秒门槛没有提高。矩阵 K 的合并裁决回归保留为历史 FAIL，
+当前候选是否合格以业务矩阵报告中的绑定版本结果为准，不把程序来源校验当作语义正确性证明。
+核验 schema 使用对象根节点，避免违反 [OpenAI Structured Outputs 的根对象约束](https://developers.openai.com/api/docs/guides/structured-outputs)；
+分类与摘录之间的关系仍由服务端校验，不假定所有兼容 Provider 都会执行完整 JSON Schema 约束。
+
+旧 active generation 不会被原地补写。已有文档需要通过正常重索引生成上述元数据；升级前排空旧任务，
+同 generation 写入清单不一致仍失败关闭。新目录能力缺失时可以拒答，不能把已有 Top-K 称作完整目录。
+已识别的文号是正向来源约束，不是“全库没有任何遗漏编号”的证明；无关文档 partial 不应阻断已有明确
+匹配的查询。已观察到的重号仍视为歧义；编号未知且元数据不完整时不得改为宽泛检索。完整标题枚举仍
+要求目标文档结构完整。精确目录路径也必须保留调用方的文档、版本、表格和记录类型限制。
+本轮问题与环境绑定的验证状态见 [混合业务矩阵](./evidence/2026-11-06-business-matrix-hk.md)。
+
 Vercel AI SDK provides model calls, structured output and streaming. LangChain core
 types are used only where they remove adapter friction. LlamaIndex is not a second
 runtime; it may later appear behind a retrieval or parser tool boundary.
+
+模型生成上下文使用 `[source:N]` 作为内部来源标记，系统消息提供本次完整允许清单，避免与条款号、
+页码或表格行号共用裸数字语法。流式守卫只在标记完整且属于本次允许集合时转换为公开的 `[N]`；未知
+来源不会自动映射，列表、范围、残缺与超长标记仍被拒绝。目录与表格的确定性回答继续使用公开格式。
+失败账本、结构化日志和运行中心只记录分类与允许来源数，不保存模型原始错误标记或正文。提示语不能
+代替该校验，也不证明回答语义正确；模型、证据和 Prompt 变化仍需真实质量回归。
 
 比较类 Ask 不把 Judge 选出的单段当成完整比较范围：在证据充分时保留全部已准入的有界候选
 （最多 6 条、14,400 个正文字符），超预算拒答，不静默截掉比较对象。这不保证全库穷举覆盖。

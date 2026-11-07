@@ -8,7 +8,10 @@ import {
 	AiConcurrencyOverloadedError,
 	AiConcurrencyWaitTimeoutError,
 } from "@/core/ai";
-import { AnswerCitationValidationError } from "@/core/ai/answer-citations";
+import {
+	AnswerCitationValidationError,
+	projectAnswerCitationDiagnostic,
+} from "@/core/ai/answer-citations";
 import {
 	type AskExecutionDiagnostics,
 	AskGraphExecutionError,
@@ -172,6 +175,8 @@ function visibility(state: AskState) {
 }
 
 function conversationDebug(state: AskState) {
+	const { conflict_evidence: _conflictEvidence, ...judge } =
+		state.judgement ?? {};
 	return {
 		mode: "live",
 		refused: state.refused === true,
@@ -179,7 +184,7 @@ function conversationDebug(state: AskState) {
 		query_type: state.query_type ?? null,
 		retrieval_plan: state.retrieval_plan ?? null,
 		retrieval_debug: state.retrieval_debug ?? null,
-		judge: state.judgement ?? null,
+		judge: state.judgement ? judge : null,
 		table_execution: state.table_execution ?? null,
 	};
 }
@@ -410,7 +415,7 @@ async function finalizeAskRun(input: {
 	state?: AskRunState;
 	status: "completed" | "refused" | "failed" | "cancelled";
 	errorCode?: string;
-	dependencyFailure?: QdrantOperationError;
+	failure?: QdrantOperationError | AnswerCitationValidationError;
 }): Promise<void> {
 	const state = input.state;
 	const mode = state ? retrievalMode(state) : null;
@@ -467,6 +472,7 @@ async function finalizeAskRun(input: {
 									detail: Object.fromEntries(
 										[
 											"judge_attempts",
+											"judge_failed_stage",
 											"judge_duration_ms",
 											"judge_timeout_ms",
 											"judge_max_attempts",
@@ -511,7 +517,14 @@ async function finalizeAskRun(input: {
 			.find((stage) => stage.outcome !== "completed");
 		if (failed) {
 			const diagnostic = projectQdrantDiagnostic(
-				input.dependencyFailure?.diagnostics,
+				input.failure instanceof QdrantOperationError
+					? input.failure.diagnostics
+					: undefined,
+			);
+			const citation = projectAnswerCitationDiagnostic(
+				input.failure instanceof AnswerCitationValidationError
+					? input.failure.diagnostics
+					: undefined,
 			);
 			Object.assign(failed, {
 				errorCode: input.errorCode,
@@ -523,6 +536,14 @@ async function finalizeAskRun(input: {
 									value,
 								]),
 							),
+						}
+					: {}),
+				...(citation
+					? {
+							detail: {
+								citation_category: citation.category,
+								citation_allowedSourceCount: citation.allowedSourceCount,
+							},
 						}
 					: {}),
 			});
@@ -774,12 +795,12 @@ async function handleNativeAskRequestInSpan(input: {
 		status: "completed" | "refused" | "failed" | "cancelled",
 		state?: AskRunState,
 		errorCode?: string,
-		dependencyFailure?: QdrantOperationError,
+		failure?: QdrantOperationError | AnswerCitationValidationError,
 	) => {
 		const run = activeRun;
 		if (!run) return;
 		activeRun = undefined;
-		await finalizeAskRun({ run, state, status, errorCode, dependencyFailure });
+		await finalizeAskRun({ run, state, status, errorCode, failure });
 	};
 	try {
 		const payload = AskRequestSchema.parse(await input.request.json());
@@ -1009,6 +1030,7 @@ async function handleNativeAskRequestInSpan(input: {
 					input.request.signal.aborted ? "cancelled" : "failed",
 					state,
 					operationalErrorCode(error),
+					error instanceof AnswerCitationValidationError ? error : undefined,
 				);
 				settleMetrics(
 					input.request.signal.aborted ? "cancelled" : "server_error",
@@ -1035,7 +1057,12 @@ async function handleNativeAskRequestInSpan(input: {
 					abortSignal: input.request.signal,
 				});
 			} catch (error) {
-				await settleActiveRun("failed", state, operationalErrorCode(error));
+				await settleActiveRun(
+					"failed",
+					state,
+					operationalErrorCode(error),
+					error instanceof AnswerCitationValidationError ? error : undefined,
+				);
 				settleMetrics("server_error");
 				yield encodeLegacySseEvent("error", {
 					code:
@@ -1075,7 +1102,10 @@ async function handleNativeAskRequestInSpan(input: {
 			input.request.signal.aborted ? "cancelled" : "failed",
 			activeState ?? failedGraphState,
 			errorCode,
-			error instanceof QdrantOperationError ? error : undefined,
+			error instanceof QdrantOperationError ||
+				error instanceof AnswerCitationValidationError
+				? error
+				: undefined,
 		);
 		if (error instanceof z.ZodError) {
 			settleMetrics("client_error");
@@ -1118,6 +1148,9 @@ async function handleNativeAskRequestInSpan(input: {
 						: false,
 			...(error instanceof QdrantOperationError
 				? { qdrant: projectQdrantDiagnostic(error.diagnostics) }
+				: {}),
+			...(error instanceof AnswerCitationValidationError
+				? { citation: projectAnswerCitationDiagnostic(error.diagnostics) }
 				: {}),
 		});
 		return Response.json(

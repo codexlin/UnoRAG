@@ -13,6 +13,8 @@
 | `deploy/compose/scripts/pilot-smoke.sh` | 登录、上传、Ask、Public API、replace、delete 全链路 |
 | `scripts/acceptance/s1_s2_isolation.sh` | 多组织、多 Workspace、ACL 与 IDOR 零泄漏 |
 | `scripts/acceptance/capacity_baseline.py` | Retrieve、Ask、生命周期阶梯并发与可选 MinerU 探针 |
+| `scripts/acceptance/business-matrix.mjs` | 同库混合文档、相似制度干扰、原文摘要、问答/拒答、版本生命周期与请求诊断；不修改既有库或注入全局故障 |
+| `scripts/acceptance/evidence-conflicts.ts` | 固定证据的冲突/非冲突 judge 对照；真实模型调用，不是端到端检索验收 |
 | `scripts/acceptance/upgrade-rollback.mjs` | 四镜像 digest 升级、旧版应用回滚、再次升级与数据校验 |
 | `scripts/acceptance/provider-faults.mjs` | 真实 Provider 透传基线、受控故障注入、失败替换保留旧版与恢复 |
 | `scripts/acceptance/restore-drill.mjs` | 隔离实例备份、删卷、恢复、Ask 与生命周期校验 |
@@ -46,6 +48,45 @@ UNORAG_ADMIN_PASSWORD='...' \
 
 容量结果只绑定测试环境、资源规格、模型 Provider、语料和 commit，不可直接外推。
 使用 `--mineru-file testdata/ab/twocolumn.pdf` 可加入真实复杂 PDF 探针。
+
+## 混合业务矩阵
+
+先审查 `testdata/business/scenarios.json` 和计划。此脚本需要本仓库已安装的 Node.js 22/tsx 依赖，
+不是安装机裸 Node 的独立命令。凭据由受保护环境注入，不写进命令历史或提交文件。
+
+```bash
+node --import tsx scripts/acceptance/business-matrix.mjs --plan
+
+UNORAG_ACCEPT_BUSINESS_MATRIX=YES \
+UNORAG_BASE_URL=https://candidate.example.com \
+UNORAG_EXPECT_REVISION='<expected-40-character-runtime-revision>' \
+node --import tsx scripts/acceptance/business-matrix.mjs
+```
+
+还需提供 `UNORAG_ADMIN_EMAIL` / `UNORAG_ADMIN_PASSWORD`。只向脚本新建、随机 run ID 命名的库写入；
+默认最后删除这些库。`--keep-library` 只保留混合语料库供浏览器核对，不能把保留状态记成清理通过。
+`.unorag/acceptance/` 的受限报告包含 own-library ID、来源标注、SHA256、任务、参考答案、回答、引用和
+Request ID；不要把这些原始产物直接公开。强制终止可能留下测试库，按报告中的确切 ID 经产品 API 清理，
+不要按模糊前缀批量删除。测试不停止生产依赖、不修改模型配置，也不自动修复业务代码。
+
+问答先复用现有确定性评分器，既不自动接受新增引用来源，也不把模型故障算成正常拒答。
+失败必须结合原文与请求阶段人工归因，区分资料冲突、预期不足、解析、检索、裁决和生成错误；
+不为通过测试反向修改预期。P95 仍以 15 秒单独判定，但一个业务探索批次不是三轮稳定性认证。
+
+## 证据冲突对照
+
+修改证据裁决时，先用合成对照检查误报，再跑完整业务矩阵。沿用 `OPENAI_*` / `JUDGE_*` Provider 配置，
+凭据仅从受保护环境注入；默认计划不联网，执行必须显式同意出域和付费调用：
+
+```bash
+node --import tsx scripts/acceptance/evidence-conflicts.ts --plan
+UNORAG_ACCEPT_JUDGE_CONTROLS=YES node --import tsx scripts/acceptance/evidence-conflicts.ts --allow-external-judge
+```
+
+此入口仅调用独立冲突核验器，不调用普通充分性 Judge，不代表完整问答 pipeline。默认两轮、每轮八个
+合成案例、每次至多两次请求/15 秒单次超时/1024 输出 Token，串行执行。
+`--rounds=1..3` 可调整轮数；分类错误、结构化失败或摘录来源校验失败均保留为 FAIL，不能靠重跑覆盖。
+报告保存在 `.unorag/acceptance/`，固定证据通过不证明检索完整，也不能代替逐条语义复核或发布验收。
 
 ## 发布演练与边界
 

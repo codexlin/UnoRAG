@@ -1,5 +1,6 @@
 import { sharesEvidenceLineage } from "../../retrieval/evidence-lineage";
 import type { AskGraphContext, Judgement } from "../context";
+import { validateConflictEvidence } from "../evidence-conflict";
 import {
 	type AskState,
 	type AskStateUpdate,
@@ -142,6 +143,42 @@ function failClosedJudgement(judgement: Judgement): Judgement {
 export function createDecisionNode(context: AskGraphContext) {
 	return async (state: AskState): Promise<AskStateUpdate> => {
 		let judgement = failClosedJudgement(await context.judge.judge(state));
+		if (judgement.conflict_evidence !== undefined) {
+			try {
+				const conflicts = validateConflictEvidence(
+					judgement.conflict_evidence,
+					state.citations,
+				);
+				if (conflicts.length > 0) {
+					if (
+						judgement.action !== "generate" ||
+						judgement.sufficient !== true ||
+						!Array.isArray(judgement.evidence_ids)
+					) {
+						throw new Error("Inconsistent conflict judgement");
+					}
+					judgement = {
+						...judgement,
+						reason: "evidence_conflict",
+						can_retry: false,
+						evidence_ids: [
+							...new Set([
+								...judgement.evidence_ids,
+								...conflicts.map((item) => item.evidence_id),
+							]),
+						],
+					};
+				}
+			} catch {
+				judgement = {
+					sufficient: false,
+					action: "refuse",
+					reason: "invalid_conflict_evidence",
+					can_retry: false,
+					evidence_ids: [],
+				};
+			}
+		}
 		const evidence = selectedEvidence(state, judgement);
 		if (evidence.invalid) {
 			judgement = {
@@ -156,10 +193,19 @@ export function createDecisionNode(context: AskGraphContext) {
 		const judgeDebug = Object.fromEntries(
 			[
 				"judge_mode",
+				"evidence_resolution",
+				"conflict_scope",
+				"conflict_candidate_count",
+				"answer_granularity",
 				"judge_model",
 				"judge_provider",
 				"judge_attempts",
 				"judge_duration_ms",
+				"judge_sufficiency_attempts",
+				"judge_sufficiency_duration_ms",
+				"judge_conflict_attempts",
+				"judge_conflict_duration_ms",
+				"judge_failed_stage",
 				"judge_timeout_ms",
 				"judge_max_attempts",
 				"judge_budget_ms",
@@ -173,6 +219,7 @@ export function createDecisionNode(context: AskGraphContext) {
 				judgement[key] !== undefined ? [[key, judgement[key]]] : [],
 			),
 		);
+		const { conflict_evidence, ...safeJudgement } = judgement;
 		return {
 			judgement,
 			...(evidence.citations && !evidence.invalid
@@ -180,7 +227,10 @@ export function createDecisionNode(context: AskGraphContext) {
 				: {}),
 			refuse_reason: judgement.action === "refuse" ? judgement.reason : null,
 			retrieval_debug: mergeRetrievalDebug(state, {
-				judgement,
+				judgement: safeJudgement,
+				conflict_evidence_count: Array.isArray(conflict_evidence)
+					? conflict_evidence.length
+					: 0,
 				retrieved_evidence_count: state.citations?.length ?? 0,
 				direct_evidence_count: evidence.invalid ? 0 : evidence.directCount,
 				lineage_evidence_count: evidence.invalid ? 0 : evidence.lineageCount,

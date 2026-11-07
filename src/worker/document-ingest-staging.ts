@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { DocumentIR } from "../core/document-ir";
+import { buildDocumentContext } from "../core/document-ir/document-context";
 import {
 	buildIndexPayloads,
 	type ChunkProfileName,
@@ -109,6 +110,7 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 			workspaceId: input.workspaceId,
 			filename: input.payload.filename,
 			lifecycleVisibility: "staging",
+			document,
 		});
 		const vectors: number[][] = [];
 		await onProgress?.({ stage: "embedding", percent: 60 });
@@ -151,7 +153,13 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 				String(document.parser_report.parser).trim() ||
 				String(document.parser_report.backend).trim() ||
 				format,
-			parserReport: structuredClone(document.parser_report),
+			parserReport: {
+				...structuredClone(document.parser_report),
+				metrics: {
+					...structuredClone(document.parser_report.metrics),
+					document_context: buildDocumentContext(document),
+				},
+			},
 		};
 	}
 

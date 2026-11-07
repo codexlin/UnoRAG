@@ -428,7 +428,19 @@ test("sync ask returns public response and atomically appends the exchange", asy
 			],
 		}),
 	]);
-	const runtime = new FakeRuntime(askState(), ["违约金", "为 200 元"]);
+	const runtime = new FakeRuntime(
+		askState({
+			judgement: {
+				sufficient: true,
+				action: "generate",
+				reason: "evidence_conflict",
+				conflict_evidence: [
+					{ evidence_id: "citation-1", quote: "private-conflict-excerpt" },
+				],
+			},
+		}),
+		["违约金", "为 200 元"],
+	);
 
 	const response = await handleNativeAskRequest({
 		request: request({
@@ -451,6 +463,10 @@ test("sync ask returns public response and atomically appends the exchange", asy
 	assert.equal(body.persisted, true);
 	assert.equal(body.retrieval_mode, "hybrid");
 	assert.equal(JSON.stringify(body).includes(ORGANIZATION_ID), false);
+	assert.equal(
+		JSON.stringify(body).includes("private-conflict-excerpt"),
+		false,
+	);
 	const retrievalDebug = body.retrieval_debug as Record<string, unknown>;
 	const stages = retrievalDebug.stages as Array<{
 		stage: string;
@@ -506,6 +522,10 @@ test("sync ask returns public response and atomically appends the exchange", asy
 	const archivedDebug = repository.exchanges[0]?.input.assistant
 		.debug as Record<string, unknown>;
 	assert.equal(archivedDebug.mode, "live");
+	assert.equal(
+		JSON.stringify(archivedDebug).includes("private-conflict-excerpt"),
+		false,
+	);
 	assert.equal(archivedDebug.refused, false);
 	assert.equal(archivedDebug.query_type, "fact");
 	const archivedRetrievalDebug = archivedDebug.retrieval_debug as Record<
@@ -1075,7 +1095,10 @@ test("invalid answer citations fail the run without persisting a successful exch
 		const runtime = new FakeRuntime(askState());
 		runtime.streamAnswer = async function* () {
 			yield "价格200元";
-			throw new AnswerCitationValidationError();
+			throw new AnswerCitationValidationError({
+				category: "unknown_source",
+				allowedSourceCount: 1,
+			});
 		};
 		const response = await handleNativeAskRequest({
 			request: request(
@@ -1103,6 +1126,13 @@ test("invalid answer citations fail the run without persisting a successful exch
 		assert.equal(repository.exchanges.length, 0);
 		assert.equal(runs.finalizations[0]?.status, "failed");
 		assert.equal(runs.finalizations[0]?.errorCode, "answer_citation_invalid");
+		assert.ok(
+			runs.finalizations[0]?.stages?.some(
+				(stage) =>
+					stage.detail?.citation_category === "unknown_source" &&
+					stage.detail?.citation_allowedSourceCount === 1,
+			),
+		);
 	}
 });
 
