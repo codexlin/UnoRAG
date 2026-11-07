@@ -794,6 +794,75 @@ test("Ask run uses the response request ID and reaches a privacy-safe terminal s
 	assert.equal("answer" in (runs.finalizations[0] ?? {}), false);
 });
 
+test("Ask run keeps service-key principal identity instead of attaching a user thread", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const runs = askRunRecorder();
+	const principal = { type: "service_key" as const, id: "service-key-1" };
+	const response = await handleNativeAskRequest({
+		request: request({ question: "Question", library_id: LIBRARY_ID }),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		runtimeFactory: runtimeFactory(new FakeRuntime(askState(), ["Answer"])),
+		askRunsRepository: runs.repository,
+		askRunPrincipal: principal,
+		resolveLibrary: async () => ({ id: LIBRARY_ID }),
+	});
+	assert.equal(response?.status, 200);
+	assert.deepEqual(runs.starts[0]?.principal, principal);
+	assert.equal(runs.finalizations.length, 1);
+});
+
+for (const failedOperation of ["resolve", "start", "finalize"] as const) {
+	test(`Ask diagnostics ${failedOperation} failure does not fail a valid answer`, async () => {
+		const { handleNativeAskRequest } = await handlerModule;
+		const operations: string[] = [];
+		const runs = new AskRunsRepository({
+			async start() {
+				operations.push("start");
+				if (failedOperation === "start")
+					throw new Error("private database details");
+				return { id: "77777777-7777-4777-8777-777777777777" } as never;
+			},
+			async finalize(input) {
+				operations.push("finalize");
+				if (failedOperation === "finalize")
+					throw new Error("private database details");
+				return { id: input.id, status: input.status } as never;
+			},
+			async deleteExpired() {
+				return 0;
+			},
+		});
+		const response = await handleNativeAskRequest({
+			request: request({ question: "Question", library_id: LIBRARY_ID }),
+			path: ["v1", "ask"],
+			identity,
+			repository: repositoryInput(new FakeConversationRepository()),
+			runtimeFactory: runtimeFactory(new FakeRuntime(askState(), ["Answer"])),
+			askRunsRepository: runs,
+			resolveLibrary: async () => {
+				operations.push("resolve");
+				if (failedOperation === "resolve")
+					throw new Error("private database details");
+				return { id: LIBRARY_ID };
+			},
+		});
+		assert.equal(response?.status, 200);
+		const body = await response?.json();
+		assert.equal(body.answer, "Answer");
+		assert.doesNotMatch(JSON.stringify(body), /private database details/);
+		assert.deepEqual(
+			operations,
+			failedOperation === "resolve"
+				? ["resolve"]
+				: failedOperation === "start"
+					? ["resolve", "start"]
+					: ["resolve", "start", "finalize"],
+		);
+	});
+}
+
 test("Ask run records refusal and runtime failure without changing HTTP behavior", async () => {
 	const { handleNativeAskRequest } = await handlerModule;
 	const refusedRuns = askRunRecorder();
