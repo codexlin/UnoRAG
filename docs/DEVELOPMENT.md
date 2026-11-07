@@ -151,6 +151,11 @@ UI 组件源码由仓库维护，不依赖 shadcn CLI 参与安装或构建。Ba
 - 拆大文件按职责与可测试边界进行，不按固定行数机械拆散。当前 Ask handler/runtime、删除 ports、
   `src/lib/api.ts` 等仍有较大模块；UI 归类不代表这些模块已完成重构，涉及它们时单独处理。
 
+Ask 后端保持在 `src/server/http/ask/` 内：`native-handler.ts` 负责 HTTP/SSE 编排及授权检查点，
+`run-diagnostics.ts` 负责请求账本和安全诊断投影，`native-runtime.ts` 组装图与授权检索，
+`table-runtime.ts` 承接表格计划和确定性执行。表格模型调用继续使用同一授权检查点和取消信号，
+诊断模块不反向依赖 handler，也不改变请求的结算时机。
+
 ### 新人阅读两条链路
 
 1. 问答：`src/app/app/ask/page.tsx` → `src/components/app/ask/ask-workspace.tsx` → `src/lib/api.ts`

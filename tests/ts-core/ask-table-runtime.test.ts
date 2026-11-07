@@ -4,6 +4,7 @@ import test from "node:test";
 import type { LanguageModel } from "ai";
 import { StructuredOutputAdapter } from "../../src/core/ai";
 import type { AskGraphContext, AskState } from "../../src/core/ask-graph";
+import type { TableQueryPlan } from "../../src/core/ask-graph/table";
 import type { InternalCitation } from "../../src/core/retrieval";
 import { NativeAskPolicySchema } from "../../src/server/http/ask/policy";
 
@@ -135,6 +136,364 @@ test("runtime refuses absent or ambiguous table identifiers", async () => {
 			}),
 		]),
 		null,
+	);
+	const source = citation({
+		id: "first",
+		tableId: "budget",
+		device: "服务器",
+		amount: "120000",
+	});
+	for (const duplicate of [
+		{ ...source, id: "other-doc", doc_id: "other-doc" },
+		{ ...source, id: "other-version", document_version_id: "version-b" },
+	]) {
+		const citations = [source, duplicate];
+		assert.equal(
+			executePlannedTableQuery({ ...plan, tableId: "budget" }, citations),
+			null,
+		);
+		for (const leftTableId of ["budget", "other-table"]) {
+			assert.equal(
+				executePlannedTableQuery(
+					{
+						mode: "dual",
+						operation: "join",
+						leftTableId,
+						rightTableId: leftTableId === "budget" ? "other-table" : "budget",
+						join: { leftColumn: "设备名称", rightColumn: "设备名称" },
+						selectColumns: ["金额（元）"],
+						limit: 50,
+					},
+					[
+						...citations,
+						citation({
+							id: "other",
+							tableId: "other-table",
+							device: "服务器",
+							amount: "100000",
+						}),
+					],
+				),
+				null,
+			);
+		}
+	}
+});
+
+const modelPlan: TableQueryPlan = {
+	mode: "single",
+	tableId: "budget",
+	operation: "count",
+	selectColumns: [],
+	includeSummaryRows: false,
+};
+
+function planningState(): AskState {
+	return {
+		session_id: "table-runtime",
+		question: "请分析这份表格。",
+		library_id: "library-a",
+		history: [],
+		rewritten_question: undefined,
+		citations: [
+			citation({
+				id: "budget-hit",
+				tableId: "budget",
+				device: "服务器",
+				amount: "120000",
+			}),
+		],
+		answer: undefined,
+		refused: undefined,
+		refuse_reason: undefined,
+		retrieval_attempts: 1,
+		judgement: undefined,
+		retrieval_debug: undefined,
+		trace_id: undefined,
+		query_type: "table",
+		route_reason: undefined,
+		retrieval_plan: undefined,
+		table_query_plan: undefined,
+		table_execution: undefined,
+		upgrade: undefined,
+		upgrade_reason: undefined,
+		downgrade_reason: undefined,
+	};
+}
+
+async function tableRuntime(
+	input: {
+		structured?: Pick<StructuredOutputAdapter, "planTable">;
+		signal?: AbortSignal;
+		assertAuthorized?: (citations: Record<string, unknown>[]) => Promise<void>;
+	} = {},
+) {
+	await runtimeModule;
+	const { createTableRuntimePorts } = await import(
+		"../../src/server/http/ask/table-runtime"
+	);
+	const evidence: Record<string, unknown>[] = [];
+	const ports = createTableRuntimePorts({
+		structured: input.structured ?? {
+			planTable: async () => assert.fail("unexpected model request"),
+		},
+		signal: input.signal,
+		assertAuthorized: async () => {
+			await input.assertAuthorized?.(evidence);
+		},
+	});
+	return { evidence, ports };
+}
+
+test("table planning explicitly authorizes before calling an injected adapter", async () => {
+	const denied = new Error("access revoked");
+	let modelCalls = 0;
+	const { evidence, ports } = await tableRuntime({
+		structured: {
+			planTable: async () => {
+				modelCalls++;
+				return modelPlan;
+			},
+		},
+		assertAuthorized: async (evidence) => {
+			assert.deepEqual(
+				evidence.map(({ id }) => id),
+				["retrieved"],
+			);
+			throw denied;
+		},
+	});
+	evidence.push({ id: "retrieved" });
+	await assert.rejects(
+		async () => ports.buildTablePlan(planningState()),
+		(error) => error === denied,
+	);
+	assert.equal(modelCalls, 0);
+});
+
+test("table planning forwards signal, headers and checkpoints over the latest evidence", async () => {
+	const controller = new AbortController();
+	const checks: unknown[][] = [];
+	const { evidence, ports } = await tableRuntime({
+		signal: controller.signal,
+		structured: {
+			planTable: async (input, options) => {
+				assert.deepEqual(input, {
+					question: "请分析这份表格。",
+					tables: [{ tableId: "budget", headers: ["设备名称", "金额（元）"] }],
+				});
+				assert.equal(options?.abortSignal, controller.signal);
+				assert.deepEqual(checks, [["first"]]);
+				assert.ok(options?.beforeRequest);
+				evidence.push({ id: "second" });
+				await options.beforeRequest();
+				evidence.push({ id: "third" });
+				await options.beforeRequest();
+				return modelPlan;
+			},
+		},
+		assertAuthorized: async (evidence) => {
+			checks.push(evidence.map(({ id }) => id));
+		},
+	});
+	evidence.push({ id: "first" });
+	assert.deepEqual(await ports.buildTablePlan(planningState()), {
+		table_query_plan: modelPlan,
+	});
+	assert.deepEqual(checks, [
+		["first"],
+		["first", "second"],
+		["first", "second", "third"],
+	]);
+});
+
+test("table plan retries reauthorize and propagate denial without another provider call", async () => {
+	const denied = new Error("access revoked during retry");
+	let checks = 0;
+	let providerCalls = 0;
+	const { ports } = await tableRuntime({
+		structured: new StructuredOutputAdapter(
+			{} as LanguageModel,
+			async () => {
+				providerCalls++;
+				throw new TypeError("transient provider failure");
+			},
+			{ maxAttempts: 3 },
+		),
+		assertAuthorized: async () => {
+			checks++;
+			if (providerCalls > 0) throw denied;
+		},
+	});
+	await assert.rejects(
+		async () => ports.buildTablePlan(planningState()),
+		(error) => error === denied,
+	);
+	assert.equal(checks, 3);
+	assert.equal(providerCalls, 1);
+});
+
+test("table planning preserves pre-request and in-flight abort errors", async () => {
+	for (const alreadyAborted of [true, false]) {
+		const controller = new AbortController();
+		const reason = new Error("cancel table plan");
+		let checks = 0;
+		let providerCalls = 0;
+		if (alreadyAborted) controller.abort(reason);
+		const { ports } = await tableRuntime({
+			signal: controller.signal,
+			structured: new StructuredOutputAdapter(
+				{} as LanguageModel,
+				async ({ abortSignal }) => {
+					providerCalls++;
+					controller.abort(reason);
+					assert.equal(abortSignal?.aborted, true);
+					assert.equal(abortSignal?.reason, reason);
+					throw reason;
+				},
+				{ maxAttempts: 3 },
+			),
+			assertAuthorized: async () => {
+				checks++;
+			},
+		});
+		await assert.rejects(
+			async () => ports.buildTablePlan(planningState()),
+			(error) => error === reason,
+		);
+		assert.equal(checks, alreadyAborted ? 1 : 2);
+		assert.equal(providerCalls, alreadyAborted ? 0 : 1);
+	}
+});
+
+test("table planning propagates adapter errors without replacing them with a refusal", async () => {
+	const reason = new Error("provider failed");
+	const { ports } = await tableRuntime({
+		structured: {
+			planTable: async () => {
+				throw reason;
+			},
+		},
+	});
+	await assert.rejects(
+		async () => ports.buildTablePlan(planningState()),
+		(error) => error === reason,
+	);
+});
+
+test("deterministic and incomplete table plans keep their model-free early returns", async () => {
+	const { ports } = await tableRuntime({
+		assertAuthorized: async () => assert.fail("unexpected model checkpoint"),
+	});
+	const invalid = {
+		table_query_plan: { invalid: true },
+		refuse_reason: "table_incomplete",
+	};
+	assert.deepEqual(
+		await ports.buildTablePlan({ ...planningState(), citations: [] }),
+		invalid,
+	);
+	assert.deepEqual(
+		await ports.buildTablePlan({
+			...planningState(),
+			upgrade_reason: "grounded_table_lookup",
+		}),
+		invalid,
+	);
+	const result = await ports.buildTablePlan({
+		...planningState(),
+		question: "表中有多少行？",
+	});
+	assert.deepEqual(result, {
+		table_query_plan: { ...modelPlan, includeHeaders: false },
+	});
+});
+
+test("table execution keeps refusal shapes for invalid and ambiguous plans", async () => {
+	const { ports } = await tableRuntime();
+	assert.deepEqual(await ports.tableExecute(planningState()), {
+		answer: "没有足够的表格结构信息来可靠执行该问题。",
+		citations: [],
+		refused: true,
+		refuse_reason: "table_incomplete",
+		judgement: {
+			sufficient: false,
+			action: "refuse",
+			reason: "table_incomplete",
+		},
+	});
+	const state = planningState();
+	assert.deepEqual(
+		await ports.tableExecute({
+			...state,
+			table_query_plan: modelPlan,
+			citations: [
+				...(state.citations ?? []),
+				{ ...state.citations?.[0], id: "duplicate", doc_id: "another-doc" },
+			],
+		}),
+		{
+			answer: "无法唯一确定要执行的表格。",
+			citations: [],
+			refused: true,
+			refuse_reason: "table_incomplete",
+			judgement: {
+				sufficient: false,
+				action: "refuse",
+				reason: "table_id_unavailable",
+			},
+		},
+	);
+});
+
+test("table execution preserves contributing row groups, citation order and diagnostics", async () => {
+	const { ports } = await tableRuntime();
+	const rows = ["120000", "130000", "100"].map((amount, index) => ({
+		...citation({
+			id: `row-${index}`,
+			tableId: "budget",
+			device: `设备-${index}`,
+			amount,
+		}),
+		row_start: index,
+		row_end: index,
+		table_row_count: 3,
+	}));
+	const debug = {
+		rerankDiagnostic: { category: "timeout" },
+		table_candidate_count: 3,
+	};
+	const result = await ports.tableExecute({
+		...planningState(),
+		citations: [rows[1], rows[2], rows[0]],
+		table_query_plan: {
+			...modelPlan,
+			operation: "filter",
+			where: { column: "金额（元）", operator: ">", value: 1000 },
+		},
+		retrieval_debug: debug,
+	});
+	assert.equal(result.table_execution?.status, "success");
+	assert.equal(result.table_execution?.matchedCount, 2);
+	assert.deepEqual(result.citations, [rows[1], rows[0]]);
+	assert.deepEqual(result.retrieval_debug, {
+		...debug,
+		judge_mode: "deterministic_table_execution",
+		judge_model: null,
+		judge_provider: null,
+	});
+	const execution = result.table_execution as {
+		evidence: { citationId: string; rowIndices: number[] }[];
+	};
+	assert.deepEqual(
+		execution.evidence.map(({ citationId, rowIndices }) => ({
+			citationId,
+			rowIndices,
+		})),
+		[
+			{ citationId: "row-0", rowIndices: [0] },
+			{ citationId: "row-1", rowIndices: [1] },
+		],
 	);
 });
 
