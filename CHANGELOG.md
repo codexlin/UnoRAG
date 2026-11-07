@@ -3,6 +3,31 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [0.2.6] - Unreleased
+
+### Fixed
+
+- Resolve named documents and policy identifiers against authorized active-version metadata;
+  preserve source scope instead of substituting similar documents or operation phases.
+- Answer bounded complete-heading queries from parser outlines with verifiable source citations,
+  and retain MinerU figure captions and footnotes with their lineage.
+- Keep ordinary sufficiency, minimal evidence selection and refusals independent from conflict
+  verification. Fact/follow-up answers can surface unresolved same-scope provisions using
+  validated original excerpts instead of silently choosing one conclusion.
+- Separate internal source tokens from clause and row numbers, validate generated citations,
+  and expose content-minimized citation and Judge stage diagnostics.
+
+### Evaluation and upgrade notes
+
+- Preserve versioned machine results and separate per-answer review. The expanded mixed-file
+  matrix includes source constraints, scope-specific provisions, ambiguity and unsupported questions.
+- Existing active generations are not patched in place. Reindex through the normal lifecycle
+  to obtain new document identity/outline metadata; drain unfinished jobs before upgrading.
+- No database schema or public Knowledge API change. Conflict verification is bounded to retrieved
+  evidence for fact/follow-up paths, not global contradiction detection or a replacement for expert review.
+- Publication and target-environment acceptance are pending; local candidate results do not certify
+  an immutable release image or the Hong Kong deployment.
+
 ## [0.2.5] - 2026-11-06
 
 ### Fixed
