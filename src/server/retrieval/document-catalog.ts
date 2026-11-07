@@ -27,6 +27,7 @@ export async function loadActiveDocumentCatalog(input: {
 	) {
 		return { documents: [], complete: true };
 	}
+	// Service principals are namespaced strings, never user UUIDs with a removable prefix.
 	const groupMatch = input.identity.groupIds.length
 		? sql`or (acl.subject_type = 'group' and acl.subject_id = any(${input.identity.groupIds}::uuid[]))`
 		: sql``;
@@ -72,7 +73,7 @@ export async function loadActiveDocumentCatalog(input: {
 				select 1 from app.document_acl acl where acl.document_id = ${documents.id} and acl.permission = 'read'
 			) or exists (
 				select 1 from app.document_acl acl where acl.document_id = ${documents.id} and acl.permission = 'read'
-				and ((acl.subject_type in ('principal', 'user') and acl.subject_id = ${input.identity.principalId}::uuid) ${groupMatch})
+				and ((acl.subject_type in ('principal', 'user') and acl.subject_id::text = ${input.identity.principalId}) ${groupMatch})
 			))`,
 			),
 		)

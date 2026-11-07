@@ -254,6 +254,23 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 		assert.equal(initialCatalog.documents.length, 1);
 		assert.deepEqual(initialCatalog.documents[0]?.context, documentContext);
 		assert.equal(initialCatalog.documents[0]?.filename, "active-source.txt");
+		const serviceIdentity = {
+			...viewerIdentity,
+			principalId: `service:${ids.owner}`,
+		};
+		const serviceScope = {
+			...contentScope,
+			principalIds: [serviceIdentity.principalId],
+		};
+		assert.deepEqual(
+			await catalog.loadActiveDocumentCatalog({
+				identity: serviceIdentity,
+				libraryId: ragLibraryId,
+				scope: serviceScope,
+			}),
+			initialCatalog,
+			"service identities can resolve workspace-visible content without a UUID cast",
+		);
 		assert.deepEqual(
 			(
 				await catalog.loadActiveDocumentCatalog({
@@ -447,6 +464,17 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 			1,
 		);
 
+		assert.deepEqual(
+			(
+				await catalog.loadActiveDocumentCatalog({
+					identity: serviceIdentity,
+					libraryId: ragLibraryId,
+					scope: serviceScope,
+				})
+			).documents,
+			[],
+			"service identity must not inherit a user ACL with the same UUID suffix",
+		);
 		const hidden = await aclRoute.GET(request("GET", viewerToken), context);
 		assert.ok(hidden);
 		assert.equal(hidden.status, 404);

@@ -3,10 +3,12 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
-## [0.2.6] - Unreleased
+## [0.2.7] - Unreleased
 
 ### Fixed
 
+- Match namespaced Service Key principals safely in the active document catalog without
+  casting them to UUIDs or inheriting a user ACL from a matching UUID suffix.
 - Resolve named documents and policy identifiers against authorized active-version metadata;
   preserve source scope instead of substituting similar documents or operation phases.
 - Answer bounded complete-heading queries from parser outlines with verifiable source citations,
@@ -27,6 +29,16 @@ results remain in [`docs/evidence/`](./docs/evidence/).
   evidence for fact/follow-up paths, not global contradiction detection or a replacement for expert review.
 - Publication and target-environment acceptance are pending; local candidate results do not certify
   an immutable release image or the Hong Kong deployment.
+
+## [0.2.6] - Not published
+
+- The immutable build was rejected by the fresh-install Public API Ask smoke gate before
+  production deployment. A Service Key principal was incorrectly cast to UUID in the new
+  document catalog query. The tag and image digests remain unchanged for traceability;
+  use the later accepted release, not these artifacts. Tracked in
+  [#209](https://github.com/codexlin/UnoRAG/issues/209).
+- The evidence-quality changes originally prepared for this version are carried forward
+  in 0.2.7 above. Hong Kong remains on 0.2.5 until target acceptance and publication complete.
 
 ## [0.2.5] - 2026-11-06
 
