@@ -3,7 +3,7 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
-## [0.2.7] - Unreleased
+## [0.2.7] - 2026-11-07
 
 ### Fixed
 
@@ -27,8 +27,11 @@ results remain in [`docs/evidence/`](./docs/evidence/).
   to obtain new document identity/outline metadata; drain unfinished jobs before upgrading.
 - No database schema or public Knowledge API change. Conflict verification is bounded to retrieved
   evidence for fact/follow-up paths, not global contradiction detection or a replacement for expert review.
-- Publication and target-environment acceptance are pending; local candidate results do not certify
-  an immutable release image or the Hong Kong deployment.
+- The final signed images passed Hong Kong acceptance: 25 fresh uploads and matching originals,
+  three 95-case rounds (285/285), 8 lifecycle checks, 36 browser checks and 3 real SSE checks.
+  Isolated install, upgrade/rollback, 29 isolation cases, dependency/provider faults and restore
+  drills also passed. See the [version-bound report](./docs/evidence/2026-11-07-v0.2.7-release-closeout.md)
+  for retained failures, review boundaries and capacity limitations.
 
 ## [0.2.6] - Not published
 
@@ -38,7 +41,7 @@ results remain in [`docs/evidence/`](./docs/evidence/).
   use the later accepted release, not these artifacts. Tracked in
   [#209](https://github.com/codexlin/UnoRAG/issues/209).
 - The evidence-quality changes originally prepared for this version are carried forward
-  in 0.2.7 above. Hong Kong remains on 0.2.5 until target acceptance and publication complete.
+  in the accepted 0.2.7 release above; Hong Kong stayed on 0.2.5 until that release passed acceptance.
 
 ## [0.2.5] - 2026-11-06
 
@@ -400,6 +403,7 @@ in [`docs/INTEGRATION.md`](./docs/INTEGRATION.md).
 - Existing RC deployments use the forward-only upgrade and application rollback process in
   [`docs/RELEASE.md`](./docs/RELEASE.md). Database migrations are not rolled back.
 
+[0.2.7]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.7
 [0.2.5]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.5
 [0.2.4]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.4
 [0.2.2]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.2
