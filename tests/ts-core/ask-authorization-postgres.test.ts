@@ -11,7 +11,7 @@ import { createClient } from "redis";
 import {
 	toApiCitation,
 	toUiCitation,
-} from "../../src/components/app/ask-turn-state";
+} from "../../src/components/app/ask/ask-turn-state";
 import * as schema from "../../src/db/schema";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
 import type { MemoryProvenance } from "../../src/server/conversations/memory-provenance";

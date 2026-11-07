@@ -5,7 +5,7 @@ import {
 	askTurnsReducer,
 	toApiCitation,
 	toUiCitation,
-} from "../../src/components/app/ask-turn-state";
+} from "../../src/components/app/ask/ask-turn-state";
 
 test("ask reducer preserves first evidence latency while streaming", () => {
 	let turns = askTurnsReducer([], {

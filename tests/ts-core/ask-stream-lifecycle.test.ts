@@ -5,12 +5,12 @@ import {
 	ASK_TOKEN_BUFFER_LIMIT,
 	ASK_TOKEN_FLUSH_MS,
 	createAskStreamLifecycle,
-} from "../../src/components/app/ask-stream-lifecycle";
+} from "../../src/components/app/ask/ask-stream-lifecycle";
 import {
 	type AskTurnsAction,
 	askTurnsReducer,
 	type LocalTurn,
-} from "../../src/components/app/ask-turn-state";
+} from "../../src/components/app/ask/ask-turn-state";
 import {
 	type ApiAskResponse,
 	type AskStreamHandlers,

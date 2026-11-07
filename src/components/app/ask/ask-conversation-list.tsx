@@ -3,8 +3,8 @@
 import { Activity, RefreshCw, Square } from "lucide-react";
 import { motion } from "motion/react";
 
-import { hasAskTrace } from "@/components/app/ask-trace-drawer";
-import type { LocalTurn } from "@/components/app/ask-turn-state";
+import { hasAskTrace } from "@/components/app/ask/ask-trace-drawer";
+import type { LocalTurn } from "@/components/app/ask/ask-turn-state";
 import { CitationSourceCard } from "@/components/app/citation-source-card";
 import { MarkdownAnswer } from "@/components/app/markdown-answer";
 import { Button } from "@/components/ui/button";

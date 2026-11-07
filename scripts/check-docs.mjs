@@ -1,9 +1,20 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 const root = process.cwd();
-const markdownFiles = execFileSync("git", ["ls-files", "-z", "--", "*.md"])
+const markdownFiles = execFileSync("git", [
+	"ls-files",
+	"--cached",
+	"--others",
+	"--exclude-standard",
+	"-z",
+	"--",
+	"*.md",
+])
 	.toString("utf8")
 	.split("\0")
 	.filter(Boolean)
@@ -19,6 +30,9 @@ const retiredDocumentationPaths = new Set([
 	"docs/design/hybrid-retrieval.md",
 	"docs/evidence/2026-09-15-library-crud-audit.md",
 	"docs/evidence/2026-09-17-library-delete-fault-recovery.md",
+	"docs/adr/0001-ocr-vlm-adapters.md",
+	"docs/adr/0004-nextjs-control-plane.md",
+	"docs/adr/0006-private-product-monorepo.md",
 ]);
 const errors = [];
 
@@ -28,13 +42,17 @@ for (const file of documentationFiles) {
 	}
 }
 
-function linkDestination(raw) {
-	const value = raw.trim();
-	if (value.startsWith("<")) {
-		const closing = value.indexOf(">");
-		return closing === -1 ? value : value.slice(1, closing);
+const markdown = unified().use(remarkParse).use(remarkGfm);
+function linkDestinations(content) {
+	const destinations = [];
+	function visit(node) {
+		if (["link", "image", "definition"].includes(node.type)) {
+			destinations.push(node.url);
+		}
+		for (const child of node.children ?? []) visit(child);
 	}
-	return value.split(/\s+/u, 1)[0];
+	visit(markdown.parse(content));
+	return destinations;
 }
 
 for (const file of documentationFiles) {
@@ -44,8 +62,7 @@ for (const file of documentationFiles) {
 		errors.push(`${file}: contains a local workstation path`);
 	}
 
-	for (const match of content.matchAll(/!?\[[^\]]*\]\(([^)\n]+)\)/gu)) {
-		const destination = linkDestination(match[1]);
+	for (const destination of linkDestinations(content)) {
 		if (
 			!destination ||
 			destination.startsWith("#") ||
@@ -78,8 +95,17 @@ const evidenceIndex = readFileSync(
 const evidenceReports = readdirSync(evidenceDirectory)
 	.filter((file) => file.endsWith(".md") && file !== "README.md")
 	.sort();
+const datedReports = evidenceReports.filter((file) =>
+	/^\d{4}-\d{2}-\d{2}-/u.test(file),
+);
+if (datedReports.length !== 1) {
+	errors.push(
+		"docs/evidence: keep exactly one current dated release report; link historical reports to immutable Git commits",
+	);
+}
+const indexedReports = new Set(linkDestinations(evidenceIndex));
 for (const report of evidenceReports) {
-	if (!evidenceIndex.includes(`./${report}`)) {
+	if (!indexedReports.has(`./${report}`)) {
 		errors.push(`docs/evidence/README.md: missing report entry: ${report}`);
 	}
 }
@@ -91,5 +117,5 @@ if (errors.length > 0) {
 }
 
 console.log(
-	`Documentation check passed: ${documentationFiles.length} files, ${evidenceReports.length} evidence reports.`,
+	`Documentation check passed: ${documentationFiles.length} files, ${evidenceReports.length} evidence documents (${datedReports.length} current release report).`,
 );

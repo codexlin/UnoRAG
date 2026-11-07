@@ -1,24 +1,40 @@
-# 当前验收证据
+# 验收证据
 
-最新正式结论在首行；其余报告保留相关根因、历史失败与回归对照，不继承为当前版本的 PASS：
+当前树只保留一份当前发布报告和一份试点模板。历史失败、实验和发布结果使用固定提交链接追溯，
+不再与现行指南混排，也不把旧 PASS 自动继承到新代码或客户环境。
 
-| 报告 | 证明范围 |
+## 当前证据
+
+| 文档 | 用途 |
 |---|---|
-| [v0.2.7 发布收口验收](./2026-11-07-v0.2.7-release-closeout.md) | 当前稳定版：普通裁决恢复、独立冲突核验、授权文档定位及 Service Key 身份修复；893/893、集成 82/82，香港真实 25 文件、三轮 285/285、原文 25/25、生命周期 8/8；浏览器 36/36、真实 SSE 3/3；空卷安装、升级/回滚、隔离 29/29、故障/背压/恢复；v0.2.6 被门禁拦截的失败保留 |
-| [v0.2.5 发布收口验收](./2026-11-06-v0.2.5-release-closeout.md) | 上一稳定版：窄屏回答与 ACR 诊断/平台兼容修复；840/840、集成 82/82，香港真实七文件入库、三轮 123/123、COS 原文 7/7；浏览器复验 36/36 与无 mock SSE 2/2，首次超时保留；空卷安装、升级/回滚、隔离 29/29、故障/背压、七文件恢复；GHCR/ACR 双签名 manifest |
-| [香港混合业务矩阵](./2026-11-06-business-matrix-hk.md) | 历史根因与实验记录：原 HK、FAIL/中断、K/L 裁决回归与 M 技术故障保留；最终本地候选 25 文件、三轮 285/285、生命周期 8/8、SSE 3/3；候选自身不是香港发布证明，后续正式结果见 v0.2.7 报告 |
-| [v0.2.4 发布收口验收](./2026-11-06-v0.2.4-release-closeout.md) | 上一稳定版：两项真实观察与在途超时修复；空安装、升级/回滚、故障、背压、原文恢复；候选 123/123 与最终稳定镜像 41/41、浏览器 32/32、COS 原文摘要 7/7；GHCR 签名发布，ACR 边界单列 |
-| [b0222ea 香港候选复验](./2026-11-06-b0222ea-hk-acceptance.md) | 上一候选：PR #192 已合并，7/7 新鲜入库、三轮 123/123、隔离 29/29、浏览器 28/28；真实 Qdrant 停机诊断与同进程恢复通过；当时未重做完整交付门禁，历史 #193 根因仍未知 |
-| [比较证据与重排降级修复](./2026-11-05-comparison-lineage-fix.md) | #189/#190 根因及效果/成本对比；旧本地 40/41 保留，补齐 Qdrant 诊断后新三轮 123/123，含真实断连与浏览器验证；原 503 根因未确认，不是香港发布通过 |
-| [d9b1377 香港部署与真实复验](./2026-11-05-d9b1377-hk-acceptance.md) | 前一候选的真实失败对照：三轮 Ask 118/123，延迟通过但质量 FAIL；不能被当前 b0222ea 的通过结果改写 |
-| [Ragas 与请求记录本地真实验收](./2026-11-05-ragas-request-records-local.md) | 未提交工作区真实入库/Ask、Ragas 语义诊断、桌面/移动请求链路与 Qdrant 故障复测；含真实质量缺口，不是 RC GO |
-| [c066377 解析修复与上传复验](./2026-11-05-c066377-parser-upload-acceptance.md) | 解析、上传、生命周期与浏览器通过；干净检出问答 123/123，但 P95 16.11 s 导致稳定性门禁 FAIL，未提升为新稳定版 |
-| [59b4f5f 隔离候选基线](./2026-11-04-59b4f5f-candidate-acceptance.md) | 该提交 RC GO：新鲜入库、三轮 Ask、隔离、浏览器、故障与恢复；仅证明该提交，旧 NO-GO 保留 Git 永久链接 |
-| [v0.2.3 Release Confidence 发布验收](./2026-09-25-v0.2.3-release-confidence.md) | 四镜像供应链、隔离 RC 的候选升级/旧版回滚/候选再升级、Provider 故障、破坏性恢复、香港原位升级、产品 smoke 及桌面/移动浏览器复核 |
-| [试点反馈模板](./PILOT-FEEDBACK-TEMPLATE.md) | 当前候选版本试点的场景结论、证据引用、已知限制与 Go / No-Go 签字格式；模板本身不是通过证据 |
+| [v0.2.7 发布收口验收](./2026-11-07-v0.2.7-release-closeout.md) | 最终签名镜像与香港验收：25 文件、三轮 285/285、生命周期 8/8、浏览器 36/36、真实 SSE 3/3、隔离 29/29；保留失败和限制 |
+| [试点反馈模板](./PILOT-FEEDBACK-TEMPLATE.md) | 记录客户场景、版本、证据和责任签字；模板本身不证明通过 |
 
-报告只证明其记录的 commit、配置和环境。报告中的测试数量是当时快照，不是当前仓库的动态状态。
-当前版本必须重新执行 [发布与验收流程](../RELEASE.md)。
+## 历史证据
 
-更早且与当前修复无关的旧报告通过 Git 历史与 GitHub Releases 保留，不继续堆积在当前文档树中。
-本目录保留的历史对照也只能按原提交解释，不能用于证明新提交、模型、ParserProvider 或客户环境已经通过。
+以下原文均固定在清理前提交 `6918b7596f77974cc036c15a3f3140aa89a95aef`，不随 main 改变。
+正文中的版本、环境与阶段性结论保持原样，包括 FAIL、NO_GO、超时和未知根因。
+
+| 原文 | 保留原因 |
+|---|---|
+| [混合业务质量调查](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-06-business-matrix-hk.md) | 原 HK FAIL、预期修正、K/L 裁决回归、M 传输故障与最终本地复验 |
+| [v0.2.5](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-06-v0.2.5-release-closeout.md) | 窄屏显示与 ACR 修复，七文件发布验收 |
+| [v0.2.4](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-06-v0.2.4-release-closeout.md) | 解析预算与请求诊断，发布和恢复 |
+| [b0222ea](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-06-b0222ea-hk-acceptance.md) | 候选质量、隔离与 Qdrant 同进程恢复 |
+| [比较证据修复](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-05-comparison-lineage-fix.md) | 证据丢失、重排降级的根因及成本对比 |
+| [d9b1377](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-05-d9b1377-hk-acceptance.md) | 部署成功但质量 FAIL 的前后对照 |
+| [Ragas/请求记录](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-05-ragas-request-records-local.md) | 本地语义诊断与质量缺口，不是发布认证 |
+| [c066377](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-05-c066377-parser-upload-acceptance.md) | 解析通过但延迟门禁 FAIL |
+| [59b4f5f](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-04-59b4f5f-candidate-acceptance.md) | 旧隔离候选基线与当时的限制 |
+| [v0.2.3](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-09-25-v0.2.3-release-confidence.md) | 交付、审计及删除故障恢复验收 |
+
+正式发布附件另见 [GitHub Releases](https://github.com/codexlin/UnoRAG/releases)。离线完整 clone 可用
+`git show 6918b7596f77974cc036c15a3f3140aa89a95aef:docs/evidence/<文件名>` 读取；浅克隆须先获取该提交。
+
+## 更新规则
+
+1. 按 [发布流程](../RELEASE.md) 验收，并绑定真实 commit、镜像 digest、配置和环境。
+2. 新发布报告取代当前报告时，在本索引为旧报告留下固定提交链接；历史文件不继续堆在当前树。
+3. 阶段实验放入受限、忽略的本地产物或脱敏 issue；最终结论汇总到当前报告，不为每次重跑新增公开 MD。
+4. 原始问题、回答、文档内容、凭据和日志不得随公开报告提交；失败不能删除或被重跑覆盖。
+5. 提交前执行 `pnpm docs:check`，检查链接、报告索引和单份当前报告约束。

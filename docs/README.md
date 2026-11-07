@@ -20,12 +20,22 @@
 | 当前事实 | `STATUS`、`ARCHITECTURE`、部署、运维、开发和集成文档 | 行为变化时与代码同一 PR 更新 |
 | 稳定契约 | [Knowledge API](./INTEGRATION.md) 与 [`public-api-v1.openapi.json`](../contracts/public-api-v1.openapi.json) | 兼容性变化必须经过版本设计 |
 | 长期决策 | [ADR](./adr/) | 已发布正文不重写；通过新 ADR 替代 |
-| 验收证据 | [`evidence/`](./evidence/) | 只保留当前稳定版汇总报告 |
+| 验收证据 | [`evidence/`](./evidence/) | 当前发布汇总 + 试点模板；历史报告保留固定提交链接 |
 | 专项参考 | 品牌规则和目录就近 README | 不自动成为产品承诺，以当前事实文档为准 |
 
 旧版本报告由 Git 历史和 [GitHub Releases](https://github.com/codexlin/UnoRAG/releases) 保存，不在当前树
 重复堆积。文档中的“已实现”描述代码能力；“已验收”只适用于证据明确绑定的版本和环境。客户上线仍须
 按照 [发布门禁](./RELEASE.md) 完成目标环境签字。
+
+## 一件事只维护一处
+
+- 产品能力和使用价值放在中英文 README；成熟度、限制与下一步只维护在 `STATUS`。
+- 架构说明职责和不变量；代码放置、测试分层与产物保留规则只维护在 `DEVELOPMENT`。
+- 安装参数放在 `DEPLOYMENT`，排障和日常维护放在 `OPERATIONS`，发布验收顺序放在 `RELEASE`。
+- 实验过程保留在受限产物或脱敏 issue；发布报告只汇总结论，不把每次重跑变成新文档。
+- 被替代的 ADR 从 [历史决策索引](./adr/README.md#历史决策) 追溯，不与现行架构并列为操作方案。
+
+文档合并或删除时，同一改动修复调用链接并保留必要的固定历史入口；不要新增“总览的总览”或平行文档树。
 
 ## 专项参考
 
