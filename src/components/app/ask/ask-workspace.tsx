@@ -16,22 +16,22 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
-import { AskComposer } from "@/components/app/ask-composer";
-import { AskConversationList } from "@/components/app/ask-conversation-list";
-import { AskSourcesPanel } from "@/components/app/ask-sources-panel";
-import { createAskStreamLifecycle } from "@/components/app/ask-stream-lifecycle";
+import { AskComposer } from "@/components/app/ask/ask-composer";
+import { AskConversationList } from "@/components/app/ask/ask-conversation-list";
+import { AskSourcesPanel } from "@/components/app/ask/ask-sources-panel";
+import { createAskStreamLifecycle } from "@/components/app/ask/ask-stream-lifecycle";
 import {
 	AskTraceDrawer,
 	stageDurationMs,
-} from "@/components/app/ask-trace-drawer";
+} from "@/components/app/ask/ask-trace-drawer";
 import {
 	askTurnsReducer,
 	completedTurn,
 	type LocalTurn,
 	toApiCitation,
 	toUiCitation,
-} from "@/components/app/ask-turn-state";
-import { AskWorkspaceHeader } from "@/components/app/ask-workspace-header";
+} from "@/components/app/ask/ask-turn-state";
+import { AskWorkspaceHeader } from "@/components/app/ask/ask-workspace-header";
 import { buttonVariants } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {

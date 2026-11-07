@@ -131,7 +131,7 @@ Ask runs 维护、关联文库/会话的生命周期约束。
 候选/结果数及 figure 在排序、去重和 Top-K 各步的数量。重排降级后 Ask 仍可能已完成，不能只筛失败请求；
 先用 Request ID 查对应成功请求，再检查 timeout/http/transport/invalid_response。空值表示未记录，
 不根据总耗时猜网络故障。复用既有结果不显示成新的 Provider 调用。诊断不含原始异常或响应正文，
-历史 `rerank_failed=true` 也无法倒推原因。验证见 [修复案例](./evidence/2026-11-05-comparison-lineage-fix.md)。
+历史 `rerank_failed=true` 也无法倒推原因。验证见 [历史修复案例](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-05-comparison-lineage-fix.md)。
 
 Qdrant 故障的新记录可展示 **Qdrant 诊断**：ready/query/scroll、错误类别、HTTP 状态、固定连接错误码、
 调用耗时、客户端超时及可重试性。Ask 返回 503 不等于 Qdrant 返回 503；HTTP 状态为空时不能这样归因。

@@ -100,11 +100,15 @@ Qdrant、共享文档存储与模型配置，应使用完整 Compose 环境验�
 
 ```text
 src/app/            页面与 Next.js Route Handlers
-src/components/     产品 UI 与可复用组件
+src/components/ui/  无业务语义的基础 UI
+src/components/app/ 产品布局、跨页面展示及按功能聚合的 UI
+  ask/              问答页面、流式尝试生命周期、turn reducer 与链路抽屉
+  libraries/        知识库列表、文档台账、对话框与工作区头部
 src/core/           与传输层解耦的 RAG 领域实现
 src/db/             Drizzle schema 与数据库访问
-src/lib/server/     身份、RBAC、Workspace 与应用服务
-src/server/         HTTP / 应用适配器
+src/lib/            浏览器 API client、query key、展示投影和共享类型
+src/lib/server/     产品应用规则：身份、RBAC、Workspace、文档命令与授权
+src/server/         RAG HTTP 适配、检索运行时、会话仓储与观测服务
 src/worker/         DBOS workflow、调度、对账与控制循环
 drizzle/            不可重写的 PostgreSQL 迁移历史
 contracts/          运行时使用的机器可读公共契约
@@ -117,13 +121,56 @@ testdata/           代表性真实文件与拒绝格式 fixture
 仓库保持单根 TypeScript package：可复用 RAG 算法放入 `src/core/`，Next.js 应用规则放入
 `src/lib/server/`。当前没有已排期的 monorepo 迁移；只有模块形成独立构建边界或被多个 composition root
 真实复用时才提取为 package，不按产品版本拆包，也不为目录整齐创建空包。历史讨论见
-[ADR-0006](./adr/0006-private-product-monorepo.md)，当前开源产品边界见
+[ADR 历史决策](./adr/README.md#历史决策)，当前开源产品边界见
 [ADR-0007](./adr/0007-fully-open-source-product-and-services.md)。
 
 UI 组件源码由仓库维护，不依赖 shadcn CLI 参与安装或构建。Base UI 状态变体与滚动条工具保存在
 `src/app/ui-variants.css`，来源及 MIT 声明见 `NOTICE`。新增组件时须审核所需样式，不为生成代码
 永久安装整套 CLI。第三方许可证仍按 pnpm 生产依赖清单、包内许可证及 SPDX 正文生成；无法确定的
 许可文本会阻断检查，不静默跳过。
+
+### 代码放在哪里
+
+按现有职责扩展，不新增与 `lib/server` / `server` 平行的 `services`、`managers` 或通用 `utils` 层：
+
+| 变更 | 首选位置 | 边界 |
+|---|---|---|
+| 页面/HTTP 接入 | `src/app/` | 组装和授权入口；可复用逻辑留在对应领域 |
+| 问答交互和流式状态 | `src/components/app/ask/` | 同一功能内就近维护；不持有服务端凭据或业务权限事实 |
+| 多页面复用展示 | `src/components/app/` | 例如引用卡片和 Markdown 渲染同时服务 Ask/归档，不塞入单一页面目录 |
+| 客户端服务端状态 | `src/hooks/`、`src/lib/query-*`、`src/lib/api.ts` | 保持 Workspace query scope；不复制第二份全局业务状态 |
+| 产品权限/版本命令 | `src/lib/server/` | 鉴权、事务和业务规则，不导入 UI |
+| RAG 算法/契约 | `src/core/` | 解析、IR、切分、检索、Ask 节点；不持有浏览器 Session |
+| RAG 接入与持久化适配 | `src/server/` | 解析可信 scope、组装 core、写请求/会话记录；不是第二个独立后端 |
+| 后台生命周期 | `src/worker/` | DBOS 执行、对账、激活和清理；不接管用户管理 |
+
+- 文件名使用 `kebab-case`，React 导出使用 `PascalCase`；直接导入具体模块，不为目录美观新增全量 barrel。
+- 同一功能的组件、状态 reducer 和异步协调器就近放置；基础 UI 与跨页面组件保持独立。
+- 移动文件同步更新全部调用者和测试，不保留没有消费者的转发文件。路径调整与行为修改分开审查。
+- 新增领域代码优先 TypeScript；现存 `.mjs` / `.d.mts` 的运行和测试契约先验证再迁移，不一次性改后缀。
+- 拆大文件按职责与可测试边界进行，不按固定行数机械拆散。当前 Ask handler/runtime、删除 ports、
+  `src/lib/api.ts` 等仍有较大模块；UI 归类不代表这些模块已完成重构，涉及它们时单独处理。
+
+### 新人阅读两条链路
+
+1. 问答：`src/app/app/ask/page.tsx` → `src/components/app/ask/ask-workspace.tsx` → `src/lib/api.ts`
+   → `src/app/api/rag/[...path]/route.ts` → `src/server/http/ask/` → `src/core/ask-graph/`。
+2. 入库：`src/app/api/libraries/[libraryId]/documents/route.ts` → `src/lib/server/document-lifecycle.ts`
+   → `src/worker/dispatcher.ts` / `workflows.ts` → parsing、ingest → 校验和激活事务。
+
+先跟一条用户操作理解依赖，遇到权限/生命周期规则再查看 [架构](./ARCHITECTURE.md)，不必逐目录通读。
+
+### 数据与产物的保留边界
+
+| 内容 | 处理方式 |
+|---|---|
+| `drizzle/`、`contracts/`、版本化 `testdata/` | 保留；不是旧缓存，不因文件多而删 |
+| `tests/`、评测 runner | 保留行为/权限/恢复覆盖；按领域维护，不用合并文件替代消除重复断言 |
+| `.next/`、`dist/`、`*.tsbuildinfo` | 可再生成构建产物；确认无运行进程依赖后才清理 |
+| `test-results/`、本地评测输出 | 先归档失败证据，再按保留策略清理；不是自动删除全部历史 |
+| `.unorag/`、`deploy/config/` 实际配置、备份和 COS | 可能含凭据或业务数据；不能使用全局 `git clean -fdx` 当作项目整理 |
+
+目录移动也需本地回归；新提交不能继承旧镜像的部署验收结论。
 
 ## 必须保持的约束
 

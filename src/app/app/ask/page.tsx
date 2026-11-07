@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 
-import { AskWorkspace } from "@/components/app/ask-workspace";
+import { AskWorkspace } from "@/components/app/ask/ask-workspace";
 
 export default function AskPage() {
 	return (
