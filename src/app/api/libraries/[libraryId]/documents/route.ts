@@ -253,6 +253,8 @@ export async function POST(request: Request, context: RouteContext) {
 				generationId,
 				contentHash: stored.contentHash,
 				storageKey: stored.key,
+				sourceFilename: originalFilename,
+				sourceContentType: contentType,
 				sizeBytes: stored.sizeBytes,
 				status: "pending",
 				pipelineVersion: "document-lifecycle-v2",

@@ -143,6 +143,7 @@ function AskWorkspaceContent() {
 	const [threadId, setThreadId] = useState<string | undefined>();
 	const [threadTitle, setThreadTitle] = useState<string | null>(null);
 	const [archiving, setArchiving] = useState(false);
+	const archivingRef = useRef(false);
 	const [archiveError, setArchiveError] = useState<string | null>(null);
 	const [resumeLibraryMissing, setResumeLibraryMissing] = useState<
 		string | null
@@ -229,6 +230,7 @@ function AskWorkspaceContent() {
 		setTraceOpen(false);
 		setArchiveError(null);
 		setArchiving(false);
+		archivingRef.current = false;
 		setResumeLibraryMissing(null);
 	}, [askStream]);
 
@@ -305,6 +307,11 @@ function AskWorkspaceContent() {
 			} catch (err) {
 				if (controller.signal.aborted || isAbortError(err)) return;
 				setArchiveError("无法打开归档会话，请从会话历史重试。");
+			} finally {
+				if (!controller.signal.aborted) {
+					archivingRef.current = false;
+					setArchiving(false);
+				}
 			}
 		})();
 		return () => controller.abort();
@@ -326,7 +333,10 @@ function AskWorkspaceContent() {
 	const canAsk = Boolean(
 		isAskableLibrary(library) &&
 			apiReady &&
-			(!requestedThreadId || threadId === requestedThreadId),
+			!archiving &&
+			(!requestedThreadId ||
+				(threadId === requestedThreadId &&
+					resumeThreadRef.current === requestedThreadId)),
 	);
 
 	const sampleQuestions = useMemo(() => {
@@ -364,12 +374,13 @@ function AskWorkspaceContent() {
 	}
 
 	async function handleArchive() {
-		if (!canArchive) return;
+		if (!canArchive || archivingRef.current) return;
 		const readyTurns = turns.filter(
 			(turn) => !turn.pending && turn.question.trim() && !turn.error,
 		);
 		if (readyTurns.length === 0) return;
 		const epoch = contextEpochRef.current;
+		archivingRef.current = true;
 		setArchiving(true);
 		setArchiveError(null);
 		try {
@@ -391,14 +402,15 @@ function AskWorkspaceContent() {
 			setThreadId(detail.id);
 			setThreadTitle(detail.title);
 			setSessionId(detail.session_id || detail.id);
+			// Keep Ask blocked until the URL-driven archive hydration has settled.
 			router.replace(`/app/ask?thread=${encodeURIComponent(detail.id)}`);
 		} catch (err) {
 			if (epoch !== contextEpochRef.current) return;
 			setArchiveError(
 				err instanceof Error ? err.message : "归档失败，请稍后重试",
 			);
-		} finally {
-			if (epoch === contextEpochRef.current) setArchiving(false);
+			archivingRef.current = false;
+			setArchiving(false);
 		}
 	}
 
@@ -407,7 +419,7 @@ function AskWorkspaceContent() {
 		options?: { replaceTurnId?: string },
 	) {
 		const trimmed = question.trim();
-		if (!trimmed || !canAsk || !libraryId) return;
+		if (!trimmed || !canAsk || !libraryId || archivingRef.current) return;
 		if (isStreaming && !options?.replaceTurnId) return;
 
 		const replaceTurnId = options?.replaceTurnId;

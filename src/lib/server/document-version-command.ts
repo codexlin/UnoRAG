@@ -172,18 +172,23 @@ export async function createDocumentVersion(
 				)
 				.for("update")
 				.limit(1);
-			if (!sourceVersion?.storageKey || !sourceVersion.contentHash) {
+			if (
+				!sourceVersion?.storageKey ||
+				!sourceVersion.contentHash ||
+				!sourceVersion.sourceFilename ||
+				!sourceVersion.sourceContentType
+			) {
 				throw new DocumentVersionCommandError(
 					"source_missing",
-					"source file was not retained; upload it again",
+					"source file or its metadata was not retained; upload it again",
 				);
 			}
 			source = {
 				storageKey: sourceVersion.storageKey,
 				contentHash: sourceVersion.contentHash,
 				sizeBytes: sourceVersion.sizeBytes,
-				filename: document.filename,
-				contentType: document.contentType,
+				filename: sourceVersion.sourceFilename,
+				contentType: sourceVersion.sourceContentType,
 			};
 		}
 
@@ -277,6 +282,8 @@ export async function createDocumentVersion(
 			generationId,
 			contentHash: source.contentHash,
 			storageKey: source.storageKey,
+			sourceFilename: source.filename,
+			sourceContentType: source.contentType,
 			sizeBytes: source.sizeBytes,
 			status: "pending",
 			pipelineVersion: "document-lifecycle-v2",

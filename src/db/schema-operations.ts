@@ -82,6 +82,9 @@ export const documentVersions = appSchema.table(
 		generationId: uuid("generation_id").defaultRandom().notNull(),
 		contentHash: varchar("content_hash", { length: 128 }).notNull(),
 		storageKey: varchar("storage_key", { length: 1024 }).notNull(),
+		// Null means historical source metadata could not be recovered reliably.
+		sourceFilename: varchar("source_filename", { length: 512 }),
+		sourceContentType: varchar("source_content_type", { length: 128 }),
 		sizeBytes: bigint("size_bytes", { mode: "number" }),
 		status: varchar("status", { length: 32 }).default("pending").notNull(),
 		pipelineVersion: varchar("pipeline_version", { length: 128 })
