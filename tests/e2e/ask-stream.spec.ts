@@ -851,3 +851,117 @@ test("URL thread switch hydrates archive and ignores old stream completion", asy
 	await expect(page.getByRole("textbox")).toBeEnabled();
 	await expect(page.getByRole("article")).toHaveCount(2);
 });
+
+for (const archiveFails of [false, true]) {
+	test(`archive pending blocks new questions and retries until ${archiveFails ? "failure" : "hydration"}`, async ({
+		page,
+	}) => {
+		const requests = await openAsk(page, [
+			[meta(), frame("token", "Partial answer")],
+			[
+				done(
+					"Safe next answer",
+					"archive-session",
+					archiveFails ? undefined : "fixture-archive",
+				),
+			],
+		]);
+		let releaseArchive = () => {};
+		let releaseHydration = () => {};
+		const archiveGate = new Promise<void>((resolve) => {
+			releaseArchive = resolve;
+		});
+		const hydrationGate = new Promise<void>((resolve) => {
+			releaseHydration = resolve;
+		});
+		const detail = { ...archivedThread, library_id: "stream-alpha" };
+		await page.route("**/api/rag/v1/threads", async (route) => {
+			await archiveGate;
+			await route.fulfill({
+				status: archiveFails ? 503 : 200,
+				json: archiveFails ? { detail: "Archive unavailable" } : detail,
+			});
+		});
+		await page.route("**/api/rag/v1/threads/*/continue", async (route) => {
+			await hydrationGate;
+			await route.fulfill({ json: detail });
+		});
+		try {
+			await submit(page, "Archive pending question", 0);
+			await release(page, 0, 2);
+			await page
+				.getByRole("button", { name: "停止生成", exact: true })
+				.first()
+				.click();
+			await expect(
+				page.getByRole("button", { name: "重试", exact: true }),
+			).toBeEnabled();
+			await page.getByRole("textbox").fill("Draft next question");
+			const archiveRequest = page.waitForRequest("**/api/rag/v1/threads");
+			await page
+				.getByRole("button", { name: "归档当前会话", exact: true })
+				.click();
+			await archiveRequest;
+			await expect(page.getByRole("textbox")).toBeDisabled();
+			await expect(
+				page.getByRole("button", { name: "发送", exact: true }),
+			).toBeDisabled();
+			await expect(
+				page.getByRole("button", { name: "重试", exact: true }),
+			).toBeDisabled();
+			// Dispatch directly to exercise the handler guard as well as disabled controls.
+			await page
+				.getByRole("textbox")
+				.dispatchEvent("keydown", { key: "Enter" });
+			await page
+				.getByRole("button", { name: "重试", exact: true })
+				.dispatchEvent("click");
+			expect(requests).toHaveLength(1);
+			if (archiveFails) {
+				releaseArchive();
+				await expect(
+					page.getByText("Archive unavailable", { exact: true }),
+				).toBeVisible();
+				await expect(
+					page.getByRole("button", { name: "重试", exact: true }),
+				).toBeEnabled();
+			} else {
+				const hydrationRequest = page.waitForRequest(
+					"**/api/rag/v1/threads/*/continue",
+				);
+				releaseArchive();
+				await hydrationRequest;
+				await expect(page.getByRole("textbox")).toBeDisabled();
+				await expect(
+					page.getByRole("button", { name: "重试", exact: true }),
+				).toBeDisabled();
+				releaseHydration();
+				await expect(
+					page.getByText("Saved archive answer", { exact: true }),
+				).toBeVisible();
+			}
+			await expect(page.getByRole("textbox")).toBeEnabled();
+			await expect(page.getByRole("textbox")).toHaveValue(
+				"Draft next question",
+			);
+			await submit(page, "Next question after archive", 1);
+			if (!archiveFails) {
+				expect(requests[1]).toMatchObject({
+					thread_id: "fixture-archive",
+					session_id: "archive-session",
+				});
+			} else {
+				expect(requests[1]).not.toHaveProperty("thread_id");
+			}
+			await release(page, 1, 1);
+			await closeStream(page, 1);
+			await expect(
+				page.getByText("Safe next answer", { exact: true }),
+			).toBeVisible();
+			await expect(page.getByRole("article")).toHaveCount(2);
+		} finally {
+			releaseArchive();
+			releaseHydration();
+		}
+	});
+}

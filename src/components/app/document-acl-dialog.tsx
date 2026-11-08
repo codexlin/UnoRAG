@@ -47,16 +47,35 @@ export function DocumentAclDialog({
 	const [selectedIds, setSelectedIds] = useState<string[]>([]);
 	const [members, setMembers] = useState<ApiWorkspaceMember[]>([]);
 	const [canEdit, setCanEdit] = useState(false);
+	const [loadedAcl, setLoadedAcl] = useState<{
+		libraryId: string;
+		docId: string;
+		signal: AbortSignal;
+	} | null>(null);
+	const docId = doc?.id;
+	const isLoaded = Boolean(
+		open &&
+			loadedAcl &&
+			!loadedAcl.signal.aborted &&
+			loadedAcl.libraryId === libraryId &&
+			loadedAcl.docId === docId,
+	);
 
 	useEffect(() => {
-		if (!open || !libraryId || !doc) return;
+		setLoadedAcl(null);
+		setCanEdit(false);
+		setScope("workspace");
+		setSelectedIds([]);
+		setMembers([]);
+		setSaving(false);
+		if (!open || !libraryId || !docId) return;
 		const controller = new AbortController();
 		setLoading(true);
 		setError(null);
 		void Promise.all([
 			fetchDocumentAcl({
 				libraryId,
-				docId: doc.id,
+				docId,
 				signal: controller.signal,
 			}),
 			fetchWorkspaceMembers(controller.signal),
@@ -66,6 +85,7 @@ export function DocumentAclDialog({
 				setScope(acl.scope);
 				setSelectedIds(acl.principal_ids);
 				setCanEdit(acl.can_edit);
+				setLoadedAcl({ libraryId, docId, signal: controller.signal });
 				setMembers(
 					memberPayload.members.filter((item) => item.status === "active"),
 				);
@@ -78,7 +98,7 @@ export function DocumentAclDialog({
 				if (!controller.signal.aborted) setLoading(false);
 			});
 		return () => controller.abort();
-	}, [open, libraryId, doc]);
+	}, [open, libraryId, docId]);
 
 	function toggleMember(userId: string) {
 		setSelectedIds((prev) =>
@@ -89,7 +109,8 @@ export function DocumentAclDialog({
 	}
 
 	async function onSave() {
-		if (!libraryId || !doc || !canEdit) return;
+		if (!doc || !isLoaded || !loadedAcl || !canEdit || loading || saving)
+			return;
 		if (scope === "restricted" && selectedIds.length === 0) {
 			setError("请至少选择一位可见成员");
 			return;
@@ -98,11 +119,12 @@ export function DocumentAclDialog({
 		setError(null);
 		try {
 			const saved = await updateDocumentAcl({
-				libraryId,
-				docId: doc.id,
+				libraryId: loadedAcl.libraryId,
+				docId: loadedAcl.docId,
 				scope,
 				principalIds: scope === "workspace" ? [] : selectedIds,
 			});
+			if (loadedAcl.signal.aborted) return;
 			setScope(saved.scope);
 			setSelectedIds(saved.principal_ids);
 			setCanEdit(saved.can_edit);
@@ -111,9 +133,10 @@ export function DocumentAclDialog({
 				toast.success(`已保存「${doc.name}」可见性，正在投影到检索`);
 			} else if (saved.projection === "reindex_required") {
 				const result = await reindexDocument({
-					libraryId,
-					docId: doc.id,
+					libraryId: loadedAcl.libraryId,
+					docId: loadedAcl.docId,
 				});
+				if (loadedAcl.signal.aborted) return;
 				onProjected?.(doc);
 				toast.success(
 					result.accepted || result.status === "processing"
@@ -129,11 +152,12 @@ export function DocumentAclDialog({
 			}
 			onOpenChange(false);
 		} catch (err) {
+			if (loadedAcl.signal.aborted) return;
 			const message = err instanceof Error ? err.message : "保存可见性失败";
 			setError(message);
 			toast.error(message);
 		} finally {
-			setSaving(false);
+			if (!loadedAcl.signal.aborted) setSaving(false);
 		}
 	}
 
@@ -156,6 +180,10 @@ export function DocumentAclDialog({
 
 				{loading ? (
 					<p className="text-ui text-muted-foreground">加载中…</p>
+				) : !isLoaded ? (
+					<p className="text-ui text-destructive">
+						{error ?? "尚未加载可见性"}
+					</p>
 				) : (
 					<div className="space-y-4">
 						<div className="space-y-2">
@@ -255,7 +283,7 @@ export function DocumentAclDialog({
 					</Button>
 					<Button
 						type="button"
-						disabled={loading || saving || !canEdit}
+						disabled={!isLoaded || loading || saving || !canEdit}
 						onClick={() => void onSave()}
 					>
 						{saving ? "保存中…" : "保存"}

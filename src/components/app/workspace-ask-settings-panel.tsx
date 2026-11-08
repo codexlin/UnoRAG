@@ -92,23 +92,28 @@ export function WorkspaceAskSettingsPanel() {
 	const refresh = useCallback(async () => {
 		setLoading(true);
 		setError(null);
-		const response = await fetch("/api/workspace/settings");
-		setLoading(false);
-		if (!response.ok) {
+		try {
+			const response = await fetch("/api/workspace/settings");
+			if (!response.ok) {
+				setError("无法加载工作区设置");
+				return;
+			}
+			const data = (await response.json()) as {
+				ask: AskSettings;
+				defaults: AskSettings;
+				policy_version?: number;
+			};
+			setAsk(data.ask);
+			setDraft(data.ask);
+			setDefaults(data.defaults);
+			setPolicyVersion(
+				typeof data.policy_version === "number" ? data.policy_version : null,
+			);
+		} catch {
 			setError("无法加载工作区设置");
-			return;
+		} finally {
+			setLoading(false);
 		}
-		const data = (await response.json()) as {
-			ask: AskSettings;
-			defaults: AskSettings;
-			policy_version?: number;
-		};
-		setAsk(data.ask);
-		setDraft(data.ask);
-		setDefaults(data.defaults);
-		setPolicyVersion(
-			typeof data.policy_version === "number" ? data.policy_version : null,
-		);
 	}, []);
 
 	useEffect(() => {
@@ -121,7 +126,7 @@ export function WorkspaceAskSettingsPanel() {
 	}
 
 	async function save() {
-		if (!canManage || !ask || !draft) return;
+		if (!canManage || !ask || !draft || busy || loading) return;
 		setBusy(true);
 		setError(null);
 		setSaved(false);
@@ -140,29 +145,36 @@ export function WorkspaceAskSettingsPanel() {
 			return;
 		}
 
-		const response = await fetch("/api/workspace/settings", {
-			method: "PATCH",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ ask: patch }),
-		});
-		setBusy(false);
-		if (!response.ok) {
-			const detail = await response.json().catch(() => null);
-			setError(typeof detail?.detail === "string" ? detail.detail : "保存失败");
-			return;
+		try {
+			const response = await fetch("/api/workspace/settings", {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ ask: patch }),
+			});
+			if (!response.ok) {
+				const detail = await response.json().catch(() => null);
+				setError(
+					typeof detail?.detail === "string" ? detail.detail : "保存失败",
+				);
+				return;
+			}
+			const data = (await response.json()) as {
+				ask: AskSettings;
+				defaults: AskSettings;
+				policy_version?: number;
+			};
+			setAsk(data.ask);
+			setDraft(data.ask);
+			setDefaults(data.defaults);
+			setPolicyVersion(
+				typeof data.policy_version === "number" ? data.policy_version : null,
+			);
+			setSaved(true);
+		} catch {
+			setError("保存失败，请重试");
+		} finally {
+			setBusy(false);
 		}
-		const data = (await response.json()) as {
-			ask: AskSettings;
-			defaults: AskSettings;
-			policy_version?: number;
-		};
-		setAsk(data.ask);
-		setDraft(data.ask);
-		setDefaults(data.defaults);
-		setPolicyVersion(
-			typeof data.policy_version === "number" ? data.policy_version : null,
-		);
-		setSaved(true);
 	}
 
 	if (loading && !defaults) {
@@ -229,7 +241,7 @@ export function WorkspaceAskSettingsPanel() {
 								{field.kind === "bool" ? (
 									<select
 										className="rounded-md border border-border bg-background px-2 py-1 text-xs"
-										disabled={!canManage || value == null}
+										disabled={!canManage || value == null || busy || loading}
 										value={value ? "true" : "false"}
 										onChange={(event) => {
 											setField(
@@ -244,7 +256,7 @@ export function WorkspaceAskSettingsPanel() {
 								) : (
 									<select
 										className="rounded-md border border-border bg-background px-2 py-1 text-xs"
-										disabled={!canManage || value == null}
+										disabled={!canManage || value == null || busy || loading}
 										value={String(value ?? "")}
 										onChange={(event) => {
 											setField(
@@ -268,13 +280,24 @@ export function WorkspaceAskSettingsPanel() {
 
 			{error ? <p className="text-ui text-destructive">{error}</p> : null}
 			{saved ? <p className="text-ui text-muted-foreground">已保存</p> : null}
+			{error && !ask ? (
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					disabled={loading}
+					onClick={() => void refresh()}
+				>
+					重试
+				</Button>
+			) : null}
 
 			{canManage ? (
 				<div className="pt-1">
 					<Button
 						type="button"
 						size="sm"
-						disabled={busy}
+						disabled={busy || loading || !ask || !draft}
 						onClick={() => void save()}
 					>
 						{busy ? "保存中…" : "保存"}
