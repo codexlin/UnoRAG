@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-11-07。本文只维护当前成熟度、已知限制和下一步；架构细节见 [ARCHITECTURE](./ARCHITECTURE.md)，逐版结果见 [验收索引](./evidence/README.md)。
+> 更新日期：2026-11-08。本文只维护当前成熟度、已知限制和下一步；架构细节见 [ARCHITECTURE](./ARCHITECTURE.md)，逐版结果见 [验收索引](./evidence/README.md)。
 
 ## 当前结论
 
@@ -8,8 +8,10 @@ UnoRAG 是 Apache-2.0 开源、TypeScript-only 的私有化知识库产品，已
 小规模私有化交付基础；不是对任意客户环境的 production-ready 或安全认证。默认一位客户一套独立实例，
 Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 
-当前稳定版 [v0.2.7](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.7)，香港参考实例
-`https://unorag.unobyte.dev` 运行 `47e7438` 的签名镜像。后续源码整理不自动成为已部署版本。
+当前稳定版仍为 [v0.2.7](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.7)，绑定 `47e7438`。
+香港参考实例 `https://unorag.unobyte.dev` 已升级到 [PR #214](https://github.com/codexlin/UnoRAG/pull/214)
+合并提交 `d0ab791` 的签名候选 `0.2.7-dev+d0ab791aeb73`。候选修复文档生命周期、下载版本一致性与
+前端异常恢复；它不是新稳定版，不继承下表 v0.2.7 的发布验收结论。后续源码提交也不自动成为已部署版本。
 
 ## 已具备的闭环
 
