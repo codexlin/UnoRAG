@@ -140,6 +140,12 @@ test("createDocumentVersion atomically supersedes queued work and queues a reind
 			[ids.document, ids.activeVersion],
 		);
 		await pool.query(
+			`UPDATE app.document_versions
+			 SET source_filename = 'handbook.pdf', source_content_type = 'application/pdf'
+			 WHERE document_id = $1`,
+			[ids.document],
+		);
+		await pool.query(
 			`INSERT INTO app.jobs (
 					id, organization_id, workspace_id, document_version_id, type,
 					status, stage, idempotency_key, payload

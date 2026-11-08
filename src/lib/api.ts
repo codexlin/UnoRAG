@@ -1,3 +1,4 @@
+import { documentDownloadFilename } from "@/lib/document-download";
 import type { ReleaseInfo } from "@/lib/release-info";
 
 export type ApiHealth = {
@@ -713,11 +714,8 @@ export async function downloadDocument(
 	}
 	const blob = await response.blob();
 	const disposition = response.headers.get("content-disposition");
-	const fromHeader = disposition?.match(
-		/filename\*?=(?:UTF-8''|")?([^";]+)/i,
-	)?.[1];
 	const resolvedName =
-		filename || (fromHeader ? decodeURIComponent(fromHeader) : docId);
+		documentDownloadFilename(disposition) || filename || docId;
 	const url = URL.createObjectURL(blob);
 	try {
 		const anchor = document.createElement("a");
@@ -809,7 +807,7 @@ export async function archiveThread(input: {
 	});
 	if (!response.ok) {
 		const text = await response.text();
-		throw new Error(text || `archive thread ${response.status}`);
+		throw new Error(parseApiError(text) || `archive thread ${response.status}`);
 	}
 	return (await response.json()) as ApiThreadDetail;
 }

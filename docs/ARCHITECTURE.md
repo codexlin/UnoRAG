@@ -76,6 +76,8 @@ Ask 的客户端数据面在 SSR/首次水合时使用一致的加载快照，�
 PostgreSQL 始终是业务事实源，TanStack Query 只是 Workspace 内的短期客户端投影。Replace 和 reindex
 Route Handler 共用 `document-version-command.ts`：按 library -> document -> source version 顺序加锁，并在
 一个事务中完成旧任务取消、新 version/job 创建、desired pointer、library 状态和审计写入。
+知识库计数刷新也在事务内先锁定 library 行，与生命周期写入使用相同锁顺序；Web 和 Worker 共用
+统计规则，排除 deleting/deleted 文档，刷新不得覆盖知识库的删除状态。
 
 ## 请求安全
 
@@ -129,6 +131,11 @@ All new jobs use `execution_engine=dbos` and `workflow_id=job_id`. Migration 002
 refuses to retire the old runtime while a non-terminal Python-owned job exists;
 terminal legacy rows remain historical. DBOS dispatch and reconciliation are
 idempotent, and Qdrant staging points are invisible until activation.
+
+原始文件名和 MIME 类型随 document version 保存。下载读取 active version 的对象及其元数据，
+不混用新 desired version 的名称；重索引复用来源版本的文件身份。中文下载名使用编码后的
+`filename*` 和 ASCII 回退名，浏览器优先采用服务端响应头。历史版本无法可靠回填来源元数据时，
+原文件仍可按通用名称和二进制类型下载，但重索引需要重新上传，不能猜测解析类型。
 
 同 generation 的写入重试还需匹配规范化记录清单 hash，并验证实际 Point ID 集合；单靠 Point 总数相同
 不足以证明解析重跑结果一致。已推进可见状态的 generation 不得再次 staging。旧的未完成 staging 若没有

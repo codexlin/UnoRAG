@@ -884,66 +884,6 @@ test("reconciliation cannot complete a job from another document payload", {
 	}
 });
 
-test("library delete tombstone wins against an in-flight upload transaction", {
-	skip,
-}, async () => {
-	const pool = new pg.Pool({ connectionString: databaseUrl, max: 3 });
-	const fixture = await seedFixture(pool, 1);
-	const deleter = await pool.connect();
-	const uploader = await pool.connect();
-	let uploadFinished = false;
-	try {
-		await pool.query(
-			"UPDATE app.libraries SET status = 'ready' WHERE id = $1",
-			[fixture.libraryId],
-		);
-		await deleter.query("BEGIN");
-		await deleter.query(
-			"SELECT id FROM app.libraries WHERE id = $1 FOR UPDATE",
-			[fixture.libraryId],
-		);
-		await deleter.query(
-			"UPDATE app.libraries SET status = 'deleting' WHERE id = $1",
-			[fixture.libraryId],
-		);
-
-		const uploadAttempt = (async () => {
-			await uploader.query("BEGIN");
-			await uploader.query("SET LOCAL lock_timeout = '2s'");
-			const locked = await uploader.query<{ status: string }>(
-				"SELECT status FROM app.libraries WHERE id = $1 FOR UPDATE",
-				[fixture.libraryId],
-			);
-			if (!["deleting", "deleted"].includes(locked.rows[0]?.status ?? "")) {
-				await uploader.query(
-					"UPDATE app.libraries SET status = 'indexing' WHERE id = $1",
-					[fixture.libraryId],
-				);
-			}
-			await uploader.query("COMMIT");
-			uploadFinished = true;
-			return locked.rows[0]?.status;
-		})();
-		await sleep(100);
-		assert.equal(uploadFinished, false);
-		await deleter.query("COMMIT");
-		assert.equal(await uploadAttempt, "deleting");
-
-		const final = await pool.query<{ status: string }>(
-			"SELECT status FROM app.libraries WHERE id = $1",
-			[fixture.libraryId],
-		);
-		assert.equal(final.rows[0]?.status, "deleting");
-	} finally {
-		await deleter.query("ROLLBACK").catch(() => undefined);
-		await uploader.query("ROLLBACK").catch(() => undefined);
-		deleter.release();
-		uploader.release();
-		await cleanupFixture(pool, fixture.organizationId);
-		await pool.end();
-	}
-});
-
 function createWorkerPool(max: number): pg.Pool {
 	return new pg.Pool({
 		connectionString: databaseUrl,

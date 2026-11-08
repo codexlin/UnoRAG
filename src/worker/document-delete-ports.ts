@@ -5,6 +5,7 @@ import type { Schemas } from "@qdrant/js-client-rest";
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
 
 import type { DocumentObjectStorage } from "../core/object-storage/contracts";
+import { refreshLockedLibraryCounts } from "../db/library-counts";
 import type { DocumentDeleteJob } from "./contracts";
 import { WorkerTaskError } from "./errors";
 import type {
@@ -420,7 +421,11 @@ export class PostgresDocumentDeleteTransactions
 				`,
 				[input.payload.document_id],
 			);
-			await this.refreshLibrary(client, input.payload.library_id);
+			await refreshLockedLibraryCounts(client, {
+				libraryId: input.payload.library_id,
+				organizationId: input.organizationId,
+				workspaceId: input.workspaceId,
+			});
 
 			let libraryFinalized = false;
 			if (
@@ -894,46 +899,6 @@ export class PostgresDocumentDeleteTransactions
 			...documentRow,
 			...jobRow,
 		} as DeleteContextRow;
-	}
-
-	private async refreshLibrary(
-		client: PoolClient,
-		libraryId: string,
-	): Promise<void> {
-		await client.query(
-			`
-			UPDATE app.libraries AS library
-			SET doc_count = counts.document_count,
-				ready_count = counts.ready_count,
-				status = CASE
-					WHEN library.status = 'deleting' THEN 'deleting'
-					WHEN counts.document_count = 0 THEN 'empty'
-					WHEN counts.processing_count > 0 THEN 'indexing'
-					WHEN counts.ready_count = counts.document_count THEN 'ready'
-					WHEN counts.ready_count > 0 THEN 'degraded'
-					WHEN counts.failed_count > 0 THEN 'failed'
-					ELSE 'empty'
-				END,
-				updated_at = now()
-			FROM (
-				SELECT
-					count(*) FILTER (
-						WHERE status NOT IN ('deleting', 'deleted')
-					)::integer AS document_count,
-					count(*) FILTER (
-						WHERE status IN ('ready', 'degraded')
-					)::integer AS ready_count,
-					count(*) FILTER (WHERE status = 'processing')::integer
-						AS processing_count,
-					count(*) FILTER (WHERE status = 'failed')::integer
-						AS failed_count
-				FROM app.documents
-				WHERE library_id = $1
-			) AS counts
-			WHERE library.id = $1
-			`,
-			[libraryId],
-		);
 	}
 
 	private async transaction<T>(

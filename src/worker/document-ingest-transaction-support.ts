@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 
 import { type IngestAclSnapshot, ingestAclFingerprint } from "../core/ingest";
+import { refreshLockedLibraryCounts } from "../db/library-counts";
 import {
 	type DocumentIngestJob,
 	documentIngestPayloadSchema,
@@ -628,44 +629,11 @@ export abstract class DocumentIngestTransactionSupport {
 		input: DocumentIngestJob,
 		libraryId: string,
 	): Promise<void> {
-		await client.query(
-			`
-			UPDATE app.libraries AS library
-			SET doc_count = counts.document_count,
-				ready_count = counts.ready_count,
-				status = CASE
-					WHEN library.status = 'deleting' THEN 'deleting'
-					WHEN counts.document_count = 0 THEN 'empty'
-					WHEN counts.processing_count > 0 THEN 'indexing'
-					WHEN counts.ready_count = counts.document_count THEN 'ready'
-					WHEN counts.ready_count > 0 THEN 'degraded'
-					WHEN counts.failed_count > 0 THEN 'failed'
-					ELSE 'empty'
-				END,
-				updated_at = now()
-			FROM (
-				SELECT
-					count(*) FILTER (
-						WHERE status NOT IN ('deleting', 'deleted')
-					)::integer AS document_count,
-					count(*) FILTER (
-						WHERE status IN ('ready', 'degraded')
-					)::integer AS ready_count,
-					count(*) FILTER (WHERE status = 'processing')::integer
-						AS processing_count,
-					count(*) FILTER (WHERE status = 'failed')::integer
-						AS failed_count
-				FROM app.documents
-				WHERE library_id = $1
-				  AND organization_id = $2
-				  AND workspace_id = $3
-			) AS counts
-			WHERE library.id = $1
-			  AND library.organization_id = $2
-			  AND library.workspace_id = $3
-			`,
-			[libraryId, input.organizationId, input.workspaceId],
-		);
+		await refreshLockedLibraryCounts(client, {
+			libraryId,
+			organizationId: input.organizationId,
+			workspaceId: input.workspaceId,
+		});
 	}
 
 	protected async writeAudit(

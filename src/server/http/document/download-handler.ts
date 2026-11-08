@@ -12,6 +12,7 @@ import {
 	documentVersions,
 	libraries,
 } from "@/db/schema";
+import { documentContentDisposition } from "@/lib/document-download";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { documentObjectStorage } from "@/lib/server/object-storage";
 
@@ -40,11 +41,6 @@ export function documentAclAllows(
 	);
 }
 
-function contentDisposition(filename: string): string {
-	const fallback = filename.replace(/[\r\n"\\]/g, "_") || "document";
-	return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
-}
-
 export async function handleNativeDocumentDownloadRequest(input: {
 	request: Request;
 	path: string[];
@@ -58,8 +54,8 @@ export async function handleNativeDocumentDownloadRequest(input: {
 	const db = getDatabase();
 	const rows = await db
 		.select({
-			filename: documents.filename,
-			contentType: documents.contentType,
+			filename: documentVersions.sourceFilename,
+			contentType: documentVersions.sourceContentType,
 			storageKey: documentVersions.storageKey,
 			subjectType: documentAcl.subjectType,
 			subjectId: documentAcl.subjectId,
@@ -127,7 +123,9 @@ export async function handleNativeDocumentDownloadRequest(input: {
 	const metadata = await storage.head(document.storageKey);
 	const headers = new Headers({
 		"cache-control": "private, no-store",
-		"content-disposition": contentDisposition(document.filename),
+		"content-disposition": documentContentDisposition(
+			document.filename || "document",
+		),
 		"content-length": String(metadata.sizeBytes),
 		"content-type": document.contentType || "application/octet-stream",
 	});
