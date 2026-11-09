@@ -8,6 +8,7 @@ import {
 	loadBusinessPlan,
 	safePlanSummary,
 } from "../../scripts/acceptance/business-matrix.mjs";
+import { scorePositiveCase } from "../../src/evaluation/scoring";
 
 test("business matrix resolves real bytes, varied formats and independently labelled origins", async () => {
 	const plan = await loadBusinessPlan();
@@ -87,6 +88,73 @@ test("business matrix rejects unknown review contracts", async () => {
 	await invalidManifest((input) => {
 		input.contract_version = 99;
 	}, /unsupported contract/u);
+});
+
+test("the backup fact accepts scoped paraphrases only with cited checklist text", async () => {
+	const plan = await loadBusinessPlan();
+	const gold = plan.positive.find(
+		(item: { id: string }) => item.id === "bc6bbc477c4a4ea7",
+	);
+	assert.ok(gold);
+	const citation = {
+		index: 1,
+		filename: gold.file,
+		record_type: "section",
+		text: "必须完成数据库备份校验、回归测试和回滚方案检查。",
+	};
+	const response = {
+		httpStatus: 200,
+		refused: false,
+		latencyMs: 1,
+		citations: [citation],
+	};
+	for (const answer of [
+		"订单系统发布前，数据库备份需要做「校验」检查 [1]。",
+		"上线前应对数据库备份进行验证 [1]。",
+		"需要验证备份的完整性 [1]，不能只确认备份文件存在。",
+		"必须做数据库备份校验 [1]。",
+	]) {
+		const score = scorePositiveCase(gold, { ...response, answer });
+		assert.equal(score.ok, true, answer);
+		assert.deepEqual(score.matchedFacts, ["备份校验"]);
+	}
+	for (const answer of [
+		"无需进行备份校验 [1]。",
+		"不必校验数据库备份 [1]。",
+		"数据库备份不需要做校验 [1]。",
+		"只需确认备份文件存在 [1]。",
+		"只需确认备份文件存在，也可以校验数据库备份 [1]。",
+		"备份校验可以省略 [1]。",
+		"数据库备份已经完成，发布配置需要校验 [1]。",
+	]) {
+		assert.equal(
+			scorePositiveCase(gold, { ...response, answer }).ok,
+			false,
+			answer,
+		);
+	}
+	const answer = "上线前应对数据库备份进行验证 [1]。";
+	for (const wrongCitation of [
+		{ ...citation, filename: "biz-backup-runbook.md" },
+		{ ...citation, text: "上线前须由测试负责人和运维负责人共同签字。" },
+		{ ...citation, text: "对数据库备份进行验证。" },
+		{ ...citation, record_type: "figure" },
+	]) {
+		assert.equal(
+			scorePositiveCase(gold, {
+				...response,
+				answer,
+				citations: [wrongCitation],
+			}).ok,
+			false,
+		);
+	}
+	const unreferenced = scorePositiveCase(gold, {
+		...response,
+		answer: "上线前应对数据库备份进行验证。",
+	});
+	assert.equal(unreferenced.ok, false);
+	assert.deepEqual(unreferenced.missingEvidenceFacts, ["备份校验"]);
 });
 
 async function invalidManifest(

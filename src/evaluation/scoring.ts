@@ -2,8 +2,13 @@ import {
 	AnswerCitationGuard,
 	AnswerCitationValidationError,
 } from "../core/ai/answer-citations";
+import { sharesEvidenceLineage } from "../core/retrieval/evidence-lineage";
 import type { GoldenCase } from "./golden-set";
-import { factMatchesAnswer } from "./golden-set";
+import {
+	answerCheckMatches,
+	answerFactMatches,
+	factMatchesAnswer,
+} from "./golden-set";
 
 export type EvaluationCitation = Readonly<{
 	index?: number;
@@ -11,6 +16,12 @@ export type EvaluationCitation = Readonly<{
 	file?: string | null;
 	record_type?: string | null;
 	text?: string | null;
+	doc_id?: string | null;
+	document_version_id?: string | null;
+	record_id?: string | null;
+	figure_id?: string | null;
+	source_chunk_ids?: readonly string[];
+	source_node_ids?: readonly string[];
 }>;
 
 export type EvaluationResponse = Readonly<{
@@ -32,6 +43,7 @@ export type PositiveCaseScore = Readonly<{
 	factCoverage: number;
 	matchedFacts: readonly string[];
 	missingFacts: readonly string[];
+	failedAnswerChecks: readonly string[];
 	targetDocumentRank: number | null;
 	reciprocalRank: number;
 	targetDocumentRecalled: boolean;
@@ -107,12 +119,24 @@ export function scorePositiveCase(
 			? null
 			: conflictCount !== null &&
 				(gold.expect_conflict ? conflictCount > 0 : conflictCount === 0);
-	const matchedFacts = gold.key_facts.filter((fact) =>
-		factMatchesAnswer(fact, response.answer),
+	const answerAliases = new Map(
+		gold.answer_fact_aliases?.map(({ fact, any_of }) => [fact, any_of]),
 	);
-	const missingFacts = gold.key_facts.filter(
-		(fact) => !factMatchesAnswer(fact, response.answer),
-	);
+	const matchedFacts: string[] = [];
+	const missingFacts: string[] = [];
+	for (const fact of gold.key_facts) {
+		const matched = answerFactMatches(
+			fact,
+			response.answer,
+			answerAliases.get(fact),
+		);
+		(matched ? matchedFacts : missingFacts).push(fact);
+	}
+	const failedAnswerChecks = (gold.answer_checks ?? [])
+		.filter(
+			(check) => !answerCheckMatches(check, response.answer, gold.key_facts),
+		)
+		.map((check) => check.label);
 	const target = basename(gold.file);
 	const ranks = response.citations
 		.map((citation, index) => ({
@@ -127,17 +151,61 @@ export function scorePositiveCase(
 	);
 	const expectedRecordType = gold.expect_record_type;
 	const citationCount = response.citations.length;
+	const indexedCitations = response.citations.map((citation, position) => ({
+		citation,
+		index: citation.index ?? position + 1,
+	}));
+	const inlineReferences = new Set<number>();
+	let inlineCitationsValid = true;
+	try {
+		const guard = new AnswerCitationGuard(
+			indexedCitations.map(({ index }) => index),
+			false,
+			(index) => inlineReferences.add(index),
+		);
+		guard.push(response.answer);
+		guard.finish();
+	} catch (error) {
+		if (!(error instanceof AnswerCitationValidationError)) throw error;
+		inlineCitationsValid = false;
+	}
 	const crossDocumentCitationCount = response.citations.filter(
 		(citation) => citationFilename(citation) !== target,
 	).length;
-	// Only explicit multi-source cases opt into citation-text fact verification.
 	const multiSource = !!gold.supporting_sources?.length;
+	const verifyCitationFacts =
+		gold.require_citation_facts === true || multiSource;
+	const referencedTextEvidence =
+		gold.require_citation_facts && !multiSource && expectedRecordType === "text"
+			? indexedCitations
+					.filter(
+						({ citation, index }) =>
+							inlineReferences.has(index) &&
+							citationFilename(citation) === target &&
+							citationMatchesExpectedRecordType(citation, "text") &&
+							gold.key_facts.some((fact) =>
+								factMatchesAnswer(fact, citation.text ?? ""),
+							),
+					)
+					.map(({ citation }) => citation)
+			: [];
 	const evidenceFacts = new Set<string>();
 	let supportingCitationCount = 0;
 	let invalidCrossDocumentCitationCount = 0;
 	let invalidCitationCount = 0;
-	for (const citation of response.citations) {
+	for (const { citation, index } of indexedCitations) {
 		const primary = citationFilename(citation) === target;
+		// An uncited companion figure is not evidence for a text-only fact.
+		if (
+			primary &&
+			citationMatchesExpectedRecordType(citation, "image") &&
+			!inlineReferences.has(index) &&
+			referencedTextEvidence.some((text) =>
+				sharesEvidenceLineage(text, citation),
+			)
+		) {
+			continue;
+		}
 		const source = gold.supporting_sources?.find(
 			(item) => item.file === citationFilename(citation),
 		);
@@ -147,7 +215,7 @@ export function scorePositiveCase(
 			factMatchesAnswer(fact, citation.text ?? ""),
 		);
 		const valid = primary
-			? !multiSource ||
+			? !verifyCitationFacts ||
 				(!!expected &&
 					citationMatchesExpectedRecordType(citation, expected) &&
 					supported.length > 0)
@@ -158,14 +226,18 @@ export function scorePositiveCase(
 				) &&
 				supported.length === facts.length;
 		if (valid) {
-			for (const fact of supported) evidenceFacts.add(fact);
+			for (const fact of supported) {
+				if (!answerAliases.has(fact) || inlineReferences.has(index)) {
+					evidenceFacts.add(fact);
+				}
+			}
 			if (!primary) supportingCitationCount += 1;
 		} else {
 			invalidCitationCount += 1;
 			if (!primary) invalidCrossDocumentCitationCount += 1;
 		}
 	}
-	const missingEvidenceFacts = multiSource
+	const missingEvidenceFacts = verifyCitationFacts
 		? gold.key_facts.filter((fact) => !evidenceFacts.has(fact))
 		: [];
 	const retrievedEvidenceCount = debugCount(
@@ -181,24 +253,13 @@ export function scorePositiveCase(
 				citationMatchesExpectedRecordType(citation, expectedRecordType),
 			)
 		: null;
-	let inlineCitationsValid = true;
-	try {
-		const guard = new AnswerCitationGuard(
-			response.citations.map((citation, index) => citation.index ?? index + 1),
-		);
-		guard.push(response.answer);
-		guard.finish();
-	} catch (error) {
-		if (!(error instanceof AnswerCitationValidationError)) throw error;
-		inlineCitationsValid = false;
-	}
-
 	return Object.freeze({
 		caseId: gold.id,
 		ok:
 			response.httpStatus === 200 &&
 			!response.refused &&
 			missingFacts.length === 0 &&
+			failedAnswerChecks.length === 0 &&
 			targetDocumentRank != null &&
 			invalidCitationCount === 0 &&
 			inlineCitationsValid &&
@@ -208,6 +269,7 @@ export function scorePositiveCase(
 		factCoverage: matchedFacts.length / gold.key_facts.length,
 		matchedFacts: Object.freeze(matchedFacts),
 		missingFacts: Object.freeze(missingFacts),
+		failedAnswerChecks: Object.freeze(failedAnswerChecks),
 		targetDocumentRank,
 		reciprocalRank: targetDocumentRank ? 1 / targetDocumentRank : 0,
 		targetDocumentRecalled: targetDocumentRank != null,

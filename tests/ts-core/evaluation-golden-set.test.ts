@@ -84,6 +84,239 @@ test("semantic review cannot silently override the business lexical gate", () =>
 	assert.equal(score.inlineCitationsValid, true);
 });
 
+test("qualifiers and entity boundaries catch failures that fact coverage misses", async () => {
+	const golds = parseGoldenJsonl(await readFile(GOLD_PATH, "utf8"));
+	const narrative = golds.find((gold) => gold.id === "e2ddb00fe88cf0e2");
+	const entity = golds.find((gold) => gold.id === "226fa2d49a0c164b");
+	assert.ok(narrative && entity);
+	const response = { httpStatus: 200, refused: false, latencyMs: 10 };
+	const narrativeResponse = {
+		...response,
+		citations: [{ filename: narrative.file, record_type: "chunk" }],
+	};
+	const omitted = scorePositiveCase(narrative, {
+		...narrativeResponse,
+		answer: "通行速度提升19.3%，排队长度缩短24.7%，延误时间减少32.1%。",
+	});
+	assert.equal(omitted.factCoverage, 1);
+	assert.equal(omitted.ok, false);
+	assert.equal(omitted.failedAnswerChecks.length, 4);
+	assert.equal(
+		scorePositiveCase(narrative, {
+			...narrativeResponse,
+			answer:
+				"高峰时段车速平均提升19.3%，排队长度平均缩短24.7%，延误时长平均减少32.1%。",
+		}).ok,
+		true,
+	);
+	const spill = scorePositiveCase(narrative, {
+		...narrativeResponse,
+		answer:
+			"- 通行速度提升：**19.3%**（高峰期平均通行速度）\n- 排队长度缩短：**24.7%**（高峰期平均排队长度）\n- 延误时间减少：**32.1%**（高峰期平均延误时间）",
+	});
+	assert.equal(spill.factCoverage, 1);
+	assert.equal(spill.ok, false);
+	assert.deepEqual(spill.failedAnswerChecks, [
+		"排队长度无高峰时段限定",
+		"延误时间无高峰时段限定",
+	]);
+	const wrongTarget = scorePositiveCase(narrative, {
+		...narrativeResponse,
+		answer:
+			"平均车速提升19.3%；高峰期平均排队长度缩短24.7%；平均延误时间减少32.1%。",
+	});
+	assert.deepEqual(wrongTarget.failedAnswerChecks, [
+		"速度指标的高峰时段",
+		"排队长度无高峰时段限定",
+	]);
+	for (const answer of [
+		"高峰时段，平均车速提升19.3%，平均排队长度缩短24.7%，平均延误时长减少32.1%。",
+		"| 指标 | 变化 |\n| --- | --- |\n| 高峰期平均车速 | 提升19.3% |\n| 平均排队长度 | 缩短24.7% |\n| 平均延误时长 | 减少32.1% |",
+		"- 通行速度提升：19.3%（试点实测；指标名称为高峰期平均通行速度）[1]\n- 平均排队长度缩短24.7% [1]\n- 平均延误时间减少32.1% [1]",
+	]) {
+		assert.equal(
+			scorePositiveCase(narrative, { ...narrativeResponse, answer }).ok,
+			true,
+			answer,
+		);
+	}
+	const trailing = scorePositiveCase(narrative, {
+		...narrativeResponse,
+		answer:
+			"高峰期平均车速提升19.3%；平均排队长度缩短24.7%；平均延误时间减少32.1%，也属于高峰期。",
+	});
+	assert.deepEqual(trailing.failedAnswerChecks, ["延误时间无高峰时段限定"]);
+
+	const name = entity.key_facts[0];
+	const number = entity.key_facts[1];
+	const citations = [
+		{
+			filename: entity.file,
+			record_type: "chunk",
+			text: `项目编号：${number}`,
+		},
+		{ filename: entity.file, record_type: "chunk", text: `项目名称：${name}` },
+	];
+	const titleAsName = scorePositiveCase(entity, {
+		...response,
+		answer: `项目名称：**《${name}竣工验收报告》**；编号：${number}。`,
+		citations,
+	});
+	assert.equal(titleAsName.factCoverage, 1);
+	assert.equal(titleAsName.ok, false);
+	assert.deepEqual(titleAsName.failedAnswerChecks, ["项目名不包含报告类型"]);
+	const separated = {
+		...response,
+		answer: `《${name}竣工验收报告》中，项目名称为「${name}」，编号 ${number}。`,
+		citations,
+	};
+	assert.equal(scorePositiveCase(entity, separated).ok, true);
+	const titleOnly = scorePositiveCase(entity, {
+		...separated,
+		citations: citations.slice(0, 1),
+	});
+	assert.equal(titleOnly.ok, false);
+	assert.deepEqual(titleOnly.missingEvidenceFacts, [name]);
+});
+
+test("answer checks and citation fact verification reject invalid oracles", () => {
+	const gold = {
+		file: "report.md",
+		mode: "fact",
+		question: "增幅是多少？",
+		answer: "高峰期增长10%。",
+		key_facts: ["10%"],
+	};
+	assert.throws(() =>
+		parseGoldenCase({ ...gold, require_citation_facts: true }),
+	);
+	assert.throws(
+		() =>
+			parseGoldenCase({
+				...gold,
+				answer_checks: [
+					{ label: "不在金标中", for_fact: "11%", none_of: ["高峰期"] },
+				],
+			}),
+		/must refer to a key_fact/u,
+	);
+	assert.throws(() =>
+		parseGoldenCase({
+			...gold,
+			answer_checks: [{ label: "适用时段", any_of: ["低谷期"] }],
+		}),
+	);
+	assert.throws(() =>
+		parseGoldenCase({
+			...gold,
+			answer_checks: [{ label: "重复别名", any_of: ["高峰期", "高峰 期"] }],
+		}),
+	);
+	assert.throws(() =>
+		parseGoldenCase({
+			...gold,
+			answer_checks: [{ label: "无匹配规则", any_of: [], none_of: [] }],
+		}),
+	);
+});
+
+test("text facts may accompany a linked figure, but the figure cannot support them", () => {
+	const gold = parseGoldenCase({
+		file: "report.pdf",
+		mode: "fact",
+		question: "正文中的比例是多少？",
+		answer: "42%。",
+		key_facts: ["42%"],
+		expect_record_type: "text",
+		require_citation_facts: true,
+	});
+	const source = {
+		filename: gold.file,
+		doc_id: "report",
+		document_version_id: "version-1",
+		source_node_ids: ["figure-node"],
+	};
+	const text = {
+		...source,
+		index: 1,
+		record_type: "chunk",
+		text: "比例为42%。",
+	};
+	const figure = {
+		...source,
+		index: 2,
+		record_type: "figure",
+		text: "图3：比例",
+	};
+	const response = {
+		httpStatus: 200,
+		refused: false,
+		latencyMs: 1,
+		answer: "42% [1]。",
+		citations: [text, figure],
+	};
+	assert.equal(scorePositiveCase(gold, response).ok, true);
+	assert.equal(
+		scorePositiveCase(gold, { ...response, answer: "42% [1][2]。" }).ok,
+		false,
+	);
+	assert.equal(
+		scorePositiveCase(gold, { ...response, answer: "42% `[1]`。" }).ok,
+		false,
+	);
+	for (const unrelated of [
+		{ ...figure, filename: "other.pdf" },
+		{ ...figure, document_version_id: "version-2" },
+		{ ...figure, source_node_ids: ["different-node"] },
+	]) {
+		assert.equal(
+			scorePositiveCase(gold, { ...response, citations: [text, unrelated] }).ok,
+			false,
+		);
+	}
+	const captionOnly = scorePositiveCase(gold, {
+		...response,
+		answer: "42% [2]。",
+		citations: [{ ...figure, text: "图注：42%。" }],
+	});
+	assert.equal(captionOnly.ok, false);
+	assert.deepEqual(captionOnly.missingEvidenceFacts, ["42%"]);
+});
+
+test("answer fact aliases require canonical cited facts and unique alternatives", () => {
+	const base = {
+		file: "report.md",
+		mode: "fact",
+		question: "检查内容是什么？",
+		answer: "完成数据库备份校验。",
+		key_facts: ["备份校验"],
+		expect_record_type: "text",
+	};
+	const aliases = [{ fact: "备份校验", any_of: ["校验数据库备份"] }];
+	assert.throws(() =>
+		parseGoldenCase({ ...base, answer_fact_aliases: aliases }),
+	);
+	const gold = { ...base, require_citation_facts: true };
+	for (const invalid of [
+		[{ fact: "发布校验", any_of: ["校验发布"] }],
+		[{ fact: "备份校验", any_of: ["备份 校验"] }],
+		[...aliases, ...aliases],
+	]) {
+		assert.throws(() =>
+			parseGoldenCase({ ...gold, answer_fact_aliases: invalid }),
+		);
+	}
+	const parsed = parseGoldenCase({ ...gold, answer_fact_aliases: aliases });
+	assert.ok(Object.isFrozen(parsed.answer_fact_aliases?.[0]?.any_of));
+	assert.throws(() =>
+		parseGoldenCase({
+			...gold,
+			answer: "校验数据库备份。",
+			answer_fact_aliases: aliases,
+		}),
+	);
+});
+
 test("gold facts and structured sources cannot mask invalid inline citations", async () => {
 	const gold = parseGoldenJsonl(await readFile(GOLD_PATH, "utf8"))[0];
 	const response = {
@@ -466,6 +699,32 @@ test("decimal trailing-zero normalization preserves exact fractions and numeric 
 		["375,000,000", "预算并非375,000,000.00元"],
 	])
 		assert.equal(factMatchesAnswer(fact ?? "", answer ?? ""), false, answer);
+});
+
+test("spelled percentages normalize without losing units, precision or negation", () => {
+	for (const [fact, answer] of [
+		["15%", "仅有不到百分之十五的系统实现了跨部门数据共享。"],
+		["19.3%", "提升了百分之十九点三。"],
+		["0.05%", "占比為百分之零點零五。"],
+		["15%", "占比为百分之十五点零。"],
+		["15.5%", "占比为百分之 １５.５。"],
+		["100%", "覆盖率为百分之百。"],
+		["百分之十五", "实际覆盖15%。"],
+	]) {
+		assert.equal(factMatchesAnswer(fact, answer), true, answer);
+	}
+	for (const answer of [
+		"百分之一百五十",
+		"百分之十五点五",
+		"百分之十五点",
+		"百分之十五点五十",
+		"百分之15.01",
+		"千分之十五",
+		"十五个百分点",
+		"占比并非百分之十五。",
+	]) {
+		assert.equal(factMatchesAnswer("15%", answer), false, answer);
+	}
 });
 
 test("golden parser fails closed on missing facts and duplicate stable IDs", () => {

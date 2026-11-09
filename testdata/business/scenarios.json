@@ -78,7 +78,7 @@
     {"file":"biz-release-checklist.md","mode":"release","question":"订单系统上线前需要哪两个角色共同签字？","answer":"测试负责人和运维负责人。","key_facts":["测试负责人","运维负责人"]},
     {"file":"biz-release-checklist.md","mode":"release","question":"订单系统应用异常时回滚什么？数据库 schema 是否自动逆向回滚？","answer":"订单系统应用异常时回滚应用镜像，不自动逆向回滚数据库 schema。","key_facts":["应用镜像","不自动"]},
     {"file":"biz-release-checklist.md","mode":"release","question":"订单系统发布清单规定，数据库迁移应按什么方式处理？","answer":"订单系统发布清单规定，数据库迁移按前向修复处理。","key_facts":["前向修复"]},
-    {"file":"biz-release-checklist.md","mode":"release","question":"订单系统发布前，数据库备份需要做什么检查，而不是只确认文件存在？","answer":"订单系统发布前必须完成数据库备份校验，不能只确认备份文件存在。","key_facts":["备份校验"]}
+    {"file":"biz-release-checklist.md","mode":"release","question":"订单系统发布前，数据库备份需要做什么检查，而不是只确认文件存在？","answer":"订单系统发布前必须完成数据库备份校验，不能只确认备份文件存在。","key_facts":["备份校验"],"expect_record_type":"text","require_citation_facts":true,"answer_fact_aliases":[{"fact":"备份校验","any_of":["数据库备份需要做校验","数据库备份需要进行校验","对数据库备份做校验","对数据库备份进行校验","校验数据库备份","验证数据库备份","对数据库备份进行验证","验证备份的完整性","校验备份完整性","验证备份完整性","数据库备份需要校验","数据库备份必须校验"]}],"answer_checks":[{"label":"不能以文件存在代替备份校验","none_of":["只需确认备份文件存在","只要确认备份文件存在","只需检查备份文件是否存在","备份校验可以省略","备份校验不是必须"]}]}
   ],
   "negative": [
     {"question":"FIN-INT-26 指定的固定美元兑人民币汇率是多少？请给出确切数值。"},
