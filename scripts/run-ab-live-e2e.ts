@@ -374,6 +374,16 @@ function citationsFrom(value: unknown): EvaluationCitation[] {
 			filename: stringValue(citation.filename),
 			file: stringValue(citation.file),
 			record_type: stringValue(citation.record_type),
+			doc_id: stringValue(citation.doc_id),
+			document_version_id: stringValue(citation.document_version_id),
+			record_id: stringValue(citation.record_id),
+			figure_id: stringValue(citation.figure_id),
+			source_chunk_ids: Array.isArray(citation.source_chunk_ids)
+				? citation.source_chunk_ids.filter((id): id is string => typeof id === "string")
+				: undefined,
+			source_node_ids: Array.isArray(citation.source_node_ids)
+				? citation.source_node_ids.filter((id): id is string => typeof id === "string")
+				: undefined,
 			text:
 				stringValue(citation.body) ??
 				stringValue(citation.text) ??
@@ -841,7 +851,7 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 				score,
 			});
 			process.stdout.write(
-				`  [${index + 1}/${golds.length}] ${score.ok ? "PASS" : "FAIL"} ${gold.file} missing=${score.missingFacts.join(",")}\n`,
+				`  [${index + 1}/${golds.length}] ${score.ok ? "PASS" : "FAIL"} ${gold.file} missing=${score.missingFacts.join(",")} answer_checks=${score.failedAnswerChecks.join(",")} missing_evidence=${score.missingEvidenceFacts.join(",")}\n`,
 			);
 		}
 

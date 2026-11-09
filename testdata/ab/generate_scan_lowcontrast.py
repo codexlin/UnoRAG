@@ -106,7 +106,8 @@ def _page_one() -> Image.Image:
 	y = 105
 	y = _draw_centered(draw, "滨海市智慧交通管理系统建设项目", y, TITLE)
 	y = _draw_centered(draw, "竣工验收报告", y + 22, TITLE)
-	y = _draw_centered(draw, "项目编号：BH-ZHJC-2026-0042", y + 55, SUBTITLE)
+	y = _draw_centered(draw, "项目名称：滨海市智慧交通管理系统建设项目", y + 55, SUBTITLE)
+	y = _draw_centered(draw, "项目编号：BH-ZHJC-2026-0042", y + 26, SUBTITLE)
 	y = _draw_centered(draw, "验收日期：2026年07月15日", y + 26, BODY, MUTED)
 
 	y += 100
@@ -116,7 +117,7 @@ def _page_one() -> Image.Image:
 		[
 			"本项目于2024年3月正式立项，建设内容包括交通信号控制、视频监控、交通诱导、数据交换和综合管理平台等子系统。",
 			"项目总投资额为人民币壹亿贰仟叁佰万元整（¥123,000,000）。项目自2024年6月开工，于2026年5月完成全部建设任务，建设周期24个月。",
-			"经审计，实际完成投资额为人民币壹亿壹仟玖佰柒拾万元整（¥119,700,000），较概算节约约2.66%。",
+			"经审计，实际完成投资额为人民币壹亿壹仟玖佰柒拾万元整（¥119,700,000），较概算节约约2.68%。",
 		],
 		y=y,
 	)

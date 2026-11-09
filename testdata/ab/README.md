@@ -31,3 +31,10 @@ Release-critical dimensions are explicit in each relevant gold: six
 reasoning; five `low_contrast_scan` cases cover OCR facts on both pages. The
 runner reports and gates these dimensions independently so aggregate accuracy
 cannot hide a parser-specific regression.
+
+The scan fixture explicitly labels the project name independently of the report
+title. Its savings rate is the rounded difference between the stated budget and
+actual spend (2.68%). The investment breakdown on page 3 of `mixed-charts.pdf`
+matches its pie chart, but the corresponding gold checks **textual** evidence
+only. Figure citations elsewhere in this set verify figure linkage, not
+independent interpretation of chart pixels.

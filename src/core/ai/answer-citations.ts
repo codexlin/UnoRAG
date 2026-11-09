@@ -46,6 +46,7 @@ export class AnswerCitationGuard {
 	constructor(
 		indices: readonly number[],
 		private readonly sourceTokens = false,
+		private readonly onReference?: (index: number) => void,
 	) {
 		this.allowed = new Set(indices);
 	}
@@ -75,7 +76,9 @@ export class AnswerCitationGuard {
 				this.fail(
 					marker.endsWith("]") ? "invalid_format" : "incomplete_marker",
 				);
-			if (!this.allowed.has(Number(match[1]))) this.fail("unknown_source");
+			const index = Number(match[1]);
+			if (!this.allowed.has(index)) this.fail("unknown_source");
+			this.onReference?.(index);
 			if (namespaced) output = `[${match[1]}]`;
 		}
 		this.pending = "";
