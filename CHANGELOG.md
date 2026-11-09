@@ -3,6 +3,26 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## 0.2.8
+
+### Fixed
+
+- Keep document versions and original downloads aligned through replacement, failed
+  replacement, and reindexing. Retain the active version until the new version is ready.
+- Recover from failed permissions and Ask settings requests without carrying stale
+  state into another document or conversation.
+- Keep the first knowledge-library render consistent when the layout fetches the
+  library list before the page bundle loads.
+- Preserve source qualifiers and exact entity names in answers. Check those boundaries
+  in the evaluation suite while accepting equivalent wording and numeric notation.
+
+### Upgrade notes
+
+- Drain unfinished document jobs before upgrading and retain the previous image
+  manifest for application rollback. This release includes migration
+  `0027_document_version_source_metadata` for version-specific filenames and MIME types.
+  Existing active generations are not reindexed automatically.
+
 ## [0.2.7] - 2026-11-07
 
 ### Fixed
