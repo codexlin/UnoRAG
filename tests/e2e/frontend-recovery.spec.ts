@@ -36,7 +36,83 @@ test.beforeEach(async ({ page, context }) => {
 });
 
 test.afterEach(async ({ page }) => {
-	expect(errors.get(page), "no unhandled request rejection").toEqual([]);
+	expect(errors.get(page), "no uncaught browser errors").toEqual([]);
+});
+
+test("knowledge library hydrates after the layout has cached the list", async ({
+	isMobile,
+	page,
+}) => {
+	const stamp = "2026-01-01T00:00:00.000Z";
+	const library: ApiLibrary = {
+		id: "hydration-library",
+		name: "Hydration fixture",
+		status: "ready",
+		doc_count: 2,
+		ready_count: 2,
+		created_at: stamp,
+		updated_at: stamp,
+	};
+	await page.route("**/api/libraries", (route) =>
+		route.fulfill({ json: [library] }),
+	);
+	await page.route("**/api/libraries/*/documents", (route) =>
+		route.fulfill({ json: [] }),
+	);
+	const listResponse = page
+		.waitForResponse(
+			(response) => new URL(response.url()).pathname === "/api/libraries",
+			{
+				timeout: 15_000,
+			},
+		)
+		.catch(() => null);
+	let listArrivedBeforePageBundle = false;
+	await page.route("**/_next/static/chunks/**/*.js", async (route) => {
+		if (listArrivedBeforePageBundle) {
+			await route.continue();
+			return;
+		}
+		const response = await route.fetch();
+		// Identify the installed page bundle by its registry heading, not a build hash.
+		if (
+			response.ok() &&
+			(await response.text()).includes("Knowledge registry")
+		) {
+			const list = await listResponse;
+			if (list) {
+				await list.finished();
+				await page.evaluate(
+					() =>
+						new Promise<void>((resolve) => {
+							requestAnimationFrame(() =>
+								requestAnimationFrame(() => resolve()),
+							);
+						}),
+				);
+				listArrivedBeforePageBundle = true;
+			}
+		}
+		await route.fulfill({ response });
+	});
+	try {
+		await page.goto("/app/libraries");
+		expect(
+			listArrivedBeforePageBundle,
+			"layout fetched before page hydration",
+		).toBe(true);
+		if (isMobile) {
+			await expect(
+				page.getByRole("combobox", { name: "当前知识库" }),
+			).toHaveValue(library.name);
+		} else {
+			await expect(
+				page.getByRole("heading", { name: library.name, exact: true }),
+			).toBeVisible();
+		}
+	} finally {
+		await page.unrouteAll({ behavior: "wait" });
+	}
 });
 
 for (const failedLoad of ["acl", "members"] as const) {

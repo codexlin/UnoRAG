@@ -1,12 +1,15 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import { useQueryScope } from "@/hooks/use-query-scope";
-import { fetchLibraries } from "@/lib/api";
+import { type ApiLibrary, fetchLibraries } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchBackgroundQuery, fetchFreshQuery } from "@/lib/query-refresh";
+
+const emptyLibraries: ApiLibrary[] = [];
+const subscribeToHydration = () => () => undefined;
 
 export function useLibraries() {
 	const scope = useQueryScope();
@@ -16,6 +19,12 @@ export function useLibraries() {
 		queryKey,
 		queryFn: ({ signal }) => fetchLibraries(signal),
 	});
+	// The layout can fill this cache before a streamed page hydrates.
+	const hydrated = useSyncExternalStore(
+		subscribeToHydration,
+		() => true,
+		() => false,
+	);
 
 	const refresh = useCallback(async () => {
 		return fetchFreshQuery(queryClient, queryKey, ({ signal }) =>
@@ -31,13 +40,14 @@ export function useLibraries() {
 	);
 
 	return {
-		libraries: query.data ?? [],
-		error: query.error
-			? query.error instanceof Error
-				? `知识库加载失败：${query.error.message}`
-				: "知识库加载失败：API 不可用"
-			: null,
-		loading: query.isPending,
+		libraries: hydrated ? (query.data ?? emptyLibraries) : emptyLibraries,
+		error:
+			hydrated && query.error
+				? query.error instanceof Error
+					? `知识库加载失败：${query.error.message}`
+					: "知识库加载失败：API 不可用"
+				: null,
+		loading: !hydrated || query.isPending,
 		refresh,
 		refreshInBackground,
 	};
