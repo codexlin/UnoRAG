@@ -3,7 +3,7 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
-## 0.2.8
+## [0.2.8] - 2026-11-10
 
 ### Fixed
 
@@ -50,7 +50,7 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 - The final signed images passed Hong Kong acceptance: 25 fresh uploads and matching originals,
   three 95-case rounds (285/285), 8 lifecycle checks, 36 browser checks and 3 real SSE checks.
   Isolated install, upgrade/rollback, 29 isolation cases, dependency/provider faults and restore
-  drills also passed. See the [version-bound report](./docs/evidence/2026-11-07-v0.2.7-release-closeout.md)
+  drills also passed. See the [version-bound report](https://github.com/codexlin/UnoRAG/blob/0d52120e15943ada7740493717559b22ec47ad2d/docs/evidence/2026-11-07-v0.2.7-release-closeout.md)
   for retained failures, review boundaries and capacity limitations.
 
 ## [0.2.6] - Not published
@@ -423,6 +423,7 @@ in [`docs/INTEGRATION.md`](./docs/INTEGRATION.md).
 - Existing RC deployments use the forward-only upgrade and application rollback process in
   [`docs/RELEASE.md`](./docs/RELEASE.md). Database migrations are not rolled back.
 
+[0.2.8]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.8
 [0.2.7]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.7
 [0.2.5]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.5
 [0.2.4]: https://github.com/codexlin/UnoRAG/releases/tag/v0.2.4

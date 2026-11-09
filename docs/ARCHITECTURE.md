@@ -225,7 +225,7 @@ Judge 与生成共享服务端的有界回答粒度提示：名称级要求、�
 默认每阶段最多 2 次、单次 15 秒、1024 输出 token，单轮证据裁决内顺序执行的最坏模型尝试预算为 60 秒。
 这不含重检索、排队和生成，不是完整请求的时限保证，也不能误称仍只有一次裁决成本；验收的端到端
 P95 15 秒门槛没有提高。矩阵 K 的合并裁决回归保留为历史 FAIL，
-质量结论以 [v0.2.7 发布验收](./evidence/2026-11-07-v0.2.7-release-closeout.md) 的绑定版本和范围为准，
+质量结论以 [当前发布验收](./evidence/README.md#当前证据) 的绑定版本和范围为准，
 不把程序来源校验当作语义正确性证明；历史候选失败仍保留在业务矩阵报告中。
 核验 schema 使用对象根节点，避免违反 [OpenAI Structured Outputs 的根对象约束](https://developers.openai.com/api/docs/guides/structured-outputs)；
 分类与摘录之间的关系仍由服务端校验，不假定所有兼容 Provider 都会执行完整 JSON Schema 约束。
