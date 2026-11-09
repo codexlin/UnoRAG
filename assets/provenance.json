@@ -57,16 +57,16 @@
 			"author": "UnoRAG maintainers",
 			"license": "Apache-2.0",
 			"redistribution": "Synthetic project test material approved for redistribution with UnoRAG under Apache-2.0.",
-			"evidence": "Git history 47fd576 and tracked generator testdata/ab/generate_scan_lowcontrast.py; fixture metadata and content were inspected during the 2026-08-14 release review.",
+			"evidence": "Git history 47fd576 and tracked generator testdata/ab/generate_scan_lowcontrast.py; fixture metadata and content were inspected during the 2026-08-14 release review. Issue #216 reconciles the scan and chart figures with their golden cases.",
 			"files": {
 				"testdata/ab/contract-long.docx": "ae211166ed2bc6aeac9d1b01e2d26273131afc5def55b1b6c71361b05f03f45a",
 				"testdata/ab/crosstable-large.pdf": "3942f1be2ed07fc20549914d8199ac207b4bf91c1bbc826a38a7244f9477aa80",
-				"testdata/ab/golds.jsonl": "6e178d5cbd9a04a232f691145d68d8142ee139dad13e95260f9ea97d8fd6484a",
-				"testdata/ab/mixed-charts.pdf": "47ee42c88072ee5a8dab754728dde8ececc58006ef81481afa5e9d358c7a17ce",
+				"testdata/ab/golds.jsonl": "d5e3ace935abd9838c282e6dff39928236df738f5ecbe7f74949fe8cc3e486b8",
+				"testdata/ab/mixed-charts.pdf": "ced5b5612f37843809279521a1d3756af1ea2419a375e9c90801b6156043153f",
 				"testdata/ab/negative-golds.jsonl": "b5d45f99b0484f62a01cf7fdd2354743251ac18108bcafe1c0faca31793a3b69",
 				"testdata/ab/quote-big-80rows.docx": "49d7006ebc592d069474029abb828dc2e48806f59da758936eb41b0f55db596b",
 				"testdata/ab/report-narrative-5k.md": "886c15d1806b7bb2b0de71c616417a3b4864aad82fd3b0b568f643e7cc1127d0",
-				"testdata/ab/scan-lowcontrast.pdf": "b9deaab8b864ebe514c5e7e5293d7c9c4369fc5c3d68aa8df8e2b99879131dc3",
+				"testdata/ab/scan-lowcontrast.pdf": "be442a24ef766183d4d2d9ffe81496bb438cf6e06ece15b51e8db3c64ead2b96",
 				"testdata/ab/twocolumn.pdf": "4de80204853e83a1b8ab2b052c6cd35e5765bf33302bd1e93445589bd1c879e3"
 			}
 		}
