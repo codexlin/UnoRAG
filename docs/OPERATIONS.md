@@ -370,8 +370,9 @@ cd deploy/compose
 CONFIRM=YES ./scripts/restore.sh ./backups/<backup-id>
 ```
 
-备份必须覆盖 PostgreSQL、DBOS、文档对象、Qdrant 和 manifest 校验值。`local` 文档对象由脚本归档；
-`cos` 文档对象必须由桶版本控制及独立复制/备份覆盖，Compose 清单只记录远程边界。恢复只允许在维护窗口
+备份必须覆盖 PostgreSQL、DBOS、文档对象、Qdrant 和 manifest 校验值。`local` 文档对象由脚本归档。
+使用 COS 时，Compose 备份清单只记录桶、地域等远端信息，不包含对象内容，不能直接恢复桶里的原文。
+COS 原文必须由桶版本控制及独立复制/备份覆盖。恢复只允许在维护窗口
 或可丢弃环境执行，顺序见 [DEPLOYMENT.md](./DEPLOYMENT.md)。每个目标环境都要实际恢复一次，
 并记录 RPO、RTO、数据对照值和恢复后的隔离检查。
 

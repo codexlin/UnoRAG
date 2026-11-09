@@ -6,6 +6,7 @@ import test from "node:test";
 import pg from "pg";
 
 import { ingestAclFingerprint } from "../../src/core/ingest";
+import { resolveDocumentConstraint } from "../../src/core/retrieval/document-constraints";
 import { hashPassword } from "../../src/lib/server/auth/passwords.mjs";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
 import { closeGlobalDatabasePool } from "../helpers/runtime";
@@ -218,7 +219,7 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 		);
 		const documentContext = {
 			version: 1,
-			title: "Private document title",
+			title: "v2.1.0 Private document title",
 			filename: "active-source.txt",
 			identifiers: ["ACL-TEST-27"],
 			identifiers_complete: true,
@@ -254,6 +255,16 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 		assert.equal(initialCatalog.documents.length, 1);
 		assert.deepEqual(initialCatalog.documents[0]?.context, documentContext);
 		assert.equal(initialCatalog.documents[0]?.filename, "active-source.txt");
+		const askByTitle = (result: typeof initialCatalog) =>
+			resolveDocumentConstraint(
+				"《Private document title》的适用条件是什么？",
+				result.documents,
+				result.complete,
+			);
+		assert.equal(
+			askByTitle(initialCatalog).documents[0]?.generationId,
+			ids.generation,
+		);
 		const serviceIdentity = {
 			...viewerIdentity,
 			principalId: `service:${ids.owner}`,
@@ -439,20 +450,20 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 			`UPDATE app.documents SET projected_acl_fingerprint = acl_fingerprint WHERE id = $1`,
 			[ids.document],
 		);
-		assert.deepEqual(
-			(
-				await catalog.loadActiveDocumentCatalog({
-					identity: {
-						...viewerIdentity,
-						role: "owner",
-						organizationRole: "owner",
-					},
-					libraryId: ragLibraryId,
-					scope: contentScope,
-				})
-			).documents,
-			[],
-		);
+		const revokedCatalog = await catalog.loadActiveDocumentCatalog({
+			identity: {
+				...viewerIdentity,
+				role: "owner",
+				organizationRole: "owner",
+			},
+			libraryId: ragLibraryId,
+			scope: contentScope,
+		});
+		assert.deepEqual(revokedCatalog.documents, []);
+		assert.deepEqual(askByTitle(revokedCatalog), {
+			status: "unavailable",
+			documents: [],
+		});
 		assert.equal(
 			(
 				await catalog.loadActiveDocumentCatalog({

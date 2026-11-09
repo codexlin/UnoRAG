@@ -18,6 +18,9 @@ const FILE = /[\p{L}\p{N}_.()（）-]+\.(?:pdf|docx|markdown|md|txt)\b/giu;
 const CODE = /\b[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+){2,}\b/gi;
 const OUTLINE =
 	/(?:[一二三四五六1-6]级标题|子标题|(?:文档|文件|章节)目录|目录(?:结构|大纲)|所有标题|全部标题|\bheadings?\b|table of contents)/i;
+const QUOTED_TITLE = /《([^》]{4,})》|“([^”]{4,})”|「([^」]{4,})」/gu;
+const VERSIONED_TITLE_PREFIX =
+	/^(?:[a-z][a-z0-9_-]{0,31}\s+)?v\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?\s+/u;
 
 export function stripFilenameReferences(question: string): string {
 	return question.replace(new RegExp(FILE), "");
@@ -28,7 +31,7 @@ export function needsDocumentConstraint(question: string): boolean {
 		new RegExp(FILE).test(question) ||
 		new RegExp(CODE).test(question) ||
 		OUTLINE.test(question) ||
-		/[“「《][^”」》]{4,}[”」》]/u.test(question) ||
+		new RegExp(QUOTED_TITLE).test(question) ||
 		/[\p{L}\p{N}]{4,}(?:前|后|时)[，,：:\s]/u.test(question)
 	);
 }
@@ -112,17 +115,34 @@ export function resolveDocumentConstraint(
 		if (failure) return failure;
 	}
 	if (!matches.length) {
-		const quoted = [...question.matchAll(/[“「《]([^”」》]{4,})[”」》]/gu)].map(
-			(m) => normalize(m[1] ?? ""),
-		);
-		for (const title of quoted) {
-			const candidates = catalog.filter(
+		for (const [, explicit, curly, corner] of question.matchAll(QUOTED_TITLE)) {
+			const title = normalize(explicit ?? curly ?? corner ?? "");
+			if (!title) {
+				if (explicit) return unavailable;
+				continue;
+			}
+			let candidates = catalog.filter(
 				(doc) => normalize(doc.context?.title ?? "") === title,
 			);
+			// Only strip an explicit version prefix; never fuzzy-match a named source.
+			if (
+				!candidates.length &&
+				explicit &&
+				Array.from(title).length >= 4 &&
+				!OUTLINE.test(intentQuestion)
+			) {
+				candidates = catalog.filter(
+					(doc) =>
+						normalize(doc.context?.title ?? "").replace(
+							VERSIONED_TITLE_PREFIX,
+							"",
+						) === title,
+				);
+			}
 			if (candidates.length) {
 				const failure = addUnique(candidates);
 				if (failure) return failure;
-			} else if (question.includes(`《${title}》`)) return unavailable;
+			} else if (explicit) return unavailable;
 		}
 	}
 	if (!matches.length) {

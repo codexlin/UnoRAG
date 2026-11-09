@@ -3,6 +3,8 @@
   "contract_version": 3,
   "description": "Repository fixtures plus fictional business documents. Not customer production data or a capacity benchmark.",
   "documents": [
+    {"filename":"pilot-cos-runbook.md","origin":"synthetic","content":"# 运维文档：文档对象的备份与灾难恢复\n\n使用 COS 时，Compose 备份清单只记录桶、地域等远端信息，不包含对象内容，不能直接恢复桶里的原文。COS 原文必须由桶版本控制及独立复制/备份覆盖。\n"},
+    {"filename":"pilot-release-closeout.md","origin":"synthetic","content":"# ExampleStack v1.4.2 发布收口验收\n\n## 香港正式版\n香港正式发布的版本号为 `v1.4.2`，对应的源码提交 SHA 为 `85278cfaae16d560378dfc8c7bfc64eabb80d3f2`。\n"},
     {"path":"testdata/md/handbook.md"},
     {"path":"testdata/txt/plain.txt"},
     {"path":"testdata/pdf/leave-digital.pdf"},
@@ -30,6 +32,9 @@
     {"filename":"biz-release-checklist.md","origin":"synthetic","content":"# 订单系统发布检查清单\n\n编号 OPS-REL-26。上线前由测试负责人和运维负责人共同签字，不能只凭流水线成功自动放行。\n\n## 上线前\n必须完成数据库备份校验、回归测试和回滚方案检查。\n\n## 回滚边界\n应用异常时回滚应用镜像。数据库迁移按前向修复处理，不自动逆向回滚数据库 schema。涉及不可逆 DDL 时必须在发布前确认维护窗口。\n"}
   ],
   "positive": [
+    {"id":"pilot-backup-manifest","file":"pilot-cos-runbook.md","mode":"operations","question":"按运维文档，使用 COS 时，Compose 备份清单能不能直接恢复桶里的原文？桶里的原文应该由什么来覆盖？","answer":"不能直接恢复。清单不包含对象内容；COS 原文必须由桶版本控制及独立复制/备份覆盖。","key_facts":["版本控制","独立复制"],"expect_record_type":"text","require_citation_facts":true,"answer_checks":[{"label":"清单本身无法恢复原文","any_of":["不能直接","无法直接","不可直接","不可以直接","不能用清单","不可以用清单","不能仅","无法仅","不能通过","不能依靠","不能。","不可以。"]}]},
+    {"id":"pilot-backup-mechanism","file":"pilot-cos-runbook.md","mode":"operations","question":"按照运维文档，腾讯云 COS 中的文档对象需要用什么机制保护和备份？","answer":"用桶版本控制及独立复制/备份覆盖 COS 原文。","key_facts":["版本控制","独立复制"],"expect_record_type":"text","require_citation_facts":true},
+    {"id":"pilot-release-title","file":"pilot-release-closeout.md","mode":"release","question":"当前这份《发布收口验收》记录的香港正式发布版本号是什么？对应的源码提交 SHA 是什么？不要列候选版。","answer":"香港正式发布版本是 v1.4.2，源码提交 SHA 为 85278cfaae16d560378dfc8c7bfc64eabb80d3f2。","key_facts":["v1.4.2","85278cfaae16d560378dfc8c7bfc64eabb80d3f2"],"expect_record_type":"text","require_citation_facts":true},
     {"file":"contract-long.docx","mode":"precise","question":"仅依据 contract-long.docx 第3.2.2条，乙方逾期付款超过多少日甲方有权解除协议？","answer":"第3.2.2条规定逾期超过30日有权解除协议。","key_facts":["30日"],"expect_conflict":false},
     {"file":"contract-long.docx","mode":"precise","question":"仅依据 contract-long.docx 第4.3.1条，乙方逾期付款超过多少日甲方有权解除协议？","answer":"第4.3.1条规定逾期超过60日有权解除协议。","key_facts":["60日"],"expect_conflict":false},
     {"file":"handbook.md","mode":"hr","question":"《员工手册》规定病假返岗后，应在几个工作日内补交材料？","answer":"三个工作日内补交完整材料。","key_facts":["三个工作日"]},
@@ -81,6 +86,7 @@
     {"file":"biz-release-checklist.md","mode":"release","question":"订单系统发布前，数据库备份需要做什么检查，而不是只确认文件存在？","answer":"订单系统发布前必须完成数据库备份校验，不能只确认备份文件存在。","key_facts":["备份校验"],"expect_record_type":"text","require_citation_facts":true,"answer_fact_aliases":[{"fact":"备份校验","any_of":["数据库备份需要做校验","数据库备份需要进行校验","对数据库备份做校验","对数据库备份进行校验","校验数据库备份","验证数据库备份","对数据库备份进行验证","验证备份的完整性","校验备份完整性","验证备份完整性","数据库备份需要校验","数据库备份必须校验"]}],"answer_checks":[{"label":"不能以文件存在代替备份校验","none_of":["只需确认备份文件存在","只要确认备份文件存在","只需检查备份文件是否存在","备份校验可以省略","备份校验不是必须"]}]}
   ],
   "negative": [
+    {"question":"按照运维文档，腾讯云 COS 中的文档对象需要用什么机制备份？如何配置复制规则和恢复保留期？"},
     {"question":"FIN-INT-26 指定的固定美元兑人民币汇率是多少？请给出确切数值。"},
     {"question":"旗舰版支持合同承诺99.999%可用性时的赔偿计算公式是什么？"},
     {"question":"供应商准入规程里，法定代表人的私人银行卡密码是什么？"},

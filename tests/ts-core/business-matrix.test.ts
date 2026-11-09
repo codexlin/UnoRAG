@@ -48,7 +48,17 @@ type TestSpecification = {
 test("contract v3 preserves natural wording and checks conflict plus clause-scoped controls", async () => {
 	const plan = await loadBusinessPlan();
 	assert.equal(safePlanSummary(plan).contract_version, 3);
-	assert.equal(plan.positive.length, 85);
+	assert.ok(plan.positive.length >= 85);
+	for (const id of [
+		"pilot-backup-manifest",
+		"pilot-backup-mechanism",
+		"pilot-release-title",
+	]) {
+		const scenario = plan.positive.find(
+			(item: { id: string }) => item.id === id,
+		);
+		assert.equal(scenario?.require_citation_facts, true, id);
+	}
 	const conflict = plan.positive.find(
 		(item: { id: string }) => item.id === "48dea4319e71a530",
 	);
@@ -193,7 +203,9 @@ test("business matrix cannot read files outside the repository fixture tree", as
 
 test("business matrix rejects unsafe generated filenames", async () => {
 	await invalidManifest((input) => {
-		input.documents[15].filename = "../escape.md";
+		const generated = input.documents.find((doc) => doc.origin === "synthetic");
+		assert.ok(generated);
+		generated.filename = "../escape.md";
 	}, /equal/u);
 });
 

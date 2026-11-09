@@ -618,6 +618,23 @@ test("workflow checklist names are prose, not evidence of tabular data", async (
 	);
 });
 
+test("backup manifest questions use prose unless they require table structure or operations", async () => {
+	const { fallbackQueryRoute } = await runtimeModule;
+	assert.equal(
+		fallbackQueryRoute(
+			"按运维文档，使用 COS 时，Compose 备份清单能不能直接恢复桶里的原文？桶里的原文应该由什么来覆盖？",
+		).queryType,
+		"fact",
+	);
+	for (const question of [
+		"备份清单中有多少行？",
+		"备份清单的表头有哪些列名？",
+		"备份清单中超过 10 GB 的有哪些？",
+	]) {
+		assert.equal(fallbackQueryRoute(question).queryType, "table");
+	}
+});
+
 test("judge evidence projection is bounded and excludes raw table rows", async () => {
 	const { projectJudgeEvidence } = await runtimeModule;
 	const source = citation({

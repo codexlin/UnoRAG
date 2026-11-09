@@ -276,3 +276,75 @@ test("scope intersections, stale catalog versions and incomplete structure fail 
 		"outline_unavailable",
 	);
 });
+
+test("a quoted release title shorthand resolves only a unique authorized active source", async () => {
+	const title = "发布收口验收";
+	const release = {
+		...doc,
+		filename: "release-closeout.md",
+		context: { ...doc.context, title: `UnoRAG v0.2.8 ${title}` },
+	};
+	const resolve = (
+		documents: (typeof release)[],
+		requestScope = scope,
+		question = `当前这份《${title}》记录的香港正式发布版本号是什么？对应的源码提交 SHA 是什么？不要列候选版。`,
+		complete = true,
+	) =>
+		resolveAskDocumentEvidence({
+			question,
+			libraryId: "lib",
+			scope: requestScope,
+			loadCatalog: async () => ({ documents, complete }),
+			lookupDocumentRecord: async () => {
+				assert.fail("a fact query must not use exact outline execution");
+			},
+		});
+	const previous = {
+		...release,
+		generationId: "old-gen",
+		context: { ...release.context, title: `v0.2.7 ${title}` },
+	};
+	const previousScope = { ...scope, activeGenerationIds: ["old-gen"] };
+	assert.deepEqual((await resolve([previous], previousScope)).scope, {
+		...previousScope,
+		documentIds: ["doc"],
+	});
+	assert.deepEqual((await resolve([release])).scope, {
+		...scope,
+		documentIds: ["doc"],
+		activeGenerationIds: ["gen"],
+	});
+	assert.equal((await resolve([previous])).status, "unavailable");
+	assert.equal((await resolve([])).status, "unavailable");
+	assert.equal(
+		(await resolve([release], { ...scope, documentIds: [] })).status,
+		"unavailable",
+	);
+	assert.equal(
+		(await resolve([release], scope, undefined, false)).status,
+		"unavailable",
+	);
+	assert.equal(
+		(await resolve([release, { ...previous, documentId: "other" }])).status,
+		"ambiguous",
+	);
+	assert.equal(
+		(
+			await resolve(
+				[release, { ...release, documentId: "other" }],
+				scope,
+				`《UnoRAG v0.2.8 ${title}》的版本号？`,
+			)
+		).status,
+		"ambiguous",
+	);
+	assert.equal(
+		(await resolve([release], scope, "《收口验收》记录了哪个版本？")).status,
+		"unavailable",
+	);
+	assert.equal(
+		(await resolve([release], scope, "《发布收口验收》的二级标题有哪些？"))
+			.status,
+		"unavailable",
+	);
+});

@@ -21,7 +21,7 @@ import {
 } from "../../src/core/ai";
 
 const EXPECTED_DIGESTS = {
-	chat: "4c411eb633aa1d06555618056b2fe900d79fab5e2eb83063ba0887f22f8dc2d7",
+	chat: "1b11802cb97f81e4873ace1f9ba393c47e9094962d6063e4f0c1884565abdd50",
 	router: "4f586e259c1fb7b4991d7014038887dd885168785edfd5fe0705cfb8a5862353",
 	rewrite: "81002875e2bfbf97afaee365f896b5a7a7c6528cea3c2242c4e26a40ab7d4104",
 	judge: "dcf69ce39ba3ae809ce1472a75193215065e1f7a2cb60e2155cb9b5d4b190abe",
@@ -31,7 +31,7 @@ const EXPECTED_DIGESTS = {
 } as const;
 
 const EXPECTED_VERSIONS = {
-	chat: "1.11.0",
+	chat: "1.12.0",
 	router: "1.0.0",
 	rewrite: "1.0.0",
 	judge: "1.12.0",

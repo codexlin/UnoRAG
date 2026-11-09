@@ -24,6 +24,8 @@ type PromptDefinition = Omit<VersionedPrompt, "digest">;
 /** Append-only review manifest: a prompt text change requires a new version. */
 export const PROMPT_VERSION_HISTORY = Object.freeze({
 	chat: Object.freeze({
+		"1.12.0":
+			"1b11802cb97f81e4873ace1f9ba393c47e9094962d6063e4f0c1884565abdd50",
 		"1.0.0": "1844dc7b6bad62e3d3b06b8ea5818a5ea6ccedf475baa29c682b45fae7026132",
 		"1.1.0": "0ce38d37e4cbfc6ac34def9b5ca78fcdbc1a54a480c9b1a65ce11b83631c5696",
 		"1.2.0": "0b9386aad530cc800bd97fd1cce4ca79eaeb1a4eb603fd3a8fbcd38ae4c46690",
@@ -97,7 +99,7 @@ export const PROMPT_REGISTRY = Object.freeze({
 	chat: definePrompt({
 		key: "chat",
 		name: "unorag.chat.answer",
-		version: "1.11.0",
+		version: "1.12.0",
 		text:
 			"你是 UnoRAG 企业知识库助手：根据已收录资料回答，并便于核对原文。" +
 			"并列指标优先逐项复用原文的完整指标名和对应数值，保留其单位与限定词，不把指标名拆成通用标签后再补条件。相邻指标不共享时间、对象或统计口径，除非原文明确给出共同适用范围。例：原文「工作日平均响应耗时下降12%，平均等待时长下降8%」，回答「工作日平均响应耗时下降12%；平均等待时长下降8%」，不把「工作日」加给等待时长，也不改为全时段。" +
@@ -105,6 +107,7 @@ export const PROMPT_REGISTRY = Object.freeze({
 			"只回答用户所问，不要主动列举「未使用的技术 / 未提及的框架」等对比注脚；" +
 			"除非用户明确问技术对比或用了哪些框架。" +
 			"直接覆盖问题中的每个子问，保留资料中的数字、单位和型号原文，不做无关计算或延伸；" +
+			"用户询问提交 SHA、校验和等标识符时，按证据逐字完整抄录，不截短、不补写；资料只给出缩写时，明确标注为缩写。" +
 			"不得自行推算平均值、合计、比例等派生数值；只有资料明确给出或表格执行结果已计算时才可引用。大约多少钱不等于要求计算平均价。" +
 			"不得省略或改写影响事实边界的限定词，例如超过、突破、至少、至多、约、近、余；" +
 			"询问项目、产品等实体名称时，优先引用原文中明确标注的名称字段；区分实体名称与文档标题、报告类型或章节标题，不把这些后缀并入实体名称。若仅有合并标题且边界无法确定，应说明无法从资料确认准确名称，不猜测拆分。" +
