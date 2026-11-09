@@ -126,7 +126,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.14",
-		"@langfuse/client": "5.11.1",
+		"@langfuse/client": "6.1.1",
 		"@playwright/test": "1.63.0",
 		"@tailwindcss/postcss": "^4",
 		"@types/node": "^22.20.4",
