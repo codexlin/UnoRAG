@@ -19,6 +19,10 @@ import {
 	type AskState,
 } from "@/core/ask-graph";
 import { deriveAnswerRequirements } from "@/core/ask-graph/answer-requirements";
+import {
+	boundedJudgeEvidenceText,
+	compactComparisonEvidence,
+} from "@/core/ask-graph/comparison-evidence";
 import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
 import { deriveGroundedTableLookup } from "@/core/ask-graph/table";
 import {
@@ -144,11 +148,6 @@ function throwIfConcurrencyUnavailable(error: unknown): void {
 	}
 }
 
-function boundedEvidenceText(value: unknown, maxLength = 2_400): string {
-	const text = typeof value === "string" ? value.trim() : "";
-	return text.length <= maxLength ? text : `${text.slice(0, maxLength)}…`;
-}
-
 export function projectJudgeEvidence(citations: InternalCitation[]) {
 	return citations.map((citation) => ({
 		id: citation.id,
@@ -161,7 +160,7 @@ export function projectJudgeEvidence(citations: InternalCitation[]) {
 		section_path: citation.section_path,
 		preamble: citation.preamble,
 		score: citation.score,
-		text: boundedEvidenceText(
+		text: boundedJudgeEvidenceText(
 			citation.body || citation.text || citation.snippet,
 		),
 	}));
@@ -575,7 +574,10 @@ export class NativeAskRuntime {
 						if (groundedPlan) result = precise;
 					}
 					return {
-						citations: result.citations,
+						citations:
+							!groundedPlan && state.query_type === "compare"
+								? compactComparisonEvidence(result.citations)
+								: result.citations,
 						...(groundedPlan
 							? { upgrade: "precise", upgrade_reason: "grounded_table_lookup" }
 							: {}),
