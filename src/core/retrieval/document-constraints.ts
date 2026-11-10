@@ -56,12 +56,14 @@ export function resolveDocumentConstraint(
 			[...question.matchAll(new RegExp(FILE))].map((m) => normalize(m[0])),
 		),
 	];
+	const intentQuestion = stripFilenameReferences(question);
 	const codes = [
 		...new Set(
-			[...question.matchAll(new RegExp(CODE))].map((m) => normalize(m[0])),
+			[...intentQuestion.matchAll(new RegExp(CODE))].map((m) =>
+				normalize(m[0]),
+			),
 		),
 	];
-	const intentQuestion = stripFilenameReferences(question);
 	const matches: ActiveDocumentDescriptor[] = [];
 	const addUnique = (
 		candidates: ActiveDocumentDescriptor[],

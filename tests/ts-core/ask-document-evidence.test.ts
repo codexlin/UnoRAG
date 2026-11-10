@@ -16,6 +16,7 @@ import {
 	documentEvidenceFilters,
 	resolveAskDocumentEvidence,
 } from "../../src/server/http/ask/document-evidence";
+import businessScenarios from "../../testdata/business/scenarios.json";
 
 const scope: AuthorizedScope = {
 	organizationId: "org",
@@ -234,6 +235,72 @@ test("ordinary asks avoid catalog work; filename asks narrow scope without chang
 	assert.deepEqual(result.scope.documentIds, ["doc"]);
 	assert.deepEqual(result.scope.activeGenerationIds, ["gen"]);
 	assert.equal(result.outline, undefined);
+});
+
+test("the scoped overlap question resolves a hyphenated filename without inventing a document code", async () => {
+	const gold = businessScenarios.negative.find(
+		(item) => item.id === "risk-overlap-with-scoped-evidence",
+	);
+	assert.ok(gold);
+	const report = {
+		...doc,
+		filename: "report-narrative-5k.md",
+		context: { ...doc.context, identifiers: ["PROJ-RISK-26"] },
+	};
+	const partial = {
+		documentId: "other-doc",
+		generationId: "other-gen",
+		filename: "partial.docx",
+		context: {
+			...doc.context,
+			identifiers: ["REPORT-NARRATIVE-5K"],
+			identifiers_complete: false,
+		},
+	};
+	const resolve = (
+		question = gold.question,
+		documents = [report, partial],
+		requestScope = scope,
+	) =>
+		resolveAskDocumentEvidence({
+			question,
+			libraryId: "lib",
+			scope: requestScope,
+			loadCatalog: async () => ({ documents, complete: true }),
+			lookupDocumentRecord: async () => {
+				assert.fail("the comparison must not use an exact outline lookup");
+			},
+		});
+	const result = await resolve(gold.question, [
+		report,
+		{ ...partial, context: { ...partial.context, identifiers: [] } },
+	]);
+	assert.equal(result.status, "resolved");
+	assert.deepEqual(result.scope.documentIds, ["doc"]);
+	assert.deepEqual(result.scope.activeGenerationIds, ["gen"]);
+	assert.equal((await resolve()).status, "resolved");
+	assert.equal(
+		(await resolve(`${gold.question} 文号 PROJ-RISK-26`)).status,
+		"resolved",
+	);
+	assert.equal(
+		(await resolve(`${gold.question} 文号 REPORT-NARRATIVE-5K`)).status,
+		"unavailable",
+	);
+	assert.equal(
+		(await resolve(`${gold.question} 文号 PROJ-MISSING-26`)).status,
+		"unavailable",
+	);
+	assert.equal((await resolve(gold.question, [partial])).status, "unavailable");
+	assert.equal(
+		(
+			await resolve(gold.question, [report, partial], {
+				...scope,
+				activeGenerationIds: ["other-gen"],
+			})
+		).status,
+		"unavailable",
+	);
 });
 
 test("scope intersections, stale catalog versions and incomplete structure fail closed", async () => {
