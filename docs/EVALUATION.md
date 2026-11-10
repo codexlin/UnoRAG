@@ -8,7 +8,7 @@ Langfuse 是可选的实验与分数视图，不是生产 Ask 的配置中心或
 | 内容 | 事实源 | 说明 |
 |---|---|---|
 | 正例黄金集 | `testdata/ab/golds.jsonl` | 36 条真实文件问题、原子事实、目标文件和专项质量维度 |
-| 拒答黄金集 | `testdata/ab/negative-golds.jsonl` | 5 条资料未覆盖问题 |
+| 拒答黄金集 | `testdata/ab/negative-golds.jsonl` | 6 条用例，覆盖资料未提供和证据不足以唯一排序 |
 | Prompt | `src/core/ai/prompt-registry.ts` | 名称、语义版本、正文与 SHA-256 digest |
 | 评分逻辑 | `src/evaluation/` | 中文数字/单位归一化、事实覆盖、Citation、拒答和门禁 |
 | Live runner | `scripts/run-ab-live-e2e.ts` | 真实上传、入库、Ask、报告与可选分数发布 |
@@ -60,7 +60,7 @@ pnpm eval:live
 1. 检查健康并登录；
 2. 创建临时知识库并上传主文件与显式辅助文件的去重并集（当前 7 份真实文件）；
 3. 等待每个 DBOS 入库任务终态；
-4. 执行 36 条正例和 5 条拒答用例；
+4. 执行 36 条正例和 6 条拒答用例；
 5. 写入 `testdata/ab/_e2e_out/ab_live_*.json|md`；
 6. 默认发起删除并轮询临时知识库消失，`--keep-library` 可保留现场。
 
@@ -118,6 +118,10 @@ pnpm eval:live
 
 现有 `documentRecallAtK` 和 MRR 根据**最终 Citation**中的目标文档出现与排序计算，不是完整候选集上的
 标准检索 Recall/MRR。`123/123` 等结果只表示当次确定性契约通过，不能解释为语义正确率或忠实性满分。
+
+区间比较应明确排序口径。风险样本用「比较区间上限」的正例验证可回答的结论，并用「无额外口径时
+要求实际概率唯一最高」的拒答反例验证不做强排序。[原始失败](https://github.com/codexlin/UnoRAG/pull/227#issuecomment-6754044841)
+保留在旧评测版本，不用新预期回写历史结果。
 
 拒答用例中的 `judge_unavailable` 是操作故障，不是正确的资料不足拒答；即使 HTTP 200 且 `refused=true`
 也按失败计算。稳定性门禁继续把 `judge_mode=model_error` 记为 Judge 故障，不改变 API 兼容映射。
