@@ -7,10 +7,13 @@ import type {
 
 type Adapter = Pick<
 	StructuredOutputAdapter,
-	"judgeWithMetadata" | "checkConflictWithMetadata"
+	| "judgeWithMetadata"
+	| "reviewRefusalWithMetadata"
+	| "checkConflictWithMetadata"
 >;
 type Input = Parameters<Adapter["judgeWithMetadata"]>[0] & {
 	query_type?: string;
+	resolvedDocumentId?: string;
 };
 type Options = Parameters<Adapter["judgeWithMetadata"]>[1];
 
@@ -54,6 +57,47 @@ function sumMetadata(
 	};
 }
 
+function canReviewRefusal(input: Input) {
+	const { requirements, resolvedDocumentId } = input;
+	const scoped =
+		input.query_type === "fact" &&
+		resolvedDocumentId &&
+		requirements &&
+		!requirements.formal_name_required &&
+		requirements.granularity !== "procedure_details" &&
+		(requirements.granularity === "named_requirement" ||
+			requirements.location_precision === "designated_destination") &&
+		input.citations.length > 0 &&
+		input.citations.every((item) => {
+			const source = item as {
+				doc_id?: string;
+				id?: string;
+				text?: string;
+			} | null;
+			return (
+				source?.doc_id === resolvedDocumentId &&
+				!!source.id &&
+				typeof source.text === "string" &&
+				source.text.length > 0
+			);
+		});
+	return scoped ? requirements : null;
+}
+
+function reviewedEvidenceIds(
+	citations: Input["citations"],
+	excerpts: { evidence_id: string; quote: string }[],
+): string[] {
+	for (const excerpt of excerpts) {
+		const sources = (citations as { id: string; text: string }[]).filter(
+			(source) => source.id === excerpt.evidence_id,
+		);
+		if (sources.length !== 1 || !sources[0].text.includes(excerpt.quote))
+			return [];
+	}
+	return [...new Set(excerpts.map((excerpt) => excerpt.evidence_id))];
+}
+
 /** Sufficiency owns evidence selection. Conflict verification may only add verified opposing evidence. */
 export async function assessEvidenceWithMetadata(
 	adapter: Adapter,
@@ -61,8 +105,53 @@ export async function assessEvidenceWithMetadata(
 	options: Options = {},
 ) {
 	const judged = await adapter.judgeWithMetadata(input, options);
+	let decision = judged.output;
+	let metadata = judged.metadata;
+	let review:
+		| {
+				judge_refusal_review: "confirmed" | "recovered" | "invalid_evidence";
+				judge_refusal_review_duration_ms: number;
+		  }
+		| undefined;
+	const requirements = canReviewRefusal(input);
+	if (
+		requirements &&
+		decision.action === "refuse" &&
+		!decision.sufficient &&
+		decision.reason !== "judge_unavailable" &&
+		decision.evidence_ids.length === 0
+	) {
+		// Recheck the same authorized evidence once, without anchoring on the first rationale.
+		const checked = await adapter.reviewRefusalWithMetadata(
+			{ question: input.question, requirements, citations: input.citations },
+			options,
+		);
+		const hasMissing = checked.output.missing_requirements.length > 0;
+		const evidenceIds = hasMissing
+			? []
+			: reviewedEvidenceIds(input.citations, checked.output.excerpts);
+		review = {
+			judge_refusal_review: hasMissing
+				? "confirmed"
+				: evidenceIds.length
+					? "recovered"
+					: "invalid_evidence",
+			judge_refusal_review_duration_ms: checked.metadata.durationMs,
+		};
+		metadata = sumMetadata(metadata, checked.metadata);
+		if (evidenceIds.length) {
+			decision = {
+				sufficient: true,
+				action: "generate",
+				reason: "refusal_review_supported",
+				can_retry: false,
+				evidence_ids: evidenceIds,
+			};
+		}
+	}
 	const base = {
-		...judged.output,
+		...decision,
+		...review,
 		evidence_resolution: "not_checked",
 		conflict_evidence: [] as ReturnType<typeof validateConflictEvidence>,
 		judge_sufficiency_attempts: judged.metadata.attempts,
@@ -70,30 +159,30 @@ export async function assessEvidenceWithMetadata(
 		judge_conflict_attempts: 0,
 		judge_conflict_duration_ms: 0,
 	};
-	if (!judged.output.sufficient || judged.output.action !== "generate") {
-		return { output: base, metadata: judged.metadata };
+	if (!decision.sufficient || decision.action !== "generate") {
+		return { output: base, metadata };
 	}
 	// Comparing distinct subjects is not a same-fact conflict check. Keep the
 	// established comparison/summary evidence contracts until a dedicated verifier exists.
 	if (input.query_type && !["fact", "follow_up"].includes(input.query_type)) {
-		return { output: base, metadata: judged.metadata };
+		return { output: base, metadata };
 	}
 	const ids = new Set(
 		input.citations.map((item) => (item as { id?: unknown })?.id),
 	);
 	if (
-		!judged.output.evidence_ids.length ||
-		judged.output.evidence_ids.some((id) => !ids.has(id))
+		!decision.evidence_ids.length ||
+		decision.evidence_ids.some((id) => !ids.has(id))
 	) {
 		throw new Error("Invalid selected evidence");
 	}
-	const candidates = conflictCandidates(input, judged.output.evidence_ids);
+	const candidates = conflictCandidates(input, decision.evidence_ids);
 	const checked = await adapter.checkConflictWithMetadata(
 		{
 			question: input.question,
 			query_type: input.query_type,
 			citations: candidates,
-			evidence_ids: judged.output.evidence_ids,
+			evidence_ids: decision.evidence_ids,
 		},
 		options,
 	);
@@ -103,7 +192,7 @@ export async function assessEvidenceWithMetadata(
 	);
 	const selected = [
 		...new Set([
-			...judged.output.evidence_ids,
+			...decision.evidence_ids,
 			...excerpts.map((item) => item.evidence_id),
 		]),
 	];
@@ -112,8 +201,8 @@ export async function assessEvidenceWithMetadata(
 	return {
 		output: {
 			...base,
-			evidence_ids: excerpts.length ? selected : judged.output.evidence_ids,
-			reason: excerpts.length ? "evidence_conflict" : judged.output.reason,
+			evidence_ids: excerpts.length ? selected : decision.evidence_ids,
+			reason: excerpts.length ? "evidence_conflict" : decision.reason,
 			evidence_resolution: checked.output.resolution,
 			conflict_scope: "selected_documents",
 			conflict_candidate_count: candidates.length,
@@ -121,6 +210,6 @@ export async function assessEvidenceWithMetadata(
 			judge_conflict_attempts: checked.metadata.attempts,
 			judge_conflict_duration_ms: checked.metadata.durationMs,
 		},
-		metadata: sumMetadata(judged.metadata, checked.metadata),
+		metadata: sumMetadata(metadata, checked.metadata),
 	};
 }

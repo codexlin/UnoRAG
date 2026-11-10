@@ -866,7 +866,7 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 				timeoutMs: options.askTimeoutMs,
 			});
 			const score = Object.freeze({
-				...scoreNegativeCase(response),
+				...scoreNegativeCase(response, gold),
 				caseId: gold.id,
 			});
 			negativeRows.push({ kind: "negative", gold, response, score });

@@ -156,6 +156,54 @@ test("overlapping ranges distinguish an upper-bound comparison from an unsupport
 		}).ok,
 		true,
 	);
+	const scoped = plan.negative.find(
+		(item: { id: string }) => item.id === "risk-overlap-with-scoped-evidence",
+	);
+	assert.ok(scoped?.refusal_evidence);
+	assert.match(scoped.question, /report-narrative-5k\.md/u);
+	assert.doesNotMatch(scoped.question, /\d+\s*%/u);
+	const refused = {
+		...response,
+		refused: true,
+		citations: [],
+		answer: "当前知识库中没有找到足以支持回答的内容。",
+		retrievalDebug: { retrieved_evidence_count: 2 },
+	};
+	const groundedReason =
+		"两个区间存在重叠：55–65% 和 50–60%，无法确定实际概率最高的一项。";
+	assert.equal(
+		scoreNegativeCase({ ...refused, refuseReason: groundedReason }, scoped).ok,
+		true,
+	);
+	for (const refuseReason of [
+		"没找到任何概率区间",
+		"区间重叠，但不能确定",
+		"区间重叠，已知组织协调风险 55–65%",
+		"invalid_judgement_action",
+		"comparison_context_exceeds_budget",
+	]) {
+		assert.equal(
+			scoreNegativeCase({ ...refused, refuseReason }, scoped).ok,
+			false,
+		);
+	}
+	assert.equal(
+		scoreNegativeCase(
+			{
+				...refused,
+				refuseReason: groundedReason,
+				retrievalDebug: { retrieved_evidence_count: 1 },
+			},
+			scoped,
+		).ok,
+		false,
+	);
+	for (const id of [
+		"release-backup-check-details-not-documented",
+		"leave-reception-street-address-not-documented",
+	]) {
+		assert.ok(plan.negative.some((item: { id: string }) => item.id === id));
+	}
 });
 
 test("the backup fact accepts scoped paraphrases only with cited checklist text", async () => {

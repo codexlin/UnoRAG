@@ -167,6 +167,13 @@ export const NegativeGoldenCaseSchema = z
 	.object({
 		id: z.string().trim().min(1).optional(),
 		question: z.string().trim().min(1),
+		refusal_evidence: z
+			.object({
+				min_retrieved: z.number().int().min(1).max(20),
+				reason_contains: z.array(KeyFactsSchema.max(12)).min(1).max(8),
+			})
+			.strict()
+			.optional(),
 	})
 	.strict();
 

@@ -203,6 +203,8 @@ export function createDecisionNode(context: AskGraphContext) {
 				"judge_duration_ms",
 				"judge_sufficiency_attempts",
 				"judge_sufficiency_duration_ms",
+				"judge_refusal_review",
+				"judge_refusal_review_duration_ms",
 				"judge_conflict_attempts",
 				"judge_conflict_duration_ms",
 				"judge_failed_stage",

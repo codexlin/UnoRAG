@@ -810,6 +810,89 @@ test("judge evidence projection is bounded and excludes raw table rows", async (
 	assert.equal("tenant_id" in (projected[0] ?? {}), false);
 });
 
+test("strict ranking of scoped probability intervals refuses overlap before calling the model", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const structured = new StructuredOutputAdapter(
+		{} as LanguageModel,
+		async (request) => {
+			assert.equal(request.schemaName, "judge");
+			modelCalls++;
+			return {
+				sufficient: false,
+				action: "refuse",
+				reason: "model",
+				evidence_ids: [],
+			};
+		},
+	);
+	let modelCalls = 0;
+	let authorizationChecks = 0;
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{ structured, answer: {} as never, retrieval: {} as never },
+		async () => {
+			authorizationChecks++;
+		},
+	);
+	Object.assign(runtime, {
+		documentConstraintStatus: "resolved",
+		documentScope: [{ documentId: "doc-budget", generationId: "generation-a" }],
+	});
+	const ports = (
+		runtime as unknown as { context: () => AskGraphContext }
+	).context();
+	const prose = (name: string, interval: string): InternalCitation => ({
+		...citation({ id: name, tableId: "budget", device: "", amount: "" }),
+		record_type: "section",
+		table_id: null,
+		section_path: `报告/风险评估/${name}`,
+		body: `风险描述。**发生概率**：较高（约${interval}）\n**影响程度**：中高`,
+	});
+	const a = prose("网络风险", "55–65%");
+	const b = prose("运维风险", "50-60%");
+	const question =
+		"仅比较网络风险与运维风险的发生概率区间。哪一类风险的实际发生概率一定最高？";
+	const judge = (hits: InternalCitation[], text = question) =>
+		ports.judge.judge({
+			question: text,
+			query_type: "compare",
+			citations: hits,
+		} as unknown as AskState);
+	const result = await judge([a, b]);
+	assert.equal(result.action, "refuse");
+	assert.equal(result.judge_mode, "deterministic_probability_overlap");
+	assert.match(result.reason, /重叠.*55-65%.*50-60%/u);
+	assert.deepEqual(result.evidence_ids, []);
+	assert.equal(modelCalls, 0);
+	assert.equal(authorizationChecks, 1);
+	for (const hits of [
+		[a, prose("运维风险", "30-40%")],
+		[a],
+		[a, { ...b, generation_id: "older" }],
+		[a, { ...b, section_path: "报告/其他评估/运维风险" }],
+		[a, { ...b, body: "发生概率：不是50-60%" }],
+		[a, b, { ...b, body: "发生概率：记录无法确定" }],
+		[a, b, prose("运维风险", "20-25%")],
+	])
+		assert.equal((await judge(hits)).reason, "model");
+	assert.equal(
+		(
+			await judge(
+				[a, b],
+				"仅比较网络风险与运维风险的发生概率区间，哪一类的上限最高？",
+			)
+		).reason,
+		"model",
+	);
+	assert.equal(
+		(await judge([a, b], `${question}它们的概率上限又分别是多少？`)).reason,
+		"model",
+	);
+});
+
 test("reusing grounded table evidence does not invent a second rerank attempt", async () => {
 	const { NativeAskRuntime } = await runtimeModule;
 	const runtime = new NativeAskRuntime(

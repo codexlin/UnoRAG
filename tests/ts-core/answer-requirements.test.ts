@@ -67,3 +67,20 @@ test("generation receives the same precision contract without changing legacy me
 	assert.match(String(messages[0]?.content), /named_requirement/);
 	assert.match(String(messages[0]?.content), /必须完成密封检查/);
 });
+
+test("designated intake location is distinct from an address or procedure", () => {
+	assert.equal(
+		deriveAnswerRequirements("补交材料期限和接收地点分别是什么？")
+			.location_precision,
+		"designated_destination",
+	);
+	assert.equal(
+		deriveAnswerRequirements("接收地点的街道与门牌号是什么？")
+			.location_precision,
+		undefined,
+	);
+	assert.equal(
+		deriveAnswerRequirements("在哪里提交，具体操作步骤是什么？").granularity,
+		"procedure_details",
+	);
+});

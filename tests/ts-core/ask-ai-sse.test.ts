@@ -19,6 +19,7 @@ import {
 } from "../../src/core/ai";
 import { assessEvidenceWithMetadata } from "../../src/core/ai/evidence-assessment";
 import { ConflictOutputSchema } from "../../src/core/ai/structured-output";
+import { deriveAnswerRequirements } from "../../src/core/ask-graph/answer-requirements";
 import {
 	type LegacySseEventName,
 	projectPublicCitations,
@@ -210,6 +211,158 @@ test("conflict verification adds only exact authorized quotes and reauthorizes b
 			assert.equal(result.output.judge_conflict_attempts, 1);
 		}
 		assert.equal(checkpoints, 2);
+	}
+});
+
+test("scoped false refusals can recover only from exact original evidence, then check conflict", async () => {
+	for (const [question, text] of [
+		["发布前应做什么检查？", "发布前必须完成完整性校验。"],
+		["补交材料期限和接收地点是什么？", "五日内将原件交至行政部前台。"],
+	]) {
+		const calls: string[] = [];
+		let checkpoints = 0;
+		const adapter = new StructuredOutputAdapter(
+			injectedModel,
+			async (request) => {
+				calls.push(request.schemaName);
+				if (request.schemaName === "judge")
+					return {
+						sufficient: false,
+						action: "refuse",
+						reason: "unrequested precision",
+						evidence_ids: [],
+					};
+				const sent = JSON.parse(String(request.messages[0].content));
+				assert.equal(sent.citations[0].text, text);
+				assert.equal(sent.question, question);
+				if (request.schemaName === "refusal_review") {
+					assert.equal(
+						JSON.stringify(sent).includes("unrequested precision"),
+						false,
+					);
+					return {
+						missing_requirements: [],
+						excerpts: [{ evidence_id: "a", quote: text }],
+					};
+				}
+				assert.deepEqual(sent.evidence_ids, ["a"]);
+				return {
+					comparison: "same",
+					resolution: "consistent",
+					conflict_evidence: [],
+				};
+			},
+		);
+		const result = await assessEvidenceWithMetadata(
+			adapter,
+			{
+				question,
+				query_type: "fact",
+				resolvedDocumentId: "doc",
+				citations: [{ id: "a", doc_id: "doc", text }],
+				requirements: deriveAnswerRequirements(question),
+				attempts: 1,
+			},
+			{
+				beforeRequest: async () => {
+					checkpoints++;
+				},
+			},
+		);
+		assert.deepEqual(calls, ["judge", "refusal_review", "conflict"]);
+		assert.equal(checkpoints, 3);
+		assert.equal(result.output.action, "generate");
+		assert.deepEqual(result.output.evidence_ids, ["a"]);
+		assert.equal(result.output.judge_refusal_review, "recovered");
+		assert.equal(result.metadata.attempts, 3);
+		assert.equal(JSON.stringify(result).includes(text), false);
+	}
+});
+
+test("scoped refusal review keeps missing or fabricated evidence closed and does not review out of scope", async () => {
+	for (const scenario of [
+		"missing",
+		"fabricated",
+		"foreign_id",
+		"other_doc",
+		"unscoped",
+		"comparison",
+		"procedure",
+		"address",
+		"revoked",
+	]) {
+		const calls: string[] = [];
+		let checkpoints = 0;
+		const adapter = new StructuredOutputAdapter(
+			injectedModel,
+			async (request) => {
+				calls.push(request.schemaName);
+				if (request.schemaName === "judge")
+					return {
+						sufficient: false,
+						action: "refuse",
+						reason: "missing",
+						evidence_ids: [],
+					};
+				assert.equal(request.schemaName, "refusal_review");
+				return scenario === "missing"
+					? { missing_requirements: ["具体检查项"], excerpts: [] }
+					: {
+							missing_requirements: [],
+							excerpts: [
+								{
+									evidence_id: scenario === "foreign_id" ? "foreign" : "a",
+									quote: scenario === "fabricated" ? "检查水压" : "备份校验",
+								},
+							],
+						};
+			},
+		);
+		const question =
+			scenario === "procedure"
+				? "检查名称及具体操作步骤是什么？"
+				: scenario === "address"
+					? "接收地点的街道和门牌号分别是什么？"
+					: "发布前应做什么检查？";
+		const run = () =>
+			assessEvidenceWithMetadata(
+				adapter,
+				{
+					question,
+					query_type: scenario === "comparison" ? "compare" : "fact",
+					resolvedDocumentId: scenario === "unscoped" ? undefined : "doc",
+					requirements: deriveAnswerRequirements(question),
+					citations: [
+						{
+							id: "a",
+							doc_id: scenario === "other_doc" ? "other" : "doc",
+							text: "发布前必须做备份校验。",
+						},
+					],
+					attempts: 1,
+				},
+				{
+					beforeRequest: async () => {
+						if (++checkpoints === 2 && scenario === "revoked")
+							throw new Error("revoked");
+					},
+				},
+			);
+		if (scenario === "revoked") {
+			await assert.rejects(run, /revoked/u);
+			assert.deepEqual(calls, ["judge"]);
+			continue;
+		}
+		const { output } = await run();
+		assert.equal(output.action, "refuse", scenario);
+		assert.deepEqual(output.evidence_ids, []);
+		if (["missing", "fabricated", "foreign_id"].includes(scenario)) {
+			assert.deepEqual(calls, ["judge", "refusal_review"]);
+			assert.equal(
+				output.judge_refusal_review,
+				scenario === "missing" ? "confirmed" : "invalid_evidence",
+			);
+		} else assert.deepEqual(calls, ["judge"], scenario);
 	}
 });
 

@@ -22,6 +22,7 @@ import { deriveAnswerRequirements } from "@/core/ask-graph/answer-requirements";
 import {
 	boundedJudgeEvidenceText,
 	compactComparisonEvidence,
+	scopedProbabilityOverlapReason,
 } from "@/core/ask-graph/comparison-evidence";
 import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
 import { deriveGroundedTableLookup } from "@/core/ask-graph/table";
@@ -468,14 +469,43 @@ export class NativeAskRuntime {
 						};
 					}
 					await this.assertAuthorized?.(this.retrievedEvidence);
+					const [document] = this.documentScope;
+					const scopedDocument =
+						this.documentConstraintStatus === "resolved" &&
+						this.documentScope.length === 1 &&
+						document &&
+						!state.table_execution &&
+						citations.every(
+							(citation) =>
+								citation.doc_id === document.documentId &&
+								citation.generation_id === document.generationId,
+						)
+							? document
+							: undefined;
+					const question = state.question ?? "";
+					const overlap =
+						scopedDocument && state.query_type === "compare"
+							? scopedProbabilityOverlapReason(question, citations)
+							: null;
+					if (overlap) {
+						return {
+							sufficient: false,
+							action: "refuse",
+							reason: overlap,
+							can_retry: false,
+							evidence_ids: [],
+							judge_mode: "deterministic_probability_overlap",
+						};
+					}
 					try {
-						const requirements = deriveAnswerRequirements(state.question ?? "");
+						const requirements = deriveAnswerRequirements(question);
 						const judged = await assessEvidenceWithMetadata(
 							judgeStructured,
 							{
-								question: state.question ?? "",
+								question,
 								query_type: state.query_type,
 								requirements,
+								resolvedDocumentId: scopedDocument?.documentId,
 								citations: [
 									...projectJudgeEvidence(citations).map((citation) => ({
 										...citation,

@@ -21,6 +21,9 @@ export function deriveAnswerRequirements(
 		/(?:多久|几天|何时|什么时候|谁|哪位|地点|地址|街道|门牌|金额|单价|价格|时限|期限|上限|下限|数量|多少|哪一天|为什么)/u.test(
 			content,
 		);
+	const destination =
+		!/(?:地址|街道|门牌|楼层|坐标)/u.test(content) &&
+		/(?:接收|收件|受理|递交|提交)(?:材料)?(?:的)?(?:地点|处所)/u.test(content);
 	return {
 		granularity: detailed
 			? "procedure_details"
@@ -28,5 +31,6 @@ export function deriveAnswerRequirements(
 				? "named_requirement"
 				: "unspecified",
 		formal_name_required: /(?:正式|法定|标准)名称/u.test(content),
+		...(destination ? { location_precision: "designated_destination" } : {}),
 	};
 }

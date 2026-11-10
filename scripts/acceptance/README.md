@@ -21,6 +21,9 @@
 | `scripts/acceptance/release-gate.mjs` | 按绑定 commit / manifest 的 profile 串行执行发布门禁 |
 | `scripts/acceptance/local-parser-smoke.ts` | Worker 镜像断网、只读条件下的真实文字 PDF 与扫描件 OCR；保留低置信度警告，不等于 OCR 质量全通过 |
 
+拒答评分不把 Judge 技术失败算作业务通过。指定 `refusal_evidence` 的对照题还必须达到候选证据数并匹配理由；
+概率区间对照题同时检查两个原文区间和重叠原因，不以“没找到资料”代替。
+
 所有验收脚本使用一致退出码：`0` 通过，`1` 失败，`2` 因依赖或配置缺失而
 阻塞。`2` 不能记为产品通过。
 

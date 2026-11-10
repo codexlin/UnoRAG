@@ -81,6 +81,13 @@ export const JudgeOutputSchema = z
 	})
 	.strict();
 
+const RefusalReviewOutputSchema = z
+	.object({
+		missing_requirements: z.array(z.string().trim().min(1).max(240)).max(8),
+		excerpts: ConflictEvidenceSchema,
+	})
+	.strict();
+
 export const ConflictOutputSchema = z
 	.object({
 		comparison: z.string().trim().min(1).max(800),
@@ -99,6 +106,7 @@ export const ConflictOutputSchema = z
 export type JudgeAnswerRequirements = {
 	granularity: "named_requirement" | "procedure_details" | "unspecified";
 	formal_name_required: boolean;
+	location_precision?: "designated_destination";
 };
 
 export const TablePlanOutputSchema = TableQueryPlanSchema;
@@ -113,6 +121,7 @@ type StructuredKind =
 	| "router"
 	| "rewrite"
 	| "judge"
+	| "refusal_review"
 	| "conflict"
 	| "table_plan";
 
@@ -120,6 +129,7 @@ interface StructuredSchemaMap {
 	router: typeof RouterOutputSchema;
 	rewrite: typeof RewriteOutputSchema;
 	judge: typeof JudgeOutputSchema;
+	refusal_review: typeof RefusalReviewOutputSchema;
 	conflict: typeof ConflictOutputSchema;
 	table_plan: typeof TablePlanOutputSchema;
 }
@@ -312,13 +322,14 @@ export class StructuredOutputAdapter {
 		messages: ModelMessage[],
 		abortSignal?: AbortSignal,
 		beforeRequest?: () => Promise<void>,
+		maxAttempts = this.maxAttempts,
 	): Promise<{
 		output: z.infer<StructuredSchemaMap[K]>;
 		metadata: StructuredRequestMetadata;
 	}> {
 		const startedAt = performance.now();
 		let lastError: unknown;
-		for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+		for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
 			if (abortSignal?.aborted) throw abortSignal.reason;
 			let lease:
 				| Awaited<ReturnType<AiConcurrencyGateLike["acquire"]>>
@@ -415,8 +426,8 @@ export class StructuredOutputAdapter {
 							durationMs:
 								Math.round((performance.now() - startedAt) * 100) / 100,
 							timeoutMs: this.timeoutMs,
-							maxAttempts: this.maxAttempts,
-							budgetMs: this.timeoutMs * this.maxAttempts,
+							maxAttempts,
+							budgetMs: this.timeoutMs * maxAttempts,
 						}),
 					);
 				}
@@ -517,6 +528,28 @@ export class StructuredOutputAdapter {
 			],
 			options.abortSignal,
 			options.beforeRequest,
+		);
+	}
+
+	reviewRefusalWithMetadata(
+		input: {
+			question: string;
+			citations: unknown[];
+			requirements: JudgeAnswerRequirements;
+		},
+		options: {
+			abortSignal?: AbortSignal;
+			beforeRequest?: () => Promise<void>;
+		} = {},
+	) {
+		return this.request(
+			"refusal_review",
+			RefusalReviewOutputSchema,
+			getPrompt("refusal_review"),
+			[userMessage(JSON.stringify(input))],
+			options.abortSignal,
+			options.beforeRequest,
+			1,
 		);
 	}
 
