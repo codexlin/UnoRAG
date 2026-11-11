@@ -83,6 +83,19 @@ Zod 契约与候选 ID 校验。模型的原生 JSON Schema 支持应按实际�
 状态，后者覆盖 `PENDING`、`ENQUEUED`、`DELAYED` durable workflow；任一侧非零都不能切换 DBOS
 application version。`upgrade.sh` 会自动执行该门禁，日常命令只用于发布前诊断。
 
+## 镜像与磁盘
+
+发布后拉取的新镜像不会自动替换或清除全部历史镜像。长期保留每次 RC、开发版和旧正式版，
+会让容器存储持续增长；镜像数量不能直接换算成磁盘用量，因为镜像共享层且后台回收可能延迟。
+先用 `df -h`、`docker system df` 和按目录统计区分镜像、数据卷、日志、备份，不把磁盘告警误判为
+知识库容量问题。使用 containerd image store 时，大头可能在 `/var/lib/containerd`，不只在 Docker Root Dir。
+
+清理前保留正在使用的全部镜像、当前四镜像清单、`.upgrade-state/previous-images.env` 指向的回滚镜像，
+以及最近正式版/仍需验收的候选；只删除确认未被容器使用且不在保留集合内的旧项目镜像。
+使用不带 `--force` 的精确 image 引用，并在清理后重查镜像 ID、实际空闲空间和服务健康。
+不要直接删除 containerd/snapshot 目录，也不要对生产运行 `docker system prune -a --volumes`。
+旧镜像、停用测试数据卷和备份是不同的保留策略，不应一次清空；生产数据卷和 COS 对象不属于镜像清理。
+
 ## 认证与限流
 
 浏览器会话使用短期 HMAC Cookie，并在 Redis 登记活跃 `sid`。退出登录、切换 Workspace 会原子撤销
@@ -140,6 +153,12 @@ UnoRAG 默认提供管理员可见的“运行中心”、低基数 `/metrics`�
 引用覆盖、dead/stuck 任务、组件健康、持久告警和恢复建议；不会返回问题、回答、Prompt、引用正文、
 Provider 地址、通知目标或 Job 错误正文。Webhook/邮件是默认关闭的核心可选投递；分布式追踪、集中
 日志与 Alertmanager 由可选 Ops Stack 提供，职责与隐私边界见 [ARCHITECTURE.md](./ARCHITECTURE.md#可观测性边界)。
+
+告警收件地址、最低级别和恢复通知在 **工作区设置 → 邮件通知** 保存，不在环境变量中指定。
+测试邮件先入持久化队列，再由 control 的可观测性周期领取；`OBSERVABILITY_CYCLE_INTERVAL_MS` 默认
+60 秒，页面会在提交后轮询最多 120 秒。
+短时显示“排队中”不表示发送失败，不应立即重复点击；结合投递历史、尝试次数和安全错误码排查。
+历史“服务商已接受”只表示发送 API 接受，不是收件箱确认；实际退信或送达应到服务商查询。
 
 需要模型、Token、LangGraph 节点和后续评测实验视图时，可选启用 metadata-only Langfuse 出口；配置、
 权限和排障见下文“可选 Langfuse”。Langfuse exporter 告警不得升级为 UnoRAG 业务不可用告警。

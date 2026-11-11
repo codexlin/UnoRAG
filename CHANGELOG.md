@@ -3,6 +3,37 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [0.2.9] - Acceptance Pending
+
+Built and deployed to the Hong Kong reference instance on 2026-11-11. The GitHub Release
+remains draft: a live Judge failure blocks the quality gate; see [#231](https://github.com/codexlin/UnoRAG/issues/231).
+
+### Added
+
+- Manage alert email recipients, severity and recovery notifications in Workspace settings,
+  with per-recipient delivery history and test mail.
+- Send HTML/plain-text invitations, existing-account sign-in links and password resets
+  through Resend HTTPS. Registration remains invitation-only.
+
+### Fixed
+
+- Fence concurrent invite acceptance, credential changes, expired account links and
+  password-reset/session-issuance races. Existing members must verify their password
+  when joining another workspace; invitations cannot replace it.
+- Keep notification retries scoped, idempotent and content-stable; redact provider errors
+  and distinguish service acceptance from inbox delivery.
+- Include the reviewed pilot evidence, parser/evaluation contract and dependency maintenance
+  updates made after v0.2.8.
+
+### Upgrade notes
+
+- Back up and drain DBOS before applying forward-only migrations 0028–0031. Existing
+  document generations are not automatically reindexed.
+- Configure transport credentials server-side and account-link origin via `APP_BASE_URL`.
+  Save recipients in the application; old global recipient/toggle settings are not imported.
+- Account mail is bounded request/`after` work, not a durable mail queue. A process interruption
+  can require another link request. Alert mail retains durable retries.
+
 ## [0.2.8] - 2026-11-10
 
 ### Fixed
