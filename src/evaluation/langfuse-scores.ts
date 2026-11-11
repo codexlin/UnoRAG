@@ -141,14 +141,20 @@ export async function publishEvaluationScores(input: {
 	for (let offset = 0; offset < payloads.length; offset += 100) {
 		const batch = payloads.slice(offset, offset + 100);
 		let response: Awaited<ReturnType<CreateScores>>;
+		const controller = new AbortController();
+		// The SDK clears its own timeout at headers, before reading the body.
+		const deadline = setTimeout(() => controller.abort(), 5_000);
 		try {
 			response = await input.client.api.scores.create(batch, {
 				timeoutInSeconds: 5,
 				maxRetries: 0,
+				abortSignal: controller.signal,
 			});
 		} catch {
 			// Provider error bodies may echo submitted data or credentials.
 			throw new Error("Langfuse score batch request failed");
+		} finally {
+			clearTimeout(deadline);
 		}
 		if (!response || typeof response !== "object") {
 			throw new Error("Langfuse score batch acknowledgement is invalid");

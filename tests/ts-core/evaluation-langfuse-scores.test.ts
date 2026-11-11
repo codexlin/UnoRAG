@@ -445,6 +445,56 @@ test("score publication waits for the real SDK acknowledgement", async (t) => {
 	assert.equal((await publication).publishedScores, 1);
 });
 
+test("score publication bounds a stalled response body after headers", {
+	timeout: 12_000,
+}, async (t) => {
+	const server = createServer(async (request, response) => {
+		for await (const _chunk of request) {
+			// Consume the request before simulating a stalled acknowledgement.
+		}
+		response.writeHead(202, { "content-type": "application/json" });
+		response.flushHeaders();
+		response.write('{"message":');
+	});
+	t.after(async () => {
+		server.closeAllConnections();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	const address = server.address();
+	assert.ok(address && typeof address !== "string");
+	const client = new LangfuseClient({
+		publicKey: "pk-lf-test",
+		secretKey: "sk-lf-test",
+		baseUrl: `http://127.0.0.1:${address.port}`,
+	});
+	t.after(() => client.score.shutdown());
+	let guard: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await assert.rejects(
+			Promise.race([
+				publishEvaluationScores({
+					client,
+					runId: "run",
+					release: "release",
+					positive: [],
+					negative: negativeScores(),
+				}),
+				new Promise<never>((_resolve, reject) => {
+					guard = setTimeout(
+						() => reject(new Error("publication exceeded deadline")),
+						7_000,
+					);
+				}),
+			]),
+			{ message: "Langfuse score batch request failed" },
+		);
+	} finally {
+		clearTimeout(guard);
+	}
+});
+
 test("publication stops after a rejected batch without sending later batches", async (t) => {
 	let calls = 0;
 	const { client, requests } = await localLangfuse(t, () => {

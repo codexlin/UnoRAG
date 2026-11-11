@@ -360,7 +360,7 @@ Publisher 使用官方 `@langfuse/client`，按每个评测 Session 写入：
 
 发送内容仅包含 Session ID、哈希 case ID、run ID、release 和数值/布尔分数；不会发送问题、模型回答、
 参考答案、关键事实或 Citation 正文。Publisher 直接调用类型化 `api.scores.create([...])`，每批最多 100 条，
-每次请求超时 5 秒且不自动重试。只有服务端确认整批接受（202 `Accepted`，或接受数匹配、拒绝数和错误均为零）
+每批 5 秒总预算覆盖请求和完整响应体读取，且不自动重试。只有服务端确认整批接受（202 `Accepted`，或接受数匹配、拒绝数和错误均为零）
 才计入 `publishedScores`；不以 `score.flush()` 完成作为送达证据。`published` 表示 API 已接受，
 不证明异步持久化完成或 UI 已可查询。部分拒绝、HTTP 错误、超时或未知响应均记为发布失败，
 不将 Provider 错误正文写入报告。此前已接受的批次不会回滚，固定 Score ID 也不构成跨次重跑幂等性保证。
