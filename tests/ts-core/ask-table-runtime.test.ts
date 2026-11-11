@@ -747,7 +747,10 @@ test("comparison preserves six real alternatives when one indexed section contai
 		.filter((record) => record !== repeated)
 		.map((record) => record._point_id);
 	assert.equal(state.query_type, "compare");
-	assert.deepEqual(evidenceIds, expected);
+	assert.deepEqual(
+		evidenceIds,
+		expected.map((_, index) => `e${index + 1}`),
+	);
 	assert.deepEqual(
 		state.citations?.map(({ id }) => id),
 		expected,
@@ -1038,7 +1041,7 @@ test("model reason text cannot impersonate a server-assigned Judge outage", asyn
 							sufficient: action === "generate",
 							action,
 							reason: "judge_unavailable",
-							evidence_ids: ["hit"],
+							evidence_ids: ["e1"],
 						},
 		);
 		const runtime = new NativeAskRuntime(

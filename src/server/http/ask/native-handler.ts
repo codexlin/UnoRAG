@@ -635,7 +635,24 @@ async function handleNativeAskRequestInSpan(input: {
 				event: "ask.judge_unavailable",
 				error_code: "judge_unavailable",
 				error_category:
-					state.retrieval_debug?.judge_error_category ?? "provider_error",
+					state.retrieval_debug?.judge_error_category ?? "unknown",
+				judge_failure_source:
+					state.retrieval_debug?.judge_failure_source ?? "unknown",
+				judge_failed_stage: state.retrieval_debug?.judge_failed_stage ?? null,
+				judge_validation_code:
+					state.retrieval_debug?.judge_validation_code ?? null,
+				judge_sufficiency_attempts:
+					state.retrieval_debug?.judge_sufficiency_attempts ?? null,
+				judge_sufficiency_duration_ms:
+					state.retrieval_debug?.judge_sufficiency_duration_ms ?? null,
+				judge_refusal_review_attempts:
+					state.retrieval_debug?.judge_refusal_review_attempts ?? null,
+				judge_refusal_review_duration_ms:
+					state.retrieval_debug?.judge_refusal_review_duration_ms ?? null,
+				judge_conflict_attempts:
+					state.retrieval_debug?.judge_conflict_attempts ?? null,
+				judge_conflict_duration_ms:
+					state.retrieval_debug?.judge_conflict_duration_ms ?? null,
 				attempts: state.retrieval_debug?.judge_attempts ?? null,
 				duration_ms: state.retrieval_debug?.judge_duration_ms ?? null,
 			});

@@ -22,6 +22,13 @@ export function redactDiagnosticMessage(value: string | null): string | null {
 }
 
 const EXACT_GUIDANCE: Record<string, ErrorGuidance> = {
+	judge_unavailable: {
+		title: "证据校验未完成",
+		cause:
+			"充分性判断、冲突核验或证据来源校验未能完成，本次未生成回答；具体原因以已记录的阶段诊断为准。",
+		recovery:
+			"按 Request ID 查看故障来源、失败环节和已完成调用；区分模型请求与本地校验，不根据总耗时推断网络故障。",
+	},
 	answer_citation_invalid: {
 		title: "回答引用校验失败",
 		cause:

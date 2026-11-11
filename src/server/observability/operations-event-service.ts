@@ -59,7 +59,33 @@ const judgeErrorCategories = new Set<string>([
 	"output_truncated",
 	"invalid_output",
 	"provider_error",
+	"evidence_validation",
+	"unknown",
 ] satisfies JudgeErrorCategory[]);
+
+const judgeFailureSources = new Set([
+	"structured_request",
+	"evidence_validation",
+	"unknown",
+]);
+const judgeFailureStages = new Set([
+	"judge",
+	"refusal_review",
+	"conflict",
+	"selected_ids",
+	"conflict_provenance",
+	"source_count",
+]);
+const judgeValidationCodes = new Set([
+	"selected_ids_empty",
+	"selected_ids_unknown",
+	"selected_ids_ambiguous",
+	"conflict_schema",
+	"conflict_unknown_source",
+	"conflict_quote_mismatch",
+	"conflict_duplicate_quote",
+	"source_count_exceeded",
+]);
 
 function judgeDetail(
 	stage: typeof askRunStages.$inferSelect,
@@ -79,7 +105,25 @@ function judgeDetail(
 	if (typeof category === "string" && judgeErrorCategories.has(category)) {
 		detail.judge_error_category = category as JudgeErrorCategory;
 	}
-	for (const key of ["judge_attempts", "judge_max_attempts"] as const) {
+	const source = stage.detail.judge_failure_source;
+	if (typeof source === "string" && judgeFailureSources.has(source))
+		detail.judge_failure_source =
+			source as JudgeDiagnosticDetail["judge_failure_source"];
+	const failedStage = stage.detail.judge_failed_stage;
+	if (typeof failedStage === "string" && judgeFailureStages.has(failedStage))
+		detail.judge_failed_stage =
+			failedStage as JudgeDiagnosticDetail["judge_failed_stage"];
+	const validation = stage.detail.judge_validation_code;
+	if (typeof validation === "string" && judgeValidationCodes.has(validation))
+		detail.judge_validation_code =
+			validation as JudgeDiagnosticDetail["judge_validation_code"];
+	for (const key of [
+		"judge_attempts",
+		"judge_max_attempts",
+		"judge_sufficiency_attempts",
+		"judge_refusal_review_attempts",
+		"judge_conflict_attempts",
+	] as const) {
 		const value = stage.detail[key];
 		if (
 			typeof value === "number" &&
@@ -93,6 +137,9 @@ function judgeDetail(
 		"judge_duration_ms",
 		"judge_timeout_ms",
 		"judge_budget_ms",
+		"judge_sufficiency_duration_ms",
+		"judge_refusal_review_duration_ms",
+		"judge_conflict_duration_ms",
 	] as const) {
 		const value = stage.detail[key];
 		if (

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EvidenceAssessmentValidationError } from "../ai/evidence-assessment-diagnostics";
 import type { AskState } from "./state";
 
 const ConflictExcerptSchema = z
@@ -19,21 +20,30 @@ function normalize(text: string): string {
 export function validateConflictEvidence(
 	value: unknown,
 	citations: AskState["citations"],
+	resolveEvidenceId?: (reference: string) => string | undefined,
 ) {
-	const items = ConflictEvidenceSchema.parse(value);
+	const parsed = ConflictEvidenceSchema.safeParse(value);
+	if (!parsed.success)
+		throw new EvidenceAssessmentValidationError("conflict_schema");
+	const items = parsed.data.map((item) => {
+		if (!resolveEvidenceId) return item;
+		const id = resolveEvidenceId(item.evidence_id);
+		if (id === undefined)
+			throw new EvidenceAssessmentValidationError("conflict_unknown_source");
+		return { ...item, evidence_id: id };
+	});
 	const seen = new Set<string>();
 	for (const item of items) {
 		const sources = (citations ?? []).filter((c) => c.id === item.evidence_id);
 		const source = sources[0];
 		const text = source?.body || source?.text || source?.snippet;
 		const quote = normalize(item.quote);
-		if (
-			sources.length !== 1 ||
-			typeof text !== "string" ||
-			!normalize(text).includes(quote) ||
-			seen.has(quote)
-		)
-			throw new Error("Invalid conflict evidence");
+		if (sources.length !== 1)
+			throw new EvidenceAssessmentValidationError("conflict_unknown_source");
+		if (typeof text !== "string" || !normalize(text).includes(quote))
+			throw new EvidenceAssessmentValidationError("conflict_quote_mismatch");
+		if (seen.has(quote))
+			throw new EvidenceAssessmentValidationError("conflict_duplicate_quote");
 		seen.add(quote);
 	}
 	return items;

@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { errorGuidance } from "../../src/lib/error-diagnostics";
 
 const email = process.env.UNORAG_E2E_ADMIN_EMAIL?.trim();
 const password = process.env.UNORAG_E2E_ADMIN_PASSWORD?.trim();
@@ -99,7 +100,7 @@ test("Judge diagnostics remain readable and omit absent legacy metadata", async 
 }, testInfo) => {
 	await signIn(page);
 	const id = "91000000-0000-4000-8000-000000000001";
-	let legacy = false;
+	let mode: "provider" | "validation" | "legacy" = "provider";
 	await page.route("**/api/workspace/operations", async (route) => {
 		const response = await route.fetch();
 		expect(response.ok()).toBe(true);
@@ -125,11 +126,7 @@ test("Judge diagnostics remain readable and omit absent legacy metadata", async 
 					id,
 					status: "failed",
 					error_code: "judge_unavailable",
-					guidance: {
-						title: "证据校验服务暂不可用",
-						cause: "模型服务暂时不可用",
-						recovery: "检查服务后重试",
-					},
+					guidance: errorGuidance("judge_unavailable"),
 					request_id: id,
 					otel_trace_id: null,
 					workflow_id: null,
@@ -153,18 +150,28 @@ test("Judge diagnostics remain readable and omit absent legacy metadata", async 
 							started_at: null,
 							ended_at: null,
 							duration_ms: 4_120,
-							detail: legacy
-								? null
-								: {
-										judge_error_category: "provider_unavailable",
-										judge_attempts: 2,
-										judge_max_attempts: 2,
-										judge_timeout_ms: 12_000,
-										judge_budget_ms: 24_000,
-										judge_duration_ms: 4_120.25,
-										judge_status_code: 503,
-										judge_retryable: true,
-									},
+							detail:
+								mode === "legacy"
+									? null
+									: mode === "validation"
+										? {
+												judge_error_category: "evidence_validation",
+												judge_failure_source: "evidence_validation",
+												judge_failed_stage: "selected_ids",
+												judge_validation_code: "selected_ids_unknown",
+												judge_sufficiency_attempts: 1,
+												judge_sufficiency_duration_ms: 4120.25,
+											}
+										: {
+												judge_error_category: "provider_unavailable",
+												judge_attempts: 2,
+												judge_max_attempts: 2,
+												judge_timeout_ms: 12_000,
+												judge_budget_ms: 24_000,
+												judge_duration_ms: 4_120.25,
+												judge_status_code: 503,
+												judge_retryable: true,
+											},
 						},
 					],
 				},
@@ -199,7 +206,31 @@ test("Judge diagnostics remain readable and omit absent legacy metadata", async 
 	});
 	await page.keyboard.press("Escape");
 	await expect(dialog).toBeHidden();
-	legacy = true;
+	mode = "validation";
+	await page.getByRole("row").filter({ hasText: "judge_unavailable" }).click();
+	await expect(dialog).toBeVisible();
+	for (const value of [
+		"selected_ids_unknown",
+		"充分性已完成尝试",
+		"4120.25 ms",
+	])
+		await expect(dialog.getByText(value, { exact: true })).toBeVisible();
+	await expect(dialog.getByText("HTTP 状态", { exact: true })).toHaveCount(0);
+	await expectNoHorizontalOverflow(page);
+	expect(
+		await dialog
+			.locator("dd")
+			.evaluateAll((nodes) =>
+				nodes.every((node) => node.scrollWidth <= node.clientWidth + 1),
+			),
+	).toBe(true);
+	await page.screenshot({
+		path: testInfo.outputPath("judge-validation-diagnostics.png"),
+		fullPage: true,
+	});
+	await page.keyboard.press("Escape");
+	await expect(dialog).toBeHidden();
+	mode = "legacy";
 	await page.getByRole("row").filter({ hasText: "judge_unavailable" }).click();
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByRole("heading", { name: /Judge 诊断/ })).toHaveCount(
