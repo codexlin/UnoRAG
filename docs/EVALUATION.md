@@ -334,6 +334,10 @@ Token、并发、单次请求、指标与整轮时间均有上限，SDK 内部�
 
 ## 可选 Langfuse 分数发布
 
+需要 Node.js 22 和 Langfuse Cloud，或自托管 Langfuse **v4.59.0 及以上**。
+SDK v6 不支持 v3 或更早的 v4；先核实并升级服务端，不能只升级客户端。
+版本边界见 [官方 v5 → v6 迁移指南](https://langfuse.com/docs/observability/sdk/upgrade-path/js-v5-to-v6)。
+
 只有操作者显式执行以下命令时才发布：
 
 ```bash
@@ -355,8 +359,12 @@ Publisher 使用官方 `@langfuse/client`，按每个评测 Session 写入：
 - `unorag.eval.refusal_correct`。
 
 发送内容仅包含 Session ID、哈希 case ID、run ID、release 和数值/布尔分数；不会发送问题、模型回答、
-参考答案、关键事实或 Citation 正文。Langfuse 发布失败不会改写报告中的本地门禁结论，但显式要求发布
-时命令会返回退出码 `2`，避免 CI 把未完成的发布动作记为成功。
+参考答案、关键事实或 Citation 正文。Publisher 直接调用类型化 `api.scores.create([...])`，每批最多 100 条，
+每次请求超时 5 秒且不自动重试。只有服务端确认整批接受（202 `Accepted`，或接受数匹配、拒绝数和错误均为零）
+才计入 `publishedScores`；不以 `score.flush()` 完成作为送达证据。`published` 表示 API 已接受，
+不证明异步持久化完成或 UI 已可查询。部分拒绝、HTTP 错误、超时或未知响应均记为发布失败，
+不将 Provider 错误正文写入报告。此前已接受的批次不会回滚，固定 Score ID 也不构成跨次重跑幂等性保证。
+发布失败保留本地门禁结论，但命令返回退出码 `2`（即使本地质量门禁也失败），避免 CI 将未完成发布记为成功。
 当前没有自动同步 Langfuse Dataset；未来若增加，必须使用独立显式命令并确认测试数据允许出域。
 
 多来源契约修复不追溯改写历史失败。当前版本结论与历史 NO-GO 均从 [验收索引](./evidence/README.md)

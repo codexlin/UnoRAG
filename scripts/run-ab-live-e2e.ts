@@ -944,10 +944,10 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 		}
 		process.stdout.write(`== report ${paths.markdownPath}\n`);
 		process.stdout.write(`== release gate ${releaseGates.ok ? "PASS" : "FAIL"}\n`);
-		resultCode = !releaseGates.ok
-			? 1
-			: options.publishLangfuseScores && langfuse.status === "failed"
-				? 2
+		resultCode = options.publishLangfuseScores && langfuse.status === "failed"
+			? 2
+			: !releaseGates.ok
+				? 1
 				: 0;
 	} finally {
 		if (!ownsLibrary) {
