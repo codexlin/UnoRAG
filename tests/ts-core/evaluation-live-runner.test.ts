@@ -564,7 +564,10 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		}
 		await cleanupEvaluationLibrary(options, "library-eval");
 		assert.equal(deleted, true);
-		assert.equal(await runLiveEvaluation({ ...options, keepLibrary: false }), 0);
+		assert.equal(
+			await runLiveEvaluation({ ...options, keepLibrary: false }),
+			0,
+		);
 		assert.equal(uploads, 14);
 		assert.equal(deleted, true);
 	} finally {
