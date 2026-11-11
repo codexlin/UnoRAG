@@ -3,6 +3,17 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## Unreleased
+
+### Fixed
+
+- Treat the ParserProvider total deadline as terminal `parser_budget_exhausted`, not
+  a transient error that can restart staging and submit another external task. Keep
+  bounded in-budget request retries and explicit cancellation semantics unchanged.
+- Emit safe budget-exhaustion diagnostics and explain remote-task uncertainty before manual retry.
+- Preserve the last observed Job stage/timestamps at batch wait timeout, bound polling
+  by the remaining budget, and block further stability rounds when the corpus is incomplete.
+
 ## [0.2.10] - Acceptance Pending
 
 Signed images deployed to the Hong Kong reference instance on 2026-11-12, but the

@@ -32,6 +32,14 @@ LiteParse 本地路径，避免所有文档无条件出域。
    `MINERU_PROVIDER=302ai`、`EXTERNAL_PARSER_ALLOWED=true` 和 worker Secret 中的
    `MINERU_API_KEY`。
 
+## 2026-11-12 预算恢复边界修正
+
+第 4 条的外层恢复不包含“单次 ParserProvider 总预算已耗尽”的自动整段重做。
+香港日志确认：总超时被当作 retryable 后，同一 Job attempt 内会再次提交新外部任务；
+发送相同幂等 Header 不证明服务商一定去重，也不是已持久化并恢复原 task。
+运行时因此将总预算耗尽标为 `parser_budget_exhausted` 并停止自动重提，预算内的暂时性请求重试不变。
+远端任务可能仍在运行，手动重试前须核对状态；跨进程持久化外部 task 去重仍属计划项。
+
 ## 产品配置边界（P1）
 
 **原则：** 部署管理员管基础设施；Workspace/知识库用户只调业务意图。

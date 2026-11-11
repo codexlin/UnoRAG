@@ -391,6 +391,12 @@ document/job/generation ID；未就绪、缺失或重名不能直接标为完成
 正常结束、门禁失败、`SIGINT` 或 `SIGTERM` 后均统一删除 runner 自建的临时知识库。
 总报告分别写入 `ingest_reliability_gate`、`ask_stability_gate` 和二者合取的 `release_gate`；任一门失败
 都禁止发布，但故障归属保持清晰。
+首轮入库或任一轮语料就绪门失败时，不再执行后续 Ask 轮次，Ask 门标为 `blocked_by_corpus`。
+第一轮已执行的诊断保留，不重传文件、不等待到变绿后覆盖失败。普通答案质量失败仍继续三轮检查稳定性。
+批次等待超时时保留最后观察的实际 Job status、stage、阶段账本和 `waitObservation`：创建/开始/结束时间、
+观测时间及排队/运行壁钟耗时；缺失或不合理时间保持 null，不编造零耗时。`timeout` 是 runner 的等待结论，
+不是把应用里的 queued/running 改成 failed。运行壁钟包含重试和等待，不是 CPU 时间。
+每次 Job 轮询及退避受批次剩余预算约束，不让单次请求悄悄越过等待期限；该期限并非每份文件的独立解析预算。
 
 默认要求三轮中每个正例和拒答用例全部通过、`model_error` 为零、运行指纹完全一致，且任一轮 Ask
 延迟 P95 不超过 15 秒。运行指纹包含仓库 Git commit、工作树 clean 状态、运行镜像 ref/digest、模型
