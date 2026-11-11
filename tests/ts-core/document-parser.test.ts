@@ -498,10 +498,12 @@ test("late retryable provider failure is terminal even before the deadline timer
 		});
 	};
 	const observed: ParserBudgetExhaustion[] = [];
+	const attempts: ParserProviderAttempt[] = [];
 	await assert.rejects(
 		new PdfDocumentParser({
 			liteParse: local,
 			maxWaitMs: 25,
+			onProviderAttempt: (attempt) => attempts.push(attempt),
 			onBudgetExhausted(observation) {
 				observed.push(observation);
 				throw new Error("diagnostics unavailable");
@@ -512,6 +514,8 @@ test("late retryable provider failure is terminal even before the deadline timer
 	assert.equal(observed.length, 1);
 	assert.equal(observed[0].pollCount, 1);
 	assert.equal(observed[0].retryCount, 0);
+	assert.equal(attempts.at(-1)?.httpStatus, 503);
+	assert.equal(attempts.at(-1)?.errorCode, "parser_budget_exhausted");
 	assert.ok(!JSON.stringify(observed).includes("private"));
 });
 

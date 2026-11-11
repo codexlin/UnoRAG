@@ -344,7 +344,7 @@ async function retryProviderOperation<T>(
 				outcome: canRetry ? "retry" : "failed",
 				durationMs: elapsedMilliseconds(startedAt),
 				errorCode: metadata.code,
-				httpStatus: metadata.status ?? undefined,
+				httpStatus: original.status ?? metadata.status ?? undefined,
 				retryDelayMs: delayMs,
 			});
 			if (!canRetry) throw failure;
