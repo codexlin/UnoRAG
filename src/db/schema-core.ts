@@ -163,7 +163,7 @@ export const workspaceMembers = appSchema.table(
 	],
 );
 
-/** Magic-link invites: copy URL always; email send is optional (Resend/SMTP). */
+/** One-time invites: copy URL always; Resend email delivery is optional. */
 export const workspaceInvites = appSchema.table(
 	"workspace_invites",
 	{
@@ -200,6 +200,57 @@ export const workspaceInvites = appSchema.table(
 		index("workspace_invites_workspace_created_idx").on(
 			table.workspaceId,
 			table.createdAt,
+		),
+	],
+);
+
+/** One-time account access proofs. Only hashes, never email links, are persisted. */
+export const accountEmailTokens = appSchema.table(
+	"account_email_tokens",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		userId: uuid("user_id").notNull(),
+		email: varchar("email", { length: 320 }).notNull(),
+		purpose: varchar("purpose", { length: 16 }).notNull(),
+		tokenHash: varchar("token_hash", { length: 64 }).notNull(),
+		credentialVersion: timestamp("credential_version", {
+			withTimezone: true,
+		}).notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+		consumedAt: timestamp("consumed_at", { withTimezone: true }),
+	},
+	(table) => [
+		uniqueIndex("account_email_tokens_hash_uq").on(table.tokenHash),
+		index("account_email_tokens_user_purpose_idx").on(
+			table.userId,
+			table.purpose,
+		),
+		foreignKey({
+			name: "account_email_tokens_user_fk",
+			columns: [table.organizationId, table.userId],
+			foreignColumns: [users.organizationId, users.id],
+		}).onDelete("cascade"),
+		foreignKey({
+			name: "account_email_tokens_workspace_fk",
+			columns: [table.organizationId, table.workspaceId],
+			foreignColumns: [workspaces.organizationId, workspaces.id],
+		}).onDelete("cascade"),
+		check(
+			"account_email_tokens_purpose_check",
+			sql`${table.purpose} in ('login', 'reset')`,
+		),
+		check(
+			"account_email_tokens_hash_check",
+			sql`${table.tokenHash} ~ '^[a-f0-9]{64}$'`,
+		),
+		check(
+			"account_email_tokens_expiry_check",
+			sql`${table.expiresAt} > ${table.createdAt} and ${table.expiresAt} <= ${table.createdAt} + interval '15 minutes'`,
 		),
 	],
 );

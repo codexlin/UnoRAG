@@ -1,0 +1,2 @@
+ALTER TABLE "app"."observability_alert_deliveries" ADD COLUMN "request_hash" varchar(64);--> statement-breakpoint
+ALTER TABLE "app"."observability_alert_deliveries" ADD CONSTRAINT "observability_alert_delivery_request_hash_check" CHECK ("app"."observability_alert_deliveries"."request_hash" is null or "app"."observability_alert_deliveries"."request_hash" ~ '^[a-f0-9]{64}$');

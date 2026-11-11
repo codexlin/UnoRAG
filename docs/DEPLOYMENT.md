@@ -118,6 +118,18 @@ Redis 是 Web 的必需依赖，用于可撤销浏览器会话、登录/Public A
 新密码长度为 7–256 个字符，并且必须同时包含大写和小写字母。该规则适用于首次改密、邀请用户设置密码
 和管理员主动重置；升级不会强制改写已有用户密码。
 
+### 可选账号邮件
+
+在 `runtime.advanced.env` 设置 `EMAIL_PROVIDER=resend` 和规范访问地址
+`APP_BASE_URL=https://unorag.example.com`；在 `runtime.secret` 设置已验证发件人 `EMAIL_FROM`
+及 `RESEND_API_KEY`，然后重新创建 Web 与 control 容器。服务端使用 Resend HTTPS API，
+不需要额外 SMTP 服务，也不读取 `SMTP_*`。本地开发只允许 loopback 地址使用 HTTP。
+
+邀请、邮箱链接登录、忘记密码共用这组传输配置，不使用工作区告警收件人列表。
+私有化部署仍为邀请制：没有公开注册入口；邮箱链接不会为未知地址创建账号或授予权限。
+邀请中的已有账号须验证原密码，新账号才设置密码。邮件未配置时仍可密码登录和复制邀请链接。
+账号邮件的有效期、安全限制及失败排查见 [运维指南](./OPERATIONS.md#账号邮件)。
+
 外部 PostgreSQL 应由客户创建等价最小权限角色，并分别配置 `WEB_DATABASE_URL`、
 `WORKER_DATABASE_URL`、`DBOS_SYSTEM_DATABASE_URL` 与 `MIGRATOR_DATABASE_URL`。
 Web 和 Worker 运行身份不得拥有 DDL 权限。

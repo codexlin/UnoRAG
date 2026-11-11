@@ -4,6 +4,7 @@ import { WorkspaceAskSettingsPanel } from "@/components/app/workspace-ask-settin
 import { WorkspaceAuditPanel } from "@/components/app/workspace-audit-panel";
 import { WorkspaceIntegrationKeysPanel } from "@/components/app/workspace-integration-keys-panel";
 import { WorkspaceMembersPanel } from "@/components/app/workspace-members-panel";
+import { WorkspaceNotificationsPanel } from "@/components/app/workspace-notifications-panel";
 import { useHealth } from "@/hooks/use-health";
 import { getApiBaseUrl } from "@/lib/api";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
@@ -162,6 +163,7 @@ export default function SettingsPage() {
 						</div>
 					</div>
 				</div>
+				<WorkspaceNotificationsPanel />
 			</div>
 		</div>
 	);

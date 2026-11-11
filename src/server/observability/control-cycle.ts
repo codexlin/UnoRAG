@@ -8,9 +8,11 @@ import {
 	configuredAlertDestinations,
 	deliverClaimedAlert,
 	deriveOperationalSignals,
+	emailTransportConfigured,
 	reconcileWorkspaceAlerts,
 	withAlertEvaluatorLock,
 } from "./alerting";
+import { readWorkspaceEmailSettings } from "./notification-settings";
 import { OperationsService } from "./operations-service";
 import { readProviderHealth } from "./provider-health";
 
@@ -119,14 +121,39 @@ export async function runObservabilityCycle(
 		);
 		const db = drizzle(pool, { schema });
 		const service = OperationsService.fromDatabase(db);
-		const destinations = configuredAlertDestinations(environment);
+		const emailConfigured = emailTransportConfigured(environment);
 		const counts = { opened: 0, resolved: 0, observed: 0 };
 		for (const scope of scopes.rows) {
+			const workspaceScope = {
+				organizationId: scope.organization_id,
+				workspaceId: scope.workspace_id,
+			};
+			const emailSettings = await readWorkspaceEmailSettings(
+				pool,
+				workspaceScope,
+			);
+			const destinations = configuredAlertDestinations(environment, {
+				scope: workspaceScope,
+				...emailSettings,
+			});
 			await projectComponentHealth(pool, {
 				organizationId: scope.organization_id,
 				workspaceId: scope.workspace_id,
 				checkedAt: now,
-				items: providers.items,
+				items: [
+					...providers.items,
+					{
+						code: "email_delivery",
+						label: "邮件服务",
+						kind: "infrastructure",
+						status: emailConfigured ? "healthy" : "disabled",
+						mode: "configuration",
+						latency_ms: null,
+						error_code: emailConfigured ? null : "email_not_configured",
+						recovery:
+							"检查 EMAIL_PROVIDER、EMAIL_FROM 和 RESEND_API_KEY 配置；配置就绪不代表邮件已送达。",
+					},
+				],
 			});
 			const snapshot = await service.readSnapshot(
 				{

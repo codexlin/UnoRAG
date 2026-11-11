@@ -4,6 +4,7 @@ import { getDatabase } from "@/db";
 import { resolveReleaseInfo } from "@/lib/release-info";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import { canManageMembers } from "@/lib/server/workspace-permissions.mjs";
+import { readWorkspaceEmailSettings } from "@/server/observability/notification-settings";
 import { OperationsService } from "@/server/observability/operations-service";
 
 function optionalNumber(value: string | null): number | undefined {
@@ -44,6 +45,13 @@ export async function GET(request: Request) {
 			),
 		},
 	);
+	const email = await readWorkspaceEmailSettings(getDatabase().$client, {
+		organizationId: identity.tenantId,
+		workspaceId: identity.workspaceId,
+	});
+	const emailService = snapshot.components.find(
+		(item) => item.code === "email_delivery",
+	);
 	const hasUnknown =
 		snapshot.components.length === 0 ||
 		snapshot.components.some((component) => component.status === "unknown");
@@ -70,7 +78,11 @@ export async function GET(request: Request) {
 		},
 		notifications: {
 			webhook: enabled(process.env.OBSERVABILITY_ALERT_WEBHOOK_ENABLED),
-			email: enabled(process.env.OBSERVABILITY_ALERT_EMAIL_ENABLED),
+			email:
+				email.settings.enabled &&
+				email.settings.recipients.length > 0 &&
+				emailService?.status === "healthy" &&
+				!emailService.stale,
 		},
 	});
 }

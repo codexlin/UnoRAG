@@ -2,21 +2,26 @@ import "server-only";
 
 import { createHash, randomBytes } from "node:crypto";
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { z } from "zod";
 
 import { getDatabase } from "@/db";
 import {
+	auditLogs,
 	documentAcl,
 	documents,
 	localCredentials,
+	organizations,
 	users,
 	workspaceInvites,
 	workspaceMembers,
 	workspaces,
 } from "@/db/schema";
+import { logger } from "@/lib/observability";
 import {
-	hashPassword,
+	hashPasswordAsync,
 	validatePassword,
+	verifyPasswordSync,
 } from "@/lib/server/auth/passwords.mjs";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { hydrateIdentity } from "@/lib/server/auth/session";
@@ -25,6 +30,9 @@ import {
 	authorizeRemoveMember,
 	isAssignableInviteRole,
 } from "@/lib/server/workspace-permissions.mjs";
+import { accountEmailBaseUrl } from "./auth/email-tokens";
+import { resolveClientAddress } from "./auth/login-rate-limit";
+import { consumeFixedWindow } from "./security/fixed-window-rate-limit";
 
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -32,9 +40,122 @@ export function hashInviteToken(rawToken: string): string {
 	return createHash("sha256").update(rawToken, "utf8").digest("hex");
 }
 
-export function buildInviteUrl(origin: string, rawToken: string): string {
-	const base = (process.env.APP_BASE_URL?.trim() || origin).replace(/\/$/, "");
-	return `${base}/invite?token=${encodeURIComponent(rawToken)}`;
+export function buildInviteUrl(_origin: string, rawToken: string): string {
+	const base = accountEmailBaseUrl(process.env.APP_BASE_URL);
+	// Relative URLs are copy-link only and are resolved by the browser, never mailed.
+	return `${base ?? ""}/invite#${new URLSearchParams({ token: rawToken })}`;
+}
+
+function inviteEmailReason(
+	delivery: Awaited<ReturnType<typeof sendInviteEmail>>,
+): string {
+	if (delivery.sent) return "provider_accepted";
+	if (delivery.reason === "EMAIL_PROVIDER=none") return "email_not_configured";
+	if (delivery.reason === "RESEND_API_KEY or EMAIL_FROM missing")
+		return "email_configuration_missing";
+	const safeReasons = new Set([
+		"copy_link_only",
+		"app_base_url_not_configured",
+		"send_failed",
+		"invalid_idempotency_key",
+		"invalid_recipient",
+		"invalid_email_template",
+		"resend_timeout",
+		"resend_invalid_response",
+		"resend_fetch_failed",
+	]);
+	return safeReasons.has(delivery.reason) ||
+		/^resend_http_[1-5]\d{2}$/.test(delivery.reason)
+		? delivery.reason
+		: "send_failed";
+}
+
+export const inviteEmailSchema = z
+	.string()
+	.trim()
+	.toLowerCase()
+	.max(320)
+	.email();
+export const inviteTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+
+export async function readInviteJson(
+	request: Request,
+): Promise<unknown | Response> {
+	const origin = request.headers.get("origin");
+	if (
+		request.headers.get("sec-fetch-site") === "cross-site" ||
+		(origin &&
+			origin !==
+				(accountEmailBaseUrl(process.env.APP_BASE_URL) ??
+					new URL(request.url).origin))
+	) {
+		return Response.json({ detail: "forbidden" }, { status: 403 });
+	}
+	if (
+		!/^application\/json(?:\s*;|$)/i.test(
+			request.headers.get("content-type") ?? "",
+		)
+	) {
+		return Response.json(
+			{ detail: "application/json required" },
+			{ status: 415 },
+		);
+	}
+	const reader = request.body?.getReader();
+	if (!reader)
+		return Response.json({ detail: "invalid JSON body" }, { status: 400 });
+	const chunks: Uint8Array[] = [];
+	let length = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			length += value.byteLength;
+			if (length > 4096) {
+				await reader.cancel();
+				return Response.json({ detail: "body too large" }, { status: 413 });
+			}
+			chunks.push(value);
+		}
+		return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+	} catch {
+		return Response.json({ detail: "invalid JSON body" }, { status: 400 });
+	} finally {
+		reader.releaseLock();
+	}
+}
+
+export async function limitInviteRequest(
+	request: Request,
+	action: string,
+	subject?: string,
+) {
+	try {
+		const subjects = [`ip:${resolveClientAddress(request)}`];
+		if (subject) subjects.push(`subject:${subject}`);
+		for (const key of subjects) {
+			const rate = await consumeFixedWindow({
+				namespace: `invite-${action}`,
+				subject: key,
+				limit: action === "preview" ? 60 : 10,
+				windowSeconds: 900,
+			});
+			if (!rate.ok)
+				return Response.json(
+					{ detail: "too many requests" },
+					{
+						status: 429,
+						headers: { "Retry-After": String(rate.retryAfterSeconds) },
+					},
+				);
+		}
+		return null;
+	} catch {
+		return Response.json(
+			{ detail: "service temporarily unavailable" },
+			{ status: 503 },
+		);
+	}
 }
 
 function normalizeEmail(email: string): string {
@@ -109,9 +230,10 @@ export async function createWorkspaceInvite(input: {
 	  }
 	| { ok: false; status: number; detail: string }
 > {
-	const email = normalizeEmail(input.email);
+	const parsedEmail = inviteEmailSchema.safeParse(input.email);
+	const email = parsedEmail.success ? parsedEmail.data : "";
 	const role = input.role.trim();
-	if (!email?.includes("@")) {
+	if (!parsedEmail.success) {
 		return { ok: false, status: 400, detail: "valid email is required" };
 	}
 	if (!isAssignableInviteRole(role)) {
@@ -123,73 +245,111 @@ export async function createWorkspaceInvite(input: {
 	}
 
 	const db = getDatabase();
-	const [workspace] = await db
-		.select({
-			id: workspaces.id,
-			name: workspaces.name,
-			organizationId: workspaces.organizationId,
-		})
-		.from(workspaces)
-		.where(
-			and(
-				eq(workspaces.id, input.identity.workspaceId),
-				eq(workspaces.organizationId, input.identity.tenantId),
-				eq(workspaces.status, "active"),
-			),
-		)
-		.limit(1);
-	if (!workspace) {
-		return { ok: false, status: 404, detail: "workspace not found" };
-	}
+	const created = await db.transaction(async (tx) => {
+		// Serialize writers while allowing account-email FK KEY SHARE locks.
+		const [workspace] = await tx
+			.select({
+				id: workspaces.id,
+				name: workspaces.name,
+				organizationId: workspaces.organizationId,
+			})
+			.from(workspaces)
+			.where(
+				and(
+					eq(workspaces.id, input.identity.workspaceId),
+					eq(workspaces.organizationId, input.identity.tenantId),
+					eq(workspaces.status, "active"),
+				),
+			)
+			.limit(1)
+			.for("no key update");
+		if (!workspace) {
+			return { ok: false as const, status: 404, detail: "workspace not found" };
+		}
+		const [actor] = await tx
+			.select({ role: workspaceMembers.role })
+			.from(workspaceMembers)
+			.innerJoin(users, eq(users.id, workspaceMembers.userId))
+			.innerJoin(organizations, eq(organizations.id, users.organizationId))
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspace.id),
+					eq(users.id, input.identity.principalId),
+					eq(users.organizationId, workspace.organizationId),
+					eq(users.status, "active"),
+					eq(organizations.status, "active"),
+				),
+			)
+			.for("share");
+		if (!actor || !["owner", "admin"].includes(actor.role)) {
+			return { ok: false as const, status: 403, detail: "forbidden" };
+		}
 
-	const existingMembers = await db
-		.select({ userId: users.id })
-		.from(workspaceMembers)
-		.innerJoin(users, eq(users.id, workspaceMembers.userId))
-		.where(
-			and(
-				eq(workspaceMembers.workspaceId, workspace.id),
-				eq(users.email, email),
-			),
-		)
-		.limit(1);
-	if (existingMembers.length > 0) {
-		return { ok: false, status: 409, detail: "user is already a member" };
-	}
+		const existingMembers = await tx
+			.select({ userId: users.id })
+			.from(workspaceMembers)
+			.innerJoin(users, eq(users.id, workspaceMembers.userId))
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspace.id),
+					sql`lower(${users.email}) = ${email}`,
+				),
+			)
+			.limit(1);
+		if (existingMembers.length > 0) {
+			return {
+				ok: false as const,
+				status: 409,
+				detail: "user is already a member",
+			};
+		}
 
-	await db
-		.update(workspaceInvites)
-		.set({ status: "revoked", updatedAt: new Date() })
-		.where(
-			and(
-				eq(workspaceInvites.workspaceId, workspace.id),
-				eq(workspaceInvites.email, email),
-				eq(workspaceInvites.status, "pending"),
-			),
-		);
+		await tx
+			.update(workspaceInvites)
+			.set({ status: "revoked", updatedAt: new Date() })
+			.where(
+				and(
+					eq(workspaceInvites.workspaceId, workspace.id),
+					sql`lower(${workspaceInvites.email}) = ${email}`,
+					eq(workspaceInvites.status, "pending"),
+				),
+			);
 
-	const rawToken = randomBytes(32).toString("base64url");
-	const tokenHash = hashInviteToken(rawToken);
-	const expiresAt = new Date(Date.now() + DEFAULT_TTL_MS);
-	const [invite] = await db
-		.insert(workspaceInvites)
-		.values({
+		const rawToken = randomBytes(32).toString("base64url");
+		const tokenHash = hashInviteToken(rawToken);
+		const expiresAt = new Date(Date.now() + DEFAULT_TTL_MS);
+		const [invite] = await tx
+			.insert(workspaceInvites)
+			.values({
+				organizationId: workspace.organizationId,
+				workspaceId: workspace.id,
+				email,
+				role,
+				tokenHash,
+				status: "pending",
+				invitedBy: input.identity.principalId,
+				expiresAt,
+			})
+			.returning({
+				id: workspaceInvites.id,
+				email: workspaceInvites.email,
+				role: workspaceInvites.role,
+				status: workspaceInvites.status,
+				expiresAt: workspaceInvites.expiresAt,
+			});
+		await tx.insert(auditLogs).values({
 			organizationId: workspace.organizationId,
 			workspaceId: workspace.id,
-			email,
-			role,
-			tokenHash,
-			status: "pending",
-			invitedBy: input.identity.principalId,
-			expiresAt,
-		})
-		.returning({
-			id: workspaceInvites.id,
-			email: workspaceInvites.email,
-			role: workspaceInvites.role,
-			status: workspaceInvites.status,
-			expiresAt: workspaceInvites.expiresAt,
+			actorId: input.identity.principalId,
+			action: "workspace.invite.created",
+			resourceType: "workspace_invite",
+			resourceId: invite.id,
+			details: { role },
 		});
+		return { ok: true as const, invite, rawToken, workspace };
+	});
+	if (!created.ok) return created;
+	const { invite, rawToken, workspace } = created;
 
 	const inviteUrl = buildInviteUrl(input.origin, rawToken);
 	let emailDelivery: Awaited<ReturnType<typeof sendInviteEmail>> = {
@@ -197,19 +357,64 @@ export async function createWorkspaceInvite(input: {
 		provider: "none",
 		reason: "copy_link_only",
 	};
-	if (input.sendEmail !== false) {
-		emailDelivery = await sendInviteEmail({
-			to: email,
-			inviteUrl,
-			workspaceName: workspace.name,
-			role,
-		});
-		if (emailDelivery.sent) {
-			await db
-				.update(workspaceInvites)
-				.set({ lastSentAt: new Date(), updatedAt: new Date() })
-				.where(eq(workspaceInvites.id, invite.id));
+	if (
+		input.sendEmail !== false &&
+		!accountEmailBaseUrl(process.env.APP_BASE_URL)
+	) {
+		emailDelivery = {
+			sent: false,
+			provider: "none",
+			reason: "app_base_url_not_configured",
+		};
+	} else if (input.sendEmail !== false) {
+		try {
+			emailDelivery = await sendInviteEmail({
+				inviteId: invite.id,
+				to: email,
+				inviteUrl,
+				workspaceName: workspace.name,
+				role,
+			});
+		} catch {
+			emailDelivery = { sent: false, provider: "none", reason: "send_failed" };
 		}
+	}
+	try {
+		await db.transaction(async (tx) => {
+			if (emailDelivery.sent) {
+				await tx
+					.update(workspaceInvites)
+					.set({ lastSentAt: new Date(), updatedAt: new Date() })
+					.where(eq(workspaceInvites.id, invite.id));
+			}
+			await tx.insert(auditLogs).values({
+				organizationId: workspace.organizationId,
+				workspaceId: workspace.id,
+				actorId: input.identity.principalId,
+				action: "workspace.invite.email",
+				resourceType: "workspace_invite",
+				resourceId: invite.id,
+				details: {
+					accepted: emailDelivery.sent,
+					provider: emailDelivery.provider,
+					reason: inviteEmailReason(emailDelivery),
+					messageId:
+						emailDelivery.sent &&
+						emailDelivery.messageId &&
+						/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(
+							emailDelivery.messageId,
+						)
+							? emailDelivery.messageId
+							: null,
+				},
+			});
+		});
+	} catch {
+		// The invite is already committed; diagnostics must not discard its copy URL.
+		logger.warn({
+			event: "workspace.invite.email_audit_failed",
+			inviteId: invite.id,
+		});
 	}
 
 	return {
@@ -245,10 +450,18 @@ export async function revokeWorkspaceInvite(input: {
 	if (row.status !== "pending") {
 		return { ok: false, status: 409, detail: "invite is not pending" };
 	}
-	await db
+	const revoked = await db
 		.update(workspaceInvites)
 		.set({ status: "revoked", updatedAt: new Date() })
-		.where(eq(workspaceInvites.id, row.id));
+		.where(
+			and(
+				eq(workspaceInvites.id, row.id),
+				eq(workspaceInvites.status, "pending"),
+			),
+		)
+		.returning({ id: workspaceInvites.id });
+	if (!revoked.length)
+		return { ok: false, status: 409, detail: "invite is not pending" };
 	return { ok: true };
 }
 
@@ -269,6 +482,22 @@ export async function previewInvite(rawToken: string) {
 		.where(eq(workspaceInvites.tokenHash, tokenHash))
 		.limit(1);
 	if (!row) return null;
+	const [account] = await db
+		.select({ id: users.id })
+		.from(users)
+		.innerJoin(
+			workspaceInvites,
+			eq(workspaceInvites.organizationId, users.organizationId),
+		)
+		.where(
+			and(
+				eq(workspaceInvites.id, row.id),
+				eq(workspaceInvites.status, "pending"),
+				sql`${workspaceInvites.expiresAt} > now()`,
+				sql`lower(${users.email}) = ${normalizeEmail(row.email)}`,
+			),
+		)
+		.limit(1);
 	const expired =
 		row.status === "pending" && row.expiresAt.getTime() <= Date.now();
 	return {
@@ -277,69 +506,131 @@ export async function previewInvite(rawToken: string) {
 		workspaceName: row.workspaceName,
 		expiresAt: row.expiresAt,
 		status: expired ? "expired" : row.status,
+		existingAccount: Boolean(account),
 	};
 }
+
+export type AcceptedInvite = {
+	ok: true;
+	identity: AuthIdentity;
+	credentialVersion: string;
+};
 
 export async function acceptInvite(input: {
 	rawToken: string;
 	password: string;
 	displayName?: string;
-}): Promise<
-	| { ok: true; identity: AuthIdentity }
-	| { ok: false; status: number; detail: string }
-> {
-	const password = input.password;
-	const passwordError = validatePassword(password);
-	if (passwordError) {
-		return {
-			ok: false,
-			status: 400,
-			detail: passwordError,
-		};
+}): Promise<AcceptedInvite | { ok: false; status: number; detail: string }> {
+	const fail = (status: number, detail: string) => ({
+		ok: false as const,
+		status,
+		detail,
+	});
+	if (!inviteTokenSchema.safeParse(input.rawToken).success)
+		return fail(404, "invite not found");
+	if (
+		typeof input.password !== "string" ||
+		!input.password ||
+		input.password.length > 4096
+	) {
+		return fail(400, "password is required");
 	}
 	const db = getDatabase();
 	const tokenHash = hashInviteToken(input.rawToken);
-	const [invite] = await db
-		.select()
-		.from(workspaceInvites)
-		.where(eq(workspaceInvites.tokenHash, tokenHash))
-		.limit(1);
-	if (!invite) {
-		return { ok: false, status: 404, detail: "invite not found" };
-	}
-	if (invite.status !== "pending") {
-		return { ok: false, status: 409, detail: `invite is ${invite.status}` };
-	}
-	if (invite.expiresAt.getTime() <= Date.now()) {
-		await db
-			.update(workspaceInvites)
-			.set({ status: "expired", updatedAt: new Date() })
-			.where(eq(workspaceInvites.id, invite.id));
-		return { ok: false, status: 410, detail: "invite expired" };
-	}
-
-	const email = normalizeEmail(invite.email);
-	const displayName =
-		input.displayName?.trim() || email.split("@")[0] || "Member";
-	const now = new Date();
-
 	const result = await db.transaction(async (tx) => {
-		const [existing] = await tx
-			.select({
-				id: users.id,
-				status: users.status,
-			})
+		// NO KEY UPDATE preserves FK references; workspace -> invite matches creation.
+		const [hint] = await tx
+			.select({ workspaceId: workspaceInvites.workspaceId })
+			.from(workspaceInvites)
+			.where(eq(workspaceInvites.tokenHash, tokenHash))
+			.limit(1);
+		if (!hint) return fail(404, "invite not found");
+		const [workspace] = await tx
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, hint.workspaceId))
+			.for("no key update");
+		if (workspace?.status !== "active")
+			return fail(403, "workspace unavailable");
+		const [organization] = await tx
+			.select()
+			.from(organizations)
+			.where(eq(organizations.id, workspace.organizationId))
+			.for("share");
+		if (organization?.status !== "active")
+			return fail(403, "organization unavailable");
+		const [invite] = await tx
+			.select()
+			.from(workspaceInvites)
+			.where(eq(workspaceInvites.tokenHash, tokenHash))
+			.for("update");
+		if (!invite || invite.organizationId !== workspace.organizationId)
+			return fail(404, "invite not found");
+		if (invite.status !== "pending") return fail(409, "invite is not pending");
+		if (invite.expiresAt.getTime() <= Date.now())
+			return fail(410, "invite expired");
+		if (!isAssignableInviteRole(invite.role))
+			return fail(403, "invalid invite role");
+		const email = normalizeEmail(invite.email);
+		// Serialize account creation across invitations in different workspaces.
+		await tx.execute(
+			sql`select pg_advisory_xact_lock(hashtextextended(${`${invite.organizationId}:${email}`}, 0))`,
+		);
+		const accounts = await tx
+			.select()
 			.from(users)
 			.where(
 				and(
 					eq(users.organizationId, invite.organizationId),
-					eq(users.email, email),
+					sql`lower(${users.email}) = ${email}`,
 				),
 			)
-			.limit(1);
-
-		let userId = existing?.id;
-		if (!userId) {
+			.limit(2)
+			.for("no key update");
+		if (accounts.length > 1) return fail(403, "account unavailable");
+		const existing = accounts[0];
+		let userId: string;
+		let credentialVersion: string;
+		if (existing) {
+			if (existing.status !== "active") return fail(403, "user is disabled");
+			// Credentials, not the deployment-defined external subject, identify local accounts.
+			const [credential] = await tx
+				.select()
+				.from(localCredentials)
+				.where(eq(localCredentials.userId, existing.id))
+				.for("update");
+			if (!credential) return fail(403, "local credentials required");
+			if (
+				credential.lockedUntil &&
+				credential.lockedUntil.getTime() > Date.now()
+			) {
+				return fail(403, "account is locked");
+			}
+			if (!verifyPasswordSync(input.password, credential.passwordHash))
+				return fail(403, "invalid password");
+			const [membership] = await tx
+				.select({ userId: workspaceMembers.userId })
+				.from(workspaceMembers)
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, workspace.id),
+						eq(workspaceMembers.userId, existing.id),
+					),
+				);
+			if (membership) return fail(409, "user is already a member");
+			userId = existing.id;
+			credentialVersion = String(credential.passwordChangedAt.getTime());
+			if (invite.expiresAt.getTime() <= Date.now())
+				return fail(410, "invite expired");
+		} else {
+			const passwordError = validatePassword(input.password);
+			if (passwordError) return fail(400, passwordError);
+			const displayName =
+				input.displayName?.trim() || email.split("@")[0] || "Member";
+			if (displayName.length > 256) return fail(400, "display name too long");
+			const passwordHash = await hashPasswordAsync(input.password);
+			if (invite.expiresAt.getTime() <= Date.now())
+				return fail(410, "invite expired");
 			const [created] = await tx
 				.insert(users)
 				.values({
@@ -348,64 +639,22 @@ export async function acceptInvite(input: {
 					email,
 					displayName,
 					status: "active",
-					lastLoginAt: now,
 				})
 				.returning({ id: users.id });
 			userId = created.id;
-			await tx.insert(localCredentials).values({
-				userId,
-				passwordHash: hashPassword(password),
-			});
-		} else {
-			if (existing.status !== "active") {
-				return { error: "user is disabled" as const };
-			}
-			await tx
-				.update(users)
-				.set({ displayName, lastLoginAt: now, updatedAt: now })
-				.where(eq(users.id, userId));
-			const [cred] = await tx
-				.select({ userId: localCredentials.userId })
-				.from(localCredentials)
-				.where(eq(localCredentials.userId, userId))
-				.limit(1);
-			if (cred) {
-				await tx
-					.update(localCredentials)
-					.set({
-						passwordHash: hashPassword(password),
-						failedAttempts: 0,
-						lockedUntil: null,
-						passwordChangedAt: now,
-						updatedAt: now,
-					})
-					.where(eq(localCredentials.userId, userId));
-			} else {
-				await tx.insert(localCredentials).values({
+			const [credential] = await tx
+				.insert(localCredentials)
+				.values({
 					userId,
-					passwordHash: hashPassword(password),
-				});
-			}
+					passwordHash,
+				})
+				.returning({ passwordChangedAt: localCredentials.passwordChangedAt });
+			credentialVersion = String(credential.passwordChangedAt.getTime());
 		}
-
-		const [membership] = await tx
-			.select({ role: workspaceMembers.role })
-			.from(workspaceMembers)
-			.where(
-				and(
-					eq(workspaceMembers.workspaceId, invite.workspaceId),
-					eq(workspaceMembers.userId, userId),
-				),
-			)
-			.limit(1);
-		if (membership) {
-			return { error: "already_member" as const };
-		}
-		await tx.insert(workspaceMembers).values({
-			workspaceId: invite.workspaceId,
-			userId,
-			role: invite.role,
-		});
+		const now = new Date();
+		await tx
+			.insert(workspaceMembers)
+			.values({ workspaceId: workspace.id, userId, role: invite.role });
 		await tx
 			.update(workspaceInvites)
 			.set({
@@ -415,30 +664,30 @@ export async function acceptInvite(input: {
 				updatedAt: now,
 			})
 			.where(eq(workspaceInvites.id, invite.id));
-
-		return { userId };
-	});
-
-	if ("error" in result) {
-		if (result.error === "already_member") {
-			return { ok: false, status: 409, detail: "user is already a member" };
-		}
+		await tx.insert(auditLogs).values({
+			organizationId: invite.organizationId,
+			workspaceId: workspace.id,
+			actorId: userId,
+			action: "workspace.invite.accepted",
+			resourceType: "workspace_invite",
+			resourceId: invite.id,
+			details: {},
+		});
 		return {
-			ok: false,
-			status: 403,
-			detail: result.error ?? "invite accept failed",
+			ok: true as const,
+			userId,
+			workspaceId: workspace.id,
+			credentialVersion,
 		};
-	}
-
+	});
+	if (!result.ok) return result;
 	const identity = await hydrateIdentity(
 		result.userId,
-		invite.workspaceId,
+		result.workspaceId,
 		"local",
 	);
-	if (!identity) {
-		return { ok: false, status: 500, detail: "failed to hydrate session" };
-	}
-	return { ok: true, identity };
+	if (!identity) return fail(403, "account unavailable; please sign in");
+	return { ok: true, identity, credentialVersion: result.credentialVersion };
 }
 
 export async function updateMemberRole(input: {

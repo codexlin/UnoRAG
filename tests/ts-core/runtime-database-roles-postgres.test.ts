@@ -34,3 +34,29 @@ test("worker role can read execution-stage diagnostics", {
 		await pool.end();
 	}
 });
+
+test("account email token storage is Web-only, never granted to the execution/control worker", {
+	skip: !databaseUrl,
+}, async () => {
+	const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+	const client = await pool.connect();
+	try {
+		await client.query("BEGIN");
+		await client.query("SET LOCAL ROLE unorag_worker");
+		await assert.rejects(
+			client.query("SELECT token_hash FROM app.account_email_tokens LIMIT 1"),
+			{ code: "42501" },
+		);
+		await client.query("ROLLBACK");
+		await client.query("BEGIN");
+		await client.query("SET LOCAL ROLE unorag_web");
+		await client.query(
+			"SELECT token_hash FROM app.account_email_tokens LIMIT 1",
+		);
+		await client.query("ROLLBACK");
+	} finally {
+		await client.query("ROLLBACK");
+		client.release();
+		await pool.end();
+	}
+});

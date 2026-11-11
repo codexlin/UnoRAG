@@ -1,4 +1,5 @@
 export const integrationTestFiles = [
+	"tests/ts-core/account-email-postgres.test.ts",
 	"tests/acl-projection-backfill.test.mjs",
 	"tests/ask-runs-postgres.test.ts",
 	"tests/conversations-postgres.test.ts",
@@ -15,6 +16,7 @@ export const integrationTestFiles = [
 	"tests/ts-core/document-version-command-postgres.test.ts",
 	"tests/ts-core/dbos-sdk-postgres.integration.test.ts",
 	"tests/ts-core/job-stage-runs-postgres.test.ts",
+	"tests/ts-core/invites-postgres.test.ts",
 	"tests/ts-core/library-state-postgres.test.ts",
 	"tests/ts-core/observability-alerting.test.ts",
 	"tests/ts-core/operations-requests-postgres.test.ts",
@@ -26,6 +28,7 @@ export const integrationTestFiles = [
 	"tests/ts-core/session-memory-redis.test.ts",
 	"tests/ts-core/tombstone-maintenance-postgres.test.ts",
 	"tests/ts-core/workspace-management-postgres.test.ts",
+	"tests/ts-core/workspace-notifications-postgres.test.ts",
 ];
 
 export const contractTestFiles = [
