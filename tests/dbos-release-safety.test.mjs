@@ -87,7 +87,7 @@ test("release manifests derive DBOS version from the immutable git SHA", async (
 	assert.match(releaseWorkflow, /PUBLISH_ACR/);
 	assert.match(releaseWorkflow, /Mirror runtime manifests to ACR/);
 	assert.match(releaseWorkflow, /id-token: write/);
-	assert.match(releaseWorkflow, /sigstore\/cosign-installer@6f9f177/);
+	assert.match(releaseWorkflow, /sigstore\/cosign-installer@[a-f0-9]{40}\b/);
 	assert.match(releaseWorkflow, /cosign sign --yes/);
 	assert.match(releaseWorkflow, /--certificate-identity "\$\{identity\}"/);
 	assert.match(releaseWorkflow, /UNORAG_VERIFY_IMAGE_SIGNATURES=true/);
