@@ -777,6 +777,20 @@ export async function createWorkerPorts(
 				retry_delay_ms: attempt.retryDelayMs,
 			});
 		},
+		onBudgetExhausted(observation) {
+			logger.error({
+				event: "parser.budget.exhausted",
+				parser_request_id: observation.requestId,
+				document_id: observation.documentId,
+				parser_provider: observation.provider,
+				error_code: "parser_budget_exhausted",
+				automatic_retry: false,
+				budget_ms: observation.budgetMs,
+				elapsed_ms: observation.elapsedMs,
+				poll_count: observation.pollCount,
+				retry_count: observation.retryCount,
+			});
+		},
 	});
 	ports.documentIngest = {
 		transactions: new PostgresDocumentIngestTransactions(pool),

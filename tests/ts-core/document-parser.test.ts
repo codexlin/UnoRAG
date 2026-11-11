@@ -17,7 +17,10 @@ import {
 	type DurableParserProvider,
 	PdfDocumentParser,
 } from "../../src/core/parsing";
-import type { ParserProviderAttempt } from "../../src/core/parsing/document-parser";
+import type {
+	ParserBudgetExhaustion,
+	ParserProviderAttempt,
+} from "../../src/core/parsing/document-parser";
 import { ParserProviderHttpError } from "../../src/core/parsing/http-parser-provider";
 import { projectParserTiming } from "../../src/core/parsing/parser-diagnostics";
 
@@ -368,6 +371,7 @@ test("PDF polling cancellation interrupts a long wait without another poll", asy
 
 test("PDF polling wait expires at the original deadline without another poll", async (context) => {
 	const advance = parserClock(context);
+	const exhausted: ParserBudgetExhaustion[] = [];
 	const local = provider("liteparse", { tables: false, calls: [] });
 	const submit = context.mock.method(local, "submit", async () => {
 		await new Promise((resolve) => setTimeout(resolve, 500));
@@ -391,11 +395,12 @@ test("PDF polling wait expires at the original deadline without another poll", a
 	const pending = new PdfDocumentParser({
 		liteParse: local,
 		maxWaitMs: 1_751,
+		onBudgetExhausted: (observation) => exhausted.push(observation),
 	}).parse(parseRequest("poll-deadline"));
 	const rejected = assert.rejects(pending, (error) => {
 		settled = true;
-		assert.equal((error as { code: string }).code, "provider_timeout");
-		assert.equal((error as { retryable: boolean }).retryable, true);
+		assert.equal((error as { code: string }).code, "parser_budget_exhausted");
+		assert.equal((error as { retryable: boolean }).retryable, false);
 		return true;
 	});
 	await advance(0);
@@ -411,6 +416,15 @@ test("PDF polling wait expires at the original deadline without another poll", a
 	assert.equal(poll.mock.callCount(), 1);
 	assert.equal(fetch.mock.callCount(), 0);
 	assert.equal(cancel.mock.callCount(), 0);
+	assert.equal(exhausted.length, 1);
+	assert.equal(exhausted[0].budgetMs, 1_751);
+	assert.equal(exhausted[0].provider, "liteparse");
+	assert.equal(exhausted[0].documentId, parseInput.documentId);
+	assert.equal(exhausted[0].pollCount, 1);
+	assert.equal(exhausted[0].retryCount, 0);
+	assert.ok(exhausted[0].elapsedMs >= 0);
+	assert.ok(!JSON.stringify(exhausted).includes(parseInput.sourceUri));
+	assert.ok(!JSON.stringify(exhausted).includes("stable-task"));
 	await advance(60_000);
 	assert.equal(poll.mock.callCount(), 1);
 	assert.equal(fetch.mock.callCount(), 0);
@@ -463,6 +477,81 @@ test("PDF parser cancels the provider task when the ingest cohort is cancelled",
 	assert.ok(calls.includes("liteparse:poll"));
 	assert.ok(calls.includes("liteparse:cancel"));
 	assert.ok(!calls.includes("liteparse:fetch"));
+});
+
+test("late retryable provider failure is terminal even before the deadline timer runs", async (context) => {
+	let now = 0;
+	context.mock.method(Date, "now", () => now);
+	const local = provider("liteparse", { tables: false, calls: [] });
+	local.submit = async () => ({
+		providerTaskId: "private-task",
+		status: "running",
+		submittedAt: new Date().toISOString(),
+	});
+	local.poll = async () => {
+		now = 26;
+		throw new ParserProviderHttpError({
+			code: "provider_service_error",
+			message: "private upstream body",
+			retryable: true,
+			status: 503,
+		});
+	};
+	const observed: ParserBudgetExhaustion[] = [];
+	const attempts: ParserProviderAttempt[] = [];
+	await assert.rejects(
+		new PdfDocumentParser({
+			liteParse: local,
+			maxWaitMs: 25,
+			onProviderAttempt: (attempt) => attempts.push(attempt),
+			onBudgetExhausted(observation) {
+				observed.push(observation);
+				throw new Error("diagnostics unavailable");
+			},
+		}).parse(parseRequest("late-provider-error")),
+		{ code: "parser_budget_exhausted", retryable: false },
+	);
+	assert.equal(observed.length, 1);
+	assert.equal(observed[0].pollCount, 1);
+	assert.equal(observed[0].retryCount, 0);
+	assert.equal(attempts.at(-1)?.httpStatus, 503);
+	assert.equal(attempts.at(-1)?.errorCode, "parser_budget_exhausted");
+	assert.ok(!JSON.stringify(observed).includes("private"));
+});
+
+test("late permanent errors and caller cancellation retain their original identity", async (context) => {
+	let now = 0;
+	context.mock.method(Date, "now", () => now);
+	for (const reason of [
+		new ParserProviderHttpError({
+			code: "provider_unauthorized",
+			message: "invalid credential",
+			retryable: false,
+			status: 401,
+		}),
+		Object.assign(new Error("cancelled"), {
+			code: "job_cancelled",
+			retryable: false,
+		}),
+	]) {
+		now = 0;
+		const local = provider("liteparse", { tables: false, calls: [] });
+		local.submit = async () => ({
+			providerTaskId: "stable",
+			status: "running",
+			submittedAt: new Date().toISOString(),
+		});
+		local.poll = async () => {
+			now = 26;
+			throw reason;
+		};
+		await assert.rejects(
+			new PdfDocumentParser({ liteParse: local, maxWaitMs: 25 }).parse(
+				parseRequest("late-permanent"),
+			),
+			(error) => error === reason,
+		);
+	}
 });
 
 test("PDF parser retries transient submit failures with the same idempotency key", async () => {
@@ -570,7 +659,7 @@ test("PDF parser bounds provider retry delays by the workflow deadline", async (
 
 	await assert.rejects(
 		() => parser.parse(parseRequest("ingest-retry-deadline")),
-		/exceeded its parser workflow timeout/,
+		{ code: "parser_budget_exhausted", retryable: false },
 	);
 	assert.ok(performance.now() - startedAt < 500);
 	assert.ok(!calls.includes("liteparse:cancel"));

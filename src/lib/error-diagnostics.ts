@@ -107,6 +107,13 @@ const EXACT_GUIDANCE: Record<string, ErrorGuidance> = {
 		recovery:
 			"检查文件是否损坏、解析器健康与凭证；复杂或扫描 PDF 请启用 MinerU 后重新索引。",
 	},
+	parser_budget_exhausted: {
+		title: "解析预算已耗尽",
+		cause:
+			"解析 Provider 在本次总预算内未完成，系统已停止自动重提，避免持续占用队列和重复创建外部任务。",
+		recovery:
+			"按 Job/Workflow ID 检查排队、Provider 任务与耗时后再手动重试；外部任务可能仍在运行，不能仅凭本地失败认定它已取消。",
+	},
 };
 
 export function errorGuidance(code: string): ErrorGuidance {

@@ -130,7 +130,8 @@ for (const phase of ["source", "submit", "poll", "result"] as const) {
 					});
 					const started = performance.now();
 					await assert.rejects(parser.parse(request(`${baseUrl}/source`)), {
-						code: "provider_timeout",
+						code: "parser_budget_exhausted",
+						retryable: false,
 					});
 					assert.ok(performance.now() - started < 750);
 				},
@@ -187,7 +188,7 @@ test("302 result ZIP shares the deadline and never receives API credentials", as
 					maxWaitMs: 80,
 					retryBackoffMs: [],
 				}).parse(request("storage://fixture", true)),
-				{ code: "provider_timeout" },
+				{ code: "parser_budget_exhausted", retryable: false },
 			);
 		},
 		(url, method, res, stall) => {

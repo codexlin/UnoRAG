@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { PdfDocumentParser } from "../../src/core/parsing/document-parser";
+import type { DurableParserProvider } from "../../src/core/parsing/http-parser-provider";
 import { getObservabilityContext } from "../../src/lib/observability";
 import type {
 	DocumentAclProjectionJob,
@@ -212,6 +214,93 @@ test("text ingest checkpoints staging and activates before retiring the previous
 		"step:document-ingest-previous-generation-inactive-1",
 		"ingest:visibility:10000000-0000-4000-8000-000000000099:inactive",
 	]);
+});
+
+test("parser budget is terminal and never restarts a remote task inside one job", async () => {
+	const events: string[] = [];
+	let submissions = 0;
+	const local: DurableParserProvider = {
+		name: "liteparse",
+		version: "fixture",
+		capabilities: {
+			formats: ["pdf"],
+			ocr: false,
+			tables: false,
+			figures: false,
+			boundingBoxes: false,
+			asynchronous: true,
+			externalDataProcessing: false,
+		},
+		async analyze() {
+			return {
+				hasTextLayer: true,
+				needsOcr: false,
+				hasTables: false,
+				hasFigures: false,
+				complexityScore: 0,
+				warnings: [],
+			};
+		},
+		async submit() {
+			submissions += 1;
+			return {
+				providerTaskId: `task-${submissions}`,
+				status: "pending",
+				submittedAt: new Date().toISOString(),
+			};
+		},
+		async poll() {
+			return { status: "running", retryAfterMs: 100 };
+		},
+		async fetchResult() {
+			throw new Error("unfinished task must not be fetched");
+		},
+		async cancel() {},
+	};
+	const parser = new PdfDocumentParser({ liteParse: local, maxWaitMs: 25 });
+	const ports = successfulIngestPorts(events);
+	if (!ports.documentIngest) throw new Error("ingest test port is required");
+	ports.documentIngest.external.stageDocument = async () => {
+		await parser.parse({
+			input: {
+				documentId: "fixture",
+				filename: "fixture.pdf",
+				mimeType: "application/pdf",
+				contentHash: "fixture",
+				sourceUri: "storage://fixture",
+			},
+			libraryId: "fixture-library",
+			title: "Fixture",
+			requestId: "fixture-request",
+			idempotencyKey: "same-parser-intent",
+			policy: {
+				deploymentPolicy: "strict-private",
+				externalParserAllowed: false,
+				parsePreference: "auto",
+				scanHandling: "auto",
+			},
+		});
+		throw new Error("unfinished parsing must not produce staging records");
+	};
+	const result = await registerDurableWorkflows(
+		passthroughRegistrar,
+		ports,
+		operations(events),
+	).documentIngest(textIngest());
+	assert.equal(submissions, 1);
+	assert.deepEqual(result, {
+		outcome: "failed",
+		errorCode: "parser_budget_exhausted",
+	});
+	assert.ok(
+		events.includes("ingest:error:parser_budget_exhausted:false:false"),
+	);
+	assert.equal(
+		events.some((event) => event.startsWith("sleep-for:")),
+		false,
+	);
+	assert.equal(events.includes("ingest:prepare"), false);
+	assert.equal(events.includes("ingest:activate"), false);
 });
 
 test("text ingest cancellation records compensation and never stages points", async () => {

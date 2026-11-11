@@ -27,6 +27,16 @@ export type ParserProviderAttempt = Readonly<{
 	retryDelayMs?: number;
 }>;
 
+export type ParserBudgetExhaustion = Readonly<{
+	requestId: string;
+	documentId: string;
+	provider: string;
+	budgetMs: number;
+	elapsedMs: number;
+	pollCount: number;
+	retryCount: number;
+}>;
+
 export type PdfParsePolicy = {
 	deploymentPolicy: "strict-private" | "private-preferred" | "cloud-allowed";
 	externalParserAllowed: boolean;
@@ -53,6 +63,7 @@ export type PdfDocumentParserOptions = {
 	retryBackoffMs?: readonly number[];
 	random?: () => number;
 	onProviderAttempt?: (attempt: ParserProviderAttempt) => void;
+	onBudgetExhausted?: (observation: ParserBudgetExhaustion) => void;
 };
 
 export class PdfDocumentParser {
@@ -99,6 +110,7 @@ export class PdfDocumentParser {
 		});
 		let pollCount = 0;
 		let retryCount = 0;
+		const providerStarted = performance.now();
 		const { result, timing } = await executeProvider(decision.provider, {
 			input: input.input,
 			idempotencyKey: `${input.idempotencyKey}:parser:${decision.provider.name}`,
@@ -116,6 +128,23 @@ export class PdfDocumentParser {
 				if (attempt.outcome === "retry") retryCount += 1;
 				this.options.onProviderAttempt?.(attempt);
 			},
+		}).catch((error: unknown) => {
+			if (retryMetadata(error).code === "parser_budget_exhausted") {
+				try {
+					this.options.onBudgetExhausted?.({
+						requestId: input.requestId,
+						documentId: input.input.documentId,
+						provider: decision.provider.name,
+						budgetMs: this.maxWaitMs,
+						elapsedMs: elapsedMilliseconds(providerStarted),
+						pollCount,
+						retryCount,
+					});
+				} catch {
+					// Diagnostics cannot turn a terminal budget failure into another retry.
+				}
+			}
+			throw error;
 		});
 		const observed: ParserTiming = {
 			schema_version: 1,
@@ -191,11 +220,7 @@ async function executeProvider(
 		while (status !== "completed") {
 			await input.assertContinuing?.();
 			if (Date.now() >= deadline) {
-				throw parserError(
-					"provider_timeout",
-					`${provider.name} exceeded its parser workflow timeout`,
-					true,
-				);
+				throw parserBudgetError(provider.name);
 			}
 			const progress = await retryProviderOperation(
 				provider,
@@ -246,7 +271,9 @@ async function executeProvider(
 			},
 		};
 	} catch (error) {
-		if (!retryMetadata(error).retryable) {
+		const failure = retryMetadata(error);
+		// Preserve the deadline: a remote task may still run, but do not add unbudgeted cancellation.
+		if (!failure.retryable && failure.code !== "parser_budget_exhausted") {
 			await runWithinDeadline(
 				(signal) => provider.cancel({ ...task, signal }),
 				Date.now() + 1_000,
@@ -267,11 +294,7 @@ async function retryProviderOperation<T>(
 	for (let attempt = 1; ; attempt += 1) {
 		await input.assertContinuing?.();
 		if (Date.now() >= deadline) {
-			throw parserError(
-				"provider_timeout",
-				`${provider.name} exceeded its parser workflow timeout`,
-				true,
-			);
+			throw parserBudgetError(provider.name);
 		}
 		const startedAt = performance.now();
 		try {
@@ -294,7 +317,12 @@ async function retryProviderOperation<T>(
 			});
 			return result;
 		} catch (error) {
-			const metadata = retryMetadata(error);
+			const original = retryMetadata(error);
+			const failure =
+				original.retryable && Date.now() >= deadline
+					? parserBudgetError(provider.name)
+					: error;
+			const metadata = retryMetadata(failure);
 			const canRetry =
 				metadata.retryable &&
 				Date.now() < deadline &&
@@ -316,19 +344,15 @@ async function retryProviderOperation<T>(
 				outcome: canRetry ? "retry" : "failed",
 				durationMs: elapsedMilliseconds(startedAt),
 				errorCode: metadata.code,
-				httpStatus: metadata.status ?? undefined,
+				httpStatus: original.status ?? metadata.status ?? undefined,
 				retryDelayMs: delayMs,
 			});
-			if (!canRetry) throw error;
+			if (!canRetry) throw failure;
 			const remainingMs = Math.max(0, deadline - Date.now());
 			const boundedDelay = Math.min(delayMs ?? 0, remainingMs);
 			await cancellableDelay(boundedDelay, input.assertContinuing);
 			if ((delayMs ?? 0) >= remainingMs) {
-				throw parserError(
-					"provider_timeout",
-					`${provider.name} exceeded its parser workflow timeout`,
-					true,
-				);
+				throw parserBudgetError(provider.name);
 			}
 		}
 	}
@@ -350,14 +374,7 @@ async function runWithinDeadline<T>(
 			reject(error);
 		};
 		timer = setTimeout(
-			() =>
-				interrupt(
-					parserError(
-						"provider_timeout",
-						`${provider} exceeded its parser workflow timeout`,
-						true,
-					),
-				),
+			() => interrupt(parserBudgetError(provider)),
 			Math.max(0, deadline - Date.now()),
 		);
 		if (assertContinuing) {
@@ -376,11 +393,7 @@ async function runWithinDeadline<T>(
 		// Keep the same deadline through response-body consumption, not only headers.
 		const result = await Promise.race([run(controller.signal), interrupted]);
 		if (Date.now() >= deadline) {
-			const error = parserError(
-				"provider_timeout",
-				`${provider} exceeded its parser workflow timeout`,
-				true,
-			);
+			const error = parserBudgetError(provider);
 			controller.abort(error);
 			throw error;
 		}
@@ -495,6 +508,15 @@ async function cancellableDelay(
 
 function parserError(code: string, message: string, retryable: boolean): Error {
 	return Object.assign(new Error(message), { code, retryable });
+}
+
+function parserBudgetError(provider: string): Error {
+	// Restarting the staging step would reset the deadline and may create a second paid task.
+	return parserError(
+		"parser_budget_exhausted",
+		`${provider} exhausted its parsing budget; automatic resubmission stopped`,
+		false,
+	);
 }
 
 function positiveInteger(value: number | undefined, fallback: number): number {

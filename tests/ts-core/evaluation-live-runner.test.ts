@@ -14,16 +14,61 @@ import test from "node:test";
 import {
 	cleanupEvaluationLibrary,
 	goldenFixtureFiles,
+	projectJobWaitObservation,
 	resolveReusedJobs,
 	resolveRunnerOptions,
 	runLiveEvaluation,
 	validateServiceUrl,
 } from "../../scripts/run-ab-live-e2e";
+import { runStabilityEvaluation } from "../../scripts/run-ab-stability";
 import {
 	loadGoldenJsonl,
 	loadNegativeGoldenJsonl,
 	parseGoldenCase,
 } from "../../src/evaluation";
+
+test("job wait observations distinguish queue time from running wall time without guessing", () => {
+	const created = "2026-11-12T00:00:00.000Z";
+	const started = "2026-11-12T00:01:00.000Z";
+	const now = Date.parse("2026-11-12T00:03:00.000Z");
+	assert.equal(
+		projectJobWaitObservation({ status: "queued", created_at: created }, now)
+			.queueMs,
+		180_000,
+	);
+	assert.equal(
+		projectJobWaitObservation({ status: "queued", created_at: created }, now)
+			.runningMs,
+		null,
+	);
+	const running = projectJobWaitObservation(
+		{ status: "running", created_at: created, started_at: started },
+		now,
+	);
+	assert.equal(running.queueMs, 60_000);
+	assert.equal(running.runningMs, 120_000);
+	assert.equal(
+		projectJobWaitObservation({ status: "running", created_at: created }, now)
+			.queueMs,
+		null,
+	);
+	assert.equal(
+		projectJobWaitObservation(
+			{ status: "completed", created_at: created, started_at: started },
+			now,
+		).runningMs,
+		null,
+	);
+	assert.equal(
+		projectJobWaitObservation({ created_at: "invalid" }, now).queueMs,
+		null,
+	);
+	assert.equal(
+		projectJobWaitObservation({ started_at: "2026-11-13T00:00:00Z" }, now)
+			.runningMs,
+		null,
+	);
+});
 
 test("reused corpus readiness is verified without manufacturing completed jobs", () => {
 	const ready = {
@@ -236,8 +281,12 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 	let deleted = false;
 	let authenticatedRequests = 0;
 	let failAsk = false;
+	let jobsPending = false;
+	let stallJobBodies = false;
+	let abortedJobBodies = 0;
+	const jobPolls = new Map<string, number>();
 	let reuseStatus = 200;
-	let reuseDocuments: unknown = goldenFixtureFiles(golds).map((filename) => ({
+	const readyDocuments = goldenFixtureFiles(golds).map((filename) => ({
 		filename,
 		status: "ready",
 		job_status: "completed",
@@ -247,6 +296,7 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		document_id: `doc-${filename}`,
 		generation_id: `generation-${filename}`,
 	}));
+	let reuseDocuments: unknown = readyDocuments;
 	const server = createServer(async (request, response) => {
 		const url = new URL(request.url ?? "/", "http://127.0.0.1");
 		const send = (status: number, body: unknown, headers = {}) => {
@@ -303,9 +353,30 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 			return;
 		}
 		if (request.method === "GET" && url.pathname.startsWith("/api/jobs/")) {
+			const polls = (jobPolls.get(url.pathname) ?? 0) + 1;
+			jobPolls.set(url.pathname, polls);
+			if (stallJobBodies && polls > 1) {
+				response.writeHead(200, { "content-type": "application/json" });
+				response.flushHeaders();
+				response.write("{");
+				response.once("close", () => {
+					abortedJobBodies += 1;
+				});
+				return;
+			}
+			const now = Date.now();
 			send(200, {
-				status: "completed",
-				stage: "done",
+				status: jobsPending ? "running" : "completed",
+				stage: jobsPending ? "parsing" : "done",
+				created_at: new Date(now - 10_000).toISOString(),
+				started_at: new Date(now - 5_000).toISOString(),
+				stage_runs: [
+					{
+						stage: "parsing",
+						outcome: jobsPending ? "running" : "completed",
+						duration_ms: jobsPending ? null : 25,
+					},
+				],
 				parser_report: {
 					parser: "fixture-parser",
 					backend: "fixture-parser",
@@ -570,6 +641,87 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		);
 		assert.equal(uploads, 14);
 		assert.equal(deleted, true);
+		jobsPending = true;
+		stallJobBodies = true;
+		jobPolls.clear();
+		const beforeBlocked = asks;
+		await withEnvironment(
+			{
+				UNORAG_BASE_URL: options.baseUrl,
+				UNORAG_ADMIN_EMAIL: options.email,
+				UNORAG_ADMIN_PASSWORD: options.password,
+				UNORAG_AB_JOB_TIMEOUT_SEC: "1",
+				UNORAG_AB_POLL_INTERVAL_MS: "10",
+				UNORAG_AB_CLEANUP_TIMEOUT_SEC: "1",
+			},
+			async () => {
+				assert.equal(
+					await runStabilityEvaluation({ rounds: 3, maxP95Ms: 15_000 }),
+					1,
+				);
+			},
+		);
+		assert.equal(uploads, 21);
+		assert.equal(asks - beforeBlocked, negatives.length);
+		assert.equal(deleted, true);
+		assert.ok(abortedJobBodies > 0);
+		const blocked = JSON.parse(
+			await readFile(resolve(output, "ab_stability_latest.json"), "utf8"),
+		);
+		assert.equal(blocked.rounds.length, 1);
+		assert.equal(blocked.ask_stability_gate.status, "blocked_by_corpus");
+		assert.equal(blocked.ingest_reliability_gate.ok, false);
+		assert.equal(blocked.release_gate.ok, false);
+		const timedOut = JSON.parse(
+			await readFile(resolve(output, "ab_live_latest.json"), "utf8"),
+		);
+		for (const entry of Object.values(timedOut.jobs) as Array<
+			Record<string, unknown>
+		>) {
+			assert.equal(entry.status, "timeout");
+			assert.equal(entry.stage, "parsing");
+			assert.ok(Array.isArray(entry.stageRuns));
+			const observation = entry.waitObservation as {
+				status: string;
+				queueMs: number;
+				runningMs: number;
+			};
+			assert.equal(observation.status, "running");
+			assert.equal(observation.queueMs, 5_000);
+			assert.ok(observation.runningMs >= 5_000);
+		}
+		jobsPending = false;
+		stallJobBodies = false;
+		failAsk = true;
+		reuseStatus = 200;
+		reuseDocuments = readyDocuments;
+		const beforeAskFailures = asks;
+		await withEnvironment(
+			{
+				UNORAG_BASE_URL: options.baseUrl,
+				UNORAG_ADMIN_EMAIL: options.email,
+				UNORAG_ADMIN_PASSWORD: options.password,
+				UNORAG_AB_JOB_TIMEOUT_SEC: "1",
+				UNORAG_AB_POLL_INTERVAL_MS: "10",
+				UNORAG_AB_CLEANUP_TIMEOUT_SEC: "1",
+			},
+			async () => {
+				assert.equal(
+					await runStabilityEvaluation({ rounds: 3, maxP95Ms: 15_000 }),
+					1,
+				);
+			},
+		);
+		assert.equal(uploads, 28);
+		assert.equal(asks - beforeAskFailures, expectedAsksPerRound * 3);
+		assert.equal(deleted, true);
+		const failedAskStability = JSON.parse(
+			await readFile(resolve(output, "ab_stability_latest.json"), "utf8"),
+		);
+		assert.equal(failedAskStability.rounds.length, 3);
+		assert.equal(failedAskStability.ask_stability_gate.status, "evaluated");
+		assert.equal(failedAskStability.ingest_reliability_gate.ok, true);
+		assert.equal(failedAskStability.release_gate.ok, false);
 	} finally {
 		await new Promise<void>((resolveClose, reject) =>
 			server.close((error) => (error ? reject(error) : resolveClose())),

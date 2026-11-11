@@ -31,6 +31,11 @@ test("error guidance groups known providers, persistence, and unknown failures",
 	assert.equal(errorGuidance("embedding_http_429").title, "Embedding 异常");
 	assert.equal(errorGuidance("provider_timeout").title, "执行超时");
 	assert.equal(
+		errorGuidance("parser_budget_exhausted").title,
+		"解析预算已耗尽",
+	);
+	assert.match(errorGuidance("parser_budget_exhausted").recovery, /手动重试/);
+	assert.equal(
 		errorGuidance("document_delete_qdrant_failed").title,
 		"向量清理失败",
 	);
