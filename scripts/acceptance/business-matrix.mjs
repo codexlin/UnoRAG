@@ -378,7 +378,7 @@ export async function runBusinessMatrix(options) {
 		}
 		for (const gold of plan.negative) {
 			const response = await ask(libraryId, gold.question),
-				score = scoreNegativeCase(response);
+				score = scoreNegativeCase(response, gold);
 			report.negative.push({ gold, response, score });
 			await save();
 			console.log(

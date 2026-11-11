@@ -1,3 +1,4 @@
+import { stripFilenameReferences } from "../../retrieval/document-constraints";
 import { sharesEvidenceLineage } from "../../retrieval/evidence-lineage";
 import type { AskGraphContext, Judgement } from "../context";
 import { validateConflictEvidence } from "../evidence-conflict";
@@ -10,6 +11,8 @@ import {
 const KNOWN_ACTIONS = new Set(["retry", "generate", "refuse"]);
 const MAX_COMPARISON_EVIDENCE = 6;
 const MAX_COMPARISON_CHARACTERS = 14_400;
+const FIGURE_REFERENCE =
+	/(?:图\s*[0-9一二三四五六七八九十]+|图表|图注|图示|图片|图像|插图|(?:折线|柱状|饼|趋势|流程|示意)图|\b(?:fig\.?\s*\d+|figures?(?!\s+out\b)|charts?|diagrams?|illustrations?|images?)\b)/iu;
 
 function comparisonContext(state: AskState) {
 	const citations = state.citations ?? [];
@@ -105,12 +108,15 @@ function selectedEvidence(
 			selectedCount: context.citations.length,
 		};
 	}
+	const asksAboutFigure = FIGURE_REFERENCE.test(
+		stripFilenameReferences(state.question ?? ""),
+	);
 	const lineage = candidates.filter(
 		(candidate) =>
 			!selected.has(String(candidate.id)) &&
 			(candidate.record_type === "table" ||
 				candidate.record_type === "table_summary" ||
-				candidate.record_type === "figure") &&
+				(asksAboutFigure && candidate.record_type === "figure")) &&
 			direct.some((citation) => sharesEvidenceLineage(citation, candidate)),
 	);
 	const citations = [...direct, ...lineage]
@@ -203,6 +209,8 @@ export function createDecisionNode(context: AskGraphContext) {
 				"judge_duration_ms",
 				"judge_sufficiency_attempts",
 				"judge_sufficiency_duration_ms",
+				"judge_refusal_review",
+				"judge_refusal_review_duration_ms",
 				"judge_conflict_attempts",
 				"judge_conflict_duration_ms",
 				"judge_failed_stage",

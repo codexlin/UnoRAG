@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import test from "node:test";
 import type { LanguageModel } from "ai";
 import { StructuredOutputAdapter } from "../../src/core/ai";
 import type { AskGraphContext, AskState } from "../../src/core/ask-graph";
 import type { TableQueryPlan } from "../../src/core/ask-graph/table";
+import { chunkDocument } from "../../src/core/ingest/chunking";
+import { buildIndexPayloads } from "../../src/core/ingest/index-records";
+import { parseTextDocument } from "../../src/core/ingest/text-parser";
 import type { InternalCitation } from "../../src/core/retrieval";
+import { mapQdrantHitToInternalCitation } from "../../src/core/retrieval/citation-mapper";
 import { NativeAskPolicySchema } from "../../src/server/http/ask/policy";
 
 type ResolveFilename = (
@@ -618,6 +623,175 @@ test("workflow checklist names are prose, not evidence of tabular data", async (
 	);
 });
 
+test("backup manifest questions use prose unless they require table structure or operations", async () => {
+	const { fallbackQueryRoute } = await runtimeModule;
+	assert.equal(
+		fallbackQueryRoute(
+			"按运维文档，使用 COS 时，Compose 备份清单能不能直接恢复桶里的原文？桶里的原文应该由什么来覆盖？",
+		).queryType,
+		"fact",
+	);
+	for (const question of [
+		"备份清单中有多少行？",
+		"备份清单的表头有哪些列名？",
+		"备份清单中超过 10 GB 的有哪些？",
+	]) {
+		assert.equal(fallbackQueryRoute(question).queryType, "table");
+	}
+});
+
+test("comparison preserves six real alternatives when one indexed section contains its own chunk", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const filename = "report-narrative-5k.md";
+	const document = parseTextDocument({
+		documentId: "risk-report",
+		libraryId: "library",
+		filename,
+		contentHash: "fixture",
+		sourceFormat: "md",
+		content: await readFile(
+			new URL(`../../testdata/ab/${filename}`, import.meta.url),
+		),
+	});
+	const records = buildIndexPayloads(await chunkDocument(document), {
+		document,
+		filename,
+		documentId: document.id,
+		documentVersionId: "version-a",
+		generationId: "10000000-0000-4000-8000-000000000001",
+		libraryId: "library",
+		organizationId: "org",
+		workspaceId: "workspace",
+	});
+	const riskRecords = records.filter((record) =>
+		record.section_path?.includes("/风险分析与应对措施/"),
+	);
+	const alternatives = riskRecords.filter(
+		(record) =>
+			record.record_type === "chunk" && record.text.includes("**发生概率**"),
+	);
+	assert.equal(alternatives.length, 6);
+	const repeated = alternatives.find((record) =>
+		record.section_path?.endsWith("/运营可持续性风险"),
+	);
+	assert.ok(repeated);
+	const section = riskRecords.find(
+		(record) =>
+			record.record_type === "section" &&
+			record.source_chunk_ids.includes(repeated.record_id) &&
+			record.text.includes(repeated.text),
+	);
+	assert.ok(section);
+	const winner = alternatives.find((record) =>
+		record.section_path?.endsWith("/组织协调风险"),
+	);
+	assert.ok(winner);
+	const payloads = [
+		...alternatives.filter((record) => record !== winner),
+		section,
+		winner,
+	];
+	const raw = payloads.map((payload, index) =>
+		mapQdrantHitToInternalCitation(
+			{
+				id: payload._point_id,
+				score: 0.8,
+				payload: {
+					...payload,
+					doc_id: document.id,
+					library_id: document.library_id,
+					title: document.title,
+					filename,
+					acl_scope: "workspace",
+				},
+			},
+			index + 1,
+		),
+	);
+	let evidenceIds: string[] = [];
+	const structured = new StructuredOutputAdapter(
+		{} as LanguageModel,
+		async (request) => {
+			const message = request.messages.findLast(
+				(item) => item.role === "user",
+			)?.content;
+			assert.equal(typeof message, "string");
+			const body = String(message).split("候选证据：").at(-1);
+			assert.ok(body);
+			evidenceIds = (JSON.parse(body) as { id: string }[]).map(({ id }) => id);
+			return {
+				sufficient: true,
+				action: "generate",
+				reason: "covered",
+				evidence_ids: evidenceIds.slice(0, 6),
+			};
+		},
+	);
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{ structured, answer: {} as never, retrieval: {} as never },
+	);
+	Object.defineProperty(runtime, "retrieve", {
+		value: async () => ({ citations: raw, debug: {} }),
+	});
+	const state = await runtime.invoke({
+		question:
+			"根据风险分析，按发生概率区间的上限比较，哪一类风险的上限最高？它的概率区间和影响程度是什么？",
+		history: [],
+		session_id: "interval-comparison",
+	});
+	const expected = payloads
+		.filter((record) => record !== repeated)
+		.map((record) => record._point_id);
+	assert.equal(state.query_type, "compare");
+	assert.deepEqual(evidenceIds, expected);
+	assert.deepEqual(
+		state.citations?.map(({ id }) => id),
+		expected,
+	);
+	assert.equal(state.refused, false);
+
+	const repeatCitation = raw.find(({ id }) => id === repeated._point_id);
+	const sectionCitation = raw.find(({ id }) => id === section._point_id);
+	assert.ok(repeatCitation && sectionCitation);
+	const { ports } = (
+		runtime as unknown as { context: () => AskGraphContext }
+	).context();
+	for (const changed of [
+		{ ...sectionCitation, source_chunk_ids: [] },
+		{
+			...sectionCitation,
+			body: sectionCitation.body.replace("50-60%", "51-61%"),
+		},
+		{
+			...sectionCitation,
+			body: `${"前置说明".repeat(601)}${sectionCitation.body}`,
+		},
+		{ ...sectionCitation, generation_id: "different" },
+		{ ...sectionCitation, document_version_id: "different" },
+		{ ...sectionCitation, doc_id: "different" },
+		{ ...sectionCitation, section_path: "different" },
+		{ ...sectionCitation, workspace_id: "different" },
+		{ ...sectionCitation, figure_id: "figure" },
+	]) {
+		raw.splice(0, raw.length, repeatCitation, changed);
+		const result = await ports?.retrieve?.({
+			question: "哪个最高？",
+			query_type: "compare",
+		} as AskState);
+		assert.deepEqual(result?.citations, raw);
+	}
+	raw.splice(0, raw.length, repeatCitation, sectionCitation);
+	const fact = await ports?.retrieve?.({
+		question: "运营可持续性风险是什么？",
+		query_type: "fact",
+	} as AskState);
+	assert.deepEqual(fact?.citations, raw);
+});
+
 test("judge evidence projection is bounded and excludes raw table rows", async () => {
 	const { projectJudgeEvidence } = await runtimeModule;
 	const source = citation({
@@ -634,6 +808,89 @@ test("judge evidence projection is bounded and excludes raw table rows", async (
 	assert.equal(projected[0]?.text.length, 2_401);
 	assert.equal("rows" in (projected[0] ?? {}), false);
 	assert.equal("tenant_id" in (projected[0] ?? {}), false);
+});
+
+test("strict ranking of scoped probability intervals refuses overlap before calling the model", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const structured = new StructuredOutputAdapter(
+		{} as LanguageModel,
+		async (request) => {
+			assert.equal(request.schemaName, "judge");
+			modelCalls++;
+			return {
+				sufficient: false,
+				action: "refuse",
+				reason: "model",
+				evidence_ids: [],
+			};
+		},
+	);
+	let modelCalls = 0;
+	let authorizationChecks = 0;
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{ structured, answer: {} as never, retrieval: {} as never },
+		async () => {
+			authorizationChecks++;
+		},
+	);
+	Object.assign(runtime, {
+		documentConstraintStatus: "resolved",
+		documentScope: [{ documentId: "doc-budget", generationId: "generation-a" }],
+	});
+	const ports = (
+		runtime as unknown as { context: () => AskGraphContext }
+	).context();
+	const prose = (name: string, interval: string): InternalCitation => ({
+		...citation({ id: name, tableId: "budget", device: "", amount: "" }),
+		record_type: "section",
+		table_id: null,
+		section_path: `报告/风险评估/${name}`,
+		body: `风险描述。**发生概率**：较高（约${interval}）\n**影响程度**：中高`,
+	});
+	const a = prose("网络风险", "55–65%");
+	const b = prose("运维风险", "50-60%");
+	const question =
+		"仅比较网络风险与运维风险的发生概率区间。哪一类风险的实际发生概率一定最高？";
+	const judge = (hits: InternalCitation[], text = question) =>
+		ports.judge.judge({
+			question: text,
+			query_type: "compare",
+			citations: hits,
+		} as unknown as AskState);
+	const result = await judge([a, b]);
+	assert.equal(result.action, "refuse");
+	assert.equal(result.judge_mode, "deterministic_probability_overlap");
+	assert.match(result.reason, /重叠.*55-65%.*50-60%/u);
+	assert.deepEqual(result.evidence_ids, []);
+	assert.equal(modelCalls, 0);
+	assert.equal(authorizationChecks, 1);
+	for (const hits of [
+		[a, prose("运维风险", "30-40%")],
+		[a],
+		[a, { ...b, generation_id: "older" }],
+		[a, { ...b, section_path: "报告/其他评估/运维风险" }],
+		[a, { ...b, body: "发生概率：不是50-60%" }],
+		[a, b, { ...b, body: "发生概率：记录无法确定" }],
+		[a, b, prose("运维风险", "20-25%")],
+	])
+		assert.equal((await judge(hits)).reason, "model");
+	assert.equal(
+		(
+			await judge(
+				[a, b],
+				"仅比较网络风险与运维风险的发生概率区间，哪一类的上限最高？",
+			)
+		).reason,
+		"model",
+	);
+	assert.equal(
+		(await judge([a, b], `${question}它们的概率上限又分别是多少？`)).reason,
+		"model",
+	);
 });
 
 test("reusing grounded table evidence does not invent a second rerank attempt", async () => {

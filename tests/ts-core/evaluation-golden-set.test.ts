@@ -639,8 +639,8 @@ test("repository negative golden set contains stable refusal cases", async () =>
 	const cases = parseNegativeGoldenJsonl(
 		await readFile(NEGATIVE_GOLD_PATH, "utf8"),
 	);
-	assert.equal(cases.length, 5);
-	assert.equal(new Set(cases.map((item) => item.id)).size, 5);
+	assert.ok(cases.length >= 6);
+	assert.equal(new Set(cases.map((item) => item.id)).size, cases.length);
 	assert.equal(
 		cases.every((item) => item.question.length > 10),
 		true,

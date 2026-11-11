@@ -19,6 +19,11 @@ import {
 	type AskState,
 } from "@/core/ask-graph";
 import { deriveAnswerRequirements } from "@/core/ask-graph/answer-requirements";
+import {
+	boundedJudgeEvidenceText,
+	compactComparisonEvidence,
+	scopedProbabilityOverlapReason,
+} from "@/core/ask-graph/comparison-evidence";
 import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
 import { deriveGroundedTableLookup } from "@/core/ask-graph/table";
 import {
@@ -144,11 +149,6 @@ function throwIfConcurrencyUnavailable(error: unknown): void {
 	}
 }
 
-function boundedEvidenceText(value: unknown, maxLength = 2_400): string {
-	const text = typeof value === "string" ? value.trim() : "";
-	return text.length <= maxLength ? text : `${text.slice(0, maxLength)}…`;
-}
-
 export function projectJudgeEvidence(citations: InternalCitation[]) {
 	return citations.map((citation) => ({
 		id: citation.id,
@@ -161,7 +161,7 @@ export function projectJudgeEvidence(citations: InternalCitation[]) {
 		section_path: citation.section_path,
 		preamble: citation.preamble,
 		score: citation.score,
-		text: boundedEvidenceText(
+		text: boundedJudgeEvidenceText(
 			citation.body || citation.text || citation.snippet,
 		),
 	}));
@@ -469,14 +469,43 @@ export class NativeAskRuntime {
 						};
 					}
 					await this.assertAuthorized?.(this.retrievedEvidence);
+					const [document] = this.documentScope;
+					const scopedDocument =
+						this.documentConstraintStatus === "resolved" &&
+						this.documentScope.length === 1 &&
+						document &&
+						!state.table_execution &&
+						citations.every(
+							(citation) =>
+								citation.doc_id === document.documentId &&
+								citation.generation_id === document.generationId,
+						)
+							? document
+							: undefined;
+					const question = state.question ?? "";
+					const overlap =
+						scopedDocument && state.query_type === "compare"
+							? scopedProbabilityOverlapReason(question, citations)
+							: null;
+					if (overlap) {
+						return {
+							sufficient: false,
+							action: "refuse",
+							reason: overlap,
+							can_retry: false,
+							evidence_ids: [],
+							judge_mode: "deterministic_probability_overlap",
+						};
+					}
 					try {
-						const requirements = deriveAnswerRequirements(state.question ?? "");
+						const requirements = deriveAnswerRequirements(question);
 						const judged = await assessEvidenceWithMetadata(
 							judgeStructured,
 							{
-								question: state.question ?? "",
+								question,
 								query_type: state.query_type,
 								requirements,
+								resolvedDocumentId: scopedDocument?.documentId,
 								citations: [
 									...projectJudgeEvidence(citations).map((citation) => ({
 										...citation,
@@ -575,7 +604,10 @@ export class NativeAskRuntime {
 						if (groundedPlan) result = precise;
 					}
 					return {
-						citations: result.citations,
+						citations:
+							!groundedPlan && state.query_type === "compare"
+								? compactComparisonEvidence(result.citations)
+								: result.citations,
 						...(groundedPlan
 							? { upgrade: "precise", upgrade_reason: "grounded_table_lookup" }
 							: {}),

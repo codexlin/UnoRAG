@@ -3,7 +3,7 @@ import {
 	AnswerCitationValidationError,
 } from "../core/ai/answer-citations";
 import { sharesEvidenceLineage } from "../core/retrieval/evidence-lineage";
-import type { GoldenCase } from "./golden-set";
+import type { GoldenCase, NegativeGoldenCase } from "./golden-set";
 import {
 	answerCheckMatches,
 	answerFactMatches,
@@ -68,6 +68,7 @@ export type PositiveCaseScore = Readonly<{
 export type NegativeCaseScore = Readonly<{
 	ok: boolean;
 	refused: boolean;
+	refusalEvidenceMatched?: boolean;
 	latencyMs: number;
 	requestId: string | null;
 	traceId: string | null;
@@ -294,15 +295,41 @@ export function scorePositiveCase(
 	});
 }
 
+const TECHNICAL_REFUSALS = new Set([
+	"judge_unavailable",
+	"invalid_judgement_action",
+	"invalid_evidence_selection",
+	"invalid_conflict_evidence",
+	"comparison_context_exceeds_budget",
+	"invalid_graph_state",
+	"invalid_rewrite",
+]);
+
 export function scoreNegativeCase(
 	response: EvaluationResponse,
+	gold?: NegativeGoldenCase,
 ): NegativeCaseScore {
+	const requirement = gold?.refusal_evidence;
+	const reason = response.refuseReason ?? "";
+	const retrieved = response.retrievalDebug?.retrieved_evidence_count;
+	const refusalEvidenceMatched =
+		requirement &&
+		typeof retrieved === "number" &&
+		retrieved >= requirement.min_retrieved &&
+		requirement.reason_contains.every((alternatives) =>
+			alternatives.some((phrase) => factMatchesAnswer(phrase, reason)),
+		);
 	return Object.freeze({
 		ok:
 			response.httpStatus === 200 &&
 			response.refused &&
-			response.refuseReason !== "judge_unavailable",
+			!TECHNICAL_REFUSALS.has(reason) &&
+			response.retrievalDebug?.judge_refusal_review !== "invalid_evidence" &&
+			(!requirement || refusalEvidenceMatched === true),
 		refused: response.refused,
+		...(requirement
+			? { refusalEvidenceMatched: !!refusalEvidenceMatched }
+			: {}),
 		latencyMs: response.latencyMs,
 		requestId: response.requestId ?? null,
 		traceId: response.traceId ?? null,

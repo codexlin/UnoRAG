@@ -8,7 +8,10 @@ import {
 	loadBusinessPlan,
 	safePlanSummary,
 } from "../../scripts/acceptance/business-matrix.mjs";
-import { scorePositiveCase } from "../../src/evaluation/scoring";
+import {
+	scoreNegativeCase,
+	scorePositiveCase,
+} from "../../src/evaluation/scoring";
 
 test("business matrix resolves real bytes, varied formats and independently labelled origins", async () => {
 	const plan = await loadBusinessPlan();
@@ -48,7 +51,17 @@ type TestSpecification = {
 test("contract v3 preserves natural wording and checks conflict plus clause-scoped controls", async () => {
 	const plan = await loadBusinessPlan();
 	assert.equal(safePlanSummary(plan).contract_version, 3);
-	assert.equal(plan.positive.length, 85);
+	assert.ok(plan.positive.length >= 85);
+	for (const id of [
+		"pilot-backup-manifest",
+		"pilot-backup-mechanism",
+		"pilot-release-title",
+	]) {
+		const scenario = plan.positive.find(
+			(item: { id: string }) => item.id === id,
+		);
+		assert.equal(scenario?.require_citation_facts, true, id);
+	}
 	const conflict = plan.positive.find(
 		(item: { id: string }) => item.id === "48dea4319e71a530",
 	);
@@ -88,6 +101,109 @@ test("business matrix rejects unknown review contracts", async () => {
 	await invalidManifest((input) => {
 		input.contract_version = 99;
 	}, /unsupported contract/u);
+});
+
+test("overlapping ranges distinguish an upper-bound comparison from an unsupported strict rank", async () => {
+	const plan = await loadBusinessPlan();
+	const positive = plan.positive.find(
+		(item: { id: string }) => item.id === "risk-probability-upper-bound",
+	);
+	const negative = plan.negative.find(
+		(item: { id: string }) =>
+			item.id === "risk-probability-without-comparison-basis",
+	);
+	assert.ok(positive);
+	assert.ok(negative);
+	assert.match(positive.question, /按.+上限比较/u);
+	assert.match(negative.question, /不能唯一确定，请拒答/u);
+	const unsupportedRank =
+		"组织协调风险实际发生概率一定最高，约55-65%，影响程度为中高 [1]。";
+	const response = {
+		httpStatus: 200,
+		refused: false,
+		latencyMs: 1,
+		citations: [
+			{
+				index: 1,
+				filename: positive.file,
+				record_type: "section",
+				text: "组织协调风险：发生概率较高（约55-65%），影响程度为中高。",
+			},
+		],
+	};
+	assert.equal(
+		scorePositiveCase(positive, {
+			...response,
+			answer: "按区间上界比较，组织协调风险最高，约55-65%，影响程度中高 [1]。",
+		}).ok,
+		true,
+	);
+	assert.equal(
+		scorePositiveCase(positive, { ...response, answer: unsupportedRank }).ok,
+		false,
+	);
+	assert.equal(
+		scoreNegativeCase({ ...response, answer: unsupportedRank }).ok,
+		false,
+	);
+	assert.equal(
+		scoreNegativeCase({
+			...response,
+			answer: "区间重叠，资料无法支持唯一最高的结论。",
+			refused: true,
+			refuseReason: "insufficient_evidence",
+			citations: [],
+		}).ok,
+		true,
+	);
+	const scoped = plan.negative.find(
+		(item: { id: string }) => item.id === "risk-overlap-with-scoped-evidence",
+	);
+	assert.ok(scoped?.refusal_evidence);
+	assert.match(scoped.question, /report-narrative-5k\.md/u);
+	assert.doesNotMatch(scoped.question, /\d+\s*%/u);
+	const refused = {
+		...response,
+		refused: true,
+		citations: [],
+		answer: "当前知识库中没有找到足以支持回答的内容。",
+		retrievalDebug: { retrieved_evidence_count: 2 },
+	};
+	const groundedReason =
+		"两个区间存在重叠：55–65% 和 50–60%，无法确定实际概率最高的一项。";
+	assert.equal(
+		scoreNegativeCase({ ...refused, refuseReason: groundedReason }, scoped).ok,
+		true,
+	);
+	for (const refuseReason of [
+		"没找到任何概率区间",
+		"区间重叠，但不能确定",
+		"区间重叠，已知组织协调风险 55–65%",
+		"invalid_judgement_action",
+		"comparison_context_exceeds_budget",
+	]) {
+		assert.equal(
+			scoreNegativeCase({ ...refused, refuseReason }, scoped).ok,
+			false,
+		);
+	}
+	assert.equal(
+		scoreNegativeCase(
+			{
+				...refused,
+				refuseReason: groundedReason,
+				retrievalDebug: { retrieved_evidence_count: 1 },
+			},
+			scoped,
+		).ok,
+		false,
+	);
+	for (const id of [
+		"release-backup-check-details-not-documented",
+		"leave-reception-street-address-not-documented",
+	]) {
+		assert.ok(plan.negative.some((item: { id: string }) => item.id === id));
+	}
 });
 
 test("the backup fact accepts scoped paraphrases only with cited checklist text", async () => {
@@ -193,7 +309,9 @@ test("business matrix cannot read files outside the repository fixture tree", as
 
 test("business matrix rejects unsafe generated filenames", async () => {
 	await invalidManifest((input) => {
-		input.documents[15].filename = "../escape.md";
+		const generated = input.documents.find((doc) => doc.origin === "synthetic");
+		assert.ok(generated);
+		generated.filename = "../escape.md";
 	}, /equal/u);
 });
 

@@ -16,6 +16,7 @@ import {
 	documentEvidenceFilters,
 	resolveAskDocumentEvidence,
 } from "../../src/server/http/ask/document-evidence";
+import businessScenarios from "../../testdata/business/scenarios.json";
 
 const scope: AuthorizedScope = {
 	organizationId: "org",
@@ -236,6 +237,72 @@ test("ordinary asks avoid catalog work; filename asks narrow scope without chang
 	assert.equal(result.outline, undefined);
 });
 
+test("the scoped overlap question resolves a hyphenated filename without inventing a document code", async () => {
+	const gold = businessScenarios.negative.find(
+		(item) => item.id === "risk-overlap-with-scoped-evidence",
+	);
+	assert.ok(gold);
+	const report = {
+		...doc,
+		filename: "report-narrative-5k.md",
+		context: { ...doc.context, identifiers: ["PROJ-RISK-26"] },
+	};
+	const partial = {
+		documentId: "other-doc",
+		generationId: "other-gen",
+		filename: "partial.docx",
+		context: {
+			...doc.context,
+			identifiers: ["REPORT-NARRATIVE-5K"],
+			identifiers_complete: false,
+		},
+	};
+	const resolve = (
+		question = gold.question,
+		documents = [report, partial],
+		requestScope = scope,
+	) =>
+		resolveAskDocumentEvidence({
+			question,
+			libraryId: "lib",
+			scope: requestScope,
+			loadCatalog: async () => ({ documents, complete: true }),
+			lookupDocumentRecord: async () => {
+				assert.fail("the comparison must not use an exact outline lookup");
+			},
+		});
+	const result = await resolve(gold.question, [
+		report,
+		{ ...partial, context: { ...partial.context, identifiers: [] } },
+	]);
+	assert.equal(result.status, "resolved");
+	assert.deepEqual(result.scope.documentIds, ["doc"]);
+	assert.deepEqual(result.scope.activeGenerationIds, ["gen"]);
+	assert.equal((await resolve()).status, "resolved");
+	assert.equal(
+		(await resolve(`${gold.question} 文号 PROJ-RISK-26`)).status,
+		"resolved",
+	);
+	assert.equal(
+		(await resolve(`${gold.question} 文号 REPORT-NARRATIVE-5K`)).status,
+		"unavailable",
+	);
+	assert.equal(
+		(await resolve(`${gold.question} 文号 PROJ-MISSING-26`)).status,
+		"unavailable",
+	);
+	assert.equal((await resolve(gold.question, [partial])).status, "unavailable");
+	assert.equal(
+		(
+			await resolve(gold.question, [report, partial], {
+				...scope,
+				activeGenerationIds: ["other-gen"],
+			})
+		).status,
+		"unavailable",
+	);
+});
+
 test("scope intersections, stale catalog versions and incomplete structure fail closed", async () => {
 	const base = {
 		question: "manual.docx 的二级标题有哪些？",
@@ -274,5 +341,77 @@ test("scope intersections, stale catalog versions and incomplete structure fail 
 	assert.equal(
 		(await resolveAskDocumentEvidence(base)).status,
 		"outline_unavailable",
+	);
+});
+
+test("a quoted release title shorthand resolves only a unique authorized active source", async () => {
+	const title = "发布收口验收";
+	const release = {
+		...doc,
+		filename: "release-closeout.md",
+		context: { ...doc.context, title: `UnoRAG v0.2.8 ${title}` },
+	};
+	const resolve = (
+		documents: (typeof release)[],
+		requestScope = scope,
+		question = `当前这份《${title}》记录的香港正式发布版本号是什么？对应的源码提交 SHA 是什么？不要列候选版。`,
+		complete = true,
+	) =>
+		resolveAskDocumentEvidence({
+			question,
+			libraryId: "lib",
+			scope: requestScope,
+			loadCatalog: async () => ({ documents, complete }),
+			lookupDocumentRecord: async () => {
+				assert.fail("a fact query must not use exact outline execution");
+			},
+		});
+	const previous = {
+		...release,
+		generationId: "old-gen",
+		context: { ...release.context, title: `v0.2.7 ${title}` },
+	};
+	const previousScope = { ...scope, activeGenerationIds: ["old-gen"] };
+	assert.deepEqual((await resolve([previous], previousScope)).scope, {
+		...previousScope,
+		documentIds: ["doc"],
+	});
+	assert.deepEqual((await resolve([release])).scope, {
+		...scope,
+		documentIds: ["doc"],
+		activeGenerationIds: ["gen"],
+	});
+	assert.equal((await resolve([previous])).status, "unavailable");
+	assert.equal((await resolve([])).status, "unavailable");
+	assert.equal(
+		(await resolve([release], { ...scope, documentIds: [] })).status,
+		"unavailable",
+	);
+	assert.equal(
+		(await resolve([release], scope, undefined, false)).status,
+		"unavailable",
+	);
+	assert.equal(
+		(await resolve([release, { ...previous, documentId: "other" }])).status,
+		"ambiguous",
+	);
+	assert.equal(
+		(
+			await resolve(
+				[release, { ...release, documentId: "other" }],
+				scope,
+				`《UnoRAG v0.2.8 ${title}》的版本号？`,
+			)
+		).status,
+		"ambiguous",
+	);
+	assert.equal(
+		(await resolve([release], scope, "《收口验收》记录了哪个版本？")).status,
+		"unavailable",
+	);
+	assert.equal(
+		(await resolve([release], scope, "《发布收口验收》的二级标题有哪些？"))
+			.status,
+		"unavailable",
 	);
 });

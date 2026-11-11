@@ -61,9 +61,9 @@
 			"files": {
 				"testdata/ab/contract-long.docx": "ae211166ed2bc6aeac9d1b01e2d26273131afc5def55b1b6c71361b05f03f45a",
 				"testdata/ab/crosstable-large.pdf": "3942f1be2ed07fc20549914d8199ac207b4bf91c1bbc826a38a7244f9477aa80",
-				"testdata/ab/golds.jsonl": "fc30097c2595c19541cf1978e239a0206bf2925e4c575167b79d935adea61407",
+				"testdata/ab/golds.jsonl": "dfc948c47e8e9bff87452cf738c404162ae94487091b3cb7f6f1c885aadea3e6",
 				"testdata/ab/mixed-charts.pdf": "ced5b5612f37843809279521a1d3756af1ea2419a375e9c90801b6156043153f",
-				"testdata/ab/negative-golds.jsonl": "b5d45f99b0484f62a01cf7fdd2354743251ac18108bcafe1c0faca31793a3b69",
+				"testdata/ab/negative-golds.jsonl": "e3f55580f636b7e534cb59344c7f01fef2a2bc43bb1a195a3df8eafc76ebfbe7",
 				"testdata/ab/quote-big-80rows.docx": "49d7006ebc592d069474029abb828dc2e48806f59da758936eb41b0f55db596b",
 				"testdata/ab/report-narrative-5k.md": "886c15d1806b7bb2b0de71c616417a3b4864aad82fd3b0b568f643e7cc1127d0",
 				"testdata/ab/scan-lowcontrast.pdf": "be442a24ef766183d4d2d9ffe81496bb438cf6e06ece15b51e8db3c64ead2b96",

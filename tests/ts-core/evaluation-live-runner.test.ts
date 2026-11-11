@@ -172,6 +172,7 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		golds.map((item) => [item.question, item] as const),
 	);
 	const negativeQuestions = new Set(negatives.map((item) => item.question));
+	const expectedAsksPerRound = golds.length + negatives.length;
 	let uploads = 0;
 	let asks = 0;
 	let deleted = false;
@@ -332,7 +333,7 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		const result = await runLiveEvaluation(options);
 		assert.equal(result, 0);
 		assert.equal(uploads, 7);
-		assert.equal(asks, 41);
+		assert.equal(asks, expectedAsksPerRound);
 		assert.equal(deleted, false);
 		const repeatResult = await runLiveEvaluation({
 			...options,
@@ -340,7 +341,7 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		});
 		assert.equal(repeatResult, 0);
 		assert.equal(uploads, 7);
-		assert.equal(asks, 82);
+		assert.equal(asks, expectedAsksPerRound * 2);
 		await cleanupEvaluationLibrary(options, "library-eval");
 		assert.equal(deleted, true);
 		assert.ok(authenticatedRequests > asks);
