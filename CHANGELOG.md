@@ -3,7 +3,10 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
-## Unreleased
+## [0.2.11] - Acceptance Pending
+
+Candidate preparation only. The signed-image build and Hong Kong acceptance must
+complete before this version can be promoted to a formal Release.
 
 ### Fixed
 
@@ -13,6 +16,15 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 - Emit safe budget-exhaustion diagnostics and explain remote-task uncertainty before manual retry.
 - Preserve the last observed Job stage/timestamps at batch wait timeout, bound polling
   by the remaining budget, and block further stability rounds when the corpus is incomplete.
+- Verify actual document readiness, including supporting sources, when reusing an
+  evaluation library instead of manufacturing completed jobs.
+
+### Upgrade notes
+
+- Drain unfinished DBOS jobs and retain a verified backup before changing application
+  version. Existing active generations are not reindexed automatically.
+- A local parser budget failure does not confirm remote cancellation. Check the
+  provider task before manually retrying; upstream long-running tasks remain under investigation.
 
 ## [0.2.10] - Acceptance Pending
 
@@ -20,10 +32,8 @@ Signed images deployed to the Hong Kong reference instance on 2026-11-12, but th
 fresh-ingestion gate exceeded its unchanged 900-second batch deadline. The three-round
 matrix is 87/126; no formal Release is published. See the current acceptance report.
 
-### Evaluation Follow-up (Not in Tagged Images)
-
-- Verify actual document readiness when reusing an evaluation library instead of
-  manufacturing completed jobs. Preserve the original failed matrix and its classifications.
+The evaluation readiness correction made after this tag is included in 0.2.11,
+not in the 0.2.10 images. The original failed matrix and its classifications remain unchanged.
 
 ### Fixed
 
