@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
+import { setImmediate } from "node:timers/promises";
 
 import type {
 	DocumentAnalysis,
 	ParseInput,
 	ParserCapabilities,
+	ProviderTask,
 } from "../../src/core/contracts";
 import {
 	DocumentIRSchema,
@@ -257,6 +259,163 @@ test("PDF auto routing keeps simple digital files on LiteParse", async () => {
 	assert.ok(!calls.includes("mineru:submit"));
 });
 
+for (const scenario of [
+	{ name: "default 250ms interval", pollIntervalMs: undefined, delayMs: 250 },
+	{ name: "minimum 25ms interval", pollIntervalMs: 1, delayMs: 25 },
+	{ name: "configured 5s interval", pollIntervalMs: 5_000, delayMs: 5_000 },
+	{
+		name: "provider Retry-After 60s",
+		pollIntervalMs: 5_000,
+		retryAfterMs: 60_000,
+		delayMs: 60_000,
+	},
+]) {
+	test(`PDF polling preserves ${scenario.name} on the same task`, async (context) => {
+		const advance = parserClock(context);
+		const local = provider("liteparse", { tables: false, calls: [] });
+		const submit = context.mock.method(local, "submit", async () => ({
+			providerTaskId: "stable-task",
+			status: "running" as const,
+			submittedAt: new Date().toISOString(),
+		}));
+		const pollTimes: number[] = [];
+		context.mock.method(local, "poll", async (task: ProviderTask) => {
+			assert.equal(task.providerTaskId, "stable-task");
+			pollTimes.push(Date.now());
+			return {
+				status: pollTimes.length === 1 ? "running" : "completed",
+				retryAfterMs:
+					"retryAfterMs" in scenario ? scenario.retryAfterMs : undefined,
+			};
+		});
+		const fetch = context.mock.method(local, "fetchResult");
+		const cancel = context.mock.method(local, "cancel");
+		const pending = new PdfDocumentParser({
+			liteParse: local,
+			pollIntervalMs: scenario.pollIntervalMs,
+			maxWaitMs: 90_000,
+		}).parse(parseRequest("poll-delay"));
+		await advance(0);
+		assert.deepEqual(pollTimes, [0]);
+		await advance(scenario.delayMs - 1);
+		assert.deepEqual(pollTimes, [0]);
+		assert.equal(fetch.mock.callCount(), 0);
+		await advance(1);
+		await pending;
+		assert.deepEqual(pollTimes, [0, scenario.delayMs]);
+		assert.equal(submit.mock.callCount(), 1);
+		assert.equal(fetch.mock.callCount(), 1);
+		assert.equal(
+			fetch.mock.calls[0].arguments[0].providerTaskId,
+			"stable-task",
+		);
+		assert.equal(cancel.mock.callCount(), 0);
+	});
+}
+
+test("PDF polling cancellation interrupts a long wait without another poll", async (context) => {
+	const advance = parserClock(context);
+	const local = provider("liteparse", { tables: false, calls: [] });
+	const submit = context.mock.method(local, "submit", async () => ({
+		providerTaskId: "stable-task",
+		status: "running" as const,
+		submittedAt: new Date().toISOString(),
+	}));
+	const poll = context.mock.method(
+		local,
+		"poll",
+		async (task: ProviderTask) => {
+			assert.equal(task.providerTaskId, "stable-task");
+			return { status: "running" as const, retryAfterMs: 60_000 };
+		},
+	);
+	const fetch = context.mock.method(local, "fetchResult");
+	const cancel = context.mock.method(local, "cancel");
+	let cancelled = false;
+	let settled = false;
+	const reason = Object.assign(new Error("job cancelled"), {
+		code: "job_cancelled",
+	});
+	const pending = new PdfDocumentParser({
+		liteParse: local,
+		maxWaitMs: 90_000,
+	}).parse({
+		...parseRequest("poll-cancel"),
+		async assertContinuing() {
+			if (cancelled) throw reason;
+		},
+	});
+	const rejected = assert.rejects(pending, (error) => {
+		settled = true;
+		return error === reason;
+	});
+	await advance(1_123);
+	cancelled = true;
+	await advance(126);
+	assert.equal(settled, false);
+	await advance(1);
+	await rejected;
+	assert.equal(Date.now(), 1_250);
+	assert.equal(submit.mock.callCount(), 1);
+	assert.equal(poll.mock.callCount(), 1);
+	assert.equal(fetch.mock.callCount(), 0);
+	assert.equal(cancel.mock.callCount(), 1);
+	assert.equal(cancel.mock.calls[0].arguments[0].providerTaskId, "stable-task");
+	await advance(60_000);
+	assert.equal(poll.mock.callCount(), 1);
+	assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("PDF polling wait expires at the original deadline without another poll", async (context) => {
+	const advance = parserClock(context);
+	const local = provider("liteparse", { tables: false, calls: [] });
+	const submit = context.mock.method(local, "submit", async () => {
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		return {
+			providerTaskId: "stable-task",
+			status: "running" as const,
+			submittedAt: new Date().toISOString(),
+		};
+	});
+	const poll = context.mock.method(
+		local,
+		"poll",
+		async (task: ProviderTask) => {
+			assert.equal(task.providerTaskId, "stable-task");
+			return { status: "pending" as const, retryAfterMs: 60_000 };
+		},
+	);
+	const fetch = context.mock.method(local, "fetchResult");
+	const cancel = context.mock.method(local, "cancel");
+	let settled = false;
+	const pending = new PdfDocumentParser({
+		liteParse: local,
+		maxWaitMs: 1_751,
+	}).parse(parseRequest("poll-deadline"));
+	const rejected = assert.rejects(pending, (error) => {
+		settled = true;
+		assert.equal((error as { code: string }).code, "provider_timeout");
+		assert.equal((error as { retryable: boolean }).retryable, true);
+		return true;
+	});
+	await advance(0);
+	await advance(500);
+	assert.equal(poll.mock.callCount(), 1);
+	assert.equal(poll.mock.calls[0].arguments[0].providerTaskId, "stable-task");
+	await advance(1_250);
+	assert.equal(settled, false);
+	await advance(1);
+	await rejected;
+	assert.equal(Date.now(), 1_751);
+	assert.equal(submit.mock.callCount(), 1);
+	assert.equal(poll.mock.callCount(), 1);
+	assert.equal(fetch.mock.callCount(), 0);
+	assert.equal(cancel.mock.callCount(), 0);
+	await advance(60_000);
+	assert.equal(poll.mock.callCount(), 1);
+	assert.equal(fetch.mock.callCount(), 0);
+});
+
 test("PDF parser cancels the provider task when the ingest cohort is cancelled", async () => {
 	const calls: string[] = [];
 	const liteParse = provider("liteparse", { tables: false, calls });
@@ -416,6 +575,22 @@ test("PDF parser bounds provider retry delays by the workflow deadline", async (
 	assert.ok(performance.now() - startedAt < 500);
 	assert.ok(!calls.includes("liteparse:cancel"));
 });
+
+function parserClock(context: TestContext) {
+	context.mock.timers.enable({
+		apis: ["Date", "setTimeout", "setInterval"],
+		now: 0,
+	});
+	return async (milliseconds: number) => {
+		for (let remaining = milliseconds; remaining > 0; ) {
+			const step = Math.min(remaining, 250);
+			context.mock.timers.tick(step);
+			await setImmediate();
+			remaining -= step;
+		}
+		await setImmediate();
+	};
+}
 
 function parseRequest(idempotencyKey: string) {
 	return {

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import { context, SpanStatusCode, trace } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
@@ -61,6 +63,124 @@ test("AI SDK telemetry is permanently metadata-only", () => {
 		() => metadataOnlyAiTelemetry("question content is not an id"),
 		/invalid/,
 	);
+});
+
+test("NodeSDK flushes correlated OTLP spans and logs to local HTTP on shutdown", {
+	timeout: 20_000,
+}, async () => {
+	// A fresh process isolates SDK globals from the in-memory tracing tests.
+	const { stderr } = await promisify(execFile)(
+		process.execPath,
+		[
+			"--import",
+			"tsx",
+			"--input-type=module",
+			"--eval",
+			`
+import assert from "node:assert/strict";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { createRequire } from "node:module";
+import { setImmediate } from "node:timers/promises";
+import { trace } from "@opentelemetry/api";
+const require = createRequire(import.meta.url);
+const { initializeTelemetry, shutdownTelemetry } = require("./src/lib/observability/telemetry.ts");
+const { runWithObservabilityContext } = require("./src/lib/observability/context.ts");
+const { logger } = require("./src/lib/observability/logger.ts");
+const { withActiveSpan } = require("./src/lib/observability/tracing.ts");
+
+const requests = [];
+const server = createServer(async (request, response) => {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  requests.push({
+    path: request.url,
+    method: request.method,
+    contentType: request.headers["content-type"],
+    body: Buffer.concat(chunks),
+  });
+  response.writeHead(200, { "content-type": "application/x-protobuf" });
+  response.end();
+});
+server.listen(0, "127.0.0.1");
+await once(server, "listening");
+const address = server.address();
+assert.ok(address && typeof address === "object");
+process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:" + address.port;
+
+try {
+  assert.equal(initializeTelemetry("unorag.telemetry-regression"), true);
+  const requestId = "11111111-1111-4111-8111-111111111111";
+  let parentContext;
+  let childContext;
+  await runWithObservabilityContext({ requestId }, () =>
+    withActiveSpan("unorag.otlp.parent", {}, async () => {
+      parentContext = trace.getActiveSpan()?.spanContext();
+      assert.ok(parentContext);
+      await setImmediate();
+      assert.equal(trace.getActiveSpan()?.spanContext().spanId, parentContext.spanId);
+      await withActiveSpan("unorag.otlp.child", {}, async () => {
+        await setImmediate();
+        childContext = trace.getActiveSpan()?.spanContext();
+        assert.ok(childContext);
+        assert.equal(childContext.traceId, parentContext.traceId);
+        assert.notEqual(childContext.spanId, parentContext.spanId);
+        logger.info({
+          event: "telemetry.regression",
+          operation: "export",
+          password: "private-secret-marker",
+          question: "private-question-marker",
+        }, "private-message-marker");
+      });
+      assert.equal(trace.getActiveSpan()?.spanContext().spanId, parentContext.spanId);
+    }),
+  );
+  assert.equal(trace.getActiveSpan(), undefined);
+  await shutdownTelemetry();
+  await shutdownTelemetry();
+
+  for (const [path, markers] of [
+    ["/v1/traces", ["unorag.otlp.parent", "unorag.otlp.child"]],
+    ["/v1/logs", ["telemetry.regression", "export"]],
+  ]) {
+    const exported = requests.filter((request) => request.path === path);
+    assert.ok(exported.length > 0, path + " must be flushed before shutdown returns");
+    for (const request of exported) {
+      assert.equal(request.method, "POST");
+      assert.equal(request.contentType, "application/x-protobuf");
+    }
+    const payload = Buffer.concat(exported.map((request) => request.body));
+    for (const marker of [...markers, "unorag.telemetry-regression", requestId]) {
+      assert.ok(payload.includes(Buffer.from(marker)), path + " missing " + marker);
+    }
+    // OTLP protobuf encodes IDs as raw bytes rather than their hex display form.
+    assert.ok(payload.includes(Buffer.from(childContext.traceId, "hex")), path + " trace ID");
+    assert.ok(payload.includes(Buffer.from(childContext.spanId, "hex")), path + " child span ID");
+    for (const secret of ["private-secret-marker", "private-question-marker", "private-message-marker"]) {
+      assert.equal(payload.includes(Buffer.from(secret)), false, path + " leaked " + secret);
+    }
+  }
+} finally {
+  await shutdownTelemetry();
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
+`,
+		],
+		{
+			cwd: new URL("../..", import.meta.url),
+			encoding: "utf8",
+			timeout: 15_000,
+			env: {
+				NODE_ENV: "test",
+				PATH: process.env.PATH,
+				TSX_DISABLE_CACHE: "1",
+				OTEL_NODE_RESOURCE_DETECTORS: "none",
+				OTEL_METRICS_EXPORTER: "none",
+				OTEL_TRACES_SAMPLER: "always_on",
+			},
+		},
+	);
+	assert.doesNotMatch(stderr, /telemetry\.(initialization|shutdown)_failed/);
 });
 
 test("business request IDs remain separate from valid OTel trace IDs", async () => {
