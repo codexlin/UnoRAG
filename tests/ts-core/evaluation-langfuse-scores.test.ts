@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import { resolve } from "node:path";
 import test, { type TestContext } from "node:test";
 import { LangfuseClient } from "@langfuse/client";
-import { runLiveEvaluation } from "../../scripts/run-ab-live-e2e";
+import {
+	goldenFixtureFiles,
+	runLiveEvaluation,
+} from "../../scripts/run-ab-live-e2e";
 import type { LangfuseScoreClient } from "../../src/evaluation";
-import { publishEvaluationScores } from "../../src/evaluation";
+import { loadGoldenJsonl, publishEvaluationScores } from "../../src/evaluation";
 
 test("Langfuse score publication sends only metadata and stable session scores", async () => {
 	const payloads: Parameters<
@@ -527,6 +531,11 @@ test("publication stops after a rejected batch without sending later batches", a
 });
 
 test("real SDK rejection reaches live runner exit 2 even when quality gates fail", async (t) => {
+	const fixtures = goldenFixtureFiles(
+		await loadGoldenJsonl(
+			resolve(import.meta.dirname, "../../testdata/ab/golds.jsonl"),
+		),
+	);
 	const { requests, baseUrl } = await localLangfuse(t, () => ({
 		status: 401,
 		body: { message: "private-provider-body" },
@@ -562,6 +571,19 @@ test("real SDK rejection reaches live runner exit 2 even when quality gates fail
 				url.pathname === "/api/auth/session"
 			) {
 				return Response.json({ status: "ok" });
+			}
+			if (url.pathname === "/api/libraries/library-eval/documents") {
+				return Response.json(
+					fixtures.map((filename) => ({
+						filename,
+						status: "ready",
+						job_status: "completed",
+						job_id: `job-${filename}`,
+						chunk_count: 1,
+						document_id: `doc-${filename}`,
+						generation_id: `generation-${filename}`,
+					})),
+				);
 			}
 			assert.equal(url.pathname, "/api/rag/v1/ask");
 			const payload = JSON.parse(String(init?.body)) as { session_id: string };

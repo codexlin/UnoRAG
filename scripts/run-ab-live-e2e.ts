@@ -64,12 +64,86 @@ type JobResult = Readonly<{
 	parserReport: unknown;
 	stageRuns: unknown;
 	documentId: string | null;
+	readiness?: Readonly<{
+		observedAt: string;
+		documentStatus: string | null;
+		jobId: string | null;
+		jobStatus: string | null;
+		generationId: string | null;
+		chunkCount: number | null;
+	}>;
 }>;
+
+export function resolveReusedJobs(
+	filenames: readonly string[],
+	documents: unknown,
+): Map<string, JobResult> {
+	if (!Array.isArray(documents))
+		throw new Error("reused corpus document response must be an array");
+	if (
+		documents.some(
+			(row) =>
+				row === null ||
+				typeof row !== "object" ||
+				Array.isArray(row) ||
+				typeof row.filename !== "string" ||
+				!row.filename.trim(),
+		)
+	)
+		throw new Error("reused corpus document entries are malformed");
+	const rows = documents.map(asObject);
+	const observedAt = new Date().toISOString();
+	const id = (value: unknown) => stringValue(value)?.trim() || null;
+	return new Map(
+		filenames.map((filename) => {
+			const matches = rows.filter((row) => row.filename === filename);
+			const document = matches.length === 1 ? matches[0] : null;
+			const ready =
+				document?.status === "ready" &&
+				document.job_status === "completed" &&
+				typeof document.chunk_count === "number" &&
+				Number.isSafeInteger(document.chunk_count) &&
+				document.chunk_count > 0 &&
+				!!id(document.document_id) &&
+				!!id(document.job_id) &&
+				!!id(document.generation_id);
+			return [
+				filename,
+				{
+					status: ready
+						? "completed"
+						: matches.length > 1
+							? "ambiguous_document"
+							: document
+								? "not_ready"
+								: "missing",
+					stage: document ? stringValue(document.job_stage) : null,
+					error: ready ? null : "reused corpus document readiness unverified",
+					parserReport: document?.parser_report ?? null,
+					stageRuns: null,
+					documentId: document ? id(document.document_id) : null,
+					readiness: {
+						observedAt,
+						documentStatus: stringValue(document?.status),
+						jobId: id(document?.job_id),
+						jobStatus: stringValue(document?.job_status),
+						generationId: id(document?.generation_id),
+						chunkCount:
+							typeof document?.chunk_count === "number"
+								? document.chunk_count
+								: null,
+					},
+				} satisfies JobResult,
+			];
+		}),
+	);
+}
 
 type PositiveRow = Readonly<{
 	kind: "positive";
 	gold: GoldenCase;
 	ingestStatus: string;
+	ingestDependencies: Readonly<Record<string, string>>;
 	response: EvaluationResponse;
 	score: PositiveCaseScore;
 }>;
@@ -813,25 +887,31 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 			});
 			for (const [filename, failure] of uploadFailures) jobs.set(filename, failure);
 		} else {
-			jobs = new Map(
-				filenames.map((filename) => [
-					filename,
-					{
-						status: "completed",
-						stage: "reused",
-						error: null,
-						parserReport: null,
-						stageRuns: null,
-						documentId: null,
-					} satisfies JobResult,
-				]),
+			const response = await client.json(
+				"GET",
+				`/api/libraries/${encodeURIComponent(libraryId)}/documents`,
 			);
+			if (response.status !== 200)
+				throw new Error(`reused corpus lookup failed: ${response.status}`);
+			jobs = resolveReusedJobs(filenames, response.body);
 		}
 
 		process.stdout.write(`== evaluate ${golds.length} positive cases\n`);
 		const positiveRows: PositiveRow[] = [];
 		for (const [index, gold] of golds.entries()) {
-			const ingestStatus = jobs.get(gold.file)?.status ?? "missing";
+			const ingestDependencies = Object.fromEntries(
+				goldenFixtureFiles([gold]).map((filename) => [
+					filename,
+					jobs.get(filename)?.status ?? "missing",
+				]),
+			);
+			const ingestStatus = Object.values(ingestDependencies).every(
+				(status) => status === "completed",
+			)
+				? "completed"
+				: ingestDependencies[gold.file] !== "completed"
+					? ingestDependencies[gold.file]
+					: "supporting_not_ready";
 			const response =
 				ingestStatus === "completed"
 					? await ask({
@@ -847,6 +927,7 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 				kind: "positive",
 				gold,
 				ingestStatus,
+				ingestDependencies,
 				response,
 				score,
 			});
@@ -891,9 +972,18 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 			jobs: providerJobs,
 		});
 		const metricGates = evaluateReleaseGates(summary);
+		const corpusReadinessFailures = [...jobs]
+			.filter(([, job]) => job.status !== "completed")
+			.map(([filename, job]) => `${filename}: corpus readiness ${job.status}`);
+		const corpusReadinessGate = {
+			ok: corpusReadinessFailures.length === 0,
+			failures: corpusReadinessFailures,
+		};
 		const releaseGates = Object.freeze({
-			ok: metricGates.ok && qualityGates.ok && providerGates.ok,
+			ok:
+				corpusReadinessGate.ok && metricGates.ok && qualityGates.ok && providerGates.ok,
 			failures: Object.freeze([
+				...corpusReadinessFailures,
 				...metricGates.failures,
 				...qualityGates.failures,
 				...providerGates.failures,
@@ -921,6 +1011,7 @@ export async function runLiveEvaluation(options: RunnerOptions): Promise<number>
 			build_fingerprint: buildFingerprint(options.baseUrl, health.body),
 			library_id: libraryId,
 			jobs: Object.fromEntries(jobs),
+			corpus_readiness_gate: corpusReadinessGate,
 			summary,
 			metric_gates: metricGates,
 			quality_scorecard: qualityScorecard,

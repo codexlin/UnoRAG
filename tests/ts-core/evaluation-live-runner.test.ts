@@ -14,6 +14,7 @@ import test from "node:test";
 import {
 	cleanupEvaluationLibrary,
 	goldenFixtureFiles,
+	resolveReusedJobs,
 	resolveRunnerOptions,
 	runLiveEvaluation,
 	validateServiceUrl,
@@ -23,6 +24,63 @@ import {
 	loadNegativeGoldenJsonl,
 	parseGoldenCase,
 } from "../../src/evaluation";
+
+test("reused corpus readiness is verified without manufacturing completed jobs", () => {
+	const ready = {
+		filename: "ready.pdf",
+		status: "ready",
+		job_status: "completed",
+		job_id: "job-ready",
+		job_stage: "done",
+		chunk_count: 2,
+		document_id: "document-ready",
+		generation_id: "generation-ready",
+	};
+	const jobs = resolveReusedJobs(
+		["ready.pdf", "processing.pdf", "missing.pdf", "duplicate.pdf"],
+		[
+			ready,
+			{ ...ready, filename: "processing.pdf", status: "processing" },
+			{ ...ready, filename: "duplicate.pdf" },
+			{ ...ready, filename: "duplicate.pdf" },
+		],
+	);
+	assert.equal(jobs.get("ready.pdf")?.status, "completed");
+	assert.equal(jobs.get("ready.pdf")?.documentId, "document-ready");
+	assert.equal(
+		jobs.get("ready.pdf")?.readiness?.generationId,
+		"generation-ready",
+	);
+	assert.equal(jobs.get("ready.pdf")?.readiness?.jobStatus, "completed");
+	assert.equal(jobs.get("processing.pdf")?.status, "not_ready");
+	assert.equal(jobs.get("missing.pdf")?.status, "missing");
+	assert.equal(jobs.get("duplicate.pdf")?.status, "ambiguous_document");
+	for (const patch of [
+		{ job_status: "running" },
+		{ job_status: null },
+		{ chunk_count: 0 },
+		{ chunk_count: "2" },
+		{ document_id: null },
+		{ document_id: "  " },
+		{ job_id: null },
+		{ generation_id: null },
+		{ generation_id: "\t" },
+	]) {
+		assert.equal(
+			resolveReusedJobs(["ready.pdf"], [{ ...ready, ...patch }]).get(
+				"ready.pdf",
+			)?.status,
+			"not_ready",
+		);
+	}
+	assert.throws(() => resolveReusedJobs(["ready.pdf"], {}), /array/);
+	for (const malformed of [[null], [ready, null], ["ready.pdf"], [{}]]) {
+		assert.throws(
+			() => resolveReusedJobs(["ready.pdf"], malformed),
+			/malformed/,
+		);
+	}
+});
 
 const ENV_KEYS = [
 	"UNORAG_ADMIN_EMAIL",
@@ -178,6 +236,17 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 	let deleted = false;
 	let authenticatedRequests = 0;
 	let failAsk = false;
+	let reuseStatus = 200;
+	let reuseDocuments: unknown = goldenFixtureFiles(golds).map((filename) => ({
+		filename,
+		status: "ready",
+		job_status: "completed",
+		job_id: `job-${filename}`,
+		job_stage: "done",
+		chunk_count: 1,
+		document_id: `doc-${filename}`,
+		generation_id: `generation-${filename}`,
+	}));
 	const server = createServer(async (request, response) => {
 		const url = new URL(request.url ?? "/", "http://127.0.0.1");
 		const send = (status: number, body: unknown, headers = {}) => {
@@ -212,7 +281,15 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 			return;
 		}
 		authenticatedRequests += 1;
+		if (
+			request.method === "GET" &&
+			url.pathname === "/api/libraries/library-eval/documents"
+		) {
+			send(reuseStatus, reuseDocuments);
+			return;
+		}
 		if (request.method === "POST" && url.pathname === "/api/libraries") {
+			deleted = false;
 			send(201, { id: "library-eval" });
 			return;
 		}
@@ -342,8 +419,6 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		assert.equal(repeatResult, 0);
 		assert.equal(uploads, 7);
 		assert.equal(asks, expectedAsksPerRound * 2);
-		await cleanupEvaluationLibrary(options, "library-eval");
-		assert.equal(deleted, true);
 		assert.ok(authenticatedRequests > asks);
 		const output = resolve(root, "testdata/ab/_e2e_out");
 		assert.equal((await stat(output)).mode & 0o777, 0o700);
@@ -405,9 +480,14 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 		});
 		failAsk = true;
 		assert.equal(
-			await runLiveEvaluation({ ...options, reuseLibraryId: "library-eval" }),
+			await runLiveEvaluation({
+				...options,
+				keepLibrary: false,
+				reuseLibraryId: "library-eval",
+			}),
 			1,
 		);
+		assert.equal(deleted, false);
 		const failedReport = JSON.parse(
 			await readFile(resolve(output, "ab_live_latest.json"), "utf8"),
 		);
@@ -416,6 +496,80 @@ test("live runner separates corpus ingestion from repeatable Ask rounds", async 
 			failedReport.positive_cases[0]?.response.requestId,
 			"failed-request-from-header",
 		);
+		failAsk = false;
+		const asksBeforeIncomplete = asks;
+		reuseDocuments = [];
+		assert.equal(
+			await runLiveEvaluation({ ...options, reuseLibraryId: "library-eval" }),
+			1,
+		);
+		assert.equal(asks - asksBeforeIncomplete, negatives.length);
+		const incompleteReport = JSON.parse(
+			await readFile(resolve(output, "ab_live_latest.json"), "utf8"),
+		);
+		assert.ok(
+			incompleteReport.positive_cases.every(
+				(row: { ingestStatus: string }) => row.ingestStatus === "missing",
+			),
+		);
+		assert.equal(incompleteReport.corpus_readiness_gate.ok, false);
+		const supporting = golds.find((gold) => gold.supporting_sources?.length);
+		assert.ok(supporting);
+		const dependency = supporting.supporting_sources?.[0]?.file;
+		assert.ok(dependency);
+		reuseDocuments = goldenFixtureFiles(golds).map((filename) => ({
+			filename,
+			status: filename === dependency ? "processing" : "ready",
+			job_status: filename === dependency ? "running" : "completed",
+			job_id: `job-${filename}`,
+			chunk_count: 1,
+			document_id: `doc-${filename}`,
+			generation_id: `generation-${filename}`,
+		}));
+		const beforeSupporting = asks;
+		assert.equal(
+			await runLiveEvaluation({ ...options, reuseLibraryId: "library-eval" }),
+			1,
+		);
+		const blockedCases = golds.filter((gold) =>
+			goldenFixtureFiles([gold]).includes(dependency),
+		).length;
+		assert.equal(asks - beforeSupporting, expectedAsksPerRound - blockedCases);
+		const supportingReport = JSON.parse(
+			await readFile(resolve(output, "ab_live_latest.json"), "utf8"),
+		);
+		assert.equal(
+			supportingReport.positive_cases.find(
+				(row: { gold: { id: string } }) => row.gold.id === supporting.id,
+			)?.ingestStatus,
+			"supporting_not_ready",
+		);
+		for (const [status, body] of [
+			[403, []],
+			[200, {}],
+		] as const) {
+			reuseStatus = status;
+			reuseDocuments = body;
+			const before = asks;
+			await assert.rejects(
+				runLiveEvaluation({
+					...options,
+					keepLibrary: false,
+					reuseLibraryId: "library-eval",
+				}),
+				/reused corpus/,
+			);
+			assert.equal(asks, before);
+			assert.equal(deleted, false);
+		}
+		await cleanupEvaluationLibrary(options, "library-eval");
+		assert.equal(deleted, true);
+		assert.equal(
+			await runLiveEvaluation({ ...options, keepLibrary: false }),
+			0,
+		);
+		assert.equal(uploads, 14);
+		assert.equal(deleted, true);
 	} finally {
 		await new Promise<void>((resolveClose, reject) =>
 			server.close((error) => (error ? reject(error) : resolveClose())),
