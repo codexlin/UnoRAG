@@ -167,6 +167,9 @@ Qdrant 故障的新记录可展示 **Qdrant 诊断**：ready/query/scroll、错�
 不写入完整 Provider task ID、URL、原文或响应正文。归一化的 pending/running 状态只是观测值，
 不能单独用于归因上游排队或计算瓶颈。
 
+正常轮询等待遵守 Provider 返回的 `Retry-After`；未提供时使用 `PARSER_POLL_INTERVAL_MS`，最短 25 ms。
+等待期间每 250 ms 检查取消，不因此提前轮询；总预算先到期则超时，不再发出下一次轮询。
+
 `PARSER_MAX_WAIT_MS` 从 Provider 提交开始计算，覆盖源文件读取、上传、创建任务、轮询、结果下载及
 转换，重试和退避共享剩余预算，不在每次操作时重置。截止时会中断在途 HTTP 请求及响应体读取，
 过期结果不能继续激活；本地预分析仍使用 LiteParse 自身的执行预算。用户取消时，等待中的 HTTP
@@ -282,6 +285,8 @@ Langfuse 不可用时，独立 exporter 只做有界排队和重试，Tempo 与�
 
 前置条件是已有 Langfuse Cloud 项目或独立部署的 Langfuse v4。UnoRAG 不复制 Langfuse 自托管所需的
 ClickHouse、Redis/Valkey、对象存储等基础设施；这些组件由独立平台负责容量、升级和备份。
+可选的评测分数发布使用 SDK v6，另要求自托管服务端至少 **v4.59.0**；OTLP Trace 接入和评测发布
+是独立入口，详见 [评测指南](./EVALUATION.md#可选-langfuse-分数发布)。
 
 在 `runtime.advanced.env` 设置以 `/api/public/otel` 结尾的基础地址：
 

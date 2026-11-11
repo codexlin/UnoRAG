@@ -221,11 +221,9 @@ async function executeProvider(
 			}
 			if (status !== "completed") {
 				await cancellableDelay(
-					Math.min(
-						Math.max(progress.retryAfterMs ?? input.pollIntervalMs, 25),
-						1_000,
-					),
+					Math.max(progress.retryAfterMs ?? input.pollIntervalMs, 25),
 					input.assertContinuing,
+					deadline,
 				);
 			}
 		}
@@ -483,9 +481,16 @@ function applyScanPolicy(
 async function cancellableDelay(
 	milliseconds: number,
 	assertContinuing?: () => Promise<void>,
+	deadline = Infinity,
 ): Promise<void> {
-	await new Promise((resolve) => setTimeout(resolve, milliseconds));
-	await assertContinuing?.();
+	const waitUntil = Math.min(Date.now() + milliseconds, deadline);
+	// Cancellation checks must not shorten the requested poll or retry delay.
+	do {
+		await new Promise((resolve) =>
+			setTimeout(resolve, Math.min(250, Math.max(0, waitUntil - Date.now()))),
+		);
+		await assertContinuing?.();
+	} while (Date.now() < waitUntil);
 }
 
 function parserError(code: string, message: string, retryable: boolean): Error {
