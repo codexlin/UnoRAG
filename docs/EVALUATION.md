@@ -390,6 +390,10 @@ pnpm eval:stability
 名称及所有生产 Prompt 的版本和 digest；任一项缺失或工作树有未提交改动也会失败，避免对不可追溯
 产物放行。
 
+Runner 应在安装了 Git、具有 `.git` 元数据的干净版本检出目录中执行，再通过 HTTPS 访问待验收服务。
+只有 `git archive` 源码的目录或精简产品镜像不能提供该身份，不能把缺失的 commit/clean 字段手工补为通过。
+容器化评测需要单独准备具备这些条件的测试环境，不要为评测向生产 Worker 安装 Git。
+
 可通过 `--rounds=N` 和 `--max-p95-ms=N` 调整轮数与环境延迟预算。稳定性报告写入
 `testdata/ab/_e2e_out/ab_stability_*.json|md`，逐题记录通过次数、失败轮次和 ingest、retrieval、
 judge、table_answer、generation 等失败阶段。退出码仍为 `0` 通过、`1` 质量门禁失败、`2` 环境阻塞。
