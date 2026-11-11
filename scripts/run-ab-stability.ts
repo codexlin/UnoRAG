@@ -89,6 +89,7 @@ function markdown(report: JsonObject): string {
 		`- gate: **${gate.ok === true ? "PASS" : "FAIL"}**`,
 		`- ingest reliability: **${ingestGate.ok === true ? "PASS" : "FAIL"}**`,
 		`- Ask stability: **${askGate.ok === true ? "PASS" : "FAIL"}**`,
+		`- Ask stability status: **${askGate.status ?? "evaluated"}**`,
 		`- rounds: **${summary.passedRounds}/${summary.roundCount}**`,
 		`- maximum round P95: **${summary.maxP95Ms} ms**`,
 		`- model errors: **${summary.modelErrorCount}**`,
@@ -145,6 +146,7 @@ export async function runStabilityEvaluation(input: {
 	}
 	const reports: JsonObject[] = [];
 	let libraryId: string | null = null;
+	let blockedByCorpus = false;
 	let interruptedBy: NodeJS.Signals | null = null;
 	const handleSignal = (signal: NodeJS.Signals) => {
 		interruptedBy = signal;
@@ -176,6 +178,15 @@ export async function runStabilityEvaluation(input: {
 				) as JsonObject,
 			);
 			if (interruptedBy) throw new Error(`interrupted by ${interruptedBy}`);
+			const report = reports.at(-1) ?? {};
+			if (
+				!evaluateIngestReliability(report).ok ||
+				object(report.corpus_readiness_gate).ok !== true
+			) {
+				blockedByCorpus = true;
+				process.stdout.write("== Ask stability blocked: corpus not ready; no further rounds\n");
+				break;
+			}
 		}
 	} finally {
 		process.removeListener("SIGINT", handleSignal);
@@ -190,7 +201,13 @@ export async function runStabilityEvaluation(input: {
 		maxP95Ms: input.maxP95Ms,
 	});
 	const ingestReliabilityGate = evaluateIngestReliability(reports[0] ?? {});
-	const askStabilityGate = summary.gate;
+	const askStabilityGate = blockedByCorpus
+		? {
+				ok: false,
+				status: "blocked_by_corpus",
+				failures: ["Ask stability requires a fully ready corpus"],
+			}
+		: { ...summary.gate, status: "evaluated" };
 	const releaseGate: Gate = {
 		ok: ingestReliabilityGate.ok && askStabilityGate.ok,
 		failures: [

@@ -64,6 +64,7 @@ type JobResult = Readonly<{
 	parserReport: unknown;
 	stageRuns: unknown;
 	documentId: string | null;
+	waitObservation?: ReturnType<typeof projectJobWaitObservation>;
 	readiness?: Readonly<{
 		observedAt: string;
 		documentStatus: string | null;
@@ -73,6 +74,34 @@ type JobResult = Readonly<{
 		chunkCount: number | null;
 	}>;
 }>;
+
+export function projectJobWaitObservation(job: JsonObject, observedAt = Date.now()) {
+	const instant = (value: unknown) => {
+		const parsed = typeof value === "string" ? Date.parse(value) : NaN;
+		return Number.isFinite(parsed) ? parsed : null;
+	};
+	const elapsed = (start: number | null, end: number | null) =>
+		start !== null && end !== null && end >= start ? end - start : null;
+	const created = instant(job.created_at);
+	const started = instant(job.started_at);
+	const finished = instant(job.finished_at);
+	const queueEnd = started ?? (
+		job.status === "queued" && (job.started_at === null || job.started_at === undefined)
+			? observedAt : null
+	);
+	const runningEnd = finished ?? (
+		job.status === "running" || job.status === "cancelling" ? observedAt : null
+	);
+	return {
+		observedAt: new Date(observedAt).toISOString(),
+		status: stringValue(job.status),
+		createdAt: stringValue(job.created_at),
+		startedAt: stringValue(job.started_at),
+		finishedAt: stringValue(job.finished_at),
+		queueMs: elapsed(created, queueEnd),
+		runningMs: elapsed(started, runningEnd),
+	};
+}
 
 export function resolveReusedJobs(
 	filenames: readonly string[],
@@ -399,41 +428,57 @@ async function waitForJobs(input: {
 	pollIntervalMs: number;
 }): Promise<Map<string, JobResult>> {
 	const results = new Map<string, JobResult>();
+	const lastObserved = new Map<string, JobResult>();
 	const pending = new Map(input.uploads);
 	const deadline = Date.now() + input.timeoutMs;
 	while (pending.size > 0 && Date.now() < deadline) {
 		for (const [filename, upload] of pending) {
-			const response = await input.client.json(
-				"GET",
-				`/api/jobs/${encodeURIComponent(upload.jobId)}`,
-			);
+			const remainingMs = deadline - Date.now();
+			if (remainingMs <= 0) break;
+			let response: EvaluationHttpResponse;
+			try {
+				response = await input.client.json(
+					"GET",
+					`/api/jobs/${encodeURIComponent(upload.jobId)}`,
+					undefined,
+					Math.min(60_000, remainingMs),
+				);
+			} catch (error) {
+				if (Date.now() >= deadline) break;
+				throw error;
+			}
 			if (response.status !== 200) continue;
 			const job = asObject(response.body);
 			const status = stringValue(job.status) ?? "unknown";
 			process.stdout.write(
 				`  ${filename}: status=${status} stage=${stringValue(job.stage) ?? "-"}\n`,
 			);
-			if (!TERMINAL_JOB_STATUSES.has(status)) continue;
-			results.set(filename, {
+			const observed: JobResult = {
 				status,
 				stage: stringValue(job.stage),
 				error: stringValue(job.last_error) ?? stringValue(job.error_code),
 				parserReport: job.parser_report ?? null,
 				stageRuns: job.stage_runs ?? null,
 				documentId: upload.documentId,
-			});
+				waitObservation: projectJobWaitObservation(job),
+			};
+			lastObserved.set(filename, observed);
+			if (!TERMINAL_JOB_STATUSES.has(status)) continue;
+			results.set(filename, observed);
 			pending.delete(filename);
 		}
-		if (pending.size > 0) await sleep(input.pollIntervalMs);
+		if (pending.size > 0)
+			await sleep(Math.min(input.pollIntervalMs, Math.max(0, deadline - Date.now())));
 	}
 	for (const [filename, upload] of pending) {
 		results.set(filename, {
 			status: "timeout",
-			stage: null,
+			stage: lastObserved.get(filename)?.stage ?? null,
 			error: "job wait timeout",
-			parserReport: null,
-			stageRuns: null,
+			parserReport: lastObserved.get(filename)?.parserReport ?? null,
+			stageRuns: lastObserved.get(filename)?.stageRuns ?? null,
 			documentId: upload.documentId,
+			waitObservation: lastObserved.get(filename)?.waitObservation,
 		});
 	}
 	return results;
