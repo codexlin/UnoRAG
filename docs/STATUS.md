@@ -47,6 +47,7 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 
 - [#231](https://github.com/codexlin/UnoRAG/issues/231)：本轮真实 Ask 返回 `judge_unavailable`，且缺少细分失败诊断；
   已安全停止回答，但精确根因未确定，不能归因于 MinerU、网络或模型服务商。它阻塞 v0.2.9 质量放行。
+  候选补丁已加入请求内短证据编号及后置校验诊断，香港派生候选定向复验 6/6；不等同新镜像完整矩阵通过。
 - [#193](https://github.com/codexlin/UnoRAG/issues/193)：历史单次 Qdrant 故障根因未知，等待新的关联证据。
 - [#202](https://github.com/codexlin/UnoRAG/issues/202)：可选离线 Ragas/DiskCache advisory；该 Python 环境不在四个产品镜像内。
 - COS sidecar 只有对象引用，不是文件内容备份；尚未据此证明对象误删或桶级恢复能力。

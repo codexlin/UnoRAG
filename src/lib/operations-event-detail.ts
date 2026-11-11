@@ -1,3 +1,4 @@
+import type { EvidenceAssessmentFailureMetadata } from "@/core/ai/evidence-assessment-diagnostics";
 import type { RerankDiagnostic } from "@/core/retrieval/provider-request";
 import type { QdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
 
@@ -8,7 +9,9 @@ export type JudgeErrorCategory =
 	| "provider_unavailable"
 	| "output_truncated"
 	| "invalid_output"
-	| "provider_error";
+	| "provider_error"
+	| "evidence_validation"
+	| "unknown";
 
 const operationalRefusalCodes = new Set([
 	"insufficient_evidence",
@@ -33,6 +36,9 @@ export function operationalRefusalCode(value: unknown): string | null {
 
 export type JudgeDiagnosticDetail = {
 	judge_error_category?: JudgeErrorCategory;
+	judge_failure_source?: EvidenceAssessmentFailureMetadata["source"];
+	judge_failed_stage?: EvidenceAssessmentFailureMetadata["stage"];
+	judge_validation_code?: EvidenceAssessmentFailureMetadata["validationCode"];
 	judge_attempts?: number;
 	judge_duration_ms?: number;
 	judge_timeout_ms?: number;
@@ -40,6 +46,12 @@ export type JudgeDiagnosticDetail = {
 	judge_budget_ms?: number;
 	judge_status_code?: number;
 	judge_retryable?: boolean;
+	judge_sufficiency_attempts?: number;
+	judge_sufficiency_duration_ms?: number;
+	judge_refusal_review_attempts?: number;
+	judge_refusal_review_duration_ms?: number;
+	judge_conflict_attempts?: number;
+	judge_conflict_duration_ms?: number;
 };
 
 export type OperationsEventStage = {

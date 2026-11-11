@@ -543,7 +543,12 @@ test("sync ask returns public response and atomically appends the exchange", asy
 });
 
 for (const mode of ["sync", "stream"] as const) {
-	for (const failure of ["timeout", "authentication"] as const) {
+	for (const failure of [
+		"timeout",
+		"authentication",
+		"evidence_validation",
+		"unknown",
+	] as const) {
 		test(`${mode} judge ${failure} fails closed with truthful diagnostics and run ledger`, async (context) => {
 			resetPrometheusMetricsForTests();
 			const { handleNativeAskRequest } = await handlerModule;
@@ -558,6 +563,14 @@ for (const mode of ["sync", "stream"] as const) {
 				model,
 				async (input) => {
 					calls += 1;
+					if (failure === "evidence_validation")
+						return {
+							sufficient: true,
+							action: "generate",
+							reason: "private rationale",
+							evidence_ids: ["missing-alias"],
+						};
+					if (failure === "unknown") throw new Error("private sk-secret");
 					if (failure === "authentication")
 						throw new APICallError({
 							message: "private upstream sk-secret",
@@ -635,15 +648,26 @@ for (const mode of ["sync", "stream"] as const) {
 			assert.doesNotMatch(body.answer, /没有找到|证据不足/);
 			assert.deepEqual(body.citations, []);
 			assert.equal(generated, false);
-			const attempts = failure === "timeout" ? 2 : 1;
+			const attempts = failure === "timeout" || failure === "unknown" ? 2 : 1;
 			assert.equal(calls, attempts);
 			const debug = body.retrieval_debug;
-			assert.equal(debug.judge_attempts, attempts);
 			assert.equal(debug.judge_error_category, failure);
-			assert.equal(debug.judge_timeout_ms, 5);
-			assert.equal(debug.judge_max_attempts, 2);
-			assert.equal(debug.judge_budget_ms, 10);
-			assert.equal(debug.judge_retryable, failure === "timeout");
+			if (failure === "evidence_validation") {
+				assert.equal(debug.judge_failure_source, "evidence_validation");
+				assert.equal(debug.judge_validation_code, "selected_ids_unknown");
+				assert.equal(debug.judge_sufficiency_attempts, 1);
+				assert.equal(debug.judge_attempts, undefined);
+				assert.equal(debug.judge_timeout_ms, undefined);
+				assert.equal(debug.judge_status_code, undefined);
+				assert.equal(debug.judge_retryable, undefined);
+			} else {
+				assert.equal(debug.judge_failure_source, "structured_request");
+				assert.equal(debug.judge_attempts, attempts);
+				assert.equal(debug.judge_timeout_ms, 5);
+				assert.equal(debug.judge_max_attempts, 2);
+				assert.equal(debug.judge_budget_ms, 10);
+				assert.equal(debug.judge_retryable, failure !== "authentication");
+			}
 			assert.equal(
 				debug.stages.find((stage: { stage: string }) => stage.stage === "judge")
 					?.ok,
@@ -659,7 +683,17 @@ for (const mode of ["sync", "stream"] as const) {
 			assert.equal(stage?.outcome, "failed");
 			assert.equal(stage?.errorCode, "judge_unavailable");
 			assert.equal(stage?.detail?.judge_error_category, failure);
-			assert.equal(stage?.detail?.judge_attempts, attempts);
+			assert.equal(
+				stage?.detail?.judge_attempts,
+				failure === "evidence_validation" ? undefined : attempts,
+			);
+			if (failure === "evidence_validation") {
+				assert.equal(
+					stage?.detail?.judge_validation_code,
+					"selected_ids_unknown",
+				);
+				assert.equal(stage?.detail?.judge_sufficiency_attempts, 1);
+			}
 			const metrics = renderPrometheusMetrics();
 			if (mode !== "stream") {
 				assert.match(

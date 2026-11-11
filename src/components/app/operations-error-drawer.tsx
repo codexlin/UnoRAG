@@ -138,6 +138,9 @@ export function JudgeDiagnostics({
 		const detail = stage.detail;
 		const fields = [
 			["故障类别", detail.judge_error_category],
+			["故障来源", detail.judge_failure_source],
+			["失败环节", detail.judge_failed_stage],
+			["校验原因", detail.judge_validation_code],
 			["应用层尝试次数", detail.judge_attempts],
 			["应用层尝试上限", detail.judge_max_attempts],
 			[
@@ -157,6 +160,27 @@ export function JudgeDiagnostics({
 					: `${detail.judge_duration_ms} ms`,
 			],
 			["HTTP 状态", detail.judge_status_code],
+			["充分性已完成尝试", detail.judge_sufficiency_attempts],
+			[
+				"充分性已完成耗时",
+				detail.judge_sufficiency_duration_ms == null
+					? null
+					: `${detail.judge_sufficiency_duration_ms} ms`,
+			],
+			["拒答复核已完成尝试", detail.judge_refusal_review_attempts],
+			[
+				"拒答复核已完成耗时",
+				detail.judge_refusal_review_duration_ms == null
+					? null
+					: `${detail.judge_refusal_review_duration_ms} ms`,
+			],
+			["冲突核验已完成尝试", detail.judge_conflict_attempts],
+			[
+				"冲突核验已完成耗时",
+				detail.judge_conflict_duration_ms == null
+					? null
+					: `${detail.judge_conflict_duration_ms} ms`,
+			],
 			[
 				"可重试",
 				detail.judge_retryable == null

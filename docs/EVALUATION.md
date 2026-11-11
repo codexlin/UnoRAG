@@ -142,6 +142,9 @@ Ask 将检索与最终证据分成三层：Retriever/Reranker 先产生候选证
 覆盖原始 `table`、`table_summary` 与 `figure`，必须通过 `table_id`、`figure_id`、source chunk 或
 source node 关系匹配，不会发起隐藏检索，也不会跨文档扩张 Citation。Judge 返回空 ID、虚构 ID 或
 越界 ID 时 Ask fail closed，不生成无依据答案。
+三个证据核验阶段共用请求内的 `e1`、`e2` 等短编号，避免模型逐字复制长 UUID；子集不重新编号，
+服务端严格映射回本轮 canonical ID 后继续执行来源唯一性、原文摘录和数量上限校验。
+模型返回原 UUID、截断 UUID 或不存在的短编号均不会被近似纠正；归档和最终 Citation 仍使用原始 ID。
 
 另有一条显式的确定性查表入口：普通召回含真实 `table_id` 时，可通过同一授权检索边界探测
 原始表格记录；该探测计入 `retrieve` 阶段，不是上述来源补齐。只有单实体能够对应实际单元格、

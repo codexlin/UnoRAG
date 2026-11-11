@@ -202,7 +202,8 @@ export type StructuredFailureMetadata = Readonly<{
 		| "provider_unavailable"
 		| "output_truncated"
 		| "invalid_output"
-		| "provider_error";
+		| "provider_error"
+		| "unknown";
 	statusCode: number | null;
 	retryable: boolean;
 }>;
@@ -255,7 +256,7 @@ function classifyFailure(
 			retryable: category !== "authentication" && cause.isRetryable,
 		};
 	}
-	return { category: "provider_error", statusCode: null, retryable: true };
+	return { category: "unknown", statusCode: null, retryable: true };
 }
 
 class DefaultStructuredResult {

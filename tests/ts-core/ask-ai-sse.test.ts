@@ -41,7 +41,7 @@ test("comparison and summary paths retain ordinary judgement without a same-fact
 					sufficient: true,
 					action: "generate",
 					reason: "covered",
-					evidence_ids: ["a", "b"],
+					evidence_ids: ["e1", "e2"],
 				};
 			},
 		);
@@ -83,7 +83,7 @@ test("conflict scope includes all selected-document candidates, explicit multi-d
 						sufficient: true,
 						action: "generate",
 						reason: "covered",
-						evidence_ids: selected,
+						evidence_ids: selected.map((id) => (id === "a" ? "e1" : "e3")),
 					};
 				checked = JSON.parse(String(request.messages[0].content)).citations.map(
 					(item: { id: string }) => item.id,
@@ -107,7 +107,7 @@ test("conflict scope includes all selected-document candidates, explicit multi-d
 		});
 		assert.deepEqual(
 			checked,
-			selected.length === 1 ? ["a", "b", "d"] : ["a", "b", "c", "d"],
+			selected.length === 1 ? ["e1", "e2", "e4"] : ["e1", "e2", "e3", "e4"],
 		);
 	}
 });
@@ -124,11 +124,11 @@ test("separate conflict verification cannot widen ordinary evidence or turn a re
 						sufficient: action === "generate",
 						action,
 						reason: "baseline",
-						evidence_ids: action === "generate" ? ["a"] : [],
+						evidence_ids: action === "generate" ? ["e1"] : [],
 					};
 				const sent = JSON.parse(String(request.messages[0].content));
 				assert.equal(sent.citations.length, 2);
-				assert.deepEqual(sent.evidence_ids, ["a"]);
+				assert.deepEqual(sent.evidence_ids, ["e1"]);
 				return {
 					comparison: "private comparison",
 					resolution: "consistent",
@@ -169,15 +169,15 @@ test("conflict verification adds only exact authorized quotes and reauthorizes b
 						sufficient: true,
 						action: "generate",
 						reason: "covered",
-						evidence_ids: ["a"],
+						evidence_ids: ["e1"],
 					};
 				return {
 					comparison: "different",
 					resolution: "conflict",
 					conflict_evidence: [
-						{ evidence_id: "a", quote: "12日" },
+						{ evidence_id: "e1", quote: "12日" },
 						{
-							evidence_id: invalid === "foreign" ? "x" : "b",
+							evidence_id: invalid === "foreign" ? "x" : "e2",
 							quote: invalid === "fabricated" ? "99日" : "24日",
 						},
 					],
@@ -242,10 +242,10 @@ test("scoped false refusals can recover only from exact original evidence, then 
 					);
 					return {
 						missing_requirements: [],
-						excerpts: [{ evidence_id: "a", quote: text }],
+						excerpts: [{ evidence_id: sent.citations[0].id, quote: text }],
 					};
 				}
-				assert.deepEqual(sent.evidence_ids, ["a"]);
+				assert.deepEqual(sent.evidence_ids, ["e1"]);
 				return {
 					comparison: "same",
 					resolution: "consistent",
@@ -311,7 +311,7 @@ test("scoped refusal review keeps missing or fabricated evidence closed and does
 							missing_requirements: [],
 							excerpts: [
 								{
-									evidence_id: scenario === "foreign_id" ? "foreign" : "a",
+									evidence_id: scenario === "foreign_id" ? "foreign" : "e1",
 									quote: scenario === "fabricated" ? "检查水压" : "备份校验",
 								},
 							],
@@ -375,7 +375,7 @@ test("conflict provider failures remain technical errors with an identifiable st
 					sufficient: true,
 					action: "generate",
 					reason: "covered",
-					evidence_ids: ["a"],
+					evidence_ids: ["e1"],
 				};
 			throw new Error("private provider body");
 		},

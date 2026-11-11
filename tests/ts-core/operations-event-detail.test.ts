@@ -310,6 +310,8 @@ test("known Judge categories survive while unrecognized category text cannot lea
 		"output_truncated",
 		"invalid_output",
 		"provider_error",
+		"evidence_validation",
+		"unknown",
 	]) {
 		const detail = await read([stage({ judge_error_category: category })]);
 		assert.deepEqual(detail.stages[0]?.detail, {
@@ -323,6 +325,42 @@ test("known Judge categories survive while unrecognized category text cannot lea
 	assert.equal(detail.stages[0]?.detail?.judge_error_category, undefined);
 	assert.equal(detail.stages[0]?.detail?.judge_attempts, 1);
 	assert.doesNotMatch(JSON.stringify(detail), /private provider body/);
+});
+
+test("Judge post-model failures retain only safe stage codes and completed call statistics", async () => {
+	const recorded = {
+		judge_error_category: "evidence_validation",
+		judge_failure_source: "evidence_validation",
+		judge_failed_stage: "conflict_provenance",
+		judge_validation_code: "conflict_quote_mismatch",
+		judge_sufficiency_attempts: 1,
+		judge_sufficiency_duration_ms: 2.5,
+		judge_refusal_review_attempts: 1,
+		judge_refusal_review_duration_ms: 3.5,
+		judge_conflict_attempts: 1,
+		judge_conflict_duration_ms: 4.5,
+	};
+	const detail = await read([
+		stage({ ...recorded, quote: "private quote", evidence_id: "private id" }),
+	]);
+	assert.deepEqual(detail.stages[0]?.detail, recorded);
+	assert.equal(detail.stages[0]?.detail?.judge_timeout_ms, undefined);
+	const html = render(detail);
+	assert.match(html, /conflict_quote_mismatch/);
+	assert.match(html, /充分性已完成尝试/);
+	assert.match(html, /4.5 ms/);
+	assert.doesNotMatch(JSON.stringify(detail) + html, /private/);
+	const poisoned = await read([
+		stage({
+			judge_failure_source: "private source",
+			judge_failed_stage: "private stage",
+			judge_validation_code: "private code",
+			judge_sufficiency_attempts: -1,
+			judge_refusal_review_duration_ms: Infinity,
+			judge_conflict_attempts: 1.5,
+		}),
+	]);
+	assert.equal(poisoned.stages[0]?.detail, null);
 });
 
 test("invalid Judge values are dropped independently without coercion or fabricated defaults", async () => {

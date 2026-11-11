@@ -3,6 +3,17 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [0.2.10] - Acceptance Pending
+
+### Fixed
+
+- Use request-local evidence references for sufficiency, refusal review and conflict checks,
+  then strictly restore canonical source IDs. Invalid references still fail closed; no reindex is required.
+- Preserve completed Judge substage attempts/timings and distinguish local evidence validation
+  from structured-request and unknown errors in JSON/SSE, the run ledger, logs and diagnostics UI.
+- Keep unknown errors unclassified instead of guessing a provider failure. Existing request
+  retry policy and evidence-provenance checks are unchanged.
+
 ## [0.2.9] - Acceptance Pending
 
 Built and deployed to the Hong Kong reference instance on 2026-11-11. The GitHub Release
