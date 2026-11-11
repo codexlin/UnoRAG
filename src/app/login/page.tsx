@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
@@ -15,37 +16,43 @@ export default function LoginPage() {
 
 	async function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		if (submitting) return;
 		setSubmitting(true);
 		setError(null);
 		const form = new FormData(event.currentTarget);
-		const response = await fetch("/api/auth/session", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				email: form.get("email"),
-				password: form.get("password"),
-			}),
-		});
-		if (!response.ok) {
-			setError(
-				response.status === 401
-					? "邮箱或密码不正确"
-					: response.status === 429
-						? "登录尝试过多，请稍后再试"
-						: "登录服务暂时不可用",
-			);
+		try {
+			const response = await fetch("/api/auth/session", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					email: form.get("email"),
+					password: form.get("password"),
+				}),
+			});
+			if (!response.ok) {
+				setError(
+					response.status === 401
+						? "邮箱或密码不正确"
+						: response.status === 429
+							? "登录尝试过多，请稍后再试"
+							: "登录服务暂时不可用",
+				);
+				return;
+			}
+			const identity = (await response.json()) as {
+				mustChangePassword?: boolean;
+			};
+			router.replace(identity.mustChangePassword ? "/change-password" : "/app");
+			router.refresh();
+		} catch {
+			setError("网络连接异常，请稍后重试");
+		} finally {
 			setSubmitting(false);
-			return;
 		}
-		const identity = (await response.json()) as {
-			mustChangePassword?: boolean;
-		};
-		router.replace(identity.mustChangePassword ? "/change-password" : "/app");
-		router.refresh();
 	}
 
 	return (
-		<main className="grid min-h-dvh place-items-center bg-background px-6">
+		<main className="grid min-h-dvh place-items-center bg-background px-6 py-10">
 			<div className="w-full max-w-sm">
 				<div className="mb-8 flex items-center gap-3">
 					<UnoRAGLogo size="md" withWordmark />
@@ -81,6 +88,23 @@ export default function LoginPage() {
 						{submitting ? "正在登录..." : "登录"}
 					</Button>
 				</form>
+				<nav
+					aria-label="其他登录方式"
+					className="mt-5 flex flex-wrap justify-between gap-2 text-sm"
+				>
+					<Link
+						className="inline-flex min-h-11 items-center text-primary underline-offset-4 hover:underline"
+						href="/account-access?purpose=login"
+					>
+						使用邮箱链接登录
+					</Link>
+					<Link
+						className="inline-flex min-h-11 items-center text-primary underline-offset-4 hover:underline"
+						href="/account-access?purpose=reset"
+					>
+						忘记密码
+					</Link>
+				</nav>
 			</div>
 		</main>
 	);

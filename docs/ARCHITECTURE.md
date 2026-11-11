@@ -9,6 +9,10 @@ UnoRAG 是可私有化部署的知识产品，也提供可嵌入的 Knowledge AP
 当前默认交付模型是一位客户一套独立实例；Organization 表示该客户企业，Workspace 用于企业内部
 部门、项目和权限隔离，而不是让互不相关的客户共享一个公网 SaaS 实例。
 
+账号邮件由 Web 服务端通过 Resend HTTPS 发送；告警邮件由 control 使用持久化投递账本发送。
+两者共享部署级传输配置，不共享收件人和敏感载荷。注册保持邀请制；邮箱登录/密码重置只消费
+PG 中绑定现有账号、密码版本和作用域的一次性令牌，不把邮件凭据写入告警、日志或可观测载荷。
+
 ```mermaid
 flowchart TB
     Browser["UnoRAG Workspace"] --> Web

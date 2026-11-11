@@ -6,6 +6,7 @@ import {
 	index,
 	integer,
 	jsonb,
+	primaryKey,
 	text,
 	timestamp,
 	uniqueIndex,
@@ -382,14 +383,67 @@ export const observabilityAlertTransitions = appSchema.table(
 	],
 );
 
-/** At-least-once notification work created from immutable transitions. */
+export const workspaceEmailSettings = appSchema.table(
+	"workspace_email_settings",
+	{
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		enabled: boolean("enabled").default(false).notNull(),
+		recipients: jsonb("recipients").$type<string[]>().default([]).notNull(),
+		minimumSeverity: varchar("minimum_severity", { length: 16 })
+			.default("warning")
+			.notNull(),
+		notifyRecovery: boolean("notify_recovery").default(true).notNull(),
+		version: integer("version").default(1).notNull(),
+		updatedBy: uuid("updated_by").references(() => users.id, {
+			onDelete: "set null",
+		}),
+		...timestamps,
+	},
+	(table) => [
+		primaryKey({
+			name: "workspace_email_settings_pk",
+			columns: [table.organizationId, table.workspaceId],
+		}),
+		foreignKey({
+			name: "workspace_email_settings_org_actor_fk",
+			columns: [table.organizationId, table.updatedBy],
+			foreignColumns: [users.organizationId, users.id],
+		}),
+		foreignKey({
+			name: "workspace_email_settings_scope_fk",
+			columns: [table.organizationId, table.workspaceId],
+			foreignColumns: [workspaces.organizationId, workspaces.id],
+		}).onDelete("cascade"),
+		check("workspace_email_settings_version_check", sql`${table.version} > 0`),
+		check(
+			"workspace_email_settings_severity_check",
+			sql`${table.minimumSeverity} in ('warning', 'critical')`,
+		),
+		check(
+			"workspace_email_settings_recipients_check",
+			sql`case
+			when jsonb_typeof(${table.recipients}) = 'array' then
+				jsonb_array_length(${table.recipients}) <= 5
+				and not jsonb_path_exists(${table.recipients}, '$[*] ? (@.type() != "string")')
+				and not jsonb_path_exists(${table.recipients}, '$[*] ? (!(@ like_regex "^[^[:space:]@A-Z]+@[^[:space:]@A-Z]+[.][^[:space:]@A-Z]+$") || !(@ like_regex "^.{1,254}$"))')
+				and (not ${table.enabled} or jsonb_array_length(${table.recipients}) > 0)
+			else false end`,
+		),
+	],
+);
+
+/** At-least-once notification work for alert transitions and explicit tests. */
 export const observabilityAlertDeliveries = appSchema.table(
 	"observability_alert_deliveries",
 	{
 		id: uuid("id").defaultRandom().primaryKey(),
 		organizationId: uuid("organization_id").notNull(),
 		workspaceId: uuid("workspace_id").notNull(),
-		transitionId: uuid("transition_id").notNull(),
+		transitionId: uuid("transition_id"),
+		purpose: varchar("purpose", { length: 16 }).default("alert").notNull(),
+		providerMessageId: varchar("provider_message_id", { length: 128 }),
+		requestHash: varchar("request_hash", { length: 64 }),
 		channel: varchar("channel", { length: 16 }).notNull(),
 		destinationKey: varchar("destination_key", { length: 64 }).notNull(),
 		configVersion: varchar("config_version", { length: 64 }).notNull(),
@@ -410,6 +464,11 @@ export const observabilityAlertDeliveries = appSchema.table(
 	},
 	(table) => [
 		foreignKey({
+			name: "observability_alert_deliveries_scope_workspace_fk",
+			columns: [table.organizationId, table.workspaceId],
+			foreignColumns: [workspaces.organizationId, workspaces.id],
+		}).onDelete("cascade"),
+		foreignKey({
 			name: "observability_alert_deliveries_scope_transition_fk",
 			columns: [table.organizationId, table.workspaceId, table.transitionId],
 			foreignColumns: [
@@ -428,6 +487,22 @@ export const observabilityAlertDeliveries = appSchema.table(
 			table.status,
 			table.nextAttemptAt,
 			table.createdAt,
+		),
+		index("observability_alert_delivery_scope_created_idx").on(
+			table.organizationId,
+			table.workspaceId,
+			table.createdAt,
+			table.id,
+		),
+		check(
+			"observability_alert_delivery_purpose_check",
+			sql`
+			(${table.purpose} = 'alert' and ${table.transitionId} is not null)
+			or (${table.purpose} = 'test' and ${table.transitionId} is null)`,
+		),
+		check(
+			"observability_alert_delivery_request_hash_check",
+			sql`${table.requestHash} is null or ${table.requestHash} ~ '^[a-f0-9]{64}$'`,
 		),
 		check(
 			"observability_alert_delivery_attempt_check",

@@ -161,7 +161,10 @@ export async function resolveSessionCookieHeader(
 	);
 }
 
-async function sessionFor(identity: AuthIdentity) {
+async function sessionFor(
+	identity: AuthIdentity,
+	expectedCredentialVersion?: string,
+) {
 	const db = getDatabase();
 	const [credential] = await db
 		.select({ passwordChangedAt: localCredentials.passwordChangedAt })
@@ -169,6 +172,12 @@ async function sessionFor(identity: AuthIdentity) {
 		.where(eq(localCredentials.userId, identity.principalId))
 		.limit(1);
 	if (!credential) throw new Error("local credentials not found");
+	if (
+		expectedCredentialVersion !== undefined &&
+		String(credential.passwordChangedAt.getTime()) !== expectedCredentialVersion
+	) {
+		throw new Error("credentials changed during authentication");
+	}
 	return createSignedSession({
 		...identity,
 		credentialVersion: String(credential.passwordChangedAt.getTime()),
@@ -177,8 +186,9 @@ async function sessionFor(identity: AuthIdentity) {
 
 export async function issueSessionToken(
 	identity: AuthIdentity,
+	expectedCredentialVersion?: string,
 ): Promise<string> {
-	const session = await sessionFor(identity);
+	const session = await sessionFor(identity, expectedCredentialVersion);
 	await registerSession(session.claims);
 	return session.token;
 }
@@ -324,75 +334,101 @@ export async function changeLocalPassword(input: {
 	return { ok: true, identity };
 }
 
-export const localIdentityProvider: IdentityProvider<LocalCredentialsInput> = {
-	id: "local",
-	async authenticate(input) {
-		const db = getDatabase();
-		const now = new Date();
-		const rows = await db
-			.select({
-				principalId: users.id,
-				workspaceId: workspaceMembers.workspaceId,
-				passwordHash: localCredentials.passwordHash,
-			})
-			.from(users)
-			.innerJoin(localCredentials, eq(localCredentials.userId, users.id))
-			.innerJoin(workspaceMembers, eq(workspaceMembers.userId, users.id))
-			.where(
-				and(
-					eq(users.email, input.email.trim().toLowerCase()),
-					eq(users.status, "active"),
-					input.workspaceId
-						? eq(workspaceMembers.workspaceId, input.workspaceId)
-						: undefined,
-					or(
-						isNull(localCredentials.lockedUntil),
-						lte(localCredentials.lockedUntil, now),
-					),
+export async function authenticateLocalCredentials(
+	input: LocalCredentialsInput,
+): Promise<{
+	identity: AuthIdentity;
+	credentialVersion: string;
+} | null> {
+	const db = getDatabase();
+	const now = new Date();
+	const rows = await db
+		.select({
+			principalId: users.id,
+			workspaceId: workspaceMembers.workspaceId,
+			passwordHash: localCredentials.passwordHash,
+			passwordChangedAt: localCredentials.passwordChangedAt,
+		})
+		.from(users)
+		.innerJoin(localCredentials, eq(localCredentials.userId, users.id))
+		.innerJoin(workspaceMembers, eq(workspaceMembers.userId, users.id))
+		.where(
+			and(
+				eq(users.email, input.email.trim().toLowerCase()),
+				eq(users.status, "active"),
+				input.workspaceId
+					? eq(workspaceMembers.workspaceId, input.workspaceId)
+					: undefined,
+				or(
+					isNull(localCredentials.lockedUntil),
+					lte(localCredentials.lockedUntil, now),
 				),
-			)
-			.limit(1);
-		if (rows.length === 0) {
-			await verifyPassword(input.password, DUMMY_PASSWORD_HASH);
-			return null;
-		}
-		for (const row of rows) {
-			if (await verifyPassword(input.password, row.passwordHash)) {
-				await db
-					.update(localCredentials)
-					.set({
-						failedAttempts: 0,
-						lockedUntil: null,
-						updatedAt: now,
-					})
-					.where(eq(localCredentials.userId, row.principalId));
-				await db
-					.update(users)
-					.set({ lastLoginAt: now, updatedAt: now })
-					.where(eq(users.id, row.principalId));
-				return hydrateIdentity(row.principalId, row.workspaceId, "local");
-			}
-			await db
+			),
+		)
+		.limit(1);
+	if (rows.length === 0) {
+		await verifyPassword(input.password, DUMMY_PASSWORD_HASH);
+		return null;
+	}
+	for (const row of rows) {
+		if (await verifyPassword(input.password, row.passwordHash)) {
+			const verified = await db
 				.update(localCredentials)
 				.set({
-					failedAttempts: sql`${localCredentials.failedAttempts} + 1`,
-					lockedUntil: sql`CASE
-						WHEN ${localCredentials.failedAttempts} + 1 >= 5
-						THEN ${new Date(now.getTime() + 15 * 60 * 1000)}
-						ELSE ${localCredentials.lockedUntil}
-					END`,
+					failedAttempts: 0,
+					lockedUntil: null,
 					updatedAt: now,
 				})
 				.where(
 					and(
 						eq(localCredentials.userId, row.principalId),
-						or(
-							isNull(localCredentials.lockedUntil),
-							lte(localCredentials.lockedUntil, now),
-						),
+						eq(localCredentials.passwordHash, row.passwordHash),
 					),
-				);
+				)
+				.returning({ userId: localCredentials.userId });
+			if (verified.length !== 1) return null;
+			const credentialVersion = String(row.passwordChangedAt.getTime());
+			const identity = await hydrateIdentity(
+				row.principalId,
+				row.workspaceId,
+				"local",
+				credentialVersion,
+			);
+			if (!identity) return null;
+			await db
+				.update(users)
+				.set({ lastLoginAt: now, updatedAt: now })
+				.where(eq(users.id, row.principalId));
+			return { identity, credentialVersion };
 		}
-		return null;
+		await db
+			.update(localCredentials)
+			.set({
+				failedAttempts: sql`${localCredentials.failedAttempts} + 1`,
+				lockedUntil: sql`CASE
+						WHEN ${localCredentials.failedAttempts} + 1 >= 5
+						THEN ${new Date(now.getTime() + 15 * 60 * 1000)}
+						ELSE ${localCredentials.lockedUntil}
+					END`,
+				updatedAt: now,
+			})
+			.where(
+				and(
+					eq(localCredentials.userId, row.principalId),
+					eq(localCredentials.passwordHash, row.passwordHash),
+					or(
+						isNull(localCredentials.lockedUntil),
+						lte(localCredentials.lockedUntil, now),
+					),
+				),
+			);
+	}
+	return null;
+}
+
+export const localIdentityProvider: IdentityProvider<LocalCredentialsInput> = {
+	id: "local",
+	async authenticate(input) {
+		return (await authenticateLocalCredentials(input))?.identity ?? null;
 	},
 };

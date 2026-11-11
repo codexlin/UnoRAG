@@ -90,6 +90,36 @@ application version。`upgrade.sh` 会自动执行该门禁，日常命令只用
 Redis 登记新会话。Redis 不保存用户、成员关系或权限事实，但 Redis 不可用时登录、会话校验与 Public
 Knowledge API 会 fail closed，避免绕过撤销或分布式限流。
 
+### 账号邮件
+
+登录页提供密码登录、邮箱链接登录和忘记密码；工作区管理员创建邀请时可发邮件。
+账号邮件与告警使用相同的 Resend 凭据，但不是同一类投递：收件人来自账号/邀请，不能用告警配置
+扩大账号或成员权限。模板同时提供 HTML、纯文本和可复制链接，动态内容转义，不记录邮件正文或链接。
+
+邮箱登录和重置仅服务于已有活跃本地账号、组织和工作区成员。跨组织同邮箱存在歧义时不选择账号，
+也不发信。请求接口统一返回 `202`，先返回再在 Next.js `after` 中查账号和发信，避免响应内容及查询/投递
+耗时泄露账号存在性。`202` 不表示已发送；实际投递结果以 `auth.email_delivery` 审计记录的
+`accepted` / `failed` 和安全错误码为准。单次发信总预算 5 秒，包含响应正文读取。
+
+这些短期账号邮件不进入告警持久化队列，避免将登录凭据暴露到管理员可读取的告警历史。
+`after` 不是 durable job：进程退出可能丢失尚未完成的发送，没有自动补发保证；用户可重新申请，
+管理员可重新邀请。不要把“服务商已接受”当成收件箱已送达。服务商拒绝、发件域未验证、配额或网络失败
+应结合安全错误码及 Resend 控制台排查，不将上游错误正文贴进日志。
+
+登录/重置令牌为 32 字节随机值，只在 PG 保存 SHA256；15 分钟过期、绑定账号/工作区/密码版本、
+用途分离、一次性消费。同用途新链接使旧链接失效。重置密码在一个事务中消费令牌、更新密码版本、
+撤销所有该用户的待用账号链接并写审计，旧 Session 随密码版本失效；重置成功不自动登录。
+链接令牌使用 URL fragment，不进入 HTTP 访问日志，页面读取后立即从地址栏移除；用户明确确认才消费，
+邮件扫描器 GET 不会登录或重置。请同时在服务商侧关闭此类邮件的点击追踪，避免安全链接经追踪重定向。
+
+新邀请链接同样使用 fragment，预览通过 POST 提交令牌，不再将新令牌放进预览请求 URL。
+历史 query 形式邀请仍可打开，页面读取后会清除参数；它首次访问时可能已进入旧访问日志，应按
+敏感日志限制权限和保留期，必要时撤销并重新邀请，不能声称历史 URL 从未泄露。
+
+邮箱申请按 Redis 共享限制：每账号每 15 分钟最多 3 次、相邻请求至少 60 秒；每客户端 IP 每 15 分钟
+最多 20 次申请、60 次消费尝试。Redis 不可用时返回 `503`，不跳过限流。
+发信还要求明确的 HTTPS `APP_BASE_URL`（仅 loopback 允许 HTTP），不信任 Host 或客户端回跳地址。
+
 ```text
 AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS=900
 AUTH_LOGIN_RATE_LIMIT_PER_ACCOUNT=10
@@ -249,7 +279,6 @@ OBSERVABILITY_ASK_P95_WARNING_MS=15000
 OBSERVABILITY_ASK_P95_CRITICAL_MS=25000
 OBSERVABILITY_ALERT_RECOVERY_CYCLES=2
 OBSERVABILITY_ALERT_WEBHOOK_ENABLED=false
-OBSERVABILITY_ALERT_EMAIL_ENABLED=false
 ```
 
 Ask 统计告警读取运行中心的滚动窗口，只在对应样本数达到
@@ -258,11 +287,28 @@ critical；任务 dead/stuck、删除失败和 Provider 不可用不受最小样
 窗口，因此不把“连续轮询次数”误当成新的独立样本；降噪依靠样本下限，恢复则要求连续健康周期。
 
 健康评估使用 advisory lock 支持多个 control 副本，并把结果按 organization/workspace 投影。Webhook
-需同时配置 `OBSERVABILITY_ALERT_WEBHOOK_URL` 和 `OBSERVABILITY_ALERT_WEBHOOK_SECRET`；邮件需设置
-`EMAIL_PROVIDER=resend`、`OBSERVABILITY_ALERT_EMAIL_TO`、`EMAIL_FROM` 和 `RESEND_API_KEY`。这些值
-属于部署密钥，不在运行中心返回。启用对应通知时，还需把非敏感的
-`OBSERVABILITY_ALERT_WEBHOOK_ENABLED` / `OBSERVABILITY_ALERT_EMAIL_ENABLED` 设为 `true`，供 Web
-端展示配置状态；Web 容器不会获得通知密钥。通知失败采用有界退避，且不影响核心业务。
+需同时配置 `OBSERVABILITY_ALERT_WEBHOOK_URL` 和 `OBSERVABILITY_ALERT_WEBHOOK_SECRET`，并启用
+`OBSERVABILITY_ALERT_WEBHOOK_ENABLED`。邮件传输只在部署中设置 `EMAIL_PROVIDER=resend`、`EMAIL_FROM`
+和 `RESEND_API_KEY`；API Key 仅提供给 Web 服务端（账号邮件）及 control 进程（告警邮件），
+不提供给浏览器或入库 Worker。当前使用 Resend HTTPS API，不读取 `SMTP_*` 配置。
+
+工作区管理员在 **设置 → 邮件通知** 管理最多 5 个收件邮箱、通知开关、最低告警级别和恢复通知。
+这些策略保存到 PostgreSQL，保存后无需重启。收件人按工作区隔离；`OBSERVABILITY_ALERT_EMAIL_TO` 和
+`OBSERVABILITY_ALERT_EMAIL_ENABLED` 不再是运行时配置。旧部署升级后需要由管理员在各工作区保存设置，
+默认关闭，不把旧的全局收件人自动广播到所有工作区；原私有配置中的旧地址可供人工核对，不会自动迁入新工作区。
+
+测试邮件只能使用已保存的收件人，可在告警开关关闭时发送；每个工作区每 60 秒最多请求一次，限制在数据库
+事务内生效，多个 Web 副本不能绕过。测试和真实通知共用已有持久化投递队列，每个收件人独立重试、幂等和
+记录状态。修改策略会使尚未发送的旧版本通知失效；新策略只处理后续告警变化，不自动补发既有活动告警，
+无法撤回已经交给服务商的邮件。
+
+同一投递的重试保持同一幂等键，并校验首次发送时固定的请求内容哈希。部署更新若改变发件人或邮件内容，
+旧任务以 `email_request_changed` 终止，不换新幂等键重复发信。Resend 的并发幂等冲突单独有界重试，
+其他冲突不自动重试；这不构成超出服务商幂等保留期的 exactly-once 承诺。
+
+页面区分服务配置、通知开关和最近投递。服务配置状态来自 control 的周期投影，缺失或过期显示未知；
+“服务商已接受”只表示 Resend 接受了 API 请求，不证明送达收件箱。Provider 消息 ID 可供管理员到服务商
+控制台继续排查。HTTP 错误仅保留安全错误码，瞬时失败采用有界退避，且不影响核心业务。
 
 手工命令默认只预览；确认后才执行：
 

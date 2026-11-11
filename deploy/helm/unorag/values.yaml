@@ -211,8 +211,9 @@ config:
   authLoginRateLimitPerIp: "60"
   publicApiRateLimitPerMinute: "120"
   emailProvider: none
+  # Canonical HTTPS origin for account mail; empty keeps email login/reset disabled.
+  appBaseUrl: ""
   observabilityAlertWebhookEnabled: "false"
-  observabilityAlertEmailEnabled: "false"
 
 # ---------------------------------------------------------------------------
 # Secrets
@@ -226,7 +227,8 @@ config:
 #   MINERU_API_KEY (optional for an authenticated self-hosted or 302.AI endpoint)
 #   OTEL_EXPORTER_OTLP_HEADERS (optional when observability.otel.enabled=true)
 #   OBSERVABILITY_ALERT_WEBHOOK_URL / OBSERVABILITY_ALERT_WEBHOOK_SECRET (optional)
-#   OBSERVABILITY_ALERT_EMAIL_TO / EMAIL_FROM / RESEND_API_KEY (optional)
+#   EMAIL_FROM / RESEND_API_KEY (optional, Web account mail + control alert mail)
+# Alert recipients and policy are stored in Workspace settings, not in this Secret.
 # Bootstrap admin password must NOT live in the long-running runtime Secret.
 secret:
   create: false

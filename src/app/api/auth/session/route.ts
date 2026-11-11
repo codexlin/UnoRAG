@@ -6,8 +6,8 @@ import {
 	resetLoginAccountRateLimit,
 } from "@/lib/server/auth/login-rate-limit";
 import {
+	authenticateLocalCredentials,
 	issueSessionToken,
-	localIdentityProvider,
 	resolveRequestSession,
 	revokeSessionCookieHeader,
 	SESSION_COOKIE,
@@ -78,20 +78,21 @@ export async function POST(request: Request) {
 			},
 		);
 	}
-	const identity = await localIdentityProvider.authenticate({
+	const authentication = await authenticateLocalCredentials({
 		email,
 		password,
 		workspaceId,
 	});
-	if (!identity) {
+	if (!authentication) {
 		return NextResponse.json(
 			{ detail: "invalid credentials" },
 			{ status: 401 },
 		);
 	}
+	const { identity, credentialVersion } = authentication;
 	let token: string;
 	try {
-		token = await issueSessionToken(identity);
+		token = await issueSessionToken(identity, credentialVersion);
 		await resetLoginAccountRateLimit(email);
 	} catch (error) {
 		logger.error({

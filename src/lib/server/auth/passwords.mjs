@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomBytes, scrypt, scryptSync, timingSafeEqual } from "node:crypto";
 
 export function validatePassword(password) {
 	if (password.length < 7) {
@@ -16,6 +16,18 @@ export function validatePassword(password) {
 export function hashPassword(password) {
 	const salt = randomBytes(16);
 	const hash = scryptSync(password, salt, 64);
+	return `scrypt$${salt.toString("hex")}$${hash.toString("hex")}`;
+}
+
+/** Request-time hashing runs in the crypto thread pool, not the event loop. */
+export async function hashPasswordAsync(password) {
+	const salt = randomBytes(16);
+	const hash = await new Promise((resolve, reject) => {
+		scrypt(password, salt, 64, (error, derived) => {
+			if (error) reject(error);
+			else resolve(derived);
+		});
+	});
 	return `scrypt$${salt.toString("hex")}$${hash.toString("hex")}`;
 }
 

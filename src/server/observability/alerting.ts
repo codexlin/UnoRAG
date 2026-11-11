@@ -2,7 +2,17 @@ import { createHash, createHmac, randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
 
+import type {
+	WorkspaceEmailSettings,
+	WorkspaceNotificationScope,
+} from "../../lib/workspace-notifications";
 import { type AlertPolicy, DEFAULT_ALERT_POLICY } from "./alert-policy";
+import {
+	emailDestinationKey,
+	readWorkspaceEmailSettings,
+	WorkspaceNotificationError,
+	workspaceEmailConfigVersion,
+} from "./notification-settings";
 import type { OperationsSnapshot } from "./operations-service";
 import type { ProviderHealthSnapshot } from "./provider-health";
 
@@ -22,6 +32,8 @@ export interface AlertDestination {
 	channel: "webhook" | "email";
 	destinationKey: string;
 	configVersion: string;
+	minimumSeverity?: WorkspaceEmailSettings["minimum_severity"];
+	notifyRecovery?: boolean;
 }
 
 type Environment = Record<string, string | undefined>;
@@ -29,7 +41,7 @@ type Environment = Record<string, string | undefined>;
 type AlertPayload = {
 	event_id: string;
 	product: "UnoRAG";
-	transition: "opened" | "escalated" | "resolved" | "reopened";
+	transition: "opened" | "escalated" | "resolved" | "reopened" | "test";
 	organization_id: string;
 	workspace_id: string;
 	alert: {
@@ -76,6 +88,11 @@ function destination(
 
 export function configuredAlertDestinations(
 	environment: Environment = process.env,
+	context?: {
+		scope: WorkspaceNotificationScope;
+		settings: WorkspaceEmailSettings;
+		version: number;
+	},
 ): AlertDestination[] {
 	const result: AlertDestination[] = [];
 	const enabled = (name: string) => {
@@ -93,26 +110,41 @@ export function configuredAlertDestinations(
 			destination("webhook", webhookUrl, `${webhookUrl}:${webhookSecret}`),
 		);
 	}
-	const emailTo =
-		environment.OBSERVABILITY_ALERT_EMAIL_TO?.trim().toLowerCase();
-	const emailProvider = environment.EMAIL_PROVIDER?.trim().toLowerCase();
-	const emailFrom = environment.EMAIL_FROM?.trim().toLowerCase();
-	if (
-		enabled("OBSERVABILITY_ALERT_EMAIL_ENABLED") &&
-		emailTo &&
-		emailProvider === "resend" &&
-		emailFrom &&
-		environment.RESEND_API_KEY?.trim()
-	) {
-		result.push(
-			destination(
-				"email",
-				emailTo,
-				`${emailTo}:${emailFrom}:${environment.RESEND_API_KEY}`,
-			),
-		);
+	if (context?.settings.enabled && emailTransportConfigured(environment)) {
+		for (const email of new Set(context.settings.recipients)) {
+			result.push({
+				channel: "email",
+				destinationKey: emailDestinationKey(email),
+				configVersion: workspaceEmailConfigVersion(
+					context.scope,
+					context.version,
+				),
+				minimumSeverity: context.settings.minimum_severity,
+				notifyRecovery: context.settings.notify_recovery,
+			});
+		}
 	}
 	return result;
+}
+
+export function emailTransportConfigured(environment: Environment): boolean {
+	return Boolean(
+		environment.EMAIL_PROVIDER?.trim().toLowerCase() === "resend" &&
+			environment.EMAIL_FROM?.trim() &&
+			environment.RESEND_API_KEY?.trim(),
+	);
+}
+
+function emailTransitionAllowed(
+	severity: AlertSeverity,
+	transition: AlertPayload["transition"],
+	minimumSeverity: AlertDestination["minimumSeverity"],
+	notifyRecovery: boolean | undefined,
+): boolean {
+	return (
+		SEVERITY_RANK[severity] >= SEVERITY_RANK[minimumSeverity ?? "warning"] &&
+		(transition !== "resolved" || notifyRecovery !== false)
+	);
 }
 
 export function deriveOperationalSignals(
@@ -309,6 +341,16 @@ async function createTransition(
 	);
 	if (!inserted.rowCount) return;
 	for (const item of input.destinations) {
+		if (
+			item.channel === "email" &&
+			!emailTransitionAllowed(
+				input.signal.severity,
+				input.transition,
+				item.minimumSeverity,
+				item.notifyRecovery,
+			)
+		)
+			continue;
 		await client.query(
 			`INSERT INTO app.observability_alert_deliveries
 				(organization_id, workspace_id, transition_id, channel,
@@ -561,8 +603,10 @@ type ClaimedDelivery = {
 	organization_id: string;
 	workspace_id: string;
 	channel: "webhook" | "email";
+	purpose: "alert" | "test";
 	destination_key: string;
 	config_version: string;
+	request_hash: string | null;
 	payload: AlertPayload;
 	attempt: number;
 	max_attempts: number;
@@ -596,8 +640,8 @@ export async function claimAlertDeliveries(
 				WHERE delivery.id = candidates.id
 				RETURNING delivery.*
 			)
-			SELECT id, organization_id, workspace_id, channel, destination_key,
-				config_version, payload, attempt, max_attempts, lease_token
+			SELECT id, organization_id, workspace_id, channel, purpose, destination_key,
+				config_version, request_hash, payload, attempt, max_attempts, lease_token
 			FROM claims`,
 			[
 				now,
@@ -616,24 +660,79 @@ export async function claimAlertDeliveries(
 	}
 }
 
-async function fetchWithDeadline(
+async function fetchWithDeadline<T>(
 	url: string,
 	init: RequestInit,
 	timeoutMs: number,
-): Promise<Response> {
+	consume: (response: Response) => Promise<T>,
+): Promise<T> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), timeoutMs);
 	try {
-		return await fetch(url, { ...init, signal: controller.signal });
+		return await Promise.race([
+			fetch(url, { ...init, signal: controller.signal }).then(consume),
+			new Promise<never>((_, reject) => {
+				controller.signal.addEventListener(
+					"abort",
+					() => {
+						reject(
+							new DOMException("Delivery deadline exceeded", "AbortError"),
+						);
+					},
+					{ once: true },
+				);
+			}),
+		]);
 	} finally {
 		clearTimeout(timeout);
 	}
 }
 
+async function readResendConflictName(
+	response: Response,
+): Promise<
+	"concurrent_idempotent_requests" | "invalid_idempotent_request" | null
+> {
+	const reader = response.body?.getReader();
+	if (!reader) return null;
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			size += value.byteLength;
+			if (size > 4_096) {
+				await reader.cancel();
+				return null;
+			}
+			chunks.push(value);
+		}
+		const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+		if (parsed && typeof parsed === "object" && "name" in parsed) {
+			if (
+				parsed.name === "concurrent_idempotent_requests" ||
+				parsed.name === "invalid_idempotent_request"
+			)
+				return parsed.name;
+		}
+		return null;
+	} catch (error) {
+		if (error instanceof Error && error.name === "AbortError") throw error;
+		return null;
+	} finally {
+		reader.releaseLock();
+	}
+}
+
 async function deliver(
+	pool: Pool,
 	delivery: ClaimedDelivery,
 	environment: Environment,
-): Promise<{ ok: true } | { ok: false; code: string; retryable: boolean }> {
+): Promise<
+	| { ok: true; providerMessageId?: string }
+	| { ok: false; code: string; retryable: boolean }
+> {
 	const body = JSON.stringify(delivery.payload);
 	try {
 		if (delivery.channel === "webhook") {
@@ -669,6 +768,7 @@ async function deliver(
 					body,
 				},
 				5_000,
+				async (response) => response,
 			);
 			if (response.ok) return { ok: true };
 			return {
@@ -680,55 +780,159 @@ async function deliver(
 					response.status >= 500,
 			};
 		}
-		const to = environment.OBSERVABILITY_ALERT_EMAIL_TO?.trim() ?? "";
+		const scope = {
+			organizationId: delivery.organization_id,
+			workspaceId: delivery.workspace_id,
+		};
+		const current = await readWorkspaceEmailSettings(pool, scope);
+		const to = current.settings.recipients.find(
+			(email) => emailDestinationKey(email) === delivery.destination_key,
+		);
 		const from = environment.EMAIL_FROM?.trim() ?? "";
 		const apiKey = environment.RESEND_API_KEY?.trim() ?? "";
-		const current = configuredAlertDestinations(environment).find(
-			(item) => item.channel === "email",
-		);
 		if (
 			!to ||
-			!from ||
-			!apiKey ||
-			current?.destinationKey !== delivery.destination_key ||
-			current.configVersion !== delivery.config_version
+			!emailTransportConfigured(environment) ||
+			workspaceEmailConfigVersion(scope, current.version) !==
+				delivery.config_version
 		) {
 			return { ok: false, code: "destination_changed", retryable: false };
 		}
-		const response = await fetchWithDeadline(
-			"https://api.resend.com/emails",
-			{
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${apiKey}`,
-					"content-type": "application/json",
-					"Idempotency-Key": delivery.payload.event_id,
-				},
-				body: JSON.stringify({
-					from,
-					to: [to],
-					subject: `[UnoRAG] ${delivery.payload.alert.title}`,
-					text: [
+		const isTest = delivery.purpose === "test";
+		if (
+			delivery.payload.organization_id !== scope.organizationId ||
+			delivery.payload.workspace_id !== scope.workspaceId ||
+			(isTest
+				? delivery.payload.transition !== "test" ||
+					delivery.payload.alert.code !== "notifications.test"
+				: delivery.purpose !== "alert" ||
+					delivery.payload.transition === "test")
+		) {
+			return { ok: false, code: "delivery_invalid_payload", retryable: false };
+		}
+		if (
+			!isTest &&
+			(!current.settings.enabled ||
+				!emailTransitionAllowed(
+					delivery.payload.alert.severity,
+					delivery.payload.transition,
+					current.settings.minimum_severity,
+					current.settings.notify_recovery,
+				))
+		) {
+			return { ok: false, code: "destination_changed", retryable: false };
+		}
+		const emailBody = JSON.stringify({
+			from,
+			to: [to],
+			subject: isTest
+				? "[UnoRAG] 邮件通知测试"
+				: `[UnoRAG] ${delivery.payload.alert.title}`,
+			text: isTest
+				? "这是一封 UnoRAG 工作区邮件通知测试邮件，不代表发生故障。"
+				: [
 						delivery.payload.alert.detail,
 						"",
 						`恢复建议：${delivery.payload.alert.recovery}`,
 						`状态：${delivery.payload.transition}`,
 						`事件：${delivery.payload.event_id}`,
 					].join("\n"),
-				}),
+		});
+		const requestHash = digest(emailBody);
+		// Pin the exact wire body and verify ownership even when a retry already has a hash.
+		const pinned = await pool.query<{ request_hash: string }>(
+			`UPDATE app.observability_alert_deliveries
+			 SET request_hash = COALESCE(request_hash, $5)
+			 WHERE organization_id = $1 AND workspace_id = $2 AND id = $3
+				AND lease_token = $4 AND status = 'sending'
+			 RETURNING request_hash`,
+			[
+				scope.organizationId,
+				scope.workspaceId,
+				delivery.id,
+				delivery.lease_token,
+				requestHash,
+			],
+		);
+		if (!pinned.rowCount) {
+			// The same lease fence in settlement will return stale without changing the row.
+			return { ok: false, code: "destination_changed", retryable: false };
+		}
+		if (pinned.rows[0].request_hash !== requestHash) {
+			return { ok: false, code: "email_request_changed", retryable: false };
+		}
+		return await fetchWithDeadline(
+			"https://api.resend.com/emails",
+			{
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+					"content-type": "application/json",
+					"Idempotency-Key": `${delivery.payload.event_id}:${delivery.destination_key}`,
+				},
+				body: emailBody,
 			},
 			5_000,
+			async (response) => {
+				if (!response.ok) {
+					if (response.status === 409) {
+						const name = await readResendConflictName(response);
+						return {
+							ok: false as const,
+							code:
+								name === "concurrent_idempotent_requests"
+									? "email_concurrent_idempotent_requests"
+									: "email_http_409",
+							retryable: name === "concurrent_idempotent_requests",
+						};
+					}
+					await response.body?.cancel();
+					return {
+						ok: false as const,
+						code: `email_http_${response.status}`,
+						retryable:
+							response.status === 408 ||
+							response.status === 429 ||
+							response.status >= 500,
+					};
+				}
+				let accepted: unknown;
+				try {
+					accepted = await response.json();
+				} catch (error) {
+					if (error instanceof Error && error.name === "AbortError")
+						throw error;
+					return {
+						ok: false as const,
+						code: "email_invalid_response",
+						retryable: true,
+					};
+				}
+				const id =
+					accepted && typeof accepted === "object" && "id" in accepted
+						? accepted.id
+						: null;
+				if (
+					typeof id !== "string" ||
+					id.length > 128 ||
+					!/^[A-Za-z0-9_-]+$/.test(id)
+				) {
+					return {
+						ok: false as const,
+						code: "email_invalid_response",
+						retryable: true,
+					};
+				}
+				return { ok: true as const, providerMessageId: id.trim() };
+			},
 		);
-		if (response.ok) return { ok: true };
-		return {
-			ok: false,
-			code: `email_http_${response.status}`,
-			retryable:
-				response.status === 408 ||
-				response.status === 429 ||
-				response.status >= 500,
-		};
 	} catch (error) {
+		if (
+			error instanceof WorkspaceNotificationError &&
+			error.code === "workspace_not_found"
+		) {
+			return { ok: false, code: "destination_changed", retryable: false };
+		}
 		return {
 			ok: false,
 			code:
@@ -746,7 +950,11 @@ export async function deliverClaimedAlert(
 	options: { environment?: Environment; now?: Date } = {},
 ): Promise<"sent" | "retry" | "dead" | "stale"> {
 	const now = options.now ?? new Date();
-	const result = await deliver(delivery, options.environment ?? process.env);
+	const result = await deliver(
+		pool,
+		delivery,
+		options.environment ?? process.env,
+	);
 	const status = result.ok
 		? "sent"
 		: result.retryable && delivery.attempt < delivery.max_attempts
@@ -756,6 +964,7 @@ export async function deliverClaimedAlert(
 	const update = await pool.query(
 		`UPDATE app.observability_alert_deliveries
 		 SET status = $5::varchar(16), error_code = $6,
+			 provider_message_id = CASE WHEN $5::varchar(16) = 'sent' THEN $9 ELSE provider_message_id END,
 			 delivered_at = CASE WHEN $5::varchar(16) = 'sent' THEN $4 ELSE delivered_at END,
 			 next_attempt_at = CASE WHEN $5::varchar(16) = 'retry' THEN $7 ELSE next_attempt_at END,
 			 claimed_by = NULL, claimed_at = NULL, lease_token = NULL,
@@ -771,6 +980,7 @@ export async function deliverClaimedAlert(
 			result.ok ? null : result.code,
 			new Date(now.getTime() + backoffMs),
 			delivery.lease_token,
+			result.ok ? (result.providerMessageId ?? null) : null,
 		],
 	);
 	return update.rowCount === 1 ? status : "stale";

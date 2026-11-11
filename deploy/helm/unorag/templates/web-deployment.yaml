@@ -87,12 +87,20 @@ spec:
                   name: {{ include "unorag.secretName" . }}
                   key: QDRANT_API_KEY
                   optional: true
-            {{- range $key := list "OBSERVABILITY_ALERT_WEBHOOK_ENABLED" "OBSERVABILITY_ALERT_EMAIL_ENABLED" }}
+            {{- range $key := list "OBSERVABILITY_ALERT_WEBHOOK_ENABLED" "EMAIL_PROVIDER" "APP_BASE_URL" }}
             - name: {{ $key }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ include "unorag.fullname" $ }}-config
                   key: {{ $key }}
+            {{- end }}
+            {{- range $key := list "EMAIL_FROM" "RESEND_API_KEY" }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" $ }}
+                  key: {{ $key }}
+                  optional: true
             {{- end }}
           volumeMounts:
             {{- if .Values.persistence.enabled }}

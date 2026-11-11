@@ -24,6 +24,9 @@ GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA app TO unorag_migrator;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO unorag_web;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app TO unorag_web;
+REVOKE ALL PRIVILEGES ON app.workspace_email_settings FROM unorag_web, unorag_worker;
+GRANT SELECT, INSERT, UPDATE ON app.workspace_email_settings TO unorag_web;
+GRANT SELECT ON app.workspace_email_settings TO unorag_worker;
 
 GRANT SELECT ON
 	app.organizations,

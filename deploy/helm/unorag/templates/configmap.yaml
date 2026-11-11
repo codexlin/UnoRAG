@@ -61,5 +61,5 @@ data:
   COS_REGION: {{ .Values.objectStorage.cos.region | quote }}
   COS_PUBLIC_BASE_URL: {{ .Values.objectStorage.cos.publicBaseUrl | quote }}
   EMAIL_PROVIDER: {{ .Values.config.emailProvider | quote }}
+  APP_BASE_URL: {{ .Values.config.appBaseUrl | quote }}
   OBSERVABILITY_ALERT_WEBHOOK_ENABLED: {{ .Values.config.observabilityAlertWebhookEnabled | quote }}
-  OBSERVABILITY_ALERT_EMAIL_ENABLED: {{ .Values.config.observabilityAlertEmailEnabled | quote }}

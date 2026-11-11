@@ -77,7 +77,7 @@ export function WorkspaceMembersPanel() {
 	}, [canManage]);
 
 	useEffect(() => {
-		void refresh();
+		void refresh().catch(() => setError("网络连接失败，请刷新重试"));
 	}, [refresh]);
 
 	async function createInvite() {
@@ -86,38 +86,63 @@ export function WorkspaceMembersPanel() {
 		setCreatedUrl(null);
 		setEmailNote(null);
 		setCopied(false);
-		const response = await fetch("/api/workspace/invites", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ email, role, send_email: true }),
-		});
-		setBusy(false);
-		if (!response.ok) {
-			const detail = await response.json().catch(() => null);
-			setError(
-				typeof detail?.detail === "string" ? detail.detail : "创建邀请失败",
+		try {
+			const response = await fetch("/api/workspace/invites", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ email, role, send_email: true }),
+			});
+			if (!response.ok) {
+				const detail = await response.json().catch(() => null);
+				setError(
+					typeof detail?.detail === "string" ? detail.detail : "创建邀请失败",
+				);
+				return;
+			}
+			const invite = (await response.json()) as Invite & {
+				emailDelivery?: { sent: boolean; provider: string; reason?: string };
+			};
+			setCreatedUrl(
+				invite.inviteUrl
+					? new URL(invite.inviteUrl, window.location.origin).href
+					: null,
 			);
-			return;
+			if (invite.emailDelivery?.sent) {
+				setEmailNote(
+					"邮件服务已接受发送请求，不代表已送达；也可复制链接分享。",
+				);
+			} else {
+				const reasons: Record<string, string> = {
+					app_base_url_not_configured:
+						"未配置有效的 APP_BASE_URL，未发送邮件。请复制链接分享。",
+					not_configured: "邮件服务未配置，未发送邮件。请复制链接分享。",
+					"EMAIL_PROVIDER=none": "邮件服务未启用，未发送邮件。请复制链接分享。",
+					"RESEND_API_KEY or EMAIL_FROM missing":
+						"邮件服务配置不完整，未发送邮件。请复制链接分享。",
+					copy_link_only: "邀请已创建，请复制链接分享。",
+				};
+				setEmailNote(
+					reasons[invite.emailDelivery?.reason ?? ""] ??
+						"邮件未发送成功。邀请已创建，请复制链接分享。",
+				);
+			}
+			setEmail("");
+			await refresh();
+		} catch {
+			setError("网络连接失败，无法确认最新状态，请刷新后重试");
+		} finally {
+			setBusy(false);
 		}
-		const invite = (await response.json()) as Invite & {
-			emailDelivery?: { sent: boolean; provider: string; reason?: string };
-		};
-		setCreatedUrl(invite.inviteUrl ?? null);
-		if (invite.emailDelivery?.sent) {
-			setEmailNote("已尝试通过邮件发送（Resend）");
-		} else {
-			setEmailNote(
-				"未配置邮件或发送未成功：请复制下方链接发给对方（默认方式）",
-			);
-		}
-		setEmail("");
-		await refresh();
 	}
 
 	async function copyUrl() {
 		if (!createdUrl) return;
-		await navigator.clipboard.writeText(createdUrl);
-		setCopied(true);
+		try {
+			await navigator.clipboard.writeText(createdUrl);
+			setCopied(true);
+		} catch {
+			setError("复制失败，请手动选择邀请链接");
+		}
 	}
 
 	async function revoke(inviteId: string) {
@@ -169,9 +194,6 @@ export function WorkspaceMembersPanel() {
 			<div>
 				<p className="text-meta font-mono tracking-[0.16em] text-muted-foreground uppercase">
 					Members
-				</p>
-				<p className="text-ui mt-1 text-muted-foreground">
-					邀请以复制链接为主；配置 Resend 后可自动发邮件。
 				</p>
 			</div>
 

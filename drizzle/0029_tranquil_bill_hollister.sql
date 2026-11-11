@@ -1,0 +1,1 @@
+ALTER TABLE "app"."workspace_email_settings" ADD CONSTRAINT "workspace_email_settings_org_actor_fk" FOREIGN KEY ("organization_id","updated_by") REFERENCES "app"."users"("organization_id","id") ON DELETE no action ON UPDATE no action;

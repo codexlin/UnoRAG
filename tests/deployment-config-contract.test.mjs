@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { loadAll } from "js-yaml";
 
 import {
 	hasCommand,
@@ -117,6 +118,67 @@ test("Helm gives Web and Worker the same canonical model endpoint", (t) => {
 	assert.doesNotMatch(render.stdout, /MINERU_URL/);
 	assert.equal((render.stdout.match(/APP_ENV/g) ?? []).length, 3);
 	assert.match(render.stdout, /APP_ENV:\s+"production"/);
+});
+
+test("account email secrets reach only Web/control and recipients stay in the application", (t) => {
+	const compose = renderComposeConfig({
+		EMAIL_PROVIDER: "resend",
+		EMAIL_FROM: "ops@example.test",
+		RESEND_API_KEY: "contract-email-key",
+		APP_BASE_URL: "https://unorag.example",
+	});
+	for (const name of ["web", "dbos-control"]) {
+		assert.equal(compose.services[name].environment.EMAIL_PROVIDER, "resend");
+		assert.equal(
+			compose.services[name].environment.RESEND_API_KEY,
+			"contract-email-key",
+		);
+	}
+	assert.equal(
+		compose.services.web.environment.APP_BASE_URL,
+		"https://unorag.example",
+	);
+	assert.equal(
+		compose.services["dbos-worker"].environment.RESEND_API_KEY,
+		undefined,
+	);
+	for (const service of Object.values(compose.services)) {
+		assert.equal(service.environment?.OBSERVABILITY_ALERT_EMAIL_TO, undefined);
+		assert.equal(
+			service.environment?.OBSERVABILITY_ALERT_EMAIL_ENABLED,
+			undefined,
+		);
+	}
+	if (!hasCommand("helm", ["version", "--short"])) {
+		t.skip("helm is not installed");
+		return;
+	}
+	const render = renderHelm([
+		"--set",
+		"config.emailProvider=resend",
+		"--set",
+		"config.appBaseUrl=https://unorag.example",
+	]);
+	assert.equal(render.status, 0, render.stderr);
+	const resources = loadAll(render.stdout).filter(Boolean);
+	const config = resources.find((item) => item.kind === "ConfigMap");
+	assert.equal(config.data.APP_BASE_URL, "https://unorag.example");
+	assert.equal(config.data.EMAIL_PROVIDER, "resend");
+	assert.equal(config.data.OBSERVABILITY_ALERT_EMAIL_TO, undefined);
+	assert.equal(config.data.OBSERVABILITY_ALERT_EMAIL_ENABLED, undefined);
+	for (const deployment of resources.filter(
+		(item) => item.kind === "Deployment",
+	)) {
+		const container = deployment.spec.template.spec.containers[0];
+		const env = new Map(container.env.map((entry) => [entry.name, entry]));
+		const component = deployment.metadata.labels["app.kubernetes.io/component"];
+		if (["web", "dbos-control"].includes(component))
+			assert.equal(
+				env.get("RESEND_API_KEY").valueFrom.secretKeyRef.key,
+				"RESEND_API_KEY",
+			);
+		else assert.equal(env.has("RESEND_API_KEY"), false);
+	}
 });
 
 test("config reconciliation layers old runtime values without losing custom settings", async (t) => {
