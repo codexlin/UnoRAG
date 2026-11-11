@@ -382,9 +382,13 @@ pnpm eval:stability
 ```
 
 稳定性 runner 将发布结论拆成两段：首轮创建临时知识库、上传全部真实文件并等待入库终态，作为
-**Ingest Reliability Gate**；随后三轮 Ask 复用同一个不可变知识库，作为 **Ask Stability Gate**。
-它不会为每轮重新调用 ParserProvider，也不会把 MinerU 等外部解析服务的偶发故障重复混入 Ask
-稳定性。正常结束、门禁失败、`SIGINT` 或 `SIGTERM` 后均统一删除临时知识库。
+**Ingest Reliability Gate**；随后三轮 Ask 复用同一个测试库，作为 **Ask Stability Gate**。
+每次复用都读取当前文档清单，验证文件唯一、文档 ready、最新 job completed、正整数 chunk 数和有效
+document/job/generation ID；未就绪、缺失或重名不能直接标为完成。原始就绪快照及观测时间保留在私有
+报告，正例的主文件和所有 `supporting_sources` 都必须就绪，并有独立 `corpus_readiness_gate`。
+非 200、畸形清单在 Ask 前停止。就绪查询不是内容哈希/跨轮 generation 不变的证明；测试期间不得外部
+编辑语料，应结合快照核对身份。它不会为每轮重新调用 ParserProvider；未入库场景不冒充完整 Ask 质量。
+正常结束、门禁失败、`SIGINT` 或 `SIGTERM` 后均统一删除 runner 自建的临时知识库。
 总报告分别写入 `ingest_reliability_gate`、`ask_stability_gate` 和二者合取的 `release_gate`；任一门失败
 都禁止发布，但故障归属保持清晰。
 
