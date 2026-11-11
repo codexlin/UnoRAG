@@ -265,6 +265,8 @@ generation，索引血缘及章节一致，且 Judge 可见的章节原文完整
 合法且重叠的百分比区间，则直接拒绝断言唯一最高，并报告两个区间。未读到区间、范围不明确及上限比较不走此规则。
 普通 Ask 可在原 Top-K 内保留一条达到原门槛、与已选正文同文档版本且有结构来源关系的 figure；
 仅使用已授权候选，不额外召回、不改变公共 Retrieve 默认顺序，也不等同于 ChartIR 数值理解。
+召回的补充图片不会仅因血缘关联就成为普通事实题的正式引用；仅当问题明确涉及图像、图注或图表时，
+才从已选证据补入同源图片。Judge 直接选中的图片仍可作为证据；表格血缘、授权、引用编号与传输契约不变。
 排查、收益与 Token/延迟代价见 [历史修复案例](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-05-comparison-lineage-fix.md)。
 
 Embedding/Rerank 的 HTTP 重试保留总 deadline 和次数预算，401 等凭证错误不重试；429/503 可遵守

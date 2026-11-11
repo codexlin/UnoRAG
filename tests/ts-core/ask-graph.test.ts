@@ -573,74 +573,112 @@ test("a contradictory insufficient-generate judgement cannot authorize an answer
 	assert.equal(calls.includes("generate"), false);
 });
 
-test("Judge evidence selection restores same-version structured lineage", async () => {
-	const result = await new AskGraphService(
-		createContext({
-			retrieve: () => ({
-				citations: [
-					{
-						id: "section-hit",
-						index: 1,
-						score: 0.95,
-						record_type: "section",
-						record_id: "section-record",
-						source_chunk_ids: ["figure-record"],
-						source_node_ids: ["node-1"],
-						doc_id: "doc-1",
-						document_version_id: "version-1",
-					},
-					{
-						id: "figure-hit",
-						index: 2,
-						score: 0.85,
-						record_type: "figure",
-						record_id: "figure-record",
-						source_chunk_ids: [],
-						source_node_ids: ["node-1"],
-						doc_id: "doc-1",
-						document_version_id: "version-1",
-					},
-					{
-						id: "foreign-figure",
-						index: 3,
-						score: 0.8,
-						record_type: "figure",
-						record_id: "foreign-record",
-						source_chunk_ids: [],
-						source_node_ids: ["node-1"],
-						doc_id: "doc-2",
-						document_version_id: "version-1",
-					},
-					{
-						id: "table-summary-hit",
-						index: 4,
-						score: 0.78,
-						record_type: "table_summary",
-						record_id: "table-summary-record",
-						source_chunk_ids: ["section-record"],
-						source_node_ids: [],
-						doc_id: "doc-1",
-						document_version_id: "version-1",
-					},
-				],
-				retrieval_attempts: 1,
+test("only visual questions promote companion figures; direct evidence and table lineage remain intact", async () => {
+	const ask = (question: string, evidenceIds = ["section-hit"]) =>
+		new AskGraphService(
+			createContext({
+				retrieve: () => ({
+					citations: [
+						{
+							id: "section-hit",
+							index: 1,
+							score: 0.95,
+							record_type: "section",
+							record_id: "section-record",
+							source_chunk_ids: ["figure-record"],
+							source_node_ids: ["node-1"],
+							doc_id: "doc-1",
+							document_version_id: "version-1",
+						},
+						{
+							id: "figure-hit",
+							index: 2,
+							score: 0.85,
+							record_type: "figure",
+							record_id: "figure-record",
+							source_chunk_ids: [],
+							source_node_ids: ["node-1"],
+							doc_id: "doc-1",
+							document_version_id: "version-1",
+						},
+						{
+							id: "foreign-figure",
+							index: 3,
+							score: 0.8,
+							record_type: "figure",
+							record_id: "foreign-record",
+							source_chunk_ids: [],
+							source_node_ids: ["node-1"],
+							doc_id: "doc-2",
+							document_version_id: "version-1",
+						},
+						{
+							id: "old-figure",
+							record_type: "figure",
+							source_node_ids: ["node-1"],
+							doc_id: "doc-1",
+							document_version_id: "old-version",
+						},
+						{
+							id: "table-summary-hit",
+							index: 4,
+							score: 0.78,
+							record_type: "table_summary",
+							record_id: "table-summary-record",
+							source_chunk_ids: ["section-record"],
+							source_node_ids: [],
+							doc_id: "doc-1",
+							document_version_id: "version-1",
+						},
+					],
+					retrieval_attempts: 1,
+				}),
+				judge: () => ({
+					sufficient: true,
+					action: "generate",
+					reason: "supported",
+					evidence_ids: evidenceIds,
+				}),
 			}),
-			judge: () => ({
-				sufficient: true,
-				action: "generate",
-				reason: "supported",
-				evidence_ids: ["section-hit"],
-			}),
-		}),
-	).invoke({ question: "What does the figure show?" });
+		).invoke({ question });
 
+	for (const question of [
+		"总投资预算和建设周期分别是多少？",
+		"mixed-charts.pdf 正文里的总投资是多少？",
+		"Can you figure out the total investment?",
+	]) {
+		const result = await ask(question);
+		assert.deepEqual(
+			result.citations?.map(({ id, index }) => [id, index]),
+			[
+				["section-hit", 1],
+				["table-summary-hit", 2],
+			],
+		);
+		assert.equal(result.retrieval_debug?.direct_evidence_count, 1);
+		assert.equal(result.retrieval_debug?.lineage_evidence_count, 1);
+		assert.equal(result.retrieval_debug?.selected_evidence_count, 2);
+	}
+	for (const question of [
+		"What does the figure show?",
+		"图4（堆叠柱状图）中哪个部门的总预算最高？",
+		"手册图注对操作前电源状态有什么要求？",
+	]) {
+		const result = await ask(question);
+		assert.deepEqual(
+			result.citations?.map(({ id }) => id),
+			["section-hit", "figure-hit", "table-summary-hit"],
+		);
+		assert.equal(result.retrieval_debug?.direct_evidence_count, 1);
+		assert.equal(result.retrieval_debug?.lineage_evidence_count, 2);
+		assert.equal(result.retrieval_debug?.selected_evidence_count, 3);
+	}
+	const directFigure = await ask("操作前电源是什么状态？", ["figure-hit"]);
 	assert.deepEqual(
-		result.citations?.map((citation) => citation.id),
-		["section-hit", "figure-hit", "table-summary-hit"],
+		directFigure.citations?.map(({ id }) => id),
+		["figure-hit"],
 	);
-	assert.equal(result.retrieval_debug?.direct_evidence_count, 1);
-	assert.equal(result.retrieval_debug?.lineage_evidence_count, 2);
-	assert.equal(result.retrieval_debug?.selected_evidence_count, 3);
+	assert.equal(directFigure.retrieval_debug?.lineage_evidence_count, 0);
 });
 
 test("Judge evidence selection fails closed for unknown or empty evidence ids", async () => {
