@@ -5,6 +5,15 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [0.2.10] - Acceptance Pending
 
+Signed images deployed to the Hong Kong reference instance on 2026-11-12, but the
+fresh-ingestion gate exceeded its unchanged 900-second batch deadline. The three-round
+matrix is 87/126; no formal Release is published. See the current acceptance report.
+
+### Evaluation Follow-up (Not in Tagged Images)
+
+- Verify actual document readiness when reusing an evaluation library instead of
+  manufacturing completed jobs. Preserve the original failed matrix and its classifications.
+
 ### Fixed
 
 - Use request-local evidence references for sufficiency, refusal review and conflict checks,
