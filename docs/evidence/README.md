@@ -7,7 +7,7 @@
 
 | 文档 | 用途 |
 |---|---|
-| [v0.2.10 候选验收](./2026-11-12-v0.2.10-release-closeout.md) | Judge 修复、签名交付及产品冒烟通过；PDF 入库超时，87/126、NO-GO；保留复用库评测缺陷与原始分类 |
+| [v0.2.11 候选验收](./2026-11-12-v0.2.11-release-closeout.md) | 签名交付、升级冒烟、7/7 入库及浏览器检查通过；三轮 122/126，冲突摘录校验故障独立阻断，NO-GO |
 | [试点反馈模板](./PILOT-FEEDBACK-TEMPLATE.md) | 记录客户场景、版本、证据和责任签字；模板本身不证明通过 |
 
 ## 历史证据
@@ -17,6 +17,7 @@
 
 | 原文 | 保留原因 |
 |---|---|
+| [v0.2.10](https://github.com/codexlin/UnoRAG/blob/288677a217c4ac788e91d6083079d3f1a0d6fd1c/docs/evidence/2026-11-12-v0.2.10-release-closeout.md) | 原 87/126、入库超时、复用库评测缺陷及总预算重提调查均保留；不被后续新文件成功改写 |
 | [v0.2.9](https://github.com/codexlin/UnoRAG/blob/6e02ab4461c81ec6d00048a4881f55d2a962853b/docs/evidence/2026-11-11-v0.2.9-release-closeout.md) | 123/126、历史 Judge 失败与诊断调查、真实邮件、磁盘清理；保留 NO-GO，不用后续补丁改写 |
 | [v0.2.8](https://github.com/codexlin/UnoRAG/blob/9ddb14432b75fd6d4dc7cbdc97e130c7e9f6ea4c/docs/evidence/2026-11-10-v0.2.8-release-closeout.md) | 25 文件候选业务矩阵、正式镜像复验及当次隔离恢复；不继承为新版本结论 |
 | [v0.2.7](https://github.com/codexlin/UnoRAG/blob/0d52120e15943ada7740493717559b22ec47ad2d/docs/evidence/2026-11-07-v0.2.7-release-closeout.md) | 当次稳定版的三轮 285/285、香港交付结果与历史限制 |

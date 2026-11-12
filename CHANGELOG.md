@@ -5,8 +5,11 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [0.2.11] - Acceptance Pending
 
-Candidate preparation only. The signed-image build and Hong Kong acceptance must
-complete before this version can be promoted to a formal Release.
+Signed images from `288677a` were deployed to the Hong Kong reference instance on
+2026-11-12. Upgrade smoke, 7/7 fresh ingestion and 34 browser checks passed. The raw
+three-round matrix is 122/126: three quarter-expression lexical failures and one
+real conflict-quote validation failure. No formal Release or stable promotion is
+approved; see the [current acceptance report](./docs/evidence/2026-11-12-v0.2.11-release-closeout.md).
 
 ### Fixed
 
@@ -19,6 +22,11 @@ complete before this version can be promoted to a formal Release.
 - Verify actual document readiness, including supporting sources, when reusing an
   evaluation library instead of manufacturing completed jobs.
 
+### Maintenance
+
+- Run the same complete read-only CI gates on release-branch pushes. Keep protected
+  branch requirements intact; queued checks are never reported as passing.
+
 ### Upgrade notes
 
 - Drain unfinished DBOS jobs and retain a verified backup before changing application
@@ -30,7 +38,9 @@ complete before this version can be promoted to a formal Release.
 
 Signed images deployed to the Hong Kong reference instance on 2026-11-12, but the
 fresh-ingestion gate exceeded its unchanged 900-second batch deadline. The three-round
-matrix is 87/126; no formal Release is published. See the current acceptance report.
+matrix is 87/126; no formal Release is published. The
+[original report](https://github.com/codexlin/UnoRAG/blob/288677a217c4ac788e91d6083079d3f1a0d6fd1c/docs/evidence/2026-11-12-v0.2.10-release-closeout.md)
+remains unchanged in history.
 
 The evaluation readiness correction made after this tag is included in 0.2.11,
 not in the 0.2.10 images. The original failed matrix and its classifications remain unchanged.
