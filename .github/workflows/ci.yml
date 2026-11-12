@@ -5,12 +5,12 @@ name: ci
 # Release image push: see release-images.yml (GHCR by default; ACR mirror optional).
 # Deploy with approval: deploy.yml (deferred).
 #
-# This workflow is the single PR/main entrypoint.
+# This workflow is the single PR/main/release-branch entrypoint.
 
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
 
 permissions:
   contents: read
