@@ -36,6 +36,27 @@ function parseEnvContract(contents) {
 	);
 }
 
+test("release pushes execute the complete read-only CI gates", async () => {
+	const [ci] = loadAll(
+		await readFile(new URL(".github/workflows/ci.yml", root), "utf8"),
+	);
+	assert.ok(Object.hasOwn(ci.on, "pull_request"));
+	assert.ok(ci.on.push.branches.includes("main"));
+	assert.ok(ci.on.push.branches.includes("release/**"));
+	assert.deepEqual(ci.permissions, { contents: "read" });
+	for (const name of [
+		"secrets",
+		"brand-residue",
+		"lint-diff",
+		"offline-evaluation",
+		"web",
+		"docker-build",
+	]) {
+		assert.ok(ci.jobs[name], `missing required CI gate: ${name}`);
+		assert.equal(ci.jobs[name].if, undefined);
+	}
+});
+
 test("deployment inputs map to one application environment contract", async () => {
 	const [runtimeContents, advancedContents] = await Promise.all([
 		readFile(new URL("deploy/config/runtime.env.example", root), "utf8"),
