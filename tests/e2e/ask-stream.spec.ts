@@ -1435,6 +1435,8 @@ test("legacy Ask trace retains labelled Judge-only token metadata", async ({
 test("temporary Ask archives model usage in the POST and restores the trace after reload", async ({
 	page,
 }, testInfo) => {
+	// Two complete document loads share this functional journey's budget.
+	test.slow();
 	const archiveId = "fixture-usage-archive";
 	const sessionId = "usage-roundtrip-session";
 	await openAsk(page, [

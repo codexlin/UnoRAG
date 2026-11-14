@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { type Cookie, expect, type Page, test } from "@playwright/test";
 import type {
 	ApiDocument,
 	ApiLibrary,
@@ -6,6 +6,7 @@ import type {
 } from "../../src/lib/api";
 
 const stamp = "2026-01-01T00:00:00.000Z";
+let cookies: Cookie[] = [];
 const libraries: ApiLibrary[] = ["Upload target", "Other library"].map(
 	(name, index) => ({
 		id: `upload-library-${index}`,
@@ -161,16 +162,27 @@ async function installUploads(page: Page, plans: Record<string, UploadPlan>) {
 	return { reads, submissions, cancelRequests };
 }
 
-test.beforeEach(async ({ page }) => {
+test.beforeAll(async ({ browser }) => {
 	const email = process.env.UNORAG_E2E_ADMIN_EMAIL;
 	const password = process.env.UNORAG_E2E_ADMIN_PASSWORD;
 	if (!email || !password)
 		throw new Error("E2E administrator credentials required");
-	await page.goto("/login");
-	await page.getByLabel("邮箱").fill(email);
-	await page.getByLabel("密码").fill(password);
-	await page.getByRole("button", { name: "登录", exact: true }).click();
-	await page.waitForURL((url) => url.pathname.startsWith("/app"));
+	const context = await browser.newContext({
+		baseURL: process.env.UNORAG_E2E_BASE_URL,
+	});
+	try {
+		const response = await context.request.post("/api/auth/session", {
+			data: { email, password },
+		});
+		expect(response.ok()).toBe(true);
+		cookies = await context.cookies();
+	} finally {
+		await context.close();
+	}
+});
+
+test.beforeEach(async ({ context }) => {
+	await context.addCookies(cookies);
 });
 
 test("multi-upload reports each response before a slow file finishes and preserves every failure", async ({
