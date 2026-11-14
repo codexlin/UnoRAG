@@ -8,10 +8,12 @@ import {
 	LoaderCircle,
 	RotateCcw,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ModelUsagePanel } from "@/components/app/model-usage-panel";
 import { useSession } from "@/components/app/session-provider";
 import { StageWaterfall } from "@/components/app/stage-waterfall";
+import { Button } from "@/components/ui/button";
 import {
 	Sheet,
 	SheetContent,
@@ -51,13 +53,13 @@ export function RequestOutcome({ detail }: { detail: OperationsEventDetail }) {
 					: "border border-border/70 bg-muted/25 px-3 py-3"
 			}
 		>
-			<p className="text-ui font-semibold">
+			<p className="text-ui font-medium">
 				{STATUS_LABELS[detail.status] ?? detail.status}
 			</p>
 			{showGuidance ? (
 				<div className="mt-2 space-y-2">
 					<p className="text-ui font-medium">{detail.guidance.title}</p>
-					<p className="font-mono text-[11px] text-destructive break-all">
+					<p className="font-mono text-xs text-destructive break-all">
 						{detail.error_code ?? "unclassified_error"}
 					</p>
 					<p className="text-ui text-foreground/85">{detail.guidance.cause}</p>
@@ -78,9 +80,7 @@ export function RequestOutcome({ detail }: { detail: OperationsEventDetail }) {
 					].map(([label, value]) => (
 						<div className="contents" key={label}>
 							<dt className="text-muted-foreground">{label}</dt>
-							<dd className="min-w-0 break-all font-mono text-[11px]">
-								{value}
-							</dd>
+							<dd className="min-w-0 break-all font-mono text-xs">{value}</dd>
 						</div>
 					))}
 				</dl>
@@ -105,18 +105,16 @@ export function CitationDiagnostics({
 		if (!diagnostic) return null;
 		return (
 			<section key={stage.id} className="border-t border-border/70 pt-4">
-				<h3 className="text-ui font-semibold">
+				<h3 className="text-ui font-medium">
 					引用诊断 · 阶段 {stage.sequence}
 				</h3>
 				<dl className="mt-3 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2">
-					<dt className="text-meta text-muted-foreground">拦截原因</dt>
+					<dt className="text-xs text-muted-foreground">拦截原因</dt>
 					<dd className="min-w-0 break-words text-xs">
 						{labels[diagnostic.category]}
 					</dd>
-					<dt className="text-meta text-muted-foreground">可用来源数</dt>
-					<dd className="font-mono text-[11px]">
-						{diagnostic.allowedSourceCount}
-					</dd>
+					<dt className="text-xs text-muted-foreground">可用来源数</dt>
+					<dd className="font-mono text-xs">{diagnostic.allowedSourceCount}</dd>
 				</dl>
 			</section>
 		);
@@ -193,16 +191,14 @@ export function JudgeDiagnostics({
 		if (fields.length === 0) return null;
 		return (
 			<section key={stage.id} className="border-t border-border/70 pt-4">
-				<h3 className="text-ui font-semibold">
+				<h3 className="text-ui font-medium">
 					Judge 诊断 · 阶段 {stage.sequence}
 				</h3>
 				<dl className="mt-3 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2">
 					{fields.map(([label, value]) => (
 						<div key={label} className="contents">
-							<dt className="text-meta text-muted-foreground">{label}</dt>
-							<dd className="min-w-0 break-words font-mono text-[11px]">
-								{value}
-							</dd>
+							<dt className="text-xs text-muted-foreground">{label}</dt>
+							<dd className="min-w-0 break-words font-mono text-xs">{value}</dd>
 						</div>
 					))}
 				</dl>
@@ -251,16 +247,14 @@ export function RerankDiagnostics({
 		].filter((field) => field[1] != null);
 		return (
 			<section key={stage.id} className="border-t border-border/70 pt-4">
-				<h3 className="text-ui font-semibold">
+				<h3 className="text-ui font-medium">
 					重排诊断 · 阶段 {stage.sequence}
 				</h3>
 				<dl className="mt-3 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2">
 					{fields.map(([label, value]) => (
 						<div key={label} className="contents">
-							<dt className="text-meta text-muted-foreground">{label}</dt>
-							<dd className="min-w-0 break-words font-mono text-[11px]">
-								{value}
-							</dd>
+							<dt className="text-xs text-muted-foreground">{label}</dt>
+							<dd className="min-w-0 break-words font-mono text-xs">{value}</dd>
 						</div>
 					))}
 				</dl>
@@ -293,14 +287,12 @@ export function QdrantDiagnostics({
 		].filter((field) => field[1] != null);
 		return (
 			<section key={stage.id} className="border-t border-border/70 pt-4">
-				<h3 className="text-ui font-semibold">Qdrant 诊断</h3>
+				<h3 className="text-ui font-medium">Qdrant 诊断</h3>
 				<dl className="mt-3 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2">
 					{fields.map(([label, value]) => (
 						<div key={label} className="contents">
-							<dt className="text-meta text-muted-foreground">{label}</dt>
-							<dd className="min-w-0 break-words font-mono text-[11px]">
-								{value}
-							</dd>
+							<dt className="text-xs text-muted-foreground">{label}</dt>
+							<dd className="min-w-0 break-words font-mono text-xs">{value}</dd>
 						</div>
 					))}
 				</dl>
@@ -311,24 +303,44 @@ export function QdrantDiagnostics({
 
 function CopyValue({ value }: { value: string }) {
 	const [copied, setCopied] = useState(false);
+	const timer = useRef<number | null>(null);
+	useEffect(
+		() => () => {
+			if (timer.current != null) window.clearTimeout(timer.current);
+		},
+		[],
+	);
 	return (
-		<button
-			type="button"
-			onClick={async () => {
-				await navigator.clipboard.writeText(value);
-				setCopied(true);
-				window.setTimeout(() => setCopied(false), 1_200);
-			}}
-			className="group flex w-full min-w-0 items-center gap-1.5 text-left font-mono text-[11px] text-foreground/85 hover:text-foreground"
-			title="复制"
-		>
-			<span className="truncate">{value}</span>
-			{copied ? (
-				<Check className="size-3 shrink-0 text-cite" />
-			) : (
-				<Copy className="size-3 shrink-0 text-muted-foreground" />
-			)}
-		</button>
+		<div className="flex min-w-0 items-center gap-2">
+			<code className="min-w-0 flex-1 text-xs [overflow-wrap:anywhere]">
+				{value}
+			</code>
+			<Button
+				type="button"
+				variant="ghost"
+				size="icon"
+				className="size-11 shrink-0"
+				onClick={async () => {
+					try {
+						await navigator.clipboard.writeText(value);
+						setCopied(true);
+						if (timer.current != null) window.clearTimeout(timer.current);
+						timer.current = window.setTimeout(() => setCopied(false), 1_200);
+					} catch {
+						setCopied(false);
+						toast.error("复制失败");
+					}
+				}}
+				aria-label={copied ? "已复制标识" : "复制标识"}
+				title="复制标识"
+			>
+				{copied ? (
+					<Check className="size-3 shrink-0 text-cite" />
+				) : (
+					<Copy className="size-3 shrink-0 text-muted-foreground" />
+				)}
+			</Button>
+		</div>
 	);
 }
 
@@ -343,6 +355,7 @@ export function OperationsErrorDrawer({
 }) {
 	const { identity, can } = useSession();
 	const [retrying, setRetrying] = useState(false);
+	const titleRef = useRef<HTMLHeadingElement | null>(null);
 	const query = useQuery({
 		queryKey: queryKeys.operationEvent(
 			{ organizationId: identity.tenantId, workspaceId: identity.workspaceId },
@@ -381,11 +394,12 @@ export function OperationsErrorDrawer({
 		<Sheet open={selected != null} onOpenChange={onOpenChange}>
 			<SheetContent
 				side="right"
-				className="w-full gap-0 sm:max-w-xl"
+				initialFocus={titleRef}
+				className="w-full max-w-[min(100vw,40rem)]! gap-0 [&>[data-slot=sheet-close]]:size-11"
 				showCloseButton
 			>
-				<SheetHeader className="border-b border-border/70">
-					<SheetTitle className="pr-8">
+				<SheetHeader className="border-b border-border px-5 py-5 sm:px-6">
+					<SheetTitle ref={titleRef} tabIndex={-1} className="pr-8">
 						{selected?.source === "ask" ? "请求链路" : "故障诊断"}
 					</SheetTitle>
 					<SheetDescription>
@@ -394,7 +408,7 @@ export function OperationsErrorDrawer({
 							: "Job · 阶段耗时与恢复动作"}
 					</SheetDescription>
 				</SheetHeader>
-				<div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
 					{!detail && !error ? (
 						<div className="flex items-center gap-2 py-8 text-ui text-muted-foreground">
 							<LoaderCircle className="size-4 animate-spin" /> 正在关联诊断信息
@@ -407,7 +421,7 @@ export function OperationsErrorDrawer({
 							<p>详情暂时不可用，记录可能已被清理或当前无权访问。</p>
 							<button
 								type="button"
-								className="inline-flex items-center gap-2 text-xs"
+								className="inline-flex min-h-11 items-center gap-2 text-sm"
 								onClick={() => void query.refetch()}
 							>
 								<RotateCcw className="size-3.5" />
@@ -417,10 +431,27 @@ export function OperationsErrorDrawer({
 					) : detail ? (
 						<div className="space-y-5">
 							<RequestOutcome detail={detail} />
+							<section>
+								<div className="mb-2 flex items-baseline justify-between">
+									<h3 className="text-ui font-medium">阶段耗时</h3>
+									<span className="font-mono text-xs text-muted-foreground">
+										{detail.latency_ms == null
+											? `${detail.stages.length} 步`
+											: formatDurationMs(detail.latency_ms)}
+									</span>
+								</div>
+								<p className="mb-3 text-xs text-muted-foreground">
+									{detail.stages.length} 步 · 顺序累计
+								</p>
+								<StageWaterfall stages={detail.stages} />
+							</section>
+							{detail.source === "ask" ? (
+								<ModelUsagePanel usage={detail.ask?.model_usage} />
+							) : null}
 							{detail.message || detail.can_retry ? (
 								<section>
 									{detail.message ? (
-										<pre className="mt-3 max-h-32 overflow-auto border-t border-destructive/20 pt-3 font-mono text-[10px] whitespace-pre-wrap break-all text-muted-foreground">
+										<pre className="mt-3 max-h-32 overflow-auto border-t border-destructive/20 pt-3 font-mono text-xs whitespace-pre-wrap break-all text-muted-foreground">
 											{detail.message}
 										</pre>
 									) : null}
@@ -444,7 +475,7 @@ export function OperationsErrorDrawer({
 													setRetrying(false);
 												}
 											}}
-											className="mt-3 inline-flex h-8 items-center gap-1.5 border border-destructive/30 bg-background px-3 text-xs font-medium text-foreground hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
+											className="mt-3 inline-flex min-h-11 items-center gap-1.5 border border-destructive/30 bg-background px-3 text-xs font-medium text-foreground hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
 										>
 											{retrying ? (
 												<LoaderCircle className="size-3.5 animate-spin" />
@@ -457,40 +488,25 @@ export function OperationsErrorDrawer({
 								</section>
 							) : null}
 
-							<section>
-								<div className="mb-2 flex items-baseline justify-between">
-									<h3 className="text-ui font-semibold">阶段瀑布</h3>
-									<span className="font-mono text-[11px] text-muted-foreground">
-										{detail.latency_ms == null
-											? `${detail.stages.length} stages`
-											: formatDurationMs(detail.latency_ms)}
-									</span>
-								</div>
-								<StageWaterfall stages={detail.stages} />
-							</section>
 							<JudgeDiagnostics stages={detail.stages} />
 							<CitationDiagnostics stages={detail.stages} />
 							<RerankDiagnostics stages={detail.stages} />
 							<QdrantDiagnostics stages={detail.stages} />
 
 							<section className="border-t border-border/70 pt-4">
-								<h3 className="text-ui font-semibold">关联信息</h3>
+								<h3 className="text-ui font-medium">关联信息</h3>
 								<dl className="mt-3 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2">
 									<div className="contents">
-										<dt className="text-meta text-muted-foreground">
-											发生时间
-										</dt>
-										<dd className="font-mono text-[11px]">
+										<dt className="text-xs text-muted-foreground">发生时间</dt>
+										<dd className="font-mono text-xs">
 											{formatDateTime(detail.ended_at ?? detail.started_at)}
 										</dd>
 									</div>
 									{identifiers.map(([label, value]) => (
 										<div key={label} className="contents">
-											<dt className="text-meta text-muted-foreground">
-												{label}
-											</dt>
+											<dt className="text-xs text-muted-foreground">{label}</dt>
 											<dd className="min-w-0">
-												<CopyValue value={value} />
+												<CopyValue key={value} value={value} />
 											</dd>
 										</div>
 									))}
@@ -498,7 +514,7 @@ export function OperationsErrorDrawer({
 								{detail.library_id && detail.document_id ? (
 									<a
 										href="/app/libraries"
-										className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-cite hover:underline"
+										className="mt-4 inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-evidence hover:underline"
 									>
 										打开知识库 <ExternalLink className="size-3" />
 									</a>

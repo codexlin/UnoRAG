@@ -1,4 +1,6 @@
 node_modules
+.pnpm-store/
+THIRD_PARTY_NOTICES.txt
 .next
 out
 build

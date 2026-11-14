@@ -26,11 +26,15 @@ function ComboboxTrigger({
 	return (
 		<ComboboxPrimitive.Trigger
 			data-slot="combobox-trigger"
+			aria-label="展开选项"
 			className={cn("[&_svg:not([class*='size-'])]:size-4", className)}
 			{...props}
 		>
 			{children}
-			<ChevronDownIcon className="pointer-events-none size-4 text-muted-foreground" />
+			<ChevronDownIcon
+				aria-hidden
+				className="pointer-events-none size-4 text-muted-foreground"
+			/>
 		</ComboboxPrimitive.Trigger>
 	);
 }
@@ -39,11 +43,12 @@ function ComboboxClear({ className, ...props }: ComboboxPrimitive.Clear.Props) {
 	return (
 		<ComboboxPrimitive.Clear
 			data-slot="combobox-clear"
+			aria-label="清除选择"
 			render={<InputGroupButton variant="ghost" size="icon-xs" />}
 			className={cn(className)}
 			{...props}
 		>
-			<XIcon className="pointer-events-none" />
+			<XIcon aria-hidden className="pointer-events-none" />
 		</ComboboxPrimitive.Clear>
 	);
 }

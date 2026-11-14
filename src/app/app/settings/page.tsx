@@ -1,169 +1,233 @@
 "use client";
 
+import {
+	Activity,
+	ArrowUpRight,
+	KeyRound,
+	Mail,
+	MessagesSquare,
+	ScrollText,
+	Users,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	GuardedLink,
+	useNavigationGuard,
+} from "@/components/app/navigation-guard";
+import { useSession } from "@/components/app/session-provider";
+import type { SettingsPanelState } from "@/components/app/settings/use-settings-panel-state";
+import { WorkspaceServicePanel } from "@/components/app/settings/workspace-service-panel";
 import { WorkspaceAskSettingsPanel } from "@/components/app/workspace-ask-settings-panel";
-import { WorkspaceAuditPanel } from "@/components/app/workspace-audit-panel";
 import { WorkspaceIntegrationKeysPanel } from "@/components/app/workspace-integration-keys-panel";
 import { WorkspaceMembersPanel } from "@/components/app/workspace-members-panel";
 import { WorkspaceNotificationsPanel } from "@/components/app/workspace-notifications-panel";
-import { useHealth } from "@/hooks/use-health";
-import { getApiBaseUrl } from "@/lib/api";
-import { formatDateTime, formatDurationMs } from "@/lib/format";
-import { formatReleaseVersion } from "@/lib/release-info";
+import { buttonVariants } from "@/components/ui/button";
+import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
+const SECTIONS = [
+	{ id: "ask-settings", label: "问答策略", icon: MessagesSquare },
+	{ id: "members", label: "成员与邀请", icon: Users },
+	{ id: "integrations", label: "集成密钥", icon: KeyRound },
+	{ id: "notifications", label: "邮件通知", icon: Mail, adminOnly: true },
+	{ id: "service", label: "服务状态", icon: Activity },
+] as const;
+type SectionId = (typeof SECTIONS)[number]["id"];
+
 export default function SettingsPage() {
-	const { health, error, loading, healthProbedAt, healthProbeMs } = useHealth();
+	const { identity, can } = useSession();
+	const canManage = can("manageMembers");
+	const sections = SECTIONS.filter(
+		(section) => !("adminOnly" in section) || canManage,
+	);
+	const sectionOptions = sections.map(({ id, label }) => ({
+		value: id,
+		label,
+	}));
+	const [active, setActive] = useState<SectionId | null>(null);
+	const activeRef = useRef(active);
+	const [panelState, setPanelState] = useState<SettingsPanelState>({
+		dirty: false,
+		busy: false,
+	});
+	const { setGuard, allowNavigation } = useNavigationGuard();
+	const reportState = useCallback(
+		(state: SettingsPanelState) => {
+			setPanelState(state);
+			setGuard(state);
+		},
+		[setGuard],
+	);
+
+	const commitSection = useCallback((next: SectionId) => {
+		activeRef.current = next;
+		setActive(next);
+		const url = `${window.location.pathname}${window.location.search}#${next}`;
+		window.history.replaceState(null, "", url);
+	}, []);
+
+	useEffect(() => {
+		function fromHash(): SectionId | undefined {
+			const value = window.location.hash.slice(1);
+			return SECTIONS.find(
+				(section) =>
+					section.id === value && (!("adminOnly" in section) || canManage),
+			)?.id;
+		}
+		activeRef.current = fromHash() ?? "ask-settings";
+		setActive(activeRef.current);
+		function handleHistory() {
+			const next = fromHash();
+			if (!next || next === activeRef.current) return;
+			// History traversal is not cancelable; never overwrite its destination.
+			activeRef.current = next;
+			setActive(next);
+		}
+		window.addEventListener("hashchange", handleHistory);
+		window.addEventListener("popstate", handleHistory);
+		return () => {
+			window.removeEventListener("hashchange", handleHistory);
+			window.removeEventListener("popstate", handleHistory);
+			setGuard({ dirty: false, busy: false });
+		};
+	}, [canManage, setGuard]);
+
+	function selectSection(next: SectionId) {
+		if (next === active) return;
+		if (allowNavigation(() => commitSection(next))) commitSection(next);
+	}
 
 	return (
-		<div className="flex flex-1 flex-col px-5 py-8 sm:px-6 lg:px-8 lg:py-10">
-			<div className="mx-auto w-full max-w-6xl space-y-8">
-				<div className="max-w-3xl space-y-2">
-					<p className="text-meta font-mono tracking-[0.2em] text-cite uppercase">
-						Settings
+		<div className="flex min-w-0 flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+			<div className="mx-auto w-full max-w-6xl">
+				<header className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-border pb-6">
+					<h2 className="text-2xl font-medium">工作区设置</h2>
+					<p className="min-w-0 break-words text-sm text-muted-foreground">
+						{identity.workspaceName}
 					</p>
-					<h2 className="font-heading text-2xl font-semibold tracking-tight">
-						工作区设置
-					</h2>
-					<p className="text-answer text-muted-foreground">
-						问答策略按业务意图配置（回答模式、检索增强、对话记忆、证据要求），算法参数由服务端映射。生产默认走
-						live；若 live 未就绪，健康检查会标为不可用并拒绝问答，不会静默降级到
-						stub。stub 仅用于本地/测试显式配置。
-					</p>
-				</div>
-
-				<div className="grid items-start gap-6 [&>*]:min-w-0 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-8">
-					<WorkspaceAskSettingsPanel />
-
-					<div className="min-w-0 space-y-6">
-						<WorkspaceMembersPanel />
-						<WorkspaceIntegrationKeysPanel />
-						<WorkspaceAuditPanel />
-
-						<div className="rounded-2xl border border-border/80 bg-card/80 px-4 py-4">
-							<p className="text-meta font-mono tracking-[0.16em] text-muted-foreground uppercase">
-								API
-							</p>
-							<p className="text-ui mt-1 font-mono text-muted-foreground">
-								{getApiBaseUrl()}
-							</p>
-							{error && !health ? (
-								<p className="text-ui mt-3 text-destructive">无法连接 API</p>
-							) : health ? (
-								<ul className="text-ui mt-4 space-y-2.5 text-foreground">
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">版本</span>
-										<span className="font-mono text-[0.8125rem]">
-											{formatReleaseVersion(health.release)}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">提交</span>
-										<span className="font-mono text-[0.8125rem]">
-											{health.release.revision_short}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">构建时间</span>
-										<span className="text-right font-mono text-[0.8125rem]">
-											{health.release.built_at
-												? formatDateTime(Date.parse(health.release.built_at))
-												: "本地开发"}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">请求模式</span>
-										<span className="font-mono text-[0.8125rem]">
-											{health.ask_mode}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">状态</span>
-										<span
-											className={cn(
-												"font-mono text-[0.8125rem]",
-												(health.degraded || health.status !== "ok") &&
-													"text-destructive",
-											)}
-										>
-											{health.status}
-											{health.degraded ? "（不可用）" : ""}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">生效模式</span>
-										<span className="font-mono text-[0.8125rem]">
-											{health.effective_mode}
-											{health.ask_mode === "stub" ? " · 测试/本地" : ""}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">Ask 就绪</span>
-										<span className="font-mono text-[0.8125rem]">
-											{health.ask_ready === false ? "否" : "是"}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">图</span>
-										<span className="font-mono text-[0.8125rem]">
-											{health.graph}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">LLM 密钥</span>
-										<span className="font-mono text-[0.8125rem]">
-											{health.has_llm_key ? "已配置" : "未配置"}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">Qdrant</span>
-										<span className="font-mono text-[0.8125rem]">
-											{health.qdrant_ok ? "可达" : "不可达"}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">
-											全局默认混合检索
-										</span>
-										<span className="font-mono text-[0.8125rem]">
-											{health.hybrid_enabled
-												? "默认开启"
-												: "默认关闭（自动策略可按问法开启）"}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">元数据</span>
-										<span className="font-mono text-[0.8125rem]">
-											{health.metadata_backend}
-											{health.metadata_ok === false ? " · 异常" : ""}
-										</span>
-									</li>
-									<li className="flex justify-between gap-3">
-										<span className="text-muted-foreground">最近探测</span>
-										<span className="text-right font-mono text-[0.8125rem]">
-											{formatDateTime(healthProbedAt)}
-											{healthProbeMs != null
-												? ` · ${formatDurationMs(healthProbeMs)}`
-												: ""}
-										</span>
-									</li>
-									{health.reasons.length > 0 ? (
-										<li className="flex justify-between gap-3">
-											<span className="text-muted-foreground">原因</span>
-											<span className="max-w-[60%] text-right font-mono text-[0.8125rem] text-muted-foreground">
-												{health.reasons.join(", ")}
-											</span>
-										</li>
-									) : null}
-								</ul>
-							) : (
-								<p className="text-ui mt-3 text-muted-foreground">
-									{loading ? "探测中…" : "暂无数据"}
-								</p>
-							)}
-						</div>
+				</header>
+				<div className="grid min-w-0 gap-8 pt-6 lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-10">
+					<div className="min-w-0 lg:hidden">
+						<label htmlFor="settings-section" className="sr-only">
+							设置分区
+						</label>
+						<Select
+							items={sectionOptions}
+							value={active}
+							disabled={!active || panelState.busy}
+							onValueChange={(value) => {
+								if (value !== null) selectSection(value);
+							}}
+						>
+							<SelectTrigger
+								id="settings-section"
+								aria-label="设置分区"
+								className="min-h-11 w-full min-w-0"
+							>
+								<SelectValue placeholder="加载设置…" />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectGroup>
+									{sectionOptions.map((option) => (
+										<SelectItem key={option.value} value={option.value}>
+											{option.label}
+										</SelectItem>
+									))}
+								</SelectGroup>
+							</SelectContent>
+						</Select>
 					</div>
+					<nav
+						aria-label="设置分区"
+						className="hidden min-w-0 self-start lg:sticky lg:top-6 lg:block"
+					>
+						<ul className="space-y-1">
+							{sections.map(({ id, label, icon: Icon }) => (
+								<li key={id}>
+									<a
+										href={`#${id}`}
+										aria-current={active === id ? "page" : undefined}
+										aria-disabled={panelState.busy || undefined}
+										className={cn(
+											buttonVariants({ variant: "ghost" }),
+											"h-auto min-h-11 w-full justify-start gap-3 whitespace-normal px-3 py-2.5 text-left font-normal",
+											active === id
+												? "bg-accent font-medium text-accent-foreground"
+												: "text-muted-foreground",
+										)}
+										onClick={(event) => {
+											if (
+												event.metaKey ||
+												event.ctrlKey ||
+												event.altKey ||
+												event.shiftKey ||
+												event.button !== 0
+											)
+												return;
+											event.preventDefault();
+											selectSection(id);
+										}}
+									>
+										<Icon className="size-4 shrink-0" aria-hidden />
+										{label}
+									</a>
+								</li>
+							))}
+						</ul>
+						{canManage ? (
+							<div className="mt-4 border-t border-border pt-4">
+								<GuardedLink
+									href="/app/audit"
+									className={cn(
+										buttonVariants({ variant: "ghost" }),
+										"min-h-11 w-full justify-start gap-3 text-muted-foreground",
+									)}
+								>
+									<ScrollText className="size-4" aria-hidden />
+									操作记录
+									<ArrowUpRight className="ml-auto size-3.5" aria-hidden />
+								</GuardedLink>
+							</div>
+						) : null}
+					</nav>
+					<div className="min-w-0 max-w-3xl" key={active}>
+						{!active ? (
+							<p role="status" className="text-sm text-muted-foreground">
+								加载设置…
+							</p>
+						) : null}
+						{active === "ask-settings" ? (
+							<WorkspaceAskSettingsPanel onStateChange={reportState} />
+						) : null}
+						{active === "members" ? (
+							<WorkspaceMembersPanel onStateChange={reportState} />
+						) : null}
+						{active === "integrations" ? (
+							<WorkspaceIntegrationKeysPanel onStateChange={reportState} />
+						) : null}
+						{active === "notifications" ? (
+							<WorkspaceNotificationsPanel onStateChange={reportState} />
+						) : null}
+						{active === "service" ? <WorkspaceServicePanel /> : null}
+					</div>
+					{canManage ? (
+						<GuardedLink
+							href="/app/audit"
+							className="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground lg:hidden"
+						>
+							<ScrollText className="size-4" aria-hidden />
+							操作记录
+							<ArrowUpRight className="size-3.5" aria-hidden />
+						</GuardedLink>
+					) : null}
 				</div>
-				<WorkspaceNotificationsPanel />
 			</div>
 		</div>
 	);

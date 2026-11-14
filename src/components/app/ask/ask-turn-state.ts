@@ -2,6 +2,7 @@ import type { ApiCitation, ApiRetrievalDebug } from "@/lib/api";
 import type { UiCitation, UiTurn } from "@/lib/ui-types";
 
 export type LocalTurn = UiTurn & {
+	restored?: boolean;
 	pending?: boolean;
 	error?: string;
 	cancelled?: boolean;
@@ -62,7 +63,7 @@ export function askTurnsReducer(
 ): LocalTurn[] {
 	switch (action.type) {
 		case "hydrate":
-			return action.turns;
+			return action.turns.map((turn) => ({ ...turn, restored: true }));
 		case "begin":
 			return action.replaceTurnId
 				? turns.map((turn) =>

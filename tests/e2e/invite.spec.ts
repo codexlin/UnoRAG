@@ -4,6 +4,15 @@ const token = "a".repeat(43);
 const errors = new WeakMap<Page, string[]>();
 const unexpected = new WeakMap<Page, string[]>();
 
+type InviteRaceWindow = typeof window & {
+	__inviteRace: {
+		bodyPending: boolean;
+		aborted: boolean;
+		delivered: boolean;
+		release: () => void;
+	};
+};
+
 // All preview and acceptance APIs are mocked. These tests never create accounts,
 // consume real invites, issue real sessions, or send email.
 test.beforeEach(async ({ page }) => {
@@ -212,4 +221,181 @@ test("accept network failure and wrong password permit manual retry (mock APIs)"
 	await expect(confirm).toBeEnabled();
 	expect(accepts).toHaveLength(2);
 	await expectCleared(page);
+});
+
+test("acceptance disables return-login navigation and duplicate submission until a failed response settles", async ({
+	page,
+}) => {
+	await mockPreview(page, true);
+	let releaseResponse = () => {};
+	const responseReady = new Promise<void>((resolve) => {
+		releaseResponse = resolve;
+	});
+	const accepts: unknown[] = [];
+	await page.route("**/api/auth/invite", async (route) => {
+		accepts.push(route.request().postDataJSON());
+		await responseReady;
+		await route.fulfill({
+			status: 403,
+			json: { detail: "invalid password" },
+		});
+	});
+	try {
+		await page.goto(`/invite#token=${token}`);
+		await page.getByLabel("原密码", { exact: true }).fill("old");
+		await page.getByRole("button", { name: "加入工作区", exact: true }).click();
+		await expect.poll(() => accepts.length).toBe(1);
+		const back = page.getByRole("button", {
+			name: "返回密码登录",
+			exact: true,
+		});
+		await expect(back).toBeDisabled();
+		await expect(back).toHaveJSProperty("tagName", "BUTTON");
+		await expect(page.getByRole("link", { name: "返回密码登录" })).toHaveCount(
+			0,
+		);
+		await back.evaluate((button: HTMLButtonElement) => button.click());
+		await page.locator("form").evaluate((form: HTMLFormElement) => {
+			form.dispatchEvent(
+				new Event("submit", { bubbles: true, cancelable: true }),
+			);
+		});
+		await expectCleared(page);
+		expect(accepts).toEqual([{ token, password: "old" }]);
+		releaseResponse();
+		await expect(page.getByRole("main").getByRole("alert")).toHaveText(
+			"原密码不正确，请重试",
+		);
+		await expect(
+			page.getByRole("link", { name: "返回密码登录" }),
+		).toHaveAttribute("href", "/login");
+		await expect(
+			page.getByRole("button", { name: "加入工作区" }),
+		).toBeEnabled();
+	} finally {
+		releaseResponse();
+	}
+});
+
+test("browser navigation invalidates a delayed accepted invitation without redirecting the new page", async ({
+	page,
+}) => {
+	await mockPreview(page, true);
+	const accepts: unknown[] = [];
+	await page.route("**/api/auth/invite", async (route) => {
+		accepts.push(route.request().postDataJSON());
+		await route.fulfill({ status: 201, json: { session_created: true } });
+	});
+	await page.addInitScript(() => {
+		const state: InviteRaceWindow["__inviteRace"] = {
+			bodyPending: false,
+			aborted: false,
+			delivered: false,
+			release: () => {},
+		};
+		(window as InviteRaceWindow).__inviteRace = state;
+		const originalFetch = window.fetch.bind(window);
+		window.fetch = async (input, init) => {
+			const url = new URL(
+				input instanceof Request ? input.url : String(input),
+				window.location.href,
+			);
+			if (url.pathname !== "/api/auth/invite")
+				return originalFetch(input, init);
+			init?.signal?.addEventListener(
+				"abort",
+				() => {
+					state.aborted = true;
+				},
+				{ once: true },
+			);
+			const response = await originalFetch(input, init);
+			const readJson = response.json.bind(response);
+			response.json = async () => {
+				const result: unknown = await readJson();
+				// The response is already read: abort cannot retract this deferred result.
+				await new Promise<void>((resolve) => {
+					state.release = resolve;
+					state.bodyPending = true;
+				});
+				state.delivered = true;
+				return result;
+			};
+			return response;
+		};
+	});
+
+	const redirects: string[] = [];
+	const trackRedirect = (request: { url: () => string }) => {
+		const url = new URL(request.url());
+		if (url.pathname === "/app") redirects.push(url.pathname);
+	};
+	try {
+		await page.goto(`/invite#token=${token}`);
+		await expect(page.getByLabel("原密码", { exact: true })).toBeVisible();
+		await expectCleared(page);
+		// Reopenable history entry; use the real Next Link and browser Forward,
+		// not a full document reload that would discard the obsolete JS context.
+		await page.evaluate((value) => {
+			window.history.replaceState(
+				window.history.state,
+				"",
+				`/invite#token=${value}`,
+			);
+		}, token);
+		await page.getByRole("link", { name: "返回密码登录", exact: true }).click();
+		await expect(page).toHaveURL(/\/login$/);
+		await page.goBack();
+		await expect(page.getByLabel("原密码", { exact: true })).toBeVisible();
+		await expectCleared(page);
+		await page.getByLabel("原密码", { exact: true }).fill("old");
+		await page.getByRole("button", { name: "加入工作区", exact: true }).click();
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() => (window as InviteRaceWindow).__inviteRace.bodyPending,
+				),
+			)
+			.toBe(true);
+		expect(accepts).toEqual([{ token, password: "old" }]);
+		await page.goForward();
+		await expect(page).toHaveURL(/\/login$/);
+		await expect(
+			page.getByRole("heading", { name: "登录 UnoRAG" }),
+		).toBeVisible();
+		await expect
+			.poll(() =>
+				page.evaluate(() => (window as InviteRaceWindow).__inviteRace.aborted),
+			)
+			.toBe(true);
+		await page
+			.getByLabel("邮箱", { exact: true })
+			.fill("next-account@example.test");
+		page.on("request", trackRedirect);
+		await page.evaluate(async () => {
+			(window as InviteRaceWindow).__inviteRace.release();
+			await new Promise<void>((resolve) => {
+				requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+			});
+		});
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() => (window as InviteRaceWindow).__inviteRace.delivered,
+				),
+			)
+			.toBe(true);
+		await expect(page).toHaveURL(/\/login$/);
+		await expect(page.getByLabel("邮箱", { exact: true })).toHaveValue(
+			"next-account@example.test",
+		);
+		await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
+		await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+		expect(redirects).toEqual([]);
+	} finally {
+		page.off("request", trackRedirect);
+		await page.evaluate(() =>
+			(window as InviteRaceWindow).__inviteRace?.release(),
+		);
+	}
 });

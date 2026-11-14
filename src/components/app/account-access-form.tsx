@@ -24,6 +24,9 @@ export function AccountAccessForm() {
 	const [ready, setReady] = useState(false);
 	const initialized = useRef(false);
 	const [error, setError] = useState<string | null>(null);
+	const [errorField, setErrorField] = useState<
+		"password" | "confirmation" | null
+	>(null);
 	const [message, setMessage] = useState<string | null>(null);
 	const [completed, setCompleted] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
@@ -56,20 +59,28 @@ export function AccountAccessForm() {
 		event.preventDefault();
 		if (!ready || submitting || completed) return;
 		setError(null);
+		setErrorField(null);
 		setMessage(null);
+		const formElement = event.currentTarget;
 		const form = new FormData(event.currentTarget);
 		const password = String(form.get("password") ?? "");
+		function rejectField(field: "password" | "confirmation", message: string) {
+			setError(message);
+			setErrorField(field);
+			const input = formElement.elements.namedItem(field);
+			if (input instanceof HTMLElement) input.focus();
+		}
 		if (token && purpose === "reset") {
 			if (password.length < 7 || password.length > 256) {
-				setError("新密码需要 7–256 个字符");
+				rejectField("password", "新密码需要 7–256 个字符");
 				return;
 			}
 			if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) {
-				setError("新密码必须同时包含大写和小写字母");
+				rejectField("password", "新密码必须同时包含大写和小写字母");
 				return;
 			}
 			if (password !== String(form.get("confirmation") ?? "")) {
-				setError("两次输入的新密码不一致");
+				rejectField("confirmation", "两次输入的新密码不一致");
 				return;
 			}
 		}
@@ -145,11 +156,29 @@ export function AccountAccessForm() {
 	}
 
 	return (
-		<div className="space-y-6">
-			<h1 className="font-heading text-2xl font-semibold">
-				{purpose === "reset" ? "重置密码" : "使用邮箱链接登录"}
-			</h1>
-			<form className="space-y-5" onSubmit={submit} aria-busy={submitting}>
+		<div className="space-y-8">
+			<div className="space-y-2">
+				<h1 className="text-2xl font-semibold leading-8">
+					{purpose === "reset" ? "重置密码" : "使用邮箱链接登录"}
+				</h1>
+				<p className="text-sm leading-6 text-muted-foreground">
+					{completed
+						? "账号访问已更新。"
+						: token
+							? purpose === "reset"
+								? "设置新密码后，请重新登录。"
+								: "确认后将使用此邮件链接登录。链接仅可使用一次。"
+							: purpose === "reset"
+								? "输入账号邮箱，申请密码重置链接。"
+								: "输入账号邮箱，申请一次性登录链接。"}
+				</p>
+			</div>
+			<form
+				method="post"
+				className="space-y-5"
+				onSubmit={submit}
+				aria-busy={submitting}
+			>
 				{!completed && !token ? (
 					<div className="space-y-2">
 						<Label htmlFor="email">邮箱</Label>
@@ -158,6 +187,10 @@ export function AccountAccessForm() {
 							name="email"
 							type="email"
 							autoComplete="email"
+							className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
+							aria-describedby={
+								error && !errorField ? "account-access-error" : undefined
+							}
 							required
 							disabled={!ready || submitting}
 						/>
@@ -172,9 +205,15 @@ export function AccountAccessForm() {
 								name="password"
 								type="password"
 								autoComplete="new-password"
+								className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
 								minLength={7}
 								maxLength={256}
-								aria-describedby="password-requirements"
+								aria-invalid={errorField === "password" || undefined}
+								aria-describedby={
+									errorField === "password"
+										? "password-requirements account-password-error"
+										: "password-requirements"
+								}
 								required
 								disabled={submitting}
 							/>
@@ -184,6 +223,17 @@ export function AccountAccessForm() {
 							>
 								7–256 个字符，同时包含大写和小写字母。
 							</p>
+							<div className="min-h-6">
+								{errorField === "password" && error ? (
+									<p
+										id="account-password-error"
+										className="text-sm leading-6 text-destructive"
+										role="alert"
+									>
+										{error}
+									</p>
+								) : null}
+							</div>
 						</div>
 						<div className="space-y-2">
 							<Label htmlFor="confirmation">确认新密码</Label>
@@ -192,19 +242,43 @@ export function AccountAccessForm() {
 								name="confirmation"
 								type="password"
 								autoComplete="new-password"
+								className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
+								aria-invalid={errorField === "confirmation" || undefined}
+								aria-describedby={
+									errorField === "confirmation"
+										? "account-confirmation-error"
+										: undefined
+								}
 								minLength={7}
 								maxLength={256}
 								required
 								disabled={submitting}
 							/>
+							<div className="min-h-6">
+								{errorField === "confirmation" && error ? (
+									<p
+										id="account-confirmation-error"
+										className="text-sm leading-6 text-destructive"
+										role="alert"
+									>
+										{error}
+									</p>
+								) : null}
+							</div>
 						</div>
 					</>
 				) : null}
-				{error ? (
-					<p className="text-sm leading-6 text-destructive" role="alert">
-						{error}
-					</p>
-				) : null}
+				<div className="min-h-6">
+					{error && !errorField ? (
+						<p
+							id="account-access-error"
+							className="text-sm leading-6 text-destructive"
+							role="alert"
+						>
+							{error}
+						</p>
+					) : null}
+				</div>
 				{message ? (
 					<p className="text-sm leading-6 text-muted-foreground" role="status">
 						{message}
@@ -212,7 +286,7 @@ export function AccountAccessForm() {
 				) : null}
 				{!completed ? (
 					<Button
-						className="min-h-11 w-full"
+						className="h-11 w-full"
 						type="submit"
 						disabled={!ready || submitting}
 					>
@@ -228,24 +302,27 @@ export function AccountAccessForm() {
 			</form>
 			{token ? (
 				<Button
-					className="min-h-11 w-full"
+					className="h-11 w-full"
 					variant="ghost"
 					disabled={submitting}
 					onClick={() => {
 						setToken(null);
 						setError(null);
+						setErrorField(null);
 						setMessage(null);
 					}}
 				>
 					重新申请邮件链接
 				</Button>
 			) : null}
-			<Link
-				className="inline-flex min-h-11 items-center text-sm text-primary underline-offset-4 hover:underline"
-				href="/login"
-			>
-				返回密码登录
-			</Link>
+			<div className="border-t pt-4">
+				<Link
+					className="inline-flex min-h-11 items-center rounded-md text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+					href="/login"
+				>
+					返回密码登录
+				</Link>
+			</div>
 		</div>
 	);
 }

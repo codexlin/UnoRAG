@@ -1,7 +1,10 @@
 "use client";
 
 import { ChevronsUpDown, LogOut, Settings2 } from "lucide-react";
-import Link from "next/link";
+import {
+	GuardedLink,
+	useNavigationGuard,
+} from "@/components/app/navigation-guard";
 
 import { useSession } from "@/components/app/session-provider";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -39,6 +42,7 @@ function initialsFor(name: string, email: string | null): string {
 export function AppNavUser() {
 	const { isMobile } = useSidebar();
 	const { identity, signOut } = useSession();
+	const { allowNavigation } = useNavigationGuard();
 	const { health } = useHealth();
 	const name = identity.displayName;
 	const email = identity.email ?? "";
@@ -56,7 +60,7 @@ export function AppNavUser() {
 								tooltip={name}
 								className={cn(
 									"h-12 gap-2.5 rounded-lg px-2.5 data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground",
-									"group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2!",
+									"group-data-[collapsible=icon]:-mx-0.5 group-data-[collapsible=icon]:size-11! group-data-[collapsible=icon]:p-1.5!",
 								)}
 							/>
 						}
@@ -66,7 +70,7 @@ export function AppNavUser() {
 								{initials}
 							</AvatarFallback>
 						</Avatar>
-						<div className="grid flex-1 text-left text-sm leading-tight">
+						<div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:sr-only">
 							<span className="truncate text-[0.9375rem] font-medium">
 								{name}
 							</span>
@@ -74,10 +78,10 @@ export function AppNavUser() {
 								{email}
 							</span>
 						</div>
-						<ChevronsUpDown className="ml-auto size-4 text-muted-foreground" />
+						<ChevronsUpDown className="ml-auto size-4 text-muted-foreground group-data-[collapsible=icon]:hidden" />
 					</DropdownMenuTrigger>
 					<DropdownMenuContent
-						className="min-w-56 rounded-lg"
+						className="w-72 min-w-0 rounded-lg"
 						side={isMobile ? "bottom" : "top"}
 						align="start"
 						sideOffset={4}
@@ -90,12 +94,14 @@ export function AppNavUser() {
 											{initials}
 										</AvatarFallback>
 									</Avatar>
-									<div className="grid flex-1 text-left text-sm leading-tight">
-										<span className="truncate font-medium">{name}</span>
-										<span className="truncate text-xs text-muted-foreground">
+									<div className="grid min-w-0 flex-1 gap-1 text-left text-sm leading-relaxed">
+										<span className="font-medium [overflow-wrap:anywhere]">
+											{name}
+										</span>
+										<span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
 											{email}
 										</span>
-										<span className="text-meta mt-0.5 truncate text-muted-foreground">
+										<span className="text-xs text-muted-foreground">
 											{role}
 										</span>
 									</div>
@@ -104,7 +110,7 @@ export function AppNavUser() {
 						</DropdownMenuGroup>
 						<DropdownMenuSeparator />
 						<DropdownMenuGroup>
-							<DropdownMenuItem render={<Link href="/app/settings" />}>
+							<DropdownMenuItem render={<GuardedLink href="/app/settings" />}>
 								<Settings2 />
 								工作区设置
 							</DropdownMenuItem>
@@ -113,7 +119,7 @@ export function AppNavUser() {
 						<DropdownMenuGroup>
 							<DropdownMenuLabel className="flex items-center justify-between gap-3 px-2 py-1.5 font-normal text-muted-foreground">
 								<span className="text-xs">UnoRAG</span>
-								<span className="font-mono text-[11px] tabular-nums">
+								<span className="min-w-0 font-mono text-xs tabular-nums [overflow-wrap:anywhere]">
 									{health ? formatReleaseVersion(health.release) : "version --"}
 								</span>
 							</DropdownMenuLabel>
@@ -121,7 +127,10 @@ export function AppNavUser() {
 						<DropdownMenuSeparator />
 						<DropdownMenuItem
 							onClick={() => {
-								void signOut();
+								const leave = () => {
+									void signOut();
+								};
+								if (allowNavigation(leave)) leave();
 							}}
 						>
 							<LogOut />

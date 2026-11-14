@@ -1,54 +1,11 @@
 "use client";
 
-import { FileText, Hash, Layers3 } from "lucide-react";
+import { ChevronDown, FileText, Hash, Layers3 } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatScore } from "@/lib/format";
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
-
-function ScoreBar({
-	label,
-	value,
-	tone = "cite",
-	/** Multiply before mapping to bar width (e.g. raw RRF ≈ 0.03). */
-	barScale = 1,
-}: {
-	label: string;
-	value: number | null | undefined;
-	tone?: "cite" | "primary" | "survey";
-	barScale?: number;
-}) {
-	if (value == null || Number.isNaN(value)) return null;
-	const scaled = value * barScale;
-	const pct =
-		scaled > 1
-			? Math.max(0, Math.min(100, (scaled / (scaled + 5)) * 100))
-			: Math.max(0, Math.min(100, scaled * 100));
-	return (
-		<div className="min-w-0 flex-1 space-y-1">
-			<div className="text-meta flex items-center justify-between gap-2 font-mono text-muted-foreground">
-				<span>{label}</span>
-				<span className="tabular-nums text-foreground/85">
-					{formatScore(value)}
-				</span>
-			</div>
-			{/* Track needs stronger contrast than bg-muted on light surfaces */}
-			<div className="h-2 overflow-hidden rounded-full border border-border/80 bg-foreground/[0.08] dark:border-border/50 dark:bg-foreground/15">
-				<div
-					className={cn(
-						"h-full rounded-full transition-[width] duration-300",
-						tone === "cite" && "bg-cite",
-						tone === "primary" && "bg-primary",
-						tone === "survey" && "bg-survey",
-					)}
-					style={{ width: `${pct}%` }}
-				/>
-			</div>
-		</div>
-	);
-}
 
 function CitationBody({
 	citation,
@@ -69,44 +26,33 @@ function CitationBody({
 	const fullText = citation.text || citation.snippet || "";
 
 	return (
-		<div className="flex items-start gap-2.5">
+		<div className="flex min-w-0 items-start gap-3">
 			<span
 				className={cn(
-					"text-meta mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-sm font-mono font-semibold",
+					"mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-sm font-mono text-xs font-medium",
 					active
-						? "bg-cite text-cite-foreground"
-						: "bg-primary/10 text-primary",
+						? "bg-evidence text-evidence-foreground"
+						: "bg-evidence/10 text-evidence",
 				)}
 			>
 				{citation.index}
 			</span>
-			<div className="min-w-0 flex-1 space-y-1.5">
+			<div className="min-w-0 flex-1 space-y-2">
 				<div className="flex flex-wrap items-center gap-1.5">
-					<p className="truncate text-[0.9375rem] font-medium leading-snug text-foreground">
+					<p className="min-w-0 text-sm font-medium leading-6 text-foreground [overflow-wrap:anywhere]">
 						{citation.title}
 					</p>
-					{citation.usedRerank ? (
-						<span className="text-meta rounded-sm bg-survey/15 px-1.5 py-0.5 font-mono text-accent-foreground">
-							rerank
-						</span>
-					) : null}
-					{citation.usedHybrid ? (
-						<span className="text-meta rounded-sm bg-primary/10 px-1.5 py-0.5 font-mono text-primary">
-							hybrid
-						</span>
-					) : null}
 				</div>
-				<div className="text-meta flex flex-wrap gap-x-2 gap-y-1 font-mono text-muted-foreground">
+				<div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
 					{citation.sectionPath ? (
-						<span className="inline-flex items-center gap-1">
-							<Layers3 className="size-3" />
+						<span className="inline-flex min-w-0 items-start gap-1">
+							<Layers3 className="mt-0.5 size-3 shrink-0" aria-hidden />
 							{citation.sectionPath}
 						</span>
 					) : null}
 					{citation.page ? (
 						<span className="inline-flex items-center gap-1">
-							<Hash className="size-3" />
-							{citation.page}
+							<Hash className="size-3" aria-hidden />页 {citation.page}
 						</span>
 					) : null}
 					{citation.filename ? (
@@ -115,56 +61,73 @@ function CitationBody({
 							<span className="truncate">{citation.filename}</span>
 						</span>
 					) : null}
-					{expanded && fullText ? (
-						<span className="meta-chip">{fullText.length} 字</span>
-					) : null}
 				</div>
 				{citation.preamble && expanded ? (
-					<p className="text-meta border-l-2 border-cite/40 bg-muted/45 px-2.5 py-2 text-muted-foreground">
+					<p className="border-l-2 border-evidence/40 pl-3 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
 						定位 {citation.preamble}
 					</p>
 				) : null}
 				{expanded ? (
-					<ScrollArea className="evidence-surface h-[min(45vh,24rem)]">
-						<p className="text-answer whitespace-pre-wrap px-3 py-3 text-foreground/90">
-							{fullText || "（无正文）"}
-						</p>
-					</ScrollArea>
+					<div className="space-y-4 pt-3">
+						<dl className="space-y-1 text-xs text-muted-foreground">
+							<dt>回答所用版本</dt>
+							<dd className="font-mono text-foreground [overflow-wrap:anywhere]">
+								{citation.source?.document_version_id || "未记录"}
+							</dd>
+							{citation.source?.row_start != null ? (
+								<>
+									<dt className="pt-2">表格行组</dt>
+									<dd>
+										{citation.source.row_start}
+										{citation.source.row_end != null
+											? ` 至 ${citation.source.row_end}`
+											: ""}
+									</dd>
+								</>
+							) : null}
+						</dl>
+						<section className="space-y-2 border-t pt-4">
+							<h3 className="text-sm font-medium">来源片段</h3>
+							<p className="text-answer whitespace-pre-wrap text-foreground [overflow-wrap:anywhere]">
+								{fullText || "未记录来源片段"}
+							</p>
+						</section>
+					</div>
 				) : !compact ? (
-					<p className="text-ui line-clamp-2 text-muted-foreground">
+					<p className="line-clamp-2 text-sm text-muted-foreground [overflow-wrap:anywhere]">
 						{preview || "（无预览）"}
 					</p>
 				) : null}
 				{showDiagnostics ? (
-					<details className="group border-t border-border/70 pt-2">
-						<summary className="cursor-pointer list-none text-meta font-mono text-muted-foreground transition-colors hover:text-foreground">
+					<details className="group border-t pt-3">
+						<summary className="flex min-h-11 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+							<ChevronDown
+								className="size-3.5 transition-transform group-open:rotate-180"
+								aria-hidden
+							/>
 							检索诊断
 						</summary>
-						<div className="mt-2 flex flex-wrap gap-3">
-							<ScoreBar label="rank" value={citation.score} tone="cite" />
-							{citation.denseScore != null ? (
-								<ScoreBar
-									label="dense"
-									value={citation.denseScore}
-									tone="primary"
-								/>
-							) : null}
-							{citation.bm25Score != null ? (
-								<ScoreBar
-									label="bm25"
-									value={citation.bm25Score}
-									tone="survey"
-								/>
-							) : null}
-							{citation.rrfScore != null ? (
-								<ScoreBar
-									label="rrf"
-									value={citation.rrfScore}
-									tone="cite"
-									barScale={10}
-								/>
-							) : null}
+						<div className="mb-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+							{citation.usedRerank ? <span>本次使用重排</span> : null}
+							{citation.usedHybrid ? <span>本次使用混合检索</span> : null}
 						</div>
+						<dl className="space-y-2 text-xs">
+							{[
+								["排序分数", citation.score],
+								["Dense", citation.denseScore],
+								["BM25", citation.bm25Score],
+								["RRF", citation.rrfScore],
+							].map(([label, value]) =>
+								typeof value === "number" && Number.isFinite(value) ? (
+									<div className="flex justify-between gap-3" key={label}>
+										<dt className="text-muted-foreground">{label}</dt>
+										<dd className="font-mono tabular-nums">
+											{formatScore(value)}
+										</dd>
+									</div>
+								) : null,
+							)}
+						</dl>
 					</details>
 				) : null}
 			</div>
@@ -190,11 +153,14 @@ export function CitationSourceCard({
 	showDiagnostics?: boolean;
 }) {
 	const className = cn(
-		"w-full rounded-md border px-3 py-2.5 text-left transition-[border-color,background-color,box-shadow]",
-		active
-			? "border-cite/45 bg-cite/8 shadow-sm"
-			: "border-border/80 bg-background/90 hover:border-cite/30 hover:bg-card",
-		!onSelect && "cursor-default hover:border-cite/45 hover:bg-cite/8",
+		"w-full min-w-0 text-left",
+		expanded
+			? ""
+			: "min-h-11 rounded-lg border px-3 py-3 transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+		!expanded &&
+			(active
+				? "border-evidence/45 bg-muted"
+				: "border-border bg-background hover:bg-muted/60"),
 	);
 
 	const body: ReactNode = (
@@ -218,6 +184,9 @@ export function CitationSourceCard({
 	return (
 		<button
 			type="button"
+			aria-label={`查看引用 ${citation.index}：${citation.title}`}
+			data-citation-id={citation.id}
+			aria-pressed={Boolean(active)}
 			onClick={() => onSelect(citation)}
 			className={className}
 		>

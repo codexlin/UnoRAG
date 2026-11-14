@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ThemeProvider } from "@/components/app/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { APPEARANCE_INIT_SCRIPT } from "@/lib/appearance";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -11,12 +12,18 @@ export const metadata: Metadata = {
 	icons: {
 		icon: [
 			{
+				url: "/favicon-16x16.png",
+				sizes: "16x16",
+				type: "image/png",
+			},
+			{
 				url: "/favicon-32x32.png",
 				sizes: "32x32",
 				type: "image/png",
 			},
 			{
-				url: "/brand/uno-mark.svg",
+				url: "/brand/uno-favicon.svg",
+				sizes: "any",
 				type: "image/svg+xml",
 			},
 		],
@@ -38,6 +45,12 @@ export default function RootLayout({
 	return (
 		<html lang="zh-CN" suppressHydrationWarning className="h-full antialiased">
 			<body className="flex min-h-full flex-col font-sans">
+				{/* Parser-executed, allow-listed bootstrap also works before hydration bundles load. */}
+				<script
+					id="unorag-appearance"
+					// biome-ignore lint/security/noDangerouslySetInnerHtml: static bootstrap with allow-listed preferences, never user-provided script/CSS
+					dangerouslySetInnerHTML={{ __html: APPEARANCE_INIT_SCRIPT }}
+				/>
 				<ThemeProvider
 					attribute="class"
 					defaultTheme="system"

@@ -1,9 +1,9 @@
 "use client";
 
-import { ExternalLink, Search } from "lucide-react";
-import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Download, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { HelpTip } from "@/components/app/help-tip";
 import { useSession } from "@/components/app/session-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,11 +76,7 @@ function resourceLabel(item: AuditItem): string {
 	return item.resource.type;
 }
 
-export function WorkspaceAuditPanel({
-	fullPage = false,
-}: {
-	fullPage?: boolean;
-}) {
+export function WorkspaceAuditPanel() {
 	const { can } = useSession();
 	const canManage = can("manageMembers");
 	const [items, setItems] = useState<AuditItem[]>([]);
@@ -90,6 +86,7 @@ export function WorkspaceAuditPanel({
 	const [error, setError] = useState<string | null>(null);
 	const [query, setQuery] = useState("");
 	const [selected, setSelected] = useState<AuditItem | null>(null);
+	const titleRef = useRef<HTMLHeadingElement | null>(null);
 
 	const load = useCallback(async (cursor: string | null, append: boolean) => {
 		if (append) setLoadingMore(true);
@@ -143,62 +140,41 @@ export function WorkspaceAuditPanel({
 
 	if (!canManage) {
 		return (
-			<div className="rounded-2xl border border-border/80 bg-card/80 px-4 py-4">
-				<p className="text-meta font-mono tracking-[0.16em] text-muted-foreground uppercase">
-					Audit
-				</p>
+			<section className="border-t border-border py-6">
+				<h3 className="text-base font-medium">操作记录</h3>
 				<p className="text-ui mt-2 text-muted-foreground">
 					仅 owner / admin 可查看工作区审计日志与导出 CSV。
 				</p>
-			</div>
+			</section>
 		);
 	}
 
 	return (
-		<div
-			className={
-				fullPage
-					? "min-w-0 space-y-4"
-					: "min-w-0 space-y-4 border border-border/80 bg-card/80 px-4 py-4"
-			}
-		>
+		<div className="min-w-0 space-y-4">
 			<div className="flex flex-wrap items-start justify-between gap-3">
-				<div>
-					<p className="text-meta font-mono tracking-[0.16em] text-muted-foreground uppercase">
-						Audit
-					</p>
-					<p className="text-ui mt-1 text-muted-foreground">
-						工作区操作记录。部分后台任务可能无操作者；仅展示已写入字段。
-					</p>
-				</div>
 				<div className="flex items-center gap-2">
-					{!fullPage ? (
-						<Link
-							href="/app/audit"
-							className="inline-flex h-8 items-center gap-1.5 border border-border bg-background px-3 text-xs font-medium hover:bg-muted/60"
-						>
-							完整记录 <ExternalLink className="size-3" />
-						</Link>
-					) : null}
 					<a
 						href="/api/workspace/audit/export"
-						className="inline-flex h-8 items-center border border-border bg-background px-3 text-xs font-medium hover:bg-muted/60"
+						className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium hover:bg-muted/60"
 					>
+						<Download className="size-4" aria-hidden />
 						导出 CSV
 					</a>
+					<HelpTip label="操作记录权限说明">
+						仅 owner / admin 可查看操作记录和导出 CSV。
+					</HelpTip>
 				</div>
 			</div>
-			{fullPage ? (
-				<div className="relative max-w-sm">
-					<Search className="absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
-					<Input
-						value={query}
-						onChange={(event) => setQuery(event.target.value)}
-						placeholder="筛选动作、操作者或资源"
-						className="pl-9"
-					/>
-				</div>
-			) : null}
+			<div className="relative max-w-sm">
+				<Search className="absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
+				<Input
+					aria-label="筛选已加载的操作记录"
+					value={query}
+					onChange={(event) => setQuery(event.target.value)}
+					placeholder="筛选已加载记录"
+					className="h-11 pl-9"
+				/>
+			</div>
 
 			{loading ? (
 				<p className="text-ui text-muted-foreground">加载中…</p>
@@ -238,7 +214,7 @@ export function WorkspaceAuditPanel({
 										<button
 											type="button"
 											onClick={() => setSelected(item)}
-											className="text-left font-medium hover:text-cite hover:underline"
+											className="min-h-11 text-left font-medium text-evidence underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
 											title={item.action}
 										>
 											{actionLabel(item.action)}
@@ -267,6 +243,7 @@ export function WorkspaceAuditPanel({
 						type="button"
 						variant="outline"
 						size="sm"
+						className="h-11"
 						disabled={loadingMore}
 						onClick={() => void load(nextCursor, true)}
 					>
@@ -280,13 +257,14 @@ export function WorkspaceAuditPanel({
 			>
 				<SheetContent
 					side="right"
-					className="w-full gap-0 sm:max-w-lg"
+					initialFocus={titleRef}
+					className="w-full gap-0 sm:max-w-lg [&>[data-slot=sheet-close]]:size-11"
 					showCloseButton
 				>
 					{selected ? (
 						<>
 							<SheetHeader className="border-b border-border/70">
-								<SheetTitle className="pr-8">
+								<SheetTitle ref={titleRef} tabIndex={-1} className="pr-8">
 									{actionLabel(selected.action)}
 								</SheetTitle>
 								<SheetDescription>
@@ -309,10 +287,8 @@ export function WorkspaceAuditPanel({
 									))}
 								</dl>
 								<section>
-									<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
-										元数据
-									</p>
-									<pre className="mt-2 max-h-80 overflow-auto border border-border/70 bg-muted/25 p-3 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-all">
+									<p className="text-sm font-medium">元数据</p>
+									<pre className="mt-2 max-h-80 overflow-auto border border-border/70 bg-muted/25 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all">
 										{JSON.stringify(selected.details, null, 2)}
 									</pre>
 								</section>

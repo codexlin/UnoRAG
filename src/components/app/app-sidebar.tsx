@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { AppNavUser } from "@/components/app/app-nav-user";
@@ -8,6 +7,7 @@ import {
 	type AppNavItem,
 	getAppNavItemsByGroup,
 } from "@/components/app/nav-items";
+import { GuardedLink } from "@/components/app/navigation-guard";
 import { useSession } from "@/components/app/session-provider";
 import { UnoMark } from "@/components/app/unorag-logo";
 import { WorkspaceSwitcher } from "@/components/app/workspace-switcher";
@@ -38,39 +38,26 @@ function NavLink({ item }: { item: AppNavItem }) {
 	return (
 		<SidebarMenuItem>
 			<SidebarMenuButton
-				render={<Link href={item.href} />}
+				render={<GuardedLink href={item.href} />}
+				aria-label={item.label}
+				aria-current={active ? "page" : undefined}
 				isActive={active}
 				tooltip={item.label}
 				className={cn(
-					"relative h-11 gap-3 overflow-visible rounded-lg px-2.5 text-[0.9375rem] font-medium",
+					"relative h-11 gap-3 rounded-lg px-3 text-sm font-medium",
 					/* 覆盖 SidebarMenuButton 默认的 width/height 过渡，只做轻量变色 */
 					"transition-[background-color,color]! duration-150! ease-out!",
-					"hover:bg-primary/12 hover:text-foreground",
-					"group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:overflow-hidden group-data-[collapsible=icon]:p-1.5!",
-					"data-active:bg-card data-active:font-medium data-active:text-foreground",
-					"data-active:hover:bg-card",
-					active && "bg-card text-foreground ring-1 ring-border/70",
+					"hover:bg-sidebar-accent hover:text-foreground",
+					"group-data-[collapsible=icon]:size-11! group-data-[collapsible=icon]:-mx-0.5 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:p-0!",
+					"data-active:bg-sidebar-accent data-active:font-medium data-active:text-foreground",
 				)}
 			>
-				<span
-					className={cn(
-						"flex size-8 shrink-0 items-center justify-center rounded-md border [&_svg]:size-4",
-						"transition-[background-color,border-color,color] duration-150 ease-out",
-						"group-data-[collapsible=icon]:size-5 group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:[&_svg]:size-4",
-						active
-							? "border-primary/30 bg-primary/15 text-primary"
-							: "border-border/70 bg-background/70 text-muted-foreground group-hover/menu-button:border-primary/40 group-hover/menu-button:bg-primary/15 group-hover/menu-button:text-primary",
-					)}
-				>
+				<span className="flex size-4 shrink-0 items-center justify-center [&_svg]:size-4">
 					<Icon aria-hidden />
 				</span>
-				<span className="truncate">{item.label}</span>
-				{active ? (
-					<span
-						className="absolute top-1/2 right-0 h-6 w-0.5 -translate-y-1/2 rounded-full bg-cite group-data-[collapsible=icon]:hidden"
-						aria-hidden
-					/>
-				) : null}
+				<span className="truncate group-data-[collapsible=icon]:sr-only">
+					{item.label}
+				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
 	);
@@ -88,14 +75,15 @@ export function AppSidebar() {
 		<Sidebar
 			collapsible="icon"
 			variant="sidebar"
-			className="border-sidebar-border bg-sidebar/90 backdrop-blur-sm"
+			className="border-sidebar-border bg-sidebar"
 		>
 			<SidebarHeader className="h-14 justify-center border-b border-sidebar-border px-2">
 				<SidebarMenu>
 					<SidebarMenuItem>
 						<SidebarMenuButton
 							size="lg"
-							render={<Link href="/" />}
+							render={<GuardedLink href="/" />}
+							aria-label="UnoRAG 首页"
 							tooltip="UnoRAG"
 							className={cn(
 								"h-10 gap-2.5 rounded-lg px-2 hover:bg-primary/10",
@@ -117,11 +105,11 @@ export function AppSidebar() {
 					<WorkspaceSwitcher />
 				</SidebarGroup>
 				<SidebarGroup>
-					<SidebarGroupLabel className="text-meta font-mono tracking-[0.14em] text-muted-foreground uppercase">
+					<SidebarGroupLabel className="text-xs text-muted-foreground">
 						导航
 					</SidebarGroupLabel>
 					<SidebarGroupContent>
-						<SidebarMenu className="gap-1.5">
+						<SidebarMenu className="gap-1">
 							{primaryNav.map((item) => (
 								<NavLink key={item.href} item={item} />
 							))}
@@ -131,11 +119,11 @@ export function AppSidebar() {
 
 				{/* 紧挨主导航，不沉底 */}
 				<SidebarGroup>
-					<SidebarGroupLabel className="text-meta font-mono tracking-[0.14em] text-muted-foreground uppercase">
+					<SidebarGroupLabel className="text-xs text-muted-foreground">
 						系统设置
 					</SidebarGroupLabel>
 					<SidebarGroupContent>
-						<SidebarMenu className="gap-1.5">
+						<SidebarMenu className="gap-1">
 							{settingsNav.map((item) => (
 								<NavLink key={item.href} item={item} />
 							))}

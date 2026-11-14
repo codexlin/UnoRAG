@@ -1,8 +1,22 @@
 "use client";
 
-import { Check, ChevronDown, Copy } from "lucide-react";
-import { useState } from "react";
-import { StageWaterfall } from "@/components/app/stage-waterfall";
+import {
+	Check,
+	CheckCircle2,
+	CircleAlert,
+	CircleHelp,
+	Code2,
+	Copy,
+	ListTree,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { ModelUsagePanel } from "@/components/app/model-usage-panel";
+import {
+	StageWaterfall,
+	stageDisplayName,
+} from "@/components/app/stage-waterfall";
+import { Button } from "@/components/ui/button";
 import {
 	Sheet,
 	SheetContent,
@@ -10,8 +24,26 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
-import type { ApiRetrievalDebug } from "@/lib/api";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+	Trace,
+	TraceCollapsible,
+	TraceCollapsibleContent,
+	TraceCollapsibleTrigger,
+	TraceDescription,
+	TraceIcon,
+	TraceLine,
+	TraceTitle,
+} from "@/components/ui/trace";
+import { projectModelUsage } from "@/core/ai/model-usage";
+import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
+import type { ApiAskStage, ApiRetrievalDebug } from "@/lib/api";
 import { formatDurationMs } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 function formatDebugValue(value: unknown): string {
 	if (value == null) return "—";
@@ -64,6 +96,7 @@ function serverTotalDurationMs(
 function summaryRows(
 	debug: ApiRetrievalDebug,
 	clientDurationMs?: number | null,
+	hasModelUsage = false,
 ): { label: string; value: string }[] {
 	const serverTotal = serverTotalDurationMs(debug);
 	const retrieveMs = stageDurationMs(debug, "retrieve");
@@ -106,55 +139,189 @@ function summaryRows(
 		});
 	}
 	if (
-		typeof debug.judge_input_tokens === "number" ||
-		typeof debug.judge_output_tokens === "number"
+		!hasModelUsage &&
+		(typeof debug.judge_input_tokens === "number" ||
+			typeof debug.judge_output_tokens === "number")
 	) {
 		rows.push({
-			label: "Judge tokens",
+			label: "Judge tokens（旧记录）",
 			value: `${formatDebugValue(debug.judge_input_tokens)} / ${formatDebugValue(debug.judge_output_tokens)}`,
 		});
 	}
 	return rows;
 }
 
+const RERANK_CATEGORY_LABELS = {
+	success: "成功",
+	timeout: "请求超时",
+	http: "上游 HTTP 错误",
+	transport: "传输失败",
+	invalid_response: "响应无效",
+	unknown: "未分类错误",
+} as const;
+
+function StageTraceDetails({ stage }: { stage: ApiAskStage }) {
+	const failed = stage.ok === false;
+	const outcome = failed ? "失败" : stage.ok === true ? "完成" : "未记录";
+	const Icon = failed
+		? CircleAlert
+		: stage.ok === true
+			? CheckCircle2
+			: CircleHelp;
+	const duration =
+		Number.isFinite(stage.duration_ms) && stage.duration_ms >= 0
+			? formatDurationMs(stage.duration_ms)
+			: "未记录";
+	const rerank = projectRerankDiagnostic(
+		"rerank_diagnostic" in stage
+			? stage.rerank_diagnostic
+			: stage.detail?.rerankDiagnostic,
+	);
+	const fields = [
+		{ label: "阶段键", value: stage.stage },
+		{ label: "执行结果", value: outcome },
+		...(rerank
+			? [
+					{
+						label: "重排结果",
+						value: RERANK_CATEGORY_LABELS[rerank.category],
+					},
+					{
+						label: "重排耗时",
+						value: formatDurationMs(rerank.durationMs),
+					},
+					{
+						label: "HTTP 状态",
+						value: formatDebugValue(rerank.statusCode),
+					},
+					{
+						label: "尝试 / 上限",
+						value: `${formatDebugValue(rerank.attempts)} / ${formatDebugValue(rerank.maxAttempts)}`,
+					},
+					{
+						label: "重排预算",
+						value:
+							rerank.timeoutMs == null
+								? "未记录"
+								: formatDurationMs(rerank.timeoutMs),
+					},
+					{
+						label: "输入 / 请求 / 返回",
+						value: `${rerank.inputCount} / ${rerank.requestedCount} / ${formatDebugValue(rerank.resultCount)}`,
+					},
+					{
+						label: "候选 / 重排 / 去重 / TopK",
+						value: `${rerank.candidateCountBeforeRerank} → ${rerank.candidateCountAfterRerank} → ${rerank.candidateCountAfterDedup} → ${rerank.candidateCountAfterTopK}`,
+					},
+				]
+			: []),
+	];
+
+	return (
+		<TraceCollapsible defaultOpen={failed}>
+			<TraceCollapsibleTrigger className="w-full gap-2 px-2 hover:bg-muted/40">
+				<TraceLine
+					status={failed ? "error" : undefined}
+					className="w-full flex-1"
+				>
+					<TraceIcon className={cn(!failed && "text-muted-foreground")}>
+						<Icon />
+					</TraceIcon>
+					<TraceTitle className="flex-1 whitespace-normal [overflow-wrap:anywhere]">
+						{stageDisplayName(stage.stage)}
+					</TraceTitle>
+					<span className="sr-only">{outcome}</span>
+					<TraceDescription className="pl-2 font-mono text-xs text-muted-foreground">
+						{duration}
+					</TraceDescription>
+				</TraceLine>
+			</TraceCollapsibleTrigger>
+			<TraceCollapsibleContent className="mt-0 mb-3 mr-2">
+				<dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-4 gap-y-2 text-xs">
+					{fields.map((field) => (
+						<div key={field.label} className="contents">
+							<dt className="[overflow-wrap:anywhere]">{field.label}</dt>
+							<dd className="font-mono text-foreground [overflow-wrap:anywhere]">
+								{field.value}
+							</dd>
+						</div>
+					))}
+				</dl>
+			</TraceCollapsibleContent>
+		</TraceCollapsible>
+	);
+}
+
 function CopyTraceId({ traceId }: { traceId: string }) {
 	const [copied, setCopied] = useState(false);
+	const timer = useRef<number | null>(null);
+	const active = useRef(false);
+	const copying = useRef(false);
+	useEffect(() => {
+		active.current = true;
+		return () => {
+			active.current = false;
+			if (timer.current != null) window.clearTimeout(timer.current);
+		};
+	}, []);
 
 	async function onCopy() {
+		if (copying.current) return;
+		copying.current = true;
 		try {
 			await navigator.clipboard.writeText(traceId);
+			if (!active.current) return;
 			setCopied(true);
-			window.setTimeout(() => setCopied(false), 1400);
+			if (timer.current != null) window.clearTimeout(timer.current);
+			timer.current = window.setTimeout(() => setCopied(false), 1400);
 		} catch {
+			if (!active.current) return;
 			setCopied(false);
+			toast.error("复制失败");
+		} finally {
+			copying.current = false;
 		}
 	}
 
 	return (
-		<button
-			type="button"
-			onClick={() => void onCopy()}
-			className="group flex w-full items-center gap-2 rounded-md border border-border/70 bg-background/80 px-2.5 py-2 text-left transition-colors hover:border-cite/35 hover:bg-cite/5"
-			title="复制 trace_id"
-		>
-			<span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground/90">
+		<div className="flex min-w-0 items-center gap-2 border-b py-1">
+			<code className="min-w-0 flex-1 text-xs text-foreground [overflow-wrap:anywhere]">
 				{traceId}
+			</code>
+			<Tooltip>
+				<TooltipTrigger
+					render={
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className={cn(
+								"size-11 shrink-0 text-muted-foreground transition-colors duration-150 hover:text-foreground motion-reduce:transition-none",
+								copied && "text-primary hover:text-primary",
+							)}
+							aria-label={copied ? "已复制 trace_id" : "复制 trace_id"}
+							onClick={() => void onCopy()}
+						/>
+					}
+				>
+					{copied ? (
+						<Check className="size-4" aria-hidden />
+					) : (
+						<Copy className="size-4" aria-hidden />
+					)}
+				</TooltipTrigger>
+				<TooltipContent>{copied ? "已复制" : "复制 trace_id"}</TooltipContent>
+			</Tooltip>
+			<span className="sr-only" role="status">
+				{copied ? "链路标识已复制" : ""}
 			</span>
-			{copied ? (
-				<Check className="size-3.5 shrink-0 text-cite" aria-hidden />
-			) : (
-				<Copy
-					className="size-3.5 shrink-0 text-muted-foreground group-hover:text-foreground"
-					aria-hidden
-				/>
-			)}
-			<span className="sr-only">{copied ? "已复制" : "复制 trace_id"}</span>
-		</button>
+		</div>
 	);
 }
 
 export function hasAskTrace(debug?: ApiRetrievalDebug | null): boolean {
 	if (!debug || typeof debug !== "object") return false;
+	if (debug.model_usage != null) return true;
 	const stages = debug.stages;
 	if (Array.isArray(stages) && stages.length > 0) return true;
 	return typeof debug.trace_id === "string" && debug.trace_id.length > 0;
@@ -173,7 +340,11 @@ export function AskTraceDrawer({
 	clientDurationMs?: number | null;
 }) {
 	const stages = Array.isArray(debug?.stages) ? debug.stages : [];
-	const rows = debug ? summaryRows(debug, clientDurationMs) : [];
+	const titleRef = useRef<HTMLHeadingElement | null>(null);
+	const modelUsage = projectModelUsage(debug?.model_usage);
+	const rows = debug
+		? summaryRows(debug, clientDurationMs, modelUsage != null)
+		: [];
 	const traceId =
 		typeof debug?.trace_id === "string" && debug.trace_id
 			? debug.trace_id
@@ -185,32 +356,88 @@ export function AskTraceDrawer({
 		<Sheet open={open && debug != null} onOpenChange={onOpenChange}>
 			<SheetContent
 				side="right"
-				className="w-full gap-0 sm:max-w-md"
+				initialFocus={titleRef}
+				className="w-full max-w-[min(100vw,40rem)]! gap-0 [&>[data-slot=sheet-close]]:size-11"
 				showCloseButton
 			>
 				{debug ? (
 					<>
-						<SheetHeader className="border-b border-border/70">
-							<SheetTitle className="pr-8">请求链路</SheetTitle>
+						<SheetHeader className="border-b px-5 py-5 sm:px-6">
+							<SheetTitle ref={titleRef} tabIndex={-1} className="pr-8">
+								请求链路
+							</SheetTitle>
 							<SheetDescription>
-								{serverTotal != null && clientDurationMs != null
-									? `服务端合计 ${formatDurationMs(serverTotal)} · 端到端 ${formatDurationMs(clientDurationMs)}`
-									: "本轮 Ask 的 stages 与检索调试信息（服务端阶段耗时）"}
+								{[
+									serverTotal != null
+										? `服务端合计 ${formatDurationMs(serverTotal)}`
+										: null,
+									clientDurationMs != null
+										? `端到端 ${formatDurationMs(clientDurationMs)}`
+										: null,
+								]
+									.filter(Boolean)
+									.join(" · ") || "本次请求"}
 							</SheetDescription>
 						</SheetHeader>
 
-						<div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 py-4">
+						<div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-5 sm:px-6">
+							<section className="space-y-3" aria-label="阶段耗时">
+								<div className="flex flex-wrap items-baseline justify-between gap-2">
+									<h3 className="text-sm font-medium">阶段耗时</h3>
+									<span className="text-xs text-muted-foreground">
+										{stages.length} 步 · 顺序累计
+									</span>
+								</div>
+								{stages.length === 0 ? (
+									<p className="text-sm text-muted-foreground">暂无阶段记录</p>
+								) : (
+									<StageWaterfall stages={stages} />
+								)}
+							</section>
+							{stages.length > 0 ? (
+								<section aria-label="阶段详情">
+									<Trace key={traceId}>
+										<TraceCollapsible
+											defaultOpen={stages.some((stage) => stage.ok === false)}
+										>
+											<TraceCollapsibleTrigger className="w-full gap-2 px-2 hover:bg-muted/40">
+												<TraceLine className="w-full flex-1">
+													<TraceIcon>
+														<ListTree />
+													</TraceIcon>
+													<TraceTitle className="flex-1 font-medium text-foreground">
+														阶段详情
+													</TraceTitle>
+													<TraceDescription className="text-xs text-muted-foreground">
+														{stages.length} 项
+													</TraceDescription>
+												</TraceLine>
+											</TraceCollapsibleTrigger>
+											<TraceCollapsibleContent className="mt-0 mb-0 pr-0 pl-3">
+												<Trace className="gap-0">
+													{stages.map((stage, index) => (
+														<StageTraceDetails
+															// biome-ignore lint/suspicious/noArrayIndexKey: Ordered stage records have no ID and stage names may repeat.
+															key={`${stage.stage}:${index}`}
+															stage={stage}
+														/>
+													))}
+												</Trace>
+											</TraceCollapsibleContent>
+										</TraceCollapsible>
+									</Trace>
+								</section>
+							) : null}
+							<ModelUsagePanel usage={modelUsage} />
 							<section className="space-y-2">
-								<p className="text-meta font-mono tracking-[0.14em] text-muted-foreground uppercase">
-									摘要
-								</p>
-								<dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+								<h3 className="text-sm font-medium">摘要</h3>
+								<dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-4 gap-y-2 text-xs">
 									{rows.map((row) => (
 										<div key={row.label} className="contents">
-											<dt className="font-mono text-[11px] text-muted-foreground">
+											<dt className="text-muted-foreground [overflow-wrap:anywhere]">
 												{row.label}
 											</dt>
-											<dd className="truncate font-mono text-[11px] text-foreground/90">
+											<dd className="font-mono text-foreground [overflow-wrap:anywhere]">
 												{row.value}
 											</dd>
 										</div>
@@ -218,60 +445,51 @@ export function AskTraceDrawer({
 								</dl>
 								{typeof debug.upgrade_reason === "string" &&
 								debug.upgrade_reason ? (
-									<p className="font-mono text-[11px] text-muted-foreground">
+									<p className="font-mono text-xs text-muted-foreground">
 										upgrade_reason · {debug.upgrade_reason}
 									</p>
 								) : null}
 								{typeof debug.downgrade_reason === "string" &&
 								debug.downgrade_reason ? (
-									<p className="font-mono text-[11px] text-survey">
+									<p className="font-mono text-xs text-survey">
 										downgrade_reason · {debug.downgrade_reason}
 									</p>
 								) : null}
 							</section>
 
 							<section className="space-y-2">
-								<p className="text-meta font-mono tracking-[0.14em] text-muted-foreground uppercase">
-									trace_id
-								</p>
+								<h3 className="text-sm font-medium">trace_id</h3>
 								{traceId ? (
-									<CopyTraceId traceId={traceId} />
+									<CopyTraceId key={traceId} traceId={traceId} />
 								) : (
-									<p className="font-mono text-[11px] text-muted-foreground">
-										—
-									</p>
+									<p className="font-mono text-xs text-muted-foreground">—</p>
 								)}
 							</section>
 
-							<section className="space-y-1">
-								<div className="flex items-baseline justify-between gap-2">
-									<p className="text-meta font-mono tracking-[0.14em] text-muted-foreground uppercase">
-										Stages
-									</p>
-									<span className="font-mono text-[11px] text-muted-foreground">
-										{stages.length} 步
-									</span>
-								</div>
-								{stages.length === 0 ? (
-									<p className="text-ui text-muted-foreground">
-										暂无 stage 记录
-									</p>
-								) : (
-									<StageWaterfall stages={stages} />
-								)}
-							</section>
-
-							<details className="group rounded-md border border-border/70">
-								<summary className="cursor-pointer list-none px-3 py-2 font-mono text-[11px] tracking-wide text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground [&::-webkit-details-marker]:hidden">
-									<span className="inline-flex items-center gap-1.5">
-										<ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
-										原始 JSON
-									</span>
-								</summary>
-								<pre className="max-h-64 overflow-auto border-t border-border/60 px-3 py-2 font-mono text-[10px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-all">
-									{rawJson}
-								</pre>
-							</details>
+							<Trace className="border-t border-border/70 pt-2">
+								<TraceCollapsible>
+									<TraceCollapsibleTrigger className="w-full justify-between px-2 hover:bg-muted/40">
+										<TraceLine>
+											<TraceIcon>
+												<Code2 />
+											</TraceIcon>
+											<TraceTitle>原始 JSON</TraceTitle>
+										</TraceLine>
+									</TraceCollapsibleTrigger>
+									<TraceCollapsibleContent className="m-0 border-l-0 p-0">
+										<section
+											// biome-ignore lint/a11y/noNoninteractiveTabindex: The scrollable JSON region needs keyboard access.
+											tabIndex={0}
+											aria-label="原始 JSON 内容"
+											className="max-h-64 overflow-auto rounded-md bg-muted/30 px-3 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										>
+											<pre className="font-mono text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap break-all">
+												{rawJson}
+											</pre>
+										</section>
+									</TraceCollapsibleContent>
+								</TraceCollapsible>
+							</Trace>
 						</div>
 					</>
 				) : null}

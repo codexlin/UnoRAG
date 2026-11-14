@@ -139,59 +139,27 @@ export type DetailAction = {
 	run: (doc: ApiDocument) => void;
 };
 
-export function buildDetailActions(input: {
-	onAcl: (doc: ApiDocument) => void;
-	onReplace: (doc: ApiDocument) => void;
-	onReindex: (doc: ApiDocument) => void;
-	onDownload: (doc: ApiDocument) => void;
-	onDelete: (doc: ApiDocument) => void;
-}): DetailAction[] {
-	return [
-		{
-			id: "acl",
-			cap: "writeLibraries",
-			label: "谁可见",
-			icon: Shield,
-			variant: "outline",
-			disabled: (_doc, busy) => busy,
-			run: input.onAcl,
-		},
-		{
-			id: "replace",
-			cap: "writeLibraries",
-			label: "替换文件",
-			icon: Replace,
-			variant: "outline",
-			disabled: (doc, busy) => doc.status === "processing" || busy,
-			run: input.onReplace,
-		},
-		{
-			id: "reindex",
-			cap: "writeLibraries",
-			label: "重索引",
-			icon: RotateCcw,
-			variant: "outline",
+export function buildDetailActions(
+	caps: PermissionCaps,
+	document: ApiDocument | null,
+	handlers: Omit<DocActionContext, "busy" | "processing">,
+): DetailAction[] {
+	if (!document) return [];
+	const context: DocActionContext = {
+		...handlers,
+		busy: false,
+		processing: document.status === "processing",
+	};
+	return resolveDocActions(caps, document)
+		.filter((action) => action.id !== "view")
+		.map((action) => ({
+			id: action.id,
+			cap: action.cap,
+			label: action.label,
+			icon: action.icon,
+			variant: action.destructive ? "destructive" : "outline",
 			disabled: (doc, busy) =>
-				!doc.has_file || doc.status === "processing" || busy,
-			run: input.onReindex,
-		},
-		{
-			id: "download",
-			cap: "read",
-			label: "下载",
-			icon: Download,
-			variant: "outline",
-			disabled: (doc, busy) => !doc.has_file || busy,
-			run: input.onDownload,
-		},
-		{
-			id: "delete",
-			cap: "manageLibraries",
-			label: "删除",
-			icon: Trash2,
-			variant: "destructive",
-			disabled: (_doc, busy) => busy,
-			run: input.onDelete,
-		},
-	];
+				action.disabled?.(doc, { ...context, busy }) ?? false,
+			run: (doc) => action.run(doc, context),
+		}));
 }

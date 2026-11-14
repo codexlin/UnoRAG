@@ -24,7 +24,7 @@ async function signIn(page: Page) {
 	await page.getByLabel("邮箱").fill(email);
 	await page.getByLabel("密码").fill(password);
 	await page.getByRole("button", { name: "登录" }).click();
-	await page.waitForURL((url) => url.pathname.startsWith("/app"));
+	await page.waitForURL((url) => url.pathname === "/app/ask");
 }
 
 test("public entry and authentication boundary are usable", async ({
@@ -37,7 +37,13 @@ test("public entry and authentication boundary are usable", async ({
 		"frame-ancestors 'none'",
 	);
 	expect(headers["content-security-policy"]).toContain("object-src 'none'");
-	expect(headers["strict-transport-security"]).toContain("max-age=31536000");
+	if (process.env.UNORAG_E2E_TARGET_MODE === "development") {
+		expect(headers["strict-transport-security"]).toBeUndefined();
+		expect(headers["content-security-policy"]).toContain("'unsafe-eval'");
+	} else {
+		expect(headers["strict-transport-security"]).toContain("max-age=31536000");
+		expect(headers["content-security-policy"]).not.toContain("'unsafe-eval'");
+	}
 	expect(headers["referrer-policy"]).toBe("strict-origin-when-cross-origin");
 	expect(headers["x-content-type-options"]).toBe("nosniff");
 	expect(headers["x-frame-options"]).toBe("DENY");
@@ -45,7 +51,7 @@ test("public entry and authentication boundary are usable", async ({
 	expect(headers["x-powered-by"]).toBeUndefined();
 	await expect(page.getByRole("heading", { name: "UnoRAG" })).toBeVisible();
 	await expect(
-		page.getByText("Enterprise Knowledge Infrastructure", { exact: true }),
+		page.getByText("开源 · 私有化部署 · Apache-2.0", { exact: true }),
 	).toBeVisible();
 	await expectNoHorizontalOverflow(page);
 
@@ -66,9 +72,8 @@ test("authenticated knowledge and settings journeys fit the viewport", async ({
 	await expect(page.getByText("资料空间", { exact: true })).toHaveCount(0);
 	await expectNoHorizontalOverflow(page);
 
-	await page.goto("/app/settings");
+	await page.goto("/app/settings#integrations");
 	await expect(page.getByRole("heading", { name: "工作区设置" })).toBeVisible();
-	await expect(page.getByText("明文仅创建时显示一次")).toBeVisible();
 	await expect(page.getByRole("button", { name: "创建密钥" })).toBeVisible();
 	await expectNoHorizontalOverflow(page);
 
@@ -103,7 +108,10 @@ test("Judge diagnostics remain readable and omit absent legacy metadata", async 
 	let mode: "provider" | "validation" | "legacy" = "provider";
 	await page.route("**/api/workspace/operations", async (route) => {
 		const response = await route.fetch();
-		expect(response.ok()).toBe(true);
+		expect(
+			response.status(),
+			"Live operations snapshot must load before diagnostic overrides",
+		).toBe(200);
 		const snapshot = await response.json();
 		snapshot.recent_errors = [
 			{
@@ -179,7 +187,10 @@ test("Judge diagnostics remain readable and omit absent legacy metadata", async 
 		},
 	);
 	await page.goto("/app/operations");
-	await page.getByRole("row").filter({ hasText: "judge_unavailable" }).click();
+	const errorButton = page
+		.getByRole("region", { name: "最近错误", exact: true })
+		.getByRole("button", { name: `查看请求错误 ${id}`, exact: true });
+	await errorButton.click();
 	const dialog = page.getByRole("dialog");
 	await expect(
 		dialog.getByRole("heading", { name: "Judge 诊断 · 阶段 3" }),
@@ -207,7 +218,7 @@ test("Judge diagnostics remain readable and omit absent legacy metadata", async 
 	await page.keyboard.press("Escape");
 	await expect(dialog).toBeHidden();
 	mode = "validation";
-	await page.getByRole("row").filter({ hasText: "judge_unavailable" }).click();
+	await errorButton.click();
 	await expect(dialog).toBeVisible();
 	for (const value of [
 		"selected_ids_unknown",
@@ -231,7 +242,7 @@ test("Judge diagnostics remain readable and omit absent legacy metadata", async 
 	await page.keyboard.press("Escape");
 	await expect(dialog).toBeHidden();
 	mode = "legacy";
-	await page.getByRole("row").filter({ hasText: "judge_unavailable" }).click();
+	await errorButton.click();
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByRole("heading", { name: /Judge 诊断/ })).toHaveCount(
 		0,

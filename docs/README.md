@@ -9,6 +9,7 @@
 | 产品评估者 / 使用者 | [项目介绍](../README.zh-CN.md) | [当前状态](./STATUS.md)、[版本记录](../CHANGELOG.md) | 判断能力、边界与当前成熟度 |
 | 部署者 / 运维人员 | [部署指南](./DEPLOYMENT.md) | [运维指南](./OPERATIONS.md)、[发布门禁](./RELEASE.md)、[当前证据](./evidence/) | 完成安装、升级、监控、备份和恢复 |
 | 开发者 / 集成方 | [系统架构](./ARCHITECTURE.md) | [开发指南](./DEVELOPMENT.md)、[Knowledge API](./INTEGRATION.md) | 理解边界并安全修改或接入 |
+| 产品设计 / 前端开发 | [产品设计规范](./DESIGN.md) | [开发指南](./DEVELOPMENT.md)、[品牌系统](./brand/uno-brand-system.md) | 统一页面、状态、交互与动效；区分目标设计与当前实现 |
 | 项目维护者 | [当前状态](./STATUS.md) | [发布门禁](./RELEASE.md)、[质量评测](./EVALUATION.md)、[ADR 索引](./adr/) | 维护路线、质量和长期决策一致性 |
 
 第一次接触项目只需读同一行，不需要阅读全部文档。
@@ -19,6 +20,7 @@
 |---|---|---|
 | 当前事实 | `STATUS`、`ARCHITECTURE`、部署、运维、开发和集成文档 | 行为变化时与代码同一 PR 更新 |
 | 稳定契约 | [Knowledge API](./INTEGRATION.md) 与 [`public-api-v1.openapi.json`](../contracts/public-api-v1.openapi.json) | 兼容性变化必须经过版本设计 |
+| 产品设计规范 | [DESIGN](./DESIGN.md) | 已确认的界面目标和实施规则；不得把未实施项描述为当前能力 |
 | 长期决策 | [ADR](./adr/) | 已发布正文不重写；通过新 ADR 替代 |
 | 验收证据 | [`evidence/`](./evidence/) | 当前发布汇总 + 试点模板；历史报告保留固定提交链接 |
 | 专项参考 | 品牌规则和目录就近 README | 不自动成为产品承诺，以当前事实文档为准 |
@@ -32,6 +34,7 @@
 - 产品能力和使用价值放在中英文 README；成熟度、限制与下一步只维护在 `STATUS`。
 - 架构说明职责和不变量；代码放置、测试分层与产物保留规则只维护在 `DEVELOPMENT`。
 - 安装参数放在 `DEPLOYMENT`，排障和日常维护放在 `OPERATIONS`，发布验收顺序放在 `RELEASE`。
+- 页面风格、状态表达、动效和 UI 库选型只维护在 `DESIGN`；品牌图形与资产规则仍维护在品牌文档。
 - 实验过程保留在受限产物或脱敏 issue；发布报告只汇总结论，不把每次重跑变成新文档。
 - 被替代的 ADR 从 [历史决策索引](./adr/README.md#历史决策) 追溯，不与现行架构并列为操作方案。
 

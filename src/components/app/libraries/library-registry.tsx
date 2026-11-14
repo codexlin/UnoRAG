@@ -1,10 +1,12 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, Plus, Search } from "lucide-react";
+import { useState } from "react";
 
 import { Can } from "@/components/app/can";
 import { LibraryCombobox } from "@/components/app/library-combobox";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ApiLibrary } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -13,6 +15,7 @@ type LibraryRegistryProps = {
 	libraries: ApiLibrary[];
 	selectedId: string;
 	loading: boolean;
+	error: string | null;
 	saving: boolean;
 	onSelect: (libraryId: string) => void;
 	onCreate: () => void;
@@ -41,56 +44,144 @@ export function LibraryRegistrySidebar({
 	libraries,
 	selectedId,
 	loading,
+	error,
 	saving,
 	onSelect,
 	onCreate,
 }: LibraryRegistryProps) {
+	const [query, setQuery] = useState("");
+	const [collapsed, setCollapsed] = useState(false);
+	const normalized = query.trim().toLocaleLowerCase();
+	const visibleLibraries = libraries.filter((library) =>
+		`${library.name} ${library.description ?? ""}`
+			.toLocaleLowerCase()
+			.includes(normalized),
+	);
 	const documentCount = libraries.reduce(
 		(sum, item) => sum + (item.doc_count || 0),
 		0,
 	);
+	const countKnown = libraries.length > 0 || (!loading && !error);
+
+	if (collapsed) {
+		return (
+			<aside
+				aria-label="知识库导航"
+				className="hidden w-12 shrink-0 flex-col items-center border-r bg-background pt-3 md:flex"
+			>
+				<Button
+					variant="ghost"
+					size="icon"
+					className="size-11"
+					aria-label="展开知识库导航"
+					title="展开知识库导航"
+					onClick={() => setCollapsed(false)}
+				>
+					<PanelLeftOpen aria-hidden />
+				</Button>
+			</aside>
+		);
+	}
 
 	return (
-		<aside className="hidden w-72 shrink-0 flex-col border-r border-border/80 bg-card md:flex">
-			<div className="space-y-1 border-b border-border/70 px-4 py-4">
-				<p className="text-meta font-mono tracking-[0.16em] text-cite uppercase">
-					Knowledge registry
+		<aside
+			aria-label="知识库导航"
+			className="hidden w-52 min-w-0 max-w-[35%] shrink-0 flex-col border-r bg-background lg:w-56 md:flex"
+		>
+			<div className="px-3 pt-3 pb-4">
+				<div className="flex items-center justify-between gap-2">
+					<h2 className="pl-1 text-sm font-medium">知识库</h2>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="size-11 text-muted-foreground"
+						aria-label="收起知识库导航"
+						title="收起知识库导航"
+						onClick={() => setCollapsed(true)}
+					>
+						<PanelLeftClose aria-hidden />
+					</Button>
+				</div>
+				<p className="px-1 text-xs text-muted-foreground">
+					{countKnown
+						? `${libraries.length} 个知识库 · ${documentCount} 份文档`
+						: "知识库与文档数量待确认"}
 				</p>
-				<h2 className="font-heading text-base font-semibold">知识库</h2>
-				<p className="text-meta font-mono text-muted-foreground">
-					{libraries.length} 个知识库 · {documentCount} 份文档
-				</p>
+				<div className="relative mt-4">
+					<Search
+						aria-hidden
+						className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+					/>
+					<Input
+						aria-label="搜索知识库"
+						placeholder="搜索知识库"
+						className="h-9 bg-muted/40 pl-8 text-sm"
+						value={query}
+						onChange={(event) => setQuery(event.target.value)}
+					/>
+				</div>
 			</div>
 			<ScrollArea className="min-h-0 flex-1">
 				<ul className="flex flex-col gap-0.5 p-2">
-					{libraries.length === 0 && !loading ? (
-						<li className="px-2 py-6 text-center text-ui text-muted-foreground">
+					{loading && libraries.length === 0 ? (
+						<li className="px-3 py-6 text-sm text-muted-foreground">
+							<span role="status">正在加载</span>
+						</li>
+					) : null}
+					{libraries.length === 0 && !loading && error ? (
+						<li className="px-3 py-6 text-sm text-muted-foreground">
+							知识库列表未能加载
+						</li>
+					) : null}
+					{libraries.length === 0 && !loading && !error ? (
+						<li className="px-2 py-6 text-center text-sm text-muted-foreground">
 							还没有知识库
 						</li>
 					) : null}
-					{libraries.map((library) => (
+					{visibleLibraries.length === 0 && libraries.length > 0 ? (
+						<li className="px-3 py-6 text-sm text-muted-foreground">
+							没有匹配的知识库
+						</li>
+					) : null}
+					{visibleLibraries.map((library) => (
 						<li key={library.id}>
 							<button
 								type="button"
+								aria-current={selectedId === library.id ? "true" : undefined}
 								onClick={() => onSelect(library.id)}
 								className={cn(
-									"flex w-full items-start gap-2.5 rounded-sm border-l-2 px-2.5 py-2.5 text-left transition-colors",
+									"flex min-h-16 w-full items-start gap-2.5 rounded-lg border border-transparent px-3 py-3 text-left transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
 									selectedId === library.id
-										? "border-l-cite bg-cite/8 text-foreground"
-										: "border-l-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+										? "bg-sidebar-accent text-sidebar-accent-foreground"
+										: "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
 								)}
 							>
 								<LibraryStatusDot status={library.status} />
 								<span className="min-w-0 flex-1">
-									<span className="block truncate text-[0.9375rem] font-medium text-foreground">
+									<span
+										className={cn(
+											"block truncate text-sm font-medium",
+											selectedId !== library.id && "text-foreground",
+										)}
+									>
 										{library.name}
 									</span>
 									{library.description?.trim() ? (
-										<span className="text-meta mt-0.5 block truncate text-muted-foreground">
+										<span
+											className={cn(
+												"text-meta mt-0.5 block truncate",
+												selectedId !== library.id && "text-muted-foreground",
+											)}
+										>
 											{library.description.trim()}
 										</span>
 									) : null}
-									<span className="text-meta mt-0.5 block font-mono text-muted-foreground">
+									<span
+										className={cn(
+											"mt-1 block text-xs",
+											selectedId !== library.id && "text-muted-foreground",
+										)}
+									>
 										{library.status === "indexing"
 											? `${library.ready_count}/${library.doc_count} 可用 · 处理中`
 											: library.status === "empty"
@@ -107,8 +198,7 @@ export function LibraryRegistrySidebar({
 				<div className="border-t border-border/70 p-3">
 					<Button
 						type="button"
-						variant="outline"
-						className="w-full rounded-md border-dashed"
+						className="h-auto min-h-11 w-full whitespace-normal"
 						disabled={saving}
 						onClick={onCreate}
 					>
@@ -127,7 +217,7 @@ export function MobileLibraryPicker({
 	saving,
 	onSelect,
 	onCreate,
-}: Omit<LibraryRegistryProps, "loading">) {
+}: Omit<LibraryRegistryProps, "loading" | "error">) {
 	return (
 		<div className="border-b border-border/70 bg-card px-4 py-3 md:hidden">
 			<div className="flex items-end gap-2">
@@ -141,9 +231,8 @@ export function MobileLibraryPicker({
 				<Can cap="manageLibraries">
 					<Button
 						type="button"
-						variant={libraries.length === 0 ? "default" : "outline"}
 						size={libraries.length === 0 ? "default" : "icon"}
-						className="h-10 shrink-0 rounded-md"
+						className="min-h-11 min-w-11 shrink-0 rounded-md"
 						disabled={saving}
 						onClick={onCreate}
 						aria-label="新建知识库"

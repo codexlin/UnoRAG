@@ -3,6 +3,101 @@
 This file records user-visible UnoRAG changes. Release evidence and environment-specific acceptance
 results remain in [`docs/evidence/`](./docs/evidence/).
 
+## [Unreleased]
+
+## [0.3.0] - Acceptance Pending
+
+- Fold answer sources with the official shadcn Trace pattern and preview inline
+  citations with HoverCard. Preserve per-turn source snapshots, document versions,
+  keyboard/touch access and full-source focus return without extra reads. Unify
+  suggested prompts and measured stage details with shadcn compositions.
+- Add whole-answer copying with temporary confirmation, explicit Clipboard failures,
+  per-turn isolation and in-flight deduplication. Group Ask copy/retry/trace actions
+  into a quiet icon footer, compact the inline prompt input and remove redundant
+  refusal copy while preserving real reasons, evidence and streaming behavior.
+- Adopt official shadcn AI Elements for message layout, prompt composition and
+  conversation scrolling. Preserve the existing SSE engine, authorized source
+  snapshots, retry/cancel semantics and diagnostics; do not invent model reasoning.
+- Keep explicit source selection scoped to its turn through streaming completion;
+  restore the exact citation focus even when activation does not move browser focus.
+  Separate archive restoration from new-message scroll anchors, resize programmatic
+  prompt changes and distinguish Ask library loading/errors from a truly empty list.
+- Replace NativeSelect with standard shadcn Select compositions across settings,
+  libraries, archives and request filters, retaining controlled values and permissions.
+- Replace the long workspace settings page with desktop section navigation and
+  a mobile selector. Load only the active section; move invitation/key creation
+  into dialogs, protect unsaved settings and clear one-time values on dismissal.
+  Keep audit records separate and service diagnostics expandable. Reduce repeated
+  instructional copy with keyboard/touch-accessible help, retaining critical
+  permission, privacy, error and delivery-state information.
+- Redesign the public homepage around a local, read-only answer/source/trace example,
+  current product captures and self-hosted deployment. Adopt the selected Uno
+  diagonal-weave symbol with a transparent SVG master, positive/reversed assets,
+  16/32px favicon tiles and an opaque Apple touch icon; no fixed teal accent.
+- Harden UI acceptance details: name icon-only navigation and combobox controls,
+  add a keyboard bypass, improve small-text contrast, and allow keyboard scrolling
+  of email delivery records. Keep failed library reads distinct from empty results.
+- Unify account entry, invitation, email access and first-password layouts with
+  accessible field feedback, stable waiting states and existing token/auth guards.
+- Refine workspace and document-access dialogs, member filtering, retry feedback,
+  menu touch targets and bounded scrolling. Prevent collapsed navigation labels
+  from intercepting workspace clicks; keep permission writes and projection semantics unchanged.
+- Add built-in tweakcn Vercel (default), Claude and Violet Bloom theme presets,
+  with local fonts, theme previews, independent light/dark/system mode and a live
+  0–8px radius slider with 0.5px steps and exact input. Migrate saved radius presets,
+  restore preferences before rendering and synchronize tabs;
+  diagnostic status colors remain independent of palette selection. No runtime
+  theme/CDN requests are required.
+- Simplify application navigation and library layout with a narrower, searchable,
+  independently collapsible library sidebar. Preserve existing document actions.
+- Use theme-primary styling for library creation, uploads and form confirmations;
+  keep refresh/filter/settings secondary and deletion destructive. Improve the
+  readability of library policy labels without changing technical-data typography.
+- Standardize ordinary form controls on shadcn/ui base-nova Slider, RadioGroup,
+  Checkbox, Switch and Select. Preserve scoped form writes, disabled states,
+  keyboard behavior and theme-aware menus; no additional UI framework.
+- Improve large-text layout in appearance, login and the library workbench: wrap
+  primary actions and filters, retain readable statistics, and prevent decorative
+  theme previews from squeezing their labels.
+- Keep workspace creation, notification recipient rows and pending Ask turns usable
+  on trusted HTTP LAN previews via cryptographic UUID generation when the browser's
+  secure-context-only `randomUUID` method is unavailable. Production still requires HTTPS.
+- Refine Ask into an unframed reading layout with on-demand responsive source
+  details and larger interaction targets. Show source-version snapshots without
+  guessing the current version; keep received answers visible after stream errors.
+- Preserve local turn and Markdown renderer identities through completion so
+  closing a source panel can restore citation focus even during a streamed answer.
+- Present stage timings and model usage earlier in request details, label the
+  sequential waterfall explicitly, and keep retrieval scores in their native scale.
+- Unify operations, archive reading and grouped workspace settings. Keep unknown
+  metrics and stale probes explicit; preserve request filters, retry actions,
+  historical source snapshots and the separate audit/CSV destination.
+- Mount login credential fields after hydration so password-manager icons cannot
+  invalidate the server-rendered form and trigger root-script recovery warnings.
+  Keep the page shell and appearance bootstrap server-rendered; show an explicit
+  JavaScript requirement instead of a credential-submitting no-script fallback.
+- Keep login submissions POST-only;
+  support an explicit development-only origin allowlist for trusted LAN previews.
+- Reuse the complete local Compose data/services with source-mounted Web hot reload
+  and watched Worker/control processes via `pnpm dev:full`; preserve existing data
+  and accounts instead of starting a separate UI-only database.
+- Add latest-task filters and per-file upload submission results. Keep asynchronous
+  acceptance distinct from completed indexing, and retain failures and original
+  library scope while navigating between libraries.
+- Distinguish initial document loading and failed reads from truly empty libraries;
+  show unknown counts and allow in-place retry without clearing cached rows on refresh.
+- Organize document details around active/desired versions, files, jobs, version
+  history and parser diagnostics, preserving authorized lifecycle actions.
+- Record per-attempt LLM token usage for routing, rewriting, evidence assessment,
+  table planning and answer generation. Share the safe snapshot across Ask traces,
+  archives and operational request details; missing usage stays unknown, not zero.
+- Preserve usage through temporary-session archival, failed attempts, retries and
+  cancellation. Keep the existing generation retry policy and content privacy boundary.
+- Report Rerank configuration readiness separately from request-level execution.
+- Apply migration `0032_ask_model_usage` before upgrading. Streamed usage is requested
+  by default; set advanced `AI_INCLUDE_USAGE=false` only for incompatible endpoints.
+  These changes are not yet deployed to the reference instance.
+
 ## [0.2.11] - Acceptance Pending
 
 Signed images from `288677a` were deployed to the Hong Kong reference instance on

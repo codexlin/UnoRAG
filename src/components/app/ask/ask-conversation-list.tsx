@@ -1,29 +1,31 @@
 "use client";
 
-import { Activity, RefreshCw, Square } from "lucide-react";
+import { CircleAlert, CircleHelp, CircleStop } from "lucide-react";
 import { motion } from "motion/react";
 
-import { hasAskTrace } from "@/components/app/ask/ask-trace-drawer";
+import { AskAnswerActions } from "@/components/app/ask/ask-answer-actions";
+import { AskAnswerSources } from "@/components/app/ask/ask-answer-sources";
 import type { LocalTurn } from "@/components/app/ask/ask-turn-state";
-import { CitationSourceCard } from "@/components/app/citation-source-card";
 import { MarkdownAnswer } from "@/components/app/markdown-answer";
-import { Button } from "@/components/ui/button";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import {
-	Tooltip,
-	TooltipContent,
-	TooltipTrigger,
-} from "@/components/ui/tooltip";
+	Message,
+	MessageContent,
+	MessageGroup,
+	MessageHeader,
+} from "@/components/ui/message";
+import { MessageScrollerItem } from "@/components/ui/message-scroller";
 import type { ApiRetrievalDebug } from "@/lib/api";
-import { formatDateTime, formatDurationMs } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import type { UiCitation } from "@/lib/ui-types";
-import { cn } from "@/lib/utils";
 
 type AskConversationListProps = {
 	activeCitation: UiCitation | null;
+	activeCitationTurnId: string | null;
 	canAsk: boolean;
 	isStreaming: boolean;
 	onCancel: () => void;
-	onOpenCitation: (citation: UiCitation) => void;
+	onOpenCitation: (citation: UiCitation, turnId: string) => void;
 	onOpenTrace: (
 		debug: ApiRetrievalDebug,
 		clientDurationMs?: number | null,
@@ -51,7 +53,7 @@ function RetrievalNotice({ turn }: { turn: LocalTurn }) {
 			{notices.map((notice) => (
 				<p
 					key={notice}
-					className="rounded-md border border-survey/35 bg-accent px-2.5 py-1.5 font-mono text-[11px] text-accent-foreground"
+					className="rounded-md border border-survey/35 bg-warning px-3 py-2 text-xs text-warning-foreground"
 				>
 					{notice}
 				</p>
@@ -60,13 +62,9 @@ function RetrievalNotice({ turn }: { turn: LocalTurn }) {
 	);
 }
 
-function canRetryTurn(turn: LocalTurn): boolean {
-	if (turn.pending) return false;
-	return Boolean(turn.error || turn.cancelled || turn.refused);
-}
-
 export function AskConversationList({
 	activeCitation,
+	activeCitationTurnId,
 	canAsk,
 	isStreaming,
 	onCancel,
@@ -77,217 +75,151 @@ export function AskConversationList({
 	turns,
 }: AskConversationListProps) {
 	return (
-		<ul className="mx-auto flex max-w-4xl flex-col gap-10">
+		<>
 			{turns.map((turn, turnIndex) => (
-				<motion.li
+				<MessageScrollerItem
 					key={turn.id}
-					className="space-y-4"
-					initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-					animate={{ opacity: 1, y: 0 }}
-					transition={{
-						duration: 0.28,
-						delay: Math.min(turnIndex, 4) * 0.035,
-						ease: [0.22, 1, 0.36, 1],
-					}}
+					messageId={turn.id}
+					scrollAnchor={!turn.restored}
+					data-turn-id={turn.id}
 				>
-					<header className="border-b border-border/80 pb-3">
-						<div className="mb-2 flex items-center justify-between gap-3 font-mono text-[11px] text-muted-foreground">
-							<span>QUERY {String(turnIndex + 1).padStart(2, "0")}</span>
-							{turn.startedAt ? (
-								<span>{formatDateTime(turn.startedAt)}</span>
-							) : null}
-						</div>
-						<p className="text-lg font-medium leading-7 text-foreground">
-							{turn.question}
-						</p>
-					</header>
+					<motion.div
+						className="min-w-0"
+						initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+						animate={{ opacity: 1, y: 0 }}
+						transition={{
+							duration: 0.18,
+							ease: [0.22, 1, 0.36, 1],
+						}}
+					>
+						<MessageGroup className="gap-5">
+							<Message align="end">
+								<MessageContent>
+									<MessageHeader className="justify-end gap-3">
+										<span>提问 {turnIndex + 1}</span>
+										{turn.startedAt ? (
+											<span>{formatDateTime(turn.startedAt)}</span>
+										) : null}
+									</MessageHeader>
+									<Bubble align="end" variant="muted">
+										<BubbleContent className="text-answer [overflow-wrap:anywhere]">
+											{turn.question}
+										</BubbleContent>
+									</Bubble>
+								</MessageContent>
+							</Message>
 
-					<div className="space-y-3">
-						<div className="min-w-0 space-y-3">
-							<article className="workbench-surface border-l-2 border-l-cite px-4 py-4 sm:px-5">
-								<div className="flex flex-wrap items-center justify-between gap-2">
-									<p className="text-meta font-mono tracking-[0.12em] text-cite uppercase">
-										{turn.refused
-											? "Refused"
-											: turn.cancelled
-												? "Cancelled"
-												: "Answer"}
-										{turn.mode ? ` · ${turn.mode}` : ""}
-									</p>
-									<div className="flex flex-wrap gap-1.5">
-										{turn.pending ? (
-											<span className="meta-chip animate-pulse text-cite">
-												处理中…
-											</span>
-										) : null}
-										{turn.cancelled ? (
-											<span className="meta-chip text-survey">已取消</span>
-										) : null}
-										{turn.durationMs != null ? (
-											<span
-												className="meta-chip text-foreground/80"
-												title="浏览器端到端：点发送到回答完成（含网络）"
+							<Message>
+								<MessageContent className="gap-3">
+									<article
+										className="min-w-0 border-t border-border/60 pt-4"
+										aria-label={`回答 ${turnIndex + 1}`}
+									>
+										<div className="flex flex-wrap items-center justify-between gap-2">
+											<p className="flex min-h-7 items-center gap-2 text-sm font-medium text-foreground">
+												{turn.error ? (
+													<CircleAlert
+														className="size-4 text-destructive"
+														aria-hidden
+													/>
+												) : turn.refused ? (
+													<CircleHelp
+														className="size-4 text-survey"
+														aria-hidden
+													/>
+												) : turn.cancelled ? (
+													<CircleStop
+														className="size-4 text-muted-foreground"
+														aria-hidden
+													/>
+												) : null}
+												<span>
+													{turn.error
+														? "请求失败"
+														: turn.refused
+															? turn.refuseReason === "weak_match"
+																? "证据不足"
+																: "未能回答"
+															: turn.cancelled
+																? "已停止"
+																: "回答"}
+												</span>
+											</p>
+											{turn.pending ? (
+												<span
+													role="status"
+													className="text-xs text-muted-foreground"
+												>
+													处理中…
+												</span>
+											) : null}
+										</div>
+
+										{turn.pending && !turn.answer && !turn.evidenceReady ? (
+											<p
+												className="mt-3 flex items-center gap-2 text-sm text-muted-foreground"
+												role="status"
 											>
-												{formatDurationMs(turn.durationMs)}
-											</span>
+												<span className="inline-block size-1.5 animate-pulse rounded-full bg-evidence" />
+												正在检索并整理引用来源…
+											</p>
 										) : null}
-										{turn.citations.length > 0 ? (
-											<span className="meta-chip">
-												{turn.citations.length} 条依据
-											</span>
+										{turn.error ? (
+											<p
+												className="mt-2 border-l-2 border-destructive pl-3 text-sm text-destructive"
+												role="alert"
+											>
+												{turn.error}
+											</p>
 										) : null}
-										{hasAskTrace(turn.retrievalDebug) ? (
-											<Tooltip>
-												<TooltipTrigger
-													render={
-														<button
-															type="button"
-															className={cn(
-																"meta-chip inline-flex cursor-pointer items-center gap-1 border-cite/45 bg-cite/12 font-medium text-cite shadow-[0_0_0_1px_color-mix(in_oklab,var(--cite)_18%,transparent)]",
-																"transition-colors hover:border-cite/70 hover:bg-cite/20 hover:text-cite",
-															)}
-															aria-label="查看请求链路：路由、检索、裁决与生成各阶段耗时"
-															onClick={() => {
-																if (turn.retrievalDebug) {
-																	onOpenTrace(
-																		turn.retrievalDebug,
-																		turn.durationMs,
-																	);
-																}
-															}}
-														>
-															<Activity
-																className="size-3 shrink-0"
-																aria-hidden
-															/>
-															链路
-														</button>
-													}
-												/>
-												<TooltipContent side="top" className="max-w-[16rem]">
-													查看请求链路：路由 / 检索 / 裁决 / 生成各阶段耗时与
-													trace_id
-												</TooltipContent>
-											</Tooltip>
-										) : null}
-									</div>
-								</div>
-
-								{turn.pending && !turn.answer && !turn.evidenceReady ? (
-									<p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
-										<span className="inline-block size-1.5 animate-pulse rounded-full bg-cite" />
-										正在检索并整理引用来源…
-									</p>
-								) : turn.error ? (
-									<p className="mt-2 text-sm text-destructive">
-										{turn.error}
-										{turn.durationMs != null
-											? ` · ${formatDurationMs(turn.durationMs)}`
-											: ""}
-									</p>
-								) : (
-									<>
 										{turn.cancelled && !turn.answer ? (
 											<p className="mt-2 text-sm text-muted-foreground">
 												已停止生成。可重试本问题，或继续提问。
 											</p>
 										) : null}
-										{turn.refused ? (
-											<p className="mt-2 font-mono text-[11px] text-survey">
-												{turn.refuseReason === "weak_match"
-													? "弱相关 · 未调用生成"
-													: "无命中 · 未调用生成"}
-											</p>
-										) : null}
 										<RetrievalNotice turn={turn} />
 										{turn.answer ? (
-											<>
-												<MarkdownAnswer
-													content={turn.answer}
-													citations={turn.citations}
-													onCite={onOpenCitation}
-													pending={turn.pending}
-													enhanced={!turn.pending}
-												/>
-												{turn.cancelled ? (
-													<p className="mt-2 font-mono text-[11px] text-muted-foreground">
-														生成已中止 · 保留已输出内容
-													</p>
-												) : null}
-											</>
-										) : turn.pending ? (
-											<p className="mt-2 text-sm text-muted-foreground">
-												引用来源已就绪，正在生成回答…
-												<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-cite/70 align-text-bottom" />
+											<MarkdownAnswer
+												content={turn.answer}
+												citations={turn.citations}
+												onCite={(citation) => onOpenCitation(citation, turn.id)}
+												pending={turn.pending}
+												enhanced={!turn.pending}
+											/>
+										) : null}
+										{turn.cancelled && turn.answer ? (
+											<p className="mt-2 text-xs text-muted-foreground">
+												生成已中止 · 保留已输出内容
 											</p>
 										) : null}
-									</>
-								)}
-								{turn.pending ? (
-									<div className="mt-3">
-										<Button
-											type="button"
-											variant="outline"
-											size="sm"
-											onClick={onCancel}
-											className="rounded-md"
-										>
-											<Square
-												data-icon="inline-start"
-												className="size-3 fill-current"
-											/>
-											停止生成
-										</Button>
-									</div>
-								) : null}
-							</article>
+										{turn.pending && turn.evidenceReady && !turn.answer ? (
+											<p className="mt-2 text-sm text-muted-foreground">
+												引用来源已就绪，正在生成回答…
+												<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-evidence/70 align-text-bottom" />
+											</p>
+										) : null}
+										<AskAnswerActions
+											turn={turn}
+											canAsk={canAsk}
+											isStreaming={isStreaming}
+											onCancel={onCancel}
+											onRetry={onRetry}
+											onOpenTrace={onOpenTrace}
+										/>
+									</article>
 
-							{canRetryTurn(turn) ? (
-								<div>
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										disabled={!canAsk || isStreaming}
-										onClick={() => onRetry(turn)}
-										className="rounded-md"
-									>
-										<RefreshCw data-icon="inline-start" />
-										重试
-									</Button>
-								</div>
-							) : null}
-
-							{turn.citations.length > 0 ? (
-								<section className="space-y-2 border-t border-border/70 pt-3">
-									<p className="font-mono text-[11px] text-muted-foreground">
-										回答依据 · {turn.citations.length} 条
-										{turn.completedAt
-											? ` · 完成于 ${formatDateTime(turn.completedAt)}`
-											: ""}
-									</p>
-									<ul className="grid gap-2 sm:grid-cols-2">
-										{turn.citations.map((citation) => (
-											<li key={citation.id}>
-												<CitationSourceCard
-													citation={citation}
-													active={activeCitation?.id === citation.id}
-													onSelect={onOpenCitation}
-													compact
-												/>
-											</li>
-										))}
-									</ul>
-								</section>
-							) : turn.refused && !turn.pending && !turn.error ? (
-								<p className="font-mono text-[11px] text-muted-foreground">
-									无可用引用来源
-								</p>
-							) : null}
-						</div>
-					</div>
-				</motion.li>
+									<AskAnswerSources
+										turn={turn}
+										activeCitation={activeCitation}
+										activeCitationTurnId={activeCitationTurnId}
+										onOpenCitation={onOpenCitation}
+									/>
+								</MessageContent>
+							</Message>
+						</MessageGroup>
+					</motion.div>
+				</MessageScrollerItem>
 			))}
-		</ul>
+		</>
 	);
 }

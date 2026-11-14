@@ -2,12 +2,20 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 
 const fixtureExtensions = /\.(csv|docx|html|jsonl|md|pdf|png|svg|txt)$/i;
 const tracked = spawnSync(
 	"git",
-	["ls-files", "public", "testdata", "docs/brand"],
+	[
+		"ls-files",
+		"--cached",
+		"--others",
+		"--exclude-standard",
+		"public",
+		"testdata",
+		"docs/brand",
+	],
 	{
 		encoding: "utf8",
 	},
@@ -15,13 +23,26 @@ const tracked = spawnSync(
 if (tracked.status !== 0)
 	throw new Error(tracked.stderr || "git ls-files failed");
 
-const expected = tracked.stdout
+const candidates = tracked.stdout
 	.split("\n")
 	.filter(Boolean)
 	.filter((path) => fixtureExtensions.test(path))
 	.filter((path) => !path.endsWith("/README.md"))
 	.filter((path) => path !== "docs/brand/uno-brand-system.md")
 	.sort();
+const expected = (
+	await Promise.all(
+		candidates.map(async (path) => {
+			try {
+				await access(path);
+				return path;
+			} catch (error) {
+				if (error.code === "ENOENT") return null;
+				throw error;
+			}
+		}),
+	)
+).filter(Boolean);
 
 const manifest = JSON.parse(await readFile("assets/provenance.json", "utf8"));
 if (!manifest.reviewed_at || !manifest.reviewed_by) {

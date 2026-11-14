@@ -21,7 +21,6 @@ export type AppNavItem = {
 		| "/app/settings";
 	code: string;
 	label: string;
-	hint: string;
 	icon: LucideIcon;
 	group: AppNavGroup;
 	cap?: Cap;
@@ -32,7 +31,6 @@ const APP_NAV_ITEMS: AppNavItem[] = [
 		href: "/app/ask",
 		code: "01",
 		label: "智能问答",
-		hint: "基于知识库检索回答并核对来源",
 		icon: MessagesSquare,
 		group: "nav",
 	},
@@ -40,7 +38,6 @@ const APP_NAV_ITEMS: AppNavItem[] = [
 		href: "/app/libraries",
 		code: "02",
 		label: "知识库",
-		hint: "管理文档、索引与解析状态",
 		icon: BookOpen,
 		group: "nav",
 	},
@@ -48,7 +45,6 @@ const APP_NAV_ITEMS: AppNavItem[] = [
 		href: "/app/archive",
 		code: "03",
 		label: "会话历史",
-		hint: "归档会话回放与继续对话",
 		icon: Clock3,
 		group: "nav",
 	},
@@ -56,7 +52,6 @@ const APP_NAV_ITEMS: AppNavItem[] = [
 		href: "/app/operations",
 		code: "04",
 		label: "运行中心",
-		hint: "请求质量、任务队列与发布熔断信号",
 		icon: Activity,
 		group: "settings",
 		cap: "manageMembers",
@@ -65,7 +60,6 @@ const APP_NAV_ITEMS: AppNavItem[] = [
 		href: "/app/audit",
 		code: "05",
 		label: "操作记录",
-		hint: "追溯操作者、资源变更与请求标识",
 		icon: History,
 		group: "settings",
 		cap: "manageMembers",
@@ -74,7 +68,6 @@ const APP_NAV_ITEMS: AppNavItem[] = [
 		href: "/app/settings",
 		code: "06",
 		label: "工作区",
-		hint: "服务健康与运行配置",
 		icon: Settings2,
 		group: "settings",
 	},

@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { LoaderCircle, RotateCcw, Search, Shield } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -12,7 +14,8 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
 	type ApiDocument,
@@ -40,6 +43,7 @@ export function DocumentAclDialog({
 	onOpenChange,
 	onProjected,
 }: Props) {
+	const id = useId();
 	const [loading, setLoading] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -47,10 +51,14 @@ export function DocumentAclDialog({
 	const [selectedIds, setSelectedIds] = useState<string[]>([]);
 	const [members, setMembers] = useState<ApiWorkspaceMember[]>([]);
 	const [canEdit, setCanEdit] = useState(false);
+	const [reload, setReload] = useState(0);
+	const [memberSearch, setMemberSearch] = useState("");
+	const titleRef = useRef<HTMLHeadingElement>(null);
 	const [loadedAcl, setLoadedAcl] = useState<{
 		libraryId: string;
 		docId: string;
 		signal: AbortSignal;
+		revision: number;
 	} | null>(null);
 	const docId = doc?.id;
 	const isLoaded = Boolean(
@@ -58,7 +66,8 @@ export function DocumentAclDialog({
 			loadedAcl &&
 			!loadedAcl.signal.aborted &&
 			loadedAcl.libraryId === libraryId &&
-			loadedAcl.docId === docId,
+			loadedAcl.docId === docId &&
+			loadedAcl.revision === reload,
 	);
 
 	useEffect(() => {
@@ -68,6 +77,7 @@ export function DocumentAclDialog({
 		setSelectedIds([]);
 		setMembers([]);
 		setSaving(false);
+		setMemberSearch("");
 		if (!open || !libraryId || !docId) return;
 		const controller = new AbortController();
 		setLoading(true);
@@ -85,7 +95,12 @@ export function DocumentAclDialog({
 				setScope(acl.scope);
 				setSelectedIds(acl.principal_ids);
 				setCanEdit(acl.can_edit);
-				setLoadedAcl({ libraryId, docId, signal: controller.signal });
+				setLoadedAcl({
+					libraryId,
+					docId,
+					signal: controller.signal,
+					revision: reload,
+				});
 				setMembers(
 					memberPayload.members.filter((item) => item.status === "active"),
 				);
@@ -98,13 +113,20 @@ export function DocumentAclDialog({
 				if (!controller.signal.aborted) setLoading(false);
 			});
 		return () => controller.abort();
-	}, [open, libraryId, docId]);
+	}, [open, libraryId, docId, reload]);
+	const visibleMembers = members.filter((member) =>
+		`${member.displayName} ${member.email ?? ""}`
+			.toLocaleLowerCase()
+			.includes(memberSearch.trim().toLocaleLowerCase()),
+	);
 
-	function toggleMember(userId: string) {
+	function setMemberSelected(userId: string, checked: boolean) {
 		setSelectedIds((prev) =>
-			prev.includes(userId)
-				? prev.filter((id) => id !== userId)
-				: [...prev, userId],
+			checked
+				? prev.includes(userId)
+					? prev
+					: [...prev, userId]
+				: prev.filter((id) => id !== userId),
 		);
 	}
 
@@ -155,7 +177,6 @@ export function DocumentAclDialog({
 			if (loadedAcl.signal.aborted) return;
 			const message = err instanceof Error ? err.message : "保存可见性失败";
 			setError(message);
-			toast.error(message);
 		} finally {
 			if (!loadedAcl.signal.aborted) setSaving(false);
 		}
@@ -169,87 +190,180 @@ export function DocumentAclDialog({
 				onOpenChange(next);
 			}}
 		>
-			<DialogContent className="sm:max-w-md">
+			<DialogContent
+				className="sm:max-w-lg"
+				initialFocus={titleRef}
+				showCloseButton={!saving}
+			>
 				<DialogHeader>
-					<DialogTitle>谁可见</DialogTitle>
+					<DialogTitle
+						ref={titleRef}
+						tabIndex={-1}
+						className="flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-ring"
+					>
+						<Shield className="size-4 shrink-0" aria-hidden />
+						谁可见
+					</DialogTitle>
 					<DialogDescription>
-						设置「{doc?.name ?? "文档"}」在 Ask 检索中的可见范围。
-						默认工作区全员；受限后仅所选成员可召回。
+						<span className="block text-foreground [overflow-wrap:anywhere]">
+							{doc?.name ?? "文档"}
+						</span>
+						设置文档在知识库检索中的可见范围。
 					</DialogDescription>
 				</DialogHeader>
 
 				{loading ? (
-					<p className="text-ui text-muted-foreground">加载中…</p>
-				) : !isLoaded ? (
-					<p className="text-ui text-destructive">
-						{error ?? "尚未加载可见性"}
+					<p
+						role="status"
+						className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground"
+					>
+						<LoaderCircle
+							className="size-4 animate-spin motion-reduce:animate-none"
+							aria-hidden
+						/>
+						正在读取文档权限…
 					</p>
+				) : !isLoaded ? (
+					<div className="space-y-3 py-3">
+						<p
+							role="alert"
+							className="text-sm text-destructive [overflow-wrap:anywhere]"
+						>
+							{error ?? "尚未加载可见性"}
+						</p>
+						<Button
+							type="button"
+							variant="outline"
+							className="h-11"
+							onClick={() => setReload((value) => value + 1)}
+						>
+							<RotateCcw data-icon="inline-start" aria-hidden />
+							重试读取权限
+						</Button>
+					</div>
 				) : (
 					<div className="space-y-4">
-						<div className="space-y-2">
-							<label className="flex cursor-pointer items-start gap-2 rounded-md border border-border/80 px-3 py-2">
-								<input
-									type="radio"
-									name="doc-acl-scope"
-									className="mt-1"
-									checked={scope === "workspace"}
-									disabled={!canEdit || saving}
-									onChange={() => setScope("workspace")}
-								/>
-								<span>
-									<span className="text-ui block font-medium">工作区全员</span>
-									<span className="text-meta text-muted-foreground">
-										本工作区成员均可在检索中看到此文档
+						<fieldset className="space-y-2" disabled={!canEdit || saving}>
+							<legend
+								id={`${id}-scope-heading`}
+								className="mb-2 text-sm font-medium"
+							>
+								文档可见范围
+							</legend>
+							<RadioGroup
+								aria-labelledby={`${id}-scope-heading`}
+								name={`${id}-scope`}
+								value={scope}
+								disabled={!canEdit || saving}
+								onValueChange={(value) => {
+									if (value === "workspace" || value === "restricted") {
+										setScope(value);
+									}
+								}}
+							>
+								<label
+									htmlFor={`${id}-scope-workspace`}
+									className={cn(
+										"flex min-h-11 cursor-pointer items-start gap-3 rounded-md border px-3 py-3 transition-colors motion-reduce:transition-none",
+										scope === "workspace"
+											? "border-primary/50 bg-muted/50"
+											: "border-border hover:bg-muted/30",
+									)}
+								>
+									<RadioGroupItem
+										id={`${id}-scope-workspace`}
+										value="workspace"
+										className="mt-1"
+									/>
+									<span className="min-w-0">
+										<span className="block text-sm font-medium">
+											工作区全员
+										</span>
+										<span className="text-sm leading-relaxed text-muted-foreground">
+											本工作区成员均可在检索中看到此文档
+										</span>
 									</span>
-								</span>
-							</label>
-							<label className="flex cursor-pointer items-start gap-2 rounded-md border border-border/80 px-3 py-2">
-								<input
-									type="radio"
-									name="doc-acl-scope"
-									className="mt-1"
-									checked={scope === "restricted"}
-									disabled={!canEdit || saving}
-									onChange={() => setScope("restricted")}
-								/>
-								<span>
-									<span className="text-ui block font-medium">仅指定成员</span>
-									<span className="text-meta text-muted-foreground">
-										仅勾选的成员可召回；保存后将对就绪文档重索引以投影
+								</label>
+								<label
+									htmlFor={`${id}-scope-restricted`}
+									className={cn(
+										"flex min-h-11 cursor-pointer items-start gap-3 rounded-md border px-3 py-3 transition-colors motion-reduce:transition-none",
+										scope === "restricted"
+											? "border-primary/50 bg-muted/50"
+											: "border-border hover:bg-muted/30",
+									)}
+								>
+									<RadioGroupItem
+										id={`${id}-scope-restricted`}
+										value="restricted"
+										className="mt-1"
+									/>
+									<span className="min-w-0">
+										<span className="block text-sm font-medium">
+											仅指定成员
+										</span>
+										<span className="text-sm leading-relaxed text-muted-foreground">
+											仅所选成员可召回；保存权限与完成检索投影是两个状态。
+										</span>
 									</span>
-								</span>
-							</label>
-						</div>
+								</label>
+							</RadioGroup>
+						</fieldset>
 
 						{scope === "restricted" ? (
 							<div className="space-y-2">
-								<Label>可见成员</Label>
+								<div className="flex items-baseline justify-between gap-2">
+									<h3 className="text-sm font-medium">可见成员</h3>
+									<span className="text-xs text-muted-foreground">
+										已选 {selectedIds.length} 位
+									</span>
+								</div>
+								<div className="relative">
+									<Search
+										className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+										aria-hidden
+									/>
+									<Input
+										aria-label="搜索可见成员"
+										className="h-11 pl-9"
+										value={memberSearch}
+										onChange={(event) => setMemberSearch(event.target.value)}
+									/>
+								</div>
 								{members.length === 0 ? (
 									<p className="text-ui text-muted-foreground">暂无可用成员</p>
 								) : (
 									<ScrollArea className="h-48 rounded-md border border-border/80">
 										<ul className="divide-y divide-border/60 p-1">
-											{members.map((member) => {
+											{visibleMembers.length === 0 ? (
+												<li className="px-3 py-5 text-sm text-muted-foreground">
+													没有匹配的成员
+												</li>
+											) : null}
+											{visibleMembers.map((member) => {
 												const checked = selectedIds.includes(member.userId);
 												return (
 													<li key={member.userId}>
 														<label
+															htmlFor={`${id}-member-${member.userId}`}
 															className={cn(
-																"flex cursor-pointer items-center gap-2 rounded-md px-2 py-2",
+																"flex min-h-11 cursor-pointer items-center gap-3 rounded-md px-3 py-3 hover:bg-muted/30",
 																checked && "bg-muted/50",
 															)}
 														>
-															<input
-																type="checkbox"
+															<Checkbox
+																id={`${id}-member-${member.userId}`}
 																checked={checked}
 																disabled={!canEdit || saving}
-																onChange={() => toggleMember(member.userId)}
+																onCheckedChange={(checked) =>
+																	setMemberSelected(member.userId, checked)
+																}
 															/>
 															<span className="min-w-0 flex-1">
-																<span className="text-ui block truncate">
+																<span className="block text-sm [overflow-wrap:anywhere]">
 																	{member.displayName}
 																</span>
-																<span className="text-meta block truncate text-muted-foreground">
+																<span className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">
 																	{member.email ?? member.role}
 																</span>
 															</span>
@@ -263,9 +377,16 @@ export function DocumentAclDialog({
 							</div>
 						) : null}
 
-						{error ? <p className="text-ui text-destructive">{error}</p> : null}
+						{error ? (
+							<p
+								role="alert"
+								className="text-sm text-destructive [overflow-wrap:anywhere]"
+							>
+								{error}
+							</p>
+						) : null}
 						{!canEdit ? (
-							<p className="text-meta text-muted-foreground">
+							<p className="text-sm text-muted-foreground">
 								需要 editor 及以上权限才能修改
 							</p>
 						) : null}
@@ -276,6 +397,7 @@ export function DocumentAclDialog({
 					<Button
 						type="button"
 						variant="outline"
+						className="h-11"
 						disabled={saving}
 						onClick={() => onOpenChange(false)}
 					>
@@ -283,6 +405,8 @@ export function DocumentAclDialog({
 					</Button>
 					<Button
 						type="button"
+						className="h-11"
+						aria-busy={saving}
 						disabled={!isLoaded || loading || saving || !canEdit}
 						onClick={() => void onSave()}
 					>

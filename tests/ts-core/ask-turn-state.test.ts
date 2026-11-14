@@ -7,6 +7,29 @@ import {
 	toUiCitation,
 } from "../../src/components/app/ask/ask-turn-state";
 
+test("restored turns do not become new-message scroll anchors", () => {
+	const turn = {
+		id: "archive-turn",
+		question: "question",
+		answer: "answer",
+		citations: [],
+	};
+	const restored = askTurnsReducer([], { type: "hydrate", turns: [turn] });
+	assert.equal(restored[0].restored, true);
+	const appended = askTurnsReducer(restored, {
+		type: "begin",
+		turn: { ...turn, id: "new-turn", pending: true },
+	});
+	assert.equal(appended[0].restored, true);
+	assert.equal(appended[1].restored, undefined);
+	const retried = askTurnsReducer(restored, {
+		type: "begin",
+		replaceTurnId: turn.id,
+		turn: { ...turn, pending: true },
+	});
+	assert.equal(retried[0].restored, undefined);
+});
+
 test("ask reducer preserves first evidence latency while streaming", () => {
 	let turns = askTurnsReducer([], {
 		type: "begin",

@@ -3,15 +3,18 @@
 import {
 	Children,
 	cloneElement,
+	createContext,
 	isValidElement,
 	type ReactNode,
+	useContext,
 	useEffect,
 	useMemo,
 	useState,
 } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { InlineCitation } from "@/components/app/inline-citation";
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +29,126 @@ type MarkdownAnswerProps = {
 };
 
 const CITE_RE = /\[(\d+)\]/g;
+
+type AnswerRenderValue = {
+	byIndex: Map<number, UiCitation>;
+	onCite?: (citation: UiCitation) => void;
+	enhanced: boolean;
+};
+const AnswerRenderContext = createContext<AnswerRenderValue>({
+	byIndex: new Map(),
+	enhanced: false,
+});
+
+function CitationText({ children }: { children: ReactNode }) {
+	const { byIndex, onCite } = useContext(AnswerRenderContext);
+	return injectCitations(children, byIndex, onCite);
+}
+
+// Stable renderer identities preserve focus and selection as stream metadata changes.
+const ANSWER_COMPONENTS: Components = {
+	p: ({ children }) => (
+		<p className="whitespace-pre-wrap">
+			<CitationText>{children}</CitationText>
+		</p>
+	),
+	h1: ({ children }) => (
+		<h3 className="font-heading mt-5 mb-2 text-lg font-medium first:mt-0">
+			<CitationText>{children}</CitationText>
+		</h3>
+	),
+	h2: ({ children }) => (
+		<h3 className="font-heading mt-5 mb-2 text-base font-medium first:mt-0">
+			<CitationText>{children}</CitationText>
+		</h3>
+	),
+	h3: ({ children }) => (
+		<h4 className="mt-3 mb-1 text-[0.95em] font-semibold text-foreground first:mt-0">
+			<CitationText>{children}</CitationText>
+		</h4>
+	),
+	ul: ({ children }) => (
+		<ul className="ml-5 list-disc space-y-1.5">
+			<CitationText>{children}</CitationText>
+		</ul>
+	),
+	ol: ({ children }) => (
+		<ol className="ml-5 list-decimal space-y-1.5">
+			<CitationText>{children}</CitationText>
+		</ol>
+	),
+	li: ({ children }) => (
+		<li className="pl-1">
+			<CitationText>{children}</CitationText>
+		</li>
+	),
+	strong: ({ children }) => (
+		<strong className="font-semibold text-foreground">
+			<CitationText>{children}</CitationText>
+		</strong>
+	),
+	em: ({ children }) => (
+		<em>
+			<CitationText>{children}</CitationText>
+		</em>
+	),
+	a: ({ children, href }) => (
+		<a
+			className="text-evidence underline underline-offset-4 hover:decoration-2"
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+		>
+			{children}
+		</a>
+	),
+	blockquote: ({ children }) => (
+		<blockquote className="cite-rail border-border/60 py-1 pl-3 text-muted-foreground">
+			<CitationText>{children}</CitationText>
+		</blockquote>
+	),
+	table: ({ children }) => (
+		<div className="overflow-x-auto rounded-md border border-border/80 bg-background/60">
+			<table className="w-full border-collapse text-left font-mono text-xs">
+				{children}
+			</table>
+		</div>
+	),
+	th: ({ children }) => (
+		<th className="border-b border-border bg-secondary/70 px-2 py-1 font-semibold">
+			<CitationText>{children}</CitationText>
+		</th>
+	),
+	td: ({ children }) => (
+		<td className="border-b border-border/60 px-2 py-1">
+			<CitationText>{children}</CitationText>
+		</td>
+	),
+	pre: function AnswerPre({ children }) {
+		const { enhanced } = useContext(AnswerRenderContext);
+		const child = Children.toArray(children)[0];
+		if (!isValidElement<{ className?: string; children?: ReactNode }>(child)) {
+			return (
+				<pre className="max-w-full overflow-x-auto whitespace-pre [overflow-wrap:normal]">
+					{children}
+				</pre>
+			);
+		}
+		const language = /language-(\w+)/.exec(child.props.className ?? "")?.[1];
+		return (
+			<CodeBlock
+				code={String(child.props.children ?? "").replace(/\n$/, "")}
+				language={language ?? "text"}
+				enhanced={enhanced}
+			/>
+		);
+	},
+	code: ({ children }) => (
+		<code className="rounded-sm border border-border/70 bg-muted px-1 py-0.5 font-mono text-[0.85em]">
+			{children}
+		</code>
+	),
+};
 
 export function MarkdownAnswer({
 	content,
@@ -43,121 +166,30 @@ export function MarkdownAnswer({
 		return map;
 	}, [citations]);
 
-	const wrapText = (nodes: ReactNode) =>
-		injectCitations(nodes, byIndex, onCite);
+	const renderValue = useMemo(
+		() => ({ byIndex, onCite, enhanced }),
+		[byIndex, onCite, enhanced],
+	);
 
 	return (
-		<div
-			className={cn(
-				"text-answer mt-2 min-w-0 space-y-3.5 text-foreground [overflow-wrap:anywhere]",
-				className,
-			)}
-		>
-			<ReactMarkdown
-				remarkPlugins={[remarkGfm]}
-				components={{
-					p: ({ children }) => (
-						<p className="whitespace-pre-wrap">{wrapText(children)}</p>
-					),
-					h1: ({ children }) => (
-						<h3 className="font-heading mt-4 mb-1 text-lg font-semibold tracking-tight first:mt-0">
-							{wrapText(children)}
-						</h3>
-					),
-					h2: ({ children }) => (
-						<h3 className="font-heading mt-4 mb-1 text-base font-semibold tracking-tight first:mt-0">
-							{wrapText(children)}
-						</h3>
-					),
-					h3: ({ children }) => (
-						<h4 className="mt-3 mb-1 text-[0.95em] font-semibold text-foreground first:mt-0">
-							{wrapText(children)}
-						</h4>
-					),
-					ul: ({ children }) => (
-						<ul className="ml-5 list-disc space-y-1.5">{wrapText(children)}</ul>
-					),
-					ol: ({ children }) => (
-						<ol className="ml-5 list-decimal space-y-1.5">
-							{wrapText(children)}
-						</ol>
-					),
-					li: ({ children }) => <li className="pl-1">{wrapText(children)}</li>,
-					strong: ({ children }) => (
-						<strong className="font-semibold text-foreground">
-							{wrapText(children)}
-						</strong>
-					),
-					em: ({ children }) => <em>{wrapText(children)}</em>,
-					a: ({ children, href }) => (
-						<a
-							className="text-cite underline underline-offset-4 hover:text-cite/80"
-							href={href}
-							target="_blank"
-							rel="noreferrer"
-						>
-							{children}
-						</a>
-					),
-					blockquote: ({ children }) => (
-						<blockquote className="cite-rail border-border/60 py-1 pl-3 text-muted-foreground">
-							{wrapText(children)}
-						</blockquote>
-					),
-					table: ({ children }) => (
-						<div className="overflow-x-auto rounded-md border border-border/80 bg-background/60">
-							<table className="w-full border-collapse text-left font-mono text-xs">
-								{children}
-							</table>
-						</div>
-					),
-					th: ({ children }) => (
-						<th className="border-b border-border bg-secondary/70 px-2 py-1 font-semibold">
-							{wrapText(children)}
-						</th>
-					),
-					td: ({ children }) => (
-						<td className="border-b border-border/60 px-2 py-1">
-							{wrapText(children)}
-						</td>
-					),
-					pre({ children }) {
-						const child = Children.toArray(children)[0];
-						if (
-							!isValidElement<{ className?: string; children?: ReactNode }>(
-								child,
-							)
-						) {
-							return (
-								<pre className="max-w-full overflow-x-auto whitespace-pre [overflow-wrap:normal]">
-									{children}
-								</pre>
-							);
-						}
-						const language = /language-(\w+)/.exec(
-							child.props.className ?? "",
-						)?.[1];
-						return (
-							<CodeBlock
-								code={String(child.props.children ?? "").replace(/\n$/, "")}
-								language={language ?? "text"}
-								enhanced={enhanced}
-							/>
-						);
-					},
-					code: ({ children }) => (
-						<code className="rounded-sm border border-border/70 bg-muted px-1 py-0.5 font-mono text-[0.85em]">
-							{children}
-						</code>
-					),
-				}}
+		<AnswerRenderContext.Provider value={renderValue}>
+			<div
+				className={cn(
+					"text-answer mt-2 min-w-0 space-y-3.5 text-foreground [overflow-wrap:anywhere]",
+					className,
+				)}
 			>
-				{content}
-			</ReactMarkdown>
-			{pending ? (
-				<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-cite/70 align-text-bottom" />
-			) : null}
-		</div>
+				<ReactMarkdown
+					remarkPlugins={[remarkGfm]}
+					components={ANSWER_COMPONENTS}
+				>
+					{content}
+				</ReactMarkdown>
+				{pending ? (
+					<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-evidence/70 align-text-bottom" />
+				) : null}
+			</div>
+		</AnswerRenderContext.Provider>
 	);
 }
 
@@ -216,21 +248,13 @@ function splitCitationText(
 		const key = `${keyPrefix}-cite-${part}-${citeIndex}`;
 		if (citation && onCite) {
 			nodes.push(
-				<button
-					key={key}
-					type="button"
-					onClick={() => onCite(citation)}
-					title={`${citation.title}${citation.sectionPath ? ` · ${citation.sectionPath}` : ""} · ${citation.score.toFixed(2)}`}
-					className="mx-0.5 inline-flex size-4 translate-y-[-1px] items-center justify-center rounded-sm border border-cite/35 bg-cite/12 align-middle font-mono text-[10px] font-semibold leading-none text-cite shadow-[0_0_0_1px_rgba(0,0,0,0.02)] transition-colors hover:border-cite/55 hover:bg-cite/22"
-				>
-					{citeIndex}
-				</button>,
+				<InlineCitation key={key} citation={citation} onSelect={onCite} />,
 			);
 		} else if (citation) {
 			nodes.push(
 				<span
 					key={key}
-					className="mx-0.5 inline-flex size-4 translate-y-[-1px] items-center justify-center rounded-sm border border-cite/25 bg-cite/10 align-middle font-mono text-[10px] font-medium leading-none text-cite"
+					className="mx-0.5 inline-flex size-4 translate-y-[-1px] items-center justify-center rounded-sm border border-evidence/25 bg-evidence/10 align-middle font-mono text-[10px] font-medium leading-none text-evidence"
 				>
 					{citeIndex}
 				</span>,

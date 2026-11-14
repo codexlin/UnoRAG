@@ -13,6 +13,14 @@ import { useId, useState } from "react";
 import type { OperationsErrorRef } from "@/components/app/operations-error-drawer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { useLibraries } from "@/hooks/use-libraries";
 import { useQueryScope } from "@/hooks/use-query-scope";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
@@ -40,6 +48,25 @@ const queryTypes: Record<string, string> = {
 	section_lookup: "章节定位",
 	ambiguous: "待澄清",
 };
+const RANGE_OPTIONS = [
+	{ value: "1h", label: "最近 1 小时" },
+	{ value: "24h", label: "最近 24 小时" },
+	{ value: "7d", label: "最近 7 天" },
+];
+const STATUS_OPTIONS = [
+	{ value: "", label: "全部状态" },
+	...OPERATIONS_REQUEST_STATUSES.map((value) => ({
+		value,
+		label: statuses[value],
+	})),
+];
+const QUERY_TYPE_OPTIONS = [
+	{ value: "", label: "全部类型" },
+	...OPERATIONS_REQUEST_QUERY_TYPES.map((value) => ({
+		value,
+		label: queryTypes[value],
+	})),
+];
 const initialFilters = {
 	range: "24h",
 	status: "",
@@ -48,8 +75,6 @@ const initialFilters = {
 	min_latency_ms: "",
 	request_id: "",
 };
-const selectClass =
-	"h-9 w-full min-w-0 rounded-md border border-input bg-background px-2 text-xs";
 
 export function OperationsRequestsPanel({
 	onSelect,
@@ -60,6 +85,10 @@ export function OperationsRequestsPanel({
 	const id = useId();
 	const queryClient = useQueryClient();
 	const { libraries } = useLibraries();
+	const libraryOptions = [
+		{ value: "", label: "全部知识库" },
+		...libraries.map((library) => ({ value: library.id, label: library.name })),
+	];
 	const [draft, setDraft] = useState(initialFilters);
 	const [filters, setFilters] = useState(initialFilters);
 	const [cursors, setCursors] = useState<Array<string | null>>([null]);
@@ -99,15 +128,13 @@ export function OperationsRequestsPanel({
 			className="min-w-0 space-y-4"
 		>
 			<div className="flex items-center justify-between gap-3">
-				<h3
-					id="request-records-heading"
-					className="font-heading text-lg font-semibold"
-				>
+				<h3 id="request-records-heading" className="text-base font-medium">
 					请求记录
 				</h3>
 				<Button
 					variant="outline"
 					size="icon"
+					className="size-11"
 					title="刷新请求记录"
 					disabled={query.isFetching}
 					onClick={() => {
@@ -134,73 +161,136 @@ export function OperationsRequestsPanel({
 					className="min-w-0 space-y-1.5 text-xs text-muted-foreground"
 				>
 					<span>时间范围</span>
-					<select
-						id={`${id}-range`}
-						className={selectClass}
+					<Select
+						items={RANGE_OPTIONS}
 						value={draft.range}
-						onChange={(event) => update("range", event.target.value)}
+						onValueChange={(value) => {
+							if (value !== null) update("range", value);
+						}}
 					>
-						<option value="1h">最近 1 小时</option>
-						<option value="24h">最近 24 小时</option>
-						<option value="7d">最近 7 天</option>
-					</select>
+						<SelectTrigger
+							id={`${id}-range`}
+							aria-label="时间范围"
+							className="min-h-11 w-full min-w-0"
+						>
+							<SelectValue className="min-w-0 truncate" />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectGroup>
+								{RANGE_OPTIONS.map((option) => (
+									<SelectItem
+										key={option.value}
+										value={option.value}
+										className="min-h-11"
+									>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectGroup>
+						</SelectContent>
+					</Select>
 				</label>
 				<label
 					htmlFor={`${id}-status`}
 					className="min-w-0 space-y-1.5 text-xs text-muted-foreground"
 				>
 					<span>请求状态</span>
-					<select
-						id={`${id}-status`}
-						className={selectClass}
+					<Select
+						items={STATUS_OPTIONS}
 						value={draft.status}
-						onChange={(event) => update("status", event.target.value)}
+						onValueChange={(value) => {
+							if (value !== null) update("status", value);
+						}}
 					>
-						<option value="">全部状态</option>
-						{OPERATIONS_REQUEST_STATUSES.map((status) => (
-							<option key={status} value={status}>
-								{statuses[status]}
-							</option>
-						))}
-					</select>
+						<SelectTrigger
+							id={`${id}-status`}
+							aria-label="请求状态"
+							className="min-h-11 w-full min-w-0"
+						>
+							<SelectValue className="min-w-0 truncate" />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectGroup>
+								{STATUS_OPTIONS.map((option) => (
+									<SelectItem
+										key={option.value}
+										value={option.value}
+										className="min-h-11"
+									>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectGroup>
+						</SelectContent>
+					</Select>
 				</label>
 				<label
 					htmlFor={`${id}-library`}
 					className="min-w-0 space-y-1.5 text-xs text-muted-foreground"
 				>
 					<span>知识库</span>
-					<select
-						id={`${id}-library`}
-						className={selectClass}
+					<Select
+						items={libraryOptions}
 						value={draft.library_id}
-						onChange={(event) => update("library_id", event.target.value)}
+						onValueChange={(value) => {
+							if (value !== null) update("library_id", value);
+						}}
 					>
-						<option value="">全部知识库</option>
-						{libraries.map((library) => (
-							<option key={library.id} value={library.id}>
-								{library.name}
-							</option>
-						))}
-					</select>
+						<SelectTrigger
+							id={`${id}-library`}
+							aria-label="知识库"
+							className="min-h-11 w-full min-w-0"
+						>
+							<SelectValue className="min-w-0 truncate" />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectGroup>
+								{libraryOptions.map((option) => (
+									<SelectItem
+										key={option.value}
+										value={option.value}
+										className="min-h-11"
+									>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectGroup>
+						</SelectContent>
+					</Select>
 				</label>
 				<label
 					htmlFor={`${id}-query-type`}
 					className="min-w-0 space-y-1.5 text-xs text-muted-foreground"
 				>
 					<span>问题类型</span>
-					<select
-						id={`${id}-query-type`}
-						className={selectClass}
+					<Select
+						items={QUERY_TYPE_OPTIONS}
 						value={draft.query_type}
-						onChange={(event) => update("query_type", event.target.value)}
+						onValueChange={(value) => {
+							if (value !== null) update("query_type", value);
+						}}
 					>
-						<option value="">全部类型</option>
-						{OPERATIONS_REQUEST_QUERY_TYPES.map((type) => (
-							<option key={type} value={type}>
-								{queryTypes[type]}
-							</option>
-						))}
-					</select>
+						<SelectTrigger
+							id={`${id}-query-type`}
+							aria-label="问题类型"
+							className="min-h-11 w-full min-w-0"
+						>
+							<SelectValue className="min-w-0 truncate" />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectGroup>
+								{QUERY_TYPE_OPTIONS.map((option) => (
+									<SelectItem
+										key={option.value}
+										value={option.value}
+										className="min-h-11"
+									>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectGroup>
+						</SelectContent>
+					</Select>
 				</label>
 				<label
 					htmlFor={`${id}-latency`}
@@ -209,6 +299,7 @@ export function OperationsRequestsPanel({
 					<span>最低耗时（ms）</span>
 					<Input
 						id={`${id}-latency`}
+						className="h-11"
 						type="number"
 						min="0"
 						max="2147483647"
@@ -230,11 +321,11 @@ export function OperationsRequestsPanel({
 						pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 						onChange={(event) => update("request_id", event.target.value)}
 						placeholder="完整 Request ID"
-						className="font-mono text-xs"
+						className="h-11 font-mono text-xs"
 					/>
 				</label>
 				<div className="flex gap-2">
-					<Button type="submit" variant="outline" size="sm">
+					<Button type="submit" variant="outline" className="h-11">
 						<Search className="size-3.5" />
 						筛选
 					</Button>
@@ -242,6 +333,7 @@ export function OperationsRequestsPanel({
 						type="button"
 						variant="outline"
 						size="icon"
+						className="size-11"
 						title="重置筛选"
 						onClick={() => {
 							setDraft(initialFilters);
@@ -287,10 +379,10 @@ export function OperationsRequestsPanel({
 												: formatDurationMs(item.latency_ms)}
 										</span>
 									</span>
-									<span className="block w-full truncate font-mono text-xs text-cite">
+									<span className="block w-full truncate font-mono text-xs text-evidence">
 										{item.request_id}
 									</span>
-									<span className="flex w-full flex-wrap justify-between gap-2 text-[11px] text-muted-foreground">
+									<span className="flex w-full flex-wrap justify-between gap-2 text-xs text-muted-foreground">
 										<span>{formatDateTime(item.started_at)}</span>
 										<span>
 											{item.query_type
@@ -351,7 +443,7 @@ export function OperationsRequestsPanel({
 												onClick={() => onSelect({ source: "ask", id: item.id })}
 												title={item.request_id}
 												aria-label={`查看请求 ${item.request_id}`}
-												className="max-w-44 truncate text-left font-mono text-cite underline-offset-4 hover:underline focus-visible:underline"
+												className="min-h-11 max-w-44 truncate text-left font-mono text-evidence underline-offset-4 hover:underline focus-visible:underline"
 											>
 												{item.request_id}
 											</button>
@@ -405,6 +497,7 @@ export function OperationsRequestsPanel({
 					<Button
 						variant="outline"
 						size="icon"
+						className="size-11"
 						title="上一页请求"
 						disabled={cursors.length < 2 || query.isFetching}
 						onClick={() => setCursors((previous) => previous.slice(0, -1))}
@@ -415,6 +508,7 @@ export function OperationsRequestsPanel({
 					<Button
 						variant="outline"
 						size="icon"
+						className="size-11"
 						title="下一页请求"
 						disabled={
 							!query.data?.next_cursor || query.isFetching || query.isError

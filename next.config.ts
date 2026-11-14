@@ -36,6 +36,13 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+	// The development badge otherwise covers the account menu in the icon rail.
+	devIndicators: false,
+	allowedDevOrigins: production
+		? undefined
+		: process.env.UNORAG_DEV_ORIGINS?.split(",")
+				.map((host) => host.trim())
+				.filter(Boolean),
 	// Required for deploy/docker/web.Dockerfile (Next standalone output).
 	output: "standalone",
 	poweredByHeader: false,

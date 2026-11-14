@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronRight, PanelRightOpen } from "lucide-react";
-import { motion, useReducedMotion } from "motion/react";
+import { ChevronRight } from "lucide-react";
+import { useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -32,8 +32,14 @@ import {
 	toUiCitation,
 } from "@/components/app/ask/ask-turn-state";
 import { AskWorkspaceHeader } from "@/components/app/ask/ask-workspace-header";
-import { buttonVariants } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+	MessageScroller,
+	MessageScrollerButton,
+	MessageScrollerContent,
+	MessageScrollerProvider,
+	MessageScrollerViewport,
+} from "@/components/ui/message-scroller";
 import {
 	Sheet,
 	SheetContent,
@@ -44,7 +50,6 @@ import {
 import { useDocuments } from "@/hooks/use-documents";
 import { useHealth } from "@/hooks/use-health";
 import { useLibraries } from "@/hooks/use-libraries";
-import { useIsMobile } from "@/hooks/use-mobile";
 import {
 	type ApiDocument,
 	type ApiRetrievalDebug,
@@ -58,6 +63,7 @@ import {
 	chooseAskLibraryId,
 	isAskableLibrary,
 } from "@/lib/ask-library-selection.mjs";
+import { createClientId } from "@/lib/client-id";
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
@@ -105,6 +111,17 @@ function canRetryTurn(turn: LocalTurn): boolean {
 
 const subscribeToHydration = () => () => undefined;
 
+const WIDE_SOURCES_QUERY = "(min-width: 1280px)";
+function subscribeWideSources(listener: () => void) {
+	const media = window.matchMedia(WIDE_SOURCES_QUERY);
+	media.addEventListener("change", listener);
+	return () => media.removeEventListener("change", listener);
+}
+function getWideSourcesSnapshot() {
+	return window.matchMedia(WIDE_SOURCES_QUERY).matches;
+}
+const getServerWideSourcesSnapshot = () => false;
+
 export function AskWorkspace() {
 	const mounted = useSyncExternalStore(
 		subscribeToHydration,
@@ -129,7 +146,11 @@ function AskWorkspaceContent() {
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const requestedThreadId = (searchParams.get("thread") || "").trim();
-	const isMobile = useIsMobile();
+	const wideSources = useSyncExternalStore(
+		subscribeWideSources,
+		getWideSourcesSnapshot,
+		getServerWideSourcesSnapshot,
+	);
 	const reduceMotion = useReducedMotion();
 	const {
 		libraries,
@@ -150,12 +171,21 @@ function AskWorkspaceContent() {
 	>(null);
 	const [turns, dispatchTurns] = useReducer(askTurnsReducer, []);
 	const contextEpochRef = useRef(0);
-	const [activeCitation, setActiveCitation] = useState<UiCitation | null>(null);
+	const [activeSource, setActiveSource] = useState<{
+		turnId: string;
+		citation: UiCitation;
+		selectedByUser: boolean;
+	} | null>(null);
+	const activeCitation = activeSource?.citation ?? null;
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [traceDebug, setTraceDebug] = useState<ApiRetrievalDebug | null>(null);
 	const [traceClientMs, setTraceClientMs] = useState<number | null>(null);
 	const [traceOpen, setTraceOpen] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const sourceTriggerRef = useRef<HTMLElement | null>(null);
+	const sourceFocusKeyRef = useRef<{ turnId: string; sourceId: string } | null>(
+		null,
+	);
 	const [askStream] = useState(() =>
 		createAskStreamLifecycle(askQuestionStream),
 	);
@@ -225,7 +255,9 @@ function AskWorkspaceContent() {
 		setSessionId(undefined);
 		setInput("");
 		dispatchTurns({ type: "hydrate", turns: [] });
-		setActiveCitation(null);
+		setActiveSource(null);
+		sourceTriggerRef.current = null;
+		sourceFocusKeyRef.current = null;
 		setDrawerOpen(false);
 		setTraceOpen(false);
 		setArchiveError(null);
@@ -273,7 +305,9 @@ function AskWorkspaceContent() {
 				if (controller.signal.aborted) return;
 				askStream.cancel();
 				resumeThreadRef.current = resumeId;
-				setActiveCitation(null);
+				setActiveSource(null);
+				sourceFocusKeyRef.current = null;
+				sourceTriggerRef.current = null;
 				setThreadId(detail.id);
 				setThreadTitle(detail.title);
 				setSessionId(detail.session_id || detail.id);
@@ -317,13 +351,12 @@ function AskWorkspaceContent() {
 		return () => controller.abort();
 	}, [apiReady, askStream, libraries, librariesLoading, requestedThreadId]);
 
-	function resizeComposer(
-		el: HTMLTextAreaElement | null = textareaRef.current,
-	) {
+	useLayoutEffect(() => {
+		const el = textareaRef.current;
 		if (!el) return;
-		el.style.height = "0px";
-		el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-	}
+		el.style.height = "auto";
+		if (input) el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+	}, [input]);
 
 	const library = useMemo(
 		() => libraries.find((item) => item.id === libraryId) ?? null,
@@ -344,15 +377,59 @@ function AskWorkspaceContent() {
 		return buildSampleQuestions(readyDocuments);
 	}, [canAsk, docsLoaded, readyDocuments]);
 
-	const hasReadyDocTitles = useMemo(
-		() => readyDocuments.some((doc) => Boolean(documentDisplayTitle(doc))),
-		[readyDocuments],
-	);
-
-	function openCitation(citation: UiCitation) {
+	const openCitation = useCallback((citation: UiCitation, turnId: string) => {
+		const target = document.activeElement;
+		sourceTriggerRef.current =
+			target instanceof HTMLElement &&
+			target.dataset.citationId === citation.id &&
+			target.closest<HTMLElement>("[data-turn-id]")?.dataset.turnId === turnId
+				? target
+				: null;
+		const selection = { turnId, sourceId: citation.id };
+		sourceFocusKeyRef.current = selection;
 		setTraceOpen(false);
-		setActiveCitation(citation);
+		setActiveSource({ turnId, citation, selectedByUser: true });
 		setDrawerOpen(true);
+	}, []);
+
+	function updateCitationSnapshot(turnId: string, citations: UiCitation[]) {
+		setActiveSource((current) => {
+			if (current?.selectedByUser && current.turnId !== turnId) return current;
+			const citation = current?.selectedByUser
+				? citations.find((citation) => citation.id === current.citation.id)
+				: citations[0];
+			return citation
+				? { turnId, citation, selectedByUser: current?.selectedByUser ?? false }
+				: null;
+		});
+	}
+
+	function sourceReturnTarget() {
+		const key = sourceFocusKeyRef.current;
+		const trigger = sourceTriggerRef.current;
+		if (
+			trigger?.isConnected &&
+			(!key ||
+				(trigger.dataset.citationId === key.sourceId &&
+					trigger.closest<HTMLElement>("[data-turn-id]")?.dataset.turnId ===
+						key.turnId))
+		)
+			return trigger;
+		// Completion can replace Markdown nodes while the source panel is open.
+		const replacement = key
+			? document.querySelector<HTMLElement>(
+					`[data-turn-id="${CSS.escape(key.turnId)}"] [data-citation-id="${CSS.escape(key.sourceId)}"]`,
+				)
+			: null;
+		return replacement ?? textareaRef.current;
+	}
+
+	function closeSources() {
+		setDrawerOpen(false);
+		if (wideSources)
+			window.requestAnimationFrame(() => {
+				sourceReturnTarget()?.focus();
+			});
 	}
 
 	function openTrace(
@@ -396,6 +473,7 @@ function AskWorkspaceContent() {
 					refused: Boolean(turn.refused),
 					refuse_reason: turn.refuseReason,
 					library_id: libraryId || undefined,
+					retrieval_debug: turn.retrievalDebug ?? undefined,
 				})),
 			});
 			if (epoch !== contextEpochRef.current) return;
@@ -423,7 +501,7 @@ function AskWorkspaceContent() {
 		if (isStreaming && !options?.replaceTurnId) return;
 
 		const replaceTurnId = options?.replaceTurnId;
-		const pendingId = replaceTurnId ?? `pending-${crypto.randomUUID()}`;
+		const pendingId = replaceTurnId ?? `pending-${createClientId()}`;
 		const startedAtMs = performance.now();
 		const startedAt = Date.now();
 
@@ -445,10 +523,8 @@ function AskWorkspaceContent() {
 		});
 		if (!replaceTurnId) {
 			setInput("");
-			requestAnimationFrame(() => resizeComposer());
 		}
 		setTraceOpen(false);
-		setDrawerOpen(true);
 
 		await askStream.run(
 			{
@@ -483,7 +559,7 @@ function AskWorkspaceContent() {
 						citations: mapped,
 						evidenceMs,
 					});
-					setActiveCitation(mapped[0] ?? null);
+					updateCitationSnapshot(pendingId, mapped);
 				},
 				onToken: (token) => {
 					dispatchTurns({ type: "token", turnId: pendingId, token });
@@ -500,7 +576,8 @@ function AskWorkspaceContent() {
 						type: "complete",
 						turnId: pendingId,
 						turn: completedTurn({
-							id: `turn-${completedAt}`,
+							// Completion must not remount this turn or its focused citations.
+							id: pendingId,
 							question: trimmed,
 							answer: result.answer,
 							citations,
@@ -527,7 +604,7 @@ function AskWorkspaceContent() {
 							persistError: result.persist_error,
 						}),
 					});
-					setActiveCitation(citations[0] ?? null);
+					updateCitationSnapshot(pendingId, citations);
 				},
 				onTerminal: ({ cancelled, error: err }) => {
 					const completedAt = Date.now();
@@ -564,6 +641,7 @@ function AskWorkspaceContent() {
 	}
 
 	function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+		if (event.nativeEvent.isComposing || event.keyCode === 229) return;
 		if (event.key === "Enter" && !event.shiftKey) {
 			event.preventDefault();
 			if (isStreaming) return;
@@ -584,7 +662,12 @@ function AskWorkspaceContent() {
 					libraryId={libraryId}
 					onArchive={() => void handleArchive()}
 					onDrawerOpenChange={(open) => {
-						if (open) setTraceOpen(false);
+						if (open) {
+							setTraceOpen(false);
+							sourceFocusKeyRef.current = null;
+							if (document.activeElement instanceof HTMLElement)
+								sourceTriggerRef.current = document.activeElement;
+						}
 						setDrawerOpen(open);
 					}}
 					onLibraryChange={(nextId) => {
@@ -607,118 +690,144 @@ function AskWorkspaceContent() {
 					</p>
 				) : null}
 				{resumeLibraryMissing ? (
-					<p className="border-b border-survey/35 bg-accent px-5 py-2 text-sm text-accent-foreground">
+					<p className="border-b border-survey/35 bg-warning px-5 py-2 text-sm text-warning-foreground">
 						原知识库已删除，历史记录仍可查看。选择其他知识库将开启新会话。
 					</p>
 				) : null}
 
-				<ScrollArea className="min-h-0 flex-1">
-					<div className="px-5 py-6">
-						{turns.length === 0 ? (
-							<div className="desk-enter mx-auto flex max-w-xl flex-col gap-5 py-10">
-								<p className="text-meta font-mono tracking-[0.14em] text-cite">
-									{healthLoading
-										? "服务状态 · 探测中"
-										: !apiReady
-											? "服务状态 · 暂不可用"
-											: library
-												? `知识库 · ${library.name}${
-														library.status === "empty"
-															? " · 空"
-															: library.status === "indexing"
-																? " · 索引中"
-																: ""
-													}`
-												: libraries.length === 0
-													? "知识库 · 尚未创建"
-													: "知识库 · 请选择"}
-								</p>
-								<h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground">
-									{canAsk
-										? "向知识库提问，答案可追溯到原文"
-										: healthLoading
-											? "正在检查服务状态"
+				<MessageScrollerProvider
+					key={`${libraryId}:${requestedThreadId ?? "new"}`}
+					autoScroll
+				>
+					<MessageScroller className="min-h-0 flex-1">
+						<MessageScrollerViewport aria-label="问答阅读区">
+							{turns.length === 0 ? (
+								<div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-14 sm:px-6 sm:py-20">
+									<p className="text-xs text-muted-foreground">
+										{healthLoading
+											? "服务状态 · 探测中"
 											: !apiReady
-												? "服务暂不可用"
-												: !library
-													? libraries.length === 0
-														? "还没有知识库"
-														: "请选择知识库"
-													: library.status === "empty"
-														? "知识库还是空的"
-														: library.status === "failed"
-															? "文档处理失败"
-															: "文档仍在索引中"}
-								</h2>
-								<p className="text-answer desk-enter desk-enter-delay-1 text-muted-foreground">
-									{canAsk
-										? "支持流式回答与来源核对。点击答案中的引用编号，即可沿证据轨道回到原文。"
-										: healthLoading
-											? "正在连接知识库服务，请稍候。"
-											: !apiReady || libsError
-												? "请先恢复 API 连接后再提问。"
-												: !library
-													? libraries.length === 0
-														? "先到「知识库」创建空间并上传文档。"
-														: "从上方选择一个已就绪的知识库。"
-													: library.status === "empty"
-														? "先上传文档完成索引，再回来提问。"
-														: library.status === "failed"
-															? "当前没有可检索文档，请到知识库查看失败原因并重试。"
-															: "索引完成后即可提问，可先到知识库查看进度。"}
-								</p>
-								{!canAsk ? (
-									<Link
-										href="/app/libraries"
-										className={cn(
-											buttonVariants({ variant: "outline" }),
-											"desk-enter desk-enter-delay-2 w-fit rounded-lg",
-										)}
-									>
-										{libraries.length === 0
-											? "去创建知识库"
-											: library?.status === "empty" || library?.doc_count === 0
-												? "去上传文档"
-												: "前往知识库"}
-										<ChevronRight data-icon="inline-end" />
-									</Link>
-								) : docsLoaded ? (
-									<div className="desk-enter desk-enter-delay-2 space-y-2">
-										{!hasReadyDocTitles ? (
-											<p className="text-xs text-muted-foreground">
-												先上传文档后再提问，或试试下面的通用问法。
-											</p>
-										) : null}
-										<div className="flex flex-wrap gap-2">
-											{sampleQuestions.map((sample) => (
-												<button
-													key={sample}
-													type="button"
-													onClick={() => setInput(sample)}
-													className="rounded-md border border-border/80 bg-card px-3.5 py-2 text-left text-xs leading-5 text-muted-foreground transition-colors hover:border-cite/40 hover:bg-cite/5 hover:text-foreground"
-												>
-													{sample}
-												</button>
-											))}
+												? "服务状态 · 暂不可用"
+												: library
+													? `知识库 · ${library.name}${
+															library.status === "empty"
+																? " · 空"
+																: library.status === "indexing"
+																	? " · 索引中"
+																	: ""
+														}`
+													: librariesLoading
+														? "知识库 · 加载中"
+														: libsError
+															? "知识库 · 暂不可用"
+															: libraries.length === 0
+																? "知识库 · 尚未创建"
+																: "知识库 · 请选择"}
+									</p>
+									<h2 className="font-heading text-2xl font-medium text-foreground">
+										{canAsk
+											? "有什么需要核对？"
+											: librariesLoading
+												? "正在加载知识库"
+												: libsError
+													? "知识库加载失败"
+													: healthLoading
+														? "正在检查服务状态"
+														: !apiReady
+															? "服务暂不可用"
+															: !library
+																? libraries.length === 0
+																	? "还没有知识库"
+																	: "请选择知识库"
+																: library.status === "empty"
+																	? "知识库还是空的"
+																	: library.status === "failed"
+																		? "文档处理失败"
+																		: "文档仍在索引中"}
+									</h2>
+									<p className="text-sm leading-6 text-muted-foreground">
+										{canAsk
+											? (library?.name ?? "")
+											: librariesLoading
+												? "正在读取知识库列表，请稍候。"
+												: libsError
+													? "可前往知识库页面重试加载。"
+													: healthLoading
+														? "正在连接知识库服务，请稍候。"
+														: !apiReady || libsError
+															? "请先恢复 API 连接后再提问。"
+															: !library
+																? libraries.length === 0
+																	? "先到「知识库」创建空间并上传文档。"
+																	: "从上方选择一个已就绪的知识库。"
+																: library.status === "empty"
+																	? "先上传文档完成索引，再回来提问。"
+																	: library.status === "failed"
+																		? "当前没有可检索文档，请到知识库查看失败原因并重试。"
+																		: "索引完成后即可提问，可先到知识库查看进度。"}
+									</p>
+									{!canAsk && !librariesLoading ? (
+										<Link
+											href="/app/libraries"
+											className={cn(
+												buttonVariants({ variant: "outline" }),
+												"min-h-11 w-fit rounded-lg",
+											)}
+										>
+											{!libsError && libraries.length === 0
+												? "去创建知识库"
+												: library?.status === "empty" ||
+														library?.doc_count === 0
+													? "去上传文档"
+													: "前往知识库"}
+											<ChevronRight data-icon="inline-end" />
+										</Link>
+									) : docsLoaded ? (
+										<div className="space-y-2">
+											<div className="flex flex-col items-start gap-1">
+												{sampleQuestions.map((sample) => (
+													<Button
+														key={sample}
+														type="button"
+														variant="outline"
+														size="sm"
+														onClick={() => setInput(sample)}
+														className="h-auto min-h-11 max-w-full justify-start px-3 py-2 text-left text-sm leading-6 whitespace-normal text-muted-foreground [overflow-wrap:anywhere]"
+													>
+														{sample}
+													</Button>
+												))}
+											</div>
 										</div>
-									</div>
-								) : null}
-							</div>
-						) : (
-							<AskConversationList
-								activeCitation={activeCitation}
-								canAsk={canAsk}
-								isStreaming={isStreaming}
-								onCancel={cancelAsk}
-								onOpenCitation={openCitation}
-								onOpenTrace={openTrace}
-								onRetry={retryTurn}
-								reduceMotion={reduceMotion}
-								turns={turns}
-							/>
-						)}
-					</div>
-				</ScrollArea>
+									) : null}
+								</div>
+							) : (
+								<MessageScrollerContent
+									className="@container mx-auto w-full max-w-3xl gap-12 px-4 py-6 sm:px-6 sm:py-8"
+									aria-label="问答记录"
+								>
+									<AskConversationList
+										activeCitation={activeCitation}
+										activeCitationTurnId={activeSource?.turnId ?? null}
+										canAsk={canAsk}
+										isStreaming={isStreaming}
+										onCancel={cancelAsk}
+										onOpenCitation={openCitation}
+										onOpenTrace={openTrace}
+										onRetry={retryTurn}
+										reduceMotion={reduceMotion}
+										turns={turns}
+									/>
+								</MessageScrollerContent>
+							)}
+						</MessageScrollerViewport>
+						<MessageScrollerButton
+							className="size-11"
+							behavior={reduceMotion ? "auto" : "smooth"}
+							aria-label="回到最新回答"
+						/>
+					</MessageScroller>
+				</MessageScrollerProvider>
 
 				<AskComposer
 					canAsk={canAsk}
@@ -726,82 +835,50 @@ function AskWorkspaceContent() {
 					input={input}
 					isStreaming={isStreaming}
 					onCancel={cancelAsk}
-					onChange={(value, element) => {
-						setInput(value);
-						resizeComposer(element);
-					}}
+					onChange={setInput}
 					onKeyDown={onKeyDown}
 					onSubmit={onSubmit}
 					textareaRef={textareaRef}
 				/>
 			</section>
 
-			{!isMobile && !drawerOpen ? (
-				<button
-					type="button"
-					onClick={() => {
-						setTraceOpen(false);
-						setDrawerOpen(true);
-					}}
-					className="group hidden w-7 shrink-0 flex-col items-center justify-center gap-2 border-l border-cite/25 bg-cite/[0.06] text-cite transition-colors hover:bg-cite/12 md:flex"
-					aria-label="展开引用来源面板"
-					title="展开引用来源"
-				>
-					<PanelRightOpen className="size-4 shrink-0" aria-hidden />
-					<span
-						className="text-meta font-mono tracking-[0.18em] uppercase [writing-mode:vertical-rl]"
-						aria-hidden
-					>
-						Evidence
-					</span>
-				</button>
-			) : null}
-
-			{isMobile ? (
+			{!wideSources ? (
 				<Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
 					<SheetContent
 						side="right"
 						showCloseButton={false}
-						className="p-0 data-[side=right]:w-[min(92vw,384px)] data-[side=right]:sm:max-w-96"
+						finalFocus={sourceReturnTarget}
+						className="w-full max-w-[min(100vw,28rem)]! p-0"
 					>
 						<SheetHeader className="sr-only">
-							<SheetTitle>证据轨道</SheetTitle>
+							<SheetTitle>引用来源</SheetTitle>
 							<SheetDescription>
-								查看回答所依据的完整原文、文档位置与检索诊断
+								本次回答使用的来源片段与文档位置
 							</SheetDescription>
 						</SheetHeader>
 						<AskSourcesPanel
 							activeCitation={activeCitation}
-							onClose={() => setDrawerOpen(false)}
+							onClose={closeSources}
 						/>
 					</SheetContent>
 				</Sheet>
-			) : (
-				<motion.aside
-					className={cn(
-						"hidden shrink-0 overflow-hidden border-l border-border/80 bg-card md:block",
-						!drawerOpen && "border-l-0",
-					)}
-					initial={false}
-					animate={{
-						width: drawerOpen ? 384 : 0,
-						opacity: drawerOpen ? 1 : 0,
+			) : drawerOpen ? (
+				<aside
+					aria-label="引用来源"
+					className="w-96 shrink-0 border-l bg-background"
+					onKeyDown={(event) => {
+						if (event.key === "Escape") {
+							event.stopPropagation();
+							closeSources();
+						}
 					}}
-					transition={
-						reduceMotion
-							? { duration: 0 }
-							: { duration: 0.22, ease: [0.22, 1, 0.36, 1] }
-					}
-					aria-hidden={!drawerOpen}
 				>
-					<div className="h-full w-96">
-						<AskSourcesPanel
-							activeCitation={activeCitation}
-							onClose={() => setDrawerOpen(false)}
-						/>
-					</div>
-				</motion.aside>
-			)}
+					<AskSourcesPanel
+						activeCitation={activeCitation}
+						onClose={closeSources}
+					/>
+				</aside>
+			) : null}
 
 			<AskTraceDrawer
 				open={traceOpen}

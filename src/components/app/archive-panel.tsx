@@ -1,12 +1,23 @@
 "use client";
 
+import { ArrowLeft, ArrowUp, MessageSquare, Search } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { CitationSourceCard } from "@/components/app/citation-source-card";
 import { MarkdownAnswer } from "@/components/app/markdown-answer";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { useLibraries } from "@/hooks/use-libraries";
 import {
 	type ApiArchiveTurn,
 	type ApiCitation,
@@ -23,6 +34,7 @@ import { cn } from "@/lib/utils";
 function toUiCitation(citation: ApiCitation): UiCitation {
 	const text = citation.body || citation.text || citation.snippet || "";
 	return {
+		source: citation,
 		id: citation.id,
 		index: citation.index,
 		title: citation.title,
@@ -43,15 +55,39 @@ function toUiCitation(citation: ApiCitation): UiCitation {
 	};
 }
 
+function dateGroup(value: string) {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return "日期未记录";
+	return date.toLocaleDateString("zh-CN", {
+		year: "numeric",
+		month: "long",
+		day: "numeric",
+	});
+}
+
 export function ArchivePanel() {
+	const { libraries } = useLibraries();
 	const [threads, setThreads] = useState<ApiThread[]>([]);
 	const [selectedId, setSelectedId] = useState("");
 	const [detail, setDetail] = useState<ApiThreadDetail | null>(null);
 	const [selectedTurnId, setSelectedTurnId] = useState("");
 	const [error, setError] = useState<string | null>(null);
+	const [detailError, setDetailError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [detailLoading, setDetailLoading] = useState(false);
+	const [query, setQuery] = useState("");
+	const [libraryFilter, setLibraryFilter] = useState("all");
+	const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+	const [listRetry, setListRetry] = useState(0);
+	const [detailRetry, setDetailRetry] = useState(0);
+	const [focusedCitationId, setFocusedCitationId] = useState("");
+	const listTriggerRef = useRef<HTMLButtonElement | null>(null);
+	const searchRef = useRef<HTMLInputElement | null>(null);
+	const backRef = useRef<HTMLButtonElement | null>(null);
+	const citationTriggerRef = useRef<HTMLElement | null>(null);
+	const citationRefs = useRef(new Map<string, HTMLLIElement>());
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Retry intentionally restarts and aborts the request.
 	useEffect(() => {
 		const controller = new AbortController();
 		void (async () => {
@@ -68,14 +104,15 @@ export function ArchivePanel() {
 			} catch (err) {
 				if (controller.signal.aborted || isAbortError(err)) return;
 				setThreads([]);
-				setError("无法加载归档会话（API 不可用或尚未归档）。");
+				setError("无法加载归档会话，请稍后重试。");
 			} finally {
 				if (!controller.signal.aborted) setLoading(false);
 			}
 		})();
 		return () => controller.abort();
-	}, []);
+	}, [listRetry]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Retry intentionally restarts and aborts the request.
 	useEffect(() => {
 		if (!selectedId) {
 			setDetail(null);
@@ -83,6 +120,9 @@ export function ArchivePanel() {
 			return;
 		}
 		const controller = new AbortController();
+		setDetail(null);
+		setDetailError(null);
+		setFocusedCitationId("");
 		void (async () => {
 			setDetailLoading(true);
 			try {
@@ -92,191 +132,426 @@ export function ArchivePanel() {
 				// turns are oldest→newest; default to latest round for review.
 				const last = item.turns[item.turns.length - 1];
 				setSelectedTurnId(last?.id || item.turns[0]?.id || "");
-				setError(null);
+				setDetailError(null);
 			} catch (err) {
 				if (controller.signal.aborted || isAbortError(err)) return;
 				setDetail(null);
-				setError("无法加载该会话的消息。");
+				setDetailError("无法加载该会话的消息，可能已不可访问。");
 			} finally {
 				if (!controller.signal.aborted) setDetailLoading(false);
 			}
 		})();
 		return () => controller.abort();
-	}, [selectedId]);
+	}, [selectedId, detailRetry]);
+
+	useEffect(() => {
+		if (mobileDetailOpen && backRef.current?.getClientRects().length) {
+			backRef.current.focus();
+		}
+	}, [mobileDetailOpen]);
+
+	function returnToList() {
+		setMobileDetailOpen(false);
+		requestAnimationFrame(() => {
+			const target = listTriggerRef.current;
+			if (target?.isConnected && target.getClientRects().length) target.focus();
+			else searchRef.current?.focus();
+		});
+	}
+
+	const libraryNames = new Map(libraries.map((item) => [item.id, item.name]));
+	const libraryIds = Array.from(
+		new Set(threads.map((thread) => thread.library_id || "")),
+	);
+	const libraryName = (id: string | null | undefined) =>
+		id ? libraryNames.get(id) || id : "未关联知识库";
+	const libraryOptions = [
+		{ value: "all", label: "全部知识库" },
+		...libraryIds.map((id) => ({ value: id, label: libraryName(id) })),
+	];
+	const normalized = query.trim().toLocaleLowerCase();
+	const visibleThreads = threads.filter(
+		(thread) =>
+			(libraryFilter === "all" ||
+				(thread.library_id || "") === libraryFilter) &&
+			thread.title.toLocaleLowerCase().includes(normalized),
+	);
+	const groups = new Map<string, ApiThread[]>();
+	for (const thread of visibleThreads) {
+		const label = dateGroup(thread.updated_at);
+		const group = groups.get(label) ?? [];
+		group.push(thread);
+		groups.set(label, group);
+	}
+	const currentDetail = detail?.id === selectedId ? detail : null;
 
 	const selectedTurn: ApiArchiveTurn | null =
-		detail?.turns.find((item) => item.id === selectedTurnId) ??
-		detail?.turns[0] ??
+		currentDetail?.turns.find((item) => item.id === selectedTurnId) ??
+		currentDetail?.turns[0] ??
 		null;
+	const turnOptions =
+		currentDetail?.turns.map((turn, index) => ({
+			value: turn.id,
+			label: `第 ${index + 1} 轮 · ${turn.question}`,
+		})) ?? [];
 
 	return (
-		<div className="flex min-h-0 flex-1 overflow-hidden">
-			<aside className="flex w-[320px] shrink-0 flex-col border-r border-border/80 bg-card/70">
-				<div className="border-b border-border/70 px-4 py-3">
-					<p className="text-meta font-mono tracking-[0.16em] text-cite uppercase">
-						Archive
-					</p>
-					<p className="text-[0.9375rem] font-medium leading-snug text-foreground">
-						归档会话
-					</p>
-					<p className="text-meta mt-1 font-mono text-muted-foreground">
-						共 {loading ? "…" : threads.length} 个
-					</p>
-				</div>
-				<ScrollArea className="min-h-0 flex-1">
-					<div className="p-2">
-						{loading ? (
-							<p className="text-ui px-2 py-3 text-muted-foreground">加载中…</p>
-						) : error && threads.length === 0 ? (
-							<p className="text-ui px-2 py-3 text-muted-foreground">{error}</p>
-						) : threads.length === 0 ? (
-							<p className="text-ui px-2 py-3 text-muted-foreground">
-								还没有归档会话。在智能问答点「归档」后会出现在这里。
+		<div className="@container flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+			<div className="flex min-h-0 min-w-0 flex-1">
+				<aside
+					aria-label="会话历史导航"
+					className={cn(
+						"min-h-0 min-w-0 flex-1 flex-col @3xl:w-72 @3xl:flex-none @3xl:border-r",
+						mobileDetailOpen ? "hidden @3xl:flex" : "flex",
+					)}
+				>
+					<header className="space-y-4 border-b p-4">
+						<div className="flex flex-wrap items-baseline justify-between gap-2">
+							<h1 className="text-lg font-medium">会话历史</h1>
+							<p className="text-xs text-muted-foreground" role="status">
+								{loading ? "加载中…" : `已加载 ${threads.length} 个`}
 							</p>
-						) : (
-							<ul className="space-y-1">
-								{threads.map((thread) => (
-									<li key={thread.id}>
-										<button
-											type="button"
-											onClick={() => setSelectedId(thread.id)}
-											className={cn(
-												"w-full rounded-md border px-3 py-2.5 text-left transition-colors",
-												selectedId === thread.id
-													? "border-cite/40 bg-cite/10"
-													: "border-transparent hover:border-border hover:bg-background/70",
-											)}
-										>
-											<p className="line-clamp-2 text-[0.9375rem] leading-snug text-foreground">
-												{thread.title}
-											</p>
-											<p className="text-meta mt-1 font-mono text-muted-foreground">
-												{formatDateTime(thread.updated_at)}
-												{` · ${thread.turn_count} 轮`}
-											</p>
-										</button>
-									</li>
-								))}
-							</ul>
-						)}
-					</div>
-				</ScrollArea>
-			</aside>
-
-			<ScrollArea className="min-h-0 min-w-0 flex-1">
-				<section className="px-5 py-6">
-					{detailLoading ? (
-						<p className="text-ui text-muted-foreground">加载会话…</p>
-					) : detail ? (
-						<div className="mx-auto w-full max-w-2xl space-y-4">
-							<div className="flex flex-wrap items-start justify-between gap-3">
-								<div>
-									<p className="text-meta font-mono tracking-[0.16em] text-cite uppercase">
-										Thread
-									</p>
-									<h2 className="font-heading mt-1 text-xl font-semibold tracking-tight sm:text-2xl">
-										{detail.title}
-									</h2>
-									<div className="mt-2 flex flex-wrap gap-1.5">
-										<span className="meta-chip">
-											{formatDateTime(detail.updated_at)}
-										</span>
-										{detail.library_id ? (
-											<span className="meta-chip">{detail.library_id}</span>
-										) : null}
-										<span className="meta-chip">{detail.turn_count} 轮</span>
-									</div>
-								</div>
-								<Link
-									href={`/app/ask?thread=${encodeURIComponent(detail.id)}`}
-									className={cn(
-										buttonVariants({ variant: "default" }),
-										"rounded-md",
-									)}
-								>
-									继续对话
-								</Link>
+						</div>
+						<div className="space-y-2">
+							<label
+								htmlFor="archive-search"
+								className="text-xs text-muted-foreground"
+							>
+								搜索已加载会话
+							</label>
+							<div className="relative">
+								<Search
+									aria-hidden
+									className="pointer-events-none absolute left-3 top-3.5 size-4 text-muted-foreground"
+								/>
+								<Input
+									ref={searchRef}
+									id="archive-search"
+									type="search"
+									placeholder="会话标题"
+									value={query}
+									onChange={(event) => setQuery(event.target.value)}
+									className="h-11 pl-9"
+								/>
 							</div>
-
-							{detail.turns.length > 1 ? (
-								<div className="flex flex-wrap gap-1.5">
-									{detail.turns.map((turn, index) => (
-										<button
-											key={turn.id}
-											type="button"
-											onClick={() => setSelectedTurnId(turn.id)}
-											className={cn(
-												"rounded-md border px-2.5 py-1 text-xs transition-colors",
-												(selectedTurn?.id || "") === turn.id
-													? "border-cite/40 bg-cite/10 text-cite"
-													: "border-border/70 text-muted-foreground hover:bg-background",
-											)}
-										>
-											第 {index + 1} 轮
-										</button>
-									))}
-								</div>
-							) : null}
-
-							{selectedTurn ? (
-								<>
-									<div>
-										<p className="text-meta font-mono tracking-[0.14em] text-cite uppercase">
-											Question
-										</p>
-										<p className="mt-1 text-[1.05rem] font-medium leading-snug">
-											{selectedTurn.question}
-										</p>
-									</div>
-									<article className="rounded-2xl border border-border/80 bg-card/90 px-4 py-4 shadow-sm">
-										<p className="text-meta font-mono tracking-[0.14em] text-cite uppercase">
-											Answer
-										</p>
-										<MarkdownAnswer
-											content={selectedTurn.answer}
-											citations={selectedTurn.citations.map(toUiCitation)}
-											enhanced
-										/>
-									</article>
-									{selectedTurn.citations.length > 0 ? (
-										<section className="space-y-2">
-											<p className="text-meta font-mono text-muted-foreground">
-												引用来源 · {selectedTurn.citations.length} 条
-											</p>
-											<ul className="space-y-2">
-												{selectedTurn.citations.map((citation) => (
-													<li key={citation.id}>
-														<CitationSourceCard
-															citation={toUiCitation(citation)}
-															expanded
-														/>
-													</li>
-												))}
-											</ul>
-										</section>
-									) : null}
-								</>
-							) : (
-								<p className="text-ui text-muted-foreground">
-									该会话还没有消息。
+						</div>
+						<div className="space-y-2">
+							<label
+								htmlFor="archive-library"
+								className="text-xs text-muted-foreground"
+							>
+								知识库
+							</label>
+							<Select
+								items={libraryOptions}
+								value={libraryFilter}
+								onValueChange={(value) => {
+									if (value !== null) setLibraryFilter(value);
+								}}
+							>
+								<SelectTrigger
+									id="archive-library"
+									className="min-h-11 w-full min-w-0"
+								>
+									<SelectValue className="min-w-0 truncate" />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectGroup>
+										{libraryOptions.map((option) => (
+											<SelectItem
+												key={option.value}
+												value={option.value}
+												className="min-h-11"
+											>
+												{option.label}
+											</SelectItem>
+										))}
+									</SelectGroup>
+								</SelectContent>
+							</Select>
+						</div>
+					</header>
+					<ScrollArea className="min-h-0 flex-1">
+						<div className="p-2">
+							{loading ? (
+								<p
+									role="status"
+									className="px-2 py-6 text-sm text-muted-foreground"
+								>
+									加载会话列表…
 								</p>
+							) : error ? (
+								<div className="space-y-3 px-2 py-6">
+									<p role="alert" className="text-sm text-destructive">
+										{error}
+									</p>
+									<Button
+										variant="outline"
+										className="h-11"
+										onClick={() => setListRetry((value) => value + 1)}
+									>
+										重试加载列表
+									</Button>
+								</div>
+							) : threads.length === 0 ? (
+								<div className="space-y-3 px-2 py-6">
+									<p className="text-sm text-muted-foreground">
+										还没有归档会话
+									</p>
+									<Link
+										href="/app/ask"
+										className={cn(
+											buttonVariants({ variant: "outline" }),
+											"h-11",
+										)}
+									>
+										开始提问
+									</Link>
+								</div>
+							) : visibleThreads.length === 0 ? (
+								<p
+									role="status"
+									className="px-2 py-6 text-sm text-muted-foreground"
+								>
+									没有匹配的会话
+								</p>
+							) : (
+								Array.from(groups, ([label, items]) => (
+									<section key={label} aria-label={label} className="mb-4">
+										<h2 className="px-3 py-3 text-xs font-medium text-muted-foreground">
+											{label}
+										</h2>
+										<ul className="space-y-1">
+											{items.map((thread) => (
+												<li key={thread.id}>
+													<button
+														type="button"
+														aria-current={
+															selectedId === thread.id ? "true" : undefined
+														}
+														onClick={(event) => {
+															listTriggerRef.current = event.currentTarget;
+															setSelectedId(thread.id);
+															setMobileDetailOpen(true);
+														}}
+														className={cn(
+															"min-h-11 w-full rounded-lg border-l-2 px-3 py-3 text-left transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
+															selectedId === thread.id
+																? "border-evidence bg-muted"
+																: "border-transparent hover:bg-muted/60",
+														)}
+													>
+														<span className="block text-sm font-medium leading-6 [overflow-wrap:anywhere]">
+															{thread.title}
+														</span>
+														<span className="mt-1 block text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+															{libraryName(thread.library_id)}
+														</span>
+														<span className="mt-1 block text-xs leading-5 text-muted-foreground">
+															{formatDateTime(thread.updated_at)} ·{" "}
+															{thread.turn_count} 轮
+														</span>
+													</button>
+												</li>
+											))}
+										</ul>
+									</section>
+								))
 							)}
 						</div>
-					) : (
-						<div className="mx-auto max-w-md py-16 text-center">
-							<p className="text-meta font-mono tracking-[0.2em] text-cite uppercase">
-								Archive
-							</p>
-							<h2 className="font-heading mt-2 text-2xl font-semibold">
-								选择左侧会话回看
-							</h2>
-							<p className="text-answer mt-2 text-muted-foreground">
-								仅显示已归档会话。可打开回放，或继续对话。
-							</p>
-						</div>
+					</ScrollArea>
+				</aside>
+				<section
+					aria-label="会话详情"
+					className={cn(
+						"min-h-0 min-w-0 flex-1 flex-col",
+						mobileDetailOpen ? "flex" : "hidden @3xl:flex",
 					)}
+				>
+					<div className="border-b px-3 py-2 @3xl:hidden">
+						<Button
+							ref={backRef}
+							variant="ghost"
+							className="h-11"
+							onClick={returnToList}
+						>
+							<ArrowLeft aria-hidden />
+							返回会话列表
+						</Button>
+					</div>
+					<ScrollArea className="min-h-0 min-w-0 flex-1">
+						<div className="px-4 py-6 @3xl:px-8">
+							{detailLoading ||
+							(selectedId && !currentDetail && !detailError) ? (
+								<p role="status" className="text-sm text-muted-foreground">
+									加载会话…
+								</p>
+							) : detailError ? (
+								<div className="space-y-3">
+									<p role="alert" className="text-sm text-destructive">
+										{detailError}
+									</p>
+									<Button
+										variant="outline"
+										className="h-11"
+										onClick={() => setDetailRetry((value) => value + 1)}
+									>
+										重试加载会话
+									</Button>
+								</div>
+							) : currentDetail ? (
+								<div className="mx-auto w-full max-w-3xl space-y-8">
+									<header className="space-y-4 border-b pb-6">
+										<h2 className="text-xl font-medium leading-8 [overflow-wrap:anywhere]">
+											{currentDetail.title}
+										</h2>
+										<div className="flex flex-wrap gap-x-4 gap-y-2 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+											<time dateTime={currentDetail.updated_at}>
+												{formatDateTime(currentDetail.updated_at)}
+											</time>
+											<span>{libraryName(currentDetail.library_id)}</span>
+											<span>{currentDetail.turn_count} 轮</span>
+										</div>
+										<Link
+											href={`/app/ask?thread=${encodeURIComponent(currentDetail.id)}`}
+											className={cn(
+												buttonVariants({ variant: "outline" }),
+												"h-11",
+											)}
+										>
+											<MessageSquare aria-hidden />
+											继续对话
+										</Link>
+									</header>
+									{currentDetail.turns.length > 1 ? (
+										<div className="space-y-2">
+											<label
+												htmlFor="archive-turn"
+												className="text-xs text-muted-foreground"
+											>
+												对话轮次
+											</label>
+											<Select
+												items={turnOptions}
+												value={selectedTurn?.id || ""}
+												onValueChange={(value) => {
+													if (value === null) return;
+													setSelectedTurnId(value);
+													setFocusedCitationId("");
+												}}
+											>
+												<SelectTrigger
+													id="archive-turn"
+													className="min-h-11 w-full min-w-0"
+												>
+													<SelectValue className="min-w-0 truncate" />
+												</SelectTrigger>
+												<SelectContent>
+													<SelectGroup>
+														{turnOptions.map((option) => (
+															<SelectItem
+																key={option.value}
+																value={option.value}
+																className="min-h-11"
+															>
+																{option.label}
+															</SelectItem>
+														))}
+													</SelectGroup>
+												</SelectContent>
+											</Select>
+										</div>
+									) : null}
+									{selectedTurn ? (
+										<div key={selectedTurn.id} className="space-y-8">
+											<section aria-label="问题" className="space-y-2">
+												<h3 className="text-xs text-muted-foreground">问题</h3>
+												<p className="whitespace-pre-wrap text-base font-medium leading-7 [overflow-wrap:anywhere]">
+													{selectedTurn.question}
+												</p>
+											</section>
+											<article
+												aria-label="回答"
+												className="min-w-0 [&_button]:min-h-11 [&_button]:min-w-11 [&_button]:text-xs"
+											>
+												<h3 className="text-xs text-muted-foreground">回答</h3>
+												<MarkdownAnswer
+													content={selectedTurn.answer}
+													citations={selectedTurn.citations.map(toUiCitation)}
+													enhanced
+													onCite={(citation) => {
+														citationTriggerRef.current =
+															document.activeElement instanceof HTMLElement
+																? document.activeElement
+																: null;
+														setFocusedCitationId(citation.id);
+														const source = citationRefs.current.get(
+															citation.id,
+														);
+														source?.focus({ preventScroll: true });
+														source?.scrollIntoView({ block: "start" });
+													}}
+												/>
+											</article>
+											{selectedTurn.citations.length > 0 ? (
+												<section
+													aria-label="引用来源"
+													className="space-y-4 border-t pt-6"
+												>
+													<h3 className="text-sm font-medium">
+														引用来源 · {selectedTurn.citations.length} 条
+													</h3>
+													<ul className="divide-y">
+														{selectedTurn.citations.map((citation) => (
+															<li
+																key={citation.id}
+																tabIndex={-1}
+																ref={(node) => {
+																	if (node)
+																		citationRefs.current.set(citation.id, node);
+																	else citationRefs.current.delete(citation.id);
+																}}
+																className="scroll-mt-4 py-5 first:pt-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+															>
+																<CitationSourceCard
+																	citation={toUiCitation(citation)}
+																	active={focusedCitationId === citation.id}
+																	expanded
+																/>
+																{focusedCitationId === citation.id ? (
+																	<Button
+																		variant="ghost"
+																		className="mt-3 h-11"
+																		onClick={() => {
+																			if (
+																				citationTriggerRef.current?.isConnected
+																			)
+																				citationTriggerRef.current.focus();
+																		}}
+																	>
+																		<ArrowUp aria-hidden />
+																		返回回答
+																	</Button>
+																) : null}
+															</li>
+														))}
+													</ul>
+												</section>
+											) : null}
+										</div>
+									) : (
+										<p className="text-sm text-muted-foreground">
+											该会话还没有消息。
+										</p>
+									)}
+								</div>
+							) : (
+								<p className="py-8 text-sm text-muted-foreground">未选择会话</p>
+							)}
+						</div>
+					</ScrollArea>
 				</section>
-			</ScrollArea>
+			</div>
 		</div>
 	);
 }

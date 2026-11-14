@@ -3,6 +3,8 @@
 .DS_Store
 
 **/node_modules
+**/.pnpm-store
+THIRD_PARTY_NOTICES.txt
 **/.next
 **/.venv
 **/__pycache__

@@ -20,7 +20,7 @@ const sizeClass = {
 	lg: "size-11",
 } as const;
 
-/** Continuous U-N-O mother-brand mark. */
+/** Selected diagonal-weave mother-brand mark. */
 export function UnoMark({
 	className,
 	decorative = true,
@@ -37,8 +37,12 @@ export function UnoMark({
 			title={decorative ? undefined : label}
 			width={128}
 			height={128}
+			unoptimized
 			draggable={false}
-			className={cn("shrink-0 rounded-md object-cover", className)}
+			className={cn(
+				"shrink-0 object-contain dark:brightness-0 dark:invert",
+				className,
+			)}
 			aria-hidden={decorative ? true : undefined}
 		/>
 	);
@@ -67,7 +71,7 @@ export function UnoLogo({
 					)}
 					aria-hidden
 				>
-					Uno<span className="text-primary">{suffix}</span>
+					Uno{suffix}
 				</span>
 			) : null}
 		</span>
