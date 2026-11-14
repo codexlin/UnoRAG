@@ -13,9 +13,8 @@ const SOURCE_KEYS = [
 
 export function boundedJudgeEvidenceText(value: unknown): string {
 	const text = typeof value === "string" ? value.trim() : "";
-	return text.length <= JUDGE_TEXT_LIMIT
-		? text
-		: `${text.slice(0, JUDGE_TEXT_LIMIT)}…`;
+	// Truncation markers must not become part of a verbatim source quote.
+	return text.slice(0, JUDGE_TEXT_LIMIT);
 }
 
 /** Remove a child only when an already retrieved parent exposes all of its text to Judge. */
