@@ -1,340 +1,404 @@
 import {
 	ArrowRight,
-	Braces,
+	ArrowUpRight,
 	Check,
+	Code2,
 	Database,
-	type FileStack,
-	GitBranch,
+	FileText,
 	LockKeyhole,
-	ScanSearch,
-	ServerCog,
-	ShieldCheck,
-	TableProperties,
+	Plus,
+	Server,
+	Workflow,
 } from "lucide-react";
-import Image from "next/image";
+import type { Metadata } from "next";
+import Image, { type StaticImageData } from "next/image";
 import Link from "next/link";
-
 import { UnoRAGLogo } from "@/components/app/unorag-logo";
+import { EvidenceExplorer } from "@/components/landing/evidence-explorer";
+import { LandingHeader } from "@/components/landing/landing-header";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import libraryLight from "../../public/product-library-workbench.png";
+import libraryDark from "../../public/product-library-workbench-dark.png";
+import traceLight from "../../public/product-request-trace.png";
+import traceDark from "../../public/product-request-trace-dark.png";
+import "./landing.css";
 
-const capabilities = [
+export const metadata: Metadata = {
+	title: "UnoRAG · 开源、自托管的知识库",
+	description:
+		"把内部文档变成可检索、可核对的知识。UnoRAG 将文档治理、证据问答和运行链路放进同一个开源工作台。",
+	openGraph: {
+		title: "UnoRAG · 开源、自托管的知识库",
+		description: "从文档到答案，每一步都有依据。",
+		type: "website",
+	},
+};
+
+const documents = [
 	{
-		icon: ScanSearch,
-		label: "Document intelligence",
-		title: "复杂资料，不只提取文字",
-		body: "DocumentIR 与 TableIR 保留章节、页码、表头、单位和来源坐标；扫描与复杂 PDF 可按策略进入 MinerU。",
+		icon: FileText,
+		title: "理解资料结构",
+		body: "TXT、Markdown、DOCX 与 PDF。保留章节、表头和来源定位，复杂 PDF 可按策略接入 MinerU。",
 	},
 	{
-		icon: ShieldCheck,
-		label: "Security boundary",
-		title: "检索之前，先验证权限",
-		body: "Organization、Workspace、Library、版本与 ACL 共同进入召回过滤，跨空间泄漏是发布熔断项。",
+		icon: Workflow,
+		title: "清楚地更新版本",
+		body: "替换和重索引在后台执行。新版校验通过才切换，处理失败时保留旧版服务。",
 	},
 	{
-		icon: GitBranch,
-		label: "Answer graph",
-		title: "回答是一条可观测链路",
-		body: "Query Router、检索计划、证据裁决、拒答与生成由 LangGraph 编排，关键阶段可以沿 trace 复盘。",
-	},
-	{
-		icon: TableProperties,
-		label: "Table evidence",
-		title: "表格答案回到命中行",
-		body: "中小表按原表、摘要与行组分层索引；比较、单位和条件查询保留命中行引用，而不是只给模糊摘要。",
+		icon: LockKeyhole,
+		title: "在检索前核对权限",
+		body: "工作区、知识库和文档权限进入召回过滤。成员只获取当前有权访问的资料。",
 	},
 ] as const;
-
-const workflow = [
-	["01", "接入资料", "TXT、Markdown、PDF、DOCX"],
-	["02", "解析建模", "结构、表格、页面坐标与质量报告"],
-	["03", "治理索引", "ACL、版本、Job、原子激活与隔离门禁"],
-	["04", "有据回答", "检索、裁决、拒答、引用与链路追踪"],
+const deployment = [
+	{ icon: Server, title: "运行环境", body: "Next.js + DBOS Worker" },
+	{ icon: Database, title: "数据存储", body: "PostgreSQL + Qdrant + Redis" },
+	{ icon: Code2, title: "模型与解析", body: "按部署配置接入 Provider" },
 ] as const;
+const questions = [
+	[
+		"需要把文档拿去训练模型吗？",
+		"不需要。RAG 在回答时检索有权访问的文档片段，再提供给模型作为上下文。更新资料不等于重新训练模型。",
+	],
+	[
+		"资料和模型可以自己管理吗？",
+		"可以自行部署，并配置自己的模型、数据库、向量库和文件存储。外部模型或解析服务是否接收资料，取决于你的 Provider 配置与解析策略。",
+	],
+	[
+		"能接入自己的应用吗？",
+		"可以使用带 Service Key 的 Retrieve / Ask API，也可以直接基于 Apache-2.0 源码二次开发。公共文档生命周期 API 仍有边界，接入前应阅读接口文档。",
+	],
+] as const;
+
+function ProductImage({
+	darkSrc,
+	src,
+	alt,
+	className,
+}: {
+	darkSrc: StaticImageData;
+	src: StaticImageData;
+	alt: string;
+	className?: string;
+}) {
+	return (
+		<div className={cn("min-w-0", className)}>
+			<a
+				href={src.src}
+				target="_blank"
+				rel="noreferrer"
+				title="查看原尺寸图片"
+				aria-label={`${alt}，查看原图`}
+				className="block cursor-zoom-in focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring dark:hidden"
+			>
+				<Image
+					src={src}
+					alt={alt}
+					sizes="(max-width: 768px) 100vw, 1280px"
+					className="h-auto w-full"
+				/>
+			</a>
+			<a
+				href={darkSrc.src}
+				target="_blank"
+				rel="noreferrer"
+				title="查看原尺寸图片"
+				aria-label={`${alt}，查看原图`}
+				className="hidden cursor-zoom-in focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring dark:block"
+			>
+				<Image
+					src={darkSrc}
+					alt={alt}
+					sizes="(max-width: 768px) 100vw, 1280px"
+					className="h-auto w-full"
+				/>
+			</a>
+		</div>
+	);
+}
 
 export default function Home() {
 	return (
-		<main className="min-h-full bg-background text-foreground">
-			<section className="relative isolate min-h-[660px] overflow-hidden border-b border-border/80 md:min-h-[min(760px,78svh)]">
-				<Image
-					src="/landing-evidence-desk.png"
-					alt="带有证据标签的企业文档、表格与审阅资料"
-					fill
-					priority
-					sizes="100vw"
-					className="object-cover object-[68%_center]"
-				/>
-				<div
-					className="absolute inset-0 bg-white/48 sm:bg-white/18"
-					aria-hidden
-				/>
-
-				<header className="relative z-10 mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-5 py-5 sm:px-8 lg:px-10">
-					<UnoRAGLogo
-						size="lg"
-						withWordmark
-						wordmarkClassName="text-xl text-[#172025]"
-					/>
-					<div className="flex items-center gap-2">
-						<span className="hidden font-mono text-[11px] text-[#435158] sm:inline">
-							PRIVATE DEPLOYMENT · V1
-						</span>
-						<Link
-							href="/app/ask"
-							className={cn(
-								buttonVariants({ variant: "outline", size: "sm" }),
-								"border-[#aeb9bd] bg-white/80 text-[#172025] shadow-sm backdrop-blur-sm hover:bg-white",
-							)}
-						>
-							进入工作台
-						</Link>
-					</div>
-				</header>
-
-				<div className="relative z-10 mx-auto flex w-full max-w-7xl px-5 pt-24 pb-14 sm:px-8 md:pt-28 lg:px-10">
-					<div className="max-w-2xl">
-						<p className="font-mono text-xs tracking-[0.18em] text-[#087a6a] uppercase">
-							Enterprise Knowledge Infrastructure
+		<div className="landing-page bg-background text-foreground">
+			<LandingHeader />
+			<main id="main-content" tabIndex={-1}>
+				<section className="landing-hero" aria-labelledby="hero-title">
+					<div className="landing-wrap landing-hero-copy">
+						<p className="landing-enter text-sm text-muted-foreground">
+							开源 · 私有化部署 · Apache-2.0
 						</p>
-						<h1 className="font-brand mt-5 text-6xl leading-none font-semibold text-[#172025] sm:text-7xl">
+						<h1
+							id="hero-title"
+							className="landing-hero-title landing-enter"
+							translate="no"
+						>
 							UnoRAG
 						</h1>
-						<p className="mt-6 max-w-xl text-2xl leading-9 font-medium text-[#172025] sm:text-3xl sm:leading-11">
-							把企业资料变成
-							<br />
-							可治理、可核验的知识服务。
+						<p className="landing-hero-lead landing-enter">
+							让内部资料，成为可核对的答案。
 						</p>
-						<p className="mt-5 max-w-lg text-base leading-7 text-[#435158]">
-							私有化部署的企业知识基础设施。统一文档生命周期、权限隔离、复杂解析、检索与有据回答，并通过
-							Workspace 与稳定 API 接入真实业务。
+						<p className="landing-hero-description landing-enter">
+							文档治理、证据问答、运行链路。
+							<br className="sm:hidden" />
+							在同一个开源工作台里，管理你的知识。
 						</p>
-						<div className="mt-8 flex flex-wrap gap-3">
-							<Link href="/app/ask" className={buttonVariants({ size: "lg" })}>
-								体验证据工作台
-								<ArrowRight data-icon="inline-end" />
-							</Link>
+						<div className="landing-enter mt-7 flex flex-wrap justify-center gap-3">
 							<Link
+								href="/app/ask"
+								className={cn(
+									buttonVariants({ size: "lg" }),
+									"min-h-11 gap-2 px-6",
+								)}
+							>
+								进入工作台
+								<ArrowRight className="size-4" aria-hidden />
+							</Link>
+							<a
 								href="https://github.com/codexlin/UnoRAG"
 								target="_blank"
 								rel="noreferrer"
 								className={cn(
 									buttonVariants({ variant: "outline", size: "lg" }),
-									"border-[#aeb9bd] bg-white/75 text-[#172025] backdrop-blur-sm hover:bg-white",
+									"min-h-11 gap-2 px-6",
 								)}
 							>
 								查看源码
-							</Link>
-						</div>
-						<div className="mt-8 flex flex-wrap gap-x-6 gap-y-2 font-mono text-[11px] text-[#435158]">
-							{["本地或客户云", "Workspace 隔离", "引用可回原文"].map(
-								(item) => (
-									<span key={item} className="inline-flex items-center gap-1.5">
-										<Check className="size-3.5 text-[#087a6a]" aria-hidden />
-										{item}
-									</span>
-								),
-							)}
+								<ArrowUpRight className="size-4" aria-hidden />
+							</a>
 						</div>
 					</div>
-				</div>
-			</section>
+					<EvidenceExplorer />
+				</section>
 
-			<section className="border-b border-border/80 bg-card">
-				<div className="mx-auto grid max-w-7xl md:grid-cols-[0.8fr_1.2fr]">
-					<div className="border-b border-border/80 px-5 py-12 sm:px-8 md:border-r md:border-b-0 lg:px-10 lg:py-16">
-						<p className="font-mono text-[11px] tracking-[0.16em] text-cite uppercase">
-							Why UnoRAG
-						</p>
-						<h2 className="mt-3 max-w-md text-3xl leading-10 font-semibold">
-							不是另一个聊天框，
-							<br />
-							而是一条完整的知识生产线。
-						</h2>
-					</div>
-					<div className="grid sm:grid-cols-2">
-						{capabilities.map((item, index) => {
-							const Icon = item.icon;
-							return (
-								<article
-									key={item.title}
-									className={cn(
-										"px-5 py-8 sm:px-7 lg:px-8 lg:py-10",
-										index % 2 === 1 && "sm:border-l sm:border-border/80",
-										index > 1 && "border-t border-border/80",
-										index === 1 && "border-t border-border/80 sm:border-t-0",
-									)}
-								>
-									<div className="flex items-center gap-2 text-cite">
-										<Icon className="size-4" aria-hidden />
-										<span className="font-mono text-[11px] uppercase">
-											{item.label}
-										</span>
-									</div>
-									<h3 className="mt-4 text-lg font-semibold">{item.title}</h3>
-									<p className="mt-2 text-sm leading-6 text-muted-foreground">
-										{item.body}
-									</p>
-								</article>
-							);
-						})}
-					</div>
-				</div>
-			</section>
-
-			<section className="border-b border-border/80">
-				<div className="mx-auto max-w-7xl px-5 py-14 sm:px-8 lg:px-10 lg:py-20">
-					<div className="flex flex-wrap items-end justify-between gap-5">
-						<div>
-							<p className="font-mono text-[11px] tracking-[0.16em] text-cite uppercase">
-								One governed flow
+				<section
+					id="product"
+					className="landing-section border-t border-border"
+					aria-labelledby="product-title"
+				>
+					<div className="landing-wrap">
+						<div className="landing-section-heading">
+							<div>
+								<p className="landing-kicker">01 / 知识库</p>
+								<h2 id="product-title">
+									资料持续更新，
+									<br />
+									版本始终清楚。
+								</h2>
+							</div>
+							<p>
+								上传只是开始。把原文、处理任务、生效版本和可见范围放在一起，知道什么能用，也知道哪里需要处理。
 							</p>
-							<h2 className="mt-3 text-3xl font-semibold">
-								从文件到答案，每一步都有边界
-							</h2>
 						</div>
-						<p className="max-w-lg text-sm leading-6 text-muted-foreground">
-							控制面负责身份、资料、版本与任务；数据面负责解析、检索与回答。两者共享同一
-							RequestContext，不产生第二套权限事实。
-						</p>
+						<ProductImage
+							src={libraryLight}
+							darkSrc={libraryDark}
+							alt="UnoRAG 知识库：可搜索的独立库列表、文档状态和处理操作，使用示例资料"
+							className="overflow-hidden border border-border"
+						/>
+						<dl className="mt-8 grid gap-7 md:grid-cols-3 md:gap-10">
+							{documents.map(({ icon: Icon, title, body }) => (
+								<div key={title} className="min-w-0">
+									<dt className="flex items-center gap-2 text-base font-medium">
+										<Icon
+											className="size-4 text-muted-foreground"
+											aria-hidden
+										/>
+										{title}
+									</dt>
+									<dd className="mt-3 text-sm leading-7 text-muted-foreground">
+										{body}
+									</dd>
+								</div>
+							))}
+						</dl>
 					</div>
+				</section>
 
-					<ol className="mt-10 grid border border-border/80 bg-card sm:grid-cols-2 lg:grid-cols-4">
-						{workflow.map(([index, title, body], itemIndex) => (
-							<li
-								key={index}
-								className={cn(
-									"min-h-44 px-5 py-6",
-									itemIndex > 0 && "border-t border-border/80 sm:border-t-0",
-									itemIndex % 2 === 1 && "sm:border-l sm:border-border/80",
-									itemIndex > 1 &&
-										"sm:border-t sm:border-border/80 lg:border-t-0",
-									itemIndex > 0 && "lg:border-l lg:border-border/80",
-								)}
-							>
-								<span className="font-mono text-xs text-cite">{index}</span>
-								<h3 className="mt-8 text-lg font-semibold">{title}</h3>
-								<p className="mt-2 text-sm leading-6 text-muted-foreground">
-									{body}
-								</p>
-							</li>
-						))}
-					</ol>
-				</div>
-			</section>
-
-			<section className="border-b border-border/80 bg-card">
-				<div className="mx-auto max-w-7xl px-5 py-14 sm:px-8 lg:px-10 lg:py-20">
-					<div className="grid gap-5 md:grid-cols-[0.75fr_1.25fr] md:items-end">
-						<div>
-							<p className="font-mono text-[11px] tracking-[0.16em] text-cite uppercase">
-								Operator workspace
-							</p>
-							<h2 className="mt-3 text-3xl leading-10 font-semibold">
-								为持续治理而设计，
+				<section
+					id="observability"
+					className="landing-section border-t border-border bg-muted/35"
+					aria-labelledby="observability-title"
+				>
+					<div className="landing-wrap landing-observability-grid">
+						<div className="min-w-0">
+							<p className="landing-kicker">02 / 可观测</p>
+							<h2 id="observability-title">
+								回答之外，
 								<br />
-								不是一次性上传器。
+								也看得见过程。
 							</h2>
+							<p className="mt-6 max-w-md text-base leading-8 text-muted-foreground">
+								慢在哪里，为什么拒答，模型用了多少
+								Token。沿同一条请求记录，核对检索、证据判断与生成过程。
+							</p>
+							<ul className="mt-8 space-y-4 text-sm">
+								{[
+									"请求与入库任务的阶段耗时",
+									"错误分类、重试与告警记录",
+									"LLM 用量和可选 OTel / Langfuse 接入",
+								].map((item) => (
+									<li key={item} className="flex gap-3">
+										<Check
+											className="mt-0.5 size-4 shrink-0 text-cite"
+											aria-hidden
+										/>
+										{item}
+									</li>
+								))}
+							</ul>
+							<p className="mt-8 max-w-md text-xs leading-6 text-muted-foreground">
+								未上报的数据明确留空。Token
+								不等于费用，阶段累计耗时也不冒充精确并行时间轴。
+							</p>
 						</div>
-						<p className="max-w-xl text-sm leading-7 text-muted-foreground">
-							资料空间、解析策略、版本、任务状态与文档台账集中在同一工作面。管理员看得到异常，
-							普通成员只看到与职责相关的动作。
-						</p>
-					</div>
-					<div className="mt-9 overflow-hidden border border-border/80 bg-[#111719] shadow-[0_24px_70px_-42px_rgba(23,32,37,0.7)]">
-						<Image
-							src="/product-library-workbench.png"
-							alt="UnoRAG 资料治理台，展示资料空间、文档状态、知识片段与搜索"
-							width={1491}
-							height={964}
-							sizes="(max-width: 1280px) 100vw, 1216px"
-							className="h-auto w-full"
+						<ProductImage
+							src={traceLight}
+							darkSrc={traceDark}
+							alt="UnoRAG 请求链路详情：阶段瀑布和逐次模型 Token 用量，使用示例诊断数据"
+							className="landing-trace-image overflow-hidden border border-border bg-background"
 						/>
 					</div>
-				</div>
-			</section>
+				</section>
 
-			<section className="border-b border-border/80 bg-[#172025] text-[#edf2f3]">
-				<div className="mx-auto grid max-w-7xl lg:grid-cols-[0.85fr_1.15fr]">
-					<div className="px-5 py-14 sm:px-8 lg:px-10 lg:py-20">
-						<p className="font-mono text-[11px] tracking-[0.16em] text-[#58b9a8] uppercase">
-							Private by design
-						</p>
-						<h2 className="mt-3 text-3xl leading-10 font-semibold">
-							部署在客户边界内，
-							<br />
-							能力仍然可以演进。
-						</h2>
-						<p className="mt-5 max-w-md text-sm leading-7 text-[#a1afb4]">
-							模型、数据库、向量库、对象存储与解析 Provider
-							均由部署方配置。Compose 用于单机与试点，Helm 为集群化提供起点。
-						</p>
-					</div>
-					<div className="grid border-t border-[#303c40] sm:grid-cols-2 lg:border-t-0 lg:border-l">
-						{[
-							[
-								ServerCog,
-								"Control Plane",
-								"Next.js · Session · Workspace · Job",
-							],
-							[
-								Database,
-								"Knowledge Plane",
-								"Next.js · LangGraph · Qdrant · DBOS",
-							],
-							[
-								LockKeyhole,
-								"Security",
-								"HMAC · ACL · Active Generation · Audit",
-							],
-							[Braces, "Integration", "Retrieve / Ask API · Service Keys"],
-						].map(([Icon, title, body], index) => {
-							const ItemIcon = Icon as typeof FileStack;
-							return (
-								<div
-									key={String(title)}
-									className={cn(
-										"px-6 py-9",
-										index % 2 === 1 && "sm:border-l sm:border-[#303c40]",
-										index > 1 && "border-t border-[#303c40]",
-										index === 1 && "border-t border-[#303c40] sm:border-t-0",
-									)}
-								>
-									<ItemIcon className="size-5 text-[#58b9a8]" aria-hidden />
-									<h3 className="mt-5 font-mono text-sm text-[#edf2f3]">
-										{String(title)}
-									</h3>
-									<p className="mt-2 text-sm leading-6 text-[#a1afb4]">
-										{String(body)}
+				<section
+					id="deployment"
+					className="landing-section border-t border-border"
+					aria-labelledby="deployment-title"
+				>
+					<div className="landing-wrap">
+						<div className="landing-section-heading">
+							<div>
+								<p className="landing-kicker">03 / 私有部署</p>
+								<h2 id="deployment-title">
+									你的部署，
+									<br />
+									你的数据与模型。
+								</h2>
+							</div>
+							<p>
+								一套实例服务一个团队。先用 Docker Compose
+								开始，再按实际资料和运行环境验证质量、容量与恢复方案。
+							</p>
+						</div>
+						<div className="grid gap-10 lg:grid-cols-[1fr_1.1fr] lg:gap-20">
+							<dl className="divide-y divide-border">
+								{deployment.map(({ icon: Icon, title, body }) => (
+									<div
+										key={title}
+										className="flex items-center justify-between gap-4 py-5 first:pt-0"
+									>
+										<dt className="flex shrink-0 items-center gap-2 text-sm">
+											<Icon
+												className="size-4 text-muted-foreground"
+												aria-hidden
+											/>
+											{title}
+										</dt>
+										<dd className="text-right text-sm text-muted-foreground">
+											{body}
+										</dd>
+									</div>
+								))}
+							</dl>
+							<div className="min-w-0">
+								<div className="border border-border bg-muted/50 p-5 sm:p-6">
+									<p className="mb-4 text-xs text-muted-foreground">
+										已安装 Docker / Compose
 									</p>
+									<pre
+										// biome-ignore lint/a11y/noNoninteractiveTabindex: the overflowing code block needs keyboard scrolling
+										tabIndex={0}
+										className="overflow-x-auto font-mono text-xs leading-7 focus-visible:outline-2 focus-visible:outline-ring sm:text-sm"
+									>
+										<code>
+											{
+												"git clone https://github.com/codexlin/UnoRAG.git\ncd UnoRAG\n./start.sh"
+											}
+										</code>
+									</pre>
 								</div>
-							);
-						})}
+								<a
+									href="https://github.com/codexlin/UnoRAG/blob/main/docs/DEPLOYMENT.md"
+									target="_blank"
+									rel="noreferrer"
+									className="landing-link mt-3 inline-flex min-h-11 items-center gap-2 text-sm"
+								>
+									查看部署文档
+									<ArrowUpRight className="size-4" aria-hidden />
+								</a>
+							</div>
+						</div>
+						<div className="mt-16 border-t border-border pt-8">
+							<h3 className="mb-4 text-lg font-medium">开始之前</h3>
+							<div className="divide-y divide-border">
+								{questions.map(([question, answer]) => (
+									<details key={question} className="group py-5">
+										<summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
+											{question}
+											<Plus
+												className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-45 motion-reduce:transition-none"
+												aria-hidden
+											/>
+										</summary>
+										<p className="mt-3 max-w-3xl text-sm leading-7 text-muted-foreground">
+											{answer}
+										</p>
+									</details>
+								))}
+							</div>
+						</div>
+					</div>
+				</section>
+			</main>
+			<footer className="border-t border-border bg-muted/35 py-12 sm:py-16">
+				<div className="landing-wrap">
+					<div className="flex flex-col items-start justify-between gap-7 sm:flex-row sm:items-center">
+						<div>
+							<UnoRAGLogo size="md" withWordmark />
+							<p className="mt-4 text-sm text-muted-foreground">
+								从一份资料，开始建立可核对的知识库。
+							</p>
+						</div>
+						<Link
+							href="/app/ask"
+							className={cn(buttonVariants({ size: "lg" }), "min-h-11 px-6")}
+						>
+							进入工作台
+							<ArrowRight className="size-4" aria-hidden />
+						</Link>
+					</div>
+					<div className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-6 text-xs text-muted-foreground">
+						<a
+							href="https://unobyte.dev"
+							target="_blank"
+							rel="noreferrer"
+							className="landing-link inline-flex min-h-11 items-center"
+						>
+							由 Unobyte 构建
+						</a>
+						<div className="flex flex-wrap gap-5">
+							<a
+								href="https://github.com/codexlin/UnoRAG"
+								target="_blank"
+								rel="noreferrer"
+								className="landing-link inline-flex min-h-11 items-center"
+							>
+								GitHub
+							</a>
+							<a
+								href="https://github.com/codexlin/UnoRAG/blob/main/LICENSE"
+								target="_blank"
+								rel="noreferrer"
+								className="landing-link inline-flex min-h-11 items-center"
+							>
+								Apache-2.0
+							</a>
+						</div>
 					</div>
 				</div>
-			</section>
-
-			<section className="bg-card">
-				<div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-8 px-5 py-14 sm:px-8 md:flex-row md:items-center lg:px-10 lg:py-18">
-					<div>
-						<p className="font-mono text-[11px] tracking-[0.16em] text-cite uppercase">
-							Start with evidence
-						</p>
-						<h2 className="mt-3 text-3xl font-semibold">
-							先让一份真实资料开口说话。
-						</h2>
-						<p className="mt-3 text-sm leading-6 text-muted-foreground">
-							创建资料空间、上传文档，然后沿引用回到原文。
-						</p>
-					</div>
-					<Link
-						href="/app/libraries"
-						className={buttonVariants({ size: "lg" })}
-					>
-						进入资料治理台
-						<ArrowRight data-icon="inline-end" />
-					</Link>
-				</div>
-			</section>
-		</main>
+			</footer>
+		</div>
 	);
 }

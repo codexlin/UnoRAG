@@ -3,8 +3,61 @@ import test from "node:test";
 import { DomUtils, parseDocument } from "htmlparser2";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { CitationSourceCard } from "../../src/components/app/citation-source-card";
 import { MarkdownAnswer } from "../../src/components/app/markdown-answer";
 import type { UiCitation } from "../../src/lib/ui-types";
+
+test("source details display the original version snapshot and unscaled retrieval scores", () => {
+	const citation: UiCitation = {
+		id: "snapshot",
+		index: 1,
+		title: "制度",
+		snippet: "预览",
+		text: "召回原始片段",
+		score: 0.9,
+		bm25Score: 25.3,
+		source: {
+			id: "snapshot",
+			index: 1,
+			title: "制度",
+			snippet: "预览",
+			score: 0.9,
+			document_version_id: "source-version-id",
+			row_start: 2,
+			row_end: 4,
+		},
+	};
+	const html = renderToStaticMarkup(
+		createElement(CitationSourceCard, {
+			citation,
+			expanded: true,
+			showDiagnostics: true,
+		}),
+	);
+	const text = DomUtils.textContent(parseDocument(html));
+	assert.match(text, /回答所用版本source-version-id/);
+	assert.match(text, /来源片段召回原始片段/);
+	assert.match(text, /表格行组2 至 4/);
+	assert.match(text, /BM2525\.3/);
+	assert.doesNotMatch(text, /完整原文|当前生效版本|正确率|概率/);
+});
+
+test("historical sources without a version remain unrecorded instead of guessing active version", () => {
+	const html = renderToStaticMarkup(
+		createElement(CitationSourceCard, {
+			citation: {
+				id: "legacy",
+				index: 1,
+				title: "旧记录",
+				score: 0.8,
+				snippet: "旧来源",
+				text: "旧来源",
+			},
+			expanded: true,
+		}),
+	);
+	assert.match(DomUtils.textContent(parseDocument(html)), /回答所用版本未记录/);
+});
 
 test("unknown historical source numbers stay plain text instead of fake citation badges", () => {
 	const html = renderToStaticMarkup(

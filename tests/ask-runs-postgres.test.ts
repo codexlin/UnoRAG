@@ -4,7 +4,7 @@ import { after, before, test } from "node:test";
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-
+import { ModelUsageCollector } from "../src/core/ai/model-usage";
 import * as schema from "../src/db/schema";
 import { createAskRunsRepository } from "../src/server/observability/ask-runs-repository";
 import { OperationsEventService } from "../src/server/observability/operations-event-service";
@@ -99,6 +99,94 @@ after(async () => {
 		.delete(schema.organizations)
 		.where(eq(schema.organizations.id, ids.organization));
 	await pool.end();
+});
+
+test("model usage persists as sanitized metadata and stays workspace scoped", {
+	skip: !enabled,
+}, async () => {
+	assert.ok(repository);
+	assert.ok(db);
+	const requestId = "77000000-0000-4000-8000-000000000005";
+	const started = await repository.start({
+		requestId,
+		organizationId: ids.organization,
+		workspaceId: ids.workspaceA,
+		libraryId: ids.libraryA,
+		ragLibraryId: "rag-ask-runs-a",
+		principal: { type: "user", id: ids.user },
+	});
+	assert.ok(started.ok);
+	const collector = new ModelUsageCollector();
+	collector.record({
+		stage: "judge",
+		model: "test",
+		provider: "test",
+		attempt: 1,
+		status: "completed",
+		inputTokens: 120,
+		outputTokens: 30,
+		totalTokens: 150,
+		cachedInputTokens: 80,
+		usageStatus: "reported",
+	});
+	const usage = collector.snapshot();
+	const finalized = await repository.finalize({
+		id: started.value.id,
+		requestId,
+		organizationId: ids.organization,
+		workspaceId: ids.workspaceA,
+		status: "refused",
+		refuseReason: "insufficient_evidence",
+		latencyMs: 25,
+		modelUsage: {
+			...usage,
+			totalTokens: 999999,
+			prompt: "private prompt",
+		} as typeof usage,
+	});
+	assert.ok(finalized.ok);
+	assert.deepEqual(finalized.value?.modelUsage, usage);
+	const service = new OperationsEventService(db);
+	const detail = await service.read(
+		{ organizationId: ids.organization, workspaceId: ids.workspaceA },
+		"ask",
+		started.value.id,
+	);
+	assert.deepEqual(detail?.ask?.model_usage, usage);
+	assert.equal(
+		await service.read(
+			{ organizationId: ids.organization, workspaceId: ids.workspaceB },
+			"ask",
+			started.value.id,
+		),
+		null,
+	);
+	assert.doesNotMatch(JSON.stringify(detail), /private prompt/);
+	// Terminal writes cannot overwrite usage, including a later stale finalizer.
+	const duplicate = await repository.finalize({
+		id: started.value.id,
+		requestId,
+		organizationId: ids.organization,
+		workspaceId: ids.workspaceA,
+		status: "failed",
+		latencyMs: 30,
+		modelUsage: null,
+	});
+	assert.ok(duplicate.ok);
+	assert.equal(duplicate.value, null);
+	assert.deepEqual(
+		(
+			await service.read(
+				{ organizationId: ids.organization, workspaceId: ids.workspaceA },
+				"ask",
+				started.value.id,
+			)
+		)?.ask?.model_usage,
+		usage,
+	);
+	await db
+		.delete(schema.askRuns)
+		.where(eq(schema.askRuns.id, started.value.id));
 });
 
 test("recorded Judge failures project safe diagnostics under the real PostgreSQL workspace scope", {

@@ -1,0 +1,47 @@
+# Source-mounted applications on the existing Compose data/services.
+# Use scripts/dev.sh; this overlay is never used by install/upgrade scripts.
+x-development: &development
+  image: unorag-development:local
+  build:
+    target: development
+  working_dir: /repo
+  volumes:
+    - ../..:/repo
+    - development_dependencies:/repo/node_modules
+    - development_next:/repo/.next
+
+x-development-environment: &development-environment
+  NODE_ENV: development
+  APP_ENV: development
+  UNORAG_VERSION: ""
+  UNORAG_REVISION: development
+  UNORAG_BUILD_TIME: ""
+  UNORAG_DBOS_APPLICATION_VERSION: dev-local
+
+services:
+  web:
+    <<: *development
+    command: ["pnpm", "exec", "next", "dev", "--hostname", "0.0.0.0", "--port", "3000"]
+    ports:
+      - "${UNORAG_DEV_BIND:-127.0.0.1}:${UNORAG_DEV_PORT:-3001}:3000"
+    environment:
+      <<: *development-environment
+      UNORAG_DEV_ORIGINS: "127.0.0.1,${UNORAG_DEV_ORIGINS:-}"
+      APP_BASE_URL: ${UNORAG_DEV_BASE_URL:-http://localhost:3001}
+  dbos-worker:
+    <<: *development
+    command: ["pnpm", "exec", "tsx", "watch", "src/worker/entry.ts"]
+    environment:
+      <<: *development-environment
+  dbos-control:
+    <<: *development
+    command: ["pnpm", "exec", "tsx", "watch", "src/worker/control-entry.ts"]
+    environment:
+      <<: *development-environment
+  migrate-web:
+    <<: *development
+    command: ["pnpm", "exec", "drizzle-kit", "migrate"]
+
+volumes:
+  development_dependencies:
+  development_next:

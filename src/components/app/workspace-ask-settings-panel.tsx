@@ -1,15 +1,23 @@
 "use client";
 
-import { CircleHelp } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-
+import { RefreshCw, Save } from "lucide-react";
+import { useCallback, useEffect, useId, useState } from "react";
+import { HelpTip } from "@/components/app/help-tip";
 import { useSession } from "@/components/app/session-provider";
+import {
+	type SettingsPanelStateChange,
+	useSettingsPanelState,
+} from "@/components/app/settings/use-settings-panel-state";
 import { Button } from "@/components/ui/button";
 import {
-	Tooltip,
-	TooltipContent,
-	TooltipTrigger,
-} from "@/components/ui/tooltip";
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
 type AskSettings = {
 	answer_profile: "precise" | "balanced" | "exploratory";
@@ -31,7 +39,7 @@ const FIELDS: {
 		key: "answer_profile",
 		label: "回答模式",
 		kind: "enum",
-		tip: "精确=证据不足时更易拒答；均衡=默认；探索=更宽召回、更敢关联线索。",
+		tip: "精确模式更保守；探索模式扩大检索范围。所有模式都需要证据支持回答。",
 		options: [
 			{ value: "precise", label: "精确" },
 			{ value: "balanced", label: "均衡" },
@@ -42,7 +50,7 @@ const FIELDS: {
 		key: "retrieval_enhancement",
 		label: "检索增强",
 		kind: "enum",
-		tip: "关闭=仅向量；开启=混合检索+重排（若可用）；自动=按问法启发式或产品默认，并在问答轨迹中记录实际取值。",
+		tip: "开启后尝试混合检索与重排，实际取决于服务配置；自动模式按问题选择。可在请求链路中核对本次执行结果。",
 		options: [
 			{ value: "auto", label: "自动" },
 			{ value: "off", label: "关闭" },
@@ -53,7 +61,7 @@ const FIELDS: {
 		key: "session_memory_enabled",
 		label: "对话记忆",
 		kind: "bool",
-		tip: "多轮追问时保留短上下文。默认开。",
+		tip: "多轮追问时保留当前会话的短上下文。",
 	},
 	{
 		key: "evidence_requirement",
@@ -77,9 +85,16 @@ function formatDefault(key: FieldKey, defaults: AskSettings | null): string {
 	return option?.label ?? String(value);
 }
 
-export function WorkspaceAskSettingsPanel() {
+export function WorkspaceAskSettingsPanel({
+	onStateChange,
+}: {
+	onStateChange?: SettingsPanelStateChange;
+}) {
+	const id = useId();
 	const { can } = useSession();
-	const canManage = can("manageMembers");
+	const sessionCanManage = can("manageMembers");
+	const [serverCanManage, setServerCanManage] = useState<boolean | null>(null);
+	const canManage = sessionCanManage && serverCanManage === true;
 	const [ask, setAsk] = useState<AskSettings | null>(null);
 	const [defaults, setDefaults] = useState<AskSettings | null>(null);
 	const [draft, setDraft] = useState<AskSettings | null>(null);
@@ -88,6 +103,10 @@ export function WorkspaceAskSettingsPanel() {
 	const [saved, setSaved] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [loading, setLoading] = useState(true);
+	const dirty = Boolean(
+		ask && draft && FIELDS.some(({ key }) => ask[key] !== draft[key]),
+	);
+	useSettingsPanelState(onStateChange, { dirty, busy });
 
 	const refresh = useCallback(async () => {
 		setLoading(true);
@@ -99,10 +118,14 @@ export function WorkspaceAskSettingsPanel() {
 				return;
 			}
 			const data = (await response.json()) as {
+				can_manage?: boolean;
 				ask: AskSettings;
 				defaults: AskSettings;
 				policy_version?: number;
 			};
+			setServerCanManage(
+				typeof data.can_manage === "boolean" ? data.can_manage : null,
+			);
 			setAsk(data.ask);
 			setDraft(data.ask);
 			setDefaults(data.defaults);
@@ -152,6 +175,7 @@ export function WorkspaceAskSettingsPanel() {
 				body: JSON.stringify({ ask: patch }),
 			});
 			if (!response.ok) {
+				if (response.status === 403) setServerCanManage(false);
 				const detail = await response.json().catch(() => null);
 				setError(
 					typeof detail?.detail === "string" ? detail.detail : "保存失败",
@@ -159,10 +183,14 @@ export function WorkspaceAskSettingsPanel() {
 				return;
 			}
 			const data = (await response.json()) as {
+				can_manage?: boolean;
 				ask: AskSettings;
 				defaults: AskSettings;
 				policy_version?: number;
 			};
+			setServerCanManage(
+				typeof data.can_manage === "boolean" ? data.can_manage : null,
+			);
 			setAsk(data.ask);
 			setDraft(data.ask);
 			setDefaults(data.defaults);
@@ -179,98 +207,112 @@ export function WorkspaceAskSettingsPanel() {
 
 	if (loading && !defaults) {
 		return (
-			<div className="space-y-2 rounded-2xl border border-border/80 bg-card/80 px-4 py-4">
-				<p className="text-meta font-mono tracking-[0.16em] text-muted-foreground uppercase">
-					Ask
+			<section
+				id="ask-settings"
+				aria-labelledby={`${id}-heading`}
+				className="min-w-0 space-y-6 text-sm"
+			>
+				<h3 id={`${id}-heading`} className="text-xl font-medium">
+					问答策略
+				</h3>
+				<p role="status" className="text-muted-foreground">
+					加载中…
 				</p>
-				<p className="text-ui text-muted-foreground">加载中…</p>
-			</div>
+			</section>
 		);
 	}
 
 	return (
-		<div className="space-y-4 rounded-2xl border border-border/80 bg-card/80 px-4 py-4">
-			<div>
-				<p className="text-meta font-mono tracking-[0.16em] text-muted-foreground uppercase">
-					Ask
-				</p>
-				<p className="text-ui mt-1 text-muted-foreground">
-					问答策略（业务意图）。算法细节由服务端映射，不在此暴露。
-					{!canManage ? " 查看者/编辑者只读。" : ""}
-					{policyVersion != null ? ` · 策略版本 ${policyVersion}` : ""}
-				</p>
+		<section
+			id="ask-settings"
+			aria-labelledby={`${id}-heading`}
+			className="min-w-0 space-y-6 text-sm"
+		>
+			<div className="flex flex-wrap items-baseline justify-between gap-2">
+				<h3 id={`${id}-heading`} className="text-xl font-medium">
+					问答策略
+				</h3>
+				<div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+					{!canManage ? (
+						<span>
+							{!sessionCanManage || serverCanManage === false
+								? "只读 · 需管理员权限修改"
+								: "权限状态未确认"}
+						</span>
+					) : null}
+					{policyVersion != null ? <span>策略版本 {policyVersion}</span> : null}
+				</div>
 			</div>
 
-			<ul className="space-y-3">
+			<ul className="divide-y divide-border/60">
 				{FIELDS.map((field) => {
 					const value = draft?.[field.key];
 					return (
 						<li
 							key={field.key}
-							className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 pb-3 last:border-0 last:pb-0"
+							className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] items-center gap-3 py-4 first:pt-0"
 						>
 							<div className="min-w-0">
 								<div className="flex items-center gap-1">
-									<p className="text-sm font-medium">{field.label}</p>
-									<Tooltip>
-										<TooltipTrigger
-											render={
-												<button
-													type="button"
-													className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
-													aria-label={`${field.label}说明`}
-												>
-													<CircleHelp className="size-3.5" aria-hidden />
-												</button>
-											}
-										/>
-										<TooltipContent
-											side="top"
-											align="start"
-											className="max-w-[18rem] text-left leading-relaxed"
-										>
-											{field.tip}
-										</TooltipContent>
-									</Tooltip>
+									<label htmlFor={`${id}-${field.key}`} className="font-medium">
+										{field.label}
+									</label>
+									<HelpTip label={field.label}>
+										{field.tip}
+										<span className="mt-2 block">
+											默认：{formatDefault(field.key, defaults)}
+										</span>
+									</HelpTip>
 								</div>
-								<p className="font-mono text-xs text-muted-foreground">
-									默认 {formatDefault(field.key, defaults)}
-								</p>
 							</div>
-							<div className="flex items-center gap-2">
+							<div className="min-w-0">
 								{field.kind === "bool" ? (
-									<select
-										className="rounded-md border border-border bg-background px-2 py-1 text-xs"
-										disabled={!canManage || value == null || busy || loading}
-										value={value ? "true" : "false"}
-										onChange={(event) => {
-											setField(
-												"session_memory_enabled",
-												event.target.value === "true",
-											);
-										}}
+									<label
+										htmlFor={`${id}-${field.key}`}
+										className="flex min-h-11 cursor-pointer items-center gap-3"
 									>
-										<option value="true">开</option>
-										<option value="false">关</option>
-									</select>
+										<Switch
+											id={`${id}-${field.key}`}
+											aria-label={field.label}
+											disabled={!canManage || value == null || busy || loading}
+											checked={Boolean(value)}
+											onCheckedChange={(checked) => {
+												setField("session_memory_enabled", checked);
+											}}
+										/>
+									</label>
 								) : (
-									<select
-										className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+									<Select
+										items={field.options ?? []}
 										disabled={!canManage || value == null || busy || loading}
-										value={String(value ?? "")}
-										onChange={(event) => {
+										value={typeof value === "string" ? value : null}
+										onValueChange={(nextValue) => {
+											if (nextValue === null) return;
 											setField(
 												field.key,
-												event.target.value as AskSettings[typeof field.key],
+												nextValue as AskSettings[typeof field.key],
 											);
 										}}
 									>
-										{(field.options ?? []).map((option) => (
-											<option key={option.value} value={option.value}>
-												{option.label}
-											</option>
-										))}
-									</select>
+										<SelectTrigger
+											id={`${id}-${field.key}`}
+											aria-label={field.label}
+											className="min-h-11 w-full min-w-0"
+										>
+											<SelectValue
+												placeholder={loading ? "加载中…" : "请选择"}
+											/>
+										</SelectTrigger>
+										<SelectContent>
+											<SelectGroup>
+												{(field.options ?? []).map((option) => (
+													<SelectItem key={option.value} value={option.value}>
+														{option.label}
+													</SelectItem>
+												))}
+											</SelectGroup>
+										</SelectContent>
+									</Select>
 								)}
 							</div>
 						</li>
@@ -278,16 +320,26 @@ export function WorkspaceAskSettingsPanel() {
 				})}
 			</ul>
 
-			{error ? <p className="text-ui text-destructive">{error}</p> : null}
-			{saved ? <p className="text-ui text-muted-foreground">已保存</p> : null}
+			{error ? (
+				<p role="alert" className="text-sm text-destructive">
+					{error}
+				</p>
+			) : null}
+			{saved ? (
+				<p role="status" className="text-sm text-muted-foreground">
+					已保存
+				</p>
+			) : null}
 			{error && !ask ? (
 				<Button
 					type="button"
 					size="sm"
+					className="h-11 min-w-24"
 					variant="outline"
 					disabled={loading}
 					onClick={() => void refresh()}
 				>
+					<RefreshCw className="size-4" aria-hidden />
 					重试
 				</Button>
 			) : null}
@@ -297,13 +349,15 @@ export function WorkspaceAskSettingsPanel() {
 					<Button
 						type="button"
 						size="sm"
-						disabled={busy || loading || !ask || !draft}
+						className="h-11 min-w-24"
+						disabled={busy || loading || !ask || !draft || !dirty}
 						onClick={() => void save()}
 					>
+						<Save className="size-4" aria-hidden />
 						{busy ? "保存中…" : "保存"}
 					</Button>
 				</div>
 			) : null}
-		</div>
+		</section>
 	);
 }

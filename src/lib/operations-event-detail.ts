@@ -1,4 +1,5 @@
 import type { EvidenceAssessmentFailureMetadata } from "@/core/ai/evidence-assessment-diagnostics";
+import type { ModelUsageSummary } from "@/core/ai/model-usage";
 import type { RerankDiagnostic } from "@/core/retrieval/provider-request";
 import type { QdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
 
@@ -98,6 +99,7 @@ export type OperationsEventDetail = {
 		citation_count: number;
 		used_hybrid: boolean;
 		used_rerank: boolean;
+		model_usage?: ModelUsageSummary | null;
 	};
 	stages: OperationsEventStage[];
 };

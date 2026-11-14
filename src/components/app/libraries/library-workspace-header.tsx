@@ -74,22 +74,19 @@ export function LibraryWorkspaceHeader({
 	return (
 		<div
 			className={cn(
-				"flex flex-wrap items-start justify-between gap-3 border-b border-border/70 bg-card px-4 py-3 sm:gap-4 sm:px-5 sm:py-4",
+				"flex flex-wrap items-start justify-between gap-4 border-b bg-background px-4 py-5 sm:px-6 sm:py-6",
 				!library && "hidden md:flex",
 			)}
 		>
 			<div className="min-w-0 space-y-1">
-				<p className="text-meta hidden font-mono tracking-[0.14em] text-cite uppercase md:block">
-					Library workspace
-				</p>
-				<h3 className="font-heading truncate text-xl font-semibold">
+				<h3 className="font-heading truncate text-xl font-medium">
 					<span className="md:hidden">{library ? "文档" : "知识库"}</span>
 					<span className="hidden md:inline">
 						{library?.name ?? "选择知识库"}
 					</span>
 				</h3>
 				{library?.description?.trim() ? (
-					<p className="text-ui hidden truncate text-muted-foreground md:block">
+					<p className="hidden truncate text-sm text-muted-foreground md:block">
 						{library.description.trim()}
 					</p>
 				) : null}
@@ -106,13 +103,13 @@ export function LibraryWorkspaceHeader({
 							解析
 						</span>
 						{library.requires_reindex ? (
-							<span className="meta-chip border-survey/35 bg-accent text-accent-foreground">
+							<span className="meta-chip border-survey/35 bg-warning text-warning-foreground">
 								需要重索引
 							</span>
 						) : null}
 					</div>
 				) : (
-					<p className="text-ui hidden text-muted-foreground md:block">
+					<p className="hidden text-sm text-muted-foreground md:block">
 						{canManageLibraries
 							? "从左侧选择或新建知识库。"
 							: "从左侧选择知识库。"}
@@ -143,7 +140,7 @@ export function LibraryWorkspaceHeader({
 									}}
 									className={cn(
 										buttonVariants({ variant: "outline" }),
-										"h-10 min-w-0 flex-1 rounded-md sm:h-9 sm:flex-none",
+										"h-11 flex-1 rounded-md sm:flex-none",
 									)}
 								>
 									<MessageSquareText data-icon="inline-start" />
@@ -153,7 +150,7 @@ export function LibraryWorkspaceHeader({
 								<Button
 									type="button"
 									variant="outline"
-									className="h-10 min-w-0 flex-1 rounded-md sm:h-9 sm:flex-none"
+									className="h-11 flex-1 rounded-md sm:flex-none"
 									disabled
 									title="暂无可检索文档"
 								>
@@ -164,7 +161,7 @@ export function LibraryWorkspaceHeader({
 							<AuthButton
 								cap="writeLibraries"
 								type="button"
-								className="h-10 min-w-0 flex-1 rounded-md sm:h-9 sm:flex-none"
+								className="h-11 flex-1 rounded-md sm:flex-none"
 								disabled={uploadDisabled}
 								onClick={onUpload}
 							>
@@ -175,7 +172,7 @@ export function LibraryWorkspaceHeader({
 								type="button"
 								variant="outline"
 								size="icon-sm"
-								className="size-10 rounded-md sm:size-8"
+								className="size-11 rounded-md"
 								disabled={refreshing}
 								onClick={onRefresh}
 							>
@@ -192,7 +189,7 @@ export function LibraryWorkspaceHeader({
 										type="button"
 										variant="outline"
 										size="icon-sm"
-										className="size-10 rounded-md sm:size-8"
+										className="size-11 rounded-md"
 										disabled={saving || deleting}
 									/>
 								}

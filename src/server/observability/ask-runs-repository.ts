@@ -1,6 +1,9 @@
 import { and, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-
+import {
+	type ModelUsageSummary,
+	projectModelUsage,
+} from "@/core/ai/model-usage";
 import type * as schema from "@/db/schema";
 import { askRunStages, askRuns } from "@/db/schema";
 import { operationalRefusalCode } from "@/lib/operations-event-detail";
@@ -38,6 +41,7 @@ interface FinalizeAskRunBase {
 	usedRerank?: boolean;
 	citationCount?: number;
 	latencyMs: number;
+	modelUsage?: ModelUsageSummary | null;
 	errorCode?: string | null;
 	stages?: AskRunStageInput[];
 	endedAt?: Date;
@@ -234,6 +238,7 @@ class DrizzleAskRunsPersistence implements AskRunsPersistence {
 					usedRerank: input.usedRerank ?? false,
 					citationCount,
 					latencyMs,
+					modelUsage: projectModelUsage(input.modelUsage),
 					refuseReason:
 						input.status === "refused"
 							? (operationalRefusalCode(

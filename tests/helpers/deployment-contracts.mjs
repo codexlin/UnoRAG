@@ -39,7 +39,7 @@ function deploymentCommandEnvironment(overrides) {
 	};
 }
 
-export function renderComposeConfig(overrides = {}) {
+export function renderComposeConfig(overrides = {}, overlays = []) {
 	const result = spawnSync(
 		"docker",
 		[
@@ -51,6 +51,10 @@ export function renderComposeConfig(overrides = {}) {
 				.pathname,
 			"-f",
 			new URL("deploy/compose/docker-compose.yml", repositoryRoot).pathname,
+			...overlays.flatMap((file) => [
+				"-f",
+				new URL(file, repositoryRoot).pathname,
+			]),
 			"config",
 			"--format",
 			"json",

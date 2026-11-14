@@ -11,6 +11,7 @@ import {
 	StructuredOutputAdapter,
 } from "@/core/ai";
 import { assessEvidenceWithMetadata } from "@/core/ai/evidence-assessment";
+import type { ModelUsageRecorder } from "@/core/ai/model-usage";
 import {
 	type AskGraphContext,
 	type AskGraphInput,
@@ -723,6 +724,7 @@ export function createNativeAskRuntime(input: {
 	signal?: AbortSignal;
 	policy: NativeAskPolicy;
 	dependencies?: NativeAskRuntimeDependencies;
+	usageRecorder?: ModelUsageRecorder;
 	assertAuthorized?: (citations: Record<string, unknown>[]) => Promise<void>;
 }): NativeAskRuntime {
 	let dependencies = input.dependencies;
@@ -743,6 +745,7 @@ export function createNativeAskRuntime(input: {
 					2,
 				),
 				concurrencyGate,
+				usageRecorder: input.usageRecorder,
 			}),
 			judgeStructured: new StructuredOutputAdapter(
 				judgeRegistry.model,
@@ -755,6 +758,7 @@ export function createNativeAskRuntime(input: {
 						1024,
 					),
 					concurrencyGate,
+					usageRecorder: input.usageRecorder,
 				},
 			),
 			judgeIdentity: {
@@ -763,6 +767,7 @@ export function createNativeAskRuntime(input: {
 			},
 			answer: new AnswerStreamAdapter(registry.model, undefined, {
 				concurrencyGate,
+				usageRecorder: input.usageRecorder,
 			}),
 		};
 	}

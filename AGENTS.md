@@ -34,6 +34,29 @@ cannot be described by the formal product documents.
 
 Flag conflicts with an accepted ADR explicitly instead of silently overriding it.
 
+### Product UI and motion
+
+Read `docs/DESIGN.md` before changing product UI, copy, styling, components, or
+motion. It is the single accepted target design, not a claim that the redesign
+has shipped. Use the existing Base UI/local UI components, CSS-first feedback,
+`motion/react`, Sonner, and Lucide; do not add a parallel component or animation
+framework for visual polish. Preserve source authorization, stream isolation,
+active-version/job distinctions, unknown metrics, and reduced-motion behavior.
+For ordinary controls, use the shadcn/ui `base-nova` registry and local
+`src/components/ui/` sources before writing a new primitive. Keep the existing
+Base UI foundation; use the standard Select composition, not NativeSelect or a
+native-event compatibility wrapper. Reuse official Base UI AI Elements for chat
+presentation without replacing the authorized citation/SSE contracts. Do not add
+a parallel Radix/component framework. Business
+compositions remain domain components. Native file inputs, minimal global-error
+recovery and specialized inline citations may retain native elements when their
+contracts require it. Document any new exception in `docs/DESIGN.md`.
+Design decisions live there, not in new parallel blueprints or agent-only rules.
+Before replacing a page, check its existing-capability map in that document and
+the actual API fields/actions. Simplified mockups are not a feature inventory.
+Keep presentation work separate from new data contracts; do not guess version
+numbers, introduce per-row history requests, or conflate readiness with job state.
+
 ### Issue tracker
 
 Issues and PRDs live as GitHub Issues in `codexlin/UnoRAG`. Use `gh issue` and

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,72 +10,127 @@ import { Label } from "@/components/ui/label";
 export function ChangePasswordForm({ email }: { email: string | null }) {
 	const router = useRouter();
 	const [error, setError] = useState<string | null>(null);
+	const [errorField, setErrorField] = useState<
+		"current_password" | "new_password" | "password_confirmation" | null
+	>(null);
 	const [submitting, setSubmitting] = useState(false);
+	const [signingOut, setSigningOut] = useState(false);
+	const [ready, setReady] = useState(false);
+	useEffect(() => setReady(true), []);
+	const busy = submitting || signingOut;
 
 	async function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		if (!ready || busy) return;
 		setError(null);
+		setErrorField(null);
+		const formElement = event.currentTarget;
 		const form = new FormData(event.currentTarget);
 		const currentPassword = String(form.get("current_password") ?? "");
 		const newPassword = String(form.get("new_password") ?? "");
 		const confirmation = String(form.get("password_confirmation") ?? "");
+		function rejectField(
+			field: "new_password" | "password_confirmation",
+			message: string,
+		) {
+			setError(message);
+			setErrorField(field);
+			const input = formElement.elements.namedItem(field);
+			if (input instanceof HTMLElement) input.focus();
+		}
 		if (newPassword.length < 7) {
-			setError("新密码至少需要 7 个字符");
+			rejectField("new_password", "新密码至少需要 7 个字符");
+			return;
+		}
+		if (newPassword.length > 256) {
+			rejectField("new_password", "新密码最多允许 256 个字符");
 			return;
 		}
 		if (!/[a-z]/.test(newPassword) || !/[A-Z]/.test(newPassword)) {
-			setError("新密码必须同时包含大写和小写字母");
+			rejectField("new_password", "新密码必须同时包含大写和小写字母");
 			return;
 		}
 		if (newPassword !== confirmation) {
-			setError("两次输入的新密码不一致");
+			rejectField("password_confirmation", "两次输入的新密码不一致");
 			return;
 		}
 
 		setSubmitting(true);
-		const response = await fetch("/api/auth/password", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				current_password: currentPassword,
-				new_password: newPassword,
-			}),
-		});
-		if (!response.ok) {
-			const payload = (await response.json().catch(() => null)) as {
-				detail?: string;
-			} | null;
-			const messages: Record<string, string> = {
-				"current password is incorrect": "当前密码不正确",
-				"password must be at least 7 characters": "新密码至少需要 7 个字符",
-				"password must contain uppercase and lowercase letters":
-					"新密码必须同时包含大写和小写字母",
-				"password must be at most 256 characters": "新密码最多允许 256 个字符",
-				"new password must differ from the current password":
-					"新密码不能与当前密码相同",
-			};
-			setError(
-				(payload?.detail && messages[payload.detail]) ||
-					"密码修改失败，请稍后重试",
-			);
-			setSubmitting(false);
-			return;
-		}
+		try {
+			const response = await fetch("/api/auth/password", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					current_password: currentPassword,
+					new_password: newPassword,
+				}),
+			});
+			if (!response.ok) {
+				const payload = (await response.json().catch(() => null)) as {
+					detail?: string;
+				} | null;
+				const messages: Record<string, string> = {
+					"current password is incorrect": "当前密码不正确",
+					"password must be at least 7 characters": "新密码至少需要 7 个字符",
+					"password must contain uppercase and lowercase letters":
+						"新密码必须同时包含大写和小写字母",
+					"password must be at most 256 characters":
+						"新密码最多允许 256 个字符",
+					"new password must differ from the current password":
+						"新密码不能与当前密码相同",
+				};
+				setError(
+					(payload?.detail && messages[payload.detail]) ||
+						"密码修改失败，请稍后重试",
+				);
+				if (payload?.detail === "current password is incorrect") {
+					setErrorField("current_password");
+				} else if (payload?.detail && messages[payload.detail]) {
+					setErrorField("new_password");
+				}
+				return;
+			}
 
-		router.replace("/app");
-		router.refresh();
+			router.replace("/app");
+			router.refresh();
+		} catch {
+			setError("网络连接异常，请稍后重试；若密码已更新，请使用新密码登录");
+		} finally {
+			setSubmitting(false);
+		}
 	}
 
 	async function signOut() {
-		await fetch("/api/auth/session", { method: "DELETE" });
-		router.replace("/login");
-		router.refresh();
+		if (!ready || busy) return;
+		setSigningOut(true);
+		setError(null);
+		setErrorField(null);
+		try {
+			const response = await fetch("/api/auth/session", { method: "DELETE" });
+			if (!response.ok) {
+				setError("退出登录失败，请稍后重试");
+				return;
+			}
+			router.replace("/login");
+			router.refresh();
+		} catch {
+			setError("网络连接异常，尚未确认退出，请重试");
+		} finally {
+			setSigningOut(false);
+		}
 	}
 
 	return (
-		<form className="space-y-5" onSubmit={submit}>
+		<form
+			method="post"
+			className="space-y-5"
+			onSubmit={submit}
+			aria-busy={busy}
+		>
 			{email ? (
-				<p className="font-mono text-xs text-muted-foreground">{email}</p>
+				<p className="break-all border-y py-4 text-sm leading-6 text-muted-foreground">
+					{email}
+				</p>
 			) : null}
 			<div className="space-y-2">
 				<Label htmlFor="current_password">初始密码</Label>
@@ -84,8 +139,27 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					name="current_password"
 					type="password"
 					autoComplete="current-password"
+					className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
+					disabled={!ready || busy}
+					aria-invalid={errorField === "current_password" || undefined}
+					aria-describedby={
+						errorField === "current_password"
+							? "current-password-error"
+							: undefined
+					}
 					required
 				/>
+				<div className="min-h-6">
+					{errorField === "current_password" && error ? (
+						<p
+							id="current-password-error"
+							className="text-sm leading-6 text-destructive"
+							role="alert"
+						>
+							{error}
+						</p>
+					) : null}
+				</div>
 			</div>
 			<div className="space-y-2">
 				<Label htmlFor="new_password">新密码</Label>
@@ -94,13 +168,35 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					name="new_password"
 					type="password"
 					autoComplete="new-password"
+					className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
+					disabled={!ready || busy}
+					aria-invalid={errorField === "new_password" || undefined}
+					aria-describedby={
+						errorField === "new_password"
+							? "new-password-hint new-password-error"
+							: "new-password-hint"
+					}
 					minLength={7}
 					maxLength={256}
 					required
 				/>
-				<p className="text-xs text-muted-foreground">
+				<p
+					id="new-password-hint"
+					className="text-xs leading-5 text-muted-foreground"
+				>
 					至少 7 个字符，并同时包含大写和小写字母。
 				</p>
+				<div className="min-h-6">
+					{errorField === "new_password" && error ? (
+						<p
+							id="new-password-error"
+							className="text-sm leading-6 text-destructive"
+							role="alert"
+						>
+							{error}
+						</p>
+					) : null}
+				</div>
 			</div>
 			<div className="space-y-2">
 				<Label htmlFor="password_confirmation">确认新密码</Label>
@@ -109,26 +205,48 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					name="password_confirmation"
 					type="password"
 					autoComplete="new-password"
+					className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
+					disabled={!ready || busy}
+					aria-invalid={errorField === "password_confirmation" || undefined}
+					aria-describedby={
+						errorField === "password_confirmation"
+							? "password-confirmation-error"
+							: undefined
+					}
 					minLength={7}
 					maxLength={256}
 					required
 				/>
+				<div className="min-h-6">
+					{errorField === "password_confirmation" && error ? (
+						<p
+							id="password-confirmation-error"
+							className="text-sm leading-6 text-destructive"
+							role="alert"
+						>
+							{error}
+						</p>
+					) : null}
+				</div>
 			</div>
-			{error ? (
-				<p className="text-sm text-destructive" role="alert">
-					{error}
-				</p>
-			) : null}
-			<Button className="w-full" type="submit" disabled={submitting}>
+			<div className="min-h-6">
+				{error && !errorField ? (
+					<p className="text-sm leading-6 text-destructive" role="alert">
+						{error}
+					</p>
+				) : null}
+			</div>
+			<Button className="h-11 w-full" type="submit" disabled={!ready || busy}>
 				{submitting ? "正在保存..." : "保存并进入 UnoRAG"}
 			</Button>
 			<Button
-				className="w-full"
+				className="h-11 w-full"
 				type="button"
 				variant="ghost"
 				onClick={signOut}
+				disabled={!ready || busy}
 			>
-				退出登录
+				{signingOut ? "正在退出..." : "退出登录"}
 			</Button>
 		</form>
 	);

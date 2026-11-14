@@ -1,6 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.UNORAG_E2E_BASE_URL?.trim();
+const targetMode = process.env.UNORAG_E2E_TARGET_MODE ?? "production";
+if (!["development", "production"].includes(targetMode)) {
+	throw new Error("UNORAG_E2E_TARGET_MODE must be development or production");
+}
 if (!baseURL) {
 	throw new Error(
 		"UNORAG_E2E_BASE_URL is required; browser tests run against an installed candidate",

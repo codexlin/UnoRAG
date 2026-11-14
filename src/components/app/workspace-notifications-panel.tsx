@@ -1,12 +1,25 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Mail, Plus, RefreshCw, Save, Send, X } from "lucide-react";
+import { Plus, RefreshCw, Save, Send, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { useSession } from "@/components/app/session-provider";
+import {
+	type SettingsPanelStateChange,
+	useSettingsPanelState,
+} from "@/components/app/settings/use-settings-panel-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
 	Table,
 	TableBody,
@@ -16,6 +29,7 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { useQueryScope } from "@/hooks/use-query-scope";
+import { createClientId } from "@/lib/client-id";
 import { formatDateTime } from "@/lib/format";
 import { queryKeys } from "@/lib/query-keys";
 import {
@@ -26,6 +40,10 @@ import {
 } from "@/lib/workspace-notifications";
 
 const endpoint = "/api/workspace/notifications";
+const SEVERITY_OPTIONS = [
+	{ value: "warning", label: "警告及严重" },
+	{ value: "critical", label: "仅严重" },
+] as const;
 const pollWindowMs = 120_000;
 const activeStatuses = new Set(["pending", "sending", "retry"]);
 const statusLabels: Record<EmailDeliveryView["status"], string> = {
@@ -138,11 +156,16 @@ function displayTime(value: string | null) {
 		: "暂无";
 }
 
-export function WorkspaceNotificationsPanel() {
+export function WorkspaceNotificationsPanel({
+	onStateChange,
+}: {
+	onStateChange?: SettingsPanelStateChange;
+}) {
 	const { can, identity } = useSession();
 	if (!can("manageMembers")) return null;
 	return (
 		<NotificationsPanel
+			onStateChange={onStateChange}
 			key={JSON.stringify([
 				identity.tenantId,
 				identity.workspaceId,
@@ -152,7 +175,11 @@ export function WorkspaceNotificationsPanel() {
 	);
 }
 
-function NotificationsPanel() {
+function NotificationsPanel({
+	onStateChange,
+}: {
+	onStateChange?: SettingsPanelStateChange;
+}) {
 	const scope = useQueryScope();
 	const queryClient = useQueryClient();
 	const queryKey = queryKeys.workspaceNotifications(scope);
@@ -305,6 +332,7 @@ function NotificationsPanel() {
 		onError: (cause) => handleFailure(cause, "测试邮件未能入队，请稍后重试"),
 	});
 	const busy = save.isPending || test.isPending;
+	useSettingsPanelState(onStateChange, { dirty, busy });
 	const unavailable = !view || query.isError;
 	const transport =
 		unavailable || transportUnknown ? "unknown" : view.transport.status;
@@ -339,21 +367,19 @@ function NotificationsPanel() {
 
 	return (
 		<section
+			id="notifications"
 			aria-labelledby={`${id}-heading`}
-			className="min-w-0 space-y-5 border-t border-border/70 pt-6 text-sm"
+			className="min-w-0 space-y-6 text-sm"
 		>
-			<div className="flex items-center justify-between gap-3">
-				<h3
-					id={`${id}-heading`}
-					className="flex items-center gap-2 font-heading text-lg font-semibold"
-				>
-					<Mail className="size-4 text-muted-foreground" aria-hidden />
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<h3 id={`${id}-heading`} className="text-xl font-medium">
 					邮件通知
 				</h3>
 				<Button
 					type="button"
 					variant="outline"
 					size="icon"
+					className="size-11"
 					title="刷新邮件通知"
 					aria-label="刷新邮件通知"
 					disabled={busy || query.isFetching}
@@ -414,55 +440,72 @@ function NotificationsPanel() {
 				>
 					<fieldset
 						disabled={busy || unavailable}
-						className="grid min-w-0 gap-6 md:grid-cols-2"
+						className="grid min-w-0 gap-6 md:grid-cols-2 md:gap-8"
 					>
 						<legend className="sr-only">邮件通知设置</legend>
-						<div className="space-y-4">
-							<label className="flex min-h-9 cursor-pointer items-center justify-between gap-3">
+						<div className="min-w-0 space-y-4">
+							<label
+								htmlFor={`${id}-enabled`}
+								className="flex min-h-11 cursor-pointer items-center justify-between gap-3"
+							>
 								<span>告警邮件通知</span>
-								<input
-									type="checkbox"
-									className="size-4 accent-primary"
+								<Switch
+									id={`${id}-enabled`}
+									disabled={busy || unavailable}
 									checked={settings.enabled}
-									onChange={(event) =>
-										update({ enabled: event.target.checked })
-									}
+									onCheckedChange={(checked) => update({ enabled: checked })}
 								/>
 							</label>
 							<label
-								className="flex flex-wrap items-center justify-between gap-3"
+								className="flex min-h-11 flex-wrap items-center justify-between gap-3"
 								htmlFor={`${id}-severity`}
 							>
 								<span>最低告警级别</span>
-								<select
-									id={`${id}-severity`}
-									className="h-9 max-w-full rounded-md border border-input bg-background px-2 text-sm"
+								<Select
+									items={SEVERITY_OPTIONS}
 									value={settings.minimum_severity}
-									onChange={(event) =>
-										update({
-											minimum_severity: event.target
-												.value as WorkspaceEmailSettings["minimum_severity"],
-										})
-									}
+									disabled={busy || unavailable}
+									onValueChange={(value) => {
+										if (value !== null) update({ minimum_severity: value });
+									}}
 								>
-									<option value="warning">警告及严重</option>
-									<option value="critical">仅严重</option>
-								</select>
+									<SelectTrigger
+										id={`${id}-severity`}
+										aria-label="最低告警级别"
+										className="min-h-11 w-full min-w-0"
+									>
+										<SelectValue
+											placeholder={query.isPending ? "加载中…" : "选择告警级别"}
+										/>
+									</SelectTrigger>
+									<SelectContent>
+										<SelectGroup>
+											{SEVERITY_OPTIONS.map((option) => (
+												<SelectItem key={option.value} value={option.value}>
+													{option.label}
+												</SelectItem>
+											))}
+										</SelectGroup>
+									</SelectContent>
+								</Select>
 							</label>
-							<label className="flex min-h-9 cursor-pointer items-center justify-between gap-3">
+							<label
+								htmlFor={`${id}-recovery`}
+								className="flex min-h-11 cursor-pointer items-center justify-between gap-3"
+							>
 								<span>恢复时通知</span>
-								<input
-									type="checkbox"
-									className="size-4 accent-primary"
+								<Switch
+									id={`${id}-recovery`}
+									disabled={busy || unavailable}
 									checked={settings.notify_recovery}
-									onChange={(event) =>
-										update({ notify_recovery: event.target.checked })
+									onCheckedChange={(checked) =>
+										update({ notify_recovery: checked })
 									}
 								/>
 							</label>
 						</div>
 						<div className="min-w-0 space-y-2">
-							<div className="flex min-h-9 items-center justify-between gap-3">
+							<div className="flex min-h-11 flex-wrap items-center justify-between gap-3">
 								<p>
 									收件邮箱{" "}
 									<span className="text-xs text-muted-foreground">
@@ -473,13 +516,14 @@ function NotificationsPanel() {
 									type="button"
 									variant="ghost"
 									size="icon"
+									className="size-11"
 									title="添加收件邮箱"
 									aria-label="添加收件邮箱"
 									disabled={settings.recipients.length >= 5}
 									onClick={() =>
 										update({ recipients: [...settings.recipients, ""] }, [
 											...recipientIds,
-											crypto.randomUUID(),
+											createClientId(),
 										])
 									}
 								>
@@ -504,7 +548,7 @@ function NotificationsPanel() {
 										value={email}
 										maxLength={254}
 										autoComplete="off"
-										className="h-9"
+										className="h-11 min-w-0"
 										onChange={(event) =>
 											update({
 												recipients: settings.recipients.map(
@@ -518,6 +562,7 @@ function NotificationsPanel() {
 										type="button"
 										variant="ghost"
 										size="icon"
+										className="size-11"
 										title={`移除收件邮箱 ${index + 1}`}
 										aria-label={`移除收件邮箱 ${index + 1}`}
 										onClick={() =>
@@ -562,6 +607,7 @@ function NotificationsPanel() {
 									<Button
 										type="button"
 										variant="outline"
+										className="min-h-11 max-w-full whitespace-normal py-2"
 										disabled={busy || unavailable || query.isFetching}
 										onClick={() => {
 											setDraft(null);
@@ -575,6 +621,7 @@ function NotificationsPanel() {
 										<Button
 											type="button"
 											variant="outline"
+											className="min-h-11 max-w-full whitespace-normal py-2"
 											disabled={busy || unavailable || query.isFetching}
 											onClick={() => {
 												setDraft({ ...draft, version: view.version });
@@ -606,6 +653,7 @@ function NotificationsPanel() {
 					<div className="flex flex-wrap items-center gap-3">
 						<Button
 							type="submit"
+							className="h-11 min-w-36"
 							disabled={
 								busy ||
 								unavailable ||
@@ -621,6 +669,7 @@ function NotificationsPanel() {
 						<Button
 							type="button"
 							variant="outline"
+							className="h-11 min-w-36"
 							disabled={!canTest}
 							onClick={() => {
 								if (!canTest || !view) return;
@@ -664,7 +713,14 @@ function DeliveryTable({ deliveries }: { deliveries: EmailDeliveryView[] }) {
 		.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
 		.slice(0, 20);
 	return (
-		<Table className="min-w-[44rem] text-xs">
+		<Table
+			className="min-w-[44rem] text-xs"
+			containerProps={{
+				tabIndex: 0,
+				role: "region",
+				"aria-label": "最近邮件发送记录",
+			}}
+		>
 			<TableHeader>
 				<TableRow>
 					{["用途", "收件邮箱", "发送状态", "尝试次数", "时间", "异常"].map(

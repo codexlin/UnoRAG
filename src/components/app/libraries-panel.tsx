@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Can, useCan } from "@/components/app/can";
@@ -17,6 +18,11 @@ import {
 	LibraryRegistrySidebar,
 	MobileLibraryPicker,
 } from "@/components/app/libraries/library-registry";
+import {
+	type DocumentUploadBatch,
+	type DocumentUploadResult,
+	LibraryUploadResults,
+} from "@/components/app/libraries/library-upload-results";
 import { LibraryWorkspaceHeader } from "@/components/app/libraries/library-workspace-header";
 import { buildDetailActions } from "@/components/app/library-doc-actions";
 import { useSession } from "@/components/app/session-provider";
@@ -24,6 +30,7 @@ import { useDocumentVersions } from "@/hooks/use-document-versions";
 import { useDocuments } from "@/hooks/use-documents";
 import { useJob } from "@/hooks/use-job";
 import { useLibraries } from "@/hooks/use-libraries";
+import { useQueryScope } from "@/hooks/use-query-scope";
 import {
 	type ApiDocument,
 	type ApiLibrary,
@@ -32,14 +39,17 @@ import {
 	deleteDocument,
 	deleteLibrary,
 	downloadDocument,
+	fetchDocuments,
+	fetchLibraries,
 	reindexDocument,
 	replaceDocument,
 	retryJob,
 	updateLibrary,
 	uploadDocument,
 } from "@/lib/api";
-import { filterByCap } from "@/lib/client-permissions";
 import { formatDurationMs } from "@/lib/format";
+import { queryKeys } from "@/lib/query-keys";
+import { fetchFreshQuery } from "@/lib/query-refresh";
 
 type DocumentOverlay =
 	| { kind: "none" }
@@ -50,6 +60,8 @@ type DocumentOverlay =
 
 export function LibrariesPanel() {
 	const { caps } = useSession();
+	const queryClient = useQueryClient();
+	const queryScope = useQueryScope();
 	const canWriteLibraries = useCan("writeLibraries");
 	const canManageLibraries = useCan("manageLibraries");
 	const {
@@ -64,7 +76,10 @@ export function LibrariesPanel() {
 	const [savingLibrary, setSavingLibrary] = useState(false);
 	const [busyDocId, setBusyDocId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [lastUploadMs, setLastUploadMs] = useState<number | null>(null);
+	const [uploadBatch, setUploadBatch] = useState<DocumentUploadBatch | null>(
+		null,
+	);
+	const uploadSequenceRef = useRef(0);
 	const [documentOverlay, setDocumentOverlay] = useState<DocumentOverlay>({
 		kind: "none",
 	});
@@ -102,6 +117,8 @@ export function LibrariesPanel() {
 	const {
 		documents,
 		error: documentsError,
+		loading: documentsLoading,
+		refreshing: documentsRefreshing,
 		refresh: refreshDocuments,
 	} = useDocuments(selectedId, { enabled: selectedLibraryExists });
 	const pageError =
@@ -112,6 +129,9 @@ export function LibrariesPanel() {
 			: null);
 	const {
 		versions: versionRows,
+		activeVersionId,
+		desiredVersionId,
+		error: versionsError,
 		loading: versionsLoading,
 		refresh: refreshVersions,
 	} = useDocumentVersions(selectedId, detailDocId ?? "");
@@ -156,22 +176,69 @@ export function LibrariesPanel() {
 	}
 
 	async function onUploadFiles(files: FileList | null) {
-		if (!files?.length || !selectedId) return;
+		if (!files?.length || !selectedLibrary || uploading || !canWriteLibraries)
+			return;
+		const libraryId = selectedLibrary.id;
+		const libraryKey = queryKeys.libraries(queryScope);
+		const documentKey = queryKeys.documents(queryScope, libraryId);
+		const batchId = ++uploadSequenceRef.current;
 		setUploading(true);
 		setError(null);
 		const started = performance.now();
-		const fileList = Array.from(files);
-		try {
-			const settled = await Promise.allSettled(
-				fileList.map((file) =>
-					uploadDocument({
-						libraryId: selectedId,
-						file,
-					}),
-				),
+		setUploadBatch({
+			id: batchId,
+			libraryId,
+			libraryName: selectedLibrary.name,
+			files: Array.from(files, (file, id) => ({
+				id,
+				filename: file.name,
+				status: "submitting",
+				durationMs: null,
+			})),
+			durationMs: null,
+		});
+		function updateFile(id: number, patch: Partial<DocumentUploadResult>) {
+			setUploadBatch((current) =>
+				current?.id === batchId
+					? {
+							...current,
+							files: current.files.map((file) =>
+								file.id === id ? { ...file, ...patch } : file,
+							),
+						}
+					: current,
 			);
+		}
+		try {
+			const uploads = Array.from(files, async (file, id) => {
+				const fileStarted = performance.now();
+				try {
+					const result = await uploadDocument({ libraryId, file });
+					updateFile(id, {
+						status: result.status === "ready" ? "ready" : "accepted",
+						docId: result.doc_id,
+						durationMs: Math.round(performance.now() - fileStarted),
+					});
+					if (result.accepted || result.status === "processing") {
+						trackProcessing([{ id: result.doc_id, name: result.title }]);
+					}
+					return result;
+				} catch (err) {
+					updateFile(id, {
+						status: "failed",
+						error: err instanceof Error ? err.message : "上传失败",
+						durationMs: Math.round(performance.now() - fileStarted),
+					});
+					throw err;
+				}
+			});
+			// Keep only submission metadata in the UI, not the selected file payloads.
+			if (fileInputRef.current) fileInputRef.current.value = "";
+			const settled = await Promise.allSettled(uploads);
 			const elapsed = Math.round(performance.now() - started);
-			setLastUploadMs(elapsed);
+			setUploadBatch((current) =>
+				current?.id === batchId ? { ...current, durationMs: elapsed } : current,
+			);
 			const ok = settled.filter(
 				(
 					item,
@@ -188,9 +255,6 @@ export function LibrariesPanel() {
 					id: item.value.doc_id,
 					name: item.value.title,
 				}));
-			if (acceptedDocs.length > 0) {
-				trackProcessing(acceptedDocs);
-			}
 			const accepted = acceptedDocs.length;
 			const ready = ok.filter((item) => item.value.status === "ready").length;
 			if (ok.length > 0) {
@@ -210,16 +274,19 @@ export function LibrariesPanel() {
 					first.reason instanceof Error
 						? first.reason.message
 						: "部分文件上传失败";
-				setError(message);
 				toast.error(message);
 			}
-			await loadLibraries();
-			await refreshDocuments();
+			await Promise.all([
+				fetchFreshQuery(queryClient, libraryKey, ({ signal }) =>
+					fetchLibraries(signal),
+				),
+				fetchFreshQuery(queryClient, documentKey, ({ signal }) =>
+					fetchDocuments(libraryId, signal),
+				),
+			]);
 		} catch (err) {
-			setLastUploadMs(Math.round(performance.now() - started));
-			const message = err instanceof Error ? err.message : "上传失败";
-			setError(message);
-			toast.error(message);
+			const message = err instanceof Error ? err.message : "列表刷新失败";
+			toast.error(`上传结果已保留，列表刷新失败：${message}`);
 		} finally {
 			setUploading(false);
 			if (fileInputRef.current) fileInputRef.current.value = "";
@@ -530,20 +597,20 @@ export function LibrariesPanel() {
 	}
 
 	const uploadDisabled = uploading || !selectedId;
-	const detailActions = filterByCap(
-		caps,
-		buildDetailActions({
-			onAcl: (doc) => setDocumentOverlay({ kind: "acl", doc }),
-			onReplace: startReplace,
-			onReindex: (doc) => {
-				void onReindex(doc);
-			},
-			onDownload: (doc) => {
-				void onDownload(doc);
-			},
-			onDelete: (doc) => setDocumentOverlay({ kind: "delete", docId: doc.id }),
-		}),
-	);
+	const detailActions = buildDetailActions(caps, detailDoc, {
+		onView: (doc) => setDocumentOverlay({ kind: "detail", docId: doc.id }),
+		onAcl: (doc) => setDocumentOverlay({ kind: "acl", doc }),
+		onReplace: startReplace,
+		onReindex: (doc) => {
+			void onReindex(doc);
+		},
+		onCancelJob: (doc) => void onCancelJob(doc),
+		onRetryJob: (doc) => void onRetryJob(doc),
+		onDownload: (doc) => {
+			void onDownload(doc);
+		},
+		onDelete: (doc) => setDocumentOverlay({ kind: "delete", docId: doc.id }),
+	});
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -552,6 +619,7 @@ export function LibrariesPanel() {
 					libraries={libraries}
 					selectedId={selectedId}
 					loading={loading}
+					error={librariesError}
 					saving={savingLibrary}
 					onSelect={(libraryId) => {
 						setSelectedId(libraryId);
@@ -598,7 +666,7 @@ export function LibrariesPanel() {
 						canManageLibraries={canManageLibraries}
 						uploading={uploading}
 						uploadDisabled={uploadDisabled}
-						refreshing={loading || !selectedId}
+						refreshing={loading || documentsRefreshing || !selectedId}
 						saving={savingLibrary}
 						deleting={deletingLibrary}
 						onUpload={() => fileInputRef.current?.click()}
@@ -609,6 +677,21 @@ export function LibrariesPanel() {
 						onEdit={openEditLibraryDialog}
 						onDelete={setDeleteLibraryTarget}
 					/>
+
+					{uploadBatch?.libraryId === selectedId ? (
+						<LibraryUploadResults
+							batch={uploadBatch}
+							viewableDocumentIds={
+								new Set(
+									documents
+										.filter((doc) => doc.library_id === uploadBatch.libraryId)
+										.map((doc) => doc.id),
+								)
+							}
+							onView={(docId) => setDocumentOverlay({ kind: "detail", docId })}
+							onDismiss={() => setUploadBatch(null)}
+						/>
+					) : null}
 
 					<LibraryDocumentLedger
 						key={selectedLibrary?.id ?? "empty"}
@@ -621,7 +704,14 @@ export function LibrariesPanel() {
 						uploadDisabled={uploadDisabled}
 						busyDocId={busyDocId}
 						pageError={pageError}
-						lastUploadMs={lastUploadMs}
+						loading={loading || documentsLoading}
+						loadError={documentsError}
+						libraryLoadError={librariesError}
+						refreshing={loading || documentsRefreshing}
+						onRetryLoad={() => {
+							if (selectedLibrary) void refreshDocuments();
+							else void refreshLibraries();
+						}}
 						actions={{
 							onView: (doc) =>
 								setDocumentOverlay({ kind: "detail", docId: doc.id }),
@@ -643,6 +733,10 @@ export function LibrariesPanel() {
 			<DocumentDetailSheet
 				document={detailDoc}
 				versions={versionRows}
+				activeVersionId={activeVersionId}
+				desiredVersionId={desiredVersionId}
+				versionsError={versionsError}
+				onRefreshVersions={refreshVersions}
 				versionsLoading={versionsLoading}
 				job={detailJob}
 				jobLoading={detailJobLoading}

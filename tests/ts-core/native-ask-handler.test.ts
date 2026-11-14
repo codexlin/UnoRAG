@@ -10,6 +10,7 @@ import {
 	StructuredOutputAdapter,
 } from "../../src/core/ai";
 import { AnswerCitationValidationError } from "../../src/core/ai/answer-citations";
+import type { ModelUsageCall } from "../../src/core/ai/model-usage";
 import type { AskGraphInput, AskState } from "../../src/core/ask-graph";
 import { AskGraphExecutionError } from "../../src/core/ask-graph";
 import type {
@@ -310,6 +311,214 @@ function askRunRecorder() {
 	});
 	return { repository, starts, finalizations };
 }
+
+const judgeUsage: ModelUsageCall = {
+	stage: "judge",
+	model: "judge-test",
+	provider: "test",
+	attempt: 1,
+	status: "completed",
+	inputTokens: 100,
+	outputTokens: 20,
+	totalTokens: 120,
+	cachedInputTokens: 40,
+	usageStatus: "reported",
+};
+
+for (const mode of ["sync", "stream"] as const) {
+	test(`${mode} model usage is shared by response, archive and operational ledger`, async () => {
+		const { handleNativeAskRequest } = await handlerModule;
+		const repository = new FakeConversationRepository([activeThread()]);
+		const runs = askRunRecorder();
+		const response = await handleNativeAskRequest({
+			request: request(
+				{
+					question: "private question",
+					library_id: LIBRARY_ID,
+					thread_id: THREAD_ID,
+				},
+				mode,
+			),
+			path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+			identity,
+			repository: repositoryInput(repository),
+			askRunsRepository: runs.repository,
+			resolveLibrary: async () => ({
+				id: "99999999-9999-4999-8999-999999999999",
+			}),
+			runtimeFactory: (input) =>
+				({
+					async invoke() {
+						input.usageRecorder?.({
+							...judgeUsage,
+							attempt: 1,
+							status: "failed",
+						});
+						input.usageRecorder?.({ ...judgeUsage, attempt: 2 });
+						return askState();
+					},
+					async *streamAnswer() {
+						yield "private answer";
+						input.usageRecorder?.({
+							...judgeUsage,
+							stage: "generate",
+							inputTokens: 200,
+							outputTokens: 30,
+							totalTokens: 230,
+						});
+					},
+				}) as never,
+		});
+		assert.ok(response);
+		const body =
+			mode === "sync"
+				? await response.json()
+				: parseSse(await response.text()).at(-1)?.data;
+		const usage = (body as { retrieval_debug: { model_usage: unknown } })
+			.retrieval_debug.model_usage;
+		assert.deepEqual(usage, runs.finalizations[0]?.modelUsage);
+		const summary = runs.finalizations[0]?.modelUsage;
+		assert.equal(summary?.status, "reported");
+		assert.equal(summary?.calls.length, 3);
+		assert.equal(summary?.totalTokens, 470);
+		assert.equal(summary?.cachedInputTokens, 120);
+		const archived = repository.debugUpdates.at(-1)?.debug as
+			| { retrieval_debug?: { model_usage?: unknown } }
+			| undefined;
+		// Both the initial conversation write and the timing update retain usage.
+		assert.deepEqual(
+			(
+				repository.exchanges[0].input.assistant.debug as {
+					retrieval_debug: { model_usage: unknown };
+				}
+			).retrieval_debug.model_usage,
+			usage,
+		);
+		assert.doesNotMatch(
+			JSON.stringify(usage),
+			/private question|private answer/,
+		);
+		assert.deepEqual(archived?.retrieval_debug?.model_usage, usage);
+	});
+}
+
+test("refusal retains Judge usage without inventing a generation call", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const runs = askRunRecorder();
+	const response = await handleNativeAskRequest({
+		request: request({ question: "private question", library_id: LIBRARY_ID }),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		askRunsRepository: runs.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
+		runtimeFactory: (input) =>
+			({
+				async invoke() {
+					input.usageRecorder?.(judgeUsage);
+					return askState({
+						refused: true,
+						refuse_reason: "insufficient_evidence",
+						answer: "资料不足",
+					});
+				},
+				async streamAnswer() {
+					throw new Error("must not generate");
+				},
+			}) as never,
+	});
+	assert.equal(response?.status, 200);
+	assert.equal(runs.finalizations[0]?.status, "refused");
+	assert.deepEqual(
+		runs.finalizations[0]?.modelUsage?.calls.map((call) => call.stage),
+		["judge"],
+	);
+	assert.equal(runs.finalizations[0]?.modelUsage?.totalTokens, 120);
+});
+
+test("graph failures retain already incurred model usage even without a graph snapshot", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const runs = askRunRecorder();
+	const response = await handleNativeAskRequest({
+		request: request({ question: "private question", library_id: LIBRARY_ID }),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		askRunsRepository: runs.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
+		runtimeFactory: (input) =>
+			({
+				async invoke() {
+					input.usageRecorder?.(judgeUsage);
+					throw new Error("private failure");
+				},
+			}) as never,
+	});
+	assert.equal(response?.status, 503);
+	assert.equal(runs.finalizations[0]?.modelUsage?.totalTokens, 120);
+	assert.equal(runs.finalizations[0]?.status, "failed");
+	assert.doesNotMatch(JSON.stringify(runs.finalizations), /private/);
+});
+
+test("client cancellation snapshots an in-flight model as unknown, never zero or unused", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const runs = askRunRecorder();
+	const response = await handleNativeAskRequest({
+		request: request(
+			{ question: "private question", library_id: LIBRARY_ID },
+			"stream",
+		),
+		path: ["v1", "ask", "stream"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		askRunsRepository: runs.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
+		runtimeFactory: (input) =>
+			({
+				async invoke() {
+					return askState();
+				},
+				async *streamAnswer() {
+					input.usageRecorder?.start?.({
+						stage: "generate",
+						model: "test",
+						provider: "test",
+						attempt: 1,
+					});
+					yield "first token";
+					if (!input.signal?.aborted)
+						await new Promise<void>((resolve) =>
+							input.signal?.addEventListener("abort", () => resolve(), {
+								once: true,
+							}),
+						);
+				},
+			}) as never,
+	});
+	const reader = response?.body?.getReader();
+	assert.ok(reader);
+	const decoder = new TextDecoder();
+	while (true) {
+		const chunk: ReadableStreamReadResult<Uint8Array> = await reader.read();
+		assert.equal(chunk.done, false);
+		if (decoder.decode(chunk.value).includes("event: token")) break;
+	}
+	await reader.cancel();
+	assert.equal(runs.finalizations.length, 1);
+	assert.equal(runs.finalizations[0]?.status, "cancelled");
+	assert.equal(runs.finalizations[0]?.modelUsage?.status, "unavailable");
+	assert.equal(runs.finalizations[0]?.modelUsage?.totalTokens, null);
+	assert.equal(
+		runs.finalizations[0]?.modelUsage?.calls[0]?.status,
+		"cancelled",
+	);
+});
 
 function parseSse(text: string): Array<{ event: string; data: unknown }> {
 	return text

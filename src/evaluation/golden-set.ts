@@ -42,6 +42,18 @@ const AnswerCheckSchema = z.union([
 			for_fact: AnswerCheckFactSchema,
 		})
 		.strict(),
+	z
+		.object({
+			label: z.string().trim().min(1).max(120),
+			period: z
+				.object({
+					year: z.number().int().min(1000).max(9999),
+					quarter: z.number().int().min(1).max(4),
+				})
+				.strict(),
+			for_fact: AnswerCheckFactSchema,
+		})
+		.strict(),
 ]);
 const AnswerFactAliasesSchema = z
 	.object({
@@ -100,7 +112,12 @@ export const GoldenCaseSchema = z
 		}
 		const labels = new Set<string>();
 		for (const check of value.answer_checks ?? []) {
-			const phrases = "any_of" in check ? check.any_of : check.none_of;
+			const phrases =
+				"any_of" in check
+					? check.any_of
+					: "none_of" in check
+						? check.none_of
+						: [];
 			if (labels.has(check.label) || !uniqueFacts(phrases)) {
 				context.addIssue({
 					code: "custom",
@@ -383,6 +400,49 @@ function clausesForFacts(text: string, facts: readonly string[]): string[] {
 	return clauses;
 }
 
+function periodMatchesAnswer(
+	period: { year: number; quarter: number },
+	text: string,
+	facts: readonly string[],
+	fact?: string,
+): boolean {
+	const quarterName = ["一", "二", "三", "四"][period.quarter - 1];
+	if (!quarterName) return false;
+	const pattern = new RegExp(
+		String.raw`${period.year}[ \t]*年[ \t]*(?:q[ \t]*${period.quarter}|第[ \t]*${quarterName}[ \t]*季[ \t]*度)`,
+		"giu",
+	);
+	const content = text.normalize("NFKC");
+	// Check code boundaries before clause splitting can discard a product's dot.
+	// An opaque replacement prevents invalid occurrences from joining fragments.
+	const bounded = content.replace(pattern, (match: string, offset: number) => {
+		const before = content.slice(Math.max(0, offset - 1), offset);
+		const after = content.slice(
+			offset + match.length,
+			offset + match.length + 2,
+		);
+		return /[a-z0-9_./-]/iu.test(before) ||
+			/^(?:[a-z0-9_/-]|\.[a-z0-9_./-])/iu.test(after)
+			? "\uFFFD"
+			: match;
+	});
+	const scopes = fact ? clausesForFacts(bounded, facts) : [bounded];
+	return scopes.some((scope) => {
+		// Parentheses in existing fact clauses cannot bridge hard sentences here.
+		const sentences = scope.split(
+			/[\r\n\u2028\u2029。;!?]+|(?<!\d)\.|\.(?!\d)/gu,
+		);
+		return sentences.some((sentence) => {
+			if (fact && !factMatchesAnswer(fact, sentence)) return false;
+			for (const match of sentence.matchAll(pattern)) {
+				const prefix = sentence.slice(0, match.index).replace(/\s+/gu, "");
+				if (!/(?:并非|不是|不为|不等于|非)$/u.test(prefix)) return true;
+			}
+			return false;
+		});
+	});
+}
+
 export function answerCheckMatches(
 	check: z.infer<typeof AnswerCheckSchema>,
 	answer: string,
@@ -390,6 +450,9 @@ export function answerCheckMatches(
 ): boolean {
 	const text = answer.replace(/[*_`"'“”‘’「」《》]/gu, "");
 	const fact = check.for_fact;
+	if ("period" in check) {
+		return periodMatchesAnswer(check.period, text, facts, fact);
+	}
 	const scopes = fact
 		? clausesForFacts(text, facts).filter((clause) =>
 				factMatchesAnswer(fact, clause),
@@ -443,7 +506,9 @@ export function parseGoldenCase(value: unknown): GoldenCase {
 							Object.freeze(
 								"any_of" in check
 									? { ...check, any_of: Object.freeze([...check.any_of]) }
-									: { ...check, none_of: Object.freeze([...check.none_of]) },
+									: "none_of" in check
+										? { ...check, none_of: Object.freeze([...check.none_of]) }
+										: { ...check, period: Object.freeze({ ...check.period }) },
 							),
 						),
 					),

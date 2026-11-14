@@ -1,12 +1,19 @@
 "use client";
 
+import { ChevronRight, FileText, RotateCcw } from "lucide-react";
+import { useRef, useState } from "react";
+
 import { AuthButton } from "@/components/app/auth-button";
 import {
 	DocumentStatusBadge,
 	ParserReportCard,
 } from "@/components/app/document-status";
 import type { DetailAction } from "@/components/app/library-doc-actions";
-import { StageWaterfall } from "@/components/app/stage-waterfall";
+import {
+	StageWaterfall,
+	stageDisplayName,
+} from "@/components/app/stage-waterfall";
+import { Button } from "@/components/ui/button";
 import {
 	Sheet,
 	SheetContent,
@@ -19,10 +26,15 @@ import { projectParserTiming } from "@/core/parsing/parser-diagnostics";
 import type { ApiDocument, ApiDocumentVersion, ApiJob } from "@/lib/api";
 import { formatDateTime, formatDurationMs, formatFileSize } from "@/lib/format";
 import { isParserReportDegraded } from "@/lib/parser-report-view.mjs";
+import { cn } from "@/lib/utils";
 
 type Props = {
 	document: ApiDocument | null;
 	versions: ApiDocumentVersion[];
+	activeVersionId: string | null;
+	desiredVersionId: string | null;
+	versionsError: unknown;
+	onRefreshVersions: () => Promise<unknown>;
 	versionsLoading: boolean;
 	job: ApiJob | null;
 	jobLoading: boolean;
@@ -35,6 +47,10 @@ type Props = {
 export function DocumentDetailSheet({
 	document,
 	versions,
+	activeVersionId,
+	desiredVersionId,
+	versionsError,
+	onRefreshVersions,
 	versionsLoading,
 	job,
 	jobLoading,
@@ -43,111 +59,221 @@ export function DocumentDetailSheet({
 	actions,
 	onClose,
 }: Props) {
+	const titleRef = useRef<HTMLHeadingElement>(null);
+	const [versionsRefreshing, setVersionsRefreshing] = useState(false);
+	const active = versions.find((version) => version.id === activeVersionId);
+	const desired = versions.find((version) => version.id === desiredVersionId);
+	const hasSeparateDesired = Boolean(
+		activeVersionId && desiredVersionId && activeVersionId !== desiredVersionId,
+	);
+
+	async function refreshVersions() {
+		setVersionsRefreshing(true);
+		try {
+			await onRefreshVersions();
+		} finally {
+			setVersionsRefreshing(false);
+		}
+	}
+
 	return (
 		<Sheet open={document != null} onOpenChange={(open) => !open && onClose()}>
-			<SheetContent side="right" className="w-full sm:max-w-md" showCloseButton>
+			<SheetContent
+				side="right"
+				initialFocus={titleRef}
+				className="w-full max-w-full! gap-0 sm:max-w-xl! [&>[data-slot=sheet-close]]:size-11 motion-reduce:transform-none motion-reduce:transition-none"
+				showCloseButton
+			>
 				{document ? (
 					<>
-						<SheetHeader className="border-b border-border/70">
-							<SheetTitle className="pr-8">{document.name}</SheetTitle>
-							<SheetDescription>
-								{document.filename} · {document.content_type || "未知类型"}
+						<SheetHeader className="shrink-0 border-b px-5 py-5 sm:px-6">
+							<SheetDescription className="mb-1 text-xs">
+								文档详情
 							</SheetDescription>
+							<SheetTitle
+								ref={titleRef}
+								tabIndex={-1}
+								className="max-h-32 overflow-y-auto pr-10 text-base leading-relaxed [overflow-wrap:anywhere] focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
+							>
+								{document.name}
+							</SheetTitle>
 						</SheetHeader>
-						<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-2">
-							<div className="flex flex-wrap items-center gap-2">
-								<DocumentStatusBadge
-									status={document.status}
-									parserReport={document.parser_report}
-								/>
-								<span className="text-meta font-mono text-muted-foreground">
-									{document.chunk_count} chunks
-								</span>
-								<span className="text-meta font-mono text-muted-foreground">
-									{formatFileSize(document.size_bytes)}
-								</span>
-								<span
-									className={
-										document.has_file
-											? "text-meta rounded-md border border-cite/30 bg-cite/10 px-2 py-0.5 font-mono text-cite"
-											: "text-meta rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-muted-foreground"
-									}
-								>
-									{document.has_file ? "原文已保留" : "原文未保留"}
-								</span>
-							</div>
-
-							<dl className="grid gap-3 text-ui">
-								<Detail
-									label="大小"
-									value={formatFileSize(document.size_bytes)}
-								/>
-								<Detail
-									label="创建"
-									value={formatDateTime(document.created_at)}
-								/>
-								<Detail
-									label="更新"
-									value={formatDateTime(document.updated_at)}
-								/>
-								{typeof document.parser_report?.parser === "string" ||
-								document.parse_status?.parser_label ? (
-									<Detail
-										label="解析器"
-										value={
-											document.parse_status?.parser_label ||
-											String(document.parser_report?.parser)
-										}
-									/>
-								) : null}
-								{document.parse_status?.task_status ? (
-									<Detail
-										label="入库状态"
-										value={`${document.parse_status.task_status}${document.job_progress != null ? ` · ${document.job_progress}%` : ""}`}
-									/>
-								) : null}
-							</dl>
-
-							{document.error ? (
-								<div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
-									<p className="text-meta font-mono uppercase tracking-wide text-destructive">
-										错误
+						<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 sm:px-6">
+							<section aria-label="版本概览" className="space-y-3 py-5">
+								<h3 className="text-sm font-medium">生效与目标版本</h3>
+								{versionsError ? (
+									<div className="space-y-2">
+										<p role="alert" className="text-sm text-destructive">
+											版本信息读取失败，当前版本关系尚未确认。
+										</p>
+										<Button
+											type="button"
+											variant="outline"
+											className="h-11"
+											disabled={versionsRefreshing}
+											aria-busy={versionsRefreshing}
+											onClick={() => void refreshVersions()}
+										>
+											<RotateCcw data-icon="inline-start" aria-hidden />
+											重试读取版本
+										</Button>
+									</div>
+								) : versionsLoading ? (
+									<p role="status" className="text-sm text-muted-foreground">
+										正在读取版本关系…
 									</p>
-									<p className="text-ui mt-1 text-destructive">
+								) : (
+									<>
+										<dl className="grid grid-cols-2 gap-4">
+											<Detail
+												label="当前生效"
+												value={
+													active
+														? `v${active.version}`
+														: activeVersionId
+															? "生效版本未在当前列表中"
+															: "未设置生效版本"
+												}
+											/>
+											<Detail
+												label="目标版本"
+												value={
+													desired
+														? `v${desired.version}`
+														: desiredVersionId
+															? "目标版本未在当前列表中"
+															: "未设置目标版本"
+												}
+											/>
+											{activeVersionId && !active ? (
+												<Detail
+													className="col-span-2"
+													label="生效版本 ID"
+													value={activeVersionId}
+												/>
+											) : null}
+											{desiredVersionId && !desired ? (
+												<Detail
+													className="col-span-2"
+													label="目标版本 ID"
+													value={desiredVersionId}
+												/>
+											) : null}
+										</dl>
+										{activeVersionId ? (
+											<p className="border-l-2 border-primary pl-3 text-sm leading-relaxed">
+												{hasSeparateDesired
+													? `${active ? `v${active.version}` : "已有版本"} 仍为生效版本；${desired ? `目标 v${desired.version}` : "目标版本"} 尚未生效。`
+													: active
+														? `v${active.version} 为当前生效版本。`
+														: "已设置生效版本，序号未包含在当前列表中。"}
+											</p>
+										) : (
+											<p className="text-sm text-muted-foreground">
+												当前未设置生效版本。
+											</p>
+										)}
+									</>
+								)}
+								<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+									<span>文档处理状态</span>
+									<DocumentStatusBadge
+										status={document.status}
+										parserReport={document.parser_report}
+									/>
+								</div>
+								{document.error ? (
+									<p
+										role="alert"
+										className="text-sm leading-relaxed text-destructive [overflow-wrap:anywhere]"
+									>
 										{document.error}
 									</p>
+								) : null}
+							</section>
+
+							<section
+								aria-label="来源与文件"
+								className="space-y-4 border-t py-5"
+							>
+								<div className="flex items-center gap-2">
+									<FileText
+										className="size-4 text-muted-foreground"
+										aria-hidden
+									/>
+									<h3 className="text-sm font-medium">来源与文件</h3>
 								</div>
-							) : null}
+								<dl className="grid grid-cols-2 gap-x-4 gap-y-4">
+									<Detail
+										className="col-span-2"
+										label="记录文件名"
+										value={document.filename}
+									/>
+									<Detail
+										label="文件类型"
+										value={document.content_type || "未知类型"}
+									/>
+									<Detail
+										label="目标文件大小"
+										value={formatFileSize(document.size_bytes)}
+									/>
+									<Detail
+										label="目标版本片段"
+										value={`${document.chunk_count} chunks`}
+									/>
+									<Detail
+										label="目标原文件"
+										value={
+											document.has_file
+												? "原文已保留"
+												: document.has_file === false
+													? "原文未保留"
+													: "保留状态未知"
+										}
+									/>
+									<Detail
+										label="创建"
+										value={formatDateTime(document.created_at)}
+									/>
+									<Detail
+										label="更新"
+										value={formatDateTime(document.updated_at)}
+									/>
+								</dl>
+								{hasSeparateDesired && !versionsError ? (
+									<p className="text-xs leading-relaxed text-muted-foreground">
+										文件大小、保留状态和解析报告对应目标版本；下载由服务端返回当前生效版本的原文件。
+									</p>
+								) : null}
+								{document.has_file === false ? (
+									<p className="text-sm leading-relaxed text-muted-foreground">
+										目标版本未保留原文件，相关下载与重索引操作可能不可用。
+										{canWrite ? "可用「替换文件」重新上传。" : ""}
+									</p>
+								) : null}
+							</section>
 
-							<VersionHistory versions={versions} loading={versionsLoading} />
-
-							<JobTimeline job={job} loading={jobLoading} />
-
-							{document.parser_report ? (
+							<JobTimeline job={job} loading={jobLoading} document={document} />
+							<VersionHistory
+								versions={versions}
+								loading={versionsLoading}
+								error={versionsError}
+								activeVersionId={activeVersionId}
+								desiredVersionId={desiredVersionId}
+							/>
+							<section
+								aria-label="解析诊断"
+								className="space-y-3 border-t py-5"
+							>
+								<h3 className="text-sm font-medium">解析诊断</h3>
 								<ParserReportCard
 									report={document.parser_report}
 									parseStatus={document.parse_status}
 								/>
-							) : document.parse_status?.task_status ? (
-								<div className="rounded-md border border-border/80 bg-muted/30 px-3 py-2">
-									<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
-										入库进度
-									</p>
-									<p className="text-ui mt-1">
-										{document.parse_status.task_status}
-									</p>
-								</div>
-							) : null}
-
-							{!document.has_file ? (
-								<p className="text-ui text-muted-foreground">
-									此文档上传时未落盘原文，无法下载或重索引。
-									{canWrite ? "可用「替换文件」重新上传。" : ""}
-								</p>
-							) : null}
+							</section>
 						</div>
-						<SheetFooter className="border-t border-border/70">
-							<div className="flex flex-wrap gap-2">
+						<SheetFooter className="max-h-[35dvh] shrink-0 overflow-y-auto border-t bg-background px-5 py-3 sm:px-6">
+							<div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
 								{actions.map((action) => {
 									const Icon = action.icon;
 									const highlight =
@@ -162,11 +288,11 @@ export function DocumentDetailSheet({
 											variant={
 												highlight ? "default" : (action.variant ?? "outline")
 											}
-											className="rounded-md"
+											className="h-11 min-w-11 rounded-md px-2 text-sm"
 											disabled={action.disabled?.(document, busy) ?? false}
 											onClick={() => action.run(document)}
 										>
-											<Icon data-icon="inline-start" />
+											<Icon data-icon="inline-start" aria-hidden />
 											{action.label}
 										</AuthButton>
 									);
@@ -180,82 +306,166 @@ export function DocumentDetailSheet({
 	);
 }
 
+const JOB_STATUS_LABELS: Record<string, string> = {
+	queued: "排队中",
+	running: "执行中",
+	cancelling: "取消中",
+	cancelled: "已取消",
+	completed: "已完成",
+	failed: "失败",
+	dead: "重试已耗尽",
+};
+
 function JobTimeline({
 	job,
 	loading,
+	document,
 }: {
 	job: ApiJob | null;
 	loading: boolean;
+	document: ApiDocument;
 }) {
-	if (loading) {
-		return <p className="text-ui text-muted-foreground">正在读取入库链路…</p>;
-	}
-	if (!job) return null;
+	const observedTotal =
+		job?.started_at && job.finished_at
+			? Date.parse(job.finished_at) - Date.parse(job.started_at)
+			: null;
 	const total =
-		job.started_at && job.finished_at
-			? Math.max(0, Date.parse(job.finished_at) - Date.parse(job.started_at))
+		observedTotal != null &&
+		Number.isFinite(observedTotal) &&
+		observedTotal >= 0
+			? observedTotal
 			: null;
 	const timing = projectParserTiming(
-		(job.parser_report?.metrics as Record<string, unknown> | undefined)
+		(job?.parser_report?.metrics as Record<string, unknown> | undefined)
 			?.parser_timing,
 	);
+	const status = job?.status ?? document.job_status;
+	const stage = job?.stage ?? document.job_stage;
+	const progress = job?.progress ?? document.job_progress;
+
 	return (
-		<section className="border border-border/80 bg-muted/15 px-3 py-3">
-			<div className="flex items-baseline justify-between gap-3">
-				<div>
-					<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
-						入库链路
-					</p>
-					<p className="mt-1 font-mono text-[10px] text-muted-foreground">
-						{job.id}
-					</p>
-				</div>
-				<span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-					{total == null ? `${job.progress}%` : formatDurationMs(total)}
-				</span>
-			</div>
-			<div className="mt-3">
-				<StageWaterfall stages={job.stage_runs ?? []} compact />
-			</div>
-			{timing ? (
-				<dl className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 border-t border-border/60 pt-3 text-meta">
-					{[
-						["本地 PDF 分析", formatDurationMs(timing.analysis_ms)],
-						["提交文件与任务", formatDurationMs(timing.submission_ms)],
-						["任务等待（含轮询）", formatDurationMs(timing.provider_wait_ms)],
-						["结果获取与转换", formatDurationMs(timing.result_fetch_ms)],
-						["轮询 / 重试", `${timing.poll_count} / ${timing.retry_count}`],
-					].map(([label, value]) => (
-						<div className="contents" key={label}>
-							<dt className="text-muted-foreground">{label}</dt>
-							<dd className="font-mono text-right tabular-nums">{value}</dd>
-						</div>
-					))}
+		<section aria-label="当前处理任务" className="space-y-4 border-t py-5">
+			<h3 className="text-sm font-medium">当前处理任务</h3>
+			{loading ? (
+				<p role="status" className="text-sm text-muted-foreground">
+					正在读取入库链路…
+				</p>
+			) : null}
+			{status || stage ? (
+				<dl className="grid grid-cols-2 gap-4">
+					<Detail
+						label="任务状态"
+						value={status ? (JOB_STATUS_LABELS[status] ?? status) : "未知"}
+					/>
+					<Detail
+						label="当前阶段"
+						value={stage ? stageDisplayName(stage) : "未提供"}
+					/>
+					{typeof progress === "number" &&
+					Number.isFinite(progress) &&
+					progress >= 0 &&
+					progress <= 100 ? (
+						<Detail label="任务进度" value={`${progress}%`} />
+					) : null}
+					{total != null ? (
+						<Detail label="执行耗时" value={formatDurationMs(total)} />
+					) : null}
 				</dl>
 			) : null}
-			<dl className="mt-3 grid grid-cols-2 gap-2 border-t border-border/60 pt-3">
-				<Detail label="创建" value={formatDateTime(job.created_at)} />
-				<Detail
-					label="开始"
-					value={job.started_at ? formatDateTime(job.started_at) : "等待执行"}
-				/>
-				<Detail
-					label="结束"
-					value={job.finished_at ? formatDateTime(job.finished_at) : "尚未结束"}
-				/>
-				<Detail label="尝试" value={String(job.attempt)} />
-			</dl>
+			{job ? (
+				<>
+					<dl className="grid grid-cols-2 gap-4">
+						<Detail className="col-span-2" label="任务 ID" value={job.id} />
+						<Detail label="任务类型" value={job.type} />
+						<Detail
+							label="尝试次数 / 上限"
+							value={`${job.attempt} / ${job.max_attempts}`}
+						/>
+						{job.progress_current != null && job.progress_total != null ? (
+							<Detail
+								label="已处理 / 总量"
+								value={`${job.progress_current} / ${job.progress_total}`}
+							/>
+						) : null}
+					</dl>
+					<div className="space-y-2">
+						<h4 className="text-xs font-medium text-muted-foreground">
+							入库链路
+						</h4>
+						<p className="text-xs text-muted-foreground">
+							顺序累计耗时，非绝对时间轴
+						</p>
+						<StageWaterfall
+							stages={job.stage_runs ?? []}
+							compact
+							className="[&_span]:text-xs [&_p]:text-xs motion-reduce:[&_*]:animate-none motion-reduce:[&_*]:transition-none"
+						/>
+					</div>
+					{timing ? (
+						<dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+							{[
+								["本地 PDF 分析", formatDurationMs(timing.analysis_ms)],
+								["提交文件与任务", formatDurationMs(timing.submission_ms)],
+								[
+									"任务等待（含轮询）",
+									formatDurationMs(timing.provider_wait_ms),
+								],
+								["结果获取与转换", formatDurationMs(timing.result_fetch_ms)],
+								["轮询 / 重试", `${timing.poll_count} / ${timing.retry_count}`],
+							].map(([label, value]) => (
+								<Detail key={label} label={label} value={value} />
+							))}
+						</dl>
+					) : null}
+					<dl className="grid grid-cols-2 gap-4">
+						<Detail label="创建" value={formatDateTime(job.created_at)} />
+						<Detail
+							label="开始"
+							value={job.started_at ? formatDateTime(job.started_at) : "未记录"}
+						/>
+						<Detail
+							label="结束"
+							value={
+								job.finished_at ? formatDateTime(job.finished_at) : "未记录"
+							}
+						/>
+					</dl>
+					{job.error_code || job.error ? (
+						<div
+							role="alert"
+							className="space-y-1 border-l-2 border-destructive pl-3 text-sm text-destructive [overflow-wrap:anywhere]"
+						>
+							{job.error_code ? (
+								<p className="font-mono text-xs">{job.error_code}</p>
+							) : null}
+							{job.error ? <p>{job.error}</p> : null}
+						</div>
+					) : null}
+				</>
+			) : !loading ? (
+				<p className="text-sm text-muted-foreground">
+					{document.job_id ? "未取得任务详情" : "暂无关联任务"}
+				</p>
+			) : null}
 		</section>
 	);
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
+function Detail({
+	label,
+	value,
+	className,
+}: {
+	label: string;
+	value: string;
+	className?: string;
+}) {
 	return (
-		<div>
-			<dt className="text-meta font-mono text-muted-foreground uppercase tracking-wide">
-				{label}
-			</dt>
-			<dd className="mt-0.5 font-mono text-meta">{value}</dd>
+		<div className={cn("min-w-0", className)}>
+			<dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
+			<dd className="mt-1 text-sm leading-relaxed [overflow-wrap:anywhere]">
+				{value}
+			</dd>
 		</div>
 	);
 }
@@ -263,44 +473,103 @@ function Detail({ label, value }: { label: string; value: string }) {
 function VersionHistory({
 	versions,
 	loading,
+	error,
+	activeVersionId,
+	desiredVersionId,
 }: {
 	versions: ApiDocumentVersion[];
 	loading: boolean;
+	error: unknown;
+	activeVersionId: string | null;
+	desiredVersionId: string | null;
 }) {
 	return (
-		<div className="rounded-md border border-border/80 bg-muted/20 px-3 py-2">
-			<p className="text-meta font-mono uppercase tracking-wide text-muted-foreground">
-				版本历史
-			</p>
-			{loading ? (
-				<p className="text-ui mt-2 text-muted-foreground">加载中…</p>
+		<section aria-label="版本历史" className="space-y-3 border-t py-5">
+			<h3 className="text-sm font-medium">版本历史</h3>
+			{error ? (
+				<p className="text-sm text-muted-foreground">版本历史暂不可用</p>
+			) : loading ? (
+				<p role="status" className="text-sm text-muted-foreground">
+					正在读取版本历史…
+				</p>
 			) : versions.length === 0 ? (
-				<p className="text-ui mt-2 text-muted-foreground">暂无版本</p>
+				<p className="text-sm text-muted-foreground">未取得版本记录</p>
 			) : (
-				<ul className="mt-2 space-y-2">
+				<ul className="divide-y divide-border">
 					{versions.map((version) => (
-						<li
-							key={version.id}
-							className="flex items-start justify-between gap-2 border-t border-border/50 pt-2 first:border-t-0 first:pt-0"
-						>
-							<div className="min-w-0">
-								<p className="font-mono text-meta">
-									v{version.version}
-									{version.is_active ? " · active" : ""}
-									{version.is_desired && !version.is_active ? " · desired" : ""}
-								</p>
-								<p className="truncate text-meta text-muted-foreground">
-									{version.generation_id.slice(0, 8)}…
-									{version.chunk_count != null
-										? ` · ${version.chunk_count} chunks`
-										: ""}
-								</p>
+						<li key={version.id} className="py-3 first:pt-0 last:pb-0">
+							<div className="flex flex-wrap items-center justify-between gap-2">
+								<div className="flex flex-wrap items-center gap-2 text-xs">
+									<span className="font-mono text-sm font-medium">
+										v{version.version}
+									</span>
+									{version.id === activeVersionId ? (
+										<span className="text-primary">当前生效</span>
+									) : null}
+									{version.id === desiredVersionId ? (
+										<span className="text-muted-foreground">目标版本</span>
+									) : null}
+								</div>
+								<DocumentStatusBadge status={version.status} />
 							</div>
-							<DocumentStatusBadge status={version.status} />
+							<p className="mt-2 text-xs text-muted-foreground">
+								{formatDateTime(version.created_at)}
+								{version.chunk_count != null
+									? ` · ${version.chunk_count} chunks`
+									: ""}
+							</p>
+							<details className="group mt-1">
+								<summary className="flex min-h-11 cursor-pointer items-center gap-2 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+									<ChevronRight
+										className="size-4 shrink-0 group-open:rotate-90"
+										aria-hidden
+									/>
+									版本明细
+								</summary>
+								<dl className="grid grid-cols-2 gap-3 pb-2">
+									<Detail
+										className="col-span-2"
+										label="版本 ID"
+										value={version.id}
+									/>
+									<Detail
+										className="col-span-2"
+										label="Generation"
+										value={version.generation_id}
+									/>
+									<Detail
+										label="大小"
+										value={formatFileSize(version.size_bytes)}
+									/>
+									{version.parser_backend ? (
+										<Detail label="解析后端" value={version.parser_backend} />
+									) : null}
+									{version.pipeline_version ? (
+										<Detail
+											label="流水线版本"
+											value={version.pipeline_version}
+										/>
+									) : null}
+									{version.activated_at ? (
+										<Detail
+											label="生效时间"
+											value={formatDateTime(version.activated_at)}
+										/>
+									) : null}
+									{version.failure_code ? (
+										<Detail label="失败代码" value={version.failure_code} />
+									) : null}
+								</dl>
+							</details>
+							{version.error ? (
+								<p className="text-sm text-destructive [overflow-wrap:anywhere]">
+									{version.error}
+								</p>
+							) : null}
 						</li>
 					))}
 				</ul>
 			)}
-		</div>
+		</section>
 	);
 }

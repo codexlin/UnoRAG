@@ -2,7 +2,6 @@ import {
 	APICallError,
 	generateText,
 	type LanguageModel,
-	type LanguageModelUsage,
 	type ModelMessage,
 	NoObjectGeneratedError,
 	NoOutputGeneratedError,
@@ -19,6 +18,13 @@ import {
 	AiConcurrencyOverloadedError,
 	AiConcurrencyWaitTimeoutError,
 } from "./concurrency-gate";
+import {
+	type ModelUsageObservation,
+	type ModelUsageRecorder,
+	type ModelUsageTokens,
+	normalizeModelUsage,
+	startModelUsageAttempt,
+} from "./model-usage";
 import {
 	getPrompt,
 	promptSpanAttributes,
@@ -143,6 +149,7 @@ export interface StructuredGenerationRequest {
 	temperature: number;
 	maxOutputTokens?: number;
 	abortSignal?: AbortSignal;
+	onUsage?: (usage: ModelUsageObservation) => void;
 }
 
 export type StructuredGenerationExecutor = (
@@ -178,6 +185,7 @@ export type StructuredOutputAdapterOptions = {
 	maxAttempts?: number;
 	maxOutputTokens?: number;
 	concurrencyGate?: AiConcurrencyGateLike;
+	usageRecorder?: ModelUsageRecorder;
 };
 
 export type StructuredRequestMetadata = {
@@ -262,7 +270,7 @@ function classifyFailure(
 class DefaultStructuredResult {
 	constructor(
 		readonly output: unknown,
-		readonly usage: LanguageModelUsage,
+		readonly usage: ModelUsageTokens,
 	) {}
 }
 
@@ -289,7 +297,9 @@ async function defaultStructuredExecutor(
 			`unorag.structured.${request.schemaName}`,
 		),
 	});
-	return new DefaultStructuredResult(result.output, result.usage);
+	const usage = normalizeModelUsage(result.usage);
+	request.onUsage?.(usage);
+	return new DefaultStructuredResult(result.output, usage);
 }
 
 function userMessage(content: string): ModelMessage {
@@ -301,6 +311,7 @@ export class StructuredOutputAdapter {
 	private readonly maxAttempts: number;
 	private readonly maxOutputTokens: number | undefined;
 	private readonly concurrencyGate: AiConcurrencyGateLike | undefined;
+	private readonly usageRecorder: ModelUsageRecorder | undefined;
 
 	constructor(
 		private readonly model: LanguageModel,
@@ -314,6 +325,7 @@ export class StructuredOutputAdapter {
 				? undefined
 				: positiveInteger(options.maxOutputTokens, 1, "maxOutputTokens");
 		this.concurrencyGate = options.concurrencyGate;
+		this.usageRecorder = options.usageRecorder;
 	}
 
 	private async request<K extends StructuredKind>(
@@ -337,6 +349,8 @@ export class StructuredOutputAdapter {
 				| undefined;
 			let timeout: NodeJS.Timeout | undefined;
 			let requestStarted = false;
+			let usageAttempt: ReturnType<typeof startModelUsageAttempt> | undefined;
+			let observedUsage: ModelUsageObservation | undefined;
 			try {
 				// Admission has its own queue bound and timeout. Provider execution gets
 				// the full structured-output budget after a permit is granted.
@@ -344,6 +358,12 @@ export class StructuredOutputAdapter {
 				await beforeRequest?.();
 				if (abortSignal?.aborted) throw abortSignal.reason;
 				requestStarted = true;
+				usageAttempt = startModelUsageAttempt(
+					this.model,
+					kind,
+					attempt,
+					this.usageRecorder,
+				);
 				const timeoutController = new AbortController();
 				const operationSignal = abortSignal
 					? AbortSignal.any([abortSignal, timeoutController.signal])
@@ -373,6 +393,10 @@ export class StructuredOutputAdapter {
 								temperature: STRUCTURED_TEMPERATURE,
 								maxOutputTokens: this.maxOutputTokens,
 								abortSignal: operationSignal,
+								onUsage: (usage) => {
+									observedUsage = normalizeModelUsage(usage);
+									usageAttempt?.onUsage(observedUsage);
+								},
 							}),
 							new Promise<never>((_, reject) => {
 								timeout = setTimeout(() => {
@@ -384,30 +408,39 @@ export class StructuredOutputAdapter {
 				);
 				const output =
 					raw instanceof DefaultStructuredResult ? raw.output : raw;
+				if (abortSignal?.aborted) throw abortSignal.reason;
+				if (raw instanceof DefaultStructuredResult) {
+					observedUsage = raw.usage;
+					usageAttempt.onUsage(raw.usage);
+				}
 				const parsed = schema.safeParse(output);
 				if (!parsed.success) {
 					throw new StructuredOutputValidationError(kind, parsed.error);
 				}
-				const usage =
-					raw instanceof DefaultStructuredResult ? raw.usage : undefined;
+				usageAttempt.finish("completed");
+				const usage = observedUsage;
 				return {
 					output: parsed.data as z.infer<StructuredSchemaMap[K]>,
 					metadata: {
 						attempts: attempt,
 						durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
-						...(usage?.inputTokens !== undefined
+						...(usage?.inputTokens != null
 							? { inputTokens: usage.inputTokens }
 							: {}),
-						...(usage?.outputTokens !== undefined
+						...(usage?.outputTokens != null
 							? { outputTokens: usage.outputTokens }
 							: {}),
-						...(usage?.totalTokens !== undefined
+						...(usage?.totalTokens != null
 							? { totalTokens: usage.totalTokens }
 							: {}),
 					},
 				};
 			} catch (error) {
 				if (!requestStarted) throw error;
+				if (NoObjectGeneratedError.isInstance(error) && error.usage) {
+					usageAttempt?.onUsage(error.usage);
+				}
+				usageAttempt?.finish(abortSignal?.aborted ? "cancelled" : "failed");
 				if (abortSignal?.aborted) throw error;
 				if (
 					error instanceof AiConcurrencyOverloadedError ||

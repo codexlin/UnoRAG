@@ -24,6 +24,9 @@ pnpm db:check
 pnpm build
 ```
 
+`pnpm typecheck` 先运行 `next typegen`，再执行 TypeScript 检查；干净检出不依赖已有
+`next-env.d.ts` 或 `.next` 缓存，也不要手写图片模块声明绕过框架类型生成。
+
 `pnpm test:fast` 覆盖不依赖外部服务的产品行为、授权、DocumentIR/TableIR、解析、切分、
 检索过滤、Ask 图、DBOS 工作流及部署契约。`pnpm test:contract` 是公共 API、IR、检索和工作流
 契约的聚焦子集，适合接口变更时快速确认。环境测试不会混入快速套件后以 skip 伪装通过。CI 会创建
@@ -48,6 +51,9 @@ UNORAG_E2E_ADMIN_EMAIL=admin@unorag.local \
 UNORAG_E2E_ADMIN_PASSWORD='...' \
 pnpm test:e2e
 ```
+
+重复执行浏览器套件也会消耗真实登录限流额度；优先在套件内复用会话。登录失败先检查 HTTP 429 和
+`Retry-After`，不要将其归为页面导航故障，也不要为通过 UI 测试放宽正式阈值或清空整个 Redis。
 
 测试按责任分层，而不是按版本复制：
 
@@ -76,7 +82,7 @@ pnpm test:e2e
 
 ## 本地运行
 
-完整生命周期开发优先使用私有部署 Compose：
+完整生命周期开发复用私有部署 Compose 的配置、数据库、Qdrant、Redis 与文件存储：
 
 ```bash
 cd deploy/compose
@@ -84,6 +90,18 @@ cd deploy/compose
 # 填写 ../config/runtime.env、runtime.secret；高级调优按需修改
 ./scripts/install.sh
 ```
+
+已有上述环境后，从仓库根目录运行 `pnpm dev:full`，访问 `http://localhost:3001`。
+该命令构建开发依赖镜像、停止旧应用进程、应用现有前向迁移，然后以本地源码启动 Web 热更新和
+Worker/control 自动重启。数据库和文件不重置，Web/Worker 使用同一份代码与 `dev-local` 执行版本。
+Linux 依赖与 Next 缓存分别使用 Docker 卷，不复用宿主机的原生模块。首次安装或依赖变化需要构建，
+普通源码修改无需重建镜像。切换前应等待任务结束并备份；迁移拒绝未排空的入库任务时先处理任务，不绕过检查。
+
+手机访问可使用
+`UNORAG_DEV_BIND=0.0.0.0 UNORAG_DEV_ORIGINS=192.168.1.4 UNORAG_DEV_BASE_URL=http://192.168.1.4:3001 pnpm dev:full`。
+沿用原开发账号和工作区，不创建另一套 UI 数据库；`pnpm dev:full logs` 查看应用日志，
+`pnpm dev:full stop` 仅停止应用进程。开发覆盖文件不属于正式安装、升级或香港部署链路。
+覆盖文件显式允许 `127.0.0.1` 的开发资源与 HMR；局域网 IP 则由上述变量按需加入，不能使用全开放白名单。
 
 只调整页面时，可以单独启动本地基础设施和 Next.js：
 
@@ -95,6 +113,18 @@ pnpm dev
 
 上传、替换、重索引、ACL 投影、删除和清理依赖 DBOS system database、Worker 运行角色、
 Qdrant、共享文档存储与模型配置，应使用完整 Compose 环境验证。
+
+手机预览须连接同一可信局域网，并显式允许本机当前 IP，例如
+`UNORAG_DEV_ORIGINS=192.168.1.4 pnpm dev --hostname 0.0.0.0`；多个主机名用逗号分隔，不含协议或端口。
+这是 Next 开发资源的来源白名单，仅在开发模式读取，不改变生产 CSP、鉴权或 Cookie 规则。
+不要对公网开放开发服务器；数据库、Redis 仍只绑定回环地址，实际 IP 变化后须重启预览。
+HTTP IP 地址不是安全上下文，浏览器不提供 `crypto.randomUUID`；客户端临时 ID 统一通过
+`src/lib/client-id.ts`，在该方法不可用时使用 `crypto.getRandomValues` 生成 UUID v4，不能改用
+`Math.random`、时间戳或测试注入来掩盖预览故障。这不放宽正式部署的 HTTPS、鉴权或 Cookie 边界。
+
+对源码热更新服务跑浏览器测试时，显式设置 `UNORAG_E2E_TARGET_MODE=development`。
+该模式只调整开发/正式安全响应头的断言：开发允许 HMR 所需的 `unsafe-eval` 且不发送 HSTS；
+默认仍验证正式候选版本的严格响应头，不能用开发模式替代发布安全验收，也不延长默认等待或增加重试。
 
 ## 仓库结构
 
@@ -128,6 +158,19 @@ UI 组件源码由仓库维护，不依赖 shadcn CLI 参与安装或构建。Ba
 `src/app/ui-variants.css`，来源及 MIT 声明见 `NOTICE`。新增组件时须审核所需样式，不为生成代码
 永久安装整套 CLI。第三方许可证仍按 pnpm 生产依赖清单、包内许可证及 SPDX 正文生成；无法确定的
 许可文本会阻断检查，不静默跳过。
+
+### 产品界面与动效
+
+改动页面、组件、文案或交互前先读 [产品设计规范](./DESIGN.md)。它描述已确认的目标设计，不表示全站
+已经改版；新旧样式交接按其中的小批顺序实施，不把演示稿作为服务端状态或计量契约。
+
+优先复用现有 Base UI 与本地 UI 组件，简单反馈使用 CSS，需要状态协调时才使用 `motion/react`。
+Sonner、Lucide 和阶段瀑布也沿用现有实现；不要为视觉打磨增加整套 registry 或第二个动画框架。
+UI 改动须覆盖浅深色、键盘/触屏、reduced-motion 及相关真实状态；具体尺寸、节奏与验收项只维护在
+设计规范中，不在本指南复制另一份数值表。
+
+替换页面前按设计规范中的“现有能力与最终页面对应”核对入口、动作和实际 API 字段。简化原型不是
+删减功能的依据；纯呈现、交互状态变化与新增数据契约分别审查，不把新能力混入换肤提交。
 
 ### 代码放在哪里
 

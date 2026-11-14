@@ -803,12 +803,12 @@ test("judge evidence projection is bounded and excludes raw table rows", async (
 		device: "服务器",
 		amount: "120000",
 	});
-	const projected = projectJudgeEvidence([
-		{ ...source, body: "证据".repeat(2_000) },
-	]);
+	const body = "证据".repeat(2_000);
+	const projected = projectJudgeEvidence([{ ...source, body }]);
 
 	assert.equal(projected.length, 1);
-	assert.equal(projected[0]?.text.length, 2_401);
+	assert.equal(projected[0]?.text.length, 2_400);
+	assert.equal(projected[0]?.text, body.slice(0, 2_400));
 	assert.equal("rows" in (projected[0] ?? {}), false);
 	assert.equal("tenant_id" in (projected[0] ?? {}), false);
 });

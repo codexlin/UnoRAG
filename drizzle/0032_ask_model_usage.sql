@@ -1,0 +1,1 @@
+ALTER TABLE "app"."ask_runs" ADD COLUMN "model_usage" jsonb;

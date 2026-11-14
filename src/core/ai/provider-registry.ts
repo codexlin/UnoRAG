@@ -17,6 +17,7 @@ export interface OpenAICompatibleAiConfig {
 	chatModel: string;
 	providerName?: string;
 	supportsStructuredOutputs?: boolean;
+	includeUsage?: boolean;
 }
 
 export interface AiProviderRegistry {
@@ -72,6 +73,7 @@ export function aiConfigFromEnv(
 		providerName: env.AI_PROVIDER_NAME?.trim() || "openai-compatible",
 		supportsStructuredOutputs:
 			env.AI_SUPPORTS_STRUCTURED_OUTPUTS?.trim().toLowerCase() !== "false",
+		includeUsage: env.AI_INCLUDE_USAGE?.trim().toLowerCase() !== "false",
 	};
 }
 
@@ -85,6 +87,7 @@ export function judgeAiConfigFromEnv(
 		baseUrl: env.JUDGE_BASE_URL?.trim() || base.baseUrl,
 		chatModel: env.JUDGE_MODEL?.trim() || base.chatModel,
 		providerName: env.JUDGE_PROVIDER_NAME?.trim() || base.providerName,
+		includeUsage: base.includeUsage,
 		supportsStructuredOutputs:
 			env.JUDGE_SUPPORTS_STRUCTURED_OUTPUTS?.trim().toLowerCase() === "false"
 				? false
@@ -104,6 +107,7 @@ export function createAiProviderRegistry(
 		apiKey,
 		baseURL: baseUrl,
 		supportsStructuredOutputs: config.supportsStructuredOutputs ?? true,
+		includeUsage: config.includeUsage ?? true,
 	});
 
 	return {

@@ -67,6 +67,7 @@ export type ApiAskStage = {
 
 /** Ask observability payload (P0 stages + summary fields). */
 export type ApiRetrievalDebug = {
+	model_usage?: import("@/core/ai/model-usage").ModelUsageSummary;
 	trace_id?: string;
 	question_hash?: string;
 	library_id?: string | null;
@@ -793,6 +794,7 @@ export async function archiveThread(input: {
 		refused?: boolean;
 		refuse_reason?: string | null;
 		library_id?: string;
+		retrieval_debug?: ApiRetrievalDebug | null;
 	}>;
 }): Promise<ApiThreadDetail> {
 	const response = await fetch(`${getApiBaseUrl()}/v1/threads`, {

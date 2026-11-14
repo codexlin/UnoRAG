@@ -23,6 +23,16 @@ RUN --mount=type=cache,id=unorag-pnpm-dev,target=/root/.local/share/pnpm/store \
 	&& rm -rf /usr/local/lib/node_modules/npm \
 	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
 
+# Local source-mounted development only; never used by release images.
+FROM deps AS development
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends curl tesseract-ocr-eng tesseract-ocr-chi-sim \
+	&& rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=development \
+	NEXT_TELEMETRY_DISABLED=1 \
+	TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+CMD ["pnpm", "exec", "next", "dev", "--hostname", "0.0.0.0", "--port", "3000"]
+
 # Runtime-only dependency tree for ops and worker. Pruning a full install in a
 # later Docker layer does not remove the original dev-dependency bytes from the
 # image, so production dependencies must be installed in their own stage.

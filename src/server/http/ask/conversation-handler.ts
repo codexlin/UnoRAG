@@ -20,6 +20,7 @@ import {
 } from "@/server/conversations/session-memory";
 import type { ConversationScope } from "@/server/conversations/types";
 import { recoverArchiveProvenance } from "./authorized-history";
+import { projectPublicRetrievalDebug } from "./legacy-sse";
 
 const CitationSchema = z.record(z.string(), z.unknown());
 const ArchiveTurnInputSchema = z
@@ -481,7 +482,9 @@ export async function handleNativeConversationRequest(input: {
 								mode: turn.mode,
 								refused: turn.refused,
 								refuse_reason: turn.refuse_reason ?? null,
-								retrieval_debug: turn.retrieval_debug ?? null,
+								retrieval_debug: turn.retrieval_debug
+									? projectPublicRetrievalDebug(turn.retrieval_debug)
+									: null,
 								memory_provenance: provenance[index] ?? null,
 							},
 						},

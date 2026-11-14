@@ -13,7 +13,7 @@ import {
 	uuid,
 	varchar,
 } from "drizzle-orm/pg-core";
-
+import type { ModelUsageSummary } from "@/core/ai/model-usage";
 import {
 	conversationThreads,
 	libraries,
@@ -50,6 +50,7 @@ export const askRuns = appSchema.table(
 		usedRerank: boolean("used_rerank").default(false).notNull(),
 		citationCount: integer("citation_count").default(0).notNull(),
 		latencyMs: integer("latency_ms"),
+		modelUsage: jsonb("model_usage").$type<ModelUsageSummary>(),
 		errorCode: varchar("error_code", { length: 128 }),
 		startedAt: timestamp("started_at", { withTimezone: true })
 			.defaultNow()

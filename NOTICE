@@ -8,12 +8,25 @@ Release container images include THIRD_PARTY_NOTICES.txt and publish an SBOM
 and provenance attestation alongside the image manifest. See ASSETS.md and
 assets/provenance.json for repository asset provenance.
 
+Vercel, Claude and Violet Bloom theme snapshots in src/styles/themes/ originate
+from tweakcn (https://github.com/jnsahaj/tweakcn), distributed under Apache-2.0.
+The license is reproduced in LICENSE. Generated src/styles/themes.css is adapted
+by UnoRAG to preserve diagnostic status colors, accessible text, local fonts and
+independent geometry. Theme names describe preset origins, not endorsements.
+
 The UnoRAG name, the UnoRAG and Uno logos, and related Uno product marks are
 not licensed under Apache License 2.0. See TRADEMARKS.md for permitted uses.
 
 State variants and no-scrollbar utility in src/app/ui-variants.css are adapted
 from shadcn 4.23.0, dist/tailwind.css (https://github.com/shadcn-ui/ui).
 The unused CLI and animation/scroll-fade/shimmer helpers are not redistributed.
+Slider, RadioGroup, Checkbox, Switch, Select, Popover, Collapsible, HoverCard,
+Trace, Message, Bubble, InputGroup and MessageScroller in src/components/ui/ are adapted from
+the shadcn/ui base-nova registry, retrieved 2026-11-13 and 2026-11-14 from
+https://ui.shadcn.com/r/styles/base-nova/ (https://github.com/shadcn-ui/ui).
+Product adaptations include semantic theme tokens, touch targets, text resizing,
+local Lucide icons and reduced-motion behavior. MessageScroller reuses the
+MIT-licensed @shadcn/react 0.3.1 primitive. No registry code is loaded at runtime.
 
 MIT License
 

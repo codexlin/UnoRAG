@@ -1,6 +1,6 @@
 import { type Cookie, expect, type Page, test } from "@playwright/test";
-
 import type { ApiDocument, ApiLibrary } from "../../src/lib/api";
+import { chooseSelect } from "./select-helpers";
 
 let cookies: Cookie[] = [];
 const errors = new WeakMap<Page, string[]>();
@@ -21,7 +21,7 @@ test.beforeAll(async ({ browser }) => {
 		await page.getByLabel("邮箱").fill(email);
 		await page.getByLabel("密码").fill(password);
 		await page.getByRole("button", { name: "登录", exact: true }).click();
-		await page.waitForURL((url) => url.pathname.startsWith("/app"));
+		await page.waitForURL((url) => url.pathname === "/app/ask");
 		cookies = await context.cookies();
 	} finally {
 		await context.close();
@@ -74,10 +74,10 @@ test("knowledge library hydrates after the layout has cached the list", async ({
 			return;
 		}
 		const response = await route.fetch();
-		// Identify the installed page bundle by its registry heading, not a build hash.
+		// This page-only control survives copy changes and production minification.
 		if (
 			response.ok() &&
-			(await response.text()).includes("Knowledge registry")
+			(await response.text()).includes("document-task-filter")
 		) {
 			const list = await listResponse;
 			if (list) {
@@ -226,7 +226,7 @@ for (const failedLoad of ["acl", "members"] as const) {
 			await dialog.getByRole("button", { name: "取消", exact: true }).click();
 			fail = true;
 			await openAcl("ACL B");
-			await expect(dialog.getByText("加载中…", { exact: true })).toBeVisible();
+			await expect(dialog.getByRole("status")).toHaveText("正在读取文档权限…");
 			await expect(
 				dialog.getByRole("button", { name: "保存", exact: true }),
 			).toBeDisabled();
@@ -293,6 +293,7 @@ for (const failure of ["network", "json"] as const) {
 			}
 			await route.fulfill({
 				json: {
+					can_manage: true,
 					ask: saving ? { ...settings, answer_profile: "precise" } : settings,
 					defaults: settings,
 					policy_version: saving ? 2 : 1,
@@ -304,25 +305,29 @@ for (const failure of ["network", "json"] as const) {
 			page.getByText("无法加载工作区设置", { exact: true }),
 		).toBeVisible();
 		const save = page.getByRole("button", { name: "保存", exact: true });
-		await expect(save).toBeDisabled();
+		await expect(save).toHaveCount(0);
+		await expect(
+			page.getByRole("combobox", { name: "回答模式", exact: true }),
+		).toBeDisabled();
 		failLoad = false;
 		await page.getByRole("button", { name: "重试", exact: true }).click();
+		await expect(save).toBeDisabled();
 		const profile = page
 			.getByRole("listitem")
 			.filter({ has: page.getByText("回答模式", { exact: true }) })
 			.getByRole("combobox");
-		await expect(profile).toHaveValue("balanced");
-		await profile.selectOption("precise");
+		await expect(profile).toHaveText("均衡");
+		await chooseSelect(profile, "精确");
 		await save.click();
 		await expect(
 			page.getByText("保存失败，请重试", { exact: true }),
 		).toBeVisible();
 		await expect(save).toBeEnabled();
-		await expect(profile).toHaveValue("precise");
+		await expect(profile).toHaveText("精确");
 		failSave = false;
 		await save.click();
 		await expect(page.getByText("已保存", { exact: true })).toBeVisible();
-		await expect(profile).toHaveValue("precise");
+		await expect(profile).toHaveText("精确");
 		expect(patches).toEqual([
 			{ ask: { answer_profile: "precise" } },
 			{ ask: { answer_profile: "precise" } },

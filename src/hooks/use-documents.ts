@@ -36,6 +36,7 @@ export function useDocuments(
 				: "文档列表加载失败"
 			: null,
 		loading: query.isPending && enabled,
+		refreshing: query.isFetching && enabled,
 		fetched: query.isFetched,
 		refresh,
 	};

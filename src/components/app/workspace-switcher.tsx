@@ -6,6 +6,7 @@ import {
 	ChevronsUpDown,
 	LoaderCircle,
 	Plus,
+	RotateCcw,
 } from "lucide-react";
 import {
 	type FormEvent,
@@ -14,7 +15,8 @@ import {
 	useRef,
 	useState,
 } from "react";
-
+import { toast } from "sonner";
+import { useNavigationGuard } from "@/components/app/navigation-guard";
 import { useSession } from "@/components/app/session-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,6 +45,7 @@ import {
 	useSidebar,
 } from "@/components/ui/sidebar";
 import { Textarea } from "@/components/ui/textarea";
+import { createClientId } from "@/lib/client-id";
 import { roleLabel } from "@/lib/session-types";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +77,7 @@ async function readError(response: Response): Promise<string> {
 export function WorkspaceSwitcher() {
 	const { isMobile } = useSidebar();
 	const { identity } = useSession();
+	const { allowNavigation, setGuard } = useNavigationGuard();
 	const [items, setItems] = useState<WorkspaceItem[]>([]);
 	const [canCreate, setCanCreate] = useState(false);
 	const [loading, setLoading] = useState(true);
@@ -85,6 +89,8 @@ export function WorkspaceSwitcher() {
 	const [description, setDescription] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const createRequestId = useRef<string | null>(null);
+	const nameRef = useRef<HTMLInputElement>(null);
+	const triggerRef = useRef<HTMLButtonElement>(null);
 
 	const loadWorkspaces = useCallback(async () => {
 		setLoading(true);
@@ -120,15 +126,17 @@ export function WorkspaceSwitcher() {
 					body: JSON.stringify({ workspace_id: workspaceId }),
 				});
 				if (!response.ok) throw new Error(await readError(response));
+				setGuard({ dirty: false, busy: false });
 				window.location.assign("/app/ask");
 			} catch (switchError) {
-				setError(
-					switchError instanceof Error ? switchError.message : "工作区切换失败",
-				);
+				const message =
+					switchError instanceof Error ? switchError.message : "工作区切换失败";
+				setError(message);
+				toast.error(message);
 				setSwitchingId(null);
 			}
 		},
-		[identity.workspaceId, switchingId],
+		[identity.workspaceId, switchingId, setGuard],
 	);
 
 	async function createWorkspace(event: FormEvent<HTMLFormElement>) {
@@ -136,7 +144,7 @@ export function WorkspaceSwitcher() {
 		if (creating) return;
 		setCreating(true);
 		setError(null);
-		createRequestId.current ??= crypto.randomUUID();
+		createRequestId.current ??= createClientId();
 		try {
 			const response = await fetch("/api/workspaces", {
 				method: "POST",
@@ -175,28 +183,38 @@ export function WorkspaceSwitcher() {
 						<DropdownMenuTrigger
 							render={
 								<SidebarMenuButton
+									ref={triggerRef}
 									size="lg"
+									disabled={switchingId !== null}
+									aria-busy={switchingId !== null}
 									tooltip={identity.workspaceName}
 									className={cn(
 										"h-12 gap-2.5 rounded-lg border border-sidebar-border bg-background/55 px-2.5 data-open:bg-sidebar-accent",
-										"group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-1.5!",
+										"group-data-[collapsible=icon]:-mx-0.5 group-data-[collapsible=icon]:size-11! group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-3!",
 									)}
 								/>
 							}
 						>
 							<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary group-data-[collapsible=icon]:size-5">
-								<Building2 className="size-4" aria-hidden />
+								{switchingId ? (
+									<LoaderCircle
+										className="size-4 animate-spin motion-reduce:animate-none"
+										aria-hidden
+									/>
+								) : (
+									<Building2 className="size-4" aria-hidden />
+								)}
 							</span>
-							<span className="grid min-w-0 flex-1 text-left leading-tight">
+							<span className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:sr-only">
 								<span className="text-meta text-muted-foreground">工作区</span>
 								<span className="truncate text-sm font-medium">
-									{identity.workspaceName}
+									{switchingId ? "正在切换…" : identity.workspaceName}
 								</span>
 							</span>
-							<ChevronsUpDown className="ml-auto size-4 text-muted-foreground" />
+							<ChevronsUpDown className="ml-auto size-4 text-muted-foreground group-data-[collapsible=icon]:hidden" />
 						</DropdownMenuTrigger>
 						<DropdownMenuContent
-							className="min-w-64"
+							className="w-72 min-w-0"
 							side={isMobile ? "bottom" : "right"}
 							align="start"
 							sideOffset={6}
@@ -205,7 +223,7 @@ export function WorkspaceSwitcher() {
 								<DropdownMenuLabel>切换工作区</DropdownMenuLabel>
 								{loading ? (
 									<DropdownMenuItem disabled>
-										<LoaderCircle className="animate-spin" />
+										<LoaderCircle className="animate-spin motion-reduce:animate-none" />
 										正在加载
 									</DropdownMenuItem>
 								) : (
@@ -213,10 +231,17 @@ export function WorkspaceSwitcher() {
 										<DropdownMenuItem
 											key={item.id}
 											onClick={() => {
-												void switchWorkspace(item.id);
+												if (item.id === identity.workspaceId) return;
+												const switchTo = () => {
+													void switchWorkspace(item.id);
+												};
+												if (allowNavigation(switchTo)) switchTo();
 											}}
 											disabled={switchingId !== null}
 											className="gap-2"
+											aria-current={
+												item.id === identity.workspaceId ? "true" : undefined
+											}
 										>
 											<Check
 												className={cn(
@@ -226,7 +251,7 @@ export function WorkspaceSwitcher() {
 														: "opacity-0",
 												)}
 											/>
-											<span className="min-w-0 flex-1 truncate">
+											<span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
 												{item.name}
 											</span>
 											<span className="text-meta text-muted-foreground">
@@ -239,7 +264,15 @@ export function WorkspaceSwitcher() {
 							{canCreate ? (
 								<>
 									<DropdownMenuSeparator />
-									<DropdownMenuItem onClick={() => setCreateOpen(true)}>
+									<DropdownMenuItem
+										onClick={() => {
+											const openCreate = () => {
+												setError(null);
+												setCreateOpen(true);
+											};
+											if (allowNavigation(openCreate)) openCreate();
+										}}
+									>
 										<Plus />
 										新建工作区
 									</DropdownMenuItem>
@@ -248,9 +281,16 @@ export function WorkspaceSwitcher() {
 							{error ? (
 								<>
 									<DropdownMenuSeparator />
-									<p className="px-2 py-1.5 text-xs text-destructive">
+									<p
+										role="alert"
+										className="px-2 py-2 text-sm text-destructive [overflow-wrap:anywhere]"
+									>
 										{error}
 									</p>
+									<DropdownMenuItem onClick={() => void loadWorkspaces()}>
+										<RotateCcw aria-hidden />
+										重新加载工作区
+									</DropdownMenuItem>
 								</>
 							) : null}
 						</DropdownMenuContent>
@@ -258,8 +298,18 @@ export function WorkspaceSwitcher() {
 				</SidebarMenuItem>
 			</SidebarMenu>
 
-			<Dialog open={createOpen} onOpenChange={setCreateOpen}>
-				<DialogContent className="sm:max-w-md">
+			<Dialog
+				open={createOpen}
+				onOpenChange={(open) => {
+					if (!creating) setCreateOpen(open);
+				}}
+			>
+				<DialogContent
+					className="sm:max-w-md"
+					initialFocus={nameRef}
+					finalFocus={triggerRef}
+					showCloseButton={!creating}
+				>
 					<form onSubmit={createWorkspace} className="contents">
 						<DialogHeader>
 							<DialogTitle>新建工作区</DialogTitle>
@@ -272,17 +322,19 @@ export function WorkspaceSwitcher() {
 								<Label htmlFor="workspace-name">名称</Label>
 								<Input
 									id="workspace-name"
+									ref={nameRef}
+									className="h-11"
 									value={name}
 									onChange={(event) => setName(event.target.value)}
 									maxLength={256}
 									required
-									autoFocus
 								/>
 							</div>
 							<div className="grid gap-1.5">
 								<Label htmlFor="workspace-slug">标识</Label>
 								<Input
 									id="workspace-slug"
+									className="h-11"
 									value={slug}
 									onChange={(event) => setSlug(event.target.value)}
 									maxLength={128}
@@ -301,25 +353,39 @@ export function WorkspaceSwitcher() {
 								/>
 							</div>
 							{error ? (
-								<p className="text-sm text-destructive">{error}</p>
+								<p
+									role="alert"
+									className="text-sm text-destructive [overflow-wrap:anywhere]"
+								>
+									{error}
+								</p>
 							) : null}
 						</div>
 						<DialogFooter>
 							<Button
 								type="button"
 								variant="outline"
+								className="h-11"
 								onClick={() => setCreateOpen(false)}
 								disabled={creating}
 							>
 								取消
 							</Button>
-							<Button type="submit" disabled={creating || !name.trim()}>
+							<Button
+								type="submit"
+								className="h-11"
+								aria-busy={creating}
+								disabled={creating || !name.trim()}
+							>
 								{creating ? (
-									<LoaderCircle className="animate-spin" aria-hidden />
+									<LoaderCircle
+										className="animate-spin motion-reduce:animate-none"
+										aria-hidden
+									/>
 								) : (
 									<Plus aria-hidden />
 								)}
-								创建并进入
+								{creating ? "创建中…" : "创建并进入"}
 							</Button>
 						</DialogFooter>
 					</form>

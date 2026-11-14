@@ -22,6 +22,20 @@ const NEGATIVE_GOLD_PATH = new URL(
 	"../../testdata/ab/negative-golds.jsonl",
 	import.meta.url,
 );
+const PERIOD_ORACLE = {
+	file: "quarter.md",
+	mode: "fact",
+	question: "2026年Q2营收是多少？",
+	answer: "2026年Q2营收4,580万元。",
+	key_facts: ["2026年", "4,580万元"],
+	answer_checks: [
+		{
+			label: "营收时段",
+			period: { year: 2026, quarter: 2 },
+			for_fact: "4,580万元",
+		},
+	],
+};
 
 test("conflict expectations require a classified outcome, not just keyword coverage", () => {
 	const gold = parseGoldenCase({
@@ -218,6 +232,227 @@ test("answer checks and citation fact verification reject invalid oracles", () =
 			answer_checks: [{ label: "无匹配规则", any_of: [], none_of: [] }],
 		}),
 	);
+});
+
+test("period checks validate bounded year and quarter fields, reference scope and immutable rules", () => {
+	const gold = parseGoldenCase(PERIOD_ORACLE);
+	const check = gold.answer_checks?.[0];
+	assert.ok(check && "period" in check);
+	assert.ok(Object.isFrozen(gold.answer_checks));
+	assert.ok(Object.isFrozen(check));
+	assert.ok(Object.isFrozen(check.period));
+	for (const period of [
+		{},
+		{ year: 2026 },
+		{ quarter: 2 },
+		{ year: "2026", quarter: 2 },
+		{ year: 999, quarter: 2 },
+		{ year: 10000, quarter: 2 },
+		{ year: 2026.5, quarter: 2 },
+		{ year: 2026, quarter: "2" },
+		{ year: 2026, quarter: 0 },
+		{ year: 2026, quarter: 5 },
+		{ year: 2026, quarter: 2.5 },
+		{ year: 2026, quarter: 2, alias: "Q2" },
+	]) {
+		assert.throws(() =>
+			parseGoldenCase({
+				...PERIOD_ORACLE,
+				answer_checks: [{ ...check, period }],
+			}),
+		);
+	}
+	for (const invalidCheck of [
+		{ ...check, any_of: ["Q2"] },
+		{ ...check, none_of: ["Q1"] },
+		{ ...check, for_fact: "4,600万元" },
+		{ ...check, period: { year: 2025, quarter: 2 } },
+		{ ...check, period: { year: 2026, quarter: 3 } },
+	]) {
+		assert.throws(() =>
+			parseGoldenCase({ ...PERIOD_ORACLE, answer_checks: [invalidCheck] }),
+		);
+	}
+	assert.throws(
+		() =>
+			parseGoldenCase({
+				...PERIOD_ORACLE,
+				answer_checks: [check, { label: check.label, any_of: ["Q2"] }],
+			}),
+		/duplicate answer check label/u,
+	);
+});
+
+test("period checks accept exact year-quarter equivalents and formatting for all four quarters", () => {
+	for (const [index, name] of ["一", "二", "三", "四"].entries()) {
+		const quarter = index + 1;
+		const gold = parseGoldenCase({
+			...PERIOD_ORACLE,
+			answer: `2026年Q${quarter}营收4,580万元。`,
+			answer_checks: [
+				{ ...PERIOD_ORACLE.answer_checks[0], period: { year: 2026, quarter } },
+			],
+		});
+		for (const answer of [
+			`2026年Q${quarter}营收4,580万元。`,
+			`2026年第${name}季度营收4,580万元。`,
+			`- **2026 年** **Q${quarter}**：营收 **4,580万元** [1]。`,
+			`2026\t年\tq\t${quarter}营收4,580万元。`,
+			`2026 年 第 ${name} 季 度的营收为4,580万元。`,
+			`２０２６年Ｑ${quarter}营收4,580万元。`,
+			`营收4,580万元（2026年Q${quarter}）。`,
+		]) {
+			assert.equal(
+				scorePositiveCase(gold, {
+					httpStatus: 200,
+					answer,
+					refused: false,
+					latencyMs: 1,
+					citations: [{ filename: gold.file, index: 1 }],
+				}).ok,
+				true,
+				answer,
+			);
+		}
+	}
+	assert.equal(factMatchesAnswer("Q2", "第二季度"), false);
+	assert.equal(factMatchesAnswer("CM-Q2", "CM-第二季度"), false);
+});
+
+test("bound period checks reject product codes, mismatched periods and cross-sentence fact assembly", () => {
+	const gold = parseGoldenCase(PERIOD_ORACLE);
+	for (const answer of [
+		"2026年Q1营收4,580万元。",
+		"2026年第三季度营收4,580万元。",
+		"2026年报告。2025年Q2营收4,580万元。",
+		"2026年报告。2027年第二季度营收4,580万元。",
+		"12026年Q2营收4,580万元。",
+		"20260年Q2营收4,580万元。",
+		"型号ABC2026年Q2营收4,580万元。",
+		"型号SKU-2026年Q2营收4,580万元。",
+		"型号SKU.2026年Q2营收4,580万元。",
+		"型号SKU/**2026年Q2**营收4,580万元。",
+		"型号2026年XQ2营收4,580万元。",
+		"型号2026年Q20营收4,580万元。",
+		"型号2026年Q2Pro营收4,580万元。",
+		"型号2026年Q2_Pro营收4,580万元。",
+		"型号2026年Q2-Pro营收4,580万元。",
+		"型号2026年Q2/Pro营收4,580万元。",
+		"型号2026年Q2.1营收4,580万元。",
+		"型号2026年Q2.Pro营收4,580万元。",
+		"型号2026年第二季度A营收4,580万元。",
+		"型号2026年第二季度2营收4,580万元。",
+		"2026年。Q2营收4,580万元。",
+		"2026年\nQ2营收4,580万元。",
+		"2026年Q2。营收4,580万元。",
+		"2026年Q2；营收4,580万元。",
+		"2026年Q2！营收4,580万元。",
+		"2026年Q2\n营收4,580万元。",
+		"2026年Q2（数值另述。营收4,580万元）",
+		"营收4,580万元（数值另述。报告另提及2026年Q2）",
+		"2026年Q2营收4,500万元；2026年Q1营收4,580万元。",
+		"2025年Q2营收4,580万元；2026年Q2营收4,500万元。",
+		"2026年Q2营收4,600万元，2026年Q3营收4,580万元。",
+		"2026年Q2Pro营收4,580万元（并非2026年Q2）。",
+		"2026年报告。营收4,580万元（时段不是2026年Q2）。",
+		"型号2026年Q2.Pro营收4,580万元。2026年Q2金额未知。",
+	]) {
+		const score = scorePositiveCase(gold, {
+			httpStatus: 200,
+			// A separate correct year cannot repair the period bound to revenue.
+			answer: `2026年背景记录。\n${answer}`,
+			refused: false,
+			latencyMs: 1,
+			citations: [{ filename: gold.file }],
+		});
+		assert.equal(score.factCoverage, 1, answer);
+		assert.equal(score.ok, false, answer);
+		assert.deepEqual(score.failedAnswerChecks, ["营收时段"], answer);
+	}
+});
+
+test("unbound period checks remain local to a year-quarter expression without requiring a fact anchor", () => {
+	const gold = parseGoldenCase({
+		...PERIOD_ORACLE,
+		answer_checks: [{ label: "报告时段", period: { year: 2026, quarter: 2 } }],
+	});
+	for (const [answer, expected] of [
+		["营收4,580万元。报告时段2026年第二季度。", true],
+		["2026年。Q2营收4,580万元。", false],
+		["2026年\nQ2营收4,580万元。", false],
+		["2026年（Q2营收4,580万元）", false],
+		["不是2026年Q2，营收4,580万元。", false],
+	] as const) {
+		assert.equal(
+			scorePositiveCase(gold, {
+				httpStatus: 200,
+				answer,
+				refused: false,
+				latencyMs: 1,
+				citations: [{ filename: gold.file }],
+			}).ok,
+			expected,
+			answer,
+		);
+	}
+});
+
+test("mixed-chart quarter oracle retains its stable ID and independently gates the period, numeric facts and source type", async () => {
+	const gold = parseGoldenJsonl(await readFile(GOLD_PATH, "utf8")).find(
+		(item) => item.id === "1f951d79315c6725",
+	);
+	assert.ok(gold);
+	assert.equal(gold.file, "mixed-charts.pdf");
+	assert.equal(gold.expect_record_type, "image");
+	assert.deepEqual(gold.key_facts, [
+		"季度",
+		"营收",
+		"趋势",
+		"2026年",
+		"4,580万元",
+		"95.7%",
+	]);
+	assert.deepEqual(gold.answer_checks, [
+		{
+			label: "营收对应2026年第二季度",
+			period: { year: 2026, quarter: 2 },
+			for_fact: "4,580万元",
+		},
+	]);
+	const response = {
+		httpStatus: 200,
+		refused: false,
+		latencyMs: 1,
+		citations: [{ filename: gold.file, record_type: "figure" }],
+		answer: gold.answer.replace("Q2", "第二季度"),
+	};
+	assert.equal(scorePositiveCase(gold, response).ok, true);
+	assert.equal(
+		scorePositiveCase(gold, { ...response, answer: gold.answer }).ok,
+		true,
+	);
+	for (const answer of [
+		response.answer.replace("第二季度", "第一季度"),
+		response.answer.replace("2026年第二季度", "2026年回顾。2025年第二季度"),
+	]) {
+		const score = scorePositiveCase(gold, { ...response, answer });
+		assert.equal(score.factCoverage, 1);
+		assert.equal(score.ok, false);
+		assert.deepEqual(score.failedAnswerChecks, ["营收对应2026年第二季度"]);
+	}
+	for (const invalid of [
+		{ ...response, answer: response.answer.replace("4,580万元", "4,600万元") },
+		{ ...response, answer: response.answer.replace("95.7%", "95.8%") },
+		{ ...response, answer: response.answer.replace("2026年", "2025年") },
+		{ ...response, citations: [] },
+		{ ...response, citations: [{ filename: gold.file, record_type: "text" }] },
+		{
+			...response,
+			citations: [{ filename: "other.pdf", record_type: "figure" }],
+		},
+	]) {
+		assert.equal(scorePositiveCase(gold, invalid).ok, false);
+	}
 });
 
 test("text facts may accompany a linked figure, but the figure cannot support them", () => {

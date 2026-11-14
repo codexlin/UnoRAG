@@ -1,6 +1,7 @@
 import { and, desc, eq, or, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { projectAnswerCitationDiagnostic } from "@/core/ai/answer-citations";
+import { projectModelUsage } from "@/core/ai/model-usage";
 import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
 import { projectQdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
 
@@ -255,6 +256,7 @@ export class OperationsEventService {
 				citation_count: run.citationCount,
 				used_hybrid: run.usedHybrid,
 				used_rerank: run.usedRerank,
+				model_usage: projectModelUsage(run.modelUsage),
 			},
 			stages: stages.map((stage) => ({
 				id: stage.id,

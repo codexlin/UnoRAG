@@ -13,6 +13,10 @@ import {
 	projectAnswerCitationDiagnostic,
 } from "@/core/ai/answer-citations";
 import {
+	ModelUsageCollector,
+	type ModelUsageRecorder,
+} from "@/core/ai/model-usage";
+import {
 	type AskExecutionDiagnostics,
 	AskGraphExecutionError,
 	type AskState,
@@ -101,6 +105,7 @@ type RuntimeFactory = (input: {
 	libraryId: string;
 	signal?: AbortSignal;
 	policy: NativeAskPolicy;
+	usageRecorder?: ModelUsageRecorder;
 	assertAuthorized?: (citations: Record<string, unknown>[]) => Promise<void>;
 }) => NativeAskRuntime;
 
@@ -449,6 +454,14 @@ async function handleNativeAskRequestInSpan(input: {
 	let metricsSettled = false;
 	let activeState: AskState | undefined;
 	let failedGraphState: AskExecutionDiagnostics | undefined;
+	const modelUsage = new ModelUsageCollector();
+	const attachModelUsage = (state: AskRunState | undefined) => {
+		if (!state) return;
+		state.retrieval_debug = {
+			...(state.retrieval_debug ?? {}),
+			model_usage: modelUsage.snapshot(),
+		};
+	};
 	const settleMetrics = (outcome: WebMetricOutcome) => {
 		if (metricsSettled) return;
 		metricsSettled = true;
@@ -532,7 +545,15 @@ async function handleNativeAskRequestInSpan(input: {
 		const run = activeRun;
 		if (!run) return;
 		activeRun = undefined;
-		await finalizeAskRun({ run, state, status, errorCode, failure });
+		const finalState = state ?? {};
+		attachModelUsage(finalState);
+		await finalizeAskRun({
+			run,
+			state: finalState,
+			status,
+			errorCode,
+			failure,
+		});
 	};
 	try {
 		const payload = AskRequestSchema.parse(await input.request.json());
@@ -585,6 +606,7 @@ async function handleNativeAskRequestInSpan(input: {
 			libraryId: payload.library_id,
 			signal: executionSignal,
 			policy,
+			usageRecorder: modelUsage.record,
 			assertAuthorized: (evidence) =>
 				checkAccess([...history.sourceReferences, ...evidence], {
 					force: true,
@@ -624,6 +646,7 @@ async function handleNativeAskRequestInSpan(input: {
 		});
 		state.trace_id = requestId;
 		activeState = state;
+		attachModelUsage(state);
 		const judgeUnavailable =
 			state.refuse_reason === "judge_unavailable" &&
 			state.retrieval_debug?.judge_mode === "model_error";
@@ -686,6 +709,7 @@ async function handleNativeAskRequestInSpan(input: {
 				})(),
 			);
 			await checkAccess(evidence, { force: true });
+			attachModelUsage(state);
 			const persisted = await timedPersistConversation(
 				state,
 				{
@@ -740,6 +764,7 @@ async function handleNativeAskRequestInSpan(input: {
 					yield token;
 				}
 				await checkAccess(evidence, { force: true });
+				attachModelUsage(state);
 				Object.assign(
 					done,
 					await timedPersistConversation(
