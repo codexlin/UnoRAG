@@ -99,7 +99,9 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 - Report Rerank configuration readiness separately from request-level execution.
 - Apply migration `0032_ask_model_usage` before upgrading. Streamed usage is requested
   by default; set advanced `AI_INCLUDE_USAGE=false` only for incompatible endpoints.
-  These changes are not yet deployed to the reference instance.
+  These changes are deployed in `0.3.0-rc.2` on the reference instance. This is
+  not a stable promotion: the RC1 three-round quality gate remains 125/126,
+  blocked by #231. See the [candidate report](./docs/evidence/2026-11-15-v0.3.0-rc-closeout.md).
 
 ## [0.2.11] - Acceptance Pending
 
@@ -107,7 +109,7 @@ Signed images from `288677a` were deployed to the Hong Kong reference instance o
 2026-11-12. Upgrade smoke, 7/7 fresh ingestion and 34 browser checks passed. The raw
 three-round matrix is 122/126: three quarter-expression lexical failures and one
 real conflict-quote validation failure. No formal Release or stable promotion is
-approved; see the [current acceptance report](./docs/evidence/2026-11-12-v0.2.11-release-closeout.md).
+approved; see the [original acceptance report](https://github.com/codexlin/UnoRAG/blob/bcd4203901d6f491616d79d695a9ff23f8dcf453/docs/evidence/2026-11-12-v0.2.11-release-closeout.md).
 
 ### Fixed
 
