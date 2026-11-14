@@ -18,6 +18,8 @@ import {
 	StructuredOutputValidationError,
 } from "../../src/core/ai";
 import { assessEvidenceWithMetadata } from "../../src/core/ai/evidence-assessment";
+import { ModelUsageCollector } from "../../src/core/ai/model-usage";
+import { createAiProviderRegistry } from "../../src/core/ai/provider-registry";
 import { ConflictOutputSchema } from "../../src/core/ai/structured-output";
 import { deriveAnswerRequirements } from "../../src/core/ask-graph/answer-requirements";
 import {
@@ -738,6 +740,62 @@ test("provider configuration fails closed without an API key", () => {
 	);
 });
 
+test("production provider registry requests streamed usage by default and supports an explicit opt-out", async (context) => {
+	for (const includeUsage of [true, false]) {
+		const bodies: Array<Record<string, unknown>> = [];
+		const mock = context.mock.method(
+			globalThis,
+			"fetch",
+			async (_url: unknown, init: RequestInit) => {
+				bodies.push(JSON.parse(String(init.body)));
+				const frame = {
+					id: "test",
+					created: 0,
+					model: "test",
+					choices: [
+						{
+							index: 0,
+							delta: { role: "assistant", content: "ok" },
+							finish_reason: null,
+						},
+					],
+				};
+				return new Response(
+					`data: ${JSON.stringify(frame)}\n\ndata: ${JSON.stringify({ ...frame, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n${includeUsage ? `data: ${JSON.stringify({ ...frame, choices: [], usage: { prompt_tokens: 7, completion_tokens: 2, total_tokens: 9 } })}\n\n` : ""}data: [DONE]\n\n`,
+					{ headers: { "content-type": "text/event-stream" } },
+				);
+			},
+		);
+		try {
+			const config = aiConfigFromEnv({
+				NODE_ENV: "test",
+				OPENAI_API_KEY: "test",
+				AI_INCLUDE_USAGE: includeUsage ? undefined : "false",
+			} as NodeJS.ProcessEnv);
+			const registry = createAiProviderRegistry(config);
+			const usage = new ModelUsageCollector();
+			const answer = new AnswerStreamAdapter(registry.model, undefined, {
+				usageRecorder: usage.record,
+			});
+			assert.deepEqual(
+				await collect(answer.stream({ question: "test", context: "test" })),
+				["ok"],
+			);
+			assert.deepEqual(
+				bodies[0].stream_options,
+				includeUsage ? { include_usage: true } : undefined,
+			);
+			assert.equal(usage.snapshot().totalTokens, includeUsage ? 9 : null);
+			assert.equal(
+				usage.snapshot().status,
+				includeUsage ? "reported" : "unavailable",
+			);
+		} finally {
+			mock.mock.restore();
+		}
+	}
+});
+
 test("judge provider inherits the answer provider unless explicitly overridden", () => {
 	const base = {
 		OPENAI_API_KEY: "test-key",
@@ -758,6 +816,7 @@ test("judge provider inherits the answer provider unless explicitly overridden",
 			apiKey: "test-key",
 			baseUrl: "https://judge.example/v1",
 			chatModel: "judge-model",
+			includeUsage: true,
 			providerName: "judge-provider",
 			supportsStructuredOutputs: false,
 		},

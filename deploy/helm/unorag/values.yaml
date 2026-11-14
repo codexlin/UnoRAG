@@ -169,6 +169,7 @@ config:
   appEnv: production
   chatModel: qwen-plus
   aiSupportsStructuredOutputs: "true"
+  aiIncludeUsage: "true"
   # Empty keeps the Judge on chatModel; set only after evaluation gates pass.
   judgeModel: ""
   judgeBaseUrl: ""

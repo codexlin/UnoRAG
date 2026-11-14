@@ -100,6 +100,76 @@ test("provider health isolates timeouts and never exposes configured endpoints",
 	assert.doesNotMatch(JSON.stringify(health), /secret\.example|secret-key/);
 });
 
+test("provider health reports rerank configuration independently of default execution", async () => {
+	for (const defaultEnabled of [undefined, "false", "0", "true", "1"]) {
+		for (const environment of [
+			{
+				OPENAI_API_KEY: "secret-key",
+				RERANK_BASE_URL: "https://private.example.invalid/rerank",
+				RERANK_MODEL: "private-model",
+			},
+			{ DASHSCOPE_API_KEY: "fallback-key" },
+			{
+				OPENAI_API_KEY: " ",
+				DASHSCOPE_API_KEY: "fallback-key",
+				RERANK_BASE_URL: " ",
+				RERANK_MODEL: " ",
+			},
+		]) {
+			const health = await readProviderHealth(
+				{
+					checkDatabase: async () => undefined,
+					checkRedis: async () => undefined,
+					checkQdrant: async () => undefined,
+				},
+				{
+					environment: {
+						...environment,
+						TS_RETRIEVAL_RERANK_ENABLED: defaultEnabled,
+					},
+				},
+			);
+			const rerank = health.items.find((item) => item.code === "rerank");
+			assert.ok(rerank);
+			assert.equal(rerank.status, "healthy");
+			assert.equal(rerank.mode, "configuration");
+			assert.equal(rerank.latency_ms, null);
+			assert.equal(rerank.error_code, null);
+			assert.doesNotMatch(
+				JSON.stringify(health),
+				/secret-key|fallback-key|private\.example|private-model/,
+			);
+		}
+	}
+});
+
+test("provider health reports missing rerank credentials even when default execution is off", async () => {
+	for (const defaultEnabled of [undefined, "false", "true"]) {
+		const health = await readProviderHealth(
+			{
+				checkDatabase: async () => undefined,
+				checkRedis: async () => undefined,
+				checkQdrant: async () => undefined,
+			},
+			{
+				environment: {
+					OPENAI_API_KEY: " ",
+					DASHSCOPE_API_KEY: " ",
+					RERANK_BASE_URL: "https://private.example.invalid/rerank",
+					RERANK_MODEL: "private-model",
+					TS_RETRIEVAL_RERANK_ENABLED: defaultEnabled,
+				},
+			},
+		);
+		const rerank = health.items.find((item) => item.code === "rerank");
+		assert.ok(rerank);
+		assert.equal(rerank.status, "degraded");
+		assert.equal(rerank.mode, "configuration");
+		assert.equal(rerank.latency_ms, null);
+		assert.equal(rerank.error_code, "rerank_not_configured");
+	}
+});
+
 test("provider health validates the selected MinerU transport", async () => {
 	const readMineru = async (environment: Record<string, string>) => {
 		const health = await readProviderHealth(

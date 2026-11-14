@@ -6,6 +6,12 @@ import type {
 	AiConcurrencyGateLike,
 	AiConcurrencyLease,
 } from "./concurrency-gate";
+import {
+	type ModelAttemptStatus,
+	type ModelUsageObservation,
+	type ModelUsageRecorder,
+	startModelUsageAttempt,
+} from "./model-usage";
 import { getPrompt, promptSpanAttributes } from "./prompt-registry";
 import type { JudgeAnswerRequirements } from "./structured-output";
 
@@ -26,6 +32,8 @@ export interface AnswerStreamRequest {
 	messages: ModelMessage[];
 	temperature: number;
 	abortSignal?: AbortSignal;
+	onUsage?: (usage: ModelUsageObservation) => void;
+	onAttemptStart?: () => void;
 }
 
 export type AnswerStreamExecutor = (
@@ -34,6 +42,7 @@ export type AnswerStreamExecutor = (
 
 export type AnswerStreamAdapterOptions = {
 	concurrencyGate?: AiConcurrencyGateLike;
+	usageRecorder?: ModelUsageRecorder;
 };
 
 export class AnswerStreamAbortedError extends Error {
@@ -61,17 +70,38 @@ export function buildAnswerMessages(input: {
 	return messages;
 }
 
-function defaultAnswerStreamExecutor(
+async function* defaultAnswerStreamExecutor(
 	request: AnswerStreamRequest,
-): AsyncIterable<string> {
-	return streamText({
+): AsyncGenerator<string> {
+	let failed = false;
+	let streamError: unknown;
+	const onError = ({ error }: { error: unknown }) => {
+		failed = true;
+		streamError = error;
+	};
+	const result = streamText({
 		model: request.model,
 		instructions: request.instructions,
 		messages: request.messages,
 		temperature: request.temperature,
 		abortSignal: request.abortSignal,
+		// This hook runs inside the SDK transport retry loop, unlike onStepStart.
+		// Leave maxRetries unset to preserve the existing SDK retry policy.
+		onLanguageModelCallStart: () => request.onAttemptStart?.(),
+		onError,
+		onStepError: onError,
+		onStepEnd: ({ usage }) => request.onUsage?.(usage),
+		onEnd: ({ usage }) => request.onUsage?.(usage),
+		onAbort: ({ steps }) => {
+			// No tools or continuation steps are configured for answer generation.
+			const usage = steps.at(-1)?.usage;
+			if (usage) request.onUsage?.(usage);
+		},
 		experimental_telemetry: metadataOnlyAiTelemetry("unorag.answer.generate"),
-	}).textStream;
+	});
+	yield* result.textStream;
+	// AI SDK textStream filters error chunks; do not count that as completion.
+	if (failed) throw streamError;
 }
 
 export class AnswerStreamAdapter {
@@ -102,12 +132,25 @@ export class AnswerStreamAdapter {
 			? new AnswerCitationGuard(options.allowedCitationIndices, true)
 			: undefined;
 		let checkingRequest = false;
+		const controller = new AbortController();
+		const operationSignal = options.abortSignal
+			? AbortSignal.any([options.abortSignal, controller.signal])
+			: controller.signal;
+		let usageAttempt: ReturnType<typeof startModelUsageAttempt> | undefined;
+		let providerAttempts = 0;
+		let status: ModelAttemptStatus = "cancelled";
 		try {
 			lease = await this.options.concurrencyGate?.acquire(options.abortSignal);
 			checkingRequest = true;
 			await options.beforeRequest?.();
 			checkingRequest = false;
 			if (options.abortSignal?.aborted) throw new AnswerStreamAbortedError();
+			usageAttempt = startModelUsageAttempt(
+				this.model,
+				"generate",
+				1,
+				this.options.usageRecorder,
+			);
 			const source = await this.execute({
 				model: this.model,
 				instructions: options.allowedCitationIndices
@@ -115,8 +158,38 @@ export class AnswerStreamAdapter {
 					: CHAT_SYSTEM_PROMPT,
 				messages: buildAnswerMessages(input),
 				temperature: ANSWER_TEMPERATURE,
-				abortSignal: options.abortSignal,
+				abortSignal: operationSignal,
+				onUsage: (usage) => usageAttempt?.onUsage(usage),
+				onAttemptStart: () => {
+					providerAttempts += 1;
+					// Reuse the synchronous reservation on the first provider call.
+					// Injected executors need not invoke this optional callback.
+					if (providerAttempts === 1) return;
+					usageAttempt?.finish("failed");
+					usageAttempt = startModelUsageAttempt(
+						this.model,
+						"generate",
+						providerAttempts,
+						this.options.usageRecorder,
+					);
+				},
 			});
+			// Abort before closing the SDK iterator: its replay branch may otherwise
+			// keep the provider alive when the downstream consumer returns early.
+			const abortableSource: AsyncIterable<string> = {
+				[Symbol.asyncIterator]() {
+					const iterator = source[Symbol.asyncIterator]();
+					return {
+						next: () => iterator.next(),
+						async return() {
+							controller.abort();
+							return (
+								(await iterator.return?.()) ?? { done: true, value: undefined }
+							);
+						},
+					};
+				},
+			};
 			for await (const token of traceAsyncIterable(
 				"unorag.ai.generate",
 				{
@@ -125,7 +198,7 @@ export class AnswerStreamAdapter {
 					"langfuse.observation.metadata.capture_content": false,
 					...promptSpanAttributes(CHAT_PROMPT),
 				},
-				source,
+				abortableSource,
 			)) {
 				if (options.abortSignal?.aborted) {
 					throw new AnswerStreamAbortedError();
@@ -138,13 +211,17 @@ export class AnswerStreamAdapter {
 			}
 			const tail = citations?.finish();
 			if (tail) yield tail;
+			status = "completed";
 		} catch (error) {
+			status = options.abortSignal?.aborted ? "cancelled" : "failed";
 			if (checkingRequest) throw error;
 			if (options.abortSignal?.aborted) {
 				throw new AnswerStreamAbortedError();
 			}
 			throw error;
 		} finally {
+			controller.abort();
+			usageAttempt?.finish(status);
 			lease?.release();
 		}
 	}

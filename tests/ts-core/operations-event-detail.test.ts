@@ -487,6 +487,7 @@ test("successful, refused and running requests do not display fabricated failure
 			citation_count: status === "completed" ? 2 : 0,
 			used_hybrid: true,
 			used_rerank: false,
+			model_usage: null,
 		});
 		const html = renderToStaticMarkup(
 			createElement(RequestOutcome, { detail }),

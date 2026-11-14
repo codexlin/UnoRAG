@@ -8,6 +8,7 @@ import {
 	AnswerCitationValidationError,
 	projectAnswerCitationDiagnostic,
 } from "@/core/ai/answer-citations";
+import { projectModelUsage } from "@/core/ai/model-usage";
 import type { AskState } from "@/core/ask-graph";
 import {
 	projectRerankDiagnostic,
@@ -239,6 +240,7 @@ export async function finalizeAskRun(input: {
 			citations.some((citation) => citation.used_rerank === true),
 		citationCount: citations.length,
 		latencyMs,
+		modelUsage: projectModelUsage(debug?.model_usage),
 		errorCode: input.errorCode ?? null,
 		stages: persistedStages,
 	};

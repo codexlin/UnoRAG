@@ -2,6 +2,7 @@ import {
 	AiConcurrencyOverloadedError,
 	AiConcurrencyWaitTimeoutError,
 } from "@/core/ai";
+import { projectModelUsage } from "@/core/ai/model-usage";
 import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
 
 const PUBLIC_META_KEYS = [
@@ -192,6 +193,8 @@ export function projectPublicRetrievalDebug(
 		value.rerankDiagnostic ?? value.rerank_diagnostic,
 	);
 	if (rerank) result.rerank_diagnostic = rerank;
+	const modelUsage = projectModelUsage(value.model_usage);
+	if (modelUsage) result.model_usage = modelUsage;
 	if (Array.isArray(value.stages)) {
 		result.stages = value.stages.flatMap((stage) => {
 			if (!isRecord(stage)) return [];

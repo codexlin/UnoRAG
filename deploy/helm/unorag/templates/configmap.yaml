@@ -20,6 +20,7 @@ data:
   APP_ENV: {{ .Values.config.appEnv | quote }}
   CHAT_MODEL: {{ .Values.config.chatModel | quote }}
   AI_SUPPORTS_STRUCTURED_OUTPUTS: {{ .Values.config.aiSupportsStructuredOutputs | quote }}
+  AI_INCLUDE_USAGE: {{ .Values.config.aiIncludeUsage | quote }}
   JUDGE_MODEL: {{ .Values.config.judgeModel | quote }}
   JUDGE_BASE_URL: {{ .Values.config.judgeBaseUrl | quote }}
   JUDGE_PROVIDER_NAME: {{ .Values.config.judgeProviderName | quote }}

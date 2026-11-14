@@ -234,10 +234,6 @@ export async function readProviderHealth(
 	const hasModelKey =
 		configured(environment.OPENAI_API_KEY) ||
 		configured(environment.DASHSCOPE_API_KEY);
-	const rerankEnabled = environmentBoolean(
-		environment,
-		"TS_RETRIEVAL_RERANK_ENABLED",
-	);
 	const externalParserAllowed = environmentBoolean(
 		environment,
 		"EXTERNAL_PARSER_ALLOWED",
@@ -275,12 +271,10 @@ export async function readProviderHealth(
 				code: "rerank",
 				label: "Rerank",
 				kind: "ai",
-				enabled: rerankEnabled,
-				ready:
-					hasModelKey &&
-					configured(environment.RERANK_BASE_URL) &&
-					configured(environment.RERANK_MODEL),
-				recovery: "检查 Rerank 开关、模型和独立兼容端点。",
+				// Retrieval always creates a reranker with endpoint/model defaults.
+				// Its default execution flag does not prevent request-level opt-in.
+				ready: hasModelKey,
+				recovery: "检查模型 API Key、RERANK_MODEL 和独立兼容端点配置。",
 			}),
 			configurationItem({
 				code: "mineru",

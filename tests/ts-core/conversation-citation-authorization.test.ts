@@ -240,6 +240,21 @@ test("archive takes provenance only from scoped server memory, never submitted d
 		libraryId: LIBRARY_ID,
 		sourceReferences: [source],
 	};
+	const modelUsage = {
+		version: 1,
+		calls: [
+			{
+				stage: "generate",
+				model: "test",
+				provider: "test",
+				attempt: 1,
+				status: "completed",
+				inputTokens: 10,
+				outputTokens: 2,
+				totalTokens: 12,
+			},
+		],
+	};
 	let created: ReturnType<typeof storedThread> | undefined;
 	const memoryReads: unknown[] = [];
 	const response = await handleNativeConversationRequest({
@@ -250,7 +265,15 @@ test("archive takes provenance only from scoped server memory, never submitted d
 				session_id: "session-a",
 				library_id: LIBRARY_ID,
 				turns: [
-					{ question: "question", answer: "answer", citations: [] },
+					{
+						question: "question",
+						answer: "answer",
+						citations: [],
+						retrieval_debug: {
+							model_usage: { ...modelUsage, prompt: "private prompt" },
+							private_response: "private body",
+						},
+					},
 					{
 						question: "question",
 						answer: "edited answer",
@@ -292,6 +315,19 @@ test("archive takes provenance only from scoped server memory, never submitted d
 		},
 	});
 	assert.equal(response?.status, 200);
+	const archivedResponse = await response?.json();
+	assert.equal(
+		archivedResponse.turns[0].retrieval_debug.model_usage.totalTokens,
+		12,
+	);
+	assert.equal(
+		archivedResponse.turns[0].retrieval_debug.model_usage.status,
+		"reported",
+	);
+	assert.doesNotMatch(
+		JSON.stringify(archivedResponse),
+		/private prompt|private body/,
+	);
 	assert.deepEqual(memoryReads, [
 		[
 			{
