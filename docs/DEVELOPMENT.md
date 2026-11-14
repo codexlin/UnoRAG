@@ -24,6 +24,9 @@ pnpm db:check
 pnpm build
 ```
 
+`pnpm typecheck` 先运行 `next typegen`，再执行 TypeScript 检查；干净检出不依赖已有
+`next-env.d.ts` 或 `.next` 缓存，也不要手写图片模块声明绕过框架类型生成。
+
 `pnpm test:fast` 覆盖不依赖外部服务的产品行为、授权、DocumentIR/TableIR、解析、切分、
 检索过滤、Ask 图、DBOS 工作流及部署契约。`pnpm test:contract` 是公共 API、IR、检索和工作流
 契约的聚焦子集，适合接口变更时快速确认。环境测试不会混入快速套件后以 skip 伪装通过。CI 会创建
