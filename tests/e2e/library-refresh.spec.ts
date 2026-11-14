@@ -1,5 +1,10 @@
 import { type Cookie, expect, type Locator, test } from "@playwright/test";
-import type { ApiDocument, ApiJob, ApiLibrary } from "../../src/lib/api";
+import type {
+	ApiDocument,
+	ApiJob,
+	ApiLibrary,
+	ApiUploadResponse,
+} from "../../src/lib/api";
 import { chooseSelect } from "./select-helpers";
 
 let cookies: Cookie[] = [];
@@ -546,6 +551,257 @@ test("ingest polling cannot cancel the post-create refresh or lose library selec
 		release();
 	}
 });
+
+for (const refreshFailure of ["delayed", "unavailable"] as const) {
+	test(`confirmed creation selects the new upload target before a ${refreshFailure} list refresh and preserves it after recovery`, async ({
+		page,
+		isMobile,
+	}) => {
+		const stamp = "2026-01-01T00:00:00.000Z";
+		const existing: ApiLibrary = {
+			id: "create-target-a",
+			name: "Existing library A",
+			status: "ready",
+			doc_count: 1,
+			ready_count: 1,
+			created_at: stamp,
+			updated_at: stamp,
+		};
+		const created: ApiLibrary = {
+			...existing,
+			id: "create-target-b",
+			name: "Created library B",
+			status: "empty",
+			doc_count: 0,
+			ready_count: 0,
+		};
+		const documents = new Map<string, ApiDocument[]>([
+			[
+				existing.id,
+				[
+					{
+						id: "existing-target-document",
+						library_id: existing.id,
+						name: "Existing A document",
+						filename: "existing-a.txt",
+						content_type: "text/plain",
+						status: "ready",
+						chunk_count: 1,
+						created_at: stamp,
+						updated_at: stamp,
+					},
+				],
+			],
+			[created.id, []],
+		]);
+		let createCount = 0;
+		let postCreateReads = 0;
+		let successfulRefreshes = 0;
+		let refreshState: "delayed" | "unavailable" | "recovered" = refreshFailure;
+		function deferred() {
+			let release = () => {};
+			const promise = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			return { promise, release };
+		}
+		const pending = deferred();
+		const oldList = deferred();
+		let holdOldList = false;
+		let oldListStarted = false;
+		let oldListFinished = false;
+		const submissions: { libraryId: string; filename: string }[] = [];
+		await page.route("**/api/libraries", async (route) => {
+			if (route.request().method() === "POST") {
+				expect(route.request().postDataJSON()).toMatchObject({
+					name: created.name,
+				});
+				createCount += 1;
+				await route.fulfill({ status: 201, json: created });
+				return;
+			}
+			if (createCount === 0) {
+				if (holdOldList) {
+					oldListStarted = true;
+					await oldList.promise;
+					await route.fulfill({ json: [existing] }).catch(() => {});
+					oldListFinished = true;
+				} else {
+					await route.fulfill({ json: [existing] });
+				}
+				return;
+			}
+			postCreateReads += 1;
+			if (refreshState === "delayed") await pending.promise;
+			if (refreshState === "unavailable") {
+				await route.fulfill({
+					status: 503,
+					json: { detail: "fixture post-create library refresh unavailable" },
+				});
+				return;
+			}
+			await route
+				.fulfill({
+					json: [existing, created].map((library) => ({
+						...library,
+						status: documents.get(library.id)?.length ? "ready" : "empty",
+						doc_count: documents.get(library.id)?.length ?? 0,
+						ready_count: documents.get(library.id)?.length ?? 0,
+					})),
+				})
+				.then(() => {
+					successfulRefreshes += 1;
+				})
+				.catch(() => {});
+		});
+		await page.route("**/api/libraries/*/documents", async (route) => {
+			const request = route.request();
+			const libraryId = new URL(request.url()).pathname.split("/")[3];
+			if (request.method() === "GET") {
+				await route.fulfill({ json: documents.get(libraryId) ?? [] });
+				return;
+			}
+			const form = await new Response(
+				new Uint8Array(request.postDataBuffer() ?? []),
+				{
+					headers: { "Content-Type": request.headers()["content-type"] },
+				},
+			).formData();
+			const file = form.get("file");
+			if (!(file instanceof File))
+				throw new Error("Expected a real multipart file upload");
+			expect(await file.text()).toBe("Created library upload target fixture");
+			submissions.push({ libraryId, filename: file.name });
+			const document: ApiDocument = {
+				id: `created-target-${file.name}`,
+				library_id: libraryId,
+				name: file.name,
+				filename: file.name,
+				content_type: "text/plain",
+				status: "ready",
+				chunk_count: 1,
+				created_at: stamp,
+				updated_at: stamp,
+			};
+			documents.get(libraryId)?.push(document);
+			const result: ApiUploadResponse = {
+				library_id: libraryId,
+				doc_id: document.id,
+				title: document.name,
+				filename: file.name,
+				chunk_count: 1,
+				status: "ready",
+				accepted: false,
+				mode: "live",
+				simulated: false,
+			};
+			await route.fulfill({ json: result });
+		});
+		async function expectSelected(library: ApiLibrary, label = library.name) {
+			if (isMobile) {
+				await expect(
+					page.getByRole("combobox", { name: "当前知识库", exact: true }),
+				).toHaveValue(label);
+			} else {
+				await expect(page.getByRole("heading", { level: 3 })).toContainText(
+					library.name,
+				);
+				await expect(
+					page
+						.getByRole("complementary", { name: "知识库导航" })
+						.getByRole("button", { name: new RegExp(library.name) }),
+				).toHaveAttribute("aria-current", "true");
+			}
+		}
+		const dialog = page.getByRole("dialog");
+		const upload = page.getByRole("button", { name: "上传文档", exact: true });
+		const refreshError = page
+			.getByRole("alert")
+			.filter({ hasText: "知识库加载失败" });
+		async function uploadFile(filename: string) {
+			const chooser = page.waitForEvent("filechooser");
+			await upload.click();
+			await (await chooser).setFiles({
+				name: filename,
+				mimeType: "text/plain",
+				buffer: Buffer.from("Created library upload target fixture"),
+			});
+			const results = page.getByRole("region", { name: "本次上传结果" });
+			await expect(results).toContainText(created.name);
+			await expect(results).toContainText(filename);
+			await expect(results).toContainText("已就绪");
+		}
+		try {
+			await page.goto("/app/libraries");
+			await expectSelected(existing);
+			await expect(
+				page.getByRole("button", { name: "Existing A document", exact: true }),
+			).toBeVisible();
+			holdOldList = true;
+			await page.getByRole("button", { name: "刷新文档", exact: true }).click();
+			await expect.poll(() => oldListStarted).toBe(true);
+			await page
+				.getByRole("button", { name: "新建知识库", exact: true })
+				.first()
+				.click();
+			await dialog
+				.getByRole("textbox", { name: "名称", exact: true })
+				.fill(created.name);
+			await dialog.getByRole("button", { name: "创建", exact: true }).click();
+			await expect(dialog).toBeHidden();
+			await expect.poll(() => postCreateReads).toBeGreaterThan(0);
+			if (refreshFailure === "unavailable")
+				await expect(refreshError).toBeVisible();
+			expect(successfulRefreshes).toBe(0);
+			await expectSelected(created, `${created.name} · 空`);
+			oldList.release();
+			await expect.poll(() => oldListFinished).toBe(true);
+			await expectSelected(created, `${created.name} · 空`);
+			await expect(upload).toBeEnabled();
+			await uploadFile("before-refresh.txt");
+			expect(submissions).toEqual([
+				{ libraryId: created.id, filename: "before-refresh.txt" },
+			]);
+			await expect.poll(() => postCreateReads).toBeGreaterThanOrEqual(2);
+			expect(successfulRefreshes).toBe(0);
+			expect(createCount).toBe(1);
+			await expect(dialog).toBeHidden();
+			await expectSelected(created, `${created.name} · 空`);
+			if (refreshFailure === "unavailable") {
+				await expect(upload).toBeEnabled();
+				await expect(refreshError).toBeVisible();
+			}
+			refreshState = "recovered";
+			pending.release();
+			await expect(upload).toBeEnabled();
+			await expect(
+				page.getByRole("button", { name: "before-refresh.txt", exact: true }),
+			).toBeVisible();
+			const recovered = page.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === "/api/libraries" &&
+					response.request().method() === "GET" &&
+					response.status() === 200,
+			);
+			await page.getByRole("button", { name: "刷新文档", exact: true }).click();
+			await recovered;
+			await expect(refreshError).toHaveCount(0);
+			await expectSelected(created);
+			await expect(dialog).toBeHidden();
+			await uploadFile("after-recovery.txt");
+			await expect(upload).toBeEnabled();
+			expect(createCount).toBe(1);
+			expect(submissions).toEqual([
+				{ libraryId: created.id, filename: "before-refresh.txt" },
+				{ libraryId: created.id, filename: "after-recovery.txt" },
+			]);
+			await expectSelected(created);
+		} finally {
+			oldList.release();
+			pending.release();
+		}
+	});
+}
 
 test("PDF detail shows observed parser phases without inventing upstream compute time", async ({
 	page,

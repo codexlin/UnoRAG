@@ -7,6 +7,9 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [0.3.0] - Acceptance Pending
 
+- Select a newly created library from its confirmed response before closing the
+  editor. A slow or failed list refresh no longer leaves immediate uploads pointed
+  at the previously selected library or makes a successful creation look failed.
 - Fold answer sources with the official shadcn Trace pattern and preview inline
   citations with HoverCard. Preserve per-turn source snapshots, document versions,
   keyboard/touch access and full-source focus return without extra reads. Unify

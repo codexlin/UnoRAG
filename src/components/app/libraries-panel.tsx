@@ -176,7 +176,13 @@ export function LibrariesPanel() {
 	}
 
 	async function onUploadFiles(files: FileList | null) {
-		if (!files?.length || !selectedLibrary || uploading || !canWriteLibraries)
+		if (
+			!files?.length ||
+			!selectedLibrary ||
+			uploading ||
+			savingLibrary ||
+			!canWriteLibraries
+		)
 			return;
 		const libraryId = selectedLibrary.id;
 		const libraryKey = queryKeys.libraries(queryScope);
@@ -348,10 +354,18 @@ export function LibrariesPanel() {
 					scanHandling: libraryScanHandling,
 					parsePreference: libraryParsePreference,
 				});
+				const libraryKey = queryKeys.libraries(queryScope);
+				await queryClient.cancelQueries({ queryKey: libraryKey, exact: true });
+				queryClient.setQueryData<ApiLibrary[]>(libraryKey, (current = []) => [
+					created,
+					...current.filter((library) => library.id !== created.id),
+				]);
+				setSelectedId(created.id);
 				toast.success(`已创建知识库「${created.name}」`);
 				setLibraryDialogOpen(false);
-				await loadLibraries();
-				setSelectedId(created.id);
+				// A failed list refresh must not undo the confirmed creation or its upload target.
+				// The scoped query hook reports refresh failures without reopening the editor.
+				void refreshLibraries().catch(() => {});
 			} else if (libraryDialogMode === "edit" && editingLibrary) {
 				const updated = await updateLibrary({
 					libraryId: editingLibrary.id,
@@ -596,7 +610,7 @@ export function LibrariesPanel() {
 		}
 	}
 
-	const uploadDisabled = uploading || !selectedId;
+	const uploadDisabled = uploading || savingLibrary || !selectedId;
 	const detailActions = buildDetailActions(caps, detailDoc, {
 		onView: (doc) => setDocumentOverlay({ kind: "detail", docId: doc.id }),
 		onAcl: (doc) => setDocumentOverlay({ kind: "acl", doc }),
