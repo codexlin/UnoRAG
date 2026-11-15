@@ -173,6 +173,10 @@ Parsing produces DocumentIR before chunking. The policy is structure-first:
 4. index chunk, section and table records with stable provenance;
 5. keep TableIR headers, normalized units, row groups and contributing citations.
 
+原生 Markdown 解析把带表头、分隔行且列数一致的管道表转换为 `TableIR`，保留标题路径与最近标题，
+沿用 table 分块、行组及 `table_summary` 索引。转义管道保留为单元格内容；空表体、列数不齐或非法分隔行
+保留为原文，围栏代码不参与表格识别。TXT 不启用该转换；既有 Markdown 需重索引才会生成新的表格结构。
+
 入库还生成一个 generation 绑定的 `document` 记录：正文保存有界的解析标题目录，向量只使用有界的文档
 身份描述，不把整份长目录当普通 chunk 向量化。同一版本的 `parser_report.metrics.document_context`
 保存原始文件名、首级标题、显式编号标签提取结果、标题层级和完整性标记。它属于检索内容，普通文档/任务

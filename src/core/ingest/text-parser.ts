@@ -1,4 +1,5 @@
 import { type DocumentIR, DocumentIRSchema } from "../document-ir";
+import { parseMarkdownTable } from "../parsing/markdown-table";
 
 export type ParseTextDocumentInput = {
 	documentId: string;
@@ -73,7 +74,7 @@ export function parseTextDocument(input: ParseTextDocumentInput): DocumentIR {
 	const nodes: Array<Record<string, unknown>> = [];
 	let pending: PendingNode | undefined;
 	let sequence = 0;
-	const currentPath = () => (headings.length > 0 ? headings.join("/") : null);
+	const currentPath = () => headings.filter(Boolean).join("/") || null;
 	const flush = () => {
 		if (!pending) return;
 		const body = pending.lines.join("\n").trim();
@@ -90,8 +91,34 @@ export function parseTextDocument(input: ParseTextDocumentInput): DocumentIR {
 		pending = undefined;
 	};
 
-	for (const rawLine of text.split("\n")) {
-		const line = rawLine.trimEnd();
+	const lines = text.split("\n");
+	const markdown =
+		input.sourceFormat === "md" || input.sourceFormat === "markdown";
+	for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+		const line = lines[lineIndex].trimEnd();
+		const fence = markdown ? /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line) : null;
+		if (fence && (fence[1][0] !== "`" || !fence[2].includes("`"))) {
+			flush();
+			const start = lineIndex;
+			while (++lineIndex < lines.length) {
+				const closing = /^ {0,3}(`+|~+)[ \t]*$/.exec(lines[lineIndex]);
+				if (
+					closing &&
+					closing[1][0] === fence[1][0] &&
+					closing[1].length >= fence[1].length
+				)
+					break;
+			}
+			nodes.push({
+				id: `text-code-${sequence}`,
+				type: "code",
+				path: currentPath(),
+				text: lines.slice(start, lineIndex + 1).join("\n"),
+				meta: { source_line_group: sequence },
+			});
+			sequence += 1;
+			continue;
+		}
 		const heading = /^(#{1,6})[ \t]+(.+?)\s*$/.exec(line);
 		if (heading) {
 			flush();
@@ -110,6 +137,29 @@ export function parseTextDocument(input: ParseTextDocumentInput): DocumentIR {
 				meta: { source_line_group: sequence },
 			});
 			sequence += 1;
+			continue;
+		}
+		const table = markdown
+			? parseMarkdownTable({
+					lines,
+					startLine: lineIndex,
+					tableId: `${input.documentId}:table:${lineIndex + 1}`,
+					caption: headings.filter(Boolean).at(-1) ?? "",
+				})
+			: null;
+		if (table) {
+			flush();
+			nodes.push({
+				id: `text-${table.tableIr ? "table" : "paragraph"}-${sequence}`,
+				type: table.tableIr ? "table" : "paragraph",
+				path: currentPath(),
+				text: lines.slice(lineIndex, table.endLine).join("\n"),
+				table_id: table.tableIr?.table_id ?? null,
+				table_ir: table.tableIr,
+				meta: { source_line_group: sequence },
+			});
+			sequence += 1;
+			lineIndex = table.endLine - 1;
 			continue;
 		}
 		if (!line.trim()) {
@@ -143,7 +193,7 @@ export function parseTextDocument(input: ParseTextDocumentInput): DocumentIR {
 			source_format: input.sourceFormat ?? "txt",
 			parser: "native-text",
 			backend: "typescript",
-			parser_version: "1",
+			parser_version: markdown ? "2" : "1",
 			mode: "native",
 			text_pages: [],
 			metrics: {
@@ -153,7 +203,7 @@ export function parseTextDocument(input: ParseTextDocumentInput): DocumentIR {
 		},
 		meta: {
 			encoding: "utf-8",
-			line_count: text.split("\n").length,
+			line_count: lines.length,
 		},
 	});
 }

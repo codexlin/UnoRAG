@@ -26,7 +26,7 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 |---|---|
 | 身份与权限 | 本地登录、首次改密、邀请注册、邮箱链接登录/重置、可撤销 Session、Workspace/角色、文档 ACL、Service Key、审计 |
 | 文档治理 | 上传、替换、版本、重索引、删除；失败保留旧 active generation；DBOS 重试、取消和对账 |
-| 文档理解 | TXT/Markdown/DOCX/PDF，LiteParse/MinerU，DocumentIR/TableIR，结构优先切分及多粒度索引 |
+| 文档理解 | TXT/Markdown/DOCX/PDF，LiteParse/MinerU，Markdown 管道表、DocumentIR/TableIR，结构优先切分及多粒度索引 |
 | 检索问答 | 作用域强制过滤、Dense/BM25+RRF、重排、改写、证据裁决、拒答、引用、确定性表格执行与 SSE |
 | 会话 | 带来源授权的短期记忆、归档和继续对话 |
 | 产品界面 | shadcn/Base UI、AI Elements、Vercel/Claude/Violet Bloom 主题、可调圆角、响应式工作台与设置分区；引用/版本/执行链路一致的阅读入口 |
@@ -100,7 +100,7 @@ Staging/Active 原子切换、检索前置强权限与黄金集稳定性门禁�
 
 1. **服务端混合检索与目录扩展**：在完成跨 Workspace、ACL、active generation 与删除隔离门禁及对应 ADR 评审后，引入 Qdrant Dense + 服务端 Sparse/RRF 替代有界内存 BM25，并以 PostgreSQL `pg_trgm`/全文索引突破 500 份授权文档目录限制。
 2. **稳定文档生命周期 Public API 与外置连接器**：开放幂等上传/替换/删除与状态查询公共 API，以独立外置 Sync Adapter 对接飞书、钉钉、Confluence、SharePoint 或对象存储事件，不将第三方 SDK 耦合进 DBOS 核心。
-3. **解析与分块补盲**：为缺乏清晰标题层级或 OCR 降级的长文本提供可选的条件式上下文增强（Contextual Retrieval），并补齐 Markdown 管道表进入 `TableIR`。
+3. **解析与分块补盲**：为缺乏清晰标题层级或 OCR 降级的长文本提供可选的条件式上下文增强（Contextual Retrieval）。
 
 ### Phase 4（`0.6.x ~ 1.0` 高合规与可控智能体版）：有界 Tool-Use 与纵深防御
 
