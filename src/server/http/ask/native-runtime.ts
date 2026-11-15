@@ -39,7 +39,10 @@ import type {
 	RetrievalResult,
 } from "@/core/retrieval";
 import { semanticEvidenceScore } from "@/core/retrieval/citation-mapper";
-import type { ActiveDocumentDescriptor } from "@/core/retrieval/document-constraints";
+import type {
+	ActiveDocumentCatalog,
+	ActiveDocumentDescriptor,
+} from "@/core/retrieval/document-constraints";
 import {
 	captureAskGenerationStream,
 	isEvaluationCaptureEnabled,
@@ -88,7 +91,8 @@ export type NativeAskRuntimeDependencies = {
 		identity: AuthIdentity;
 		libraryId: string;
 		scope: AuthorizedScope;
-	}) => Promise<{ documents: ActiveDocumentDescriptor[]; complete: boolean }>;
+		question?: string;
+	}) => Promise<ActiveDocumentCatalog>;
 };
 
 export class NativeAskRequestError extends Error {
@@ -265,9 +269,7 @@ export class NativeAskRuntime {
 		this.documentConstraintStatus = "none";
 		let retrievalScope = scope;
 		const loadDocumentCatalog = this.dependencies.loadDocumentCatalog;
-		let catalog:
-			| { documents: ActiveDocumentDescriptor[]; complete: boolean }
-			| undefined;
+		let catalog: ActiveDocumentCatalog | undefined;
 		if (loadDocumentCatalog) {
 			const resolution = await resolveAskDocumentEvidence({
 				question: state.question ?? "",
@@ -280,6 +282,7 @@ export class NativeAskRuntime {
 						identity: this.identity,
 						libraryId: this.libraryId,
 						scope,
+						question: state.question ?? "",
 					});
 					return catalog;
 				},
@@ -349,11 +352,12 @@ export class NativeAskRuntime {
 				),
 			];
 			if (documentIds.length) {
-				catalog ??= await loadDocumentCatalog({
-					identity: this.identity,
-					libraryId: this.libraryId,
-					scope: { ...retrievalScope, documentIds },
-				});
+				if (!catalog?.complete)
+					catalog = await loadDocumentCatalog({
+						identity: this.identity,
+						libraryId: this.libraryId,
+						scope: { ...retrievalScope, documentIds },
+					});
 				if (!catalog.complete) {
 					this.documentConstraintStatus = "unavailable";
 					return this.emptyDocumentResult(scope);

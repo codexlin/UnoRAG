@@ -7,6 +7,13 @@ export type ActiveDocumentDescriptor = {
 	context: DocumentContext | null;
 };
 
+export type ActiveDocumentCatalog = {
+	documents: ActiveDocumentDescriptor[];
+	complete: boolean;
+	/** All potential identity matches for this exact question were loaded. */
+	completeForQuestion?: string;
+};
+
 export type DocumentConstraint = {
 	status: "none" | "resolved" | "unavailable" | "ambiguous";
 	documents: ActiveDocumentDescriptor[];
@@ -40,17 +47,45 @@ function normalize(value: string): string {
 	return value.normalize("NFKC").trim().toLowerCase();
 }
 
+export function documentCatalogSearchHints(question: string): {
+	terms: string[];
+	codes: string[];
+} {
+	const codes = [
+		...question.replace(new RegExp(FILE), "").matchAll(new RegExp(CODE)),
+	].map((match) => normalize(match[0]));
+	const subject = question
+		.replace(/^(?:请问|请说明|请描述)/u, "")
+		.match(/([\p{L}\p{N}]{4,40})(?:前|后|时)[，,：:\s]/u)?.[1];
+	return {
+		codes: [...new Set(codes)],
+		terms: [
+			...new Set([
+				...[...question.matchAll(new RegExp(FILE))].map((match) =>
+					normalize(match[0]),
+				),
+				...codes,
+				...[...question.matchAll(new RegExp(QUOTED_TITLE))].map((match) =>
+					normalize(match[1] ?? match[2] ?? match[3] ?? ""),
+				),
+				...(subject ? [normalize(subject)] : []),
+			]),
+		],
+	};
+}
+
 export function resolveDocumentConstraint(
 	question: string,
 	catalog: ActiveDocumentDescriptor[],
 	complete: boolean,
+	completeForQuestion?: string,
 ): DocumentConstraint {
 	const none: DocumentConstraint = { status: "none", documents: [] };
 	const unavailable: DocumentConstraint = {
 		status: "unavailable",
 		documents: [],
 	};
-	if (!complete) return unavailable;
+	if (!complete && completeForQuestion !== question) return unavailable;
 	const filenames = [
 		...new Set(
 			[...question.matchAll(new RegExp(FILE))].map((m) => normalize(m[0])),

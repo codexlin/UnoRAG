@@ -8,6 +8,7 @@ export const integrationTestFiles = [
 	"tests/ts-core/auth-security-redis.test.ts",
 	"tests/ts-core/database-contracts-postgres.test.ts",
 	"tests/ts-core/document-acl-routes-postgres.test.ts",
+	"tests/ts-core/document-catalog-postgres.test.ts",
 	"tests/ts-core/document-acl-projection.test.ts",
 	"tests/ts-core/document-delete-postgres.test.ts",
 	"tests/ts-core/document-download-postgres.test.ts",

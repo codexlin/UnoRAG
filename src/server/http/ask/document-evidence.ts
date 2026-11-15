@@ -8,6 +8,7 @@ import type {
 	InternalCitation,
 } from "@/core/retrieval";
 import {
+	type ActiveDocumentCatalog,
 	type ActiveDocumentDescriptor,
 	executeOutlineQuestion,
 	needsDocumentConstraint,
@@ -67,10 +68,7 @@ export async function resolveAskDocumentEvidence(input: {
 	libraryId: string;
 	scope: AuthorizedScope;
 	filters?: RetrievalFilters;
-	loadCatalog: () => Promise<{
-		documents: ActiveDocumentDescriptor[];
-		complete: boolean;
-	}>;
+	loadCatalog: () => Promise<ActiveDocumentCatalog>;
 	lookupDocumentRecord: DefaultRetrievalService["lookupDocumentRecord"];
 	signal?: AbortSignal;
 }): Promise<DocumentEvidenceResolution> {
@@ -84,6 +82,7 @@ export async function resolveAskDocumentEvidence(input: {
 		input.question,
 		catalog.documents,
 		catalog.complete,
+		catalog.completeForQuestion,
 	);
 	if (constraint.status !== "resolved")
 		return { ...empty, status: constraint.status };

@@ -10,6 +10,7 @@ import { buildIndexPayloads } from "../../src/core/ingest/index-records";
 import { parseTextDocument } from "../../src/core/ingest/text-parser";
 import {
 	type ActiveDocumentDescriptor,
+	documentCatalogSearchHints,
 	executeOutlineQuestion,
 	needsDocumentConstraint,
 	resolveDocumentConstraint,
@@ -163,6 +164,56 @@ test("explicit filenames resolve only against the supplied authorized active cat
 	);
 	assert.equal(
 		resolveDocumentConstraint("manual.docx 的内容？", [allowed], false).status,
+		"unavailable",
+	);
+});
+
+test("catalog search hints preserve all source selectors without treating filename hyphens as codes", () => {
+	assert.deepEqual(
+		documentCatalogSearchHints(
+			"MANUAL.DOCX 中 SEC-ACCESS-27 和《访问控制规程》的内容？",
+		),
+		{
+			terms: ["manual.docx", "sec-access-27", "访问控制规程"],
+			codes: ["sec-access-27"],
+		},
+	);
+	assert.deepEqual(
+		documentCatalogSearchHints("report-narrative-5k.md 的内容？"),
+		{ terms: ["report-narrative-5k.md"], codes: [] },
+	);
+	assert.deepEqual(
+		documentCatalogSearchHints("库存盘点前，需要核对哪些批次？"),
+		{ terms: ["库存盘点"], codes: [] },
+	);
+});
+
+test("partial catalogs resolve only with a complete match set bound to the same question", () => {
+	const question = "manual.docx 的内容？";
+	assert.equal(
+		resolveDocumentConstraint(question, [descriptor()], false, question).status,
+		"resolved",
+	);
+	assert.equal(
+		resolveDocumentConstraint(
+			question,
+			[descriptor()],
+			false,
+			"other.docx 的内容？",
+		).status,
+		"unavailable",
+	);
+	assert.equal(
+		resolveDocumentConstraint(
+			question,
+			[descriptor(), descriptor({ documentId: "duplicate" })],
+			false,
+			question,
+		).status,
+		"ambiguous",
+	);
+	assert.equal(
+		resolveDocumentConstraint(question, [], false, question).status,
 		"unavailable",
 	);
 });
