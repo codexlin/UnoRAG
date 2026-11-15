@@ -117,6 +117,8 @@ function assertAuthorizedHits(
 			payload.library_id !== scope.libraryId ||
 			!generationAllowed ||
 			!documentAllowed ||
+			(payload.lifecycle_visibility != null &&
+				payload.lifecycle_visibility !== "active") ||
 			!aclAllowed
 		) {
 			throw new RetrievalSecurityViolationError(
@@ -475,26 +477,49 @@ export class DefaultRetrievalService {
 			input.options?.rerankEnabled ?? this.options.rerankEnabled;
 		if (hybridEnabled) {
 			try {
-				const corpus = assertAuthorizedHits(
-					await this.store.listCorpus({
-						scope,
-						userFilters: filters,
-						limit: this.options.corpusLimit ?? 10_000,
-					}),
+				const serverHits = await this.store.hybridSearch?.({
+					vector,
+					query,
 					scope,
-				);
-				const lexical = lexicalHits(query, corpus, this.options.bm25TopK);
-				if (lexical.length) {
-					candidates = fuseHits({
-						dense,
-						lexical,
-						rrfK: this.options.rrfK,
-						limit: denseK,
-					});
+					userFilters: filters,
+					limit: denseK,
+					sparseLimit: this.options.bm25TopK,
+					rrfK: this.options.rrfK,
+				});
+				if (serverHits != null) {
+					const denseScores = new Map(
+						dense.map((hit) => [String(hit.id), hit.score]),
+					);
+					candidates = assertAuthorizedHits(serverHits, scope).map((hit) => ({
+						...hit,
+						dense_score: denseScores.get(String(hit.id)) ?? null,
+						rrf_score: hit.score,
+						used_hybrid: true,
+					}));
 					usedHybrid = true;
+				} else {
+					const corpus = assertAuthorizedHits(
+						await this.store.listCorpus({
+							scope,
+							userFilters: filters,
+							limit: this.options.corpusLimit ?? 10_000,
+						}),
+						scope,
+					);
+					const lexical = lexicalHits(query, corpus, this.options.bm25TopK);
+					if (lexical.length) {
+						candidates = fuseHits({
+							dense,
+							lexical,
+							rrfK: this.options.rrfK,
+							limit: denseK,
+						});
+						usedHybrid = true;
+					}
 				}
 			} catch (error) {
 				input.signal?.throwIfAborted();
+				if (error instanceof RetrievalSecurityViolationError) throw error;
 				hybridError = errorMessage(error);
 				candidates = dense;
 			}

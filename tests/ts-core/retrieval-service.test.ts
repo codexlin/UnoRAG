@@ -204,16 +204,14 @@ test("BM25 uses only authorized narrative context and keeps rerank and citation 
 			payload: { ...contextual.payload, workspace_id: "workspace-b" },
 		},
 	];
-	const isolated = await service.retrieve({
-		query: "Zephyrquartz",
-		libraryId: "library-a",
-		scope,
-		topK: 10,
-	});
-	assert.equal(isolated.debug.hybridFailed, true);
-	assert.deepEqual(
-		isolated.citations.map((item) => item.id),
-		["dense"],
+	await assert.rejects(
+		service.retrieve({
+			query: "Zephyrquartz",
+			libraryId: "library-a",
+			scope,
+			topK: 10,
+		}),
+		RetrievalSecurityViolationError,
 	);
 });
 
@@ -1278,4 +1276,179 @@ test("a vector store scope violation fails the entire retrieval", async () => {
 		}),
 		RetrievalSecurityViolationError,
 	);
+});
+
+for (const violation of [
+	"tenant",
+	"workspace",
+	"library",
+	"document",
+	"generation",
+	"acl",
+	"missing-acl",
+	"inactive",
+	"staging",
+] as const) {
+	test(`server hybrid results fail closed on ${violation} before reranking or citations`, async () => {
+		const leaked = hit({
+			id: "leaked",
+			text: "private",
+			chunkIndex: 0,
+			score: 0.02,
+		});
+		if (violation === "tenant") leaked.payload.tenant_id = "other";
+		if (violation === "workspace") leaked.payload.workspace_id = "other";
+		if (violation === "library") leaked.payload.library_id = "other";
+		if (violation === "document") leaked.payload.doc_id = "other";
+		if (violation === "generation") leaked.payload.generation_id = "other";
+		if (violation === "acl") {
+			leaked.payload.acl_scope = "restricted";
+			leaked.payload.acl_principal_ids = ["other"];
+		}
+		if (violation === "missing-acl") delete leaked.payload.acl_scope;
+		if (violation === "inactive" || violation === "staging")
+			leaked.payload.lifecycle_visibility = violation;
+		const store: RetrievalVectorStore = {
+			...new FakeStore(),
+			search: async () => [],
+			listCorpus: async () => {
+				throw new Error("no scroll");
+			},
+			hybridSearch: async () => [leaked],
+		};
+		const service = new DefaultRetrievalService(
+			embeddings,
+			store,
+			{
+				async rerank() {
+					assert.fail("must not rerank unauthorized content");
+				},
+			},
+			{
+				hybridEnabled: true,
+				rerankEnabled: true,
+				rerankTopK: 6,
+				bm25TopK: 20,
+				rrfK: 60,
+			},
+		);
+		await assert.rejects(
+			service.retrieve({
+				query: "q",
+				libraryId: "library-a",
+				scope: { ...scope, documentIds: ["document-a"] },
+				topK: 1,
+			}),
+			RetrievalSecurityViolationError,
+		);
+	});
+}
+
+test("server hybrid is preferred without corpus scroll and preserves semantic scores", async () => {
+	const denseHit = hit({
+		id: "dense",
+		text: "semantic",
+		chunkIndex: 0,
+		score: 0.8,
+	});
+	const sparseHit = hit({
+		id: "sparse",
+		text: "exact",
+		chunkIndex: 1,
+		score: 0.01,
+	});
+	const store: RetrievalVectorStore = {
+		async search() {
+			return [denseHit];
+		},
+		async listCorpus() {
+			assert.fail("server hybrid must not scroll corpus");
+		},
+		async hybridSearch(input) {
+			assert.equal(input.rrfK, 60);
+			return [{ ...denseHit, score: 0.02 }, sparseHit];
+		},
+	};
+	const service = new DefaultRetrievalService(embeddings, store, null, {
+		hybridEnabled: true,
+		rerankEnabled: false,
+		rerankTopK: 6,
+		bm25TopK: 20,
+		rrfK: 60,
+	});
+	const result = await service.retrieve({
+		query: "exact",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+	});
+	assert.equal(result.debug.usedHybrid, true);
+	assert.equal(result.debug.hybridFailed, false);
+	assert.equal(result.debug.retrievalMode, "hybrid");
+	assert.equal(result.citations[0].dense_score, 0.8);
+	assert.equal(result.citations[0].rrf_score, 0.02);
+	assert.equal(result.citations[1].dense_score, null);
+	assert.equal(
+		semanticEvidenceScore(result.citations[1]),
+		Number.NEGATIVE_INFINITY,
+	);
+});
+
+test("a BM25 corpus security violation aborts instead of falling back to dense", async () => {
+	const store = new FakeStore();
+	store.listCorpus = async () => [
+		{
+			...hit({ id: "leaked", text: "private", chunkIndex: 0, score: 0 }),
+			payload: {
+				...hit({ id: "leaked", text: "private", chunkIndex: 0, score: 0 })
+					.payload,
+				workspace_id: "other",
+			},
+		},
+	];
+	const service = new DefaultRetrievalService(embeddings, store, null, {
+		hybridEnabled: true,
+		rerankEnabled: false,
+		rerankTopK: 6,
+		bm25TopK: 20,
+		rrfK: 60,
+	});
+	await assert.rejects(
+		service.retrieve({ query: "q", libraryId: "library-a", scope, topK: 1 }),
+		RetrievalSecurityViolationError,
+	);
+});
+
+test("server hybrid transport errors keep authorized dense fallback and failure diagnostics", async () => {
+	const store: RetrievalVectorStore = {
+		async search() {
+			return [
+				hit({ id: "dense", text: "semantic", chunkIndex: 0, score: 0.8 }),
+			];
+		},
+		async listCorpus() {
+			assert.fail("transport failure is not a legacy capability fallback");
+		},
+		async hybridSearch() {
+			throw new Error("Qdrant query operation failed");
+		},
+	};
+	const service = new DefaultRetrievalService(embeddings, store, null, {
+		hybridEnabled: true,
+		rerankEnabled: false,
+		rerankTopK: 6,
+		bm25TopK: 20,
+		rrfK: 60,
+	});
+	const result = await service.retrieve({
+		query: "q",
+		libraryId: "library-a",
+		scope,
+		topK: 1,
+	});
+	assert.equal(result.debug.hybridFailed, true);
+	assert.equal(result.debug.hybridError, "Qdrant query operation failed");
+	assert.equal(result.debug.usedHybrid, false);
+	assert.equal(result.debug.retrievalMode, "dense");
+	assert.equal(result.citations[0].id, "dense");
 });

@@ -12,6 +12,7 @@ import {
 import {
 	parseQdrantDistance,
 	QdrantCollectionManager,
+	qdrantServerHybridEnabled,
 } from "@/core/retrieval/qdrant/collection-manager";
 
 function required(name: string, fallback?: string): string {
@@ -81,6 +82,7 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		collection,
 		vectorSize: dimensions,
 		distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
+		serverHybridEnabled: qdrantServerHybridEnabled(),
 	}).ensure();
 	// The store awaits the original promise. This observer prevents an
 	// unhandled rejection if Qdrant fails before the first request arrives.
@@ -107,6 +109,8 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		embeddings,
 		new QdrantRetrievalStore(qdrant, collection, collectionReady, {
 			timeoutMs: qdrantTimeoutMs,
+			serverHybridEnabled: qdrantServerHybridEnabled(),
+			vectorSchema: collectionReady.then((result) => result.vectorSchema),
 		}),
 		reranker,
 		{

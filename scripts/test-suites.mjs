@@ -24,6 +24,7 @@ export const integrationTestFiles = [
 	"tests/ts-core/password-onboarding-postgres.test.ts",
 	"tests/ts-core/qdrant-collection-manager.integration.test.ts",
 	"tests/ts-core/qdrant-ingest-write-store.integration.test.ts",
+	"tests/ts-core/qdrant-server-hybrid.integration.test.ts",
 	"tests/ts-core/runtime-database-roles-postgres.test.ts",
 	"tests/ts-core/service-key-routes-postgres.test.ts",
 	"tests/ts-core/session-memory-redis.test.ts",

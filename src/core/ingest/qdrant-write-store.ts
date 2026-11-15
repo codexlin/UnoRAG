@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
 import type { Schemas } from "@qdrant/js-client-rest";
+import { sparseVector } from "../retrieval/hybrid/sparse-vector";
+import type { QdrantVectorSchema } from "../retrieval/qdrant/collection-manager";
 
 import type { IndexWritePayload } from "./index-records";
 
@@ -80,7 +82,10 @@ export class QdrantIngestWriteStore {
 	constructor(
 		private readonly client: QdrantIngestClient,
 		private readonly collection: string,
-		options: { batchSize?: number } = {},
+		private readonly options: {
+			batchSize?: number;
+			vectorSchema?: QdrantVectorSchema;
+		} = {},
 	) {
 		if (!collection.trim()) throw new Error("Qdrant collection is required");
 		this.batchSize = Math.max(1, Math.trunc(options.batchSize ?? 64));
@@ -121,7 +126,16 @@ export class QdrantIngestWriteStore {
 			assertRecordScope(record, input.scope);
 			return {
 				id: record._point_id,
-				vector,
+				vector: this.options.vectorSchema?.sparseVectorName
+					? {
+							[this.options.vectorSchema.denseVectorName ?? ""]: vector,
+							[this.options.vectorSchema.sparseVectorName]: sparseVector(
+								record.embed_text,
+							),
+						}
+					: this.options.vectorSchema?.denseVectorName
+						? { [this.options.vectorSchema.denseVectorName]: vector }
+						: vector,
 				payload: {
 					...storedPayload(record, input.scope),
 					ingest_manifest_hash: manifestHash,

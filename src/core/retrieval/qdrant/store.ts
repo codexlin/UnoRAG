@@ -6,7 +6,11 @@ import {
 
 import type { RetrievalScope, RetrievalUserFilters } from "../contracts";
 import { buildMandatoryQdrantFilter } from "../filters/qdrant-filter";
-import { QdrantCollectionContractError } from "./collection-manager";
+import { sparseVector } from "../hybrid/sparse-vector";
+import {
+	QdrantCollectionContractError,
+	type QdrantVectorSchema,
+} from "./collection-manager";
 import { diagnoseQdrantError, type QdrantDiagnostic } from "./diagnostics";
 import { parseQdrantSearchHit, type QdrantSearchHit } from "./payload";
 
@@ -54,7 +58,19 @@ async function qdrantOperation<T>(
 	}
 }
 
+export type HybridSearchInput = {
+	vector: number[];
+	query: string;
+	scope: RetrievalScope;
+	userFilters?: RetrievalUserFilters;
+	limit: number;
+	sparseLimit: number;
+	rrfK: number;
+};
+
 export interface RetrievalVectorStore {
+	// null means this collection has no supported sparse index (use bounded BM25).
+	hybridSearch?(input: HybridSearchInput): Promise<QdrantSearchHit[] | null>;
 	search(input: {
 		vector: number[];
 		scope: RetrievalScope;
@@ -73,9 +89,14 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		private readonly client: QdrantClient,
 		private readonly collection: string,
 		private readonly ready: Promise<unknown> = Promise.resolve(),
-		private readonly options: { timeoutMs?: number } = {},
+		private readonly options: {
+			timeoutMs?: number;
+			serverHybridEnabled?: boolean;
+			vectorSchema?: Promise<QdrantVectorSchema>;
+		} = {},
 	) {
 		if (!collection.trim()) throw new Error("Qdrant collection is required");
+		void this.options.vectorSchema?.catch(() => undefined);
 	}
 
 	async search(input: {
@@ -109,9 +130,11 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		}) as QdrantFilter;
 		const response = await qdrantOperation(
 			"query",
-			() =>
+			async () =>
 				this.client.query(this.collection, {
 					query: input.vector,
+					using:
+						(await this.options.vectorSchema)?.denseVectorName ?? undefined,
 					filter,
 					limit: input.limit,
 					with_payload: true,
@@ -123,6 +146,70 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 			const hit = parseQdrantSearchHit(point);
 			return hit ? [hit] : [];
 		});
+	}
+
+	async hybridSearch(
+		input: HybridSearchInput,
+	): Promise<QdrantSearchHit[] | null> {
+		await qdrantOperation("ready", () => this.ready, this.options);
+		if (!this.options.serverHybridEnabled) return null;
+		const schema = await this.options.vectorSchema;
+		if (!schema?.sparseVectorName) return null;
+		const sparse = sparseVector(input.query);
+		if (!sparse.indices.length) return null;
+		const filter = buildMandatoryQdrantFilter({
+			scope: input.scope,
+			userFilters: input.userFilters,
+		}) as QdrantFilter;
+		return withActiveSpan(
+			"unorag.qdrant.hybrid_search",
+			{
+				"db.system.name": "qdrant",
+				"db.operation.name": "query",
+				"langfuse.observation.type": "retriever",
+			},
+			async () => {
+				const response = await qdrantOperation(
+					"query",
+					() =>
+						this.client.query(this.collection, {
+							prefetch: [
+								{
+									query: input.vector,
+									using: schema.denseVectorName ?? undefined,
+									filter,
+									limit: input.limit,
+								},
+								{
+									query: sparse,
+									using: schema.sparseVectorName ?? undefined,
+									filter,
+									limit: Math.max(input.limit, input.sparseLimit),
+								},
+							],
+							query: { rrf: { k: input.rrfK } },
+							filter,
+							limit: input.limit,
+							with_payload: true,
+							with_vector: false,
+						}),
+					this.options,
+				);
+				return response.points.flatMap((point) => {
+					const hit = parseQdrantSearchHit(point);
+					return hit
+						? [
+								{
+									...hit,
+									rrf_score: hit.score,
+									dense_score: null,
+									used_hybrid: true,
+								},
+							]
+						: [];
+				});
+			},
+		);
 	}
 
 	async listCorpus(input: {

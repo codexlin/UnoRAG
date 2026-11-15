@@ -1,5 +1,19 @@
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
 
+export const QDRANT_DENSE_VECTOR = "dense";
+export const QDRANT_SPARSE_VECTOR = "lexical_v1";
+
+export type QdrantVectorSchema = {
+	denseVectorName: string | null;
+	sparseVectorName: string | null;
+};
+
+export function qdrantServerHybridEnabled(): boolean {
+	return ["true", "1", "yes"].includes(
+		process.env.QDRANT_SERVER_HYBRID_ENABLED?.trim().toLowerCase() ?? "",
+	);
+}
+
 export const qdrantDistances = [
 	"Cosine",
 	"Euclid",
@@ -42,9 +56,11 @@ export type QdrantCollectionContract = {
 	collection: string;
 	vectorSize: number;
 	distance: QdrantDistance;
+	serverHybridEnabled?: boolean;
 };
 
 export type QdrantCollectionEnsureResult = QdrantCollectionContract & {
+	vectorSchema: QdrantVectorSchema;
 	created: boolean;
 	createdPayloadIndexes: string[];
 };
@@ -101,6 +117,7 @@ export class QdrantCollectionManager {
 
 		return {
 			...this.contract,
+			vectorSchema: detectQdrantVectorSchema(info),
 			created,
 			createdPayloadIndexes,
 		};
@@ -115,10 +132,20 @@ export class QdrantCollectionManager {
 			const created = await this.client.createCollection(
 				this.contract.collection,
 				{
-					vectors: {
-						size: this.contract.vectorSize,
-						distance: this.contract.distance,
-					},
+					vectors: this.contract.serverHybridEnabled
+						? {
+								[QDRANT_DENSE_VECTOR]: {
+									size: this.contract.vectorSize,
+									distance: this.contract.distance,
+								},
+							}
+						: {
+								size: this.contract.vectorSize,
+								distance: this.contract.distance,
+							},
+					...(this.contract.serverHybridEnabled
+						? { sparse_vectors: { [QDRANT_SPARSE_VECTOR]: {} } }
+						: {}),
 				},
 			);
 			if (!created) {
@@ -197,14 +224,39 @@ function validateContract(contract: QdrantCollectionContract): void {
 	}
 }
 
+export function detectQdrantVectorSchema(
+	info: CollectionInfo,
+): QdrantVectorSchema {
+	const vectors = info.config.params.vectors;
+	if (!vectors || (!("size" in vectors) && !vectors[QDRANT_DENSE_VECTOR])) {
+		throw new QdrantCollectionContractError(
+			"Qdrant collection has no supported dense vector",
+		);
+	}
+	const sparse = info.config.params.sparse_vectors?.[QDRANT_SPARSE_VECTOR];
+	// lexical_v1 uses fixed TF weights; corpus-wide IDF would change that contract.
+	if (sparse?.modifier && sparse.modifier !== "none") {
+		throw new QdrantCollectionContractError(
+			"Qdrant lexical_v1 must not use an IDF modifier",
+		);
+	}
+	return {
+		denseVectorName: "size" in vectors ? null : QDRANT_DENSE_VECTOR,
+		sparseVectorName: sparse ? QDRANT_SPARSE_VECTOR : null,
+	};
+}
+
 function validateCollectionInfo(
 	info: CollectionInfo,
 	contract: QdrantCollectionContract,
 ): void {
-	const vectors = info.config.params.vectors;
+	detectQdrantVectorSchema(info);
+	const config = info.config.params.vectors;
+	const vectors =
+		config && ("size" in config ? config : config[QDRANT_DENSE_VECTOR]);
 	if (!vectors || !("size" in vectors)) {
 		throw new QdrantCollectionContractError(
-			`Qdrant collection ${contract.collection} must use one unnamed dense vector`,
+			`Qdrant collection ${contract.collection} must use one unnamed dense vector or a named dense vector`,
 		);
 	}
 	if (vectors.size !== contract.vectorSize) {
