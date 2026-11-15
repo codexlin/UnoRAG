@@ -146,7 +146,13 @@ export function OperationsFeedbackPanel({
 						onValueChange={(value) => setTriageFilter(value ?? "all")}
 					>
 						<SelectTrigger className="w-36" aria-label="按处理状态筛选">
-							<SelectValue placeholder="处理状态" />
+							<SelectValue>
+								{triageFilter === "all"
+									? "全部状态"
+									: ((ASK_FEEDBACK_TRIAGE_LABELS as Record<string, string>)[
+											triageFilter
+										] ?? triageFilter)}
+							</SelectValue>
 						</SelectTrigger>
 						<SelectContent>
 							<SelectItem value="all">全部状态</SelectItem>
@@ -162,7 +168,13 @@ export function OperationsFeedbackPanel({
 						onValueChange={(value) => setReasonFilter(value ?? "all")}
 					>
 						<SelectTrigger className="w-44" aria-label="按反馈原因筛选">
-							<SelectValue placeholder="问题原因" />
+							<SelectValue>
+								{reasonFilter === "all"
+									? "全部原因"
+									: ((ASK_FEEDBACK_REASON_LABELS as Record<string, string>)[
+											reasonFilter
+										] ?? reasonFilter)}
+							</SelectValue>
 						</SelectTrigger>
 						<SelectContent>
 							<SelectItem value="all">全部原因</SelectItem>
