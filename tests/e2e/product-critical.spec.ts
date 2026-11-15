@@ -106,15 +106,19 @@ test("static delivery preserves shared warm-cache assets without routing", async
 			.filter((resource) => resource.decodedBodySize > 0)
 			.map((resource) => resource.path),
 	);
-	const shared = warm.resources.filter(
-		(resource) => coldPaths.has(resource.path) && resource.decodedBodySize > 0,
+	const sharedByPath = warm.resources.filter((resource) =>
+		coldPaths.has(resource.path),
+	);
+	const shared = sharedByPath.filter(
+		(resource) => resource.decodedBodySize > 0,
 	);
 	const cached = shared.filter((resource) => resource.transferSize === 0);
 	await testInfo.attach("static-delivery-shared-cache", {
 		body: JSON.stringify(
 			{
 				targetMode,
-				sharedPaths: shared.map((resource) => resource.path),
+				sharedPaths: sharedByPath.map((resource) => resource.path),
+				decodedSharedPaths: shared.map((resource) => resource.path),
 				cachedPaths: cached.map((resource) => resource.path),
 			},
 			null,
@@ -122,11 +126,14 @@ test("static delivery preserves shared warm-cache assets without routing", async
 		),
 		contentType: "application/json",
 	});
-	expect(shared.length).toBeGreaterThan(0);
+	expect(sharedByPath.length).toBeGreaterThan(0);
 	if (targetMode === "production") {
+		expect(shared.length).toBeGreaterThan(0);
 		expect(cached.length).toBeGreaterThan(0);
 	}
-	const css = shared.find((resource) => resource.path.endsWith(".css"));
+	// Development 304s may expose zero body sizes despite reusing the stored CSS.
+	const cssResources = targetMode === "development" ? sharedByPath : shared;
+	const css = cssResources.find((resource) => resource.path.endsWith(".css"));
 	if (!css)
 		throw new Error("Expected a shared same-origin static CSS resource");
 	const cssResponse = await request.get(css.path, {
