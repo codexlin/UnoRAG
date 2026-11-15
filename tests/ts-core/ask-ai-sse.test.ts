@@ -1046,6 +1046,68 @@ test("answer adapter streams injected tokens with current prompt and temperature
 	assert.match(observedSystem, /资料未覆盖/);
 });
 
+test("SSE final sources keep original anchors while early candidates and table proof remain complete", async () => {
+	for (const preserveAllCitations of [false, true]) {
+		const events = (
+			await collect(
+				streamLegacyAskSse({
+					meta: {},
+					citations: [{ id: "unused" }, { id: "used" }],
+					tokens: tokens("Answer ", "[2]."),
+					done: {},
+					preserveAllCitations,
+				}),
+			)
+		).map(parseFrame);
+		const early = events[1]?.data;
+		assert.ok(Array.isArray(early));
+		assert.equal(early.length, 2);
+		const done = events.at(-1)?.data as {
+			answer: string;
+			citations: Array<{ id: string; index: number }>;
+		};
+		assert.equal(done.answer, "Answer [2].");
+		assert.deepEqual(
+			done.citations.map(({ id, index }) => ({ id, index })),
+			preserveAllCitations
+				? [
+						{ id: "unused", index: 1 },
+						{ id: "used", index: 2 },
+					]
+				: [{ id: "used", index: 2 }],
+		);
+	}
+});
+
+test("incomplete SSE keeps candidate provenance and never emits finalized sources", async () => {
+	for (const abort of [false, true]) {
+		const controller = new AbortController();
+		const events = (
+			await collect(
+				streamLegacyAskSse({
+					meta: {},
+					citations: [{ id: "one" }, { id: "two" }],
+					done: {},
+					abortSignal: controller.signal,
+					tokens: (async function* () {
+						yield "Partial [2].";
+						if (abort) controller.abort();
+						else throw new Error("interrupted");
+					})(),
+				}),
+			)
+		).map(parseFrame);
+		const initial = events.find((event) => event.event === "citations")?.data;
+		assert.ok(Array.isArray(initial));
+		assert.equal(initial.length, 2);
+		assert.equal(
+			events.some((event) => event.event === "done"),
+			false,
+		);
+		assert.equal(events.at(-1)?.event, "error");
+	}
+});
+
 test("legacy SSE preserves order and removes internal scope and debug fields", async () => {
 	const frames = await collect(
 		streamLegacyAskSse({
