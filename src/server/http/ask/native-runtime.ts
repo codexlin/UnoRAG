@@ -25,6 +25,7 @@ import {
 	scopedProbabilityOverlapReason,
 } from "@/core/ask-graph/comparison-evidence";
 import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
+import { isSelfContainedFollowupQuestion } from "@/core/ask-graph/nodes/rewrite";
 import { deriveGroundedTableLookup } from "@/core/ask-graph/table";
 import {
 	isFormFieldLookup,
@@ -452,6 +453,9 @@ export class NativeAskRuntime {
 				rewrite: async ({ question, history }) => {
 					if (history.length === 0) {
 						return { query: question, mode: "identity_first_turn" };
+					}
+					if (isSelfContainedFollowupQuestion(question)) {
+						return { query: question, mode: "identity_self_contained" };
 					}
 					await this.assertAuthorized?.(this.retrievedEvidence);
 					try {

@@ -1,3 +1,9 @@
+import type {
+	AskFeedbackRating,
+	AskFeedbackReasonCode,
+	AskFeedbackRecord,
+	AskFeedbackTriageStatus,
+} from "@/lib/ask-feedback";
 import { documentDownloadFilename } from "@/lib/document-download";
 import type { ReleaseInfo } from "@/lib/release-info";
 
@@ -942,4 +948,94 @@ export async function askQuestionStream(
 			}
 		}
 	}
+}
+
+export async function submitAskFeedback(input: {
+	request_id: string;
+	rating: AskFeedbackRating;
+	reason_code?: AskFeedbackReasonCode | null;
+}): Promise<{
+	id: string;
+	request_id: string;
+	rating: AskFeedbackRating;
+	reason_code: AskFeedbackReasonCode | null;
+	triage_status: AskFeedbackTriageStatus;
+}> {
+	const response = await fetch(`${getApiBaseUrl()}/v1/feedback`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(input),
+	});
+	const payload = (await response.json().catch(() => null)) as {
+		detail?: string;
+		feedback?: {
+			id: string;
+			request_id: string;
+			rating: AskFeedbackRating;
+			reason_code: AskFeedbackReasonCode | null;
+			triage_status: AskFeedbackTriageStatus;
+		};
+	} | null;
+	if (!response.ok || !payload?.feedback) {
+		throw new Error(payload?.detail || `feedback ${response.status}`);
+	}
+	return payload.feedback;
+}
+
+export async function fetchOperationsFeedback(input?: {
+	rating?: AskFeedbackRating;
+	triage_status?: AskFeedbackTriageStatus;
+	reason_code?: AskFeedbackReasonCode;
+	limit?: number;
+	signal?: AbortSignal;
+}): Promise<AskFeedbackRecord[]> {
+	const params = new URLSearchParams();
+	if (input?.rating) params.set("rating", input.rating);
+	if (input?.triage_status) params.set("triage_status", input.triage_status);
+	if (input?.reason_code) params.set("reason_code", input.reason_code);
+	if (input?.limit) params.set("limit", String(input.limit));
+	const query = params.toString();
+	const response = await fetch(
+		`/api/workspace/operations/feedback${query ? `?${query}` : ""}`,
+		{
+			method: "GET",
+			cache: "no-store",
+			signal: input?.signal,
+		},
+	);
+	const payload = (await response.json().catch(() => null)) as {
+		detail?: string;
+		items?: AskFeedbackRecord[];
+	} | null;
+	if (!response.ok || !payload?.items) {
+		throw new Error(payload?.detail || `feedback list ${response.status}`);
+	}
+	return payload.items;
+}
+
+export async function updateOperationsFeedbackTriage(input: {
+	feedback_id: string;
+	triage_status: AskFeedbackTriageStatus;
+}): Promise<{
+	id: string;
+	triage_status: AskFeedbackTriageStatus;
+	updated_at: string;
+}> {
+	const response = await fetch("/api/workspace/operations/feedback", {
+		method: "PATCH",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(input),
+	});
+	const payload = (await response.json().catch(() => null)) as {
+		detail?: string;
+		feedback?: {
+			id: string;
+			triage_status: AskFeedbackTriageStatus;
+			updated_at: string;
+		};
+	} | null;
+	if (!response.ok || !payload?.feedback) {
+		throw new Error(payload?.detail || `triage ${response.status}`);
+	}
+	return payload.feedback;
 }

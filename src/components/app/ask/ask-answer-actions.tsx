@@ -7,6 +7,8 @@ import {
 	LoaderCircle,
 	RotateCcw,
 	Square,
+	ThumbsDown,
+	ThumbsUp,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -15,11 +17,22 @@ import type { LocalTurn } from "@/components/app/ask/ask-turn-state";
 import { Button } from "@/components/ui/button";
 import { MessageFooter } from "@/components/ui/message";
 import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "@/components/ui/popover";
+import {
 	Tooltip,
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { ApiRetrievalDebug } from "@/lib/api";
+import { type ApiRetrievalDebug, submitAskFeedback } from "@/lib/api";
+import {
+	ASK_FEEDBACK_REASON_CODES,
+	ASK_FEEDBACK_REASON_LABELS,
+	type AskFeedbackRating,
+	type AskFeedbackReasonCode,
+} from "@/lib/ask-feedback";
 import { formatDurationMs } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -114,6 +127,124 @@ function CopyAnswerButton({ text }: { text: string }) {
 	);
 }
 
+const UUID_PATTERN =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function FeedbackButtons({ requestId }: { requestId: string }) {
+	const [rating, setRating] = useState<AskFeedbackRating | null>(null);
+	const [reasonCode, setReasonCode] = useState<AskFeedbackReasonCode | null>(
+		null,
+	);
+	const [saving, setSaving] = useState(false);
+	const [menuOpen, setMenuOpen] = useState(false);
+
+	async function send(
+		nextRating: AskFeedbackRating,
+		nextReason?: AskFeedbackReasonCode | null,
+	) {
+		if (saving) return;
+		setSaving(true);
+		try {
+			await submitAskFeedback({
+				request_id: requestId,
+				rating: nextRating,
+				reason_code: nextRating === "up" ? undefined : (nextReason ?? null),
+			});
+			setRating(nextRating);
+			setReasonCode(nextRating === "up" ? null : (nextReason ?? null));
+			setMenuOpen(false);
+			toast.success(nextRating === "up" ? "感谢反馈" : "已记录问题反馈");
+		} catch (error) {
+			toast.error("反馈提交失败", {
+				description: error instanceof Error ? error.message : "请稍后重试",
+			});
+		} finally {
+			setSaving(false);
+		}
+	}
+
+	return (
+		<>
+			<Tooltip>
+				<TooltipTrigger
+					render={
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className={cn(
+								actionClassName,
+								rating === "up" && "text-primary hover:text-primary",
+							)}
+							aria-label="回答有帮助"
+							aria-pressed={rating === "up"}
+							disabled={saving}
+							focusableWhenDisabled
+							onClick={() => void send("up")}
+						/>
+					}
+				>
+					<ThumbsUp className="size-4" aria-hidden />
+				</TooltipTrigger>
+				<TooltipContent>回答有帮助</TooltipContent>
+			</Tooltip>
+			<Popover open={menuOpen} onOpenChange={setMenuOpen}>
+				<Tooltip>
+					<TooltipTrigger
+						render={
+							<PopoverTrigger
+								render={
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon"
+										className={cn(
+											actionClassName,
+											rating === "down" &&
+												"text-destructive hover:text-destructive",
+										)}
+										aria-label="反馈回答问题"
+										aria-pressed={rating === "down"}
+										disabled={saving}
+										focusableWhenDisabled
+									/>
+								}
+							>
+								<ThumbsDown className="size-4" aria-hidden />
+							</PopoverTrigger>
+						}
+					/>
+					<TooltipContent>反馈回答问题</TooltipContent>
+				</Tooltip>
+				<PopoverContent align="start" className="w-60 p-2">
+					<p className="px-2 py-1 text-xs font-medium text-muted-foreground">
+						选择问题原因
+					</p>
+					<div className="mt-1 flex flex-col gap-1">
+						{ASK_FEEDBACK_REASON_CODES.map((code) => (
+							<Button
+								key={code}
+								type="button"
+								variant={
+									rating === "down" && reasonCode === code
+										? "secondary"
+										: "ghost"
+								}
+								size="sm"
+								className="justify-start font-normal"
+								disabled={saving}
+								onClick={() => void send("down", code)}
+							>
+								{ASK_FEEDBACK_REASON_LABELS[code]}
+							</Button>
+						))}
+					</div>
+				</PopoverContent>
+			</Popover>
+		</>
+	);
+}
+
 type AskAnswerActionsProps = {
 	turn: LocalTurn;
 	canAsk: boolean;
@@ -136,6 +267,12 @@ export function AskAnswerActions({
 }: AskAnswerActionsProps) {
 	const canRetry =
 		!turn.pending && Boolean(turn.error || turn.cancelled || turn.refused);
+	const requestId =
+		!turn.pending &&
+		typeof turn.retrievalDebug?.trace_id === "string" &&
+		UUID_PATTERN.test(turn.retrievalDebug.trace_id)
+			? turn.retrievalDebug.trace_id
+			: null;
 	return (
 		<MessageFooter
 			role="group"
@@ -144,6 +281,9 @@ export function AskAnswerActions({
 		>
 			{!turn.pending && turn.answer.trim() ? (
 				<CopyAnswerButton text={turn.answer} />
+			) : null}
+			{requestId ? (
+				<FeedbackButtons key={requestId} requestId={requestId} />
 			) : null}
 			{turn.pending ? (
 				<Tooltip>

@@ -26,6 +26,7 @@ export const integrationTestFiles = [
 	"tests/ts-core/runtime-database-roles-postgres.test.ts",
 	"tests/ts-core/service-key-routes-postgres.test.ts",
 	"tests/ts-core/session-memory-redis.test.ts",
+	"tests/ts-core/sprint1-services-integration.test.ts",
 	"tests/ts-core/tombstone-maintenance-postgres.test.ts",
 	"tests/ts-core/workspace-management-postgres.test.ts",
 	"tests/ts-core/workspace-notifications-postgres.test.ts",

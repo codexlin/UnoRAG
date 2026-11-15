@@ -7,6 +7,7 @@ import {
 	OpenAICompatibleEmbeddingProvider,
 	OpenAICompatibleRerankProvider,
 	QdrantRetrievalStore,
+	ScopedRetrievalCache,
 } from "@/core/retrieval";
 import {
 	parseQdrantDistance,
@@ -23,6 +24,14 @@ function positiveInteger(name: string, fallback: number): number {
 	const value = Number(process.env[name] ?? fallback);
 	if (!Number.isInteger(value) || value <= 0) {
 		throw new Error(`${name} must be a positive integer`);
+	}
+	return value;
+}
+
+function nonNegativeInteger(name: string, fallback: number): number {
+	const value = Number(process.env[name] ?? fallback);
+	if (!Number.isInteger(value) || value < 0) {
+		throw new Error(`${name} must be a non-negative integer`);
 	}
 	return value;
 }
@@ -107,6 +116,10 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 			bm25TopK: positiveInteger("BM25_TOP_K", 20),
 			rrfK: positiveInteger("RRF_K", 60),
 			corpusLimit: positiveInteger("TS_RETRIEVAL_CORPUS_LIMIT", 10_000),
+			cache: new ScopedRetrievalCache({
+				ttlMs: nonNegativeInteger("RETRIEVAL_CACHE_TTL_MS", 30_000),
+				maxEntries: positiveInteger("RETRIEVAL_CACHE_MAX_ENTRIES", 256),
+			}),
 		},
 	);
 	return runtime;

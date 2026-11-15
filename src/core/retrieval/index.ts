@@ -9,4 +9,5 @@ export * from "./hybrid/tokenizer";
 export * from "./qdrant/payload";
 export * from "./qdrant/store";
 export * from "./rerank/provider";
+export * from "./retrieval-cache";
 export * from "./retrieval-service";

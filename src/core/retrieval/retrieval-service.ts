@@ -23,6 +23,10 @@ import {
 import type { QdrantSearchHit, StoredQdrantPayload } from "./qdrant/payload";
 import type { RetrievalVectorStore } from "./qdrant/store";
 import { normalizeRerankResults, type RerankProvider } from "./rerank/provider";
+import {
+	buildScopedRetrievalCacheKey,
+	type ScopedRetrievalCache,
+} from "./retrieval-cache";
 
 type CandidateCounts = {
 	total: number;
@@ -57,6 +61,7 @@ export type RetrievalServiceOptions = {
 	bm25TopK: number;
 	rrfK: number;
 	corpusLimit?: number;
+	cache?: ScopedRetrievalCache;
 };
 
 function toRetrievalScope(
@@ -414,6 +419,30 @@ export class DefaultRetrievalService {
 		}
 		const scope = toRetrievalScope(input.scope, input.libraryId);
 		const filters = toUserFilters(input.filters);
+		const cacheKey = this.options.cache
+			? buildScopedRetrievalCacheKey({
+					query,
+					libraryId: input.libraryId,
+					scope: input.scope,
+					topK: input.topK,
+					filters,
+					options: {
+						hybridEnabled:
+							input.options?.hybridEnabled ?? this.options.hybridEnabled,
+						rerankEnabled:
+							input.options?.rerankEnabled ?? this.options.rerankEnabled,
+						preserveFigureLineage: input.options?.preserveFigureLineage,
+						lineageMinScore: input.options?.lineageMinScore,
+						rerankTopK: this.options.rerankTopK,
+						bm25TopK: this.options.bm25TopK,
+						rrfK: this.options.rrfK,
+					},
+				})
+			: null;
+		const cached = cacheKey ? this.options.cache?.get(cacheKey) : null;
+		if (cached) {
+			return cached;
+		}
 		const denseK = Math.max(
 			input.topK,
 			this.options.rerankTopK,
@@ -557,7 +586,7 @@ export class DefaultRetrievalService {
 				index + 1,
 			),
 		);
-		return {
+		const result: RetrievalResult = {
 			citations,
 			debug: {
 				usedHybrid,
@@ -572,6 +601,10 @@ export class DefaultRetrievalService {
 				...(rerankDiagnostic ? { rerankDiagnostic } : {}),
 			},
 		};
+		if (cacheKey) {
+			this.options.cache?.set(cacheKey, result);
+		}
+		return result;
 	}
 }
 

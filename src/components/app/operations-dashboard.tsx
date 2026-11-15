@@ -27,6 +27,7 @@ import {
 	OperationsErrorDrawer,
 	type OperationsErrorRef,
 } from "@/components/app/operations-error-drawer";
+import { OperationsFeedbackPanel } from "@/components/app/operations-feedback-panel";
 import { OperationsRequestsPanel } from "@/components/app/operations-requests-panel";
 import { useSession } from "@/components/app/session-provider";
 import { stageDisplayName } from "@/components/app/stage-waterfall";
@@ -254,7 +255,9 @@ export function OperationsDashboard() {
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [autoRefresh, setAutoRefresh] = useState(true);
-	const [view, setView] = useState<"overview" | "requests">("overview");
+	const [view, setView] = useState<"overview" | "requests" | "feedback">(
+		"overview",
+	);
 	const [selectedError, setSelectedError] = useState<OperationsErrorRef | null>(
 		null,
 	);
@@ -418,6 +421,7 @@ export function OperationsDashboard() {
 						[
 							["overview", "概览"],
 							["requests", "请求记录"],
+							["feedback", "Bad Case 反馈"],
 						] as const
 					).map(([value, label]) => (
 						<button
@@ -440,6 +444,11 @@ export function OperationsDashboard() {
 					<OperationsRequestsPanel
 						key={`${identity.tenantId}:${identity.workspaceId}`}
 						onSelect={setSelectedError}
+					/>
+				) : view === "feedback" ? (
+					<OperationsFeedbackPanel
+						key={`${identity.tenantId}:${identity.workspaceId}`}
+						workspaceId={identity.workspaceId}
 					/>
 				) : (
 					<>
