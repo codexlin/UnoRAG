@@ -1318,7 +1318,9 @@ test("structured qualifier checks enforce bounds, approximations, units and cond
 	});
 	assert.equal(dropped.factCoverage, 1);
 	assert.equal(dropped.ok, false);
-	assert.deepEqual(dropped.failedAnswerChecks, ["个人开发者账户数保留下界限定"]);
+	assert.deepEqual(dropped.failedAnswerChecks, [
+		"个人开发者账户数保留下界限定",
+	]);
 	assert.equal(
 		scorePositiveCase(lowerBoundCase, {
 			...base,
@@ -1392,7 +1394,12 @@ test("structured qualifier checks enforce bounds, approximations, units and cond
 		key_facts: ["15分钟", "500元"],
 		answer_checks: [
 			{ label: "回滚时限上界", qualifier: "upper_bound", for_fact: "15分钟" },
-			{ label: "回滚时限单位", qualifier: "unit", unit: "分钟", for_fact: "15分钟" },
+			{
+				label: "回滚时限单位",
+				qualifier: "unit",
+				unit: "分钟",
+				for_fact: "15分钟",
+			},
 			{
 				label: "触发条件",
 				qualifier: "condition",
