@@ -327,70 +327,72 @@ const judgeUsage: ModelUsageCall = {
 };
 
 for (const mode of ["sync", "stream"] as const) {
-	test(`${mode} final evidence keeps only the referenced passage and its selected figure bundle`, async () => {
-		const { handleNativeAskRequest } = await handlerModule;
-		const repository = new FakeConversationRepository([activeThread()]);
-		const runs = askRunRecorder();
-		const base = askState().citations?.[0];
-		assert.ok(base);
-		const passage = {
-			...base,
-			id: "passage",
-			record_type: "chunk",
-			record_id: "chunk-1",
-			source_node_ids: ["node-1"],
-		};
-		const figure = {
-			...base,
-			id: "figure",
-			record_type: "figure",
-			record_id: "figure-1",
-			source_node_ids: ["node-1"],
-		};
-		const unrelated = {
-			...figure,
-			id: "foreign-figure",
-			doc_id: "another-project",
-		};
-		const state = askState({ citations: [passage, figure, unrelated] });
-		const response = await handleNativeAskRequest({
-			request: request(
-				{
-					question: "图4中的比例？",
-					library_id: LIBRARY_ID,
-					thread_id: THREAD_ID,
-				},
-				mode,
-			),
-			path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
-			identity,
-			repository: repositoryInput(repository),
-			askRunsRepository: runs.repository,
-			resolveLibrary: async () => ({
-				id: "99999999-9999-4999-8999-999999999999",
-			}),
-			runtimeFactory: runtimeFactory(
-				new FakeRuntime(state, ["比例是54.5% [1]。"]),
-			),
+	for (const anchor of [1, 2]) {
+		test(`${mode} final evidence keeps the selected figure bundle when source ${anchor} is referenced`, async () => {
+			const { handleNativeAskRequest } = await handlerModule;
+			const repository = new FakeConversationRepository([activeThread()]);
+			const runs = askRunRecorder();
+			const base = askState().citations?.[0];
+			assert.ok(base);
+			const passage = {
+				...base,
+				id: "passage",
+				record_type: "chunk",
+				record_id: "chunk-1",
+				source_node_ids: ["node-1"],
+			};
+			const figure = {
+				...base,
+				id: "figure",
+				record_type: "figure",
+				record_id: "figure-1",
+				source_node_ids: ["node-1"],
+			};
+			const unrelated = {
+				...figure,
+				id: "foreign-figure",
+				doc_id: "another-project",
+			};
+			const state = askState({ citations: [passage, figure, unrelated] });
+			const response = await handleNativeAskRequest({
+				request: request(
+					{
+						question: "图4中的比例？",
+						library_id: LIBRARY_ID,
+						thread_id: THREAD_ID,
+					},
+					mode,
+				),
+				path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+				identity,
+				repository: repositoryInput(repository),
+				askRunsRepository: runs.repository,
+				resolveLibrary: async () => ({
+					id: "99999999-9999-4999-8999-999999999999",
+				}),
+				runtimeFactory: runtimeFactory(
+					new FakeRuntime(state, [`比例是54.5% [${anchor}]。`]),
+				),
+			});
+			assert.ok(response);
+			const frames = mode === "stream" ? parseSse(await response.text()) : null;
+			const body = (frames ? frames.at(-1)?.data : await response.json()) as {
+				citations: Array<{ id: string; index: number }>;
+			};
+			assert.deepEqual(
+				body.citations.map(({ id, index }) => ({ id, index })),
+				[
+					{ id: "passage", index: 1 },
+					{ id: "figure", index: 2 },
+				],
+			);
+			assert.deepEqual(
+				repository.exchanges[0]?.input.assistant.citations,
+				body.citations,
+			);
+			assert.equal(runs.finalizations[0]?.citationCount, 2);
 		});
-		assert.ok(response);
-		const frames = mode === "stream" ? parseSse(await response.text()) : null;
-		const body = (frames ? frames.at(-1)?.data : await response.json()) as {
-			citations: Array<{ id: string; index: number }>;
-		};
-		assert.deepEqual(
-			body.citations.map(({ id, index }) => ({ id, index })),
-			[
-				{ id: "passage", index: 1 },
-				{ id: "figure", index: 2 },
-			],
-		);
-		assert.deepEqual(
-			repository.exchanges[0]?.input.assistant.citations,
-			body.citations,
-		);
-		assert.equal(runs.finalizations[0]?.citationCount, 2);
-	});
+	}
 
 	test(`${mode} final citations narrow without weakening authorization or memory dependencies`, async () => {
 		const { handleNativeAskRequest } = await handlerModule;

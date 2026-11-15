@@ -116,6 +116,21 @@ test("companions require a present nonempty matching generation on both sides", 
 	}
 });
 
+test("a referenced figure or table also retains its directly linked selected prose", () => {
+	for (const record_type of ["figure", "table", "table_summary"]) {
+		const prose = evidence(3, { source_node_ids: ["paired-node"] });
+		const structured = evidence(8, {
+			record_type,
+			source_node_ids: ["paired-node"],
+		});
+		const unrelated = evidence(1);
+		assert.deepEqual(
+			selectFinalAnswerEvidence("Answer [8].", [unrelated, prose, structured]),
+			[prose, structured],
+		);
+	}
+});
+
 test("unrelated visual records and unanchored ordinary prose are dropped", () => {
 	const anchored = evidence(3, { source_node_ids: ["shared-node"] });
 	const relatedProse = evidence(1, { source_node_ids: ["shared-node"] });
