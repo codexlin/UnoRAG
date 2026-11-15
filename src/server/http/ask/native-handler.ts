@@ -692,6 +692,8 @@ async function handleNativeAskRequestInSpan(input: {
 		let citations = publicCandidates;
 		const preserveAllCitations =
 			state.refused === true ||
+			state.query_type === "compare" ||
+			state.query_type === "summary" ||
 			!!state.table_execution ||
 			state.judgement?.judge_mode === "deterministic_document_outline";
 		const finalizeCitations = (answer: string) => {

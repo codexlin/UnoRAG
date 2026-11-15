@@ -9,7 +9,6 @@ import {
 	AnswerStreamAdapter,
 	StructuredOutputAdapter,
 } from "../../src/core/ai";
-import { AnswerCitationValidationError } from "../../src/core/ai/answer-citations";
 import type { ModelUsageCall } from "../../src/core/ai/model-usage";
 import type { AskGraphInput, AskState } from "../../src/core/ask-graph";
 import { AskGraphExecutionError } from "../../src/core/ask-graph";
@@ -394,111 +393,152 @@ for (const mode of ["sync", "stream"] as const) {
 		});
 	}
 
-	test(`${mode} final citations narrow without weakening authorization or memory dependencies`, async () => {
-		const { handleNativeAskRequest } = await handlerModule;
-		const repository = new FakeConversationRepository([activeThread()]);
-		const runs = askRunRecorder();
-		const base = askState().citations?.[0];
-		assert.ok(base);
-		const candidates = [1, 2, 3].map((index) => ({
-			...base,
-			id: `source-${index}`,
-			index,
-			doc_id: `doc-${index}`,
-			document_version_id: `version-${index}`,
-			generation_id: `generation-${index}`,
-		}));
-		const state = askState({
-			citations: candidates,
-			retrieval_debug: { selected_evidence_count: 3 },
-		});
-		const authorized: string[][] = [];
-		const response = await handleNativeAskRequest({
-			request: request(
+	for (const queryType of [
+		"fact",
+		"follow_up",
+		"compare",
+		"summary",
+	] as const) {
+		test(`${mode} ${queryType} final citations preserve joint context only where required without weakening authorization or memory dependencies`, async () => {
+			const { handleNativeAskRequest } = await handlerModule;
+			const repository = new FakeConversationRepository([activeThread()]);
+			const runs = askRunRecorder();
+			const base = askState().citations?.[0];
+			assert.ok(base);
+			const candidates = [1, 2, 3].map((index) => ({
+				...base,
+				id: `source-${index}`,
+				index,
+				doc_id: `doc-${index}`,
+				document_version_id: `version-${index}`,
+				generation_id: `generation-${index}`,
+			}));
+			const dependencies = [
+				...candidates,
 				{
-					question: "Which project?",
-					library_id: LIBRARY_ID,
-					thread_id: THREAD_ID,
+					...base,
+					id: "auth-only-dependency",
+					doc_id: "doc-4",
+					document_version_id: "version-4",
+					generation_id: "generation-4",
 				},
-				mode,
-			),
-			path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
-			identity,
-			repository: repositoryInput(repository),
-			askRunsRepository: runs.repository,
-			resolveLibrary: async () => ({
-				id: "99999999-9999-4999-8999-999999999999",
-			}),
-			authorization: {
-				refreshIdentity: async () => identity,
-				resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
-				citationAuthorizer: {
-					filterAuthorized: async ({ citations }) => {
-						authorized.push(
-							citations.map((citation) => String(citation.doc_id)),
-						);
-						return citations;
+			];
+			const state = askState({
+				query_type: queryType,
+				citations: candidates,
+				retrieval_debug: { selected_evidence_count: 3 },
+			});
+			const authorized: string[][] = [];
+			const response = await handleNativeAskRequest({
+				request: request(
+					{
+						question: "Which project?",
+						library_id: LIBRARY_ID,
+						thread_id: THREAD_ID,
+					},
+					mode,
+				),
+				path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+				identity,
+				repository: repositoryInput(repository),
+				askRunsRepository: runs.repository,
+				resolveLibrary: async () => ({
+					id: "99999999-9999-4999-8999-999999999999",
+				}),
+				authorization: {
+					refreshIdentity: async () => identity,
+					resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
+					citationAuthorizer: {
+						filterAuthorized: async ({ citations }) => {
+							authorized.push(
+								citations.map((citation) => String(citation.doc_id)),
+							);
+							return citations;
+						},
 					},
 				},
-			},
-			runtimeFactory: (() => ({
-				invoke: async () => state,
-				getEvidenceReferences: () => candidates,
-				async *streamAnswer() {
-					yield "Answer [3].";
+				runtimeFactory: (() => ({
+					invoke: async () => state,
+					getEvidenceReferences: () => dependencies,
+					async *streamAnswer() {
+						yield "Answer [3].";
+					},
+				})) as never,
+			});
+			assert.ok(response);
+			assert.equal(response.status, 200);
+			const frames = mode === "stream" ? parseSse(await response.text()) : null;
+			const body = (frames ? frames.at(-1)?.data : await response.json()) as {
+				answer: string;
+				persisted: boolean;
+				citations: Array<{ id: string; index: number }>;
+			};
+			const preserveJointContext =
+				queryType === "compare" || queryType === "summary";
+			const expected = (
+				preserveJointContext ? candidates : candidates.slice(2)
+			).map(({ id, index }) => ({ id, index }));
+			assert.equal(body.answer, "Answer [3].");
+			assert.equal(body.persisted, true);
+			assert.deepEqual(
+				body.citations.map(({ id, index }) => ({ id, index })),
+				expected,
+			);
+			if (frames) {
+				assert.equal(frames.at(-1)?.event, "done");
+				const early = frames.find((frame) => frame.event === "citations")?.data;
+				assert.ok(Array.isArray(early));
+				assert.deepEqual(
+					early.map(({ id, index }) => ({ id, index })),
+					candidates.map(({ id, index }) => ({ id, index })),
+				);
+			}
+			assert.equal(runs.finalizations.length, 1);
+			assert.equal(runs.finalizations[0]?.status, "completed");
+			assert.equal(runs.finalizations[0]?.queryType, queryType);
+			assert.equal(runs.finalizations[0]?.citationCount, expected.length);
+			assert.equal(state.retrieval_debug?.selected_evidence_count, 3);
+			assert.deepEqual(
+				state.citations?.map(({ id, index }) => ({ id, index })),
+				expected,
+			);
+			const saved = repository.exchanges[0]?.input.assistant;
+			assert.equal(repository.exchanges.length, 1);
+			assert.deepEqual(saved?.citations, body.citations);
+			const provenance = MemoryProvenanceSchema.parse(
+				saved?.debug?.memory_provenance,
+			);
+			assert.deepEqual(
+				provenance.sourceReferences.map((source) => source.doc_id).sort(),
+				["doc-1", "doc-2", "doc-3", "doc-4"],
+			);
+			assert.ok(
+				authorized.some(
+					(docs) =>
+						docs.includes("doc-1") &&
+						docs.includes("doc-2") &&
+						docs.includes("doc-3") &&
+						docs.includes("doc-4"),
+				),
+			);
+			const { authorizeHistory } = await import(
+				"../../src/server/http/ask/authorized-history"
+			);
+			const history = await authorizeHistory({
+				identity,
+				libraryId: LIBRARY_ID,
+				citationAuthorizer: {
+					filterAuthorized: async ({ citations }) =>
+						citations.filter((citation) => citation.doc_id !== "doc-4"),
 				},
-			})) as never,
+				messages: [
+					{ role: "user", content: "Question", provenance },
+					{ role: "assistant", content: "Answer [3].", provenance },
+				],
+			});
+			assert.deepEqual(history.messages, []);
 		});
-		assert.ok(response);
-		const frames = mode === "stream" ? parseSse(await response.text()) : null;
-		const body = (frames ? frames.at(-1)?.data : await response.json()) as {
-			citations: Array<{ id: string; index: number }>;
-		};
-		assert.deepEqual(
-			body.citations.map(({ id, index }) => ({ id, index })),
-			[{ id: "source-3", index: 3 }],
-		);
-		if (frames) {
-			const early = frames.find((frame) => frame.event === "citations")?.data;
-			assert.ok(Array.isArray(early));
-			assert.equal(early.length, 3);
-		}
-		assert.equal(runs.finalizations[0]?.citationCount, 1);
-		assert.equal(state.retrieval_debug?.selected_evidence_count, 3);
-		const saved = repository.exchanges[0]?.input.assistant;
-		assert.deepEqual(saved?.citations, body.citations);
-		const provenance = MemoryProvenanceSchema.parse(
-			saved?.debug?.memory_provenance,
-		);
-		assert.deepEqual(
-			provenance.sourceReferences.map((source) => source.doc_id).sort(),
-			["doc-1", "doc-2", "doc-3"],
-		);
-		assert.ok(
-			authorized.some(
-				(docs) =>
-					docs.includes("doc-1") &&
-					docs.includes("doc-2") &&
-					docs.includes("doc-3"),
-			),
-		);
-		const { authorizeHistory } = await import(
-			"../../src/server/http/ask/authorized-history"
-		);
-		const history = await authorizeHistory({
-			identity,
-			libraryId: LIBRARY_ID,
-			citationAuthorizer: {
-				filterAuthorized: async ({ citations }) =>
-					citations.filter((citation) => citation.doc_id !== "doc-1"),
-			},
-			messages: [
-				{ role: "user", content: "Question", provenance },
-				{ role: "assistant", content: "Answer [3].", provenance },
-			],
-		});
-		assert.deepEqual(history.messages, []);
-	});
+	}
 
 	for (const kind of ["table", "outline"] as const) {
 		test(`${mode} deterministic ${kind} sources and literal numeric brackets remain intact`, async () => {
@@ -1603,50 +1643,62 @@ test("stream ask preserves SSE order and persists after all tokens", async () =>
 
 test("invalid answer citations fail the run without persisting a successful exchange", async () => {
 	const { handleNativeAskRequest } = await handlerModule;
-	for (const streaming of [false, true]) {
-		const repository = new FakeConversationRepository([activeThread()]);
-		const runs = askRunRecorder();
-		const runtime = new FakeRuntime(askState());
-		runtime.streamAnswer = async function* () {
-			yield "价格200元";
-			throw new AnswerCitationValidationError({
-				category: "unknown_source",
-				allowedSourceCount: 1,
-			});
-		};
-		const response = await handleNativeAskRequest({
-			request: request(
-				{
-					question: "价格是多少？",
-					library_id: LIBRARY_ID,
-					thread_id: THREAD_ID,
+	for (const queryType of [
+		"fact",
+		"follow_up",
+		"compare",
+		"summary",
+	] as const) {
+		for (const streaming of [false, true]) {
+			const repository = new FakeConversationRepository([activeThread()]);
+			const runs = askRunRecorder();
+			const runtime = new FakeRuntime(askState({ query_type: queryType }));
+			const answer = new AnswerStreamAdapter(
+				{} as LanguageModel,
+				async function* () {
+					yield "价格200元";
+					yield " [source:2].";
 				},
-				streaming ? "stream" : undefined,
-			),
-			path: streaming ? ["v1", "ask", "stream"] : ["v1", "ask"],
-			identity,
-			repository: repositoryInput(repository),
-			runtimeFactory: runtimeFactory(runtime),
-			askRunsRepository: runs.repository,
-			resolveLibrary: async () => ({
-				id: "99999999-9999-4999-8999-999999999999",
-			}),
-		});
-		const body = await response?.text();
-		if (streaming) {
-			assert.match(body ?? "", /event: error/);
-			assert.doesNotMatch(body ?? "", /event: done/);
-		} else assert.equal(response?.status, 503);
-		assert.equal(repository.exchanges.length, 0);
-		assert.equal(runs.finalizations[0]?.status, "failed");
-		assert.equal(runs.finalizations[0]?.errorCode, "answer_citation_invalid");
-		assert.ok(
-			runs.finalizations[0]?.stages?.some(
-				(stage) =>
-					stage.detail?.citation_category === "unknown_source" &&
-					stage.detail?.citation_allowedSourceCount === 1,
-			),
-		);
+			);
+			runtime.streamAnswer = () =>
+				answer.stream(
+					{ question: "价格是多少？", context: "[source:1] 价格200元" },
+					{ allowedCitationIndices: [1] },
+				);
+			const response = await handleNativeAskRequest({
+				request: request(
+					{
+						question: "价格是多少？",
+						library_id: LIBRARY_ID,
+						thread_id: THREAD_ID,
+					},
+					streaming ? "stream" : undefined,
+				),
+				path: streaming ? ["v1", "ask", "stream"] : ["v1", "ask"],
+				identity,
+				repository: repositoryInput(repository),
+				runtimeFactory: runtimeFactory(runtime),
+				askRunsRepository: runs.repository,
+				resolveLibrary: async () => ({
+					id: "99999999-9999-4999-8999-999999999999",
+				}),
+			});
+			const body = await response?.text();
+			if (streaming) {
+				assert.match(body ?? "", /event: error/);
+				assert.doesNotMatch(body ?? "", /event: done/);
+			} else assert.equal(response?.status, 503);
+			assert.equal(repository.exchanges.length, 0);
+			assert.equal(runs.finalizations[0]?.status, "failed");
+			assert.equal(runs.finalizations[0]?.errorCode, "answer_citation_invalid");
+			assert.ok(
+				runs.finalizations[0]?.stages?.some(
+					(stage) =>
+						stage.detail?.citation_category === "unknown_source" &&
+						stage.detail?.citation_allowedSourceCount === 1,
+				),
+			);
+		}
 	}
 });
 

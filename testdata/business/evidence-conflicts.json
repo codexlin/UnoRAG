@@ -2,6 +2,11 @@
   "contract_version": 1,
   "description": "Synthetic judge controls, not customer documents or end-to-end retrieval evidence.",
   "cases": [
+    {"id":"unknown-acceptance-date-is-not-contradiction","question":"设备运维从什么时候开始？","citations":[{"id":"a","doc_id":"maintenance","text":"设备运维期从2029年9月3日开始，为期十个月。"},{"id":"b","doc_id":"maintenance","text":"设备采购合同在验收通过后生效，验收日期未记载。"}],"expect_conflict":false},
+    {"id":"unknown-approval-date-is-not-contradiction","question":"本项目的培训服务何时开始？","citations":[{"id":"a","doc_id":"training","text":"培训服务从2028年7月15日起提供。"},{"id":"b","doc_id":"training","text":"采购协议经董事会批准生效，尚未提供审批日期。"}],"expect_conflict":false},
+    {"id":"unknown-event-date-is-not-contradiction","question":"云平台服务的初始期限及起算日是什么？","citations":[{"id":"a","doc_id":"service","text":"初始服务期限为十八个月，自2031年4月1日起算。"},{"id":"b","doc_id":"service","text":"本协议自双方签字盖章日起生效，协议有效期十八个月。签署日期栏待填写。"}],"expect_conflict":false},
+    {"id":"different-explicit-service-dates","question":"云平台服务从哪一天起算？","citations":[{"id":"a","doc_id":"service","text":"服务起算日为2031年4月1日。"},{"id":"b","doc_id":"service","text":"服务起算日为2031年5月1日，未标明替代关系。"}],"expect_conflict":true},
+    {"id":"known-event-date-contradicts-service-date","question":"云平台服务从哪一天起算？","citations":[{"id":"a","doc_id":"service","text":"双方签署日期为2031年3月2日。服务从双方签署日期起算。"},{"id":"b","doc_id":"service","text":"本项目服务从2031年4月1日起算，未约定其他适用条件或优先关系。"}],"expect_conflict":true},
     {"id":"different-subject-same-document","question":"两个部门中预算较高的是哪个？","query_type":"compare","citations":[{"id":"a","doc_id":"d1","section_path":"年度计划/销售部","text":"预算为120万元。"},{"id":"b","doc_id":"d1","section_path":"年度计划/研发部","text":"预算为240万元。"}],"expect_conflict":false},
     {"id":"different-action","question":"设备甲的首次响应时限是多少？","citations":[{"id":"a","text":"设备甲首次响应时限为10分钟，恢复目标为60分钟。"}],"expect_conflict":false},
     {

@@ -116,15 +116,17 @@ async function main() {
 		fixture_sha256: createHash("sha256").update(bytes).digest("hex"),
 		prompt_digest: getPrompt("judge").digest,
 		conflict_prompt_digest: getPrompt("conflict").digest,
+		conflict_review_prompt_digest: getPrompt("conflict_review").digest,
 		schema_sha256: createHash("sha256")
 			.update(JSON.stringify(ConflictSelectionOutputSchema.toJSONSchema()))
 			.digest("hex"),
 		cases: fixture.cases.length,
 		rounds,
-		max_http_attempts: fixture.cases.length * rounds * 2,
+		max_http_attempts: fixture.cases.length * rounds * 3,
 		max_stage_attempts: 2,
+		review_max_attempts: 1,
 		stage_timeout_ms: 15000,
-		max_case_model_budget_ms: 30000,
+		max_case_model_budget_ms: 45000,
 		max_output_tokens: 1024,
 	};
 	if (values.plan) {

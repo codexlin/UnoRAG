@@ -20,6 +20,7 @@ export function judgeFailureDebug(
 		detail.judge_validation_code = assessment.validationCode;
 	if (request) {
 		Object.assign(detail, {
+			judge_failed_request_kind: request.kind,
 			judge_attempts: request.attempts,
 			judge_duration_ms: request.durationMs,
 			judge_timeout_ms: request.timeoutMs,

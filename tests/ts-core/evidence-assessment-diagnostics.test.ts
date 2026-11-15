@@ -14,6 +14,7 @@ import {
 	EvidenceAssessmentValidationError,
 } from "../../src/core/ai/evidence-assessment-diagnostics";
 import { createEvidenceReferences } from "../../src/core/ai/evidence-references";
+import { ModelUsageCollector } from "../../src/core/ai/model-usage";
 import {
 	ConflictOutputSchema,
 	getStructuredFailureMetadata,
@@ -21,6 +22,7 @@ import {
 	StructuredOutputAdapter,
 } from "../../src/core/ai/structured-output";
 import { validateConflictEvidence } from "../../src/core/ask-graph/evidence-conflict";
+import { judgeFailureDebug } from "../../src/server/http/ask/judge-diagnostics";
 
 type Adapter = Parameters<typeof assessEvidenceWithMetadata>[0];
 type Input = Parameters<typeof assessEvidenceWithMetadata>[1];
@@ -444,6 +446,14 @@ test("UUIDs with repeated tail characters round-trip only through short referenc
 			const serialized = String(request.messages[0].content);
 			assert.ok(!serialized.includes(uuid));
 			assert.ok(!serialized.includes(otherUuid));
+			if (request.schemaName === "conflict_review") {
+				const review = JSON.parse(serialized);
+				assert.deepEqual(
+					review.citations.map((citation: { id: string }) => citation.id),
+					["v1", "v2"],
+				);
+				return { incompatible: true };
+			}
 			assert.ok(serialized.includes('"id":"e1"'));
 			assert.ok(serialized.includes('"id":"e2"'));
 			assert.ok(serialized.includes('"doc_id":"doc"'));
@@ -466,12 +476,169 @@ test("UUIDs with repeated tail characters round-trip only through short referenc
 		{ evidence_id: uuid, quote: "first provision" },
 		{ evidence_id: otherUuid, quote: "second provision" },
 	]);
+	assert.equal(result.output.judge_conflict_attempts, 2);
+	assert.equal(result.metadata.attempts, 3);
 	assert.deepEqual(citations, before);
 	const references = createEvidenceReferences(citations);
 	assert.equal(references.decodeId(uuid), undefined);
 	assert.equal(references.decodeId(truncatedUuid), undefined);
 	assert.equal(references.decodeId("e1"), uuid);
 	assert.notEqual(references.encodeCitations(citations)[0], citations[0]);
+});
+
+test("confirmed and rejected reviews retain ordinary evidence decisions and account for all three calls", async () => {
+	for (const confirmed of [false, true]) {
+		const calls: string[] = [];
+		const usage = new ModelUsageCollector();
+		const structured = new StructuredOutputAdapter(
+			{} as LanguageModel,
+			async (request) => {
+				calls.push(request.schemaName);
+				request.onUsage?.({
+					inputTokens: 10,
+					outputTokens: 2,
+					totalTokens: 12,
+				});
+				if (request.schemaName === "judge") return judgeOutput;
+				if (request.schemaName === "conflict_review")
+					return { incompatible: confirmed };
+				return {
+					comparison: "proposed mismatch",
+					resolution: "conflict",
+					conflict_evidence: ["s1", "s2"],
+				};
+			},
+			{ usageRecorder: usage.record },
+		);
+		const result = await assessEvidenceWithMetadata(structured, input);
+		assert.deepEqual(calls, ["judge", "conflict", "conflict_review"]);
+		assert.equal(result.output.action, "generate");
+		assert.equal(
+			result.output.reason,
+			confirmed ? "evidence_conflict" : "covered",
+		);
+		assert.equal(
+			result.output.evidence_resolution,
+			confirmed ? "conflict" : "consistent",
+		);
+		assert.deepEqual(
+			result.output.evidence_ids,
+			confirmed ? [uuid, otherUuid] : [uuid],
+		);
+		assert.deepEqual(
+			result.output.conflict_evidence,
+			confirmed
+				? [
+						{ evidence_id: uuid, quote: "first provision" },
+						{ evidence_id: otherUuid, quote: "second provision" },
+					]
+				: [],
+		);
+		assert.equal(result.output.judge_conflict_attempts, 2);
+		assert.equal(
+			result.output.judge_conflict_review,
+			confirmed ? "confirmed" : "rejected",
+		);
+		assert.equal(result.output.judge_conflict_review_attempts, 1);
+		assert.ok((result.output.judge_conflict_review_duration_ms ?? -1) >= 0);
+		assert.equal(result.metadata.attempts, 3);
+		assert.equal(result.metadata.inputTokens, 30);
+		assert.equal(result.metadata.outputTokens, 6);
+		assert.equal(result.metadata.totalTokens, 36);
+		assert.deepEqual(
+			usage.snapshot().calls.map(({ stage, status }) => ({ stage, status })),
+			[
+				{ stage: "judge", status: "completed" },
+				{ stage: "conflict", status: "completed" },
+				{ stage: "conflict", status: "completed" },
+			],
+		);
+		assert.doesNotMatch(
+			JSON.stringify(result.metadata),
+			/first provision|second provision|proposed mismatch/,
+		);
+	}
+});
+
+test("a retryable conflict-review failure stays technical, runs once and retains the usage ledger", async () => {
+	const original = new APICallError({
+		message: "private review provider body",
+		url: "https://provider.invalid/review",
+		requestBodyValues: {},
+		statusCode: 503,
+		isRetryable: true,
+	});
+	const originalKeys = Object.getOwnPropertyNames(original);
+	const calls: string[] = [];
+	const usage = new ModelUsageCollector();
+	let checkpoints = 0;
+	const structured = new StructuredOutputAdapter(
+		{} as LanguageModel,
+		async (request) => {
+			calls.push(request.schemaName);
+			if (request.schemaName === "judge") return judgeOutput;
+			if (request.schemaName === "conflict_review") throw original;
+			return {
+				comparison: "different",
+				resolution: "conflict",
+				conflict_evidence: ["s1", "s2"],
+			};
+		},
+		{ maxAttempts: 3, usageRecorder: usage.record },
+	);
+	const error = await rejected(
+		assessEvidenceWithMetadata(structured, input, {
+			beforeRequest: async () => {
+				checkpoints++;
+			},
+		}),
+	);
+	assert.equal(error, original);
+	assert.deepEqual(Object.getOwnPropertyNames(original), originalKeys);
+	assert.deepEqual(calls, ["judge", "conflict", "conflict_review"]);
+	assert.equal(checkpoints, 3);
+	const metadata = getEvidenceAssessmentFailureMetadata(error);
+	assert.ok(metadata);
+	assert.equal(metadata.source, "structured_request");
+	assert.equal(metadata.stage, "conflict");
+	assert.equal(metadata.completed.sufficiency?.attempts, 1);
+	assert.ok(metadata.request);
+	assert.equal(metadata.request.kind, "conflict_review");
+	assert.equal(metadata.request.attempts, 1);
+	assert.equal(metadata.request.maxAttempts, 1);
+	assert.equal(metadata.request.category, "provider_unavailable");
+	assert.equal(metadata.request, getStructuredFailureMetadata(error));
+	assert.ok(metadata.request.completedConflict);
+	assert.equal(metadata.request.completedConflict.attempts, 1);
+	assert.ok(metadata.request.completedConflict.durationMs >= 0);
+	assert.deepEqual(
+		metadata.completed.conflict,
+		metadata.request.completedConflict,
+	);
+	const debug = judgeFailureDebug(error);
+	assert.equal(debug.judge_failed_stage, "conflict");
+	assert.equal(debug.judge_failed_request_kind, "conflict_review");
+	assert.equal(debug.judge_conflict_attempts, 1);
+	assert.equal(
+		debug.judge_conflict_duration_ms,
+		metadata.request.completedConflict.durationMs,
+	);
+	assert.doesNotMatch(
+		JSON.stringify(debug),
+		/private|provider.invalid|provision|issues/,
+	);
+	assert.deepEqual(
+		usage.snapshot().calls.map(({ stage, status }) => ({ stage, status })),
+		[
+			{ stage: "judge", status: "completed" },
+			{ stage: "conflict", status: "completed" },
+			{ stage: "conflict", status: "failed" },
+		],
+	);
+	assert.doesNotMatch(
+		JSON.stringify(metadata),
+		/private|provider.invalid|provision|issues/,
+	);
 });
 
 test("request maps are isolated even for overlapping concurrent assessments", async () => {

@@ -27,7 +27,9 @@ const EXPECTED_DIGESTS = {
 	judge: "dcf69ce39ba3ae809ce1472a75193215065e1f7a2cb60e2155cb9b5d4b190abe",
 	refusal_review:
 		"7f35bbcecc1b3e7fd326e76c59213e791235432801c74254e3af87cdd0b7a675",
-	conflict: "749e25eac357a833d84fd5ccbf2a1948fb33f01742eaa59c4dc42a78a13c8762",
+	conflict: "28aa307583ce89bbb7b0c84c091add0bb5506fff246a4b1dca5c388977dd1c7e",
+	conflict_review:
+		"27a3b3101b76d9ffc994c896d5e9b66b4d447691567cbeaf0ddbf431e17957d9",
 	table_plan:
 		"074c2f67f29bc44f7a72be0b1525490ef51719be3a9ba9ac4677b33198d5aab7",
 } as const;
@@ -38,7 +40,8 @@ const EXPECTED_VERSIONS = {
 	rewrite: "1.0.0",
 	judge: "1.12.0",
 	refusal_review: "1.0.0",
-	conflict: "2.0.0",
+	conflict: "2.3.0",
+	conflict_review: "1.0.0",
 	table_plan: "1.0.0",
 } as const;
 
@@ -49,6 +52,7 @@ const EXPECTED_NAMES = {
 	judge: "unorag.evidence.judge",
 	refusal_review: "unorag.evidence.refusal_review",
 	conflict: "unorag.evidence.conflict",
+	conflict_review: "unorag.evidence.conflict_review",
 	table_plan: "unorag.table.plan",
 } as const;
 
@@ -61,6 +65,7 @@ async function collect(iterable: AsyncIterable<string>): Promise<string[]> {
 }
 
 test("prompt registry is complete and locks stable names, versions, and digests", () => {
+	assert.equal(PROMPT_KEYS.length, 8);
 	assert.deepEqual(Object.keys(PROMPT_REGISTRY), [...PROMPT_KEYS]);
 	for (const key of PROMPT_KEYS) {
 		const prompt = getPrompt(key);
@@ -135,6 +140,8 @@ test("runtime adapters use registry instructions and export no prompt text", asy
 						resolution: "consistent",
 						conflict_evidence: [],
 					};
+				case "conflict_review":
+					return { incompatible: true };
 			}
 		},
 		{ maxAttempts: 1 },
@@ -155,6 +162,10 @@ test("runtime adapters use registry instructions and export no prompt text", asy
 		question: "期限？",
 		citations: [],
 		evidence_ids: [],
+	});
+	await structured.reviewConflictWithMetadata({
+		question: "期限？",
+		citations: [],
 	});
 	await structured.planTable({ question: "多少行？", tables: [] });
 
@@ -179,7 +190,20 @@ test("runtime adapters use registry instructions and export no prompt text", asy
 		.filter((span) =>
 			["unorag.ai.structured", "unorag.ai.generate"].includes(span.name),
 		);
-	assert.equal(spans.length, 7);
+	assert.equal(spans.length, 8);
+	const reviewSpan = spans.find(
+		(span) =>
+			span.attributes["unorag.ai.structured_kind"] === "conflict_review",
+	);
+	assert.ok(reviewSpan);
+	assert.equal(
+		reviewSpan.attributes["langfuse.observation.metadata.prompt_name"],
+		EXPECTED_NAMES.conflict_review,
+	);
+	assert.equal(
+		reviewSpan.attributes["langfuse.observation.metadata.prompt_version"],
+		EXPECTED_VERSIONS.conflict_review,
+	);
 	const exportedAttributes = JSON.stringify(
 		spans.map((span) => span.attributes),
 	);
