@@ -1376,7 +1376,13 @@ test("structured qualifier checks enforce bounds, approximations, units and cond
 		}).ok,
 		false,
 	);
-	for (const approx of ["约1.58亿元", "1.58亿元左右", "大约1.58亿元"]) {
+	for (const approx of [
+		"约1.58亿元",
+		"金额约为1.58亿元",
+		"约合1.58亿元",
+		"1.58亿元左右",
+		"大约1.58亿元",
+	]) {
 		assert.equal(
 			scorePositiveCase(approxCase, {
 				...approxBase,

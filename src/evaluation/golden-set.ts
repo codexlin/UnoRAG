@@ -503,7 +503,7 @@ function qualifierMatchesClause(
 			return (hasUpperPrefix || hasUpperPostfix) && !hasLowerOverride;
 		}
 		case "approximation": {
-			return /(?:大约|约计|约莫|(?<![合预条规相])约(?=\s*\d)|大概|大致|接近|将近|(?<![最临])近(?=\s*\d)|~|≈|\b(?:approx(?:\.|imately)?|around|about|roughly|nearly)\b|(?:\d[a-z\u4e00-\u9fff%]{0,4})\s*(?:左右|上下|前后|余(?=[个家条项名人次年天万亿])|多(?=[个家条项名人次年天])))/iu.test(
+			return /(?:大约|约计|约莫|(?<![合预条规相])约(?=(?:为|合|达|有|占|在)?\s*\d)|大概|大致|接近|将近|(?<![最临])近(?=\s*\d)|~|≈|\b(?:approx(?:\.|imately)?|around|about|roughly|nearly)\b|(?:\d[a-z\u4e00-\u9fff%]{0,4})\s*(?:左右|上下|前后|余(?=[个家条项名人次年天万亿])|多(?=[个家条项名人次年天])))/iu.test(
 				text,
 			);
 		}
