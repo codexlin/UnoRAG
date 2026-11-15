@@ -6,8 +6,10 @@ export function parseMarkdownTable(input: {
 	tableId: string;
 	caption: string;
 }): { endLine: number; tableIr: TableIR | null } | null {
-	const headers = splitRow(input.lines[input.startLine]);
-	const delimiter = splitRow(input.lines[input.startLine + 1] ?? "");
+	const headers = splitMarkdownTableRow(input.lines[input.startLine]);
+	const delimiter = splitMarkdownTableRow(
+		input.lines[input.startLine + 1] ?? "",
+	);
 	if (
 		!headers ||
 		!delimiter ||
@@ -25,7 +27,7 @@ export function parseMarkdownTable(input: {
 		const line = input.lines[endLine];
 		if (/^ {0,3}(?:#{1,6}(?:\s|$)|>|[-+*]\s|\d+[.)]\s|`{3,}|~{3,})/.test(line))
 			break;
-		const cells = splitRow(line);
+		const cells = splitMarkdownTableRow(line);
 		if (!cells) break;
 		if (cells.length !== headers.length) irregular = true;
 		rows.push(cells);
@@ -59,7 +61,7 @@ export function parseMarkdownTable(input: {
 	};
 }
 
-function splitRow(line: string): string[] | null {
+export function splitMarkdownTableRow(line: string): string[] | null {
 	if (/^(?: {4}|\t)/.test(line)) return null;
 	const value = line.trim();
 	const cells: string[] = [];

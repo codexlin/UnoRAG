@@ -59,9 +59,9 @@ export function InlineCitation({
 						{citation.page ? <p>页 {citation.page}</p> : null}
 						{citation.source?.row_start != null ? (
 							<p>
-								表格行组 {citation.source.row_start}
+								表格行组 {citation.source.row_start + 1}
 								{citation.source.row_end != null
-									? ` 至 ${citation.source.row_end}`
+									? ` 至 ${citation.source.row_end + 1}`
 									: ""}
 							</p>
 						) : null}

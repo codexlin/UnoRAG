@@ -3,6 +3,15 @@
 import { ChevronDown, FileText, Hash, Layers3 } from "lucide-react";
 import type { ReactNode } from "react";
 
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/components/ui/table";
+import { splitMarkdownTableRow } from "@/core/parsing/markdown-table";
 import { formatScore } from "@/lib/format";
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
@@ -24,6 +33,7 @@ function CitationBody({
 		.replace(/\s+/g, " ")
 		.trim();
 	const fullText = citation.text || citation.snippet || "";
+	const table = expanded ? citationTable(citation, fullText) : null;
 
 	return (
 		<div className="flex min-w-0 items-start gap-3">
@@ -78,9 +88,9 @@ function CitationBody({
 								<>
 									<dt className="pt-2">表格行组</dt>
 									<dd>
-										{citation.source.row_start}
+										{citation.source.row_start + 1}
 										{citation.source.row_end != null
-											? ` 至 ${citation.source.row_end}`
+											? ` 至 ${citation.source.row_end + 1}`
 											: ""}
 									</dd>
 								</>
@@ -88,9 +98,44 @@ function CitationBody({
 						</dl>
 						<section className="space-y-2 border-t pt-4">
 							<h3 className="text-sm font-medium">来源片段</h3>
-							<p className="text-answer whitespace-pre-wrap text-foreground [overflow-wrap:anywhere]">
-								{fullText || "未记录来源片段"}
-							</p>
+							{table ? (
+								<Table
+									aria-label={citation.title}
+									className="w-max min-w-full text-foreground"
+									containerProps={{
+										role: "region",
+										"aria-label": "表格来源片段",
+										tabIndex: 0,
+										className: "max-w-full rounded-sm border",
+									}}
+								>
+									<TableHeader className="bg-muted/50">
+										<TableRow>
+											{table.headers.map((header, index) => (
+												// biome-ignore lint/suspicious/noArrayIndexKey: Snapshot columns retain their source order, including duplicate labels.
+												<TableHead key={index} scope="col">
+													{header}
+												</TableHead>
+											))}
+										</TableRow>
+									</TableHeader>
+									<TableBody>
+										{table.rows.map((row, index) => (
+											// biome-ignore lint/suspicious/noArrayIndexKey: Snapshot rows retain their source order, including identical rows.
+											<TableRow key={index}>
+												{row.map((cell, column) => (
+													// biome-ignore lint/suspicious/noArrayIndexKey: Snapshot cells retain their column position.
+													<TableCell key={column}>{cell}</TableCell>
+												))}
+											</TableRow>
+										))}
+									</TableBody>
+								</Table>
+							) : (
+								<p className="text-answer whitespace-pre-wrap text-foreground [overflow-wrap:anywhere]">
+									{fullText || "未记录来源片段"}
+								</p>
+							)}
 						</section>
 					</div>
 				) : !compact ? (
@@ -133,6 +178,43 @@ function CitationBody({
 			</div>
 		</div>
 	);
+}
+
+function citationTable(citation: UiCitation, text: string) {
+	const { headers, rows } = citation.source ?? {};
+	if (headers?.length || rows?.length) {
+		return Array.isArray(headers) &&
+			headers.length > 0 &&
+			headers.every((header) => typeof header === "string") &&
+			Array.isArray(rows) &&
+			rows.length > 0 &&
+			rows.every(
+				(row) =>
+					Array.isArray(row) &&
+					row.length === headers.length &&
+					row.every((cell) => typeof cell === "string"),
+			)
+			? { headers, rows }
+			: null;
+	}
+	const lines = text.trim().split(/\r?\n/).map(splitMarkdownTableRow);
+	if (lines.some((line) => !line)) return null;
+	const [textHeaders, ...textRows] = lines as string[][];
+	const delimiter = textRows[0]?.every((cell) => /^:?-+:?$/.test(cell));
+	if (delimiter && textRows[0].length !== textHeaders?.length) return null;
+	if (delimiter) textRows.shift();
+	if (
+		!(
+			delimiter ||
+			citation.source?.record_type === "table" ||
+			citation.source?.table_id
+		) ||
+		!textHeaders?.some(Boolean) ||
+		!textRows.length ||
+		textRows.some((row) => row.length !== textHeaders.length)
+	)
+		return null;
+	return { headers: textHeaders, rows: textRows };
 }
 
 export function CitationSourceCard({

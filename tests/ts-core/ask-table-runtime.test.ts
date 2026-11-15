@@ -504,6 +504,11 @@ test("table execution preserves contributing row groups, citation order and diag
 			{ citationId: "row-1", rowIndices: [1] },
 		],
 	);
+	const { deterministicTableAnswer } = await runtimeModule;
+	assert.match(
+		deterministicTableAnswer(result.table_execution, result.citations) ?? "",
+		/ \[1\]\[2\]$/,
+	);
 });
 
 test("structured router fallback remains deterministic and conservative", async () => {
@@ -1273,6 +1278,67 @@ test("successful table execution always prefers its deterministic answer", async
 		deterministicTableAnswer({ status: "success", answerText: "unsafe" }),
 		null,
 	);
+});
+
+test("deterministic table answers cite contributing evidence using its public position", async () => {
+	const {
+		deterministicTableAnswer,
+		executePlannedTableQuery,
+		NativeAskRuntime,
+	} = await runtimeModule;
+	const source = {
+		...citation({
+			id: "selected",
+			tableId: "budget",
+			device: "服务器",
+			amount: "120000",
+		}),
+		index: 7,
+	};
+	const execution = executePlannedTableQuery(modelPlan, [source]);
+	assert.equal(execution?.status, "success");
+	assert.equal(
+		deterministicTableAnswer(execution, [source]),
+		`${execution?.answerText} [1]`,
+	);
+	assert.equal(
+		deterministicTableAnswer(execution, [
+			{ ...source, id: "unrelated" },
+			source,
+		]),
+		`${execution?.answerText} [2]`,
+	);
+	assert.equal(
+		deterministicTableAnswer(execution, [{ ...source, id: "unrelated" }]),
+		execution?.answerText,
+	);
+	let checks = 0;
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{
+			structured: {} as never,
+			answer: {
+				stream: () =>
+					assert.fail("deterministic answers must not call the model"),
+			} as never,
+			retrieval: {} as never,
+		},
+		async () => {
+			checks++;
+		},
+	);
+	let answer = "";
+	for await (const token of runtime.streamAnswer({
+		...planningState(),
+		citations: [source],
+		table_execution: execution,
+	}))
+		answer += token;
+	assert.equal(answer, `${execution?.answerText} [1]`);
+	assert.equal(checks, 1);
 });
 
 test("runtime renders verified conflict excerpts without invoking answer generation and still checks authorization", async () => {
