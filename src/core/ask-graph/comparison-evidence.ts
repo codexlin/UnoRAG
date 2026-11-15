@@ -14,7 +14,10 @@ const SOURCE_KEYS = [
 export function boundedJudgeEvidenceText(value: unknown): string {
 	const text = typeof value === "string" ? value.trim() : "";
 	// Truncation markers must not become part of a verbatim source quote.
-	return text.slice(0, JUDGE_TEXT_LIMIT);
+	const splitPair =
+		/[\uD800-\uDBFF]/u.test(text.charAt(JUDGE_TEXT_LIMIT - 1)) &&
+		/[\uDC00-\uDFFF]/u.test(text.charAt(JUDGE_TEXT_LIMIT));
+	return text.slice(0, JUDGE_TEXT_LIMIT - (splitPair ? 1 : 0));
 }
 
 /** Remove a child only when an already retrieved parent exposes all of its text to Judge. */
@@ -31,7 +34,7 @@ export function compactComparisonEvidence(
 		)
 		.map((section) => ({
 			section,
-			judgeBody: section.body.trim().slice(0, JUDGE_TEXT_LIMIT),
+			judgeBody: boundedJudgeEvidenceText(section.body),
 		}));
 	return citations.filter((chunk) => {
 		if (

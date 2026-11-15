@@ -60,6 +60,105 @@ test("public entry and authentication boundary are usable", async ({
 	await expect(page.getByRole("button", { name: "登录" })).toBeVisible();
 });
 
+test("static delivery preserves shared warm-cache assets without routing", async ({
+	page,
+	request,
+}, testInfo) => {
+	test.slow();
+	const targetMode = process.env.UNORAG_E2E_TARGET_MODE ?? "production";
+	const probe = `static-delivery-${Date.now()}`;
+	const navigations = [];
+	// page.route would disable the HTTP cache this test needs to exercise.
+	for (const phase of ["cold", "warm"]) {
+		const response = await page.goto(`/login?probe=${probe}-${phase}`, {
+			waitUntil: "load",
+		});
+		expect(response?.status()).toBe(200);
+		const resources = await page.evaluate(async () => {
+			await document.fonts.ready;
+			return (
+				performance.getEntriesByType("resource") as PerformanceResourceTiming[]
+			)
+				.filter((entry) => {
+					const url = new URL(entry.name);
+					return (
+						url.origin === location.origin &&
+						url.pathname.startsWith("/_next/static/")
+					);
+				})
+				.map((entry) => ({
+					path: new URL(entry.name).pathname,
+					transferSize: entry.transferSize,
+					encodedBodySize: entry.encodedBodySize,
+					decodedBodySize: entry.decodedBodySize,
+				}));
+		});
+		navigations.push({ phase, resources });
+		await testInfo.attach(`static-delivery-${phase}`, {
+			body: JSON.stringify({ targetMode, phase, resources }, null, 2),
+			contentType: "application/json",
+		});
+		expect(resources.length).toBeGreaterThan(0);
+	}
+	const [cold, warm] = navigations;
+	const coldPaths = new Set(
+		cold.resources
+			.filter((resource) => resource.decodedBodySize > 0)
+			.map((resource) => resource.path),
+	);
+	const shared = warm.resources.filter(
+		(resource) => coldPaths.has(resource.path) && resource.decodedBodySize > 0,
+	);
+	const cached = shared.filter((resource) => resource.transferSize === 0);
+	await testInfo.attach("static-delivery-shared-cache", {
+		body: JSON.stringify(
+			{
+				targetMode,
+				sharedPaths: shared.map((resource) => resource.path),
+				cachedPaths: cached.map((resource) => resource.path),
+			},
+			null,
+			2,
+		),
+		contentType: "application/json",
+	});
+	expect(shared.length).toBeGreaterThan(0);
+	if (targetMode === "production") {
+		expect(cached.length).toBeGreaterThan(0);
+	}
+	const css = shared.find((resource) => resource.path.endsWith(".css"));
+	if (!css)
+		throw new Error("Expected a shared same-origin static CSS resource");
+	const cssResponse = await request.get(css.path, {
+		headers: { "Accept-Encoding": "gzip" },
+	});
+	const cssHeaders = cssResponse.headers();
+	const cssMetadata = {
+		targetMode,
+		path: css.path,
+		status: cssResponse.status(),
+		cacheControl: cssHeaders["cache-control"] ?? "",
+		contentEncoding: cssHeaders["content-encoding"],
+		contentType: cssHeaders["content-type"],
+		decodedBytes: (await cssResponse.body()).byteLength,
+	};
+	await testInfo.attach("static-delivery-css-response", {
+		body: JSON.stringify(cssMetadata, null, 2),
+		contentType: "application/json",
+	});
+	expect(cssMetadata.status).toBe(200);
+	expect(cssMetadata.contentType).toContain("text/css");
+	expect(cssMetadata.decodedBytes).toBeGreaterThan(0);
+	expect(cssMetadata.contentEncoding).toBe("gzip");
+	if (targetMode === "development") {
+		expect(cssMetadata.cacheControl).not.toMatch(/\bimmutable\b/i);
+		expect(cssMetadata.cacheControl).toMatch(/\b(?:no-cache|no-store)\b/i);
+	} else {
+		expect(cssMetadata.cacheControl).toMatch(/\bpublic\b/i);
+		expect(cssMetadata.cacheControl).toMatch(/\bimmutable\b/i);
+	}
+});
+
 test("authenticated knowledge and settings journeys fit the viewport", async ({
 	page,
 }) => {

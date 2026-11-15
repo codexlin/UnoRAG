@@ -2,6 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { EvidenceAssessmentValidationError } from "../../src/core/ai/evidence-assessment-diagnostics";
 import { boundedJudgeEvidenceText } from "../../src/core/ask-graph/comparison-evidence";
+
+test("Judge truncation keeps supplementary characters intact at the source boundary", () => {
+	for (const prefixLength of [2398, 2399]) {
+		const original = `${"a".repeat(prefixLength)}😀Z`;
+		const projected = boundedJudgeEvidenceText(original);
+		assert.ok(projected.isWellFormed());
+		assert.ok(original.startsWith(projected));
+		assert.ok(projected.length <= 2400);
+		assert.equal(
+			projected,
+			prefixLength === 2398 ? `${"a".repeat(2398)}😀` : "a".repeat(2399),
+		);
+	}
+});
+
 import { validateConflictEvidence } from "../../src/core/ask-graph/evidence-conflict";
 
 const limit = 2_400;

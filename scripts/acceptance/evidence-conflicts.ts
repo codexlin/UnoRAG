@@ -11,7 +11,7 @@ import {
 import { getPrompt } from "../../src/core/ai/prompt-registry";
 import {
 	StructuredOutputAdapter,
-	ConflictOutputSchema,
+	ConflictSelectionOutputSchema,
 	getStructuredFailureMetadata,
 } from "../../src/core/ai/structured-output";
 import { validateConflictEvidence } from "../../src/core/ask-graph/evidence-conflict";
@@ -117,7 +117,7 @@ async function main() {
 		prompt_digest: getPrompt("judge").digest,
 		conflict_prompt_digest: getPrompt("conflict").digest,
 		schema_sha256: createHash("sha256")
-			.update(JSON.stringify(ConflictOutputSchema.toJSONSchema()))
+			.update(JSON.stringify(ConflictSelectionOutputSchema.toJSONSchema()))
 			.digest("hex"),
 		cases: fixture.cases.length,
 		rounds,

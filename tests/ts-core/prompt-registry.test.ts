@@ -27,7 +27,7 @@ const EXPECTED_DIGESTS = {
 	judge: "dcf69ce39ba3ae809ce1472a75193215065e1f7a2cb60e2155cb9b5d4b190abe",
 	refusal_review:
 		"7f35bbcecc1b3e7fd326e76c59213e791235432801c74254e3af87cdd0b7a675",
-	conflict: "b51503bfd463423bf3d08407d285620f109c75c85e04ac862653cb2db0af11d5",
+	conflict: "749e25eac357a833d84fd5ccbf2a1948fb33f01742eaa59c4dc42a78a13c8762",
 	table_plan:
 		"074c2f67f29bc44f7a72be0b1525490ef51719be3a9ba9ac4677b33198d5aab7",
 } as const;
@@ -38,7 +38,7 @@ const EXPECTED_VERSIONS = {
 	rewrite: "1.0.0",
 	judge: "1.12.0",
 	refusal_review: "1.0.0",
-	conflict: "1.3.0",
+	conflict: "2.0.0",
 	table_plan: "1.0.0",
 } as const;
 
