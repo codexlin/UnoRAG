@@ -54,6 +54,21 @@ const AnswerCheckSchema = z.union([
 			for_fact: AnswerCheckFactSchema,
 		})
 		.strict(),
+	z
+		.object({
+			label: z.string().trim().min(1).max(120),
+			qualifier: z.enum([
+				"lower_bound",
+				"upper_bound",
+				"approximation",
+				"unit",
+				"condition",
+			]),
+			unit: z.string().trim().min(1).max(40).optional(),
+			condition_terms: KeyFactsSchema.max(8).optional(),
+			for_fact: AnswerCheckFactSchema,
+		})
+		.strict(),
 ]);
 const AnswerFactAliasesSchema = z
 	.object({
@@ -117,11 +132,19 @@ export const GoldenCaseSchema = z
 					? check.any_of
 					: "none_of" in check
 						? check.none_of
-						: [];
+						: "condition_terms" in check && check.condition_terms
+							? check.condition_terms
+							: [];
 			if (labels.has(check.label) || !uniqueFacts(phrases)) {
 				context.addIssue({
 					code: "custom",
 					message: "duplicate answer check label or phrase",
+				});
+			}
+			if ("qualifier" in check && check.qualifier === "unit" && !check.unit) {
+				context.addIssue({
+					code: "custom",
+					message: `unit qualifier requires unit: ${check.label}`,
 				});
 			}
 			labels.add(check.label);
@@ -443,6 +466,70 @@ function periodMatchesAnswer(
 	});
 }
 
+function qualifierMatchesClause(
+	check: Extract<z.infer<typeof AnswerCheckSchema>, { qualifier: string }>,
+	clause: string,
+): boolean {
+	const text = clause.normalize("NFKC");
+	switch (check.qualifier) {
+		case "lower_bound": {
+			const hasLowerPrefix =
+				/(?:(?<![不未非无])(?:突破|超过|超出|多于|高于|大于|至少|起码)|不少于|不低于|不小于|>=|≥|(?<![<])>|\b(?:at\s+least|more\s+than|over|exceed(?:s|ed|ing)?|no\s+less\s+than|minimum)\b)/iu.test(
+					text,
+				);
+			const hasLowerPostfix =
+				/(?:\d|[万亿千百十余])\s*[a-z\u4e00-\u9fff%]{0,4}\s*(?:以上|起|不止|\+)(?:\s|$|[，。；,;])/iu.test(
+					text,
+				);
+			const hasUpperOverride =
+				/(?:不超过|至多|最多|(?<![不未非无])(?:少于|低于|小于)|不足|不到|不高于|不多于|不大于|<=|≤|\b(?:at\s+most|no\s+more\s+than|less\s+than)\b)/iu.test(
+					text,
+				);
+			return (hasLowerPrefix || hasLowerPostfix) && !hasUpperOverride;
+		}
+		case "upper_bound": {
+			const hasUpperPrefix =
+				/(?:不超过|至多|最多|(?<![不未非无])(?:少于|低于|小于|不足|不到)|未达|未超|不高于|不多于|不大于|<=|≤|(?<![>])<|\b(?:at\s+most|no\s+more\s+than|less\s+than|under|below|up\s+to|maximum)\b)/iu.test(
+					text,
+				);
+			const hasUpperPostfix =
+				/(?:\d|[万亿千百十])\s*[a-z\u4e00-\u9fff%]{0,4}\s*(?:以下|以内|之内)/iu.test(
+					text,
+				);
+			const hasLowerOverride =
+				/(?:不少于|不低于|不小于|>=|≥|\b(?:at\s+least|no\s+less\s+than)\b)/iu.test(
+					text,
+				);
+			return (hasUpperPrefix || hasUpperPostfix) && !hasLowerOverride;
+		}
+		case "approximation": {
+			return /(?:大约|约计|约莫|(?<![合预条规相])约(?=\s*\d)|大概|大致|接近|将近|(?<![最临])近(?=\s*\d)|~|≈|\b(?:approx(?:\.|imately)?|around|about|roughly|nearly)\b|(?:\d[a-z\u4e00-\u9fff%]{0,4})\s*(?:左右|上下|前后|余(?=[个家条项名人次年天万亿])|多(?=[个家条项名人次年天])))/iu.test(
+				text,
+			);
+		}
+		case "unit": {
+			if (!check.unit) return false;
+			const escaped = check.unit
+				.normalize("NFKC")
+				.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+			return new RegExp(
+				String.raw`(?:\d|零|一|二|两|三|四|五|六|七|八|九|十|百|千|万|亿)\s*${escaped}(?![a-z0-9_])`,
+				"iu",
+			).test(text);
+		}
+		case "condition": {
+			if (check.condition_terms?.length) {
+				return check.condition_terms.some((term) =>
+					factMatchesAnswer(term, text),
+				);
+			}
+			return /(?:^|[，,;；\s])(?:若|如果|如遇|如发生|当.{1,20}时|在.{1,20}(?:情况下|前提下|条件下|阶段|期间|前|后)|仅限|前提|除非|需满足|\b(?:if|when|unless|only\s+when|provided\s+that)\b)/iu.test(
+				text,
+			);
+		}
+	}
+}
+
 export function answerCheckMatches(
 	check: z.infer<typeof AnswerCheckSchema>,
 	answer: string,
@@ -459,6 +546,9 @@ export function answerCheckMatches(
 			)
 		: [text];
 	if (!scopes.length) return false;
+	if ("qualifier" in check) {
+		return scopes.some((scope) => qualifierMatchesClause(check, scope));
+	}
 	const includes = (phrase: string) =>
 		scopes.some((scope) => factMatchesAnswer(phrase, scope));
 	return "any_of" in check
@@ -508,7 +598,18 @@ export function parseGoldenCase(value: unknown): GoldenCase {
 									? { ...check, any_of: Object.freeze([...check.any_of]) }
 									: "none_of" in check
 										? { ...check, none_of: Object.freeze([...check.none_of]) }
-										: { ...check, period: Object.freeze({ ...check.period }) },
+										: "period" in check
+											? { ...check, period: Object.freeze({ ...check.period }) }
+											: {
+													...check,
+													...(check.condition_terms
+														? {
+																condition_terms: Object.freeze([
+																	...check.condition_terms,
+																]),
+															}
+														: {}),
+												},
 							),
 						),
 					),
