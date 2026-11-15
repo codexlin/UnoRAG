@@ -5,7 +5,7 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
-## [0.3.0] - Acceptance Pending
+## [0.3.0] - 2026-11-15
 
 - Replace model-written conflict quotations with request-local excerpt selections.
   The server materializes exact original text while retaining source scope,
