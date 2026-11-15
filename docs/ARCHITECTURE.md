@@ -173,6 +173,21 @@ Parsing produces DocumentIR before chunking. The policy is structure-first:
 4. index chunk, section and table records with stable provenance;
 5. keep TableIR headers, normalized units, row groups and contributing citations.
 
+原生 Markdown 解析把带表头、分隔行且列数一致的管道表转换为 `TableIR`，保留标题路径与最近标题，
+沿用 table 分块、行组及 `table_summary` 索引。转义管道保留为单元格内容；空表体、列数不齐或非法分隔行
+保留为原文，围栏代码不参与表格识别。TXT 不启用该转换；既有 Markdown 需重索引才会生成新的表格结构。
+
+条件式 Contextual Retrieval 默认关闭。Worker 可设置 `CONTEXTUAL_RETRIEVAL_ENABLED=true`，
+或通过 `ChunkingOptions.contextualRetrieval` 显式开启；仅增强正文不少于 160 字符、且无标题路径或属于
+OCR/降级解析的叙事块。`CONTEXTUAL_RETRIEVAL_MAX_CHUNKS` 默认及硬上限均为 40，
+`CONTEXTUAL_RETRIEVAL_TIMEOUT_MS` 默认 1000、上限 5000 毫秒；Compose 高级配置与 Helm Worker 同步支持。
+默认前缀只使用同文档标题、文件名、最近标题和页码；可注入 `Contextualizer` 实现有界的一句定位，
+默认不调用外部 LLM。前缀最多 240 字符，单独存入 `contextual_prefix`，仅加入向量化输入和已经过授权校验的
+BM25 语料，不进入引用正文、snippet、重排、去重或表格/图片/章节/文档记录。超时会发出取消信号；
+异常或超时静默保留原文，并停止该文档的后续增强尝试，迟到结果不会修改索引。
+此步骤不改变 ADR-0003 的分块边界或语义切分降级策略；同 generation 的清单一致性校验继续生效，
+注入模型适配器需保证重试结果幂等。既有文档仅在重索引时生成上下文前缀，不原地改写 active generation。
+
 入库还生成一个 generation 绑定的 `document` 记录：正文保存有界的解析标题目录，向量只使用有界的文档
 身份描述，不把整份长目录当普通 chunk 向量化。同一版本的 `parser_report.metrics.document_context`
 保存原始文件名、首级标题、显式编号标签提取结果、标题层级和完整性标记。它属于检索内容，普通文档/任务
@@ -192,14 +207,22 @@ when truncated; citations continue to point at every contributing row group.
 ## 检索与问答
 
 Native Retrieve resolves scope, embeds the query, applies mandatory Qdrant filters,
-optionally reranks results, and maps strict citations. The current BM25+RRF path
-builds an application-level lexical index from a bounded corpus and is intended for
-small and medium knowledge bases; server-side sparse retrieval remains an evaluated
-future upgrade rather than a current scale claim.
+optionally reranks results, and maps strict citations. `QDRANT_SERVER_HYBRID_ENABLED=true`
+opts new collections into named `dense` + deterministic tokenizer/hash `lexical_v1`
+sparse vectors and Query API prefetch/RRF. Dense and sparse prefetches and the fused
+query each carry the complete mandatory filter; every returned hit is rechecked for
+scope, ACL, active generation and lifecycle before use. RRF scores are kept separate
+from original dense semantic scores; sparse-only evidence has no dense confidence.
+
+存量 collection 通过 schema 探测兼容，不自动迁移或原地补 sparse。无 sparse 索引、开关关闭或无词元时，
+沿用受配置上限约束（默认 10,000 条授权语料）的应用层 BM25+RRF。此回退适用于小中型知识库，不能宣称百万级容量。
+稀疏写入随 collection 能力持续执行，关闭查询开关不破坏后续重启启用。部署开关需 Web/Worker 同步；
+迁移须完整补齐数据、验证范围后协调切换，详见待评审 [ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md)。
+真实 Qdrant 门禁覆盖跨 Workspace、ACL、active generation、删除残留与旧 collection 回退；
+默认仍关闭，客户语料的质量/容量验收与 ADR 评审不由 fixture 测试替代。
 
 应用层 BM25 不得按 library 或 generation 共享高权限主体构建的语料缓存。任何复用都必须包含规范化的
-授权指纹、再次执行 ACL/version 校验并具备可靠失效机制。Qdrant sparse 只有在真实客户语料证明质量、
-容量和回滚收益，并通过跨 Workspace、ACL、active generation 与删除隔离门禁后，才能替换当前路径。
+授权指纹、再次执行 ACL/version 校验并具备可靠失效机制。
 
 Native Ask uses LangGraph.js for orchestration:
 
@@ -209,8 +232,14 @@ route -> plan -> clarify | retrieve -> table execute -> judge
 ```
 
 指定文件名、已识别文号或可唯一匹配的业务阶段主题时，Ask 先从 PG 的**当前 active 版本**解析文档身份，
-再收窄 Qdrant 的 document/generation 过滤。候选目录最多读取 501 行，超过 500 份授权文档时失败关闭，
-不根据截断目录猜测唯一性；这不是大规模文档目录搜索的实现。PG 查询同时执行组织、Workspace、文库、
+再收窄 Qdrant 的 document/generation 过滤。小库最多读取 501 行，授权文档不超过 500 份时返回完整目录；
+超过时在同一授权集合内，按原问中的文件名、文号、引用标题或阶段主题执行 ILIKE/pg_trgm 检索与相似度排序，
+最多返回 500 份候选。GIN 索引覆盖规范化文档名、版本原始文件名和解析标题；扩展由迁移身份安装，运行角色仅使用。
+大库仍标记 `complete=false`；只有全部潜在身份匹配已取回且未截断时，才附带绑定原问题的 `completeForQuestion`，
+供原有精确约束规则判断，不把相似度当作唯一性证明。重复名称仍需澄清，匿名目录、未知文号、超过 16 条线索
+或匹配集合超限仍失败关闭；为避免 PG locale 与 JS 大小写折叠差异，大库完整性证明限于 NFKC 后的 ASCII/汉字线索，
+其他文字保留候选但不据此猜测唯一来源。后续引用身份元数据按召回文档批量重新加载，不复用不完整的大库候选。
+PG 查询同时执行组织、Workspace、文库、
 删除状态、ACL 与投影一致性检查，不复用 editor/owner 的元数据管理权限绕过正文 ACL。
 重写和重试保留原问中的来源约束；重复名称、冲突编号或未授权的指定文件不会静默改查其他文档。
 文件名与文号分别解析，文件名内部的连字符不构成文号；问题中独立写出的文号仍须与指定文件一致。
@@ -255,24 +284,17 @@ Token 兼容归入 `conflict` 用量；OTel 的 `structured_kind` 和独立 Prom
 规定，不能按 chunk 数量判断冲突。服务端校验来源、逐字匹配、去重与数量后，确定性展示原文、引用和
 待核实提示，不让回答模型再次选择单一口径。无效摘录或模型故障失败关闭，不算有效拒答验收通过。
 
-充分性裁决与冲突核验各自有界重试、超时、并发许可和调用前授权检查，并生成独立 metadata-only 模型 span。原生诊断
-成功时保留两段耗时/次数、合计已知 token 和核验范围/候选数；Provider 调用失败时记录失败步骤的
-阶段、次数与耗时，不伪造另一个步骤的成功统计。不记录核验比较正文或额外保存摘录。
-默认每阶段最多 2 次、单次 15 秒、1024 输出 token，普通路径顺序执行的最坏模型尝试预算为 60 秒；
-命中受限拒答复核时最多额外一次，最坏为 75 秒。
-这不含重检索、排队和生成，不是完整请求的时限保证，也不能误称仍只有一次裁决成本；验收的端到端
-P95 15 秒门槛没有提高。矩阵 K 的合并裁决回归保留为历史 FAIL，
-质量结论以 [当前发布验收](./evidence/README.md#当前证据) 的绑定版本和范围为准，
-不把程序来源校验当作语义正确性证明；历史候选失败仍保留在业务矩阵报告中。
-核验 schema 使用对象根节点，避免违反 [OpenAI Structured Outputs 的根对象约束](https://developers.openai.com/api/docs/guides/structured-outputs)；
-分类与摘录之间的关系仍由服务端校验，不假定所有兼容 Provider 都会执行完整 JSON Schema 约束。
+充分性裁决与冲突核验各自有界重试、超时、并发许可和调用前授权检查，并生成独立 metadata-only 模型 span。
+原生诊断保留两段耗时/次数、合计已知 token 与核验范围；Provider 失败时记录失败阶段、次数与耗时，不伪造成功统计，
+也不记录核验比较正文或额外摘录。默认每阶段最多 2 次、单次 15 秒、1024 输出 token，普通路径顺序执行的最坏模型尝试预算为
+60 秒（命中受限拒答复核时最坏 75 秒）；这不含重检索、排队与生成，端到端验收 P95 门槛为 15 秒。
+核验 schema 使用对象根节点以兼容 [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)；
+分类与摘录关系仍由服务端校验，不假定所有兼容 Provider 都执行完整 JSON Schema 约束。
 
-旧 active generation 不会被原地补写。已有文档需要通过正常重索引生成上述元数据；升级前排空旧任务，
-同 generation 写入清单不一致仍失败关闭。新目录能力缺失时可以拒答，不能把已有 Top-K 称作完整目录。
-已识别的文号是正向来源约束，不是“全库没有任何遗漏编号”的证明；无关文档 partial 不应阻断已有明确
-匹配的查询。已观察到的重号仍视为歧义；编号未知且元数据不完整时不得改为宽泛检索。完整标题枚举仍
-要求目标文档结构完整。精确目录路径也必须保留调用方的文档、版本、表格和记录类型限制。
-问题与环境绑定的验证状态见 [当前发布报告](./evidence/README.md)，历史混合业务实验从该索引追溯。
+旧 active generation 不会被原地补写，已有文档须通过正常重索引生成新结构元数据；升级前排空旧任务，
+同 generation 写入清单不一致仍失败关闭。文档编号与完整目录能力遵循以下边界：已识别文号是正向来源约束，
+未召回文档或无关文档 partial 不阻断明确匹配，重号视为歧义；编号未知且元数据不完整时不降级为宽泛检索；
+完整标题枚举与精确目录路径均保留调用方文档、版本、表格与记录类型限制。当前发布验收状态见 [当前发布报告](./evidence/README.md#当前证据)。
 
 Vercel AI SDK provides model calls, structured output and streaming. LangChain core
 types are used only where they remove adapter friction. LlamaIndex is not a second
@@ -281,20 +303,18 @@ runtime; it may later appear behind a retrieval or parser tool boundary.
 模型生成上下文使用 `[source:N]` 作为内部来源标记，系统消息提供本次完整允许清单，避免与条款号、
 页码或表格行号共用裸数字语法。流式守卫只在标记完整且属于本次允许集合时转换为公开的 `[N]`；未知
 来源不会自动映射，列表、范围、残缺与超长标记仍被拒绝。目录与表格的确定性回答继续使用公开格式。
-失败账本、结构化日志和运行中心只记录分类与允许来源数，不保存模型原始错误标记或正文。提示语不能
-代替该校验，也不证明回答语义正确；模型、证据和 Prompt 变化仍需真实质量回归。
+失败账本、结构化日志和运行中心只记录分类与允许来源数，不保存模型原始错误标记或正文。
 
 比较类 Ask 在 Judge 前仅合并可证明重复的正文候选：已召回的章节必须与片段同授权范围、文档、版本和
 generation，索引血缘及章节一致，且 Judge 可见的章节原文完整包含该片段。保留较完整的真实章节引用；
 不合并表格、图像或仅相似的证据。在证据充分时保留全部剩余候选（最多 6 条、14,400 个正文字符），
-超预算拒答，不静默截掉比较对象。这不保证全库穷举覆盖。
+超预算拒答，不静默截掉比较对象。
 对同一生效文档中明确指定两个比较对象、问实际发生概率能否严格排序的题，若从同组章节逐一识别到
 合法且重叠的百分比区间，则直接拒绝断言唯一最高，并报告两个区间。未读到区间、范围不明确及上限比较不走此规则。
 普通 Ask 可在原 Top-K 内保留一条达到原门槛、与已选正文同文档版本且有结构来源关系的 figure；
 仅使用已授权候选，不额外召回、不改变公共 Retrieve 默认顺序，也不等同于 ChartIR 数值理解。
-召回的补充图片不会仅因血缘关联就成为普通事实题的正式引用；仅当问题明确涉及图像、图注或图表时，
-才从已选证据补入同源图片。Judge 直接选中的图片仍可作为证据；表格血缘、授权、引用编号与传输契约不变。
-排查、收益与 Token/延迟代价见 [历史修复案例](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-05-comparison-lineage-fix.md)。
+补充图片仅在问题明确涉及图像、图注或图表时从已选证据补入，不因血缘关联自动成为普通事实题的正式引用；
+Judge 直接选中的图片仍可作为证据，表格血缘、授权、引用编号与传输契约不变。
 
 Embedding/Rerank 的 HTTP 重试保留总 deadline 和次数预算，401 等凭证错误不重试；429/503 可遵守
 Retry-After，等待超出本次预算/上限时返回可重试错误，不提前再次请求。deadline 覆盖响应头与 JSON body

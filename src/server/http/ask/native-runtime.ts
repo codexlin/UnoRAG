@@ -25,6 +25,7 @@ import {
 	scopedProbabilityOverlapReason,
 } from "@/core/ask-graph/comparison-evidence";
 import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
+import { isSelfContainedFollowupQuestion } from "@/core/ask-graph/nodes/rewrite";
 import { deriveGroundedTableLookup } from "@/core/ask-graph/table";
 import {
 	isFormFieldLookup,
@@ -38,7 +39,10 @@ import type {
 	RetrievalResult,
 } from "@/core/retrieval";
 import { semanticEvidenceScore } from "@/core/retrieval/citation-mapper";
-import type { ActiveDocumentDescriptor } from "@/core/retrieval/document-constraints";
+import type {
+	ActiveDocumentCatalog,
+	ActiveDocumentDescriptor,
+} from "@/core/retrieval/document-constraints";
 import {
 	captureAskGenerationStream,
 	isEvaluationCaptureEnabled,
@@ -87,7 +91,8 @@ export type NativeAskRuntimeDependencies = {
 		identity: AuthIdentity;
 		libraryId: string;
 		scope: AuthorizedScope;
-	}) => Promise<{ documents: ActiveDocumentDescriptor[]; complete: boolean }>;
+		question?: string;
+	}) => Promise<ActiveDocumentCatalog>;
 };
 
 export class NativeAskRequestError extends Error {
@@ -264,9 +269,7 @@ export class NativeAskRuntime {
 		this.documentConstraintStatus = "none";
 		let retrievalScope = scope;
 		const loadDocumentCatalog = this.dependencies.loadDocumentCatalog;
-		let catalog:
-			| { documents: ActiveDocumentDescriptor[]; complete: boolean }
-			| undefined;
+		let catalog: ActiveDocumentCatalog | undefined;
 		if (loadDocumentCatalog) {
 			const resolution = await resolveAskDocumentEvidence({
 				question: state.question ?? "",
@@ -279,6 +282,7 @@ export class NativeAskRuntime {
 						identity: this.identity,
 						libraryId: this.libraryId,
 						scope,
+						question: state.question ?? "",
 					});
 					return catalog;
 				},
@@ -348,11 +352,12 @@ export class NativeAskRuntime {
 				),
 			];
 			if (documentIds.length) {
-				catalog ??= await loadDocumentCatalog({
-					identity: this.identity,
-					libraryId: this.libraryId,
-					scope: { ...retrievalScope, documentIds },
-				});
+				if (!catalog?.complete)
+					catalog = await loadDocumentCatalog({
+						identity: this.identity,
+						libraryId: this.libraryId,
+						scope: { ...retrievalScope, documentIds },
+					});
 				if (!catalog.complete) {
 					this.documentConstraintStatus = "unavailable";
 					return this.emptyDocumentResult(scope);
@@ -452,6 +457,9 @@ export class NativeAskRuntime {
 				rewrite: async ({ question, history }) => {
 					if (history.length === 0) {
 						return { query: question, mode: "identity_first_turn" };
+					}
+					if (isSelfContainedFollowupQuestion(question)) {
+						return { query: question, mode: "identity_self_contained" };
 					}
 					await this.assertAuthorized?.(this.retrievedEvidence);
 					try {

@@ -23,6 +23,10 @@ import {
 import type { QdrantSearchHit, StoredQdrantPayload } from "./qdrant/payload";
 import type { RetrievalVectorStore } from "./qdrant/store";
 import { normalizeRerankResults, type RerankProvider } from "./rerank/provider";
+import {
+	buildScopedRetrievalCacheKey,
+	type ScopedRetrievalCache,
+} from "./retrieval-cache";
 
 type CandidateCounts = {
 	total: number;
@@ -57,6 +61,7 @@ export type RetrievalServiceOptions = {
 	bm25TopK: number;
 	rrfK: number;
 	corpusLimit?: number;
+	cache?: ScopedRetrievalCache;
 };
 
 function toRetrievalScope(
@@ -112,6 +117,8 @@ function assertAuthorizedHits(
 			payload.library_id !== scope.libraryId ||
 			!generationAllowed ||
 			!documentAllowed ||
+			(payload.lifecycle_visibility != null &&
+				payload.lifecycle_visibility !== "active") ||
 			!aclAllowed
 		) {
 			throw new RetrievalSecurityViolationError(
@@ -285,7 +292,14 @@ function lexicalHits(
 	const index = new Bm25Index<QdrantSearchHit>(
 		corpus.map((hit) => ({
 			id: String(hit.id),
-			text: hitText(hit),
+			text:
+				hit.payload.record_type === "chunk" &&
+				!hit.payload.table_id &&
+				!hit.payload.figure_id &&
+				hit.payload.split_strategy !== "code" &&
+				hit.payload.contextual_prefix
+					? `${hit.payload.contextual_prefix}\n${hitText(hit)}`
+					: hitText(hit),
 			value: hit,
 		})),
 	);
@@ -414,6 +428,30 @@ export class DefaultRetrievalService {
 		}
 		const scope = toRetrievalScope(input.scope, input.libraryId);
 		const filters = toUserFilters(input.filters);
+		const cacheKey = this.options.cache
+			? buildScopedRetrievalCacheKey({
+					query,
+					libraryId: input.libraryId,
+					scope: input.scope,
+					topK: input.topK,
+					filters,
+					options: {
+						hybridEnabled:
+							input.options?.hybridEnabled ?? this.options.hybridEnabled,
+						rerankEnabled:
+							input.options?.rerankEnabled ?? this.options.rerankEnabled,
+						preserveFigureLineage: input.options?.preserveFigureLineage,
+						lineageMinScore: input.options?.lineageMinScore,
+						rerankTopK: this.options.rerankTopK,
+						bm25TopK: this.options.bm25TopK,
+						rrfK: this.options.rrfK,
+					},
+				})
+			: null;
+		const cached = cacheKey ? this.options.cache?.get(cacheKey) : null;
+		if (cached) {
+			return cached;
+		}
 		const denseK = Math.max(
 			input.topK,
 			this.options.rerankTopK,
@@ -439,26 +477,49 @@ export class DefaultRetrievalService {
 			input.options?.rerankEnabled ?? this.options.rerankEnabled;
 		if (hybridEnabled) {
 			try {
-				const corpus = assertAuthorizedHits(
-					await this.store.listCorpus({
-						scope,
-						userFilters: filters,
-						limit: this.options.corpusLimit ?? 10_000,
-					}),
+				const serverHits = await this.store.hybridSearch?.({
+					vector,
+					query,
 					scope,
-				);
-				const lexical = lexicalHits(query, corpus, this.options.bm25TopK);
-				if (lexical.length) {
-					candidates = fuseHits({
-						dense,
-						lexical,
-						rrfK: this.options.rrfK,
-						limit: denseK,
-					});
+					userFilters: filters,
+					limit: denseK,
+					sparseLimit: this.options.bm25TopK,
+					rrfK: this.options.rrfK,
+				});
+				if (serverHits != null) {
+					const denseScores = new Map(
+						dense.map((hit) => [String(hit.id), hit.score]),
+					);
+					candidates = assertAuthorizedHits(serverHits, scope).map((hit) => ({
+						...hit,
+						dense_score: denseScores.get(String(hit.id)) ?? null,
+						rrf_score: hit.score,
+						used_hybrid: true,
+					}));
 					usedHybrid = true;
+				} else {
+					const corpus = assertAuthorizedHits(
+						await this.store.listCorpus({
+							scope,
+							userFilters: filters,
+							limit: this.options.corpusLimit ?? 10_000,
+						}),
+						scope,
+					);
+					const lexical = lexicalHits(query, corpus, this.options.bm25TopK);
+					if (lexical.length) {
+						candidates = fuseHits({
+							dense,
+							lexical,
+							rrfK: this.options.rrfK,
+							limit: denseK,
+						});
+						usedHybrid = true;
+					}
 				}
 			} catch (error) {
 				input.signal?.throwIfAborted();
+				if (error instanceof RetrievalSecurityViolationError) throw error;
 				hybridError = errorMessage(error);
 				candidates = dense;
 			}
@@ -557,7 +618,7 @@ export class DefaultRetrievalService {
 				index + 1,
 			),
 		);
-		return {
+		const result: RetrievalResult = {
 			citations,
 			debug: {
 				usedHybrid,
@@ -572,6 +633,10 @@ export class DefaultRetrievalService {
 				...(rerankDiagnostic ? { rerankDiagnostic } : {}),
 			},
 		};
+		if (cacheKey) {
+			this.options.cache?.set(cacheKey, result);
+		}
+		return result;
 	}
 }
 

@@ -7,10 +7,12 @@ import {
 	OpenAICompatibleEmbeddingProvider,
 	OpenAICompatibleRerankProvider,
 	QdrantRetrievalStore,
+	ScopedRetrievalCache,
 } from "@/core/retrieval";
 import {
 	parseQdrantDistance,
 	QdrantCollectionManager,
+	qdrantServerHybridEnabled,
 } from "@/core/retrieval/qdrant/collection-manager";
 
 function required(name: string, fallback?: string): string {
@@ -23,6 +25,14 @@ function positiveInteger(name: string, fallback: number): number {
 	const value = Number(process.env[name] ?? fallback);
 	if (!Number.isInteger(value) || value <= 0) {
 		throw new Error(`${name} must be a positive integer`);
+	}
+	return value;
+}
+
+function nonNegativeInteger(name: string, fallback: number): number {
+	const value = Number(process.env[name] ?? fallback);
+	if (!Number.isInteger(value) || value < 0) {
+		throw new Error(`${name} must be a non-negative integer`);
 	}
 	return value;
 }
@@ -72,6 +82,7 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		collection,
 		vectorSize: dimensions,
 		distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
+		serverHybridEnabled: qdrantServerHybridEnabled(),
 	}).ensure();
 	// The store awaits the original promise. This observer prevents an
 	// unhandled rejection if Qdrant fails before the first request arrives.
@@ -98,6 +109,8 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		embeddings,
 		new QdrantRetrievalStore(qdrant, collection, collectionReady, {
 			timeoutMs: qdrantTimeoutMs,
+			serverHybridEnabled: qdrantServerHybridEnabled(),
+			vectorSchema: collectionReady.then((result) => result.vectorSchema),
 		}),
 		reranker,
 		{
@@ -107,6 +120,10 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 			bm25TopK: positiveInteger("BM25_TOP_K", 20),
 			rrfK: positiveInteger("RRF_K", 60),
 			corpusLimit: positiveInteger("TS_RETRIEVAL_CORPUS_LIMIT", 10_000),
+			cache: new ScopedRetrievalCache({
+				ttlMs: nonNegativeInteger("RETRIEVAL_CACHE_TTL_MS", 30_000),
+				maxEntries: positiveInteger("RETRIEVAL_CACHE_MAX_ENTRIES", 256),
+			}),
 		},
 	);
 	return runtime;

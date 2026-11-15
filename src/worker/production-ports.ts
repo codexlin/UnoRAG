@@ -14,6 +14,8 @@ import { OpenAICompatibleEmbeddingProvider } from "../core/retrieval/embedding/p
 import {
 	parseQdrantDistance,
 	QdrantCollectionManager,
+	type QdrantVectorSchema,
+	qdrantServerHybridEnabled,
 } from "../core/retrieval/qdrant/collection-manager";
 import { observePostgresPoolErrors } from "../db/pool-observability";
 import { logger } from "../lib/observability";
@@ -646,12 +648,15 @@ export async function createWorkerPorts(
 		timeout: positiveInteger("QDRANT_TIMEOUT_MS", 5_000),
 		checkCompatibility: true,
 	});
+	let vectorSchema: QdrantVectorSchema;
 	try {
-		await new QdrantCollectionManager(qdrant, {
+		const ready = await new QdrantCollectionManager(qdrant, {
 			collection: qdrantCollection,
 			vectorSize: embeddingDimensions,
 			distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
+			serverHybridEnabled: qdrantServerHybridEnabled(),
 		}).ensure();
+		vectorSchema = ready.vectorSchema;
 	} catch (error) {
 		await pool.end();
 		throw error;
@@ -659,7 +664,7 @@ export async function createWorkerPorts(
 	const ports: WorkerPorts = {
 		documentAclProjection: new DocumentAclProjectionOperations(
 			pool,
-			new QdrantIngestWriteStore(qdrant, qdrantCollection),
+			new QdrantIngestWriteStore(qdrant, qdrantCollection, { vectorSchema }),
 		),
 		documentDelete: {
 			transactions: new PostgresDocumentDeleteTransactions(pool),
@@ -798,7 +803,7 @@ export async function createWorkerPorts(
 			source,
 			new PostgresDocumentIngestScope(pool),
 			embeddings,
-			new QdrantIngestWriteStore(qdrant, qdrantCollection),
+			new QdrantIngestWriteStore(qdrant, qdrantCollection, { vectorSchema }),
 			pdfParser,
 		),
 	};

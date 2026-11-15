@@ -58,6 +58,10 @@ export const documents = appSchema.table(
 			table.ragDocumentId,
 		),
 		index("documents_library_status_idx").on(table.libraryId, table.status),
+		index("documents_name_trgm_idx").using(
+			"gin",
+			sql`lower(normalize(${table.name}, NFKC)) public.gin_trgm_ops`,
+		),
 		check(
 			"documents_status_check",
 			sql`${table.status} in ('empty', 'processing', 'ready', 'degraded', 'failed', 'deleting', 'deleted')`,
@@ -123,6 +127,14 @@ export const documentVersions = appSchema.table(
 			table.id,
 		),
 		index("document_versions_status_idx").on(table.status, table.updatedAt),
+		index("document_versions_source_filename_trgm_idx").using(
+			"gin",
+			sql`lower(normalize(${table.sourceFilename}, NFKC)) public.gin_trgm_ops`,
+		),
+		index("document_versions_context_title_trgm_idx").using(
+			"gin",
+			sql`lower(normalize(${table.parserReport}->'metrics'->'document_context'->>'title', NFKC)) public.gin_trgm_ops`,
+		),
 		check(
 			"document_versions_status_check",
 			sql`${table.status} in ('pending', 'processing', 'indexed', 'activating', 'active', 'failed', 'superseded', 'cancelled', 'deleting', 'deleted')`,

@@ -112,12 +112,20 @@ spec:
               value: {{ .Values.config.llmBaseUrl | quote }}
             - name: EMBEDDING_MODEL
               value: {{ .Values.config.embeddingModel | quote }}
+            - name: QDRANT_SERVER_HYBRID_ENABLED
+              value: {{ .Values.config.qdrantServerHybridEnabled | quote }}
             - name: EMBEDDING_DIM
               value: {{ .Values.config.embeddingDim | quote }}
             - name: EMBEDDING_BATCH_SIZE
               value: {{ .Values.config.embeddingBatchSize | quote }}
             - name: EMBEDDING_TIMEOUT_MS
               value: {{ .Values.config.embeddingTimeoutMs | quote }}
+            - name: CONTEXTUAL_RETRIEVAL_ENABLED
+              value: {{ .Values.config.contextualRetrievalEnabled | quote }}
+            - name: CONTEXTUAL_RETRIEVAL_MAX_CHUNKS
+              value: {{ .Values.config.contextualRetrievalMaxChunks | quote }}
+            - name: CONTEXTUAL_RETRIEVAL_TIMEOUT_MS
+              value: {{ .Values.config.contextualRetrievalTimeoutMs | quote }}
             - name: MINERU_PROVIDER
               value: {{ .Values.config.mineruProvider | quote }}
             - name: MINERU_SELF_HOSTED_URL

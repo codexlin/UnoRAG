@@ -91,6 +91,38 @@ function service(listCorpus: RetrievalVectorStore["listCorpus"]) {
 	);
 }
 
+test("query-complete catalog candidates narrow Ask scope without claiming a complete library", async () => {
+	const question = "manual.docx 的内容？";
+	const result = await resolveAskDocumentEvidence({
+		question,
+		libraryId: "lib",
+		scope,
+		loadCatalog: async () => ({
+			documents: [doc],
+			complete: false,
+			completeForQuestion: question,
+		}),
+		lookupDocumentRecord: async () => {
+			throw new Error("content query must not execute an outline");
+		},
+	});
+	assert.equal(result.status, "resolved");
+	assert.deepEqual(result.scope.documentIds, ["doc"]);
+	assert.deepEqual(result.scope.activeGenerationIds, ["gen"]);
+	const stale = await resolveAskDocumentEvidence({
+		question,
+		libraryId: "lib",
+		scope,
+		loadCatalog: async () => ({
+			documents: [doc],
+			complete: false,
+			completeForQuestion: "another.docx 的内容？",
+		}),
+		lookupDocumentRecord: async () => null,
+	});
+	assert.equal(stale.status, "unavailable");
+});
+
 test("outline replanning removes only the internal text default, never explicit resource constraints", () => {
 	assert.deepEqual(
 		documentEvidenceFilters({

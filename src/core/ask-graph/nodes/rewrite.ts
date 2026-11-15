@@ -6,6 +6,24 @@ import {
 	requireQuestion,
 } from "../state";
 
+const FOLLOWUP_REFERENCE_ZH_RE =
+	/(?:^|[\s，,。！？(（])(?:它|它们|他|他们|她|她们|这|这个|这些|这里|这种|这样|那|那个|那些|那里|那种|那样|上述|上面|前面|刚才|上文|之前|该|此|继续|展开|详细说说|再说说|为什么呢|怎么解决|如何处理|还有吗|有哪些补充)/;
+const FOLLOWUP_REFERENCE_EN_RE =
+	/\b(?:it|its|they|them|their|this|that|these|those|above|previous|former|latter|same|elaborate|more details?|continue|follow[\s-]?up)\b/i;
+
+/**
+ * Returns true when a follow-up question appears self-contained (sufficiently
+ * specific and free of anaphoric or elliptical references), allowing Ask to
+ * skip the extra LLM rewrite round-trip without losing coreference accuracy.
+ */
+export function isSelfContainedFollowupQuestion(question: string): boolean {
+	const trimmed = question.trim();
+	if (trimmed.length < 8) return false;
+	if (FOLLOWUP_REFERENCE_ZH_RE.test(trimmed)) return false;
+	if (FOLLOWUP_REFERENCE_EN_RE.test(trimmed)) return false;
+	return true;
+}
+
 export function createRewriteNode(context: AskGraphContext) {
 	return async (state: AskState): Promise<AskStateUpdate> => {
 		const rewritten = await context.queryRewriter.rewrite({

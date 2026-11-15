@@ -19,6 +19,8 @@ REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA app, public FROM unorag_web, un
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA app FROM PUBLIC;
 
 GRANT USAGE ON SCHEMA app TO unorag_web, unorag_worker;
+-- pg_trgm is installed by the migrator in public; runtime roles only use it.
+GRANT USAGE ON SCHEMA public TO unorag_web, unorag_worker;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA app TO unorag_migrator;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA app TO unorag_migrator;
 

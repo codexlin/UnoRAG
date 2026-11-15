@@ -519,3 +519,65 @@ export const observabilityAlertDeliveries = appSchema.table(
 		),
 	],
 );
+
+/**
+ * Privacy-safe user feedback on Ask runs for Bad Case triage and golden-set
+ * regression export. Stores only structured ratings and reason codes.
+ */
+export const askFeedback = appSchema.table(
+	"ask_feedback",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		askRunId: uuid("ask_run_id")
+			.notNull()
+			.references(() => askRuns.id, { onDelete: "cascade" }),
+		requestId: uuid("request_id").notNull(),
+		organizationId: uuid("organization_id").notNull(),
+		workspaceId: uuid("workspace_id").notNull(),
+		userId: uuid("user_id").notNull(),
+		rating: varchar("rating", { length: 16 }).notNull(),
+		reasonCode: varchar("reason_code", { length: 48 }),
+		triageStatus: varchar("triage_status", { length: 24 })
+			.default("open")
+			.notNull(),
+		...timestamps,
+	},
+	(table) => [
+		foreignKey({
+			name: "ask_feedback_org_workspace_fk",
+			columns: [table.organizationId, table.workspaceId],
+			foreignColumns: [workspaces.organizationId, workspaces.id],
+		}).onDelete("cascade"),
+		foreignKey({
+			name: "ask_feedback_org_user_fk",
+			columns: [table.organizationId, table.userId],
+			foreignColumns: [users.organizationId, users.id],
+		}).onDelete("cascade"),
+		foreignKey({
+			name: "ask_feedback_workspace_user_fk",
+			columns: [table.workspaceId, table.userId],
+			foreignColumns: [workspaceMembers.workspaceId, workspaceMembers.userId],
+		}).onDelete("cascade"),
+		uniqueIndex("ask_feedback_request_user_uq").on(
+			table.requestId,
+			table.userId,
+		),
+		index("ask_feedback_scope_triage_idx").on(
+			table.organizationId,
+			table.workspaceId,
+			table.rating,
+			table.triageStatus,
+			table.updatedAt,
+		),
+		check("ask_feedback_rating_check", sql`${table.rating} in ('up', 'down')`),
+		check(
+			"ask_feedback_reason_check",
+			sql`(${table.rating} = 'up' and ${table.reasonCode} is null)
+				or (${table.rating} = 'down' and (${table.reasonCode} is null or ${table.reasonCode} in ('citation_error', 'outdated_doc', 'missing_info', 'hallucination', 'other')))`,
+		),
+		check(
+			"ask_feedback_triage_status_check",
+			sql`${table.triageStatus} in ('open', 'resolved', 'exported')`,
+		),
+	],
+);
