@@ -5,7 +5,14 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
-## [0.3.2] - Acceptance Pending
+## [0.3.2] - 2026-11-15
+
+Signed images passed their own HK acceptance: three-round quality 126/126,
+27-file business matrix (88 positive, 15 refusal, 8 lifecycle workflows),
+282 browser cases and fresh agent semantic review. This promotes the unreleased
+UI, theme and token-accounting changes below; earlier failed tags stay immutable.
+See [release evidence](./docs/evidence/2026-11-15-v0.3.2-release.md) for exact
+digests, boundaries and the known P2 numeric-qualifier/inline-attribution gaps.
 
 - Keep already-selected figure/table companions directly linked to cited passages
   in the same document version and generation. Final source projection runs once;
