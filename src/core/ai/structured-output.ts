@@ -11,7 +11,10 @@ import {
 import { z } from "zod";
 import { metadataOnlyAiTelemetry } from "@/lib/observability/ai-telemetry";
 import { withActiveSpan } from "@/lib/observability/tracing";
-import { ConflictEvidenceSchema } from "../ask-graph/evidence-conflict";
+import {
+	ConflictEvidenceSchema,
+	validateConflictEvidence,
+} from "../ask-graph/evidence-conflict";
 import { type TableQueryPlan, TableQueryPlanSchema } from "../ask-graph/table";
 import {
 	type AiConcurrencyGateLike,
@@ -128,6 +131,10 @@ export const ConflictSelectionOutputSchema = z
 		"Inconsistent conflict resolution",
 	);
 
+export const ConflictReviewOutputSchema = z
+	.object({ incompatible: z.boolean() })
+	.strict();
+
 export type JudgeAnswerRequirements = {
 	granularity: "named_requirement" | "procedure_details" | "unspecified";
 	formal_name_required: boolean;
@@ -148,6 +155,7 @@ type StructuredKind =
 	| "judge"
 	| "refusal_review"
 	| "conflict"
+	| "conflict_review"
 	| "table_plan";
 
 interface StructuredSchemaMap {
@@ -156,6 +164,7 @@ interface StructuredSchemaMap {
 	judge: typeof JudgeOutputSchema;
 	refusal_review: typeof RefusalReviewOutputSchema;
 	conflict: typeof ConflictSelectionOutputSchema;
+	conflict_review: typeof ConflictReviewOutputSchema;
 	table_plan: typeof TablePlanOutputSchema;
 }
 
@@ -213,10 +222,12 @@ export type StructuredRequestMetadata = {
 	inputTokens?: number;
 	outputTokens?: number;
 	totalTokens?: number;
+	conflictReview?: { confirmed: boolean; attempts: number; durationMs: number };
 };
 
 export type StructuredFailureMetadata = Readonly<{
 	kind: StructuredKind;
+	completedConflict?: Readonly<{ attempts: number; durationMs: number }>;
 	attempts: number;
 	durationMs: number;
 	timeoutMs: number;
@@ -379,7 +390,7 @@ export class StructuredOutputAdapter {
 				requestStarted = true;
 				usageAttempt = startModelUsageAttempt(
 					this.model,
-					kind,
+					kind === "conflict_review" ? "conflict" : kind,
 					attempt,
 					this.usageRecorder,
 				);
@@ -644,15 +655,101 @@ export class StructuredOutputAdapter {
 			options.abortSignal,
 			options.beforeRequest,
 		);
-		return {
-			output: {
-				...result.output,
-				conflict_evidence: result.output.conflict_evidence.map(
-					excerpts.resolve,
-				),
+		const proposed = result.output.conflict_evidence.map(excerpts.resolve);
+		if (!proposed.length)
+			return {
+				output: { ...result.output, conflict_evidence: proposed },
+				metadata: result.metadata,
+			};
+		validateConflictEvidence(
+			proposed,
+			excerpts.citations.map((source) => ({
+				id: source.id,
+				text: source.excerpts.map((item) => item.text).join(" "),
+			})),
+		);
+		const review = await this.reviewConflictWithMetadata(
+			{
+				question: input.question,
+				citations: proposed.map((item, index) => {
+					const source = excerpts.citations.find(
+						(value) => value.id === item.evidence_id,
+					);
+					if (!source) throw new Error("Conflict source missing");
+					return {
+						id: `v${index + 1}`,
+						doc_id: source.doc_id,
+						title: source.title,
+						filename: source.filename,
+						document_context: source.document_context,
+						section_path: source.section_path,
+						preamble: source.preamble,
+						text: item.quote,
+					};
+				}),
 			},
-			metadata: result.metadata,
+			options,
+		).catch((error) => {
+			const failure = getStructuredFailureMetadata(error);
+			if (failure)
+				failureMetadata.set(
+					error as object,
+					Object.freeze({
+						...failure,
+						completedConflict: Object.freeze({
+							attempts: result.metadata.attempts,
+							durationMs: result.metadata.durationMs,
+						}),
+					}),
+				);
+			throw error;
+		});
+		const metadata: StructuredRequestMetadata = {
+			attempts: result.metadata.attempts + review.metadata.attempts,
+			durationMs:
+				Math.round(
+					(result.metadata.durationMs + review.metadata.durationMs) * 100,
+				) / 100,
+			conflictReview: {
+				confirmed: review.output.incompatible,
+				attempts: review.metadata.attempts,
+				durationMs: review.metadata.durationMs,
+			},
 		};
+		for (const key of ["inputTokens", "outputTokens", "totalTokens"] as const) {
+			const first = result.metadata[key],
+				second = review.metadata[key];
+			if (first !== undefined && second !== undefined)
+				metadata[key] = first + second;
+		}
+		return {
+			output: review.output.incompatible
+				? { ...result.output, conflict_evidence: proposed }
+				: {
+						comparison: "未确认原文明示不一致，不以未知条件推断冲突。",
+						resolution: "consistent",
+						conflict_evidence: [],
+					},
+			metadata,
+		};
+	}
+
+	reviewConflictWithMetadata(
+		input: { question: string; citations: unknown[] },
+		options: {
+			abortSignal?: AbortSignal;
+			beforeRequest?: () => Promise<void>;
+		} = {},
+	) {
+		return this.request(
+			"conflict_review",
+			ConflictReviewOutputSchema,
+			getPrompt("conflict_review"),
+			[userMessage(JSON.stringify(input))],
+			options.abortSignal,
+			options.beforeRequest,
+			1,
+		);
 	}
 
 	planTable(

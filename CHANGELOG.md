@@ -13,6 +13,13 @@ results remain in [`docs/evidence/`](./docs/evidence/).
   ordinary unused passages and transitive lineage remain excluded.
 - Explicitly require the known cross-project budget regression not to report a
   conflict; expected facts, supporting sources and image evidence gates are unchanged.
+- Require explicit incompatible evidence before reporting a conflict; unknown
+  trigger dates and unproven relationships are not contradictions. Add negative
+  definition controls and positive date/condition controls. Only a proposed conflict
+  triggers one independent, bounded review of exact authorized excerpts; ordinary
+  non-conflict answers do not add a call. Review failures stay technical errors.
+- Keep the complete selected comparison/summary evidence set as a joint result,
+  even when the generated response anchors only part of it.
 
 ## [0.3.1] - Not Released
 

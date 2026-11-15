@@ -203,6 +203,9 @@ export async function assessEvidenceWithMetadata(
 			judge_sufficiency_duration_ms: judged.metadata.durationMs,
 			judge_conflict_attempts: 0,
 			judge_conflict_duration_ms: 0,
+			judge_conflict_review: undefined as "confirmed" | "rejected" | undefined,
+			judge_conflict_review_attempts: undefined as number | undefined,
+			judge_conflict_review_duration_ms: undefined as number | undefined,
 		};
 		if (!decision.sufficient || decision.action !== "generate") {
 			return { output: base, metadata };
@@ -265,11 +268,24 @@ export async function assessEvidenceWithMetadata(
 				conflict_evidence: excerpts,
 				judge_conflict_attempts: checked.metadata.attempts,
 				judge_conflict_duration_ms: checked.metadata.durationMs,
+				...(checked.metadata.conflictReview
+					? {
+							judge_conflict_review: checked.metadata.conflictReview.confirmed
+								? "confirmed"
+								: "rejected",
+							judge_conflict_review_attempts:
+								checked.metadata.conflictReview.attempts,
+							judge_conflict_review_duration_ms:
+								checked.metadata.conflictReview.durationMs,
+						}
+					: {}),
 			},
 			metadata: sumMetadata(metadata, checked.metadata),
 		};
 	} catch (error) {
 		const request = getStructuredFailureMetadata(error);
+		if (request?.completedConflict)
+			completed.conflict = request.completedConflict;
 		const validationCode =
 			error instanceof EvidenceAssessmentValidationError
 				? error.validationCode

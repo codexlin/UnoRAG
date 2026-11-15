@@ -160,12 +160,22 @@ test("separate conflict verification cannot widen ordinary evidence or turn a re
 	}
 });
 
-test("conflict verification adds only exact authorized quotes and reauthorizes before the second call", async () => {
-	for (const invalid of ["none", "foreign", "fabricated", "revoked"] as const) {
+test("conflict verification adds only exact authorized quotes and reauthorizes before each conflict request", async () => {
+	for (const invalid of [
+		"none",
+		"foreign",
+		"fabricated",
+		"revoked",
+		"review_revoked",
+	] as const) {
 		let checkpoints = 0;
+		const calls: string[] = [];
 		const adapter = new StructuredOutputAdapter(
 			injectedModel,
 			async (request) => {
+				calls.push(request.schemaName);
+				if (request.schemaName === "conflict_review")
+					return { incompatible: true };
 				if (request.schemaName === "judge")
 					return {
 						sufficient: true,
@@ -197,7 +207,11 @@ test("conflict verification adds only exact authorized quotes and reauthorizes b
 				},
 				{
 					beforeRequest: async () => {
-						if (++checkpoints === 2 && invalid === "revoked")
+						checkpoints++;
+						if (
+							(checkpoints === 2 && invalid === "revoked") ||
+							(checkpoints === 3 && invalid === "review_revoked")
+						)
 							throw new Error("revoked");
 					},
 				},
@@ -207,9 +221,21 @@ test("conflict verification adds only exact authorized quotes and reauthorizes b
 			const result = await run();
 			assert.deepEqual(result.output.evidence_ids, ["a", "b"]);
 			assert.equal(result.output.reason, "evidence_conflict");
-			assert.equal(result.output.judge_conflict_attempts, 1);
+			assert.equal(result.output.judge_conflict_attempts, 2);
+			assert.equal(result.metadata.attempts, 3);
 		}
-		assert.equal(checkpoints, 2);
+		assert.equal(
+			checkpoints,
+			["none", "review_revoked"].includes(invalid) ? 3 : 2,
+		);
+		assert.deepEqual(
+			calls,
+			invalid === "none"
+				? ["judge", "conflict", "conflict_review"]
+				: invalid === "revoked"
+					? ["judge"]
+					: ["judge", "conflict"],
+		);
 	}
 });
 
@@ -901,6 +927,10 @@ test("public retrieval debug exposes only safe Judge diagnostics", () => {
 			judge_duration_ms: 123.4,
 			judge_sufficiency_duration_ms: 50,
 			judge_conflict_duration_ms: 73.4,
+			judge_conflict_review: "rejected",
+			judge_conflict_review_attempts: 1,
+			judge_conflict_review_duration_ms: 20,
+			judge_failed_request_kind: "conflict_review",
 			conflict_scope: "selected_documents",
 			conflict_candidate_count: 4,
 			judge_input_tokens: 800,
@@ -925,6 +955,10 @@ test("public retrieval debug exposes only safe Judge diagnostics", () => {
 			judge_duration_ms: 123.4,
 			judge_sufficiency_duration_ms: 50,
 			judge_conflict_duration_ms: 73.4,
+			judge_conflict_review: "rejected",
+			judge_conflict_review_attempts: 1,
+			judge_conflict_review_duration_ms: 20,
+			judge_failed_request_kind: "conflict_review",
 			conflict_scope: "selected_documents",
 			conflict_candidate_count: 4,
 			judge_input_tokens: 800,

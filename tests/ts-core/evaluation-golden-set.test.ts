@@ -562,6 +562,7 @@ test("gold facts and structured sources cannot mask invalid inline citations", a
 		citations: [
 			{ filename: gold.file, record_type: gold.expect_record_type, index: 1 },
 		],
+		retrievalDebug: { conflict_evidence_count: 0 },
 	};
 	assert.equal(scorePositiveCase(gold, response).ok, true);
 	for (const invalid of ["[78]", "[6–78]", "[6, 18, 30]"]) {
@@ -686,6 +687,37 @@ test("multi-source declarations validate facts, types, filenames, and preserve c
 		},
 	])
 		assert.throws(() => parseGoldenCase(value));
+});
+
+test("contract definitions cannot pass by copying facts into an unsupported conflict response", async () => {
+	const gold = parseGoldenJsonl(await readFile(GOLD_PATH, "utf8")).find(
+		(item) => item.id === "9640cadfd327022e",
+	);
+	assert.ok(gold);
+	assert.equal(gold.expect_conflict, false);
+	const response = {
+		httpStatus: 200,
+		answer: gold.answer,
+		refused: false,
+		latencyMs: 10,
+		citations: [
+			{ filename: gold.file, record_type: "text", text: gold.answer },
+		],
+	};
+	assert.equal(
+		scorePositiveCase(gold, {
+			...response,
+			retrievalDebug: { conflict_evidence_count: 0 },
+		}).ok,
+		true,
+	);
+	assert.equal(
+		scorePositiveCase(gold, {
+			...response,
+			retrievalDebug: { conflict_evidence_count: 2 },
+		}).ok,
+		false,
+	);
 });
 
 test("multi-source scoring verifies each citation and full fact coverage without replacing the primary", async () => {
@@ -1035,6 +1067,7 @@ test("deterministic scorer measures facts, citations, refusal, and release gates
 		retrievalDebug: {
 			retrieved_evidence_count: 6,
 			selected_evidence_count: 2,
+			conflict_evidence_count: 0,
 		},
 	});
 	assert.equal(cleanPositive.ok, true);
