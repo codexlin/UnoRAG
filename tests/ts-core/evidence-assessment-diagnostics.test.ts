@@ -453,10 +453,7 @@ test("UUIDs with repeated tail characters round-trip only through short referenc
 			return {
 				comparison: "different",
 				resolution: "conflict",
-				conflict_evidence: [
-					{ evidence_id: "e1", quote: "first provision" },
-					{ evidence_id: "e2", quote: "second provision" },
-				],
+				conflict_evidence: ["s1", "s2"],
 			};
 		},
 	);

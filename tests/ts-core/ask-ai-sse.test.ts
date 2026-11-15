@@ -176,13 +176,10 @@ test("conflict verification adds only exact authorized quotes and reauthorizes b
 				return {
 					comparison: "different",
 					resolution: "conflict",
-					conflict_evidence: [
-						{ evidence_id: "e1", quote: "12日" },
-						{
-							evidence_id: invalid === "foreign" ? "x" : "e2",
-							quote: invalid === "fabricated" ? "99日" : "24日",
-						},
-					],
+					conflict_evidence:
+						invalid === "fabricated"
+							? [{ evidence_id: "e2", quote: "99日" }]
+							: ["s1", invalid === "foreign" ? "s99" : "s2"],
 				};
 			},
 			{ maxAttempts: 1 },
@@ -235,9 +232,9 @@ test("scoped false refusals can recover only from exact original evidence, then 
 						evidence_ids: [],
 					};
 				const sent = JSON.parse(String(request.messages[0].content));
-				assert.equal(sent.citations[0].text, text);
 				assert.equal(sent.question, question);
 				if (request.schemaName === "refusal_review") {
+					assert.equal(sent.citations[0].text, text);
 					assert.equal(
 						JSON.stringify(sent).includes("unrequested precision"),
 						false,
@@ -247,6 +244,7 @@ test("scoped false refusals can recover only from exact original evidence, then 
 						excerpts: [{ evidence_id: sent.citations[0].id, quote: text }],
 					};
 				}
+				assert.equal(sent.citations[0].excerpts[0].text, text);
 				assert.deepEqual(sent.evidence_ids, ["e1"]);
 				return {
 					comparison: "same",

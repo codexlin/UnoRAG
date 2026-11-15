@@ -7,6 +7,10 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [0.3.0] - Acceptance Pending
 
+- Replace model-written conflict quotations with request-local excerpt selections.
+  The server materializes exact original text while retaining source scope,
+  provenance validation, the six-excerpt limit and bounded-attempt diagnostics.
+  No reindex or public response migration is required.
 - Select a newly created library from its confirmed response before closing the
   editor. A slow or failed list refresh no longer leaves immediate uploads pointed
   at the previously selected library or makes a successful creation look failed.
@@ -99,7 +103,8 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 - Report Rerank configuration readiness separately from request-level execution.
 - Apply migration `0032_ask_model_usage` before upgrading. Streamed usage is requested
   by default; set advanced `AI_INCLUDE_USAGE=false` only for incompatible endpoints.
-  These changes are deployed in `0.3.0-rc.2` on the reference instance. This is
+  The themed UI and token accounting are deployed in `0.3.0-rc.2` on the reference
+  instance; the new conflict-selection protocol awaits candidate acceptance. This is
   not a stable promotion: the RC1 three-round quality gate remains 125/126,
   blocked by #231. See the [candidate report](./docs/evidence/2026-11-15-v0.3.0-rc-closeout.md).
 

@@ -18,6 +18,7 @@ import {
 	AiConcurrencyOverloadedError,
 	AiConcurrencyWaitTimeoutError,
 } from "./concurrency-gate";
+import { createConflictExcerpts } from "./conflict-excerpts";
 import {
 	type ModelUsageObservation,
 	type ModelUsageRecorder,
@@ -109,6 +110,24 @@ export const ConflictOutputSchema = z
 		"Inconsistent conflict resolution",
 	);
 
+export const ConflictSelectionOutputSchema = z
+	.object({
+		comparison: z.string().trim().min(1).max(800),
+		resolution: z.enum(["consistent", "scoped", "precedence", "conflict"]),
+		conflict_evidence: z
+			.array(z.string().regex(/^s[1-9]\d*$/))
+			.max(6)
+			.describe(
+				"Select only excerpt IDs supplied in citations[].excerpts; never write quotes.",
+			),
+	})
+	.strict()
+	.refine(
+		(value) =>
+			(value.resolution === "conflict") === value.conflict_evidence.length > 0,
+		"Inconsistent conflict resolution",
+	);
+
 export type JudgeAnswerRequirements = {
 	granularity: "named_requirement" | "procedure_details" | "unspecified";
 	formal_name_required: boolean;
@@ -136,7 +155,7 @@ interface StructuredSchemaMap {
 	rewrite: typeof RewriteOutputSchema;
 	judge: typeof JudgeOutputSchema;
 	refusal_review: typeof RefusalReviewOutputSchema;
-	conflict: typeof ConflictOutputSchema;
+	conflict: typeof ConflictSelectionOutputSchema;
 	table_plan: typeof TablePlanOutputSchema;
 }
 
@@ -587,7 +606,7 @@ export class StructuredOutputAdapter {
 		);
 	}
 
-	checkConflictWithMetadata(
+	async checkConflictWithMetadata(
 		input: {
 			question: string;
 			citations: unknown[];
@@ -599,14 +618,41 @@ export class StructuredOutputAdapter {
 			beforeRequest?: () => Promise<void>;
 		} = {},
 	): Promise<{ output: ConflictOutput; metadata: StructuredRequestMetadata }> {
-		return this.request(
+		const excerpts = createConflictExcerpts(input.citations);
+		const schema = ConflictSelectionOutputSchema.superRefine(
+			(value, context) => {
+				const seen = new Set<string>();
+				for (const id of value.conflict_evidence) {
+					if (!excerpts.has(id) || seen.has(id))
+						context.addIssue({
+							code: "custom",
+							message: "Invalid excerpt reference",
+						});
+					seen.add(id);
+				}
+			},
+		);
+		const result = await this.request(
 			"conflict",
-			ConflictOutputSchema,
+			schema,
 			getPrompt("conflict"),
-			[userMessage(JSON.stringify(input))],
+			[
+				userMessage(
+					JSON.stringify({ ...input, citations: excerpts.citations }),
+				),
+			],
 			options.abortSignal,
 			options.beforeRequest,
 		);
+		return {
+			output: {
+				...result.output,
+				conflict_evidence: result.output.conflict_evidence.map(
+					excerpts.resolve,
+				),
+			},
+			metadata: result.metadata,
+		};
 	}
 
 	planTable(
