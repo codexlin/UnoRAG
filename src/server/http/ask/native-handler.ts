@@ -11,7 +11,6 @@ import {
 import {
 	AnswerCitationValidationError,
 	projectAnswerCitationDiagnostic,
-	selectAnswerCitations,
 } from "@/core/ai/answer-citations";
 import {
 	ModelUsageCollector,
@@ -24,6 +23,7 @@ import {
 	appendAskStage,
 	finishAskTiming,
 } from "@/core/ask-graph";
+import { selectFinalAnswerEvidence } from "@/core/ask-graph/answer-evidence";
 import { RetrievalProviderError } from "@/core/retrieval/provider-request";
 import { projectQdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
 import { QdrantOperationError } from "@/core/retrieval/qdrant/store";
@@ -688,16 +688,25 @@ async function handleNativeAskRequestInSpan(input: {
 		await checkAccess(evidence, { force: true });
 		const provenance = createMemoryProvenance(payload.library_id, evidence);
 		const candidateCitations = state.citations ?? [];
-		let citations = projectPublicCitations(candidateCitations);
+		const publicCandidates = projectPublicCitations(candidateCitations);
+		let citations = publicCandidates;
 		const preserveAllCitations =
 			state.refused === true ||
 			!!state.table_execution ||
 			state.judgement?.judge_mode === "deterministic_document_outline";
 		const finalizeCitations = (answer: string) => {
-			citations = selectAnswerCitations(answer, citations, {
-				preserveAll: preserveAllCitations,
-			});
-			const indices = new Set(citations.map((citation) => citation.index));
+			const selected = selectFinalAnswerEvidence(
+				answer,
+				candidateCitations.map((citation, index) => ({
+					...citation,
+					index: index + 1,
+				})),
+				{ preserveAll: preserveAllCitations },
+			);
+			const indices = new Set(selected.map((citation) => citation.index));
+			citations = publicCandidates.filter((citation) =>
+				indices.has(citation.index),
+			);
 			state.citations = candidateCitations.filter((_, index) =>
 				indices.has(index + 1),
 			);
@@ -847,6 +856,7 @@ async function handleNativeAskRequestInSpan(input: {
 					done,
 					abortSignal: input.request.signal,
 					preserveAllCitations,
+					getFinalCitations: () => citations,
 				});
 			} catch (error) {
 				await settleActiveRun(

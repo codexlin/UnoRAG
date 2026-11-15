@@ -5,7 +5,20 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
-## [0.3.1] - Acceptance Pending
+## [0.3.2] - Acceptance Pending
+
+- Keep already-selected figure/table companions directly linked to cited passages
+  in the same document version and generation. Final source projection runs once;
+  JSON, SSE, archives and the ledger share the exact result. Unrelated documents,
+  ordinary unused passages and transitive lineage remain excluded.
+- Explicitly require the known cross-project budget regression not to report a
+  conflict; expected facts, supporting sources and image evidence gates are unchanged.
+
+## [0.3.1] - Not Released
+
+Its own real-file acceptance exposed a figure-lineage regression: a correct chart
+answer lost its selected image companion during final citation pruning. The signed
+tag/images and raw failure remain immutable; no GitHub Release was published.
 
 - Finalize successful generated-answer citations from validated emitted source
   anchors, keeping their original numbers. JSON, SSE completion, archives and
@@ -124,7 +137,7 @@ immutable; a passing RC3 run does not override this failure.
   The themed UI and token accounting are deployed in `0.3.0-rc.2` on the reference
   instance; the new conflict-selection protocol awaits candidate acceptance. This is
   not a stable promotion: the RC1 three-round quality gate remains 125/126,
-  blocked by #231. See the [candidate report](./docs/evidence/2026-11-15-v0.3.0-rc-closeout.md).
+  blocked by #231. See the [candidate report](https://github.com/codexlin/UnoRAG/blob/c0346cc2965236362194316499dd80ca92f5a353/docs/evidence/2026-11-15-v0.3.0-rc-closeout.md).
 
 ## [0.2.11] - Acceptance Pending
 

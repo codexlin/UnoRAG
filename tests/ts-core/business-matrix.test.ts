@@ -76,7 +76,7 @@ test("contract v3 preserves natural wording and checks conflict plus clause-scop
 		plan.positive.filter(
 			(item: { expect_conflict?: boolean }) => item.expect_conflict === false,
 		).length,
-		2,
+		3,
 	);
 	const backup = plan.positive.find(
 		(item: { id: string }) => item.id === "bc6bbc477c4a4ea7",
