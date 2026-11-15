@@ -1301,3 +1301,135 @@ test("image expectations accept the canonical figure record type", () => {
 	assert.equal(score.ok, true);
 	assert.equal(score.recordTypeMatched, true);
 });
+
+test("structured qualifier checks enforce bounds, approximations, units and conditions without rigid wording", async () => {
+	const golds = parseGoldenJsonl(await readFile(GOLD_PATH, "utf8"));
+	const lowerBoundCase = golds.find((gold) => gold.id === "f40b201e257bc8b8");
+	assert.ok(lowerBoundCase);
+	const base = {
+		httpStatus: 200,
+		refused: false,
+		latencyMs: 10,
+		citations: [{ filename: lowerBoundCase.file, record_type: "chunk" }],
+	};
+	const dropped = scorePositiveCase(lowerBoundCase, {
+		...base,
+		answer: "注册企业客户总数12,680家；个人开发者账户数为45万个。",
+	});
+	assert.equal(dropped.factCoverage, 1);
+	assert.equal(dropped.ok, false);
+	assert.deepEqual(dropped.failedAnswerChecks, ["个人开发者账户数保留下界限定"]);
+	assert.equal(
+		scorePositiveCase(lowerBoundCase, {
+			...base,
+			answer: "注册企业客户总数12,680家；个人开发者账户数不超过45万个。",
+		}).ok,
+		false,
+	);
+	for (const phrasing of [
+		"个人开发者账户数突破45万个",
+		"个人开发者账户数超过45万个",
+		"个人开发者账户数达45万个以上",
+		"个人开发者账户数不少于45万个",
+	]) {
+		assert.equal(
+			scorePositiveCase(lowerBoundCase, {
+				...base,
+				answer: `注册企业客户总数12,680家；${phrasing}。`,
+			}).ok,
+			true,
+		);
+	}
+
+	const approxCase = golds.find(
+		(gold) =>
+			gold.file === "mixed-charts.pdf" &&
+			gold.key_facts.includes("1.58亿元") &&
+			gold.answer_checks?.some(
+				(check) => "qualifier" in check && check.qualifier === "approximation",
+			),
+	);
+	assert.ok(approxCase);
+	const approxBase = {
+		...base,
+		citations: [
+			{
+				filename: approxCase.file,
+				record_type: "chunk",
+				text: "硬件设备采购占比42.0%（约1.58亿元）。",
+			},
+		],
+	};
+	assert.equal(
+		scorePositiveCase(approxCase, {
+			...approxBase,
+			answer: "硬件设备采购占比42.0%，金额1.58亿元 [1]。",
+		}).ok,
+		false,
+	);
+	assert.equal(
+		scorePositiveCase(approxCase, {
+			...approxBase,
+			answer: "硬件设备采购占比42.0%，合约金额1.58亿元 [1]。",
+		}).ok,
+		false,
+	);
+	for (const approx of ["约1.58亿元", "1.58亿元左右", "大约1.58亿元"]) {
+		assert.equal(
+			scorePositiveCase(approxCase, {
+				...approxBase,
+				answer: `硬件设备采购占比42.0%，${approx} [1]。`,
+			}).ok,
+			true,
+		);
+	}
+
+	const structured = parseGoldenCase({
+		file: "sla.md",
+		mode: "fact",
+		question: "灰度失败回滚时限和触发条件？",
+		answer: "若健康检查失败，必须在至多15分钟内回滚，且单次补偿不超过500元。",
+		key_facts: ["15分钟", "500元"],
+		answer_checks: [
+			{ label: "回滚时限上界", qualifier: "upper_bound", for_fact: "15分钟" },
+			{ label: "回滚时限单位", qualifier: "unit", unit: "分钟", for_fact: "15分钟" },
+			{
+				label: "触发条件",
+				qualifier: "condition",
+				condition_terms: ["健康检查失败"],
+				for_fact: "15分钟",
+			},
+			{ label: "补偿金额上界", qualifier: "upper_bound", for_fact: "500元" },
+		],
+	});
+	const sBase = {
+		httpStatus: 200,
+		refused: false,
+		latencyMs: 10,
+		citations: [{ filename: "sla.md", record_type: "chunk" }],
+	};
+	assert.equal(
+		scorePositiveCase(structured, {
+			...sBase,
+			answer: "当健康检查失败时，需在15分钟以内回滚，单次补偿最多500元。",
+		}).ok,
+		true,
+	);
+	const omittedConditionAndBound = scorePositiveCase(structured, {
+		...sBase,
+		answer: "需在15分钟回滚，单次补偿不少于500元。",
+	});
+	assert.equal(omittedConditionAndBound.ok, false);
+	assert.deepEqual(omittedConditionAndBound.failedAnswerChecks, [
+		"回滚时限上界",
+		"触发条件",
+		"补偿金额上界",
+	]);
+	assert.equal(
+		scorePositiveCase(structured, {
+			...sBase,
+			answer: "若健康检查失败，必须在至多15内回滚，且单次补偿不超过500元。",
+		}).ok,
+		false,
+	);
+});
