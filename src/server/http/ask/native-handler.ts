@@ -11,6 +11,7 @@ import {
 import {
 	AnswerCitationValidationError,
 	projectAnswerCitationDiagnostic,
+	selectAnswerCitations,
 } from "@/core/ai/answer-citations";
 import {
 	ModelUsageCollector,
@@ -686,7 +687,21 @@ async function handleNativeAskRequestInSpan(input: {
 		];
 		await checkAccess(evidence, { force: true });
 		const provenance = createMemoryProvenance(payload.library_id, evidence);
-		const citations = projectPublicCitations(state.citations ?? []);
+		const candidateCitations = state.citations ?? [];
+		let citations = projectPublicCitations(candidateCitations);
+		const preserveAllCitations =
+			state.refused === true ||
+			!!state.table_execution ||
+			state.judgement?.judge_mode === "deterministic_document_outline";
+		const finalizeCitations = (answer: string) => {
+			citations = selectAnswerCitations(answer, citations, {
+				preserveAll: preserveAllCitations,
+			});
+			const indices = new Set(citations.map((citation) => citation.index));
+			state.citations = candidateCitations.filter((_, index) =>
+				indices.has(index + 1),
+			);
+		};
 		const initialRetrievalDebug = completeRetrievalDebug(state, askStartedAt);
 		const common = {
 			session_id: sessionId,
@@ -710,6 +725,7 @@ async function handleNativeAskRequestInSpan(input: {
 			);
 			await checkAccess(evidence, { force: true });
 			attachModelUsage(state);
+			finalizeCitations(answer);
 			const persisted = await timedPersistConversation(
 				state,
 				{
@@ -765,6 +781,7 @@ async function handleNativeAskRequestInSpan(input: {
 				}
 				await checkAccess(evidence, { force: true });
 				attachModelUsage(state);
+				finalizeCitations(answer);
 				Object.assign(
 					done,
 					await timedPersistConversation(
@@ -829,6 +846,7 @@ async function handleNativeAskRequestInSpan(input: {
 					tokens: persistedTokens,
 					done,
 					abortSignal: input.request.signal,
+					preserveAllCitations,
 				});
 			} catch (error) {
 				await settleActiveRun(

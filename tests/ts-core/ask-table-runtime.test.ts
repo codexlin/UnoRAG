@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import test from "node:test";
 import type { LanguageModel } from "ai";
-import { StructuredOutputAdapter } from "../../src/core/ai";
+import {
+	AnswerStreamAdapter,
+	StructuredOutputAdapter,
+} from "../../src/core/ai";
 import type { AskGraphContext, AskState } from "../../src/core/ask-graph";
 import type { TableQueryPlan } from "../../src/core/ask-graph/table";
 import { chunkDocument } from "../../src/core/ingest/chunking";
@@ -11,6 +14,7 @@ import { buildIndexPayloads } from "../../src/core/ingest/index-records";
 import { parseTextDocument } from "../../src/core/ingest/text-parser";
 import type { InternalCitation } from "../../src/core/retrieval";
 import { mapQdrantHitToInternalCitation } from "../../src/core/retrieval/citation-mapper";
+import type { ActiveDocumentDescriptor } from "../../src/core/retrieval/document-constraints";
 import { NativeAskPolicySchema } from "../../src/server/http/ask/policy";
 
 type ResolveFilename = (
@@ -811,6 +815,175 @@ test("judge evidence projection is bounded and excludes raw table rows", async (
 	assert.equal(projected[0]?.text, body.slice(0, 2_400));
 	assert.equal("rows" in (projected[0] ?? {}), false);
 	assert.equal("tenant_id" in (projected[0] ?? {}), false);
+});
+
+test("retrieval batches authorized document identities into judge, conflict and generation", async (context) => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const { DrizzleActiveGenerationResolver } = await import(
+		"../../src/server/retrieval/active-generation-resolver"
+	);
+	context.mock.method(
+		DrizzleActiveGenerationResolver.prototype,
+		"resolve",
+		async () => ({
+			libraryId: "library-a",
+			generationIds: ["generation-a", "generation-b"],
+			resolvedAt: new Date(),
+		}),
+	);
+	const sources = ["a", "b"].map(
+		(name): InternalCitation => ({
+			...citation({ id: `hit-${name}`, tableId: name, device: "", amount: "" }),
+			record_type: "chunk",
+			generation_id: `generation-${name}`,
+			table_id: null,
+			headers: [],
+			rows: [],
+			body: "本项目建设周期24个月。",
+		}),
+	);
+	const documents: ActiveDocumentDescriptor[] = ["a", "b"].map((name) => ({
+		documentId: `doc-${name}`,
+		generationId: `generation-${name}`,
+		filename: `${name}.pdf`,
+		context: {
+			version: 1,
+			title: `Project ${name.toUpperCase()}`,
+			filename: `${name}.pdf`,
+			identifiers: [`PROJECT-${name.toUpperCase()}`],
+			identifiers_complete: true,
+			outline_complete: true,
+			outline: [
+				{
+					node_id: name,
+					text: "Unretrieved private heading",
+					level: 1,
+					page: 1,
+				},
+			],
+		},
+	}));
+	let catalogCalls = 0;
+	let catalogComplete = true;
+	let tableProbes = 0;
+	const stages: string[] = [];
+	const structured = new StructuredOutputAdapter(
+		{} as LanguageModel,
+		async (request) => {
+			stages.push(request.schemaName);
+			const messages = JSON.stringify(request.messages);
+			assert.match(messages, /Project A/);
+			assert.match(messages, /PROJECT-A/);
+			assert.doesNotMatch(messages, /Unretrieved private heading/);
+			if (request.schemaName === "conflict") {
+				assert.doesNotMatch(messages, /Project B/);
+				return {
+					comparison: "different project scope",
+					resolution: "consistent",
+					conflict_evidence: [],
+				};
+			}
+			assert.match(messages, /Project B/);
+			return {
+				sufficient: true,
+				action: "generate",
+				reason: "covered",
+				evidence_ids: ["e1"],
+			};
+		},
+	);
+	const runtime = new NativeAskRuntime(
+		{
+			tenantId: "org",
+			workspaceId: "workspace",
+			principalId: "reader",
+			groupIds: [],
+		} as never,
+		"library-a",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{
+			structured,
+			retrieval: {
+				retrieve: async (input: { filters?: { record_type?: string } }) => {
+					if (input.filters?.record_type === "table") {
+						tableProbes++;
+						return { citations: [], debug: {} };
+					}
+					return { citations: sources, debug: {} };
+				},
+			} as never,
+			loadDocumentCatalog: async (input) => {
+				catalogCalls++;
+				assert.deepEqual(input.scope.documentIds, ["doc-a", "doc-b"]);
+				assert.deepEqual(input.scope.activeGenerationIds, [
+					"generation-a",
+					"generation-b",
+				]);
+				assert.equal(input.scope.organizationId, "org");
+				assert.equal(input.scope.workspaceId, "workspace");
+				assert.deepEqual(input.scope.principalIds, ["reader"]);
+				return { documents, complete: catalogComplete };
+			},
+			answer: new AnswerStreamAdapter(
+				{} as LanguageModel,
+				async function* (request) {
+					const messages = JSON.stringify(request.messages);
+					assert.match(messages, /Project A/);
+					assert.doesNotMatch(
+						messages,
+						/Project B|Unretrieved private heading/,
+					);
+					yield "24个月[1]";
+				},
+			),
+		},
+	);
+	const ports = (
+		runtime as unknown as { context: () => AskGraphContext }
+	).context();
+	const state = {
+		question: "建设周期是多少？",
+		query_type: "fact",
+		history: [],
+		retrieval_attempts: 1,
+	} as unknown as AskState;
+	const retrieved = await ports.ports?.retrieve?.(state);
+	assert.ok(retrieved);
+	const judged = await ports.judge.judge({
+		...state,
+		citations: retrieved.citations,
+	});
+	assert.equal(judged.action, "generate");
+	assert.deepEqual(stages, ["judge", "conflict"]);
+	let answer = "";
+	for await (const token of runtime.streamAnswer({
+		...state,
+		citations: [sources[0]],
+		judgement: judged,
+		refused: false,
+	}))
+		answer += token;
+	assert.equal(answer, "24个月[1]");
+	assert.equal(catalogCalls, 1);
+	sources[0].table_id = "probe-table";
+	const retained = await ports.ports?.retrieve?.(state);
+	assert.deepEqual(retained?.citations, sources);
+	assert.equal(tableProbes, 1);
+	assert.equal(catalogCalls, 2);
+	assert.equal(
+		(await ports.judge.judge({ ...state, citations: retained?.citations }))
+			.action,
+		"generate",
+	);
+	assert.deepEqual(stages, ["judge", "conflict", "judge", "conflict"]);
+	catalogComplete = false;
+	const incomplete = await ports.ports?.retrieve?.(state);
+	assert.deepEqual(incomplete?.citations, []);
+	const refused = await ports.judge.judge({ ...state, citations: [] });
+	assert.equal(refused.action, "refuse");
+	assert.equal(refused.reason, "document_scope_unavailable");
+	assert.deepEqual(stages, ["judge", "conflict", "judge", "conflict"]);
 });
 
 test("strict ranking of scoped probability intervals refuses overlap before calling the model", async () => {

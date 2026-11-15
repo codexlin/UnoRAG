@@ -5,7 +5,25 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-11-15
+## [0.3.1] - Acceptance Pending
+
+- Finalize successful generated-answer citations from validated emitted source
+  anchors, keeping their original numbers. JSON, SSE completion, archives and
+  the request ledger use the same final subset; authorization and memory retain
+  all context dependencies. Table execution keeps every contributing source;
+  refusals, anchorless answers and interrupted streams preserve existing evidence.
+- Bind bounded document identity context to the exact authorized document and
+  generation for evidence judgment, conflict checks and answer generation, using
+  one scoped catalog lookup rather than inferring the subject of "this project"
+  from isolated fragments.
+
+## [0.3.0] - Not Released
+
+The signed image/tag was deployed for acceptance, but its own three-round quality
+gate failed at 124/126: one answer retained an unused cross-project citation and
+another falsely classified different projects as conflicting. No GitHub Release
+was published. The tag and original evidence remain
+immutable; a passing RC3 run does not override this failure.
 
 - Replace model-written conflict quotations with request-local excerpt selections.
   The server materializes exact original text while retaining source scope,

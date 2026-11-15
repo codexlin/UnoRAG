@@ -21,6 +21,7 @@ import { RerankDiagnosticSchema } from "../../src/core/retrieval/provider-reques
 import { QdrantOperationError } from "../../src/core/retrieval/qdrant/store";
 import { runWithObservabilityContext } from "../../src/lib/observability/context";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
+import { MemoryProvenanceSchema } from "../../src/server/conversations/memory-provenance";
 import type {
 	AppendConversationExchangeInput,
 	ConversationScope,
@@ -326,6 +327,140 @@ const judgeUsage: ModelUsageCall = {
 };
 
 for (const mode of ["sync", "stream"] as const) {
+	test(`${mode} final citations narrow without weakening authorization or memory dependencies`, async () => {
+		const { handleNativeAskRequest } = await handlerModule;
+		const repository = new FakeConversationRepository([activeThread()]);
+		const runs = askRunRecorder();
+		const base = askState().citations?.[0];
+		assert.ok(base);
+		const candidates = [1, 2, 3].map((index) => ({
+			...base,
+			id: `source-${index}`,
+			index,
+			doc_id: `doc-${index}`,
+			document_version_id: `version-${index}`,
+			generation_id: `generation-${index}`,
+		}));
+		const state = askState({
+			citations: candidates,
+			retrieval_debug: { selected_evidence_count: 3 },
+		});
+		const authorized: string[][] = [];
+		const response = await handleNativeAskRequest({
+			request: request(
+				{
+					question: "Which project?",
+					library_id: LIBRARY_ID,
+					thread_id: THREAD_ID,
+				},
+				mode,
+			),
+			path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+			identity,
+			repository: repositoryInput(repository),
+			askRunsRepository: runs.repository,
+			resolveLibrary: async () => ({
+				id: "99999999-9999-4999-8999-999999999999",
+			}),
+			authorization: {
+				refreshIdentity: async () => identity,
+				resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
+				citationAuthorizer: {
+					filterAuthorized: async ({ citations }) => {
+						authorized.push(
+							citations.map((citation) => String(citation.doc_id)),
+						);
+						return citations;
+					},
+				},
+			},
+			runtimeFactory: (() => ({
+				invoke: async () => state,
+				getEvidenceReferences: () => candidates,
+				async *streamAnswer() {
+					yield "Answer [3].";
+				},
+			})) as never,
+		});
+		assert.ok(response);
+		const frames = mode === "stream" ? parseSse(await response.text()) : null;
+		const body = (frames ? frames.at(-1)?.data : await response.json()) as {
+			citations: Array<{ id: string; index: number }>;
+		};
+		assert.deepEqual(
+			body.citations.map(({ id, index }) => ({ id, index })),
+			[{ id: "source-3", index: 3 }],
+		);
+		if (frames) {
+			const early = frames.find((frame) => frame.event === "citations")?.data;
+			assert.ok(Array.isArray(early));
+			assert.equal(early.length, 3);
+		}
+		assert.equal(runs.finalizations[0]?.citationCount, 1);
+		assert.equal(state.retrieval_debug?.selected_evidence_count, 3);
+		const saved = repository.exchanges[0]?.input.assistant;
+		assert.deepEqual(saved?.citations, body.citations);
+		const provenance = MemoryProvenanceSchema.parse(
+			saved?.debug?.memory_provenance,
+		);
+		assert.deepEqual(
+			provenance.sourceReferences.map((source) => source.doc_id).sort(),
+			["doc-1", "doc-2", "doc-3"],
+		);
+		assert.ok(
+			authorized.some(
+				(docs) =>
+					docs.includes("doc-1") &&
+					docs.includes("doc-2") &&
+					docs.includes("doc-3"),
+			),
+		);
+		const { authorizeHistory } = await import(
+			"../../src/server/http/ask/authorized-history"
+		);
+		const history = await authorizeHistory({
+			identity,
+			libraryId: LIBRARY_ID,
+			citationAuthorizer: {
+				filterAuthorized: async ({ citations }) =>
+					citations.filter((citation) => citation.doc_id !== "doc-1"),
+			},
+			messages: [
+				{ role: "user", content: "Question", provenance },
+				{ role: "assistant", content: "Answer [3].", provenance },
+			],
+		});
+		assert.deepEqual(history.messages, []);
+	});
+
+	for (const kind of ["table", "outline"] as const) {
+		test(`${mode} deterministic ${kind} sources and literal numeric brackets remain intact`, async () => {
+			const { handleNativeAskRequest } = await handlerModule;
+			const state = askState(
+				kind === "table"
+					? { table_execution: { operation: "filter" } }
+					: { judgement: { judge_mode: "deterministic_document_outline" } },
+			);
+			const response = await handleNativeAskRequest({
+				request: request({ question: "Rows?", library_id: LIBRARY_ID }, mode),
+				path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+				identity,
+				repository: repositoryInput(new FakeConversationRepository()),
+				runtimeFactory: runtimeFactory(
+					new FakeRuntime(state, ["item[2026] [1,2] row value."]),
+				),
+			});
+			assert.ok(response);
+			const body = (
+				mode === "stream"
+					? parseSse(await response.text()).at(-1)?.data
+					: await response.json()
+			) as { answer: string; citations: unknown[] };
+			assert.equal(body.answer, "item[2026] [1,2] row value.");
+			assert.equal(body.citations.length, 1);
+		});
+	}
+
 	test(`${mode} model usage is shared by response, archive and operational ledger`, async () => {
 		const { handleNativeAskRequest } = await handlerModule;
 		const repository = new FakeConversationRepository([activeThread()]);

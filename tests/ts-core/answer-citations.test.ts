@@ -5,6 +5,7 @@ import {
 	AnswerCitationGuard,
 	AnswerCitationValidationError,
 	projectAnswerCitationDiagnostic,
+	selectAnswerCitations,
 } from "../../src/core/ai/answer-citations";
 import { AnswerStreamAdapter } from "../../src/core/ai/answer-stream";
 
@@ -12,6 +13,54 @@ function guarded(chunks: string[], indices = [1, 2]) {
 	const guard = new AnswerCitationGuard(indices);
 	return chunks.map((chunk) => guard.push(chunk)).join("") + guard.finish();
 }
+
+test("completed sources drop unused candidates without renumbering or mutating them", () => {
+	const citations = [
+		{ index: 1, id: "other-project" },
+		{ index: 2, id: "answer" },
+		{ index: 3, id: "context" },
+	];
+	assert.deepEqual(selectAnswerCitations("The answer [2].", citations), [
+		citations[1],
+	]);
+	assert.deepEqual(
+		citations.map((citation) => citation.index),
+		[1, 2, 3],
+	);
+	assert.deepEqual(selectAnswerCitations("First [3], then [1].", citations), [
+		citations[0],
+		citations[2],
+	]);
+});
+
+test("literal brackets do not select sources and anchorless or contributing-table sources remain", () => {
+	const citations = [{ index: 1 }, { index: 2 }];
+	assert.deepEqual(
+		selectAnswerCitations(
+			"`[2]` [2](https://example.org) \\[2] actual [1]",
+			citations,
+		),
+		[citations[0]],
+	);
+	assert.deepEqual(
+		selectAnswerCitations("No inline anchors.", citations),
+		citations,
+	);
+	assert.deepEqual(
+		selectAnswerCitations("Preview [1].", citations, { preserveAll: true }),
+		citations,
+	);
+	assert.deepEqual(
+		selectAnswerCitations("Table cell item[2026] and [1,2].", citations, {
+			preserveAll: true,
+		}),
+		citations,
+	);
+	assert.throws(
+		() => selectAnswerCitations("Unknown [3].", citations),
+		AnswerCitationValidationError,
+	);
+});
 
 test("source citations survive every token split without buffering ordinary text", () => {
 	const text = "价格200元[1][2]。";

@@ -78,7 +78,7 @@ function cleanupHarness({
 			],
 			password: "not-a-real-password",
 			baseUrl: "http://fixture.invalid",
-			timeoutMs: 100,
+			timeoutMs: 5_000,
 			pollMs: 0,
 			createSession: () => ({
 				async request(url, options) {

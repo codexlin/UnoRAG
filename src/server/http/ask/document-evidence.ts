@@ -1,5 +1,8 @@
 import type { AuthorizedScope, RetrievalFilters } from "@/core/contracts";
-import { documentContextText } from "@/core/document-ir/document-context";
+import {
+	DocumentContextSchema,
+	documentContextText,
+} from "@/core/document-ir/document-context";
 import type {
 	DefaultRetrievalService,
 	InternalCitation,
@@ -22,6 +25,33 @@ export type DocumentEvidenceResolution = {
 	documents: ActiveDocumentDescriptor[];
 	outline?: { text: string; citation: InternalCitation };
 };
+
+/** Project validated identity metadata for one exact document generation. */
+export function evidenceDocumentContext(
+	citation: Pick<InternalCitation, "doc_id" | "generation_id">,
+	documents: ActiveDocumentDescriptor[],
+): { title: string; filename: string; identifiers: string[] } | null {
+	if (
+		typeof citation.doc_id !== "string" ||
+		!citation.doc_id.trim() ||
+		typeof citation.generation_id !== "string" ||
+		!citation.generation_id.trim()
+	)
+		return null;
+	const matches = documents.filter(
+		(document) =>
+			document.documentId === citation.doc_id &&
+			document.generationId === citation.generation_id,
+	);
+	if (matches.length !== 1) return null;
+	const context = DocumentContextSchema.safeParse(matches[0]?.context);
+	if (!context.success) return null;
+	return {
+		title: context.data.title,
+		filename: context.data.filename,
+		identifiers: [...context.data.identifiers],
+	};
+}
 
 /** The short-path default selects prose hits; exact outline execution replans it. */
 export function documentEvidenceFilters(

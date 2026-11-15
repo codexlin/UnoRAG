@@ -53,6 +53,7 @@ import { getTypeScriptRetrievalService } from "@/server/retrieval/runtime";
 import { getSharedAiConcurrencyGate } from "./ai-concurrency";
 import {
 	documentEvidenceFilters,
+	evidenceDocumentContext,
 	resolveAskDocumentEvidence,
 } from "./document-evidence";
 import { judgeFailureDebug } from "./judge-diagnostics";
@@ -150,7 +151,10 @@ function throwIfConcurrencyUnavailable(error: unknown): void {
 	}
 }
 
-export function projectJudgeEvidence(citations: InternalCitation[]) {
+export function projectJudgeEvidence(
+	citations: InternalCitation[],
+	documents: ActiveDocumentDescriptor[] = [],
+) {
 	return citations.map((citation) => ({
 		id: citation.id,
 		record_type: citation.record_type,
@@ -162,6 +166,7 @@ export function projectJudgeEvidence(citations: InternalCitation[]) {
 		section_path: citation.section_path,
 		preamble: citation.preamble,
 		score: citation.score,
+		document_context: evidenceDocumentContext(citation, documents),
 		text: boundedJudgeEvidenceText(
 			citation.body || citation.text || citation.snippet,
 		),
@@ -179,11 +184,15 @@ function filters(state: AskState): RetrievalFilters | undefined {
 		: undefined;
 }
 
-function contextText(state: AskState): string {
+function contextText(
+	state: AskState,
+	documents: ActiveDocumentDescriptor[],
+): string {
 	const citations = (state.citations ?? []) as InternalCitation[];
 	const evidence = citations
 		.map((citation, index) => {
 			const body = citation.body || citation.text || citation.snippet;
+			const identity = evidenceDocumentContext(citation, documents);
 			const location = [
 				citation.heading_text,
 				citation.section_path,
@@ -200,6 +209,9 @@ function contextText(state: AskState): string {
 				.join(" / ");
 			return [
 				`[source:${index + 1}] ${citation.title || citation.filename || citation.doc_id}`,
+				identity
+					? `文档身份（仅用于来源归属，不代替正文事实）：${JSON.stringify(identity)}`
+					: "文档身份未确认；本项目等指代仅属于当前文档，不能与其他文档默认合并。",
 				location,
 				body,
 			]
@@ -219,6 +231,7 @@ export class NativeAskRuntime {
 	private readonly retrievedEvidence: Record<string, unknown>[] = [];
 	private documentConstraintStatus = "none";
 	private documentScope: ActiveDocumentDescriptor[] = [];
+	private evidenceDocuments: ActiveDocumentDescriptor[] = [];
 	private outlineAnswer: { text: string; citationId: string } | null = null;
 
 	constructor(
@@ -247,9 +260,13 @@ export class NativeAskRuntime {
 		if (!scope) throw new NativeAskRequestError(404, "library not found");
 		this.outlineAnswer = null;
 		this.documentScope = [];
+		this.evidenceDocuments = [];
 		this.documentConstraintStatus = "none";
 		let retrievalScope = scope;
 		const loadDocumentCatalog = this.dependencies.loadDocumentCatalog;
+		let catalog:
+			| { documents: ActiveDocumentDescriptor[]; complete: boolean }
+			| undefined;
 		if (loadDocumentCatalog) {
 			const resolution = await resolveAskDocumentEvidence({
 				question: state.question ?? "",
@@ -257,12 +274,14 @@ export class NativeAskRuntime {
 				scope,
 				filters: documentEvidenceFilters(filters(state)),
 				signal: this.signal,
-				loadCatalog: () =>
-					loadDocumentCatalog({
+				loadCatalog: async () => {
+					catalog = await loadDocumentCatalog({
 						identity: this.identity,
 						libraryId: this.libraryId,
 						scope,
-					}),
+					});
+					return catalog;
+				},
 				lookupDocumentRecord: (input) =>
 					this.dependencies.retrieval.lookupDocumentRecord?.(input) ??
 					Promise.resolve(null),
@@ -311,6 +330,36 @@ export class NativeAskRuntime {
 			},
 			signal: this.signal,
 		});
+		if (loadDocumentCatalog && result.citations.length) {
+			const allowedGenerations = new Set(retrievalScope.activeGenerationIds);
+			const allowedDocuments = retrievalScope.documentIds
+				? new Set(retrievalScope.documentIds)
+				: null;
+			const documentIds = [
+				...new Set(
+					result.citations
+						.filter(
+							(citation) =>
+								citation.generation_id &&
+								allowedGenerations.has(citation.generation_id) &&
+								(!allowedDocuments || allowedDocuments.has(citation.doc_id)),
+						)
+						.map((citation) => citation.doc_id),
+				),
+			];
+			if (documentIds.length) {
+				catalog ??= await loadDocumentCatalog({
+					identity: this.identity,
+					libraryId: this.libraryId,
+					scope: { ...retrievalScope, documentIds },
+				});
+				if (!catalog.complete) {
+					this.documentConstraintStatus = "unavailable";
+					return this.emptyDocumentResult(scope);
+				}
+				this.evidenceDocuments = catalog.documents;
+			}
+		}
 		this.retrievedEvidence.push(...result.citations);
 		if (
 			!input.tableOnly &&
@@ -508,11 +557,12 @@ export class NativeAskRuntime {
 								requirements,
 								resolvedDocumentId: scopedDocument?.documentId,
 								citations: [
-									...projectJudgeEvidence(citations).map((citation) => ({
+									...projectJudgeEvidence(
+										citations,
+										this.evidenceDocuments,
+									).map((citation) => ({
 										...citation,
-										document_identity: this.documentScope.find(
-											(doc) => doc.documentId === citation.doc_id,
-										)?.context?.identifiers,
+										document_identity: citation.document_context?.identifiers,
 									})),
 									...(state.table_execution
 										? [{ table_execution: state.table_execution }]
@@ -582,6 +632,12 @@ export class NativeAskRuntime {
 						result.citations.some((citation) => citation.table_id)
 					) {
 						tableProbe = true;
+						const primaryContext = {
+							documentConstraintStatus: this.documentConstraintStatus,
+							documentScope: this.documentScope,
+							evidenceDocuments: this.evidenceDocuments,
+							outlineAnswer: this.outlineAnswer,
+						};
 						const precise = this.adjudicate(
 							await this.retrieve(state, { tableOnly: true }),
 						);
@@ -590,6 +646,7 @@ export class NativeAskRuntime {
 							tableCandidates(precise.citations),
 						);
 						if (groundedPlan) result = precise;
+						else Object.assign(this, primaryContext);
 					}
 					return {
 						citations:
@@ -687,7 +744,7 @@ export class NativeAskRuntime {
 						(doc) =>
 							`已定位的文档：${doc.context?.title || doc.filename}；文件编号：${doc.context?.identifiers.join("、") || "未提供"}`,
 					),
-				contextText(state),
+				contextText(state, this.evidenceDocuments),
 			].join("\n\n"),
 			history: (state.history ?? []).flatMap<{
 				role: "user" | "assistant";

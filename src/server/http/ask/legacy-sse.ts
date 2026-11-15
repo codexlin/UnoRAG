@@ -2,6 +2,7 @@ import {
 	AiConcurrencyOverloadedError,
 	AiConcurrencyWaitTimeoutError,
 } from "@/core/ai";
+import { selectAnswerCitations } from "@/core/ai/answer-citations";
 import { projectModelUsage } from "@/core/ai/model-usage";
 import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
 
@@ -83,6 +84,7 @@ export interface LegacyAskSseInput {
 	tokens: AsyncIterable<string>;
 	done: Record<string, unknown>;
 	abortSignal?: AbortSignal;
+	preserveAllCitations?: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -111,7 +113,7 @@ function publicCitation(value: unknown): Record<string, unknown> | null {
 
 export function projectPublicCitations(
 	values: unknown[],
-): Record<string, unknown>[] {
+): Array<Record<string, unknown> & { index: number }> {
 	return values
 		.map(publicCitation)
 		.filter((item): item is Record<string, unknown> => item !== null)
@@ -281,8 +283,11 @@ export async function* streamLegacyAskSse(
 		done.retrieval_debug = projectPublicRetrievalDebug(
 			input.done.retrieval_debug,
 		);
-		done.answer = answer || String(done.answer ?? "");
-		done.citations = citations;
+		const finalAnswer = answer || String(done.answer ?? "");
+		done.answer = finalAnswer;
+		done.citations = selectAnswerCitations(finalAnswer, citations, {
+			preserveAll: input.preserveAllCitations,
+		});
 		done.truncated = false;
 		yield encodeLegacySseEvent("done", done);
 	} catch (error) {

@@ -148,3 +148,24 @@ export class AnswerCitationGuard {
 		return this.validate();
 	}
 }
+
+/** Final answer sources are a subset of the authorized, canonically numbered candidates. */
+export function selectAnswerCitations<T extends { index: number }>(
+	answer: string,
+	citations: readonly T[],
+	options: { preserveAll?: boolean } = {},
+): T[] {
+	if (options.preserveAll) return [...citations];
+	const referenced = new Set<number>();
+	const guard = new AnswerCitationGuard(
+		citations.map((citation) => citation.index),
+		false,
+		(index) => referenced.add(index),
+	);
+	guard.push(answer);
+	guard.finish();
+	// No anchors do not justify inventing attribution or discarding selected evidence.
+	return referenced.size === 0
+		? [...citations]
+		: citations.filter((citation) => referenced.has(citation.index));
+}

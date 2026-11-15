@@ -1207,6 +1207,109 @@ test("Ask trace shows model token usage even without legacy stages or trace ID",
 	});
 });
 
+test("stream completion narrows Sources to referenced sparse indices without refetching", async ({
+	page,
+	isMobile,
+}, testInfo) => {
+	const first: ApiCitation = {
+		...previewCitation,
+		id: "unused-stream-candidate",
+		index: 1,
+		title: "未引用的候选来源",
+		text: "第一份候选的独立来源快照。",
+		snippet: "第一份候选的独立来源快照。",
+	};
+	const second: ApiCitation = {
+		...previewCitation,
+		id: "referenced-stream-source",
+		index: 2,
+		title: "最终回答依据",
+		text: "第二份来源的最终引用快照。",
+		snippet: "第二份来源的最终引用快照。",
+	};
+	const answer = "完成后只保留实际引用的依据。[2]";
+	const requests = await openAsk(page, [
+		[
+			meta(),
+			frame("citations", [first, second]),
+			frame("token", answer),
+			done(answer, undefined, undefined, [second]),
+		],
+	]);
+	await submit(page, "核对最终回答的引用来源", 0);
+	await release(page, 0, 3);
+	const turn = page.locator("[data-turn-id]").first();
+	const initialSources = await expandAnswerSources(turn, 2);
+	await expect(
+		initialSources.getByRole("button", { name: /^查看引用 / }),
+	).toHaveCount(2);
+	await pause(page);
+	const apiRequests: string[] = [];
+	page.on("request", (request) => {
+		const url = new URL(request.url());
+		if (url.pathname.startsWith("/api/")) apiRequests.push(url.pathname);
+	});
+	await initialSources
+		.getByRole("button", { name: `查看引用 1：${first.title}`, exact: true })
+		.click();
+	const panel = isMobile
+		? page.getByRole("dialog", { name: "引用来源", exact: true })
+		: page.getByRole("complementary", { name: "引用来源", exact: true });
+	await expect(
+		panel.getByText(first.text ?? "", { exact: true }),
+	).toBeVisible();
+	await release(page, 0, 1);
+	await closeStream(page, 0);
+	// A removed selection clears the panel; it must not silently select another source.
+	await expect(panel.getByText("尚未选择引用", { exact: true })).toBeVisible();
+	await expect(panel.getByText(first.text ?? "", { exact: true })).toHaveCount(
+		0,
+	);
+	await expect(panel.getByText(second.text ?? "", { exact: true })).toHaveCount(
+		0,
+	);
+	// Let Base UI finish the sheet exit transition before freezing timers again.
+	await page.clock.resume();
+	await closeSources(page);
+	await pause(page);
+	const finalSources = await expandAnswerSources(turn, 1);
+	await expect(
+		finalSources.getByRole("button", { name: /^查看引用 / }),
+	).toHaveCount(1);
+	await expect(
+		finalSources.getByRole("button", {
+			name: `查看引用 2：${second.title}`,
+			exact: true,
+		}),
+	).toHaveAttribute("data-citation-id", second.id);
+	await expect(turn.getByRole("button", { name: /^查看引用 1：/ })).toHaveCount(
+		0,
+	);
+	const inline = turn.getByRole("article").getByRole("button", {
+		name: `查看引用 2：${second.title}`,
+		exact: true,
+	});
+	await expect(inline).toHaveText("2");
+	await inline.click();
+	await page.clock.runFor(400);
+	await expect(panel).toHaveCSS("opacity", "1");
+	await expect(
+		panel.getByText(second.text ?? "", { exact: true }),
+	).toBeVisible();
+	await expect(panel.getByText(first.text ?? "", { exact: true })).toHaveCount(
+		0,
+	);
+	await page.screenshot({
+		path: testInfo.outputPath("final-citation-subset.png"),
+		animations: "disabled",
+	});
+	expect(requests).toHaveLength(1);
+	expect(
+		apiRequests,
+		"source selection must use the delivered snapshots",
+	).toEqual([]);
+});
+
 test("stream updates preserve the explicitly selected source and its originating turn", async ({
 	page,
 	isMobile,
