@@ -14,6 +14,12 @@ ADR 解释长期取舍，不是操作手册。当前实现先读 [系统架构](
 当前仓库保持单根 TypeScript package。只有真实独立构建边界或多个消费者出现时才提取 package，
 没有已排期的 monorepo 迁移；数据库迁移始终只有一个所有者。
 
+## 待评审决策
+
+| 决策 | 适用范围 |
+|---|---|
+| [0008 Qdrant server-side Sparse + RRF](./0008-qdrant-server-side-sparse-rrf.md) | 默认关闭的命名 Dense + 确定性词法 Sparse/RRF；存量 collection 降级、迁移与强隔离门禁 |
+
 ## 历史决策
 
 已替代正文退出当前目录，固定在清理前提交中；不删除 Git 历史，不把历史命令当作现行指引。

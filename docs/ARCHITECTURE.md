@@ -207,14 +207,22 @@ when truncated; citations continue to point at every contributing row group.
 ## 检索与问答
 
 Native Retrieve resolves scope, embeds the query, applies mandatory Qdrant filters,
-optionally reranks results, and maps strict citations. The current BM25+RRF path
-builds an application-level lexical index from a bounded corpus and is intended for
-small and medium knowledge bases; server-side sparse retrieval remains an evaluated
-future upgrade rather than a current scale claim.
+optionally reranks results, and maps strict citations. `QDRANT_SERVER_HYBRID_ENABLED=true`
+opts new collections into named `dense` + deterministic tokenizer/hash `lexical_v1`
+sparse vectors and Query API prefetch/RRF. Dense and sparse prefetches and the fused
+query each carry the complete mandatory filter; every returned hit is rechecked for
+scope, ACL, active generation and lifecycle before use. RRF scores are kept separate
+from original dense semantic scores; sparse-only evidence has no dense confidence.
+
+存量 collection 通过 schema 探测兼容，不自动迁移或原地补 sparse。无 sparse 索引、开关关闭或无词元时，
+沿用受配置上限约束（默认 10,000 条授权语料）的应用层 BM25+RRF。此回退适用于小中型知识库，不能宣称百万级容量。
+稀疏写入随 collection 能力持续执行，关闭查询开关不破坏后续重启启用。部署开关需 Web/Worker 同步；
+迁移须完整补齐数据、验证范围后协调切换，详见待评审 [ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md)。
+真实 Qdrant 门禁覆盖跨 Workspace、ACL、active generation、删除残留与旧 collection 回退；
+默认仍关闭，客户语料的质量/容量验收与 ADR 评审不由 fixture 测试替代。
 
 应用层 BM25 不得按 library 或 generation 共享高权限主体构建的语料缓存。任何复用都必须包含规范化的
-授权指纹、再次执行 ACL/version 校验并具备可靠失效机制。Qdrant sparse 只有在真实客户语料证明质量、
-容量和回滚收益，并通过跨 Workspace、ACL、active generation 与删除隔离门禁后，才能替换当前路径。
+授权指纹、再次执行 ACL/version 校验并具备可靠失效机制。
 
 Native Ask uses LangGraph.js for orchestration:
 

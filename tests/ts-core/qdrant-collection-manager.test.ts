@@ -508,3 +508,140 @@ test("retrieval store uses the universal query API with mandatory scope", async 
 		),
 	);
 });
+
+test("collection capability detects named and migrated unnamed dense schemas", async () => {
+	for (const named of [false, true]) {
+		const info = collectionInfo();
+		if (named)
+			info.config.params.vectors = {
+				dense: { size: 1024, distance: "Cosine" },
+			};
+		info.config.params.sparse_vectors = { lexical_v1: {} };
+		const { client } = fakeClient({ exists: true, info });
+		const result = await new QdrantCollectionManager(client, {
+			collection: "test",
+			vectorSize: 1024,
+			distance: "Cosine",
+			serverHybridEnabled: true,
+		}).ensure();
+		assert.deepEqual(result.vectorSchema, {
+			denseVectorName: named ? "dense" : null,
+			sparseVectorName: "lexical_v1",
+		});
+	}
+	const { client, calls } = fakeClient({ exists: true });
+	const legacy = await new QdrantCollectionManager(client, {
+		collection: "legacy",
+		vectorSize: 1024,
+		distance: "Cosine",
+		serverHybridEnabled: true,
+	}).ensure();
+	assert.deepEqual(legacy.vectorSchema, {
+		denseVectorName: null,
+		sparseVectorName: null,
+	});
+	assert.equal(
+		calls.some((call) => call.name === "createCollection"),
+		false,
+	);
+});
+
+test("incompatible named dimensions, unknown dense names and sparse IDF fail closed", async () => {
+	for (const params of [
+		{ vectors: { dense: { size: 3, distance: "Cosine" as const } } },
+		{ vectors: { unknown: { size: 1024, distance: "Cosine" as const } } },
+		{ sparse_vectors: { lexical_v1: { modifier: "idf" as const } } },
+	]) {
+		const info = collectionInfo();
+		Object.assign(info.config.params, params);
+		const { client } = fakeClient({ exists: true, info });
+		await assert.rejects(
+			new QdrantCollectionManager(client, {
+				collection: "test",
+				vectorSize: 1024,
+				distance: "Cosine",
+			}).ensure(),
+			QdrantCollectionContractError,
+		);
+	}
+});
+
+test("both server prefetch branches and fusion carry the complete mandatory authorization filter", async () => {
+	const scope = {
+		tenantId: "tenant",
+		workspaceId: "workspace",
+		libraryId: "library",
+		principalIds: ["principal"],
+		groupIds: ["group"],
+		activeGenerationIds: ["generation"],
+		documentIds: ["document"],
+	};
+	const requests: Array<Parameters<QdrantClient["query"]>[1]> = [];
+	const client = {
+		async query(
+			_collection: string,
+			request: Parameters<QdrantClient["query"]>[1],
+		) {
+			requests.push(request);
+			return { points: [] };
+		},
+	} as unknown as QdrantClient;
+	const store = new QdrantRetrievalStore(client, "test", Promise.resolve(), {
+		serverHybridEnabled: true,
+		vectorSchema: Promise.resolve({
+			denseVectorName: "dense",
+			sparseVectorName: "lexical_v1",
+		}),
+	});
+	await store.search({ vector: [1, 0], scope, limit: 5 });
+	assert.equal(requests[0].using, "dense");
+	const result = await store.hybridSearch({
+		vector: [1, 0],
+		query: "合同 ZXQ987",
+		scope,
+		userFilters: { document_version_id: "version" },
+		limit: 5,
+		sparseLimit: 3,
+		rrfK: 60,
+	});
+	assert.deepEqual(result, []);
+	const request = requests[1];
+	assert.deepEqual(request.query, { rrf: { k: 60 } });
+	assert.ok(Array.isArray(request.prefetch));
+	assert.equal(request.prefetch.length, 2);
+	for (const prefetch of request.prefetch) {
+		assert.deepEqual(prefetch.filter, request.filter);
+		assert.ok((prefetch.limit ?? 0) >= 5);
+		const encoded = JSON.stringify(prefetch.filter);
+		for (const value of [
+			"tenant_id",
+			"workspace_id",
+			"library_id",
+			"generation_id",
+			"doc_id",
+			"acl_principal_ids",
+			"acl_group_ids",
+			"lifecycle_visibility",
+			"document_version_id",
+			"principal",
+			"group",
+			"generation",
+			"version",
+		])
+			assert.ok(encoded.includes(value), value);
+	}
+	assert.equal(request.prefetch[0].using, "dense");
+	assert.equal(request.prefetch[1].using, "lexical_v1");
+	assert.equal(
+		await store.hybridSearch({
+			vector: [1, 0],
+			query: "!?",
+			scope,
+			limit: 5,
+			sparseLimit: 5,
+			rrfK: 60,
+		}),
+		null,
+	);
+	assert.equal(requests.length, 2);
+});

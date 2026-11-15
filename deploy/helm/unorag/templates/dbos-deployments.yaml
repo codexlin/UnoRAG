@@ -112,6 +112,8 @@ spec:
               value: {{ .Values.config.llmBaseUrl | quote }}
             - name: EMBEDDING_MODEL
               value: {{ .Values.config.embeddingModel | quote }}
+            - name: QDRANT_SERVER_HYBRID_ENABLED
+              value: {{ .Values.config.qdrantServerHybridEnabled | quote }}
             - name: EMBEDDING_DIM
               value: {{ .Values.config.embeddingDim | quote }}
             - name: EMBEDDING_BATCH_SIZE
