@@ -14,11 +14,26 @@ import {
 } from "@/core/ask-graph/table";
 import type { InternalCitation } from "@/core/retrieval";
 
-export function deterministicTableAnswer(value: unknown): string | null {
+export function deterministicTableAnswer(
+	value: unknown,
+	citations: readonly Record<string, unknown>[] = [],
+): string | null {
 	const parsed = TableExecutionResultSchema.safeParse(value);
 	if (parsed.success && parsed.data.status === "success") {
 		const answer = parsed.data.answerText?.trim();
-		return answer || null;
+		if (!answer) return null;
+		const evidenceIds = new Set(
+			parsed.data.evidence.map((item) => item.citationId),
+		);
+		// Public citations are numbered by their position in the selected evidence.
+		const markers = citations
+			.flatMap((citation, index) =>
+				typeof citation.id === "string" && evidenceIds.has(citation.id)
+					? [`[${index + 1}]`]
+					: [],
+			)
+			.join("");
+		return markers ? `${answer} ${markers}` : answer;
 	}
 	return null;
 }

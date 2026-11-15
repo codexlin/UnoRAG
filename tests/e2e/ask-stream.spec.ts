@@ -411,6 +411,97 @@ async function hoverCitation(page: Page, trigger: Locator) {
 	return preview;
 }
 
+test("deterministic table answers open a scrollable table source with human row numbers", async ({
+	page,
+	isMobile,
+}) => {
+	await page.setViewportSize({ width: isMobile ? 320 : 1440, height: 900 });
+	await page.emulateMedia({ reducedMotion: "reduce" });
+	const citation: ApiCitation = {
+		...previewCitation,
+		title: "设备预算表",
+		record_type: "table",
+		table_id: "budget",
+		row_start: 0,
+		row_end: 2,
+		headers: [
+			"设备名称",
+			"规格参数与供应商型号",
+			"单价（元）",
+			"验收与交付要求",
+		],
+		rows: [
+			[
+				"服务器",
+				"CloudMax CM-R7425 / 双处理器 / 256GB 内存",
+				"120000",
+				"交付后现场完成部署及验收",
+			],
+			["存储", "ArrayMax 双控制器 / 48TB", "30000", "完成数据迁移与备份验证"],
+			["交换机", "NetworkMax 48 端口", "10000", "完成网络连通性验证"],
+		],
+		text: "设备名称 | 规格参数与供应商型号 | 单价（元） | 验收与交付要求\n服务器 | CloudMax CM-R7425 / 双处理器 / 256GB 内存 | 120000 | 交付后现场完成部署及验收",
+	};
+	const answer = "命中 1 行：\n- 设备名称：服务器，单价（元）：120000 [1]";
+	await openAsk(page, [
+		[
+			meta(),
+			frame("citations", [citation]),
+			frame("token", answer),
+			done(answer, undefined, undefined, [citation], {
+				judge_mode: "deterministic_table_execution",
+			}),
+		],
+	]);
+	await submit(page, "预算表中服务器的单价是多少？", 0);
+	await release(page, 0, 3);
+	const anchor = page
+		.getByRole("article")
+		.getByRole("button", { name: "查看引用 1：设备预算表", exact: true });
+	await expect(anchor).toBeVisible();
+	await release(page, 0, 1);
+	await closeStream(page, 0);
+	const preview = await hoverCitation(page, anchor);
+	await expect(preview).toContainText("表格行组 1 至 3");
+	await page.clock.resume();
+	if (isMobile) await anchor.tap();
+	else await anchor.press("Enter");
+	const panel = isMobile
+		? page.getByRole("dialog", { name: "引用来源", exact: true })
+		: page.getByRole("complementary", { name: "引用来源", exact: true });
+	await expect(panel.getByText("1 至 3", { exact: true })).toBeVisible();
+	const table = panel.getByRole("table", { name: citation.title, exact: true });
+	await expect(table.getByRole("columnheader")).toHaveCount(4);
+	await expect(table.getByRole("cell")).toHaveCount(12);
+	await expect(
+		table.getByRole("cell", { name: "120000", exact: true }),
+	).toBeVisible();
+	const scroll = panel.getByRole("region", {
+		name: "表格来源片段",
+		exact: true,
+	});
+	await scroll.focus();
+	await expect(scroll).toBeFocused();
+	expect(
+		await scroll.evaluate(
+			(element) => element.scrollWidth > element.clientWidth,
+		),
+	).toBe(true);
+	await scroll.press("ArrowRight");
+	await expect
+		.poll(() => scroll.evaluate((element) => element.scrollLeft))
+		.toBeGreaterThan(0);
+	expect(
+		await page.evaluate(
+			() =>
+				document.documentElement.scrollWidth <=
+				document.documentElement.clientWidth + 1,
+		),
+	).toBe(true);
+	await closeSources(page);
+	await expect(anchor).toBeFocused();
+});
+
 test("answer Sources fold by default and retain same-file references with distinct versions", async ({
 	page,
 	isMobile,
@@ -571,7 +662,7 @@ test("inline citation hover previews its snapshot without requests, selection or
 		previewCitation.filename ?? "",
 		previewCitation.section_path ?? "",
 		"页 12",
-		"表格行组 30 至 35",
+		"表格行组 31 至 36",
 		previewCitation.snippet,
 		"回答所用版本",
 		previewCitation.document_version_id ?? "",
@@ -824,7 +915,7 @@ for (const terminal of ["complete", "error"] as const) {
 			updated.filename ?? "",
 			updated.section_path ?? "",
 			"页 18",
-			"表格行组 50 至 55",
+			"表格行组 51 至 56",
 			updated.document_version_id ?? "",
 			updated.snippet,
 		]) {

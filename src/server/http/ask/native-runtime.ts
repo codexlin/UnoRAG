@@ -733,7 +733,7 @@ export class NativeAskRuntime {
 				(citation) => citation.id === this.outlineAnswer?.citationId,
 			)
 				? this.outlineAnswer.text
-				: deterministicTableAnswer(state.table_execution);
+				: deterministicTableAnswer(state.table_execution, state.citations);
 		if (deterministicAnswer) {
 			yield deterministicAnswer;
 			return;
