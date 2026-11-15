@@ -1079,6 +1079,34 @@ test("SSE final sources keep original anchors while early candidates and table p
 	}
 });
 
+test("SSE uses the completed native evidence bundle without pruning its companion twice", async () => {
+	let completed = false;
+	const final = [
+		{ id: "passage", index: 1 },
+		{ id: "figure", index: 2 },
+	];
+	const frames = (
+		await collect(
+			streamLegacyAskSse({
+				meta: {},
+				citations: [...final, { id: "unused", index: 3 }],
+				done: {},
+				tokens: (async function* () {
+					yield "Answer [1].";
+					completed = true;
+				})(),
+				getFinalCitations: () => {
+					assert.equal(completed, true);
+					return final;
+				},
+			}),
+		)
+	).map(parseFrame);
+	const done = frames.at(-1)?.data as { citations: unknown[] };
+	assert.ok(done);
+	assert.deepEqual(done.citations, final);
+});
+
 test("incomplete SSE keeps candidate provenance and never emits finalized sources", async () => {
 	for (const abort of [false, true]) {
 		const controller = new AbortController();

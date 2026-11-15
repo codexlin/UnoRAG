@@ -709,9 +709,18 @@ test("multi-source scoring verifies each citation and full fact coverage without
 		refused: false,
 		latencyMs: 10,
 		citations: [primary, auxiliary],
+		retrievalDebug: { conflict_evidence_count: 0 },
 	};
 	const valid = scorePositiveCase(gold, response);
 	assert.equal(valid.ok, true);
+	assert.equal(gold.expect_conflict, false);
+	assert.equal(
+		scorePositiveCase(gold, {
+			...response,
+			retrievalDebug: { conflict_evidence_count: 2 },
+		}).ok,
+		false,
+	);
 	assert.equal(valid.crossDocumentCitationCount, 1);
 	assert.equal(valid.supportingCitationCount, 1);
 	assert.equal(valid.invalidCrossDocumentCitationCount, 0);

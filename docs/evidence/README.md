@@ -7,7 +7,7 @@
 
 | 文档 | 用途 |
 |---|---|
-| [v0.3.0 验收](./2026-11-15-v0.3.0-rc-closeout.md) | RC3 曾通过；正式镜像三轮 124/126、引用精度失败 NO-GO，0.3.1 修复待验收 |
+| [v0.3.1 验收](./2026-11-15-v0.3.1-acceptance.md) | 正式镜像三轮 123/126、图像配套来源被移除，NO-GO；0.3.2 修复待验收 |
 | [试点反馈模板](./PILOT-FEEDBACK-TEMPLATE.md) | 记录客户场景、版本、证据和责任签字；模板本身不证明通过 |
 
 ## 历史证据
@@ -17,6 +17,7 @@
 
 | 原文 | 保留原因 |
 |---|---|
+| [v0.3.0 / RC3](https://github.com/codexlin/UnoRAG/blob/c0346cc2965236362194316499dd80ca92f5a353/docs/evidence/2026-11-15-v0.3.0-rc-closeout.md) | RC3 曾通过；正式镜像 124/126，未使用来源与跨项目假冲突保持 NO-GO |
 | [v0.3.0 RC1/RC2](https://github.com/codexlin/UnoRAG/blob/1c9b0f3ba6a2e492df9206c5cb42154942bccdbd/docs/evidence/2026-11-15-v0.3.0-rc-closeout.md) | 原始 125/126、冲突摘录故障和浏览器 276/278 保持 NO-GO；后续成功不重算历史 |
 | [v0.2.11](https://github.com/codexlin/UnoRAG/blob/bcd4203901d6f491616d79d695a9ff23f8dcf453/docs/evidence/2026-11-12-v0.2.11-release-closeout.md) | 原始 122/126、季度词面差异及冲突摘录故障保持 NO-GO，不被新结果重算 |
 | [v0.2.10](https://github.com/codexlin/UnoRAG/blob/288677a217c4ac788e91d6083079d3f1a0d6fd1c/docs/evidence/2026-11-12-v0.2.10-release-closeout.md) | 原 87/126、入库超时、复用库评测缺陷及总预算重提调查均保留；不被后续新文件成功改写 |

@@ -85,6 +85,7 @@ export interface LegacyAskSseInput {
 	done: Record<string, unknown>;
 	abortSignal?: AbortSignal;
 	preserveAllCitations?: boolean;
+	getFinalCitations?: () => Array<Record<string, unknown> & { index: number }>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -285,9 +286,11 @@ export async function* streamLegacyAskSse(
 		);
 		const finalAnswer = answer || String(done.answer ?? "");
 		done.answer = finalAnswer;
-		done.citations = selectAnswerCitations(finalAnswer, citations, {
-			preserveAll: input.preserveAllCitations,
-		});
+		done.citations =
+			input.getFinalCitations?.() ??
+			selectAnswerCitations(finalAnswer, citations, {
+				preserveAll: input.preserveAllCitations,
+			});
 		done.truncated = false;
 		yield encodeLegacySseEvent("done", done);
 	} catch (error) {
