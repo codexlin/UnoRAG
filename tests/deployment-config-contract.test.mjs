@@ -213,6 +213,21 @@ test("deployment inputs map to one application environment contract", async () =
 	);
 	assert.equal(compose.services.web.environment.AI_INCLUDE_USAGE, "true");
 	assert.equal(advanced.get("AI_INCLUDE_USAGE"), "true");
+	for (const [name, value] of Object.entries({
+		CONTEXTUAL_RETRIEVAL_ENABLED: "false",
+		CONTEXTUAL_RETRIEVAL_MAX_CHUNKS: "40",
+		CONTEXTUAL_RETRIEVAL_TIMEOUT_MS: "1000",
+	})) {
+		assert.equal(advanced.get(name), value);
+		assert.equal(compose.services["dbos-worker"].environment[name], value);
+		assert.equal(compose.services.web.environment[name], undefined);
+	}
+	assert.equal(
+		renderComposeConfig({ CONTEXTUAL_RETRIEVAL_ENABLED: "true" }).services[
+			"dbos-worker"
+		].environment.CONTEXTUAL_RETRIEVAL_ENABLED,
+		"true",
+	);
 	assert.equal(
 		renderComposeConfig({ AI_INCLUDE_USAGE: "false" }).services.web.environment
 			.AI_INCLUDE_USAGE,
@@ -247,6 +262,31 @@ test("Helm gives Web and Worker the same canonical model endpoint", (t) => {
 	assert.equal((render.stdout.match(/APP_ENV/g) ?? []).length, 3);
 	assert.match(render.stdout, /APP_ENV:\s+"production"/);
 	const documents = loadAll(render.stdout);
+	const worker = documents.find(
+		(item) =>
+			item?.kind === "Deployment" &&
+			item.spec?.template?.spec?.containers?.some(
+				(container) => container.name === "dbos-worker",
+			),
+	);
+	const workerEnv = worker?.spec.template.spec.containers.find(
+		(container) => container.name === "dbos-worker",
+	).env;
+	assert.equal(
+		workerEnv?.find((entry) => entry.name === "CONTEXTUAL_RETRIEVAL_ENABLED")
+			?.value,
+		"false",
+	);
+	assert.equal(
+		workerEnv?.find((entry) => entry.name === "CONTEXTUAL_RETRIEVAL_MAX_CHUNKS")
+			?.value,
+		"40",
+	);
+	assert.equal(
+		workerEnv?.find((entry) => entry.name === "CONTEXTUAL_RETRIEVAL_TIMEOUT_MS")
+			?.value,
+		"1000",
+	);
 	const configMap = documents.find(
 		(item) =>
 			item?.kind === "ConfigMap" && item.data?.AI_INCLUDE_USAGE !== undefined,

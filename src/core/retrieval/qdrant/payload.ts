@@ -21,6 +21,7 @@ const StoredQdrantPayloadSchema = z
 		chunk_index: z.number().int().nonnegative(),
 		text: z.string(),
 		body: z.string().nullable().optional(),
+		contextual_prefix: z.string().max(240).optional(),
 		document_version_id: z.string().trim().min(1),
 		generation_id: z.string().trim().min(1).nullable().optional(),
 		tenant_id: z.string().trim().min(1),

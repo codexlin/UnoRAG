@@ -64,6 +64,7 @@ export const IndexWritePayloadSchema = z
 		text: z.string(),
 		body: z.string().optional(),
 		embed_text: z.string(),
+		contextual_prefix: z.string().max(240).optional(),
 		record_type: z.enum(indexRecordTypes),
 		record_id: z.string().trim().min(1),
 		document_version_id: z.string().trim().min(1),
@@ -541,6 +542,17 @@ function chunkPayload(
 		lifecycle_visibility: options.lifecycleVisibility ?? "staging",
 		source_chunk_ids: [],
 	};
+	if (
+		!chunk.table_id &&
+		!chunk.figure_id &&
+		!["table", "figure", "code"].includes(chunk.split_strategy)
+	) {
+		const prefix = textValue(chunk.meta.contextual_prefix)?.slice(0, 240);
+		if (prefix) {
+			payload.contextual_prefix = prefix;
+			payload.embed_text = `${prefix}\n\n${payload.embed_text}`;
+		}
+	}
 	copy(payload, "preamble", chunk.preamble);
 	copy(payload, "section_path", chunk.section_path);
 	copy(payload, "heading_text", chunk.heading_text);

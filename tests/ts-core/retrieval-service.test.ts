@@ -113,6 +113,110 @@ class FakeStore implements RetrievalVectorStore {
 	}
 }
 
+test("BM25 uses only authorized narrative context and keeps rerank and citation evidence original", async () => {
+	const contextual = hit({
+		id: "contextual",
+		text: "Payment is due in thirty days.",
+		chunkIndex: 1,
+		score: 0,
+	});
+	contextual.payload.contextual_prefix = "Zephyrquartz";
+	const excluded = [
+		{ record_type: "table" as const },
+		{ record_type: "table_summary" as const },
+		{ record_type: "figure" as const },
+		{ record_type: "section" as const },
+		{ record_type: "document" as const },
+		{ record_type: "chunk" as const, table_id: "table-1" },
+		{ record_type: "chunk" as const, figure_id: "figure-1" },
+		{ record_type: "chunk" as const, split_strategy: "code" },
+	].map((metadata, index) => ({
+		...contextual,
+		id: `excluded-${index}`,
+		payload: { ...contextual.payload, ...metadata },
+	}));
+	let corpus = [contextual, ...excluded];
+	let rerankTexts: string[] = [];
+	const service = new DefaultRetrievalService(
+		embeddings,
+		{
+			async search() {
+				return [
+					hit({
+						id: "dense",
+						text: "Unrelated evidence.",
+						chunkIndex: 0,
+						score: 0.8,
+					}),
+				];
+			},
+			async listCorpus(input) {
+				assert.equal(input.scope.workspaceId, "workspace-a");
+				assert.deepEqual(input.scope.activeGenerationIds, [
+					"generation-current",
+				]);
+				return corpus;
+			},
+		},
+		{
+			async rerank(input) {
+				rerankTexts = input.documents;
+				return input.documents.map((_text, index) => ({
+					index,
+					score: 0.9 - index * 0.1,
+				}));
+			},
+		},
+		{
+			hybridEnabled: true,
+			rerankEnabled: true,
+			rerankTopK: 10,
+			bm25TopK: 10,
+			rrfK: 60,
+		},
+	);
+	const result = await service.retrieve({
+		query: "Zephyrquartz",
+		libraryId: "library-a",
+		scope,
+		topK: 10,
+	});
+	assert.equal(result.debug.usedHybrid, true);
+	assert.deepEqual(
+		new Set(result.citations.map((citation) => citation.id)),
+		new Set(["dense", "contextual"]),
+	);
+	const citation = result.citations.find((item) => item.id === "contextual");
+	assert.ok(citation);
+	assert.ok((citation.bm25_score ?? 0) > 0);
+	assert.equal(citation.body, contextual.payload.text);
+	assert.equal(citation.snippet, contextual.payload.text);
+	assert.ok(rerankTexts.includes(contextual.payload.text));
+	assert.doesNotMatch(rerankTexts.join("\n"), /Zephyrquartz/);
+	assert.doesNotMatch(
+		JSON.stringify(result.citations),
+		/Zephyrquartz|contextual_prefix/,
+	);
+
+	corpus = [
+		{
+			...contextual,
+			payload: { ...contextual.payload, workspace_id: "workspace-b" },
+		},
+	];
+	const isolated = await service.retrieve({
+		query: "Zephyrquartz",
+		libraryId: "library-a",
+		scope,
+		topK: 10,
+	});
+	assert.equal(isolated.debug.hybridFailed, true);
+	assert.deepEqual(
+		isolated.citations.map((item) => item.id),
+		["dense"],
+	);
+});
+
 test("retrieval service carries mandatory scope and metadata filters to store", async () => {
 	const store = new FakeStore();
 	const service = new DefaultRetrievalService(embeddings, store, null, {

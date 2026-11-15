@@ -231,3 +231,40 @@ test("Qdrant hit maps to a strict internal citation without unknown payload fiel
 	assert.deepEqual(citation.source_chunk_ids, ["chunk-a"]);
 	assert.equal("unknown_secret" in citation, false);
 });
+
+test("bounded contextual search metadata survives storage but cannot enter citations or replace scope", () => {
+	const payload = {
+		library_id: "library-a",
+		doc_id: "document-a",
+		title: "Policy",
+		chunk_index: 0,
+		text: "Original evidence.",
+		body: "Original evidence.",
+		document_version_id: "version-a",
+		generation_id: "generation-current",
+		tenant_id: "tenant-a",
+		workspace_id: "workspace-a",
+		contextual_prefix: "Generated location metadata",
+	};
+	const stored = parseStoredQdrantPayload(payload);
+	assert.ok(stored);
+	assert.equal(stored.contextual_prefix, payload.contextual_prefix);
+	const citation = mapQdrantHitToInternalCitation(
+		{ id: "point-a", score: 0.9, payload: stored },
+		1,
+	);
+	assert.equal(citation.body, payload.body);
+	assert.equal(citation.snippet, payload.body);
+	assert.equal("contextual_prefix" in citation, false);
+	assert.equal(
+		parseStoredQdrantPayload({
+			...payload,
+			contextual_prefix: "x".repeat(241),
+		}),
+		null,
+	);
+	assert.equal(
+		parseStoredQdrantPayload({ ...payload, workspace_id: "" }),
+		null,
+	);
+});

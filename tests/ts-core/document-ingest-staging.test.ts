@@ -322,6 +322,135 @@ test("text staging observes cancellation between compute and Qdrant batches", as
 	assert.equal(checks, 4);
 });
 
+test("worker environment enables bounded deterministic context only in embedding/search fields", async (t) => {
+	const keys = [
+		"CONTEXTUAL_RETRIEVAL_ENABLED",
+		"CONTEXTUAL_RETRIEVAL_MAX_CHUNKS",
+		"CONTEXTUAL_RETRIEVAL_TIMEOUT_MS",
+	];
+	const previous = keys.map((key) => process.env[key]);
+	t.after(() =>
+		keys.forEach((key, index) => {
+			if (previous[index] === undefined) delete process.env[key];
+			else process.env[key] = previous[index];
+		}),
+	);
+	process.env.CONTEXTUAL_RETRIEVAL_ENABLED = "true";
+	process.env.CONTEXTUAL_RETRIEVAL_MAX_CHUNKS = "1";
+	process.env.CONTEXTUAL_RETRIEVAL_TIMEOUT_MS = "1000";
+	const text = "Payment is due thirty days after acceptance. ".repeat(20);
+	const source = new TextEncoder().encode(text);
+	let records: IndexWritePayload[] = [];
+	const embedded: string[] = [];
+	const stager = new DocumentIngestStager(
+		{
+			async load() {
+				return source;
+			},
+		},
+		scopePort(),
+		{
+			...embeddingProvider(),
+			async embedTexts(texts) {
+				embedded.push(...texts);
+				return texts.map(() => [1, 0]);
+			},
+		},
+		{
+			async stage(input) {
+				records = input.records;
+				return records.length;
+			},
+			async setVisibility() {
+				return 0;
+			},
+		},
+	);
+	await stager.stageDocument({
+		...job(),
+		payload: {
+			...job().payload,
+			content_hash: createHash("sha256").update(source).digest("hex"),
+		},
+	});
+	assert.equal(records.filter((record) => record.contextual_prefix).length, 1);
+	assert.deepEqual(
+		embedded,
+		records.map((record) => record.embed_text),
+	);
+	const contextual = records.find((record) => record.contextual_prefix);
+	assert.ok(contextual);
+	assert.match(contextual.contextual_prefix ?? "", /handbook/);
+	assert.ok(text.includes(contextual.body ?? ""));
+	assert.equal(contextual.text, contextual.body);
+	assert.ok(
+		contextual.embed_text.startsWith(contextual.contextual_prefix ?? ""),
+	);
+	assert.ok(
+		records
+			.filter((record) => record.record_type !== "chunk")
+			.every((record) => record.contextual_prefix === undefined),
+	);
+	assert.ok(
+		records.every(
+			(record) =>
+				record.generation_id === job().payload.generation_id &&
+				record.tenant_id === job().organizationId &&
+				record.workspace_id === job().workspaceId,
+		),
+	);
+});
+
+test("worker continues staging original evidence when an injected contextualizer fails", async () => {
+	const source = new TextEncoder().encode(
+		"Original narrative evidence for the document. ".repeat(10),
+	);
+	let records: IndexWritePayload[] = [];
+	let attempts = 0;
+	const stager = new DocumentIngestStager(
+		{
+			async load() {
+				return source;
+			},
+		},
+		scopePort(),
+		embeddingProvider(),
+		{
+			async stage(input) {
+				records = input.records;
+				return records.length;
+			},
+			async setVisibility() {
+				return 0;
+			},
+		},
+		undefined,
+		{
+			enabled: true,
+			contextualizer: {
+				async contextualize() {
+					attempts += 1;
+					throw new Error("provider unavailable");
+				},
+			},
+		},
+	);
+	const result = await stager.stageDocument({
+		...job(),
+		payload: {
+			...job().payload,
+			content_hash: createHash("sha256").update(source).digest("hex"),
+		},
+	});
+	assert.equal(attempts, 1);
+	assert.ok(result.pointCount > 0);
+	assert.ok(records.every((record) => record.contextual_prefix === undefined));
+	assert.equal(
+		records.find((record) => record.record_type === "chunk")?.body,
+		new TextDecoder().decode(source).trim(),
+	);
+});
+
 function embeddingProvider(): EmbeddingProvider {
 	return {
 		async embedQuery() {

@@ -11,6 +11,10 @@ import {
 	ingestAclFingerprint,
 	parseTextDocument,
 } from "../core/ingest";
+import {
+	type ContextualRetrievalOptions,
+	contextualRetrievalFromEnvironment,
+} from "../core/ingest/contextual-retrieval";
 import { type ParsePdfInput, parseDocxDocument } from "../core/parsing";
 import type { EmbeddingProvider } from "../core/retrieval/embedding/provider";
 import type { DocumentIngestJob } from "./contracts";
@@ -69,6 +73,9 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 		private readonly embeddings: EmbeddingProvider,
 		private readonly qdrant: DocumentIngestVectorStore,
 		private readonly pdfParser?: PdfParserPort,
+		private readonly contextualRetrieval: ContextualRetrievalOptions = contextualRetrievalFromEnvironment(
+			process.env,
+		),
 	) {}
 
 	async stageDocument(
@@ -91,7 +98,10 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 			? (input.payload.document_profile as ChunkProfileName)
 			: "balanced";
 		await onProgress?.({ stage: "chunking", percent: 45 });
-		const chunks = await chunkDocument(document, { profileName });
+		const chunks = await chunkDocument(document, {
+			profileName,
+			contextualRetrieval: this.contextualRetrieval,
+		});
 		if (chunks.length === 0) {
 			throw new WorkerTaskError(
 				"Document parser produced no indexable chunks",

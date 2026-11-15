@@ -290,7 +290,14 @@ function lexicalHits(
 	const index = new Bm25Index<QdrantSearchHit>(
 		corpus.map((hit) => ({
 			id: String(hit.id),
-			text: hitText(hit),
+			text:
+				hit.payload.record_type === "chunk" &&
+				!hit.payload.table_id &&
+				!hit.payload.figure_id &&
+				hit.payload.split_strategy !== "code" &&
+				hit.payload.contextual_prefix
+					? `${hit.payload.contextual_prefix}\n${hitText(hit)}`
+					: hitText(hit),
 			value: hit,
 		})),
 	);

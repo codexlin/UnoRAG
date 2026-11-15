@@ -177,6 +177,17 @@ Parsing produces DocumentIR before chunking. The policy is structure-first:
 沿用 table 分块、行组及 `table_summary` 索引。转义管道保留为单元格内容；空表体、列数不齐或非法分隔行
 保留为原文，围栏代码不参与表格识别。TXT 不启用该转换；既有 Markdown 需重索引才会生成新的表格结构。
 
+条件式 Contextual Retrieval 默认关闭。Worker 可设置 `CONTEXTUAL_RETRIEVAL_ENABLED=true`，
+或通过 `ChunkingOptions.contextualRetrieval` 显式开启；仅增强正文不少于 160 字符、且无标题路径或属于
+OCR/降级解析的叙事块。`CONTEXTUAL_RETRIEVAL_MAX_CHUNKS` 默认及硬上限均为 40，
+`CONTEXTUAL_RETRIEVAL_TIMEOUT_MS` 默认 1000、上限 5000 毫秒；Compose 高级配置与 Helm Worker 同步支持。
+默认前缀只使用同文档标题、文件名、最近标题和页码；可注入 `Contextualizer` 实现有界的一句定位，
+默认不调用外部 LLM。前缀最多 240 字符，单独存入 `contextual_prefix`，仅加入向量化输入和已经过授权校验的
+BM25 语料，不进入引用正文、snippet、重排、去重或表格/图片/章节/文档记录。超时会发出取消信号；
+异常或超时静默保留原文，并停止该文档的后续增强尝试，迟到结果不会修改索引。
+此步骤不改变 ADR-0003 的分块边界或语义切分降级策略；同 generation 的清单一致性校验继续生效，
+注入模型适配器需保证重试结果幂等。既有文档仅在重索引时生成上下文前缀，不原地改写 active generation。
+
 入库还生成一个 generation 绑定的 `document` 记录：正文保存有界的解析标题目录，向量只使用有界的文档
 身份描述，不把整份长目录当普通 chunk 向量化。同一版本的 `parser_report.metrics.document_context`
 保存原始文件名、首级标题、显式编号标签提取结果、标题层级和完整性标记。它属于检索内容，普通文档/任务

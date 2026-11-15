@@ -7,6 +7,10 @@ import {
 	type DocumentNode,
 	type SplitStrategy,
 } from "../document-ir";
+import {
+	type ContextualRetrievalOptions,
+	contextualizeChunks,
+} from "./contextual-retrieval";
 
 export const CHUNK_POLICY_VERSION = "v1";
 
@@ -47,6 +51,7 @@ export type ChunkingProfile = {
 };
 
 export type ChunkingOptions = {
+	contextualRetrieval?: ContextualRetrievalOptions;
 	profileName?: ChunkProfileName;
 	chunkSize?: number;
 	chunkOverlap?: number;
@@ -278,6 +283,7 @@ export async function chunkDocument(
 		strategies,
 		fallback_count: fallbackCount,
 	};
+	await contextualizeChunks(input, chunks, options.contextualRetrieval);
 	return chunks;
 }
 

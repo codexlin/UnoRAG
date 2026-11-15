@@ -118,6 +118,12 @@ spec:
               value: {{ .Values.config.embeddingBatchSize | quote }}
             - name: EMBEDDING_TIMEOUT_MS
               value: {{ .Values.config.embeddingTimeoutMs | quote }}
+            - name: CONTEXTUAL_RETRIEVAL_ENABLED
+              value: {{ .Values.config.contextualRetrievalEnabled | quote }}
+            - name: CONTEXTUAL_RETRIEVAL_MAX_CHUNKS
+              value: {{ .Values.config.contextualRetrievalMaxChunks | quote }}
+            - name: CONTEXTUAL_RETRIEVAL_TIMEOUT_MS
+              value: {{ .Values.config.contextualRetrievalTimeoutMs | quote }}
             - name: MINERU_PROVIDER
               value: {{ .Values.config.mineruProvider | quote }}
             - name: MINERU_SELF_HOSTED_URL
