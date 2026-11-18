@@ -13,7 +13,11 @@ import { fetchFreshQuery } from "@/lib/query-refresh";
 
 export function useDocuments(
 	libraryId: string,
-	options: { enabled?: boolean } = {},
+	options: {
+		enabled?: boolean;
+		libraryDeleting?: boolean;
+		deleteJobsActive?: boolean;
+	} = {},
 ) {
 	const scope = useQueryScope();
 	const queryClient = useQueryClient();
@@ -25,7 +29,12 @@ export function useDocuments(
 	const query = useQuery({
 		...queryOptions,
 		enabled,
-		refetchInterval: (query) => documentRefetchInterval(query.state.data),
+		refetchInterval: (query) =>
+			documentRefetchInterval(query.state.data, {
+				libraryDeleting: options.libraryDeleting,
+				deleteJobsActive: options.deleteJobsActive,
+				errorCount: query.state.error ? query.state.errorUpdateCount : 0,
+			}),
 	});
 	const refresh = useCallback(async () => {
 		if (!enabled) return [];

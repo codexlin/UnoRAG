@@ -198,13 +198,17 @@ export function LibraryWorkspaceHeader({
 								<span className="sr-only">知识库设置</span>
 							</DropdownMenuTrigger>
 							<DropdownMenuContent align="end" className="min-w-40">
-								<DropdownMenuItem onClick={() => onEdit(library)}>
+								<DropdownMenuItem
+									disabled={library.status === "deleting"}
+									onClick={() => onEdit(library)}
+								>
 									<Pencil />
 									编辑设置
 								</DropdownMenuItem>
 								<DropdownMenuSeparator />
 								<DropdownMenuItem
 									variant="destructive"
+									disabled={library.status === "deleting"}
 									onClick={() => onDelete(library)}
 								>
 									<Trash2 />

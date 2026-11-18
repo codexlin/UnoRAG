@@ -38,6 +38,9 @@ const modules = Promise.all([
 	import("../../src/lib/server/security/redis"),
 	import("../../src/app/api/libraries/[libraryId]/route"),
 	import("../../src/app/api/libraries/route"),
+	import("../../src/app/api/libraries/[libraryId]/documents/route"),
+	import("../../src/app/api/jobs/[jobId]/retry/route"),
+	import("../../src/app/api/jobs/[jobId]/route"),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolve;
 });
@@ -322,8 +325,18 @@ test("reindex indication executes the production active-version policy query", {
 test("library DELETE preserves archived threads and deleted sources while retaining scope and async behavior", {
 	skip: skip || (!redisUrl && "REDIS_INTEGRATION_TEST_URL is not configured"),
 }, async () => {
-	const [{ getDatabase }, access, , session, , route, listRoute] =
-		await modules;
+	const [
+		{ getDatabase },
+		access,
+		,
+		session,
+		,
+		route,
+		listRoute,
+		documentsRoute,
+		retryRoute,
+		jobRoute,
+	] = await modules;
 	await withFixture(async (fixture) => {
 		const {
 			pool,
@@ -486,6 +499,21 @@ test("library DELETE preserves archived threads and deleted sources while retain
 				).rowCount,
 				0,
 			);
+			// Uploaded documents have a persisted desired version, even when ingest fails.
+			const otherVersionId = randomUUID();
+			const version = await pool.query(
+				`INSERT INTO app.document_versions (
+					id, document_id, version, content_hash, storage_key, status,
+					source_filename, source_content_type
+				) SELECT $1, id, 1, $3, 'fixtures/library-state/other.txt', 'failed', filename, content_type
+				FROM app.documents WHERE library_id = $2 RETURNING document_id`,
+				[otherVersionId, otherLibraryId, "a".repeat(64)],
+			);
+			assert.equal(version.rowCount, 1);
+			await pool.query(
+				"UPDATE app.documents SET desired_version_id = $2 WHERE id = $1",
+				[version.rows[0].document_id, otherVersionId],
+			);
 			const queued = await remove(otherLibraryId);
 			assert.equal(queued.status, 202);
 			assert.equal((await queued.json()).delete_jobs_queued, 1);
@@ -499,6 +527,152 @@ test("library DELETE preserves archived threads and deleted sources while retain
 			assert.deepEqual(jobs.rows, [
 				{ type: "document.delete", status: "queued" },
 			]);
+			const listDocuments = (id = otherLibraryId, headers = { cookie }) =>
+				documentsRoute.GET(
+					new Request(`http://local/api/libraries/${id}/documents`, {
+						headers,
+					}),
+					{
+						params: Promise.resolve({ libraryId: id }),
+					},
+				);
+			assert.equal(
+				(await listDocuments(otherLibraryId, { cookie: "" })).status,
+				401,
+			);
+			assert.equal((await listDocuments(foreignLibraryId)).status, 404);
+			assert.equal(
+				(await listDocuments(libraryId)).status,
+				404,
+				"deleted is never readable",
+			);
+			assert.equal(
+				await access.findAuthorizedLibrary(identity, otherLibraryId),
+				null,
+				"generic authorization remains closed",
+			);
+			for (const foreignIdentity of [
+				{ ...identity, workspaceId: otherWorkspaceId },
+				{ ...identity, tenantId: randomUUID() },
+			]) {
+				assert.equal(
+					await access.findAuthorizedLibrary(foreignIdentity, otherLibraryId, {
+						allowDeletingForDocumentList: true,
+					}),
+					null,
+				);
+			}
+			const deletingList = await listDocuments();
+			assert.equal(deletingList.status, 200);
+			const [deletingDoc] = await deletingList.json();
+			assert.equal(deletingDoc.status, "deleting");
+			assert.equal(deletingDoc.job_status, "queued");
+			assert.equal(deletingDoc.document_version_id, otherVersionId);
+			const jobId = deletingDoc.job_id;
+			assert.ok(jobId);
+			const jobContext = { params: Promise.resolve({ jobId }) };
+			const retry = (headers = { cookie }) =>
+				retryRoute.POST(
+					new Request(`http://local/api/jobs/${jobId}/retry`, {
+						method: "POST",
+						headers,
+					}),
+					jobContext,
+				);
+			const getJob = (headers = { cookie }) =>
+				jobRoute.GET(
+					new Request(`http://local/api/jobs/${jobId}`, { headers }),
+					jobContext,
+				);
+			const activity = async () => {
+				const response = await listRoute.GET(
+					new Request("http://local/api/libraries", { headers: { cookie } }),
+				);
+				assert.equal(response.status, 200);
+				return (await response.json()).find(
+					(row: { id: string }) => row.id === otherLibraryId,
+				).delete_jobs_active;
+			};
+			for (const status of [
+				"queued",
+				"running",
+				"retry",
+				"cancelling",
+				"failed",
+				"dead",
+				"cancelled",
+			]) {
+				await pool.query("UPDATE app.jobs SET status = $2 WHERE id = $1", [
+					jobId,
+					status,
+				]);
+				assert.equal(
+					await activity(),
+					["queued", "running", "retry", "cancelling"].includes(status),
+					status,
+				);
+			}
+			await pool.query(
+				"UPDATE app.jobs SET status = 'failed', error = 'cleanup fixture failed' WHERE id = $1",
+				[jobId],
+			);
+			assert.equal((await getJob()).status, 200);
+			const failed = (await (await listDocuments()).json())[0];
+			assert.equal(failed.job_status, "failed");
+			assert.equal(failed.error, "cleanup fixture failed");
+			await pool.query(
+				"UPDATE app.workspace_members SET role = 'viewer' WHERE workspace_id = $1 AND user_id = $2",
+				[workspaceId, principalId],
+			);
+			assert.equal((await retry()).status, 403);
+			assert.equal(
+				(await getJob()).status,
+				200,
+				"workspace-visible metadata remains readable by viewers",
+			);
+			await pool.query(
+				"UPDATE app.workspace_members SET role = 'owner' WHERE workspace_id = $1 AND user_id = $2",
+				[workspaceId, principalId],
+			);
+			await pool.query(
+				"INSERT INTO app.workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
+				[otherWorkspaceId, principalId],
+			);
+			const foreignToken = await session.issueSessionToken({
+				...identity,
+				workspaceId: otherWorkspaceId,
+			});
+			const foreignCookie = `${session.SESSION_COOKIE}=${foreignToken}`;
+			try {
+				assert.equal((await retry({ cookie: foreignCookie })).status, 404);
+				assert.equal((await getJob({ cookie: foreignCookie })).status, 404);
+				assert.equal(
+					(await listDocuments(otherLibraryId, { cookie: foreignCookie }))
+						.status,
+					404,
+				);
+			} finally {
+				await session.revokeSessionCookieHeader(foreignCookie);
+			}
+			const retried = await retry();
+			assert.equal(retried.status, 202);
+			const newJob = await retried.json();
+			assert.equal(newJob.type, "document.delete");
+			assert.equal(newJob.status, "queued");
+			assert.equal(newJob.library_id, otherLibraryId);
+			assert.equal(newJob.document_version_id, otherVersionId);
+			assert.notEqual(newJob.id, jobId);
+			assert.equal((await (await listDocuments()).json())[0].job_id, newJob.id);
+			assert.equal(
+				await activity(),
+				true,
+				"retry restores fast poll eligibility",
+			);
+			assert.equal(
+				(await retry()).status,
+				409,
+				"an old retry cannot enqueue a duplicate",
+			);
 		} finally {
 			await session.revokeSessionCookieHeader(cookie);
 		}

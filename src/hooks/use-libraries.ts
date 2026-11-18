@@ -5,6 +5,7 @@ import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import { useQueryScope } from "@/hooks/use-query-scope";
 import { type ApiLibrary, fetchLibraries } from "@/lib/api";
+import { libraryRefetchInterval } from "@/lib/library-query-state";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchBackgroundQuery, fetchFreshQuery } from "@/lib/query-refresh";
 
@@ -18,6 +19,12 @@ export function useLibraries() {
 	const query = useQuery({
 		queryKey,
 		queryFn: ({ signal }) => fetchLibraries(signal),
+		refetchInterval: (query) =>
+			libraryRefetchInterval(
+				query.state.data,
+				query.state.error ? query.state.errorUpdateCount : 0,
+			),
+		refetchIntervalInBackground: false,
 	});
 	// The layout can fill this cache before a streamed page hydrates.
 	const hydrated = useSyncExternalStore(

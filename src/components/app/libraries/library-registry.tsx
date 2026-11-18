@@ -182,11 +182,13 @@ export function LibraryRegistrySidebar({
 											selectedId !== library.id && "text-muted-foreground",
 										)}
 									>
-										{library.status === "indexing"
-											? `${library.ready_count}/${library.doc_count} 可用 · 处理中`
-											: library.status === "empty"
-												? "等待资料"
-												: `${library.ready_count}/${library.doc_count} 可检索`}
+										{library.status === "deleting"
+											? "删除中"
+											: library.status === "indexing"
+												? `${library.ready_count}/${library.doc_count} 可用 · 处理中`
+												: library.status === "empty"
+													? "等待资料"
+													: `${library.ready_count}/${library.doc_count} 可检索`}
 									</span>
 								</span>
 							</button>

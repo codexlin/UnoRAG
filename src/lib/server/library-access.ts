@@ -15,6 +15,7 @@ export {
 export async function findAuthorizedLibrary(
 	identity: AuthIdentity,
 	ragLibraryId: string,
+	options: { allowDeletingForDocumentList?: boolean } = {},
 ) {
 	const db = getDatabase();
 	const [library] = await db
@@ -25,7 +26,12 @@ export async function findAuthorizedLibrary(
 				eq(libraries.organizationId, identity.tenantId),
 				eq(libraries.workspaceId, identity.workspaceId),
 				eq(libraries.ragLibraryId, ragLibraryId),
-				notInArray(libraries.status, ["deleting", "deleted"]),
+				notInArray(
+					libraries.status,
+					options.allowDeletingForDocumentList
+						? ["deleted"]
+						: ["deleting", "deleted"],
+				),
 			),
 		)
 		.limit(1);
