@@ -21,7 +21,7 @@ export type DocumentConstraint = {
 	parentHeading?: string;
 };
 
-const FILE = /[\p{L}\p{N}_.()（）-]+\.(?:pdf|docx|markdown|md|txt)\b/giu;
+const FILE = /[\p{L}\p{N}_.()（）-]+\.(?:pdf|docx|xlsx|markdown|md|txt)\b/giu;
 const CODE = /\b[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+){2,}\b/gi;
 const OUTLINE =
 	/(?:[一二三四五六1-6]级标题|子标题|(?:文档|文件|章节)目录|目录(?:结构|大纲)|所有标题|全部标题|\bheadings?\b|table of contents)/i;

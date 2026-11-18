@@ -50,3 +50,8 @@ export {
 	type ParserRouteRequest,
 	ParserRouter,
 } from "./parser-router";
+export {
+	type ParseXlsxDocumentInput,
+	type ParseXlsxLimits,
+	parseXlsxDocument,
+} from "./xlsx-parser";

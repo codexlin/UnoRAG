@@ -12,7 +12,12 @@ test("document lifecycle accepts production parser formats", () => {
 			name: "contract.docx",
 			type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 		},
+		{
+			name: "budget.xlsx",
+			type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		},
 		{ name: "browser-fallback.PDF", type: "application/octet-stream" },
+		{ name: "browser-fallback.XLSX", type: "application/octet-stream" },
 	]) {
 		assert.equal(validateDocumentUpload(file), null);
 	}

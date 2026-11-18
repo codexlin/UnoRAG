@@ -86,6 +86,7 @@ export function resolveParserLabel(report) {
 		.toLowerCase();
 	if (parser === "liteparse") return "LiteParse";
 	if (parser === "mammoth") return "Mammoth";
+	if (parser === "xlsx") return "Excel / OOXML";
 	if (parser === "native-text") return "原生文本";
 	if (
 		backend.includes("pymupdf") ||
@@ -111,7 +112,11 @@ export function resolveExternalProcessing(report) {
 	if (external !== null) return external;
 	const label = resolveParserLabel(report);
 	if (label === "302 云解析") return true;
-	if (["PyMuPDF", "LiteParse", "Mammoth", "原生文本"].includes(label)) {
+	if (
+		["PyMuPDF", "LiteParse", "Mammoth", "Excel / OOXML", "原生文本"].includes(
+			label,
+		)
+	) {
 		return false;
 	}
 	return null;
