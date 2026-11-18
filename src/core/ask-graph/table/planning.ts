@@ -1,5 +1,6 @@
 import type { TableQueryPlan } from "./contracts";
 import { normalizeTable, type TableDatasetInput } from "./normalize";
+import { isDerivedCalculationQuestion } from "./query-intent";
 
 const MINIMUM_CUE = /(?:最小|最低|最少|minimum|\bmin\b)/i;
 const MAXIMUM_CUE = /(?:最大|最高|最多|maximum|\bmax\b)/i;
@@ -34,7 +35,8 @@ export function deriveGroundedTableLookup(
 		FILTER_OPERATORS.some(({ cue }) => cue.test(question)) ||
 		/(?:为什么|原因|如何|比较|对比|区别|差异|占比|比例|百分比|排名|排行|第[一二三四五六七八九十\d]+|汇总说明|总结|percentage|ratio|ranking|ranked)/iu.test(
 			question,
-		)
+		) ||
+		isDerivedCalculationQuestion(question)
 	)
 		return null;
 	const questionKey = normalized(question);
@@ -210,6 +212,7 @@ export function deriveDeterministicTablePlan(
 	question: string,
 	tables: readonly TableCandidate[],
 ): TableQueryPlan | null {
+	if (isDerivedCalculationQuestion(question)) return null;
 	const table = selectCandidate(question, tables);
 	if (!table) return null;
 	const base = {

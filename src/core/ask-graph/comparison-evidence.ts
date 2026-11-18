@@ -11,13 +11,22 @@ const SOURCE_KEYS = [
 	"section_path",
 ] as const;
 
-export function boundedJudgeEvidenceText(value: unknown): string {
+export function truncateEvidenceText(
+	value: unknown,
+	maxLength: number,
+): string {
 	const text = typeof value === "string" ? value.trim() : "";
+	if (maxLength <= 0 || text.length <= maxLength)
+		return maxLength <= 0 ? "" : text;
 	// Truncation markers must not become part of a verbatim source quote.
 	const splitPair =
-		/[\uD800-\uDBFF]/u.test(text.charAt(JUDGE_TEXT_LIMIT - 1)) &&
-		/[\uDC00-\uDFFF]/u.test(text.charAt(JUDGE_TEXT_LIMIT));
-	return text.slice(0, JUDGE_TEXT_LIMIT - (splitPair ? 1 : 0));
+		/[\uD800-\uDBFF]/u.test(text.charAt(maxLength - 1)) &&
+		/[\uDC00-\uDFFF]/u.test(text.charAt(maxLength));
+	return text.slice(0, maxLength - (splitPair ? 1 : 0));
+}
+
+export function boundedJudgeEvidenceText(value: unknown): string {
+	return truncateEvidenceText(value, JUDGE_TEXT_LIMIT);
 }
 
 /** Remove a child only when an already retrieved parent exposes all of its text to Judge. */

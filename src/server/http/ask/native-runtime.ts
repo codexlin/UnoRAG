@@ -34,6 +34,7 @@ import { planForGroundedQuestion } from "@/core/ask-graph/nodes/routing";
 import { groundedQuestion } from "@/core/ask-graph/state";
 import { deriveGroundedTableLookup } from "@/core/ask-graph/table";
 import {
+	isDerivedCalculationQuestion,
 	isFormFieldLookup,
 	isFormTableOperation,
 	isProseChecklistLookup,
@@ -133,8 +134,9 @@ export function fallbackQueryRoute(
 		};
 	}
 	if (
-		FALLBACK_TABLE_PATTERN.test(normalized) ||
-		isFormTableOperation(normalized)
+		!isDerivedCalculationQuestion(normalized) &&
+		(FALLBACK_TABLE_PATTERN.test(normalized) ||
+			isFormTableOperation(normalized))
 	) {
 		return { queryType: "table", reason: "structured_router_fallback_table" };
 	}
