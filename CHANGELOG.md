@@ -5,6 +5,9 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+- Let qualified first-turn document descriptions reach authorized retrieval and
+  evidence judgment. Bare references and references remaining elsewhere in the
+  question still require clarification; a description does not prove identity.
 - Ground follow-up retrieval, table planning and evidence judgment in entities from
   recent, continuously authorized conversation history. Keep the original question
   in archives; history never substitutes for current authorized evidence.
@@ -34,6 +37,15 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 - Upgrade note: apply migrations `0033` (feedback) and `0034` (pg_trgm catalog
   indexes) with the documented drain/backup procedure. These changes have not
   inherited the v0.3.2 deployment acceptance results.
+
+## [0.3.3] - Not Released
+
+The immutable signed build passed fresh installation, isolation, infrastructure
+recovery and application upgrade/rollback, but its own three-round quality gate
+failed at 120/126. Two qualified first-turn document lookups were incorrectly
+treated as dangling conversation references before retrieval in every round.
+The tag and original failures remain immutable; no GitHub Release was published
+and the Hong Kong reference instance remained on v0.3.2.
 
 ## [0.3.2] - 2026-11-15
 
