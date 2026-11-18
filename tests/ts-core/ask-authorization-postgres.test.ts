@@ -612,14 +612,6 @@ test("real PostgreSQL archived answers retain and reauthorize transitive memory 
 				debug: { memory_provenance: nextProvenance },
 			},
 		});
-		await repository.appendExchange(scope, thread.id, {
-			user: { role: "user", content: "legacy imported question" },
-			assistant: {
-				role: "assistant",
-				content: "unknown provenance",
-				citations: [sources[1].reference],
-			},
-		});
 		const saved = await repository.getThread(scope, thread.id);
 		assert.ok(saved);
 		const authorized = await authorizeArchivedHistory({
@@ -633,6 +625,27 @@ test("real PostgreSQL archived answers retain and reauthorize transitive memory 
 			authorized.sourceReferences,
 			sources.map((source) => source.reference),
 		);
+		await repository.appendExchange(scope, thread.id, {
+			user: { role: "user", content: "legacy imported question" },
+			assistant: {
+				role: "assistant",
+				content: "unknown provenance",
+				citations: [sources[1].reference],
+			},
+		});
+		const withBoundary = await repository.getThread(scope, thread.id);
+		assert.ok(withBoundary);
+		assert.equal(withBoundary.turns.length, 6);
+		assert.deepEqual(
+			await authorizeArchivedHistory({
+				turns: withBoundary.turns,
+				identity,
+				libraryId,
+				citationAuthorizer,
+			}),
+			{ messages: [], sourceReferences: [] },
+		);
+		// Recheck the trusted prefix so the boundary cannot mask a revocation failure.
 		await fixture.revokeFirstSource();
 		assert.deepEqual(
 			await citationAuthorizer.filterAuthorized({
