@@ -123,6 +123,15 @@ test("preserves figures as independently retrievable records", async () => {
 	assert.ok(figurePayload);
 	assert.equal(figurePayload.figure_id, "document-1:figure:1");
 	assert.deepEqual(figurePayload.source_node_ids, ["figure-1"]);
+	assert.equal(figurePayload.parent_record_id, undefined);
+	const childChunk = payloads.find(
+		(payload) => payload.record_type === "chunk" && !payload.figure_id,
+	);
+	const sectionPayload = payloads.find(
+		(payload) => payload.record_type === "section",
+	);
+	assert.ok(childChunk && sectionPayload);
+	assert.equal(childChunk.parent_record_id, sectionPayload.record_id);
 });
 
 test("keeps a page between target and max intact, then recursively splits over max", async () => {

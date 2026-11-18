@@ -82,6 +82,10 @@ export interface RetrievalVectorStore {
 		userFilters?: RetrievalUserFilters;
 		limit: number;
 	}): Promise<QdrantSearchHit[]>;
+	lookupSections?(input: {
+		scope: RetrievalScope;
+		limit: number;
+	}): Promise<QdrantSearchHit[]>;
 }
 
 export class QdrantRetrievalStore implements RetrievalVectorStore {
@@ -226,6 +230,27 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 				"unorag.retrieval.limit": input.limit,
 			},
 			() => this.listCorpusInSpan(input),
+		);
+	}
+
+	async lookupSections(input: {
+		scope: RetrievalScope;
+		limit: number;
+	}): Promise<QdrantSearchHit[]> {
+		return withActiveSpan(
+			"unorag.qdrant.lookup_sections",
+			{
+				"db.system.name": "qdrant",
+				"langfuse.observation.type": "retriever",
+				"db.operation.name": "scroll",
+				"unorag.retrieval.limit": input.limit,
+			},
+			() =>
+				this.listCorpusInSpan({
+					scope: input.scope,
+					userFilters: { record_type: "section" },
+					limit: input.limit,
+				}),
 		);
 	}
 

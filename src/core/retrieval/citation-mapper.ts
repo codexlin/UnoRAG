@@ -13,6 +13,29 @@ function clampScore(score: number): number {
 	return Math.max(0, Math.min(1, score));
 }
 
+export function formatCitationEvidenceText(source: {
+	body?: unknown;
+	text?: unknown;
+	snippet?: unknown;
+	parent_context?: unknown;
+}): string {
+	const primary = (
+		typeof source.body === "string" && source.body
+			? source.body
+			: typeof source.text === "string" && source.text
+				? source.text
+				: typeof source.snippet === "string"
+					? source.snippet
+					: ""
+	).trim();
+	const parent =
+		typeof source.parent_context === "string"
+			? source.parent_context.trim()
+			: "";
+	if (!parent || parent === primary) return primary;
+	return primary ? `${primary}\n\n所属章节完整上下文：\n${parent}` : parent;
+}
+
 export function semanticEvidenceScore(input: {
 	score: number;
 	dense_score?: number | null;
@@ -30,6 +53,7 @@ export function semanticEvidenceScore(input: {
 export function mapQdrantHitToInternalCitation(
 	input: QdrantSearchHit | unknown,
 	index: number,
+	parentContext?: string | null,
 ): InternalCitation {
 	const hit = parseQdrantSearchHit(input);
 	if (!hit) throw new TypeError("invalid Qdrant search hit");
@@ -39,6 +63,11 @@ export function mapQdrantHitToInternalCitation(
 
 	const payload = hit.payload;
 	const body = payload.body || payload.text;
+	const parentRecordId = nullableString(payload.parent_record_id);
+	const resolvedParentContext =
+		typeof parentContext === "string" && parentContext.trim()
+			? parentContext.trim()
+			: null;
 	return InternalCitationSchema.parse({
 		id: String(hit.id),
 		index,
@@ -78,6 +107,8 @@ export function mapQdrantHitToInternalCitation(
 		workspace_id: payload.workspace_id,
 		record_type: payload.record_type,
 		record_id: nullableString(payload.record_id),
+		...(parentRecordId ? { parent_record_id: parentRecordId } : {}),
+		...(resolvedParentContext ? { parent_context: resolvedParentContext } : {}),
 		source_chunk_ids: payload.source_chunk_ids ?? [],
 		source_node_ids: payload.source_node_ids ?? [],
 	});
