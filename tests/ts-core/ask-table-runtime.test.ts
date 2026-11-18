@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import test from "node:test";
 import type { LanguageModel } from "ai";
 import {
@@ -17,30 +16,7 @@ import { mapQdrantHitToInternalCitation } from "../../src/core/retrieval/citatio
 import type { ActiveDocumentDescriptor } from "../../src/core/retrieval/document-constraints";
 import { NativeAskPolicySchema } from "../../src/server/http/ask/policy";
 
-type ResolveFilename = (
-	request: string,
-	parent?: unknown,
-	isMain?: boolean,
-	options?: unknown,
-) => string;
-
-const require = createRequire(import.meta.url);
-const nodeModule = require("node:module") as {
-	_resolveFilename: ResolveFilename;
-};
-const originalResolveFilename = nodeModule._resolveFilename.bind(nodeModule);
-const inertServerOnlyModule = require.resolve("next/package.json");
-
-nodeModule._resolveFilename = (request, parent, isMain, options) =>
-	request === "server-only"
-		? inertServerOnlyModule
-		: originalResolveFilename(request, parent, isMain, options);
-
-const runtimeModule = import(
-	"../../src/server/http/ask/native-runtime"
-).finally(() => {
-	nodeModule._resolveFilename = originalResolveFilename;
-});
+import { runtimeModule } from "../helpers/native-ask-runtime";
 
 function citation(input: {
 	id: string;

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { StructuredOutputAdapter } from "@/core/ai";
 import type { AskGraphContext } from "@/core/ask-graph";
+import { groundedQuestion } from "@/core/ask-graph/state";
 import {
 	deriveDeterministicTablePlan,
 	deriveGroundedTableLookup,
@@ -116,7 +117,7 @@ export function createTableRuntimePorts({
 				headers,
 			}));
 			const groundedPlan = deriveGroundedTableLookup(
-				state.question ?? "",
+				groundedQuestion(state),
 				candidates,
 			);
 			if (state.upgrade_reason === "grounded_table_lookup" && !groundedPlan) {
@@ -127,14 +128,14 @@ export function createTableRuntimePorts({
 			}
 			const deterministicPlan =
 				groundedPlan ??
-				deriveDeterministicTablePlan(state.question ?? "", candidateHeaders);
+				deriveDeterministicTablePlan(groundedQuestion(state), candidateHeaders);
 			if (deterministicPlan) {
 				return { table_query_plan: deterministicPlan };
 			}
 			await assertAuthorized();
 			const generatedPlan = await structured.planTable(
 				{
-					question: state.question ?? "",
+					question: groundedQuestion(state),
 					tables: candidateHeaders,
 				},
 				{
@@ -143,7 +144,7 @@ export function createTableRuntimePorts({
 				},
 			);
 			const plan = normalizeTablePlanForQuestion(
-				state.question ?? "",
+				groundedQuestion(state),
 				generatedPlan,
 				candidates,
 			);

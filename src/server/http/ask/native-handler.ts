@@ -24,6 +24,7 @@ import {
 	finishAskTiming,
 } from "@/core/ask-graph";
 import { selectFinalAnswerEvidence } from "@/core/ask-graph/answer-evidence";
+import { readPendingClarification } from "@/core/ask-graph/clarification";
 import { RetrievalProviderError } from "@/core/retrieval/provider-request";
 import { projectQdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
 import { QdrantOperationError } from "@/core/retrieval/qdrant/store";
@@ -168,9 +169,13 @@ function visibility(state: AskState) {
 }
 
 function conversationDebug(state: AskState) {
+	const pending = readPendingClarification(
+		state.retrieval_debug?.pending_clarification,
+	);
 	const { conflict_evidence: _conflictEvidence, ...judge } =
 		state.judgement ?? {};
 	return {
+		...(pending ? { pending_clarification: pending } : {}),
 		mode: "live",
 		refused: state.refused === true,
 		refuse_reason: state.refuse_reason ?? null,
@@ -253,6 +258,9 @@ async function persistConversation(input: {
 		return { persisted: false, persist_error: null };
 	}
 	try {
+		const pending = readPendingClarification(
+			input.state.retrieval_debug?.pending_clarification,
+		);
 		await input.memoryStore.append(
 			input.scope,
 			input.sessionId,
@@ -262,6 +270,7 @@ async function persistConversation(input: {
 					role: "assistant",
 					content: input.answer,
 					...(input.provenance ? { provenance: input.provenance } : {}),
+					...(pending ? { pending_clarification: pending } : {}),
 				},
 			],
 			input.policy.session_memory_max_turns,

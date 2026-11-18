@@ -11,17 +11,29 @@ const FOLLOWUP_REFERENCE_ZH_RE =
 const FOLLOWUP_REFERENCE_EN_RE =
 	/\b(?:it|its|they|them|their|this|that|these|those|above|previous|former|latter|same|elaborate|more details?|continue|follow[\s-]?up)\b/i;
 
+const EMBEDDED_REFERENCE_ZH_RE =
+	/(?<!其)(?:它|他(?:们|的))|她(?:们|的)|上述|前者|后者|刚才|(?<!应)该(?:方案|文件|合同|规定)|这(?:个|份|项)|那(?:个|份|项)/;
+
+export function hasFollowupReference(question: string): boolean {
+	return (
+		EMBEDDED_REFERENCE_ZH_RE.test(question) ||
+		FOLLOWUP_REFERENCE_ZH_RE.test(question) ||
+		FOLLOWUP_REFERENCE_EN_RE.test(question)
+	);
+}
+
 /**
  * Returns true when a follow-up question appears self-contained (sufficiently
- * specific and free of anaphoric or elliptical references), allowing Ask to
- * skip the extra LLM rewrite round-trip without losing coreference accuracy.
+ * specific and free of common references); this fast path is a heuristic.
  */
 export function isSelfContainedFollowupQuestion(question: string): boolean {
 	const trimmed = question.trim();
-	if (trimmed.length < 8) return false;
-	if (FOLLOWUP_REFERENCE_ZH_RE.test(trimmed)) return false;
-	if (FOLLOWUP_REFERENCE_EN_RE.test(trimmed)) return false;
-	return true;
+	if (trimmed.length < 8 || hasFollowupReference(trimmed)) return false;
+	// Length alone cannot distinguish “生效日期是什么时候？” from a named lookup.
+	// With history, prefer one resolution call over silently dropping an omitted subject.
+	return /《[^》]+》|(?:根据|依据|关于|针对)\S{2}|[\p{L}\d][\p{L}\d\s-]{1,40}(?:的|中|里)\S{2}|\b(?:for|of|about|under|within)\s+\w{2,}/iu.test(
+		trimmed,
+	);
 }
 
 export function createRewriteNode(context: AskGraphContext) {
@@ -32,6 +44,25 @@ export function createRewriteNode(context: AskGraphContext) {
 			plan: state.retrieval_plan ?? {},
 		});
 		const query = rewritten.query?.trim();
+		if (rewritten.clarification) {
+			const plan = {
+				...state.retrieval_plan,
+				route: "clarify",
+				path: "clarify",
+				execute_path: "clarify",
+			};
+			return {
+				answer: rewritten.clarification,
+				retrieval_plan: plan,
+				retrieval_debug: mergeRetrievalDebug(state, {
+					rewrite: rewritten.mode,
+					pending_clarification: rewritten.pendingClarification,
+					retrieval_plan: plan,
+					route: "clarify",
+					path: "clarify",
+				}),
+			};
+		}
 		if (!query) {
 			return {
 				refuse_reason: "invalid_rewrite",

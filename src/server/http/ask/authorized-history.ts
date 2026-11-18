@@ -1,4 +1,8 @@
 import "server-only";
+import {
+	type PendingClarification,
+	readPendingClarification,
+} from "@/core/ask-graph/clarification";
 
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import {
@@ -17,7 +21,11 @@ export {
 } from "@/server/conversations/memory-provenance";
 
 export type AuthorizedHistory = {
-	messages: { role: "user" | "assistant"; content: string }[];
+	messages: {
+		role: "user" | "assistant";
+		content: string;
+		pending_clarification?: PendingClarification;
+	}[];
 	sourceReferences: Record<string, unknown>[];
 };
 
@@ -32,6 +40,7 @@ type HistoryCandidate = {
 	content: string;
 	complete: boolean;
 	provenance?: unknown;
+	pending_clarification?: unknown;
 };
 
 type Exchange = {
@@ -149,13 +158,22 @@ async function authorizeCandidates(
 			message.content.length > 100_000
 		) {
 			question = undefined;
+			exchanges.length = 0;
 			continue;
 		}
 		if (message.role === "user") {
+			if (question) exchanges.length = 0;
 			question = message;
 			continue;
 		}
+		let accepted = false;
 		if (message.role === "assistant" && question) {
+			const pending = readPendingClarification(message.pending_clarification);
+			if (message.pending_clarification !== undefined && !pending) {
+				exchanges.length = 0;
+				question = undefined;
+				continue;
+			}
 			const references = exchangeSources(message.provenance, input);
 			const userReferences =
 				question.provenance === undefined
@@ -167,15 +185,23 @@ async function authorizeCandidates(
 					exchanges.push({
 						messages: [
 							{ role: "user", content: question.content },
-							{ role: "assistant", content: message.content },
+							{
+								role: "assistant",
+								content: message.content,
+								...(pending ? { pending_clarification: pending } : {}),
+							},
 						],
 						sourceReferences: combined,
 					});
+					accepted = true;
 				}
 			}
 		}
+		// A missing exchange is a context boundary, not permission to use an older subject.
+		if (!accepted) exchanges.length = 0;
 		question = undefined;
 	}
+	if (question) exchanges.length = 0;
 
 	// Keep recent whole exchanges within the dependency budget, never trim lineage.
 	const selected: Exchange[] = [];
@@ -186,7 +212,7 @@ async function authorizeCandidates(
 			...dependencies,
 			...exchange.sourceReferences,
 		]);
-		if (combined === null) continue;
+		if (combined === null) break;
 		selected.push(exchange);
 		dependencies = combined;
 	}
@@ -202,13 +228,16 @@ async function authorizeCandidates(
 		throw new Error("History authorizer returned invalid source references");
 	}
 	const allowedKeys = new Set(authorized.map(referenceKey));
-	const safe = selected
-		.reverse()
-		.filter((exchange) =>
-			exchange.sourceReferences.every((reference) =>
+	const safe: Exchange[] = [];
+	for (const exchange of selected) {
+		if (
+			!exchange.sourceReferences.every((reference) =>
 				allowedKeys.has(referenceKey(reference)),
-			),
-		);
+			)
+		)
+			break;
+		safe.unshift(exchange);
+	}
 	const safeReferences = sourceReferences(
 		safe.flatMap((exchange) => exchange.sourceReferences),
 	);
@@ -241,14 +270,25 @@ export function recoverArchiveProvenance(
 	},
 ): (MemoryProvenance | null)[] {
 	const matches = new Map<string, MemoryProvenance | null>();
+	const clarificationKeys = new Set<string>();
+	let currentClarificationKey: string | undefined;
 	let question: SessionMemoryMessage | undefined;
-	for (const message of input.messages) {
+	for (const [index, message] of input.messages.entries()) {
 		if (message.role === "user") {
 			question = message;
 			continue;
 		}
 		if (question && message.role === "assistant") {
 			const key = JSON.stringify([question.content, message.content]);
+			if (message.pending_clarification !== undefined) {
+				clarificationKeys.add(key);
+				if (
+					index === input.messages.length - 1 &&
+					!matches.has(key) &&
+					readPendingClarification(message.pending_clarification)
+				)
+					currentClarificationKey = key;
+			}
 			const sources = exchangeSources(message.provenance, input);
 			const userSources = question.provenance
 				? exchangeSources(question.provenance, input)
@@ -267,9 +307,17 @@ export function recoverArchiveProvenance(
 		}
 		question = undefined;
 	}
-	return input.turns.map(
-		(turn) => matches.get(JSON.stringify([turn.question, turn.answer])) ?? null,
-	);
+	return input.turns.map((turn, index) => {
+		const key = JSON.stringify([turn.question, turn.answer]);
+		// An old or ambiguous choice stays viewable, but null lineage preserves its
+		// context boundary instead of letting archived text recreate the candidates.
+		if (
+			clarificationKeys.has(key) &&
+			(key !== currentClarificationKey || index !== input.turns.length - 1)
+		)
+			return null;
+		return matches.get(key) ?? null;
+	});
 }
 
 export function authorizeArchivedHistory(
@@ -290,6 +338,9 @@ export function authorizeArchivedHistory(
 			complete: turn.status === "complete",
 			provenance: isRecord(turn.debug)
 				? turn.debug.memory_provenance
+				: undefined,
+			pending_clarification: isRecord(turn.debug)
+				? turn.debug.pending_clarification
 				: undefined,
 		})),
 	});

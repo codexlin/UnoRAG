@@ -1,3 +1,4 @@
+import type { PendingClarification } from "./clarification";
 import type {
 	AskHistoryMessage,
 	AskMetadata,
@@ -26,6 +27,8 @@ export interface QueryRewrite {
 	query: string;
 	mode?: string;
 	plan?: AskMetadata;
+	clarification?: string;
+	pendingClarification?: PendingClarification;
 }
 
 export interface QueryRewriter {

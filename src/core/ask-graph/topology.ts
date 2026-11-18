@@ -202,6 +202,7 @@ export function compileAskGraph(context: AskGraphContext) {
 			end: END,
 		})
 		.addConditionalEdges("rewrite", routeAfterRewrite, {
+			clarify: "clarify",
 			retrieve: "retrieve",
 			table: "table_retrieve",
 			refuse: "refuse",

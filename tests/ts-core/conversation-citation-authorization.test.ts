@@ -225,6 +225,94 @@ test("thread list does not authorize or load citation bodies", async () => {
 	assert.equal(payload[0].turn_count, 1);
 });
 
+for (const continuing of [false, true]) {
+	test(`${continuing ? "continue" : "GET"} projects public debug without exposing or mutating server clarification state`, async () => {
+		const { handleNativeConversationRequest } = await handlerModule;
+		const pending = {
+			version: 1 as const,
+			question: "when does it start?",
+			candidates: ["A", "B"],
+			createdAt: Date.now(),
+			expiresAt: Date.now() + 60_000,
+		};
+		const marker = {
+			version: 1,
+			libraryId: LIBRARY_ID,
+			sourceReferences: [
+				{
+					doc_id: "document-a",
+					document_version_id: VERSION_ID,
+					generation_id: GENERATION_ID,
+				},
+			],
+		};
+		const debug = {
+			pending_clarification: pending,
+			memory_provenance: marker,
+			retrieval_debug: {
+				trace_id: "public-trace",
+				total_duration_ms: 42,
+				usedHybrid: true,
+				pending_clarification: pending,
+				memory_provenance: marker,
+				retrieval_plan: { grounded_question: "private grounded question" },
+				stages: [
+					{
+						stage: "rewrite",
+						duration_ms: 7,
+						ok: true,
+						detail: { pending_clarification: pending },
+					},
+				],
+			},
+		};
+		const base = storedThread();
+		const stored = {
+			...base,
+			turns: [base.turns[0], { ...base.turns[1], debug }],
+		};
+		const before = structuredClone(stored);
+		const path = [
+			"v1",
+			"threads",
+			THREAD_ID,
+			...(continuing ? ["continue"] : []),
+		];
+		const response = await handleNativeConversationRequest({
+			request: new Request(`http://local/${path.join("/")}`, {
+				method: continuing ? "POST" : "GET",
+			}),
+			path,
+			identity,
+			repository: {
+				getThread: async () => stored,
+				touchThread: async () => stored,
+			} as never,
+			citationAuthorizer: {
+				filterAuthorized: async ({ citations }) =>
+					citations.filter((item) => item.id === "citation-1"),
+			},
+		});
+		assert.equal(response?.status, 200);
+		const payload = await response?.json();
+		assert.deepEqual(payload.turns[0].retrieval_debug, {
+			trace_id: "public-trace",
+			total_duration_ms: 42,
+			used_hybrid: true,
+			stages: [{ stage: "rewrite", duration_ms: 7, ok: true }],
+		});
+		assert.deepEqual(
+			payload.turns[0].citations.map((item: { id: string }) => item.id),
+			["citation-1"],
+		);
+		assert.doesNotMatch(
+			JSON.stringify(payload),
+			/pending_clarification|memory_provenance|private grounded question/,
+		);
+		assert.deepEqual(stored, before);
+	});
+}
+
 test("archive takes provenance only from scoped server memory, never submitted debug or edited text", async () => {
 	const { handleNativeConversationRequest } = await handlerModule;
 	const { authorizeArchivedHistory } = await import(
@@ -348,11 +436,228 @@ test("archive takes provenance only from scoped server memory, never submitted d
 			filterAuthorized: async ({ citations }) => citations,
 		},
 	});
-	assert.deepEqual(history.messages, [
+	assert.deepEqual(history.messages, []);
+	const trustedPrefix = await authorizeArchivedHistory({
+		identity,
+		libraryId: LIBRARY_ID,
+		turns: created.turns.slice(0, 2),
+		citationAuthorizer: {
+			filterAuthorized: async ({ citations }) => citations,
+		},
+	});
+	assert.deepEqual(trustedPrefix.messages, [
 		{ role: "user", content: "question" },
 		{ role: "assistant", content: "answer" },
 	]);
 });
+
+test("archive recovers a pending choice only from the exact latest server exchange", async () => {
+	const { handleNativeConversationRequest } = await handlerModule;
+	const pending = {
+		version: 1 as const,
+		question: "when does it start?",
+		candidates: ["A", "B"],
+		createdAt: Date.now(),
+		expiresAt: Date.now() + 60_000,
+	};
+	const marker = {
+		version: 1 as const,
+		libraryId: LIBRARY_ID,
+		sourceReferences: [
+			{
+				doc_id: "document-a",
+				document_version_id: VERSION_ID,
+				generation_id: GENERATION_ID,
+			},
+		],
+	};
+	for (const answer of ["choose A or B", "edited choice"]) {
+		let saved: Record<string, unknown> | undefined;
+		const response = await handleNativeConversationRequest({
+			request: new Request("http://local/v1/threads", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					session_id: "pending-session",
+					library_id: LIBRARY_ID,
+					turns: [
+						{
+							question: pending.question,
+							answer,
+							citations: [],
+							retrieval_debug: {
+								pending_clarification: { ...pending, candidates: ["forged"] },
+							},
+						},
+					],
+				}),
+			}),
+			path: ["v1", "threads"],
+			identity,
+			repository: {
+				async createThreadWithTurns(
+					_scope: unknown,
+					input: { turns: { debug?: Record<string, unknown> }[] },
+				) {
+					const base = storedThread();
+					const turns = input.turns.map((turn, index) => ({
+						...base.turns[index % 2],
+						...turn,
+					}));
+					saved = input.turns[1]?.debug;
+					return { ...base, turns };
+				},
+			} as never,
+			memoryStore: {
+				async load() {
+					return [
+						{ role: "user" as const, content: pending.question },
+						{
+							role: "assistant" as const,
+							content: "choose A or B",
+							provenance: marker,
+							pending_clarification: pending,
+						},
+					];
+				},
+				async append() {
+					throw new Error("not expected");
+				},
+			},
+			citationAuthorizer: {
+				filterAuthorized: async ({ citations }) => citations,
+			},
+		});
+		assert.equal(response?.status, 200);
+		assert.deepEqual(
+			saved?.pending_clarification,
+			answer === "choose A or B" ? pending : undefined,
+		);
+		assert.equal(
+			JSON.stringify(await response?.json()).includes("pending_clarification"),
+			false,
+		);
+	}
+});
+
+for (const expired of [false, true]) {
+	test(`archive never promotes an ${expired ? "expired" : "unexpired"} old clarification into reusable history`, async () => {
+		const { handleNativeConversationRequest } = await handlerModule;
+		const { authorizeArchivedHistory } = await import(
+			"../../src/server/http/ask/authorized-history"
+		);
+		const now = Date.now();
+		const pending = {
+			version: 1 as const,
+			question: "when does it start?",
+			candidates: ["A", "B"],
+			createdAt: expired ? now - 120_000 : now,
+			expiresAt: expired ? now - 60_000 : now + 60_000,
+		};
+		const marker = {
+			version: 1 as const,
+			libraryId: LIBRARY_ID,
+			sourceReferences: [
+				{
+					doc_id: "document-a",
+					document_version_id: VERSION_ID,
+					generation_id: GENERATION_ID,
+				},
+			],
+		};
+		let saved: {
+			role: string;
+			content: string;
+			status: string;
+			debug?: Record<string, unknown> | null;
+		}[] = [];
+		const response = await handleNativeConversationRequest({
+			request: new Request("http://local/v1/threads", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					session_id: "pending-session",
+					library_id: LIBRARY_ID,
+					turns: [
+						{
+							question: pending.question,
+							answer: "choose A or B",
+							retrieval_debug: {
+								pending_clarification: {
+									...pending,
+									createdAt: now,
+									expiresAt: now + 60_000,
+								},
+								memory_provenance: marker,
+							},
+						},
+					],
+				}),
+			}),
+			path: ["v1", "threads"],
+			identity,
+			repository: {
+				async createThreadWithTurns(
+					_scope: unknown,
+					input: {
+						turns: {
+							role: string;
+							content: string;
+							debug?: Record<string, unknown>;
+						}[];
+					},
+				) {
+					const base = storedThread();
+					const turns = input.turns.map((turn, index) => ({
+						...base.turns[index % 2],
+						...turn,
+					}));
+					saved = turns;
+					return { ...base, turns };
+				},
+			} as never,
+			memoryStore: {
+				load: async () => [
+					{ role: "user", content: pending.question },
+					{
+						role: "assistant",
+						content: "choose A or B",
+						provenance: marker,
+						pending_clarification: pending,
+					},
+					{ role: "user", content: "new question" },
+					{ role: "assistant", content: "new answer", provenance: marker },
+				],
+				append: async () => {
+					throw new Error("archive must not rewrite memory");
+				},
+			},
+			citationAuthorizer: {
+				filterAuthorized: async ({ citations }) => citations,
+			},
+		});
+		assert.equal(response?.status, 200);
+		assert.equal(saved[1]?.debug?.memory_provenance, null);
+		assert.equal(saved[1]?.debug?.pending_clarification, undefined);
+		const payload = await response?.json();
+		assert.equal(payload.turns[0].answer, "choose A or B");
+		assert.doesNotMatch(
+			JSON.stringify(payload),
+			/pending_clarification|memory_provenance/,
+		);
+		assert.deepEqual(
+			await authorizeArchivedHistory({
+				identity,
+				libraryId: LIBRARY_ID,
+				turns: saved,
+				citationAuthorizer: {
+					filterAuthorized: async ({ citations }) => citations,
+				},
+			}),
+			{ messages: [], sourceReferences: [] },
+		);
+	});
+}
 
 test("unavailable server memory fails archiving before any database write", async () => {
 	const { handleNativeConversationRequest } = await handlerModule;

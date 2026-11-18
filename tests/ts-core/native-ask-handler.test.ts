@@ -12,6 +12,7 @@ import {
 import type { ModelUsageCall } from "../../src/core/ai/model-usage";
 import type { AskGraphInput, AskState } from "../../src/core/ask-graph";
 import { AskGraphExecutionError } from "../../src/core/ask-graph";
+import { CLARIFICATION_TTL_MS } from "../../src/core/ask-graph/clarification";
 import type {
 	InternalCitation,
 	RetrievalResult,
@@ -1779,6 +1780,46 @@ test("persist stage reports a sanitized failure without failing the answer", asy
 	);
 	assert.equal(persistStage?.outcome, "failed");
 	assert.equal(persistStage?.errorCode, "conversation_persist_failed");
+});
+
+test("clarification state is persisted server-side without entering the public diagnostics", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const now = Date.now();
+	const pending = {
+		version: 1 as const,
+		question: "它什么时候生效？",
+		candidates: ["方案 A", "方案 B"],
+		createdAt: now,
+		expiresAt: now + CLARIFICATION_TTL_MS,
+	};
+	const state = askState({
+		refused: true,
+		answer: "请选择 A 或 B",
+		retrieval_debug: { pending_clarification: pending },
+	});
+	const memory = new FakeSessionMemory();
+	const response = await handleNativeAskRequest({
+		request: request({
+			question: pending.question,
+			library_id: LIBRARY_ID,
+			session_id: "pending-choice",
+		}),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		memoryStore: memory as never,
+		runtimeFactory: (() => new FakeRuntime(state)) as never,
+	});
+	assert.equal(response?.status, 200);
+	assert.equal(
+		JSON.stringify(await response?.json()).includes("pending_clarification"),
+		false,
+	);
+	assert.deepEqual(
+		(memory.appended[0]?.messages[1] as Record<string, unknown> | undefined)
+			?.pending_clarification,
+		pending,
+	);
 });
 
 test("temporary session memory is scoped, bounded, and receives policy settings", async () => {

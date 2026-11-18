@@ -315,10 +315,7 @@ const structuredCalls = {
 	route: (adapter: StructuredOutputAdapter, options: RequestOptions) =>
 		adapter.route({ question: "question" }, options),
 	rewrite: (adapter: StructuredOutputAdapter, options: RequestOptions) =>
-		adapter.rewrite(
-			{ question: "question", fallbackSemanticQuery: "question" },
-			options,
-		),
+		adapter.rewrite({ question: "question", history: [] }, options),
 	judge: (adapter: StructuredOutputAdapter, options: RequestOptions) =>
 		adapter.judge(
 			{ question: "question", citations: [], attempts: 0 },

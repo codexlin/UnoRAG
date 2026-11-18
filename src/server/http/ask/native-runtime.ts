@@ -20,12 +20,17 @@ import {
 } from "@/core/ask-graph";
 import { deriveAnswerRequirements } from "@/core/ask-graph/answer-requirements";
 import {
+	clarificationSelection,
+	latestClarification,
+} from "@/core/ask-graph/clarification";
+import {
 	boundedJudgeEvidenceText,
 	compactComparisonEvidence,
 	scopedProbabilityOverlapReason,
 } from "@/core/ask-graph/comparison-evidence";
 import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
-import { isSelfContainedFollowupQuestion } from "@/core/ask-graph/nodes/rewrite";
+import { hasFollowupReference } from "@/core/ask-graph/nodes/rewrite";
+import { groundedQuestion } from "@/core/ask-graph/state";
 import { deriveGroundedTableLookup } from "@/core/ask-graph/table";
 import {
 	isFormFieldLookup,
@@ -60,6 +65,7 @@ import {
 	evidenceDocumentContext,
 	resolveAskDocumentEvidence,
 } from "./document-evidence";
+import { rewriteFollowup } from "./followup-rewrite";
 import { judgeFailureDebug } from "./judge-diagnostics";
 import type { NativeAskPolicy } from "./policy";
 import {
@@ -128,7 +134,11 @@ export function fallbackQueryRoute(
 	) {
 		return { queryType: "table", reason: "structured_router_fallback_table" };
 	}
-	if (historyCount > 0 && FALLBACK_FOLLOW_UP_PATTERN.test(normalized)) {
+	if (
+		historyCount > 0 &&
+		(FALLBACK_FOLLOW_UP_PATTERN.test(normalized) ||
+			hasFollowupReference(normalized))
+	) {
 		return {
 			queryType: "follow_up",
 			reason: "structured_router_fallback_follow_up",
@@ -272,7 +282,7 @@ export class NativeAskRuntime {
 		let catalog: ActiveDocumentCatalog | undefined;
 		if (loadDocumentCatalog) {
 			const resolution = await resolveAskDocumentEvidence({
-				question: state.question ?? "",
+				question: groundedQuestion(state),
 				libraryId: this.libraryId,
 				scope,
 				filters: documentEvidenceFilters(filters(state)),
@@ -282,7 +292,7 @@ export class NativeAskRuntime {
 						identity: this.identity,
 						libraryId: this.libraryId,
 						scope,
-						question: state.question ?? "",
+						question: groundedQuestion(state),
 					});
 					return catalog;
 				},
@@ -450,37 +460,21 @@ export class NativeAskRuntime {
 		};
 		return {
 			queryRouter: {
-				route: ({ question, history }) =>
-					fallbackQueryRoute(question, history.length),
+				route: ({ question, history }) => {
+					const pending = latestClarification(history);
+					return pending && clarificationSelection(question, pending)
+						? { queryType: "follow_up", reason: "pending_clarification_reply" }
+						: fallbackQueryRoute(question, history.length);
+				},
 			},
 			queryRewriter: {
-				rewrite: async ({ question, history }) => {
-					if (history.length === 0) {
-						return { query: question, mode: "identity_first_turn" };
-					}
-					if (isSelfContainedFollowupQuestion(question)) {
-						return { query: question, mode: "identity_self_contained" };
-					}
-					await this.assertAuthorized?.(this.retrievedEvidence);
-					try {
-						const rewritten = await structured.rewrite(
-							{ question, fallbackSemanticQuery: question },
-							{
-								abortSignal: this.signal,
-								beforeRequest: this.beforeModelRequest,
-							},
-						);
-						return {
-							query: rewritten.semantic_query,
-							mode: "structured",
-							plan: { filters: rewritten.filters },
-						};
-					} catch (error) {
-						throwIfAborted(this.signal, error);
-						throwIfConcurrencyUnavailable(error);
-						return { query: question, mode: "structured_fallback" };
-					}
-				},
+				rewrite: ({ question, history }) =>
+					rewriteFollowup(question, history, (input) =>
+						structured.rewrite(input, {
+							abortSignal: this.signal,
+							beforeRequest: this.beforeModelRequest,
+						}),
+					),
 			},
 			judge: {
 				judge: async (state) => {
@@ -540,7 +534,7 @@ export class NativeAskRuntime {
 						)
 							? document
 							: undefined;
-					const question = state.question ?? "";
+					const question = groundedQuestion(state);
 					const overlap =
 						scopedDocument && state.query_type === "compare"
 							? scopedProbabilityOverlapReason(question, citations)
@@ -629,7 +623,7 @@ export class NativeAskRuntime {
 						await this.retrieve(state, { tableOnly: false }),
 					);
 					let groundedPlan = deriveGroundedTableLookup(
-						state.question ?? "",
+						groundedQuestion(state),
 						tableCandidates(result.citations),
 					);
 					let tableProbe = false;
@@ -650,7 +644,7 @@ export class NativeAskRuntime {
 							await this.retrieve(state, { tableOnly: true }),
 						);
 						groundedPlan = deriveGroundedTableLookup(
-							state.question ?? "",
+							groundedQuestion(state),
 							tableCandidates(precise.citations),
 						);
 						if (groundedPlan) result = precise;
@@ -739,8 +733,8 @@ export class NativeAskRuntime {
 			return;
 		}
 		const generationInput = {
-			question: state.question ?? "",
-			requirements: deriveAnswerRequirements(state.question ?? ""),
+			question: groundedQuestion(state),
+			requirements: deriveAnswerRequirements(groundedQuestion(state)),
 			context: [
 				...this.documentScope
 					.filter((doc) =>
