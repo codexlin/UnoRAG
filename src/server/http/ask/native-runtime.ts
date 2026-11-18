@@ -30,6 +30,7 @@ import {
 } from "@/core/ask-graph/comparison-evidence";
 import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
 import { hasFollowupReference } from "@/core/ask-graph/nodes/rewrite";
+import { planForGroundedQuestion } from "@/core/ask-graph/nodes/routing";
 import { groundedQuestion } from "@/core/ask-graph/state";
 import { deriveGroundedTableLookup } from "@/core/ask-graph/table";
 import {
@@ -468,13 +469,34 @@ export class NativeAskRuntime {
 				},
 			},
 			queryRewriter: {
-				rewrite: ({ question, history }) =>
-					rewriteFollowup(question, history, (input) =>
+				rewrite: async ({ question, history }) => {
+					const rewritten = await rewriteFollowup(question, history, (input) =>
 						structured.rewrite(input, {
 							abortSignal: this.signal,
 							beforeRequest: this.beforeModelRequest,
 						}),
-					),
+					);
+					if (
+						rewritten.mode !== "clarification_resolved" &&
+						rewritten.mode !== "history_resolved"
+					)
+						return rewritten;
+					// Route the restored task, not the short choice (e.g. "B").
+					const route = fallbackQueryRoute(rewritten.query);
+					const plan = planForGroundedQuestion(
+						route.queryType,
+						rewritten.query,
+						route.reason,
+					);
+					if (plan.query_type === "fact") return rewritten;
+					return {
+						...rewritten,
+						plan: {
+							...plan,
+							...rewritten.plan,
+						},
+					};
+				},
 			},
 			judge: {
 				judge: async (state) => {

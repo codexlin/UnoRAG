@@ -14,6 +14,7 @@ export const SessionMemoryMessageSchema = z
 		content: z.string().max(100_000),
 		provenance: MemoryProvenanceSchema.optional(),
 		pending_clarification: PendingClarificationSchema.optional(),
+		history_boundary: z.literal(true).optional(),
 	})
 	.strict();
 

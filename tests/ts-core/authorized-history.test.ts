@@ -271,6 +271,61 @@ test("archive recovery never bridges messages or discards unknown transitive sou
 	}
 });
 
+test("explicit failure boundaries survive parsing and archive omission without trusting a repeated prefix", async () => {
+	const [
+		{ recoverArchiveProvenance, authorizeHistory },
+		{ parseSessionMemoryMessages },
+	] = await modules;
+	const before = exchange(provenance(), "old question", "old answer");
+	const boundary = {
+		role: "assistant" as const,
+		content: "",
+		history_boundary: true as const,
+	};
+	const after = exchange(
+		provenance([reference("b")]),
+		"new question",
+		"new answer",
+	);
+	const messages = [...before, boundary, ...after];
+	assert.deepEqual(
+		parseSessionMemoryMessages(
+			messages.map((message) => JSON.stringify(message)),
+		),
+		messages,
+	);
+	assert.deepEqual(
+		recoverArchiveProvenance({
+			identity,
+			libraryId,
+			messages,
+			turns: [
+				{ question: "old question", answer: "old answer" },
+				{ question: "new question", answer: "new answer" },
+			],
+		}),
+		[null, provenance([reference("b")])],
+	);
+	assert.deepEqual(
+		recoverArchiveProvenance({
+			identity,
+			libraryId,
+			messages: [...before, boundary, ...before],
+			turns: [{ question: "old question", answer: "old answer" }],
+		}),
+		[null],
+	);
+	assert.deepEqual(
+		await authorizeHistory({
+			identity,
+			libraryId,
+			messages: [...before, { ...boundary, provenance: provenance() }],
+			citationAuthorizer: authorizer().value,
+		}),
+		{ messages: [], sourceReferences: [] },
+	);
+});
+
 test("archive clarification provenance is limited to the unique current choice at the archive tail", async (t) => {
 	const [{ recoverArchiveProvenance }] = await modules;
 	const now = 1_000_000;

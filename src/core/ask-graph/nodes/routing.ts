@@ -138,6 +138,21 @@ function defaultPlan(queryType: string, reason: string): AskMetadata {
 	};
 }
 
+export function planForGroundedQuestion(
+	rawQueryType: string,
+	question: string,
+	reason: string,
+): AskMetadata {
+	const normalized = executionQueryType(rawQueryType, question);
+	const queryType = KNOWN_QUERY_TYPES.has(normalized)
+		? normalized
+		: "ambiguous";
+	const plan = defaultPlan(queryType, reason);
+	return queryType === "table"
+		? { ...plan, filters: { record_type: "table" } }
+		: plan;
+}
+
 export function createRoutingNodes(context: AskGraphContext) {
 	return {
 		queryRouter: async (state: AskState): Promise<AskStateUpdate> => {

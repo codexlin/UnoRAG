@@ -41,6 +41,7 @@ type HistoryCandidate = {
 	complete: boolean;
 	provenance?: unknown;
 	pending_clarification?: unknown;
+	history_boundary?: boolean;
 };
 
 type Exchange = {
@@ -153,6 +154,7 @@ async function authorizeCandidates(
 	let question: HistoryCandidate | undefined;
 	for (const message of input.messages) {
 		if (
+			message.history_boundary === true ||
 			!message.complete ||
 			typeof message.content !== "string" ||
 			message.content.length > 100_000
@@ -274,6 +276,13 @@ export function recoverArchiveProvenance(
 	let currentClarificationKey: string | undefined;
 	let question: SessionMemoryMessage | undefined;
 	for (const [index, message] of input.messages.entries()) {
+		if (message.history_boundary) {
+			// Clients may omit failed turns when archiving. Do not restore the prefix.
+			for (const key of matches.keys()) matches.set(key, null);
+			currentClarificationKey = undefined;
+			question = undefined;
+			continue;
+		}
 		if (message.role === "user") {
 			question = message;
 			continue;

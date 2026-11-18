@@ -211,7 +211,9 @@ test("real runtime rechecks after SSE frames were buffered before starting the p
 	assert.match(body, /"code":"ask_access_changed"/);
 	assert.equal(fixture.providerCalls(), 0);
 	assert.equal(fixture.aborted(), true);
-	assert.deepEqual(fixture.appended, []);
+	assert.deepEqual(fixture.appended, [
+		[{ role: "assistant", content: "", history_boundary: true }],
+	]);
 });
 
 test("real runtime rechecks again after answer concurrency admission", {
@@ -236,7 +238,9 @@ test("real runtime rechecks again after answer concurrency admission", {
 	assert.equal(terminalError.truncated, true);
 	assert.equal(fixture.providerCalls(), 0);
 	assert.equal(fixture.aborted(), true);
-	assert.deepEqual(fixture.appended, []);
+	assert.deepEqual(fixture.appended, [
+		[{ role: "assistant", content: "", history_boundary: true }],
+	]);
 	assert.deepEqual(gate.snapshot(), { active: 0, queued: 0, limit: 1 });
 });
 

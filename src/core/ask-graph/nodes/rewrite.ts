@@ -1,5 +1,6 @@
 import type { AskGraphContext } from "../context";
 import {
+	type AskMetadata,
 	type AskState,
 	type AskStateUpdate,
 	mergeRetrievalDebug,
@@ -90,19 +91,27 @@ export function createRewriteNode(context: AskGraphContext) {
 			!Array.isArray(rewrittenPlan.filters)
 				? (rewrittenPlan.filters as Record<string, unknown>)
 				: {};
-		const plan = {
+		const plan: AskMetadata = {
 			...currentPlan,
 			...rewrittenPlan,
 			filters: { ...currentFilters, ...rewrittenFilters },
 			rewritten_queries: [query],
 		};
 		return {
+			query_type:
+				typeof plan.query_type === "string"
+					? plan.query_type
+					: state.query_type,
 			rewritten_question: query,
 			retrieval_plan: plan,
 			retrieval_attempts: 0,
 			refused: false,
 			refuse_reason: null,
 			retrieval_debug: mergeRetrievalDebug(state, {
+				query_type: plan.query_type ?? state.query_type,
+				route: plan.route,
+				path: plan.path,
+				precise_kind: plan.precise_kind,
 				rewrite: rewritten.mode ?? "injected",
 				history_turns: state.history?.length ?? 0,
 				retrieval_plan: plan,

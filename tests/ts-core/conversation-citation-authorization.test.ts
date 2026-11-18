@@ -451,6 +451,85 @@ test("archive takes provenance only from scoped server memory, never submitted d
 	]);
 });
 
+test("archive omission of a failed turn cannot recover the pre-boundary conversation", async () => {
+	const { handleNativeConversationRequest } = await handlerModule;
+	const { authorizeArchivedHistory } = await import(
+		"../../src/server/http/ask/authorized-history"
+	);
+	const marker = {
+		version: 1 as const,
+		libraryId: LIBRARY_ID,
+		sourceReferences: [
+			{
+				doc_id: "document-a",
+				document_version_id: VERSION_ID,
+				generation_id: GENERATION_ID,
+			},
+		],
+	};
+	let created: ReturnType<typeof storedThread> | undefined;
+	const response = await handleNativeConversationRequest({
+		request: new Request("http://local/v1/threads", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				session_id: "session-a",
+				library_id: LIBRARY_ID,
+				turns: [{ question: "question", answer: "answer" }],
+			}),
+		}),
+		path: ["v1", "threads"],
+		identity,
+		repository: {
+			async createThreadWithTurns(_scope: unknown, input: { turns: object[] }) {
+				const base = storedThread();
+				created = {
+					...base,
+					turns: input.turns.map((turn, index) => ({
+						...base.turns[index],
+						...turn,
+					})),
+				} as ReturnType<typeof storedThread>;
+				return created;
+			},
+		} as never,
+		memoryStore: {
+			async load() {
+				return [
+					{ role: "user", content: "question" },
+					{ role: "assistant", content: "answer", provenance: marker },
+					{ role: "assistant", content: "", history_boundary: true },
+				];
+			},
+			async append() {
+				throw new Error("archive must not rewrite memory");
+			},
+		},
+		citationAuthorizer: {
+			filterAuthorized: async ({ citations }) => citations,
+		},
+	});
+	assert.equal(response?.status, 200);
+	const body = await response?.json();
+	assert.equal(body.turns[0].answer, "answer");
+	assert.doesNotMatch(
+		JSON.stringify(body),
+		/history_boundary|memory_provenance/,
+	);
+	assert.ok(created);
+	assert.deepEqual(
+		await authorizeArchivedHistory({
+			identity,
+			libraryId: LIBRARY_ID,
+			turns: created.turns,
+			citationAuthorizer: {
+				filterAuthorized: async ({ citations }) => citations,
+			},
+		}),
+		{ messages: [], sourceReferences: [] },
+	);
+});
+
 test("archive recovers a pending choice only from the exact latest server exchange", async () => {
 	const { handleNativeConversationRequest } = await handlerModule;
 	const pending = {

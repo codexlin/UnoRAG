@@ -13,6 +13,58 @@ import {
 } from "../../src/core/ask-graph/clarification";
 import { mapQdrantHitToInternalCitation } from "../../src/core/retrieval/citation-mapper";
 import { rewriteFollowup } from "../../src/server/http/ask/followup-rewrite";
+
+test("explicit topic changes cut older referents but keep later elliptical turns", async () => {
+	const old = [
+		{ role: "user" as const, content: "采购合同甲的付款金额是多少？" },
+		{ role: "assistant" as const, content: "采购合同甲的付款金额是 80 元。" },
+	];
+	const latest = [
+		{ role: "user" as const, content: "采购合同乙的付款金额是多少？" },
+		{ role: "assistant" as const, content: "采购合同乙的付款金额是 95 元。" },
+	];
+	for (const tail of [
+		[],
+		[
+			{ role: "user" as const, content: "它什么时候生效？" },
+			{ role: "assistant" as const, content: "2027 年 8 月 1 日。" },
+		],
+	]) {
+		const result = await rewriteFollowup(
+			"它的到期日期呢？",
+			[...old, ...latest, ...tail],
+			async (input) => {
+				assert.deepEqual(input.history, [...latest, ...tail]);
+				return { resolution: "resolved", subjects: ["采购合同乙"] };
+			},
+		);
+		assert.equal(result.query, "采购合同乙的到期日期呢？");
+	}
+	const comparison = [
+		{
+			role: "user" as const,
+			content: "采购合同甲和采购合同乙的付款金额各是多少？",
+		},
+		{
+			role: "assistant" as const,
+			content: "采购合同甲为 80 元，采购合同乙为 95 元。",
+		},
+	];
+	const result = await rewriteFollowup(
+		"它的到期日期呢？",
+		[...old, ...comparison],
+		async (input) => {
+			assert.deepEqual(input.history, comparison);
+			return {
+				resolution: "ambiguous",
+				subjects: ["采购合同甲", "采购合同乙"],
+			};
+		},
+	);
+	assert.ok(result.clarification);
+	assert.equal(result.pendingClarification?.candidates.length, 2);
+});
+
 import { NativeAskPolicySchema } from "../../src/server/http/ask/policy";
 import { runtimeModule } from "../helpers/native-ask-runtime";
 
@@ -308,7 +360,10 @@ test("clarification choices are bounded, unique, and expire without changing the
 });
 
 test("reference resolution forwards only recent complete exchanges and never accepts invented subjects", async () => {
-	const messages = ["old", "one", "two", "three"].flatMap(history);
+	const messages = ["old", "one", "two", "three"].flatMap((subject) => [
+		{ role: "user" as const, content: "它的报价呢？" },
+		{ role: "assistant" as const, content: `${subject}的报价为 300 元。` },
+	]);
 	const result = await rewriteFollowup(question, messages, async (input) => {
 		assert.deepEqual(input.history, messages.slice(2));
 		return { resolution: "resolved", subjects: ["old"] };

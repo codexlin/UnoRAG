@@ -33,6 +33,9 @@ function recentExchanges(history: AskHistoryMessage[]): Message[] {
 			{ role: "user", content: user.content },
 			{ role: "assistant", content: assistant.content },
 		);
+		// A named, independent question starts a new topic. Earlier subjects are
+		// not competing referents; elliptical exchanges still retain their anchor.
+		if (isSelfContainedFollowupQuestion(user.content)) break;
 	}
 	return selected;
 }

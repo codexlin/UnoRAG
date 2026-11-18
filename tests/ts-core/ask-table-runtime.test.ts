@@ -7,6 +7,7 @@ import {
 	StructuredOutputAdapter,
 } from "../../src/core/ai";
 import type { AskGraphContext, AskState } from "../../src/core/ask-graph";
+import { readPendingClarification } from "../../src/core/ask-graph/clarification";
 import type { TableQueryPlan } from "../../src/core/ask-graph/table";
 import { chunkDocument } from "../../src/core/ingest/chunking";
 import { buildIndexPayloads } from "../../src/core/ingest/index-records";
@@ -172,6 +173,118 @@ const modelPlan: TableQueryPlan = {
 	selectColumns: [],
 	includeSummaryRows: false,
 };
+
+test("clarification resumes the original sum, count and sort table tasks", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	for (const [operation, question] of [
+		["sum", "它的表格中金额合计是多少？"],
+		["count", "它的表格一共有多少行？"],
+		["sort", "把它的表格按金额降序排列。"],
+	] as const) {
+		const source = {
+			...citation({
+				id: "budget-hit",
+				tableId: "budget",
+				device: "服务器",
+				amount: "120000",
+			}),
+			rows: [
+				["服务器", "120000"],
+				["交换机", "30000"],
+			],
+			row_end: 1,
+			table_row_count: 2,
+		};
+		const structured: StructuredOutputAdapter = new StructuredOutputAdapter(
+			{} as LanguageModel,
+			async (request) => {
+				if (request.schemaName === "rewrite")
+					return { resolution: "ambiguous", subjects: ["方案 A", "方案 B"] };
+				assert.equal(request.schemaName, "table_plan");
+				return {
+					...modelPlan,
+					operation,
+					...(operation !== "count" ? { column: "金额（元）" } : {}),
+					...(operation === "sort" ? { direction: "desc" } : {}),
+				};
+			},
+		);
+		const makeRuntime = () => {
+			const runtime = new NativeAskRuntime(
+				{
+					organizationId: "tenant-a",
+					workspaceId: "workspace-a",
+					principalId: "reader",
+					groupIds: [],
+				} as never,
+				"library-a",
+				undefined,
+				NativeAskPolicySchema.parse({}),
+				{
+					structured,
+					retrieval: {} as never,
+					answer: new AnswerStreamAdapter({} as LanguageModel, () => {
+						assert.fail(
+							"deterministic table answers must not invoke generation",
+						);
+					}),
+				},
+			);
+			Object.defineProperty(runtime, "retrieve", {
+				value: async (state: AskState, input: { tableOnly: boolean }) => {
+					assert.equal(input.tableOnly, true);
+					assert.equal(state.query_type, "table");
+					assert.match(state.rewritten_question ?? "", /方案 B/);
+					return { citations: [source], debug: {} };
+				},
+			});
+			return runtime;
+		};
+		const history: NonNullable<AskState["history"]> = [
+			{ role: "user", content: "对比方案 A 和方案 B" },
+			{ role: "assistant", content: "方案 A 和方案 B 各有独立的预算表。" },
+		];
+		const clarification = await makeRuntime().invoke({
+			session_id: `clarify-${operation}`,
+			question,
+			history,
+		});
+		assert.equal(clarification.refuse_reason, "ambiguous");
+		const pending = readPendingClarification(
+			clarification.retrieval_debug?.pending_clarification,
+		);
+		assert.ok(pending);
+		const runtime = makeRuntime();
+		const result = await runtime.invoke({
+			session_id: `resume-${operation}`,
+			question: "B",
+			history: [
+				...history,
+				{ role: "user", content: question },
+				{
+					role: "assistant",
+					content: clarification.answer ?? "",
+					pending_clarification: pending,
+				},
+			],
+		});
+		assert.equal(result.question, "B");
+		assert.equal(result.query_type, "table");
+		assert.equal(result.table_execution?.status, "success");
+		assert.equal(result.table_execution?.operation, operation);
+		if (operation === "sum")
+			assert.equal(result.table_execution?.answerValue, 150000);
+		if (operation === "count")
+			assert.equal(result.table_execution?.answerValue, 2);
+		assert.deepEqual(
+			result.citations?.map((c) => c.id),
+			[source.id],
+		);
+		let answer = "";
+		for await (const part of runtime.streamAnswer(result)) answer += part;
+		assert.ok(answer.includes("[1]"));
+	}
+});
 
 function planningState(): AskState {
 	return {
