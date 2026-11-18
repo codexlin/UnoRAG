@@ -5,6 +5,28 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+- Ground follow-up retrieval, table planning and evidence judgment in entities from
+  recent, continuously authorized conversation history. Keep the original question
+  in archives; history never substitutes for current authorized evidence.
+- Preserve bounded clarification choices across temporary sessions and archives.
+  Unknown choices do not renew the five-minute deadline; expired, revoked, replaced
+  or deleted sources cannot be revived by old conversation text. Private memory
+  provenance stays out of public conversation/debug responses.
+- Track accepted asynchronous document deletion until its actual terminal state.
+  Prevent stale list responses and cross-library navigation from hiding jobs or
+  updating the wrong cache; failed deletion remains visible and retryable.
+- Add Ask feedback reasons, operational triage and an export skeleton for manually
+  reviewed golden cases. Add scope-bound, process-local short-TTL retrieval caching
+  and an optional Redis-backed cross-Web LLM concurrency gate, with explicit
+  fail-closed configuration rather than a Provider RPM/TPM quota guarantee.
+- Parse Markdown pipe tables into TableIR, retrieve authorized document catalog
+  candidates with pg_trgm, and retain numeric qualifiers and deterministic table
+  inline citations. Qdrant Sparse/RRF and conditional Contextual Retrieval remain
+  experimental and disabled by default.
+- Upgrade note: apply migrations `0033` (feedback) and `0034` (pg_trgm catalog
+  indexes) with the documented drain/backup procedure. These changes have not
+  inherited the v0.3.2 deployment acceptance results.
+
 ## [0.3.2] - 2026-11-15
 
 Signed images passed their own HK acceptance: three-round quality 126/126,
