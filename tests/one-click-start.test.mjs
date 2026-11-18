@@ -164,7 +164,8 @@ function runSandboxStart(sandbox, extraEnv) {
 		cwd: sandbox,
 		encoding: "utf8",
 		env: {
-			...process.env,
+			HOME: sandbox,
+			TMPDIR: sandbox,
 			...extraEnv,
 			PATH: `${join(sandbox, "bin")}:/usr/bin:/bin`,
 		},
