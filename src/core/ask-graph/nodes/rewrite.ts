@@ -13,7 +13,7 @@ const FOLLOWUP_REFERENCE_EN_RE =
 	/\b(?:it|its|they|them|their|this|that|these|those|above|previous|former|latter|same|elaborate|more details?|continue|follow[\s-]?up)\b/i;
 
 const EMBEDDED_REFERENCE_ZH_RE =
-	/(?<!其)(?:它|他(?:们|的))|她(?:们|的)|上述|前者|后者|刚才|(?<!应)该(?:方案|文件|合同|规定)|这(?:个|份|项)|那(?:个|份|项)/;
+	/(?<!其)(?:它|他(?:们|的))|她(?:们|的)|上述|上面|上文|前面|之前|前者|后者|刚才|(?<!应)该(?:方案|文件|合同|规定)|此(?:方案|文件|合同|规定)|这(?:个|份|项|些|种)|那(?:个|份|项|些|种)/;
 
 export function hasFollowupReference(question: string): boolean {
 	return (

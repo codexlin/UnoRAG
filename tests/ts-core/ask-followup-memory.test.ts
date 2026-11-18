@@ -82,6 +82,47 @@ const unexpected = (): never => {
 	throw new Error("unexpected call");
 };
 
+test("described document lookups remain retrievable without prior conversation", async () => {
+	for (const lookup of [
+		"这份验收报告的项目名称和编号分别是什么？",
+		"这份低对比扫描报告中，项目建设周期和数据交换平台核心接口API调用成功率分别是多少？",
+		"请核对这份采购合同的付款日期。",
+		"那份运维手册中，备份校验需要哪些检查？",
+		"这份《项目验收报告》的项目编号是什么？",
+	]) {
+		const result = await rewriteFollowup(lookup, [], unexpected);
+		assert.equal(result.query, lookup);
+		assert.equal(result.clarification, undefined);
+	}
+	for (const dangling of [
+		"这份的编号是什么？",
+		"这份报告的编号是什么？",
+		"这个价格按月吗？",
+		"这份合同什么时候生效？",
+		"What does this say about payment?",
+		"When does this contract take effect?",
+		"What does it say about this acceptance report?",
+		"What does this say about their contract?",
+		"How does this acceptance report compare with that one?",
+		"What does this previously mentioned report say?",
+		"它是否符合这份验收报告的要求？",
+		"这份验收报告的金额比它高多少？",
+		"这份验收报告的金额比前面的高多少？",
+		"这份上述验收报告的项目编号是什么？",
+		"这份采购合同的金额比这些高多少？",
+	]) {
+		assert.ok((await rewriteFollowup(dangling, [], unexpected)).clarification);
+		assert.ok(
+			(
+				await rewriteFollowup(dangling, history("方案 A"), async () => ({
+					resolution: "standalone",
+					subjects: [],
+				}))
+			).clarification,
+		);
+	}
+});
+
 test("identical follow-ups resolve against their own history before retrieval; ambiguous references stop before retrieval", async (t) => {
 	const { NativeAskRuntime } = await runtimeModule;
 	const { DrizzleActiveGenerationResolver } = await import(
@@ -223,6 +264,18 @@ test("identical follow-ups resolve against their own history before retrieval; a
 			[doc.id],
 		);
 	}
+	const standalone = "这份方案 A 报告的生效日期是什么？";
+	const described = await runtime().invoke({
+		question: standalone,
+		history: [],
+	});
+	assert.equal(queries.at(-1), standalone);
+	assert.equal(described.refused, false);
+	assert.deepEqual(
+		described.citations?.map((c) => c.id),
+		[documents[0].id],
+	);
+	const beforeAmbiguous = queries.length;
 	const ambiguous = await runtime().invoke({
 		session_id: "comparison",
 		question,
@@ -231,7 +284,7 @@ test("identical follow-ups resolve against their own history before retrieval; a
 	assert.match(ambiguous.answer ?? "", /方案 A.*方案 B/);
 	assert.equal(ambiguous.judgement?.action, "clarify");
 	assert.deepEqual(ambiguous.citations, []);
-	assert.equal(queries.length, 2);
+	assert.equal(queries.length, beforeAmbiguous);
 	const pending = readPendingClarification(
 		ambiguous.retrieval_debug?.pending_clarification,
 	);
