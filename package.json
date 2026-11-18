@@ -1,6 +1,6 @@
 {
 	"name": "unorag",
-	"version": "0.3.2",
+	"version": "0.3.3",
 	"private": true,
 	"license": "Apache-2.0",
 	"homepage": "https://unorag.unobyte.dev",
@@ -60,6 +60,7 @@
 		"eval:stability": "tsx scripts/run-ab-stability.ts",
 		"acceptance:release:plan": "node scripts/acceptance/release-gate.mjs --profile scripts/acceptance/release-gate.example.json --plan",
 		"acceptance:release": "node scripts/acceptance/release-gate.mjs",
+		"acceptance:multi-turn": "node --import tsx scripts/acceptance/multi-turn-matrix.mjs",
 		"acceptance:provider-faults": "node scripts/acceptance/provider-faults.mjs",
 		"acceptance:restore": "node scripts/acceptance/restore-drill.mjs",
 		"acceptance:upgrade-rollback": "node scripts/acceptance/upgrade-rollback.mjs",

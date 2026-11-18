@@ -138,6 +138,21 @@ function defaultPlan(queryType: string, reason: string): AskMetadata {
 	};
 }
 
+export function planForGroundedQuestion(
+	rawQueryType: string,
+	question: string,
+	reason: string,
+): AskMetadata {
+	const normalized = executionQueryType(rawQueryType, question);
+	const queryType = KNOWN_QUERY_TYPES.has(normalized)
+		? normalized
+		: "ambiguous";
+	const plan = defaultPlan(queryType, reason);
+	return queryType === "table"
+		? { ...plan, filters: { record_type: "table" } }
+		: plan;
+}
+
 export function createRoutingNodes(context: AskGraphContext) {
 	return {
 		queryRouter: async (state: AskState): Promise<AskStateUpdate> => {
@@ -205,7 +220,9 @@ export function createRoutingNodes(context: AskGraphContext) {
 				can_retry: false,
 			};
 			return {
-				answer: (context.clarifyAnswer ?? defaultClarifyAnswer)(state),
+				answer:
+					state.answer ||
+					(context.clarifyAnswer ?? defaultClarifyAnswer)(state),
 				citations: [],
 				refused: true,
 				refuse_reason: "ambiguous",
@@ -235,12 +252,13 @@ export function routeAfterPlan(state: AskState): RouteAfterPlan {
 	return "rewrite";
 }
 
-export type RouteAfterRewrite = "retrieve" | "table" | "refuse";
+export type RouteAfterRewrite = "retrieve" | "table" | "refuse" | "clarify";
 
 export function routeAfterRewrite(state: AskState): RouteAfterRewrite {
 	const plan = state.retrieval_plan ?? {};
 	const path = String(plan.path ?? "");
 	const executePath = String(plan.execute_path ?? "");
+	if (path === "clarify" && executePath === "clarify") return "clarify";
 	if (
 		(path === "precise" && plan.precise_kind === "table") ||
 		executePath === "table"

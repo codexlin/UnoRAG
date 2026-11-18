@@ -151,6 +151,12 @@ mk_compose --profile ops run --rm inspect-lifecycle
 | Viewer 操作 | 读权限符合策略，所有写操作被拒绝 |
 | 归档与续聊 | 归档可恢复，追问 rewrite 不扩大访问范围 |
 
+多轮追问必须另外执行 `pnpm acceptance:multi-turn --include-expiry`，使用
+`UNORAG_ACCEPT_MULTI_TURN_MATRIX=YES`、目标 `UNORAG_BASE_URL`、完整 `UNORAG_EXPECT_REVISION` 和管理员凭据。
+它覆盖实体/省略追问、歧义与短选择、归档继续、会话/文库隔离及替换/删除/真实五分钟过期边界；
+确定性撤权回归、S1/S2 与浏览器仍分别必需，不能用其中一层替代另一层。
+详见 [评测指南](./EVALUATION.md#多轮问答发布矩阵)。开发模式或跳过过期不得用于 RC 放行。
+
 开发诊断可运行 `pnpm eval:live`；正式 RC 必须运行 `pnpm eval:stability`。它先对一轮真实文件入库
 执行可靠性门禁，再在同一不可变知识库上连续运行三轮 Ask，记录正例、拒答、事实覆盖、Recall、MRR、
 citation coverage、延迟和构建指纹。流程、凭据和可选 Langfuse 分数发布见
@@ -238,6 +244,7 @@ pnpm acceptance:restore -- --base-url https://isolated-rc.example.com
 UNORAG_ACCEPT_UPGRADE_ROLLBACK=YES \
 UNORAG_ACCEPT_PROVIDER_FAULTS=YES \
 UNORAG_ACCEPT_DESTRUCTIVE_RESTORE=YES \
+UNORAG_ACCEPT_MULTI_TURN_MATRIX=YES \
 UNORAG_ADMIN_PASSWORD='...' \
 pnpm acceptance:release -- --profile /path/to/release-gate.json
 ```
@@ -245,6 +252,7 @@ pnpm acceptance:release -- --profile /path/to/release-gate.json
 profile 只能声明版本、环境、manifest、fixture 和门禁开关，不能保存密码。退出码 `0/1/2` 分别表示
 PASS / FAIL / BLOCKED；BLOCKED 不能计作通过。升级回滚执行态只接受四镜像均为 SHA256 digest 的
 manifest，标签或本地镜像只可用于 `--plan`。
+现有 `gates.runtime=true` 同时执行多轮矩阵（含过期），不另增一个默认可遗漏的多轮开关。
 
 ## 6. 目标环境生产清单
 

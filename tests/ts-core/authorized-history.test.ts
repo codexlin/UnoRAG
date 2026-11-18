@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { CLARIFICATION_TTL_MS } from "../../src/core/ask-graph/clarification";
 
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
 import type { SessionMemoryMessage } from "../../src/server/conversations/session-memory";
@@ -126,6 +127,86 @@ test("source references sanitize and deduplicate without exposing content", asyn
 	assert.deepEqual(sourceReferences([]), []);
 });
 
+test("pending clarification survives only current authorized provenance and bounded expiry", async () => {
+	const [
+		{ authorizeHistory, authorizeArchivedHistory },
+		{ parseSessionMemoryMessages },
+	] = await modules;
+	const now = Date.now();
+	const pending = {
+		version: 1 as const,
+		question: "它什么时候生效？",
+		candidates: ["方案 A", "方案 B"],
+		createdAt: now,
+		expiresAt: now + CLARIFICATION_TTL_MS,
+	};
+	const messages = exchange();
+	messages[1].pending_clarification = pending;
+	assert.deepEqual(
+		parseSessionMemoryMessages(messages.map((m) => JSON.stringify(m))),
+		messages,
+	);
+	const allowed = await authorizeHistory({
+		identity,
+		libraryId,
+		messages,
+		citationAuthorizer: authorizer().value,
+	});
+	assert.deepEqual(allowed.messages.at(-1)?.pending_clarification, pending);
+	assert.deepEqual(
+		await authorizeHistory({
+			identity,
+			libraryId,
+			messages,
+			citationAuthorizer: authorizer(["document-a"]).value,
+		}),
+		{ messages: [], sourceReferences: [] },
+	);
+	assert.deepEqual(
+		await authorizeHistory({
+			identity,
+			libraryId: "other-library",
+			messages,
+			citationAuthorizer: authorizer().value,
+		}),
+		{ messages: [], sourceReferences: [] },
+	);
+	messages[1].pending_clarification = {
+		...pending,
+		createdAt: 1,
+		expiresAt: 2,
+	};
+	assert.equal(
+		(
+			await authorizeHistory({
+				identity,
+				libraryId,
+				messages,
+				citationAuthorizer: authorizer().value,
+			})
+		).messages.at(-1)?.pending_clarification,
+		undefined,
+	);
+	const archived = await authorizeArchivedHistory({
+		identity,
+		libraryId,
+		citationAuthorizer: authorizer().value,
+		turns: [
+			{ role: "user", content: "question", status: "complete" },
+			{
+				role: "assistant",
+				content: "answer",
+				status: "complete",
+				debug: {
+					memory_provenance: provenance(),
+					pending_clarification: pending,
+				},
+			},
+		],
+	});
+	assert.deepEqual(archived.messages.at(-1)?.pending_clarification, pending);
+});
+
 test("archive provenance requires exact server content and unions ambiguous matches", async () => {
 	const [{ recoverArchiveProvenance }] = await modules;
 	const messages = [
@@ -188,6 +269,204 @@ test("archive recovery never bridges messages or discards unknown transitive sou
 			[null],
 		);
 	}
+});
+
+test("explicit failure boundaries survive parsing and archive omission without trusting a repeated prefix", async () => {
+	const [
+		{ recoverArchiveProvenance, authorizeHistory },
+		{ parseSessionMemoryMessages },
+	] = await modules;
+	const before = exchange(provenance(), "old question", "old answer");
+	const boundary = {
+		role: "assistant" as const,
+		content: "",
+		history_boundary: true as const,
+	};
+	const after = exchange(
+		provenance([reference("b")]),
+		"new question",
+		"new answer",
+	);
+	const messages = [...before, boundary, ...after];
+	assert.deepEqual(
+		parseSessionMemoryMessages(
+			messages.map((message) => JSON.stringify(message)),
+		),
+		messages,
+	);
+	assert.deepEqual(
+		recoverArchiveProvenance({
+			identity,
+			libraryId,
+			messages,
+			turns: [
+				{ question: "old question", answer: "old answer" },
+				{ question: "new question", answer: "new answer" },
+			],
+		}),
+		[null, provenance([reference("b")])],
+	);
+	assert.deepEqual(
+		recoverArchiveProvenance({
+			identity,
+			libraryId,
+			messages: [...before, boundary, ...before],
+			turns: [{ question: "old question", answer: "old answer" }],
+		}),
+		[null],
+	);
+	assert.deepEqual(
+		await authorizeHistory({
+			identity,
+			libraryId,
+			messages: [...before, { ...boundary, provenance: provenance() }],
+			citationAuthorizer: authorizer().value,
+		}),
+		{ messages: [], sourceReferences: [] },
+	);
+});
+
+test("archive clarification provenance is limited to the unique current choice at the archive tail", async (t) => {
+	const [{ recoverArchiveProvenance }] = await modules;
+	const now = 1_000_000;
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const choice = exchange(provenance(), "when does it start?", "choose A or B");
+	choice[1].pending_clarification = {
+		version: 1,
+		question: choice[0].content,
+		candidates: ["A", "B"],
+		createdAt: now,
+		expiresAt: now + CLARIFICATION_TTL_MS,
+	};
+	const turn = { question: choice[0].content, answer: choice[1].content };
+	const next = exchange(
+		provenance([reference("b")]),
+		"new question",
+		"new answer",
+	);
+	const nextTurn = { question: next[0].content, answer: next[1].content };
+	for (const scenario of [
+		{
+			name: "current choice",
+			messages: choice,
+			turns: [turn],
+			expected: [provenance()],
+		},
+		{
+			name: "old choice archived alone",
+			messages: [...choice, ...next],
+			turns: [turn],
+			expected: [null],
+		},
+		{
+			name: "old choice reordered last",
+			messages: [...choice, ...next],
+			turns: [nextTurn, turn],
+			expected: [provenance([reference("b")]), null],
+		},
+		{
+			name: "current choice outside archive tail",
+			messages: choice,
+			turns: [turn, nextTurn],
+			expected: [null, null],
+		},
+		{
+			name: "duplicate server choices",
+			messages: [...choice, ...choice],
+			turns: [turn],
+			expected: [null],
+		},
+		{
+			name: "duplicate plain server exchange",
+			messages: [
+				...exchange(provenance(), turn.question, turn.answer),
+				...choice,
+			],
+			turns: [turn],
+			expected: [null],
+		},
+		{
+			name: "duplicate submitted choices",
+			messages: choice,
+			turns: [turn, turn],
+			expected: [null, provenance()],
+		},
+	]) {
+		assert.deepEqual(
+			recoverArchiveProvenance({ identity, libraryId, ...scenario }),
+			scenario.expected,
+			scenario.name,
+		);
+	}
+	t.mock.timers.tick(CLARIFICATION_TTL_MS);
+	assert.deepEqual(
+		recoverArchiveProvenance({
+			identity,
+			libraryId,
+			messages: choice,
+			turns: [turn],
+		}),
+		[null],
+	);
+});
+
+test("archiving an old clarification preserves a boundary and only the newer trusted suffix", async () => {
+	const [{ recoverArchiveProvenance, authorizeArchivedHistory }] =
+		await modules;
+	const before = exchange(provenance(), "older subject", "older answer");
+	const choice = exchange(provenance(), "when?", "choose A or B");
+	choice[1].pending_clarification = {
+		version: 1,
+		question: "when?",
+		candidates: ["A", "B"],
+		createdAt: 1,
+		expiresAt: 2,
+	};
+	const after = exchange(
+		provenance([reference("b")]),
+		"new subject",
+		"new answer",
+	);
+	const messages = [...before, ...choice, ...after];
+	const turns = [before, choice, after].map((pair) => ({
+		question: pair[0].content,
+		answer: pair[1].content,
+	}));
+	const recovered = recoverArchiveProvenance({
+		identity,
+		libraryId,
+		messages,
+		turns,
+	});
+	assert.deepEqual(recovered, [
+		provenance(),
+		null,
+		provenance([reference("b")]),
+	]);
+	const archived = turns.flatMap((turn, index) => [
+		{ role: "user", content: turn.question, status: "complete" },
+		{
+			role: "assistant",
+			content: turn.answer,
+			status: "complete",
+			debug: { memory_provenance: recovered[index] },
+		},
+	]);
+	const input = { identity, libraryId, citationAuthorizer: authorizer().value };
+	assert.deepEqual(
+		await authorizeArchivedHistory({ ...input, turns: archived.slice(0, 4) }),
+		{ messages: [], sourceReferences: [] },
+	);
+	assert.deepEqual(
+		await authorizeArchivedHistory({ ...input, turns: archived }),
+		{
+			messages: [
+				{ role: "user", content: "new subject" },
+				{ role: "assistant", content: "new answer" },
+			],
+			sourceReferences: [reference("b")],
+		},
+	);
 });
 
 test("any incomplete source invalidates extraction instead of disappearing", async () => {
@@ -398,6 +677,24 @@ test("one revoked source drops the entire exchange, not just its citations", asy
 	});
 });
 
+test("a revoked latest exchange cannot expose an older referent as the latest one", async () => {
+	const [{ authorizeHistory }] = await modules;
+	const result = await authorizeHistory({
+		messages: [
+			...exchange(provenance([reference()]), "plan A", "answer A"),
+			...exchange(
+				provenance([reference(), reference("b")]),
+				"plan B",
+				"answer B",
+			),
+		],
+		identity,
+		libraryId,
+		citationAuthorizer: authorizer(["document-b"]).value,
+	});
+	assert.deepEqual(result, { messages: [], sourceReferences: [] });
+});
+
 test("truncated Redis history cannot forget a revoked earlier dependency", async () => {
 	const [{ authorizeHistory, createMemoryProvenance }] = await modules;
 	const first = await authorizeHistory({
@@ -426,6 +723,47 @@ test("truncated Redis history cannot forget a revoked earlier dependency", async
 		},
 	);
 	assert.deepEqual(access.calls[0]?.citations, [reference(), reference("b")]);
+});
+
+test("unknown or incomplete latest exchanges form a memory boundary", async () => {
+	const [{ authorizeHistory }] = await modules;
+	for (const tail of [
+		exchange(provenance([]), "plan B", "no answer"),
+		exchange(undefined, "plan B", "untrusted answer").map((message) => ({
+			...message,
+			provenance: undefined,
+		})),
+		[{ role: "user" as const, content: "plan B" }],
+	]) {
+		const result = await authorizeHistory({
+			messages: [...exchange(), ...tail],
+			identity,
+			libraryId,
+			citationAuthorizer: authorizer().value,
+		});
+		assert.deepEqual(result, { messages: [], sourceReferences: [] });
+	}
+});
+
+test("only the continuous authorized suffix survives a revoked middle exchange", async () => {
+	const [{ authorizeHistory }] = await modules;
+	const result = await authorizeHistory({
+		messages: [
+			...exchange(provenance([reference()]), "plan A", "answer A"),
+			...exchange(provenance([reference("b")]), "plan B", "answer B"),
+			...exchange(provenance([reference("c")]), "plan C", "answer C"),
+		],
+		identity,
+		libraryId,
+		citationAuthorizer: authorizer(["document-b"]).value,
+	});
+	assert.deepEqual(result, {
+		messages: [
+			{ role: "user", content: "plan C" },
+			{ role: "assistant", content: "answer C" },
+		],
+		sourceReferences: [reference("c")],
+	});
 });
 
 test("cross-library and cross-scope lineage is excluded before authorization", async () => {

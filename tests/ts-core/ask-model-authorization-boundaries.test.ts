@@ -211,7 +211,9 @@ test("real runtime rechecks after SSE frames were buffered before starting the p
 	assert.match(body, /"code":"ask_access_changed"/);
 	assert.equal(fixture.providerCalls(), 0);
 	assert.equal(fixture.aborted(), true);
-	assert.deepEqual(fixture.appended, []);
+	assert.deepEqual(fixture.appended, [
+		[{ role: "assistant", content: "", history_boundary: true }],
+	]);
 });
 
 test("real runtime rechecks again after answer concurrency admission", {
@@ -236,7 +238,9 @@ test("real runtime rechecks again after answer concurrency admission", {
 	assert.equal(terminalError.truncated, true);
 	assert.equal(fixture.providerCalls(), 0);
 	assert.equal(fixture.aborted(), true);
-	assert.deepEqual(fixture.appended, []);
+	assert.deepEqual(fixture.appended, [
+		[{ role: "assistant", content: "", history_boundary: true }],
+	]);
 	assert.deepEqual(gate.snapshot(), { active: 0, queued: 0, limit: 1 });
 });
 
@@ -315,10 +319,7 @@ const structuredCalls = {
 	route: (adapter: StructuredOutputAdapter, options: RequestOptions) =>
 		adapter.route({ question: "question" }, options),
 	rewrite: (adapter: StructuredOutputAdapter, options: RequestOptions) =>
-		adapter.rewrite(
-			{ question: "question", fallbackSemanticQuery: "question" },
-			options,
-		),
+		adapter.rewrite({ question: "question", history: [] }, options),
 	judge: (adapter: StructuredOutputAdapter, options: RequestOptions) =>
 		adapter.judge(
 			{ question: "question", citations: [], attempts: 0 },

@@ -110,6 +110,12 @@ export function finishAskTiming(
 	};
 }
 
+/** Stable across retrieval retries; the user's original question remains in the archive. */
+export function groundedQuestion(state: AskState): string {
+	const grounded = state.retrieval_plan?.grounded_question;
+	return typeof grounded === "string" ? grounded : (state.question ?? "");
+}
+
 export function requireQuestion(state: AskState): string {
 	const question = state.question?.trim();
 	if (!question) {

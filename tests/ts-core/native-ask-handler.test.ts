@@ -12,6 +12,7 @@ import {
 import type { ModelUsageCall } from "../../src/core/ai/model-usage";
 import type { AskGraphInput, AskState } from "../../src/core/ask-graph";
 import { AskGraphExecutionError } from "../../src/core/ask-graph";
+import { CLARIFICATION_TTL_MS } from "../../src/core/ask-graph/clarification";
 import type {
 	InternalCitation,
 	RetrievalResult,
@@ -19,12 +20,17 @@ import type {
 import { RerankDiagnosticSchema } from "../../src/core/retrieval/provider-request";
 import { QdrantOperationError } from "../../src/core/retrieval/qdrant/store";
 import { runWithObservabilityContext } from "../../src/lib/observability/context";
+import { logger } from "../../src/lib/observability/logger";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
 import { MemoryProvenanceSchema } from "../../src/server/conversations/memory-provenance";
+import type { SessionMemoryMessage } from "../../src/server/conversations/session-memory";
 import type {
 	AppendConversationExchangeInput,
+	AppendConversationTurnInput,
 	ConversationScope,
+	ConversationTurnStatus,
 } from "../../src/server/conversations/types";
+import { rewriteFollowup } from "../../src/server/http/ask/followup-rewrite";
 import {
 	AskRunsRepository,
 	type FinalizeAskRunInput,
@@ -104,11 +110,9 @@ type StoredThread = {
 	principalId: string;
 	status: "active" | "hidden";
 	ragLibraryId: string | null;
-	turns: Array<{
-		role: "system" | "user" | "assistant" | "tool";
-		status: "pending" | "complete" | "failed";
-		content: string;
-	}>;
+	turns: Array<
+		AppendConversationTurnInput & { status: ConversationTurnStatus }
+	>;
 };
 
 class FakeConversationRepository {
@@ -121,19 +125,54 @@ class FakeConversationRepository {
 		turnId: string;
 		debug: Record<string, unknown>;
 	}> = [];
+	readonly boundaries: Array<{
+		scope: ConversationScope;
+		threadId: string;
+		input: AppendConversationTurnInput;
+	}> = [];
+	private readonly records: Array<{
+		id: string;
+		threadId: string;
+		turn: AppendConversationTurnInput;
+	}> = [];
 
 	constructor(private readonly threads: StoredThread[] = []) {}
 
 	async getThread(scope: ConversationScope, threadId: string) {
-		return (
-			this.threads.find(
-				(thread) =>
-					thread.id === threadId &&
-					thread.organizationId === scope.organizationId &&
-					thread.workspaceId === scope.workspaceId &&
-					thread.principalId === scope.principalId,
-			) ?? null
+		const thread = this.threads.find(
+			(thread) =>
+				thread.id === threadId &&
+				thread.organizationId === scope.organizationId &&
+				thread.workspaceId === scope.workspaceId &&
+				thread.principalId === scope.principalId,
 		);
+		return thread
+			? {
+					...thread,
+					turns: [
+						...thread.turns,
+						...this.records
+							.filter((record) => record.threadId === threadId)
+							.map(({ id, turn }) => ({
+								...turn,
+								id,
+								status: turn.status ?? ("complete" as const),
+							})),
+					],
+				}
+			: null;
+	}
+
+	async appendTurn(
+		scope: ConversationScope,
+		threadId: string,
+		input: AppendConversationTurnInput,
+	) {
+		assert.ok(await this.getThread(scope, threadId));
+		this.boundaries.push({ scope, threadId, input });
+		const id = `boundary-${this.boundaries.length}`;
+		this.records.push({ id, threadId, turn: input });
+		return { id };
 	}
 
 	async appendExchange(
@@ -146,10 +185,11 @@ class FakeConversationRepository {
 			throw new Error("thread not found");
 		}
 		this.exchanges.push({ scope, threadId, input });
-		return [
-			{ id: `user-${this.exchanges.length}`, role: "user" },
-			{ id: `assistant-${this.exchanges.length}`, role: "assistant" },
-		] as never;
+		return [input.user, input.assistant].map((turn) => {
+			const id = `${turn.role}-${this.exchanges.length}`;
+			this.records.push({ id, threadId, turn });
+			return { id, role: turn.role };
+		}) as never;
 	}
 
 	async updateTurnDebug(
@@ -159,8 +199,8 @@ class FakeConversationRepository {
 		debug: Record<string, unknown>,
 	) {
 		this.debugUpdates.push({ turnId, debug });
-		const exchange = this.exchanges.at(-1);
-		if (exchange) exchange.input.assistant.debug = debug;
+		const record = this.records.find((record) => record.id === turnId);
+		if (record) record.turn.debug = debug;
 		return { id: turnId };
 	}
 }
@@ -1781,6 +1821,46 @@ test("persist stage reports a sanitized failure without failing the answer", asy
 	assert.equal(persistStage?.errorCode, "conversation_persist_failed");
 });
 
+test("clarification state is persisted server-side without entering the public diagnostics", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const now = Date.now();
+	const pending = {
+		version: 1 as const,
+		question: "它什么时候生效？",
+		candidates: ["方案 A", "方案 B"],
+		createdAt: now,
+		expiresAt: now + CLARIFICATION_TTL_MS,
+	};
+	const state = askState({
+		refused: true,
+		answer: "请选择 A 或 B",
+		retrieval_debug: { pending_clarification: pending },
+	});
+	const memory = new FakeSessionMemory();
+	const response = await handleNativeAskRequest({
+		request: request({
+			question: pending.question,
+			library_id: LIBRARY_ID,
+			session_id: "pending-choice",
+		}),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		memoryStore: memory as never,
+		runtimeFactory: (() => new FakeRuntime(state)) as never,
+	});
+	assert.equal(response?.status, 200);
+	assert.equal(
+		JSON.stringify(await response?.json()).includes("pending_clarification"),
+		false,
+	);
+	assert.deepEqual(
+		(memory.appended[0]?.messages[1] as Record<string, unknown> | undefined)
+			?.pending_clarification,
+		pending,
+	);
+});
+
 test("temporary session memory is scoped, bounded, and receives policy settings", async () => {
 	const { handleNativeAskRequest } = await handlerModule;
 	const memory = new FakeSessionMemory();
@@ -2037,4 +2117,477 @@ test("cancelling the response aborts upstream execution before returning the ite
 	await reader.cancel();
 	assert.equal(executionSignal?.aborted, true);
 	assert.equal(repository.exchanges.length, 0);
+});
+
+class StoredSessionMemory {
+	readonly windows = new Map<string, SessionMemoryMessage[]>();
+	readonly boundaries: string[] = [];
+
+	key(scope: ConversationScope, sessionId: string) {
+		return JSON.stringify([
+			scope.organizationId,
+			scope.workspaceId,
+			scope.principalId,
+			sessionId,
+		]);
+	}
+
+	async load(scope: ConversationScope, sessionId: string, maxTurns: number) {
+		return (this.windows.get(this.key(scope, sessionId)) ?? []).slice(
+			-maxTurns * 2,
+		);
+	}
+
+	async append(
+		scope: ConversationScope,
+		sessionId: string,
+		messages: SessionMemoryMessage[],
+		maxTurns: number,
+	) {
+		const key = this.key(scope, sessionId);
+		if (messages.length === 1) this.boundaries.push(key);
+		this.windows.set(
+			key,
+			[...(this.windows.get(key) ?? []), ...messages].slice(-maxTurns * 2),
+		);
+	}
+}
+
+function deferred() {
+	let resolve!: () => void;
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
+function historyFixture(archived: boolean) {
+	const repository = new FakeConversationRepository([
+		activeThread(),
+		activeThread({ id: FOREIGN_THREAD_ID }),
+	]);
+	const memory = new StoredSessionMemory();
+	const run = async (
+		runtime: FakeRuntime,
+		options: {
+			question?: string;
+			stream?: boolean;
+			otherSession?: boolean;
+			signal?: AbortSignal;
+		} = {},
+	) => {
+		const { handleNativeAskRequest } = await handlerModule;
+		const req = request(
+			{
+				question: options.question ?? "方案 A的报价是多少？",
+				library_id: LIBRARY_ID,
+				session_id: options.otherSession ? "new-session" : "old-session",
+				...(archived
+					? { thread_id: options.otherSession ? FOREIGN_THREAD_ID : THREAD_ID }
+					: {}),
+			},
+			options.stream ? "stream" : "sync",
+		);
+		const response = await handleNativeAskRequest({
+			request: options.signal
+				? new Request(req, { signal: options.signal })
+				: req,
+			path: options.stream ? ["v1", "ask", "stream"] : ["v1", "ask"],
+			identity,
+			repository: repositoryInput(repository),
+			memoryStore: memory,
+			runtimeFactory: runtimeFactory(runtime),
+		});
+		assert.ok(response);
+		return response;
+	};
+	const seed = () => run(new FakeRuntime(askState(), ["方案 A报价300元"]));
+	const boundaryCount = () =>
+		archived ? repository.boundaries.length : memory.boundaries.length;
+	const assertNoHistory = async () => {
+		const runtime = new FakeRuntime(askState());
+		runtime.invoke = async (input) => {
+			assert.deepEqual(input.history, []);
+			const rewritten = await rewriteFollowup(
+				input.question ?? "",
+				input.history ?? [],
+				async () => {
+					throw new Error("untrusted history reached the resolver");
+				},
+			);
+			assert.ok(rewritten.clarification);
+			return askState({
+				refused: true,
+				answer: rewritten.clarification,
+				citations: [],
+			});
+		};
+		const response = await run(runtime, {
+			question: "它的生效日期是什么时候？",
+		});
+		assert.equal(response.status, 200);
+		assert.doesNotMatch(
+			JSON.stringify(await response.json()),
+			/方案 A|pending_clarification|memory_provenance/,
+		);
+	};
+	return { repository, memory, run, seed, boundaryCount, assertNoHistory };
+}
+
+for (const archived of [false, true]) {
+	const storage = archived ? "archived" : "temporary";
+	for (const stream of [false, true]) {
+		test(`${storage} ${stream ? "SSE" : "JSON"} preserves an expired clarification across rewrite-to-persistence`, async (t) => {
+			const fixture = historyFixture(archived);
+			const now = Date.now();
+			t.mock.timers.enable({ apis: ["Date"], now });
+			const pending = {
+				version: 1 as const,
+				question: "它什么时候生效？",
+				candidates: ["方案 A", "方案 B"],
+				createdAt: now,
+				expiresAt: now + CLARIFICATION_TTL_MS,
+			};
+			await fixture.run(
+				new FakeRuntime(
+					askState({
+						refused: true,
+						answer: "请选择方案 A或方案 B",
+						retrieval_debug: { pending_clarification: pending },
+					}),
+				),
+				{ question: pending.question },
+			);
+			const runtime = new FakeRuntime(askState());
+			runtime.invoke = async (input) => {
+				const rewritten = await rewriteFollowup(
+					input.question ?? "",
+					input.history ?? [],
+					async () => {
+						throw new Error("invalid selection must not call the resolver");
+					},
+				);
+				assert.deepEqual(rewritten.pendingClarification, pending);
+				t.mock.timers.tick(CLARIFICATION_TTL_MS);
+				return askState({
+					refused: true,
+					citations: [],
+					answer: rewritten.clarification,
+					retrieval_debug: {
+						pending_clarification: rewritten.pendingClarification,
+					},
+				});
+			};
+			const response = await fixture.run(runtime, { question: "C", stream });
+			assert.equal(response.status, 200);
+			assert.doesNotMatch(
+				await response.text(),
+				/pending_clarification|memory_provenance|grounded_question/,
+			);
+			const saved = archived
+				? fixture.repository.exchanges.at(-1)?.input.assistant.debug
+						?.pending_clarification
+				: [...fixture.memory.windows.values()][0]?.at(-1)
+						?.pending_clarification;
+			assert.deepEqual(saved, pending);
+			await fixture.assertNoHistory();
+		});
+	}
+
+	for (const failure of [
+		"invoke",
+		"sync generation",
+		"stream generation",
+		"cancel",
+		"cancel generation",
+		"request abort",
+		"request abort stream",
+	] as const) {
+		test(`${storage} ${failure} records exactly one boundary before the next follow-up`, async () => {
+			const fixture = historyFixture(archived);
+			await fixture.seed();
+			const controller = new AbortController();
+			const started = deferred();
+			const release = deferred();
+			const runtime = new FakeRuntime(askState());
+			if (failure === "invoke") {
+				runtime.invoke = async () => {
+					throw new Error("private provider failure");
+				};
+			} else if (failure.startsWith("request abort")) {
+				runtime.invoke = async () => {
+					controller.abort();
+					return askState();
+				};
+			} else if (failure === "cancel generation") {
+				runtime.streamAnswer = async function* () {
+					yield "partial private answer";
+					started.resolve();
+					await release.promise;
+					yield "late private answer";
+				};
+			} else if (failure !== "cancel") {
+				runtime.streamAnswer = async function* () {
+					yield "partial private answer";
+					throw new Error("private provider failure");
+				};
+			}
+			const stream =
+				failure === "stream generation" ||
+				failure.startsWith("cancel") ||
+				failure === "request abort stream";
+			const response = await fixture.run(runtime, {
+				question: "方案 B的报价是多少？",
+				stream,
+				signal: controller.signal,
+			});
+			if (failure.startsWith("cancel")) {
+				assert.ok(response.body);
+				const reader = response.body.getReader();
+				await reader.read();
+				if (failure === "cancel generation") {
+					await reader.read();
+					await reader.read();
+					await started.promise;
+				}
+				const cancelled = reader.cancel();
+				release.resolve();
+				await cancelled;
+			} else if (stream) {
+				const events = parseSse(await response.text());
+				const last = events.at(-1);
+				assert.ok(last);
+				assert.equal(last.event, "error");
+				assert.equal(
+					(last.data as { code: string }).code,
+					failure === "request abort stream" ? "aborted" : "stream_failed",
+				);
+				assert.ok(!events.some((event) => event.event === "done"));
+			} else {
+				assert.equal(response.status, 503);
+				assert.deepEqual(await response.json(), {
+					detail: "Ask service unavailable",
+				});
+			}
+			assert.equal(fixture.boundaryCount(), 1);
+			if (archived) {
+				assert.deepEqual(fixture.repository.boundaries[0].input, {
+					role: "system",
+					content: "",
+					status:
+						failure.startsWith("cancel") || failure.startsWith("request abort")
+							? "cancelled"
+							: "failed",
+				});
+			} else {
+				assert.deepEqual([...fixture.memory.windows.values()][0]?.at(-1), {
+					role: "assistant",
+					content: "",
+					history_boundary: true,
+				});
+			}
+			await fixture.assertNoHistory();
+		});
+	}
+
+	test(`${storage} late cancellation waits for in-flight persistence and cannot restore history`, async (t) => {
+		const fixture = historyFixture(archived);
+		await fixture.seed();
+		const started = deferred(),
+			release = deferred();
+		if (archived) {
+			const append = fixture.repository.appendExchange.bind(fixture.repository);
+			t.mock.method(
+				fixture.repository,
+				"appendExchange",
+				async (...args: Parameters<typeof append>) => {
+					started.resolve();
+					await release.promise;
+					return append(...args);
+				},
+			);
+		} else {
+			const append = fixture.memory.append.bind(fixture.memory);
+			t.mock.method(
+				fixture.memory,
+				"append",
+				async (...args: Parameters<typeof append>) => {
+					if (args[2].length > 1) {
+						started.resolve();
+						await release.promise;
+					}
+					return append(...args);
+				},
+			);
+		}
+		const response = await fixture.run(
+			new FakeRuntime(askState(), ["late answer"]),
+			{ stream: true },
+		);
+		assert.ok(response.body);
+		const reader = response.body.getReader();
+		await reader.read();
+		await reader.read();
+		await reader.read();
+		await started.promise;
+		const cancelled = reader.cancel();
+		release.resolve();
+		await cancelled;
+		assert.equal(fixture.boundaryCount(), 1);
+		await fixture.assertNoHistory();
+	});
+
+	test(`${storage} delayed failure cannot clear a newer independent session`, async () => {
+		const fixture = historyFixture(archived);
+		await fixture.seed();
+		const started = deferred(),
+			release = deferred();
+		const old = new FakeRuntime(askState());
+		old.invoke = async () => {
+			started.resolve();
+			await release.promise;
+			throw new Error("late old failure");
+		};
+		const oldResponse = fixture.run(old, { question: "方案 B的报价是多少？" });
+		await started.promise;
+		await fixture.run(new FakeRuntime(askState(), ["new answer"]), {
+			question: "方案 C的报价是多少？",
+			otherSession: true,
+		});
+		release.resolve();
+		assert.equal((await oldResponse).status, 503);
+		const next = new FakeRuntime(askState(), ["follow-up"]);
+		await fixture.run(next, {
+			question: "它什么时候生效？",
+			otherSession: true,
+		});
+		assert.deepEqual(next.invocations[0].history, [
+			{ role: "user", content: "方案 C的报价是多少？" },
+			{ role: "assistant", content: "new answer" },
+		]);
+		await fixture.assertNoHistory();
+	});
+
+	test(`${storage} boundary storage errors preserve the original failure and log metadata only`, async (t) => {
+		const fixture = historyFixture(archived);
+		await fixture.seed();
+		const warnings: unknown[] = [];
+		t.mock.method(logger, "warn", (value: unknown) => {
+			warnings.push(value);
+		});
+		if (archived) {
+			t.mock.method(fixture.repository, "appendTurn", async () => {
+				throw new Error("private PG failure");
+			});
+		} else {
+			t.mock.method(fixture.memory, "append", async () => {
+				throw new Error("private Redis failure");
+			});
+		}
+		const response = await fixture.run(
+			new FakeRuntime(askState(), [], new AiConcurrencyOverloadedError()),
+		);
+		assert.equal(response.status, 503);
+		assert.equal(response.headers.get("retry-after"), "1");
+		assert.deepEqual(await response.json(), {
+			detail: "AI provider is busy",
+			code: "llm_overloaded",
+		});
+		assert.equal(fixture.boundaryCount(), 0);
+		assert.deepEqual(warnings, [
+			{ event: "ask.history_boundary.persist_failed" },
+		]);
+	});
+
+	test(`${storage} a failed answer write reports persistence failure and leaves a boundary`, async (t) => {
+		const fixture = historyFixture(archived);
+		await fixture.seed();
+		if (archived) {
+			t.mock.method(fixture.repository, "appendExchange", async () => {
+				throw new Error("private PG failure");
+			});
+		} else {
+			const append = fixture.memory.append.bind(fixture.memory);
+			t.mock.method(
+				fixture.memory,
+				"append",
+				async (...args: Parameters<typeof append>) => {
+					if (args[2].length > 1) throw new Error("private Redis failure");
+					return append(...args);
+				},
+			);
+		}
+		const response = await fixture.run(
+			new FakeRuntime(askState(), ["answer not saved"]),
+		);
+		assert.equal(response.status, 200);
+		const body = await response.json();
+		assert.equal(body.persisted, false);
+		assert.equal(
+			body.persist_error,
+			archived
+				? "conversation persistence failed"
+				: "session memory persistence failed",
+		);
+		assert.equal(fixture.boundaryCount(), 1);
+		await fixture.assertNoHistory();
+	});
+
+	test(`${storage} technical judge refusal cannot become reusable history`, async () => {
+		const fixture = historyFixture(archived);
+		await fixture.seed();
+		const response = await fixture.run(
+			new FakeRuntime(
+				askState({
+					refused: true,
+					refuse_reason: "judge_unavailable",
+					answer: "service unavailable",
+					retrieval_debug: { judge_mode: "model_error" },
+				}),
+			),
+			{ question: "方案 B的报价是多少？" },
+		);
+		assert.equal(response.status, 200);
+		assert.equal((await response.json()).refuse_reason, "judge_unavailable");
+		await fixture.assertNoHistory();
+	});
+}
+
+test("archive debug refresh cannot drop a clarification that expires after its first write", async (t) => {
+	const fixture = historyFixture(true);
+	const now = Date.now();
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const pending = {
+		version: 1 as const,
+		question: "它什么时候生效？",
+		candidates: ["方案 A", "方案 B"],
+		createdAt: now,
+		expiresAt: now + CLARIFICATION_TTL_MS,
+	};
+	const append = fixture.repository.appendExchange.bind(fixture.repository);
+	t.mock.method(
+		fixture.repository,
+		"appendExchange",
+		async (...args: Parameters<typeof append>) => {
+			const result = await append(...args);
+			t.mock.timers.tick(CLARIFICATION_TTL_MS);
+			return result;
+		},
+	);
+	const response = await fixture.run(
+		new FakeRuntime(
+			askState({
+				refused: true,
+				answer: "请选择方案 A或方案 B",
+				retrieval_debug: { pending_clarification: pending },
+			}),
+		),
+		{ question: pending.question },
+	);
+	assert.equal(response.status, 200);
+	assert.deepEqual(
+		fixture.repository.debugUpdates[0].debug.pending_clarification,
+		pending,
+	);
+	await fixture.assertNoHistory();
 });

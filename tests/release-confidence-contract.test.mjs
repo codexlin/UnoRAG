@@ -12,8 +12,14 @@ import {
 	runCommand,
 	writeEvidence,
 } from "../scripts/acceptance/lib/runtime.mjs";
-import { deleteLibraryAndWait } from "../scripts/acceptance/recovery-probe.mjs";
-import { validateProfile } from "../scripts/acceptance/release-gate.mjs";
+import {
+	deleteLibraryAndWait,
+	ProductSession,
+} from "../scripts/acceptance/recovery-probe.mjs";
+import {
+	multiTurnStage,
+	validateProfile,
+} from "../scripts/acceptance/release-gate.mjs";
 
 const root = new URL("../", import.meta.url);
 const rootPath = fileURLToPath(root);
@@ -150,6 +156,33 @@ test("release profile is strict and never contains a password", () => {
 	);
 });
 
+test("multi-turn release gate binds target identity and cannot skip expiry", () => {
+	const profile = {
+		base_url: "https://candidate.example.com",
+		expected_git_revision: "a".repeat(40),
+		admin_email: "admin@example.com",
+		password_env: "CANDIDATE_PASSWORD",
+	};
+	const stage = multiTurnStage(profile, {
+		CANDIDATE_PASSWORD: "synthetic-test-value",
+		UNORAG_ACCEPT_MULTI_TURN_MATRIX: "YES",
+	});
+	assert.equal(stage.command, process.execPath);
+	assert.equal(stage.args.at(-1), "--include-expiry");
+	assert.ok(!stage.args.includes("--development"));
+	assert.deepEqual(stage.env, {
+		UNORAG_BASE_URL: profile.base_url,
+		UNORAG_EXPECT_REVISION: profile.expected_git_revision,
+		UNORAG_ADMIN_EMAIL: profile.admin_email,
+		UNORAG_ADMIN_PASSWORD: "synthetic-test-value",
+		UNORAG_ACCEPT_MULTI_TURN_MATRIX: "YES",
+	});
+	assert.equal(
+		multiTurnStage(profile, {}).env.UNORAG_ACCEPT_MULTI_TURN_MATRIX,
+		"",
+	);
+});
+
 test("release code gate fails closed unless pnpm executes with Node 22", async () => {
 	const source = await readFile(
 		new URL("scripts/acceptance/release-gate.mjs", root),
@@ -179,6 +212,75 @@ test("probe cleanup waits for asynchronous library deletion", async () => {
 		{ path: "/api/libraries", method: "GET" },
 		{ path: "/api/libraries", method: "GET" },
 	]);
+});
+
+test("probe cleanup accepts HTTP 200/202 deletions with valid library lists", async (t) => {
+	let deleteStatus;
+	let libraries;
+	t.mock.method(globalThis, "fetch", async (url, request = {}) => {
+		if (request.method === "DELETE") {
+			assert.equal(new URL(url).pathname, "/api/libraries/library-probe");
+			return new Response(JSON.stringify({ status: "deleting" }), {
+				status: deleteStatus,
+			});
+		}
+		assert.equal(new URL(url).pathname, "/api/libraries");
+		return new Response(JSON.stringify(libraries), { status: 200 });
+	});
+	for (deleteStatus of [200, 202]) {
+		for (libraries of [
+			[],
+			[{ id: "unrelated-library", status: "ready" }],
+			[{ id: "library-probe", status: "deleted" }],
+		]) {
+			await assert.doesNotReject(() =>
+				deleteLibraryAndWait(
+					new ProductSession("https://synthetic.example.invalid"),
+					"library-probe",
+					10,
+				),
+			);
+		}
+	}
+});
+
+test("probe cleanup rejects malformed HTTP 200 library lists without exposing response bodies", async (t) => {
+	let raw;
+	t.mock.method(globalThis, "fetch", async (url, request = {}) => {
+		if (request.method === "DELETE") {
+			assert.equal(new URL(url).pathname, "/api/libraries/library-probe");
+			return new Response(JSON.stringify({ status: "deleting" }), {
+				status: 202,
+			});
+		}
+		assert.equal(new URL(url).pathname, "/api/libraries");
+		return new Response(raw, { status: 200 });
+	});
+	for (raw of [
+		"",
+		"null",
+		"{}",
+		'{"libraries":[]}',
+		'{"detail":"private response details"}',
+		'"private response details"',
+		"false",
+		"42",
+		"<html>private response details</html>",
+		"[null]",
+		"[{}]",
+		'[{"id":42}]',
+		'[{"id":""}]',
+	]) {
+		await assert.rejects(
+			() =>
+				deleteLibraryAndWait(
+					new ProductSession("https://synthetic.example.invalid"),
+					"library-probe",
+					10,
+				),
+			{ message: "invalid library list response during cleanup" },
+		);
+	}
 });
 
 test("destructive and fault acceptance entrypoints are fail-closed", async (t) => {

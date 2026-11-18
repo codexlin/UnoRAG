@@ -54,29 +54,10 @@ export const RouterOutputSchema = z
 	})
 	.strict();
 
-const RetrievalRecordTypeSchema = z.enum([
-	"chunk",
-	"section",
-	"document",
-	"table",
-	"table_summary",
-	"figure",
-	"chunk+table_summary",
-	"text",
-]);
-
 export const RewriteOutputSchema = z
 	.object({
-		semantic_query: z.string().trim().min(1),
-		filters: z
-			.object({
-				record_type: RetrievalRecordTypeSchema.optional(),
-				doc_id: z.string().trim().min(1).optional(),
-				table_id: z.string().trim().min(1).optional(),
-				document_version_id: z.string().trim().min(1).optional(),
-			})
-			.strict()
-			.default({}),
+		resolution: z.enum(["standalone", "resolved", "ambiguous"]),
+		subjects: z.array(z.string().trim().min(1).max(120)).max(4),
 	})
 	.strict();
 
@@ -531,7 +512,7 @@ export class StructuredOutputAdapter {
 	rewrite(
 		input: {
 			question: string;
-			fallbackSemanticQuery: string;
+			history: readonly { role: "user" | "assistant"; content: string }[];
 		},
 		options: {
 			abortSignal?: AbortSignal;
@@ -544,7 +525,7 @@ export class StructuredOutputAdapter {
 			getPrompt("rewrite"),
 			[
 				userMessage(
-					`原问题：${input.question.trim()}\n已有改写（可参考）：${input.fallbackSemanticQuery.trim()}`,
+					JSON.stringify({ history: input.history, question: input.question }),
 				),
 			],
 			options.abortSignal,

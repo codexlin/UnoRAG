@@ -23,7 +23,7 @@ import {
 const EXPECTED_DIGESTS = {
 	chat: "a823611a82a1aca278decc13db5a104924a91f2d17db28b4c77508293c077d8a",
 	router: "4f586e259c1fb7b4991d7014038887dd885168785edfd5fe0705cfb8a5862353",
-	rewrite: "81002875e2bfbf97afaee365f896b5a7a7c6528cea3c2242c4e26a40ab7d4104",
+	rewrite: "515f7cae7e09b2cdeb5dae09eafdebdb8bbdf9b8631d867f1ba1dd6bd604a7da",
 	judge: "dcf69ce39ba3ae809ce1472a75193215065e1f7a2cb60e2155cb9b5d4b190abe",
 	refusal_review:
 		"7f35bbcecc1b3e7fd326e76c59213e791235432801c74254e3af87cdd0b7a675",
@@ -37,7 +37,7 @@ const EXPECTED_DIGESTS = {
 const EXPECTED_VERSIONS = {
 	chat: "1.13.0",
 	router: "1.0.0",
-	rewrite: "1.0.0",
+	rewrite: "2.1.0",
 	judge: "1.12.0",
 	refusal_review: "1.0.0",
 	conflict: "2.3.0",
@@ -116,7 +116,7 @@ test("runtime adapters use registry instructions and export no prompt text", asy
 				case "router":
 					return { query_type: "fact", reason: "direct" };
 				case "rewrite":
-					return { semantic_query: "合同期限", filters: {} };
+					return { resolution: "standalone", subjects: [] };
 				case "judge":
 					return {
 						sufficient: true,
@@ -150,7 +150,7 @@ test("runtime adapters use registry instructions and export no prompt text", asy
 	await structured.route({ question: "期限？" });
 	await structured.rewrite({
 		question: "期限？",
-		fallbackSemanticQuery: "期限",
+		history: [],
 	});
 	await structured.judge({ question: "期限？", citations: [], attempts: 1 });
 	await structured.reviewRefusalWithMetadata({

@@ -24,6 +24,7 @@ import {
 	finishAskTiming,
 } from "@/core/ask-graph";
 import { selectFinalAnswerEvidence } from "@/core/ask-graph/answer-evidence";
+import { PendingClarificationSchema } from "@/core/ask-graph/clarification";
 import { RetrievalProviderError } from "@/core/retrieval/provider-request";
 import { projectQdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
 import { QdrantOperationError } from "@/core/retrieval/qdrant/store";
@@ -168,9 +169,14 @@ function visibility(state: AskState) {
 }
 
 function conversationDebug(state: AskState) {
+	// Expiry is checked on reuse. Dropping an expired marker would trust its text.
+	const pending = PendingClarificationSchema.safeParse(
+		state.retrieval_debug?.pending_clarification,
+	).data;
 	const { conflict_evidence: _conflictEvidence, ...judge } =
 		state.judgement ?? {};
 	return {
+		...(pending ? { pending_clarification: pending } : {}),
 		mode: "live",
 		refused: state.refused === true,
 		refuse_reason: state.refuse_reason ?? null,
@@ -253,6 +259,9 @@ async function persistConversation(input: {
 		return { persisted: false, persist_error: null };
 	}
 	try {
+		const pending = PendingClarificationSchema.safeParse(
+			input.state.retrieval_debug?.pending_clarification,
+		).data;
 		await input.memoryStore.append(
 			input.scope,
 			input.sessionId,
@@ -262,6 +271,7 @@ async function persistConversation(input: {
 					role: "assistant",
 					content: input.answer,
 					...(input.provenance ? { provenance: input.provenance } : {}),
+					...(pending ? { pending_clarification: pending } : {}),
 				},
 			],
 			input.policy.session_memory_max_turns,
@@ -536,6 +546,40 @@ async function handleNativeAskRequestInSpan(input: {
 		input.request.signal,
 		executionAbort.signal,
 	]);
+	let clientCancelled = false;
+	let historyCompleted = false;
+	let historyWrite: ReturnType<typeof timedPersistConversation> | undefined;
+	let boundaryWrite: Promise<void> | undefined;
+	let writeBoundary: (() => Promise<void>) | undefined;
+	const invalidateHistory = (): Promise<void> => {
+		if (historyCompleted || !writeBoundary) return Promise.resolve();
+		const write = writeBoundary;
+		boundaryWrite ??= (async () => {
+			// Cancellation may race a successful append already in flight.
+			await historyWrite?.catch(() => {});
+			try {
+				await write();
+			} catch {
+				// Preserve the original failure, but never claim its boundary was saved.
+				logger.warn({ event: "ask.history_boundary.persist_failed" });
+			}
+		})();
+		return boundaryWrite;
+	};
+	const persistHistory = async (
+		...args: Parameters<typeof timedPersistConversation>
+	) => {
+		executionSignal.throwIfAborted();
+		historyWrite = timedPersistConversation(...args);
+		const result = await historyWrite;
+		if (!executionSignal.aborted && result.persist_error === null) {
+			historyCompleted = true;
+		} else {
+			await invalidateHistory();
+		}
+		executionSignal.throwIfAborted();
+		return result;
+	};
 	let activeRun: ActiveAskRun | undefined;
 	const settleActiveRun = async (
 		status: "completed" | "refused" | "failed" | "cancelled",
@@ -602,6 +646,26 @@ async function handleNativeAskRequestInSpan(input: {
 			identity: input.identity,
 			citationAuthorizer: authorization.citationAuthorizer,
 		});
+		// Only a validated destination can receive a boundary. Never clear a session.
+		writeBoundary = async () => {
+			if (payload.thread_id) {
+				await repository.appendTurn(conversationScope, payload.thread_id, {
+					role: "system",
+					content: "",
+					status:
+						clientCancelled || input.request.signal.aborted
+							? "cancelled"
+							: "failed",
+				});
+			} else if (policy.session_memory_enabled && memoryStore) {
+				await memoryStore.append(
+					conversationScope,
+					sessionId,
+					[{ role: "assistant", content: "", history_boundary: true }],
+					policy.session_memory_max_turns,
+				);
+			}
+		};
 		const runtime = (input.runtimeFactory ?? createNativeAskRuntime)({
 			identity: input.identity,
 			libraryId: payload.library_id,
@@ -686,7 +750,9 @@ async function handleNativeAskRequestInSpan(input: {
 			...(runtime.getEvidenceReferences?.() ?? state.citations ?? []),
 		];
 		await checkAccess(evidence, { force: true });
-		const provenance = createMemoryProvenance(payload.library_id, evidence);
+		const provenance = judgeUnavailable
+			? null
+			: createMemoryProvenance(payload.library_id, evidence);
 		const candidateCitations = state.citations ?? [];
 		const publicCandidates = projectPublicCitations(candidateCitations);
 		let citations = publicCandidates;
@@ -737,7 +803,7 @@ async function handleNativeAskRequestInSpan(input: {
 			await checkAccess(evidence, { force: true });
 			attachModelUsage(state);
 			finalizeCitations(answer);
-			const persisted = await timedPersistConversation(
+			const persisted = await persistHistory(
 				state,
 				{
 					repository,
@@ -795,7 +861,7 @@ async function handleNativeAskRequestInSpan(input: {
 				finalizeCitations(answer);
 				Object.assign(
 					done,
-					await timedPersistConversation(
+					await persistHistory(
 						state,
 						{
 							repository,
@@ -839,6 +905,7 @@ async function handleNativeAskRequestInSpan(input: {
 				);
 				throw error;
 			} finally {
+				await invalidateHistory();
 				await settleActiveRun(
 					input.request.signal.aborted ? "cancelled" : "failed",
 					state,
@@ -861,6 +928,7 @@ async function handleNativeAskRequestInSpan(input: {
 					getFinalCitations: () => citations,
 				});
 			} catch (error) {
+				await invalidateHistory();
 				await settleActiveRun(
 					"failed",
 					state,
@@ -880,6 +948,7 @@ async function handleNativeAskRequestInSpan(input: {
 					truncated: true,
 				});
 			} finally {
+				await invalidateHistory();
 				await settleActiveRun(
 					input.request.signal.aborted ? "cancelled" : "failed",
 					state,
@@ -890,7 +959,9 @@ async function handleNativeAskRequestInSpan(input: {
 			}
 		})();
 		return streamResponse(frames, async () => {
+			clientCancelled = true;
 			executionAbort.abort(new DOMException("Request cancelled", "AbortError"));
+			await invalidateHistory();
 			await settleActiveRun("cancelled", state, "request_cancelled");
 			settleMetrics("cancelled");
 		});
@@ -900,6 +971,7 @@ async function handleNativeAskRequestInSpan(input: {
 		failedGraphState =
 			caught instanceof AskGraphExecutionError ? caught.diagnostics : undefined;
 		executionAbort.abort(error);
+		await invalidateHistory();
 		recordActiveSpanFailure(error);
 		const errorCode = operationalErrorCode(error);
 		await settleActiveRun(

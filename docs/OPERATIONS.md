@@ -268,10 +268,16 @@ poll/retry 次数及 `automatic_retry=false`，不保存完整 task ID、URL、�
 ### 模型并发与背压
 
 LLM 调用由 Web 进程内的共享 FIFO 门控统一约束，Router、Rewrite、Judge、TablePlan 和最终回答不会各自
-绕过额度。`LLM_MAX_INFLIGHT` 是每个 Web 副本的在途上限，因此集群总上限约为“副本数 × 该值”；
-`LLM_MAX_QUEUE` 限制每个副本的排队数，`LLM_QUEUE_TIMEOUT_MS` 限制等待时间。队列满返回
+绕过额度。`LLM_MAX_INFLIGHT` 是每个 Web 副本的在途上限；`LLM_MAX_QUEUE` 限制每个副本的排队数，
+`LLM_QUEUE_TIMEOUT_MS` 限制等待时间。队列满返回
 `llm_overloaded`，等待超时返回 `llm_queue_timeout`，两者均可重试且不包含 Prompt 内容。调整这些参数
 需要重启 Web，不支持运行中漂移。
+
+配置 `REDIS_URL` 且 `LLM_REDIS_GATE_ENABLED` 不为 `false` 时，另启用跨 Web 的 Redis 租约门；
+`LLM_GLOBAL_MAX_INFLIGHT` 限制这些 Web 调用的全局在途数，默认等于 `LLM_MAX_INFLIGHT`。
+Redis 故障默认记录 `ai.concurrency.redis_fallback` 并回退本地门，此时总上限可能达到“副本数 × 本地上限”；
+需要严格全局约束时设置 `LLM_REDIS_GATE_FAIL_CLOSED=true`，接受 Redis 不可用会阻断模型调用的代价。
+这不是 Worker、Embedding、Rerank 或 Provider RPM/TPM 的统一配额服务。
 
 容量调优应同时观察 `unorag_ai_llm_inflight`、`unorag_ai_llm_queue_depth` 和
 `unorag_ai_llm_queue_wait_seconds`，并核对 Provider 限额、Ask P95、拒答率和引用覆盖。不要只提高并发；

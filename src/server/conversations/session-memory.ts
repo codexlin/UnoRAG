@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 
 import { createClient, type RedisClientType } from "redis";
 import { z } from "zod";
-
+import { PendingClarificationSchema } from "@/core/ask-graph/clarification";
 import { MemoryProvenanceSchema } from "./memory-provenance";
 import type { ConversationScope } from "./types";
 
@@ -13,6 +13,8 @@ export const SessionMemoryMessageSchema = z
 		role: z.enum(["user", "assistant"]),
 		content: z.string().max(100_000),
 		provenance: MemoryProvenanceSchema.optional(),
+		pending_clarification: PendingClarificationSchema.optional(),
+		history_boundary: z.literal(true).optional(),
 	})
 	.strict();
 

@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, count, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import { z } from "zod";
+import { PendingClarificationSchema } from "@/core/ask-graph/clarification";
 
 import { getDatabase } from "@/db";
 import {
@@ -326,7 +327,7 @@ async function legacyTurns(
 				debug.retrieval_debug &&
 				typeof debug.retrieval_debug === "object" &&
 				!Array.isArray(debug.retrieval_debug)
-					? debug.retrieval_debug
+					? projectPublicRetrievalDebug(debug.retrieval_debug)
 					: null,
 			created_at: iso(turn.createdAt),
 		});
@@ -448,17 +449,37 @@ export async function handleNativeConversationRequest(input: {
 				await input.request.json(),
 			);
 			validateLibraryConsistency(payload.library_id, payload.turns);
+			const messages =
+				payload.session_id && payload.library_id
+					? await (input.memoryStore ?? getSessionMemoryStore()).load(
+							conversationScope,
+							payload.session_id,
+							50,
+						)
+					: [];
 			const provenance =
 				payload.session_id && payload.library_id
 					? recoverArchiveProvenance({
 							identity: input.identity,
 							libraryId: payload.library_id,
 							turns: payload.turns,
-							messages: await (
-								input.memoryStore ?? getSessionMemoryStore()
-							).load(conversationScope, payload.session_id, 50),
+							messages,
 						})
 					: [];
+			// A pending choice is recoverable only from the exact latest server exchange.
+			const lastTurn = payload.turns.at(-1);
+			const lastUser = messages.at(-2);
+			const lastAssistant = messages.at(-1);
+			const pending =
+				provenance.at(-1) &&
+				lastUser?.role === "user" &&
+				lastAssistant?.role === "assistant" &&
+				lastUser.content === lastTurn?.question &&
+				lastAssistant.content === lastTurn?.answer
+					? PendingClarificationSchema.safeParse(
+							lastAssistant.pending_clarification,
+						).data
+					: undefined;
 			const title =
 				payload.title ||
 				payload.turns[0]?.question.slice(0, 80) ||
@@ -486,6 +507,9 @@ export async function handleNativeConversationRequest(input: {
 									? projectPublicRetrievalDebug(turn.retrieval_debug)
 									: null,
 								memory_provenance: provenance[index] ?? null,
+								...(index === payload.turns.length - 1 && pending
+									? { pending_clarification: pending }
+									: {}),
 							},
 						},
 					]),

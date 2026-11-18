@@ -210,7 +210,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 /**
  * Delete a library by fan-out to document.delete jobs (V2) so a large library
  * never blocks a single HTTP request on synchronous RAG cleanup.
- * Empty libraries still hard-delete + enqueue projection cleanup immediately.
+ * Empty libraries finalize the same tombstone as the worker, retaining archives.
  */
 export async function DELETE(request: Request, context: RouteContext) {
 	const identity = await resolveRequestSession(request);
@@ -304,7 +304,15 @@ export async function DELETE(request: Request, context: RouteContext) {
 					details: libraryDeleteRequestedAuditDetails(locked, immediateOutcome),
 					createdAt: now,
 				});
-				await tx.delete(libraries).where(eq(libraries.id, locked.id));
+				await tx
+					.update(libraries)
+					.set({
+						status: "deleted",
+						docCount: 0,
+						readyCount: 0,
+						updatedAt: now,
+					})
+					.where(eq(libraries.id, locked.id));
 				await tx.insert(auditLogs).values({
 					organizationId: identity.tenantId,
 					workspaceId: identity.workspaceId,
