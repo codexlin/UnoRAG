@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { isCancelledError, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Can, useCan } from "@/components/app/can";
@@ -47,6 +47,10 @@ import {
 	updateLibrary,
 	uploadDocument,
 } from "@/lib/api";
+import {
+	documentQueryOptions,
+	seedAcceptedDocumentDeletion,
+} from "@/lib/document-query-state";
 import { formatDurationMs } from "@/lib/format";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchFreshQuery } from "@/lib/query-refresh";
@@ -72,6 +76,8 @@ export function LibrariesPanel() {
 	} = useLibraries();
 	const { tick: ingestTick, trackProcessing } = useIngestJobs();
 	const [selectedId, setSelectedId] = useState<string>("");
+	const selectedIdRef = useRef(selectedId);
+	selectedIdRef.current = selectedId;
 	const [uploading, setUploading] = useState(false);
 	const [savingLibrary, setSavingLibrary] = useState(false);
 	const [busyDocId, setBusyDocId] = useState<string | null>(null);
@@ -496,21 +502,36 @@ export function LibrariesPanel() {
 	}
 
 	async function onRetryJob(doc: ApiDocument) {
-		if (!doc.job_id) return;
+		if (!doc.job_id || busyDocId === doc.id) return;
+		const deleting = doc.status === "deleting";
+		if (deleting && !canManageLibraries) return;
 		setBusyDocId(doc.id);
 		setError(null);
 		try {
 			const result = await retryJob(doc.job_id);
-			trackProcessing([{ id: result.document_id, name: doc.name }]);
+			if (deleting) {
+				await seedAcceptedDocumentDeletion(
+					queryClient,
+					queryScope,
+					doc,
+					result,
+				);
+			} else {
+				trackProcessing([{ id: result.document_id, name: doc.name }]);
+			}
 			toast.success(`已重新提交「${doc.name}」`);
-			await loadLibraries();
-			if (selectedId) await refreshDocuments();
+			if (deleting) {
+				await refreshDeletion(doc.library_id);
+			} else {
+				await loadLibraries();
+				if (selectedId) await refreshDocuments();
+			}
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "重试任务失败";
-			setError(message);
+			if (selectedIdRef.current === doc.library_id) setError(message);
 			toast.error(message);
 		} finally {
-			setBusyDocId(null);
+			setBusyDocId((current) => (current === doc.id ? null : current));
 		}
 	}
 
@@ -535,23 +556,58 @@ export function LibrariesPanel() {
 		}
 	}
 
+	async function refreshDeletion(libraryId: string) {
+		const { queryKey, queryFn } = documentQueryOptions(
+			queryClient,
+			queryScope,
+			libraryId,
+		);
+		// Both queries retain their original workspace/library even after navigation.
+		await Promise.all([
+			fetchFreshQuery(
+				queryClient,
+				queryKeys.libraries(queryScope),
+				({ signal }) => fetchLibraries(signal),
+			),
+			fetchFreshQuery(queryClient, queryKey, queryFn),
+		]).catch((err: unknown) => {
+			if (isCancelledError(err)) return;
+			const message = err instanceof Error ? err.message : "列表刷新失败";
+			toast.error(`删除任务已提交，列表刷新失败：${message}`);
+		});
+	}
+
 	async function onConfirmDelete() {
-		if (!deleteDocId || !selectedId) return;
-		const id = deleteDocId;
-		setBusyDocId(id);
+		if (
+			!deleteDoc ||
+			busyDocId === deleteDoc.id ||
+			deleteDoc.status === "deleting"
+		)
+			return;
+		const doc = deleteDoc;
+		const overlay = documentOverlay;
+		setBusyDocId(doc.id);
 		setError(null);
 		try {
-			await deleteDocument({ libraryId: selectedId, docId: id });
+			const result = await deleteDocument({
+				libraryId: doc.library_id,
+				docId: doc.id,
+			});
+			await seedAcceptedDocumentDeletion(queryClient, queryScope, doc, {
+				id: result.job_id,
+				status: "queued",
+			});
 			toast.success("已排队删除文档（后台清理向量、对象与元数据）");
-			setDocumentOverlay({ kind: "none" });
-			await loadLibraries();
-			if (selectedId) await refreshDocuments();
+			setDocumentOverlay((current) =>
+				current === overlay ? { kind: "none" } : current,
+			);
+			await refreshDeletion(doc.library_id);
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "删除失败";
-			setError(message);
+			if (selectedIdRef.current === doc.library_id) setError(message);
 			toast.error(message);
 		} finally {
-			setBusyDocId(null);
+			setBusyDocId((current) => (current === doc.id ? null : current));
 		}
 	}
 

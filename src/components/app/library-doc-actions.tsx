@@ -53,7 +53,7 @@ const DOC_ACTIONS: DocAction[] = [
 		cap: "writeLibraries",
 		label: "谁可见",
 		icon: Shield,
-		disabled: (_doc, ctx) => ctx.busy,
+		disabled: (doc, ctx) => doc.status === "deleting" || ctx.busy,
 		run: (doc, ctx) => ctx.onAcl(doc),
 	},
 	{
@@ -61,7 +61,8 @@ const DOC_ACTIONS: DocAction[] = [
 		cap: "writeLibraries",
 		label: "替换文件",
 		icon: Replace,
-		disabled: (_doc, ctx) => ctx.processing || ctx.busy,
+		disabled: (doc, ctx) =>
+			doc.status === "deleting" || ctx.processing || ctx.busy,
 		run: (doc, ctx) => ctx.onReplace(doc),
 	},
 	{
@@ -69,7 +70,8 @@ const DOC_ACTIONS: DocAction[] = [
 		cap: "writeLibraries",
 		label: "重索引",
 		icon: RotateCcw,
-		disabled: (doc, ctx) => !doc.has_file || ctx.processing || ctx.busy,
+		disabled: (doc, ctx) =>
+			doc.status === "deleting" || !doc.has_file || ctx.processing || ctx.busy,
 		run: (doc, ctx) => ctx.onReindex(doc),
 	},
 	{
@@ -79,7 +81,8 @@ const DOC_ACTIONS: DocAction[] = [
 		icon: CircleStop,
 		visible: (doc) =>
 			Boolean(
-				doc.job_id &&
+				doc.status !== "deleting" &&
+					doc.job_id &&
 					["queued", "running", "retry", "cancelling"].includes(
 						doc.job_status ?? "",
 					),
@@ -97,7 +100,8 @@ const DOC_ACTIONS: DocAction[] = [
 				doc.job_id &&
 					["cancelled", "failed", "dead"].includes(doc.job_status ?? ""),
 			),
-		disabled: (doc, ctx) => !doc.has_file || ctx.busy,
+		disabled: (doc, ctx) =>
+			(doc.status !== "deleting" && !doc.has_file) || ctx.busy,
 		run: (doc, ctx) => ctx.onRetryJob(doc),
 	},
 	{
@@ -115,7 +119,7 @@ const DOC_ACTIONS: DocAction[] = [
 		icon: Trash2,
 		destructive: true,
 		separatorBefore: true,
-		disabled: (_doc, ctx) => ctx.busy,
+		disabled: (doc, ctx) => doc.status === "deleting" || ctx.busy,
 		run: (doc, ctx) => ctx.onDelete(doc),
 	},
 ];
@@ -125,7 +129,11 @@ export function resolveDocActions(
 	doc: ApiDocument,
 ): DocAction[] {
 	return filterByCap(caps, DOC_ACTIONS).filter(
-		(action) => action.visible?.(doc) ?? true,
+		(action) =>
+			(action.id !== "retry" ||
+				doc.status !== "deleting" ||
+				caps.canManageLibraries) &&
+			(action.visible?.(doc) ?? true),
 	);
 }
 

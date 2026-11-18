@@ -1,32 +1,44 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 
 import { useQueryScope } from "@/hooks/use-query-scope";
-import { fetchDocuments } from "@/lib/api";
-import { queryKeys } from "@/lib/query-keys";
+import type { ApiDocument } from "@/lib/api";
+import {
+	documentQueryOptions,
+	documentRefetchInterval,
+} from "@/lib/document-query-state";
+import { fetchFreshQuery } from "@/lib/query-refresh";
 
 export function useDocuments(
 	libraryId: string,
 	options: { enabled?: boolean } = {},
 ) {
 	const scope = useQueryScope();
+	const queryClient = useQueryClient();
 	const enabled = Boolean(libraryId) && (options.enabled ?? true);
-	const queryKey = useMemo(
-		() => queryKeys.documents(scope, libraryId),
-		[scope, libraryId],
+	const queryOptions = useMemo(
+		() => documentQueryOptions(queryClient, scope, libraryId),
+		[queryClient, scope, libraryId],
 	);
 	const query = useQuery({
-		queryKey,
-		queryFn: ({ signal }) => fetchDocuments(libraryId, signal),
+		...queryOptions,
 		enabled,
+		refetchInterval: (query) => documentRefetchInterval(query.state.data),
 	});
 	const refresh = useCallback(async () => {
 		if (!enabled) return [];
-		const result = await query.refetch();
-		return result.data ?? [];
-	}, [enabled, query.refetch]);
+		// Capture the key instead of refetching an observer that may have switched libraries.
+		return fetchFreshQuery(
+			queryClient,
+			queryOptions.queryKey,
+			queryOptions.queryFn,
+		).catch(
+			() =>
+				queryClient.getQueryData<ApiDocument[]>(queryOptions.queryKey) ?? [],
+		);
+	}, [enabled, queryClient, queryOptions]);
 
 	return {
 		documents: query.data ?? [],
