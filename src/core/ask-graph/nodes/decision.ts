@@ -1,5 +1,6 @@
 import { stripFilenameReferences } from "../../retrieval/document-constraints";
 import { sharesEvidenceLineage } from "../../retrieval/evidence-lineage";
+import { truncateEvidenceText } from "../comparison-evidence";
 import type { AskGraphContext, Judgement } from "../context";
 import { validateConflictEvidence } from "../evidence-conflict";
 import {
@@ -14,28 +15,141 @@ const MAX_COMPARISON_CHARACTERS = 14_400;
 const FIGURE_REFERENCE =
 	/(?:图\s*[0-9一二三四五六七八九十]+|图表|图注|图示|图片|图像|插图|(?:折线|柱状|饼|趋势|流程|示意)图|\b(?:fig\.?\s*\d+|figures?(?!\s+out\b)|charts?|diagrams?|illustrations?|images?)\b)/iu;
 
-function comparisonContext(state: AskState) {
+function citationRawText(citation: Record<string, unknown>): string {
+	const value = citation.body || citation.text || citation.snippet;
+	return typeof value === "string" ? value : "";
+}
+
+function allocateComparisonCaps(
+	lengths: readonly number[],
+	budget: number,
+): number[] {
+	const caps = [...lengths];
+	let remainingIndices = lengths.map((_, index) => index);
+	let remainingBudget = budget;
+	while (remainingIndices.length > 0) {
+		const share = Math.floor(remainingBudget / remainingIndices.length);
+		const settled = remainingIndices.filter((index) => lengths[index] <= share);
+		if (settled.length === 0) {
+			let extra = remainingBudget - share * remainingIndices.length;
+			for (const index of remainingIndices) {
+				caps[index] = share + (extra > 0 ? 1 : 0);
+				if (extra > 0) extra -= 1;
+			}
+			break;
+		}
+		for (const index of settled) {
+			caps[index] = lengths[index];
+			remainingBudget -= lengths[index];
+		}
+		remainingIndices = remainingIndices.filter(
+			(index) => lengths[index] > share,
+		);
+	}
+	return caps;
+}
+
+function normalizeWhitespace(value: string): string {
+	return value.replace(/\s+/gu, " ").trim();
+}
+
+function comparisonContext(
+	state: AskState,
+	directIds?: ReadonlySet<string>,
+	conflictQuotesById?: ReadonlyMap<string, readonly string[]>,
+) {
 	const citations = state.citations ?? [];
-	const characters = citations.reduce((sum, citation) => {
-		const text = citation.body || citation.text || citation.snippet;
-		return sum + (typeof text === "string" ? text.length : 0);
-	}, 0);
 	const ids = citations.map((citation) => citation.id);
-	const overBudget =
-		citations.length > MAX_COMPARISON_EVIDENCE ||
-		characters > MAX_COMPARISON_CHARACTERS;
-	const invalid =
-		overBudget ||
+	if (
 		citations.length === 0 ||
 		ids.some((id) => typeof id !== "string" || !id) ||
-		new Set(ids).size !== ids.length;
+		new Set(ids).size !== ids.length
+	) {
+		return { citations: [], invalid: true, invalidReason: undefined };
+	}
+	const requiredIds = new Set(directIds ?? []);
+	if (requiredIds.size > MAX_COMPARISON_EVIDENCE) {
+		return {
+			citations: [],
+			invalid: true,
+			invalidReason: "comparison_context_exceeds_budget",
+		};
+	}
+	const keptIds = new Set(requiredIds);
+	for (const citation of citations) {
+		if (keptIds.size >= MAX_COMPARISON_EVIDENCE) break;
+		keptIds.add(String(citation.id));
+	}
+	const kept = citations.filter((citation) => keptIds.has(String(citation.id)));
+	const lengths = kept.map((citation) => citationRawText(citation).length);
+	const totalCharacters = lengths.reduce((sum, len) => sum + len, 0);
+	const caps =
+		totalCharacters <= MAX_COMPARISON_CHARACTERS
+			? lengths
+			: allocateComparisonCaps(lengths, MAX_COMPARISON_CHARACTERS);
+
+	const bounded: Array<Record<string, unknown>> = kept.map(
+		(citation, index) => {
+			const raw = citationRawText(citation);
+			const cap = caps[index] ?? raw.length;
+			if (raw.length <= cap) return { ...citation, index: index + 1 };
+			const trimmed = truncateEvidenceText(raw, cap);
+			return {
+				...citation,
+				index: index + 1,
+				body: trimmed,
+				...(typeof citation.text === "string" ? { text: trimmed } : {}),
+				...(typeof citation.snippet === "string"
+					? { snippet: truncateEvidenceText(trimmed, 280) }
+					: {}),
+			};
+		},
+	);
+
+	if (conflictQuotesById && conflictQuotesById.size > 0) {
+		for (const citation of bounded) {
+			const quotes = conflictQuotesById.get(String(citation.id));
+			if (!quotes?.length) continue;
+			const normalizedBody = normalizeWhitespace(citationRawText(citation));
+			const parentText =
+				typeof citation.parent_context === "string"
+					? normalizeWhitespace(citation.parent_context)
+					: "";
+			const missingQuote = quotes.some(
+				(quote) =>
+					!normalizedBody.includes(quote) && !parentText.includes(quote),
+			);
+			if (missingQuote) {
+				return {
+					citations: [],
+					invalid: true,
+					invalidReason: "comparison_context_exceeds_budget",
+				};
+			}
+		}
+	}
+
 	return {
-		citations: invalid
-			? []
-			: citations.map((citation, index) => ({ ...citation, index: index + 1 })),
-		invalid,
-		invalidReason: overBudget ? "comparison_context_exceeds_budget" : undefined,
+		citations: bounded,
+		invalid: false,
+		invalidReason: undefined,
 	};
+}
+
+function conflictQuotesMap(judgement: Judgement): Map<string, string[]> {
+	const map = new Map<string, string[]>();
+	if (!Array.isArray(judgement.conflict_evidence)) return map;
+	for (const item of judgement.conflict_evidence) {
+		if (!item || typeof item !== "object") continue;
+		const id = (item as Record<string, unknown>).evidence_id;
+		const quote = (item as Record<string, unknown>).quote;
+		if (typeof id === "string" && typeof quote === "string") {
+			const list = map.get(id) ?? [];
+			list.push(normalizeWhitespace(quote));
+			map.set(id, list);
+		}
+	}
+	return map;
 }
 
 function selectedEvidence(
@@ -51,7 +165,11 @@ function selectedEvidence(
 } {
 	if (judgement.evidence_ids === undefined) {
 		if (state.query_type === "compare" && judgement.action === "generate") {
-			const context = comparisonContext(state);
+			const context = comparisonContext(
+				state,
+				undefined,
+				conflictQuotesMap(judgement),
+			);
 			return {
 				...context,
 				directCount: context.citations.length,
@@ -100,7 +218,11 @@ function selectedEvidence(
 	// A comparison needs the alternatives, not just the single most relevant
 	// paragraph. These candidates already passed retrieval policy and scope checks.
 	if (state.query_type === "compare") {
-		const context = comparisonContext(state);
+		const context = comparisonContext(
+			state,
+			selected,
+			conflictQuotesMap(judgement),
+		);
 		return {
 			...context,
 			directCount: direct.length,

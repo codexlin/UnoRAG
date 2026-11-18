@@ -736,6 +736,12 @@ test("backup manifest questions use prose unless they require table structure or
 	]) {
 		assert.equal(fallbackQueryRoute(question).queryType, "table");
 	}
+	for (const question of [
+		"表中甘李药业2022到2024年复合增长率是多少？",
+		"明细表中2025年静态市盈率PE是多少？",
+	]) {
+		assert.equal(fallbackQueryRoute(question).queryType, "fact");
+	}
 });
 
 test("comparison preserves six real alternatives when one indexed section contains its own chunk", async () => {

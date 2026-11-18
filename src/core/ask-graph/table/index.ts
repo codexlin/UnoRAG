@@ -27,3 +27,9 @@ export {
 	deriveGroundedTableLookup,
 	normalizeTablePlanForQuestion,
 } from "./planning";
+export {
+	isDerivedCalculationQuestion,
+	isFormFieldLookup,
+	isFormTableOperation,
+	isProseChecklistLookup,
+} from "./query-intent";

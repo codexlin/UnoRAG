@@ -5,6 +5,7 @@ import {
 	deriveDeterministicTablePlan,
 	deriveGroundedTableLookup,
 	executeTableQuery,
+	isDerivedCalculationQuestion,
 	normalizeTablePlanForQuestion,
 	parseTableNumber,
 	type TableDatasetInput,
@@ -955,4 +956,44 @@ test("unknown columns and absent join keys return typed outcomes", () => {
 	);
 	assert.equal(badJoin.status, "clarify");
 	assert.equal(badJoin.reason, "missing_column:合同号");
+});
+
+test("derived financial calculation queries bypass deterministic single-table lookup/planning", () => {
+	const financialQuote = {
+		records: [
+			tableRecord({
+				id: "fin-1",
+				tableId: "financials",
+				headers: ["股票简称", "2022年", "2024年"],
+				rows: [["甘李药业", "171227.04万元", "3045.34百万元"]],
+			}),
+		],
+	};
+	for (const question of [
+		"甘李药业2022年到2024年三年间的总资产复合增长率是多少？",
+		"华电国际20250811的静态市盈率PE是多少？",
+		"2024年筹资活动现金流量净额与有息负债的比率是多少？",
+	]) {
+		assert.equal(isDerivedCalculationQuestion(question), true);
+		assert.equal(
+			deriveGroundedTableLookup(question, [
+				{
+					tableId: "financials",
+					headers: ["股票简称", "2022年", "2024年"],
+					dataset: financialQuote,
+				},
+			]),
+			null,
+		);
+		assert.equal(
+			deriveDeterministicTablePlan(question, [
+				{ tableId: "financials", headers: ["股票简称", "2022年", "2024年"] },
+			]),
+			null,
+		);
+	}
+	assert.equal(
+		isDerivedCalculationQuestion("报价清单中哪些设备的单价超过10万元？"),
+		false,
+	);
 });
