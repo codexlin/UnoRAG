@@ -476,6 +476,24 @@ test("parser diagnostics strip content context without mutating persisted metada
 	assert.equal(publicParserReport(null), null);
 });
 
+test("document constraint recognizes xlsx filename and sheet headings", () => {
+	const result = resolveDocumentConstraint(
+		"budget.xlsx 中 Q1 收入是多少？",
+		[
+			descriptor({
+				documentId: "xlsx-1",
+				filename: "budget.xlsx",
+			}),
+		],
+		true,
+	);
+	assert.equal(result.status, "resolved");
+	assert.deepEqual(
+		result.documents.map((doc) => doc.documentId),
+		["xlsx-1"],
+	);
+});
+
 test("native text parser identity metadata is extracted from structured paragraph content", () => {
 	const doc = parseTextDocument({
 		documentId: "d",

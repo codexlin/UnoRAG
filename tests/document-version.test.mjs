@@ -30,10 +30,28 @@ test("contentTypeForUpload prefers real MIME then extension", () => {
 		contentTypeForUpload({ name: "a.docx", type: "" }),
 		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 	);
+	assert.equal(
+		contentTypeForUpload({ name: "budget.xlsx", type: "" }),
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	);
+	assert.equal(
+		contentTypeForUpload({
+			name: "budget.xlsx",
+			type: "application/octet-stream",
+		}),
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	);
 });
 
 test("inferIngestQueueClass slots pdf vs local", () => {
 	assert.equal(inferIngestQueueClass("a.docx", "application/vnd..."), "local");
+	assert.equal(
+		inferIngestQueueClass(
+			"budget.xlsx",
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		),
+		"local",
+	);
 	assert.equal(inferIngestQueueClass("a.md", "text/markdown"), "local");
 	assert.equal(inferIngestQueueClass("a.pdf", "application/pdf"), "auto");
 	assert.equal(inferIngestQueueClass("x.bin", "application/pdf"), "auto");

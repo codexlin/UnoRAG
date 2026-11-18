@@ -16,13 +16,20 @@ const CONTENT_TYPES_BY_EXTENSION = new Map([
 			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 		]),
 	],
+	[
+		".xlsx",
+		new Set([
+			...COMMON_BINARY_TYPES,
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		]),
+	],
 ]);
 
 export function validateDocumentUpload(file) {
 	const extension = path.extname(file.name).toLowerCase();
 	const allowedTypes = CONTENT_TYPES_BY_EXTENSION.get(extension);
 	if (!allowedTypes) {
-		return "supported file types: .txt, .md, .markdown, .pdf, .docx";
+		return "supported file types: .txt, .md, .markdown, .pdf, .docx, .xlsx";
 	}
 	const contentType = (file.type || "").toLowerCase();
 	if (!allowedTypes.has(contentType)) {

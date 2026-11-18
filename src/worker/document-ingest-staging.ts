@@ -15,7 +15,11 @@ import {
 	type ContextualRetrievalOptions,
 	contextualRetrievalFromEnvironment,
 } from "../core/ingest/contextual-retrieval";
-import { type ParsePdfInput, parseDocxDocument } from "../core/parsing";
+import {
+	type ParsePdfInput,
+	parseDocxDocument,
+	parseXlsxDocument,
+} from "../core/parsing";
 import type { EmbeddingProvider } from "../core/retrieval/embedding/provider";
 import type { DocumentIngestJob } from "./contracts";
 import { WorkerTaskError } from "./errors";
@@ -223,6 +227,17 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 				source,
 			});
 		}
+		if (format === "xlsx") {
+			return parseXlsxDocument({
+				documentId: snapshot.documentId,
+				libraryId: snapshot.libraryId,
+				filename: input.payload.filename,
+				title: snapshot.title,
+				contentHash: input.payload.content_hash,
+				content,
+				source,
+			});
+		}
 		if (!this.pdfParser) {
 			throw new WorkerTaskError(
 				"PDF ParserProvider runtime is not configured",
@@ -272,7 +287,7 @@ function pointScope(
 	};
 }
 
-type SupportedFormat = "txt" | "md" | "markdown" | "pdf" | "docx";
+type SupportedFormat = "txt" | "md" | "markdown" | "pdf" | "docx" | "xlsx";
 
 function supportedFormat(input: DocumentIngestJob): SupportedFormat {
 	const contentType = input.payload.content_type
@@ -290,7 +305,9 @@ function supportedFormat(input: DocumentIngestJob): SupportedFormat {
 					? "pdf"
 					: filename.endsWith(".docx")
 						? "docx"
-						: null;
+						: filename.endsWith(".xlsx")
+							? "xlsx"
+							: null;
 	const validContentType =
 		(format === "txt" && contentType === "text/plain") ||
 		((format === "md" || format === "markdown") &&
@@ -300,7 +317,10 @@ function supportedFormat(input: DocumentIngestJob): SupportedFormat {
 		(format === "pdf" && contentType === "application/pdf") ||
 		(format === "docx" &&
 			contentType ===
-				"application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document") ||
+		(format === "xlsx" &&
+			contentType ===
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 	const validQueue =
 		(format === "pdf" &&
 			(input.payload.queue_class === "auto" ||

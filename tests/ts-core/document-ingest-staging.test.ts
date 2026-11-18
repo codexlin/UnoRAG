@@ -451,6 +451,86 @@ test("worker continues staging original evidence when an injected contextualizer
 	);
 });
 
+test("xlsx stager parses multi-sheet workbook through local xlsx parser without external processing", async () => {
+	const JSZip = (await import("jszip")).default;
+	const zip = new JSZip();
+	zip.file(
+		"[Content_Types].xml",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`,
+	);
+	zip.file(
+		"xl/workbook.xml",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Summary" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+	);
+	zip.file(
+		"xl/_rels/workbook.xml.rels",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+	);
+	zip.file(
+		"xl/worksheets/sheet1.xml",
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1" t="inlineStr"><is><t>Item</t></is></c><c r="B1" t="inlineStr"><is><t>Amount</t></is></c></row>
+    <row r="2"><c r="A2" t="inlineStr"><is><t>Server</t></is></c><c r="B2"><v>2500</v></c></row>
+  </sheetData>
+</worksheet>`,
+	);
+	const xlsxBytes = await zip.generateAsync({ type: "uint8array" });
+	const xlsxHash = `sha256:${createHash("sha256").update(xlsxBytes).digest("hex")}`;
+	let stagedRecords: IndexWritePayload[] = [];
+	const stager = new DocumentIngestStager(
+		{
+			async load(key) {
+				assert.equal(key, "documents/budget.xlsx");
+				return xlsxBytes;
+			},
+		},
+		scopePort(),
+		embeddingProvider(),
+		{
+			async stage(input) {
+				stagedRecords = input.records;
+				return input.records.length;
+			},
+			async setVisibility() {
+				return stagedRecords.length;
+			},
+		},
+	);
+	const baseJob = job();
+	const result = await stager.stageDocument({
+		...baseJob,
+		payload: {
+			...baseJob.payload,
+			storage_key: "documents/budget.xlsx",
+			content_hash: xlsxHash,
+			filename: "budget.xlsx",
+			content_type:
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		},
+	});
+	assert.equal(result.parserBackend, "xlsx");
+	assert.equal(result.tableCount, 2);
+	assert.equal(result.parserReport.backend, "typescript");
+	assert.equal(
+		stagedRecords.filter((r) => r.record_type === "table").length,
+		1,
+	);
+});
+
 function embeddingProvider(): EmbeddingProvider {
 	return {
 		async embedQuery() {

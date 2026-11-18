@@ -731,7 +731,7 @@ export function LibrariesPanel() {
 							<input
 								ref={fileInputRef}
 								type="file"
-								accept=".txt,.md,.markdown,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+								accept=".txt,.md,.markdown,.docx,.xlsx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 								className="hidden"
 								multiple
 								onChange={(event) => void onUploadFiles(event.target.files)}
@@ -739,7 +739,7 @@ export function LibrariesPanel() {
 							<input
 								ref={replaceInputRef}
 								type="file"
-								accept=".txt,.md,.markdown,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+								accept=".txt,.md,.markdown,.docx,.xlsx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 								className="hidden"
 								onChange={(event) => onReplaceFilePicked(event.target.files)}
 							/>
