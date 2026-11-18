@@ -57,7 +57,7 @@ export type RunnerOptions = Readonly<{
 	ragasExport?: { runId: string; captureDirectory: string };
 }>;
 
-type JobResult = Readonly<{
+export type JobResult = Readonly<{
 	status: string;
 	stage: string | null;
 	error: string | null;
@@ -332,7 +332,7 @@ function cookieValues(response: Response): string[] {
 
 type EvaluationHttpResponse = { status: number; body: unknown; requestId: string | null };
 
-class EvaluationClient {
+export class EvaluationClient {
 	private readonly cookies = new Map<string, string>();
 
 	constructor(private readonly baseUrl: string) {}
@@ -421,7 +421,7 @@ function sleep(milliseconds: number): Promise<void> {
 	return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 }
 
-async function waitForJobs(input: {
+export async function waitForJobs(input: {
 	client: EvaluationClient;
 	uploads: ReadonlyMap<string, { jobId: string; documentId: string | null }>;
 	timeoutMs: number;
@@ -511,7 +511,7 @@ function citationsFrom(value: unknown): EvaluationCitation[] {
 	});
 }
 
-async function ask(input: {
+export async function ask(input: {
 	client: EvaluationClient;
 	libraryId: string;
 	question: string;
@@ -563,7 +563,7 @@ function failedIngestResponse(status: string): EvaluationResponse {
 	});
 }
 
-function compactTimestamp(date = new Date()): string {
+export function compactTimestamp(date = new Date()): string {
 	return date.toISOString().replace(/[-:]/gu, "").replace(/\.\d{3}Z$/u, "Z");
 }
 
@@ -608,7 +608,7 @@ function localImageDigest(baseUrl: string, buildRef: string | null): string | nu
 	}
 }
 
-function buildFingerprint(baseUrl: string, healthBody: unknown): JsonObject {
+export function buildFingerprint(baseUrl: string, healthBody: unknown): JsonObject {
 	const health = asObject(healthBody);
 	const buildRef = stringValue(health.build_ref);
 	return {
@@ -775,7 +775,7 @@ async function maybePublishLangfuse(input: {
 	}
 }
 
-async function deleteEvaluationLibrary(input: {
+export async function deleteEvaluationLibrary(input: {
 	client: EvaluationClient;
 	libraryId: string;
 	timeoutMs: number;
