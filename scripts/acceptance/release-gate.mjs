@@ -88,6 +88,26 @@ function validateProfile(input) {
 	};
 }
 
+function multiTurnStage(profile, environment = process.env) {
+	return {
+		command: process.execPath,
+		args: [
+			"--import",
+			"tsx",
+			resolve(acceptanceDirectory, "multi-turn-matrix.mjs"),
+			"--include-expiry",
+		],
+		env: {
+			UNORAG_BASE_URL: profile.base_url,
+			UNORAG_EXPECT_REVISION: profile.expected_git_revision,
+			UNORAG_ADMIN_EMAIL: profile.admin_email,
+			UNORAG_ADMIN_PASSWORD: environment[profile.password_env],
+			UNORAG_ACCEPT_MULTI_TURN_MATRIX:
+				environment.UNORAG_ACCEPT_MULTI_TURN_MATRIX || "",
+		},
+	};
+}
+
 async function main() {
 	const args = parseArguments(process.argv.slice(2));
 	const profilePath = resolve(
@@ -262,6 +282,11 @@ async function main() {
 			await stage("evaluation_stability", "pnpm", ["eval:stability"], {
 				timeoutMs: 7_200_000,
 			});
+			const matrix = multiTurnStage(profile);
+			await stage("multi_turn", matrix.command, matrix.args, {
+				env: matrix.env,
+				timeoutMs: 3_600_000,
+			});
 		}
 		if (profile.gates.provider_faults) {
 			const providerArgs = [
@@ -345,4 +370,4 @@ if (
 		});
 }
 
-export { validateProfile };
+export { multiTurnStage, validateProfile };

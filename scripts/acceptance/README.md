@@ -14,6 +14,7 @@
 | `scripts/acceptance/s1_s2_isolation.sh` | 多组织、多 Workspace、ACL 与 IDOR 零泄漏 |
 | `scripts/acceptance/capacity_baseline.py` | Retrieve、Ask、生命周期阶梯并发与可选 MinerU 探针 |
 | `scripts/acceptance/business-matrix.mjs` | 同库混合文档、相似制度干扰、原文摘要、问答/拒答、版本生命周期与请求诊断；不修改既有库或注入全局故障 |
+| `scripts/acceptance/multi-turn-matrix.mjs` | 真实上传、实体追问、澄清选择、归档恢复、会话/文库隔离和替换/删除/过期后的历史失效；只操作本次新建库 |
 | `scripts/acceptance/evidence-conflicts.ts` | 固定证据的冲突/非冲突 judge 对照；真实模型调用，不是端到端检索验收 |
 | `scripts/acceptance/upgrade-rollback.mjs` | 四镜像 digest 升级、旧版应用回滚、再次升级与数据校验 |
 | `scripts/acceptance/provider-faults.mjs` | 真实 Provider 透传基线、受控故障注入、失败替换保留旧版与恢复 |
@@ -75,6 +76,30 @@ Request ID；不要把这些原始产物直接公开。强制终止可能留下�
 问答先复用现有确定性评分器，既不自动接受新增引用来源，也不把模型故障算成正常拒答。
 失败必须结合原文与请求阶段人工归因，区分资料冲突、预期不足、解析、检索、裁决和生成错误；
 不为通过测试反向修改预期。P95 仍以 15 秒单独判定，但一个业务探索批次不是三轮稳定性认证。
+
+## 多轮问答矩阵
+
+合成资料与预期维护在 `testdata/multi-turn/`，运行器复用产品登录、上传、版本和删除 API。
+不会直写业务数据库、替换模型输出或调整产品澄清 TTL。先看计划，再向明确的候选环境执行：
+
+```bash
+pnpm acceptance:multi-turn --plan
+
+UNORAG_ACCEPT_MULTI_TURN_MATRIX=YES \
+UNORAG_BASE_URL=https://candidate.example.com \
+UNORAG_EXPECT_REVISION='<expected-40-character-runtime-revision>' \
+pnpm acceptance:multi-turn --include-expiry
+```
+
+凭据沿用 `UNORAG_ADMIN_EMAIL` / `UNORAG_ADMIN_PASSWORD`。正式执行包含真实五分钟过期等待，
+报告绑定源码提交、服务端版本与 fixture 摘要；缺身份信息、技术错误或清理失败不能判为 PASS。
+本地热更新服务可显式使用 `--development`，其 `release_gate=not_evaluated`，即使所有场景通过也不是发布放行。
+开发排查可用 `--skip-expiry`，报告必须保留未执行项；正式模式不允许跳过。
+
+原始响应、问题、引用、版本和请求号仅保存在 `.unorag/acceptance/` 的受限产物中，不公开上传。
+只删除当前 run ID 创建的知识库；强制终止后按报告中的精确 ID 经产品 API 清理。
+多轮矩阵不替代单轮稳定性黄金集、真实 ACL/跨主体隔离、浏览器交互或升级恢复门禁，
+也不证明任意自然语言指代都能理解。各层覆盖与判定边界见 [EVALUATION.md](../../docs/EVALUATION.md#多轮问答发布矩阵)。
 
 ## 证据冲突对照
 

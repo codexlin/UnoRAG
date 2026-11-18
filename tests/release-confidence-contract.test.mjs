@@ -13,7 +13,10 @@ import {
 	writeEvidence,
 } from "../scripts/acceptance/lib/runtime.mjs";
 import { deleteLibraryAndWait } from "../scripts/acceptance/recovery-probe.mjs";
-import { validateProfile } from "../scripts/acceptance/release-gate.mjs";
+import {
+	multiTurnStage,
+	validateProfile,
+} from "../scripts/acceptance/release-gate.mjs";
 
 const root = new URL("../", import.meta.url);
 const rootPath = fileURLToPath(root);
@@ -147,6 +150,33 @@ test("release profile is strict and never contains a password", () => {
 	assert.throws(
 		() => validateProfile({ ...valid, expected_git_revision: "main" }),
 		/full lowercase Git SHA/,
+	);
+});
+
+test("multi-turn release gate binds target identity and cannot skip expiry", () => {
+	const profile = {
+		base_url: "https://candidate.example.com",
+		expected_git_revision: "a".repeat(40),
+		admin_email: "admin@example.com",
+		password_env: "CANDIDATE_PASSWORD",
+	};
+	const stage = multiTurnStage(profile, {
+		CANDIDATE_PASSWORD: "synthetic-test-value",
+		UNORAG_ACCEPT_MULTI_TURN_MATRIX: "YES",
+	});
+	assert.equal(stage.command, process.execPath);
+	assert.equal(stage.args.at(-1), "--include-expiry");
+	assert.ok(!stage.args.includes("--development"));
+	assert.deepEqual(stage.env, {
+		UNORAG_BASE_URL: profile.base_url,
+		UNORAG_EXPECT_REVISION: profile.expected_git_revision,
+		UNORAG_ADMIN_EMAIL: profile.admin_email,
+		UNORAG_ADMIN_PASSWORD: "synthetic-test-value",
+		UNORAG_ACCEPT_MULTI_TURN_MATRIX: "YES",
+	});
+	assert.equal(
+		multiTurnStage(profile, {}).env.UNORAG_ACCEPT_MULTI_TURN_MATRIX,
+		"",
 	);
 });
 

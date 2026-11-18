@@ -58,6 +58,19 @@
 			}
 		},
 		{
+			"id": "multi-turn-synthetic-fixtures",
+			"origin": "Original synthetic A/B procurement plans and an A replacement version authored for UnoRAG multi-turn acceptance; all entities, prices and dates are fictional, with no customer data.",
+			"author": "UnoRAG maintainers (AI-assisted)",
+			"license": "Apache-2.0",
+			"redistribution": "Original synthetic project test material distributed with UnoRAG under Apache-2.0.",
+			"evidence": "2026-11-18 multi-turn acceptance fixture creation; testdata/multi-turn/manifest.json versions the explicit price/date oracles and scenario sequences. No external documents were used.",
+			"files": {
+				"testdata/multi-turn/plan-a.md": "bfb9500e83fe47f6f850339e282e0dceb7718b773ae86f99d29d6302e39a6933",
+				"testdata/multi-turn/plan-b.md": "555b1cf254d430201c734caf74b23600aa0bf75a1f0ce84e216613a22450572b",
+				"testdata/multi-turn/plan-a-v2.md": "7cd37a84a2be73e8fbf25e521119c0e10f85465f76b03d7e8925845ed9b0079c"
+			}
+		},
+		{
 			"id": "layout-evaluation-fixtures",
 			"origin": "Synthetic contracts, tables, reports, charts, scans and golden cases authored and generated for UnoRAG layout and retrieval evaluation; all named entities and identifiers are fictional.",
 			"author": "UnoRAG maintainers",

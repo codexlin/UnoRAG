@@ -15,6 +15,12 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 - Track accepted asynchronous document deletion until its actual terminal state.
   Prevent stale list responses and cross-library navigation from hiding jobs or
   updating the wrong cache; failed deletion remains visible and retryable.
+- Add a versioned multi-turn acceptance matrix using real product APIs and isolated
+  synthetic libraries. The runtime release gate includes clarification expiry;
+  development runs and skipped scenarios cannot grant release approval.
+- Stop old topics from competing with a newer explicit question, preserve failed
+  or cancelled request boundaries and expired clarification markers, and restore
+  deterministic table execution after a short clarification choice.
 - Add Ask feedback reasons, operational triage and an export skeleton for manually
   reviewed golden cases. Add scope-bound, process-local short-TTL retrieval caching
   and an optional Redis-backed cross-Web LLM concurrency gate, with explicit

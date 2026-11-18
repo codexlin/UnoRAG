@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "contract_version": 1,
+  "origin": "synthetic",
+  "clarification_ttl_ms": 300000,
+  "documents": [
+    { "id": "a", "entity": "a", "file": "plan-a.md", "name": "青岚方案 A", "aliases": ["青岚方案 A", "方案 A"], "price": 1379, "date": "2027-04-16" },
+    { "id": "b", "entity": "b", "file": "plan-b.md", "name": "星河方案 B", "aliases": ["星河方案 B", "方案 B"], "price": 2683, "date": "2028-09-23" },
+    { "id": "a2", "entity": "a", "file": "plan-a-v2.md", "name": "青岚方案 A", "aliases": ["青岚方案 A", "方案 A"], "price": 4517, "date": "2029-06-12" }
+  ],
+  "scenarios": [
+    { "id": "single-entity", "library": "main", "steps": [
+      { "op": "ask", "question": "青岚方案 A 的含税报价是多少？", "expect": { "kind": "answer", "facts": ["a.price"] } },
+      { "op": "ask", "question": "它什么时候生效？", "expect": { "kind": "answer", "facts": ["a.date"] } },
+      { "op": "ask", "question": "报价呢？", "expect": { "kind": "answer", "facts": ["a.price"] } }
+    ] },
+    { "id": "explicit-switch", "library": "main", "steps": [
+      { "op": "ask", "question": "青岚方案 A 的含税报价是多少？", "expect": { "kind": "answer", "facts": ["a.price"] } },
+      { "op": "ask", "question": "星河方案 B 的含税报价是多少？", "expect": { "kind": "answer", "facts": ["b.price"] } },
+      { "op": "ask", "question": "它的生效日期呢？", "expect": { "kind": "answer", "facts": ["b.date"] } }
+    ] },
+    { "id": "clarify-letter", "library": "main", "steps": [
+      { "op": "ask", "question": "青岚方案 A 和星河方案 B 各自的含税报价是多少？", "expect": { "kind": "answer", "facts": ["a.price", "b.price"] } },
+      { "op": "ask", "question": "它什么时候生效？", "expect": { "kind": "clarify" } },
+      { "op": "ask", "question": "B", "expect": { "kind": "answer", "facts": ["b.date"] } }
+    ] },
+    { "id": "invalid-choice-archive-ordinal", "library": "main", "steps": [
+      { "op": "ask", "question": "青岚方案 A 和星河方案 B 各自的含税报价是多少？", "expect": { "kind": "answer", "facts": ["a.price", "b.price"] } },
+      { "op": "ask", "question": "它什么时候生效？", "expect": { "kind": "clarify" } },
+      { "op": "ask", "question": "我选第五个", "expect": { "kind": "clarify", "unchanged": true } },
+      { "op": "archive" },
+      { "op": "ask", "question": "第二个", "context": "archive", "expect": { "kind": "answer", "facts": ["choice2.date"] } },
+      { "op": "reload" }
+    ] },
+    { "id": "cross-session", "library": "main", "steps": [
+      { "op": "ask", "question": "青岚方案 A 和星河方案 B 各自的含税报价是多少？", "expect": { "kind": "answer", "facts": ["a.price", "b.price"] } },
+      { "op": "ask", "question": "它什么时候生效？", "expect": { "kind": "clarify" } },
+      { "op": "ask", "question": "第二个", "context": "fresh", "expect": { "kind": "deny" } },
+      { "op": "ask", "question": "第二个", "expect": { "kind": "answer", "facts": ["choice2.date"] } }
+    ] },
+    { "id": "cross-library", "library": "main", "steps": [
+      { "op": "ask", "question": "青岚方案 A 和星河方案 B 各自的含税报价是多少？", "expect": { "kind": "answer", "facts": ["a.price", "b.price"] } },
+      { "op": "ask", "question": "它什么时候生效？", "expect": { "kind": "clarify" } },
+      { "op": "ask", "question": "第二个", "library": "isolated", "expect": { "kind": "deny" } }
+    ] },
+    { "id": "archive-old-round", "library": "main", "steps": [
+      { "op": "ask", "question": "青岚方案 A 和星河方案 B 各自的含税报价是多少？", "expect": { "kind": "answer", "facts": ["a.price", "b.price"] } },
+      { "op": "ask", "question": "它什么时候生效？", "expect": { "kind": "clarify" } },
+      { "op": "ask", "question": "青岚方案 A 的含税报价是多少？", "expect": { "kind": "answer", "facts": ["a.price"] } },
+      { "op": "archive", "turns": [1] },
+      { "op": "ask", "question": "第二个", "context": "archive", "expect": { "kind": "deny" } }
+    ] },
+    { "id": "replace-delete", "library": "lifecycle", "steps": [
+      { "op": "ask", "question": "青岚方案 A 的含税报价是多少？", "expect": { "kind": "answer", "facts": ["a.price"] } },
+      { "op": "archive" },
+      { "op": "replace", "document": "a", "replacement": "a2" },
+      { "op": "ask", "question": "它的生效日期呢？", "expect": { "kind": "deny" } },
+      { "op": "ask", "question": "它的生效日期呢？", "context": "archive", "expect": { "kind": "deny" } },
+      { "op": "ask", "question": "青岚方案 A 的含税报价和生效日期是什么？", "expect": { "kind": "answer", "facts": ["a2.price", "a2.date"] } },
+      { "op": "archive" },
+      { "op": "delete", "document": "a2" },
+      { "op": "ask", "question": "它的报价呢？", "expect": { "kind": "deny" } },
+      { "op": "ask", "question": "它的生效日期呢？", "context": "archive", "expect": { "kind": "deny" } },
+      { "op": "ask", "question": "青岚方案 A 的含税报价是多少？", "context": "fresh", "expect": { "kind": "deny" } }
+    ] },
+    { "id": "expiry", "library": "main", "expiry": true, "steps": [
+      { "op": "ask", "question": "青岚方案 A 和星河方案 B 各自的含税报价是多少？", "expect": { "kind": "answer", "facts": ["a.price", "b.price"] } },
+      { "op": "ask", "question": "它什么时候生效？", "expect": { "kind": "clarify" } },
+      { "op": "archive" },
+      { "op": "wait", "phase": "midpoint" },
+      { "op": "ask", "question": "我选第五个", "expect": { "kind": "clarify", "unchanged": true } },
+      { "op": "wait", "phase": "expired" },
+      { "op": "ask", "question": "第二个", "expect": { "kind": "deny" } },
+      { "op": "ask", "question": "第二个", "context": "archive", "expect": { "kind": "deny" } },
+      { "op": "ask", "question": "青岚方案 A 的生效日期是什么？", "expect": { "kind": "answer", "facts": ["a.date"] } }
+    ] }
+  ],
+  "deterministic_coverage": [
+    { "boundary": "permission-revocation-and-transitive-provenance", "tests": ["tests/ts-core/authorized-history.test.ts", "tests/ts-core/ask-model-authorization-boundaries.test.ts"], "live_status": "NOT_RUN_REQUIRES_PERMISSION_TOPOLOGY" },
+    { "boundary": "ttl-check-execution-race-and-no-renewal", "tests": ["tests/ts-core/ask-followup-memory.test.ts", "tests/ts-core/native-ask-handler.test.ts"], "live_status": "DETERMINISTIC_ONLY_FOR_MILLISECOND_RACE" },
+    { "boundary": "failed-cancelled-and-inflight-persistence-history", "tests": ["tests/ts-core/native-ask-handler.test.ts", "tests/ts-core/conversation-citation-authorization.test.ts"], "live_status": "DETERMINISTIC_ONLY_FOR_FAILURE_AND_CANCEL_RACES" }
+  ]
+}
