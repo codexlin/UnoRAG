@@ -151,6 +151,8 @@ export const InternalCitationSchema = z
 		workspace_id: z.string(),
 		record_type: RecordTypeSchema.exclude(["chunk+table_summary", "text"]),
 		record_id: z.string().nullable(),
+		parent_record_id: z.string().nullable().optional(),
+		parent_context: z.string().nullable().optional(),
 		source_chunk_ids: z.array(z.string()),
 		source_node_ids: z.array(z.string()),
 	})

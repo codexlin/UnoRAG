@@ -138,6 +138,19 @@ test("model selects only short excerpt IDs; the server materializes exact author
 		).length,
 		2,
 	);
+	assert.equal(
+		validateConflictEvidence(
+			[{ evidence_id: "e1", quote: "补充条款约定为60日。" }],
+			[
+				{
+					id: "e1",
+					body: "主条款约定为30日。",
+					parent_context: "主条款约定为30日。补充条款约定为60日。",
+				},
+			] as never,
+		).length,
+		1,
+	);
 	assert.deepEqual(calls, ["conflict", "conflict_review"]);
 	assert.equal(result.metadata.attempts, 2);
 	assert.equal(result.metadata.inputTokens, 30);

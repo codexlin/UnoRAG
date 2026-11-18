@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EvidenceAssessmentValidationError } from "../ai/evidence-assessment-diagnostics";
+import { formatCitationEvidenceText } from "../retrieval/citation-mapper";
 import type { AskState } from "./state";
 
 const ConflictExcerptSchema = z
@@ -36,11 +37,11 @@ export function validateConflictEvidence(
 	for (const item of items) {
 		const sources = (citations ?? []).filter((c) => c.id === item.evidence_id);
 		const source = sources[0];
-		const text = source?.body || source?.text || source?.snippet;
+		const text = source ? formatCitationEvidenceText(source) : "";
 		const quote = normalize(item.quote);
 		if (sources.length !== 1)
 			throw new EvidenceAssessmentValidationError("conflict_unknown_source");
-		if (typeof text !== "string" || !normalize(text).includes(quote))
+		if (!text || !normalize(text).includes(quote))
 			throw new EvidenceAssessmentValidationError("conflict_quote_mismatch");
 		if (seen.has(quote))
 			throw new EvidenceAssessmentValidationError("conflict_duplicate_quote");

@@ -13,6 +13,7 @@ export type ScopedRetrievalCacheKeyInput = {
 		rerankEnabled: boolean;
 		preserveFigureLineage?: boolean;
 		lineageMinScore?: number;
+		expandParentContext?: boolean;
 		rerankTopK: number;
 		bm25TopK: number;
 		rrfK: number;

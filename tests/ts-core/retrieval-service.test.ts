@@ -1452,3 +1452,191 @@ test("server hybrid transport errors keep authorized dense fallback and failure 
 	assert.equal(result.debug.retrievalMode, "dense");
 	assert.equal(result.citations[0].id, "dense");
 });
+
+test("parent-child expansion attaches bounded parent section context without losing fine-grained chunk citations or deduplication", async () => {
+	const parentSection: QdrantSearchHit = {
+		id: "sec-1",
+		score: 0.4,
+		payload: {
+			...hit({
+				id: "sec-1",
+				text: "第一章 监管指标定义\n\n第一条 双重杠杆比率是指保险集团公司长期股权投资账面价值与所有者权益之比。\n\n第二条 长期股权投资账面价值是指账面余额扣除减值准备，计算口径按合并报表前单体口径统计。",
+				chunkIndex: 0,
+				score: 0.4,
+				recordType: "section",
+			}).payload,
+			record_id: "sec:ratio",
+			section_path: "第一章 监管指标定义",
+			source_chunk_ids: ["chk:document-a:1", "chk:document-a:2"],
+		},
+	};
+	const childA: QdrantSearchHit = {
+		id: "chk-1",
+		score: 0.92,
+		payload: {
+			...hit({
+				id: "chk-1",
+				text: "第二条 长期股权投资账面价值是指账面余额扣除减值准备，计算口径按合并报表前单体口径统计。",
+				chunkIndex: 1,
+				score: 0.92,
+			}).payload,
+			record_id: "chk:document-a:1",
+			parent_record_id: "sec:ratio",
+			section_path: "第一章 监管指标定义",
+		},
+	};
+	const childB: QdrantSearchHit = {
+		id: "chk-2",
+		score: 0.85,
+		payload: {
+			...hit({
+				id: "chk-2",
+				text: "第一条 双重杠杆比率是指保险集团公司长期股权投资账面价值与所有者权益之比。",
+				chunkIndex: 2,
+				score: 0.85,
+			}).payload,
+			record_id: "chk:document-a:2",
+			section_path: "第一章 监管指标定义",
+		},
+	};
+
+	let lookupCalls = 0;
+	const store: RetrievalVectorStore = {
+		async search() {
+			return [childA, childB];
+		},
+		async listCorpus() {
+			assert.fail("parent lookup must not invoke full-corpus listCorpus");
+		},
+		async lookupSections(input) {
+			lookupCalls += 1;
+			assert.deepEqual(input.scope.documentIds, ["document-a"]);
+			return [parentSection];
+		},
+	};
+	const service = new DefaultRetrievalService(embeddings, store, null, {
+		hybridEnabled: false,
+		rerankEnabled: false,
+		rerankTopK: 6,
+		bm25TopK: 20,
+		rrfK: 60,
+	});
+	const result = await service.retrieve({
+		query: "双重杠杆比率定义",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+	});
+
+	assert.equal(lookupCalls, 1);
+	assert.equal(result.citations.length, 2);
+	assert.equal(result.citations[0]?.record_type, "chunk");
+	assert.equal(result.citations[0]?.record_id, "chk:document-a:1");
+	assert.equal(result.citations[0]?.parent_record_id, "sec:ratio");
+	assert.match(result.citations[0]?.parent_context ?? "", /双重杠杆比率是指/);
+	assert.equal(
+		result.citations[1]?.parent_context,
+		undefined,
+		"sibling chunk sharing the same section should not duplicate parent_context",
+	);
+});
+
+test("parent-child expansion supports legacy source_chunk_ids matching and enforces scope authorization", async () => {
+	const childLegacy: QdrantSearchHit = {
+		id: "chk-legacy",
+		score: 0.9,
+		payload: {
+			...hit({
+				id: "chk-legacy",
+				text: "子块正文仅包含一部分条款说明。",
+				chunkIndex: 3,
+				score: 0.9,
+			}).payload,
+			record_id: "chk:document-a:3",
+			section_path: "第三章",
+		},
+	};
+	const longPrefix = "前序背景。".repeat(300);
+	const longSuffix = "后续条件。".repeat(300);
+	const hugeSection: QdrantSearchHit = {
+		id: "sec-legacy",
+		score: 0,
+		payload: {
+			...hit({
+				id: "sec-legacy",
+				text: `${longPrefix}子块正文仅包含一部分条款说明。${longSuffix}`,
+				chunkIndex: 0,
+				score: 0,
+				recordType: "section",
+			}).payload,
+			record_id: "sec:legacy",
+			section_path: "第三章",
+			source_chunk_ids: ["chk:document-a:3"],
+		},
+	};
+	const boundedStore: RetrievalVectorStore = {
+		async search() {
+			return [childLegacy];
+		},
+		async listCorpus() {
+			return [];
+		},
+		async lookupSections() {
+			return [hugeSection];
+		},
+	};
+	const service = new DefaultRetrievalService(embeddings, boundedStore, null, {
+		hybridEnabled: false,
+		rerankEnabled: false,
+		rerankTopK: 6,
+		bm25TopK: 20,
+		rrfK: 60,
+	});
+	const result = await service.retrieve({
+		query: "条款",
+		libraryId: "library-a",
+		scope,
+		topK: 1,
+	});
+	const parentCtx = result.citations[0]?.parent_context ?? "";
+	assert.ok(parentCtx.length > 0 && parentCtx.length <= 1_600);
+	assert.ok(parentCtx.includes("子块正文仅包含一部分条款说明。"));
+
+	const unauthorizedStore: RetrievalVectorStore = {
+		async search() {
+			return [childLegacy];
+		},
+		async listCorpus() {
+			return [];
+		},
+		async lookupSections() {
+			return [
+				{
+					...hugeSection,
+					payload: { ...hugeSection.payload, workspace_id: "workspace-other" },
+				},
+			];
+		},
+	};
+	const strictService = new DefaultRetrievalService(
+		embeddings,
+		unauthorizedStore,
+		null,
+		{
+			hybridEnabled: false,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	await assert.rejects(
+		strictService.retrieve({
+			query: "条款",
+			libraryId: "library-a",
+			scope,
+			topK: 1,
+		}),
+		RetrievalSecurityViolationError,
+	);
+});

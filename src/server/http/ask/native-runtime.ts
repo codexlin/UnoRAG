@@ -44,7 +44,10 @@ import type {
 	InternalCitation,
 	RetrievalResult,
 } from "@/core/retrieval";
-import { semanticEvidenceScore } from "@/core/retrieval/citation-mapper";
+import {
+	formatCitationEvidenceText,
+	semanticEvidenceScore,
+} from "@/core/retrieval/citation-mapper";
 import type {
 	ActiveDocumentCatalog,
 	ActiveDocumentDescriptor,
@@ -183,9 +186,7 @@ export function projectJudgeEvidence(
 		preamble: citation.preamble,
 		score: citation.score,
 		document_context: evidenceDocumentContext(citation, documents),
-		text: boundedJudgeEvidenceText(
-			citation.body || citation.text || citation.snippet,
-		),
+		text: boundedJudgeEvidenceText(formatCitationEvidenceText(citation)),
 	}));
 }
 
@@ -207,7 +208,7 @@ function contextText(
 	const citations = (state.citations ?? []) as InternalCitation[];
 	const evidence = citations
 		.map((citation, index) => {
-			const body = citation.body || citation.text || citation.snippet;
+			const body = formatCitationEvidenceText(citation);
 			const identity = evidenceDocumentContext(citation, documents);
 			const location = [
 				citation.heading_text,

@@ -137,7 +137,27 @@ export function buildIndexPayloads(
 	requireText(options.documentVersionId, "documentVersionId");
 	requireText(options.generationId, "generationId");
 	requireText(options.documentId, "documentId");
-	const payloads = chunks.map((chunk) => chunkPayload(chunk, options));
+	const sectionRecords =
+		(options.includeSections ?? true) && chunks.length > 0
+			? buildSectionRecords(chunks, options)
+			: [];
+	const parentSectionByChunkId = new Map<string, string>();
+	for (const section of sectionRecords) {
+		for (const sourceChunkId of section.sourceChunkIds) {
+			if (!parentSectionByChunkId.has(sourceChunkId)) {
+				parentSectionByChunkId.set(sourceChunkId, section.recordId);
+			}
+		}
+	}
+	const payloads = chunks.map((chunk) =>
+		chunkPayload(
+			chunk,
+			options,
+			parentSectionByChunkId.get(
+				chunkRecordId(options.documentId, chunk.chunk_index),
+			),
+		),
+	);
 	if (options.document) {
 		const context = buildDocumentContext(options.document);
 		const body = documentContextText(context);
@@ -159,9 +179,9 @@ export function buildIndexPayloads(
 			),
 		);
 	}
-	if ((options.includeSections ?? true) && chunks.length > 0) {
+	if (sectionRecords.length > 0) {
 		payloads.push(
-			...buildSectionRecords(chunks, options).map((record) =>
+			...sectionRecords.map((record) =>
 				recordPayload(
 					record,
 					options.generationId,
@@ -523,6 +543,7 @@ export function buildTableSummaryRecords(
 function chunkPayload(
 	chunk: Chunk,
 	options: BuildIndexPayloadOptions,
+	parentRecordId?: string,
 ): IndexWritePayload {
 	const recordId = chunkRecordId(options.documentId, chunk.chunk_index);
 	const payload: Record<string, unknown> = {
@@ -534,6 +555,9 @@ function chunkPayload(
 		source_format: chunk.source_format,
 		record_type: chunk.figure_id ? "figure" : "chunk",
 		record_id: recordId,
+		...(parentRecordId && !chunk.figure_id && !chunk.table_id
+			? { parent_record_id: parentRecordId }
+			: {}),
 		document_version_id: options.documentVersionId,
 		tenant_id: options.organizationId,
 		workspace_id: options.workspaceId,

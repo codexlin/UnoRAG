@@ -243,6 +243,211 @@ function retainFigureCompanion(
 	return { selected, restoredFigureCount: 0 };
 }
 
+const MAX_PARENT_CONTEXT_CHARS = 1_600;
+const MIN_PARENT_EXTRA_CHARS = 40;
+const SKIP_PARENT_RECORD_FILTERS = new Set([
+	"document",
+	"section",
+	"table",
+	"table_summary",
+]);
+
+function sectionKey(hit: QdrantSearchHit): string {
+	return `${hit.payload.doc_id}:${hit.payload.generation_id ?? ""}:${hit.payload.record_id ?? String(hit.id)}`;
+}
+
+function isExpandableChildChunk(hit: QdrantSearchHit): boolean {
+	return (
+		hit.payload.record_type === "chunk" &&
+		!hit.payload.table_id &&
+		!hit.payload.figure_id
+	);
+}
+
+function findParentSection(
+	child: QdrantSearchHit,
+	sections: readonly QdrantSearchHit[],
+): QdrantSearchHit | null {
+	const childBody = (child.payload.body || child.payload.text).trim();
+	const sameScopeSections = sections.filter(
+		(section) =>
+			section.payload.record_type === "section" &&
+			section.payload.doc_id === child.payload.doc_id &&
+			section.payload.generation_id === child.payload.generation_id,
+	);
+	if (child.payload.parent_record_id) {
+		const byParentId = sameScopeSections.find(
+			(section) => section.payload.record_id === child.payload.parent_record_id,
+		);
+		if (byParentId) return byParentId;
+	}
+	if (child.payload.record_id) {
+		const recordId = child.payload.record_id;
+		const bySourceChunk = sameScopeSections.find((section) =>
+			section.payload.source_chunk_ids?.includes(recordId),
+		);
+		if (bySourceChunk) return bySourceChunk;
+	}
+	if (child.payload.section_path && childBody) {
+		const normalizedChild = childBody.replace(/\s+/g, " ");
+		const byPathAndText = sameScopeSections.find((section) => {
+			if (section.payload.section_path !== child.payload.section_path) {
+				return false;
+			}
+			const sectionText = (section.payload.body || section.payload.text)
+				.replace(/\s+/g, " ")
+				.trim();
+			return sectionText.includes(normalizedChild);
+		});
+		if (byPathAndText) return byPathAndText;
+	}
+	return null;
+}
+
+function safeSlice(text: string, start: number, end: number): string {
+	let s = Math.max(0, start);
+	let e = Math.min(text.length, end);
+	if (
+		s > 0 &&
+		/[\uDC00-\uDFFF]/u.test(text.charAt(s)) &&
+		/[\uD800-\uDBFF]/u.test(text.charAt(s - 1))
+	) {
+		s += 1;
+	}
+	if (
+		e < text.length &&
+		/[\uD800-\uDBFF]/u.test(text.charAt(e - 1)) &&
+		/[\uDC00-\uDFFF]/u.test(text.charAt(e))
+	) {
+		e -= 1;
+	}
+	return text.slice(s, e).trim();
+}
+
+function boundParentWindow(
+	sectionText: string,
+	childText: string,
+): string | null {
+	const trimmedSection = sectionText.trim();
+	const trimmedChild = childText.trim();
+	if (
+		!trimmedSection ||
+		trimmedSection.length <= trimmedChild.length + MIN_PARENT_EXTRA_CHARS
+	) {
+		return null;
+	}
+	if (trimmedSection.length <= MAX_PARENT_CONTEXT_CHARS) {
+		return trimmedSection;
+	}
+	const anchor = trimmedChild.slice(0, Math.min(80, trimmedChild.length));
+	const matchPos = anchor ? trimmedSection.indexOf(anchor) : -1;
+	if (matchPos < 0) {
+		return safeSlice(trimmedSection, 0, MAX_PARENT_CONTEXT_CHARS);
+	}
+	const matchEnd = Math.min(
+		trimmedSection.length,
+		matchPos + trimmedChild.length,
+	);
+	const halfMargin = Math.max(
+		0,
+		Math.floor((MAX_PARENT_CONTEXT_CHARS - (matchEnd - matchPos)) / 2),
+	);
+	let start = Math.max(0, matchPos - halfMargin);
+	const end = Math.min(trimmedSection.length, start + MAX_PARENT_CONTEXT_CHARS);
+	if (end === trimmedSection.length) {
+		start = Math.max(0, end - MAX_PARENT_CONTEXT_CHARS);
+	}
+	return safeSlice(trimmedSection, start, end);
+}
+
+async function expandParentContexts(input: {
+	selected: readonly QdrantSearchHit[];
+	knownSections: readonly QdrantSearchHit[];
+	scope: RetrievalScope;
+	store: RetrievalVectorStore;
+	filters: RetrievalUserFilters;
+	enabled: boolean;
+	signal?: AbortSignal;
+}): Promise<Map<string, string>> {
+	const parentContexts = new Map<string, string>();
+	if (
+		!input.enabled ||
+		(input.filters.record_type &&
+			SKIP_PARENT_RECORD_FILTERS.has(input.filters.record_type))
+	) {
+		return parentContexts;
+	}
+	const expandable = input.selected.filter(isExpandableChildChunk);
+	if (expandable.length === 0) return parentContexts;
+
+	const selectedSectionKeys = new Set(
+		input.selected
+			.filter((hit) => hit.payload.record_type === "section")
+			.map(sectionKey),
+	);
+	const sectionPool = new Map<string, QdrantSearchHit>();
+	for (const hit of input.knownSections) {
+		if (hit.payload.record_type === "section") {
+			sectionPool.set(sectionKey(hit), hit);
+		}
+	}
+
+	const unresolvedDocIds = new Set<string>();
+	for (const child of expandable) {
+		if (!findParentSection(child, [...sectionPool.values()])) {
+			unresolvedDocIds.add(child.payload.doc_id);
+		}
+	}
+
+	if (unresolvedDocIds.size > 0 && input.store.lookupSections) {
+		input.signal?.throwIfAborted();
+		const allowedDocIds = input.scope.documentIds
+			? [...unresolvedDocIds].filter((docId) =>
+					input.scope.documentIds?.includes(docId),
+				)
+			: [...unresolvedDocIds];
+		if (allowedDocIds.length > 0) {
+			try {
+				const fetched = assertAuthorizedHits(
+					await input.store.lookupSections({
+						scope: {
+							...input.scope,
+							documentIds: allowedDocIds,
+						},
+						limit: Math.min(256, Math.max(32, allowedDocIds.length * 32)),
+					}),
+					input.scope,
+				);
+				for (const hit of fetched) {
+					if (hit.payload.record_type === "section") {
+						sectionPool.set(sectionKey(hit), hit);
+					}
+				}
+			} catch (error) {
+				input.signal?.throwIfAborted();
+				if (error instanceof RetrievalSecurityViolationError) throw error;
+			}
+		}
+	}
+
+	const allSections = [...sectionPool.values()];
+	const attachedSectionKeys = new Set(selectedSectionKeys);
+	for (const child of expandable) {
+		const parent = findParentSection(child, allSections);
+		if (!parent) continue;
+		const key = sectionKey(parent);
+		if (attachedSectionKeys.has(key)) continue;
+		const bounded = boundParentWindow(
+			parent.payload.body || parent.payload.text,
+			child.payload.body || child.payload.text,
+		);
+		if (!bounded) continue;
+		attachedSectionKeys.add(key);
+		parentContexts.set(String(child.id), bounded);
+	}
+	return parentContexts;
+}
+
 function fuseHits(input: {
 	dense: QdrantSearchHit[];
 	lexical: QdrantSearchHit[];
@@ -417,6 +622,7 @@ export class DefaultRetrievalService {
 			rerankEnabled?: boolean;
 			preserveFigureLineage?: boolean;
 			lineageMinScore?: number;
+			expandParentContext?: boolean;
 		};
 		signal?: AbortSignal;
 	}): Promise<RetrievalResult> {
@@ -428,6 +634,7 @@ export class DefaultRetrievalService {
 		}
 		const scope = toRetrievalScope(input.scope, input.libraryId);
 		const filters = toUserFilters(input.filters);
+		const expandParentContext = input.options?.expandParentContext ?? true;
 		const cacheKey = this.options.cache
 			? buildScopedRetrievalCacheKey({
 					query,
@@ -442,6 +649,7 @@ export class DefaultRetrievalService {
 							input.options?.rerankEnabled ?? this.options.rerankEnabled,
 						preserveFigureLineage: input.options?.preserveFigureLineage,
 						lineageMinScore: input.options?.lineageMinScore,
+						expandParentContext,
 						rerankTopK: this.options.rerankTopK,
 						bm25TopK: this.options.bm25TopK,
 						rrfK: this.options.rrfK,
@@ -469,6 +677,9 @@ export class DefaultRetrievalService {
 			scope,
 		);
 		let candidates = dense;
+		const knownSections: QdrantSearchHit[] = dense.filter(
+			(hit) => hit.payload.record_type === "section",
+		);
 		let usedHybrid = false;
 		let hybridError: string | null = null;
 		const hybridEnabled =
@@ -496,6 +707,9 @@ export class DefaultRetrievalService {
 						rrf_score: hit.score,
 						used_hybrid: true,
 					}));
+					for (const hit of candidates) {
+						if (hit.payload.record_type === "section") knownSections.push(hit);
+					}
 					usedHybrid = true;
 				} else {
 					const corpus = assertAuthorizedHits(
@@ -506,6 +720,9 @@ export class DefaultRetrievalService {
 						}),
 						scope,
 					);
+					for (const hit of corpus) {
+						if (hit.payload.record_type === "section") knownSections.push(hit);
+					}
 					const lexical = lexicalHits(query, corpus, this.options.bm25TopK);
 					if (lexical.length) {
 						candidates = fuseHits({
@@ -602,6 +819,15 @@ export class DefaultRetrievalService {
 			input.topK,
 			input.options,
 		);
+		const parentContexts = await expandParentContexts({
+			selected,
+			knownSections,
+			scope,
+			store: this.store,
+			filters,
+			enabled: expandParentContext,
+			signal: input.signal,
+		});
 		const rerankDiagnostic =
 			rerankDiagnostics &&
 			projectRerankDiagnostic({
@@ -616,6 +842,7 @@ export class DefaultRetrievalService {
 			mapQdrantHitToInternalCitation(
 				{ ...hit, used_hybrid: usedHybrid },
 				index + 1,
+				parentContexts.get(String(hit.id)),
 			),
 		);
 		const result: RetrievalResult = {

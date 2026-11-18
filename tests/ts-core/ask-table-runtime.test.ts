@@ -909,6 +909,25 @@ test("judge evidence projection is bounded and excludes raw table rows", async (
 	assert.equal(projected[0]?.text, body.slice(0, 2_400));
 	assert.equal("rows" in (projected[0] ?? {}), false);
 	assert.equal("tenant_id" in (projected[0] ?? {}), false);
+
+	const withParent = projectJudgeEvidence([
+		{
+			...citation({
+				id: "chunk-hit",
+				tableId: "",
+				device: "路由器",
+				amount: "100",
+			}),
+			record_type: "chunk",
+			table_id: null,
+			body: "具体计算口径按单体统计。",
+			parent_context:
+				"第一条 双重杠杆比率是指长期股权投资账面价值与所有者权益之比。",
+		},
+	]);
+	assert.match(withParent[0]?.text ?? "", /具体计算口径按单体统计/);
+	assert.match(withParent[0]?.text ?? "", /所属章节完整上下文：/);
+	assert.match(withParent[0]?.text ?? "", /双重杠杆比率是指/);
 });
 
 test("retrieval batches authorized document identities into judge, conflict and generation", async (context) => {
