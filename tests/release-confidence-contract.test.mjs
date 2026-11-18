@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	realpath,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -284,24 +291,48 @@ test("probe cleanup rejects malformed HTTP 200 library lists without exposing re
 });
 
 test("destructive and fault acceptance entrypoints are fail-closed", async (t) => {
-	const restore = spawnSync(
-		process.execPath,
-		[
-			fileURLToPath(new URL("scripts/acceptance/restore-drill.mjs", root)),
-			"--plan",
-		],
-		{ cwd: rootPath, encoding: "utf8" },
+	const sandbox = await realpath(
+		await mkdtemp(join(tmpdir(), "unorag-restore-gate-")),
 	);
+	t.after(() => rm(sandbox, { recursive: true, force: true }));
+	await mkdir(join(sandbox, "scripts/acceptance/lib"), { recursive: true });
+	await mkdir(join(sandbox, "deploy/config"), { recursive: true });
+	for (const file of [
+		"scripts/acceptance/restore-drill.mjs",
+		"scripts/acceptance/recovery-probe.mjs",
+		"scripts/acceptance/lib/runtime.mjs",
+	]) {
+		await writeFile(join(sandbox, file), await readFile(new URL(file, root)));
+	}
+	const runtimeConfig = join(sandbox, "deploy/config/runtime.env");
+	await writeFile(runtimeConfig, "COMPOSE_PROJECT_NAME=unorag-customer\n");
+	const restoreScript = join(sandbox, "scripts/acceptance/restore-drill.mjs");
+	const restore = spawnSync(process.execPath, [restoreScript, "--plan"], {
+		cwd: sandbox,
+		encoding: "utf8",
+		env: {},
+	});
 	assert.equal(restore.status, 0, restore.stderr);
 	const plan = JSON.parse(restore.stdout);
-	assert.equal(typeof plan.destructive_project_allowed, "boolean");
-	const blockedRestore = spawnSync(
-		process.execPath,
-		[fileURLToPath(new URL("scripts/acceptance/restore-drill.mjs", root))],
-		{ cwd: rootPath, encoding: "utf8", env: {} },
-	);
+	assert.equal(plan.destructive_project_allowed, false);
+	const blockedRestore = spawnSync(process.execPath, [restoreScript], {
+		cwd: sandbox,
+		encoding: "utf8",
+		env: {},
+	});
 	assert.equal(blockedRestore.status, 2);
 	assert.match(blockedRestore.stderr, /refusing destructive restore/);
+	await writeFile(runtimeConfig, "COMPOSE_PROJECT_NAME=unorag-rc-test\n");
+	const missingConsent = spawnSync(process.execPath, [restoreScript], {
+		cwd: sandbox,
+		encoding: "utf8",
+		env: {},
+	});
+	assert.equal(missingConsent.status, 2);
+	assert.match(
+		missingConsent.stderr,
+		/UNORAG_ACCEPT_DESTRUCTIVE_RESTORE=YES is required/,
+	);
 
 	const provider = spawnSync(
 		process.execPath,
