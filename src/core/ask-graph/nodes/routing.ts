@@ -7,6 +7,7 @@ import {
 	requireQuestion,
 } from "../state";
 import {
+	isDerivedCalculationQuestion,
 	isFormFieldLookup,
 	isProseChecklistLookup,
 } from "../table/query-intent";
@@ -44,7 +45,9 @@ function hasSelfContainedRetrievalScope(question: string): boolean {
 function executionQueryType(rawQueryType: string, question: string): string {
 	if (
 		rawQueryType === "table" &&
-		(isFormFieldLookup(question) || isProseChecklistLookup(question))
+		(isFormFieldLookup(question) ||
+			isProseChecklistLookup(question) ||
+			isDerivedCalculationQuestion(question))
 	)
 		return "fact";
 	if (
@@ -71,7 +74,8 @@ function executionQueryType(rawQueryType: string, question: string): string {
 		return "fact";
 	}
 	return rawQueryType === "compare" &&
-		EXPLICIT_TABLE_COMPARE_PATTERN.test(question)
+		EXPLICIT_TABLE_COMPARE_PATTERN.test(question) &&
+		!isDerivedCalculationQuestion(question)
 		? "table"
 		: rawQueryType;
 }
@@ -85,6 +89,9 @@ function factOverrideReason(question: string, fallback: string): string {
 	}
 	if (FIGURE_PROSE_PATTERN.test(question)) {
 		return `figure_prose_cue: ${fallback}`;
+	}
+	if (isDerivedCalculationQuestion(question)) {
+		return `derived_calculation_cue: ${fallback}`;
 	}
 	if (hasSelfContainedRetrievalScope(question)) {
 		return `self_contained_retrieval_cue: ${fallback}`;

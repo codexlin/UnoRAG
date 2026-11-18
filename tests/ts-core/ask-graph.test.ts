@@ -508,32 +508,93 @@ test("prose comparison retains alternatives even when Judge selects one paragrap
 	);
 });
 
-test("comparison refuses an oversized context instead of truncating alternatives", async () => {
-	for (const candidates of [
-		Array.from({ length: 7 }, (_, index) => ({
-			id: `source-${index}`,
-			body: "candidate",
-		})),
-		[{ id: "source-0", body: "x".repeat(14_401) }],
-	]) {
-		const calls: string[] = [];
-		const result = await new AskGraphService(
-			createContext({
-				calls,
-				queryType: "compare",
-				retrieve: () => ({ citations: candidates, retrieval_attempts: 1 }),
-				judge: () => ({
-					sufficient: true,
-					action: "generate",
-					reason: "covered",
-					evidence_ids: ["source-0"],
-				}),
-			}),
-		).invoke({ question: "Compare alternatives" });
-		assert.equal(result.refused, true);
-		assert.equal(result.refuse_reason, "comparison_context_exceeds_budget");
-		assert.equal(calls.includes("generate"), false);
-	}
+test("comparison keeps direct evidence and trims oversized alternatives within budget", async () => {
+	const manyCandidates = Array.from({ length: 8 }, (_, index) => ({
+		id: `source-${index}`,
+		index: index + 1,
+		score: 1 - index * 0.05,
+		body: `candidate-${index}`,
+	}));
+	let manyEvidence: Array<{ id?: unknown; body?: unknown }> = [];
+	const manyContext = createContext({
+		queryType: "compare",
+		retrieve: () => ({ citations: manyCandidates, retrieval_attempts: 1 }),
+		judge: () => ({
+			sufficient: true,
+			action: "generate",
+			reason: "covered",
+			evidence_ids: ["source-0", "source-7"],
+		}),
+	});
+	manyContext.ports.generate = (state) => {
+		manyEvidence = (state.citations ?? []) as Array<{
+			id?: unknown;
+			body?: unknown;
+		}>;
+		return { answer: "compared within cap [1][6]", refused: false };
+	};
+	const manyResult = await new AskGraphService(manyContext).invoke({
+		question: "Compare alternatives",
+	});
+	assert.equal(manyResult.refused, false);
+	assert.equal(manyEvidence.length, 6);
+	assert.deepEqual(
+		manyEvidence.map((item) => item.id),
+		["source-0", "source-1", "source-2", "source-3", "source-4", "source-7"],
+	);
+	assert.equal(manyResult.retrieval_debug?.direct_evidence_count, 2);
+	assert.equal(manyResult.retrieval_debug?.selected_evidence_count, 6);
+	assert.equal(manyResult.retrieval_debug?.comparison_context_count, 4);
+
+	let trimmedEvidence: Array<{ id?: unknown; body?: unknown }> = [];
+	const longContext = createContext({
+		queryType: "compare",
+		retrieve: () => ({
+			citations: [
+				{ id: "source-0", index: 1, body: "x".repeat(14_401) },
+				{ id: "source-1", index: 2, body: "short" },
+			],
+			retrieval_attempts: 1,
+		}),
+		judge: () => ({
+			sufficient: true,
+			action: "generate",
+			reason: "covered",
+			evidence_ids: ["source-0"],
+		}),
+	});
+	longContext.ports.generate = (state) => {
+		trimmedEvidence = (state.citations ?? []) as Array<{
+			id?: unknown;
+			body?: unknown;
+		}>;
+		return { answer: "trimmed cleanly [1]", refused: false };
+	};
+	const longResult = await new AskGraphService(longContext).invoke({
+		question: "Compare long text",
+	});
+	assert.equal(longResult.refused, false);
+	assert.equal(trimmedEvidence.length, 2);
+	assert.equal(
+		trimmedEvidence.reduce(
+			(sum, item) => sum + String(item.body ?? "").length,
+			0,
+		) <= 14_400,
+		true,
+	);
+	assert.equal(String(trimmedEvidence[1]?.body ?? ""), "short");
+});
+
+test("derived calculation questions mentioning table terms route through retrieve-judge-generate", async () => {
+	const calls: string[] = [];
+	const context = createContext({ calls, queryType: "table" });
+	const result = await new AskGraphService(context).invoke({
+		question: "请根据表中数据计算2022年至2024年的复合增长率（CAGR）是多少？",
+	});
+	assert.equal(result.refused, false);
+	assert.equal(result.query_type, "fact");
+	assert.match(result.route_reason ?? "", /^derived_calculation_cue:/);
+	assert.deepEqual(calls, ["retrieve", "generate"]);
 });
 
 test("comparison still rejects an untrusted Judge evidence id", async () => {
