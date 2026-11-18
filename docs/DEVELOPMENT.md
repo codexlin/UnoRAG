@@ -67,6 +67,8 @@ pnpm test:e2e
 | Offline semantic | 可选 Python/Ragas 数据契约、隐私和预算；CI 使用模拟 HTTP，不调用付费模型 | 见 [EVALUATION.md](./EVALUATION.md#可选-ragas-离线语义评测) |
 
 旧的 `pnpm test` 和 `pnpm test:ts-core` 暂时保留为兼容入口；新增或调整 CI 应使用分层入口。
+离线 `pilot-preflight.sh` 也使用 `test:fast` 和 `test:contract`，快测按文件串行执行，避免宿主机进程争用
+影响信号竞态测试。预检不替代同一版本的真实 Integration 零跳过门禁。
 测试应断言调用者可观察的状态、响应和副作用。只有不可执行的历史 migration 或发布清单才允许
 静态契约检查，并应优先使用 SQL/YAML/Compose 解析器，不要锁定函数名、源码调用顺序或 CSS 类字符串。
 数据库结构契约必须在 Integration 层查询迁移后的 `pg_catalog` / `information_schema`，验证实际列、约束、

@@ -10,11 +10,11 @@ command -v pnpm >/dev/null 2>&1 || {
 	exit 2
 }
 
-echo "==> TypeScript core security, retrieval, and lifecycle tests"
-pnpm test:ts-core
+echo "==> deterministic product, security, retrieval, and lifecycle tests"
+pnpm test:fast
 
 echo "==> Web control-plane contract tests"
-pnpm test
+pnpm test:contract
 
 echo "==> static types and migration history"
 pnpm typecheck

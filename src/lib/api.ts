@@ -157,6 +157,7 @@ export type ApiLibrary = {
 	status: "ready" | "indexing" | "empty" | string;
 	doc_count: number;
 	ready_count: number;
+	delete_jobs_active?: boolean;
 	document_profile?: string;
 	applied_document_profile?: string | null;
 	scan_handling?: string;

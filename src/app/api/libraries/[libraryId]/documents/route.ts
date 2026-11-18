@@ -52,7 +52,9 @@ export async function GET(request: Request, context: RouteContext) {
 		);
 	}
 	const { libraryId } = await context.params;
-	const library = await findAuthorizedLibrary(identity, libraryId);
+	const library = await findAuthorizedLibrary(identity, libraryId, {
+		allowDeletingForDocumentList: true,
+	});
 	if (!library) {
 		return Response.json({ detail: "library not found" }, { status: 404 });
 	}

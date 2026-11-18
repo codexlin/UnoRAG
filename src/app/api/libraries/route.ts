@@ -49,6 +49,21 @@ export async function GET(request: Request) {
 			parsePreference: libraries.parsePreference,
 			ingestPolicyVersion: libraries.ingestPolicyVersion,
 			staleActiveVersions: staleActiveVersionsSql(),
+			// Static outer identifiers avoid Drizzle's single-table column unqualification.
+			// Only expose activity for visible documents, never job payloads.
+			deleteJobsActive: sql<boolean>`case when "app"."libraries"."status" = 'deleting' then exists (
+				select 1 from app.documents as deleting_document
+				join app.jobs as delete_job on delete_job.id = deleting_document.latest_job_id
+				where deleting_document.library_id = "app"."libraries"."id"
+				  and deleting_document.organization_id = ${identity.tenantId}::uuid
+				  and deleting_document.workspace_id = ${identity.workspaceId}::uuid
+				  and deleting_document.status = 'deleting'
+				  and delete_job.organization_id = ${identity.tenantId}::uuid
+				  and delete_job.workspace_id = ${identity.workspaceId}::uuid
+				  and delete_job.type = 'document.delete'
+				  and delete_job.status in ('queued', 'running', 'retry', 'cancelling')
+				  and ${documentMetadataVisibilitySql(identity, sql`deleting_document.id`)}
+			) else false end`,
 			createdAt: libraries.createdAt,
 			updatedAt: libraries.updatedAt,
 		})
@@ -62,7 +77,12 @@ export async function GET(request: Request) {
 		)
 		.orderBy(desc(libraries.updatedAt));
 	if (canWriteLibraries(identity)) {
-		return Response.json(rows.map(toApiLibrary));
+		return Response.json(
+			rows.map((row) => ({
+				...toApiLibrary(row),
+				delete_jobs_active: row.deleteJobsActive,
+			})),
+		);
 	}
 
 	const visibleCounts = await db
@@ -108,13 +128,16 @@ export async function GET(request: Request) {
 									: failed > 0
 										? "failed"
 										: "empty";
-			return toApiLibrary({
-				...row,
-				status,
-				docCount: total,
-				readyCount: ready,
-				staleActiveVersions: 0,
-			});
+			return {
+				...toApiLibrary({
+					...row,
+					status,
+					docCount: total,
+					readyCount: ready,
+					staleActiveVersions: 0,
+				}),
+				delete_jobs_active: row.deleteJobsActive,
+			};
 		}),
 	);
 }

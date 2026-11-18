@@ -52,6 +52,7 @@ import {
 	seedAcceptedDocumentDeletion,
 } from "@/lib/document-query-state";
 import { formatDurationMs } from "@/lib/format";
+import { seedAcceptedLibraryDeletion } from "@/lib/library-query-state";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchFreshQuery } from "@/lib/query-refresh";
 
@@ -117,16 +118,22 @@ export function LibrariesPanel() {
 		documentOverlay.kind === "replace" ? documentOverlay.doc : null;
 	const replaceFile =
 		documentOverlay.kind === "replace" ? documentOverlay.file : null;
-	const selectedLibraryExists = libraries.some(
-		(item) => item.id === selectedId,
+	const selectedLibrary = useMemo(
+		() => libraries.find((item) => item.id === selectedId) ?? null,
+		[libraries, selectedId],
 	);
+	const selectedLibraryExists = Boolean(selectedLibrary);
 	const {
 		documents,
 		error: documentsError,
 		loading: documentsLoading,
 		refreshing: documentsRefreshing,
 		refresh: refreshDocuments,
-	} = useDocuments(selectedId, { enabled: selectedLibraryExists });
+	} = useDocuments(selectedId, {
+		enabled: selectedLibraryExists,
+		libraryDeleting: selectedLibrary?.status === "deleting",
+		deleteJobsActive: selectedLibrary?.delete_jobs_active,
+	});
 	const pageError =
 		error ||
 		librariesError ||
@@ -141,11 +148,6 @@ export function LibrariesPanel() {
 		loading: versionsLoading,
 		refresh: refreshVersions,
 	} = useDocumentVersions(selectedId, detailDocId ?? "");
-
-	const selectedLibrary = useMemo(
-		() => libraries.find((item) => item.id === selectedId) ?? null,
-		[libraries, selectedId],
-	);
 
 	const detailDoc = useMemo(
 		() => documents.find((doc) => doc.id === detailDocId) ?? null,
@@ -185,6 +187,7 @@ export function LibrariesPanel() {
 		if (
 			!files?.length ||
 			!selectedLibrary ||
+			selectedLibrary.status === "deleting" ||
 			uploading ||
 			savingLibrary ||
 			!canWriteLibraries
@@ -421,6 +424,13 @@ export function LibrariesPanel() {
 						})()
 					: selectedId;
 			const result = await deleteLibrary(target.id);
+			if (
+				result.accepted &&
+				result.status === "deleting" &&
+				result.library_id === target.id
+			) {
+				await seedAcceptedLibraryDeletion(queryClient, queryScope, target.id);
+			}
 			toast.success(
 				result.accepted
 					? `已排队删除知识库「${target.name}」（${result.deleted_documents} 篇文档）`
@@ -429,10 +439,11 @@ export function LibrariesPanel() {
 			setDeleteLibraryTarget(null);
 			setLibraryDialogOpen(false);
 			setDocumentOverlay({ kind: "none" });
-			if (selectedId === target.id) {
+			if (!result.accepted && selectedIdRef.current === target.id) {
 				setSelectedId(nextSelectedId);
 			}
-			await loadLibraries();
+			// Query errors stay visible and clear on recovery; acceptance is not a delete failure.
+			void refreshLibraries().catch(() => {});
 		} catch (err) {
 			const message = err instanceof Error ? err.message : "删除知识库失败";
 			setError(message);
@@ -666,7 +677,11 @@ export function LibrariesPanel() {
 		}
 	}
 
-	const uploadDisabled = uploading || savingLibrary || !selectedId;
+	const uploadDisabled =
+		uploading ||
+		savingLibrary ||
+		!selectedId ||
+		selectedLibrary?.status === "deleting";
 	const detailActions = buildDetailActions(caps, detailDoc, {
 		onView: (doc) => setDocumentOverlay({ kind: "detail", docId: doc.id }),
 		onAcl: (doc) => setDocumentOverlay({ kind: "acl", doc }),

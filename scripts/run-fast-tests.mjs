@@ -32,5 +32,5 @@ function run(args) {
 const rootTests = await testFiles("tests", ".test.mjs");
 const coreTests = await testFiles("tests/ts-core", ".test.ts");
 
-run(["--test", ...rootTests]);
+run(["--test", "--test-concurrency=1", ...rootTests]);
 run(["--import", "tsx", "--test", "--test-concurrency=1", ...coreTests]);

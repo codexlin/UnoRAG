@@ -14,6 +14,8 @@ import type {
 import { chooseSelect } from "./select-helpers";
 
 let cookies: Cookie[] = [];
+let workspaceId = "";
+let workspaceName = "";
 test.beforeAll(async ({ browser }) => {
 	const email = process.env.UNORAG_E2E_ADMIN_EMAIL;
 	const password = process.env.UNORAG_E2E_ADMIN_PASSWORD;
@@ -27,6 +29,9 @@ test.beforeAll(async ({ browser }) => {
 			data: { email, password },
 		});
 		expect(auth.ok()).toBe(true);
+		const identity = await auth.json();
+		workspaceId = identity.workspaceId;
+		workspaceName = identity.workspaceName;
 		cookies = await context.cookies();
 	} finally {
 		await context.close();
@@ -44,6 +49,7 @@ function deletionFixture() {
 		status: "ready",
 		doc_count: 1,
 		ready_count: 1,
+		delete_jobs_active: false,
 		created_at: stamp,
 		updated_at: stamp,
 	};
@@ -80,6 +86,475 @@ async function confirmDocumentDeletion(page: Page) {
 		.getByRole("button", { name: "确认删除", exact: true })
 		.click();
 }
+
+async function confirmLibraryDeletion(page: Page) {
+	await page.getByRole("button", { name: "知识库设置", exact: true }).click();
+	await page.getByRole("menuitem", { name: "删除知识库", exact: true }).click();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "确认删除", exact: true })
+		.click();
+}
+
+async function expectDeletingLibrary(
+	page: Page,
+	mobile: boolean,
+	name: string,
+) {
+	if (mobile) {
+		await expect(
+			page.getByRole("combobox", { name: "当前知识库", exact: true }),
+		).toHaveValue(`${name} · 删除中`);
+	} else {
+		const item = page
+			.getByRole("complementary", { name: "知识库导航" })
+			.getByRole("button", { name: new RegExp(name) });
+		await expect(item).toContainText("删除中");
+		await expect(item).not.toContainText("可检索");
+	}
+}
+
+test("whole library deletion cancels old reads, retains deleting through read failure, then removes without reload", async ({
+	page,
+	isMobile,
+}) => {
+	const { library, document } = deletionFixture();
+	let accepted = false;
+	let removed = false;
+	let failing = false;
+	let reads = 0;
+	let deleteRequests = 0;
+	let holdOld = false;
+	let oldHeld = false;
+	let oldAborted = false;
+	let freshHeld = false;
+	const old = responseGate();
+	const fresh = responseGate();
+	page.on("requestfailed", (request) => {
+		if (new URL(request.url()).pathname === "/api/libraries") oldAborted = true;
+	});
+	await page.route("**/api/libraries", async (route) => {
+		reads += 1;
+		if (holdOld && !accepted && !oldHeld) {
+			oldHeld = true;
+			await old.pending;
+			await route.fulfill({ json: [library] }).catch(() => {});
+			return;
+		}
+		if (accepted && !freshHeld) {
+			freshHeld = true;
+			await fresh.pending;
+		}
+		await route.fulfill(
+			failing
+				? { status: 503, json: { detail: "fixture library poll unavailable" } }
+				: {
+						json: removed
+							? []
+							: [
+									{
+										...library,
+										status: accepted ? "deleting" : "ready",
+										delete_jobs_active: accepted,
+									},
+								],
+					},
+		);
+	});
+	// Keep the document read unchanged: only library polling can discover its completed removal.
+	await page.route(`**/api/libraries/${library.id}/documents`, (route) =>
+		route.fulfill({ json: [document] }),
+	);
+	await page.route(`**/api/libraries/${library.id}`, (route) => {
+		expect(route.request().method()).toBe("DELETE");
+		deleteRequests += 1;
+		accepted = true;
+		return route.fulfill({
+			status: 202,
+			json: {
+				ok: true,
+				library_id: library.id,
+				accepted: true,
+				status: "deleting",
+				deleted_documents: 1,
+				delete_jobs_queued: 1,
+				cleanup_queued: true,
+			},
+		});
+	});
+	try {
+		await page.goto("/app/libraries");
+		await expect(
+			page.getByRole("button", { name: document.name, exact: true }),
+		).toBeVisible();
+		await page.clock.install();
+		holdOld = true;
+		await page.getByRole("button", { name: "刷新文档", exact: true }).click();
+		await expect.poll(() => oldHeld).toBe(true);
+		await confirmLibraryDeletion(page);
+		await expect.poll(() => freshHeld).toBe(true);
+		await expect.poll(() => oldAborted).toBe(true);
+		await expectDeletingLibrary(page, isMobile, library.name);
+		old.release();
+		const inFlightReads = reads;
+		await page.clock.fastForward(6_100);
+		expect(reads).toBe(inFlightReads);
+		failing = true;
+		fresh.release();
+		await page.clock.runFor(1_100);
+		await expect(
+			page.getByRole("alert").filter({ hasText: "libraries 503" }),
+		).toBeVisible();
+		await expectDeletingLibrary(page, isMobile, library.name);
+		await expect(page.getByText("还没有知识库", { exact: true })).toHaveCount(
+			0,
+		);
+		await expect(
+			page.getByRole("button", { name: "上传文档", exact: true }),
+		).toBeDisabled();
+		await page.getByRole("button", { name: "知识库设置", exact: true }).click();
+		await expect(
+			page.getByRole("menuitem", { name: "编辑设置", exact: true }),
+		).toBeDisabled();
+		await expect(
+			page.getByRole("menuitem", { name: "删除知识库", exact: true }),
+		).toBeDisabled();
+		await page.keyboard.press("Escape");
+		failing = false;
+		removed = true;
+		await page.clock.fastForward(2_100);
+		await expect(
+			page.getByRole("button", { name: document.name, exact: true }),
+		).toHaveCount(0);
+		await expect(
+			page.getByText("还没有知识库", { exact: true }).last(),
+		).toBeVisible();
+		await expect(
+			page.getByRole("alert").filter({ hasText: "libraries 503" }),
+		).toHaveCount(0);
+		const terminalReads = reads;
+		await page.clock.fastForward(6_100);
+		await page.clock.runFor(100);
+		expect(reads).toBe(terminalReads);
+		expect(deleteRequests).toBe(1);
+	} finally {
+		old.release();
+		fresh.release();
+	}
+});
+
+test("whole library deletion recovers a failed job read, backs off terminal jobs and resumes on retry", async ({
+	page,
+	isMobile,
+}) => {
+	const { library, document } = deletionFixture();
+	let accepted = false;
+	let retried = false;
+	let removed = false;
+	let deletes = 0;
+	let failDocumentRead = true;
+	let libraryReads = 0;
+	let documentReads = 0;
+	await page.route("**/api/libraries", (route) => {
+		libraryReads += 1;
+		return route.fulfill({
+			json: removed
+				? []
+				: [
+						{
+							...library,
+							status: accepted ? "deleting" : "ready",
+							delete_jobs_active: retried,
+						},
+					],
+		});
+	});
+	await page.route(`**/api/libraries/${library.id}/documents`, (route) => {
+		documentReads += 1;
+		if (accepted && failDocumentRead)
+			return route.fulfill({
+				status: 503,
+				json: { detail: "fixture read unavailable" },
+			});
+		return route.fulfill({
+			json: [
+				accepted
+					? {
+							...document,
+							status: "deleting",
+							job_id: retried ? "retried-delete" : "failed-delete",
+							job_status: retried ? "queued" : "failed",
+							has_file: false,
+							error: retried ? null : "fixture cleanup failed",
+						}
+					: document,
+			],
+		});
+	});
+	await page.route(`**/api/libraries/${library.id}`, (route) => {
+		deletes += 1;
+		accepted = true;
+		return route.fulfill({
+			status: 202,
+			json: {
+				ok: true,
+				library_id: library.id,
+				accepted: true,
+				status: "deleting",
+				deleted_documents: 1,
+				delete_jobs_queued: 1,
+			},
+		});
+	});
+	await page.route("**/api/jobs/failed-delete/retry", (route) => {
+		expect(route.request().method()).toBe("POST");
+		retried = true;
+		return route.fulfill({
+			status: 202,
+			json: {
+				id: "retried-delete",
+				type: "document.delete",
+				status: "queued",
+				stage: "cleanup",
+				document_id: document.id,
+				library_id: library.id,
+			},
+		});
+	});
+	await page.goto("/app/libraries");
+	const row = page.getByRole("row").filter({ hasText: document.name });
+	await expect(row).toBeVisible();
+	await page.clock.install();
+	await confirmLibraryDeletion(page);
+	await expectDeletingLibrary(page, isMobile, library.name);
+	await page.clock.runFor(1_100);
+	await expect(
+		page.getByRole("alert").filter({ hasText: "documents 503" }),
+	).toBeVisible();
+	await expect(row).toBeVisible();
+	failDocumentRead = false;
+	await page.clock.fastForward(2_100);
+	await expect(row.getByText("处理失败", { exact: true })).toBeVisible();
+	await expect(
+		page.getByRole("alert").filter({ hasText: "documents 503" }),
+	).toHaveCount(0);
+	const failedLibraryReads = libraryReads;
+	const failedDocumentReads = documentReads;
+	await page.clock.fastForward(6_100);
+	await page.clock.runFor(100);
+	expect(libraryReads).toBe(failedLibraryReads);
+	expect(documentReads).toBe(failedDocumentReads);
+	await row.getByRole("button", { name: "操作", exact: true }).click();
+	await expect(
+		page.getByRole("menuitem", { name: "删除", exact: true }),
+	).toBeDisabled();
+	await page.getByRole("menuitem", { name: "重试任务", exact: true }).click();
+	await expect(row.getByText("排队中", { exact: true })).toBeVisible();
+	expect(retried).toBe(true);
+	removed = true;
+	await page.clock.fastForward(2_100);
+	await expect(row).toHaveCount(0);
+	await expect(
+		page.getByText("还没有知识库", { exact: true }).last(),
+	).toBeVisible();
+	expect(deletes).toBe(1);
+});
+
+test("external library delete retry replaces a cached failed job with the new job identity", async ({
+	page,
+}) => {
+	const { library, document } = deletionFixture();
+	let externalRetry = false;
+	let activeReads = 0;
+	let documentReads = 0;
+	const jobReads: string[] = [];
+	await page.route("**/api/libraries", (route) => {
+		if (externalRetry) activeReads += 1;
+		return route.fulfill({
+			json: [
+				{ ...library, status: "deleting", delete_jobs_active: externalRetry },
+			],
+		});
+	});
+	await page.route(`**/api/libraries/${library.id}/documents`, (route) => {
+		documentReads += 1;
+		return route.fulfill({
+			json: [
+				{
+					...document,
+					status: "deleting",
+					job_id: externalRetry ? "external-new-delete" : "old-failed-delete",
+					job_status: externalRetry ? "queued" : "failed",
+					has_file: false,
+					error: externalRetry ? null : "fixture cleanup failed",
+				},
+			],
+		});
+	});
+	await page.route("**/api/jobs/*", (route) => {
+		const id = new URL(route.request().url()).pathname.split("/").at(-1) ?? "";
+		jobReads.push(id);
+		return route.fulfill({
+			json: {
+				id,
+				type: "document.delete",
+				status: "queued",
+				stage: "cleanup",
+				progress: 0,
+				attempt: 0,
+				max_attempts: 3,
+				document_id: document.id,
+				document_version_id: "fixture-version",
+				generation_id: "fixture-generation",
+				library_id: library.id,
+				created_at: document.created_at,
+				updated_at: document.updated_at,
+			} satisfies ApiJob,
+		});
+	});
+	// Version/content reads remain closed during deletion; only task metadata is readable.
+	await page.route(
+		`**/api/libraries/${library.id}/documents/${document.id}/versions`,
+		(route) =>
+			route.fulfill({ status: 404, json: { detail: "library not found" } }),
+	);
+	await page.clock.install();
+	await page.goto("/app/libraries");
+	const row = page.getByRole("row").filter({ hasText: document.name });
+	await expect(row.getByText("处理失败", { exact: true })).toBeVisible();
+	const failedReads = documentReads;
+	await page.clock.fastForward(6_100);
+	await page.clock.runFor(100);
+	expect(documentReads).toBe(failedReads);
+	// No local retry, refresh, or reload: a different administrator changes server state.
+	externalRetry = true;
+	await page.clock.fastForward(30_100);
+	await expect.poll(() => activeReads).toBeGreaterThan(0);
+	await page.clock.fastForward(2_100);
+	await expect(row.getByText("排队中", { exact: true })).toBeVisible();
+	await row.getByRole("button", { name: "操作", exact: true }).click();
+	await expect(
+		page.getByRole("menuitem", { name: "重试任务", exact: true }),
+	).toHaveCount(0);
+	await page.keyboard.press("Escape");
+	await page.getByRole("button", { name: document.name, exact: true }).click();
+	await expect(
+		page.getByText("external-new-delete", { exact: true }),
+	).toBeVisible();
+	expect(jobReads.length).toBeGreaterThan(0);
+	expect(jobReads.every((id) => id === "external-new-delete")).toBe(true);
+});
+
+test("workspace-switch navigation cancels the old library deletion poll and ignores its late response", async ({
+	page,
+	isMobile,
+}) => {
+	// Two full SSR navigations can exceed 30s on the shared development server.
+	test.setTimeout(60_000);
+	const { library } = deletionFixture();
+	const other = {
+		...library,
+		id: "other-workspace-library",
+		name: "Other workspace library",
+		status: "ready",
+	};
+	const otherWorkspaceId = "6d18ff0c-0fb0-4d85-a1ab-3ff99b7e8801";
+	let switched = false;
+	let oldReads = 0;
+	let newReads = 0;
+	let holdPoll = false;
+	let held = false;
+	let aborted = false;
+	const late = responseGate();
+	await page.route("**/api/workspaces", (route) =>
+		route.fulfill({
+			json: {
+				can_create: false,
+				items: [
+					{
+						id: workspaceId,
+						name: workspaceName,
+						role: "admin",
+						current: !switched,
+					},
+					{
+						id: otherWorkspaceId,
+						name: "Other scope fixture",
+						role: "admin",
+						current: switched,
+					},
+				],
+			},
+		}),
+	);
+	await page.route("**/api/auth/session/workspace", (route) => {
+		expect(route.request().postDataJSON()).toEqual({
+			workspace_id: otherWorkspaceId,
+		});
+		switched = true;
+		return route.fulfill({ json: { workspaceId: otherWorkspaceId } });
+	});
+	await page.route("**/api/libraries", async (route) => {
+		if (switched) {
+			newReads += 1;
+			await route.fulfill({ json: [other] });
+			return;
+		}
+		oldReads += 1;
+		if (holdPoll) {
+			held = true;
+			await late.pending;
+		}
+		await route
+			.fulfill({
+				json: [{ ...library, status: "deleting", delete_jobs_active: true }],
+			})
+			.catch(() => {});
+	});
+	await page.route("**/api/libraries/*/documents", (route) =>
+		route.fulfill({ json: [] }),
+	);
+	page.on("requestfailed", (request) => {
+		if (held && new URL(request.url()).pathname === "/api/libraries")
+			aborted = true;
+	});
+	try {
+		await page.goto("/app/libraries");
+		await expectDeletingLibrary(page, isMobile, library.name);
+		await page.clock.install();
+		holdPoll = true;
+		await page.clock.fastForward(2_100);
+		await expect.poll(() => held).toBe(true);
+		if (isMobile)
+			await page
+				.getByRole("button", { name: "切换侧边栏", exact: true })
+				.first()
+				.click();
+		await page
+			.getByRole("button", { name: new RegExp(workspaceName) })
+			.first()
+			.click();
+		await page.getByRole("menuitem", { name: /Other scope fixture/ }).click();
+		await expect(page).toHaveURL(/\/app\/ask$/);
+		await expect.poll(() => newReads).toBeGreaterThan(0);
+		await expect.poll(() => aborted).toBe(true);
+		late.release();
+		await expect(
+			page.getByRole("combobox", { name: "知识库", exact: true }),
+		).toHaveValue(other.name);
+		const oldCount = oldReads;
+		const newCount = newReads;
+		await page.clock.fastForward(6_100);
+		await page.clock.runFor(100);
+		expect(oldReads).toBe(oldCount);
+		expect(newReads).toBe(newCount);
+		await expect(
+			page.getByRole("combobox", { name: "知识库", exact: true }),
+		).toHaveValue(other.name);
+	} finally {
+		late.release();
+	}
+});
 
 for (const outcome of ["completed", "failed"] as const) {
 	test(`async document deletion waits for slow ${outcome}, stops polling and supports cleanup retry`, async ({

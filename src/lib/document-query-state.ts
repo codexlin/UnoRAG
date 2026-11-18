@@ -19,7 +19,30 @@ export function isActiveDocumentDeletion(document: ApiDocument) {
 	);
 }
 
-export function documentRefetchInterval(documents: ApiDocument[] | undefined) {
+export function documentRefetchInterval(
+	documents: ApiDocument[] | undefined,
+	{
+		libraryDeleting = false,
+		deleteJobsActive = false,
+		errorCount = 0,
+	}: {
+		libraryDeleting?: boolean;
+		deleteJobsActive?: boolean;
+		errorCount?: number;
+	} = {},
+) {
+	if (libraryDeleting) {
+		if (errorCount > 0)
+			return Math.min(30_000, 2_000 * 2 ** Math.min(errorCount - 1, 4));
+		// Another tab/manager may have retried while this cache still holds a failed job.
+		if (deleteJobsActive) return 2_000;
+		// Acceptance may precede the first successful read of the real delete jobs.
+		if (
+			!documents ||
+			documents.some((document) => document.status !== "deleting")
+		)
+			return 2_000;
+	}
 	return documents?.some(isActiveDocumentDeletion) ? 2_000 : false;
 }
 

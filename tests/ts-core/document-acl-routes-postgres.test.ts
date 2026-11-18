@@ -49,6 +49,7 @@ const routeModules = Promise.all([
 	),
 	import("../../src/app/api/jobs/route"),
 	import("../../src/server/retrieval/document-catalog"),
+	import("../../src/app/api/jobs/[jobId]/route"),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolveFilename;
 });
@@ -212,6 +213,7 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 			versionsRoute,
 			jobsRoute,
 			catalog,
+			jobRoute,
 		] = await routeModules;
 		await pool.query(
 			`UPDATE app.documents SET projected_acl_fingerprint = acl_fingerprint WHERE id = $1`,
@@ -552,6 +554,110 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 			job_status: "queued",
 			audit_count: 1,
 		});
+
+		await pool.query(
+			"UPDATE app.libraries SET status = 'deleting' WHERE id = $1",
+			[ids.library],
+		);
+		const deleteJobId = randomUUID();
+		await pool.query(
+			`INSERT INTO app.jobs (
+				id, organization_id, workspace_id, document_version_id, type,
+				execution_engine, workflow_id, status, stage, idempotency_key
+			) VALUES ($1::uuid, $2, $3, $4, 'document.delete', 'dbos', $1::text,
+				'queued', 'cleanup', $5)`,
+			[
+				deleteJobId,
+				ids.organization,
+				ids.workspace,
+				ids.version,
+				`acl-delete-job-${suffix}`,
+			],
+		);
+		await pool.query(
+			"UPDATE app.documents SET status = 'deleting', latest_job_id = $2 WHERE id = $1",
+			[ids.document, deleteJobId],
+		);
+		const ownerHeaders = { cookie: `${session.SESSION_COOKIE}=${ownerToken}` };
+		for (const [headers, visible] of [
+			[ownerHeaders, true],
+			[viewerHeaders, false],
+		] as const) {
+			const list = await documentsRoute.GET(
+				new Request(`http://local/api/libraries/${ragLibraryId}/documents`, {
+					headers,
+				}),
+				documentsContext,
+			);
+			assert.equal(
+				list.status,
+				200,
+				"deleting metadata is still an authorized list",
+			);
+			const body = await list.json();
+			assert.equal(
+				body.length,
+				visible ? 1 : 0,
+				"deleting must not bypass document ACLs",
+			);
+			if (visible) {
+				assert.equal(body[0].job_id, deleteJobId);
+				assert.equal(body[0].job_status, "queued");
+			}
+			const job = await jobRoute.GET(
+				new Request(`http://local/api/jobs/${deleteJobId}`, { headers }),
+				{ params: Promise.resolve({ jobId: deleteJobId }) },
+			);
+			assert.equal(job.status, visible ? 200 : 404);
+			const libraryList = await librariesRoute.GET(
+				new Request("http://local/api/libraries", { headers }),
+			);
+			assert.equal(
+				(await libraryList.json())[0].delete_jobs_active,
+				visible,
+				"activity cannot disclose a hidden document job",
+			);
+			assert.equal(
+				(
+					await versionsRoute.GET(
+						new Request(
+							`http://local/api/libraries/${ragLibraryId}/documents/${ragDocumentId}/versions`,
+							{ headers },
+						),
+						context,
+					)
+				).status,
+				404,
+			);
+		}
+		const closedWrite = await aclRoute.PUT(
+			request("PUT", ownerToken, { scope: "workspace" }),
+			context,
+		);
+		assert.ok(closedWrite);
+		assert.equal(closedWrite.status, 404);
+		assert.equal(
+			(
+				await documentsRoute.POST(
+					new Request(`http://local/api/libraries/${ragLibraryId}/documents`, {
+						method: "POST",
+						headers: ownerHeaders,
+					}),
+					documentsContext,
+				)
+			).status,
+			404,
+		);
+		assert.deepEqual(
+			(
+				await catalog.loadActiveDocumentCatalog({
+					identity: ownerIdentity,
+					libraryId: ragLibraryId,
+					scope: { ...contentScope, principalIds: [ids.owner] },
+				})
+			).documents,
+			[],
+		);
 
 		await session.revokeSessionCookieHeader(
 			`${session.SESSION_COOKIE}=${ownerToken}`,

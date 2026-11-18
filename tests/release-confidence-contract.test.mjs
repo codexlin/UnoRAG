@@ -202,6 +202,46 @@ test("release code gate fails closed unless pnpm executes with Node 22", async (
 	);
 });
 
+for (const failStep of ["", "test:fast", "test:contract"]) {
+	test(`offline preflight uses layered suites and stops at ${failStep || "completion"}`, async (t) => {
+		const directory = await mkdtemp(join(tmpdir(), "unorag-preflight-"));
+		t.after(() => rm(directory, { recursive: true, force: true }));
+		const scripts = join(directory, "deploy/compose/scripts");
+		const bin = join(directory, "bin");
+		await mkdir(scripts, { recursive: true });
+		await mkdir(bin);
+		const script = join(scripts, "pilot-preflight.sh");
+		await writeFile(
+			script,
+			await readFile(
+				new URL("deploy/compose/scripts/pilot-preflight.sh", root),
+			),
+		);
+		await writeFile(
+			join(bin, "pnpm"),
+			'#!/bin/sh\nprintf "%s\\n" "$1" >> "$TEST_STEPS"\n[ "$1" != "$TEST_FAIL_STEP" ] || exit 31\n',
+			{ mode: 0o700 },
+		);
+		const steps = join(directory, "steps");
+		const result = spawnSync("/bin/bash", [script], {
+			encoding: "utf8",
+			timeout: 10_000,
+			env: {
+				PATH: `${bin}:/usr/bin:/bin`,
+				TEST_STEPS: steps,
+				TEST_FAIL_STEP: failStep,
+			},
+		});
+		assert.equal(result.status, failStep ? 31 : 0, result.stderr);
+		const expected = ["test:fast", "test:contract", "typecheck", "db:check"];
+		assert.deepEqual(
+			(await readFile(steps, "utf8")).trim().split("\n"),
+			failStep ? expected.slice(0, expected.indexOf(failStep) + 1) : expected,
+		);
+		assert.equal(result.stdout.includes("preflight PASS"), !failStep);
+	});
+}
+
 test("probe cleanup waits for asynchronous library deletion", async () => {
 	let reads = 0;
 	const requests = [];

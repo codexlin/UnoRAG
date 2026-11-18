@@ -102,6 +102,47 @@ test("terminal transitions include removal and failed cleanup, not unrelated or 
 	assert.equal(hasFinishedDocumentDeletion(undefined, []), false);
 });
 
+test("library acceptance recovers stale ready or missing jobs after read errors without polling terminal jobs", () => {
+	const options = { libraryDeleting: true };
+	assert.equal(documentRefetchInterval([document], options), 2_000);
+	assert.equal(documentRefetchInterval(undefined, options), 2_000);
+	assert.equal(
+		documentRefetchInterval([document], { ...options, errorCount: 1 }),
+		2_000,
+	);
+	assert.equal(
+		documentRefetchInterval([document], { ...options, errorCount: 2 }),
+		4_000,
+	);
+	assert.equal(
+		documentRefetchInterval([document], { ...options, errorCount: 100 }),
+		30_000,
+	);
+	for (const job_status of ["failed", "cancelled", "dead", "completed"]) {
+		assert.equal(
+			documentRefetchInterval([{ ...deleting, job_status }], options),
+			false,
+		);
+	}
+	assert.equal(documentRefetchInterval([deleting], options), 2_000);
+	assert.equal(
+		documentRefetchInterval([{ ...deleting, job_status: "failed" }], {
+			...options,
+			deleteJobsActive: true,
+		}),
+		2_000,
+		"server-observed external retry must refresh an old failed snapshot",
+	);
+	assert.equal(documentRefetchInterval([], options), false);
+	assert.equal(
+		documentRefetchInterval([document], {
+			libraryDeleting: false,
+			errorCount: 2,
+		}),
+		false,
+	);
+});
+
 test("accepted delete cancels an old fetch, retains the row and cannot affect another library or workspace", async (t) => {
 	const client = createClient();
 	t.after(() => client.clear());
