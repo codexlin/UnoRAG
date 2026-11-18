@@ -9,9 +9,16 @@ import pg from "pg";
 
 import { refreshLockedLibraryCounts } from "../../src/db/library-counts";
 import { libraries } from "../../src/db/schema";
+import { hashPassword } from "../../src/lib/server/auth/passwords.mjs";
+import type { AuthIdentity } from "../../src/lib/server/auth/provider";
+import { ConversationRepository } from "../../src/server/conversations/repository";
 import { closeGlobalDatabasePool } from "../helpers/runtime";
 
 const databaseUrl = process.env.DOCUMENT_INGEST_TEST_DATABASE_URL;
+const redisUrl = process.env.REDIS_INTEGRATION_TEST_URL;
+if (redisUrl) process.env.REDIS_URL = redisUrl;
+process.env.UNORAG_SESSION_SECRET ||=
+	"library-state-test-session-secret-0000000000000000";
 const skip = databaseUrl
 	? false
 	: "DOCUMENT_INGEST_TEST_DATABASE_URL is not configured";
@@ -27,10 +34,18 @@ const modules = Promise.all([
 	import("../../src/db"),
 	import("../../src/lib/server/library-access"),
 	import("../../src/lib/server/library-reindex-sql"),
+	import("../../src/lib/server/auth/session"),
+	import("../../src/lib/server/security/redis"),
+	import("../../src/app/api/libraries/[libraryId]/route"),
+	import("../../src/app/api/libraries/route"),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolve;
 });
 test.after(closeGlobalDatabasePool);
+test.after(async () => {
+	const loaded = await modules;
+	await loaded[4].closeSecurityRedisForTests();
+});
 
 async function withFixture(
 	run: (fixture: {
@@ -301,5 +316,191 @@ test("reindex indication executes the production active-version policy query", {
 			[documentId],
 		);
 		assert.equal(await count(), 0, "deleted sources must not require reindex");
+	});
+});
+
+test("library DELETE preserves archived threads and deleted sources while retaining scope and async behavior", {
+	skip: skip || (!redisUrl && "REDIS_INTEGRATION_TEST_URL is not configured"),
+}, async () => {
+	const [{ getDatabase }, access, , session, , route, listRoute] =
+		await modules;
+	await withFixture(async (fixture) => {
+		const {
+			pool,
+			organizationId,
+			workspaceId,
+			libraryId,
+			otherLibraryId,
+			documentId,
+		} = fixture;
+		const principalId = randomUUID();
+		const otherWorkspaceId = randomUUID();
+		const foreignLibraryId = randomUUID();
+		const identity: AuthIdentity = {
+			tenantId: organizationId,
+			workspaceId,
+			workspaceName: "Default",
+			principalId,
+			groupIds: [],
+			organizationRole: "owner",
+			role: "owner",
+			email: `${principalId}@example.test`,
+			displayName: "Library delete test",
+			provider: "local",
+			mustChangePassword: false,
+		};
+		await pool.query(
+			`INSERT INTO app.users (id, organization_id, external_subject, email, display_name, organization_role)
+			VALUES ($1::uuid, $2, $1::text, $3, 'Library delete test', 'owner')`,
+			[principalId, organizationId, identity.email],
+		);
+		await pool.query(
+			"INSERT INTO app.local_credentials (user_id, password_hash) VALUES ($1, $2)",
+			[principalId, hashPassword("LibraryDeleteTestPassword")],
+		);
+		await pool.query(
+			"INSERT INTO app.workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
+			[workspaceId, principalId],
+		);
+		await pool.query(
+			"INSERT INTO app.workspaces (id, organization_id, slug, name) VALUES ($1, $2, 'other', 'Other')",
+			[otherWorkspaceId, organizationId],
+		);
+		await pool.query(
+			`INSERT INTO app.libraries (id, organization_id, workspace_id, rag_library_id, name, status)
+			VALUES ($1::uuid, $2, $3, $1::text, 'Foreign', 'empty')`,
+			[foreignLibraryId, organizationId, otherWorkspaceId],
+		);
+		await pool.query(
+			"UPDATE app.documents SET status = 'deleted', deleted_at = now() WHERE id = $1",
+			[documentId],
+		);
+		await pool.query(
+			"UPDATE app.libraries SET doc_count = 1, ready_count = 1 WHERE id = $1",
+			[libraryId],
+		);
+		const scope = { organizationId, workspaceId, principalId };
+		const repository = new ConversationRepository(getDatabase());
+		const thread = await repository.createThreadWithTurns(scope, {
+			ragLibraryId: libraryId,
+			title: "Retained archive",
+			turns: [
+				{ role: "user", content: "Archived question" },
+				{ role: "assistant", content: "Archived answer" },
+			],
+		});
+		const archived = await repository.getThread(scope, thread.id);
+		const token = await session.issueSessionToken(identity);
+		const cookie = `${session.SESSION_COOKIE}=${token}`;
+		const remove = (id = libraryId, authenticated = true) =>
+			route.DELETE(
+				new Request(`http://local/api/libraries/${id}`, {
+					method: "DELETE",
+					headers: {
+						...(authenticated ? { cookie } : {}),
+						"x-request-id": "empty-library-delete-test",
+					},
+				}),
+				{ params: Promise.resolve({ libraryId: id }) },
+			);
+		try {
+			assert.equal((await remove(libraryId, false)).status, 401);
+			for (const role of ["viewer", "editor"]) {
+				await pool.query(
+					"UPDATE app.workspace_members SET role = $3 WHERE workspace_id = $1 AND user_id = $2",
+					[workspaceId, principalId, role],
+				);
+				assert.equal((await remove()).status, 403);
+			}
+			await pool.query(
+				"UPDATE app.workspace_members SET role = 'owner' WHERE workspace_id = $1 AND user_id = $2",
+				[workspaceId, principalId],
+			);
+			assert.equal((await remove(foreignLibraryId)).status, 404);
+			const responses = await Promise.all([remove(), remove()]);
+			const bodies = await Promise.all(responses.map((r) => r.json()));
+			assert.ok(responses.every((r) => r.status === 200));
+			assert.ok(bodies.every((b) => b.status === "deleted"));
+			assert.equal(bodies.filter((b) => b.already_deleted).length, 1);
+			assert.equal(
+				bodies.find((b) => !b.already_deleted).delete_jobs_queued,
+				0,
+			);
+			assert.deepEqual(
+				(
+					await pool.query(
+						"SELECT status, doc_count, ready_count FROM app.libraries WHERE id = $1",
+						[libraryId],
+					)
+				).rows,
+				[{ status: "deleted", doc_count: 0, ready_count: 0 }],
+			);
+			assert.deepEqual(await repository.getThread(scope, thread.id), archived);
+			assert.deepEqual(
+				(
+					await pool.query("SELECT status FROM app.documents WHERE id = $1", [
+						documentId,
+					])
+				).rows,
+				[{ status: "deleted" }],
+			);
+			assert.equal(
+				await access.findAuthorizedLibrary(identity, libraryId),
+				null,
+			);
+			const listed = await listRoute.GET(
+				new Request("http://local/api/libraries", { headers: { cookie } }),
+			);
+			assert.ok(
+				!(await listed.json()).some(
+					(row: { id: string }) => row.id === libraryId,
+				),
+			);
+			assert.deepEqual(
+				(
+					await pool.query(
+						"SELECT status FROM app.libraries WHERE workspace_id = $1",
+						[otherWorkspaceId],
+					)
+				).rows.map((row) => row.status),
+				["empty"],
+			);
+			const audit = await pool.query(
+				"SELECT action, actor_id, request_id FROM app.audit_logs WHERE resource_id = $1 ORDER BY action",
+				[libraryId],
+			);
+			assert.deepEqual(
+				audit.rows,
+				["library.delete_requested", "library.deleted"].map((action) => ({
+					action,
+					actor_id: principalId,
+					request_id: "empty-library-delete-test",
+				})),
+			);
+			assert.equal(
+				(
+					await pool.query(
+						"SELECT id FROM app.jobs WHERE organization_id = $1",
+						[organizationId],
+					)
+				).rowCount,
+				0,
+			);
+			const queued = await remove(otherLibraryId);
+			assert.equal(queued.status, 202);
+			assert.equal((await queued.json()).delete_jobs_queued, 1);
+			const repeated = await remove(otherLibraryId);
+			assert.equal(repeated.status, 202);
+			assert.equal((await repeated.json()).already_deleting, true);
+			const jobs = await pool.query(
+				"SELECT type, status FROM app.jobs WHERE organization_id = $1",
+				[organizationId],
+			);
+			assert.deepEqual(jobs.rows, [
+				{ type: "document.delete", status: "queued" },
+			]);
+		} finally {
+			await session.revokeSessionCookieHeader(cookie);
+		}
 	});
 });

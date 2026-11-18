@@ -15,6 +15,8 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 - Track accepted asynchronous document deletion until its actual terminal state.
   Prevent stale list responses and cross-library navigation from hiding jobs or
   updating the wrong cache; failed deletion remains visible and retryable.
+- Preserve a deleted-library tombstone for empty libraries, matching asynchronous
+  deletion and avoiding foreign-key failures when archived conversations remain.
 - Add a versioned multi-turn acceptance matrix using real product APIs and isolated
   synthetic libraries. The runtime release gate includes clarification expiry;
   development runs and skipped scenarios cannot grant release approval.

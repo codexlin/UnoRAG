@@ -97,6 +97,8 @@ Route Handler 共用 `document-version-command.ts`：按 library -> document -> 
 一个事务中完成旧任务取消、新 version/job 创建、desired pointer、library 状态和审计写入。
 知识库计数刷新也在事务内先锁定 library 行，与生命周期写入使用相同锁顺序；Web 和 Worker 共用
 统计规则，排除 deleting/deleted 文档，刷新不得覆盖知识库的删除状态。
+空知识库与异步文档删除完成后的知识库统一保留 `deleted` tombstone；不直接物理删除仍被归档会话、
+任务或审计关联的记录。产品列表隐藏已删除库，历史来源仍经过授权检查，物理回收由现有保留策略处理。
 
 ## 请求安全
 
