@@ -7,7 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
-	assertPublicDebug,
+	assertArchiveTurns,
 	blocked,
 	configurationFingerprint,
 	EXPIRY_MS,
@@ -188,7 +188,20 @@ export async function runMultiTurnMatrix(options, password, { signal } = {}) {
 					status: result.status,
 					request_id: requestId,
 					duration_ms: Math.round(performance.now() - started),
-					body: result.body,
+					body:
+						path === "/api/libraries" &&
+						(!request.method || request.method === "GET")
+							? {
+									valid_list: Array.isArray(result.body),
+									owned_library_ids: Array.isArray(result.body)
+										? result.body
+												.filter((item) =>
+													owned.items.some((own) => own.id === item?.id),
+												)
+												.map((item) => item.id)
+										: [],
+								}
+							: result.body,
 				})}\n`,
 				{ mode: 0o600 },
 			);
@@ -291,6 +304,7 @@ export async function runMultiTurnMatrix(options, password, { signal } = {}) {
 			const sessionId = `${runId}-${scenario.id}`;
 			let threadId,
 				choices = [],
+				archivedTurns = [],
 				pendingObservedAt;
 			const turns = [];
 			async function reload() {
@@ -301,7 +315,7 @@ export async function runMultiTurnMatrix(options, password, { signal } = {}) {
 						{ method: suffix ? "POST" : "GET" },
 					);
 					assert.equal(body.id, threadId);
-					assertPublicDebug(body);
+					assertArchiveTurns(body, archivedTurns, libraries[scenario.library]);
 				}
 			}
 			try {
@@ -332,7 +346,12 @@ export async function runMultiTurnMatrix(options, password, { signal } = {}) {
 						const score = scoreTurn(
 							step.expect,
 							{ ...response, requestId },
-							{ documents: plan.documents, sources: sources[label], choices },
+							{
+								documents: plan.documents,
+								sources: sources[label],
+								choices,
+								requirePersistence: step.context === "archive",
+							},
 						);
 						Object.assign(result, {
 							question: step.question,
@@ -350,6 +369,10 @@ export async function runMultiTurnMatrix(options, password, { signal } = {}) {
 							result.original_pending_response_at = new Date(
 								pendingObservedAt,
 							).toISOString();
+						}
+						if (step.context === "archive") {
+							archivedTurns.push({ question: step.question, ...response.body });
+							await reload();
 						}
 						if (!step.context && !step.library) {
 							const body = response.body;
@@ -378,11 +401,16 @@ export async function runMultiTurnMatrix(options, password, { signal } = {}) {
 							expected: [200, 201],
 						});
 						threadId = id(body.id);
+						archivedTurns = [...selected];
 						report.owned_threads.push({
 							id: threadId,
 							library_id: libraries[scenario.library],
 						});
-						assertPublicDebug(body);
+						assertArchiveTurns(
+							body,
+							archivedTurns,
+							libraries[scenario.library],
+						);
 						await reload();
 						result.thread_id = threadId;
 					} else if (step.op === "reload") await reload();

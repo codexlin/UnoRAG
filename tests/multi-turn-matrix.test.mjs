@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
+	assertArchiveTurns,
 	assertPublicDebug,
 	clarificationChoices,
 	configurationFingerprint,
@@ -71,7 +72,15 @@ const citation = (key, index = 1) => ({
 const response = (answer, citations = [citation("a")], extra = {}) => ({
 	status: 200,
 	requestId: "request-1",
-	body: { answer, citations, refused: false, refuse_reason: null, ...extra },
+	body: {
+		answer,
+		citations,
+		refused: false,
+		refuse_reason: null,
+		persisted: false,
+		persist_error: null,
+		...extra,
+	},
 });
 const score = (expect, result, choices = []) =>
 	scoreTurn(expect, result, { documents: plan.documents, sources, choices });
@@ -383,6 +392,66 @@ test("strict positive scoring requires exact facts, current source version and i
 		assert.equal(score(answerA, bad).ok, false, JSON.stringify(bad));
 });
 
+test("correct answers and clarifications cannot mask persistence failures", () => {
+	const good = response("1379元[1]。");
+	for (const result of [good, clarify]) {
+		const expect = result === good ? answerA : { kind: "clarify" };
+		assert.equal(score(expect, result).ok, true);
+		for (const persist_error of [
+			"session memory persistence failed",
+			"conversation persistence failed",
+			undefined,
+		])
+			assert.equal(
+				score(expect, { ...result, body: { ...result.body, persist_error } })
+					.ok,
+				false,
+			);
+	}
+	const context = {
+		documents: plan.documents,
+		sources,
+		requirePersistence: true,
+	};
+	assert.equal(scoreTurn(answerA, good, context).ok, false);
+	assert.equal(
+		scoreTurn(
+			answerA,
+			{ ...good, body: { ...good.body, persisted: true } },
+			context,
+		).ok,
+		true,
+	);
+});
+
+test("archive reload must contain every saved exchange in order, including continuation", () => {
+	const first = {
+		question: "报价？",
+		answer: "1379元[1]",
+		refused: false,
+		refuse_reason: null,
+	};
+	const next = {
+		question: "它何时生效？",
+		answer: "2027-04-16[1]",
+		refused: false,
+		refuse_reason: null,
+	};
+	const expected = [first, next];
+	const body = { library_id: "owned-library", turn_count: 2, turns: expected };
+	assert.doesNotThrow(() =>
+		assertArchiveTurns(body, expected, "owned-library"),
+	);
+	for (const invalid of [
+		{ ...body, library_id: "another-library" },
+		{ ...body, turn_count: 1, turns: [first] },
+		{ ...body, turns: [next, first] },
+		{ ...body, turns: [first, { ...next, answer: "different answer" }] },
+		{ ...body, turns: undefined },
+	])
+		assert.throws(() => assertArchiveTurns(invalid, expected, "owned-library"));
+});
+
 test("comparison scoring rejects swapped subject-value pairs and ungrounded extra sources", () => {
 	const expect = { kind: "answer", facts: ["a.price", "b.price"] };
 	const citations = [citation("a"), citation("b", 2)];
@@ -657,7 +726,14 @@ test("runner records failed raw HTTP privately, excludes login secrets, and clea
 		} else if (request.method === "DELETE") {
 			deleted.push(path);
 			body = {};
-		} else if (path === "/api/libraries") body = [];
+		} else if (path === "/api/libraries")
+			body = [
+				{
+					id: "foreign-customer-library",
+					name: "PRIVATE_CUSTOMER_NAME",
+					description: "PRIVATE_CUSTOMER_DESCRIPTION",
+				},
+			];
 		else throw new Error(`unexpected request: ${path}`);
 		return new Response(JSON.stringify(body), {
 			status,
@@ -704,7 +780,7 @@ test("runner records failed raw HTTP privately, excludes login secrets, and clea
 			const raw = await readFile(resolve(result.output, "raw", file), "utf8");
 			assert.doesNotMatch(
 				raw,
-				/synthetic-test-password|synthetic-secret-cookie|\/api\/auth\/session/u,
+				/synthetic-test-password|synthetic-secret-cookie|\/api\/auth\/session|PRIVATE_CUSTOMER|foreign-customer-library/u,
 			);
 			if (JSON.parse(raw).status === 500) observedFailure = true;
 			assert.equal(

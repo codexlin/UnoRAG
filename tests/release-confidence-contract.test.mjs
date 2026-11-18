@@ -12,7 +12,10 @@ import {
 	runCommand,
 	writeEvidence,
 } from "../scripts/acceptance/lib/runtime.mjs";
-import { deleteLibraryAndWait } from "../scripts/acceptance/recovery-probe.mjs";
+import {
+	deleteLibraryAndWait,
+	ProductSession,
+} from "../scripts/acceptance/recovery-probe.mjs";
 import {
 	multiTurnStage,
 	validateProfile,
@@ -209,6 +212,75 @@ test("probe cleanup waits for asynchronous library deletion", async () => {
 		{ path: "/api/libraries", method: "GET" },
 		{ path: "/api/libraries", method: "GET" },
 	]);
+});
+
+test("probe cleanup accepts HTTP 200/202 deletions with valid library lists", async (t) => {
+	let deleteStatus;
+	let libraries;
+	t.mock.method(globalThis, "fetch", async (url, request = {}) => {
+		if (request.method === "DELETE") {
+			assert.equal(new URL(url).pathname, "/api/libraries/library-probe");
+			return new Response(JSON.stringify({ status: "deleting" }), {
+				status: deleteStatus,
+			});
+		}
+		assert.equal(new URL(url).pathname, "/api/libraries");
+		return new Response(JSON.stringify(libraries), { status: 200 });
+	});
+	for (deleteStatus of [200, 202]) {
+		for (libraries of [
+			[],
+			[{ id: "unrelated-library", status: "ready" }],
+			[{ id: "library-probe", status: "deleted" }],
+		]) {
+			await assert.doesNotReject(() =>
+				deleteLibraryAndWait(
+					new ProductSession("https://synthetic.example.invalid"),
+					"library-probe",
+					10,
+				),
+			);
+		}
+	}
+});
+
+test("probe cleanup rejects malformed HTTP 200 library lists without exposing response bodies", async (t) => {
+	let raw;
+	t.mock.method(globalThis, "fetch", async (url, request = {}) => {
+		if (request.method === "DELETE") {
+			assert.equal(new URL(url).pathname, "/api/libraries/library-probe");
+			return new Response(JSON.stringify({ status: "deleting" }), {
+				status: 202,
+			});
+		}
+		assert.equal(new URL(url).pathname, "/api/libraries");
+		return new Response(raw, { status: 200 });
+	});
+	for (raw of [
+		"",
+		"null",
+		"{}",
+		'{"libraries":[]}',
+		'{"detail":"private response details"}',
+		'"private response details"',
+		"false",
+		"42",
+		"<html>private response details</html>",
+		"[null]",
+		"[{}]",
+		'[{"id":42}]',
+		'[{"id":""}]',
+	]) {
+		await assert.rejects(
+			() =>
+				deleteLibraryAndWait(
+					new ProductSession("https://synthetic.example.invalid"),
+					"library-probe",
+					10,
+				),
+			{ message: "invalid library list response during cleanup" },
+		);
+	}
 });
 
 test("destructive and fault acceptance entrypoints are fail-closed", async (t) => {

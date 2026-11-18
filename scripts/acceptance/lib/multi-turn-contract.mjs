@@ -348,6 +348,28 @@ export function assertPublicDebug(body) {
 	visit(body);
 }
 
+export function assertArchiveTurns(body, expected, libraryId) {
+	assertPublicDebug(body);
+	assert.equal(body.library_id, libraryId, "archive library changed");
+	assert.equal(body.turn_count, expected.length, "archive turn count mismatch");
+	assert.ok(Array.isArray(body.turns), "archive turns missing");
+	assert.deepEqual(
+		body.turns.map((turn) => ({
+			question: turn.question,
+			answer: turn.answer,
+			refused: turn.refused,
+			refuse_reason: turn.refuse_reason ?? null,
+		})),
+		expected.map((turn) => ({
+			question: turn.question,
+			answer: turn.answer,
+			refused: turn.refused,
+			refuse_reason: turn.refuse_reason ?? null,
+		})),
+		"archive lost, changed or reordered exchanges",
+	);
+}
+
 export function extractFacts(value) {
 	const text = String(value)
 		.normalize("NFKC")
@@ -490,7 +512,7 @@ const DENIAL_REASONS = new Set([
 export function scoreTurn(
 	expect,
 	response,
-	{ documents, sources, choices = [] },
+	{ documents, sources, choices = [], requirePersistence = false },
 ) {
 	const failures = [];
 	const check = (valid, reason) => {
@@ -498,6 +520,10 @@ export function scoreTurn(
 	};
 	const body = response.body ?? {};
 	check(response.status === 200, "http_status");
+	check(body.persist_error === null, "persistence_error");
+	check(typeof body.persisted === "boolean", "persistence_status_missing");
+	if (requirePersistence)
+		check(body.persisted === true, "archive_not_persisted");
 	check(
 		typeof response.requestId === "string" && response.requestId.length > 0,
 		"request_id",

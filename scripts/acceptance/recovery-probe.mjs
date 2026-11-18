@@ -177,6 +177,12 @@ export async function deleteLibraryAndWait(session, libraryId, timeoutMs) {
 		const libraries = await session.request("/api/libraries");
 		if (
 			!Array.isArray(libraries) ||
+			libraries.some(
+				(library) => !library || typeof library.id !== "string" || !library.id,
+			)
+		)
+			throw new Error("invalid library list response during cleanup");
+		if (
 			!libraries.some(
 				(library) => library.id === libraryId && library.status !== "deleted",
 			)
