@@ -1640,3 +1640,101 @@ test("parent-child expansion supports legacy source_chunk_ids matching and enfor
 		RetrievalSecurityViolationError,
 	);
 });
+
+test("DefaultRetrievalService attaches adjacent sibling chunks when no parent section exists and enforces authorization", async () => {
+	const childMid: QdrantSearchHit = hit({
+		id: "chunk-mid",
+		text: "智慧水务云方案支持二次供水管理。",
+		chunkIndex: 5,
+		score: 0.91,
+	});
+	const siblingPrev: QdrantSearchHit = hit({
+		id: "chunk-prev",
+		text: "和达科技与嘉源环境合资成立嘉源和达水务。",
+		chunkIndex: 4,
+		score: 0,
+	});
+	const siblingNext: QdrantSearchHit = hit({
+		id: "chunk-next",
+		text: "同时涵盖供排水调度、管网管理与漏损控制模块。",
+		chunkIndex: 6,
+		score: 0,
+	});
+
+	const storeWithSiblings: RetrievalVectorStore = {
+		async search() {
+			return [childMid];
+		},
+		async listCorpus() {
+			return [];
+		},
+		async lookupSections() {
+			return [];
+		},
+		async lookupChunks() {
+			return [siblingPrev, siblingNext];
+		},
+	};
+	const service = new DefaultRetrievalService(
+		embeddings,
+		storeWithSiblings,
+		null,
+		{
+			hybridEnabled: false,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	const result = await service.retrieve({
+		query: "合作伙伴",
+		libraryId: "library-a",
+		scope,
+		topK: 1,
+	});
+	const parentCtx = result.citations[0]?.parent_context ?? "";
+	assert.ok(parentCtx.includes("嘉源和达水务"));
+	assert.ok(parentCtx.includes("供排水调度、管网管理与漏损控制模块"));
+
+	const badSiblingStore: RetrievalVectorStore = {
+		async search() {
+			return [childMid];
+		},
+		async listCorpus() {
+			return [];
+		},
+		async lookupSections() {
+			return [];
+		},
+		async lookupChunks() {
+			return [
+				{
+					...siblingNext,
+					payload: { ...siblingNext.payload, tenant_id: "tenant-other" },
+				},
+			];
+		},
+	};
+	const strict = new DefaultRetrievalService(
+		embeddings,
+		badSiblingStore,
+		null,
+		{
+			hybridEnabled: false,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	await assert.rejects(
+		strict.retrieve({
+			query: "合作伙伴",
+			libraryId: "library-a",
+			scope,
+			topK: 1,
+		}),
+		RetrievalSecurityViolationError,
+	);
+});

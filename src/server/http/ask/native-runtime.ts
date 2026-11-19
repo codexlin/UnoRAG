@@ -371,19 +371,27 @@ export class NativeAskRuntime {
 			}
 		}
 		const mainQuery = query(state);
-		const targetTopK = input.tableOnly
+		const isRetryAttempt = (state.retrieval_attempts ?? 0) >= 1;
+		const isMultiAspectFact =
+			!input.tableOnly &&
+			state.query_type === "fact" &&
+			/(?:对比|比较|差异|以及|并且|有哪些|分别|应对|措施|战略|合作伙伴)/u.test(
+				mainQuery,
+			);
+		const baseTopK = input.tableOnly
 			? Math.max(30, this.policy.retrieve_top_k)
 			: state.query_type === "compare"
 				? Math.max(20, this.policy.retrieve_top_k)
-				: state.query_type === "summary"
+				: state.query_type === "summary" || isMultiAspectFact
 					? Math.max(10, this.policy.retrieve_top_k)
 					: this.policy.retrieve_top_k;
+		const targetTopK = isRetryAttempt ? Math.max(12, baseTopK) : baseTopK;
 		const effectiveFilters: RetrievalFilters | undefined = input.tableOnly
 			? { ...filters(state), record_type: "table" }
 			: filters(state);
 		const retrieveOptions = {
-			hybridEnabled: this.policy.hybrid_enabled,
-			rerankEnabled: this.policy.rerank_enabled,
+			hybridEnabled: this.policy.hybrid_enabled || isRetryAttempt,
+			rerankEnabled: this.policy.rerank_enabled || isRetryAttempt,
 			preserveFigureLineage: !input.tableOnly && state.query_type !== "compare",
 			lineageMinScore: this.evidenceThreshold(),
 		};
@@ -857,6 +865,7 @@ export class NativeAskRuntime {
 					// table identity through the same authorized retrieval boundary.
 					if (
 						!groundedPlan &&
+						!isDerivedCalculationQuestion(groundedQuestion(state)) &&
 						result.citations.some((citation) => citation.table_id)
 					) {
 						tableProbe = true;

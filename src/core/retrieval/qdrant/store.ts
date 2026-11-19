@@ -86,6 +86,10 @@ export interface RetrievalVectorStore {
 		scope: RetrievalScope;
 		limit: number;
 	}): Promise<QdrantSearchHit[]>;
+	lookupChunks?(input: {
+		scope: RetrievalScope;
+		limit: number;
+	}): Promise<QdrantSearchHit[]>;
 }
 
 export class QdrantRetrievalStore implements RetrievalVectorStore {
@@ -249,6 +253,27 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 				this.listCorpusInSpan({
 					scope: input.scope,
 					userFilters: { record_type: "section" },
+					limit: input.limit,
+				}),
+		);
+	}
+
+	async lookupChunks(input: {
+		scope: RetrievalScope;
+		limit: number;
+	}): Promise<QdrantSearchHit[]> {
+		return withActiveSpan(
+			"unorag.qdrant.lookup_chunks",
+			{
+				"db.system.name": "qdrant",
+				"langfuse.observation.type": "retriever",
+				"db.operation.name": "scroll",
+				"unorag.retrieval.limit": input.limit,
+			},
+			() =>
+				this.listCorpusInSpan({
+					scope: input.scope,
+					userFilters: { record_type: "chunk" },
 					limit: input.limit,
 				}),
 		);

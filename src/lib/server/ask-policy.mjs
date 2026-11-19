@@ -138,7 +138,7 @@ function looksRetrievalSensitive(question) {
 	if (!text) return false;
 	return (
 		looksLikePreciseLookup(text) ||
-		/(?:分别|第一个|最(?:高|低|大|小|多|少)|排名|占比|概率区间|提升|降低|图\s*\d+|表头|列名|文末汇总说明)/i.test(
+		/(?:分别|第一个|最(?:高|低|大|小|多|少)|排名|占比|概率区间|提升|降低|图\s*\d+|表头|列名|文末汇总说明|以及|并且|对比|比较|差异|如何应对|有哪些|监管|原则)/i.test(
 			text,
 		)
 	);
