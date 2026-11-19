@@ -1,8 +1,11 @@
 import { QdrantClient, type Schemas } from "@qdrant/js-client-rest";
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
+import type { ParsedFigureAsset } from "../core/contracts";
 import { QdrantIngestWriteStore } from "../core/ingest";
+import type { DocumentObjectStorage } from "../core/object-storage/contracts";
 import { documentObjectStorage } from "../core/object-storage/factory";
+import { LocalObjectStorage } from "../core/object-storage/local";
 import {
 	LiteParseProvider,
 	MinerU302Provider,
@@ -34,6 +37,7 @@ import {
 import {
 	assertDocumentContentHash,
 	DocumentIngestStager,
+	type FigureAssetStorePort,
 } from "./document-ingest-staging";
 import { PostgresDocumentIngestTransactions } from "./document-ingest-transactions";
 import { WorkerTaskError } from "./errors";
@@ -560,10 +564,92 @@ export class PostgresGenerationCleanupTransactions
 	}
 }
 
+function sanitizeFigureFilenameSegment(value: string): string {
+	const cleaned = value
+		.replace(/[^a-zA-Z0-9._-]+/g, "_")
+		.replace(/^_+|_+$/g, "");
+	return (cleaned || "figure").slice(0, 80);
+}
+
+export class PostgresFigureAssetStore implements FigureAssetStorePort {
+	constructor(
+		private readonly pool: Pick<Pool, "query">,
+		private readonly objectStorage: DocumentObjectStorage,
+	) {}
+
+	async persist(input: {
+		organizationId: string;
+		workspaceId: string;
+		libraryId: string;
+		documentId: string;
+		documentVersionId: string;
+		generationId: string;
+		assets: readonly ParsedFigureAsset[];
+	}): Promise<ReadonlySet<string>> {
+		const persisted = new Set<string>();
+		for (const [index, asset] of input.assets.entries()) {
+			const storageKey = `org/${input.organizationId}/workspace/${input.workspaceId}/library/${input.libraryId}/document/${input.documentId}/version/${input.documentVersionId}/generation/${input.generationId}/figures/${index}-${sanitizeFigureFilenameSegment(asset.figureId)}.${asset.extension}`;
+			const stored = await this.objectStorage.putBytes(
+				storageKey,
+				asset.bytes,
+				{
+					contentType: asset.mimeType,
+					maxBytes: 10 * 1024 * 1024,
+				},
+			);
+			await this.pool.query(
+				`
+				INSERT INTO app.document_figure_assets (
+					organization_id,
+					workspace_id,
+					library_id,
+					document_id,
+					document_version_id,
+					generation_id,
+					figure_id,
+					storage_key,
+					mime_type,
+					size_bytes,
+					page_start,
+					page_end
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				ON CONFLICT (generation_id, figure_id)
+				DO UPDATE SET
+					storage_key = EXCLUDED.storage_key,
+					mime_type = EXCLUDED.mime_type,
+					size_bytes = EXCLUDED.size_bytes,
+					page_start = EXCLUDED.page_start,
+					page_end = EXCLUDED.page_end
+				`,
+				[
+					input.organizationId,
+					input.workspaceId,
+					input.libraryId,
+					input.documentId,
+					input.documentVersionId,
+					input.generationId,
+					asset.figureId,
+					stored.key,
+					asset.mimeType,
+					stored.sizeBytes,
+					asset.pageStart,
+					asset.pageEnd,
+				],
+			);
+			persisted.add(asset.figureId);
+		}
+		return persisted;
+	}
+}
+
 export class QdrantGenerationCleanupStep implements GenerationCleanupStepPort {
 	constructor(
 		private readonly client: QdrantDeleteClient,
 		private readonly collection: string,
+		private readonly derivedStorage?: {
+			pool: Pick<Pool, "query">;
+			objectStorage: DocumentObjectStorage;
+		},
 	) {
 		if (!collection.trim()) {
 			throw new Error("Qdrant collection is required");
@@ -573,6 +659,39 @@ export class QdrantGenerationCleanupStep implements GenerationCleanupStepPort {
 	async deleteGeneration(
 		input: GenerationCleanupJob,
 	): Promise<GenerationCleanupDeleteResult> {
+		let deletedStorageObjects = 0;
+		if (this.derivedStorage) {
+			try {
+				const assets = await this.derivedStorage.pool.query<{
+					storage_key: string;
+				}>(
+					`
+					SELECT storage_key
+					FROM app.document_figure_assets
+					WHERE generation_id = $1
+					`,
+					[input.payload.generation_id],
+				);
+				for (const row of assets.rows) {
+					if (!row.storage_key) continue;
+					if (await this.derivedStorage.objectStorage.delete(row.storage_key)) {
+						deletedStorageObjects += 1;
+					}
+				}
+				await this.derivedStorage.pool.query(
+					`DELETE FROM app.document_figure_assets WHERE generation_id = $1`,
+					[input.payload.generation_id],
+				);
+			} catch (error) {
+				throw new WorkerTaskError(
+					error instanceof Error
+						? error.message
+						: "Derived figure generation cleanup failed",
+					"figure_generation_cleanup_failed",
+					"transient",
+				);
+			}
+		}
 		try {
 			const result = await this.client.delete(this.collection, {
 				filter: scopedCleanupFilter(input),
@@ -583,7 +702,7 @@ export class QdrantGenerationCleanupStep implements GenerationCleanupStepPort {
 				throw new Error(`Qdrant delete returned ${result.status}`);
 			}
 			return {
-				deletedStorageObjects: 0,
+				deletedStorageObjects,
 				qdrantOperationId: result.operation_id ?? null,
 			};
 		} catch (error) {
@@ -617,6 +736,11 @@ export async function createWorkerPorts(
 			: undefined;
 	const remoteStorage =
 		storageDriver === "cos" ? documentObjectStorage() : undefined;
+	const derivedObjectStorage: DocumentObjectStorage =
+		remoteStorage ??
+		new LocalObjectStorage(
+			documentStorageRoot ?? requiredEnvironment("DOCUMENT_STORAGE_ROOT"),
+		);
 	const embeddingDimensions = positiveInteger("EMBEDDING_DIM", 1_024);
 	if (!config.listenQueues.some((queue) => queue.startsWith("ingest-"))) {
 		throw new Error("DBOS document ingest requires at least one ingest queue");
@@ -679,6 +803,10 @@ export async function createWorkerPorts(
 		generationCleanup: new QdrantGenerationCleanupStep(
 			qdrant,
 			qdrantCollection,
+			{
+				pool,
+				objectStorage: derivedObjectStorage,
+			},
 		),
 		async close() {
 			await pool.end();
@@ -805,6 +933,8 @@ export async function createWorkerPorts(
 			embeddings,
 			new QdrantIngestWriteStore(qdrant, qdrantCollection, { vectorSchema }),
 			pdfParser,
+			undefined,
+			new PostgresFigureAssetStore(pool, derivedObjectStorage),
 		),
 	};
 	return ports;

@@ -57,10 +57,20 @@ export type ParseProgress = {
 	errorCode?: string;
 };
 
+export type ParsedFigureAsset = {
+	figureId: string;
+	bytes: Uint8Array;
+	mimeType: string;
+	extension: string;
+	pageStart: number | null;
+	pageEnd: number | null;
+};
+
 export type ParseResult = {
 	document: DocumentIR;
 	report: ParserReport;
 	rawArtifactRef?: string;
+	figureAssets?: readonly ParsedFigureAsset[];
 };
 
 export interface ParserProvider {

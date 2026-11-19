@@ -708,6 +708,18 @@ export async function replaceDocument(input: {
 	return (await response.json()) as ApiUploadResponse;
 }
 
+export function documentFigureUrl(
+	docId: string,
+	figureId: string,
+	versionId?: string | null,
+): string {
+	const params = new URLSearchParams({ figure_id: figureId });
+	if (versionId?.trim()) {
+		params.set("version_id", versionId.trim());
+	}
+	return `${getApiBaseUrl()}/v1/documents/${encodeURIComponent(docId)}/figure?${params.toString()}`;
+}
+
 export async function downloadDocument(
 	docId: string,
 	filename?: string,

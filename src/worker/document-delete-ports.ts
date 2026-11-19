@@ -769,11 +769,26 @@ export class PostgresDocumentDeleteTransactions
 				`,
 				[input.payload.document_id],
 			);
+			const figureAssets = await client.query<{
+				generation_id: string;
+				storage_key: string;
+			}>(
+				`
+				SELECT generation_id::text, storage_key
+				FROM app.document_figure_assets
+				WHERE document_id = $1
+				ORDER BY created_at, id
+				`,
+				[input.payload.document_id],
+			);
 			const generationIds = [
 				...new Set(versions.rows.map((row) => row.generation_id)),
 			];
 			const storageKeys = [
-				...new Set(versions.rows.map((row) => row.storage_key).filter(Boolean)),
+				...new Set([
+					...versions.rows.map((row) => row.storage_key).filter(Boolean),
+					...figureAssets.rows.map((row) => row.storage_key).filter(Boolean),
+				]),
 			];
 			const generationSet = new Set(generationIds);
 			const storageSet = new Set(storageKeys);

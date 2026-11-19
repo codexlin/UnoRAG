@@ -25,6 +25,7 @@ test("runtime roles match the TypeScript ownership boundary", async () => {
 	assert.match(roles, /CREATE ROLE unorag_web NOLOGIN/);
 	assert.match(roles, /CREATE ROLE unorag_worker NOLOGIN/);
 	assert.match(roles, /app\.generation_cleanup_queue/);
+	assert.match(roles, /app\.document_figure_assets TO unorag_worker/);
 	assert.match(roles, /app\.active_document_generations/);
 	assert.match(roles, /app\.ask_run_stages/);
 	assert.match(roles, /app\.job_stage_runs/);

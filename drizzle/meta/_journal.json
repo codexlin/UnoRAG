@@ -246,6 +246,13 @@
       "when": 1794751869586,
       "tag": "0034_document_catalog_trigram",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1795066233211,
+      "tag": "0035_document_figure_assets",
+      "breakpoints": true
     }
   ]
 }

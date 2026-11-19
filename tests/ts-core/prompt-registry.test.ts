@@ -12,6 +12,7 @@ import type { LanguageModel } from "ai";
 import {
 	AnswerStreamAdapter,
 	CHAT_SYSTEM_PROMPT,
+	FigureReaderAdapter,
 	getPrompt,
 	PROMPT_KEYS,
 	PROMPT_REGISTRY,
@@ -24,6 +25,8 @@ const EXPECTED_DIGESTS = {
 	chat: "c756b8414aff26bd3ff276d0ecabd1ce2f3405b120d62c28d1348cefab772041",
 	router: "4f586e259c1fb7b4991d7014038887dd885168785edfd5fe0705cfb8a5862353",
 	rewrite: "515f7cae7e09b2cdeb5dae09eafdebdb8bbdf9b8631d867f1ba1dd6bd604a7da",
+	figure_read:
+		"0eb3627d4cf86fb1bc20aea945f6bad8858c43dda7edcd93643d6161a54065d5",
 	judge: "d1d6384fc3a317ff1ecdd439ddc357141426087c8978dfb43f17b884bd7aa829",
 	refusal_review:
 		"4763560446161b7754bd8c95a7c22c2a13d11247642e25380502f8ee7dcff5a8",
@@ -38,6 +41,7 @@ const EXPECTED_VERSIONS = {
 	chat: "1.14.0",
 	router: "1.0.0",
 	rewrite: "2.1.0",
+	figure_read: "1.0.0",
 	judge: "1.13.0",
 	refusal_review: "1.1.0",
 	conflict: "2.3.0",
@@ -49,6 +53,7 @@ const EXPECTED_NAMES = {
 	chat: "unorag.chat.answer",
 	router: "unorag.query.router",
 	rewrite: "unorag.query.rewrite",
+	figure_read: "unorag.evidence.figure_read",
 	judge: "unorag.evidence.judge",
 	refusal_review: "unorag.evidence.refusal_review",
 	conflict: "unorag.evidence.conflict",
@@ -65,7 +70,7 @@ async function collect(iterable: AsyncIterable<string>): Promise<string[]> {
 }
 
 test("prompt registry is complete and locks stable names, versions, and digests", () => {
-	assert.equal(PROMPT_KEYS.length, 8);
+	assert.equal(PROMPT_KEYS.length, 9);
 	assert.deepEqual(Object.keys(PROMPT_REGISTRY), [...PROMPT_KEYS]);
 	for (const key of PROMPT_KEYS) {
 		const prompt = getPrompt(key);
@@ -169,6 +174,17 @@ test("runtime adapters use registry instructions and export no prompt text", asy
 	});
 	await structured.planTable({ question: "多少行？", tables: [] });
 
+	const figureReader = new FigureReaderAdapter(model, async (request) => {
+		observed.set("figure_read", request.instructions);
+		return { text: "图表显示同比增长 10%。" };
+	});
+	await figureReader.readFigure({
+		question: "增长率多少？",
+		figureId: "doc:figure:0",
+		imageBytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47]),
+		mimeType: "image/png",
+	});
+
 	const answer = new AnswerStreamAdapter(model, (request) => {
 		observed.set("chat", request.instructions);
 		return (async function* () {
@@ -188,9 +204,13 @@ test("runtime adapters use registry instructions and export no prompt text", asy
 	const spans = exporter
 		.getFinishedSpans()
 		.filter((span) =>
-			["unorag.ai.structured", "unorag.ai.generate"].includes(span.name),
+			[
+				"unorag.ai.structured",
+				"unorag.ai.generate",
+				"unorag.ai.figure_read",
+			].includes(span.name),
 		);
-	assert.equal(spans.length, 8);
+	assert.equal(spans.length, 9);
 	const reviewSpan = spans.find(
 		(span) =>
 			span.attributes["unorag.ai.structured_kind"] === "conflict_review",

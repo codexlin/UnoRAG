@@ -6,6 +6,7 @@ import type { Readable } from "node:stream";
 
 import type {
 	DocumentObjectStorage,
+	PutBytesOptions,
 	PutFileOptions,
 	StoredObject,
 } from "./contracts";
@@ -74,6 +75,44 @@ export class LocalObjectStorage implements DocumentObjectStorage {
 			};
 		} catch (error) {
 			await reader.cancel().catch(() => undefined);
+			await handle.close().catch(() => undefined);
+			await unlink(temporaryPath).catch(() => undefined);
+			throw error;
+		}
+	}
+
+	async putBytes(
+		key: string,
+		bytes: Uint8Array,
+		options: PutBytesOptions = {},
+	): Promise<StoredObject> {
+		const finalPath = this.resolve(key);
+		const maxBytes = options.maxBytes ?? Number.MAX_SAFE_INTEGER;
+		if (bytes.byteLength > maxBytes) {
+			throw new Error(`file exceeds ${maxBytes} byte upload limit`);
+		}
+		if (options.signal?.aborted) {
+			throw new DOMException("upload cancelled", "AbortError");
+		}
+		assertUploadContent(
+			key,
+			bytes.byteLength,
+			Buffer.from(bytes.subarray(0, 512)),
+		);
+		const temporaryPath = `${finalPath}.${randomUUID()}.part`;
+		await mkdir(path.dirname(finalPath), { recursive: true });
+		const handle = await open(temporaryPath, "wx", 0o600);
+		try {
+			await handle.writeFile(bytes);
+			await handle.sync();
+			await handle.close();
+			await rename(temporaryPath, finalPath);
+			return {
+				key,
+				sizeBytes: bytes.byteLength,
+				contentHash: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+			};
+		} catch (error) {
 			await handle.close().catch(() => undefined);
 			await unlink(temporaryPath).catch(() => undefined);
 			throw error;

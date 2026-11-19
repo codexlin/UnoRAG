@@ -2,6 +2,7 @@ import JSZip from "jszip";
 
 import type {
 	DocumentAnalysis,
+	ParsedFigureAsset,
 	ParseInput,
 	ParseProgress,
 	ParseResult,
@@ -232,7 +233,7 @@ export class MinerU302Provider
 				false,
 			);
 		}
-		return this.normalize(
+		const baseResult = this.normalize(
 			{
 				content_list: contentList,
 				filename: entry.name
@@ -243,6 +244,15 @@ export class MinerU302Provider
 			},
 			task,
 		);
+		const figureAssets = await extractFigureAssetsFromZip(
+			zip,
+			entry.name,
+			baseResult.document,
+		);
+		return {
+			...baseResult,
+			...(figureAssets.length > 0 ? { figureAssets } : {}),
+		};
 	}
 
 	async cancel(_task: ProviderTask): Promise<void> {
@@ -404,4 +414,101 @@ function providerError(
 	status?: number,
 ): ParserProviderHttpError {
 	return new ParserProviderHttpError({ message, code, retryable, status });
+}
+
+const MAX_FIGURE_ASSETS = 100;
+const MAX_FIGURE_ASSET_BYTES = 10 * 1024 * 1024;
+const MAX_TOTAL_FIGURE_BYTES = 64 * 1024 * 1024;
+const FIGURE_MIME_BY_EXT: Readonly<Record<string, string>> = {
+	png: "image/png",
+	jpg: "image/jpeg",
+	jpeg: "image/jpeg",
+	webp: "image/webp",
+};
+
+function figureMimeAndExt(entryName: string): {
+	extension: string;
+	mimeType: string;
+} | null {
+	const match = /\.([a-z0-9]+)$/i.exec(entryName);
+	const extension = match?.[1]?.toLowerCase() ?? "";
+	const mimeType = FIGURE_MIME_BY_EXT[extension];
+	return mimeType ? { extension, mimeType } : null;
+}
+
+function resolveZipImageEntry(
+	zip: JSZip,
+	contentListPath: string,
+	rawImgPath: string,
+): JSZip.JSZipObject | undefined {
+	const normalizedImg = rawImgPath
+		.trim()
+		.replaceAll("\\", "/")
+		.replace(/^\.\//, "")
+		.replace(/^\/+/, "");
+	if (!normalizedImg || normalizedImg.includes("..")) return undefined;
+	const parentDir = contentListPath.includes("/")
+		? contentListPath.slice(0, contentListPath.lastIndexOf("/") + 1)
+		: "";
+	const candidates = [
+		`${parentDir}${normalizedImg}`,
+		normalizedImg,
+		`images/${normalizedImg.split("/").at(-1) ?? ""}`,
+	];
+	const files = Object.values(zip.files).filter((item) => !item.dir);
+	for (const candidate of candidates) {
+		const exact = files.find(
+			(item) => item.name.toLowerCase() === candidate.toLowerCase(),
+		);
+		if (exact) return exact;
+	}
+	const base = normalizedImg.split("/").at(-1)?.toLowerCase();
+	if (!base) return undefined;
+	return files.find((item) => item.name.toLowerCase().endsWith(`/${base}`));
+}
+
+async function extractFigureAssetsFromZip(
+	zip: JSZip,
+	contentListPath: string,
+	document: {
+		nodes: Array<{
+			type: string;
+			figure_id: string | null;
+			page_start: number | null;
+			page_end: number | null;
+			meta: Record<string, unknown>;
+		}>;
+	},
+): Promise<ParsedFigureAsset[]> {
+	const assets: ParsedFigureAsset[] = [];
+	let totalBytes = 0;
+	for (const node of document.nodes) {
+		if (node.type !== "figure" || !node.figure_id) continue;
+		const imgPath =
+			typeof node.meta.img_path === "string" ? node.meta.img_path : "";
+		delete node.meta.img_path;
+		if (!imgPath || assets.length >= MAX_FIGURE_ASSETS) continue;
+		const zipEntry = resolveZipImageEntry(zip, contentListPath, imgPath);
+		if (!zipEntry) continue;
+		const info = figureMimeAndExt(zipEntry.name);
+		if (!info) continue;
+		const bytes = await zipEntry.async("uint8array");
+		if (
+			bytes.byteLength === 0 ||
+			bytes.byteLength > MAX_FIGURE_ASSET_BYTES ||
+			totalBytes + bytes.byteLength > MAX_TOTAL_FIGURE_BYTES
+		) {
+			continue;
+		}
+		totalBytes += bytes.byteLength;
+		assets.push({
+			figureId: node.figure_id,
+			bytes,
+			mimeType: info.mimeType,
+			extension: info.extension,
+			pageStart: node.page_start,
+			pageEnd: node.page_end,
+		});
+	}
+	return assets;
 }

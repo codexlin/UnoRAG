@@ -11,11 +11,20 @@ export type PutFileOptions = {
 	signal?: AbortSignal;
 };
 
+export type PutBytesOptions = PutFileOptions & {
+	contentType?: string;
+};
+
 export interface DocumentObjectStorage {
 	putFile(
 		key: string,
 		file: File,
 		options?: PutFileOptions,
+	): Promise<StoredObject>;
+	putBytes(
+		key: string,
+		bytes: Uint8Array,
+		options?: PutBytesOptions,
 	): Promise<StoredObject>;
 	exists(key: string): Promise<boolean>;
 	head(key: string): Promise<{ sizeBytes: number }>;

@@ -20,6 +20,13 @@ export interface OpenAICompatibleAiConfig {
 	includeUsage?: boolean;
 }
 
+export interface VlmAiConfig extends OpenAICompatibleAiConfig {
+	enabled: boolean;
+	timeoutMs: number;
+	maxFiguresPerRequest: number;
+	maxImageBytes: number;
+}
+
 export interface AiProviderRegistry {
 	model: LanguageModel;
 	modelId: string;
@@ -92,6 +99,75 @@ export function judgeAiConfigFromEnv(
 			env.JUDGE_SUPPORTS_STRUCTURED_OUTPUTS?.trim().toLowerCase() === "false"
 				? false
 				: base.supportsStructuredOutputs,
+	};
+}
+
+function boundedEnvInt(
+	env: Record<string, string | undefined>,
+	name: string,
+	fallback: number,
+	min: number,
+	max: number,
+): number {
+	const raw = env[name]?.trim();
+	if (!raw) return fallback;
+	const parsed = Number(raw);
+	if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+		throw new AiProviderConfigurationError(
+			`${name} must be an integer between ${min} and ${max}`,
+		);
+	}
+	return parsed;
+}
+
+/** VLM defaults to disabled; when enabled it binds strictly to an OpenAI-compatible vision endpoint. */
+export function vlmAiConfigFromEnv(
+	env: Record<string, string | undefined> = process.env,
+): VlmAiConfig | null {
+	if (env.VLM_ENABLED?.trim().toLowerCase() !== "true") {
+		return null;
+	}
+	const apiKey = required(
+		env.VLM_API_KEY || env.OPENAI_API_KEY || env.DASHSCOPE_API_KEY,
+		"VLM_API_KEY, OPENAI_API_KEY, or DASHSCOPE_API_KEY",
+	);
+	const baseUrl = httpUrl(
+		required(
+			env.VLM_BASE_URL ||
+				env.OPENAI_BASE_URL ||
+				env.DASHSCOPE_BASE_URL ||
+				DEFAULT_BASE_URL,
+			"VLM_BASE_URL or OPENAI_BASE_URL",
+		),
+		"VLM_BASE_URL",
+	);
+	const chatModel = required(env.VLM_MODEL, "VLM_MODEL");
+	return {
+		enabled: true,
+		apiKey,
+		baseUrl,
+		chatModel,
+		providerName:
+			env.VLM_PROVIDER_NAME?.trim() ||
+			env.AI_PROVIDER_NAME?.trim() ||
+			"openai-compatible",
+		supportsStructuredOutputs: false,
+		includeUsage: env.AI_INCLUDE_USAGE?.trim().toLowerCase() !== "false",
+		timeoutMs: boundedEnvInt(env, "VLM_TIMEOUT_MS", 15_000, 1_000, 60_000),
+		maxFiguresPerRequest: boundedEnvInt(
+			env,
+			"VLM_MAX_FIGURES_PER_REQUEST",
+			2,
+			1,
+			4,
+		),
+		maxImageBytes: boundedEnvInt(
+			env,
+			"VLM_MAX_IMAGE_BYTES",
+			5 * 1024 * 1024,
+			65_536,
+			10 * 1024 * 1024,
+		),
 	};
 }
 
