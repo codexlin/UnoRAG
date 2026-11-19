@@ -22,12 +22,12 @@ import {
 } from "../../src/core/ai";
 
 const EXPECTED_DIGESTS = {
-	chat: "c756b8414aff26bd3ff276d0ecabd1ce2f3405b120d62c28d1348cefab772041",
+	chat: "c97b082c14fc22452ad58faaa0727e1bddac1fec86ed7162b1a9b3810d627d63",
 	router: "4f586e259c1fb7b4991d7014038887dd885168785edfd5fe0705cfb8a5862353",
 	rewrite: "515f7cae7e09b2cdeb5dae09eafdebdb8bbdf9b8631d867f1ba1dd6bd604a7da",
 	figure_read:
 		"0eb3627d4cf86fb1bc20aea945f6bad8858c43dda7edcd93643d6161a54065d5",
-	judge: "20d8dfb902832470e549f05fca178f98cc5be8e6b1e2c550d5b3b08efa0b3005",
+	judge: "7ca969280f7d0daa537a3841b607be814c0b16ffaba73c174de65b1d5ed7e2c0",
 	refusal_review:
 		"5b54ebd0e6c6941028eede4df994d849cad25815a3905aae75dda70c5a2ddf96",
 	conflict: "28aa307583ce89bbb7b0c84c091add0bb5506fff246a4b1dca5c388977dd1c7e",
@@ -38,11 +38,11 @@ const EXPECTED_DIGESTS = {
 } as const;
 
 const EXPECTED_VERSIONS = {
-	chat: "1.14.0",
+	chat: "1.15.0",
 	router: "1.0.0",
 	rewrite: "2.1.0",
 	figure_read: "1.0.0",
-	judge: "1.14.0",
+	judge: "1.15.0",
 	refusal_review: "1.2.0",
 	conflict: "2.3.0",
 	conflict_review: "1.0.0",

@@ -432,18 +432,103 @@ async function expandParentContexts(input: {
 
 	const allSections = [...sectionPool.values()];
 	const attachedSectionKeys = new Set(selectedSectionKeys);
+	const fallbackChildren: QdrantSearchHit[] = [];
 	for (const child of expandable) {
 		const parent = findParentSection(child, allSections);
-		if (!parent) continue;
+		if (!parent) {
+			fallbackChildren.push(child);
+			continue;
+		}
 		const key = sectionKey(parent);
 		if (attachedSectionKeys.has(key)) continue;
 		const bounded = boundParentWindow(
 			parent.payload.body || parent.payload.text,
 			child.payload.body || child.payload.text,
 		);
-		if (!bounded) continue;
+		if (!bounded) {
+			fallbackChildren.push(child);
+			continue;
+		}
 		attachedSectionKeys.add(key);
 		parentContexts.set(String(child.id), bounded);
+	}
+	// Sibling-chunk fallback when a chunk has no parent section or spans across chunk boundaries.
+	if (fallbackChildren.length > 0 && input.store.lookupChunks) {
+		const selectedChunkKeys = new Set(
+			input.selected
+				.filter((hit) => hit.payload.record_type === "chunk")
+				.map(
+					(hit) =>
+						`${hit.payload.doc_id}:${hit.payload.generation_id ?? ""}:${hit.payload.chunk_index}`,
+				),
+		);
+		const fallbackDocIds = [
+			...new Set(fallbackChildren.map((child) => child.payload.doc_id)),
+		];
+		const allowedDocIds = input.scope.documentIds
+			? fallbackDocIds.filter((docId) =>
+					input.scope.documentIds?.includes(docId),
+				)
+			: fallbackDocIds;
+		if (allowedDocIds.length > 0) {
+			try {
+				input.signal?.throwIfAborted();
+				const siblingCandidates = assertAuthorizedHits(
+					await input.store.lookupChunks({
+						scope: {
+							...input.scope,
+							documentIds: allowedDocIds,
+						},
+						limit: Math.min(256, Math.max(48, allowedDocIds.length * 48)),
+					}),
+					input.scope,
+				);
+				const chunkByIndex = new Map<string, QdrantSearchHit>();
+				for (const hit of siblingCandidates) {
+					if (isExpandableChildChunk(hit)) {
+						chunkByIndex.set(
+							`${hit.payload.doc_id}:${hit.payload.generation_id ?? ""}:${hit.payload.chunk_index}`,
+							hit,
+						);
+					}
+				}
+				for (const child of fallbackChildren) {
+					const prefix = `${child.payload.doc_id}:${child.payload.generation_id ?? ""}`;
+					const prevKey = `${prefix}:${child.payload.chunk_index - 1}`;
+					const nextKey = `${prefix}:${child.payload.chunk_index + 1}`;
+					const neighbors = [
+						!selectedChunkKeys.has(prevKey)
+							? chunkByIndex.get(prevKey)
+							: undefined,
+						!selectedChunkKeys.has(nextKey)
+							? chunkByIndex.get(nextKey)
+							: undefined,
+					].filter((hit): hit is QdrantSearchHit => Boolean(hit));
+					if (neighbors.length === 0) continue;
+					const combined = [
+						...neighbors
+							.filter((n) => n.payload.chunk_index < child.payload.chunk_index)
+							.map((n) => (n.payload.body || n.payload.text).trim()),
+						(child.payload.body || child.payload.text).trim(),
+						...neighbors
+							.filter((n) => n.payload.chunk_index > child.payload.chunk_index)
+							.map((n) => (n.payload.body || n.payload.text).trim()),
+					]
+						.filter(Boolean)
+						.join("\n\n");
+					const bounded = boundParentWindow(
+						combined,
+						child.payload.body || child.payload.text,
+					);
+					if (bounded) {
+						parentContexts.set(String(child.id), bounded);
+					}
+				}
+			} catch (error) {
+				input.signal?.throwIfAborted();
+				if (error instanceof RetrievalSecurityViolationError) throw error;
+			}
+		}
 	}
 	return parentContexts;
 }
