@@ -33,8 +33,9 @@ type PositiveHfCase = Readonly<{
 type NegativeHfCase = Readonly<{
 	id: string;
 	polarity: "negative";
+	refusal_kind?: "out_of_corpus" | "in_corpus_unanswerable";
 	question: string;
-	excluded_entity: string;
+	excluded_entity: string | null;
 	source_doc: string;
 	task_type: string;
 	doc_type: string;
@@ -70,7 +71,8 @@ type PositiveResult = Readonly<{
 
 type NegativeResult = Readonly<{
 	id: string;
-	excluded_entity: string;
+	refusal_kind: "out_of_corpus" | "in_corpus_unanswerable";
+	excluded_entity: string | null;
 	task_type: string;
 	doc_type: string;
 	question: string;
@@ -541,9 +543,12 @@ async function run(): Promise<void> {
 				timeoutMs: 120_000,
 			});
 			const passed = res.httpStatus === 200 && res.refused;
+			const refusalKind =
+				item.refusal_kind ?? (item.excluded_entity ? "out_of_corpus" : "in_corpus_unanswerable");
 			negativeResults.push({
 				id: item.id,
-				excluded_entity: item.excluded_entity,
+				refusal_kind: refusalKind,
+				excluded_entity: item.excluded_entity ?? null,
 				task_type: item.task_type,
 				doc_type: item.doc_type,
 				question: item.question,
@@ -555,7 +560,7 @@ async function run(): Promise<void> {
 				latency_ms: res.latencyMs,
 			});
 			process.stdout.write(
-				`  [N${index + 1}/${negatives.length}] ${passed ? "PASS" : "FAIL"} entity=${item.excluded_entity} refused=${res.refused}\n`,
+				`  [N${index + 1}/${negatives.length}] ${passed ? "PASS" : "FAIL"} kind=${refusalKind} target=${item.excluded_entity ?? item.source_doc} refused=${res.refused}\n`,
 			);
 		}
 
