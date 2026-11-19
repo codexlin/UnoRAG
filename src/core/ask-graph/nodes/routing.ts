@@ -32,6 +32,8 @@ const FIGURE_PROSE_PATTERN =
 	/(?:图\s*\d+|图表|折线图|柱状图|堆叠图|饼图|趋势图)/i;
 const PROSE_SUPERLATIVE_COMPARE_PATTERN =
 	/(?:最高|最低|最大|最小|最多|最少)[^，。？?]{0,16}(?:哪一|哪个|何种|什么)|(?:哪一|哪个|何种|什么)[^，。？?]{0,16}(?:最高|最低|最大|最小|最多|最少)/i;
+const PROSE_DIFF_COMPARE_PATTERN =
+	/(?:有何不同|有哪些不同|主要差异|有哪些差异|异同点?|相比(?:较|而言)?[^，。？?]{0,20}(?:如何|怎样|更大|更小|更高|更低|差异|区别)|对比[^，。？?]{0,36}(?:差异|区别|不同|策略|优势|前景))/u;
 const SELF_CONTAINED_RETRIEVAL_PATTERN =
 	/(?:根据|依据|关于|针对|规定|要求|提到|说明|显示|列出|包括|中|里)/i;
 
@@ -58,9 +60,11 @@ function executionQueryType(rawQueryType: string, question: string): string {
 	}
 	if (
 		["fact", "section_lookup"].includes(rawQueryType) &&
-		PROSE_SUPERLATIVE_COMPARE_PATTERN.test(question) &&
+		(PROSE_SUPERLATIVE_COMPARE_PATTERN.test(question) ||
+			PROSE_DIFF_COMPARE_PATTERN.test(question)) &&
 		!FIGURE_PROSE_PATTERN.test(question) &&
-		!EXPLICIT_TABLE_COMPARE_PATTERN.test(question)
+		!EXPLICIT_TABLE_COMPARE_PATTERN.test(question) &&
+		!isDerivedCalculationQuestion(question)
 	) {
 		return "compare";
 	}

@@ -13,7 +13,9 @@ import {
 	defaultClarifyAnswer,
 	defaultRefuseAnswer,
 } from "../../src/core/ask-graph";
+import { buildMultiAspectSubQueries } from "../../src/core/ask-graph/comparison-query";
 import { conflictAnswer } from "../../src/core/ask-graph/evidence-conflict";
+import { isEligibleForGroundedTableLookup } from "../../src/core/ask-graph/table/planning";
 import { projectPublicRetrievalDebug } from "../../src/server/http/ask/legacy-sse";
 
 test("default user-facing fallbacks never expose internal library ids", () => {
@@ -1024,4 +1026,45 @@ test("node names and all 21 state fields match the stable graph contract", () =>
 		(name) => name !== "__start__" && name !== "__end__",
 	);
 	assert.deepEqual(runtimeNodes.sort(), [...ASK_GRAPH_NODE_NAMES].sort());
+});
+
+test("prose difference comparison routes to compare while preserving derived calculations", async () => {
+	const diffResult = await new AskGraphService(
+		createContext({ queryType: "fact" }),
+	).invoke({
+		question: "对比招商证券和浙商证券报告中对经济形势展望的主要差异是什么？",
+		library_id: "library-a",
+	});
+	assert.equal(diffResult.query_type, "compare");
+
+	const derivedResult = await new AskGraphService(
+		createContext({ queryType: "fact" }),
+	).invoke({
+		question: "上港集团相比2022年的复合增长率CAGR有何差异？",
+		library_id: "library-a",
+	});
+	assert.equal(derivedResult.query_type, "fact");
+});
+
+test("multi-aspect sub-queries and grounded table probe precheck behave conservatively", () => {
+	const subs = buildMultiAspectSubQueries(
+		"和达科技在智慧水务领域有哪些合作伙伴，并且它们提供了哪些服务？",
+	);
+	assert.equal(subs.length, 2);
+	assert.ok(subs[0]?.includes("合作伙伴"));
+	assert.ok(subs[1]?.includes("和达科技"));
+
+	assert.deepEqual(buildMultiAspectSubQueries("什么是双重杠杆比率？"), []);
+	assert.equal(
+		isEligibleForGroundedTableLookup("Server-X9 的单价是多少？"),
+		true,
+	);
+	assert.equal(
+		isEligibleForGroundedTableLookup("为什么有色金属价格出现明显波动？"),
+		false,
+	);
+	assert.equal(
+		isEligibleForGroundedTableLookup("表格中设备总计金额是多少？"),
+		false,
+	);
 });
