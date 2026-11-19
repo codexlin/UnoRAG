@@ -128,7 +128,14 @@ def main() -> None:
             f"Missing extracted FinanceComplexQA dataset under {args.source_dir}"
         )
 
-    pdf_by_stem = {p.stem: p for p in refs_root.rglob("*.pdf")}
+    pdf_by_stem: dict[str, Path] = {}
+    pdf_by_scene_stem: dict[tuple[str, str], Path] = {}
+    for pdf in sorted(refs_root.rglob("*.pdf")):
+        rel_parts = pdf.relative_to(refs_root).parts
+        if len(rel_parts) >= 2:
+            pdf_by_scene_stem[(rel_parts[0], pdf.stem)] = pdf
+        pdf_by_stem.setdefault(pdf.stem, pdf)
+
     qa_by_pdf: dict[Path, list[dict]] = defaultdict(list)
     seen_ids: set[str] = set()
     for qa_file in qa_files:
@@ -140,7 +147,8 @@ def main() -> None:
                     continue
                 seen_ids.add(qid)
                 stem = Path(row["Reference_documents"]).stem
-                pdf_path = pdf_by_stem.get(stem)
+                doc_type = str(row.get("doc_type") or "")
+                pdf_path = pdf_by_scene_stem.get((doc_type, stem)) or pdf_by_stem.get(stem)
                 if not pdf_path:
                     continue
                 row["_clean_q"] = clean_question(row["question"])

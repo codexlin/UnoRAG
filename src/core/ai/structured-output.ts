@@ -63,9 +63,9 @@ export const RewriteOutputSchema = z
 
 export const JudgeOutputSchema = z
 	.object({
+		reason: z.string().trim().min(1),
 		sufficient: z.boolean(),
 		action: z.enum(["generate", "retry", "refuse"]),
-		reason: z.string().trim().min(1),
 		evidence_ids: z.array(z.string().trim().min(1)).max(6),
 		can_retry: z.boolean().optional(),
 		top_score: z.number().min(0).max(1).optional(),
