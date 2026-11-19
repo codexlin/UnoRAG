@@ -26,6 +26,17 @@ SCENES = [
 ]
 
 OUTPUT_FORMAT_RE = re.compile(r"\n+###\s*输出格式[\s\S]*$")
+CONCLUSION_HEAD_RE = re.compile(
+    r"(?:###\s*(?:✅\s*)?(?:最终)?(?:结论|总结|正式回答)|最终答案为|综上所述[，,:：])"
+)
+UNANSWERABLE_VERDICT_RE = re.compile(
+    r"(?:无法(?:准确|有效|唯一)?(?:回答|判断|确定|比较|计算|得出(?:准确)?(?:结论|结果))"
+    r"|因此[，,]?\s*无法(?:判断|比较|回答|确定|计算)"
+    r"|在当前文档范围内\s*\*{0,2}无解\*{0,2}"
+    r"|文档中?(?:完全)?(?:未|没有)提供足够的(?:信息|数据)"
+    r"|文档中?(?:完全)?(?:未|没有)提供(?:任何|足够的).*?(?:因此|故|所以|无法)"
+    r"|(?:缺少|缺乏)足够的.*?(?:因此|无法))"
+)
 NUMBER_RE = re.compile(r"(?<![A-Za-z0-9])\d[\d,]*(?:\.\d+)?%?")
 CN_PHRASE_RE = re.compile(r"[\u4e00-\u9fff]{2,8}")
 EN_TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9._-]{2,20}\b")
@@ -90,6 +101,15 @@ def extract_key_signals(gold_texts: list[str]) -> tuple[list[str], list[str]]:
 
 def clean_question(text: str) -> str:
     return OUTPUT_FORMAT_RE.sub("", text).strip()
+
+
+def is_unanswerable_gold(gold_texts: list[str]) -> bool:
+    joined = "\n".join(gold_texts).strip()
+    if not joined:
+        return False
+    matches = list(CONCLUSION_HEAD_RE.finditer(joined))
+    verdict_slice = joined[matches[-1].start() :] if matches else joined[-320:]
+    return bool(UNANSWERABLE_VERDICT_RE.search(verdict_slice))
 
 
 def main() -> None:
@@ -177,6 +197,7 @@ def main() -> None:
                 {
                     "id": f"neg-{row['finqa_id']}",
                     "polarity": "negative",
+                    "refusal_kind": "out_of_corpus",
                     "question": q,
                     "excluded_entity": company,
                     "source_doc": pdf.name,
@@ -194,6 +215,7 @@ def main() -> None:
         old_pdf.unlink()
 
     cases: list[dict] = []
+    in_corpus_refusals: list[dict] = []
     task_counts: Counter[str] = Counter()
     scene_counts: Counter[str] = Counter()
     manifest_docs: list[dict] = []
@@ -201,19 +223,28 @@ def main() -> None:
     for pdf, rows in selected:
         target_pdf = pdfs_out / pdf.name
         shutil.copy2(pdf, target_pdf)
-        manifest_docs.append(
-            {
-                "file": pdf.name,
-                "pages": pages[pdf],
-                "qa_count": len(rows),
-                "doc_type": rows[0].get("doc_type", "unknown"),
-            }
-        )
+        answerable_for_pdf = 0
         for row in rows:
             gold_texts = flatten_gold(row.get("gold"))
-            numbers, terms = extract_key_signals(gold_texts)
             task_type = row["task_type"]
             doc_type = row.get("doc_type", "unknown")
+            if is_unanswerable_gold(gold_texts):
+                in_corpus_refusals.append(
+                    {
+                        "id": f"neg-in-{row['finqa_id']}",
+                        "polarity": "negative",
+                        "refusal_kind": "in_corpus_unanswerable",
+                        "question": row["_clean_q"],
+                        "excluded_entity": None,
+                        "source_doc": pdf.name,
+                        "task_type": task_type,
+                        "doc_type": doc_type,
+                        "gold": gold_texts,
+                    }
+                )
+                continue
+            answerable_for_pdf += 1
+            numbers, terms = extract_key_signals(gold_texts)
             task_counts[task_type] += 1
             scene_counts[doc_type] += 1
             cases.append(
@@ -230,8 +261,17 @@ def main() -> None:
                     "company": row.get("company_with_period", ""),
                 }
             )
+        manifest_docs.append(
+            {
+                "file": pdf.name,
+                "pages": pages[pdf],
+                "qa_count": answerable_for_pdf,
+                "doc_type": rows[0].get("doc_type", "unknown"),
+            }
+        )
 
-    cases.extend(negatives)
+    all_negatives = negatives + in_corpus_refusals
+    cases.extend(all_negatives)
     cases_path = args.out_dir / "cases.jsonl"
     with cases_path.open("w", encoding="utf-8") as handle:
         for item in cases:
@@ -241,8 +281,10 @@ def main() -> None:
         "dataset": "Multilingual-Multimodal-NLP/FinanceComplexQA (CN curated)",
         "document_count": len(manifest_docs),
         "total_pages": total_pages,
-        "positive_count": len(cases) - len(negatives),
-        "negative_count": len(negatives),
+        "positive_count": len(cases) - len(all_negatives),
+        "negative_count": len(all_negatives),
+        "out_of_corpus_negative_count": len(negatives),
+        "in_corpus_unanswerable_count": len(in_corpus_refusals),
         "task_types": dict(task_counts),
         "scenes": dict(scene_counts),
         "documents": manifest_docs,
