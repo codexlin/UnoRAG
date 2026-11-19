@@ -33,7 +33,7 @@ export function deriveGroundedTableLookup(
 			cue.test(question),
 		) ||
 		FILTER_OPERATORS.some(({ cue }) => cue.test(question)) ||
-		/(?:为什么|原因|如何|比较|对比|区别|差异|占比|比例|百分比|排名|排行|第[一二三四五六七八九十\d]+|汇总说明|总结|percentage|ratio|ranking|ranked)/iu.test(
+		/(?:为什么|原因|如何|怎么|怎样|潜在影响|有何影响|有什么影响|带来什么影响|有何风险|作用|意义|关系|措施|建议|比较|对比|区别|差异|占比|比例|百分比|排名|排行|第[一二三四五六七八九十\d]+|汇总说明|总结|impact|effect|percentage|ratio|ranking|ranked)/iu.test(
 			question,
 		) ||
 		isDerivedCalculationQuestion(question)
@@ -93,6 +93,20 @@ export function deriveGroundedTableLookup(
 			.filter((item) => item.column === best.column && item.key === best.key)
 			.map((item) => item.value);
 		if (values.length > 50) continue;
+		const matchedRowCount = table.rows.filter((row) =>
+			values.some(
+				(val) => normalized(row.values[best.column]) === normalized(val),
+			),
+		).length;
+		const nonKeyColumns = columns.filter((col) => col !== best.column);
+		// A "分别是..." query asking about multiple targets/metrics cannot be satisfied by a single 1-row, 1-metric cell.
+		if (
+			/(?:分别是|各是|各为|各自)/u.test(question) &&
+			!ORDINAL_LOOKUP_CUE.test(question) &&
+			matchedRowCount < 2 &&
+			nonKeyColumns.length < 2
+		)
+			continue;
 		plans.push({
 			mode: "single",
 			tableId: candidate.tableId,

@@ -997,3 +997,31 @@ test("derived financial calculation queries bypass deterministic single-table lo
 		false,
 	);
 });
+
+test("explanatory impact and multi-segment comparison queries bypass single-row lookup shortcut", () => {
+	const summaryTable = {
+		records: [
+			tableRecord({
+				id: "comp-1",
+				tableId: "companies",
+				headers: ["公司名称", "营业收入"],
+				rows: [["浙江迦南科技股份有限公司", "10亿元"]],
+			}),
+		],
+	};
+	for (const question of [
+		"商誉减值测试结果显示凯鑫隆公司、众心和公司的商誉减值，这对浙江迦南科技股份有限公司的税负有何潜在影响？",
+		"浙江迦南科技股份有限公司2020年度个人业务和团体业务的营业收入分别是多少？",
+	]) {
+		assert.equal(
+			deriveGroundedTableLookup(question, [
+				{
+					tableId: "companies",
+					headers: ["公司名称", "营业收入"],
+					dataset: summaryTable,
+				},
+			]),
+			null,
+		);
+	}
+});
