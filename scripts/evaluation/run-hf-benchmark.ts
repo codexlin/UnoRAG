@@ -1,9 +1,12 @@
 #!/usr/bin/env tsx
 
+import { generateText, Output } from "ai";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { z } from "zod";
+import { aiConfigFromEnv, createAiProviderRegistry } from "../../src/core/ai";
 import {
 	ask,
 	buildFingerprint,
@@ -66,6 +69,9 @@ type PositiveResult = Readonly<{
 	term_total: number;
 	fact_hit_rate: number;
 	latency_ms: number;
+	semantic_verdict?: "correct" | "partial" | "incorrect";
+	semantic_score?: number;
+	semantic_reason?: string;
 	citations: readonly { filename: string | null; record_type: string | null; snippet: string | null }[];
 }>;
 
@@ -113,6 +119,8 @@ type BenchmarkReport = Readonly<{
 		mean_number_hit_rate: number;
 		mean_term_hit_rate: number;
 		mean_fact_hit_rate: number;
+		semantic_accuracy?: number;
+		semantic_answered_accuracy?: number;
 		negative_cases: number;
 		negative_passed: number;
 		refusal_accuracy: number;
@@ -152,19 +160,60 @@ function percentile(values: readonly number[], ratio: number): number {
 	return Math.round((sorted[index] ?? 0) * 10) / 10;
 }
 
-function normalizeAnswerForNumbers(text: string): string {
+export function normalizeAnswerForNumbers(text: string): string {
 	return text.replace(/(\d),(?=\d{3})/gu, "$1");
 }
 
-function numberMatches(answerNormalized: string, rawNumber: string): boolean {
+function extractAnswerNumbers(answerNormalized: string): Array<{ value: number; isPercent: boolean; digits: number }> {
+	const matches = answerNormalized.matchAll(/(?<![A-Za-z0-9])-?\d+(?:\.\d+)?%?/gu);
+	const results: Array<{ value: number; isPercent: boolean; digits: number }> = [];
+	for (const match of matches) {
+		const token = match[0];
+		const isPercent = token.endsWith("%");
+		const digits = token.replace(/[^0-9]/gu, "").length;
+		const parsed = Number.parseFloat(isPercent ? token.slice(0, -1) : token);
+		if (!Number.isFinite(parsed)) continue;
+		results.push({ value: parsed, isPercent, digits });
+	}
+	return results;
+}
+
+export function numberMatches(answerNormalized: string, rawNumber: string): boolean {
 	const cleaned = rawNumber.replace(/,/gu, "").trim();
 	if (!cleaned) return false;
 	if (answerNormalized.includes(cleaned)) return true;
-	const numericValue = Number.parseFloat(cleaned.replace(/%$/u, ""));
+	const isPercent = cleaned.endsWith("%");
+	const numericValue = Number.parseFloat(isPercent ? cleaned.slice(0, -1) : cleaned);
 	if (!Number.isFinite(numericValue)) return false;
-	if (cleaned.endsWith("%")) {
+
+	// Bidirectional % <-> decimal ratio matching (e.g. "0.0361" <-> "3.61%" and "3.61%" <-> "0.0361").
+	if (isPercent) {
 		const ratio = (numericValue / 100).toFixed(4).replace(/0+$/u, "").replace(/\.$/u, "");
-		return ratio.length >= 3 && answerNormalized.includes(ratio);
+		if (ratio.length >= 3 && answerNormalized.includes(ratio)) return true;
+	} else if (numericValue > 0 && numericValue < 1 && cleaned.includes(".")) {
+		const pct = (numericValue * 100).toFixed(4).replace(/0+$/u, "").replace(/\.$/u, "");
+		if (answerNormalized.includes(`${pct}%`)) return true;
+	}
+
+	// Relative tolerance matching (<= 0.5%) for multi-digit/decimal quantities to handle precision/rounding differences.
+	const goldDigits = cleaned.replace(/[^0-9]/gu, "").length;
+	if (goldDigits >= 3 || cleaned.includes(".")) {
+		const answerNumbers = extractAnswerNumbers(answerNormalized);
+		for (const candidate of answerNumbers) {
+			if (candidate.digits < 2 && !cleaned.includes(".")) continue;
+			const targetValues = isPercent
+				? [numericValue, numericValue / 100]
+				: numericValue > 0 && numericValue < 1 && cleaned.includes(".")
+					? [numericValue, numericValue * 100]
+					: [numericValue];
+			for (const target of targetValues) {
+				if (candidate.isPercent && target === numericValue && !isPercent && numericValue >= 1) continue;
+				const denom = Math.max(1e-9, Math.abs(target));
+				if (Math.abs(candidate.value - target) / denom <= 0.005) {
+					return true;
+				}
+			}
+		}
 	}
 	return false;
 }
@@ -268,6 +317,11 @@ function renderMarkdown(report: BenchmarkReport): string {
 		`- document Recall@K / MRR: **${formatPct(s.doc_recall_at_k)} / ${s.doc_mrr.toFixed(3)}**`,
 		`- inline citation rate: **${formatPct(s.inline_citation_rate)}**`,
 		`- numeric / term / combined hit rate: **${formatPct(s.mean_number_hit_rate)} / ${formatPct(s.mean_term_hit_rate)} / ${formatPct(s.mean_fact_hit_rate)}**`,
+		...(s.semantic_accuracy !== undefined
+			? [
+					`- semantic accuracy (overall / answered): **${formatPct(s.semantic_accuracy)} / ${formatPct(s.semantic_answered_accuracy ?? 0)}**`,
+				]
+			: []),
 		`- refusal accuracy: **${s.negative_passed}/${s.negative_cases}** (${formatPct(s.refusal_accuracy)})`,
 		`- latency P50 / P95 / Max: **${s.latency_p50_ms} / ${s.latency_p95_ms} / ${s.latency_max_ms} ms**`,
 		"",
@@ -355,8 +409,174 @@ function argValue(args: readonly string[], flag: string): string | undefined {
 	return undefined;
 }
 
+const SemanticGradeSchema = z
+	.object({
+		reason: z.string().trim().min(1),
+		verdict: z.enum(["correct", "partial", "incorrect"]),
+	})
+	.strict();
+
+async function gradeAnswerSemantically(
+	model: ReturnType<typeof createAiProviderRegistry>["model"],
+	row: Pick<PositiveResult, "question" | "gold" | "answer" | "answered">,
+): Promise<{
+	semantic_verdict: "correct" | "partial" | "incorrect";
+	semantic_score: number;
+	semantic_reason: string;
+}> {
+	if (!row.answered) {
+		return {
+			semantic_verdict: "incorrect",
+			semantic_score: 0,
+			semantic_reason: "Question was not answered.",
+		};
+	}
+	const result = await generateText({
+		model,
+		maxRetries: 1,
+		temperature: 0,
+		instructions:
+			"你是严格的语义评测裁判。对比标准答案（Gold）和系统回答（Answer），仅判断事实、数值（允许四舍五入微小尾差或百分比/小数同义表达）与核心结论是否等价覆盖。" +
+			"先在 reason 中简短说明比对依据，再输出 verdict：correct（核心结论与关键数值全部一致，允许措辞不同）、partial（答对部分要点或数值略有缺失/偏差）或 incorrect（核心结论错误或关键数值算错）。",
+		messages: [
+			{
+				role: "user",
+				content: `问题：${row.question}\n\n标准答案（Gold）：\n${row.gold.join("\n").slice(0, 1500)}\n\n系统回答（Answer）：\n${row.answer.slice(0, 1500)}`,
+			},
+		],
+		output: Output.object({
+			schema: SemanticGradeSchema,
+			name: "semantic_grade",
+		}),
+		abortSignal: AbortSignal.timeout(30_000),
+	});
+	const parsed = SemanticGradeSchema.parse(result.output);
+	const score =
+		parsed.verdict === "correct" ? 1 : parsed.verdict === "partial" ? 0.5 : 0;
+	return {
+		semantic_verdict: parsed.verdict,
+		semantic_score: score,
+		semantic_reason: parsed.reason,
+	};
+}
+
+function semanticSummaryFields(
+	positives: PositiveResult[],
+	enabled: boolean,
+): { semantic_accuracy?: number; semantic_answered_accuracy?: number } {
+	if (!enabled) return {};
+	const posCount = positives.length || 1;
+	const answeredRows = positives.filter((r) => r.answered);
+	return {
+		semantic_accuracy: positives.reduce((s, r) => s + (r.semantic_score ?? 0), 0) / posCount,
+		semantic_answered_accuracy:
+			answeredRows.length > 0
+				? answeredRows.reduce((s, r) => s + (r.semantic_score ?? 0), 0) / answeredRows.length
+				: 0,
+	};
+}
+
+async function rescoreReport(
+	reportPath: string,
+	casesDir: string,
+	semanticJudge: boolean,
+): Promise<void> {
+	const rawReport = JSON.parse(await readFile(reportPath, "utf8")) as BenchmarkReport;
+	const caseLines = (await readFile(resolve(casesDir, "cases.jsonl"), "utf8"))
+		.split(/\r?\n/u)
+		.filter((l) => l.trim())
+		.map((l) => JSON.parse(l) as HfCase);
+	const caseById = new Map(
+		caseLines
+			.filter((c): c is PositiveHfCase => c.polarity === "positive")
+			.map((c) => [c.id, c]),
+	);
+	const model = semanticJudge ? createAiProviderRegistry(aiConfigFromEnv()).model : null;
+
+	const rescoredPositives: PositiveResult[] = [];
+	for (const [index, row] of rawReport.positive_results.entries()) {
+		const item = caseById.get(row.id);
+		const normalizedAnswer = normalizeAnswerForNumbers(row.answer);
+		const lowerAnswer = row.answer.toLowerCase();
+		const numberHits = item
+			? item.expected_numbers.filter((num) => numberMatches(normalizedAnswer, num)).length
+			: row.number_hits;
+		const numberTotal = item ? item.expected_numbers.length : row.number_total;
+		const termHits = item
+			? item.expected_terms.filter((term) => lowerAnswer.includes(term.toLowerCase())).length
+			: row.term_hits;
+		const termTotal = item ? item.expected_terms.length : row.term_total;
+		const totalSignals = numberTotal + termTotal;
+		const factHitRate =
+			totalSignals > 0
+				? (numberHits + termHits) / totalSignals
+				: row.answered
+					? 1
+					: 0;
+		let semanticFields: Partial<PositiveResult> = {};
+		if (model) {
+			semanticFields = await gradeAnswerSemantically(model, row);
+			if ((index + 1) % 20 === 0 || index + 1 === rawReport.positive_results.length) {
+				process.stdout.write(`  semantic graded ${index + 1}/${rawReport.positive_results.length}\n`);
+			}
+		}
+		rescoredPositives.push({
+			...row,
+			number_hits: numberHits,
+			number_total: numberTotal,
+			term_hits: termHits,
+			term_total: termTotal,
+			fact_hit_rate: factHitRate,
+			...semanticFields,
+		});
+	}
+
+	const posCount = rescoredPositives.length || 1;
+	const numWithTotal = rescoredPositives.filter((r) => r.number_total > 0);
+	const termWithTotal = rescoredPositives.filter((r) => r.term_total > 0);
+	const updated: BenchmarkReport = {
+		...rawReport,
+		summary: {
+			...rawReport.summary,
+			mean_number_hit_rate:
+				numWithTotal.length > 0
+					? numWithTotal.reduce((s, r) => s + r.number_hits / r.number_total, 0) / numWithTotal.length
+					: 1,
+			mean_term_hit_rate:
+				termWithTotal.length > 0
+					? termWithTotal.reduce((s, r) => s + r.term_hits / r.term_total, 0) / termWithTotal.length
+					: 1,
+			mean_fact_hit_rate:
+				rescoredPositives.reduce((s, r) => s + r.fact_hit_rate, 0) / posCount,
+			...semanticSummaryFields(rescoredPositives, Boolean(model)),
+		},
+		by_task_type: summarizeByKey(rescoredPositives, (r) => r.task_type),
+		by_doc_type: summarizeByKey(rescoredPositives, (r) => r.doc_type),
+		positive_results: rescoredPositives,
+	};
+
+	const outJson = reportPath.replace(/\.json$/u, ".rescored.json");
+	const outMd = reportPath.replace(/\.json$/u, ".rescored.md");
+	await writeFile(outJson, JSON.stringify(updated, null, 2), "utf8");
+	await writeFile(outMd, renderMarkdown(updated), "utf8");
+	process.stdout.write(
+		`== rescored: numeric=${formatPct(updated.summary.mean_number_hit_rate)} combined=${formatPct(updated.summary.mean_fact_hit_rate)}${
+			updated.summary.semantic_accuracy !== undefined
+				? ` semantic_overall=${formatPct(updated.summary.semantic_accuracy)} semantic_answered=${formatPct(updated.summary.semantic_answered_accuracy ?? 0)}`
+				: ""
+		}\n== saved: ${outMd}\n`,
+	);
+}
+
 async function run(): Promise<void> {
 	const args = process.argv.slice(2);
+	const semanticJudge = args.includes("--semantic-judge");
+	const rescorePath = argValue(args, "--rescore");
+	const batchDir = resolve(argValue(args, "--dir") ?? DEFAULT_BATCH_DIR);
+	if (rescorePath) {
+		await rescoreReport(resolve(rescorePath), batchDir, semanticJudge);
+		return;
+	}
 	const compareIndex = args.indexOf("--compare");
 	if (compareIndex >= 0) {
 		const fileA = args[compareIndex + 1];
@@ -368,7 +588,6 @@ async function run(): Promise<void> {
 		return;
 	}
 
-	const batchDir = resolve(argValue(args, "--dir") ?? DEFAULT_BATCH_DIR);
 	const label = argValue(args, "--label") ?? "baseline";
 	const reuseLibraryId = argValue(args, "--reuse-library");
 	const cleanupLibrary = args.includes("--cleanup-library");
@@ -462,6 +681,9 @@ async function run(): Promise<void> {
 		}
 
 		const positiveResults: PositiveResult[] = [];
+		const semanticModel = semanticJudge
+			? createAiProviderRegistry(aiConfigFromEnv()).model
+			: null;
 		process.stdout.write(`== evaluate ${positives.length} positive cases\n`);
 		for (const [index, item] of positives.entries()) {
 			const res = await ask({
@@ -526,6 +748,9 @@ async function run(): Promise<void> {
 					snippet: c.text ? c.text.slice(0, 240) : null,
 				})),
 			};
+			if (semanticModel) {
+				Object.assign(row, await gradeAnswerSemantically(semanticModel, row));
+			}
 			positiveResults.push(row);
 			process.stdout.write(
 				`  [${index + 1}/${positives.length}] ${answered && docRecall ? "OK  " : "MISS"} ${item.task_type} ans=${answered} recall=${docRecall}@${docRank ?? "-"} fact=${formatPct(factHitRate)} (${res.latencyMs}ms)\n`,
@@ -597,6 +822,7 @@ async function run(): Promise<void> {
 						: 1,
 				mean_fact_hit_rate:
 					positiveResults.reduce((s, r) => s + r.fact_hit_rate, 0) / posCount,
+				...semanticSummaryFields(positiveResults, Boolean(semanticModel)),
 				negative_cases: negativeResults.length,
 				negative_passed: negativeResults.filter((r) => r.passed).length,
 				refusal_accuracy:
@@ -621,6 +847,9 @@ async function run(): Promise<void> {
 		await writeFile(jsonPath, JSON.stringify(report, null, 2), "utf8");
 		await writeFile(mdPath, renderMarkdown(report), "utf8");
 		process.stdout.write(`== saved report: ${mdPath}\n== library_id: ${libraryId}\n`);
+		if (!cleanupLibrary) {
+			process.stdout.write(`== reuse without re-ingest via: --reuse-library ${libraryId}\n`);
+		}
 	} finally {
 		if (ownsLibrary && cleanupLibrary && libraryId) {
 			await deleteEvaluationLibrary({

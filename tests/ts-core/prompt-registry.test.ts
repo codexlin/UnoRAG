@@ -27,9 +27,9 @@ const EXPECTED_DIGESTS = {
 	rewrite: "515f7cae7e09b2cdeb5dae09eafdebdb8bbdf9b8631d867f1ba1dd6bd604a7da",
 	figure_read:
 		"0eb3627d4cf86fb1bc20aea945f6bad8858c43dda7edcd93643d6161a54065d5",
-	judge: "d1d6384fc3a317ff1ecdd439ddc357141426087c8978dfb43f17b884bd7aa829",
+	judge: "20d8dfb902832470e549f05fca178f98cc5be8e6b1e2c550d5b3b08efa0b3005",
 	refusal_review:
-		"4763560446161b7754bd8c95a7c22c2a13d11247642e25380502f8ee7dcff5a8",
+		"5b54ebd0e6c6941028eede4df994d849cad25815a3905aae75dda70c5a2ddf96",
 	conflict: "28aa307583ce89bbb7b0c84c091add0bb5506fff246a4b1dca5c388977dd1c7e",
 	conflict_review:
 		"27a3b3101b76d9ffc994c896d5e9b66b4d447691567cbeaf0ddbf431e17957d9",
@@ -42,8 +42,8 @@ const EXPECTED_VERSIONS = {
 	router: "1.0.0",
 	rewrite: "2.1.0",
 	figure_read: "1.0.0",
-	judge: "1.13.0",
-	refusal_review: "1.1.0",
+	judge: "1.14.0",
+	refusal_review: "1.2.0",
 	conflict: "2.3.0",
 	conflict_review: "1.0.0",
 	table_plan: "1.0.0",
