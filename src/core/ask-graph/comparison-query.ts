@@ -89,6 +89,37 @@ export function buildComparisonSubQueries(question: string): string[] {
 }
 
 /**
+ * Split multi-subquestion planning/multi-hop prompts joined by coordinating
+ * conjunctions into up to 2 complementary retrieval queries.
+ */
+export function buildMultiAspectSubQueries(question: string): string[] {
+	const trimmed = question.trim();
+	if (trimmed.length < 16) return [];
+	const parts = trimmed
+		.split(/\s*(?:并且|以及|且|同时|[，,;；])\s*/u)
+		.map((part) => part.replace(/[？?。！!]+$/gu, "").trim())
+		.filter((part) => part.length >= 6);
+	if (parts.length < 2) return [];
+	const subjectMatch = trimmed.match(
+		/^([A-Za-z0-9_\u4e00-\u9fa5]{2,20})(?:在|的|对于|关于|中)/u,
+	);
+	const subject = subjectMatch?.[1]?.trim() ?? "";
+	const unique: string[] = [];
+	for (const part of parts) {
+		const candidate = (
+			subject && !part.includes(subject) ? `${subject} ${part}` : part
+		)
+			.slice(0, MAX_QUERY_LENGTH)
+			.trim();
+		if (candidate.length >= 6 && !unique.includes(candidate)) {
+			unique.push(candidate);
+		}
+		if (unique.length >= 2) break;
+	}
+	return unique.length >= 2 ? unique : [];
+}
+
+/**
  * Interleave baseline retrieval hits with per-target sub-query hits round-robin,
  * preserving highest-ranked global hits first while guaranteeing coverage across targets.
  */

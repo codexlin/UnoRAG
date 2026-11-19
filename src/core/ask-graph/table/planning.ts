@@ -22,23 +22,28 @@ const FILTER_VALUE = /([+-]?\d[\d,]*(?:\.\d+)?\s*(?:万|亿)?\s*(?:元|%|％)?)/
 
 type TableCandidate = { tableId: string; headers: readonly string[] };
 
+const NON_LOOKUP_INTENT_CUE =
+	/(?:为什么|原因|如何|怎么|怎样|潜在影响|有何影响|有什么影响|带来什么影响|有何风险|作用|意义|关系|措施|建议|比较|对比|区别|差异|占比|比例|百分比|排名|排行|第[一二三四五六七八九十\d]+|汇总说明|总结|impact|effect|percentage|ratio|ranking|ranked)/iu;
+
+/** Precheck whether a question can ever satisfy a deterministic single-table lookup. */
+export function isEligibleForGroundedTableLookup(question: string): boolean {
+	return !(
+		[COUNT_CUE, SUM_CUE, AVERAGE_CUE, MINIMUM_CUE, MAXIMUM_CUE].some((cue) =>
+			cue.test(question),
+		) ||
+		FILTER_OPERATORS.some(({ cue }) => cue.test(question)) ||
+		NON_LOOKUP_INTENT_CUE.test(question) ||
+		isDerivedCalculationQuestion(question)
+	);
+}
+
 /** Ground an entity lookup in actual cells, never in a model-invented row ID. */
 export function deriveGroundedTableLookup(
 	question: string,
 	tables: readonly (TableCandidate & { dataset: TableDatasetInput })[],
 ): TableQueryPlan | null {
 	// Aggregation, comparison and explanatory questions need a separate plan.
-	if (
-		[COUNT_CUE, SUM_CUE, AVERAGE_CUE, MINIMUM_CUE, MAXIMUM_CUE].some((cue) =>
-			cue.test(question),
-		) ||
-		FILTER_OPERATORS.some(({ cue }) => cue.test(question)) ||
-		/(?:为什么|原因|如何|怎么|怎样|潜在影响|有何影响|有什么影响|带来什么影响|有何风险|作用|意义|关系|措施|建议|比较|对比|区别|差异|占比|比例|百分比|排名|排行|第[一二三四五六七八九十\d]+|汇总说明|总结|impact|effect|percentage|ratio|ranking|ranked)/iu.test(
-			question,
-		) ||
-		isDerivedCalculationQuestion(question)
-	)
-		return null;
+	if (!isEligibleForGroundedTableLookup(question)) return null;
 	const questionKey = normalized(question);
 	const plans: TableQueryPlan[] = [];
 	for (const candidate of tables) {

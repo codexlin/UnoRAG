@@ -22,15 +22,15 @@ import {
 } from "../../src/core/ai";
 
 const EXPECTED_DIGESTS = {
-	chat: "c97b082c14fc22452ad58faaa0727e1bddac1fec86ed7162b1a9b3810d627d63",
+	chat: "5d1756a6ba1741e01a399ac47b226d304113b002a465bb064e6029562c904a5a",
 	router: "4f586e259c1fb7b4991d7014038887dd885168785edfd5fe0705cfb8a5862353",
 	rewrite: "515f7cae7e09b2cdeb5dae09eafdebdb8bbdf9b8631d867f1ba1dd6bd604a7da",
 	figure_read:
 		"0eb3627d4cf86fb1bc20aea945f6bad8858c43dda7edcd93643d6161a54065d5",
-	judge: "7ca969280f7d0daa537a3841b607be814c0b16ffaba73c174de65b1d5ed7e2c0",
+	judge: "af71e85b87ef9301c4e4684fd54542054cb3c25d82785f6114e70b73e530995c",
 	refusal_review:
 		"5b54ebd0e6c6941028eede4df994d849cad25815a3905aae75dda70c5a2ddf96",
-	conflict: "28aa307583ce89bbb7b0c84c091add0bb5506fff246a4b1dca5c388977dd1c7e",
+	conflict: "01f7428282ca08983d90c615dd998303fcb482e1906318a8b13f2832b2de77fe",
 	conflict_review:
 		"27a3b3101b76d9ffc994c896d5e9b66b4d447691567cbeaf0ddbf431e17957d9",
 	table_plan:
@@ -38,13 +38,13 @@ const EXPECTED_DIGESTS = {
 } as const;
 
 const EXPECTED_VERSIONS = {
-	chat: "1.15.0",
+	chat: "1.16.0",
 	router: "1.0.0",
 	rewrite: "2.1.0",
 	figure_read: "1.0.0",
-	judge: "1.15.0",
+	judge: "1.16.0",
 	refusal_review: "1.2.0",
-	conflict: "2.3.0",
+	conflict: "2.4.0",
 	conflict_review: "1.0.0",
 	table_plan: "1.0.0",
 } as const;

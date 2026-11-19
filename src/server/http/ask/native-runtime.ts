@@ -34,6 +34,7 @@ import {
 } from "@/core/ask-graph/comparison-evidence";
 import {
 	buildComparisonSubQueries,
+	buildMultiAspectSubQueries,
 	mergeComparisonCitations,
 } from "@/core/ask-graph/comparison-query";
 import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
@@ -41,6 +42,7 @@ import { hasFollowupReference } from "@/core/ask-graph/nodes/rewrite";
 import { planForGroundedQuestion } from "@/core/ask-graph/nodes/routing";
 import { groundedQuestion } from "@/core/ask-graph/state";
 import { deriveGroundedTableLookup } from "@/core/ask-graph/table";
+import { isEligibleForGroundedTableLookup } from "@/core/ask-graph/table/planning";
 import {
 	isDerivedCalculationQuestion,
 	isFormFieldLookup,
@@ -398,10 +400,14 @@ export class NativeAskRuntime {
 		const comparisonSubQueries =
 			!input.tableOnly && state.query_type === "compare"
 				? buildComparisonSubQueries(mainQuery)
-				: [];
+				: !input.tableOnly && state.query_type === "fact" && isMultiAspectFact
+					? buildMultiAspectSubQueries(mainQuery)
+					: [];
 		const subTopK =
 			comparisonSubQueries.length > 0
-				? Math.max(8, Math.ceil(targetTopK / comparisonSubQueries.length))
+				? state.query_type === "compare"
+					? Math.max(8, Math.ceil(targetTopK / comparisonSubQueries.length))
+					: 6
 				: 0;
 		const [primaryResult, ...subResults] = await Promise.all([
 			this.dependencies.retrieval.retrieve({
@@ -865,7 +871,7 @@ export class NativeAskRuntime {
 					// table identity through the same authorized retrieval boundary.
 					if (
 						!groundedPlan &&
-						!isDerivedCalculationQuestion(groundedQuestion(state)) &&
+						isEligibleForGroundedTableLookup(groundedQuestion(state)) &&
 						result.citations.some((citation) => citation.table_id)
 					) {
 						tableProbe = true;
