@@ -22,4 +22,16 @@ ALTER TABLE "app"."document_figure_assets" ADD CONSTRAINT "document_figure_asset
 ALTER TABLE "app"."document_figure_assets" ADD CONSTRAINT "document_figure_assets_document_version_id_document_versions_id_fk" FOREIGN KEY ("document_version_id") REFERENCES "app"."document_versions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "document_figure_assets_gen_fig_uq" ON "app"."document_figure_assets" USING btree ("generation_id","figure_id");--> statement-breakpoint
 CREATE INDEX "document_figure_assets_doc_gen_idx" ON "app"."document_figure_assets" USING btree ("document_id","generation_id");--> statement-breakpoint
-CREATE INDEX "document_figure_assets_ver_idx" ON "app"."document_figure_assets" USING btree ("document_version_id");
+CREATE INDEX "document_figure_assets_ver_idx" ON "app"."document_figure_assets" USING btree ("document_version_id");--> statement-breakpoint
+DO $$
+BEGIN
+	-- Existing deployments already have runtime roles during an upgrade,
+	-- while a fresh install applies configure-runtime-roles.sql after migrations.
+	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'unorag_web') THEN
+		GRANT SELECT, INSERT, UPDATE, DELETE ON app.document_figure_assets TO unorag_web;
+	END IF;
+	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'unorag_worker') THEN
+		GRANT SELECT, INSERT, UPDATE, DELETE ON app.document_figure_assets TO unorag_worker;
+	END IF;
+END
+$$;

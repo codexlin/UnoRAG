@@ -201,8 +201,8 @@ export class FigureReaderAdapter implements FigureReaderPort {
 					content: [
 						{ type: "text", text: contextLines },
 						{
-							type: "image",
-							image: input.imageBytes,
+							type: "file",
+							data: input.imageBytes,
 							mediaType: input.mimeType,
 						},
 					],

@@ -208,7 +208,7 @@ test("FigureReaderAdapter sends multimodal image message, enforces bounds, and r
 	const firstMessage = (
 		capturedMessages[0] as Array<{ content: Array<{ type?: string }> }>
 	)[0];
-	assert.equal(firstMessage?.content[1]?.type, "image");
+	assert.equal(firstMessage?.content[1]?.type, "file");
 	const summary = usageCollector.snapshot();
 	assert.equal(summary.calls.length, 1);
 	assert.equal(summary.calls[0]?.stage, "figure_read");

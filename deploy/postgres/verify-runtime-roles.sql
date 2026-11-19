@@ -8,6 +8,7 @@ BEGIN
 		RAISE EXCEPTION 'unorag_web_login privilege boundary is invalid';
 	END IF;
 	IF NOT has_table_privilege('unorag_worker_login', 'app.jobs', 'SELECT,INSERT,UPDATE')
+		OR NOT has_table_privilege('unorag_worker_login', 'app.document_figure_assets', 'SELECT,INSERT,UPDATE,DELETE')
 		OR NOT has_table_privilege('unorag_worker_login', 'app.generation_cleanup_queue', 'SELECT,INSERT,UPDATE,DELETE')
 		OR NOT has_table_privilege('unorag_worker_login', 'app.active_document_generations', 'SELECT')
 		OR NOT has_table_privilege('unorag_worker_login', 'app.ask_run_stages', 'SELECT')
