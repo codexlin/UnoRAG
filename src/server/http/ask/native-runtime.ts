@@ -28,6 +28,10 @@ import {
 	compactComparisonEvidence,
 	scopedProbabilityOverlapReason,
 } from "@/core/ask-graph/comparison-evidence";
+import {
+	buildComparisonSubQueries,
+	mergeComparisonCitations,
+} from "@/core/ask-graph/comparison-query";
 import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
 import { hasFollowupReference } from "@/core/ask-graph/nodes/rewrite";
 import { planForGroundedQuestion } from "@/core/ask-graph/nodes/routing";
@@ -325,29 +329,64 @@ export class NativeAskRuntime {
 				};
 			}
 		}
-		const result = await this.dependencies.retrieval.retrieve({
-			query: query(state),
-			libraryId: this.libraryId,
-			scope: retrievalScope,
-			topK: input.tableOnly
-				? Math.max(30, this.policy.retrieve_top_k)
-				: state.query_type === "compare"
-					? Math.max(20, this.policy.retrieve_top_k)
-					: state.query_type === "summary"
-						? Math.max(10, this.policy.retrieve_top_k)
-						: this.policy.retrieve_top_k,
-			filters: input.tableOnly
-				? { ...filters(state), record_type: "table" }
-				: filters(state),
-			options: {
-				hybridEnabled: this.policy.hybrid_enabled,
-				rerankEnabled: this.policy.rerank_enabled,
-				preserveFigureLineage:
-					!input.tableOnly && state.query_type !== "compare",
-				lineageMinScore: this.evidenceThreshold(),
-			},
-			signal: this.signal,
-		});
+		const mainQuery = query(state);
+		const targetTopK = input.tableOnly
+			? Math.max(30, this.policy.retrieve_top_k)
+			: state.query_type === "compare"
+				? Math.max(20, this.policy.retrieve_top_k)
+				: state.query_type === "summary"
+					? Math.max(10, this.policy.retrieve_top_k)
+					: this.policy.retrieve_top_k;
+		const effectiveFilters: RetrievalFilters | undefined = input.tableOnly
+			? { ...filters(state), record_type: "table" }
+			: filters(state);
+		const retrieveOptions = {
+			hybridEnabled: this.policy.hybrid_enabled,
+			rerankEnabled: this.policy.rerank_enabled,
+			preserveFigureLineage: !input.tableOnly && state.query_type !== "compare",
+			lineageMinScore: this.evidenceThreshold(),
+		};
+		const comparisonSubQueries =
+			!input.tableOnly && state.query_type === "compare"
+				? buildComparisonSubQueries(mainQuery)
+				: [];
+		const subTopK =
+			comparisonSubQueries.length > 0
+				? Math.max(8, Math.ceil(targetTopK / comparisonSubQueries.length))
+				: 0;
+		const [primaryResult, ...subResults] = await Promise.all([
+			this.dependencies.retrieval.retrieve({
+				query: mainQuery,
+				libraryId: this.libraryId,
+				scope: retrievalScope,
+				topK: targetTopK,
+				filters: effectiveFilters,
+				options: retrieveOptions,
+				signal: this.signal,
+			}),
+			...comparisonSubQueries.map((subQuery) =>
+				this.dependencies.retrieval.retrieve({
+					query: subQuery,
+					libraryId: this.libraryId,
+					scope: retrievalScope,
+					topK: subTopK,
+					filters: effectiveFilters,
+					options: retrieveOptions,
+					signal: this.signal,
+				}),
+			),
+		]);
+		const result =
+			subResults.length > 0
+				? {
+						...primaryResult,
+						citations: mergeComparisonCitations(
+							primaryResult.citations,
+							subResults.map((item) => item.citations),
+							targetTopK,
+						),
+					}
+				: primaryResult;
 		if (loadDocumentCatalog && result.citations.length) {
 			const allowedGenerations = new Set(retrievalScope.activeGenerationIds);
 			const allowedDocuments = retrievalScope.documentIds

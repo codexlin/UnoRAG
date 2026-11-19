@@ -21,12 +21,12 @@ import {
 } from "../../src/core/ai";
 
 const EXPECTED_DIGESTS = {
-	chat: "a823611a82a1aca278decc13db5a104924a91f2d17db28b4c77508293c077d8a",
+	chat: "c756b8414aff26bd3ff276d0ecabd1ce2f3405b120d62c28d1348cefab772041",
 	router: "4f586e259c1fb7b4991d7014038887dd885168785edfd5fe0705cfb8a5862353",
 	rewrite: "515f7cae7e09b2cdeb5dae09eafdebdb8bbdf9b8631d867f1ba1dd6bd604a7da",
-	judge: "dcf69ce39ba3ae809ce1472a75193215065e1f7a2cb60e2155cb9b5d4b190abe",
+	judge: "d1d6384fc3a317ff1ecdd439ddc357141426087c8978dfb43f17b884bd7aa829",
 	refusal_review:
-		"7f35bbcecc1b3e7fd326e76c59213e791235432801c74254e3af87cdd0b7a675",
+		"4763560446161b7754bd8c95a7c22c2a13d11247642e25380502f8ee7dcff5a8",
 	conflict: "28aa307583ce89bbb7b0c84c091add0bb5506fff246a4b1dca5c388977dd1c7e",
 	conflict_review:
 		"27a3b3101b76d9ffc994c896d5e9b66b4d447691567cbeaf0ddbf431e17957d9",
@@ -35,11 +35,11 @@ const EXPECTED_DIGESTS = {
 } as const;
 
 const EXPECTED_VERSIONS = {
-	chat: "1.13.0",
+	chat: "1.14.0",
 	router: "1.0.0",
 	rewrite: "2.1.0",
-	judge: "1.12.0",
-	refusal_review: "1.0.0",
+	judge: "1.13.0",
+	refusal_review: "1.1.0",
 	conflict: "2.3.0",
 	conflict_review: "1.0.0",
 	table_plan: "1.0.0",
