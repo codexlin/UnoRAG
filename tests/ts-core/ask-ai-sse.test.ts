@@ -17,7 +17,10 @@ import {
 	StructuredOutputTimeoutError,
 	StructuredOutputValidationError,
 } from "../../src/core/ai";
-import { assessEvidenceWithMetadata } from "../../src/core/ai/evidence-assessment";
+import {
+	assessEvidenceWithMetadata,
+	shouldSkipLowRiskConflict,
+} from "../../src/core/ai/evidence-assessment";
 import { ModelUsageCollector } from "../../src/core/ai/model-usage";
 import { createAiProviderRegistry } from "../../src/core/ai/provider-registry";
 import { ConflictOutputSchema } from "../../src/core/ai/structured-output";
@@ -1316,3 +1319,59 @@ test("legacy SSE terminates aborted streams without done", async () => {
 });
 
 import { RerankDiagnosticSchema } from "../../src/core/retrieval/provider-request";
+
+test("selectiveConflictCheck skips low-risk single-doc thematic queries while enforcing rule and multi-doc checks", async () => {
+	assert.equal(
+		shouldSkipLowRiskConflict("和达科技有哪些合作伙伴，提供了哪些服务？", [
+			{ doc_id: "d1" },
+			{ doc_id: "d1" },
+		]),
+		true,
+	);
+	assert.equal(
+		shouldSkipLowRiskConflict("合同签署后几日内必须完成付款期限？", [
+			{ doc_id: "d1" },
+			{ doc_id: "d1" },
+		]),
+		false,
+	);
+	assert.equal(
+		shouldSkipLowRiskConflict("为什么有色金属价格出现波动？", [
+			{ doc_id: "d1" },
+			{ doc_id: "d2" },
+		]),
+		false,
+	);
+
+	const calls: string[] = [];
+	const adapter = new StructuredOutputAdapter(
+		injectedModel,
+		async (request) => {
+			calls.push(request.schemaName);
+			if (request.schemaName === "judge") {
+				return {
+					sufficient: true,
+					action: "generate",
+					reason: "covered",
+					evidence_ids: ["e1"],
+				};
+			}
+			return {
+				comparison: "none",
+				resolution: "consistent",
+				conflict_evidence: [],
+			};
+		},
+	);
+	await assessEvidenceWithMetadata(
+		adapter,
+		{
+			question: "AI应用发展对算力产业链有哪些影响？",
+			query_type: "fact",
+			attempts: 1,
+			citations: [{ id: "a", doc_id: "d1", text: "算力需求大幅增长。" }],
+		},
+		{ selectiveConflictCheck: true },
+	);
+	assert.deepEqual(calls, ["judge"]);
+});

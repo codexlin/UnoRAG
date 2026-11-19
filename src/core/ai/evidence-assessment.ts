@@ -28,7 +28,36 @@ type Input = Parameters<Adapter["judgeWithMetadata"]>[0] & {
 	query_type?: string;
 	resolvedDocumentId?: string;
 };
-type Options = Parameters<Adapter["judgeWithMetadata"]>[1];
+type Options = Parameters<Adapter["judgeWithMetadata"]>[1] & {
+	selectiveConflictCheck?: boolean;
+};
+
+const THEMATIC_LOW_RISK_CUE =
+	/(?:为什么|原因|有哪些|合作伙伴|发展策略|战略|前景|趋势|优势|荣誉|背景|概述|作用|意义|如何应对|怎么应对|影响|提供了哪些服务)/u;
+const CONSTRAINT_OR_RULE_CUE =
+	/(?:期限|几日|几天|小时|分钟|条款|第\s*\d+\s*条|规定|要求|门槛|比例|占比|金额|价格|单价|总价|日期|时间|允许|禁止|不得|违约|赔付|处罚|费率|税率|多少|最高|最低|最大|最小|比较|对比|冲突|矛盾|哪个|是否|均值|平均|合计|总计|市盈率|复合增长|\b(?:cagr|pe|eps|roe|roa)\b)/iu;
+
+/**
+ * Only bypass sequential same-fact conflict verification when all selected
+ * candidates belong to one document and the question asks open-ended thematic
+ * prose without rule, threshold, permission, or quantitative comparison cues.
+ */
+export function shouldSkipLowRiskConflict(
+	question: string,
+	candidates: readonly {
+		doc_id?: string;
+		document_identity?: readonly string[];
+	}[],
+): boolean {
+	if (candidates.length === 0) return true;
+	const docIds = new Set(
+		candidates.flatMap((item) => (item.doc_id ? [item.doc_id] : [])),
+	);
+	if (docIds.size > 1) return false;
+	const trimmed = question.trim();
+	if (!THEMATIC_LOW_RISK_CUE.test(trimmed)) return false;
+	return !CONSTRAINT_OR_RULE_CUE.test(trimmed);
+}
 
 function conflictCandidates(input: Input, evidenceIds: string[]) {
 	const sources = input.citations as Array<{
@@ -231,6 +260,12 @@ export async function assessEvidenceWithMetadata(
 				throw new EvidenceAssessmentValidationError("selected_ids_ambiguous");
 		}
 		const candidates = conflictCandidates(input, decision.evidence_ids);
+		if (
+			options.selectiveConflictCheck &&
+			shouldSkipLowRiskConflict(input.question, candidates)
+		) {
+			return { output: base, metadata };
+		}
 		stage = "conflict";
 		const checked = await adapter.checkConflictWithMetadata(
 			{
