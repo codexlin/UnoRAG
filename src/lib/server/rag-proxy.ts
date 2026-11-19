@@ -15,7 +15,9 @@ import {
 } from "@/server/http/ask/native-handler";
 import {
 	handleNativeDocumentDownloadRequest,
+	handleNativeDocumentFigureRequest,
 	isNativeDocumentDownloadPath,
+	isNativeDocumentFigurePath,
 } from "@/server/http/document/download-handler";
 import { handleNativeHealthRequest } from "@/server/http/health/native-handler";
 import {
@@ -207,6 +209,15 @@ async function proxyRagRequestInContext(
 				if (isNativeDocumentDownloadPath(path)) {
 					return (
 						(await handleNativeDocumentDownloadRequest({
+							request: routedRequest,
+							path,
+							identity,
+						})) ?? Response.json({ detail: "not found" }, { status: 404 })
+					);
+				}
+				if (isNativeDocumentFigurePath(path)) {
+					return (
+						(await handleNativeDocumentFigureRequest({
 							request: routedRequest,
 							path,
 							identity,

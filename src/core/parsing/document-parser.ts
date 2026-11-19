@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
 	DocumentAnalysis,
+	ParsedFigureAsset,
 	ParseInput,
 	ParseProgress,
 	ParseResult,
@@ -66,6 +67,11 @@ export type PdfDocumentParserOptions = {
 	onBudgetExhausted?: (observation: ParserBudgetExhaustion) => void;
 };
 
+export type PdfParseWithAssetsResult = {
+	document: DocumentIR;
+	figureAssets: ParsedFigureAsset[];
+};
+
 export class PdfDocumentParser {
 	private readonly pollIntervalMs: number;
 	private readonly maxWaitMs: number;
@@ -82,6 +88,12 @@ export class PdfDocumentParser {
 	}
 
 	async parse(input: ParsePdfInput): Promise<DocumentIR> {
+		return (await this.parseWithAssets(input)).document;
+	}
+
+	async parseWithAssets(
+		input: ParsePdfInput,
+	): Promise<PdfParseWithAssetsResult> {
 		await input.assertContinuing?.();
 		const analysisStarted = performance.now();
 		let analysis = await this.options.liteParse.analyze(input.input);
@@ -153,7 +165,7 @@ export class PdfDocumentParser {
 			poll_count: pollCount,
 			retry_count: retryCount,
 		};
-		return normalizeResult(
+		const document = normalizeResult(
 			{
 				...result,
 				report: {
@@ -163,6 +175,10 @@ export class PdfDocumentParser {
 			},
 			input,
 		);
+		return {
+			document,
+			figureAssets: [...(result.figureAssets ?? [])],
+		};
 	}
 }
 

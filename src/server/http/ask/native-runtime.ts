@@ -7,8 +7,12 @@ import {
 	AnswerStreamAdapter,
 	aiConfigFromEnv,
 	createAiProviderRegistry,
+	FigureReaderAdapter,
+	type FigureReaderPort,
+	FigureReaderTimeoutError,
 	judgeAiConfigFromEnv,
 	StructuredOutputAdapter,
+	vlmAiConfigFromEnv,
 } from "@/core/ai";
 import { assessEvidenceWithMetadata } from "@/core/ai/evidence-assessment";
 import type { ModelUsageRecorder } from "@/core/ai/model-usage";
@@ -74,6 +78,10 @@ import {
 	evidenceDocumentContext,
 	resolveAskDocumentEvidence,
 } from "./document-evidence";
+import {
+	type LoadAuthorizedFigureAssetPort,
+	loadAuthorizedFigureAsset,
+} from "./figure-assets";
 import { rewriteFollowup } from "./followup-rewrite";
 import { judgeFailureDebug } from "./judge-diagnostics";
 import type { NativeAskPolicy } from "./policy";
@@ -95,6 +103,17 @@ const FALLBACK_TABLE_PATTERN =
 	/(?:表格|表中|表内|明细表|清单|台账|逐行|多少行|表头|列名|字段|序号\s*(?:为|是)?\s*\d+|rows?|row\s*#?\s*\d+)/i;
 const FALLBACK_FOLLOW_UP_PATTERN =
 	/^(?:那|那么|这个|它|上述|前者|后者|还有|为什么|具体呢|分别呢)/i;
+const FIGURE_REFERENCE_PATTERN =
+	/(?:图表|柱状图|折线图|饼图|雷达图|散点图|示意图|流程图|架构图|走势图|趋势图|分布图|对比图|图示|附图|图\s*\d+|figure\s*\d+|chart|diagram|graph|plot|fig\.\s*\d+)/i;
+
+function figureObservationKey(
+	citation: Pick<InternalCitation, "doc_id" | "generation_id" | "figure_id">,
+): string | null {
+	if (!citation.figure_id || !citation.doc_id || !citation.generation_id) {
+		return null;
+	}
+	return `${citation.doc_id}::${citation.generation_id}::${citation.figure_id}`;
+}
 
 export type NativeAskRuntimeDependencies = {
 	retrieval: RetrievalService;
@@ -102,6 +121,8 @@ export type NativeAskRuntimeDependencies = {
 	judgeStructured?: StructuredOutputAdapter;
 	judgeIdentity?: { modelId: string; providerName: string };
 	answer: AnswerStreamAdapter;
+	figureReader?: FigureReaderPort | null;
+	loadFigureAsset?: LoadAuthorizedFigureAssetPort;
 	loadDocumentCatalog?: (input: {
 		identity: AuthIdentity;
 		libraryId: string;
@@ -179,21 +200,29 @@ function throwIfConcurrencyUnavailable(error: unknown): void {
 export function projectJudgeEvidence(
 	citations: InternalCitation[],
 	documents: ActiveDocumentDescriptor[] = [],
+	figureObservations?: ReadonlyMap<string, string>,
 ) {
-	return citations.map((citation) => ({
-		id: citation.id,
-		record_type: citation.record_type,
-		filename: citation.filename,
-		doc_id: citation.doc_id,
-		title: citation.title,
-		page_start: citation.page_start,
-		page_end: citation.page_end,
-		section_path: citation.section_path,
-		preamble: citation.preamble,
-		score: citation.score,
-		document_context: evidenceDocumentContext(citation, documents),
-		text: boundedJudgeEvidenceText(formatCitationEvidenceText(citation)),
-	}));
+	return citations.map((citation) => {
+		const observationKey = figureObservationKey(citation);
+		const vlmObservation = observationKey
+			? figureObservations?.get(observationKey)
+			: undefined;
+		return {
+			id: citation.id,
+			record_type: citation.record_type,
+			filename: citation.filename,
+			doc_id: citation.doc_id,
+			title: citation.title,
+			page_start: citation.page_start,
+			page_end: citation.page_end,
+			section_path: citation.section_path,
+			preamble: citation.preamble,
+			score: citation.score,
+			document_context: evidenceDocumentContext(citation, documents),
+			text: boundedJudgeEvidenceText(formatCitationEvidenceText(citation)),
+			...(vlmObservation ? { vlm_observation: vlmObservation } : {}),
+		};
+	});
 }
 
 function query(state: AskState): string {
@@ -210,11 +239,16 @@ function filters(state: AskState): RetrievalFilters | undefined {
 function contextText(
 	state: AskState,
 	documents: ActiveDocumentDescriptor[],
+	figureObservations?: ReadonlyMap<string, string>,
 ): string {
 	const citations = (state.citations ?? []) as InternalCitation[];
 	const evidence = citations
 		.map((citation, index) => {
 			const body = formatCitationEvidenceText(citation);
+			const observationKey = figureObservationKey(citation);
+			const observation = observationKey
+				? figureObservations?.get(observationKey)
+				: undefined;
 			const identity = evidenceDocumentContext(citation, documents);
 			const location = [
 				citation.heading_text,
@@ -237,6 +271,9 @@ function contextText(
 					: "文档身份未确认；本项目等指代仅属于当前文档，不能与其他文档默认合并。",
 				location,
 				body,
+				observation
+					? `视觉图表核验读数（来自授权裁切图实时识别）：\n${observation}`
+					: "",
 			]
 				.filter(Boolean)
 				.join("\n");
@@ -256,6 +293,10 @@ export class NativeAskRuntime {
 	private documentScope: ActiveDocumentDescriptor[] = [];
 	private evidenceDocuments: ActiveDocumentDescriptor[] = [];
 	private outlineAnswer: { text: string; citationId: string } | null = null;
+	private readonly figureObservations = new Map<string, string>();
+	private readonly attemptedFigureKeys = new Set<string>();
+	private vlmFiguresReadCount = 0;
+	private vlmDegradedReason: string | null = null;
 
 	constructor(
 		private readonly identity: AuthIdentity,
@@ -467,6 +508,92 @@ export class NativeAskRuntime {
 		await this.assertAuthorized?.(this.retrievedEvidence);
 	};
 
+	private async enrichFiguresOnDemand(
+		question: string,
+		citations: InternalCitation[],
+	): Promise<number> {
+		const candidates = citations.filter((citation) => {
+			if (citation.record_type !== "figure") return false;
+			const key = figureObservationKey(citation);
+			return Boolean(key && !this.attemptedFigureKeys.has(key));
+		});
+		if (candidates.length === 0) return 0;
+
+		const reader = this.dependencies.figureReader;
+		if (!reader) {
+			this.vlmDegradedReason ??= "vlm_disabled";
+			return 0;
+		}
+		const maxFigures = reader.maxFiguresPerRequest ?? 2;
+		if (this.vlmFiguresReadCount >= maxFigures) {
+			this.vlmDegradedReason ??= "vlm_budget_exhausted";
+			return 0;
+		}
+
+		const loadAsset =
+			this.dependencies.loadFigureAsset ?? loadAuthorizedFigureAsset;
+		const maxBytes = reader.maxImageBytes ?? 5 * 1024 * 1024;
+		let newlyRead = 0;
+		for (const citation of candidates) {
+			if (this.vlmFiguresReadCount >= maxFigures) {
+				this.vlmDegradedReason ??= "vlm_budget_exhausted";
+				break;
+			}
+			const key = figureObservationKey(citation);
+			if (
+				!key ||
+				this.attemptedFigureKeys.has(key) ||
+				!citation.figure_id ||
+				!citation.generation_id
+			) {
+				continue;
+			}
+			this.attemptedFigureKeys.add(key);
+
+			const loaded = await loadAsset({
+				identity: this.identity,
+				docId: citation.doc_id,
+				generationId: citation.generation_id,
+				figureId: citation.figure_id,
+				maxBytes,
+				signal: this.signal,
+			});
+			if (loaded.status !== "ok") {
+				this.vlmDegradedReason ??= loaded.status;
+				continue;
+			}
+
+			try {
+				const result = await reader.readFigure(
+					{
+						question,
+						figureId: citation.figure_id,
+						title: citation.title || citation.filename || citation.doc_id,
+						pageStart: citation.page_start,
+						captionText: formatCitationEvidenceText(citation),
+						imageBytes: loaded.bytes,
+						mimeType: loaded.mimeType,
+					},
+					{
+						abortSignal: this.signal,
+						beforeRequest: this.beforeModelRequest,
+					},
+				);
+				this.figureObservations.set(key, result.observation);
+				this.vlmFiguresReadCount += 1;
+				newlyRead += 1;
+			} catch (error) {
+				throwIfAborted(this.signal, error);
+				throwIfConcurrencyUnavailable(error);
+				this.vlmDegradedReason ??=
+					error instanceof FigureReaderTimeoutError
+						? "vlm_timeout"
+						: "vlm_error";
+			}
+		}
+		return newlyRead;
+	}
+
 	private evidenceThreshold(): number {
 		return this.policy.citation_adjudicate_enabled
 			? Math.max(
@@ -615,32 +742,61 @@ export class NativeAskRuntime {
 					}
 					try {
 						const requirements = deriveAnswerRequirements(question);
-						const judged = await assessEvidenceWithMetadata(
-							judgeStructured,
-							{
+						const hasUnreadFigureCandidate = () =>
+							citations.some((citation) => {
+								if (citation.record_type !== "figure") return false;
+								const key = figureObservationKey(citation);
+								return Boolean(key && !this.attemptedFigureKeys.has(key));
+							});
+						if (
+							FIGURE_REFERENCE_PATTERN.test(question) &&
+							hasUnreadFigureCandidate()
+						) {
+							await this.enrichFiguresOnDemand(question, citations);
+						}
+
+						const runJudge = () =>
+							assessEvidenceWithMetadata(
+								judgeStructured,
+								{
+									question,
+									query_type: state.query_type,
+									requirements,
+									resolvedDocumentId: scopedDocument?.documentId,
+									citations: [
+										...projectJudgeEvidence(
+											citations,
+											this.evidenceDocuments,
+											this.figureObservations,
+										).map((citation) => ({
+											...citation,
+											document_identity: citation.document_context?.identifiers,
+										})),
+										...(state.table_execution
+											? [{ table_execution: state.table_execution }]
+											: []),
+									],
+									attempts: state.retrieval_attempts ?? 0,
+								},
+								{
+									abortSignal: this.signal,
+									beforeRequest: this.beforeModelRequest,
+								},
+							);
+
+						let judged = await runJudge();
+						if (
+							judged.output.action !== "generate" &&
+							hasUnreadFigureCandidate()
+						) {
+							const newlyRead = await this.enrichFiguresOnDemand(
 								question,
-								query_type: state.query_type,
-								requirements,
-								resolvedDocumentId: scopedDocument?.documentId,
-								citations: [
-									...projectJudgeEvidence(
-										citations,
-										this.evidenceDocuments,
-									).map((citation) => ({
-										...citation,
-										document_identity: citation.document_context?.identifiers,
-									})),
-									...(state.table_execution
-										? [{ table_execution: state.table_execution }]
-										: []),
-								],
-								attempts: state.retrieval_attempts ?? 0,
-							},
-							{
-								abortSignal: this.signal,
-								beforeRequest: this.beforeModelRequest,
-							},
-						);
+								citations,
+							);
+							if (newlyRead > 0) {
+								judged = await runJudge();
+							}
+						}
 						return {
 							...judged.output,
 							answer_granularity: requirements.granularity,
@@ -655,6 +811,12 @@ export class NativeAskRuntime {
 							judge_provider: judgeIdentity.providerName,
 							judge_attempts: judged.metadata.attempts,
 							judge_duration_ms: judged.metadata.durationMs,
+							...(this.vlmFiguresReadCount > 0
+								? { vlm_figures_read: this.vlmFiguresReadCount }
+								: {}),
+							...(this.vlmDegradedReason
+								? { vlm_degraded_reason: this.vlmDegradedReason }
+								: {}),
 							...(judged.metadata.inputTokens !== undefined
 								? { judge_input_tokens: judged.metadata.inputTokens }
 								: {}),
@@ -810,7 +972,7 @@ export class NativeAskRuntime {
 						(doc) =>
 							`已定位的文档：${doc.context?.title || doc.filename}；文件编号：${doc.context?.identifiers.join("、") || "未提供"}`,
 					),
-				contextText(state, this.evidenceDocuments),
+				contextText(state, this.evidenceDocuments, this.figureObservations),
 			].join("\n\n"),
 			history: (state.history ?? []).flatMap<{
 				role: "user" | "assistant";
@@ -854,6 +1016,8 @@ export function createNativeAskRuntime(input: {
 	if (!dependencies) {
 		const registry = createAiProviderRegistry(aiConfigFromEnv());
 		const judgeRegistry = createAiProviderRegistry(judgeAiConfigFromEnv());
+		const vlmConfig = vlmAiConfigFromEnv();
+		const vlmRegistry = vlmConfig ? createAiProviderRegistry(vlmConfig) : null;
 		const concurrencyGate = getSharedAiConcurrencyGate();
 		dependencies = {
 			retrieval: getTypeScriptRetrievalService(),
@@ -892,6 +1056,17 @@ export function createNativeAskRuntime(input: {
 				concurrencyGate,
 				usageRecorder: input.usageRecorder,
 			}),
+			figureReader:
+				vlmConfig && vlmRegistry
+					? new FigureReaderAdapter(vlmRegistry.model, undefined, {
+							timeoutMs: vlmConfig.timeoutMs,
+							maxFiguresPerRequest: vlmConfig.maxFiguresPerRequest,
+							maxImageBytes: vlmConfig.maxImageBytes,
+							concurrencyGate,
+							usageRecorder: input.usageRecorder,
+						})
+					: null,
+			loadFigureAsset: loadAuthorizedFigureAsset,
 		};
 	}
 	return new NativeAskRuntime(

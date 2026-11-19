@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, FileText, Hash, Layers3 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 
 import {
 	Table,
@@ -12,6 +12,7 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { splitMarkdownTableRow } from "@/core/parsing/markdown-table";
+import { documentFigureUrl } from "@/lib/api";
 import { formatScore } from "@/lib/format";
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
@@ -98,6 +99,23 @@ function CitationBody({
 						</dl>
 						<section className="space-y-2 border-t pt-4">
 							<h3 className="text-sm font-medium">来源片段</h3>
+							{citation.source?.figure_id &&
+							(citation.source?.document_id ||
+								citation.source?.doc_id ||
+								citation.docId) ? (
+								<FigureAssetPreview
+									key={`${citation.source.figure_id}:${citation.source.document_version_id ?? ""}`}
+									src={documentFigureUrl(
+										citation.source.document_id ||
+											citation.source.doc_id ||
+											citation.docId ||
+											"",
+										citation.source.figure_id,
+										citation.source.document_version_id,
+									)}
+									alt={preview || citation.title}
+								/>
+							) : null}
 							{table ? (
 								<Table
 									aria-label={citation.title}
@@ -177,6 +195,24 @@ function CitationBody({
 				) : null}
 			</div>
 		</div>
+	);
+}
+
+function FigureAssetPreview({ src, alt }: { src: string; alt: string }) {
+	const [failed, setFailed] = useState(false);
+	if (failed) return null;
+	return (
+		<figure className="overflow-hidden rounded-sm border bg-muted/20 p-2">
+			{/* biome-ignore lint/performance/noImgElement: Authenticated figure crops stream dynamically with private no-store cache headers. */}
+			<img
+				src={src}
+				alt={alt}
+				loading="lazy"
+				decoding="async"
+				onError={() => setFailed(true)}
+				className="max-h-72 w-auto max-w-full rounded-sm object-contain"
+			/>
+		</figure>
 	);
 }
 

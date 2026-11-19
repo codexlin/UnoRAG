@@ -451,6 +451,7 @@ function contentListToNodes(
 					: kind === "code"
 						? "code"
 						: "paragraph";
+		const imgPath = isFigure ? textValue(item.img_path ?? item.image_path) : "";
 		const node: DocumentNode = {
 			id: `${documentId}:mineru:${index}`,
 			type: nodeType,
@@ -469,6 +470,7 @@ function contentListToNodes(
 				reading_order: index,
 				...(promotedDocumentHeader ? { promoted_document_header: true } : {}),
 				...(Array.isArray(item.bbox) ? { bbox: item.bbox } : {}),
+				...(imgPath ? { img_path: imgPath } : {}),
 			},
 		};
 		const previous = nodes.at(-1);

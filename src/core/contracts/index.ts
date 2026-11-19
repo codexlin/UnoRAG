@@ -10,6 +10,7 @@ export {
 } from "./authorized-scope";
 export type {
 	DocumentAnalysis,
+	ParsedFigureAsset,
 	ParseInput,
 	ParseOptions,
 	ParseProgress,

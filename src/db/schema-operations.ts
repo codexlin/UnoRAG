@@ -478,3 +478,46 @@ export const auditLogs = appSchema.table(
 		),
 	],
 );
+
+export const documentFigureAssets = appSchema.table(
+	"document_figure_assets",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		workspaceId: uuid("workspace_id")
+			.notNull()
+			.references(() => workspaces.id, { onDelete: "cascade" }),
+		libraryId: uuid("library_id")
+			.notNull()
+			.references(() => libraries.id, { onDelete: "cascade" }),
+		documentId: uuid("document_id")
+			.notNull()
+			.references(() => documents.id, { onDelete: "cascade" }),
+		documentVersionId: uuid("document_version_id")
+			.notNull()
+			.references(() => documentVersions.id, { onDelete: "cascade" }),
+		generationId: uuid("generation_id").notNull(),
+		figureId: varchar("figure_id", { length: 256 }).notNull(),
+		storageKey: varchar("storage_key", { length: 1024 }).notNull(),
+		mimeType: varchar("mime_type", { length: 128 }).notNull(),
+		sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+		pageStart: integer("page_start"),
+		pageEnd: integer("page_end"),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		uniqueIndex("document_figure_assets_gen_fig_uq").on(
+			table.generationId,
+			table.figureId,
+		),
+		index("document_figure_assets_doc_gen_idx").on(
+			table.documentId,
+			table.generationId,
+		),
+		index("document_figure_assets_ver_idx").on(table.documentVersionId),
+	],
+);

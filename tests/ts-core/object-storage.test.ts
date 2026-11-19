@@ -157,3 +157,48 @@ test("Tencent COS storage rejects invalid keys and cleans failed uploads", async
 	);
 	assert.deepEqual(deleted, ["documents/binary.txt"]);
 });
+
+test("local and COS storage support putBytes for derived figure assets", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "unorag-fig-storage-"));
+	try {
+		const local = new LocalObjectStorage(root);
+		const png = new Uint8Array([
+			0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		]);
+		const stored = await local.putBytes("org/o/figures/fig-0.png", png, {
+			maxBytes: 1_024,
+			contentType: "image/png",
+		});
+		assert.equal(stored.sizeBytes, png.byteLength);
+		assert.deepEqual(
+			Buffer.from(await local.load(stored.key, 1_024)),
+			Buffer.from(png),
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+
+	const calls: Array<Record<string, unknown>> = [];
+	const cos = new TencentCosObjectStorage(config, {
+		async putObject(input: Record<string, unknown>) {
+			calls.push(input);
+			return { ETag: "etag", Location: "private" };
+		},
+		async deleteObject() {
+			return {};
+		},
+		async headObject() {
+			throw { statusCode: 404, code: "NoSuchKey" };
+		},
+		async getObject() {
+			throw { statusCode: 404, code: "NoSuchKey" };
+		},
+	} as never);
+	const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+	const storedCos = await cos.putBytes("org/o/figures/fig-1.jpg", jpg, {
+		contentType: "image/jpeg",
+	});
+	assert.equal(storedCos.sizeBytes, jpg.byteLength);
+	assert.equal(calls[0]?.ACL, "private");
+	assert.equal(calls[0]?.ContentType, "image/jpeg");
+});

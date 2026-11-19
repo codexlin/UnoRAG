@@ -3,6 +3,7 @@ import type { LanguageModel } from "ai";
 export type ModelUsageStage =
 	| "router"
 	| "rewrite"
+	| "figure_read"
 	| "judge"
 	| "refusal_review"
 	| "conflict"
@@ -60,6 +61,7 @@ export const MAX_MODEL_USAGE_CALLS = 64;
 const stages = new Set<ModelUsageStage>([
 	"router",
 	"rewrite",
+	"figure_read",
 	"judge",
 	"refusal_review",
 	"conflict",

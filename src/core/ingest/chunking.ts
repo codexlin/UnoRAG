@@ -133,7 +133,12 @@ export async function chunkDocument(
 
 	for (const section of sections) {
 		for (const node of section.specialNodes) {
-			let body = node.text.trim() || tableJsonToText(node.table_json);
+			let body =
+				node.text.trim() ||
+				tableJsonToText(node.table_json) ||
+				(node.type === "figure" && node.meta?.has_figure_asset === true
+					? `图表${node.page_start ? `（第${node.page_start}页）` : ""}`
+					: "");
 			if (!body) continue;
 			const decision = specialNodeDecision(node.type);
 			const pageStart = node.page_start ?? section.pageStart;

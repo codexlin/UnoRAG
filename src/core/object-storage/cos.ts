@@ -5,6 +5,7 @@ import COS from "cos-nodejs-sdk-v5";
 
 import type {
 	DocumentObjectStorage,
+	PutBytesOptions,
 	PutFileOptions,
 	StoredObject,
 } from "./contracts";
@@ -115,6 +116,38 @@ export class TencentCosObjectStorage implements DocumentObjectStorage {
 		} finally {
 			options.signal?.removeEventListener("abort", abort);
 		}
+	}
+
+	async putBytes(
+		key: string,
+		bytes: Uint8Array,
+		options: PutBytesOptions = {},
+	): Promise<StoredObject> {
+		const maxBytes = options.maxBytes ?? Number.MAX_SAFE_INTEGER;
+		if (bytes.byteLength > maxBytes) {
+			throw new Error(`file exceeds ${maxBytes} byte upload limit`);
+		}
+		if (options.signal?.aborted) {
+			throw new DOMException("upload cancelled", "AbortError");
+		}
+		assertUploadContent(
+			key,
+			bytes.byteLength,
+			Buffer.from(bytes.subarray(0, 512)),
+		);
+		const buffer = Buffer.from(bytes);
+		await this.client.putObject({
+			...this.params(key),
+			Body: buffer,
+			ContentLength: bytes.byteLength,
+			ContentType: options.contentType || "application/octet-stream",
+			ACL: "private",
+		});
+		return {
+			key,
+			sizeBytes: bytes.byteLength,
+			contentHash: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+		};
 	}
 
 	async exists(key: string): Promise<boolean> {

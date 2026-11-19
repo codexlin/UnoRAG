@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ParsedFigureAsset } from "../core/contracts";
 import type { DocumentIR } from "../core/document-ir";
 import { buildDocumentContext } from "../core/document-ir/document-context";
 import {
@@ -66,8 +67,23 @@ export interface DocumentIngestVectorStore {
 	): Promise<number>;
 }
 
+export interface FigureAssetStorePort {
+	persist(input: {
+		organizationId: string;
+		workspaceId: string;
+		libraryId: string;
+		documentId: string;
+		documentVersionId: string;
+		generationId: string;
+		assets: readonly ParsedFigureAsset[];
+	}): Promise<ReadonlySet<string>>;
+}
+
 export interface PdfParserPort {
 	parse(input: ParsePdfInput): Promise<DocumentIR>;
+	parseWithAssets?(
+		input: ParsePdfInput,
+	): Promise<{ document: DocumentIR; figureAssets: ParsedFigureAsset[] }>;
 }
 
 export class DocumentIngestStager implements DocumentIngestExternalPort {
@@ -80,6 +96,7 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 		private readonly contextualRetrieval: ContextualRetrievalOptions = contextualRetrievalFromEnvironment(
 			process.env,
 		),
+		private readonly figureAssets?: FigureAssetStorePort,
 	) {}
 
 	async stageDocument(
@@ -94,8 +111,34 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 		await this.assertContinuing(input);
 		assertDocumentContentHash(content, input.payload.content_hash);
 		await onProgress?.({ stage: "parsing", percent: 15 });
-		const document = await this.parseDocument(input, snapshot, content, format);
+		const { document, figureAssets } = await this.parseDocumentWithAssets(
+			input,
+			snapshot,
+			content,
+			format,
+		);
 		await this.assertContinuing(input);
+		if (figureAssets.length > 0 && this.figureAssets) {
+			const persistedIds = await this.figureAssets.persist({
+				organizationId: input.organizationId,
+				workspaceId: input.workspaceId,
+				libraryId: input.payload.library_id,
+				documentId: input.payload.document_id,
+				documentVersionId: input.payload.document_version_id,
+				generationId: input.payload.generation_id,
+				assets: figureAssets,
+			});
+			for (const node of document.nodes) {
+				if (
+					node.type === "figure" &&
+					node.figure_id &&
+					persistedIds.has(node.figure_id)
+				) {
+					node.meta = { ...node.meta, has_figure_asset: true };
+				}
+			}
+			await this.assertContinuing(input);
+		}
 		const profileName = CHUNK_PROFILES.has(
 			input.payload.document_profile as ChunkProfileName,
 		)
@@ -198,45 +241,54 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 		await this.scopes.assertContinuing?.(input);
 	}
 
-	private async parseDocument(
+	private async parseDocumentWithAssets(
 		input: DocumentIngestJob,
 		snapshot: DocumentIngestScopeSnapshot,
 		content: Uint8Array,
 		format: SupportedFormat,
-	): Promise<DocumentIR> {
+	): Promise<{ document: DocumentIR; figureAssets: ParsedFigureAsset[] }> {
 		const source = `storage://${input.payload.storage_key}`;
 		if (format === "txt" || format === "md" || format === "markdown") {
-			return parseTextDocument({
-				documentId: snapshot.documentId,
-				libraryId: snapshot.libraryId,
-				filename: input.payload.filename,
-				contentHash: input.payload.content_hash,
-				content,
-				source,
-				sourceFormat: format,
-			});
+			return {
+				document: parseTextDocument({
+					documentId: snapshot.documentId,
+					libraryId: snapshot.libraryId,
+					filename: input.payload.filename,
+					contentHash: input.payload.content_hash,
+					content,
+					source,
+					sourceFormat: format,
+				}),
+				figureAssets: [],
+			};
 		}
 		if (format === "docx") {
-			return parseDocxDocument({
-				documentId: snapshot.documentId,
-				libraryId: snapshot.libraryId,
-				filename: input.payload.filename,
-				title: snapshot.title,
-				contentHash: input.payload.content_hash,
-				content,
-				source,
-			});
+			return {
+				document: await parseDocxDocument({
+					documentId: snapshot.documentId,
+					libraryId: snapshot.libraryId,
+					filename: input.payload.filename,
+					title: snapshot.title,
+					contentHash: input.payload.content_hash,
+					content,
+					source,
+				}),
+				figureAssets: [],
+			};
 		}
 		if (format === "xlsx") {
-			return parseXlsxDocument({
-				documentId: snapshot.documentId,
-				libraryId: snapshot.libraryId,
-				filename: input.payload.filename,
-				title: snapshot.title,
-				contentHash: input.payload.content_hash,
-				content,
-				source,
-			});
+			return {
+				document: await parseXlsxDocument({
+					documentId: snapshot.documentId,
+					libraryId: snapshot.libraryId,
+					filename: input.payload.filename,
+					title: snapshot.title,
+					contentHash: input.payload.content_hash,
+					content,
+					source,
+				}),
+				figureAssets: [],
+			};
 		}
 		if (!this.pdfParser) {
 			throw new WorkerTaskError(
@@ -245,7 +297,7 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 				"permanent",
 			);
 		}
-		return this.pdfParser.parse({
+		const parseInput: ParsePdfInput = {
 			input: {
 				documentId: snapshot.documentId,
 				filename: input.payload.filename,
@@ -267,7 +319,14 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 				scanHandling: scanHandling(input.payload.scan_handling),
 			},
 			assertContinuing: () => this.assertContinuing(input),
-		});
+		};
+		if (this.pdfParser.parseWithAssets) {
+			return this.pdfParser.parseWithAssets(parseInput);
+		}
+		return {
+			document: await this.pdfParser.parse(parseInput),
+			figureAssets: [],
+		};
 	}
 }
 
