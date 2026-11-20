@@ -188,6 +188,100 @@ test("catalog search hints preserve all source selectors without treating filena
 	);
 });
 
+test("a known Chinese query verb can touch an exact active filename", () => {
+	const stock = descriptor({ filename: "分仓库存表.xlsx" });
+	for (const question of [
+		"查分仓库存表.xlsx 的“华北库存”工作表，库存是多少？",
+		"对比分仓库存表.xlsx 的两张工作表。",
+		"根据分仓库存表.xlsx 的两张工作表，计算库存差。",
+		"请帮我查看分仓库存表.xlsx 的库存。",
+	]) {
+		assert.deepEqual(resolveDocumentConstraint(question, [stock], true), {
+			status: "resolved",
+			documents: [stock],
+		});
+		assert.ok(
+			documentCatalogSearchHints(question).terms.includes(stock.filename),
+		);
+	}
+	assert.deepEqual(documentCatalogSearchHints("根据分仓库存表.xlsx 查库存。"), {
+		terms: ["根据分仓库存表.xlsx", stock.filename],
+		codes: [],
+	});
+	assert.equal(
+		resolveDocumentConstraint("其他分仓库存表.xlsx 的内容？", [stock], true)
+			.status,
+		"unavailable",
+	);
+	assert.equal(
+		resolveDocumentConstraint(
+			"查看.xlsx 的内容？",
+			[descriptor({ filename: "看.xlsx" })],
+			true,
+		).status,
+		"unavailable",
+	);
+});
+
+test("an exact filename takes priority and a quoted filename never loses its prefix", () => {
+	const stock = descriptor({ filename: "分仓库存表.xlsx" });
+	const exact = descriptor({
+		documentId: "exact",
+		filename: "查分仓库存表.xlsx",
+	});
+	assert.deepEqual(
+		resolveDocumentConstraint(
+			"查分仓库存表.xlsx 的库存？",
+			[stock, exact],
+			true,
+		).documents,
+		[exact],
+	);
+	for (const question of [
+		"打开“查分仓库存表.xlsx”的工作表。",
+		'打开"查分仓库存表.xlsx"的工作表。',
+		"打开《 查分仓库存表.xlsx 》的工作表。",
+	]) {
+		assert.deepEqual(documentCatalogSearchHints(question).terms, [
+			exact.filename,
+		]);
+		assert.equal(
+			resolveDocumentConstraint(question, [stock], true).status,
+			"unavailable",
+		);
+		assert.deepEqual(
+			resolveDocumentConstraint(question, [stock, exact], true).documents,
+			[exact],
+		);
+	}
+});
+
+test("an attached verb does not bypass an unresolved or ambiguous source constraint", () => {
+	const stock = descriptor({ filename: "分仓库存表.xlsx" });
+	const duplicate = { ...stock, documentId: "duplicate" };
+	const question = "查分仓库存表.xlsx 的工作表。";
+	assert.equal(
+		resolveDocumentConstraint(question, [], true).status,
+		"unavailable",
+	);
+	assert.equal(
+		resolveDocumentConstraint(question, [stock, duplicate], true).status,
+		"ambiguous",
+	);
+	assert.equal(
+		resolveDocumentConstraint(
+			"对比分仓库存表.xlsx 和缺失库存表.xlsx 的内容。",
+			[stock],
+			true,
+		).status,
+		"unavailable",
+	);
+	assert.equal(
+		resolveDocumentConstraint(question, [stock], false).status,
+		"unavailable",
+	);
+});
+
 test("partial catalogs resolve only with a complete match set bound to the same question", () => {
 	const question = "manual.docx 的内容？";
 	assert.equal(

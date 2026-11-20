@@ -409,6 +409,37 @@ test("large active document catalogs use scoped pg_trgm search under the Web run
 		},
 	);
 	await t.test(
+		"attached Chinese query verbs preserve partial-catalog completeness and ACLs",
+		async () => {
+			const cases = [
+				["根据needle-legacy.pdf 查内容。", "resolved", [target.id]],
+				["查询duplicate.pdf 的内容。", "ambiguous", []],
+				["查看group-only.pdf 的内容。", "unavailable", []],
+				["查看“根据needle-legacy.pdf”的内容。", "unavailable", []],
+			] as const;
+			for (const [question, status, documentIds] of cases) {
+				const result = await load(question);
+				assert.equal(result.complete, false);
+				assert.equal(result.completeForQuestion, question);
+				assert.ok(
+					!result.documents.some((doc) => doc.documentId === groupEntry.id),
+				);
+				const resolution = await resolveAskDocumentEvidence({
+					question,
+					libraryId: library,
+					scope,
+					loadCatalog: async () => result,
+					lookupDocumentRecord: async () => null,
+				});
+				assert.equal(resolution.status, status);
+				assert.deepEqual(
+					resolution.documents.map((doc) => doc.documentId),
+					documentIds,
+				);
+			}
+		},
+	);
+	await t.test(
 		"title and document code selectors retain exact identity rules",
 		async () => {
 			for (const question of [

@@ -22,6 +22,18 @@ export type DocumentConstraint = {
 };
 
 const FILE = /[\p{L}\p{N}_.()（）-]+\.(?:pdf|docx|xlsx|markdown|md|txt)\b/giu;
+const FILE_QUERY_PREFIX =
+	/^(?:请(?:帮我)?|帮我)?(?:对比|比较|根据|依据|查看|查询|查)/u;
+const FILE_QUOTES = new Map([
+	["“", "”"],
+	["‘", "’"],
+	["《", "》"],
+	["「", "」"],
+	["『", "』"],
+	['"', '"'],
+	["'", "'"],
+	["`", "`"],
+]);
 const CODE = /\b[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+){2,}\b/gi;
 const OUTLINE =
 	/(?:[一二三四五六1-6]级标题|子标题|(?:文档|文件|章节)目录|目录(?:结构|大纲)|所有标题|全部标题|\bheadings?\b|table of contents)/i;
@@ -47,6 +59,23 @@ function normalize(value: string): string {
 	return value.normalize("NFKC").trim().toLowerCase();
 }
 
+function filenameAlternatives(question: string): string[][] {
+	return Array.from(question.matchAll(FILE), (match) => {
+		const token = match[0];
+		const exact = normalize(token);
+		const opener = question.slice(0, match.index).trimEnd().at(-1);
+		const closer = question.slice(match.index + token.length).trimStart()[0];
+		if (opener && closer && FILE_QUOTES.get(opener) === closer) return [exact];
+
+		// Chinese verbs can touch the filename. Only try a known prefix
+		// as a fallback; never resolve an arbitrary suffix or a quoted name.
+		const unprefixed = exact.replace(FILE_QUERY_PREFIX, "");
+		return unprefixed !== exact && /^[\p{L}\p{N}_]/u.test(unprefixed)
+			? [exact, unprefixed]
+			: [exact];
+	});
+}
+
 export function documentCatalogSearchHints(question: string): {
 	terms: string[];
 	codes: string[];
@@ -61,9 +90,7 @@ export function documentCatalogSearchHints(question: string): {
 		codes: [...new Set(codes)],
 		terms: [
 			...new Set([
-				...[...question.matchAll(new RegExp(FILE))].map((match) =>
-					normalize(match[0]),
-				),
+				...filenameAlternatives(question).flat(),
 				...codes,
 				...[...question.matchAll(new RegExp(QUOTED_TITLE))].map((match) =>
 					normalize(match[1] ?? match[2] ?? match[3] ?? ""),
@@ -86,11 +113,7 @@ export function resolveDocumentConstraint(
 		documents: [],
 	};
 	if (!complete && completeForQuestion !== question) return unavailable;
-	const filenames = [
-		...new Set(
-			[...question.matchAll(new RegExp(FILE))].map((m) => normalize(m[0])),
-		),
-	];
+	const filenames = filenameAlternatives(question);
 	const intentQuestion = stripFilenameReferences(question);
 	const codes = [
 		...new Set(
@@ -115,10 +138,15 @@ export function resolveDocumentConstraint(
 			matches.push(candidate);
 		return null;
 	};
-	for (const filename of filenames) {
-		const failure = addUnique(
-			catalog.filter((doc) => normalize(doc.filename) === filename),
-		);
+	for (const alternatives of filenames) {
+		let candidates: ActiveDocumentDescriptor[] = [];
+		for (const filename of alternatives) {
+			candidates = catalog.filter(
+				(doc) => normalize(doc.filename) === filename,
+			);
+			if (candidates.length) break;
+		}
+		const failure = addUnique(candidates);
 		if (failure) return failure;
 	}
 	for (const code of codes) {

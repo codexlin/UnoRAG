@@ -5,6 +5,13 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-11-21
+
+- Recognize supported Chinese query verbs attached directly to filenames. Exact
+  filenames still take precedence, quoted names remain literal, and ambiguous or
+  inaccessible sources are not used as evidence.
+- No database migration, configuration change, or reindex is required.
+
 ## [0.3.5] - 2026-11-20
 
 [Release acceptance](./docs/evidence/2026-11-20-v0.3.5-release.md) covers the exact
