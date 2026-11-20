@@ -439,11 +439,12 @@ test("external library delete retry replaces a cached failed job with the new jo
 		})
 		.toBe(true);
 	await row.getByRole("button", { name: "操作", exact: true }).click();
+	const menu = page.getByRole("menu", { name: "操作", exact: true });
+	await expect(menu).toBeVisible();
 	await expect(
-		page.getByRole("menuitem", { name: "重试任务", exact: true }),
+		menu.getByRole("menuitem", { name: "重试任务", exact: true }),
 	).toHaveCount(0);
-	await page.keyboard.press("Escape");
-	await page.getByRole("button", { name: document.name, exact: true }).click();
+	await menu.getByRole("menuitem", { name: "查看", exact: true }).click();
 	await expect(
 		page.getByText("external-new-delete", { exact: true }),
 	).toBeVisible();
