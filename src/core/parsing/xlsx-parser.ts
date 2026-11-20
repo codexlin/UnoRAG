@@ -1,6 +1,5 @@
 import { parseDocument } from "htmlparser2";
 import JSZip from "jszip";
-
 import {
 	type DocumentIR,
 	DocumentIRSchema,
@@ -8,6 +7,7 @@ import {
 	NodeSchema,
 } from "../document-ir";
 import { normalizeHtmlTable } from "./html-table";
+import { readZipEntryBounded } from "./zip-entry";
 
 const XLSX_PARSER_VERSION = "1.0.0";
 const DEFAULT_MAX_SHEETS = 32;
@@ -213,11 +213,11 @@ async function readZipText(
 			) ?? "",
 		);
 	if (!entry) return null;
-	const bytes = await entry.async("uint8array");
-	budget.remainingBytes -= bytes.byteLength;
-	if (budget.remainingBytes < 0) {
+	const bytes = await readZipEntryBounded(entry, budget.remainingBytes);
+	if (!bytes) {
 		throw new Error("XLSX workbook uncompressed XML size exceeds safety limit");
 	}
+	budget.remainingBytes -= bytes.byteLength;
 	return new TextDecoder("utf-8").decode(bytes);
 }
 

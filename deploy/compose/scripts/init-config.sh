@@ -247,7 +247,7 @@ advanced_keys = set(parse_env(config_dir / "runtime.advanced.env.example"))
 runtime_keys = common_keys | advanced_keys
 secret_keys = [
     "POSTGRES_PASSWORD", "UNORAG_SESSION_SECRET",
-    "LLM_API_KEY", "MINERU_API_KEY",
+    "LLM_API_KEY", "MINERU_API_KEY", "VLM_API_KEY",
     "COS_SECRET_ID", "COS_SECRET_KEY", "COS_SECURITY_TOKEN",
     "DATABASE_URL", "WEB_DATABASE_URL", "WORKER_DATABASE_URL",
     "DBOS_SYSTEM_DATABASE_URL", "MIGRATOR_DATABASE_URL",

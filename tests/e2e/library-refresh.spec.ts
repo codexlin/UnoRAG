@@ -430,8 +430,14 @@ test("external library delete retry replaces a cached failed job with the new jo
 	externalRetry = true;
 	await page.clock.fastForward(30_100);
 	await expect.poll(() => activeReads).toBeGreaterThan(0);
-	await page.clock.fastForward(2_100);
-	await expect(row.getByText("排队中", { exact: true })).toBeVisible();
+	// A routed request can be observed before React commits its result and
+	// schedules the document poll. Keep advancing until the UI observes it.
+	await expect
+		.poll(async () => {
+			await page.clock.fastForward(2_100);
+			return row.getByText("排队中", { exact: true }).isVisible();
+		})
+		.toBe(true);
 	await row.getByRole("button", { name: "操作", exact: true }).click();
 	await expect(
 		page.getByRole("menuitem", { name: "重试任务", exact: true }),

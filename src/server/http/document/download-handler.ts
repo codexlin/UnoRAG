@@ -198,12 +198,6 @@ export async function handleNativeDocumentFigureRequest(input: {
 			})
 		: await (async () => {
 				const db = getDatabase();
-				const versionMatchCondition = requestedVersionId
-					? eq(documentFigureAssets.documentVersionId, requestedVersionId)
-					: eq(
-							documentFigureAssets.documentVersionId,
-							documentActiveVersions.versionId,
-						);
 				return db
 					.select({
 						storageKey: documentFigureAssets.storageKey,
@@ -226,11 +220,26 @@ export async function handleNativeDocumentFigureRequest(input: {
 						eq(documentActiveVersions.documentId, documents.id),
 					)
 					.innerJoin(
+						documentVersions,
+						and(
+							eq(documentVersions.id, documentActiveVersions.versionId),
+							eq(documentVersions.documentId, documents.id),
+							eq(documentVersions.status, "active"),
+							requestedVersionId
+								? eq(documentVersions.id, requestedVersionId)
+								: undefined,
+						),
+					)
+					.innerJoin(
 						documentFigureAssets,
 						and(
 							eq(documentFigureAssets.documentId, documents.id),
 							eq(documentFigureAssets.figureId, figureId),
-							versionMatchCondition,
+							eq(documentFigureAssets.documentVersionId, documentVersions.id),
+							eq(
+								documentFigureAssets.generationId,
+								documentVersions.generationId,
+							),
 						),
 					)
 					.leftJoin(

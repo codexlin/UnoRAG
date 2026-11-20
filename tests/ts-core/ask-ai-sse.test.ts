@@ -1321,6 +1321,11 @@ test("legacy SSE terminates aborted streams without done", async () => {
 import { RerankDiagnosticSchema } from "../../src/core/retrieval/provider-request";
 
 test("selectiveConflictCheck skips low-risk single-doc thematic queries while enforcing rule and multi-doc checks", async () => {
+	assert.equal(shouldSkipLowRiskConflict("为什么出现波动？", []), false);
+	assert.equal(
+		shouldSkipLowRiskConflict("为什么出现波动？", [{ doc_id: "d1" }, {}]),
+		false,
+	);
 	assert.equal(
 		shouldSkipLowRiskConflict("和达科技有哪些合作伙伴，提供了哪些服务？", [
 			{ doc_id: "d1" },

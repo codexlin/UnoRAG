@@ -6,8 +6,10 @@ import { and, eq, isNull, notInArray } from "drizzle-orm";
 import { getDatabase } from "@/db";
 import {
 	documentAcl,
+	documentActiveVersions,
 	documentFigureAssets,
 	documents,
+	documentVersions,
 	libraries,
 } from "@/db/schema";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
@@ -94,9 +96,23 @@ export async function loadAuthorizedFigureAsset(input: {
 			),
 		)
 		.innerJoin(
+			documentActiveVersions,
+			eq(documentActiveVersions.documentId, documents.id),
+		)
+		.innerJoin(
+			documentVersions,
+			and(
+				eq(documentVersions.id, documentActiveVersions.versionId),
+				eq(documentVersions.documentId, documents.id),
+				eq(documentVersions.generationId, input.generationId),
+				eq(documentVersions.status, "active"),
+			),
+		)
+		.innerJoin(
 			documentFigureAssets,
 			and(
 				eq(documentFigureAssets.documentId, documents.id),
+				eq(documentFigureAssets.documentVersionId, documentVersions.id),
 				eq(documentFigureAssets.generationId, input.generationId),
 				eq(documentFigureAssets.figureId, input.figureId),
 			),
