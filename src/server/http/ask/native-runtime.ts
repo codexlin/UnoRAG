@@ -796,8 +796,8 @@ export class NativeAskRuntime {
 									abortSignal: this.signal,
 									beforeRequest: this.beforeModelRequest,
 									selectiveConflictCheck:
-										process.env.ASK_CONFLICT_CHECK_MODE?.trim().toLowerCase() !==
-										"always",
+										process.env.ASK_CONFLICT_CHECK_MODE?.trim().toLowerCase() ===
+										"selective",
 								},
 							);
 

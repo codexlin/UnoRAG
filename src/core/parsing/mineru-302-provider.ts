@@ -21,6 +21,7 @@ import {
 	retryAfterMilliseconds,
 } from "./http-parser-provider";
 import { normalizeMinerUResult } from "./mineru-provider";
+import { readZipEntryBounded } from "./zip-entry";
 
 const DEFAULT_RESULT_HOSTS = new Set(["file.302.ai", "file.302ai.cn"]);
 
@@ -225,7 +226,9 @@ export class MinerU302Provider
 		}
 		let contentList: unknown;
 		try {
-			contentList = JSON.parse(await entry.async("string"));
+			const bytes = await readZipEntryBounded(entry, 32 * 1024 * 1024);
+			if (!bytes) throw new Error("content list exceeds size budget");
+			contentList = JSON.parse(bytes.toString("utf8"));
 		} catch {
 			throw providerError(
 				"provider_invalid_response",
@@ -492,14 +495,11 @@ async function extractFigureAssetsFromZip(
 		if (!zipEntry) continue;
 		const info = figureMimeAndExt(zipEntry.name);
 		if (!info) continue;
-		const bytes = await zipEntry.async("uint8array");
-		if (
-			bytes.byteLength === 0 ||
-			bytes.byteLength > MAX_FIGURE_ASSET_BYTES ||
-			totalBytes + bytes.byteLength > MAX_TOTAL_FIGURE_BYTES
-		) {
-			continue;
-		}
+		const bytes = await readZipEntryBounded(
+			zipEntry,
+			Math.min(MAX_FIGURE_ASSET_BYTES, MAX_TOTAL_FIGURE_BYTES - totalBytes),
+		);
+		if (!bytes?.byteLength) continue;
 		totalBytes += bytes.byteLength;
 		assets.push({
 			figureId: node.figure_id,

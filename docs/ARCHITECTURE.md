@@ -320,6 +320,10 @@ Token 兼容归入 `conflict` 用量；OTel 的 `structured_kind` 和独立 Prom
 核验 schema 使用对象根节点以兼容 [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)；
 分类与摘录关系仍由服务端校验，不假定所有兼容 Provider 都执行完整 JSON Schema 约束。
 
+默认保持事实类核验；`ASK_CONFLICT_CHECK_MODE=selective` 仅作为可选优化，在候选均有同一文档身份且命中
+低风险主题规则时跳过，结果仍为 `not_checked`。图表裁剪读取和可选 VLM 均重新检查工作区、文档 ACL、
+active version 和 generation。归档保留原引用文本，不承诺已替换版本的裁剪图片持续可读。
+
 旧 active generation 不会被原地补写，已有文档须通过正常重索引生成新结构元数据；升级前排空旧任务，
 同 generation 写入清单不一致仍失败关闭。文档编号与完整目录能力遵循以下边界：已识别文号是正向来源约束，
 未召回文档或无关文档 partial 不阻断明确匹配，重号视为歧义；编号未知且元数据不完整时不降级为宽泛检索；

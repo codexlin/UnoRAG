@@ -91,6 +91,9 @@ export function buildSparseBackfillPoint(point: SourcePoint): QdrantPoint {
 
 async function run(): Promise<void> {
 	const args = process.argv.slice(2);
+	if (!args.includes("--execute")) {
+		throw new Error("Backfill writes a new collection; pass --execute and an explicit unused --to name");
+	}
 	const qdrantUrl =
 		argValue(args, "--qdrant-url") ??
 		process.env.QDRANT_URL?.trim() ??
@@ -99,16 +102,17 @@ async function run(): Promise<void> {
 		argValue(args, "--from") ??
 		process.env.QDRANT_COLLECTION?.trim() ??
 		"unorag_chunks";
-	const toCollection = argValue(args, "--to") ?? `${fromCollection}_hybrid`;
+	const toCollection = argValue(args, "--to")?.trim();
 	const dimensions = Number(
 		argValue(args, "--dimensions") ?? process.env.EMBEDDING_DIM ?? 1024,
 	);
-	const batchSize = Math.max(
-		1,
-		Number(argValue(args, "--batch-size") ?? 128),
-	);
-	if (fromCollection === toCollection) {
-		throw new Error("--from and --to collections must differ per ADR-0008");
+	const batchSize = Number(argValue(args, "--batch-size") ?? 128);
+	if (!toCollection || fromCollection === toCollection) {
+		throw new Error("--to must name a new collection distinct from --from");
+	}
+	if (!Number.isSafeInteger(dimensions) || dimensions < 1 ||
+		!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 512) {
+		throw new Error("Expected positive integer dimensions and --batch-size between 1 and 512");
 	}
 
 	const client = new QdrantClient({
@@ -130,7 +134,7 @@ async function run(): Promise<void> {
 		vectorSize: dimensions,
 		distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
 		serverHybridEnabled: true,
-	}).ensure();
+	}, { requireNew: true }).ensure();
 	process.stdout.write(
 		`== target ${toCollection}: created=${ensured.created} schema=${JSON.stringify(ensured.vectorSchema)}\n`,
 	);

@@ -34,6 +34,7 @@ nodeModule._resolveFilename = (request, ...args) =>
 const modules = Promise.all([
 	import("../../src/server/http/document/download-handler"),
 	import("../../src/lib/server/document-version-command"),
+	import("../../src/server/http/ask/figure-assets"),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolve;
 });
@@ -87,8 +88,12 @@ test("real PG downloads bind GET/HEAD bytes, Unicode name and MIME to the active
 		await rm(root, { recursive: true, force: true });
 	});
 	const [
-		{ handleNativeDocumentDownloadRequest: download },
+		{
+			handleNativeDocumentDownloadRequest: download,
+			handleNativeDocumentFigureRequest: downloadFigure,
+		},
 		{ createDocumentVersion, DocumentVersionCommandError },
+		{ loadAuthorizedFigureAsset },
 	] = await modules;
 	await pool.query(
 		"INSERT INTO app.organizations (id, slug, name) VALUES ($1::uuid, $1::text, 'Download')",
@@ -174,6 +179,59 @@ test("real PG downloads bind GET/HEAD bytes, Unicode name and MIME to the active
 			sizeBytes: replacementFile.sizeBytes,
 		},
 	});
+	const figureId = "figure-fixture";
+	async function putFigure(versionId: string) {
+		const object = await storage.putFile(
+			`figure/${versionId}/crop.png`,
+			new File(["fixture crop"], "crop.png", { type: "image/png" }),
+		);
+		const { rows } = await pool.query<{ generation_id: string }>(
+			`INSERT INTO app.document_figure_assets (
+				organization_id, workspace_id, library_id, document_id,
+				document_version_id, generation_id, figure_id, storage_key, mime_type, size_bytes
+			)
+			SELECT $1, $2, $3, document_id, id, generation_id, $5, $6, 'image/png', $7
+			FROM app.document_versions WHERE id = $4 RETURNING generation_id`,
+			[
+				ids.org,
+				ids.workspace,
+				ids.library,
+				versionId,
+				figureId,
+				object.key,
+				object.sizeBytes,
+			],
+		);
+		return rows[0].generation_id;
+	}
+	async function assertFigure(
+		versionId: string,
+		generationId: string,
+		visible: boolean,
+	) {
+		const url = new URL("http://localhost/figure");
+		url.searchParams.set("figure_id", figureId);
+		url.searchParams.set("version_id", versionId);
+		const response = await downloadFigure({
+			request: new Request(url),
+			path: ["v1", "documents", ids.document, "figure"],
+			identity,
+		});
+		assert.equal(response?.status, visible ? 200 : 404);
+		if (visible) assert.equal(await response?.text(), "fixture crop");
+		const asset = await loadAuthorizedFigureAsset({
+			identity,
+			docId: ids.document,
+			generationId,
+			figureId,
+			maxBytes: 1_024,
+		});
+		assert.equal(asset.status, visible ? "ok" : "not_found");
+	}
+	const oldGeneration = await putFigure(ids.active);
+	const pendingGeneration = await putFigure(replacement.versionId);
+	await assertFigure(ids.active, oldGeneration, true);
+	await assertFigure(replacement.versionId, pendingGeneration, false);
 	await assertDownload(oldName, "application/pdf", oldBytes);
 	const transactions = new PostgresDocumentIngestTransactions(pool);
 	async function jobFor(jobId: string): Promise<DocumentIngestJob> {
@@ -211,6 +269,7 @@ test("real PG downloads bind GET/HEAD bytes, Unicode name and MIME to the active
 		);
 	}
 	await fail(replacement.jobId);
+	await assertFigure(replacement.versionId, pendingGeneration, false);
 	await assertDownload(oldName, "application/pdf", oldBytes);
 	// Mutable metadata must not leak into either the reindex payload or download.
 	await pool.query(
@@ -253,6 +312,12 @@ test("real PG downloads bind GET/HEAD bytes, Unicode name and MIME to the active
 		}),
 	});
 	await assertDownload(newName, newMime, newBytes);
+	await assertFigure(ids.active, oldGeneration, false);
+	await assertFigure(
+		successful.versionId,
+		await putFigure(successful.versionId),
+		true,
+	);
 
 	await pool.query(
 		"UPDATE app.document_versions SET source_filename = NULL, source_content_type = NULL WHERE id = $1",

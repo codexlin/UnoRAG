@@ -78,6 +78,7 @@ export class QdrantCollectionManager {
 	constructor(
 		private readonly client: QdrantCollectionClient,
 		private readonly contract: QdrantCollectionContract,
+		private readonly options: { requireNew?: boolean } = {},
 	) {
 		validateContract(contract);
 	}
@@ -94,6 +95,11 @@ export class QdrantCollectionManager {
 
 	private async ensureInternal(): Promise<QdrantCollectionEnsureResult> {
 		const created = await this.ensureCollectionExists();
+		if (this.options.requireNew && !created) {
+			throw new QdrantCollectionContractError(
+				"Target collection already exists; refusing to modify it",
+			);
+		}
 		let info = await this.client.getCollection(this.contract.collection);
 		validateCollectionInfo(info, this.contract);
 

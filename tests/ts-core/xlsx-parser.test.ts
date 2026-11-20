@@ -389,4 +389,18 @@ test("parseXlsxDocument enforces empty, structural, and bounded resource limits"
 			}),
 		/cell/i,
 	);
+	await assert.rejects(
+		() =>
+			parseXlsxDocument({
+				documentId: "d5",
+				libraryId: "l1",
+				filename: "bounded.xlsx",
+				title: "bounded.xlsx",
+				contentHash: "h5",
+				content: twoSheetContent,
+				source: "upload",
+				limits: { maxUncompressedBytes: 128 },
+			}),
+		/uncompressed XML size exceeds safety limit/,
+	);
 });

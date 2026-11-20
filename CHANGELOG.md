@@ -5,6 +5,14 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+- Accept multi-sheet Excel workbooks with bounded decompression and structured
+  table extraction. Add optional MinerU figure crops and opt-in model-assisted
+  chart reading; figure access follows the active document version and ACL.
+- Expand retrieved context within the same authorized generation, bound
+  comparison context, and support deterministic arithmetic. Selective conflict
+  bypass remains opt-in; normal fact verification stays enabled by default.
+- Add a guarded sparse-vector backfill for a new collection without re-embedding.
+  It is an operator tool, not an automatic upgrade step.
 - Let qualified first-turn document descriptions reach authorized retrieval and
   evidence judgment. Bare references and references remaining elsewhere in the
   question still require clarification; a description does not prove identity.
@@ -34,9 +42,16 @@ results remain in [`docs/evidence/`](./docs/evidence/).
   candidates with pg_trgm, and retain numeric qualifiers and deterministic table
   inline citations. Qdrant Sparse/RRF and conditional Contextual Retrieval remain
   experimental and disabled by default.
-- Upgrade note: apply migrations `0033` (feedback) and `0034` (pg_trgm catalog
-  indexes) with the documented drain/backup procedure. These changes have not
+- Upgrade note: apply migrations `0033` (feedback), `0034` (pg_trgm catalog
+  indexes), and `0035` (figure assets) with the documented drain/backup procedure. These changes have not
   inherited the v0.3.2 deployment acceptance results.
+
+## [0.3.4] - Not Released
+
+The signed candidate passed three-round quality, multi-turn evaluation, isolation,
+provider fault, and isolated restore gates. The complete browser suite was
+298/300: the same external-delete-retry case timed out on both viewports. The
+original run is retained as failed; a later focused pass does not change it.
 
 ## [0.3.3] - Not Released
 

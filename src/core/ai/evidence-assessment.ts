@@ -49,11 +49,10 @@ export function shouldSkipLowRiskConflict(
 		document_identity?: readonly string[];
 	}[],
 ): boolean {
-	if (candidates.length === 0) return true;
-	const docIds = new Set(
-		candidates.flatMap((item) => (item.doc_id ? [item.doc_id] : [])),
-	);
-	if (docIds.size > 1) return false;
+	const documentId = candidates[0]?.doc_id;
+	if (!documentId || candidates.some((item) => item.doc_id !== documentId)) {
+		return false;
+	}
 	const trimmed = question.trim();
 	if (!THEMATIC_LOW_RISK_CUE.test(trimmed)) return false;
 	return !CONSTRAINT_OR_RULE_CUE.test(trimmed);

@@ -278,6 +278,24 @@ test("collection manager creates the dense collection and every UnoRAG payload i
 	);
 });
 
+test("new-collection mode refuses existing targets before modifying indexes", async () => {
+	const { client, calls } = fakeClient({ exists: true });
+	const manager = new QdrantCollectionManager(
+		client,
+		{
+			collection: "unorag_chunks_hybrid",
+			vectorSize: 1_024,
+			distance: "Cosine",
+		},
+		{ requireNew: true },
+	);
+	await assert.rejects(manager.ensure(), /already exists/);
+	assert.deepEqual(
+		calls.map((call) => call.name),
+		["collectionExists"],
+	);
+});
+
 test("collection manager is reusable, validates existing indexes, and coalesces ensure calls", async () => {
 	const indexes = Object.fromEntries(
 		UNORAG_QDRANT_PAYLOAD_INDEXES.map((index) => [index.fieldName, "keyword"]),
