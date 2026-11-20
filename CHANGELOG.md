@@ -5,6 +5,11 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-11-20
+
+[Release acceptance](./docs/evidence/2026-11-20-v0.3.5-release.md) covers the exact
+signed build, the test-only browser rerun, and the Hong Kong rollout.
+
 - Accept multi-sheet Excel workbooks with bounded decompression and structured
   table extraction. Add optional MinerU figure crops and opt-in model-assisted
   chart reading; figure access follows the active document version and ACL.
@@ -43,8 +48,7 @@ results remain in [`docs/evidence/`](./docs/evidence/).
   inline citations. Qdrant Sparse/RRF and conditional Contextual Retrieval remain
   experimental and disabled by default.
 - Upgrade note: apply migrations `0033` (feedback), `0034` (pg_trgm catalog
-  indexes), and `0035` (figure assets) with the documented drain/backup procedure. These changes have not
-  inherited the v0.3.2 deployment acceptance results.
+  indexes), and `0035` (figure assets) with the documented drain/backup procedure.
 
 ## [0.3.4] - Not Released
 
@@ -68,7 +72,7 @@ Signed images passed their own HK acceptance: three-round quality 126/126,
 27-file business matrix (88 positive, 15 refusal, 8 lifecycle workflows),
 282 browser cases and fresh agent semantic review. This promotes the unreleased
 UI, theme and token-accounting changes below; earlier failed tags stay immutable.
-See [release evidence](./docs/evidence/2026-11-15-v0.3.2-release.md) for exact
+See [release evidence](https://github.com/codexlin/UnoRAG/blob/b70b9546a6ac67a4be6dc1d35bd79421d9ad1988/docs/evidence/2026-11-15-v0.3.2-release.md) for exact
 digests, boundaries and the known P2 numeric-qualifier/inline-attribution gaps.
 
 - Keep already-selected figure/table companions directly linked to cited passages

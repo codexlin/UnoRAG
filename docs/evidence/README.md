@@ -7,7 +7,7 @@
 
 | 文档 | 用途 |
 |---|---|
-| [v0.3.2 发布验收](./2026-11-15-v0.3.2-release.md) | 本版三轮 126/126、扩展业务、282/282 浏览器及逐题代理复核；按已披露 P2 限制发布 |
+| [v0.3.5 发布验收](./2026-11-20-v0.3.5-release.md) | 三轮 126/126、多轮 9/9、浏览器全量 300/300、隔离恢复与香港交付 |
 | [试点反馈模板](./PILOT-FEEDBACK-TEMPLATE.md) | 记录客户场景、版本、证据和责任签字；模板本身不证明通过 |
 
 ## 历史证据
@@ -17,7 +17,8 @@
 
 | 正式发布 / 里程碑 | 保留原因 |
 |---|---|
-| [v0.2.8](https://github.com/codexlin/UnoRAG/blob/9ddb14432b75fd6d4dc7cbdc97e130c7e9f6ea4c/docs/evidence/2026-11-10-v0.2.8-release-closeout.md) | 当前公开稳定版：25 文件候选业务矩阵、正式镜像复验及当次隔离恢复（不继承为新版本结论） |
+| [v0.3.2](https://github.com/codexlin/UnoRAG/blob/b70b9546a6ac67a4be6dc1d35bd79421d9ad1988/docs/evidence/2026-11-15-v0.3.2-release.md) | 上一稳定版三轮 126/126、扩展业务和浏览器验收 |
+| [v0.2.8](https://github.com/codexlin/UnoRAG/blob/9ddb14432b75fd6d4dc7cbdc97e130c7e9f6ea4c/docs/evidence/2026-11-10-v0.2.8-release-closeout.md) | 历史稳定版：25 文件候选业务矩阵、正式镜像复验及当次隔离恢复 |
 | [v0.2.7](https://github.com/codexlin/UnoRAG/blob/0d52120e15943ada7740493717559b22ec47ad2d/docs/evidence/2026-11-07-v0.2.7-release-closeout.md) | 历史稳定版的三轮 285/285、香港交付结果与当期限制 |
 | [v0.2.3](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-09-25-v0.2.3-release-confidence.md) | 早期交付、审计及删除故障恢复验收基线 |
 | [比较证据修复](https://github.com/codexlin/UnoRAG/blob/6918b7596f77974cc036c15a3f3140aa89a95aef/docs/evidence/2026-11-05-comparison-lineage-fix.md) | 证据丢失与重排降级的典型根因及成本对比案例 |
