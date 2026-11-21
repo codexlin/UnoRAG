@@ -1,4 +1,5 @@
 version: 2
+# Pause routine version PRs; security updates use a separate limit.
 updates:
   - package-ecosystem: npm
     directory: /
@@ -7,7 +8,7 @@ updates:
       day: monday
       time: "03:00"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       react:
         patterns:
@@ -79,7 +80,7 @@ updates:
       day: monday
       time: "03:30"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: /deploy/docker
@@ -88,7 +89,7 @@ updates:
       day: monday
       time: "04:00"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     ignore:
       - dependency-name: node
         versions:
