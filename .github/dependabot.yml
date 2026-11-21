@@ -15,11 +15,10 @@ updates:
           - "react-dom"
           - "@types/react"
           - "@types/react-dom"
-      opentelemetry-minor-patch:
+      opentelemetry-patch:
         patterns:
           - "@opentelemetry/*"
         update-types:
-          - minor
           - patch
       production-minor-patch:
         dependency-type: production
@@ -49,6 +48,12 @@ updates:
           - minor
           - patch
     ignore:
+      # Coordinate OTel train changes with the legacy SDK peer used by LangSmith.
+      # Patch and security updates remain eligible.
+      - dependency-name: "@opentelemetry/*"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
       # UnoRAG currently supports Node 22 and TypeScript 5. Major migrations
       # are planned explicitly instead of entering the weekly release queue.
       - dependency-name: "@types/node"
