@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import yaml from "js-yaml";
+import { loadAll } from "js-yaml";
 
 import {
 	dbosDocumentIngestEnabled,
@@ -123,9 +123,9 @@ test("Helm control-plane health observes the worker's selected MinerU provider",
 			"config.externalParserAllowed=true",
 		]);
 		assert.equal(render.status, 0, render.stderr);
-		const deployments = yaml
-			.loadAll(render.stdout)
-			.filter((doc) => ["Deployment", "StatefulSet"].includes(doc?.kind));
+		const deployments = loadAll(render.stdout).filter((doc) =>
+			["Deployment", "StatefulSet"].includes(doc?.kind),
+		);
 		const environment = (name) => {
 			const deployment = deployments.find((doc) => doc.metadata.name === name);
 			assert.ok(deployment, name);
