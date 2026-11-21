@@ -4,9 +4,9 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import yaml from "js-yaml";
+import { load } from "js-yaml";
 
-const workflow = yaml.load(
+const workflow = load(
 	await readFile(
 		new URL("../.github/workflows/release-images.yml", import.meta.url),
 		"utf8",
