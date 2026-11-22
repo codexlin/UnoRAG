@@ -73,7 +73,7 @@ const embeddings: EmbeddingProvider = {
 class FakeStore implements RetrievalVectorStore {
 	searchScope: RetrievalScope | null = null;
 	filters: RetrievalUserFilters | undefined;
-	throwCorpus = false;
+	throwHybrid = false;
 
 	async search(input: {
 		vector: number[];
@@ -94,8 +94,26 @@ class FakeStore implements RetrievalVectorStore {
 		];
 	}
 
+	async hybridSearch() {
+		if (this.throwHybrid) throw new Error("hybrid search unavailable");
+		return [
+			hit({
+				id: "both",
+				text: "合同违约金 200 元",
+				chunkIndex: 1,
+				score: 0.032,
+			}),
+			hit({ id: "dense", text: "leave policy", chunkIndex: 0, score: 0.016 }),
+			hit({
+				id: "lexical",
+				text: "合同付款后违约金",
+				chunkIndex: 2,
+				score: 0.015,
+			}),
+		];
+	}
+
 	async listCorpus() {
-		if (this.throwCorpus) throw new Error("corpus unavailable");
 		return [
 			hit({
 				id: "both",
@@ -113,29 +131,23 @@ class FakeStore implements RetrievalVectorStore {
 	}
 }
 
-test("BM25 uses only authorized narrative context and keeps rerank and citation evidence original", async () => {
+test("server hybrid keeps rerank and citation evidence original without leaking contextual_prefix", async () => {
 	const contextual = hit({
 		id: "contextual",
 		text: "Payment is due in thirty days.",
 		chunkIndex: 1,
-		score: 0,
+		score: 0.02,
 	});
 	contextual.payload.contextual_prefix = "Zephyrquartz";
-	const excluded = [
-		{ record_type: "table" as const },
-		{ record_type: "table_summary" as const },
-		{ record_type: "figure" as const },
-		{ record_type: "section" as const },
-		{ record_type: "document" as const },
-		{ record_type: "chunk" as const, table_id: "table-1" },
-		{ record_type: "chunk" as const, figure_id: "figure-1" },
-		{ record_type: "chunk" as const, split_strategy: "code" },
-	].map((metadata, index) => ({
-		...contextual,
-		id: `excluded-${index}`,
-		payload: { ...contextual.payload, ...metadata },
-	}));
-	let corpus = [contextual, ...excluded];
+	let hybridHits: QdrantSearchHit[] = [
+		hit({
+			id: "dense",
+			text: "Unrelated evidence.",
+			chunkIndex: 0,
+			score: 0.03,
+		}),
+		contextual,
+	];
 	let rerankTexts: string[] = [];
 	const service = new DefaultRetrievalService(
 		embeddings,
@@ -150,12 +162,15 @@ test("BM25 uses only authorized narrative context and keeps rerank and citation 
 					}),
 				];
 			},
-			async listCorpus(input) {
+			async hybridSearch(input) {
 				assert.equal(input.scope.workspaceId, "workspace-a");
 				assert.deepEqual(input.scope.activeGenerationIds, [
 					"generation-current",
 				]);
-				return corpus;
+				return hybridHits;
+			},
+			async listCorpus() {
+				assert.fail("server hybrid must not scroll full corpus");
 			},
 		},
 		{
@@ -188,7 +203,8 @@ test("BM25 uses only authorized narrative context and keeps rerank and citation 
 	);
 	const citation = result.citations.find((item) => item.id === "contextual");
 	assert.ok(citation);
-	assert.ok((citation.bm25_score ?? 0) > 0);
+	assert.equal(citation.dense_score, null);
+	assert.equal(citation.rrf_score, 0.02);
 	assert.equal(citation.body, contextual.payload.text);
 	assert.equal(citation.snippet, contextual.payload.text);
 	assert.ok(rerankTexts.includes(contextual.payload.text));
@@ -198,7 +214,7 @@ test("BM25 uses only authorized narrative context and keeps rerank and citation 
 		/Zephyrquartz|contextual_prefix/,
 	);
 
-	corpus = [
+	hybridHits = [
 		{
 			...contextual,
 			payload: { ...contextual.payload, workspace_id: "workspace-b" },
@@ -684,7 +700,7 @@ async function retrieveLineagePool(
 ) {
 	const store = new FakeStore();
 	let searches = 0;
-	let corpusReads = 0;
+	let hybridSearches = 0;
 	store.search = async (input) => {
 		searches += 1;
 		assert.equal(input.limit, 20);
@@ -699,9 +715,16 @@ async function retrieveLineagePool(
 		assert.deepEqual(input.userFilters, { doc_id: "document-a" });
 		return pool.filter((item) => !lexicalOnlyIds.includes(String(item.id)));
 	};
+	store.hybridSearch = async () => {
+		hybridSearches += 1;
+		return pool.map((item, index) => ({
+			...item,
+			score:
+				(lexicalOnlyIds.includes(String(item.id)) ? 1 : 2) / (60 + index + 1),
+		}));
+	};
 	store.listCorpus = async () => {
-		corpusReads += 1;
-		return pool;
+		assert.fail("server hybrid must not scroll full corpus");
 	};
 	const service = new DefaultRetrievalService(
 		embeddings,
@@ -729,7 +752,7 @@ async function retrieveLineagePool(
 		options,
 	});
 	assert.equal(searches, 1);
-	assert.equal(corpusReads, 1);
+	assert.equal(hybridSearches, 1);
 	assert.equal(result.debug.usedHybrid, true);
 	assert.equal(result.debug.rerankFailed, true);
 	return result;
@@ -1194,9 +1217,9 @@ test("citation mapping preserves explicit lexical-only dense null for shared adj
 	);
 });
 
-test("hybrid corpus failure falls back to dense without failing retrieval", async () => {
+test("hybrid search failure falls back to dense without failing retrieval", async () => {
 	const store = new FakeStore();
-	store.throwCorpus = true;
+	store.throwHybrid = true;
 	const service = new DefaultRetrievalService(embeddings, store, null, {
 		hybridEnabled: true,
 		rerankEnabled: false,
@@ -1391,31 +1414,6 @@ test("server hybrid is preferred without corpus scroll and preserves semantic sc
 	assert.equal(
 		semanticEvidenceScore(result.citations[1]),
 		Number.NEGATIVE_INFINITY,
-	);
-});
-
-test("a BM25 corpus security violation aborts instead of falling back to dense", async () => {
-	const store = new FakeStore();
-	store.listCorpus = async () => [
-		{
-			...hit({ id: "leaked", text: "private", chunkIndex: 0, score: 0 }),
-			payload: {
-				...hit({ id: "leaked", text: "private", chunkIndex: 0, score: 0 })
-					.payload,
-				workspace_id: "other",
-			},
-		},
-	];
-	const service = new DefaultRetrievalService(embeddings, store, null, {
-		hybridEnabled: true,
-		rerankEnabled: false,
-		rerankTopK: 6,
-		bm25TopK: 20,
-		rrfK: 60,
-	});
-	await assert.rejects(
-		service.retrieve({ query: "q", libraryId: "library-a", scope, topK: 1 }),
-		RetrievalSecurityViolationError,
 	);
 });
 

@@ -18,7 +18,6 @@ import {
 	parseQdrantDistance,
 	QdrantCollectionManager,
 	type QdrantVectorSchema,
-	qdrantServerHybridEnabled,
 } from "../core/retrieval/qdrant/collection-manager";
 import { observePostgresPoolErrors } from "../db/pool-observability";
 import { logger } from "../lib/observability";
@@ -778,7 +777,6 @@ export async function createWorkerPorts(
 			collection: qdrantCollection,
 			vectorSize: embeddingDimensions,
 			distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
-			serverHybridEnabled: qdrantServerHybridEnabled(),
 		}).ensure();
 		vectorSchema = ready.vectorSchema;
 	} catch (error) {

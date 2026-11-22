@@ -13,6 +13,7 @@ import type { RetrievalScope } from "../../src/core/retrieval/contracts";
 import { buildMandatoryQdrantFilter } from "../../src/core/retrieval/filters/qdrant-filter";
 import { sparseVector } from "../../src/core/retrieval/hybrid/sparse-vector";
 import {
+	QdrantCollectionContractError,
 	QdrantCollectionManager,
 	type QdrantVectorSchema,
 } from "../../src/core/retrieval/qdrant/collection-manager";
@@ -106,7 +107,6 @@ function service(store: QdrantRetrievalStore) {
 		bm25TopK: 10,
 		rerankTopK: 2,
 		rrfK: 60,
-		corpusLimit: 3,
 	});
 }
 
@@ -121,7 +121,6 @@ test(
 				collection,
 				vectorSize: 2,
 				distance: "Cosine",
-				serverHybridEnabled: true,
 			}).ensure();
 			const { vectorSchema } = await ready;
 			assert.deepEqual(vectorSchema, {
@@ -237,7 +236,6 @@ test(
 					);
 			}
 			const store = new QdrantRetrievalStore(client, collection, ready, {
-				serverHybridEnabled: true,
 				vectorSchema: ready.then((result) => result.vectorSchema),
 			});
 			const fused = await store.hybridSearch({
@@ -349,7 +347,7 @@ test(
 
 for (const named of [false, true]) {
 	test(
-		`real Qdrant ${named ? "named" : "legacy unnamed"} dense without sparse falls back to bounded BM25`,
+		`real Qdrant ${named ? "named" : "legacy unnamed"} dense without lexical_v1 fails closed`,
 		integration,
 		async () => {
 			const client = new QdrantClient({ url, checkCompatibility: true });
@@ -360,42 +358,14 @@ for (const named of [false, true]) {
 						? { dense: { size: 2, distance: "Cosine" } }
 						: { size: 2, distance: "Cosine" },
 				});
-				const ready = new QdrantCollectionManager(client, {
-					collection,
-					vectorSize: 2,
-					distance: "Cosine",
-					serverHybridEnabled: true,
-				}).ensure();
-				const { vectorSchema } = await ready;
-				assert.equal(vectorSchema.sparseVectorName, null);
-				const scope = createScope();
-				const exact = record(scope, query);
-				const writer = new QdrantIngestWriteStore(client, collection, {
-					vectorSchema,
-				});
-				await writer.stage({ scope, records: [exact], vectors: [[1, 0]] });
-				await writer.setVisibility(scope, "active");
-				const store = new QdrantRetrievalStore(client, collection, ready, {
-					serverHybridEnabled: true,
-					vectorSchema: ready.then((result) => result.vectorSchema),
-				});
-				let corpusReads = 0;
-				const listCorpus = store.listCorpus.bind(store);
-				store.listCorpus = async (input) => {
-					corpusReads += 1;
-					assert.equal(input.limit, 3);
-					return listCorpus(input);
-				};
-				const result = await service(store).retrieve({
-					query,
-					libraryId: scope.libraryId,
-					scope: authorized(retrievalScope(scope)),
-					topK: 1,
-				});
-				assert.equal(result.citations[0].id, exact._point_id);
-				assert.equal(result.debug.usedHybrid, true);
-				assert.equal(result.debug.hybridFailed, false);
-				assert.equal(corpusReads, 1);
+				await assert.rejects(
+					new QdrantCollectionManager(client, {
+						collection,
+						vectorSize: 2,
+						distance: "Cosine",
+					}).ensure(),
+					QdrantCollectionContractError,
+				);
 			} finally {
 				if ((await client.collectionExists(collection)).exists)
 					await client.deleteCollection(collection);
@@ -405,7 +375,7 @@ for (const named of [false, true]) {
 }
 
 test(
-	"real Qdrant migrated unnamed dense plus sparse supports dual writes and query-switch rollback",
+	"real Qdrant migrated unnamed dense plus lexical_v1 IDF supports dual writes and server hybrid retrieval",
 	integration,
 	async () => {
 		const client = new QdrantClient({ url, checkCompatibility: true });
@@ -413,13 +383,12 @@ test(
 		try {
 			await client.createCollection(collection, {
 				vectors: { size: 2, distance: "Cosine" },
-				sparse_vectors: { lexical_v1: {} },
+				sparse_vectors: { lexical_v1: { modifier: "idf" } },
 			});
 			const ready = new QdrantCollectionManager(client, {
 				collection,
 				vectorSize: 2,
 				distance: "Cosine",
-				serverHybridEnabled: false,
 			}).ensure();
 			const { vectorSchema } = await ready;
 			assert.deepEqual(vectorSchema, {
@@ -433,21 +402,71 @@ test(
 			});
 			await writer.stage({ scope, records: [exact], vectors: [[1, 0]] });
 			await writer.setVisibility(scope, "active");
-			for (const enabled of [true, false]) {
-				const store = new QdrantRetrievalStore(client, collection, ready, {
-					serverHybridEnabled: enabled,
-					vectorSchema: ready.then((result) => result.vectorSchema),
-				});
-				const result = await service(store).retrieve({
-					query,
-					libraryId: scope.libraryId,
-					scope: authorized(retrievalScope(scope)),
-					topK: 1,
-				});
-				assert.equal(result.citations[0].id, exact._point_id);
-				assert.equal(result.debug.usedHybrid, true);
-				assert.equal(result.debug.hybridFailed, false);
-			}
+			const store = new QdrantRetrievalStore(client, collection, ready, {
+				vectorSchema: ready.then((result) => result.vectorSchema),
+			});
+			store.listCorpus = async () => {
+				assert.fail("server hybrid must not scroll full corpus");
+			};
+			const result = await service(store).retrieve({
+				query,
+				libraryId: scope.libraryId,
+				scope: authorized(retrievalScope(scope)),
+				topK: 1,
+			});
+			assert.equal(result.citations[0].id, exact._point_id);
+			assert.equal(result.debug.usedHybrid, true);
+			assert.equal(result.debug.hybridFailed, false);
+		} finally {
+			if ((await client.collectionExists(collection)).exists)
+				await client.deleteCollection(collection);
+		}
+	},
+);
+
+test(
+	"real Qdrant lexical_v1 IDF modifier ranks rare term matches above high-TF boilerplate",
+	integration,
+	async () => {
+		const client = new QdrantClient({ url, checkCompatibility: true });
+		const collection = `unorag_sparse_idf_${randomUUID().replaceAll("-", "")}`;
+		try {
+			const ready = new QdrantCollectionManager(client, {
+				collection,
+				vectorSize: 2,
+				distance: "Cosine",
+			}).ensure();
+			const { vectorSchema } = await ready;
+			const info = await client.getCollection(collection);
+			assert.equal(
+				info.config.params.sparse_vectors?.lexical_v1?.modifier,
+				"idf",
+			);
+			const scope = createScope();
+			const boilerplate = Array.from({ length: 8 }, () =>
+				record(scope, "annual annual annual report report summary"),
+			);
+			const rare = record(scope, "ZXQ987");
+			const records = [...boilerplate, rare];
+			const writer = new QdrantIngestWriteStore(client, collection, {
+				vectorSchema,
+			});
+			await writer.stage({
+				scope,
+				records,
+				vectors: records.map(() => [1, 0]),
+			});
+			await writer.setVisibility(scope, "active");
+			const sparseHits = await client.query(collection, {
+				query: sparseVector("annual report ZXQ987"),
+				using: "lexical_v1",
+				filter: buildMandatoryQdrantFilter({
+					scope: retrievalScope(scope),
+				}) as Schemas["Filter"],
+				limit: 3,
+				with_payload: false,
+			});
+			assert.equal(sparseHits.points[0]?.id, rare._point_id);
 		} finally {
 			if ((await client.collectionExists(collection)).exists)
 				await client.deleteCollection(collection);

@@ -189,10 +189,8 @@ config:
   contextualRetrievalEnabled: "false"
   contextualRetrievalMaxChunks: "40"
   contextualRetrievalTimeoutMs: "1000"
-  qdrantServerHybridEnabled: "false"
   retrievalHybridEnabled: "false"
   retrievalRerankEnabled: "false"
-  retrievalCorpusLimit: "10000"
   rerankModel: qwen3-rerank
   rerankTimeoutMs: "10000"
   mineruProvider: self_hosted

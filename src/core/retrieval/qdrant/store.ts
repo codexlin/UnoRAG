@@ -69,7 +69,7 @@ export type HybridSearchInput = {
 };
 
 export interface RetrievalVectorStore {
-	// null means this collection has no supported sparse index (use bounded BM25).
+	// null means the query had no lexical tokens so retrieval stays on dense.
 	hybridSearch?(input: HybridSearchInput): Promise<QdrantSearchHit[] | null>;
 	search(input: {
 		vector: number[];
@@ -99,7 +99,6 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		private readonly ready: Promise<unknown> = Promise.resolve(),
 		private readonly options: {
 			timeoutMs?: number;
-			serverHybridEnabled?: boolean;
 			vectorSchema?: Promise<QdrantVectorSchema>;
 		} = {},
 	) {
@@ -160,9 +159,12 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		input: HybridSearchInput,
 	): Promise<QdrantSearchHit[] | null> {
 		await qdrantOperation("ready", () => this.ready, this.options);
-		if (!this.options.serverHybridEnabled) return null;
 		const schema = await this.options.vectorSchema;
-		if (!schema?.sparseVectorName) return null;
+		if (!schema?.sparseVectorName) {
+			throw new QdrantCollectionContractError(
+				"Qdrant collection schema is missing lexical_v1 sparse vector",
+			);
+		}
 		const sparse = sparseVector(input.query);
 		if (!sparse.indices.length) return null;
 		const filter = buildMandatoryQdrantFilter({

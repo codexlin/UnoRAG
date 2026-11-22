@@ -8,8 +8,6 @@ import {
 	scopeWithActiveGenerations,
 } from "../../src/core/retrieval/active-generation";
 import { OpenAICompatibleEmbeddingProvider } from "../../src/core/retrieval/embedding/provider";
-import { Bm25Index } from "../../src/core/retrieval/hybrid/bm25";
-import { reciprocalRankFusion } from "../../src/core/retrieval/hybrid/rrf";
 import { tokenize } from "../../src/core/retrieval/hybrid/tokenizer";
 import {
 	fetchRetrievalProvider,
@@ -972,28 +970,6 @@ for (const cleanup of ["rejects", "stalls"] as const) {
 	});
 }
 
-test("mixed Chinese and English BM25 keeps the established token semantics", () => {
+test("mixed Chinese and English tokenizer keeps the established token semantics", () => {
 	assert.deepEqual(tokenize("合同 penalty"), ["penalty", "合", "同", "合同"]);
-	const index = new Bm25Index([
-		{ id: "a", text: "合同违约金 200 元", value: "contract" },
-		{ id: "b", text: "employee leave policy", value: "leave" },
-	]);
-	assert.equal(index.search("合同违约金", 1)[0]?.id, "a");
-});
-
-test("RRF rewards candidates present in both result lists", () => {
-	const fused = reciprocalRankFusion(
-		[
-			[
-				{ id: "a", value: "dense-a" },
-				{ id: "b", value: "dense-b" },
-			],
-			[
-				{ id: "b", value: "lexical-b" },
-				{ id: "c", value: "lexical-c" },
-			],
-		],
-		{ k: 60 },
-	);
-	assert.equal(fused[0]?.id, "b");
 });

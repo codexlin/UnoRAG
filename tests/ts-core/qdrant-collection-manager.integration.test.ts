@@ -37,11 +37,14 @@ test("real Qdrant collection ensure is idempotent and materializes filter indexe
 
 		assert.equal(first.created, true);
 		assert.deepEqual(first, second);
+		const vectors = info.config.params.vectors;
 		assert.equal(
-			"size" in (info.config.params.vectors ?? {})
-				? info.config.params.vectors?.size
-				: undefined,
+			vectors && !("size" in vectors) ? vectors.dense?.size : undefined,
 			2,
+		);
+		assert.equal(
+			info.config.params.sparse_vectors?.lexical_v1?.modifier,
+			"idf",
 		);
 		for (const index of UNORAG_QDRANT_PAYLOAD_INDEXES) {
 			assert.equal(info.payload_schema[index.fieldName]?.data_type, "keyword");
@@ -51,7 +54,16 @@ test("real Qdrant collection ensure is idempotent and materializes filter indexe
 		const upsert = await client.upsert(collection, {
 			wait: true,
 			ordering: "strong",
-			points: [{ id: pointId, vector: [1, 0], payload: tablePayload() }],
+			points: [
+				{
+					id: pointId,
+					vector: {
+						dense: [1, 0],
+						lexical_v1: { indices: [1], values: [1] },
+					},
+					payload: tablePayload(),
+				},
+			],
 		});
 		assert.equal(upsert.status, "completed");
 		const point = (await client.retrieve(collection, { ids: [pointId] }))[0];

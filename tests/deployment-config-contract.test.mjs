@@ -213,17 +213,17 @@ test("deployment inputs map to one application environment contract", async () =
 	);
 	assert.equal(compose.services.web.environment.AI_INCLUDE_USAGE, "true");
 	assert.equal(advanced.get("AI_INCLUDE_USAGE"), "true");
-	assert.equal(advanced.get("QDRANT_SERVER_HYBRID_ENABLED"), "false");
-	for (const enabled of ["false", "true"]) {
-		const configured = renderComposeConfig({
-			QDRANT_SERVER_HYBRID_ENABLED: enabled,
-		});
-		for (const service of ["web", "dbos-worker"]) {
-			assert.equal(
-				configured.services[service].environment.QDRANT_SERVER_HYBRID_ENABLED,
-				enabled,
-			);
-		}
+	for (const service of ["web", "dbos-worker"]) {
+		assert.equal(
+			"QDRANT_SERVER_HYBRID_ENABLED" in
+				(compose.services[service].environment ?? {}),
+			false,
+		);
+		assert.equal(
+			"TS_RETRIEVAL_CORPUS_LIMIT" in
+				(compose.services[service].environment ?? {}),
+			false,
+		);
 	}
 	for (const [name, value] of Object.entries({
 		CONTEXTUAL_RETRIEVAL_ENABLED: "false",
@@ -304,37 +304,11 @@ test("Helm gives Web and Worker the same canonical model endpoint", (t) => {
 			item?.kind === "ConfigMap" && item.data?.AI_INCLUDE_USAGE !== undefined,
 	);
 	assert.equal(configMap?.data.AI_INCLUDE_USAGE, "true");
-	assert.equal(configMap?.data.QDRANT_SERVER_HYBRID_ENABLED, "false");
+	assert.equal(configMap?.data.QDRANT_SERVER_HYBRID_ENABLED, undefined);
+	assert.equal(configMap?.data.TS_RETRIEVAL_CORPUS_LIMIT, undefined);
 	assert.equal(
-		workerEnv?.find((entry) => entry.name === "QDRANT_SERVER_HYBRID_ENABLED")
-			?.value,
-		"false",
-	);
-	const hybridRender = renderHelm([
-		"--set-string",
-		"config.qdrantServerHybridEnabled=true",
-	]);
-	assert.equal(hybridRender.status, 0, hybridRender.stderr);
-	const hybrid = loadAll(hybridRender.stdout);
-	const hybridConfig = hybrid.find(
-		(item) =>
-			item?.kind === "ConfigMap" &&
-			item.data?.QDRANT_SERVER_HYBRID_ENABLED !== undefined,
-	);
-	assert.equal(hybridConfig?.data.QDRANT_SERVER_HYBRID_ENABLED, "true");
-	const hybridWorker = hybrid.find(
-		(item) =>
-			item?.kind === "StatefulSet" &&
-			item.spec?.template?.spec?.containers?.some(
-				(container) => container.name === "dbos-worker",
-			),
-	);
-	assert.equal(
-		hybridWorker?.spec.template.spec.containers
-			.find((container) => container.name === "dbos-worker")
-			.env.find((entry) => entry.name === "QDRANT_SERVER_HYBRID_ENABLED")
-			?.value,
-		"true",
+		workerEnv?.find((entry) => entry.name === "QDRANT_SERVER_HYBRID_ENABLED"),
+		undefined,
 	);
 	const disabled = renderHelm(["--set-string", "config.aiIncludeUsage=false"]);
 	assert.equal(disabled.status, 0, disabled.stderr);
