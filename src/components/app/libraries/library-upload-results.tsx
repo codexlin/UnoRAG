@@ -6,9 +6,9 @@ import {
 	Loader2,
 	X,
 } from "lucide-react";
-
 import { Button } from "@/components/ui/button";
 import { formatDurationMs } from "@/lib/format";
+import { useInterfaceText } from "@/lib/i18n/provider";
 
 export type DocumentUploadResult = {
 	id: number;
@@ -28,11 +28,11 @@ export type DocumentUploadBatch = {
 };
 
 const uploadStates = {
-	submitting: { label: "提交中", icon: Loader2 },
-	accepted: { label: "已接受", icon: Clock3 },
-	ready: { label: "已就绪", icon: CheckCircle2 },
-	failed: { label: "提交失败", icon: CircleAlert },
-};
+	submitting: { label: ["提交中", "Submitting"], icon: Loader2 },
+	accepted: { label: ["已接受", "Accepted"], icon: Clock3 },
+	ready: { label: ["已就绪", "Ready"], icon: CheckCircle2 },
+	failed: { label: ["提交失败", "Submission failed"], icon: CircleAlert },
+} as const;
 
 export function LibraryUploadResults({
 	batch,
@@ -45,21 +45,25 @@ export function LibraryUploadResults({
 	onView: (docId: string) => void;
 	onDismiss: () => void;
 }) {
+	const t = useInterfaceText();
 	return (
 		<section
-			aria-label="本次上传结果"
+			aria-label={t("本次上传结果", "Upload results")}
 			className="min-w-0 border-b px-4 py-4 sm:px-6"
 		>
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0 space-y-1">
 					<h4 className="break-words text-sm font-medium [overflow-wrap:anywhere]">
-						本次上传 · {batch.libraryName}
+						{t("本次上传 ·", "Upload ·")} {batch.libraryName}
 					</h4>
 					<p role="status" className="text-xs text-muted-foreground">
-						{batch.files.length} 个文件 ·{" "}
+						{batch.files.length} {t("个文件 ·", "files ·")}{" "}
 						{batch.durationMs == null
-							? "提交中"
-							: `提交耗时 ${formatDurationMs(batch.durationMs)}`}
+							? t("提交中", "Submitting")
+							: t(
+									`提交耗时 ${formatDurationMs(batch.durationMs)}`,
+									`Submission took ${formatDurationMs(batch.durationMs)}`,
+								)}
 					</p>
 				</div>
 				<Button
@@ -67,8 +71,11 @@ export function LibraryUploadResults({
 					variant="ghost"
 					size="icon"
 					className="size-11"
-					aria-label="关闭上传结果"
-					title="关闭上传结果（不取消后台任务）"
+					aria-label={t("关闭上传结果", "Close upload results")}
+					title={t(
+						"关闭上传结果（不取消后台任务）",
+						"Close upload results without canceling background jobs",
+					)}
 					onClick={onDismiss}
 				>
 					<X aria-hidden />
@@ -112,11 +119,12 @@ export function LibraryUploadResults({
 												: "size-3.5"
 										}
 									/>
-									{label}
+									{t(label[0], label[1])}
 								</span>
 								{file.durationMs != null ? (
 									<span className="tabular-nums text-muted-foreground">
-										提交 {formatDurationMs(file.durationMs)}
+										{t("提交", "Submission")}{" "}
+										{formatDurationMs(file.durationMs)}
 									</span>
 								) : null}
 								{file.docId && viewableDocumentIds.has(file.docId) ? (
@@ -124,11 +132,14 @@ export function LibraryUploadResults({
 										type="button"
 										variant="ghost"
 										className="h-11"
-										aria-label={`查看文档：${file.filename}`}
+										aria-label={t(
+											`查看文档：${file.filename}`,
+											`View document: ${file.filename}`,
+										)}
 										onClick={() => file.docId && onView(file.docId)}
 									>
 										<FileText aria-hidden data-icon="inline-start" />
-										查看文档
+										{t("查看文档", "View document")}
 									</Button>
 								) : null}
 							</div>
@@ -138,7 +149,10 @@ export function LibraryUploadResults({
 			</ul>
 			{batch.files.some((file) => file.status === "accepted") ? (
 				<p className="mt-2 text-xs text-muted-foreground">
-					已接受表示提交成功，不代表索引完成。
+					{t(
+						"已接受表示提交成功，不代表索引完成。",
+						"Accepted means the upload was submitted, not that indexing has finished.",
+					)}
 				</p>
 			) : null}
 		</section>

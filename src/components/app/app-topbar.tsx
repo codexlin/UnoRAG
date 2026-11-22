@@ -1,14 +1,17 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { LanguageMenu } from "@/components/app/language-menu";
 import { getAppNavItem } from "@/components/app/nav-items";
 import { ThemeToggle } from "@/components/app/theme-toggle";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { useHealth } from "@/hooks/use-health";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
 export function AppTopbar() {
+	const t = useInterfaceText();
 	const pathname = usePathname();
 	const current = getAppNavItem(pathname);
 	const { apiReady, loading, healthProbedAt, healthProbeMs } = useHealth();
@@ -21,7 +24,7 @@ export function AppTopbar() {
 				<SidebarTrigger className="-ml-0.5 size-11" />
 				<div className="min-w-0">
 					<h1 className="text-sm font-medium text-foreground">
-						{current.label}
+						{t(...current.label)}
 					</h1>
 				</div>
 			</div>
@@ -38,20 +41,21 @@ export function AppTopbar() {
 							aria-hidden
 						/>
 						{apiStatus === "checking"
-							? "知识服务检查中"
+							? t("知识服务检查中", "Checking knowledge service")
 							: apiStatus === "online"
-								? "知识服务在线"
-								: "知识服务不可用"}
+								? t("知识服务在线", "Knowledge service online")
+								: t("知识服务不可用", "Knowledge service unavailable")}
 					</span>
 					{(healthProbedAt || healthProbeMs != null) && (
 						<span className="text-xs font-mono text-muted-foreground">
-							探测 {formatDateTime(healthProbedAt)}
+							{t("探测", "Checked")} {formatDateTime(healthProbedAt)}
 							{healthProbeMs != null
 								? ` · ${formatDurationMs(healthProbeMs)}`
 								: ""}
 						</span>
 					)}
 				</div>
+				<LanguageMenu />
 				<ThemeToggle />
 			</div>
 		</header>

@@ -2,7 +2,6 @@
 
 import { ArrowUp, Square } from "lucide-react";
 import type { FormEventHandler, KeyboardEventHandler, Ref } from "react";
-
 import {
 	InputGroup,
 	InputGroupAddon,
@@ -14,6 +13,7 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useInterfaceText } from "@/lib/i18n/provider";
 
 type AskComposerProps = {
 	canAsk: boolean;
@@ -38,6 +38,7 @@ export function AskComposer({
 	onSubmit,
 	textareaRef,
 }: AskComposerProps) {
+	const t = useInterfaceText();
 	return (
 		<form
 			onSubmit={onSubmit}
@@ -52,15 +53,15 @@ export function AskComposer({
 						onKeyDown={onKeyDown}
 						disabled={!canAsk || isStreaming}
 						rows={1}
-						aria-label="向知识库提问"
+						aria-label={t("向知识库提问", "Ask the knowledge base")}
 						placeholder={
 							isStreaming
-								? "生成中…"
+								? t("生成中…", "Generating…")
 								: healthLoading
-									? "正在检查服务状态…"
+									? t("正在检查服务状态…", "Checking service status…")
 									: canAsk
-										? "向知识库提问…"
-										: "知识库就绪后再提问…"
+										? t("向知识库提问…", "Ask the knowledge base…")
+										: t("知识库就绪后再提问…", "Ask once the library is ready…")
 						}
 						className="text-answer max-h-50 min-h-16 min-w-0 px-3 py-4"
 					/>
@@ -76,7 +77,7 @@ export function AskComposer({
 											type="button"
 											size="icon-sm"
 											variant="secondary"
-											aria-label="停止生成"
+											aria-label={t("停止生成", "Stop generating")}
 											onClick={onCancel}
 											className="size-11 shrink-0 self-end rounded-lg"
 										>
@@ -84,7 +85,9 @@ export function AskComposer({
 										</InputGroupButton>
 									}
 								/>
-								<TooltipContent>停止生成</TooltipContent>
+								<TooltipContent>
+									{t("停止生成", "Stop generating")}
+								</TooltipContent>
 							</Tooltip>
 						) : (
 							<Tooltip>
@@ -95,14 +98,14 @@ export function AskComposer({
 											size="icon-sm"
 											variant={canAsk && input.trim() ? "default" : "ghost"}
 											disabled={!canAsk || !input.trim()}
-											aria-label="发送"
+											aria-label={t("发送", "Send")}
 											className="size-11 shrink-0 self-end rounded-lg disabled:text-muted-foreground disabled:opacity-100"
 										>
 											<ArrowUp className="size-4" aria-hidden />
 										</InputGroupButton>
 									}
 								/>
-								<TooltipContent>发送</TooltipContent>
+								<TooltipContent>{t("发送", "Send")}</TooltipContent>
 							</Tooltip>
 						)}
 					</InputGroupAddon>

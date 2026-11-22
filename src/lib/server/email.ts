@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Locale } from "@/lib/i18n/locale";
 import {
 	type AccountEmailPurpose,
 	type EmailTemplate,
@@ -184,6 +185,7 @@ export async function sendAccountEmail(
 		url: string;
 		purpose: AccountEmailPurpose;
 		idempotencyKey: string;
+		locale?: Locale;
 	},
 	dependencies: EmailDependencies = {},
 ): Promise<EmailSendResult> {
@@ -205,6 +207,7 @@ export async function sendInviteEmail(
 		workspaceName: string;
 		role: string;
 		inviteId?: string;
+		locale?: Locale;
 	},
 	dependencies: EmailDependencies = {},
 ): Promise<EmailSendResult> {

@@ -7,10 +7,25 @@ import { AuthPageShell } from "@/components/app/auth-page-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useInterfaceText } from "@/lib/i18n/provider";
+
+const ERROR_COPY = {
+	credentials: ["邮箱或密码不正确", "Incorrect email or password"],
+	rate_limit: [
+		"登录尝试过多，请稍后再试",
+		"Too many sign-in attempts. Try again later.",
+	],
+	unavailable: ["登录服务暂时不可用", "Sign-in is temporarily unavailable."],
+	network: ["网络连接异常，请稍后重试", "Connection failed. Please try again."],
+} as const;
 
 function LoginFormPlaceholder() {
+	const t = useInterfaceText();
 	return (
-		<div role="status" aria-label="正在加载登录表单">
+		<div
+			role="status"
+			aria-label={t("正在加载登录表单", "Loading sign-in form")}
+		>
 			<div aria-hidden className="space-y-5">
 				{[0, 1].map((field) => (
 					<div key={field} className="space-y-2">
@@ -23,7 +38,7 @@ function LoginFormPlaceholder() {
 			</div>
 			<noscript>
 				<p role="alert" className="mt-3 text-sm text-destructive">
-					登录需要启用 JavaScript。
+					{t("登录需要启用 JavaScript。", "Sign-in requires JavaScript.")}
 				</p>
 			</noscript>
 		</div>
@@ -31,8 +46,9 @@ function LoginFormPlaceholder() {
 }
 
 export default function LoginPage() {
+	const t = useInterfaceText();
 	const router = useRouter();
-	const [error, setError] = useState<string | null>(null);
+	const [error, setError] = useState<keyof typeof ERROR_COPY | null>(null);
 	const [submitting, setSubmitting] = useState(false);
 	const [ready, setReady] = useState(false);
 	useEffect(() => setReady(true), []);
@@ -55,10 +71,10 @@ export default function LoginPage() {
 			if (!response.ok) {
 				setError(
 					response.status === 401
-						? "邮箱或密码不正确"
+						? "credentials"
 						: response.status === 429
-							? "登录尝试过多，请稍后再试"
-							: "登录服务暂时不可用",
+							? "rate_limit"
+							: "unavailable",
 				);
 				return;
 			}
@@ -68,7 +84,7 @@ export default function LoginPage() {
 			router.replace(identity.mustChangePassword ? "/change-password" : "/app");
 			router.refresh();
 		} catch {
-			setError("网络连接异常，请稍后重试");
+			setError("network");
 		} finally {
 			setSubmitting(false);
 		}
@@ -77,9 +93,14 @@ export default function LoginPage() {
 	return (
 		<AuthPageShell>
 			<div className="space-y-2">
-				<h1 className="text-2xl font-semibold leading-8">登录 UnoRAG</h1>
+				<h1 className="text-2xl font-semibold leading-8">
+					{t("登录 UnoRAG", "Sign in to UnoRAG")}
+				</h1>
 				<p className="text-sm leading-6 text-muted-foreground">
-					使用你的工作区账号登录。
+					{t(
+						"使用你的工作区账号登录。",
+						"Use your workspace account to sign in.",
+					)}
 				</p>
 			</div>
 			{/* Password managers may insert sibling controls before hydration. */}
@@ -93,7 +114,7 @@ export default function LoginPage() {
 					aria-busy={submitting}
 				>
 					<div className="space-y-2">
-						<Label htmlFor="email">邮箱</Label>
+						<Label htmlFor="email">{t("邮箱", "Email")}</Label>
 						<Input
 							id="email"
 							name="email"
@@ -101,21 +122,21 @@ export default function LoginPage() {
 							autoComplete="username"
 							placeholder="admin@unorag.local"
 							className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
-							aria-invalid={error === "邮箱或密码不正确" || undefined}
+							aria-invalid={error === "credentials" || undefined}
 							aria-describedby={error ? "login-error" : undefined}
 							disabled={submitting}
 							required
 						/>
 					</div>
 					<div className="space-y-2">
-						<Label htmlFor="password">密码</Label>
+						<Label htmlFor="password">{t("密码", "Password")}</Label>
 						<Input
 							id="password"
 							name="password"
 							type="password"
 							autoComplete="current-password"
 							className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
-							aria-invalid={error === "邮箱或密码不正确" || undefined}
+							aria-invalid={error === "credentials" || undefined}
 							aria-describedby={error ? "login-error" : undefined}
 							disabled={submitting}
 							required
@@ -128,7 +149,7 @@ export default function LoginPage() {
 								className="text-sm leading-6 text-destructive"
 								role="alert"
 							>
-								{error}
+								{t(ERROR_COPY[error][0], ERROR_COPY[error][1])}
 							</p>
 						) : null}
 					</div>
@@ -137,25 +158,27 @@ export default function LoginPage() {
 						type="submit"
 						disabled={!ready || submitting}
 					>
-						{submitting ? "正在登录..." : "登录"}
+						{submitting
+							? t("正在登录...", "Signing in...")
+							: t("登录", "Sign in")}
 					</Button>
 				</form>
 			)}
 			<nav
-				aria-label="其他登录方式"
+				aria-label={t("其他登录方式", "Other sign-in options")}
 				className="flex flex-wrap justify-between gap-x-4 gap-y-2 border-t pt-4 text-sm"
 			>
 				<Link
 					className="inline-flex min-h-11 items-center rounded-md text-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
 					href="/account-access?purpose=login"
 				>
-					使用邮箱链接登录
+					{t("使用邮箱链接登录", "Sign in with an email link")}
 				</Link>
 				<Link
 					className="inline-flex min-h-11 items-center rounded-md text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
 					href="/account-access?purpose=reset"
 				>
-					忘记密码
+					{t("忘记密码", "Forgot password")}
 				</Link>
 			</nav>
 		</AuthPageShell>

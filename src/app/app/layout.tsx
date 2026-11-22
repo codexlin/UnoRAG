@@ -9,6 +9,8 @@ import { QueryProvider } from "@/components/app/query-provider";
 import { SessionProvider } from "@/components/app/session-provider";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { interfaceText } from "@/lib/i18n/locale";
+import { getRequestLanguage } from "@/lib/i18n/request-locale";
 import { resolveSessionCookieHeader } from "@/lib/server/auth/session";
 import type { SessionIdentity } from "@/lib/session-types";
 
@@ -21,6 +23,7 @@ export default async function AppLayout({
 	const identity = await resolveSessionCookieHeader(cookieStore.toString());
 	if (!identity) redirect("/login");
 	if (identity.mustChangePassword) redirect("/change-password");
+	const t = interfaceText((await getRequestLanguage()).locale);
 
 	const session: SessionIdentity = {
 		tenantId: identity.tenantId,
@@ -56,7 +59,7 @@ export default async function AppLayout({
 									href="#workspace-content"
 									className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:rounded-md focus:bg-background focus:px-4 focus:py-3 focus:text-sm focus:text-foreground focus:outline-2 focus:outline-ring"
 								>
-									跳至主要内容
+									{t("跳至主要内容", "Skip to main content")}
 								</a>
 								<AppSidebar />
 								<SidebarInset className="min-h-0 overflow-hidden bg-transparent">

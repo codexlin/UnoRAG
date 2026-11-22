@@ -1,6 +1,6 @@
 import { ChevronRight } from "lucide-react";
-
 import type { ApiDocument } from "@/lib/api";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import {
 	formatParserReportView,
 	PARSE_DEGRADED_REINDEX_HINT,
@@ -58,6 +58,7 @@ export function ParserReportCard({
 	report: ApiDocument["parser_report"];
 	parseStatus?: ApiDocument["parse_status"];
 }) {
+	const t = useInterfaceText();
 	const reportView = formatParserReportView(report);
 	const status = parseStatus ?? null;
 	const parser = status?.parser_label || report?.parser;
@@ -66,20 +67,28 @@ export function ParserReportCard({
 			<div className="flex flex-wrap items-center gap-2">
 				<p className="text-xs text-muted-foreground">{reportView.title}</p>
 				{reportView.degraded ? (
-					<span className="text-xs text-survey">降级处理</span>
+					<span className="text-xs text-survey">
+						{t("降级处理", "Parsing fallback")}
+					</span>
 				) : null}
 			</div>
 			{parser ? (
-				<p className="text-sm leading-relaxed">实际解析器：{parser}</p>
+				<p className="text-sm leading-relaxed">
+					{t("实际解析器：", "Parser:")}
+					{parser}
+				</p>
 			) : null}
 			{status?.external_processing != null ? (
 				<p className="text-sm text-muted-foreground">
-					{status.external_processing === true ? "已出域处理" : "未出域"}
+					{status.external_processing === true
+						? t("已出域处理", "Processed externally")
+						: t("未出域", "Processed locally")}
 				</p>
 			) : null}
 			{status?.task_status ? (
 				<p className="text-sm text-muted-foreground">
-					任务状态：{status.task_status}
+					{t("任务状态：", "Job status:")}
+					{status.task_status}
 				</p>
 			) : null}
 			{status?.parse_quality_hint ? (
@@ -88,11 +97,15 @@ export function ParserReportCard({
 				</p>
 			) : null}
 			{status?.degrade_reason ? (
-				<p className="text-sm text-survey">降级原因：{status.degrade_reason}</p>
+				<p className="text-sm text-survey">
+					{t("降级原因：", "Fallback reason:")}
+					{status.degrade_reason}
+				</p>
 			) : null}
 			{status?.provider_task_id ? (
 				<p className="font-mono text-xs leading-relaxed text-muted-foreground">
-					任务 ID：{status.provider_task_id}
+					{t("任务 ID：", "Job ID:")}
+					{status.provider_task_id}
 				</p>
 			) : null}
 			{reportView.summaries.map((line) => (
@@ -100,7 +113,7 @@ export function ParserReportCard({
 					key={line}
 					className={cn(
 						"text-sm leading-relaxed",
-						line.startsWith("建议 OCR")
+						line.startsWith(t("建议 OCR", "OCR recommended"))
 							? "text-muted-foreground"
 							: "text-survey",
 					)}
@@ -120,7 +133,7 @@ export function ParserReportCard({
 							className="size-4 shrink-0 group-open:rotate-90"
 							aria-hidden
 						/>
-						技术详情
+						{t("技术详情", "Technical details")}
 					</summary>
 					<ul className="space-y-2 pb-2 text-muted-foreground">
 						{reportView.techDetails.map((detail) => (
@@ -133,7 +146,9 @@ export function ParserReportCard({
 			) : null}
 			{!report || (reportView.empty && !parser) ? (
 				<p className="text-sm text-muted-foreground">
-					{report ? "报告无额外提示" : "暂无解析报告"}
+					{report
+						? t("报告无额外提示", "No additional parser details")
+						: t("暂无解析报告", "No parser report")}
 				</p>
 			) : null}
 		</div>

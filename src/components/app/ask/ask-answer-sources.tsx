@@ -13,6 +13,7 @@ import {
 	TraceTitle,
 } from "@/components/ui/trace";
 import { formatDateTime } from "@/lib/format";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import type { UiCitation } from "@/lib/ui-types";
 
 export function AskAnswerSources({
@@ -26,9 +27,13 @@ export function AskAnswerSources({
 	activeCitationTurnId: string | null;
 	onOpenCitation: (citation: UiCitation, turnId: string) => void;
 }) {
+	const t = useInterfaceText();
 	if (turn.citations.length === 0) return null;
 	return (
-		<section className="border-t border-border/60 pt-1" aria-label="回答依据">
+		<section
+			className="border-t border-border/60 pt-1"
+			aria-label={t("回答依据", "Answer evidence")}
+		>
 			<Trace>
 				<TraceCollapsible>
 					<TraceCollapsibleTrigger className="min-h-11">
@@ -37,7 +42,8 @@ export function AskAnswerSources({
 								<Files className="size-4" aria-hidden />
 							</TraceIcon>
 							<TraceTitle className="whitespace-normal [overflow-wrap:anywhere]">
-								回答依据 · {turn.citations.length} 条
+								{t("回答依据 ·", "Answer evidence ·")} {turn.citations.length}{" "}
+								{t("条", "sources")}
 							</TraceTitle>
 						</TraceLine>
 					</TraceCollapsibleTrigger>
@@ -59,7 +65,7 @@ export function AskAnswerSources({
 						</ul>
 						{turn.completedAt ? (
 							<p className="pb-2 text-xs text-muted-foreground">
-								完成于 {formatDateTime(turn.completedAt)}
+								{t("完成于", "Completed at")} {formatDateTime(turn.completedAt)}
 							</p>
 						) : null}
 					</TraceCollapsibleContent>

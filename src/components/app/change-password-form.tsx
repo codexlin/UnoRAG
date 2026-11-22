@@ -2,12 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useInterfaceText } from "@/lib/i18n/provider";
 
 export function ChangePasswordForm({ email }: { email: string | null }) {
+	const t = useInterfaceText();
 	const router = useRouter();
 	const [error, setError] = useState<string | null>(null);
 	const [errorField, setErrorField] = useState<
@@ -39,19 +40,40 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 			if (input instanceof HTMLElement) input.focus();
 		}
 		if (newPassword.length < 7) {
-			rejectField("new_password", "新密码至少需要 7 个字符");
+			rejectField(
+				"new_password",
+				t(
+					"新密码至少需要 7 个字符",
+					"Use at least 7 characters for the new password.",
+				),
+			);
 			return;
 		}
 		if (newPassword.length > 256) {
-			rejectField("new_password", "新密码最多允许 256 个字符");
+			rejectField(
+				"new_password",
+				t(
+					"新密码最多允许 256 个字符",
+					"Use at most 256 characters for the new password.",
+				),
+			);
 			return;
 		}
 		if (!/[a-z]/.test(newPassword) || !/[A-Z]/.test(newPassword)) {
-			rejectField("new_password", "新密码必须同时包含大写和小写字母");
+			rejectField(
+				"new_password",
+				t(
+					"新密码必须同时包含大写和小写字母",
+					"Use uppercase and lowercase letters in the new password.",
+				),
+			);
 			return;
 		}
 		if (newPassword !== confirmation) {
-			rejectField("password_confirmation", "两次输入的新密码不一致");
+			rejectField(
+				"password_confirmation",
+				t("两次输入的新密码不一致", "The new passwords don't match."),
+			);
 			return;
 		}
 
@@ -70,18 +92,33 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					detail?: string;
 				} | null;
 				const messages: Record<string, string> = {
-					"current password is incorrect": "当前密码不正确",
-					"password must be at least 7 characters": "新密码至少需要 7 个字符",
-					"password must contain uppercase and lowercase letters":
+					"current password is incorrect": t(
+						"当前密码不正确",
+						"Incorrect current password.",
+					),
+					"password must be at least 7 characters": t(
+						"新密码至少需要 7 个字符",
+						"Use at least 7 characters for the new password.",
+					),
+					"password must contain uppercase and lowercase letters": t(
 						"新密码必须同时包含大写和小写字母",
-					"password must be at most 256 characters":
+						"Use uppercase and lowercase letters in the new password.",
+					),
+					"password must be at most 256 characters": t(
 						"新密码最多允许 256 个字符",
-					"new password must differ from the current password":
+						"Use at most 256 characters for the new password.",
+					),
+					"new password must differ from the current password": t(
 						"新密码不能与当前密码相同",
+						"Choose a password different from your current password.",
+					),
 				};
 				setError(
 					(payload?.detail && messages[payload.detail]) ||
-						"密码修改失败，请稍后重试",
+						t(
+							"密码修改失败，请稍后重试",
+							"Couldn't change the password. Try again later.",
+						),
 				);
 				if (payload?.detail === "current password is incorrect") {
 					setErrorField("current_password");
@@ -94,7 +131,12 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 			router.replace("/app");
 			router.refresh();
 		} catch {
-			setError("网络连接异常，请稍后重试；若密码已更新，请使用新密码登录");
+			setError(
+				t(
+					"网络连接异常，请稍后重试；若密码已更新，请使用新密码登录",
+					"Couldn't connect. Try again, or sign in with your new password if it was updated.",
+				),
+			);
 		} finally {
 			setSubmitting(false);
 		}
@@ -108,13 +150,20 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 		try {
 			const response = await fetch("/api/auth/session", { method: "DELETE" });
 			if (!response.ok) {
-				setError("退出登录失败，请稍后重试");
+				setError(
+					t("退出登录失败，请稍后重试", "Couldn't sign out. Try again later."),
+				);
 				return;
 			}
 			router.replace("/login");
 			router.refresh();
 		} catch {
-			setError("网络连接异常，尚未确认退出，请重试");
+			setError(
+				t(
+					"网络连接异常，尚未确认退出，请重试",
+					"Connection failed. Sign-out was not confirmed. Try again.",
+				),
+			);
 		} finally {
 			setSigningOut(false);
 		}
@@ -133,7 +182,9 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 				</p>
 			) : null}
 			<div className="space-y-2">
-				<Label htmlFor="current_password">初始密码</Label>
+				<Label htmlFor="current_password">
+					{t("初始密码", "Initial password")}
+				</Label>
 				<Input
 					id="current_password"
 					name="current_password"
@@ -162,7 +213,7 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 				</div>
 			</div>
 			<div className="space-y-2">
-				<Label htmlFor="new_password">新密码</Label>
+				<Label htmlFor="new_password">{t("新密码", "New password")}</Label>
 				<Input
 					id="new_password"
 					name="new_password"
@@ -184,7 +235,10 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					id="new-password-hint"
 					className="text-xs leading-5 text-muted-foreground"
 				>
-					至少 7 个字符，并同时包含大写和小写字母。
+					{t(
+						"至少 7 个字符，并同时包含大写和小写字母。",
+						"Use at least 7 characters, with uppercase and lowercase letters.",
+					)}
 				</p>
 				<div className="min-h-6">
 					{errorField === "new_password" && error ? (
@@ -199,7 +253,9 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 				</div>
 			</div>
 			<div className="space-y-2">
-				<Label htmlFor="password_confirmation">确认新密码</Label>
+				<Label htmlFor="password_confirmation">
+					{t("确认新密码", "Confirm new password")}
+				</Label>
 				<Input
 					id="password_confirmation"
 					name="password_confirmation"
@@ -237,7 +293,9 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 				) : null}
 			</div>
 			<Button className="h-11 w-full" type="submit" disabled={!ready || busy}>
-				{submitting ? "正在保存..." : "保存并进入 UnoRAG"}
+				{submitting
+					? t("正在保存...", "Saving...")
+					: t("保存并进入 UnoRAG", "Save and enter UnoRAG")}
 			</Button>
 			<Button
 				className="h-11 w-full"
@@ -246,7 +304,9 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 				onClick={signOut}
 				disabled={!ready || busy}
 			>
-				{signingOut ? "正在退出..." : "退出登录"}
+				{signingOut
+					? t("正在退出...", "Signing out...")
+					: t("退出登录", "Sign out")}
 			</Button>
 		</form>
 	);

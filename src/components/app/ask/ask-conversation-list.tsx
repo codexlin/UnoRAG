@@ -2,7 +2,6 @@
 
 import { CircleAlert, CircleHelp, CircleStop } from "lucide-react";
 import { motion } from "motion/react";
-
 import { AskAnswerActions } from "@/components/app/ask/ask-answer-actions";
 import { AskAnswerSources } from "@/components/app/ask/ask-answer-sources";
 import type { LocalTurn } from "@/components/app/ask/ask-turn-state";
@@ -17,6 +16,7 @@ import {
 import { MessageScrollerItem } from "@/components/ui/message-scroller";
 import type { ApiRetrievalDebug } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import type { UiCitation } from "@/lib/ui-types";
 
 type AskConversationListProps = {
@@ -36,16 +36,29 @@ type AskConversationListProps = {
 };
 
 function RetrievalNotice({ turn }: { turn: LocalTurn }) {
+	const t = useInterfaceText();
 	const notices: string[] = [];
 	if (turn.hybridFailed) {
 		notices.push(
 			turn.retrievalMode === "dense" || !turn.usedHybrid
-				? "hybrid 失败，已回退 dense"
-				: "hybrid 失败",
+				? t(
+						"hybrid 失败，已回退 dense",
+						"Hybrid search failed; using dense search",
+					)
+				: t("hybrid 失败", "Hybrid search failed"),
 		);
 	}
-	if (turn.rerankFailed) notices.push("rerank 失败，已跳过重排");
-	if (turn.persistError) notices.push(`归档写入失败：${turn.persistError}`);
+	if (turn.rerankFailed)
+		notices.push(
+			t("rerank 失败，已跳过重排", "Reranking failed and was skipped"),
+		);
+	if (turn.persistError)
+		notices.push(
+			t(
+				`归档写入失败：${turn.persistError}`,
+				`Couldn't archive: ${turn.persistError}`,
+			),
+		);
 	if (notices.length === 0) return null;
 
 	return (
@@ -74,6 +87,7 @@ export function AskConversationList({
 	reduceMotion,
 	turns,
 }: AskConversationListProps) {
+	const t = useInterfaceText();
 	return (
 		<>
 			{turns.map((turn, turnIndex) => (
@@ -96,7 +110,9 @@ export function AskConversationList({
 							<Message align="end">
 								<MessageContent>
 									<MessageHeader className="justify-end gap-3">
-										<span>提问 {turnIndex + 1}</span>
+										<span>
+											{t("提问", "Question")} {turnIndex + 1}
+										</span>
 										{turn.startedAt ? (
 											<span>{formatDateTime(turn.startedAt)}</span>
 										) : null}
@@ -113,7 +129,10 @@ export function AskConversationList({
 								<MessageContent className="gap-3">
 									<article
 										className="min-w-0 border-t border-border/60 pt-4"
-										aria-label={`回答 ${turnIndex + 1}`}
+										aria-label={t(
+											`回答 ${turnIndex + 1}`,
+											`Answer ${turnIndex + 1}`,
+										)}
 									>
 										<div className="flex flex-wrap items-center justify-between gap-2">
 											<p className="flex min-h-7 items-center gap-2 text-sm font-medium text-foreground">
@@ -135,14 +154,14 @@ export function AskConversationList({
 												) : null}
 												<span>
 													{turn.error
-														? "请求失败"
+														? t("请求失败", "Request failed")
 														: turn.refused
 															? turn.refuseReason === "weak_match"
-																? "证据不足"
-																: "未能回答"
+																? t("证据不足", "Insufficient evidence")
+																: t("未能回答", "No answer")
 															: turn.cancelled
-																? "已停止"
-																: "回答"}
+																? t("已停止", "Stopped")
+																: t("回答", "Answer")}
 												</span>
 											</p>
 											{turn.pending ? (
@@ -150,7 +169,7 @@ export function AskConversationList({
 													role="status"
 													className="text-xs text-muted-foreground"
 												>
-													处理中…
+													{t("处理中…", "Processing…")}
 												</span>
 											) : null}
 										</div>
@@ -161,7 +180,10 @@ export function AskConversationList({
 												role="status"
 											>
 												<span className="inline-block size-1.5 animate-pulse rounded-full bg-evidence" />
-												正在检索并整理引用来源…
+												{t(
+													"正在检索并整理引用来源…",
+													"Retrieving evidence and organizing sources…",
+												)}
 											</p>
 										) : null}
 										{turn.error ? (
@@ -174,7 +196,10 @@ export function AskConversationList({
 										) : null}
 										{turn.cancelled && !turn.answer ? (
 											<p className="mt-2 text-sm text-muted-foreground">
-												已停止生成。可重试本问题，或继续提问。
+												{t(
+													"已停止生成。可重试本问题，或继续提问。",
+													"Generation stopped. Retry this question or ask another.",
+												)}
 											</p>
 										) : null}
 										<RetrievalNotice turn={turn} />
@@ -189,12 +214,18 @@ export function AskConversationList({
 										) : null}
 										{turn.cancelled && turn.answer ? (
 											<p className="mt-2 text-xs text-muted-foreground">
-												生成已中止 · 保留已输出内容
+												{t(
+													"生成已中止 · 保留已输出内容",
+													"Generation stopped · partial answer kept",
+												)}
 											</p>
 										) : null}
 										{turn.pending && turn.evidenceReady && !turn.answer ? (
 											<p className="mt-2 text-sm text-muted-foreground">
-												引用来源已就绪，正在生成回答…
+												{t(
+													"引用来源已就绪，正在生成回答…",
+													"Sources found. Generating an answer…",
+												)}
 												<span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-evidence/70 align-text-bottom" />
 											</p>
 										) : null}

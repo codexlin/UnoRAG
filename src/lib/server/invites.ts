@@ -17,6 +17,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from "@/db/schema";
+import type { Locale } from "@/lib/i18n/locale";
 import { logger } from "@/lib/observability";
 import {
 	hashPasswordAsync,
@@ -215,6 +216,7 @@ export async function createWorkspaceInvite(input: {
 	role: string;
 	origin: string;
 	sendEmail?: boolean;
+	locale?: Locale;
 }): Promise<
 	| {
 			ok: true;
@@ -374,6 +376,7 @@ export async function createWorkspaceInvite(input: {
 				inviteUrl,
 				workspaceName: workspace.name,
 				role,
+				locale: input.locale,
 			});
 		} catch {
 			emailDelivery = { sent: false, provider: "none", reason: "send_failed" };

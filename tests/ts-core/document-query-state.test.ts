@@ -14,6 +14,7 @@ import {
 	hasFinishedDocumentDeletion,
 	seedAcceptedDocumentDeletion,
 } from "../../src/lib/document-query-state";
+import { interfaceText } from "../../src/lib/i18n/locale";
 import { queryKeys } from "../../src/lib/query-keys";
 import { fetchFreshQuery } from "../../src/lib/query-refresh";
 
@@ -479,7 +480,7 @@ test("delete actions prevent duplicate commands and permit manager retry without
 			false,
 		);
 		assert.equal(
-			buildDetailActions(caps, row, context)
+			buildDetailActions(caps, row, context, interfaceText("en"))
 				.find((action) => action.id === "delete")
 				?.disabled?.(row, false),
 			true,

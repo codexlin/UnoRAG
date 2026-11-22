@@ -1,5 +1,7 @@
 import "server-only";
 
+import { DEFAULT_LOCALE, interfaceText, type Locale } from "@/lib/i18n/locale";
+
 export type EmailTemplate = { subject: string; html: string; text: string };
 export type AccountEmailPurpose = "login" | "reset";
 
@@ -57,11 +59,16 @@ function renderEmail(input: {
 	actionLabel: string;
 	actionUrl: string;
 	footerText: string;
+	locale: Locale;
 }): EmailTemplate {
 	const url = validateActionUrl(input.actionUrl);
-	const helper = "如果按钮无法打开，请复制下面的完整链接到浏览器地址栏。";
+	const t = interfaceText(input.locale);
+	const helper = t(
+		"如果按钮无法打开，请复制下面的完整链接到浏览器地址栏。",
+		"If the button doesn't open, copy the full link below into your browser.",
+	);
 	const html = `<!doctype html>
-<html lang="zh-CN">
+<html lang="${input.locale}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(input.subject)}</title></head>
 <body style="margin:0;padding:0;background-color:#f3f6f6;color:#243634;font-family:Arial,'Microsoft YaHei',sans-serif;letter-spacing:0;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:24px 12px;">
@@ -106,24 +113,48 @@ function renderEmail(input: {
 export function renderAccountEmail(input: {
 	url: string;
 	purpose: AccountEmailPurpose;
+	locale?: Locale;
 }): EmailTemplate {
 	if (input.purpose !== "login" && input.purpose !== "reset") {
 		throw new Error("invalid_email_purpose");
 	}
 	const login = input.purpose === "login";
+	const locale = input.locale ?? DEFAULT_LOCALE;
+	const t = interfaceText(locale);
 	return renderEmail({
-		subject: login ? "你的 UnoRAG 登录链接" : "重置你的 UnoRAG 密码",
-		heading: login ? "登录 UnoRAG" : "重置 UnoRAG 密码",
+		locale,
+		subject: login
+			? t("你的 UnoRAG 登录链接", "Your UnoRAG sign-in link")
+			: t("重置你的 UnoRAG 密码", "Reset your UnoRAG password"),
+		heading: login
+			? t("登录 UnoRAG", "Sign in to UnoRAG")
+			: t("重置 UnoRAG 密码", "Reset your UnoRAG password"),
 		primaryText: login
-			? "我们收到了你的登录请求。请点击下方按钮继续登录 UnoRAG。"
-			: "我们收到了重置密码的请求。请点击下方按钮为你的 UnoRAG 账户设置新密码。",
-		secondaryText:
+			? t(
+					"我们收到了你的登录请求。请点击下方按钮继续登录 UnoRAG。",
+					"We received a sign-in request. Use the button below to sign in to UnoRAG.",
+				)
+			: t(
+					"我们收到了重置密码的请求。请点击下方按钮为你的 UnoRAG 账户设置新密码。",
+					"We received a password reset request. Use the button below to set a new password.",
+				),
+		secondaryText: t(
 			"该链接在 15 分钟内有效，且只能使用一次。请勿转发或与他人分享。",
-		actionLabel: login ? "登录 UnoRAG" : "重置密码",
+			"This link expires in 15 minutes and can only be used once. Do not share or forward it.",
+		),
+		actionLabel: login
+			? t("登录 UnoRAG", "Sign in to UnoRAG")
+			: t("重置密码", "Reset password"),
 		actionUrl: input.url,
 		footerText: login
-			? "若非本人发起登录请求，请忽略本邮件。"
-			: "若非本人请求重置密码，请忽略本邮件，你的现有密码不会更改。",
+			? t(
+					"若非本人发起登录请求，请忽略本邮件。",
+					"If you didn't request this link, ignore this email.",
+				)
+			: t(
+					"若非本人请求重置密码，请忽略本邮件，你的现有密码不会更改。",
+					"If you didn't request a password reset, ignore this email. Your current password will not change.",
+				),
 	});
 }
 
@@ -131,24 +162,39 @@ export function renderInviteEmail(input: {
 	inviteUrl: string;
 	workspaceName: string;
 	role: string;
+	locale?: Locale;
 }): EmailTemplate {
+	const locale = input.locale ?? DEFAULT_LOCALE;
+	const t = interfaceText(locale);
 	const roleLabels: Record<string, string> = {
-		viewer: "查看者",
-		editor: "编辑者",
-		admin: "管理员",
-		owner: "所有者",
+		viewer: t("查看者", "Viewer"),
+		editor: t("编辑者", "Editor"),
+		admin: t("管理员", "Administrator"),
+		owner: t("所有者", "Owner"),
 	};
 	const roleLabel = Object.hasOwn(roleLabels, input.role)
 		? roleLabels[input.role]
 		: input.role;
 	return renderEmail({
-		subject: `邀请加入 ${input.workspaceName} · UnoRAG`,
-		heading: "加入 UnoRAG 工作区",
-		primaryText: `你被邀请以「${roleLabel}」加入工作区「${input.workspaceName}」。`,
-		secondaryText:
+		locale,
+		subject: t(
+			`邀请加入 ${input.workspaceName} · UnoRAG`,
+			`Invitation to join ${input.workspaceName} · UnoRAG`,
+		),
+		heading: t("加入 UnoRAG 工作区", "Join a UnoRAG workspace"),
+		primaryText: t(
+			`你被邀请以「${roleLabel}」加入工作区「${input.workspaceName}」。`,
+			`You've been invited to join “${input.workspaceName}” as ${roleLabel}.`,
+		),
+		secondaryText: t(
 			"该邀请链接在 7 天内有效，且只能使用一次，请勿转发。首次使用请设置密码；已有账号请验证原密码后接受邀请。",
-		actionLabel: "接受邀请",
+			"This invitation expires in 7 days and can only be used once. Do not forward it. New users choose a password; existing users confirm their current password.",
+		),
+		actionLabel: t("接受邀请", "Accept invitation"),
 		actionUrl: input.inviteUrl,
-		footerText: "如果你不打算加入该工作区或不认识邀请人，请忽略本邮件。",
+		footerText: t(
+			"如果你不打算加入该工作区或不认识邀请人，请忽略本邮件。",
+			"Ignore this email if you don't want to join or don't recognize the invitation.",
+		),
 	});
 }

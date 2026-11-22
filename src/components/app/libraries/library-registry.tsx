@@ -2,13 +2,13 @@
 
 import { PanelLeftClose, PanelLeftOpen, Plus, Search } from "lucide-react";
 import { useState } from "react";
-
 import { Can } from "@/components/app/can";
 import { LibraryCombobox } from "@/components/app/library-combobox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ApiLibrary } from "@/lib/api";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
 type LibraryRegistryProps = {
@@ -49,6 +49,7 @@ export function LibraryRegistrySidebar({
 	onSelect,
 	onCreate,
 }: LibraryRegistryProps) {
+	const t = useInterfaceText();
 	const [query, setQuery] = useState("");
 	const [collapsed, setCollapsed] = useState(false);
 	const normalized = query.trim().toLocaleLowerCase();
@@ -66,15 +67,15 @@ export function LibraryRegistrySidebar({
 	if (collapsed) {
 		return (
 			<aside
-				aria-label="知识库导航"
+				aria-label={t("知识库导航", "Library navigation")}
 				className="hidden w-12 shrink-0 flex-col items-center border-r bg-background pt-3 md:flex"
 			>
 				<Button
 					variant="ghost"
 					size="icon"
 					className="size-11"
-					aria-label="展开知识库导航"
-					title="展开知识库导航"
+					aria-label={t("展开知识库导航", "Expand library navigation")}
+					title={t("展开知识库导航", "Expand library navigation")}
 					onClick={() => setCollapsed(false)}
 				>
 					<PanelLeftOpen aria-hidden />
@@ -85,18 +86,20 @@ export function LibraryRegistrySidebar({
 
 	return (
 		<aside
-			aria-label="知识库导航"
+			aria-label={t("知识库导航", "Library navigation")}
 			className="hidden w-52 min-w-0 max-w-[35%] shrink-0 flex-col border-r bg-background lg:w-56 md:flex"
 		>
 			<div className="px-3 pt-3 pb-4">
 				<div className="flex items-center justify-between gap-2">
-					<h2 className="pl-1 text-sm font-medium">知识库</h2>
+					<h2 className="pl-1 text-sm font-medium">
+						{t("知识库", "Libraries")}
+					</h2>
 					<Button
 						variant="ghost"
 						size="icon"
 						className="size-11 text-muted-foreground"
-						aria-label="收起知识库导航"
-						title="收起知识库导航"
+						aria-label={t("收起知识库导航", "Collapse library navigation")}
+						title={t("收起知识库导航", "Collapse library navigation")}
 						onClick={() => setCollapsed(true)}
 					>
 						<PanelLeftClose aria-hidden />
@@ -104,8 +107,14 @@ export function LibraryRegistrySidebar({
 				</div>
 				<p className="px-1 text-xs text-muted-foreground">
 					{countKnown
-						? `${libraries.length} 个知识库 · ${documentCount} 份文档`
-						: "知识库与文档数量待确认"}
+						? t(
+								`${libraries.length} 个知识库 · ${documentCount} 份文档`,
+								`${libraries.length} libraries · ${documentCount} documents`,
+							)
+						: t(
+								"知识库与文档数量待确认",
+								"Library and document totals unavailable",
+							)}
 				</p>
 				<div className="relative mt-4">
 					<Search
@@ -113,8 +122,8 @@ export function LibraryRegistrySidebar({
 						className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
 					/>
 					<Input
-						aria-label="搜索知识库"
-						placeholder="搜索知识库"
+						aria-label={t("搜索知识库", "Search libraries")}
+						placeholder={t("搜索知识库", "Search libraries")}
 						className="h-9 bg-muted/40 pl-8 text-sm"
 						value={query}
 						onChange={(event) => setQuery(event.target.value)}
@@ -125,22 +134,22 @@ export function LibraryRegistrySidebar({
 				<ul className="flex flex-col gap-0.5 p-2">
 					{loading && libraries.length === 0 ? (
 						<li className="px-3 py-6 text-sm text-muted-foreground">
-							<span role="status">正在加载</span>
+							<span role="status">{t("正在加载", "Loading")}</span>
 						</li>
 					) : null}
 					{libraries.length === 0 && !loading && error ? (
 						<li className="px-3 py-6 text-sm text-muted-foreground">
-							知识库列表未能加载
+							{t("知识库列表未能加载", "Couldn't load libraries")}
 						</li>
 					) : null}
 					{libraries.length === 0 && !loading && !error ? (
 						<li className="px-2 py-6 text-center text-sm text-muted-foreground">
-							还没有知识库
+							{t("还没有知识库", "No libraries yet")}
 						</li>
 					) : null}
 					{visibleLibraries.length === 0 && libraries.length > 0 ? (
 						<li className="px-3 py-6 text-sm text-muted-foreground">
-							没有匹配的知识库
+							{t("没有匹配的知识库", "No matching libraries")}
 						</li>
 					) : null}
 					{visibleLibraries.map((library) => (
@@ -183,12 +192,18 @@ export function LibraryRegistrySidebar({
 										)}
 									>
 										{library.status === "deleting"
-											? "删除中"
+											? t("删除中", "Deleting")
 											: library.status === "indexing"
-												? `${library.ready_count}/${library.doc_count} 可用 · 处理中`
+												? t(
+														`${library.ready_count}/${library.doc_count} 可用 · 处理中`,
+														`${library.ready_count}/${library.doc_count} ready · processing`,
+													)
 												: library.status === "empty"
-													? "等待资料"
-													: `${library.ready_count}/${library.doc_count} 可检索`}
+													? t("等待资料", "Waiting for documents")
+													: t(
+															`${library.ready_count}/${library.doc_count} 可检索`,
+															`${library.ready_count}/${library.doc_count} searchable`,
+														)}
 									</span>
 								</span>
 							</button>
@@ -205,7 +220,7 @@ export function LibraryRegistrySidebar({
 						onClick={onCreate}
 					>
 						<Plus data-icon="inline-start" />
-						新建知识库
+						{t("新建知识库", "Create library")}
 					</Button>
 				</div>
 			</Can>
@@ -220,6 +235,7 @@ export function MobileLibraryPicker({
 	onSelect,
 	onCreate,
 }: Omit<LibraryRegistryProps, "loading" | "error">) {
+	const t = useInterfaceText();
 	return (
 		<div className="border-b border-border/70 bg-card px-4 py-3 md:hidden">
 			<div className="flex items-end gap-2">
@@ -228,7 +244,7 @@ export function MobileLibraryPicker({
 					value={selectedId}
 					onValueChange={onSelect}
 					className="min-w-0 flex-1"
-					label="当前知识库"
+					label={t("当前知识库", "Current library")}
 				/>
 				<Can cap="manageLibraries">
 					<Button
@@ -237,10 +253,10 @@ export function MobileLibraryPicker({
 						className="min-h-11 min-w-11 shrink-0 rounded-md"
 						disabled={saving}
 						onClick={onCreate}
-						aria-label="新建知识库"
+						aria-label={t("新建知识库", "Create library")}
 					>
 						<Plus aria-hidden="true" />
-						{libraries.length === 0 ? "新建" : null}
+						{libraries.length === 0 ? t("新建", "New") : null}
 					</Button>
 				</Can>
 			</div>

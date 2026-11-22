@@ -2,6 +2,7 @@
 
 import { ArrowUpRight, Menu } from "lucide-react";
 import Link from "next/link";
+import { LanguageMenu } from "@/components/app/language-menu";
 import { ThemeToggle } from "@/components/app/theme-toggle";
 import { UnoRAGLogo } from "@/components/app/unorag-logo";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -13,39 +14,41 @@ import {
 	SheetTitle,
 	SheetTrigger,
 } from "@/components/ui/sheet";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
 const links = [
-	["产品", "#product"],
-	["可观测", "#observability"],
-	["私有部署", "#deployment"],
+	["产品", "Product", "#product"],
+	["可观测", "Observability", "#observability"],
+	["私有部署", "Self-hosting", "#deployment"],
 ] as const;
 
 export function LandingHeader() {
+	const t = useInterfaceText();
 	return (
 		<header className="border-b border-border bg-background">
 			<div className="landing-wrap flex h-16 items-center justify-between gap-3 sm:h-18">
 				<a href="#main-content" className="landing-skip">
-					跳至主要内容
+					{t("跳至主要内容", "Skip to main content")}
 				</a>
 				<Link
 					href="/"
-					aria-label="UnoRAG 首页"
+					aria-label={t("UnoRAG 首页", "UnoRAG home")}
 					className="shrink-0 rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
 				>
 					<UnoRAGLogo size="md" withWordmark />
 				</Link>
 				<nav
-					aria-label="主导航"
+					aria-label={t("主导航", "Main navigation")}
 					className="hidden items-center gap-8 text-sm text-muted-foreground md:flex"
 				>
-					{links.map(([label, href]) => (
+					{links.map(([zh, en, href]) => (
 						<a
 							key={href}
 							href={href}
 							className="landing-link inline-flex min-h-11 items-center"
 						>
-							{label}
+							{t(zh, en)}
 						</a>
 					))}
 					<a
@@ -59,6 +62,7 @@ export function LandingHeader() {
 					</a>
 				</nav>
 				<div className="flex items-center gap-1.5 sm:gap-3">
+					<LanguageMenu />
 					<ThemeToggle />
 					<Link
 						href="/app/ask"
@@ -67,7 +71,7 @@ export function LandingHeader() {
 							"hidden min-h-11 px-4 sm:inline-flex",
 						)}
 					>
-						进入工作台
+						{t("进入工作台", "Open workspace")}
 					</Link>
 					<Sheet>
 						<SheetTrigger
@@ -76,7 +80,7 @@ export function LandingHeader() {
 									variant="ghost"
 									size="icon"
 									className="size-11 md:hidden"
-									aria-label="打开导航"
+									aria-label={t("打开导航", "Open navigation")}
 								/>
 							}
 						>
@@ -89,8 +93,11 @@ export function LandingHeader() {
 							<SheetHeader className="border-b p-5">
 								<SheetTitle>UnoRAG</SheetTitle>
 							</SheetHeader>
-							<nav aria-label="手机导航" className="flex flex-col p-5">
-								{links.map(([label, href]) => (
+							<nav
+								aria-label={t("手机导航", "Mobile navigation")}
+								className="flex flex-col p-5"
+							>
+								{links.map(([zh, en, href]) => (
 									<SheetClose
 										key={href}
 										render={
@@ -100,7 +107,7 @@ export function LandingHeader() {
 											/>
 										}
 									>
-										{label}
+										{t(zh, en)}
 									</SheetClose>
 								))}
 								<SheetClose
@@ -111,7 +118,7 @@ export function LandingHeader() {
 										/>
 									}
 								>
-									进入工作台
+									{t("进入工作台", "Open workspace")}
 								</SheetClose>
 							</nav>
 						</SheetContent>

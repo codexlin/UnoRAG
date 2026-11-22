@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, Suspense, useEffect, useRef, useState } from "react";
-
 import { AuthPageShell } from "@/components/app/auth-page-shell";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useInterfaceText } from "@/lib/i18n/provider";
 
 type Preview = {
 	email: string;
@@ -19,6 +19,7 @@ type Preview = {
 };
 
 function InviteForm() {
+	const t = useInterfaceText();
 	const router = useRouter();
 	const [token, setToken] = useState<string | null>(null);
 	const initialized = useRef(false);
@@ -69,7 +70,7 @@ function InviteForm() {
 		setPreview(null);
 		setLoadError(null);
 		if (!token) {
-			setLoadError("缺少邀请链接");
+			setLoadError(t("缺少邀请链接", "Invitation link is missing."));
 			return;
 		}
 		const controller = new AbortController();
@@ -84,7 +85,12 @@ function InviteForm() {
 				if (controller.signal.aborted) return;
 				if (!response.ok) {
 					setLoadError(
-						response.status === 404 ? "邀请不存在或已失效" : "无法加载邀请",
+						response.status === 404
+							? t(
+									"邀请不存在或已失效",
+									"The invitation was not found or is no longer valid.",
+								)
+							: t("无法加载邀请", "Couldn't load the invitation."),
 					);
 					return;
 				}
@@ -93,19 +99,30 @@ function InviteForm() {
 				if (data.status !== "pending") {
 					setLoadError(
 						data.status === "expired"
-							? "邀请已过期，请联系管理员重新邀请"
-							: `邀请状态：${data.status}`,
+							? t(
+									"邀请已过期，请联系管理员重新邀请",
+									"The invitation has expired. Ask an administrator for a new link.",
+								)
+							: t(
+									`邀请状态：${data.status}`,
+									`Invitation status: ${data.status}`,
+								),
 					);
 					return;
 				}
 				setPreview(data);
 			} catch {
 				if (!controller.signal.aborted)
-					setLoadError("网络连接失败，请重新打开邀请链接重试");
+					setLoadError(
+						t(
+							"网络连接失败，请重新打开邀请链接重试",
+							"Couldn't connect. Reopen the invitation link and try again.",
+						),
+					);
 			}
 		})();
 		return () => controller.abort();
-	}, [token]);
+	}, [token, t]);
 
 	async function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
@@ -126,14 +143,21 @@ function InviteForm() {
 			!preview.existingAccount &&
 			(password.length < 7 || password.length > 256)
 		) {
-			rejectPassword("密码需要 7–256 个字符");
+			rejectPassword(
+				t("密码需要 7–256 个字符", "Use 7–256 characters for your password."),
+			);
 			return;
 		}
 		if (
 			!preview.existingAccount &&
 			(!/[a-z]/.test(password) || !/[A-Z]/.test(password))
 		) {
-			rejectPassword("密码必须同时包含大写和小写字母");
+			rejectPassword(
+				t(
+					"密码必须同时包含大写和小写字母",
+					"Use both uppercase and lowercase letters.",
+				),
+			);
 			return;
 		}
 		const attempt = new AbortController();
@@ -158,22 +182,53 @@ function InviteForm() {
 				const detail = await response.json().catch(() => null);
 				if (!isCurrent()) return;
 				const messages: Record<string, string> = {
-					"invalid password": "原密码不正确，请重试",
-					"local credentials required":
+					"invalid password": t(
+						"原密码不正确，请重试",
+						"Incorrect current password. Try again.",
+					),
+					"local credentials required": t(
 						"此账号不能使用本地密码接受邀请，请联系管理员",
-					"user is disabled": "账号已停用，请联系管理员",
-					"account is locked": "账号暂时锁定，请稍后重试",
-					"invite is not pending": "邀请已使用或已撤销，请联系管理员",
-					"invite expired": "邀请已过期，请联系管理员重新邀请",
-					"user is already a member": "你已是此工作区成员，请登录",
-					"password must be at least 7 characters": "密码至少需要 7 个字符",
-					"password must contain uppercase and lowercase letters":
+						"This account cannot accept an invitation with a local password. Contact your administrator.",
+					),
+					"user is disabled": t(
+						"账号已停用，请联系管理员",
+						"This account is disabled. Contact your administrator.",
+					),
+					"account is locked": t(
+						"账号暂时锁定，请稍后重试",
+						"This account is temporarily locked. Try again later.",
+					),
+					"invite is not pending": t(
+						"邀请已使用或已撤销，请联系管理员",
+						"This invitation was used or revoked. Contact your administrator.",
+					),
+					"invite expired": t(
+						"邀请已过期，请联系管理员重新邀请",
+						"The invitation has expired. Ask an administrator for a new link.",
+					),
+					"user is already a member": t(
+						"你已是此工作区成员，请登录",
+						"You already belong to this workspace. Please sign in.",
+					),
+					"password must be at least 7 characters": t(
+						"密码至少需要 7 个字符",
+						"Use at least 7 characters.",
+					),
+					"password must contain uppercase and lowercase letters": t(
 						"密码必须同时包含大写和小写字母",
-					"password must be at most 256 characters": "密码最多允许 256 个字符",
+						"Use both uppercase and lowercase letters.",
+					),
+					"password must be at most 256 characters": t(
+						"密码最多允许 256 个字符",
+						"Use at most 256 characters.",
+					),
 				};
 				setError(
 					(typeof detail?.detail === "string" && messages[detail.detail]) ||
-						"接受邀请失败，请稍后重试",
+						t(
+							"接受邀请失败，请稍后重试",
+							"Couldn't accept the invitation. Try again later.",
+						),
 				);
 				if (detail?.detail === "invalid password") {
 					setPasswordError(true);
@@ -186,7 +241,12 @@ function InviteForm() {
 			router.refresh();
 		} catch {
 			if (isCurrent())
-				setError("网络连接失败，请重试；若已加入工作区，可直接登录");
+				setError(
+					t(
+						"网络连接失败，请重试；若已加入工作区，可直接登录",
+						"Couldn't connect. Try again, or sign in if you already joined.",
+					),
+				);
 		} finally {
 			if (isCurrent()) {
 				submitAttempt.current = null;
@@ -198,10 +258,15 @@ function InviteForm() {
 	return (
 		<div className="space-y-8">
 			<div className="space-y-2">
-				<h1 className="text-2xl font-semibold leading-8">接受邀请</h1>
+				<h1 className="text-2xl font-semibold leading-8">
+					{t("接受邀请", "Accept invitation")}
+				</h1>
 				{preview ? (
 					<p className="text-sm leading-6 text-muted-foreground">
-						加入「{preview.workspaceName}」· 角色 {preview.role}
+						{t(
+							`加入「${preview.workspaceName}」· 角色 ${preview.role}`,
+							`Join ${preview.workspaceName} · Role: ${preview.role}`,
+						)}
 					</p>
 				) : null}
 			</div>
@@ -214,12 +279,14 @@ function InviteForm() {
 					className="min-h-12 text-sm leading-6 text-muted-foreground"
 					role="status"
 				>
-					加载邀请…
+					{t("加载邀请…", "Loading invitation…")}
 				</p>
 			) : (
 				<>
 					<div className="space-y-1 border-y py-4">
-						<p className="text-xs leading-5 text-muted-foreground">受邀邮箱</p>
+						<p className="text-xs leading-5 text-muted-foreground">
+							{t("受邀邮箱", "Invited email")}
+						</p>
 						<p className="text-sm leading-6 break-all">{preview.email}</p>
 					</div>
 					<form
@@ -230,7 +297,9 @@ function InviteForm() {
 					>
 						{!preview.existingAccount ? (
 							<div className="space-y-2">
-								<Label htmlFor="display_name">显示名称</Label>
+								<Label htmlFor="display_name">
+									{t("显示名称", "Display name")}
+								</Label>
 								<Input
 									id="display_name"
 									name="display_name"
@@ -243,7 +312,9 @@ function InviteForm() {
 						) : null}
 						<div className="space-y-2">
 							<Label htmlFor="password">
-								{preview.existingAccount ? "原密码" : "设置密码"}
+								{preview.existingAccount
+									? t("原密码", "Current password")
+									: t("设置密码", "Choose password")}
 							</Label>
 							<Input
 								id="password"
@@ -269,8 +340,14 @@ function InviteForm() {
 								className="text-xs leading-5 text-muted-foreground"
 							>
 								{preview.existingAccount
-									? "该邮箱已有账号，请输入原密码。账号名称和密码不会更改。"
-									: "7–256 个字符，并同时包含大写和小写字母。"}
+									? t(
+											"该邮箱已有账号，请输入原密码。账号名称和密码不会更改。",
+											"An account already uses this email. Enter its current password. The account name and password will not change.",
+										)
+									: t(
+											"7–256 个字符，并同时包含大写和小写字母。",
+											"Use 7–256 characters, with uppercase and lowercase letters.",
+										)}
 							</p>
 							<div className="min-h-6">
 								{passwordError && error ? (
@@ -296,7 +373,9 @@ function InviteForm() {
 							type="submit"
 							disabled={!token || submitting}
 						>
-							{submitting ? "正在加入…" : "加入工作区"}
+							{submitting
+								? t("正在加入…", "Joining…")
+								: t("加入工作区", "Join workspace")}
 						</Button>
 					</form>
 				</>
@@ -309,7 +388,7 @@ function InviteForm() {
 						className="min-h-11 px-0 text-muted-foreground"
 						disabled
 					>
-						返回密码登录
+						{t("返回密码登录", "Back to password sign-in")}
 					</Button>
 				) : (
 					<Link
@@ -320,7 +399,7 @@ function InviteForm() {
 								"min-h-11 px-0 text-muted-foreground hover:text-foreground",
 						})}
 					>
-						返回密码登录
+						{t("返回密码登录", "Back to password sign-in")}
 					</Link>
 				)}
 			</div>
@@ -329,6 +408,7 @@ function InviteForm() {
 }
 
 export default function InvitePage() {
+	const t = useInterfaceText();
 	return (
 		<AuthPageShell>
 			<Suspense
@@ -337,7 +417,7 @@ export default function InvitePage() {
 						className="min-h-80 text-sm leading-6 text-muted-foreground"
 						role="status"
 					>
-						加载邀请…
+						{t("加载邀请…", "Loading invitation…")}
 					</p>
 				}
 			>

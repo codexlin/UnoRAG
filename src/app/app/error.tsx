@@ -2,8 +2,8 @@
 
 import { RotateCcw, TriangleAlert } from "lucide-react";
 import { useEffect } from "react";
-
 import { Button } from "@/components/ui/button";
+import { useInterfaceText } from "@/lib/i18n/provider";
 
 export default function AppError({
 	error,
@@ -12,6 +12,7 @@ export default function AppError({
 	error: Error & { digest?: string };
 	reset: () => void;
 }) {
+	const t = useInterfaceText();
 	useEffect(() => {
 		console.error("app_route_error", error);
 	}, [error]);
@@ -25,18 +26,24 @@ export default function AppError({
 						Workspace error
 					</p>
 				</div>
-				<h2 className="mt-3 text-lg font-semibold">当前页面未能正常加载</h2>
+				<h2 className="mt-3 text-lg font-semibold">
+					{t("当前页面未能正常加载", "This page couldn't load")}
+				</h2>
 				<p className="mt-2 text-sm leading-6 text-muted-foreground">
-					可以重试当前页面。若问题持续出现，请在运行中心按请求时间检查服务状态。
+					{t(
+						"可以重试当前页面。若问题持续出现，请在运行中心按请求时间检查服务状态。",
+						"Retry this page. If the problem persists, check service status in Operations using the request time.",
+					)}
 				</p>
 				{error.digest ? (
 					<p className="mt-3 font-mono text-xs text-muted-foreground">
-						错误编号：{error.digest}
+						{t("错误编号：", "Error ID:")}
+						{error.digest}
 					</p>
 				) : null}
 				<Button className="mt-5" variant="outline" onClick={reset}>
 					<RotateCcw data-icon="inline-start" />
-					重试
+					{t("重试", "Retry")}
 				</Button>
 			</div>
 		</div>

@@ -14,6 +14,7 @@ import {
 import type { ApiDocument } from "@/lib/api";
 import type { CapExpr, PermissionCaps } from "@/lib/client-permissions";
 import { filterByCap } from "@/lib/client-permissions";
+import type { interfaceText } from "@/lib/i18n/locale";
 
 export type DocActionContext = {
 	busy: boolean;
@@ -31,7 +32,7 @@ export type DocActionContext = {
 export type DocAction = {
 	id: string;
 	cap: CapExpr;
-	label: string;
+	label: readonly [zh: string, en: string];
 	icon: LucideIcon;
 	destructive?: boolean;
 	separatorBefore?: boolean;
@@ -44,14 +45,14 @@ const DOC_ACTIONS: DocAction[] = [
 	{
 		id: "view",
 		cap: "read",
-		label: "查看",
+		label: ["查看", "View"],
 		icon: Eye,
 		run: (doc, ctx) => ctx.onView(doc),
 	},
 	{
 		id: "acl",
 		cap: "writeLibraries",
-		label: "谁可见",
+		label: ["谁可见", "Access"],
 		icon: Shield,
 		disabled: (doc, ctx) => doc.status === "deleting" || ctx.busy,
 		run: (doc, ctx) => ctx.onAcl(doc),
@@ -59,7 +60,7 @@ const DOC_ACTIONS: DocAction[] = [
 	{
 		id: "replace",
 		cap: "writeLibraries",
-		label: "替换文件",
+		label: ["替换文件", "Replace file"],
 		icon: Replace,
 		disabled: (doc, ctx) =>
 			doc.status === "deleting" || ctx.processing || ctx.busy,
@@ -68,7 +69,7 @@ const DOC_ACTIONS: DocAction[] = [
 	{
 		id: "reindex",
 		cap: "writeLibraries",
-		label: "重索引",
+		label: ["重索引", "Reindex"],
 		icon: RotateCcw,
 		disabled: (doc, ctx) =>
 			doc.status === "deleting" || !doc.has_file || ctx.processing || ctx.busy,
@@ -77,7 +78,7 @@ const DOC_ACTIONS: DocAction[] = [
 	{
 		id: "cancel",
 		cap: "writeLibraries",
-		label: "取消任务",
+		label: ["取消任务", "Cancel job"],
 		icon: CircleStop,
 		visible: (doc) =>
 			Boolean(
@@ -93,7 +94,7 @@ const DOC_ACTIONS: DocAction[] = [
 	{
 		id: "retry",
 		cap: "writeLibraries",
-		label: "重试任务",
+		label: ["重试任务", "Retry job"],
 		icon: RotateCcw,
 		visible: (doc) =>
 			Boolean(
@@ -107,7 +108,7 @@ const DOC_ACTIONS: DocAction[] = [
 	{
 		id: "download",
 		cap: "read",
-		label: "下载",
+		label: ["下载", "Download"],
 		icon: Download,
 		disabled: (doc, ctx) => !doc.has_file || ctx.busy,
 		run: (doc, ctx) => ctx.onDownload(doc),
@@ -115,7 +116,7 @@ const DOC_ACTIONS: DocAction[] = [
 	{
 		id: "delete",
 		cap: "manageLibraries",
-		label: "删除",
+		label: ["删除", "Delete"],
 		icon: Trash2,
 		destructive: true,
 		separatorBefore: true,
@@ -151,6 +152,7 @@ export function buildDetailActions(
 	caps: PermissionCaps,
 	document: ApiDocument | null,
 	handlers: Omit<DocActionContext, "busy" | "processing">,
+	t: ReturnType<typeof interfaceText>,
 ): DetailAction[] {
 	if (!document) return [];
 	const context: DocActionContext = {
@@ -163,7 +165,7 @@ export function buildDetailActions(
 		.map((action) => ({
 			id: action.id,
 			cap: action.cap,
-			label: action.label,
+			label: t(...action.label),
 			icon: action.icon,
 			variant: action.destructive ? "destructive" : "outline",
 			disabled: (doc, busy) =>

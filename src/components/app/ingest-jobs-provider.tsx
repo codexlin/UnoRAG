@@ -12,10 +12,10 @@ import {
 	useState,
 } from "react";
 import { toast } from "sonner";
-
 import { useLibraries } from "@/hooks/use-libraries";
 import { useQueryScope } from "@/hooks/use-query-scope";
 import { type ApiDocument, fetchDocuments, isAbortError } from "@/lib/api";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { queryKeys } from "@/lib/query-keys";
 
 const POLL_MS = 2_000;
@@ -36,6 +36,7 @@ const IngestJobsContext = createContext<IngestJobsContextValue | null>(null);
  * processing → ready/failed 时右上角 toast。
  */
 export function IngestJobsProvider({ children }: { children: ReactNode }) {
+	const t = useInterfaceText();
 	const { libraries, refreshInBackground: refresh } = useLibraries();
 	const queryClient = useQueryClient();
 	const scope = useQueryScope();
@@ -106,10 +107,19 @@ export function IngestJobsProvider({ children }: { children: ReactNode }) {
 					const prev = statusRef.current[doc.id];
 					if (prev === "processing" && doc.status === "ready") {
 						toast.success(
-							`「${doc.name}」索引完成 · ${doc.chunk_count} chunks`,
+							t(
+								`「${doc.name}」索引完成 · ${doc.chunk_count} chunks`,
+								`Indexed “${doc.name}” · ${doc.chunk_count} chunks`,
+							),
 						);
 					} else if (prev === "processing" && doc.status === "failed") {
-						toast.error(`「${doc.name}」索引失败：${doc.error || "未知错误"}`);
+						const reason = doc.error || t("未知错误", "Unknown error");
+						toast.error(
+							t(
+								`「${doc.name}」索引失败：${reason}`,
+								`Couldn't index “${doc.name}”: ${reason}`,
+							),
+						);
 					}
 					statusRef.current[doc.id] = doc.status;
 					if (doc.status === "processing") processing += 1;
@@ -121,7 +131,7 @@ export function IngestJobsProvider({ children }: { children: ReactNode }) {
 		} catch {
 			/* 下一轮再试 */
 		}
-	}, [queryClient, refresh, scope]);
+	}, [queryClient, refresh, scope, t]);
 
 	useEffect(() => {
 		mountedRef.current = true;

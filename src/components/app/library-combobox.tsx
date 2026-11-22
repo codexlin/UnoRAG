@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-
 import {
 	Combobox,
 	ComboboxContent,
@@ -12,6 +11,7 @@ import {
 } from "@/components/ui/combobox";
 import { Label } from "@/components/ui/label";
 import type { ApiLibrary } from "@/lib/api";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
 export type LibraryOption = {
@@ -20,18 +20,21 @@ export type LibraryOption = {
 	status: string;
 };
 
-function toOption(library: ApiLibrary): LibraryOption {
+function toOption(
+	library: ApiLibrary,
+	t: ReturnType<typeof useInterfaceText>,
+): LibraryOption {
 	const suffix =
 		library.status === "deleting"
-			? " · 删除中"
+			? t(" · 删除中", " · Deleting")
 			: library.status === "indexing"
-				? " · 索引中"
+				? t(" · 索引中", " · Indexing")
 				: library.status === "degraded"
-					? " · 部分可检索"
+					? t(" · 部分可检索", " · Partly searchable")
 					: library.status === "failed"
-						? " · 不可用"
+						? t(" · 不可用", " · Unavailable")
 						: library.status === "empty"
-							? " · 空"
+							? t(" · 空", " · Empty")
 							: "";
 	return {
 		value: library.id,
@@ -57,10 +60,15 @@ export function LibraryCombobox({
 	onValueChange,
 	disabled,
 	className,
-	label = "知识库",
+	label: customLabel,
 	showLabel = true,
 }: LibraryComboboxProps) {
-	const items = useMemo(() => libraries.map(toOption), [libraries]);
+	const t = useInterfaceText();
+	const label = customLabel ?? t("知识库", "Library");
+	const items = useMemo(
+		() => libraries.map((library) => toOption(library, t)),
+		[libraries, t],
+	);
 	const selected = useMemo(
 		() => items.find((item) => item.value === value) ?? null,
 		[items, value],
@@ -90,12 +98,18 @@ export function LibraryCombobox({
 				<ComboboxInput
 					id="library-combobox"
 					aria-label={label}
-					placeholder={items.length ? "搜索或选择知识库…" : "暂无知识库"}
+					placeholder={
+						items.length
+							? t("搜索或选择知识库…", "Search or select a library…")
+							: t("暂无知识库", "No libraries")
+					}
 					className="w-full"
 					showClear={false}
 				/>
 				<ComboboxContent className="min-w-(--anchor-width)">
-					<ComboboxEmpty>无匹配知识库</ComboboxEmpty>
+					<ComboboxEmpty>
+						{t("无匹配知识库", "No matching libraries")}
+					</ComboboxEmpty>
 					<ComboboxList>
 						{(item) => (
 							<ComboboxItem key={item.value} value={item}>

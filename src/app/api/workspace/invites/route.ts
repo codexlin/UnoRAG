@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { getRequestLanguage } from "@/lib/i18n/request-locale";
 
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
@@ -64,6 +65,7 @@ export async function POST(request: Request) {
 		role: parsed.data.role,
 		origin,
 		sendEmail: parsed.data.send_email !== false,
+		locale: (await getRequestLanguage()).locale,
 	});
 	if (!result.ok) {
 		return NextResponse.json(

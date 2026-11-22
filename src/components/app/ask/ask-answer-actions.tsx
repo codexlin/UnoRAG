@@ -34,12 +34,14 @@ import {
 	type AskFeedbackReasonCode,
 } from "@/lib/ask-feedback";
 import { formatDurationMs } from "@/lib/format";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
 const actionClassName =
 	"size-11 shrink-0 text-muted-foreground transition-[color,background-color,transform] duration-150 hover:text-foreground motion-safe:active:scale-95";
 
 function CopyAnswerButton({ text }: { text: string }) {
+	const t = useInterfaceText();
 	const [copiedText, setCopiedText] = useState<string | null>(null);
 	const [copyingText, setCopyingText] = useState<string | null>(null);
 	const attemptRef = useRef(0);
@@ -72,11 +74,17 @@ function CopyAnswerButton({ text }: { text: string }) {
 			timerRef.current = window.setTimeout(() => setCopiedText(null), 1500);
 		} catch {
 			if (attempt !== attemptRef.current) return;
-			toast.error("复制失败", {
+			toast.error(t("复制失败", "Couldn't copy"), {
 				description:
 					typeof navigator.clipboard?.writeText === "function"
-						? "请重试或手动选择回答正文复制。"
-						: "当前连接不支持自动复制，请使用 HTTPS 或手动复制。",
+						? t(
+								"请重试或手动选择回答正文复制。",
+								"Try again or select and copy the answer manually.",
+							)
+						: t(
+								"当前连接不支持自动复制，请使用 HTTPS 或手动复制。",
+								"Automatic copying needs HTTPS. Copy the answer manually instead.",
+							),
 			});
 		} finally {
 			if (attempt === attemptRef.current) {
@@ -98,7 +106,11 @@ function CopyAnswerButton({ text }: { text: string }) {
 							actionClassName,
 							copied && "text-primary hover:text-primary",
 						)}
-						aria-label={copied ? "已复制回答" : "复制回答"}
+						aria-label={
+							copied
+								? t("已复制回答", "Answer copied")
+								: t("复制回答", "Copy answer")
+						}
 						aria-busy={copying}
 						disabled={copying}
 						focusableWhenDisabled
@@ -118,10 +130,14 @@ function CopyAnswerButton({ text }: { text: string }) {
 				)}
 			</TooltipTrigger>
 			<TooltipContent>
-				{copied ? "已复制" : copying ? "正在复制…" : "复制回答"}
+				{copied
+					? t("已复制", "Copied")
+					: copying
+						? t("正在复制…", "Copying…")
+						: t("复制回答", "Copy answer")}
 			</TooltipContent>
 			<span className="sr-only" role="status">
-				{copied ? "回答已复制" : ""}
+				{copied ? t("回答已复制", "Answer copied") : ""}
 			</span>
 		</Tooltip>
 	);
@@ -131,6 +147,7 @@ const UUID_PATTERN =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function FeedbackButtons({ requestId }: { requestId: string }) {
+	const t = useInterfaceText();
 	const [rating, setRating] = useState<AskFeedbackRating | null>(null);
 	const [reasonCode, setReasonCode] = useState<AskFeedbackReasonCode | null>(
 		null,
@@ -153,10 +170,17 @@ function FeedbackButtons({ requestId }: { requestId: string }) {
 			setRating(nextRating);
 			setReasonCode(nextRating === "up" ? null : (nextReason ?? null));
 			setMenuOpen(false);
-			toast.success(nextRating === "up" ? "感谢反馈" : "已记录问题反馈");
+			toast.success(
+				nextRating === "up"
+					? t("感谢反馈", "Thanks for your feedback")
+					: t("已记录问题反馈", "Feedback recorded"),
+			);
 		} catch (error) {
-			toast.error("反馈提交失败", {
-				description: error instanceof Error ? error.message : "请稍后重试",
+			toast.error(t("反馈提交失败", "Couldn't submit feedback"), {
+				description:
+					error instanceof Error
+						? error.message
+						: t("请稍后重试", "Try again later"),
 			});
 		} finally {
 			setSaving(false);
@@ -176,7 +200,7 @@ function FeedbackButtons({ requestId }: { requestId: string }) {
 								actionClassName,
 								rating === "up" && "text-primary hover:text-primary",
 							)}
-							aria-label="回答有帮助"
+							aria-label={t("回答有帮助", "Helpful answer")}
 							aria-pressed={rating === "up"}
 							disabled={saving}
 							focusableWhenDisabled
@@ -186,7 +210,7 @@ function FeedbackButtons({ requestId }: { requestId: string }) {
 				>
 					<ThumbsUp className="size-4" aria-hidden />
 				</TooltipTrigger>
-				<TooltipContent>回答有帮助</TooltipContent>
+				<TooltipContent>{t("回答有帮助", "Helpful answer")}</TooltipContent>
 			</Tooltip>
 			<Popover open={menuOpen} onOpenChange={setMenuOpen}>
 				<Tooltip>
@@ -203,7 +227,10 @@ function FeedbackButtons({ requestId }: { requestId: string }) {
 											rating === "down" &&
 												"text-destructive hover:text-destructive",
 										)}
-										aria-label="反馈回答问题"
+										aria-label={t(
+											"反馈回答问题",
+											"Report an issue with the answer",
+										)}
 										aria-pressed={rating === "down"}
 										disabled={saving}
 										focusableWhenDisabled
@@ -214,11 +241,13 @@ function FeedbackButtons({ requestId }: { requestId: string }) {
 							</PopoverTrigger>
 						}
 					/>
-					<TooltipContent>反馈回答问题</TooltipContent>
+					<TooltipContent>
+						{t("反馈回答问题", "Report an issue with the answer")}
+					</TooltipContent>
 				</Tooltip>
 				<PopoverContent align="start" className="w-60 p-2">
 					<p className="px-2 py-1 text-xs font-medium text-muted-foreground">
-						选择问题原因
+						{t("选择问题原因", "Choose a reason")}
 					</p>
 					<div className="mt-1 flex flex-col gap-1">
 						{ASK_FEEDBACK_REASON_CODES.map((code) => (
@@ -265,6 +294,7 @@ export function AskAnswerActions({
 	onRetry,
 	onOpenTrace,
 }: AskAnswerActionsProps) {
+	const t = useInterfaceText();
 	const canRetry =
 		!turn.pending && Boolean(turn.error || turn.cancelled || turn.refused);
 	const requestId =
@@ -276,7 +306,7 @@ export function AskAnswerActions({
 	return (
 		<MessageFooter
 			role="group"
-			aria-label="回答操作"
+			aria-label={t("回答操作", "Answer actions")}
 			className="-ml-3 mt-2 flex-wrap gap-x-1 gap-y-2 px-0 font-normal"
 		>
 			{!turn.pending && turn.answer.trim() ? (
@@ -294,14 +324,14 @@ export function AskAnswerActions({
 								variant="ghost"
 								size="icon"
 								className={actionClassName}
-								aria-label="停止生成"
+								aria-label={t("停止生成", "Stop generating")}
 								onClick={onCancel}
 							/>
 						}
 					>
 						<Square className="size-3.5 fill-current" aria-hidden />
 					</TooltipTrigger>
-					<TooltipContent>停止生成</TooltipContent>
+					<TooltipContent>{t("停止生成", "Stop generating")}</TooltipContent>
 				</Tooltip>
 			) : canRetry ? (
 				<Tooltip>
@@ -312,7 +342,7 @@ export function AskAnswerActions({
 								variant="ghost"
 								size="icon"
 								className={actionClassName}
-								aria-label="重试"
+								aria-label={t("重试", "Retry")}
 								disabled={!canAsk || isStreaming}
 								onClick={() => onRetry(turn)}
 							/>
@@ -320,7 +350,9 @@ export function AskAnswerActions({
 					>
 						<RotateCcw className="size-4" aria-hidden />
 					</TooltipTrigger>
-					<TooltipContent>重试此问题</TooltipContent>
+					<TooltipContent>
+						{t("重试此问题", "Retry this question")}
+					</TooltipContent>
 				</Tooltip>
 			) : null}
 			{hasAskTrace(turn.retrievalDebug) ? (
@@ -332,7 +364,10 @@ export function AskAnswerActions({
 								variant="ghost"
 								size="icon"
 								className={actionClassName}
-								aria-label="查看请求链路：路由、检索、裁决与生成各阶段耗时"
+								aria-label={t(
+									"查看请求链路：路由、检索、裁决与生成各阶段耗时",
+									"View the request trace: routing, retrieval, evidence checks, and generation timings",
+								)}
 								onClick={() => {
 									if (turn.retrievalDebug)
 										onOpenTrace(turn.retrievalDebug, turn.durationMs);
@@ -342,12 +377,16 @@ export function AskAnswerActions({
 					>
 						<Activity className="size-4" aria-hidden />
 					</TooltipTrigger>
-					<TooltipContent>查看请求链路</TooltipContent>
+					<TooltipContent>
+						{t("查看请求链路", "View request trace")}
+					</TooltipContent>
 				</Tooltip>
 			) : null}
 			{turn.durationMs != null ? (
 				<span className="ml-auto pl-3 font-mono text-xs tabular-nums text-muted-foreground">
-					<span className="sr-only">端到端耗时 </span>
+					<span className="sr-only">
+						{t("端到端耗时", "End-to-end duration")}{" "}
+					</span>
 					{formatDurationMs(turn.durationMs)}
 				</span>
 			) : null}

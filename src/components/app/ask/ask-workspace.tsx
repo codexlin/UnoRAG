@@ -64,20 +64,9 @@ import {
 	isAskableLibrary,
 } from "@/lib/ask-library-selection.mjs";
 import { createClientId } from "@/lib/client-id";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
-
-/** 中性示例：不暗示内置语料，仅在无可用文档标题时使用 */
-const NEUTRAL_SAMPLE_QUESTIONS = [
-	"这份资料的主要内容是什么？",
-	"有哪些关键要点值得注意？",
-] as const;
-
-const DOC_QUESTION_TEMPLATES = [
-	(title: string) => `《${title}》里说了什么？`,
-	(title: string) => `关于「${title}」的要点是什么？`,
-	(title: string) => `总结一下《${title}》的核心内容`,
-] as const;
 
 function documentDisplayTitle(doc: ApiDocument): string {
 	const raw = (doc.name || doc.filename || "").trim();
@@ -86,7 +75,10 @@ function documentDisplayTitle(doc: ApiDocument): string {
 }
 
 /** 根据就绪文档标题生成 2～3 条可点提问；无标题时退回中性文案 */
-function buildSampleQuestions(docs: ApiDocument[]): string[] {
+function buildSampleQuestions(
+	docs: ApiDocument[],
+	t: ReturnType<typeof useInterfaceText>,
+): string[] {
 	const titles = docs
 		.filter((doc) => doc.status === "ready")
 		.map(documentDisplayTitle)
@@ -97,11 +89,21 @@ function buildSampleQuestions(docs: ApiDocument[]): string[] {
 		if (unique.length >= 3) break;
 	}
 	if (unique.length === 0) {
-		return [...NEUTRAL_SAMPLE_QUESTIONS];
+		return [
+			t("这份资料的主要内容是什么？", "What does this document cover?"),
+			t("有哪些关键要点值得注意？", "What are the key takeaways?"),
+		];
 	}
-	return unique.map((title, index) =>
-		DOC_QUESTION_TEMPLATES[index % DOC_QUESTION_TEMPLATES.length](title),
-	);
+	return unique.map((title, index) => {
+		if (index === 0)
+			return t(`《${title}》里说了什么？`, `What does “${title}” say?`);
+		if (index === 1)
+			return t(
+				`关于「${title}」的要点是什么？`,
+				`What are the key points in “${title}”?`,
+			);
+		return t(`总结一下《${title}》的核心内容`, `Summarize “${title}”.`);
+	});
 }
 
 function canRetryTurn(turn: LocalTurn): boolean {
@@ -123,6 +125,7 @@ function getWideSourcesSnapshot() {
 const getServerWideSourcesSnapshot = () => false;
 
 export function AskWorkspace() {
+	const t = useInterfaceText();
 	const mounted = useSyncExternalStore(
 		subscribeToHydration,
 		() => true,
@@ -135,7 +138,7 @@ export function AskWorkspace() {
 				role="status"
 				className="flex flex-1 items-center justify-center text-sm text-muted-foreground"
 			>
-				加载问答…
+				{t("加载问答…", "Loading Ask…")}
 			</div>
 		);
 	}
@@ -143,6 +146,7 @@ export function AskWorkspace() {
 }
 
 function AskWorkspaceContent() {
+	const t = useInterfaceText();
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const requestedThreadId = (searchParams.get("thread") || "").trim();
@@ -165,7 +169,11 @@ function AskWorkspaceContent() {
 	const [threadTitle, setThreadTitle] = useState<string | null>(null);
 	const [archiving, setArchiving] = useState(false);
 	const archivingRef = useRef(false);
-	const [archiveError, setArchiveError] = useState<string | null>(null);
+	const [archiveError, setArchiveError] = useState<
+		| { kind: "resume_failed" }
+		| { kind: "archive_failed"; detail?: string }
+		| null
+	>(null);
 	const [resumeLibraryMissing, setResumeLibraryMissing] = useState<
 		string | null
 	>(null);
@@ -340,7 +348,7 @@ function AskWorkspaceContent() {
 				setArchiveError(null);
 			} catch (err) {
 				if (controller.signal.aborted || isAbortError(err)) return;
-				setArchiveError("无法打开归档会话，请从会话历史重试。");
+				setArchiveError({ kind: "resume_failed" });
 			} finally {
 				if (!controller.signal.aborted) {
 					archivingRef.current = false;
@@ -374,8 +382,8 @@ function AskWorkspaceContent() {
 
 	const sampleQuestions = useMemo(() => {
 		if (!canAsk || !docsLoaded) return [];
-		return buildSampleQuestions(readyDocuments);
-	}, [canAsk, docsLoaded, readyDocuments]);
+		return buildSampleQuestions(readyDocuments, t);
+	}, [canAsk, docsLoaded, readyDocuments, t]);
 
 	const openCitation = useCallback((citation: UiCitation, turnId: string) => {
 		const target = document.activeElement;
@@ -484,9 +492,10 @@ function AskWorkspaceContent() {
 			router.replace(`/app/ask?thread=${encodeURIComponent(detail.id)}`);
 		} catch (err) {
 			if (epoch !== contextEpochRef.current) return;
-			setArchiveError(
-				err instanceof Error ? err.message : "归档失败，请稍后重试",
-			);
+			setArchiveError({
+				kind: "archive_failed",
+				detail: err instanceof Error ? err.message : undefined,
+			});
 			archivingRef.current = false;
 			setArchiving(false);
 		}
@@ -619,7 +628,10 @@ function AskWorkspaceContent() {
 							? undefined
 							: err instanceof Error
 								? err.message
-								: "请求失败，请确认 API 已启动",
+								: t(
+										"请求失败，请确认 API 已启动",
+										"Request failed. Check that the API is running.",
+									),
 					});
 				},
 			},
@@ -686,12 +698,24 @@ function AskWorkspaceContent() {
 				) : null}
 				{archiveError ? (
 					<p className="border-b border-destructive/30 bg-destructive/10 px-5 py-1.5 text-sm text-destructive">
-						{archiveError}
+						{archiveError.kind === "resume_failed"
+							? t(
+									"无法打开归档会话，请从会话历史重试。",
+									"Couldn't open the archived conversation. Try again from Conversations.",
+								)
+							: (archiveError.detail ??
+								t(
+									"归档失败，请稍后重试",
+									"Couldn't archive. Try again later.",
+								))}
 					</p>
 				) : null}
 				{resumeLibraryMissing ? (
 					<p className="border-b border-survey/35 bg-warning px-5 py-2 text-sm text-warning-foreground">
-						原知识库已删除，历史记录仍可查看。选择其他知识库将开启新会话。
+						{t(
+							"原知识库已删除，历史记录仍可查看。选择其他知识库将开启新会话。",
+							"The original library was deleted. You can still view the conversation. Selecting another library starts a new one.",
+						)}
 					</p>
 				) : null}
 
@@ -700,71 +724,109 @@ function AskWorkspaceContent() {
 					autoScroll
 				>
 					<MessageScroller className="min-h-0 flex-1">
-						<MessageScrollerViewport aria-label="问答阅读区">
+						<MessageScrollerViewport
+							aria-label={t("问答阅读区", "Question and answer area")}
+						>
 							{turns.length === 0 ? (
 								<div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-14 sm:px-6 sm:py-20">
 									<p className="text-xs text-muted-foreground">
 										{healthLoading
-											? "服务状态 · 探测中"
+											? t("服务状态 · 探测中", "Service · Checking")
 											: !apiReady
-												? "服务状态 · 暂不可用"
+												? t("服务状态 · 暂不可用", "Service · Unavailable")
 												: library
-													? `知识库 · ${library.name}${
+													? `${t("知识库", "Library")} · ${library.name}${
 															library.status === "empty"
-																? " · 空"
+																? t(" · 空", " · Empty")
 																: library.status === "indexing"
-																	? " · 索引中"
+																	? t(" · 索引中", " · Indexing")
 																	: ""
 														}`
 													: librariesLoading
-														? "知识库 · 加载中"
+														? t("知识库 · 加载中", "Library · Loading")
 														: libsError
-															? "知识库 · 暂不可用"
+															? t("知识库 · 暂不可用", "Library · Unavailable")
 															: libraries.length === 0
-																? "知识库 · 尚未创建"
-																: "知识库 · 请选择"}
+																? t(
+																		"知识库 · 尚未创建",
+																		"Library · Not created",
+																	)
+																: t("知识库 · 请选择", "Library · Select one")}
 									</p>
 									<h2 className="font-heading text-2xl font-medium text-foreground">
 										{canAsk
-											? "有什么需要核对？"
+											? t("有什么需要核对？", "What would you like to know?")
 											: librariesLoading
-												? "正在加载知识库"
+												? t("正在加载知识库", "Loading libraries")
 												: libsError
-													? "知识库加载失败"
+													? t("知识库加载失败", "Couldn't load libraries")
 													: healthLoading
-														? "正在检查服务状态"
+														? t("正在检查服务状态", "Checking service status")
 														: !apiReady
-															? "服务暂不可用"
+															? t("服务暂不可用", "Service unavailable")
 															: !library
 																? libraries.length === 0
-																	? "还没有知识库"
-																	: "请选择知识库"
+																	? t("还没有知识库", "No libraries yet")
+																	: t("请选择知识库", "Select a library")
 																: library.status === "empty"
-																	? "知识库还是空的"
+																	? t("知识库还是空的", "This library is empty")
 																	: library.status === "failed"
-																		? "文档处理失败"
-																		: "文档仍在索引中"}
+																		? t(
+																				"文档处理失败",
+																				"Document processing failed",
+																			)
+																		: t(
+																				"文档仍在索引中",
+																				"Documents are still indexing",
+																			)}
 									</h2>
 									<p className="text-sm leading-6 text-muted-foreground">
 										{canAsk
 											? (library?.name ?? "")
 											: librariesLoading
-												? "正在读取知识库列表，请稍候。"
+												? t(
+														"正在读取知识库列表，请稍候。",
+														"Loading the list of libraries.",
+													)
 												: libsError
-													? "可前往知识库页面重试加载。"
+													? t(
+															"可前往知识库页面重试加载。",
+															"Try reloading from Knowledge libraries.",
+														)
 													: healthLoading
-														? "正在连接知识库服务，请稍候。"
+														? t(
+																"正在连接知识库服务，请稍候。",
+																"Connecting to the knowledge service.",
+															)
 														: !apiReady || libsError
-															? "请先恢复 API 连接后再提问。"
+															? t(
+																	"请先恢复 API 连接后再提问。",
+																	"Restore the API connection before asking a question.",
+																)
 															: !library
 																? libraries.length === 0
-																	? "先到「知识库」创建空间并上传文档。"
-																	: "从上方选择一个已就绪的知识库。"
+																	? t(
+																			"先到「知识库」创建空间并上传文档。",
+																			"Create a library and upload documents.",
+																		)
+																	: t(
+																			"从上方选择一个已就绪的知识库。",
+																			"Select a ready library above.",
+																		)
 																: library.status === "empty"
-																	? "先上传文档完成索引，再回来提问。"
+																	? t(
+																			"先上传文档完成索引，再回来提问。",
+																			"Upload documents and wait for indexing before asking.",
+																		)
 																	: library.status === "failed"
-																		? "当前没有可检索文档，请到知识库查看失败原因并重试。"
-																		: "索引完成后即可提问，可先到知识库查看进度。"}
+																		? t(
+																				"当前没有可检索文档，请到知识库查看失败原因并重试。",
+																				"No searchable documents. Check the failures in Knowledge libraries, then retry.",
+																			)
+																		: t(
+																				"索引完成后即可提问，可先到知识库查看进度。",
+																				"Ask when indexing finishes. Check progress in Knowledge libraries.",
+																			)}
 									</p>
 									{!canAsk && !librariesLoading ? (
 										<Link
@@ -775,11 +837,11 @@ function AskWorkspaceContent() {
 											)}
 										>
 											{!libsError && libraries.length === 0
-												? "去创建知识库"
+												? t("去创建知识库", "Create a library")
 												: library?.status === "empty" ||
 														library?.doc_count === 0
-													? "去上传文档"
-													: "前往知识库"}
+													? t("去上传文档", "Upload documents")
+													: t("前往知识库", "Open Knowledge libraries")}
 											<ChevronRight data-icon="inline-end" />
 										</Link>
 									) : docsLoaded ? (
@@ -804,7 +866,7 @@ function AskWorkspaceContent() {
 							) : (
 								<MessageScrollerContent
 									className="@container mx-auto w-full max-w-3xl gap-12 px-4 py-6 sm:px-6 sm:py-8"
-									aria-label="问答记录"
+									aria-label={t("问答记录", "Question history")}
 								>
 									<AskConversationList
 										activeCitation={activeCitation}
@@ -824,7 +886,7 @@ function AskWorkspaceContent() {
 						<MessageScrollerButton
 							className="size-11"
 							behavior={reduceMotion ? "auto" : "smooth"}
-							aria-label="回到最新回答"
+							aria-label={t("回到最新回答", "Back to latest answer")}
 						/>
 					</MessageScroller>
 				</MessageScrollerProvider>
@@ -851,9 +913,12 @@ function AskWorkspaceContent() {
 						className="w-full max-w-[min(100vw,28rem)]! p-0"
 					>
 						<SheetHeader className="sr-only">
-							<SheetTitle>引用来源</SheetTitle>
+							<SheetTitle>{t("引用来源", "Sources")}</SheetTitle>
 							<SheetDescription>
-								本次回答使用的来源片段与文档位置
+								{t(
+									"本次回答使用的来源片段与文档位置",
+									"Evidence excerpts and document locations for this answer",
+								)}
 							</SheetDescription>
 						</SheetHeader>
 						<AskSourcesPanel
@@ -864,7 +929,7 @@ function AskWorkspaceContent() {
 				</Sheet>
 			) : drawerOpen ? (
 				<aside
-					aria-label="引用来源"
+					aria-label={t("引用来源", "Sources")}
 					className="w-96 shrink-0 border-l bg-background"
 					onKeyDown={(event) => {
 						if (event.key === "Escape") {

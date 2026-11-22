@@ -1,7 +1,6 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-
 import { AppNavUser } from "@/components/app/app-nav-user";
 import {
 	type AppNavItem,
@@ -25,12 +24,15 @@ import {
 	SidebarRail,
 } from "@/components/ui/sidebar";
 import { allowsCap } from "@/lib/client-permissions";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
 const PRIMARY_NAV = getAppNavItemsByGroup("nav");
 const SETTINGS_NAV = getAppNavItemsByGroup("settings");
 
 function NavLink({ item }: { item: AppNavItem }) {
+	const t = useInterfaceText();
+	const label = t(...item.label);
 	const pathname = usePathname();
 	const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
 	const Icon = item.icon;
@@ -39,10 +41,10 @@ function NavLink({ item }: { item: AppNavItem }) {
 		<SidebarMenuItem>
 			<SidebarMenuButton
 				render={<GuardedLink href={item.href} />}
-				aria-label={item.label}
+				aria-label={label}
 				aria-current={active ? "page" : undefined}
 				isActive={active}
-				tooltip={item.label}
+				tooltip={label}
 				className={cn(
 					"relative h-11 gap-3 rounded-lg px-3 text-sm font-medium",
 					/* 覆盖 SidebarMenuButton 默认的 width/height 过渡，只做轻量变色 */
@@ -56,7 +58,7 @@ function NavLink({ item }: { item: AppNavItem }) {
 					<Icon aria-hidden />
 				</span>
 				<span className="truncate group-data-[collapsible=icon]:sr-only">
-					{item.label}
+					{label}
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
@@ -64,6 +66,7 @@ function NavLink({ item }: { item: AppNavItem }) {
 }
 
 export function AppSidebar() {
+	const t = useInterfaceText();
 	const { caps } = useSession();
 	const primaryNav = PRIMARY_NAV.filter(
 		(item) => !item.cap || allowsCap(caps, item.cap),
@@ -83,7 +86,7 @@ export function AppSidebar() {
 						<SidebarMenuButton
 							size="lg"
 							render={<GuardedLink href="/" />}
-							aria-label="UnoRAG 首页"
+							aria-label={t("UnoRAG 首页", "UnoRAG home")}
 							tooltip="UnoRAG"
 							className={cn(
 								"h-10 gap-2.5 rounded-lg px-2 hover:bg-primary/10",
@@ -106,7 +109,7 @@ export function AppSidebar() {
 				</SidebarGroup>
 				<SidebarGroup>
 					<SidebarGroupLabel className="text-xs text-muted-foreground">
-						导航
+						{t("导航", "Navigation")}
 					</SidebarGroupLabel>
 					<SidebarGroupContent>
 						<SidebarMenu className="gap-1">
@@ -120,7 +123,7 @@ export function AppSidebar() {
 				{/* 紧挨主导航，不沉底 */}
 				<SidebarGroup>
 					<SidebarGroupLabel className="text-xs text-muted-foreground">
-						系统设置
+						{t("系统设置", "System")}
 					</SidebarGroupLabel>
 					<SidebarGroupContent>
 						<SidebarMenu className="gap-1">
