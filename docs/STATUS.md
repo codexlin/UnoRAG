@@ -35,7 +35,7 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 | 身份与权限 | 本地登录、首次改密、邀请注册、邮箱链接登录/重置、可撤销 Session、Workspace/角色、文档 ACL、Service Key、审计 |
 | 文档治理 | 上传、替换、版本、重索引、删除；失败保留旧 active generation；DBOS 重试、取消和对账 |
 | 文档理解 | TXT/Markdown/DOCX/XLSX/PDF，LiteParse/MinerU，Markdown 管道表、DocumentIR/TableIR，结构优先切分、多粒度索引及默认关闭的条件式检索上下文增强 |
-| 检索问答 | 作用域强制过滤、Dense/BM25+RRF、可选 Qdrant 服务端 Sparse/RRF（默认关闭）、重排、改写、证据裁决、拒答、引用、确定性表格执行与 SSE；pg_trgm 授权文档目录候选检索 |
+| 检索问答 | 作用域强制过滤、Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF、重排、改写、证据裁决、拒答、引用、确定性表格执行与 SSE；pg_trgm 授权文档目录候选检索 |
 | 会话 | 带来源授权的短期记忆、实体追问、有限期歧义澄清、归档和继续对话；历史不替代当次证据 |
 | 产品界面 | shadcn/Base UI、AI Elements、Vercel/Claude/Violet Bloom 主题、可调圆角、响应式工作台与设置分区；引用/版本/执行链路一致的阅读入口 |
 | 运维交付 | 原生阶段瀑布/请求诊断/告警、工作区邮件策略及持久化投递、可选 OTel/Langfuse、签名镜像、安装升级、备份与恢复工具 |
@@ -78,7 +78,7 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
   这不解释历史长等待的服务商内部根因，也不证明未来延迟保证或跨重启任务去重；原失败报告不改写。
 - 账号邮件使用有界请求/Next `after`，不是持久化账号邮件队列；进程中断可能需要重新申请。告警投递另有持久化重试。
 - 冲突核验只覆盖事实/追问的已授权召回证据，不是全库矛盾检测；表格、比较、汇总和目录不运行这一步。
-- 完整标题目录有界；超过 500 份授权文档时按问题检索至多 500 份身份候选，不将候选误称为完整目录；匹配截断或无法证明完整性仍失败关闭。BM25 适用于小中型语料，不是百万级容量承诺。
+- 完整标题目录有界；超过 500 份授权文档时按问题检索至多 500 份身份候选，不将候选误称为完整目录；匹配截断或无法证明完整性仍失败关闭。
 - 图文 PDF 目前证明正文/图注恢复，不代表 ChartIR 或独立图表数值理解。
 - 没有可交付 OIDC/SSO、SCIM/用户组管理 UI、稳定公共文档生命周期 API；Helm 仍是 starter。
 - PostgreSQL 使用作用域查询、约束及分离运行角色，未启用 RLS；Redis 模型并发门只限制接入该门的 Web 调用，
@@ -101,7 +101,7 @@ Staging/Active 原子切换、检索前置强权限与黄金集稳定性门禁�
 
 ### 后续：按实际需求扩展
 
-1. **服务端混合检索与规模验收**：已实现默认关闭的 Qdrant 命名 Dense + 确定性词法 Sparse/服务端 RRF，含真实 Qdrant 跨 Workspace、ACL、active generation、删除隔离门禁及存量 collection 有界 BM25 回退；[ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md) 待评审，启用前仍需客户语料质量/容量验收；对已实现的 PostgreSQL `pg_trgm` 授权目录检索继续验证客户规模下的延迟与完整性边界。
+1. **大规模语料容量验收**：已全面切换至 Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF（[ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md) 已采纳，移除 10,000 条应用层 BM25 语料回退），后续在百万级客户语料上继续验证 Qdrant 稀疏索引与 PostgreSQL `pg_trgm` 授权目录检索的延迟与容量边界。
 2. **稳定文档生命周期 Public API 与外置连接器**：开放幂等上传/替换/删除与状态查询公共 API，以独立外置 Sync Adapter 对接飞书、钉钉、Confluence、SharePoint 或对象存储事件，不将第三方 SDK 耦合进 DBOS 核心。
 3. **解析增强效果验收**：对默认关闭的条件式 Contextual Retrieval，在获授权的无标题层级/OCR 降级语料上验证召回质量与成本，验收通过后再决定启用范围。
 

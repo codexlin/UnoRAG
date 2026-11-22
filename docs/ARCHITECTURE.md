@@ -211,8 +211,8 @@ Parsing produces DocumentIR before chunking. The policy is structure-first:
 OCR/降级解析的叙事块。`CONTEXTUAL_RETRIEVAL_MAX_CHUNKS` 默认及硬上限均为 40，
 `CONTEXTUAL_RETRIEVAL_TIMEOUT_MS` 默认 1000、上限 5000 毫秒；Compose 高级配置与 Helm Worker 同步支持。
 默认前缀只使用同文档标题、文件名、最近标题和页码；可注入 `Contextualizer` 实现有界的一句定位，
-默认不调用外部 LLM。前缀最多 240 字符，单独存入 `contextual_prefix`，仅加入向量化输入和已经过授权校验的
-BM25 语料，不进入引用正文、snippet、重排、去重或表格/图片/章节/文档记录。超时会发出取消信号；
+默认不调用外部 LLM。前缀最多 240 字符，单独存入 `contextual_prefix`，仅加入向量化与 `lexical_v1` 稀疏索引输入，
+不进入引用正文、snippet、重排、去重或表格/图片/章节/文档记录。超时会发出取消信号；
 异常或超时静默保留原文，并停止该文档的后续增强尝试，迟到结果不会修改索引。
 此步骤不改变 ADR-0003 的分块边界或语义切分降级策略；同 generation 的清单一致性校验继续生效，
 注入模型适配器需保证重试结果幂等。既有文档仅在重索引时生成上下文前缀，不原地改写 active generation。
@@ -236,22 +236,18 @@ when truncated; citations continue to point at every contributing row group.
 ## 检索与问答
 
 Native Retrieve resolves scope, embeds the query, applies mandatory Qdrant filters,
-optionally reranks results, and maps strict citations. `QDRANT_SERVER_HYBRID_ENABLED=true`
-opts new collections into named `dense` + deterministic tokenizer/hash `lexical_v1`
-sparse vectors and Query API prefetch/RRF. Dense and sparse prefetches and the fused
-query each carry the complete mandatory filter; every returned hit is rechecked for
-scope, ACL, active generation and lifecycle before use. RRF scores are kept separate
-from original dense semantic scores; sparse-only evidence has no dense confidence.
+optionally reranks results, and maps strict citations. Collections always configure named
+`dense` + deterministic tokenizer/hash `lexical_v1` sparse vectors (`modifier: "idf"`)
+and use Qdrant Query API prefetch/RRF as the sole hybrid retrieval path. Dense and sparse
+prefetches and the fused query each carry the complete mandatory filter; every returned hit
+is rechecked for scope, ACL, active generation and lifecycle before use. RRF scores are kept
+separate from original dense semantic scores; sparse-only evidence has no dense confidence.
 
-存量 collection 通过 schema 探测兼容，不自动迁移或原地补 sparse。无 sparse 索引、开关关闭或无词元时，
-沿用受配置上限约束（默认 10,000 条授权语料）的应用层 BM25+RRF。此回退适用于小中型知识库，不能宣称百万级容量。
-稀疏写入随 collection 能力持续执行，关闭查询开关不破坏后续重启启用。部署开关需 Web/Worker 同步；
-迁移须完整补齐数据、验证范围后协调切换，详见待评审 [ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md)。
-真实 Qdrant 门禁覆盖跨 Workspace、ACL、active generation、删除残留与旧 collection 回退；
-默认仍关闭，客户语料的质量/容量验收与 ADR 评审不由 fixture 测试替代。
-
-应用层 BM25 不得按 library 或 generation 共享高权限主体构建的语料缓存。任何复用都必须包含规范化的
-授权指纹、再次执行 ACL/version 校验并具备可靠失效机制。
+集合启动时强制校验 `dense`（或已回填的未命名 dense）与 `lexical_v1 (modifier: "idf")` 契约，缺失或非 IDF
+配置直接失败关闭，不自动原地修改集合，也不再使用受 10,000 条上限约束的应用层内存 BM25 语料回退。
+无词元查询或瞬时服务端混合检索异常安全回落至同一授权范围内的 dense 候选。旧 dense-only 集合可通过
+`scripts/qdrant-backfill-sparse.ts --execute` 零外部 API 成本回填并切换，详见已采纳的
+[ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md)。
 
 Native Ask uses LangGraph.js for orchestration:
 

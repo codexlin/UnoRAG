@@ -10,15 +10,10 @@ ADR 解释长期取舍，不是操作手册。当前实现先读 [系统架构](
 | [0003 Policy-driven chunking](./0003-policy-driven-chunking.md) | 结构优先、递归上限、受控语义切分与表格 profile |
 | [0005 TypeScript core runtime](./0005-typescript-core-runtime.md) | 运行时所有权、DBOS 与数据边界；迁移步骤属于已完成的历史 |
 | [0007 Fully open-source product](./0007-fully-open-source-product-and-services.md) | 单一完整开源产品，无商业功能墙 |
+| [0008 Qdrant server-side Sparse + RRF](./0008-qdrant-server-side-sparse-rrf.md) | 命名 Dense + 确定性词法 Sparse（`lexical_v1`，`modifier: "idf"`）与 Qdrant 服务端 RRF；已移除应用层 BM25 回退 |
 
 当前仓库保持单根 TypeScript package。只有真实独立构建边界或多个消费者出现时才提取 package，
 没有已排期的 monorepo 迁移；数据库迁移始终只有一个所有者。
-
-## 待评审决策
-
-| 决策 | 适用范围 |
-|---|---|
-| [0008 Qdrant server-side Sparse + RRF](./0008-qdrant-server-side-sparse-rrf.md) | 默认关闭的命名 Dense + 确定性词法 Sparse/RRF；存量 collection 降级、迁移与强隔离门禁 |
 
 ## 历史决策
 

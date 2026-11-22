@@ -12,8 +12,6 @@ import {
 } from "./contracts";
 import type { EmbeddingProvider } from "./embedding/provider";
 import { sharesEvidenceLineage } from "./evidence-lineage";
-import { Bm25Index } from "./hybrid/bm25";
-import { reciprocalRankFusion } from "./hybrid/rrf";
 import {
 	projectRerankDiagnostic,
 	type RerankDiagnostic,
@@ -60,7 +58,6 @@ export type RetrievalServiceOptions = {
 	rerankTopK: number;
 	bm25TopK: number;
 	rrfK: number;
-	corpusLimit?: number;
 	cache?: ScopedRetrievalCache;
 };
 
@@ -533,73 +530,6 @@ async function expandParentContexts(input: {
 	return parentContexts;
 }
 
-function fuseHits(input: {
-	dense: QdrantSearchHit[];
-	lexical: QdrantSearchHit[];
-	rrfK: number;
-	limit: number;
-}): QdrantSearchHit[] {
-	const byId = new Map<string, QdrantSearchHit>();
-	for (const hit of input.dense) {
-		byId.set(String(hit.id), {
-			...hit,
-			dense_score: hit.score,
-			bm25_score: null,
-		});
-	}
-	for (const hit of input.lexical) {
-		const id = String(hit.id);
-		const existing = byId.get(id);
-		if (existing) {
-			existing.bm25_score = hit.score;
-		} else {
-			byId.set(id, {
-				...hit,
-				dense_score: null,
-				bm25_score: hit.score,
-			});
-		}
-	}
-	return reciprocalRankFusion(
-		[
-			input.dense.map((hit) => ({ id: String(hit.id), value: hit })),
-			input.lexical.map((hit) => ({ id: String(hit.id), value: hit })),
-		],
-		{ k: input.rrfK, limit: input.limit },
-	).map((fused) => ({
-		...(byId.get(fused.id) ?? fused.value),
-		score: fused.score,
-		rrf_score: fused.score,
-		used_hybrid: true,
-	}));
-}
-
-function lexicalHits(
-	query: string,
-	corpus: QdrantSearchHit[],
-	topK: number,
-): QdrantSearchHit[] {
-	const index = new Bm25Index<QdrantSearchHit>(
-		corpus.map((hit) => ({
-			id: String(hit.id),
-			text:
-				hit.payload.record_type === "chunk" &&
-				!hit.payload.table_id &&
-				!hit.payload.figure_id &&
-				hit.payload.split_strategy !== "code" &&
-				hit.payload.contextual_prefix
-					? `${hit.payload.contextual_prefix}\n${hitText(hit)}`
-					: hitText(hit),
-			value: hit,
-		})),
-	);
-	return index.search(query, topK).map((item) => ({
-		...item.value,
-		score: item.score,
-		bm25_score: item.score,
-	}));
-}
-
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -796,28 +726,6 @@ export class DefaultRetrievalService {
 						if (hit.payload.record_type === "section") knownSections.push(hit);
 					}
 					usedHybrid = true;
-				} else {
-					const corpus = assertAuthorizedHits(
-						await this.store.listCorpus({
-							scope,
-							userFilters: filters,
-							limit: this.options.corpusLimit ?? 10_000,
-						}),
-						scope,
-					);
-					for (const hit of corpus) {
-						if (hit.payload.record_type === "section") knownSections.push(hit);
-					}
-					const lexical = lexicalHits(query, corpus, this.options.bm25TopK);
-					if (lexical.length) {
-						candidates = fuseHits({
-							dense,
-							lexical,
-							rrfK: this.options.rrfK,
-							limit: denseK,
-						});
-						usedHybrid = true;
-					}
 				}
 			} catch (error) {
 				input.signal?.throwIfAborted();

@@ -5,14 +5,8 @@ export const QDRANT_SPARSE_VECTOR = "lexical_v1";
 
 export type QdrantVectorSchema = {
 	denseVectorName: string | null;
-	sparseVectorName: string | null;
+	sparseVectorName: typeof QDRANT_SPARSE_VECTOR;
 };
-
-export function qdrantServerHybridEnabled(): boolean {
-	return ["true", "1", "yes"].includes(
-		process.env.QDRANT_SERVER_HYBRID_ENABLED?.trim().toLowerCase() ?? "",
-	);
-}
 
 export const qdrantDistances = [
 	"Cosine",
@@ -56,7 +50,6 @@ export type QdrantCollectionContract = {
 	collection: string;
 	vectorSize: number;
 	distance: QdrantDistance;
-	serverHybridEnabled?: boolean;
 };
 
 export type QdrantCollectionEnsureResult = QdrantCollectionContract & {
@@ -138,20 +131,13 @@ export class QdrantCollectionManager {
 			const created = await this.client.createCollection(
 				this.contract.collection,
 				{
-					vectors: this.contract.serverHybridEnabled
-						? {
-								[QDRANT_DENSE_VECTOR]: {
-									size: this.contract.vectorSize,
-									distance: this.contract.distance,
-								},
-							}
-						: {
-								size: this.contract.vectorSize,
-								distance: this.contract.distance,
-							},
-					...(this.contract.serverHybridEnabled
-						? { sparse_vectors: { [QDRANT_SPARSE_VECTOR]: {} } }
-						: {}),
+					vectors: {
+						[QDRANT_DENSE_VECTOR]: {
+							size: this.contract.vectorSize,
+							distance: this.contract.distance,
+						},
+					},
+					sparse_vectors: { [QDRANT_SPARSE_VECTOR]: { modifier: "idf" } },
 				},
 			);
 			if (!created) {
@@ -240,15 +226,15 @@ export function detectQdrantVectorSchema(
 		);
 	}
 	const sparse = info.config.params.sparse_vectors?.[QDRANT_SPARSE_VECTOR];
-	// lexical_v1 uses fixed TF weights; corpus-wide IDF would change that contract.
-	if (sparse?.modifier && sparse.modifier !== "none") {
+	// lexical_v1 relies on Qdrant's built-in IDF modifier for BM25-like term weighting (ADR-0008).
+	if (sparse?.modifier !== "idf") {
 		throw new QdrantCollectionContractError(
-			"Qdrant lexical_v1 must not use an IDF modifier",
+			"Qdrant collection must configure lexical_v1 with the idf modifier",
 		);
 	}
 	return {
 		denseVectorName: "size" in vectors ? null : QDRANT_DENSE_VECTOR,
-		sparseVectorName: sparse ? QDRANT_SPARSE_VECTOR : null,
+		sparseVectorName: QDRANT_SPARSE_VECTOR,
 	};
 }
 

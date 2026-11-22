@@ -35,10 +35,8 @@ data:
   EMBEDDING_DIM: {{ .Values.config.embeddingDim | quote }}
   EMBEDDING_BATCH_SIZE: {{ .Values.config.embeddingBatchSize | quote }}
   EMBEDDING_TIMEOUT_MS: {{ .Values.config.embeddingTimeoutMs | quote }}
-  QDRANT_SERVER_HYBRID_ENABLED: {{ .Values.config.qdrantServerHybridEnabled | quote }}
   TS_RETRIEVAL_HYBRID_ENABLED: {{ .Values.config.retrievalHybridEnabled | quote }}
   TS_RETRIEVAL_RERANK_ENABLED: {{ .Values.config.retrievalRerankEnabled | quote }}
-  TS_RETRIEVAL_CORPUS_LIMIT: {{ .Values.config.retrievalCorpusLimit | quote }}
   RERANK_MODEL: {{ .Values.config.rerankModel | quote }}
   RERANK_TIMEOUT_MS: {{ .Values.config.rerankTimeoutMs | quote }}
   MINERU_PROVIDER: {{ .Values.config.mineruProvider | quote }}

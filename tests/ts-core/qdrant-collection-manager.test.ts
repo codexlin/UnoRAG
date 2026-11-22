@@ -145,8 +145,15 @@ function collectionInfo(input?: {
 		config: {
 			params: {
 				vectors: {
-					size: input?.size ?? 1_024,
-					distance: input?.distance ?? "Cosine",
+					dense: {
+						size: input?.size ?? 1_024,
+						distance: input?.distance ?? "Cosine",
+					},
+				},
+				sparse_vectors: {
+					lexical_v1: {
+						modifier: "idf",
+					},
 				},
 				shard_number: 1,
 				replication_factor: 1,
@@ -190,7 +197,13 @@ function fakeClient(input?: {
 	createCollectionError?: Error;
 }): {
 	client: QdrantCollectionClient;
-	calls: Array<{ name: string; fieldName?: string; fieldSchema?: unknown }>;
+	calls: Array<{
+		name: string;
+		fieldName?: string;
+		fieldSchema?: unknown;
+		createCollection?: string;
+		createRequest?: unknown;
+	}>;
 } {
 	let exists = input?.exists ?? false;
 	let info = input?.info ?? collectionInfo();
@@ -198,6 +211,8 @@ function fakeClient(input?: {
 		name: string;
 		fieldName?: string;
 		fieldSchema?: unknown;
+		createCollection?: string;
+		createRequest?: unknown;
 	}> = [];
 	return {
 		client: {
@@ -205,21 +220,26 @@ function fakeClient(input?: {
 				calls.push({ name: "collectionExists" });
 				return { exists };
 			},
-			async createCollection(_collection, request) {
-				calls.push({ name: "createCollection" });
+			async createCollection(collection, request) {
+				calls.push({
+					name: "createCollection",
+					createCollection: collection,
+					createRequest: request,
+				});
 				if (input?.createCollectionError) {
 					exists = true;
 					throw input.createCollectionError;
 				}
-				const vectors = request.vectors as {
-					size: number;
-					distance: "Cosine" | "Euclid" | "Dot" | "Manhattan";
-				};
 				exists = true;
-				info = collectionInfo({
-					size: vectors.size,
-					distance: vectors.distance,
-				});
+				info = collectionInfo();
+				if (request.vectors) {
+					info.config.params.vectors =
+						request.vectors as CollectionInfo["config"]["params"]["vectors"];
+				}
+				if (request.sparse_vectors) {
+					info.config.params.sparse_vectors =
+						request.sparse_vectors as CollectionInfo["config"]["params"]["sparse_vectors"];
+				}
 				return true;
 			},
 			async getCollection() {
@@ -530,45 +550,67 @@ test("retrieval store uses the universal query API with mandatory scope", async 
 test("collection capability detects named and migrated unnamed dense schemas", async () => {
 	for (const named of [false, true]) {
 		const info = collectionInfo();
-		if (named)
-			info.config.params.vectors = {
-				dense: { size: 1024, distance: "Cosine" },
-			};
-		info.config.params.sparse_vectors = { lexical_v1: {} };
+		info.config.params.vectors = named
+			? { dense: { size: 1024, distance: "Cosine" } }
+			: { size: 1024, distance: "Cosine" };
+		info.config.params.sparse_vectors = { lexical_v1: { modifier: "idf" } };
 		const { client } = fakeClient({ exists: true, info });
 		const result = await new QdrantCollectionManager(client, {
 			collection: "test",
 			vectorSize: 1024,
 			distance: "Cosine",
-			serverHybridEnabled: true,
 		}).ensure();
 		assert.deepEqual(result.vectorSchema, {
 			denseVectorName: named ? "dense" : null,
 			sparseVectorName: "lexical_v1",
 		});
 	}
-	const { client, calls } = fakeClient({ exists: true });
-	const legacy = await new QdrantCollectionManager(client, {
-		collection: "legacy",
-		vectorSize: 1024,
-		distance: "Cosine",
-		serverHybridEnabled: true,
-	}).ensure();
-	assert.deepEqual(legacy.vectorSchema, {
-		denseVectorName: null,
-		sparseVectorName: null,
-	});
+	const legacyInfo = collectionInfo();
+	legacyInfo.config.params.vectors = { size: 1024, distance: "Cosine" };
+	delete legacyInfo.config.params.sparse_vectors;
+	const { client, calls } = fakeClient({ exists: true, info: legacyInfo });
+	await assert.rejects(
+		new QdrantCollectionManager(client, {
+			collection: "legacy",
+			vectorSize: 1024,
+			distance: "Cosine",
+		}).ensure(),
+		QdrantCollectionContractError,
+	);
 	assert.equal(
 		calls.some((call) => call.name === "createCollection"),
 		false,
 	);
 });
 
-test("incompatible named dimensions, unknown dense names and sparse IDF fail closed", async () => {
+test("creating a collection always configures named dense and lexical_v1 with Qdrant IDF modifier", async () => {
+	const { client, calls } = fakeClient({ exists: false });
+	const result = await new QdrantCollectionManager(client, {
+		collection: "hybrid_new",
+		vectorSize: 1024,
+		distance: "Cosine",
+	}).ensure();
+	assert.equal(result.created, true);
+	assert.deepEqual(result.vectorSchema, {
+		denseVectorName: "dense",
+		sparseVectorName: "lexical_v1",
+	});
+	const createCall = calls.find((call) => call.name === "createCollection");
+	assert.ok(createCall);
+	assert.equal(createCall.createCollection, "hybrid_new");
+	assert.deepEqual(createCall.createRequest, {
+		vectors: { dense: { size: 1024, distance: "Cosine" } },
+		sparse_vectors: { lexical_v1: { modifier: "idf" } },
+	});
+});
+
+test("incompatible named dimensions, unknown dense names and missing or non-IDF sparse fail closed", async () => {
 	for (const params of [
 		{ vectors: { dense: { size: 3, distance: "Cosine" as const } } },
 		{ vectors: { unknown: { size: 1024, distance: "Cosine" as const } } },
-		{ sparse_vectors: { lexical_v1: { modifier: "idf" as const } } },
+		{ sparse_vectors: undefined },
+		{ sparse_vectors: { lexical_v1: {} } },
+		{ sparse_vectors: { lexical_v1: { modifier: "none" as const } } },
 	]) {
 		const info = collectionInfo();
 		Object.assign(info.config.params, params);
@@ -605,7 +647,6 @@ test("both server prefetch branches and fusion carry the complete mandatory auth
 		},
 	} as unknown as QdrantClient;
 	const store = new QdrantRetrievalStore(client, "test", Promise.resolve(), {
-		serverHybridEnabled: true,
 		vectorSchema: Promise.resolve({
 			denseVectorName: "dense",
 			sparseVectorName: "lexical_v1",

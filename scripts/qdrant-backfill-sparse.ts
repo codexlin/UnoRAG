@@ -133,7 +133,6 @@ async function run(): Promise<void> {
 		collection: toCollection,
 		vectorSize: dimensions,
 		distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
-		serverHybridEnabled: true,
 	}, { requireNew: true }).ensure();
 	process.stdout.write(
 		`== target ${toCollection}: created=${ensured.created} schema=${JSON.stringify(ensured.vectorSchema)}\n`,
