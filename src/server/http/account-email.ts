@@ -33,7 +33,10 @@ type Dependencies = {
 		action: "request" | "consume",
 	): Promise<RateLimitResult>;
 	defer(work: () => Promise<void>): void;
-	send(input: { email: string; purpose: AccountEmailPurpose }): Promise<void>;
+	send(
+		input: { email: string; purpose: AccountEmailPurpose },
+		request: Request,
+	): Promise<void>;
 	consume(input: {
 		token: string;
 		purpose: AccountEmailPurpose;
@@ -114,7 +117,7 @@ export function createAccountEmailHandlers(deps: Dependencies) {
 				// Defer lookup as well as sending so response timing cannot reveal account existence.
 				deps.defer(async () => {
 					try {
-						await deps.send(command);
+						await deps.send(command, request);
 					} catch {
 						deps.report("account_email_send_failed");
 					}

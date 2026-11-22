@@ -31,13 +31,25 @@ const account = {
 	url: "https://unorag.example.test/auth/verify?token=private-token&purpose=login",
 	purpose: "login" as const,
 	idempotencyKey: "login/event-123",
+	locale: "zh-CN" as const,
 };
 const invite = {
 	to: account.to,
 	inviteUrl: account.url,
 	workspaceName: "研发知识库",
 	role: "editor",
+	locale: "zh-CN" as const,
 };
+test("account and invite templates use English by default and can render Simplified Chinese", async () => {
+	const { renderAccountEmail, renderInviteEmail } = await templatesModule;
+	const english = renderAccountEmail({ url: account.url, purpose: "reset" });
+	assert.match(english.html, /<html lang="en">/);
+	assert.equal(english.subject, "Reset your UnoRAG password");
+	assert.match(english.text, /expires in 15 minutes/);
+	const chinese = renderInviteEmail(invite);
+	assert.match(chinese.html, /<html lang="zh-CN">/);
+	assert.match(chinese.subject, /邀请加入/);
+});
 const success = { sent: true, provider: "resend", messageId };
 const failure = (reason: string) => ({
 	sent: false,

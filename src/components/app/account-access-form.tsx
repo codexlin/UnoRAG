@@ -3,18 +3,20 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useInterfaceText } from "@/lib/i18n/provider";
 
 type Purpose = "login" | "reset";
 type Identity = { mustChangePassword?: boolean; session_created?: boolean };
 
-const acceptedMessage =
-	"如果该邮箱对应可用账户，你将收到一封邮件。请检查收件箱和垃圾邮件。";
-
 export function AccountAccessForm() {
+	const t = useInterfaceText();
+	const acceptedMessage = t(
+		"如果该邮箱对应可用账户，你将收到一封邮件。请检查收件箱和垃圾邮件。",
+		"If the email belongs to an active account, you'll receive a link. Check your inbox and spam folder.",
+	);
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const [purpose, setPurpose] = useState<Purpose>(
@@ -49,11 +51,16 @@ export function AccountAccessForm() {
 				setToken(hashToken);
 				setPurpose(hashPurpose);
 			} else {
-				setError("邮件链接无效，请重新申请。");
+				setError(
+					t(
+						"邮件链接无效，请重新申请。",
+						"The email link is invalid. Request a new one.",
+					),
+				);
 			}
 		}
 		setReady(true);
-	}, []);
+	}, [t]);
 
 	async function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
@@ -72,15 +79,30 @@ export function AccountAccessForm() {
 		}
 		if (token && purpose === "reset") {
 			if (password.length < 7 || password.length > 256) {
-				rejectField("password", "新密码需要 7–256 个字符");
+				rejectField(
+					"password",
+					t(
+						"新密码需要 7–256 个字符",
+						"Use 7–256 characters for the new password.",
+					),
+				);
 				return;
 			}
 			if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) {
-				rejectField("password", "新密码必须同时包含大写和小写字母");
+				rejectField(
+					"password",
+					t(
+						"新密码必须同时包含大写和小写字母",
+						"Use uppercase and lowercase letters in the new password.",
+					),
+				);
 				return;
 			}
 			if (password !== String(form.get("confirmation") ?? "")) {
-				rejectField("confirmation", "两次输入的新密码不一致");
+				rejectField(
+					"confirmation",
+					t("两次输入的新密码不一致", "The new passwords don't match."),
+				);
 				return;
 			}
 		}
@@ -104,32 +126,59 @@ export function AccountAccessForm() {
 				},
 			);
 			if (response.status === 429) {
-				setError("请求过于频繁，请稍后再试。");
+				setError(
+					t(
+						"请求过于频繁，请稍后再试。",
+						"Too many requests. Try again later.",
+					),
+				);
 				return;
 			}
 			if (response.status === 503) {
 				setError(
 					token
-						? "服务暂时不可用，链接可能已失效，请重新申请邮件链接。"
-						: "邮件服务暂时不可用，请稍后重试或使用密码登录。",
+						? t(
+								"服务暂时不可用，链接可能已失效，请重新申请邮件链接。",
+								"The service is temporarily unavailable. The link may have expired; request a new one.",
+							)
+						: t(
+								"邮件服务暂时不可用，请稍后重试或使用密码登录。",
+								"Email is temporarily unavailable. Try again later or sign in with a password.",
+							),
 				);
 				setToken(null);
 				return;
 			}
 			if (!token) {
 				if (response.status === 202) setMessage(acceptedMessage);
-				else setError("暂时无法申请邮件链接，请稍后重试。");
+				else
+					setError(
+						t(
+							"暂时无法申请邮件链接，请稍后重试。",
+							"Couldn't request an email link. Try again later.",
+						),
+					);
 				return;
 			}
 			if (!response.ok) {
-				setError("邮件链接无效或已过期，请重新申请。");
+				setError(
+					t(
+						"邮件链接无效或已过期，请重新申请。",
+						"The email link is invalid or expired. Request a new one.",
+					),
+				);
 				setToken(null);
 				return;
 			}
 			if (purpose === "reset") {
 				setToken(null);
 				setCompleted(true);
-				setMessage("密码已重置，请使用新密码登录。");
+				setMessage(
+					t(
+						"密码已重置，请使用新密码登录。",
+						"Password reset. Sign in with your new password.",
+					),
+				);
 				return;
 			}
 			const payload = (await response.json()) as Identity & {
@@ -140,7 +189,12 @@ export function AccountAccessForm() {
 				payload.session_created === false ||
 				identity.session_created === false
 			) {
-				setError("未能建立登录会话，请重新申请邮件链接或使用密码登录。");
+				setError(
+					t(
+						"未能建立登录会话，请重新申请邮件链接或使用密码登录。",
+						"Couldn't start a session. Request another email link or sign in with a password.",
+					),
+				);
 				setToken(null);
 				return;
 			}
@@ -149,7 +203,12 @@ export function AccountAccessForm() {
 			router.replace(identity.mustChangePassword ? "/change-password" : "/app");
 			router.refresh();
 		} catch {
-			setError("网络连接异常，请稍后重试；如链接已失效，请重新申请。");
+			setError(
+				t(
+					"网络连接异常，请稍后重试；如链接已失效，请重新申请。",
+					"Couldn't connect. Try again, or request a new link if this one expired.",
+				),
+			);
 		} finally {
 			setSubmitting(false);
 		}
@@ -159,18 +218,32 @@ export function AccountAccessForm() {
 		<div className="space-y-8">
 			<div className="space-y-2">
 				<h1 className="text-2xl font-semibold leading-8">
-					{purpose === "reset" ? "重置密码" : "使用邮箱链接登录"}
+					{purpose === "reset"
+						? t("重置密码", "Reset password")
+						: t("使用邮箱链接登录", "Sign in with an email link")}
 				</h1>
 				<p className="text-sm leading-6 text-muted-foreground">
 					{completed
-						? "账号访问已更新。"
+						? t("账号访问已更新。", "Account access updated.")
 						: token
 							? purpose === "reset"
-								? "设置新密码后，请重新登录。"
-								: "确认后将使用此邮件链接登录。链接仅可使用一次。"
+								? t(
+										"设置新密码后，请重新登录。",
+										"Sign in again after setting your new password.",
+									)
+								: t(
+										"确认后将使用此邮件链接登录。链接仅可使用一次。",
+										"Confirm to sign in with this single-use link.",
+									)
 							: purpose === "reset"
-								? "输入账号邮箱，申请密码重置链接。"
-								: "输入账号邮箱，申请一次性登录链接。"}
+								? t(
+										"输入账号邮箱，申请密码重置链接。",
+										"Enter your account email to request a password reset link.",
+									)
+								: t(
+										"输入账号邮箱，申请一次性登录链接。",
+										"Enter your account email to request a single-use sign-in link.",
+									)}
 				</p>
 			</div>
 			<form
@@ -181,7 +254,7 @@ export function AccountAccessForm() {
 			>
 				{!completed && !token ? (
 					<div className="space-y-2">
-						<Label htmlFor="email">邮箱</Label>
+						<Label htmlFor="email">{t("邮箱", "Email")}</Label>
 						<Input
 							id="email"
 							name="email"
@@ -199,7 +272,7 @@ export function AccountAccessForm() {
 				{!completed && token && purpose === "reset" ? (
 					<>
 						<div className="space-y-2">
-							<Label htmlFor="password">新密码</Label>
+							<Label htmlFor="password">{t("新密码", "New password")}</Label>
 							<Input
 								id="password"
 								name="password"
@@ -221,7 +294,10 @@ export function AccountAccessForm() {
 								id="password-requirements"
 								className="text-xs leading-5 text-muted-foreground"
 							>
-								7–256 个字符，同时包含大写和小写字母。
+								{t(
+									"7–256 个字符，同时包含大写和小写字母。",
+									"Use 7–256 characters, with uppercase and lowercase letters.",
+								)}
 							</p>
 							<div className="min-h-6">
 								{errorField === "password" && error ? (
@@ -236,7 +312,9 @@ export function AccountAccessForm() {
 							</div>
 						</div>
 						<div className="space-y-2">
-							<Label htmlFor="confirmation">确认新密码</Label>
+							<Label htmlFor="confirmation">
+								{t("确认新密码", "Confirm new password")}
+							</Label>
 							<Input
 								id="confirmation"
 								name="confirmation"
@@ -291,12 +369,12 @@ export function AccountAccessForm() {
 						disabled={!ready || submitting}
 					>
 						{submitting
-							? "正在处理..."
+							? t("正在处理...", "Processing...")
 							: token
 								? purpose === "reset"
-									? "重置密码"
-									: "确认登录"
-								: "发送邮件链接"}
+									? t("重置密码", "Reset password")
+									: t("确认登录", "Confirm sign-in")
+								: t("发送邮件链接", "Send email link")}
 					</Button>
 				) : null}
 			</form>
@@ -312,7 +390,7 @@ export function AccountAccessForm() {
 						setMessage(null);
 					}}
 				>
-					重新申请邮件链接
+					{t("重新申请邮件链接", "Request another email link")}
 				</Button>
 			) : null}
 			<div className="border-t pt-4">
@@ -320,7 +398,7 @@ export function AccountAccessForm() {
 					className="inline-flex min-h-11 items-center rounded-md text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
 					href="/login"
 				>
-					返回密码登录
+					{t("返回密码登录", "Back to password sign-in")}
 				</Link>
 			</div>
 		</div>

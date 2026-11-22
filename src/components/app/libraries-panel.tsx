@@ -52,6 +52,7 @@ import {
 	seedAcceptedDocumentDeletion,
 } from "@/lib/document-query-state";
 import { formatDurationMs } from "@/lib/format";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { seedAcceptedLibraryDeletion } from "@/lib/library-query-state";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchFreshQuery } from "@/lib/query-refresh";
@@ -64,6 +65,7 @@ type DocumentOverlay =
 	| { kind: "replace"; doc: ApiDocument; file: File | null };
 
 export function LibrariesPanel() {
+	const t = useInterfaceText();
 	const { caps } = useSession();
 	const queryClient = useQueryClient();
 	const queryScope = useQueryScope();
@@ -138,7 +140,10 @@ export function LibrariesPanel() {
 		error ||
 		librariesError ||
 		(documentsError && !/404|not found/i.test(documentsError)
-			? `文档列表加载失败：${documentsError}`
+			? t(
+					`文档列表加载失败：${documentsError}`,
+					`Couldn't load documents: ${documentsError}`,
+				)
 			: null);
 	const {
 		versions: versionRows,
@@ -241,7 +246,10 @@ export function LibrariesPanel() {
 				} catch (err) {
 					updateFile(id, {
 						status: "failed",
-						error: err instanceof Error ? err.message : "上传失败",
+						error:
+							err instanceof Error
+								? err.message
+								: t("上传失败", "Upload failed"),
 						durationMs: Math.round(performance.now() - fileStarted),
 					});
 					throw err;
@@ -279,7 +287,10 @@ export function LibrariesPanel() {
 					);
 				} else {
 					toast.success(
-						`已上传 ${ok.length} 个文件 · ${formatDurationMs(elapsed)}`,
+						t(
+							`已上传 ${ok.length} 个文件 · ${formatDurationMs(elapsed)}`,
+							`Uploaded ${ok.length} files · ${formatDurationMs(elapsed)}`,
+						),
 					);
 				}
 			}
@@ -288,7 +299,7 @@ export function LibrariesPanel() {
 				const message =
 					first.reason instanceof Error
 						? first.reason.message
-						: "部分文件上传失败";
+						: t("部分文件上传失败", "Some uploads failed");
 				toast.error(message);
 			}
 			await Promise.all([
@@ -300,8 +311,16 @@ export function LibrariesPanel() {
 				),
 			]);
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "列表刷新失败";
-			toast.error(`上传结果已保留，列表刷新失败：${message}`);
+			const message =
+				err instanceof Error
+					? err.message
+					: t("列表刷新失败", "Couldn't refresh the list");
+			toast.error(
+				t(
+					`上传结果已保留，列表刷新失败：${message}`,
+					`Upload results were kept, but the list could not refresh: ${message}`,
+				),
+			);
 		} finally {
 			setUploading(false);
 			if (fileInputRef.current) fileInputRef.current.value = "";
@@ -347,7 +366,7 @@ export function LibrariesPanel() {
 	async function onSubmitLibraryForm() {
 		const name = libraryName.trim();
 		if (!name) {
-			setLibraryFormError("请填写知识库名称");
+			setLibraryFormError(t("请填写知识库名称", "Enter a library name"));
 			return;
 		}
 		setSavingLibrary(true);
@@ -370,7 +389,12 @@ export function LibrariesPanel() {
 					...current.filter((library) => library.id !== created.id),
 				]);
 				setSelectedId(created.id);
-				toast.success(`已创建知识库「${created.name}」`);
+				toast.success(
+					t(
+						`已创建知识库「${created.name}」`,
+						`Created library “${created.name}”`,
+					),
+				);
 				setLibraryDialogOpen(false);
 				// A failed list refresh must not undo the confirmed creation or its upload target.
 				// The scoped query hook reports refresh failures without reopening the editor.
@@ -386,10 +410,18 @@ export function LibrariesPanel() {
 				});
 				if (updated.requires_reindex) {
 					toast.success(
-						`已更新「${updated.name}」。文档处理预设已变更，需重新索引后才会全部生效。`,
+						t(
+							`已更新「${updated.name}」。文档处理预设已变更，需重新索引后才会全部生效。`,
+							`Updated “${updated.name}”. Reindex documents to apply the new processing preset.`,
+						),
 					);
 				} else {
-					toast.success(`已更新知识库「${updated.name}」`);
+					toast.success(
+						t(
+							`已更新知识库「${updated.name}」`,
+							`Updated library “${updated.name}”`,
+						),
+					);
 				}
 				setLibraryDialogOpen(false);
 				await loadLibraries();
@@ -399,8 +431,8 @@ export function LibrariesPanel() {
 				err instanceof Error
 					? err.message
 					: libraryDialogMode === "create"
-						? "创建失败"
-						: "更新失败";
+						? t("创建失败", "Couldn't create the library")
+						: t("更新失败", "Couldn't update the library");
 			setLibraryFormError(message);
 			toast.error(message);
 		} finally {
@@ -433,8 +465,14 @@ export function LibrariesPanel() {
 			}
 			toast.success(
 				result.accepted
-					? `已排队删除知识库「${target.name}」（${result.deleted_documents} 篇文档）`
-					: `已删除知识库「${target.name}」`,
+					? t(
+							`已排队删除知识库「${target.name}」（${result.deleted_documents} 篇文档）`,
+							`Queued deletion of “${target.name}” (${result.deleted_documents} documents)`,
+						)
+					: t(
+							`已删除知识库「${target.name}」`,
+							`Deleted library “${target.name}”`,
+						),
 			);
 			setDeleteLibraryTarget(null);
 			setLibraryDialogOpen(false);
@@ -445,7 +483,10 @@ export function LibrariesPanel() {
 			// Query errors stay visible and clear on recovery; acceptance is not a delete failure.
 			void refreshLibraries().catch(() => {});
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "删除知识库失败";
+			const message =
+				err instanceof Error
+					? err.message
+					: t("删除知识库失败", "Couldn't delete the library");
 			setError(message);
 			toast.error(message);
 			setDeleteLibraryTarget(null);
@@ -456,7 +497,10 @@ export function LibrariesPanel() {
 
 	async function onReindex(doc: ApiDocument) {
 		if (!doc.has_file) {
-			const message = "原文未保留，请重新上传后再重索引";
+			const message = t(
+				"原文未保留，请重新上传后再重索引",
+				"The original file is unavailable. Upload it again before reindexing.",
+			);
 			setError(message);
 			toast.error(message);
 			return;
@@ -466,7 +510,7 @@ export function LibrariesPanel() {
 		setError(null);
 		try {
 			if (!selectedId) {
-				throw new Error("请先选择知识库");
+				throw new Error(t("请先选择知识库", "Select a library first."));
 			}
 			const result = await reindexDocument({
 				libraryId: selectedId,
@@ -474,16 +518,25 @@ export function LibrariesPanel() {
 			});
 			if (result.accepted || result.status === "processing") {
 				trackProcessing([{ id: result.doc_id, name: result.title }]);
-				toast.success(`已提交重索引「${result.title}」`);
+				toast.success(
+					t(
+						`已提交重索引「${result.title}」`,
+						`Queued “${result.title}” for reindexing`,
+					),
+				);
 			} else {
 				toast.success(
-					`已重索引「${result.title}」· ${result.chunk_count} chunks`,
+					t(
+						`已重索引「${result.title}」· ${result.chunk_count} chunks`,
+						`Reindexed “${result.title}” · ${result.chunk_count} chunks`,
+					),
 				);
 			}
 			await loadLibraries();
 			if (selectedId) await refreshDocuments();
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "重索引失败";
+			const message =
+				err instanceof Error ? err.message : t("重索引失败", "Reindex failed");
 			setError(message);
 			toast.error(message);
 			if (selectedId) await refreshDocuments();
@@ -499,12 +552,17 @@ export function LibrariesPanel() {
 		try {
 			const result = await cancelJob(doc.job_id);
 			toast.success(
-				result.status === "cancelling" ? "已请求取消任务" : "任务已取消",
+				result.status === "cancelling"
+					? t("已请求取消任务", "Cancellation requested")
+					: t("任务已取消", "Job canceled"),
 			);
 			await loadLibraries();
 			if (selectedId) await refreshDocuments();
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "取消任务失败";
+			const message =
+				err instanceof Error
+					? err.message
+					: t("取消任务失败", "Couldn't cancel the job");
 			setError(message);
 			toast.error(message);
 		} finally {
@@ -530,7 +588,9 @@ export function LibrariesPanel() {
 			} else {
 				trackProcessing([{ id: result.document_id, name: doc.name }]);
 			}
-			toast.success(`已重新提交「${doc.name}」`);
+			toast.success(
+				t(`已重新提交「${doc.name}」`, `Resubmitted “${doc.name}”`),
+			);
 			if (deleting) {
 				await refreshDeletion(doc.library_id);
 			} else {
@@ -538,7 +598,10 @@ export function LibrariesPanel() {
 				if (selectedId) await refreshDocuments();
 			}
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "重试任务失败";
+			const message =
+				err instanceof Error
+					? err.message
+					: t("重试任务失败", "Couldn't retry the job");
 			if (selectedIdRef.current === doc.library_id) setError(message);
 			toast.error(message);
 		} finally {
@@ -548,7 +611,10 @@ export function LibrariesPanel() {
 
 	async function onDownload(doc: ApiDocument) {
 		if (!doc.has_file) {
-			const message = "原文未保留，请重新上传后再下载";
+			const message = t(
+				"原文未保留，请重新上传后再下载",
+				"The original file is unavailable. Upload it again before downloading.",
+			);
 			setError(message);
 			toast.error(message);
 			return;
@@ -557,9 +623,15 @@ export function LibrariesPanel() {
 		setError(null);
 		try {
 			await downloadDocument(doc.id, doc.filename);
-			toast.success(`已开始下载「${doc.filename}」`);
+			toast.success(
+				t(
+					`已开始下载「${doc.filename}」`,
+					`Started downloading “${doc.filename}”`,
+				),
+			);
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "下载失败";
+			const message =
+				err instanceof Error ? err.message : t("下载失败", "Download failed");
 			setError(message);
 			toast.error(message);
 		} finally {
@@ -583,8 +655,16 @@ export function LibrariesPanel() {
 			fetchFreshQuery(queryClient, queryKey, queryFn),
 		]).catch((err: unknown) => {
 			if (isCancelledError(err)) return;
-			const message = err instanceof Error ? err.message : "列表刷新失败";
-			toast.error(`删除任务已提交，列表刷新失败：${message}`);
+			const message =
+				err instanceof Error
+					? err.message
+					: t("列表刷新失败", "Couldn't refresh the list");
+			toast.error(
+				t(
+					`删除任务已提交，列表刷新失败：${message}`,
+					`Deletion was submitted, but the list could not refresh: ${message}`,
+				),
+			);
 		});
 	}
 
@@ -608,13 +688,19 @@ export function LibrariesPanel() {
 				id: result.job_id,
 				status: "queued",
 			});
-			toast.success("已排队删除文档（后台清理向量、对象与元数据）");
+			toast.success(
+				t(
+					"已排队删除文档（后台清理向量、对象与元数据）",
+					"Document deletion queued (vectors, objects, and metadata will be removed in the background)",
+				),
+			);
 			setDocumentOverlay((current) =>
 				current === overlay ? { kind: "none" } : current,
 			);
 			await refreshDeletion(doc.library_id);
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "删除失败";
+			const message =
+				err instanceof Error ? err.message : t("删除失败", "Deletion failed");
 			if (selectedIdRef.current === doc.library_id) setError(message);
 			toast.error(message);
 		} finally {
@@ -658,17 +744,28 @@ export function LibrariesPanel() {
 			});
 			if (result.accepted || result.status === "processing") {
 				trackProcessing([{ id: result.doc_id, name: result.title }]);
-				toast.success(`已提交替换「${result.title}」，正在重新索引`);
+				toast.success(
+					t(
+						`已提交替换「${result.title}」，正在重新索引`,
+						`Replacement submitted for “${result.title}”. Reindexing…`,
+					),
+				);
 			} else {
 				toast.success(
-					`已替换「${result.title}」· ${result.chunk_count} chunks`,
+					t(
+						`已替换「${result.title}」· ${result.chunk_count} chunks`,
+						`Replaced “${result.title}” · ${result.chunk_count} chunks`,
+					),
 				);
 			}
 			setDocumentOverlay({ kind: "none" });
 			await loadLibraries();
 			if (selectedId) await refreshDocuments();
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "替换失败";
+			const message =
+				err instanceof Error
+					? err.message
+					: t("替换失败", "Replacement failed");
 			setError(message);
 			toast.error(message);
 		} finally {
@@ -682,20 +779,25 @@ export function LibrariesPanel() {
 		savingLibrary ||
 		!selectedId ||
 		selectedLibrary?.status === "deleting";
-	const detailActions = buildDetailActions(caps, detailDoc, {
-		onView: (doc) => setDocumentOverlay({ kind: "detail", docId: doc.id }),
-		onAcl: (doc) => setDocumentOverlay({ kind: "acl", doc }),
-		onReplace: startReplace,
-		onReindex: (doc) => {
-			void onReindex(doc);
+	const detailActions = buildDetailActions(
+		caps,
+		detailDoc,
+		{
+			onView: (doc) => setDocumentOverlay({ kind: "detail", docId: doc.id }),
+			onAcl: (doc) => setDocumentOverlay({ kind: "acl", doc }),
+			onReplace: startReplace,
+			onReindex: (doc) => {
+				void onReindex(doc);
+			},
+			onCancelJob: (doc) => void onCancelJob(doc),
+			onRetryJob: (doc) => void onRetryJob(doc),
+			onDownload: (doc) => {
+				void onDownload(doc);
+			},
+			onDelete: (doc) => setDocumentOverlay({ kind: "delete", docId: doc.id }),
 		},
-		onCancelJob: (doc) => void onCancelJob(doc),
-		onRetryJob: (doc) => void onRetryJob(doc),
-		onDownload: (doc) => {
-			void onDownload(doc);
-		},
-		onDelete: (doc) => setDocumentOverlay({ kind: "delete", docId: doc.id }),
-	});
+		t,
+	);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">

@@ -46,6 +46,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Textarea } from "@/components/ui/textarea";
 import { createClientId } from "@/lib/client-id";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { roleLabel } from "@/lib/session-types";
 import { cn } from "@/lib/utils";
 
@@ -75,6 +76,7 @@ async function readError(response: Response): Promise<string> {
 }
 
 export function WorkspaceSwitcher() {
+	const t = useInterfaceText();
 	const { isMobile } = useSidebar();
 	const { identity } = useSession();
 	const { allowNavigation, setGuard } = useNavigationGuard();
@@ -103,12 +105,14 @@ export function WorkspaceSwitcher() {
 			setError(null);
 		} catch (loadError) {
 			setError(
-				loadError instanceof Error ? loadError.message : "工作区列表加载失败",
+				loadError instanceof Error
+					? loadError.message
+					: t("工作区列表加载失败", "Couldn't load workspaces"),
 			);
 		} finally {
 			setLoading(false);
 		}
-	}, []);
+	}, [t]);
 
 	useEffect(() => {
 		void loadWorkspaces();
@@ -130,13 +134,15 @@ export function WorkspaceSwitcher() {
 				window.location.assign("/app/ask");
 			} catch (switchError) {
 				const message =
-					switchError instanceof Error ? switchError.message : "工作区切换失败";
+					switchError instanceof Error
+						? switchError.message
+						: t("工作区切换失败", "Couldn't switch workspaces");
 				setError(message);
 				toast.error(message);
 				setSwitchingId(null);
 			}
 		},
-		[identity.workspaceId, switchingId, setGuard],
+		[identity.workspaceId, switchingId, setGuard, t],
 	);
 
 	async function createWorkspace(event: FormEvent<HTMLFormElement>) {
@@ -168,7 +174,9 @@ export function WorkspaceSwitcher() {
 			await switchWorkspace(created.id);
 		} catch (createError) {
 			setError(
-				createError instanceof Error ? createError.message : "工作区创建失败",
+				createError instanceof Error
+					? createError.message
+					: t("工作区创建失败", "Couldn't create the workspace"),
 			);
 		} finally {
 			setCreating(false);
@@ -206,9 +214,13 @@ export function WorkspaceSwitcher() {
 								)}
 							</span>
 							<span className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:sr-only">
-								<span className="text-meta text-muted-foreground">工作区</span>
+								<span className="text-meta text-muted-foreground">
+									{t("工作区", "Workspace")}
+								</span>
 								<span className="truncate text-sm font-medium">
-									{switchingId ? "正在切换…" : identity.workspaceName}
+									{switchingId
+										? t("正在切换…", "Switching…")
+										: identity.workspaceName}
 								</span>
 							</span>
 							<ChevronsUpDown className="ml-auto size-4 text-muted-foreground group-data-[collapsible=icon]:hidden" />
@@ -220,11 +232,13 @@ export function WorkspaceSwitcher() {
 							sideOffset={6}
 						>
 							<DropdownMenuGroup>
-								<DropdownMenuLabel>切换工作区</DropdownMenuLabel>
+								<DropdownMenuLabel>
+									{t("切换工作区", "Switch workspace")}
+								</DropdownMenuLabel>
 								{loading ? (
 									<DropdownMenuItem disabled>
 										<LoaderCircle className="animate-spin motion-reduce:animate-none" />
-										正在加载
+										{t("正在加载", "Loading")}
 									</DropdownMenuItem>
 								) : (
 									items.map((item) => (
@@ -274,7 +288,7 @@ export function WorkspaceSwitcher() {
 										}}
 									>
 										<Plus />
-										新建工作区
+										{t("新建工作区", "Create workspace")}
 									</DropdownMenuItem>
 								</>
 							) : null}
@@ -289,7 +303,7 @@ export function WorkspaceSwitcher() {
 									</p>
 									<DropdownMenuItem onClick={() => void loadWorkspaces()}>
 										<RotateCcw aria-hidden />
-										重新加载工作区
+										{t("重新加载工作区", "Reload workspaces")}
 									</DropdownMenuItem>
 								</>
 							) : null}
@@ -312,14 +326,17 @@ export function WorkspaceSwitcher() {
 				>
 					<form onSubmit={createWorkspace} className="contents">
 						<DialogHeader>
-							<DialogTitle>新建工作区</DialogTitle>
+							<DialogTitle>{t("新建工作区", "Create workspace")}</DialogTitle>
 							<DialogDescription>
-								为部门、项目或独立业务域创建数据隔离空间。
+								{t(
+									"为部门、项目或独立业务域创建数据隔离空间。",
+									"Create an isolated workspace for a department, project, or business area.",
+								)}
 							</DialogDescription>
 						</DialogHeader>
 						<div className="grid gap-4">
 							<div className="grid gap-1.5">
-								<Label htmlFor="workspace-name">名称</Label>
+								<Label htmlFor="workspace-name">{t("名称", "Name")}</Label>
 								<Input
 									id="workspace-name"
 									ref={nameRef}
@@ -331,7 +348,7 @@ export function WorkspaceSwitcher() {
 								/>
 							</div>
 							<div className="grid gap-1.5">
-								<Label htmlFor="workspace-slug">标识</Label>
+								<Label htmlFor="workspace-slug">{t("标识", "Slug")}</Label>
 								<Input
 									id="workspace-slug"
 									className="h-11"
@@ -343,7 +360,9 @@ export function WorkspaceSwitcher() {
 								/>
 							</div>
 							<div className="grid gap-1.5">
-								<Label htmlFor="workspace-description">描述</Label>
+								<Label htmlFor="workspace-description">
+									{t("描述", "Description")}
+								</Label>
 								<Textarea
 									id="workspace-description"
 									value={description}
@@ -369,7 +388,7 @@ export function WorkspaceSwitcher() {
 								onClick={() => setCreateOpen(false)}
 								disabled={creating}
 							>
-								取消
+								{t("取消", "Cancel")}
 							</Button>
 							<Button
 								type="submit"
@@ -385,7 +404,9 @@ export function WorkspaceSwitcher() {
 								) : (
 									<Plus aria-hidden />
 								)}
-								{creating ? "创建中…" : "创建并进入"}
+								{creating
+									? t("创建中…", "Creating…")
+									: t("创建并进入", "Create and enter")}
 							</Button>
 						</DialogFooter>
 					</form>

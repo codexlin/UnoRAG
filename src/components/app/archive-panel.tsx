@@ -3,7 +3,6 @@
 import { ArrowLeft, ArrowUp, MessageSquare, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-
 import { CitationSourceCard } from "@/components/app/citation-source-card";
 import { MarkdownAnswer } from "@/components/app/markdown-answer";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -28,6 +27,7 @@ import {
 	isAbortError,
 } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
@@ -66,6 +66,7 @@ function dateGroup(value: string) {
 }
 
 export function ArchivePanel() {
+	const t = useInterfaceText();
 	const { libraries } = useLibraries();
 	const [threads, setThreads] = useState<ApiThread[]>([]);
 	const [selectedId, setSelectedId] = useState("");
@@ -104,7 +105,12 @@ export function ArchivePanel() {
 			} catch (err) {
 				if (controller.signal.aborted || isAbortError(err)) return;
 				setThreads([]);
-				setError("无法加载归档会话，请稍后重试。");
+				setError(
+					t(
+						"无法加载归档会话，请稍后重试。",
+						"Couldn't load archived conversations. Try again later.",
+					),
+				);
 			} finally {
 				if (!controller.signal.aborted) setLoading(false);
 			}
@@ -136,7 +142,12 @@ export function ArchivePanel() {
 			} catch (err) {
 				if (controller.signal.aborted || isAbortError(err)) return;
 				setDetail(null);
-				setDetailError("无法加载该会话的消息，可能已不可访问。");
+				setDetailError(
+					t(
+						"无法加载该会话的消息，可能已不可访问。",
+						"Couldn't load the conversation. It may no longer be accessible.",
+					),
+				);
 			} finally {
 				if (!controller.signal.aborted) setDetailLoading(false);
 			}
@@ -164,9 +175,9 @@ export function ArchivePanel() {
 		new Set(threads.map((thread) => thread.library_id || "")),
 	);
 	const libraryName = (id: string | null | undefined) =>
-		id ? libraryNames.get(id) || id : "未关联知识库";
+		id ? libraryNames.get(id) || id : t("未关联知识库", "No linked library");
 	const libraryOptions = [
-		{ value: "all", label: "全部知识库" },
+		{ value: "all", label: t("全部知识库", "All libraries") },
 		...libraryIds.map((id) => ({ value: id, label: libraryName(id) })),
 	];
 	const normalized = query.trim().toLocaleLowerCase();
@@ -192,14 +203,17 @@ export function ArchivePanel() {
 	const turnOptions =
 		currentDetail?.turns.map((turn, index) => ({
 			value: turn.id,
-			label: `第 ${index + 1} 轮 · ${turn.question}`,
+			label: t(
+				`第 ${index + 1} 轮 · ${turn.question}`,
+				`Turn ${index + 1} · ${turn.question}`,
+			),
 		})) ?? [];
 
 	return (
 		<div className="@container flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
 			<div className="flex min-h-0 min-w-0 flex-1">
 				<aside
-					aria-label="会话历史导航"
+					aria-label={t("会话历史导航", "Conversation navigation")}
 					className={cn(
 						"min-h-0 min-w-0 flex-1 flex-col @3xl:w-72 @3xl:flex-none @3xl:border-r",
 						mobileDetailOpen ? "hidden @3xl:flex" : "flex",
@@ -207,9 +221,16 @@ export function ArchivePanel() {
 				>
 					<header className="space-y-4 border-b p-4">
 						<div className="flex flex-wrap items-baseline justify-between gap-2">
-							<h1 className="text-lg font-medium">会话历史</h1>
+							<h1 className="text-lg font-medium">
+								{t("会话历史", "Conversations")}
+							</h1>
 							<p className="text-xs text-muted-foreground" role="status">
-								{loading ? "加载中…" : `已加载 ${threads.length} 个`}
+								{loading
+									? t("加载中…", "Loading…")
+									: t(
+											`已加载 ${threads.length} 个`,
+											`Loaded ${threads.length}`,
+										)}
 							</p>
 						</div>
 						<div className="space-y-2">
@@ -217,7 +238,7 @@ export function ArchivePanel() {
 								htmlFor="archive-search"
 								className="text-xs text-muted-foreground"
 							>
-								搜索已加载会话
+								{t("搜索已加载会话", "Search loaded conversations")}
 							</label>
 							<div className="relative">
 								<Search
@@ -228,7 +249,7 @@ export function ArchivePanel() {
 									ref={searchRef}
 									id="archive-search"
 									type="search"
-									placeholder="会话标题"
+									placeholder={t("会话标题", "Conversation title")}
 									value={query}
 									onChange={(event) => setQuery(event.target.value)}
 									className="h-11 pl-9"
@@ -240,7 +261,7 @@ export function ArchivePanel() {
 								htmlFor="archive-library"
 								className="text-xs text-muted-foreground"
 							>
-								知识库
+								{t("知识库", "Library")}
 							</label>
 							<Select
 								items={libraryOptions}
@@ -278,7 +299,7 @@ export function ArchivePanel() {
 									role="status"
 									className="px-2 py-6 text-sm text-muted-foreground"
 								>
-									加载会话列表…
+									{t("加载会话列表…", "Loading conversations…")}
 								</p>
 							) : error ? (
 								<div className="space-y-3 px-2 py-6">
@@ -290,13 +311,13 @@ export function ArchivePanel() {
 										className="h-11"
 										onClick={() => setListRetry((value) => value + 1)}
 									>
-										重试加载列表
+										{t("重试加载列表", "Retry loading the list")}
 									</Button>
 								</div>
 							) : threads.length === 0 ? (
 								<div className="space-y-3 px-2 py-6">
 									<p className="text-sm text-muted-foreground">
-										还没有归档会话
+										{t("还没有归档会话", "No archived conversations yet")}
 									</p>
 									<Link
 										href="/app/ask"
@@ -305,7 +326,7 @@ export function ArchivePanel() {
 											"h-11",
 										)}
 									>
-										开始提问
+										{t("开始提问", "Ask a question")}
 									</Link>
 								</div>
 							) : visibleThreads.length === 0 ? (
@@ -313,7 +334,7 @@ export function ArchivePanel() {
 									role="status"
 									className="px-2 py-6 text-sm text-muted-foreground"
 								>
-									没有匹配的会话
+									{t("没有匹配的会话", "No matching conversations")}
 								</p>
 							) : (
 								Array.from(groups, ([label, items]) => (
@@ -349,7 +370,7 @@ export function ArchivePanel() {
 														</span>
 														<span className="mt-1 block text-xs leading-5 text-muted-foreground">
 															{formatDateTime(thread.updated_at)} ·{" "}
-															{thread.turn_count} 轮
+															{thread.turn_count} {t("轮", "turns")}
 														</span>
 													</button>
 												</li>
@@ -362,7 +383,7 @@ export function ArchivePanel() {
 					</ScrollArea>
 				</aside>
 				<section
-					aria-label="会话详情"
+					aria-label={t("会话详情", "Conversation details")}
 					className={cn(
 						"min-h-0 min-w-0 flex-1 flex-col",
 						mobileDetailOpen ? "flex" : "hidden @3xl:flex",
@@ -376,7 +397,7 @@ export function ArchivePanel() {
 							onClick={returnToList}
 						>
 							<ArrowLeft aria-hidden />
-							返回会话列表
+							{t("返回会话列表", "Back to conversations")}
 						</Button>
 					</div>
 					<ScrollArea className="min-h-0 min-w-0 flex-1">
@@ -384,7 +405,7 @@ export function ArchivePanel() {
 							{detailLoading ||
 							(selectedId && !currentDetail && !detailError) ? (
 								<p role="status" className="text-sm text-muted-foreground">
-									加载会话…
+									{t("加载会话…", "Loading conversation…")}
 								</p>
 							) : detailError ? (
 								<div className="space-y-3">
@@ -396,7 +417,7 @@ export function ArchivePanel() {
 										className="h-11"
 										onClick={() => setDetailRetry((value) => value + 1)}
 									>
-										重试加载会话
+										{t("重试加载会话", "Retry loading conversation")}
 									</Button>
 								</div>
 							) : currentDetail ? (
@@ -410,7 +431,9 @@ export function ArchivePanel() {
 												{formatDateTime(currentDetail.updated_at)}
 											</time>
 											<span>{libraryName(currentDetail.library_id)}</span>
-											<span>{currentDetail.turn_count} 轮</span>
+											<span>
+												{currentDetail.turn_count} {t("轮", "turns")}
+											</span>
 										</div>
 										<Link
 											href={`/app/ask?thread=${encodeURIComponent(currentDetail.id)}`}
@@ -420,7 +443,7 @@ export function ArchivePanel() {
 											)}
 										>
 											<MessageSquare aria-hidden />
-											继续对话
+											{t("继续对话", "Continue conversation")}
 										</Link>
 									</header>
 									{currentDetail.turns.length > 1 ? (
@@ -429,7 +452,7 @@ export function ArchivePanel() {
 												htmlFor="archive-turn"
 												className="text-xs text-muted-foreground"
 											>
-												对话轮次
+												{t("对话轮次", "Conversation turns")}
 											</label>
 											<Select
 												items={turnOptions}
@@ -464,17 +487,24 @@ export function ArchivePanel() {
 									) : null}
 									{selectedTurn ? (
 										<div key={selectedTurn.id} className="space-y-8">
-											<section aria-label="问题" className="space-y-2">
-												<h3 className="text-xs text-muted-foreground">问题</h3>
+											<section
+												aria-label={t("问题", "Question")}
+												className="space-y-2"
+											>
+												<h3 className="text-xs text-muted-foreground">
+													{t("问题", "Question")}
+												</h3>
 												<p className="whitespace-pre-wrap text-base font-medium leading-7 [overflow-wrap:anywhere]">
 													{selectedTurn.question}
 												</p>
 											</section>
 											<article
-												aria-label="回答"
+												aria-label={t("回答", "Answer")}
 												className="min-w-0 [&_button]:min-h-11 [&_button]:min-w-11 [&_button]:text-xs"
 											>
-												<h3 className="text-xs text-muted-foreground">回答</h3>
+												<h3 className="text-xs text-muted-foreground">
+													{t("回答", "Answer")}
+												</h3>
 												<MarkdownAnswer
 													content={selectedTurn.answer}
 													citations={selectedTurn.citations.map(toUiCitation)}
@@ -495,11 +525,12 @@ export function ArchivePanel() {
 											</article>
 											{selectedTurn.citations.length > 0 ? (
 												<section
-													aria-label="引用来源"
+													aria-label={t("引用来源", "Sources")}
 													className="space-y-4 border-t pt-6"
 												>
 													<h3 className="text-sm font-medium">
-														引用来源 · {selectedTurn.citations.length} 条
+														{t("引用来源 ·", "Sources ·")}{" "}
+														{selectedTurn.citations.length} {t("条", "sources")}
 													</h3>
 													<ul className="divide-y">
 														{selectedTurn.citations.map((citation) => (
@@ -530,7 +561,7 @@ export function ArchivePanel() {
 																		}}
 																	>
 																		<ArrowUp aria-hidden />
-																		返回回答
+																		{t("返回回答", "Back to answer")}
 																	</Button>
 																) : null}
 															</li>
@@ -541,12 +572,17 @@ export function ArchivePanel() {
 										</div>
 									) : (
 										<p className="text-sm text-muted-foreground">
-											该会话还没有消息。
+											{t(
+												"该会话还没有消息。",
+												"This conversation has no messages yet.",
+											)}
 										</p>
 									)}
 								</div>
 							) : (
-								<p className="py-8 text-sm text-muted-foreground">未选择会话</p>
+								<p className="py-8 text-sm text-muted-foreground">
+									{t("未选择会话", "No conversation selected")}
+								</p>
 							)}
 						</div>
 					</ScrollArea>

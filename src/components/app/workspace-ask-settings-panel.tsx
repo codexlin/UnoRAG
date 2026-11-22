@@ -18,6 +18,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { useInterfaceText } from "@/lib/i18n/provider";
 
 type AskSettings = {
 	answer_profile: "precise" | "balanced" | "exploratory";
@@ -27,62 +28,79 @@ type AskSettings = {
 };
 
 type FieldKey = keyof AskSettings;
+type Copy = readonly [zh: string, en: string];
 
 const FIELDS: {
 	key: FieldKey;
-	label: string;
-	tip: string;
+	label: Copy;
+	tip: Copy;
 	kind: "enum" | "bool";
-	options?: { value: string; label: string }[];
+	options?: { value: string; label: Copy }[];
 }[] = [
 	{
 		key: "answer_profile",
-		label: "回答模式",
+		label: ["回答模式", "Answer mode"],
 		kind: "enum",
-		tip: "精确模式更保守；探索模式扩大检索范围。所有模式都需要证据支持回答。",
+		tip: [
+			"精确模式更保守；探索模式扩大检索范围。所有模式都需要证据支持回答。",
+			"Precise mode is more conservative; exploratory mode broadens retrieval. All modes require evidence.",
+		],
 		options: [
-			{ value: "precise", label: "精确" },
-			{ value: "balanced", label: "均衡" },
-			{ value: "exploratory", label: "探索" },
+			{ value: "precise", label: ["精确", "Precise"] },
+			{ value: "balanced", label: ["均衡", "Balanced"] },
+			{ value: "exploratory", label: ["探索", "Exploratory"] },
 		],
 	},
 	{
 		key: "retrieval_enhancement",
-		label: "检索增强",
+		label: ["检索增强", "Retrieval enhancement"],
 		kind: "enum",
-		tip: "开启后尝试混合检索与重排，实际取决于服务配置；自动模式按问题选择。可在请求链路中核对本次执行结果。",
+		tip: [
+			"开启后尝试混合检索与重排，实际取决于服务配置；自动模式按问题选择。可在请求链路中核对本次执行结果。",
+			"When enabled, the service attempts hybrid retrieval and reranking if configured. Auto chooses per question. Check the request trace for what ran.",
+		],
 		options: [
-			{ value: "auto", label: "自动" },
-			{ value: "off", label: "关闭" },
-			{ value: "on", label: "开启" },
+			{ value: "auto", label: ["自动", "Auto"] },
+			{ value: "off", label: ["关闭", "Off"] },
+			{ value: "on", label: ["开启", "On"] },
 		],
 	},
 	{
 		key: "session_memory_enabled",
-		label: "对话记忆",
+		label: ["对话记忆", "Conversation memory"],
 		kind: "bool",
-		tip: "多轮追问时保留当前会话的短上下文。",
+		tip: [
+			"多轮追问时保留当前会话的短上下文。",
+			"Keep short-term context for follow-up questions in this conversation.",
+		],
 	},
 	{
 		key: "evidence_requirement",
-		label: "证据要求",
+		label: ["证据要求", "Evidence requirement"],
 		kind: "enum",
-		tip: "严格/标准/宽松，调节拒答与引用裁决；与回答模式冲突时取更严一侧。",
+		tip: [
+			"严格/标准/宽松，调节拒答与引用裁决；与回答模式冲突时取更严一侧。",
+			"Adjust refusal and citation strictness. If this conflicts with the answer mode, the stricter setting wins.",
+		],
 		options: [
-			{ value: "strict", label: "严格" },
-			{ value: "standard", label: "标准" },
-			{ value: "relaxed", label: "宽松" },
+			{ value: "strict", label: ["严格", "Strict"] },
+			{ value: "standard", label: ["标准", "Standard"] },
+			{ value: "relaxed", label: ["宽松", "Relaxed"] },
 		],
 	},
 ];
 
-function formatDefault(key: FieldKey, defaults: AskSettings | null): string {
+function formatDefault(
+	key: FieldKey,
+	defaults: AskSettings | null,
+	t: ReturnType<typeof useInterfaceText>,
+): string {
 	if (!defaults) return "—";
 	const value = defaults[key];
-	if (typeof value === "boolean") return value ? "开" : "关";
+	if (typeof value === "boolean") return value ? t("开", "On") : t("关", "Off");
 	const field = FIELDS.find((item) => item.key === key);
 	const option = field?.options?.find((item) => item.value === value);
-	return option?.label ?? String(value);
+	return option ? t(...option.label) : String(value);
 }
 
 export function WorkspaceAskSettingsPanel({
@@ -90,6 +108,7 @@ export function WorkspaceAskSettingsPanel({
 }: {
 	onStateChange?: SettingsPanelStateChange;
 }) {
+	const t = useInterfaceText();
 	const id = useId();
 	const { can } = useSession();
 	const sessionCanManage = can("manageMembers");
@@ -114,7 +133,7 @@ export function WorkspaceAskSettingsPanel({
 		try {
 			const response = await fetch("/api/workspace/settings");
 			if (!response.ok) {
-				setError("无法加载工作区设置");
+				setError("load_failed");
 				return;
 			}
 			const data = (await response.json()) as {
@@ -133,7 +152,7 @@ export function WorkspaceAskSettingsPanel({
 				typeof data.policy_version === "number" ? data.policy_version : null,
 			);
 		} catch {
-			setError("无法加载工作区设置");
+			setError("load_failed");
 		} finally {
 			setLoading(false);
 		}
@@ -178,7 +197,9 @@ export function WorkspaceAskSettingsPanel({
 				if (response.status === 403) setServerCanManage(false);
 				const detail = await response.json().catch(() => null);
 				setError(
-					typeof detail?.detail === "string" ? detail.detail : "保存失败",
+					typeof detail?.detail === "string"
+						? detail.detail
+						: t("保存失败", "Couldn't save"),
 				);
 				return;
 			}
@@ -199,7 +220,7 @@ export function WorkspaceAskSettingsPanel({
 			);
 			setSaved(true);
 		} catch {
-			setError("保存失败，请重试");
+			setError(t("保存失败，请重试", "Couldn't save. Try again."));
 		} finally {
 			setBusy(false);
 		}
@@ -213,10 +234,10 @@ export function WorkspaceAskSettingsPanel({
 				className="min-w-0 space-y-6 text-sm"
 			>
 				<h3 id={`${id}-heading`} className="text-xl font-medium">
-					问答策略
+					{t("问答策略", "Ask policy")}
 				</h3>
 				<p role="status" className="text-muted-foreground">
-					加载中…
+					{t("加载中…", "Loading…")}
 				</p>
 			</section>
 		);
@@ -230,23 +251,36 @@ export function WorkspaceAskSettingsPanel({
 		>
 			<div className="flex flex-wrap items-baseline justify-between gap-2">
 				<h3 id={`${id}-heading`} className="text-xl font-medium">
-					问答策略
+					{t("问答策略", "Ask policy")}
 				</h3>
 				<div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
 					{!canManage ? (
 						<span>
 							{!sessionCanManage || serverCanManage === false
-								? "只读 · 需管理员权限修改"
-								: "权限状态未确认"}
+								? t(
+										"只读 · 需管理员权限修改",
+										"Read only · Administrator access required to edit",
+									)
+								: t("权限状态未确认", "Permissions not yet confirmed")}
 						</span>
 					) : null}
-					{policyVersion != null ? <span>策略版本 {policyVersion}</span> : null}
+					{policyVersion != null ? (
+						<span>
+							{t("策略版本", "Policy version")} {policyVersion}
+						</span>
+					) : null}
 				</div>
 			</div>
 
 			<ul className="divide-y divide-border/60">
 				{FIELDS.map((field) => {
 					const value = draft?.[field.key];
+					const label = t(...field.label);
+					const options =
+						field.options?.map(({ value, label }) => ({
+							value,
+							label: t(...label),
+						})) ?? [];
 					return (
 						<li
 							key={field.key}
@@ -255,12 +289,13 @@ export function WorkspaceAskSettingsPanel({
 							<div className="min-w-0">
 								<div className="flex items-center gap-1">
 									<label htmlFor={`${id}-${field.key}`} className="font-medium">
-										{field.label}
+										{label}
 									</label>
-									<HelpTip label={field.label}>
-										{field.tip}
+									<HelpTip label={label}>
+										{t(...field.tip)}
 										<span className="mt-2 block">
-											默认：{formatDefault(field.key, defaults)}
+											{t("默认：", "Default:")}
+											{formatDefault(field.key, defaults, t)}
 										</span>
 									</HelpTip>
 								</div>
@@ -273,7 +308,7 @@ export function WorkspaceAskSettingsPanel({
 									>
 										<Switch
 											id={`${id}-${field.key}`}
-											aria-label={field.label}
+											aria-label={label}
 											disabled={!canManage || value == null || busy || loading}
 											checked={Boolean(value)}
 											onCheckedChange={(checked) => {
@@ -283,7 +318,7 @@ export function WorkspaceAskSettingsPanel({
 									</label>
 								) : (
 									<Select
-										items={field.options ?? []}
+										items={options}
 										disabled={!canManage || value == null || busy || loading}
 										value={typeof value === "string" ? value : null}
 										onValueChange={(nextValue) => {
@@ -296,16 +331,20 @@ export function WorkspaceAskSettingsPanel({
 									>
 										<SelectTrigger
 											id={`${id}-${field.key}`}
-											aria-label={field.label}
+											aria-label={label}
 											className="min-h-11 w-full min-w-0"
 										>
 											<SelectValue
-												placeholder={loading ? "加载中…" : "请选择"}
+												placeholder={
+													loading
+														? t("加载中…", "Loading…")
+														: t("请选择", "Select an option")
+												}
 											/>
 										</SelectTrigger>
 										<SelectContent>
 											<SelectGroup>
-												{(field.options ?? []).map((option) => (
+												{options.map((option) => (
 													<SelectItem key={option.value} value={option.value}>
 														{option.label}
 													</SelectItem>
@@ -322,12 +361,14 @@ export function WorkspaceAskSettingsPanel({
 
 			{error ? (
 				<p role="alert" className="text-sm text-destructive">
-					{error}
+					{error === "load_failed"
+						? t("无法加载工作区设置", "Couldn't load workspace settings")
+						: error}
 				</p>
 			) : null}
 			{saved ? (
 				<p role="status" className="text-sm text-muted-foreground">
-					已保存
+					{t("已保存", "Saved")}
 				</p>
 			) : null}
 			{error && !ask ? (
@@ -340,7 +381,7 @@ export function WorkspaceAskSettingsPanel({
 					onClick={() => void refresh()}
 				>
 					<RefreshCw className="size-4" aria-hidden />
-					重试
+					{t("重试", "Retry")}
 				</Button>
 			) : null}
 
@@ -354,7 +395,7 @@ export function WorkspaceAskSettingsPanel({
 						onClick={() => void save()}
 					>
 						<Save className="size-4" aria-hidden />
-						{busy ? "保存中…" : "保存"}
+						{busy ? t("保存中…", "Saving…") : t("保存", "Save")}
 					</Button>
 				</div>
 			) : null}

@@ -5,7 +5,6 @@ import {
 	GuardedLink,
 	useNavigationGuard,
 } from "@/components/app/navigation-guard";
-
 import { useSession } from "@/components/app/session-provider";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -24,6 +23,7 @@ import {
 	useSidebar,
 } from "@/components/ui/sidebar";
 import { useHealth } from "@/hooks/use-health";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { formatReleaseVersion } from "@/lib/release-info";
 import { roleLabel } from "@/lib/session-types";
 import { cn } from "@/lib/utils";
@@ -40,6 +40,7 @@ function initialsFor(name: string, email: string | null): string {
 }
 
 export function AppNavUser() {
+	const t = useInterfaceText();
 	const { isMobile } = useSidebar();
 	const { identity, signOut } = useSession();
 	const { allowNavigation } = useNavigationGuard();
@@ -112,7 +113,7 @@ export function AppNavUser() {
 						<DropdownMenuGroup>
 							<DropdownMenuItem render={<GuardedLink href="/app/settings" />}>
 								<Settings2 />
-								工作区设置
+								{t("工作区设置", "Workspace settings")}
 							</DropdownMenuItem>
 						</DropdownMenuGroup>
 						<DropdownMenuSeparator />
@@ -134,7 +135,7 @@ export function AppNavUser() {
 							}}
 						>
 							<LogOut />
-							退出登录
+							{t("退出登录", "Sign out")}
 						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>

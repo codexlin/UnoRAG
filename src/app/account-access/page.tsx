@@ -3,14 +3,20 @@ import { Suspense } from "react";
 
 import { AccountAccessForm } from "@/components/app/account-access-form";
 import { AuthPageShell } from "@/components/app/auth-page-shell";
+import { interfaceText } from "@/lib/i18n/locale";
+import { getRequestLanguage } from "@/lib/i18n/request-locale";
 
-export const metadata: Metadata = {
-	title: "账号访问 · UnoRAG",
-	referrer: "no-referrer",
-	robots: { index: false, follow: false },
-};
+export async function generateMetadata(): Promise<Metadata> {
+	const t = interfaceText((await getRequestLanguage()).locale);
+	return {
+		title: t("账号访问 · UnoRAG", "Account access · UnoRAG"),
+		referrer: "no-referrer",
+		robots: { index: false, follow: false },
+	};
+}
 
-export default function AccountAccessPage() {
+export default async function AccountAccessPage() {
+	const t = interfaceText((await getRequestLanguage()).locale);
 	return (
 		<AuthPageShell>
 			<Suspense
@@ -19,7 +25,7 @@ export default function AccountAccessPage() {
 						className="min-h-80 text-sm leading-6 text-muted-foreground"
 						role="status"
 					>
-						正在加载...
+						{t("正在加载...", "Loading…")}
 					</p>
 				}
 			>

@@ -20,6 +20,7 @@ export default defineConfig({
 	reporter: process.env.CI ? "github" : "list",
 	use: {
 		baseURL,
+		locale: "zh-CN",
 		trace: "retain-on-failure",
 		screenshot: "only-on-failure",
 		video: "retain-on-failure",

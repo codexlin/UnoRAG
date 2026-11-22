@@ -10,7 +10,6 @@ import {
 	Search,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-
 import { AuthButton } from "@/components/app/auth-button";
 import {
 	type DocActionContext,
@@ -46,13 +45,8 @@ import type { ApiDocument, ApiLibrary } from "@/lib/api";
 import type { PermissionCaps } from "@/lib/client-permissions";
 import { documentProcessingView } from "@/lib/document-processing-view";
 import { formatDateTime, formatFileSize } from "@/lib/format";
+import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
-
-const TASK_FILTER_OPTIONS = [
-	{ value: "all", label: "全部任务" },
-	{ value: "processing", label: "任务处理中" },
-	{ value: "failed", label: "任务失败" },
-];
 
 export type DocumentLedgerActions = Omit<
 	DocActionContext,
@@ -98,6 +92,13 @@ export function LibraryDocumentLedger({
 	onCreateLibrary,
 	onUpload,
 }: LibraryDocumentLedgerProps) {
+	const t = useInterfaceText();
+	const { locale } = useInterfaceLanguage();
+	const taskFilterOptions = [
+		{ value: "all", label: t("全部任务", "All jobs") },
+		{ value: "processing", label: t("任务处理中", "Active jobs") },
+		{ value: "failed", label: t("任务失败", "Failed jobs") },
+	];
 	const [query, setQuery] = useState("");
 	const [taskFilter, setTaskFilter] = useState("all");
 	const filteredDocuments = useMemo(() => {
@@ -132,14 +133,14 @@ export function LibraryDocumentLedger({
 		<>
 			{library ? (
 				<section
-					aria-label="文档与任务统计"
+					aria-label={t("文档与任务统计", "Document and job totals")}
 					className="grid shrink-0 grid-cols-[repeat(auto-fit,minmax(min(100%,8rem),1fr))] border-b border-border/70 bg-background"
 				>
 					{[
-						["文档", documents.length],
-						["任务完成", summary.completed],
-						["任务处理中", summary.processing],
-						["任务失败", summary.failed],
+						[t("文档", "Documents"), documents.length],
+						[t("任务完成", "Completed jobs"), summary.completed],
+						[t("任务处理中", "Active jobs"), summary.processing],
+						[t("任务失败", "Failed jobs"), summary.failed],
 					].map(([label, value], index) => (
 						<div
 							key={label}
@@ -174,17 +175,20 @@ export function LibraryDocumentLedger({
 				{library && documents.length > 0 ? (
 					<div className="mb-3 flex flex-wrap items-end justify-between gap-3">
 						<div>
-							<p className="text-sm font-medium text-foreground">文档</p>
+							<p className="text-sm font-medium text-foreground">
+								{t("文档", "Documents")}
+							</p>
 							<p className="mt-1 text-xs text-muted-foreground">
-								显示 {filteredDocuments.length} / {documents.length} 份文档
+								{t("显示", "Showing")} {filteredDocuments.length} /{" "}
+								{documents.length} {t("份文档", "documents")}
 							</p>
 						</div>
 						<div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
 							<label className="sr-only" htmlFor="document-task-filter">
-								最近处理任务
+								{t("最近处理任务", "Recent jobs")}
 							</label>
 							<Select
-								items={TASK_FILTER_OPTIONS}
+								items={taskFilterOptions}
 								value={taskFilter}
 								onValueChange={(value) => {
 									if (value !== null) setTaskFilter(value);
@@ -198,7 +202,7 @@ export function LibraryDocumentLedger({
 								</SelectTrigger>
 								<SelectContent>
 									<SelectGroup>
-										{TASK_FILTER_OPTIONS.map((option) => (
+										{taskFilterOptions.map((option) => (
 											<SelectItem
 												key={option.value}
 												value={option.value}
@@ -218,9 +222,12 @@ export function LibraryDocumentLedger({
 								<Input
 									value={query}
 									onChange={(event) => setQuery(event.target.value)}
-									placeholder="搜索显示名或原文件…"
+									placeholder={t(
+										"搜索显示名或原文件…",
+										"Search by display name or original file…",
+									)}
 									className="h-11 rounded-md pl-8"
-									aria-label="搜索文档"
+									aria-label={t("搜索文档", "Search documents")}
 								/>
 							</div>
 						</div>
@@ -236,15 +243,23 @@ export function LibraryDocumentLedger({
 							className="size-4 animate-spin motion-reduce:animate-none"
 							aria-hidden
 						/>
-						{library ? "正在加载文档…" : "正在加载知识库…"}
+						{library
+							? t("正在加载文档…", "Loading documents…")
+							: t("正在加载知识库…", "Loading libraries…")}
 					</div>
 				) : (!library && libraryLoadError) ||
 					(library && loadError && documents.length === 0) ? (
 					<div className="flex min-h-60 flex-col items-center justify-center gap-3 text-sm">
 						<p className="text-muted-foreground">
 							{library
-								? "文档列表未能加载，暂无法确认资料数量。"
-								: "知识库列表未能加载，暂无法确认资料数量。"}
+								? t(
+										"文档列表未能加载，暂无法确认资料数量。",
+										"Couldn't load documents or verify the document count.",
+									)
+								: t(
+										"知识库列表未能加载，暂无法确认资料数量。",
+										"Couldn't load libraries or verify the document count.",
+									)}
 						</p>
 						<Button
 							type="button"
@@ -255,15 +270,20 @@ export function LibraryDocumentLedger({
 							aria-busy={refreshing}
 						>
 							<RotateCcw data-icon="inline-start" aria-hidden />
-							{library ? "重试加载文档" : "重试加载知识库"}
+							{library
+								? t("重试加载文档", "Retry loading documents")
+								: t("重试加载知识库", "Retry loading libraries")}
 						</Button>
 					</div>
 				) : !library ? (
 					<div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-border/80 bg-muted/20 px-6 text-center">
 						<p className="text-sm text-muted-foreground">
 							{canManageLibraries
-								? "还没有知识库"
-								: "当前 Workspace 还没有知识库"}
+								? t("还没有知识库", "No libraries yet")
+								: t(
+										"当前 Workspace 还没有知识库",
+										"This workspace has no libraries.",
+									)}
 						</p>
 						<AuthButton
 							cap="manageLibraries"
@@ -273,15 +293,18 @@ export function LibraryDocumentLedger({
 							onClick={onCreateLibrary}
 						>
 							<Plus data-icon="inline-start" />
-							新建知识库
+							{t("新建知识库", "Create library")}
 						</AuthButton>
 					</div>
 				) : documents.length === 0 ? (
 					<div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-border/80 bg-muted/20 px-6 text-center">
 						<p className="text-sm text-muted-foreground">
 							{canWriteLibraries
-								? "尚无文档"
-								: "尚无文档。当前角色为只读，请联系编辑者或管理员上传。"}
+								? t("尚无文档", "No documents yet")
+								: t(
+										"尚无文档。当前角色为只读，请联系编辑者或管理员上传。",
+										"No documents. Ask an editor or administrator to upload one.",
+									)}
 						</p>
 						<AuthButton
 							cap="writeLibraries"
@@ -291,16 +314,19 @@ export function LibraryDocumentLedger({
 							onClick={onUpload}
 						>
 							<FileUp data-icon="inline-start" />
-							上传文档
+							{t("上传文档", "Upload documents")}
 						</AuthButton>
 					</div>
 				) : filteredDocuments.length === 0 ? (
 					<div className="flex min-h-48 flex-col items-center justify-center border border-dashed border-border/80 bg-muted/20 px-6 text-center">
 						<p className="text-sm font-medium text-foreground">
-							没有匹配的文档
+							{t("没有匹配的文档", "No matching documents")}
 						</p>
 						<p className="mt-1 text-sm text-muted-foreground">
-							换一个名称或文件名关键词试试。
+							{t(
+								"换一个名称或文件名关键词试试。",
+								"Try another name or filename.",
+							)}
 						</p>
 						<Button
 							type="button"
@@ -312,7 +338,7 @@ export function LibraryDocumentLedger({
 								setTaskFilter("all");
 							}}
 						>
-							清除筛选
+							{t("清除筛选", "Clear filters")}
 						</Button>
 					</div>
 				) : (
@@ -320,25 +346,31 @@ export function LibraryDocumentLedger({
 						<Table className="table-fixed xl:table-auto">
 							<TableHeader>
 								<TableRow className="hover:bg-transparent">
-									<TableHead>文档名称</TableHead>
-									<TableHead className="hidden xl:table-cell">原文件</TableHead>
-									<TableHead className="w-24 md:w-auto">最近处理</TableHead>
-									<TableHead className="hidden text-right xl:table-cell">
-										大小
+									<TableHead>{t("文档名称", "Document name")}</TableHead>
+									<TableHead className="hidden xl:table-cell">
+										{t("原文件", "Original file")}
+									</TableHead>
+									<TableHead className="w-24 md:w-auto">
+										{t("最近处理", "Latest job")}
 									</TableHead>
 									<TableHead className="hidden text-right xl:table-cell">
-										本次片段
+										{t("大小", "Size")}
+									</TableHead>
+									<TableHead className="hidden text-right xl:table-cell">
+										{t("本次片段", "Chunks in this version")}
 									</TableHead>
 									<TableHead className="hidden lg:table-cell">
-										更新时间
+										{t("更新时间", "Updated")}
 									</TableHead>
-									<TableHead className="w-16 text-right">操作</TableHead>
+									<TableHead className="w-16 text-right">
+										{t("操作", "Actions")}
+									</TableHead>
 								</TableRow>
 							</TableHeader>
 							<TableBody>
 								{filteredDocuments.map((doc) => {
 									const busy = busyDocId === doc.id;
-									const task = documentProcessingView(doc);
+									const task = documentProcessingView(doc, locale);
 									const actionContext: DocActionContext = {
 										busy,
 										processing: doc.status === "processing",
@@ -402,7 +434,7 @@ export function LibraryDocumentLedger({
 												) : null}
 												{doc.status === "degraded" ? (
 													<span className="mt-1 block text-xs text-warning-foreground">
-														解析降级
+														{t("解析降级", "Parsing fallback")}
 													</span>
 												) : null}
 											</TableCell>
@@ -431,7 +463,9 @@ export function LibraryDocumentLedger({
 														}
 													>
 														<MoreHorizontal />
-														<span className="sr-only">操作</span>
+														<span className="sr-only">
+															{t("操作", "Actions")}
+														</span>
 													</DropdownMenuTrigger>
 													<DropdownMenuContent align="end" className="min-w-40">
 														{resolveDocActions(caps, doc).map((action) => {
@@ -456,7 +490,7 @@ export function LibraryDocumentLedger({
 																		}
 																	>
 																		<Icon />
-																		{action.label}
+																		{t(...action.label)}
 																	</DropdownMenuItem>
 																</div>
 															);

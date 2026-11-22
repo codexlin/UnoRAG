@@ -3,7 +3,6 @@
 import { Check, Monitor, Moon, Palette, RotateCcw, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useId, useState } from "react";
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,11 +23,12 @@ import {
 	normalizeRadius,
 	RADIUS_RANGE,
 } from "@/lib/appearance";
+import { useInterfaceText } from "@/lib/i18n/provider";
 
 const MODES = [
-	{ id: "light", label: "浅色", icon: Sun },
-	{ id: "dark", label: "深色", icon: Moon },
-	{ id: "system", label: "跟随系统", icon: Monitor },
+	{ id: "light", label: ["浅色", "Light"], icon: Sun },
+	{ id: "dark", label: ["深色", "Dark"], icon: Moon },
+	{ id: "system", label: ["跟随系统", "System"], icon: Monitor },
 ] as const;
 
 const optionClassName =
@@ -41,12 +41,15 @@ function RadiusControl({
 	value: number;
 	onChange: (value: number) => void;
 }) {
+	const t = useInterfaceText();
 	const id = useId();
 	const [draft, setDraft] = useState(String(value));
 	useEffect(() => setDraft(String(value)), [value]);
 	return (
 		<fieldset>
-			<legend className="mb-3 text-sm font-medium">圆角</legend>
+			<legend className="mb-3 text-sm font-medium">
+				{t("圆角", "Corner radius")}
+			</legend>
 			<div className="flex min-w-0 flex-wrap items-center gap-3">
 				<div className="min-w-[min(100%,10rem)] flex-1">
 					<Slider
@@ -54,8 +57,10 @@ function RadiusControl({
 						max={RADIUS_RANGE.max}
 						step={RADIUS_RANGE.step}
 						value={[value]}
-						getAriaLabel={() => "圆角大小"}
-						getAriaValueText={(_, pixels) => `${pixels} 像素`}
+						getAriaLabel={() => t("圆角大小", "Corner radius")}
+						getAriaValueText={(_, pixels) =>
+							t(`${pixels} 像素`, `${pixels} pixels`)
+						}
 						onValueChange={(pixels) =>
 							onChange(Array.isArray(pixels) ? pixels[0] : pixels)
 						}
@@ -70,7 +75,7 @@ function RadiusControl({
 				</div>
 				<div className="flex shrink-0 items-center gap-1.5 self-start">
 					<label htmlFor={`${id}-number`} className="sr-only">
-						圆角数值
+						{t("圆角数值", "Corner radius value")}
 					</label>
 					<Input
 						id={`${id}-number`}
@@ -126,6 +131,7 @@ function ThemePreview({ theme }: { theme: Appearance["color"] }) {
 }
 
 export function ThemeToggle() {
+	const t = useInterfaceText();
 	const id = useId();
 	const [mounted, setMounted] = useState(false);
 	useEffect(() => setMounted(true), []);
@@ -139,8 +145,8 @@ export function ThemeToggle() {
 						variant="ghost"
 						size="icon"
 						className="size-11"
-						aria-label="外观设置"
-						title="外观设置"
+						aria-label={t("外观设置", "Appearance settings")}
+						title={t("外观设置", "Appearance settings")}
 						disabled={!mounted}
 					/>
 				}
@@ -152,13 +158,15 @@ export function ThemeToggle() {
 				aria-describedby={undefined}
 			>
 				<SheetHeader className="border-b p-5">
-					<SheetTitle>外观</SheetTitle>
+					<SheetTitle>{t("外观", "Appearance")}</SheetTitle>
 				</SheetHeader>
 				<div className="space-y-7 p-5">
 					<fieldset>
-						<legend className="mb-3 text-sm font-medium">主题</legend>
+						<legend className="mb-3 text-sm font-medium">
+							{t("主题", "Theme")}
+						</legend>
 						<RadioGroup
-							aria-label="主题"
+							aria-label={t("主题", "Theme")}
 							name="appearance-color"
 							value={appearance.color}
 							onValueChange={(color) => setAppearance({ color })}
@@ -190,9 +198,11 @@ export function ThemeToggle() {
 						</RadioGroup>
 					</fieldset>
 					<fieldset>
-						<legend className="mb-3 text-sm font-medium">明暗</legend>
+						<legend className="mb-3 text-sm font-medium">
+							{t("明暗", "Color mode")}
+						</legend>
 						<RadioGroup
-							aria-label="明暗"
+							aria-label={t("明暗", "Color mode")}
 							name="appearance-mode"
 							value={theme ?? "system"}
 							onValueChange={setTheme}
@@ -207,11 +217,11 @@ export function ThemeToggle() {
 									<RadioGroupItem
 										id={`${id}-mode-${item.id}`}
 										className="absolute inset-0 size-full cursor-pointer rounded-lg opacity-0 after:hidden"
-										aria-label={item.label}
+										aria-label={t(item.label[0], item.label[1])}
 										value={item.id}
 									/>
 									<item.icon className="size-4" aria-hidden />
-									{item.label}
+									{t(item.label[0], item.label[1])}
 								</Label>
 							))}
 						</RadioGroup>
@@ -221,7 +231,9 @@ export function ThemeToggle() {
 						onChange={(radius) => setAppearance({ radius })}
 					/>
 					<div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4">
-						<span className="text-xs text-muted-foreground">当前浏览器</span>
+						<span className="text-xs text-muted-foreground">
+							{t("当前浏览器", "This browser")}
+						</span>
 						<Button
 							variant="ghost"
 							className="min-h-11"
@@ -231,7 +243,7 @@ export function ThemeToggle() {
 							}}
 						>
 							<RotateCcw aria-hidden />
-							恢复默认
+							{t("恢复默认", "Restore defaults")}
 						</Button>
 					</div>
 				</div>

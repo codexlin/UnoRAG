@@ -1,5 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { after, type NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/db";
+import { LOCALE_COOKIE, resolveLocale } from "@/lib/i18n/locale";
 import { logger } from "@/lib/observability";
 import {
 	accountEmailBaseUrl,
@@ -43,7 +44,7 @@ export const accountEmailHandlers = createAccountEmailHandlers({
 			windowSeconds: 60,
 		});
 	},
-	async send(input) {
+	async send(input, request) {
 		const pool = getDatabase().$client;
 		const token = await issueAccountEmailToken(pool, {
 			...input,
@@ -55,6 +56,10 @@ export const accountEmailHandlers = createAccountEmailHandlers({
 			url: token.url,
 			purpose: input.purpose,
 			idempotencyKey: `account:${token.tokenId}`,
+			locale: resolveLocale(
+				(request as NextRequest).cookies?.get(LOCALE_COOKIE)?.value,
+				request.headers.get("accept-language"),
+			),
 		});
 		await pool.query(
 			`INSERT INTO app.audit_logs (organization_id, workspace_id, actor_id, action, resource_type, resource_id, details)
