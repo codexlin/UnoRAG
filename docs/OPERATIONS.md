@@ -316,62 +316,11 @@ Compose 为组件设置 CPU、内存限制和有限保留期，但 Docker 命名
 把观测卷放在有水位告警与配额/容量控制的独立文件系统，或改接客户托管的 Prometheus、Loki、Tempo；
 磁盘告警必须早于业务数据卷告警阈值。
 
-`dbos-control` 默认每 15 分钟把超过 30 分钟的 `running` Ask 收敛为失败，并按 30 天保留期有界删除
-终态记录。它还会每小时分批回收超过 90 天的删除 tombstone：只有 Qdrant、原文件和 generation cleanup
-均已完成的文档才能物理删除；库仍被文档、历史会话或 Ask 记录引用时会保留并报告为 `blocked`。每次
-物理回收前都会写入 `document.tombstone_purged` / `library.tombstone_purged` 审计事件。
+`dbos-control` 默认每 15 分钟将超过 30 分钟的 `running` Ask 收敛为失败、按 30 天保留期清理终态记录，并每小时分批回收超过 90 天的删除 tombstone（仅在 Qdrant、原文件和 cleanup 均完成且无历史引用时物理删除，删除前写审计）。调度周期与告警阈值参数集中在 [`deploy/config/runtime.advanced.env.example`](../deploy/config/runtime.advanced.env.example) 的维护与告警区块维护。
 
-以下部署参数可调整或关闭调度：
+Ask 统计告警只在样本数达到 `OBSERVABILITY_ASK_MIN_SAMPLES` 后评估，恢复需连续健康周期（`OBSERVABILITY_ALERT_RECOVERY_CYCLES`）；dead/stuck 任务、删除失败和 Provider 不可用不受最小样本限制。健康评估通过 PostgreSQL advisory lock 支持多 control 副本。
 
-```text
-ASK_RUN_MAINTENANCE_ENABLED=true
-ASK_RUN_MAINTENANCE_INTERVAL_MS=900000
-ASK_RUN_STALE_AFTER_MINUTES=30
-ASK_RUN_RETENTION_DAYS=30
-ASK_RUN_MAINTENANCE_BATCH_SIZE=1000
-TOMBSTONE_MAINTENANCE_ENABLED=true
-TOMBSTONE_MAINTENANCE_INTERVAL_MS=3600000
-TOMBSTONE_RETENTION_DAYS=90
-TOMBSTONE_MAINTENANCE_BATCH_SIZE=100
-OBSERVABILITY_CYCLE_ENABLED=true
-OBSERVABILITY_CYCLE_INTERVAL_MS=60000
-OBSERVABILITY_ASK_MIN_SAMPLES=10
-OBSERVABILITY_ASK_FAILURE_RATE_WARNING=0.05
-OBSERVABILITY_ASK_CITATION_COVERAGE_MIN=0.90
-OBSERVABILITY_ASK_P95_WARNING_MS=15000
-OBSERVABILITY_ASK_P95_CRITICAL_MS=25000
-OBSERVABILITY_ALERT_RECOVERY_CYCLES=2
-OBSERVABILITY_ALERT_WEBHOOK_ENABLED=false
-```
-
-Ask 统计告警读取运行中心的滚动窗口，只在对应样本数达到
-`OBSERVABILITY_ASK_MIN_SAMPLES` 后评估。P95 达到 warning 阈值产生 warning，达到 critical 阈值升级为
-critical；任务 dead/stuck、删除失败和 Provider 不可用不受最小样本限制。控制周期会重复观察同一个滚动
-窗口，因此不把“连续轮询次数”误当成新的独立样本；降噪依靠样本下限，恢复则要求连续健康周期。
-
-健康评估使用 advisory lock 支持多个 control 副本，并把结果按 organization/workspace 投影。Webhook
-需同时配置 `OBSERVABILITY_ALERT_WEBHOOK_URL` 和 `OBSERVABILITY_ALERT_WEBHOOK_SECRET`，并启用
-`OBSERVABILITY_ALERT_WEBHOOK_ENABLED`。邮件传输只在部署中设置 `EMAIL_PROVIDER=resend`、`EMAIL_FROM`
-和 `RESEND_API_KEY`；API Key 仅提供给 Web 服务端（账号邮件）及 control 进程（告警邮件），
-不提供给浏览器或入库 Worker。当前使用 Resend HTTPS API，不读取 `SMTP_*` 配置。
-
-工作区管理员在 **设置 → 邮件通知** 管理最多 5 个收件邮箱、通知开关、最低告警级别和恢复通知。
-这些策略保存到 PostgreSQL，保存后无需重启。收件人按工作区隔离；`OBSERVABILITY_ALERT_EMAIL_TO` 和
-`OBSERVABILITY_ALERT_EMAIL_ENABLED` 不再是运行时配置。旧部署升级后需要由管理员在各工作区保存设置，
-默认关闭，不把旧的全局收件人自动广播到所有工作区；原私有配置中的旧地址可供人工核对，不会自动迁入新工作区。
-
-测试邮件只能使用已保存的收件人，可在告警开关关闭时发送；每个工作区每 60 秒最多请求一次，限制在数据库
-事务内生效，多个 Web 副本不能绕过。测试和真实通知共用已有持久化投递队列，每个收件人独立重试、幂等和
-记录状态。修改策略会使尚未发送的旧版本通知失效；新策略只处理后续告警变化，不自动补发既有活动告警，
-无法撤回已经交给服务商的邮件。
-
-同一投递的重试保持同一幂等键，并校验首次发送时固定的请求内容哈希。部署更新若改变发件人或邮件内容，
-旧任务以 `email_request_changed` 终止，不换新幂等键重复发信。Resend 的并发幂等冲突单独有界重试，
-其他冲突不自动重试；这不构成超出服务商幂等保留期的 exactly-once 承诺。
-
-页面区分服务配置、通知开关和最近投递。服务配置状态来自 control 的周期投影，缺失或过期显示未知；
-“服务商已接受”只表示 Resend 接受了 API 请求，不证明送达收件箱。Provider 消息 ID 可供管理员到服务商
-控制台继续排查。HTTP 错误仅保留安全错误码，瞬时失败采用有界退避，且不影响核心业务。
+Webhook 告警需同时配置 `OBSERVABILITY_ALERT_WEBHOOK_URL`、`OBSERVABILITY_ALERT_WEBHOOK_SECRET` 与 `OBSERVABILITY_ALERT_WEBHOOK_ENABLED=true`。告警邮件复用部署级 Resend 凭据（`EMAIL_PROVIDER=resend`、`EMAIL_FROM`、`RESEND_API_KEY`，仅注入 Web 与 control，不读取 `SMTP_*`）；收件人（最多 5 个）、级别与开关由工作区管理员在 **设置 → 邮件通知** 热配置并持久化到 PostgreSQL。测试邮件按工作区每 60 秒限流一次，与真实告警共用持久化幂等投递队列（仅“服务商已接受”不代表已进收件箱，投递失败结合安全错误码与 Resend 控制台排查）。
 
 手工命令默认只预览；确认后才执行：
 
@@ -484,17 +433,9 @@ cd deploy/compose
 CONFIRM=YES ./scripts/restore.sh ./backups/<backup-id>
 ```
 
-备份必须覆盖 PostgreSQL、DBOS、文档对象、Qdrant 和 manifest 校验值。`local` 文档对象由脚本归档。
-使用 COS 时，Compose 备份清单只记录桶、地域等远端信息，不包含对象内容，不能直接恢复桶里的原文。
-COS 原文必须由桶版本控制及独立复制/备份覆盖。恢复只允许在维护窗口
-或可丢弃环境执行，顺序见 [DEPLOYMENT.md](./DEPLOYMENT.md)。每个目标环境都要实际恢复一次，
-并记录 RPO、RTO、数据对照值和恢复后的隔离检查。
+备份覆盖 PostgreSQL、DBOS、Qdrant、manifest 校验值及 `local` 文档卷（COS 模式只记录桶元数据，原文须依赖桶版本控制与独立复制；Redis 可重建）。恢复顺序固定为：**停止应用 → 恢复 PG → 恢复/核验文档对象 → 恢复 Qdrant → 启动应用并验证**（检查登录、active version、既有引用、新上传、Ask、删除、巡检与跨 Workspace 隔离）。
 
-以下任一情况表示恢复失败：active pointer 与可见 generation 不一致、引用指向不存在版本、
-对象缺失、跨租户数据出现，或必须手工改库才能恢复。
-
-COS 模式还必须监控 4xx/5xx、请求延迟、存储容量、版本保留和复制状态。轮换 CAM 密钥时先让 Web 与
-Worker 同时获得新凭证，验证上传、入库、下载和删除后再撤销旧凭证，避免半套运行时使用不同身份。
+以下任一情况即判定恢复失败：active pointer 与可见 generation 不一致、引用指向不存在版本、对象缺失、跨租户数据出现或必须手工改库。轮换 COS CAM 密钥时先让 Web 与 Worker 同步切换新凭据并验证上传/下载/删除后再撤销旧密钥。
 
 ## CI 与镜像发布
 

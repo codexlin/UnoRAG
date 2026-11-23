@@ -14,6 +14,19 @@
 
 第一次接触项目只需读同一行，不需要阅读全部文档。
 
+## 按问题快速直达
+
+| 你想查什么 | 直接打开 |
+|---|---|
+| 权限隔离、Ask 编排、记忆边界、引用守卫 | [系统架构](./ARCHITECTURE.md) |
+| 为什么这么设计、哪些架构红线不能松 | [ADR 索引](./adr/README.md) |
+| 本地启动、环境变量、Compose/Helm 安装升级 | [部署指南](./DEPLOYMENT.md) |
+| 日志/Trace、Ops Stack、Langfuse、故障排查 | [运维指南](./OPERATIONS.md) |
+| 分块与评测体系、黄金集、Ragas 离线诊断 | [质量评测](./EVALUATION.md) |
+| 代码目录归属、测试分层、提 PR 检查项 | [开发指南](./DEVELOPMENT.md) |
+| UI 规范、组件选型、主题与动效边界 | [产品设计规范](./DESIGN.md) |
+| 外部系统对接 `/api/v1/retrieve` 与 `/api/v1/ask` | [Knowledge API](./INTEGRATION.md) |
+
 ## 文档层级
 
 | 层级 | 内容 | 维护规则 |

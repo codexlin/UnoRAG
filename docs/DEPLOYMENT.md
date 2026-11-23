@@ -258,37 +258,18 @@ overlay 和显式开关。脚本随后：
 4. 启动新版本 DBOS worker/control，执行 ACL 对账与生命周期巡检；
 5. 替换 Web，检查结构化健康状态并运行真实上传、Ask、替换、删除与隔离冒烟。
 
-排空默认最多等待 1800 秒，可通过 `DBOS_UPGRADE_DRAIN_TIMEOUT_SECONDS` 调整。超时会拒绝版本切换并
-恢复旧服务，不会让新 Worker 接管旧版本 workflow。版本变化后的自动回滚同样先停止入口并排空新版本；
-若无法排空，脚本保留新镜像和维护状态，要求运维处理，而不会做可能遗留任务的强制回滚。
+排空默认最多等待 1800 秒（可通过 `DBOS_UPGRADE_DRAIN_TIMEOUT_SECONDS` 调整）；超时或无法排空时拒绝版本切换，不强制中断在途 workflow。上一个镜像集合保存在 `.upgrade-state/previous-images.env`，失败时自动或手动作为 manifest 传给 `upgrade.sh` 回滚应用镜像。数据库仅向前迁移，破坏性 schema 变更须遵循 expand / migrate / contract。
 
-`0027_document_version_source_metadata` 迁移会再次检查没有未完成的入库任务，并从匹配原始上传对象的
-任务记录回填版本级文件名/MIME。无法可靠恢复的历史元数据保持为空：原文可用通用名称下载，
-需要重索引时请重新上传该文件。不要以当前文档名称批量填充旧版本，否则可能把旧 PDF 当成新 DOCX 处理。
-
-上一个镜像集合保存在 `.upgrade-state/previous-images.env`。升级过程中任一步失败，脚本会恢复
-旧应用镜像引用；运维人员也可把该文件作为 manifest 再次执行 `upgrade.sh` 完成手工应用回滚。
-数据库不会自动向下迁移，因此旧镜像必须与新 schema 保持兼容，破坏性变化必须采用 expand / migrate /
-contract 窗口。
-
-Compose 是单机参考拓扑：DBOS version 变化使用明确的短维护窗口，单副本 Web 替换也可能产生连接
-中断，不承诺零停机。需要无感更新时，不能只增加副本；还要让旧、新 DBOS application version 的
-Worker 并存直至旧 workflow 排空，并使用 readiness、PDB 与负载均衡完成该客户拓扑的专项验收。
+Compose 为单机参考拓扑（DBOS 版本变更存在短维护窗口），不承诺零停机。
 
 ## 备份与恢复
-
-参考 Compose 备份覆盖 PostgreSQL、DBOS 与 Qdrant。`local` 模式同时归档文档卷；`cos` 模式只记录
-远程桶边界，文档对象依赖 COS 自身的版本控制、跨地域复制或独立备份策略。Redis 会话可重建，
-不属于恢复集。
 
 ```bash
 ./scripts/backup.sh ./backups/$(date +%Y%m%dT%H%M%S)
 CONFIRM=YES ./scripts/restore.sh ./backups/<backup-id>
 ```
 
-恢复顺序固定为：停止应用、恢复 PostgreSQL、恢复或核验文档对象、恢复 Qdrant、启动应用并验证。
-恢复后必须检查登录、active version、既有引用、新上传、Retrieve/Ask、删除、生命周期巡检和
-跨 Workspace 隔离。只生成备份文件而未做过恢复演练，不算具备恢复能力。
+备份覆盖 PostgreSQL、DBOS 与 Qdrant（`local` 同时归档文档卷；`cos` 只记录桶边界，原文依赖 COS 版本控制/复制；Redis 会话可重建）。恢复顺序、失败判定与演练要求见 [运维指南 · 备份与灾难恢复](./OPERATIONS.md#备份与灾难恢复)。
 
 ## Kubernetes
 
@@ -425,5 +406,4 @@ Helm 不安装官方单机 Ops Stack；Kubernetes 客户应复用现有 Collecto
 `observability.otel.enabled=true` 与 `observability.otel.endpoint`。启用但未提供 endpoint 时 Chart
 会拒绝渲染。可选认证头通过 Runtime Secret 的 `OTEL_EXPORTER_OTLP_HEADERS` 注入。
 
-详细配置项见 [`deploy/README.md`](../deploy/README.md) 和
-[`deploy/helm/README.md`](../deploy/helm/README.md)。上线判定以 [RELEASE.md](./RELEASE.md) 为准。
+Helm 配置详见 [`deploy/helm/README.md`](../deploy/helm/README.md)，Compose 脚本位于 `deploy/compose/scripts/`。上线判定以 [RELEASE.md](./RELEASE.md) 为准。
