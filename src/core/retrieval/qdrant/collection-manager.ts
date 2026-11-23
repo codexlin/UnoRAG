@@ -37,6 +37,15 @@ export const UNORAG_QDRANT_PAYLOAD_INDEXES = [
 }>;
 
 type CollectionInfo = Awaited<ReturnType<QdrantClient["getCollection"]>>;
+type DenseVectorConfig = NonNullable<
+	CollectionInfo["config"]["params"]["vectors"]
+>;
+
+function isUnnamedDenseVector(
+	config: DenseVectorConfig,
+): config is Schemas["VectorParams"] {
+	return typeof config.size === "number";
+}
 
 export type QdrantCollectionClient = Pick<
 	QdrantClient,
@@ -62,6 +71,28 @@ export class QdrantCollectionContractError extends Error {
 	constructor(message: string) {
 		super(message);
 		this.name = "QdrantCollectionContractError";
+	}
+}
+
+export class QdrantEmbeddingDimensionMismatchError extends QdrantCollectionContractError {
+	readonly code = "embedding_dimension_mismatch";
+	readonly collection: string;
+	readonly recovery: string;
+
+	constructor(
+		collection: string,
+		readonly expectedDimension: number,
+		readonly actualDimension: number,
+	) {
+		const safeCollection = /^[\w.-]{1,200}$/.test(collection)
+			? collection
+			: "QDRANT_COLLECTION";
+		const recovery = `If your embedding model supports ${actualDimension} dimensions, set EMBEDDING_DIM=${actualDimension}. To use ${expectedDimension} dimensions, set QDRANT_COLLECTION to a new collection and reindex.`;
+		super(
+			`Qdrant collection ${safeCollection} vector size mismatch: configured EMBEDDING_DIM=${expectedDimension}, collection dense size=${actualDimension}. ${recovery}`,
+		);
+		this.collection = safeCollection;
+		this.recovery = `集合的向量维度为 ${actualDimension}，当前 EMBEDDING_DIM=${expectedDimension}。若模型支持现有维度，设置 EMBEDDING_DIM=${actualDimension}；若要使用新维度，修改 QDRANT_COLLECTION 指向新集合后重索引。 ${recovery}`;
 	}
 }
 
@@ -220,7 +251,10 @@ export function detectQdrantVectorSchema(
 	info: CollectionInfo,
 ): QdrantVectorSchema {
 	const vectors = info.config.params.vectors;
-	if (!vectors || (!("size" in vectors) && !vectors[QDRANT_DENSE_VECTOR])) {
+	if (
+		!vectors ||
+		(!isUnnamedDenseVector(vectors) && !vectors[QDRANT_DENSE_VECTOR])
+	) {
 		throw new QdrantCollectionContractError(
 			"Qdrant collection has no supported dense vector",
 		);
@@ -233,29 +267,40 @@ export function detectQdrantVectorSchema(
 		);
 	}
 	return {
-		denseVectorName: "size" in vectors ? null : QDRANT_DENSE_VECTOR,
+		denseVectorName: isUnnamedDenseVector(vectors) ? null : QDRANT_DENSE_VECTOR,
 		sparseVectorName: QDRANT_SPARSE_VECTOR,
 	};
+}
+
+export function assertQdrantEmbeddingDimension(
+	info: CollectionInfo,
+	contract: Pick<QdrantCollectionContract, "collection" | "vectorSize">,
+): Schemas["VectorParams"] {
+	const config = info.config.params.vectors;
+	const vectors =
+		config &&
+		(isUnnamedDenseVector(config) ? config : config[QDRANT_DENSE_VECTOR]);
+	if (!vectors || typeof vectors.size !== "number") {
+		throw new QdrantCollectionContractError(
+			`Qdrant collection ${contract.collection} must use one unnamed dense vector or a named dense vector`,
+		);
+	}
+	if (vectors.size !== contract.vectorSize) {
+		throw new QdrantEmbeddingDimensionMismatchError(
+			contract.collection,
+			contract.vectorSize,
+			vectors.size,
+		);
+	}
+	return vectors;
 }
 
 function validateCollectionInfo(
 	info: CollectionInfo,
 	contract: QdrantCollectionContract,
 ): void {
+	const vectors = assertQdrantEmbeddingDimension(info, contract);
 	detectQdrantVectorSchema(info);
-	const config = info.config.params.vectors;
-	const vectors =
-		config && ("size" in config ? config : config[QDRANT_DENSE_VECTOR]);
-	if (!vectors || !("size" in vectors)) {
-		throw new QdrantCollectionContractError(
-			`Qdrant collection ${contract.collection} must use one unnamed dense vector or a named dense vector`,
-		);
-	}
-	if (vectors.size !== contract.vectorSize) {
-		throw new QdrantCollectionContractError(
-			`Qdrant collection ${contract.collection} vector size mismatch: expected ${contract.vectorSize}, received ${vectors.size}`,
-		);
-	}
 	if (vectors.distance !== contract.distance) {
 		throw new QdrantCollectionContractError(
 			`Qdrant collection ${contract.collection} distance mismatch: expected ${contract.distance}, received ${vectors.distance}`,

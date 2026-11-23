@@ -3,6 +3,8 @@ export const ASK_PUBLIC_KEYS: string[];
 export const PUBLIC_ASK_DEFAULTS: {
 	answer_profile: string;
 	retrieval_enhancement: string;
+	hybrid_retrieval: string;
+	reranking: string;
 	session_memory_enabled: boolean;
 	evidence_requirement: string;
 };

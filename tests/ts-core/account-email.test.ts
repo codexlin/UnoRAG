@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { Parser } from "htmlparser2";
+import { resolveAccountEmailBaseUrl } from "../../src/lib/server/auth/email-tokens";
 import type { EmailDependencies } from "../../src/lib/server/email";
 
 const require = createRequire(import.meta.url);
@@ -40,6 +41,42 @@ const invite = {
 	role: "editor",
 	locale: "zh-CN" as const,
 };
+
+test("account email prefers APP_BASE_URL and validates UNORAG_BASE_URL as a fallback", () => {
+	const fallback = { UNORAG_BASE_URL: "https://workspace.example.test/" };
+	assert.equal(
+		resolveAccountEmailBaseUrl(fallback),
+		"https://workspace.example.test",
+	);
+	assert.equal(
+		resolveAccountEmailBaseUrl({ ...fallback, APP_BASE_URL: "" }),
+		"https://workspace.example.test",
+	);
+	assert.equal(
+		resolveAccountEmailBaseUrl({
+			...fallback,
+			APP_BASE_URL: "https://mail.example.test",
+		}),
+		"https://mail.example.test",
+	);
+	assert.equal(
+		resolveAccountEmailBaseUrl({
+			...fallback,
+			APP_BASE_URL: "http://mail.example.test",
+		}),
+		null,
+	);
+	assert.equal(
+		resolveAccountEmailBaseUrl({
+			UNORAG_BASE_URL: "http://workspace.example.test",
+		}),
+		null,
+	);
+	assert.equal(
+		resolveAccountEmailBaseUrl({ UNORAG_BASE_URL: "http://127.0.0.1:8080" }),
+		"http://127.0.0.1:8080",
+	);
+});
 test("account and invite templates use English by default and can render Simplified Chinese", async () => {
 	const { renderAccountEmail, renderInviteEmail } = await templatesModule;
 	const english = renderAccountEmail({ url: account.url, purpose: "reset" });

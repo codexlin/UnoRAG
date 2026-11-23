@@ -1,4 +1,8 @@
-import type { ApiCitation, ApiRetrievalDebug } from "@/lib/api";
+import type {
+	ApiAskTraceDetails,
+	ApiCitation,
+	ApiRetrievalDebug,
+} from "@/lib/api";
 import type { UiCitation, UiTurn } from "@/lib/ui-types";
 
 export type LocalTurn = UiTurn & {
@@ -20,6 +24,7 @@ export type LocalTurn = UiTurn & {
 	durationMs?: number;
 	evidenceMs?: number;
 	retrieveMs?: number;
+	traceDetails?: ApiAskTraceDetails;
 };
 
 type MetaPatch = Pick<
@@ -181,6 +186,7 @@ export function completedTurn(input: {
 	durationMs: number;
 	retrieveMs?: number;
 	debug: ApiRetrievalDebug;
+	traceDetails?: ApiAskTraceDetails;
 	hybridFailed: boolean;
 	rerankFailed: boolean;
 	retrievalMode?: string;
@@ -203,6 +209,7 @@ export function completedTurn(input: {
 		durationMs: input.durationMs,
 		retrieveMs: input.retrieveMs,
 		retrievalDebug: input.debug,
+		traceDetails: input.traceDetails,
 		topScore:
 			typeof input.debug.top_score === "number" ? input.debug.top_score : null,
 		usedHybrid: Boolean(input.debug.used_hybrid),

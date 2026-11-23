@@ -65,8 +65,8 @@ flowchart LR
 
 Chunking is structure first: headings, pages, tables, and code take priority; recursive splitting
 enforces hard limits; semantic splitting is reserved for long narrative regions without explicit
-structure. Retrieval defaults to dense search with optional reranking. Application-level BM25+RRF
-is available for small and medium knowledge bases, alongside deterministic table execution.
+structure. Hybrid retrieval uses Qdrant server-side named `dense` + `lexical_v1 (modifier: "idf")`
+sparse vectors with RRF fusion (with optional reranking and deterministic table execution).
 LangGraph.js orchestrates Ask, while Vercel AI SDK streams model output.
 
 ## Private Deployment
@@ -143,11 +143,9 @@ professional deployment, integration, tuning, customization, training, and SLA s
 The source code is licensed under [Apache License 2.0](./LICENSE), and the GitHub repository is public.
 Product names and logos are governed separately by the [trademark policy](./TRADEMARKS.md); forks and
 hosted services remain welcome when they use distinct branding and describe their UnoRAG relationship truthfully.
-Asset provenance, third-party notices, SBOM/provenance, and image signing are in place. Stable
-[`v0.2.2`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.2) hardens native alert recovery,
-distributed login and API limits, immediate session revocation, and the production configuration
-contract on top of the existing complex-document, citation, lifecycle, and supply-chain gates. See
-the [current status](./docs/STATUS.md),
+Asset provenance, third-party notices, SBOM/provenance, and image signing are in place. For the
+latest release, verification status, and known limits, see
+[CHANGELOG.md](./CHANGELOG.md), [current status](./docs/STATUS.md),
 [ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md), and the
 [current release evidence](./docs/evidence/README.md).
 

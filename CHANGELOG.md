@@ -5,15 +5,37 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-23
+
+- **Token-aware chunking (`v2`) & balanced comparison context (#308)**:
+  - Introduce a deterministic pure-TypeScript token estimator (`src/core/text/token-estimate.ts`) for CJK/Latin/symbol-mixed text and advance default chunking to `CHUNK_POLICY_VERSION = "v2"` (400 tokens target / 60 overlap / 1,800-char cap), while keeping explicit character `chunkSize` overrides backward compatible.
+  - Auto-select `table_heavy` when Markdown tables exceed 40% of a document's text volume (zero extra LLM cost).
+  - Budget parent context expansion by estimated tokens (`1,200` tokens / `4,500`-char hard cap) and allocate comparison context (`8,000` tokens) evenly across subjects via round-robin while preserving contiguous verbatim conflict excerpts.
+- **Default-on Hybrid retrieval, short-term memory compaction & embedding preflight (#307, #300)**:
+  - Require Qdrant server-side named Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF and remove the 10,000-chunk application-layer BM25 fallback.
+  - Enable Hybrid retrieval by default for workspaces while preserving independent workspace (`on`/`off`/`auto`) and deployment-level (`TS_RETRIEVAL_HYBRID_ENABLED=false`) kill-switches, and keep `auto`-mode first-pass reranking for retrieval-sensitive questions.
+  - Compact long assistant replies into bounded structured context projections when building model prompt history, leaving archived full text and `MemoryProvenance` untouched.
+  - Detect Qdrant/Embedding dimension mismatches at startup, `/api/rag/health`, and ingestion preflight with actionable, credential-safe operator guidance.
+- **Ephemeral Retrieval Trace Inspector (#306)**:
+  - Add Admin/Editor-only (`writeLibraries`, excluding `service_key`) ephemeral `include_trace_details: true` inspection on `/api/rag/ask` (JSON and SSE) showing coarse Top-K vs reranked/selected diff, dropped candidates with fresh ACL reauthorization, `cache-control: no-store`, and `ScopedRetrievalCache` bypass.
+  - Keep persisted request logs 100% `metadata-only` (no raw chunks or snippets stored) and surface a 4-section trace drawer in Ask UI.
+- **Streamlined deployment configuration & hot workspace policies (#305, #304)**:
+  - Add canonical environment aliases (`LLM_API_KEY`, `LLM_BASE_URL`, `UNORAG_BASE_URL`) and slim `deploy/config/runtime.advanced.env.example` (108 → 74 keys) while preserving legacy overrides during `init-config.sh`.
+  - Add workspace-level alert thresholds (`alert_thresholds` JSONB with optimistic `alert_policy_version` locking) and independent Hybrid/Rerank controls editable live in Workspace Settings.
+  - Consolidate documentation, slim `docs/DESIGN.md`, calibrate ADR-0002/0003/0005/0007/0008, and remove legacy residue.
+- **Product UI, bilingual i18n & evaluation tooling (#299, #301, #309)**:
+  - Add browser-aware EN/ZH interface language switching, redesigned landing and auth shells, 4 built-in themes (`vercel`, `claude`, `violet-bloom`, `modern-minimal`) with circular View Transitions toggle, and server-side audit filtering/CSV export.
+  - Add bounded `--concurrency <1..8>` execution to `scripts/evaluation/run-hf-benchmark.ts`.
+- **Upgrade note**: Apply migration `0036` (`drizzle/0036_workspace_alert_thresholds.sql`) using the documented drain/backup procedure. For a pre-IDF collection on a reference Compose deployment, the new [guarded IDF cutover](./docs/DEPLOYMENT.md#从旧-qdrant-集合迁移到-idf) verifies a cold backup and copies vectors and payloads into a separate collection without re-embedding. Existing active document versions are preserved. Reindexing later adopts `CHUNK_POLICY_VERSION = "v2"` and automatic `table_heavy` profiling.
+
 ## [0.3.7] - 2026-11-23
 
-- Choose Simplified Chinese or English from the browser's language preferences
-  with English fallback and a persistent manual override. Refresh the landing,
-  account, appearance and workspace interfaces, including a fourth theme and
-  a filterable, paginated audit ledger.
-- Use Qdrant's server-side sparse IDF and reciprocal rank fusion for hybrid
-  retrieval. Existing collections without the IDF index must be backed up
-  and copied to a new collection before switching. No re-embedding is required.
+- Choose Simplified Chinese or English from browser language preferences, with
+  English fallback and a saved manual override. Refresh the landing and account
+  interfaces, add a fourth appearance theme, and paginate the workspace audit ledger.
+- Use Qdrant-native sparse IDF and reciprocal rank fusion for hybrid retrieval.
+  Existing non-IDF collections require the [manual migration documented with v0.3.7](https://github.com/codexlin/UnoRAG/blob/v0.3.7/docs/adr/0008-qdrant-server-side-sparse-rrf.md#compatibility-and-migration)
+  before switching.
 
 ## [0.3.6] - 2026-11-21
 

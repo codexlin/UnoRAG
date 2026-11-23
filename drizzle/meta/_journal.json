@@ -253,6 +253,13 @@
       "when": 1795066233211,
       "tag": "0035_document_figure_assets",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1795433395804,
+      "tag": "0036_workspace_alert_thresholds",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,8 @@
 
 本文描述当前产品运行时。迁移过程和被取代的设计保存在 [`adr/`](./adr/)，不作为操作指南。
 
+> **快速目录**：[系统边界](#系统边界) · [职责所有权](#职责所有权) · [Web 请求与状态边界](#web-请求与状态边界) · [请求安全](#请求安全) · [文档生命周期](#文档生命周期) · [解析与切分](#解析与切分) · [检索与问答](#检索与问答) · [可观测性边界](#可观测性边界) · [部署模型](#部署模型)
+
 ## 系统边界
 
 UnoRAG 是可私有化部署的知识产品，也提供可嵌入的 Knowledge API。浏览器通过 Session、
@@ -56,11 +58,15 @@ system-database login.
 
 ## Web 请求与状态边界
 
+### 会话代理与鉴权入口
+
 `src/proxy.ts` 只在进入 `/app/*` 前快速校验签名 Session Cookie 的格式、签名和有效期，减少无效请求
 进入 React Server Component 渲染。它不是完整授权层，也不保护 Route Handler。页面和 API 仍必须通过
 服务端 Session/DAL 校验 Redis 活跃 `sid`、PostgreSQL 密码版本、成员关系、Workspace 和权限；所有写操作
 都在对应 Route Handler 内再次校验 capability。密码变更由 PostgreSQL 版本使旧 Cookie 失效，登出与
 Workspace 切换由 Redis 即时撤销旧 `sid`。
+
+### 前端查询缓存与删除状态机
 
 浏览器中的服务端状态由 TanStack Query React Adapter 管理：
 
@@ -76,6 +82,8 @@ Workspace 切换由 Redis 即时撤销旧 `sid`。
   不恢复下载、版本、写入或检索权限；失败清理仍通过已有任务重试入口处理；
 - 后台健康探测失败时可以保留上次成功载荷用于诊断，但 readiness 必须立即 fail closed；
 - Ask token 流仍使用显式 SSE reducer，因为它是有顺序的事件流，不是普通请求缓存。
+
+### Ask 流式生成、引用收敛与水合一致性
 
 Ask 的每次生成尝试使用独立对象身份，而不是复用会话或 turn ID。取消、文库/会话切换和卸载会使旧尝试
 失效，旧 token、错误、结束回调和定时器不得修改新尝试。客户端按短时间窗口或缓冲上限合并 token，
@@ -95,6 +103,8 @@ Ask 的每次生成尝试使用独立对象身份，而不是复用会话或 tur
 Ask 的客户端数据面在 SSR/首次水合时使用一致的加载快照，再读取共享 Query cache，避免父级后台查询
 先完成而 Suspense 子树尚未水合时，空列表服务端 HTML 与已填充客户端缓存产生结构不一致。公共首页不受此边界影响。
 
+### 事务锁序与软删除 Tombstone
+
 PostgreSQL 始终是业务事实源，TanStack Query 只是 Workspace 内的短期客户端投影。Replace 和 reindex
 Route Handler 共用 `document-version-command.ts`：按 library -> document -> source version 顺序加锁，并在
 一个事务中完成旧任务取消、新 version/job 创建、desired pointer、library 状态和审计写入。
@@ -104,6 +114,8 @@ Route Handler 共用 `document-version-command.ts`：按 library -> document -> 
 任务或审计关联的记录。产品列表隐藏已删除库，历史来源仍经过授权检查，物理回收由现有保留策略处理。
 
 ## 请求安全
+
+### 服务端作用域与数据隔离
 
 The authenticated server session or Service Key produces an authoritative scope:
 
@@ -120,6 +132,8 @@ application queries, composite constraints, and separated runtime roles; it does
 not install Row-Level Security policies. RLS remains an optional defense-in-depth
 hardening item, not a claimed runtime guarantee.
 
+### Ask 检查点授权
+
 Ask 采用检查点式授权：进入请求、调用模型前、发出引用前和完成前强制复核，输出期间在下一个片段到达时
 最多复用一秒的成功校验。浏览器重新验证 Session，公共 Ask 重新验证原 Service Key 与文库范围，再按 PG
 当前 ACL 和文档存活状态检查使用过的证据。每份新证据首次校验时必须属于 active version，成功后仅在本次
@@ -127,13 +141,17 @@ Ask 采用检查点式授权：进入请求、调用模型前、发出引用前�
 上下文仍只接受当前 active version，不允许借此读取任意旧版、失败或已删除版本。身份范围或证据失效则停止后续输出；这不是零延迟撤权，
 不能撤回已经发送给客户端或 Provider 的内容，也不是跨整个模型调用持有数据库锁。
 
+### 授权短期记忆、指代解析与多候选澄清
+
 会话隔离不等于历史正文安全。可复用的历史问答必须带服务端记录的文库与完整来源依赖，并在注入模型前
 重新授权；新回答继续携带所使用历史的传递依赖，避免短期记忆截断后丢失来源。缺少来源、来源超出预算、
 跨文库或权限失效的历史不参与模型上下文；原始历史记录仍保留用于查看。历史引用读取权限与模型记忆复用
 是两个独立检查，不能互相替代。
 
-追问检索最多使用最近三轮连续、完整、已授权的问答（合计 8,000 个 UTF-16 码元）。权限/版本失效、来源不可信、
-未完成或超预算的轮次形成上下文边界，不跳过这些轮次去猜更早的对象。无历史的悬空指代先要求补充对象。
+Ask 模型上下文最多使用最近三轮连续、完整、已授权的问答（合计 8,000 个 UTF-16 码元）。长回答在投影时
+压缩至 1,200 个码元，保留摘要、章节、表头和结论等线索；Redis 与 PostgreSQL 保留完整正文和来源依赖。
+权限或版本失效、来源不可信、未完成或超预算的轮次形成上下文边界，不跳过这些轮次去猜更早的对象。
+无历史的悬空指代先要求补充对象。
 首轮已带限定文档描述的问题可保留原问进入授权检索；描述本身不证明来源唯一或证据充分。
 描述内部及其余问句仍有指代时不能豁免澄清，不能仅凭“这份”就拦截整条普通查询。
 最近一次明确、自包含的问题也是话题边界，更早的不同对象不作为当前候选；后续省略或代词追问仍保留该锚点。
@@ -188,6 +206,8 @@ idempotent, and Qdrant staging points are invisible until activation.
 
 ## 解析与切分
 
+### ParserProvider 与结构优先切分
+
 `ParserProvider` is the stable boundary. LiteParse is local and default. MinerU can
 run through a self-hosted endpoint inside the customer trust boundary or through the
 302.AI upload/task/ZIP API. The external provider is fail-closed unless deployment
@@ -205,6 +225,8 @@ Parsing produces DocumentIR before chunking. The policy is structure-first:
 原生 Markdown 解析把带表头、分隔行且列数一致的管道表转换为 `TableIR`，保留标题路径与最近标题，
 沿用 table 分块、行组及 `table_summary` 索引。转义管道保留为单元格内容；空表体、列数不齐或非法分隔行
 保留为原文，围栏代码不参与表格识别。TXT 不启用该转换；既有 Markdown 需重索引才会生成新的表格结构。
+
+### 条件式 Contextual Retrieval 与文档目录记录
 
 条件式 Contextual Retrieval 默认关闭。Worker 可设置 `CONTEXTUAL_RETRIEVAL_ENABLED=true`，
 或通过 `ChunkingOptions.contextualRetrieval` 显式开启；仅增强正文不少于 160 字符、且无标题路径或属于
@@ -224,6 +246,8 @@ OCR/降级解析的叙事块。`CONTEXTUAL_RETRIEVAL_MAX_CHUNKS` 默认及硬上
 这里的完整性仅指已保存的解析结构未被截断且 Provider 未标记缺页，不证明 OCR 或标题层级识别绝对正确；
 扫描与复杂 PDF 仍需对应来源和布局的金标验收。
 
+### 确定性表格执行边界
+
 Small and medium tables remain RAG records with layered row groups and summaries.
 Very large SQL-style execution is deliberately deferred; operational data should
 usually be queried from its source database.
@@ -234,6 +258,8 @@ Row previews are bounded and must disclose both the displayed and total row coun
 when truncated; citations continue to point at every contributing row group.
 
 ## 检索与问答
+
+### 混合检索与集合契约
 
 Native Retrieve resolves scope, embeds the query, applies mandatory Qdrant filters,
 optionally reranks results, and maps strict citations. Collections always configure named
@@ -248,6 +274,8 @@ separate from original dense semantic scores; sparse-only evidence has no dense 
 无词元查询或瞬时服务端混合检索异常安全回落至同一授权范围内的 dense 候选。旧 dense-only 集合可通过
 `scripts/qdrant-backfill-sparse.ts --execute` 零外部 API 成本回填并切换，详见已采纳的
 [ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md)。
+
+### Ask 编排与文档身份定位
 
 Native Ask uses LangGraph.js for orchestration:
 
@@ -284,6 +312,8 @@ Judge 与生成共享服务端的有界回答粒度提示：名称级要求、�
 证据充分，也不能覆盖其他所问字段。问采用什么机制时，原文列出的机制与实施配置分别判断；
 名称级回答不应擅自补充未提供的定义与细则，步骤级问题不能以
 名称代替方法。该提示不是答案校验器；引用格式、来源约束和回归评分仍分别执行。
+
+### 证据裁决、受限拒答复核与冲突核验
 
 当前实现把普通充分性裁决与冲突核验分开。对于已锁定同一份生效文档、仅询问检查/措施名称或指定接收地点的
 事实题，普通 Judge 的拒答可触发一次独立证据复核。复核不重检索、不扩大权限；只有全部所问均被判定覆盖，
@@ -330,6 +360,8 @@ active version 和 generation。归档保留原引用文本，不承诺已替换
 Vercel AI SDK provides model calls, structured output and streaming. LangChain core
 types are used only where they remove adapter friction. LlamaIndex is not a second
 runtime; it may later appear behind a retrieval or parser tool boundary.
+
+### 引用守卫、比较上限与并发/缓存边界
 
 模型生成上下文使用 `[source:N]` 作为内部来源标记，系统消息提供本次完整允许清单，避免与条款号、
 页码或表格行号共用裸数字语法。流式守卫只在标记完整且属于本次允许集合时转换为公开的 `[N]`；未知

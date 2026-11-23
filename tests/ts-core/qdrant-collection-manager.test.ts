@@ -7,6 +7,7 @@ import {
 	type QdrantCollectionClient,
 	QdrantCollectionContractError,
 	QdrantCollectionManager,
+	QdrantEmbeddingDimensionMismatchError,
 	UNORAG_QDRANT_PAYLOAD_INDEXES,
 } from "../../src/core/retrieval/qdrant/collection-manager";
 import {
@@ -378,7 +379,22 @@ test("collection manager fails closed on vector and payload index contract misma
 			vectorSize: 1_024,
 			distance: "Cosine",
 		}).ensure(),
-		/vector size mismatch/,
+		(error) => {
+			assert.ok(error instanceof QdrantCollectionContractError);
+			assert.ok(error instanceof QdrantEmbeddingDimensionMismatchError);
+			assert.equal(error.code, "embedding_dimension_mismatch");
+			assert.equal(error.collection, "unorag_chunks");
+			assert.equal(error.expectedDimension, 1_024);
+			assert.equal(error.actualDimension, 768);
+			assert.match(error.message, /unorag_chunks.*EMBEDDING_DIM=1024.*768/);
+			assert.match(error.message, /set EMBEDDING_DIM=768/);
+			assert.match(error.message, /set QDRANT_COLLECTION.*reindex/);
+			return true;
+		},
+	);
+	assert.deepEqual(
+		wrongSize.calls.map((call) => call.name),
+		["collectionExists", "getCollection"],
 	);
 
 	const wrongDistance = fakeClient({

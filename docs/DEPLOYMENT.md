@@ -70,12 +70,18 @@ UNORAG_COMPOSE_OVERLAY=./docker-compose.local-amd64.yml \
 | 文件 | 用途 | 通常是否修改 |
 |---|---|---|
 | `runtime.env` | 端口、域名、存储、模型与核心数据服务，共 15 项 | 是 |
-| `runtime.advanced.env` | 镜像 pin、限流、MinerU、DBOS、维护周期与 OTel | 仅调优或发布时 |
+| `runtime.advanced.env` | 镜像 pin、限流、MinerU、DBOS 并发、通知与 OTel | 仅调优或发布时 |
 | `runtime.secret` | 数据库、Session、模型、COS 与通知凭据 | 是 |
 | `bootstrap.env` | 首次管理员与组织初始化 | 首次安装时 |
 
 旧版本把所有非敏感项放在 `runtime.env`。首次运行新版本的 `init-config.sh` 或
-`upgrade.sh` 会自动把高级项移入 `runtime.advanced.env`；未知的大写自定义项也会保留在高级层。
+`upgrade.sh` 会自动把高级项移入 `runtime.advanced.env`，并保留自定义项。示例中省略的调优项使用内置默认值，仍可在该文件中显式覆盖。
+
+新部署默认启用 Qdrant `lexical_v1` IDF + RRF 混合检索，词法检索无需额外的模型 API 调用。
+在 `runtime.advanced.env` 设置 `TS_RETRIEVAL_HYBRID_ENABLED=false` 可在整个部署禁用混合检索。
+工作区可通过 `hybrid_retrieval: "off"` 禁用混合检索，包括问答重试。选择 `inherit` 时，
+`retrieval_enhancement: "off"` 同样禁用混合检索。自动模式在对比、精确编号等查询的首轮启用重排。
+升级保留已有的显式关闭值。
 
 正式安装必须使用发布 workflow 生成的 digest manifest。没有 `--manifest` 时安装脚本会构建当前
 工作树镜像，该模式只用于本地开发，不属于可交付安装。manifest 会同时固定四个镜像和 DBOS
@@ -120,8 +126,9 @@ Redis 是 Web 的必需依赖，用于可撤销浏览器会话、登录/Public A
 
 ### 可选账号邮件
 
-在 `runtime.advanced.env` 设置 `EMAIL_PROVIDER=resend` 和规范访问地址
-`APP_BASE_URL=https://unorag.example.com`；在 `runtime.secret` 设置已验证发件人 `EMAIL_FROM`
+在 `runtime.advanced.env` 设置 `EMAIL_PROVIDER=resend`，并在 `runtime.env` 设置规范访问地址
+`UNORAG_BASE_URL=https://unorag.example.com`。`runtime.advanced.env` 中的 `APP_BASE_URL` 优先用于账号邮件。
+在 `runtime.secret` 设置已验证发件人 `EMAIL_FROM`
 及 `RESEND_API_KEY`，然后重新创建 Web 与 control 容器。服务端使用 Resend HTTPS API，
 不需要额外 SMTP 服务，也不读取 `SMTP_*`。本地开发只允许 loopback 地址使用 HTTP。
 
@@ -134,9 +141,9 @@ Redis 是 Web 的必需依赖，用于可撤销浏览器会话、登录/Public A
 `WORKER_DATABASE_URL`、`DBOS_SYSTEM_DATABASE_URL` 与 `MIGRATOR_DATABASE_URL`。
 Web 和 Worker 运行身份不得拥有 DDL 权限。
 
-Compose 的模型端点只配置 `runtime.env` 中的 `LLM_BASE_URL`；Helm 使用
-`config.llmBaseUrl`。两个部署入口都会映射为应用内部的 `OPENAI_BASE_URL`，不要再为 Web 和
-Worker 分别维护端点。自托管 MinerU 地址只使用 `runtime.advanced.env` 中的
+Compose 使用 `runtime.env` 中的 `LLM_BASE_URL` 和 `runtime.secret` 中的 `LLM_API_KEY`；Helm 使用
+`config.llmBaseUrl` 和 Secret 的 `LLM_API_KEY`。应用依次接受 `LLM_*`、`OPENAI_*`、`DASHSCOPE_*`
+的端点和凭据。Compose 和 Helm 继续向容器提供兼容现有部署覆盖的 `OPENAI_*` 变量。自托管 MinerU 地址只使用 `runtime.advanced.env` 中的
 `MINERU_SELF_HOSTED_URL`；升级初始化会将历史
 `MINERU_URL` 一次性迁移并删除旧键。
 
@@ -222,13 +229,17 @@ mk_compose --profile ops run --rm inspect-lifecycle
 | 组件 | 预期 |
 |---|---|
 | Web liveness | `/api/rag/health/live` 返回 200；只说明进程可响应，不探测下游依赖 |
-| Web readiness | `/api/rag/health/ready` 仅在 PostgreSQL、Qdrant 和模型凭证均可用时返回 200，否则返回 503 并停止接收新流量 |
+| Web readiness | `/api/rag/health/ready` 检查 PostgreSQL、Qdrant 和模型凭证，以及现有集合的向量维度，失败时返回 503 |
 | Web 状态详情 | `/api/rag/health` 保持兼容，返回 `ask_ready`、`degraded` 与 `reasons`，供 UI 和诊断读取 |
 | DBOS Worker | 私有 `:3001/dbos-healthz` 正常 |
 | DBOS Control | ready marker 持续更新 |
 | PostgreSQL | `pg_isready` 正常 |
 | Qdrant | 私有 `:6333` ready |
 | Redis | `redis-cli ping` 正常 |
+
+当 `/api/rag/health` 或运行中心报告 `embedding_dimension_mismatch` 时，请在 Web 和 Worker 使用相同配置。
+若所用模型支持现有集合的维度，将 `EMBEDDING_DIM` 调整为提示中的集合维度。
+若要使用新维度，将 `QDRANT_COLLECTION` 指向新集合并重新索引。新安装尚未创建集合时，健康探针允许启动。
 
 ## 镜像与升级
 
@@ -258,44 +269,39 @@ overlay 和显式开关。脚本随后：
 4. 启动新版本 DBOS worker/control，执行 ACL 对账与生命周期巡检；
 5. 替换 Web，检查结构化健康状态并运行真实上传、Ask、替换、删除与隔离冒烟。
 
-排空默认最多等待 1800 秒，可通过 `DBOS_UPGRADE_DRAIN_TIMEOUT_SECONDS` 调整。超时会拒绝版本切换并
-恢复旧服务，不会让新 Worker 接管旧版本 workflow。版本变化后的自动回滚同样先停止入口并排空新版本；
-若无法排空，脚本保留新镜像和维护状态，要求运维处理，而不会做可能遗留任务的强制回滚。
+排空默认最多等待 1800 秒（可通过 `DBOS_UPGRADE_DRAIN_TIMEOUT_SECONDS` 调整）；超时或无法排空时拒绝版本切换，不强制中断在途 workflow。上一个镜像集合保存在 `.upgrade-state/previous-images.env`，失败时自动或手动作为 manifest 传给 `upgrade.sh` 回滚应用镜像。数据库仅向前迁移，破坏性 schema 变更须遵循 expand / migrate / contract。
 
-当旧 Qdrant 集合没有 `lexical_v1` 的 `idf` modifier 时，首次启用新版检索须使用
-`./scripts/upgrade.sh --manifest /path/to/release-ghcr.env --qdrant-idf-target unorag_chunks_idf_v1`。
-目标名必须未使用。脚本停止入口并排空 Worker 后校验冷备份，将 Point ID、payload 与已有 dense
-向量复制到新集合，再生成 sparse 向量，不重新调用 embedding。旧集合保留。
-入口开放前失败会同时回滚镜像和集合配置；开放后不得直接切回旧集合，因为它不再接收写入。
-此时应先关闭入口、排空任务并核对新集合与 PG，优先向前修复。COS sidecar 只记录对象边界，不是内容备份。
+Compose 为单机参考拓扑（DBOS 版本变更存在短维护窗口），不承诺零停机。
 
-`0027_document_version_source_metadata` 迁移会再次检查没有未完成的入库任务，并从匹配原始上传对象的
-任务记录回填版本级文件名/MIME。无法可靠恢复的历史元数据保持为空：原文可用通用名称下载，
-需要重索引时请重新上传该文件。不要以当前文档名称批量填充旧版本，否则可能把旧 PDF 当成新 DOCX 处理。
+### 从旧 Qdrant 集合迁移到 IDF
 
-上一个镜像集合保存在 `.upgrade-state/previous-images.env`。升级过程中任一步失败，脚本会恢复
-旧应用镜像引用；运维人员也可把该文件作为 manifest 再次执行 `upgrade.sh` 完成手工应用回滚。
-数据库不会自动向下迁移，因此旧镜像必须与新 schema 保持兼容，破坏性变化必须采用 expand / migrate /
-contract 窗口。
+旧集合缺少 `lexical_v1` 的 `idf` modifier 时，从 v0.4.0 起可使用 Compose 升级脚本显式切换。
+已经使用 IDF 的实例按常规流程升级即可。该选项要求四个产品镜像均通过签名校验、使用不可变 digest，
+并且目标 manifest 的 DBOS application version 与当前版本不同。
 
-Compose 是单机参考拓扑：DBOS version 变化使用明确的短维护窗口，单副本 Web 替换也可能产生连接
-中断，不承诺零停机。需要无感更新时，不能只增加副本；还要让旧、新 DBOS application version 的
-Worker 并存直至旧 workflow 排空，并使用 readiness、PDB 与负载均衡完成该客户拓扑的专项验收。
+```bash
+./scripts/upgrade.sh --manifest /path/to/release-ghcr.env --qdrant-idf-target unorag_chunks_idf_v1
+```
+
+这个流程使用参考 Compose 拓扑的 Qdrant 命名卷，Web 和 DBOS 服务保持在私有网络。
+外部 Qdrant 或自定义卷使用 [ADR-0008 的手动迁移](./adr/0008-qdrant-server-side-sparse-rrf.md#compatibility-and-migration)。
+目标集合名须未使用，旧集合与目标使用同一 Embedding 维度和距离度量。脚本停止入口并排空所有写入方，
+在旧镜像引用及 DBOS 版本下生成并校验冷备份，然后复制 Point ID、payload 和已有 dense 向量，重建
+sparse 向量，无需重新调用 Embedding。旧集合保留，部分回填的目标也保留以便排查，重试须使用新的目标名。
+
+新 Web 就绪检查通过后才启动目标 Worker 和 control。此之前的失败会尝试恢复旧镜像和集合配置，数据库
+migration 仍只向前执行。目标 Worker 启动后，即使入口尚未开放，后台对账也可能写入新集合，
+因此后续失败会保留新镜像和集合配置。处理时先关闭入口、排空任务并核对 PostgreSQL 与新集合，
+优先向前修复。COS 原文需要独立备份，冷备份中的 COS sidecar 只记录桶边界。
 
 ## 备份与恢复
-
-参考 Compose 备份覆盖 PostgreSQL、DBOS 与 Qdrant。`local` 模式同时归档文档卷；`cos` 模式只记录
-远程桶边界，文档对象依赖 COS 自身的版本控制、跨地域复制或独立备份策略。Redis 会话可重建，
-不属于恢复集。
 
 ```bash
 ./scripts/backup.sh ./backups/$(date +%Y%m%dT%H%M%S)
 CONFIRM=YES ./scripts/restore.sh ./backups/<backup-id>
 ```
 
-恢复顺序固定为：停止应用、恢复 PostgreSQL、恢复或核验文档对象、恢复 Qdrant、启动应用并验证。
-恢复后必须检查登录、active version、既有引用、新上传、Retrieve/Ask、删除、生命周期巡检和
-跨 Workspace 隔离。只生成备份文件而未做过恢复演练，不算具备恢复能力。
+备份覆盖 PostgreSQL、DBOS 与 Qdrant（`local` 同时归档文档卷；`cos` 只记录桶边界，原文依赖 COS 版本控制/复制；Redis 会话可重建）。恢复顺序、失败判定与演练要求见 [运维指南 · 备份与灾难恢复](./OPERATIONS.md#备份与灾难恢复)。
 
 ## Kubernetes
 
@@ -432,5 +438,4 @@ Helm 不安装官方单机 Ops Stack；Kubernetes 客户应复用现有 Collecto
 `observability.otel.enabled=true` 与 `observability.otel.endpoint`。启用但未提供 endpoint 时 Chart
 会拒绝渲染。可选认证头通过 Runtime Secret 的 `OTEL_EXPORTER_OTLP_HEADERS` 注入。
 
-详细配置项见 [`deploy/README.md`](../deploy/README.md) 和
-[`deploy/helm/README.md`](../deploy/helm/README.md)。上线判定以 [RELEASE.md](./RELEASE.md) 为准。
+Helm 配置详见 [`deploy/helm/README.md`](../deploy/helm/README.md)，Compose 脚本位于 `deploy/compose/scripts/`。上线判定以 [RELEASE.md](./RELEASE.md) 为准。

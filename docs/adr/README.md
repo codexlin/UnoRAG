@@ -4,13 +4,20 @@ ADR 解释长期取舍，不是操作手册。当前实现先读 [系统架构](
 
 ## 当前决策
 
-| 决策 | 适用范围 |
-|---|---|
-| [0002 MinerU complex PDF](./0002-mineru-complex-pdf.md) | MinerU 解析策略；实现已迁至 TypeScript ParserProvider |
-| [0003 Policy-driven chunking](./0003-policy-driven-chunking.md) | 结构优先、递归上限、受控语义切分与表格 profile |
-| [0005 TypeScript core runtime](./0005-typescript-core-runtime.md) | 运行时所有权、DBOS 与数据边界；迁移步骤属于已完成的历史 |
-| [0007 Fully open-source product](./0007-fully-open-source-product-and-services.md) | 单一完整开源产品，无商业功能墙 |
-| [0008 Qdrant server-side Sparse + RRF](./0008-qdrant-server-side-sparse-rrf.md) | 命名 Dense + 确定性词法 Sparse（`lexical_v1`，`modifier: "idf"`）与 Qdrant 服务端 RRF；已移除应用层 BM25 回退 |
+| 决策 | 适用范围 | 当前状态与补充 |
+|---|---|---|
+| [0002 MinerU complex PDF](./0002-mineru-complex-pdf.md) | MinerU 解析策略；实现已迁至 TypeScript ParserProvider | 已实现；含 `2026-11-12` 预算修正与 `2026-11-23` 配置边界补充 |
+| [0003 Policy-driven chunking](./0003-policy-driven-chunking.md) | 结构优先、递归上限、受控语义切分与表格 profile | 已采纳；含 `2026-11-23` 中英文 Token 预算演进注记 |
+| [0005 TypeScript core runtime](./0005-typescript-core-runtime.md) | 运行时所有权、DBOS 与数据边界；迁移步骤属于已完成的历史 | 已实施；含 `2026-11-23` RLS/历史章节校准注记 |
+| [0007 Fully open-source product](./0007-fully-open-source-product-and-services.md) | 单一完整开源产品，无商业功能墙 | 已公开发布；含 `2026-11-23` 分层发版门禁注记 |
+| [0008 Qdrant server-side Sparse + RRF](./0008-qdrant-server-side-sparse-rrf.md) | 命名 Dense + 确定性词法 Sparse（`lexical_v1`，`modifier: "idf"`）与 Qdrant 服务端 RRF；已移除应用层 BM25 回退 | 已采纳；含 `2026-11-23` 默认开启评估注记 |
+
+## 架构红线 vs 可演进边界
+
+| 类别 | 具体约束 | 演进态度 |
+|---|---|---|
+| **不可松动的红线** | 双层权限隔离（Qdrant 前置 Mandatory Filter + `assertAuthorizedHits` 二次熔断）、Staging/Active 原子切换、出域解析显式授权、持久化观测 `metadata-only`、Apache-2.0 无商业功能墙 | 任何新功能不得削弱 |
+| **可按评测与体验演进** | 分块从纯字符转向 Token 估算与文档级启发式选档、`hybrid_enabled` 默认值、管理员级预算/调优项上移 UI、客户端能力探针校验、Trace 内存态本人检索透视、分层发版门禁 | 经黄金集/契约测试验证后按小版本演进 |
 
 当前仓库保持单根 TypeScript package。只有真实独立构建边界或多个消费者出现时才提取 package，
 没有已排期的 monorepo 迁移；数据库迁移始终只有一个所有者。

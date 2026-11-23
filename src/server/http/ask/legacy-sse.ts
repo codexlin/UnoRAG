@@ -5,6 +5,7 @@ import {
 import { selectAnswerCitations } from "@/core/ai/answer-citations";
 import { projectModelUsage } from "@/core/ai/model-usage";
 import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
+import type { ApiAskTraceDetails } from "@/lib/api";
 
 const PUBLIC_META_KEYS = [
 	"session_id",
@@ -83,6 +84,7 @@ export interface LegacyAskSseInput {
 	citations: unknown[];
 	tokens: AsyncIterable<string>;
 	done: Record<string, unknown>;
+	getTraceDetails?: () => ApiAskTraceDetails | undefined;
 	abortSignal?: AbortSignal;
 	preserveAllCitations?: boolean;
 	getFinalCitations?: () => Array<Record<string, unknown> & { index: number }>;
@@ -131,8 +133,15 @@ export function projectPublicRetrievalDebug(
 		total_duration_ms: ["total_duration_ms"],
 		query_type: ["query_type"],
 		route_reason: ["route_reason"],
+		path: ["path"],
+		route: ["route"],
+		precise_gate: ["precise_gate"],
+		upgrade: ["upgrade"],
+		upgrade_reason: ["upgrade_reason"],
+		downgrade_reason: ["downgrade_reason"],
 		top_score: ["top_score"],
 		used_hybrid: ["used_hybrid", "usedHybrid"],
+		used_rerank: ["used_rerank", "usedRerank"],
 		hybrid_failed: ["hybrid_failed", "hybridFailed"],
 		rerank_failed: ["rerank_failed", "rerankFailed"],
 		retrieval_mode: ["retrieval_mode", "retrievalMode"],
@@ -194,7 +203,16 @@ export function projectPublicRetrievalDebug(
 	} as const;
 	for (const [target, sources] of Object.entries(mappings)) {
 		const source = sources.find((name) => value[name] !== undefined);
-		if (source) result[target] = value[source];
+		if (!source) continue;
+		const field = value[source];
+		if (
+			field === null ||
+			typeof field === "string" ||
+			typeof field === "boolean" ||
+			(typeof field === "number" && Number.isFinite(field))
+		) {
+			result[target] = field;
+		}
 	}
 	const rerank = projectRerankDiagnostic(
 		value.rerankDiagnostic ?? value.rerank_diagnostic,
@@ -296,7 +314,10 @@ export async function* streamLegacyAskSse(
 				preserveAll: input.preserveAllCitations,
 			});
 		done.truncated = false;
-		yield encodeLegacySseEvent("done", done);
+		yield encodeLegacySseEvent("done", {
+			...done,
+			...input.getTraceDetails?.(),
+		});
 	} catch (error) {
 		const code = input.abortSignal?.aborted
 			? "aborted"

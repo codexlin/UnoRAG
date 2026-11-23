@@ -6,11 +6,15 @@ import {
 	DEFAULT_WORKSPACE_EMAIL_SETTINGS,
 	type EmailDeliveryView,
 	type EmailTransportState,
+	type WorkspaceAlertThresholds,
 	type WorkspaceEmailSettings,
 	type WorkspaceNotificationScope,
 	type WorkspaceNotificationsView,
+	workspaceAlertLatencyOrderIsValid,
+	workspaceAlertThresholdsSchema,
 	workspaceEmailSettingsSchema,
 } from "../../lib/workspace-notifications";
+import { workspaceAlertDefaults } from "./alert-policy";
 
 export class WorkspaceNotificationError extends Error {
 	constructor(
@@ -25,13 +29,22 @@ export class WorkspaceNotificationError extends Error {
 
 type SettingsSnapshot = Pick<
 	WorkspaceNotificationsView,
-	"settings" | "version" | "updated_at"
+	| "settings"
+	| "version"
+	| "updated_at"
+	| "alert_thresholds"
+	| "alert_policy_version"
 >;
 type WriteInput = WorkspaceNotificationScope & {
 	actorId: string;
 	expectedVersion: number;
 };
 type Queryable = Pick<PoolClient, "query">;
+export type WorkspaceNotificationUpdate = WriteInput & {
+	settings: WorkspaceEmailSettings;
+	alertThresholds?: WorkspaceAlertThresholds;
+	expectedAlertPolicyVersion?: number;
+};
 
 function digest(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
@@ -101,10 +114,12 @@ async function readSettings(
 		minimum_severity: WorkspaceEmailSettings["minimum_severity"] | null;
 		notify_recovery: boolean | null;
 		version: number | null;
+		alert_thresholds: unknown;
+		alert_policy_version: number | null;
 		updated_at: Date | null;
 	}>(
 		`SELECT s.enabled, s.recipients, s.minimum_severity, s.notify_recovery,
-			s.version, s.updated_at
+			s.version, s.updated_at, s.alert_thresholds, s.alert_policy_version
 		 FROM app.workspaces w
 		 LEFT JOIN app.workspace_email_settings s
 			ON s.organization_id = w.organization_id AND s.workspace_id = w.id
@@ -118,6 +133,8 @@ async function readSettings(
 			settings: { ...DEFAULT_WORKSPACE_EMAIL_SETTINGS, recipients: [] },
 			version: 0,
 			updated_at: null,
+			alert_thresholds: {},
+			alert_policy_version: 0,
 		};
 	return {
 		settings: workspaceEmailSettingsSchema.parse({
@@ -127,6 +144,10 @@ async function readSettings(
 			notify_recovery: row.notify_recovery,
 		}),
 		version: row.version,
+		alert_thresholds: workspaceAlertThresholdsSchema.parse(
+			row.alert_thresholds,
+		),
+		alert_policy_version: row.alert_policy_version ?? 0,
 		updated_at: row.updated_at?.toISOString() ?? null,
 	};
 }
@@ -199,6 +220,7 @@ export function readWorkspaceNotifications(
 			);
 			return {
 				...snapshot,
+				alert_defaults: workspaceAlertDefaults(),
 				transport,
 				deliveries: deliveries.rows.map(({ destination_key, ...row }) => ({
 					...row,
@@ -278,7 +300,7 @@ async function audit(
 
 export function saveWorkspaceEmailSettings(
 	pool: Pool,
-	input: WriteInput & { settings: WorkspaceEmailSettings },
+	input: WorkspaceNotificationUpdate,
 	now = new Date(),
 ): Promise<void> {
 	return transaction(pool, async (client) => {
@@ -287,6 +309,53 @@ export function saveWorkspaceEmailSettings(
 		if (!parsed.success)
 			throw new WorkspaceNotificationError(400, "invalid_settings");
 		const settings = parsed.data;
+		const thresholds = input.alertThresholds;
+		if (thresholds !== undefined) {
+			if (snapshot.alert_policy_version !== input.expectedAlertPolicyVersion) {
+				throw new WorkspaceNotificationError(409, "version_conflict");
+			}
+			const validated = workspaceAlertThresholdsSchema.safeParse(thresholds);
+			if (
+				!validated.success ||
+				!workspaceAlertLatencyOrderIsValid(
+					validated.data,
+					workspaceAlertDefaults(),
+				)
+			) {
+				throw new WorkspaceNotificationError(400, "invalid_alert_thresholds");
+			}
+			if (
+				JSON.stringify(snapshot.alert_thresholds) !==
+				JSON.stringify(validated.data)
+			) {
+				await client.query(
+					`INSERT INTO app.workspace_email_settings
+						(organization_id, workspace_id, alert_thresholds, alert_policy_version,
+						 updated_by, created_at, updated_at)
+					 VALUES ($1, $2, $3::jsonb, 1, $4, $5, $5)
+					 ON CONFLICT (organization_id, workspace_id) DO UPDATE SET
+						alert_thresholds = EXCLUDED.alert_thresholds,
+						alert_policy_version = workspace_email_settings.alert_policy_version + 1`,
+					[
+						input.organizationId,
+						input.workspaceId,
+						JSON.stringify(validated.data),
+						input.actorId,
+						now,
+					],
+				);
+				await audit(
+					client,
+					input,
+					"workspace.alert_thresholds.updated",
+					{
+						version: snapshot.alert_policy_version + 1,
+						alert_thresholds: validated.data,
+					},
+					now,
+				);
+			}
+		}
 		if (JSON.stringify(snapshot.settings) === JSON.stringify(settings)) return;
 		const version = snapshot.version + 1;
 		await client.query(

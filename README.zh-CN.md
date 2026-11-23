@@ -61,9 +61,9 @@ flowchart LR
 ```
 
 默认切分策略是**结构优先**：标题、页面、表格和代码边界优先；递归切分负责硬上限；
-语义切分只用于较长、缺少显式结构的叙事区域。检索默认使用 Dense，可选 Rerank；当前还提供
-面向小中型知识库的应用层 BM25+RRF，并支持确定性表格执行。Ask 使用 LangGraph.js 编排并通过
-Vercel AI SDK 流式生成。
+语义切分只用于较长、缺少显式结构的叙事区域。混合检索采用 Qdrant 服务端命名 `dense` +
+`lexical_v1 (modifier: "idf")` 稀疏向量与 RRF 融合（可选 Rerank），并支持确定性表格执行。
+Ask 使用 LangGraph.js 编排并通过 Vercel AI SDK 流式生成。
 
 ## 私有部署
 
@@ -135,10 +135,9 @@ UnoRAG 采用单一开源发行版，不设置付费功能墙。私有化部署�
 
 源代码已采用 [Apache License 2.0](./LICENSE)，GitHub 仓库已经公开。产品名称与 Logo 另受
 [商标使用政策](./TRADEMARKS.md)约束；项目欢迎 fork 和托管服务，但应使用独立品牌并如实说明与 UnoRAG 的关系。
-素材溯源、第三方通知、SBOM/provenance 与镜像签名已经完成；稳定版 [`v0.2.2`](https://github.com/codexlin/UnoRAG/releases/tag/v0.2.2)
-在现有复杂文档、引用、生命周期和供应链门禁之上，加固了原生告警恢复、分布式登录与 API 限流、
-Session 即时撤销和生产配置契约。
-详见[当前状态](./docs/STATUS.md)、[ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) 和
+素材溯源、第三方通知、SBOM/provenance 与镜像签名已经完成。最新发行版本、验收结论与已知边界见
+[CHANGELOG.md](./CHANGELOG.md)、[当前状态](./docs/STATUS.md)、
+[ADR-0007](./docs/adr/0007-fully-open-source-product-and-services.md) 和
 [当前版本验收证据](./docs/evidence/README.md)。
 
 贡献、支持和安全报告方式分别见 [CONTRIBUTING.md](./CONTRIBUTING.md)、[SUPPORT.md](./SUPPORT.md)

@@ -97,3 +97,8 @@ Worker 另有：`document_ingest.mineru_pending … provider_task_id=… wait_s=
 进程内计数器键：`mineru_302_upload|create|complete|fail|429|5xx|timeout|invalid_result|pending|budget_exceeded`。
 无 Prometheus 时靠结构化日志；workspace 日/月汇总 UI 为后续项。
 客户监控系统可对 `mineru.302.fail` / `long_pending` / `budget_*` 增加规则。
+
+## 2026-11-23 配置边界与续表演进注记
+
+- **配置边界澄清**：上文 `Deploy-only` 边界的核心目的是隔离**凭据、出域授权、Provider 端点与 Worker 并发上限**（避免终端用户触碰或增加环境变量漂移）。对于非敏感的管理员运营参数（如日预算额度、告警比例、长等待告警阈值），后续实现应优先归入受权限保护的 Workspace/系统管理配置，而非继续膨胀部署环境变量清单。
+- **跨页续表演进**：第 7 条的“禁止仅凭页码拼接”继续保留；对于缺少显式“续表”字样但相邻页列结构完全一致、且续页紧贴页顶无新表头的规范文档，可在新增真实 PDF 黄金集验证后迭代受控合并规则。

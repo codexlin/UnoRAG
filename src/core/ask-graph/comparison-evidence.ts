@@ -1,4 +1,13 @@
+import {
+	formatCitationEvidenceText,
+	PARENT_CONTEXT_SEPARATOR,
+} from "../retrieval/citation-mapper";
 import type { InternalCitation } from "../retrieval/contracts";
+import {
+	estimateTokens,
+	sliceAroundTokenBudget,
+	sliceByTokenBudget,
+} from "../text/token-estimate";
 
 const JUDGE_TEXT_LIMIT = 2_400;
 const SOURCE_KEYS = [
@@ -27,6 +36,127 @@ export function truncateEvidenceText(
 
 export function boundedJudgeEvidenceText(value: unknown): string {
 	return truncateEvidenceText(value, JUDGE_TEXT_LIMIT);
+}
+
+type QuoteRange = { start: number; end: number };
+
+function span(
+	current: QuoteRange | undefined,
+	match: RegExpMatchArray,
+): QuoteRange {
+	const start = match.index ?? 0;
+	const end = start + match[0].length;
+	return current
+		? { start: Math.min(current.start, start), end: Math.max(current.end, end) }
+		: { start, end };
+}
+
+const PARENT_SEPARATOR_TOKENS = estimateTokens(PARENT_CONTEXT_SEPARATOR);
+
+export function comparisonEvidenceText(
+	citation: Record<string, unknown>,
+	quotes: readonly string[],
+) {
+	const body = formatCitationEvidenceText({
+		body: citation.body,
+		text: citation.text,
+		snippet: citation.snippet,
+	});
+	const parent =
+		typeof citation.parent_context === "string" &&
+		citation.parent_context.trim() !== body
+			? citation.parent_context.trim()
+			: "";
+	const full = formatCitationEvidenceText({ body, parent_context: parent });
+	let bodyRange: QuoteRange | undefined;
+	let parentRange: QuoteRange | undefined;
+	for (const quote of quotes) {
+		const pattern = new RegExp(
+			quote.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&").replaceAll(" ", "\\s+"),
+			"u",
+		);
+		const bodyMatch = body.match(pattern);
+		if (bodyMatch) {
+			bodyRange = span(bodyRange, bodyMatch);
+			continue;
+		}
+		const parentMatch = parent.match(pattern);
+		if (!parentMatch) return null;
+		parentRange = span(parentRange, parentMatch);
+	}
+	// Keep each source excerpt contiguous, including any text between its quotes.
+	const requiredBody = bodyRange
+		? body.slice(bodyRange.start, bodyRange.end)
+		: "";
+	const requiredParent = parentRange
+		? parent.slice(parentRange.start, parentRange.end)
+		: "";
+	const separatorLength =
+		requiredBody && requiredParent ? PARENT_CONTEXT_SEPARATOR.length : 0;
+	const minimumCharCount =
+		requiredBody.length + requiredParent.length + separatorLength;
+	const minimumTokens =
+		estimateTokens(requiredBody) +
+		estimateTokens(requiredParent) +
+		(separatorLength ? PARENT_SEPARATOR_TOKENS : 0);
+	const tokenCount = estimateTokens(full);
+	return {
+		charCount: full.length,
+		tokenCount,
+		minimumCharCount,
+		minimumTokens: Math.min(tokenCount, minimumTokens),
+		bound(maxTokens: number, maxChars: number): Record<string, unknown> {
+			if (tokenCount <= maxTokens && full.length <= maxChars) return citation;
+			const bodyTokens = parentRange
+				? estimateTokens(requiredParent) + PARENT_SEPARATOR_TOKENS
+				: 0;
+			const bodyChars = parentRange
+				? requiredParent.length + PARENT_CONTEXT_SEPARATOR.length
+				: 0;
+			const trimmedBody = boundExcerpt(
+				body,
+				bodyRange,
+				maxTokens - bodyTokens,
+				maxChars - bodyChars,
+			);
+			const trimmedParent = boundExcerpt(
+				parent,
+				parentRange,
+				maxTokens -
+					(trimmedBody
+						? estimateTokens(trimmedBody) + PARENT_SEPARATOR_TOKENS
+						: 0),
+				maxChars -
+					(trimmedBody
+						? trimmedBody.length + PARENT_CONTEXT_SEPARATOR.length
+						: 0),
+			);
+			const { parent_context, ...source } = citation;
+			return {
+				...source,
+				body: trimmedBody,
+				...(typeof citation.text === "string" ? { text: trimmedBody } : {}),
+				...(typeof citation.snippet === "string"
+					? { snippet: truncateEvidenceText(trimmedBody, 280) }
+					: {}),
+				...(trimmedParent ? { parent_context: trimmedParent } : {}),
+			};
+		},
+	};
+}
+
+function boundExcerpt(
+	text: string,
+	range: QuoteRange | undefined,
+	tokens: number,
+	chars: number,
+): string {
+	if (text.length <= chars && estimateTokens(text) <= tokens) return text;
+	return (
+		range
+			? sliceAroundTokenBudget(text, range.start, range.end, tokens, chars)
+			: sliceByTokenBudget(text, tokens, chars)
+	).trim();
 }
 
 /** Remove a child only when an already retrieved parent exposes all of its text to Judge. */

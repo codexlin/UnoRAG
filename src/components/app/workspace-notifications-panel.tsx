@@ -35,13 +35,62 @@ import { useInterfaceText } from "@/lib/i18n/provider";
 import { queryKeys } from "@/lib/query-keys";
 import {
 	type EmailDeliveryView,
+	type WorkspaceAlertThresholds,
 	type WorkspaceEmailSettings,
 	type WorkspaceNotificationsView,
+	workspaceAlertLatencyOrderIsValid,
+	workspaceAlertThresholdsSchema,
 	workspaceEmailSettingsSchema,
 } from "@/lib/workspace-notifications";
 
 type Copy = readonly [zh: string, en: string];
 type InterfaceText = ReturnType<typeof useInterfaceText>;
+type AlertField = keyof WorkspaceAlertThresholds;
+type AlertDraft = Partial<Record<AlertField, string>>;
+
+const ALERT_FIELDS: readonly {
+	field: AlertField;
+	label: Copy;
+	range: string;
+	step: string;
+}[] = [
+	{
+		field: "ask_min_samples",
+		label: ["最少问答样本数", "Minimum Ask samples"],
+		range: "1–1,000",
+		step: "1",
+	},
+	{
+		field: "ask_failure_rate_warning",
+		label: ["失败率警告", "Failure rate warning"],
+		range: "0.01–1",
+		step: "any",
+	},
+	{
+		field: "ask_citation_coverage_min",
+		label: ["最低引用覆盖率", "Minimum citation coverage"],
+		range: "0.1–1",
+		step: "any",
+	},
+	{
+		field: "ask_p95_warning_ms",
+		label: ["P95 延迟警告（毫秒）", "P95 latency warning (ms)"],
+		range: "1,000–120,000",
+		step: "1",
+	},
+	{
+		field: "ask_p95_critical_ms",
+		label: ["P95 严重延迟（毫秒）", "P95 critical latency (ms)"],
+		range: "1,000–300,000",
+		step: "1",
+	},
+];
+
+function alertDraft(thresholds: WorkspaceAlertThresholds): AlertDraft {
+	return Object.fromEntries(
+		Object.entries(thresholds).map(([key, value]) => [key, String(value)]),
+	);
+}
 
 const endpoint = "/api/workspace/notifications";
 const SEVERITY_OPTIONS = [
@@ -152,6 +201,11 @@ async function readView(
 	if (
 		!view ||
 		!Number.isInteger(view.version) ||
+		!Number.isInteger(view.alert_policy_version) ||
+		!workspaceAlertThresholdsSchema.safeParse(view.alert_thresholds).success ||
+		!ALERT_FIELDS.every(({ field }) =>
+			Number.isFinite(view.alert_defaults?.[field]),
+		) ||
 		!workspaceEmailSettingsSchema.safeParse(view.settings).success ||
 		!Array.isArray(view.deliveries) ||
 		!["configured", "unconfigured", "unknown"].includes(view.transport?.status)
@@ -190,8 +244,8 @@ function requestError(error: unknown, fallback: string, t: InterfaceText) {
 			);
 		if (error.status === 400 || error.status === 422)
 			return t(
-				"设置未被接受，请检查收件邮箱后重试",
-				"Settings were not accepted. Check the recipient emails and try again.",
+				"请检查收件邮箱和告警阈值后重试",
+				"Check the recipient emails and alert thresholds, then try again.",
 			);
 	}
 	return fallback;
@@ -242,6 +296,8 @@ function NotificationsPanel({
 	const [draft, setDraft] = useState<{
 		settings: WorkspaceEmailSettings;
 		version: number;
+		thresholds: AlertDraft;
+		alertPolicyVersion: number;
 		recipientIds: string[];
 	} | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -290,14 +346,50 @@ function NotificationsPanel({
 	});
 	const view = query.data;
 	const settings = draft?.settings ?? view?.settings;
+	const thresholds =
+		draft?.thresholds ?? alertDraft(view?.alert_thresholds ?? {});
 	const recipientIds = draft?.recipientIds ?? view?.settings.recipients ?? [];
+	const thresholdsDirty = Boolean(
+		draft &&
+			view &&
+			ALERT_FIELDS.some(
+				({ field }) =>
+					(thresholds[field] ?? "") !==
+					String(view.alert_thresholds[field] ?? ""),
+			),
+	);
 	const dirty = Boolean(
-		draft && JSON.stringify(draft.settings) !== JSON.stringify(view?.settings),
+		thresholdsDirty ||
+			(draft &&
+				JSON.stringify(draft.settings) !== JSON.stringify(view?.settings)),
 	);
 	const versionChanged = Boolean(
-		draft && view && draft.version !== view.version,
+		draft &&
+			view &&
+			(draft.version !== view.version ||
+				draft.alertPolicyVersion !== view.alert_policy_version),
 	);
 	const conflict = mustRefresh || versionChanged;
+	const thresholdValidation = workspaceAlertThresholdsSchema.safeParse(
+		Object.fromEntries(
+			Object.entries(thresholds)
+				.filter(([, value]) => value.trim() !== "")
+				.map(([key, value]) => [key, Number(value)]),
+		),
+	);
+	const latencyOrderInvalid = Boolean(
+		view &&
+			thresholdValidation.success &&
+			!workspaceAlertLatencyOrderIsValid(
+				thresholdValidation.data,
+				view.alert_defaults,
+			),
+	);
+	const thresholdIssues = thresholdValidation.success
+		? []
+		: thresholdValidation.error.issues;
+	const thresholdsInvalid =
+		thresholdsDirty && (!thresholdValidation.success || latencyOrderInvalid);
 	const validation = settings
 		? workspaceEmailSettingsSchema.safeParse({
 				...settings,
@@ -336,6 +428,8 @@ function NotificationsPanel({
 		mutationFn: async (payload: {
 			version: number;
 			settings: WorkspaceEmailSettings;
+			alert_thresholds?: WorkspaceAlertThresholds;
+			alert_policy_version?: number;
 		}) => {
 			await queryClient.cancelQueries({ queryKey, exact: true });
 			return readView(
@@ -348,14 +442,18 @@ function NotificationsPanel({
 			);
 		},
 		retry: false,
-		onSuccess: async (saved) => {
+		onSuccess: async (saved, submitted) => {
 			await queryClient.cancelQueries({ queryKey, exact: true });
 			if (lifetime.current?.signal.aborted) return;
 			queryClient.setQueryData(queryKey, saved);
 			setDraft(null);
 			setMustRefresh(false);
 			setTransportUnknown(false);
-			setNotice(t("邮件通知设置已保存", "Email notification settings saved."));
+			setNotice(
+				submitted.alert_thresholds
+					? t("通知设置已保存", "Notification settings saved.")
+					: t("邮件通知设置已保存", "Email notification settings saved."),
+			);
 		},
 		onError: (cause) =>
 			handleFailure(
@@ -414,11 +512,18 @@ function NotificationsPanel({
 		transport === "configured" &&
 		Boolean(view.settings.recipients.length) &&
 		!retryAt;
-	function update(patch: Partial<WorkspaceEmailSettings>, ids = recipientIds) {
+	function update(
+		patch: Partial<WorkspaceEmailSettings>,
+		ids = recipientIds,
+		nextThresholds = thresholds,
+	) {
 		if (!settings || !view || busy || unavailable) return;
 		setDraft({
 			settings: { ...settings, ...patch },
 			version: draft?.version ?? view.version,
+			thresholds: nextThresholds,
+			alertPolicyVersion:
+				draft?.alertPolicyVersion ?? view.alert_policy_version,
 			recipientIds: ids,
 		});
 		setNotice(null);
@@ -504,6 +609,7 @@ function NotificationsPanel({
 							busy ||
 							unavailable ||
 							!dirty ||
+							thresholdsInvalid ||
 							conflict ||
 							query.isFetching
 						)
@@ -513,6 +619,13 @@ function NotificationsPanel({
 						save.mutate({
 							version: draft?.version ?? view.version,
 							settings: validation.data,
+							...(thresholdsDirty && thresholdValidation.success
+								? {
+										alert_thresholds: thresholdValidation.data,
+										alert_policy_version:
+											draft?.alertPolicyVersion ?? view.alert_policy_version,
+									}
+								: {}),
 						});
 					}}
 				>
@@ -688,6 +801,89 @@ function NotificationsPanel({
 							) : null}
 						</div>
 					</fieldset>
+					{view ? (
+						<fieldset
+							disabled={busy || unavailable}
+							className="min-w-0 space-y-3 border-t border-border/60 pt-4"
+						>
+							<legend className="sr-only">
+								{t("告警阈值", "Alert thresholds")}
+							</legend>
+							<div className="flex flex-wrap items-center justify-between gap-2">
+								<h4 className="font-medium">
+									{t("告警阈值", "Alert thresholds")}
+								</h4>
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									className="min-h-11 md:min-h-9"
+									disabled={
+										busy ||
+										unavailable ||
+										!ALERT_FIELDS.some(({ field }) => thresholds[field])
+									}
+									onClick={() => update({}, recipientIds, {})}
+								>
+									{t("恢复默认值", "Reset to defaults")}
+								</Button>
+							</div>
+							<p className="text-xs text-muted-foreground">
+								{t(
+									"留空使用部署默认值。保存后在下一次告警评估时生效。",
+									"Leave a field blank to use its deployment default. Saved changes take effect at the next alert evaluation.",
+								)}
+							</p>
+							<div className="grid gap-4 sm:grid-cols-2">
+								{ALERT_FIELDS.map(({ field, label, range, step }) => {
+									const inputId = `${id}-${field}`;
+									const fieldIssue = thresholdIssues.find(
+										(issue) => issue.path[0] === field,
+									);
+									const orderIssue =
+										field === "ask_p95_critical_ms" &&
+										(latencyOrderInvalid || fieldIssue?.code === "custom");
+									const invalid = Boolean(fieldIssue || orderIssue);
+									return (
+										<div key={field} className="min-w-0 space-y-1.5">
+											<label htmlFor={inputId}>{t(...label)}</label>
+											<Input
+												id={inputId}
+												type="number"
+												step={step}
+												className="h-11 md:h-9"
+												value={thresholds[field] ?? ""}
+												placeholder={String(view.alert_defaults[field])}
+												aria-invalid={invalid}
+												aria-describedby={`${inputId}-range`}
+												onChange={(event) =>
+													update({}, recipientIds, {
+														...thresholds,
+														[field]: event.target.value,
+													})
+												}
+											/>
+											<p
+												id={`${inputId}-range`}
+												className={
+													invalid
+														? "text-xs text-destructive"
+														: "text-xs text-muted-foreground"
+												}
+											>
+												{orderIssue
+													? t(
+															"严重阈值须大于或等于警告阈值。",
+															"Critical must be at least the warning threshold.",
+														)
+													: range}
+											</p>
+										</div>
+									);
+								})}
+							</div>
+						</fieldset>
+					) : null}
 					{conflict ? (
 						<div
 							role="alert"
@@ -726,7 +922,11 @@ function NotificationsPanel({
 											className="min-h-11 max-w-full whitespace-normal py-2"
 											disabled={busy || unavailable || query.isFetching}
 											onClick={() => {
-												setDraft({ ...draft, version: view.version });
+												setDraft({
+													...draft,
+													version: view.version,
+													alertPolicyVersion: view.alert_policy_version,
+												});
 												setError(null);
 											}}
 										>
@@ -762,6 +962,7 @@ function NotificationsPanel({
 								unavailable ||
 								query.isFetching ||
 								!dirty ||
+								thresholdsInvalid ||
 								conflict ||
 								!validation?.success
 							}

@@ -115,48 +115,128 @@ run_drain_check() {
 quiesce_dbos_version() {
 	local version="$1"
 	log "entering maintenance mode for DBOS version ${version}"
-	runtime_compose stop caddy web
+	runtime_compose stop caddy web || return 1
 
 	# Keep the matching control process and worker alive while all application
 	# jobs and durable workflows drain. Once empty, stop the producer first,
 	# then the executor, and verify the boundary a final time.
 	run_drain_check "$version" all "$DBOS_DRAIN_TIMEOUT_SECONDS" || return 1
-	mk_compose stop dbos-control
+	mk_compose stop dbos-control || return 1
 	run_drain_check "$version" app 0 || return 1
 	run_drain_check "$version" dbos "$DBOS_DRAIN_TIMEOUT_SECONDS" || return 1
-	mk_compose stop dbos-worker
+	mk_compose stop dbos-worker || return 1
 	run_drain_check "$version" all 0
 }
 
 write_qdrant_collection() {
 	local collection="$1" tmp
-	tmp="$(mktemp "${RUNTIME_ENV}.XXXXXXXX")" || return 1
-	chmod 600 "$tmp" || return 1
-	awk -F= -v name="$collection" '
+	tmp="$(mktemp "${RUNTIME_ADVANCED_ENV}.XXXXXXXX")" || return 1
+	if awk -F= -v name="$collection" '
 		$1 == "QDRANT_COLLECTION" { next }
 		{ print }
 		END { print "QDRANT_COLLECTION=" name }
-	' "$RUNTIME_ENV" >"$tmp" || return 1
-	mv -f "$tmp" "$RUNTIME_ENV"
+	' "$RUNTIME_ADVANCED_ENV" >"$tmp" && mv -f "$tmp" "$RUNTIME_ADVANCED_ENV"; then
+		return 0
+	fi
+	rm -f "$tmp"
+	return 1
+}
+
+validate_idf_compose_config() {
+	local collection="$1"
+	shift
+	runtime_compose --profile ops --profile migrate config --format json | python3 -c '
+import json
+import sys
+
+def fail(message):
+    sys.exit("error: " + message)
+
+config = json.load(sys.stdin)
+collection, project, *release = sys.argv[1:]
+services = config["services"]
+if config["name"] != project:
+    fail("IDF cutover must use the Compose project selected by backup.sh")
+for name in ("web", "dbos-worker", "dbos-control"):
+    service = services[name]
+    env = service["environment"]
+    if env.get("QDRANT_URL", "").rstrip("/") != "http://qdrant:6333":
+        fail(f"IDF cutover requires {name} to use the bundled Qdrant service")
+    if env.get("QDRANT_COLLECTION") != collection:
+        fail(f"{name} has an unexpected QDRANT_COLLECTION")
+    if service.get("ports") or service.get("network_mode") == "host":
+        fail(f"IDF cutover requires {name} to be private behind Compose ingress")
+
+web_env = services["web"]["environment"]
+worker_env = services["dbos-worker"]["environment"]
+for key, default in (("EMBEDDING_DIM", "1024"), ("QDRANT_DISTANCE", "Cosine")):
+    if web_env.get(key, default).strip().lower() != worker_env.get(key, default).strip().lower():
+        fail(f"Web and Worker must agree on {key} during IDF cutover")
+
+if release:
+    web, migrator, ops, worker, version = release
+    expected = {"web": web, "migrate-web": migrator, "inspect-lifecycle": ops,
+                "backfill-acl-projections": ops, "dbos-worker": worker, "dbos-control": worker}
+    for name, image in expected.items():
+        if services[name].get("image") != image:
+            fail(f"{name} must use its verified release image")
+    for name in ("web", "dbos-worker", "dbos-control"):
+        if services[name]["environment"].get("UNORAG_DBOS_APPLICATION_VERSION") != version:
+            fail(f"{name} must use the target DBOS application version")
+' "$collection" "$(mk_config_get COMPOSE_PROJECT_NAME || echo unorag)" "$@"
+}
+
+validate_idf_backup_storage() {
+	local project container volume
+	project="$(mk_config_get COMPOSE_PROJECT_NAME || echo unorag)"
+	container="$(mk_compose ps --status running -q qdrant)"
+	[[ -n "$container" ]] || die "IDF cutover requires a running Compose Qdrant service"
+	volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/qdrant/storage"}}{{.Name}}{{end}}{{end}}' "$container")"
+	[[ "$volume" == "${project}_qdrant_data" ]] ||
+		die "IDF cutover requires the Qdrant volume archived by backup.sh"
 }
 
 backup_before_qdrant_cutover() {
 	local backup
-	backup="${ROOT}/backups/pre-idf-$(date -u +%Y%m%dT%H%M%SZ)"
-	mkdir -m 700 "$backup"
+	mkdir -p -m 700 "${ROOT}/backups"
+	backup="$(mktemp -d "${ROOT}/backups/pre-idf-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX")"
 	"${ROOT}/scripts/backup.sh" "$backup"
-	(cd "$backup" && sha256sum -c CHECKSUMS.sha256)
+	(
+		cd "$backup"
+		if command -v sha256sum >/dev/null 2>&1; then
+			sha256sum -c CHECKSUMS.sha256
+		else
+			shasum -a 256 -c CHECKSUMS.sha256
+		fi
+	)
 }
 
 backfill_qdrant_after_drain() {
+	validate_idf_compose_config "$PREVIOUS_QDRANT_COLLECTION" \
+		"$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION"
 	# Use the target worker's dependencies, but do not run its executor yet.
-	mk_compose --profile dbos run --rm --no-deps -T \
+	runtime_compose run --rm --no-deps -T --pull never \
 		--entrypoint /repo/node_modules/.bin/tsx dbos-worker \
 		/repo/scripts/qdrant-backfill-sparse.ts --execute \
 		--from "$PREVIOUS_QDRANT_COLLECTION" --to "$QDRANT_IDF_TARGET"
 	COLLECTION_SWITCHED=1
 	write_qdrant_collection "$QDRANT_IDF_TARGET"
-	[[ "$(mk_config_get QDRANT_COLLECTION)" == "$QDRANT_IDF_TARGET" ]]
+	validate_idf_compose_config "$QDRANT_IDF_TARGET" \
+		"$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION"
+}
+
+verify_target_web() {
+	runtime_compose exec -T web node -e '
+		fetch("http://127.0.0.1:3000/api/rag/health/ready", {signal: AbortSignal.timeout(15000)})
+			.then(async (response) => {
+				const data = await response.json();
+				if (!response.ok || !data.ask_ready || !data.qdrant_ok || !data.metadata_ok ||
+					data.release?.dbos_application_version !== process.argv[1] ||
+					process.env.QDRANT_COLLECTION !== process.argv[2]) {
+					throw new Error("target release did not become ready before IDF cutover");
+				}
+			}).catch((error) => { console.error(error.message); process.exitCode = 1; });
+	' "$DBOS_VERSION" "$QDRANT_IDF_TARGET"
 }
 
 rollback_images() {
@@ -179,7 +259,13 @@ rollback_images() {
 	if [[ "$COLLECTION_SWITCHED" -eq 1 ]]; then
 		write_qdrant_collection "$PREVIOUS_QDRANT_COLLECTION" || return 1
 	fi
-	write_runtime_pins "$web" "$migrator" "$ops" "$worker" "$version" "$platform"
+	write_runtime_pins "$web" "$migrator" "$ops" "$worker" "$version" "$platform" || return 1
+	if [[ -n "$QDRANT_IDF_TARGET" ]]; then
+		mk_compose up -d --no-deps --wait qdrant || return 1
+		runtime_compose up -d --no-deps --wait dbos-worker dbos-control web || return 1
+		runtime_compose up -d --no-deps caddy
+		return $?
+	fi
 	runtime_compose up -d --no-deps dbos-worker dbos-control web caddy || true
 }
 
@@ -188,6 +274,8 @@ on_exit() {
 	if [[ $rc -ne 0 && $SWITCHED -eq 1 ]]; then
 		warn "upgrade failed; restoring previous application image pins"
 		rollback_images || warn "automatic rollback could not be completed safely"
+	elif [[ $rc -ne 0 && $COLLECTION_SWITCHED -eq 1 ]]; then
+		warn "target writers may have run; target pins and collection were retained for recovery"
 	fi
 	exit "$rc"
 }
@@ -300,6 +388,8 @@ if [[ -n "$QDRANT_IDF_TARGET" ]]; then
 	PREVIOUS_QDRANT_COLLECTION="$(mk_config_get QDRANT_COLLECTION || echo unorag_chunks)"
 	[[ "$PREVIOUS_QDRANT_COLLECTION" != "$QDRANT_IDF_TARGET" ]] ||
 		die "IDF cutover requires an unused collection distinct from the current collection"
+	validate_idf_compose_config "$PREVIOUS_QDRANT_COLLECTION"
+	validate_idf_backup_storage
 fi
 DBOS_DRAIN_TIMEOUT_SECONDS="$(mk_config_get DBOS_UPGRADE_DRAIN_TIMEOUT_SECONDS || echo 1800)"
 [[ "$DBOS_DRAIN_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || die "DBOS_UPGRADE_DRAIN_TIMEOUT_SECONDS must be a positive integer"
@@ -320,12 +410,12 @@ capture_previous
 if [[ -n "$QDRANT_IDF_TARGET" ]]; then
 	log "pre-pulling verified images before stopping ingress"
 	for image in "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE"; do
-		docker pull "$image"
+		docker pull --platform "$IMAGE_PLATFORM" "$image"
 	done
 	# The backup must record the old image pins and DBOS application version.
 	SWITCHED=1
 	quiesce_dbos_version "$CURRENT_DBOS_VERSION" ||
-		die "DBOS drain timed out; refusing IDF cutover"
+		die "could not stop and drain the current services; refusing IDF cutover"
 	backup_before_qdrant_cutover
 fi
 write_runtime_pins "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION" "$IMAGE_PLATFORM"
@@ -365,6 +455,16 @@ mk_compose up -d --wait postgres
 mk_compose --profile migrate run --rm migrate-web
 mk_compose --profile migrate run --rm configure-db-roles
 
+if [[ "$COLLECTION_SWITCHED" -eq 1 ]]; then
+	log "verifying target Web while ingress and DBOS writers are stopped"
+	runtime_compose up -d --no-deps --wait web
+	verify_target_web
+	# Target workers and ACL reconciliation can create writes before Caddy starts.
+	# From here, the old collection may be stale even with ingress closed.
+	SWITCHED=0
+	log "starting target writers; automatic collection rollback is disabled after this point"
+fi
+
 log "rolling DBOS execution and control"
 mk_compose stop dbos-control dbos-worker || true
 TARGET_EXECUTION_STARTED=1
@@ -375,23 +475,8 @@ mk_compose --profile ops run --rm backfill-acl-projections
 mk_compose --profile ops run --rm inspect-lifecycle
 
 log "rolling web and edge"
-runtime_compose up -d --no-deps --wait web
-if [[ "$COLLECTION_SWITCHED" -eq 1 ]]; then
-	# Old Web rejects the IDF collection. Verify the target before giving it any
-	# public traffic; once traffic can write to the new collection, restoring
-	# the old snapshot automatically would discard those writes.
-	runtime_compose exec -T web node -e '
-		fetch("http://127.0.0.1:3000/api/rag/health/ready", {signal: AbortSignal.timeout(15000)})
-			.then(async (response) => {
-				const data = await response.json();
-				if (!response.ok || !data.ask_ready || !data.qdrant_ok || !data.metadata_ok ||
-					data.release?.dbos_application_version !== process.env.UNORAG_DBOS_APPLICATION_VERSION) {
-					throw new Error("target release did not become ready before public cutover");
-				}
-			}).catch((error) => { console.error(error.message); process.exitCode = 1; });
-	'
-	SWITCHED=0
-	log "opening public ingress; automatic collection rollback is disabled after this point"
+if [[ "$COLLECTION_SWITCHED" -eq 0 ]]; then
+	runtime_compose up -d --no-deps --wait web
 fi
 runtime_compose up -d --no-deps caddy
 

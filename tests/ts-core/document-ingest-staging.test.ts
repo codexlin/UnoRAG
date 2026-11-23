@@ -95,7 +95,7 @@ test("text stager runs source, parser, chunks, embeddings, and scoped Qdrant wri
 				node_count: 2,
 				heading_count: 1,
 				chunking: {
-					policy_version: "v1",
+					policy_version: "v2",
 					profile: "balanced",
 					chunk_count: 1,
 					strategies: { heading: 1 },
@@ -126,6 +126,66 @@ test("text stager runs source, parser, chunks, embeddings, and scoped Qdrant wri
 		{ stage: "embedding", percent: 60 },
 		{ stage: "indexing", percent: 80 },
 	]);
+});
+
+test("staging recommends a table profile for auto libraries and honors explicit profiles", async () => {
+	const markdown = [
+		"| Product | Quantity |",
+		"| --- | --- |",
+		...Array.from(
+			{ length: 41 },
+			(_, index) => `| Inventory item ${index + 1} | 20 |`,
+		),
+	].join("\n");
+	const bytes = new TextEncoder().encode(markdown);
+	let records: IndexWritePayload[] = [];
+	const stager = new DocumentIngestStager(
+		{
+			async load() {
+				return bytes;
+			},
+		},
+		scopePort(),
+		embeddingProvider(),
+		{
+			async stage(input) {
+				records = input.records;
+				return records.length;
+			},
+			async setVisibility() {
+				return 0;
+			},
+		},
+	);
+	for (const [configured, expected, expectedRows] of [
+		["auto", "table_heavy", [20, 20, 1]],
+		["general", "balanced", [40, 1]],
+		["regulatory", "precise", [40, 1]],
+	] as const) {
+		const input = job();
+		await stager.stageDocument({
+			...input,
+			payload: {
+				...input.payload,
+				filename: "inventory.md",
+				content_type: "text/markdown",
+				document_profile: configured,
+				content_hash: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+			},
+		});
+		const chunk = records.find((record) => record.record_type === "chunk");
+		assert.equal(chunk?.chunk_profile, expected);
+		assert.equal(
+			chunk?.profile_auto_selected,
+			configured === "auto" ? true : undefined,
+		);
+		assert.deepEqual(
+			records
+				.filter((record) => record.record_type === "table")
+				.map((record) => record.rows?.length),
+			expectedRows,
+		);
+	}
 });
 
 test("document stager rejects unsupported formats and source hash mismatches", async () => {

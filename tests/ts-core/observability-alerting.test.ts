@@ -9,6 +9,7 @@ import { DEFAULT_WORKSPACE_EMAIL_SETTINGS } from "../../src/lib/workspace-notifi
 import {
 	DEFAULT_ALERT_POLICY,
 	resolveAlertPolicy,
+	resolveWorkspaceAlertPolicy,
 } from "../../src/server/observability/alert-policy";
 import {
 	claimAlertDeliveries,
@@ -326,6 +327,58 @@ test("Ask SLO rules require enough samples and honor bounded policy overrides", 
 		/CRITICAL_MS must be greater/,
 	);
 	assert.deepEqual(resolveAlertPolicy({}), DEFAULT_ALERT_POLICY);
+});
+
+test("operational signals use workspace overrides before environment and built-in thresholds", () => {
+	const baseline = resolveAlertPolicy({
+		OBSERVABILITY_ASK_MIN_SAMPLES: "12",
+		OBSERVABILITY_ASK_FAILURE_RATE_WARNING: "0.9",
+		OBSERVABILITY_ASK_P95_WARNING_MS: "20000",
+		OBSERVABILITY_ASK_P95_CRITICAL_MS: "30000",
+	});
+	const environmentOnly = resolveWorkspaceAlertPolicy({}, baseline);
+	assert.deepEqual(environmentOnly, {
+		...DEFAULT_ALERT_POLICY,
+		askMinSamples: 12,
+		askFailureRateWarning: 0.9,
+		askP95WarningMs: 20_000,
+		askP95CriticalMs: 30_000,
+	});
+	const custom = resolveWorkspaceAlertPolicy(
+		{
+			ask_min_samples: 9,
+			ask_failure_rate_warning: 0.1,
+			ask_citation_coverage_min: 0.8,
+			ask_p95_critical_ms: 24_000,
+		},
+		baseline,
+	);
+	const signal = (policy: typeof custom) =>
+		deriveOperationalSignals(
+			snapshot(),
+			{ checked_at: new Date().toISOString(), items: [] },
+			policy,
+		)
+			.filter(({ code }) => code.startsWith("ask."))
+			.map(({ code, severity }) => [code, severity]);
+	assert.deepEqual(signal(environmentOnly), [["ask.p95_latency", "warning"]]);
+	assert.deepEqual(signal(custom), [
+		["ask.failure_rate", "warning"],
+		["ask.p95_latency", "critical"],
+	]);
+	assert.deepEqual(
+		signal(resolveWorkspaceAlertPolicy({}, resolveAlertPolicy({}))),
+		[
+			["ask.failure_rate", "warning"],
+			["ask.citation_coverage", "warning"],
+			["ask.p95_latency", "critical"],
+		],
+	);
+	assert.equal(
+		resolveWorkspaceAlertPolicy({ ask_p95_critical_ms: 10_000 }, baseline)
+			.askP95WarningMs,
+		10_000,
+	);
 });
 
 test("notification configuration stores only destination and config digests", () => {

@@ -23,6 +23,8 @@ import {
 	RetrievalProviderError,
 } from "../../src/core/retrieval/provider-request";
 import { OpenAICompatibleRerankProvider } from "../../src/core/retrieval/rerank/provider";
+import { ScopedRetrievalCache } from "../../src/core/retrieval/retrieval-cache";
+import { estimateTokens } from "../../src/core/text/token-estimate";
 
 const scope: AuthorizedScope = {
 	organizationId: "tenant-a",
@@ -130,6 +132,228 @@ class FakeStore implements RetrievalVectorStore {
 		];
 	}
 }
+
+test("inspection captures bounded hybrid candidates, rerank movement, deduplication, threshold and expansion", async () => {
+	const childText = `Payment\n\t terms. ${"A".repeat(400)}`;
+	const parentText = `${childText}\n\n${"B".repeat(500)}`;
+	const parent = hit({
+		id: "parent",
+		text: parentText,
+		chunkIndex: 0,
+		score: 0.04,
+		recordType: "section",
+	});
+	parent.payload.record_id = "parent-record";
+	const child = hit({
+		id: "child",
+		text: childText,
+		chunkIndex: 2,
+		score: 0.02,
+	});
+	child.payload.parent_record_id = "parent-record";
+	child.payload.filename = "policy.pdf";
+	child.payload.section_path = "Contracts / Payment";
+	child.payload.page_start = 2;
+	child.payload.page_end = 3;
+	child.bm25_score = 5.5;
+	const other = hit({
+		id: "other",
+		text: "Other evidence",
+		chunkIndex: 1,
+		score: 0.03,
+	});
+	const weak = hit({
+		id: "weak",
+		text: "Weak evidence",
+		chunkIndex: 3,
+		score: 0.01,
+	});
+	const fillers = Array.from({ length: 19 }, (_, index) =>
+		hit({
+			id: `filler-${index}`,
+			text: `Unranked ${index}`,
+			chunkIndex: 4 + index,
+			score: 0.009 - index / 10_000,
+		}),
+	);
+	const denseChild = { ...child, score: 0.83 };
+	const service = new DefaultRetrievalService(
+		embeddings,
+		{
+			async search() {
+				return [denseChild];
+			},
+			async hybridSearch() {
+				return [parent, other, child, weak, ...fillers];
+			},
+			async listCorpus() {
+				return [];
+			},
+		},
+		{
+			async rerank({ topN, documents }) {
+				assert.equal(topN, 2);
+				assert.equal(documents.length, 23);
+				return [
+					{ index: 3, score: 0.21 },
+					{ index: 2, score: 0.98 },
+				];
+			},
+		},
+		{
+			hybridEnabled: true,
+			rerankEnabled: true,
+			rerankTopK: 24,
+			bm25TopK: 24,
+			rrfK: 60,
+		},
+	);
+	const result = await service.retrieve({
+		query: `${"q".repeat(299)}🚀 remainder`,
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+		options: { includeTraceDetails: true, evidenceThreshold: 0.5 },
+	});
+	const inspection = result.debug.inspection;
+	assert.ok(inspection);
+	assert.equal(inspection.query, "q".repeat(299));
+	assert.equal(inspection.mode, "hybrid");
+	assert.equal(inspection.usedRerank, true);
+	assert.equal(inspection.topK, 2);
+	assert.equal(inspection.evidenceThreshold, 0.5);
+	assert.equal(inspection.candidates.length, 20);
+	assert.deepEqual(
+		result.citations.map(({ id }) => id),
+		["child", "weak"],
+	);
+	assert.deepEqual(
+		inspection.candidates
+			.slice(0, 4)
+			.map(
+				({ id, outcome, coarse_rank, rerank_rank, rank_delta, final_rank }) => [
+					id,
+					outcome,
+					coarse_rank,
+					rerank_rank,
+					rank_delta,
+					final_rank,
+				],
+			),
+		[
+			["parent", "deduped", 1, null, null, null],
+			["other", "dropped_rerank", 2, null, null, null],
+			["child", "selected", 3, 1, 2, 1],
+			["weak", "below_threshold", 4, 2, 2, null],
+		],
+	);
+	assert.deepEqual(inspection.candidates[2], {
+		id: "child",
+		document_id: "document-a",
+		title: "Policy",
+		filename: "policy.pdf",
+		section_path: "Contracts / Payment",
+		record_type: "chunk",
+		page_start: 2,
+		page_end: 3,
+		coarse_rank: 3,
+		rerank_rank: 1,
+		rank_delta: 2,
+		final_rank: 1,
+		dense_score: 0.83,
+		sparse_score: 5.5,
+		rrf_score: 0.02,
+		rerank_score: 0.98,
+		outcome: "selected",
+		parent_expanded: true,
+		chars_before_expand: childText.length,
+		chars_after_expand: parentText.length,
+		preview: childText.replace(/\s+/gu, " ").slice(0, 300),
+	});
+	assert.equal(inspection.candidates[1].dense_score, null);
+	assert.equal(inspection.candidates[1].parent_expanded, false);
+	assert.equal(
+		inspection.candidates[1].chars_before_expand,
+		inspection.candidates[1].chars_after_expand,
+	);
+	assert.ok(
+		inspection.candidates.every(({ preview }) => preview.length <= 300),
+	);
+	assert.equal(result.inspectionReferences?.length, 20);
+	assert.doesNotMatch(
+		JSON.stringify(result.inspectionReferences),
+		/Payment|Other evidence/,
+	);
+});
+
+test("traced retrieval bypasses cache reads and writes and fails closed on newly unauthorized hits", async () => {
+	const cache = new ScopedRetrievalCache();
+	let searches = 0;
+	let allowed = true;
+	const service = new DefaultRetrievalService(
+		embeddings,
+		{
+			async search(input) {
+				searches += 1;
+				assert.deepEqual(
+					input.scope.activeGenerationIds,
+					scope.activeGenerationIds,
+				);
+				const first = hit({
+					id: "best",
+					text: "best",
+					chunkIndex: 1,
+					score: 0.9,
+				});
+				if (!allowed) {
+					first.payload.acl_scope = "restricted";
+					first.payload.acl_group_ids = ["outside"];
+				}
+				return [
+					first,
+					hit({ id: "next", text: "next", chunkIndex: 2, score: 0.8 }),
+				];
+			},
+			async listCorpus() {
+				return [];
+			},
+		},
+		null,
+		{
+			cache,
+			hybridEnabled: false,
+			rerankEnabled: false,
+			rerankTopK: 5,
+			bm25TopK: 5,
+			rrfK: 60,
+		},
+	);
+	const input = { query: "payment", libraryId: "library-a", scope, topK: 1 };
+	const tracedInput = { ...input, options: { includeTraceDetails: true } };
+	const first = await service.retrieve(tracedInput);
+	assert.equal(cache.size, 0);
+	assert.deepEqual(
+		first.debug.inspection?.candidates.map(({ outcome }) => outcome),
+		["selected", "dropped_topk"],
+	);
+	assert.equal(first.debug.inspection?.candidates[0].dense_score, 0.9);
+	assert.equal(first.debug.inspection?.candidates[0].rerank_rank, null);
+	assert.equal(first.debug.inspection?.evidenceThreshold, null);
+	const cached = await service.retrieve({
+		...input,
+		options: { includeTraceDetails: false },
+	});
+	assert.equal(cached.debug.inspection, undefined);
+	assert.equal(cached.inspectionReferences, undefined);
+	assert.equal(cache.size, 1);
+	allowed = false;
+	await assert.rejects(
+		service.retrieve(tracedInput),
+		RetrievalSecurityViolationError,
+	);
+	assert.deepEqual(await service.retrieve(input), cached);
+	assert.equal(searches, 3);
+});
 
 test("server hybrid keeps rerank and citation evidence original without leaking contextual_prefix", async () => {
 	const contextual = hit({
@@ -1552,6 +1776,7 @@ test("parent-child expansion supports legacy source_chunk_ids matching and enfor
 			}).payload,
 			record_id: "chk:document-a:3",
 			section_path: "第三章",
+			chunk_policy_version: "v1",
 		},
 	};
 	const longPrefix = "前序背景。".repeat(300);
@@ -1597,7 +1822,7 @@ test("parent-child expansion supports legacy source_chunk_ids matching and enfor
 		topK: 1,
 	});
 	const parentCtx = result.citations[0]?.parent_context ?? "";
-	assert.ok(parentCtx.length > 0 && parentCtx.length <= 1_600);
+	assert.ok(parentCtx.length >= 1_150 && parentCtx.length <= 1_200);
 	assert.ok(parentCtx.includes("子块正文仅包含一部分条款说明。"));
 
 	const unauthorizedStore: RetrievalVectorStore = {
@@ -1637,6 +1862,77 @@ test("parent-child expansion supports legacy source_chunk_ids matching and enfor
 		}),
 		RetrievalSecurityViolationError,
 	);
+});
+
+test("parent context centers lengthy English sections and respects the hard character cap", async () => {
+	const childBody = "The matched safety clause is mandatory.";
+	const child = hit({
+		id: "child",
+		text: childBody,
+		chunkIndex: 3,
+		score: 0.9,
+	});
+	child.payload.parent_record_id = "section-parent";
+	for (const [before, after, minimum, hardCap] of [
+		[
+			"The background explains how the previous policy handled restricted transfers. ".repeat(
+				60,
+			),
+			"The follow-up lists the required approval and reporting steps for all staff. ".repeat(
+				60,
+			),
+			3_900,
+			4_500,
+		],
+		["a ".repeat(3_000), "b ".repeat(3_000), 4_450, 4_500],
+	] as const) {
+		const parent = hit({
+			id: "parent",
+			text: `${before}${childBody} ${after}`,
+			chunkIndex: 0,
+			score: 0,
+			recordType: "section",
+		});
+		parent.payload.record_id = "section-parent";
+		const service = new DefaultRetrievalService(
+			embeddings,
+			{
+				async search() {
+					return [child];
+				},
+				async listCorpus() {
+					return [];
+				},
+				async lookupSections() {
+					return [parent];
+				},
+			},
+			null,
+			{
+				hybridEnabled: false,
+				rerankEnabled: false,
+				rerankTopK: 6,
+				bm25TopK: 20,
+				rrfK: 60,
+			},
+		);
+		const result = await service.retrieve({
+			query: "safety clause",
+			libraryId: "library-a",
+			scope,
+			topK: 1,
+		});
+		const expanded = result.citations[0]?.parent_context ?? "";
+		assert.ok(
+			expanded.length >= minimum && expanded.length <= hardCap,
+			String(expanded.length),
+		);
+		assert.ok(estimateTokens(expanded) <= 1_200);
+		const offset = expanded.indexOf(childBody);
+		assert.ok(
+			offset > 1_600 && expanded.length - offset - childBody.length > 1_600,
+		);
+	}
 });
 
 test("DefaultRetrievalService attaches adjacent sibling chunks when no parent section exists and enforces authorization", async () => {
