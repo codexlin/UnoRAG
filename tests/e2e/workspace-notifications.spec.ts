@@ -311,7 +311,7 @@ test("settings keep grouped controls, one-time key clearing and audit navigation
 		.poll(() => auditFilters.get("action"))
 		.toBe("workspace.alert_thresholds.updated");
 	await expect(
-		page.getByRole("link", { name: "导出 CSV", exact: true }),
+		page.getByRole("link", { name: "导出当前筛选 CSV", exact: true }),
 	).toHaveAttribute(
 		"href",
 		"/api/workspace/audit/export?resource_type=workspace&action=workspace.alert_thresholds.updated",

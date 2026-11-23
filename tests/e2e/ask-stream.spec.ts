@@ -785,6 +785,9 @@ test("Sources and citation previews fit narrow and enlarged layouts across all t
 		document.documentElement.style.fontSize = "200%";
 	});
 	await page.getByRole("textbox").focus();
+	await page.mouse.move(0, 0);
+	await page.clock.runFor(200);
+	await expect(page.getByRole("tooltip")).toBeHidden();
 	const chooser = await page
 		.getByRole("combobox", { name: "知识库", exact: true })
 		.boundingBox();
@@ -2917,7 +2920,10 @@ test("switching to a failed thread clears the old answer and source drawer befor
 			history.pushState(null, "", "/app/ask?thread=fixture-archive"),
 		);
 		await expect(page.getByText(answer, { exact: true })).toBeVisible();
-		const sources = await expandAnswerSources(page.getByRole("article"), 1);
+		const sources = await expandAnswerSources(
+			page.locator("[data-turn-id]"),
+			1,
+		);
 		await sources.locator("[data-citation-id]").first().click();
 		const preview = page.getByText(previewCitation.text ?? "", { exact: true });
 		await expect(preview).toBeVisible();
