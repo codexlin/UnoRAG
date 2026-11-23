@@ -273,6 +273,27 @@ overlay 和显式开关。脚本随后：
 
 Compose 为单机参考拓扑（DBOS 版本变更存在短维护窗口），不承诺零停机。
 
+### 从旧 Qdrant 集合迁移到 IDF
+
+旧集合缺少 `lexical_v1` 的 `idf` modifier 时，从 v0.4.0 起可使用 Compose 升级脚本显式切换。
+已经使用 IDF 的实例按常规流程升级即可。该选项要求四个产品镜像均通过签名校验、使用不可变 digest，
+并且目标 manifest 的 DBOS application version 与当前版本不同。
+
+```bash
+./scripts/upgrade.sh --manifest /path/to/release-ghcr.env --qdrant-idf-target unorag_chunks_idf_v1
+```
+
+这个流程使用参考 Compose 拓扑的 Qdrant 命名卷，Web 和 DBOS 服务保持在私有网络。
+外部 Qdrant 或自定义卷使用 [ADR-0008 的手动迁移](./adr/0008-qdrant-server-side-sparse-rrf.md#compatibility-and-migration)。
+目标集合名须未使用，旧集合与目标使用同一 Embedding 维度和距离度量。脚本停止入口并排空所有写入方，
+在旧镜像引用及 DBOS 版本下生成并校验冷备份，然后复制 Point ID、payload 和已有 dense 向量，重建
+sparse 向量，无需重新调用 Embedding。旧集合保留，部分回填的目标也保留以便排查，重试须使用新的目标名。
+
+新 Web 就绪检查通过后才启动目标 Worker 和 control。此之前的失败会尝试恢复旧镜像和集合配置，数据库
+migration 仍只向前执行。目标 Worker 启动后，即使入口尚未开放，后台对账也可能写入新集合，
+因此后续失败会保留新镜像和集合配置。处理时先关闭入口、排空任务并核对 PostgreSQL 与新集合，
+优先向前修复。COS 原文需要独立备份，冷备份中的 COS sidecar 只记录桶边界。
+
 ## 备份与恢复
 
 ```bash

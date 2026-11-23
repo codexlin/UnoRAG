@@ -1,10 +1,12 @@
 #!/usr/bin/env tsx
 
-import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { QdrantClient, type Schemas } from "@qdrant/js-client-rest";
 import { sparseVector } from "../src/core/retrieval/hybrid/sparse-vector";
 import {
+	assertQdrantEmbeddingDimension,
 	parseQdrantDistance,
 	QDRANT_DENSE_VECTOR,
 	QDRANT_SPARSE_VECTOR,
@@ -110,8 +112,13 @@ async function run(): Promise<void> {
 	if (!toCollection || fromCollection === toCollection) {
 		throw new Error("--to must name a new collection distinct from --from");
 	}
-	if (!Number.isSafeInteger(dimensions) || dimensions < 1 ||
-		!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 512) {
+	if (
+		!Number.isSafeInteger(dimensions) ||
+		dimensions < 1 ||
+		!Number.isSafeInteger(batchSize) ||
+		batchSize < 1 ||
+		batchSize > 512
+	) {
 		throw new Error("Expected positive integer dimensions and --batch-size between 1 and 512");
 	}
 
@@ -122,6 +129,17 @@ async function run(): Promise<void> {
 		checkCompatibility: true,
 	});
 
+	const distance = parseQdrantDistance(process.env.QDRANT_DISTANCE);
+	const sourceInfo = await client.getCollection(fromCollection);
+	const sourceDense = assertQdrantEmbeddingDimension(sourceInfo, {
+		collection: fromCollection,
+		vectorSize: dimensions,
+	});
+	if (sourceDense.distance !== distance) {
+		throw new Error(
+			`Source collection uses ${sourceDense.distance} distance; set QDRANT_DISTANCE to match before backfill`,
+		);
+	}
 	const { count: sourceCount } = await client.count(fromCollection, {
 		exact: true,
 	});
@@ -129,11 +147,11 @@ async function run(): Promise<void> {
 		`== source ${fromCollection}: ${sourceCount} points (qdrant=${qdrantUrl})\n`,
 	);
 
-	const ensured = await new QdrantCollectionManager(client, {
-		collection: toCollection,
-		vectorSize: dimensions,
-		distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
-	}, { requireNew: true }).ensure();
+	const ensured = await new QdrantCollectionManager(
+		client,
+		{ collection: toCollection, vectorSize: dimensions, distance },
+		{ requireNew: true },
+	).ensure();
 	process.stdout.write(
 		`== target ${toCollection}: created=${ensured.created} schema=${JSON.stringify(ensured.vectorSchema)}\n`,
 	);
@@ -159,6 +177,25 @@ async function run(): Promise<void> {
 		if (result.status !== "completed") {
 			throw new Error(`Qdrant upsert returned ${result.status}`);
 		}
+		const stored = await client.retrieve(toCollection, {
+			ids: points.map((point) => point.id),
+			with_payload: true,
+			with_vector: false,
+		});
+		const storedPayloads = new Map(
+			stored.map((point) => [String(point.id), point.payload ?? {}]),
+		);
+		if (
+			stored.length !== points.length ||
+			points.some(
+				(point) =>
+					!isDeepStrictEqual(storedPayloads.get(String(point.id)), point.payload),
+			)
+		) {
+			throw new Error(
+				"Target collection point IDs or payloads do not match the source batch",
+			);
+		}
 		copied += points.length;
 		process.stdout.write(`  copied ${copied}/${sourceCount}\n`);
 		const next = page.next_page_offset;
@@ -169,12 +206,18 @@ async function run(): Promise<void> {
 		offset = next;
 	}
 
-	const { count: targetCount } = await client.count(toCollection, {
-		exact: true,
-	});
-	if (targetCount !== sourceCount) {
+	const [{ count: currentSourceCount }, { count: targetCount }] =
+		await Promise.all([
+			client.count(fromCollection, { exact: true }),
+			client.count(toCollection, { exact: true }),
+		]);
+	if (
+		currentSourceCount !== sourceCount ||
+		targetCount !== sourceCount ||
+		copied !== sourceCount
+	) {
 		throw new Error(
-			`Point count mismatch after backfill: source=${sourceCount}, target=${targetCount}`,
+			`Point count mismatch after backfill: expected=${sourceCount}, source=${currentSourceCount}, copied=${copied}, target=${targetCount}`,
 		);
 	}
 	process.stdout.write(

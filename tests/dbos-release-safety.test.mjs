@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	chmod,
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -264,6 +271,201 @@ test("the ops image and Compose profile include the drain checker", async () => 
 	assert.match(compose, /DBOS_SYSTEM_DATABASE_URL:/);
 });
 
+test("IDF cutover verifies the old backup and only rolls back before target writers start", async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), "unorag-idf-upgrade-"));
+	const compose = join(directory, "compose");
+	const scripts = join(compose, "scripts");
+	const config = join(directory, "config");
+	const oldPins = {
+		UNORAG_WEB_IMAGE: "fixture/web:old",
+		UNORAG_WEB_MIGRATOR_IMAGE: "fixture/migrator:old",
+		UNORAG_WEB_OPS_IMAGE: "fixture/ops:old",
+		UNORAG_DBOS_WORKER_IMAGE: "fixture/worker:old",
+		UNORAG_DBOS_APPLICATION_VERSION: "old-release",
+		UNORAG_IMAGE_PLATFORM: "linux/amd64",
+	};
+	const targetPins = {
+		...oldPins,
+		UNORAG_DBOS_APPLICATION_VERSION: "target-release",
+		...Object.fromEntries(
+			Object.entries(oldPins)
+				.filter(([name]) => name.endsWith("_IMAGE"))
+				.map(([name, value]) => [
+					name,
+					value.replace(":old", `@sha256:${"a".repeat(64)}`),
+				]),
+		),
+	};
+	const envFile = (values) =>
+		Object.entries(values)
+			.map(([key, value]) => `${key}=${value}\n`)
+			.join("");
+	const runtime = join(config, "runtime.advanced.env");
+	const manifest = join(directory, "release.env");
+	const trace = join(directory, "trace.jsonl");
+	const fakeTool = `#!/usr/bin/env node
+const { appendFileSync, readFileSync, writeFileSync } = require("node:fs");
+const { basename } = require("node:path");
+const { createHash } = require("node:crypto");
+const args = process.argv.slice(2);
+const values = Object.fromEntries(readFileSync("../config/runtime.advanced.env", "utf8").trim().split("\\n").map(line => line.split("=")));
+const version = values.UNORAG_DBOS_APPLICATION_VERSION;
+const collection = values.QDRANT_COLLECTION;
+const fault = process.env.FIXTURE_FAULT;
+function record(step) {
+  appendFileSync(process.env.FIXTURE_TRACE, JSON.stringify({ step, version, collection }) + "\\n");
+  if (fault === step && (version === "target-release" || step === "stop-worker")) process.exit(1);
+}
+if (basename(process.argv[1]) === "backup.sh") {
+  record("backup");
+  const data = "synthetic backup";
+  writeFileSync(args[0] + "/artifact", data);
+  writeFileSync(args[0] + "/CHECKSUMS.sha256", createHash("sha256").update(fault === "backup" ? "wrong" : data).digest("hex") + "  artifact\\n");
+} else if (args[0] === "inspect") {
+  console.log("unorag_qdrant_data");
+} else if (args.includes("config")) {
+  const environment = {
+    QDRANT_URL: fault === "external" ? "http://external.example" : "http://qdrant:6333",
+    QDRANT_COLLECTION: collection,
+    UNORAG_DBOS_APPLICATION_VERSION: version,
+  };
+  console.log(JSON.stringify({ name: "unorag", services: {
+    web: { environment, image: values.UNORAG_WEB_IMAGE },
+    "dbos-worker": { environment, image: values.UNORAG_DBOS_WORKER_IMAGE },
+    "dbos-control": { environment, image: values.UNORAG_DBOS_WORKER_IMAGE },
+    "migrate-web": { image: values.UNORAG_WEB_MIGRATOR_IMAGE },
+    "inspect-lifecycle": { image: values.UNORAG_WEB_OPS_IMAGE },
+    "backfill-acl-projections": { image: values.UNORAG_WEB_OPS_IMAGE },
+  } }));
+} else if (args.includes("ps") && args.at(-1) === "qdrant") {
+  console.log("qdrant-container");
+} else if (args.includes("stop") && args.at(-1) === "dbos-worker" && !args.includes("dbos-control")) {
+  record("stop-worker");
+} else if (args.includes("check-dbos-drain")) {
+  record("drain");
+} else if (args.includes("/repo/scripts/qdrant-backfill-sparse.ts")) {
+  record("backfill");
+} else if (args.includes("exec") && args.includes("web")) {
+  record("web-ready");
+} else if (args.includes("up") && args.at(-1) === "dbos-control") {
+  record("start-writers");
+} else if (args.includes("up") && args.at(-1) === "caddy") {
+  record("open-edge");
+}
+`;
+	try {
+		await mkdir(scripts, { recursive: true });
+		await mkdir(config);
+		for (const name of ["upgrade.sh", "compose-env.sh", "release-env.sh"]) {
+			await writeFile(
+				join(scripts, name),
+				await source(`deploy/compose/scripts/${name}`),
+			);
+		}
+		for (const [path, contents] of [
+			[join(scripts, "init-config.sh"), "#!/usr/bin/env bash\nexit 0\n"],
+			[join(scripts, "backup.sh"), fakeTool],
+			[join(directory, "docker"), fakeTool],
+			[join(directory, "cosign"), "#!/usr/bin/env bash\nexit 0\n"],
+			[join(directory, "curl"), "#!/usr/bin/env bash\nexit 0\n"],
+		]) {
+			await writeFile(path, contents, { mode: 0o700 });
+		}
+		await writeFile(join(config, "runtime.env"), "");
+		await writeFile(join(config, "runtime.secret"), "");
+		await writeFile(
+			manifest,
+			envFile({
+				...targetPins,
+				UNORAG_VERIFY_IMAGE_SIGNATURES: "true",
+				UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP: "^fixture-workflow$",
+			}),
+		);
+
+		for (const [fault, expectedVersion, expectedCollection, expectedEdge] of [
+			["none", "target-release", "new_idf", "target-release"],
+			["external", "old-release", "legacy", null],
+			["stop-worker", "old-release", "legacy", "old-release"],
+			["backup", "old-release", "legacy", "old-release"],
+			["backfill", "old-release", "legacy", "old-release"],
+			["web-ready", "old-release", "legacy", "old-release"],
+			["start-writers", "target-release", "new_idf", null],
+			["open-edge", "target-release", "new_idf", "target-release"],
+		]) {
+			await t.test(fault, async () => {
+				await writeFile(
+					runtime,
+					envFile({ ...oldPins, QDRANT_COLLECTION: "legacy" }),
+				);
+				await writeFile(trace, "");
+				const result = spawnSync(
+					"bash",
+					[
+						join(scripts, "upgrade.sh"),
+						"--manifest",
+						manifest,
+						"--qdrant-idf-target",
+						"new_idf",
+						"--without-observability",
+						"--skip-smoke",
+					],
+					{
+						encoding: "utf8",
+						env: {
+							PATH: `${directory}:${process.env.PATH ?? ""}`,
+							UNORAG_DOCKER_PLATFORM_OVERRIDE: "linux/amd64",
+							FIXTURE_FAULT: fault,
+							FIXTURE_TRACE: trace,
+						},
+					},
+				);
+				assert.equal(
+					result.status === 0,
+					fault === "none",
+					result.stdout + result.stderr,
+				);
+				const pins = await readFile(runtime, "utf8");
+				assert.ok(
+					pins.includes(`UNORAG_DBOS_APPLICATION_VERSION=${expectedVersion}\n`),
+				);
+				assert.ok(pins.includes(`QDRANT_COLLECTION=${expectedCollection}\n`));
+				const steps = (await readFile(trace, "utf8"))
+					.trim()
+					.split("\n")
+					.filter(Boolean)
+					.map((line) => JSON.parse(line));
+				assert.deepEqual(
+					steps
+						.filter(({ step }) => step === "open-edge")
+						.map(({ version }) => version),
+					expectedEdge === null ? [] : [expectedEdge],
+				);
+				const backup = steps.findIndex(({ step }) => step === "backup");
+				const copy = steps.findIndex(({ step }) => step === "backfill");
+				const ready = steps.findIndex(({ step }) => step === "web-ready");
+				const writers = steps.findIndex(({ step }) => step === "start-writers");
+				if (backup >= 0) {
+					assert.equal(steps[backup].version, "old-release");
+					assert.ok(
+						steps.slice(0, backup).some(({ step }) => step === "drain"),
+					);
+				}
+				if (fault === "none") {
+					assert.ok(
+						0 <= backup && backup < copy && copy < ready && ready < writers,
+					);
+					assert.equal(steps[copy].collection, "legacy");
+					assert.equal(steps[ready].collection, "new_idf");
+				} else if (["external", "stop-worker", "backup"].includes(fault)) {
+					assert.equal(copy, -1);
+				}
+			});
+		}
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
 test("worker images install production dependencies without retaining a dev layer", async () => {
 	const dockerfile = await source("deploy/docker/web.Dockerfile");
 	const ci = await source(".github/workflows/ci.yml");
@@ -272,6 +474,10 @@ test("worker images install production dependencies without retaining a dev laye
 	assert.match(dockerfile, /pnpm install --prod --frozen-lockfile/);
 	assert.match(dockerfile, /FROM runtime-deps AS ops/);
 	assert.match(dockerfile, /FROM runtime-deps AS worker/);
+	assert.match(
+		dockerfile,
+		/FROM runtime-deps AS worker[\s\S]*?COPY [^\n]*scripts\/qdrant-backfill-sparse\.ts \.\/scripts\//,
+	);
 	assert.doesNotMatch(dockerfile, /pnpm prune --prod/);
 	for (const workflow of [ci, release]) {
 		for (const scope of ["runner", "migrator", "ops", "worker"]) {
