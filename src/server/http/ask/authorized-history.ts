@@ -45,9 +45,142 @@ type HistoryCandidate = {
 };
 
 type Exchange = {
-	messages: AuthorizedHistory["messages"];
+	messages: [
+		AuthorizedHistory["messages"][number],
+		AuthorizedHistory["messages"][number],
+	];
 	sourceReferences: Record<string, unknown>[];
 };
+
+const MAX_HISTORY_EXCHANGES = 3;
+const MAX_HISTORY_CHARS = 8_000;
+const COMPACTED_ANSWER = "[回答内容已压缩]";
+const MARKDOWN_HEADING = /^ {0,3}#{1,6}\s/;
+const MARKDOWN_LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s/;
+const FINAL_CITATIONS =
+	/(?:\[\d+(?:\s*[,，、–-]\s*\d+)*\]|【(?:来源)?\s*\d+】)(?:[\s。.!！?？]*?(?:\[\d+\]|【(?:来源)?\s*\d+】))*[\s。.!！?？]*$/u;
+
+function isTableDivider(line: string | undefined): line is string {
+	return Boolean(
+		line?.includes("|") &&
+			line
+				.trim()
+				.replace(/^\||\|$/g, "")
+				.split("|")
+				.every((cell) => /^:?-+:?$/.test(cell.trim())),
+	);
+}
+
+function clipHistoryText(text: string, maxChars: number): string {
+	if (text.length <= maxChars) return text;
+	if (maxChars <= 0) return "";
+	// Slice UTF-16 without leaving half of a surrogate pair at the boundary.
+	return `${text
+		.slice(0, maxChars - 1)
+		.replace(/[\uD800-\uDBFF]$/, "")
+		.trimEnd()}…`;
+}
+
+export function compactHistoryAssistantContent(
+	content: string,
+	maxChars = 1_200,
+): string {
+	const limit = Number.isNaN(maxChars) ? 1_200 : Math.floor(maxChars);
+	if (content.length <= limit) return content;
+	if (limit <= COMPACTED_ANSWER.length + 8)
+		return clipHistoryText(content, limit);
+
+	const lines = content.split(/\r?\n/);
+	const summary: string[] = [];
+	const sections: string[] = [];
+	let paragraph: string[] = [];
+	let leading = true;
+	let closing = "";
+	function flushParagraph() {
+		if (paragraph.length === 0) return;
+		const text = paragraph.join("\n");
+		if (leading) summary.push(text);
+		else closing = text;
+		paragraph = [];
+	}
+
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index].trimEnd();
+		const divider = lines[index + 1];
+		if (line.includes("|") && isTableDivider(divider)) {
+			flushParagraph();
+			leading = false;
+			closing = "";
+			const rowStart = index + 2;
+			let rowEnd = rowStart;
+			while (
+				lines[rowEnd]?.includes("|") &&
+				!MARKDOWN_HEADING.test(lines[rowEnd])
+			) {
+				rowEnd += 1;
+			}
+			const headerBudget = Math.floor(limit / 4);
+			const header =
+				line.length + divider.length < headerBudget
+					? `${line}\n${divider}`
+					: clipHistoryText(line, headerBudget);
+			sections.push(`${header}\n\n[表格内容已压缩]（${rowEnd - rowStart} 行）`);
+			index = rowEnd - 1;
+		} else if (MARKDOWN_HEADING.test(line)) {
+			flushParagraph();
+			closing = "";
+			leading = leading && summary.length === 0;
+			(leading ? summary : sections).push(line);
+		} else if (MARKDOWN_LIST_ITEM.test(line)) {
+			flushParagraph();
+			leading = false;
+			closing = "";
+		} else if (line.trim()) {
+			paragraph.push(line);
+		} else {
+			flushParagraph();
+		}
+	}
+	flushParagraph();
+
+	const tailBudget = Math.floor(limit / 4);
+	if (!closing && summary.length > 1 && summary.join("\n\n").length > limit) {
+		closing = summary.pop() ?? "";
+	}
+	const finalLine = lines.findLast((line) => line.trim()) ?? "";
+	const citations =
+		FINAL_CITATIONS.exec(
+			finalLine.trimEnd().slice(-Math.min(tailBudget, 300)),
+		)?.[0] ?? "";
+	const compactTail =
+		closing.length <= tailBudget
+			? closing || citations
+			: [
+					clipHistoryText(
+						closing,
+						tailBudget - (citations ? citations.length + 1 : 0),
+					),
+					citations,
+				]
+					.filter(Boolean)
+					.join(" ");
+	const room =
+		limit -
+		COMPACTED_ANSWER.length -
+		2 -
+		(compactTail ? compactTail.length + 2 : 0);
+	const head = clipHistoryText(
+		summary.join("\n\n"),
+		sections.length ? Math.min(Math.floor(limit / 2), room - 2) : room,
+	);
+	const outlines = clipHistoryText(
+		sections.join("\n\n"),
+		room - (head ? head.length + 2 : 0),
+	);
+	return [head, outlines, COMPACTED_ANSWER, compactTail]
+		.filter(Boolean)
+		.join("\n\n");
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -205,17 +338,30 @@ async function authorizeCandidates(
 	}
 	if (question) exchanges.length = 0;
 
-	// Keep recent whole exchanges within the dependency budget, never trim lineage.
+	// Project recent whole exchanges within both budgets, retaining every source
+	// dependency even if its citation marker disappears from the compacted text.
 	const selected: Exchange[] = [];
 	let dependencies: Record<string, unknown>[] = [];
-	for (let index = exchanges.length - 1; index >= 0; index -= 1) {
+	let remaining = MAX_HISTORY_CHARS;
+	for (
+		let index = exchanges.length - 1;
+		index >= 0 && selected.length < MAX_HISTORY_EXCHANGES;
+		index -= 1
+	) {
 		const exchange = exchanges[index];
+		const [user, assistant] = exchange.messages;
+		const content = compactHistoryAssistantContent(assistant.content);
+		remaining -= user.content.length + content.length;
+		if (remaining < 0) break;
 		const combined = sourceReferences([
 			...dependencies,
 			...exchange.sourceReferences,
 		]);
 		if (combined === null) break;
-		selected.push(exchange);
+		selected.push({
+			...exchange,
+			messages: [user, { ...assistant, content }],
+		});
 		dependencies = combined;
 	}
 	if (selected.length === 0) return { messages: [], sourceReferences: [] };

@@ -7,7 +7,10 @@ import {
 	type ActiveGenerationSnapshot,
 	scopeWithActiveGenerations,
 } from "../../src/core/retrieval/active-generation";
-import { OpenAICompatibleEmbeddingProvider } from "../../src/core/retrieval/embedding/provider";
+import {
+	EmbeddingDimensionMismatchError,
+	OpenAICompatibleEmbeddingProvider,
+} from "../../src/core/retrieval/embedding/provider";
 import { tokenize } from "../../src/core/retrieval/hybrid/tokenizer";
 import {
 	fetchRetrievalProvider,
@@ -60,6 +63,37 @@ test("embedding provider orders and validates vectors", async () => {
 		[1, 2],
 		[3, 4],
 	]);
+});
+
+test("embedding dimension errors give model and reindex guidance without credentials", async () => {
+	const apiKey = "opaque-credential";
+	const baseUrl = "https://provider.example/v1?token=private-value";
+	for (const model of ["embedding-model", baseUrl, apiKey]) {
+		const provider = new OpenAICompatibleEmbeddingProvider({
+			apiKey,
+			baseUrl,
+			model,
+			dimensions: 4,
+			fetch: async () =>
+				Response.json({ data: [{ index: 0, embedding: [0.1, 0.2] }] }),
+		});
+		await assert.rejects(provider.embedQuery("question"), (error) => {
+			assert.ok(error instanceof EmbeddingDimensionMismatchError);
+			assert.equal(error.code, "embedding_dimension_mismatch");
+			assert.ok(
+				error.message.includes(
+					`expected EMBEDDING_DIM=4, got 2 from model ${model === "embedding-model" ? model : "EMBEDDING_MODEL"}`,
+				),
+			);
+			assert.match(error.message, /set EMBEDDING_DIM=2/);
+			assert.match(error.message, /QDRANT_COLLECTION.*reindex/);
+			assert.doesNotMatch(
+				error.message,
+				/opaque-credential|provider\.example|private-value|Bearer/,
+			);
+			return true;
+		});
+	}
 });
 
 test("embedding provider retries a transient transport failure", async () => {

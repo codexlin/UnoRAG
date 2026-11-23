@@ -22,6 +22,7 @@ export type ApiHealth = {
 	live_ready?: boolean;
 	ask_ready?: boolean;
 	reasons: string[];
+	recovery?: string;
 	hybrid_enabled?: boolean;
 	metadata_backend?: string;
 	metadata_ok?: boolean;

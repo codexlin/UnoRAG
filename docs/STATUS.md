@@ -20,7 +20,9 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 
 - **已随本版发布**：反馈/Bad Case、scope 缓存、并发门、Markdown 与 Excel 表格、pg_trgm 目录候选、
   授权多轮记忆、同一生效代次的检索扩展和可选图表读取。`0033`/`0034`/`0035` 已迁移，存量不自动重索引。
-- **默认关闭**：Sparse/RRF、条件式 Contextual Retrieval、选择性冲突核验和 VLM。验收不承诺启用后的效果。
+- **v0.3.5 默认关闭**：Sparse/RRF、条件式 Contextual Retrieval、选择性冲突核验和 VLM。
+  当前源码默认开启 Qdrant `lexical_v1` IDF + RRF，保留工作区和部署级关闭开关；自动模式按问题决定首轮是否重排。
+  默认配置的标准黄金集与 P95 验收仍按 [ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md) 绑定发布候选版本。
 - **失败证据仍保留**：`v0.3.3` 三轮 **120/126**，两条首问误拒答；`v0.3.4` 浏览器 **298/300**，均未发布。
   `v0.3.5` 第一次浏览器全量的菜单时序超时也保留，另用仅测试同步修正的 [#286](https://github.com/codexlin/UnoRAG/pull/286)
   对同一签名镜像重跑 300/300，不改写初次结果。
@@ -35,8 +37,9 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 | 身份与权限 | 本地登录、首次改密、邀请注册、邮箱链接登录/重置、可撤销 Session、Workspace/角色、文档 ACL、Service Key、审计 |
 | 文档治理 | 上传、替换、版本、重索引、删除；失败保留旧 active generation；DBOS 重试、取消和对账 |
 | 文档理解 | TXT/Markdown/DOCX/XLSX/PDF，LiteParse/MinerU，Markdown 管道表、DocumentIR/TableIR，结构优先切分、多粒度索引及默认关闭的条件式检索上下文增强 |
-| 检索问答 | 作用域强制过滤、Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF、重排、改写、证据裁决、拒答、引用、确定性表格执行与 SSE；pg_trgm 授权文档目录候选检索 |
-| 会话 | 带来源授权的短期记忆、实体追问、有限期歧义澄清、归档和继续对话；历史不替代当次证据 |
+| 检索问答 | 作用域强制过滤、默认启用 Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF、重排、改写、证据裁决、拒答、引用、确定性表格执行与 SSE；pg_trgm 授权文档目录候选检索 |
+| 会话 | 带来源授权的短期记忆、实体追问、有限期歧义澄清、归档和继续对话；模型上下文压缩长回复，归档保留原文和来源 |
+| 运维预检 | 健康接口和运行中心校验现有 Qdrant 集合的向量维度，给出调整 `EMBEDDING_DIM` 或切换集合并重索引的操作提示 |
 | 产品界面 | shadcn/Base UI、AI Elements、Vercel/Claude/Violet Bloom 主题、可调圆角、响应式工作台与设置分区；引用/版本/执行链路一致的阅读入口 |
 | 运维交付 | 原生阶段瀑布/请求诊断/告警、工作区邮件策略及持久化投递、可选 OTel/Langfuse、签名镜像、安装升级、备份与恢复工具 |
 | 反馈闭环 | Ask 赞/踩与原因标签、运行中心处理状态、待人工补全的黄金集样本骨架；不是自动采纳用户反馈为真值 |

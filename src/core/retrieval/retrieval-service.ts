@@ -103,6 +103,7 @@ export type RetrievalResult = {
 
 export type RetrievalServiceOptions = {
 	hybridEnabled: boolean;
+	hybridAllowed?: boolean;
 	rerankEnabled: boolean;
 	rerankTopK: number;
 	bm25TopK: number;
@@ -775,6 +776,9 @@ export class DefaultRetrievalService {
 		const filters = toUserFilters(input.filters);
 		const expandParentContext = input.options?.expandParentContext ?? true;
 		const includeTraceDetails = input.options?.includeTraceDetails === true;
+		const hybridEnabled =
+			this.options.hybridAllowed !== false &&
+			(input.options?.hybridEnabled ?? this.options.hybridEnabled);
 		const cacheKey =
 			this.options.cache && !includeTraceDetails
 				? buildScopedRetrievalCacheKey({
@@ -784,8 +788,7 @@ export class DefaultRetrievalService {
 						topK: input.topK,
 						filters,
 						options: {
-							hybridEnabled:
-								input.options?.hybridEnabled ?? this.options.hybridEnabled,
+							hybridEnabled,
 							rerankEnabled:
 								input.options?.rerankEnabled ?? this.options.rerankEnabled,
 							preserveFigureLineage: input.options?.preserveFigureLineage,
@@ -823,8 +826,6 @@ export class DefaultRetrievalService {
 		);
 		let usedHybrid = false;
 		let hybridError: string | null = null;
-		const hybridEnabled =
-			input.options?.hybridEnabled ?? this.options.hybridEnabled;
 		const rerankEnabled =
 			input.options?.rerankEnabled ?? this.options.rerankEnabled;
 		if (hybridEnabled) {

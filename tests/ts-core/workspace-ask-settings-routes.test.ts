@@ -55,10 +55,10 @@ test("only a workspace admin can change retrieval settings, applied on the next 
 				body: JSON.stringify({ ask: value }),
 			}),
 		);
-	async function retrieve(retry: boolean) {
+	async function retrieve(retry: boolean, question = "Hello") {
 		const body = new TextEncoder().encode(
 			JSON.stringify({
-				question: "hello",
+				question,
 				ask_overrides: { rerank_enabled: true },
 			}),
 		);
@@ -122,6 +122,30 @@ test("only a workspace admin can change retrieval settings, applied on the next 
 		rerankEnabled: false,
 	});
 	assert.deepEqual(await retrieve(true), {
+		hybridEnabled: false,
+		rerankEnabled: true,
+	});
+
+	assert.equal((await patch({ hybrid_retrieval: "on" })).status, 200);
+	assert.deepEqual(await retrieve(false, "对比方案A和方案B"), {
+		hybridEnabled: true,
+		rerankEnabled: false,
+	});
+	assert.deepEqual(await retrieve(true), {
+		hybridEnabled: true,
+		rerankEnabled: true,
+	});
+
+	assert.equal(
+		(await patch({ retrieval_enhancement: "auto", hybrid_retrieval: null }))
+			.status,
+		200,
+	);
+	assert.deepEqual(await retrieve(false, "请介绍休假政策。"), {
+		hybridEnabled: true,
+		rerankEnabled: false,
+	});
+	assert.deepEqual(await retrieve(false, "SKU-123"), {
 		hybridEnabled: true,
 		rerankEnabled: true,
 	});

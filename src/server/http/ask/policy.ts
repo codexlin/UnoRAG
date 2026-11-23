@@ -4,7 +4,7 @@ export const NativeAskPolicySchema = z
 	.object({
 		retrieve_top_k: z.number().int().min(1).max(50).default(6),
 		answer_min_score: z.number().min(0).max(1).default(0.4),
-		hybrid_enabled: z.boolean().default(false),
+		hybrid_enabled: z.boolean().default(true),
 		rerank_enabled: z.boolean().default(false),
 		hybrid_retry_enabled: z.literal(false).optional(),
 		rerank_retry_enabled: z.literal(false).optional(),

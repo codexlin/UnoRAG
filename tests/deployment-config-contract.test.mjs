@@ -203,9 +203,20 @@ test("deployment inputs map to one application environment contract", async () =
 		compose.services["dbos-worker"].environment.OPENAI_BASE_URL,
 		"https://models.example/v1",
 	);
+	assert.equal(advanced.get("TS_RETRIEVAL_HYBRID_ENABLED"), "true");
 	assert.equal(
 		compose.services.web.environment.TS_RETRIEVAL_HYBRID_ENABLED,
-		advanced.get("TS_RETRIEVAL_HYBRID_ENABLED"),
+		"true",
+	);
+	assert.equal(
+		renderComposeConfig({ TS_RETRIEVAL_HYBRID_ENABLED: "" }).services.web
+			.environment.TS_RETRIEVAL_HYBRID_ENABLED,
+		"true",
+	);
+	assert.equal(
+		renderComposeConfig({ TS_RETRIEVAL_HYBRID_ENABLED: "false" }).services.web
+			.environment.TS_RETRIEVAL_HYBRID_ENABLED,
+		"false",
 	);
 	assert.equal(
 		compose.services.web.environment.TS_RETRIEVAL_RERANK_ENABLED,
@@ -426,21 +437,26 @@ test("Helm gives Web and Worker the same canonical model endpoint", (t) => {
 			item?.kind === "ConfigMap" && item.data?.AI_INCLUDE_USAGE !== undefined,
 	);
 	assert.equal(configMap?.data.AI_INCLUDE_USAGE, "true");
+	assert.equal(configMap?.data.TS_RETRIEVAL_HYBRID_ENABLED, "true");
 	assert.equal(configMap?.data.QDRANT_SERVER_HYBRID_ENABLED, undefined);
 	assert.equal(configMap?.data.TS_RETRIEVAL_CORPUS_LIMIT, undefined);
 	assert.equal(
 		workerEnv?.find((entry) => entry.name === "QDRANT_SERVER_HYBRID_ENABLED"),
 		undefined,
 	);
-	const disabled = renderHelm(["--set-string", "config.aiIncludeUsage=false"]);
+	const disabled = renderHelm([
+		"--set-string",
+		"config.aiIncludeUsage=false",
+		"--set-string",
+		"config.retrievalHybridEnabled=false",
+	]);
 	assert.equal(disabled.status, 0, disabled.stderr);
-	assert.equal(
-		loadAll(disabled.stdout).find(
-			(item) =>
-				item?.kind === "ConfigMap" && item.data?.AI_INCLUDE_USAGE !== undefined,
-		)?.data.AI_INCLUDE_USAGE,
-		"false",
+	const disabledConfig = loadAll(disabled.stdout).find(
+		(item) =>
+			item?.kind === "ConfigMap" && item.data?.AI_INCLUDE_USAGE !== undefined,
 	);
+	assert.equal(disabledConfig?.data.AI_INCLUDE_USAGE, "false");
+	assert.equal(disabledConfig?.data.TS_RETRIEVAL_HYBRID_ENABLED, "false");
 });
 
 test("Helm rolls out the same alert defaults to Web and control", (t) => {

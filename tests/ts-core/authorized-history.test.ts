@@ -85,6 +85,167 @@ function authorizer(revoked: string[] = []) {
 	return { value, calls };
 }
 
+const longTableAnswer = [
+	"## 摘要",
+	"",
+	"基础设施预算来自 2026 年计划。",
+	"",
+	"## 设备明细",
+	"",
+	"| 设备 | 部门 | 预算 |",
+	"| :--- | :--- | ---: |",
+	...Array.from(
+		{ length: 100 },
+		(_, index) =>
+			`| 特定设备 ${index} | 基础设施与数据平台保障部门 | 123,456.78 元 |`,
+	),
+	"",
+	"## 结论",
+	"",
+	"审批以财务系统为准。[5]",
+].join("\n");
+
+test("assistant history compaction keeps Markdown summaries, headings, row counts and closing citations", async () => {
+	const [{ compactHistoryAssistantContent }] = await modules;
+	assert.ok(longTableAnswer.length > 4_000);
+	const compact = compactHistoryAssistantContent(longTableAnswer);
+	assert.equal(compact, compactHistoryAssistantContent(longTableAnswer));
+	assert.ok(compact.length <= 1_200);
+	assert.match(compact, /## 摘要\n\n基础设施预算/);
+	assert.match(compact, /## 设备明细/);
+	assert.match(compact, /\| 设备 \| 部门 \| 预算 \|/);
+	assert.match(compact, /\[表格内容已压缩\]（100 行）/);
+	assert.match(compact, /## 结论/);
+	assert.match(compact, /审批以财务系统为准。\[5\]$/);
+	assert.doesNotMatch(compact, /特定设备|123,456/);
+
+	const brief = "  Short answer 🧪 [1]\r\n";
+	assert.equal(compactHistoryAssistantContent(brief, brief.length), brief);
+	for (const limit of [0, 1, 2, 4, 11, 24, 81, 1_200]) {
+		const plain = compactHistoryAssistantContent(
+			`${"🧪".repeat(2_000)} [12]`,
+			limit,
+		);
+		assert.ok(plain.length <= limit);
+		assert.equal(plain, plain.toWellFormed());
+	}
+	const report = [
+		"Key findings from the investigation.",
+		"## Reconciliation",
+		...Array.from({ length: 200 }, () => "- Deep bullet point."),
+		"## Final recommendation",
+		"Follow the documented process. [3]",
+	].join("\n\n");
+	const compactReport = compactHistoryAssistantContent(report);
+	assert.match(compactReport, /^Key findings/);
+	assert.match(compactReport, /## Reconciliation/);
+	assert.doesNotMatch(compactReport, /Deep bullet point/);
+	assert.match(compactReport, /Final recommendation[\s\S]*\[3\]$/);
+});
+
+test("temporary and archived history project three whole turns without changing exact content or lineage", async () => {
+	const [
+		{ authorizeHistory, authorizeArchivedHistory, recoverArchiveProvenance },
+		{ parseSessionMemoryMessages },
+	] = await modules;
+	const stored = ["old", "one", "two", "three"].flatMap((id) =>
+		exchange(provenance([reference(id)]), `Question ${id}?`, longTableAnswer),
+	);
+	const redisEntries = stored.map((message) => JSON.stringify(message));
+	const messages = parseSessionMemoryMessages(redisEntries);
+	const archiveTurns = messages
+		.filter((message) => message.role === "user")
+		.map((message) => ({ question: message.content, answer: longTableAnswer }));
+	const acl = authorizer();
+	const input = { identity, libraryId, citationAuthorizer: acl.value };
+	const projected = await authorizeHistory({ ...input, messages });
+	assert.equal(projected.messages.length, 6);
+	assert.deepEqual(
+		projected.sourceReferences,
+		["one", "two", "three"].map(reference),
+	);
+	assert.equal(acl.calls.length, 1);
+	assert.equal(acl.calls[0].citations.length, 3);
+	assert.ok(
+		projected.messages.reduce(
+			(sum, message) => sum + message.content.length,
+			0,
+		) <= 8_000,
+	);
+	assert.ok(
+		projected.messages
+			.filter((message) => message.role === "assistant")
+			.every((message) => message.content.length <= 1_200),
+	);
+	assert.deepEqual(
+		messages.map((message) => JSON.stringify(message)),
+		redisEntries,
+	);
+	assert.deepEqual(
+		recoverArchiveProvenance({ ...input, messages, turns: archiveTurns }),
+		["old", "one", "two", "three"].map((id) => provenance([reference(id)])),
+	);
+	assert.deepEqual(
+		recoverArchiveProvenance({
+			...input,
+			messages,
+			turns: [
+				{
+					question: archiveTurns[3].question,
+					answer: projected.messages[5].content,
+				},
+			],
+		}),
+		[null],
+	);
+
+	const turns = stored.map(({ role, content, provenance: lineage }) => ({
+		role,
+		content,
+		status: "complete",
+		debug: { memory_provenance: lineage },
+	}));
+	const archiveBefore = structuredClone(turns);
+	assert.deepEqual(
+		await authorizeArchivedHistory({ ...input, turns }),
+		projected,
+	);
+	assert.deepEqual(turns, archiveBefore);
+	const revoked = await authorizeArchivedHistory({
+		...input,
+		turns,
+		citationAuthorizer: authorizer(["document-two"]).value,
+	});
+	assert.deepEqual(revoked.messages, projected.messages.slice(-2));
+	assert.deepEqual(revoked.sourceReferences, [reference("three")]);
+});
+
+test("projected history respects the UTF-16 budget without skipping recent exchanges", async () => {
+	const [{ authorizeHistory }] = await modules;
+	const messages = [
+		...exchange(provenance([reference("old")]), "short question"),
+		...exchange(
+			provenance([reference("a")]),
+			"🧪".repeat(2_000),
+			longTableAnswer,
+		),
+		...exchange(
+			provenance([reference("b")]),
+			"🧪".repeat(2_000),
+			longTableAnswer,
+		),
+	];
+	const result = await authorizeHistory({
+		identity,
+		libraryId,
+		messages,
+		citationAuthorizer: authorizer().value,
+	});
+	assert.equal(result.messages.length, 2);
+	assert.equal(result.messages[0].content, messages[4].content);
+	assert.deepEqual(result.sourceReferences, [reference("b")]);
+});
+
 test("source references sanitize and deduplicate without exposing content", async () => {
 	const [{ sourceReferences }] = await modules;
 	assert.deepEqual(

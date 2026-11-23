@@ -10,10 +10,12 @@ import {
 } from "@/core/ai/answer-citations";
 import { projectModelUsage } from "@/core/ai/model-usage";
 import type { AskState } from "@/core/ask-graph";
+import { EmbeddingDimensionMismatchError } from "@/core/retrieval/embedding/provider";
 import {
 	projectRerankDiagnostic,
 	RetrievalProviderError,
 } from "@/core/retrieval/provider-request";
+import { QdrantEmbeddingDimensionMismatchError } from "@/core/retrieval/qdrant/collection-manager";
 import { projectQdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
 import { QdrantOperationError } from "@/core/retrieval/qdrant/store";
 import { getObservabilityContext, logger } from "@/lib/observability";
@@ -60,8 +62,11 @@ export function operationalErrorCode(error: unknown): string {
 		/^(embedding|rerank) provider failed with HTTP (\d{3})$/,
 	);
 	if (providerHttp) return `${providerHttp[1]}_http_${providerHttp[2]}`;
-	if (error.message.includes("unexpected dimension")) {
-		return "embedding_dimension_mismatch";
+	if (
+		error instanceof EmbeddingDimensionMismatchError ||
+		error instanceof QdrantEmbeddingDimensionMismatchError
+	) {
+		return error.code;
 	}
 	if (error.message.includes("Qdrant")) return "qdrant_error";
 	return error.name;

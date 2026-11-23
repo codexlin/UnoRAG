@@ -1,11 +1,12 @@
 import "server-only";
 
-import { QdrantClient } from "@qdrant/js-client-rest";
 import { sql } from "drizzle-orm";
 
 import { resolveLlmApiKey } from "@/core/ai/model-environment";
+import { QdrantEmbeddingDimensionMismatchError } from "@/core/retrieval/qdrant/collection-manager";
 import { getDatabase } from "@/db";
 import { resolveReleaseInfo } from "@/lib/release-info";
+import { createQdrantHealthCheck } from "@/server/observability/provider-health";
 
 type HealthDependencies = {
 	checkDatabase: () => Promise<void>;
@@ -18,28 +19,12 @@ let defaultHealthCache:
 	| { expiresAt: number; response: Promise<Response> }
 	| undefined;
 
-function positiveInteger(name: string, fallback: number): number {
-	const value = Number(process.env[name] ?? fallback);
-	return Number.isInteger(value) && value > 0 ? value : fallback;
-}
-
 function defaultDependencies(): HealthDependencies {
 	return {
 		checkDatabase: async () => {
 			await getDatabase().execute(sql`select 1`);
 		},
-		checkQdrant: async () => {
-			const client = new QdrantClient({
-				url: process.env.QDRANT_URL?.trim() || "http://localhost:6333",
-				apiKey: process.env.QDRANT_API_KEY?.trim() || undefined,
-				timeout: positiveInteger("QDRANT_TIMEOUT_MS", 5_000),
-				checkCompatibility: false,
-			});
-			const collection =
-				process.env.QDRANT_COLLECTION?.trim() || "unorag_chunks";
-			const result = await client.collectionExists(collection);
-			if (!result.exists) throw new Error("Qdrant collection is missing");
-		},
+		checkQdrant: createQdrantHealthCheck(),
 	};
 }
 
@@ -53,10 +38,15 @@ async function buildHealthResponse(
 	]);
 	const metadataOk = database.status === "fulfilled";
 	const qdrantOk = qdrant.status === "fulfilled";
+	const dimensionMismatch =
+		qdrant.status === "rejected" &&
+		qdrant.reason instanceof QdrantEmbeddingDimensionMismatchError
+			? qdrant.reason
+			: null;
 	const hasLlmKey = Boolean(resolveLlmApiKey());
 	const reasons: string[] = [];
 	if (!metadataOk) reasons.push("metadata_unavailable");
-	if (!qdrantOk) reasons.push("qdrant_unavailable");
+	if (!qdrantOk) reasons.push(dimensionMismatch?.code ?? "qdrant_unavailable");
 	if (!hasLlmKey) reasons.push("llm_key_missing");
 	const askReady = metadataOk && qdrantOk && hasLlmKey;
 	const chatModel = process.env.CHAT_MODEL?.trim() || "qwen-plus";
@@ -86,6 +76,7 @@ async function buildHealthResponse(
 			live_ready: metadataOk,
 			ask_ready: askReady,
 			reasons,
+			...(dimensionMismatch ? { recovery: dimensionMismatch.recovery } : {}),
 		},
 		{
 			status:

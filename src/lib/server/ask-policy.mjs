@@ -25,7 +25,7 @@ export const ASK_PUBLIC_KEYS = [
 export const ASK_INTERNAL_DEFAULTS = Object.freeze({
 	retrieve_top_k: 6,
 	answer_min_score: 0.4,
-	hybrid_enabled: false,
+	hybrid_enabled: true,
 	rerank_enabled: false,
 	citation_adjudicate_enabled: true,
 	citation_adjudicate_absolute_floor: 0.35,
@@ -231,7 +231,9 @@ export function resolvedAskAsOverrideKnobs(resolved) {
 		answer_min_score: resolved.answer_min_score,
 		hybrid_enabled: resolved.hybrid_enabled,
 		rerank_enabled: resolved.rerank_enabled,
-		...(resolved.public.hybrid_retrieval === "off"
+		...(resolved.public.hybrid_retrieval === "off" ||
+		(resolved.public.hybrid_retrieval === "inherit" &&
+			resolved.retrieval_enhancement_resolved_from === "off")
 			? { hybrid_retry_enabled: false }
 			: {}),
 		...(resolved.public.reranking === "off"
