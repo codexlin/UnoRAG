@@ -144,13 +144,15 @@ test("service key routes enforce roles, one-time plaintext, scope, and revocatio
 		);
 
 		for (const fields of [
-			{ library_ids: ["library-allowed"] },
-			{ scopes: ["retrieve"] },
+			{ scopes: null },
 			{ scopes: [], library_ids: ["library-allowed"] },
+			{ scopes: "retrieve" },
 			{ scopes: ["retrieve", "ingest"] },
 			{ scopes: ["retrieve"], library_ids: [] },
 			{ scopes: ["retrieve"], library_ids: "library-allowed" },
 			{ scopes: ["retrieve"], library_ids: ["library-allowed", 42] },
+			{ scopes: ["retrieve"], library_ids: [""] },
+			{ scopes: ["retrieve"], library_ids: ["x".repeat(129)] },
 		]) {
 			const response = await keysRoute.POST(
 				request("POST", ownerToken, { name: "Invalid", ...fields }),
@@ -267,6 +269,31 @@ test("service key routes enforce roles, one-time plaintext, scope, and revocatio
 		);
 		assert.equal(explicitWorkspaceGrant.status, 201);
 		assert.equal((await explicitWorkspaceGrant.json()).library_ids, null);
+
+		const defaultWorkspaceGrant = await keysRoute.POST(
+			request("POST", ownerToken, { name: "Default workspace-wide key" }),
+		);
+		assert.equal(defaultWorkspaceGrant.status, 201);
+		const defaults = await defaultWorkspaceGrant.json();
+		assert.equal(defaults.library_ids, null);
+		assert.deepEqual(defaults.scopes, ["ask", "retrieve"]);
+		const defaultKey = await serviceKeys.authenticateServiceKey(defaults.key);
+		assert.ok(defaultKey);
+		assert.equal(
+			serviceKeys.serviceKeyAllowsLibrary(defaultKey, "library-other"),
+			true,
+		);
+		assert.equal(serviceKeys.serviceKeyHasScope(defaultKey, "ask"), true);
+		assert.equal(serviceKeys.serviceKeyHasScope(defaultKey, "retrieve"), true);
+
+		const legacyPanelGrant = await keysRoute.POST(
+			request("POST", ownerToken, {
+				name: "Workspace integration",
+				scopes: ["ask", "retrieve"],
+			}),
+		);
+		assert.equal(legacyPanelGrant.status, 201);
+		assert.equal((await legacyPanelGrant.json()).library_ids, null);
 
 		const persisted = await pool.query<{
 			key_hash: string;

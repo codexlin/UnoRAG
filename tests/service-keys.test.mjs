@@ -42,6 +42,7 @@ test("scope and library allow-list helpers", () => {
 		["lib-a", ""],
 		[1],
 		["../lib-a"],
+		[`lib-a${" ".repeat(124)}`],
 	]) {
 		assert.equal(normalizeLibraryIds(libraryIds), undefined);
 		assert.equal(serviceKeyAllowsLibrary({ libraryIds }, "lib-a"), false);

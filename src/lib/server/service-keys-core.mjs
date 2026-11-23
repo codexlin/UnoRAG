@@ -29,7 +29,7 @@ export function normalizeLibraryIds(input) {
 	if (input === null) return null;
 	if (!Array.isArray(input) || input.length === 0) return undefined;
 	const ids = Array.from(input, (item) =>
-		typeof item === "string" ? item.trim() : "",
+		typeof item === "string" && item.length <= 128 ? item.trim() : "",
 	);
 	if (ids.some((id) => !LIBRARY_ID_PATTERN.test(id))) return undefined;
 	return [...new Set(ids)];

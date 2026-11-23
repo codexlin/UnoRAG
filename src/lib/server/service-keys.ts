@@ -85,7 +85,10 @@ export async function createWorkspaceServiceKey(input: {
 	if (!name) {
 		return { ok: false, status: 400, detail: "name is required" };
 	}
-	const scopes = normalizeScopes(input.scopes);
+	// Creation defaults are written explicitly so authentication can stay strict.
+	const scopes = normalizeScopes(
+		input.scopes === undefined ? SERVICE_KEY_SCOPES : input.scopes,
+	);
 	if (!scopes) {
 		return {
 			ok: false,
@@ -93,7 +96,7 @@ export async function createWorkspaceServiceKey(input: {
 			detail: "scopes must list ask or retrieve",
 		};
 	}
-	const libraryIds = normalizeLibraryIds(input.libraryIds);
+	const libraryIds = normalizeLibraryIds(input.libraryIds ?? null);
 	if (libraryIds === undefined) {
 		return {
 			ok: false,
