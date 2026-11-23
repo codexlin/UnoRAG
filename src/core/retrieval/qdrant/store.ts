@@ -68,6 +68,23 @@ export type HybridSearchInput = {
 	rrfK: number;
 };
 
+type ExpansionTarget = {
+	documentId: string;
+	generationId: string;
+};
+
+export type SectionLookupTarget = ExpansionTarget &
+	(
+		| { parentRecordId: string }
+		| { childRecordId: string }
+		| { sectionPath: string }
+	);
+
+export type ChunkLookupTarget = ExpansionTarget & {
+	chunkIndex: number;
+	sectionPath: string | null;
+};
+
 export interface RetrievalVectorStore {
 	// null means the query had no lexical tokens so retrieval stays on dense.
 	hybridSearch?(input: HybridSearchInput): Promise<QdrantSearchHit[] | null>;
@@ -84,11 +101,11 @@ export interface RetrievalVectorStore {
 	}): Promise<QdrantSearchHit[]>;
 	lookupSections?(input: {
 		scope: RetrievalScope;
-		limit: number;
+		targets: readonly SectionLookupTarget[];
 	}): Promise<QdrantSearchHit[]>;
 	lookupChunks?(input: {
 		scope: RetrievalScope;
-		limit: number;
+		targets: readonly ChunkLookupTarget[];
 	}): Promise<QdrantSearchHit[]>;
 }
 
@@ -241,42 +258,69 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 
 	async lookupSections(input: {
 		scope: RetrievalScope;
-		limit: number;
+		targets: readonly SectionLookupTarget[];
 	}): Promise<QdrantSearchHit[]> {
+		if (!input.targets.length) return [];
 		return withActiveSpan(
 			"unorag.qdrant.lookup_sections",
 			{
 				"db.system.name": "qdrant",
 				"langfuse.observation.type": "retriever",
 				"db.operation.name": "scroll",
-				"unorag.retrieval.limit": input.limit,
 			},
 			() =>
 				this.listCorpusInSpan({
 					scope: input.scope,
 					userFilters: { record_type: "section" },
-					limit: input.limit,
+					limit: Number.POSITIVE_INFINITY,
+					targetFilter: {
+						should: input.targets.map((target) => ({
+							must: [
+								...expansionScopeConditions(target),
+								"parentRecordId" in target
+									? match("record_id", target.parentRecordId)
+									: "childRecordId" in target
+										? match("source_chunk_ids", target.childRecordId)
+										: match("section_path", target.sectionPath),
+							],
+						})),
+					},
 				}),
 		);
 	}
 
 	async lookupChunks(input: {
 		scope: RetrievalScope;
-		limit: number;
+		targets: readonly ChunkLookupTarget[];
 	}): Promise<QdrantSearchHit[]> {
+		if (!input.targets.length) return [];
 		return withActiveSpan(
 			"unorag.qdrant.lookup_chunks",
 			{
 				"db.system.name": "qdrant",
 				"langfuse.observation.type": "retriever",
 				"db.operation.name": "scroll",
-				"unorag.retrieval.limit": input.limit,
 			},
 			() =>
 				this.listCorpusInSpan({
 					scope: input.scope,
 					userFilters: { record_type: "chunk" },
-					limit: input.limit,
+					limit: input.targets.length,
+					targetFilter: {
+						must: [
+							{ is_empty: { key: "table_id" } },
+							{ is_empty: { key: "figure_id" } },
+						],
+						should: input.targets.map((target) => ({
+							must: [
+								...expansionScopeConditions(target),
+								match("chunk_index", target.chunkIndex),
+								target.sectionPath === null
+									? { is_empty: { key: "section_path" } }
+									: match("section_path", target.sectionPath),
+							],
+						})),
+					},
 				}),
 		);
 	}
@@ -285,12 +329,16 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		scope: RetrievalScope;
 		userFilters?: RetrievalUserFilters;
 		limit: number;
+		targetFilter?: QdrantFilter;
 	}): Promise<QdrantSearchHit[]> {
 		await qdrantOperation("ready", () => this.ready, this.options);
-		const filter = buildMandatoryQdrantFilter({
+		const authorizationFilter = buildMandatoryQdrantFilter({
 			scope: input.scope,
 			userFilters: input.userFilters,
 		}) as QdrantFilter;
+		const filter = input.targetFilter
+			? { must: [authorizationFilter, input.targetFilter] }
+			: authorizationFilter;
 		const hits: QdrantSearchHit[] = [];
 		let offset: PointOffset | undefined;
 		while (hits.length < input.limit) {
@@ -326,4 +374,15 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		}
 		return hits;
 	}
+}
+
+function match(key: string, value: string | number): Schemas["FieldCondition"] {
+	return { key, match: { value } };
+}
+
+function expansionScopeConditions(target: ExpansionTarget) {
+	return [
+		match("doc_id", target.documentId),
+		match("generation_id", target.generationId),
+	];
 }

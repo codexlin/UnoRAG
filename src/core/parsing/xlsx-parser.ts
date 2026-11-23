@@ -439,16 +439,37 @@ function rowValues(
 	return cols.map((col) => map?.get(col) ?? "");
 }
 
-function looksNumericOrEmpty(values: readonly string[]): boolean {
-	let numeric = 0;
-	let nonEmpty = 0;
-	for (const value of values) {
-		const v = value.trim();
-		if (!v) continue;
-		nonEmpty += 1;
-		if (/^[+-]?[\d,]+(?:\.\d+)?%?$/.test(v)) numeric += 1;
-	}
-	return nonEmpty > 0 && numeric > 0;
+const NUMERIC_CELL = /^[+-]?[\d,]+(?:\.\d+)?%?$/u;
+const YEAR_LABEL = /^(?:19|20)\d{2}年?$/u;
+
+function hasYearSubheaders(
+	firstRow: number,
+	secondRow: number,
+	cols: readonly number[],
+	grid: Map<number, Map<number, string>>,
+	merges: readonly MergeRange[],
+): boolean {
+	return merges.some((merge) => {
+		if (
+			merge.startRow !== firstRow ||
+			merge.endRow >= secondRow ||
+			merge.endCol <= merge.startCol
+		) {
+			return false;
+		}
+		const labels = cols
+			.filter((col) => col >= merge.startCol && col <= merge.endCol)
+			.map(
+				(col) => grid.get(secondRow)?.get(col)?.normalize("NFKC").trim() ?? "",
+			)
+			.filter(Boolean);
+		return (
+			labels.filter((label) => YEAR_LABEL.test(label)).length >= 2 &&
+			labels.every(
+				(label) => YEAR_LABEL.test(label) || !NUMERIC_CELL.test(label),
+			)
+		);
+	});
 }
 
 function isBannerTitleRow(
@@ -493,8 +514,19 @@ function inferHeaderRowCount(
 			cols.includes(m.startCol),
 	);
 	if (hasHorizontalMerge && blockRows.length >= 3) {
-		const secondVals = rowValues(grid, blockRows[1], cols);
-		if (!looksNumericOrEmpty(secondVals)) {
+		const secondRow = blockRows[1];
+		const secondVals = rowValues(grid, secondRow, cols);
+		const spansBothRows = merges.some(
+			(merge) =>
+				merge.startRow === firstRow &&
+				merge.endRow === secondRow &&
+				cols.includes(merge.startCol),
+		);
+		if (
+			spansBothRows ||
+			hasYearSubheaders(firstRow, secondRow, cols, grid, merges) ||
+			!secondVals.some((value) => NUMERIC_CELL.test(value.trim()))
+		) {
 			return 2;
 		}
 	}
@@ -693,7 +725,12 @@ export async function parseXlsxDocument(
 					sheet.grid,
 					sheet.merges,
 				);
-				if (!banner) break;
+				if (
+					!banner ||
+					hasYearSubheaders(rows[0], rows[1], cols, sheet.grid, sheet.merges)
+				) {
+					break;
+				}
 				pendingCaption = `${sheet.name} - ${banner}`;
 				appendNode({
 					type: "paragraph",

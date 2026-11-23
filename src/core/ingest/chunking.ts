@@ -19,7 +19,7 @@ import {
 
 export const CHUNK_POLICY_VERSION = "v2";
 
-const DEFAULT_MAX_TOKENS = 400;
+export const DEFAULT_MAX_CHUNK_TOKENS = 400;
 const DEFAULT_MAX_CHARS = 1_800;
 
 const PROFILE_TARGET_RATIOS = {
@@ -106,7 +106,9 @@ export function buildChunkingProfile(
 	const targetChars = charSized
 		? Math.max(100, Math.round(maxChars * ratio))
 		: maxChars;
-	const maxTokens = charSized ? Number.POSITIVE_INFINITY : DEFAULT_MAX_TOKENS;
+	const maxTokens = charSized
+		? Number.POSITIVE_INFINITY
+		: DEFAULT_MAX_CHUNK_TOKENS;
 	const targetTokens = Math.round(maxTokens * ratio);
 	const charOverlap =
 		options.chunkOverlap !== undefined && Number.isFinite(options.chunkOverlap)
@@ -198,6 +200,13 @@ export async function chunkDocument(
 	if (input.nodes.length === 0) return [];
 	const profileName = options.profileName ?? recommendChunkProfile(input);
 	const profile = buildChunkingProfile({ ...options, profileName });
+	const structuredProfile = {
+		...profile,
+		targetTokens: Math.min(profile.targetTokens, DEFAULT_MAX_CHUNK_TOKENS),
+		maxTokens: DEFAULT_MAX_CHUNK_TOKENS,
+		overlapTokens: 0,
+		overlapChars: 0,
+	};
 	const profileMetadata =
 		options.profileName === undefined && profileName === "table_heavy"
 			? { profile_auto_selected: true }
@@ -243,29 +252,43 @@ export async function chunkDocument(
 					}
 				}
 			}
-			chunks.push(
-				makeChunk({
-					index: chunks.length,
-					body,
-					preamble: buildPreamble({
-						title: input.title,
+			const structured = node.type === "table" || node.type === "code";
+			const pieces = structured
+				? recursiveSplit(body, structuredProfile, ["\n"])
+				: [body];
+			const pieceMetadata = structured
+				? {
+						...decisionMetadata(decision, structuredProfile),
+						...profileMetadata,
+					}
+				: meta;
+			for (const [pieceIndex, piece] of pieces.entries()) {
+				chunks.push(
+					makeChunk({
+						index: chunks.length,
+						body: piece,
+						preamble: buildPreamble({
+							title: input.title,
+							sectionPath: section.sectionPath,
+							headingText: section.headingText,
+							pageStart,
+							pageEnd,
+						}),
+						document: input,
 						sectionPath: section.sectionPath,
 						headingText: section.headingText,
 						pageStart,
 						pageEnd,
+						nodeIds: [node.id],
+						tableId: node.table_id,
+						figureId: node.figure_id,
+						decision,
+						// The first chunk owns the full table structure for row-group indexing.
+						meta:
+							pieceIndex === 0 ? { ...meta, ...pieceMetadata } : pieceMetadata,
 					}),
-					document: input,
-					sectionPath: section.sectionPath,
-					headingText: section.headingText,
-					pageStart,
-					pageEnd,
-					nodeIds: [node.id],
-					tableId: node.table_id,
-					figureId: node.figure_id,
-					decision,
-					meta,
-				}),
-			);
+				);
+			}
 		}
 
 		const body = section.bodyText.trim();
@@ -646,12 +669,16 @@ function fitsBudget(
 	);
 }
 
-function recursiveSplit(text: string, profile: ChunkingProfile): string[] {
+function recursiveSplit(
+	text: string,
+	profile: ChunkingProfile,
+	separators: readonly string[] = RECURSIVE_SEPARATORS,
+): string[] {
 	const cleaned = text.trim();
 	if (!cleaned) return [];
 	const { targetChars, targetTokens } = profile;
 	const fits = (piece: string) => fitsBudget(piece, targetChars, targetTokens);
-	const parts = splitBySeparators(cleaned, RECURSIVE_SEPARATORS, fits);
+	const parts = splitBySeparators(cleaned, separators, fits);
 	const merged: string[] = [];
 	let buffer = "";
 	for (const part of parts) {

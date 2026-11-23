@@ -136,6 +136,8 @@ export const InternalCitationSchema = z
 		score: z.number().min(0).max(1),
 		dense_score: z.number().nullable(),
 		bm25_score: z.number().nullable(),
+		lexical_score: z.number().min(0).max(1).optional(),
+		sparse_score: z.number().optional(),
 		rrf_score: z.number().nullable(),
 		used_rerank: z.boolean(),
 		used_hybrid: z.boolean(),

@@ -89,6 +89,8 @@ const QdrantSearchHitSchema = z
 		score: z.number().finite(),
 		dense_score: z.number().finite().nullable().optional(),
 		bm25_score: z.number().finite().nullable().optional(),
+		lexical_score: z.number().min(0).max(1).optional(),
+		sparse_score: z.number().finite().optional(),
 		rrf_score: z.number().finite().nullable().optional(),
 		used_rerank: z.boolean().optional(),
 		used_hybrid: z.boolean().optional(),

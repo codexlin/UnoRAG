@@ -41,15 +41,32 @@ export function formatCitationEvidenceText(source: {
 export function semanticEvidenceScore(input: {
 	score: number;
 	dense_score?: number | null;
+	lexical_score?: number | null;
+	sparse_score?: number | null;
+	bm25_score?: number | null;
+	rrf_score?: number | null;
 	used_hybrid?: boolean;
 	used_rerank?: boolean;
 }): number {
-	// Fusion rank is not semantic relevance; lexical-only hits have no dense score.
+	if (input.used_hybrid && !input.used_rerank && input.dense_score == null) {
+		const lexical = input.lexical_score ?? input.sparse_score;
+		if (typeof lexical === "number" && Number.isFinite(lexical)) {
+			return clampScore(lexical);
+		}
+		const bm25 = input.bm25_score;
+		if (typeof bm25 === "number" && Number.isFinite(bm25) && bm25 > 0) {
+			return bm25 / (1 + bm25);
+		}
+		// A standalone score can be a relevance score. An RRF score is only a rank.
+		return input.rrf_score == null && Number.isFinite(input.score)
+			? clampScore(input.score)
+			: Number.NEGATIVE_INFINITY;
+	}
 	const score =
-		input.used_hybrid && !input.used_rerank
-			? (input.dense_score ?? Number.NEGATIVE_INFINITY)
-			: input.score;
-	return Number.isFinite(score) ? score : Number.NEGATIVE_INFINITY;
+		input.used_hybrid && !input.used_rerank ? input.dense_score : input.score;
+	return typeof score === "number" && Number.isFinite(score)
+		? score
+		: Number.NEGATIVE_INFINITY;
 }
 
 export function mapQdrantHitToInternalCitation(
@@ -94,6 +111,8 @@ export function mapQdrantHitToInternalCitation(
 		score: clampScore(hit.score),
 		dense_score: hit.dense_score === undefined ? hit.score : hit.dense_score,
 		bm25_score: hit.bm25_score ?? null,
+		...(hit.lexical_score != null ? { lexical_score: hit.lexical_score } : {}),
+		...(hit.sparse_score != null ? { sparse_score: hit.sparse_score } : {}),
 		rrf_score: hit.rrf_score ?? null,
 		used_rerank: hit.used_rerank ?? false,
 		used_hybrid: hit.used_hybrid ?? false,

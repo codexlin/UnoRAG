@@ -408,8 +408,89 @@ test("unit parser handles Chinese units, header units, percentages and rejects e
 	assert.equal(parseTableNumber("十万"), 100_000);
 	assert.equal(parseTableNumber("一亿二千万"), 120_000_000);
 	assert.equal(parseTableNumber("12", "预算（万元）"), 120_000);
+	assert.equal(parseTableNumber(12, "预算（万元）"), 120_000);
+	assert.equal(parseTableNumber("十二", "预算（万元）"), 120_000);
+	assert.equal(parseTableNumber("￥12", "预算（万元）"), 120_000);
+	assert.equal(parseTableNumber("12元", "预算（万元）"), 12);
 	assert.ok(Math.abs((parseTableNumber("58.7%") ?? 0) - 0.587) < 1e-12);
 	assert.equal(parseTableNumber("1+2"), null);
+});
+
+test("table aggregates report values in the header unit and JSON numbers use that unit", () => {
+	const column = "预算（万元）";
+	const dataset = {
+		records: [
+			tableRecord({
+				id: "budget-rows",
+				tableId: "budget",
+				headers: ["项目", column],
+				rows: [
+					["A", "0.5"],
+					["B", "1,200,000元"],
+					["C", "200万元"],
+				],
+				tableRowCount: 3,
+			}),
+		],
+	};
+	const plan = { mode: "single", tableId: "budget", column };
+	for (const [operation, expected, rendered] of [
+		["sum", 320.5, /预算（万元）合计为 320\.5$/u],
+		["avg", 320.5 / 3, /预算（万元）平均值为 106\.83/u],
+		["min", 0.5, /预算（万元）最小值为 0\.5$/u],
+		["max", 200, /预算（万元）最大值为 200$/u],
+		["minMax", { min: 0.5, max: 200 }, /最小值为 0\.5.*最大值为 200/u],
+	] as const) {
+		const result = executeTableQuery({ ...plan, operation }, dataset);
+		assert.equal(result.status, "success");
+		assert.deepEqual(result.answerValue, expected);
+		assert.match(result.answerText ?? "", rendered);
+	}
+	for (const value of [100, "100", "100万元", "1000000元"]) {
+		const result = executeTableQuery(
+			{
+				mode: "single",
+				tableId: "budget",
+				operation: "filter",
+				where: { column, operator: ">", value },
+				selectColumns: ["项目", column],
+			},
+			dataset,
+		);
+		assert.equal(result.status, "success");
+		assert.deepEqual(
+			result.matchedRows.map((row) => row.项目),
+			["B", "C"],
+		);
+	}
+});
+
+test("exact duplicate and normalized duplicate headers are ambiguous", () => {
+	for (const duplicate of ["预算（万元）", "预算(万元)"]) {
+		const result = executeTableQuery(
+			{
+				mode: "single",
+				tableId: "budget",
+				operation: "sum",
+				column: "预算（万元）",
+				selectColumns: ["项目"],
+			},
+			{
+				records: [
+					tableRecord({
+						id: "budget-rows",
+						tableId: "budget",
+						headers: ["项目", "预算（万元）", duplicate],
+						rows: [["A", "100", "999"]],
+						tableRowCount: 1,
+					}),
+				],
+			},
+		);
+		assert.equal(result.status, "clarify");
+		assert.equal(result.reason, "ambiguous_column:预算（万元）");
+		assert.equal(result.answerValue, null);
+	}
 });
 
 test("ASCII comparison >= 10万 preserves cross-page row-group evidence", () => {

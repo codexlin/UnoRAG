@@ -66,11 +66,10 @@ export function resolveColumn(
 	requested: string,
 	headers: readonly string[],
 ): { status: "ok"; column: string } | { status: "missing" | "ambiguous" } {
-	if (headers.includes(requested)) return { status: "ok", column: requested };
 	const key = normalizedHeader(requested);
 	const exact = headers.filter((header) => normalizedHeader(header) === key);
-	if (exact.length === 1) return { status: "ok", column: exact[0] };
 	if (exact.length > 1) return { status: "ambiguous" };
+	if (exact.length === 1) return { status: "ok", column: exact[0] };
 
 	const contained = headers.filter((header) => {
 		const headerKey = normalizedHeader(header);
@@ -344,7 +343,7 @@ function parseChineseInteger(source: string): number | null {
 	return total + section + digit;
 }
 
-function headerScale(header: string): number {
+export function tableColumnScale(header: string): number {
 	const normalized = header.normalize("NFKC").toLowerCase();
 	if (/亿元|人民币亿元/u.test(normalized)) return UNIT_SCALE.亿;
 	if (/万元|人民币万元/u.test(normalized)) return UNIT_SCALE.万;
@@ -356,25 +355,38 @@ export function parseTableNumber(
 	value: unknown,
 	columnHeader = "",
 ): number | null {
-	if (typeof value === "number") return Number.isFinite(value) ? value : null;
+	if (typeof value === "number") {
+		const numeric = value * tableColumnScale(columnHeader);
+		return Number.isFinite(numeric) ? numeric : null;
+	}
 	const source = String(value ?? "")
 		.normalize("NFKC")
 		.trim()
-		.replace(/[,，\s]/gu, "")
-		.replace(/[￥¥$元圆块]/gu, "");
+		.replace(/[,，\s]/gu, "");
 	if (!source) return null;
-	const chinese = parseChineseInteger(source.replace(/[整%％]/gu, ""));
+	const explicitBaseUnit = /[元圆块]/u.test(source);
+	const numberText = source.replace(/[¥$元圆块]/gu, "");
+	const chinese = parseChineseInteger(numberText.replace(/[整%]/gu, ""));
 	if (chinese !== null) {
-		return chinese * (/[%％]/u.test(source) ? 0.01 : 1);
+		const scale =
+			explicitBaseUnit || /[千万亿]/u.test(numberText)
+				? 1
+				: tableColumnScale(columnHeader);
+		return chinese * scale * (numberText.includes("%") ? 0.01 : 1);
 	}
-	const match = source.match(
+	const match = numberText.match(
 		/^[约≈~]?\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*([千万亿kwm])?(?:%|％)?(?:整)?$/iu,
 	);
 	if (!match) return null;
 	const numeric = Number(match[1]);
 	if (!Number.isFinite(numeric)) return null;
 	const suffix = match[2]?.toLowerCase();
-	const scale = suffix ? UNIT_SCALE[suffix] : headerScale(columnHeader);
+	const scale = suffix
+		? UNIT_SCALE[suffix]
+		: explicitBaseUnit
+			? 1
+			: tableColumnScale(columnHeader);
 	const percent = /[%％]/u.test(source) ? 0.01 : 1;
-	return numeric * scale * percent;
+	const scaled = numeric * scale * percent;
+	return Number.isFinite(scaled) ? scaled : null;
 }

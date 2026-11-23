@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { chunkDocument } from "../../src/core/ingest/chunking";
 import { normalizeMinerUResult } from "../../src/core/parsing";
 
 const context = {
@@ -8,6 +9,60 @@ const context = {
 	providerVersion: "test",
 	providerTaskId: "task-cross-page",
 };
+
+test("MinerU paths follow wrapped and nested headings through parsing and chunking", async () => {
+	const result = normalizeMinerUResult(
+		{
+			content_list: [
+				{ type: "text", text: "Introductory note", page_idx: 0 },
+				{ type: "text", text: "Operations", text_level: 1, page_idx: 0 },
+				{ type: "text", text: "Manual", text_level: 1, page_idx: 0 },
+				{ type: "text", text: "Inspection", text_level: 2, page_idx: 1 },
+				{ type: "text", text: "Check service status", page_idx: 1 },
+				{
+					type: "table",
+					page_idx: 1,
+					table_body:
+						"<table><tr><th>Step</th></tr><tr><td>Verify</td></tr></table>",
+				},
+				{ type: "image", page_idx: 1, img_caption: ["Inspection diagram"] },
+				{ type: "text", text: "Escalation", text_level: 2, page_idx: 2 },
+				{ type: "code", text: "notify(operator);", page_idx: 2 },
+				{ type: "text", text: "Appendix", text_level: 1, page_idx: 3 },
+				{ type: "text", text: "Additional material", page_idx: 3 },
+			],
+		},
+		context,
+	);
+	assert.deepEqual(
+		result.document.nodes.map(({ path }) => path),
+		[
+			null,
+			"Operations Manual",
+			"Operations Manual/Inspection",
+			"Operations Manual/Inspection",
+			"Operations Manual/Inspection",
+			"Operations Manual/Inspection",
+			"Operations Manual/Escalation",
+			"Operations Manual/Escalation",
+			"Appendix",
+			"Appendix",
+		],
+	);
+	const chunks = await chunkDocument(result.document);
+	for (const [text, path] of [
+		["Check service status", "Operations Manual/Inspection"],
+		["Verify", "Operations Manual/Inspection"],
+		["Inspection diagram", "Operations Manual/Inspection"],
+		["notify(operator);", "Operations Manual/Escalation"],
+		["Additional material", "Appendix"],
+	]) {
+		assert.equal(
+			chunks.find(({ body }) => body.includes(text))?.section_path,
+			path,
+		);
+	}
+});
 
 test("MinerU promotes a unique first-page header but drops repeated decoration", () => {
 	const result = normalizeMinerUResult(

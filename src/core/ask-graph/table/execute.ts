@@ -15,6 +15,7 @@ import {
 	parseTableNumber,
 	resolveColumn,
 	type TableDatasetInput,
+	tableColumnScale,
 } from "./normalize";
 
 const PREVIEW_LIMIT = 50;
@@ -355,6 +356,7 @@ function executeSingle(
 
 	const valueColumn = resolve(plan.column, table, plan.operation);
 	if ("result" in valueColumn) return valueColumn.result;
+	const scale = tableColumnScale(valueColumn.column);
 	const numericRows = rows
 		.map((row) => ({
 			row,
@@ -401,7 +403,7 @@ function executeSingle(
 	if (plan.operation === "sum" || plan.operation === "avg") {
 		const total = numericRows.reduce((sum, item) => sum + item.value, 0);
 		const answer =
-			plan.operation === "sum" ? total : total / numericRows.length;
+			total / (scale * (plan.operation === "sum" ? 1 : numericRows.length));
 		return success(
 			plan.operation,
 			plan.operation,
@@ -423,13 +425,15 @@ function executeSingle(
 			minimum.row.absoluteIndex === maximum.row.absoluteIndex
 				? [minimum.row]
 				: [minimum.row, maximum.row];
+		const min = minimum.value / scale;
+		const max = maximum.value / scale;
 		return success(
 			plan.operation,
 			plan.operation,
 			selectedRows,
 			selected.columns,
-			{ min: minimum.value, max: maximum.value },
-			`${valueColumn.column}最小值为 ${minimum.value}（${describeRow(minimum.row, selected.columns)}）；最大值为 ${maximum.value}（${describeRow(maximum.row, selected.columns)}）`,
+			{ min, max },
+			`${valueColumn.column}最小值为 ${min}（${describeRow(minimum.row, selected.columns)}）；最大值为 ${max}（${describeRow(maximum.row, selected.columns)}）`,
 		);
 	}
 
@@ -439,13 +443,14 @@ function executeSingle(
 		}
 		return item.value > best.value ? item : best;
 	});
+	const answer = chosen.value / scale;
 	return success(
 		plan.operation,
 		plan.operation,
 		[chosen.row],
 		selected.columns,
-		chosen.value,
-		`${valueColumn.column}${plan.operation === "min" ? "最小值" : "最大值"}为 ${chosen.value}`,
+		answer,
+		`${valueColumn.column}${plan.operation === "min" ? "最小值" : "最大值"}为 ${answer}`,
 	);
 }
 
@@ -490,6 +495,12 @@ function executeDual(
 	if ("result" in leftKey) return leftKey.result;
 	const rightKey = resolve(plan.join.rightColumn, right, plan.operation);
 	if ("result" in rightKey) return rightKey.result;
+
+	// Joined projections use prefixed header names as object keys.
+	for (const table of [left, right]) {
+		const columns = resolveColumns([], table, plan.operation);
+		if ("result" in columns) return columns.result;
+	}
 
 	const rightIndex = new Map<string, NormalizedTableRow[]>();
 	for (const row of right.rows) {

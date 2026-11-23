@@ -482,6 +482,22 @@ function contentListToNodes(
 		}
 		nodes.push(node);
 	}
+	// Assign paths after joining wrapped headings so all nodes use the final title.
+	const headings: { level: number; text: string }[] = [];
+	let path: string | null = null;
+	for (const node of nodes) {
+		if (node.type === "heading" && node.level !== null) {
+			while (
+				headings.length &&
+				headings[headings.length - 1].level >= node.level
+			) {
+				headings.pop();
+			}
+			headings.push({ level: node.level, text: node.text });
+			path = headings.map(({ text }) => text).join("/");
+		}
+		node.path = path;
+	}
 	return nodes;
 }
 

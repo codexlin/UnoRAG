@@ -15,6 +15,20 @@ const input: ParseInput = {
 	sourceUri: "storage://scan.pdf",
 };
 
+const zipUrl = "https://file.302.ai/output/scan.zip";
+
+function zipProvider(download: (init: RequestInit | undefined) => Response) {
+	return new MinerU302Provider({
+		baseUrl: "https://api.302.ai",
+		headers: { authorization: "Bearer test-secret" },
+		fetch: async (url, init) => {
+			if (String(url) === zipUrl) return download(init);
+			assert.match(String(url), /^https:\/\/api\.302\.ai\//u);
+			return Response.json({ data: { status: "SUCCESS", result_url: zipUrl } });
+		},
+	});
+}
+
 test("302.AI MinerU uploads, polls, and normalizes the result ZIP", async () => {
 	const zip = new JSZip();
 	zip.file(
@@ -136,4 +150,62 @@ test("302.AI MinerU fails closed without egress permission or with an unsafe res
 		}),
 		/outside the allowed hosts/,
 	);
+});
+
+test("302.AI ZIP downloads reject redirects before contacting another origin", async () => {
+	let downloads = 0;
+	const provider = zipProvider((init) => {
+		downloads += 1;
+		assert.equal(init?.redirect, "manual");
+		assert.equal(new Headers(init?.headers).has("authorization"), false);
+		return Response.redirect("https://other-origin.example/scan.zip", 302);
+	});
+	await assert.rejects(
+		provider.fetchResult({
+			documentId: input.documentId,
+			providerTaskId: "redirect",
+		}),
+		{ code: "provider_result_download_failed", status: 302, retryable: false },
+	);
+	assert.equal(downloads, 1);
+});
+
+test("302.AI ZIP downloads enforce declared and actual byte limits, cancelling oversized streams", async () => {
+	const block = new Uint8Array(1024 * 1024);
+	for (const length of [String(65 * block.length), null, "128"]) {
+		let pulls = 0;
+		let cancelled = false;
+		const stream = new ReadableStream<Uint8Array>(
+			{
+				pull(controller) {
+					pulls += 1;
+					controller.enqueue(block);
+				},
+				cancel() {
+					cancelled = true;
+				},
+			},
+			{ highWaterMark: 0 },
+		);
+		const provider = zipProvider(
+			() =>
+				new Response(stream, {
+					headers: length === null ? undefined : { "content-length": length },
+				}),
+		);
+		await assert.rejects(
+			provider.fetchResult({
+				documentId: input.documentId,
+				providerTaskId: "oversize",
+			}),
+			{
+				code: "provider_invalid_response",
+				retryable: false,
+				message: /download budget/u,
+			},
+		);
+		assert.equal(cancelled, true);
+		if (length === String(65 * block.length)) assert.ok(pulls <= 1);
+		else assert.equal(pulls, 65);
+	}
 });

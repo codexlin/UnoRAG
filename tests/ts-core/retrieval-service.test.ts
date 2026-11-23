@@ -22,6 +22,7 @@ import {
 	projectRerankDiagnostic,
 	RetrievalProviderError,
 } from "../../src/core/retrieval/provider-request";
+import { QdrantRetrievalStore } from "../../src/core/retrieval/qdrant/store";
 import { OpenAICompatibleRerankProvider } from "../../src/core/retrieval/rerank/provider";
 import { ScopedRetrievalCache } from "../../src/core/retrieval/retrieval-cache";
 import { estimateTokens } from "../../src/core/text/token-estimate";
@@ -191,6 +192,64 @@ test("Ask threshold selects strong dense evidence before Top-K, including candid
 		assert.deepEqual(calls[0], calls[1]);
 		assert.deepEqual(calls[0]?.activeGenerationIds, scope.activeGenerationIds);
 	}
+});
+
+test("Ask threshold admits lexical-only matches from RRF and excludes weak term overlap", async () => {
+	const strong = hit({
+		id: "exact",
+		text: "POL-44 2024 is the approved schedule",
+		chunkIndex: 1,
+		score: 0.01,
+	});
+	const weak = hit({
+		id: "partial",
+		text: "The 2024 index",
+		chunkIndex: 2,
+		score: 0.02,
+	});
+	const dense = hit({
+		id: "dense",
+		text: "The semantic evidence",
+		chunkIndex: 0,
+		score: 0.9,
+	});
+	const service = new DefaultRetrievalService(
+		embeddings,
+		{
+			async search() {
+				return [dense];
+			},
+			async hybridSearch() {
+				return [weak, strong];
+			},
+			async listCorpus() {
+				assert.fail("Hybrid should not scroll the corpus");
+			},
+		},
+		null,
+		{
+			hybridEnabled: true,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	const result = await service.retrieve({
+		query: "POL-44 2024",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+		options: { minimumEvidenceScore: 0.6 },
+	});
+	assert.deepEqual(
+		result.citations.map(({ id }) => id),
+		["exact", "dense"],
+	);
+	assert.equal(result.citations[0].dense_score, null);
+	assert.equal(result.citations[0].rrf_score, 0.01);
+	assert.equal(result.citations[0].bm25_score, null);
+	assert.equal(semanticEvidenceScore(result.citations[0]), 1);
 });
 
 test("Public Retrieve retains unthresholded RRF order when Ask selection is not requested", async () => {
@@ -504,9 +563,10 @@ test("inspection captures bounded hybrid candidates, rerank movement, deduplicat
 		},
 		{
 			async rerank({ topN, documents }) {
-				assert.equal(topN, 2);
+				assert.equal(topN, 23);
 				assert.equal(documents.length, 23);
 				return [
+					{ index: 0, score: 0.6 },
 					{ index: 3, score: 0.21 },
 					{ index: 2, score: 0.98 },
 				];
@@ -553,10 +613,10 @@ test("inspection captures bounded hybrid candidates, rerank movement, deduplicat
 				],
 			),
 		[
-			["parent", "deduped", 1, null, null, null],
+			["parent", "deduped", 1, 2, -1, null],
 			["other", "dropped_rerank", 2, null, null, null],
 			["child", "selected", 3, 1, 2, 1],
-			["weak", "below_threshold", 4, 2, 2, null],
+			["weak", "below_threshold", 4, 3, 1, null],
 		],
 	);
 	assert.deepEqual(inspection.candidates[2], {
@@ -971,7 +1031,7 @@ test("service returns allowlisted HTTP failure metadata, never private errors or
 	assert.equal(diagnostic.timeoutMs, 1_000);
 	assert.equal(diagnostic.maxAttempts, 2);
 	assert.equal(diagnostic.inputCount, 2);
-	assert.equal(diagnostic.requestedCount, 1);
+	assert.equal(diagnostic.requestedCount, 2);
 	assert.equal(diagnostic.resultCount, null);
 	assert.equal(diagnostic.candidateCountBeforeRerank, 2);
 	assert.equal(diagnostic.candidateCountAfterRerank, 2);
@@ -1052,7 +1112,7 @@ test("service fails soft on a stalled response body but reports the bounded time
 	body?.close();
 });
 
-test("reranking preserves requested topK and removes contained duplicates", async () => {
+test("reranking fills Top-K after deduplication using only scored candidates", async () => {
 	const store = new FakeStore();
 	let requestedTopN = 0;
 	store.search = async () => [
@@ -1078,13 +1138,17 @@ test("reranking preserves requested topK and removes contained duplicates", asyn
 			id: "risk-c",
 			text: `风险C ${"另一证据".repeat(30)}`,
 			chunkIndex: 3,
-			score: 0.6,
+			score: 0.99,
 		}),
 	];
 	const reranker: RerankProvider = {
 		async rerank(input) {
 			requestedTopN = input.topN;
-			return [{ index: 0, score: 0.95 }];
+			return [
+				{ index: 0, score: 0.95 },
+				{ index: 1, score: 0.9 },
+				{ index: 2, score: 0.8 },
+			].slice(0, input.topN);
 		},
 	};
 	const service = new DefaultRetrievalService(embeddings, store, reranker, {
@@ -1104,10 +1168,11 @@ test("reranking preserves requested topK and removes contained duplicates", asyn
 
 	assert.deepEqual(
 		result.citations.map((citation) => citation.id),
-		["section-a", "risk-b", "risk-c"],
+		["section-a", "risk-b"],
 	);
+	assert.ok(result.citations.every(({ used_rerank }) => used_rerank));
 	assert.equal(result.debug.usedRerank, true);
-	assert.equal(requestedTopN, 3);
+	assert.equal(requestedTopN, 4);
 });
 
 test("overlap deduplication preserves the more specific figure evidence", async () => {
@@ -1188,6 +1253,7 @@ test("flat count diagnostics trace record types through ranking, dedup and topK"
 				return [
 					{ index: 2, score: 0.95 },
 					{ index: 0, score: 0.8 },
+					{ index: 1, score: 0.75 },
 				];
 			},
 		},
@@ -1195,7 +1261,7 @@ test("flat count diagnostics trace record types through ranking, dedup and topK"
 	).retrieve({ query: "q", libraryId: "library-a", scope, topK: 1 });
 	const diagnostic = result.debug.rerankDiagnostic;
 	assert.ok(diagnostic);
-	assert.equal(diagnostic.resultCount, 2);
+	assert.equal(diagnostic.resultCount, 3);
 	assert.equal(diagnostic.candidateCountBeforeRerank, 3);
 	assert.equal(diagnostic.candidateCountAfterRerank, 3);
 	assert.equal(diagnostic.candidateCountAfterDedup, 2);
@@ -1708,9 +1774,23 @@ test("semantic evidence score is shared for dense, hybrid and reranked relevance
 		semanticEvidenceScore({
 			score: 0.03,
 			dense_score: null,
+			rrf_score: 0.03,
 			used_hybrid: true,
 		}),
 		Number.NEGATIVE_INFINITY,
+	);
+	assert.equal(
+		semanticEvidenceScore({ score: 0.8, dense_score: null, used_hybrid: true }),
+		0.8,
+	);
+	assert.equal(
+		semanticEvidenceScore({
+			score: 0.03,
+			sparse_score: 0.85,
+			dense_score: null,
+			used_hybrid: true,
+		}),
+		0.85,
 	);
 	assert.equal(
 		semanticEvidenceScore({
@@ -1741,12 +1821,14 @@ test("citation mapping preserves explicit lexical-only dense null for shared adj
 		...lineagePool()[8],
 		score: 0.03,
 		dense_score: null,
+		rrf_score: 0.03,
+		lexical_score: 0.85,
 		used_hybrid: true,
 	};
 	const citation = mapQdrantHitToInternalCitation(lexicalOnly, 1);
 	assert.equal(citation.dense_score, null);
 	assert.equal(citation.score, 0.03);
-	assert.equal(semanticEvidenceScore(citation), Number.NEGATIVE_INFINITY);
+	assert.equal(semanticEvidenceScore(citation), 0.85);
 	assert.equal(
 		mapQdrantHitToInternalCitation(lineagePool()[0], 1).dense_score,
 		0.92,
@@ -1947,10 +2029,7 @@ test("server hybrid is preferred without corpus scroll and preserves semantic sc
 	assert.equal(result.citations[0].dense_score, 0.8);
 	assert.equal(result.citations[0].rrf_score, 0.02);
 	assert.equal(result.citations[1].dense_score, null);
-	assert.equal(
-		semanticEvidenceScore(result.citations[1]),
-		Number.NEGATIVE_INFINITY,
-	);
+	assert.equal(semanticEvidenceScore(result.citations[1]), 1);
 });
 
 test("server hybrid transport errors keep authorized dense fallback and failure diagnostics", async () => {
@@ -1985,6 +2064,54 @@ test("server hybrid transport errors keep authorized dense fallback and failure 
 	assert.equal(result.debug.usedHybrid, false);
 	assert.equal(result.debug.retrievalMode, "dense");
 	assert.equal(result.citations[0].id, "dense");
+});
+
+test("transient hybrid and rerank failures are retried on the next cached retrieval", async () => {
+	for (const failure of ["hybrid", "rerank"] as const) {
+		const cache = new ScopedRetrievalCache();
+		const store = new FakeStore();
+		store.throwHybrid = failure === "hybrid";
+		let rerankCalls = 0;
+		const service = new DefaultRetrievalService(
+			embeddings,
+			store,
+			{
+				async rerank() {
+					rerankCalls += 1;
+					if (failure === "rerank" && rerankCalls === 1)
+						throw new Error("temporary");
+					return [{ index: 0, score: 0.9 }];
+				},
+			},
+			{
+				hybridEnabled: true,
+				rerankEnabled: failure === "rerank",
+				rerankTopK: 6,
+				bm25TopK: 20,
+				rrfK: 60,
+				cache,
+			},
+		);
+		const request = {
+			query: "合同违约金",
+			libraryId: "library-a",
+			scope,
+			topK: 1,
+		};
+		const first = await service.retrieve(request);
+		assert.equal(first.debug.hybridFailed, failure === "hybrid");
+		assert.equal(first.debug.rerankFailed, failure === "rerank");
+		assert.equal(cache.size, 0);
+		store.throwHybrid = false;
+		const recovered = await service.retrieve(request);
+		assert.equal(recovered.debug.hybridFailed, false);
+		assert.equal(recovered.debug.usedHybrid, true);
+		assert.equal(recovered.debug.rerankFailed, false);
+		assert.equal(recovered.debug.usedRerank, failure === "rerank");
+		assert.equal(cache.size, 1);
+		store.throwHybrid = true;
+		assert.deepEqual(await service.retrieve(request), recovered);
+	}
 });
 
 test("parent-child expansion attaches bounded parent section context without losing fine-grained chunk citations or deduplication", async () => {
@@ -2045,6 +2172,18 @@ test("parent-child expansion attaches bounded parent section context without los
 		async lookupSections(input) {
 			lookupCalls += 1;
 			assert.deepEqual(input.scope.documentIds, ["document-a"]);
+			assert.deepEqual(input.targets, [
+				{
+					documentId: "document-a",
+					generationId: "generation-current",
+					parentRecordId: "sec:ratio",
+				},
+				{
+					documentId: "document-a",
+					generationId: "generation-current",
+					childRecordId: "chk:document-a:2",
+				},
+			]);
 			return [parentSection];
 		},
 	};
@@ -2054,13 +2193,35 @@ test("parent-child expansion attaches bounded parent section context without los
 		rerankTopK: 6,
 		bm25TopK: 20,
 		rrfK: 60,
+		cache: new ScopedRetrievalCache(),
 	});
-	const result = await service.retrieve({
+	const request = {
 		query: "双重杠杆比率定义",
 		libraryId: "library-a",
 		scope,
 		topK: 2,
+	};
+	const unexpanded = await service.retrieve({
+		...request,
+		options: { expandParentContext: false },
 	});
+	assert.equal(lookupCalls, 0);
+	assert.equal(unexpanded.citations[0]?.parent_context, undefined);
+	const result = await service.retrieve(request);
+	assert.deepEqual(
+		await service.retrieve({
+			...request,
+			options: { expandParentContext: true },
+		}),
+		result,
+	);
+	assert.deepEqual(
+		await service.retrieve({
+			...request,
+			options: { expandParentContext: false },
+		}),
+		unexpanded,
+	);
 
 	assert.equal(lookupCalls, 1);
 	assert.equal(result.citations.length, 2);
@@ -2266,6 +2427,18 @@ test("DefaultRetrievalService attaches adjacent sibling chunks when no parent se
 		chunkIndex: 6,
 		score: 0,
 	});
+	for (const candidate of [childMid, siblingPrev, siblingNext]) {
+		candidate.payload.section_path = "Water management";
+	}
+	const crossSection = {
+		...siblingNext,
+		id: "unrelated",
+		payload: {
+			...siblingNext.payload,
+			section_path: "Other",
+			text: "Cross-section text",
+		},
+	};
 
 	const storeWithSiblings: RetrievalVectorStore = {
 		async search() {
@@ -2277,8 +2450,15 @@ test("DefaultRetrievalService attaches adjacent sibling chunks when no parent se
 		async lookupSections() {
 			return [];
 		},
-		async lookupChunks() {
-			return [siblingPrev, siblingNext];
+		async lookupChunks({ targets }) {
+			assert.deepEqual(
+				targets.map(({ chunkIndex, sectionPath }) => [chunkIndex, sectionPath]),
+				[
+					[4, "Water management"],
+					[6, "Water management"],
+				],
+			);
+			return [siblingPrev, siblingNext, crossSection];
 		},
 	};
 	const service = new DefaultRetrievalService(
@@ -2302,6 +2482,7 @@ test("DefaultRetrievalService attaches adjacent sibling chunks when no parent se
 	const parentCtx = result.citations[0]?.parent_context ?? "";
 	assert.ok(parentCtx.includes("嘉源和达水务"));
 	assert.ok(parentCtx.includes("供排水调度、管网管理与漏损控制模块"));
+	assert.doesNotMatch(parentCtx, /Cross-section text/);
 
 	const badSiblingStore: RetrievalVectorStore = {
 		async search() {
@@ -2343,4 +2524,129 @@ test("DefaultRetrievalService attaches adjacent sibling chunks when no parent se
 		}),
 		RetrievalSecurityViolationError,
 	);
+});
+
+test("Qdrant expansion filters exact targets before scrolling a large document", async () => {
+	type Filter = {
+		must?: Filter[];
+		should?: Filter[];
+		key?: string;
+		match?: { value?: string | number; any?: string[] };
+		is_empty?: { key: string };
+		is_null?: { key: string };
+	};
+	function matches(filter: Filter, values: Record<string, unknown>): boolean {
+		if (filter.must && !filter.must.every((item) => matches(item, values)))
+			return false;
+		if (filter.should && !filter.should.some((item) => matches(item, values)))
+			return false;
+		if (filter.is_empty) return values[filter.is_empty.key] == null;
+		if (filter.is_null) return values[filter.is_null.key] === null;
+		if (!filter.key || !filter.match) return true;
+		const value = values[filter.key];
+		const actual = Array.isArray(value) ? value : [value];
+		const expected = filter.match.any ?? [filter.match.value];
+		return expected.some((item) => actual.includes(item));
+	}
+	const child = hit({
+		id: "child",
+		text: "Target evidence",
+		chunkIndex: 350,
+		score: 0.9,
+	});
+	child.payload.parent_record_id = "sec:target";
+	child.payload.section_path = "Target";
+	const parent = hit({
+		id: "parent",
+		text: "Target evidence with more context from the matching parent section".repeat(
+			2,
+		),
+		chunkIndex: 350,
+		recordType: "section",
+		score: 0,
+	});
+	parent.payload.record_id = "sec:target";
+	const sameSection = hit({
+		id: "adjacent",
+		text: "The neighboring passage in the target section contains extra context.",
+		chunkIndex: 351,
+		score: 0,
+	});
+	sameSection.payload.section_path = "Target";
+	const otherSection = {
+		...sameSection,
+		id: "wrong",
+		payload: {
+			...sameSection.payload,
+			chunk_index: 349,
+			section_path: "Other",
+		},
+	};
+	const irrelevant = Array.from({ length: 330 }, (_, chunkIndex) =>
+		(["section", "chunk"] as const).map((recordType) =>
+			hit({
+				id: `${recordType}-${chunkIndex}`,
+				text: "irrelevant",
+				chunkIndex,
+				recordType,
+				score: 0,
+			}),
+		),
+	).flat();
+	let points = [
+		...irrelevant,
+		{
+			...parent,
+			id: "inactive-parent",
+			payload: { ...parent.payload, generation_id: "old-generation" },
+		},
+		parent,
+		sameSection,
+		otherSection,
+	];
+	const scrollResults: string[][] = [];
+	const store = new QdrantRetrievalStore(
+		{
+			async query() {
+				return { points: [child] };
+			},
+			async scroll(
+				_collection: string,
+				{ filter, limit }: { filter: Filter; limit: number },
+			) {
+				const filtered = points
+					.filter(({ payload }) => matches(filter, payload))
+					.slice(0, limit);
+				scrollResults.push(filtered.map(({ id }) => String(id)));
+				return { points: filtered, next_page_offset: null };
+			},
+		} as unknown as ConstructorParameters<typeof QdrantRetrievalStore>[0],
+		"records",
+	);
+	const service = new DefaultRetrievalService(embeddings, store, null, {
+		hybridEnabled: false,
+		rerankEnabled: false,
+		rerankTopK: 6,
+		bm25TopK: 20,
+		rrfK: 60,
+	});
+	const input = {
+		query: "Target evidence",
+		libraryId: "library-a",
+		scope,
+		topK: 1,
+	};
+	const expanded = await service.retrieve(input);
+	assert.match(
+		expanded.citations[0]?.parent_context ?? "",
+		/matching parent section/,
+	);
+
+	points = points.filter(({ id }) => id !== "parent");
+	const fallback = await service.retrieve(input);
+	assert.match(
+		fallback.citations[0]?.parent_context ?? "",
+		/neighboring passage/,
+	);
+	assert.deepEqual(scrollResults, [["parent"], [], ["adjacent"]]);
 });

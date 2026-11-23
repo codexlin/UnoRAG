@@ -7,6 +7,8 @@ import {
 	buildDocumentContext,
 	documentContextText,
 } from "../document-ir/document-context";
+import { estimateTokens, sliceByTokenBudget } from "../text/token-estimate";
+import { DEFAULT_MAX_CHUNK_TOKENS } from "./chunking";
 
 const POINT_NAMESPACE = "a6c3e8f0-2b1d-4e9a-9c7f-1d2e3f4a5b6c";
 
@@ -420,7 +422,7 @@ export function buildTableRecords(
 				sectionPath: chunk.section_path ?? undefined,
 				headingText: chunk.heading_text ?? undefined,
 				body,
-				embedText: prefix ? `${prefix}\n\n${body}` : body,
+				embedText: boundedEmbedText(body, prefix, maxTokens),
 				sourceChunkIds: [sourceChunkId],
 				sourceNodeIds: [...chunk.node_ids],
 				chunkIndex: part,
@@ -465,7 +467,10 @@ export function buildTableSummaryRecords(
 		const headers = stringArray(chunk.meta.headers);
 		const rows = stringRows(chunk.meta.rows);
 		const caption =
-			textValue(chunk.meta.table_caption) ?? chunk.heading_text ?? "";
+			textValue(chunk.meta.table_caption) ??
+			byTable.get(tableId)?.tableCaption ??
+			chunk.heading_text ??
+			"";
 		const footnotes = stringArray(chunk.meta.footnotes);
 		const tableIr = recordValue(chunk.meta.table_ir);
 		const summaries =
@@ -507,7 +512,10 @@ export function buildTableSummaryRecords(
 			sectionPath: existing?.sectionPath ?? chunk.section_path ?? undefined,
 			headingText: existing?.headingText ?? chunk.heading_text ?? undefined,
 			body,
-			embedText: body,
+			embedText: sliceByTokenBudget(
+				body,
+				firstPositiveMetadata([chunk], "table_tokens_per_record", 1_400),
+			),
 			sourceChunkIds: unique([
 				...(existing?.sourceChunkIds ?? []),
 				sourceChunkId,
@@ -554,7 +562,14 @@ function chunkPayload(
 		chunk_index: chunk.chunk_index,
 		text: displayText(chunk),
 		body: displayText(chunk),
-		embed_text: embedText(chunk),
+		embed_text:
+			chunk.table_id || ["table", "code"].includes(chunk.split_strategy)
+				? boundedEmbedText(
+						displayText(chunk),
+						chunk.preamble.trim(),
+						DEFAULT_MAX_CHUNK_TOKENS,
+					)
+				: embedText(chunk),
 		split_strategy: chunk.split_strategy,
 		source_format: chunk.source_format,
 		record_type: chunk.figure_id ? "figure" : "chunk",
@@ -731,20 +746,6 @@ function sliceTableRows(
 	return result;
 }
 
-function estimateTokens(text: string): number {
-	let cjk = 0;
-	for (const character of text) {
-		if (
-			(character >= "\u3400" && character <= "\u9fff") ||
-			(character >= "\u3040" && character <= "\u30ff") ||
-			(character >= "\uac00" && character <= "\ud7af")
-		) {
-			cjk += 1;
-		}
-	}
-	return cjk + Math.max(1, Math.trunc((text.length - cjk + 3) / 4));
-}
-
 function tableGroupText(headers: string[], rows: string[][]): string {
 	return [
 		headers.length > 0 ? headers.join(" | ") : "",
@@ -796,6 +797,18 @@ function sha1(value: string): string {
 
 function displayText(chunk: Chunk): string {
 	return (chunk.body || chunk.text || "").trim();
+}
+
+function boundedEmbedText(
+	body: string,
+	preamble: string,
+	maxTokens: number,
+): string {
+	const boundedBody = sliceByTokenBudget(body, maxTokens);
+	const prefixBudget = maxTokens - estimateTokens(boundedBody) - 1;
+	const prefix =
+		prefixBudget > 0 ? sliceByTokenBudget(preamble, prefixBudget).trim() : "";
+	return prefix ? `${prefix}\n\n${boundedBody}` : boundedBody;
 }
 
 function embedText(chunk: Chunk): string {

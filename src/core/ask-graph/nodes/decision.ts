@@ -12,6 +12,7 @@ import {
 	type AskStateUpdate,
 	mergeRetrievalDebug,
 } from "../state";
+import { MAX_RETRIEVAL_ATTEMPTS } from "./retry";
 
 const KNOWN_ACTIONS = new Set(["retry", "generate", "refuse"]);
 const MAX_COMPARISON_EVIDENCE = 6;
@@ -450,7 +451,7 @@ export function routeAfterJudge(state: AskState): RouteAfterJudge {
 	const action = state.judgement?.action;
 	if (action === "retry") {
 		return state.judgement?.can_retry !== false &&
-			(state.retrieval_attempts ?? 0) < 2
+			(state.retrieval_attempts ?? 0) < MAX_RETRIEVAL_ATTEMPTS
 			? "retry"
 			: "refuse";
 	}
