@@ -5,10 +5,16 @@ import test from "node:test";
 
 import pg from "pg";
 
-import { ingestAclFingerprint } from "../../src/core/ingest";
+import {
+	ingestAclFingerprint,
+	QdrantIngestWriteStore,
+} from "../../src/core/ingest";
 import { resolveDocumentConstraint } from "../../src/core/retrieval/document-constraints";
 import { hashPassword } from "../../src/lib/server/auth/passwords.mjs";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
+import { EMPTY_RESTRICTED_ACL_PRINCIPAL } from "../../src/lib/server/document-acl.mjs";
+import { durableJobSchema } from "../../src/worker/contracts";
+import { DocumentAclProjectionOperations } from "../../src/worker/document-acl-projection";
 import { closeGlobalDatabasePool } from "../helpers/runtime";
 
 type ResolveFilename = (
@@ -50,6 +56,10 @@ const routeModules = Promise.all([
 	import("../../src/app/api/jobs/route"),
 	import("../../src/server/retrieval/document-catalog"),
 	import("../../src/app/api/jobs/[jobId]/route"),
+	import("../../src/app/api/workspace/members/route"),
+	import("../../src/lib/server/auth/session-registry"),
+	import("../../src/lib/server/auth/session-token"),
+	import("../../src/server/http/document/download-handler"),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolveFilename;
 });
@@ -214,6 +224,10 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 			jobsRoute,
 			catalog,
 			jobRoute,
+			membersRoute,
+			sessionRegistry,
+			sessionTokens,
+			download,
 		] = await routeModules;
 		await pool.query(
 			`UPDATE app.documents SET projected_acl_fingerprint = acl_fingerprint WHERE id = $1`,
@@ -554,6 +568,187 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 			job_status: "queued",
 			audit_count: 1,
 		});
+
+		const granteeId = randomUUID();
+		const secondWorkspaceId = randomUUID();
+		const grantee = {
+			...viewerIdentity,
+			principalId: granteeId,
+			email: `acl-grantee-${suffix}@example.test`,
+		};
+		await pool.query(
+			`INSERT INTO app.workspaces (id, organization_id, slug, name)
+			 VALUES ($1, $2, 'second', 'Second workspace')`,
+			[secondWorkspaceId, ids.organization],
+		);
+		await pool.query(
+			`INSERT INTO app.users (id, organization_id, external_subject, email, display_name)
+			 VALUES ($1, $2, $3, $3, 'ACL grantee')`,
+			[granteeId, ids.organization, grantee.email],
+		);
+		await pool.query(
+			"INSERT INTO app.local_credentials (user_id, password_hash) VALUES ($1, $2)",
+			[granteeId, hashPassword("RoutePassword")],
+		);
+		await pool.query(
+			`INSERT INTO app.workspace_members (workspace_id, user_id, role)
+			 VALUES ($1, $3, 'viewer'), ($2, $3, 'viewer')`,
+			[ids.workspace, secondWorkspaceId, granteeId],
+		);
+		const granteeToken = await session.issueSessionToken(grantee);
+		const otherWorkspaceToken = await session.issueSessionToken({
+			...grantee,
+			workspaceId: secondWorkspaceId,
+		});
+		const cookie = (token: string) => `${session.SESSION_COOKIE}=${token}`;
+		const granteeClaims = sessionTokens.readSessionClaims(cookie(granteeToken));
+		assert.ok(granteeClaims);
+		assert.equal(await sessionRegistry.isSessionActive(granteeClaims), true);
+
+		const grant = await aclRoute.PUT(
+			request("PUT", ownerToken, {
+				scope: "restricted",
+				principal_ids: [granteeId],
+			}),
+			context,
+		);
+		assert.equal(grant?.status, 200);
+		await pool.query(
+			"UPDATE app.documents SET projected_acl_fingerprint = acl_fingerprint WHERE id = $1",
+			[ids.document],
+		);
+		await pool.query(
+			"UPDATE app.document_versions SET point_count = 1 WHERE id = $1",
+			[ids.version],
+		);
+		const removed = await membersRoute.DELETE(
+			new Request("http://local/api/workspace/members", {
+				method: "DELETE",
+				headers: { cookie: cookie(ownerToken), origin: "http://local" },
+				body: JSON.stringify({ user_id: granteeId }),
+			}),
+		);
+		assert.equal(removed.status, 200);
+		assert.equal(await sessionRegistry.isSessionActive(granteeClaims), false);
+		assert.equal(
+			(await session.resolveSessionCookieHeader(cookie(otherWorkspaceToken)))
+				?.workspaceId,
+			secondWorkspaceId,
+		);
+
+		const retainedAcl = await aclRoute.GET(request("GET", ownerToken), context);
+		assert.equal(retainedAcl?.status, 200);
+		const acl = await retainedAcl?.json();
+		assert.equal(acl.scope, "restricted");
+		assert.deepEqual(acl.principal_ids, []);
+		const restrictedFingerprint = ingestAclFingerprint({
+			scope: "restricted",
+			principalIds: [EMPTY_RESTRICTED_ACL_PRINCIPAL],
+			groupIds: [],
+		});
+		const durableState = await pool.query(
+			`SELECT d.acl_fingerprint, d.projected_acl_fingerprint,
+					a.actor_id, a.resource_id, a.details
+			 FROM app.documents AS d
+			 JOIN app.audit_logs AS a ON a.workspace_id = d.workspace_id
+			   AND a.action = 'workspace.member_removed'
+			 WHERE d.id = $1`,
+			[ids.document],
+		);
+		assert.deepEqual(durableState.rows, [
+			{
+				acl_fingerprint: restrictedFingerprint,
+				projected_acl_fingerprint: ingestAclFingerprint({
+					scope: "restricted",
+					principalIds: [granteeId],
+					groupIds: [],
+				}),
+				actor_id: ids.owner,
+				resource_id: granteeId,
+				details: { role: "viewer", affected_documents: 1, projection_jobs: 1 },
+			},
+		]);
+		const pendingProjections = await pool.query(
+			`SELECT id AS "jobId", organization_id AS "organizationId",
+					workspace_id AS "workspaceId", document_version_id AS "documentVersionId",
+					idempotency_key AS "idempotencyKey", type, payload
+			 FROM app.jobs
+			 WHERE workspace_id = $1 AND type = 'document.acl.project'
+			   AND status = 'queued' AND workflow_id = id::text
+			   AND payload->>'document_id' = $2 AND payload->>'acl_fingerprint' = $3`,
+			[ids.workspace, ids.document, restrictedFingerprint],
+		);
+		assert.equal(pendingProjections.rowCount, 1);
+		const projection = durableJobSchema.parse(pendingProjections.rows[0]);
+		assert.equal(projection.type, "document.acl.project");
+		let projectedPayload: unknown;
+		const operations = new DocumentAclProjectionOperations(
+			pool,
+			new QdrantIngestWriteStore(
+				{
+					async scroll() {
+						throw new Error("unexpected scroll");
+					},
+					async upsert() {
+						throw new Error("unexpected upsert");
+					},
+					async setPayload(_collection, input) {
+						projectedPayload = input.payload;
+						return { status: "completed" };
+					},
+					async count() {
+						return { count: 1 };
+					},
+				},
+				"chunks",
+			),
+		);
+		assert.deepEqual(await operations.project(projection), {
+			pointCount: 1,
+			generationId: ids.generation,
+		});
+		assert.deepEqual(projectedPayload, {
+			acl_scope: "restricted",
+			acl_principal_ids: [EMPTY_RESTRICTED_ACL_PRINCIPAL],
+			acl_group_ids: [],
+		});
+		const afterRemoval = await documentsRoute.GET(
+			new Request(`http://local/api/libraries/${ragLibraryId}/documents`, {
+				headers: viewerHeaders,
+			}),
+			documentsContext,
+		);
+		assert.equal(afterRemoval.status, 200);
+		assert.deepEqual(await afterRemoval.json(), []);
+		assert.equal(
+			(
+				await download.handleNativeDocumentDownloadRequest({
+					request: new Request("http://local", { method: "HEAD" }),
+					identity: viewerIdentity,
+					path: ["v1", "documents", ragDocumentId, "download"],
+				})
+			)?.status,
+			404,
+		);
+		assert.deepEqual(
+			(
+				await catalog.loadActiveDocumentCatalog({
+					identity: viewerIdentity,
+					libraryId: ragLibraryId,
+					scope: contentScope,
+				})
+			).documents,
+			[],
+		);
+		await session.revokeSessionCookieHeader(cookie(otherWorkspaceToken));
+		const restoredAcl = await aclRoute.PUT(
+			request("PUT", ownerToken, {
+				scope: "restricted",
+				principal_ids: [ids.owner],
+			}),
+			context,
+		);
+		assert.equal(restoredAcl?.status, 200);
 
 		await pool.query(
 			"UPDATE app.libraries SET status = 'deleting' WHERE id = $1",

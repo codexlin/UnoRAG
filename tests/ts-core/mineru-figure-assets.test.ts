@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import JSZip from "jszip";
+import type { Pool } from "pg";
 
 import type { ParseInput, ParseResult } from "../../src/core/contracts";
 import { DocumentIRSchema } from "../../src/core/document-ir";
@@ -24,7 +25,10 @@ import {
 	DocumentIngestStager,
 	type FigureAssetStorePort,
 } from "../../src/worker/document-ingest-staging";
-import { QdrantGenerationCleanupStep } from "../../src/worker/production-ports";
+import {
+	PostgresFigureAssetStore,
+	QdrantGenerationCleanupStep,
+} from "../../src/worker/production-ports";
 
 const SAMPLE_PNG = Uint8Array.from([
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49,
@@ -293,6 +297,7 @@ test("PdfDocumentParser.parseWithAssets and DocumentIngestStager persist figure 
 	assert.equal(direct.figureAssets.length, 1);
 
 	const persistedRecords: Array<unknown> = [];
+	const libraryUuid = "10000000-0000-4000-8000-000000000007";
 	const indexedRecords: Array<Record<string, unknown>> = [];
 	const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
 	const contentHash = `sha256:${createHash("sha256").update(pdfBytes).digest("hex")}`;
@@ -306,6 +311,7 @@ test("PdfDocumentParser.parseWithAssets and DocumentIngestStager persist figure 
 	};
 	const figureStore: FigureAssetStorePort = {
 		async persist(saveInput) {
+			assert.equal(saveInput.libraryUuid, libraryUuid);
 			persistedRecords.push(...saveInput.assets);
 			return new Set(saveInput.assets.map((asset) => asset.figureId));
 		},
@@ -322,6 +328,7 @@ test("PdfDocumentParser.parseWithAssets and DocumentIngestStager persist figure 
 					title: "charts.pdf",
 					documentId: "rag-doc-stage",
 					libraryId: "rag-lib-1",
+					libraryUuid,
 					acl: {
 						scope: "workspace",
 						principalIds: [],
@@ -357,7 +364,7 @@ test("PdfDocumentParser.parseWithAssets and DocumentIngestStager persist figure 
 		payload: {
 			document_id: "10000000-0000-4000-8000-000000000006",
 			document_version_id: "10000000-0000-4000-8000-000000000004",
-			library_id: "10000000-0000-4000-8000-000000000007",
+			library_id: "rag-lib-1",
 			storage_key: "documents/charts.pdf",
 			generation_id: "10000000-0000-4000-8000-000000000005",
 			content_hash: contentHash,
@@ -382,6 +389,55 @@ test("PdfDocumentParser.parseWithAssets and DocumentIngestStager persist figure 
 		),
 		true,
 	);
+});
+
+test("figure persistence cleans up failed and redundant uploads without removing the saved object", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "unorag-fig-persist-"));
+	try {
+		const storage = new LocalObjectStorage(root);
+		const attemptedKeys: string[] = [];
+		const libraryUuid = randomUUID();
+		const failure = new Error("figure row insert failed");
+		const pool = {
+			async query(_text: string, values: unknown[]) {
+				assert.equal(values[2], libraryUuid);
+				const storageKey = String(values[7]);
+				assert.equal(await storage.exists(storageKey), true);
+				attemptedKeys.push(storageKey);
+				if (attemptedKeys.length === 2) throw failure;
+				return { rowCount: attemptedKeys.length === 1 ? 1 : 0 };
+			},
+		} as Pick<Pool, "query">;
+		const store = new PostgresFigureAssetStore(pool, storage);
+		const input = {
+			organizationId: randomUUID(),
+			workspaceId: randomUUID(),
+			libraryUuid,
+			documentId: randomUUID(),
+			documentVersionId: randomUUID(),
+			generationId: randomUUID(),
+			assets: [
+				{
+					figureId: "fig-1",
+					extension: "png",
+					mimeType: "image/png",
+					bytes: Uint8Array.of(1, 2, 3),
+					pageStart: 1,
+					pageEnd: 1,
+				},
+			],
+		} as const;
+		assert.deepEqual(await store.persist(input), new Set(["fig-1"]));
+		await assert.rejects(store.persist(input), failure);
+		assert.deepEqual(await store.persist(input), new Set(["fig-1"]));
+		assert.equal(new Set(attemptedKeys).size, 3);
+		assert.deepEqual(
+			await Promise.all(attemptedKeys.map((key) => storage.exists(key))),
+			[true, false, false],
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });
 
 test("generation cleanup and document delete both include derived figure storage keys", async () => {

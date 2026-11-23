@@ -12,6 +12,7 @@ export type SessionClaims = {
 	v: 2;
 	iss: typeof SESSION_ISSUER;
 	sid: string;
+	family_id?: string;
 	principal_id: string;
 	workspace_id: string;
 	credential_version: string;
@@ -30,6 +31,7 @@ type SessionSubject = {
 	workspaceId: string;
 	credentialVersion: string;
 	mustChangePassword?: boolean;
+	sessionFamilyId?: string;
 };
 
 function sign(value: string): string {
@@ -118,6 +120,7 @@ export function createSignedSession(
 		v: 2,
 		iss: SESSION_ISSUER,
 		sid: randomUUID(),
+		family_id: subject.sessionFamilyId,
 		principal_id: subject.principalId,
 		workspace_id: subject.workspaceId,
 		credential_version: subject.credentialVersion,

@@ -5,6 +5,7 @@ import { and, eq, type SQL, type SQLWrapper, sql } from "drizzle-orm";
 import { getDatabase } from "@/db";
 import { documents } from "@/db/schema";
 import type { AuthIdentity } from "./auth/provider";
+import { EMPTY_RESTRICTED_ACL_PRINCIPAL } from "./document-acl.mjs";
 import { canWriteLibraries } from "./library-permissions.mjs";
 
 /**
@@ -33,6 +34,7 @@ export function documentMetadataVisibilitySql(
 			from app.document_acl as acl
 			where acl.document_id = ${documentId}
 				and acl.permission = 'read'
+				and acl.subject_id <> ${EMPTY_RESTRICTED_ACL_PRINCIPAL}::uuid
 				and (
 					(acl.subject_type in ('principal', 'user') and acl.subject_id = ${identity.principalId}::uuid)
 					${groupMatch}

@@ -25,6 +25,7 @@ import {
 	isNativeRetrievalPath,
 } from "@/server/http/retrieval/native-handler";
 import { injectAskOverrides } from "./ask-overrides-inject.mjs";
+import { isSameOriginSessionRequest } from "./auth/same-origin";
 import { resolveRequestSession } from "./auth/session";
 import { canWriteLibraries, findAuthorizedLibrary } from "./library-access";
 import {
@@ -120,6 +121,9 @@ async function proxyRagRequestInContext(
 		return Response.json({ detail: "RAG path not exposed" }, { status: 404 });
 	}
 
+	if (!isSameOriginSessionRequest(request)) {
+		return Response.json({ detail: "forbidden" }, { status: 403 });
+	}
 	const identity = await resolveRequestSession(request);
 	if (!identity) {
 		return Response.json(

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { QdrantClient, type Schemas } from "@qdrant/js-client-rest";
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
@@ -580,7 +581,7 @@ export class PostgresFigureAssetStore implements FigureAssetStorePort {
 	async persist(input: {
 		organizationId: string;
 		workspaceId: string;
-		libraryId: string;
+		libraryUuid: string;
 		documentId: string;
 		documentVersionId: string;
 		generationId: string;
@@ -588,7 +589,8 @@ export class PostgresFigureAssetStore implements FigureAssetStorePort {
 	}): Promise<ReadonlySet<string>> {
 		const persisted = new Set<string>();
 		for (const [index, asset] of input.assets.entries()) {
-			const storageKey = `org/${input.organizationId}/workspace/${input.workspaceId}/library/${input.libraryId}/document/${input.documentId}/version/${input.documentVersionId}/generation/${input.generationId}/figures/${index}-${sanitizeFigureFilenameSegment(asset.figureId)}.${asset.extension}`;
+			// An individual attempt must own the object it may have to delete.
+			const storageKey = `org/${input.organizationId}/workspace/${input.workspaceId}/library/${input.libraryUuid}/document/${input.documentId}/version/${input.documentVersionId}/generation/${input.generationId}/figures/${index}-${randomUUID()}-${sanitizeFigureFilenameSegment(asset.figureId)}.${asset.extension}`;
 			const stored = await this.objectStorage.putBytes(
 				storageKey,
 				asset.bytes,
@@ -597,8 +599,10 @@ export class PostgresFigureAssetStore implements FigureAssetStorePort {
 					maxBytes: 10 * 1024 * 1024,
 				},
 			);
-			await this.pool.query(
-				`
+			let inserted: QueryResult;
+			try {
+				inserted = await this.pool.query(
+					`
 				INSERT INTO app.document_figure_assets (
 					organization_id,
 					workspace_id,
@@ -613,29 +617,37 @@ export class PostgresFigureAssetStore implements FigureAssetStorePort {
 					page_start,
 					page_end
 				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-				ON CONFLICT (generation_id, figure_id)
-				DO UPDATE SET
-					storage_key = EXCLUDED.storage_key,
-					mime_type = EXCLUDED.mime_type,
-					size_bytes = EXCLUDED.size_bytes,
-					page_start = EXCLUDED.page_start,
-					page_end = EXCLUDED.page_end
+				ON CONFLICT (generation_id, figure_id) DO NOTHING
 				`,
-				[
-					input.organizationId,
-					input.workspaceId,
-					input.libraryId,
-					input.documentId,
-					input.documentVersionId,
-					input.generationId,
-					asset.figureId,
-					stored.key,
-					asset.mimeType,
-					stored.sizeBytes,
-					asset.pageStart,
-					asset.pageEnd,
-				],
-			);
+					[
+						input.organizationId,
+						input.workspaceId,
+						input.libraryUuid,
+						input.documentId,
+						input.documentVersionId,
+						input.generationId,
+						asset.figureId,
+						stored.key,
+						asset.mimeType,
+						stored.sizeBytes,
+						asset.pageStart,
+						asset.pageEnd,
+					],
+				);
+			} catch (error) {
+				try {
+					await this.objectStorage.delete(stored.key);
+				} catch (cleanupError) {
+					throw new AggregateError(
+						[error, cleanupError],
+						"Failed to persist a figure asset and remove its uploaded object",
+					);
+				}
+				throw error;
+			}
+			if (inserted.rowCount === 0) {
+				await this.objectStorage.delete(stored.key);
+			}
 			persisted.add(asset.figureId);
 		}
 		return persisted;

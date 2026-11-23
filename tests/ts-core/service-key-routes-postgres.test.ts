@@ -143,6 +143,21 @@ test("service key routes enforce roles, one-time plaintext, scope, and revocatio
 			403,
 		);
 
+		for (const fields of [
+			{ library_ids: ["library-allowed"] },
+			{ scopes: ["retrieve"] },
+			{ scopes: [], library_ids: ["library-allowed"] },
+			{ scopes: ["retrieve", "ingest"] },
+			{ scopes: ["retrieve"], library_ids: [] },
+			{ scopes: ["retrieve"], library_ids: "library-allowed" },
+			{ scopes: ["retrieve"], library_ids: ["library-allowed", 42] },
+		]) {
+			const response = await keysRoute.POST(
+				request("POST", ownerToken, { name: "Invalid", ...fields }),
+			);
+			assert.equal(response.status, 400);
+		}
+
 		const createdResponse = await keysRoute.POST(
 			request("POST", ownerToken, {
 				name: "Support assistant",
@@ -198,6 +213,60 @@ test("service key routes enforce roles, one-time plaintext, scope, and revocatio
 				: true,
 			false,
 		);
+
+		await pool.query(
+			"UPDATE app.workspaces SET status = 'disabled' WHERE id = $1",
+			[ids.workspace],
+		);
+		assert.equal(await serviceKeys.authenticateServiceKey(created.key), null);
+		await pool.query(
+			"UPDATE app.workspaces SET status = 'active' WHERE id = $1",
+			[ids.workspace],
+		);
+		await pool.query(
+			"UPDATE app.organizations SET status = 'disabled' WHERE id = $1",
+			[ids.organization],
+		);
+		assert.equal(await serviceKeys.authenticateServiceKey(created.key), null);
+		await pool.query(
+			"UPDATE app.organizations SET status = 'active' WHERE id = $1",
+			[ids.organization],
+		);
+		await pool.query(
+			"UPDATE app.workspace_service_keys SET library_ids = '[]'::jsonb WHERE id = $1",
+			[created.id],
+		);
+		assert.equal(await serviceKeys.authenticateServiceKey(created.key), null);
+		await pool.query(
+			"UPDATE app.workspace_service_keys SET library_ids = 'null'::jsonb WHERE id = $1",
+			[created.id],
+		);
+		assert.equal(await serviceKeys.authenticateServiceKey(created.key), null);
+		await pool.query(
+			"UPDATE app.workspace_service_keys SET library_ids = NULL, scopes = '[]'::jsonb WHERE id = $1",
+			[created.id],
+		);
+		assert.equal(await serviceKeys.authenticateServiceKey(created.key), null);
+		await pool.query(
+			"UPDATE app.workspace_service_keys SET scopes = '[\"retrieve\"]'::jsonb WHERE id = $1",
+			[created.id],
+		);
+		const workspaceKey = await serviceKeys.authenticateServiceKey(created.key);
+		assert.ok(workspaceKey);
+		assert.equal(workspaceKey.libraryIds, null);
+		assert.equal(
+			serviceKeys.serviceKeyAllowsLibrary(workspaceKey, "library-other"),
+			true,
+		);
+		const explicitWorkspaceGrant = await keysRoute.POST(
+			request("POST", ownerToken, {
+				name: "Workspace-wide key",
+				scopes: ["retrieve"],
+				library_ids: null,
+			}),
+		);
+		assert.equal(explicitWorkspaceGrant.status, 201);
+		assert.equal((await explicitWorkspaceGrant.json()).library_ids, null);
 
 		const persisted = await pool.query<{
 			key_hash: string;

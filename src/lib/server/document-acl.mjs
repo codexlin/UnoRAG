@@ -13,6 +13,12 @@ import { canWriteLibraries } from "./library-permissions.mjs";
 const UUID_RE =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// A nil UUID is never issued to a principal and is rejected by the ACL API.
+// This read row preserves restricted scope across PostgreSQL and Qdrant until
+// a manager explicitly replaces the ACL.
+export const EMPTY_RESTRICTED_ACL_PRINCIPAL =
+	"00000000-0000-0000-0000-000000000000";
+
 export function authorizeDocumentAclWrite(identity) {
 	if (!identity) {
 		return { ok: false, status: 401, detail: "authentication required" };
@@ -130,8 +136,15 @@ function normalizeIdList(raw) {
 export function toDocumentAclResponse(rows, memberById = new Map()) {
 	const principals = [];
 	const groups = [];
+	let restricted = false;
 	for (const row of rows) {
 		if (row.permission && row.permission !== "read") continue;
+		restricted = true;
+		if (
+			row.subjectType === "principal" &&
+			row.subjectId === EMPTY_RESTRICTED_ACL_PRINCIPAL
+		)
+			continue;
 		const entry = {
 			id: row.subjectId,
 			label:
@@ -147,10 +160,8 @@ export function toDocumentAclResponse(rows, memberById = new Map()) {
 			groups.push(entry);
 		}
 	}
-	const scope =
-		principals.length === 0 && groups.length === 0 ? "workspace" : "restricted";
 	return {
-		scope,
+		scope: restricted ? "restricted" : "workspace",
 		principals,
 		groups,
 		principal_ids: principals.map((item) => item.id),

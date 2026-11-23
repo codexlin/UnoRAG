@@ -25,13 +25,28 @@ test("service key raw format and hash", () => {
 });
 
 test("scope and library allow-list helpers", () => {
-	assert.deepEqual(normalizeScopes(["ask", "retrieve", "ask", "admin"]), [
+	assert.deepEqual(normalizeScopes(["ask", "retrieve", "ask"]), [
 		"ask",
 		"retrieve",
 	]);
-	assert.equal(normalizeScopes(["ingest"]), null);
-	assert.deepEqual(normalizeLibraryIds(["lib-a", "lib-a", ""]), ["lib-a"]);
-	assert.equal(normalizeLibraryIds([]), null);
+	for (const scopes of [undefined, null, [], "ask", ["ask", "ingest"], [1]]) {
+		assert.equal(normalizeScopes(scopes), null);
+		assert.equal(serviceKeyHasScope({ scopes }, "ask"), false);
+	}
+	assert.deepEqual(normalizeLibraryIds(["lib-a", " lib-a "]), ["lib-a"]);
+	assert.equal(normalizeLibraryIds(null), null);
+	for (const libraryIds of [
+		undefined,
+		[],
+		"lib-a",
+		["lib-a", ""],
+		[1],
+		["../lib-a"],
+	]) {
+		assert.equal(normalizeLibraryIds(libraryIds), undefined);
+		assert.equal(serviceKeyAllowsLibrary({ libraryIds }, "lib-a"), false);
+	}
+	assert.equal(serviceKeyAllowsLibrary({}, "lib-a"), false);
 
 	const key = { scopes: ["retrieve"], libraryIds: ["lib-1"] };
 	assert.equal(serviceKeyHasScope(key, "retrieve"), true);

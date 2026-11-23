@@ -7,7 +7,7 @@ import {
 } from "node:crypto";
 import { promisify } from "node:util";
 
-import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import {
@@ -26,6 +26,7 @@ import type {
 	IdentityProvider,
 	LocalCredentialsInput,
 } from "./provider";
+import { isSameOriginSessionRequest } from "./same-origin";
 import {
 	isSessionActive,
 	registerSession,
@@ -135,6 +136,7 @@ export async function resolveRequestSession(
 	request: Request,
 	options: { allowPasswordChangeRequired?: boolean } = {},
 ): Promise<AuthIdentity | null> {
+	if (!isSameOriginSessionRequest(request)) return null;
 	const identity = await resolveSessionCookieHeader(
 		request.headers.get("cookie"),
 	);
@@ -161,26 +163,64 @@ export async function resolveSessionCookieHeader(
 	);
 }
 
+type SessionTransaction = Parameters<
+	Parameters<ReturnType<typeof getDatabase>["transaction"]>[0]
+>[0];
+
+export class SessionInvalidatedError extends Error {}
+
 async function sessionFor(
+	tx: SessionTransaction,
 	identity: AuthIdentity,
 	expectedCredentialVersion?: string,
+	sessionFamilyId?: string,
 ) {
-	const db = getDatabase();
-	const [credential] = await db
+	const [credential] = await tx
 		.select({ passwordChangedAt: localCredentials.passwordChangedAt })
 		.from(localCredentials)
 		.where(eq(localCredentials.userId, identity.principalId))
+		.for("share")
 		.limit(1);
 	if (!credential) throw new Error("local credentials not found");
 	if (
 		expectedCredentialVersion !== undefined &&
 		String(credential.passwordChangedAt.getTime()) !== expectedCredentialVersion
 	) {
-		throw new Error("credentials changed during authentication");
+		throw new SessionInvalidatedError(
+			"credentials changed during authentication",
+		);
 	}
 	return createSignedSession({
 		...identity,
 		credentialVersion: String(credential.passwordChangedAt.getTime()),
+		sessionFamilyId,
+	});
+}
+
+async function withSessionMemberships<T>(
+	principalId: string,
+	workspaceIds: string[],
+	issue: (tx: SessionTransaction) => Promise<T>,
+): Promise<T> {
+	return getDatabase().transaction(async (tx) => {
+		// Member removal deletes this row and revokes Redis sessions before commit.
+		const memberships = await tx
+			.select({ workspaceId: workspaceMembers.workspaceId })
+			.from(workspaceMembers)
+			.where(
+				and(
+					eq(workspaceMembers.userId, principalId),
+					inArray(workspaceMembers.workspaceId, workspaceIds),
+				),
+			)
+			.orderBy(workspaceMembers.workspaceId)
+			.for("share");
+		if (memberships.length !== workspaceIds.length) {
+			throw new SessionInvalidatedError(
+				"workspace membership no longer exists",
+			);
+		}
+		return issue(tx);
 	});
 }
 
@@ -188,26 +228,57 @@ export async function issueSessionToken(
 	identity: AuthIdentity,
 	expectedCredentialVersion?: string,
 ): Promise<string> {
-	const session = await sessionFor(identity, expectedCredentialVersion);
-	await registerSession(session.claims);
-	return session.token;
+	return withSessionMemberships(
+		identity.principalId,
+		[identity.workspaceId],
+		async (tx) => {
+			const session = await sessionFor(tx, identity, expectedCredentialVersion);
+			await registerSession(session.claims);
+			return session.token;
+		},
+	);
 }
 
 export async function rotateSessionToken(
 	identity: AuthIdentity,
 	previousClaims: SessionClaims,
 ): Promise<string> {
-	const session = await sessionFor(identity);
-	await rotateSession(previousClaims, session.claims);
-	return session.token;
+	if (identity.principalId !== previousClaims.principal_id) {
+		throw new Error("cannot rotate a session across principals");
+	}
+	return withSessionMemberships(
+		identity.principalId,
+		[...new Set([identity.workspaceId, previousClaims.workspace_id])],
+		async (tx) => {
+			const session = await sessionFor(
+				tx,
+				identity,
+				previousClaims.credential_version,
+				previousClaims.family_id ?? previousClaims.sid,
+			);
+			if (!(await rotateSession(previousClaims, session.claims))) {
+				throw new SessionInvalidatedError(
+					"previous session is no longer active",
+				);
+			}
+			return session.token;
+		},
+	);
 }
 
 export async function replacePrincipalSessionToken(
 	identity: AuthIdentity,
+	expectedCredentialVersion: string,
 ): Promise<string> {
-	const session = await sessionFor(identity);
-	await replacePrincipalSessions(session.claims);
-	return session.token;
+	return withSessionMemberships(
+		identity.principalId,
+		[identity.workspaceId],
+		async (tx) => {
+			const session = await sessionFor(tx, identity, expectedCredentialVersion);
+			await replacePrincipalSessions(session.claims);
+			return session.token;
+		},
+	);
 }
 
 export async function revokeSessionCookieHeader(
@@ -218,7 +289,7 @@ export async function revokeSessionCookieHeader(
 }
 
 export type ChangePasswordResult =
-	| { ok: true; identity: AuthIdentity }
+	| { ok: true; identity: AuthIdentity; credentialVersion: string }
 	| { ok: false; status: number; detail: string };
 
 async function verifyPassword(
@@ -252,6 +323,16 @@ export async function changeLocalPassword(input: {
 			ok: false,
 			status: 400,
 			detail: "password is managed by the identity provider",
+		};
+	}
+	if (
+		input.currentPassword.length === 0 ||
+		input.currentPassword.length > 256
+	) {
+		return {
+			ok: false,
+			status: 400,
+			detail: "current_password must be 1–256 characters",
 		};
 	}
 	const passwordError = validatePassword(input.newPassword);
@@ -327,11 +408,12 @@ export async function changeLocalPassword(input: {
 		input.identity.principalId,
 		input.identity.workspaceId,
 		"local",
+		String(now.getTime()),
 	);
 	if (!identity) {
 		return { ok: false, status: 401, detail: "authentication required" };
 	}
-	return { ok: true, identity };
+	return { ok: true, identity, credentialVersion: String(now.getTime()) };
 }
 
 export async function authenticateLocalCredentials(
