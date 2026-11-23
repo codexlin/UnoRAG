@@ -3,6 +3,8 @@
 import { AlertCircle, CheckCircle2, LoaderCircle, XCircle } from "lucide-react";
 
 import { formatDurationMs } from "@/lib/format";
+import { interfaceText, type Locale } from "@/lib/i18n/locale";
+import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
 export type WaterfallStage = {
@@ -18,37 +20,42 @@ export type WaterfallStage = {
 	ended_at?: string | null;
 };
 
-const STAGE_LABELS: Record<string, string> = {
-	request: "请求",
-	accepted: "排队",
-	downloading: "读取文件",
-	parsing: "文档解析",
-	chunking: "内容切分",
-	embedding: "向量化",
-	indexing: "写入索引",
-	validating: "索引校验",
-	awaiting_activation: "等待激活",
-	activating: "版本激活",
-	cleanup: "清理旧版本",
-	done: "完成",
-	route: "问题路由",
-	plan: "检索规划",
-	clarify: "问题澄清",
-	rewrite: "问题改写",
-	retrieve: "知识检索",
-	judge: "证据判断",
-	retry: "检索重试",
-	prepare_generate: "生成准备",
-	refuse: "拒答",
-	table_plan: "表格规划",
-	table_retrieve: "表格检索",
-	table_execute: "表格执行",
-	generate: "答案生成",
-	persist: "会话持久化",
+const STAGE_LABELS: Record<string, readonly [zh: string, en: string]> = {
+	request: ["请求", "Request"],
+	accepted: ["排队", "Queued"],
+	downloading: ["读取文件", "Read file"],
+	parsing: ["文档解析", "Parse document"],
+	chunking: ["内容切分", "Chunk content"],
+	embedding: ["向量化", "Embed"],
+	indexing: ["写入索引", "Write index"],
+	validating: ["索引校验", "Validate index"],
+	awaiting_activation: ["等待激活", "Awaiting activation"],
+	activating: ["版本激活", "Activate version"],
+	cleanup: ["清理旧版本", "Clean up old version"],
+	done: ["完成", "Done"],
+	route: ["问题路由", "Route query"],
+	plan: ["检索规划", "Plan retrieval"],
+	clarify: ["问题澄清", "Clarify query"],
+	rewrite: ["问题改写", "Rewrite query"],
+	retrieve: ["知识检索", "Retrieve"],
+	judge: ["证据判断", "Judge evidence"],
+	retry: ["检索重试", "Retry retrieval"],
+	prepare_generate: ["生成准备", "Prepare generation"],
+	refuse: ["拒答", "Refuse"],
+	table_plan: ["表格规划", "Plan table"],
+	table_retrieve: ["表格检索", "Retrieve table"],
+	table_execute: ["表格执行", "Execute table"],
+	generate: ["答案生成", "Generate answer"],
+	persist: ["会话持久化", "Persist session"],
 };
 
-export function stageDisplayName(stage: string): string {
-	return STAGE_LABELS[stage] ?? stage;
+export function stageDisplayName(
+	stage: string,
+	locale: Locale = "zh-CN",
+): string {
+	const labels = STAGE_LABELS[stage];
+	if (!labels) return stage;
+	return interfaceText(locale)(labels[0], labels[1]);
 }
 
 function stageDuration(stage: WaterfallStage): number {
@@ -82,6 +89,8 @@ export function StageWaterfall({
 	className?: string;
 	compact?: boolean;
 }) {
+	const { locale } = useInterfaceLanguage();
+	const t = useInterfaceText();
 	const rows = stages.map((stage) => ({
 		...stage,
 		duration: stageDuration(stage),
@@ -94,7 +103,11 @@ export function StageWaterfall({
 	let elapsed = 0;
 
 	if (rows.length === 0) {
-		return <p className="text-ui text-muted-foreground">暂无阶段记录</p>;
+		return (
+			<p className="text-ui text-muted-foreground">
+				{t("暂无阶段记录", "No stage records")}
+			</p>
+		);
 	}
 
 	return (
@@ -136,7 +149,7 @@ export function StageWaterfall({
 								aria-hidden
 							/>
 							<span className="truncate text-xs" title={stage.stage}>
-								{stageDisplayName(stage.stage)}
+								{stageDisplayName(stage.stage, locale)}
 							</span>
 							{stage.attempt != null && stage.attempt > 1 ? (
 								<span className="font-mono text-[9px] text-muted-foreground">
@@ -160,7 +173,9 @@ export function StageWaterfall({
 							/>
 						</div>
 						<span className="text-right font-mono text-[11px] tabular-nums text-muted-foreground">
-							{running ? "进行中" : formatDurationMs(stage.duration)}
+							{running
+								? t("进行中", "Running")
+								: formatDurationMs(stage.duration)}
 						</span>
 						{stage.error_code ? (
 							<p className="col-span-full pl-5 truncate font-mono text-[10px] text-destructive">

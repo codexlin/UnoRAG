@@ -854,7 +854,7 @@ function AskWorkspaceContent() {
 														variant="outline"
 														size="sm"
 														onClick={() => setInput(sample)}
-														className="h-auto min-h-11 max-w-full justify-start px-3 py-2 text-left text-sm leading-6 whitespace-normal text-muted-foreground [overflow-wrap:anywhere]"
+														className="h-auto min-h-11 max-w-full justify-start border-border bg-card px-3 py-2 text-left text-sm leading-6 whitespace-normal text-muted-foreground shadow-2xs hover:bg-accent hover:text-accent-foreground dark:border-border dark:bg-card dark:hover:bg-accent [overflow-wrap:anywhere]"
 													>
 														{sample}
 													</Button>

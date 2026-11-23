@@ -15,6 +15,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { InlineCitation } from "@/components/app/inline-citation";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
@@ -281,6 +282,7 @@ function CodeBlock({
 	language: string;
 	enhanced: boolean;
 }) {
+	const t = useInterfaceText();
 	const [html, setHtml] = useState("");
 	const [copied, setCopied] = useState(false);
 	const normalizedLanguage = useMemo(
@@ -340,7 +342,7 @@ function CodeBlock({
 						onClick={() => void copyCode()}
 						className="rounded-sm border border-[#b8d4dc]/35 px-2 py-0.5 text-[10px] tracking-[0.14em] text-[#b8d4dc] uppercase transition hover:bg-[#b8d4dc] hover:text-[#0b1c24]"
 					>
-						{copied ? "已复制" : "复制"}
+						{copied ? t("已复制", "Copied") : t("复制", "Copy")}
 					</button>
 				</div>
 			</div>

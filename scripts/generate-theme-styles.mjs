@@ -14,6 +14,10 @@ const presets = {
 		sans: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
 		mono: 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace',
 	},
+	"modern-minimal": {
+		sans: '"Geist Variable", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
+		mono: '"Geist Mono Variable", "SFMono-Regular", Consolas, monospace',
+	},
 	"violet-bloom": {
 		sans: '"Plus Jakarta Sans Variable", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
 		mono: '"IBM Plex Mono", "SFMono-Regular", Consolas, monospace',
@@ -65,6 +69,82 @@ const shadows = [
 	"shadow-2xl",
 ];
 
+function oklchToLuminance(value) {
+	const match = String(value).match(
+		/^oklch\(\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\)$/,
+	);
+	if (!match) return null;
+	const L = Number(match[1]);
+	const C = Number(match[2]);
+	const H = (Number(match[3]) * Math.PI) / 180;
+	const a = C * Math.cos(H);
+	const b = C * Math.sin(H);
+	const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+	const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+	const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+	const l = l_ ** 3;
+	const m = m_ ** 3;
+	const s = s_ ** 3;
+	const r = Math.min(
+		1,
+		Math.max(0, 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+	);
+	const g = Math.min(
+		1,
+		Math.max(0, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+	);
+	const bl = Math.min(
+		1,
+		Math.max(0, -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+	);
+	return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+}
+
+function contrastRatio(colorA, colorB) {
+	const l1 = oklchToLuminance(colorA);
+	const l2 = oklchToLuminance(colorB);
+	if (l1 == null || l2 == null) return null;
+	return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
+function validateThemeValues(id, mode, values) {
+	if (mode === "dark") {
+		for (const token of [
+			"card",
+			"popover",
+			"secondary",
+			"muted",
+			"accent",
+			"border",
+			"sidebar",
+			"sidebar-accent",
+			"sidebar-border",
+		]) {
+			const m = String(values[token] ?? "").match(/^oklch\(\s*([0-9.]+)/);
+			if (m && Number(m[1]) > 0.55) {
+				throw new Error(
+					`Theme ${id}/${mode}/${token} has light-mode luminance (${values[token]}); add a dark override in overrides.json`,
+				);
+			}
+		}
+	}
+	for (const [fg, bg] of [
+		["foreground", "background"],
+		["muted-foreground", "background"],
+		["primary-foreground", "primary"],
+		["secondary-foreground", "secondary"],
+		["sidebar-foreground", "sidebar"],
+		["sidebar-accent-foreground", "sidebar-accent"],
+	]) {
+		const ratio = contrastRatio(values[fg], values[bg]);
+		if (ratio != null && ratio < 4.5) {
+			throw new Error(
+				`Theme ${id}/${mode} contrast too low: ${fg} on ${bg} = ${ratio.toFixed(2)}:1 (< 4.5:1)`,
+			);
+		}
+	}
+}
+
 // Theme colors are upstream snapshots; product status colors and geometry stay independent.
 export async function generateThemeStyles() {
 	const overrides = JSON.parse(
@@ -85,6 +165,7 @@ export async function generateThemeStyles() {
 			const values = { ...theme.cssVars[mode], ...overrides[id]?.[mode] };
 			values.evidence ??= values.primary;
 			values["evidence-foreground"] ??= values["primary-foreground"];
+			validateThemeValues(id, mode, values);
 			const selector = `:root${mode === "dark" ? ".dark" : ""}[data-color-theme="${id}"]`;
 			rules.push(
 				"",
@@ -119,12 +200,13 @@ export async function generateThemeStyles() {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	const output = new URL("src/styles/themes.css", root);
 	const css = await generateThemeStyles();
+	const count = Object.keys(presets).length;
 	if (process.argv.includes("--check")) {
 		if ((await readFile(output, "utf8")) !== css)
 			throw new Error("Theme CSS is stale; run pnpm themes:generate");
-		console.log("Verified 3 built-in tweakcn themes (light/dark).");
+		console.log(`Verified ${count} built-in tweakcn themes (light/dark).`);
 	} else {
 		await writeFile(output, css);
-		console.log("Generated 3 built-in tweakcn themes (light/dark).");
+		console.log(`Generated ${count} built-in tweakcn themes (light/dark).`);
 	}
 }

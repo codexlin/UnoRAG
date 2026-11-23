@@ -14,6 +14,7 @@ import {
 import { splitMarkdownTableRow } from "@/core/parsing/markdown-table";
 import { documentFigureUrl } from "@/lib/api";
 import { formatScore } from "@/lib/format";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +31,7 @@ function CitationBody({
 	expanded?: boolean;
 	showDiagnostics?: boolean;
 }) {
+	const t = useInterfaceText();
 	const preview = (citation.snippet || citation.text || "")
 		.replace(/\s+/g, " ")
 		.trim();
@@ -63,7 +65,8 @@ function CitationBody({
 					) : null}
 					{citation.page ? (
 						<span className="inline-flex items-center gap-1">
-							<Hash className="size-3" aria-hidden />页 {citation.page}
+							<Hash className="size-3" aria-hidden />
+							{t(`页 ${citation.page}`, `Page ${citation.page}`)}
 						</span>
 					) : null}
 					{citation.filename ? (
@@ -75,30 +78,36 @@ function CitationBody({
 				</div>
 				{citation.preamble && expanded ? (
 					<p className="border-l-2 border-evidence/40 pl-3 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
-						定位 {citation.preamble}
+						{t(`定位 ${citation.preamble}`, `Location: ${citation.preamble}`)}
 					</p>
 				) : null}
 				{expanded ? (
 					<div className="space-y-4 pt-3">
 						<dl className="space-y-1 text-xs text-muted-foreground">
-							<dt>回答所用版本</dt>
+							<dt>{t("回答所用版本", "Version used")}</dt>
 							<dd className="font-mono text-foreground [overflow-wrap:anywhere]">
-								{citation.source?.document_version_id || "未记录"}
+								{citation.source?.document_version_id ||
+									t("未记录", "Not recorded")}
 							</dd>
 							{citation.source?.row_start != null ? (
 								<>
-									<dt className="pt-2">表格行组</dt>
+									<dt className="pt-2">{t("表格行组", "Table rows")}</dt>
 									<dd>
 										{citation.source.row_start + 1}
 										{citation.source.row_end != null
-											? ` 至 ${citation.source.row_end + 1}`
+											? t(
+													` 至 ${citation.source.row_end + 1}`,
+													`–${citation.source.row_end + 1}`,
+												)
 											: ""}
 									</dd>
 								</>
 							) : null}
 						</dl>
 						<section className="space-y-2 border-t pt-4">
-							<h3 className="text-sm font-medium">来源片段</h3>
+							<h3 className="text-sm font-medium">
+								{t("来源片段", "Source excerpt")}
+							</h3>
 							{citation.source?.figure_id &&
 							(citation.source?.document_id ||
 								citation.source?.doc_id ||
@@ -122,7 +131,7 @@ function CitationBody({
 									className="w-max min-w-full text-foreground"
 									containerProps={{
 										role: "region",
-										"aria-label": "表格来源片段",
+										"aria-label": t("表格来源片段", "Table source excerpt"),
 										tabIndex: 0,
 										className: "max-w-full rounded-sm border",
 									}}
@@ -151,14 +160,15 @@ function CitationBody({
 								</Table>
 							) : (
 								<p className="text-answer whitespace-pre-wrap text-foreground [overflow-wrap:anywhere]">
-									{fullText || "未记录来源片段"}
+									{fullText ||
+										t("未记录来源片段", "No source excerpt recorded")}
 								</p>
 							)}
 						</section>
 					</div>
 				) : !compact ? (
 					<p className="line-clamp-2 text-sm text-muted-foreground [overflow-wrap:anywhere]">
-						{preview || "（无预览）"}
+						{preview || t("（无预览）", "(No preview)")}
 					</p>
 				) : null}
 				{showDiagnostics ? (
@@ -168,15 +178,19 @@ function CitationBody({
 								className="size-3.5 transition-transform group-open:rotate-180"
 								aria-hidden
 							/>
-							检索诊断
+							{t("检索诊断", "Retrieval diagnostics")}
 						</summary>
 						<div className="mb-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-							{citation.usedRerank ? <span>本次使用重排</span> : null}
-							{citation.usedHybrid ? <span>本次使用混合检索</span> : null}
+							{citation.usedRerank ? (
+								<span>{t("本次使用重排", "Reranked")}</span>
+							) : null}
+							{citation.usedHybrid ? (
+								<span>{t("本次使用混合检索", "Hybrid search")}</span>
+							) : null}
 						</div>
 						<dl className="space-y-2 text-xs">
 							{[
-								["排序分数", citation.score],
+								[t("排序分数", "Rank score"), citation.score],
 								["Dense", citation.denseScore],
 								["BM25", citation.bm25Score],
 								["RRF", citation.rrfScore],
@@ -270,6 +284,7 @@ export function CitationSourceCard({
 	/** Reveal retrieval scores behind a secondary disclosure. */
 	showDiagnostics?: boolean;
 }) {
+	const t = useInterfaceText();
 	const className = cn(
 		"w-full min-w-0 text-left",
 		expanded
@@ -302,7 +317,10 @@ export function CitationSourceCard({
 	return (
 		<button
 			type="button"
-			aria-label={`查看引用 ${citation.index}：${citation.title}`}
+			aria-label={t(
+				`查看引用 ${citation.index}：${citation.title}`,
+				`View source ${citation.index}: ${citation.title}`,
+			)}
 			data-citation-id={citation.id}
 			aria-pressed={Boolean(active)}
 			onClick={() => onSelect(citation)}

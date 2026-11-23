@@ -73,7 +73,7 @@ export function LibraryRegistrySidebar({
 				<Button
 					variant="ghost"
 					size="icon"
-					className="size-11"
+					className="size-11 md:size-9"
 					aria-label={t("展开知识库导航", "Expand library navigation")}
 					title={t("展开知识库导航", "Expand library navigation")}
 					onClick={() => setCollapsed(false)}
@@ -87,9 +87,9 @@ export function LibraryRegistrySidebar({
 	return (
 		<aside
 			aria-label={t("知识库导航", "Library navigation")}
-			className="hidden w-52 min-w-0 max-w-[35%] shrink-0 flex-col border-r bg-background lg:w-56 md:flex"
+			className="hidden w-52 min-h-0 min-w-0 max-w-[35%] shrink-0 flex-col overflow-hidden border-r bg-background lg:w-56 md:flex"
 		>
-			<div className="px-3 pt-3 pb-4">
+			<div className="shrink-0 px-3 pt-3 pb-4">
 				<div className="flex items-center justify-between gap-2">
 					<h2 className="pl-1 text-sm font-medium">
 						{t("知识库", "Libraries")}
@@ -97,7 +97,7 @@ export function LibraryRegistrySidebar({
 					<Button
 						variant="ghost"
 						size="icon"
-						className="size-11 text-muted-foreground"
+						className="size-11 text-muted-foreground md:size-9"
 						aria-label={t("收起知识库导航", "Collapse library navigation")}
 						title={t("收起知识库导航", "Collapse library navigation")}
 						onClick={() => setCollapsed(true)}
@@ -212,10 +212,10 @@ export function LibraryRegistrySidebar({
 				</ul>
 			</ScrollArea>
 			<Can cap="manageLibraries">
-				<div className="border-t border-border/70 p-3">
+				<div className="shrink-0 border-t border-border/70 p-3">
 					<Button
 						type="button"
-						className="h-auto min-h-11 w-full whitespace-normal"
+						className="h-auto min-h-11 w-full whitespace-normal md:min-h-9"
 						disabled={saving}
 						onClick={onCreate}
 					>

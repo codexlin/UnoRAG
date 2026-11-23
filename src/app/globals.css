@@ -1,7 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "./ui-variants.css";
-@import "@fontsource-variable/ibm-plex-sans";
 @import "@fontsource-variable/fraunces";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
@@ -61,10 +60,18 @@
 	--radius-sm: calc(var(--radius) * 0.6);
 	--radius-md: calc(var(--radius) * 0.8);
 	--radius-lg: var(--radius);
-	--radius-xl: min(calc(var(--radius) * 1.4), 0.5rem);
-	--radius-2xl: min(calc(var(--radius) * 1.8), 0.5rem);
-	--radius-3xl: min(calc(var(--radius) * 2.2), 0.5rem);
-	--radius-4xl: min(calc(var(--radius) * 2.6), 0.5rem);
+	--radius-xl: min(calc(var(--radius) * 1.25), 0.875rem);
+	--radius-2xl: min(calc(var(--radius) * 1.5), 1rem);
+	--radius-3xl: min(calc(var(--radius) * 1.75), 1.125rem);
+	--radius-4xl: min(calc(var(--radius) * 2), 1.25rem);
+	--shadow-2xs: var(--shadow-2xs);
+	--shadow-xs: var(--shadow-xs);
+	--shadow-sm: var(--shadow-sm);
+	--shadow: var(--shadow);
+	--shadow-md: var(--shadow-md);
+	--shadow-lg: var(--shadow-lg);
+	--shadow-xl: var(--shadow-xl);
+	--shadow-2xl: var(--shadow-2xl);
 }
 
 /* Diagnostic status colors and geometry stay independent of theme choice. */
@@ -92,19 +99,24 @@
 @layer base {
 	* {
 		@apply border-border outline-ring/50;
-		/* Firefox — thin theme-aware bars; macOS overlay scrollbars ignore most of this */
-		scrollbar-width: thin;
-		scrollbar-color: color-mix(
-				in oklab,
-				var(--muted-foreground) 42%,
-				transparent
-			)
-			transparent;
+	}
+
+	/* Firefox fallback only — setting scrollbar-width on * disables ::-webkit-scrollbar in Chromium 121+ */
+	@supports not selector(::-webkit-scrollbar) {
+		* {
+			scrollbar-width: thin;
+			scrollbar-color: color-mix(
+					in oklab,
+					var(--muted-foreground) 35%,
+					transparent
+				)
+				transparent;
+		}
 	}
 
 	*::-webkit-scrollbar {
-		width: 10px;
-		height: 10px;
+		width: 8px;
+		height: 8px;
 	}
 	*::-webkit-scrollbar-track {
 		background: transparent;
@@ -112,7 +124,7 @@
 	*::-webkit-scrollbar-thumb {
 		background-color: color-mix(
 			in oklab,
-			var(--muted-foreground) 32%,
+			var(--muted-foreground) 30%,
 			transparent
 		);
 		border-radius: 999px;
@@ -148,6 +160,12 @@
 	.font-brand {
 		font-family: var(--font-brand);
 	}
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation: none;
+	mix-blend-mode: normal;
 }
 
 @layer components {
@@ -200,14 +218,14 @@
 	}
 	/*
 	 * Type scale — enterprise KB reading
-	 * answer 16px · ui 13px · meta 12px
+	 * answer 16px · ui 14px · meta 12px
 	 */
 	.text-answer {
 		font-size: 1rem;
 		line-height: 1.85;
 	}
 	.text-ui {
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		line-height: 1.5;
 	}
 	.text-meta {
@@ -225,8 +243,6 @@
 		animation-duration: 0.01ms !important;
 		/* biome-ignore lint/complexity/noImportantStyles: prevent repeated motion under reduced-motion */
 		animation-iteration-count: 1 !important;
-		/* biome-ignore lint/complexity/noImportantStyles: user motion preference overrides utility durations */
-		transition-duration: 0.01ms !important;
 		/* biome-ignore lint/complexity/noImportantStyles: user motion preference overrides smooth scrolling */
 		scroll-behavior: auto !important;
 	}

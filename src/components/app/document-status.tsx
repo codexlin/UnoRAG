@@ -1,12 +1,87 @@
 import { ChevronRight } from "lucide-react";
 import type { ApiDocument } from "@/lib/api";
-import { useInterfaceText } from "@/lib/i18n/provider";
+import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
 import {
 	formatParserReportView,
 	PARSE_DEGRADED_REINDEX_HINT,
 	resolveDocumentStatusDisplay,
 } from "@/lib/parser-report-view.mjs";
 import { cn } from "@/lib/utils";
+
+const STATUS_LABEL_EN: Record<string, string> = {
+	就绪: "Ready",
+	"已就绪（降级）": "Ready (fallback)",
+	索引中: "Indexing",
+	空库: "Empty",
+	处理中: "Processing",
+	降级可用: "Available (degraded)",
+	已取消: "Cancelled",
+	失败: "Failed",
+	删除中: "Deleting",
+	已删除: "Deleted",
+	活跃: "Active",
+	已替代: "Superseded",
+	待处理: "Pending",
+	已索引: "Indexed",
+};
+
+const PARSER_LABEL_EN: Record<string, string> = {
+	"302 云解析": "302 Cloud Parser",
+	"自建 MinerU": "Self-hosted MinerU",
+	原生文本: "Plain text",
+};
+
+const TASK_STATUS_EN: Record<string, string> = {
+	"等待 302 云解析": "Waiting for 302 Cloud Parser",
+	排队中: "Queued",
+	解析中: "Parsing",
+	切片中: "Chunking",
+	索引中: "Indexing",
+	读取原文: "Reading source",
+	处理中: "Processing",
+	已完成: "Completed",
+	失败: "Failed",
+	已取消: "Cancelled",
+	就绪: "Ready",
+	降级可用: "Available (degraded)",
+};
+
+const QUALITY_HINT_EN: Record<string, string> = {
+	"偏好：强制高质量解析": "Preference: Force high-quality parsing",
+	"偏好：严格不出域（仅本地）": "Preference: Local only (no external egress)",
+	"偏好：自动识别": "Preference: Auto detect",
+	已使用增强解析: "Enhanced parsing used",
+	"基础解析（部分页未完成）": "Basic parsing (some pages incomplete)",
+	"基础解析（PyMuPDF）": "Basic parsing (PyMuPDF)",
+};
+
+const DEGRADE_REASON_EN: Record<string, string> = {
+	"增强解析不可用，已用基础解析":
+		"Enhanced parser unavailable; used basic parsing",
+	"未启用增强解析，使用基础解析":
+		"Enhanced parser disabled; used basic parsing",
+};
+
+function localizeReportSummary(line: string, locale: "zh-CN" | "en"): string {
+	if (locale === "zh-CN") return line;
+	if (line === "已用基础解析（PyMuPDF）· MinerU 暂不可用（短窗熔断）") {
+		return "Basic parser (PyMuPDF) used · MinerU temporarily unavailable (circuit open)";
+	}
+	if (line === "已用基础解析（PyMuPDF）· MinerU 暂不可用") {
+		return "Basic parser (PyMuPDF) used · MinerU temporarily unavailable";
+	}
+	const partialMatch = line.match(/^部分页未解析(?:（失败页 (.+)）)?$/);
+	if (partialMatch) {
+		return partialMatch[1]
+			? `Some pages were not parsed (failed pages: ${partialMatch[1]})`
+			: "Some pages were not parsed";
+	}
+	const ocrMatch = line.match(/^建议 OCR 页：(.+)$/);
+	if (ocrMatch) {
+		return `OCR recommended for pages: ${ocrMatch[1]}`;
+	}
+	return line;
+}
 
 export function DocumentStatusBadge({
 	status,
@@ -15,8 +90,13 @@ export function DocumentStatusBadge({
 	status: string;
 	parserReport?: ApiDocument["parser_report"];
 }) {
+	const { locale } = useInterfaceLanguage();
 	const display = resolveDocumentStatusDisplay(status, parserReport);
 	const tone = display.tone;
+	const label =
+		locale === "zh-CN"
+			? display.label
+			: (STATUS_LABEL_EN[display.label] ?? display.label);
 	return (
 		<span
 			className={cn(
@@ -46,7 +126,7 @@ export function DocumentStatusBadge({
 				].includes(tone) && "border-border bg-muted text-muted-foreground",
 			)}
 		>
-			{display.label}
+			{label}
 		</span>
 	);
 }
@@ -58,14 +138,34 @@ export function ParserReportCard({
 	report: ApiDocument["parser_report"];
 	parseStatus?: ApiDocument["parse_status"];
 }) {
+	const { locale } = useInterfaceLanguage();
 	const t = useInterfaceText();
 	const reportView = formatParserReportView(report);
 	const status = parseStatus ?? null;
-	const parser = status?.parser_label || report?.parser;
+	const rawParser = status?.parser_label || report?.parser;
+	const parser =
+		rawParser && locale === "en"
+			? (PARSER_LABEL_EN[rawParser] ?? rawParser)
+			: rawParser;
+	const taskStatus =
+		status?.task_status && locale === "en"
+			? (TASK_STATUS_EN[status.task_status] ?? status.task_status)
+			: status?.task_status;
+	const qualityHint =
+		status?.parse_quality_hint && locale === "en"
+			? (QUALITY_HINT_EN[status.parse_quality_hint] ??
+				status.parse_quality_hint)
+			: status?.parse_quality_hint;
+	const degradeReason =
+		status?.degrade_reason && locale === "en"
+			? (DEGRADE_REASON_EN[status.degrade_reason] ?? status.degrade_reason)
+			: status?.degrade_reason;
 	return (
 		<div className="space-y-3 [overflow-wrap:anywhere]">
 			<div className="flex flex-wrap items-center gap-2">
-				<p className="text-xs text-muted-foreground">{reportView.title}</p>
+				<p className="text-xs text-muted-foreground">
+					{t(reportView.title, "Latest parser report")}
+				</p>
 				{reportView.degraded ? (
 					<span className="text-xs text-survey">
 						{t("降级处理", "Parsing fallback")}
@@ -74,7 +174,7 @@ export function ParserReportCard({
 			</div>
 			{parser ? (
 				<p className="text-sm leading-relaxed">
-					{t("实际解析器：", "Parser:")}
+					{t("实际解析器：", "Parser: ")}
 					{parser}
 				</p>
 			) : null}
@@ -85,45 +185,49 @@ export function ParserReportCard({
 						: t("未出域", "Processed locally")}
 				</p>
 			) : null}
-			{status?.task_status ? (
+			{taskStatus ? (
 				<p className="text-sm text-muted-foreground">
-					{t("任务状态：", "Job status:")}
-					{status.task_status}
+					{t("任务状态：", "Job status: ")}
+					{taskStatus}
 				</p>
 			) : null}
-			{status?.parse_quality_hint ? (
-				<p className="text-sm text-muted-foreground">
-					{status.parse_quality_hint}
-				</p>
+			{qualityHint ? (
+				<p className="text-sm text-muted-foreground">{qualityHint}</p>
 			) : null}
-			{status?.degrade_reason ? (
+			{degradeReason ? (
 				<p className="text-sm text-survey">
-					{t("降级原因：", "Fallback reason:")}
-					{status.degrade_reason}
+					{t("降级原因：", "Fallback reason: ")}
+					{degradeReason}
 				</p>
 			) : null}
 			{status?.provider_task_id ? (
 				<p className="font-mono text-xs leading-relaxed text-muted-foreground">
-					{t("任务 ID：", "Job ID:")}
+					{t("任务 ID：", "Job ID: ")}
 					{status.provider_task_id}
 				</p>
 			) : null}
-			{reportView.summaries.map((line) => (
-				<p
-					key={line}
-					className={cn(
-						"text-sm leading-relaxed",
-						line.startsWith(t("建议 OCR", "OCR recommended"))
-							? "text-muted-foreground"
-							: "text-survey",
-					)}
-				>
-					{line}
-				</p>
-			))}
+			{reportView.summaries.map((line) => {
+				const localized = localizeReportSummary(line, locale);
+				return (
+					<p
+						key={line}
+						className={cn(
+							"text-sm leading-relaxed",
+							line.startsWith("建议 OCR")
+								? "text-muted-foreground"
+								: "text-survey",
+						)}
+					>
+						{localized}
+					</p>
+				);
+			})}
 			{reportView.degraded ? (
 				<p className="text-sm text-muted-foreground">
-					{PARSE_DEGRADED_REINDEX_HINT}
+					{t(
+						PARSE_DEGRADED_REINDEX_HINT,
+						"Re-index once MinerU is available for better parsing quality.",
+					)}
 				</p>
 			) : null}
 			{reportView.techDetails.length > 0 ? (

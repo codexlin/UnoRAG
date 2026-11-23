@@ -27,7 +27,7 @@ import {
 	isAbortError,
 } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
-import { useInterfaceText } from "@/lib/i18n/provider";
+import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
 import type { UiCitation } from "@/lib/ui-types";
 import { cn } from "@/lib/utils";
 
@@ -55,10 +55,14 @@ function toUiCitation(citation: ApiCitation): UiCitation {
 	};
 }
 
-function dateGroup(value: string) {
+function dateGroup(
+	value: string,
+	locale: "zh-CN" | "en",
+	t: ReturnType<typeof useInterfaceText>,
+) {
 	const date = new Date(value);
-	if (Number.isNaN(date.getTime())) return "日期未记录";
-	return date.toLocaleDateString("zh-CN", {
+	if (Number.isNaN(date.getTime())) return t("日期未记录", "Date unavailable");
+	return date.toLocaleDateString(locale === "zh-CN" ? "zh-CN" : "en-US", {
 		year: "numeric",
 		month: "long",
 		day: "numeric",
@@ -66,6 +70,7 @@ function dateGroup(value: string) {
 }
 
 export function ArchivePanel() {
+	const { locale } = useInterfaceLanguage();
 	const t = useInterfaceText();
 	const { libraries } = useLibraries();
 	const [threads, setThreads] = useState<ApiThread[]>([]);
@@ -189,7 +194,7 @@ export function ArchivePanel() {
 	);
 	const groups = new Map<string, ApiThread[]>();
 	for (const thread of visibleThreads) {
-		const label = dateGroup(thread.updated_at);
+		const label = dateGroup(thread.updated_at, locale, t);
 		const group = groups.get(label) ?? [];
 		group.push(thread);
 		groups.set(label, group);
@@ -221,9 +226,9 @@ export function ArchivePanel() {
 				>
 					<header className="space-y-4 border-b p-4">
 						<div className="flex flex-wrap items-baseline justify-between gap-2">
-							<h1 className="text-lg font-medium">
+							<h2 className="text-xl font-medium">
 								{t("会话历史", "Conversations")}
-							</h1>
+							</h2>
 							<p className="text-xs text-muted-foreground" role="status">
 								{loading
 									? t("加载中…", "Loading…")
@@ -233,7 +238,7 @@ export function ArchivePanel() {
 										)}
 							</p>
 						</div>
-						<div className="space-y-2">
+						<div className="space-y-1.5">
 							<label
 								htmlFor="archive-search"
 								className="text-xs text-muted-foreground"
@@ -243,7 +248,7 @@ export function ArchivePanel() {
 							<div className="relative">
 								<Search
 									aria-hidden
-									className="pointer-events-none absolute left-3 top-3.5 size-4 text-muted-foreground"
+									className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
 								/>
 								<Input
 									ref={searchRef}
@@ -252,11 +257,11 @@ export function ArchivePanel() {
 									placeholder={t("会话标题", "Conversation title")}
 									value={query}
 									onChange={(event) => setQuery(event.target.value)}
-									className="h-11 pl-9"
+									className="h-11 pl-9 md:h-9"
 								/>
 							</div>
 						</div>
-						<div className="space-y-2">
+						<div className="space-y-1.5">
 							<label
 								htmlFor="archive-library"
 								className="text-xs text-muted-foreground"
@@ -272,18 +277,14 @@ export function ArchivePanel() {
 							>
 								<SelectTrigger
 									id="archive-library"
-									className="min-h-11 w-full min-w-0"
+									className="h-11 w-full min-w-0 md:h-9"
 								>
 									<SelectValue className="min-w-0 truncate" />
 								</SelectTrigger>
 								<SelectContent>
 									<SelectGroup>
 										{libraryOptions.map((option) => (
-											<SelectItem
-												key={option.value}
-												value={option.value}
-												className="min-h-11"
-											>
+											<SelectItem key={option.value} value={option.value}>
 												{option.label}
 											</SelectItem>
 										))}

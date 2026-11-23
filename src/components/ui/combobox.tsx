@@ -10,6 +10,7 @@ import {
 	InputGroupButton,
 	InputGroupInput,
 } from "@/components/ui/input-group";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
 const Combobox = ComboboxPrimitive.Root;
@@ -23,10 +24,11 @@ function ComboboxTrigger({
 	children,
 	...props
 }: ComboboxPrimitive.Trigger.Props) {
+	const t = useInterfaceText();
 	return (
 		<ComboboxPrimitive.Trigger
 			data-slot="combobox-trigger"
-			aria-label="展开选项"
+			aria-label={t("展开选项", "Toggle options")}
 			className={cn("[&_svg:not([class*='size-'])]:size-4", className)}
 			{...props}
 		>
@@ -40,10 +42,11 @@ function ComboboxTrigger({
 }
 
 function ComboboxClear({ className, ...props }: ComboboxPrimitive.Clear.Props) {
+	const t = useInterfaceText();
 	return (
 		<ComboboxPrimitive.Clear
 			data-slot="combobox-clear"
-			aria-label="清除选择"
+			aria-label={t("清除选择", "Clear selection")}
 			render={<InputGroupButton variant="ghost" size="icon-xs" />}
 			className={cn(className)}
 			{...props}

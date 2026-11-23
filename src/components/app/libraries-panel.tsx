@@ -800,8 +800,8 @@ export function LibrariesPanel() {
 	);
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col">
-			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
+		<div className="flex min-h-0 flex-1 flex-col md:overflow-hidden">
+			<div className="flex min-h-0 flex-1 flex-col md:flex-row md:overflow-hidden">
 				<LibraryRegistrySidebar
 					libraries={libraries}
 					selectedId={selectedId}
@@ -816,7 +816,7 @@ export function LibrariesPanel() {
 				/>
 
 				{/* 右栏：文档表 */}
-				<section className="flex min-w-0 flex-1 flex-col">
+				<section className="flex min-h-0 min-w-0 flex-1 flex-col md:overflow-hidden">
 					<MobileLibraryPicker
 						libraries={libraries}
 						selectedId={selectedId}

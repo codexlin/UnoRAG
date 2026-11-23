@@ -43,11 +43,15 @@ import { projectModelUsage } from "@/core/ai/model-usage";
 import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
 import type { ApiAskStage, ApiRetrievalDebug } from "@/lib/api";
 import { formatDurationMs } from "@/lib/format";
+import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
-function formatDebugValue(value: unknown): string {
+function formatDebugValue(
+	value: unknown,
+	t: ReturnType<typeof useInterfaceText>,
+): string {
 	if (value == null) return "—";
-	if (typeof value === "boolean") return value ? "是" : "否";
+	if (typeof value === "boolean") return value ? t("是", "Yes") : t("否", "No");
 	if (typeof value === "number") {
 		if (!Number.isFinite(value)) return "—";
 		return Number.isInteger(value) ? String(value) : value.toFixed(3);
@@ -55,7 +59,7 @@ function formatDebugValue(value: unknown): string {
 	if (typeof value === "string") return value || "—";
 	if (Array.isArray(value)) {
 		if (value.length === 0) return "—";
-		return value.map((item) => formatDebugValue(item)).join(", ");
+		return value.map((item) => formatDebugValue(item, t)).join(", ");
 	}
 	try {
 		return JSON.stringify(value);
@@ -95,46 +99,53 @@ function serverTotalDurationMs(
 
 function summaryRows(
 	debug: ApiRetrievalDebug,
+	t: ReturnType<typeof useInterfaceText>,
 	clientDurationMs?: number | null,
 	hasModelUsage = false,
 ): { label: string; value: string }[] {
 	const serverTotal = serverTotalDurationMs(debug);
 	const retrieveMs = stageDurationMs(debug, "retrieve");
 	const rows: { label: string; value: string }[] = [
-		{ label: "path", value: formatDebugValue(debug.path) },
-		{ label: "route", value: formatDebugValue(debug.route) },
-		{ label: "precise_gate", value: formatDebugValue(debug.precise_gate) },
+		{ label: "path", value: formatDebugValue(debug.path, t) },
+		{ label: "route", value: formatDebugValue(debug.route, t) },
+		{ label: "precise_gate", value: formatDebugValue(debug.precise_gate, t) },
 		{
 			label: "upgrade",
 			value:
 				debug.upgrade == null || debug.upgrade === ""
 					? "—"
-					: formatDebugValue(debug.upgrade),
+					: formatDebugValue(debug.upgrade, t),
 		},
 		{
-			label: "服务端合计",
+			label: t("服务端合计", "Server total"),
 			value: serverTotal != null ? formatDurationMs(serverTotal) : "—",
 		},
 		{
-			label: "检索(服务端)",
+			label: t("检索(服务端)", "Retrieve (server)"),
 			value: retrieveMs != null ? formatDurationMs(retrieveMs) : "—",
 		},
 	];
 	if (clientDurationMs != null && !Number.isNaN(clientDurationMs)) {
 		rows.push({
-			label: "端到端",
+			label: t("端到端", "End-to-end"),
 			value: formatDurationMs(clientDurationMs),
 		});
 	}
 	if (typeof debug.judge_mode === "string") {
-		rows.push({ label: "Judge 模式", value: debug.judge_mode });
+		rows.push({
+			label: t("Judge 模式", "Judge mode"),
+			value: debug.judge_mode,
+		});
 	}
 	if (typeof debug.judge_model === "string") {
-		rows.push({ label: "Judge 模型", value: debug.judge_model });
+		rows.push({
+			label: t("Judge 模型", "Judge model"),
+			value: debug.judge_model,
+		});
 	}
 	if (typeof debug.judge_duration_ms === "number") {
 		rows.push({
-			label: "Judge 耗时",
+			label: t("Judge 耗时", "Judge duration"),
 			value: formatDurationMs(debug.judge_duration_ms),
 		});
 	}
@@ -144,25 +155,31 @@ function summaryRows(
 			typeof debug.judge_output_tokens === "number")
 	) {
 		rows.push({
-			label: "Judge tokens（旧记录）",
-			value: `${formatDebugValue(debug.judge_input_tokens)} / ${formatDebugValue(debug.judge_output_tokens)}`,
+			label: t("Judge tokens（旧记录）", "Judge tokens (legacy)"),
+			value: `${formatDebugValue(debug.judge_input_tokens, t)} / ${formatDebugValue(debug.judge_output_tokens, t)}`,
 		});
 	}
 	return rows;
 }
 
 const RERANK_CATEGORY_LABELS = {
-	success: "成功",
-	timeout: "请求超时",
-	http: "上游 HTTP 错误",
-	transport: "传输失败",
-	invalid_response: "响应无效",
-	unknown: "未分类错误",
+	success: ["成功", "Succeeded"],
+	timeout: ["请求超时", "Request timed out"],
+	http: ["上游 HTTP 错误", "Upstream HTTP error"],
+	transport: ["传输失败", "Transport failure"],
+	invalid_response: ["响应无效", "Invalid response"],
+	unknown: ["未分类错误", "Unclassified error"],
 } as const;
 
 function StageTraceDetails({ stage }: { stage: ApiAskStage }) {
+	const t = useInterfaceText();
+	const { locale } = useInterfaceLanguage();
 	const failed = stage.ok === false;
-	const outcome = failed ? "失败" : stage.ok === true ? "完成" : "未记录";
+	const outcome = failed
+		? t("失败", "Failed")
+		: stage.ok === true
+			? t("完成", "Completed")
+			: t("未记录", "Not recorded");
 	const Icon = failed
 		? CircleAlert
 		: stage.ok === true
@@ -171,46 +188,52 @@ function StageTraceDetails({ stage }: { stage: ApiAskStage }) {
 	const duration =
 		Number.isFinite(stage.duration_ms) && stage.duration_ms >= 0
 			? formatDurationMs(stage.duration_ms)
-			: "未记录";
+			: t("未记录", "Not recorded");
 	const rerank = projectRerankDiagnostic(
 		"rerank_diagnostic" in stage
 			? stage.rerank_diagnostic
 			: stage.detail?.rerankDiagnostic,
 	);
 	const fields = [
-		{ label: "阶段键", value: stage.stage },
-		{ label: "执行结果", value: outcome },
+		{ label: t("阶段键", "Stage key"), value: stage.stage },
+		{ label: t("执行结果", "Outcome"), value: outcome },
 		...(rerank
 			? [
 					{
-						label: "重排结果",
-						value: RERANK_CATEGORY_LABELS[rerank.category],
+						label: t("重排结果", "Rerank outcome"),
+						value: t(
+							RERANK_CATEGORY_LABELS[rerank.category][0],
+							RERANK_CATEGORY_LABELS[rerank.category][1],
+						),
 					},
 					{
-						label: "重排耗时",
+						label: t("重排耗时", "Rerank duration"),
 						value: formatDurationMs(rerank.durationMs),
 					},
 					{
-						label: "HTTP 状态",
-						value: formatDebugValue(rerank.statusCode),
+						label: t("HTTP 状态", "HTTP status"),
+						value: formatDebugValue(rerank.statusCode, t),
 					},
 					{
-						label: "尝试 / 上限",
-						value: `${formatDebugValue(rerank.attempts)} / ${formatDebugValue(rerank.maxAttempts)}`,
+						label: t("尝试 / 上限", "Attempts / Max"),
+						value: `${formatDebugValue(rerank.attempts, t)} / ${formatDebugValue(rerank.maxAttempts, t)}`,
 					},
 					{
-						label: "重排预算",
+						label: t("重排预算", "Rerank timeout"),
 						value:
 							rerank.timeoutMs == null
-								? "未记录"
+								? t("未记录", "Not recorded")
 								: formatDurationMs(rerank.timeoutMs),
 					},
 					{
-						label: "输入 / 请求 / 返回",
-						value: `${rerank.inputCount} / ${rerank.requestedCount} / ${formatDebugValue(rerank.resultCount)}`,
+						label: t("输入 / 请求 / 返回", "Input / Requested / Returned"),
+						value: `${rerank.inputCount} / ${rerank.requestedCount} / ${formatDebugValue(rerank.resultCount, t)}`,
 					},
 					{
-						label: "候选 / 重排 / 去重 / TopK",
+						label: t(
+							"候选 / 重排 / 去重 / TopK",
+							"Candidates / Reranked / Deduped / TopK",
+						),
 						value: `${rerank.candidateCountBeforeRerank} → ${rerank.candidateCountAfterRerank} → ${rerank.candidateCountAfterDedup} → ${rerank.candidateCountAfterTopK}`,
 					},
 				]
@@ -228,7 +251,7 @@ function StageTraceDetails({ stage }: { stage: ApiAskStage }) {
 						<Icon />
 					</TraceIcon>
 					<TraceTitle className="flex-1 whitespace-normal [overflow-wrap:anywhere]">
-						{stageDisplayName(stage.stage)}
+						{stageDisplayName(stage.stage, locale)}
 					</TraceTitle>
 					<span className="sr-only">{outcome}</span>
 					<TraceDescription className="pl-2 font-mono text-xs text-muted-foreground">
@@ -253,6 +276,7 @@ function StageTraceDetails({ stage }: { stage: ApiAskStage }) {
 }
 
 function CopyTraceId({ traceId }: { traceId: string }) {
+	const t = useInterfaceText();
 	const [copied, setCopied] = useState(false);
 	const timer = useRef<number | null>(null);
 	const active = useRef(false);
@@ -277,7 +301,7 @@ function CopyTraceId({ traceId }: { traceId: string }) {
 		} catch {
 			if (!active.current) return;
 			setCopied(false);
-			toast.error("复制失败");
+			toast.error(t("复制失败", "Copy failed"));
 		} finally {
 			copying.current = false;
 		}
@@ -299,7 +323,11 @@ function CopyTraceId({ traceId }: { traceId: string }) {
 								"size-11 shrink-0 text-muted-foreground transition-colors duration-150 hover:text-foreground motion-reduce:transition-none",
 								copied && "text-primary hover:text-primary",
 							)}
-							aria-label={copied ? "已复制 trace_id" : "复制 trace_id"}
+							aria-label={
+								copied
+									? t("已复制 trace_id", "Copied trace_id")
+									: t("复制 trace_id", "Copy trace_id")
+							}
 							onClick={() => void onCopy()}
 						/>
 					}
@@ -310,10 +338,12 @@ function CopyTraceId({ traceId }: { traceId: string }) {
 						<Copy className="size-4" aria-hidden />
 					)}
 				</TooltipTrigger>
-				<TooltipContent>{copied ? "已复制" : "复制 trace_id"}</TooltipContent>
+				<TooltipContent>
+					{copied ? t("已复制", "Copied") : t("复制 trace_id", "Copy trace_id")}
+				</TooltipContent>
 			</Tooltip>
 			<span className="sr-only" role="status">
-				{copied ? "链路标识已复制" : ""}
+				{copied ? t("链路标识已复制", "Trace ID copied") : ""}
 			</span>
 		</div>
 	);
@@ -339,11 +369,12 @@ export function AskTraceDrawer({
 	/** Browser wall-clock until done (端到端), for reconciling with server total */
 	clientDurationMs?: number | null;
 }) {
+	const t = useInterfaceText();
 	const stages = Array.isArray(debug?.stages) ? debug.stages : [];
 	const titleRef = useRef<HTMLHeadingElement | null>(null);
 	const modelUsage = projectModelUsage(debug?.model_usage);
 	const rows = debug
-		? summaryRows(debug, clientDurationMs, modelUsage != null)
+		? summaryRows(debug, t, clientDurationMs, modelUsage != null)
 		: [];
 	const traceId =
 		typeof debug?.trace_id === "string" && debug.trace_id
@@ -364,38 +395,54 @@ export function AskTraceDrawer({
 					<>
 						<SheetHeader className="border-b px-5 py-5 sm:px-6">
 							<SheetTitle ref={titleRef} tabIndex={-1} className="pr-8">
-								请求链路
+								{t("请求链路", "Request trace")}
 							</SheetTitle>
 							<SheetDescription>
 								{[
 									serverTotal != null
-										? `服务端合计 ${formatDurationMs(serverTotal)}`
+										? t(
+												`服务端合计 ${formatDurationMs(serverTotal)}`,
+												`Server total ${formatDurationMs(serverTotal)}`,
+											)
 										: null,
 									clientDurationMs != null
-										? `端到端 ${formatDurationMs(clientDurationMs)}`
+										? t(
+												`端到端 ${formatDurationMs(clientDurationMs)}`,
+												`End-to-end ${formatDurationMs(clientDurationMs)}`,
+											)
 										: null,
 								]
 									.filter(Boolean)
-									.join(" · ") || "本次请求"}
+									.join(" · ") || t("本次请求", "Current request")}
 							</SheetDescription>
 						</SheetHeader>
 
 						<div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-5 sm:px-6">
-							<section className="space-y-3" aria-label="阶段耗时">
+							<section
+								className="space-y-3"
+								aria-label={t("阶段耗时", "Stage timings")}
+							>
 								<div className="flex flex-wrap items-baseline justify-between gap-2">
-									<h3 className="text-sm font-medium">阶段耗时</h3>
+									<h3 className="text-sm font-medium">
+										{t("阶段耗时", "Stage timings")}
+									</h3>
 									<span className="text-xs text-muted-foreground">
-										{stages.length} 步 · 顺序累计
+										{t(
+											`${stages.length} 步 · 顺序累计`,
+											`${stages.length} ${stages.length === 1 ? "step" : "steps"} · cumulative`,
+										)}
 									</span>
 								</div>
 								{stages.length === 0 ? (
-									<p className="text-sm text-muted-foreground">暂无阶段记录</p>
+									<p className="text-sm text-muted-foreground">
+										{t("暂无阶段记录", "No stage records")}
+									</p>
 								) : (
 									<StageWaterfall stages={stages} />
 								)}
 							</section>
 							{stages.length > 0 ? (
-								<section aria-label="阶段详情">
+								<section aria-label={t("阶段详情", "Stage details")}>
 									<Trace key={traceId}>
 										<TraceCollapsible
 											defaultOpen={stages.some((stage) => stage.ok === false)}
@@ -406,10 +453,13 @@ export function AskTraceDrawer({
 														<ListTree />
 													</TraceIcon>
 													<TraceTitle className="flex-1 font-medium text-foreground">
-														阶段详情
+														{t("阶段详情", "Stage details")}
 													</TraceTitle>
 													<TraceDescription className="text-xs text-muted-foreground">
-														{stages.length} 项
+														{t(
+															`${stages.length} 项`,
+															`${stages.length} ${stages.length === 1 ? "item" : "items"}`,
+														)}
 													</TraceDescription>
 												</TraceLine>
 											</TraceCollapsibleTrigger>
@@ -430,7 +480,7 @@ export function AskTraceDrawer({
 							) : null}
 							<ModelUsagePanel usage={modelUsage} />
 							<section className="space-y-2">
-								<h3 className="text-sm font-medium">摘要</h3>
+								<h3 className="text-sm font-medium">{t("摘要", "Summary")}</h3>
 								<dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-4 gap-y-2 text-xs">
 									{rows.map((row) => (
 										<div key={row.label} className="contents">
@@ -473,14 +523,14 @@ export function AskTraceDrawer({
 											<TraceIcon>
 												<Code2 />
 											</TraceIcon>
-											<TraceTitle>原始 JSON</TraceTitle>
+											<TraceTitle>{t("原始 JSON", "Raw JSON")}</TraceTitle>
 										</TraceLine>
 									</TraceCollapsibleTrigger>
 									<TraceCollapsibleContent className="m-0 border-l-0 p-0">
 										<section
 											// biome-ignore lint/a11y/noNoninteractiveTabindex: The scrollable JSON region needs keyboard access.
 											tabIndex={0}
-											aria-label="原始 JSON 内容"
+											aria-label={t("原始 JSON 内容", "Raw JSON content")}
 											className="max-h-64 overflow-auto rounded-md bg-muted/30 px-3 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
 										>
 											<pre className="font-mono text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap break-all">

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { resolveRequestSession } from "@/lib/server/auth/session";
-import { authorizeAuditAccess } from "@/lib/server/workspace-audit.mjs";
+import {
+	authorizeAuditAccess,
+	parseAuditListParams,
+} from "@/lib/server/workspace-audit.mjs";
 import { exportWorkspaceAuditCsv } from "@/lib/server/workspace-audit-db";
 
 export async function GET(request: Request) {
@@ -14,9 +17,15 @@ export async function GET(request: Request) {
 		);
 	}
 
+	const url = new URL(request.url);
+	const params = parseAuditListParams(url.searchParams);
 	const exported = await exportWorkspaceAuditCsv({
 		organizationId: identity.tenantId,
 		workspaceId: identity.workspaceId,
+		range: params.range,
+		resourceType: params.resourceType,
+		action: params.action,
+		q: params.q,
 	});
 	return new NextResponse(exported.body, {
 		status: 200,

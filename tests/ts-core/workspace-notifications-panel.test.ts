@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { SessionProvider } from "../../src/components/app/session-provider";
 import { WorkspaceNotificationsPanel } from "../../src/components/app/workspace-notifications-panel";
+import { LanguageProvider } from "../../src/lib/i18n/provider";
 import { queryKeys } from "../../src/lib/query-keys";
 import type { SessionIdentity } from "../../src/lib/session-types";
 import {
@@ -79,7 +80,11 @@ function render(
 				createElement(
 					QueryClientProvider,
 					{ client },
-					createElement(WorkspaceNotificationsPanel),
+					createElement(
+						LanguageProvider,
+						{ language: { locale: "zh-CN" } },
+						createElement(WorkspaceNotificationsPanel),
+					),
 				),
 			),
 		),

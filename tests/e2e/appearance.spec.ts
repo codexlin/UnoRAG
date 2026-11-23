@@ -47,7 +47,7 @@ test("appearance applies globally, persists, follows system, syncs tabs and rest
 		"data-color-theme",
 		"claude",
 	);
-	await expect(page.locator("html")).toHaveAttribute("data-radius", "8");
+	await expect(page.locator("html")).toHaveAttribute("data-radius", "12");
 	await expect(page.locator("html")).toHaveClass(/dark/);
 	await page.screenshot({
 		path: testInfo.outputPath("appearance-claude-dark.png"),
@@ -68,7 +68,7 @@ test("appearance applies globally, persists, follows system, syncs tabs and rest
 			exact: true,
 			includeHidden: true,
 		}),
-	).toHaveCSS("border-radius", "8px");
+	).toHaveCSS("border-radius", "12px");
 	const other = await context.newPage();
 	await other.goto("/login");
 	await page.getByRole("button", { name: "外观设置", exact: true }).click();
@@ -87,6 +87,8 @@ test("appearance applies globally, persists, follows system, syncs tabs and rest
 		"data-color-theme",
 		"vercel",
 	);
+	await expect(page.locator("html")).toHaveClass(/dark/);
+	await dialog.getByRole("radio", { name: "跟随系统", exact: true }).check();
 	await expect(page.locator("html")).not.toHaveClass(/dark/);
 	await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
 	await expect(page.locator("html")).toHaveClass(/dark/);
@@ -243,7 +245,7 @@ test("custom radius supports drag, keyboard, exact input and safe empty/range ha
 	await expect(number).toHaveValue("3.5");
 	await number.fill("99");
 	await number.press("Tab");
-	await expect(number).toHaveValue("8");
+	await expect(number).toHaveValue("12");
 	await number.fill("-5");
 	await number.press("Tab");
 	await expect(number).toHaveValue("0");
@@ -251,7 +253,7 @@ test("custom radius supports drag, keyboard, exact input and safe empty/range ha
 	await slider.press("ArrowRight");
 	await expect(slider).toHaveValue("0.5");
 	await slider.press("End");
-	await expect(slider).toHaveValue("8");
+	await expect(slider).toHaveValue("12");
 	const box = await dialog.locator('[data-slot="slider"]').boundingBox();
 	if (!box) throw new Error("Missing radius slider");
 	await page.mouse.move(box.x + box.width - 4, box.y + box.height / 2);

@@ -249,8 +249,8 @@ export function WorkspaceAskSettingsPanel({
 			aria-labelledby={`${id}-heading`}
 			className="min-w-0 space-y-6 text-sm"
 		>
-			<div className="flex flex-wrap items-baseline justify-between gap-2">
-				<h3 id={`${id}-heading`} className="text-xl font-medium">
+			<div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border/70 pb-3">
+				<h3 id={`${id}-heading`} className="text-base font-medium">
 					{t("问答策略", "Ask policy")}
 				</h3>
 				<div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -284,9 +284,9 @@ export function WorkspaceAskSettingsPanel({
 					return (
 						<li
 							key={field.key}
-							className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] items-center gap-3 py-4 first:pt-0"
+							className="flex min-w-0 flex-col gap-3 py-4 first:pt-0 sm:flex-row sm:items-center sm:justify-between sm:gap-8"
 						>
-							<div className="min-w-0">
+							<div className="min-w-0 max-w-xl flex-1">
 								<div className="flex items-center gap-1">
 									<label htmlFor={`${id}-${field.key}`} className="font-medium">
 										{label}
@@ -299,23 +299,30 @@ export function WorkspaceAskSettingsPanel({
 										</span>
 									</HelpTip>
 								</div>
+								<p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+									{t(...field.tip)}
+								</p>
 							</div>
-							<div className="min-w-0">
+							<div className="w-full shrink-0 sm:w-56">
 								{field.kind === "bool" ? (
-									<label
-										htmlFor={`${id}-${field.key}`}
-										className="flex min-h-11 cursor-pointer items-center gap-3"
-									>
-										<Switch
-											id={`${id}-${field.key}`}
-											aria-label={label}
-											disabled={!canManage || value == null || busy || loading}
-											checked={Boolean(value)}
-											onCheckedChange={(checked) => {
-												setField("session_memory_enabled", checked);
-											}}
-										/>
-									</label>
+									<div className="flex min-h-11 items-center sm:min-h-9 sm:justify-end">
+										<label
+											htmlFor={`${id}-${field.key}`}
+											className="inline-flex cursor-pointer items-center gap-3"
+										>
+											<Switch
+												id={`${id}-${field.key}`}
+												aria-label={label}
+												disabled={
+													!canManage || value == null || busy || loading
+												}
+												checked={Boolean(value)}
+												onCheckedChange={(checked) => {
+													setField("session_memory_enabled", checked);
+												}}
+											/>
+										</label>
+									</div>
 								) : (
 									<Select
 										items={options}
@@ -332,7 +339,7 @@ export function WorkspaceAskSettingsPanel({
 										<SelectTrigger
 											id={`${id}-${field.key}`}
 											aria-label={label}
-											className="min-h-11 w-full min-w-0"
+											className="h-11 w-full min-w-0 md:h-9"
 										>
 											<SelectValue
 												placeholder={
@@ -359,44 +366,56 @@ export function WorkspaceAskSettingsPanel({
 				})}
 			</ul>
 
-			{error ? (
-				<p role="alert" className="text-sm text-destructive">
-					{error === "load_failed"
-						? t("无法加载工作区设置", "Couldn't load workspace settings")
-						: error}
-				</p>
-			) : null}
-			{saved ? (
-				<p role="status" className="text-sm text-muted-foreground">
-					{t("已保存", "Saved")}
-				</p>
-			) : null}
-			{error && !ask ? (
-				<Button
-					type="button"
-					size="sm"
-					className="h-11 min-w-24"
-					variant="outline"
-					disabled={loading}
-					onClick={() => void refresh()}
-				>
-					<RefreshCw className="size-4" aria-hidden />
-					{t("重试", "Retry")}
-				</Button>
-			) : null}
-
-			{canManage ? (
-				<div className="pt-1">
-					<Button
-						type="button"
-						size="sm"
-						className="h-11 min-w-24"
-						disabled={busy || loading || !ask || !draft || !dirty}
-						onClick={() => void save()}
-					>
-						<Save className="size-4" aria-hidden />
-						{busy ? t("保存中…", "Saving…") : t("保存", "Save")}
-					</Button>
+			{error || saved || (error && !ask) || canManage ? (
+				<div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-4">
+					<div className="min-w-0 space-y-1">
+						{error ? (
+							<p role="alert" className="text-sm text-destructive">
+								{error === "load_failed"
+									? t("无法加载工作区设置", "Couldn't load workspace settings")
+									: error}
+							</p>
+						) : null}
+						{saved ? (
+							<p role="status" className="text-sm text-muted-foreground">
+								{t("已保存", "Saved")}
+							</p>
+						) : !error && canManage ? (
+							<p className="text-xs text-muted-foreground">
+								{dirty
+									? t("有未保存的策略更改", "You have unsaved policy changes")
+									: t(
+											"更改将在保存后立即应用于新问答",
+											"Changes apply to new questions once saved",
+										)}
+							</p>
+						) : null}
+					</div>
+					<div className="flex items-center gap-2">
+						{error && !ask ? (
+							<Button
+								type="button"
+								className="h-11 min-w-24 md:h-9"
+								variant="outline"
+								disabled={loading}
+								onClick={() => void refresh()}
+							>
+								<RefreshCw className="size-4" aria-hidden />
+								{t("重试", "Retry")}
+							</Button>
+						) : null}
+						{canManage ? (
+							<Button
+								type="button"
+								className="h-11 min-w-28"
+								disabled={busy || loading || !ask || !draft || !dirty}
+								onClick={() => void save()}
+							>
+								<Save className="size-4" aria-hidden />
+								{busy ? t("保存中…", "Saving…") : t("保存", "Save")}
+							</Button>
+						) : null}
+					</div>
 				</div>
 			) : null}
 		</section>

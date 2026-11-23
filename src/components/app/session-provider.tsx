@@ -16,6 +16,7 @@ import {
 	type PermissionCaps,
 	permissionsFor,
 } from "@/lib/client-permissions";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import type { SessionIdentity } from "@/lib/session-types";
 
 type SessionContextValue = PermissionCaps & {
@@ -35,17 +36,20 @@ export function SessionProvider({
 	children: ReactNode;
 }) {
 	const router = useRouter();
+	const t = useInterfaceText();
 	const caps = useMemo(() => permissionsFor(identity), [identity]);
 
 	const signOut = useCallback(async () => {
 		const response = await fetch("/api/auth/session", { method: "DELETE" });
 		if (!response.ok) {
-			toast.error("退出失败，请稍后重试");
+			toast.error(
+				t("退出失败，请稍后重试", "Couldn't sign out. Please try again."),
+			);
 			return;
 		}
 		router.replace("/login");
 		router.refresh();
-	}, [router]);
+	}, [router, t]);
 
 	const value = useMemo(
 		() => ({

@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DomUtils, parseDocument } from "htmlparser2";
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CitationSourceCard } from "../../src/components/app/citation-source-card";
 import { MarkdownAnswer } from "../../src/components/app/markdown-answer";
+import { LanguageProvider } from "../../src/lib/i18n/provider";
 import type { UiCitation } from "../../src/lib/ui-types";
+
+function renderZh(children: ReactNode) {
+	return renderToStaticMarkup(
+		createElement(LanguageProvider, {
+			language: { locale: "zh-CN" },
+			children,
+		}),
+	);
+}
 
 test("source details display the original version snapshot and unscaled retrieval scores", () => {
 	const citation: UiCitation = {
@@ -27,7 +37,7 @@ test("source details display the original version snapshot and unscaled retrieva
 			row_end: 4,
 		},
 	};
-	const html = renderToStaticMarkup(
+	const html = renderZh(
 		createElement(CitationSourceCard, {
 			citation,
 			expanded: true,
@@ -68,7 +78,7 @@ const tableCitation: UiCitation = {
 };
 
 test("expanded table sources render structured snapshots as a keyboard-accessible semantic table", () => {
-	const html = renderToStaticMarkup(
+	const html = renderZh(
 		createElement(CitationSourceCard, {
 			citation: tableCitation,
 			expanded: true,
@@ -214,7 +224,7 @@ test("malformed structured rows fall back to text and HTML-looking cells remain 
 
 test("a deterministic table answer binds [1] to its selected inline citation", () => {
 	const document = parseDocument(
-		renderToStaticMarkup(
+		renderZh(
 			createElement(MarkdownAnswer, {
 				content: "命中 1 行：\n- 设备：服务器，金额：120000 [1]",
 				citations: [tableCitation],
@@ -229,7 +239,7 @@ test("a deterministic table answer binds [1] to its selected inline citation", (
 });
 
 test("historical sources without a version remain unrecorded instead of guessing active version", () => {
-	const html = renderToStaticMarkup(
+	const html = renderZh(
 		createElement(CitationSourceCard, {
 			citation: {
 				id: "legacy",

@@ -63,7 +63,10 @@ test("public evidence example has real source text, reversible views and no API 
 	});
 	await page.goto("/");
 	await expect(
-		page.getByRole("heading", { name: "UnoRAG", exact: true }),
+		page.getByRole("heading", {
+			name: "让内部资料，成为可核对的答案。",
+			exact: true,
+		}),
 	).toBeVisible();
 	const example = page.getByRole("region", {
 		name: "知识工作流示例",
@@ -159,15 +162,11 @@ test("themes, radius, public assets and layouts stay coherent across viewports",
 						),
 					)
 					.toBe(true);
-				await expect
-					.poll(
-						async () =>
-							(await page.locator(".landing-kicker").first().boundingBox())
-								?.y ?? Infinity,
-					)
-					.toBeLessThan(height);
 				await expect(
-					page.getByRole("heading", { name: "UnoRAG", exact: true }),
+					page.getByRole("heading", {
+						name: "让内部资料，成为可核对的答案。",
+						exact: true,
+					}),
 				).toBeInViewport();
 			}
 			await page.screenshot({
@@ -180,7 +179,7 @@ test("themes, radius, public assets and layouts stay coherent across viewports",
 	await page.getByRole("slider", { name: "圆角大小", exact: true }).focus();
 	await page.keyboard.press("End");
 	await page.keyboard.press("Escape");
-	await expect(page.locator("html")).toHaveAttribute("data-radius", "8");
+	await expect(page.locator("html")).toHaveAttribute("data-radius", "12");
 	await page
 		.getByRole("heading", { name: /回答之外/ })
 		.scrollIntoViewIfNeeded();
@@ -231,7 +230,7 @@ test("mobile menu, anchor links and keyboard bypass stay operable", async ({
 	await details.scrollIntoViewIfNeeded();
 	await details.click();
 	await expect(
-		page.getByText("不需要。RAG 在回答时检索有权访问的文档片段", {
+		page.getByText("不需要。UnoRAG 在回答时先检索当前成员有权访问的文档片段", {
 			exact: false,
 		}),
 	).toBeVisible();

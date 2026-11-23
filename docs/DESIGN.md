@@ -213,7 +213,7 @@ UI/UX Pro Max 的 Productivity Tool、Minimalism & Swiss Style、Data-Dense Dash
   增长且保留 200px 上限。空输入使用低强调发送图标，可发送时使用主题主色，停止使用次级样式；
   不预留未实现的附件、模型切换或工具操作行。焦点沿用官方 ring，背景与细阴影只提供必要层次。
 - 交互以 150ms 颜色/表面反馈为主；加载动画只表示真实在途操作，并尊重 reduced-motion。
-  保留三套主题，不为“科技感”添加发光、光晕、装饰线或额外动效库。
+  保留四套主题，不为“科技感”添加发光、光晕、装饰线或额外动效库。
 
 ### 运行中心与操作记录：诊断不是新功能拼盘
 
@@ -240,7 +240,7 @@ UI/UX Pro Max 的 Productivity Tool、Minimalism & Swiss Style、Data-Dense Dash
 
 界面支持简体中文和 English。首屏由服务端按「显式浏览器偏好 Cookie → 浏览器
 `Accept-Language` 中可匹配的最高优先级语言 → English」渲染，同时设置 `html[lang]`。
-中文语言族显示简体中文；「跟随系统」清除手动偏好。不添加语言 URL 前缀，不重写问答、
+中文语言族显示简体中文；语言菜单仅列出「English / 简体中文」两项，选中态对应当前生效语言。不添加语言 URL 前缀，不重写问答、
 引用、原文件名、用户内容或 API 状态值。语言菜单复用 Base UI 的单选菜单。
 
 第一批覆盖首页、账号入口、工作台导航、知识库主要操作、问答与会话历史、Ask 策略和运行中心概览。
@@ -256,11 +256,13 @@ UI/UX Pro Max 的 Productivity Tool、Minimalism & Swiss Style、Data-Dense Dash
 Uno 已选定 D「对向交错」符号，透明底 SVG、黑白资产与图标由同一母版生成；待最终视觉验收和发布。
 验收范围见下文，不将主题自动生效等同于全部页面重构。
 
-首页使用同一套主题、字体、圆角和基础控件。首屏以 UnoRAG 为 H1，提供有真实条文依据的只读示例：
-回答、引用原文与概念处理路径可以切换，不接入模型、业务写接口或后台统计。示例来自版本化员工手册，
-不伪装成实时业务请求。后续分区展示当前知识库、请求诊断和真实安装入口，不继续使用过时的控制面/HMAC 文案。
-产品截图由当前组件配合合成资料生成，分别提供浅深色和原尺寸查看；使用静态图片导入的内容哈希避免旧截图缓存。
-不把截图里的示例耗时和用量当作性能承诺。标志、favicon 与规范板均由单一 SVG 主源派生，见品牌规范。
+首页使用同一套主题、字体、圆角和基础控件。首屏以核心价值主张为 H1（如「让内部资料，成为可核对的答案」），
+下方呈现由离线独立 Remotion 工程（`tools/landing-video/`，不进入生产镜像与运行时依赖，保持主仓库 Apache-2.0 纯净）
+批量渲染的中英双语 × 浅深双色产品动效短片及高清静态 Poster（`public/landing-media/`），并紧接有真实条文依据的
+只读交互示例 `EvidenceExplorer`：回答、引用原文与概念处理路径可切换，不接入模型、业务写接口或后台统计；
+系统开启 `prefers-reduced-motion` 时自动停用视频自动播放并直接展示高清 Poster。后续分区展示文档治理、
+滚动逐词点亮宣言、请求诊断和带一键复制的 Docker Compose 安装入口与 6 条选型 FAQ。
+不把示例中的耗时和用量当作性能承诺。标志、favicon 与规范板均由单一 SVG 主源派生，见品牌规范。
 
 - 工作区设置按“问答策略 / 成员与邀请 / 集成密钥 / 通知 / 服务信息”分区，保留原入口和权限，不大幅改变 URL 以适配排版。
 - 工作区设置保留 `#ask-settings`、`#members`、`#integrations`、`#notifications`、`#service`
@@ -298,10 +300,10 @@ Uno 已选定 D「对向交错」符号，透明底 SVG、黑白资产与图标�
 
 ### 配色与材质
 
-工作台不被 Logo 或青绿色约束，内置 tweakcn 的 **Vercel（默认）、Claude、Violet Bloom**
-三套主题，不再保留临时的中性/蓝色选项。主题与“浅色 / 深色 / 跟随系统”、圆角分别选择。
+工作台不被 Logo 或青绿色约束，内置 tweakcn 的 **Vercel（默认）、Modern Minimal、Claude、Violet Bloom**
+四套主题，不再保留临时的中性/蓝色选项。主题与“浅色 / 深色 / 跟随系统”、圆角分别选择。
 不是只替换主色：背景、文字、浮层、侧栏、图表和阴影跟随预设；失败、成功、告警仍保持产品语义。
-Vercel 是高对比黑白，Claude 是暖白与陶土强调，Violet Bloom 是中性表面与紫色强调。
+Vercel 是高对比黑白，Modern Minimal 是冷静科技蓝，Claude 是暖白与陶土强调，Violet Bloom 是中性表面与紫色强调。
 
 主题已在本地源码接入，尚未随版本发布，也不表示全站页面重构完成。官方注册表 JSON 快照保留在
 `src/styles/themes/`；`src/styles/themes.css` 由脚本生成，产品诊断色和几何规则在
@@ -330,20 +332,20 @@ Vercel 是高对比黑白，Claude 是暖白与陶土强调，Violet Bloom 是�
 
 ### 主题扩展与圆角
 
-外观入口位于顶部调色板按钮及登录页。圆角使用 **0–8px 滑块、0.5px 步进、默认 4px**，
-拖动时即时应用；同时提供数值输入，失焦或 Enter 时提交，空值恢复当前值，越界值限制到有效范围。
-滑块支持方向键及 Home/End，数值输入提供不依赖拖拽的操作方式。旧三档偏好按 0/4/8px 迁移。
-由根 `--radius` 映射控件和浮层，最大常规圆角不超过 8px；不随主题覆盖圆角、间距、控件尺寸、
+外观入口位于顶部调色板按钮及登录页。圆角支持 **「跟随预设」（Vercel 4px / Modern Minimal 6px / Claude 8px / Violet Bloom 12px）与自定义（快捷档位 0 / 4 / 6 / 8 / 12px + 0–12px、0.5px 步进滑块与精确数值输入）**，
+拖动或切换主题时即时应用；数值输入在失焦或 Enter 时提交，空值恢复当前值，越界值限制到有效范围。
+滑块支持方向键及 Home/End，数值输入与快捷档位提供不依赖拖拽的操作方式。旧三档偏好按 0/4/8px 迁移。
+由根 `--radius` 映射控件和浮层，最大常规圆角不超过 12px；不随主题覆盖间距、控件尺寸、
 状态点/头像等必要圆形，也不覆盖有明确语义的 `rounded-none`。不支持任意 CSS 或远程主题注入。
 
 主题标识、名称集中在 `src/lib/appearance.ts`；预览与页面共用生成的色阶，不手抄一套缩略图颜色。
 生成的 CSS 按根 `data-color-theme` 和局部 `data-theme-preview` 定义，
-明暗仍使用 `.dark`。来源为 `https://tweakcn.com/r/themes/{vercel,claude,violet-bloom}.json`，
+明暗仍使用 `.dark`。来源为 `https://tweakcn.com/r/themes/{vercel,modern-minimal,claude,violet-bloom}.json`，
 源码及许可说明保留在仓库，不在运行时执行 `shadcn add` 或加载远程主题；CLI 直接添加只会覆写当前
 一套全局变量，不能代替产品的多预设切换。更新快照后运行 `pnpm themes:generate`，
 `pnpm themes:check` 与测试防止源数据/生成物漂移。官方 tracking、spacing、radius 不导入；
 保持字距 0、4px 间距体系和用户圆角。无效或旧临时主题标识回退 Vercel，仍保留有效圆角。
-`overrides.json` 明确记录可访问性调整：Claude 浅色次要文字/陶土强调加深、深色强调提亮并使用深色按钮文字，
+`overrides.json` 明确记录可访问性与深色适配调整：Claude 浅色次要文字/陶土强调加深并统一暖灰 `sidebar-border`；深色强调提亮并使用深色按钮文字，同时修正上游快照中未反转的亮色 `sidebar-border` / `secondary` / `sidebar-ring`，
 引用另用更亮的同色阶，保证引用悬停/高亮浅底仍可读；
 Violet Bloom 深色强调提亮并使用深色按钮文字、侧栏选中文字提亮，浅色 accent 文字略加深。
 保留原始 JSON 不改写，避免把产品适配误称为官方原值；真实浏览器测量关键文字/背景组合至少 4.5:1。

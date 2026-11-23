@@ -18,7 +18,7 @@ for (const { locale, language, heading } of [
 	});
 }
 
-test("manual selection persists across routes, and system clears the override", async ({
+test("manual selection persists across routes and can switch back", async ({
 	page,
 }) => {
 	await page.goto("/login");
@@ -30,6 +30,9 @@ test("manual selection persists across routes, and system clears the override", 
 	await page.getByRole("button", { name: "登录", exact: true }).click();
 	await expect(page.locator("#login-error")).toHaveText("邮箱或密码不正确");
 	await page.getByRole("button", { name: "界面语言" }).click();
+	await expect(
+		page.getByRole("menuitemradio", { name: "简体中文" }),
+	).toBeChecked();
 	await page.getByRole("menuitemradio", { name: "English" }).click();
 	await expect(page.locator("html")).toHaveAttribute("lang", "en");
 	await expect(page.getByLabel("Email", { exact: true })).toHaveValue(
@@ -51,9 +54,10 @@ test("manual selection persists across routes, and system clears the override", 
 		page.getByRole("heading", { name: "Reset password" }),
 	).toBeVisible();
 	await page.getByRole("button", { name: "Interface language" }).click();
-	await page
-		.getByRole("menuitemradio", { name: "Use system language" })
-		.click();
+	await expect(
+		page.getByRole("menuitemradio", { name: "English" }),
+	).toBeChecked();
+	await page.getByRole("menuitemradio", { name: "简体中文" }).click();
 	await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
 	await expect(page.getByRole("heading", { name: "重置密码" })).toBeVisible();
 });

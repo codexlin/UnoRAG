@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AuthButton } from "@/components/app/auth-button";
+import { LedgerTable } from "@/components/app/ledger-table";
 import {
 	type DocActionContext,
 	resolveDocActions,
@@ -34,11 +35,9 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import {
-	Table,
 	TableBody,
 	TableCell,
 	TableHead,
-	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
 import type { ApiDocument, ApiLibrary } from "@/lib/api";
@@ -171,9 +170,9 @@ export function LibraryDocumentLedger({
 				</p>
 			) : null}
 
-			<div className="min-h-0 flex-1 px-4 py-5 sm:px-6">
+			<div className="flex min-h-0 flex-1 flex-col px-4 py-5 sm:px-6 md:overflow-hidden">
 				{library && documents.length > 0 ? (
-					<div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+					<div className="mb-3 flex shrink-0 flex-wrap items-end justify-between gap-3">
 						<div>
 							<p className="text-sm font-medium text-foreground">
 								{t("文档", "Documents")}
@@ -196,18 +195,14 @@ export function LibraryDocumentLedger({
 							>
 								<SelectTrigger
 									id="document-task-filter"
-									className="min-h-11 min-w-0"
+									className="h-11 min-w-0 md:h-9"
 								>
 									<SelectValue className="min-w-0 truncate" />
 								</SelectTrigger>
 								<SelectContent>
 									<SelectGroup>
 										{taskFilterOptions.map((option) => (
-											<SelectItem
-												key={option.value}
-												value={option.value}
-												className="min-h-11"
-											>
+											<SelectItem key={option.value} value={option.value}>
 												{option.label}
 											</SelectItem>
 										))}
@@ -226,7 +221,7 @@ export function LibraryDocumentLedger({
 										"搜索显示名或原文件…",
 										"Search by display name or original file…",
 									)}
-									className="h-11 rounded-md pl-8"
+									className="h-11 rounded-md pl-8 md:h-9"
 									aria-label={t("搜索文档", "Search documents")}
 								/>
 							</div>
@@ -342,168 +337,171 @@ export function LibraryDocumentLedger({
 						</Button>
 					</div>
 				) : (
-					<div className="max-w-full overflow-x-auto border-y border-border/80">
-						<Table className="table-fixed xl:table-auto">
-							<TableHeader>
-								<TableRow className="hover:bg-transparent">
-									<TableHead>{t("文档名称", "Document name")}</TableHead>
-									<TableHead className="hidden xl:table-cell">
-										{t("原文件", "Original file")}
-									</TableHead>
-									<TableHead className="w-24 md:w-auto">
-										{t("最近处理", "Latest job")}
-									</TableHead>
-									<TableHead className="hidden text-right xl:table-cell">
-										{t("大小", "Size")}
-									</TableHead>
-									<TableHead className="hidden text-right xl:table-cell">
-										{t("本次片段", "Chunks in this version")}
-									</TableHead>
-									<TableHead className="hidden lg:table-cell">
-										{t("更新时间", "Updated")}
-									</TableHead>
-									<TableHead className="w-16 text-right">
-										{t("操作", "Actions")}
-									</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{filteredDocuments.map((doc) => {
-									const busy = busyDocId === doc.id;
-									const task = documentProcessingView(doc, locale);
-									const actionContext: DocActionContext = {
-										busy,
-										processing: doc.status === "processing",
-										...actions,
-									};
-									return (
-										<TableRow key={doc.id}>
-											<TableCell className="max-w-64 py-3">
-												<button
-													type="button"
-													className="flex min-h-11 w-full min-w-0 items-center gap-2.5 text-left font-medium hover:text-evidence focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-													aria-label={doc.name}
-													onClick={() => actions.onView(doc)}
-												>
-													<FileText
-														className="hidden size-4 shrink-0 text-muted-foreground sm:block"
-														aria-hidden
-													/>
-													<span className="min-w-0">
-														<span
-															className="line-clamp-2 [overflow-wrap:anywhere]"
-															title={doc.name}
-														>
-															{doc.name}
-														</span>
-														{doc.filename !== doc.name ? (
-															<span
-																className="mt-1 block truncate text-xs font-normal text-muted-foreground xl:hidden"
-																title={doc.filename}
-															>
-																{doc.filename}
-															</span>
-														) : null}
-													</span>
-												</button>
-											</TableCell>
-											<TableCell className="hidden max-w-40 xl:table-cell">
-												<span className="text-meta block truncate text-muted-foreground">
-													{doc.filename}
-												</span>
-											</TableCell>
-											<TableCell className="w-24 md:w-auto">
-												<span
-													className={cn(
-														"text-sm",
-														task.failed
-															? "text-destructive"
-															: task.processing
-																? "text-warning-foreground"
-																: task.completed
-																	? "text-cite"
-																	: "text-muted-foreground",
-													)}
-												>
-													{task.label}
-												</span>
-												{task.stage ? (
-													<span className="mt-1 block break-words text-xs text-muted-foreground">
-														{stageDisplayName(task.stage)}
-													</span>
-												) : null}
-												{doc.status === "degraded" ? (
-													<span className="mt-1 block text-xs text-warning-foreground">
-														{t("解析降级", "Parsing fallback")}
-													</span>
-												) : null}
-											</TableCell>
-											<TableCell className="hidden text-right font-mono text-meta text-muted-foreground xl:table-cell">
-												{formatFileSize(doc.size_bytes)}
-											</TableCell>
-											<TableCell className="hidden text-right font-mono text-meta xl:table-cell">
-												{task.completed ||
-												["ready", "degraded"].includes(doc.status)
-													? doc.chunk_count
-													: "—"}
-											</TableCell>
-											<TableCell className="hidden text-meta font-mono text-muted-foreground lg:table-cell">
-												{formatDateTime(doc.updated_at)}
-											</TableCell>
-											<TableCell className="w-16 text-right">
-												<DropdownMenu>
-													<DropdownMenuTrigger
-														render={
-															<Button
-																variant="ghost"
-																size="icon-sm"
-																className="size-11 rounded-md"
-																disabled={busy}
-															/>
-														}
+					<LedgerTable
+						className="table-fixed"
+						header={
+							<TableRow className="hover:bg-transparent">
+								<TableHead className="w-[44%] 2xl:w-[32%]">
+									{t("文档名称", "Document name")}
+								</TableHead>
+								<TableHead className="hidden 2xl:table-cell 2xl:w-[16%]">
+									{t("原文件", "Original file")}
+								</TableHead>
+								<TableHead className="w-24 md:w-28">
+									{t("最近处理", "Latest job")}
+								</TableHead>
+								<TableHead className="hidden w-20 text-right xl:table-cell">
+									{t("大小", "Size")}
+								</TableHead>
+								<TableHead
+									className="hidden w-20 text-right xl:table-cell"
+									title={t("本次生效片段数", "Chunks in this version")}
+								>
+									{t("片段", "Chunks")}
+								</TableHead>
+								<TableHead className="hidden w-36 lg:table-cell">
+									{t("更新时间", "Updated")}
+								</TableHead>
+								<TableHead className="w-14 text-right">
+									{t("操作", "Actions")}
+								</TableHead>
+							</TableRow>
+						}
+					>
+						<TableBody>
+							{filteredDocuments.map((doc) => {
+								const busy = busyDocId === doc.id;
+								const task = documentProcessingView(doc, locale);
+								const actionContext: DocActionContext = {
+									busy,
+									processing: doc.status === "processing",
+									...actions,
+								};
+								return (
+									<TableRow key={doc.id}>
+										<TableCell className="py-2.5 whitespace-normal">
+											<button
+												type="button"
+												className="flex min-h-11 w-full min-w-0 items-center gap-2.5 text-left font-medium hover:text-evidence focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-9"
+												aria-label={doc.name}
+												onClick={() => actions.onView(doc)}
+											>
+												<FileText
+													className="hidden size-4 shrink-0 text-muted-foreground sm:block"
+													aria-hidden
+												/>
+												<span className="min-w-0">
+													<span
+														className="line-clamp-2 [overflow-wrap:anywhere]"
+														title={doc.name}
 													>
-														<MoreHorizontal />
-														<span className="sr-only">
-															{t("操作", "Actions")}
+														{doc.name}
+													</span>
+													{doc.filename !== doc.name ? (
+														<span
+															className="mt-0.5 block truncate text-xs font-normal text-muted-foreground 2xl:hidden"
+															title={doc.filename}
+														>
+															{doc.filename}
 														</span>
-													</DropdownMenuTrigger>
-													<DropdownMenuContent align="end" className="min-w-40">
-														{resolveDocActions(caps, doc).map((action) => {
-															const Icon = action.icon;
-															return (
-																<div key={action.id}>
-																	{action.separatorBefore ? (
-																		<DropdownMenuSeparator />
-																	) : null}
-																	<DropdownMenuItem
-																		variant={
-																			action.destructive
-																				? "destructive"
-																				: undefined
-																		}
-																		disabled={
-																			action.disabled?.(doc, actionContext) ??
-																			false
-																		}
-																		onClick={() =>
-																			action.run(doc, actionContext)
-																		}
-																	>
-																		<Icon />
-																		{t(...action.label)}
-																	</DropdownMenuItem>
-																</div>
-															);
-														})}
-													</DropdownMenuContent>
-												</DropdownMenu>
-											</TableCell>
-										</TableRow>
-									);
-								})}
-							</TableBody>
-						</Table>
-					</div>
+													) : null}
+												</span>
+											</button>
+										</TableCell>
+										<TableCell className="hidden 2xl:table-cell">
+											<span className="text-meta block truncate text-muted-foreground">
+												{doc.filename}
+											</span>
+										</TableCell>
+										<TableCell>
+											<span
+												className={cn(
+													"text-sm",
+													task.failed
+														? "text-destructive"
+														: task.processing
+															? "text-warning-foreground"
+															: task.completed
+																? "text-cite"
+																: "text-muted-foreground",
+												)}
+											>
+												{task.label}
+											</span>
+											{task.stage ? (
+												<span className="mt-0.5 block break-words text-xs text-muted-foreground">
+													{stageDisplayName(task.stage, locale)}
+												</span>
+											) : null}
+											{doc.status === "degraded" ? (
+												<span className="mt-0.5 block text-xs text-warning-foreground">
+													{t("解析降级", "Parsing fallback")}
+												</span>
+											) : null}
+										</TableCell>
+										<TableCell className="hidden text-right font-mono text-meta tabular-nums text-muted-foreground xl:table-cell">
+											{formatFileSize(doc.size_bytes)}
+										</TableCell>
+										<TableCell className="hidden text-right font-mono text-meta tabular-nums xl:table-cell">
+											{task.completed ||
+											["ready", "degraded"].includes(doc.status)
+												? doc.chunk_count
+												: "—"}
+										</TableCell>
+										<TableCell className="hidden font-mono text-meta tabular-nums text-muted-foreground lg:table-cell">
+											{formatDateTime(doc.updated_at)}
+										</TableCell>
+										<TableCell className="text-right">
+											<DropdownMenu>
+												<DropdownMenuTrigger
+													render={
+														<Button
+															variant="ghost"
+															size="icon"
+															className="size-11 rounded-md md:size-9"
+															disabled={busy}
+														/>
+													}
+												>
+													<MoreHorizontal />
+													<span className="sr-only">
+														{t("操作", "Actions")}
+													</span>
+												</DropdownMenuTrigger>
+												<DropdownMenuContent align="end" className="min-w-40">
+													{resolveDocActions(caps, doc).map((action) => {
+														const Icon = action.icon;
+														return (
+															<div key={action.id}>
+																{action.separatorBefore ? (
+																	<DropdownMenuSeparator />
+																) : null}
+																<DropdownMenuItem
+																	variant={
+																		action.destructive
+																			? "destructive"
+																			: undefined
+																	}
+																	disabled={
+																		action.disabled?.(doc, actionContext) ??
+																		false
+																	}
+																	onClick={() => action.run(doc, actionContext)}
+																>
+																	<Icon />
+																	{t(...action.label)}
+																</DropdownMenuItem>
+															</div>
+														);
+													})}
+												</DropdownMenuContent>
+											</DropdownMenu>
+										</TableCell>
+									</TableRow>
+								);
+							})}
+						</TableBody>
+					</LedgerTable>
 				)}
 			</div>
 		</>
