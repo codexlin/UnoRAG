@@ -4,8 +4,7 @@ import { canManageMembers } from "../../lib/server/workspace-permissions.mjs";
 import {
 	type WorkspaceNotificationScope,
 	type WorkspaceNotificationsView,
-	workspaceAlertThresholdsSchema,
-	workspaceEmailSettingsSchema,
+	workspaceNotificationsPatchSchema,
 } from "../../lib/workspace-notifications";
 import {
 	WorkspaceNotificationError,
@@ -33,17 +32,7 @@ type Dependencies = {
 };
 
 const versionSchema = z.strictObject({ version: z.number().int().min(0) });
-const saveSchema = versionSchema
-	.extend({
-		settings: workspaceEmailSettingsSchema,
-		alert_thresholds: workspaceAlertThresholdsSchema.optional(),
-		alert_policy_version: z.number().int().min(0).optional(),
-	})
-	.refine(
-		(value) =>
-			(value.alert_thresholds === undefined) ===
-			(value.alert_policy_version === undefined),
-	);
+const saveSchema = workspaceNotificationsPatchSchema;
 
 const errorMessages: Record<string, string> = {
 	workspace_not_found: "工作区不存在或已停用",
@@ -135,14 +124,22 @@ export function createWorkspaceNotificationHandlers(deps: Dependencies) {
 			const command = {
 				...scope,
 				actorId: identity.principalId,
-				expectedVersion: validated.data.version,
 			};
-			if (action === "test") return json(await deps.test(command), 202);
-			const { settings, alert_thresholds, alert_policy_version } =
+			if (action === "test")
+				return json(
+					await deps.test({
+						...command,
+						expectedVersion: versionSchema.parse(validated.data).version,
+					}),
+					202,
+				);
+			const { version, settings, alert_thresholds, alert_policy_version } =
 				saveSchema.parse(validated.data);
 			await deps.save({
 				...command,
-				settings,
+				...(settings === undefined
+					? {}
+					: { settings, expectedVersion: version }),
 				...(alert_thresholds === undefined
 					? {}
 					: {

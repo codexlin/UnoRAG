@@ -401,6 +401,9 @@ export class NativeAskRuntime {
 			: filters(state);
 		const retrieveOptions = {
 			...askRetrievalOptions(this.policy, isRetryAttempt),
+			minimumEvidenceScore: input.applyEvidenceThreshold
+				? this.evidenceThreshold()
+				: undefined,
 			preserveFigureLineage: !input.tableOnly && state.query_type !== "compare",
 			lineageMinScore: this.evidenceThreshold(),
 			...(this.includeTraceDetails

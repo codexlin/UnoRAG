@@ -10,6 +10,7 @@ import {
 	DocumentIRSchema,
 } from "../../src/core/document-ir";
 import {
+	buildChunkingProfile,
 	buildIndexPayloads,
 	buildSectionRecords,
 	buildTableRecords,
@@ -148,6 +149,95 @@ test("character overlap can override the token overlap without changing the v2 s
 	assert.equal(automatic[1]?.body, text.slice(340, 740));
 	assert.equal(explicit[0]?.body, text.slice(0, 400));
 	assert.equal(explicit[1]?.body, text.slice(388, 788));
+});
+
+test("oversized character overlap is bounded by the effective token window with useful forward progress", async () => {
+	const text = Array.from({ length: 900 }, (_, index) =>
+		String.fromCodePoint(0x4e00 + index),
+	).join("");
+	for (const profileName of [
+		"precise",
+		"balanced",
+		"narrative",
+		"table_heavy",
+	] as const) {
+		const chunks = await chunkDocument(
+			documentWithNodes([{ id: "prose", type: "paragraph", text }]),
+			{ profileName, chunkOverlap: 100_000 },
+		);
+		const target = profileName === "precise" ? 260 : 400;
+		assert.equal(chunks[0].body, text.slice(0, target));
+		assert.equal(chunks[1].body, text.slice(target / 2, target * 1.5));
+		assert.ok(chunks.length <= Math.ceil(text.length / (target / 2)));
+		assert.ok(chunks.every(({ body }) => estimateTokens(body) <= target));
+		let covered = "";
+		for (const { body } of chunks) {
+			const start = text.indexOf(body);
+			assert.ok(start <= covered.length);
+			covered = text.slice(0, start + body.length);
+		}
+		assert.equal(covered, text);
+	}
+});
+
+test("non-finite internal overlap overrides fall back to the unchanged profile defaults", async () => {
+	const text = "abc🙂xyz𠮷".repeat(160);
+	for (const chunkSize of [undefined, 201]) {
+		const baseline = await chunkDocument(
+			documentWithNodes([{ id: "prose", type: "paragraph", text }]),
+			{ chunkSize },
+		);
+		for (const chunkOverlap of [
+			Number.NaN,
+			Number.POSITIVE_INFINITY,
+			Number.NEGATIVE_INFINITY,
+		]) {
+			const profile = buildChunkingProfile({ chunkSize, chunkOverlap });
+			assert.equal(Number.isNaN(profile.overlapChars), false);
+			assert.ok(
+				Number.isFinite(profile.overlapChars) ||
+					Number.isFinite(profile.overlapTokens),
+			);
+			assert.deepEqual(
+				await chunkDocument(
+					documentWithNodes([{ id: "prose", type: "paragraph", text }]),
+					{ chunkSize, chunkOverlap },
+				),
+				baseline,
+			);
+		}
+	}
+});
+
+test("default v2 profile windows and token overlap remain byte-for-byte unchanged", async () => {
+	const text = Array.from({ length: 900 }, (_, index) =>
+		String.fromCodePoint(0x4e00 + index),
+	).join("");
+	for (const profileName of [
+		"precise",
+		"balanced",
+		"narrative",
+		"table_heavy",
+	] as const) {
+		const chunks = await chunkDocument(
+			documentWithNodes([{ id: "prose", type: "paragraph", text }]),
+			{ profileName },
+		);
+		const expected =
+			profileName === "precise"
+				? [
+						text.slice(0, 260),
+						text.slice(200, 460),
+						text.slice(400, 660),
+						text.slice(600, 860),
+						text.slice(800),
+					]
+				: [text.slice(0, 400), text.slice(340, 740), text.slice(680)];
+		assert.deepEqual(
+			chunks.map(({ body }) => body),
+			expected,
+		);
+	}
 });
 
 test("auto profile counts non-whitespace table volume and explicit profiles override it", async () => {

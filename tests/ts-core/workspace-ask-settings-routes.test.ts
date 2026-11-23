@@ -123,7 +123,7 @@ test("only a workspace admin can change retrieval settings, applied on the next 
 	});
 	assert.deepEqual(await retrieve(true), {
 		hybridEnabled: false,
-		rerankEnabled: true,
+		rerankEnabled: false,
 	});
 
 	assert.equal((await patch({ hybrid_retrieval: "on" })).status, 200);
@@ -133,7 +133,7 @@ test("only a workspace admin can change retrieval settings, applied on the next 
 	});
 	assert.deepEqual(await retrieve(true), {
 		hybridEnabled: true,
-		rerankEnabled: true,
+		rerankEnabled: false,
 	});
 
 	assert.equal(

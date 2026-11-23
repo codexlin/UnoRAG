@@ -37,6 +37,7 @@ import {
 	type EmailDeliveryView,
 	type WorkspaceAlertThresholds,
 	type WorkspaceEmailSettings,
+	type WorkspaceNotificationsPatch,
 	type WorkspaceNotificationsView,
 	workspaceAlertLatencyOrderIsValid,
 	workspaceAlertThresholdsSchema,
@@ -294,7 +295,7 @@ function NotificationsPanel({
 	const pollUntil = useRef(Date.now() + pollWindowMs);
 	const [awaitingTest, setAwaitingTest] = useState<Set<string> | null>(null);
 	const [draft, setDraft] = useState<{
-		settings: WorkspaceEmailSettings;
+		settings: Partial<WorkspaceEmailSettings>;
 		version: number;
 		thresholds: AlertDraft;
 		alertPolicyVersion: number;
@@ -345,10 +346,14 @@ function NotificationsPanel({
 		},
 	});
 	const view = query.data;
-	const settings = draft?.settings ?? view?.settings;
-	const thresholds =
-		draft?.thresholds ?? alertDraft(view?.alert_thresholds ?? {});
-	const recipientIds = draft?.recipientIds ?? view?.settings.recipients ?? [];
+	const settings = view ? { ...view.settings, ...draft?.settings } : undefined;
+	const thresholds = {
+		...alertDraft(view?.alert_thresholds ?? {}),
+		...draft?.thresholds,
+	};
+	const recipientIds = draft?.settings.recipients
+		? draft.recipientIds
+		: (view?.settings.recipients ?? []);
 	const thresholdsDirty = Boolean(
 		draft &&
 			view &&
@@ -358,11 +363,10 @@ function NotificationsPanel({
 					String(view.alert_thresholds[field] ?? ""),
 			),
 	);
-	const dirty = Boolean(
-		thresholdsDirty ||
-			(draft &&
-				JSON.stringify(draft.settings) !== JSON.stringify(view?.settings)),
+	const emailDirty = Boolean(
+		draft && JSON.stringify(settings) !== JSON.stringify(view?.settings),
 	);
+	const dirty = thresholdsDirty || emailDirty;
 	const versionChanged = Boolean(
 		draft &&
 			view &&
@@ -425,12 +429,7 @@ function NotificationsPanel({
 	}
 
 	const save = useMutation({
-		mutationFn: async (payload: {
-			version: number;
-			settings: WorkspaceEmailSettings;
-			alert_thresholds?: WorkspaceAlertThresholds;
-			alert_policy_version?: number;
-		}) => {
+		mutationFn: async (payload: WorkspaceNotificationsPatch) => {
 			await queryClient.cancelQueries({ queryKey, exact: true });
 			return readView(
 				await fetch(endpoint, {
@@ -518,10 +517,25 @@ function NotificationsPanel({
 		nextThresholds = thresholds,
 	) {
 		if (!settings || !view || busy || unavailable) return;
+		const changes = { ...draft?.settings, ...patch };
+		for (const field of Object.keys(
+			patch,
+		) as (keyof WorkspaceEmailSettings)[]) {
+			if (
+				JSON.stringify(changes[field]) === JSON.stringify(view.settings[field])
+			)
+				delete changes[field];
+		}
 		setDraft({
-			settings: { ...settings, ...patch },
+			settings: changes,
 			version: draft?.version ?? view.version,
-			thresholds: nextThresholds,
+			thresholds: Object.fromEntries(
+				ALERT_FIELDS.filter(
+					({ field }) =>
+						(nextThresholds[field] ?? "") !==
+						String(view.alert_thresholds[field] ?? ""),
+				).map(({ field }) => [field, nextThresholds[field] ?? ""]),
+			),
 			alertPolicyVersion:
 				draft?.alertPolicyVersion ?? view.alert_policy_version,
 			recipientIds: ids,
@@ -617,8 +631,12 @@ function NotificationsPanel({
 						setError(null);
 						setNotice(null);
 						save.mutate({
-							version: draft?.version ?? view.version,
-							settings: validation.data,
+							...(emailDirty
+								? {
+										version: draft?.version ?? view.version,
+										settings: validation.data,
+									}
+								: {}),
 							...(thresholdsDirty && thresholdValidation.success
 								? {
 										alert_thresholds: thresholdValidation.data,

@@ -3,9 +3,8 @@ import "server-only";
 import { QdrantClient } from "@qdrant/js-client-rest";
 
 import {
-	DEFAULT_LLM_BASE_URL,
-	resolveLlmApiKey,
-	resolveLlmBaseUrl,
+	modelProviderOverrideFromEnv,
+	rerankProviderFromEnv,
 } from "@/core/ai/model-environment";
 
 import {
@@ -52,12 +51,8 @@ let runtime: DefaultRetrievalService | undefined;
 
 export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 	if (runtime) return runtime;
-	const apiKey = resolveLlmApiKey();
-	if (!apiKey) {
-		throw new Error(
-			"LLM_API_KEY (or OPENAI_API_KEY / DASHSCOPE_API_KEY) is required for TypeScript retrieval",
-		);
-	}
+	const embeddingProvider = modelProviderOverrideFromEnv("EMBEDDING");
+	const rerankProvider = rerankProviderFromEnv();
 	const qdrantTimeoutMs = positiveInteger("QDRANT_TIMEOUT_MS", 5_000);
 	const qdrant = new QdrantClient({
 		url: required("QDRANT_URL", "http://localhost:6333"),
@@ -76,8 +71,7 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 	// Observe the chained rejection until the store can await the contract.
 	void vectorSchema.catch(() => undefined);
 	const embeddings = new OpenAICompatibleEmbeddingProvider({
-		apiKey,
-		baseUrl: resolveLlmBaseUrl() ?? DEFAULT_LLM_BASE_URL,
+		...embeddingProvider,
 		model: required("EMBEDDING_MODEL", "text-embedding-v3"),
 		dimensions,
 		batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
@@ -85,15 +79,13 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 	});
 	const rerankEnabled = enabled("TS_RETRIEVAL_RERANK_ENABLED");
 	const hybridEnabled = enabled("TS_RETRIEVAL_HYBRID_ENABLED", true);
-	const reranker = new OpenAICompatibleRerankProvider({
-		apiKey,
-		baseUrl: required(
-			"RERANK_BASE_URL",
-			"https://dashscope.aliyuncs.com/compatible-api/v1",
-		),
-		model: required("RERANK_MODEL", "qwen3-rerank"),
-		timeoutMs: positiveInteger("RERANK_TIMEOUT_MS", 10_000),
-	});
+	const reranker = rerankProvider
+		? new OpenAICompatibleRerankProvider({
+				...rerankProvider,
+				model: required("RERANK_MODEL", "qwen3-rerank"),
+				timeoutMs: positiveInteger("RERANK_TIMEOUT_MS", 10_000),
+			})
+		: null;
 	runtime = new DefaultRetrievalService(
 		embeddings,
 		new QdrantRetrievalStore(qdrant, collection, collectionReady, {

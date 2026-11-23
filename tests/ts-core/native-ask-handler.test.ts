@@ -2246,6 +2246,372 @@ test("LLM pressure failures return stable retryable 503 outcomes", async () => {
 	}
 });
 
+for (const mode of ["sync", "stream"] as const) {
+	for (const revoked of ["session", "candidate-only"] as const) {
+		test(`${mode} finalize hook ${revoked} revoke is checked at the delivery boundary`, async (t) => {
+			const { handleNativeAskRequest } = await handlerModule;
+			const caller = { ...identity, role: "editor" };
+			const repository = new FakeConversationRepository([activeThread()]);
+			const privatePreview =
+				"private candidate revoked in finalize must not leave";
+			const runId = "77777777-7777-4777-8777-777777777777";
+			let ledgerStatus: FinalizeAskRunInput["status"] | "running" = "running";
+			let finalizeReturned = false;
+			let checksAfterFinalize = 0;
+			const finalizations: FinalizeAskRunInput[] = [];
+			const warnings: unknown[] = [];
+			t.mock.method(logger, "warn", (event: unknown) => {
+				warnings.push(event);
+			});
+			const runs = new AskRunsRepository({
+				async start() {
+					return { id: runId } as never;
+				},
+				async finalize(input) {
+					finalizations.push(input);
+					// Match the real repository: an already-terminal run cannot be finalized again.
+					if (ledgerStatus !== "running") return null;
+					ledgerStatus = input.status;
+					await Promise.resolve();
+					finalizeReturned = true;
+					return { id: runId, status: input.status } as never;
+				},
+				async deleteExpired() {
+					return 0;
+				},
+			});
+			const runtime = Object.assign(
+				new FakeRuntime(askState(), ["Answer [1]"]),
+				{
+					getRetrievalInspections: () => [
+						{
+							references: [
+								{
+									doc_id: "dropped",
+									document_version_id: "dropped-v",
+									generation_id: "dropped-g",
+								},
+							],
+							inspection: {
+								query: "question",
+								candidates: [{ id: "dropped", preview: privatePreview }],
+							},
+						},
+					],
+				},
+			);
+			const response = await handleNativeAskRequest({
+				request: request(
+					{
+						question: "question",
+						library_id: LIBRARY_ID,
+						thread_id: THREAD_ID,
+						include_trace_details: true,
+					},
+					mode,
+				),
+				path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+				identity: caller,
+				repository: repositoryInput(repository),
+				askRunsRepository: runs,
+				resolveLibrary: async () => ({ id: "db-library" }),
+				runtimeFactory: runtimeFactory(runtime),
+				authorization: {
+					refreshIdentity: async () => {
+						if (finalizeReturned) checksAfterFinalize += 1;
+						return finalizeReturned && revoked === "session" ? null : caller;
+					},
+					resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
+					citationAuthorizer: {
+						filterAuthorized: async ({ citations }) =>
+							finalizeReturned && revoked === "candidate-only"
+								? citations.filter((citation) => citation.doc_id !== "dropped")
+								: citations,
+					},
+				},
+			});
+			assert.ok(response);
+			const text = await response.text();
+			assert.equal(text.includes(privatePreview), false);
+			assert.equal(text.includes('"retrieval_inspection"'), false);
+			if (revoked === "session") {
+				if (mode === "sync") {
+					assert.equal(response.status, 403);
+					const body = JSON.parse(text);
+					assert.equal(body.code, "ask_access_changed");
+					assert.equal("answer" in body, false);
+				} else {
+					const frames = parseSse(text);
+					const last = frames.at(-1);
+					assert.ok(last);
+					assert.equal(last.event, "error");
+					assert.equal(
+						(last.data as { code: string }).code,
+						"ask_access_changed",
+					);
+					assert.equal(
+						frames.some((frame) => frame.event === "done"),
+						false,
+					);
+				}
+				assert.equal(repository.boundaries.length, 1);
+				assert.deepEqual(warnings, [
+					{
+						event: "ask.delivery.authorization_failed_after_finalize",
+						run_id: runId,
+						finalize_status_attempted: "completed",
+						error_code: "ask_access_changed",
+						ledger_reclassified: false,
+					},
+				]);
+			} else {
+				assert.equal(response.status, 200);
+				if (mode === "sync")
+					assert.equal(JSON.parse(text).answer, "Answer [1]");
+				else {
+					const frames = parseSse(text);
+					const last = frames.at(-1);
+					assert.ok(last);
+					assert.equal(last.event, "done");
+					assert.equal((last.data as { answer: string }).answer, "Answer [1]");
+				}
+				assert.equal(repository.boundaries.length, 0);
+				assert.deepEqual(warnings, []);
+			}
+			assert.equal(repository.exchanges.length, 1);
+			assert.equal(finalizeReturned, true);
+			assert.ok(checksAfterFinalize > 0);
+			assert.equal(ledgerStatus, "completed");
+			assert.deepEqual(
+				finalizations.map(({ status }) => status),
+				["completed"],
+			);
+		});
+	}
+	for (const revoked of ["session", "library", "answer"] as const) {
+		test(`${mode} final trace check cannot hide ${revoked} revocation`, async () => {
+			const { handleNativeAskRequest } = await handlerModule;
+			const caller = { ...identity, role: "editor" };
+			const repository = new FakeConversationRepository([activeThread()]);
+			const runs = askRunRecorder();
+			let finalCheck = false;
+			const runtime = Object.assign(
+				new FakeRuntime(askState(), ["Private answer [1]"]),
+				{
+					getRetrievalInspections() {
+						finalCheck = true;
+						return [];
+					},
+				},
+			);
+			const response = await handleNativeAskRequest({
+				request: request(
+					{
+						question: "question",
+						library_id: LIBRARY_ID,
+						thread_id: THREAD_ID,
+						include_trace_details: true,
+					},
+					mode,
+				),
+				path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+				identity: caller,
+				repository: repositoryInput(repository),
+				askRunsRepository: runs.repository,
+				resolveLibrary: async () => ({ id: "db-library" }),
+				runtimeFactory: runtimeFactory(runtime),
+				authorization: {
+					refreshIdentity: async () =>
+						finalCheck && revoked === "session" ? null : caller,
+					resolveLibrary: (async () =>
+						finalCheck && revoked === "library"
+							? null
+							: { id: LIBRARY_ID }) as never,
+					citationAuthorizer: {
+						filterAuthorized: async ({ citations }) =>
+							finalCheck && revoked === "answer" ? [] : citations,
+					},
+				},
+			});
+			assert.ok(response);
+			if (mode === "sync") {
+				assert.equal(response.status, 403);
+				const body = await response.json();
+				assert.equal(body.code, "ask_access_changed");
+				assert.equal("answer" in body, false);
+			} else {
+				const frames = parseSse(await response.text());
+				const last = frames.at(-1);
+				assert.ok(last);
+				assert.equal(last.event, "error");
+				assert.equal(
+					(last.data as { code: string }).code,
+					"ask_access_changed",
+				);
+				assert.equal(
+					frames.some((frame) => frame.event === "done"),
+					false,
+				);
+			}
+			assert.equal(finalCheck, true);
+			assert.equal(repository.exchanges.length, 0);
+			assert.equal(runs.finalizations.at(-1)?.status, "failed");
+		});
+	}
+	test(`${mode} dropped candidate revoked during persistence never reaches final trace`, async () => {
+		const { handleNativeAskRequest } = await handlerModule;
+		const caller = { ...identity, role: "editor" };
+		const repository = new FakeConversationRepository([activeThread()]);
+		const append = repository.appendExchange.bind(repository);
+		let revoked = false;
+		repository.appendExchange = async (...args) => {
+			const result = await append(...args);
+			revoked = true;
+			return result;
+		};
+		const privatePreview = "revoked candidate preview must not leave";
+		const runtime = Object.assign(new FakeRuntime(askState(), ["Answer [1]"]), {
+			getRetrievalInspections: () => [
+				{
+					references: [
+						{
+							doc_id: "dropped",
+							document_version_id: "dropped-v",
+							generation_id: "dropped-g",
+						},
+					],
+					inspection: {
+						query: "question",
+						candidates: [{ id: "dropped", preview: privatePreview }],
+					},
+				},
+			],
+		});
+		const response = await handleNativeAskRequest({
+			request: request(
+				{
+					question: "question",
+					library_id: LIBRARY_ID,
+					thread_id: THREAD_ID,
+					include_trace_details: true,
+				},
+				mode,
+			),
+			path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+			identity: caller,
+			repository: repositoryInput(repository),
+			runtimeFactory: runtimeFactory(runtime),
+			authorization: {
+				refreshIdentity: async () => caller,
+				resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
+				citationAuthorizer: {
+					filterAuthorized: async ({ citations }) =>
+						revoked
+							? citations.filter((c) => c.doc_id !== "dropped")
+							: citations,
+				},
+			},
+		});
+		assert.ok(response);
+		assert.equal(response.status, 200);
+		const body = await response.text();
+		assert.ok(body.includes("Answer [1]"));
+		assert.equal(body.includes(privatePreview), false);
+		assert.equal(body.includes('"retrieval_inspection"'), false);
+		if (mode === "stream") assert.ok(body.includes("event: done"));
+	});
+	test(`${mode} revocation during persistence blocks completion and writes a history boundary`, async () => {
+		const { handleNativeAskRequest } = await handlerModule;
+		const repository = new FakeConversationRepository([activeThread()]);
+		const appendExchange = repository.appendExchange.bind(repository);
+		let authorized = true;
+		repository.appendExchange = async (...args) => {
+			const result = await appendExchange(...args);
+			authorized = false;
+			return result;
+		};
+		const response = await handleNativeAskRequest({
+			request: request(
+				{ question: "question", library_id: LIBRARY_ID, thread_id: THREAD_ID },
+				mode,
+			),
+			path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+			identity,
+			repository: repositoryInput(repository),
+			runtimeFactory: runtimeFactory(
+				new FakeRuntime(askState(), ["Private answer [1]"]),
+			),
+			authorization: {
+				refreshIdentity: async () => (authorized ? identity : null),
+				resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
+				citationAuthorizer: {
+					filterAuthorized: async ({ citations }) => citations,
+				},
+			},
+		});
+		assert.ok(response);
+		if (mode === "sync") {
+			assert.equal(response.status, 403);
+			assert.equal((await response.json()).code, "ask_access_changed");
+		} else {
+			const frames = parseSse(await response.text());
+			assert.equal(frames.at(-1)?.event, "error");
+			assert.equal(
+				frames.some((frame) => frame.event === "done"),
+				false,
+			);
+		}
+		assert.equal(repository.exchanges.length, 1);
+		assert.equal(repository.boundaries.length, 1);
+	});
+	test(`${mode} archive persists only allowed retrieval plan metadata`, async () => {
+		const { handleNativeAskRequest } = await handlerModule;
+		const repository = new FakeConversationRepository([activeThread()]);
+		const marker = "private rewritten question should remain live-only";
+		const response = await handleNativeAskRequest({
+			request: request(
+				{ question: "question", library_id: LIBRARY_ID, thread_id: THREAD_ID },
+				mode,
+			),
+			path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+			identity,
+			repository: repositoryInput(repository),
+			runtimeFactory: runtimeFactory(
+				new FakeRuntime(
+					askState({
+						retrieval_plan: {
+							query_type: "fact",
+							path: "fast",
+							route: "short",
+							filters: { record_type: "text", doc_id: "document-1" },
+							grounded_question: marker,
+							rewritten_queries: [marker],
+							reason: marker,
+							future_content_field: { text: marker },
+						},
+					}),
+					["Answer [1]"],
+				),
+			),
+		});
+		assert.ok(response);
+		assert.equal(response.status, 200);
+		await response.text();
+		assert.equal(repository.exchanges.length, 1);
+		const plan = repository.exchanges[0].input.assistant.debug?.retrieval_plan;
+		assert.equal((plan as Record<string, unknown>).query_type, "fact");
+		assert.equal((plan as Record<string, unknown>).path, "fast");
+		assert.doesNotMatch(
+			JSON.stringify(repository.exchanges),
+			new RegExp(marker),
+		);
+		assert.doesNotMatch(
+			JSON.stringify(repository.debugUpdates),
+			new RegExp(marker),
+		);
+	});
+}
+
 test("revocation after retrieval prevents generation and persistence", async () => {
 	const { handleNativeAskRequest } = await handlerModule;
 	let allowed = true;

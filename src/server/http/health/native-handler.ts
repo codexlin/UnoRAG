@@ -2,11 +2,24 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 
-import { resolveLlmApiKey } from "@/core/ai/model-environment";
-import { QdrantEmbeddingDimensionMismatchError } from "@/core/retrieval/qdrant/collection-manager";
+import {
+	modelProviderOverrideFromEnv,
+	rerankProviderFromEnv,
+	resolveLlmApiKey,
+} from "@/core/ai/model-environment";
+import {
+	aiConfigFromEnv,
+	judgeAiConfigFromEnv,
+	vlmAiConfigFromEnv,
+} from "@/core/ai/provider-registry";
+import { QdrantCollectionContractError } from "@/core/retrieval/qdrant/collection-manager";
 import { getDatabase } from "@/db";
 import { resolveReleaseInfo } from "@/lib/release-info";
-import { createQdrantHealthCheck } from "@/server/observability/provider-health";
+import { hasActiveDocuments } from "@/server/observability/native-readiness";
+import {
+	createQdrantHealthCheck,
+	modelConfigurationRecovery,
+} from "@/server/observability/provider-health";
 
 type HealthDependencies = {
 	checkDatabase: () => Promise<void>;
@@ -24,8 +37,30 @@ function defaultDependencies(): HealthDependencies {
 		checkDatabase: async () => {
 			await getDatabase().execute(sql`select 1`);
 		},
-		checkQdrant: createQdrantHealthCheck(),
+		checkQdrant: createQdrantHealthCheck(process.env, {
+			hasActiveDocuments: () => hasActiveDocuments(getDatabase()),
+		}),
 	};
+}
+
+function modelConfigurationError(): string | null {
+	for (const [code, resolve] of [
+		["llm_not_configured", () => aiConfigFromEnv()],
+		[
+			"embedding_not_configured",
+			() => modelProviderOverrideFromEnv("EMBEDDING"),
+		],
+		["rerank_not_configured", () => rerankProviderFromEnv()],
+		["judge_not_configured", () => judgeAiConfigFromEnv()],
+		["vlm_not_configured", () => vlmAiConfigFromEnv()],
+	] as const) {
+		try {
+			resolve();
+		} catch {
+			return code;
+		}
+	}
+	return null;
 }
 
 async function buildHealthResponse(
@@ -38,17 +73,18 @@ async function buildHealthResponse(
 	]);
 	const metadataOk = database.status === "fulfilled";
 	const qdrantOk = qdrant.status === "fulfilled";
-	const dimensionMismatch =
+	const contractError =
 		qdrant.status === "rejected" &&
-		qdrant.reason instanceof QdrantEmbeddingDimensionMismatchError
+		qdrant.reason instanceof QdrantCollectionContractError
 			? qdrant.reason
 			: null;
 	const hasLlmKey = Boolean(resolveLlmApiKey());
+	const modelError = hasLlmKey ? modelConfigurationError() : "llm_key_missing";
 	const reasons: string[] = [];
 	if (!metadataOk) reasons.push("metadata_unavailable");
-	if (!qdrantOk) reasons.push(dimensionMismatch?.code ?? "qdrant_unavailable");
-	if (!hasLlmKey) reasons.push("llm_key_missing");
-	const askReady = metadataOk && qdrantOk && hasLlmKey;
+	if (!qdrantOk) reasons.push(contractError?.code ?? "qdrant_unavailable");
+	if (modelError) reasons.push(modelError);
+	const askReady = metadataOk && qdrantOk && !modelError;
 	const chatModel = process.env.CHAT_MODEL?.trim() || "qwen-plus";
 	const release = resolveReleaseInfo(process.env);
 
@@ -76,7 +112,11 @@ async function buildHealthResponse(
 			live_ready: metadataOk,
 			ask_ready: askReady,
 			reasons,
-			...(dimensionMismatch ? { recovery: dimensionMismatch.recovery } : {}),
+			...(contractError
+				? { recovery: contractError.recovery }
+				: modelError
+					? { recovery: modelConfigurationRecovery(modelError) }
+					: {}),
 		},
 		{
 			status:

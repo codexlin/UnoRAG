@@ -139,8 +139,179 @@ test("assistant history compaction keeps Markdown summaries, headings, row count
 	const compactReport = compactHistoryAssistantContent(report);
 	assert.match(compactReport, /^Key findings/);
 	assert.match(compactReport, /## Reconciliation/);
-	assert.doesNotMatch(compactReport, /Deep bullet point/);
+	assert.match(compactReport, /- Deep bullet point\./);
+	assert.ok((compactReport.match(/Deep bullet point/g) ?? []).length <= 12);
+	assert.match(compactReport, /省略.*项/);
 	assert.match(compactReport, /Final recommendation[\s\S]*\[3\]$/);
+});
+
+const longListAnswer = [
+	"Available deployment options:",
+	"",
+	...Array.from(
+		{ length: 10 },
+		(_, index) =>
+			`${index + 1}. Project ${String(index + 1).padStart(2, "0")}: approval required. ${"Detailed compliance checks must be completed before activation. ".repeat(5)}[1]`,
+	),
+].join("\n");
+
+test("long list projection keeps original numbers, object names and a short summary per item", async () => {
+	const [{ compactHistoryAssistantContent }] = await modules;
+	assert.ok(longListAnswer.length > 1_200);
+	const compact = compactHistoryAssistantContent(longListAnswer);
+	assert.ok(compact.length <= 1_200);
+	assert.equal(compact, compactHistoryAssistantContent(longListAnswer));
+	for (let index = 1; index <= 10; index += 1) {
+		assert.ok(
+			compact.includes(
+				`${index}. Project ${String(index).padStart(2, "0")}: approval required.`,
+			),
+		);
+	}
+	assert.ok(
+		compact
+			.split("\n")
+			.filter((line) => /^\d+[.)]\s/.test(line))
+			.every((line) => line.length <= 120),
+	);
+	assert.match(compact, /\[1\]$/);
+	const short = "  3) Project Atlas\r\n  7) Project Boreal [1]\r\n";
+	assert.equal(compactHistoryAssistantContent(short), short);
+});
+
+test("lists share the bounded projection with summary, headings, table headers and conclusion", async () => {
+	const [{ compactHistoryAssistantContent }] = await modules;
+	const mixed = [
+		"## Summary",
+		"Keep the current active generation.",
+		"",
+		"## Candidates",
+		...Array.from(
+			{ length: 6 },
+			(_, index) =>
+				`${index + 3}) Project ${index}: approval required. ${"Lengthy implementation details. ".repeat(20)}`,
+		),
+		"## Costs",
+		"| Option | Budget |",
+		"| --- | ---: |",
+		...Array.from({ length: 50 }, (_, index) => `| Device ${index} | 100 |`),
+		"",
+		"## Conclusion",
+		"Do not activate without approval. [3]",
+	].join("\n");
+	const compact = compactHistoryAssistantContent(mixed);
+	assert.ok(compact.length <= 1_200);
+	for (const text of [
+		"## Summary",
+		"Keep the current active generation.",
+		"## Candidates",
+		"## Costs",
+		"| Option | Budget |",
+		"50 行",
+		"## Conclusion",
+		"Do not activate without approval. [3]",
+	])
+		assert.ok(compact.includes(text), text);
+	for (let index = 0; index < 6; index += 1) {
+		assert.ok(
+			compact.includes(`${index + 3}) Project ${index}: approval required.`),
+		);
+	}
+	assert.doesNotMatch(compact, /Device \d/);
+});
+
+test("very long lists retain only a bounded prefix, mark omissions and preserve UTF-16 budgets", async () => {
+	const [{ compactHistoryAssistantContent }] = await modules;
+	const content = [
+		"## Candidates",
+		...Array.from(
+			{ length: 200 },
+			(_, index) =>
+				`${index + 1}) Project ${index}: ${"🧪 extended details ".repeat(12)}`,
+		),
+		"## Conclusion",
+		"Approval is required. [4]",
+	].join("\n");
+	const compact = compactHistoryAssistantContent(content);
+	assert.match(compact, /1\) Project 0:/);
+	assert.match(compact, /2\) Project 1:/);
+	assert.ok((compact.match(/\d+\) Project/g) ?? []).length <= 12);
+	assert.doesNotMatch(compact, /200\) Project 199/);
+	assert.match(compact, /省略.*项/);
+	assert.match(compact, /## Conclusion[\s\S]*Approval is required\. \[4\]$/);
+	for (const limit of [0, 1, 24, 48, 81, 120, 300, 1_200]) {
+		const projected = compactHistoryAssistantContent(content, limit);
+		assert.ok(projected.length <= limit, `${limit}: ${projected.length}`);
+		assert.equal(projected, projected.toWellFormed());
+	}
+});
+
+test("list projection preserves complete transitive lineage and never reuses a partially revoked exchange", async () => {
+	const [{ authorizeHistory, authorizeArchivedHistory }] = await modules;
+	const sources = [reference("visible"), reference("omitted")];
+	const messages = exchange(
+		provenance(sources),
+		"List the deployment options.",
+		longListAnswer,
+	);
+	const before = structuredClone(messages);
+	const acl = authorizer();
+	const input = { identity, libraryId, citationAuthorizer: acl.value };
+	const temporary = await authorizeHistory({ ...input, messages });
+	const turns = messages.map(({ role, content, provenance: marker }) => ({
+		role,
+		content,
+		status: "complete",
+		debug: { memory_provenance: marker },
+	}));
+	const archived = await authorizeArchivedHistory({ ...input, turns });
+	assert.deepEqual(archived, temporary);
+	assert.ok(
+		temporary.messages[1].content.includes("2. Project 02: approval required."),
+	);
+	assert.deepEqual(temporary.sourceReferences, sources);
+	assert.deepEqual(messages, before);
+	assert.deepEqual(acl.calls[0].citations, sources);
+	const { rewriteFollowup } = await import(
+		"../../src/server/http/ask/followup-rewrite"
+	);
+	const rewritten = await rewriteFollowup(
+		"And the second one?",
+		temporary.messages,
+		async ({ history }) => {
+			assert.ok(
+				history[1].content.includes("2. Project 02: approval required."),
+			);
+			return { resolution: "resolved", subjects: ["Project 02"] };
+		},
+	);
+	assert.ok(rewritten.query.includes("Project 02"));
+	const revoked = authorizer(["document-omitted"]).value;
+	for (const result of [
+		await authorizeHistory({ ...input, messages, citationAuthorizer: revoked }),
+		await authorizeArchivedHistory({
+			...input,
+			turns,
+			citationAuthorizer: revoked,
+		}),
+	])
+		assert.deepEqual(result, { messages: [], sourceReferences: [] });
+});
+
+test("list summaries retain indented continuation text without promoting omitted entries to conclusions", async () => {
+	const [{ compactHistoryAssistantContent }] = await modules;
+	const content = Array.from({ length: 20 }, (_, index) =>
+		[
+			`${index + 1}. Project ${index}`,
+			`  Approval required. ${"Implementation details. ".repeat(10)}`,
+		].join("\n"),
+	).join("\n\n");
+	const compact = compactHistoryAssistantContent(content);
+	assert.ok(compact.length <= 1_200);
+	assert.match(compact, /1\. Project 0 Approval required\./);
+	assert.match(compact, /2\. Project 1 Approval required\./);
+	assert.doesNotMatch(compact, /\[回答内容已压缩\][\s\S]*Approval required/);
+	assert.match(compact, /省略 8 项/);
 });
 
 test("temporary and archived history project three whole turns without changing exact content or lineage", async () => {

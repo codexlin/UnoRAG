@@ -58,6 +58,25 @@ export type WorkspaceAlertThresholds = z.infer<
 	typeof workspaceAlertThresholdsSchema
 >;
 
+export const workspaceNotificationsPatchSchema = z
+	.strictObject({
+		version: z.number().int().min(0).optional(),
+		settings: workspaceEmailSettingsSchema.optional(),
+		alert_thresholds: workspaceAlertThresholdsSchema.optional(),
+		alert_policy_version: z.number().int().min(0).optional(),
+	})
+	.refine(
+		(value) =>
+			(value.settings !== undefined || value.alert_thresholds !== undefined) &&
+			(value.settings === undefined) === (value.version === undefined) &&
+			(value.alert_thresholds === undefined) ===
+				(value.alert_policy_version === undefined),
+	);
+
+export type WorkspaceNotificationsPatch = z.infer<
+	typeof workspaceNotificationsPatchSchema
+>;
+
 export type WorkspaceAlertThresholdDefaults =
 	typeof DEFAULT_ASK_ALERT_THRESHOLDS;
 

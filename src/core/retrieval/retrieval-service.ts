@@ -384,6 +384,7 @@ function inspectCandidates(input: {
 	citations: InternalCitation[];
 	evidenceThreshold: number | null;
 	usedHybrid: boolean;
+	belowThresholdIds?: ReadonlySet<string>;
 }): RetrievalInspectionCandidate[] {
 	const deduplicatedIds = new Set(
 		input.deduplicated.map(({ id }) => String(id)),
@@ -412,7 +413,8 @@ function inspectCandidates(input: {
 		const rank = finalRanks.get(id) ?? null;
 		let outcome: RetrievalInspectionCandidate["outcome"];
 		if (rank !== null) outcome = "selected";
-		else if (citation) outcome = "below_threshold";
+		else if (citation || input.belowThresholdIds?.has(id))
+			outcome = "below_threshold";
 		else if (!deduplicatedIds.has(id)) outcome = "deduped";
 		else if (input.reranked.size && !ranked) outcome = "dropped_rerank";
 		else outcome = "dropped_topk";
@@ -773,6 +775,8 @@ export class DefaultRetrievalService {
 			rerankEnabled?: boolean;
 			preserveFigureLineage?: boolean;
 			lineageMinScore?: number;
+			/** Ask-only selection floor; omit to retain Public Retrieve ranking semantics. */
+			minimumEvidenceScore?: number;
 			expandParentContext?: boolean;
 			includeTraceDetails?: boolean;
 			/** Applied by Ask after Top-K. Used here to describe the trace only. */
@@ -785,6 +789,15 @@ export class DefaultRetrievalService {
 		if (!query) throw new Error("query is required");
 		if (!Number.isInteger(input.topK) || input.topK < 1 || input.topK > 50) {
 			throw new Error("topK must be an integer between 1 and 50");
+		}
+		const minimumEvidenceScore = input.options?.minimumEvidenceScore;
+		if (
+			minimumEvidenceScore !== undefined &&
+			(!Number.isFinite(minimumEvidenceScore) ||
+				minimumEvidenceScore < 0 ||
+				minimumEvidenceScore > 1)
+		) {
+			throw new RangeError("minimumEvidenceScore must be between 0 and 1");
 		}
 		const scope = toRetrievalScope(input.scope, input.libraryId);
 		const filters = toUserFilters(input.filters);
@@ -807,6 +820,7 @@ export class DefaultRetrievalService {
 								input.options?.rerankEnabled ?? this.options.rerankEnabled,
 							preserveFigureLineage: input.options?.preserveFigureLineage,
 							lineageMinScore: input.options?.lineageMinScore,
+							minimumEvidenceScore,
 							expandParentContext,
 							rerankTopK: this.options.rerankTopK,
 							bm25TopK: this.options.bm25TopK,
@@ -874,6 +888,26 @@ export class DefaultRetrievalService {
 				hybridError = errorMessage(error);
 				candidates = dense;
 			}
+		}
+
+		if (usedHybrid && minimumEvidenceScore !== undefined) {
+			// Fusion can omit a strong dense hit. Reuse only this query's authorized dense pool.
+			const fusedIds = new Set(candidates.map(({ id }) => String(id)));
+			candidates = [
+				...candidates,
+				...dense
+					.filter(
+						(hit) =>
+							!fusedIds.has(String(hit.id)) &&
+							semanticEvidenceScore(hit) >= minimumEvidenceScore,
+					)
+					.map((hit) => ({
+						...hit,
+						dense_score: hit.score,
+						rrf_score: null,
+						used_hybrid: true,
+					})),
+			];
 		}
 
 		input.signal?.throwIfAborted();
@@ -959,7 +993,23 @@ export class DefaultRetrievalService {
 
 		input.signal?.throwIfAborted();
 		const afterRerank = countCandidates(candidates);
-		const deduplicated = deduplicateOverlappingHits(candidates);
+		const eligible =
+			minimumEvidenceScore === undefined
+				? candidates
+				: candidates.filter(
+						(hit) => semanticEvidenceScore(hit) >= minimumEvidenceScore,
+					);
+		const belowThresholdIds =
+			includeTraceDetails && minimumEvidenceScore !== undefined
+				? new Set(
+						candidates
+							.filter(
+								(hit) => semanticEvidenceScore(hit) < minimumEvidenceScore,
+							)
+							.map(({ id }) => String(id)),
+					)
+				: undefined;
+		const deduplicated = deduplicateOverlappingHits(eligible);
 		const { selected, restoredFigureCount } = retainFigureCompanion(
 			deduplicated,
 			input.topK,
@@ -992,7 +1042,7 @@ export class DefaultRetrievalService {
 			),
 		);
 		const mode = usedHybrid ? "hybrid" : "dense";
-		const threshold = input.options?.evidenceThreshold;
+		const threshold = input.options?.evidenceThreshold ?? minimumEvidenceScore;
 		const evidenceThreshold =
 			typeof threshold === "number" && Number.isFinite(threshold)
 				? threshold
@@ -1037,6 +1087,7 @@ export class DefaultRetrievalService {
 									citations,
 									evidenceThreshold,
 									usedHybrid,
+									belowThresholdIds,
 								}),
 							},
 						}

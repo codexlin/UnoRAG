@@ -133,6 +133,318 @@ class FakeStore implements RetrievalVectorStore {
 	}
 }
 
+test("Ask threshold selects strong dense evidence before Top-K, including candidates absent from RRF", async () => {
+	for (const missingFromFusion of [false, true]) {
+		const strong = hit({
+			id: "strong",
+			text: "Required answer",
+			chunkIndex: 0,
+			score: 0.9,
+		});
+		const weak = Array.from({ length: 7 }, (_, i) =>
+			hit({
+				id: `weak-${i}`,
+				text: `Weak distractor ${i}`,
+				chunkIndex: i + 1,
+				score: 0.1,
+			}),
+		);
+		const calls: RetrievalScope[] = [];
+		const service = new DefaultRetrievalService(
+			embeddings,
+			{
+				async search(input) {
+					calls.push(input.scope);
+					return [strong, ...weak];
+				},
+				async hybridSearch(input) {
+					calls.push(input.scope);
+					return [...weak, ...(missingFromFusion ? [] : [strong])].map(
+						(candidate, i) => ({ ...candidate, score: 0.03 - i / 1_000 }),
+					);
+				},
+				async listCorpus() {
+					throw new Error("Unexpected corpus fallback");
+				},
+			},
+			null,
+			{
+				hybridEnabled: true,
+				rerankEnabled: false,
+				rerankTopK: 6,
+				bm25TopK: 20,
+				rrfK: 60,
+			},
+		);
+		const result = await service.retrieve({
+			query: "Required answer",
+			libraryId: "library-a",
+			scope,
+			topK: 2,
+			options: { minimumEvidenceScore: 0.4, expandParentContext: false },
+		});
+		assert.deepEqual(
+			result.citations.map(({ id }) => id),
+			["strong"],
+		);
+		assert.equal(semanticEvidenceScore(result.citations[0]), 0.9);
+		assert.deepEqual(calls[0], calls[1]);
+		assert.deepEqual(calls[0]?.activeGenerationIds, scope.activeGenerationIds);
+	}
+});
+
+test("Public Retrieve retains unthresholded RRF order when Ask selection is not requested", async () => {
+	const result = await new DefaultRetrievalService(
+		embeddings,
+		new FakeStore(),
+		null,
+		{
+			hybridEnabled: true,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	).retrieve({ query: "policy", libraryId: "library-a", scope, topK: 3 });
+	assert.deepEqual(
+		result.citations.map(({ id }) => id),
+		["both", "dense", "lexical"],
+	);
+	assert.equal(result.citations[2].dense_score, null);
+});
+
+test("Ask dense safety candidates survive rerank failure but cannot override an explicit weak rerank score", async () => {
+	for (const fails of [true, false]) {
+		const strong = hit({
+			id: "strong",
+			text: "Required answer",
+			chunkIndex: 0,
+			score: 0.9,
+		});
+		const weak = hit({
+			id: "weak",
+			text: "Distractor",
+			chunkIndex: 1,
+			score: 0.1,
+		});
+		const service = new DefaultRetrievalService(
+			embeddings,
+			{
+				async search() {
+					return [strong, weak];
+				},
+				async hybridSearch() {
+					return [{ ...weak, score: 0.03 }];
+				},
+				async listCorpus() {
+					throw new Error("Unexpected corpus fallback");
+				},
+			},
+			{
+				async rerank({ documents }) {
+					assert.ok(documents.includes("Required answer"));
+					if (fails) throw new Error("offline injected failure");
+					return documents.map((_, index) => ({ index, score: 0.2 }));
+				},
+			},
+			{
+				hybridEnabled: true,
+				rerankEnabled: true,
+				rerankTopK: 6,
+				bm25TopK: 20,
+				rrfK: 60,
+			},
+		);
+		const result = await service.retrieve({
+			query: "answer",
+			libraryId: "library-a",
+			scope,
+			topK: 1,
+			options: { minimumEvidenceScore: 0.4, expandParentContext: false },
+		});
+		assert.deepEqual(
+			result.citations.map(({ id }) => id),
+			fails ? ["strong"] : [],
+		);
+		assert.equal(result.debug.rerankFailed, fails);
+	}
+});
+
+test("Ask evidence threshold participates in cache identity without changing unthresholded retrieval", async () => {
+	const service = new DefaultRetrievalService(
+		embeddings,
+		new FakeStore(),
+		null,
+		{
+			hybridEnabled: true,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+			cache: new ScopedRetrievalCache(),
+		},
+	);
+	const retrieve = (minimumEvidenceScore?: number) =>
+		service.retrieve({
+			query: "policy",
+			libraryId: "library-a",
+			scope,
+			topK: 3,
+			options: { minimumEvidenceScore, expandParentContext: false },
+		});
+	assert.equal((await retrieve()).citations.length, 3);
+	assert.deepEqual(
+		(await retrieve(0.75)).citations.map(({ id }) => id),
+		["dense"],
+	);
+	assert.equal((await retrieve(0.85)).citations.length, 0);
+	assert.deepEqual(
+		(await retrieve(0.75)).citations.map(({ id }) => id),
+		["dense"],
+	);
+	assert.equal((await retrieve()).citations.length, 3);
+});
+
+test("Ask threshold does not hide unauthorized dense safety candidates", async () => {
+	const foreign = hit({
+		id: "foreign",
+		text: "foreign",
+		chunkIndex: 0,
+		score: 0.9,
+	});
+	foreign.payload.workspace_id = "workspace-foreign";
+	const store = new FakeStore();
+	store.search = async () => [foreign];
+	const service = new DefaultRetrievalService(embeddings, store, null, {
+		hybridEnabled: true,
+		rerankEnabled: false,
+		rerankTopK: 6,
+		bm25TopK: 20,
+		rrfK: 60,
+	});
+	await assert.rejects(
+		service.retrieve({
+			query: "policy",
+			libraryId: "library-a",
+			scope,
+			topK: 1,
+			options: { minimumEvidenceScore: 0.4 },
+		}),
+		RetrievalSecurityViolationError,
+	);
+});
+
+test("Ask filters before overlap deduplication and classifies removed candidates as below threshold", async () => {
+	const strong = hit({
+		id: "strong",
+		text: "A".repeat(120),
+		chunkIndex: 0,
+		score: 0.8,
+	});
+	const weakTable = hit({
+		id: "weak-table",
+		text: "A".repeat(140),
+		chunkIndex: 1,
+		score: 0.1,
+		recordType: "table",
+	});
+	const lexical = hit({
+		id: "lexical-only",
+		text: "Lexical only",
+		chunkIndex: 2,
+		score: 0.02,
+	});
+	const service = new DefaultRetrievalService(
+		embeddings,
+		{
+			async search() {
+				return [strong, weakTable];
+			},
+			async hybridSearch() {
+				return [weakTable, lexical, strong].map((h, i) => ({
+					...h,
+					score: 0.03 - i / 1000,
+				}));
+			},
+			async listCorpus() {
+				throw new Error("Unexpected corpus fallback");
+			},
+		},
+		null,
+		{
+			hybridEnabled: true,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	const result = await service.retrieve({
+		query: "policy",
+		libraryId: "library-a",
+		scope,
+		topK: 1,
+		options: {
+			minimumEvidenceScore: 0.8,
+			includeTraceDetails: true,
+			expandParentContext: false,
+		},
+	});
+	assert.deepEqual(
+		result.citations.map(({ id }) => id),
+		["strong"],
+	);
+	assert.equal(result.debug.inspection?.evidenceThreshold, 0.8);
+	assert.deepEqual(
+		result.debug.inspection?.candidates.map(({ id, outcome }) => [id, outcome]),
+		[
+			["weak-table", "below_threshold"],
+			["lexical-only", "below_threshold"],
+			["strong", "selected"],
+		],
+	);
+});
+
+test("Ask rejects invalid selection thresholds before querying dependencies", async () => {
+	const neverEmbed: EmbeddingProvider = {
+		async embedQuery() {
+			throw new Error("Unexpected embedding request");
+		},
+		async embedTexts() {
+			throw new Error("Unexpected embedding request");
+		},
+	};
+	const service = new DefaultRetrievalService(
+		neverEmbed,
+		new FakeStore(),
+		null,
+		{
+			hybridEnabled: true,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	for (const minimumEvidenceScore of [
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		-0.01,
+		1.01,
+	]) {
+		await assert.rejects(
+			service.retrieve({
+				query: "policy",
+				libraryId: "library-a",
+				scope,
+				topK: 1,
+				options: { minimumEvidenceScore },
+			}),
+			RangeError,
+		);
+	}
+});
+
 test("inspection captures bounded hybrid candidates, rerank movement, deduplication, threshold and expansion", async () => {
 	const childText = `Payment\n\t terms. ${"A".repeat(400)}`;
 	const parentText = `${childText}\n\n${"B".repeat(500)}`;

@@ -19,6 +19,7 @@ export const integrationTestFiles = [
 	"tests/ts-core/job-stage-runs-postgres.test.ts",
 	"tests/ts-core/invites-postgres.test.ts",
 	"tests/ts-core/library-state-postgres.test.ts",
+	"tests/ts-core/native-readiness-postgres.test.ts",
 	"tests/ts-core/observability-alerting.test.ts",
 	"tests/ts-core/operations-requests-postgres.test.ts",
 	"tests/ts-core/password-onboarding-postgres.test.ts",

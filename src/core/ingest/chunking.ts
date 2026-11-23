@@ -108,7 +108,12 @@ export function buildChunkingProfile(
 		: maxChars;
 	const maxTokens = charSized ? Number.POSITIVE_INFINITY : DEFAULT_MAX_TOKENS;
 	const targetTokens = Math.round(maxTokens * ratio);
-	const charOverlap = options.chunkOverlap ?? (charSized ? 80 : undefined);
+	const charOverlap =
+		options.chunkOverlap !== undefined && Number.isFinite(options.chunkOverlap)
+			? options.chunkOverlap
+			: charSized
+				? 80
+				: undefined;
 	const overlapChars =
 		charOverlap === undefined
 			? Number.POSITIVE_INFINITY
@@ -660,7 +665,13 @@ function recursiveSplit(text: string, profile: ChunkingProfile): string[] {
 			const overlap = sliceTailByTokenBudget(
 				buffer,
 				Math.min(profile.overlapTokens, targetTokens - estimateTokens(part)),
-				Math.min(profile.overlapChars, targetChars - part.length),
+				Math.min(
+					profile.overlapChars,
+					targetChars - part.length,
+					Number.isFinite(profile.overlapChars)
+						? Math.floor(buffer.length / 2)
+						: Number.POSITIVE_INFINITY,
+				),
 			);
 			buffer = overlap + part;
 		} else {
@@ -705,7 +716,14 @@ function budgetWindow(text: string, profile: ChunkingProfile): string[] {
 		const tail = sliceTailByTokenBudget(
 			piece,
 			profile.overlapTokens,
-			Math.min(profile.overlapChars, piece.length - firstWidth),
+			// Character overrides must leave useful progress in the actual token-sized window.
+			Math.min(
+				profile.overlapChars,
+				piece.length - firstWidth,
+				Number.isFinite(profile.overlapChars)
+					? Math.floor(piece.length / 2)
+					: Number.POSITIVE_INFINITY,
+			),
 		);
 		start += piece.length - tail.length;
 	}

@@ -32,6 +32,7 @@ data:
   LLM_MAX_QUEUE: {{ .Values.config.llmMaxQueue | quote }}
   LLM_QUEUE_TIMEOUT_MS: {{ .Values.config.llmQueueTimeoutMs | quote }}
   EMBEDDING_MODEL: {{ .Values.config.embeddingModel | quote }}
+  EMBEDDING_BASE_URL: {{ .Values.config.embeddingBaseUrl | quote }}
   EMBEDDING_DIM: {{ .Values.config.embeddingDim | quote }}
   EMBEDDING_BATCH_SIZE: {{ .Values.config.embeddingBatchSize | quote }}
   EMBEDDING_TIMEOUT_MS: {{ .Values.config.embeddingTimeoutMs | quote }}
@@ -45,7 +46,7 @@ data:
   EXTERNAL_PARSER_ALLOWED: {{ .Values.config.externalParserAllowed | quote }}
   MINERU_MODE: {{ .Values.config.mineruMode | quote }}
   MINERU_VERSION: {{ .Values.config.mineruVersion | quote }}
-  OPENAI_BASE_URL: {{ .Values.config.llmBaseUrl | quote }}
+  LLM_BASE_URL: {{ .Values.config.llmBaseUrl | quote }}
   RERANK_BASE_URL: {{ .Values.config.rerankBaseUrl | quote }}
   QDRANT_URL: {{ .Values.external.qdrant.url | quote }}
   QDRANT_COLLECTION: {{ .Values.external.qdrant.collection | quote }}

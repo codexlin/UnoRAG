@@ -867,18 +867,62 @@ test("judge provider inherits the answer provider unless explicitly overridden",
 		judgeAiConfigFromEnv({
 			...base,
 			JUDGE_BASE_URL: "https://judge.example/v1",
+			JUDGE_API_KEY: "judge-only-key",
 			JUDGE_MODEL: "judge-model",
 			JUDGE_PROVIDER_NAME: "judge-provider",
 			JUDGE_SUPPORTS_STRUCTURED_OUTPUTS: "false",
 		} as NodeJS.ProcessEnv),
 		{
-			apiKey: "test-key",
+			apiKey: "judge-only-key",
 			baseUrl: "https://judge.example/v1",
 			chatModel: "judge-model",
 			includeUsage: true,
 			providerName: "judge-provider",
 			supportsStructuredOutputs: false,
 		},
+	);
+});
+
+test("provider aliases never mix a credential with another namespace's endpoint", () => {
+	assert.throws(
+		() =>
+			aiConfigFromEnv({
+				NODE_ENV: "test",
+				LLM_BASE_URL: "https://gateway-a.example/v1",
+				OPENAI_API_KEY: "gateway-b-only",
+				OPENAI_BASE_URL: "https://gateway-b.example/v1",
+			} as NodeJS.ProcessEnv),
+		AiProviderConfigurationError,
+	);
+	const config = aiConfigFromEnv({
+		NODE_ENV: "test",
+		LLM_API_KEY: "gateway-a-only",
+		OPENAI_API_KEY: "gateway-b-only",
+		OPENAI_BASE_URL: "https://gateway-b.example/v1",
+	} as NodeJS.ProcessEnv);
+	assert.notEqual(config.baseUrl, "https://gateway-b.example/v1");
+});
+
+test("judge endpoint changes require its own credential and same endpoint can inherit", () => {
+	const base = {
+		NODE_ENV: "test" as const,
+		LLM_API_KEY: "gateway-a-only",
+		LLM_BASE_URL: "https://gateway-a.example/v1",
+	};
+	assert.throws(
+		() =>
+			judgeAiConfigFromEnv({
+				...base,
+				JUDGE_BASE_URL: "https://gateway-b.example/v1",
+			} as NodeJS.ProcessEnv),
+		AiProviderConfigurationError,
+	);
+	assert.equal(
+		judgeAiConfigFromEnv({
+			...base,
+			JUDGE_BASE_URL: `${base.LLM_BASE_URL}/`,
+		} as NodeJS.ProcessEnv).apiKey,
+		"gateway-a-only",
 	);
 });
 

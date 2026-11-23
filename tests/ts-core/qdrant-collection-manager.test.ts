@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { QdrantClient } from "@qdrant/js-client-rest";
 import {
+	assertQdrantCollectionSchema,
 	parseQdrantDistance,
 	type QdrantCollectionClient,
 	QdrantCollectionContractError,
@@ -191,6 +192,73 @@ function collectionInfo(input?: {
 		),
 	};
 }
+
+test("shared collection snapshot validation is strict and does not mutate schema", () => {
+	const contract = {
+		collection: "test",
+		vectorSize: 1024,
+		distance: "Cosine" as const,
+	};
+	const info = collectionInfo({
+		indexes: Object.fromEntries(
+			UNORAG_QDRANT_PAYLOAD_INDEXES.map(({ fieldName }) => [
+				fieldName,
+				"keyword" as const,
+			]),
+		),
+	});
+	const snapshot = structuredClone(info);
+	assert.deepEqual(assertQdrantCollectionSchema(info, contract), {
+		denseVectorName: "dense",
+		sparseVectorName: "lexical_v1",
+	});
+	assert.deepEqual(info, snapshot);
+	for (const mutate of [
+		(value: CollectionInfo) => {
+			value.config.params.vectors = {
+				unknown: { size: 1024, distance: "Cosine" },
+			};
+		},
+		(value: CollectionInfo) => {
+			value.config.params.vectors = {
+				dense: { size: 768, distance: "Cosine" },
+			};
+		},
+		(value: CollectionInfo) => {
+			value.config.params.vectors = { dense: { size: 1024, distance: "Dot" } };
+		},
+		(value: CollectionInfo) => {
+			value.config.params.sparse_vectors = { lexical_v1: {} };
+		},
+		(value: CollectionInfo) => {
+			delete value.config.params.sparse_vectors;
+		},
+		(value: CollectionInfo) => {
+			delete value.payload_schema.tenant_id;
+		},
+		(value: CollectionInfo) => {
+			value.payload_schema.tenant_id = { data_type: "integer", points: 0 };
+		},
+		(value: CollectionInfo) => {
+			Object.assign(value, { config: undefined });
+		},
+	]) {
+		const invalid = structuredClone(info);
+		mutate(invalid);
+		const before = structuredClone(invalid);
+		assert.throws(
+			() => assertQdrantCollectionSchema(invalid, contract),
+			QdrantCollectionContractError,
+		);
+		assert.deepEqual(invalid, before);
+	}
+	for (const vectorSize of [0, -1, NaN, Infinity, 1.5]) {
+		assert.throws(
+			() => assertQdrantCollectionSchema(info, { ...contract, vectorSize }),
+			QdrantCollectionContractError,
+		);
+	}
+});
 
 function fakeClient(input?: {
 	exists?: boolean;

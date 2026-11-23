@@ -1,10 +1,21 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { createClient } from "redis";
 
-import { resolveLlmApiKey } from "../../core/ai/model-environment";
 import {
-	assertQdrantEmbeddingDimension,
-	QdrantEmbeddingDimensionMismatchError,
+	modelProviderOverrideFromEnv,
+	rerankProviderFromEnv,
+} from "../../core/ai/model-environment";
+import {
+	aiConfigFromEnv,
+	judgeAiConfigFromEnv,
+	vlmAiConfigFromEnv,
+} from "../../core/ai/provider-registry";
+import {
+	assertQdrantCollectionSchema,
+	parseQdrantDistance,
+	QdrantCollectionContractError,
+	QdrantCollectionMissingError,
+	QdrantIndexMissingError,
 } from "../../core/retrieval/qdrant/collection-manager";
 
 export type HealthStatus = "healthy" | "degraded" | "disabled";
@@ -29,9 +40,30 @@ export interface ProviderHealthDependencies {
 	checkDatabase: (signal: AbortSignal) => Promise<void>;
 	checkRedis?: (signal: AbortSignal) => Promise<void>;
 	checkQdrant?: (signal: AbortSignal) => Promise<void>;
+	hasActiveDocuments?: () => Promise<boolean>;
 }
 
 type Environment = Record<string, string | undefined>;
+
+const MODEL_RECOVERY: Record<string, string> = {
+	llm_not_configured:
+		"Check LLM_API_KEY, LLM_BASE_URL and CHAT_MODEL, or a complete OPENAI/DASHSCOPE configuration.",
+	embedding_not_configured:
+		"Check EMBEDDING_API_KEY, EMBEDDING_BASE_URL, EMBEDDING_MODEL and EMBEDDING_DIM. A separate endpoint requires separate credentials.",
+	judge_not_configured:
+		"Check JUDGE_API_KEY, JUDGE_BASE_URL and JUDGE_MODEL. A separate endpoint requires separate credentials; otherwise Judge inherits the primary model configuration.",
+	rerank_not_configured:
+		"Check RERANK_API_KEY, RERANK_BASE_URL and RERANK_MODEL. A separate endpoint requires separate credentials.",
+	vlm_not_configured:
+		"Check VLM_ENABLED, VLM_MODEL, VLM_API_KEY, VLM_BASE_URL, VLM_TIMEOUT_MS, VLM_MAX_FIGURES_PER_REQUEST and VLM_MAX_IMAGE_BYTES.",
+};
+
+export function modelConfigurationRecovery(code: string): string {
+	return (
+		MODEL_RECOVERY[code === "llm_key_missing" ? "llm_not_configured" : code] ??
+		"Check the model provider configuration."
+	);
+}
 
 function positiveInteger(
 	environment: Environment,
@@ -66,6 +98,14 @@ async function bounded(
 
 function configured(value: string | undefined): boolean {
 	return Boolean(value?.trim());
+}
+
+function providerConfigured(resolve: () => unknown): boolean {
+	try {
+		return Boolean(resolve());
+	} catch {
+		return false;
+	}
 }
 
 function environmentBoolean(
@@ -125,8 +165,8 @@ async function activeItem(input: {
 			recovery: input.recovery,
 		};
 	} catch (error) {
-		const mismatch =
-			error instanceof QdrantEmbeddingDimensionMismatchError ? error : null;
+		const contractError =
+			error instanceof QdrantCollectionContractError ? error : null;
 		return {
 			code: input.code,
 			label: input.label,
@@ -135,11 +175,11 @@ async function activeItem(input: {
 			mode: "active",
 			latency_ms: Date.now() - startedAt,
 			error_code:
-				mismatch?.code ??
+				contractError?.code ??
 				(error instanceof Error && error.message === "probe_timeout"
 					? `${input.code}_timeout`
 					: `${input.code}_unavailable`),
-			recovery: mismatch?.recovery ?? input.recovery,
+			recovery: contractError?.recovery ?? input.recovery,
 		};
 	}
 }
@@ -175,21 +215,42 @@ function defaultRedisCheck(
 
 export function createQdrantHealthCheck(
 	environment: Environment = process.env,
+	dependencies: { hasActiveDocuments?: () => Promise<boolean> } = {},
 ): () => Promise<void> {
 	return async () => {
+		const collection = environment.QDRANT_COLLECTION?.trim() || "unorag_chunks";
+		const vectorSize = Number(environment.EMBEDDING_DIM ?? 1_024);
+		if (!Number.isInteger(vectorSize) || vectorSize <= 0) {
+			throw new QdrantCollectionContractError(
+				"Qdrant vector size must be a positive integer",
+			);
+		}
+		const distance = parseQdrantDistance(environment.QDRANT_DISTANCE);
 		const client = new QdrantClient({
 			url: environment.QDRANT_URL?.trim() || "http://localhost:6333",
 			apiKey: environment.QDRANT_API_KEY?.trim() || undefined,
 			timeout: positiveInteger(environment, "QDRANT_TIMEOUT_MS", 5_000),
 			checkCompatibility: false,
 		});
-		const collection = environment.QDRANT_COLLECTION?.trim() || "unorag_chunks";
 		const { exists } = await client.collectionExists(collection);
-		if (!exists) return; // Collection initialization is lazy on a fresh install.
-		const vectorSize = Number(environment.EMBEDDING_DIM ?? 1_024);
-		if (Number.isInteger(vectorSize) && vectorSize > 0) {
-			const info = await client.getCollection(collection);
-			assertQdrantEmbeddingDimension(info, { collection, vectorSize });
+		if (!exists) {
+			// Only confirmed empty instances may wait for lazy initialization.
+			if (
+				!dependencies.hasActiveDocuments ||
+				(await dependencies.hasActiveDocuments()) !== false
+			) {
+				throw new QdrantCollectionMissingError();
+			}
+			return;
+		}
+		const info = await client.getCollection(collection);
+		assertQdrantCollectionSchema(info, { collection, vectorSize, distance });
+		if (
+			info.points_count === 0 &&
+			(!dependencies.hasActiveDocuments ||
+				(await dependencies.hasActiveDocuments()) !== false)
+		) {
+			throw new QdrantIndexMissingError();
 		}
 	};
 }
@@ -210,7 +271,10 @@ export async function readProviderHealth(
 	const redisCheck =
 		dependencies.checkRedis ?? defaultRedisCheck(environment, timeoutMs);
 	const qdrantCheck =
-		dependencies.checkQdrant ?? createQdrantHealthCheck(environment);
+		dependencies.checkQdrant ??
+		createQdrantHealthCheck(environment, {
+			hasActiveDocuments: dependencies.hasActiveDocuments,
+		});
 	const active = await Promise.all([
 		activeItem({
 			code: "postgres",
@@ -245,7 +309,27 @@ export async function readProviderHealth(
 		}),
 	]);
 
-	const hasModelKey = Boolean(resolveLlmApiKey(environment));
+	const llmConfigured = providerConfigured(() =>
+		aiConfigFromEnv(environment as NodeJS.ProcessEnv),
+	);
+	const embeddingConfigured = providerConfigured(() =>
+		modelProviderOverrideFromEnv("EMBEDDING", environment),
+	);
+	let rerankEnabled = true;
+	const rerankConfigured = providerConfigured(() => {
+		const config = rerankProviderFromEnv(environment);
+		rerankEnabled = config !== null;
+		return config;
+	});
+	const judgeConfigured = providerConfigured(() =>
+		judgeAiConfigFromEnv(environment as NodeJS.ProcessEnv),
+	);
+	let vlmEnabled = true;
+	const vlmConfigured = providerConfigured(() => {
+		const config = vlmAiConfigFromEnv(environment);
+		vlmEnabled = config !== null;
+		return config;
+	});
 	const externalParserAllowed = environmentBoolean(
 		environment,
 		"EXTERNAL_PARSER_ALLOWED",
@@ -266,27 +350,41 @@ export async function readProviderHealth(
 				code: "llm",
 				label: "LLM",
 				kind: "ai",
-				ready: hasModelKey && configured(environment.CHAT_MODEL),
-				recovery: "检查模型 API Key、CHAT_MODEL 和兼容端点配置。",
+				ready: llmConfigured,
+				recovery: modelConfigurationRecovery("llm_not_configured"),
 			}),
 			configurationItem({
 				code: "embedding",
 				label: "Embedding",
 				kind: "ai",
 				ready:
-					hasModelKey &&
+					embeddingConfigured &&
 					configured(environment.EMBEDDING_MODEL) &&
 					positiveInteger(environment, "EMBEDDING_DIM", 0) > 0,
-				recovery: "检查模型凭证、EMBEDDING_MODEL 与 EMBEDDING_DIM。",
+				recovery: modelConfigurationRecovery("embedding_not_configured"),
+			}),
+			configurationItem({
+				code: "judge",
+				label: "Judge",
+				kind: "ai",
+				ready: judgeConfigured,
+				recovery: modelConfigurationRecovery("judge_not_configured"),
 			}),
 			configurationItem({
 				code: "rerank",
 				label: "Rerank",
 				kind: "ai",
-				// Retrieval always creates a reranker with endpoint/model defaults.
-				// Its default execution flag does not prevent request-level opt-in.
-				ready: hasModelKey,
-				recovery: "检查模型 API Key、RERANK_MODEL 和独立兼容端点配置。",
+				enabled: rerankEnabled,
+				ready: rerankConfigured,
+				recovery: modelConfigurationRecovery("rerank_not_configured"),
+			}),
+			configurationItem({
+				code: "vlm",
+				label: "VLM",
+				kind: "ai",
+				enabled: vlmEnabled,
+				ready: vlmConfigured,
+				recovery: modelConfigurationRecovery("vlm_not_configured"),
 			}),
 			configurationItem({
 				code: "mineru",

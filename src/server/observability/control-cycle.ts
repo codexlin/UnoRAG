@@ -16,6 +16,7 @@ import {
 	reconcileWorkspaceAlerts,
 	withAlertEvaluatorLock,
 } from "./alerting";
+import { hasActiveDocuments } from "./native-readiness";
 import { readWorkspaceEmailSettings } from "./notification-settings";
 import { OperationsService } from "./operations-service";
 import { readProviderHealth } from "./provider-health";
@@ -119,11 +120,14 @@ export async function runObservabilityCycle(
 			 WHERE status = 'active'
 			 ORDER BY organization_id, id`,
 		);
+		const db = drizzle(pool, { schema });
 		const providers = await readProviderHealth(
-			{ checkDatabase: async () => void (await pool.query("SELECT 1")) },
+			{
+				checkDatabase: async () => void (await pool.query("SELECT 1")),
+				hasActiveDocuments: () => hasActiveDocuments(db),
+			},
 			{ now, environment },
 		);
-		const db = drizzle(pool, { schema });
 		const service = OperationsService.fromDatabase(db);
 		const emailConfigured = emailTransportConfigured(environment);
 		const counts = { opened: 0, resolved: 0, observed: 0 };
