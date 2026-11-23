@@ -135,7 +135,6 @@ RUN apt-get update \
 	&& apt-get install -y --no-install-recommends tesseract-ocr-eng tesseract-ocr-chi-sim \
 	&& rm -rf /var/lib/apt/lists/*
 COPY --chown=unorag:unorag src ./src
-COPY --chown=unorag:unorag scripts/qdrant-backfill-sparse.ts ./scripts/
 COPY --chown=unorag:unorag tsconfig.json ./
 WORKDIR /repo
 ENV NODE_ENV=production \

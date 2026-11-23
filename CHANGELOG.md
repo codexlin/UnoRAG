@@ -26,16 +26,7 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 - **Product UI, bilingual i18n & evaluation tooling (#299, #301, #309)**:
   - Add browser-aware EN/ZH interface language switching, redesigned landing and auth shells, 4 built-in themes (`vercel`, `claude`, `violet-bloom`, `modern-minimal`) with circular View Transitions toggle, and server-side audit filtering/CSV export.
   - Add bounded `--concurrency <1..8>` execution to `scripts/evaluation/run-hf-benchmark.ts`.
-- **Upgrade note**: Apply migration `0036` (`drizzle/0036_workspace_alert_thresholds.sql`) using the documented drain/backup procedure. For a pre-IDF collection on a reference Compose deployment, the new [guarded IDF cutover](./docs/DEPLOYMENT.md#从旧-qdrant-集合迁移到-idf) verifies a cold backup and copies vectors and payloads into a separate collection without re-embedding. Existing active document versions are preserved. Reindexing later adopts `CHUNK_POLICY_VERSION = "v2"` and automatic `table_heavy` profiling.
-
-## [0.3.7] - 2026-11-23
-
-- Choose Simplified Chinese or English from browser language preferences, with
-  English fallback and a saved manual override. Refresh the landing and account
-  interfaces, add a fourth appearance theme, and paginate the workspace audit ledger.
-- Use Qdrant-native sparse IDF and reciprocal rank fusion for hybrid retrieval.
-  Existing non-IDF collections require the [manual migration documented with v0.3.7](https://github.com/codexlin/UnoRAG/blob/v0.3.7/docs/adr/0008-qdrant-server-side-sparse-rrf.md#compatibility-and-migration)
-  before switching.
+- **Upgrade note**: Apply migration `0036` (`drizzle/0036_workspace_alert_thresholds.sql`) using the documented drain/backup procedure. Existing active document versions continue serving without forced reindex; reindexing documents adopts `CHUNK_POLICY_VERSION = "v2"` and automatic `table_heavy` profiling.
 
 ## [0.3.6] - 2026-11-21
 
