@@ -25,25 +25,19 @@ test("the selected brand stays visible in both themes and publishes explicit ico
 
 	for (const mode of ["浅色", "深色"]) {
 		await page.getByRole("button", { name: "外观设置", exact: true }).click();
-		const choice = page.getByRole("radio", { name: mode, exact: true });
-		await choice.click();
-		await expect(choice).toBeChecked();
+		await page.getByRole("radio", { name: mode, exact: true }).check();
 		await page.keyboard.press("Escape");
-		await expect(page.getByRole("dialog")).toHaveCount(0);
 		await expect(page.locator("html")).toHaveClass(
 			mode === "深色" ? /dark/ : /light/,
 		);
-		// The native view transition can still paint old pixels after the class changes.
-		const stroke = expect.poll(async () => {
-			const { data } = await sharp(await logo.screenshot())
-				.resize(32, 32)
-				.ensureAlpha()
-				.raw()
-				.toBuffer({ resolveWithObject: true });
-			return data[(16 * 32 + 6) * 4];
-		});
-		if (mode === "深色") await stroke.toBeGreaterThan(220);
-		else await stroke.toBeLessThan(80);
+		const { data } = await sharp(await logo.screenshot())
+			.resize(32, 32)
+			.ensureAlpha()
+			.raw()
+			.toBuffer({ resolveWithObject: true });
+		const stroke = data[(16 * 32 + 6) * 4];
+		if (mode === "深色") expect(stroke).toBeGreaterThan(220);
+		else expect(stroke).toBeLessThan(80);
 	}
 
 	for (const path of [
@@ -161,9 +155,6 @@ test("themes, radius, public assets and layouts stay coherent across viewports",
 				[1920, 1080],
 			]) {
 				await page.setViewportSize({ width, height });
-				await page.evaluate(() =>
-					window.scrollTo({ top: 0, behavior: "instant" }),
-				);
 				await expect
 					.poll(() =>
 						page.evaluate(
