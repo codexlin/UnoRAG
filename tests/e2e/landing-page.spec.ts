@@ -25,7 +25,9 @@ test("the selected brand stays visible in both themes and publishes explicit ico
 
 	for (const mode of ["浅色", "深色"]) {
 		await page.getByRole("button", { name: "外观设置", exact: true }).click();
-		await page.getByRole("radio", { name: mode, exact: true }).check();
+		const choice = page.getByRole("radio", { name: mode, exact: true });
+		await choice.click();
+		await expect(choice).toBeChecked();
 		await page.keyboard.press("Escape");
 		await expect(page.locator("html")).toHaveClass(
 			mode === "深色" ? /dark/ : /light/,
@@ -155,6 +157,9 @@ test("themes, radius, public assets and layouts stay coherent across viewports",
 				[1920, 1080],
 			]) {
 				await page.setViewportSize({ width, height });
+				await page.evaluate(() =>
+					window.scrollTo({ top: 0, behavior: "instant" }),
+				);
 				await expect
 					.poll(() =>
 						page.evaluate(

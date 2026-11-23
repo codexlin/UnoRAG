@@ -262,6 +262,13 @@ overlay 和显式开关。脚本随后：
 恢复旧服务，不会让新 Worker 接管旧版本 workflow。版本变化后的自动回滚同样先停止入口并排空新版本；
 若无法排空，脚本保留新镜像和维护状态，要求运维处理，而不会做可能遗留任务的强制回滚。
 
+当旧 Qdrant 集合没有 `lexical_v1` 的 `idf` modifier 时，首次启用新版检索须使用
+`./scripts/upgrade.sh --manifest /path/to/release-ghcr.env --qdrant-idf-target unorag_chunks_idf_v1`。
+目标名必须未使用。脚本停止入口并排空 Worker 后校验冷备份，将 Point ID、payload 与已有 dense
+向量复制到新集合，再生成 sparse 向量，不重新调用 embedding。旧集合保留。
+入口开放前失败会同时回滚镜像和集合配置；开放后不得直接切回旧集合，因为它不再接收写入。
+此时应先关闭入口、排空任务并核对新集合与 PG，优先向前修复。COS sidecar 只记录对象边界，不是内容备份。
+
 `0027_document_version_source_metadata` 迁移会再次检查没有未完成的入库任务，并从匹配原始上传对象的
 任务记录回填版本级文件名/MIME。无法可靠恢复的历史元数据保持为空：原文可用通用名称下载，
 需要重索引时请重新上传该文件。不要以当前文档名称批量填充旧版本，否则可能把旧 PDF 当成新 DOCX 处理。

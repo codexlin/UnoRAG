@@ -264,6 +264,36 @@ test("the ops image and Compose profile include the drain checker", async () => 
 	assert.match(compose, /DBOS_SYSTEM_DATABASE_URL:/);
 });
 
+test("IDF cutover backs up old pins, backfills before starting workers and ends rollback before ingress", async () => {
+	const upgrade = await source("deploy/compose/scripts/upgrade.sh");
+	const idf = upgrade.indexOf('log "pre-pulling verified images');
+	const drain = upgrade.indexOf(
+		'quiesce_dbos_version "$CURRENT_DBOS_VERSION"',
+		idf,
+	);
+	const backup = upgrade.indexOf("\n\tbackup_before_qdrant_cutover", drain);
+	const pins = upgrade.indexOf('\nwrite_runtime_pins "$WEB_IMAGE"', backup);
+	const copy = upgrade.indexOf("\n\tbackfill_qdrant_after_drain", pins);
+	const worker = upgrade.indexOf("\nTARGET_EXECUTION_STARTED=1", copy);
+	const verify = upgrade.indexOf(
+		'throw new Error("target release did not become ready',
+		worker,
+	);
+	const release = upgrade.indexOf("\n\tSWITCHED=0", verify);
+	const publicStart = upgrade.indexOf(
+		"\nruntime_compose up -d --no-deps caddy",
+		release,
+	);
+	assert.ok(idf > 0 && idf < drain && drain < backup && backup < pins);
+	assert.ok(pins < copy && copy < worker && worker < verify);
+	assert.ok(verify < release && release < publicStart);
+	assert.match(
+		upgrade,
+		/write_qdrant_collection "\$PREVIOUS_QDRANT_COLLECTION" \|\| return 1/,
+	);
+	assert.match(upgrade, /sha256sum -c CHECKSUMS\.sha256/);
+});
+
 test("worker images install production dependencies without retaining a dev layer", async () => {
 	const dockerfile = await source("deploy/docker/web.Dockerfile");
 	const ci = await source(".github/workflows/ci.yml");

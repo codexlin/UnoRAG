@@ -2,6 +2,7 @@
 
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { QdrantClient, type Schemas } from "@qdrant/js-client-rest";
 import { sparseVector } from "../src/core/retrieval/hybrid/sparse-vector";
 import {
@@ -159,6 +160,22 @@ async function run(): Promise<void> {
 		if (result.status !== "completed") {
 			throw new Error(`Qdrant upsert returned ${result.status}`);
 		}
+		const stored = await client.retrieve(toCollection, {
+			ids: points.map((point) => point.id),
+			with_payload: true,
+			with_vector: false,
+		});
+		const storedPayloads = new Map(
+			stored.map((point) => [String(point.id), point.payload ?? {}]),
+		);
+		if (
+			stored.length !== points.length ||
+			points.some(
+				(point) => !isDeepStrictEqual(storedPayloads.get(String(point.id)), point.payload),
+			)
+		) {
+			throw new Error("Target collection point IDs or payloads do not match the source batch");
+		}
 		copied += points.length;
 		process.stdout.write(`  copied ${copied}/${sourceCount}\n`);
 		const next = page.next_page_offset;
@@ -172,7 +189,7 @@ async function run(): Promise<void> {
 	const { count: targetCount } = await client.count(toCollection, {
 		exact: true,
 	});
-	if (targetCount !== sourceCount) {
+	if (targetCount !== sourceCount || copied !== sourceCount) {
 		throw new Error(
 			`Point count mismatch after backfill: source=${sourceCount}, target=${targetCount}`,
 		);

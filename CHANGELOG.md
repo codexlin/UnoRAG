@@ -5,6 +5,16 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-11-23
+
+- Choose Simplified Chinese or English from the browser's language preferences
+  with English fallback and a persistent manual override. Refresh the landing,
+  account, appearance and workspace interfaces, including a fourth theme and
+  a filterable, paginated audit ledger.
+- Use Qdrant's server-side sparse IDF and reciprocal rank fusion for hybrid
+  retrieval. Existing collections without the IDF index must be backed up
+  and copied to a new collection before switching. No re-embedding is required.
+
 ## [0.3.6] - 2026-11-21
 
 - Recognize supported Chinese query verbs attached directly to filenames. Exact

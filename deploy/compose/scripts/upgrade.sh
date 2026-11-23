@@ -32,6 +32,9 @@ OBSERVABILITY_MODE=auto
 SWITCHED=0
 VERSION_CHANGED=0
 TARGET_EXECUTION_STARTED=0
+QDRANT_IDF_TARGET=""
+PREVIOUS_QDRANT_COLLECTION=""
+COLLECTION_SWITCHED=0
 
 usage() {
 	cat <<'EOF'
@@ -44,6 +47,9 @@ Options:
   --allow-build  Build local images when registry pull is unavailable.
   --allow-platform-emulation  Accept a host/image architecture mismatch for local validation only.
   --skip-smoke   Skip pilot-smoke.sh after health checks.
+  --qdrant-idf-target COLLECTION
+                 Drain writers, verify a cold backup, and copy points to a new
+                 IDF collection before starting the target release.
   --with-observability  Preserve/start the optional Ops Stack and validate it.
   --without-observability  Explicitly disconnect the application from Ops.
   --with-langfuse  Enable metadata-only Langfuse fan-out (implies Ops Stack).
@@ -90,6 +96,9 @@ capture_previous() {
 		echo "UNORAG_DBOS_WORKER_IMAGE=$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_DBOS_WORKER_IMAGE)"
 		echo "UNORAG_DBOS_APPLICATION_VERSION=$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
 		echo "UNORAG_IMAGE_PLATFORM=$(mk_release_env_get "$RUNTIME_ADVANCED_ENV" UNORAG_IMAGE_PLATFORM)"
+		if [[ -n "$QDRANT_IDF_TARGET" ]]; then
+			echo "QDRANT_COLLECTION=$PREVIOUS_QDRANT_COLLECTION"
+		fi
 	} >"$PREVIOUS_ENV"
 	chmod 600 "$PREVIOUS_ENV"
 }
@@ -119,6 +128,37 @@ quiesce_dbos_version() {
 	run_drain_check "$version" all 0
 }
 
+write_qdrant_collection() {
+	local collection="$1" tmp
+	tmp="$(mktemp "${RUNTIME_ENV}.XXXXXXXX")" || return 1
+	chmod 600 "$tmp" || return 1
+	awk -F= -v name="$collection" '
+		$1 == "QDRANT_COLLECTION" { next }
+		{ print }
+		END { print "QDRANT_COLLECTION=" name }
+	' "$RUNTIME_ENV" >"$tmp" || return 1
+	mv -f "$tmp" "$RUNTIME_ENV"
+}
+
+backup_before_qdrant_cutover() {
+	local backup
+	backup="${ROOT}/backups/pre-idf-$(date -u +%Y%m%dT%H%M%SZ)"
+	mkdir -m 700 "$backup"
+	"${ROOT}/scripts/backup.sh" "$backup"
+	(cd "$backup" && sha256sum -c CHECKSUMS.sha256)
+}
+
+backfill_qdrant_after_drain() {
+	# Use the target worker's dependencies, but do not run its executor yet.
+	mk_compose --profile dbos run --rm --no-deps -T \
+		--entrypoint /repo/node_modules/.bin/tsx dbos-worker \
+		/repo/scripts/qdrant-backfill-sparse.ts --execute \
+		--from "$PREVIOUS_QDRANT_COLLECTION" --to "$QDRANT_IDF_TARGET"
+	COLLECTION_SWITCHED=1
+	write_qdrant_collection "$QDRANT_IDF_TARGET"
+	[[ "$(mk_config_get QDRANT_COLLECTION)" == "$QDRANT_IDF_TARGET" ]]
+}
+
 rollback_images() {
 	[[ -f "$PREVIOUS_ENV" ]] || return 0
 	local web migrator ops worker version platform
@@ -136,6 +176,9 @@ rollback_images() {
 	worker="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_DBOS_WORKER_IMAGE)"
 	version="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_DBOS_APPLICATION_VERSION)"
 	platform="$(mk_release_env_get "$PREVIOUS_ENV" UNORAG_IMAGE_PLATFORM)"
+	if [[ "$COLLECTION_SWITCHED" -eq 1 ]]; then
+		write_qdrant_collection "$PREVIOUS_QDRANT_COLLECTION" || return 1
+	fi
 	write_runtime_pins "$web" "$migrator" "$ops" "$worker" "$version" "$platform"
 	runtime_compose up -d --no-deps dbos-worker dbos-control web caddy || true
 }
@@ -162,6 +205,10 @@ while [[ $# -gt 0 ]]; do
 		--allow-build) ALLOW_BUILD=1; shift ;;
 		--allow-platform-emulation) ALLOW_PLATFORM_EMULATION=1; shift ;;
 		--skip-smoke) SKIP_SMOKE=1; shift ;;
+		--qdrant-idf-target)
+			[[ $# -ge 2 && "$2" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_-]{0,62}$ ]] ||
+				die "--qdrant-idf-target requires a valid collection name"
+			QDRANT_IDF_TARGET="$2"; shift 2 ;;
 		--with-ops|--with-observability) WITH_OBSERVABILITY=1; OBSERVABILITY_MODE=enabled; shift ;;
 		--without-observability) WITH_OBSERVABILITY=0; WITH_LANGFUSE=0; OBSERVABILITY_MODE=disabled; shift ;;
 		--with-langfuse) WITH_LANGFUSE=1; WITH_OBSERVABILITY=1; OBSERVABILITY_MODE=enabled; shift ;;
@@ -238,6 +285,22 @@ fi
 if [[ "$DBOS_VERSION" != "$CURRENT_DBOS_VERSION" ]]; then
 	VERSION_CHANGED=1
 fi
+if [[ -n "$QDRANT_IDF_TARGET" ]]; then
+	[[ -n "$MANIFEST" && $VERSION_CHANGED -eq 1 && $ALLOW_BUILD -eq 0 ]] ||
+		die "IDF cutover requires a pinned release manifest and a new DBOS version"
+	[[ "$(mk_release_env_get "$MANIFEST" UNORAG_VERIFY_IMAGE_SIGNATURES)" == true ]] ||
+		die "IDF cutover requires verified image signatures"
+	mk_release_assert_image UNORAG_WEB_IMAGE "$WEB_IMAGE" digest
+	mk_release_assert_image UNORAG_WEB_MIGRATOR_IMAGE "$MIGRATOR_IMAGE" digest
+	mk_release_assert_image UNORAG_WEB_OPS_IMAGE "$OPS_IMAGE" digest
+	mk_release_assert_image UNORAG_DBOS_WORKER_IMAGE "$WORKER_IMAGE" digest
+	[[ -z "$(mk_release_env_get "${_MK_CONFIG_DIR}/runtime.secret" QDRANT_COLLECTION)" &&
+		-z "$(mk_release_env_get "${_MK_CONFIG_DIR}/bootstrap.env" QDRANT_COLLECTION)" ]] ||
+		die "move QDRANT_COLLECTION out of runtime.secret/bootstrap.env before IDF cutover"
+	PREVIOUS_QDRANT_COLLECTION="$(mk_config_get QDRANT_COLLECTION || echo unorag_chunks)"
+	[[ "$PREVIOUS_QDRANT_COLLECTION" != "$QDRANT_IDF_TARGET" ]] ||
+		die "IDF cutover requires an unused collection distinct from the current collection"
+fi
 DBOS_DRAIN_TIMEOUT_SECONDS="$(mk_config_get DBOS_UPGRADE_DRAIN_TIMEOUT_SECONDS || echo 1800)"
 [[ "$DBOS_DRAIN_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || die "DBOS_UPGRADE_DRAIN_TIMEOUT_SECONDS must be a positive integer"
 
@@ -254,6 +317,17 @@ if [[ $WITH_LANGFUSE -eq 1 ]]; then
 fi
 
 capture_previous
+if [[ -n "$QDRANT_IDF_TARGET" ]]; then
+	log "pre-pulling verified images before stopping ingress"
+	for image in "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE"; do
+		docker pull "$image"
+	done
+	# The backup must record the old image pins and DBOS application version.
+	SWITCHED=1
+	quiesce_dbos_version "$CURRENT_DBOS_VERSION" ||
+		die "DBOS drain timed out; refusing IDF cutover"
+	backup_before_qdrant_cutover
+fi
 write_runtime_pins "$WEB_IMAGE" "$MIGRATOR_IMAGE" "$OPS_IMAGE" "$WORKER_IMAGE" "$DBOS_VERSION" "$IMAGE_PLATFORM"
 SWITCHED=1
 
@@ -269,12 +343,15 @@ fi
 if [[ $ALLOW_BUILD -eq 1 ]]; then
 	warn "using break-glass local image builds"
 	mk_compose build web migrate-web bootstrap inspect-lifecycle dbos-worker
-else
+elif [[ -z "$QDRANT_IDF_TARGET" ]]; then
 	log "pulling four pinned release images"
 	mk_compose pull web migrate-web bootstrap dbos-worker
 fi
 
-if [[ $VERSION_CHANGED -eq 1 ]]; then
+if [[ -n "$QDRANT_IDF_TARGET" ]]; then
+	log "backfilling a separate IDF collection with all writers stopped"
+	backfill_qdrant_after_drain
+elif [[ $VERSION_CHANGED -eq 1 ]]; then
 	log "DBOS application version changes ${CURRENT_DBOS_VERSION} -> ${DBOS_VERSION}"
 	if ! quiesce_dbos_version "$CURRENT_DBOS_VERSION"; then
 		die "DBOS drain timed out; old services will be restored without switching versions"
@@ -299,6 +376,23 @@ mk_compose --profile ops run --rm inspect-lifecycle
 
 log "rolling web and edge"
 runtime_compose up -d --no-deps --wait web
+if [[ "$COLLECTION_SWITCHED" -eq 1 ]]; then
+	# Old Web rejects the IDF collection. Verify the target before giving it any
+	# public traffic; once traffic can write to the new collection, restoring
+	# the old snapshot automatically would discard those writes.
+	runtime_compose exec -T web node -e '
+		fetch("http://127.0.0.1:3000/api/rag/health/ready", {signal: AbortSignal.timeout(15000)})
+			.then(async (response) => {
+				const data = await response.json();
+				if (!response.ok || !data.ask_ready || !data.qdrant_ok || !data.metadata_ok ||
+					data.release?.dbos_application_version !== process.env.UNORAG_DBOS_APPLICATION_VERSION) {
+					throw new Error("target release did not become ready before public cutover");
+				}
+			}).catch((error) => { console.error(error.message); process.exitCode = 1; });
+	'
+	SWITCHED=0
+	log "opening public ingress; automatic collection rollback is disabled after this point"
+fi
 runtime_compose up -d --no-deps caddy
 
 HTTP_PORT="$(mk_config_get HTTP_PORT || echo 80)"
