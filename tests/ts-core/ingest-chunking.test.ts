@@ -13,13 +13,16 @@ import {
 	buildIndexPayloads,
 	buildSectionRecords,
 	buildTableRecords,
+	CHUNK_POLICY_VERSION,
 	chunkDocument,
 	generationPointId,
+	recommendChunkProfile,
 	recordPointId,
 	sectionRecordId,
 	tableRecordId,
 	tableSummaryRecordId,
 } from "../../src/core/ingest";
+import { estimateTokens } from "../../src/core/text/token-estimate";
 
 const fixtureUrl = new URL(
 	"../fixtures/ts-core/document-ir-v1.json",
@@ -53,7 +56,7 @@ test("chunks representative DocumentIR and preserves table structure", async () 
 		true,
 	);
 	assert.deepEqual(document.parser_report.metrics.chunking, {
-		policy_version: "v1",
+		policy_version: "v2",
 		profile: "balanced",
 		chunk_count: 2,
 		strategies: { table: 1, figure: 1 },
@@ -78,6 +81,120 @@ test("chunks representative DocumentIR and preserves table structure", async () 
 	);
 	assert.ok(
 		payloads.every((payload) => payload.workspace_id === "workspace-1"),
+	);
+});
+
+test("v2 fills token budgets for long English and Chinese prose", async () => {
+	assert.equal(CHUNK_POLICY_VERSION, "v2");
+	const english =
+		"The review team checks each supplier against the agreed criteria and records any exceptions in the audit log. ".repeat(
+			45,
+		);
+	const chinese = "每一项供应商资质都由采购部门初审并按规定归档。".repeat(55);
+	for (const [text, minChars, maxChars] of [
+		[english, 1_200, 1_600],
+		[chinese, 375, 400],
+	] as const) {
+		const chunks = await chunkDocument(
+			documentWithNodes([{ id: "prose", type: "paragraph", text }]),
+		);
+		assert.ok(chunks.length > 2);
+		const first = chunks[0];
+		assert.ok(first.body.length >= minChars && first.body.length <= maxChars);
+		assert.equal(first.meta.chunk_policy_version, "v2");
+		assert.equal(first.meta.target_tokens, 400);
+		assert.equal(first.meta.max_tokens, 400);
+		assert.equal(first.meta.overlap_tokens, 60);
+		assert.ok(chunks.every(({ body }) => estimateTokens(body) <= 400));
+		assert.ok(chunks.every(({ body }) => body.length <= 1_800));
+	}
+});
+
+test("explicit character bounds and overlap apply to recursive and unbroken text", async () => {
+	const text = "abc🙂xyz𠮷".repeat(160);
+	const doc = documentWithNodes([{ id: "prose", type: "paragraph", text }]);
+	const noOverlap = await chunkDocument(doc, {
+		chunkSize: 201,
+		chunkOverlap: 0,
+	});
+	assert.equal(noOverlap.map((chunk) => chunk.body).join(""), text);
+	const withOverlap = await chunkDocument(doc, {
+		chunkSize: 201,
+		chunkOverlap: 18,
+	});
+	assert.ok(withOverlap.length > noOverlap.length);
+	assert.ok(
+		[...noOverlap, ...withOverlap].every(
+			({ body }) => body.length <= 201 && body.isWellFormed(),
+		),
+	);
+	const longExplicitCjk = await chunkDocument(
+		documentWithNodes([
+			{ id: "prose", type: "paragraph", text: "文".repeat(650) },
+		]),
+		{ chunkSize: 700 },
+	);
+	assert.equal(longExplicitCjk[0]?.body.length, 650);
+});
+
+test("character overlap can override the token overlap without changing the v2 size limit", async () => {
+	const text = Array.from({ length: 900 }, (_, index) =>
+		String.fromCodePoint(0x4e00 + index),
+	).join("");
+	const doc = documentWithNodes([{ id: "prose", type: "paragraph", text }]);
+	const automatic = await chunkDocument(doc);
+	const explicit = await chunkDocument(doc, { chunkOverlap: 12 });
+	assert.equal(automatic[0]?.body, text.slice(0, 400));
+	assert.equal(automatic[1]?.body, text.slice(340, 740));
+	assert.equal(explicit[0]?.body, text.slice(0, 400));
+	assert.equal(explicit[1]?.body, text.slice(388, 788));
+});
+
+test("auto profile counts non-whitespace table volume and explicit profiles override it", async () => {
+	const paragraph = { id: "prose", type: "paragraph", text: "文 ".repeat(60) };
+	const table = {
+		id: "table-node",
+		type: "table",
+		table_id: "table-1",
+		text: "表 \n".repeat(41),
+		table_json: { headers: ["Product"], rows: [["Example"]] },
+	};
+	const doc = documentWithNodes([paragraph, table]);
+	assert.equal(recommendChunkProfile(doc), "table_heavy");
+	assert.equal(
+		recommendChunkProfile(
+			documentWithNodes([paragraph, { ...table, text: "表 ".repeat(40) }]),
+		),
+		"balanced",
+	);
+	assert.equal(
+		recommendChunkProfile(documentWithNodes([paragraph])),
+		"balanced",
+	);
+
+	const automatic = await chunkDocument(doc);
+	assert.ok(
+		automatic.every(
+			(chunk) =>
+				chunk.meta.chunk_profile === "table_heavy" &&
+				chunk.meta.profile_auto_selected === true,
+		),
+	);
+	assert.equal(
+		automatic.find((chunk) => chunk.table_id)?.meta.table_rows_per_record,
+		20,
+	);
+	const explicit = await chunkDocument(doc, { profileName: "balanced" });
+	assert.ok(
+		explicit.every(
+			(chunk) =>
+				chunk.meta.chunk_profile === "balanced" &&
+				chunk.meta.profile_auto_selected !== true,
+		),
+	);
+	assert.equal(
+		explicit.find((chunk) => chunk.table_id)?.meta.table_rows_per_record,
+		40,
 	);
 });
 
