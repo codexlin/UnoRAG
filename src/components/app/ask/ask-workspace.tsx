@@ -32,6 +32,7 @@ import {
 	toUiCitation,
 } from "@/components/app/ask/ask-turn-state";
 import { AskWorkspaceHeader } from "@/components/app/ask/ask-workspace-header";
+import { useCan } from "@/components/app/can";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	MessageScroller,
@@ -186,9 +187,10 @@ function AskWorkspaceContent() {
 	} | null>(null);
 	const activeCitation = activeSource?.citation ?? null;
 	const [drawerOpen, setDrawerOpen] = useState(false);
-	const [traceDebug, setTraceDebug] = useState<ApiRetrievalDebug | null>(null);
-	const [traceClientMs, setTraceClientMs] = useState<number | null>(null);
-	const [traceOpen, setTraceOpen] = useState(false);
+	const canInspect = useCan("writeLibraries");
+	const [traceRequested, setTraceRequested] = useState(false);
+	const [traceTurnId, setTraceTurnId] = useState<string | null>(null);
+	const traceTurn = turns.find((turn) => turn.id === traceTurnId);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const sourceTriggerRef = useRef<HTMLElement | null>(null);
 	const sourceFocusKeyRef = useRef<{ turnId: string; sourceId: string } | null>(
@@ -267,7 +269,8 @@ function AskWorkspaceContent() {
 		sourceTriggerRef.current = null;
 		sourceFocusKeyRef.current = null;
 		setDrawerOpen(false);
-		setTraceOpen(false);
+		setTraceTurnId(null);
+		setTraceRequested(false);
 		setArchiveError(null);
 		setArchiving(false);
 		archivingRef.current = false;
@@ -291,6 +294,8 @@ function AskWorkspaceContent() {
 			return;
 		contextEpochRef.current += 1;
 		askStream.cancel();
+		setTraceTurnId(null);
+		setTraceRequested(false);
 		if (
 			!requestedThreadId &&
 			(previous.requestedThreadId ||
@@ -395,7 +400,7 @@ function AskWorkspaceContent() {
 				: null;
 		const selection = { turnId, sourceId: citation.id };
 		sourceFocusKeyRef.current = selection;
-		setTraceOpen(false);
+		setTraceTurnId(null);
 		setActiveSource({ turnId, citation, selectedByUser: true });
 		setDrawerOpen(true);
 	}, []);
@@ -440,18 +445,9 @@ function AskWorkspaceContent() {
 			});
 	}
 
-	function openTrace(
-		debug: ApiRetrievalDebug,
-		clientDurationMs?: number | null,
-	) {
+	function openTrace(turn: LocalTurn) {
 		setDrawerOpen(false);
-		setTraceDebug(debug);
-		setTraceClientMs(
-			clientDurationMs != null && !Number.isNaN(clientDurationMs)
-				? clientDurationMs
-				: null,
-		);
-		setTraceOpen(true);
+		setTraceTurnId(turn.id);
 	}
 
 	function cancelAsk() {
@@ -533,7 +529,8 @@ function AskWorkspaceContent() {
 		if (!replaceTurnId) {
 			setInput("");
 		}
-		setTraceOpen(false);
+		setTraceTurnId(null);
+		const includeTraceDetails = canInspect && traceRequested;
 
 		await askStream.run(
 			{
@@ -541,6 +538,7 @@ function AskWorkspaceContent() {
 				libraryId,
 				sessionId,
 				threadId,
+				include_trace_details: includeTraceDetails ? true : undefined,
 			},
 			{
 				onMeta: (meta) => {
@@ -598,6 +596,16 @@ function AskWorkspaceContent() {
 							durationMs,
 							retrieveMs: retrieveMs ?? undefined,
 							debug,
+							traceDetails:
+								includeTraceDetails &&
+								result.retrieval_inspection &&
+								result.judge_summary
+									? {
+											retrieval_inspection: result.retrieval_inspection,
+											rewritten_question: result.rewritten_question,
+											judge_summary: result.judge_summary,
+										}
+									: undefined,
 							hybridFailed: Boolean(
 								result.hybrid_failed ?? debug.hybrid_failed,
 							),
@@ -675,7 +683,7 @@ function AskWorkspaceContent() {
 					onArchive={() => void handleArchive()}
 					onDrawerOpenChange={(open) => {
 						if (open) {
-							setTraceOpen(false);
+							setTraceTurnId(null);
 							sourceFocusKeyRef.current = null;
 							if (document.activeElement instanceof HTMLElement)
 								sourceTriggerRef.current = document.activeElement;
@@ -689,6 +697,8 @@ function AskWorkspaceContent() {
 						if (requestedThreadId) router.replace("/app/ask");
 					}}
 					threadTitle={threadTitle}
+					traceRequested={traceRequested}
+					onTraceRequestedChange={setTraceRequested}
 					turnCount={turns.length}
 				/>
 				{libsError ? (
@@ -946,13 +956,14 @@ function AskWorkspaceContent() {
 			) : null}
 
 			<AskTraceDrawer
-				open={traceOpen}
+				open={traceTurn != null}
 				onOpenChange={(open) => {
-					setTraceOpen(open);
-					if (!open) setTraceClientMs(null);
+					if (!open) setTraceTurnId(null);
 				}}
-				debug={traceDebug}
-				clientDurationMs={traceClientMs}
+				debug={traceTurn?.retrievalDebug ?? null}
+				details={canInspect ? traceTurn?.traceDetails : undefined}
+				canInspect={canInspect}
+				clientDurationMs={traceTurn?.durationMs}
 			/>
 		</div>
 	);

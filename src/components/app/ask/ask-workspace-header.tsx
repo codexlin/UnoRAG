@@ -7,9 +7,13 @@ import {
 	PanelRightOpen,
 } from "lucide-react";
 import Link from "next/link";
+import { useId } from "react";
+import { useCan } from "@/components/app/can";
 import { LibraryCombobox } from "@/components/app/library-combobox";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import {
 	Tooltip,
 	TooltipContent,
@@ -30,9 +34,30 @@ type AskWorkspaceHeaderProps = {
 	onArchive: () => void;
 	onDrawerOpenChange: (open: boolean) => void;
 	onLibraryChange: (libraryId: string) => void;
+	onTraceRequestedChange: (enabled: boolean) => void;
+	traceRequested: boolean;
 	threadTitle: string | null;
 	turnCount: number;
 };
+
+export function AskTraceToggle({
+	checked,
+	onCheckedChange,
+}: {
+	checked: boolean;
+	onCheckedChange: (checked: boolean) => void;
+}) {
+	const canInspect = useCan("writeLibraries");
+	const t = useInterfaceText();
+	const id = useId();
+	if (!canInspect) return null;
+	return (
+		<Label htmlFor={id} className="min-h-11 cursor-pointer gap-2 px-2 text-xs">
+			{t("检索透视", "Retrieval trace")}
+			<Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
+		</Label>
+	);
+}
 
 export function AskWorkspaceHeader({
 	archiving,
@@ -45,6 +70,8 @@ export function AskWorkspaceHeader({
 	onArchive,
 	onDrawerOpenChange,
 	onLibraryChange,
+	onTraceRequestedChange,
+	traceRequested,
 	threadTitle,
 	turnCount,
 }: AskWorkspaceHeaderProps) {
@@ -145,6 +172,10 @@ export function AskWorkspaceHeader({
 			</div>
 
 			<div className="ml-auto flex shrink-0 items-center gap-2">
+				<AskTraceToggle
+					checked={traceRequested}
+					onCheckedChange={onTraceRequestedChange}
+				/>
 				<Tooltip>
 					<TooltipTrigger
 						render={

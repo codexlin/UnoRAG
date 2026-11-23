@@ -25,10 +25,12 @@ import {
 } from "@/core/ask-graph";
 import { selectFinalAnswerEvidence } from "@/core/ask-graph/answer-evidence";
 import { PendingClarificationSchema } from "@/core/ask-graph/clarification";
+import { truncateEvidenceText } from "@/core/ask-graph/comparison-evidence";
 import { RetrievalProviderError } from "@/core/retrieval/provider-request";
 import { projectQdrantDiagnostic } from "@/core/retrieval/qdrant/diagnostics";
 import { QdrantOperationError } from "@/core/retrieval/qdrant/store";
 import { getDatabase } from "@/db";
+import type { ApiAskTraceDetails } from "@/lib/api";
 import {
 	getObservabilityContext,
 	logger,
@@ -37,7 +39,10 @@ import {
 	withActiveHttpSpan,
 } from "@/lib/observability";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
-import { findAuthorizedLibrary } from "@/lib/server/library-access";
+import {
+	canWriteLibraries,
+	findAuthorizedLibrary,
+} from "@/lib/server/library-access";
 import { ConversationRepository } from "@/server/conversations/repository";
 import {
 	getSessionMemoryStore,
@@ -98,6 +103,7 @@ const AskRequestSchema = z
 		session_id: z.string().trim().min(1).max(256).optional(),
 		thread_id: z.uuid().optional(),
 		ask_overrides: NativeAskPolicySchema.optional(),
+		include_trace_details: z.boolean().optional(),
 	})
 	.strict();
 
@@ -109,6 +115,7 @@ type RuntimeFactory = (input: {
 	policy: NativeAskPolicy;
 	usageRecorder?: ModelUsageRecorder;
 	assertAuthorized?: (citations: Record<string, unknown>[]) => Promise<void>;
+	includeTraceDetails?: boolean;
 }) => NativeAskRuntime;
 
 export function isNativeAskPath(path: string[]): boolean {
@@ -175,14 +182,23 @@ function conversationDebug(state: AskState) {
 	).data;
 	const { conflict_evidence: _conflictEvidence, ...judge } =
 		state.judgement ?? {};
+	const { rewritten_queries: _rewrittenQueries, ...retrievalPlan } =
+		state.retrieval_plan ?? {};
 	return {
 		...(pending ? { pending_clarification: pending } : {}),
 		mode: "live",
 		refused: state.refused === true,
 		refuse_reason: state.refuse_reason ?? null,
 		query_type: state.query_type ?? null,
-		retrieval_plan: state.retrieval_plan ?? null,
-		retrieval_debug: state.retrieval_debug ?? null,
+		retrieval_plan: state.retrieval_plan ? retrievalPlan : null,
+		retrieval_debug: state.retrieval_debug
+			? projectPublicRetrievalDebug({
+					...state.retrieval_debug,
+					upgrade: state.upgrade,
+					upgrade_reason: state.upgrade_reason,
+					downgrade_reason: state.downgrade_reason,
+				})
+			: null,
 		judge: state.judgement ? judge : null,
 		table_execution: state.table_execution ?? null,
 	};
@@ -371,11 +387,56 @@ function completeRetrievalDebug(state: AskState, startedAt: number) {
 		trace_id: state.trace_id,
 		query_type: state.query_type,
 		route_reason: state.route_reason,
+		upgrade: state.upgrade,
+		upgrade_reason: state.upgrade_reason,
+		downgrade_reason: state.downgrade_reason,
 		top_score:
 			typeof state.judgement?.top_score === "number"
 				? state.judgement.top_score
 				: undefined,
 	});
+}
+
+const TraceJudgeMode = z.enum([
+	"model",
+	"model_error",
+	"deterministic_document_scope",
+	"deterministic_document_outline",
+	"deterministic_no_evidence",
+	"deterministic_probability_overlap",
+	"deterministic_table_execution",
+]);
+const TraceVerdict = z.enum(["generate", "refuse", "retry", "clarify"]);
+const TraceConflictStatus = z.enum([
+	"not_checked",
+	"consistent",
+	"scoped",
+	"precedence",
+	"conflict",
+]);
+
+function traceJudgeSummary(
+	state: AskState,
+	validatedCitations: boolean,
+): ApiAskTraceDetails["judge_summary"] {
+	const judgement = state.judgement;
+	return {
+		mode:
+			TraceJudgeMode.safeParse(
+				state.retrieval_debug?.judge_mode ?? judgement?.judge_mode,
+			).data ?? null,
+		sufficient:
+			typeof judgement?.sufficient === "boolean" ? judgement.sufficient : null,
+		verdict: TraceVerdict.safeParse(judgement?.action).data ?? null,
+		conflict_status:
+			TraceConflictStatus.safeParse(
+				judgement?.reason === "evidence_conflict"
+					? "conflict"
+					: (state.retrieval_debug?.evidence_resolution ??
+							judgement?.evidence_resolution),
+			).data ?? null,
+		citation_validation: validatedCitations ? "passed" : "not_checked",
+	};
 }
 
 function streamResponse(
@@ -398,7 +459,7 @@ function streamResponse(
 		}),
 		{
 			headers: {
-				"cache-control": "no-cache, no-transform",
+				"cache-control": "no-store, no-transform",
 				"content-type": "text/event-stream; charset=utf-8",
 				"x-accel-buffering": "no",
 			},
@@ -627,6 +688,10 @@ async function handleNativeAskRequestInSpan(input: {
 			}
 		};
 		await checkAccess([], { force: true });
+		const includeTraceDetails =
+			payload.include_trace_details === true &&
+			input.askRunPrincipal?.type !== "service_key" &&
+			canWriteLibraries(input.identity);
 		setActiveSpanAttributes({
 			"langfuse.observation.type": "chain",
 			"langfuse.session.id": sessionId,
@@ -672,6 +737,7 @@ async function handleNativeAskRequestInSpan(input: {
 			signal: executionSignal,
 			policy,
 			usageRecorder: modelUsage.record,
+			includeTraceDetails,
 			assertAuthorized: (evidence) =>
 				checkAccess([...history.sourceReferences, ...evidence], {
 					force: true,
@@ -779,6 +845,42 @@ async function handleNativeAskRequestInSpan(input: {
 				indices.has(index + 1),
 			);
 		};
+		const liveTraceDetails = async (): Promise<
+			ApiAskTraceDetails | undefined
+		> => {
+			if (!includeTraceDetails || executionSignal.aborted) return;
+			const inspections = runtime.getRetrievalInspections?.() ?? [];
+			try {
+				// Dropped candidates are outside answer provenance but still require a
+				// fresh authorization check before any of their previews can leave.
+				await checkpoint.check(
+					[...evidence, ...inspections.flatMap(({ references }) => references)],
+					{ force: true },
+				);
+			} catch {
+				return;
+			}
+			if (executionSignal.aborted) return;
+			const ranks = new Map(citations.map(({ id }, index) => [id, index + 1]));
+			const rewritten = truncateEvidenceText(state.rewritten_question, 4_000);
+			return {
+				retrieval_inspection: inspections.map(({ inspection }) => ({
+					...inspection,
+					candidates: inspection.candidates.map((candidate) => ({
+						...candidate,
+						final_rank: ranks.get(candidate.id) ?? null,
+					})),
+				})),
+				...(rewritten && rewritten !== payload.question
+					? { rewritten_question: rewritten }
+					: {}),
+				judge_summary: traceJudgeSummary(
+					state,
+					!preserveAllCitations ||
+						runtime.didValidateAnswerCitations?.() === true,
+				),
+			};
+		};
 		const initialRetrievalDebug = completeRetrievalDebug(state, askStartedAt);
 		const common = {
 			session_id: sessionId,
@@ -833,13 +935,17 @@ async function handleNativeAskRequestInSpan(input: {
 						? "refused"
 						: "success",
 			);
-			return Response.json({
-				...common,
-				answer,
-				citations,
-				retrieval_debug: retrievalDebug,
-				...persisted,
-			});
+			return Response.json(
+				{
+					...common,
+					answer,
+					citations,
+					retrieval_debug: retrievalDebug,
+					...persisted,
+					...(await liveTraceDetails()),
+				},
+				{ headers: { "cache-control": "no-store" } },
+			);
 		}
 
 		const done: Record<string, unknown> = {
@@ -848,6 +954,7 @@ async function handleNativeAskRequestInSpan(input: {
 			persisted: false,
 			persist_error: null,
 		};
+		let traceDetails: ApiAskTraceDetails | undefined;
 		const persistedTokens = (async function* () {
 			try {
 				let answer = "";
@@ -892,6 +999,7 @@ async function handleNativeAskRequestInSpan(input: {
 							? "refused"
 							: "success",
 				);
+				traceDetails = await liveTraceDetails();
 			} catch (error) {
 				recordActiveSpanFailure(error);
 				await settleActiveRun(
@@ -926,6 +1034,7 @@ async function handleNativeAskRequestInSpan(input: {
 					abortSignal: input.request.signal,
 					preserveAllCitations,
 					getFinalCitations: () => citations,
+					getTraceDetails: () => traceDetails,
 				});
 			} catch (error) {
 				await invalidateHistory();

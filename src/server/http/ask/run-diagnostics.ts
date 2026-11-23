@@ -87,6 +87,8 @@ export async function finalizeAskRun(input: {
 	errorCode?: string;
 	failure?: QdrantOperationError | AnswerCitationValidationError;
 }): Promise<void> {
+	// The run ledger projects metadata only. Live previews and rewritten queries
+	// are added at the response boundary after this projection.
 	const state = input.state;
 	const mode = state ? retrievalMode(state) : null;
 	const debug = state?.retrieval_debug;

@@ -273,6 +273,10 @@
 						"minLength": 1,
 						"maxLength": 256,
 						"description": "Customer-controlled opaque conversation ID. It does not create an archived Workspace thread."
+					},
+					"include_trace_details": {
+						"type": "boolean",
+						"description": "Accepted and ignored for Service Key requests."
 					}
 				}
 			},
