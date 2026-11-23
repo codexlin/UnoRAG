@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertCircle, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
@@ -26,14 +27,16 @@ function LoginFormPlaceholder() {
 			role="status"
 			aria-label={t("正在加载登录表单", "Loading sign-in form")}
 		>
-			<div aria-hidden className="space-y-5">
-				{[0, 1].map((field) => (
-					<div key={field} className="space-y-2">
-						<div className="h-3.5 w-8 rounded-sm bg-muted" />
-						<div className="h-11 rounded-lg border border-input" />
-					</div>
-				))}
-				<div className="h-6" />
+			<div aria-hidden>
+				<div className="space-y-4">
+					{[0, 1].map((field) => (
+						<div key={field} className="space-y-2">
+							<div className="h-3.5 w-10 rounded-sm bg-muted" />
+							<div className="h-11 rounded-lg border border-input bg-background dark:bg-muted/35" />
+						</div>
+					))}
+				</div>
+				<div className="mt-2 mb-3 min-h-6" />
 				<div className="h-11 rounded-lg bg-muted" />
 			</div>
 			<noscript>
@@ -92,8 +95,8 @@ export default function LoginPage() {
 
 	return (
 		<AuthPageShell>
-			<div className="space-y-2">
-				<h1 className="text-2xl font-semibold leading-8">
+			<div className="space-y-1.5">
+				<h1 className="text-2xl font-semibold leading-8 tracking-[-0.02em] text-card-foreground">
 					{t("登录 UnoRAG", "Sign in to UnoRAG")}
 				</h1>
 				<p className="text-sm leading-6 text-muted-foreground">
@@ -107,75 +110,81 @@ export default function LoginPage() {
 			{!ready ? (
 				<LoginFormPlaceholder />
 			) : (
-				<form
-					method="post"
-					className="space-y-5"
-					onSubmit={submit}
-					aria-busy={submitting}
-				>
-					<div className="space-y-2">
-						<Label htmlFor="email">{t("邮箱", "Email")}</Label>
-						<Input
-							id="email"
-							name="email"
-							type="email"
-							autoComplete="username"
-							placeholder="admin@unorag.local"
-							className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
-							aria-invalid={error === "credentials" || undefined}
-							aria-describedby={error ? "login-error" : undefined}
-							disabled={submitting}
-							required
-						/>
+				<form method="post" onSubmit={submit} aria-busy={submitting}>
+					<div className="space-y-4">
+						<div className="space-y-2">
+							<Label htmlFor="email">{t("邮箱", "Email")}</Label>
+							<Input
+								id="email"
+								name="email"
+								type="email"
+								autoComplete="username"
+								placeholder="admin@unorag.local"
+								className="h-11 bg-background px-3.5 text-base shadow-2xs md:text-base dark:bg-muted/35 motion-reduce:transition-none"
+								aria-invalid={error === "credentials" || undefined}
+								aria-describedby={error ? "login-error" : undefined}
+								disabled={submitting}
+								required
+							/>
+						</div>
+						<div className="space-y-2">
+							<Label htmlFor="password">{t("密码", "Password")}</Label>
+							<Input
+								id="password"
+								name="password"
+								type="password"
+								autoComplete="current-password"
+								className="h-11 bg-background px-3.5 text-base shadow-2xs md:text-base dark:bg-muted/35 motion-reduce:transition-none"
+								aria-invalid={error === "credentials" || undefined}
+								aria-describedby={error ? "login-error" : undefined}
+								disabled={submitting}
+								required
+							/>
+						</div>
 					</div>
-					<div className="space-y-2">
-						<Label htmlFor="password">{t("密码", "Password")}</Label>
-						<Input
-							id="password"
-							name="password"
-							type="password"
-							autoComplete="current-password"
-							className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
-							aria-invalid={error === "credentials" || undefined}
-							aria-describedby={error ? "login-error" : undefined}
-							disabled={submitting}
-							required
-						/>
-					</div>
-					<div className="min-h-6">
+					<div className="mt-2 mb-3 flex min-h-6 items-center">
 						{error ? (
 							<p
 								id="login-error"
-								className="text-sm leading-6 text-destructive"
+								className="inline-flex items-center gap-1.5 text-sm leading-6 text-destructive"
 								role="alert"
 							>
-								{t(ERROR_COPY[error][0], ERROR_COPY[error][1])}
+								<AlertCircle className="size-4 shrink-0" aria-hidden />
+								<span>{t(ERROR_COPY[error][0], ERROR_COPY[error][1])}</span>
 							</p>
 						) : null}
 					</div>
 					<Button
-						className="h-11 w-full"
+						className="h-11 w-full text-sm font-medium shadow-2xs"
 						type="submit"
 						disabled={!ready || submitting}
 					>
-						{submitting
-							? t("正在登录...", "Signing in...")
-							: t("登录", "Sign in")}
+						{submitting ? (
+							<>
+								<Loader2
+									className="size-4 animate-spin motion-reduce:hidden"
+									aria-hidden
+								/>
+								{t("正在登录...", "Signing in...")}
+							</>
+						) : (
+							t("登录", "Sign in")
+						)}
 					</Button>
 				</form>
 			)}
 			<nav
 				aria-label={t("其他登录方式", "Other sign-in options")}
-				className="flex flex-wrap justify-between gap-x-4 gap-y-2 border-t pt-4 text-sm"
+				className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-border pt-4 text-sm"
 			>
 				<Link
-					className="inline-flex min-h-11 items-center rounded-md text-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+					className="inline-flex min-h-11 min-w-11 items-center rounded-md text-card-foreground underline-offset-4 transition-colors duration-150 hover:text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring motion-reduce:transition-none"
 					href="/account-access?purpose=login"
 				>
 					{t("使用邮箱链接登录", "Sign in with an email link")}
 				</Link>
 				<Link
-					className="inline-flex min-h-11 items-center rounded-md text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+					className="inline-flex min-h-11 min-w-11 items-center rounded-md text-muted-foreground underline-offset-4 transition-colors duration-150 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring motion-reduce:transition-none"
 					href="/account-access?purpose=reset"
 				>
 					{t("忘记密码", "Forgot password")}

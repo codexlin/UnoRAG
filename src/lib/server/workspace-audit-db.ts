@@ -1,10 +1,12 @@
-import { and, desc, eq, lt, or } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, lt, or, sql } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
 import { auditLogs, users } from "@/db/schema";
 import {
 	AUDIT_EXPORT_MAX_ROWS,
 	type AuditListItem,
+	type AuditRange,
+	auditRangeCutoff,
 	decodeAuditCursor,
 	encodeAuditCursor,
 	formatAuditCsv,
@@ -15,12 +17,28 @@ export type ListAuditResult =
 	| { ok: true; items: AuditListItem[]; next_cursor: string | null }
 	| { ok: false; status: number; detail: string };
 
-async function queryAuditRows(opts: {
-	organizationId: string;
-	workspaceId: string;
-	limit: number;
-	cursor?: string | null;
-}): Promise<ListAuditResult> {
+export type AuditFilterOptions = {
+	range?: AuditRange;
+	resourceType?: string | null;
+	action?: string | null;
+	q?: string | null;
+};
+
+function escapeLike(value: string): string {
+	return value
+		.replaceAll("\\", "\\\\")
+		.replaceAll("%", "\\%")
+		.replaceAll("_", "\\_");
+}
+
+async function queryAuditRows(
+	opts: {
+		organizationId: string;
+		workspaceId: string;
+		limit: number;
+		cursor?: string | null;
+	} & AuditFilterOptions,
+): Promise<ListAuditResult> {
 	const decoded =
 		opts.cursor != null && opts.cursor !== ""
 			? decodeAuditCursor(opts.cursor)
@@ -33,6 +51,38 @@ async function queryAuditRows(opts: {
 		eq(auditLogs.organizationId, opts.organizationId),
 		eq(auditLogs.workspaceId, opts.workspaceId),
 	];
+
+	const cutoff = opts.range ? auditRangeCutoff(opts.range) : null;
+	if (cutoff) {
+		conditions.push(gte(auditLogs.createdAt, cutoff));
+	}
+
+	if (opts.resourceType) {
+		conditions.push(eq(auditLogs.resourceType, opts.resourceType));
+	}
+
+	if (opts.action) {
+		if (opts.action.endsWith(".*")) {
+			const prefix = escapeLike(opts.action.slice(0, -2));
+			conditions.push(ilike(auditLogs.action, `${prefix}.%`));
+		} else {
+			conditions.push(eq(auditLogs.action, opts.action));
+		}
+	}
+
+	if (opts.q) {
+		const pattern = `%${escapeLike(opts.q)}%`;
+		const searchFilter = or(
+			ilike(auditLogs.action, pattern),
+			ilike(auditLogs.resourceType, pattern),
+			ilike(auditLogs.resourceId, pattern),
+			ilike(auditLogs.requestId, pattern),
+			ilike(users.displayName, pattern),
+			ilike(users.email, pattern),
+			sql`CAST(${auditLogs.details} AS text) ILIKE ${pattern}`,
+		);
+		if (searchFilter) conditions.push(searchFilter);
+	}
 
 	if (decoded) {
 		const cursorAt = new Date(decoded.createdAt);
@@ -82,24 +132,32 @@ async function queryAuditRows(opts: {
 	return { ok: true, items, next_cursor };
 }
 
-export async function listWorkspaceAuditLogs(opts: {
-	organizationId: string;
-	workspaceId: string;
-	limit: number;
-	cursor?: string | null;
-}): Promise<ListAuditResult> {
+export async function listWorkspaceAuditLogs(
+	opts: {
+		organizationId: string;
+		workspaceId: string;
+		limit: number;
+		cursor?: string | null;
+	} & AuditFilterOptions,
+): Promise<ListAuditResult> {
 	return queryAuditRows(opts);
 }
 
-export async function exportWorkspaceAuditCsv(opts: {
-	organizationId: string;
-	workspaceId: string;
-}): Promise<{ body: string; filename: string }> {
+export async function exportWorkspaceAuditCsv(
+	opts: {
+		organizationId: string;
+		workspaceId: string;
+	} & AuditFilterOptions,
+): Promise<{ body: string; filename: string }> {
 	const result = await queryAuditRows({
 		organizationId: opts.organizationId,
 		workspaceId: opts.workspaceId,
 		limit: AUDIT_EXPORT_MAX_ROWS,
 		cursor: null,
+		range: opts.range,
+		resourceType: opts.resourceType,
+		action: opts.action,
+		q: opts.q,
 	});
 	if (!result.ok) {
 		return { body: formatAuditCsv([]), filename: "audit-export.csv" };

@@ -1,24 +1,18 @@
 "use client";
 
 import { createContext, type ReactNode, useContext } from "react";
-import {
-	DEFAULT_LOCALE,
-	interfaceText,
-	type Locale,
-	type LocalePreference,
-} from "./locale";
+import { DEFAULT_LOCALE, interfaceText, type Locale } from "./locale";
 
-const LanguageContext = createContext<{
-	locale: Locale;
-	preference: LocalePreference;
-}>({ locale: DEFAULT_LOCALE, preference: "system" });
+const LanguageContext = createContext<{ locale: Locale }>({
+	locale: DEFAULT_LOCALE,
+});
 
 export function LanguageProvider({
 	language,
 	children,
 }: {
-	language: { locale: Locale; preference: LocalePreference };
-	children: ReactNode;
+	language: { locale: Locale };
+	children?: ReactNode;
 }) {
 	return (
 		<LanguageContext.Provider value={language}>

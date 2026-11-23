@@ -12,6 +12,7 @@ import {
 	normalizeRadius,
 	parseAppearance,
 	RADIUS_RANGE,
+	resolveRadius,
 } from "../../src/lib/appearance";
 
 function normalizeCSSValue(value: string) {
@@ -24,7 +25,7 @@ function normalizeCSSValue(value: string) {
 test("appearance accepts registered themes and preserves radius when old or damaged themes fall back", () => {
 	assert.deepEqual(
 		COLOR_THEMES.map((theme) => theme.id),
-		["vercel", "claude", "violet-bloom"],
+		["vercel", "modern-minimal", "claude", "violet-bloom"],
 	);
 	for (const raw of [null, "bad json", "null", "7", "[]", '"blue"']) {
 		assert.deepEqual(parseAppearance(raw), DEFAULT_APPEARANCE);
@@ -33,9 +34,13 @@ test("appearance accepts registered themes and preserves radius when old or dama
 		parseAppearance('{"color":"claude","radius":"malicious CSS"}'),
 		{
 			color: "claude",
-			radius: 4,
+			radius: "preset",
 		},
 	);
+	assert.equal(resolveRadius({ color: "vercel", radius: "preset" }), 4);
+	assert.equal(resolveRadius({ color: "modern-minimal", radius: "preset" }), 6);
+	assert.equal(resolveRadius({ color: "claude", radius: "preset" }), 8);
+	assert.equal(resolveRadius({ color: "violet-bloom", radius: "preset" }), 12);
 	for (const color of ["neutral", "blue", "url(https://example.com)"]) {
 		assert.deepEqual(
 			parseAppearance(JSON.stringify({ color, radius: "soft" })),
@@ -54,8 +59,9 @@ test("custom radius clamps finite values, rounds to half pixels and migrates old
 		[4.74, 4.5],
 		[4.75, 5],
 		[8, 8],
+		[12, 12],
 		[-12, 0],
-		[100, 8],
+		[100, 12],
 		["none", 0],
 		["balanced", 4],
 		["soft", 8],
@@ -89,6 +95,8 @@ test("pre-paint bootstrap agrees with preference parser for every theme/radius a
 		"{bad",
 		'{"color":"bad","radius":-1}',
 		'{"color":"blue","radius":"soft"}',
+		'{"color":"claude","radius":"preset"}',
+		'{"color":"violet-bloom","radius":"preset"}',
 		'{"color":"claude","radius":100}',
 		'{"color":"claude","radius":1e309}',
 		'{"color":"claude","radius":"constructor"}',
@@ -119,11 +127,13 @@ test("pre-paint bootstrap agrees with preference parser for every theme/radius a
 			},
 		});
 		const expected = parseAppearance(raw);
+		const expectedPx = resolveRadius(expected);
 		assert.deepEqual(dataset, {
 			colorTheme: expected.color,
-			radius: String(expected.radius),
+			radius: String(expectedPx),
+			radiusMode: expected.radius === "preset" ? "preset" : "custom",
 		});
-		assert.deepEqual(styles, { "--radius": `${expected.radius}px` });
+		assert.deepEqual(styles, { "--radius": `${expectedPx}px` });
 	}
 	const dataset: Record<string, string> = {};
 	vm.runInNewContext(APPEARANCE_INIT_SCRIPT, {
@@ -134,7 +144,11 @@ test("pre-paint bootstrap agrees with preference parser for every theme/radius a
 			documentElement: { dataset, style: { setProperty: () => {} } },
 		},
 	});
-	assert.deepEqual(dataset, { colorTheme: "vercel", radius: "4" });
+	assert.deepEqual(dataset, {
+		colorTheme: "vercel",
+		radius: "4",
+		radiusMode: "preset",
+	});
 });
 
 test("built-in themes are reproducible snapshots with complete colors, local fonts and isolated geometry", () => {
@@ -148,7 +162,7 @@ test("built-in themes are reproducible snapshots with complete colors, local fon
 			["scripts/generate-theme-styles.mjs", "--check"],
 			{ encoding: "utf8" },
 		),
-		/Verified 3 built-in/,
+		/Verified 4 built-in/,
 	);
 	const css = postcss.parse(cssText);
 	const variables = new Map<string, Record<string, string>>();
@@ -243,6 +257,15 @@ test("built-in themes are reproducible snapshots with complete colors, local fon
 				);
 			}
 			assert.ok(values["--theme-font-sans"]);
+			if (mode === "dark") {
+				for (const darkSurface of ["sidebar-border", "secondary", "border"]) {
+					const match = values[`--${darkSurface}`]?.match(/^oklch\(([0-9.]+)/);
+					assert.ok(
+						match && Number(match[1]) < 0.55,
+						`${theme.id}/dark/${darkSurface} must stay dark (got ${values[`--${darkSurface}`]})`,
+					);
+				}
+			}
 			assert.ok(values["--theme-font-mono"]);
 			assert.equal(
 				normalizeCSSValue(values["--evidence"]),

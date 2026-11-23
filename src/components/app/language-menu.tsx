@@ -16,30 +16,28 @@ import { isLocale } from "@/lib/i18n/locale";
 import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
 
 export function LanguageMenu() {
-	const { preference } = useInterfaceLanguage();
+	const { locale } = useInterfaceLanguage();
 	const t = useInterfaceText();
 	const [pending, startTransition] = useTransition();
 	const label = t("界面语言", "Interface language");
 
 	return (
-		<DropdownMenu>
+		<DropdownMenu modal={false}>
 			<DropdownMenuTrigger
 				aria-label={label}
 				title={label}
 				disabled={pending}
-				render={<Button variant="ghost" size="icon" className="size-11" />}
+				render={
+					<Button variant="ghost" size="icon" className="size-11 md:size-9" />
+				}
 			>
 				<Languages aria-hidden />
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="min-w-36">
 				<DropdownMenuRadioGroup
-					value={preference}
+					value={locale}
 					onValueChange={(value) => {
-						if (
-							value === preference ||
-							(!isLocale(value) && value !== "system")
-						)
-							return;
+						if (value === locale || !isLocale(value)) return;
 						startTransition(async () => {
 							try {
 								if (!(await setInterfaceLanguage(value))) throw new Error();
@@ -54,9 +52,6 @@ export function LanguageMenu() {
 						});
 					}}
 				>
-					<DropdownMenuRadioItem value="system">
-						{t("跟随系统", "Use system language")}
-					</DropdownMenuRadioItem>
 					<DropdownMenuRadioItem value="en" lang="en">
 						English
 					</DropdownMenuRadioItem>

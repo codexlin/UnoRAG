@@ -27,6 +27,10 @@ export async function GET(request: Request) {
 		const exported = await exportWorkspaceAuditCsv({
 			organizationId: identity.tenantId,
 			workspaceId: identity.workspaceId,
+			range: params.range,
+			resourceType: params.resourceType,
+			action: params.action,
+			q: params.q,
 		});
 		return new NextResponse(exported.body, {
 			status: 200,
@@ -42,6 +46,10 @@ export async function GET(request: Request) {
 		workspaceId: identity.workspaceId,
 		limit: params.limit,
 		cursor: params.cursor,
+		range: params.range,
+		resourceType: params.resourceType,
+		action: params.action,
+		q: params.q,
 	});
 	if (!result.ok) {
 		return NextResponse.json(

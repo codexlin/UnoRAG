@@ -33,7 +33,7 @@ import { stageDisplayName } from "@/components/app/stage-waterfall";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
-import { useInterfaceText } from "@/lib/i18n/provider";
+import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
 import { formatReleaseVersion, type ReleaseInfo } from "@/lib/release-info";
 import { cn } from "@/lib/utils";
 
@@ -201,6 +201,7 @@ function StageLatencyTable({
 	rows: StageLatency[];
 }) {
 	const t = useInterfaceText();
+	const { locale } = useInterfaceLanguage();
 	return (
 		<section className="min-w-0" aria-label={title}>
 			<div className="flex items-center justify-between border-border border-b py-3">
@@ -222,7 +223,7 @@ function StageLatencyTable({
 							className="grid grid-cols-[minmax(0,1fr)_3.5rem_3.5rem_4rem] items-center gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_5rem]"
 						>
 							<span className="truncate text-ui" title={row.stage}>
-								{stageDisplayName(row.stage)}
+								{stageDisplayName(row.stage, locale)}
 							</span>
 							<span className="text-right font-mono text-xs tabular-nums text-muted-foreground">
 								{latency(row.p50)}
@@ -250,7 +251,121 @@ function StageLatencyTable({
 	);
 }
 
+function localizeComponentLabel(
+	code: string,
+	label: string,
+	locale: "zh-CN" | "en",
+): string {
+	if (locale === "zh-CN") return label;
+	if (code === "email_delivery" || label === "邮件服务") return "Email service";
+	return label;
+}
+
+function localizeComponentRecovery(
+	code: string,
+	recovery: string,
+	locale: "zh-CN" | "en",
+): string {
+	if (locale === "zh-CN") return recovery;
+	if (code === "email_delivery") {
+		return "Check EMAIL_PROVIDER, EMAIL_FROM, and RESEND_API_KEY configuration; being configured does not guarantee delivery.";
+	}
+	return recovery;
+}
+
+function localizeAlert(
+	alert: OperationsAlert,
+	locale: "zh-CN" | "en",
+): { title: string; detail: string; recovery: string } {
+	if (locale === "zh-CN") {
+		return {
+			title: alert.title,
+			detail: alert.detail,
+			recovery: alert.recovery,
+		};
+	}
+	switch (alert.code) {
+		case "jobs.delete_failed": {
+			const count = alert.detail.match(/\d+/)?.[0];
+			return {
+				title: "Deletion cleanup awaiting recovery",
+				detail: count
+					? `${count} document deletion job(s) exhausted retries.`
+					: alert.detail,
+				recovery:
+					'Confirm dependency health in Recent errors, then use "Retry cleanup" to enqueue an idempotent job.',
+			};
+		}
+		case "jobs.dead": {
+			const count = alert.detail.match(/\d+/)?.[0];
+			return {
+				title: "Dead jobs detected",
+				detail: count ? `${count} job(s) entered dead state.` : alert.detail,
+				recovery:
+					"Inspect the failure category in job details, fix the dependency, and trigger an idempotent retry.",
+			};
+		}
+		case "jobs.stuck": {
+			const count = alert.detail.match(/\d+/)?.[0];
+			return {
+				title: "Job heartbeat timed out",
+				detail: count
+					? `${count} running job(s) missed heartbeat.`
+					: alert.detail,
+				recovery:
+					"Check DBOS worker and dependency health, confirm the lease, then retry.",
+			};
+		}
+		case "ask.failure_rate": {
+			const ratio = alert.detail.match(/\d+\/\d+/)?.[0];
+			return {
+				title: "Elevated Ask failure rate",
+				detail: ratio ? `${ratio} terminal requests failed.` : alert.detail,
+				recovery:
+					"Check model, retrieval dependencies, and timeout settings via recent error codes.",
+			};
+		}
+		case "ask.citation_coverage": {
+			const count = alert.detail.match(/\d+/)?.[0];
+			return {
+				title: "Low citation coverage",
+				detail: count
+					? `${count} completed answer(s) had no citations.`
+					: alert.detail,
+				recovery:
+					"Check retrieval thresholds, refusal policy, and citation generation.",
+			};
+		}
+		case "ask.p95_latency": {
+			const ms = alert.detail.match(/\d+/)?.[0];
+			return {
+				title: "Elevated Ask P95 latency",
+				detail: ms ? `Current P95 is ${ms} ms.` : alert.detail,
+				recovery:
+					"Use stage latency to isolate retrieval, rerank, or model bottlenecks.",
+			};
+		}
+		default: {
+			if (alert.code.startsWith("provider.")) {
+				const providerName = alert.title.replace(/\s*状态异常$/, "");
+				const errCode = alert.detail.match(/健康检查返回\s+([^。]+)/)?.[1];
+				return {
+					title: `${providerName} unhealthy`,
+					detail: errCode ? `Health check returned ${errCode}.` : alert.detail,
+					recovery: alert.recovery,
+				};
+			}
+			return {
+				title: alert.title,
+				detail: alert.detail,
+				recovery: alert.recovery,
+			};
+		}
+	}
+}
+
 export function OperationsDashboard() {
+	const { locale } = useInterfaceLanguage();
 	const t = useInterfaceText();
 	const id = useId();
 	const canManage = useCan("manageMembers");
@@ -397,14 +512,14 @@ export function OperationsDashboard() {
 		: 0;
 
 	return (
-		<div className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
-			<div className="mx-auto w-full max-w-7xl space-y-6">
-				<header className="flex flex-wrap items-end justify-between gap-4">
+		<div className="flex min-h-0 min-w-0 flex-1 flex-col px-4 pt-5 pb-6 sm:px-6 md:overflow-hidden md:pb-0 lg:px-8">
+			<div className="mx-auto flex w-full max-w-7xl flex-col gap-4 md:min-h-0 md:flex-1 md:overflow-hidden">
+				<header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-4">
 					<div className="min-w-0">
 						<h2 className="text-2xl font-medium">
 							{t("运行中心", "Operations")}
 						</h2>
-						<p className="mt-2 text-xs text-muted-foreground">
+						<p className="mt-1 text-xs text-muted-foreground">
 							{snapshot
 								? t(
 										`最近 ${snapshot.window.hours} 小时 · 更新于 ${formatDateTime(snapshot.generated_at)}`,
@@ -419,7 +534,7 @@ export function OperationsDashboard() {
 						<div className="flex items-center gap-3">
 							<label
 								htmlFor={`${id}-auto-refresh`}
-								className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs text-muted-foreground"
+								className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs text-muted-foreground md:min-h-9"
 							>
 								<Switch
 									id={`${id}-auto-refresh`}
@@ -431,7 +546,7 @@ export function OperationsDashboard() {
 							<Button
 								variant="outline"
 								size="icon"
-								className="size-11"
+								className="size-11 md:size-9"
 								onClick={() => void load()}
 								disabled={loading}
 								title={t("刷新运行数据", "Refresh operations data")}
@@ -445,7 +560,7 @@ export function OperationsDashboard() {
 					) : null}
 				</header>
 				<fieldset
-					className="flex min-w-0 gap-4 border-b border-border"
+					className="flex min-w-0 shrink-0 gap-4 border-b border-border"
 					aria-label={t("运行中心视图", "Operations view")}
 				>
 					{(
@@ -461,7 +576,7 @@ export function OperationsDashboard() {
 							aria-pressed={view === value}
 							onClick={() => setView(value)}
 							className={cn(
-								"min-h-11 border-b-2 px-2 text-sm font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+								"min-h-11 border-b-2 px-2 text-sm font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-10",
 								view === value
 									? "border-evidence text-evidence"
 									: "border-transparent text-muted-foreground hover:text-foreground",
@@ -482,7 +597,7 @@ export function OperationsDashboard() {
 						workspaceId={identity.workspaceId}
 					/>
 				) : (
-					<>
+					<div className="min-h-0 flex-1 space-y-6 overflow-y-auto pb-8 md:pr-1 md:[scrollbar-gutter:stable]">
 						{error ? (
 							<div
 								role="alert"
@@ -523,7 +638,7 @@ export function OperationsDashboard() {
 						</section>
 						<section
 							aria-label={t("问答指标", "Ask metrics")}
-							className="grid grid-cols-2 border-b border-border xl:grid-cols-5"
+							className="grid grid-cols-2 divide-y divide-border/60 rounded-lg border border-border bg-card shadow-2xs xl:grid-cols-5 xl:divide-x xl:divide-y-0"
 						>
 							<MetricCell
 								label={t("问答请求", "Ask requests")}
@@ -683,7 +798,11 @@ export function OperationsDashboard() {
 										>
 											<div className="flex flex-wrap items-center justify-between gap-2">
 												<span className="text-sm font-medium">
-													{component.label}
+													{localizeComponentLabel(
+														component.code,
+														component.label,
+														locale,
+													)}
 												</span>
 												<span
 													className={cn(
@@ -724,7 +843,11 @@ export function OperationsDashboard() {
 											</p>
 											{component.status === "degraded" || component.stale ? (
 												<p className="mt-2 break-words text-sm text-muted-foreground">
-													{component.recovery}
+													{localizeComponentRecovery(
+														component.code,
+														component.recovery,
+														locale,
+													)}
 												</p>
 											) : null}
 										</li>
@@ -759,80 +882,85 @@ export function OperationsDashboard() {
 							</div>
 							<p className="py-3 text-xs text-muted-foreground">
 								{snapshot
-									? `Webhook ${snapshot.notifications.webhook ? t("已配置", "Configured") : t("未配置", "Not configured")} · 邮件 ${snapshot.notifications.email ? t("已配置", "Configured") : t("未配置", "Not configured")}`
+									? `Webhook ${snapshot.notifications.webhook ? t("已配置", "Configured") : t("未配置", "Not configured")} · ${t("邮件", "Email")} ${snapshot.notifications.email ? t("已配置", "Configured") : t("未配置", "Not configured")}`
 									: t("通知配置未知", "Notification configuration unknown")}
 							</p>
 							{activeAlerts.length ? (
 								<ul className="divide-y divide-border/60">
-									{activeAlerts.map((alert) => (
-										<li
-											key={alert.id}
-											className="grid min-w-0 gap-3 py-4 lg:grid-cols-[minmax(0,1fr)_12rem]"
-										>
-											<div className="min-w-0">
-												<div className="flex flex-wrap items-center gap-3">
-													<span
-														className={cn(
-															"text-xs font-medium",
-															alert.severity === "critical"
-																? "text-destructive"
+									{activeAlerts.map((alert) => {
+										const localizedAlert = localizeAlert(alert, locale);
+										return (
+											<li
+												key={alert.id}
+												className="grid min-w-0 gap-3 py-4 lg:grid-cols-[minmax(0,1fr)_12rem]"
+											>
+												<div className="min-w-0">
+													<div className="flex flex-wrap items-center gap-3">
+														<span
+															className={cn(
+																"text-xs font-medium",
+																alert.severity === "critical"
+																	? "text-destructive"
+																	: alert.severity === "warning"
+																		? "text-warning-foreground"
+																		: "text-muted-foreground",
+															)}
+														>
+															{alert.severity === "critical"
+																? t("严重", "Critical")
 																: alert.severity === "warning"
-																	? "text-warning-foreground"
-																	: "text-muted-foreground",
-														)}
-													>
-														{alert.severity === "critical"
-															? t("严重", "Critical")
-															: alert.severity === "warning"
-																? t("警告", "Warning")
-																: t("提示", "Info")}
-													</span>
-													<h4 className="text-sm font-medium">{alert.title}</h4>
+																	? t("警告", "Warning")
+																	: t("提示", "Info")}
+														</span>
+														<h4 className="text-sm font-medium">
+															{localizedAlert.title}
+														</h4>
+													</div>
+													<p className="mt-2 break-words text-sm">
+														{localizedAlert.detail}
+													</p>
+													<p className="mt-2 break-words text-xs text-muted-foreground">
+														{localizedAlert.recovery}
+													</p>
 												</div>
-												<p className="mt-2 break-words text-sm">
-													{alert.detail}
-												</p>
-												<p className="mt-2 break-words text-xs text-muted-foreground">
-													{alert.recovery}
-												</p>
-											</div>
-											<dl className="space-y-1 text-xs text-muted-foreground">
-												<div>
-													<dt className="inline">
-														{t("首次触发", "First triggered")}{" "}
-													</dt>
-													<dd className="inline">
-														{formatDateTime(alert.first_triggered_at)}
-													</dd>
-												</div>
-												<div>
-													<dt className="inline">{t("累计", "Total:")} </dt>
-													<dd className="inline tabular-nums">
-														{alert.occurrence_count} {t("次", "occurrences")}
-													</dd>
-												</div>
-												<div>
-													<dt className="inline">
-														{t("投递状态", "Delivery status")}{" "}
-													</dt>
-													<dd className="inline break-all">
-														{alert.last_delivery_status ??
-															t("未记录投递", "No delivery recorded")}
-													</dd>
-												</div>
-												{alert.last_delivery_at ? (
+												<dl className="space-y-1 text-xs text-muted-foreground">
 													<div>
 														<dt className="inline">
-															{t("最近投递", "Last delivery")}{" "}
+															{t("首次触发", "First triggered")}{" "}
 														</dt>
 														<dd className="inline">
-															{formatDateTime(alert.last_delivery_at)}
+															{formatDateTime(alert.first_triggered_at)}
 														</dd>
 													</div>
-												) : null}
-											</dl>
-										</li>
-									))}
+													<div>
+														<dt className="inline">{t("累计", "Total:")} </dt>
+														<dd className="inline tabular-nums">
+															{alert.occurrence_count} {t("次", "occurrences")}
+														</dd>
+													</div>
+													<div>
+														<dt className="inline">
+															{t("投递状态", "Delivery status")}{" "}
+														</dt>
+														<dd className="inline break-all">
+															{alert.last_delivery_status ??
+																t("未记录投递", "No delivery recorded")}
+														</dd>
+													</div>
+													{alert.last_delivery_at ? (
+														<div>
+															<dt className="inline">
+																{t("最近投递", "Last delivery")}{" "}
+															</dt>
+															<dd className="inline">
+																{formatDateTime(alert.last_delivery_at)}
+															</dd>
+														</div>
+													) : null}
+												</dl>
+											</li>
+										);
+									})}
 								</ul>
 							) : (
 								<p className="py-5 text-sm text-muted-foreground">
@@ -863,7 +991,10 @@ export function OperationsDashboard() {
 										<li key={`${item.source}-${item.id}`}>
 											<button
 												type="button"
-												aria-label={`查看${item.source === "ask" ? t("请求", "Request") : t("任务", "Job")}错误 ${item.id}`}
+												aria-label={t(
+													`查看${item.source === "ask" ? "请求" : "任务"}错误 ${item.id}`,
+													`Inspect ${item.source === "ask" ? "request" : "job"} error ${item.id}`,
+												)}
 												onClick={() =>
 													setSelectedError({ source: item.source, id: item.id })
 												}
@@ -882,7 +1013,7 @@ export function OperationsDashboard() {
 												</span>
 												<span className="break-words text-xs">
 													{item.stage
-														? stageDisplayName(item.stage)
+														? stageDisplayName(item.stage, locale)
 														: item.status}
 												</span>
 												<time
@@ -938,7 +1069,7 @@ export function OperationsDashboard() {
 								))}
 							</dl>
 						</details>
-					</>
+					</div>
 				)}
 				<OperationsErrorDrawer
 					selected={selectedError}

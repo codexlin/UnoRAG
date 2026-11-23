@@ -11,6 +11,8 @@ import {
 	PopoverTrigger,
 } from "@/components/ui/popover";
 
+import { useInterfaceLanguage } from "@/lib/i18n/provider";
+
 export function HelpTip({
 	label,
 	children,
@@ -18,6 +20,13 @@ export function HelpTip({
 	label: string;
 	children: ReactNode;
 }) {
+	const { locale } = useInterfaceLanguage();
+	const ariaLabel =
+		locale === "zh-CN"
+			? label.endsWith("说明")
+				? label
+				: `${label}说明`
+			: label;
 	return (
 		<Popover>
 			<PopoverTrigger
@@ -29,7 +38,7 @@ export function HelpTip({
 						variant="ghost"
 						size="icon"
 						className="size-11 shrink-0 text-muted-foreground"
-						aria-label={label.endsWith("说明") ? label : `${label}说明`}
+						aria-label={ariaLabel}
 					/>
 				}
 			>

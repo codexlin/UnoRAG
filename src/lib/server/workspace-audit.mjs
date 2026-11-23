@@ -20,6 +20,11 @@ export function authorizeAuditAccess(identity) {
 	return { ok: true };
 }
 
+export const AUDIT_RANGE_OPTIONS = ["all", "24h", "7d", "30d"];
+
+const AUDIT_RESOURCE_TYPE_RE = /^[a-z0-9_.-]{1,64}$/i;
+const AUDIT_ACTION_FILTER_RE = /^[a-z0-9_.-]{1,80}(\.\*)?$/i;
+
 export function parseAuditListParams(searchParams) {
 	const rawLimit = Number(searchParams.get("limit") ?? 50);
 	const limit =
@@ -28,7 +33,30 @@ export function parseAuditListParams(searchParams) {
 			: 50;
 	const cursor = searchParams.get("cursor")?.trim() || null;
 	const format = searchParams.get("format")?.trim()?.toLowerCase() || null;
-	return { limit, cursor, format };
+	const rawRange = searchParams.get("range")?.trim()?.toLowerCase() || "all";
+	const range = AUDIT_RANGE_OPTIONS.includes(rawRange) ? rawRange : "all";
+	const rawResourceType = searchParams.get("resource_type")?.trim() || "";
+	const resourceType = AUDIT_RESOURCE_TYPE_RE.test(rawResourceType)
+		? rawResourceType
+		: null;
+	const rawAction = searchParams.get("action")?.trim() || "";
+	const action = AUDIT_ACTION_FILTER_RE.test(rawAction) ? rawAction : null;
+	const rawQuery = searchParams.get("q")?.trim() || "";
+	const q = rawQuery ? rawQuery.slice(0, 120) : null;
+	return { limit, cursor, format, range, resourceType, action, q };
+}
+
+export function auditRangeCutoff(range, now = new Date()) {
+	const hours =
+		range === "24h"
+			? 24
+			: range === "7d"
+				? 24 * 7
+				: range === "30d"
+					? 24 * 30
+					: null;
+	if (!hours) return null;
+	return new Date(now.getTime() - hours * 60 * 60 * 1000);
 }
 
 export function encodeAuditCursor({ createdAt, id }) {

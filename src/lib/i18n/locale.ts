@@ -1,7 +1,6 @@
 export const LOCALE_COOKIE = "unorag-locale";
 export const SUPPORTED_LOCALES = ["en", "zh-CN"] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
-export type LocalePreference = Locale | "system";
 export const DEFAULT_LOCALE: Locale = "en";
 
 export function isLocale(value: unknown): value is Locale {

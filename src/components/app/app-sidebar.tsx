@@ -49,9 +49,9 @@ function NavLink({ item }: { item: AppNavItem }) {
 					"relative h-11 gap-3 rounded-lg px-3 text-sm font-medium",
 					/* 覆盖 SidebarMenuButton 默认的 width/height 过渡，只做轻量变色 */
 					"transition-[background-color,color]! duration-150! ease-out!",
-					"hover:bg-sidebar-accent hover:text-foreground",
+					"hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
 					"group-data-[collapsible=icon]:size-11! group-data-[collapsible=icon]:-mx-0.5 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:p-0!",
-					"data-active:bg-sidebar-accent data-active:font-medium data-active:text-foreground",
+					"data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground data-active:[&_svg]:text-sidebar-primary",
 				)}
 			>
 				<span className="flex size-4 shrink-0 items-center justify-center [&_svg]:size-4">
@@ -78,9 +78,9 @@ export function AppSidebar() {
 		<Sidebar
 			collapsible="icon"
 			variant="sidebar"
-			className="border-sidebar-border bg-sidebar"
+			className="border-border bg-sidebar"
 		>
-			<SidebarHeader className="h-14 justify-center border-b border-sidebar-border px-2">
+			<SidebarHeader className="h-14 justify-center border-b border-border px-2">
 				<SidebarMenu>
 					<SidebarMenuItem>
 						<SidebarMenuButton
@@ -135,7 +135,7 @@ export function AppSidebar() {
 				</SidebarGroup>
 			</SidebarContent>
 
-			<SidebarFooter className="border-t border-sidebar-border p-2">
+			<SidebarFooter className="border-t border-border p-2">
 				<AppNavUser />
 			</SidebarFooter>
 			<SidebarRail />

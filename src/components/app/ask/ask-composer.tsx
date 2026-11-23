@@ -45,7 +45,7 @@ export function AskComposer({
 			className="bg-background px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6"
 		>
 			<div className="mx-auto max-w-3xl">
-				<InputGroup className="bg-background shadow-sm has-disabled:bg-background has-disabled:opacity-100 dark:bg-input/30 dark:has-disabled:bg-input/30">
+				<InputGroup className="bg-card shadow-sm has-disabled:bg-card has-disabled:opacity-100 dark:bg-card dark:has-disabled:bg-card">
 					<InputGroupTextarea
 						ref={textareaRef}
 						value={input}

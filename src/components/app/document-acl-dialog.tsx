@@ -26,6 +26,7 @@ import {
 	reindexDocument,
 	updateDocumentAcl,
 } from "@/lib/api";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -43,6 +44,7 @@ export function DocumentAclDialog({
 	onOpenChange,
 	onProjected,
 }: Props) {
+	const t = useInterfaceText();
 	const id = useId();
 	const [loading, setLoading] = useState(false);
 	const [saving, setSaving] = useState(false);
@@ -107,13 +109,17 @@ export function DocumentAclDialog({
 			})
 			.catch((err) => {
 				if (isAbortError(err) || controller.signal.aborted) return;
-				setError(err instanceof Error ? err.message : "加载可见性失败");
+				setError(
+					err instanceof Error
+						? err.message
+						: t("加载可见性失败", "Failed to load access settings"),
+				);
 			})
 			.finally(() => {
 				if (!controller.signal.aborted) setLoading(false);
 			});
 		return () => controller.abort();
-	}, [open, libraryId, docId, reload]);
+	}, [open, libraryId, docId, reload, t]);
 	const visibleMembers = members.filter((member) =>
 		`${member.displayName} ${member.email ?? ""}`
 			.toLocaleLowerCase()
@@ -134,7 +140,7 @@ export function DocumentAclDialog({
 		if (!doc || !isLoaded || !loadedAcl || !canEdit || loading || saving)
 			return;
 		if (scope === "restricted" && selectedIds.length === 0) {
-			setError("请至少选择一位可见成员");
+			setError(t("请至少选择一位可见成员", "Select at least one member."));
 			return;
 		}
 		setSaving(true);
@@ -152,7 +158,12 @@ export function DocumentAclDialog({
 			setCanEdit(saved.can_edit);
 			if (saved.projection === "projection_queued") {
 				onProjected?.(doc);
-				toast.success(`已保存「${doc.name}」可见性，正在投影到检索`);
+				toast.success(
+					t(
+						`已保存「${doc.name}」可见性，正在投影到检索`,
+						`Saved access for "${doc.name}". Updating search index.`,
+					),
+				);
 			} else if (saved.projection === "reindex_required") {
 				const result = await reindexDocument({
 					libraryId: loadedAcl.libraryId,
@@ -162,20 +173,34 @@ export function DocumentAclDialog({
 				onProjected?.(doc);
 				toast.success(
 					result.accepted || result.status === "processing"
-						? `已保存「${doc.name}」可见性，正在投影到检索`
-						: `已保存「${doc.name}」可见性并完成投影`,
+						? t(
+								`已保存「${doc.name}」可见性，正在投影到检索`,
+								`Saved access for "${doc.name}". Updating search index.`,
+							)
+						: t(
+								`已保存「${doc.name}」可见性并完成投影`,
+								`Saved access for "${doc.name}" and updated search index.`,
+							),
 				);
 			} else if (saved.projection === "deferred_to_ingest") {
 				toast.success(
-					`已保存「${doc.name}」可见性；当前索引完成后将按新 ACL 生效`,
+					t(
+						`已保存「${doc.name}」可见性；当前索引完成后将按新 ACL 生效`,
+						`Saved access for "${doc.name}". New ACL will take effect once current indexing finishes.`,
+					),
 				);
 			} else {
-				toast.success(`已保存「${doc.name}」可见性`);
+				toast.success(
+					t(`已保存「${doc.name}」可见性`, `Saved access for "${doc.name}".`),
+				);
 			}
 			onOpenChange(false);
 		} catch (err) {
 			if (loadedAcl.signal.aborted) return;
-			const message = err instanceof Error ? err.message : "保存可见性失败";
+			const message =
+				err instanceof Error
+					? err.message
+					: t("保存可见性失败", "Failed to save access settings");
 			setError(message);
 		} finally {
 			if (!loadedAcl.signal.aborted) setSaving(false);
@@ -202,13 +227,16 @@ export function DocumentAclDialog({
 						className="flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-ring"
 					>
 						<Shield className="size-4 shrink-0" aria-hidden />
-						谁可见
+						{t("谁可见", "Document access")}
 					</DialogTitle>
 					<DialogDescription>
 						<span className="block text-foreground [overflow-wrap:anywhere]">
-							{doc?.name ?? "文档"}
+							{doc?.name ?? t("文档", "Document")}
 						</span>
-						设置文档在知识库检索中的可见范围。
+						{t(
+							"设置文档在知识库检索中的可见范围。",
+							"Set who can retrieve this document in library search.",
+						)}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -221,7 +249,7 @@ export function DocumentAclDialog({
 							className="size-4 animate-spin motion-reduce:animate-none"
 							aria-hidden
 						/>
-						正在读取文档权限…
+						{t("正在读取文档权限…", "Loading document access…")}
 					</p>
 				) : !isLoaded ? (
 					<div className="space-y-3 py-3">
@@ -229,7 +257,7 @@ export function DocumentAclDialog({
 							role="alert"
 							className="text-sm text-destructive [overflow-wrap:anywhere]"
 						>
-							{error ?? "尚未加载可见性"}
+							{error ?? t("尚未加载可见性", "Access settings not loaded")}
 						</p>
 						<Button
 							type="button"
@@ -238,7 +266,7 @@ export function DocumentAclDialog({
 							onClick={() => setReload((value) => value + 1)}
 						>
 							<RotateCcw data-icon="inline-start" aria-hidden />
-							重试读取权限
+							{t("重试读取权限", "Retry loading access")}
 						</Button>
 					</div>
 				) : (
@@ -248,7 +276,7 @@ export function DocumentAclDialog({
 								id={`${id}-scope-heading`}
 								className="mb-2 text-sm font-medium"
 							>
-								文档可见范围
+								{t("文档可见范围", "Visibility scope")}
 							</legend>
 							<RadioGroup
 								aria-labelledby={`${id}-scope-heading`}
@@ -277,10 +305,13 @@ export function DocumentAclDialog({
 									/>
 									<span className="min-w-0">
 										<span className="block text-sm font-medium">
-											工作区全员
+											{t("工作区全员", "All workspace members")}
 										</span>
 										<span className="text-sm leading-relaxed text-muted-foreground">
-											本工作区成员均可在检索中看到此文档
+											{t(
+												"本工作区成员均可在检索中看到此文档",
+												"Everyone in this workspace can retrieve this document",
+											)}
 										</span>
 									</span>
 								</label>
@@ -300,10 +331,13 @@ export function DocumentAclDialog({
 									/>
 									<span className="min-w-0">
 										<span className="block text-sm font-medium">
-											仅指定成员
+											{t("仅指定成员", "Selected members only")}
 										</span>
 										<span className="text-sm leading-relaxed text-muted-foreground">
-											仅所选成员可召回；保存权限与完成检索投影是两个状态。
+											{t(
+												"仅所选成员可召回；保存权限与完成检索投影是两个状态。",
+												"Only selected members can retrieve it. Saving permissions and finishing search projection happen separately.",
+											)}
 										</span>
 									</span>
 								</label>
@@ -313,9 +347,14 @@ export function DocumentAclDialog({
 						{scope === "restricted" ? (
 							<div className="space-y-2">
 								<div className="flex items-baseline justify-between gap-2">
-									<h3 className="text-sm font-medium">可见成员</h3>
+									<h3 className="text-sm font-medium">
+										{t("可见成员", "Allowed members")}
+									</h3>
 									<span className="text-xs text-muted-foreground">
-										已选 {selectedIds.length} 位
+										{t(
+											`已选 ${selectedIds.length} 位`,
+											`${selectedIds.length} selected`,
+										)}
 									</span>
 								</div>
 								<div className="relative">
@@ -324,20 +363,22 @@ export function DocumentAclDialog({
 										aria-hidden
 									/>
 									<Input
-										aria-label="搜索可见成员"
+										aria-label={t("搜索可见成员", "Search allowed members")}
 										className="h-11 pl-9"
 										value={memberSearch}
 										onChange={(event) => setMemberSearch(event.target.value)}
 									/>
 								</div>
 								{members.length === 0 ? (
-									<p className="text-ui text-muted-foreground">暂无可用成员</p>
+									<p className="text-ui text-muted-foreground">
+										{t("暂无可用成员", "No available members")}
+									</p>
 								) : (
 									<ScrollArea className="h-48 rounded-md border border-border/80">
 										<ul className="divide-y divide-border/60 p-1">
 											{visibleMembers.length === 0 ? (
 												<li className="px-3 py-5 text-sm text-muted-foreground">
-													没有匹配的成员
+													{t("没有匹配的成员", "No matching members")}
 												</li>
 											) : null}
 											{visibleMembers.map((member) => {
@@ -387,7 +428,10 @@ export function DocumentAclDialog({
 						) : null}
 						{!canEdit ? (
 							<p className="text-sm text-muted-foreground">
-								需要 editor 及以上权限才能修改
+								{t(
+									"需要 editor 及以上权限才能修改",
+									"Editor role or higher is required to make changes.",
+								)}
 							</p>
 						) : null}
 					</div>
@@ -401,7 +445,7 @@ export function DocumentAclDialog({
 						disabled={saving}
 						onClick={() => onOpenChange(false)}
 					>
-						取消
+						{t("取消", "Cancel")}
 					</Button>
 					<Button
 						type="button"
@@ -410,7 +454,7 @@ export function DocumentAclDialog({
 						disabled={!isLoaded || loading || saving || !canEdit}
 						onClick={() => void onSave()}
 					>
-						{saving ? "保存中…" : "保存"}
+						{saving ? t("保存中…", "Saving…") : t("保存", "Save")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

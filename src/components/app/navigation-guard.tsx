@@ -26,6 +26,8 @@ import {
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+import { useInterfaceText } from "@/lib/i18n/provider";
+
 const CLEAR: SettingsPanelState = {
 	dirty: false,
 	busy: false,
@@ -37,6 +39,7 @@ const NavigationGuardContext = createContext({
 });
 
 export function NavigationGuardProvider({ children }: { children: ReactNode }) {
+	const t = useInterfaceText();
 	const pathname = usePathname();
 	const previousPathname = useRef(pathname);
 	const state = useRef(CLEAR);
@@ -53,17 +56,20 @@ export function NavigationGuardProvider({ children }: { children: ReactNode }) {
 				: next,
 		);
 	}, []);
-	const allowNavigation = useCallback((afterConfirm: () => void) => {
-		if (state.current.busy) {
-			toast.info("操作进行中，请稍候");
-			return false;
-		}
-		if (state.current.dirty || state.current.sensitive) {
-			setPending(() => afterConfirm);
-			return false;
-		}
-		return true;
-	}, []);
+	const allowNavigation = useCallback(
+		(afterConfirm: () => void) => {
+			if (state.current.busy) {
+				toast.info(t("操作进行中，请稍候", "Action in progress, please wait"));
+				return false;
+			}
+			if (state.current.dirty || state.current.sensitive) {
+				setPending(() => afterConfirm);
+				return false;
+			}
+			return true;
+		},
+		[t],
+	);
 	const context = useMemo(
 		() => ({ setGuard, allowNavigation }),
 		[setGuard, allowNavigation],
@@ -95,15 +101,22 @@ export function NavigationGuardProvider({ children }: { children: ReactNode }) {
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>离开当前设置？</AlertDialogTitle>
+						<AlertDialogTitle>
+							{t("离开当前设置？", "Leave current settings?")}
+						</AlertDialogTitle>
 						<AlertDialogDescription>
 							{guard.sensitive
-								? "一次性密钥或邀请链接将关闭，请先复制保存。"
-								: "未保存的更改将丢失。"}
+								? t(
+										"一次性密钥或邀请链接将关闭，请先复制保存。",
+										"This one-time key or invite link will close. Copy and save it first.",
+									)
+								: t("未保存的更改将丢失。", "Unsaved changes will be lost.")}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel>留在此页</AlertDialogCancel>
+						<AlertDialogCancel>
+							{t("留在此页", "Stay on page")}
+						</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={() => {
 								const navigate = pending;
@@ -111,7 +124,9 @@ export function NavigationGuardProvider({ children }: { children: ReactNode }) {
 								navigate?.();
 							}}
 						>
-							{guard.sensitive ? "已保存，离开" : "放弃更改并离开"}
+							{guard.sensitive
+								? t("已保存，离开", "Saved, leave")
+								: t("放弃更改并离开", "Discard and leave")}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

@@ -85,7 +85,7 @@ export function LibraryWorkspaceHeader({
 	return (
 		<div
 			className={cn(
-				"flex flex-wrap items-start justify-between gap-4 border-b bg-background px-4 py-5 sm:px-6 sm:py-6",
+				"flex shrink-0 flex-wrap items-start justify-between gap-4 border-b bg-background px-4 py-5 sm:px-6 sm:py-6",
 				!library && "hidden md:flex",
 			)}
 		>
@@ -151,7 +151,7 @@ export function LibraryWorkspaceHeader({
 									}}
 									className={cn(
 										buttonVariants({ variant: "outline" }),
-										"h-11 flex-1 rounded-md sm:flex-none",
+										"h-11 flex-1 rounded-md sm:flex-none md:h-9",
 									)}
 								>
 									<MessageSquareText data-icon="inline-start" />
@@ -161,7 +161,7 @@ export function LibraryWorkspaceHeader({
 								<Button
 									type="button"
 									variant="outline"
-									className="h-11 flex-1 rounded-md sm:flex-none"
+									className="h-11 flex-1 rounded-md sm:flex-none md:h-9"
 									disabled
 									title={t("暂无可检索文档", "No searchable documents")}
 								>
@@ -172,7 +172,7 @@ export function LibraryWorkspaceHeader({
 							<AuthButton
 								cap="writeLibraries"
 								type="button"
-								className="h-11 flex-1 rounded-md sm:flex-none"
+								className="h-11 flex-1 rounded-md sm:flex-none md:h-9"
 								disabled={uploadDisabled}
 								onClick={onUpload}
 							>
@@ -184,8 +184,8 @@ export function LibraryWorkspaceHeader({
 							<Button
 								type="button"
 								variant="outline"
-								size="icon-sm"
-								className="size-11 rounded-md"
+								size="icon"
+								className="size-11 rounded-md md:size-9"
 								disabled={refreshing}
 								onClick={onRefresh}
 							>
@@ -203,8 +203,8 @@ export function LibraryWorkspaceHeader({
 									<Button
 										type="button"
 										variant="outline"
-										size="icon-sm"
-										className="size-11 rounded-md"
+										size="icon"
+										className="size-11 rounded-md md:size-9"
 										disabled={saving || deleting}
 									/>
 								}

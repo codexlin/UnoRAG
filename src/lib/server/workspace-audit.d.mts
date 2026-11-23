@@ -2,11 +2,21 @@ export type AuditAuthResult =
 	| { ok: true }
 	| { ok: false; status: number; detail: string };
 
+export type AuditRange = "all" | "24h" | "7d" | "30d";
+
+export const AUDIT_RANGE_OPTIONS: readonly AuditRange[];
+
 export type AuditListParams = {
 	limit: number;
 	cursor: string | null;
 	format: string | null;
+	range: AuditRange;
+	resourceType: string | null;
+	action: string | null;
+	q: string | null;
 };
+
+export function auditRangeCutoff(range: AuditRange, now?: Date): Date | null;
 
 export type AuditCursor = {
 	createdAt: string;

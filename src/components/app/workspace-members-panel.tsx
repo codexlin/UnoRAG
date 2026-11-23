@@ -41,7 +41,11 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { formatDateTime } from "@/lib/format";
+import { useInterfaceText } from "@/lib/i18n/provider";
 import { roleLabel } from "@/lib/session-types";
+
+type TextPair = readonly [zh: string, en: string];
+type InterfaceText = ReturnType<typeof useInterfaceText>;
 
 type Member = {
 	userId: string;
@@ -65,33 +69,67 @@ type CreatedInvite = Invite & {
 };
 
 const ROLE_OPTIONS = [
-	{ value: "viewer", label: "查看者" },
-	{ value: "editor", label: "编辑者" },
-	{ value: "admin", label: "管理员" },
+	{ value: "viewer", label: ["查看者", "Viewer"] },
+	{ value: "editor", label: ["编辑者", "Editor"] },
+	{ value: "admin", label: ["管理员", "Admin"] },
 ] as const;
 
 const ACTION_ERRORS = {
-	invite: "创建邀请失败",
-	role: "更新角色失败",
-	remove: "移除成员失败",
-	revoke: "撤销邀请失败",
-};
+	invite: ["创建邀请失败", "Failed to create invite"],
+	role: ["更新角色失败", "Failed to update role"],
+	remove: ["移除成员失败", "Failed to remove member"],
+	revoke: ["撤销邀请失败", "Failed to revoke invite"],
+} as const satisfies Record<string, TextPair>;
 
-function deliveryNote(invite: CreatedInvite) {
-	if (invite.emailDelivery?.sent) {
-		return "邮件服务已接受发送请求，不代表已送达；也可复制链接分享。";
+function formatRole(role: string, t: InterfaceText): string {
+	switch (role) {
+		case "owner":
+			return t("所有者", "Owner");
+		case "admin":
+			return t("管理员", "Admin");
+		case "editor":
+			return t("编辑者", "Editor");
+		case "viewer":
+			return t("查看者", "Viewer");
+		default:
+			return roleLabel(role);
 	}
-	const reasons: Record<string, string> = {
-		app_base_url_not_configured: "邀请地址未配置，未发送邮件。请复制链接分享。",
-		not_configured: "邮件服务未配置，未发送邮件。请复制链接分享。",
-		"EMAIL_PROVIDER=none": "邮件服务未启用，未发送邮件。请复制链接分享。",
-		"RESEND_API_KEY or EMAIL_FROM missing":
+}
+
+function deliveryNote(invite: CreatedInvite): TextPair {
+	if (invite.emailDelivery?.sent) {
+		return [
+			"邮件服务已接受发送请求，不代表已送达；也可复制链接分享。",
+			"The email service accepted the request, though delivery is not guaranteed. You can also copy the link to share.",
+		];
+	}
+	const reasons: Record<string, TextPair> = {
+		app_base_url_not_configured: [
+			"邀请地址未配置，未发送邮件。请复制链接分享。",
+			"Invite URL is not configured, so no email was sent. Copy the link to share.",
+		],
+		not_configured: [
+			"邮件服务未配置，未发送邮件。请复制链接分享。",
+			"Email service is not configured, so no email was sent. Copy the link to share.",
+		],
+		"EMAIL_PROVIDER=none": [
+			"邮件服务未启用，未发送邮件。请复制链接分享。",
+			"Email service is disabled, so no email was sent. Copy the link to share.",
+		],
+		"RESEND_API_KEY or EMAIL_FROM missing": [
 			"邮件服务配置不完整，未发送邮件。请复制链接分享。",
-		copy_link_only: "邀请已创建，请复制链接分享。",
+			"Email service configuration is incomplete, so no email was sent. Copy the link to share.",
+		],
+		copy_link_only: [
+			"邀请已创建，请复制链接分享。",
+			"Invite created. Copy the link to share.",
+		],
 	};
 	return (
-		reasons[invite.emailDelivery?.reason ?? ""] ??
-		"邮件未发送成功。邀请已创建，请复制链接分享。"
+		reasons[invite.emailDelivery?.reason ?? ""] ?? [
+			"邮件未发送成功。邀请已创建，请复制链接分享。",
+			"Email could not be sent. The invite was created—copy the link to share.",
+		]
 	);
 }
 
@@ -121,6 +159,11 @@ export function WorkspaceMembersPanel({
 }: {
 	onStateChange?: SettingsPanelStateChange;
 } = {}) {
+	const t = useInterfaceText();
+	const roleOptions = ROLE_OPTIONS.map((option) => ({
+		value: option.value,
+		label: t(option.label[0], option.label[1]),
+	}));
 	const id = useId();
 	const { can, identity } = useSession();
 	const sessionCanManage = can("manageMembers");
@@ -129,8 +172,8 @@ export function WorkspaceMembersPanel({
 	const [members, setMembers] = useState<Member[] | null>(null);
 	const [invites, setInvites] = useState<Invite[] | null>(null);
 	const [loading, setLoading] = useState(true);
-	const [membersError, setMembersError] = useState<string | null>(null);
-	const [invitesError, setInvitesError] = useState<string | null>(null);
+	const [membersError, setMembersError] = useState(false);
+	const [invitesError, setInvitesError] = useState(false);
 	const [email, setEmail] = useState("");
 	const [role, setRole] = useState("viewer");
 	const [error, setError] = useState<string | null>(null);
@@ -138,7 +181,7 @@ export function WorkspaceMembersPanel({
 	const [discardOpen, setDiscardOpen] = useState(false);
 	const [createdInvite, setCreatedInvite] = useState<{
 		url: string | null;
-		note: string;
+		note: TextPair;
 	} | null>(null);
 	const [pending, setPending] = useState<keyof typeof ACTION_ERRORS | null>(
 		null,
@@ -170,8 +213,8 @@ export function WorkspaceMembersPanel({
 		setLoading(false);
 		setMembers(null);
 		setInvites(null);
-		setMembersError(null);
-		setInvitesError(null);
+		setMembersError(false);
+		setInvitesError(false);
 		setCreatedInvite(null);
 		setInviteOpen(false);
 		setDiscardOpen(false);
@@ -191,8 +234,8 @@ export function WorkspaceMembersPanel({
 		readRequest.current = request;
 		const isCurrent = () => !request.signal.aborted && !active.signal.aborted;
 		setLoading(true);
-		setMembersError(null);
-		setInvitesError(null);
+		setMembersError(false);
+		setInvitesError(false);
 		const loadMembers = async () => {
 			try {
 				const result = await readList<Member>(
@@ -212,7 +255,7 @@ export function WorkspaceMembersPanel({
 					revokePermission();
 					return;
 				}
-				setMembersError("成员列表加载失败，请重试。");
+				setMembersError(true);
 			}
 		};
 		const loadInvites = async () => {
@@ -238,7 +281,7 @@ export function WorkspaceMembersPanel({
 					revokePermission();
 					return;
 				}
-				setInvitesError("邀请列表加载失败，请重试。");
+				setInvitesError(true);
 			}
 		};
 		try {
@@ -321,7 +364,7 @@ export function WorkspaceMembersPanel({
 				setError(
 					typeof data?.detail === "string"
 						? data.detail
-						: ACTION_ERRORS[action],
+						: t(ACTION_ERRORS[action][0], ACTION_ERRORS[action][1]),
 				);
 				return;
 			}
@@ -330,7 +373,12 @@ export function WorkspaceMembersPanel({
 			void refresh();
 		} catch {
 			if (!active.signal.aborted && !permissionRevokedRef.current)
-				setError("请求未完成，无法确认最新状态。请刷新列表核对后重试。");
+				setError(
+					t(
+						"请求未完成，无法确认最新状态。请刷新列表核对后重试。",
+						"Request did not complete, so the latest state could not be confirmed. Refresh the list and try again.",
+					),
+				);
 		} finally {
 			if (!active.signal.aborted) {
 				writing.current = false;
@@ -376,7 +424,12 @@ export function WorkspaceMembersPanel({
 			}
 		} catch {
 			if (!active?.signal.aborted && version === dialogVersion.current)
-				setError("复制失败，请手动选择邀请链接。");
+				setError(
+					t(
+						"复制失败，请手动选择邀请链接。",
+						"Copy failed. Please select the invite link manually.",
+					),
+				);
 		}
 	}
 
@@ -389,7 +442,7 @@ export function WorkspaceMembersPanel({
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ user_id: userId, role: nextRole }),
 			},
-			() => toast.success("成员角色已更新"),
+			() => toast.success(t("成员角色已更新", "Member role updated")),
 		);
 	}
 
@@ -404,7 +457,12 @@ export function WorkspaceMembersPanel({
 				body: JSON.stringify({ user_id: removeTarget.userId }),
 			},
 			() => {
-				toast.success(`已移除「${removeTarget.displayName}」的访问权限`);
+				toast.success(
+					t(
+						`已移除「${removeTarget.displayName}」的访问权限`,
+						`Removed access for ${removeTarget.displayName}`,
+					),
+				);
 				setRemoveTarget(null);
 			},
 		);
@@ -418,7 +476,7 @@ export function WorkspaceMembersPanel({
 			{ method: "DELETE" },
 			() => {
 				setRevokeTarget(null);
-				toast.success("邀请已撤销");
+				toast.success(t("邀请已撤销", "Invite revoked"));
 			},
 		);
 	}
@@ -443,20 +501,25 @@ export function WorkspaceMembersPanel({
 					} else closeInvite();
 				}}
 			>
-				<div className="flex flex-wrap items-center justify-between gap-3">
-					<h3 id={`${id}-heading`} className="text-xl font-medium">
-						成员与邀请
+				<div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 pb-3">
+					<h3 id={`${id}-heading`} className="text-base font-medium">
+						{t("成员与邀请", "Members and invites")}
 					</h3>
 					{canManage ? (
-						<DialogTrigger render={<Button className="h-11" disabled={busy} />}>
+						<DialogTrigger
+							render={<Button className="h-11 md:h-9" disabled={busy} />}
+						>
 							<UserPlus className="size-4" aria-hidden />
-							邀请成员
+							{t("邀请成员", "Invite member")}
 						</DialogTrigger>
 					) : null}
 				</div>
 				{!canManage ? (
 					<p className="text-sm text-muted-foreground">
-						当前为只读权限；仅所有者 / 管理员可管理成员与邀请。
+						{t(
+							"当前为只读权限；仅所有者 / 管理员可管理成员与邀请。",
+							"Read-only access. Only owners and admins can manage members and invites.",
+						)}
 					</p>
 				) : null}
 				{error && !inviteOpen && !removeTarget && !revokeTarget ? (
@@ -464,13 +527,23 @@ export function WorkspaceMembersPanel({
 						{error}
 					</p>
 				) : null}
-				{pending === "role" ? <p role="status">正在更新角色…</p> : null}
+				{pending === "role" ? (
+					<p role="status">{t("正在更新角色…", "Updating role…")}</p>
+				) : null}
 				<div aria-busy={loading} className="min-w-0">
 					{membersError ? (
 						<div className="flex flex-wrap items-center gap-2">
 							<p role="alert" className="text-destructive">
-								{membersError}
-								{members !== null ? " 以下为上次加载的结果。" : ""}
+								{t(
+									"成员列表加载失败，请重试。",
+									"Failed to load members. Please try again.",
+								)}
+								{members !== null
+									? t(
+											" 以下为上次加载的结果。",
+											" Showing the last loaded results.",
+										)
+									: ""}
 							</p>
 							<Button
 								type="button"
@@ -480,20 +553,25 @@ export function WorkspaceMembersPanel({
 								onClick={() => void refresh()}
 							>
 								<RefreshCw className="size-4" aria-hidden />
-								重试加载成员
+								{t("重试加载成员", "Retry loading members")}
 							</Button>
 						</div>
 					) : null}
 					{members === null && !membersError && loading ? (
 						<p role="status" className="py-3 text-muted-foreground">
-							正在加载成员…
+							{t("正在加载成员…", "Loading members…")}
 						</p>
 					) : null}
 					{members?.length === 0 && !membersError && !loading ? (
-						<p className="py-3 text-muted-foreground">暂无成员</p>
+						<p className="py-3 text-muted-foreground">
+							{t("暂无成员", "No members yet")}
+						</p>
 					) : null}
 					{members && members.length > 0 ? (
-						<ul aria-label="工作区成员" className="divide-y divide-border/60">
+						<ul
+							aria-label={t("工作区成员", "Workspace members")}
+							className="divide-y divide-border/60"
+						>
 							{members.map((member) => (
 								<li
 									key={member.userId}
@@ -512,7 +590,7 @@ export function WorkspaceMembersPanel({
 									<div className="flex max-w-full flex-wrap items-center gap-2">
 										{canManage && member.role !== "owner" ? (
 											<Select
-												items={ROLE_OPTIONS}
+												items={roleOptions}
 												value={member.role}
 												disabled={busy || loading}
 												onValueChange={(value) => {
@@ -520,14 +598,19 @@ export function WorkspaceMembersPanel({
 												}}
 											>
 												<SelectTrigger
-													aria-label={`${member.displayName}的角色`}
+													aria-label={t(
+														`${member.displayName}的角色`,
+														`Role for ${member.displayName}`,
+													)}
 													className="min-h-11 w-full min-w-0"
 												>
-													<SelectValue placeholder="选择角色" />
+													<SelectValue
+														placeholder={t("选择角色", "Select role")}
+													/>
 												</SelectTrigger>
 												<SelectContent>
 													<SelectGroup>
-														{ROLE_OPTIONS.map((option) => (
+														{roleOptions.map((option) => (
 															<SelectItem
 																key={option.value}
 																value={option.value}
@@ -540,7 +623,7 @@ export function WorkspaceMembersPanel({
 											</Select>
 										) : (
 											<span className="text-sm text-muted-foreground">
-												{roleLabel(member.role)}
+												{formatRole(member.role, t)}
 											</span>
 										)}
 										{canManage &&
@@ -558,7 +641,7 @@ export function WorkspaceMembersPanel({
 												}}
 											>
 												<UserMinus className="size-4" aria-hidden />
-												移除
+												{t("移除", "Remove")}
 											</Button>
 										) : null}
 									</div>
@@ -572,12 +655,22 @@ export function WorkspaceMembersPanel({
 						className="space-y-2 border-t border-border/60 pt-4"
 						aria-busy={loading}
 					>
-						<h4 className="font-medium">待接受邀请</h4>
+						<h4 className="font-medium">
+							{t("待接受邀请", "Pending invites")}
+						</h4>
 						{invitesError ? (
 							<div className="flex flex-wrap items-center gap-2">
 								<p role="alert" className="text-destructive">
-									{invitesError}
-									{invites !== null ? " 以下为上次加载的结果。" : ""}
+									{t(
+										"邀请列表加载失败，请重试。",
+										"Failed to load invites. Please try again.",
+									)}
+									{invites !== null
+										? t(
+												" 以下为上次加载的结果。",
+												" Showing the last loaded results.",
+											)
+										: ""}
 								</p>
 								<Button
 									type="button"
@@ -587,20 +680,25 @@ export function WorkspaceMembersPanel({
 									onClick={() => void refresh()}
 								>
 									<RefreshCw className="size-4" aria-hidden />
-									重试加载邀请
+									{t("重试加载邀请", "Retry loading invites")}
 								</Button>
 							</div>
 						) : null}
 						{invites === null && !invitesError ? (
 							<p role="status" className="text-muted-foreground">
-								正在加载邀请…
+								{t("正在加载邀请…", "Loading invites…")}
 							</p>
 						) : null}
 						{invites?.length === 0 && !invitesError && !loading ? (
-							<p className="text-muted-foreground">暂无待接受邀请</p>
+							<p className="text-muted-foreground">
+								{t("暂无待接受邀请", "No pending invites")}
+							</p>
 						) : null}
 						{invites && invites.length > 0 ? (
-							<ul aria-label="待接受邀请" className="divide-y divide-border/60">
+							<ul
+								aria-label={t("待接受邀请", "Pending invites")}
+								className="divide-y divide-border/60"
+							>
 								{invites.map((invite) => (
 									<li
 										key={invite.id}
@@ -609,7 +707,7 @@ export function WorkspaceMembersPanel({
 										<div className="min-w-0 flex-1 basis-48">
 											<p className="break-all">{invite.email}</p>
 											<p className="text-xs text-muted-foreground">
-												{roleLabel(invite.role)} · 到期{" "}
+												{formatRole(invite.role, t)} · {t("到期", "Expires")}{" "}
 												{formatDateTime(invite.expiresAt)}
 											</p>
 										</div>
@@ -625,7 +723,7 @@ export function WorkspaceMembersPanel({
 											}}
 										>
 											<X className="size-4" aria-hidden />
-											撤销
+											{t("撤销", "Revoke")}
 										</Button>
 									</li>
 								))}
@@ -637,23 +735,34 @@ export function WorkspaceMembersPanel({
 				<DialogContent showCloseButton={!busy}>
 					<DialogHeader>
 						<DialogTitle>
-							{createdInvite ? "邀请已创建" : "邀请成员"}
+							{createdInvite
+								? t("邀请已创建", "Invite created")
+								: t("邀请成员", "Invite member")}
 						</DialogTitle>
 						<DialogDescription>
 							{createdInvite
-								? "邀请链接仅本次可见，关闭后无法再次查看。"
-								: "创建后将尝试发送邀请邮件。"}
+								? t(
+										"邀请链接仅本次可见，关闭后无法再次查看。",
+										"This invite link is shown only once and cannot be viewed after closing.",
+									)
+								: t(
+										"创建后将尝试发送邀请邮件。",
+										"We'll try to send an invite email after creation.",
+									)}
 						</DialogDescription>
 					</DialogHeader>
 					{createdInvite ? (
 						<div className="min-w-0 space-y-3">
 							<p role="status" className="text-sm">
-								{createdInvite.note}
+								{t(...createdInvite.note)}
 							</p>
 							{createdInvite.url ? (
 								<>
 									<p className="text-sm text-warning-foreground">
-										链接持有者可接受邀请，请仅分享给受邀人。
+										{t(
+											"链接持有者可接受邀请，请仅分享给受邀人。",
+											"Anyone with this link can accept the invite. Share it only with the invited person.",
+										)}
 									</p>
 									<p className="select-all break-all font-mono text-xs">
 										{createdInvite.url}
@@ -665,12 +774,17 @@ export function WorkspaceMembersPanel({
 										onClick={() => void copyUrl()}
 									>
 										<Copy className="size-4" aria-hidden />
-										{copied ? "已复制" : "复制链接"}
+										{copied
+											? t("已复制", "Copied")
+											: t("复制链接", "Copy link")}
 									</Button>
 								</>
 							) : (
 								<p role="alert" className="text-destructive">
-									响应未包含邀请链接，请核对邀请列表与邮件状态，勿重复创建。
+									{t(
+										"响应未包含邀请链接，请核对邀请列表与邮件状态，勿重复创建。",
+										"The response did not include an invite link. Check pending invites and email status before creating another.",
+									)}
 								</p>
 							)}
 						</div>
@@ -684,7 +798,9 @@ export function WorkspaceMembersPanel({
 							}}
 						>
 							<div className="space-y-2">
-								<Label htmlFor={`${id}-invite-email`}>邮箱</Label>
+								<Label htmlFor={`${id}-invite-email`}>
+									{t("邮箱", "Email")}
+								</Label>
 								<Input
 									id={`${id}-invite-email`}
 									type="email"
@@ -698,9 +814,9 @@ export function WorkspaceMembersPanel({
 								/>
 							</div>
 							<div className="space-y-2">
-								<Label htmlFor={`${id}-invite-role`}>角色</Label>
+								<Label htmlFor={`${id}-invite-role`}>{t("角色", "Role")}</Label>
 								<Select
-									items={ROLE_OPTIONS}
+									items={roleOptions}
 									value={role}
 									disabled={busy}
 									onValueChange={(value) => {
@@ -709,14 +825,14 @@ export function WorkspaceMembersPanel({
 								>
 									<SelectTrigger
 										id={`${id}-invite-role`}
-										aria-label="角色"
+										aria-label={t("角色", "Role")}
 										className="min-h-11 w-full min-w-0"
 									>
-										<SelectValue placeholder="选择角色" />
+										<SelectValue placeholder={t("选择角色", "Select role")} />
 									</SelectTrigger>
 									<SelectContent>
 										<SelectGroup>
-											{ROLE_OPTIONS.map((option) => (
+											{roleOptions.map((option) => (
 												<SelectItem key={option.value} value={option.value}>
 													{option.label}
 												</SelectItem>
@@ -737,7 +853,7 @@ export function WorkspaceMembersPanel({
 							disabled={busy}
 							render={<Button variant="outline" className="h-11" />}
 						>
-							{createdInvite ? "关闭" : "取消"}
+							{createdInvite ? t("关闭", "Close") : t("取消", "Cancel")}
 						</DialogClose>
 						{!createdInvite ? (
 							<Button
@@ -747,7 +863,9 @@ export function WorkspaceMembersPanel({
 								disabled={busy || !email.trim()}
 							>
 								<UserPlus className="size-4" aria-hidden />
-								{pending === "invite" ? "创建中…" : "创建邀请"}
+								{pending === "invite"
+									? t("创建中…", "Creating…")
+									: t("创建邀请", "Create invite")}
 							</Button>
 						) : null}
 					</DialogFooter>
@@ -755,22 +873,34 @@ export function WorkspaceMembersPanel({
 						<AlertDialogContent>
 							<AlertDialogHeader>
 								<AlertDialogTitle>
-									{sensitive ? "关闭并清除邀请链接？" : "放弃本次邀请？"}
+									{sensitive
+										? t("关闭并清除邀请链接？", "Close and clear invite link?")
+										: t("放弃本次邀请？", "Discard this invite?")}
 								</AlertDialogTitle>
 								<AlertDialogDescription>
 									{sensitive
-										? "关闭后无法再次查看此链接，已创建的邀请不会撤销。请确认已妥善保存。"
-										: "尚未创建邀请，关闭后将丢弃已填写的内容。"}
+										? t(
+												"关闭后无法再次查看此链接，已创建的邀请不会撤销。请确认已妥善保存。",
+												"You won't be able to view this link again after closing. The invite remains active—make sure you've saved it.",
+											)
+										: t(
+												"尚未创建邀请，关闭后将丢弃已填写的内容。",
+												"The invite hasn't been created yet. Closing will discard your input.",
+											)}
 								</AlertDialogDescription>
 							</AlertDialogHeader>
 							<AlertDialogFooter>
-								<AlertDialogCancel className="h-11">继续查看</AlertDialogCancel>
+								<AlertDialogCancel className="h-11">
+									{t("继续查看", "Keep viewing")}
+								</AlertDialogCancel>
 								<AlertDialogAction
 									variant="destructive"
 									className="h-11"
 									onClick={closeInvite}
 								>
-									{sensitive ? "清除并关闭" : "放弃并关闭"}
+									{sensitive
+										? t("清除并关闭", "Clear and close")
+										: t("放弃并关闭", "Discard and close")}
 								</AlertDialogAction>
 							</AlertDialogFooter>
 						</AlertDialogContent>
@@ -790,10 +920,14 @@ export function WorkspaceMembersPanel({
 			>
 				<AlertDialogContent finalFocus={removeTrigger}>
 					<AlertDialogHeader>
-						<AlertDialogTitle>移除成员？</AlertDialogTitle>
+						<AlertDialogTitle>
+							{t("移除成员？", "Remove member?")}
+						</AlertDialogTitle>
 						<AlertDialogDescription>
-							将移除「{removeTarget?.displayName ?? "该成员"}
-							」对本工作区的访问权限。其文档、问答记录与审计历史仍保留。
+							{t(
+								`将移除「${removeTarget?.displayName ?? "该成员"}」对本工作区的访问权限。其文档、问答记录与审计历史仍保留。`,
+								`Remove workspace access for ${removeTarget?.displayName ?? "this member"}? Their documents, Ask history, and audit records will remain.`,
+							)}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					{error ? (
@@ -803,7 +937,7 @@ export function WorkspaceMembersPanel({
 					) : null}
 					<AlertDialogFooter>
 						<AlertDialogCancel className="h-11" disabled={busy}>
-							取消
+							{t("取消", "Cancel")}
 						</AlertDialogCancel>
 						<AlertDialogAction
 							variant="destructive"
@@ -811,7 +945,9 @@ export function WorkspaceMembersPanel({
 							disabled={busy}
 							onClick={confirmRemove}
 						>
-							{pending === "remove" ? "移除中…" : "确认移除"}
+							{pending === "remove"
+								? t("移除中…", "Removing…")
+								: t("确认移除", "Remove member")}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -828,10 +964,14 @@ export function WorkspaceMembersPanel({
 			>
 				<AlertDialogContent finalFocus={revokeTrigger}>
 					<AlertDialogHeader>
-						<AlertDialogTitle>撤销邀请？</AlertDialogTitle>
+						<AlertDialogTitle>
+							{t("撤销邀请？", "Revoke invite?")}
+						</AlertDialogTitle>
 						<AlertDialogDescription>
-							发给「{revokeTarget?.email}
-							」的邀请链接将失效，对方将无法通过此邀请加入工作区。
+							{t(
+								`发给「${revokeTarget?.email}」的邀请链接将失效，对方将无法通过此邀请加入工作区。`,
+								`The invite link sent to ${revokeTarget?.email} will stop working, and they will no longer be able to join the workspace with it.`,
+							)}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					{error ? (
@@ -841,7 +981,7 @@ export function WorkspaceMembersPanel({
 					) : null}
 					<AlertDialogFooter>
 						<AlertDialogCancel className="h-11" disabled={busy}>
-							取消
+							{t("取消", "Cancel")}
 						</AlertDialogCancel>
 						<AlertDialogAction
 							variant="destructive"
@@ -849,7 +989,9 @@ export function WorkspaceMembersPanel({
 							disabled={busy}
 							onClick={confirmRevoke}
 						>
-							{pending === "revoke" ? "撤销中…" : "确认撤销"}
+							{pending === "revoke"
+								? t("撤销中…", "Revoking…")
+								: t("确认撤销", "Revoke invite")}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

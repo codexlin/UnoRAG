@@ -4,7 +4,7 @@ import test from "node:test";
 import { getTableColumns, type Table } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
-import { createElement } from "react";
+import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
@@ -17,10 +17,17 @@ import {
 import { RerankDiagnosticSchema } from "../../src/core/retrieval/provider-request";
 import { diagnoseQdrantError } from "../../src/core/retrieval/qdrant/diagnostics";
 import * as schema from "../../src/db/schema";
+import { LanguageProvider } from "../../src/lib/i18n/provider";
 import type { OperationsEventDetail } from "../../src/lib/operations-event-detail";
 import { OperationsEventService } from "../../src/server/observability/operations-event-service";
 
 const scope = { organizationId: "org-1", workspaceId: "workspace-1" };
+
+function renderZh(element: ReactElement) {
+	return renderToStaticMarkup(
+		createElement(LanguageProvider, { language: { locale: "zh-CN" } }, element),
+	);
+}
 
 test("citation detail exposes finite classification, not generated markers or answers", async () => {
 	const detail = await read(
@@ -39,7 +46,7 @@ test("citation detail exposes finite classification, not generated markers or an
 	assert.deepEqual(detail.stages[0]?.detail, {
 		citation: { category: "unknown_source", allowedSourceCount: 1 },
 	});
-	const html = renderToStaticMarkup(
+	const html = renderZh(
 		createElement(CitationDiagnostics, { stages: detail.stages }),
 	);
 	assert.match(html, /来源编号不在本次清单/);
@@ -51,9 +58,7 @@ test("citation detail exposes finite classification, not generated markers or an
 		stage({}, { stage: "generate", errorCode: "answer_citation_invalid" }),
 	]);
 	assert.equal(
-		renderToStaticMarkup(
-			createElement(CitationDiagnostics, { stages: old.stages }),
-		),
+		renderZh(createElement(CitationDiagnostics, { stages: old.stages })),
 		"",
 	);
 });
@@ -79,7 +84,7 @@ test("Qdrant request failure diagnostics expose cause code without private error
 		{ errorCode: "qdrant_error" },
 	);
 	assert.deepEqual(detail.stages[0]?.detail, { qdrant: diagnostic });
-	const html = renderToStaticMarkup(
+	const html = renderZh(
 		createElement(QdrantDiagnostics, { stages: detail.stages }),
 	);
 	assert.match(html, /ECONNRESET/);
@@ -90,9 +95,7 @@ test("Qdrant request failure diagnostics expose cause code without private error
 		{ errorCode: "qdrant_error" },
 	);
 	assert.equal(
-		renderToStaticMarkup(
-			createElement(QdrantDiagnostics, { stages: old.stages }),
-		),
+		renderZh(createElement(QdrantDiagnostics, { stages: old.stages })),
 		"",
 	);
 });
@@ -158,7 +161,7 @@ test("completed fallback exposes safe rerank diagnostics without provider conten
 		{ status: "completed", errorCode: null },
 	);
 	assert.deepEqual(detail.stages[0]?.detail, { rerank: safe });
-	const html = renderToStaticMarkup(
+	const html = renderZh(
 		createElement(RerankDiagnostics, { stages: detail.stages }),
 	);
 	assert.match(html, /重排诊断/);
@@ -247,9 +250,7 @@ async function read(
 }
 
 function render(detail: OperationsEventDetail) {
-	return renderToStaticMarkup(
-		createElement(JudgeDiagnostics, { stages: detail.stages }),
-	);
+	return renderZh(createElement(JudgeDiagnostics, { stages: detail.stages }));
 }
 
 test("operations event detail projects recorded Judge metadata, not arbitrary ledger detail", async () => {
@@ -489,17 +490,13 @@ test("successful, refused and running requests do not display fabricated failure
 			used_rerank: false,
 			model_usage: null,
 		});
-		const html = renderToStaticMarkup(
-			createElement(RequestOutcome, { detail }),
-		);
+		const html = renderZh(createElement(RequestOutcome, { detail }));
 		assert.doesNotMatch(html, /unclassified_error|故障原因|text-destructive/);
 		assert.ok(!html.includes(detail.guidance.cause));
 		if (status === "refused") assert.match(html, /insufficient_evidence/);
 	}
 	const failed = await read();
-	const html = renderToStaticMarkup(
-		createElement(RequestOutcome, { detail: failed }),
-	);
+	const html = renderZh(createElement(RequestOutcome, { detail: failed }));
 	assert.ok(html.includes(failed.guidance.title));
 	assert.match(html, /judge_unavailable/);
 });
@@ -518,7 +515,7 @@ test("cancelled jobs retain neutral diagnostic guidance", async () => {
 	const detail = await read();
 	detail.source = "job";
 	detail.status = "cancelled";
-	const html = renderToStaticMarkup(createElement(RequestOutcome, { detail }));
+	const html = renderZh(createElement(RequestOutcome, { detail }));
 	assert.ok(html.includes(detail.guidance.title));
 	assert.ok(html.includes(detail.guidance.recovery));
 });

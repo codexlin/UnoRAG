@@ -25,6 +25,7 @@ import {
 import { projectParserTiming } from "@/core/parsing/parser-diagnostics";
 import type { ApiDocument, ApiDocumentVersion, ApiJob } from "@/lib/api";
 import { formatDateTime, formatDurationMs, formatFileSize } from "@/lib/format";
+import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
 import { isParserReportDegraded } from "@/lib/parser-report-view.mjs";
 import { cn } from "@/lib/utils";
 
@@ -59,6 +60,7 @@ export function DocumentDetailSheet({
 	actions,
 	onClose,
 }: Props) {
+	const t = useInterfaceText();
 	const titleRef = useRef<HTMLHeadingElement>(null);
 	const [versionsRefreshing, setVersionsRefreshing] = useState(false);
 	const active = versions.find((version) => version.id === activeVersionId);
@@ -88,7 +90,7 @@ export function DocumentDetailSheet({
 					<>
 						<SheetHeader className="shrink-0 border-b px-5 py-5 sm:px-6">
 							<SheetDescription className="mb-1 text-xs">
-								文档详情
+								{t("文档详情", "Document details")}
 							</SheetDescription>
 							<SheetTitle
 								ref={titleRef}
@@ -99,12 +101,20 @@ export function DocumentDetailSheet({
 							</SheetTitle>
 						</SheetHeader>
 						<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 sm:px-6">
-							<section aria-label="版本概览" className="space-y-3 py-5">
-								<h3 className="text-sm font-medium">生效与目标版本</h3>
+							<section
+								aria-label={t("版本概览", "Version overview")}
+								className="space-y-3 py-5"
+							>
+								<h3 className="text-sm font-medium">
+									{t("生效与目标版本", "Active and target versions")}
+								</h3>
 								{versionsError ? (
 									<div className="space-y-2">
 										<p role="alert" className="text-sm text-destructive">
-											版本信息读取失败，当前版本关系尚未确认。
+											{t(
+												"版本信息读取失败，当前版本关系尚未确认。",
+												"Failed to load version information. Active and target versions could not be confirmed.",
+											)}
 										</p>
 										<Button
 											type="button"
@@ -115,47 +125,53 @@ export function DocumentDetailSheet({
 											onClick={() => void refreshVersions()}
 										>
 											<RotateCcw data-icon="inline-start" aria-hidden />
-											重试读取版本
+											{t("重试读取版本", "Retry loading versions")}
 										</Button>
 									</div>
 								) : versionsLoading ? (
 									<p role="status" className="text-sm text-muted-foreground">
-										正在读取版本关系…
+										{t("正在读取版本关系…", "Loading version status…")}
 									</p>
 								) : (
 									<>
 										<dl className="grid grid-cols-2 gap-4">
 											<Detail
-												label="当前生效"
+												label={t("当前生效", "Active version")}
 												value={
 													active
 														? `v${active.version}`
 														: activeVersionId
-															? "生效版本未在当前列表中"
-															: "未设置生效版本"
+															? t(
+																	"生效版本未在当前列表中",
+																	"Active version not in current list",
+																)
+															: t("未设置生效版本", "No active version")
 												}
 											/>
 											<Detail
-												label="目标版本"
+												label={t("目标版本", "Target version")}
 												value={
 													desired
 														? `v${desired.version}`
 														: desiredVersionId
-															? "目标版本未在当前列表中"
-															: "未设置目标版本"
+															? t(
+																	"目标版本未在当前列表中",
+																	"Target version not in current list",
+																)
+															: t("未设置目标版本", "No target version")
 												}
 											/>
 											{activeVersionId && !active ? (
 												<Detail
 													className="col-span-2"
-													label="生效版本 ID"
+													label={t("生效版本 ID", "Active version ID")}
 													value={activeVersionId}
 												/>
 											) : null}
 											{desiredVersionId && !desired ? (
 												<Detail
 													className="col-span-2"
-													label="目标版本 ID"
+													label={t("目标版本 ID", "Target version ID")}
 													value={desiredVersionId}
 												/>
 											) : null}
@@ -163,20 +179,32 @@ export function DocumentDetailSheet({
 										{activeVersionId ? (
 											<p className="border-l-2 border-primary pl-3 text-sm leading-relaxed">
 												{hasSeparateDesired
-													? `${active ? `v${active.version}` : "已有版本"} 仍为生效版本；${desired ? `目标 v${desired.version}` : "目标版本"} 尚未生效。`
+													? t(
+															`${active ? `v${active.version}` : "已有版本"} 仍为生效版本；${desired ? `目标 v${desired.version}` : "目标版本"} 尚未生效。`,
+															`${active ? `v${active.version}` : "The existing version"} remains active; ${desired ? `target v${desired.version}` : "the target version"} is not active yet.`,
+														)
 													: active
-														? `v${active.version} 为当前生效版本。`
-														: "已设置生效版本，序号未包含在当前列表中。"}
+														? t(
+																`v${active.version} 为当前生效版本。`,
+																`v${active.version} is the active version.`,
+															)
+														: t(
+																"已设置生效版本，序号未包含在当前列表中。",
+																"An active version is set, but its version number is not in the current list.",
+															)}
 											</p>
 										) : (
 											<p className="text-sm text-muted-foreground">
-												当前未设置生效版本。
+												{t(
+													"当前未设置生效版本。",
+													"No active version is currently set.",
+												)}
 											</p>
 										)}
 									</>
 								)}
 								<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-									<span>文档处理状态</span>
+									<span>{t("文档处理状态", "Processing status")}</span>
 									<DocumentStatusBadge
 										status={document.status}
 										parserReport={document.parser_report}
@@ -193,7 +221,7 @@ export function DocumentDetailSheet({
 							</section>
 
 							<section
-								aria-label="来源与文件"
+								aria-label={t("来源与文件", "Source and file")}
 								className="space-y-4 border-t py-5"
 							>
 								<div className="flex items-center gap-2">
@@ -201,54 +229,69 @@ export function DocumentDetailSheet({
 										className="size-4 text-muted-foreground"
 										aria-hidden
 									/>
-									<h3 className="text-sm font-medium">来源与文件</h3>
+									<h3 className="text-sm font-medium">
+										{t("来源与文件", "Source and file")}
+									</h3>
 								</div>
 								<dl className="grid grid-cols-2 gap-x-4 gap-y-4">
 									<Detail
 										className="col-span-2"
-										label="记录文件名"
+										label={t("记录文件名", "Recorded filename")}
 										value={document.filename}
 									/>
 									<Detail
-										label="文件类型"
-										value={document.content_type || "未知类型"}
-									/>
-									<Detail
-										label="目标文件大小"
-										value={formatFileSize(document.size_bytes)}
-									/>
-									<Detail
-										label="目标版本片段"
-										value={`${document.chunk_count} chunks`}
-									/>
-									<Detail
-										label="目标原文件"
+										label={t("文件类型", "File type")}
 										value={
-											document.has_file
-												? "原文已保留"
-												: document.has_file === false
-													? "原文未保留"
-													: "保留状态未知"
+											document.content_type || t("未知类型", "Unknown type")
 										}
 									/>
 									<Detail
-										label="创建"
+										label={t("目标文件大小", "Target file size")}
+										value={formatFileSize(document.size_bytes)}
+									/>
+									<Detail
+										label={t("目标版本片段", "Target version chunks")}
+										value={`${document.chunk_count} chunks`}
+									/>
+									<Detail
+										label={t("目标原文件", "Target source file")}
+										value={
+											document.has_file
+												? t("原文已保留", "Original file retained")
+												: document.has_file === false
+													? t("原文未保留", "Original file not retained")
+													: t("保留状态未知", "Retention status unknown")
+										}
+									/>
+									<Detail
+										label={t("创建", "Created")}
 										value={formatDateTime(document.created_at)}
 									/>
 									<Detail
-										label="更新"
+										label={t("更新", "Updated")}
 										value={formatDateTime(document.updated_at)}
 									/>
 								</dl>
 								{hasSeparateDesired && !versionsError ? (
 									<p className="text-xs leading-relaxed text-muted-foreground">
-										文件大小、保留状态和解析报告对应目标版本；下载由服务端返回当前生效版本的原文件。
+										{t(
+											"文件大小、保留状态和解析报告对应目标版本；下载由服务端返回当前生效版本的原文件。",
+											"File size, retention status, and parser report reflect the target version; downloads return the active version's original file.",
+										)}
 									</p>
 								) : null}
 								{document.has_file === false ? (
 									<p className="text-sm leading-relaxed text-muted-foreground">
-										目标版本未保留原文件，相关下载与重索引操作可能不可用。
-										{canWrite ? "可用「替换文件」重新上传。" : ""}
+										{t(
+											"目标版本未保留原文件，相关下载与重索引操作可能不可用。",
+											"The target version has no retained original file; download and reindex actions may be unavailable.",
+										)}
+										{canWrite
+											? t(
+													"可用「替换文件」重新上传。",
+													' Use "Replace file" to upload again.',
+												)
+											: ""}
 									</p>
 								) : null}
 							</section>
@@ -262,10 +305,12 @@ export function DocumentDetailSheet({
 								desiredVersionId={desiredVersionId}
 							/>
 							<section
-								aria-label="解析诊断"
+								aria-label={t("解析诊断", "Parser diagnostics")}
 								className="space-y-3 border-t py-5"
 							>
-								<h3 className="text-sm font-medium">解析诊断</h3>
+								<h3 className="text-sm font-medium">
+									{t("解析诊断", "Parser diagnostics")}
+								</h3>
 								<ParserReportCard
 									report={document.parser_report}
 									parseStatus={document.parse_status}
@@ -306,14 +351,14 @@ export function DocumentDetailSheet({
 	);
 }
 
-const JOB_STATUS_LABELS: Record<string, string> = {
-	queued: "排队中",
-	running: "执行中",
-	cancelling: "取消中",
-	cancelled: "已取消",
-	completed: "已完成",
-	failed: "失败",
-	dead: "重试已耗尽",
+const JOB_STATUS_LABELS: Record<string, readonly [zh: string, en: string]> = {
+	queued: ["排队中", "Queued"],
+	running: ["执行中", "Running"],
+	cancelling: ["取消中", "Cancelling"],
+	cancelled: ["已取消", "Cancelled"],
+	completed: ["已完成", "Completed"],
+	failed: ["失败", "Failed"],
+	dead: ["重试已耗尽", "Retries exhausted"],
 };
 
 function JobTimeline({
@@ -325,6 +370,8 @@ function JobTimeline({
 	loading: boolean;
 	document: ApiDocument;
 }) {
+	const t = useInterfaceText();
+	const { locale } = useInterfaceLanguage();
 	const observedTotal =
 		job?.started_at && job.finished_at
 			? Date.parse(job.finished_at) - Date.parse(job.started_at)
@@ -342,58 +389,87 @@ function JobTimeline({
 	const status = job?.status ?? document.job_status;
 	const stage = job?.stage ?? document.job_stage;
 	const progress = job?.progress ?? document.job_progress;
+	const statusLabel = status ? JOB_STATUS_LABELS[status] : undefined;
 
 	return (
-		<section aria-label="当前处理任务" className="space-y-4 border-t py-5">
-			<h3 className="text-sm font-medium">当前处理任务</h3>
+		<section
+			aria-label={t("当前处理任务", "Current processing job")}
+			className="space-y-4 border-t py-5"
+		>
+			<h3 className="text-sm font-medium">
+				{t("当前处理任务", "Current processing job")}
+			</h3>
 			{loading ? (
 				<p role="status" className="text-sm text-muted-foreground">
-					正在读取入库链路…
+					{t("正在读取入库链路…", "Loading ingestion trace…")}
 				</p>
 			) : null}
 			{status || stage ? (
 				<dl className="grid grid-cols-2 gap-4">
 					<Detail
-						label="任务状态"
-						value={status ? (JOB_STATUS_LABELS[status] ?? status) : "未知"}
+						label={t("任务状态", "Job status")}
+						value={
+							status
+								? statusLabel
+									? t(...statusLabel)
+									: status
+								: t("未知", "Unknown")
+						}
 					/>
 					<Detail
-						label="当前阶段"
-						value={stage ? stageDisplayName(stage) : "未提供"}
+						label={t("当前阶段", "Current stage")}
+						value={
+							stage
+								? stageDisplayName(stage, locale)
+								: t("未提供", "Not provided")
+						}
 					/>
 					{typeof progress === "number" &&
 					Number.isFinite(progress) &&
 					progress >= 0 &&
 					progress <= 100 ? (
-						<Detail label="任务进度" value={`${progress}%`} />
+						<Detail
+							label={t("任务进度", "Job progress")}
+							value={`${progress}%`}
+						/>
 					) : null}
 					{total != null ? (
-						<Detail label="执行耗时" value={formatDurationMs(total)} />
+						<Detail
+							label={t("执行耗时", "Elapsed time")}
+							value={formatDurationMs(total)}
+						/>
 					) : null}
 				</dl>
 			) : null}
 			{job ? (
 				<>
 					<dl className="grid grid-cols-2 gap-4">
-						<Detail className="col-span-2" label="任务 ID" value={job.id} />
-						<Detail label="任务类型" value={job.type} />
 						<Detail
-							label="尝试次数 / 上限"
+							className="col-span-2"
+							label={t("任务 ID", "Job ID")}
+							value={job.id}
+						/>
+						<Detail label={t("任务类型", "Job type")} value={job.type} />
+						<Detail
+							label={t("尝试次数 / 上限", "Attempts / Max")}
 							value={`${job.attempt} / ${job.max_attempts}`}
 						/>
 						{job.progress_current != null && job.progress_total != null ? (
 							<Detail
-								label="已处理 / 总量"
+								label={t("已处理 / 总量", "Processed / Total")}
 								value={`${job.progress_current} / ${job.progress_total}`}
 							/>
 						) : null}
 					</dl>
 					<div className="space-y-2">
 						<h4 className="text-xs font-medium text-muted-foreground">
-							入库链路
+							{t("入库链路", "Ingestion pipeline")}
 						</h4>
 						<p className="text-xs text-muted-foreground">
-							顺序累计耗时，非绝对时间轴
+							{t(
+								"顺序累计耗时，非绝对时间轴",
+								"Cumulative stage durations, not an absolute timeline",
+							)}
 						</p>
 						<StageWaterfall
 							stages={job.stage_runs ?? []}
@@ -404,29 +480,50 @@ function JobTimeline({
 					{timing ? (
 						<dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
 							{[
-								["本地 PDF 分析", formatDurationMs(timing.analysis_ms)],
-								["提交文件与任务", formatDurationMs(timing.submission_ms)],
 								[
-									"任务等待（含轮询）",
+									t("本地 PDF 分析", "Local PDF analysis"),
+									formatDurationMs(timing.analysis_ms),
+								],
+								[
+									t("提交文件与任务", "File & job submission"),
+									formatDurationMs(timing.submission_ms),
+								],
+								[
+									t("任务等待（含轮询）", "Provider wait (incl. polling)"),
 									formatDurationMs(timing.provider_wait_ms),
 								],
-								["结果获取与转换", formatDurationMs(timing.result_fetch_ms)],
-								["轮询 / 重试", `${timing.poll_count} / ${timing.retry_count}`],
+								[
+									t("结果获取与转换", "Result fetch & conversion"),
+									formatDurationMs(timing.result_fetch_ms),
+								],
+								[
+									t("轮询 / 重试", "Polls / Retries"),
+									`${timing.poll_count} / ${timing.retry_count}`,
+								],
 							].map(([label, value]) => (
 								<Detail key={label} label={label} value={value} />
 							))}
 						</dl>
 					) : null}
 					<dl className="grid grid-cols-2 gap-4">
-						<Detail label="创建" value={formatDateTime(job.created_at)} />
 						<Detail
-							label="开始"
-							value={job.started_at ? formatDateTime(job.started_at) : "未记录"}
+							label={t("创建", "Created")}
+							value={formatDateTime(job.created_at)}
 						/>
 						<Detail
-							label="结束"
+							label={t("开始", "Started")}
 							value={
-								job.finished_at ? formatDateTime(job.finished_at) : "未记录"
+								job.started_at
+									? formatDateTime(job.started_at)
+									: t("未记录", "Not recorded")
+							}
+						/>
+						<Detail
+							label={t("结束", "Finished")}
+							value={
+								job.finished_at
+									? formatDateTime(job.finished_at)
+									: t("未记录", "Not recorded")
 							}
 						/>
 					</dl>
@@ -444,7 +541,9 @@ function JobTimeline({
 				</>
 			) : !loading ? (
 				<p className="text-sm text-muted-foreground">
-					{document.job_id ? "未取得任务详情" : "暂无关联任务"}
+					{document.job_id
+						? t("未取得任务详情", "Job details unavailable")
+						: t("暂无关联任务", "No associated job")}
 				</p>
 			) : null}
 		</section>
@@ -483,17 +582,27 @@ function VersionHistory({
 	activeVersionId: string | null;
 	desiredVersionId: string | null;
 }) {
+	const t = useInterfaceText();
 	return (
-		<section aria-label="版本历史" className="space-y-3 border-t py-5">
-			<h3 className="text-sm font-medium">版本历史</h3>
+		<section
+			aria-label={t("版本历史", "Version history")}
+			className="space-y-3 border-t py-5"
+		>
+			<h3 className="text-sm font-medium">
+				{t("版本历史", "Version history")}
+			</h3>
 			{error ? (
-				<p className="text-sm text-muted-foreground">版本历史暂不可用</p>
+				<p className="text-sm text-muted-foreground">
+					{t("版本历史暂不可用", "Version history unavailable")}
+				</p>
 			) : loading ? (
 				<p role="status" className="text-sm text-muted-foreground">
-					正在读取版本历史…
+					{t("正在读取版本历史…", "Loading version history…")}
 				</p>
 			) : versions.length === 0 ? (
-				<p className="text-sm text-muted-foreground">未取得版本记录</p>
+				<p className="text-sm text-muted-foreground">
+					{t("未取得版本记录", "No version records found")}
+				</p>
 			) : (
 				<ul className="divide-y divide-border">
 					{versions.map((version) => (
@@ -504,10 +613,14 @@ function VersionHistory({
 										v{version.version}
 									</span>
 									{version.id === activeVersionId ? (
-										<span className="text-primary">当前生效</span>
+										<span className="text-primary">
+											{t("当前生效", "Active")}
+										</span>
 									) : null}
 									{version.id === desiredVersionId ? (
-										<span className="text-muted-foreground">目标版本</span>
+										<span className="text-muted-foreground">
+											{t("目标版本", "Target")}
+										</span>
 									) : null}
 								</div>
 								<DocumentStatusBadge status={version.status} />
@@ -524,12 +637,12 @@ function VersionHistory({
 										className="size-4 shrink-0 group-open:rotate-90"
 										aria-hidden
 									/>
-									版本明细
+									{t("版本明细", "Version details")}
 								</summary>
 								<dl className="grid grid-cols-2 gap-3 pb-2">
 									<Detail
 										className="col-span-2"
-										label="版本 ID"
+										label={t("版本 ID", "Version ID")}
 										value={version.id}
 									/>
 									<Detail
@@ -538,26 +651,32 @@ function VersionHistory({
 										value={version.generation_id}
 									/>
 									<Detail
-										label="大小"
+										label={t("大小", "Size")}
 										value={formatFileSize(version.size_bytes)}
 									/>
 									{version.parser_backend ? (
-										<Detail label="解析后端" value={version.parser_backend} />
+										<Detail
+											label={t("解析后端", "Parser backend")}
+											value={version.parser_backend}
+										/>
 									) : null}
 									{version.pipeline_version ? (
 										<Detail
-											label="流水线版本"
+											label={t("流水线版本", "Pipeline version")}
 											value={version.pipeline_version}
 										/>
 									) : null}
 									{version.activated_at ? (
 										<Detail
-											label="生效时间"
+											label={t("生效时间", "Activated")}
 											value={formatDateTime(version.activated_at)}
 										/>
 									) : null}
 									{version.failure_code ? (
-										<Detail label="失败代码" value={version.failure_code} />
+										<Detail
+											label={t("失败代码", "Failure code")}
+											value={version.failure_code}
+										/>
 									) : null}
 								</dl>
 							</details>

@@ -32,6 +32,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatDateTime } from "@/lib/format";
+import { useInterfaceText } from "@/lib/i18n/provider";
 
 type ServiceKeyRow = {
 	id: string;
@@ -49,6 +50,7 @@ export function WorkspaceIntegrationKeysPanel({
 }: {
 	onStateChange?: SettingsPanelStateChange;
 } = {}) {
+	const t = useInterfaceText();
 	const id = useId();
 	const { can, identity } = useSession();
 	const sessionCanManage = can("manageMembers");
@@ -56,7 +58,7 @@ export function WorkspaceIntegrationKeysPanel({
 	const canManage = sessionCanManage && !permissionRevoked;
 	const [keys, setKeys] = useState<ServiceKeyRow[] | null>(null);
 	const [loading, setLoading] = useState(canManage);
-	const [loadError, setLoadError] = useState<string | null>(null);
+	const [loadError, setLoadError] = useState(false);
 	const [name, setName] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [dialogOpen, setDialogOpen] = useState(false);
@@ -87,7 +89,7 @@ export function WorkspaceIntegrationKeysPanel({
 		dialogVersion.current += 1;
 		setLoading(false);
 		setKeys(null);
-		setLoadError(null);
+		setLoadError(false);
 		setCreated(false);
 		setCreatedKey(null);
 		setDialogOpen(false);
@@ -112,7 +114,7 @@ export function WorkspaceIntegrationKeysPanel({
 		readRequest.current = request;
 		const isCurrent = () => !request.signal.aborted && !active.signal.aborted;
 		setLoading(true);
-		setLoadError(null);
+		setLoadError(false);
 		try {
 			const response = await fetch("/api/workspace/keys", {
 				signal: request.signal,
@@ -128,7 +130,7 @@ export function WorkspaceIntegrationKeysPanel({
 			if (!Array.isArray(data.keys)) throw new Error("密钥列表响应无效");
 			if (isCurrent()) setKeys(data.keys.filter((item) => !item.revoked_at));
 		} catch {
-			if (isCurrent()) setLoadError("密钥列表加载失败，请重试。");
+			if (isCurrent()) setLoadError(true);
 		} finally {
 			if (isCurrent()) setLoading(false);
 		}
@@ -144,7 +146,7 @@ export function WorkspaceIntegrationKeysPanel({
 		dialogVersion.current += 1;
 		setKeys(null);
 		setLoading(sessionCanManage);
-		setLoadError(null);
+		setLoadError(false);
 		setPending(null);
 		setDialogOpen(false);
 		setDiscardOpen(false);
@@ -204,8 +206,8 @@ export function WorkspaceIntegrationKeysPanel({
 					typeof data?.detail === "string"
 						? data.detail
 						: action === "create"
-							? "创建密钥失败"
-							: "吊销失败",
+							? t("创建密钥失败", "Failed to create key")
+							: t("吊销失败", "Failed to revoke key"),
 				);
 				return;
 			}
@@ -214,7 +216,12 @@ export function WorkspaceIntegrationKeysPanel({
 			void refresh();
 		} catch {
 			if (!active.signal.aborted && !permissionRevokedRef.current)
-				setError("请求未完成，无法确认最新状态。请刷新列表核对后重试。");
+				setError(
+					t(
+						"请求未完成，无法确认最新状态。请刷新列表核对后重试。",
+						"Request did not complete, so the latest state could not be confirmed. Refresh the list and try again.",
+					),
+				);
 		} finally {
 			if (!active.signal.aborted) {
 				writing.current = false;
@@ -232,7 +239,7 @@ export function WorkspaceIntegrationKeysPanel({
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({
-					name: name.trim() || "集成密钥",
+					name: name.trim() || t("集成密钥", "Service key"),
 					scopes: ["ask", "retrieve"],
 				}),
 			},
@@ -258,7 +265,12 @@ export function WorkspaceIntegrationKeysPanel({
 			}
 		} catch {
 			if (!active?.signal.aborted && version === dialogVersion.current)
-				setError("复制失败，请手动选择密钥。");
+				setError(
+					t(
+						"复制失败，请手动选择密钥。",
+						"Copy failed. Please select the key manually.",
+					),
+				);
 		}
 	}
 
@@ -292,20 +304,25 @@ export function WorkspaceIntegrationKeysPanel({
 					} else closeDialog();
 				}}
 			>
-				<div className="flex flex-wrap items-center justify-between gap-3">
-					<h3 id={`${id}-heading`} className="text-xl font-medium">
-						集成密钥
+				<div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 pb-3">
+					<h3 id={`${id}-heading`} className="text-base font-medium">
+						{t("集成密钥", "Service keys")}
 					</h3>
 					{canManage ? (
-						<DialogTrigger render={<Button className="h-11" disabled={busy} />}>
+						<DialogTrigger
+							render={<Button className="h-11 md:h-9" disabled={busy} />}
+						>
 							<Plus className="size-4" aria-hidden />
-							创建密钥
+							{t("创建密钥", "Create key")}
 						</DialogTrigger>
 					) : null}
 				</div>
 				{!canManage ? (
 					<p className="text-sm text-muted-foreground">
-						当前无密钥管理权限；仅所有者 / 管理员可查看与管理集成密钥。
+						{t(
+							"当前无密钥管理权限；仅所有者 / 管理员可查看与管理集成密钥。",
+							"You don't have permission to manage keys. Only owners and admins can view and manage service keys.",
+						)}
 					</p>
 				) : (
 					<>
@@ -318,8 +335,16 @@ export function WorkspaceIntegrationKeysPanel({
 							{loadError ? (
 								<div className="flex flex-wrap items-center gap-2">
 									<p role="alert" className="text-destructive">
-										{loadError}
-										{keys !== null ? " 以下为上次加载的结果。" : ""}
+										{t(
+											"密钥列表加载失败，请重试。",
+											"Failed to load service keys. Please try again.",
+										)}
+										{keys !== null
+											? t(
+													" 以下为上次加载的结果。",
+													" Showing the last loaded results.",
+												)
+											: ""}
 									</p>
 									<Button
 										type="button"
@@ -329,21 +354,23 @@ export function WorkspaceIntegrationKeysPanel({
 										onClick={() => void refresh()}
 									>
 										<RefreshCw className="size-4" aria-hidden />
-										重试加载密钥
+										{t("重试加载密钥", "Retry loading keys")}
 									</Button>
 								</div>
 							) : null}
 							{keys === null && !loadError ? (
 								<p role="status" className="py-3 text-muted-foreground">
-									正在加载密钥…
+									{t("正在加载密钥…", "Loading keys…")}
 								</p>
 							) : null}
 							{keys?.length === 0 && !loadError && !loading ? (
-								<p className="py-3 text-muted-foreground">暂无有效密钥</p>
+								<p className="py-3 text-muted-foreground">
+									{t("暂无有效密钥", "No active keys")}
+								</p>
 							) : null}
 							{keys && keys.length > 0 ? (
 								<ul
-									aria-label="有效集成密钥"
+									aria-label={t("有效集成密钥", "Active service keys")}
 									className="divide-y divide-border/60"
 								>
 									{keys.map((item) => (
@@ -360,10 +387,14 @@ export function WorkspaceIntegrationKeysPanel({
 														: ""}
 												</p>
 												<p className="mt-1 text-xs text-muted-foreground">
-													创建 {formatDateTime(item.created_at)} ·{" "}
+													{t("创建", "Created")}{" "}
+													{formatDateTime(item.created_at)} ·{" "}
 													{item.last_used_at
-														? `最近使用 ${formatDateTime(item.last_used_at)}`
-														: "尚未使用"}
+														? t(
+																`最近使用 ${formatDateTime(item.last_used_at)}`,
+																`Last used ${formatDateTime(item.last_used_at)}`,
+															)
+														: t("尚未使用", "Never used")}
 												</p>
 											</div>
 											<Button
@@ -378,7 +409,7 @@ export function WorkspaceIntegrationKeysPanel({
 												}}
 											>
 												<KeyRound className="size-4" aria-hidden />
-												吊销
+												{t("吊销", "Revoke")}
 											</Button>
 										</li>
 									))}
@@ -390,15 +421,28 @@ export function WorkspaceIntegrationKeysPanel({
 
 				<DialogContent showCloseButton={!busy}>
 					<DialogHeader>
-						<DialogTitle>{created ? "密钥已创建" : "创建密钥"}</DialogTitle>
+						<DialogTitle>
+							{created
+								? t("密钥已创建", "Key created")
+								: t("创建密钥", "Create key")}
+						</DialogTitle>
 						<DialogDescription>
 							{created
-								? "明文仅本次可见，关闭或离开后无法再次查看。"
-								: "权限：ask / retrieve（问答与检索）。明文仅创建时显示一次。"}
+								? t(
+										"明文仅本次可见，关闭或离开后无法再次查看。",
+										"The plaintext key is shown only once and cannot be viewed after closing or leaving.",
+									)
+								: t(
+										"权限：ask / retrieve（问答与检索）。明文仅创建时显示一次。",
+										"Scopes: ask / retrieve. The plaintext key is shown only once upon creation.",
+									)}
 						</DialogDescription>
 					</DialogHeader>
 					<p className="text-sm text-warning-foreground">
-						请妥善保管密钥，不要放入前端代码、公开仓库或日志。
+						{t(
+							"请妥善保管密钥，不要放入前端代码、公开仓库或日志。",
+							"Store this key securely. Never place it in frontend code, public repositories, or logs.",
+						)}
 					</p>
 					{created ? (
 						<div className="min-w-0 space-y-3">
@@ -414,12 +458,15 @@ export function WorkspaceIntegrationKeysPanel({
 										onClick={() => void copyKey()}
 									>
 										<Copy className="size-4" aria-hidden />
-										{copied ? "已复制" : "复制密钥"}
+										{copied ? t("已复制", "Copied") : t("复制密钥", "Copy key")}
 									</Button>
 								</>
 							) : (
 								<p role="alert" className="text-destructive">
-									密钥已创建，但响应未包含可用明文。请核对列表并吊销该密钥后重新创建。
+									{t(
+										"密钥已创建，但响应未包含可用明文。请核对列表并吊销该密钥后重新创建。",
+										"The key was created, but the response did not include a usable plaintext value. Check the list, revoke that key, and create a new one.",
+									)}
 								</p>
 							)}
 						</div>
@@ -432,13 +479,13 @@ export function WorkspaceIntegrationKeysPanel({
 								createKey();
 							}}
 						>
-							<Label htmlFor={`${id}-key-name`}>名称</Label>
+							<Label htmlFor={`${id}-key-name`}>{t("名称", "Name")}</Label>
 							<Input
 								id={`${id}-key-name`}
 								className="h-11"
 								value={name}
 								disabled={busy}
-								placeholder="例如：客服助手"
+								placeholder={t("例如：客服助手", "e.g., Support assistant")}
 								onChange={(event) => setName(event.target.value)}
 							/>
 						</form>
@@ -456,12 +503,12 @@ export function WorkspaceIntegrationKeysPanel({
 							{createdKey ? (
 								<>
 									<EyeOff className="size-4" aria-hidden />
-									清除明文
+									{t("清除明文", "Clear key")}
 								</>
 							) : created ? (
-								"关闭"
+								t("关闭", "Close")
 							) : (
-								"取消"
+								t("取消", "Cancel")
 							)}
 						</DialogClose>
 						{!created ? (
@@ -472,7 +519,9 @@ export function WorkspaceIntegrationKeysPanel({
 								disabled={busy}
 							>
 								<Plus className="size-4" aria-hidden />
-								{pending === "create" ? "创建中…" : "创建密钥"}
+								{pending === "create"
+									? t("创建中…", "Creating…")
+									: t("创建密钥", "Create key")}
 							</Button>
 						) : null}
 					</DialogFooter>
@@ -480,22 +529,37 @@ export function WorkspaceIntegrationKeysPanel({
 						<AlertDialogContent>
 							<AlertDialogHeader>
 								<AlertDialogTitle>
-									{sensitive ? "关闭并清除密钥明文？" : "放弃创建密钥？"}
+									{sensitive
+										? t(
+												"关闭并清除密钥明文？",
+												"Close and clear plaintext key?",
+											)
+										: t("放弃创建密钥？", "Discard new key?")}
 								</AlertDialogTitle>
 								<AlertDialogDescription>
 									{sensitive
-										? "关闭后无法再次查看明文，已创建的密钥仍然有效。请确认已妥善保存。"
-										: "尚未创建密钥，关闭后将丢弃已填写的名称。"}
+										? t(
+												"关闭后无法再次查看明文，已创建的密钥仍然有效。请确认已妥善保存。",
+												"You won't be able to view the plaintext key again after closing. The created key remains active—make sure you've saved it.",
+											)
+										: t(
+												"尚未创建密钥，关闭后将丢弃已填写的名称。",
+												"The key hasn't been created yet. Closing will discard the entered name.",
+											)}
 								</AlertDialogDescription>
 							</AlertDialogHeader>
 							<AlertDialogFooter>
-								<AlertDialogCancel className="h-11">继续查看</AlertDialogCancel>
+								<AlertDialogCancel className="h-11">
+									{t("继续查看", "Keep viewing")}
+								</AlertDialogCancel>
 								<AlertDialogAction
 									variant="destructive"
 									className="h-11"
 									onClick={closeDialog}
 								>
-									{sensitive ? "清除并关闭" : "放弃并关闭"}
+									{sensitive
+										? t("清除并关闭", "Clear and close")
+										: t("放弃并关闭", "Discard and close")}
 								</AlertDialogAction>
 							</AlertDialogFooter>
 						</AlertDialogContent>
@@ -515,10 +579,14 @@ export function WorkspaceIntegrationKeysPanel({
 			>
 				<AlertDialogContent finalFocus={revokeTrigger}>
 					<AlertDialogHeader>
-						<AlertDialogTitle>吊销密钥？</AlertDialogTitle>
+						<AlertDialogTitle>
+							{t("吊销密钥？", "Revoke key?")}
+						</AlertDialogTitle>
 						<AlertDialogDescription>
-							吊销「{revokeTarget?.name}
-							」后，使用该密钥的集成将失去访问权限。此操作不可撤销。
+							{t(
+								`吊销「${revokeTarget?.name}」后，使用该密钥的集成将失去访问权限。此操作不可撤销。`,
+								`After revoking "${revokeTarget?.name}", integrations using this key will lose access. This action cannot be undone.`,
+							)}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					{error ? (
@@ -528,7 +596,7 @@ export function WorkspaceIntegrationKeysPanel({
 					) : null}
 					<AlertDialogFooter>
 						<AlertDialogCancel className="h-11" disabled={busy}>
-							取消
+							{t("取消", "Cancel")}
 						</AlertDialogCancel>
 						<AlertDialogAction
 							variant="destructive"
@@ -536,7 +604,9 @@ export function WorkspaceIntegrationKeysPanel({
 							disabled={busy}
 							onClick={confirmRevoke}
 						>
-							{pending === "revoke" ? "吊销中…" : "确认吊销"}
+							{pending === "revoke"
+								? t("吊销中…", "Revoking…")
+								: t("确认吊销", "Revoke key")}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

@@ -8,7 +8,7 @@ Release container images include THIRD_PARTY_NOTICES.txt and publish an SBOM
 and provenance attestation alongside the image manifest. See ASSETS.md and
 assets/provenance.json for repository asset provenance.
 
-Vercel, Claude and Violet Bloom theme snapshots in src/styles/themes/ originate
+Vercel, Modern Minimal, Claude and Violet Bloom theme snapshots in src/styles/themes/ originate
 from tweakcn (https://github.com/jnsahaj/tweakcn), distributed under Apache-2.0.
 The license is reproduced in LICENSE. Generated src/styles/themes.css is adapted
 by UnoRAG to preserve diagnostic status colors, accessible text, local fonts and

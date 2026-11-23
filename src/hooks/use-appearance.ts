@@ -6,15 +6,19 @@ import {
 	type Appearance,
 	DEFAULT_APPEARANCE,
 	parseAppearance,
+	resolveRadius,
 } from "@/lib/appearance";
 
 let snapshot: Appearance | undefined;
 const listeners = new Set<() => void>();
 
 function applyAppearance(value: Appearance) {
+	const resolved = resolveRadius(value);
 	document.documentElement.dataset.colorTheme = value.color;
-	document.documentElement.dataset.radius = String(value.radius);
-	document.documentElement.style.setProperty("--radius", `${value.radius}px`);
+	document.documentElement.dataset.radius = String(resolved);
+	document.documentElement.dataset.radiusMode =
+		value.radius === "preset" ? "preset" : "custom";
+	document.documentElement.style.setProperty("--radius", `${resolved}px`);
 }
 
 function readAppearance() {

@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { hasAskTrace } from "../../src/components/app/ask/ask-trace-drawer";
 import { ModelUsagePanel } from "../../src/components/app/model-usage-panel";
 import type { ModelUsageSummary } from "../../src/core/ai/model-usage";
+import { LanguageProvider } from "../../src/lib/i18n/provider";
 import {
 	partialModelUsage,
 	reportedModelUsage,
@@ -21,7 +22,13 @@ function content(
 }
 
 function render(usage?: ModelUsageSummary | null) {
-	const html = renderToStaticMarkup(createElement(ModelUsagePanel, { usage }));
+	const html = renderToStaticMarkup(
+		createElement(
+			LanguageProvider,
+			{ language: { locale: "zh-CN" } },
+			createElement(ModelUsagePanel, { usage }),
+		),
+	);
 	return { html, text: parseDocument(html).children.map(content).join("") };
 }
 

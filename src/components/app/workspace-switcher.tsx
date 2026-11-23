@@ -65,14 +65,20 @@ type WorkspaceListResponse = {
 	can_create: boolean;
 };
 
-async function readError(response: Response): Promise<string> {
+async function readError(
+	response: Response,
+	t: ReturnType<typeof useInterfaceText>,
+): Promise<string> {
 	try {
 		const body = (await response.json()) as { detail?: unknown };
 		if (typeof body.detail === "string") return body.detail;
 	} catch {
 		// Fall through to a stable user-facing message.
 	}
-	return `请求失败（HTTP ${response.status}）`;
+	return t(
+		`请求失败（HTTP ${response.status}）`,
+		`Request failed (HTTP ${response.status})`,
+	);
 }
 
 export function WorkspaceSwitcher() {
@@ -98,7 +104,7 @@ export function WorkspaceSwitcher() {
 		setLoading(true);
 		try {
 			const response = await fetch("/api/workspaces", { cache: "no-store" });
-			if (!response.ok) throw new Error(await readError(response));
+			if (!response.ok) throw new Error(await readError(response, t));
 			const payload = (await response.json()) as WorkspaceListResponse;
 			setItems(payload.items);
 			setCanCreate(payload.can_create);
@@ -129,7 +135,7 @@ export function WorkspaceSwitcher() {
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ workspace_id: workspaceId }),
 				});
-				if (!response.ok) throw new Error(await readError(response));
+				if (!response.ok) throw new Error(await readError(response, t));
 				setGuard({ dirty: false, busy: false });
 				window.location.assign("/app/ask");
 			} catch (switchError) {
@@ -164,7 +170,7 @@ export function WorkspaceSwitcher() {
 					description: description || null,
 				}),
 			});
-			if (!response.ok) throw new Error(await readError(response));
+			if (!response.ok) throw new Error(await readError(response, t));
 			const created = (await response.json()) as WorkspaceItem;
 			setCreateOpen(false);
 			setName("");
@@ -197,7 +203,7 @@ export function WorkspaceSwitcher() {
 									aria-busy={switchingId !== null}
 									tooltip={identity.workspaceName}
 									className={cn(
-										"h-12 gap-2.5 rounded-lg border border-sidebar-border bg-background/55 px-2.5 data-open:bg-sidebar-accent",
+										"h-12 gap-2.5 rounded-lg border border-border bg-sidebar-accent/45 px-2.5 hover:bg-sidebar-accent data-open:bg-sidebar-accent",
 										"group-data-[collapsible=icon]:-mx-0.5 group-data-[collapsible=icon]:size-11! group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-3!",
 									)}
 								/>

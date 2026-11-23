@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
 	AUDIT_CSV_HEADERS,
+	auditRangeCutoff,
 	authorizeAuditAccess,
 	decodeAuditCursor,
 	encodeAuditCursor,
@@ -125,14 +126,45 @@ test("cursor round-trip and reject garbage", () => {
 	assert.equal(decodeAuditCursor(""), null);
 });
 
-test("parseAuditListParams clamps limit and reads format", () => {
+test("parseAuditListParams clamps limit, validates filters, and reads format", () => {
 	const params = parseAuditListParams(
-		new URLSearchParams("limit=999&format=csv&cursor=abc"),
+		new URLSearchParams(
+			"limit=999&format=csv&cursor=abc&range=7d&resource_type=library&action=library.*&q=%20req-123%20",
+		),
 	);
 	assert.equal(params.limit, 200);
 	assert.equal(params.format, "csv");
 	assert.equal(params.cursor, "abc");
-	assert.equal(parseAuditListParams(new URLSearchParams("limit=0")).limit, 50);
+	assert.equal(params.range, "7d");
+	assert.equal(params.resourceType, "library");
+	assert.equal(params.action, "library.*");
+	assert.equal(params.q, "req-123");
+
+	const invalid = parseAuditListParams(
+		new URLSearchParams(
+			"limit=0&range=999d&resource_type=bad%20type!&action=bad%20action",
+		),
+	);
+	assert.equal(invalid.limit, 50);
+	assert.equal(invalid.range, "all");
+	assert.equal(invalid.resourceType, null);
+	assert.equal(invalid.action, null);
+	assert.equal(invalid.q, null);
+
+	const now = new Date("2026-11-23T00:00:00.000Z");
+	assert.equal(auditRangeCutoff("all", now), null);
+	assert.equal(
+		auditRangeCutoff("24h", now)?.toISOString(),
+		"2026-11-22T00:00:00.000Z",
+	);
+	assert.equal(
+		auditRangeCutoff("7d", now)?.toISOString(),
+		"2026-11-16T00:00:00.000Z",
+	);
+	assert.equal(
+		auditRangeCutoff("30d", now)?.toISOString(),
+		"2026-10-24T00:00:00.000Z",
+	);
 });
 
 test("summarizeAuditDetails falls back to JSON for unknown shape", () => {

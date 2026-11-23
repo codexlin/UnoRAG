@@ -37,6 +37,7 @@ export function UnoMark({
 			title={decorative ? undefined : label}
 			width={128}
 			height={128}
+			loading="eager"
 			unoptimized
 			draggable={false}
 			className={cn(

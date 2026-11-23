@@ -1,17 +1,17 @@
 "use server";
 
 import { cookies } from "next/headers";
-import { isLocale, LOCALE_COOKIE, type LocalePreference } from "./locale";
+import { isLocale, LOCALE_COOKIE, type Locale } from "./locale";
 
-export async function setInterfaceLanguage(preference: LocalePreference) {
-	if (!isLocale(preference) && preference !== "system") return false;
+export async function setInterfaceLanguage(locale: Locale) {
+	if (!isLocale(locale)) return false;
 	const cookieStore = await cookies();
-	cookieStore.set(LOCALE_COOKIE, preference === "system" ? "" : preference, {
+	cookieStore.set(LOCALE_COOKIE, locale, {
 		httpOnly: true,
 		sameSite: "lax",
 		path: "/",
 		secure: process.env.NODE_ENV === "production",
-		maxAge: preference === "system" ? 0 : 365 * 24 * 60 * 60,
+		maxAge: 365 * 24 * 60 * 60,
 	});
 	return true;
 }
