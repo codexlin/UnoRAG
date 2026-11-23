@@ -10,7 +10,7 @@ ADR 解释长期取舍，不是操作手册。当前实现先读 [系统架构](
 | [0003 Policy-driven chunking](./0003-policy-driven-chunking.md) | 结构优先、递归上限、受控语义切分与表格 profile | 已采纳；含 `2026-11-23` 中英文 Token 预算演进注记 |
 | [0005 TypeScript core runtime](./0005-typescript-core-runtime.md) | 运行时所有权、DBOS 与数据边界；迁移步骤属于已完成的历史 | 已实施；含 `2026-11-23` RLS/历史章节校准注记 |
 | [0007 Fully open-source product](./0007-fully-open-source-product-and-services.md) | 单一完整开源产品，无商业功能墙 | 已公开发布；含 `2026-11-23` 分层发版门禁注记 |
-| [0008 Qdrant server-side Sparse + RRF](./0008-qdrant-server-side-sparse-rrf.md) | 命名 Dense + 确定性词法 Sparse（`lexical_v1`，`modifier: "idf"`）与 Qdrant 服务端 RRF；已移除应用层 BM25 回退 | 已采纳；含 `2026-11-23` 默认开启评估注记 |
+| [0008 Qdrant server-side Sparse + RRF](./0008-qdrant-server-side-sparse-rrf.md) | 命名 Dense + 确定性词法 Sparse（`lexical_v1`，`modifier: "idf"`）与 Qdrant 服务端 RRF；已移除应用层 BM25 回退 | 已采纳；v0.4.0 默认开启 |
 
 ## 架构红线 vs 可演进边界
 

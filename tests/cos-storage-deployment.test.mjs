@@ -4,6 +4,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { loadAll } from "js-yaml";
 
 import {
 	hasCommand,
@@ -130,11 +131,37 @@ test("Helm renders COS and rejects incomplete or contradictory topology", (t) =>
 		"objectStorage.cos.bucket=contract-bucket",
 		"--set",
 		"objectStorage.cos.region=ap-hongkong",
+		"--set",
+		"objectStorage.cos.publicBaseUrl=https://cos.example.test",
 	]);
 	assert.equal(valid.status, 0, valid.stderr);
-	assert.match(valid.stdout, /DOCUMENT_STORAGE_DRIVER: "cos"/);
-	assert.match(valid.stdout, /COS_BUCKET: "contract-bucket"/);
-	assert.doesNotMatch(valid.stdout, /kind: PersistentVolumeClaim/);
+	const manifests = loadAll(valid.stdout).filter(Boolean);
+	const config = manifests.find((doc) => doc.kind === "ConfigMap");
+	const workload = (component) =>
+		manifests.find(
+			(doc) =>
+				doc.metadata?.labels?.["app.kubernetes.io/component"] === component &&
+				doc.spec?.template?.spec?.containers,
+		).spec.template.spec.containers[0];
+	const web = workload("web");
+	const worker = workload("dbos-worker");
+	assert.ok(
+		web.envFrom.some(
+			({ configMapRef }) => configMapRef?.name === config.metadata.name,
+		),
+	);
+	for (const [name, value] of Object.entries({
+		DOCUMENT_STORAGE_DRIVER: "cos",
+		COS_BUCKET: "contract-bucket",
+		COS_REGION: "ap-hongkong",
+		COS_PUBLIC_BASE_URL: "https://cos.example.test",
+	})) {
+		assert.equal(config.data[name], value);
+		assert.deepEqual(worker.env.find((item) => item.name === name)?.valueFrom, {
+			configMapKeyRef: { name: config.metadata.name, key: name },
+		});
+	}
+	assert.ok(!manifests.some((doc) => doc.kind === "PersistentVolumeClaim"));
 
 	for (const args of [
 		[

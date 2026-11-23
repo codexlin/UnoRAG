@@ -247,7 +247,7 @@ secret:
   #   MINERU_API_KEY: ""
 
 # ---------------------------------------------------------------------------
-# Migration Jobs (opt-in; run as separate release step)
+# Migration hooks
 # ---------------------------------------------------------------------------
 migrate:
   aclProjectionGate:
@@ -256,7 +256,8 @@ migrate:
     enabled: true
   runtimeRoles:
     # Replays grants and verifies that every runtime DSN authenticates as the
-    # fixed least-privilege login role documented by the chart.
+    # fixed least-privilege login role documented by the chart. Provision the
+    # login roles and their memberships before installing the release.
     enabled: true
   web:
     enabled: false

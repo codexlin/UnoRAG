@@ -1673,14 +1673,18 @@ test("alert lifecycle is durable, deduplicated and workspace isolated", {
 		});
 		assert.equal(
 			(
-				await pool.query<{ severity: string }>(
-					`SELECT severity
+				await pool.query<{
+					severity: string;
+					status: string;
+					generation: number;
+				}>(
+					`SELECT severity, status, generation
 					 FROM app.observability_alerts
 					 WHERE organization_id = $1 AND workspace_id = $2`,
 					[organizationId, workspaceId],
 				)
-			).rows[0]?.severity,
-			"critical",
+			).rows[0],
+			{ severity: "warning", status: "active", generation: 1 },
 		);
 		assert.deepEqual(
 			(

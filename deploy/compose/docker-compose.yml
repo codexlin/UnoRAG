@@ -128,6 +128,9 @@ services:
       UNORAG_DBOS_APPLICATION_VERSION: ${UNORAG_DBOS_APPLICATION_VERSION:-dev-local}
       QDRANT_URL: ${QDRANT_URL:?QDRANT_URL required}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-unorag_chunks}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_DISTANCE: ${QDRANT_DISTANCE:-Cosine}
+      QDRANT_TIMEOUT_MS: ${QDRANT_TIMEOUT_MS:-5000}
       # Keep provider namespaces intact; never select the key and URL separately.
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}

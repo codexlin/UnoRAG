@@ -26,9 +26,43 @@ spec:
         - name: migrate
           image: "{{ .Values.images.migrator.repository }}:{{ .Values.images.migrator.tag }}"
           imagePullPolicy: {{ .Values.images.migrator.pullPolicy }}
+          {{- if .Values.migrate.runtimeRoles.enabled }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              ./node_modules/.bin/drizzle-kit migrate
+
+              psql -X --single-transaction --dbname="$DATABASE_URL" --file=- <<'SQL'
+              {{- required "missing configure-runtime-roles.sql" (.Files.Get "files/configure-runtime-roles.sql") | trimSuffix "\n" | nindent 14 }}
+              SQL
+
+              app_database=$(psql -XAt --dbname="$DATABASE_URL" -c 'SELECT current_database()')
+              web_database=$(psql -XAt --dbname="$WEB_DATABASE_URL" -c "SELECT current_database() WHERE session_user = 'unorag_web_login' AND current_user = session_user")
+              worker_database=$(psql -XAt --dbname="$WORKER_DATABASE_URL" -c "SELECT current_database() WHERE session_user = 'unorag_worker_login' AND current_user = session_user")
+              UNORAG_DBOS_DATABASE=$(psql -XAt --dbname="$DBOS_SYSTEM_DATABASE_URL" -c "SELECT current_database() WHERE session_user = 'unorag_dbos_login' AND current_user = session_user")
+              test -n "$app_database" && test "$web_database" = "$app_database" &&
+                test "$worker_database" = "$app_database" && test -n "$UNORAG_DBOS_DATABASE" &&
+                test "$UNORAG_DBOS_DATABASE" != "$app_database" || {
+                  echo "runtime DSNs must use the expected login roles and databases" >&2
+                  exit 1
+                }
+              export UNORAG_DBOS_DATABASE
+              psql -X --dbname="$DATABASE_URL" --file=- <<'SQL'
+              {{- required "missing verify-runtime-roles.sql" (.Files.Get "files/verify-runtime-roles.sql") | trimSuffix "\n" | nindent 14 }}
+              SQL
+          {{- end }}
           env:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "unorag.secretName" . }}
                   key: MIGRATOR_DATABASE_URL
+            {{- if .Values.migrate.runtimeRoles.enabled }}
+            {{- range $name, $key := dict "WEB_DATABASE_URL" "DATABASE_URL" "WORKER_DATABASE_URL" "WORKER_DATABASE_URL" "DBOS_SYSTEM_DATABASE_URL" "DBOS_SYSTEM_DATABASE_URL" }}
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" $ }}
+                  key: {{ $key }}
+            {{- end }}
+            {{- end }}

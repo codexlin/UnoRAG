@@ -447,7 +447,6 @@ export async function reconcileWorkspaceAlerts(
 			if (current.status === "active") {
 				const escalated =
 					SEVERITY_RANK[signal.severity] > SEVERITY_RANK[current.severity];
-				const severity = escalated ? signal.severity : current.severity;
 				await client.query(
 					`UPDATE app.observability_alerts
 					 SET source = $4, severity = $5, title = $6, detail = $7,
@@ -460,7 +459,7 @@ export async function reconcileWorkspaceAlerts(
 						input.workspaceId,
 						current.id,
 						signal.source,
-						severity,
+						signal.severity,
 						signal.title,
 						signal.detail,
 						signal.recovery,

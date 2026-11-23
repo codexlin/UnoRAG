@@ -5,7 +5,7 @@ Qdrant and Redis. The chart deploys the same four-image topology as Compose:
 
 - `web`: product edge and native Retrieve/Ask;
 - `dbosWorker`: durable lifecycle executor and control loop;
-- `migrator`: opt-in Drizzle and role migration jobs;
+- `migrator`: Drizzle migration hook with runtime grant reconciliation enabled by default;
 - `ops`: opt-in inspection and ACL reconciliation jobs.
 
 Only Web receives an Ingress. DBOS admin, PostgreSQL, Qdrant, Redis and
@@ -73,9 +73,17 @@ helm upgrade --install unorag ./deploy/helm/unorag \
   --set ingress.hosts[0].host=unorag.example.com
 ```
 
-Run schema migration as a controlled release step by enabling the migration jobs
-defined in [`values.yaml`](./unorag/values.yaml). Migrations are forward-only;
-application rollback switches image pins and does not down-migrate data.
+The pre-install and pre-upgrade hook runs Drizzle with `MIGRATOR_DATABASE_URL`,
+then reapplies table grants and verifies the runtime database identities. Use
+the schema and table owner, or a role with equivalent migration and grant
+privileges, for this DSN. Before installing, provision the
+`unorag_web_login` and `unorag_worker_login` roles with
+membership in `unorag_web` and `unorag_worker` respectively. Provision a separate
+database on the same PostgreSQL cluster owned by `unorag_dbos_login` and deny
+that login access to the application database. Use an existing Kubernetes Secret
+so all required DSNs are available before the Helm hook starts. Set
+`migrate.runtimeRoles.enabled=false` if grants and verification are managed
+externally. Migrations are forward-only. Application rollback switches image pins.
 
 ## External OpenTelemetry Collector
 
