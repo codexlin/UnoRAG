@@ -3,7 +3,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import { workspaceSettings } from "@/db/schema";
+import { workspaceSettings, workspaces } from "@/db/schema";
 
 import {
 	mergeAskPatch,
@@ -26,7 +26,7 @@ export {
 
 export async function getWorkspaceAskSettings(workspaceId: string) {
 	const db = getDatabase();
-	const [row] = await db
+	const rows = await db
 		.select({
 			ask: workspaceSettings.ask,
 			askPrevious: workspaceSettings.askPrevious,
@@ -38,6 +38,7 @@ export async function getWorkspaceAskSettings(workspaceId: string) {
 		.where(eq(workspaceSettings.workspaceId, workspaceId))
 		.limit(1);
 
+	const row = rows.at(0);
 	const ask = sanitizeStoredAsk(row?.ask ?? {});
 	return {
 		ask,
@@ -70,71 +71,62 @@ export async function patchWorkspaceAskSettings(
 		return { ok: false, detail: validated.detail, status: 400 };
 	}
 
-	const db = getDatabase();
-	const [existing] = await db
-		.select({
-			ask: workspaceSettings.ask,
-			policyVersion: workspaceSettings.policyVersion,
-		})
-		.from(workspaceSettings)
-		.where(eq(workspaceSettings.workspaceId, workspaceId))
-		.limit(1);
-
-	const current = sanitizeStoredAsk(existing?.ask ?? {});
-	const next = mergeAskPatch(current, validated.patch);
-	const unchanged =
-		JSON.stringify(current) === JSON.stringify(next) && Boolean(existing);
-	const now = new Date();
-	const nextVersion = unchanged
-		? (existing?.policyVersion ?? 1)
-		: (existing?.policyVersion ?? 0) + 1;
-
-	if (existing) {
-		await db
-			.update(workspaceSettings)
-			.set({
-				ask: next,
-				...(unchanged
-					? {}
-					: {
-							askPrevious: current,
-							policyVersion: nextVersion,
-						}),
-				updatedAt: now,
-				updatedBy: updatedBy ?? null,
+	return getDatabase().transaction(async (tx) => {
+		// Serialize partial patches even before the first settings row exists.
+		const [workspace] = await tx
+			.select({ id: workspaces.id })
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for("update");
+		if (!workspace) {
+			return { ok: false, detail: "workspace not found", status: 404 };
+		}
+		const [existing] = await tx
+			.select({
+				ask: workspaceSettings.ask,
+				askPrevious: workspaceSettings.askPrevious,
+				policyVersion: workspaceSettings.policyVersion,
 			})
-			.where(eq(workspaceSettings.workspaceId, workspaceId));
-	} else {
-		await db.insert(workspaceSettings).values({
-			workspaceId,
+			.from(workspaceSettings)
+			.where(eq(workspaceSettings.workspaceId, workspaceId))
+			.limit(1);
+
+		const current = sanitizeStoredAsk(existing?.ask ?? {});
+		const next = mergeAskPatch(current, validated.patch);
+		const changed = JSON.stringify(current) !== JSON.stringify(next);
+		const now = new Date();
+		const version = existing ? existing.policyVersion + Number(changed) : 1;
+		const previous = existing
+			? changed
+				? current
+				: existing.askPrevious
+			: null;
+		const values = {
 			ask: next,
-			askPrevious: null,
-			policyVersion: 1,
-			createdAt: now,
+			askPrevious: previous,
+			policyVersion: version,
 			updatedAt: now,
 			updatedBy: updatedBy ?? null,
-		});
-	}
+		};
 
-	const [row] = await db
-		.select({
-			ask: workspaceSettings.ask,
-			askPrevious: workspaceSettings.askPrevious,
-			policyVersion: workspaceSettings.policyVersion,
-			updatedAt: workspaceSettings.updatedAt,
-			updatedBy: workspaceSettings.updatedBy,
-		})
-		.from(workspaceSettings)
-		.where(eq(workspaceSettings.workspaceId, workspaceId))
-		.limit(1);
-
-	return {
-		ok: true,
-		ask: sanitizeStoredAsk(row?.ask ?? next),
-		defaults: publicAskDefaults(),
-		policy_version: row?.policyVersion ?? nextVersion,
-		updated_at: (row?.updatedAt ?? now).toISOString(),
-		updated_by: row?.updatedBy ?? updatedBy ?? null,
-		ask_previous: row?.askPrevious ?? null,
-	};
+		if (existing) {
+			await tx
+				.update(workspaceSettings)
+				.set(values)
+				.where(eq(workspaceSettings.workspaceId, workspaceId));
+		} else {
+			await tx
+				.insert(workspaceSettings)
+				.values({ ...values, workspaceId, createdAt: now });
+		}
+		return {
+			ok: true,
+			ask: next,
+			defaults: publicAskDefaults(),
+			policy_version: version,
+			updated_at: now.toISOString(),
+			updated_by: values.updatedBy,
+			ask_previous: previous,
+		};
+	});
 }

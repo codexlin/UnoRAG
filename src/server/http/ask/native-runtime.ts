@@ -86,7 +86,7 @@ import {
 } from "./figure-assets";
 import { rewriteFollowup } from "./followup-rewrite";
 import { judgeFailureDebug } from "./judge-diagnostics";
-import type { NativeAskPolicy } from "./policy";
+import { askRetrievalOptions, type NativeAskPolicy } from "./policy";
 import {
 	createTableRuntimePorts,
 	deterministicTableAnswer,
@@ -392,8 +392,7 @@ export class NativeAskRuntime {
 			? { ...filters(state), record_type: "table" }
 			: filters(state);
 		const retrieveOptions = {
-			hybridEnabled: this.policy.hybrid_enabled || isRetryAttempt,
-			rerankEnabled: this.policy.rerank_enabled || isRetryAttempt,
+			...askRetrievalOptions(this.policy, isRetryAttempt),
 			preserveFigureLineage: !input.tableOnly && state.query_type !== "compare",
 			lineageMinScore: this.evidenceThreshold(),
 		};

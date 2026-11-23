@@ -160,11 +160,86 @@ test("workspace notification repository PostgreSQL boundaries", {
 		}
 	}
 	try {
+		await t.test(
+			"alert overrides are versioned, workspace scoped and preserve email delivery policy",
+			() =>
+				run(async (f) => {
+					await saveWorkspaceEmailSettings(
+						pool,
+						{ ...f.command, settings },
+						now,
+					);
+					const command = {
+						...f.command,
+						expectedVersion: 1,
+						settings,
+						expectedAlertPolicyVersion: 0,
+					};
+					await assert.rejects(
+						saveWorkspaceEmailSettings(
+							pool,
+							{
+								...command,
+								alertThresholds: { ask_p95_warning_ms: 100_000 },
+							},
+							now,
+						),
+						notificationError(400, "invalid_alert_thresholds"),
+					);
+					const thresholds = {
+						ask_min_samples: 30,
+						ask_p95_warning_ms: 30_000,
+						ask_p95_critical_ms: 30_000,
+					};
+					await saveWorkspaceEmailSettings(
+						pool,
+						{ ...command, alertThresholds: thresholds },
+						now,
+					);
+					const saved = await readWorkspaceNotifications(pool, f.scope, now);
+					assert.deepEqual(saved.alert_thresholds, thresholds);
+					assert.deepEqual(saved.settings, settings);
+					assert.equal(saved.alert_policy_version, 1);
+					assert.equal(saved.version, 1);
+					const other = await readWorkspaceNotifications(
+						pool,
+						{ ...f.scope, workspaceId: f.otherWorkspace },
+						now,
+					);
+					assert.deepEqual(other.alert_thresholds, {});
+					await assert.rejects(
+						saveWorkspaceEmailSettings(
+							pool,
+							{
+								...command,
+								alertThresholds: {},
+							},
+							now,
+						),
+						notificationError(409, "version_conflict"),
+					);
+					await saveWorkspaceEmailSettings(
+						pool,
+						{
+							...command,
+							expectedAlertPolicyVersion: 1,
+							alertThresholds: {},
+						},
+						now,
+					);
+					const reset = await readWorkspaceNotifications(pool, f.scope, now);
+					assert.deepEqual(reset.alert_thresholds, {});
+					assert.equal(reset.alert_policy_version, 2);
+					assert.equal(reset.version, 1);
+				}),
+		);
 		await t.test("absent defaults, scope and active workspace checks", () =>
 			run(async (f) => {
 				assert.deepEqual(await readWorkspaceEmailSettings(pool, f.scope), {
 					settings: DEFAULT_WORKSPACE_EMAIL_SETTINGS,
 					version: 0,
+					alert_thresholds: {},
+					alert_policy_version: 0,
 					updated_at: null,
 				});
 				await saveWorkspaceEmailSettings(
@@ -237,6 +312,8 @@ test("workspace notification repository PostgreSQL boundaries", {
 					assert.deepEqual(snapshot, {
 						settings,
 						version: 1,
+						alert_thresholds: {},
+						alert_policy_version: 0,
 						updated_at: now.toISOString(),
 					});
 					await saveWorkspaceEmailSettings(

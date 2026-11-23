@@ -31,6 +31,20 @@ Expand the name of the chart.
 {{- end }}
 {{- end }}
 
+{{/* Shared by validation in Web and evaluation in control. */}}
+{{- define "unorag.askAlertThresholdEnv" -}}
+- name: OBSERVABILITY_ASK_MIN_SAMPLES
+  value: {{ .Values.observability.nativeAlerts.askMinSamples | quote }}
+- name: OBSERVABILITY_ASK_FAILURE_RATE_WARNING
+  value: {{ .Values.observability.nativeAlerts.askFailureRateWarning | quote }}
+- name: OBSERVABILITY_ASK_CITATION_COVERAGE_MIN
+  value: {{ .Values.observability.nativeAlerts.askCitationCoverageMin | quote }}
+- name: OBSERVABILITY_ASK_P95_WARNING_MS
+  value: {{ .Values.observability.nativeAlerts.askP95WarningMs | quote }}
+- name: OBSERVABILITY_ASK_P95_CRITICAL_MS
+  value: {{ .Values.observability.nativeAlerts.askP95CriticalMs | quote }}
+{{- end }}
+
 {{/*
 Create a default fully qualified app name.
 */}}

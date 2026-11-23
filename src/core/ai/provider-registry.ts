@@ -1,7 +1,12 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 
-const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+import {
+	DEFAULT_LLM_BASE_URL,
+	resolveLlmApiKey,
+	resolveLlmBaseUrl,
+} from "./model-environment";
+
 const DEFAULT_CHAT_MODEL = "qwen-plus";
 
 export class AiProviderConfigurationError extends Error {
@@ -58,15 +63,12 @@ export function aiConfigFromEnv(
 	env: NodeJS.ProcessEnv = process.env,
 ): OpenAICompatibleAiConfig {
 	const apiKey = required(
-		env.OPENAI_API_KEY || env.DASHSCOPE_API_KEY,
-		"OPENAI_API_KEY or DASHSCOPE_API_KEY",
+		resolveLlmApiKey(env),
+		"LLM_API_KEY (or OPENAI_API_KEY / DASHSCOPE_API_KEY)",
 	);
 	const baseUrl = httpUrl(
-		required(
-			env.OPENAI_BASE_URL || env.DASHSCOPE_BASE_URL || DEFAULT_BASE_URL,
-			"OPENAI_BASE_URL or DASHSCOPE_BASE_URL",
-		),
-		"OPENAI_BASE_URL or DASHSCOPE_BASE_URL",
+		required(resolveLlmBaseUrl(env) ?? DEFAULT_LLM_BASE_URL, "LLM_BASE_URL"),
+		"LLM_BASE_URL",
 	);
 	const chatModel = required(
 		env.CHAT_MODEL || DEFAULT_CHAT_MODEL,
@@ -128,16 +130,13 @@ export function vlmAiConfigFromEnv(
 		return null;
 	}
 	const apiKey = required(
-		env.VLM_API_KEY || env.OPENAI_API_KEY || env.DASHSCOPE_API_KEY,
-		"VLM_API_KEY, OPENAI_API_KEY, or DASHSCOPE_API_KEY",
+		env.VLM_API_KEY || resolveLlmApiKey(env),
+		"VLM_API_KEY or LLM_API_KEY",
 	);
 	const baseUrl = httpUrl(
 		required(
-			env.VLM_BASE_URL ||
-				env.OPENAI_BASE_URL ||
-				env.DASHSCOPE_BASE_URL ||
-				DEFAULT_BASE_URL,
-			"VLM_BASE_URL or OPENAI_BASE_URL",
+			env.VLM_BASE_URL || resolveLlmBaseUrl(env) || DEFAULT_LLM_BASE_URL,
+			"VLM_BASE_URL or LLM_BASE_URL",
 		),
 		"VLM_BASE_URL",
 	);

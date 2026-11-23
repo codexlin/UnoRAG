@@ -230,7 +230,7 @@ test("deployment inputs map to one application environment contract", async () =
 		CONTEXTUAL_RETRIEVAL_MAX_CHUNKS: "40",
 		CONTEXTUAL_RETRIEVAL_TIMEOUT_MS: "1000",
 	})) {
-		assert.equal(advanced.get(name), value);
+		assert.equal(advanced.has(name), name === "CONTEXTUAL_RETRIEVAL_ENABLED");
 		assert.equal(compose.services["dbos-worker"].environment[name], value);
 		assert.equal(compose.services.web.environment[name], undefined);
 	}
@@ -245,12 +245,134 @@ test("deployment inputs map to one application environment contract", async () =
 			.AI_INCLUDE_USAGE,
 		"false",
 	);
-	assert.equal(
-		compose.services.web.environment.SESSION_MEMORY_TTL_SECONDS,
-		advanced.get("SESSION_MEMORY_TTL_SECONDS"),
-	);
 	for (const service of Object.values(compose.services)) {
 		assert.equal("MINERU_URL" in (service.environment ?? {}), false);
+	}
+});
+
+test("omitted engineering settings retain their Compose defaults and accept overrides", async () => {
+	const advanced = parseEnvContract(
+		await readFile(
+			new URL("deploy/config/runtime.advanced.env.example", root),
+			"utf8",
+		),
+	);
+	const defaults = {
+		web: {
+			DATABASE_POOL_MAX: "10",
+			SESSION_MEMORY_TTL_SECONDS: "3600",
+			ASK_JUDGE_TIMEOUT_MS: "15000",
+			ASK_JUDGE_MAX_ATTEMPTS: "2",
+			ASK_JUDGE_MAX_OUTPUT_TOKENS: "1024",
+			VLM_TIMEOUT_MS: "15000",
+			VLM_MAX_FIGURES_PER_REQUEST: "2",
+			VLM_MAX_IMAGE_BYTES: "5242880",
+			EMBEDDING_TIMEOUT_MS: "15000",
+			EMBEDDING_BATCH_SIZE: "10",
+			RERANK_TIMEOUT_MS: "10000",
+		},
+		"dbos-worker": {
+			CONTEXTUAL_RETRIEVAL_MAX_CHUNKS: "40",
+			CONTEXTUAL_RETRIEVAL_TIMEOUT_MS: "1000",
+			PARSER_POLL_INTERVAL_MS: "250",
+			PARSER_RETRY_BACKOFF_MS: "2000,5000,15000,30000",
+		},
+		"dbos-control": {
+			DBOS_SYSTEM_DATABASE_POOL_SIZE: "10",
+			DBOS_CONTROL_POLL_MS: "5000",
+			ASK_RUN_MAINTENANCE_ENABLED: "true",
+			ASK_RUN_MAINTENANCE_INTERVAL_MS: "900000",
+			ASK_RUN_MAINTENANCE_BATCH_SIZE: "1000",
+			ASK_RUN_STALE_AFTER_MINUTES: "30",
+			ASK_RUN_RETENTION_DAYS: "30",
+			TOMBSTONE_MAINTENANCE_ENABLED: "true",
+			TOMBSTONE_MAINTENANCE_INTERVAL_MS: "3600000",
+			TOMBSTONE_MAINTENANCE_BATCH_SIZE: "100",
+			TOMBSTONE_RETENTION_DAYS: "90",
+			OBSERVABILITY_CYCLE_ENABLED: "true",
+			OBSERVABILITY_CYCLE_INTERVAL_MS: "60000",
+			OBSERVABILITY_ASK_MIN_SAMPLES: "10",
+			OBSERVABILITY_ASK_FAILURE_RATE_WARNING: "0.05",
+			OBSERVABILITY_ASK_CITATION_COVERAGE_MIN: "0.90",
+			OBSERVABILITY_ASK_P95_WARNING_MS: "15000",
+			OBSERVABILITY_ASK_P95_CRITICAL_MS: "25000",
+			OBSERVABILITY_ALERT_RECOVERY_CYCLES: "2",
+		},
+	};
+	const compose = renderComposeConfig();
+	for (const [service, values] of Object.entries(defaults)) {
+		for (const [name, expected] of Object.entries(values)) {
+			assert.equal(advanced.has(name), false, name);
+			assert.equal(compose.services[service].environment[name], expected, name);
+		}
+	}
+	const overrides = renderComposeConfig({
+		ASK_RUN_MAINTENANCE_BATCH_SIZE: "900",
+		PARSER_POLL_INTERVAL_MS: "600",
+		EMBEDDING_TIMEOUT_MS: "4500",
+		OBSERVABILITY_ASK_P95_WARNING_MS: "17000",
+	});
+	assert.equal(
+		overrides.services["dbos-control"].environment
+			.ASK_RUN_MAINTENANCE_BATCH_SIZE,
+		"900",
+	);
+	assert.equal(
+		overrides.services["dbos-worker"].environment.PARSER_POLL_INTERVAL_MS,
+		"600",
+	);
+	for (const name of ["web", "dbos-worker"]) {
+		assert.equal(
+			overrides.services[name].environment.EMBEDDING_TIMEOUT_MS,
+			"4500",
+		);
+	}
+	for (const name of ["web", "dbos-control"]) {
+		assert.equal(
+			overrides.services[name].environment.OBSERVABILITY_ASK_P95_WARNING_MS,
+			"17000",
+		);
+	}
+});
+
+test("Compose accepts model aliases in priority order and passes through the account origin fallback", () => {
+	const legacy = {
+		OPENAI_API_KEY: "test-openai",
+		OPENAI_BASE_URL: "https://openai.example/v1",
+		DASHSCOPE_API_KEY: "test-dashscope",
+		DASHSCOPE_BASE_URL: "https://dashscope.example/v1",
+		UNORAG_BASE_URL: "https://console.example",
+	};
+	for (const [overrides, key, url] of [
+		[legacy, "contract-llm-key", "https://models.example/v1"],
+		[
+			{ ...legacy, LLM_API_KEY: "", LLM_BASE_URL: "" },
+			legacy.OPENAI_API_KEY,
+			legacy.OPENAI_BASE_URL,
+		],
+		[
+			{
+				...legacy,
+				LLM_API_KEY: "",
+				LLM_BASE_URL: "",
+				OPENAI_API_KEY: "",
+				OPENAI_BASE_URL: "",
+			},
+			legacy.DASHSCOPE_API_KEY,
+			legacy.DASHSCOPE_BASE_URL,
+		],
+	]) {
+		const { services } = renderComposeConfig(overrides);
+		for (const name of ["web", "dbos-worker", "dbos-control"]) {
+			assert.equal(services[name].environment.OPENAI_API_KEY, key);
+		}
+		for (const name of ["web", "dbos-worker"]) {
+			assert.equal(services[name].environment.OPENAI_BASE_URL, url);
+		}
+		assert.equal(
+			services.web.environment.UNORAG_BASE_URL,
+			legacy.UNORAG_BASE_URL,
+		);
 	}
 });
 
@@ -319,6 +441,35 @@ test("Helm gives Web and Worker the same canonical model endpoint", (t) => {
 		)?.data.AI_INCLUDE_USAGE,
 		"false",
 	);
+});
+
+test("Helm rolls out the same alert defaults to Web and control", (t) => {
+	if (!hasCommand("helm", ["version", "--short"])) {
+		t.skip("helm is not installed");
+		return;
+	}
+	for (const count of ["10", "27"]) {
+		const render = renderHelm([
+			"--set-string",
+			`observability.nativeAlerts.askMinSamples=${count}`,
+		]);
+		assert.equal(render.status, 0, render.stderr);
+		const documents = loadAll(render.stdout);
+		for (const component of ["web", "dbos-control"]) {
+			const deployment = documents.find(
+				(item) =>
+					item?.kind === "Deployment" &&
+					item.metadata.labels["app.kubernetes.io/component"] === component,
+			);
+			const environment = deployment?.spec.template.spec.containers[0].env;
+			assert.equal(
+				environment?.find(
+					(entry) => entry.name === "OBSERVABILITY_ASK_MIN_SAMPLES",
+				)?.value,
+				count,
+			);
+		}
+	}
 });
 
 test("account email secrets reach only Web/control and recipients stay in the application", (t) => {
@@ -391,10 +542,17 @@ test("config reconciliation layers old runtime values without losing custom sett
 	await mkdir(scriptsDir, { recursive: true });
 	await mkdir(configDir, { recursive: true });
 
-	await cp(
-		new URL("deploy/compose/scripts/init-config.sh", root),
-		join(scriptsDir, "init-config.sh"),
-	);
+	for (const name of [
+		"init-config.sh",
+		"upgrade.sh",
+		"compose-env.sh",
+		"release-env.sh",
+	]) {
+		await cp(
+			new URL(`deploy/compose/scripts/${name}`, root),
+			join(scriptsDir, name),
+		);
+	}
 	await chmod(join(scriptsDir, "init-config.sh"), 0o755);
 	for (const name of [
 		"runtime.env",
@@ -419,6 +577,10 @@ test("config reconciliation layers old runtime values without losing custom sett
 		readFile(runtimePath, "utf8"),
 		readFile(join(configDir, "runtime.advanced.env.example"), "utf8"),
 	]);
+	await writeFile(
+		advancedPath,
+		"ASK_JUDGE_TIMEOUT_MS=24000\nOBSERVABILITY_ASK_MIN_SAMPLES=24\noperator_tag=night-shift\nCUSTOM_MULTILINE='first\nCUSTOM_INNER=second\nthird'\n",
+	);
 	await writeFile(
 		runtimePath,
 		`${runtime.replace(/^HTTP_PORT=.*$/m, "HTTP_PORT=8088")}\n${advancedExample
@@ -447,5 +609,64 @@ test("config reconciliation layers old runtime values without losing custom sett
 	);
 	assert.match(advanced, /^DBOS_INGEST_AUTO_CONCURRENCY=7$/m);
 	assert.match(advanced, /^CUSTOM_OPERATOR_SETTING=preserved$/m);
+	assert.match(advanced, /^ASK_JUDGE_TIMEOUT_MS=24000$/m);
+	assert.match(advanced, /^OBSERVABILITY_ASK_MIN_SAMPLES=24$/m);
+	assert.match(advanced, /^operator_tag=night-shift$/m);
+	assert.match(
+		advanced,
+		/^CUSTOM_MULTILINE='first\nCUSTOM_INNER=second\nthird'$/m,
+	);
 	assert.doesNotMatch(advanced, /^MINERU_URL=/m);
+
+	// Stop at queue validation before any Docker or release operation.
+	const invalidQueues = advanced.replace(
+		/^UNORAG_DBOS_LISTEN_QUEUES=.*$/m,
+		"UNORAG_DBOS_LISTEN_QUEUES=invalid",
+	);
+	await writeFile(
+		advancedPath,
+		`${invalidQueues}PARSER_POLL_INTERVAL_MS=600\n`,
+	);
+	const upgrade = spawnSync(
+		"bash",
+		[join(scriptsDir, "upgrade.sh"), "--from-runtime"],
+		{
+			cwd: composeDir,
+			encoding: "utf8",
+		},
+	);
+	assert.equal(upgrade.status, 1);
+	assert.match(
+		upgrade.stderr,
+		/UNORAG_DBOS_LISTEN_QUEUES must include ingest-local/,
+	);
+	const upgraded = await readFile(advancedPath, "utf8");
+	assert.match(upgraded, /^PARSER_POLL_INTERVAL_MS=600$/m);
+	assert.match(upgraded, /^ASK_JUDGE_TIMEOUT_MS=24000$/m);
+	assert.match(
+		upgraded,
+		/^CUSTOM_MULTILINE='first\nCUSTOM_INNER=second\nthird'$/m,
+	);
+
+	for (const file of [runtimePath, advancedPath]) await rm(file);
+	await writeFile(
+		join(composeDir, ".env"),
+		"DASHSCOPE_API_KEY=test-legacy-key\nDASHSCOPE_BASE_URL=https://legacy.example/v1\nEMBEDDING_TIMEOUT_MS=7500\nAPP_BASE_URL=https://console.example\n",
+	);
+	const monolithic = spawnSync("bash", [join(scriptsDir, "init-config.sh")], {
+		cwd: composeDir,
+		encoding: "utf8",
+	});
+	assert.equal(monolithic.status, 0, monolithic.stderr);
+	assert.match(
+		await readFile(runtimePath, "utf8"),
+		/^LLM_BASE_URL=https:\/\/legacy.example\/v1$/m,
+	);
+	assert.match(
+		await readFile(join(configDir, "runtime.secret"), "utf8"),
+		/^LLM_API_KEY=test-legacy-key$/m,
+	);
+	const migrated = await readFile(advancedPath, "utf8");
+	assert.match(migrated, /^EMBEDDING_TIMEOUT_MS=7500$/m);
+	assert.match(migrated, /^APP_BASE_URL=https:\/\/console.example$/m);
 });

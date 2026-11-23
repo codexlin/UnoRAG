@@ -12,6 +12,7 @@ import { LanguageProvider } from "../../src/lib/i18n/provider";
 import { queryKeys } from "../../src/lib/query-keys";
 import type { SessionIdentity } from "../../src/lib/session-types";
 import {
+	DEFAULT_ASK_ALERT_THRESHOLDS,
 	DEFAULT_WORKSPACE_EMAIL_SETTINGS,
 	type WorkspaceNotificationsView,
 } from "../../src/lib/workspace-notifications";
@@ -36,6 +37,9 @@ function view(): WorkspaceNotificationsView {
 	return {
 		settings: { ...DEFAULT_WORKSPACE_EMAIL_SETTINGS, recipients: [] },
 		version: 1,
+		alert_thresholds: {},
+		alert_defaults: DEFAULT_ASK_ALERT_THRESHOLDS,
+		alert_policy_version: 0,
 		updated_at: null,
 		transport: { status: "configured", checked_at: stamp },
 		deliveries: [],
@@ -122,6 +126,17 @@ test("an empty recipient list is never prefilled from the session", () => {
 	assert.ok(html.includes("邮件服务：已配置"));
 	assert.ok(!html.includes(identity.email ?? "personal@example.test"));
 	assert.ok(!html.includes("/api/workspace/notifications"));
+});
+
+test("admins can see the saved alert overrides and inherited defaults without transport configuration", () => {
+	const data = view();
+	data.alert_thresholds = { ask_min_samples: 27 };
+	data.transport = { status: "unconfigured", checked_at: stamp };
+	const { html } = render(data);
+	assert.match(html, /告警阈值/);
+	assert.match(html, /恢复默认值/);
+	assert.match(html, /value="27"/);
+	assert.match(html, /placeholder="25000"/);
 });
 
 test("deliveries use safe Chinese status and error labels and show only the newest 20", () => {

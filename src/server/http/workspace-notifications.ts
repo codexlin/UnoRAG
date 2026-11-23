@@ -1,12 +1,16 @@
 import { z } from "zod";
 
+import { canManageMembers } from "../../lib/server/workspace-permissions.mjs";
 import {
-	type WorkspaceEmailSettings,
 	type WorkspaceNotificationScope,
 	type WorkspaceNotificationsView,
+	workspaceAlertThresholdsSchema,
 	workspaceEmailSettingsSchema,
 } from "../../lib/workspace-notifications";
-import { WorkspaceNotificationError } from "../observability/notification-settings";
+import {
+	WorkspaceNotificationError,
+	type WorkspaceNotificationUpdate,
+} from "../observability/notification-settings";
 
 type Identity = {
 	tenantId: string;
@@ -23,17 +27,23 @@ type VersionCommand = WorkspaceNotificationScope & {
 type Dependencies = {
 	resolveIdentity(request: Request): Promise<Identity | null>;
 	read(scope: WorkspaceNotificationScope): Promise<WorkspaceNotificationsView>;
-	save(
-		input: VersionCommand & { settings: WorkspaceEmailSettings },
-	): Promise<unknown>;
+	save(input: WorkspaceNotificationUpdate): Promise<unknown>;
 	test(input: VersionCommand): Promise<{ queued: number }>;
 	appBaseUrl?: string;
 };
 
 const versionSchema = z.strictObject({ version: z.number().int().min(0) });
-const saveSchema = versionSchema.extend({
-	settings: workspaceEmailSettingsSchema,
-});
+const saveSchema = versionSchema
+	.extend({
+		settings: workspaceEmailSettingsSchema,
+		alert_thresholds: workspaceAlertThresholdsSchema.optional(),
+		alert_policy_version: z.number().int().min(0).optional(),
+	})
+	.refine(
+		(value) =>
+			(value.alert_thresholds === undefined) ===
+			(value.alert_policy_version === undefined),
+	);
 
 const errorMessages: Record<string, string> = {
 	workspace_not_found: "工作区不存在或已停用",
@@ -41,6 +51,7 @@ const errorMessages: Record<string, string> = {
 	invalid_version: "配置版本无效，请刷新重试",
 	version_conflict: "设置已被修改，请刷新后确认",
 	invalid_settings: "通知设置无效，请检查收件邮箱",
+	invalid_alert_thresholds: "告警阈值无效，请检查数值范围和延迟阈值顺序",
 	recipients_required: "请先保存收件邮箱",
 	transport_unavailable: "邮件服务未配置或状态未知，请联系部署管理员",
 	rate_limited: "测试请求过于频繁，请稍后重试",
@@ -86,7 +97,7 @@ export function createWorkspaceNotificationHandlers(deps: Dependencies) {
 		try {
 			const identity = await deps.resolveIdentity(request);
 			if (!identity) return json({ detail: "authentication required" }, 401);
-			if (identity.role !== "owner" && identity.role !== "admin") {
+			if (!canManageMembers(identity)) {
 				return json({ detail: "forbidden" }, 403);
 			}
 			const scope = {
@@ -127,8 +138,18 @@ export function createWorkspaceNotificationHandlers(deps: Dependencies) {
 				expectedVersion: validated.data.version,
 			};
 			if (action === "test") return json(await deps.test(command), 202);
-			const settings = saveSchema.parse(validated.data).settings;
-			await deps.save({ ...command, settings });
+			const { settings, alert_thresholds, alert_policy_version } =
+				saveSchema.parse(validated.data);
+			await deps.save({
+				...command,
+				settings,
+				...(alert_thresholds === undefined
+					? {}
+					: {
+							alertThresholds: alert_thresholds,
+							expectedAlertPolicyVersion: alert_policy_version,
+						}),
+			});
 			return json(await deps.read(scope));
 		} catch (error) {
 			if (error instanceof WorkspaceNotificationError) {
