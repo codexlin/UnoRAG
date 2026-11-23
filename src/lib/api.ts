@@ -79,6 +79,7 @@ export type ApiRetrievalDebug = {
 	library_id?: string | null;
 	path?: string;
 	route?: string;
+	route_reason?: string;
 	upgrade?: unknown;
 	upgrade_reason?: string | null;
 	downgrade_reason?: string | null;
@@ -89,6 +90,7 @@ export type ApiRetrievalDebug = {
 	stages?: ApiAskStage[];
 	top_score?: number | null;
 	used_hybrid?: boolean;
+	used_rerank?: boolean;
 	hybrid_failed?: boolean;
 	rerank_failed?: boolean;
 	retrieval_mode?: string;
@@ -101,6 +103,25 @@ export type ApiRetrievalDebug = {
 	judge_output_tokens?: number;
 	judge_total_tokens?: number;
 	[key: string]: unknown;
+};
+
+/** Live-only fields, separate from archiveable retrieval_debug. */
+export type ApiAskTraceDetails = {
+	retrieval_inspection: import("@/core/retrieval/retrieval-service").RetrievalInspection[];
+	rewritten_question?: string;
+	judge_summary: {
+		mode: string | null;
+		sufficient: boolean | null;
+		verdict: "generate" | "refuse" | "retry" | "clarify" | null;
+		conflict_status:
+			| "not_checked"
+			| "consistent"
+			| "scoped"
+			| "precedence"
+			| "conflict"
+			| null;
+		citation_validation: "passed" | "not_checked";
+	};
 };
 
 export type ApiArchiveTurn = {
@@ -133,7 +154,7 @@ export type ApiThreadDetail = ApiThread & {
 	turns: ApiArchiveTurn[];
 };
 
-export type ApiAskResponse = {
+export type ApiAskResponse = Partial<ApiAskTraceDetails> & {
 	session_id: string;
 	thread_id?: string | null;
 	question: string;
@@ -897,6 +918,7 @@ export async function askQuestionStream(
 		libraryId: string;
 		sessionId?: string;
 		threadId?: string;
+		include_trace_details?: boolean;
 	},
 	handlers: AskStreamHandlers,
 	signal?: AbortSignal,
@@ -912,6 +934,7 @@ export async function askQuestionStream(
 			library_id: input.libraryId,
 			session_id: input.sessionId,
 			thread_id: input.threadId,
+			include_trace_details: input.include_trace_details,
 		}),
 		signal,
 	});

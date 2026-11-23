@@ -1,12 +1,11 @@
-import { type AskStreamHandlers, isAbortError } from "@/lib/api";
+import {
+	type AskStreamHandlers,
+	type askQuestionStream,
+	isAbortError,
+} from "@/lib/api";
 
 type Stream = (
-	input: {
-		question: string;
-		libraryId: string;
-		sessionId?: string;
-		threadId?: string;
-	},
+	input: Parameters<typeof askQuestionStream>[0],
 	handlers: AskStreamHandlers,
 	signal: AbortSignal,
 ) => Promise<void>;

@@ -63,6 +63,7 @@ import type {
 	ActiveDocumentCatalog,
 	ActiveDocumentDescriptor,
 } from "@/core/retrieval/document-constraints";
+import type { RetrievalInspection } from "@/core/retrieval/retrieval-service";
 import {
 	captureAskGenerationStream,
 	isEvaluationCaptureEnabled,
@@ -291,6 +292,11 @@ function contextText(
 export class NativeAskRuntime {
 	private readonly graph: AskGraphService;
 	private readonly retrievedEvidence: Record<string, unknown>[] = [];
+	// Keep previews out of graph state, stage diagnostics, and evaluation captures.
+	private readonly retrievalInspections: {
+		inspection: RetrievalInspection;
+		references: NonNullable<RetrievalResult["inspectionReferences"]>;
+	}[] = [];
 	private documentConstraintStatus = "none";
 	private documentScope: ActiveDocumentDescriptor[] = [];
 	private evidenceDocuments: ActiveDocumentDescriptor[] = [];
@@ -299,6 +305,7 @@ export class NativeAskRuntime {
 	private readonly attemptedFigureKeys = new Set<string>();
 	private vlmFiguresReadCount = 0;
 	private vlmDegradedReason: string | null = null;
+	private validatedAnswerCitations = false;
 
 	constructor(
 		private readonly identity: AuthIdentity,
@@ -309,13 +316,14 @@ export class NativeAskRuntime {
 		private readonly assertAuthorized?: (
 			citations: Record<string, unknown>[],
 		) => Promise<void>,
+		private readonly includeTraceDetails = false,
 	) {
 		this.graph = new AskGraphService(this.context());
 	}
 
 	private async retrieve(
 		state: AskState,
-		input: { tableOnly: boolean },
+		input: { tableOnly: boolean; applyEvidenceThreshold: boolean },
 	): Promise<RetrievalResult> {
 		await this.assertAuthorized?.(this.retrievedEvidence);
 		const scope = await resolveAuthorizedRetrievalScope({
@@ -395,6 +403,14 @@ export class NativeAskRuntime {
 			...askRetrievalOptions(this.policy, isRetryAttempt),
 			preserveFigureLineage: !input.tableOnly && state.query_type !== "compare",
 			lineageMinScore: this.evidenceThreshold(),
+			...(this.includeTraceDetails
+				? {
+						includeTraceDetails: true,
+						evidenceThreshold: input.applyEvidenceThreshold
+							? this.evidenceThreshold()
+							: undefined,
+					}
+				: {}),
 		};
 		const comparisonSubQueries =
 			!input.tableOnly && state.query_type === "compare"
@@ -473,6 +489,19 @@ export class NativeAskRuntime {
 			}
 		}
 		this.retrievedEvidence.push(...result.citations);
+		if (this.includeTraceDetails) {
+			for (const { debug, inspectionReferences } of [
+				primaryResult,
+				...subResults,
+			]) {
+				if (debug.inspection && inspectionReferences) {
+					this.retrievalInspections.push({
+						inspection: debug.inspection,
+						references: inspectionReferences,
+					});
+				}
+			}
+		}
 		if (
 			!input.tableOnly &&
 			isEvaluationCaptureEnabled(state.session_id ?? "")
@@ -486,10 +515,11 @@ export class NativeAskRuntime {
 				citations: result.citations.map(({ body }) => ({ body })),
 			});
 		}
+		const { inspection: _inspection, ...debug } = result.debug;
 		return {
-			...result,
+			citations: result.citations,
 			debug: {
-				...result.debug,
+				...debug,
 				documentConstraintStatus: this.documentConstraintStatus,
 			},
 		};
@@ -515,6 +545,14 @@ export class NativeAskRuntime {
 
 	getEvidenceReferences(): Record<string, unknown>[] {
 		return this.retrievedEvidence;
+	}
+
+	getRetrievalInspections() {
+		return this.retrievalInspections;
+	}
+
+	didValidateAnswerCitations(): boolean {
+		return this.validatedAnswerCitations;
 	}
 
 	private beforeModelRequest = async () => {
@@ -862,7 +900,10 @@ export class NativeAskRuntime {
 			ports: {
 				retrieve: async (state) => {
 					let result = this.adjudicate(
-						await this.retrieve(state, { tableOnly: false }),
+						await this.retrieve(state, {
+							tableOnly: false,
+							applyEvidenceThreshold: true,
+						}),
 					);
 					let groundedPlan = deriveGroundedTableLookup(
 						groundedQuestion(state),
@@ -884,7 +925,10 @@ export class NativeAskRuntime {
 							outlineAnswer: this.outlineAnswer,
 						};
 						const precise = this.adjudicate(
-							await this.retrieve(state, { tableOnly: true }),
+							await this.retrieve(state, {
+								tableOnly: true,
+								applyEvidenceThreshold: true,
+							}),
 						);
 						groundedPlan = deriveGroundedTableLookup(
 							groundedQuestion(state),
@@ -921,7 +965,10 @@ export class NativeAskRuntime {
 							},
 						};
 					}
-					const result = await this.retrieve(state, { tableOnly: true });
+					const result = await this.retrieve(state, {
+						tableOnly: true,
+						applyEvidenceThreshold: false,
+					});
 					return {
 						citations: result.citations,
 						retrieval_attempts: (state.retrieval_attempts ?? 0) + 1,
@@ -1017,6 +1064,7 @@ export class NativeAskRuntime {
 				beforeRequest: this.beforeModelRequest,
 			}),
 		);
+		this.validatedAnswerCitations = true;
 	}
 }
 
@@ -1028,6 +1076,7 @@ export function createNativeAskRuntime(input: {
 	dependencies?: NativeAskRuntimeDependencies;
 	usageRecorder?: ModelUsageRecorder;
 	assertAuthorized?: (citations: Record<string, unknown>[]) => Promise<void>;
+	includeTraceDetails?: boolean;
 }): NativeAskRuntime {
 	let dependencies = input.dependencies;
 	if (!dependencies) {
@@ -1093,6 +1142,7 @@ export function createNativeAskRuntime(input: {
 		input.policy,
 		dependencies,
 		input.assertAuthorized,
+		input.includeTraceDetails,
 	);
 }
 

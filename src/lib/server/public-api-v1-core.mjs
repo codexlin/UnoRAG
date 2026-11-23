@@ -45,7 +45,12 @@ export const PUBLIC_CITATION_KEYS = Object.freeze([
 	"record_type",
 ]);
 
-const ASK_FIELDS = new Set(["question", "library_id", "session_id"]);
+const ASK_FIELDS = new Set([
+	"question",
+	"library_id",
+	"session_id",
+	"include_trace_details",
+]);
 const RETRIEVE_FIELDS = new Set([
 	"query",
 	"question",
@@ -145,6 +150,14 @@ export function normalizePublicApiRequest(target, value) {
 	if (!library.ok) return library;
 
 	if (target === "ask") {
+		if (
+			value.include_trace_details !== undefined &&
+			typeof value.include_trace_details !== "boolean"
+		) {
+			return invalid("include_trace_details must be a boolean", {
+				field: "include_trace_details",
+			});
+		}
 		const question = requiredString(value, "question", 4000);
 		if (!question.ok) return question;
 		const payload = {

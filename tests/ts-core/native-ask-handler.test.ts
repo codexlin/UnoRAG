@@ -13,12 +13,14 @@ import type { ModelUsageCall } from "../../src/core/ai/model-usage";
 import type { AskGraphInput, AskState } from "../../src/core/ask-graph";
 import { AskGraphExecutionError } from "../../src/core/ask-graph";
 import { CLARIFICATION_TTL_MS } from "../../src/core/ask-graph/clarification";
-import type {
-	InternalCitation,
-	RetrievalResult,
+import {
+	DefaultRetrievalService,
+	type InternalCitation,
+	type RetrievalResult,
 } from "../../src/core/retrieval";
 import { RerankDiagnosticSchema } from "../../src/core/retrieval/provider-request";
 import { QdrantOperationError } from "../../src/core/retrieval/qdrant/store";
+import type { ApiAskResponse } from "../../src/lib/api";
 import { runWithObservabilityContext } from "../../src/lib/observability/context";
 import { logger } from "../../src/lib/observability/logger";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
@@ -350,6 +352,268 @@ function askRunRecorder() {
 		},
 	});
 	return { repository, starts, finalizations };
+}
+
+for (const [role, include, expected, serviceKey] of [
+	["admin", true, true, false],
+	["editor", true, true, false],
+	["owner", true, true, false],
+	["admin", undefined, false, false],
+	["editor", false, false, false],
+	["viewer", true, false, false],
+	["admin", true, false, true],
+] as const) {
+	test(`trace opt-in and scope for ${role}, include=${include}, service key=${serviceKey}`, async () => {
+		const { handleNativeAskRequest } = await handlerModule;
+		const caller = { ...identity, role };
+		const runtime = new FakeRuntime(askState(), ["Answer [1]"]);
+		let inspectionReads = 0;
+		Object.assign(runtime, {
+			getRetrievalInspections() {
+				inspectionReads += 1;
+				return [];
+			},
+		});
+		const response = await handleNativeAskRequest({
+			request: request({
+				question: "Question",
+				library_id: LIBRARY_ID,
+				include_trace_details: include,
+			}),
+			path: ["v1", "ask"],
+			identity: caller,
+			repository: repositoryInput(new FakeConversationRepository()),
+			...(serviceKey
+				? { askRunPrincipal: { type: "service_key", id: "key" } }
+				: {}),
+			authorization: {
+				refreshIdentity: async () => caller,
+				resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
+				citationAuthorizer: {
+					filterAuthorized: async ({ citations }) => citations,
+				},
+			},
+			runtimeFactory: (input) => {
+				assert.equal(input.includeTraceDetails, expected);
+				return runtime as never;
+			},
+		});
+		assert.equal(response?.status, 200);
+		const body = await response?.json();
+		assert.equal("retrieval_inspection" in body, expected);
+		assert.equal("judge_summary" in body, expected);
+		assert.equal("rewritten_question" in body, false);
+		assert.equal(inspectionReads, expected ? 1 : 0);
+	});
+}
+
+for (const [mode, revokeDropped] of [
+	["sync", false],
+	["stream", false],
+	["stream", true],
+] as const) {
+	test(`${mode} ${revokeDropped ? "omits inspection after a dropped candidate loses access" : "sends live-only inspection for each main, subquery and retry call"}`, async (context) => {
+		const { handleNativeAskRequest } = await handlerModule;
+		const { createNativeAskRuntime } = await import(
+			"../../src/server/http/ask/native-runtime"
+		);
+		const { DrizzleActiveGenerationResolver } = await import(
+			"../../src/server/retrieval/active-generation-resolver"
+		);
+		context.mock.method(
+			DrizzleActiveGenerationResolver.prototype,
+			"resolve",
+			async () => ({
+				libraryId: LIBRARY_ID,
+				generationIds: ["generation-1"],
+				resolvedAt: new Date(),
+			}),
+		);
+		const caller = { ...identity, role: "editor" };
+		const runs = askRunRecorder();
+		const repository = new FakeConversationRepository([activeThread()]);
+		const memory = new FakeSessionMemory();
+		const queries: string[] = [];
+		const coarseMarker = "Private coarse preview only";
+		const question = "采购合同在付款时有哪些要求，以及逾期时有哪些责任？";
+		const service = new DefaultRetrievalService(
+			{
+				async embedQuery(query) {
+					queries.push(query);
+					return [queries.length];
+				},
+				async embedTexts() {
+					throw new Error("Unexpected embedTexts");
+				},
+			},
+			{
+				async search({ vector, scope }) {
+					assert.deepEqual(scope.activeGenerationIds, ["generation-1"]);
+					const call = vector[0];
+					return Array.from({ length: 13 }, (_, index) => ({
+						id: `call-${call}-${index}`,
+						score: call > 3 && index === 0 ? 0.85 : 0.1,
+						payload: {
+							doc_id: `document-${index}`,
+							document_version_id: `version-${index}`,
+							generation_id: "generation-1",
+							library_id: LIBRARY_ID,
+							tenant_id: ORGANIZATION_ID,
+							workspace_id: WORKSPACE_ID,
+							acl_scope: "workspace" as const,
+							title: "Test contract",
+							text:
+								index === 0 && call > 3
+									? "Payment is due in 30 days."
+									: coarseMarker,
+							record_type: "chunk" as const,
+							chunk_index: index,
+						},
+					}));
+				},
+				async listCorpus() {
+					return [];
+				},
+			},
+			null,
+			{
+				hybridEnabled: false,
+				rerankEnabled: false,
+				rerankTopK: 20,
+				bm25TopK: 20,
+				rrfK: 60,
+			},
+		);
+		const model = {} as LanguageModel;
+		const response = await handleNativeAskRequest({
+			request: request(
+				{
+					question,
+					library_id: LIBRARY_ID,
+					include_trace_details: true,
+					...(mode === "sync" ? { thread_id: THREAD_ID } : {}),
+				},
+				mode,
+			),
+			path: mode === "stream" ? ["v1", "ask", "stream"] : ["v1", "ask"],
+			identity: caller,
+			repository: repositoryInput(repository),
+			memoryStore: memory as never,
+			askRunsRepository: runs.repository,
+			resolveLibrary: async () => ({ id: "db-library" }),
+			authorization: {
+				refreshIdentity: async () => caller,
+				resolveLibrary: (async () => ({ id: LIBRARY_ID })) as never,
+				citationAuthorizer: {
+					filterAuthorized: async ({ citations }) =>
+						revokeDropped
+							? citations.filter(({ doc_id }) => doc_id !== "document-12")
+							: citations,
+				},
+			},
+			runtimeFactory: (input) =>
+				createNativeAskRuntime({
+					...input,
+					dependencies: {
+						retrieval: service,
+						structured: new StructuredOutputAdapter(model, async (request) => {
+							if (request.schemaName === "conflict") {
+								return {
+									resolution: "consistent",
+									comparison: "The sources agree.",
+									conflict_evidence: [],
+								};
+							}
+							assert.equal(request.schemaName, "judge");
+							return {
+								action: "generate",
+								reason: "covered",
+								sufficient: true,
+								evidence_ids: ["e1"],
+							};
+						}),
+						answer: new AnswerStreamAdapter(model, async function* () {
+							yield "Payment is due in 30 days. [source:1]";
+						}),
+					},
+				}),
+		});
+		assert.ok(response);
+		assert.equal(response.status, 200);
+		assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+		let body: ApiAskResponse;
+		if (mode === "stream") {
+			const frames = parseSse(await response.text());
+			assert.equal(frames.at(-1)?.event, "done");
+			assert.doesNotMatch(
+				JSON.stringify(frames.slice(0, -1)),
+				/retrieval_inspection|rewritten_question|Private coarse preview/,
+			);
+			body = frames.at(-1)?.data as ApiAskResponse;
+		} else {
+			body = await response.json();
+		}
+		assert.equal(
+			body.refused,
+			false,
+			JSON.stringify({
+				reason: body.refuse_reason,
+				queries,
+				debug: body.retrieval_debug,
+			}),
+		);
+		assert.equal(queries.length, 6);
+		assert.equal(runs.finalizations[0]?.status, "completed");
+		if (revokeDropped) {
+			assert.equal("retrieval_inspection" in body, false);
+			assert.equal("rewritten_question" in body, false);
+			assert.equal("judge_summary" in body, false);
+			return;
+		}
+		assert.deepEqual(
+			body.retrieval_inspection?.map(({ query }) => query),
+			queries,
+		);
+		assert.equal(body.rewritten_question, queries[3]);
+		assert.notEqual(body.rewritten_question, question);
+		assert.equal(
+			body.retrieval_inspection?.[0].candidates[0].outcome,
+			"below_threshold",
+		);
+		assert.equal(
+			body.retrieval_inspection?.[0].candidates[0].preview,
+			coarseMarker,
+		);
+		assert.equal(body.retrieval_inspection?.[0].candidates[0].final_rank, null);
+		assert.equal(body.retrieval_inspection?.[3].candidates[0].final_rank, 1);
+		assert.deepEqual(body.judge_summary, {
+			mode: "model",
+			sufficient: true,
+			verdict: "generate",
+			conflict_status: "consistent",
+			citation_validation: "passed",
+		});
+		assert.equal(
+			mode === "sync" ? repository.exchanges.length : memory.appended.length,
+			1,
+		);
+		if (mode === "sync") assert.equal(repository.debugUpdates.length, 1);
+		const durable = JSON.stringify([
+			runs.starts,
+			runs.finalizations,
+			repository.exchanges,
+			repository.debugUpdates,
+			memory.appended,
+		]);
+		assert.doesNotMatch(
+			durable,
+			/inspection|rewritten_question|rewritten_queries|retrieval_query|Private coarse preview only/,
+		);
+		assert.equal(
+			durable.includes(JSON.stringify(body.rewritten_question)),
+			false,
+		);
+	});
 }
 
 const judgeUsage: ModelUsageCall = {

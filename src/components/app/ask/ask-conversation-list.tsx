@@ -14,7 +14,6 @@ import {
 	MessageHeader,
 } from "@/components/ui/message";
 import { MessageScrollerItem } from "@/components/ui/message-scroller";
-import type { ApiRetrievalDebug } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { useInterfaceText } from "@/lib/i18n/provider";
 import type { UiCitation } from "@/lib/ui-types";
@@ -26,10 +25,7 @@ type AskConversationListProps = {
 	isStreaming: boolean;
 	onCancel: () => void;
 	onOpenCitation: (citation: UiCitation, turnId: string) => void;
-	onOpenTrace: (
-		debug: ApiRetrievalDebug,
-		clientDurationMs?: number | null,
-	) => void;
+	onOpenTrace: (turn: LocalTurn) => void;
 	onRetry: (turn: LocalTurn) => void;
 	reduceMotion: boolean | null;
 	turns: LocalTurn[];

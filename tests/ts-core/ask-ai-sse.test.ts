@@ -1213,6 +1213,7 @@ test("legacy SSE preserves order and removes internal scope and debug fields", a
 				trace_id: "trace-1",
 				tenant_id: "tenant-secret",
 				retrieval_debug: { filters: "secret" },
+				retrieval_inspection: [{ preview: "coarse-preview-secret" }],
 			},
 			citations: [
 				{
@@ -1231,7 +1232,13 @@ test("legacy SSE preserves order and removes internal scope and debug fields", a
 			done: {
 				session_id: "session-1",
 				trace_id: "trace-1",
-				retrieval_debug: { score: 1 },
+				retrieval_debug: {
+					score: 1,
+					inspection: { preview: "coarse-preview-secret" },
+					judge_mode: { retrieval_inspection: "coarse-preview-secret" },
+				},
+				retrieval_inspection: [{ preview: "coarse-preview-secret" }],
+				rewritten_question: "rewrite-secret",
 				workspace_id: "workspace-secret",
 			},
 		}),
@@ -1245,6 +1252,10 @@ test("legacy SSE preserves order and removes internal scope and debug fields", a
 	assert.equal(JSON.stringify(events).includes("tenant-secret"), false);
 	assert.equal(JSON.stringify(events).includes("workspace-secret"), false);
 	assert.equal(JSON.stringify(events).includes("generation-secret"), false);
+	assert.doesNotMatch(
+		JSON.stringify(events),
+		/coarse-preview-secret|rewrite-secret/,
+	);
 	assert.deepEqual(events[2]?.data, "违约金");
 	assert.deepEqual(events.at(-1)?.data, {
 		session_id: "session-1",

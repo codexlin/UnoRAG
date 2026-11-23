@@ -26,7 +26,7 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { type ApiRetrievalDebug, submitAskFeedback } from "@/lib/api";
+import { submitAskFeedback } from "@/lib/api";
 import {
 	ASK_FEEDBACK_REASON_CODES,
 	ASK_FEEDBACK_REASON_LABELS,
@@ -280,10 +280,7 @@ type AskAnswerActionsProps = {
 	isStreaming: boolean;
 	onCancel: () => void;
 	onRetry: (turn: LocalTurn) => void;
-	onOpenTrace: (
-		debug: ApiRetrievalDebug,
-		clientDurationMs?: number | null,
-	) => void;
+	onOpenTrace: (turn: LocalTurn) => void;
 };
 
 export function AskAnswerActions({
@@ -368,10 +365,7 @@ export function AskAnswerActions({
 									"查看请求链路：路由、检索、裁决与生成各阶段耗时",
 									"View the request trace: routing, retrieval, evidence checks, and generation timings",
 								)}
-								onClick={() => {
-									if (turn.retrievalDebug)
-										onOpenTrace(turn.retrievalDebug, turn.durationMs);
-								}}
+								onClick={() => onOpenTrace(turn)}
 							/>
 						}
 					>
