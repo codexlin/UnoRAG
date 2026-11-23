@@ -7,6 +7,7 @@ import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { aiConfigFromEnv, createAiProviderRegistry } from "../../src/core/ai";
+import { scoreNegativeCase } from "../../src/evaluation/scoring";
 import {
 	ask,
 	buildFingerprint,
@@ -649,6 +650,7 @@ async function run(): Promise<void> {
 	}
 
 	let jobs = new Map<string, JobResult>();
+	let evaluationFailed = false;
 	try {
 		if (ownsLibrary) {
 			const uploads = new Map<string, { jobId: string; documentId: string | null }>();
@@ -697,17 +699,26 @@ async function run(): Promise<void> {
 		): Promise<R[]> => {
 			const results = new Array<R>(items.length);
 			let cursor = 0;
+			let stopped = false;
+			let firstError: unknown;
 			const workerCount = Math.min(concurrency, items.length);
-			await Promise.all(
+			await Promise.allSettled(
 				Array.from({ length: workerCount }, async () => {
-					while (true) {
-						const current = cursor;
-						cursor += 1;
-						if (current >= items.length) return;
-						results[current] = await worker(items[current], current);
+					try {
+						while (!stopped) {
+							const current = cursor;
+							cursor += 1;
+							if (current >= items.length) return;
+							results[current] = await worker(items[current], current);
+						}
+					} catch (error) {
+						if (!stopped) firstError = error;
+						stopped = true;
+						throw error;
 					}
 				}),
 			);
+			if (stopped) throw firstError;
 			return results;
 		};
 
@@ -797,7 +808,7 @@ async function run(): Promise<void> {
 				sessionId: `unorag-hf-${runId}-${item.id}`.slice(0, 250),
 				timeoutMs: 120_000,
 			});
-			const passed = res.httpStatus === 200 && res.refused;
+			const passed = scoreNegativeCase(res).ok;
 			const refusalKind =
 				item.refusal_kind ?? (item.excluded_entity ? "out_of_corpus" : "in_corpus_unanswerable");
 			const row: NegativeResult = {
@@ -881,15 +892,24 @@ async function run(): Promise<void> {
 		if (!cleanupLibrary) {
 			process.stdout.write(`== reuse without re-ingest via: --reuse-library ${libraryId}\n`);
 		}
+	} catch (error) {
+		evaluationFailed = true;
+		throw error;
 	} finally {
 		if (ownsLibrary && cleanupLibrary && libraryId) {
-			await deleteEvaluationLibrary({
-				client,
-				libraryId,
-				timeoutMs: 120_000,
-				pollIntervalMs: 2_000,
-			});
-			process.stdout.write(`== cleaned up library ${libraryId}\n`);
+			try {
+				await deleteEvaluationLibrary({
+					client,
+					libraryId,
+					timeoutMs: 120_000,
+					pollIntervalMs: 2_000,
+				});
+				process.stdout.write(`== cleaned up library ${libraryId}\n`);
+			} catch (error) {
+				if (!evaluationFailed) throw error;
+				const detail = error instanceof Error ? error.message : String(error);
+				process.stderr.write(`!! cleanup failed: ${detail}\n`);
+			}
 		}
 	}
 }

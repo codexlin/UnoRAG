@@ -56,6 +56,7 @@ const PARENT_SEPARATOR_TOKENS = estimateTokens(PARENT_CONTEXT_SEPARATOR);
 export function comparisonEvidenceText(
 	citation: Record<string, unknown>,
 	quotes: readonly string[],
+	preserveJudgeText = false,
 ) {
 	const body = formatCitationEvidenceText({
 		body: citation.body,
@@ -70,6 +71,16 @@ export function comparisonEvidenceText(
 	const full = formatCitationEvidenceText({ body, parent_context: parent });
 	let bodyRange: QuoteRange | undefined;
 	let parentRange: QuoteRange | undefined;
+	if (preserveJudgeText) {
+		// Sufficiency selected this source, so none of its Judge-visible facts are optional.
+		const visibleLength = boundedJudgeEvidenceText(full).length;
+		if (body)
+			bodyRange = { start: 0, end: Math.min(body.length, visibleLength) };
+		const parentLength =
+			visibleLength -
+			(body ? body.length + PARENT_CONTEXT_SEPARATOR.length : 0);
+		if (parentLength > 0) parentRange = { start: 0, end: parentLength };
+	}
 	for (const quote of quotes) {
 		const pattern = new RegExp(
 			quote.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&").replaceAll(" ", "\\s+"),

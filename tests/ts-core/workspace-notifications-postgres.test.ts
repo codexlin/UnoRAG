@@ -161,6 +161,177 @@ test("workspace notification repository PostgreSQL boundaries", {
 	}
 	try {
 		await t.test(
+			"threshold-only writes can initialize a new workspace and reset overrides",
+			() =>
+				run(async (f) => {
+					const command = {
+						...f.scope,
+						actorId: f.command.actorId,
+						expectedAlertPolicyVersion: 0,
+					};
+					await saveWorkspaceEmailSettings(
+						pool,
+						{ ...command, alertThresholds: {} },
+						now,
+					);
+					assert.equal(
+						(await readWorkspaceNotifications(pool, f.scope, now)).version,
+						0,
+					);
+					await saveWorkspaceEmailSettings(
+						pool,
+						{ ...command, alertThresholds: { ask_min_samples: 30 } },
+						now,
+					);
+					const initialized = await readWorkspaceNotifications(
+						pool,
+						f.scope,
+						now,
+					);
+					assert.deepEqual(
+						initialized.settings,
+						DEFAULT_WORKSPACE_EMAIL_SETTINGS,
+					);
+					assert.equal(initialized.version, 1);
+					assert.equal(initialized.alert_policy_version, 1);
+					await saveWorkspaceEmailSettings(
+						pool,
+						{ ...command, expectedAlertPolicyVersion: 1, alertThresholds: {} },
+						now,
+					);
+					const reset = await readWorkspaceNotifications(pool, f.scope, now);
+					assert.deepEqual(reset.alert_thresholds, {});
+					assert.equal(reset.alert_policy_version, 2);
+					assert.equal(reset.version, 1);
+				}),
+		);
+		await t.test(
+			"threshold-only writes preserve concurrent email changes and email version protection",
+			() =>
+				run(async (f) => {
+					await saveWorkspaceEmailSettings(
+						pool,
+						{ ...f.command, settings },
+						now,
+					);
+					const latestSettings = {
+						...settings,
+						recipients: ["new@example.test"],
+					};
+					await saveWorkspaceEmailSettings(
+						pool,
+						{
+							...f.command,
+							expectedVersion: 1,
+							settings: latestSettings,
+						},
+						now,
+					);
+					const thresholdCommand = {
+						...f.scope,
+						actorId: f.command.actorId,
+						alertThresholds: { ask_min_samples: 30 },
+						expectedAlertPolicyVersion: 0,
+					};
+					await saveWorkspaceEmailSettings(pool, thresholdCommand, now);
+					const saved = await readWorkspaceNotifications(pool, f.scope, now);
+					assert.deepEqual(saved.settings, latestSettings);
+					assert.equal(saved.version, 2);
+					assert.deepEqual(saved.alert_thresholds, { ask_min_samples: 30 });
+					assert.equal(saved.alert_policy_version, 1);
+					await assert.rejects(
+						saveWorkspaceEmailSettings(
+							pool,
+							{
+								...thresholdCommand,
+								alertThresholds: {},
+							},
+							now,
+						),
+						notificationError(409, "version_conflict"),
+					);
+					await assert.rejects(
+						saveWorkspaceEmailSettings(
+							pool,
+							{
+								...f.command,
+								expectedVersion: 1,
+								settings,
+								alertThresholds: {},
+								expectedAlertPolicyVersion: 1,
+							},
+							now,
+						),
+						notificationError(409, "version_conflict"),
+					);
+					await assert.rejects(
+						saveWorkspaceEmailSettings(
+							pool,
+							{
+								...f.scope,
+								actorId: f.command.actorId,
+								settings,
+							},
+							now,
+						),
+						notificationError(400, "invalid_version"),
+					);
+					await assert.rejects(
+						saveWorkspaceEmailSettings(
+							pool,
+							{
+								...f.command,
+								expectedVersion: 2,
+								settings,
+								alertThresholds: {},
+								expectedAlertPolicyVersion: 0,
+							},
+							now,
+						),
+						notificationError(409, "version_conflict"),
+					);
+					const unchanged = await readWorkspaceNotifications(
+						pool,
+						f.scope,
+						now,
+					);
+					assert.deepEqual(unchanged.settings, latestSettings);
+					assert.equal(unchanged.version, 2);
+					assert.equal(unchanged.alert_policy_version, 1);
+					const audit = await pool.query(
+						"SELECT action FROM app.audit_logs WHERE workspace_id = $1",
+						[f.scope.workspaceId],
+					);
+					assert.equal(
+						audit.rows.filter(
+							(row) => row.action === "workspace.notifications.updated",
+						).length,
+						2,
+					);
+					assert.equal(
+						audit.rows.filter(
+							(row) => row.action === "workspace.alert_thresholds.updated",
+						).length,
+						1,
+					);
+					await pool.query(
+						"UPDATE app.workspace_members SET role = 'editor' WHERE workspace_id = $1 AND user_id = $2",
+						[f.scope.workspaceId, f.command.actorId],
+					);
+					await assert.rejects(
+						saveWorkspaceEmailSettings(
+							pool,
+							{
+								...thresholdCommand,
+								expectedAlertPolicyVersion: 1,
+							},
+							now,
+						),
+						notificationError(403),
+					);
+				}),
+		);
+		await t.test(
 			"alert overrides are versioned, workspace scoped and preserve email delivery policy",
 			() =>
 				run(async (f) => {

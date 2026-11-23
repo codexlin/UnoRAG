@@ -77,11 +77,19 @@ spec:
                 secretKeyRef:
                   name: {{ include "unorag.secretName" . }}
                   key: UNORAG_SESSION_SECRET
-            - name: OPENAI_API_KEY
+            - name: LLM_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "unorag.secretName" . }}
                   key: LLM_API_KEY
+            {{- range $key := list "EMBEDDING_API_KEY" "JUDGE_API_KEY" "RERANK_API_KEY" }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" $ }}
+                  key: {{ $key }}
+                  optional: true
+            {{- end }}
             - name: QDRANT_API_KEY
               valueFrom:
                 secretKeyRef:

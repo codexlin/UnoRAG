@@ -236,7 +236,9 @@ export function resolvedAskAsOverrideKnobs(resolved) {
 			resolved.retrieval_enhancement_resolved_from === "off")
 			? { hybrid_retry_enabled: false }
 			: {}),
-		...(resolved.public.reranking === "off"
+		...(resolved.public.reranking === "off" ||
+		(resolved.public.reranking === "inherit" &&
+			resolved.retrieval_enhancement_resolved_from === "off")
 			? { rerank_retry_enabled: false }
 			: {}),
 		citation_adjudicate_enabled: resolved.citation_adjudicate_enabled,

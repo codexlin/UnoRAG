@@ -40,8 +40,12 @@ type WriteInput = WorkspaceNotificationScope & {
 	expectedVersion: number;
 };
 type Queryable = Pick<PoolClient, "query">;
-export type WorkspaceNotificationUpdate = WriteInput & {
-	settings: WorkspaceEmailSettings;
+export type WorkspaceNotificationUpdate = Omit<
+	WriteInput,
+	"expectedVersion"
+> & {
+	expectedVersion?: number;
+	settings?: WorkspaceEmailSettings;
 	alertThresholds?: WorkspaceAlertThresholds;
 	expectedAlertPolicyVersion?: number;
 };
@@ -243,7 +247,8 @@ export function readWorkspaceNotifications(
 
 async function lockWorkspace(
 	client: PoolClient,
-	input: WriteInput,
+	input: Omit<WriteInput, "expectedVersion"> & { expectedVersion?: number },
+	checkEmailVersion = true,
 ): Promise<SettingsSnapshot> {
 	const workspace = await client.query(
 		`SELECT id FROM app.workspaces
@@ -264,21 +269,23 @@ async function lockWorkspace(
 	if (!actor.rowCount)
 		throw new WorkspaceNotificationError(403, "notifications_forbidden");
 	const snapshot = await readSettings(client, input);
-	if (
-		!Number.isSafeInteger(input.expectedVersion) ||
-		input.expectedVersion < 0
-	) {
-		throw new WorkspaceNotificationError(400, "invalid_version");
-	}
-	if (snapshot.version !== input.expectedVersion) {
-		throw new WorkspaceNotificationError(409, "version_conflict");
+	if (checkEmailVersion) {
+		if (
+			!Number.isSafeInteger(input.expectedVersion) ||
+			(input.expectedVersion ?? -1) < 0
+		) {
+			throw new WorkspaceNotificationError(400, "invalid_version");
+		}
+		if (snapshot.version !== input.expectedVersion) {
+			throw new WorkspaceNotificationError(409, "version_conflict");
+		}
 	}
 	return snapshot;
 }
 
 async function audit(
 	client: PoolClient,
-	input: WriteInput,
+	input: Omit<WriteInput, "expectedVersion">,
 	action: string,
 	details: Record<string, unknown>,
 	now: Date,
@@ -304,12 +311,26 @@ export function saveWorkspaceEmailSettings(
 	now = new Date(),
 ): Promise<void> {
 	return transaction(pool, async (client) => {
-		const snapshot = await lockWorkspace(client, input);
-		const parsed = workspaceEmailSettingsSchema.safeParse(input.settings);
-		if (!parsed.success)
+		const snapshot = await lockWorkspace(
+			client,
+			input,
+			input.settings !== undefined,
+		);
+		if (
+			(input.settings === undefined) !==
+			(input.expectedVersion === undefined)
+		)
+			throw new WorkspaceNotificationError(400, "invalid_version");
+		const parsed =
+			input.settings === undefined
+				? undefined
+				: workspaceEmailSettingsSchema.safeParse(input.settings);
+		if (parsed && !parsed.success)
 			throw new WorkspaceNotificationError(400, "invalid_settings");
-		const settings = parsed.data;
+		const settings = parsed?.data;
 		const thresholds = input.alertThresholds;
+		if (settings === undefined && thresholds === undefined)
+			throw new WorkspaceNotificationError(400, "invalid_settings");
 		if (thresholds !== undefined) {
 			if (snapshot.alert_policy_version !== input.expectedAlertPolicyVersion) {
 				throw new WorkspaceNotificationError(409, "version_conflict");
@@ -356,7 +377,11 @@ export function saveWorkspaceEmailSettings(
 				);
 			}
 		}
-		if (JSON.stringify(snapshot.settings) === JSON.stringify(settings)) return;
+		if (
+			settings === undefined ||
+			JSON.stringify(snapshot.settings) === JSON.stringify(settings)
+		)
+			return;
 		const version = snapshot.version + 1;
 		await client.query(
 			`INSERT INTO app.workspace_email_settings

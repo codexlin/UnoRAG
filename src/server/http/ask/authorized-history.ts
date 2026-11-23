@@ -57,6 +57,9 @@ const MAX_HISTORY_CHARS = 8_000;
 const COMPACTED_ANSWER = "[回答内容已压缩]";
 const MARKDOWN_HEADING = /^ {0,3}#{1,6}\s/;
 const MARKDOWN_LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s/;
+const MAX_HISTORY_LIST_ITEMS = 12;
+const MAX_HISTORY_LIST_ITEM_CHARS = 120;
+type HistorySection = string | { listItem: string };
 const FINAL_CITATIONS =
 	/(?:\[\d+(?:\s*[,，、–-]\s*\d+)*\]|【(?:来源)?\s*\d+】)(?:[\s。.!！?？]*?(?:\[\d+\]|【(?:来源)?\s*\d+】))*[\s。.!！?？]*$/u;
 
@@ -81,6 +84,61 @@ function clipHistoryText(text: string, maxChars: number): string {
 		.trimEnd()}…`;
 }
 
+function compactHistorySections(
+	sections: HistorySection[],
+	listCount: number,
+	maxChars: number,
+): string {
+	const budget = Math.max(0, maxChars);
+	if (!listCount) return clipHistoryText(sections.join("\n\n"), budget);
+	// Lists share the outline budget with headings and table headers, not replace them.
+	const structures = sections.filter((section) => typeof section === "string");
+	let structuralRoom = Math.min(
+		structures.join("\n\n").length,
+		Math.floor(budget / 2),
+	);
+	const projected = sections.map((section) => {
+		if (typeof section !== "string") return section;
+		const text = clipHistoryText(section, structuralRoom);
+		structuralRoom -= text.length + (text ? 2 : 0);
+		return text;
+	});
+	const structureLength = projected
+		.filter((section) => typeof section === "string" && section)
+		.join("\n\n").length;
+	const listRoom = Math.max(
+		0,
+		budget - structureLength - (structureLength ? 2 : 0),
+	);
+	const shown = Math.min(
+		MAX_HISTORY_LIST_ITEMS,
+		listCount,
+		Math.floor(listRoom / 26),
+	);
+	const omitted =
+		listCount > shown ? `[列表已压缩：省略 ${listCount - shown} 项]` : "";
+	const itemChars = Math.max(
+		0,
+		Math.min(
+			MAX_HISTORY_LIST_ITEM_CHARS,
+			Math.floor(
+				(listRoom - omitted.length - (omitted ? 2 : 0)) / Math.max(1, shown),
+			) - 2,
+		),
+	);
+	let remainingItems = shown;
+	const outline = projected.map((section) => {
+		if (typeof section === "string") return section;
+		return remainingItems-- > 0
+			? clipHistoryText(section.listItem, itemChars)
+			: "";
+	});
+	return clipHistoryText(
+		[...outline, omitted].filter(Boolean).join("\n\n"),
+		budget,
+	);
+}
+
 export function compactHistoryAssistantContent(
 	content: string,
 	maxChars = 1_200,
@@ -92,7 +150,9 @@ export function compactHistoryAssistantContent(
 
 	const lines = content.split(/\r?\n/);
 	const summary: string[] = [];
-	const sections: string[] = [];
+	const sections: HistorySection[] = [];
+	let listCount = 0;
+	let activeListItem: { listItem: string } | undefined;
 	let paragraph: string[] = [];
 	let leading = true;
 	let closing = "";
@@ -108,6 +168,7 @@ export function compactHistoryAssistantContent(
 		const line = lines[index].trimEnd();
 		const divider = lines[index + 1];
 		if (line.includes("|") && isTableDivider(divider)) {
+			activeListItem = undefined;
 			flushParagraph();
 			leading = false;
 			closing = "";
@@ -127,16 +188,31 @@ export function compactHistoryAssistantContent(
 			sections.push(`${header}\n\n[表格内容已压缩]（${rowEnd - rowStart} 行）`);
 			index = rowEnd - 1;
 		} else if (MARKDOWN_HEADING.test(line)) {
+			activeListItem = undefined;
 			flushParagraph();
 			closing = "";
 			leading = leading && summary.length === 0;
-			(leading ? summary : sections).push(line);
+			if (leading) summary.push(line);
+			else sections.push(line);
 		} else if (MARKDOWN_LIST_ITEM.test(line)) {
 			flushParagraph();
 			leading = false;
 			closing = "";
+			listCount += 1;
+			activeListItem = {
+				listItem: clipHistoryText(line, MAX_HISTORY_LIST_ITEM_CHARS),
+			};
+			if (listCount <= MAX_HISTORY_LIST_ITEMS) sections.push(activeListItem);
 		} else if (line.trim()) {
-			paragraph.push(line);
+			if (activeListItem && /^\s/.test(line)) {
+				activeListItem.listItem = clipHistoryText(
+					`${activeListItem.listItem} ${line.trim()}`,
+					MAX_HISTORY_LIST_ITEM_CHARS,
+				);
+			} else {
+				activeListItem = undefined;
+				paragraph.push(line);
+			}
 		} else {
 			flushParagraph();
 		}
@@ -171,10 +247,13 @@ export function compactHistoryAssistantContent(
 		(compactTail ? compactTail.length + 2 : 0);
 	const head = clipHistoryText(
 		summary.join("\n\n"),
-		sections.length ? Math.min(Math.floor(limit / 2), room - 2) : room,
+		sections.length
+			? Math.min(Math.floor(limit / (listCount ? 4 : 2)), room - 2)
+			: room,
 	);
-	const outlines = clipHistoryText(
-		sections.join("\n\n"),
+	const outlines = compactHistorySections(
+		sections,
+		listCount,
 		room - (head ? head.length + 2 : 0),
 	);
 	return [head, outlines, COMPACTED_ANSWER, compactTail]

@@ -115,7 +115,7 @@ test("Compose overlays are explicit and cannot change the default install", asyn
 	assert.match(helper, /missing Compose overlay/);
 });
 
-test("config reconciliation separates DashScope model and rerank endpoints", async () => {
+test("new config leaves rerank endpoint selection to the bound provider resolver", async () => {
 	const initializer = await source("deploy/compose/scripts/init-config.sh");
 	const runtimeExample = await source("deploy/config/runtime.env.example");
 	const advancedExample = await source(
@@ -127,8 +127,6 @@ test("config reconciliation separates DashScope model and rerank endpoints", asy
 		runtimeExample,
 		/LLM_BASE_URL=https:\/\/dashscope\.aliyuncs\.com\/compatible-mode\/v1/,
 	);
-	assert.match(
-		advancedExample,
-		/RERANK_BASE_URL=https:\/\/dashscope\.aliyuncs\.com\/compatible-api\/v1/,
-	);
+	assert.match(advancedExample, /^RERANK_BASE_URL=$/m);
+	assert.match(advancedExample, /different endpoint requires RERANK_API_KEY/);
 });

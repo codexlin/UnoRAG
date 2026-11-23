@@ -175,6 +175,39 @@ function visibility(state: AskState) {
 	};
 }
 
+function persistedRetrievalPlan(plan: AskState["retrieval_plan"]) {
+	if (!plan) return null;
+	const metadata: Record<string, unknown> = {};
+	for (const key of [
+		"query_type",
+		"path",
+		"route",
+		"execute_path",
+		"precise_kind",
+		"record_type",
+	] as const) {
+		if (typeof plan[key] === "string") metadata[key] = plan[key];
+	}
+	if (
+		plan.filters &&
+		typeof plan.filters === "object" &&
+		!Array.isArray(plan.filters)
+	) {
+		const filters: Record<string, unknown> = {};
+		for (const key of [
+			"record_type",
+			"doc_id",
+			"table_id",
+			"document_version_id",
+		] as const) {
+			const value = (plan.filters as Record<string, unknown>)[key];
+			if (typeof value === "string" || value === null) filters[key] = value;
+		}
+		metadata.filters = filters;
+	}
+	return metadata;
+}
+
 function conversationDebug(state: AskState) {
 	// Expiry is checked on reuse. Dropping an expired marker would trust its text.
 	const pending = PendingClarificationSchema.safeParse(
@@ -182,15 +215,13 @@ function conversationDebug(state: AskState) {
 	).data;
 	const { conflict_evidence: _conflictEvidence, ...judge } =
 		state.judgement ?? {};
-	const { rewritten_queries: _rewrittenQueries, ...retrievalPlan } =
-		state.retrieval_plan ?? {};
 	return {
 		...(pending ? { pending_clarification: pending } : {}),
 		mode: "live",
 		refused: state.refused === true,
 		refuse_reason: state.refuse_reason ?? null,
 		query_type: state.query_type ?? null,
-		retrieval_plan: state.retrieval_plan ? retrievalPlan : null,
+		retrieval_plan: persistedRetrievalPlan(state.retrieval_plan),
 		retrieval_debug: state.retrieval_debug
 			? projectPublicRetrievalDebug({
 					...state.retrieval_debug,
@@ -642,6 +673,10 @@ async function handleNativeAskRequestInSpan(input: {
 		return result;
 	};
 	let activeRun: ActiveAskRun | undefined;
+	// Terminal ledger rows cannot be rewritten if delivery authorization fails later.
+	let completedRunAttempt:
+		| { id: string; status: "completed" | "refused" }
+		| undefined;
 	const settleActiveRun = async (
 		status: "completed" | "refused" | "failed" | "cancelled",
 		state?: AskRunState,
@@ -660,6 +695,9 @@ async function handleNativeAskRequestInSpan(input: {
 			errorCode,
 			failure,
 		});
+		if (status === "completed" || status === "refused") {
+			completedRunAttempt = { id: run.id, status };
+		}
 	};
 	try {
 		const payload = AskRequestSchema.parse(await input.request.json());
@@ -683,7 +721,18 @@ async function handleNativeAskRequestInSpan(input: {
 			try {
 				await checkpoint.check(...args);
 			} catch (error) {
+				historyCompleted = false;
 				executionAbort.abort(error);
+				if (completedRunAttempt) {
+					logger.warn({
+						event: "ask.delivery.authorization_failed_after_finalize",
+						run_id: completedRunAttempt.id,
+						finalize_status_attempted: completedRunAttempt.status,
+						error_code: operationalErrorCode(error),
+						ledger_reclassified: false,
+					});
+					completedRunAttempt = undefined;
+				}
 				throw error;
 			}
 		};
@@ -845,11 +894,15 @@ async function handleNativeAskRequestInSpan(input: {
 				indices.has(index + 1),
 			);
 		};
+		let retrievalInspections:
+			| ReturnType<NativeAskRuntime["getRetrievalInspections"]>
+			| undefined;
 		const liveTraceDetails = async (): Promise<
 			ApiAskTraceDetails | undefined
 		> => {
 			if (!includeTraceDetails || executionSignal.aborted) return;
-			const inspections = runtime.getRetrievalInspections?.() ?? [];
+			retrievalInspections ??= runtime.getRetrievalInspections?.() ?? [];
+			const inspections = retrievalInspections;
 			try {
 				// Dropped candidates are outside answer provenance but still require a
 				// fresh authorization check before any of their previews can leave.
@@ -858,6 +911,8 @@ async function handleNativeAskRequestInSpan(input: {
 					{ force: true },
 				);
 			} catch {
+				// Candidate visibility may degrade, but answer authorization is mandatory.
+				await checkAccess(evidence, { force: true });
 				return;
 			}
 			if (executionSignal.aborted) return;
@@ -905,6 +960,7 @@ async function handleNativeAskRequestInSpan(input: {
 			await checkAccess(evidence, { force: true });
 			attachModelUsage(state);
 			finalizeCitations(answer);
+			await liveTraceDetails();
 			const persisted = await persistHistory(
 				state,
 				{
@@ -922,12 +978,15 @@ async function handleNativeAskRequestInSpan(input: {
 				},
 				askStartedAt,
 			);
+			await checkAccess(evidence, { force: true });
 			const retrievalDebug = completeRetrievalDebug(state, askStartedAt);
 			await settleActiveRun(
 				judgeUnavailable ? "failed" : state.refused ? "refused" : "completed",
 				state,
 				judgeUnavailable ? "judge_unavailable" : undefined,
 			);
+			const traceDetails = await liveTraceDetails();
+			await checkAccess(evidence, { force: true });
 			settleMetrics(
 				judgeUnavailable
 					? "server_error"
@@ -942,7 +1001,7 @@ async function handleNativeAskRequestInSpan(input: {
 					citations,
 					retrieval_debug: retrievalDebug,
 					...persisted,
-					...(await liveTraceDetails()),
+					...traceDetails,
 				},
 				{ headers: { "cache-control": "no-store" } },
 			);
@@ -966,6 +1025,7 @@ async function handleNativeAskRequestInSpan(input: {
 				await checkAccess(evidence, { force: true });
 				attachModelUsage(state);
 				finalizeCitations(answer);
+				await liveTraceDetails();
 				Object.assign(
 					done,
 					await persistHistory(
@@ -986,12 +1046,15 @@ async function handleNativeAskRequestInSpan(input: {
 						askStartedAt,
 					),
 				);
+				await checkAccess(evidence, { force: true });
 				done.retrieval_debug = completeRetrievalDebug(state, askStartedAt);
 				await settleActiveRun(
 					judgeUnavailable ? "failed" : state.refused ? "refused" : "completed",
 					state,
 					judgeUnavailable ? "judge_unavailable" : undefined,
 				);
+				traceDetails = await liveTraceDetails();
+				await checkAccess(evidence, { force: true });
 				settleMetrics(
 					judgeUnavailable
 						? "server_error"
@@ -999,7 +1062,6 @@ async function handleNativeAskRequestInSpan(input: {
 							? "refused"
 							: "success",
 				);
-				traceDetails = await liveTraceDetails();
 			} catch (error) {
 				recordActiveSpanFailure(error);
 				await settleActiveRun(

@@ -18,9 +18,29 @@ Langfuse 是可选的实验与分数视图，不是生产 Ask 的配置中心或
 不要在 Langfuse 中维护另一份独立黄金集作为发布门禁。否则代码评测与平台评测会随时间漂移，CI 无法
 证明线上版本使用了哪一份数据。
 
+## 验证分层
+
+| 层级 | 数据与入口 | 证明范围 |
+|---|---|---|
+| 解析与契约回归 | `testdata/{pdf,docx,md,txt,unsupported}`、`pnpm test:fast` 与真实依赖集成测试 | 解析边界、文件拒绝、授权、版本与故障反例；不替代真实模型评测 |
+| 标准质量门禁 | `testdata/ab`，7 份文件、36 正例、6 拒答；`pnpm eval:live` / `pnpm eval:stability` | 当前固定语料的全流程正确性与重复稳定性，所有失败保留 |
+| 业务与多轮矩阵 | `testdata/business`、`testdata/multi-turn`；业务 `--plan` 当前为 27 文件、88 正例、15 拒答 | 冲突、条件、归档、指代、权限/版本边界及真实 301 秒过期；数量以版本化清单为准 |
+| 外部语料基准 | 私有目录 `.unorag/hf-eval/batch_cn_v1`；22 PDF、118 正例、17 拒答 | 长文金融语料上的分块/检索/生成变化；保留机器判分并逐题复核异常 |
+
+外部集已经参与多轮对比与调优，不能继续宣称为未见留出集；泛化结论还需要独立、未用于调整规则的语料。
+HF 语义评分将完全正确计 1、部分正确计 0.5、错误计 0。Runner 当前 summary 的 `semantic_accuracy` 与
+`semantic_answered_accuracy` 分别是全部正例与已回答正例的语义均分，均不是严格准确率。
+本轮报告在 runner summary 之外，依据逐题 `semantic_verdict` 额外计算严格通过率 `correct / total`；
+`total` 为正例总数，部分正确和未回答均不计入 `correct`。
+重跑应记录代码与数据指纹、模型/Prompt 身份、并发数和原始报告；不同并发数的延迟不能直接当作性能提升。
+并发评测遇到异常后停止领取新题，等待已开始的请求结束，再清理本轮创建的知识库；首次错误不能被清理错误覆盖。
+HF 拒答计分复用标准门禁的 `scoreNegativeCase`；`judge_unavailable`、无效证据选择或上下文预算超限等
+技术性拒答不能计为正确拒答。HTTP 200 或 `refused=true` 单独成立都不足以通过。
+
 ## Prompt 变更流程
 
-五类生产 Prompt 统一登记为 `chat`、`router`、`rewrite`、`judge` 和 `table_plan`。修改正文时必须：
+生产 Prompt 统一登记在 `prompt-registry.ts`，覆盖回答、路由、改写、充分性与拒答复核、
+冲突与冲突复核、表格计划及图表读取。修改正文时必须：
 
 1. 在 `prompt-registry.ts` 更新正文并提升语义版本；
 2. 更新 Registry 测试锁定的 digest；

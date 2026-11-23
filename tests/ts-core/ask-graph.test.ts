@@ -13,6 +13,7 @@ import {
 	defaultClarifyAnswer,
 	defaultRefuseAnswer,
 } from "../../src/core/ask-graph";
+import { boundedJudgeEvidenceText } from "../../src/core/ask-graph/comparison-evidence";
 import { buildMultiAspectSubQueries } from "../../src/core/ask-graph/comparison-query";
 import { conflictAnswer } from "../../src/core/ask-graph/evidence-conflict";
 import { isEligibleForGroundedTableLookup } from "../../src/core/ask-graph/table/planning";
@@ -518,6 +519,149 @@ test("prose comparison retains alternatives even when Judge selects one paragrap
 	);
 });
 
+test("comparison reserves all direct IDs before balancing optional subjects", async () => {
+	for (const groupBySection of [false, true]) {
+		const candidates = ["A", "A", "B", "C", "D", "E", "F"].map(
+			(subject, index) => ({
+				id: `required-${index}`,
+				doc_id: groupBySection ? "shared" : subject,
+				section_path: subject,
+				body: `Evidence ${index}`,
+			}),
+		);
+		const result = await new AskGraphService(
+			createContext({
+				queryType: "compare",
+				retrieve: () => ({ citations: candidates }),
+				judge: () => ({
+					sufficient: true,
+					action: "generate",
+					reason: "Both required fields are covered",
+					evidence_ids: ["required-0", "required-1"],
+				}),
+			}),
+		).invoke({ question: "Compare alternatives" });
+		assert.equal(result.refused, false);
+		assert.equal(result.citations?.length, 6);
+		assert.deepEqual(result.judgement?.evidence_ids, [
+			"required-0",
+			"required-1",
+		]);
+		assert.ok(result.citations?.some(({ id }) => id === "required-1"));
+	}
+});
+
+test("comparison preserves the complete Judge-visible text of direct body and parent evidence", async () => {
+	for (const parent of [false, true]) {
+		const candidates = Array.from({ length: 6 }, (_, index) => ({
+			id: `source-${index}`,
+			doc_id: `doc-${index}`,
+			body: parent && index < 2 ? "Body. " : "\u6c49".repeat(1_800),
+			parent_context: `${"\u5b57".repeat(1_700)}REQUIRED_${index}${"\u6587".repeat(1_000)}`,
+		}));
+		const result = await new AskGraphService(
+			createContext({
+				queryType: "compare",
+				retrieve: () => ({ citations: candidates }),
+				judge: () => ({
+					sufficient: true,
+					action: "generate",
+					reason: "Required text is visible to Judge",
+					evidence_ids: ["source-0", "source-1"],
+				}),
+			}),
+		).invoke({ question: "Compare alternatives" });
+		assert.equal(result.refused, false);
+		assert.ok(result.citations);
+		for (const original of candidates.slice(0, 2)) {
+			const bounded = result.citations?.find(({ id }) => id === original.id);
+			assert.ok(bounded);
+			assert.ok(
+				formatCitationEvidenceText(bounded).startsWith(
+					boundedJudgeEvidenceText(formatCitationEvidenceText(original)),
+				),
+			);
+		}
+		assert.ok(
+			result.citations
+				.map(formatCitationEvidenceText)
+				.reduce((total, text) => total + estimateTokens(text), 0) <= 8_000,
+		);
+	}
+});
+
+test("comparison refuses instead of inheriting sufficient after necessary text exceeds budget", async () => {
+	const candidates = Array.from({ length: 6 }, (_, index) => ({
+		id: `required-${index}`,
+		doc_id: `doc-${index}`,
+		body: "\u6c49".repeat(2_200),
+	}));
+	const calls: string[] = [];
+	const result = await new AskGraphService(
+		createContext({
+			calls,
+			queryType: "compare",
+			retrieve: () => ({ citations: candidates }),
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "All six sources are necessary",
+				evidence_ids: candidates.map(({ id }) => id),
+			}),
+		}),
+	).invoke({ question: "Compare alternatives" });
+	assert.equal(result.refused, true);
+	assert.equal(result.judgement?.sufficient, false);
+	assert.equal(result.refuse_reason, "comparison_context_exceeds_budget");
+	assert.ok(!calls.includes("generate"));
+});
+
+test("comparison preserves six normal direct chunks without unnecessary refusal", async () => {
+	const candidates = Array.from({ length: 6 }, (_, index) => ({
+		id: `required-${index}`,
+		doc_id: `doc-${index}`,
+		body: "\u6c49".repeat(400),
+	}));
+	const result = await new AskGraphService(
+		createContext({
+			queryType: "compare",
+			retrieve: () => ({ citations: candidates }),
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "covered",
+				evidence_ids: candidates.map(({ id }) => id),
+			}),
+		}),
+	).invoke({ question: "Compare alternatives" });
+	assert.equal(result.refused, false);
+	assert.deepEqual(
+		result.citations?.map(({ body }) => body),
+		candidates.map(({ body }) => body),
+	);
+});
+
+test("comparison rejects a direct evidence set exceeding the six-source cap", async () => {
+	const candidates = Array.from({ length: 7 }, (_, index) => ({
+		id: `required-${index}`,
+		body: `Required field ${index}`,
+	}));
+	const result = await new AskGraphService(
+		createContext({
+			queryType: "compare",
+			retrieve: () => ({ citations: candidates }),
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "covered",
+				evidence_ids: candidates.map(({ id }) => id),
+			}),
+		}),
+	).invoke({ question: "Compare alternatives" });
+	assert.equal(result.refused, true);
+	assert.equal(result.refuse_reason, "comparison_context_exceeds_budget");
+});
+
 test("comparison keeps direct evidence and trims oversized alternatives within budget", async () => {
 	const manyCandidates = Array.from({ length: 8 }, (_, index) => ({
 		id: `source-${index}`,
@@ -611,7 +755,7 @@ test("comparison shares six slots and the token budget across documents or secti
 					sufficient: true,
 					action: "generate",
 					reason: "covered",
-					evidence_ids: candidates.slice(1).map(({ id }) => id),
+					evidence_ids: ["source-1"],
 				}),
 			}),
 		).invoke({ question: "Compare all alternatives" });
@@ -620,18 +764,19 @@ test("comparison shares six slots and the token budget across documents or secti
 		const kept = result.citations ?? [];
 		assert.deepEqual(
 			kept.map(({ id, index }) => [id, index]),
-			[1, 2, 4, 5, 6, 7].map((id, index) => [`source-${id}`, index + 1]),
+			[0, 1, 4, 5, 6, 7].map((id, index) => [`source-${id}`, index + 1]),
 		);
 		const excerpts = kept.map(formatCitationEvidenceText);
 		const sizes = excerpts.map(estimateTokens);
 		assert.ok(sizes.reduce((sum, size) => sum + size, 0) <= 8_000);
-		assert.ok(sizes.every((size) => size > 1_250 && size <= 1_334));
-		assert.ok(excerpts.at(-1)?.includes("补充背景D。"));
-		assert.equal(result.retrieval_debug?.direct_evidence_count, 6);
-		assert.deepEqual(
-			result.judgement?.evidence_ids,
-			kept.map(({ id }) => id),
+		assert.ok(
+			formatCitationEvidenceText(kept[1]).startsWith(
+				boundedJudgeEvidenceText(formatCitationEvidenceText(candidates[1])),
+			),
 		);
+		assert.ok(excerpts.at(-1)?.includes("补充背景D。"));
+		assert.equal(result.retrieval_debug?.direct_evidence_count, 1);
+		assert.deepEqual(result.judgement?.evidence_ids, ["source-1"]);
 	}
 });
 
@@ -641,7 +786,10 @@ test("comparison keeps required late body and parent quotes despite slot and tex
 	const candidates = Array.from({ length: 9 }, (_, index) => ({
 		id: `source-${index}`,
 		doc_id: `document-${index}`,
-		body: `${"采购审批的通用背景。".repeat(340)}${index === 8 ? firstQuote : ""}`,
+		body:
+			index === 7
+				? "Context."
+				: `${"采购审批的通用背景。".repeat(340)}${index === 8 ? firstQuote : ""}`,
 		...(index === 7
 			? {
 					parent_context: `${"文档背景。".repeat(790)}${secondQuote.replace("takes ", "takes\t")}`,
@@ -656,7 +804,7 @@ test("comparison keeps required late body and parent quotes despite slot and tex
 				sufficient: true,
 				action: "generate",
 				reason: "conflicting terms",
-				evidence_ids: candidates.slice(0, 7).map(({ id }) => id),
+				evidence_ids: ["source-8"],
 				conflict_evidence: [
 					{ evidence_id: "source-8", quote: firstQuote },
 					{ evidence_id: "source-7", quote: secondQuote },

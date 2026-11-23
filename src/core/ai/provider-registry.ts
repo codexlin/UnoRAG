@@ -2,19 +2,14 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 
 import {
-	DEFAULT_LLM_BASE_URL,
-	resolveLlmApiKey,
-	resolveLlmBaseUrl,
+	AiProviderConfigurationError,
+	llmProviderFromEnv,
+	modelProviderOverrideFromEnv,
 } from "./model-environment";
 
-const DEFAULT_CHAT_MODEL = "qwen-plus";
+export { AiProviderConfigurationError } from "./model-environment";
 
-export class AiProviderConfigurationError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "AiProviderConfigurationError";
-	}
-}
+const DEFAULT_CHAT_MODEL = "qwen-plus";
 
 export interface OpenAICompatibleAiConfig {
 	apiKey: string;
@@ -62,14 +57,7 @@ function httpUrl(value: string, name: string): string {
 export function aiConfigFromEnv(
 	env: NodeJS.ProcessEnv = process.env,
 ): OpenAICompatibleAiConfig {
-	const apiKey = required(
-		resolveLlmApiKey(env),
-		"LLM_API_KEY (or OPENAI_API_KEY / DASHSCOPE_API_KEY)",
-	);
-	const baseUrl = httpUrl(
-		required(resolveLlmBaseUrl(env) ?? DEFAULT_LLM_BASE_URL, "LLM_BASE_URL"),
-		"LLM_BASE_URL",
-	);
+	const { apiKey, baseUrl } = llmProviderFromEnv(env);
 	const chatModel = required(
 		env.CHAT_MODEL || DEFAULT_CHAT_MODEL,
 		"CHAT_MODEL",
@@ -92,8 +80,7 @@ export function judgeAiConfigFromEnv(
 ): OpenAICompatibleAiConfig {
 	const base = aiConfigFromEnv(env);
 	return {
-		apiKey: base.apiKey,
-		baseUrl: env.JUDGE_BASE_URL?.trim() || base.baseUrl,
+		...modelProviderOverrideFromEnv("JUDGE", env, base),
 		chatModel: env.JUDGE_MODEL?.trim() || base.chatModel,
 		providerName: env.JUDGE_PROVIDER_NAME?.trim() || base.providerName,
 		includeUsage: base.includeUsage,
@@ -129,17 +116,7 @@ export function vlmAiConfigFromEnv(
 	if (env.VLM_ENABLED?.trim().toLowerCase() !== "true") {
 		return null;
 	}
-	const apiKey = required(
-		env.VLM_API_KEY || resolveLlmApiKey(env),
-		"VLM_API_KEY or LLM_API_KEY",
-	);
-	const baseUrl = httpUrl(
-		required(
-			env.VLM_BASE_URL || resolveLlmBaseUrl(env) || DEFAULT_LLM_BASE_URL,
-			"VLM_BASE_URL or LLM_BASE_URL",
-		),
-		"VLM_BASE_URL",
-	);
+	const { apiKey, baseUrl } = modelProviderOverrideFromEnv("VLM", env);
 	const chatModel = required(env.VLM_MODEL, "VLM_MODEL");
 	return {
 		enabled: true,

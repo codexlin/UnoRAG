@@ -183,6 +183,7 @@ config:
   llmMaxQueue: "32"
   llmQueueTimeoutMs: "30000"
   embeddingModel: text-embedding-v3
+  embeddingBaseUrl: ""
   embeddingDim: "1024"
   embeddingBatchSize: "10"
   embeddingTimeoutMs: "15000"

@@ -196,11 +196,11 @@ test("deployment inputs map to one application environment contract", async () =
 	const compose = renderComposeConfig();
 	assert.equal(compose.services.web.environment.APP_ENV, "production");
 	assert.equal(
-		compose.services.web.environment.OPENAI_BASE_URL,
+		compose.services.web.environment.LLM_BASE_URL,
 		"https://models.example/v1",
 	);
 	assert.equal(
-		compose.services["dbos-worker"].environment.OPENAI_BASE_URL,
+		compose.services["dbos-worker"].environment.LLM_BASE_URL,
 		"https://models.example/v1",
 	);
 	assert.equal(advanced.get("TS_RETRIEVAL_HYBRID_ENABLED"), "true");
@@ -346,7 +346,7 @@ test("omitted engineering settings retain their Compose defaults and accept over
 	}
 });
 
-test("Compose accepts model aliases in priority order and passes through the account origin fallback", () => {
+test("Compose preserves each provider credential and endpoint pair without flattening aliases", () => {
 	const legacy = {
 		OPENAI_API_KEY: "test-openai",
 		OPENAI_BASE_URL: "https://openai.example/v1",
@@ -354,36 +354,78 @@ test("Compose accepts model aliases in priority order and passes through the acc
 		DASHSCOPE_BASE_URL: "https://dashscope.example/v1",
 		UNORAG_BASE_URL: "https://console.example",
 	};
-	for (const [overrides, key, url] of [
-		[legacy, "contract-llm-key", "https://models.example/v1"],
-		[
-			{ ...legacy, LLM_API_KEY: "", LLM_BASE_URL: "" },
-			legacy.OPENAI_API_KEY,
-			legacy.OPENAI_BASE_URL,
-		],
-		[
-			{
-				...legacy,
-				LLM_API_KEY: "",
-				LLM_BASE_URL: "",
-				OPENAI_API_KEY: "",
-				OPENAI_BASE_URL: "",
-			},
-			legacy.DASHSCOPE_API_KEY,
-			legacy.DASHSCOPE_BASE_URL,
-		],
+	for (const overrides of [
+		legacy,
+		{ ...legacy, LLM_API_KEY: "", LLM_BASE_URL: "" },
+		{
+			...legacy,
+			LLM_API_KEY: "",
+			LLM_BASE_URL: "",
+			OPENAI_API_KEY: "",
+			OPENAI_BASE_URL: "",
+		},
 	]) {
 		const { services } = renderComposeConfig(overrides);
 		for (const name of ["web", "dbos-worker", "dbos-control"]) {
-			assert.equal(services[name].environment.OPENAI_API_KEY, key);
-		}
-		for (const name of ["web", "dbos-worker"]) {
-			assert.equal(services[name].environment.OPENAI_BASE_URL, url);
+			const env = services[name].environment;
+			assert.equal(
+				env.LLM_API_KEY,
+				overrides.LLM_API_KEY ?? "contract-llm-key",
+			);
+			assert.equal(
+				env.LLM_BASE_URL,
+				overrides.LLM_BASE_URL ?? "https://models.example/v1",
+			);
+			assert.equal(env.OPENAI_API_KEY, overrides.OPENAI_API_KEY);
+			assert.equal(env.OPENAI_BASE_URL, overrides.OPENAI_BASE_URL);
+			assert.equal(env.DASHSCOPE_API_KEY, overrides.DASHSCOPE_API_KEY);
+			assert.equal(env.DASHSCOPE_BASE_URL, overrides.DASHSCOPE_BASE_URL);
 		}
 		assert.equal(
 			services.web.environment.UNORAG_BASE_URL,
 			legacy.UNORAG_BASE_URL,
 		);
+	}
+});
+
+test("Compose gives control the same Judge and VLM bindings as Web", () => {
+	const configured = {
+		AI_SUPPORTS_STRUCTURED_OUTPUTS: "false",
+		AI_INCLUDE_USAGE: "false",
+		JUDGE_MODEL: "independent-judge",
+		JUDGE_BASE_URL: "https://judge.example/v1",
+		JUDGE_API_KEY: "dedicated-judge-key",
+		JUDGE_PROVIDER_NAME: "judge-provider",
+		JUDGE_SUPPORTS_STRUCTURED_OUTPUTS: "false",
+		VLM_ENABLED: "true",
+		VLM_MODEL: "independent-vision",
+		VLM_BASE_URL: "https://vision.example/v1",
+		VLM_API_KEY: "dedicated-vision-key",
+		VLM_PROVIDER_NAME: "vision-provider",
+		VLM_TIMEOUT_MS: "24000",
+		VLM_MAX_FIGURES_PER_REQUEST: "3",
+		VLM_MAX_IMAGE_BYTES: "1048576",
+	};
+	for (const overrides of [
+		{},
+		configured,
+		{
+			...configured,
+			JUDGE_API_KEY: "",
+			VLM_API_KEY: "",
+			VLM_TIMEOUT_MS: "999",
+		},
+	]) {
+		const { services } = renderComposeConfig(overrides);
+		for (const key of Object.keys(configured)) {
+			const webValue = services.web.environment[key];
+			assert.notEqual(webValue, undefined, `Web is missing ${key}`);
+			assert.equal(services["dbos-control"].environment[key], webValue, key);
+			if (Object.hasOwn(overrides, key))
+				assert.equal(webValue, overrides[key], key);
+		}
+		for (const key of ["JUDGE_API_KEY", "VLM_API_KEY"])
+			assert.equal(services["dbos-worker"].environment[key], undefined);
 	}
 });
 
@@ -395,13 +437,13 @@ test("Helm gives Web and Worker the same canonical model endpoint", (t) => {
 	const render = renderHelm();
 	assert.equal(render.status, 0, render.stderr);
 	assert.equal(
-		(render.stdout.match(/OPENAI_BASE_URL/g) ?? []).length,
-		2,
-		"ConfigMap and DBOS Worker must use the same endpoint",
+		(render.stdout.match(/LLM_BASE_URL/g) ?? []).length,
+		3,
+		"ConfigMap, DBOS Worker and control must use the same endpoint",
 	);
 	assert.equal(
 		(render.stdout.match(/https:\/\/models\.example\/v1/g) ?? []).length,
-		2,
+		3,
 	);
 	assert.doesNotMatch(render.stdout, /MINERU_URL/);
 	assert.equal((render.stdout.match(/APP_ENV/g) ?? []).length, 3);
@@ -457,6 +499,116 @@ test("Helm gives Web and Worker the same canonical model endpoint", (t) => {
 	);
 	assert.equal(disabledConfig?.data.AI_INCLUDE_USAGE, "false");
 	assert.equal(disabledConfig?.data.TS_RETRIEVAL_HYBRID_ENABLED, "false");
+});
+
+test("Helm binds dedicated model credentials to their matching endpoints", (t) => {
+	if (!hasCommand("helm", ["version", "--short"])) {
+		t.skip("helm is not installed");
+		return;
+	}
+	const render = renderHelm([
+		"--set",
+		"config.embeddingBaseUrl=https://embeddings.example/v1",
+	]);
+	assert.equal(render.status, 0, render.stderr);
+	const documents = loadAll(render.stdout).filter(Boolean);
+	const config = documents.find((item) => item.kind === "ConfigMap");
+	assert.equal(config.data.LLM_BASE_URL, "https://models.example/v1");
+	assert.equal(config.data.EMBEDDING_BASE_URL, "https://embeddings.example/v1");
+	const workloads = documents.filter((item) =>
+		["Deployment", "StatefulSet"].includes(item.kind),
+	);
+	let checked = 0;
+	for (const workload of workloads) {
+		for (const container of workload.spec.template.spec.containers) {
+			const env = Object.fromEntries(
+				(container.env ?? []).map((entry) => [entry.name, entry]),
+			);
+			if (!["web", "dbos-worker", "dbos-control"].includes(container.name))
+				continue;
+			checked++;
+			assert.equal(env.LLM_API_KEY.valueFrom.secretKeyRef.key, "LLM_API_KEY");
+			assert.equal(env.OPENAI_API_KEY, undefined);
+			assert.equal(
+				env.EMBEDDING_API_KEY.valueFrom.secretKeyRef.key,
+				"EMBEDDING_API_KEY",
+			);
+			if (container.name === "web") {
+				for (const key of ["JUDGE_API_KEY", "RERANK_API_KEY"])
+					assert.equal(env[key].valueFrom.secretKeyRef.key, key);
+			} else {
+				assert.equal(env.LLM_BASE_URL.value, config.data.LLM_BASE_URL);
+				assert.equal(
+					env.EMBEDDING_BASE_URL.value,
+					config.data.EMBEDDING_BASE_URL,
+				);
+			}
+		}
+	}
+	assert.equal(checked, 3);
+});
+
+test("Helm gives control the same supported Judge bindings as Web", (t) => {
+	if (!hasCommand("helm", ["version", "--short"])) {
+		t.skip("helm is not installed");
+		return;
+	}
+	for (const args of [
+		[],
+		[
+			"--set",
+			"config.judgeModel=independent-judge",
+			"--set",
+			"config.judgeBaseUrl=https://judge.example/v1",
+			"--set",
+			"config.judgeProviderName=judge-provider",
+			"--set-string",
+			"config.judgeSupportsStructuredOutputs=false",
+			"--set-string",
+			"config.aiSupportsStructuredOutputs=false",
+			"--set-string",
+			"config.aiIncludeUsage=false",
+		],
+	]) {
+		const render = renderHelm(args);
+		assert.equal(render.status, 0, render.stderr);
+		const documents = loadAll(render.stdout).filter(Boolean);
+		const config = documents.find((item) => item.kind === "ConfigMap");
+		const containers = new Map(
+			documents
+				.filter((item) => item.kind === "Deployment")
+				.flatMap((item) => item.spec.template.spec.containers)
+				.map((container) => [container.name, container]),
+		);
+		const web = containers.get("web");
+		const control = containers.get("dbos-control");
+		assert.ok(
+			web.envFrom.some(
+				(entry) => entry.configMapRef?.name === config.metadata.name,
+			),
+		);
+		const webEnv = new Map(web.env.map((entry) => [entry.name, entry]));
+		const controlEnv = new Map(control.env.map((entry) => [entry.name, entry]));
+		for (const key of [
+			"AI_SUPPORTS_STRUCTURED_OUTPUTS",
+			"AI_INCLUDE_USAGE",
+			"JUDGE_MODEL",
+			"JUDGE_BASE_URL",
+			"JUDGE_PROVIDER_NAME",
+			"JUDGE_SUPPORTS_STRUCTURED_OUTPUTS",
+		]) {
+			assert.notEqual(config.data[key], undefined, key);
+			assert.equal(controlEnv.get(key)?.value, config.data[key], key);
+		}
+		assert.equal(
+			controlEnv.get("JUDGE_API_KEY")?.valueFrom.secretKeyRef.key,
+			"JUDGE_API_KEY",
+		);
+		assert.deepEqual(
+			controlEnv.get("JUDGE_API_KEY"),
+			webEnv.get("JUDGE_API_KEY"),
+		);
+	}
 });
 
 test("Helm rolls out the same alert defaults to Web and control", (t) => {
