@@ -1,6 +1,8 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { createClient } from "redis";
 
+import { resolveLlmApiKey } from "../../core/ai/model-environment";
+
 export type HealthStatus = "healthy" | "degraded" | "disabled";
 
 export interface ProviderHealthItem {
@@ -231,9 +233,7 @@ export async function readProviderHealth(
 		}),
 	]);
 
-	const hasModelKey =
-		configured(environment.OPENAI_API_KEY) ||
-		configured(environment.DASHSCOPE_API_KEY);
+	const hasModelKey = Boolean(resolveLlmApiKey(environment));
 	const externalParserAllowed = environmentBoolean(
 		environment,
 		"EXTERNAL_PARSER_ALLOWED",

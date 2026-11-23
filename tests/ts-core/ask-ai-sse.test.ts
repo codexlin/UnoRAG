@@ -767,6 +767,38 @@ test("provider configuration fails closed without an API key", () => {
 	);
 });
 
+test("the model registry prefers canonical credentials and accepts older provider aliases", () => {
+	const dashscope = {
+		NODE_ENV: "test" as const,
+		DASHSCOPE_API_KEY: "test-dashscope-key",
+		DASHSCOPE_BASE_URL: "https://dashscope.example/v1/",
+	};
+	const openai = {
+		...dashscope,
+		OPENAI_API_KEY: "test-openai-key",
+		OPENAI_BASE_URL: "https://openai.example/v1/",
+	};
+	const canonical = {
+		...openai,
+		LLM_API_KEY: " test-canonical-key ",
+		LLM_BASE_URL: "https://canonical.example/v1/",
+	};
+	for (const [env, apiKey, baseUrl] of [
+		[canonical, "test-canonical-key", "https://canonical.example/v1"],
+		[
+			{ ...openai, LLM_API_KEY: "" },
+			"test-openai-key",
+			"https://openai.example/v1",
+		],
+		[dashscope, "test-dashscope-key", "https://dashscope.example/v1"],
+	] as const) {
+		assert.deepEqual(
+			[aiConfigFromEnv(env).apiKey, judgeAiConfigFromEnv(env).baseUrl],
+			[apiKey, baseUrl],
+		);
+	}
+});
+
 test("production provider registry requests streamed usage by default and supports an explicit opt-out", async (context) => {
 	for (const includeUsage of [true, false]) {
 		const bodies: Array<Record<string, unknown>> = [];

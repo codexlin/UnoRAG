@@ -3,6 +3,7 @@ import "server-only";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { sql } from "drizzle-orm";
 
+import { resolveLlmApiKey } from "@/core/ai/model-environment";
 import { getDatabase } from "@/db";
 import { resolveReleaseInfo } from "@/lib/release-info";
 
@@ -52,9 +53,7 @@ async function buildHealthResponse(
 	]);
 	const metadataOk = database.status === "fulfilled";
 	const qdrantOk = qdrant.status === "fulfilled";
-	const hasLlmKey = Boolean(
-		process.env.OPENAI_API_KEY?.trim() || process.env.DASHSCOPE_API_KEY?.trim(),
-	);
+	const hasLlmKey = Boolean(resolveLlmApiKey());
 	const reasons: string[] = [];
 	if (!metadataOk) reasons.push("metadata_unavailable");
 	if (!qdrantOk) reasons.push("qdrant_unavailable");

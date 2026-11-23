@@ -3,9 +3,9 @@ import { getDatabase } from "@/db";
 import { LOCALE_COOKIE, resolveLocale } from "@/lib/i18n/locale";
 import { logger } from "@/lib/observability";
 import {
-	accountEmailBaseUrl,
 	consumeAccountEmailToken,
 	issueAccountEmailToken,
+	resolveAccountEmailBaseUrl,
 } from "@/lib/server/auth/email-tokens";
 import { resolveClientAddress } from "@/lib/server/auth/login-rate-limit";
 import {
@@ -19,7 +19,7 @@ import { consumeFixedWindow } from "@/lib/server/security/fixed-window-rate-limi
 import { createAccountEmailHandlers } from "@/server/http/account-email";
 
 export const accountEmailHandlers = createAccountEmailHandlers({
-	baseUrl: accountEmailBaseUrl(process.env.APP_BASE_URL),
+	baseUrl: resolveAccountEmailBaseUrl(),
 	configured: () => isEmailConfigured(),
 	defer: (work) => after(work),
 	async limit(request, subject, action) {
@@ -48,7 +48,7 @@ export const accountEmailHandlers = createAccountEmailHandlers({
 		const pool = getDatabase().$client;
 		const token = await issueAccountEmailToken(pool, {
 			...input,
-			baseUrl: process.env.APP_BASE_URL ?? "",
+			baseUrl: resolveAccountEmailBaseUrl() ?? "",
 		});
 		if (!token) return;
 		const delivery = await sendAccountEmail({

@@ -37,6 +37,7 @@ spec:
                 name: {{ include "unorag.fullname" . }}-config
           env:
             {{- include "unorag.otelEnv" (list . "unorag-web") | nindent 12 }}
+            {{- include "unorag.askAlertThresholdEnv" . | nindent 12 }}
             - name: NODE_ENV
               value: production
             - name: PORT

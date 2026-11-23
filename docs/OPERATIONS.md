@@ -140,7 +140,7 @@ Knowledge API 会 fail closed，避免绕过撤销或分布式限流。
 
 邮箱申请按 Redis 共享限制：每账号每 15 分钟最多 3 次、相邻请求至少 60 秒；每客户端 IP 每 15 分钟
 最多 20 次申请、60 次消费尝试。Redis 不可用时返回 `503`，不跳过限流。
-发信还要求明确的 HTTPS `APP_BASE_URL`（仅 loopback 允许 HTTP），不信任 Host 或客户端回跳地址。
+发信使用明确的 HTTPS `APP_BASE_URL`，未设置时使用 `UNORAG_BASE_URL`。仅 loopback 允许 HTTP。
 
 ```text
 AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS=900
@@ -316,9 +316,15 @@ Compose 为组件设置 CPU、内存限制和有限保留期，但 Docker 命名
 把观测卷放在有水位告警与配额/容量控制的独立文件系统，或改接客户托管的 Prometheus、Loki、Tempo；
 磁盘告警必须早于业务数据卷告警阈值。
 
-`dbos-control` 默认每 15 分钟将超过 30 分钟的 `running` Ask 收敛为失败、按 30 天保留期清理终态记录，并每小时分批回收超过 90 天的删除 tombstone（仅在 Qdrant、原文件和 cleanup 均完成且无历史引用时物理删除，删除前写审计）。调度周期与告警阈值参数集中在 [`deploy/config/runtime.advanced.env.example`](../deploy/config/runtime.advanced.env.example) 的维护与告警区块维护。
+`dbos-control` 默认每 15 分钟将超过 30 分钟的 `running` Ask 收敛为失败、按 30 天保留期清理终态记录，并每小时分批回收超过 90 天的删除 tombstone（仅在 Qdrant、原文件和 cleanup 均完成且无历史引用时物理删除，删除前写审计）。部署保留各项调优变量的内置默认值，可在 `runtime.advanced.env` 中显式覆盖。
 
-Ask 统计告警只在样本数达到 `OBSERVABILITY_ASK_MIN_SAMPLES` 后评估，恢复需连续健康周期（`OBSERVABILITY_ALERT_RECOVERY_CYCLES`）；dead/stuck 任务、删除失败和 Provider 不可用不受最小样本限制。健康评估通过 PostgreSQL advisory lock 支持多 control 副本。
+工作区管理员可在 **设置 → 邮件通知 → 告警阈值** 调整 Ask 的最少样本数、失败率、引用覆盖率和 P95 延迟。
+保存后在下次评估时生效。留空按部署环境变量和内置默认值依次继承，恢复默认值会清除工作区覆盖。
+恢复仍需连续健康周期（`OBSERVABILITY_ALERT_RECOVERY_CYCLES`）。dead/stuck 任务、删除失败和 Provider
+不可用不受最小样本限制。健康评估通过 PostgreSQL advisory lock 支持多 control 副本。
+
+在 **设置 → 问答策略** 中，管理员可以独立启用或关闭混合检索和重排，也可以让每项功能跟随原有检索增强策略。
+改动在下一次 Ask 请求时生效。
 
 Webhook 告警需同时配置 `OBSERVABILITY_ALERT_WEBHOOK_URL`、`OBSERVABILITY_ALERT_WEBHOOK_SECRET` 与 `OBSERVABILITY_ALERT_WEBHOOK_ENABLED=true`。告警邮件复用部署级 Resend 凭据（`EMAIL_PROVIDER=resend`、`EMAIL_FROM`、`RESEND_API_KEY`，仅注入 Web 与 control，不读取 `SMTP_*`）；收件人（最多 5 个）、级别与开关由工作区管理员在 **设置 → 邮件通知** 热配置并持久化到 PostgreSQL。测试邮件按工作区每 60 秒限流一次，与真实告警共用持久化幂等投递队列（仅“服务商已接受”不代表已进收件箱，投递失败结合安全错误码与 Resend 控制台排查）。
 

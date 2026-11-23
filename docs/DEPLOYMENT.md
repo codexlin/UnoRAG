@@ -70,12 +70,12 @@ UNORAG_COMPOSE_OVERLAY=./docker-compose.local-amd64.yml \
 | 文件 | 用途 | 通常是否修改 |
 |---|---|---|
 | `runtime.env` | 端口、域名、存储、模型与核心数据服务，共 15 项 | 是 |
-| `runtime.advanced.env` | 镜像 pin、限流、MinerU、DBOS、维护周期与 OTel | 仅调优或发布时 |
+| `runtime.advanced.env` | 镜像 pin、限流、MinerU、DBOS 并发、通知与 OTel | 仅调优或发布时 |
 | `runtime.secret` | 数据库、Session、模型、COS 与通知凭据 | 是 |
 | `bootstrap.env` | 首次管理员与组织初始化 | 首次安装时 |
 
 旧版本把所有非敏感项放在 `runtime.env`。首次运行新版本的 `init-config.sh` 或
-`upgrade.sh` 会自动把高级项移入 `runtime.advanced.env`；未知的大写自定义项也会保留在高级层。
+`upgrade.sh` 会自动把高级项移入 `runtime.advanced.env`，并保留自定义项。示例中省略的调优项使用内置默认值，仍可在该文件中显式覆盖。
 
 正式安装必须使用发布 workflow 生成的 digest manifest。没有 `--manifest` 时安装脚本会构建当前
 工作树镜像，该模式只用于本地开发，不属于可交付安装。manifest 会同时固定四个镜像和 DBOS
@@ -120,8 +120,9 @@ Redis 是 Web 的必需依赖，用于可撤销浏览器会话、登录/Public A
 
 ### 可选账号邮件
 
-在 `runtime.advanced.env` 设置 `EMAIL_PROVIDER=resend` 和规范访问地址
-`APP_BASE_URL=https://unorag.example.com`；在 `runtime.secret` 设置已验证发件人 `EMAIL_FROM`
+在 `runtime.advanced.env` 设置 `EMAIL_PROVIDER=resend`，并在 `runtime.env` 设置规范访问地址
+`UNORAG_BASE_URL=https://unorag.example.com`。`runtime.advanced.env` 中的 `APP_BASE_URL` 优先用于账号邮件。
+在 `runtime.secret` 设置已验证发件人 `EMAIL_FROM`
 及 `RESEND_API_KEY`，然后重新创建 Web 与 control 容器。服务端使用 Resend HTTPS API，
 不需要额外 SMTP 服务，也不读取 `SMTP_*`。本地开发只允许 loopback 地址使用 HTTP。
 
@@ -134,9 +135,9 @@ Redis 是 Web 的必需依赖，用于可撤销浏览器会话、登录/Public A
 `WORKER_DATABASE_URL`、`DBOS_SYSTEM_DATABASE_URL` 与 `MIGRATOR_DATABASE_URL`。
 Web 和 Worker 运行身份不得拥有 DDL 权限。
 
-Compose 的模型端点只配置 `runtime.env` 中的 `LLM_BASE_URL`；Helm 使用
-`config.llmBaseUrl`。两个部署入口都会映射为应用内部的 `OPENAI_BASE_URL`，不要再为 Web 和
-Worker 分别维护端点。自托管 MinerU 地址只使用 `runtime.advanced.env` 中的
+Compose 使用 `runtime.env` 中的 `LLM_BASE_URL` 和 `runtime.secret` 中的 `LLM_API_KEY`；Helm 使用
+`config.llmBaseUrl` 和 Secret 的 `LLM_API_KEY`。应用依次接受 `LLM_*`、`OPENAI_*`、`DASHSCOPE_*`
+的端点和凭据。Compose 和 Helm 继续向容器提供兼容现有部署覆盖的 `OPENAI_*` 变量。自托管 MinerU 地址只使用 `runtime.advanced.env` 中的
 `MINERU_SELF_HOSTED_URL`；升级初始化会将历史
 `MINERU_URL` 一次性迁移并删除旧键。
 

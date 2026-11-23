@@ -202,8 +202,7 @@ config:
   parserPollIntervalMs: "250"
   parserMaxWaitMs: "900000"
   parserRetryBackoffMs: "2000,5000,15000,30000"
-  # Canonical deployment input. Templates map it to the application's
-  # OPENAI_BASE_URL environment variable.
+  # Canonical deployment input. Templates keep the compatible OPENAI_BASE_URL variable.
   llmBaseUrl: ""
   rerankBaseUrl: ""
   databasePoolMax: "10"

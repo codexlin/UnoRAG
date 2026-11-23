@@ -1,6 +1,10 @@
 import { QdrantClient, type Schemas } from "@qdrant/js-client-rest";
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
+import {
+	resolveLlmApiKey,
+	resolveLlmBaseUrl,
+} from "../core/ai/model-environment";
 import type { ParsedFigureAsset } from "../core/contracts";
 import { QdrantIngestWriteStore } from "../core/ingest";
 import type { DocumentObjectStorage } from "../core/object-storage/contracts";
@@ -744,9 +748,16 @@ export async function createWorkerPorts(
 	if (!config.listenQueues.some((queue) => queue.startsWith("ingest-"))) {
 		throw new Error("DBOS document ingest requires at least one ingest queue");
 	}
+	const apiKey = resolveLlmApiKey();
+	const baseUrl = resolveLlmBaseUrl();
+	if (!apiKey || !baseUrl) {
+		throw new Error(
+			"LLM_API_KEY and LLM_BASE_URL are required for production worker ports",
+		);
+	}
 	const documentIngestConfig = {
-		apiKey: requiredEnvironment("OPENAI_API_KEY"),
-		baseUrl: requiredEnvironment("OPENAI_BASE_URL"),
+		apiKey,
+		baseUrl,
 		model: requiredEnvironment("EMBEDDING_MODEL"),
 		dimensions: embeddingDimensions,
 		batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),

@@ -23,12 +23,20 @@ import { useInterfaceText } from "@/lib/i18n/provider";
 type AskSettings = {
 	answer_profile: "precise" | "balanced" | "exploratory";
 	retrieval_enhancement: "auto" | "off" | "on";
+	hybrid_retrieval: "inherit" | "off" | "on";
+	reranking: "inherit" | "off" | "on";
 	session_memory_enabled: boolean;
 	evidence_requirement: "strict" | "standard" | "relaxed";
 };
 
 type FieldKey = keyof AskSettings;
 type Copy = readonly [zh: string, en: string];
+
+const RETRIEVAL_OPTIONS = [
+	{ value: "inherit", label: ["跟随检索增强", "Follow policy"] },
+	{ value: "on", label: ["开启", "On"] },
+	{ value: "off", label: ["关闭", "Off"] },
+] satisfies { value: string; label: Copy }[];
 
 const FIELDS: {
 	key: FieldKey;
@@ -56,14 +64,34 @@ const FIELDS: {
 		label: ["检索增强", "Retrieval enhancement"],
 		kind: "enum",
 		tip: [
-			"开启后尝试混合检索与重排，实际取决于服务配置；自动模式按问题选择。可在请求链路中核对本次执行结果。",
-			"When enabled, the service attempts hybrid retrieval and reranking if configured. Auto chooses per question. Check the request trace for what ran.",
+			"为跟随此设置的检索功能选择策略。自动模式按问题选择；关闭时先用向量检索，重试仍可增强。",
+			"Sets the policy for features that follow this setting. Auto adapts to the question. Off starts with vector search and can still enhance retries.",
 		],
 		options: [
 			{ value: "auto", label: ["自动", "Auto"] },
 			{ value: "off", label: ["关闭", "Off"] },
 			{ value: "on", label: ["开启", "On"] },
 		],
+	},
+	{
+		key: "hybrid_retrieval",
+		label: ["混合检索", "Hybrid retrieval"],
+		kind: "enum",
+		tip: [
+			"结合关键词与向量搜索查找证据。",
+			"Find evidence using keyword and vector search.",
+		],
+		options: RETRIEVAL_OPTIONS,
+	},
+	{
+		key: "reranking",
+		label: ["检索重排", "Reranking"],
+		kind: "enum",
+		tip: [
+			"使用部署配置的重排模型重新排列候选片段。",
+			"Reorder results using the deployment’s reranking model.",
+		],
+		options: RETRIEVAL_OPTIONS,
 	},
 	{
 		key: "session_memory_enabled",

@@ -31,7 +31,7 @@ import {
 	authorizeRemoveMember,
 	isAssignableInviteRole,
 } from "@/lib/server/workspace-permissions.mjs";
-import { accountEmailBaseUrl } from "./auth/email-tokens";
+import { resolveAccountEmailBaseUrl } from "./auth/email-tokens";
 import { resolveClientAddress } from "./auth/login-rate-limit";
 import { consumeFixedWindow } from "./security/fixed-window-rate-limit";
 
@@ -42,7 +42,7 @@ export function hashInviteToken(rawToken: string): string {
 }
 
 export function buildInviteUrl(_origin: string, rawToken: string): string {
-	const base = accountEmailBaseUrl(process.env.APP_BASE_URL);
+	const base = resolveAccountEmailBaseUrl();
 	// Relative URLs are copy-link only and are resolved by the browser, never mailed.
 	return `${base ?? ""}/invite#${new URLSearchParams({ token: rawToken })}`;
 }
@@ -86,9 +86,7 @@ export async function readInviteJson(
 	if (
 		request.headers.get("sec-fetch-site") === "cross-site" ||
 		(origin &&
-			origin !==
-				(accountEmailBaseUrl(process.env.APP_BASE_URL) ??
-					new URL(request.url).origin))
+			origin !== (resolveAccountEmailBaseUrl() ?? new URL(request.url).origin))
 	) {
 		return Response.json({ detail: "forbidden" }, { status: 403 });
 	}
@@ -359,10 +357,7 @@ export async function createWorkspaceInvite(input: {
 		provider: "none",
 		reason: "copy_link_only",
 	};
-	if (
-		input.sendEmail !== false &&
-		!accountEmailBaseUrl(process.env.APP_BASE_URL)
-	) {
+	if (input.sendEmail !== false && !resolveAccountEmailBaseUrl()) {
 		emailDelivery = {
 			sent: false,
 			provider: "none",

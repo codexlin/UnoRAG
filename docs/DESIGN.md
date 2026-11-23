@@ -49,7 +49,7 @@
 | 文档治理与诊断 | 查看、ACL、替换、重索引、取消/重试、下载、删除、版本历史、入库瀑布、解析报告 | [library-doc-actions.tsx](../src/components/app/library-doc-actions.tsx)、[document-detail-sheet.tsx](../src/components/app/document-detail-sheet.tsx) |
 | 会话历史 | 按日期分组列表、已加载范围搜索/筛库、逐轮回放、继续原 thread | [archive-panel.tsx](../src/components/app/archive-panel.tsx) |
 | 运行中心与审计 | Ask/队列统计、健康状态、告警及投递、请求筛选/翻页、错误抽屉、独立审计页与 CSV 导出 | [operations-dashboard.tsx](../src/components/app/operations-dashboard.tsx)、[operations-requests-panel.tsx](../src/components/app/operations-requests-panel.tsx)、[workspace-audit-panel.tsx](../src/components/app/workspace-audit-panel.tsx) |
-| 设置与账号 | 问答策略、成员/邀请、Service Key、邮件通知策略/测试、服务信息；登录/改密/邀请/邮箱访问 | [settings/page.tsx](../src/app/app/settings/page.tsx)、[login/page.tsx](../src/app/login/page.tsx) |
+| 设置与账号 | 问答策略与混合检索/重排、成员/邀请、Service Key、告警阈值、邮件通知策略/测试、服务信息；登录/改密/邀请/邮箱访问 | [settings/page.tsx](../src/app/app/settings/page.tsx)、[login/page.tsx](../src/app/login/page.tsx) |
 
 ---
 

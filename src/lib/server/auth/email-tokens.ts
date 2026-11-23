@@ -35,6 +35,23 @@ export function accountEmailBaseUrl(value: string | undefined): string | null {
 	}
 }
 
+export function resolveAccountEmailBaseUrl(
+	env: Record<string, string | undefined> = process.env,
+): string | null {
+	return accountEmailBaseUrl(env.APP_BASE_URL?.trim() || env.UNORAG_BASE_URL);
+}
+
+/** Preserve the explicitly configured origin for local development mutations. */
+export function resolveMutationBaseUrl(
+	env: Record<string, string | undefined> = process.env,
+): string | undefined {
+	return (
+		env.APP_BASE_URL?.trim() ||
+		accountEmailBaseUrl(env.UNORAG_BASE_URL) ||
+		undefined
+	);
+}
+
 export async function issueAccountEmailToken(
 	pool: Pool,
 	input: { email: string; purpose: AccountEmailPurpose; baseUrl: string },

@@ -1,5 +1,6 @@
 import { type Cookie, expect, type Page, test } from "@playwright/test";
 import {
+	DEFAULT_ASK_ALERT_THRESHOLDS,
 	DEFAULT_WORKSPACE_EMAIL_SETTINGS,
 	type WorkspaceNotificationsView,
 	workspaceEmailSettingsSchema,
@@ -46,6 +47,9 @@ function initialView(): WorkspaceNotificationsView {
 	return {
 		settings: { ...DEFAULT_WORKSPACE_EMAIL_SETTINGS, recipients: [] },
 		version: 0,
+		alert_thresholds: {},
+		alert_defaults: DEFAULT_ASK_ALERT_THRESHOLDS,
+		alert_policy_version: 0,
 		updated_at: null,
 		transport: { status: "configured", checked_at: new Date().toISOString() },
 		deliveries: [],

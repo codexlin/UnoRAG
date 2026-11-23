@@ -82,7 +82,7 @@ mk_validate_dbos_config
 
 SESSION="$(mk_config_get UNORAG_SESSION_SECRET || true)"
 ADMIN_PW="$(mk_config_get UNORAG_ADMIN_PASSWORD || true)"
-LLM_KEY="$(mk_config_get LLM_API_KEY || true)"
+LLM_KEY="$(mk_config_get LLM_API_KEY || mk_config_get OPENAI_API_KEY || mk_config_get DASHSCOPE_API_KEY || true)"
 POSTGRES_PW="$(mk_config_get POSTGRES_PASSWORD || true)"
 STORAGE_DRIVER="$(mk_config_get DOCUMENT_STORAGE_DRIVER || echo local)"
 

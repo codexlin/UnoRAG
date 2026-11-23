@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+	DEFAULT_ASK_ALERT_THRESHOLDS,
 	DEFAULT_WORKSPACE_EMAIL_SETTINGS,
 	type WorkspaceNotificationsView,
+	workspaceAlertThresholdsSchema,
 	workspaceEmailSettingsSchema,
 } from "../../src/lib/workspace-notifications";
 import { createWorkspaceNotificationHandlers } from "../../src/server/http/workspace-notifications";
@@ -20,6 +22,9 @@ function view(): WorkspaceNotificationsView {
 	return {
 		settings: { ...DEFAULT_WORKSPACE_EMAIL_SETTINGS, recipients: [] },
 		version: 0,
+		alert_thresholds: {},
+		alert_defaults: DEFAULT_ASK_ALERT_THRESHOLDS,
+		alert_policy_version: 0,
 		updated_at: null,
 		transport: { status: "unknown", checked_at: null },
 		deliveries: [],
@@ -86,12 +91,72 @@ test("notification endpoints reject unauthenticated and non-admin requests befor
 	]) {
 		const { handlers, calls } = fixture(actor);
 		for (const handler of [handlers.GET, handlers.PATCH, handlers.POST]) {
-			const response = await handler(command({ version: 0 }));
+			const response = await handler(
+				command({
+					version: 0,
+					settings: DEFAULT_WORKSPACE_EMAIL_SETTINGS,
+					alert_policy_version: 0,
+					alert_thresholds: { ask_min_samples: 25 },
+				}),
+			);
 			assert.equal(response.status, actor ? 403 : 401);
 			assert.match(response.headers.get("cache-control") ?? "", /no-store/);
 		}
 		assert.deepEqual(calls, []);
 	}
+});
+
+test("workspace alert thresholds validate bounds, critical ordering, and strict keys", async () => {
+	const { handlers, calls } = fixture();
+	const valid = {
+		ask_min_samples: 1_000,
+		ask_failure_rate_warning: 0.01,
+		ask_citation_coverage_min: 1,
+		ask_p95_warning_ms: 120_000,
+		ask_p95_critical_ms: 120_000,
+	};
+	assert.deepEqual(workspaceAlertThresholdsSchema.parse(valid), valid);
+	assert.deepEqual(workspaceAlertThresholdsSchema.parse({}), {});
+	const body = {
+		version: 3,
+		settings: DEFAULT_WORKSPACE_EMAIL_SETTINGS,
+		alert_policy_version: 2,
+	};
+	for (const invalid of [
+		{ ask_min_samples: 0 },
+		{ ask_min_samples: 1.5 },
+		{ ask_min_samples: 1_001 },
+		{ ask_min_samples: "25" },
+		{ ask_failure_rate_warning: 0 },
+		{ ask_failure_rate_warning: 1.01 },
+		{ ask_citation_coverage_min: 0.09 },
+		{ ask_p95_warning_ms: 999 },
+		{ ask_p95_warning_ms: 120_001 },
+		{ ask_p95_critical_ms: 300_001 },
+		{ ask_p95_warning_ms: 25_001, ask_p95_critical_ms: 25_000 },
+		{ EXTERNAL_PARSER_ALLOWED: true },
+	]) {
+		const response = await handlers.PATCH(
+			command({ ...body, alert_thresholds: invalid }),
+		);
+		assert.equal(response.status, 400);
+	}
+	assert.equal((await handlers.PATCH(command(body))).status, 400);
+	assert.equal(calls.length, 0);
+	assert.equal(
+		(await handlers.PATCH(command({ ...body, alert_thresholds: valid })))
+			.status,
+		200,
+	);
+	assert.deepEqual(calls[0].input, {
+		organizationId: identity.tenantId,
+		workspaceId: identity.workspaceId,
+		actorId: identity.principalId,
+		expectedVersion: 3,
+		settings: DEFAULT_WORKSPACE_EMAIL_SETTINGS,
+		expectedAlertPolicyVersion: 2,
+		alertThresholds: valid,
+	});
 });
 
 test("notification reads and test requests use authenticated scope and saved recipients only", async () => {
