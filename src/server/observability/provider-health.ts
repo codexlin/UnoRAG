@@ -2,6 +2,10 @@ import { QdrantClient } from "@qdrant/js-client-rest";
 import { createClient } from "redis";
 
 import { resolveLlmApiKey } from "../../core/ai/model-environment";
+import {
+	assertQdrantEmbeddingDimension,
+	QdrantEmbeddingDimensionMismatchError,
+} from "../../core/retrieval/qdrant/collection-manager";
 
 export type HealthStatus = "healthy" | "degraded" | "disabled";
 
@@ -121,6 +125,8 @@ async function activeItem(input: {
 			recovery: input.recovery,
 		};
 	} catch (error) {
+		const mismatch =
+			error instanceof QdrantEmbeddingDimensionMismatchError ? error : null;
 		return {
 			code: input.code,
 			label: input.label,
@@ -129,10 +135,11 @@ async function activeItem(input: {
 			mode: "active",
 			latency_ms: Date.now() - startedAt,
 			error_code:
-				error instanceof Error && error.message === "probe_timeout"
+				mismatch?.code ??
+				(error instanceof Error && error.message === "probe_timeout"
 					? `${input.code}_timeout`
-					: `${input.code}_unavailable`,
-			recovery: input.recovery,
+					: `${input.code}_unavailable`),
+			recovery: mismatch?.recovery ?? input.recovery,
 		};
 	}
 }
@@ -166,9 +173,9 @@ function defaultRedisCheck(
 	};
 }
 
-function defaultQdrantCheck(
-	environment: Environment,
-): (signal: AbortSignal) => Promise<void> {
+export function createQdrantHealthCheck(
+	environment: Environment = process.env,
+): () => Promise<void> {
 	return async () => {
 		const client = new QdrantClient({
 			url: environment.QDRANT_URL?.trim() || "http://localhost:6333",
@@ -177,8 +184,13 @@ function defaultQdrantCheck(
 			checkCompatibility: false,
 		});
 		const collection = environment.QDRANT_COLLECTION?.trim() || "unorag_chunks";
-		const result = await client.collectionExists(collection);
-		if (!result.exists) throw new Error("collection_missing");
+		const { exists } = await client.collectionExists(collection);
+		if (!exists) return; // Collection initialization is lazy on a fresh install.
+		const vectorSize = Number(environment.EMBEDDING_DIM ?? 1_024);
+		if (Number.isInteger(vectorSize) && vectorSize > 0) {
+			const info = await client.getCollection(collection);
+			assertQdrantEmbeddingDimension(info, { collection, vectorSize });
+		}
 	};
 }
 
@@ -198,7 +210,7 @@ export async function readProviderHealth(
 	const redisCheck =
 		dependencies.checkRedis ?? defaultRedisCheck(environment, timeoutMs);
 	const qdrantCheck =
-		dependencies.checkQdrant ?? defaultQdrantCheck(environment);
+		dependencies.checkQdrant ?? createQdrantHealthCheck(environment);
 	const active = await Promise.all([
 		activeItem({
 			code: "postgres",

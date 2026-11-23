@@ -72,9 +72,9 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		vectorSize: dimensions,
 		distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
 	}).ensure();
-	// The store awaits the original promise. This observer prevents an
-	// unhandled rejection if Qdrant fails before the first request arrives.
-	void collectionReady.catch(() => undefined);
+	const vectorSchema = collectionReady.then((result) => result.vectorSchema);
+	// Observe the chained rejection until the store can await the contract.
+	void vectorSchema.catch(() => undefined);
 	const embeddings = new OpenAICompatibleEmbeddingProvider({
 		apiKey,
 		baseUrl: resolveLlmBaseUrl() ?? DEFAULT_LLM_BASE_URL,
@@ -84,6 +84,7 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		timeoutMs: positiveInteger("EMBEDDING_TIMEOUT_MS", 15_000),
 	});
 	const rerankEnabled = enabled("TS_RETRIEVAL_RERANK_ENABLED");
+	const hybridEnabled = enabled("TS_RETRIEVAL_HYBRID_ENABLED", true);
 	const reranker = new OpenAICompatibleRerankProvider({
 		apiKey,
 		baseUrl: required(
@@ -97,11 +98,12 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		embeddings,
 		new QdrantRetrievalStore(qdrant, collection, collectionReady, {
 			timeoutMs: qdrantTimeoutMs,
-			vectorSchema: collectionReady.then((result) => result.vectorSchema),
+			vectorSchema,
 		}),
 		reranker,
 		{
-			hybridEnabled: enabled("TS_RETRIEVAL_HYBRID_ENABLED"),
+			hybridEnabled,
+			hybridAllowed: hybridEnabled,
 			rerankEnabled,
 			rerankTopK: positiveInteger("RERANK_TOP_K", 6),
 			bm25TopK: positiveInteger("BM25_TOP_K", 20),

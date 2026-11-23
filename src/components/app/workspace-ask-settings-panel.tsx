@@ -64,8 +64,8 @@ const FIELDS: {
 		label: ["检索增强", "Retrieval enhancement"],
 		kind: "enum",
 		tip: [
-			"为跟随此设置的检索功能选择策略。自动模式按问题选择；关闭时先用向量检索，重试仍可增强。",
-			"Sets the policy for features that follow this setting. Auto adapts to the question. Off starts with vector search and can still enhance retries.",
+			"自动模式默认启用混合检索，并按问题决定是否重排。混合检索和重排可单独设置。",
+			"Auto uses hybrid retrieval by default and decides whether to rerank based on the question. Hybrid retrieval and reranking can be set independently.",
 		],
 		options: [
 			{ value: "auto", label: ["自动", "Auto"] },

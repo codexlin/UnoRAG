@@ -189,7 +189,7 @@ config:
   contextualRetrievalEnabled: "false"
   contextualRetrievalMaxChunks: "40"
   contextualRetrievalTimeoutMs: "1000"
-  retrievalHybridEnabled: "false"
+  retrievalHybridEnabled: "true"
   retrievalRerankEnabled: "false"
   rerankModel: qwen3-rerank
   rerankTimeoutMs: "10000"

@@ -35,6 +35,16 @@ function endpoint(baseUrl: string): string {
 	return `${baseUrl.replace(/\/$/, "")}/embeddings`;
 }
 
+export class EmbeddingDimensionMismatchError extends Error {
+	readonly code = "embedding_dimension_mismatch";
+	constructor(expected: number, actual: number, model: string) {
+		super(
+			`Embedding vector size mismatch: expected EMBEDDING_DIM=${expected}, got ${actual} from model ${model}. Choose an EMBEDDING_MODEL that returns ${expected} dimensions, or set EMBEDDING_DIM=${actual} and use a matching Qdrant collection. For a dimension change, set QDRANT_COLLECTION to a new collection and reindex.`,
+		);
+		this.name = "EmbeddingDimensionMismatchError";
+	}
+}
+
 export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 	private readonly fetch: typeof globalThis.fetch;
 	private readonly batchSize: number;
@@ -113,8 +123,17 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 			}
 			for (const item of ordered) {
 				if (item.embedding.length !== this.config.dimensions) {
-					throw new Error(
-						"embedding provider returned an unexpected dimension",
+					const { dimensions, model, apiKey } = this.config;
+					const safeModel =
+						/^[\w./:-]{1,200}$/.test(model) &&
+						!model.includes("://") &&
+						!model.includes(apiKey.trim())
+							? model
+							: "EMBEDDING_MODEL";
+					throw new EmbeddingDimensionMismatchError(
+						dimensions,
+						item.embedding.length,
+						safeModel,
 					);
 				}
 				vectors.push(item.embedding);

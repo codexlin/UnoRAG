@@ -10,6 +10,7 @@ import {
 	mergeAskPatch,
 	PUBLIC_ASK_DEFAULTS,
 	resolveAskPolicy,
+	resolvedAskAsOverrideKnobs,
 	validateAskPatch,
 } from "../src/lib/server/workspace-ask-settings.mjs";
 import { canManageMembers } from "../src/lib/server/workspace-permissions.mjs";
@@ -22,7 +23,9 @@ test("public defaults match balanced → internal ASK defaults", () => {
 		ASK_INTERNAL_DEFAULTS.answer_min_score,
 	);
 	assert.equal(resolved.hybrid_enabled, ASK_INTERNAL_DEFAULTS.hybrid_enabled);
+	assert.equal(resolved.hybrid_enabled, true);
 	assert.equal(resolved.rerank_enabled, ASK_INTERNAL_DEFAULTS.rerank_enabled);
+	assert.equal(resolved.rerank_enabled, false);
 	assert.equal(
 		resolved.citation_adjudicate_enabled,
 		ASK_INTERNAL_DEFAULTS.citation_adjudicate_enabled,
@@ -122,32 +125,47 @@ test("retrieval_enhancement off/on/auto resolve hybrid+rerank", () => {
 	assert.equal(on.hybrid_enabled, true);
 	assert.equal(on.rerank_enabled, true);
 
-	const autoDefault = resolveAskPolicy({
-		...PUBLIC_ASK_DEFAULTS,
-		retrieval_enhancement: "auto",
-	});
-	assert.equal(autoDefault.hybrid_enabled, false);
+	const auto = { ...PUBLIC_ASK_DEFAULTS, retrieval_enhancement: "auto" };
+	const autoDefault = resolveAskPolicy(auto, { question: "请介绍休假政策。" });
+	assert.equal(autoDefault.hybrid_enabled, true);
 	assert.equal(autoDefault.rerank_enabled, false);
 
-	const autoLookup = resolveAskPolicy(
-		{ ...PUBLIC_ASK_DEFAULTS, retrieval_enhancement: "auto" },
-		{ question: "合同编号 HT-2024-001 的金额是多少？" },
-	);
-	assert.equal(autoLookup.hybrid_enabled, true);
-	assert.equal(autoLookup.rerank_enabled, true);
-
 	for (const question of [
+		"对比方案A和方案B",
+		"SKU-123",
+		"合同编号 HT-2024-001 的金额是多少？",
 		"项目组诊断出的第一个主要问题是什么？具体表现如何？",
 		"发生概率最高的风险是哪一类？概率区间和影响程度如何？",
 		"图4中总预算最高的部门是哪个？其基础设施投入占比多少？",
 	]) {
-		const autoSensitive = resolveAskPolicy(
-			{ ...PUBLIC_ASK_DEFAULTS, retrieval_enhancement: "auto" },
-			{ question },
-		);
+		const autoSensitive = resolveAskPolicy(auto, { question });
 		assert.equal(autoSensitive.hybrid_enabled, true);
 		assert.equal(autoSensitive.rerank_enabled, true);
 	}
+});
+
+test("workspace hybrid opt-outs disable the first attempt and retries", () => {
+	for (const settings of [
+		{ hybrid_retrieval: "off" },
+		{ hybrid_retrieval: "off", retrieval_enhancement: "on" },
+		{ retrieval_enhancement: "off", hybrid_retrieval: "inherit" },
+	]) {
+		const knobs = resolvedAskAsOverrideKnobs(resolveAskPolicy(settings));
+		assert.equal(knobs.hybrid_enabled, false);
+		assert.equal(knobs.hybrid_retry_enabled, false);
+	}
+});
+
+test("independent hybrid override stays enabled with retrieval enhancement off", () => {
+	const knobs = resolvedAskAsOverrideKnobs(
+		resolveAskPolicy(
+			{ retrieval_enhancement: "off", hybrid_retrieval: "on" },
+			{ question: "对比方案A和方案B" },
+		),
+	);
+	assert.equal(knobs.hybrid_enabled, true);
+	assert.equal(knobs.rerank_enabled, false);
+	assert.equal("hybrid_retry_enabled" in knobs, false);
 });
 
 test("null patch key resets to public default", () => {

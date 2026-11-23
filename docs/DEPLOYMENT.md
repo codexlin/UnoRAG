@@ -77,6 +77,12 @@ UNORAG_COMPOSE_OVERLAY=./docker-compose.local-amd64.yml \
 旧版本把所有非敏感项放在 `runtime.env`。首次运行新版本的 `init-config.sh` 或
 `upgrade.sh` 会自动把高级项移入 `runtime.advanced.env`，并保留自定义项。示例中省略的调优项使用内置默认值，仍可在该文件中显式覆盖。
 
+新部署默认启用 Qdrant `lexical_v1` IDF + RRF 混合检索，词法检索无需额外的模型 API 调用。
+在 `runtime.advanced.env` 设置 `TS_RETRIEVAL_HYBRID_ENABLED=false` 可在整个部署禁用混合检索。
+工作区可通过 `hybrid_retrieval: "off"` 禁用混合检索，包括问答重试。选择 `inherit` 时，
+`retrieval_enhancement: "off"` 同样禁用混合检索。自动模式在对比、精确编号等查询的首轮启用重排。
+升级保留已有的显式关闭值。
+
 正式安装必须使用发布 workflow 生成的 digest manifest。没有 `--manifest` 时安装脚本会构建当前
 工作树镜像，该模式只用于本地开发，不属于可交付安装。manifest 会同时固定四个镜像和 DBOS
 application version；缺少字段、使用 tag、`latest` 或不完整 digest 时安装会直接拒绝。
@@ -223,13 +229,17 @@ mk_compose --profile ops run --rm inspect-lifecycle
 | 组件 | 预期 |
 |---|---|
 | Web liveness | `/api/rag/health/live` 返回 200；只说明进程可响应，不探测下游依赖 |
-| Web readiness | `/api/rag/health/ready` 仅在 PostgreSQL、Qdrant 和模型凭证均可用时返回 200，否则返回 503 并停止接收新流量 |
+| Web readiness | `/api/rag/health/ready` 检查 PostgreSQL、Qdrant 和模型凭证，以及现有集合的向量维度，失败时返回 503 |
 | Web 状态详情 | `/api/rag/health` 保持兼容，返回 `ask_ready`、`degraded` 与 `reasons`，供 UI 和诊断读取 |
 | DBOS Worker | 私有 `:3001/dbos-healthz` 正常 |
 | DBOS Control | ready marker 持续更新 |
 | PostgreSQL | `pg_isready` 正常 |
 | Qdrant | 私有 `:6333` ready |
 | Redis | `redis-cli ping` 正常 |
+
+当 `/api/rag/health` 或运行中心报告 `embedding_dimension_mismatch` 时，请在 Web 和 Worker 使用相同配置。
+若所用模型支持现有集合的维度，将 `EMBEDDING_DIM` 调整为提示中的集合维度。
+若要使用新维度，将 `QDRANT_COLLECTION` 指向新集合并重新索引。新安装尚未创建集合时，健康探针允许启动。
 
 ## 镜像与升级
 
