@@ -8,6 +8,7 @@ import {
 
 import type {
 	ApiAskResponse,
+	ApiAskTraceDetails,
 	ApiCitation,
 	ApiDocument,
 	ApiHealth,
@@ -15,8 +16,9 @@ import type {
 	ApiRetrievalDebug,
 	ApiThreadDetail,
 } from "../../src/lib/api";
+import { COLOR_THEMES } from "../../src/lib/appearance";
 import { reportedModelUsage } from "../fixtures/model-usage";
-import { textContrast } from "./appearance-assertions";
+import { selectAppearanceRadio, textContrast } from "./appearance-assertions";
 
 const stamp = "2026-01-01T00:00:00.000Z";
 const libraries: ApiLibrary[] = ["Alpha", "Beta"].map((name) => ({
@@ -127,6 +129,7 @@ function done(
 	thread?: string,
 	citations: ApiCitation[] = [],
 	retrievalDebug: ApiRetrievalDebug = {},
+	traceDetails?: ApiAskTraceDetails,
 ) {
 	return frame("done", {
 		question: "fixture question",
@@ -138,6 +141,7 @@ function done(
 		refused: false,
 		retrieval_debug: retrievalDebug,
 		persisted: Boolean(thread),
+		...traceDetails,
 	} satisfies ApiAskResponse);
 }
 
@@ -156,6 +160,7 @@ test.beforeAll(async ({ browser }) => {
 	}
 	const context = await browser.newContext({
 		baseURL: process.env.UNORAG_E2E_BASE_URL,
+		locale: "zh-CN",
 	});
 	try {
 		const page = await context.newPage();
@@ -729,11 +734,15 @@ test("Sources and citation previews fit narrow and enlarged layouts across all t
 	const trigger = turn
 		.getByRole("article")
 		.getByRole("button", { name: /^查看引用 1：/ });
-	for (const theme of ["Vercel", "Claude", "Violet Bloom"]) {
+	for (const { label: theme } of COLOR_THEMES) {
 		for (const mode of ["浅色", "深色"]) {
 			await page.getByRole("button", { name: "外观设置", exact: true }).click();
-			await page.getByRole("radio", { name: theme, exact: true }).check();
-			await page.getByRole("radio", { name: mode, exact: true }).check();
+			await selectAppearanceRadio(
+				page.getByRole("radio", { name: theme, exact: true }),
+			);
+			await selectAppearanceRadio(
+				page.getByRole("radio", { name: mode, exact: true }),
+			);
 			await page.keyboard.press("Escape");
 			for (const width of [320, 1440]) {
 				await page.setViewportSize({ width, height: 900 });
@@ -1279,7 +1288,7 @@ test("Ask trace shows model token usage even without legacy stages or trace ID",
 	await expect(panel).toContainText("fixture-provider");
 	await expect(panel).toContainText("包含在输入内");
 	await expect(
-		page.getByRole("dialog").getByText("Judge tokens", { exact: false }),
+		page.getByRole("dialog").getByText(/裁决 Token（旧记录）|Judge tokens/),
 	).toHaveCount(0);
 	await panel.scrollIntoViewIfNeeded();
 	expect(
@@ -1618,7 +1627,7 @@ test("legacy Ask trace retains labelled Judge-only token metadata", async ({
 	await page.getByRole("button", { name: /^查看请求链路/ }).click();
 	const dialog = page.getByRole("dialog");
 	await expect(
-		dialog.getByText("Judge tokens（旧记录）", { exact: true }),
+		dialog.getByText("裁决 Token（旧记录）", { exact: true }),
 	).toBeVisible();
 	await expect(dialog.getByText("12 / 3", { exact: true })).toBeVisible();
 	const panel = dialog.getByRole("region", { name: "模型 Token 用量" });
@@ -1626,18 +1635,34 @@ test("legacy Ask trace retains labelled Judge-only token metadata", async ({
 	await expect(panel).toContainText("不能视为零消耗");
 });
 
-test("temporary Ask archives model usage in the POST and restores the trace after reload", async ({
+test("archiving keeps the live trace in memory and restores only stored diagnostics after reload", async ({
 	page,
 }, testInfo) => {
 	// Two complete document loads share this functional journey's budget.
 	test.slow();
 	const archiveId = "fixture-usage-archive";
 	const sessionId = "usage-roundtrip-session";
+	const liveQuery = "Live-only rewritten query";
 	await openAsk(page, [
 		[
-			done("Archived usage answer", sessionId, undefined, [], {
-				model_usage: reportedModelUsage,
-			}),
+			done(
+				"Archived usage answer",
+				sessionId,
+				undefined,
+				[],
+				{ model_usage: reportedModelUsage },
+				{
+					retrieval_inspection: [],
+					rewritten_question: liveQuery,
+					judge_summary: {
+						mode: null,
+						sufficient: true,
+						verdict: "generate",
+						conflict_status: null,
+						citation_validation: "passed",
+					},
+				},
+			),
 		],
 	]);
 	let archived: ApiThreadDetail | undefined;
@@ -1674,6 +1699,9 @@ test("temporary Ask archives model usage in the POST and restores the trace afte
 		resumeReads += 1;
 		return route.fulfill({ json: archived });
 	});
+	const traceToggle = page.getByRole("switch", { name: "检索透视" });
+	await traceToggle.click();
+	await expect(traceToggle).toBeChecked();
 	await submit(page, "Archive usage roundtrip", 0);
 	await release(page, 0, 1);
 	await closeStream(page, 0);
@@ -1693,7 +1721,13 @@ test("temporary Ask archives model usage in the POST and restores the trace afte
 			},
 		],
 	});
+	expect(JSON.stringify(archivePayload)).not.toContain(liveQuery);
+	expect(JSON.stringify(archivePayload)).not.toContain("retrieval_inspection");
 	await expect.poll(() => resumeReads).toBeGreaterThan(0);
+	await expect(traceToggle).toBeChecked();
+	await expect(traceToggle).toBeEnabled();
+	await page.getByRole("button", { name: /^查看请求链路/ }).click();
+	await expect(page.getByText(liveQuery, { exact: true })).toBeVisible();
 	const readsBeforeReload = resumeReads;
 	await page.reload();
 	// Development effect replays may abort and restart a read; assert fresh data, not an exact fetch count.
@@ -1702,6 +1736,7 @@ test("temporary Ask archives model usage in the POST and restores the trace afte
 		page.getByText("Archived usage answer", { exact: true }),
 	).toBeVisible();
 	await page.getByRole("button", { name: /^查看请求链路/ }).click();
+	await expect(page.getByText(liveQuery, { exact: true })).toHaveCount(0);
 	const panel = page.getByRole("region", { name: "模型 Token 用量" });
 	await expect(panel.getByText("已上报", { exact: true })).toBeVisible();
 	await expect(panel.locator("dl").first().locator("dd")).toHaveText([
@@ -2261,11 +2296,15 @@ test("refusal actions and compact composer share readable themes across narrow a
 	const composer = input.locator("..");
 	const send = page.getByRole("button", { name: "发送", exact: true });
 	await expect(actions.getByRole("button")).toHaveCount(3);
-	for (const theme of ["Vercel", "Claude", "Violet Bloom"]) {
+	for (const { label: theme } of COLOR_THEMES) {
 		for (const mode of ["浅色", "深色"]) {
 			await page.getByRole("button", { name: "外观设置", exact: true }).click();
-			await page.getByRole("radio", { name: theme, exact: true }).check();
-			await page.getByRole("radio", { name: mode, exact: true }).check();
+			await selectAppearanceRadio(
+				page.getByRole("radio", { name: theme, exact: true }),
+			);
+			await selectAppearanceRadio(
+				page.getByRole("radio", { name: mode, exact: true }),
+			);
 			await page.keyboard.press("Escape");
 			for (const width of [320, 390, 1440]) {
 				await page.setViewportSize({ width, height: 900 });
@@ -2777,6 +2816,72 @@ test("URL thread switch hydrates archive and ignores old stream completion", asy
 	await closeStream(page, 1);
 	await expect(page.getByRole("textbox")).toBeEnabled();
 	await expect(page.getByRole("article")).toHaveCount(2);
+});
+
+test("switching to a failed thread clears the old answer and source drawer before the response", async ({
+	page,
+}) => {
+	const answer = "Previous thread answer with a source.";
+	await openAsk(page, []);
+	await page.route("**/api/rag/v1/threads/fixture-archive/continue", (route) =>
+		route.fulfill({
+			json: {
+				...archivedThread,
+				turns: [
+					{ ...archivedThread.turns[0], answer, citations: [previewCitation] },
+				],
+			},
+		}),
+	);
+	let respond = () => {};
+	const gate = new Promise<void>((resolve) => {
+		respond = resolve;
+	});
+	await page.route(
+		"**/api/rag/v1/threads/unavailable/continue",
+		async (route) => {
+			await gate;
+			await route.fulfill({
+				status: 404,
+				json: { detail: "thread not found" },
+			});
+		},
+	);
+	try {
+		await page.evaluate(() =>
+			history.pushState(null, "", "/app/ask?thread=fixture-archive"),
+		);
+		await expect(page.getByText(answer, { exact: true })).toBeVisible();
+		const sources = await expandAnswerSources(page.getByRole("article"), 1);
+		await sources.locator("[data-citation-id]").first().click();
+		const preview = page.getByText(previewCitation.text ?? "", { exact: true });
+		await expect(preview).toBeVisible();
+
+		const recovery = page.waitForRequest(
+			"**/api/rag/v1/threads/unavailable/continue",
+		);
+		await page.evaluate(() =>
+			history.pushState(null, "", "/app/ask?thread=unavailable"),
+		);
+		await recovery;
+		await expect(page.getByRole("article")).toHaveCount(0);
+		await expect(preview).toHaveCount(0);
+		await expect(
+			page.getByRole("dialog", { name: "引用来源", exact: true }),
+		).toBeHidden();
+		await expect(
+			page.getByRole("complementary", { name: "引用来源", exact: true }),
+		).toHaveCount(0);
+		await expect(page.getByRole("textbox")).toBeDisabled();
+		respond();
+		await expect(
+			page.getByText("无法打开归档会话，请从会话历史重试。", { exact: true }),
+		).toBeVisible();
+		await expect(page.getByRole("article")).toHaveCount(0);
+		await expect(page.getByRole("textbox")).toBeDisabled();
+	} finally {
+		respond();
+	}
 });
 
 for (const archiveFails of [false, true]) {

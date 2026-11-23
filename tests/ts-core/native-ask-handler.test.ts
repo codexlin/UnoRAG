@@ -452,7 +452,7 @@ for (const [mode, revokeDropped] of [
 					const call = vector[0];
 					return Array.from({ length: 13 }, (_, index) => ({
 						id: `call-${call}-${index}`,
-						score: call > 3 && index === 0 ? 0.85 : 0.1,
+						score: call > 3 && index < 2 ? 0.85 - index * 0.05 : 0.1,
 						payload: {
 							doc_id: `document-${index}`,
 							document_version_id: `version-${index}`,
@@ -585,7 +585,12 @@ for (const [mode, revokeDropped] of [
 			coarseMarker,
 		);
 		assert.equal(body.retrieval_inspection?.[0].candidates[0].final_rank, null);
-		assert.equal(body.retrieval_inspection?.[3].candidates[0].final_rank, 1);
+		const [retained, pruned] = body.retrieval_inspection?.[3].candidates ?? [];
+		assert.equal(retained?.outcome, "selected");
+		assert.equal(retained?.final_rank, 1);
+		assert.equal(pruned?.id, "call-4-1");
+		assert.equal(pruned?.outcome, "dropped_topk");
+		assert.equal(pruned?.final_rank, null);
 		assert.deepEqual(body.judge_summary, {
 			mode: "model",
 			sufficient: true,

@@ -19,7 +19,10 @@ import {
 import { AskComposer } from "@/components/app/ask/ask-composer";
 import { AskConversationList } from "@/components/app/ask/ask-conversation-list";
 import { AskSourcesPanel } from "@/components/app/ask/ask-sources-panel";
-import { createAskStreamLifecycle } from "@/components/app/ask/ask-stream-lifecycle";
+import {
+	AskStreamIncompleteError,
+	createAskStreamLifecycle,
+} from "@/components/app/ask/ask-stream-lifecycle";
 import {
 	AskTraceDrawer,
 	stageDurationMs,
@@ -199,6 +202,10 @@ function AskWorkspaceContent() {
 	const [askStream] = useState(() =>
 		createAskStreamLifecycle(askQuestionStream),
 	);
+	const pendingArchiveRef = useRef<{
+		threadId: string;
+		turns: LocalTurn[];
+	} | null>(null);
 	const resumeThreadRef = useRef<string | null>(null);
 	const previousContextRef = useRef({ libraryId, requestedThreadId });
 	const {
@@ -260,6 +267,7 @@ function AskWorkspaceContent() {
 		contextEpochRef.current += 1;
 		askStream.cancel(false);
 		resumeThreadRef.current = null;
+		pendingArchiveRef.current = null;
 		setThreadId(undefined);
 		setThreadTitle(null);
 		setSessionId(undefined);
@@ -287,24 +295,19 @@ function AskWorkspaceContent() {
 
 	useLayoutEffect(() => {
 		const previous = previousContextRef.current;
-		if (
-			previous.libraryId === libraryId &&
-			previous.requestedThreadId === requestedThreadId
-		)
-			return;
-		contextEpochRef.current += 1;
-		askStream.cancel();
-		setTraceTurnId(null);
-		setTraceRequested(false);
-		if (
+		previousContextRef.current = { libraryId, requestedThreadId };
+		if (previous.requestedThreadId !== requestedThreadId) {
+			if (pendingArchiveRef.current?.threadId !== requestedThreadId) {
+				resetConversation();
+			}
+		} else if (
 			!requestedThreadId &&
-			(previous.requestedThreadId ||
-				(previous.libraryId && previous.libraryId !== libraryId))
+			previous.libraryId &&
+			previous.libraryId !== libraryId
 		) {
 			resetConversation();
 		}
-		previousContextRef.current = { libraryId, requestedThreadId };
-	}, [askStream, libraryId, requestedThreadId, resetConversation]);
+	}, [libraryId, requestedThreadId, resetConversation]);
 
 	useEffect(() => {
 		const resumeId = requestedThreadId;
@@ -312,15 +315,25 @@ function AskWorkspaceContent() {
 		if (!apiReady) return;
 		if (librariesLoading) return;
 		const controller = new AbortController();
+		const epoch = contextEpochRef.current;
+		const isCurrent = () =>
+			!controller.signal.aborted &&
+			contextEpochRef.current === epoch &&
+			previousContextRef.current.requestedThreadId === resumeId;
 		void (async () => {
 			try {
 				const detail = await continueThread(resumeId, controller.signal);
-				if (controller.signal.aborted) return;
-				askStream.cancel();
+				if (!isCurrent()) return;
+				const archivedTurns =
+					pendingArchiveRef.current?.threadId === resumeId
+						? pendingArchiveRef.current.turns
+						: [];
+				pendingArchiveRef.current = null;
 				resumeThreadRef.current = resumeId;
 				setActiveSource(null);
 				sourceFocusKeyRef.current = null;
 				sourceTriggerRef.current = null;
+				setDrawerOpen(false);
 				setThreadId(detail.id);
 				setThreadTitle(detail.title);
 				setSessionId(detail.session_id || detail.id);
@@ -337,32 +350,51 @@ function AskWorkspaceContent() {
 				}
 				dispatchTurns({
 					type: "hydrate",
-					turns: detail.turns.map((turn, index) => ({
-						id: turn.id || `resume-${index}`,
-						question: turn.question,
-						answer: turn.answer,
-						citations: turn.citations.map(toUiCitation),
-						refused: turn.refused,
-						refuseReason: turn.refuse_reason,
-						mode: turn.mode,
-						pending: false,
-						persisted: true,
-						retrievalDebug: turn.retrieval_debug || undefined,
-					})),
+					turns: detail.turns.map((turn, index) => {
+						const local = archivedTurns[index];
+						// Keep live diagnostics only for the same turn and authorized sources.
+						const sameTurn =
+							local?.question === turn.question &&
+							local.answer === turn.answer &&
+							local.citations.length === turn.citations.length &&
+							turn.citations.every(
+								(citation, i) =>
+									citation.id === local.citations[i].id &&
+									citation.document_version_id ===
+										local.citations[i].source?.document_version_id,
+							);
+						return {
+							id: sameTurn ? local.id : turn.id || `resume-${index}`,
+							question: turn.question,
+							answer: turn.answer,
+							citations: turn.citations.map(toUiCitation),
+							refused: turn.refused,
+							refuseReason: turn.refuse_reason,
+							mode: turn.mode,
+							pending: false,
+							persisted: true,
+							retrievalDebug: turn.retrieval_debug || undefined,
+							traceDetails: sameTurn ? local.traceDetails : undefined,
+						};
+					}),
 				});
 				setArchiveError(null);
+				archivingRef.current = false;
+				setArchiving(false);
 			} catch (err) {
-				if (controller.signal.aborted || isAbortError(err)) return;
+				if (!isCurrent() || isAbortError(err)) return;
+				resetConversation();
 				setArchiveError({ kind: "resume_failed" });
-			} finally {
-				if (!controller.signal.aborted) {
-					archivingRef.current = false;
-					setArchiving(false);
-				}
 			}
 		})();
 		return () => controller.abort();
-	}, [apiReady, askStream, libraries, librariesLoading, requestedThreadId]);
+	}, [
+		apiReady,
+		libraries,
+		librariesLoading,
+		requestedThreadId,
+		resetConversation,
+	]);
 
 	useLayoutEffect(() => {
 		const el = textareaRef.current;
@@ -481,6 +513,7 @@ function AskWorkspaceContent() {
 				})),
 			});
 			if (epoch !== contextEpochRef.current) return;
+			pendingArchiveRef.current = { threadId: detail.id, turns: readyTurns };
 			setThreadId(detail.id);
 			setThreadTitle(detail.title);
 			setSessionId(detail.session_id || detail.id);
@@ -626,20 +659,30 @@ function AskWorkspaceContent() {
 				onTerminal: ({ cancelled, error: err }) => {
 					const completedAt = Date.now();
 					const durationMs = Math.round(performance.now() - startedAtMs);
+					let error: string | undefined;
+					if (!cancelled) {
+						if (err instanceof AskStreamIncompleteError) {
+							error = t(
+								"回答流意外结束，请重试",
+								"The answer stream ended unexpectedly. Try again.",
+							);
+						} else {
+							error =
+								err instanceof Error
+									? err.message
+									: t(
+											"请求失败，请确认 API 已启动",
+											"Request failed. Check that the API is running.",
+										);
+						}
+					}
 					dispatchTurns({
 						type: "terminal",
 						turnId: pendingId,
 						completedAt,
 						durationMs,
 						cancelled,
-						error: cancelled
-							? undefined
-							: err instanceof Error
-								? err.message
-								: t(
-										"请求失败，请确认 API 已启动",
-										"Request failed. Check that the API is running.",
-									),
+						error,
 					});
 				},
 			},

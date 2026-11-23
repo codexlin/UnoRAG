@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { expect, test } from "@playwright/test";
 import { COLOR_THEMES } from "../../src/lib/appearance";
-import { textContrast } from "./appearance-assertions";
+import { selectAppearanceRadio, textContrast } from "./appearance-assertions";
 
 const resolveFromApp = createRequire(`${process.cwd()}/package.json`);
 const sharp = createRequire(resolveFromApp.resolve("next/package.json"))(
@@ -25,7 +25,9 @@ test("the selected brand stays visible in both themes and publishes explicit ico
 
 	for (const mode of ["浅色", "深色"]) {
 		await page.getByRole("button", { name: "外观设置", exact: true }).click();
-		await page.getByRole("radio", { name: mode, exact: true }).check();
+		await selectAppearanceRadio(
+			page.getByRole("radio", { name: mode, exact: true }),
+		);
 		await page.keyboard.press("Escape");
 		await expect(page.locator("html")).toHaveClass(
 			mode === "深色" ? /dark/ : /light/,
@@ -108,9 +110,20 @@ test("themes, radius, public assets and layouts stay coherent across viewports",
 	await page.goto("/");
 	await page.getByRole("button", { name: "外观设置", exact: true }).click();
 	for (const color of COLOR_THEMES) {
-		await page.getByRole("radio", { name: color.label, exact: true }).check();
+		await selectAppearanceRadio(
+			page.getByRole("radio", { name: color.label, exact: true }),
+		);
 		for (const mode of ["浅色", "深色"]) {
-			await page.getByRole("radio", { name: mode, exact: true }).check();
+			await selectAppearanceRadio(
+				page.getByRole("radio", { name: mode, exact: true }),
+			);
+			await expect(page.locator("html")).toHaveAttribute(
+				"data-color-theme",
+				color.id,
+			);
+			await expect(page.locator("html")).toHaveClass(
+				mode === "深色" ? /\bdark\b/ : /\blight\b/,
+			);
 			await page.keyboard.press("Escape");
 			await expect(page.getByRole("dialog")).toHaveCount(0);
 			await expect(
@@ -124,20 +137,21 @@ test("themes, radius, public assets and layouts stay coherent across viewports",
 				name: "查看引用 1：员工手册",
 				exact: true,
 			});
-			if (await page.evaluate(() => matchMedia("(hover: hover)").matches))
-				await citation.hover();
-			await expect
-				.poll(() =>
-					citation.evaluate((element) => {
-						getComputedStyle(element).backgroundColor;
-						return element.getAnimations().length;
-					}),
-				)
-				.toBe(0);
+			await page.mouse.move(0, 0);
 			expect(
 				(await textContrast(citation)).ratio,
-				`${color.id}/${mode}/citation`,
+				`${color.id}/${mode}/citation resting`,
 			).toBeGreaterThanOrEqual(4.5);
+			if (await page.evaluate(() => matchMedia("(hover: hover)").matches)) {
+				await citation.hover();
+				expect(await citation.evaluate((el) => el.matches(":hover"))).toBe(
+					true,
+				);
+				expect(
+					(await textContrast(citation)).ratio,
+					`${color.id}/${mode}/citation hover`,
+				).toBeGreaterThanOrEqual(4.5);
+			}
 			await citation.click();
 			expect(
 				(await textContrast(example.locator("mark"))).ratio,
@@ -154,6 +168,9 @@ test("themes, radius, public assets and layouts stay coherent across viewports",
 				[1440, 900],
 				[1920, 1080],
 			]) {
+				await page.evaluate(() =>
+					window.scrollTo({ top: 0, behavior: "instant" }),
+				);
 				await page.setViewportSize({ width, height });
 				await expect
 					.poll(() =>

@@ -21,7 +21,7 @@ const OUTCOMES = {
 	selected: ["已选中", "Selected"],
 	deduped: ["已去重", "Deduplicated"],
 	below_threshold: ["低于阈值", "Below threshold"],
-	dropped_topk: ["超出 Top K", "Outside top K"],
+	dropped_topk: ["未保留在结果中", "Trimmed from results"],
 	dropped_rerank: ["未进入重排结果", "Outside rerank results"],
 } as const;
 

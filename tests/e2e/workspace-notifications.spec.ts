@@ -1,10 +1,12 @@
 import { type Cookie, expect, type Page, test } from "@playwright/test";
+import { COLOR_THEMES } from "../../src/lib/appearance";
 import {
 	DEFAULT_ASK_ALERT_THRESHOLDS,
 	DEFAULT_WORKSPACE_EMAIL_SETTINGS,
 	type WorkspaceNotificationsView,
 	workspaceEmailSettingsSchema,
 } from "../../src/lib/workspace-notifications";
+import { selectAppearanceRadio } from "./appearance-assertions";
 import { chooseSelect } from "./select-helpers";
 
 let cookies: Cookie[] = [];
@@ -17,6 +19,7 @@ test.beforeAll(async ({ browser }) => {
 		throw new Error("E2E administrator credentials required");
 	const context = await browser.newContext({
 		baseURL: process.env.UNORAG_E2E_BASE_URL,
+		locale: "zh-CN",
 	});
 	try {
 		const page = await context.newPage();
@@ -95,6 +98,7 @@ test("settings keep grouped controls, one-time key clearing and audit navigation
 	const patches: unknown[] = [];
 	const roleChanges: unknown[] = [];
 	let auditReads = 0;
+	let auditFilters = new URLSearchParams();
 	await page.route("**/api/workspace/settings", async (route) => {
 		if (route.request().method() === "PATCH") {
 			const body = route.request().postDataJSON();
@@ -144,6 +148,7 @@ test("settings keep grouped controls, one-time key clearing and audit navigation
 	);
 	await page.route("**/api/workspace/audit?**", (route) => {
 		auditReads++;
+		auditFilters = new URL(route.request().url()).searchParams;
 		return route.fulfill({ json: { items: [], next_cursor: null } });
 	});
 	await page.goto("/app/settings");
@@ -293,6 +298,24 @@ test("settings keep grouped controls, one-time key clearing and audit navigation
 		page.getByRole("link", { name: "导出 CSV", exact: true }),
 	).toBeVisible();
 	await expect.poll(() => auditReads).toBeGreaterThan(0);
+	await chooseSelect(
+		page.getByRole("combobox", { name: "资源类型" }),
+		"工作区",
+	);
+	await chooseSelect(
+		page.getByRole("combobox", { name: "动作类别" }),
+		"更新告警阈值",
+	);
+	await expect.poll(() => auditFilters.get("resource_type")).toBe("workspace");
+	await expect
+		.poll(() => auditFilters.get("action"))
+		.toBe("workspace.alert_thresholds.updated");
+	await expect(
+		page.getByRole("link", { name: "导出 CSV", exact: true }),
+	).toHaveAttribute(
+		"href",
+		"/api/workspace/audit/export?resource_type=workspace&action=workspace.alert_thresholds.updated",
+	);
 });
 
 test("notification form saves settings and distinguishes queued from accepted (mock notification API)", async ({
@@ -864,29 +887,38 @@ test("settings share readable theme tokens across desktop and mobile layouts", a
 		session_memory_enabled: true,
 		evidence_requirement: "standard",
 	};
-	await page.route("**/api/workspace/settings", (route) =>
-		route.fulfill({
+	let resolveSettings = () => {};
+	const settingsGate = new Promise<void>((resolve) => {
+		resolveSettings = resolve;
+	});
+	await page.route("**/api/workspace/settings", async (route) => {
+		await settingsGate;
+		await route.fulfill({
 			json: {
 				ask: settings,
 				defaults: settings,
 				can_manage: true,
 				policy_version: 1,
 			},
-		}),
-	);
+		});
+	});
 	await page.setViewportSize(
 		isMobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 },
 	);
 	await page.goto("/app/settings#ask-settings");
 	const panel = page.getByRole("region", { name: "问答策略", exact: true });
+	try {
+		await expect(panel.getByRole("status")).toHaveText("加载中…");
+		await expect(
+			panel.getByRole("heading", { name: "问答策略", exact: true }),
+		).toHaveCSS("font-size", "16px");
+	} finally {
+		resolveSettings();
+	}
 	await expect(
 		panel.getByRole("switch", { name: "对话记忆", exact: true }),
 	).toBeEnabled();
-	for (const [theme, label] of [
-		["vercel", "Vercel"],
-		["claude", "Claude"],
-		["violet-bloom", "Violet Bloom"],
-	]) {
+	for (const { id: theme, label } of COLOR_THEMES) {
 		for (const [mode, modeLabel] of [
 			["light", "浅色"],
 			["dark", "深色"],
@@ -896,18 +928,23 @@ test("settings share readable theme tokens across desktop and mobile layouts", a
 				name: "外观",
 				exact: true,
 			});
-			await appearance.getByRole("radio", { name: label, exact: true }).check();
-			await appearance
-				.getByRole("radio", { name: modeLabel, exact: true })
-				.check();
+			await selectAppearanceRadio(
+				appearance.getByRole("radio", { name: label, exact: true }),
+			);
+			await selectAppearanceRadio(
+				appearance.getByRole("radio", { name: modeLabel, exact: true }),
+			);
 			await page.keyboard.press("Escape");
 			await expect(page.locator("html")).toHaveAttribute(
 				"data-color-theme",
 				theme,
 			);
+			await expect(page.locator("html")).toHaveClass(
+				new RegExp(`\\b${mode}\\b`),
+			);
 			await expect(
 				panel.getByRole("heading", { name: "问答策略", exact: true }),
-			).toHaveCSS("font-size", "20px");
+			).toHaveCSS("font-size", "16px");
 			await noOverflow(page);
 			await page.evaluate(() => document.fonts.ready);
 			await page.mouse.move(0, 0);

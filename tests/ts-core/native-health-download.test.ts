@@ -512,10 +512,10 @@ test("both health surfaces flag a live Qdrant dimension mismatch and permit firs
 		);
 		if (mode === "mismatch") {
 			assert.equal(native.recovery, item.recovery);
-			assert.match(item.recovery, /集合的向量维度为 768/);
+			assert.doesNotMatch(item.recovery, /\p{Script=Han}/u);
 			assert.match(
 				item.recovery,
-				/EMBEDDING_DIM=1024.*set EMBEDDING_DIM=768.*QDRANT_COLLECTION.*reindex/,
+				/supports 768 dimensions, set EMBEDDING_DIM=768.*To use 1024 dimensions, set QDRANT_COLLECTION.*reindex/,
 			);
 		}
 		assert.doesNotMatch(

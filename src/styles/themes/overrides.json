@@ -23,10 +23,10 @@
 	},
 	"modern-minimal": {
 		"light": {
-			"primary": "oklch(0.5400 0.1950 259.8145)",
+			"primary": "oklch(0.5150 0.1950 259.8145)",
 			"ring": "oklch(0.5400 0.1950 259.8145)",
 			"evidence": "oklch(0.5200 0.1950 259.8145)",
-			"sidebar-primary": "oklch(0.5400 0.1950 259.8145)",
+			"sidebar-primary": "oklch(0.5150 0.1950 259.8145)",
 			"sidebar-ring": "oklch(0.5400 0.1950 259.8145)"
 		},
 		"dark": {
@@ -46,6 +46,7 @@
 		"dark": {
 			"primary": "oklch(0.7000 0.2000 291.7437)",
 			"primary-foreground": "oklch(0.1344 0 0)",
+			"evidence": "oklch(0.7400 0.2000 291.7437)",
 			"ring": "oklch(0.7000 0.2000 291.7437)",
 			"sidebar-primary": "oklch(0.7000 0.2000 291.7437)",
 			"sidebar-primary-foreground": "oklch(0.1344 0 0)",

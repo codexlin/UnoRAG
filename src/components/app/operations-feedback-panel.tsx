@@ -3,6 +3,7 @@
 import { CheckCircle2, Download, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { feedbackReasonLabel } from "@/components/app/ask/feedback-reason-label";
 import {
 	LedgerTable,
 	LedgerTableSkeleton,
@@ -27,7 +28,6 @@ import {
 } from "@/lib/api";
 import {
 	ASK_FEEDBACK_REASON_CODES,
-	ASK_FEEDBACK_REASON_LABELS,
 	ASK_FEEDBACK_TRIAGE_LABELS,
 	ASK_FEEDBACK_TRIAGE_STATUSES,
 	type AskFeedbackReasonCode,
@@ -58,25 +58,12 @@ export function OperationsFeedbackPanel({
 	const [triageFilter, setTriageFilter] = useState<string>("all");
 	const [reasonFilter, setReasonFilter] = useState<string>("all");
 	const [updatingId, setUpdatingId] = useState<string | null>(null);
-	const reasonLabels: Record<AskFeedbackReasonCode, string> = {
-		citation_error: t(
-			ASK_FEEDBACK_REASON_LABELS.citation_error,
-			"Wrong or irrelevant citation",
-		),
-		outdated_doc: t(
-			ASK_FEEDBACK_REASON_LABELS.outdated_doc,
-			"Outdated or wrong version",
-		),
-		missing_info: t(
-			ASK_FEEDBACK_REASON_LABELS.missing_info,
-			"Missing answer or not retrieved",
-		),
-		hallucination: t(
-			ASK_FEEDBACK_REASON_LABELS.hallucination,
-			"Hallucination or missed refusal",
-		),
-		other: t(ASK_FEEDBACK_REASON_LABELS.other, "Other issue"),
-	};
+	const reasonLabels = Object.fromEntries(
+		ASK_FEEDBACK_REASON_CODES.map((code) => [
+			code,
+			feedbackReasonLabel(code, t),
+		]),
+	);
 	const triageLabels: Record<AskFeedbackTriageStatus, string> = {
 		open: t(ASK_FEEDBACK_TRIAGE_LABELS.open, "Open"),
 		resolved: t(ASK_FEEDBACK_TRIAGE_LABELS.resolved, "Resolved"),

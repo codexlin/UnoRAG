@@ -261,7 +261,10 @@ export function WorkspaceAskSettingsPanel({
 				aria-labelledby={`${id}-heading`}
 				className="min-w-0 space-y-6 text-sm"
 			>
-				<h3 id={`${id}-heading`} className="text-xl font-medium">
+				<h3
+					id={`${id}-heading`}
+					className="border-b border-border/70 pb-3 text-base font-medium"
+				>
 					{t("问答策略", "Ask policy")}
 				</h3>
 				<p role="status" className="text-muted-foreground">

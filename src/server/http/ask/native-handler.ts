@@ -921,10 +921,17 @@ async function handleNativeAskRequestInSpan(input: {
 			return {
 				retrieval_inspection: inspections.map(({ inspection }) => ({
 					...inspection,
-					candidates: inspection.candidates.map((candidate) => ({
-						...candidate,
-						final_rank: ranks.get(candidate.id) ?? null,
-					})),
+					candidates: inspection.candidates.map((candidate) => {
+						const finalRank = ranks.get(candidate.id) ?? null;
+						return {
+							...candidate,
+							final_rank: finalRank,
+							outcome:
+								finalRank === null && candidate.outcome === "selected"
+									? "dropped_topk"
+									: candidate.outcome,
+						};
+					}),
 				})),
 				...(rewritten && rewritten !== payload.question
 					? { rewritten_question: rewritten }

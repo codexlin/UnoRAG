@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner";
 import { useNavigationGuard } from "@/components/app/navigation-guard";
 import { useSession } from "@/components/app/session-provider";
+import { workspaceRoleLabel } from "@/components/app/workspace-role-label";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -47,7 +48,6 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { createClientId } from "@/lib/client-id";
 import { useInterfaceText } from "@/lib/i18n/provider";
-import { roleLabel } from "@/lib/session-types";
 import { cn } from "@/lib/utils";
 
 type WorkspaceItem = {
@@ -275,7 +275,7 @@ export function WorkspaceSwitcher() {
 												{item.name}
 											</span>
 											<span className="text-meta text-muted-foreground">
-												{roleLabel(item.role)}
+												{workspaceRoleLabel(item.role, t)}
 											</span>
 										</DropdownMenuItem>
 									))

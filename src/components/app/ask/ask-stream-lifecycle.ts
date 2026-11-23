@@ -22,6 +22,12 @@ type Scheduler = {
 export const ASK_TOKEN_FLUSH_MS = 32;
 export const ASK_TOKEN_BUFFER_LIMIT = 4096;
 
+export class AskStreamIncompleteError extends Error {
+	constructor() {
+		super("The answer stream ended unexpectedly.");
+	}
+}
+
 export function createAskStreamLifecycle(
 	stream: Stream,
 	scheduler: Scheduler = {
@@ -129,7 +135,7 @@ export function createAskStreamLifecycle(
 			if (isCurrent()) {
 				terminal({
 					cancelled: false,
-					error: new Error("回答流意外结束，请重试"),
+					error: new AskStreamIncompleteError(),
 				});
 			}
 		} catch (error) {

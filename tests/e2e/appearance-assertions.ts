@@ -1,4 +1,17 @@
-import type { Locator } from "@playwright/test";
+import { expect, type Locator } from "@playwright/test";
+
+export async function selectAppearanceRadio(radio: Locator) {
+	// The controlled value commits inside the View Transition callback.
+	await radio.click();
+	await expect(radio).toBeChecked();
+	await radio
+		.page()
+		.waitForFunction(
+			() =>
+				!CSS.supports("selector(:active-view-transition)") ||
+				!document.documentElement.matches(":active-view-transition"),
+		);
+}
 
 export function textContrast(locator: Locator) {
 	return locator.evaluate((element) => {

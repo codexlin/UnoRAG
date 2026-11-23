@@ -29,6 +29,7 @@ import {
 import { OperationsFeedbackPanel } from "@/components/app/operations-feedback-panel";
 import { OperationsRequestsPanel } from "@/components/app/operations-requests-panel";
 import { useSession } from "@/components/app/session-provider";
+import { localizeHealthRecovery } from "@/components/app/settings/health-recovery";
 import { stageDisplayName } from "@/components/app/stage-waterfall";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -261,16 +262,37 @@ function localizeComponentLabel(
 	return label;
 }
 
+const PROVIDER_RECOVERY_EN: Record<string, string> = {
+	postgres:
+		"Check database connectivity, capacity, and runtime role permissions.",
+	redis: "Check the Redis service, network connection, and REDIS_URL.",
+	redis_not_configured: "Set REDIS_URL and confirm the service is reachable.",
+	qdrant: "Check the Qdrant service, collection, and API key.",
+	mineru:
+		"Check the MinerU endpoint, credentials, and EXTERNAL_PARSER_ALLOWED.",
+	liteparse:
+		"Check the local LiteParse dependencies, OCR language codes, and installed language data.",
+	email_delivery:
+		"Check EMAIL_PROVIDER, EMAIL_FROM, and RESEND_API_KEY. Confirm message delivery separately.",
+};
+
 function localizeComponentRecovery(
 	code: string,
+	errorCode: string | null,
 	recovery: string,
 	locale: "zh-CN" | "en",
 ): string {
-	if (locale === "zh-CN") return recovery;
-	if (code === "email_delivery") {
-		return "Check EMAIL_PROVIDER, EMAIL_FROM, and RESEND_API_KEY configuration; being configured does not guarantee delivery.";
+	if (locale === "en" && /\p{Script=Han}/u.test(recovery)) {
+		const translated =
+			PROVIDER_RECOVERY_EN[errorCode ?? ""] ?? PROVIDER_RECOVERY_EN[code];
+		if (translated && errorCode !== "embedding_dimension_mismatch")
+			return translated;
 	}
-	return recovery;
+	return localizeHealthRecovery(
+		recovery,
+		errorCode ?? `${code}_not_configured`,
+		locale,
+	);
 }
 
 function localizeAlert(
@@ -281,7 +303,14 @@ function localizeAlert(
 		return {
 			title: alert.title,
 			detail: alert.detail,
-			recovery: alert.recovery,
+			recovery: alert.code.startsWith("provider.")
+				? localizeComponentRecovery(
+						alert.code.slice("provider.".length),
+						alert.detail.match(/健康检查返回\s+([^。]+)/)?.[1] ?? null,
+						alert.recovery,
+						locale,
+					)
+				: alert.recovery,
 		};
 	}
 	switch (alert.code) {
@@ -350,9 +379,14 @@ function localizeAlert(
 				const providerName = alert.title.replace(/\s*状态异常$/, "");
 				const errCode = alert.detail.match(/健康检查返回\s+([^。]+)/)?.[1];
 				return {
-					title: `${providerName} unhealthy`,
+					title: `${localizeComponentLabel(alert.code.slice("provider.".length), providerName, locale)} unhealthy`,
 					detail: errCode ? `Health check returned ${errCode}.` : alert.detail,
-					recovery: alert.recovery,
+					recovery: localizeComponentRecovery(
+						alert.code.slice("provider.".length),
+						errCode ?? null,
+						alert.recovery,
+						locale,
+					),
 				};
 			}
 			return {
@@ -845,6 +879,7 @@ export function OperationsDashboard() {
 												<p className="mt-2 break-words text-sm text-muted-foreground">
 													{localizeComponentRecovery(
 														component.code,
+														component.error_code,
 														component.recovery,
 														locale,
 													)}
