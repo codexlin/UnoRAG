@@ -1,6 +1,8 @@
 import { type InternalCitation, InternalCitationSchema } from "./contracts";
 import { parseQdrantSearchHit, type QdrantSearchHit } from "./qdrant/payload";
 
+export const PARENT_CONTEXT_SEPARATOR = "\n\n所属章节完整上下文：\n";
+
 function nullableNumber(value: number | null | undefined): number | null {
 	return value ?? null;
 }
@@ -33,7 +35,7 @@ export function formatCitationEvidenceText(source: {
 			? source.parent_context.trim()
 			: "";
 	if (!parent || parent === primary) return primary;
-	return primary ? `${primary}\n\n所属章节完整上下文：\n${parent}` : parent;
+	return primary ? primary + PARENT_CONTEXT_SEPARATOR + parent : parent;
 }
 
 export function semanticEvidenceScore(input: {

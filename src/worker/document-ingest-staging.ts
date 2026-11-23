@@ -22,6 +22,7 @@ import {
 	parseXlsxDocument,
 } from "../core/parsing";
 import type { EmbeddingProvider } from "../core/retrieval/embedding/provider";
+import { resolveDocumentPolicy } from "../lib/server/document-policy.mjs";
 import type { DocumentIngestJob } from "./contracts";
 import { WorkerTaskError } from "./errors";
 import type {
@@ -139,11 +140,14 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 			}
 			await this.assertContinuing(input);
 		}
-		const profileName = CHUNK_PROFILES.has(
-			input.payload.document_profile as ChunkProfileName,
-		)
-			? (input.payload.document_profile as ChunkProfileName)
-			: "balanced";
+		const requestedProfile = input.payload.document_profile as ChunkProfileName;
+		const profileName = CHUNK_PROFILES.has(requestedProfile)
+			? requestedProfile
+			: input.payload.document_profile === "auto"
+				? undefined
+				: (resolveDocumentPolicy({
+						documentProfile: input.payload.document_profile,
+					}).chunk_profile as ChunkProfileName);
 		await onProgress?.({ stage: "chunking", percent: 45 });
 		const chunks = await chunkDocument(document, {
 			profileName,

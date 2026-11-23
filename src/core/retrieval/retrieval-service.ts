@@ -1,5 +1,10 @@
 import type { AuthorizedScope, RetrievalFilters } from "../contracts";
 import {
+	estimateTokens,
+	sliceAroundTokenBudget,
+	sliceByTokenBudget,
+} from "../text/token-estimate";
+import {
 	mapQdrantHitToInternalCitation,
 	semanticEvidenceScore,
 } from "./citation-mapper";
@@ -290,7 +295,8 @@ function retainFigureCompanion(
 	return { selected, restoredFigureCount: 0 };
 }
 
-const MAX_PARENT_CONTEXT_CHARS = 1_600;
+const MAX_PARENT_CONTEXT_TOKENS = 1_200;
+const MAX_PARENT_CONTEXT_HARD_CHARS = 4_500;
 const MIN_PARENT_EXTRA_CHARS = 40;
 const SKIP_PARENT_RECORD_FILTERS = new Set([
 	"document",
@@ -455,28 +461,36 @@ function boundParentWindow(
 	) {
 		return null;
 	}
-	if (trimmedSection.length <= MAX_PARENT_CONTEXT_CHARS) {
+	if (
+		trimmedSection.length <= MAX_PARENT_CONTEXT_HARD_CHARS &&
+		estimateTokens(trimmedSection) <= MAX_PARENT_CONTEXT_TOKENS
+	) {
 		return trimmedSection;
 	}
-	const anchor = trimmedChild.slice(0, Math.min(80, trimmedChild.length));
-	const matchPos = anchor ? trimmedSection.indexOf(anchor) : -1;
-	if (matchPos < 0) {
-		return safeSlice(trimmedSection, 0, MAX_PARENT_CONTEXT_CHARS);
+	let anchor = trimmedChild;
+	let matchPos = anchor ? trimmedSection.indexOf(anchor) : -1;
+	if (matchPos < 0 && trimmedChild) {
+		anchor = sliceByTokenBudget(trimmedChild, Number.POSITIVE_INFINITY, 80);
+		matchPos = trimmedSection.indexOf(anchor);
 	}
-	const matchEnd = Math.min(
-		trimmedSection.length,
-		matchPos + trimmedChild.length,
-	);
-	const halfMargin = Math.max(
-		0,
-		Math.floor((MAX_PARENT_CONTEXT_CHARS - (matchEnd - matchPos)) / 2),
-	);
-	let start = Math.max(0, matchPos - halfMargin);
-	const end = Math.min(trimmedSection.length, start + MAX_PARENT_CONTEXT_CHARS);
-	if (end === trimmedSection.length) {
-		start = Math.max(0, end - MAX_PARENT_CONTEXT_CHARS);
-	}
-	return safeSlice(trimmedSection, start, end);
+	const bounded = (
+		matchPos < 0
+			? sliceByTokenBudget(
+					trimmedSection,
+					MAX_PARENT_CONTEXT_TOKENS,
+					MAX_PARENT_CONTEXT_HARD_CHARS,
+				)
+			: sliceAroundTokenBudget(
+					trimmedSection,
+					matchPos,
+					matchPos + anchor.length,
+					MAX_PARENT_CONTEXT_TOKENS,
+					MAX_PARENT_CONTEXT_HARD_CHARS,
+				)
+	).trim();
+	return bounded.length > trimmedChild.length + MIN_PARENT_EXTRA_CHARS
+		? bounded
+		: null;
 }
 
 async function expandParentContexts(input: {

@@ -24,6 +24,7 @@ import {
 } from "../../src/core/retrieval/provider-request";
 import { OpenAICompatibleRerankProvider } from "../../src/core/retrieval/rerank/provider";
 import { ScopedRetrievalCache } from "../../src/core/retrieval/retrieval-cache";
+import { estimateTokens } from "../../src/core/text/token-estimate";
 
 const scope: AuthorizedScope = {
 	organizationId: "tenant-a",
@@ -1775,6 +1776,7 @@ test("parent-child expansion supports legacy source_chunk_ids matching and enfor
 			}).payload,
 			record_id: "chk:document-a:3",
 			section_path: "第三章",
+			chunk_policy_version: "v1",
 		},
 	};
 	const longPrefix = "前序背景。".repeat(300);
@@ -1820,7 +1822,7 @@ test("parent-child expansion supports legacy source_chunk_ids matching and enfor
 		topK: 1,
 	});
 	const parentCtx = result.citations[0]?.parent_context ?? "";
-	assert.ok(parentCtx.length > 0 && parentCtx.length <= 1_600);
+	assert.ok(parentCtx.length >= 1_150 && parentCtx.length <= 1_200);
 	assert.ok(parentCtx.includes("子块正文仅包含一部分条款说明。"));
 
 	const unauthorizedStore: RetrievalVectorStore = {
@@ -1860,6 +1862,77 @@ test("parent-child expansion supports legacy source_chunk_ids matching and enfor
 		}),
 		RetrievalSecurityViolationError,
 	);
+});
+
+test("parent context centers lengthy English sections and respects the hard character cap", async () => {
+	const childBody = "The matched safety clause is mandatory.";
+	const child = hit({
+		id: "child",
+		text: childBody,
+		chunkIndex: 3,
+		score: 0.9,
+	});
+	child.payload.parent_record_id = "section-parent";
+	for (const [before, after, minimum, hardCap] of [
+		[
+			"The background explains how the previous policy handled restricted transfers. ".repeat(
+				60,
+			),
+			"The follow-up lists the required approval and reporting steps for all staff. ".repeat(
+				60,
+			),
+			3_900,
+			4_500,
+		],
+		["a ".repeat(3_000), "b ".repeat(3_000), 4_450, 4_500],
+	] as const) {
+		const parent = hit({
+			id: "parent",
+			text: `${before}${childBody} ${after}`,
+			chunkIndex: 0,
+			score: 0,
+			recordType: "section",
+		});
+		parent.payload.record_id = "section-parent";
+		const service = new DefaultRetrievalService(
+			embeddings,
+			{
+				async search() {
+					return [child];
+				},
+				async listCorpus() {
+					return [];
+				},
+				async lookupSections() {
+					return [parent];
+				},
+			},
+			null,
+			{
+				hybridEnabled: false,
+				rerankEnabled: false,
+				rerankTopK: 6,
+				bm25TopK: 20,
+				rrfK: 60,
+			},
+		);
+		const result = await service.retrieve({
+			query: "safety clause",
+			libraryId: "library-a",
+			scope,
+			topK: 1,
+		});
+		const expanded = result.citations[0]?.parent_context ?? "";
+		assert.ok(
+			expanded.length >= minimum && expanded.length <= hardCap,
+			String(expanded.length),
+		);
+		assert.ok(estimateTokens(expanded) <= 1_200);
+		const offset = expanded.indexOf(childBody);
+		assert.ok(
+			offset > 1_600 && expanded.length - offset - childBody.length > 1_600,
+		);
+	}
 });
 
 test("DefaultRetrievalService attaches adjacent sibling chunks when no parent section exists and enforces authorization", async () => {
