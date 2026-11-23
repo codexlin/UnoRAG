@@ -572,6 +572,8 @@ function sanitizeFigureFilenameSegment(value: string): string {
 	return (cleaned || "figure").slice(0, 80);
 }
 
+const MAX_FIGURE_ASSET_BYTES = 10 * 1024 * 1024;
+
 export class PostgresFigureAssetStore implements FigureAssetStorePort {
 	constructor(
 		private readonly pool: Pick<Pool, "query">,
@@ -589,6 +591,15 @@ export class PostgresFigureAssetStore implements FigureAssetStorePort {
 	}): Promise<ReadonlySet<string>> {
 		const persisted = new Set<string>();
 		for (const [index, asset] of input.assets.entries()) {
+			const identity = [
+				input.organizationId,
+				input.workspaceId,
+				input.libraryUuid,
+				input.documentId,
+				input.documentVersionId,
+				input.generationId,
+				asset.figureId,
+			];
 			// An individual attempt must own the object it may have to delete.
 			const storageKey = `org/${input.organizationId}/workspace/${input.workspaceId}/library/${input.libraryUuid}/document/${input.documentId}/version/${input.documentVersionId}/generation/${input.generationId}/figures/${index}-${randomUUID()}-${sanitizeFigureFilenameSegment(asset.figureId)}.${asset.extension}`;
 			const stored = await this.objectStorage.putBytes(
@@ -596,12 +607,12 @@ export class PostgresFigureAssetStore implements FigureAssetStorePort {
 				asset.bytes,
 				{
 					contentType: asset.mimeType,
-					maxBytes: 10 * 1024 * 1024,
+					maxBytes: MAX_FIGURE_ASSET_BYTES,
 				},
 			);
-			let inserted: QueryResult;
+			let inserted: boolean;
 			try {
-				inserted = await this.pool.query(
+				const result = await this.pool.query(
 					`
 				INSERT INTO app.document_figure_assets (
 					organization_id,
@@ -620,13 +631,7 @@ export class PostgresFigureAssetStore implements FigureAssetStorePort {
 				ON CONFLICT (generation_id, figure_id) DO NOTHING
 				`,
 					[
-						input.organizationId,
-						input.workspaceId,
-						input.libraryUuid,
-						input.documentId,
-						input.documentVersionId,
-						input.generationId,
-						asset.figureId,
+						...identity,
 						stored.key,
 						asset.mimeType,
 						stored.sizeBytes,
@@ -634,6 +639,10 @@ export class PostgresFigureAssetStore implements FigureAssetStorePort {
 						asset.pageEnd,
 					],
 				);
+				inserted = result.rowCount === 1;
+				if (!inserted) {
+					await this.verifyExistingAsset(identity, asset, stored.sizeBytes);
+				}
 			} catch (error) {
 				try {
 					await this.objectStorage.delete(stored.key);
@@ -645,12 +654,43 @@ export class PostgresFigureAssetStore implements FigureAssetStorePort {
 				}
 				throw error;
 			}
-			if (inserted.rowCount === 0) {
+			if (!inserted) {
 				await this.objectStorage.delete(stored.key);
 			}
 			persisted.add(asset.figureId);
 		}
 		return persisted;
+	}
+
+	private async verifyExistingAsset(
+		identity: string[],
+		asset: ParsedFigureAsset,
+		sizeBytes: number,
+	): Promise<void> {
+		const { rows } = await this.pool.query<{ storage_key: string }>(
+			`
+			SELECT storage_key
+			FROM app.document_figure_assets
+			WHERE organization_id = $1 AND workspace_id = $2 AND library_id = $3
+			  AND document_id = $4 AND document_version_id = $5 AND generation_id = $6
+			  AND figure_id = $7 AND mime_type = $8 AND size_bytes = $9
+			  AND page_start IS NOT DISTINCT FROM $10 AND page_end IS NOT DISTINCT FROM $11
+			`,
+			[...identity, asset.mimeType, sizeBytes, asset.pageStart, asset.pageEnd],
+		);
+		const existing = rows[0];
+		if (existing) {
+			const bytes = await this.objectStorage.load(
+				existing.storage_key,
+				MAX_FIGURE_ASSET_BYTES,
+			);
+			if (Buffer.compare(bytes, asset.bytes) === 0) return;
+		}
+		throw new WorkerTaskError(
+			"Figure asset conflicts with a previously stored asset for this generation",
+			"document_figure_asset_conflict",
+			"permanent",
+		);
 	}
 }
 

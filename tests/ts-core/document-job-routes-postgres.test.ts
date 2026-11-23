@@ -215,25 +215,38 @@ test("document ingest cancel and retry routes enforce the persisted lifecycle", 
 		assert.equal(snapshot.libraryUuid, ids.library);
 		const storage = new LocalObjectStorage(storageRoot);
 		const assetStore = new PostgresFigureAssetStore(pool, storage);
-		const saved = await assetStore.persist({
+		const asset = {
+			figureId: "figure-1",
+			bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+			mimeType: "image/png",
+			extension: "png",
+			pageStart: 1,
+			pageEnd: null,
+		} as const;
+		const figureInput = {
 			organizationId: ids.organization,
 			workspaceId: ids.workspace,
 			libraryUuid: snapshot.libraryUuid,
 			documentId: ids.document,
 			documentVersionId: ids.version,
 			generationId: ids.generation,
-			assets: [
-				{
-					figureId: "figure-1",
-					bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
-					mimeType: "image/png",
-					extension: "png",
-					pageStart: 1,
-					pageEnd: 1,
-				},
-			],
-		});
-		assert.deepEqual([...saved], ["figure-1"]);
+			assets: [asset],
+		};
+		assert.deepEqual(
+			await assetStore.persist(figureInput),
+			new Set(["figure-1"]),
+		);
+		assert.deepEqual(
+			await assetStore.persist(figureInput),
+			new Set(["figure-1"]),
+		);
+		await assert.rejects(
+			assetStore.persist({
+				...figureInput,
+				assets: [{ ...asset, pageEnd: 2 }],
+			}),
+			{ code: "document_figure_asset_conflict" },
+		);
 		const [{ library_id, storage_key }] = (
 			await pool.query(
 				"SELECT library_id, storage_key FROM app.document_figure_assets WHERE generation_id = $1",
@@ -241,7 +254,10 @@ test("document ingest cancel and retry routes enforce the persisted lifecycle", 
 			)
 		).rows;
 		assert.equal(library_id, ids.library);
-		assert.equal(await storage.exists(storage_key), true);
+		assert.deepEqual(
+			new Uint8Array(await storage.load(storage_key, 32)),
+			asset.bytes,
+		);
 
 		const [session, securityRedis, cancelRoute, retryRoute] =
 			await routeModules;

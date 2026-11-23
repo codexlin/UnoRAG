@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import pg from "pg";
 
@@ -60,6 +61,7 @@ const routeModules = Promise.all([
 	import("../../src/lib/server/auth/session-registry"),
 	import("../../src/lib/server/auth/session-token"),
 	import("../../src/server/http/document/download-handler"),
+	import("../../src/app/api/libraries/[libraryId]/route"),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolveFilename;
 });
@@ -69,7 +71,7 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 		databaseUrl && redisUrl
 			? false
 			: "DOCUMENT_ACL_ROUTES_TEST_DATABASE_URL and REDIS_INTEGRATION_TEST_URL are required",
-}, async () => {
+}, async (t) => {
 	assert.ok(databaseUrl);
 	assert.ok(redisUrl);
 	const pool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
@@ -228,6 +230,7 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 			sessionRegistry,
 			sessionTokens,
 			download,
+			libraryRoute,
 		] = await routeModules;
 		await pool.query(
 			`UPDATE app.documents SET projected_acl_fingerprint = acl_fingerprint WHERE id = $1`,
@@ -569,6 +572,46 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 			audit_count: 1,
 		});
 
+		await t.test("metadata ACLs use all of a viewer's group IDs", async () => {
+			const memberGroup = randomUUID();
+			const restrictedGroup = randomUUID();
+			await pool.query(
+				`INSERT INTO app.groups (id, organization_id, name)
+				 VALUES ($1, $3, 'Viewer group'), ($2, $3, 'Restricted group')`,
+				[memberGroup, restrictedGroup, ids.organization],
+			);
+			await pool.query(
+				"INSERT INTO app.group_members (group_id, user_id) VALUES ($1, $2)",
+				[memberGroup, ids.viewer],
+			);
+			const groupAcl = await aclRoute.PUT(
+				request("PUT", ownerToken, {
+					scope: "restricted",
+					group_ids: [restrictedGroup],
+				}),
+				context,
+			);
+			assert.equal(groupAcl?.status, 200);
+			const list = () =>
+				documentsRoute.GET(
+					new Request(`http://local/api/libraries/${ragLibraryId}/documents`, {
+						headers: viewerHeaders,
+					}),
+					documentsContext,
+				);
+			const hidden = await list();
+			assert.equal(hidden.status, 200);
+			assert.deepEqual(await hidden.json(), []);
+			await pool.query(
+				"INSERT INTO app.group_members (group_id, user_id) VALUES ($1, $2)",
+				[restrictedGroup, ids.viewer],
+			);
+			const visible = await list();
+			assert.equal(visible.status, 200);
+			const [item] = await visible.json();
+			assert.equal(item?.document_id, ids.document);
+		});
+
 		const granteeId = randomUUID();
 		const secondWorkspaceId = randomUUID();
 		const grantee = {
@@ -852,6 +895,134 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 				})
 			).documents,
 			[],
+		);
+
+		await t.test(
+			"library deletion and grant revocation share the document lock order",
+			async () => {
+				const secondLibrary = randomUUID();
+				const secondRagLibrary = `acl-deletion-${suffix}`;
+				const [firstDocument, secondDocument] = [
+					randomUUID(),
+					randomUUID(),
+				].sort();
+				await pool.query(
+					`INSERT INTO app.libraries (id, organization_id, workspace_id, rag_library_id, name, status)
+				 VALUES ($1, $2, $3, $4, 'Concurrent deletion', 'ready')`,
+					[secondLibrary, ids.organization, ids.workspace, secondRagLibrary],
+				);
+				// Insert the higher UUID first so heap order and lock order differ.
+				await pool.query(
+					`INSERT INTO app.documents (
+					id, organization_id, workspace_id, library_id, rag_document_id,
+					name, filename, content_type, status, created_by
+				) SELECT id, $1, $2, $3, id::text, 'Document', 'test.txt', 'text/plain', 'ready', $4
+				  FROM unnest($5::uuid[]) AS id`,
+					[
+						ids.organization,
+						ids.workspace,
+						secondLibrary,
+						ids.owner,
+						[secondDocument, firstDocument],
+					],
+				);
+				await pool.query(
+					"INSERT INTO app.workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'viewer')",
+					[ids.workspace, granteeId],
+				);
+				await pool.query(
+					`INSERT INTO app.document_acl (document_id, subject_type, subject_id, permission)
+				 VALUES ($1, 'principal', $3, 'read'), ($2, 'principal', $3, 'read')`,
+					[firstDocument, secondDocument, granteeId],
+				);
+
+				const blocker = await pool.connect();
+				const pending: PromiseSettledResult<Response>[][] = [];
+				const writes: Promise<PromiseSettledResult<Response>[]>[] = [];
+				try {
+					await blocker.query("BEGIN");
+					const result = await blocker.query<{ pid: number }>(
+						"SELECT pg_backend_pid() AS pid",
+					);
+					const pid = result.rows[0].pid;
+					await blocker.query(
+						"SELECT id FROM app.documents WHERE id = $1 FOR UPDATE",
+						[firstDocument],
+					);
+					const waitForDocumentLock = async (expected: number) => {
+						const deadline = Date.now() + 5000;
+						do {
+							const { rows } = await pool.query<{ blocked: number }>(
+								`WITH RECURSIVE blocked(pid) AS (
+								SELECT $1::integer
+								UNION
+								SELECT activity.pid FROM pg_stat_activity AS activity
+								JOIN blocked ON blocked.pid = ANY(pg_blocking_pids(activity.pid))
+							) SELECT count(*)::int - 1 AS blocked FROM blocked`,
+								[pid],
+							);
+							if (rows[0].blocked === expected) return;
+							await delay(25);
+						} while (Date.now() < deadline);
+						assert.fail(
+							`expected ${expected} writes to wait for the first document`,
+						);
+					};
+
+					writes.push(
+						Promise.allSettled([
+							libraryRoute.DELETE(
+								new Request(`http://local/api/libraries/${secondRagLibrary}`, {
+									method: "DELETE",
+									headers: ownerHeaders,
+								}),
+								{ params: Promise.resolve({ libraryId: secondRagLibrary }) },
+							),
+						]),
+					);
+					await waitForDocumentLock(1);
+					await pool.query(
+						"SELECT id FROM app.documents WHERE id = $1 FOR UPDATE NOWAIT",
+						[secondDocument],
+					);
+					writes.push(
+						Promise.allSettled([
+							membersRoute.DELETE(
+								new Request("http://local/api/workspace/members", {
+									method: "DELETE",
+									headers: ownerHeaders,
+									body: JSON.stringify({ user_id: granteeId }),
+								}),
+							),
+						]),
+					);
+					await waitForDocumentLock(2);
+				} finally {
+					await blocker.query("ROLLBACK");
+					blocker.release();
+					pending.push(...(await Promise.all(writes)));
+				}
+				assert.deepEqual(
+					pending.flat().map((result) => {
+						if (result.status === "rejected") throw result.reason;
+						return result.value.status;
+					}),
+					[202, 200],
+				);
+				const { rows } = await pool.query(
+					`SELECT d.status, a.subject_id FROM app.documents AS d
+				 JOIN app.document_acl AS a ON a.document_id = d.id
+				 WHERE d.library_id = $1 ORDER BY d.id`,
+					[secondLibrary],
+				);
+				assert.deepEqual(
+					rows,
+					Array.from({ length: 2 }, () => ({
+						status: "deleting",
+						subject_id: EMPTY_RESTRICTED_ACL_PRINCIPAL,
+					})),
+				);
+			},
 		);
 
 		await session.revokeSessionCookieHeader(

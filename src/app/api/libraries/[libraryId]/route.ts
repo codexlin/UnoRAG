@@ -272,6 +272,8 @@ export async function DELETE(request: Request, context: RouteContext) {
 					notInArray(documents.status, ["deleted", "deleting"]),
 				),
 			)
+			// Match the document lock order used by workspace grant revocation.
+			.orderBy(documents.id)
 			.for("update");
 
 		if (liveDocuments.length === 0) {

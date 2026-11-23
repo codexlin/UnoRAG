@@ -20,7 +20,7 @@ export function documentMetadataVisibilitySql(
 	if (canWriteLibraries(identity)) return sql`true`;
 	const groupMatch =
 		identity.groupIds.length > 0
-			? sql`or (acl.subject_type = 'group' and acl.subject_id = any(${identity.groupIds}::uuid[]))`
+			? sql`or (acl.subject_type = 'group' and acl.subject_id = any(${sql.param(identity.groupIds)}::uuid[]))`
 			: sql``;
 	return sql`(
 		not exists (

@@ -225,11 +225,12 @@ test("a bootstrap administrator must replace the initial password before normal 
 					body: unknown,
 					site = "same-origin",
 				) =>
-					new Request(`https://unorag.test${path}`, {
+					new Request(`http://localhost:3000${path}`, {
 						method: "POST",
 						headers: {
 							cookie: cookieHeader,
-							origin: "https://unorag.test",
+							origin: "http://127.0.0.1:3001",
+							host: "127.0.0.1:3001",
 							"sec-fetch-site": site,
 							"content-type": "application/json",
 							"x-real-ip": `2001:db8::${suffix.slice(0, 4)}`,

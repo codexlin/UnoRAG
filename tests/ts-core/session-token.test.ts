@@ -47,6 +47,68 @@ test("cookie mutations reject foreign origins and non-same-origin fetch sites", 
 	);
 });
 
+test("cookie mutations use the public host when Next uses an internal listener URL", () => {
+	const request = (headers: Record<string, string>) =>
+		new NextRequest("http://localhost:3000/api/auth/password", {
+			method: "POST",
+			headers: { "sec-fetch-site": "same-origin", ...headers },
+		});
+	const composeHeaders = {
+		host: "127.0.0.1:3001",
+		"x-forwarded-host": "127.0.0.1:3001",
+		"x-forwarded-proto": "http",
+	};
+	const developmentBaseUrl = "http://localhost:3001";
+	assert.equal(
+		isSameOriginSessionRequest(
+			request({ ...composeHeaders, origin: "http://127.0.0.1:3001" }),
+			developmentBaseUrl,
+		),
+		true,
+	);
+	assert.equal(
+		isSameOriginSessionRequest(request({ origin: "null" }), "file:///tmp"),
+		false,
+	);
+	for (const origin of [
+		"http://localhost:3000",
+		"http://localhost:3001",
+		"https://127.0.0.1:3001",
+	]) {
+		assert.equal(
+			isSameOriginSessionRequest(
+				request({ ...composeHeaders, origin }),
+				developmentBaseUrl,
+			),
+			false,
+		);
+	}
+	const proxyHeaders = { host: "web:3000", "x-forwarded-proto": "https" };
+	const publicBaseUrl = "https://unorag.test";
+	assert.equal(
+		isSameOriginSessionRequest(
+			request({
+				...proxyHeaders,
+				"x-forwarded-host": "unorag.test",
+				origin: publicBaseUrl,
+			}),
+			publicBaseUrl,
+		),
+		true,
+	);
+	assert.equal(
+		isSameOriginSessionRequest(
+			request({
+				...proxyHeaders,
+				"x-forwarded-host": "foreign.test",
+				origin: "https://foreign.test",
+			}),
+			publicBaseUrl,
+		),
+		false,
+	);
+});
+
 function withSecret<T>(run: () => T): T {
 	const previous = process.env.UNORAG_SESSION_SECRET;
 	process.env.UNORAG_SESSION_SECRET = SECRET;

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { isSameOriginSessionRequest } from "../../lib/server/auth/same-origin";
 import { canManageMembers } from "../../lib/server/workspace-permissions.mjs";
 import {
 	type WorkspaceNotificationScope,
@@ -94,11 +95,7 @@ export function createWorkspaceNotificationHandlers(deps: Dependencies) {
 				workspaceId: identity.workspaceId,
 			};
 			if (action === "read") return json(await deps.read(scope));
-			if (request.headers.get("sec-fetch-site") === "cross-site") {
-				return json({ detail: "forbidden" }, 403);
-			}
-			const origin = request.headers.get("origin");
-			if (origin && origin !== new URL(deps.appBaseUrl ?? request.url).origin) {
+			if (!isSameOriginSessionRequest(request, deps.appBaseUrl)) {
 				return json({ detail: "forbidden" }, 403);
 			}
 			if (

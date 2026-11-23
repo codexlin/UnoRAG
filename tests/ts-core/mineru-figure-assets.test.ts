@@ -399,8 +399,11 @@ test("figure persistence cleans up failed and redundant uploads without removing
 		const libraryUuid = randomUUID();
 		const failure = new Error("figure row insert failed");
 		const pool = {
-			async query(_text: string, values: unknown[]) {
+			async query(sql: string, values: unknown[]) {
 				assert.equal(values[2], libraryUuid);
+				if (sql.includes("SELECT storage_key")) {
+					return { rows: [{ storage_key: attemptedKeys[0] }] };
+				}
 				const storageKey = String(values[7]);
 				assert.equal(await storage.exists(storageKey), true);
 				attemptedKeys.push(storageKey);
@@ -430,10 +433,17 @@ test("figure persistence cleans up failed and redundant uploads without removing
 		assert.deepEqual(await store.persist(input), new Set(["fig-1"]));
 		await assert.rejects(store.persist(input), failure);
 		assert.deepEqual(await store.persist(input), new Set(["fig-1"]));
-		assert.equal(new Set(attemptedKeys).size, 3);
+		await assert.rejects(
+			store.persist({
+				...input,
+				assets: [{ ...input.assets[0], bytes: Uint8Array.of(1, 2, 4) }],
+			}),
+			{ code: "document_figure_asset_conflict" },
+		);
+		assert.equal(new Set(attemptedKeys).size, 4);
 		assert.deepEqual(
 			await Promise.all(attemptedKeys.map((key) => storage.exists(key))),
-			[true, false, false],
+			[true, false, false, false],
 		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
