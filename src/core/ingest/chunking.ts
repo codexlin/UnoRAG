@@ -21,6 +21,7 @@ export const CHUNK_POLICY_VERSION = "v2";
 
 export const DEFAULT_MAX_CHUNK_TOKENS = 400;
 const DEFAULT_MAX_CHARS = 1_800;
+const MAX_TABLE_HEADER_CONTEXT_TOKENS = 120;
 
 const PROFILE_TARGET_RATIOS = {
 	precise: 0.65,
@@ -214,15 +215,18 @@ export async function chunkDocument(
 	const sections = splitIntoSections(input.nodes, profile.headingBoundaryLevel);
 	const chunks: Chunk[] = [];
 
-	for (const section of sections) {
+	for (const [sectionInstance, section] of sections.entries()) {
 		for (const node of section.specialNodes) {
+			const preserveWhitespace = node.type === "code";
+			const nodeText = node.text.trim();
 			let body =
-				node.text.trim() ||
+				nodeText ||
 				tableJsonToText(node.table_json) ||
 				(node.type === "figure" && node.meta?.has_figure_asset === true
 					? `图表${node.page_start ? `（第${node.page_start}页）` : ""}`
 					: "");
 			if (!body) continue;
+			if (preserveWhitespace && nodeText) body = node.text;
 			const decision = specialNodeDecision(node.type);
 			const pageStart = node.page_start ?? section.pageStart;
 			const pageEnd = node.page_end ?? section.pageEnd;
@@ -230,8 +234,19 @@ export async function chunkDocument(
 				...decisionMetadata(decision, profile),
 				...profileMetadata,
 			};
+			let headerContext = "";
 			if (node.type === "table" && (node.table_ir || node.table_json)) {
 				const table = tableParts(node);
+				const headerLabels = table.headers.map((header, index) => {
+					const unit = node.table_ir?.columns[index]?.unit;
+					return unit && !header.includes(unit)
+						? `${header}（${unit}）`
+						: header;
+				});
+				headerContext = sliceByTokenBudget(
+					headerLabels.join(" | "),
+					MAX_TABLE_HEADER_CONTEXT_TOKENS,
+				).trim();
 				meta.headers = table.headers;
 				meta.rows = table.rows;
 				meta.table_rows_per_record = profile.tableRowsPerRecord;
@@ -253,13 +268,24 @@ export async function chunkDocument(
 				}
 			}
 			const structured = node.type === "table" || node.type === "code";
+			// Leave room to repeat table column names and units in continued embeddings.
+			const bodyProfile = {
+				...structuredProfile,
+				targetTokens: headerContext
+					? Math.min(
+							structuredProfile.targetTokens,
+							DEFAULT_MAX_CHUNK_TOKENS - estimateTokens(headerContext) - 1,
+						)
+					: structuredProfile.targetTokens,
+			};
 			const pieces = structured
-				? recursiveSplit(body, structuredProfile, ["\n"])
+				? recursiveSplit(body, bodyProfile, ["\n"], preserveWhitespace)
 				: [body];
 			const pieceMetadata = structured
 				? {
-						...decisionMetadata(decision, structuredProfile),
+						...decisionMetadata(decision, bodyProfile),
 						...profileMetadata,
+						...(headerContext ? { table_header_context: headerContext } : {}),
 					}
 				: meta;
 			for (const [pieceIndex, piece] of pieces.entries()) {
@@ -276,6 +302,7 @@ export async function chunkDocument(
 						}),
 						document: input,
 						sectionPath: section.sectionPath,
+						sectionInstance,
 						headingText: section.headingText,
 						pageStart,
 						pageEnd,
@@ -355,6 +382,7 @@ export async function chunkDocument(
 					preamble,
 					document: input,
 					sectionPath: section.sectionPath,
+					sectionInstance,
 					headingText: section.headingText,
 					pageStart: section.pageStart,
 					pageEnd: section.pageEnd,
@@ -573,6 +601,7 @@ function makeChunk(input: {
 	preamble: string;
 	document: DocumentIR;
 	sectionPath: string | null;
+	sectionInstance: number;
 	headingText: string | null;
 	pageStart: number | null;
 	pageEnd: number | null;
@@ -582,7 +611,8 @@ function makeChunk(input: {
 	decision: ChunkDecision;
 	meta: Record<string, unknown>;
 }): Chunk {
-	const body = input.body.trim();
+	const body =
+		input.decision.strategy === "code" ? input.body : input.body.trim();
 	const preamble = input.preamble.trim();
 	return ChunkSchema.parse({
 		chunk_index: input.index,
@@ -600,7 +630,7 @@ function makeChunk(input: {
 		split_strategy: input.decision.strategy,
 		source_format: input.document.source_format,
 		content_hash: contentFingerprint(input.document),
-		meta: input.meta,
+		meta: { ...input.meta, section_instance: input.sectionInstance },
 	});
 }
 
@@ -673,9 +703,10 @@ function recursiveSplit(
 	text: string,
 	profile: ChunkingProfile,
 	separators: readonly string[] = RECURSIVE_SEPARATORS,
+	preserveWhitespace = false,
 ): string[] {
-	const cleaned = text.trim();
-	if (!cleaned) return [];
+	const cleaned = preserveWhitespace ? text : text.trim();
+	if (!cleaned.trim()) return [];
 	const { targetChars, targetTokens } = profile;
 	const fits = (piece: string) => fitsBudget(piece, targetChars, targetTokens);
 	const parts = splitBySeparators(cleaned, separators, fits);
@@ -687,7 +718,7 @@ function recursiveSplit(
 			buffer = candidate;
 			continue;
 		}
-		if (buffer.trim()) merged.push(buffer.trim());
+		if (buffer.trim()) merged.push(preserveWhitespace ? buffer : buffer.trim());
 		if (fits(part)) {
 			const overlap = sliceTailByTokenBudget(
 				buffer,
@@ -702,11 +733,13 @@ function recursiveSplit(
 			);
 			buffer = overlap + part;
 		} else {
-			for (const piece of budgetWindow(part, profile)) merged.push(piece);
+			for (const piece of budgetWindow(part, profile, preserveWhitespace)) {
+				merged.push(piece);
+			}
 			buffer = "";
 		}
 	}
-	if (buffer.trim()) merged.push(buffer.trim());
+	if (buffer.trim()) merged.push(preserveWhitespace ? buffer : buffer.trim());
 	return merged;
 }
 
@@ -727,7 +760,11 @@ function splitBySeparators(
 	);
 }
 
-function budgetWindow(text: string, profile: ChunkingProfile): string[] {
+function budgetWindow(
+	text: string,
+	profile: ChunkingProfile,
+	preserveWhitespace = false,
+): string[] {
 	const pieces: string[] = [];
 	let start = 0;
 	while (start < text.length) {
@@ -737,7 +774,7 @@ function budgetWindow(text: string, profile: ChunkingProfile): string[] {
 			profile.targetChars,
 		);
 		if (!piece) break;
-		if (piece.trim()) pieces.push(piece.trim());
+		if (piece.trim()) pieces.push(preserveWhitespace ? piece : piece.trim());
 		if (start + piece.length === text.length) break;
 		const firstWidth = (piece.codePointAt(0) ?? 0) > 0xffff ? 2 : 1;
 		const tail = sliceTailByTokenBudget(

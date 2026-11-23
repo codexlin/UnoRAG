@@ -116,7 +116,7 @@ test("large table and code projections retain content and keep embeddings within
 	const document = DocumentIRSchema.parse(fixture);
 	const table = document.nodes.find((node) => node.type === "table");
 	assert.ok(table);
-	const headers = ["Item", "Details"];
+	const headers = ["Item", "预算（万元）"];
 	const rows = Array.from({ length: 60 }, (_, index) => [
 		`row-${index}`,
 		index === 10 ? "值".repeat(9_000) : "描述".repeat(10),
@@ -125,8 +125,11 @@ test("large table and code projections retain content and keep embeddings within
 	table.table_json = { headers, rows };
 	table.text = [headers, ...rows].map((row) => row.join(" | ")).join("\n");
 	const code = [
-		"startOfCode();",
-		...Array.from({ length: 700 }, () => "  emit(record.someField, payload);"),
+		"\tstartOfCode();",
+		...Array.from(
+			{ length: 700 },
+			(_, index) => `  emit(record[${index}], payload);`,
+		),
 		"中".repeat(9_000),
 		"endOfCode();",
 	].join("\n");
@@ -171,6 +174,23 @@ test("large table and code projections retain content and keep embeddings within
 				embed_text.endsWith(body),
 		),
 	);
+	const tableChunks = chunkPayloads.filter(
+		({ split_strategy }) => split_strategy === "table",
+	);
+	assert.ok(
+		tableChunks
+			.slice(1)
+			.every(({ embed_text }) => embed_text.includes("Item | 预算（万元）")),
+	);
+	assert.ok(
+		tableChunks.slice(1).some(({ body }) => !body?.includes("预算（万元）")),
+	);
+	const codeChunks = chunkPayloads.filter(
+		({ split_strategy }) => split_strategy === "code",
+	);
+	assert.ok(codeChunks.slice(1).some(({ body }) => body?.startsWith("  emit")));
+	assert.equal(codeChunks.map(({ body }) => body).join(""), code);
+	assert.ok(codeChunks[0].embed_text.includes("\tstartOfCode();"));
 	const tableRecords = payloads.filter(
 		({ record_type }) => record_type === "table",
 	);

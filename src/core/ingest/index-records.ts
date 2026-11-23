@@ -33,6 +33,7 @@ export type IndexRecord = {
 	organizationId: string;
 	workspaceId: string;
 	sectionPath?: string;
+	sectionInstance?: number;
 	headingText?: string;
 	body: string;
 	embedText: string;
@@ -75,6 +76,7 @@ export const IndexWritePayloadSchema = z
 		_point_id: z.string().uuid(),
 		preamble: z.string().optional(),
 		section_path: z.string().optional(),
+		section_instance: z.number().int().nonnegative().optional(),
 		heading_text: z.string().optional(),
 		page: z.string().optional(),
 		page_start: z.number().int().positive().optional(),
@@ -278,12 +280,16 @@ export function buildSectionRecords(
 	>,
 	maxChars = 2_400,
 ): IndexRecord[] {
-	const runs: Array<{ path: string; chunks: Chunk[] }> = [];
+	const runs: Array<{ path: string; instance?: number; chunks: Chunk[] }> = [];
 	for (const chunk of chunks) {
 		const path = chunk.section_path?.trim() || "__root__";
+		const instance = sectionInstance(chunk);
 		const previous = runs.at(-1);
-		if (previous?.path === path) previous.chunks.push(chunk);
-		else runs.push({ path, chunks: [chunk] });
+		if (previous?.path === path && previous.instance === instance) {
+			previous.chunks.push(chunk);
+		} else {
+			runs.push({ path, instance, chunks: [chunk] });
+		}
 	}
 	const occurrences = new Map<string, number>();
 	const records: IndexRecord[] = [];
@@ -351,6 +357,7 @@ export function buildSectionRecords(
 				recordType: "section",
 				recordId,
 				sectionPath: displayPath,
+				sectionInstance: run.instance,
 				headingText: heading ?? undefined,
 				body,
 				embedText: prefix ? `${prefix}\n\n${body}` : body,
@@ -558,14 +565,18 @@ function chunkPayload(
 	parentRecordId?: string,
 ): IndexWritePayload {
 	const recordId = chunkRecordId(options.documentId, chunk.chunk_index);
+	const body = displayText(chunk);
+	const header = textValue(chunk.meta.table_header_context);
+	const embeddingBody =
+		header && !body.includes(header) ? `${header}\n\n${body}` : body;
 	const payload: Record<string, unknown> = {
 		chunk_index: chunk.chunk_index,
-		text: displayText(chunk),
-		body: displayText(chunk),
+		text: body,
+		body,
 		embed_text:
 			chunk.table_id || ["table", "code"].includes(chunk.split_strategy)
 				? boundedEmbedText(
-						displayText(chunk),
+						embeddingBody,
 						chunk.preamble.trim(),
 						DEFAULT_MAX_CHUNK_TOKENS,
 					)
@@ -598,6 +609,7 @@ function chunkPayload(
 	}
 	copy(payload, "preamble", chunk.preamble);
 	copy(payload, "section_path", chunk.section_path);
+	copy(payload, "section_instance", sectionInstance(chunk));
 	copy(payload, "heading_text", chunk.heading_text);
 	copy(payload, "page", chunk.page_label);
 	copy(payload, "page_start", chunk.page_start);
@@ -656,6 +668,7 @@ function recordPayload(
 		payload.source_node_ids = [...record.sourceNodeIds];
 	}
 	copy(payload, "section_path", record.sectionPath);
+	copy(payload, "section_instance", record.sectionInstance);
 	copy(payload, "heading_text", record.headingText);
 	copy(payload, "page", record.pageLabel);
 	copy(payload, "page_start", record.pageStart);
@@ -796,7 +809,13 @@ function sha1(value: string): string {
 }
 
 function displayText(chunk: Chunk): string {
-	return (chunk.body || chunk.text || "").trim();
+	const body = chunk.body || chunk.text || "";
+	return chunk.split_strategy === "code" ? body : body.trim();
+}
+
+function sectionInstance(chunk: Chunk): number | undefined {
+	const instance = chunk.meta.section_instance;
+	return typeof instance === "number" ? instance : undefined;
 }
 
 function boundedEmbedText(

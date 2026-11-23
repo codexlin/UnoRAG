@@ -38,6 +38,7 @@ const StoredQdrantPayloadSchema = z
 		parent_record_id: z.string().nullable().optional(),
 		preamble: z.string().nullable().optional(),
 		section_path: z.string().nullable().optional(),
+		section_instance: z.number().int().nonnegative().nullable().optional(),
 		heading_text: z.string().nullable().optional(),
 		page: z.union([z.string(), z.number()]).nullable().optional(),
 		page_start: z.number().int().nullable().optional(),

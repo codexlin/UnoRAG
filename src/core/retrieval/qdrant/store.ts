@@ -71,6 +71,7 @@ export type HybridSearchInput = {
 type ExpansionTarget = {
 	documentId: string;
 	generationId: string;
+	sectionInstance?: number;
 };
 
 export type SectionLookupTarget = ExpansionTarget &
@@ -384,5 +385,8 @@ function expansionScopeConditions(target: ExpansionTarget) {
 	return [
 		match("doc_id", target.documentId),
 		match("generation_id", target.generationId),
+		...(target.sectionInstance === undefined
+			? []
+			: [match("section_instance", target.sectionInstance)]),
 	];
 }

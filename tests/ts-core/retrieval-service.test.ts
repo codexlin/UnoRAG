@@ -252,6 +252,77 @@ test("Ask threshold admits lexical-only matches from RRF and excludes weak term 
 	assert.equal(semanticEvidenceScore(result.citations[0]), 1);
 });
 
+test("whole lexical identifiers survive conversational Ask thresholds without admitting near matches", async () => {
+	for (const [code, nearMatch, query, threshold] of [
+		[
+			"POL-44",
+			"POL-440",
+			"Could you please tell me what the policy says about requesting travel reimbursement under POL-44?",
+			0.35,
+		],
+		[
+			"BX-2026-09",
+			"BX-2026-090",
+			"请帮我认真查一下为什么这个项目的采购审批记录里出现了 BX-2026-09 以及需要提供什么材料",
+			0.4,
+		],
+	] as const) {
+		const exact = hit({
+			id: "exact",
+			text: `Reference: ${code}.`,
+			chunkIndex: 0,
+			score: 0.01,
+		});
+		const near = hit({
+			id: "near",
+			text: `Reference: ${nearMatch}.`,
+			chunkIndex: 1,
+			score: 0.03,
+		});
+		const split = hit({
+			id: "split",
+			text: `References: ${code.split("-").join(", ")}.`,
+			chunkIndex: 2,
+			score: 0.02,
+		});
+		const service = new DefaultRetrievalService(
+			embeddings,
+			{
+				async search() {
+					return [];
+				},
+				async hybridSearch() {
+					return [near, split, exact];
+				},
+				async listCorpus() {
+					assert.fail("Hybrid should not scroll the corpus");
+				},
+			},
+			null,
+			{
+				hybridEnabled: true,
+				rerankEnabled: false,
+				rerankTopK: 6,
+				bm25TopK: 20,
+				rrfK: 60,
+			},
+		);
+		const result = await service.retrieve({
+			query,
+			libraryId: "library-a",
+			scope,
+			topK: 3,
+			options: { minimumEvidenceScore: threshold },
+		});
+		assert.deepEqual(
+			result.citations.map(({ id }) => id),
+			["exact"],
+		);
+		assert.equal(result.citations[0]?.dense_score, null);
+		assert.equal(semanticEvidenceScore(result.citations[0]), 1);
+	}
+});
+
 test("Public Retrieve retains unthresholded RRF order when Ask selection is not requested", async () => {
 	const result = await new DefaultRetrievalService(
 		embeddings,
@@ -2556,6 +2627,7 @@ test("Qdrant expansion filters exact targets before scrolling a large document",
 	});
 	child.payload.parent_record_id = "sec:target";
 	child.payload.section_path = "Target";
+	child.payload.section_instance = 3;
 	const parent = hit({
 		id: "parent",
 		text: "Target evidence with more context from the matching parent section".repeat(
@@ -2566,6 +2638,7 @@ test("Qdrant expansion filters exact targets before scrolling a large document",
 		score: 0,
 	});
 	parent.payload.record_id = "sec:target";
+	parent.payload.section_instance = 3;
 	const sameSection = hit({
 		id: "adjacent",
 		text: "The neighboring passage in the target section contains extra context.",
@@ -2573,6 +2646,7 @@ test("Qdrant expansion filters exact targets before scrolling a large document",
 		score: 0,
 	});
 	sameSection.payload.section_path = "Target";
+	sameSection.payload.section_instance = 3;
 	const otherSection = {
 		...sameSection,
 		id: "wrong",
@@ -2580,6 +2654,16 @@ test("Qdrant expansion filters exact targets before scrolling a large document",
 			...sameSection.payload,
 			chunk_index: 349,
 			section_path: "Other",
+		},
+	};
+	const previousSameTitle = {
+		...sameSection,
+		id: "previous-instance",
+		payload: {
+			...sameSection.payload,
+			chunk_index: 349,
+			section_instance: 2,
+			body: "Private to the previous same-titled section",
 		},
 	};
 	const irrelevant = Array.from({ length: 330 }, (_, chunkIndex) =>
@@ -2600,9 +2684,15 @@ test("Qdrant expansion filters exact targets before scrolling a large document",
 			id: "inactive-parent",
 			payload: { ...parent.payload, generation_id: "old-generation" },
 		},
+		{
+			...parent,
+			id: "wrong-section-instance",
+			payload: { ...parent.payload, section_instance: 2 },
+		},
 		parent,
 		sameSection,
 		otherSection,
+		previousSameTitle,
 	];
 	const scrollResults: string[][] = [];
 	const store = new QdrantRetrievalStore(
@@ -2647,6 +2737,10 @@ test("Qdrant expansion filters exact targets before scrolling a large document",
 	assert.match(
 		fallback.citations[0]?.parent_context ?? "",
 		/neighboring passage/,
+	);
+	assert.doesNotMatch(
+		fallback.citations[0]?.parent_context ?? "",
+		/previous same-titled/,
 	);
 	assert.deepEqual(scrollResults, [["parent"], [], ["adjacent"]]);
 });

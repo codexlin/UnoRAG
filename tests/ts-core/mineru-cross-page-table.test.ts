@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { chunkDocument } from "../../src/core/ingest/chunking";
+import { buildIndexPayloads } from "../../src/core/ingest/index-records";
 import { normalizeMinerUResult } from "../../src/core/parsing";
 
 const context = {
@@ -27,7 +28,7 @@ test("MinerU paths follow wrapped and nested headings through parsing and chunki
 				},
 				{ type: "image", page_idx: 1, img_caption: ["Inspection diagram"] },
 				{ type: "text", text: "Escalation", text_level: 2, page_idx: 2 },
-				{ type: "code", text: "notify(operator);", page_idx: 2 },
+				{ type: "code", text: "  notify(operator);", page_idx: 2 },
 				{ type: "text", text: "Appendix", text_level: 1, page_idx: 3 },
 				{ type: "text", text: "Additional material", page_idx: 3 },
 			],
@@ -50,6 +51,10 @@ test("MinerU paths follow wrapped and nested headings through parsing and chunki
 		],
 	);
 	const chunks = await chunkDocument(result.document);
+	assert.equal(
+		chunks.find(({ split_strategy }) => split_strategy === "code")?.body,
+		"  notify(operator);",
+	);
 	for (const [text, path] of [
 		["Check service status", "Operations Manual/Inspection"],
 		["Verify", "Operations Manual/Inspection"],
@@ -61,6 +66,51 @@ test("MinerU paths follow wrapped and nested headings through parsing and chunki
 			chunks.find(({ body }) => body.includes(text))?.section_path,
 			path,
 		);
+	}
+});
+
+test("consecutive MinerU sections with the same display title have different index parents", async () => {
+	const { document } = normalizeMinerUResult(
+		{
+			content_list: [
+				{ type: "text", text: "Manual", text_level: 1, page_idx: 0 },
+				{ type: "text", text: "Inspection", text_level: 2, page_idx: 0 },
+				{ type: "text", text: "Inspect the generator.", page_idx: 0 },
+				{ type: "text", text: "Inspection", text_level: 2, page_idx: 0 },
+				{ type: "text", text: "Inspect the pump.", page_idx: 0 },
+			],
+		},
+		context,
+	);
+	const chunks = await chunkDocument(document);
+	const payloads = buildIndexPayloads(chunks, {
+		documentId: document.id,
+		documentVersionId: "version",
+		generationId: "8d3c1bbb-0f89-4ccc-9db1-ae02bc38ab09",
+		libraryId: "library",
+		organizationId: "org",
+		workspaceId: "workspace",
+	});
+	const sections = payloads.filter(
+		({ record_type }) => record_type === "section",
+	);
+	const children = payloads.filter(
+		({ record_type }) => record_type === "chunk",
+	);
+	assert.deepEqual(
+		sections.map(({ section_path }) => section_path),
+		["Manual/Inspection", "Manual/Inspection"],
+	);
+	assert.deepEqual(
+		sections.map(({ body }) => body),
+		["Inspect the generator.", "Inspect the pump."],
+	);
+	assert.notEqual(sections[0].section_instance, sections[1].section_instance);
+	assert.notEqual(sections[0].record_id, sections[1].record_id);
+	for (const [index, child] of children.entries()) {
+		assert.equal(child.parent_record_id, sections[index].record_id);
+		assert.equal(child.section_instance, sections[index].section_instance);
+		assert.deepEqual(sections[index].source_chunk_ids, [child.record_id]);
 	}
 });
 

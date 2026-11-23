@@ -440,33 +440,43 @@ function rowValues(
 }
 
 const NUMERIC_CELL = /^[+-]?[\d,]+(?:\.\d+)?%?$/u;
-const YEAR_LABEL = /^(?:19|20)\d{2}年?$/u;
+const NUMERIC_HEADER_LABEL = /^(?:\d{1,4}|(?:19|20)\d{2}年)$/u;
 
-function hasYearSubheaders(
+function hasNumericSubheaders(
 	firstRow: number,
 	secondRow: number,
 	cols: readonly number[],
 	grid: Map<number, Map<number, string>>,
 	merges: readonly MergeRange[],
 ): boolean {
-	return merges.some((merge) => {
-		if (
-			merge.startRow !== firstRow ||
-			merge.endRow >= secondRow ||
-			merge.endCol <= merge.startCol
-		) {
-			return false;
-		}
-		const labels = cols
-			.filter((col) => col >= merge.startCol && col <= merge.endCol)
-			.map(
-				(col) => grid.get(secondRow)?.get(col)?.normalize("NFKC").trim() ?? "",
-			)
-			.filter(Boolean);
+	const groups = merges.filter(
+		(merge) =>
+			merge.startRow === firstRow &&
+			merge.endRow === firstRow &&
+			merge.endCol > merge.startCol &&
+			cols.includes(merge.startCol),
+	);
+	const occupied = cols.flatMap((col) => {
+		const value = grid.get(secondRow)?.get(col)?.normalize("NFKC").trim();
+		return value ? [{ col, value }] : [];
+	});
+	const belongsTo = (col: number, group: MergeRange) =>
+		col >= group.startCol && col <= group.endCol;
+	// An occupied standalone column (for example, a region name) identifies
+	// the first data row even when the remaining values look like years.
+	if (
+		occupied.some(({ col }) => !groups.some((group) => belongsTo(col, group)))
+	)
+		return false;
+	return groups.some((group) => {
+		const labels = occupied
+			.filter(({ col }) => belongsTo(col, group))
+			.map(({ value }) => value);
 		return (
-			labels.filter((label) => YEAR_LABEL.test(label)).length >= 2 &&
+			labels.filter((label) => NUMERIC_HEADER_LABEL.test(label)).length >= 2 &&
 			labels.every(
-				(label) => YEAR_LABEL.test(label) || !NUMERIC_CELL.test(label),
+				(label) =>
+					NUMERIC_HEADER_LABEL.test(label) || !NUMERIC_CELL.test(label),
 			)
 		);
 	});
@@ -516,15 +526,8 @@ function inferHeaderRowCount(
 	if (hasHorizontalMerge && blockRows.length >= 3) {
 		const secondRow = blockRows[1];
 		const secondVals = rowValues(grid, secondRow, cols);
-		const spansBothRows = merges.some(
-			(merge) =>
-				merge.startRow === firstRow &&
-				merge.endRow === secondRow &&
-				cols.includes(merge.startCol),
-		);
 		if (
-			spansBothRows ||
-			hasYearSubheaders(firstRow, secondRow, cols, grid, merges) ||
+			hasNumericSubheaders(firstRow, secondRow, cols, grid, merges) ||
 			!secondVals.some((value) => NUMERIC_CELL.test(value.trim()))
 		) {
 			return 2;
@@ -727,7 +730,7 @@ export async function parseXlsxDocument(
 				);
 				if (
 					!banner ||
-					hasYearSubheaders(rows[0], rows[1], cols, sheet.grid, sheet.merges)
+					hasNumericSubheaders(rows[0], rows[1], cols, sheet.grid, sheet.merges)
 				) {
 					break;
 				}

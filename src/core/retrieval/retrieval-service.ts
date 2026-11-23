@@ -200,6 +200,17 @@ function hitText(hit: QdrantSearchHit): string {
 	return heading && !body.includes(heading) ? `${heading}\n${body}` : body;
 }
 
+function lexicalIdentifiers(text: string): Set<string> {
+	const normalized = text
+		.normalize("NFKC")
+		.toLowerCase()
+		.replace(/\p{Dash_Punctuation}/gu, "-");
+	const words = normalized.match(/[a-z0-9]+(?:[-_./][a-z0-9]+)*/gu) ?? [];
+	return new Set(
+		words.filter((word) => /^[a-z]/u.test(word) && /\d/u.test(word)),
+	);
+}
+
 function lexicalEvidenceScorer(
 	query: string,
 ): (hit: QdrantSearchHit) => number {
@@ -211,11 +222,19 @@ function lexicalEvidenceScorer(
 	)
 		? tokens.filter((term) => !/^\p{Script=Han}$/u.test(term))
 		: tokens;
+	const identifiers = [...lexicalIdentifiers(query)];
 	return (hit) => {
-		const matched = new Set(tokenize(hitText(hit)));
-		return terms.length
+		const text = hitText(hit);
+		const matched = new Set(tokenize(text));
+		const termCoverage = terms.length
 			? terms.filter((term) => matched.has(term)).length / terms.length
 			: 0;
+		if (!identifiers.length) return termCoverage;
+		const matchedIdentifiers = lexicalIdentifiers(text);
+		const identifierCoverage =
+			identifiers.filter((identifier) => matchedIdentifiers.has(identifier))
+				.length / identifiers.length;
+		return Math.max(termCoverage, identifierCoverage);
 	};
 }
 
@@ -355,7 +374,9 @@ function findParentSection(
 		(section) =>
 			section.payload.record_type === "section" &&
 			section.payload.doc_id === child.payload.doc_id &&
-			section.payload.generation_id === child.payload.generation_id,
+			section.payload.generation_id === child.payload.generation_id &&
+			(section.payload.section_instance ?? null) ===
+				(child.payload.section_instance ?? null),
 	);
 	if (child.payload.parent_record_id) {
 		return (
@@ -389,10 +410,20 @@ function findParentSection(
 }
 
 function parentLookupTarget(child: QdrantSearchHit): SectionLookupTarget[] {
-	const { doc_id, generation_id, parent_record_id, record_id, section_path } =
-		child.payload;
+	const {
+		doc_id,
+		generation_id,
+		parent_record_id,
+		record_id,
+		section_path,
+		section_instance,
+	} = child.payload;
 	if (!generation_id) return [];
-	const identity = { documentId: doc_id, generationId: generation_id };
+	const identity = {
+		documentId: doc_id,
+		generationId: generation_id,
+		...(section_instance == null ? {} : { sectionInstance: section_instance }),
+	};
 	if (parent_record_id)
 		return [{ ...identity, parentRecordId: parent_record_id }];
 	if (record_id) return [{ ...identity, childRecordId: record_id }];
@@ -408,6 +439,9 @@ function chunkLocation(
 		generationId: hit.payload.generation_id ?? "",
 		chunkIndex,
 		sectionPath: hit.payload.section_path ?? null,
+		...(hit.payload.section_instance == null
+			? {}
+			: { sectionInstance: hit.payload.section_instance }),
 	} satisfies ChunkLookupTarget;
 }
 
@@ -417,6 +451,7 @@ function chunkLocationKey(target: ChunkLookupTarget): string {
 		target.generationId,
 		target.chunkIndex,
 		target.sectionPath,
+		target.sectionInstance ?? null,
 	]);
 }
 

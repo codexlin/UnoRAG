@@ -301,8 +301,17 @@ test("numeric year subheaders stay out of merged-header table data and aggregate
 				mergeRefs: ["B1:C1"],
 				rowsXml: `
 				<row r="1"><c r="A1" t="inlineStr"><is><t>Item</t></is></c><c r="B1" t="inlineStr"><is><t>Reading</t></is></c></row>
-				<row r="2"><c r="A2" t="inlineStr"><is><t>North</t></is></c><c r="B2"><v>10</v></c><c r="C2"><v>20</v></c></row>
+				<row r="2"><c r="A2" t="inlineStr"><is><t>North</t></is></c><c r="B2"><v>2024</v></c><c r="C2"><v>2025</v></c></row>
 				<row r="3"><c r="A3" t="inlineStr"><is><t>South</t></is></c><c r="B3"><v>30</v></c><c r="C3"><v>40</v></c></row>
+			`,
+			},
+			{
+				name: "Numbered subheaders",
+				mergeRefs: ["A1:A2", "B1:C1"],
+				rowsXml: `
+				<row r="1"><c r="A1" t="inlineStr"><is><t>Item</t></is></c><c r="B1" t="inlineStr"><is><t>Slot</t></is></c></row>
+				<row r="2"><c r="B2"><v>1</v></c><c r="C2"><v>2</v></c></row>
+				<row r="3"><c r="A3" t="inlineStr"><is><t>North</t></is></c><c r="B3"><v>10</v></c><c r="C3"><v>20</v></c></row>
 			`,
 			},
 		],
@@ -317,7 +326,7 @@ test("numeric year subheaders stay out of merged-header table data and aggregate
 		source: "upload",
 	});
 	const tables = doc.nodes.filter(({ type }) => type === "table");
-	assert.equal(tables.length, 2);
+	assert.equal(tables.length, 3);
 	assert.deepEqual(tables[0].table_ir?.header_rows.at(-1)?.slice(1), [
 		"2024",
 		"2025",
@@ -332,7 +341,20 @@ test("numeric year subheaders stay out of merged-header table data and aggregate
 			["南区", "200", "250", "25"],
 		],
 	);
-	assert.equal(tables[1].table_ir?.rows[0]?.cells[0]?.raw_text, "North");
+	assert.deepEqual(
+		tables[1].table_ir?.rows[0]?.cells.map(({ raw_text }) => raw_text),
+		["North", "2024", "2025"],
+	);
+	assert.deepEqual(tables[2].table_ir?.header_rows.at(-1)?.slice(1), [
+		"1",
+		"2",
+	]);
+	assert.deepEqual(
+		tables[2].table_ir?.rows.map(({ cells }) =>
+			cells.map(({ raw_text }) => raw_text),
+		),
+		[["North", "10", "20"]],
+	);
 	const chunks = await chunkDocument(doc);
 	const records = buildIndexPayloads(chunks, {
 		documentId: doc.id,
