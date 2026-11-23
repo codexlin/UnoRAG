@@ -370,13 +370,15 @@ async function release(page: Page, index: number, count: number) {
 		.toBeGreaterThan(before);
 }
 
-async function rejectOld(page: Page, index: number) {
+async function rejectStream(
+	page: Page,
+	index: number,
+	message = "delayed old transport rejection",
+) {
 	await page.evaluate(
-		(i) =>
-			window.__askStreamFixtures[i].controller.error(
-				new Error("delayed old transport rejection"),
-			),
-		index,
+		({ index, message }) =>
+			window.__askStreamFixtures[index].controller.error(new Error(message)),
+		{ index, message },
 	);
 }
 
@@ -910,7 +912,7 @@ for (const terminal of ["complete", "error"] as const) {
 		await expect(page.getByRole("textbox")).toBeEnabled();
 		if (terminal === "error") {
 			await expect(article.getByRole("alert")).toContainText(
-				"preview fixture stream interruption",
+				"回答生成失败，请重试",
 			);
 		}
 		await expect(
@@ -970,7 +972,7 @@ test("library switch removes an open citation preview and late old frames cannot
 	await expect(page.getByRole("article")).toHaveCount(0);
 	await expect(citationPreview(page)).toHaveCount(0);
 	await release(page, 0, 1);
-	await rejectOld(page, 0);
+	await rejectStream(page, 0);
 	await page.clock.runFor(400);
 	await expect(citationPreview(page)).toHaveCount(0);
 	await expect(
@@ -1135,12 +1137,7 @@ test("transport failure preserves the received answer and its usable citations",
 		score: 0.8,
 	};
 	await openAsk(page, [
-		[
-			meta(),
-			frame("citations", [citation]),
-			frame("token", partial),
-			frame("error", { message: "fixture provider interruption" }),
-		],
+		[meta(), frame("citations", [citation]), frame("token", partial)],
 	]);
 	await submit(page, "流中断的测试", 0);
 	await release(page, 0, 3);
@@ -1149,10 +1146,9 @@ test("transport failure preserves the received answer and its usable citations",
 	await expect(citationButton).toBeVisible();
 	await citationButton.focus();
 	const originalButton = await citationButton.elementHandle();
-	await release(page, 0, 1);
-	await closeStream(page, 0);
+	await rejectStream(page, 0, "读取服务器数据失败");
 	await expect(article.getByRole("alert")).toContainText(
-		"fixture provider interruption",
+		"回答连接中断，请重试",
 	);
 	await expect(article).toContainText("已收到的回答片段。");
 	expect(await originalButton?.evaluate((element) => element.isConnected)).toBe(
@@ -1996,7 +1992,7 @@ for (const terminal of ["cancelled", "error"] as const) {
 	}) => {
 		await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 		const partial = "保留的 **部分回答**。[1]\n\n- 尚未完成的条目";
-		const message = "fixture copy transport interruption";
+		const message = "已收到流式失败事件";
 		await openAsk(page, [
 			[
 				meta(),
@@ -2020,12 +2016,14 @@ for (const terminal of ["cancelled", "error"] as const) {
 				.last()
 				.click();
 			await release(page, 0, 2);
-			await rejectOld(page, 0);
+			await rejectStream(page, 0);
 			await expect(article).not.toContainText("STALE COPY CONTENT");
 		} else {
 			await release(page, 0, 1);
 			await closeStream(page, 0);
-			await expect(article.getByRole("alert")).toContainText(message);
+			await expect(article.getByRole("alert")).toContainText(
+				"回答生成失败，请重试",
+			);
 		}
 		await expect(page.getByRole("textbox")).toBeEnabled();
 		await expect(
@@ -2468,7 +2466,7 @@ test("stop flushes an unpainted tail and stale frames cannot restart the turn", 
 	).toBeVisible();
 	await expect(page.getByText("已停止", { exact: true })).toBeVisible();
 	await release(page, 0, 2);
-	await rejectOld(page, 0);
+	await rejectStream(page, 0);
 	await page.clock.runFor(64);
 	await expect(page.getByRole("article")).not.toContainText("STALE");
 	await expect(page.getByRole("textbox")).toBeEnabled();
@@ -2627,7 +2625,7 @@ test("same-turn retry survives late old metadata, done, rejection, and finally",
 	await release(page, 1, 2);
 	await expect(page.getByText("Current retry", { exact: true })).toBeVisible();
 	await release(page, 0, 5);
-	await rejectOld(page, 0);
+	await rejectStream(page, 0);
 	await expect(page.getByRole("article")).toHaveCount(1);
 	await expect(page.getByRole("article")).not.toContainText("STALE");
 	await expect(page.getByRole("textbox")).toBeDisabled();
@@ -2671,7 +2669,7 @@ test("library switch starts a clean session and ignores old work", async ({
 	await expect(page.getByRole("article")).toHaveCount(0);
 	await expect(page.getByRole("textbox")).toBeEnabled();
 	await release(page, 0, 2);
-	await rejectOld(page, 0);
+	await rejectStream(page, 0);
 	await submit(page, "Beta fixture question", 1);
 	expect(requests[1]).toMatchObject({ library_id: "stream-beta" });
 	expect(requests[1]).not.toHaveProperty("session_id");
@@ -2798,7 +2796,7 @@ test("URL thread switch hydrates archive and ignores old stream completion", asy
 		.poll(() => page.evaluate(() => window.__askStreamFixtures[0].aborted))
 		.toBe(true);
 	await release(page, 0, 2);
-	await rejectOld(page, 0);
+	await rejectStream(page, 0);
 	await expect(page.getByRole("article")).toHaveCount(1);
 	await expect(page.getByRole("article")).not.toContainText("STALE");
 	await submit(page, "Archive followup question", 1);
@@ -2816,6 +2814,73 @@ test("URL thread switch hydrates archive and ignores old stream completion", asy
 	await closeStream(page, 1);
 	await expect(page.getByRole("textbox")).toBeEnabled();
 	await expect(page.getByRole("article")).toHaveCount(2);
+});
+
+test("refreshed library inventory cannot move an archived stream to another library", async ({
+	page,
+}) => {
+	const requests = await openAsk(page, [
+		[
+			meta("archive-session", "fixture-archive"),
+			frame("token", "Partial archived answer"),
+			done(
+				"Unusable late archived answer",
+				"archive-session",
+				"fixture-archive",
+			),
+		],
+	]);
+	await page.evaluate(() =>
+		history.pushState(null, "", "/app/ask?thread=fixture-archive"),
+	);
+	const chooser = page.getByRole("combobox", { name: "知识库", exact: true });
+	await expect(chooser).toHaveValue("Stream Beta");
+	await submit(page, "Archived stream refresh", 0);
+	await release(page, 0, 2);
+	await expect(
+		page.getByText("Partial archived answer", { exact: true }),
+	).toBeVisible();
+	expect(requests[0]).toMatchObject({
+		library_id: "stream-beta",
+		thread_id: "fixture-archive",
+	});
+
+	let inventory: ApiLibrary[] = [
+		libraries[0],
+		{ ...libraries[1], status: "indexing", ready_count: 0 },
+	];
+	await page.route("**/api/libraries", (route) =>
+		route.fulfill({ json: inventory }),
+	);
+	async function refreshInventory() {
+		await page.clock.fastForward(16_000);
+		const response = page.waitForResponse(
+			(item) => new URL(item.url()).pathname === "/api/libraries",
+		);
+		await page.evaluate(() =>
+			window.dispatchEvent(new Event("visibilitychange")),
+		);
+		await response;
+	}
+	await refreshInventory();
+	await expect(chooser).toHaveValue("Stream Beta · 索引中");
+	expect(await page.evaluate(() => window.__askStreamFixtures[0].aborted)).toBe(
+		false,
+	);
+
+	inventory = [libraries[0]];
+	await refreshInventory();
+	await expect(chooser).not.toHaveValue("Stream Alpha");
+	await expect(page.getByRole("textbox")).toBeDisabled();
+	await expect
+		.poll(() => page.evaluate(() => window.__askStreamFixtures[0].aborted))
+		.toBe(true);
+	await release(page, 0, 1);
+	await rejectStream(page, 0);
+	await expect(
+		page.getByText("Unusable late archived answer", { exact: true }),
+	).toHaveCount(0);
+	expect(requests).toHaveLength(1);
 });
 
 test("switching to a failed thread clears the old answer and source drawer before the response", async ({

@@ -589,7 +589,7 @@ for (const [mode, revokeDropped] of [
 		assert.equal(retained?.outcome, "selected");
 		assert.equal(retained?.final_rank, 1);
 		assert.equal(pruned?.id, "call-4-1");
-		assert.equal(pruned?.outcome, "dropped_topk");
+		assert.equal(pruned?.outcome, "dropped_after_retrieval");
 		assert.equal(pruned?.final_rank, null);
 		assert.deepEqual(body.judge_summary, {
 			mode: "model",

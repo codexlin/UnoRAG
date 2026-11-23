@@ -928,7 +928,7 @@ async function handleNativeAskRequestInSpan(input: {
 							final_rank: finalRank,
 							outcome:
 								finalRank === null && candidate.outcome === "selected"
-									? "dropped_topk"
+									? "dropped_after_retrieval"
 									: candidate.outcome,
 						};
 					}),

@@ -887,8 +887,33 @@ export type AskStreamHandlers = {
 	onCitations?: (citations: ApiCitation[]) => void;
 	onToken?: (token: string) => void;
 	onDone?: (data: ApiAskResponse) => void;
-	onError?: (message: string) => void;
+	onError?: (message: string, code?: string) => void;
 };
+
+export class AskStreamRequestError extends Error {
+	constructor(
+		message: string,
+		readonly code?: string,
+		readonly status?: number,
+	) {
+		super(message);
+	}
+}
+
+function readAskErrorCode(value: unknown): string | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	if ("code" in value && typeof value.code === "string") return value.code;
+	if (
+		"detail" in value &&
+		value.detail &&
+		typeof value.detail === "object" &&
+		"code" in value.detail &&
+		typeof value.detail.code === "string"
+	) {
+		return value.detail.code;
+	}
+	return undefined;
+}
 
 function parseSseChunk(buffer: string): {
 	events: { event: string; data: string }[];
@@ -941,7 +966,17 @@ export async function askQuestionStream(
 	});
 	if (!response.ok || !response.body) {
 		const text = await response.text();
-		throw new Error(parseApiError(text) || `ask stream ${response.status}`);
+		let code: string | undefined;
+		try {
+			code = readAskErrorCode(JSON.parse(text));
+		} catch {
+			/* The response may be plain text. */
+		}
+		throw new AskStreamRequestError(
+			parseApiError(text) || `ask stream ${response.status}`,
+			code,
+			response.status,
+		);
 	}
 
 	const reader = response.body.getReader();
@@ -981,7 +1016,7 @@ export async function askQuestionStream(
 					typeof (payload as { message: unknown }).message === "string"
 						? (payload as { message: string }).message
 						: "stream error";
-				handlers.onError?.(message);
+				handlers.onError?.(message, readAskErrorCode(payload));
 			}
 		}
 	}

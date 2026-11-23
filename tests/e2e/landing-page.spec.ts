@@ -29,6 +29,7 @@ test("the selected brand stays visible in both themes and publishes explicit ico
 			page.getByRole("radio", { name: mode, exact: true }),
 		);
 		await page.keyboard.press("Escape");
+		await expect(page.locator('[data-slot="sheet-overlay"]')).toBeHidden();
 		await expect(page.locator("html")).toHaveClass(
 			mode === "深色" ? /dark/ : /light/,
 		);

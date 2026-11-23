@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { buttonVariants } from "../../src/components/ui/button";
 import { COLOR_THEMES } from "../../src/lib/appearance";
 import { selectAppearanceRadio, textContrast } from "./appearance-assertions";
 
@@ -99,6 +100,7 @@ test("appearance applies globally, persists, follows system, syncs tabs and rest
 	await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
 	await expect(page.locator("html")).toHaveClass(/dark/);
 	await expect(dialog).toHaveCSS("transition-property", "none");
+	await expect(dialog).toHaveCSS("animation-name", "none");
 	await expect
 		.poll(() =>
 			dialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
@@ -310,6 +312,56 @@ test("custom radius supports drag, keyboard, exact input and safe empty/range ha
 	await expect(
 		page.getByRole("button", { name: "登录", exact: true }),
 	).toHaveCSS("border-radius", "5px");
+});
+
+test("Claude dark popovers keep tinted evidence and destructive actions readable", async ({
+	page,
+}) => {
+	await page.emulateMedia({ reducedMotion: "reduce" });
+	await page.addInitScript(() => {
+		localStorage.setItem(
+			"unorag-appearance-v1",
+			JSON.stringify({ color: "claude", radius: "preset" }),
+		);
+		localStorage.setItem("unorag-theme", "dark");
+	});
+	await page.goto("/login");
+	await expect(page.locator("html")).toHaveAttribute(
+		"data-color-theme",
+		"claude",
+	);
+	await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+	// Exercise the shared destructive variant on the same surface as the member-removal footer.
+	await page.evaluate(
+		(buttonClass) => {
+			const popover = document.createElement("div");
+			popover.className = "fixed top-4 left-4 z-50 bg-popover p-4";
+			const evidence = document.createElement("span");
+			evidence.className = "bg-evidence/15 text-evidence";
+			evidence.textContent = "Evidence contrast";
+			const footer = document.createElement("div");
+			footer.className = "bg-muted/50 p-4";
+			const button = document.createElement("button");
+			button.className = buttonClass;
+			button.textContent = "Destructive contrast";
+			footer.append(button);
+			popover.append(evidence, footer);
+			document.body.append(popover);
+		},
+		buttonVariants({ variant: "destructive" }),
+	);
+	const button = page.getByRole("button", { name: "Destructive contrast" });
+	expect(
+		(await textContrast(page.getByText("Evidence contrast"))).ratio,
+	).toBeGreaterThanOrEqual(4.5);
+	const resting = await textContrast(button);
+	expect(resting.ratio).toBeGreaterThanOrEqual(4.5);
+	if (await page.evaluate(() => matchMedia("(hover: hover)").matches)) {
+		await button.hover();
+		const hovered = await textContrast(button);
+		expect(hovered.alpha).not.toBe(resting.alpha);
+		expect(hovered.ratio).toBeGreaterThanOrEqual(4.5);
+	}
 });
 
 test("primary button text remains readable in real resting and hover states", async ({

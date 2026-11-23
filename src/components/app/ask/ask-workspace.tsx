@@ -20,7 +20,7 @@ import { AskComposer } from "@/components/app/ask/ask-composer";
 import { AskConversationList } from "@/components/app/ask/ask-conversation-list";
 import { AskSourcesPanel } from "@/components/app/ask/ask-sources-panel";
 import {
-	AskStreamIncompleteError,
+	askStreamErrorText,
 	createAskStreamLifecycle,
 } from "@/components/app/ask/ask-stream-lifecycle";
 import {
@@ -31,6 +31,7 @@ import {
 	askTurnsReducer,
 	completedTurn,
 	type LocalTurn,
+	retainAuthorizedTrace,
 	toApiCitation,
 	toUiCitation,
 } from "@/components/app/ask/ask-turn-state";
@@ -170,6 +171,7 @@ function AskWorkspaceContent() {
 	const [input, setInput] = useState("");
 	const [sessionId, setSessionId] = useState<string | undefined>();
 	const [threadId, setThreadId] = useState<string | undefined>();
+	const [threadLibraryId, setThreadLibraryId] = useState("");
 	const [threadTitle, setThreadTitle] = useState<string | null>(null);
 	const [archiving, setArchiving] = useState(false);
 	const archivingRef = useRef(false);
@@ -177,9 +179,6 @@ function AskWorkspaceContent() {
 		| { kind: "resume_failed" }
 		| { kind: "archive_failed"; detail?: string }
 		| null
-	>(null);
-	const [resumeLibraryMissing, setResumeLibraryMissing] = useState<
-		string | null
 	>(null);
 	const [turns, dispatchTurns] = useReducer(askTurnsReducer, []);
 	const contextEpochRef = useRef(0);
@@ -204,6 +203,7 @@ function AskWorkspaceContent() {
 	);
 	const pendingArchiveRef = useRef<{
 		threadId: string;
+		libraryId: string;
 		turns: LocalTurn[];
 	} | null>(null);
 	const resumeThreadRef = useRef<string | null>(null);
@@ -222,6 +222,16 @@ function AskWorkspaceContent() {
 	);
 
 	const isStreaming = turns.some((turn) => turn.pending);
+	const library = libraries.find(
+		(item) =>
+			item.id === libraryId &&
+			item.status !== "deleting" &&
+			item.status !== "deleted",
+	);
+	const resumeLibraryMissing =
+		requestedThreadId && threadLibraryId && !librariesLoading && !library
+			? threadLibraryId
+			: null;
 	const isArchived = Boolean(threadId);
 	const canArchive =
 		!isArchived &&
@@ -229,46 +239,13 @@ function AskWorkspaceContent() {
 		!archiving &&
 		turns.some((turn) => !turn.pending && turn.question.trim());
 
-	useEffect(() => {
-		if (librariesLoading) return;
-		if (resumeLibraryMissing) return;
-		if (libraries.length === 0) {
-			setLibraryId("");
-			try {
-				window.localStorage.removeItem(ASK_LIBRARY_STORAGE_KEY);
-			} catch {
-				// Storage may be unavailable in hardened/private browser contexts.
-			}
-			return;
-		}
-
-		let storedId = "";
-		try {
-			storedId =
-				window.localStorage.getItem(ASK_LIBRARY_STORAGE_KEY)?.trim() ?? "";
-		} catch {
-			// Continue with the deterministic ready-library fallback.
-		}
-		const nextId = chooseAskLibraryId(libraries, libraryId || storedId);
-		if (nextId !== libraryId) {
-			setLibraryId(nextId);
-			return;
-		}
-		if (nextId) {
-			try {
-				window.localStorage.setItem(ASK_LIBRARY_STORAGE_KEY, nextId);
-			} catch {
-				// Selection still works when persistence is unavailable.
-			}
-		}
-	}, [libraries, librariesLoading, libraryId, resumeLibraryMissing]);
-
 	const resetConversation = useCallback(() => {
 		contextEpochRef.current += 1;
 		askStream.cancel(false);
 		resumeThreadRef.current = null;
 		pendingArchiveRef.current = null;
 		setThreadId(undefined);
+		setThreadLibraryId("");
 		setThreadTitle(null);
 		setSessionId(undefined);
 		setInput("");
@@ -282,8 +259,44 @@ function AskWorkspaceContent() {
 		setArchiveError(null);
 		setArchiving(false);
 		archivingRef.current = false;
-		setResumeLibraryMissing(null);
 	}, [askStream]);
+
+	useLayoutEffect(() => {
+		if (librariesLoading || library) return;
+		if (requestedThreadId) {
+			// A resumed thread stays bound to its own library through refreshes.
+			askStream.cancel();
+			return;
+		}
+		let storedId = "";
+		try {
+			storedId = window.localStorage.getItem(ASK_LIBRARY_STORAGE_KEY) ?? "";
+		} catch {
+			// The inventory can still supply the initial selection.
+		}
+		const nextId = chooseAskLibraryId(libraries, storedId);
+		if (libraryId !== nextId) {
+			if (libraryId) resetConversation();
+			setLibraryId(nextId);
+		}
+	}, [
+		askStream,
+		libraries,
+		librariesLoading,
+		library,
+		libraryId,
+		requestedThreadId,
+		resetConversation,
+	]);
+
+	useEffect(() => {
+		if (!library) return;
+		try {
+			window.localStorage.setItem(ASK_LIBRARY_STORAGE_KEY, library.id);
+		} catch {
+			// Selection still works when persistence is unavailable.
+		}
+	}, [library]);
 
 	useLayoutEffect(
 		() => () => {
@@ -296,18 +309,13 @@ function AskWorkspaceContent() {
 	useLayoutEffect(() => {
 		const previous = previousContextRef.current;
 		previousContextRef.current = { libraryId, requestedThreadId };
+		if (previous.libraryId !== libraryId) askStream.cancel(false);
 		if (previous.requestedThreadId !== requestedThreadId) {
 			if (pendingArchiveRef.current?.threadId !== requestedThreadId) {
 				resetConversation();
 			}
-		} else if (
-			!requestedThreadId &&
-			previous.libraryId &&
-			previous.libraryId !== libraryId
-		) {
-			resetConversation();
 		}
-	}, [libraryId, requestedThreadId, resetConversation]);
+	}, [askStream, libraryId, requestedThreadId, resetConversation]);
 
 	useEffect(() => {
 		const resumeId = requestedThreadId;
@@ -324,9 +332,12 @@ function AskWorkspaceContent() {
 			try {
 				const detail = await continueThread(resumeId, controller.signal);
 				if (!isCurrent()) return;
+				const archivedLibraryId = (detail.library_id || "").trim();
+				const pendingArchive = pendingArchiveRef.current;
 				const archivedTurns =
-					pendingArchiveRef.current?.threadId === resumeId
-						? pendingArchiveRef.current.turns
+					pendingArchive?.threadId === resumeId &&
+					pendingArchive.libraryId === archivedLibraryId
+						? pendingArchive.turns
 						: [];
 				pendingArchiveRef.current = null;
 				resumeThreadRef.current = resumeId;
@@ -335,19 +346,10 @@ function AskWorkspaceContent() {
 				sourceTriggerRef.current = null;
 				setDrawerOpen(false);
 				setThreadId(detail.id);
+				setThreadLibraryId(archivedLibraryId);
 				setThreadTitle(detail.title);
 				setSessionId(detail.session_id || detail.id);
-				const archivedLibraryId = (detail.library_id || "").trim();
-				if (
-					archivedLibraryId &&
-					!libraries.some((item) => item.id === archivedLibraryId)
-				) {
-					setResumeLibraryMissing(archivedLibraryId);
-					setLibraryId("");
-				} else {
-					setResumeLibraryMissing(null);
-					if (archivedLibraryId) setLibraryId(archivedLibraryId);
-				}
+				setLibraryId(archivedLibraryId);
 				dispatchTurns({
 					type: "hydrate",
 					turns: detail.turns.map((turn, index) => {
@@ -374,7 +376,9 @@ function AskWorkspaceContent() {
 							pending: false,
 							persisted: true,
 							retrievalDebug: turn.retrieval_debug || undefined,
-							traceDetails: sameTurn ? local.traceDetails : undefined,
+							traceDetails: sameTurn
+								? retainAuthorizedTrace(local.traceDetails, turn.citations)
+								: undefined,
 						};
 					}),
 				});
@@ -388,13 +392,7 @@ function AskWorkspaceContent() {
 			}
 		})();
 		return () => controller.abort();
-	}, [
-		apiReady,
-		libraries,
-		librariesLoading,
-		requestedThreadId,
-		resetConversation,
-	]);
+	}, [apiReady, librariesLoading, requestedThreadId, resetConversation]);
 
 	useLayoutEffect(() => {
 		const el = textareaRef.current;
@@ -403,15 +401,11 @@ function AskWorkspaceContent() {
 		if (input) el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
 	}, [input]);
 
-	const library = useMemo(
-		() => libraries.find((item) => item.id === libraryId) ?? null,
-		[libraries, libraryId],
-	);
-
 	const canAsk = Boolean(
 		isAskableLibrary(library) &&
 			apiReady &&
 			!archiving &&
+			(!threadId || libraryId === threadLibraryId) &&
 			(!requestedThreadId ||
 				(threadId === requestedThreadId &&
 					resumeThreadRef.current === requestedThreadId)),
@@ -513,8 +507,13 @@ function AskWorkspaceContent() {
 				})),
 			});
 			if (epoch !== contextEpochRef.current) return;
-			pendingArchiveRef.current = { threadId: detail.id, turns: readyTurns };
+			pendingArchiveRef.current = {
+				threadId: detail.id,
+				libraryId,
+				turns: readyTurns,
+			};
 			setThreadId(detail.id);
+			setThreadLibraryId(libraryId);
 			setThreadTitle(detail.title);
 			setSessionId(detail.session_id || detail.id);
 			// Keep Ask blocked until the URL-driven archive hydration has settled.
@@ -576,7 +575,10 @@ function AskWorkspaceContent() {
 			{
 				onMeta: (meta) => {
 					setSessionId(meta.session_id);
-					if (meta.thread_id) setThreadId(meta.thread_id);
+					if (meta.thread_id) {
+						setThreadId(meta.thread_id);
+						setThreadLibraryId(libraryId);
+					}
 					dispatchTurns({
 						type: "meta",
 						turnId: pendingId,
@@ -606,7 +608,10 @@ function AskWorkspaceContent() {
 				},
 				onDone: (result) => {
 					setSessionId(result.session_id);
-					if (result.thread_id) setThreadId(result.thread_id);
+					if (result.thread_id) {
+						setThreadId(result.thread_id);
+						setThreadLibraryId(libraryId);
+					}
 					const citations = result.citations.map(toUiCitation);
 					const debug: ApiRetrievalDebug = result.retrieval_debug || {};
 					const completedAt = Date.now();
@@ -659,30 +664,13 @@ function AskWorkspaceContent() {
 				onTerminal: ({ cancelled, error: err }) => {
 					const completedAt = Date.now();
 					const durationMs = Math.round(performance.now() - startedAtMs);
-					let error: string | undefined;
-					if (!cancelled) {
-						if (err instanceof AskStreamIncompleteError) {
-							error = t(
-								"回答流意外结束，请重试",
-								"The answer stream ended unexpectedly. Try again.",
-							);
-						} else {
-							error =
-								err instanceof Error
-									? err.message
-									: t(
-											"请求失败，请确认 API 已启动",
-											"Request failed. Check that the API is running.",
-										);
-						}
-					}
 					dispatchTurns({
 						type: "terminal",
 						turnId: pendingId,
 						completedAt,
 						durationMs,
 						cancelled,
-						error,
+						error: cancelled ? undefined : askStreamErrorText(err, t),
 					});
 				},
 			},
@@ -721,7 +709,7 @@ function AskWorkspaceContent() {
 					drawerOpen={drawerOpen}
 					isArchived={isArchived}
 					libraries={libraries}
-					library={library}
+					library={library ?? null}
 					libraryId={libraryId}
 					onArchive={() => void handleArchive()}
 					onDrawerOpenChange={(open) => {

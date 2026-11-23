@@ -4,6 +4,7 @@ import test from "node:test";
 import {
 	ASK_TOKEN_BUFFER_LIMIT,
 	ASK_TOKEN_FLUSH_MS,
+	askStreamErrorText,
 	createAskStreamLifecycle,
 } from "../../src/components/app/ask/ask-stream-lifecycle";
 import {
@@ -14,8 +15,10 @@ import {
 import {
 	type ApiAskResponse,
 	type AskStreamHandlers,
+	AskStreamRequestError,
 	askQuestionStream,
 } from "../../src/lib/api";
+import { interfaceText } from "../../src/lib/i18n/locale";
 
 function deferred() {
 	let resolve!: () => void;
@@ -455,7 +458,7 @@ test("real SSE reader preserves split network Unicode and flushes before done wi
 	assert.deepEqual(painted, [answer]);
 });
 
-test("access-changed SSE error uses message, flushes the tail, and rejects later done", async (t) => {
+test("access-changed SSE preserves its code for localization, flushes the tail, and rejects later done", async (t) => {
 	const message = "\u8bbf\u95ee\u6743\u9650\u5df2\u53d8\u5316";
 	const frames = [
 		`event: token\ndata: ${JSON.stringify("received tail")}\n\n`,
@@ -484,11 +487,72 @@ test("access-changed SSE error uses message, flushes the tail, and rejects later
 	);
 	assert.equal(terminals.length, 1);
 	assert.equal(terminals[0].cancelled, false);
-	assert.ok(terminals[0].error instanceof Error);
+	assert.ok(terminals[0].error instanceof AskStreamRequestError);
 	assert.equal(terminals[0].error.message, message);
+	assert.equal(terminals[0].error.code, "ask_access_changed");
+	assert.equal(
+		askStreamErrorText(terminals[0].error, interfaceText("en")),
+		"Your access changed. Ask again.",
+	);
+	assert.equal(
+		askStreamErrorText(terminals[0].error, interfaceText("zh-CN")),
+		"访问权限已变化，请重新发起提问",
+	);
 	assert.equal(tailAtTerminal, "received tail");
 	assert.equal(completed, false);
 	assert.deepEqual(painted, ["received tail"]);
+});
+
+test("reader rejections and Ask HTTP errors use localized interface copy", async (t) => {
+	const transportError = new Error("读取服务器数据失败");
+	const reader = new ReadableStream({
+		pull(controller) {
+			controller.error(transportError);
+		},
+	});
+	const fetch = t.mock.method(
+		globalThis,
+		"fetch",
+		async () => new Response(reader),
+	);
+	const lifecycle = createAskStreamLifecycle(askQuestionStream);
+	const received: unknown[] = [];
+	const run = () =>
+		lifecycle.run(
+			{ question: "q", libraryId: "library" },
+			{
+				onTerminal: ({ cancelled, error }) => {
+					assert.equal(cancelled, false);
+					received.push(error);
+				},
+			},
+		);
+	await run();
+	assert.equal(received[0], transportError);
+	assert.equal(
+		askStreamErrorText(received[0], interfaceText("en")),
+		"The connection to the answer stream was interrupted. Try again.",
+	);
+	assert.equal(
+		askStreamErrorText(received[0], interfaceText("zh-CN")),
+		"回答连接中断，请重试",
+	);
+
+	fetch.mock.mockImplementation(async () =>
+		Response.json(
+			{ detail: { code: "llm_overloaded", message: "模型繁忙" } },
+			{ status: 503 },
+		),
+	);
+	await run();
+	assert.equal(
+		askStreamErrorText(received[1], interfaceText("en")),
+		"The AI service is busy. Try again later.",
+	);
+	assert.equal(
+		askStreamErrorText(received[1], interfaceText("zh-CN")),
+		"AI 服务繁忙，请稍后重试",
+	);
 });
 
 test("completion mapping failure terminalizes instead of silently leaving a pending turn", async () => {
