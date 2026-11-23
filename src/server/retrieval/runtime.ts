@@ -3,6 +3,12 @@ import "server-only";
 import { QdrantClient } from "@qdrant/js-client-rest";
 
 import {
+	DEFAULT_LLM_BASE_URL,
+	resolveLlmApiKey,
+	resolveLlmBaseUrl,
+} from "@/core/ai/model-environment";
+
+import {
 	DefaultRetrievalService,
 	OpenAICompatibleEmbeddingProvider,
 	OpenAICompatibleRerankProvider,
@@ -42,30 +48,14 @@ function enabled(name: string, fallback = false): boolean {
 	return value === "1" || value === "true" || value === "yes";
 }
 
-function llmApiKey(): string {
-	return (
-		process.env.OPENAI_API_KEY?.trim() ||
-		process.env.DASHSCOPE_API_KEY?.trim() ||
-		""
-	);
-}
-
-function llmBaseUrl(): string {
-	return (
-		process.env.OPENAI_BASE_URL?.trim() ||
-		process.env.DASHSCOPE_BASE_URL?.trim() ||
-		"https://dashscope.aliyuncs.com/compatible-mode/v1"
-	);
-}
-
 let runtime: DefaultRetrievalService | undefined;
 
 export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 	if (runtime) return runtime;
-	const apiKey = llmApiKey();
+	const apiKey = resolveLlmApiKey();
 	if (!apiKey) {
 		throw new Error(
-			"OPENAI_API_KEY or DASHSCOPE_API_KEY is required for TypeScript retrieval",
+			"LLM_API_KEY (or OPENAI_API_KEY / DASHSCOPE_API_KEY) is required for TypeScript retrieval",
 		);
 	}
 	const qdrantTimeoutMs = positiveInteger("QDRANT_TIMEOUT_MS", 5_000);
@@ -82,18 +72,19 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		vectorSize: dimensions,
 		distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
 	}).ensure();
-	// The store awaits the original promise. This observer prevents an
-	// unhandled rejection if Qdrant fails before the first request arrives.
-	void collectionReady.catch(() => undefined);
+	const vectorSchema = collectionReady.then((result) => result.vectorSchema);
+	// Observe the chained rejection until the store can await the contract.
+	void vectorSchema.catch(() => undefined);
 	const embeddings = new OpenAICompatibleEmbeddingProvider({
 		apiKey,
-		baseUrl: llmBaseUrl(),
+		baseUrl: resolveLlmBaseUrl() ?? DEFAULT_LLM_BASE_URL,
 		model: required("EMBEDDING_MODEL", "text-embedding-v3"),
 		dimensions,
 		batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
 		timeoutMs: positiveInteger("EMBEDDING_TIMEOUT_MS", 15_000),
 	});
 	const rerankEnabled = enabled("TS_RETRIEVAL_RERANK_ENABLED");
+	const hybridEnabled = enabled("TS_RETRIEVAL_HYBRID_ENABLED", true);
 	const reranker = new OpenAICompatibleRerankProvider({
 		apiKey,
 		baseUrl: required(
@@ -107,11 +98,12 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		embeddings,
 		new QdrantRetrievalStore(qdrant, collection, collectionReady, {
 			timeoutMs: qdrantTimeoutMs,
-			vectorSchema: collectionReady.then((result) => result.vectorSchema),
+			vectorSchema,
 		}),
 		reranker,
 		{
-			hybridEnabled: enabled("TS_RETRIEVAL_HYBRID_ENABLED"),
+			hybridEnabled,
+			hybridAllowed: hybridEnabled,
 			rerankEnabled,
 			rerankTopK: positiveInteger("RERANK_TOP_K", 6),
 			bm25TopK: positiveInteger("BM25_TOP_K", 20),

@@ -64,6 +64,38 @@ test("ask contract accepts only the stable public fields", () => {
 	}
 });
 
+test("public Ask accepts a boolean trace opt-in and discards it for Service Keys", () => {
+	const request = { question: "q", library_id: "lib-1" };
+	for (const value of [true, false]) {
+		assert.deepEqual(
+			normalizePublicApiRequest("ask", {
+				...request,
+				include_trace_details: value,
+			}),
+			{ ok: true, payload: request },
+		);
+	}
+	assert.equal(
+		normalizePublicApiRequest("ask", {
+			...request,
+			include_trace_details: "true",
+		}).ok,
+		false,
+	);
+	assert.equal(
+		contract.components.schemas.AskRequest.properties.include_trace_details
+			.type,
+		"boolean",
+	);
+	for (const key of [
+		"retrieval_inspection",
+		"rewritten_question",
+		"judge_summary",
+	]) {
+		assert.equal(PUBLIC_ASK_SUCCESS_KEYS.includes(key), false);
+	}
+});
+
 test("retrieve normalizes question alias and validates public filters", () => {
 	assert.deepEqual(
 		normalizePublicApiRequest("retrieve", {

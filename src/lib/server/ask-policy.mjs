@@ -9,11 +9,14 @@
 
 export const ANSWER_PROFILES = ["precise", "balanced", "exploratory"];
 export const RETRIEVAL_ENHANCEMENTS = ["auto", "off", "on"];
+export const RETRIEVAL_OVERRIDES = ["inherit", "off", "on"];
 export const EVIDENCE_REQUIREMENTS = ["strict", "standard", "relaxed"];
 
 export const ASK_PUBLIC_KEYS = [
 	"answer_profile",
 	"retrieval_enhancement",
+	"hybrid_retrieval",
+	"reranking",
 	"session_memory_enabled",
 	"evidence_requirement",
 ];
@@ -22,7 +25,7 @@ export const ASK_PUBLIC_KEYS = [
 export const ASK_INTERNAL_DEFAULTS = Object.freeze({
 	retrieve_top_k: 6,
 	answer_min_score: 0.4,
-	hybrid_enabled: false,
+	hybrid_enabled: true,
 	rerank_enabled: false,
 	citation_adjudicate_enabled: true,
 	citation_adjudicate_absolute_floor: 0.35,
@@ -33,6 +36,8 @@ export const ASK_INTERNAL_DEFAULTS = Object.freeze({
 export const PUBLIC_ASK_DEFAULTS = Object.freeze({
 	answer_profile: "balanced",
 	retrieval_enhancement: "auto",
+	hybrid_retrieval: "inherit",
+	reranking: "inherit",
 	session_memory_enabled: true,
 	evidence_requirement: "standard",
 });
@@ -115,6 +120,12 @@ export function normalizePublicAsk(raw) {
 	return {
 		answer_profile: answer,
 		retrieval_enhancement: enhancement,
+		hybrid_retrieval: RETRIEVAL_OVERRIDES.includes(src.hybrid_retrieval)
+			? src.hybrid_retrieval
+			: PUBLIC_ASK_DEFAULTS.hybrid_retrieval,
+		reranking: RETRIEVAL_OVERRIDES.includes(src.reranking)
+			? src.reranking
+			: PUBLIC_ASK_DEFAULTS.reranking,
 		session_memory_enabled: memory,
 		evidence_requirement: evidence,
 	};
@@ -197,8 +208,14 @@ export function resolveAskPolicy(raw, opts = {}) {
 		public: publicView,
 		retrieve_top_k: base.retrieve_top_k,
 		answer_min_score: minScore,
-		hybrid_enabled: hybrid,
-		rerank_enabled: rerank,
+		hybrid_enabled:
+			publicView.hybrid_retrieval === "inherit"
+				? hybrid
+				: publicView.hybrid_retrieval === "on",
+		rerank_enabled:
+			publicView.reranking === "inherit"
+				? rerank
+				: publicView.reranking === "on",
 		citation_adjudicate_enabled: adjudicate,
 		citation_adjudicate_absolute_floor: floor,
 		session_memory_enabled: publicView.session_memory_enabled,
@@ -214,6 +231,14 @@ export function resolvedAskAsOverrideKnobs(resolved) {
 		answer_min_score: resolved.answer_min_score,
 		hybrid_enabled: resolved.hybrid_enabled,
 		rerank_enabled: resolved.rerank_enabled,
+		...(resolved.public.hybrid_retrieval === "off" ||
+		(resolved.public.hybrid_retrieval === "inherit" &&
+			resolved.retrieval_enhancement_resolved_from === "off")
+			? { hybrid_retry_enabled: false }
+			: {}),
+		...(resolved.public.reranking === "off"
+			? { rerank_retry_enabled: false }
+			: {}),
 		citation_adjudicate_enabled: resolved.citation_adjudicate_enabled,
 		citation_adjudicate_absolute_floor:
 			resolved.citation_adjudicate_absolute_floor,

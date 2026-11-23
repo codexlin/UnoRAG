@@ -8,11 +8,19 @@ import {
 	type SplitStrategy,
 } from "../document-ir";
 import {
+	estimateTokens,
+	sliceByTokenBudget,
+	sliceTailByTokenBudget,
+} from "../text/token-estimate";
+import {
 	type ContextualRetrievalOptions,
 	contextualizeChunks,
 } from "./contextual-retrieval";
 
-export const CHUNK_POLICY_VERSION = "v1";
+export const CHUNK_POLICY_VERSION = "v2";
+
+const DEFAULT_MAX_TOKENS = 400;
+const DEFAULT_MAX_CHARS = 1_800;
 
 const PROFILE_TARGET_RATIOS = {
 	precise: 0.65,
@@ -30,6 +38,8 @@ const RECURSIVE_SEPARATORS = [
 	"？",
 	". ",
 	"; ",
+	"! ",
+	"? ",
 	" ",
 ] as const;
 
@@ -37,12 +47,15 @@ export type ChunkProfileName = keyof typeof PROFILE_TARGET_RATIOS;
 
 export type ChunkingProfile = {
 	name: ChunkProfileName;
+	targetTokens: number;
+	maxTokens: number;
+	overlapTokens: number;
 	targetChars: number;
 	maxChars: number;
 	overlapChars: number;
 	headingBoundaryLevel: number;
 	semanticEnabled: boolean;
-	semanticMinChars: number;
+	semanticMinChars?: number;
 	semanticBreakPercentile: number;
 	semanticMinChunkChars: number;
 	tableRowsPerRecord: number;
@@ -85,17 +98,35 @@ export function buildChunkingProfile(
 	const name = options.profileName ?? "balanced";
 	const ratio = PROFILE_TARGET_RATIOS[name];
 	if (ratio === undefined) throw new Error(`unknown chunking profile: ${name}`);
-	const maxChars = Math.max(100, Math.trunc(options.chunkSize ?? 500));
-	const targetChars = Math.max(
+	const charSized = options.chunkSize !== undefined;
+	const maxChars = Math.max(
 		100,
-		Math.min(maxChars, Math.round(maxChars * ratio)),
+		Math.trunc(options.chunkSize ?? DEFAULT_MAX_CHARS),
 	);
-	const overlapChars = Math.max(
-		0,
-		Math.min(Math.trunc(options.chunkOverlap ?? 80), targetChars - 1),
-	);
+	const targetChars = charSized
+		? Math.max(100, Math.round(maxChars * ratio))
+		: maxChars;
+	const maxTokens = charSized ? Number.POSITIVE_INFINITY : DEFAULT_MAX_TOKENS;
+	const targetTokens = Math.round(maxTokens * ratio);
+	const charOverlap = options.chunkOverlap ?? (charSized ? 80 : undefined);
+	const overlapChars =
+		charOverlap === undefined
+			? Number.POSITIVE_INFINITY
+			: Math.max(0, Math.min(Math.trunc(charOverlap), targetChars - 1));
+	const overlapTokens =
+		charOverlap === undefined ? 60 : Number.POSITIVE_INFINITY;
+	const semanticMinChars =
+		options.semanticMinChars !== undefined || charSized
+			? Math.max(
+					charSized ? maxChars : 0,
+					Math.trunc(options.semanticMinChars ?? 1_200),
+				)
+			: undefined;
 	return {
 		name,
+		targetTokens,
+		maxTokens,
+		overlapTokens,
 		targetChars,
 		maxChars,
 		overlapChars,
@@ -104,10 +135,7 @@ export function buildChunkingProfile(
 			Math.trunc(options.headingBoundaryLevel ?? 2),
 		),
 		semanticEnabled: options.semanticEnabled ?? false,
-		semanticMinChars: Math.max(
-			maxChars,
-			Math.trunc(options.semanticMinChars ?? 1_200),
-		),
+		semanticMinChars,
 		semanticBreakPercentile: Math.max(
 			1,
 			Math.min(99, Math.trunc(options.semanticBreakPercentile ?? 85)),
@@ -122,12 +150,53 @@ export function buildChunkingProfile(
 	};
 }
 
+export function recommendChunkProfile(input: DocumentIR): ChunkProfileName {
+	let tableVolume = 0;
+	let totalVolume = 0;
+	for (const node of input.nodes) {
+		const volume = nonWhitespaceLength(node.text);
+		if (node.type !== "table") {
+			totalVolume += volume;
+			continue;
+		}
+		const tableChars = volume || tableCellVolume(node);
+		tableVolume += tableChars;
+		totalVolume += tableChars;
+	}
+	return tableVolume * 5 > totalVolume * 2 ? "table_heavy" : "balanced";
+}
+
+function tableCellVolume(node: DocumentNode): number {
+	const { headers, rows } = tableParts(node);
+	let volume = headers.reduce(
+		(sum, cell) => sum + nonWhitespaceLength(cell),
+		0,
+	);
+	for (const row of rows) {
+		for (const cell of row) volume += nonWhitespaceLength(cell);
+	}
+	return volume;
+}
+
+function nonWhitespaceLength(text: string): number {
+	let count = 0;
+	for (const character of text) {
+		if (!/\s/u.test(character)) count += 1;
+	}
+	return count;
+}
+
 export async function chunkDocument(
 	input: DocumentIR,
 	options: ChunkingOptions = {},
 ): Promise<Chunk[]> {
-	const profile = buildChunkingProfile(options);
 	if (input.nodes.length === 0) return [];
+	const profileName = options.profileName ?? recommendChunkProfile(input);
+	const profile = buildChunkingProfile({ ...options, profileName });
+	const profileMetadata =
+		options.profileName === undefined && profileName === "table_heavy"
+			? { profile_auto_selected: true }
+			: {};
 	const sections = splitIntoSections(input.nodes, profile.headingBoundaryLevel);
 	const chunks: Chunk[] = [];
 
@@ -143,7 +212,10 @@ export async function chunkDocument(
 			const decision = specialNodeDecision(node.type);
 			const pageStart = node.page_start ?? section.pageStart;
 			const pageEnd = node.page_end ?? section.pageEnd;
-			const meta: Record<string, unknown> = decisionMetadata(decision, profile);
+			const meta: Record<string, unknown> = {
+				...decisionMetadata(decision, profile),
+				...profileMetadata,
+			};
 			if (node.type === "table" && (node.table_ir || node.table_json)) {
 				const table = tableParts(node);
 				meta.headers = table.headers;
@@ -224,21 +296,17 @@ export async function chunkDocument(
 					semantic_fallback:
 						error instanceof Error ? error.name : "UnknownError",
 				};
-				pieces = recursiveSplit(
-					body,
-					profile.targetChars,
-					profile.overlapChars,
-				);
+				pieces = recursiveSplit(body, profile);
 			}
 		} else if (decision.strategy === "page") {
 			pieces = [body];
-		} else if (body.length <= profile.targetChars) {
+		} else if (fitsBudget(body, profile.targetChars, profile.targetTokens)) {
 			pieces = [body];
 		} else {
-			pieces = recursiveSplit(body, profile.targetChars, profile.overlapChars);
+			pieces = recursiveSplit(body, profile);
 		}
 		if (pieces.length === 0) {
-			pieces = charWindow(body, profile.targetChars, profile.overlapChars);
+			pieces = budgetWindow(body, profile);
 			decision = {
 				strategy: "char_window",
 				reason: "recursive_empty_fallback",
@@ -266,7 +334,11 @@ export async function chunkDocument(
 					tableId: null,
 					figureId: null,
 					decision,
-					meta: { ...decisionMetadata(decision, profile), ...extraMeta },
+					meta: {
+						...decisionMetadata(decision, profile),
+						...profileMetadata,
+						...extraMeta,
+					},
 				}),
 			);
 		}
@@ -284,6 +356,7 @@ export async function chunkDocument(
 	input.parser_report.metrics.chunking = {
 		policy_version: profile.policyVersion,
 		profile: profile.name,
+		...profileMetadata,
 		chunk_count: chunks.length,
 		strategies,
 		fallback_count: fallbackCount,
@@ -403,26 +476,33 @@ function textDecision(input: {
 	profile: ChunkingProfile;
 	semanticAvailable: boolean;
 }): ChunkDecision {
-	const length = input.text.trim().length;
+	const { text, profile } = input;
+	const withinTarget = fitsBudget(
+		text,
+		profile.targetChars,
+		profile.targetTokens,
+	);
 	if (input.forcePageStrategy) {
-		return length <= input.profile.maxChars
+		return fitsBudget(text, profile.maxChars, profile.maxTokens)
 			? { strategy: "page", reason: "page_boundary" }
 			: { strategy: "recursive", reason: "page_over_max" };
 	}
 	if (input.sectionPath) {
-		return length <= input.profile.targetChars
+		return withinTarget
 			? { strategy: "heading", reason: "structured_heading" }
 			: {
 					strategy: "recursive",
 					reason: "heading_section_over_target",
 				};
 	}
-	if (length <= input.profile.targetChars) {
+	if (withinTarget) {
 		return { strategy: "recursive", reason: "short_unstructured_text" };
 	}
 	if (
-		input.profile.semanticEnabled &&
-		length >= input.profile.semanticMinChars
+		profile.semanticEnabled &&
+		(profile.semanticMinChars === undefined
+			? estimateTokens(text) >= profile.maxTokens * 2
+			: text.length >= profile.semanticMinChars)
 	) {
 		if (!looksLikeNarrative(input.text, input.sourceFormat)) {
 			return { strategy: "recursive", reason: "semantic_ineligible_content" };
@@ -448,6 +528,12 @@ function decisionMetadata(
 		split_reason: decision.reason,
 		target_chars: profile.targetChars,
 		max_chars: profile.maxChars,
+		...(Number.isFinite(profile.maxTokens)
+			? { target_tokens: profile.targetTokens, max_tokens: profile.maxTokens }
+			: {}),
+		...(Number.isFinite(profile.overlapTokens)
+			? { overlap_tokens: profile.overlapTokens }
+			: {}),
 		table_rows_per_record: profile.tableRowsPerRecord,
 		table_tokens_per_record: profile.tableTokensPerRecord,
 	};
@@ -544,88 +630,84 @@ function tableJsonToText(value: DocumentNode["table_json"]): string {
 	return [headers.join(" | "), ...rows].filter(Boolean).join("\n");
 }
 
-function recursiveSplit(
+function fitsBudget(
 	text: string,
-	chunkSize: number,
-	overlap: number,
-): string[] {
+	maxChars: number,
+	maxTokens: number,
+): boolean {
+	return (
+		text.length <= maxChars &&
+		(!Number.isFinite(maxTokens) || estimateTokens(text) <= maxTokens)
+	);
+}
+
+function recursiveSplit(text: string, profile: ChunkingProfile): string[] {
 	const cleaned = text.trim();
 	if (!cleaned) return [];
-	if (cleaned.length <= chunkSize) return [cleaned];
-	const parts = splitBySeparators(
-		cleaned,
-		[...RECURSIVE_SEPARATORS],
-		chunkSize,
-	);
-	if (parts.length === 0) return [];
+	const { targetChars, targetTokens } = profile;
+	const fits = (piece: string) => fitsBudget(piece, targetChars, targetTokens);
+	const parts = splitBySeparators(cleaned, RECURSIVE_SEPARATORS, fits);
 	const merged: string[] = [];
 	let buffer = "";
 	for (const part of parts) {
 		const candidate = `${buffer}${part}`;
-		if (candidate.length <= chunkSize) {
+		if (fits(candidate)) {
 			buffer = candidate;
 			continue;
 		}
 		if (buffer.trim()) merged.push(buffer.trim());
-		if (part.length <= chunkSize) {
-			buffer = part;
+		if (fits(part)) {
+			const overlap = sliceTailByTokenBudget(
+				buffer,
+				Math.min(profile.overlapTokens, targetTokens - estimateTokens(part)),
+				Math.min(profile.overlapChars, targetChars - part.length),
+			);
+			buffer = overlap + part;
 		} else {
-			merged.push(...charWindow(part, chunkSize, overlap));
+			for (const piece of budgetWindow(part, profile)) merged.push(piece);
 			buffer = "";
 		}
 	}
 	if (buffer.trim()) merged.push(buffer.trim());
-	if (merged.length <= 1 || overlap <= 0) return merged;
-	return merged.map((piece, index) => {
-		if (index === 0) return piece;
-		const previous = merged[index - 1] ?? "";
-		const prefix =
-			previous.length > overlap ? previous.slice(-overlap) : previous;
-		const combined = piece.startsWith(prefix) ? piece : `${prefix}${piece}`;
-		return combined.slice(0, chunkSize + overlap).trim() || piece;
-	});
+	return merged;
 }
 
 function splitBySeparators(
 	text: string,
-	separators: string[],
-	chunkSize: number,
+	separators: readonly string[],
+	fits: (text: string) => boolean,
 ): string[] {
-	if (separators.length === 0) return [text];
-	const [separator = "", ...rest] = separators;
-	if (!text.includes(separator)) {
-		return rest.length > 0 ? splitBySeparators(text, rest, chunkSize) : [text];
-	}
-	const rawParts = text.split(separator);
-	const pieces = rawParts.flatMap((part, index) => {
-		if (!part && index < rawParts.length - 1) return [];
-		const suffix =
-			index < rawParts.length - 1
-				? separator.trim()
-					? separator
-					: separator
-				: "";
-		return [`${part}${suffix}`];
-	});
-	return pieces.flatMap((piece) => {
-		if (piece.length <= chunkSize) return piece.trim() ? [piece] : [];
-		return rest.length > 0
-			? splitBySeparators(piece, rest, chunkSize)
-			: [piece];
-	});
+	const [separator, ...rest] = separators;
+	if (!separator || fits(text)) return [text];
+	const parts = text.split(separator);
+	return parts.flatMap((part, index) =>
+		splitBySeparators(
+			index < parts.length - 1 ? part + separator : part,
+			rest,
+			fits,
+		),
+	);
 }
 
-function charWindow(
-	text: string,
-	chunkSize: number,
-	overlap: number,
-): string[] {
+function budgetWindow(text: string, profile: ChunkingProfile): string[] {
 	const pieces: string[] = [];
-	const step = Math.max(1, chunkSize - overlap);
-	for (let start = 0; start < text.length; start += step) {
-		const piece = text.slice(start, start + chunkSize).trim();
-		if (piece) pieces.push(piece);
-		if (start + chunkSize >= text.length) break;
+	let start = 0;
+	while (start < text.length) {
+		const piece = sliceByTokenBudget(
+			text.slice(start),
+			profile.targetTokens,
+			profile.targetChars,
+		);
+		if (!piece) break;
+		if (piece.trim()) pieces.push(piece.trim());
+		if (start + piece.length === text.length) break;
+		const firstWidth = (piece.codePointAt(0) ?? 0) > 0xffff ? 2 : 1;
+		const tail = sliceTailByTokenBudget(
+			piece,
+			profile.overlapTokens,
+			Math.min(profile.overlapChars, piece.length - firstWidth),
+		);
+		start += piece.length - tail.length;
 	}
 	return pieces;
 }
@@ -673,8 +755,10 @@ async function semanticSplit(
 }> {
 	const units = semanticUnits(text);
 	if (units.length < 2) throw semanticError("not enough semantic units");
-	if (units.some((unit) => unit.length > profile.maxChars)) {
-		throw semanticError("semantic unit exceeds max_chars");
+	if (
+		units.some((unit) => !fitsBudget(unit, profile.maxChars, profile.maxTokens))
+	) {
+		throw semanticError("semantic unit exceeds chunk budget");
 	}
 	const vectors = await embedder(units);
 	if (
@@ -704,13 +788,18 @@ async function semanticSplit(
 	};
 	for (const [index, unit] of units.entries()) {
 		const candidate = [...buffer, unit].join(" ").trim();
-		if (buffer.length > 0 && candidate.length > profile.maxChars) flush();
-		buffer.push(unit);
 		if (
-			boundaries.has(index) &&
-			buffer.join(" ").length >= profile.semanticMinChunkChars
-		) {
+			buffer.length > 0 &&
+			!fitsBudget(candidate, profile.maxChars, profile.maxTokens)
+		)
 			flush();
+		buffer.push(unit);
+		if (boundaries.has(index)) {
+			const body = buffer.join(" ");
+			const minimumReached = Number.isFinite(profile.targetTokens)
+				? estimateTokens(body) >= Math.floor(profile.targetTokens / 2)
+				: body.length >= profile.semanticMinChunkChars;
+			if (minimumReached) flush();
 		}
 	}
 	flush();

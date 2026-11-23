@@ -6,8 +6,13 @@ import type {
 	InternalCitation,
 	RetrievalResult,
 } from "../../src/core/retrieval";
+import { UNORAG_QDRANT_PAYLOAD_INDEXES } from "../../src/core/retrieval/qdrant/collection-manager";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
 import type { AuthenticatedServiceKey } from "../../src/lib/server/service-keys";
+import {
+	askRetrievalOptions,
+	NativeAskPolicySchema,
+} from "../../src/server/http/ask/policy";
 import type { NativeRetrievalDependencies } from "../../src/server/http/retrieval/service";
 import {
 	renderPrometheusMetrics,
@@ -36,6 +41,7 @@ nodeModule._resolveFilename = (request, parent, isMain, options) =>
 const protectedModules = Promise.all([
 	import("../../src/server/http/retrieval/native-handler"),
 	import("../../src/lib/server/integration-rag"),
+	import("../../src/server/retrieval/runtime"),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolveFilename;
 });
@@ -43,12 +49,157 @@ const handlerModule = protectedModules.then(([handler]) => handler);
 const integrationModule = protectedModules.then(
 	([, integration]) => integration,
 );
+const retrievalRuntime = protectedModules.then(([, , runtime]) => runtime);
 
 const ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const GENERATION_ID = "44444444-4444-4444-8444-444444444444";
 const LIBRARY_ID = "library-1";
+
+test("native hybrid defaults to on, honors deployment and request opt-outs, and falls back to authorized dense", async (t) => {
+	const {
+		getTypeScriptRetrievalService,
+		resetTypeScriptRetrievalServiceForTests,
+	} = await retrievalRuntime;
+	const environment = {
+		LLM_API_KEY: "runtime-test-credential",
+		LLM_BASE_URL: "https://embedding.example/v1",
+		QDRANT_URL: "http://qdrant.example",
+		QDRANT_COLLECTION: "runtime-test",
+		EMBEDDING_DIM: "2",
+		TS_RETRIEVAL_HYBRID_ENABLED: undefined,
+		TS_RETRIEVAL_RERANK_ENABLED: undefined,
+		RETRIEVAL_CACHE_TTL_MS: "0",
+	};
+	const previous = Object.keys(environment).map(
+		(name) => [name, process.env[name]] as const,
+	);
+	const setEnv = (name: string, value: string | undefined) => {
+		if (value === undefined) delete process.env[name];
+		else process.env[name] = value;
+	};
+	t.after(() => {
+		resetTypeScriptRetrievalServiceForTests();
+		for (const [name, value] of previous) setEnv(name, value);
+	});
+	for (const [name, value] of Object.entries(environment)) setEnv(name, value);
+
+	const queries: { prefetch?: { filter: unknown }[]; filter: unknown }[] = [];
+	const unexpected: string[] = [];
+	let hybridFails = false;
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async (input: string | URL, init: RequestInit) => {
+			const { pathname } = new URL(input);
+			switch (pathname) {
+				case "/":
+					return Response.json({ version: "1.19.0" });
+				case "/v1/embeddings":
+					return Response.json({ data: [{ index: 0, embedding: [1, 0] }] });
+				case "/collections/runtime-test/exists":
+					return Response.json({ result: { exists: true } });
+				case "/collections/runtime-test":
+					return Response.json({
+						result: {
+							config: {
+								params: {
+									vectors: { dense: { size: 2, distance: "Cosine" } },
+									sparse_vectors: { lexical_v1: { modifier: "idf" } },
+								},
+							},
+							payload_schema: Object.fromEntries(
+								UNORAG_QDRANT_PAYLOAD_INDEXES.map(({ fieldName }) => [
+									fieldName,
+									{ data_type: "keyword" },
+								]),
+							),
+						},
+					});
+				case "/collections/runtime-test/points/query": {
+					const query = JSON.parse(
+						String(init.body),
+					) as (typeof queries)[number];
+					queries.push(query);
+					if (query.prefetch && hybridFails) {
+						return Response.json(
+							{ status: { error: "temporary failure" } },
+							{ status: 503 },
+						);
+					}
+					return Response.json({ result: { points: [] } });
+				}
+				default:
+					unexpected.push(pathname);
+					return Response.json({}, { status: 404 });
+			}
+		},
+	);
+	const input = {
+		query: "working policy",
+		libraryId: LIBRARY_ID,
+		scope: {
+			organizationId: ORGANIZATION_ID,
+			workspaceId: WORKSPACE_ID,
+			libraryIds: [LIBRARY_ID],
+			principalIds: [PRINCIPAL_ID],
+			groupIds: ["group-1"],
+			activeGenerationIds: [GENERATION_ID],
+		},
+		topK: 2,
+	};
+	const policy = NativeAskPolicySchema.parse({});
+	assert.equal(policy.hybrid_enabled, true);
+	assert.equal(policy.rerank_enabled, false);
+	const service = getTypeScriptRetrievalService();
+	const hybrid = await service.retrieve(input);
+	assert.equal(hybrid.debug.retrievalMode, "hybrid");
+	assert.equal(hybrid.debug.usedRerank, false);
+
+	queries.length = 0;
+	hybridFails = true;
+	const fallback = await service.retrieve({
+		...input,
+		options: askRetrievalOptions(policy, false),
+	});
+	assert.equal(fallback.debug.retrievalMode, "dense");
+	assert.equal(fallback.debug.hybridFailed, true);
+	assert.ok(queries[0].filter);
+	assert.deepEqual(queries[1].filter, queries[0].filter);
+	assert.deepEqual(
+		queries[1].prefetch?.map(({ filter }) => filter),
+		[queries[0].filter, queries[0].filter],
+	);
+
+	queries.length = 0;
+	const workspaceOff = NativeAskPolicySchema.parse({
+		hybrid_enabled: false,
+		hybrid_retry_enabled: false,
+	});
+	const workspaceDense = await service.retrieve({
+		...input,
+		options: askRetrievalOptions(workspaceOff, true),
+	});
+	assert.equal(workspaceDense.debug.hybridEnabled, false);
+	assert.equal(queries.length, 1);
+	assert.equal(queries[0].prefetch, undefined);
+
+	for (const disabled of ["false", "0"]) {
+		queries.length = 0;
+		setEnv("TS_RETRIEVAL_HYBRID_ENABLED", disabled);
+		resetTypeScriptRetrievalServiceForTests();
+		const dense = await getTypeScriptRetrievalService().retrieve({
+			...input,
+			options: askRetrievalOptions(policy, false),
+		});
+		assert.equal(dense.debug.hybridEnabled, false);
+		assert.equal(dense.debug.retrievalMode, "dense");
+		assert.equal(queries.length, 1);
+		assert.equal(queries[0].prefetch, undefined);
+	}
+	assert.deepEqual(unexpected, []);
+});
 
 const identity: AuthIdentity = {
 	tenantId: ORGANIZATION_ID,

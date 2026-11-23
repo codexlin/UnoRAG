@@ -767,6 +767,38 @@ test("provider configuration fails closed without an API key", () => {
 	);
 });
 
+test("the model registry prefers canonical credentials and accepts older provider aliases", () => {
+	const dashscope = {
+		NODE_ENV: "test" as const,
+		DASHSCOPE_API_KEY: "test-dashscope-key",
+		DASHSCOPE_BASE_URL: "https://dashscope.example/v1/",
+	};
+	const openai = {
+		...dashscope,
+		OPENAI_API_KEY: "test-openai-key",
+		OPENAI_BASE_URL: "https://openai.example/v1/",
+	};
+	const canonical = {
+		...openai,
+		LLM_API_KEY: " test-canonical-key ",
+		LLM_BASE_URL: "https://canonical.example/v1/",
+	};
+	for (const [env, apiKey, baseUrl] of [
+		[canonical, "test-canonical-key", "https://canonical.example/v1"],
+		[
+			{ ...openai, LLM_API_KEY: "" },
+			"test-openai-key",
+			"https://openai.example/v1",
+		],
+		[dashscope, "test-dashscope-key", "https://dashscope.example/v1"],
+	] as const) {
+		assert.deepEqual(
+			[aiConfigFromEnv(env).apiKey, judgeAiConfigFromEnv(env).baseUrl],
+			[apiKey, baseUrl],
+		);
+	}
+});
+
 test("production provider registry requests streamed usage by default and supports an explicit opt-out", async (context) => {
 	for (const includeUsage of [true, false]) {
 		const bodies: Array<Record<string, unknown>> = [];
@@ -1181,6 +1213,7 @@ test("legacy SSE preserves order and removes internal scope and debug fields", a
 				trace_id: "trace-1",
 				tenant_id: "tenant-secret",
 				retrieval_debug: { filters: "secret" },
+				retrieval_inspection: [{ preview: "coarse-preview-secret" }],
 			},
 			citations: [
 				{
@@ -1199,7 +1232,13 @@ test("legacy SSE preserves order and removes internal scope and debug fields", a
 			done: {
 				session_id: "session-1",
 				trace_id: "trace-1",
-				retrieval_debug: { score: 1 },
+				retrieval_debug: {
+					score: 1,
+					inspection: { preview: "coarse-preview-secret" },
+					judge_mode: { retrieval_inspection: "coarse-preview-secret" },
+				},
+				retrieval_inspection: [{ preview: "coarse-preview-secret" }],
+				rewritten_question: "rewrite-secret",
 				workspace_id: "workspace-secret",
 			},
 		}),
@@ -1213,6 +1252,10 @@ test("legacy SSE preserves order and removes internal scope and debug fields", a
 	assert.equal(JSON.stringify(events).includes("tenant-secret"), false);
 	assert.equal(JSON.stringify(events).includes("workspace-secret"), false);
 	assert.equal(JSON.stringify(events).includes("generation-secret"), false);
+	assert.doesNotMatch(
+		JSON.stringify(events),
+		/coarse-preview-secret|rewrite-secret/,
+	);
 	assert.deepEqual(events[2]?.data, "违约金");
 	assert.deepEqual(events.at(-1)?.data, {
 		session_id: "session-1",

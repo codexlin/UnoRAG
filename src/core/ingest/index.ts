@@ -7,6 +7,7 @@ export {
 	type ChunkProfileName,
 	chunkDocument,
 	formatPageLabel,
+	recommendChunkProfile,
 } from "./chunking";
 export {
 	type BuildIndexPayloadOptions,

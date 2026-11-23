@@ -1,5 +1,10 @@
 import type { AuthorizedScope, RetrievalFilters } from "../contracts";
 import {
+	estimateTokens,
+	sliceAroundTokenBudget,
+	sliceByTokenBudget,
+} from "../text/token-estimate";
+import {
 	mapQdrantHitToInternalCitation,
 	semanticEvidenceScore,
 } from "./citation-mapper";
@@ -31,6 +36,44 @@ type CandidateCounts = {
 	byRecordType: Record<StoredQdrantPayload["record_type"], number>;
 };
 
+export type RetrievalInspectionCandidate = {
+	id: string;
+	document_id: string;
+	title: string;
+	filename: string | null;
+	section_path: string | null;
+	record_type: string;
+	page_start: number | null;
+	page_end: number | null;
+	coarse_rank: number;
+	rerank_rank: number | null;
+	rank_delta: number | null;
+	final_rank: number | null;
+	dense_score: number | null;
+	sparse_score: number | null;
+	rrf_score: number | null;
+	rerank_score: number | null;
+	outcome:
+		| "selected"
+		| "deduped"
+		| "below_threshold"
+		| "dropped_topk"
+		| "dropped_rerank";
+	parent_expanded: boolean;
+	chars_before_expand: number;
+	chars_after_expand: number;
+	preview: string;
+};
+
+export type RetrievalInspection = {
+	query: string;
+	mode: "dense" | "hybrid";
+	usedRerank: boolean;
+	topK: number;
+	evidenceThreshold: number | null;
+	candidates: RetrievalInspectionCandidate[];
+};
+
 export type RetrievalDebug = {
 	usedHybrid: boolean;
 	hybridEnabled: boolean;
@@ -45,15 +88,27 @@ export type RetrievalDebug = {
 	evidenceThreshold?: number;
 	rerankDiagnostic?: RerankDiagnostic;
 	documentConstraintStatus?: string;
+	inspection?: RetrievalInspection;
 };
 
 export type RetrievalResult = {
 	citations: InternalCitation[];
 	debug: RetrievalDebug;
+	/** Scope lineage for live reauthorization of inspected hits, including drops. */
+	inspectionReferences?: Pick<
+		StoredQdrantPayload,
+		| "doc_id"
+		| "document_version_id"
+		| "generation_id"
+		| "library_id"
+		| "tenant_id"
+		| "workspace_id"
+	>[];
 };
 
 export type RetrievalServiceOptions = {
 	hybridEnabled: boolean;
+	hybridAllowed?: boolean;
 	rerankEnabled: boolean;
 	rerankTopK: number;
 	bm25TopK: number;
@@ -240,7 +295,8 @@ function retainFigureCompanion(
 	return { selected, restoredFigureCount: 0 };
 }
 
-const MAX_PARENT_CONTEXT_CHARS = 1_600;
+const MAX_PARENT_CONTEXT_TOKENS = 1_200;
+const MAX_PARENT_CONTEXT_HARD_CHARS = 4_500;
 const MIN_PARENT_EXTRA_CHARS = 40;
 const SKIP_PARENT_RECORD_FILTERS = new Set([
 	"document",
@@ -321,6 +377,78 @@ function safeSlice(text: string, start: number, end: number): string {
 	return text.slice(s, e).trim();
 }
 
+function inspectCandidates(input: {
+	coarse: QdrantSearchHit[];
+	reranked: Map<string, { rank: number; score: number }>;
+	deduplicated: QdrantSearchHit[];
+	citations: InternalCitation[];
+	evidenceThreshold: number | null;
+	usedHybrid: boolean;
+}): RetrievalInspectionCandidate[] {
+	const deduplicatedIds = new Set(
+		input.deduplicated.map(({ id }) => String(id)),
+	);
+	const citations = new Map(
+		input.citations.map((citation) => [citation.id, citation]),
+	);
+	let finalRank = 0;
+	const finalRanks = new Map<string, number>();
+	for (const citation of input.citations) {
+		if (
+			input.evidenceThreshold === null ||
+			semanticEvidenceScore(citation) >= input.evidenceThreshold
+		) {
+			finalRanks.set(citation.id, ++finalRank);
+		}
+	}
+	return input.coarse.map((hit, index) => {
+		const id = String(hit.id);
+		const payload = hit.payload;
+		const ranked = input.reranked.get(id);
+		const citation = citations.get(id);
+		const coarseRank = index + 1;
+		const body = (payload.body || payload.text).trim();
+		const parent = citation?.parent_context;
+		const rank = finalRanks.get(id) ?? null;
+		let outcome: RetrievalInspectionCandidate["outcome"];
+		if (rank !== null) outcome = "selected";
+		else if (citation) outcome = "below_threshold";
+		else if (!deduplicatedIds.has(id)) outcome = "deduped";
+		else if (input.reranked.size && !ranked) outcome = "dropped_rerank";
+		else outcome = "dropped_topk";
+		return {
+			id,
+			document_id: payload.doc_id,
+			title: safeSlice(payload.title || "未命名文档", 0, 300),
+			filename:
+				payload.filename == null ? null : safeSlice(payload.filename, 0, 300),
+			section_path:
+				payload.section_path == null
+					? null
+					: safeSlice(payload.section_path, 0, 300),
+			record_type: payload.record_type,
+			page_start: payload.page_start ?? null,
+			page_end: payload.page_end ?? null,
+			coarse_rank: coarseRank,
+			rerank_rank: ranked?.rank ?? null,
+			rank_delta: ranked ? coarseRank - ranked.rank : null,
+			final_rank: rank,
+			dense_score:
+				hit.dense_score === undefined && !input.usedHybrid
+					? hit.score
+					: (hit.dense_score ?? null),
+			sparse_score: hit.bm25_score ?? null,
+			rrf_score: hit.rrf_score ?? null,
+			rerank_score: ranked?.score ?? null,
+			outcome,
+			parent_expanded: !!parent,
+			chars_before_expand: body.length,
+			chars_after_expand: parent?.length ?? body.length,
+			preview: safeSlice(body.replace(/\s+/gu, " "), 0, 300),
+		};
+	});
+}
+
 function boundParentWindow(
 	sectionText: string,
 	childText: string,
@@ -333,28 +461,36 @@ function boundParentWindow(
 	) {
 		return null;
 	}
-	if (trimmedSection.length <= MAX_PARENT_CONTEXT_CHARS) {
+	if (
+		trimmedSection.length <= MAX_PARENT_CONTEXT_HARD_CHARS &&
+		estimateTokens(trimmedSection) <= MAX_PARENT_CONTEXT_TOKENS
+	) {
 		return trimmedSection;
 	}
-	const anchor = trimmedChild.slice(0, Math.min(80, trimmedChild.length));
-	const matchPos = anchor ? trimmedSection.indexOf(anchor) : -1;
-	if (matchPos < 0) {
-		return safeSlice(trimmedSection, 0, MAX_PARENT_CONTEXT_CHARS);
+	let anchor = trimmedChild;
+	let matchPos = anchor ? trimmedSection.indexOf(anchor) : -1;
+	if (matchPos < 0 && trimmedChild) {
+		anchor = sliceByTokenBudget(trimmedChild, Number.POSITIVE_INFINITY, 80);
+		matchPos = trimmedSection.indexOf(anchor);
 	}
-	const matchEnd = Math.min(
-		trimmedSection.length,
-		matchPos + trimmedChild.length,
-	);
-	const halfMargin = Math.max(
-		0,
-		Math.floor((MAX_PARENT_CONTEXT_CHARS - (matchEnd - matchPos)) / 2),
-	);
-	let start = Math.max(0, matchPos - halfMargin);
-	const end = Math.min(trimmedSection.length, start + MAX_PARENT_CONTEXT_CHARS);
-	if (end === trimmedSection.length) {
-		start = Math.max(0, end - MAX_PARENT_CONTEXT_CHARS);
-	}
-	return safeSlice(trimmedSection, start, end);
+	const bounded = (
+		matchPos < 0
+			? sliceByTokenBudget(
+					trimmedSection,
+					MAX_PARENT_CONTEXT_TOKENS,
+					MAX_PARENT_CONTEXT_HARD_CHARS,
+				)
+			: sliceAroundTokenBudget(
+					trimmedSection,
+					matchPos,
+					matchPos + anchor.length,
+					MAX_PARENT_CONTEXT_TOKENS,
+					MAX_PARENT_CONTEXT_HARD_CHARS,
+				)
+	).trim();
+	return bounded.length > trimmedChild.length + MIN_PARENT_EXTRA_CHARS
+		? bounded
+		: null;
 }
 
 async function expandParentContexts(input: {
@@ -638,6 +774,9 @@ export class DefaultRetrievalService {
 			preserveFigureLineage?: boolean;
 			lineageMinScore?: number;
 			expandParentContext?: boolean;
+			includeTraceDetails?: boolean;
+			/** Applied by Ask after Top-K. Used here to describe the trace only. */
+			evidenceThreshold?: number;
 		};
 		signal?: AbortSignal;
 	}): Promise<RetrievalResult> {
@@ -650,27 +789,31 @@ export class DefaultRetrievalService {
 		const scope = toRetrievalScope(input.scope, input.libraryId);
 		const filters = toUserFilters(input.filters);
 		const expandParentContext = input.options?.expandParentContext ?? true;
-		const cacheKey = this.options.cache
-			? buildScopedRetrievalCacheKey({
-					query,
-					libraryId: input.libraryId,
-					scope: input.scope,
-					topK: input.topK,
-					filters,
-					options: {
-						hybridEnabled:
-							input.options?.hybridEnabled ?? this.options.hybridEnabled,
-						rerankEnabled:
-							input.options?.rerankEnabled ?? this.options.rerankEnabled,
-						preserveFigureLineage: input.options?.preserveFigureLineage,
-						lineageMinScore: input.options?.lineageMinScore,
-						expandParentContext,
-						rerankTopK: this.options.rerankTopK,
-						bm25TopK: this.options.bm25TopK,
-						rrfK: this.options.rrfK,
-					},
-				})
-			: null;
+		const includeTraceDetails = input.options?.includeTraceDetails === true;
+		const hybridEnabled =
+			this.options.hybridAllowed !== false &&
+			(input.options?.hybridEnabled ?? this.options.hybridEnabled);
+		const cacheKey =
+			this.options.cache && !includeTraceDetails
+				? buildScopedRetrievalCacheKey({
+						query,
+						libraryId: input.libraryId,
+						scope: input.scope,
+						topK: input.topK,
+						filters,
+						options: {
+							hybridEnabled,
+							rerankEnabled:
+								input.options?.rerankEnabled ?? this.options.rerankEnabled,
+							preserveFigureLineage: input.options?.preserveFigureLineage,
+							lineageMinScore: input.options?.lineageMinScore,
+							expandParentContext,
+							rerankTopK: this.options.rerankTopK,
+							bm25TopK: this.options.bm25TopK,
+							rrfK: this.options.rrfK,
+						},
+					})
+				: null;
 		const cached = cacheKey ? this.options.cache?.get(cacheKey) : null;
 		if (cached) {
 			return cached;
@@ -697,8 +840,6 @@ export class DefaultRetrievalService {
 		);
 		let usedHybrid = false;
 		let hybridError: string | null = null;
-		const hybridEnabled =
-			input.options?.hybridEnabled ?? this.options.hybridEnabled;
 		const rerankEnabled =
 			input.options?.rerankEnabled ?? this.options.rerankEnabled;
 		if (hybridEnabled) {
@@ -737,6 +878,10 @@ export class DefaultRetrievalService {
 
 		input.signal?.throwIfAborted();
 		const beforeRerank = countCandidates(candidates);
+		const coarse = includeTraceDetails ? candidates.slice(0, 20) : undefined;
+		const rerankPositions = coarse
+			? new Map<string, { rank: number; score: number }>()
+			: undefined;
 		let rerankFailed = false;
 		let usedRerank = false;
 		let rerankDiagnostics:
@@ -778,6 +923,14 @@ export class DefaultRetrievalService {
 					used_rerank: true,
 				}));
 				if (reranked.length) {
+					if (rerankPositions) {
+						for (const [position, hit] of reranked.entries()) {
+							rerankPositions.set(String(hit.id), {
+								rank: position + 1,
+								score: hit.score,
+							});
+						}
+					}
 					const rerankedIds = new Set(reranked.map((hit) => String(hit.id)));
 					candidates = [
 						...reranked,
@@ -838,8 +991,26 @@ export class DefaultRetrievalService {
 				parentContexts.get(String(hit.id)),
 			),
 		);
+		const mode = usedHybrid ? "hybrid" : "dense";
+		const threshold = input.options?.evidenceThreshold;
+		const evidenceThreshold =
+			typeof threshold === "number" && Number.isFinite(threshold)
+				? threshold
+				: null;
 		const result: RetrievalResult = {
 			citations,
+			...(coarse
+				? {
+						inspectionReferences: coarse.map(({ payload }) => ({
+							doc_id: payload.doc_id,
+							document_version_id: payload.document_version_id,
+							generation_id: payload.generation_id,
+							library_id: payload.library_id,
+							tenant_id: payload.tenant_id,
+							workspace_id: payload.workspace_id,
+						})),
+					}
+				: {}),
 			debug: {
 				usedHybrid,
 				hybridEnabled,
@@ -847,10 +1018,29 @@ export class DefaultRetrievalService {
 				hybridError,
 				usedRerank,
 				rerankFailed,
-				retrievalMode: usedHybrid ? "hybrid" : "dense",
+				retrievalMode: mode,
 				denseHitCount: dense.length,
 				activeGenerationCount: scope.activeGenerationIds.length,
 				...(rerankDiagnostic ? { rerankDiagnostic } : {}),
+				...(coarse && rerankPositions
+					? {
+							inspection: {
+								query: safeSlice(query, 0, 300),
+								mode,
+								usedRerank,
+								topK: input.topK,
+								evidenceThreshold,
+								candidates: inspectCandidates({
+									coarse,
+									reranked: rerankPositions,
+									deduplicated,
+									citations,
+									evidenceThreshold,
+									usedHybrid,
+								}),
+							},
+						}
+					: {}),
 			},
 		};
 		if (cacheKey) {

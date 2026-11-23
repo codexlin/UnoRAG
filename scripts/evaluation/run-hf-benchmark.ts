@@ -593,6 +593,14 @@ async function run(): Promise<void> {
 	const cleanupLibrary = args.includes("--cleanup-library");
 	const limitRaw = argValue(args, "--limit");
 	const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+	const concurrencyRaw = argValue(args, "--concurrency");
+	const parsedConcurrency = concurrencyRaw
+		? Number.parseInt(concurrencyRaw, 10)
+		: 1;
+	const concurrency =
+		Number.isInteger(parsedConcurrency) && parsedConcurrency >= 1
+			? Math.min(parsedConcurrency, 8)
+			: 1;
 
 	const baseUrl = (process.env.UNORAG_BASE_URL ?? "http://localhost:3002").replace(/\/$/, "");
 	const email = process.env.UNORAG_ADMIN_EMAIL ?? "admin@unorag.local";
@@ -680,12 +688,33 @@ async function run(): Promise<void> {
 			process.stdout.write(`== verified ${docs.length} documents in reused library\n`);
 		}
 
-		const positiveResults: PositiveResult[] = [];
 		const semanticModel = semanticJudge
 			? createAiProviderRegistry(aiConfigFromEnv()).model
 			: null;
-		process.stdout.write(`== evaluate ${positives.length} positive cases\n`);
-		for (const [index, item] of positives.entries()) {
+		const runPool = async <T, R>(
+			items: readonly T[],
+			worker: (item: T, index: number) => Promise<R>,
+		): Promise<R[]> => {
+			const results = new Array<R>(items.length);
+			let cursor = 0;
+			const workerCount = Math.min(concurrency, items.length);
+			await Promise.all(
+				Array.from({ length: workerCount }, async () => {
+					while (true) {
+						const current = cursor;
+						cursor += 1;
+						if (current >= items.length) return;
+						results[current] = await worker(items[current], current);
+					}
+				}),
+			);
+			return results;
+		};
+
+		process.stdout.write(
+			`== evaluate ${positives.length} positive cases (concurrency=${concurrency})\n`,
+		);
+		const positiveResults = await runPool(positives, async (item, index) => {
 			const res = await ask({
 				client,
 				libraryId,
@@ -751,15 +780,16 @@ async function run(): Promise<void> {
 			if (semanticModel) {
 				Object.assign(row, await gradeAnswerSemantically(semanticModel, row));
 			}
-			positiveResults.push(row);
 			process.stdout.write(
 				`  [${index + 1}/${positives.length}] ${answered && docRecall ? "OK  " : "MISS"} ${item.task_type} ans=${answered} recall=${docRecall}@${docRank ?? "-"} fact=${formatPct(factHitRate)} (${res.latencyMs}ms)\n`,
 			);
-		}
+			return row;
+		});
 
-		const negativeResults: NegativeResult[] = [];
-		process.stdout.write(`== evaluate ${negatives.length} negative refusal cases\n`);
-		for (const [index, item] of negatives.entries()) {
+		process.stdout.write(
+			`== evaluate ${negatives.length} negative refusal cases (concurrency=${concurrency})\n`,
+		);
+		const negativeResults = await runPool(negatives, async (item, index) => {
 			const res = await ask({
 				client,
 				libraryId,
@@ -770,7 +800,7 @@ async function run(): Promise<void> {
 			const passed = res.httpStatus === 200 && res.refused;
 			const refusalKind =
 				item.refusal_kind ?? (item.excluded_entity ? "out_of_corpus" : "in_corpus_unanswerable");
-			negativeResults.push({
+			const row: NegativeResult = {
 				id: item.id,
 				refusal_kind: refusalKind,
 				excluded_entity: item.excluded_entity ?? null,
@@ -783,11 +813,12 @@ async function run(): Promise<void> {
 				refuse_reason: res.refuseReason ?? null,
 				passed,
 				latency_ms: res.latencyMs,
-			});
+			};
 			process.stdout.write(
 				`  [N${index + 1}/${negatives.length}] ${passed ? "PASS" : "FAIL"} kind=${refusalKind} target=${item.excluded_entity ?? item.source_doc} refused=${res.refused}\n`,
 			);
-		}
+			return row;
+		});
 
 		const posCount = positiveResults.length || 1;
 		const numWithTotal = positiveResults.filter((r) => r.number_total > 0);

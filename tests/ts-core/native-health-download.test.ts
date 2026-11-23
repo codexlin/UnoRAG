@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
+import {
+	createQdrantHealthCheck,
+	readProviderHealth,
+} from "../../src/server/observability/provider-health";
 
 type ResolveFilename = (
 	request: string,
@@ -29,6 +33,103 @@ const protectedModules = Promise.all([
 });
 const healthModule = protectedModules.then(([health]) => health);
 const downloadModule = protectedModules.then(([, download]) => download);
+
+test("both health surfaces flag a live Qdrant dimension mismatch and permit first boot", async (t) => {
+	const { handleNativeHealthRequest } = await healthModule;
+	const environment = {
+		LLM_API_KEY: "configured-model-credential",
+		QDRANT_URL: "https://private-vector.example",
+		QDRANT_API_KEY: "private-vector-credential",
+		QDRANT_COLLECTION: "health-test",
+		EMBEDDING_DIM: "1024",
+	};
+	const previousKey = process.env.LLM_API_KEY;
+	process.env.LLM_API_KEY = environment.LLM_API_KEY;
+	t.after(() => {
+		if (previousKey === undefined) delete process.env.LLM_API_KEY;
+		else process.env.LLM_API_KEY = previousKey;
+	});
+	const paths: string[] = [];
+	let mode: "missing" | "matching" | "mismatch" | "down";
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async (input: string | URL, init: RequestInit) => {
+			const { pathname } = new URL(input);
+			paths.push(pathname);
+			assert.equal(
+				new Headers(init.headers).get("api-key"),
+				environment.QDRANT_API_KEY,
+			);
+			if (mode === "down") {
+				return Response.json(
+					{ error: "https://private-vector.example?token=private-response" },
+					{ status: 503 },
+				);
+			}
+			if (pathname === "/collections/health-test/exists") {
+				return Response.json({ result: { exists: mode !== "missing" } });
+			}
+			assert.equal(pathname, "/collections/health-test");
+			const dense = {
+				size: mode === "mismatch" ? 768 : 1024,
+				distance: "Cosine",
+			};
+			return Response.json({
+				result: {
+					config: {
+						params: { vectors: mode === "mismatch" ? { dense } : dense },
+					},
+				},
+			});
+		},
+	);
+
+	for (mode of ["missing", "matching", "mismatch", "down"] as const) {
+		paths.length = 0;
+		const checkDatabase = async () => undefined;
+		const operations = await readProviderHealth(
+			{ checkDatabase },
+			{ environment },
+		);
+		const item = operations.items.find((entry) => entry.code === "qdrant");
+		assert.ok(item);
+		const response = await handleNativeHealthRequest({
+			probe: "ready",
+			dependencies: {
+				checkDatabase,
+				checkQdrant: createQdrantHealthCheck(environment),
+			},
+		});
+		const native = await response.json();
+		const ready = mode === "missing" || mode === "matching";
+		const expectedCode =
+			mode === "mismatch"
+				? "embedding_dimension_mismatch"
+				: "qdrant_unavailable";
+		assert.equal(item.status, ready ? "healthy" : "degraded");
+		assert.equal(item.error_code, ready ? null : expectedCode);
+		assert.equal(response.status, ready ? 200 : 503);
+		assert.equal(native.ask_ready, ready);
+		assert.deepEqual(native.reasons, ready ? [] : [expectedCode]);
+		assert.equal(
+			paths.filter((path) => path === "/collections/health-test").length,
+			mode === "matching" || mode === "mismatch" ? 2 : 0,
+		);
+		if (mode === "mismatch") {
+			assert.equal(native.recovery, item.recovery);
+			assert.match(item.recovery, /集合的向量维度为 768/);
+			assert.match(
+				item.recovery,
+				/EMBEDDING_DIM=1024.*set EMBEDDING_DIM=768.*QDRANT_COLLECTION.*reindex/,
+			);
+		}
+		assert.doesNotMatch(
+			JSON.stringify([native, operations]),
+			/private-vector|configured-model-credential|private-response|authorization/i,
+		);
+	}
+});
 
 test("native health reports ready only when all required dependencies are ready", async () => {
 	const previousKey = process.env.OPENAI_API_KEY;

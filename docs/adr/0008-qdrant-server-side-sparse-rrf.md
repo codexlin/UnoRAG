@@ -95,5 +95,9 @@ Verified against real Qdrant `v1.19.0`:
 
 No changes to ADR-0003 chunking or ADR-0005 ownership are required.
 
+## 2026-11-23 默认开启策略演进注记
+
+- 由于每次入库均已零外部 API 成本写入 `lexical_v1 (modifier: "idf")` 稀疏向量，且上述实测已验证其召回与语义准确率收益，后续小版本在补充“默认开启 Hybrid 的标准黄金集与 P95 延迟回归”后，可将新部署的默认 `hybrid_enabled` 提升为 `true`（同时保留显式关闭开关）。
+
 - [Qdrant hybrid queries](https://qdrant.tech/documentation/search/hybrid-queries/)
 - [Qdrant vectors](https://qdrant.tech/documentation/concepts/vectors/)

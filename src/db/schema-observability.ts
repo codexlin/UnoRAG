@@ -395,6 +395,8 @@ export const workspaceEmailSettings = appSchema.table(
 			.default("warning")
 			.notNull(),
 		notifyRecovery: boolean("notify_recovery").default(true).notNull(),
+		alertThresholds: jsonb("alert_thresholds").default({}).notNull(),
+		alertPolicyVersion: integer("alert_policy_version").default(0).notNull(),
 		version: integer("version").default(1).notNull(),
 		updatedBy: uuid("updated_by").references(() => users.id, {
 			onDelete: "set null",

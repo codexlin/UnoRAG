@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getDatabase } from "@/db";
+import { resolveMutationBaseUrl } from "@/lib/server/auth/email-tokens";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import { createWorkspaceFeedbackHandlers } from "@/server/http/ask-feedback";
 import { AskFeedbackService } from "@/server/observability/ask-feedback-service";
@@ -11,5 +12,5 @@ export const { GET, PATCH } = createWorkspaceFeedbackHandlers({
 		new AskFeedbackService(getDatabase()).listFeedback(scope, filters),
 	updateTriage: (scope, input) =>
 		new AskFeedbackService(getDatabase()).updateTriageStatus(scope, input),
-	appBaseUrl: process.env.APP_BASE_URL,
+	appBaseUrl: resolveMutationBaseUrl(),
 });

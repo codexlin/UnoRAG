@@ -1,0 +1,2 @@
+ALTER TABLE "app"."workspace_email_settings" ADD COLUMN "alert_thresholds" jsonb DEFAULT '{}'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "app"."workspace_email_settings" ADD COLUMN "alert_policy_version" integer DEFAULT 0 NOT NULL;

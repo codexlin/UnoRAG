@@ -5,12 +5,14 @@ UnoRAG 的发布结论必须绑定明确的 commit、四个镜像 digest、配�
 
 ## 发布层级
 
-| 层级 | 含义 |
-|---|---|
-| Code green | 确定性测试、类型、Lint、迁移和构建通过 |
-| Release candidate | 不可变镜像已发布，真实文件与完整产品链路通过 |
-| Pilot GO | 候选版本在受控试点环境通过安全、可靠性和质量门禁 |
-| Production GO | 在目标客户环境完成容量、恢复、监控、身份和责任签字 |
+| 层级 | 含义 | 适用场景 |
+|---|---|---|
+| Code green | 确定性测试、类型、Lint、迁移和构建通过 | 日常 PR 合并与 Patch/小功能迭代 |
+| Release candidate | 不可变镜像已发布，真实文件与完整产品链路通过 | 涉及检索/存储/权限/生命周期变更或里程碑发版 |
+| Pilot GO | 候选版本在受控试点环境通过安全、可靠性和质量门禁 | 客户试点上线前 |
+| Production GO | 在目标客户环境完成容量、恢复、监控、身份和责任签字 | 正式生产交付 |
+
+> **分层门禁原则**：纯 UI、文档或非核心生命周期的小改版只需完成 `Code green`（含 CI 确定性门禁与相关契约/单测），不必每次重复重型故障注入与全量恢复演练；里程碑版本与客户交付必须走完下文完整流程。
 
 当前仓库具备 TS-only RC / 受控试点基线，不代表对任意客户环境无条件 production-ready。
 当前证据见 [`evidence/`](./evidence/)。
@@ -298,6 +300,27 @@ OIDC、S3、HPA/PDB/NetworkPolicy、SBOM/签名等功能若由客户合同或安
 只有结论明确为 GO，且上述项目都有可访问证据时，才允许对该版本和目标环境使用
 “production-ready”表述。
 
-受控试点结束后使用 [试点反馈模板](./evidence/PILOT-FEEDBACK-TEMPLATE.md)，机器可读记录须符合
-[`pilot-feedback.schema.json`](../scripts/acceptance/pilot-feedback.schema.json)。记录只包含角色数量、场景
-结论、非敏感证据 ID、已知限制和签字，不得包含客户文档、问题、回答、Prompt、凭据或个人信息。
+受控试点结束后须留存脱敏反馈记录，机器可读归档符合
+[`pilot-feedback.schema.json`](../scripts/acceptance/pilot-feedback.schema.json)（不得包含客户文档、问题、回答、Prompt、凭据或个人信息）：
+
+<details>
+<summary>展开受控试点反馈记录模板</summary>
+
+```markdown
+- Release / commit / Deployment ID:
+- 配置摘要与模型/Parser 版本:
+- 试点起止时间与角色人数（Admin / Editor / Viewer 仅数量）:
+
+| Scenario ID | Result | Evidence reference | Notes |
+|---|---|---|---|
+| upload-retrieve-ask | PASS / FAIL / BLOCKED | | |
+| replace-and-failed-replace | PASS / FAIL / BLOCKED | | |
+| permission-boundary | PASS / FAIL / BLOCKED | | |
+| provider-recovery | PASS / FAIL / BLOCKED | | |
+| backup-restore | PASS / FAIL / BLOCKED | | |
+
+- Decision: GO / CONDITIONAL_GO / NO_GO
+- Decision owner & Approved at:
+```
+
+</details>

@@ -9,8 +9,9 @@ import {
 	Copy,
 	ListTree,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { RetrievalInspectionPanel } from "@/components/app/ask/retrieval-inspection-panel";
 import { ModelUsagePanel } from "@/components/app/model-usage-panel";
 import {
 	StageWaterfall,
@@ -41,7 +42,11 @@ import {
 } from "@/components/ui/trace";
 import { projectModelUsage } from "@/core/ai/model-usage";
 import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
-import type { ApiAskStage, ApiRetrievalDebug } from "@/lib/api";
+import type {
+	ApiAskStage,
+	ApiAskTraceDetails,
+	ApiRetrievalDebug,
+} from "@/lib/api";
 import { formatDurationMs } from "@/lib/format";
 import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
@@ -97,69 +102,43 @@ function serverTotalDurationMs(
 	return null;
 }
 
-function summaryRows(
-	debug: ApiRetrievalDebug,
-	t: ReturnType<typeof useInterfaceText>,
-	clientDurationMs?: number | null,
-	hasModelUsage = false,
-): { label: string; value: string }[] {
-	const serverTotal = serverTotalDurationMs(debug);
-	const retrieveMs = stageDurationMs(debug, "retrieve");
-	const rows: { label: string; value: string }[] = [
-		{ label: "path", value: formatDebugValue(debug.path, t) },
-		{ label: "route", value: formatDebugValue(debug.route, t) },
-		{ label: "precise_gate", value: formatDebugValue(debug.precise_gate, t) },
-		{
-			label: "upgrade",
-			value:
-				debug.upgrade == null || debug.upgrade === ""
-					? "—"
-					: formatDebugValue(debug.upgrade, t),
-		},
-		{
-			label: t("服务端合计", "Server total"),
-			value: serverTotal != null ? formatDurationMs(serverTotal) : "—",
-		},
-		{
-			label: t("检索(服务端)", "Retrieve (server)"),
-			value: retrieveMs != null ? formatDurationMs(retrieveMs) : "—",
-		},
-	];
-	if (clientDurationMs != null && !Number.isNaN(clientDurationMs)) {
-		rows.push({
-			label: t("端到端", "End-to-end"),
-			value: formatDurationMs(clientDurationMs),
-		});
-	}
-	if (typeof debug.judge_mode === "string") {
-		rows.push({
-			label: t("Judge 模式", "Judge mode"),
-			value: debug.judge_mode,
-		});
-	}
-	if (typeof debug.judge_model === "string") {
-		rows.push({
-			label: t("Judge 模型", "Judge model"),
-			value: debug.judge_model,
-		});
-	}
-	if (typeof debug.judge_duration_ms === "number") {
-		rows.push({
-			label: t("Judge 耗时", "Judge duration"),
-			value: formatDurationMs(debug.judge_duration_ms),
-		});
-	}
-	if (
-		!hasModelUsage &&
-		(typeof debug.judge_input_tokens === "number" ||
-			typeof debug.judge_output_tokens === "number")
-	) {
-		rows.push({
-			label: t("Judge tokens（旧记录）", "Judge tokens (legacy)"),
-			value: `${formatDebugValue(debug.judge_input_tokens, t)} / ${formatDebugValue(debug.judge_output_tokens, t)}`,
-		});
-	}
-	return rows;
+function TraceFields({ rows }: { rows: [string, unknown][] }) {
+	const t = useInterfaceText();
+	return (
+		<dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 gap-y-2 text-xs">
+			{rows.map(([label, value]) => (
+				<div key={label} className="contents">
+					<dt className="[overflow-wrap:anywhere]">{label}</dt>
+					<dd className="text-foreground [overflow-wrap:anywhere]">
+						{formatDebugValue(value, t)}
+					</dd>
+				</div>
+			))}
+		</dl>
+	);
+}
+
+function TraceSection({
+	title,
+	defaultOpen,
+	children,
+}: {
+	title: string;
+	defaultOpen?: boolean;
+	children: ReactNode;
+}) {
+	return (
+		<TraceCollapsible defaultOpen={defaultOpen} className="border-b">
+			<h3>
+				<TraceCollapsibleTrigger className="w-full justify-between px-2 font-medium text-foreground hover:bg-muted/40">
+					{title}
+				</TraceCollapsibleTrigger>
+			</h3>
+			<TraceCollapsibleContent className="m-0 space-y-4 border-l-0 px-2 pt-2 pb-4">
+				{children}
+			</TraceCollapsibleContent>
+		</TraceCollapsible>
+	);
 }
 
 const RERANK_CATEGORY_LABELS = {
@@ -357,30 +336,246 @@ export function hasAskTrace(debug?: ApiRetrievalDebug | null): boolean {
 	return typeof debug.trace_id === "string" && debug.trace_id.length > 0;
 }
 
+export function AskTraceDrawerContent({
+	debug,
+	details: liveDetails,
+	canInspect,
+}: {
+	debug: ApiRetrievalDebug;
+	details?: ApiAskTraceDetails;
+	canInspect: boolean;
+}) {
+	const t = useInterfaceText();
+	const details = canInspect ? liveDetails : undefined;
+	const stages = Array.isArray(debug.stages) ? debug.stages : [];
+	const modelUsage = projectModelUsage(debug.model_usage);
+	const traceId = debug.trace_id || null;
+	const rawJson = JSON.stringify(debug, null, 2);
+	const judge = details?.judge_summary;
+	const judgeMs = debug.judge_duration_ms;
+	const retrieveMs = stageDurationMs(debug, "retrieve");
+	const overview: [string, unknown][] = [
+		[t("执行路径", "Path"), debug.path],
+		[t("路由", "Route"), debug.route ?? debug.query_type],
+		[t("路由原因", "Route reason"), debug.route_reason],
+		[t("检索模式", "Retrieval mode"), debug.retrieval_mode],
+		[
+			t("混合检索", "Hybrid retrieval"),
+			debug.hybrid_failed ? t("已降级", "Fell back") : debug.used_hybrid,
+		],
+		[
+			t("重排", "Rerank"),
+			debug.rerank_failed ? t("已降级", "Fell back") : debug.used_rerank,
+		],
+		[t("精确路径判定", "Precise routing gate"), debug.precise_gate],
+		[t("升级", "Upgrade"), debug.upgrade],
+	];
+	if (debug.upgrade_reason)
+		overview.push([t("升级原因", "Upgrade reason"), debug.upgrade_reason]);
+	if (debug.downgrade_reason)
+		overview.push([t("降级原因", "Downgrade reason"), debug.downgrade_reason]);
+	if (details?.rewritten_question)
+		overview.push([
+			t("改写后的问题", "Rewritten question"),
+			details.rewritten_question,
+		]);
+
+	return (
+		<div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-5 sm:px-5">
+			<TraceSection
+				title={t("执行总览与决策链", "Overview and routing")}
+				defaultOpen
+			>
+				<TraceFields rows={overview} />
+				<div>
+					<p className="text-xs">trace_id</p>
+					{traceId ? <CopyTraceId key={traceId} traceId={traceId} /> : <p>—</p>}
+				</div>
+			</TraceSection>
+			{canInspect ? (
+				<TraceSection
+					title={t(
+						"检索透视 · 粗召回与重排",
+						"Retrieval funnel · Coarse vs rerank",
+					)}
+					defaultOpen
+				>
+					{details ? (
+						<RetrievalInspectionPanel
+							key={traceId}
+							details={details}
+							traceId={traceId}
+						/>
+					) : (
+						<p className="text-sm text-muted-foreground">
+							{t(
+								"本轮没有可用的检索透视。提问前开启「检索透视」，即可查看本次会话的粗召回和重排。",
+								"No retrieval snapshot is available for this turn. Enable Retrieval trace before asking to inspect coarse retrieval and reranking.",
+							)}
+						</p>
+					)}
+				</TraceSection>
+			) : null}
+			<TraceSection
+				title={t(
+					"证据裁决与引用校验",
+					"Evidence judgment and citation validation",
+				)}
+			>
+				<TraceFields
+					rows={[
+						[t("裁决模式", "Judge mode"), judge?.mode ?? debug.judge_mode],
+						[t("裁决结果", "Verdict"), judge?.verdict],
+						[t("证据充分", "Sufficient evidence"), judge?.sufficient],
+						[
+							t("冲突状态", "Conflict status"),
+							judge?.conflict_status ?? debug.evidence_resolution,
+						],
+						[
+							t("引用校验", "Citation validation"),
+							judge &&
+								(judge.citation_validation === "passed"
+									? t("通过", "Passed")
+									: t("未检查", "Not checked")),
+						],
+						[t("裁决模型", "Judge model"), debug.judge_model],
+					]}
+				/>
+			</TraceSection>
+			<TraceSection
+				title={t("性能与模型用量", "Performance and model usage")}
+				defaultOpen={!details}
+			>
+				<TraceFields
+					rows={[
+						[
+							t("服务端检索耗时", "Server retrieval"),
+							retrieveMs !== null ? formatDurationMs(retrieveMs) : null,
+						],
+						[
+							t("裁决耗时", "Judge duration"),
+							typeof judgeMs === "number" ? formatDurationMs(judgeMs) : null,
+						],
+						...(!modelUsage &&
+						(typeof debug.judge_input_tokens === "number" ||
+							typeof debug.judge_output_tokens === "number")
+							? [
+									[
+										t("裁决 Token（旧记录）", "Judge tokens (legacy)"),
+										`${formatDebugValue(debug.judge_input_tokens, t)} / ${formatDebugValue(debug.judge_output_tokens, t)}`,
+									] as [string, string],
+								]
+							: []),
+					]}
+				/>
+				<section
+					className="space-y-3"
+					aria-label={t("阶段耗时", "Stage timings")}
+				>
+					<div className="flex flex-wrap items-baseline justify-between gap-2">
+						<h3 className="text-sm font-medium">
+							{t("阶段耗时", "Stage timings")}
+						</h3>
+						<span className="text-xs text-muted-foreground">
+							{t(
+								`${stages.length} 步 · 顺序累计`,
+								`${stages.length} ${stages.length === 1 ? "step" : "steps"} · cumulative`,
+							)}
+						</span>
+					</div>
+					{stages.length === 0 ? (
+						<p className="text-sm text-muted-foreground">
+							{t("暂无阶段记录", "No stage records")}
+						</p>
+					) : (
+						<StageWaterfall stages={stages} />
+					)}
+				</section>
+				{stages.length > 0 ? (
+					<section aria-label={t("阶段详情", "Stage details")}>
+						<Trace key={traceId}>
+							<TraceCollapsible
+								defaultOpen={stages.some((stage) => stage.ok === false)}
+							>
+								<TraceCollapsibleTrigger className="w-full gap-2 px-2 hover:bg-muted/40">
+									<TraceLine className="w-full flex-1">
+										<TraceIcon>
+											<ListTree />
+										</TraceIcon>
+										<TraceTitle className="flex-1 font-medium text-foreground">
+											{t("阶段详情", "Stage details")}
+										</TraceTitle>
+										<TraceDescription className="text-xs text-muted-foreground">
+											{t(
+												`${stages.length} 项`,
+												`${stages.length} ${stages.length === 1 ? "item" : "items"}`,
+											)}
+										</TraceDescription>
+									</TraceLine>
+								</TraceCollapsibleTrigger>
+								<TraceCollapsibleContent className="mt-0 mb-0 pr-0 pl-3">
+									<Trace className="gap-0">
+										{stages.map((stage, index) => (
+											<StageTraceDetails
+												// biome-ignore lint/suspicious/noArrayIndexKey: Ordered stage records have no ID and stage names may repeat.
+												key={`${stage.stage}:${index}`}
+												stage={stage}
+											/>
+										))}
+									</Trace>
+								</TraceCollapsibleContent>
+							</TraceCollapsible>
+						</Trace>
+					</section>
+				) : null}
+				<ModelUsagePanel usage={modelUsage} />
+				<Trace className="border-t border-border/70 pt-2">
+					<TraceCollapsible>
+						<TraceCollapsibleTrigger className="w-full justify-between px-2 hover:bg-muted/40">
+							<TraceLine>
+								<TraceIcon>
+									<Code2 />
+								</TraceIcon>
+								<TraceTitle>{t("原始 JSON", "Raw JSON")}</TraceTitle>
+							</TraceLine>
+						</TraceCollapsibleTrigger>
+						<TraceCollapsibleContent className="m-0 border-l-0 p-0">
+							<section
+								// biome-ignore lint/a11y/noNoninteractiveTabindex: The scrollable JSON region needs keyboard access.
+								tabIndex={0}
+								aria-label={t("原始 JSON 内容", "Raw JSON content")}
+								className="max-h-64 overflow-auto rounded-md bg-muted/30 px-3 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							>
+								<pre className="font-mono text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap break-all">
+									{rawJson}
+								</pre>
+							</section>
+						</TraceCollapsibleContent>
+					</TraceCollapsible>
+				</Trace>
+			</TraceSection>
+		</div>
+	);
+}
+
 export function AskTraceDrawer({
 	open,
 	onOpenChange,
 	debug,
+	details,
+	canInspect,
 	clientDurationMs = null,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	debug: ApiRetrievalDebug | null;
-	/** Browser wall-clock until done (端到端), for reconciling with server total */
+	details?: ApiAskTraceDetails;
+	canInspect: boolean;
+	/** Browser wall-clock until done, for reconciling with server total. */
 	clientDurationMs?: number | null;
 }) {
 	const t = useInterfaceText();
-	const stages = Array.isArray(debug?.stages) ? debug.stages : [];
 	const titleRef = useRef<HTMLHeadingElement | null>(null);
-	const modelUsage = projectModelUsage(debug?.model_usage);
-	const rows = debug
-		? summaryRows(debug, t, clientDurationMs, modelUsage != null)
-		: [];
-	const traceId =
-		typeof debug?.trace_id === "string" && debug.trace_id
-			? debug.trace_id
-			: null;
-	const rawJson = debug ? JSON.stringify(debug, null, 2) : "";
 	const serverTotal = serverTotalDurationMs(debug);
 
 	return (
@@ -388,7 +583,7 @@ export function AskTraceDrawer({
 			<SheetContent
 				side="right"
 				initialFocus={titleRef}
-				className="w-full max-w-[min(100vw,40rem)]! gap-0 [&>[data-slot=sheet-close]]:size-11"
+				className="w-full max-w-[min(100vw,40rem)]! gap-0 motion-reduce:transition-none [&>[data-slot=sheet-close]]:size-11"
 				showCloseButton
 			>
 				{debug ? (
@@ -416,131 +611,11 @@ export function AskTraceDrawer({
 									.join(" · ") || t("本次请求", "Current request")}
 							</SheetDescription>
 						</SheetHeader>
-
-						<div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-5 sm:px-6">
-							<section
-								className="space-y-3"
-								aria-label={t("阶段耗时", "Stage timings")}
-							>
-								<div className="flex flex-wrap items-baseline justify-between gap-2">
-									<h3 className="text-sm font-medium">
-										{t("阶段耗时", "Stage timings")}
-									</h3>
-									<span className="text-xs text-muted-foreground">
-										{t(
-											`${stages.length} 步 · 顺序累计`,
-											`${stages.length} ${stages.length === 1 ? "step" : "steps"} · cumulative`,
-										)}
-									</span>
-								</div>
-								{stages.length === 0 ? (
-									<p className="text-sm text-muted-foreground">
-										{t("暂无阶段记录", "No stage records")}
-									</p>
-								) : (
-									<StageWaterfall stages={stages} />
-								)}
-							</section>
-							{stages.length > 0 ? (
-								<section aria-label={t("阶段详情", "Stage details")}>
-									<Trace key={traceId}>
-										<TraceCollapsible
-											defaultOpen={stages.some((stage) => stage.ok === false)}
-										>
-											<TraceCollapsibleTrigger className="w-full gap-2 px-2 hover:bg-muted/40">
-												<TraceLine className="w-full flex-1">
-													<TraceIcon>
-														<ListTree />
-													</TraceIcon>
-													<TraceTitle className="flex-1 font-medium text-foreground">
-														{t("阶段详情", "Stage details")}
-													</TraceTitle>
-													<TraceDescription className="text-xs text-muted-foreground">
-														{t(
-															`${stages.length} 项`,
-															`${stages.length} ${stages.length === 1 ? "item" : "items"}`,
-														)}
-													</TraceDescription>
-												</TraceLine>
-											</TraceCollapsibleTrigger>
-											<TraceCollapsibleContent className="mt-0 mb-0 pr-0 pl-3">
-												<Trace className="gap-0">
-													{stages.map((stage, index) => (
-														<StageTraceDetails
-															// biome-ignore lint/suspicious/noArrayIndexKey: Ordered stage records have no ID and stage names may repeat.
-															key={`${stage.stage}:${index}`}
-															stage={stage}
-														/>
-													))}
-												</Trace>
-											</TraceCollapsibleContent>
-										</TraceCollapsible>
-									</Trace>
-								</section>
-							) : null}
-							<ModelUsagePanel usage={modelUsage} />
-							<section className="space-y-2">
-								<h3 className="text-sm font-medium">{t("摘要", "Summary")}</h3>
-								<dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-4 gap-y-2 text-xs">
-									{rows.map((row) => (
-										<div key={row.label} className="contents">
-											<dt className="text-muted-foreground [overflow-wrap:anywhere]">
-												{row.label}
-											</dt>
-											<dd className="font-mono text-foreground [overflow-wrap:anywhere]">
-												{row.value}
-											</dd>
-										</div>
-									))}
-								</dl>
-								{typeof debug.upgrade_reason === "string" &&
-								debug.upgrade_reason ? (
-									<p className="font-mono text-xs text-muted-foreground">
-										upgrade_reason · {debug.upgrade_reason}
-									</p>
-								) : null}
-								{typeof debug.downgrade_reason === "string" &&
-								debug.downgrade_reason ? (
-									<p className="font-mono text-xs text-survey">
-										downgrade_reason · {debug.downgrade_reason}
-									</p>
-								) : null}
-							</section>
-
-							<section className="space-y-2">
-								<h3 className="text-sm font-medium">trace_id</h3>
-								{traceId ? (
-									<CopyTraceId key={traceId} traceId={traceId} />
-								) : (
-									<p className="font-mono text-xs text-muted-foreground">—</p>
-								)}
-							</section>
-
-							<Trace className="border-t border-border/70 pt-2">
-								<TraceCollapsible>
-									<TraceCollapsibleTrigger className="w-full justify-between px-2 hover:bg-muted/40">
-										<TraceLine>
-											<TraceIcon>
-												<Code2 />
-											</TraceIcon>
-											<TraceTitle>{t("原始 JSON", "Raw JSON")}</TraceTitle>
-										</TraceLine>
-									</TraceCollapsibleTrigger>
-									<TraceCollapsibleContent className="m-0 border-l-0 p-0">
-										<section
-											// biome-ignore lint/a11y/noNoninteractiveTabindex: The scrollable JSON region needs keyboard access.
-											tabIndex={0}
-											aria-label={t("原始 JSON 内容", "Raw JSON content")}
-											className="max-h-64 overflow-auto rounded-md bg-muted/30 px-3 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-										>
-											<pre className="font-mono text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap break-all">
-												{rawJson}
-											</pre>
-										</section>
-									</TraceCollapsibleContent>
-								</TraceCollapsible>
-							</Trace>
-						</div>
+						<AskTraceDrawerContent
+							debug={debug}
+							details={details}
+							canInspect={canInspect}
+						/>
 					</>
 				) : null}
 			</SheetContent>

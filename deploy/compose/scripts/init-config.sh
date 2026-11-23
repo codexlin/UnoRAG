@@ -21,6 +21,8 @@ copy_if_missing() {
 }
 
 echo "==> ensuring deploy/config examples → real files"
+NEW_RUNTIME_ENV=false
+[[ -f "${CONFIG_DIR}/runtime.env" ]] || NEW_RUNTIME_ENV=true
 copy_if_missing "${CONFIG_DIR}/runtime.env.example" "${CONFIG_DIR}/runtime.env"
 copy_if_missing "${CONFIG_DIR}/runtime.advanced.env.example" "${CONFIG_DIR}/runtime.advanced.env"
 copy_if_missing "${CONFIG_DIR}/runtime.secret.example" "${CONFIG_DIR}/runtime.secret"
@@ -28,6 +30,7 @@ copy_if_missing "${CONFIG_DIR}/bootstrap.env.example" "${CONFIG_DIR}/bootstrap.e
 
 echo "==> reconciling split config schema"
 python3 - <<'PY' "$CONFIG_DIR"
+import re
 import sys
 from pathlib import Path
 
@@ -64,22 +67,28 @@ known_value_migrations = {
     ): "https://dashscope.aliyuncs.com/compatible-mode/v1",
 }
 def assignment(line):
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#") or "=" not in line:
-        return None
-    key, value = line.split("=", 1)
-    key = key.strip()
-    if not key or not all(ch.isupper() or ch.isdigit() or ch == "_" for ch in key):
-        return None
-    return key, value
+    match = re.match(r"^\s*(?:export\s+)?([A-Za-z_][\w.-]*)\s*=(.*)", line)
+    return match.groups() if match else None
 
 def assignments(path):
-    return {
-        key: value
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if (parsed := assignment(line)) is not None
-        for key, value in [parsed]
-    }
+    values = {}
+    lines = iter(path.read_text(encoding="utf-8").splitlines())
+    for line in lines:
+        parsed = assignment(line)
+        if parsed is None:
+            continue
+        key, value = parsed
+        start = value.lstrip()
+        if start.startswith(("'", '"')):
+            closing_quote = re.compile(r"(?<!\\)(?:\\\\)*" + start[0])
+            remainder = start[1:]
+            while not closing_quote.search(remainder):
+                remainder = next(lines, None)
+                if remainder is None:
+                    raise ValueError(f"unterminated quoted value for {key} in {path.name}")
+                value += "\n" + remainder
+        values[key] = value
+    return values
 
 def render_example(example, values, extras=None):
     output = []
@@ -186,12 +195,13 @@ PY
 
 # One-time migration from legacy monolithic compose .env
 if [[ -f "$LEGACY_ENV" ]]; then
-	python3 - <<'PY' "$LEGACY_ENV" "$CONFIG_DIR"
+	python3 - <<'PY' "$LEGACY_ENV" "$CONFIG_DIR" "$NEW_RUNTIME_ENV"
 import sys
 from pathlib import Path
 
 legacy_path = Path(sys.argv[1])
 config_dir = Path(sys.argv[2])
+new_runtime_env = sys.argv[3] == "true"
 
 def parse_env(path: Path) -> dict[str, str]:
     out: dict[str, str] = {}
@@ -240,10 +250,27 @@ legacy = parse_env(legacy_path)
 
 # Map legacy OPENAI_/DASHSCOPE_ → LLM_*
 llm_key = (legacy.get("LLM_API_KEY") or legacy.get("OPENAI_API_KEY") or legacy.get("DASHSCOPE_API_KEY") or "").strip()
-llm_base = (legacy.get("LLM_BASE_URL") or legacy.get("OPENAI_BASE_URL") or "").strip()
+llm_base = (legacy.get("LLM_BASE_URL") or legacy.get("OPENAI_BASE_URL") or legacy.get("DASHSCOPE_BASE_URL") or "").strip()
 
 common_keys = set(parse_env(config_dir / "runtime.env.example"))
 advanced_keys = set(parse_env(config_dir / "runtime.advanced.env.example"))
+# Import the same tuning overrides from monolithic deployments after slimming
+# the example. These keys still flow through the Compose runtime contract.
+advanced_keys.update("""+SESSION_MEMORY_TTL_SECONDS ASK_JUDGE_TIMEOUT_MS ASK_JUDGE_MAX_ATTEMPTS
+ASK_JUDGE_MAX_OUTPUT_TOKENS VLM_TIMEOUT_MS VLM_MAX_FIGURES_PER_REQUEST
+VLM_MAX_IMAGE_BYTES EMBEDDING_TIMEOUT_MS CONTEXTUAL_RETRIEVAL_MAX_CHUNKS
+CONTEXTUAL_RETRIEVAL_TIMEOUT_MS RERANK_TIMEOUT_MS PARSER_POLL_INTERVAL_MS
+PARSER_RETRY_BACKOFF_MS DATABASE_POOL_MAX EMBEDDING_BATCH_SIZE
+DBOS_SYSTEM_DATABASE_POOL_SIZE DBOS_CONTROL_POLL_MS ASK_RUN_MAINTENANCE_ENABLED
+ASK_RUN_MAINTENANCE_INTERVAL_MS ASK_RUN_STALE_AFTER_MINUTES ASK_RUN_RETENTION_DAYS
+ASK_RUN_MAINTENANCE_BATCH_SIZE TOMBSTONE_MAINTENANCE_ENABLED
+TOMBSTONE_MAINTENANCE_INTERVAL_MS TOMBSTONE_RETENTION_DAYS
+TOMBSTONE_MAINTENANCE_BATCH_SIZE OBSERVABILITY_CYCLE_ENABLED
+OBSERVABILITY_CYCLE_INTERVAL_MS OBSERVABILITY_ASK_MIN_SAMPLES
+OBSERVABILITY_ASK_FAILURE_RATE_WARNING OBSERVABILITY_ASK_CITATION_COVERAGE_MIN
+OBSERVABILITY_ASK_P95_WARNING_MS OBSERVABILITY_ASK_P95_CRITICAL_MS
+OBSERVABILITY_ALERT_RECOVERY_CYCLES
+""".split())
 runtime_keys = common_keys | advanced_keys
 secret_keys = [
     "POSTGRES_PASSWORD", "UNORAG_SESSION_SECRET",
@@ -286,6 +313,8 @@ if marker.exists():
     print("skip legacy .env migration (already migrated once)")
 else:
     r = upsert(config_dir / "runtime.env", common_updates, only_empty=True)
+    if llm_base and new_runtime_env:
+        r += upsert(config_dir / "runtime.env", {"LLM_BASE_URL": llm_base}, only_empty=False)
     a = upsert(
         config_dir / "runtime.advanced.env", advanced_updates, only_empty=True
     )

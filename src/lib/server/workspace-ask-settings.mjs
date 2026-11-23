@@ -11,6 +11,7 @@ import {
 	normalizePublicAsk,
 	PUBLIC_ASK_DEFAULTS,
 	RETRIEVAL_ENHANCEMENTS,
+	RETRIEVAL_OVERRIDES,
 	resolveAskPolicy,
 	resolvedAskAsOverrideKnobs,
 } from "./ask-policy.mjs";
@@ -102,6 +103,15 @@ export function validateAskPatch(partial) {
 			return {
 				ok: false,
 				detail: `retrieval_enhancement must be one of: ${RETRIEVAL_ENHANCEMENTS.join(", ")}`,
+			};
+		}
+		if (
+			(key === "hybrid_retrieval" || key === "reranking") &&
+			!RETRIEVAL_OVERRIDES.includes(normalized)
+		) {
+			return {
+				ok: false,
+				detail: `${key} must be one of: ${RETRIEVAL_OVERRIDES.join(", ")}`,
 			};
 		}
 		if (

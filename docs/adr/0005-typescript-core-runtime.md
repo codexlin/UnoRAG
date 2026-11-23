@@ -11,6 +11,11 @@
   service, outbox and old deployment topology. Runtime hardening and the current
   commit-bound RC evidence are recorded by `902cdae`, `f00bbd7` and `d0272f9`.
 
+> **2026-11-23 现行状态校准注记**（不改写历史正文，用于消除与现行系统的阅读歧义）：
+> 1. **PostgreSQL 隔离实现**：正文第 45/88 行曾将 `PostgreSQL RLS` 列为目标所有权；当前正式实现使用**显式作用域查询 + 复合约束 + 分离运行角色**，**尚未启用 RLS**（见 [STATUS.md](../STATUS.md) 与 [ARCHITECTURE.md](../ARCHITECTURE.md)）。
+> 2. **历史章节范围**：下文的 `Migration Strategy (M0–M5)`、`Library Spike Results` 以及未采纳/暂缓选型（`Elysia`、`LlamaParse`、`LlamaIndex`、`LangSmith`）均属于已完成的历史迁移与调研记录；当前运行态基线（含 OTel + 可选 Langfuse）以 [ARCHITECTURE.md](../ARCHITECTURE.md) 为准。
+> 3. **Qdrant 兼容校验**：面向客户自带的托管 Qdrant 集群，运行时以“实际集合能力契约（命名 `dense` + `lexical_v1 (idf)` + Query API）”为硬门禁，避免仅因无破坏性的小版本差异阻断运维。
+
 ## Context
 
 ADR-0004 established the correct product boundary: Next.js owns identity,

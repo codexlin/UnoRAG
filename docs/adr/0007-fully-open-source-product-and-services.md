@@ -145,3 +145,8 @@ This decision is reflected when:
 
 - [The Apache Software Foundation: Applying the Apache License](https://www.apache.org/legal/apply-license)
 - [Open Source Initiative: Open Source Licenses](https://opensource.org/licenses)
+
+## 2026-11-23 公开发布后状态与分层门禁注记
+
+- **公开发布已完成**：上述 `Publication Gates` 已在开源发布前完成验收，仓库现已以 Apache-2.0 公开托管并持续发布（当前见 [STATUS.md](../STATUS.md) 与 [GitHub Releases](https://github.com/codexlin/UnoRAG/releases)）。
+- **分层发版门禁**：为平衡交付严谨性与迭代效率，日常 Patch/小功能迭代以自动 CI 确定性门禁（`pnpm verify` + `test:fast` + `test:contract` + `test:integration` + 离线评测）为基准；涉及存储/权限/生命周期或正式客户交付的 Milestone/RC 版本，再执行完整签名镜像、真实文件多轮回归与故障恢复门禁（详见 [RELEASE.md](../RELEASE.md)）。

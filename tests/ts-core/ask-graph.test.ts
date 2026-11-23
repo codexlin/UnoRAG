@@ -16,6 +16,8 @@ import {
 import { buildMultiAspectSubQueries } from "../../src/core/ask-graph/comparison-query";
 import { conflictAnswer } from "../../src/core/ask-graph/evidence-conflict";
 import { isEligibleForGroundedTableLookup } from "../../src/core/ask-graph/table/planning";
+import { formatCitationEvidenceText } from "../../src/core/retrieval/citation-mapper";
+import { estimateTokens } from "../../src/core/text/token-estimate";
 import { projectPublicRetrievalDebug } from "../../src/server/http/ask/legacy-sse";
 
 test("default user-facing fallbacks never expose internal library ids", () => {
@@ -243,7 +245,13 @@ function createContext(scenario: Scenario = {}): AskGraphContext {
 				((state) => {
 					calls.push("retrieve");
 					return {
-						citations: [{ id: "chunk-1", score: 0.9 }],
+						citations: [
+							{
+								id: "chunk-1",
+								score: 0.9,
+								body: "Remote work requires manager approval.",
+							},
+						],
 						retrieval_attempts: (state.retrieval_attempts ?? 0) + 1,
 					};
 				}),
@@ -553,7 +561,7 @@ test("comparison keeps direct evidence and trims oversized alternatives within b
 		queryType: "compare",
 		retrieve: () => ({
 			citations: [
-				{ id: "source-0", index: 1, body: "x".repeat(14_401) },
+				{ id: "source-0", index: 1, body: "x ".repeat(16_000) },
 				{ id: "source-1", index: 2, body: "short" },
 			],
 			retrieval_attempts: 1,
@@ -577,14 +585,144 @@ test("comparison keeps direct evidence and trims oversized alternatives within b
 	});
 	assert.equal(longResult.refused, false);
 	assert.equal(trimmedEvidence.length, 2);
-	assert.equal(
-		trimmedEvidence.reduce(
-			(sum, item) => sum + String(item.body ?? "").length,
-			0,
-		) <= 14_400,
-		true,
+	const totalChars = trimmedEvidence.reduce(
+		(sum, item) => sum + String(item.body ?? "").length,
+		0,
 	);
+	assert.ok(totalChars > 27_900 && totalChars <= 28_000);
 	assert.equal(String(trimmedEvidence[1]?.body ?? ""), "short");
+});
+
+test("comparison shares six slots and the token budget across documents or sections", async () => {
+	const subjects = ["A", "A", "A", "A", "B", "B", "C", "D"];
+	for (const groupBySection of [false, true]) {
+		const candidates = subjects.map((subject, index) => ({
+			id: `source-${index}`,
+			doc_id: groupBySection ? "shared-doc" : subject,
+			section_path: groupBySection ? subject : "shared-section",
+			body: index === 7 ? "对比项D。" : `对比项${subject}。`.repeat(480),
+			parent_context: `补充背景${subject}。`.repeat(400),
+		}));
+		const result = await new AskGraphService(
+			createContext({
+				queryType: "compare",
+				retrieve: () => ({ citations: candidates }),
+				judge: () => ({
+					sufficient: true,
+					action: "generate",
+					reason: "covered",
+					evidence_ids: candidates.slice(1).map(({ id }) => id),
+				}),
+			}),
+		).invoke({ question: "Compare all alternatives" });
+
+		assert.equal(result.refused, false);
+		const kept = result.citations ?? [];
+		assert.deepEqual(
+			kept.map(({ id, index }) => [id, index]),
+			[1, 2, 4, 5, 6, 7].map((id, index) => [`source-${id}`, index + 1]),
+		);
+		const excerpts = kept.map(formatCitationEvidenceText);
+		const sizes = excerpts.map(estimateTokens);
+		assert.ok(sizes.reduce((sum, size) => sum + size, 0) <= 8_000);
+		assert.ok(sizes.every((size) => size > 1_250 && size <= 1_334));
+		assert.ok(excerpts.at(-1)?.includes("补充背景D。"));
+		assert.equal(result.retrieval_debug?.direct_evidence_count, 6);
+		assert.deepEqual(
+			result.judgement?.evidence_ids,
+			kept.map(({ id }) => id),
+		);
+	}
+});
+
+test("comparison keeps required late body and parent quotes despite slot and text pressure", async () => {
+	const firstQuote = "Option A [policy] takes 12 days.";
+	const secondQuote = "Option A takes 24 days.";
+	const candidates = Array.from({ length: 9 }, (_, index) => ({
+		id: `source-${index}`,
+		doc_id: `document-${index}`,
+		body: `${"采购审批的通用背景。".repeat(340)}${index === 8 ? firstQuote : ""}`,
+		...(index === 7
+			? {
+					parent_context: `${"文档背景。".repeat(790)}${secondQuote.replace("takes ", "takes\t")}`,
+				}
+			: {}),
+	}));
+	const result = await new AskGraphService(
+		createContext({
+			queryType: "compare",
+			retrieve: () => ({ citations: candidates }),
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "conflicting terms",
+				evidence_ids: candidates.slice(0, 7).map(({ id }) => id),
+				conflict_evidence: [
+					{ evidence_id: "source-8", quote: firstQuote },
+					{ evidence_id: "source-7", quote: secondQuote },
+				],
+			}),
+		}),
+	).invoke({ question: "Compare the contract terms" });
+
+	assert.equal(result.refused, false);
+	const kept = result.citations ?? [];
+	assert.equal(kept.length, 6);
+	assert.ok(
+		kept.some(
+			(citation) =>
+				citation.id === "source-8" &&
+				String(citation.body).includes(firstQuote),
+		),
+	);
+	assert.ok(
+		kept.some(
+			(citation) =>
+				citation.id === "source-7" &&
+				String(citation.parent_context).includes("takes\t24 days."),
+		),
+	);
+	assert.ok(
+		kept
+			.map(formatCitationEvidenceText)
+			.map(estimateTokens)
+			.reduce((a, b) => a + b, 0) <= 8_000,
+	);
+	assert.match(conflictAnswer(result) ?? "", /12 days./u);
+	assert.match(conflictAnswer(result) ?? "", /24 days./u);
+});
+
+test("comparison fails closed when a contiguous required conflict excerpt exceeds the token budget", async () => {
+	const calls: string[] = [];
+	const quotes = ["甲项期限为12日。", "甲项期限为24日。"];
+	const result = await new AskGraphService(
+		createContext({
+			calls,
+			queryType: "compare",
+			retrieve: () => ({
+				citations: [
+					{
+						id: "terms",
+						body: `${quotes[0]}${"文".repeat(8_100)}${quotes[1]}`,
+					},
+				],
+			}),
+			judge: () => ({
+				sufficient: true,
+				action: "generate",
+				reason: "conflicting terms",
+				evidence_ids: ["terms"],
+				conflict_evidence: quotes.map((quote) => ({
+					evidence_id: "terms",
+					quote,
+				})),
+			}),
+		}),
+	).invoke({ question: "Compare the contract terms" });
+
+	assert.equal(result.refused, true);
+	assert.equal(result.refuse_reason, "comparison_context_exceeds_budget");
+	assert.ok(!calls.includes("generate"));
 });
 
 test("derived calculation questions mentioning table terms route through retrieve-judge-generate", async () => {
@@ -617,6 +755,17 @@ test("comparison still rejects an untrusted Judge evidence id", async () => {
 	).invoke({ question: "Compare alternatives" });
 	assert.equal(result.refused, true);
 	assert.equal(result.refuse_reason, "invalid_evidence_selection");
+});
+
+test("comparison fails closed when no candidate contains evidence text", async () => {
+	const result = await new AskGraphService(
+		createContext({
+			queryType: "compare",
+			retrieve: () => ({ citations: [{ id: "empty", body: "  " }] }),
+		}),
+	).invoke({ question: "Compare alternatives" });
+	assert.equal(result.refused, true);
+	assert.equal(result.refuse_reason, "comparison_context_exceeds_budget");
 });
 
 test("a contradictory insufficient-generate judgement cannot authorize an answer", async () => {
