@@ -54,10 +54,16 @@ and validates size, distance and payload indexes. Collections missing `lexical_v
 a non-IDF modifier fail closed with `QdrantCollectionContractError`.
 
 No automatic in-place sparse index enablement, rename, dual collection reads or
-backfill occurs. Operators migrating a pre-ADR-0008 dense-only collection drain jobs,
-snapshot the old collection and run `pnpm exec tsx scripts/qdrant-backfill-sparse.ts --execute` from
-a matching source checkout with its dependencies installed and access to Qdrant. The tool copies
-all point IDs, payloads, dense vectors and freshly computed `lexical_v1` vectors into a
+backfill occurs. Operators migrating a pre-ADR-0008 dense-only collection drain jobs
+and snapshot the old collection. From a matching source checkout with dependencies
+installed and access to Qdrant, run the following command with the actual source
+collection name and an unused destination name.
+
+```bash
+pnpm exec tsx scripts/qdrant-backfill-sparse.ts --from unorag_chunks --to unorag_chunks_idf --execute
+```
+
+The tool copies all point IDs, payloads, dense vectors and freshly computed `lexical_v1` vectors into a
 new IDF-enabled collection (`$0` external API cost). Validate point counts and scope coverage,
 then switch `QDRANT_COLLECTION` for Web and Worker together before restarting.
 

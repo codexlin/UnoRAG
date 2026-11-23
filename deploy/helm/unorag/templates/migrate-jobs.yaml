@@ -30,6 +30,21 @@ spec:
           command: ["/bin/sh", "-ec"]
           args:
             - |
+              psql -X --set=ON_ERROR_STOP=1 --dbname="$DATABASE_URL" --file=- <<'SQL'
+              DO $$
+              DECLARE missing_roles text;
+              BEGIN
+                SELECT string_agg(required.name, ', ' ORDER BY required.name) INTO missing_roles
+                FROM (VALUES ('unorag_migrator'), ('unorag_web'), ('unorag_worker')) AS required(name)
+                WHERE NOT EXISTS (
+                  SELECT FROM pg_roles WHERE rolname = required.name AND NOT rolcanlogin
+                );
+                IF missing_roles IS NOT NULL THEN
+                  RAISE EXCEPTION 'Provision these NOLOGIN roles before Helm migration: %', missing_roles;
+                END IF;
+              END $$;
+              SQL
+
               ./node_modules/.bin/drizzle-kit migrate
 
               psql -X --single-transaction --dbname="$DATABASE_URL" --file=- <<'SQL'
@@ -47,9 +62,11 @@ spec:
                   exit 1
                 }
               export UNORAG_DBOS_DATABASE
-              psql -X --dbname="$DATABASE_URL" --file=- <<'SQL'
+              for runtime_url in "$WEB_DATABASE_URL" "$WORKER_DATABASE_URL"; do
+                psql -X --dbname="$runtime_url" --file=- <<'SQL'
               {{- required "missing verify-runtime-roles.sql" (.Files.Get "files/verify-runtime-roles.sql") | trimSuffix "\n" | nindent 14 }}
               SQL
+              done
           {{- end }}
           env:
             - name: DATABASE_URL

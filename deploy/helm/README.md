@@ -73,12 +73,14 @@ helm upgrade --install unorag ./deploy/helm/unorag \
   --set ingress.hosts[0].host=unorag.example.com
 ```
 
-The pre-install and pre-upgrade hook runs Drizzle with `MIGRATOR_DATABASE_URL`,
-then reapplies table grants and verifies the runtime database identities. Use
-the schema and table owner, or a role with equivalent migration and grant
-privileges, for this DSN. Before installing, provision the
-`unorag_web_login` and `unorag_worker_login` roles with
-membership in `unorag_web` and `unorag_worker` respectively. Provision a separate
+Before installing, have a PostgreSQL administrator provision the `NOLOGIN`
+roles `unorag_migrator`, `unorag_web`, and `unorag_worker`. Provision the
+`unorag_web_login` and `unorag_worker_login` roles with membership in
+`unorag_web` and `unorag_worker` respectively. Set `MIGRATOR_DATABASE_URL` to a
+login that can own and migrate the application schema and grant access to its
+objects. The hook checks the three group roles before running Drizzle, so the
+migration login can operate without `CREATEROLE`. After migration, the hook
+reapplies the grants and checks privileges through both runtime DSNs. Provision a separate
 database on the same PostgreSQL cluster owned by `unorag_dbos_login` and deny
 that login access to the application database. Use an existing Kubernetes Secret
 so all required DSNs are available before the Helm hook starts. Set

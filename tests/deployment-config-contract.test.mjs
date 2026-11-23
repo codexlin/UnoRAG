@@ -388,7 +388,7 @@ test("Compose preserves each provider credential and endpoint pair without flatt
 	}
 });
 
-test("Compose gives Web and Worker the same Qdrant connection settings", () => {
+test("Compose gives Web, Worker, and Control the same Qdrant connection settings", () => {
 	for (const [overrides, expected] of [
 		[
 			{},
@@ -412,7 +412,7 @@ test("Compose gives Web and Worker the same Qdrant connection settings", () => {
 		],
 	]) {
 		const { services } = renderComposeConfig(overrides);
-		for (const workload of ["web", "dbos-worker"]) {
+		for (const workload of ["web", "dbos-worker", "dbos-control"]) {
 			for (const [name, value] of Object.entries(expected)) {
 				assert.equal(
 					services[workload].environment[name],
@@ -471,11 +471,17 @@ test("Helm migrations apply the shared runtime grants and verify separated login
 		});
 		assert.deepEqual(container.command, ["/bin/sh", "-ec"]);
 		const [script] = container.args;
-		assert.ok(script.startsWith("./node_modules/.bin/drizzle-kit migrate\n"));
+		const migrate = script.indexOf("./node_modules/.bin/drizzle-kit migrate");
+		assert.ok(migrate > script.indexOf("Provision these NOLOGIN roles"));
+		assert.match(script.slice(0, migrate), /'unorag_migrator'/);
 		assert.ok(script.includes(grants.trimEnd()));
 		assert.ok(script.includes(verification.trimEnd()));
 		assert.ok(
 			script.indexOf(grants.trimEnd()) < script.indexOf(verification.trimEnd()),
+		);
+		assert.match(
+			script,
+			/for runtime_url in "\$WEB_DATABASE_URL" "\$WORKER_DATABASE_URL"; do\n\s+psql -X --dbname="\$runtime_url" --file=-/,
 		);
 		for (const role of [
 			"unorag_web_login",
