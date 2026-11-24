@@ -469,7 +469,7 @@ just release "$VERSION" REGISTRY/NAMESPACE
 
 manifest 记录四个镜像 digest、DBOS application version 和 Cosign 验证策略。升级只能引用该
 不可变 manifest；扫描、签名或发布后的自验任一失败都不得发布。正式 workflow 使用 GitHub OIDC
-短期身份做 Sigstore keyless 签名，不保存长期私钥。安装机需预装 `cosign`；正式 manifest 默认启用
+短期身份做 Sigstore keyless 签名，不保存长期私钥。安装机需预装 Cosign v3（`>= 3.0`）；正式 manifest 默认启用
 fail-closed 验签，并在拉取镜像前校验证书身份和 OIDC issuer。
 
 GHCR 使用 Cosign v3 的 OCI 1.1 referrer 与新 bundle；部分 ACR 版本不接受 OCI 1.1 签名 manifest，

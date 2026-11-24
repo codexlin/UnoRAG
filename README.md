@@ -89,13 +89,15 @@ The script securely asks for `LLM_API_KEY`, generates local secrets, builds the 
 Where npmjs.org is unreliable, local source builds may use
 `./start.sh --npm-registry https://registry.npmmirror.com` without changing locked dependency versions.
 
-Production installation still uses a digest-pinned release manifest and the explicit deployment runbook:
+Production installation still uses a digest-pinned release manifest and the explicit deployment runbook
+(requires Cosign v3 for signed GHCR manifests, plus `POSTGRES_PASSWORD`, `UNORAG_SESSION_SECRET`, and `LLM_API_KEY` in `deploy/config/runtime.secret`):
 
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh
-# Review runtime.env and runtime.secret; advanced tuning is optional
 ./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
+# Fill POSTGRES_PASSWORD, UNORAG_SESSION_SECRET (>= 32 chars), and LLM_API_KEY in ../config/runtime.secret
+# Review ../config/runtime.env (HTTP_PORT, LLM_BASE_URL, models); advanced tuning is optional
 ./scripts/install.sh --manifest /path/to/release.env
 ```
 
@@ -105,7 +107,7 @@ For the default local launch, verify readiness with:
 curl -sf http://localhost:8080/api/rag/health/ready
 ```
 
-See [Private Deployment](./docs/DEPLOYMENT.md) for upgrades, rollback, backup, restore, and Kubernetes.
+See [Private Deployment](./docs/DEPLOYMENT.md) for switching cloud/local model providers (OpenAI, DeepSeek, Ollama, vLLM, SGLang, Xinference), upgrades, rollback, backup, restore, and Kubernetes.
 
 ## Architecture
 

@@ -208,6 +208,8 @@ services:
       timeout: 5s
       retries: 12
       start_period: 40s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - internal
       - edge
@@ -292,6 +294,8 @@ services:
       retries: 12
       start_period: 30s
     stop_grace_period: 2m
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - internal
 
@@ -373,6 +377,8 @@ services:
       retries: 12
       start_period: 20s
     stop_grace_period: 30s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - internal
 
