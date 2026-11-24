@@ -8,12 +8,134 @@ cd "$ROOT"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/compose-env.sh"
 
-OUT="${1:-}"
+usage() {
+	cat <<'EOF'
+Usage:
+  backup.sh [--retain N] [OUT_DIR]
+
+Options:
+  --retain N   After verifying the new backup checksums and restoring services,
+               keep the newest N sibling backups (matching unorag-* or pre-*
+               with MANIFEST.txt and CHECKSUMS.sha256) in the same parent
+               directory and remove older ones. Defaults to
+               UNORAG_BACKUP_RETAIN_COUNT when set; unset keeps all backups.
+  -h, --help   Show this help message.
+EOF
+}
+
+OUT=""
+RETAIN_COUNT="${UNORAG_BACKUP_RETAIN_COUNT:-}"
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--retain)
+			RETAIN_COUNT="${2:-}"
+			[[ -n "$RETAIN_COUNT" ]] || { echo "error: --retain requires a positive integer" >&2; exit 1; }
+			shift 2
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		-*)
+			echo "error: unknown argument: $1" >&2
+			exit 1
+			;;
+		*)
+			if [[ -n "$OUT" ]]; then
+				echo "error: unexpected extra argument: $1" >&2
+				exit 1
+			fi
+			OUT="$1"
+			shift
+			;;
+	esac
+done
+if [[ $# -gt 0 ]]; then
+	if [[ -n "$OUT" || $# -gt 1 ]]; then
+		echo "error: unexpected extra arguments: $*" >&2
+		exit 1
+	fi
+	OUT="$1"
+fi
+
+if [[ -n "$RETAIN_COUNT" ]]; then
+	if [[ ! "$RETAIN_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+		echo "error: retain count must be a positive integer (got: $RETAIN_COUNT)" >&2
+		exit 1
+	fi
+fi
+
 if [[ -z "$OUT" ]]; then
 	OUT="$ROOT/backups/unorag-$(date +%Y%m%dT%H%M%S)"
 fi
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
+
+verify_backup_checksums() {
+	local dir="$1"
+	(
+		cd "$dir"
+		if command -v sha256sum >/dev/null 2>&1; then
+			sha256sum --check --strict CHECKSUMS.sha256 >/dev/null
+		else
+			shasum -a 256 -c CHECKSUMS.sha256 >/dev/null
+		fi
+	)
+}
+
+prune_old_backups() {
+	local current_dir="$1" keep_count="$2"
+	local parent_dir current_base entry base created_at
+	parent_dir="$(dirname "$current_dir")"
+	current_base="$(basename "$current_dir")"
+
+	local -a candidates=()
+	for entry in "$parent_dir"/*; do
+		[[ -d "$entry" && ! -L "$entry" ]] || continue
+		base="$(basename "$entry")"
+		[[ "$base" != "$current_base" ]] || continue
+		case "$base" in
+			unorag-*|pre-*) ;;
+			*) continue ;;
+		esac
+		[[ -f "$entry/MANIFEST.txt" && -f "$entry/CHECKSUMS.sha256" ]] || continue
+		created_at="$(awk -F= '$1 == "created_at" { print substr($0, index($0, "=") + 1); exit }' "$entry/MANIFEST.txt" 2>/dev/null || true)"
+		if [[ ! "$created_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+			created_at="0000-00-00T00:00:00Z"
+		fi
+		candidates+=("${created_at}|${base}|${entry}")
+	done
+
+	local keep_siblings=$((keep_count - 1))
+	if [[ "${#candidates[@]}" -le "$keep_siblings" ]]; then
+		echo "==> backup retention: keeping ${current_base} + ${#candidates[@]} sibling backup(s) (limit=${keep_count})"
+		return 0
+	fi
+
+	local -a sorted=()
+	local line
+	while IFS= read -r line; do
+		[[ -n "$line" ]] && sorted+=("$line")
+	done < <(printf '%s\n' "${candidates[@]}" | LC_ALL=C sort -r)
+
+	local idx=0 removed=0 target_path
+	for line in "${sorted[@]}"; do
+		idx=$((idx + 1))
+		if [[ "$idx" -le "$keep_siblings" ]]; then
+			continue
+		fi
+		target_path="${line#*|*|}"
+		echo "==> backup retention: removing expired backup ${target_path}"
+		rm -rf -- "$target_path"
+		removed=$((removed + 1))
+	done
+	echo "==> backup retention: kept ${keep_count} newest backup(s), removed ${removed} older backup(s)"
+}
 
 PROJECT="$(mk_config_get COMPOSE_PROJECT_NAME || echo unorag)"
 # Compose invariant — must match docker-compose named-volume mount (not runtime.env).
@@ -130,6 +252,12 @@ EOF
 	fi
 ) >"$OUT/CHECKSUMS.sha256"
 
+verify_backup_checksums "$OUT"
+
 trap - EXIT
 restart_services
 echo "backup complete → $OUT"
+
+if [[ -n "$RETAIN_COUNT" ]]; then
+	prune_old_backups "$OUT" "$RETAIN_COUNT"
+fi

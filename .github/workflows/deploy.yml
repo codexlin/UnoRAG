@@ -1,0 +1,506 @@
+name: deploy
+
+# Approval-gated Compose deployment for published, Cosign-signed UnoRAG releases.
+#
+# Security model:
+#   1. `prepare` runs WITHOUT environment secrets: downloads the Release manifest
+#      and SHA256SUMS, verifies integrity + tag commit SHA + Cosign v3 signatures
+#      (for public GHCR manifests), and writes the deployment plan summary.
+#   2. `deploy` binds to the target GitHub Environment (configure Required
+#      Reviewers on that Environment for manual approval), uses strictly
+#      Environment-scoped SSH credentials with pinned `known_hosts`, runs
+#      backup (with retention) -> Cosign-verified upgrade.sh -> inspect-lifecycle
+#      -> safe image prune, and asserts live `/api/rag/health` version/digest.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target GitHub Environment (must have Required Reviewers & deploy secrets)"
+        type: string
+        required: true
+        default: "production-hk"
+      release_tag:
+        description: "Published GitHub Release tag (e.g. v0.4.2)"
+        type: string
+        required: true
+      manifest_source:
+        description: "Release manifest asset to deploy"
+        type: choice
+        default: "ghcr"
+        options:
+          - ghcr
+          - acr
+      backup_retain_count:
+        description: "Number of verified pre-upgrade backups to retain on host"
+        type: string
+        default: "3"
+      prune_old_images:
+        description: "Safely prune obsolete UnoRAG images after upgrade (keeps active + previous)"
+        type: boolean
+        default: true
+      sync_deploy_checkout:
+        description: "Sync clean deployment git checkout to release_tag before upgrading"
+        type: boolean
+        default: true
+      run_smoke:
+        description: "Run pilot-smoke.sh during upgrade (creates/deletes temp test libraries)"
+        type: boolean
+        default: false
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'release' &&
+        !github.event.release.draft &&
+        !github.event.release.prerelease &&
+        vars.DEPLOY_AUTO_ENVIRONMENT != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      environment: ${{ steps.plan.outputs.environment }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      expected_version: ${{ steps.plan.outputs.expected_version }}
+      expected_revision: ${{ steps.plan.outputs.expected_revision }}
+      expected_web_digest: ${{ steps.plan.outputs.expected_web_digest }}
+      dbos_version: ${{ steps.plan.outputs.dbos_version }}
+      manifest_file: ${{ steps.plan.outputs.manifest_file }}
+      manifest_sha256: ${{ steps.plan.outputs.manifest_sha256 }}
+      backup_retain_count: ${{ steps.plan.outputs.backup_retain_count }}
+      prune_old_images: ${{ steps.plan.outputs.prune_old_images }}
+      sync_deploy_checkout: ${{ steps.plan.outputs.sync_deploy_checkout }}
+      run_smoke: ${{ steps.plan.outputs.run_smoke }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: Download and verify signed release manifest
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ENVIRONMENT: ${{ inputs.environment }}
+          AUTO_ENVIRONMENT: ${{ vars.DEPLOY_AUTO_ENVIRONMENT }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          EVENT_RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_MANIFEST_SOURCE: ${{ inputs.manifest_source }}
+          INPUT_BACKUP_RETAIN: ${{ inputs.backup_retain_count }}
+          INPUT_PRUNE_IMAGES: ${{ inputs.prune_old_images }}
+          INPUT_SYNC_CHECKOUT: ${{ inputs.sync_deploy_checkout }}
+          INPUT_RUN_SMOKE: ${{ inputs.run_smoke }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${EVENT_NAME}" == "release" ]]; then
+            target_env="${AUTO_ENVIRONMENT}"
+            release_tag="${EVENT_RELEASE_TAG}"
+            manifest_source="ghcr"
+            backup_retain="3"
+            prune_images="true"
+            sync_checkout="true"
+            run_smoke="false"
+          else
+            target_env="${INPUT_ENVIRONMENT}"
+            release_tag="${INPUT_RELEASE_TAG}"
+            manifest_source="${INPUT_MANIFEST_SOURCE:-ghcr}"
+            backup_retain="${INPUT_BACKUP_RETAIN:-3}"
+            prune_images="${INPUT_PRUNE_IMAGES:-true}"
+            sync_checkout="${INPUT_SYNC_CHECKOUT:-true}"
+            run_smoke="${INPUT_RUN_SMOKE:-false}"
+          fi
+
+          [[ "${target_env}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
+            || { echo "invalid environment name: ${target_env}" >&2; exit 1; }
+          [[ "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+            || { echo "invalid release tag: ${release_tag}" >&2; exit 1; }
+          [[ "${manifest_source}" == "ghcr" || "${manifest_source}" == "acr" ]] \
+            || { echo "invalid manifest_source: ${manifest_source}" >&2; exit 1; }
+          [[ "${backup_retain}" =~ ^[1-9][0-9]*$ ]] \
+            || { echo "invalid backup_retain_count: ${backup_retain}" >&2; exit 1; }
+
+          manifest_file="release-${manifest_source}.env"
+          stage_dir="${RUNNER_TEMP}/unorag-deploy-manifest"
+          mkdir -p "${stage_dir}"
+
+          gh release download "${release_tag}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --dir "${stage_dir}" \
+            --pattern "${manifest_file}" \
+            --pattern "SHA256SUMS"
+
+          [[ -f "${stage_dir}/${manifest_file}" && -f "${stage_dir}/SHA256SUMS" ]] \
+            || { echo "release ${release_tag} must contain ${manifest_file} and SHA256SUMS" >&2; exit 1; }
+
+          grep -E "^[a-f0-9]{64}[[:space:]][[:space:]\*](\./)?${manifest_file}$" "${stage_dir}/SHA256SUMS" >/dev/null \
+            || { echo "SHA256SUMS does not contain an entry for ${manifest_file}" >&2; exit 1; }
+          (
+            cd "${stage_dir}"
+            grep -E "^[a-f0-9]{64}[[:space:]][[:space:]\*](\./)?${manifest_file}$" SHA256SUMS | sha256sum --check --strict
+          )
+
+          # Dereference annotated or lightweight tag to immutable commit SHA.
+          ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${release_tag}")"
+          ref_type="$(jq -r '.object.type' <<<"${ref_json}")"
+          ref_sha="$(jq -r '.object.sha' <<<"${ref_json}")"
+          if [[ "${ref_type}" == "tag" ]]; then
+            expected_revision="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${ref_sha}" --jq '.object.sha')"
+          else
+            expected_revision="${ref_sha}"
+          fi
+          [[ "${expected_revision}" =~ ^[a-f0-9]{40}$ ]] \
+            || { echo "failed to resolve commit SHA for tag ${release_tag}" >&2; exit 1; }
+
+          source deploy/compose/scripts/release-env.sh
+          manifest_path="${stage_dir}/${manifest_file}"
+
+          web_image="$(mk_release_env_get "${manifest_path}" UNORAG_WEB_IMAGE)"
+          migrator_image="$(mk_release_env_get "${manifest_path}" UNORAG_WEB_MIGRATOR_IMAGE)"
+          ops_image="$(mk_release_env_get "${manifest_path}" UNORAG_WEB_OPS_IMAGE)"
+          worker_image="$(mk_release_env_get "${manifest_path}" UNORAG_DBOS_WORKER_IMAGE)"
+          manifest_version="$(mk_release_env_get "${manifest_path}" UNORAG_VERSION)"
+          manifest_revision="$(mk_release_env_get "${manifest_path}" UNORAG_REVISION)"
+          dbos_version="$(mk_release_env_get "${manifest_path}" UNORAG_DBOS_APPLICATION_VERSION)"
+          verify_sig="$(mk_release_env_get "${manifest_path}" UNORAG_VERIFY_IMAGE_SIGNATURES)"
+          expected_version="${release_tag#v}"
+          expected_dbos_version="unorag-${expected_revision:0:16}"
+
+          [[ "${verify_sig}" == "true" ]] \
+            || { echo "manifest must enable UNORAG_VERIFY_IMAGE_SIGNATURES=true" >&2; exit 1; }
+          [[ "${manifest_version}" == "${expected_version}" ]] \
+            || { echo "manifest UNORAG_VERSION (${manifest_version}) != ${expected_version}" >&2; exit 1; }
+          [[ "${manifest_revision}" == "${expected_revision}" ]] \
+            || { echo "manifest UNORAG_REVISION (${manifest_revision}) != ${expected_revision}" >&2; exit 1; }
+          [[ "${dbos_version}" == "${expected_dbos_version}" ]] \
+            || { echo "manifest UNORAG_DBOS_APPLICATION_VERSION (${dbos_version}) != ${expected_dbos_version}" >&2; exit 1; }
+
+          mk_release_assert_image UNORAG_WEB_IMAGE "${web_image}" digest
+          mk_release_assert_image UNORAG_WEB_MIGRATOR_IMAGE "${migrator_image}" digest
+          mk_release_assert_image UNORAG_WEB_OPS_IMAGE "${ops_image}" digest
+          mk_release_assert_image UNORAG_DBOS_WORKER_IMAGE "${worker_image}" digest
+
+          cosign_precheck="deferred to target host (private ACR auth)"
+          if [[ "${manifest_source}" == "ghcr" ]]; then
+            UNORAG_VERIFY_IMAGE_SIGNATURES="${verify_sig}"
+            UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP="$(mk_release_env_get "${manifest_path}" UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP)"
+            UNORAG_COSIGN_OIDC_ISSUER="$(mk_release_env_get "${manifest_path}" UNORAG_COSIGN_OIDC_ISSUER)"
+            UNORAG_COSIGN_NEW_BUNDLE_FORMAT="$(mk_release_env_get "${manifest_path}" UNORAG_COSIGN_NEW_BUNDLE_FORMAT)"
+            UNORAG_COSIGN_REGISTRY_REFERRERS_MODE="$(mk_release_env_get "${manifest_path}" UNORAG_COSIGN_REGISTRY_REFERRERS_MODE)"
+            export UNORAG_VERIFY_IMAGE_SIGNATURES UNORAG_COSIGN_CERTIFICATE_IDENTITY_REGEXP \
+              UNORAG_COSIGN_OIDC_ISSUER UNORAG_COSIGN_NEW_BUNDLE_FORMAT UNORAG_COSIGN_REGISTRY_REFERRERS_MODE
+            mk_release_verify_images \
+              UNORAG_WEB_IMAGE "${web_image}" \
+              UNORAG_WEB_MIGRATOR_IMAGE "${migrator_image}" \
+              UNORAG_WEB_OPS_IMAGE "${ops_image}" \
+              UNORAG_DBOS_WORKER_IMAGE "${worker_image}"
+            cosign_precheck="verified (4/4 digests via Cosign v3 keyless OIDC)"
+          fi
+
+          manifest_sha256="$(sha256sum "${manifest_path}" | awk '{print $1}')"
+          expected_web_digest="${web_image##*@}"
+
+          {
+            echo "environment=${target_env}"
+            echo "release_tag=${release_tag}"
+            echo "expected_version=${expected_version}"
+            echo "expected_revision=${expected_revision}"
+            echo "expected_web_digest=${expected_web_digest}"
+            echo "dbos_version=${dbos_version}"
+            echo "manifest_file=${manifest_file}"
+            echo "manifest_sha256=${manifest_sha256}"
+            echo "backup_retain_count=${backup_retain}"
+            echo "prune_old_images=${prune_images}"
+            echo "sync_deploy_checkout=${sync_checkout}"
+            echo "run_smoke=${run_smoke}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "### UnoRAG Deployment Plan (Pending Approval)"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Environment | \`${target_env}\` |"
+            echo "| Release | \`${release_tag}\` (\`${expected_version}\`) |"
+            echo "| Commit | \`${expected_revision}\` |"
+            echo "| DBOS Version | \`${dbos_version}\` |"
+            echo "| Manifest | \`${manifest_file}\` (\`sha256:${manifest_sha256}\`) |"
+            echo "| Pre-approval Cosign | ${cosign_precheck} |"
+            echo "| Backup Retain | \`${backup_retain}\` |"
+            echo "| Prune Old Images | \`${prune_images}\` (keeps active + previous rollback pins) |"
+            echo "| Sync Checkout | \`${sync_checkout}\` |"
+            echo "| Run Pilot Smoke | \`${run_smoke}\` |"
+            echo ""
+            echo "**Verified Image Digests**"
+            echo "- \`web\`: \`${web_image}\`"
+            echo "- \`migrator\`: \`${migrator_image}\`"
+            echo "- \`ops\`: \`${ops_image}\`"
+            echo "- \`worker\`: \`${worker_image}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload verified manifest for deploy job
+        uses: actions/upload-artifact@v7
+        with:
+          name: verified-deploy-manifest-${{ steps.plan.outputs.release_tag }}
+          path: ${{ runner.temp }}/unorag-deploy-manifest/${{ steps.plan.outputs.manifest_file }}
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: ${{ needs.prepare.outputs.environment }}
+      url: ${{ steps.health.outputs.public_url }}
+    concurrency:
+      group: deploy-${{ needs.prepare.outputs.environment }}
+      cancel-in-progress: false
+    steps:
+      - name: Download verified release manifest
+        uses: actions/download-artifact@v7
+        with:
+          name: verified-deploy-manifest-${{ needs.prepare.outputs.release_tag }}
+          path: ${{ runner.temp }}/deploy-manifest
+
+      - name: Re-verify manifest integrity
+        env:
+          MANIFEST_FILE: ${{ needs.prepare.outputs.manifest_file }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          manifest_path="${RUNNER_TEMP}/deploy-manifest/${MANIFEST_FILE}"
+          [[ -f "${manifest_path}" ]] || { echo "missing downloaded manifest" >&2; exit 1; }
+          echo "${EXPECTED_MANIFEST_SHA256}  ${manifest_path}" | sha256sum --check --strict
+
+      - name: Configure ephemeral SSH client
+        env:
+          DEPLOY_SSH_HOST: ${{ vars.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ vars.DEPLOY_SSH_PORT }}
+          DEPLOY_SSH_USER: ${{ vars.DEPLOY_SSH_USER }}
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+          DEPLOY_PUBLIC_URL: ${{ vars.DEPLOY_PUBLIC_URL }}
+          DEPLOY_SSH_PROXY_JUMP: ${{ vars.DEPLOY_SSH_PROXY_JUMP }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+          DEPLOY_JUMP_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_JUMP_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+
+          for required in DEPLOY_SSH_HOST DEPLOY_SSH_USER DEPLOY_DIR DEPLOY_PUBLIC_URL; do
+            [[ -n "${!required:-}" ]] || { echo "missing required Environment variable: ${required}" >&2; exit 1; }
+          done
+          [[ -n "${DEPLOY_SSH_PRIVATE_KEY:-}" ]] || { echo "missing required Environment secret: DEPLOY_SSH_PRIVATE_KEY" >&2; exit 1; }
+          [[ -n "${DEPLOY_SSH_KNOWN_HOSTS:-}" ]] || { echo "missing required Environment secret: DEPLOY_SSH_KNOWN_HOSTS" >&2; exit 1; }
+
+          ssh_port="${DEPLOY_SSH_PORT:-22}"
+          [[ "${ssh_port}" =~ ^[0-9]+$ && "${ssh_port}" -ge 1 && "${ssh_port}" -le 65535 ]] \
+            || { echo "invalid DEPLOY_SSH_PORT: ${ssh_port}" >&2; exit 1; }
+          [[ "${DEPLOY_DIR}" == /* && "${DEPLOY_DIR}" != *".."* ]] \
+            || { echo "DEPLOY_DIR must be an absolute normalized path" >&2; exit 1; }
+          [[ "${DEPLOY_PUBLIC_URL}" =~ ^https?://[^[:space:]]+$ ]] \
+            || { echo "DEPLOY_PUBLIC_URL must be a valid http(s) URL" >&2; exit 1; }
+
+          ssh_dir="${RUNNER_TEMP}/unorag-ssh"
+          mkdir -p "${ssh_dir}"
+          chmod 700 "${ssh_dir}"
+
+          printf '%s\n' "${DEPLOY_SSH_PRIVATE_KEY}" > "${ssh_dir}/id_deploy"
+          chmod 600 "${ssh_dir}/id_deploy"
+
+          printf '%s\n' "${DEPLOY_SSH_KNOWN_HOSTS}" > "${ssh_dir}/known_hosts"
+          chmod 600 "${ssh_dir}/known_hosts"
+
+          {
+            echo "Host *"
+            echo "  BatchMode yes"
+            echo "  StrictHostKeyChecking yes"
+            echo "  UserKnownHostsFile ${ssh_dir}/known_hosts"
+            echo "  ConnectTimeout 15"
+            echo "  ServerAliveInterval 30"
+            echo "  ServerAliveCountMax 10"
+            echo "  IdentitiesOnly yes"
+            if [[ -n "${DEPLOY_SSH_PROXY_JUMP:-}" && -n "${DEPLOY_JUMP_SSH_PRIVATE_KEY:-}" ]]; then
+              printf '%s\n' "${DEPLOY_JUMP_SSH_PRIVATE_KEY}" > "${ssh_dir}/id_jump"
+              chmod 600 "${ssh_dir}/id_jump"
+              echo "  IdentityFile ${ssh_dir}/id_jump"
+            fi
+            echo ""
+            echo "Host deploy-target"
+            echo "  HostName ${DEPLOY_SSH_HOST}"
+            echo "  Port ${ssh_port}"
+            echo "  User ${DEPLOY_SSH_USER}"
+            echo "  IdentityFile ${ssh_dir}/id_deploy"
+            if [[ -n "${DEPLOY_SSH_PROXY_JUMP:-}" ]]; then
+              echo "  ProxyJump ${DEPLOY_SSH_PROXY_JUMP}"
+            fi
+          } > "${ssh_dir}/config"
+          chmod 600 "${ssh_dir}/config"
+
+      - name: Upload manifest and execute signed upgrade on target host
+        env:
+          MANIFEST_FILE: ${{ needs.prepare.outputs.manifest_file }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          EXPECTED_REVISION: ${{ needs.prepare.outputs.expected_revision }}
+          BACKUP_RETAIN_COUNT: ${{ needs.prepare.outputs.backup_retain_count }}
+          PRUNE_OLD_IMAGES: ${{ needs.prepare.outputs.prune_old_images }}
+          SYNC_DEPLOY_CHECKOUT: ${{ needs.prepare.outputs.sync_deploy_checkout }}
+          RUN_SMOKE: ${{ needs.prepare.outputs.run_smoke }}
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+          DEPLOY_BACKUP_ROOT: ${{ vars.DEPLOY_BACKUP_ROOT }}
+          DEPLOY_USE_SUDO: ${{ vars.DEPLOY_USE_SUDO }}
+        run: |
+          set -euo pipefail
+
+          ssh_cfg="${RUNNER_TEMP}/unorag-ssh/config"
+          local_manifest="${RUNNER_TEMP}/deploy-manifest/${MANIFEST_FILE}"
+          backup_root="${DEPLOY_BACKUP_ROOT:-${DEPLOY_DIR}/deploy/compose/backups}"
+          use_sudo="${DEPLOY_USE_SUDO:-true}"
+
+          remote_tmp="$(ssh -F "${ssh_cfg}" deploy-target 'mktemp -d /tmp/unorag-deploy.XXXXXX')"
+          cleanup_remote() {
+            ssh -F "${ssh_cfg}" deploy-target "rm -rf -- $(printf '%q' "${remote_tmp}")" >/dev/null 2>&1 || true
+          }
+          trap cleanup_remote EXIT
+
+          scp -F "${ssh_cfg}" "${local_manifest}" "deploy-target:${remote_tmp}/release.env"
+
+          ssh -F "${ssh_cfg}" deploy-target \
+            "bash -s" -- \
+            "${DEPLOY_DIR}" \
+            "${remote_tmp}/release.env" \
+            "${EXPECTED_MANIFEST_SHA256}" \
+            "${RELEASE_TAG}" \
+            "${EXPECTED_REVISION}" \
+            "${backup_root}" \
+            "${BACKUP_RETAIN_COUNT}" \
+            "${PRUNE_OLD_IMAGES}" \
+            "${SYNC_DEPLOY_CHECKOUT}" \
+            "${RUN_SMOKE}" \
+            "${use_sudo}" <<'REMOTE_EOF'
+          set -euo pipefail
+          deploy_dir="$1"
+          remote_manifest="$2"
+          expected_sha="$3"
+          release_tag="$4"
+          expected_rev="$5"
+          backup_root="$6"
+          backup_retain="$7"
+          prune_images="$8"
+          sync_checkout="$9"
+          run_smoke="${10}"
+          use_sudo="${11}"
+
+          echo "${expected_sha}  ${remote_manifest}" | sha256sum --check --strict
+
+          run_priv() {
+            if [[ "${use_sudo}" == "false" || "$(id -u)" -eq 0 ]]; then
+              "$@"
+            else
+              sudo -n "$@"
+            fi
+          }
+
+          if [[ "${sync_checkout}" == "true" ]]; then
+            run_priv bash -euo pipefail -c '
+              deploy_dir="$1"; release_tag="$2"; expected_rev="$3"
+              if [[ -d "${deploy_dir}/.git" ]]; then
+                git -c safe.directory="${deploy_dir}" -C "${deploy_dir}" diff --quiet || { echo "error: deployment checkout has unstaged tracked edits" >&2; exit 1; }
+                git -c safe.directory="${deploy_dir}" -C "${deploy_dir}" diff --cached --quiet || { echo "error: deployment checkout has staged tracked edits" >&2; exit 1; }
+                git -c safe.directory="${deploy_dir}" -C "${deploy_dir}" fetch --tags origin
+                tag_commit="$(git -c safe.directory="${deploy_dir}" -C "${deploy_dir}" rev-parse "${release_tag}^{commit}" 2>/dev/null || true)"
+                [[ "${tag_commit}" == "${expected_rev}" ]] || { echo "error: tag ${release_tag} resolved to ${tag_commit}, expected ${expected_rev}" >&2; exit 1; }
+                git -c safe.directory="${deploy_dir}" -C "${deploy_dir}" checkout --detach "${release_tag}"
+              fi
+            ' -- "${deploy_dir}" "${release_tag}" "${expected_rev}"
+          fi
+
+          remote_script="${deploy_dir}/deploy/compose/scripts/remote-deploy.sh"
+          run_priv test -x "${remote_script}" \
+            || { echo "error: missing executable ${remote_script} (enable sync_deploy_checkout or update deploy scripts)" >&2; exit 1; }
+
+          cmd=(
+            "${remote_script}"
+            --manifest "${remote_manifest}"
+            --release-tag "${release_tag}"
+            --expected-revision "${expected_rev}"
+            --backup-root "${backup_root}"
+            --backup-retain "${backup_retain}"
+          )
+          if [[ "${prune_images}" == "true" ]]; then
+            cmd+=(--prune-old-images)
+          fi
+          if [[ "${run_smoke}" != "true" ]]; then
+            cmd+=(--skip-smoke)
+          fi
+
+          run_priv "${cmd[@]}"
+          REMOTE_EOF
+
+      - name: Verify live public health endpoint and release fingerprint
+        id: health
+        env:
+          DEPLOY_PUBLIC_URL: ${{ vars.DEPLOY_PUBLIC_URL }}
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.expected_version }}
+          EXPECTED_REVISION: ${{ needs.prepare.outputs.expected_revision }}
+          EXPECTED_WEB_DIGEST: ${{ needs.prepare.outputs.expected_web_digest }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          TARGET_ENV: ${{ needs.prepare.outputs.environment }}
+        run: |
+          set -euo pipefail
+          base_url="${DEPLOY_PUBLIC_URL%/}"
+          health_url="${base_url}/api/rag/health"
+          payload=""
+
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if payload="$(curl -fsS --max-time 15 "${health_url}")"; then
+              if jq -e \
+                --arg version "${EXPECTED_VERSION}" \
+                --arg revision "${EXPECTED_REVISION}" \
+                --arg digest "${EXPECTED_WEB_DIGEST}" '
+                .status == "ok" and
+                .live_ready == true and
+                .ask_ready == true and
+                .degraded == false and
+                .release.version == $version and
+                .release.revision == $revision and
+                .image_digest == $digest
+              ' <<<"${payload}" >/dev/null; then
+                break
+              fi
+            fi
+            [[ "${attempt}" -lt 10 ]] || {
+              echo "health verification failed for ${health_url}" >&2
+              printf '%s\n' "${payload}" >&2
+              exit 1
+            }
+            sleep 3
+          done
+
+          echo "public_url=${base_url}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "### UnoRAG Deployment Verified"
+            echo ""
+            echo "| Field | Verified Value |"
+            echo "|---|---|"
+            echo "| Environment | \`${TARGET_ENV}\` |"
+            echo "| Public URL | ${base_url} |"
+            echo "| Release | \`${RELEASE_TAG}\` (\`${EXPECTED_VERSION}\`) |"
+            echo "| Revision | \`${EXPECTED_REVISION}\` |"
+            echo "| Web Digest | \`${EXPECTED_WEB_DIGEST}\` |"
+            echo "| Health | \`status=ok\`, \`live_ready=true\`, \`ask_ready=true\`, \`degraded=false\` |"
+            echo ""
+            echo "Rollback (application images only, forward-only DB):"
+            echo "\`./scripts/upgrade.sh --manifest .upgrade-state/previous-images.env\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Clean up ephemeral SSH material
+        if: always()
+        run: rm -rf -- "${RUNNER_TEMP}/unorag-ssh" "${RUNNER_TEMP}/deploy-manifest"
