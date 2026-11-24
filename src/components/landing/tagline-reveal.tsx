@@ -18,7 +18,7 @@ export function TaglineReveal({
 	const containerRef = useRef<HTMLParagraphElement | null>(null);
 	const reducedMotion = useReducedMotion();
 	const [mounted, setMounted] = useState(false);
-	const [revealedCount, setRevealedCount] = useState(0);
+	const [scrollProgress, setScrollProgress] = useState(0);
 
 	useEffect(() => {
 		setMounted(true);
@@ -36,7 +36,7 @@ export function TaglineReveal({
 	useEffect(() => {
 		if (!mounted) return;
 		if (reducedMotion) {
-			setRevealedCount(segments.length);
+			setScrollProgress(1);
 			return;
 		}
 		let rafId = 0;
@@ -46,15 +46,15 @@ export function TaglineReveal({
 			if (!node) return;
 			const rect = node.getBoundingClientRect();
 			const viewportH = window.innerHeight || 1;
-			// Reveal cleanly between 86% and 32% of viewport height.
+			// Smooth continuous reveal across 86% -> 30% of viewport height.
 			const start = viewportH * 0.86;
-			const end = viewportH * 0.32;
+			const end = viewportH * 0.3;
 			const progress = Math.min(
 				1,
 				Math.max(0, (start - rect.top) / (start - end)),
 			);
-			const nextCount = Math.round(progress * segments.length);
-			setRevealedCount((prev) => (prev === nextCount ? prev : nextCount));
+			const quantized = Math.round(progress * 100) / 100;
+			setScrollProgress((prev) => (prev === quantized ? prev : quantized));
 		};
 		const schedule = () => {
 			if (!rafId) rafId = window.requestAnimationFrame(update);
@@ -67,9 +67,10 @@ export function TaglineReveal({
 			window.removeEventListener("scroll", schedule);
 			window.removeEventListener("resize", schedule);
 		};
-	}, [mounted, reducedMotion, segments.length]);
+	}, [mounted, reducedMotion]);
 
 	const isReduced = mounted && Boolean(reducedMotion);
+	const total = Math.max(1, keyedSegments.length);
 
 	return (
 		<p
@@ -80,14 +81,17 @@ export function TaglineReveal({
 			)}
 		>
 			{keyedSegments.map((item, position) => {
-				const active = isReduced || position < revealedCount;
+				const segStart = (position / total) * 0.84;
+				const segSpan = Math.max(0.14, 1.8 / total);
+				const localP = isReduced
+					? 1
+					: Math.min(1, Math.max(0, (scrollProgress - segStart) / segSpan));
+				const opacity = isReduced ? 1 : 0.32 + 0.68 * localP;
 				return (
 					<span
 						key={item.key}
-						className={cn(
-							"transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-							active ? "text-foreground" : "text-muted-foreground",
-						)}
+						style={{ opacity }}
+						className="text-foreground transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
 					>
 						{item.text}
 						{!isCjk && position < keyedSegments.length - 1 ? " " : ""}
