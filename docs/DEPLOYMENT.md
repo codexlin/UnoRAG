@@ -409,11 +409,13 @@ digest manifest，禁止直接使用浮动 `latest`。`upgrade.sh` 也接受带�
 
 ```bash
 cd deploy/compose
-./scripts/backup.sh ./backups/pre-upgrade
-./scripts/upgrade.sh --manifest /path/to/release-registry.env
+./scripts/backup.sh --retain 3 ./backups/pre-upgrade
+./scripts/upgrade.sh --manifest /path/to/release-registry.env --prune-old-images
 # 已部署 Ops Stack 时保留 OTLP 连接和看板：
-./scripts/upgrade.sh --manifest /path/to/release-registry.env --with-observability
+./scripts/upgrade.sh --manifest /path/to/release-registry.env --with-observability --prune-old-images
 ```
+
+`--retain N` 仅在新备份完成校验并恢复服务后，按 `MANIFEST.txt` 的创建时间保留同目录下最近 `N` 份托管备份（`unorag-*` / `pre-*`）；未显式指定时默认全部保留。`--prune-old-images` 仅在核心升级验收通过后调用 `prune-release-images.sh --prune-exited-ops`，自动保留当前版本、`.upgrade-state/previous-images.env` 回滚版本以及所有容器正在引用的镜像，绝不触碰 Docker 卷。也可在日常运维中单独执行 `./scripts/prune-release-images.sh --dry-run` 预览清理范围。
 
 升级前应确认备份可读、生命周期巡检无 dead/stuck/pending ACL，并归档当前配置摘要。正式发布
 manifest 会从 Git commit 生成 `unorag-<sha>` DBOS application version；不得在不同提交间复用

@@ -105,6 +105,17 @@ application version。`upgrade.sh` 会自动执行该门禁，日常命令只用
 不要直接删除 containerd/snapshot 目录，也不要对生产运行 `docker system prune -a --volumes`。
 旧镜像、停用测试数据卷和备份是不同的保留策略，不应一次清空；生产数据卷和 COS 对象不属于镜像清理。
 
+日常或升级后可直接调用受约束清理脚本（默认保护当前运行镜像、`.upgrade-state/previous-images.env`
+回滚镜像与任意容器引用镜像，不使用 `--force`，不触碰任何数据卷）：
+
+```bash
+cd deploy/compose
+./scripts/prune-release-images.sh --dry-run --prune-exited-ops
+./scripts/prune-release-images.sh --prune-exited-ops
+```
+
+升级时也可传入 `./scripts/upgrade.sh --manifest ... --prune-old-images`（仅在核心升级成功、关闭自动回滚保护后执行）；备份时可传入 `./scripts/backup.sh --retain 3 <out-dir>`（仅在新备份 `CHECKSUMS.sha256` 校验通过且服务恢复后再按创建时间淘汰超期旧备份）。
+
 ## 认证与限流
 
 浏览器会话使用短期 HMAC Cookie，并在 Redis 登记活跃 `sid`。退出登录、切换 Workspace 会原子撤销
@@ -457,6 +468,15 @@ CONFIRM=YES ./scripts/restore.sh ./backups/<backup-id>
 |---|---|
 | `.github/workflows/ci.yml` | Web/TS 测试、评分器、类型、Lint、迁移与四镜像构建 |
 | `.github/workflows/release-images.yml` | ACR/GHCR 推送、Trivy HIGH/CRITICAL 门禁、SBOM/provenance、Cosign 签名和 digest manifest |
+| `.github/workflows/deploy.yml` | 基于 GitHub Environment 人工审批门禁的 Compose 发布：预检清单校验和与 Cosign v3 签名，审批后经受限 SSH 执行 `remote-deploy.sh`（备份轮转、验签升级、生命周期巡检、旧镜像清理）并校验线上 `/api/rag/health` 版本与 digest |
+
+### 审批门禁自动化部署配置（`.github/workflows/deploy.yml`）
+
+`deploy.yml` 拆分为两个隔离作业：`prepare` 不读取任何部署凭据，先从 GitHub Release 下载 `release-<source>.env` 与 `SHA256SUMS`，校验证书签名、清单 SHA256 与不可变 Git Tag 提交后输出审批摘要；`deploy` 绑定目标 GitHub Environment（须在仓库 Settings → Environments 中开启 **Required reviewers**），审批通过后才使用 Environment 级凭据连接目标机执行 `deploy/compose/scripts/remote-deploy.sh`。
+
+- **Environment Secrets（必填）**：`DEPLOY_SSH_PRIVATE_KEY`（专用部署 Ed25519 私钥，不复用个人主力密钥）、`DEPLOY_SSH_KNOWN_HOSTS`（`ssh-keyscan` 固定的主机公钥，工作流强制 `StrictHostKeyChecking=yes`）；若经跳板机访问且跳板机使用独立私钥，可选配置 `DEPLOY_JUMP_SSH_PRIVATE_KEY`。
+- **Environment Variables**：必填 `DEPLOY_SSH_HOST`、`DEPLOY_SSH_USER`、`DEPLOY_DIR`（部署目录绝对路径）、`DEPLOY_PUBLIC_URL`（例如 `https://unorag.unobyte.dev`）；可选 `DEPLOY_SSH_PORT`（默认 `22`）、`DEPLOY_BACKUP_ROOT`（默认 `${DEPLOY_DIR}/deploy/compose/backups`）、`DEPLOY_USE_SUDO`（默认 `true`）、`DEPLOY_SSH_PROXY_JUMP`。
+- **可选自动排队审批**：若希望每次发布正式 GitHub Release 后自动完成 `prepare` 并在审批门禁前挂起等待确认，可在仓库级 Variables 配置 `DEPLOY_AUTO_ENVIRONMENT`（例如 `production-hk`）；未配置时仅通过 `workflow_dispatch` 手动触发，不影响 Fork 仓库。
 
 本地候选镜像：
 

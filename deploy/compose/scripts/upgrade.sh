@@ -26,6 +26,7 @@ FROM_RUNTIME=0
 ALLOW_BUILD=0
 ALLOW_PLATFORM_EMULATION=0
 SKIP_SMOKE=0
+PRUNE_OLD_IMAGES=0
 WITH_OBSERVABILITY=0
 WITH_LANGFUSE=0
 OBSERVABILITY_MODE=auto
@@ -44,6 +45,9 @@ Options:
   --allow-build  Build local images when registry pull is unavailable.
   --allow-platform-emulation  Accept a host/image architecture mismatch for local validation only.
   --skip-smoke   Skip pilot-smoke.sh after health checks.
+  --prune-old-images  After core upgrade succeeds, prune obsolete UnoRAG images
+                      and exited one-shot ops containers while preserving active
+                      and previous-images.env rollback pins (never touches volumes).
   --with-observability  Preserve/start the optional Ops Stack and validate it.
   --without-observability  Explicitly disconnect the application from Ops.
   --with-langfuse  Enable metadata-only Langfuse fan-out (implies Ops Stack).
@@ -162,6 +166,7 @@ while [[ $# -gt 0 ]]; do
 		--allow-build) ALLOW_BUILD=1; shift ;;
 		--allow-platform-emulation) ALLOW_PLATFORM_EMULATION=1; shift ;;
 		--skip-smoke) SKIP_SMOKE=1; shift ;;
+		--prune-old-images) PRUNE_OLD_IMAGES=1; shift ;;
 		--with-ops|--with-observability) WITH_OBSERVABILITY=1; OBSERVABILITY_MODE=enabled; shift ;;
 		--without-observability) WITH_OBSERVABILITY=0; WITH_LANGFUSE=0; OBSERVABILITY_MODE=disabled; shift ;;
 		--with-langfuse) WITH_LANGFUSE=1; WITH_OBSERVABILITY=1; OBSERVABILITY_MODE=enabled; shift ;;
@@ -324,4 +329,9 @@ if [[ $WITH_OBSERVABILITY -eq 1 ]]; then
 fi
 
 trap - EXIT
+if [[ $PRUNE_OLD_IMAGES -eq 1 && -x "${ROOT}/scripts/prune-release-images.sh" ]]; then
+	log "pruning obsolete release images while retaining active and rollback pins"
+	"${ROOT}/scripts/prune-release-images.sh" --prune-exited-ops \
+		|| warn "post-upgrade image prune did not complete cleanly; active release remains unaffected"
+fi
 log "upgrade complete; previous image pins are in $PREVIOUS_ENV"
