@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { and, eq, inArray, ne } from "drizzle-orm";
 import { ingestAclFingerprint } from "@/core/ingest";
 import { getDatabase } from "@/db";
@@ -9,10 +11,178 @@ import {
 	documents,
 	documentVersions,
 	jobs,
+	libraries,
 	users,
 	workspaceMembers,
 } from "@/db/schema";
-import { toDocumentAclResponse } from "@/lib/server/document-acl.mjs";
+import {
+	EMPTY_RESTRICTED_ACL_PRINCIPAL,
+	toDocumentAclResponse,
+} from "@/lib/server/document-acl.mjs";
+
+type AclTransaction = Parameters<
+	Parameters<ReturnType<typeof getDatabase>["transaction"]>[0]
+>[0];
+
+type AclDocument = {
+	id: string;
+	status: string;
+	ragDocumentId: string;
+};
+
+async function updateAclProjection(
+	tx: AclTransaction,
+	input: {
+		document: AclDocument;
+		activeVersionId: string | undefined;
+		organizationId: string;
+		workspaceId: string;
+		ragLibraryId: string;
+		aclFingerprint: string;
+		jobId: string;
+		now: Date;
+	},
+): Promise<string | null> {
+	const { document, aclFingerprint, now } = input;
+	await tx
+		.update(documents)
+		.set({ aclFingerprint, updatedAt: now })
+		.where(eq(documents.id, document.id));
+	if (
+		document.status === "deleting" ||
+		document.status === "deleted" ||
+		!input.activeVersionId
+	) {
+		return null;
+	}
+
+	// The DBOS dispatcher consumes this durable intent after the transaction commits.
+	await tx.insert(jobs).values({
+		id: input.jobId,
+		organizationId: input.organizationId,
+		workspaceId: input.workspaceId,
+		documentVersionId: input.activeVersionId,
+		type: "document.acl.project",
+		executionEngine: "dbos",
+		workflowId: input.jobId,
+		status: "queued",
+		stage: "accepted",
+		idempotencyKey: `document.acl.project:${document.id}:${input.jobId}`,
+		payload: {
+			document_id: document.id,
+			rag_document_id: document.ragDocumentId,
+			library_id: input.ragLibraryId,
+			acl_fingerprint: aclFingerprint,
+		},
+		createdAt: now,
+		updatedAt: now,
+	});
+	return input.jobId;
+}
+
+export async function revokeWorkspaceDocumentGrants(
+	tx: AclTransaction,
+	input: {
+		organizationId: string;
+		workspaceId: string;
+		principalId: string;
+		actorId: string;
+		now: Date;
+	},
+) {
+	const grant = and(
+		eq(documentAcl.subjectId, input.principalId),
+		inArray(documentAcl.subjectType, ["principal", "user"]),
+	);
+	const grantedDocuments = tx
+		.select({ id: documentAcl.documentId })
+		.from(documentAcl)
+		.where(grant);
+	const affected = await tx
+		.select({
+			id: documents.id,
+			status: documents.status,
+			ragDocumentId: documents.ragDocumentId,
+			libraryId: documents.libraryId,
+		})
+		.from(documents)
+		.where(
+			and(
+				eq(documents.organizationId, input.organizationId),
+				eq(documents.workspaceId, input.workspaceId),
+				inArray(documents.id, grantedDocuments),
+			),
+		)
+		.orderBy(documents.id)
+		.for("update");
+
+	let projectionJobs = 0;
+	for (const document of affected) {
+		const removed = await tx
+			.delete(documentAcl)
+			.where(and(eq(documentAcl.documentId, document.id), grant))
+			.returning({ permission: documentAcl.permission });
+		if (!removed.some((row) => row.permission === "read")) continue;
+
+		const remaining = await tx
+			.select({
+				subjectType: documentAcl.subjectType,
+				subjectId: documentAcl.subjectId,
+			})
+			.from(documentAcl)
+			.where(
+				and(
+					eq(documentAcl.documentId, document.id),
+					eq(documentAcl.permission, "read"),
+				),
+			);
+		if (remaining.length === 0) {
+			await tx.insert(documentAcl).values({
+				documentId: document.id,
+				subjectType: "principal",
+				subjectId: EMPTY_RESTRICTED_ACL_PRINCIPAL,
+				permission: "read",
+				createdBy: input.actorId,
+				createdAt: input.now,
+			});
+			remaining.push({
+				subjectType: "principal",
+				subjectId: EMPTY_RESTRICTED_ACL_PRINCIPAL,
+			});
+		}
+
+		const [library] = await tx
+			.select({
+				ragLibraryId: libraries.ragLibraryId,
+				activeVersionId: documentActiveVersions.versionId,
+			})
+			.from(libraries)
+			.leftJoin(
+				documentActiveVersions,
+				eq(documentActiveVersions.documentId, document.id),
+			)
+			.where(eq(libraries.id, document.libraryId));
+		if (!library) throw new Error("document library does not exist");
+		const projection = await updateAclProjection(tx, {
+			...input,
+			document,
+			ragLibraryId: library.ragLibraryId,
+			activeVersionId: library.activeVersionId ?? undefined,
+			aclFingerprint: ingestAclFingerprint({
+				scope: "restricted",
+				principalIds: remaining
+					.filter((row) => ["principal", "user"].includes(row.subjectType))
+					.map((row) => row.subjectId),
+				groupIds: remaining
+					.filter((row) => row.subjectType === "group")
+					.map((row) => row.subjectId),
+			}),
+			jobId: randomUUID(),
+		});
+		if (projection) projectionJobs += 1;
+	}
+	return { affectedDocuments: affected.length, projectionJobs };
+}
 
 export async function loadDocumentAclForApi(
 	documentId: string,
@@ -80,30 +250,27 @@ export async function replaceDocumentAcl(input: {
 		groupIds: input.groupIds,
 	});
 
-	if (input.principalIds.length > 0) {
-		const members = await db
-			.select({ userId: workspaceMembers.userId })
-			.from(workspaceMembers)
-			.where(
-				and(
-					eq(workspaceMembers.workspaceId, input.workspaceId),
-					inArray(workspaceMembers.userId, input.principalIds),
-				),
-			);
-		const allowed = new Set(members.map((row) => row.userId));
-		const missing = input.principalIds.filter((id) => !allowed.has(id));
-		if (missing.length > 0) {
-			return {
-				ok: false as const,
-				status: 400,
-				detail: "principal_ids must be workspace members",
-			};
-		}
-	}
-
 	const replacement = await db.transaction(async (tx) => {
+		if (input.principalIds.length > 0) {
+			const members = await tx
+				.select({ userId: workspaceMembers.userId })
+				.from(workspaceMembers)
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, input.workspaceId),
+						inArray(workspaceMembers.userId, input.principalIds),
+					),
+				)
+				.orderBy(workspaceMembers.userId)
+				.for("share");
+			const allowed = new Set(members.map((row) => row.userId));
+			if (input.principalIds.some((id) => !allowed.has(id))) {
+				return { invalidPrincipals: true as const };
+			}
+		}
 		const [lockedDocument] = await tx
 			.select({
+				id: documents.id,
 				status: documents.status,
 				ragDocumentId: documents.ragDocumentId,
 			})
@@ -153,45 +320,14 @@ export async function replaceDocumentAcl(input: {
 			await tx.insert(documentAcl).values(values);
 		}
 
-		let projectionJobId: string | null = null;
-		if (
-			lockedDocument.status !== "deleting" &&
-			lockedDocument.status !== "deleted" &&
-			active?.versionId
-		) {
-			await tx.insert(jobs).values({
-				id: input.projectionJobId,
-				organizationId: input.organizationId,
-				workspaceId: input.workspaceId,
-				documentVersionId: active.versionId,
-				type: "document.acl.project",
-				executionEngine: "dbos",
-				workflowId: input.projectionJobId,
-				status: "queued",
-				stage: "accepted",
-				idempotencyKey: `document.acl.project:${input.documentId}:${input.projectionJobId}`,
-				payload: {
-					document_id: input.documentId,
-					rag_document_id: lockedDocument.ragDocumentId,
-					library_id: input.ragLibraryId,
-					acl_fingerprint: aclFingerprint,
-				},
-				createdAt: now,
-				updatedAt: now,
-			});
-			projectionJobId = input.projectionJobId;
-		}
-
-		await tx
-			.update(documents)
-			.set({ aclFingerprint, updatedAt: now })
-			.where(
-				and(
-					eq(documents.id, input.documentId),
-					eq(documents.organizationId, input.organizationId),
-					eq(documents.workspaceId, input.workspaceId),
-				),
-			);
+		const projectionJobId = await updateAclProjection(tx, {
+			...input,
+			document: lockedDocument,
+			activeVersionId: active?.versionId,
+			aclFingerprint,
+			jobId: input.projectionJobId,
+			now,
+		});
 		return {
 			documentStatus: lockedDocument.status,
 			projectionJobId,
@@ -202,6 +338,13 @@ export async function replaceDocumentAcl(input: {
 			ok: false as const,
 			status: 404,
 			detail: "document not found",
+		};
+	}
+	if ("invalidPrincipals" in replacement) {
+		return {
+			ok: false as const,
+			status: 400,
+			detail: "principal_ids must be workspace members",
 		};
 	}
 	if ("projectionUnavailable" in replacement) {

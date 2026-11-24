@@ -5,6 +5,8 @@ import {
 	requireQuestion,
 } from "../state";
 
+export const MAX_RETRIEVAL_ATTEMPTS = 2;
+
 function compactRetryQuery(question: string, reason: string): string {
 	const cleaned = question
 		.replace(
@@ -30,6 +32,9 @@ export function retryNode(state: AskState): AskStateUpdate {
 	const broadened = compactRetryQuery(base, reason);
 	return {
 		rewritten_question: broadened,
+		...(state.upgrade_reason === "grounded_table_lookup"
+			? { upgrade_reason: null }
+			: {}),
 		retrieval_debug: mergeRetrievalDebug(state, {
 			retry: { from: base, to: broadened, reason },
 		}),
@@ -39,6 +44,9 @@ export function retryNode(state: AskState): AskStateUpdate {
 export type RouteAfterRetry = "retrieve" | "table_retrieve" | "refuse";
 
 export function routeAfterRetry(state: AskState): RouteAfterRetry {
+	if ((state.retrieval_attempts ?? 0) >= MAX_RETRIEVAL_ATTEMPTS) {
+		return "refuse";
+	}
 	const plan = state.retrieval_plan ?? {};
 	if (
 		state.query_type === "table" ||

@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 
 import * as schema from "@/db/schema";
+import { logger } from "@/lib/observability";
 import {
 	type AlertPolicy,
 	resolveAlertPolicy,
@@ -16,6 +17,7 @@ import {
 	reconcileWorkspaceAlerts,
 	withAlertEvaluatorLock,
 } from "./alerting";
+import { hasActiveDocuments } from "./native-readiness";
 import { readWorkspaceEmailSettings } from "./notification-settings";
 import { OperationsService } from "./operations-service";
 import { readProviderHealth } from "./provider-health";
@@ -119,11 +121,14 @@ export async function runObservabilityCycle(
 			 WHERE status = 'active'
 			 ORDER BY organization_id, id`,
 		);
+		const db = drizzle(pool, { schema });
 		const providers = await readProviderHealth(
-			{ checkDatabase: async () => void (await pool.query("SELECT 1")) },
+			{
+				checkDatabase: async () => void (await pool.query("SELECT 1")),
+				hasActiveDocuments: () => hasActiveDocuments(db),
+			},
 			{ now, environment },
 		);
-		const db = drizzle(pool, { schema });
 		const service = OperationsService.fromDatabase(db);
 		const emailConfigured = emailTransportConfigured(environment);
 		const counts = { opened: 0, resolved: 0, observed: 0 };
@@ -132,55 +137,54 @@ export async function runObservabilityCycle(
 				organizationId: scope.organization_id,
 				workspaceId: scope.workspace_id,
 			};
-			const emailSettings = await readWorkspaceEmailSettings(
-				pool,
-				workspaceScope,
-			);
-			const policy = resolveWorkspaceAlertPolicy(
-				emailSettings.alert_thresholds,
-				baselinePolicy,
-			);
-			const destinations = configuredAlertDestinations(environment, {
-				scope: workspaceScope,
-				...emailSettings,
-			});
-			await projectComponentHealth(pool, {
-				organizationId: scope.organization_id,
-				workspaceId: scope.workspace_id,
-				checkedAt: now,
-				items: [
-					...providers.items,
-					{
-						code: "email_delivery",
-						label: "邮件服务",
-						kind: "infrastructure",
-						status: emailConfigured ? "healthy" : "disabled",
-						mode: "configuration",
-						latency_ms: null,
-						error_code: emailConfigured ? null : "email_not_configured",
-						recovery:
-							"检查 EMAIL_PROVIDER、EMAIL_FROM 和 RESEND_API_KEY 配置；配置就绪不代表邮件已送达。",
-					},
-				],
-			});
-			const snapshot = await service.readSnapshot(
-				{
-					organizationId: scope.organization_id,
-					workspaceId: scope.workspace_id,
-				},
-				{ now },
-			);
-			const result = await reconcileWorkspaceAlerts(pool, {
-				organizationId: scope.organization_id,
-				workspaceId: scope.workspace_id,
-				signals: deriveOperationalSignals(snapshot, providers, policy),
-				destinations,
-				recoveryCycles: policy.recoveryCycles,
-				now,
-			});
-			counts.opened += result.opened;
-			counts.resolved += result.resolved;
-			counts.observed += result.observed;
+			try {
+				const emailSettings = await readWorkspaceEmailSettings(
+					pool,
+					workspaceScope,
+				);
+				const policy = resolveWorkspaceAlertPolicy(
+					emailSettings.alert_thresholds,
+					baselinePolicy,
+				);
+				const destinations = configuredAlertDestinations(environment, {
+					scope: workspaceScope,
+					...emailSettings,
+				});
+				await projectComponentHealth(pool, {
+					...workspaceScope,
+					checkedAt: now,
+					items: [
+						...providers.items,
+						{
+							code: "email_delivery",
+							label: "邮件服务",
+							kind: "infrastructure",
+							status: emailConfigured ? "healthy" : "disabled",
+							mode: "configuration",
+							latency_ms: null,
+							error_code: emailConfigured ? null : "email_not_configured",
+							recovery:
+								"检查 EMAIL_PROVIDER、EMAIL_FROM 和 RESEND_API_KEY 配置；配置就绪不代表邮件已送达。",
+						},
+					],
+				});
+				const snapshot = await service.readSnapshot(workspaceScope, { now });
+				const result = await reconcileWorkspaceAlerts(pool, {
+					...workspaceScope,
+					signals: deriveOperationalSignals(snapshot, providers, policy),
+					destinations,
+					recoveryCycles: policy.recoveryCycles,
+					now,
+				});
+				counts.opened += result.opened;
+				counts.resolved += result.resolved;
+				counts.observed += result.observed;
+			} catch {
+				logger.error({
+					event: "observability_workspace_evaluation_failed",
+					...workspaceScope,
+				});
+			}
 		}
 		return { workspaces: scopes.rowCount ?? scopes.rows.length, ...counts };
 	});

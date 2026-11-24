@@ -24,6 +24,7 @@ import { normalizeMinerUResult } from "./mineru-provider";
 import { readZipEntryBounded } from "./zip-entry";
 
 const DEFAULT_RESULT_HOSTS = new Set(["file.302.ai", "file.302ai.cn"]);
+const MAX_RESULT_ZIP_BYTES = 64 * 1024 * 1024;
 
 export type MinerU302ProviderOptions = HttpParserProviderOptions & {
 	version?: string;
@@ -196,9 +197,11 @@ export class MinerU302Provider
 			// Result downloads are pre-signed/public. Never forward the API key.
 			response = await this.fetchImpl(resultUrl, {
 				method: "GET",
+				redirect: "manual",
 				signal: task.signal,
 			});
 		} catch {
+			task.signal?.throwIfAborted();
 			throw providerError(
 				"provider_unreachable",
 				"302.AI result ZIP is unreachable",
@@ -206,6 +209,7 @@ export class MinerU302Provider
 			);
 		}
 		if (!response.ok) {
+			await response.body?.cancel().catch(() => undefined);
 			throw providerError(
 				"provider_result_download_failed",
 				`302.AI result ZIP failed with HTTP ${response.status}`,
@@ -213,7 +217,17 @@ export class MinerU302Provider
 				response.status,
 			);
 		}
-		const zip = await JSZip.loadAsync(await response.arrayBuffer());
+		const bytes = await readResultZip(response, task.signal);
+		let zip: JSZip;
+		try {
+			zip = await JSZip.loadAsync(bytes);
+		} catch {
+			throw providerError(
+				"provider_invalid_response",
+				"302.AI result ZIP is invalid",
+				false,
+			);
+		}
 		const entry = Object.values(zip.files)
 			.filter((item) => !item.dir && /content_list\.json$/i.test(item.name))
 			.sort((left, right) => left.name.length - right.name.length)[0];
@@ -297,6 +311,54 @@ export class MinerU302Provider
 			}),
 		};
 	}
+}
+
+async function readResultZip(
+	response: Response,
+	signal?: AbortSignal,
+): Promise<Buffer> {
+	const tooLarge = providerError(
+		"provider_invalid_response",
+		"302.AI result ZIP exceeds its download budget",
+		false,
+	);
+	if (Number(response.headers.get("content-length")) > MAX_RESULT_ZIP_BYTES) {
+		await response.body?.cancel().catch(() => undefined);
+		throw tooLarge;
+	}
+	if (!response.body) {
+		throw providerError(
+			"provider_invalid_response",
+			"302.AI result ZIP has no body",
+			false,
+		);
+	}
+
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		while (true) {
+			signal?.throwIfAborted();
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > MAX_RESULT_ZIP_BYTES) throw tooLarge;
+			chunks.push(value);
+		}
+	} catch (error) {
+		await reader.cancel().catch(() => undefined);
+		signal?.throwIfAborted();
+		if (error === tooLarge) throw error;
+		throw providerError(
+			"provider_result_download_failed",
+			"302.AI result ZIP download was interrupted",
+			true,
+		);
+	} finally {
+		reader.releaseLock();
+	}
+	return Buffer.concat(chunks, total);
 }
 
 async function responseValue(response: Response): Promise<unknown> {

@@ -227,6 +227,49 @@ test("notification updates validate complete settings and optimistic version bef
 	assert.equal(calls.length, 2);
 });
 
+test("threshold-only updates omit email settings and require their own version", async () => {
+	const { handlers, calls } = fixture();
+	const body = {
+		alert_thresholds: { ask_min_samples: 30 },
+		alert_policy_version: 2,
+	};
+	assert.equal(
+		(
+			await handlers.PATCH(
+				new Request("http://localhost:3000/api/workspace/notifications", {
+					method: "PATCH",
+					headers: {
+						"content-type": "application/json",
+						host: "127.0.0.1:3001",
+						origin: "http://127.0.0.1:3001",
+					},
+					body: JSON.stringify(body),
+				}),
+			)
+		).status,
+		200,
+	);
+	assert.deepEqual(calls[0].input, {
+		organizationId: identity.tenantId,
+		workspaceId: identity.workspaceId,
+		actorId: identity.principalId,
+		alertThresholds: body.alert_thresholds,
+		expectedAlertPolicyVersion: 2,
+	});
+	for (const invalid of [
+		{},
+		{ version: 1 },
+		{ alert_thresholds: {} },
+		{ alert_policy_version: 2 },
+		{ ...body, settings: DEFAULT_WORKSPACE_EMAIL_SETTINGS },
+		{ ...body, version: 1 },
+		{ ...body, workspace_id: "other" },
+	]) {
+		assert.equal((await handlers.PATCH(command(invalid))).status, 400);
+	}
+	assert.equal(calls.length, 2);
+});
+
 test("notification commands reject cross-origin, non-JSON, malformed and oversized requests", async () => {
 	const { handlers, calls } = fixture();
 	assert.equal(

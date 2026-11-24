@@ -13,6 +13,7 @@ export type ScopedRetrievalCacheKeyInput = {
 		rerankEnabled: boolean;
 		preserveFigureLineage?: boolean;
 		lineageMinScore?: number;
+		minimumEvidenceScore?: number;
 		expandParentContext?: boolean;
 		rerankTopK: number;
 		bm25TopK: number;
@@ -68,6 +69,8 @@ export function buildScopedRetrievalCacheKey(
 			rerankEnabled: input.options.rerankEnabled,
 			preserveFigureLineage: Boolean(input.options.preserveFigureLineage),
 			lineageMinScore: input.options.lineageMinScore ?? null,
+			minimumEvidenceScore: input.options.minimumEvidenceScore ?? null,
+			expandParentContext: input.options.expandParentContext ?? true,
 			rerankTopK: input.options.rerankTopK,
 			bm25TopK: input.options.bm25TopK,
 			rrfK: input.options.rrfK,

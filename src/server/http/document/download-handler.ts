@@ -15,6 +15,7 @@ import {
 } from "@/db/schema";
 import { documentContentDisposition } from "@/lib/document-download";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
+import { EMPTY_RESTRICTED_ACL_PRINCIPAL } from "@/lib/server/document-acl.mjs";
 import { documentObjectStorage } from "@/lib/server/object-storage";
 
 export function isNativeDocumentDownloadPath(path: string[]): boolean {
@@ -48,6 +49,7 @@ export function documentAclAllows(
 	return aclRows.some(
 		(row) =>
 			row.subjectId !== null &&
+			row.subjectId !== EMPTY_RESTRICTED_ACL_PRINCIPAL &&
 			((["principal", "user"].includes(row.subjectType ?? "") &&
 				row.subjectId === identity.principalId) ||
 				(row.subjectType === "group" &&

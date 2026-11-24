@@ -7,6 +7,7 @@ import pg from "pg";
 
 import { hashPassword } from "../../src/lib/server/auth/passwords.mjs";
 import { createSignedSession } from "../../src/lib/server/auth/session-token";
+import { closeGlobalDatabasePool } from "../helpers/runtime";
 
 const require = createRequire(import.meta.url);
 const nodeModule = require("node:module") as {
@@ -81,7 +82,7 @@ test("Redis enforces distributed fixed-window, login, and public API limits", {
 	skip: redisUrl ? false : "REDIS_INTEGRATION_TEST_URL is not configured",
 }, async () => {
 	const [
-		{ consumeLoginRateLimit },
+		{ consumeLoginRateLimit, consumePasswordChangeRateLimit },
 		,
 		{ checkPublicApiRateLimit },
 		{ consumeFixedWindow },
@@ -153,6 +154,46 @@ test("Redis enforces distributed fixed-window, login, and public API limits", {
 		assert.equal((await checkPublicApiRateLimit(`key-${nonce}`)).ok, true);
 		assert.equal((await checkPublicApiRateLimit(`key-${nonce}`)).ok, true);
 		assert.equal((await checkPublicApiRateLimit(`key-${nonce}`)).ok, false);
+
+		const passwordRequest = (host: number) =>
+			new Request("https://unorag.test/api/auth/password", {
+				headers: {
+					"x-real-ip": `2001:db8:${nonce.slice(0, 4)}:${nonce.slice(4, 8)}::${host}`,
+				},
+			});
+		for (let attempt = 0; attempt < 5; attempt += 1) {
+			assert.equal(
+				(
+					await consumePasswordChangeRateLimit(
+						passwordRequest(attempt + 10),
+						nonce,
+					)
+				).ok,
+				true,
+			);
+		}
+		const accountLimited = await consumePasswordChangeRateLimit(
+			passwordRequest(16),
+			nonce,
+		);
+		assert.equal(accountLimited.ok, false);
+		if (!accountLimited.ok) assert.ok(accountLimited.retryAfterSeconds > 0);
+		for (let attempt = 0; attempt < 30; attempt += 1) {
+			assert.equal(
+				(
+					await consumePasswordChangeRateLimit(
+						passwordRequest(20),
+						randomUUID(),
+					)
+				).ok,
+				true,
+			);
+		}
+		assert.equal(
+			(await consumePasswordChangeRateLimit(passwordRequest(20), randomUUID()))
+				.ok,
+			false,
+		);
 	} finally {
 		await closeSecurityRedisForTests();
 		if (previousRedis === undefined) delete process.env.REDIS_URL;
@@ -175,6 +216,7 @@ test("Redis session registry supports rotation, password-wide replacement, and l
 			registerSession,
 			replacePrincipalSessions,
 			revokeSession,
+			revokeWorkspaceSessions,
 			rotateSession,
 		},
 		,
@@ -200,9 +242,31 @@ test("Redis session registry supports rotation, password-wide replacement, and l
 			principalId,
 			workspaceId: randomUUID(),
 			credentialVersion: "100",
+			sessionFamilyId: first.claims.sid,
 		});
-		await rotateSession(first.claims, second.claims);
+		const rotations = await Promise.all([
+			rotateSession(first.claims, second.claims),
+			rotateSession(first.claims, second.claims),
+		]);
+		assert.equal(rotations.filter(Boolean).length, 1);
+		assert.equal(await rotateSession(first.claims, second.claims), false);
 		assert.equal(await isSessionActive(first.claims), false);
+		assert.equal(await isSessionActive(second.claims), true);
+
+		await revokeSession(first.claims);
+		assert.equal(await isSessionActive(second.claims), false);
+		assert.equal(await rotateSession(first.claims, second.claims), false);
+		await registerSession(first.claims);
+		assert.equal(await rotateSession(first.claims, second.claims), true);
+
+		const independent = createSignedSession({
+			principalId,
+			workspaceId: first.claims.workspace_id,
+			credentialVersion: "100",
+		});
+		await registerSession(independent.claims);
+		await revokeWorkspaceSessions(principalId, first.claims.workspace_id);
+		assert.equal(await isSessionActive(independent.claims), false);
 		assert.equal(await isSessionActive(second.claims), true);
 
 		const passwordChanged = createSignedSession({
@@ -213,6 +277,17 @@ test("Redis session registry supports rotation, password-wide replacement, and l
 		await replacePrincipalSessions(passwordChanged.claims);
 		assert.equal(await isSessionActive(second.claims), false);
 		assert.equal(await isSessionActive(passwordChanged.claims), true);
+		const staleRotation = createSignedSession({
+			principalId,
+			workspaceId: first.claims.workspace_id,
+			credentialVersion: "100",
+			sessionFamilyId: first.claims.sid,
+		});
+		assert.equal(
+			await rotateSession(second.claims, staleRotation.claims),
+			false,
+		);
+		assert.equal(await isSessionActive(staleRotation.claims), false);
 
 		await revokeSession(passwordChanged.claims);
 		assert.equal(await isSessionActive(passwordChanged.claims), false);
@@ -309,6 +384,7 @@ test("local authentication counts one atomic failure across multiple workspace m
 			.query("DELETE FROM app.organizations WHERE id = $1", [organizationId])
 			.catch(() => undefined);
 		await pool.end();
+		await closeGlobalDatabasePool();
 		if (previousDatabase === undefined) delete process.env.DATABASE_URL;
 		else process.env.DATABASE_URL = previousDatabase;
 	}

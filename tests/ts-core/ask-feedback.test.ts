@@ -192,11 +192,16 @@ test("createAskFeedbackHandlers enforces auth, origin, content-type, validation,
 
 	throwNotFound = false;
 	const ok = await POST(
-		makeJsonRequest("https://unorag.example/api/rag/v1/feedback", "POST", {
-			request_id: VALID_REQUEST_ID,
-			rating: "down",
-			reason_code: "outdated_doc",
-		}),
+		makeJsonRequest(
+			"http://localhost:3000/api/rag/v1/feedback",
+			"POST",
+			{
+				request_id: VALID_REQUEST_ID,
+				rating: "down",
+				reason_code: "outdated_doc",
+			},
+			{ host: "127.0.0.1:3001", origin: "http://127.0.0.1:3001" },
+		),
 	);
 	assert.equal(ok.status, 200);
 	assert.deepEqual(capturedScope, {

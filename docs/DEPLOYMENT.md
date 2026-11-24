@@ -142,8 +142,23 @@ Redis 是 Web 的必需依赖，用于可撤销浏览器会话、登录/Public A
 Web 和 Worker 运行身份不得拥有 DDL 权限。
 
 Compose 使用 `runtime.env` 中的 `LLM_BASE_URL` 和 `runtime.secret` 中的 `LLM_API_KEY`；Helm 使用
-`config.llmBaseUrl` 和 Secret 的 `LLM_API_KEY`。应用依次接受 `LLM_*`、`OPENAI_*`、`DASHSCOPE_*`
-的端点和凭据。Compose 和 Helm 继续向容器提供兼容现有部署覆盖的 `OPENAI_*` 变量。自托管 MinerU 地址只使用 `runtime.advanced.env` 中的
+`config.llmBaseUrl` 和 Secret 的 `LLM_API_KEY`。应用按 `LLM_*`、`OPENAI_*`、`DASHSCOPE_*` 的顺序，
+选择首个含非空地址或密钥的命名空间，不跨组拼接地址与密钥。所选组必须提供 API Key；未提供地址时，
+使用既有默认 `https://dashscope.aliyuncs.com/compatible-mode/v1`，因此只配置 Key 是使用默认 DashScope 的有效配置。
+自定义网关必须显式配置同组地址与匹配的密钥；只配置地址而缺少密钥会报错，不从低优先级组补齐。
+Compose 保留各组原值，Helm 使用 `LLM_*`。
+
+Embedding、Judge、Rerank 可分别配置 `*_BASE_URL` 与 `*_API_KEY`；地址与主模型端点不同就必须提供专用密钥。
+仅同一个端点可以继承主密钥，另允许已知 DashScope Chat/Embedding 与 Rerank 两条官方 API 路径共享同厂凭据。
+自定义主网关没有配置重排时不创建默认外部 Reranker；配置了不同地址却缺少专用密钥会报配置错误。
+合法未配置的 Reranker 在运行中心显示 `disabled`，不触发 Provider 异常告警；解析配置失败仍显示 `degraded`，
+即使 `TS_RETRIEVAL_RERANK_ENABLED=false` 也不会隐藏缺少专用密钥或非法地址等错误。
+Web 查询与 Worker 入库必须使用同一组 Embedding 配置。专用密钥放在 `runtime.secret` 或 Helm Secret，地址放在高级配置。
+VLM 的专用地址与凭据遵循相同绑定规则，但目前仅 Compose/本地配置已接入；Helm 尚未接入 VLM 配置与凭据注入，
+仅向 Helm Secret 添加 `VLM_API_KEY` 不会启用 VLM。
+Compose 向 Control 同步 Web 的 Judge/VLM 绑定及 VLM 开关、超时和读取上限；Helm 向 Control 同步已支持的 Judge
+绑定与专用密钥。Control 只检查配置，不调用模型；变更这些配置后须同时重新创建 Web 与 Control，避免健康状态和告警使用不同配置。
+自托管 MinerU 地址只使用 `runtime.advanced.env` 中的
 `MINERU_SELF_HOSTED_URL`；升级初始化会将历史
 `MINERU_URL` 一次性迁移并删除旧键。
 
@@ -229,7 +244,7 @@ mk_compose --profile ops run --rm inspect-lifecycle
 | 组件 | 预期 |
 |---|---|
 | Web liveness | `/api/rag/health/live` 返回 200；只说明进程可响应，不探测下游依赖 |
-| Web readiness | `/api/rag/health/ready` 检查 PostgreSQL、Qdrant 和模型凭证，以及现有集合的向量维度，失败时返回 503 |
+| Web readiness | `/api/rag/health/ready` 检查 PostgreSQL、模型配置绑定及 Qdrant 的 Dense/维度/距离、Sparse IDF 和必要 payload 索引；失败返回 503 |
 | Web 状态详情 | `/api/rag/health` 保持兼容，返回 `ask_ready`、`degraded` 与 `reasons`，供 UI 和诊断读取 |
 | DBOS Worker | 私有 `:3001/dbos-healthz` 正常 |
 | DBOS Control | ready marker 持续更新 |
@@ -239,7 +254,9 @@ mk_compose --profile ops run --rm inspect-lifecycle
 
 当 `/api/rag/health` 或运行中心报告 `embedding_dimension_mismatch` 时，请在 Web 和 Worker 使用相同配置。
 若所用模型支持现有集合的维度，将 `EMBEDDING_DIM` 调整为提示中的集合维度。
-若要使用新维度，将 `QDRANT_COLLECTION` 指向新集合并重新索引。新安装尚未创建集合时，健康探针允许启动。
+若要使用新维度，将 `QDRANT_COLLECTION` 指向新集合并重新索引。
+只有 PG 明确没有生效文档时，尚未创建或为空的集合才允许初始化；PG 已有生效文档时，集合不存在或完全为空会使问答不就绪。
+健康探针只读，不创建集合或补写索引，也不逐文档证明全部 Point 完整；初始化由正常入库/检索的集合管理器完成。
 
 ## 镜像与升级
 

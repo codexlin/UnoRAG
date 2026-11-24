@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { buttonVariants } from "../../src/components/ui/button";
 import { COLOR_THEMES } from "../../src/lib/appearance";
-import { textContrast } from "./appearance-assertions";
+import { selectAppearanceRadio, textContrast } from "./appearance-assertions";
 
 test("stored appearance is restored before hydration bundles are available", async ({
 	page,
@@ -39,10 +40,14 @@ test("appearance applies globally, persists, follows system, syncs tabs and rest
 	await page.goto("/login");
 	await page.getByRole("button", { name: "外观设置", exact: true }).click();
 	const dialog = page.getByRole("dialog", { name: "外观", exact: true });
-	await dialog.getByRole("radio", { name: "Claude", exact: true }).check();
+	await selectAppearanceRadio(
+		dialog.getByRole("radio", { name: "Claude", exact: true }),
+	);
 	await dialog.getByRole("slider", { name: "圆角大小", exact: true }).focus();
 	await page.keyboard.press("End");
-	await dialog.getByRole("radio", { name: "深色", exact: true }).check();
+	await selectAppearanceRadio(
+		dialog.getByRole("radio", { name: "深色", exact: true }),
+	);
 	await expect(page.locator("html")).toHaveAttribute(
 		"data-color-theme",
 		"claude",
@@ -88,11 +93,14 @@ test("appearance applies globally, persists, follows system, syncs tabs and rest
 		"vercel",
 	);
 	await expect(page.locator("html")).toHaveClass(/dark/);
-	await dialog.getByRole("radio", { name: "跟随系统", exact: true }).check();
+	await selectAppearanceRadio(
+		dialog.getByRole("radio", { name: "跟随系统", exact: true }),
+	);
 	await expect(page.locator("html")).not.toHaveClass(/dark/);
 	await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
 	await expect(page.locator("html")).toHaveClass(/dark/);
-	await expect(dialog).toHaveCSS("transition-duration", "1e-05s");
+	await expect(dialog).toHaveCSS("transition-property", "none");
+	await expect(dialog).toHaveCSS("animation-name", "none");
 	await expect
 		.poll(() =>
 			dialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
@@ -110,12 +118,17 @@ test("palette and radius combinations render without overflow and leave semantic
 	await page.getByRole("button", { name: "外观设置", exact: true }).click();
 	const dialog = page.getByRole("dialog", { name: "外观", exact: true });
 	for (const mode of ["浅色", "深色"]) {
-		await dialog.getByRole("radio", { name: mode, exact: true }).check();
+		await selectAppearanceRadio(
+			dialog.getByRole("radio", { name: mode, exact: true }),
+		);
+		await expect(page.locator("html")).toHaveClass(
+			mode === "深色" ? /\bdark\b/ : /\blight\b/,
+		);
 		let semanticColors: Record<string, string> | undefined;
 		for (const color of COLOR_THEMES) {
-			await dialog
-				.getByRole("radio", { name: color.label, exact: true })
-				.check();
+			await selectAppearanceRadio(
+				dialog.getByRole("radio", { name: color.label, exact: true }),
+			);
 			await expect(page.locator("html")).toHaveAttribute(
 				"data-color-theme",
 				color.id,
@@ -154,10 +167,16 @@ test("palette and radius combinations render without overflow and leave semantic
 				if (!context) throw new Error("Missing canvas color context");
 				const probe = document.createElement("span");
 				document.body.append(probe);
-				const luminance = (token: string) => {
+				const luminance = (token: string, evidenceTint = false) => {
 					probe.style.color = `var(--${token})`;
 					context.fillStyle = getComputedStyle(probe).color;
 					context.fillRect(0, 0, 1, 1);
+					if (evidenceTint) {
+						probe.style.color =
+							"color-mix(in oklab, var(--evidence) 15%, transparent)";
+						context.fillStyle = getComputedStyle(probe).color;
+						context.fillRect(0, 0, 1, 1);
+					}
 					const [r, g, b] = Array.from(context.getImageData(0, 0, 1, 1).data)
 						.slice(0, 3)
 						.map((value) => {
@@ -170,14 +189,22 @@ test("palette and radius combinations render without overflow and leave semantic
 				};
 				const result = [
 					["foreground", "background"],
+					["card-foreground", "card"],
+					["popover-foreground", "popover"],
 					["muted-foreground", "background"],
 					["muted-foreground", "muted"],
+					["muted-foreground", "card"],
+					["muted-foreground", "popover"],
 					["primary", "background"],
 					["primary-foreground", "primary"],
+					["secondary-foreground", "secondary"],
 					["accent-foreground", "accent"],
 					["sidebar-foreground", "sidebar"],
+					["sidebar-primary-foreground", "sidebar-primary"],
 					["sidebar-accent-foreground", "sidebar-accent"],
 					["evidence", "background"],
+					["evidence", "card"],
+					["evidence-foreground", "evidence"],
 					["cite", "background"],
 					["warning-foreground", "warning"],
 					["destructive", "background"],
@@ -185,6 +212,16 @@ test("palette and radius combinations render without overflow and leave semantic
 					const [a, b] = [luminance(fg), luminance(bg)].sort((x, y) => y - x);
 					return { pair: `${fg}/${bg}`, ratio: (a + 0.05) / (b + 0.05) };
 				});
+				const evidence = luminance("evidence");
+				for (const surface of ["background", "card", "popover"]) {
+					const [a, b] = [evidence, luminance(surface, true)].sort(
+						(x, y) => y - x,
+					);
+					result.push({
+						pair: `evidence/evidence tint over ${surface}`,
+						ratio: (a + 0.05) / (b + 0.05),
+					});
+				}
 				probe.remove();
 				return result;
 			});
@@ -277,6 +314,56 @@ test("custom radius supports drag, keyboard, exact input and safe empty/range ha
 	).toHaveCSS("border-radius", "5px");
 });
 
+test("Claude dark popovers keep tinted evidence and destructive actions readable", async ({
+	page,
+}) => {
+	await page.emulateMedia({ reducedMotion: "reduce" });
+	await page.addInitScript(() => {
+		localStorage.setItem(
+			"unorag-appearance-v1",
+			JSON.stringify({ color: "claude", radius: "preset" }),
+		);
+		localStorage.setItem("unorag-theme", "dark");
+	});
+	await page.goto("/login");
+	await expect(page.locator("html")).toHaveAttribute(
+		"data-color-theme",
+		"claude",
+	);
+	await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+	// Exercise the shared destructive variant on the same surface as the member-removal footer.
+	await page.evaluate(
+		(buttonClass) => {
+			const popover = document.createElement("div");
+			popover.className = "fixed top-4 left-4 z-50 bg-popover p-4";
+			const evidence = document.createElement("span");
+			evidence.className = "bg-evidence/15 text-evidence";
+			evidence.textContent = "Evidence contrast";
+			const footer = document.createElement("div");
+			footer.className = "bg-muted/50 p-4";
+			const button = document.createElement("button");
+			button.className = buttonClass;
+			button.textContent = "Destructive contrast";
+			footer.append(button);
+			popover.append(evidence, footer);
+			document.body.append(popover);
+		},
+		buttonVariants({ variant: "destructive" }),
+	);
+	const button = page.getByRole("button", { name: "Destructive contrast" });
+	expect(
+		(await textContrast(page.getByText("Evidence contrast"))).ratio,
+	).toBeGreaterThanOrEqual(4.5);
+	const resting = await textContrast(button);
+	expect(resting.ratio).toBeGreaterThanOrEqual(4.5);
+	if (await page.evaluate(() => matchMedia("(hover: hover)").matches)) {
+		await button.hover();
+		const hovered = await textContrast(button);
+		expect(hovered.alpha).not.toBe(resting.alpha);
+		expect(hovered.ratio).toBeGreaterThanOrEqual(4.5);
+	}
+});
+
 test("primary button text remains readable in real resting and hover states", async ({
 	page,
 }) => {
@@ -289,19 +376,36 @@ test("primary button text remains readable in real resting and hover states", as
 	for (const theme of COLOR_THEMES) {
 		for (const mode of ["浅色", "深色"]) {
 			await page.getByRole("button", { name: "外观设置", exact: true }).click();
-			await page.getByRole("radio", { name: theme.label, exact: true }).check();
-			await page.getByRole("radio", { name: mode, exact: true }).check();
+			await selectAppearanceRadio(
+				page.getByRole("radio", { name: theme.label, exact: true }),
+			);
+			await selectAppearanceRadio(
+				page.getByRole("radio", { name: mode, exact: true }),
+			);
 			await page.keyboard.press("Escape");
-			if (canHover) await button.hover();
+			await expect(page.locator("html")).toHaveAttribute(
+				"data-color-theme",
+				theme.id,
+			);
+			await expect(page.locator("html")).toHaveClass(
+				mode === "深色" ? /\bdark\b/ : /\blight\b/,
+			);
+			await page.mouse.move(0, 0);
 			const measure = () => textContrast(button);
-			if (canHover)
+			expect(
+				(await measure()).ratio,
+				`${theme.id}/${mode}/button resting`,
+			).toBeGreaterThanOrEqual(4.5);
+			if (canHover) {
+				await button.hover();
 				await expect
 					.poll(async () => (await measure()).alpha)
 					.toBeLessThan(255);
-			expect(
-				(await measure()).ratio,
-				`${theme.id}/${mode}/button`,
-			).toBeGreaterThanOrEqual(4.5);
+				expect(
+					(await measure()).ratio,
+					`${theme.id}/${mode}/button hover`,
+				).toBeGreaterThanOrEqual(4.5);
+			}
 		}
 	}
 });
@@ -324,8 +428,10 @@ test("appearance and login remain readable with 200 percent root text size", asy
 		await expect
 			.poll(() => dialog.evaluate((el) => el.scrollWidth <= el.clientWidth + 1))
 			.toBe(true);
-		for (const name of ["Vercel", "Claude", "Violet Bloom"]) {
-			await dialog.getByRole("radio", { name, exact: true }).check();
+		for (const { label: name } of COLOR_THEMES) {
+			await selectAppearanceRadio(
+				dialog.getByRole("radio", { name, exact: true }),
+			);
 			const label = dialog.getByText(name, { exact: true });
 			await expect
 				.poll(() =>
@@ -399,10 +505,11 @@ test("invalid and blocked local storage never prevents login or appearance chang
 	});
 	await page.reload();
 	await page.getByRole("button", { name: "外观设置", exact: true }).click();
-	await page
-		.getByRole("dialog")
-		.getByRole("radio", { name: "Violet Bloom", exact: true })
-		.check();
+	await selectAppearanceRadio(
+		page
+			.getByRole("dialog")
+			.getByRole("radio", { name: "Violet Bloom", exact: true }),
+	);
 	await expect(page.locator("html")).toHaveAttribute(
 		"data-color-theme",
 		"violet-bloom",

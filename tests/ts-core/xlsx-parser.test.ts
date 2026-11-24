@@ -283,6 +283,106 @@ test("parseXlsxDocument parses multi-sheet workbooks with banners, merged header
 	assert.equal(sumResult.answerValue, 800);
 });
 
+test("numeric year subheaders stay out of merged-header table data and aggregates", async () => {
+	const content = await buildXlsxBuffer({
+		sheets: [
+			{
+				name: "Budgets",
+				mergeRefs: ["B1:D1"],
+				rowsXml: `
+				<row r="1"><c r="A1" t="inlineStr"><is><t>项目</t></is></c><c r="B1" t="inlineStr"><is><t>预算（万元）</t></is></c></row>
+				<row r="2"><c r="B2"><v>2024</v></c><c r="C2"><v>2025</v></c><c r="D2" t="inlineStr"><is><t>增幅</t></is></c></row>
+				<row r="3"><c r="A3" t="inlineStr"><is><t>北区</t></is></c><c r="B3"><v>100</v></c><c r="C3"><v>150</v></c><c r="D3"><v>50</v></c></row>
+				<row r="4"><c r="A4" t="inlineStr"><is><t>南区</t></is></c><c r="B4"><v>200</v></c><c r="C4"><v>250</v></c><c r="D4"><v>25</v></c></row>
+			`,
+			},
+			{
+				name: "Single header",
+				mergeRefs: ["B1:C1"],
+				rowsXml: `
+				<row r="1"><c r="A1" t="inlineStr"><is><t>Item</t></is></c><c r="B1" t="inlineStr"><is><t>Reading</t></is></c></row>
+				<row r="2"><c r="A2" t="inlineStr"><is><t>North</t></is></c><c r="B2"><v>2024</v></c><c r="C2"><v>2025</v></c></row>
+				<row r="3"><c r="A3" t="inlineStr"><is><t>South</t></is></c><c r="B3"><v>30</v></c><c r="C3"><v>40</v></c></row>
+			`,
+			},
+			{
+				name: "Numbered subheaders",
+				mergeRefs: ["A1:A2", "B1:C1"],
+				rowsXml: `
+				<row r="1"><c r="A1" t="inlineStr"><is><t>Item</t></is></c><c r="B1" t="inlineStr"><is><t>Slot</t></is></c></row>
+				<row r="2"><c r="B2"><v>1</v></c><c r="C2"><v>2</v></c></row>
+				<row r="3"><c r="A3" t="inlineStr"><is><t>North</t></is></c><c r="B3"><v>10</v></c><c r="C3"><v>20</v></c></row>
+			`,
+			},
+		],
+	});
+	const doc = await parseXlsxDocument({
+		documentId: "merged-years",
+		libraryId: "library",
+		filename: "budget.xlsx",
+		title: "budget",
+		contentHash: "fixture",
+		content,
+		source: "upload",
+	});
+	const tables = doc.nodes.filter(({ type }) => type === "table");
+	assert.equal(tables.length, 3);
+	assert.deepEqual(tables[0].table_ir?.header_rows.at(-1)?.slice(1), [
+		"2024",
+		"2025",
+		"增幅",
+	]);
+	assert.deepEqual(
+		tables[0].table_ir?.rows.map(({ cells }) =>
+			cells.map(({ raw_text }) => raw_text),
+		),
+		[
+			["北区", "100", "150", "50"],
+			["南区", "200", "250", "25"],
+		],
+	);
+	assert.deepEqual(
+		tables[1].table_ir?.rows[0]?.cells.map(({ raw_text }) => raw_text),
+		["North", "2024", "2025"],
+	);
+	assert.deepEqual(tables[2].table_ir?.header_rows.at(-1)?.slice(1), [
+		"1",
+		"2",
+	]);
+	assert.deepEqual(
+		tables[2].table_ir?.rows.map(({ cells }) =>
+			cells.map(({ raw_text }) => raw_text),
+		),
+		[["North", "10", "20"]],
+	);
+	const chunks = await chunkDocument(doc);
+	const records = buildIndexPayloads(chunks, {
+		documentId: doc.id,
+		documentVersionId: "version",
+		generationId: "8d3c1bbb-0f89-4ccc-9db1-ae02bc38ab09",
+		libraryId: doc.library_id,
+		organizationId: "org",
+		workspaceId: "workspace",
+		filename: doc.filename,
+	}).filter(
+		(record) =>
+			record.record_type === "table" && record.table_id === tables[0].table_id,
+	);
+	const column = records[0]?.headers?.find((header) => header.includes("2025"));
+	assert.ok(column);
+	const result = executeTableQuery(
+		{
+			mode: "single",
+			operation: "sum",
+			tableId: tables[0].table_id,
+			column,
+		},
+		{ records: records as unknown as StoredQdrantPayload[] },
+	);
+	assert.equal(result.status, "success");
+	assert.equal(result.answerValue, 400);
+});
+
 test("parseXlsxDocument supports 1904 workbook dates", async () => {
 	const content = await buildXlsxBuffer({
 		date1904: true,

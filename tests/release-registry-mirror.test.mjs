@@ -12,10 +12,57 @@ const workflow = load(
 		"utf8",
 	),
 );
-const mirror = workflow.jobs["build-and-maybe-push"].steps.find(
-	(step) => step.id === "acr",
-);
+const steps = workflow.jobs["build-and-maybe-push"].steps;
+const publish = steps.find((step) => step.id === "publish");
+const mirror = steps.find((step) => step.id === "acr");
+const targets = ["web", "migrator", "ops", "worker"];
+const runnerTemp = `\${{ runner.temp }}`;
 const digest = `sha256:${"a".repeat(64)}`;
+const sourceDigests = Object.fromEntries(
+	targets.map((target, index) => [
+		`${target.toUpperCase()}_DIGEST`,
+		`sha256:${String(index).repeat(64)}`,
+	]),
+);
+
+test("all four local images must pass Trivy before either registry receives a push", () => {
+	const scanSelection = steps.findIndex(
+		(step) => step.name === "Select runtime images for scanning",
+	);
+	assert.notEqual(scanSelection, -1);
+	assert.ok(steps.indexOf(publish) < steps.indexOf(mirror));
+	assert.equal(publish.if, "steps.meta.outputs.dry_run != 'true'");
+	assert.match(publish.run, /skopeo copy --all --preserve-digests/);
+	assert.match(publish.run, /digest.*!=.*expected/);
+	for (const target of targets) {
+		const build = steps.find((step) => step.id === target);
+		assert.ok(steps.indexOf(build) < scanSelection);
+		assert.equal(build.with.push, undefined);
+		assert.equal(
+			build.with.outputs,
+			`type=oci,dest=${runnerTemp}/unorag-${target}.tar`,
+		);
+		const scan = steps.find(
+			(step) => step.with?.input === `${runnerTemp}/unorag-${target}-scan`,
+		);
+		assert.ok(scan?.uses.startsWith("aquasecurity/trivy-action@"));
+		assert.ok(scanSelection < steps.indexOf(scan));
+		assert.ok(steps.indexOf(scan) < steps.indexOf(publish));
+		assert.equal(scan["continue-on-error"], undefined);
+		assert.equal(scan.if, undefined);
+		assert.equal(scan.with["exit-code"], "1");
+		assert.equal(scan.with.severity, "HIGH,CRITICAL");
+		const digestKey = `${target.toUpperCase()}_DIGEST`;
+		assert.equal(
+			publish.env[digestKey],
+			`\${{ steps.${target}.outputs.digest }}`,
+		);
+		assert.equal(
+			mirror.env[digestKey],
+			`\${{ steps.publish.outputs.${target}_digest }}`,
+		);
+	}
+});
 
 async function executeMirror(t, settings = {}) {
 	const directory = await mkdtemp(join(tmpdir(), "unorag-registry-mirror-"));
@@ -38,11 +85,14 @@ if(command==='timeout') {
  process.exit(child.status??99);
 }
 const operation=args[0], ref=args.at(-1);
+const matchesTarget=operation==='pull'
+ ? ref.endsWith('@'+process.env[process.env.FAIL_TARGET.toUpperCase()+'_DIGEST'])
+ : ref.includes(':'+process.env.FAIL_TARGET+'-');
 if(operation==='push'&&process.env.REQUIRE_RUNTIME_PLATFORM==='1'&&(args[1]!=='--platform'||args[2]!=='linux/amd64')){
  console.error('error from registry: unknown manifest class for application/vnd.oci.empty.v1+json');
  process.exit(1);
 }
-if(operation===process.env.FAIL_OPERATION&&ref.includes(':'+process.env.FAIL_TARGET+'-')){
+if(operation===process.env.FAIL_OPERATION&&matchesTarget){
  console.error('fixture registry denied requested access');
  if(process.env.LEAK_FIXTURE==='1')console.error(process.env.ACR_USERNAME+' '+process.env.ACR_PASSWORD+' ::error::untrusted registry text');
  process.exit(Number(process.env.FAIL_CODE));
@@ -72,6 +122,7 @@ if(operation==='push'){
 				FAIL_OPERATION: "",
 				FAIL_TARGET: "web",
 				FAIL_CODE: "17",
+				...sourceDigests,
 				...settings,
 			},
 		},
@@ -106,6 +157,14 @@ test("mirror executes the workflow step and records four complete digest outputs
 			(call) => call.command === "docker" && call.args[0] === "push",
 		).length,
 		4,
+	);
+	assert.deepEqual(
+		result.calls
+			.filter((call) => call.command === "docker" && call.args[0] === "pull")
+			.map((call) => call.args.at(-1)),
+		Object.values(sourceDigests).map(
+			(value) => `ghcr.io/fixture/unorag@${value}`,
+		),
 	);
 });
 

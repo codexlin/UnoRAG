@@ -17,6 +17,7 @@ import {
 } from "./contracts";
 import type { EmbeddingProvider } from "./embedding/provider";
 import { sharesEvidenceLineage } from "./evidence-lineage";
+import { tokenize } from "./hybrid/tokenizer";
 import {
 	projectRerankDiagnostic,
 	type RerankDiagnostic,
@@ -24,7 +25,11 @@ import {
 	RetrievalProviderError,
 } from "./provider-request";
 import type { QdrantSearchHit, StoredQdrantPayload } from "./qdrant/payload";
-import type { RetrievalVectorStore } from "./qdrant/store";
+import type {
+	ChunkLookupTarget,
+	RetrievalVectorStore,
+	SectionLookupTarget,
+} from "./qdrant/store";
 import { normalizeRerankResults, type RerankProvider } from "./rerank/provider";
 import {
 	buildScopedRetrievalCacheKey,
@@ -39,6 +44,7 @@ type CandidateCounts = {
 export type RetrievalInspectionCandidate = {
 	id: string;
 	document_id: string;
+	document_version_id?: string | null;
 	title: string;
 	filename: string | null;
 	section_path: string | null;
@@ -58,6 +64,7 @@ export type RetrievalInspectionCandidate = {
 		| "deduped"
 		| "below_threshold"
 		| "dropped_topk"
+		| "dropped_after_retrieval"
 		| "dropped_rerank";
 	parent_expanded: boolean;
 	chars_before_expand: number;
@@ -195,6 +202,44 @@ function hitText(hit: QdrantSearchHit): string {
 	return heading && !body.includes(heading) ? `${heading}\n${body}` : body;
 }
 
+function lexicalIdentifiers(text: string): Set<string> {
+	const normalized = text
+		.normalize("NFKC")
+		.toLowerCase()
+		.replace(/\p{Dash_Punctuation}/gu, "-");
+	const words = normalized.match(/[a-z0-9]+(?:[-_./][a-z0-9]+)*/gu) ?? [];
+	return new Set(
+		words.filter((word) => /^[a-z]/u.test(word) && /\d/u.test(word)),
+	);
+}
+
+function lexicalEvidenceScorer(
+	query: string,
+): (hit: QdrantSearchHit) => number {
+	const tokens = [...new Set(tokenize(query))];
+	// When bigrams are available, scattered Han characters alone do not
+	// establish that the candidate matched query terms.
+	const terms = tokens.some(
+		(term) => term.length > 1 && /\p{Script=Han}/u.test(term),
+	)
+		? tokens.filter((term) => !/^\p{Script=Han}$/u.test(term))
+		: tokens;
+	const identifiers = [...lexicalIdentifiers(query)];
+	return (hit) => {
+		const text = hitText(hit);
+		const matched = new Set(tokenize(text));
+		const termCoverage = terms.length
+			? terms.filter((term) => matched.has(term)).length / terms.length
+			: 0;
+		if (!identifiers.length) return termCoverage;
+		const matchedIdentifiers = lexicalIdentifiers(text);
+		const identifierCoverage =
+			identifiers.filter((identifier) => matchedIdentifiers.has(identifier))
+				.length / identifiers.length;
+		return Math.max(termCoverage, identifierCoverage);
+	};
+}
+
 function deduplicateOverlappingHits(
 	hits: QdrantSearchHit[],
 ): QdrantSearchHit[] {
@@ -250,12 +295,17 @@ function retainFigureCompanion(
 		threshold > 1
 	)
 		return { selected, restoredFigureCount: 0 };
+	// Lineage can insert an image from outside Top-K. Keep its original
+	// dense/reranked relevance gate even when lexical evidence is eligible for recall.
+	const passesLineageThreshold = (hit: QdrantSearchHit) =>
+		(!hit.used_hybrid || hit.used_rerank || hit.dense_score != null) &&
+		semanticEvidenceScore(hit) >= threshold;
 	const selectedIds = new Set(selected.map((hit) => String(hit.id)));
 	for (const [anchorIndex, anchor] of selected.entries()) {
 		if (
 			anchorIndex >= topK - 1 ||
 			anchor.payload.record_type !== "chunk" ||
-			semanticEvidenceScore(anchor) < threshold
+			!passesLineageThreshold(anchor)
 		)
 			continue;
 		const directFigureId = anchor.payload.figure_id?.trim()
@@ -278,7 +328,7 @@ function retainFigureCompanion(
 			(hit) =>
 				!selectedIds.has(String(hit.id)) &&
 				isCompanion(hit) &&
-				semanticEvidenceScore(hit) >= threshold,
+				passesLineageThreshold(hit),
 		);
 		const companion = eligible.find(directFigure) ?? eligible[0];
 		if (!companion) continue;
@@ -326,13 +376,17 @@ function findParentSection(
 		(section) =>
 			section.payload.record_type === "section" &&
 			section.payload.doc_id === child.payload.doc_id &&
-			section.payload.generation_id === child.payload.generation_id,
+			section.payload.generation_id === child.payload.generation_id &&
+			(section.payload.section_instance ?? null) ===
+				(child.payload.section_instance ?? null),
 	);
 	if (child.payload.parent_record_id) {
-		const byParentId = sameScopeSections.find(
-			(section) => section.payload.record_id === child.payload.parent_record_id,
+		return (
+			sameScopeSections.find(
+				(section) =>
+					section.payload.record_id === child.payload.parent_record_id,
+			) ?? null
 		);
-		if (byParentId) return byParentId;
 	}
 	if (child.payload.record_id) {
 		const recordId = child.payload.record_id;
@@ -355,6 +409,65 @@ function findParentSection(
 		if (byPathAndText) return byPathAndText;
 	}
 	return null;
+}
+
+function parentLookupTarget(child: QdrantSearchHit): SectionLookupTarget[] {
+	const {
+		doc_id,
+		generation_id,
+		parent_record_id,
+		record_id,
+		section_path,
+		section_instance,
+	} = child.payload;
+	if (!generation_id) return [];
+	const identity = {
+		documentId: doc_id,
+		generationId: generation_id,
+		...(section_instance == null ? {} : { sectionInstance: section_instance }),
+	};
+	if (parent_record_id)
+		return [{ ...identity, parentRecordId: parent_record_id }];
+	if (record_id) return [{ ...identity, childRecordId: record_id }];
+	return section_path ? [{ ...identity, sectionPath: section_path }] : [];
+}
+
+function chunkLocation(
+	hit: QdrantSearchHit,
+	chunkIndex = hit.payload.chunk_index,
+) {
+	return {
+		documentId: hit.payload.doc_id,
+		generationId: hit.payload.generation_id ?? "",
+		chunkIndex,
+		sectionPath: hit.payload.section_path ?? null,
+		...(hit.payload.section_instance == null
+			? {}
+			: { sectionInstance: hit.payload.section_instance }),
+	} satisfies ChunkLookupTarget;
+}
+
+function chunkLocationKey(target: ChunkLookupTarget): string {
+	return JSON.stringify([
+		target.documentId,
+		target.generationId,
+		target.chunkIndex,
+		target.sectionPath,
+		target.sectionInstance ?? null,
+	]);
+}
+
+function expansionScope(
+	scope: RetrievalScope,
+	targets: readonly (SectionLookupTarget | ChunkLookupTarget)[],
+): RetrievalScope {
+	return {
+		...scope,
+		documentIds: [...new Set(targets.map((target) => target.documentId))],
+		activeGenerationIds: [
+			...new Set(targets.map((target) => target.generationId)),
+		],
+	};
 }
 
 function safeSlice(text: string, start: number, end: number): string {
@@ -384,6 +497,7 @@ function inspectCandidates(input: {
 	citations: InternalCitation[];
 	evidenceThreshold: number | null;
 	usedHybrid: boolean;
+	belowThresholdIds?: ReadonlySet<string>;
 }): RetrievalInspectionCandidate[] {
 	const deduplicatedIds = new Set(
 		input.deduplicated.map(({ id }) => String(id)),
@@ -412,13 +526,15 @@ function inspectCandidates(input: {
 		const rank = finalRanks.get(id) ?? null;
 		let outcome: RetrievalInspectionCandidate["outcome"];
 		if (rank !== null) outcome = "selected";
-		else if (citation) outcome = "below_threshold";
-		else if (!deduplicatedIds.has(id)) outcome = "deduped";
+		else if (citation || input.belowThresholdIds?.has(id))
+			outcome = "below_threshold";
 		else if (input.reranked.size && !ranked) outcome = "dropped_rerank";
+		else if (!deduplicatedIds.has(id)) outcome = "deduped";
 		else outcome = "dropped_topk";
 		return {
 			id,
 			document_id: payload.doc_id,
+			document_version_id: payload.document_version_id ?? null,
 			title: safeSlice(payload.title || "未命名文档", 0, 300),
 			filename:
 				payload.filename == null ? null : safeSlice(payload.filename, 0, 300),
@@ -437,7 +553,7 @@ function inspectCandidates(input: {
 				hit.dense_score === undefined && !input.usedHybrid
 					? hit.score
 					: (hit.dense_score ?? null),
-			sparse_score: hit.bm25_score ?? null,
+			sparse_score: hit.sparse_score ?? hit.bm25_score ?? null,
 			rrf_score: hit.rrf_score ?? null,
 			rerank_score: ranked?.score ?? null,
 			outcome,
@@ -525,41 +641,26 @@ async function expandParentContexts(input: {
 		}
 	}
 
-	const unresolvedDocIds = new Set<string>();
-	for (const child of expandable) {
-		if (!findParentSection(child, [...sectionPool.values()])) {
-			unresolvedDocIds.add(child.payload.doc_id);
-		}
-	}
-
-	if (unresolvedDocIds.size > 0 && input.store.lookupSections) {
+	const knownSections = [...sectionPool.values()];
+	const parentTargets = expandable
+		.filter((child) => !findParentSection(child, knownSections))
+		.flatMap(parentLookupTarget);
+	if (parentTargets.length && input.store.lookupSections) {
 		input.signal?.throwIfAborted();
-		const allowedDocIds = input.scope.documentIds
-			? [...unresolvedDocIds].filter((docId) =>
-					input.scope.documentIds?.includes(docId),
-				)
-			: [...unresolvedDocIds];
-		if (allowedDocIds.length > 0) {
-			try {
-				const fetched = assertAuthorizedHits(
-					await input.store.lookupSections({
-						scope: {
-							...input.scope,
-							documentIds: allowedDocIds,
-						},
-						limit: Math.min(256, Math.max(32, allowedDocIds.length * 32)),
-					}),
-					input.scope,
-				);
-				for (const hit of fetched) {
-					if (hit.payload.record_type === "section") {
-						sectionPool.set(sectionKey(hit), hit);
-					}
+		try {
+			const scope = expansionScope(input.scope, parentTargets);
+			const fetched = assertAuthorizedHits(
+				await input.store.lookupSections({ scope, targets: parentTargets }),
+				scope,
+			);
+			for (const hit of fetched) {
+				if (hit.payload.record_type === "section") {
+					sectionPool.set(sectionKey(hit), hit);
 				}
-			} catch (error) {
-				input.signal?.throwIfAborted();
-				if (error instanceof RetrievalSecurityViolationError) throw error;
 			}
+		} catch (error) {
+			input.signal?.throwIfAborted();
+			if (error instanceof RetrievalSecurityViolationError) throw error;
 		}
 	}
 
@@ -590,63 +691,50 @@ async function expandParentContexts(input: {
 		const selectedChunkKeys = new Set(
 			input.selected
 				.filter((hit) => hit.payload.record_type === "chunk")
-				.map(
-					(hit) =>
-						`${hit.payload.doc_id}:${hit.payload.generation_id ?? ""}:${hit.payload.chunk_index}`,
-				),
+				.map((hit) => chunkLocationKey(chunkLocation(hit))),
 		);
-		const fallbackDocIds = [
-			...new Set(fallbackChildren.map((child) => child.payload.doc_id)),
-		];
-		const allowedDocIds = input.scope.documentIds
-			? fallbackDocIds.filter((docId) =>
-					input.scope.documentIds?.includes(docId),
-				)
-			: fallbackDocIds;
-		if (allowedDocIds.length > 0) {
+		const neighborTargets = new Map<string, ChunkLookupTarget>();
+		for (const child of fallbackChildren) {
+			for (const offset of [-1, 1]) {
+				const target = chunkLocation(child, child.payload.chunk_index + offset);
+				const key = chunkLocationKey(target);
+				if (target.chunkIndex >= 0 && !selectedChunkKeys.has(key)) {
+					neighborTargets.set(key, target);
+				}
+			}
+		}
+		const targets = [...neighborTargets.values()];
+		if (targets.length > 0) {
 			try {
 				input.signal?.throwIfAborted();
+				const scope = expansionScope(input.scope, targets);
 				const siblingCandidates = assertAuthorizedHits(
-					await input.store.lookupChunks({
-						scope: {
-							...input.scope,
-							documentIds: allowedDocIds,
-						},
-						limit: Math.min(256, Math.max(48, allowedDocIds.length * 48)),
-					}),
-					input.scope,
+					await input.store.lookupChunks({ scope, targets }),
+					scope,
 				);
-				const chunkByIndex = new Map<string, QdrantSearchHit>();
+				const neighborsByLocation = new Map<string, QdrantSearchHit>();
 				for (const hit of siblingCandidates) {
-					if (isExpandableChildChunk(hit)) {
-						chunkByIndex.set(
-							`${hit.payload.doc_id}:${hit.payload.generation_id ?? ""}:${hit.payload.chunk_index}`,
-							hit,
-						);
+					const key = chunkLocationKey(chunkLocation(hit));
+					if (neighborTargets.has(key) && isExpandableChildChunk(hit)) {
+						neighborsByLocation.set(key, hit);
 					}
 				}
 				for (const child of fallbackChildren) {
-					const prefix = `${child.payload.doc_id}:${child.payload.generation_id ?? ""}`;
-					const prevKey = `${prefix}:${child.payload.chunk_index - 1}`;
-					const nextKey = `${prefix}:${child.payload.chunk_index + 1}`;
-					const neighbors = [
-						!selectedChunkKeys.has(prevKey)
-							? chunkByIndex.get(prevKey)
-							: undefined,
-						!selectedChunkKeys.has(nextKey)
-							? chunkByIndex.get(nextKey)
-							: undefined,
-					].filter((hit): hit is QdrantSearchHit => Boolean(hit));
-					if (neighbors.length === 0) continue;
-					const combined = [
-						...neighbors
-							.filter((n) => n.payload.chunk_index < child.payload.chunk_index)
-							.map((n) => (n.payload.body || n.payload.text).trim()),
-						(child.payload.body || child.payload.text).trim(),
-						...neighbors
-							.filter((n) => n.payload.chunk_index > child.payload.chunk_index)
-							.map((n) => (n.payload.body || n.payload.text).trim()),
-					]
+					const previous = neighborsByLocation.get(
+						chunkLocationKey(
+							chunkLocation(child, child.payload.chunk_index - 1),
+						),
+					);
+					const next = neighborsByLocation.get(
+						chunkLocationKey(
+							chunkLocation(child, child.payload.chunk_index + 1),
+						),
+					);
+					if (!previous && !next) continue;
+					const combined = [previous, child, next]
+						.flatMap((hit) =>
+							hit ? [(hit.payload.body || hit.payload.text).trim()] : [],
+						)
 						.filter(Boolean)
 						.join("\n\n");
 					const bounded = boundParentWindow(
@@ -773,6 +861,8 @@ export class DefaultRetrievalService {
 			rerankEnabled?: boolean;
 			preserveFigureLineage?: boolean;
 			lineageMinScore?: number;
+			/** Ask-only selection floor; omit to retain Public Retrieve ranking semantics. */
+			minimumEvidenceScore?: number;
 			expandParentContext?: boolean;
 			includeTraceDetails?: boolean;
 			/** Applied by Ask after Top-K. Used here to describe the trace only. */
@@ -785,6 +875,15 @@ export class DefaultRetrievalService {
 		if (!query) throw new Error("query is required");
 		if (!Number.isInteger(input.topK) || input.topK < 1 || input.topK > 50) {
 			throw new Error("topK must be an integer between 1 and 50");
+		}
+		const minimumEvidenceScore = input.options?.minimumEvidenceScore;
+		if (
+			minimumEvidenceScore !== undefined &&
+			(!Number.isFinite(minimumEvidenceScore) ||
+				minimumEvidenceScore < 0 ||
+				minimumEvidenceScore > 1)
+		) {
+			throw new RangeError("minimumEvidenceScore must be between 0 and 1");
 		}
 		const scope = toRetrievalScope(input.scope, input.libraryId);
 		const filters = toUserFilters(input.filters);
@@ -807,6 +906,7 @@ export class DefaultRetrievalService {
 								input.options?.rerankEnabled ?? this.options.rerankEnabled,
 							preserveFigureLineage: input.options?.preserveFigureLineage,
 							lineageMinScore: input.options?.lineageMinScore,
+							minimumEvidenceScore,
 							expandParentContext,
 							rerankTopK: this.options.rerankTopK,
 							bm25TopK: this.options.bm25TopK,
@@ -857,12 +957,24 @@ export class DefaultRetrievalService {
 					const denseScores = new Map(
 						dense.map((hit) => [String(hit.id), hit.score]),
 					);
-					candidates = assertAuthorizedHits(serverHits, scope).map((hit) => ({
-						...hit,
-						dense_score: denseScores.get(String(hit.id)) ?? null,
-						rrf_score: hit.score,
-						used_hybrid: true,
-					}));
+					const lexicalEvidenceScore = lexicalEvidenceScorer(query);
+					candidates = assertAuthorizedHits(serverHits, scope).map((hit) => {
+						const denseScore = denseScores.get(String(hit.id)) ?? null;
+						return {
+							...hit,
+							dense_score: denseScore,
+							...(denseScore === null &&
+							hit.sparse_score == null &&
+							hit.bm25_score == null
+								? {
+										lexical_score:
+											hit.lexical_score ?? lexicalEvidenceScore(hit),
+									}
+								: {}),
+							rrf_score: hit.score,
+							used_hybrid: true,
+						};
+					});
 					for (const hit of candidates) {
 						if (hit.payload.record_type === "section") knownSections.push(hit);
 					}
@@ -874,6 +986,26 @@ export class DefaultRetrievalService {
 				hybridError = errorMessage(error);
 				candidates = dense;
 			}
+		}
+
+		if (usedHybrid && minimumEvidenceScore !== undefined) {
+			// Fusion can omit a strong dense hit. Reuse only this query's authorized dense pool.
+			const fusedIds = new Set(candidates.map(({ id }) => String(id)));
+			candidates = [
+				...candidates,
+				...dense
+					.filter(
+						(hit) =>
+							!fusedIds.has(String(hit.id)) &&
+							semanticEvidenceScore(hit) >= minimumEvidenceScore,
+					)
+					.map((hit) => ({
+						...hit,
+						dense_score: hit.score,
+						rrf_score: null,
+						used_hybrid: true,
+					})),
+			];
 		}
 
 		input.signal?.throwIfAborted();
@@ -893,7 +1025,8 @@ export class DefaultRetrievalService {
 			| undefined;
 		if (rerankEnabled && this.reranker && candidates.length > 1) {
 			const startedAt = Date.now();
-			const requestedCount = Math.min(input.topK, candidates.length);
+			// Keep enough scored candidates to fill Top-K after overlap deduplication.
+			const requestedCount = candidates.length;
 			rerankDiagnostics = {
 				inputCount: candidates.length,
 				requestedCount,
@@ -919,6 +1052,10 @@ export class DefaultRetrievalService {
 				rerankDiagnostics.resultCount = ranked.length;
 				const reranked = ranked.map((rank) => ({
 					...candidates[rank.index],
+					dense_score:
+						candidates[rank.index].dense_score === undefined
+							? candidates[rank.index].score
+							: candidates[rank.index].dense_score,
 					score: rank.score,
 					used_rerank: true,
 				}));
@@ -931,11 +1068,7 @@ export class DefaultRetrievalService {
 							});
 						}
 					}
-					const rerankedIds = new Set(reranked.map((hit) => String(hit.id)));
-					candidates = [
-						...reranked,
-						...candidates.filter((hit) => !rerankedIds.has(String(hit.id))),
-					];
+					candidates = reranked;
 					usedRerank = true;
 				}
 			} catch (error) {
@@ -959,7 +1092,23 @@ export class DefaultRetrievalService {
 
 		input.signal?.throwIfAborted();
 		const afterRerank = countCandidates(candidates);
-		const deduplicated = deduplicateOverlappingHits(candidates);
+		const eligible =
+			minimumEvidenceScore === undefined
+				? candidates
+				: candidates.filter(
+						(hit) => semanticEvidenceScore(hit) >= minimumEvidenceScore,
+					);
+		const belowThresholdIds =
+			includeTraceDetails && minimumEvidenceScore !== undefined
+				? new Set(
+						candidates
+							.filter(
+								(hit) => semanticEvidenceScore(hit) < minimumEvidenceScore,
+							)
+							.map(({ id }) => String(id)),
+					)
+				: undefined;
+		const deduplicated = deduplicateOverlappingHits(eligible);
 		const { selected, restoredFigureCount } = retainFigureCompanion(
 			deduplicated,
 			input.topK,
@@ -992,7 +1141,7 @@ export class DefaultRetrievalService {
 			),
 		);
 		const mode = usedHybrid ? "hybrid" : "dense";
-		const threshold = input.options?.evidenceThreshold;
+		const threshold = input.options?.evidenceThreshold ?? minimumEvidenceScore;
 		const evidenceThreshold =
 			typeof threshold === "number" && Number.isFinite(threshold)
 				? threshold
@@ -1037,13 +1186,14 @@ export class DefaultRetrievalService {
 									citations,
 									evidenceThreshold,
 									usedHybrid,
+									belowThresholdIds,
 								}),
 							},
 						}
 					: {}),
 			},
 		};
-		if (cacheKey) {
+		if (cacheKey && !result.debug.hybridFailed && !result.debug.rerankFailed) {
 			this.options.cache?.set(cacheKey, result);
 		}
 		return result;

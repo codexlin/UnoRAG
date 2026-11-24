@@ -293,6 +293,7 @@ test("real local TXT parsing and chunking stages scoped points in Qdrant", {
 						title: scope.title,
 						documentId: scope.documentId,
 						libraryId: scope.libraryId,
+						libraryUuid: randomUUID(),
 						acl: scope.acl,
 					};
 				},

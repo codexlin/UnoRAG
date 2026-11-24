@@ -27,6 +27,43 @@ export type LocalTurn = UiTurn & {
 	traceDetails?: ApiAskTraceDetails;
 };
 
+export function retainAuthorizedTrace(
+	details: ApiAskTraceDetails | undefined,
+	citations: ApiCitation[],
+): ApiAskTraceDetails | undefined {
+	if (!details) return undefined;
+	const authorized = new Set(
+		citations
+			.filter(
+				(citation) =>
+					citation.document_version_id &&
+					(citation.doc_id || citation.document_id),
+			)
+			.map((citation) =>
+				JSON.stringify([
+					citation.id,
+					citation.doc_id || citation.document_id,
+					citation.document_version_id,
+				]),
+			),
+	);
+	return {
+		...details,
+		retrieval_inspection: details.retrieval_inspection.flatMap((inspection) => {
+			const candidates = inspection.candidates.filter((candidate) =>
+				authorized.has(
+					JSON.stringify([
+						candidate.id,
+						candidate.document_id,
+						candidate.document_version_id,
+					]),
+				),
+			);
+			return candidates.length ? [{ ...inspection, candidates }] : [];
+		}),
+	};
+}
+
 type MetaPatch = Pick<
 	LocalTurn,
 	| "refused"

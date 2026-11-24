@@ -10,6 +10,7 @@ import {
 	DocumentIRSchema,
 } from "../../src/core/document-ir";
 import {
+	buildChunkingProfile,
 	buildIndexPayloads,
 	buildSectionRecords,
 	buildTableRecords,
@@ -110,6 +111,102 @@ test("v2 fills token budgets for long English and Chinese prose", async () => {
 	}
 });
 
+test("large table and code projections retain content and keep embeddings within budget", async () => {
+	const fixture = JSON.parse(await readFile(fixtureUrl, "utf8"));
+	const document = DocumentIRSchema.parse(fixture);
+	const table = document.nodes.find((node) => node.type === "table");
+	assert.ok(table);
+	const headers = ["Item", "预算（万元）"];
+	const rows = Array.from({ length: 60 }, (_, index) => [
+		`row-${index}`,
+		index === 10 ? "值".repeat(9_000) : "描述".repeat(10),
+	]);
+	table.table_ir = null;
+	table.table_json = { headers, rows };
+	table.text = [headers, ...rows].map((row) => row.join(" | ")).join("\n");
+	const code = [
+		"\tstartOfCode();",
+		...Array.from(
+			{ length: 700 },
+			(_, index) => `  emit(record[${index}], payload);`,
+		),
+		"中".repeat(9_000),
+		"endOfCode();",
+	].join("\n");
+	document.nodes = [
+		table,
+		{
+			...table,
+			id: "code-node",
+			type: "code",
+			table_id: null,
+			table_json: null,
+			text: code,
+		},
+	];
+	document.title = "超長標題".repeat(180);
+	const chunks = await chunkDocument(document);
+	for (const [strategy, first, last] of [
+		["table", /row-0/u, /row-59/u],
+		["code", /startOfCode/u, /endOfCode/u],
+	] as const) {
+		const pieces = chunks.filter(
+			({ split_strategy }) => split_strategy === strategy,
+		);
+		assert.ok(pieces.length > 2);
+		assert.ok(pieces.every(({ body }) => estimateTokens(body) <= 400));
+		assert.match(pieces[0].body, first);
+		assert.match(pieces.at(-1)?.body ?? "", last);
+	}
+	const payloads = buildIndexPayloads(chunks, {
+		...recordOptions,
+		generationId: "8d3c1bbb-0f89-4ccc-9db1-ae02bc38ab09",
+	});
+	const chunkPayloads = payloads.filter(
+		({ record_type }) => record_type === "chunk",
+	);
+	assert.equal(chunkPayloads.length, chunks.length);
+	assert.ok(
+		chunkPayloads.every(
+			({ body, embed_text }) =>
+				typeof body === "string" &&
+				estimateTokens(embed_text) <= 400 &&
+				embed_text.endsWith(body),
+		),
+	);
+	const tableChunks = chunkPayloads.filter(
+		({ split_strategy }) => split_strategy === "table",
+	);
+	assert.ok(
+		tableChunks
+			.slice(1)
+			.every(({ embed_text }) => embed_text.includes("Item | 预算（万元）")),
+	);
+	assert.ok(
+		tableChunks.slice(1).some(({ body }) => !body?.includes("预算（万元）")),
+	);
+	const codeChunks = chunkPayloads.filter(
+		({ split_strategy }) => split_strategy === "code",
+	);
+	assert.ok(codeChunks.slice(1).some(({ body }) => body?.startsWith("  emit")));
+	assert.equal(codeChunks.map(({ body }) => body).join(""), code);
+	assert.ok(codeChunks[0].embed_text.includes("\tstartOfCode();"));
+	const tableRecords = payloads.filter(
+		({ record_type }) => record_type === "table",
+	);
+	assert.deepEqual(
+		tableRecords.flatMap(({ rows }) => rows ?? []),
+		rows,
+	);
+	assert.ok(
+		tableRecords.every(({ embed_text }) => estimateTokens(embed_text) <= 1_400),
+	);
+	assert.equal(
+		new Set(payloads.map(({ record_id }) => record_id)).size,
+		payloads.length,
+	);
+});
+
 test("explicit character bounds and overlap apply to recursive and unbroken text", async () => {
 	const text = "abc🙂xyz𠮷".repeat(160);
 	const doc = documentWithNodes([{ id: "prose", type: "paragraph", text }]);
@@ -148,6 +245,95 @@ test("character overlap can override the token overlap without changing the v2 s
 	assert.equal(automatic[1]?.body, text.slice(340, 740));
 	assert.equal(explicit[0]?.body, text.slice(0, 400));
 	assert.equal(explicit[1]?.body, text.slice(388, 788));
+});
+
+test("oversized character overlap is bounded by the effective token window with useful forward progress", async () => {
+	const text = Array.from({ length: 900 }, (_, index) =>
+		String.fromCodePoint(0x4e00 + index),
+	).join("");
+	for (const profileName of [
+		"precise",
+		"balanced",
+		"narrative",
+		"table_heavy",
+	] as const) {
+		const chunks = await chunkDocument(
+			documentWithNodes([{ id: "prose", type: "paragraph", text }]),
+			{ profileName, chunkOverlap: 100_000 },
+		);
+		const target = profileName === "precise" ? 260 : 400;
+		assert.equal(chunks[0].body, text.slice(0, target));
+		assert.equal(chunks[1].body, text.slice(target / 2, target * 1.5));
+		assert.ok(chunks.length <= Math.ceil(text.length / (target / 2)));
+		assert.ok(chunks.every(({ body }) => estimateTokens(body) <= target));
+		let covered = "";
+		for (const { body } of chunks) {
+			const start = text.indexOf(body);
+			assert.ok(start <= covered.length);
+			covered = text.slice(0, start + body.length);
+		}
+		assert.equal(covered, text);
+	}
+});
+
+test("non-finite internal overlap overrides fall back to the unchanged profile defaults", async () => {
+	const text = "abc🙂xyz𠮷".repeat(160);
+	for (const chunkSize of [undefined, 201]) {
+		const baseline = await chunkDocument(
+			documentWithNodes([{ id: "prose", type: "paragraph", text }]),
+			{ chunkSize },
+		);
+		for (const chunkOverlap of [
+			Number.NaN,
+			Number.POSITIVE_INFINITY,
+			Number.NEGATIVE_INFINITY,
+		]) {
+			const profile = buildChunkingProfile({ chunkSize, chunkOverlap });
+			assert.equal(Number.isNaN(profile.overlapChars), false);
+			assert.ok(
+				Number.isFinite(profile.overlapChars) ||
+					Number.isFinite(profile.overlapTokens),
+			);
+			assert.deepEqual(
+				await chunkDocument(
+					documentWithNodes([{ id: "prose", type: "paragraph", text }]),
+					{ chunkSize, chunkOverlap },
+				),
+				baseline,
+			);
+		}
+	}
+});
+
+test("default v2 profile windows and token overlap remain byte-for-byte unchanged", async () => {
+	const text = Array.from({ length: 900 }, (_, index) =>
+		String.fromCodePoint(0x4e00 + index),
+	).join("");
+	for (const profileName of [
+		"precise",
+		"balanced",
+		"narrative",
+		"table_heavy",
+	] as const) {
+		const chunks = await chunkDocument(
+			documentWithNodes([{ id: "prose", type: "paragraph", text }]),
+			{ profileName },
+		);
+		const expected =
+			profileName === "precise"
+				? [
+						text.slice(0, 260),
+						text.slice(200, 460),
+						text.slice(400, 660),
+						text.slice(600, 860),
+						text.slice(800),
+					]
+				: [text.slice(0, 400), text.slice(340, 740), text.slice(680)];
+		assert.deepEqual(
+			chunks.map(({ body }) => body),
+			expected,
+		);
+	}
 });
 
 test("auto profile counts non-whitespace table volume and explicit profiles override it", async () => {

@@ -107,9 +107,14 @@ test("provider health reports rerank configuration independently of default exec
 			{
 				OPENAI_API_KEY: "secret-key",
 				RERANK_BASE_URL: "https://private.example.invalid/rerank",
+				RERANK_API_KEY: "rerank-secret-key",
 				RERANK_MODEL: "private-model",
 			},
 			{ DASHSCOPE_API_KEY: "fallback-key" },
+			{
+				RERANK_API_KEY: "rerank-secret-key",
+				RERANK_BASE_URL: "https://private.example.invalid/rerank",
+			},
 			{
 				OPENAI_API_KEY: " ",
 				DASHSCOPE_API_KEY: "fallback-key",
@@ -141,6 +146,174 @@ test("provider health reports rerank configuration independently of default exec
 				/secret-key|fallback-key|private\.example|private-model/,
 			);
 		}
+	}
+});
+
+test("provider health disables legitimately absent rerank providers without an alert", async (t) => {
+	t.mock.method(globalThis, "fetch", async () => {
+		throw new Error("Unexpected provider HTTP");
+	});
+	for (const defaultEnabled of [undefined, "false", "0", "true", "1"]) {
+		for (const environment of [
+			{},
+			{
+				LLM_API_KEY: "secret-key",
+				LLM_BASE_URL: "https://private.example.invalid/v1",
+			},
+			{
+				OPENAI_API_KEY: "secret-key",
+				OPENAI_BASE_URL: "https://private.example.invalid/v1",
+			},
+		]) {
+			const health = await readProviderHealth(
+				{
+					checkDatabase: async () => undefined,
+					checkRedis: async () => undefined,
+					checkQdrant: async () => undefined,
+				},
+				{
+					environment: {
+						...environment,
+						TS_RETRIEVAL_RERANK_ENABLED: defaultEnabled,
+					},
+				},
+			);
+			const rerank = health.items.find((item) => item.code === "rerank");
+			assert.ok(rerank);
+			assert.equal(rerank.status, "disabled");
+			assert.equal(rerank.mode, "configuration");
+			assert.equal(rerank.latency_ms, null);
+			assert.equal(rerank.error_code, null);
+			assert.equal(
+				deriveOperationalSignals(snapshot(), health).some(
+					(signal) => signal.code === "provider.rerank",
+				),
+				false,
+			);
+			assert.doesNotMatch(
+				JSON.stringify(health),
+				/secret-key|private\.example/,
+			);
+		}
+	}
+});
+
+test("provider health keeps invalid rerank bindings degraded and alertable", async (t) => {
+	t.mock.method(globalThis, "fetch", async () => {
+		throw new Error("Unexpected provider HTTP");
+	});
+	for (const environment of [
+		{
+			LLM_API_KEY: "secret-key",
+			RERANK_BASE_URL: "https://other.example.invalid/rerank",
+		},
+		{
+			LLM_API_KEY: "secret-key",
+			RERANK_BASE_URL: "not-a-url",
+			RERANK_API_KEY: "rerank-secret-key",
+		},
+		{
+			LLM_API_KEY: "secret-key",
+			LLM_BASE_URL: "https://private.example.invalid/v1",
+			RERANK_API_KEY: "rerank-secret-key",
+		},
+		{ RERANK_BASE_URL: "https://other.example.invalid/rerank" },
+		{ RERANK_API_KEY: "rerank-secret-key" },
+	]) {
+		const health = await readProviderHealth(
+			{
+				checkDatabase: async () => undefined,
+				checkRedis: async () => undefined,
+				checkQdrant: async () => undefined,
+			},
+			{ environment: { ...environment, TS_RETRIEVAL_RERANK_ENABLED: "false" } },
+		);
+		const rerank = health.items.find((item) => item.code === "rerank");
+		assert.ok(rerank);
+		assert.equal(rerank.status, "degraded");
+		assert.equal(rerank.error_code, "rerank_not_configured");
+		assert.equal(
+			deriveOperationalSignals(snapshot(), health).some(
+				(signal) => signal.code === "provider.rerank",
+			),
+			true,
+		);
+		assert.doesNotMatch(
+			JSON.stringify(health),
+			/secret-key|private\.example|other\.example|not-a-url/,
+		);
+	}
+});
+
+test("provider health resolves primary and independent embedding bindings without mixing credentials", async () => {
+	for (const { environment, llm, embedding } of [
+		{
+			environment: {
+				EMBEDDING_API_KEY: "embedding-secret",
+				EMBEDDING_BASE_URL: "https://embedding.private.invalid/v1",
+			},
+			llm: "degraded",
+			embedding: "healthy",
+		},
+		{
+			environment: {
+				LLM_API_KEY: "llm-secret",
+				LLM_BASE_URL: "https://primary.private.invalid/v1",
+			},
+			llm: "healthy",
+			embedding: "healthy",
+		},
+		{
+			environment: {
+				LLM_API_KEY: "llm-secret",
+				EMBEDDING_BASE_URL: "https://embedding.private.invalid/v1",
+			},
+			llm: "healthy",
+			embedding: "degraded",
+		},
+		{
+			environment: {
+				LLM_BASE_URL: "https://primary.private.invalid/v1",
+				OPENAI_API_KEY: "openai-secret",
+			},
+			llm: "degraded",
+			embedding: "degraded",
+		},
+		{
+			environment: {
+				LLM_API_KEY: "llm-secret",
+				LLM_BASE_URL: "not-a-url",
+				EMBEDDING_API_KEY: "embedding-secret",
+				EMBEDDING_BASE_URL: "https://embedding.private.invalid/v1",
+			},
+			llm: "degraded",
+			embedding: "healthy",
+		},
+	]) {
+		const health = await readProviderHealth(
+			{
+				checkDatabase: async () => undefined,
+				checkRedis: async () => undefined,
+				checkQdrant: async () => undefined,
+			},
+			{
+				environment: {
+					...environment,
+					CHAT_MODEL: "chat",
+					EMBEDDING_MODEL: "embedding",
+					EMBEDDING_DIM: "1024",
+				},
+			},
+		);
+		assert.equal(health.items.find((item) => item.code === "llm")?.status, llm);
+		assert.equal(
+			health.items.find((item) => item.code === "embedding")?.status,
+			embedding,
+		);
+		assert.doesNotMatch(
+			JSON.stringify(health),
+			/llm-secret|embedding-secret|openai-secret|private\.invalid|not-a-url/,
+		);
 	}
 });
 
@@ -223,6 +396,108 @@ test("provider health validates the selected MinerU transport", async () => {
 		)?.status,
 		"disabled",
 	);
+});
+
+test("provider health validates Judge and enabled VLM through their full configuration parsers", async (t) => {
+	t.mock.method(globalThis, "fetch", async () => {
+		throw new Error("Unexpected provider HTTP");
+	});
+	for (const { overrides, judge, vlm } of [
+		{ overrides: {}, judge: "healthy", vlm: "disabled" },
+		{
+			overrides: { JUDGE_BASE_URL: "https://judge.private.invalid/v1" },
+			judge: "degraded",
+			vlm: "disabled",
+		},
+		{
+			overrides: {
+				JUDGE_BASE_URL: "https://judge.private.invalid/v1",
+				JUDGE_API_KEY: "judge-secret",
+			},
+			judge: "healthy",
+			vlm: "disabled",
+		},
+		{ overrides: { VLM_ENABLED: "true" }, judge: "healthy", vlm: "degraded" },
+		{
+			overrides: { VLM_ENABLED: "true", VLM_MODEL: "vision" },
+			judge: "healthy",
+			vlm: "healthy",
+		},
+		{
+			overrides: {
+				VLM_ENABLED: "true",
+				VLM_MODEL: "vision",
+				VLM_TIMEOUT_MS: "999",
+			},
+			judge: "healthy",
+			vlm: "degraded",
+		},
+		{
+			overrides: {
+				VLM_ENABLED: "true",
+				VLM_MODEL: "vision",
+				VLM_MAX_FIGURES_PER_REQUEST: "5",
+			},
+			judge: "healthy",
+			vlm: "degraded",
+		},
+		{
+			overrides: {
+				VLM_ENABLED: "true",
+				VLM_MODEL: "vision",
+				VLM_MAX_IMAGE_BYTES: "42",
+			},
+			judge: "healthy",
+			vlm: "degraded",
+		},
+		{
+			overrides: {
+				VLM_ENABLED: "false",
+				VLM_MODEL: "",
+				VLM_BASE_URL: "invalid-url",
+				VLM_TIMEOUT_MS: "invalid",
+			},
+			judge: "healthy",
+			vlm: "disabled",
+		},
+	]) {
+		const health = await readProviderHealth(
+			{
+				checkDatabase: async () => undefined,
+				checkRedis: async () => undefined,
+				checkQdrant: async () => undefined,
+			},
+			{
+				environment: {
+					LLM_API_KEY: "offline-key",
+					CHAT_MODEL: "chat",
+					...overrides,
+				},
+			},
+		);
+		for (const [code, expected] of [
+			["judge", judge],
+			["vlm", vlm],
+		]) {
+			const item = health.items.find((entry) => entry.code === code);
+			assert.ok(item, code);
+			assert.equal(item.status, expected);
+			assert.equal(
+				item.error_code,
+				expected === "degraded" ? `${code}_not_configured` : null,
+			);
+			assert.equal(item.mode, "configuration");
+			assert.equal(item.latency_ms, null);
+			assert.match(
+				item.recovery,
+				code === "judge" ? /JUDGE_API_KEY/ : /VLM_MODEL.*VLM_TIMEOUT_MS/,
+			);
+		}
+		assert.doesNotMatch(
+			JSON.stringify(health),
+			/offline-key|judge-secret|private\.invalid|invalid-url/,
+		);
+	}
 });
 
 test("operational rules create deterministic scoped signal codes", () => {
@@ -759,6 +1034,47 @@ test("workspace email jobs revalidate settings and isolate recipients", {
 					[scope.organizationId, scope.workspaceId],
 				);
 				assert.equal(alerts.rows[0]?.status, "resolved");
+			},
+		);
+
+		await t.test(
+			"critical-only recipients receive recovery after de-escalation within the same generation",
+			async () => {
+				await changeSettings({
+					minimum_severity: "critical",
+					notify_recovery: true,
+				});
+				const before = requests.length;
+				await reconcile([{ ...signal, severity: "critical" }]);
+				const criticalJobs = await claim();
+				assert.equal(criticalJobs.length, recipients.length);
+				for (const job of criticalJobs) assert.equal(await send(job), "sent");
+
+				await reconcile([{ ...signal, severity: "warning" }]);
+				assert.equal((await claim()).length, 0);
+				await reconcile([]);
+				const recoveryJobs = await claim();
+				assert.equal(recoveryJobs.length, recipients.length);
+				for (const job of recoveryJobs) {
+					assert.equal(job.payload.transition, "resolved");
+					assert.equal(job.payload.alert.severity, "critical");
+					assert.equal(
+						job.payload.alert.generation,
+						criticalJobs[0].payload.alert.generation,
+					);
+					assert.equal(await send(job), "sent");
+				}
+				assert.deepEqual(
+					requests
+						.slice(before + recipients.length)
+						.flatMap(({ to }) => to)
+						.sort(),
+					[...recipients].sort(),
+				);
+
+				await reconcile([{ ...signal, severity: "warning" }]);
+				await reconcile([]);
+				assert.equal((await claim()).length, 0);
 			},
 		);
 
@@ -1396,16 +1712,20 @@ test("alert lifecycle is durable, deduplicated and workspace isolated", {
 			transitions: "2",
 			deliveries: "2",
 		});
-		assert.equal(
+		assert.deepEqual(
 			(
-				await pool.query<{ severity: string }>(
-					`SELECT severity
+				await pool.query<{
+					severity: string;
+					status: string;
+					generation: number;
+				}>(
+					`SELECT severity, status, generation
 					 FROM app.observability_alerts
 					 WHERE organization_id = $1 AND workspace_id = $2`,
 					[organizationId, workspaceId],
 				)
-			).rows[0]?.severity,
-			"critical",
+			).rows[0],
+			{ severity: "warning", status: "active", generation: 1 },
 		);
 		assert.deepEqual(
 			(

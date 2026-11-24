@@ -3,7 +3,12 @@ import "server-only";
 import { and, desc, eq, isNull } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import { auditLogs, workspaceServiceKeys } from "@/db/schema";
+import {
+	auditLogs,
+	organizations,
+	workspaceServiceKeys,
+	workspaces,
+} from "@/db/schema";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import {
 	serviceKeyAllowsLibrary as allowsLibrary,
@@ -80,10 +85,25 @@ export async function createWorkspaceServiceKey(input: {
 	if (!name) {
 		return { ok: false, status: 400, detail: "name is required" };
 	}
-	const scopes = (normalizeScopes(input.scopes) as
-		| ServiceKeyScope[]
-		| null) ?? ["ask", "retrieve"];
-	const libraryIds = normalizeLibraryIds(input.libraryIds) as string[] | null;
+	// Creation defaults are written explicitly so authentication can stay strict.
+	const scopes = normalizeScopes(
+		input.scopes === undefined ? SERVICE_KEY_SCOPES : input.scopes,
+	);
+	if (!scopes) {
+		return {
+			ok: false,
+			status: 400,
+			detail: "scopes must list ask or retrieve",
+		};
+	}
+	const libraryIds = normalizeLibraryIds(input.libraryIds ?? null);
+	if (libraryIds === undefined) {
+		return {
+			ok: false,
+			status: 400,
+			detail: "library_ids must be null or list at least one valid library ID",
+		};
+	}
 	const { rawKey, prefix } = generateServiceKeyRaw();
 	const keyHash = hashServiceKey(rawKey);
 	const db = getDatabase();
@@ -217,8 +237,26 @@ export async function authenticateServiceKey(
 	const keyHash = hashServiceKey(trimmed);
 	const db = getDatabase();
 	const [row] = await db
-		.select()
+		.select({
+			key: workspaceServiceKeys,
+			workspaceWide: isNull(workspaceServiceKeys.libraryIds),
+		})
 		.from(workspaceServiceKeys)
+		.innerJoin(
+			workspaces,
+			and(
+				eq(workspaces.id, workspaceServiceKeys.workspaceId),
+				eq(workspaces.organizationId, workspaceServiceKeys.organizationId),
+				eq(workspaces.status, "active"),
+			),
+		)
+		.innerJoin(
+			organizations,
+			and(
+				eq(organizations.id, workspaceServiceKeys.organizationId),
+				eq(organizations.status, "active"),
+			),
+		)
 		.where(
 			and(
 				eq(workspaceServiceKeys.keyHash, keyHash),
@@ -227,28 +265,37 @@ export async function authenticateServiceKey(
 		)
 		.limit(1);
 	if (!row) return null;
+	const { key } = row;
+	const scopes = normalizeScopes(key.scopes);
+	const libraryIds = normalizeLibraryIds(key.libraryIds);
+	if (
+		!scopes ||
+		libraryIds === undefined ||
+		(libraryIds === null && !row.workspaceWide)
+	) {
+		return null;
+	}
 
 	void db
 		.update(workspaceServiceKeys)
 		.set({ lastUsedAt: new Date() })
-		.where(eq(workspaceServiceKeys.id, row.id))
+		.where(eq(workspaceServiceKeys.id, key.id))
 		.catch(() => undefined);
 
-	const scopes = Array.isArray(row.scopes) ? row.scopes : [];
 	return {
-		id: row.id,
-		organizationId: row.organizationId,
-		workspaceId: row.workspaceId,
-		name: row.name,
-		prefix: row.prefix,
+		id: key.id,
+		organizationId: key.organizationId,
+		workspaceId: key.workspaceId,
+		name: key.name,
+		prefix: key.prefix,
 		scopes,
-		libraryIds: row.libraryIds,
-		createdBy: row.createdBy,
-		revokedAt: row.revokedAt,
-		lastUsedAt: row.lastUsedAt,
-		createdAt: row.createdAt,
-		updatedAt: row.updatedAt,
-		principalId: principalForServiceKey(row.id),
+		libraryIds,
+		createdBy: key.createdBy,
+		revokedAt: key.revokedAt,
+		lastUsedAt: key.lastUsedAt,
+		createdAt: key.createdAt,
+		updatedAt: key.updatedAt,
+		principalId: principalForServiceKey(key.id),
 	};
 }
 

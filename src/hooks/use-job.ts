@@ -1,13 +1,14 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-
+import { useQueryScope } from "@/hooks/use-query-scope";
 import { fetchJob } from "@/lib/api";
 
 export function useJob(jobId: string | null | undefined) {
+	const { organizationId, workspaceId } = useQueryScope();
 	const enabled = Boolean(jobId);
 	const query = useQuery({
-		queryKey: ["job", jobId],
+		queryKey: ["job", organizationId, workspaceId, jobId],
 		queryFn: ({ signal }) => fetchJob(jobId as string, signal),
 		enabled,
 		refetchInterval: (current) => {

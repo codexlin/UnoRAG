@@ -282,8 +282,12 @@ export function LibrariesPanel() {
 			const ready = ok.filter((item) => item.value.status === "ready").length;
 			if (ok.length > 0) {
 				if (accepted > 0) {
+					const duration = formatDurationMs(elapsed);
 					toast.success(
-						`已提交 ${accepted} 个文件索引${ready ? `，${ready} 个已就绪` : ""} · ${formatDurationMs(elapsed)}`,
+						t(
+							`已提交 ${accepted} 个文件索引${ready ? `，${ready} 个已就绪` : ""} · ${duration}`,
+							`${accepted} ${accepted === 1 ? "file" : "files"} submitted for indexing${ready ? `, ${ready} ready` : ""} · ${duration}`,
+						),
 					);
 				} else {
 					toast.success(

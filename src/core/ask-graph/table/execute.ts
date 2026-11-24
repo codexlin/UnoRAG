@@ -15,6 +15,7 @@ import {
 	parseTableNumber,
 	resolveColumn,
 	type TableDatasetInput,
+	tableColumnScale,
 } from "./normalize";
 
 const PREVIEW_LIMIT = 50;
@@ -157,11 +158,18 @@ function projectRows(
 	columns: readonly string[],
 ): Record<string, unknown>[] {
 	return rows.slice(0, PREVIEW_LIMIT).map((row) => ({
-		...Object.fromEntries(
-			columns.map((column) => [column, row.values[column]]),
-		),
+		...selectRowValues(row, columns),
 		_row_index: row.absoluteIndex,
 	}));
+}
+
+function selectRowValues(
+	row: NormalizedTableRow,
+	columns: readonly string[],
+): Record<string, string> {
+	return Object.fromEntries(
+		columns.map((column) => [column, row.values[column]]),
+	);
 }
 
 function describeRow(
@@ -212,9 +220,7 @@ function lookupAnswerValue(
 	rows: readonly NormalizedTableRow[],
 	columns: readonly string[],
 ): unknown {
-	const values = rows.map((row) =>
-		Object.fromEntries(columns.map((column) => [column, row.values[column]])),
-	);
+	const values = rows.map((row) => selectRowValues(row, columns));
 	if (values.length <= 1) return values[0] ?? null;
 	const numericRanges = Object.fromEntries(
 		columns.flatMap((column) => {
@@ -223,8 +229,15 @@ function lookupAnswerValue(
 			);
 			if (parsed.some((value) => value === null)) return [];
 			const numbers = parsed as number[];
+			const scale = tableColumnScale(column);
 			return [
-				[column, { min: Math.min(...numbers), max: Math.max(...numbers) }],
+				[
+					column,
+					{
+						min: Math.min(...numbers) / scale,
+						max: Math.max(...numbers) / scale,
+					},
+				],
 			];
 		}),
 	);
@@ -334,7 +347,7 @@ function executeSingle(
 			rows.length > 0 ? "filter" : "no_match",
 			rows,
 			selected.columns,
-			rows.map((row) => row.values),
+			rows.map((row) => selectRowValues(row, selected.columns)),
 			renderRowsAnswer("匹配", rows, selected.columns),
 		);
 	}
@@ -355,6 +368,7 @@ function executeSingle(
 
 	const valueColumn = resolve(plan.column, table, plan.operation);
 	if ("result" in valueColumn) return valueColumn.result;
+	const scale = tableColumnScale(valueColumn.column);
 	const numericRows = rows
 		.map((row) => ({
 			row,
@@ -383,13 +397,14 @@ function executeSingle(
 		);
 		const limit =
 			plan.operation === "topN" ? plan.limit : (plan.limit ?? sorted.length);
-		const selectedRows = sorted.slice(0, limit).map((item) => item.row);
+		const ranked = sorted.slice(0, limit);
+		const selectedRows = ranked.map((item) => item.row);
 		return success(
 			plan.operation,
 			plan.operation,
 			selectedRows,
 			selected.columns,
-			sorted.slice(0, limit).map((item) => item.value),
+			ranked.map((item) => item.value / scale),
 			renderRowsAnswer(
 				`按${valueColumn.column}${plan.direction === "asc" ? "升序" : "降序"}返回`,
 				selectedRows,
@@ -401,7 +416,7 @@ function executeSingle(
 	if (plan.operation === "sum" || plan.operation === "avg") {
 		const total = numericRows.reduce((sum, item) => sum + item.value, 0);
 		const answer =
-			plan.operation === "sum" ? total : total / numericRows.length;
+			total / (scale * (plan.operation === "sum" ? 1 : numericRows.length));
 		return success(
 			plan.operation,
 			plan.operation,
@@ -423,13 +438,15 @@ function executeSingle(
 			minimum.row.absoluteIndex === maximum.row.absoluteIndex
 				? [minimum.row]
 				: [minimum.row, maximum.row];
+		const min = minimum.value / scale;
+		const max = maximum.value / scale;
 		return success(
 			plan.operation,
 			plan.operation,
 			selectedRows,
 			selected.columns,
-			{ min: minimum.value, max: maximum.value },
-			`${valueColumn.column}最小值为 ${minimum.value}（${describeRow(minimum.row, selected.columns)}）；最大值为 ${maximum.value}（${describeRow(maximum.row, selected.columns)}）`,
+			{ min, max },
+			`${valueColumn.column}最小值为 ${min}（${describeRow(minimum.row, selected.columns)}）；最大值为 ${max}（${describeRow(maximum.row, selected.columns)}）`,
 		);
 	}
 
@@ -439,13 +456,14 @@ function executeSingle(
 		}
 		return item.value > best.value ? item : best;
 	});
+	const answer = chosen.value / scale;
 	return success(
 		plan.operation,
 		plan.operation,
 		[chosen.row],
 		selected.columns,
-		chosen.value,
-		`${valueColumn.column}${plan.operation === "min" ? "最小值" : "最大值"}为 ${chosen.value}`,
+		answer,
+		`${valueColumn.column}${plan.operation === "min" ? "最小值" : "最大值"}为 ${answer}`,
 	);
 }
 
@@ -490,6 +508,12 @@ function executeDual(
 	if ("result" in leftKey) return leftKey.result;
 	const rightKey = resolve(plan.join.rightColumn, right, plan.operation);
 	if ("result" in rightKey) return rightKey.result;
+
+	// Joined projections use prefixed header names as object keys.
+	for (const table of [left, right]) {
+		const columns = resolveColumns([], table, plan.operation);
+		if ("result" in columns) return columns.result;
+	}
 
 	const rightIndex = new Map<string, NormalizedTableRow[]>();
 	for (const row of right.rows) {
@@ -560,6 +584,9 @@ function executeDual(
 		) {
 			return failure("clarify", plan.operation, "missing_compare_column");
 		}
+		const leftScale = tableColumnScale(plan.leftValueColumn);
+		const rightScale = tableColumnScale(plan.rightValueColumn);
+		const differenceScale = leftScale === rightScale ? leftScale : 1;
 		const compared: Record<string, unknown>[] = [];
 		for (const item of selected) {
 			const leftValue = parseTableNumber(
@@ -573,7 +600,7 @@ function executeDual(
 			if (leftValue === null || rightValue === null) continue;
 			const comparisonValue =
 				plan.comparison === "difference"
-					? leftValue - rightValue
+					? (leftValue - rightValue) / differenceScale
 					: plan.comparison === "ratio"
 						? rightValue === 0
 							? null

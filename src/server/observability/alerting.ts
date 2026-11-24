@@ -447,7 +447,6 @@ export async function reconcileWorkspaceAlerts(
 			if (current.status === "active") {
 				const escalated =
 					SEVERITY_RANK[signal.severity] > SEVERITY_RANK[current.severity];
-				const severity = escalated ? signal.severity : current.severity;
 				await client.query(
 					`UPDATE app.observability_alerts
 					 SET source = $4, severity = $5, title = $6, detail = $7,
@@ -460,7 +459,7 @@ export async function reconcileWorkspaceAlerts(
 						input.workspaceId,
 						current.id,
 						signal.source,
-						severity,
+						signal.severity,
 						signal.title,
 						signal.detail,
 						signal.recovery,
@@ -553,6 +552,26 @@ export async function reconcileWorkspaceAlerts(
 			);
 			const alert = row.rows[0];
 			if (!alert) continue;
+			// Recovery follows the highest notification severity in this occurrence.
+			const history = await client.query<{ severity: AlertSeverity }>(
+				`SELECT payload #>> '{alert,severity}' AS severity
+				 FROM app.observability_alert_transitions
+				 WHERE organization_id = $1 AND workspace_id = $2 AND alert_id = $3
+				   AND generation = $4 AND transition IN ('opened', 'escalated', 'reopened')`,
+				[
+					input.organizationId,
+					input.workspaceId,
+					current.id,
+					current.generation,
+				],
+			);
+			const severity = history.rows.reduce(
+				(peak, entry) =>
+					SEVERITY_RANK[entry.severity] > SEVERITY_RANK[peak]
+						? entry.severity
+						: peak,
+				alert.severity,
+			);
 			await createTransition(client, {
 				...input,
 				alertId: current.id,
@@ -561,6 +580,7 @@ export async function reconcileWorkspaceAlerts(
 				signal: {
 					code: current.code,
 					...alert,
+					severity,
 					evidence: {},
 				},
 				now,

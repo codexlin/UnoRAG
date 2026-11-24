@@ -19,8 +19,9 @@ import {
 
 export const CHUNK_POLICY_VERSION = "v2";
 
-const DEFAULT_MAX_TOKENS = 400;
+export const DEFAULT_MAX_CHUNK_TOKENS = 400;
 const DEFAULT_MAX_CHARS = 1_800;
+const MAX_TABLE_HEADER_CONTEXT_TOKENS = 120;
 
 const PROFILE_TARGET_RATIOS = {
 	precise: 0.65,
@@ -106,9 +107,16 @@ export function buildChunkingProfile(
 	const targetChars = charSized
 		? Math.max(100, Math.round(maxChars * ratio))
 		: maxChars;
-	const maxTokens = charSized ? Number.POSITIVE_INFINITY : DEFAULT_MAX_TOKENS;
+	const maxTokens = charSized
+		? Number.POSITIVE_INFINITY
+		: DEFAULT_MAX_CHUNK_TOKENS;
 	const targetTokens = Math.round(maxTokens * ratio);
-	const charOverlap = options.chunkOverlap ?? (charSized ? 80 : undefined);
+	const charOverlap =
+		options.chunkOverlap !== undefined && Number.isFinite(options.chunkOverlap)
+			? options.chunkOverlap
+			: charSized
+				? 80
+				: undefined;
 	const overlapChars =
 		charOverlap === undefined
 			? Number.POSITIVE_INFINITY
@@ -193,6 +201,13 @@ export async function chunkDocument(
 	if (input.nodes.length === 0) return [];
 	const profileName = options.profileName ?? recommendChunkProfile(input);
 	const profile = buildChunkingProfile({ ...options, profileName });
+	const structuredProfile = {
+		...profile,
+		targetTokens: Math.min(profile.targetTokens, DEFAULT_MAX_CHUNK_TOKENS),
+		maxTokens: DEFAULT_MAX_CHUNK_TOKENS,
+		overlapTokens: 0,
+		overlapChars: 0,
+	};
 	const profileMetadata =
 		options.profileName === undefined && profileName === "table_heavy"
 			? { profile_auto_selected: true }
@@ -200,15 +215,18 @@ export async function chunkDocument(
 	const sections = splitIntoSections(input.nodes, profile.headingBoundaryLevel);
 	const chunks: Chunk[] = [];
 
-	for (const section of sections) {
+	for (const [sectionInstance, section] of sections.entries()) {
 		for (const node of section.specialNodes) {
+			const preserveWhitespace = node.type === "code";
+			const nodeText = node.text.trim();
 			let body =
-				node.text.trim() ||
+				nodeText ||
 				tableJsonToText(node.table_json) ||
 				(node.type === "figure" && node.meta?.has_figure_asset === true
 					? `图表${node.page_start ? `（第${node.page_start}页）` : ""}`
 					: "");
 			if (!body) continue;
+			if (preserveWhitespace && nodeText) body = node.text;
 			const decision = specialNodeDecision(node.type);
 			const pageStart = node.page_start ?? section.pageStart;
 			const pageEnd = node.page_end ?? section.pageEnd;
@@ -216,8 +234,19 @@ export async function chunkDocument(
 				...decisionMetadata(decision, profile),
 				...profileMetadata,
 			};
+			let headerContext = "";
 			if (node.type === "table" && (node.table_ir || node.table_json)) {
 				const table = tableParts(node);
+				const headerLabels = table.headers.map((header, index) => {
+					const unit = node.table_ir?.columns[index]?.unit;
+					return unit && !header.includes(unit)
+						? `${header}（${unit}）`
+						: header;
+				});
+				headerContext = sliceByTokenBudget(
+					headerLabels.join(" | "),
+					MAX_TABLE_HEADER_CONTEXT_TOKENS,
+				).trim();
 				meta.headers = table.headers;
 				meta.rows = table.rows;
 				meta.table_rows_per_record = profile.tableRowsPerRecord;
@@ -238,29 +267,55 @@ export async function chunkDocument(
 					}
 				}
 			}
-			chunks.push(
-				makeChunk({
-					index: chunks.length,
-					body,
-					preamble: buildPreamble({
-						title: input.title,
+			const structured = node.type === "table" || node.type === "code";
+			// Leave room to repeat table column names and units in continued embeddings.
+			const bodyProfile = {
+				...structuredProfile,
+				targetTokens: headerContext
+					? Math.min(
+							structuredProfile.targetTokens,
+							DEFAULT_MAX_CHUNK_TOKENS - estimateTokens(headerContext) - 1,
+						)
+					: structuredProfile.targetTokens,
+			};
+			const pieces = structured
+				? recursiveSplit(body, bodyProfile, ["\n"], preserveWhitespace)
+				: [body];
+			const pieceMetadata = structured
+				? {
+						...decisionMetadata(decision, bodyProfile),
+						...profileMetadata,
+						...(headerContext ? { table_header_context: headerContext } : {}),
+					}
+				: meta;
+			for (const [pieceIndex, piece] of pieces.entries()) {
+				chunks.push(
+					makeChunk({
+						index: chunks.length,
+						body: piece,
+						preamble: buildPreamble({
+							title: input.title,
+							sectionPath: section.sectionPath,
+							headingText: section.headingText,
+							pageStart,
+							pageEnd,
+						}),
+						document: input,
 						sectionPath: section.sectionPath,
+						sectionInstance,
 						headingText: section.headingText,
 						pageStart,
 						pageEnd,
+						nodeIds: [node.id],
+						tableId: node.table_id,
+						figureId: node.figure_id,
+						decision,
+						// The first chunk owns the full table structure for row-group indexing.
+						meta:
+							pieceIndex === 0 ? { ...meta, ...pieceMetadata } : pieceMetadata,
 					}),
-					document: input,
-					sectionPath: section.sectionPath,
-					headingText: section.headingText,
-					pageStart,
-					pageEnd,
-					nodeIds: [node.id],
-					tableId: node.table_id,
-					figureId: node.figure_id,
-					decision,
-					meta,
-				}),
-			);
+				);
+			}
 		}
 
 		const body = section.bodyText.trim();
@@ -327,6 +382,7 @@ export async function chunkDocument(
 					preamble,
 					document: input,
 					sectionPath: section.sectionPath,
+					sectionInstance,
 					headingText: section.headingText,
 					pageStart: section.pageStart,
 					pageEnd: section.pageEnd,
@@ -545,6 +601,7 @@ function makeChunk(input: {
 	preamble: string;
 	document: DocumentIR;
 	sectionPath: string | null;
+	sectionInstance: number;
 	headingText: string | null;
 	pageStart: number | null;
 	pageEnd: number | null;
@@ -554,7 +611,8 @@ function makeChunk(input: {
 	decision: ChunkDecision;
 	meta: Record<string, unknown>;
 }): Chunk {
-	const body = input.body.trim();
+	const body =
+		input.decision.strategy === "code" ? input.body : input.body.trim();
 	const preamble = input.preamble.trim();
 	return ChunkSchema.parse({
 		chunk_index: input.index,
@@ -572,7 +630,7 @@ function makeChunk(input: {
 		split_strategy: input.decision.strategy,
 		source_format: input.document.source_format,
 		content_hash: contentFingerprint(input.document),
-		meta: input.meta,
+		meta: { ...input.meta, section_instance: input.sectionInstance },
 	});
 }
 
@@ -641,12 +699,17 @@ function fitsBudget(
 	);
 }
 
-function recursiveSplit(text: string, profile: ChunkingProfile): string[] {
-	const cleaned = text.trim();
-	if (!cleaned) return [];
+function recursiveSplit(
+	text: string,
+	profile: ChunkingProfile,
+	separators: readonly string[] = RECURSIVE_SEPARATORS,
+	preserveWhitespace = false,
+): string[] {
+	const cleaned = preserveWhitespace ? text : text.trim();
+	if (!cleaned.trim()) return [];
 	const { targetChars, targetTokens } = profile;
 	const fits = (piece: string) => fitsBudget(piece, targetChars, targetTokens);
-	const parts = splitBySeparators(cleaned, RECURSIVE_SEPARATORS, fits);
+	const parts = splitBySeparators(cleaned, separators, fits);
 	const merged: string[] = [];
 	let buffer = "";
 	for (const part of parts) {
@@ -655,20 +718,28 @@ function recursiveSplit(text: string, profile: ChunkingProfile): string[] {
 			buffer = candidate;
 			continue;
 		}
-		if (buffer.trim()) merged.push(buffer.trim());
+		if (buffer.trim()) merged.push(preserveWhitespace ? buffer : buffer.trim());
 		if (fits(part)) {
 			const overlap = sliceTailByTokenBudget(
 				buffer,
 				Math.min(profile.overlapTokens, targetTokens - estimateTokens(part)),
-				Math.min(profile.overlapChars, targetChars - part.length),
+				Math.min(
+					profile.overlapChars,
+					targetChars - part.length,
+					Number.isFinite(profile.overlapChars)
+						? Math.floor(buffer.length / 2)
+						: Number.POSITIVE_INFINITY,
+				),
 			);
 			buffer = overlap + part;
 		} else {
-			for (const piece of budgetWindow(part, profile)) merged.push(piece);
+			for (const piece of budgetWindow(part, profile, preserveWhitespace)) {
+				merged.push(piece);
+			}
 			buffer = "";
 		}
 	}
-	if (buffer.trim()) merged.push(buffer.trim());
+	if (buffer.trim()) merged.push(preserveWhitespace ? buffer : buffer.trim());
 	return merged;
 }
 
@@ -689,7 +760,11 @@ function splitBySeparators(
 	);
 }
 
-function budgetWindow(text: string, profile: ChunkingProfile): string[] {
+function budgetWindow(
+	text: string,
+	profile: ChunkingProfile,
+	preserveWhitespace = false,
+): string[] {
 	const pieces: string[] = [];
 	let start = 0;
 	while (start < text.length) {
@@ -699,13 +774,20 @@ function budgetWindow(text: string, profile: ChunkingProfile): string[] {
 			profile.targetChars,
 		);
 		if (!piece) break;
-		if (piece.trim()) pieces.push(piece.trim());
+		if (piece.trim()) pieces.push(preserveWhitespace ? piece : piece.trim());
 		if (start + piece.length === text.length) break;
 		const firstWidth = (piece.codePointAt(0) ?? 0) > 0xffff ? 2 : 1;
 		const tail = sliceTailByTokenBudget(
 			piece,
 			profile.overlapTokens,
-			Math.min(profile.overlapChars, piece.length - firstWidth),
+			// Character overrides must leave useful progress in the actual token-sized window.
+			Math.min(
+				profile.overlapChars,
+				piece.length - firstWidth,
+				Number.isFinite(profile.overlapChars)
+					? Math.floor(piece.length / 2)
+					: Number.POSITIVE_INFINITY,
+			),
 		);
 		start += piece.length - tail.length;
 	}

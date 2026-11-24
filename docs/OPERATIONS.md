@@ -189,6 +189,11 @@ Ask runs 维护、关联文库/会话的生命周期约束。
 处理中详情每 5 秒刷新一次；阶段账本主要在请求终态写入，处理中或历史记录可能没有阶段，不能把空记录
 解释成“没有耗时”。抽屉不虚构 Embedding、Qdrant、Rerank 或网络请求子 Span，也不展示完整 Prompt。
 
+回答和临时检索轨迹在记录落库后、实际交付前仍会重新鉴权。若此时撤权，不能发送成功响应或 SSE `done`；
+已流出的文字无法收回。若终态账本已写入，系统不会伪造数据库回滚，而记录不含正文的
+`ask.delivery.authorization_failed_after_finalize` 日志（`ledger_reclassified=false`），并切断历史复用。
+因此计算完成记录不等于用户已成功接收，排查交付失败时还要关联同一 Request ID 的安全日志。
+
 新记录还可按真实检索阶段展示 **重排诊断**：类别、已记录的 HTTP 状态/尝试次数、预算、耗时、
 候选/结果数及 figure 在排序、去重和 Top-K 各步的数量。重排降级后 Ask 仍可能已完成，不能只筛失败请求；
 先用 Request ID 查对应成功请求，再检查 timeout/http/transport/invalid_response。空值表示未记录，
@@ -320,11 +325,14 @@ Compose 为组件设置 CPU、内存限制和有限保留期，但 Docker 命名
 
 工作区管理员可在 **设置 → 邮件通知 → 告警阈值** 调整 Ask 的最少样本数、失败率、引用覆盖率和 P95 延迟。
 保存后在下次评估时生效。留空按部署环境变量和内置默认值依次继承，恢复默认值会清除工作区覆盖。
+阈值更新与邮件设置使用独立版本；仅编辑阈值不会重写收件人。发生并发冲突时，“保留草稿”只保留实际编辑字段，
+其他字段沿用刷新后的设置，避免恢复另一位管理员已移除的收件人。
 恢复仍需连续健康周期（`OBSERVABILITY_ALERT_RECOVERY_CYCLES`）。dead/stuck 任务、删除失败和 Provider
 不可用不受最小样本限制。健康评估通过 PostgreSQL advisory lock 支持多 control 副本。
 
 在 **设置 → 问答策略** 中，管理员可以独立启用或关闭混合检索和重排，也可以让每项功能跟随原有检索增强策略。
-改动在下一次 Ask 请求时生效。
+改动在下一次 Ask 请求时生效。显式关闭对首轮和重试均有效；跟随已关闭的检索增强策略也不在重试时重新开启。
+自动模式首轮未使用重排，不等于禁止在证据不足时尝试重排。
 
 Webhook 告警需同时配置 `OBSERVABILITY_ALERT_WEBHOOK_URL`、`OBSERVABILITY_ALERT_WEBHOOK_SECRET` 与 `OBSERVABILITY_ALERT_WEBHOOK_ENABLED=true`。告警邮件复用部署级 Resend 凭据（`EMAIL_PROVIDER=resend`、`EMAIL_FROM`、`RESEND_API_KEY`，仅注入 Web 与 control，不读取 `SMTP_*`）；收件人（最多 5 个）、级别与开关由工作区管理员在 **设置 → 邮件通知** 热配置并持久化到 PostgreSQL。测试邮件按工作区每 60 秒限流一次，与真实告警共用持久化幂等投递队列（仅“服务商已接受”不代表已进收件箱，投递失败结合安全错误码与 Resend 控制台排查）。
 

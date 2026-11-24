@@ -5,6 +5,7 @@ import {
 	resolveRequestSession,
 	rotateSessionToken,
 	SESSION_COOKIE,
+	SessionInvalidatedError,
 	sessionCookieOptions,
 } from "@/lib/server/auth/session";
 import { readSessionClaims } from "@/lib/server/auth/session-token";
@@ -27,13 +28,13 @@ export async function POST(request: Request) {
 		);
 	}
 
-	let body: { workspace_id?: unknown };
+	let body: { workspace_id?: unknown } | null;
 	try {
 		body = (await request.json()) as typeof body;
 	} catch {
 		return NextResponse.json({ detail: "invalid JSON body" }, { status: 400 });
 	}
-	const validated = validateWorkspaceId(body.workspace_id);
+	const validated = validateWorkspaceId(body?.workspace_id);
 	if (!validated.ok) {
 		return NextResponse.json(
 			{ detail: validated.detail },
@@ -56,6 +57,12 @@ export async function POST(request: Request) {
 	try {
 		token = await rotateSessionToken(nextIdentity, currentClaims);
 	} catch (error) {
+		if (error instanceof SessionInvalidatedError) {
+			return NextResponse.json(
+				{ detail: "authentication required" },
+				{ status: 401 },
+			);
+		}
 		logger.error({
 			event: "auth.session.workspace_rotation_failed",
 			component: "redis",

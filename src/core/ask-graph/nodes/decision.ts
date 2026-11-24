@@ -1,7 +1,10 @@
 import { formatCitationEvidenceText } from "../../retrieval/citation-mapper";
 import { stripFilenameReferences } from "../../retrieval/document-constraints";
 import { sharesEvidenceLineage } from "../../retrieval/evidence-lineage";
-import { comparisonEvidenceText } from "../comparison-evidence";
+import {
+	boundedJudgeEvidenceText,
+	comparisonEvidenceText,
+} from "../comparison-evidence";
 import type { AskGraphContext, Judgement } from "../context";
 import { validateConflictEvidence } from "../evidence-conflict";
 import {
@@ -9,6 +12,7 @@ import {
 	type AskStateUpdate,
 	mergeRetrievalDebug,
 } from "../state";
+import { MAX_RETRIEVAL_ATTEMPTS } from "./retry";
 
 const KNOWN_ACTIONS = new Set(["retry", "generate", "refuse"]);
 const MAX_COMPARISON_EVIDENCE = 6;
@@ -75,7 +79,7 @@ function balancedComparisonIds(
 	for (const group of subjects) group.sort((a, b) => priority(b) - priority(a));
 	subjects.sort((a, b) => priority(b[0]) - priority(a[0]));
 
-	const kept = new Set(conflictIds);
+	const kept = new Set([...directIds, ...conflictIds]);
 	for (let rank = 0; rank < MAX_COMPARISON_EVIDENCE; rank += 1) {
 		for (const group of subjects) {
 			if (kept.size >= MAX_COMPARISON_EVIDENCE) return kept;
@@ -112,13 +116,15 @@ function comparisonContext(
 		formatCitationEvidenceText(citation),
 	);
 	const conflictIds = new Set(conflictQuotesById.keys());
+	const requiredIds = new Set([...directIds, ...conflictIds]);
+	if (requiredIds.size > MAX_COMPARISON_EVIDENCE) return overBudget;
 	const keptIds = balancedComparisonIds(candidates, directIds, conflictIds);
 	const kept = candidates.filter((citation) =>
 		keptIds.has(String(citation.id)),
 	);
 	if (
 		kept.length === 0 ||
-		[...conflictIds].some((id) => !kept.some((citation) => citation.id === id))
+		[...requiredIds].some((id) => !kept.some((citation) => citation.id === id))
 	) {
 		return overBudget;
 	}
@@ -126,6 +132,7 @@ function comparisonContext(
 		const excerpt = comparisonEvidenceText(
 			citation,
 			conflictQuotesById.get(String(citation.id)) ?? [],
+			directIds.has(String(citation.id)),
 		);
 		return excerpt ? [excerpt] : [];
 	});
@@ -145,6 +152,20 @@ function comparisonContext(
 		.map((excerpt, index) => excerpt.bound(tokenCaps[index], charCaps[index]))
 		.filter((citation) => formatCitationEvidenceText(citation));
 	if (bounded.length === 0) return overBudget;
+	if (
+		kept.some(
+			(citation) =>
+				directIds.has(String(citation.id)) &&
+				!formatCitationEvidenceText(
+					bounded.find(({ id }) => id === citation.id) ?? {},
+				).startsWith(
+					boundedJudgeEvidenceText(
+						formatCitationEvidenceText(citation),
+					).trimEnd(),
+				),
+		)
+	)
+		return overBudget;
 	if (conflictIds.size > 0) {
 		try {
 			// Recheck every required quote against what generation will actually see.
@@ -352,16 +373,6 @@ export function createDecisionNode(context: AskGraphContext) {
 				can_retry: false,
 				evidence_ids: [],
 			};
-		} else if (
-			state.query_type === "compare" &&
-			evidence.citations &&
-			Array.isArray(judgement.evidence_ids)
-		) {
-			const keptIds = new Set(evidence.citations.map(({ id }) => id));
-			judgement = {
-				...judgement,
-				evidence_ids: judgement.evidence_ids.filter((id) => keptIds.has(id)),
-			};
 		}
 		const judgeDebug = Object.fromEntries(
 			[
@@ -440,7 +451,7 @@ export function routeAfterJudge(state: AskState): RouteAfterJudge {
 	const action = state.judgement?.action;
 	if (action === "retry") {
 		return state.judgement?.can_retry !== false &&
-			(state.retrieval_attempts ?? 0) < 2
+			(state.retrieval_attempts ?? 0) < MAX_RETRIEVAL_ATTEMPTS
 			? "retry"
 			: "refuse";
 	}

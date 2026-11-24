@@ -68,6 +68,10 @@ export type QdrantCollectionEnsureResult = QdrantCollectionContract & {
 };
 
 export class QdrantCollectionContractError extends Error {
+	readonly code: string = "qdrant_schema_mismatch";
+	readonly recovery: string =
+		"Check the Qdrant dense vector, dimensions, distance, lexical_v1 IDF modifier and payload indexes. Restore the expected collection or reindex into a new collection.";
+
 	constructor(message: string) {
 		super(message);
 		this.name = "QdrantCollectionContractError";
@@ -75,9 +79,9 @@ export class QdrantCollectionContractError extends Error {
 }
 
 export class QdrantEmbeddingDimensionMismatchError extends QdrantCollectionContractError {
-	readonly code = "embedding_dimension_mismatch";
+	override readonly code = "embedding_dimension_mismatch";
 	readonly collection: string;
-	readonly recovery: string;
+	override readonly recovery: string;
 
 	constructor(
 		collection: string,
@@ -92,7 +96,33 @@ export class QdrantEmbeddingDimensionMismatchError extends QdrantCollectionContr
 			`Qdrant collection ${safeCollection} vector size mismatch: configured EMBEDDING_DIM=${expectedDimension}, collection dense size=${actualDimension}. ${recovery}`,
 		);
 		this.collection = safeCollection;
-		this.recovery = `集合的向量维度为 ${actualDimension}，当前 EMBEDDING_DIM=${expectedDimension}。若模型支持现有维度，设置 EMBEDDING_DIM=${actualDimension}；若要使用新维度，修改 QDRANT_COLLECTION 指向新集合后重索引。 ${recovery}`;
+		this.recovery = recovery;
+	}
+}
+
+export class QdrantCollectionMissingError extends QdrantCollectionContractError {
+	override readonly code = "qdrant_collection_missing";
+	override readonly recovery =
+		"Confirm PostgreSQL has no active documents before initializing an empty collection. Otherwise restore the indexed collection or reindex the active documents.";
+
+	constructor() {
+		super(
+			"Qdrant collection is missing and an empty metadata instance was not confirmed",
+		);
+		this.name = "QdrantCollectionMissingError";
+	}
+}
+
+export class QdrantIndexMissingError extends QdrantCollectionContractError {
+	override readonly code = "qdrant_index_missing";
+	override readonly recovery =
+		"Confirm PostgreSQL has no active documents before using an empty index. Otherwise restore the indexed collection or reindex the active documents.";
+
+	constructor() {
+		super(
+			"Qdrant collection has no points and an empty metadata instance was not confirmed",
+		);
+		this.name = "QdrantIndexMissingError";
 	}
 }
 
@@ -147,7 +177,7 @@ export class QdrantCollectionManager {
 
 		return {
 			...this.contract,
-			vectorSchema: detectQdrantVectorSchema(info),
+			vectorSchema: assertQdrantCollectionSchema(info, this.contract),
 			created,
 			createdPayloadIndexes,
 		};
@@ -299,6 +329,11 @@ function validateCollectionInfo(
 	info: CollectionInfo,
 	contract: QdrantCollectionContract,
 ): void {
+	if (!info?.config?.params) {
+		throw new QdrantCollectionContractError(
+			"Qdrant collection schema is missing",
+		);
+	}
 	const vectors = assertQdrantEmbeddingDimension(info, contract);
 	detectQdrantVectorSchema(info);
 	if (vectors.distance !== contract.distance) {
@@ -306,6 +341,22 @@ function validateCollectionInfo(
 			`Qdrant collection ${contract.collection} distance mismatch: expected ${contract.distance}, received ${vectors.distance}`,
 		);
 	}
+}
+
+/** Read-only contract shared by initialized collections and readiness probes. */
+export function assertQdrantCollectionSchema(
+	info: CollectionInfo,
+	contract: QdrantCollectionContract,
+): QdrantVectorSchema {
+	validateContract(contract);
+	validateCollectionInfo(info, contract);
+	for (const index of UNORAG_QDRANT_PAYLOAD_INDEXES) {
+		assertPayloadIndexType(
+			index.fieldName,
+			info.payload_schema?.[index.fieldName]?.data_type,
+		);
+	}
+	return detectQdrantVectorSchema(info);
 }
 
 function assertPayloadIndexType(

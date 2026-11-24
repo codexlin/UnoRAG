@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-11-23。本文只维护当前成熟度、已知限制和下一步；架构细节见 [ARCHITECTURE](./ARCHITECTURE.md)，逐版结果见 [验收索引](./evidence/README.md)。
+> 更新日期：2026-11-24。本文只维护当前成熟度、已知限制和下一步；架构细节见 [ARCHITECTURE](./ARCHITECTURE.md)，逐版结果见 [验收索引](./evidence/README.md)。
 
 ## 当前结论
 
@@ -25,11 +25,24 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
   - 引入确定性纯 TS Token 估算与 `CHUNK_POLICY_VERSION = "v2"`（400 tokens / 60 overlap）、零额外模型成本的 `>40%` 表格自动 `table_heavy` 档位、按 Token 预算的父上下文扩展及按主体均衡配额的对比上下文裁剪（保留完整连续冲突摘录）。
   - 新增仅限 Admin/Editor（不含 `service_key`）的临时检索轨迹检查器（粗排 vs 精排差异、淘汰候选二次强权限校验、`no-store` 与绕过缓存、持久化维持 100% `metadata-only`）。
   - 精简部署环境变量模板并支持 `LLM_API_KEY` / `LLM_BASE_URL` / `UNORAG_BASE_URL` 标准别名；新增 `0036` 迁移支持工作区告警阈值热更新与独立 Hybrid/Rerank 控制；补充 Qdrant/Embedding 维度错配预检、模型历史长回复投影压缩、EN/ZH 双语界面与 4 套内置主题。
-  - 开发机预检（非签名镜像香港正式验收）：标准活库回归 `pnpm eval:live` 7/7 入库、35/36 正向（Recall@K/MRR 1.000、拒答 6/6、P95 9.62s）；外部 FinanceComplexQA 22 份 PDF / 135 题对比 ADR-0008 基线，语义准确率由 64.4%（已答 74.5%）提升至 65.7%（已答 75.2%），对比题回答率 +4.7pp、多跳推理 +3.7pp、P95 降低 1.28s。正式发布验收仍按 [ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md) 绑定 `v0.4.0` 签名镜像独立执行。
+  - `#308` 阶段开发机基线（历史中间快照，非正式验收）：标准活库回归 `pnpm eval:live` 7/7 入库、35/36 正向（Recall@K/MRR 1.000、拒答 6/6、P95 9.62s）；外部 FinanceComplexQA 22 份 PDF / 135 题对比 ADR-0008 基线，语义准确率由 64.4%（已答 74.5%）提升至 65.7%（已答 75.2%），对比题回答率 +4.7pp、多跳推理 +3.7pp、P95 降低 1.28s。后续安全与质量收口见下节；正式发布验收仍按 [ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md) 绑定 `v0.4.0` 签名镜像独立执行。
 - **失败证据仍保留**：`v0.3.3` 三轮 **120/126**，两条首问误拒答；`v0.3.4` 浏览器 **298/300**，均未发布。
   `v0.3.5` 第一次浏览器全量的菜单时序超时也保留，另用仅测试同步修正的 [#286](https://github.com/codexlin/UnoRAG/pull/286)
   对同一签名镜像重跑 300/300，不改写初次结果。
 - **尚未证明**：独立上手、客户容量和 COS 对象内容容灾。
+
+### 当前安全与质量收口（`v0.4.0` 发版前开发机验证）
+
+本轮在 `b796e18` 基础上通过 [#313](https://github.com/codexlin/UnoRAG/pull/313)–[#318](https://github.com/codexlin/UnoRAG/pull/318) 完成了面向全新部署的 5 域全量收口，覆盖 4/4 P0 阻断缺陷、15/15 P1 高优问题、8/9 P2 改进项及 `chat@1.17.0` 限定词回归：
+
+- **安全与生命周期（#313, #316）**：修复撤权后回答交付、跨 Provider 凭据同源绑定、移除成员导致单人受限文档静默公开（含 ACL 投影、会话吊销与审计）、Cookie 写接口同源校验与改密限流、Service Key 空列表 fail-closed、自定义 `library_id` 切图外键错误、派发前取消任务饿死 DBOS 对账池及取消覆写 `deleting` 墓碑。
+- **RAG 检索、表格与解析（#313, #317, #318）**：修复 `grounded_table_lookup` 触发 Judge 重试死循环、未重排时稀疏独有命中被丢弃、重排去重前截断回填低分候选、带单位表头（`万元`/`%`）10,000 倍放大与 JSON 过滤缩放、超大表格/代码 chunk 超限、XLSX 年份子表头误判、MinerU `section_path` 与精确 `record_id` 扩展、`ScopedRetrievalCache` 键漏项与降级污染，并在 `chat@1.17.0` 恢复并列指标限定词示例。
+- **前端对比度、状态机与部署运维（#314, #315）**：修复 4 套内置主题明暗对比度至 WCAG AA（`>= 4.5:1`）、Ask 跨会话隔离与归档轨迹权限、前端 `health.recovery` 展示与双语补齐、Helm `dbos-worker` COS 配置与分角色 PG 授权、Compose `web`/`dbos-control` Qdrant 配置对齐、告警降级恢复邮件以及镜像发布前置 Trivy 扫描。
+
+开发机本轮预检结果（尚未替代签名镜像正式发布验收）：
+- **自动化验证**：`pnpm verify`、`pnpm test:fast`（1,611/1,611）、`pnpm test:contract`（46/46）、真实 PG/Qdrant/Redis 集成测试 `pnpm test:integration`（191/191）、实时 Compose 浏览器全量 E2E（148/148）与 `pilot-smoke.sh` 真实模型端到端冒烟全部通过。
+- **标准活库真模型门禁（`pnpm eval:live`，`chat@1.17.0`）**：**PASS** —— 7/7 入库完成，正例 **36/36（100%）**，拒答 **6/6（100%）**，Fact Coverage / Document Recall@K / MRR 均为 **1.000**，Citation Precision **100.0%**，`cross_page_table` **6/6**，`low_contrast_scan` **5/5**，延迟 P50 / P95 为 **5.63s / 7.99s**。
+- **待正式签名镜像验收**：发布 `v0.4.0` tag 构建四个签名镜像后，仍需对精确签名镜像独立补齐三轮稳定性、恢复演练与目标环境新装/升级验收并替换当前发布报告。
 
 下表描述当前源码能力；线上可用范围仍以具体 Release 和部署清单为准。
 
@@ -42,7 +55,7 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 | 文档理解 | TXT/Markdown/DOCX/XLSX/PDF，LiteParse/MinerU，Markdown 管道表、DocumentIR/TableIR，Token 感知 `v2` 切分与 `>40%` 表格自动 `table_heavy`、多粒度索引及默认关闭的条件式检索上下文增强 |
 | 检索问答 | 作用域强制过滤、默认启用 Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF、重排、改写、证据裁决、按主体均衡配额的对比上下文、拒答、引用、确定性表格执行与 SSE；Admin/Editor 临时检索轨迹检查器；pg_trgm 授权文档目录候选检索 |
 | 会话 | 带来源授权的短期记忆、实体追问、有限期歧义澄清、归档和继续对话；模型上下文压缩长回复，归档保留原文和来源 |
-| 运维预检 | 健康接口和运行中心校验现有 Qdrant 集合的向量维度，给出调整 `EMBEDDING_DIM` 或切换集合并重索引的操作提示 |
+| 运维预检 | 健康接口和运行中心校验现有 Qdrant 集合的向量维度、距离、`lexical_v1` IDF 配置及载荷索引，按异常类型给出恢复提示 |
 | 产品界面 | shadcn/Base UI、AI Elements、EN/ZH 双语、Vercel/Claude/Violet Bloom/Modern Minimal 4 套主题、可调圆角、响应式工作台与设置分区；引用/版本/执行链路一致的阅读入口 |
 | 运维交付 | 原生阶段瀑布/请求诊断/工作区可配告警阈值、工作区邮件策略及持久化投递、精简环境变量与标准别名、可选 OTel/Langfuse、签名镜像、安装升级、备份与恢复工具 |
 | 反馈闭环 | Ask 赞/踩与原因标签、运行中心处理状态、待人工补全的黄金集样本骨架；不是自动采纳用户反馈为真值 |
