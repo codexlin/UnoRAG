@@ -363,6 +363,7 @@ function contentListToNodes(
 ): DocumentNode[] {
 	const nodes: DocumentNode[] = [];
 	let previousTable: DocumentNode | null = null;
+	let activeDecimalHeadingLevel = 0;
 	for (const [index, item] of contentList.entries()) {
 		const kind = textValue(item.type).toLowerCase();
 		const promotedDocumentHeader = shouldPromoteDocumentHeader(
@@ -455,12 +456,30 @@ function contentListToNodes(
 					: kind === "code"
 						? "code"
 						: "paragraph";
+		const rawLevel = nodeType === "heading" ? (level ?? 1) : null;
+		const resolvedLevel =
+			nodeType === "heading" && rawLevel !== null
+				? inferMinerUHeadingLevel(
+						text,
+						rawLevel,
+						promotedDocumentHeader,
+						activeDecimalHeadingLevel,
+					)
+				: null;
+		if (nodeType === "heading" && resolvedLevel !== null) {
+			activeDecimalHeadingLevel = nextActiveDecimalHeadingLevel(
+				text,
+				resolvedLevel,
+				promotedDocumentHeader,
+				activeDecimalHeadingLevel,
+			);
+		}
 		const imgPath = isFigure ? textValue(item.img_path ?? item.image_path) : "";
 		const node: DocumentNode = {
 			id: `${documentId}:mineru:${index}`,
 			type: nodeType,
 			path: null,
-			level: nodeType === "heading" ? (level ?? 1) : null,
+			level: resolvedLevel,
 			page_start: page,
 			page_end: page,
 			text,
@@ -503,6 +522,56 @@ function contentListToNodes(
 		node.path = path;
 	}
 	return nodes;
+}
+
+function inferMinerUHeadingLevel(
+	text: string,
+	rawLevel: number,
+	promotedDocumentHeader: boolean,
+	activeDecimalHeadingLevel: number,
+): number {
+	if (promotedDocumentHeader || rawLevel !== 1) return rawLevel;
+	const normalized = text.normalize("NFKC").replace(/\s+/gu, " ").trim();
+	const multiDecimal = normalized.match(
+		/^([1-9]\d?(?:\.[1-9]\d?){1,3})(?=[\s、.．:：）)\p{Script=Han}A-Za-z])/u,
+	);
+	if (multiDecimal?.[1]) {
+		return Math.min(4, multiDecimal[1].split(".").length);
+	}
+	if (activeDecimalHeadingLevel >= 2) {
+		const isArabicItem =
+			/^[1-9]\d?[.．、）)]\s*\S/u.test(normalized) &&
+			!/^[1-9]\d?\.\d/u.test(normalized);
+		const isChineseItem =
+			/^(?:[一二三四五六七八九十]{1,3}[、.．]|[(（][一二三四五六七八九十]{1,3}[)）])\s*\S/u.test(
+				normalized,
+			);
+		if (isArabicItem || isChineseItem) {
+			return Math.min(4, activeDecimalHeadingLevel + 1);
+		}
+	}
+	return rawLevel;
+}
+
+function nextActiveDecimalHeadingLevel(
+	text: string,
+	resolvedLevel: number,
+	promotedDocumentHeader: boolean,
+	previous: number,
+): number {
+	if (promotedDocumentHeader) return 0;
+	const normalized = text.normalize("NFKC").replace(/\s+/gu, " ").trim();
+	const multiDecimal = normalized.match(
+		/^([1-9]\d?(?:\.[1-9]\d?){1,3})(?=[\s、.．:：）)\p{Script=Han}A-Za-z])/u,
+	);
+	if (multiDecimal?.[1]) {
+		return Math.min(4, multiDecimal[1].split(".").length);
+	}
+	if (/^[1-9]\d?\s*[\p{Script=Han}A-Za-z]/u.test(normalized)) {
+		return 1;
+	}
+	if (resolvedLevel <= 2) return 0;
+	return previous;
 }
 
 function canMergeAdjacentHeadings(

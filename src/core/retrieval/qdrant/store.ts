@@ -79,6 +79,7 @@ export type SectionLookupTarget = ExpansionTarget &
 		| { parentRecordId: string }
 		| { childRecordId: string }
 		| { sectionPath: string }
+		| { sectionInstanceOnly: true; sectionInstance: number }
 	);
 
 export type ChunkLookupTarget = ExpansionTarget & {
@@ -278,11 +279,13 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 						should: input.targets.map((target) => ({
 							must: [
 								...expansionScopeConditions(target),
-								"parentRecordId" in target
-									? match("record_id", target.parentRecordId)
+								...("parentRecordId" in target
+									? [match("record_id", target.parentRecordId)]
 									: "childRecordId" in target
-										? match("source_chunk_ids", target.childRecordId)
-										: match("section_path", target.sectionPath),
+										? [match("source_chunk_ids", target.childRecordId)]
+										: "sectionPath" in target
+											? [match("section_path", target.sectionPath)]
+											: []),
 							],
 						})),
 					},

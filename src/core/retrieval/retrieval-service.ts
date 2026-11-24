@@ -35,6 +35,11 @@ import {
 	buildScopedRetrievalCacheKey,
 	type ScopedRetrievalCache,
 } from "./retrieval-cache";
+import {
+	adjacentSectionInstanceOffsets,
+	coalesceAdjacentMicroSections,
+	isShortStructuredSection,
+} from "./section-window";
 
 type CandidateCounts = {
 	total: number;
@@ -632,7 +637,10 @@ async function expandParentContexts(input: {
 		return parentContexts;
 	}
 	const expandable = input.selected.filter(isExpandableParentChild);
-	if (expandable.length === 0) return parentContexts;
+	const shortSelectedSections = input.selected.filter(isShortStructuredSection);
+	if (expandable.length === 0 && shortSelectedSections.length === 0) {
+		return parentContexts;
+	}
 
 	const selectedSectionKeys = new Set(
 		input.selected
@@ -640,7 +648,7 @@ async function expandParentContexts(input: {
 			.map(sectionKey),
 	);
 	const sectionPool = new Map<string, QdrantSearchHit>();
-	for (const hit of input.knownSections) {
+	for (const hit of [...input.knownSections, ...input.selected]) {
 		if (hit.payload.record_type === "section") {
 			sectionPool.set(sectionKey(hit), hit);
 		}
@@ -669,9 +677,73 @@ async function expandParentContexts(input: {
 		}
 	}
 
+	const directSections = [...sectionPool.values()];
+	const shortAnchors: QdrantSearchHit[] = [...shortSelectedSections];
+	for (const child of expandable) {
+		const parent = findParentSection(child, directSections);
+		if (parent && isShortStructuredSection(parent)) {
+			shortAnchors.push(parent);
+		}
+	}
+	if (shortAnchors.length > 0 && input.store.lookupSections) {
+		const knownInstanceKeys = new Set(
+			directSections
+				.filter(
+					(section) =>
+						typeof section.payload.section_instance === "number" &&
+						section.payload.generation_id,
+				)
+				.map(
+					(section) =>
+						`${section.payload.doc_id}:${section.payload.generation_id}:${section.payload.section_instance}`,
+				),
+		);
+		const adjacentTargets = new Map<string, SectionLookupTarget>();
+		const offsets = adjacentSectionInstanceOffsets();
+		for (const anchor of shortAnchors) {
+			const { doc_id, generation_id, section_instance } = anchor.payload;
+			if (!generation_id || section_instance == null) continue;
+			for (const offset of offsets) {
+				const targetInstance = section_instance + offset;
+				if (targetInstance < 0) continue;
+				const key = `${doc_id}:${generation_id}:${targetInstance}`;
+				if (knownInstanceKeys.has(key) || adjacentTargets.has(key)) continue;
+				adjacentTargets.set(key, {
+					documentId: doc_id,
+					generationId: generation_id,
+					sectionInstance: targetInstance,
+					sectionInstanceOnly: true,
+				});
+			}
+		}
+		const targets = [...adjacentTargets.values()];
+		if (targets.length > 0) {
+			input.signal?.throwIfAborted();
+			try {
+				const scope = expansionScope(input.scope, targets);
+				const fetched = assertAuthorizedHits(
+					await input.store.lookupSections({ scope, targets }),
+					scope,
+				);
+				for (const hit of fetched) {
+					if (hit.payload.record_type === "section") {
+						sectionPool.set(sectionKey(hit), hit);
+					}
+				}
+			} catch (error) {
+				input.signal?.throwIfAborted();
+				if (error instanceof RetrievalSecurityViolationError) throw error;
+			}
+		}
+	}
+
 	const allSections = [...sectionPool.values()];
 	const attachedSectionKeys = new Set(selectedSectionKeys);
 	const fallbackChildren: QdrantSearchHit[] = [];
+	const parentBudget = {
+		maxTokens: MAX_PARENT_CONTEXT_TOKENS,
+		maxChars: MAX_PARENT_CONTEXT_HARD_CHARS,
+	};
 	for (const child of expandable) {
 		const parent = findParentSection(child, allSections);
 		if (!parent) {
@@ -680,8 +752,16 @@ async function expandParentContexts(input: {
 		}
 		const key = sectionKey(parent);
 		if (attachedSectionKeys.has(key)) continue;
+		const coalesced = coalesceAdjacentMicroSections(
+			parent,
+			allSections,
+			parentBudget,
+		);
+		const sourceText = coalesced
+			? coalesced.text
+			: parent.payload.body || parent.payload.text;
 		const bounded = boundParentWindow(
-			parent.payload.body || parent.payload.text,
+			sourceText,
 			child.payload.body || child.payload.text,
 		);
 		if (!bounded) {
@@ -689,7 +769,35 @@ async function expandParentContexts(input: {
 			continue;
 		}
 		attachedSectionKeys.add(key);
+		if (coalesced) {
+			for (const member of coalesced.sections) {
+				attachedSectionKeys.add(sectionKey(member));
+			}
+		}
 		parentContexts.set(String(child.id), bounded);
+	}
+	for (const section of shortSelectedSections) {
+		const coalesced = coalesceAdjacentMicroSections(
+			section,
+			allSections,
+			parentBudget,
+		);
+		if (!coalesced) continue;
+		const hasNewNeighbor = coalesced.sections.some(
+			(member) =>
+				sectionKey(member) !== sectionKey(section) &&
+				!attachedSectionKeys.has(sectionKey(member)),
+		);
+		if (!hasNewNeighbor) continue;
+		const bounded = boundParentWindow(
+			coalesced.text,
+			section.payload.body || section.payload.text,
+		);
+		if (!bounded) continue;
+		for (const member of coalesced.sections) {
+			attachedSectionKeys.add(sectionKey(member));
+		}
+		parentContexts.set(String(section.id), bounded);
 	}
 	// Sibling-chunk fallback when a chunk has no parent section or spans across chunk boundaries.
 	if (fallbackChildren.length > 0 && input.store.lookupChunks) {
