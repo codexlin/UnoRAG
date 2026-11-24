@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-11-24。本文只维护当前成熟度、已知限制和下一步；架构细节见 [ARCHITECTURE](./ARCHITECTURE.md)，逐版结果见 [验收索引](./evidence/README.md)。
+> 更新日期：2026-11-25。本文只维护当前成熟度、已知限制和下一步；架构细节见 [ARCHITECTURE](./ARCHITECTURE.md)，逐版结果见 [验收索引](./evidence/README.md)。
 
 ## 当前结论
 
@@ -52,6 +52,11 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 - **表格查找、派生计算与微 section 检索修复（#322, #323, #324）**：修复重复表头触发 `deriveGroundedTableLookup` `TypeError`（消除实测 9 道 HTTP `503`）；允许表格投影 chunk 挂载父 section 上下文并放宽派生计算题 `baseTopK >= 10`；新增同章/连续编号短微 section 检索期合并（免重入库立即生效）并在 MinerU 解析期推断扁平 `text_level: 1` 的多级标题层级。
 - **评测成本控制与依赖维护（#311, #325）**：`run-hf-benchmark.ts` 默认入库超时提至 60 分钟且默认 fail-fast，新增 `--reuse-or-create`、`--only-ids` 与 `--only-failed-from` 支持零重入库和失败子集回归；同步合入 `tools/landing-video` Dependabot 更新（#311）。
 - **开发机完整回归结果（未替代签名镜像正式发布验收）**：`pnpm verify`、`pnpm test:fast`（1,345/1,345）、`pnpm test:contract`（40/40，6 项本机无 `helm` 跳过，CI 全绿）、`pnpm test:integration`（192/192）、Playwright（324/324）、`pnpm eval:live`（正例 **36/36**、拒答 **6/6**）、`.unorag/acceptance`（证据冲突 **26/26**、多轮含 301s 过期 **9/9**）全部通过；外部 FinanceComplexQA 22 份 PDF / 135 题（含 `--semantic-judge`）实现 **0 HTTP 503 / 0 失败**，回答率 **88.1%**（+0.8pp）、文档召回 **87.3%**（+0.8pp）、MRR **0.869**（+0.008）、数值命中率 **58.3%**、综合事实命中率 **43.4%**（+0.5pp）、语义准确率 **65.3%**、拒答准确率 **94.1%**（+5.9pp）、P95 **19.8s**（-1.3s）。
+
+### `v0.4.2` 首页动效与本地模型部署补丁（`#327`, `#328`）
+
+- **本地模型与上手文档（#327, #328）**：在 `deploy/compose/docker-compose.yml` 补充 `host.docker.internal` 映射以直连宿主机 Ollama/vLLM，补齐中英 README、部署指南与 Helm 拆分密钥说明。
+- **对外首页双语×浅深色动效升级**：重做 `tools/landing-video/` → `public/landing-media/` 全部 12 支循环片与 12 张 Poster（自托管 `Geist`/`Geist Mono`、扫描线引用核验、检索前 ACL 黑幕隔离、3D 文档行入槽与双状态表达、顺序阶段耗时瀑布），并精修首页章节/证据卡 `layoutId` 滑块、播放进度微条与连续滚动文案动效；已通过 `pnpm verify`、`pnpm test:fast`（1,345/1,345）及桌面/移动 `landing-page.spec.ts`（8/8）。
 
 下表描述当前源码能力；线上可用范围仍以具体 Release 和部署清单为准。
 

@@ -5,6 +5,17 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-25
+
+- **Public homepage bilingual & dual-theme motion upgrade**:
+  - Upgrade all 12 offline Remotion product workflow reels and posters (`hero`, `library`, `trace` × `en`/`zh-CN` × `light`/`dark` in `tools/landing-video/` → `public/landing-media/`) with local self-hosted variable `Geist` / `Geist Mono`, pure-vector dual-tone `UnoMark`, scanline citation verification, honest hybrid retrieval + rerank candidate ranking, pre-retrieval ACL isolation (`0 leaks` with localized tactile click ring), 3D `row-embed` dual-state document governance, and sequential stage timing waterfall + token ledger.
+  - Refresh homepage micro-interactions in `src/components/landing/` (`layoutId` sliding chapter & evidence tabs, 2px hairline playback rail with `preload="auto"` on priority Hero reel, staggered trace steps, continuous scroll `TaglineReveal`, and subtle card/FAQ transitions), preserving `prefers-reduced-motion`, WCAG AA contrast across all 4 built-in themes, and 0 `/api/` calls on public load.
+  - Update SHA-256 digests in `assets/provenance.json` for all 12 regenerated posters.
+- **Local model deployment & onboarding documentation (#327, #328)**:
+  - Map `host.docker.internal` in `deploy/compose/docker-compose.yml` so Docker containers reach host-local Ollama / vLLM runtimes seamlessly, and expand local model & first-time onboarding docs in `README.md`, `README.zh-CN.md`, `docs/DEPLOYMENT.md`, and `docs/OPERATIONS.md`.
+  - Add inline model-switching hints to `deploy/config/runtime.env.example` / `runtime.secret.example` and Helm split-key guidance in `deploy/helm/README.md`.
+- **Upgrade note**: Upgrading from `v0.4.1` requires no database migration, configuration change, or mandatory reindex.
+
 ## [0.4.1] - 2026-11-24
 
 - **Deployment rerank kill-switch & Ask policy optimistic locking (#320)**:

@@ -142,6 +142,15 @@
 		transform: translateY(0);
 	}
 }
+.landing-card-hover {
+	transition:
+		border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+		background-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.landing-card-hover:hover {
+	border-color: color-mix(in oklch, var(--foreground) 20%, var(--border));
+	background-color: var(--card);
+}
 .landing-evidence {
 	border-top: 1px solid var(--border);
 	background: var(--background);
@@ -254,11 +263,28 @@
 		line-height: 2.25rem;
 	}
 }
+.landing-faq-item[open] > p {
+	animation: landing-faq-open 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes landing-faq-open {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
 @media (prefers-reduced-motion: reduce) {
 	.landing-enter {
 		animation: none;
 	}
-	.landing-link {
+	.landing-link,
+	.landing-card-hover {
 		transition: none;
+	}
+	.landing-faq-item[open] > p {
+		animation: none;
 	}
 }

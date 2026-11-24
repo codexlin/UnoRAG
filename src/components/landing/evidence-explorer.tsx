@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +42,7 @@ export function EvidenceExplorer({
 		onViewChange?.(next);
 	};
 	const reducedMotion = useReducedMotion();
+	const tabPillId = useId();
 
 	return (
 		<section
@@ -65,23 +66,37 @@ export function EvidenceExplorer({
 					</p>
 					<fieldset className="inline-flex min-w-0 items-center gap-1 rounded-lg bg-muted/60 p-1">
 						<legend className="sr-only">{t("示例视图", "Example view")}</legend>
-						{views.map(({ id, label, icon: Icon }) => (
-							<button
-								key={id}
-								type="button"
-								aria-pressed={view === id}
-								onClick={() => setView(id)}
-								className={cn(
-									"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9 motion-reduce:transition-none",
-									view === id
-										? "bg-card text-foreground shadow-2xs ring-1 ring-border"
-										: "text-muted-foreground hover:text-foreground",
-								)}
-							>
-								<Icon className="size-3.5" aria-hidden />
-								{t(label[0], label[1])}
-							</button>
-						))}
+						{views.map(({ id, label, icon: Icon }) => {
+							const active = view === id;
+							return (
+								<button
+									key={id}
+									type="button"
+									aria-pressed={active}
+									onClick={() => setView(id)}
+									className={cn(
+										"relative inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9 motion-reduce:transition-none",
+										active
+											? "text-foreground"
+											: "text-muted-foreground hover:text-foreground",
+									)}
+								>
+									{active ? (
+										<motion.span
+											layoutId={tabPillId}
+											aria-hidden
+											transition={{
+												duration: reducedMotion ? 0 : 0.22,
+												ease: [0.22, 1, 0.36, 1],
+											}}
+											className="absolute inset-0 rounded-md bg-card shadow-2xs ring-1 ring-border"
+										/>
+									) : null}
+									<Icon className="relative z-10 size-3.5" aria-hidden />
+									<span className="relative z-10">{t(label[0], label[1])}</span>
+								</button>
+							);
+						})}
 					</fieldset>
 				</div>
 				<div className="landing-evidence-body">
@@ -190,15 +205,24 @@ export function EvidenceExplorer({
 												t("引用校验", "Citation check"),
 												t("记录链路", "Trace recording"),
 											].map((label, i) => (
-												<li
+												<motion.li
 													key={label}
+													initial={
+														reducedMotion ? false : { opacity: 0, x: -5 }
+													}
+													animate={{ opacity: 1, x: 0 }}
+													transition={{
+														duration: reducedMotion ? 0 : 0.2,
+														delay: reducedMotion ? 0 : i * 0.035,
+														ease: [0.22, 1, 0.36, 1],
+													}}
 													className="flex items-center gap-1.5 text-foreground"
 												>
-													<span className="font-mono text-xs tabular-nums text-muted-foreground">
+													<span className="font-mono text-xs tabular-nums text-cite">
 														{String(i + 1).padStart(2, "0")}
 													</span>
 													<span>{label}</span>
-												</li>
+												</motion.li>
 											))}
 										</ol>
 									</div>

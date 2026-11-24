@@ -433,7 +433,7 @@ export default async function Home() {
 								{documents.map(({ icon: Icon, title, body }) => (
 									<div
 										key={title[1]}
-										className="min-w-0 rounded-xl border border-border/80 bg-card/70 p-5 shadow-2xs sm:p-6"
+										className="landing-card-hover min-w-0 rounded-xl border border-border/80 bg-card/70 p-5 shadow-2xs sm:p-6"
 									>
 										<div className="mb-4 inline-flex size-9 items-center justify-center rounded-lg border border-border bg-background text-primary shadow-2xs">
 											<Icon className="size-4 shrink-0" aria-hidden />
@@ -611,7 +611,10 @@ export default async function Home() {
 								</h3>
 								<div className="divide-y divide-border">
 									{questions.map(([question, answer]) => (
-										<details key={question[1]} className="group py-4">
+										<details
+											key={question[1]}
+											className="landing-faq-item group py-4"
+										>
 											<summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 text-sm font-medium text-foreground focus-visible:outline-2 focus-visible:outline-ring">
 												<span>{t(question[0], question[1])}</span>
 												<Plus

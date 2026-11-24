@@ -6,9 +6,9 @@ const outDir = resolve(process.cwd(), "../../public/landing-media");
 mkdirSync(outDir, { recursive: true });
 
 const jobs = [
-	{ id: "UnoRAGHeroFilm", prefix: "hero", posterFrame: 78 },
-	{ id: "UnoRAGLibraryFilm", prefix: "library", posterFrame: 210 },
-	{ id: "UnoRAGTraceFilm", prefix: "trace", posterFrame: 235 },
+	{ id: "UnoRAGHeroFilm", prefix: "hero", posterFrame: 84 },
+	{ id: "UnoRAGLibraryFilm", prefix: "library", posterFrame: 222 },
+	{ id: "UnoRAGTraceFilm", prefix: "trace", posterFrame: 228 },
 ];
 
 const onlyArg = process.argv.find((arg) => arg.startsWith("--only="));
@@ -48,6 +48,8 @@ for (const job of jobs) {
 				"--codec=h264",
 				"--crf=24",
 				"--pixel-format=yuv420p",
+				"--concurrency=4",
+				"--timeout=60000",
 				"--muted",
 				"--log=error",
 			]);
@@ -58,9 +60,12 @@ for (const job of jobs) {
 				`${base}.png`,
 				`--frame=${job.posterFrame}`,
 				`--props=${props}`,
+				"--timeout=60000",
 				"--log=error",
 			]);
 		}
 	}
 }
-console.log("\nRendered all 12 MP4 reels and 12 PNG posters to public/landing-media/");
+console.log(
+	"\nRendered all 12 MP4 reels and 12 PNG posters to public/landing-media/",
+);

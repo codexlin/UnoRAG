@@ -1,10 +1,10 @@
 "use client";
 
 import { Pause, Play } from "lucide-react";
-import { useReducedMotion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import Image from "next/image";
 import { useTheme } from "next-themes";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
@@ -54,6 +54,8 @@ export function ProductFilmPlayer({
 	const [paused, setPaused] = useState(false);
 	const [inView, setInView] = useState(priority);
 	const [failedVideoSrc, setFailedVideoSrc] = useState<string | null>(null);
+	const [playbackProgress, setPlaybackProgress] = useState(0);
+	const chapterPillId = useId();
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -99,21 +101,48 @@ export function ProductFilmPlayer({
 		}
 	}, [paused, inView, showVideo]);
 
-	// Keep chapter indicator synchronized while playing without overriding user's manual reading below.
+	// Keep chapter indicator and subtle timeline rail synchronized while playing.
 	useEffect(() => {
 		const video = videoRef.current;
-		if (!video || !chapters?.length || !onChapterSync || !showVideo) return;
-		const onTimeUpdate = () => {
+		if (!video || !chapters?.length || !showVideo) return;
+		const syncFromVideo = () => {
 			const now = video.currentTime;
-			let current = chapters[0].id;
-			for (const chapter of chapters) {
-				if (now >= chapter.startSec - 0.1) current = chapter.id;
+			const dur = video.duration;
+			if (Number.isFinite(dur) && dur > 0) {
+				setPlaybackProgress(Math.min(1, Math.max(0, now / dur)));
 			}
-			onChapterSync(current);
+			if (onChapterSync) {
+				let current = chapters[0].id;
+				for (const chapter of chapters) {
+					if (now >= chapter.startSec - 0.1) current = chapter.id;
+				}
+				onChapterSync(current);
+			}
 		};
-		video.addEventListener("timeupdate", onTimeUpdate);
-		return () => video.removeEventListener("timeupdate", onTimeUpdate);
-	}, [chapters, onChapterSync, showVideo]);
+		video.addEventListener("timeupdate", syncFromVideo);
+		video.addEventListener("seeked", syncFromVideo);
+		let rafId = 0;
+		const tick = () => {
+			if (
+				!video.paused &&
+				Number.isFinite(video.duration) &&
+				video.duration > 0
+			) {
+				setPlaybackProgress(
+					Math.min(1, Math.max(0, video.currentTime / video.duration)),
+				);
+			}
+			rafId = window.requestAnimationFrame(tick);
+		};
+		if (!paused && inView) {
+			rafId = window.requestAnimationFrame(tick);
+		}
+		return () => {
+			video.removeEventListener("timeupdate", syncFromVideo);
+			video.removeEventListener("seeked", syncFromVideo);
+			if (rafId) window.cancelAnimationFrame(rafId);
+		};
+	}, [chapters, onChapterSync, showVideo, paused, inView]);
 
 	function seekToChapter(chapter: ProductFilmChapter) {
 		onChapterSelect?.(chapter.id);
@@ -148,7 +177,7 @@ export function ProductFilmPlayer({
 			)}
 		>
 			{showChapterBar && chapters ? (
-				<div className="flex items-center justify-between gap-2 border-b border-border bg-muted/35 px-3 py-1.5 sm:px-5 sm:py-2">
+				<div className="relative flex items-center justify-between gap-2 border-b border-border bg-muted/35 px-3 py-1.5 sm:px-5 sm:py-2">
 					<fieldset className="grid min-w-0 flex-1 grid-cols-3 gap-1 sm:flex sm:flex-none sm:items-center">
 						<legend className="sr-only">
 							{t("演示章节", "Demo chapters")}
@@ -162,20 +191,35 @@ export function ProductFilmPlayer({
 									aria-pressed={selected}
 									onClick={() => seekToChapter(chapter)}
 									className={cn(
-										"inline-flex min-h-11 items-center justify-center rounded-md px-2 text-xs font-medium transition-colors duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9 md:px-3 motion-reduce:transition-none",
+										"relative inline-flex min-h-11 items-center justify-center rounded-md px-2 text-xs font-medium transition-colors duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9 md:px-3 motion-reduce:transition-none",
 										selected
-											? "bg-card text-foreground shadow-2xs ring-1 ring-border"
+											? "text-foreground"
 											: "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
 									)}
 								>
-									{chapter.shortLabel ? (
-										<>
-											<span className="sm:hidden">{chapter.shortLabel}</span>
-											<span className="hidden sm:inline">{chapter.label}</span>
-										</>
-									) : (
-										chapter.label
-									)}
+									{selected ? (
+										<motion.span
+											layoutId={chapterPillId}
+											aria-hidden
+											transition={{
+												duration: isReduced ? 0 : 0.24,
+												ease: [0.22, 1, 0.36, 1],
+											}}
+											className="absolute inset-0 rounded-md bg-card shadow-2xs ring-1 ring-border"
+										/>
+									) : null}
+									<span className="relative z-10">
+										{chapter.shortLabel ? (
+											<>
+												<span className="sm:hidden">{chapter.shortLabel}</span>
+												<span className="hidden sm:inline">
+													{chapter.label}
+												</span>
+											</>
+										) : (
+											chapter.label
+										)}
+									</span>
 								</button>
 							);
 						})}
@@ -197,6 +241,17 @@ export function ProductFilmPlayer({
 								<Pause className="size-3.5" aria-hidden />
 							)}
 						</button>
+					) : null}
+					{showVideo && !isReduced ? (
+						<span
+							aria-hidden
+							className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] bg-transparent"
+						>
+							<span
+								className="block h-full w-full origin-left bg-cite/70"
+								style={{ transform: `scaleX(${playbackProgress.toFixed(4)})` }}
+							/>
+						</span>
 					) : null}
 				</div>
 			) : null}
@@ -238,7 +293,7 @@ export function ProductFilmPlayer({
 						muted
 						loop
 						playsInline
-						preload={priority ? "metadata" : "none"}
+						preload={priority ? "auto" : "metadata"}
 						aria-label={alt}
 						onLoadedData={(event) => {
 							if (paused) event.currentTarget.pause();
