@@ -5,7 +5,7 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-11-23
+## [0.4.0] - 2026-11-24
 
 - **Token-aware chunking (`v2`) & balanced comparison context (#308)**:
   - Introduce a deterministic pure-TypeScript token estimator (`src/core/text/token-estimate.ts`) for CJK/Latin/symbol-mixed text and advance default chunking to `CHUNK_POLICY_VERSION = "v2"` (400 tokens target / 60 overlap / 1,800-char cap), while keeping explicit character `chunkSize` overrides backward compatible.
@@ -23,10 +23,15 @@ results remain in [`docs/evidence/`](./docs/evidence/).
   - Add canonical environment aliases (`LLM_API_KEY`, `LLM_BASE_URL`, `UNORAG_BASE_URL`) and slim `deploy/config/runtime.advanced.env.example` (108 → 74 keys) while preserving legacy overrides during `init-config.sh`.
   - Add workspace-level alert thresholds (`alert_thresholds` JSONB with optimistic `alert_policy_version` locking) and independent Hybrid/Rerank controls editable live in Workspace Settings.
   - Consolidate documentation, slim `docs/DESIGN.md`, calibrate ADR-0002/0003/0005/0007/0008, and remove legacy residue.
+- **Pre-release security, RAG, UI & deployment hardening (#313–#318)**:
+  - **Security, ACL & DBOS lifecycle (#313, #316)**: Prevent `removeWorkspaceMember` from turning sole-grantee restricted documents workspace-wide public (preserving locked-down ACL, triggering `document.acl.project`, revoking active sessions, and writing audit logs); enforce same-origin checks on Cookie write endpoints, `POST /api/auth/password` length/rate limits, fail-closed Service Key scope/`library_ids` validation, and cross-provider credential origin binding; fix custom `library_id` figure asset FK errors, pre-dispatch cancelled jobs starving DBOS reconciliation, and `cancel` overwriting `deleting` tombstones.
+  - **RAG core, tables, parsing & prompt fidelity (#313, #317, #318)**: Fix `grounded_table_lookup` Judge retry loop, score sparse-only exact hits when Rerank is off, deduplicate after full reranking rather than truncating `topN` prematurely, fix unit-scaled table aggregation (`万元`/`%` headers and JSON numeric predicates), bound oversized `table`/`code` chunks, detect numeric/year sub-headers in merged XLSX tables, populate MinerU `section_path` and scoped `record_id` parent/sibling expansion, guard `ScopedRetrievalCache` (`expandParentContext` and non-caching degraded results) and MinerU redirect/ZIP bounds, and restore parallel-metric qualifier preservation in `chat@1.17.0`.
+  - **UI contrast, Ask state isolation & bilingual coverage (#313, #315)**: Bring all 4 built-in themes (light/dark) and hover/highlight states to WCAG AA (`>= 4.5:1`), isolate Ask cross-thread/library state and archived trace authorization, surface `health.recovery` guidance and localize remaining English-mode labels/toasts/errors, distinguish post-retrieval trace outcomes, and align the full 5-spec Playwright suite.
+  - **Compose, Helm, alerting & release pipeline (#314)**: Wire missing COS environment variables to Helm `dbos-worker` and per-privilege runtime role grants/verification to Helm migrations, align Compose `web` and `dbos-control` Qdrant settings, support `critical -> warning` alert de-escalation with peak-severity recovery emails and per-workspace control-cycle isolation, fix `init-config.sh` typo, and gate GHCR/ACR image publishing behind Trivy vulnerability scans.
 - **Product UI, bilingual i18n & evaluation tooling (#299, #301, #309)**:
   - Add browser-aware EN/ZH interface language switching, redesigned landing and auth shells, 4 built-in themes (`vercel`, `claude`, `violet-bloom`, `modern-minimal`) with circular View Transitions toggle, and server-side audit filtering/CSV export.
   - Add bounded `--concurrency <1..8>` execution to `scripts/evaluation/run-hf-benchmark.ts`.
-- **Upgrade note**: Apply migration `0036` (`drizzle/0036_workspace_alert_thresholds.sql`) using the documented drain/backup procedure. Existing active document versions continue serving without forced reindex; reindexing documents adopts `CHUNK_POLICY_VERSION = "v2"` and automatic `table_heavy` profiling.
+- **Upgrade note**: Apply migration `0036` (`drizzle/0036_workspace_alert_thresholds.sql`) using the documented drain/backup procedure. Fresh and upgraded deployments require a Qdrant collection with named Dense + `lexical_v1 (modifier: "idf")` sparse vectors; on pre-v0.4 collections without `lexical_v1`, recreate the collection or switch `QDRANT_COLLECTION_NAME` before serving traffic.
 
 ## [0.3.6] - 2026-11-21
 
