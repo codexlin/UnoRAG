@@ -539,6 +539,75 @@ test("MinerU empty table placeholders extend only the current adjacent table", (
 	assert.deepEqual(table?.meta.continuation_pages, [2, 3]);
 });
 
+test("MinerU infers nested heading levels from numbered headings when text_level is flat", async () => {
+	const result = normalizeMinerUResult(
+		{
+			content_list: [
+				{ type: "text", text: "5 经济展望对比", text_level: 1, page_idx: 0 },
+				{ type: "text", text: "5.2 相同点分析", text_level: 1, page_idx: 0 },
+				{
+					type: "text",
+					text: "1. 宏观政策保持积极",
+					text_level: 1,
+					page_idx: 0,
+				},
+				{ type: "text", text: "财政赤字率约4%。", page_idx: 0 },
+				{
+					type: "text",
+					text: "2. 制造业与基建双轮驱动",
+					text_level: 1,
+					page_idx: 0,
+				},
+				{ type: "text", text: "制造业投资增速9.3%。", page_idx: 0 },
+				{ type: "text", text: "5.3 不同点分析", text_level: 1, page_idx: 1 },
+				{ type: "text", text: "消费与地产判断存在差异。", page_idx: 1 },
+			],
+		},
+		context,
+	);
+	const headings = result.document.nodes.filter((n) => n.type === "heading");
+	assert.deepEqual(
+		headings.map((h) => [h.text, h.level, h.path]),
+		[
+			["5 经济展望对比", 1, "5 经济展望对比"],
+			["5.2 相同点分析", 2, "5 经济展望对比/5.2 相同点分析"],
+			[
+				"1. 宏观政策保持积极",
+				3,
+				"5 经济展望对比/5.2 相同点分析/1. 宏观政策保持积极",
+			],
+			[
+				"2. 制造业与基建双轮驱动",
+				3,
+				"5 经济展望对比/5.2 相同点分析/2. 制造业与基建双轮驱动",
+			],
+			["5.3 不同点分析", 2, "5 经济展望对比/5.3 不同点分析"],
+		],
+	);
+	const chunks = await chunkDocument(result.document);
+	const payloads = buildIndexPayloads(chunks, {
+		documentId: result.document.id,
+		documentVersionId: "version",
+		generationId: "8d3c1bbb-0f89-4ccc-9db1-ae02bc38ab09",
+		libraryId: "library",
+		organizationId: "org",
+		workspaceId: "workspace",
+	});
+	const sections = payloads.filter(
+		({ record_type }) => record_type === "section",
+	);
+	assert.deepEqual(
+		sections.map((s) => s.section_path),
+		[
+			"5 经济展望对比/5.2 相同点分析/1. 宏观政策保持积极",
+			"5 经济展望对比/5.2 相同点分析/2. 制造业与基建双轮驱动",
+			"5 经济展望对比/5.3 不同点分析",
+		],
+	);
+	assert.match(sections[0]?.body ?? "", /财政赤字率约4%/);
+	assert.match(sections[1]?.body ?? "", /制造业投资增速9\.3%/);
+});
+
 function tableItem(
 	page: number,
 	caption: string,

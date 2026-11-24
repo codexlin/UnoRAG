@@ -2911,3 +2911,193 @@ test("table-projection chunks retain parent section context after overlap dedupl
 	assert.equal(orphanResult.citations[0]?.parent_context, undefined);
 	assert.equal(siblingLookupCalls, 0);
 });
+
+test("DefaultRetrievalService coalesces adjacent short chapter and sub-item micro-sections without crossing chapter boundaries", async () => {
+	const makeSection = (
+		id: string,
+		instance: number,
+		sectionPath: string,
+		text: string,
+	) => {
+		const record = hit({
+			id,
+			text,
+			chunkIndex: 0,
+			score: 0,
+			recordType: "section",
+		});
+		record.payload.record_id = `sec:${id}`;
+		record.payload.section_path = sectionPath;
+		record.payload.section_instance = instance;
+		return record;
+	};
+
+	const sec3 = makeSection(
+		"s3",
+		13,
+		"3.4 其他业务系统",
+		"第三章内容，与第四章无关。",
+	);
+	const sec41 = makeSection(
+		"s41",
+		14,
+		"4 合资企业与二次供水管理 4.1 合资企业成立背景与战略目标",
+		"和达科技与浙江嘉源环境集团合资设立浙江嘉源和达水务有限公司，推进智慧水务建设。",
+	);
+	const sec42 = makeSection(
+		"s42",
+		15,
+		"4.2 二次供水管理系统技术实现",
+		"系统借助物联网、工业组态、分布式与视频门禁技术实现远程集中监控与预警。",
+	);
+	sec42.payload.source_chunk_ids = ["chk:doc:42"];
+	const sec43 = makeSection(
+		"s43",
+		16,
+		"4.3 泵房无人值守与巡检管理的实现机制",
+		"通过APP实现流程化巡检、保养与维修闭环管理，降低现场值守成本。",
+	);
+	const sec51 = makeSection(
+		"s51",
+		17,
+		"5 渗漏预警技术 5.1 渗漏预警平台",
+		"第五章渗漏预警平台内容，不应被第四章混入。",
+	);
+
+	const child42 = hit({
+		id: "chk-42",
+		text: sec42.payload.body ?? sec42.payload.text,
+		chunkIndex: 42,
+		score: 0.91,
+		recordType: "chunk",
+	});
+	child42.payload.record_id = "chk:doc:42";
+	child42.payload.parent_record_id = "sec:s42";
+	child42.payload.section_path = "4.2 二次供水管理系统技术实现";
+	child42.payload.section_instance = 15;
+
+	const sec23 = makeSection(
+		"s23",
+		24,
+		"2.3 行政处罚听证程序规定 2.3.1 听证的启动与组织",
+		"听证由行政处罚委员会办公室组织实施。",
+	);
+	sec23.payload.source_chunk_ids = ["chk:doc:23"];
+	const secItem1 = makeSection(
+		"s23-1",
+		25,
+		"一、听证参加人信息",
+		"需填写听证参加人姓名与联系方式。",
+	);
+	const secItem2 = makeSection(
+		"s23-2",
+		26,
+		"二、回避申请确认",
+		"当事人有权申请听证主持人回避。",
+	);
+	const secItem3 = makeSection(
+		"s23-3",
+		27,
+		"三、语言使用权利告知",
+		"在听证过程中，当事人有使用本民族语言文字参加听证的权利。",
+	);
+	const sec24 = makeSection(
+		"s24",
+		28,
+		"2.4 证据收集规范",
+		"证据收集遵循合法性原则，不应混入 2.3。",
+	);
+	const child23 = hit({
+		id: "chk-23",
+		text: sec23.payload.body ?? sec23.payload.text,
+		chunkIndex: 23,
+		score: 0.85,
+		recordType: "chunk",
+	});
+	child23.payload.record_id = "chk:doc:23";
+	child23.payload.parent_record_id = "sec:s23";
+	child23.payload.section_path = sec23.payload.section_path;
+	child23.payload.section_instance = 24;
+
+	const allSections = [
+		sec3,
+		sec41,
+		sec42,
+		sec43,
+		sec51,
+		sec23,
+		secItem1,
+		secItem2,
+		secItem3,
+		sec24,
+	];
+	const service = new DefaultRetrievalService(
+		embeddings,
+		{
+			async search() {
+				return [child42, child23];
+			},
+			async listCorpus() {
+				return [];
+			},
+			async lookupSections({ targets }) {
+				return allSections.filter((section) =>
+					targets.some((target) => {
+						if (
+							target.documentId !== section.payload.doc_id ||
+							target.generationId !== section.payload.generation_id
+						) {
+							return false;
+						}
+						if (
+							target.sectionInstance !== undefined &&
+							target.sectionInstance !== section.payload.section_instance
+						) {
+							return false;
+						}
+						if ("parentRecordId" in target) {
+							return section.payload.record_id === target.parentRecordId;
+						}
+						if ("childRecordId" in target) {
+							return (
+								section.payload.source_chunk_ids?.includes(
+									target.childRecordId,
+								) ?? false
+							);
+						}
+						if ("sectionPath" in target) {
+							return section.payload.section_path === target.sectionPath;
+						}
+						return true;
+					}),
+				);
+			},
+		},
+		null,
+		{
+			hybridEnabled: false,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+
+	const result = await service.retrieve({
+		query: "浙江嘉源和达水务有限公司与听证语言权利",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+	});
+	const ctx42 = result.citations.find((c) => c.id === "chk-42")?.parent_context;
+	assert.ok(ctx42);
+	assert.match(ctx42, /浙江嘉源和达水务有限公司/);
+	assert.match(ctx42, /流程化巡检/);
+	assert.doesNotMatch(ctx42, /第三章内容/);
+	assert.doesNotMatch(ctx42, /第五章渗漏预警/);
+
+	const ctx23 = result.citations.find((c) => c.id === "chk-23")?.parent_context;
+	assert.ok(ctx23);
+	assert.match(ctx23, /使用本民族语言文字参加听证/);
+	assert.doesNotMatch(ctx23, /证据收集遵循合法性原则/);
+});
