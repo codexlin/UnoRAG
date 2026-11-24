@@ -55,7 +55,7 @@ Qdrant 只读就绪校验、重试阶段的重排禁用、Ask 阈值前候选选
 | 文档理解 | TXT/Markdown/DOCX/XLSX/PDF，LiteParse/MinerU，Markdown 管道表、DocumentIR/TableIR，Token 感知 `v2` 切分与 `>40%` 表格自动 `table_heavy`、多粒度索引及默认关闭的条件式检索上下文增强 |
 | 检索问答 | 作用域强制过滤、默认启用 Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF、重排、改写、证据裁决、按主体均衡配额的对比上下文、拒答、引用、确定性表格执行与 SSE；Admin/Editor 临时检索轨迹检查器；pg_trgm 授权文档目录候选检索 |
 | 会话 | 带来源授权的短期记忆、实体追问、有限期歧义澄清、归档和继续对话；模型上下文压缩长回复，归档保留原文和来源 |
-| 运维预检 | 健康接口和运行中心校验现有 Qdrant 集合的向量维度，给出调整 `EMBEDDING_DIM` 或切换集合并重索引的操作提示 |
+| 运维预检 | 健康接口和运行中心校验现有 Qdrant 集合的向量维度、距离、`lexical_v1` IDF 配置及载荷索引，按异常类型给出恢复提示 |
 | 产品界面 | shadcn/Base UI、AI Elements、EN/ZH 双语、Vercel/Claude/Violet Bloom/Modern Minimal 4 套主题、可调圆角、响应式工作台与设置分区；引用/版本/执行链路一致的阅读入口 |
 | 运维交付 | 原生阶段瀑布/请求诊断/工作区可配告警阈值、工作区邮件策略及持久化投递、精简环境变量与标准别名、可选 OTel/Langfuse、签名镜像、安装升级、备份与恢复工具 |
 | 反馈闭环 | Ask 赞/踩与原因标签、运行中心处理状态、待人工补全的黄金集样本骨架；不是自动采纳用户反馈为真值 |
