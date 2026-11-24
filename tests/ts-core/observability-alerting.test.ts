@@ -1038,6 +1038,47 @@ test("workspace email jobs revalidate settings and isolate recipients", {
 		);
 
 		await t.test(
+			"critical-only recipients receive recovery after de-escalation within the same generation",
+			async () => {
+				await changeSettings({
+					minimum_severity: "critical",
+					notify_recovery: true,
+				});
+				const before = requests.length;
+				await reconcile([{ ...signal, severity: "critical" }]);
+				const criticalJobs = await claim();
+				assert.equal(criticalJobs.length, recipients.length);
+				for (const job of criticalJobs) assert.equal(await send(job), "sent");
+
+				await reconcile([{ ...signal, severity: "warning" }]);
+				assert.equal((await claim()).length, 0);
+				await reconcile([]);
+				const recoveryJobs = await claim();
+				assert.equal(recoveryJobs.length, recipients.length);
+				for (const job of recoveryJobs) {
+					assert.equal(job.payload.transition, "resolved");
+					assert.equal(job.payload.alert.severity, "critical");
+					assert.equal(
+						job.payload.alert.generation,
+						criticalJobs[0].payload.alert.generation,
+					);
+					assert.equal(await send(job), "sent");
+				}
+				assert.deepEqual(
+					requests
+						.slice(before + recipients.length)
+						.flatMap(({ to }) => to)
+						.sort(),
+					[...recipients].sort(),
+				);
+
+				await reconcile([{ ...signal, severity: "warning" }]);
+				await reconcile([]);
+				assert.equal((await claim()).length, 0);
+			},
+		);
+
+		await t.test(
 			"send-time severity and recovery checks use current settings",
 			async () => {
 				await changeSettings({
@@ -1671,16 +1712,20 @@ test("alert lifecycle is durable, deduplicated and workspace isolated", {
 			transitions: "2",
 			deliveries: "2",
 		});
-		assert.equal(
+		assert.deepEqual(
 			(
-				await pool.query<{ severity: string }>(
-					`SELECT severity
+				await pool.query<{
+					severity: string;
+					status: string;
+					generation: number;
+				}>(
+					`SELECT severity, status, generation
 					 FROM app.observability_alerts
 					 WHERE organization_id = $1 AND workspace_id = $2`,
 					[organizationId, workspaceId],
 				)
-			).rows[0]?.severity,
-			"critical",
+			).rows[0],
+			{ severity: "warning", status: "active", generation: 1 },
 		);
 		assert.deepEqual(
 			(

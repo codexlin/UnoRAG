@@ -256,7 +256,7 @@ common_keys = set(parse_env(config_dir / "runtime.env.example"))
 advanced_keys = set(parse_env(config_dir / "runtime.advanced.env.example"))
 # Import the same tuning overrides from monolithic deployments after slimming
 # the example. These keys still flow through the Compose runtime contract.
-advanced_keys.update("""+SESSION_MEMORY_TTL_SECONDS ASK_JUDGE_TIMEOUT_MS ASK_JUDGE_MAX_ATTEMPTS
+advanced_keys.update("""SESSION_MEMORY_TTL_SECONDS ASK_JUDGE_TIMEOUT_MS ASK_JUDGE_MAX_ATTEMPTS
 ASK_JUDGE_MAX_OUTPUT_TOKENS VLM_TIMEOUT_MS VLM_MAX_FIGURES_PER_REQUEST
 VLM_MAX_IMAGE_BYTES EMBEDDING_TIMEOUT_MS CONTEXTUAL_RETRIEVAL_MAX_CHUNKS
 CONTEXTUAL_RETRIEVAL_TIMEOUT_MS RERANK_TIMEOUT_MS PARSER_POLL_INTERVAL_MS
