@@ -609,6 +609,7 @@ function scopePort(): DocumentIngestScopePort {
 				title: "Employee handbook",
 				documentId: "rag-document",
 				libraryId: "rag-library",
+				libraryUuid: "10000000-0000-4000-8000-000000000007",
 				acl: {
 					scope: "restricted",
 					principalIds: ["10000000-0000-4000-8000-000000000008"],

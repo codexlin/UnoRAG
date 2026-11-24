@@ -53,7 +53,11 @@ test("runtime roles match the TypeScript ownership boundary", async () => {
 	);
 	assert.match(
 		verification,
-		/has_table_privilege\('unorag_worker_login', 'app\.audit_logs', 'SELECT,INSERT'\)/,
+		/has_table_privilege\('unorag_worker_login', 'app\.audit_logs', 'SELECT'\)/,
+	);
+	assert.match(
+		verification,
+		/has_table_privilege\('unorag_worker_login', 'app\.audit_logs', 'INSERT'\)/,
 	);
 	assert.match(verification, /unorag_dbos_login can access application data/);
 });

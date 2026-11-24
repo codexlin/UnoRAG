@@ -5,6 +5,7 @@ import { and, eq, type SQL, type SQLWrapper, sql } from "drizzle-orm";
 import { getDatabase } from "@/db";
 import { documents } from "@/db/schema";
 import type { AuthIdentity } from "./auth/provider";
+import { EMPTY_RESTRICTED_ACL_PRINCIPAL } from "./document-acl.mjs";
 import { canWriteLibraries } from "./library-permissions.mjs";
 
 /**
@@ -19,7 +20,7 @@ export function documentMetadataVisibilitySql(
 	if (canWriteLibraries(identity)) return sql`true`;
 	const groupMatch =
 		identity.groupIds.length > 0
-			? sql`or (acl.subject_type = 'group' and acl.subject_id = any(${identity.groupIds}::uuid[]))`
+			? sql`or (acl.subject_type = 'group' and acl.subject_id = any(${sql.param(identity.groupIds)}::uuid[]))`
 			: sql``;
 	return sql`(
 		not exists (
@@ -33,6 +34,7 @@ export function documentMetadataVisibilitySql(
 			from app.document_acl as acl
 			where acl.document_id = ${documentId}
 				and acl.permission = 'read'
+				and acl.subject_id <> ${EMPTY_RESTRICTED_ACL_PRINCIPAL}::uuid
 				and (
 					(acl.subject_type in ('principal', 'user') and acl.subject_id = ${identity.principalId}::uuid)
 					${groupMatch}

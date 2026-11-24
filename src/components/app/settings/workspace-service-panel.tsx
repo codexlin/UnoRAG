@@ -2,6 +2,7 @@
 
 import { ChevronDown, RefreshCw } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { healthRecovery } from "@/components/app/settings/health-recovery";
 import { Button } from "@/components/ui/button";
 import {
 	Collapsible,
@@ -11,7 +12,7 @@ import {
 import { useHealth } from "@/hooks/use-health";
 import { getApiBaseUrl } from "@/lib/api";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
-import { useInterfaceText } from "@/lib/i18n/provider";
+import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
 import { formatReleaseVersion } from "@/lib/release-info";
 
 function StatusField({
@@ -31,9 +32,11 @@ function StatusField({
 
 export function WorkspaceServicePanel() {
 	const t = useInterfaceText();
+	const { locale } = useInterfaceLanguage();
 	const { health, error, loading, healthProbedAt, healthProbeMs, refresh } =
 		useHealth();
 	const [refreshing, setRefreshing] = useState(false);
+	const recovery = health && healthRecovery(health, locale);
 	return (
 		<section
 			id="service"
@@ -124,6 +127,14 @@ export function WorkspaceServicePanel() {
 						<p className="break-words text-destructive">
 							{health.reasons.join(t("，", ", "))}
 						</p>
+					) : null}
+					{recovery ? (
+						<div className="space-y-1 rounded-lg border border-warning-foreground/25 bg-warning px-4 py-3 text-warning-foreground [overflow-wrap:anywhere]">
+							<h4 className="font-medium">
+								{t("恢复建议", "Recovery guidance")}
+							</h4>
+							<p>{recovery}</p>
+						</div>
 					) : null}
 					<Collapsible className="min-w-0 border-t border-border pt-2">
 						<CollapsibleTrigger

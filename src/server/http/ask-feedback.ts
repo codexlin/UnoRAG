@@ -11,6 +11,7 @@ import {
 	type UpdateFeedbackTriageInput,
 	updateFeedbackTriageSchema,
 } from "../../lib/ask-feedback";
+import { isSameOriginSessionRequest } from "../../lib/server/auth/same-origin";
 import { canManageMembers } from "../../lib/server/workspace-permissions.mjs";
 import {
 	AskFeedbackNotFoundError,
@@ -37,18 +38,8 @@ function assertSameOriginMutation(
 	request: Request,
 	appBaseUrl?: string,
 ): Response | null {
-	if (request.headers.get("sec-fetch-site") === "cross-site") {
+	if (!isSameOriginSessionRequest(request, appBaseUrl)) {
 		return json({ detail: "forbidden" }, 403);
-	}
-	const origin = request.headers.get("origin");
-	if (origin) {
-		try {
-			if (origin !== new URL(appBaseUrl ?? request.url).origin) {
-				return json({ detail: "forbidden" }, 403);
-			}
-		} catch {
-			return json({ detail: "forbidden" }, 403);
-		}
 	}
 	if (
 		!/^application\/json(?:\s*;|$)/i.test(

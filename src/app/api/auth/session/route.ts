@@ -5,6 +5,7 @@ import {
 	consumeLoginRateLimit,
 	resetLoginAccountRateLimit,
 } from "@/lib/server/auth/login-rate-limit";
+import { isSameOriginSessionRequest } from "@/lib/server/auth/same-origin";
 import {
 	authenticateLocalCredentials,
 	issueSessionToken,
@@ -41,6 +42,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+	if (!isSameOriginSessionRequest(request)) {
+		return NextResponse.json({ detail: "forbidden" }, { status: 403 });
+	}
 	let body: unknown;
 	try {
 		body = await request.json();
@@ -111,6 +115,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+	if (!isSameOriginSessionRequest(request)) {
+		return NextResponse.json({ detail: "forbidden" }, { status: 403 });
+	}
 	try {
 		await revokeSessionCookieHeader(request.headers.get("cookie"));
 	} catch (error) {

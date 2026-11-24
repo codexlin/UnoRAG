@@ -693,6 +693,7 @@ test("inspection captures bounded hybrid candidates, rerank movement, deduplicat
 	assert.deepEqual(inspection.candidates[2], {
 		id: "child",
 		document_id: "document-a",
+		document_version_id: "version-a",
 		title: "Policy",
 		filename: "policy.pdf",
 		section_path: "Contracts / Payment",

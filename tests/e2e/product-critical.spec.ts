@@ -49,9 +49,21 @@ test("public entry and authentication boundary are usable", async ({
 	expect(headers["x-frame-options"]).toBe("DENY");
 	expect(headers["permissions-policy"]).toContain("camera=()");
 	expect(headers["x-powered-by"]).toBeUndefined();
-	await expect(page.getByRole("heading", { name: "UnoRAG" })).toBeVisible();
 	await expect(
-		page.getByText("开源 · 私有化部署 · Apache-2.0", { exact: true }),
+		page.getByRole("heading", {
+			level: 1,
+			name: "让内部资料，成为可核对的答案。",
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(
+		page.getByText("Apache-2.0 开源私有化知识工作台", { exact: true }),
+	).toBeVisible();
+	await expect(
+		page.getByText(
+			"将文档治理、权限过滤检索、原文引用与请求链路放进同一个开源工作台。",
+			{ exact: true },
+		),
 	).toBeVisible();
 	await expectNoHorizontalOverflow(page);
 

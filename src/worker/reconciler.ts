@@ -129,13 +129,8 @@ export class PostgresReconciliationStore implements ReconciliationStore {
 			WHERE job.execution_engine = 'dbos'
 			  AND job.type = ANY($3::varchar[])
 			  AND job.workflow_id = job.id::text
-			  AND (
-				  job.dispatched_at IS NULL
-				  OR (
-					  job.status IN ('queued', 'running', 'retry', 'cancelling')
-					  AND job.updated_at <= $1
-				  )
-			  )
+			  AND job.status IN ('queued', 'running', 'retry', 'cancelling')
+			  AND (job.dispatched_at IS NULL OR job.updated_at <= $1)
 			ORDER BY coalesce(job.dispatched_at, job.created_at), job.id
 			LIMIT $2
 			`,

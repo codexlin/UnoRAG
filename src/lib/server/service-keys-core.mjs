@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 export const SERVICE_KEY_SCOPES = ["ask", "retrieve"];
 export const KEY_PREFIX = "mk_svc_";
 const KEY_SECRET_BYTES = 24;
+const LIBRARY_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 
 export function hashServiceKey(rawKey) {
 	return createHash("sha256").update(rawKey, "utf8").digest("hex");
@@ -16,36 +17,31 @@ export function generateServiceKeyRaw() {
 
 export function normalizeScopes(input) {
 	if (!Array.isArray(input) || input.length === 0) return null;
-	const scopes = [
-		...new Set(
-			input
-				.map((item) => String(item).trim())
-				.filter((item) => SERVICE_KEY_SCOPES.includes(item)),
-		),
-	];
-	return scopes.length > 0 ? scopes : null;
+	const scopes = Array.from(input, (item) =>
+		typeof item === "string" ? item.trim() : "",
+	);
+	if (scopes.some((scope) => !SERVICE_KEY_SCOPES.includes(scope))) return null;
+	return [...new Set(scopes)];
 }
 
 export function normalizeLibraryIds(input) {
-	if (input == null) return null;
-	if (!Array.isArray(input)) return null;
-	const ids = [
-		...new Set(
-			input
-				.map((item) => String(item).trim())
-				.filter((item) => item.length > 0 && item.length <= 128),
-		),
-	];
-	return ids.length > 0 ? ids : null;
+	// Explicit null is the persisted workspace-wide grant.
+	if (input === null) return null;
+	if (!Array.isArray(input) || input.length === 0) return undefined;
+	const ids = Array.from(input, (item) =>
+		typeof item === "string" && item.length <= 128 ? item.trim() : "",
+	);
+	if (ids.some((id) => !LIBRARY_ID_PATTERN.test(id))) return undefined;
+	return [...new Set(ids)];
 }
 
 export function serviceKeyHasScope(key, scope) {
-	return Array.isArray(key?.scopes) && key.scopes.includes(scope);
+	return normalizeScopes(key?.scopes)?.includes(scope) ?? false;
 }
 
 export function serviceKeyAllowsLibrary(key, libraryId) {
-	if (!key?.libraryIds || key.libraryIds.length === 0) return true;
-	return key.libraryIds.includes(libraryId);
+	if (key?.libraryIds === null) return true;
+	return normalizeLibraryIds(key?.libraryIds)?.includes(libraryId) ?? false;
 }
 
 export function extractBearerServiceKey(authorizationHeader, altHeader) {

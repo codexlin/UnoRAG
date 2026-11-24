@@ -54,11 +54,18 @@ and validates size, distance and payload indexes. Collections missing `lexical_v
 a non-IDF modifier fail closed with `QdrantCollectionContractError`.
 
 No automatic in-place sparse index enablement, rename, dual collection reads or
-backfill occurs. Operators migrating a pre-ADR-0008 dense-only collection drain jobs,
-snapshot the old collection, run `scripts/qdrant-backfill-sparse.ts --execute` to copy
-all point IDs, payloads, dense vectors and freshly computed `lexical_v1` vectors into a
-new IDF-enabled collection (`$0` external API cost), validate point counts and scope
-coverage, and switch `QDRANT_COLLECTION` for Web and Worker together before restarting.
+backfill occurs. Operators migrating a pre-ADR-0008 dense-only collection drain jobs
+and snapshot the old collection. From a matching source checkout with dependencies
+installed and access to Qdrant, run the following command with the actual source
+collection name and an unused destination name.
+
+```bash
+pnpm exec tsx scripts/qdrant-backfill-sparse.ts --from unorag_chunks --to unorag_chunks_idf --execute
+```
+
+The tool copies all point IDs, payloads, dense vectors and freshly computed `lexical_v1` vectors into a
+new IDF-enabled collection (`$0` external API cost). Validate point counts and scope coverage,
+then switch `QDRANT_COLLECTION` for Web and Worker together before restarting.
 
 ## Security and isolation gates
 
@@ -95,9 +102,10 @@ Verified against real Qdrant `v1.19.0`:
 
 No changes to ADR-0003 chunking or ADR-0005 ownership are required.
 
-## 2026-11-23 默认开启策略演进注记
+## v0.4.0 默认开启策略
 
-- 由于每次入库均已零外部 API 成本写入 `lexical_v1 (modifier: "idf")` 稀疏向量，且上述实测已验证其召回与语义准确率收益，后续小版本在补充“默认开启 Hybrid 的标准黄金集与 P95 延迟回归”后，可将新部署的默认 `hybrid_enabled` 提升为 `true`（同时保留显式关闭开关）。
+- v0.4.0 默认开启 Hybrid。新部署省略 `TS_RETRIEVAL_HYBRID_ENABLED` 时使用 `true`；
+  可设为 `false` 在部署级关闭，工作区也可独立关闭混合检索。
 
 - [Qdrant hybrid queries](https://qdrant.tech/documentation/search/hybrid-queries/)
 - [Qdrant vectors](https://qdrant.tech/documentation/concepts/vectors/)

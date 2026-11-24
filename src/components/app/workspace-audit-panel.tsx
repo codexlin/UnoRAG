@@ -89,6 +89,8 @@ const INITIAL_FILTERS: AuditFilters = {
 	q: "",
 };
 
+const ALERT_THRESHOLDS_UPDATED = "workspace.alert_thresholds.updated";
+
 const ACTION_LABELS: Record<string, readonly [zh: string, en: string]> = {
 	"document.uploaded": ["上传文档", "Document uploaded"],
 	"document.version_created": ["创建文档版本", "Document version created"],
@@ -108,6 +110,7 @@ const ACTION_LABELS: Record<string, readonly [zh: string, en: string]> = {
 	"job.cancel_requested": ["取消任务", "Job cancelled"],
 	"job.retried": ["重试任务", "Job retried"],
 	"workspace.created": ["创建工作区", "Workspace created"],
+	[ALERT_THRESHOLDS_UPDATED]: ["更新告警阈值", "Alert thresholds updated"],
 	"workspace.invite.created": ["创建成员邀请", "Invite created"],
 	"workspace.invite.email": ["发送邀请邮件", "Invite email sent"],
 	"workspace.invite.accepted": ["接受成员邀请", "Invite accepted"],
@@ -122,6 +125,7 @@ const RESOURCE_LABELS: Record<string, readonly [zh: string, en: string]> = {
 	document: ["文档", "Document"],
 	document_version: ["文档版本", "Document version"],
 	library: ["知识库", "Library"],
+	workspace: ["工作区", "Workspace"],
 	workspace_invite: ["成员邀请", "Workspace invite"],
 	service_key: ["服务密钥", "Service key"],
 	user: ["用户账号", "User account"],
@@ -178,23 +182,25 @@ export function WorkspaceAuditPanel() {
 	const resourceOptions = useMemo(
 		() => [
 			{ value: "all", label: t("全部资源", "All resources") },
-			{ value: "document", label: t("文档", "Document") },
-			{ value: "document_version", label: t("文档版本", "Document version") },
-			{ value: "library", label: t("知识库", "Library") },
-			{ value: "workspace_invite", label: t("成员邀请", "Workspace invite") },
-			{ value: "service_key", label: t("服务密钥", "Service key") },
-			{ value: "user", label: t("用户账号", "User account") },
+			...Object.entries(RESOURCE_LABELS).map(([value, label]) => ({
+				value,
+				label: t(...label),
+			})),
 		],
 		[t],
 	);
 
-	const actionCategoryOptions = useMemo(
+	const actionOptions = useMemo(
 		() => [
 			{ value: "all", label: t("全部动作", "All actions") },
 			{ value: "document.*", label: t("文档操作", "Document events") },
 			{ value: "library.*", label: t("知识库管理", "Library events") },
 			{ value: "job.*", label: t("任务控制", "Job events") },
 			{ value: "workspace.*", label: t("工作区与密钥", "Workspace & keys") },
+			{
+				value: ALERT_THRESHOLDS_UPDATED,
+				label: t(...ACTION_LABELS[ALERT_THRESHOLDS_UPDATED]),
+			},
 			{ value: "auth.*", label: t("账号安全", "Account security") },
 			{ value: "knowledge.*", label: t("公共 API", "Public API") },
 		],
@@ -477,7 +483,7 @@ export function WorkspaceAuditPanel() {
 							{t("动作类别", "Action category")}
 						</label>
 						<Select
-							items={actionCategoryOptions}
+							items={actionOptions}
 							value={filters.action}
 							onValueChange={(value) => {
 								if (value !== null) applyFilterPatch({ action: value });
@@ -491,7 +497,7 @@ export function WorkspaceAuditPanel() {
 							</SelectTrigger>
 							<SelectContent>
 								<SelectGroup>
-									{actionCategoryOptions.map((option) => (
+									{actionOptions.map((option) => (
 										<SelectItem key={option.value} value={option.value}>
 											{option.label}
 										</SelectItem>

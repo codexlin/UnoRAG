@@ -388,6 +388,115 @@ test("Compose preserves each provider credential and endpoint pair without flatt
 	}
 });
 
+test("Compose gives Web, Worker, and Control the same Qdrant connection settings", () => {
+	for (const [overrides, expected] of [
+		[
+			{},
+			{
+				QDRANT_API_KEY: "",
+				QDRANT_DISTANCE: "Cosine",
+				QDRANT_TIMEOUT_MS: "5000",
+			},
+		],
+		[
+			{
+				QDRANT_API_KEY: "contract-qdrant",
+				QDRANT_DISTANCE: "Dot",
+				QDRANT_TIMEOUT_MS: "1200",
+			},
+			{
+				QDRANT_API_KEY: "contract-qdrant",
+				QDRANT_DISTANCE: "Dot",
+				QDRANT_TIMEOUT_MS: "1200",
+			},
+		],
+	]) {
+		const { services } = renderComposeConfig(overrides);
+		for (const workload of ["web", "dbos-worker", "dbos-control"]) {
+			for (const [name, value] of Object.entries(expected)) {
+				assert.equal(
+					services[workload].environment[name],
+					value,
+					`${workload}: ${name}`,
+				);
+			}
+		}
+	}
+});
+
+test("Helm migrations apply the shared runtime grants and verify separated login roles", async (t) => {
+	if (!hasCommand("helm", ["version", "--short"])) {
+		t.skip("helm is not installed");
+		return;
+	}
+	const [grants, verification] = await Promise.all(
+		["configure-runtime-roles", "verify-runtime-roles"].map((name) =>
+			readFile(new URL(`deploy/postgres/${name}.sql`, root), "utf8"),
+		),
+	);
+	for (const enabled of [true, false]) {
+		const result = renderHelm([
+			"--set",
+			`migrate.runtimeRoles.enabled=${enabled}`,
+		]);
+		assert.equal(result.status, 0, result.stderr);
+		const job = loadAll(result.stdout).find(
+			(doc) =>
+				doc?.kind === "Job" &&
+				doc.metadata.labels["app.kubernetes.io/component"] === "migrator",
+		);
+		assert.equal(
+			job.metadata.annotations["helm.sh/hook"],
+			"pre-install,pre-upgrade",
+		);
+		const [container] = job.spec.template.spec.containers;
+		const secretKeys = Object.fromEntries(
+			container.env.map(({ name, valueFrom }) => {
+				assert.equal(valueFrom.secretKeyRef.name, "unorag-runtime");
+				return [name, valueFrom.secretKeyRef.key];
+			}),
+		);
+		assert.equal(secretKeys.DATABASE_URL, "MIGRATOR_DATABASE_URL");
+		delete secretKeys.DATABASE_URL;
+		if (!enabled) {
+			assert.deepEqual(secretKeys, {});
+			assert.equal(container.command, undefined);
+			assert.equal(container.args, undefined);
+			continue;
+		}
+		assert.deepEqual(secretKeys, {
+			WEB_DATABASE_URL: "DATABASE_URL",
+			WORKER_DATABASE_URL: "WORKER_DATABASE_URL",
+			DBOS_SYSTEM_DATABASE_URL: "DBOS_SYSTEM_DATABASE_URL",
+		});
+		assert.deepEqual(container.command, ["/bin/sh", "-ec"]);
+		const [script] = container.args;
+		const migrate = script.indexOf("./node_modules/.bin/drizzle-kit migrate");
+		assert.ok(migrate > script.indexOf("Provision these NOLOGIN roles"));
+		assert.match(script.slice(0, migrate), /'unorag_migrator'/);
+		assert.ok(script.includes(grants.trimEnd()));
+		assert.ok(script.includes(verification.trimEnd()));
+		assert.ok(
+			script.indexOf(grants.trimEnd()) < script.indexOf(verification.trimEnd()),
+		);
+		assert.match(
+			script,
+			/for runtime_url in "\$WEB_DATABASE_URL" "\$WORKER_DATABASE_URL"; do\n\s+psql -X --dbname="\$runtime_url" --file=-/,
+		);
+		for (const role of [
+			"unorag_web_login",
+			"unorag_worker_login",
+			"unorag_dbos_login",
+		]) {
+			assert.ok(
+				script.includes(
+					`WHERE session_user = '${role}' AND current_user = session_user`,
+				),
+			);
+		}
+	}
+});
+
 test("Compose gives control the same Judge and VLM bindings as Web", () => {
 	const configured = {
 		AI_SUPPORTS_STRUCTURED_OUTPUTS: "false",
@@ -819,7 +928,7 @@ test("config reconciliation layers old runtime values without losing custom sett
 	for (const file of [runtimePath, advancedPath]) await rm(file);
 	await writeFile(
 		join(composeDir, ".env"),
-		"DASHSCOPE_API_KEY=test-legacy-key\nDASHSCOPE_BASE_URL=https://legacy.example/v1\nEMBEDDING_TIMEOUT_MS=7500\nAPP_BASE_URL=https://console.example\n",
+		"DASHSCOPE_API_KEY=test-legacy-key\nDASHSCOPE_BASE_URL=https://legacy.example/v1\nEMBEDDING_TIMEOUT_MS=7500\nSESSION_MEMORY_TTL_SECONDS=1800\nAPP_BASE_URL=https://console.example\n",
 	);
 	const monolithic = spawnSync("bash", [join(scriptsDir, "init-config.sh")], {
 		cwd: composeDir,
@@ -836,5 +945,6 @@ test("config reconciliation layers old runtime values without losing custom sett
 	);
 	const migrated = await readFile(advancedPath, "utf8");
 	assert.match(migrated, /^EMBEDDING_TIMEOUT_MS=7500$/m);
+	assert.match(migrated, /^SESSION_MEMORY_TTL_SECONDS=1800$/m);
 	assert.match(migrated, /^APP_BASE_URL=https:\/\/console.example$/m);
 });

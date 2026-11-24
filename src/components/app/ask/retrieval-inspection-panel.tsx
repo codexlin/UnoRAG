@@ -21,7 +21,11 @@ const OUTCOMES = {
 	selected: ["已选中", "Selected"],
 	deduped: ["已去重", "Deduplicated"],
 	below_threshold: ["低于阈值", "Below threshold"],
-	dropped_topk: ["超出 Top K", "Outside top K"],
+	dropped_topk: ["未进入检索前 K 条", "Outside retrieval top K"],
+	dropped_after_retrieval: [
+		"检索后未保留为最终依据",
+		"Excluded from final evidence after retrieval",
+	],
 	dropped_rerank: ["未进入重排结果", "Outside rerank results"],
 } as const;
 
@@ -270,7 +274,10 @@ export function RetrievalInspectionPanel({
 				</>
 			) : (
 				<p className="text-sm text-muted-foreground">
-					{t("本轮未进行粗召回。", "This turn ran without coarse retrieval.")}
+					{t(
+						"没有可显示的粗召回候选。",
+						"No coarse retrieval candidates to display.",
+					)}
 				</p>
 			)}
 		</div>

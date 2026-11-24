@@ -2,14 +2,12 @@ import "server-only";
 
 import { createHash, randomBytes } from "node:crypto";
 
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { getDatabase } from "@/db";
 import {
 	auditLogs,
-	documentAcl,
-	documents,
 	localCredentials,
 	organizations,
 	users,
@@ -26,6 +24,9 @@ import {
 } from "@/lib/server/auth/passwords.mjs";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
 import { hydrateIdentity } from "@/lib/server/auth/session";
+import { revokeWorkspaceSessions } from "@/lib/server/auth/session-registry";
+import { isUuid } from "@/lib/server/document-acl.mjs";
+import { revokeWorkspaceDocumentGrants } from "@/lib/server/document-acl-db";
 import { sendInviteEmail } from "@/lib/server/email";
 import {
 	authorizeRemoveMember,
@@ -742,9 +743,9 @@ export async function removeWorkspaceMember(input: {
 	identity: AuthIdentity;
 	userId: string;
 }): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
-	const userId = input.userId.trim();
-	if (!userId) {
-		return { ok: false, status: 400, detail: "user_id is required" };
+	const userId = input.userId.trim().toLowerCase();
+	if (!isUuid(userId)) {
+		return { ok: false, status: 400, detail: "user_id must be a UUID" };
 	}
 	if (userId === input.identity.principalId) {
 		return { ok: false, status: 400, detail: "cannot remove yourself" };
@@ -752,40 +753,49 @@ export async function removeWorkspaceMember(input: {
 
 	const db = getDatabase();
 	const workspaceId = input.identity.workspaceId;
-	const [target] = await db
-		.select({
-			userId: workspaceMembers.userId,
-			role: workspaceMembers.role,
-			email: users.email,
-		})
-		.from(workspaceMembers)
-		.innerJoin(users, eq(users.id, workspaceMembers.userId))
-		.where(
-			and(
-				eq(workspaceMembers.workspaceId, workspaceId),
-				eq(workspaceMembers.userId, userId),
-			),
-		)
-		.limit(1);
-	if (!target) {
-		return { ok: false, status: 404, detail: "member not found" };
-	}
+	return db.transaction(async (tx) => {
+		const [account] = await tx
+			.select({ email: users.email })
+			.from(users)
+			.where(
+				and(
+					eq(users.id, userId),
+					eq(users.organizationId, input.identity.tenantId),
+				),
+			);
+		if (!account) {
+			return { ok: false, status: 404, detail: "member not found" };
+		}
+		const [target] = await tx
+			.select({
+				userId: workspaceMembers.userId,
+				role: workspaceMembers.role,
+			})
+			.from(workspaceMembers)
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspaceId),
+					eq(workspaceMembers.userId, userId),
+				),
+			)
+			.for("update");
+		if (!target) {
+			return { ok: false, status: 404, detail: "member not found" };
+		}
+		const gate = authorizeRemoveMember({
+			actorPrincipalId: input.identity.principalId,
+			targetUserId: target.userId,
+			targetRole: target.role,
+		});
+		if (!gate.ok) {
+			return {
+				ok: false,
+				status: gate.status ?? 403,
+				detail: gate.detail ?? "forbidden",
+			};
+		}
 
-	const gate = authorizeRemoveMember({
-		actorPrincipalId: input.identity.principalId,
-		targetUserId: target.userId,
-		targetRole: target.role,
-	});
-	if (!gate.ok) {
-		return {
-			ok: false,
-			status: gate.status ?? 403,
-			detail: gate.detail ?? "forbidden",
-		};
-	}
-
-	const now = new Date();
-	await db.transaction(async (tx) => {
+		const now = new Date();
 		await tx
 			.delete(workspaceMembers)
 			.where(
@@ -795,34 +805,40 @@ export async function removeWorkspaceMember(input: {
 				),
 			);
 
-		const workspaceDocIds = tx
-			.select({ id: documents.id })
-			.from(documents)
-			.where(eq(documents.workspaceId, workspaceId));
+		const acl = await revokeWorkspaceDocumentGrants(tx, {
+			organizationId: input.identity.tenantId,
+			workspaceId,
+			principalId: userId,
+			actorId: input.identity.principalId,
+			now,
+		});
 
-		await tx
-			.delete(documentAcl)
-			.where(
-				and(
-					eq(documentAcl.subjectId, userId),
-					inArray(documentAcl.subjectType, ["principal", "user"]),
-					inArray(documentAcl.documentId, workspaceDocIds),
-				),
-			);
-
-		if (target.email) {
+		if (account.email) {
 			await tx
 				.update(workspaceInvites)
 				.set({ status: "revoked", updatedAt: now })
 				.where(
 					and(
 						eq(workspaceInvites.workspaceId, workspaceId),
-						eq(workspaceInvites.email, normalizeEmail(target.email)),
+						eq(workspaceInvites.email, normalizeEmail(account.email)),
 						eq(workspaceInvites.status, "pending"),
 					),
 				);
 		}
+		await tx.insert(auditLogs).values({
+			organizationId: input.identity.tenantId,
+			workspaceId,
+			actorId: input.identity.principalId,
+			action: "workspace.member_removed",
+			resourceType: "workspace_member",
+			resourceId: userId,
+			details: {
+				role: target.role,
+				affected_documents: acl.affectedDocuments,
+				projection_jobs: acl.projectionJobs,
+			},
+		});
+		await revokeWorkspaceSessions(userId, workspaceId);
+		return { ok: true };
 	});
-
-	return { ok: true };
 }
