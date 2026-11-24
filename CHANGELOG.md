@@ -5,6 +5,21 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-24
+
+- **Deployment rerank kill-switch & Ask policy optimistic locking (#320)**:
+  - Add `TS_RETRIEVAL_RERANK_ALLOWED` deployment-level kill-switch so operators can disable reranking globally even when workspace settings request it.
+  - Enforce same-origin checks, `policy_version` optimistic locking (`409` on stale concurrent writes), and transactional audit logging on `PATCH /api/workspace/settings`, with aligned bilingual Workspace Settings UI.
+- **Grounded table lookup hardening & live retrieval accuracy fixes (#322, #323, #324)**:
+  - Guard duplicate/omitted table headers in `deriveGroundedTableLookup()` and `selectRowValues()`, eliminating uncaught `TypeError` (HTTP `503`) failures on financial tables with repeated column headers.
+  - Enable parent `section` expansion for table-projection chunks (`record_type === "chunk" && !figure_id`) so surrounding footnotes, units, and split-table continuations stay attached while keeping prose sibling lookup untouched; broaden `baseTopK` to `>= 10` for derived calculation queries (e.g., static P/E, CAGR, ratios).
+  - Add bounded adjacent micro-section coalescing (`src/core/retrieval/section-window.ts`) for short numbered chapters and sequential Arabic/Chinese sub-items within the existing tenant/workspace/library/document/generation/ACL boundary, and infer nested heading depths in `mineru-provider.ts` when MinerU outputs flattened `text_level: 1` headings.
+- **UI zoom layout, evaluation cost controls & dependency maintenance (#311, #321, #325)**:
+  - Fix 200%-zoom wrapping in `workspace-ask-settings-panel.tsx` and align the full 324-test Playwright E2E suite.
+  - Raise default ingestion timeout in `scripts/evaluation/run-hf-benchmark.ts` to 60 minutes with fail-fast on incomplete corpora unless `--allow-incomplete-corpus` is set, and add `--reuse-or-create [name]`, `--only-ids <csv>`, and `--only-failed-from <report.json>` for zero-reingest and targeted regression reruns.
+  - Apply Dependabot maintenance bump for `tools/landing-video` (#311).
+- **Upgrade note**: Upgrading from `v0.4.0` requires no database migration, configuration change, or mandatory reindex. Adjacent micro-section coalescing improves existing indexed corpora immediately; reindexing PDFs additionally persists inferred MinerU heading depths.
+
 ## [0.4.0] - 2026-11-24
 
 - **Token-aware chunking (`v2`) & balanced comparison context (#308)**:

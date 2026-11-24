@@ -44,6 +44,15 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 - **标准活库真模型门禁（`pnpm eval:live`，`chat@1.17.0`）**：**PASS** —— 7/7 入库完成，正例 **36/36（100%）**，拒答 **6/6（100%）**，Fact Coverage / Document Recall@K / MRR 均为 **1.000**，Citation Precision **100.0%**，`cross_page_table` **6/6**，`low_contrast_scan` **5/5**，延迟 P50 / P95 为 **5.63s / 7.99s**。
 - **待正式签名镜像验收**：发布 `v0.4.0` tag 构建四个签名镜像后，仍需对精确签名镜像独立补齐三轮稳定性、恢复演练与目标环境新装/升级验收并替换当前发布报告。
 
+### `v0.4.1` 补丁收口（`#311`, `#320`–`#325`）
+
+在 `v0.4.0` 基础上，已完成全部剩余审计项与全量活库压测暴露回归的修复收口：
+
+- **部署级重排开关与策略并发控制（#320, #321）**：关闭 P2-4（新增 `TS_RETRIEVAL_RERANK_ALLOWED` 部署级开关、`PATCH /api/workspace/settings` 同源校验 + `policy_version` 乐观锁 `409` + 事务审计及双语 UI）；修复 200% 缩放下策略面板换行并对齐全量 Playwright（**324/324**）。
+- **表格查找、派生计算与微 section 检索修复（#322, #323, #324）**：修复重复表头触发 `deriveGroundedTableLookup` `TypeError`（消除实测 9 道 HTTP `503`）；允许表格投影 chunk 挂载父 section 上下文并放宽派生计算题 `baseTopK >= 10`；新增同章/连续编号短微 section 检索期合并（免重入库立即生效）并在 MinerU 解析期推断扁平 `text_level: 1` 的多级标题层级。
+- **评测成本控制与依赖维护（#311, #325）**：`run-hf-benchmark.ts` 默认入库超时提至 60 分钟且默认 fail-fast，新增 `--reuse-or-create`、`--only-ids` 与 `--only-failed-from` 支持零重入库和失败子集回归；同步合入 `tools/landing-video` Dependabot 更新（#311）。
+- **开发机完整回归结果（未替代签名镜像正式发布验收）**：`pnpm verify`、`pnpm test:fast`（1,345/1,345）、`pnpm test:contract`（40/40，6 项本机无 `helm` 跳过，CI 全绿）、`pnpm test:integration`（192/192）、Playwright（324/324）、`pnpm eval:live`（正例 **36/36**、拒答 **6/6**）、`.unorag/acceptance`（证据冲突 **26/26**、多轮含 301s 过期 **9/9**）全部通过；外部 FinanceComplexQA 22 份 PDF / 135 题（含 `--semantic-judge`）实现 **0 HTTP 503 / 0 失败**，回答率 **88.1%**（+0.8pp）、文档召回 **87.3%**（+0.8pp）、MRR **0.869**（+0.008）、数值命中率 **58.3%**、综合事实命中率 **43.4%**（+0.5pp）、语义准确率 **65.3%**、拒答准确率 **94.1%**（+5.9pp）、P95 **19.8s**（-1.3s）。
+
 下表描述当前源码能力；线上可用范围仍以具体 Release 和部署清单为准。
 
 ## 已具备的闭环
