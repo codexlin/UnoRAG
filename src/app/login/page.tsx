@@ -181,7 +181,7 @@ export default function LoginPage() {
 					className="inline-flex min-h-11 min-w-11 items-center rounded-md text-card-foreground underline-offset-4 transition-colors duration-150 hover:text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring motion-reduce:transition-none"
 					href="/account-access?purpose=login"
 				>
-					{t("使用邮箱链接登录", "Sign in with an email link")}
+					{t("使用邮箱登录", "Sign in with email")}
 				</Link>
 				<Link
 					className="inline-flex min-h-11 min-w-11 items-center rounded-md text-muted-foreground underline-offset-4 transition-colors duration-150 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring motion-reduce:transition-none"

@@ -215,6 +215,8 @@ export const accountEmailTokens = appSchema.table(
 		email: varchar("email", { length: 320 }).notNull(),
 		purpose: varchar("purpose", { length: 16 }).notNull(),
 		tokenHash: varchar("token_hash", { length: 64 }).notNull(),
+		codeHash: varchar("code_hash", { length: 64 }),
+		codeAttempts: integer("code_attempts").default(0).notNull(),
 		credentialVersion: timestamp("credential_version", {
 			withTimezone: true,
 		}).notNull(),
@@ -247,6 +249,14 @@ export const accountEmailTokens = appSchema.table(
 		check(
 			"account_email_tokens_hash_check",
 			sql`${table.tokenHash} ~ '^[a-f0-9]{64}$'`,
+		),
+		check(
+			"account_email_tokens_code_hash_check",
+			sql`${table.codeHash} is null or ${table.codeHash} ~ '^[a-f0-9]{64}$'`,
+		),
+		check(
+			"account_email_tokens_code_attempts_check",
+			sql`${table.codeAttempts} >= 0 and ${table.codeAttempts} <= 5`,
 		),
 		check(
 			"account_email_tokens_expiry_check",

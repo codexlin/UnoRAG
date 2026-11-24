@@ -2,17 +2,23 @@ import { z } from "zod";
 import type {
 	AccountEmailPrincipal,
 	AccountEmailPurpose,
+	ConsumeAccountEmailInput,
 } from "../../lib/server/auth/email-tokens";
 import { validatePassword } from "../../lib/server/auth/passwords.mjs";
 import type { AuthIdentity } from "../../lib/server/auth/provider";
 import type { RateLimitResult } from "../../lib/server/security/fixed-window-rate-limit";
 
 const purpose = z.enum(["login", "reset"]);
+const emailSchema = z.string().trim().toLowerCase().max(320).email();
+const otpCodeSchema = z
+	.string()
+	.trim()
+	.regex(/^\d{6}$/);
 const requestSchema = z.strictObject({
-	email: z.string().trim().toLowerCase().max(320).email(),
+	email: emailSchema,
 	purpose,
 });
-const consumeSchema = z.discriminatedUnion("purpose", [
+const consumeSchema = z.union([
 	z.strictObject({
 		purpose: z.literal("login"),
 		token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -20,6 +26,17 @@ const consumeSchema = z.discriminatedUnion("purpose", [
 	z.strictObject({
 		purpose: z.literal("reset"),
 		token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+		password: z.string().min(7).max(256),
+	}),
+	z.strictObject({
+		purpose: z.literal("login"),
+		email: emailSchema,
+		code: otpCodeSchema,
+	}),
+	z.strictObject({
+		purpose: z.literal("reset"),
+		email: emailSchema,
+		code: otpCodeSchema,
 		password: z.string().min(7).max(256),
 	}),
 ]);
@@ -37,11 +54,9 @@ type Dependencies = {
 		input: { email: string; purpose: AccountEmailPurpose },
 		request: Request,
 	): Promise<void>;
-	consume(input: {
-		token: string;
-		purpose: AccountEmailPurpose;
-		password?: string;
-	}): Promise<AccountEmailPrincipal | null>;
+	consume(
+		input: ConsumeAccountEmailInput,
+	): Promise<AccountEmailPrincipal | null>;
 	login(
 		principal: AccountEmailPrincipal,
 	): Promise<{ identity: AuthIdentity; cookie: string } | null>;
@@ -138,11 +153,14 @@ export function createAccountEmailHandlers(deps: Dependencies) {
 				);
 			const principal = await deps.consume(command);
 			if (!principal)
-				return json({ detail: "链接无效或已过期，请重新申请" }, 400);
+				return json({ detail: "验证码或链接无效、已过期，请重新申请" }, 400);
 			if (command.purpose === "reset") return json({ ok: true });
 			const session = await deps.login(principal);
 			if (!session)
-				return json({ detail: "链接无效或账号不可用，请重新申请" }, 400);
+				return json(
+					{ detail: "验证码或链接无效，或账号不可用，请重新申请" },
+					400,
+				);
 			return json(session.identity, 200, { "set-cookie": session.cookie });
 		} catch {
 			deps.report("account_email_unavailable");

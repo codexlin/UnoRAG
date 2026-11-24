@@ -1,0 +1,4 @@
+ALTER TABLE "app"."account_email_tokens" ADD COLUMN "code_hash" varchar(64);--> statement-breakpoint
+ALTER TABLE "app"."account_email_tokens" ADD COLUMN "code_attempts" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "app"."account_email_tokens" ADD CONSTRAINT "account_email_tokens_code_hash_check" CHECK ("app"."account_email_tokens"."code_hash" is null or "app"."account_email_tokens"."code_hash" ~ '^[a-f0-9]{64}$');--> statement-breakpoint
+ALTER TABLE "app"."account_email_tokens" ADD CONSTRAINT "account_email_tokens_code_attempts_check" CHECK ("app"."account_email_tokens"."code_attempts" >= 0 and "app"."account_email_tokens"."code_attempts" <= 5);

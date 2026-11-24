@@ -55,6 +55,8 @@ function renderEmail(input: {
 	subject: string;
 	heading: string;
 	primaryText: string;
+	verificationCode?: string;
+	verificationCodeLabel?: string;
 	secondaryText: string;
 	actionLabel: string;
 	actionUrl: string;
@@ -62,11 +64,20 @@ function renderEmail(input: {
 	locale: Locale;
 }): EmailTemplate {
 	const url = validateActionUrl(input.actionUrl);
+	if (
+		input.verificationCode !== undefined &&
+		!/^\d{6}$/.test(input.verificationCode)
+	) {
+		throw new Error("invalid_verification_code");
+	}
 	const t = interfaceText(input.locale);
 	const helper = t(
 		"如果按钮无法打开，请复制下面的完整链接到浏览器地址栏。",
 		"If the button doesn't open, copy the full link below into your browser.",
 	);
+	const codeBlockHtml = input.verificationCode
+		? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;background-color:#f3f6f6;border:1px solid #d9e3e1;border-radius:8px;"><tr><td align="center" style="padding:18px 16px;">${input.verificationCodeLabel ? `<p style="margin:0 0 8px;color:#526864;font-size:12px;">${escapeHtml(input.verificationCodeLabel)}</p>` : ""}<p style="margin:0;color:#0f766e;font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;font-size:32px;font-weight:bold;letter-spacing:8px;line-height:1.2;">${escapeHtml(input.verificationCode)}</p></td></tr></table>`
+		: "";
 	const html = `<!doctype html>
 <html lang="${input.locale}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(input.subject)}</title></head>
@@ -79,7 +90,7 @@ function renderEmail(input: {
 </td></tr>
 <tr><td style="padding:24px;font-size:15px;line-height:1.8;overflow-wrap:anywhere;">
 <p style="margin:0 0 16px;">${escapeHtml(input.primaryText)}</p>
-<p style="margin:0 0 24px;">${escapeHtml(input.secondaryText)}</p>
+${codeBlockHtml}<p style="margin:0 0 24px;">${escapeHtml(input.secondaryText)}</p>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="#0f766e" style="border-radius:6px;">
 <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:12px 24px;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;">${escapeHtml(input.actionLabel)}</a>
 </td></tr></table>
@@ -98,6 +109,13 @@ function renderEmail(input: {
 			input.heading,
 			"",
 			input.primaryText,
+			...(input.verificationCode
+				? [
+						"",
+						`${input.verificationCodeLabel ?? t("验证码", "Verification code")}: ${input.verificationCode}`,
+					]
+				: []),
+			"",
 			input.secondaryText,
 			"",
 			input.actionLabel,
@@ -112,6 +130,7 @@ function renderEmail(input: {
 
 export function renderAccountEmail(input: {
 	url: string;
+	code?: string;
 	purpose: AccountEmailPurpose;
 	locale?: Locale;
 }): EmailTemplate {
@@ -121,27 +140,49 @@ export function renderAccountEmail(input: {
 	const login = input.purpose === "login";
 	const locale = input.locale ?? DEFAULT_LOCALE;
 	const t = interfaceText(locale);
+	const hasCode = Boolean(input.code);
 	return renderEmail({
 		locale,
 		subject: login
-			? t("你的 UnoRAG 登录链接", "Your UnoRAG sign-in link")
+			? hasCode
+				? t("你的 UnoRAG 登录验证码", "Your UnoRAG sign-in code")
+				: t("你的 UnoRAG 登录链接", "Your UnoRAG sign-in link")
 			: t("重置你的 UnoRAG 密码", "Reset your UnoRAG password"),
 		heading: login
 			? t("登录 UnoRAG", "Sign in to UnoRAG")
 			: t("重置 UnoRAG 密码", "Reset your UnoRAG password"),
 		primaryText: login
+			? hasCode
+				? t(
+						"我们收到了你的登录请求。请在当前登录页面输入下方 6 位验证码，或在同一台设备上点击下方按钮继续登录。",
+						"We received a sign-in request. Enter the 6-digit code below on your sign-in page, or use the button below on the same device.",
+					)
+				: t(
+						"我们收到了你的登录请求。请点击下方按钮继续登录 UnoRAG。",
+						"We received a sign-in request. Use the button below to sign in to UnoRAG.",
+					)
+			: hasCode
+				? t(
+						"我们收到了重置密码的请求。请在当前页面输入下方 6 位验证码，或在同一台设备上点击下方按钮设置新密码。",
+						"We received a password reset request. Enter the 6-digit code below on the reset page, or use the button below on the same device.",
+					)
+				: t(
+						"我们收到了重置密码的请求。请点击下方按钮为你的 UnoRAG 账户设置新密码。",
+						"We received a password reset request. Use the button below to set a new password.",
+					),
+		verificationCode: input.code,
+		verificationCodeLabel: hasCode
+			? t("6 位一次性验证码", "6-digit verification code")
+			: undefined,
+		secondaryText: hasCode
 			? t(
-					"我们收到了你的登录请求。请点击下方按钮继续登录 UnoRAG。",
-					"We received a sign-in request. Use the button below to sign in to UnoRAG.",
+					"该验证码和链接在 15 分钟内有效，且只能使用一次（任一方式使用后均立即失效）。请勿转发或与他人分享。",
+					"This code and link expire in 15 minutes and can only be used once. Do not share or forward them.",
 				)
 			: t(
-					"我们收到了重置密码的请求。请点击下方按钮为你的 UnoRAG 账户设置新密码。",
-					"We received a password reset request. Use the button below to set a new password.",
+					"该链接在 15 分钟内有效，且只能使用一次。请勿转发或与他人分享。",
+					"This link expires in 15 minutes and can only be used once. Do not share or forward it.",
 				),
-		secondaryText: t(
-			"该链接在 15 分钟内有效，且只能使用一次。请勿转发或与他人分享。",
-			"This link expires in 15 minutes and can only be used once. Do not share or forward it.",
-		),
 		actionLabel: login
 			? t("登录 UnoRAG", "Sign in to UnoRAG")
 			: t("重置密码", "Reset password"),
@@ -149,7 +190,7 @@ export function renderAccountEmail(input: {
 		footerText: login
 			? t(
 					"若非本人发起登录请求，请忽略本邮件。",
-					"If you didn't request this link, ignore this email.",
+					"If you didn't request this sign-in email, ignore it.",
 				)
 			: t(
 					"若非本人请求重置密码，请忽略本邮件，你的现有密码不会更改。",

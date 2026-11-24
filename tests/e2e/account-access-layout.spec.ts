@@ -64,7 +64,7 @@ async function expectLayout(page: Page) {
 
 for (const { path, title } of [
 	{ path: "/login", title: "登录 UnoRAG" },
-	{ path: "/account-access?purpose=login", title: "使用邮箱链接登录" },
+	{ path: "/account-access?purpose=login", title: "使用邮箱登录" },
 	{ path: "/account-access?purpose=reset", title: "重置密码" },
 	{ path: "/invite", title: "接受邀请" },
 ]) {
@@ -152,8 +152,17 @@ test("email request keeps generic acceptance and actionable service errors (mock
 	await page.goto("/account-access?purpose=login");
 	const email = page.getByLabel("邮箱", { exact: true });
 	await expect(email).toBeEnabled();
+	const submit = page.getByRole("button", { name: "发送验证码与链接" });
+	// Verify there is no excessive dead gap between the email input and submit button.
+	const emailBox = await email.boundingBox();
+	const submitBox = await submit.boundingBox();
+	expect(emailBox).not.toBeNull();
+	expect(submitBox).not.toBeNull();
+	expect(
+		(submitBox?.y ?? 0) - ((emailBox?.y ?? 0) + (emailBox?.height ?? 0)),
+	).toBeLessThanOrEqual(32);
+
 	await email.fill("layout@example.test");
-	const submit = page.getByRole("button", { name: "发送邮件链接" });
 	await submit.click();
 	await expect(email).toHaveAccessibleDescription(
 		"邮件服务暂时不可用，请稍后重试或使用密码登录。",
@@ -161,8 +170,25 @@ test("email request keeps generic acceptance and actionable service errors (mock
 	await expect(submit).toBeEnabled();
 	await submit.click();
 	await expect(page.getByRole("status")).toHaveText(
-		"如果该邮箱对应可用账户，你将收到一封邮件。请检查收件箱和垃圾邮件。",
+		"如果该邮箱对应可用账户，你将收到 6 位验证码和一次性链接。请检查收件箱和垃圾邮件。",
 	);
+	// Transitions cleanly into the 6-digit OTP verification step without overflow at 320px.
+	await expect(page.getByLabel("6 位验证码", { exact: true })).toBeVisible();
+	await page.setViewportSize({ width: 320, height: 900 });
+	await expectLayout(page);
+	const otpSlotsBounds = await page.evaluate(() => {
+		const form = document.querySelector("main form")?.getBoundingClientRect();
+		const slots = Array.from(
+			document.querySelectorAll('[data-slot="input-otp-slot"]'),
+		).map((el) => el.getBoundingClientRect());
+		if (!form || slots.length !== 6) return { ok: false };
+		const minLeft = Math.min(...slots.map((s) => s.left));
+		const maxRight = Math.max(...slots.map((s) => s.right));
+		return {
+			ok: minLeft >= form.left - 1 && maxRight <= form.right + 1,
+		};
+	});
+	expect(otpSlotsBounds).toEqual({ ok: true });
 	expect(requests).toEqual(
 		Array(2).fill({ email: "layout@example.test", purpose: "login" }),
 	);

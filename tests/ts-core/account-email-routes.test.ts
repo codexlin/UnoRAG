@@ -183,3 +183,84 @@ test("password reset enforces policy and never signs a session", async () => {
 	assert.equal(result.headers.get("set-cookie"), null);
 	assert.deepEqual(await result.json(), { ok: true });
 });
+
+test("consume accepts 6-digit verification codes for cross-device login and reset", async () => {
+	const subjects: string[] = [];
+	const payloads: unknown[] = [];
+	const handlers = createAccountEmailHandlers({
+		baseUrl: "https://unorag.example",
+		configured: () => true,
+		limit: async (_request, subject, action) => {
+			subjects.push(`${action}:${subject}`);
+			return { ok: true, remaining: 5 };
+		},
+		defer: () => {},
+		send: async () => {},
+		consume: async (input) => {
+			payloads.push(input);
+			return {
+				organizationId: "org",
+				workspaceId: "ws",
+				userId: "user",
+				credentialVersion: "1",
+			};
+		},
+		login: async () => ({
+			identity: {
+				tenantId: "org",
+				workspaceId: "ws",
+				principalId: "user",
+				provider: "local",
+				groupIds: [],
+				role: "owner",
+				displayName: "Owner",
+				email: "u@example.test",
+				organizationRole: "owner",
+				workspaceName: "Main",
+				mustChangePassword: false,
+			},
+			cookie: "session=opaque; HttpOnly; SameSite=Lax; Secure",
+		}),
+		report: () => {},
+	});
+
+	assert.equal(
+		(
+			await handlers.consume(
+				request({ purpose: "login", email: "u@example.test", code: "12345" }),
+			)
+		).status,
+		400,
+	);
+	assert.equal(payloads.length, 0);
+
+	const loginRes = await handlers.consume(
+		request({ purpose: "login", email: " U@Example.test ", code: "482917" }),
+	);
+	assert.equal(loginRes.status, 200);
+	assert.match(loginRes.headers.get("set-cookie") ?? "", /HttpOnly/);
+	assert.deepEqual(subjects, ["consume:u@example.test"]);
+	assert.deepEqual(payloads[0], {
+		purpose: "login",
+		email: "u@example.test",
+		code: "482917",
+	});
+
+	const resetRes = await handlers.consume(
+		request({
+			purpose: "reset",
+			email: "u@example.test",
+			code: "482917",
+			password: "NewPassword7",
+		}),
+	);
+	assert.equal(resetRes.status, 200);
+	assert.equal(resetRes.headers.get("set-cookie"), null);
+	assert.deepEqual(await resetRes.json(), { ok: true });
+	assert.deepEqual(payloads[1], {
+		purpose: "reset",
+		email: "u@example.test",
+		code: "482917",
+		password: "NewPassword7",
+	});
+});
