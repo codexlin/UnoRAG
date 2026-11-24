@@ -592,6 +592,15 @@ async function run(): Promise<void> {
 	const label = argValue(args, "--label") ?? "baseline";
 	const reuseLibraryId = argValue(args, "--reuse-library");
 	const cleanupLibrary = args.includes("--cleanup-library");
+	const allowIncompleteCorpus = args.includes("--allow-incomplete-corpus");
+	const ingestTimeoutRaw = argValue(args, "--ingest-timeout-ms");
+	const parsedIngestTimeout = ingestTimeoutRaw
+		? Number.parseInt(ingestTimeoutRaw, 10)
+		: 3_600_000;
+	const ingestTimeoutMs =
+		Number.isInteger(parsedIngestTimeout) && parsedIngestTimeout >= 60_000
+			? parsedIngestTimeout
+			: 3_600_000;
 	const limitRaw = argValue(args, "--limit");
 	const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
 	const concurrencyRaw = argValue(args, "--concurrency");
@@ -668,18 +677,24 @@ async function run(): Promise<void> {
 					documentId: stringValue(body.document_id) ?? stringValue(body.id),
 				});
 			}
-			process.stdout.write(`== wait ${uploads.size} ingestion jobs\n`);
+			process.stdout.write(
+				`== wait ${uploads.size} ingestion jobs (timeout=${Math.round(ingestTimeoutMs / 1_000)}s)\n`,
+			);
 			jobs = await waitForJobs({
 				client,
 				uploads,
-				timeoutMs: 1_800_000,
+				timeoutMs: ingestTimeoutMs,
 				pollIntervalMs: 3_000,
 			});
 			const incomplete = [...jobs.entries()].filter(([, j]) => j.status !== "completed");
 			if (incomplete.length > 0) {
-				process.stderr.write(
-					`!! warning: incomplete ingestion jobs: ${incomplete.map(([f, j]) => `${f}:${j.status}`).join(", ")}\n`,
-				);
+				const summary = incomplete
+					.map(([f, j]) => `${f}:${j.status}`)
+					.join(", ");
+				if (!allowIncompleteCorpus) {
+					throw new Error(`incomplete ingestion jobs: ${summary}`);
+				}
+				process.stderr.write(`!! warning: incomplete ingestion jobs: ${summary}\n`);
 			}
 		} else {
 			const docsRes = await client.json(
