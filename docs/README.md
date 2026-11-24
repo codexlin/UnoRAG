@@ -20,7 +20,7 @@
 |---|---|
 | 权限隔离、Ask 编排、记忆边界、引用守卫 | [系统架构](./ARCHITECTURE.md) |
 | 为什么这么设计、哪些架构红线不能松 | [ADR 索引](./adr/README.md) |
-| 本地启动、环境变量、Compose/Helm 安装升级 | [部署指南](./DEPLOYMENT.md) |
+| 本地启动、环境变量、切换云端/本地模型、Compose/Helm 安装升级 | [部署指南](./DEPLOYMENT.md) |
 | 日志/Trace、Ops Stack、Langfuse、故障排查 | [运维指南](./OPERATIONS.md) |
 | 分块与评测体系、黄金集、Ragas 离线诊断 | [质量评测](./EVALUATION.md) |
 | 代码目录归属、测试分层、提 PR 检查项 | [开发指南](./DEVELOPMENT.md) |
