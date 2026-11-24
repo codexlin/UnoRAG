@@ -26,9 +26,60 @@ spec:
         - name: migrate
           image: "{{ .Values.images.migrator.repository }}:{{ .Values.images.migrator.tag }}"
           imagePullPolicy: {{ .Values.images.migrator.pullPolicy }}
+          {{- if .Values.migrate.runtimeRoles.enabled }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              psql -X --set=ON_ERROR_STOP=1 --dbname="$DATABASE_URL" --file=- <<'SQL'
+              DO $$
+              DECLARE missing_roles text;
+              BEGIN
+                SELECT string_agg(required.name, ', ' ORDER BY required.name) INTO missing_roles
+                FROM (VALUES ('unorag_migrator'), ('unorag_web'), ('unorag_worker')) AS required(name)
+                WHERE NOT EXISTS (
+                  SELECT FROM pg_roles WHERE rolname = required.name AND NOT rolcanlogin
+                );
+                IF missing_roles IS NOT NULL THEN
+                  RAISE EXCEPTION 'Provision these NOLOGIN roles before Helm migration: %', missing_roles;
+                END IF;
+              END $$;
+              SQL
+
+              ./node_modules/.bin/drizzle-kit migrate
+
+              psql -X --single-transaction --dbname="$DATABASE_URL" --file=- <<'SQL'
+              {{- required "missing configure-runtime-roles.sql" (.Files.Get "files/configure-runtime-roles.sql") | trimSuffix "\n" | nindent 14 }}
+              SQL
+
+              app_database=$(psql -XAt --dbname="$DATABASE_URL" -c 'SELECT current_database()')
+              web_database=$(psql -XAt --dbname="$WEB_DATABASE_URL" -c "SELECT current_database() WHERE session_user = 'unorag_web_login' AND current_user = session_user")
+              worker_database=$(psql -XAt --dbname="$WORKER_DATABASE_URL" -c "SELECT current_database() WHERE session_user = 'unorag_worker_login' AND current_user = session_user")
+              UNORAG_DBOS_DATABASE=$(psql -XAt --dbname="$DBOS_SYSTEM_DATABASE_URL" -c "SELECT current_database() WHERE session_user = 'unorag_dbos_login' AND current_user = session_user")
+              test -n "$app_database" && test "$web_database" = "$app_database" &&
+                test "$worker_database" = "$app_database" && test -n "$UNORAG_DBOS_DATABASE" &&
+                test "$UNORAG_DBOS_DATABASE" != "$app_database" || {
+                  echo "runtime DSNs must use the expected login roles and databases" >&2
+                  exit 1
+                }
+              export UNORAG_DBOS_DATABASE
+              for runtime_url in "$WEB_DATABASE_URL" "$WORKER_DATABASE_URL"; do
+                psql -X --dbname="$runtime_url" --file=- <<'SQL'
+              {{- required "missing verify-runtime-roles.sql" (.Files.Get "files/verify-runtime-roles.sql") | trimSuffix "\n" | nindent 14 }}
+              SQL
+              done
+          {{- end }}
           env:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "unorag.secretName" . }}
                   key: MIGRATOR_DATABASE_URL
+            {{- if .Values.migrate.runtimeRoles.enabled }}
+            {{- range $name, $key := dict "WEB_DATABASE_URL" "DATABASE_URL" "WORKER_DATABASE_URL" "WORKER_DATABASE_URL" "DBOS_SYSTEM_DATABASE_URL" "DBOS_SYSTEM_DATABASE_URL" }}
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "unorag.secretName" $ }}
+                  key: {{ $key }}
+            {{- end }}
+            {{- end }}

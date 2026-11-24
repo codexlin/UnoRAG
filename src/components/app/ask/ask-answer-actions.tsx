@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { hasAskTrace } from "@/components/app/ask/ask-trace-drawer";
 import type { LocalTurn } from "@/components/app/ask/ask-turn-state";
+import { feedbackReasonLabel } from "@/components/app/ask/feedback-reason-label";
 import { Button } from "@/components/ui/button";
 import { MessageFooter } from "@/components/ui/message";
 import {
@@ -29,7 +30,6 @@ import {
 import { submitAskFeedback } from "@/lib/api";
 import {
 	ASK_FEEDBACK_REASON_CODES,
-	ASK_FEEDBACK_REASON_LABELS,
 	type AskFeedbackRating,
 	type AskFeedbackReasonCode,
 } from "@/lib/ask-feedback";
@@ -264,7 +264,7 @@ function FeedbackButtons({ requestId }: { requestId: string }) {
 								disabled={saving}
 								onClick={() => void send("down", code)}
 							>
-								{ASK_FEEDBACK_REASON_LABELS[code]}
+								{feedbackReasonLabel(code, t)}
 							</Button>
 						))}
 					</div>

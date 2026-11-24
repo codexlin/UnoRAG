@@ -96,7 +96,7 @@ export class QdrantEmbeddingDimensionMismatchError extends QdrantCollectionContr
 			`Qdrant collection ${safeCollection} vector size mismatch: configured EMBEDDING_DIM=${expectedDimension}, collection dense size=${actualDimension}. ${recovery}`,
 		);
 		this.collection = safeCollection;
-		this.recovery = `集合的向量维度为 ${actualDimension}，当前 EMBEDDING_DIM=${expectedDimension}。若模型支持现有维度，设置 EMBEDDING_DIM=${actualDimension}；若要使用新维度，修改 QDRANT_COLLECTION 指向新集合后重索引。 ${recovery}`;
+		this.recovery = recovery;
 	}
 }
 

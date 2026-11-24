@@ -39,6 +39,7 @@ type CandidateCounts = {
 export type RetrievalInspectionCandidate = {
 	id: string;
 	document_id: string;
+	document_version_id?: string | null;
 	title: string;
 	filename: string | null;
 	section_path: string | null;
@@ -58,6 +59,7 @@ export type RetrievalInspectionCandidate = {
 		| "deduped"
 		| "below_threshold"
 		| "dropped_topk"
+		| "dropped_after_retrieval"
 		| "dropped_rerank";
 	parent_expanded: boolean;
 	chars_before_expand: number;
@@ -421,6 +423,7 @@ function inspectCandidates(input: {
 		return {
 			id,
 			document_id: payload.doc_id,
+			document_version_id: payload.document_version_id ?? null,
 			title: safeSlice(payload.title || "未命名文档", 0, 300),
 			filename:
 				payload.filename == null ? null : safeSlice(payload.filename, 0, 300),

@@ -66,6 +66,8 @@ test("health checks the retrieval schema read-only and distinguishes empty metad
 		{ name: "no-idf", code: "qdrant_schema_mismatch" },
 		{ name: "absent-idf", code: "qdrant_schema_mismatch" },
 		{ name: "no-sparse", code: "qdrant_schema_mismatch" },
+		{ name: "wrong-sparse-name", code: "qdrant_schema_mismatch" },
+		{ name: "hybrid-disabled-no-idf", code: "qdrant_schema_mismatch" },
 		{ name: "distance", code: "qdrant_schema_mismatch" },
 		{ name: "unknown-dense", code: "qdrant_schema_mismatch" },
 		{ name: "dimension", code: "embedding_dimension_mismatch" },
@@ -89,11 +91,13 @@ test("health checks the retrieval schema read-only and distinguishes empty metad
 				QDRANT_COLLECTION: "offline-health",
 				EMBEDDING_DIM: name === "invalid-dimension" ? "invalid" : "1024",
 				QDRANT_DISTANCE: name === "invalid-distance" ? "invalid" : "Cosine",
+				TS_RETRIEVAL_HYBRID_ENABLED:
+					name === "hybrid-disabled-no-idf" ? "false" : undefined,
 			};
 			if (name === "configured-distance") environment.QDRANT_DISTANCE = "Dot";
 			const info = healthyCollection();
 			if (name.startsWith("empty-")) info.points_count = 0;
-			if (name === "no-idf")
+			if (name === "no-idf" || name === "hybrid-disabled-no-idf")
 				info.config.params.sparse_vectors.lexical_v1.modifier = "none";
 			if (name === "absent-idf")
 				Object.assign(info.config.params, {
@@ -101,6 +105,10 @@ test("health checks the retrieval schema read-only and distinguishes empty metad
 				});
 			if (name === "no-sparse")
 				Object.assign(info.config.params, { sparse_vectors: undefined });
+			if (name === "wrong-sparse-name")
+				Object.assign(info.config.params, {
+					sparse_vectors: { lexical_v2: { modifier: "idf" } },
+				});
 			if (name === "distance" || name === "configured-distance")
 				info.config.params.vectors.dense.distance = "Dot";
 			if (name === "unknown-dense")
@@ -512,10 +520,10 @@ test("both health surfaces flag a live Qdrant dimension mismatch and permit firs
 		);
 		if (mode === "mismatch") {
 			assert.equal(native.recovery, item.recovery);
-			assert.match(item.recovery, /集合的向量维度为 768/);
+			assert.doesNotMatch(item.recovery, /\p{Script=Han}/u);
 			assert.match(
 				item.recovery,
-				/EMBEDDING_DIM=1024.*set EMBEDDING_DIM=768.*QDRANT_COLLECTION.*reindex/,
+				/supports 768 dimensions, set EMBEDDING_DIM=768.*To use 1024 dimensions, set QDRANT_COLLECTION.*reindex/,
 			);
 		}
 		assert.doesNotMatch(

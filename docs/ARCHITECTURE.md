@@ -271,16 +271,15 @@ when truncated; citations continue to point at every contributing row group.
 Native Retrieve resolves scope, embeds the query, applies mandatory Qdrant filters,
 optionally reranks results, and maps strict citations. Collections always configure named
 `dense` + deterministic tokenizer/hash `lexical_v1` sparse vectors (`modifier: "idf"`)
-and use Qdrant Query API prefetch/RRF as the sole hybrid retrieval path. Dense and sparse
+and use Qdrant Query API prefetch/RRF as the default retrieval path. Dense and sparse
 prefetches and the fused query each carry the complete mandatory filter; every returned hit
 is rechecked for scope, ACL, active generation and lifecycle before use. RRF scores are kept
 separate from original dense semantic scores; sparse-only evidence has no dense confidence.
 
 集合启动时强制校验 `dense`（或已回填的未命名 dense）与 `lexical_v1 (modifier: "idf")` 契约，缺失或非 IDF
 配置直接失败关闭，不自动原地修改集合，也不再使用受 10,000 条上限约束的应用层内存 BM25 语料回退。
-无词元查询或瞬时服务端混合检索异常安全回落至同一授权范围内的 dense 候选。旧 dense-only 集合可通过
-`scripts/qdrant-backfill-sparse.ts --execute` 零外部 API 成本回填并切换，详见已采纳的
-[ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md)。
+无词元查询或瞬时服务端混合检索异常安全回落至同一授权范围内的 dense 候选。旧 dense-only 集合的
+离线回填步骤见 [ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md)。
 
 ### Ask 编排与文档身份定位
 
