@@ -326,9 +326,9 @@ export function WorkspaceAskSettingsPanel({
 					return (
 						<li
 							key={field.key}
-							className="flex min-w-0 flex-col gap-3 py-4 first:pt-0 sm:flex-row sm:items-center sm:justify-between sm:gap-8"
+							className="flex min-w-0 flex-wrap items-center justify-between gap-x-8 gap-y-3 py-4 first:pt-0"
 						>
-							<div className="min-w-0 max-w-xl flex-1">
+							<div className="min-w-[min(100%,14rem)] max-w-xl flex-1">
 								<div className="flex items-center gap-1">
 									<label htmlFor={`${id}-${field.key}`} className="font-medium">
 										{label}
