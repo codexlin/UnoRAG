@@ -6,6 +6,7 @@ import {
 	useNavigationGuard,
 } from "@/components/app/navigation-guard";
 import { useSession } from "@/components/app/session-provider";
+import { workspaceRoleLabel } from "@/components/app/workspace-role-label";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
 	DropdownMenu,
@@ -25,7 +26,6 @@ import {
 import { useHealth } from "@/hooks/use-health";
 import { useInterfaceText } from "@/lib/i18n/provider";
 import { formatReleaseVersion } from "@/lib/release-info";
-import { roleLabel } from "@/lib/session-types";
 import { cn } from "@/lib/utils";
 
 function initialsFor(name: string, email: string | null): string {
@@ -47,7 +47,7 @@ export function AppNavUser() {
 	const { health } = useHealth();
 	const name = identity.displayName;
 	const email = identity.email ?? "";
-	const role = roleLabel(identity.role);
+	const role = workspaceRoleLabel(identity.role, t);
 	const initials = initialsFor(name, identity.email);
 
 	return (

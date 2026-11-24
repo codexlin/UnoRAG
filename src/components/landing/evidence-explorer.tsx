@@ -124,7 +124,7 @@ export function EvidenceExplorer({
 													"查看引用 1：员工手册",
 													"View source 1: Employee handbook",
 												)}
-												className="relative ml-2 inline-flex size-6 align-middle items-center justify-center rounded-sm border border-evidence/35 bg-evidence/10 font-mono text-xs font-medium text-evidence transition-colors duration-200 hover:bg-evidence/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring after:absolute after:-inset-2.5 after:content-[''] motion-reduce:transition-none"
+												className="relative ml-2 inline-flex size-6 align-middle items-center justify-center rounded-sm border border-evidence/35 bg-evidence/10 font-mono text-xs font-medium text-evidence transition-colors duration-150 hover:border-evidence hover:bg-evidence/20 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring after:absolute after:-inset-2.5 after:content-[''] motion-reduce:transition-none"
 											>
 												1
 											</button>
@@ -167,7 +167,7 @@ export function EvidenceExplorer({
 												"病假须提供二级甲等以上医院出具的诊断证明，须于",
 												"Sick leave requires a medical certificate from an accredited hospital. Submit all documents ",
 											)}
-											<mark className="rounded-xs bg-evidence/15 px-1 py-0.5 text-evidence">
+											<mark className="rounded-xs bg-evidence/15 px-1 py-0.5 text-foreground">
 												{t(
 													"返岗后三个工作日内",
 													"within three business days of returning to work",

@@ -257,7 +257,7 @@ export function ThemeToggle() {
 							name="appearance-color"
 							value={appearance.color}
 							onValueChange={handleColorChange}
-							className="grid min-w-0 grid-cols-2 gap-2.5"
+							className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,8rem),1fr))] gap-2.5"
 						>
 							{COLOR_THEMES.map((item) => (
 								<Label
@@ -273,7 +273,7 @@ export function ThemeToggle() {
 									/>
 									<ThemePreview theme={item.id} radius={item.radius} />
 									<span className="flex min-w-0 items-center justify-between gap-1.5">
-										<span className="min-w-0 truncate text-xs font-medium">
+										<span className="min-w-0 flex-1 text-xs font-medium [overflow-wrap:anywhere]">
 											{item.label}
 										</span>
 										<span className="flex shrink-0 items-center gap-1">

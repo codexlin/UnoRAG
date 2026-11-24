@@ -4,6 +4,7 @@ import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AskTraceDrawerContent } from "../../src/components/app/ask/ask-trace-drawer";
+import { retainAuthorizedTrace } from "../../src/components/app/ask/ask-turn-state";
 import { AskTraceToggle } from "../../src/components/app/ask/ask-workspace-header";
 import { SessionProvider } from "../../src/components/app/session-provider";
 import type { ApiAskTraceDetails } from "../../src/lib/api";
@@ -30,6 +31,7 @@ const details: ApiAskTraceDetails = {
 				{
 					id: "one",
 					document_id: "contract",
+					document_version_id: "archived-version",
 					title: "Payment terms",
 					filename: "contract.pdf",
 					section_path: "Finance / Conditions",
@@ -54,6 +56,47 @@ const details: ApiAskTraceDetails = {
 		},
 	],
 };
+
+test("archive hydration retains only candidates whose exact source is authorized", () => {
+	const [call] = details.retrieval_inspection;
+	const [cited] = call.candidates;
+	const sameIdDifferentVersion = {
+		...cited,
+		document_version_id: "different-version",
+		preview: "Preview from a different version",
+	};
+	const uncited = {
+		...cited,
+		id: "uncited",
+		preview: "Uncited preview",
+		outcome: "dropped_after_retrieval" as const,
+		final_rank: null,
+	};
+	const live = {
+		...details,
+		retrieval_inspection: [
+			{ ...call, candidates: [cited, uncited, sameIdDifferentVersion] },
+			{
+				...call,
+				query: "query only for excluded candidates",
+				candidates: [uncited],
+			},
+		],
+	};
+	const citation = {
+		id: cited.id,
+		doc_id: cited.document_id,
+		document_version_id: cited.document_version_id,
+		index: 1,
+		title: cited.title,
+		score: 0.9,
+		snippet: cited.preview,
+	};
+	const restored = retainAuthorizedTrace(live, [citation]);
+	assert.deepEqual(restored, details);
+	assert.equal(live.retrieval_inspection[0].candidates.length, 3);
+	assert.deepEqual(retainAuthorizedTrace(live, [])?.retrieval_inspection, []);
+});
 
 test("AskTraceDrawer shows retrieval stage differences alongside routing, judgment, and performance", () => {
 	const html = renderToStaticMarkup(

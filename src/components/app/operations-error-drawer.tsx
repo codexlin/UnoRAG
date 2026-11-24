@@ -11,6 +11,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ModelUsagePanel } from "@/components/app/model-usage-panel";
+import { englishOperationsGuidance } from "@/components/app/operations-guidance";
 import { useSession } from "@/components/app/session-provider";
 import { StageWaterfall } from "@/components/app/stage-waterfall";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,7 @@ import {
 } from "@/components/ui/sheet";
 import { retryJob } from "@/lib/api";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
-import { useInterfaceText } from "@/lib/i18n/provider";
+import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
 import type { OperationsEventDetail } from "@/lib/operations-event-detail";
 import { queryKeys } from "@/lib/query-keys";
 
@@ -45,6 +46,7 @@ function rerankCategoryLabels(t: ReturnType<typeof useInterfaceText>) {
 
 export function RequestOutcome({ detail }: { detail: OperationsEventDetail }) {
 	const t = useInterfaceText();
+	const { locale } = useInterfaceLanguage();
 	const statusLabels: Record<string, string> = {
 		running: t("处理中", "Running"),
 		completed: t("已完成", "Completed"),
@@ -57,6 +59,10 @@ export function RequestOutcome({ detail }: { detail: OperationsEventDetail }) {
 		(detail.status === "completed" && detail.error_code != null);
 	const showGuidance =
 		faulty || (detail.source === "job" && detail.error_code != null);
+	const guidance =
+		locale === "en"
+			? englishOperationsGuidance(detail.error_code)
+			: detail.guidance;
 	return (
 		<section
 			className={
@@ -70,14 +76,12 @@ export function RequestOutcome({ detail }: { detail: OperationsEventDetail }) {
 			</p>
 			{showGuidance ? (
 				<div className="mt-2 space-y-2">
-					<p className="text-ui font-medium">{detail.guidance.title}</p>
+					<p className="text-ui font-medium">{guidance.title}</p>
 					<p className="font-mono text-xs text-destructive break-all">
 						{detail.error_code ?? "unclassified_error"}
 					</p>
-					<p className="text-ui text-foreground/85">{detail.guidance.cause}</p>
-					<p className="text-ui text-muted-foreground">
-						{detail.guidance.recovery}
-					</p>
+					<p className="text-ui text-foreground/85">{guidance.cause}</p>
+					<p className="text-ui text-muted-foreground">{guidance.recovery}</p>
 				</div>
 			) : null}
 			{detail.ask ? (

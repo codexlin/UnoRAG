@@ -9,6 +9,7 @@ import {
 	type SettingsPanelStateChange,
 	useSettingsPanelState,
 } from "@/components/app/settings/use-settings-panel-state";
+import { workspaceRoleLabel } from "@/components/app/workspace-role-label";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -42,10 +43,8 @@ import {
 } from "@/components/ui/select";
 import { formatDateTime } from "@/lib/format";
 import { useInterfaceText } from "@/lib/i18n/provider";
-import { roleLabel } from "@/lib/session-types";
 
 type TextPair = readonly [zh: string, en: string];
-type InterfaceText = ReturnType<typeof useInterfaceText>;
 
 type Member = {
 	userId: string;
@@ -80,21 +79,6 @@ const ACTION_ERRORS = {
 	remove: ["移除成员失败", "Failed to remove member"],
 	revoke: ["撤销邀请失败", "Failed to revoke invite"],
 } as const satisfies Record<string, TextPair>;
-
-function formatRole(role: string, t: InterfaceText): string {
-	switch (role) {
-		case "owner":
-			return t("所有者", "Owner");
-		case "admin":
-			return t("管理员", "Admin");
-		case "editor":
-			return t("编辑者", "Editor");
-		case "viewer":
-			return t("查看者", "Viewer");
-		default:
-			return roleLabel(role);
-	}
-}
 
 function deliveryNote(invite: CreatedInvite): TextPair {
 	if (invite.emailDelivery?.sent) {
@@ -623,7 +607,7 @@ export function WorkspaceMembersPanel({
 											</Select>
 										) : (
 											<span className="text-sm text-muted-foreground">
-												{formatRole(member.role, t)}
+												{workspaceRoleLabel(member.role, t)}
 											</span>
 										)}
 										{canManage &&
@@ -707,7 +691,8 @@ export function WorkspaceMembersPanel({
 										<div className="min-w-0 flex-1 basis-48">
 											<p className="break-all">{invite.email}</p>
 											<p className="text-xs text-muted-foreground">
-												{formatRole(invite.role, t)} · {t("到期", "Expires")}{" "}
+												{workspaceRoleLabel(invite.role, t)} ·{" "}
+												{t("到期", "Expires")}{" "}
 												{formatDateTime(invite.expiresAt)}
 											</p>
 										</div>

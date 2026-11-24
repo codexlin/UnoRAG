@@ -499,6 +499,12 @@ test("successful, refused and running requests do not display fabricated failure
 	const html = renderZh(createElement(RequestOutcome, { detail: failed }));
 	assert.ok(html.includes(failed.guidance.title));
 	assert.match(html, /judge_unavailable/);
+	const english = renderToStaticMarkup(
+		createElement(RequestOutcome, { detail: failed }),
+	);
+	assert.match(english, /Evidence checks did not complete/);
+	assert.match(english, /Use the request ID to check the failing stage/);
+	assert.doesNotMatch(english, /\p{Script=Han}/u);
 });
 
 test("operational refusal projection cannot expose model-authored or historical prose", async () => {
