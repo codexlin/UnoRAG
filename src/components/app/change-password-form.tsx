@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -172,12 +173,12 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 	return (
 		<form
 			method="post"
-			className="space-y-5"
+			className="space-y-4"
 			onSubmit={submit}
 			aria-busy={busy}
 		>
 			{email ? (
-				<p className="break-all border-y py-4 text-sm leading-6 text-muted-foreground">
+				<p className="break-all border-y py-3 text-sm leading-6 text-muted-foreground">
 					{email}
 				</p>
 			) : null}
@@ -190,7 +191,7 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					name="current_password"
 					type="password"
 					autoComplete="current-password"
-					className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
+					className="h-11 bg-background px-3.5 text-base shadow-2xs md:text-base dark:bg-muted/35 motion-reduce:transition-none"
 					disabled={!ready || busy}
 					aria-invalid={errorField === "current_password" || undefined}
 					aria-describedby={
@@ -200,17 +201,16 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					}
 					required
 				/>
-				<div className="min-h-6">
-					{errorField === "current_password" && error ? (
-						<p
-							id="current-password-error"
-							className="text-sm leading-6 text-destructive"
-							role="alert"
-						>
-							{error}
-						</p>
-					) : null}
-				</div>
+				{errorField === "current_password" && error ? (
+					<p
+						id="current-password-error"
+						className="inline-flex items-center gap-1.5 text-sm leading-6 text-destructive"
+						role="alert"
+					>
+						<AlertCircle className="size-4 shrink-0" aria-hidden />
+						<span>{error}</span>
+					</p>
+				) : null}
 			</div>
 			<div className="space-y-2">
 				<Label htmlFor="new_password">{t("新密码", "New password")}</Label>
@@ -219,7 +219,7 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					name="new_password"
 					type="password"
 					autoComplete="new-password"
-					className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
+					className="h-11 bg-background px-3.5 text-base shadow-2xs md:text-base dark:bg-muted/35 motion-reduce:transition-none"
 					disabled={!ready || busy}
 					aria-invalid={errorField === "new_password" || undefined}
 					aria-describedby={
@@ -240,17 +240,16 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 						"Use at least 7 characters, with uppercase and lowercase letters.",
 					)}
 				</p>
-				<div className="min-h-6">
-					{errorField === "new_password" && error ? (
-						<p
-							id="new-password-error"
-							className="text-sm leading-6 text-destructive"
-							role="alert"
-						>
-							{error}
-						</p>
-					) : null}
-				</div>
+				{errorField === "new_password" && error ? (
+					<p
+						id="new-password-error"
+						className="inline-flex items-center gap-1.5 text-sm leading-6 text-destructive"
+						role="alert"
+					>
+						<AlertCircle className="size-4 shrink-0" aria-hidden />
+						<span>{error}</span>
+					</p>
+				) : null}
 			</div>
 			<div className="space-y-2">
 				<Label htmlFor="password_confirmation">
@@ -261,7 +260,7 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					name="password_confirmation"
 					type="password"
 					autoComplete="new-password"
-					className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
+					className="h-11 bg-background px-3.5 text-base shadow-2xs md:text-base dark:bg-muted/35 motion-reduce:transition-none"
 					disabled={!ready || busy}
 					aria-invalid={errorField === "password_confirmation" || undefined}
 					aria-describedby={
@@ -273,41 +272,48 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					maxLength={256}
 					required
 				/>
-				<div className="min-h-6">
-					{errorField === "password_confirmation" && error ? (
-						<p
-							id="password-confirmation-error"
-							className="text-sm leading-6 text-destructive"
-							role="alert"
-						>
-							{error}
-						</p>
-					) : null}
-				</div>
-			</div>
-			<div className="min-h-6">
-				{error && !errorField ? (
-					<p className="text-sm leading-6 text-destructive" role="alert">
-						{error}
+				{errorField === "password_confirmation" && error ? (
+					<p
+						id="password-confirmation-error"
+						className="inline-flex items-center gap-1.5 text-sm leading-6 text-destructive"
+						role="alert"
+					>
+						<AlertCircle className="size-4 shrink-0" aria-hidden />
+						<span>{error}</span>
 					</p>
 				) : null}
 			</div>
-			<Button className="h-11 w-full" type="submit" disabled={!ready || busy}>
-				{submitting
-					? t("正在保存...", "Saving...")
-					: t("保存并进入 UnoRAG", "Save and enter UnoRAG")}
-			</Button>
-			<Button
-				className="h-11 w-full"
-				type="button"
-				variant="ghost"
-				onClick={signOut}
-				disabled={!ready || busy}
-			>
-				{signingOut
-					? t("正在退出...", "Signing out...")
-					: t("退出登录", "Sign out")}
-			</Button>
+			{error && !errorField ? (
+				<p
+					className="inline-flex items-center gap-1.5 text-sm leading-6 text-destructive"
+					role="alert"
+				>
+					<AlertCircle className="size-4 shrink-0" aria-hidden />
+					<span>{error}</span>
+				</p>
+			) : null}
+			<div className="space-y-2 pt-1">
+				<Button
+					className="h-11 w-full text-sm font-medium shadow-2xs"
+					type="submit"
+					disabled={!ready || busy}
+				>
+					{submitting
+						? t("正在保存...", "Saving...")
+						: t("保存并进入 UnoRAG", "Save and enter UnoRAG")}
+				</Button>
+				<Button
+					className="h-11 w-full"
+					type="button"
+					variant="ghost"
+					onClick={signOut}
+					disabled={!ready || busy}
+				>
+					{signingOut
+						? t("正在退出...", "Signing out...")
+						: t("退出登录", "Sign out")}
+				</Button>
+			</div>
 		</form>
 	);
 }

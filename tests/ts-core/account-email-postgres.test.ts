@@ -4,8 +4,10 @@ import { createRequire } from "node:module";
 import test from "node:test";
 import { Pool } from "pg";
 import {
+	ACCOUNT_EMAIL_CODE_MAX_ATTEMPTS,
 	accountEmailBaseUrl,
 	consumeAccountEmailToken,
+	hashAccountEmailCode,
 	hashAccountEmailToken,
 	issueAccountEmailToken,
 } from "../../src/lib/server/auth/email-tokens";
@@ -497,6 +499,128 @@ test("account email tokens: one-time, credential-bound and scope-safe", {
 						purpose: "login",
 					}),
 					null,
+				);
+			},
+		);
+		await t.test(
+			"6-digit verification codes are salted, single-use across code/link, and lock after 5 wrong guesses",
+			async () => {
+				// Restore workspace membership removed by the previous subtest.
+				await pool.query(
+					"INSERT INTO app.workspace_members(workspace_id,user_id,role) VALUES($1,$2,'owner') ON CONFLICT DO NOTHING",
+					[ws, user],
+				);
+				const issued = await issue("login");
+				assert.match(issued.code, /^\d{6}$/);
+				const token = raw(issued.url);
+				const stored = await pool.query(
+					"SELECT token_hash, code_hash, code_attempts FROM app.account_email_tokens WHERE id=$1",
+					[issued.tokenId],
+				);
+				assert.equal(
+					stored.rows[0].code_hash,
+					hashAccountEmailCode(stored.rows[0].token_hash, issued.code),
+				);
+				assert.equal(stored.rows[0].code_attempts, 0);
+				assert.doesNotMatch(
+					JSON.stringify(stored.rows),
+					new RegExp(issued.code),
+				);
+
+				// Consuming by 6-digit code works once and invalidates the companion link.
+				const consumed = await consumeAccountEmailToken(pool, {
+					email,
+					code: issued.code,
+					purpose: "login",
+				});
+				assert.equal(consumed?.userId, user);
+				assert.equal(
+					await consumeAccountEmailToken(pool, {
+						email,
+						code: issued.code,
+						purpose: "login",
+					}),
+					null,
+				);
+				assert.equal(
+					await consumeAccountEmailToken(pool, { token, purpose: "login" }),
+					null,
+				);
+
+				// Consuming by link invalidates the companion 6-digit code.
+				const issuedLinkFirst = await issue("login");
+				assert.ok(
+					await consumeAccountEmailToken(pool, {
+						token: raw(issuedLinkFirst.url),
+						purpose: "login",
+					}),
+				);
+				assert.equal(
+					await consumeAccountEmailToken(pool, {
+						email,
+						code: issuedLinkFirst.code,
+						purpose: "login",
+					}),
+					null,
+				);
+
+				// 5 wrong code guesses lock out and revoke both the code and the link.
+				const brute = await issue("login");
+				const wrongCode = brute.code === "000000" ? "111111" : "000000";
+				for (let i = 0; i < ACCOUNT_EMAIL_CODE_MAX_ATTEMPTS; i++) {
+					assert.equal(
+						await consumeAccountEmailToken(pool, {
+							email,
+							code: wrongCode,
+							purpose: "login",
+						}),
+						null,
+					);
+				}
+				const lockedRow = await pool.query(
+					"SELECT code_attempts, consumed_at FROM app.account_email_tokens WHERE id=$1",
+					[brute.tokenId],
+				);
+				assert.equal(
+					lockedRow.rows[0].code_attempts,
+					ACCOUNT_EMAIL_CODE_MAX_ATTEMPTS,
+				);
+				assert.ok(lockedRow.rows[0].consumed_at !== null);
+				assert.equal(
+					await consumeAccountEmailToken(pool, {
+						email,
+						code: brute.code,
+						purpose: "login",
+					}),
+					null,
+				);
+				assert.equal(
+					await consumeAccountEmailToken(pool, {
+						token: raw(brute.url),
+						purpose: "login",
+					}),
+					null,
+				);
+
+				// Cross-device password reset via 6-digit code updates credentials cleanly.
+				const resetCodeProof = await issue("reset");
+				assert.ok(
+					await consumeAccountEmailToken(pool, {
+						email,
+						code: resetCodeProof.code,
+						purpose: "reset",
+						password: "OtpResetPassword7",
+					}),
+				);
+				const updatedCred = await pool.query(
+					"SELECT password_hash FROM app.local_credentials WHERE user_id=$1",
+					[user],
+				);
+				assert.ok(
+					verifyPasswordSync(
+						"OtpResetPassword7",
+						updatedCred.rows[0].password_hash,
+					),
 				);
 			},
 		);

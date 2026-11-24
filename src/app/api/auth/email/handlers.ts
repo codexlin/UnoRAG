@@ -29,7 +29,16 @@ export const accountEmailHandlers = createAccountEmailHandlers({
 			limit: action === "request" ? 20 : 60,
 			windowSeconds: 900,
 		});
-		if (!ip.ok || action === "consume") return ip;
+		if (!ip.ok) return ip;
+		if (action === "consume") {
+			if (subject === "token-consume") return ip;
+			return consumeFixedWindow({
+				namespace: "account-email-consume-account",
+				subject,
+				limit: 10,
+				windowSeconds: 900,
+			});
+		}
 		const account = await consumeFixedWindow({
 			namespace: "account-email-account",
 			subject,
@@ -54,6 +63,7 @@ export const accountEmailHandlers = createAccountEmailHandlers({
 		const delivery = await sendAccountEmail({
 			to: input.email,
 			url: token.url,
+			code: token.code,
 			purpose: input.purpose,
 			idempotencyKey: `account:${token.tokenId}`,
 			locale: resolveLocale(

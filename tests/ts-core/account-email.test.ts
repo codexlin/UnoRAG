@@ -83,6 +83,24 @@ test("account and invite templates use English by default and can render Simplif
 	assert.match(english.html, /<html lang="en">/);
 	assert.equal(english.subject, "Reset your UnoRAG password");
 	assert.match(english.text, /expires in 15 minutes/);
+	const withCode = renderAccountEmail({
+		url: account.url,
+		code: "482917",
+		purpose: "login",
+		locale: "zh-CN",
+	});
+	assert.equal(withCode.subject, "你的 UnoRAG 登录验证码");
+	assert.match(withCode.text, /482917/);
+	assert.match(parseHtml(withCode.html).text, /482917/);
+	assert.throws(
+		() =>
+			renderAccountEmail({
+				url: account.url,
+				code: "12ab56",
+				purpose: "login",
+			}),
+		{ message: "invalid_verification_code" },
+	);
 	const chinese = renderInviteEmail(invite);
 	assert.match(chinese.html, /<html lang="zh-CN">/);
 	assert.match(chinese.subject, /邀请加入/);

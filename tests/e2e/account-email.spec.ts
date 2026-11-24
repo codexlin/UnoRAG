@@ -3,7 +3,7 @@ import { expect, type Page, test } from "@playwright/test";
 const browserErrors = new WeakMap<Page, string[]>();
 const unexpectedMailRequests = new WeakMap<Page, string[]>();
 const acceptedMessage =
-	"如果该邮箱对应可用账户，你将收到一封邮件。请检查收件箱和垃圾邮件。";
+	"如果该邮箱对应可用账户，你将收到 6 位验证码和一次性链接。请检查收件箱和垃圾邮件。";
 
 // Every mail endpoint is mocked: this suite never sends real mail or needs credentials.
 test.beforeEach(async ({ page }) => {
@@ -48,14 +48,14 @@ test("password login remains the default and links select each mail purpose", as
 	await expect(
 		page.getByRole("button", { name: "登录", exact: true }),
 	).toBeEnabled();
-	const mailLogin = page.getByRole("link", { name: "使用邮箱链接登录" });
+	const mailLogin = page.getByRole("link", { name: "使用邮箱登录" });
 	await expect(mailLogin).toHaveAttribute(
 		"href",
 		"/account-access?purpose=login",
 	);
 	await mailLogin.click();
 	await expect(
-		page.getByRole("heading", { name: "使用邮箱链接登录" }),
+		page.getByRole("heading", { name: "使用邮箱登录" }),
 	).toBeVisible();
 	await page.getByRole("link", { name: "返回密码登录" }).click();
 	const reset = page.getByRole("link", { name: "忘记密码" });
@@ -81,10 +81,19 @@ for (const purpose of ["login", "reset"] as const) {
 			});
 		});
 		await page.goto(`/account-access?purpose=${purpose}`);
-		for (const email of ["member@example.test", "unknown@example.test"]) {
+		for (const [index, email] of [
+			"member@example.test",
+			"unknown@example.test",
+		].entries()) {
+			if (index > 0) {
+				await page.getByRole("button", { name: "更换邮箱" }).click();
+			}
 			await page.getByLabel("邮箱").fill(email);
-			await page.getByRole("button", { name: "发送邮件链接" }).click();
+			await page.getByRole("button", { name: "发送验证码与链接" }).click();
 			await expect(page.getByRole("status")).toHaveText(acceptedMessage);
+			await expect(
+				page.getByLabel("6 位验证码", { exact: true }),
+			).toBeVisible();
 		}
 		expect(requests).toEqual([
 			{ email: "member@example.test", purpose },
@@ -109,7 +118,7 @@ for (const failure of [503, 429, "network"] as const) {
 		});
 		await page.goto("/account-access?purpose=login");
 		await page.getByLabel("邮箱").fill("member@example.test");
-		const send = page.getByRole("button", { name: "发送邮件链接" });
+		const send = page.getByRole("button", { name: "发送验证码与链接" });
 		await send.click();
 		await expect(page.getByRole("main").getByRole("alert")).toContainText(
 			failure === 503
@@ -296,4 +305,49 @@ test("malformed hash is cleared and query-string tokens are never consumed (mock
 	await expect(page.getByLabel("邮箱")).toBeEnabled();
 	await expect(page.getByRole("button", { name: "确认登录" })).toHaveCount(0);
 	await expect(page.getByLabel("新密码", { exact: true })).toHaveCount(0);
+});
+
+test("cross-device 6-digit OTP signs in on the requesting browser (mock mail API)", async ({
+	page,
+}) => {
+	const consumes: unknown[] = [];
+	await page.route("**/api/auth/email/request", (route) =>
+		route.fulfill({ status: 202, json: {} }),
+	);
+	await page.route("**/api/auth/email/consume", async (route) => {
+		consumes.push(route.request().postDataJSON());
+		await route.fulfill({
+			status: 200,
+			json: { mustChangePassword: false, session_created: true },
+		});
+	});
+	await page.route(
+		(url) => url.pathname === "/app",
+		(route) =>
+			route.fulfill({
+				contentType: "text/html",
+				body: "<h1>Mock authenticated destination</h1>",
+			}),
+	);
+
+	await page.goto("/account-access?purpose=login");
+	await page.getByLabel("邮箱", { exact: true }).fill("codexlin@gmail.com");
+	await page.getByRole("button", { name: "发送验证码与链接" }).click();
+
+	const otp = page.getByLabel("6 位验证码", { exact: true });
+	await expect(otp).toBeVisible();
+	// Reject incomplete code before calling consume.
+	await otp.fill("123");
+	await page.getByRole("button", { name: "验证并登录" }).click();
+	await expect(page.getByRole("main").getByRole("alert")).toContainText(
+		"6 位数字验证码",
+	);
+	expect(consumes).toEqual([]);
+
+	await otp.fill("482917");
+	await page.getByRole("button", { name: "验证并登录" }).click();
+	await expect(page).toHaveURL(/\/app$/);
+	expect(consumes).toEqual([
+		{ purpose: "login", email: "codexlin@gmail.com", code: "482917" },
+	]);
 });

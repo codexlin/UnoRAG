@@ -183,6 +183,7 @@ export async function sendAccountEmail(
 	input: {
 		to: string;
 		url: string;
+		code?: string;
 		purpose: AccountEmailPurpose;
 		idempotencyKey: string;
 		locale?: Locale;
