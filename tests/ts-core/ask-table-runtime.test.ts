@@ -6,7 +6,11 @@ import {
 	AnswerStreamAdapter,
 	StructuredOutputAdapter,
 } from "../../src/core/ai";
-import type { AskGraphContext, AskState } from "../../src/core/ask-graph";
+import {
+	type AskGraphContext,
+	AskGraphService,
+	type AskState,
+} from "../../src/core/ask-graph";
 import { readPendingClarification } from "../../src/core/ask-graph/clarification";
 import type { TableQueryPlan } from "../../src/core/ask-graph/table";
 import { chunkDocument } from "../../src/core/ingest/chunking";
@@ -1202,11 +1206,86 @@ test("reusing grounded table evidence does not invent a second rerank attempt", 
 	).context();
 	const result = await context.ports.tableRetrieve({
 		upgrade_reason: "grounded_table_lookup",
+		retrieval_attempts: 1,
 		citations: [{ id: "source" }],
 		retrieval_debug: { rerankDiagnostic: { category: "timeout" } },
 	} as unknown as AskState);
 	assert.equal(result.retrieval_debug?.rerankDiagnostic, null);
 	assert.equal(result.retrieval_debug?.table_candidate_count, 1);
+	assert.equal(result.retrieval_attempts, 2);
+});
+
+test("grounded lookup with no contributing rows terminates when Judge requests a retry", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const source = {
+		...citation({
+			id: "row",
+			tableId: "catalog",
+			device: "服务器主机",
+			amount: "120000",
+		}),
+		headers: ["设备名称", "品牌/型号", "规格参数", "单价（元）"],
+		rows: [["服务器主机", "Acme/X-42", "64GB", "120000"]],
+	};
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{ structured: {} as never, answer: {} as never, retrieval: {} as never },
+	);
+	const retrievalCalls: boolean[] = [];
+	Object.defineProperty(runtime, "retrieve", {
+		value: async (_state: AskState, { tableOnly }: { tableOnly: boolean }) => {
+			retrievalCalls.push(tableOnly);
+			return {
+				citations: [
+					tableOnly
+						? source
+						: { ...source, record_type: "chunk", headers: [], rows: [] },
+				],
+				debug: {},
+			};
+		},
+	});
+	const context = (
+		runtime as unknown as { context: () => AskGraphContext }
+	).context();
+	const judgeAttempts: number[] = [];
+	const graph = new AskGraphService({
+		...context,
+		ports: {
+			...context.ports,
+			// Use the real executor with no contributing rows to exercise the Judge edge.
+			tableExecute: (state) =>
+				context.ports.tableExecute({
+					...state,
+					citations: [{ ...source, rows: [] }],
+				}),
+		},
+		judge: {
+			async judge(state) {
+				assert.equal(state.table_execution?.reason, "no_match");
+				judgeAttempts.push(state.retrieval_attempts ?? 0);
+				return {
+					sufficient: false,
+					action: "retry",
+					reason: "weak_match",
+					can_retry: true,
+				};
+			},
+		},
+	});
+	const state = await graph.invoke({
+		question: "服务器主机Acme X42的单价及规格参数是什么？",
+		session_id: "grounded-retry",
+		history: [],
+	});
+	assert.equal(state.upgrade_reason, "grounded_table_lookup");
+	assert.equal(state.refused, true);
+	assert.equal(state.retrieval_attempts, 2);
+	assert.deepEqual(judgeAttempts, [2]);
+	assert.deepEqual(retrievalCalls, [false, true]);
 });
 
 test("semantic adjudication never compares RRF ranks with relevance thresholds", async () => {
@@ -1235,7 +1314,17 @@ test("semantic adjudication never compares RRF ranks with relevance thresholds",
 		{
 			...base,
 			id: "lexical-only",
+			score: 0.0328,
+			rrf_score: 0.0328,
+			lexical_score: 0.85,
+			dense_score: null,
+			used_hybrid: true,
+		},
+		{
+			...base,
+			id: "rrf-only",
 			score: 0.9,
+			rrf_score: 0.9,
 			dense_score: null,
 			used_hybrid: true,
 		},
@@ -1274,7 +1363,7 @@ test("semantic adjudication never compares RRF ranks with relevance thresholds",
 	).adjudicate({ citations: hits, debug: {} });
 	assert.deepEqual(
 		result.citations.map(({ id }) => id),
-		["single-hybrid", "good-rerank", "dense"],
+		["single-hybrid", "lexical-only", "good-rerank", "dense"],
 	);
 });
 

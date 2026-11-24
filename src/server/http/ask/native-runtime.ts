@@ -38,6 +38,7 @@ import {
 	mergeComparisonCitations,
 } from "@/core/ask-graph/comparison-query";
 import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
+import { MAX_RETRIEVAL_ATTEMPTS } from "@/core/ask-graph/nodes/retry";
 import { hasFollowupReference } from "@/core/ask-graph/nodes/rewrite";
 import { planForGroundedQuestion } from "@/core/ask-graph/nodes/routing";
 import { groundedQuestion } from "@/core/ask-graph/state";
@@ -754,7 +755,8 @@ export class NativeAskRuntime {
 						};
 					}
 					if (citations.length === 0 && !state.table_execution) {
-						const canRetry = (state.retrieval_attempts ?? 0) < 2;
+						const canRetry =
+							(state.retrieval_attempts ?? 0) < MAX_RETRIEVAL_ATTEMPTS;
 						return {
 							sufficient: false,
 							action: canRetry ? "retry" : "refuse",
@@ -958,11 +960,18 @@ export class NativeAskRuntime {
 					};
 				},
 				tableRetrieve: async (state) => {
-					if (state.upgrade_reason === "grounded_table_lookup") {
+					// Keep the upgrade reason for table planning and the client trace.
+					// The reuse marker makes that transition one-shot.
+					if (
+						state.upgrade_reason === "grounded_table_lookup" &&
+						state.retrieval_debug?.grounded_lookup_reused !== true
+					) {
 						return {
 							citations: state.citations ?? [],
+							retrieval_attempts: (state.retrieval_attempts ?? 0) + 1,
 							retrieval_debug: {
 								...(state.retrieval_debug ?? {}),
+								grounded_lookup_reused: true,
 								table_candidate_count: state.citations?.length ?? 0,
 								rerankDiagnostic: null,
 							},

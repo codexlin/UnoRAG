@@ -111,6 +111,102 @@ test("v2 fills token budgets for long English and Chinese prose", async () => {
 	}
 });
 
+test("large table and code projections retain content and keep embeddings within budget", async () => {
+	const fixture = JSON.parse(await readFile(fixtureUrl, "utf8"));
+	const document = DocumentIRSchema.parse(fixture);
+	const table = document.nodes.find((node) => node.type === "table");
+	assert.ok(table);
+	const headers = ["Item", "预算（万元）"];
+	const rows = Array.from({ length: 60 }, (_, index) => [
+		`row-${index}`,
+		index === 10 ? "值".repeat(9_000) : "描述".repeat(10),
+	]);
+	table.table_ir = null;
+	table.table_json = { headers, rows };
+	table.text = [headers, ...rows].map((row) => row.join(" | ")).join("\n");
+	const code = [
+		"\tstartOfCode();",
+		...Array.from(
+			{ length: 700 },
+			(_, index) => `  emit(record[${index}], payload);`,
+		),
+		"中".repeat(9_000),
+		"endOfCode();",
+	].join("\n");
+	document.nodes = [
+		table,
+		{
+			...table,
+			id: "code-node",
+			type: "code",
+			table_id: null,
+			table_json: null,
+			text: code,
+		},
+	];
+	document.title = "超長標題".repeat(180);
+	const chunks = await chunkDocument(document);
+	for (const [strategy, first, last] of [
+		["table", /row-0/u, /row-59/u],
+		["code", /startOfCode/u, /endOfCode/u],
+	] as const) {
+		const pieces = chunks.filter(
+			({ split_strategy }) => split_strategy === strategy,
+		);
+		assert.ok(pieces.length > 2);
+		assert.ok(pieces.every(({ body }) => estimateTokens(body) <= 400));
+		assert.match(pieces[0].body, first);
+		assert.match(pieces.at(-1)?.body ?? "", last);
+	}
+	const payloads = buildIndexPayloads(chunks, {
+		...recordOptions,
+		generationId: "8d3c1bbb-0f89-4ccc-9db1-ae02bc38ab09",
+	});
+	const chunkPayloads = payloads.filter(
+		({ record_type }) => record_type === "chunk",
+	);
+	assert.equal(chunkPayloads.length, chunks.length);
+	assert.ok(
+		chunkPayloads.every(
+			({ body, embed_text }) =>
+				typeof body === "string" &&
+				estimateTokens(embed_text) <= 400 &&
+				embed_text.endsWith(body),
+		),
+	);
+	const tableChunks = chunkPayloads.filter(
+		({ split_strategy }) => split_strategy === "table",
+	);
+	assert.ok(
+		tableChunks
+			.slice(1)
+			.every(({ embed_text }) => embed_text.includes("Item | 预算（万元）")),
+	);
+	assert.ok(
+		tableChunks.slice(1).some(({ body }) => !body?.includes("预算（万元）")),
+	);
+	const codeChunks = chunkPayloads.filter(
+		({ split_strategy }) => split_strategy === "code",
+	);
+	assert.ok(codeChunks.slice(1).some(({ body }) => body?.startsWith("  emit")));
+	assert.equal(codeChunks.map(({ body }) => body).join(""), code);
+	assert.ok(codeChunks[0].embed_text.includes("\tstartOfCode();"));
+	const tableRecords = payloads.filter(
+		({ record_type }) => record_type === "table",
+	);
+	assert.deepEqual(
+		tableRecords.flatMap(({ rows }) => rows ?? []),
+		rows,
+	);
+	assert.ok(
+		tableRecords.every(({ embed_text }) => estimateTokens(embed_text) <= 1_400),
+	);
+	assert.equal(
+		new Set(payloads.map(({ record_id }) => record_id)).size,
+		payloads.length,
+	);
+});
+
 test("explicit character bounds and overlap apply to recursive and unbroken text", async () => {
 	const text = "abc🙂xyz𠮷".repeat(160);
 	const doc = documentWithNodes([{ id: "prose", type: "paragraph", text }]);

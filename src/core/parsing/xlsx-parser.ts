@@ -439,16 +439,47 @@ function rowValues(
 	return cols.map((col) => map?.get(col) ?? "");
 }
 
-function looksNumericOrEmpty(values: readonly string[]): boolean {
-	let numeric = 0;
-	let nonEmpty = 0;
-	for (const value of values) {
-		const v = value.trim();
-		if (!v) continue;
-		nonEmpty += 1;
-		if (/^[+-]?[\d,]+(?:\.\d+)?%?$/.test(v)) numeric += 1;
-	}
-	return nonEmpty > 0 && numeric > 0;
+const NUMERIC_CELL = /^[+-]?[\d,]+(?:\.\d+)?%?$/u;
+const NUMERIC_HEADER_LABEL = /^(?:\d{1,4}|(?:19|20)\d{2}年)$/u;
+
+function hasNumericSubheaders(
+	firstRow: number,
+	secondRow: number,
+	cols: readonly number[],
+	grid: Map<number, Map<number, string>>,
+	merges: readonly MergeRange[],
+): boolean {
+	const groups = merges.filter(
+		(merge) =>
+			merge.startRow === firstRow &&
+			merge.endRow === firstRow &&
+			merge.endCol > merge.startCol &&
+			cols.includes(merge.startCol),
+	);
+	const occupied = cols.flatMap((col) => {
+		const value = grid.get(secondRow)?.get(col)?.normalize("NFKC").trim();
+		return value ? [{ col, value }] : [];
+	});
+	const belongsTo = (col: number, group: MergeRange) =>
+		col >= group.startCol && col <= group.endCol;
+	// An occupied standalone column (for example, a region name) identifies
+	// the first data row even when the remaining values look like years.
+	if (
+		occupied.some(({ col }) => !groups.some((group) => belongsTo(col, group)))
+	)
+		return false;
+	return groups.some((group) => {
+		const labels = occupied
+			.filter(({ col }) => belongsTo(col, group))
+			.map(({ value }) => value);
+		return (
+			labels.filter((label) => NUMERIC_HEADER_LABEL.test(label)).length >= 2 &&
+			labels.every(
+				(label) =>
+					NUMERIC_HEADER_LABEL.test(label) || !NUMERIC_CELL.test(label),
+			)
+		);
+	});
 }
 
 function isBannerTitleRow(
@@ -493,8 +524,12 @@ function inferHeaderRowCount(
 			cols.includes(m.startCol),
 	);
 	if (hasHorizontalMerge && blockRows.length >= 3) {
-		const secondVals = rowValues(grid, blockRows[1], cols);
-		if (!looksNumericOrEmpty(secondVals)) {
+		const secondRow = blockRows[1];
+		const secondVals = rowValues(grid, secondRow, cols);
+		if (
+			hasNumericSubheaders(firstRow, secondRow, cols, grid, merges) ||
+			!secondVals.some((value) => NUMERIC_CELL.test(value.trim()))
+		) {
 			return 2;
 		}
 	}
@@ -693,7 +728,12 @@ export async function parseXlsxDocument(
 					sheet.grid,
 					sheet.merges,
 				);
-				if (!banner) break;
+				if (
+					!banner ||
+					hasNumericSubheaders(rows[0], rows[1], cols, sheet.grid, sheet.merges)
+				) {
+					break;
+				}
 				pendingCaption = `${sheet.name} - ${banner}`;
 				appendNode({
 					type: "paragraph",

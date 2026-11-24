@@ -416,6 +416,16 @@ function contentListToNodes(
 		// content closes the candidate so A -> B -> A cannot reconnect the ends.
 		previousTable = null;
 		const isFigure = ["image", "figure"].includes(kind);
+		const sourceText =
+			kind === "code" && typeof item.text === "string"
+				? item.text
+				: textValue(
+						item.text ??
+							item.table_caption ??
+							item.img_caption ??
+							item.image_caption ??
+							item.equation,
+					);
 		const text = isFigure
 			? [
 					...new Set([
@@ -429,18 +439,12 @@ function contentListToNodes(
 				]
 					.filter(Boolean)
 					.join("\n\n")
-			: textValue(
-					item.text ??
-						item.table_caption ??
-						item.img_caption ??
-						item.image_caption ??
-						item.equation,
-				) ||
+			: sourceText ||
 				joinedText(
 					item.table_caption ?? item.img_caption ?? item.image_caption,
 				) ||
 				stripHtml(tableHtml);
-		if (!text && !isFigure) continue;
+		if (!text.trim() && !isFigure) continue;
 		const level = positiveNumber(item.text_level ?? item.level);
 		const nodeType = promotedDocumentHeader
 			? "heading"
@@ -482,6 +486,22 @@ function contentListToNodes(
 		}
 		nodes.push(node);
 	}
+	// Assign paths after joining wrapped headings so all nodes use the final title.
+	const headings: { level: number; text: string }[] = [];
+	let path: string | null = null;
+	for (const node of nodes) {
+		if (node.type === "heading" && node.level !== null) {
+			while (
+				headings.length &&
+				headings[headings.length - 1].level >= node.level
+			) {
+				headings.pop();
+			}
+			headings.push({ level: node.level, text: node.text });
+			path = headings.map(({ text }) => text).join("/");
+		}
+		node.path = path;
+	}
 	return nodes;
 }
 
@@ -493,6 +513,7 @@ function canMergeAdjacentHeadings(
 	return Boolean(
 		previous?.type === "heading" &&
 			current.type === "heading" &&
+			previous.text !== current.text &&
 			previous.level === current.level &&
 			previous.page_start === current.page_start &&
 			Number(previous.meta.reading_order) + 1 === readingOrder,

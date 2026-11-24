@@ -408,8 +408,213 @@ test("unit parser handles Chinese units, header units, percentages and rejects e
 	assert.equal(parseTableNumber("十万"), 100_000);
 	assert.equal(parseTableNumber("一亿二千万"), 120_000_000);
 	assert.equal(parseTableNumber("12", "预算（万元）"), 120_000);
+	assert.equal(parseTableNumber(12, "预算（万元）"), 120_000);
+	assert.equal(parseTableNumber("十二", "预算（万元）"), 120_000);
+	assert.equal(parseTableNumber("￥12", "预算（万元）"), 120_000);
+	assert.equal(parseTableNumber("12元", "预算（万元）"), 12);
 	assert.ok(Math.abs((parseTableNumber("58.7%") ?? 0) - 0.587) < 1e-12);
 	assert.equal(parseTableNumber("1+2"), null);
+});
+
+test("table aggregates report values in the header unit and JSON numbers use that unit", () => {
+	const column = "预算（万元）";
+	const dataset = {
+		records: [
+			tableRecord({
+				id: "budget-rows",
+				tableId: "budget",
+				headers: ["项目", column],
+				rows: [
+					["A", "0.5"],
+					["B", "1,200,000元"],
+					["C", "200万元"],
+				],
+				tableRowCount: 3,
+			}),
+		],
+	};
+	const plan = { mode: "single", tableId: "budget", column };
+	for (const [operation, expected, rendered] of [
+		["sum", 320.5, /预算（万元）合计为 320\.5$/u],
+		["avg", 320.5 / 3, /预算（万元）平均值为 106\.83/u],
+		["min", 0.5, /预算（万元）最小值为 0\.5$/u],
+		["max", 200, /预算（万元）最大值为 200$/u],
+		["minMax", { min: 0.5, max: 200 }, /最小值为 0\.5.*最大值为 200/u],
+	] as const) {
+		const result = executeTableQuery({ ...plan, operation }, dataset);
+		assert.equal(result.status, "success");
+		assert.deepEqual(result.answerValue, expected);
+		assert.match(result.answerText ?? "", rendered);
+	}
+	for (const value of [100, "100", "100万元", "1000000元"]) {
+		const result = executeTableQuery(
+			{
+				mode: "single",
+				tableId: "budget",
+				operation: "filter",
+				where: { column, operator: ">", value },
+				selectColumns: ["项目", column],
+			},
+			dataset,
+		);
+		assert.equal(result.status, "success");
+		assert.deepEqual(
+			result.matchedRows.map((row) => row.项目),
+			["B", "C"],
+		);
+	}
+});
+
+test("sort, topN and repeated lookup ranges report the declared column unit", () => {
+	const column = "预算（万元）";
+	const dataset = {
+		records: [
+			tableRecord({
+				id: "budget-units",
+				tableId: "budget",
+				headers: ["Item", column],
+				rows: [
+					["North", "200"],
+					["North", "1200000元"],
+					["South", "150"],
+				],
+				tableRowCount: 3,
+			}),
+		],
+	};
+	const plan = { mode: "single", tableId: "budget" };
+	const sorted = executeTableQuery(
+		{ ...plan, operation: "sort", column, direction: "asc" },
+		dataset,
+	);
+	assert.equal(sorted.status, "success");
+	assert.deepEqual(sorted.answerValue, [120, 150, 200]);
+	const top = executeTableQuery(
+		{ ...plan, operation: "topN", column, direction: "desc", limit: 2 },
+		dataset,
+	);
+	assert.equal(top.status, "success");
+	assert.deepEqual(top.answerValue, [200, 150]);
+	const lookup = executeTableQuery(
+		{
+			...plan,
+			operation: "lookup",
+			entity: { column: "Item", value: "North", match: "exact" },
+			selectColumns: [column],
+		},
+		dataset,
+	);
+	assert.equal(lookup.status, "success");
+	assert.deepEqual(lookup.answerValue, {
+		rows: [{ [column]: "200" }, { [column]: "1200000元" }],
+		numeric_ranges: { [column]: { min: 120, max: 200 } },
+	});
+});
+
+test("Chinese thousands inherit the column unit unless the value declares its own", () => {
+	const header = "预算金额（万元）";
+	assert.equal(parseTableNumber("两千", header), 20_000_000);
+	assert.equal(parseTableNumber("2千", header), 20_000_000);
+	assert.equal(parseTableNumber("两千元", header), 2_000);
+	assert.equal(parseTableNumber("2千元", header), 2_000);
+	assert.equal(parseTableNumber("两千万元", header), 20_000_000);
+	assert.equal(parseTableNumber("两万", header), 20_000);
+});
+
+test("percentage headers scale aggregate and predicate values consistently", () => {
+	const column = "增长率（%）";
+	const dataset = {
+		records: [
+			tableRecord({
+				id: "growth-rows",
+				tableId: "growth",
+				headers: ["Item", column],
+				rows: [
+					["North", "12%"],
+					["South", "8%"],
+				],
+				tableRowCount: 2,
+			}),
+		],
+	};
+	const plan = { mode: "single", tableId: "growth" };
+	const result = executeTableQuery(
+		{ ...plan, operation: "sum", column },
+		dataset,
+	);
+	assert.equal(result.status, "success");
+	assert.equal(result.answerValue, 20);
+	assert.match(result.answerText ?? "", /增长率（%）合计为 20$/u);
+	assert.equal(parseTableNumber("12", column), parseTableNumber("12%", column));
+	for (const value of [10, "10", "10%"]) {
+		const filtered = executeTableQuery(
+			{
+				...plan,
+				operation: "filter",
+				where: { column, operator: ">", value },
+				selectColumns: ["Item"],
+			},
+			dataset,
+		);
+		assert.equal(filtered.status, "success");
+		assert.deepEqual(filtered.answerValue, [{ Item: "North" }]);
+	}
+});
+
+test("filter projections omit duplicate values when selecting an unrelated unique column", () => {
+	const result = executeTableQuery(
+		{
+			mode: "single",
+			tableId: "budget",
+			operation: "filter",
+			where: { column: "Item", operator: "==", value: "North" },
+			selectColumns: ["Item"],
+		},
+		{
+			records: [
+				tableRecord({
+					id: "duplicate-budget",
+					tableId: "budget",
+					headers: ["Item", "Budget", "Budget"],
+					rows: [
+						["North", "100", "200"],
+						["South", "300", "400"],
+					],
+				}),
+			],
+		},
+	);
+	assert.equal(result.status, "success");
+	assert.deepEqual(result.answerValue, [{ Item: "North" }]);
+	assert.deepEqual(result.matchedRows, [{ Item: "North", _row_index: 0 }]);
+});
+
+test("exact duplicate and normalized duplicate headers are ambiguous", () => {
+	for (const duplicate of ["预算（万元）", "预算(万元)"]) {
+		const result = executeTableQuery(
+			{
+				mode: "single",
+				tableId: "budget",
+				operation: "sum",
+				column: "预算（万元）",
+				selectColumns: ["项目"],
+			},
+			{
+				records: [
+					tableRecord({
+						id: "budget-rows",
+						tableId: "budget",
+						headers: ["项目", "预算（万元）", duplicate],
+						rows: [["A", "100", "999"]],
+						tableRowCount: 1,
+					}),
+				],
+			},
+		);
+		assert.equal(result.status, "clarify");
+		assert.equal(result.reason, "ambiguous_column:预算（万元）");
+		assert.equal(result.answerValue, null);
+	}
 });
 
 test("ASCII comparison >= 10万 preserves cross-page row-group evidence", () => {
@@ -892,6 +1097,39 @@ test("dual table compare uses normalized units and explicit value columns", () =
 		),
 		[20_000, -50_000],
 	);
+});
+
+test("dual differences report the shared unit of both columns", () => {
+	const column = "预算（万元）";
+	const dataset = (tableId: string, value: string) => ({
+		records: [
+			tableRecord({
+				id: tableId,
+				tableId,
+				headers: ["Item", column],
+				rows: [["North", value]],
+				tableRowCount: 1,
+			}),
+		],
+	});
+	const result = executeTableQuery(
+		{
+			mode: "dual",
+			leftTableId: "left",
+			rightTableId: "right",
+			operation: "compare",
+			join: { leftColumn: "Item", rightColumn: "Item" },
+			leftValueColumn: `left.${column}`,
+			rightValueColumn: `right.${column}`,
+			comparison: "difference",
+			selectColumns: ["left.Item"],
+		},
+		{ left: dataset("left", "100"), right: dataset("right", "800000元") },
+	);
+	assert.equal(result.status, "success");
+	assert.deepEqual(result.answerValue, [
+		{ "left.Item": "North", comparison: 20 },
+	]);
 });
 
 test("dual compare refuses when either table lacks global row coverage", () => {
