@@ -20,6 +20,7 @@ import {
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const DEFAULT_BATCH_DIR = resolve(ROOT, ".unorag/hf-eval/batch_cn_v1");
+export const REUSABLE_LIBRARY_ID_FILE = "reusable-library-id.txt";
 
 type PositiveHfCase = Readonly<{
 	id: string;
@@ -102,6 +103,14 @@ type GroupSummary = Readonly<{
 	latency_p95_ms: number;
 }>;
 
+type SubsetMetadata = Readonly<{
+	only_ids?: readonly string[];
+	only_failed_from?: string;
+	limit?: number;
+	total_positive_cases: number;
+	total_negative_cases: number;
+}>;
+
 type BenchmarkReport = Readonly<{
 	run_id: string;
 	label: string;
@@ -109,6 +118,7 @@ type BenchmarkReport = Readonly<{
 	base_url: string;
 	library_id: string;
 	reused_library: boolean;
+	subset?: SubsetMetadata;
 	build_fingerprint: Record<string, unknown>;
 	summary: Readonly<{
 		positive_cases: number;
@@ -314,6 +324,19 @@ function renderMarkdown(report: BenchmarkReport): string {
 		"",
 		`- base_url: \`${report.base_url}\``,
 		`- library_id: \`${report.library_id}\` (reused=${report.reused_library})`,
+		...(report.subset
+			? [
+					`- subset: **${s.positive_cases}/${report.subset.total_positive_cases} positive, ${s.negative_cases}/${report.subset.total_negative_cases} negative**${
+						report.subset.only_failed_from
+							? ` (only_failed_from=\`${basename(report.subset.only_failed_from)}\`)`
+							: ""
+					}${
+						report.subset.only_ids?.length
+							? ` (only_ids=${report.subset.only_ids.length})`
+							: ""
+					}${report.subset.limit ? ` (limit=${report.subset.limit})` : ""}`,
+				]
+			: []),
 		`- answered: **${s.answered_count}/${s.positive_cases}** (${formatPct(s.answered_rate)})`,
 		`- document Recall@K / MRR: **${formatPct(s.doc_recall_at_k)} / ${s.doc_mrr.toFixed(3)}**`,
 		`- inline citation rate: **${formatPct(s.inline_citation_rate)}**`,
@@ -383,7 +406,14 @@ async function compareReports(pathA: string, pathB: string): Promise<void> {
 		`| doc_recall_at_k | ${formatPct(a.summary.doc_recall_at_k)} | ${formatPct(b.summary.doc_recall_at_k)} | ${deltaPct(a.summary.doc_recall_at_k, b.summary.doc_recall_at_k)} |`,
 		`| doc_mrr | ${a.summary.doc_mrr.toFixed(3)} | ${b.summary.doc_mrr.toFixed(3)} | ${(b.summary.doc_mrr - a.summary.doc_mrr >= 0 ? "+" : "") + (b.summary.doc_mrr - a.summary.doc_mrr).toFixed(3)} |`,
 		`| inline_citation_rate | ${formatPct(a.summary.inline_citation_rate)} | ${formatPct(b.summary.inline_citation_rate)} | ${deltaPct(a.summary.inline_citation_rate, b.summary.inline_citation_rate)} |`,
+		`| mean_number_hit_rate | ${formatPct(a.summary.mean_number_hit_rate)} | ${formatPct(b.summary.mean_number_hit_rate)} | ${deltaPct(a.summary.mean_number_hit_rate, b.summary.mean_number_hit_rate)} |`,
 		`| mean_fact_hit_rate | ${formatPct(a.summary.mean_fact_hit_rate)} | ${formatPct(b.summary.mean_fact_hit_rate)} | ${deltaPct(a.summary.mean_fact_hit_rate, b.summary.mean_fact_hit_rate)} |`,
+		...(a.summary.semantic_accuracy !== undefined &&
+		b.summary.semantic_accuracy !== undefined
+			? [
+					`| semantic_accuracy | ${formatPct(a.summary.semantic_accuracy)} | ${formatPct(b.summary.semantic_accuracy)} | ${deltaPct(a.summary.semantic_accuracy, b.summary.semantic_accuracy)} |`,
+				]
+			: []),
 		`| refusal_accuracy | ${formatPct(a.summary.refusal_accuracy)} | ${formatPct(b.summary.refusal_accuracy)} | ${deltaPct(a.summary.refusal_accuracy, b.summary.refusal_accuracy)} |`,
 		`| latency_p95_ms | ${a.summary.latency_p95_ms} | ${b.summary.latency_p95_ms} | ${Math.round(b.summary.latency_p95_ms - a.summary.latency_p95_ms)}ms |`,
 	];
@@ -408,6 +438,118 @@ function argValue(args: readonly string[], flag: string): string | undefined {
 	const index = args.indexOf(flag);
 	if (index >= 0 && index + 1 < args.length) return args[index + 1];
 	return undefined;
+}
+
+function argValues(args: readonly string[], flag: string): string[] {
+	const values: string[] = [];
+	for (let i = 0; i < args.length; i += 1) {
+		if (args[i] === flag && i + 1 < args.length) {
+			values.push(args[i + 1] ?? "");
+		}
+	}
+	return values;
+}
+
+export function parseOnlyIdsArg(rawValues: readonly string[]): string[] {
+	const seen = new Set<string>();
+	const ids: string[] = [];
+	for (const raw of rawValues) {
+		for (const piece of raw.split(",")) {
+			const trimmed = piece.trim();
+			if (!trimmed || seen.has(trimmed)) continue;
+			seen.add(trimmed);
+			ids.push(trimmed);
+		}
+	}
+	return ids;
+}
+
+export function extractFailedIdsFromReport(report: BenchmarkReport): string[] {
+	const seen = new Set<string>();
+	const ids: string[] = [];
+	const push = (id: string) => {
+		if (!id || seen.has(id)) return;
+		seen.add(id);
+		ids.push(id);
+	};
+	for (const row of report.positive_results ?? []) {
+		const semanticFailed =
+			row.semantic_verdict !== undefined && row.semantic_verdict !== "correct";
+		if (
+			row.http_status !== 200 ||
+			!row.answered ||
+			!row.doc_recall ||
+			semanticFailed
+		) {
+			push(row.id);
+		}
+	}
+	for (const row of report.negative_results ?? []) {
+		if (row.http_status !== 200 || !row.passed) {
+			push(row.id);
+		}
+	}
+	return ids;
+}
+
+export function isLibraryCorpusReady(
+	documents: unknown,
+	requiredFilenames: readonly string[],
+): boolean {
+	if (!Array.isArray(documents) || requiredFilenames.length === 0) return false;
+	const readyFilenames = new Set<string>();
+	for (const entry of documents) {
+		const doc = asObject(entry);
+		const filename = stringValue(doc.filename);
+		const status = stringValue(doc.status);
+		const jobStatus = stringValue(doc.job_status);
+		if (
+			filename &&
+			status === "ready" &&
+			(jobStatus === null || jobStatus === "completed")
+		) {
+			readyFilenames.add(filename);
+		}
+	}
+	return requiredFilenames.every((filename) => readyFilenames.has(filename));
+}
+
+export function resolveReuseOrCreateFlag(
+	args: readonly string[],
+	batchDir: string,
+): { enabled: boolean; name: string } {
+	const index = args.indexOf("--reuse-or-create");
+	if (index < 0) return { enabled: false, name: "" };
+	const next = args[index + 1];
+	const name =
+		next && !next.startsWith("--") && next.trim()
+			? next.trim()
+			: `HF Eval Corpus ${basename(batchDir)}`;
+	return { enabled: true, name };
+}
+
+async function readSavedReusableLibraryId(
+	batchDir: string,
+): Promise<string | null> {
+	try {
+		const raw = await readFile(
+			resolve(batchDir, REUSABLE_LIBRARY_ID_FILE),
+			"utf8",
+		);
+		const trimmed = raw.trim();
+		return trimmed || null;
+	} catch {
+		return null;
+	}
+}
+
+async function writeSavedReusableLibraryId(
+	batchDir: string,
+	libraryId: string,
+): Promise<string> {
+	const targetPath = resolve(batchDir, REUSABLE_LIBRARY_ID_FILE);
+	await writeFile(targetPath, `${libraryId}\n`, "utf8");
+	return targetPath;
 }
 
 const SemanticGradeSchema = z
@@ -591,8 +733,20 @@ async function run(): Promise<void> {
 
 	const label = argValue(args, "--label") ?? "baseline";
 	const reuseLibraryId = argValue(args, "--reuse-library");
+	const reuseOrCreate = resolveReuseOrCreateFlag(args, batchDir);
 	const cleanupLibrary = args.includes("--cleanup-library");
 	const allowIncompleteCorpus = args.includes("--allow-incomplete-corpus");
+	if (reuseLibraryId && reuseOrCreate.enabled) {
+		throw new Error("cannot combine --reuse-library and --reuse-or-create");
+	}
+	if (reuseOrCreate.enabled && cleanupLibrary) {
+		throw new Error("cannot combine --reuse-or-create and --cleanup-library");
+	}
+	const onlyIds = parseOnlyIdsArg(argValues(args, "--only-ids"));
+	const onlyFailedFromRaw = argValue(args, "--only-failed-from");
+	const onlyFailedFromPath = onlyFailedFromRaw
+		? resolve(onlyFailedFromRaw)
+		: undefined;
 	const ingestTimeoutRaw = argValue(args, "--ingest-timeout-ms");
 	const parsedIngestTimeout = ingestTimeoutRaw
 		? Number.parseInt(ingestTimeoutRaw, 10)
@@ -623,14 +777,75 @@ async function run(): Promise<void> {
 		.split(/\r?\n/u)
 		.filter((line) => line.trim())
 		.map((line) => JSON.parse(line) as HfCase);
-	let positives = lines.filter((c): c is PositiveHfCase => c.polarity === "positive");
-	let negatives = lines.filter((c): c is NegativeHfCase => c.polarity === "negative");
+	const allPositives = lines.filter(
+		(c): c is PositiveHfCase => c.polarity === "positive",
+	);
+	const allNegatives = lines.filter(
+		(c): c is NegativeHfCase => c.polarity === "negative",
+	);
+	let positives = [...allPositives];
+	let negatives = [...allNegatives];
+
+	let subset: SubsetMetadata | undefined;
+	let selectedIds: Set<string> | null = null;
+	if (onlyFailedFromPath) {
+		const priorReport = JSON.parse(
+			await readFile(onlyFailedFromPath, "utf8"),
+		) as BenchmarkReport;
+		const failedIds = extractFailedIdsFromReport(priorReport);
+		if (failedIds.length === 0 && onlyIds.length === 0) {
+			process.stdout.write(
+				`== 0 failed cases in ${onlyFailedFromPath}; nothing to re-run\n`,
+			);
+			return;
+		}
+		selectedIds = new Set([...failedIds, ...onlyIds]);
+	} else if (onlyIds.length > 0) {
+		selectedIds = new Set(onlyIds);
+	}
+
+	if (selectedIds) {
+		const allCaseIds = new Set([...allPositives, ...allNegatives].map((c) => c.id));
+		const unknownIds = [...selectedIds].filter((id) => !allCaseIds.has(id));
+		if (unknownIds.length > 0) {
+			process.stderr.write(
+				`!! warning: unknown case IDs ignored: ${unknownIds.join(", ")}\n`,
+			);
+		}
+		positives = positives.filter((c) => selectedIds.has(c.id));
+		negatives = negatives.filter((c) => selectedIds.has(c.id));
+		if (positives.length === 0 && negatives.length === 0) {
+			throw new Error(
+				`no benchmark cases matched filter (${[...selectedIds].join(", ")})`,
+			);
+		}
+		subset = {
+			...(onlyIds.length > 0 ? { only_ids: onlyIds } : {}),
+			...(onlyFailedFromPath ? { only_failed_from: onlyFailedFromPath } : {}),
+			total_positive_cases: allPositives.length,
+			total_negative_cases: allNegatives.length,
+		};
+	}
+
 	if (limit && Number.isFinite(limit) && limit > 0) {
 		positives = positives.slice(0, limit);
 		negatives = negatives.slice(0, Math.min(negatives.length, 3));
+		subset = {
+			...(subset ?? {
+				total_positive_cases: allPositives.length,
+				total_negative_cases: allNegatives.length,
+			}),
+			limit,
+		};
 	}
 
-	const filenames = [...new Set(positives.map((c) => c.file))].sort();
+	// When creating a reusable corpus, always upload the full batch corpus unless --limit explicitly reduced it.
+	const fullBatchFilenames = [...new Set(allPositives.map((c) => c.file))].sort();
+	const subsetFilenames = [...new Set(positives.map((c) => c.file))].sort();
+	const requiredFilenames =
+		subsetFilenames.length > 0 ? subsetFilenames : fullBatchFilenames;
+	const uploadFilenames =
+		reuseOrCreate.enabled && !limit ? fullBatchFilenames : requiredFilenames;
 	const runId = `hf-${label}-${compactTimestamp()}-${randomUUID().slice(0, 8)}`;
 
 	const client = new EvaluationClient(baseUrl);
@@ -643,9 +858,73 @@ async function run(): Promise<void> {
 	if (login.status !== 200) throw new Error(`login failed: ${login.status}`);
 
 	let libraryId = reuseLibraryId;
-	const ownsLibrary = !libraryId;
+	let ownsLibrary = false;
 	if (libraryId) {
 		process.stdout.write(`== reuse library ${libraryId}\n`);
+	} else if (reuseOrCreate.enabled) {
+		const savedId = await readSavedReusableLibraryId(batchDir);
+		if (savedId) {
+			const docsRes = await client.json(
+				"GET",
+				`/api/libraries/${encodeURIComponent(savedId)}/documents`,
+			);
+			if (
+				docsRes.status === 200 &&
+				isLibraryCorpusReady(docsRes.body, requiredFilenames)
+			) {
+				libraryId = savedId;
+				process.stdout.write(
+					`== reuse saved corpus library ${libraryId} (${REUSABLE_LIBRARY_ID_FILE})\n`,
+				);
+			}
+		}
+		if (!libraryId) {
+			const libsRes = await client.json("GET", "/api/libraries");
+			const libraries = Array.isArray(libsRes.body) ? libsRes.body : [];
+			for (const entry of libraries) {
+				const lib = asObject(entry);
+				const candidateId = stringValue(lib.id);
+				const candidateName = stringValue(lib.name);
+				const candidateStatus = stringValue(lib.status);
+				if (
+					!candidateId ||
+					candidateName !== reuseOrCreate.name ||
+					candidateStatus === "deleting" ||
+					candidateStatus === "deleted"
+				) {
+					continue;
+				}
+				const docsRes = await client.json(
+					"GET",
+					`/api/libraries/${encodeURIComponent(candidateId)}/documents`,
+				);
+				if (
+					docsRes.status === 200 &&
+					isLibraryCorpusReady(docsRes.body, requiredFilenames)
+				) {
+					libraryId = candidateId;
+					const savedPath = await writeSavedReusableLibraryId(batchDir, libraryId);
+					process.stdout.write(
+						`== reuse existing named library "${reuseOrCreate.name}" (${libraryId}, saved -> ${savedPath})\n`,
+					);
+					break;
+				}
+			}
+		}
+		if (!libraryId) {
+			process.stdout.write(
+				`== create reusable library "${reuseOrCreate.name}"\n`,
+			);
+			const created = await client.json("POST", "/api/libraries", {
+				name: reuseOrCreate.name,
+			});
+			const body = asObject(created.body);
+			libraryId = stringValue(body.id) ?? undefined;
+			if (![200, 201].includes(created.status) || !libraryId) {
+				throw new Error(`library creation failed: ${created.status}`);
+			}
+			ownsLibrary = true;
+		}
 	} else {
 		process.stdout.write(`== create library HF Eval ${runId}\n`);
 		const created = await client.json("POST", "/api/libraries", {
@@ -656,6 +935,7 @@ async function run(): Promise<void> {
 		if (![200, 201].includes(created.status) || !libraryId) {
 			throw new Error(`library creation failed: ${created.status}`);
 		}
+		ownsLibrary = true;
 	}
 
 	let jobs = new Map<string, JobResult>();
@@ -663,7 +943,7 @@ async function run(): Promise<void> {
 	try {
 		if (ownsLibrary) {
 			const uploads = new Map<string, { jobId: string; documentId: string | null }>();
-			for (const filename of filenames) {
+			for (const filename of uploadFilenames) {
 				const filePath = resolve(batchDir, "pdfs", filename);
 				const res = await client.upload(libraryId, filePath);
 				const body = asObject(res.body);
@@ -695,6 +975,9 @@ async function run(): Promise<void> {
 					throw new Error(`incomplete ingestion jobs: ${summary}`);
 				}
 				process.stderr.write(`!! warning: incomplete ingestion jobs: ${summary}\n`);
+			} else if (!cleanupLibrary && !limit) {
+				const savedPath = await writeSavedReusableLibraryId(batchDir, libraryId);
+				process.stdout.write(`== saved reusable library id -> ${savedPath}\n`);
 			}
 		} else {
 			const docsRes = await client.json(
@@ -849,7 +1132,9 @@ async function run(): Promise<void> {
 		const posCount = positiveResults.length || 1;
 		const numWithTotal = positiveResults.filter((r) => r.number_total > 0);
 		const termWithTotal = positiveResults.filter((r) => r.term_total > 0);
-		const latencies = positiveResults.map((r) => r.latency_ms);
+		const latencies = (
+			positiveResults.length > 0 ? positiveResults : negativeResults
+		).map((r) => r.latency_ms);
 
 		const report: BenchmarkReport = {
 			run_id: runId,
@@ -858,6 +1143,7 @@ async function run(): Promise<void> {
 			base_url: baseUrl,
 			library_id: libraryId,
 			reused_library: !ownsLibrary,
+			...(subset ? { subset } : {}),
 			build_fingerprint: buildFingerprint(baseUrl, health.body),
 			summary: {
 				positive_cases: positiveResults.length,
