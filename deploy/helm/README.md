@@ -28,6 +28,9 @@ WORKER_DATABASE_URL
 DBOS_SYSTEM_DATABASE_URL
 MIGRATOR_DATABASE_URL
 LLM_API_KEY
+EMBEDDING_API_KEY          # optional, required when config.embeddingBaseUrl differs from llmBaseUrl
+JUDGE_API_KEY              # optional, required when config.judgeBaseUrl differs from llmBaseUrl
+RERANK_API_KEY             # optional, required when a custom rerank endpoint is configured
 MINERU_API_KEY             # optional, self-hosted or 302.AI MinerU auth
 OTEL_EXPORTER_OTLP_HEADERS # optional, customer Collector authentication
 COS_SECRET_ID              # required only for objectStorage.driver=cos
