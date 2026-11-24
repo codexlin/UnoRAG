@@ -222,6 +222,15 @@ test("deployment inputs map to one application environment contract", async () =
 		compose.services.web.environment.TS_RETRIEVAL_RERANK_ENABLED,
 		advanced.get("TS_RETRIEVAL_RERANK_ENABLED"),
 	);
+	assert.equal(
+		compose.services.web.environment.TS_RETRIEVAL_RERANK_ALLOWED,
+		"true",
+	);
+	assert.equal(
+		renderComposeConfig({ TS_RETRIEVAL_RERANK_ALLOWED: "false" }).services.web
+			.environment.TS_RETRIEVAL_RERANK_ALLOWED,
+		"false",
+	);
 	assert.equal(compose.services.web.environment.AI_INCLUDE_USAGE, "true");
 	assert.equal(advanced.get("AI_INCLUDE_USAGE"), "true");
 	for (const service of ["web", "dbos-worker"]) {

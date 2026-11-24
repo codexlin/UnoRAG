@@ -184,7 +184,10 @@ test("settings keep grouped controls, one-time key clearing and audit navigation
 	await ask.getByRole("button", { name: "保存", exact: true }).click();
 	await expect(ask.getByRole("status")).toHaveText("已保存");
 	expect(patches).toEqual([
-		{ ask: { answer_profile: "precise", session_memory_enabled: false } },
+		{
+			ask: { answer_profile: "precise", session_memory_enabled: false },
+			policy_version: 1,
+		},
 	]);
 	await expect(
 		page.getByRole("region", { name: "成员与邀请", exact: true }),

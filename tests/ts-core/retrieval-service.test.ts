@@ -2745,3 +2745,64 @@ test("Qdrant expansion filters exact targets before scrolling a large document",
 	);
 	assert.deepEqual(scrollResults, [["parent"], [], ["adjacent"]]);
 });
+
+test("deployment rerankAllowed=false hard-disables per-request reranking", async () => {
+	let rerankCalls = 0;
+	const reranker: RerankProvider = {
+		async rerank() {
+			rerankCalls += 1;
+			return [{ index: 1, score: 0.99 }];
+		},
+	};
+	const cache = new ScopedRetrievalCache({ ttlMs: 30_000, maxEntries: 16 });
+	const disallowed = new DefaultRetrievalService(
+		embeddings,
+		new FakeStore(),
+		reranker,
+		{
+			hybridEnabled: false,
+			rerankEnabled: true,
+			rerankAllowed: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+			cache,
+		},
+	);
+	const blocked = await disallowed.retrieve({
+		query: "leave policy",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+		options: { rerankEnabled: true },
+	});
+	assert.equal(rerankCalls, 0);
+	assert.equal(blocked.debug.usedRerank, false);
+	assert.deepEqual(
+		blocked.citations.map((citation) => citation.id),
+		["dense", "both"],
+	);
+
+	// Baseline rerankEnabled=false still allows workspace per-request rerank when rerankAllowed is omitted/true.
+	const allowed = new DefaultRetrievalService(
+		embeddings,
+		new FakeStore(),
+		reranker,
+		{
+			hybridEnabled: false,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	const reranked = await allowed.retrieve({
+		query: "leave policy",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+		options: { rerankEnabled: true },
+	});
+	assert.equal(rerankCalls, 1);
+	assert.equal(reranked.debug.usedRerank, true);
+});

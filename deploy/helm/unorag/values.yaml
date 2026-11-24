@@ -192,6 +192,7 @@ config:
   contextualRetrievalTimeoutMs: "1000"
   retrievalHybridEnabled: "true"
   retrievalRerankEnabled: "false"
+  retrievalRerankAllowed: "true"
   rerankModel: qwen3-rerank
   rerankTimeoutMs: "10000"
   mineruProvider: self_hosted
