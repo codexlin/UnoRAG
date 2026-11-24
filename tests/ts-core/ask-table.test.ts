@@ -1263,3 +1263,65 @@ test("explanatory impact and multi-segment comparison queries bypass single-row 
 		);
 	}
 });
+
+test("grounded lookup ignores duplicate headers safely without throwing TypeError", () => {
+	const duplicateBlankHeaders = ["公司名称", "营业收入", "", ""];
+	const duplicateBlankDataset = {
+		records: [
+			tableRecord({
+				id: "dup-blank-1",
+				tableId: "dup-blank",
+				headers: duplicateBlankHeaders,
+				rows: [["新华人寿保险股份有限公司", "2065.38亿元", "注释A", "注释B"]],
+			}),
+		],
+	};
+	const blankPlan = deriveGroundedTableLookup(
+		"新华人寿保险股份有限公司的营业收入是多少？",
+		[
+			{
+				tableId: "dup-blank",
+				headers: duplicateBlankHeaders,
+				dataset: duplicateBlankDataset,
+			},
+		],
+	);
+	assert.equal(blankPlan?.operation, "lookup");
+	const blankResult = executeTableQuery(blankPlan, duplicateBlankDataset);
+	assert.equal(blankResult.status, "success");
+	assert.match(blankResult.answerText ?? "", /2065\.38亿元/);
+
+	const duplicateMetricHeaders = ["公司名称", "金额", " 金额 "];
+	const duplicateMetricDataset = {
+		records: [
+			tableRecord({
+				id: "dup-metric-1",
+				tableId: "dup-metric",
+				headers: duplicateMetricHeaders,
+				rows: [["新华人寿保险股份有限公司", "100亿元", "200亿元"]],
+			}),
+		],
+	};
+	// Mentioning an ambiguous duplicate column must fall back cleanly instead of throwing or dropping the column.
+	assert.equal(
+		deriveGroundedTableLookup("新华人寿保险股份有限公司的金额是多少？", [
+			{
+				tableId: "dup-metric",
+				headers: duplicateMetricHeaders,
+				dataset: duplicateMetricDataset,
+			},
+		]),
+		null,
+	);
+	// Unrelated queries hitting a duplicate-header table must also return null without throwing.
+	assert.equal(
+		deriveGroundedTableLookup("产品登记编码的构成", [
+			{
+				tableId: "dup-metric",
+				headers: duplicateMetricHeaders,
+				dataset: duplicateMetricDataset,
+			},
+		]),
+		null,
+	);
+});

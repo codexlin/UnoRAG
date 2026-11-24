@@ -168,7 +168,7 @@ function selectRowValues(
 	columns: readonly string[],
 ): Record<string, string> {
 	return Object.fromEntries(
-		columns.map((column) => [column, row.values[column]]),
+		columns.map((column) => [column, row.values[column] ?? ""]),
 	);
 }
 

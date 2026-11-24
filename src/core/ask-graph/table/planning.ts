@@ -1,5 +1,9 @@
 import type { TableQueryPlan } from "./contracts";
-import { normalizeTable, type TableDatasetInput } from "./normalize";
+import {
+	normalizeTable,
+	resolveColumn,
+	type TableDatasetInput,
+} from "./normalize";
 import { isDerivedCalculationQuestion } from "./query-intent";
 
 const MINIMUM_CUE = /(?:最小|最低|最少|minimum|\bmin\b)/i;
@@ -49,16 +53,31 @@ export function deriveGroundedTableLookup(
 	for (const candidate of tables) {
 		const table = normalizeTable(candidate.dataset);
 		if (!table) continue;
-		const columns = table.headers.filter((header) =>
+		const matchedHeaders = table.headers.filter((header) =>
 			headerTerms(header).some(
 				(term) => term.length >= 2 && questionKey.includes(term),
 			),
 		);
-		if (!columns.length) continue;
-		const matches = table.headers
+		if (!matchedHeaders.length) continue;
+		if (
+			matchedHeaders.some(
+				(header) => resolveColumn(header, table.headers).status !== "ok",
+			)
+		) {
+			continue;
+		}
+		const columns = matchedHeaders;
+		const uniqueHeaders = table.headers.filter(
+			(header) => resolveColumn(header, table.headers).status === "ok",
+		);
+		const matches = uniqueHeaders
 			.flatMap((column) => {
 				const values = [
-					...new Set(table.rows.map((row) => row.values[column])),
+					...new Set(
+						table.rows
+							.map((row) => row.values[column])
+							.filter((value): value is string => typeof value === "string"),
+					),
 				];
 				return values.flatMap((value) => {
 					const key = normalized(value);
@@ -85,7 +104,9 @@ export function deriveGroundedTableLookup(
 			matches.some(
 				(item) =>
 					!table.rows
-						.filter((row) => normalized(row.values[best.column]) === best.key)
+						.filter(
+							(row) => normalized(row.values[best.column] ?? "") === best.key,
+						)
 						.every(
 							(row) =>
 								(item.column === best.column && item.key === best.key) ||
@@ -100,7 +121,7 @@ export function deriveGroundedTableLookup(
 		if (values.length > 50) continue;
 		const matchedRowCount = table.rows.filter((row) =>
 			values.some(
-				(val) => normalized(row.values[best.column]) === normalized(val),
+				(val) => normalized(row.values[best.column] ?? "") === normalized(val),
 			),
 		).length;
 		const nonKeyColumns = columns.filter((col) => col !== best.column);
