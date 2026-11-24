@@ -84,13 +84,15 @@ UnoRAG 当前以**单客户独立实例**为默认交付模型。Organization �
 在 npmjs.org 网络不稳定的环境中，可使用
 `./start.sh --npm-registry https://registry.npmmirror.com`，依赖版本仍由 lockfile 固定。
 
-正式客户安装仍须使用 digest-pinned release manifest 和完整部署流程：
+正式客户安装仍须使用 digest-pinned release manifest 和完整部署流程
+（GHCR 签名校验需安装 Cosign v3，并在 `deploy/config/runtime.secret` 中补全 `POSTGRES_PASSWORD`、`UNORAG_SESSION_SECRET` 与 `LLM_API_KEY`）：
 
 ```bash
 cd deploy/compose
 ./scripts/init-config.sh
-# 检查 runtime.env 与 runtime.secret；高级调优按需修改
 ./scripts/prepare-runtime-db-secrets.sh --bundled-postgres
+# 在 ../config/runtime.secret 补全 POSTGRES_PASSWORD、UNORAG_SESSION_SECRET（>= 32 字符）和 LLM_API_KEY
+# 检查 ../config/runtime.env（端口、LLM_BASE_URL、模型）；高级调优按需修改
 ./scripts/install.sh --manifest /path/to/release.env
 ```
 
@@ -100,7 +102,7 @@ cd deploy/compose
 curl -sf http://localhost:8080/api/rag/health/ready
 ```
 
-升级、回滚、备份、恢复和 Kubernetes 说明见[私有化部署](./docs/DEPLOYMENT.md)。
+切换云端或本地模型服务（OpenAI、DeepSeek、Ollama、vLLM、SGLang、Xinference）以及升级、回滚、备份、恢复和 Kubernetes 说明见[私有化部署](./docs/DEPLOYMENT.md)。
 
 ## 系统架构
 

@@ -397,6 +397,25 @@ test("Compose preserves each provider credential and endpoint pair without flatt
 	}
 });
 
+test("Compose maps host.docker.internal for Linux local model and parser services", () => {
+	const { services } = renderComposeConfig();
+	for (const workload of ["web", "dbos-worker", "dbos-control"]) {
+		const extraHosts = services[workload].extra_hosts;
+		const mapped = Array.isArray(extraHosts)
+			? extraHosts.some(
+					(entry) =>
+						entry === "host.docker.internal:host-gateway" ||
+						entry === "host.docker.internal=host-gateway",
+				)
+			: extraHosts?.["host.docker.internal"] === "host-gateway";
+		assert.equal(
+			mapped,
+			true,
+			`${workload} must map host.docker.internal to host-gateway`,
+		);
+	}
+});
+
 test("Compose gives Web, Worker, and Control the same Qdrant connection settings", () => {
 	for (const [overrides, expected] of [
 		[
