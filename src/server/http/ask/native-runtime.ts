@@ -393,7 +393,9 @@ export class NativeAskRuntime {
 			? Math.max(30, this.policy.retrieve_top_k)
 			: state.query_type === "compare"
 				? Math.max(20, this.policy.retrieve_top_k)
-				: state.query_type === "summary" || isMultiAspectFact
+				: state.query_type === "summary" ||
+						isMultiAspectFact ||
+						isDerivedCalculationQuestion(mainQuery)
 					? Math.max(10, this.policy.retrieve_top_k)
 					: this.policy.retrieve_top_k;
 		const targetTopK = isRetryAttempt ? Math.max(12, baseTopK) : baseTopK;

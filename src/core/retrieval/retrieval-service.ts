@@ -360,7 +360,11 @@ function sectionKey(hit: QdrantSearchHit): string {
 	return `${hit.payload.doc_id}:${hit.payload.generation_id ?? ""}:${hit.payload.record_id ?? String(hit.id)}`;
 }
 
-function isExpandableChildChunk(hit: QdrantSearchHit): boolean {
+function isExpandableParentChild(hit: QdrantSearchHit): boolean {
+	return hit.payload.record_type === "chunk" && !hit.payload.figure_id;
+}
+
+function isExpandableSiblingChunk(hit: QdrantSearchHit): boolean {
 	return (
 		hit.payload.record_type === "chunk" &&
 		!hit.payload.table_id &&
@@ -627,7 +631,7 @@ async function expandParentContexts(input: {
 	) {
 		return parentContexts;
 	}
-	const expandable = input.selected.filter(isExpandableChildChunk);
+	const expandable = input.selected.filter(isExpandableParentChild);
 	if (expandable.length === 0) return parentContexts;
 
 	const selectedSectionKeys = new Set(
@@ -671,7 +675,7 @@ async function expandParentContexts(input: {
 	for (const child of expandable) {
 		const parent = findParentSection(child, allSections);
 		if (!parent) {
-			fallbackChildren.push(child);
+			if (isExpandableSiblingChunk(child)) fallbackChildren.push(child);
 			continue;
 		}
 		const key = sectionKey(parent);
@@ -681,7 +685,7 @@ async function expandParentContexts(input: {
 			child.payload.body || child.payload.text,
 		);
 		if (!bounded) {
-			fallbackChildren.push(child);
+			if (isExpandableSiblingChunk(child)) fallbackChildren.push(child);
 			continue;
 		}
 		attachedSectionKeys.add(key);
@@ -716,7 +720,7 @@ async function expandParentContexts(input: {
 				const neighborsByLocation = new Map<string, QdrantSearchHit>();
 				for (const hit of siblingCandidates) {
 					const key = chunkLocationKey(chunkLocation(hit));
-					if (neighborTargets.has(key) && isExpandableChildChunk(hit)) {
+					if (neighborTargets.has(key) && isExpandableSiblingChunk(hit)) {
 						neighborsByLocation.set(key, hit);
 					}
 				}

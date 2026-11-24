@@ -2806,3 +2806,108 @@ test("deployment rerankAllowed=false hard-disables per-request reranking", async
 	assert.equal(rerankCalls, 1);
 	assert.equal(reranked.debug.usedRerank, true);
 });
+
+test("table-projection chunks retain parent section context after overlap deduplication without sibling-prose fallback", async () => {
+	const tableText = `${"股票简称 | 股票代码 | 2024年报EPS\n上港集团 | 600018.SH | 0.6440元\n".repeat(4).trim()}`;
+	const surroundingProse =
+		"表3列示了交通运输板块重点标的2022年至2024年基本每股收益（EPS）数据。每股收益是衡量上市公司盈利能力的关键指标，也是计算静态市盈率的核心分母。";
+	const sectionText = `${tableText}\n\n${surroundingProse}`;
+	const sectionHit = hit({
+		id: "sec-eps",
+		text: sectionText,
+		chunkIndex: 0,
+		score: 0.92,
+		recordType: "section",
+	});
+	sectionHit.payload.record_id = "sec:eps";
+	sectionHit.payload.section_path = "3.3 每股收益与盈利质量";
+	sectionHit.payload.section_instance = 9;
+	sectionHit.payload.source_chunk_ids = ["chk:doc:11", "chk:doc:12"];
+
+	const tableChunk = hit({
+		id: "chk-eps-table",
+		text: tableText,
+		chunkIndex: 11,
+		score: 0.9,
+		recordType: "chunk",
+	});
+	tableChunk.payload.record_id = "chk:doc:11";
+	tableChunk.payload.table_id = "doc:table:52";
+	tableChunk.payload.section_path = "3.3 每股收益与盈利质量";
+	tableChunk.payload.section_instance = 9;
+
+	let siblingLookupCalls = 0;
+	const service = new DefaultRetrievalService(
+		embeddings,
+		{
+			async search() {
+				return [sectionHit, tableChunk];
+			},
+			async listCorpus() {
+				return [];
+			},
+			async lookupChunks() {
+				siblingLookupCalls += 1;
+				return [];
+			},
+		},
+		null,
+		{
+			hybridEnabled: false,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	const result = await service.retrieve({
+		query: "上港集团静态市盈率PE",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+	});
+	assert.equal(result.citations.length, 1);
+	assert.equal(result.citations[0]?.id, "chk-eps-table");
+	assert.equal(result.citations[0]?.table_id, "doc:table:52");
+	assert.match(
+		result.citations[0]?.parent_context ?? "",
+		/计算静态市盈率的核心分母/,
+	);
+	assert.equal(siblingLookupCalls, 0);
+
+	// Even when no parent section exists, table-projection chunks do not query prose sibling chunks.
+	const orphanService = new DefaultRetrievalService(
+		embeddings,
+		{
+			async search() {
+				return [tableChunk];
+			},
+			async listCorpus() {
+				return [];
+			},
+			async lookupSections() {
+				return [];
+			},
+			async lookupChunks() {
+				siblingLookupCalls += 1;
+				return [];
+			},
+		},
+		null,
+		{
+			hybridEnabled: false,
+			rerankEnabled: false,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	const orphanResult = await orphanService.retrieve({
+		query: "上港集团静态市盈率PE",
+		libraryId: "library-a",
+		scope,
+		topK: 1,
+	});
+	assert.equal(orphanResult.citations[0]?.parent_context, undefined);
+	assert.equal(siblingLookupCalls, 0);
+});
