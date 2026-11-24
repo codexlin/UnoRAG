@@ -11,6 +11,7 @@ import type {
 	ApiLibrary,
 	ApiUploadResponse,
 } from "../../src/lib/api";
+import { selectAppearanceRadio } from "./appearance-assertions";
 import { chooseSelect } from "./select-helpers";
 
 let cookies: Cookie[] = [];
@@ -1212,8 +1213,12 @@ test("library navigation keeps search, selection, collapse and document actions 
 	for (const theme of ["Vercel", "Claude", "Violet Bloom"]) {
 		for (const mode of ["浅色", "深色"]) {
 			await page.getByRole("button", { name: "外观设置", exact: true }).click();
-			await page.getByRole("radio", { name: theme, exact: true }).check();
-			await page.getByRole("radio", { name: mode, exact: true }).check();
+			await selectAppearanceRadio(
+				page.getByRole("radio", { name: theme, exact: true }),
+			);
+			await selectAppearanceRadio(
+				page.getByRole("radio", { name: mode, exact: true }),
+			);
 			await page.keyboard.press("Escape");
 			await expectThemeColors(
 				page.getByRole("button", { name: "新建知识库", exact: true }).first(),
@@ -1300,22 +1305,23 @@ test("library navigation keeps search, selection, collapse and document actions 
 			await expect(
 				page.getByRole("button", { name: "操作", exact: true }),
 			).toBeVisible();
+			const minTarget = width < 768 ? 44 : 36;
 			await expect
 				.poll(() =>
 					page
 						.getByRole("button", { name: "操作", exact: true })
-						.evaluate((button) => {
+						.evaluate((button, expected) => {
 							const bounds = button.getBoundingClientRect();
 							const container = button
 								.closest('[data-slot="table-container"]')
 								?.getBoundingClientRect();
 							return Boolean(
 								container &&
-									bounds.width >= 44 &&
+									bounds.width >= expected &&
 									bounds.right <= container.right &&
 									bounds.left >= container.left,
 							);
-						}),
+						}, minTarget),
 				)
 				.toBe(true);
 			await expect

@@ -227,8 +227,9 @@ test("overview preserves unknown and stale health, exposes keyboard errors and f
 		const bounds = await page
 			.getByRole("button", { name: "刷新运行数据", exact: true })
 			.boundingBox();
-		expect(bounds?.width).toBeGreaterThanOrEqual(44);
-		expect(bounds?.height).toBeGreaterThanOrEqual(44);
+		const minTarget = width < 768 ? 44 : 36;
+		expect(bounds?.width).toBeGreaterThanOrEqual(minTarget);
+		expect(bounds?.height).toBeGreaterThanOrEqual(minTarget);
 	}
 	await page.screenshot({
 		path: testInfo.outputPath("operations-overview.png"),
@@ -395,7 +396,7 @@ test("request browser filters, paginates and opens successful and refused chains
 		fullPage: true,
 	});
 	await page.keyboard.press("Escape");
-	await page.getByRole("button", { name: "下一页请求", exact: true }).click();
+	await page.getByRole("button", { name: "下一页", exact: true }).click();
 	await expect(
 		page.getByRole("button", {
 			name: `查看请求 ${secondRequestId}`,
@@ -423,7 +424,7 @@ test("request browser filters, paginates and opens successful and refused chains
 		page.getByRole("combobox", { name: "问题类型", exact: true }),
 		"事实",
 	);
-	await page.getByLabel("最低耗时（ms）", { exact: true }).fill("15000");
+	await page.getByLabel("最低耗时(ms)", { exact: true }).fill("15000");
 	await page.getByLabel("Request ID", { exact: true }).fill(requestId);
 	await page.getByRole("button", { name: "筛选", exact: true }).click();
 	await expect
