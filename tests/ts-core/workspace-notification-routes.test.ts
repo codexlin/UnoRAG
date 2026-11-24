@@ -233,7 +233,22 @@ test("threshold-only updates omit email settings and require their own version",
 		alert_thresholds: { ask_min_samples: 30 },
 		alert_policy_version: 2,
 	};
-	assert.equal((await handlers.PATCH(command(body))).status, 200);
+	assert.equal(
+		(
+			await handlers.PATCH(
+				new Request("http://localhost:3000/api/workspace/notifications", {
+					method: "PATCH",
+					headers: {
+						"content-type": "application/json",
+						host: "127.0.0.1:3001",
+						origin: "http://127.0.0.1:3001",
+					},
+					body: JSON.stringify(body),
+				}),
+			)
+		).status,
+		200,
+	);
 	assert.deepEqual(calls[0].input, {
 		organizationId: identity.tenantId,
 		workspaceId: identity.workspaceId,

@@ -71,7 +71,13 @@ export async function POST(request: Request, context: RouteContext) {
 		if (!lockedLibrary) return false;
 
 		const [lockedDocument] = await tx
-			.select({ id: documents.id })
+			.select({
+				id: documents.id,
+				status: documents.status,
+				deletedAt: documents.deletedAt,
+				desiredVersionId: documents.desiredVersionId,
+				latestJobId: documents.latestJobId,
+			})
 			.from(documents)
 			.where(
 				and(
@@ -85,7 +91,7 @@ export async function POST(request: Request, context: RouteContext) {
 		if (!lockedDocument) return false;
 
 		const [lockedVersion] = await tx
-			.select({ id: documentVersions.id })
+			.select({ id: documentVersions.id, status: documentVersions.status })
 			.from(documentVersions)
 			.where(
 				and(
@@ -135,17 +141,34 @@ export async function POST(request: Request, context: RouteContext) {
 				)
 				.returning({ id: jobs.id });
 			if (cancelledJob.length !== 1) return false;
-			await tx
-				.update(documentVersions)
-				.set({ status: "cancelled", updatedAt: now })
-				.where(eq(documentVersions.id, lockedVersion.id));
-			await tx
-				.update(documents)
-				.set({
-					status: active ? "degraded" : "failed",
-					updatedAt: now,
-				})
-				.where(eq(documents.id, lockedDocument.id));
+			const supersededForSameVersion =
+				lockedDocument.desiredVersionId === lockedVersion.id &&
+				lockedDocument.latestJobId !== null &&
+				lockedDocument.latestJobId !== current.job.id;
+			const canCancelVersion =
+				!supersededForSameVersion &&
+				active?.versionId !== lockedVersion.id &&
+				["pending", "processing", "indexed", "activating"].includes(
+					lockedVersion.status,
+				);
+			if (canCancelVersion) {
+				await tx
+					.update(documentVersions)
+					.set({ status: "cancelled", updatedAt: now })
+					.where(eq(documentVersions.id, lockedVersion.id));
+			}
+			if (
+				canCancelVersion &&
+				lockedDocument.status === "processing" &&
+				lockedDocument.deletedAt === null &&
+				lockedDocument.desiredVersionId === lockedVersion.id &&
+				lockedDocument.latestJobId === current.job.id
+			) {
+				await tx
+					.update(documents)
+					.set({ status: active ? "degraded" : "failed", updatedAt: now })
+					.where(eq(documents.id, lockedDocument.id));
+			}
 		} else {
 			const cancellingJob = await tx
 				.update(jobs)

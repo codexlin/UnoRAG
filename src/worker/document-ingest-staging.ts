@@ -47,6 +47,7 @@ export interface DocumentIngestScopeSnapshot {
 	title: string;
 	documentId: string;
 	libraryId: string;
+	libraryUuid: string;
 	acl: IngestAclSnapshot;
 }
 
@@ -72,7 +73,7 @@ export interface FigureAssetStorePort {
 	persist(input: {
 		organizationId: string;
 		workspaceId: string;
-		libraryId: string;
+		libraryUuid: string;
 		documentId: string;
 		documentVersionId: string;
 		generationId: string;
@@ -123,7 +124,7 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 			const persistedIds = await this.figureAssets.persist({
 				organizationId: input.organizationId,
 				workspaceId: input.workspaceId,
-				libraryId: input.payload.library_id,
+				libraryUuid: snapshot.libraryUuid,
 				documentId: input.payload.document_id,
 				documentVersionId: input.payload.document_version_id,
 				generationId: input.payload.generation_id,

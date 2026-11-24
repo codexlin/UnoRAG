@@ -4,6 +4,7 @@ import test from "node:test";
 import {
 	authorizeDocumentAclRead,
 	authorizeDocumentAclWrite,
+	EMPTY_RESTRICTED_ACL_PRINCIPAL,
 	parseDocumentAclBody,
 	resolveAclProjection,
 	toDocumentAclResponse,
@@ -127,6 +128,26 @@ test("legacy subject_type=user still serializes as principal", () => {
 	]);
 	assert.equal(acl.scope, "restricted");
 	assert.equal(acl.principals.length, 1);
+});
+
+test("an empty restricted ACL stays restricted without exposing a synthetic principal", () => {
+	const acl = toDocumentAclResponse([
+		{
+			subjectType: "principal",
+			subjectId: EMPTY_RESTRICTED_ACL_PRINCIPAL,
+			permission: "read",
+		},
+	]);
+	assert.equal(acl.scope, "restricted");
+	assert.deepEqual(acl.principals, []);
+	assert.deepEqual(acl.groups, []);
+	assert.equal(
+		parseDocumentAclBody({
+			scope: "restricted",
+			principal_ids: [EMPTY_RESTRICTED_ACL_PRINCIPAL],
+		}).ok,
+		false,
+	);
 });
 
 test("projection: ready docs with storage need reindex", () => {

@@ -77,17 +77,41 @@ export async function consumeLoginRateLimit(
 	email: string,
 	policy = resolveLoginRateLimitPolicy(),
 ): Promise<RateLimitResult> {
-	const account = accountSubject(email);
+	return consumeAccountAndIpRateLimit(
+		request,
+		accountSubject(email),
+		"login",
+		policy,
+	);
+}
+
+export function consumePasswordChangeRateLimit(
+	request: Request,
+	principalId: string,
+): Promise<RateLimitResult> {
+	return consumeAccountAndIpRateLimit(request, principalId, "password-change", {
+		windowSeconds: 900,
+		perAccount: 5,
+		perIp: 30,
+	});
+}
+
+async function consumeAccountAndIpRateLimit(
+	request: Request,
+	account: string,
+	namespace: string,
+	policy: LoginRateLimitPolicy,
+): Promise<RateLimitResult> {
 	const address = resolveClientAddress(request);
 	const [accountResult, ipResult] = await Promise.all([
 		consumeFixedWindow({
-			namespace: "login-account",
+			namespace: `${namespace}-account`,
 			subject: account,
 			limit: policy.perAccount,
 			windowSeconds: policy.windowSeconds,
 		}),
 		consumeFixedWindow({
-			namespace: "login-ip",
+			namespace: `${namespace}-ip`,
 			subject: address,
 			limit: policy.perIp,
 			windowSeconds: policy.windowSeconds,

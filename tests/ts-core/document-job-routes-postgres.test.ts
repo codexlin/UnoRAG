@@ -8,8 +8,13 @@ import test from "node:test";
 
 import pg from "pg";
 
+import { LocalObjectStorage } from "../../src/core/object-storage/local";
 import { hashPassword } from "../../src/lib/server/auth/passwords.mjs";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
+import { durableJobSchema } from "../../src/worker/contracts";
+import { PostgresDocumentIngestScope } from "../../src/worker/document-ingest-production";
+import { PostgresFigureAssetStore } from "../../src/worker/production-ports";
+import { PostgresReconciliationStore } from "../../src/worker/reconciler";
 import { closeGlobalDatabasePool } from "../helpers/runtime";
 
 type ResolveFilename = (
@@ -193,6 +198,67 @@ test("document ingest cancel and retry routes enforce the persisted lifecycle", 
 			[ids.document, ids.version, ids.job],
 		);
 
+		const ingestJob = durableJobSchema.parse({
+			jobId: ids.job,
+			organizationId: ids.organization,
+			workspaceId: ids.workspace,
+			documentVersionId: ids.version,
+			type: "document.ingest",
+			idempotencyKey: `document.ingest:${ids.job}`,
+			payload,
+		});
+		assert.equal(ingestJob.type, "document.ingest");
+		const snapshot = await new PostgresDocumentIngestScope(pool).load(
+			ingestJob,
+		);
+		assert.equal(snapshot.libraryId, payload.library_id);
+		assert.equal(snapshot.libraryUuid, ids.library);
+		const storage = new LocalObjectStorage(storageRoot);
+		const assetStore = new PostgresFigureAssetStore(pool, storage);
+		const asset = {
+			figureId: "figure-1",
+			bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+			mimeType: "image/png",
+			extension: "png",
+			pageStart: 1,
+			pageEnd: null,
+		} as const;
+		const figureInput = {
+			organizationId: ids.organization,
+			workspaceId: ids.workspace,
+			libraryUuid: snapshot.libraryUuid,
+			documentId: ids.document,
+			documentVersionId: ids.version,
+			generationId: ids.generation,
+			assets: [asset],
+		};
+		assert.deepEqual(
+			await assetStore.persist(figureInput),
+			new Set(["figure-1"]),
+		);
+		assert.deepEqual(
+			await assetStore.persist(figureInput),
+			new Set(["figure-1"]),
+		);
+		await assert.rejects(
+			assetStore.persist({
+				...figureInput,
+				assets: [{ ...asset, pageEnd: 2 }],
+			}),
+			{ code: "document_figure_asset_conflict" },
+		);
+		const [{ library_id, storage_key }] = (
+			await pool.query(
+				"SELECT library_id, storage_key FROM app.document_figure_assets WHERE generation_id = $1",
+				[ids.generation],
+			)
+		).rows;
+		assert.equal(library_id, ids.library);
+		assert.deepEqual(
+			new Uint8Array(await storage.load(storage_key, 32)),
+			asset.bytes,
+		);
+
 		const [session, securityRedis, cancelRoute, retryRoute] =
 			await routeModules;
 		const token = await session.issueSessionToken(identity);
@@ -213,6 +279,16 @@ test("document ingest cancel and retry routes enforce the persisted lifecycle", 
 		assert.deepEqual(await rejected.json(), {
 			detail: "only document ingest jobs can be cancelled",
 		});
+		const crossOriginCancel = request(`/api/jobs/${ids.job}/cancel`);
+		crossOriginCancel.headers.set("origin", "http://different.local");
+		assert.equal(
+			(
+				await cancelRoute.POST(crossOriginCancel, {
+					params: Promise.resolve({ jobId: ids.job }),
+				})
+			).status,
+			401,
+		);
 
 		const cancelled = await cancelRoute.POST(
 			request(`/api/jobs/${ids.job}/cancel`),
@@ -310,6 +386,141 @@ test("document ingest cancel and retry routes enforce the persisted lifecycle", 
 		assert.deepEqual(await deletingRetry.json(), {
 			detail: "job state changed before retry",
 		});
+
+		const newerVersion = randomUUID();
+		const newerJob = randomUUID();
+		await pool.query(
+			`INSERT INTO app.document_versions (
+				id, document_id, version, generation_id, content_hash, storage_key,
+				status, pipeline_version, ingest_policy_version, document_profile,
+				scan_handling, parse_preference
+			  ) VALUES ($1, $2, 2, $3, 'sha256:newer', $4, 'pending', 'test',
+				1, 'auto', 'auto', 'auto')`,
+			[newerVersion, ids.document, randomUUID(), storageKey],
+		);
+		await pool.query(
+			`INSERT INTO app.jobs (
+				id, organization_id, workspace_id, document_version_id, type,
+				execution_engine, workflow_id, status, stage, idempotency_key
+			) VALUES ($1::uuid, $2, $3, $4, 'document.ingest', 'dbos', $1::text,
+				'queued', 'accepted', $5)`,
+			[
+				newerJob,
+				ids.organization,
+				ids.workspace,
+				newerVersion,
+				`newer:${newerJob}`,
+			],
+		);
+		for (const scenario of [
+			{
+				status: "deleting",
+				desired: ids.version,
+				latest: retriedBody.id,
+				oldVersion: "cancelled",
+			},
+			{
+				status: "deleted",
+				desired: ids.version,
+				latest: retriedBody.id,
+				oldVersion: "cancelled",
+			},
+			{
+				status: "processing",
+				desired: newerVersion,
+				latest: newerJob,
+				oldVersion: "cancelled",
+			},
+			{
+				status: "processing",
+				desired: ids.version,
+				latest: retriedBody.id,
+				oldVersion: "pending",
+			},
+		]) {
+			await pool.query(
+				`UPDATE app.documents SET status = $2::varchar, desired_version_id = $3, latest_job_id = $4,
+					deleted_at = CASE WHEN $2::varchar = 'deleted' THEN now() ELSE NULL END
+				 WHERE id = $1`,
+				[ids.document, scenario.status, scenario.desired, scenario.latest],
+			);
+			const jobToCancel =
+				scenario.oldVersion === "pending" ? ids.job : retriedBody.id;
+			await pool.query("UPDATE app.jobs SET status = 'queued' WHERE id = $1", [
+				jobToCancel,
+			]);
+			await pool.query(
+				"UPDATE app.document_versions SET status = 'pending' WHERE id = $1",
+				[ids.version],
+			);
+			const response = await cancelRoute.POST(
+				request(`/api/jobs/${jobToCancel}/cancel`),
+				{ params: Promise.resolve({ jobId: jobToCancel }) },
+			);
+			assert.equal(response.status, 200);
+			assert.equal((await response.json()).status, "cancelled");
+			const state = await pool.query(
+				`SELECT d.status, d.desired_version_id, d.latest_job_id,
+						v.status AS version_status, newest.status AS newer_status
+				 FROM app.documents AS d
+				 JOIN app.document_versions AS v ON v.document_id = d.id AND v.id = $2
+				 JOIN app.document_versions AS newest ON newest.document_id = d.id AND newest.id = $3
+				 WHERE d.id = $1`,
+				[ids.document, ids.version, newerVersion],
+			);
+			assert.deepEqual(state.rows[0], {
+				status: scenario.status,
+				desired_version_id: scenario.desired,
+				latest_job_id: scenario.latest,
+				version_status: scenario.oldVersion,
+				newer_status: "pending",
+			});
+		}
+
+		await pool.query(
+			"UPDATE app.jobs SET status = 'cancelled' WHERE workspace_id = $1",
+			[ids.workspace],
+		);
+		const recoveredJob = randomUUID();
+		const cleanupPayload = {
+			document_id: ids.document,
+			generation_id: ids.generation,
+			library_id: ids.library,
+			storage_keys: [],
+			reason: "superseded",
+		};
+		await pool.query(
+			`INSERT INTO app.jobs (
+				id, organization_id, workspace_id, document_version_id, type,
+				execution_engine, workflow_id, status, stage, idempotency_key, payload, created_at
+			)
+			SELECT id, $1, $2, $3, 'generation.cleanup', 'dbos',
+				   id::text, CASE WHEN ordinal <= 100 THEN 'cancelled' ELSE 'queued' END,
+				   'cleanup', 'reconciliation:' || id::text, $4,
+				   CASE WHEN ordinal <= 100 THEN now() - interval '1 day' ELSE now() END
+			FROM (
+				SELECT ordinal, CASE WHEN ordinal <= 100 THEN gen_random_uuid() ELSE $5::uuid END AS id
+				FROM generate_series(1, 101) AS ordinal
+			) AS fixture`,
+			[
+				ids.organization,
+				ids.workspace,
+				ids.version,
+				cleanupPayload,
+				recoveredJob,
+			],
+		);
+		const reconciler = new PostgresReconciliationStore(pool);
+		const candidates = await reconciler.listCandidates({
+			limit: 100,
+			staleBefore: new Date(Date.now() - 300_000),
+		});
+		assert.deepEqual(
+			candidates
+				.filter(({ job }) => job.workspaceId === ids.workspace)
+				.map(({ job }) => job.jobId),
+			[recoveredJob],
+		);
 
 		await session.revokeSessionCookieHeader(
 			`${session.SESSION_COOKIE}=${token}`,

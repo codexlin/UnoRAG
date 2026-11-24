@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { NextRequest } from "next/server";
+import { isSameOriginSessionRequest } from "@/lib/server/auth/same-origin";
 import {
 	createSignedSessionToken,
 	readSessionClaims,
@@ -12,6 +13,101 @@ import { proxy } from "@/proxy";
 
 const SECRET = "session-token-test-secret-at-least-32-characters";
 const NOW = 1_800_000_000;
+
+test("cookie mutations reject foreign origins and non-same-origin fetch sites", () => {
+	const request = (method: string, headers: HeadersInit = {}) =>
+		new Request("https://unorag.test/api/auth/password", { method, headers });
+	assert.equal(isSameOriginSessionRequest(request("POST")), true);
+	assert.equal(
+		isSameOriginSessionRequest(
+			request("POST", {
+				origin: "https://unorag.test",
+				"sec-fetch-site": "same-origin",
+			}),
+		),
+		true,
+	);
+	const rejectedHeaders: HeadersInit[] = [
+		{ origin: "null" },
+		{ origin: "https://other.unorag.test" },
+		{ origin: "https://unorag.test:8443" },
+		{ "sec-fetch-site": "same-site" },
+		{ "sec-fetch-site": "cross-site", origin: "https://unorag.test" },
+	];
+	for (const method of ["POST", "PATCH", "PUT", "DELETE"]) {
+		for (const headers of rejectedHeaders) {
+			assert.equal(isSameOriginSessionRequest(request(method, headers)), false);
+		}
+	}
+	assert.equal(
+		isSameOriginSessionRequest(
+			request("GET", { "sec-fetch-site": "cross-site" }),
+		),
+		true,
+	);
+});
+
+test("cookie mutations use the public host when Next uses an internal listener URL", () => {
+	const request = (headers: Record<string, string>) =>
+		new NextRequest("http://localhost:3000/api/auth/password", {
+			method: "POST",
+			headers: { "sec-fetch-site": "same-origin", ...headers },
+		});
+	const composeHeaders = {
+		host: "127.0.0.1:3001",
+		"x-forwarded-host": "127.0.0.1:3001",
+		"x-forwarded-proto": "http",
+	};
+	const developmentBaseUrl = "http://localhost:3001";
+	assert.equal(
+		isSameOriginSessionRequest(
+			request({ ...composeHeaders, origin: "http://127.0.0.1:3001" }),
+			developmentBaseUrl,
+		),
+		true,
+	);
+	assert.equal(
+		isSameOriginSessionRequest(request({ origin: "null" }), "file:///tmp"),
+		false,
+	);
+	for (const origin of [
+		"http://localhost:3000",
+		"http://localhost:3001",
+		"https://127.0.0.1:3001",
+	]) {
+		assert.equal(
+			isSameOriginSessionRequest(
+				request({ ...composeHeaders, origin }),
+				developmentBaseUrl,
+			),
+			false,
+		);
+	}
+	const proxyHeaders = { host: "web:3000", "x-forwarded-proto": "https" };
+	const publicBaseUrl = "https://unorag.test";
+	assert.equal(
+		isSameOriginSessionRequest(
+			request({
+				...proxyHeaders,
+				"x-forwarded-host": "unorag.test",
+				origin: publicBaseUrl,
+			}),
+			publicBaseUrl,
+		),
+		true,
+	);
+	assert.equal(
+		isSameOriginSessionRequest(
+			request({
+				...proxyHeaders,
+				"x-forwarded-host": "foreign.test",
+				origin: "https://foreign.test",
+			}),
+			publicBaseUrl,
+		),
+		false,
+	);
+});
 
 function withSecret<T>(run: () => T): T {
 	const previous = process.env.UNORAG_SESSION_SECRET;

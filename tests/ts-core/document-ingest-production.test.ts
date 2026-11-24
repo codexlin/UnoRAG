@@ -14,6 +14,8 @@ import {
 } from "../../src/worker/document-ingest-production";
 import { WorkerTaskError } from "../../src/worker/errors";
 
+const libraryUuid = "30000000-0000-4000-8000-000000000007";
+
 test("local source reads bounded regular files and blocks traversal and symlinks", async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), "unorag-ingest-"));
 	await mkdir(path.join(root, "documents"));
@@ -69,6 +71,7 @@ test("Postgres scope binds job, control-plane mapping, and restricted ACL", asyn
 					title: "Handbook",
 					rag_document_id: "rag-document",
 					rag_library_id: "rag-library",
+					library_uuid: libraryUuid,
 					subject_type: "principal",
 					subject_id: "principal-1",
 				},
@@ -76,6 +79,7 @@ test("Postgres scope binds job, control-plane mapping, and restricted ACL", asyn
 					title: "Handbook",
 					rag_document_id: "rag-document",
 					rag_library_id: "rag-library",
+					library_uuid: libraryUuid,
 					subject_type: "group",
 					subject_id: "group-1",
 				},
@@ -87,6 +91,7 @@ test("Postgres scope binds job, control-plane mapping, and restricted ACL", asyn
 		title: "Handbook",
 		documentId: "rag-document",
 		libraryId: "rag-library",
+		libraryUuid,
 		acl: {
 			scope: "restricted",
 			principalIds: ["principal-1"],
@@ -112,6 +117,7 @@ test("Postgres scope treats no ACL as workspace and rejects unknown ACL types", 
 				title: "Handbook",
 				rag_document_id: "rag-document",
 				rag_library_id: "rag-library",
+				library_uuid: libraryUuid,
 				subject_type: null,
 				subject_id: null,
 			},
@@ -125,6 +131,7 @@ test("Postgres scope treats no ACL as workspace and rejects unknown ACL types", 
 				title: "Handbook",
 				rag_document_id: "rag-document",
 				rag_library_id: "rag-library",
+				library_uuid: libraryUuid,
 				subject_type: "organization",
 				subject_id: "organization-1",
 			},

@@ -22,6 +22,7 @@ interface ScopeRow extends QueryResultRow {
 	title: string;
 	rag_document_id: string;
 	rag_library_id: string;
+	library_uuid: string;
 	subject_type: string | null;
 	subject_id: string | null;
 }
@@ -138,6 +139,7 @@ export class PostgresDocumentIngestScope implements DocumentIngestScopePort {
 			SELECT document.name AS title,
 			       document.rag_document_id,
 			       library.rag_library_id,
+			       library.id::text AS library_uuid,
 			       acl.subject_type,
 			       acl.subject_id::text
 			FROM app.jobs AS job
@@ -195,7 +197,8 @@ export class PostgresDocumentIngestScope implements DocumentIngestScopePort {
 			if (
 				row.title !== first.title ||
 				row.rag_document_id !== first.rag_document_id ||
-				row.rag_library_id !== first.rag_library_id
+				row.rag_library_id !== first.rag_library_id ||
+				row.library_uuid !== first.library_uuid
 			) {
 				throw new WorkerTaskError(
 					"Document ingest scope query returned inconsistent rows",
@@ -228,6 +231,7 @@ export class PostgresDocumentIngestScope implements DocumentIngestScopePort {
 			title: first.title,
 			documentId: first.rag_document_id,
 			libraryId: first.rag_library_id,
+			libraryUuid: first.library_uuid,
 			acl: {
 				scope: restricted ? "restricted" : "workspace",
 				principalIds,
