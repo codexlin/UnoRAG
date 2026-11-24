@@ -117,6 +117,7 @@ export type RetrievalServiceOptions = {
 	hybridEnabled: boolean;
 	hybridAllowed?: boolean;
 	rerankEnabled: boolean;
+	rerankAllowed?: boolean;
 	rerankTopK: number;
 	bm25TopK: number;
 	rrfK: number;
@@ -892,6 +893,9 @@ export class DefaultRetrievalService {
 		const hybridEnabled =
 			this.options.hybridAllowed !== false &&
 			(input.options?.hybridEnabled ?? this.options.hybridEnabled);
+		const rerankEnabled =
+			this.options.rerankAllowed !== false &&
+			(input.options?.rerankEnabled ?? this.options.rerankEnabled);
 		const cacheKey =
 			this.options.cache && !includeTraceDetails
 				? buildScopedRetrievalCacheKey({
@@ -902,8 +906,7 @@ export class DefaultRetrievalService {
 						filters,
 						options: {
 							hybridEnabled,
-							rerankEnabled:
-								input.options?.rerankEnabled ?? this.options.rerankEnabled,
+							rerankEnabled,
 							preserveFigureLineage: input.options?.preserveFigureLineage,
 							lineageMinScore: input.options?.lineageMinScore,
 							minimumEvidenceScore,
@@ -940,8 +943,6 @@ export class DefaultRetrievalService {
 		);
 		let usedHybrid = false;
 		let hybridError: string | null = null;
-		const rerankEnabled =
-			input.options?.rerankEnabled ?? this.options.rerankEnabled;
 		if (hybridEnabled) {
 			try {
 				const serverHits = await this.store.hybridSearch?.({

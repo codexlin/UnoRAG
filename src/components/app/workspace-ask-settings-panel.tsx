@@ -147,6 +147,7 @@ export function WorkspaceAskSettingsPanel({
 	const [draft, setDraft] = useState<AskSettings | null>(null);
 	const [policyVersion, setPolicyVersion] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [conflict, setConflict] = useState(false);
 	const [saved, setSaved] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [loading, setLoading] = useState(true);
@@ -158,6 +159,7 @@ export function WorkspaceAskSettingsPanel({
 	const refresh = useCallback(async () => {
 		setLoading(true);
 		setError(null);
+		setConflict(false);
 		try {
 			const response = await fetch("/api/workspace/settings");
 			if (!response.ok) {
@@ -199,6 +201,7 @@ export function WorkspaceAskSettingsPanel({
 		if (!canManage || !ask || !draft || busy || loading) return;
 		setBusy(true);
 		setError(null);
+		setConflict(false);
 		setSaved(false);
 
 		const patch: Partial<AskSettings> = {};
@@ -219,10 +222,18 @@ export function WorkspaceAskSettingsPanel({
 			const response = await fetch("/api/workspace/settings", {
 				method: "PATCH",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ ask: patch }),
+				body: JSON.stringify({
+					ask: patch,
+					...(policyVersion != null ? { policy_version: policyVersion } : {}),
+				}),
 			});
 			if (!response.ok) {
 				if (response.status === 403) setServerCanManage(false);
+				if (response.status === 409) {
+					setConflict(true);
+					setError("version_conflict");
+					return;
+				}
 				const detail = await response.json().catch(() => null);
 				setError(
 					typeof detail?.detail === "string"
@@ -404,7 +415,12 @@ export function WorkspaceAskSettingsPanel({
 							<p role="alert" className="text-sm text-destructive">
 								{error === "load_failed"
 									? t("无法加载工作区设置", "Couldn't load workspace settings")
-									: error}
+									: error === "version_conflict"
+										? t(
+												"问答策略已被其他管理员更新，请刷新最新设置后重试。",
+												"Ask policy was updated by another administrator. Refresh to load the latest settings and try again.",
+											)
+										: error}
 							</p>
 						) : null}
 						{saved ? (
@@ -423,16 +439,18 @@ export function WorkspaceAskSettingsPanel({
 						) : null}
 					</div>
 					<div className="flex items-center gap-2">
-						{error && !ask ? (
+						{(error && !ask) || conflict ? (
 							<Button
 								type="button"
 								className="h-11 min-w-24 md:h-9"
 								variant="outline"
-								disabled={loading}
+								disabled={loading || busy}
 								onClick={() => void refresh()}
 							>
 								<RefreshCw className="size-4" aria-hidden />
-								{t("重试", "Retry")}
+								{conflict
+									? t("刷新最新设置", "Refresh settings")
+									: t("重试", "Retry")}
 							</Button>
 						) : null}
 						{canManage ? (

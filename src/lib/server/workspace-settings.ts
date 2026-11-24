@@ -3,7 +3,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import { workspaceSettings, workspaces } from "@/db/schema";
+import { auditLogs, workspaceSettings, workspaces } from "@/db/schema";
 
 import {
 	mergeAskPatch,
@@ -50,10 +50,15 @@ export async function getWorkspaceAskSettings(workspaceId: string) {
 	};
 }
 
+export type PatchWorkspaceAskSettingsOptions = {
+	expectedPolicyVersion?: number;
+};
+
 export async function patchWorkspaceAskSettings(
 	workspaceId: string,
 	partial: unknown,
 	updatedBy?: string | null,
+	options?: PatchWorkspaceAskSettingsOptions,
 ): Promise<
 	| {
 			ok: true;
@@ -64,21 +69,37 @@ export async function patchWorkspaceAskSettings(
 			updated_by: string | null;
 			ask_previous: Record<string, unknown> | null;
 	  }
-	| { ok: false; detail: string; status: number }
+	| { ok: false; detail: string; status: number; code?: string }
 > {
 	const validated = validateAskPatch(partial);
 	if (!validated.ok) {
 		return { ok: false, detail: validated.detail, status: 400 };
 	}
+	const expectedVersion = options?.expectedPolicyVersion;
+	if (
+		expectedVersion !== undefined &&
+		(!Number.isSafeInteger(expectedVersion) || expectedVersion < 1)
+	) {
+		return {
+			ok: false,
+			detail: "policy_version must be a positive integer",
+			code: "invalid_version",
+			status: 400,
+		};
+	}
 
 	return getDatabase().transaction(async (tx) => {
 		// Serialize partial patches even before the first settings row exists.
 		const [workspace] = await tx
-			.select({ id: workspaces.id })
+			.select({
+				id: workspaces.id,
+				organizationId: workspaces.organizationId,
+				status: workspaces.status,
+			})
 			.from(workspaces)
 			.where(eq(workspaces.id, workspaceId))
 			.for("update");
-		if (!workspace) {
+		if (workspace?.status !== "active") {
 			return { ok: false, detail: "workspace not found", status: 404 };
 		}
 		const [existing] = await tx
@@ -91,11 +112,21 @@ export async function patchWorkspaceAskSettings(
 			.where(eq(workspaceSettings.workspaceId, workspaceId))
 			.limit(1);
 
+		const currentVersion = existing?.policyVersion ?? 1;
+		if (expectedVersion !== undefined && expectedVersion !== currentVersion) {
+			return {
+				ok: false,
+				detail: "policy_version conflict: workspace ask settings were updated",
+				code: "version_conflict",
+				status: 409,
+			};
+		}
+
 		const current = sanitizeStoredAsk(existing?.ask ?? {});
 		const next = mergeAskPatch(current, validated.patch);
 		const changed = JSON.stringify(current) !== JSON.stringify(next);
 		const now = new Date();
-		const version = existing ? existing.policyVersion + Number(changed) : 1;
+		const version = currentVersion + Number(changed);
 		const previous = existing
 			? changed
 				? current
@@ -118,6 +149,23 @@ export async function patchWorkspaceAskSettings(
 			await tx
 				.insert(workspaceSettings)
 				.values({ ...values, workspaceId, createdAt: now });
+		}
+		if (changed) {
+			await tx.insert(auditLogs).values({
+				organizationId: workspace.organizationId,
+				workspaceId,
+				actorId: updatedBy ?? null,
+				action: "workspace.ask_settings.updated",
+				resourceType: "workspace",
+				resourceId: workspaceId,
+				details: {
+					policy_version: version,
+					previous_policy_version: currentVersion,
+					changed_keys: Object.keys(validated.patch).sort(),
+					ask: next,
+				},
+				createdAt: now,
+			});
 		}
 		return {
 			ok: true,

@@ -150,3 +150,105 @@ test("only a workspace admin can change retrieval settings, applied on the next 
 		rerankEnabled: true,
 	});
 });
+
+test("workspace settings PATCH enforces same-origin and policy_version optimistic locking", async () => {
+	let ask: Record<string, unknown> = { ...PUBLIC_ASK_DEFAULTS };
+	let policyVersion = 2;
+	const { PATCH } = createWorkspaceAskSettingsHandlers({
+		resolveIdentity: async () => ({
+			workspaceId: "test-workspace",
+			principalId: "caller",
+			role: "admin",
+		}),
+		appBaseUrl: "https://console.example",
+		read: async () => ({
+			ask,
+			defaults: PUBLIC_ASK_DEFAULTS,
+			updated_at: null,
+			updated_by: null,
+			policy_version: policyVersion,
+			ask_previous: null,
+		}),
+		patch: async (_workspaceId, requested, actor, options) => {
+			if (
+				options?.expectedPolicyVersion !== undefined &&
+				options.expectedPolicyVersion !== policyVersion
+			) {
+				return {
+					ok: false,
+					status: 409,
+					code: "version_conflict",
+					detail: "policy_version conflict",
+				};
+			}
+			const validated = validateAskPatch(requested);
+			if (!validated.ok) return { ...validated, status: 400 };
+			const previous = ask;
+			ask = mergeAskPatch(previous, validated.patch);
+			return {
+				ok: true,
+				ask,
+				defaults: PUBLIC_ASK_DEFAULTS,
+				updated_at: new Date(0).toISOString(),
+				updated_by: actor ?? null,
+				policy_version: ++policyVersion,
+				ask_previous: previous,
+			};
+		},
+	});
+
+	const crossSite = await PATCH(
+		new Request("https://console.example/api/workspace/settings", {
+			method: "PATCH",
+			headers: {
+				origin: "https://evil.example",
+				"sec-fetch-site": "cross-site",
+			},
+			body: JSON.stringify({
+				ask: { answer_profile: "precise" },
+				policy_version: 2,
+			}),
+		}),
+	);
+	assert.equal(crossSite.status, 403);
+
+	const invalidVersion = await PATCH(
+		new Request("https://console.example/api/workspace/settings", {
+			method: "PATCH",
+			body: JSON.stringify({
+				ask: { answer_profile: "precise" },
+				policy_version: 0,
+			}),
+		}),
+	);
+	assert.equal(invalidVersion.status, 400);
+	assert.equal((await invalidVersion.json()).code, "invalid_version");
+
+	const stale = await PATCH(
+		new Request("https://console.example/api/workspace/settings", {
+			method: "PATCH",
+			body: JSON.stringify({
+				ask: { answer_profile: "precise" },
+				policy_version: 1,
+			}),
+		}),
+	);
+	assert.equal(stale.status, 409);
+	assert.equal((await stale.json()).code, "version_conflict");
+
+	const ok = await PATCH(
+		new Request("https://console.example/api/workspace/settings", {
+			method: "PATCH",
+			headers: {
+				origin: "https://console.example",
+				"sec-fetch-site": "same-origin",
+			},
+			body: JSON.stringify({
+				ask: { answer_profile: "precise" },
+				policy_version: 2,
+			}),
+		}),
+	);
+	assert.equal(ok.status, 200);
+	assert.equal((await ok.json()).policy_version, 3);
+});

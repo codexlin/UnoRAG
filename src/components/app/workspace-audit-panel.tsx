@@ -110,6 +110,7 @@ const ACTION_LABELS: Record<string, readonly [zh: string, en: string]> = {
 	"job.cancel_requested": ["取消任务", "Job cancelled"],
 	"job.retried": ["重试任务", "Job retried"],
 	"workspace.created": ["创建工作区", "Workspace created"],
+	"workspace.ask_settings.updated": ["更新问答策略", "Ask policy updated"],
 	[ALERT_THRESHOLDS_UPDATED]: ["更新告警阈值", "Alert thresholds updated"],
 	"workspace.invite.created": ["创建成员邀请", "Invite created"],
 	"workspace.invite.email": ["发送邀请邮件", "Invite email sent"],

@@ -277,6 +277,8 @@ for (const failure of ["network", "json"] as const) {
 		};
 		let failLoad = true;
 		let failSave = true;
+		let conflictSave = failure === "network";
+		let serverVersion = 1;
 		const patches: unknown[] = [];
 		await page.route("**/api/workspace/settings", async (route) => {
 			const saving = route.request().method() === "PATCH";
@@ -291,12 +293,24 @@ for (const failure of ["network", "json"] as const) {
 					});
 				return;
 			}
+			if (saving && conflictSave) {
+				conflictSave = false;
+				serverVersion = 2;
+				await route.fulfill({
+					status: 409,
+					json: {
+						detail: "policy_version conflict",
+						code: "version_conflict",
+					},
+				});
+				return;
+			}
 			await route.fulfill({
 				json: {
 					can_manage: true,
 					ask: saving ? { ...settings, answer_profile: "precise" } : settings,
 					defaults: settings,
-					policy_version: saving ? 2 : 1,
+					policy_version: saving ? serverVersion + 1 : serverVersion,
 				},
 			});
 		});
@@ -325,12 +339,33 @@ for (const failure of ["network", "json"] as const) {
 		await expect(save).toBeEnabled();
 		await expect(profile).toHaveText("精确");
 		failSave = false;
+		if (failure === "network") {
+			await save.click();
+			await expect(
+				page.getByText("问答策略已被其他管理员更新，请刷新最新设置后重试。", {
+					exact: true,
+				}),
+			).toBeVisible();
+			await page
+				.getByRole("button", { name: "刷新最新设置", exact: true })
+				.click();
+			await expect(profile).toHaveText("均衡");
+			await chooseSelect(profile, "精确");
+		}
 		await save.click();
 		await expect(page.getByText("已保存", { exact: true })).toBeVisible();
 		await expect(profile).toHaveText("精确");
-		expect(patches).toEqual([
-			{ ask: { answer_profile: "precise" } },
-			{ ask: { answer_profile: "precise" } },
-		]);
+		expect(patches).toEqual(
+			failure === "network"
+				? [
+						{ ask: { answer_profile: "precise" }, policy_version: 1 },
+						{ ask: { answer_profile: "precise" }, policy_version: 1 },
+						{ ask: { answer_profile: "precise" }, policy_version: 2 },
+					]
+				: [
+						{ ask: { answer_profile: "precise" }, policy_version: 1 },
+						{ ask: { answer_profile: "precise" }, policy_version: 1 },
+					],
+		);
 	});
 }
