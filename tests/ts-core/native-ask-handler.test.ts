@@ -1541,6 +1541,69 @@ test("rerank degradation is persisted on its own retrieval attempt, not copied f
 	assert.doesNotMatch(JSON.stringify(runs.finalizations), /private provider/);
 });
 
+test("Ask run persists sanitized route_reason, route_layer, and evidence_dispatch metadata without leaking text", async () => {
+	const { handleNativeAskRequest } = await handlerModule;
+	const runs = askRunRecorder();
+	const runtime = new FakeRuntime(
+		askState({
+			route_reason: "prose_superlative_cue: 敏感内容不能落库",
+			judgement: {
+				sufficient: true,
+				action: "generate",
+				reason: "covered",
+				missing_query: "敏感缺失词不能落库",
+			},
+			retrieval_debug: {
+				retrievalMode: "hybrid",
+				route_reason: "prose_superlative_cue: 敏感内容不能落库",
+				route_layer: "thin_rule",
+				evidence_dispatch: "evidence_driven_table_operation",
+				retry_strategy: "judge_missing_query",
+				stages: [
+					{ stage: "route", duration_ms: 1, ok: true },
+					{ stage: "retrieve", duration_ms: 20, ok: true },
+					{ stage: "retry", duration_ms: 1, ok: true },
+				],
+			},
+		}),
+		["答案"],
+	);
+	await handleNativeAskRequest({
+		request: request({
+			question: "单价最高的设备是什么？",
+			library_id: LIBRARY_ID,
+		}),
+		path: ["v1", "ask"],
+		identity,
+		repository: repositoryInput(new FakeConversationRepository()),
+		runtimeFactory: runtimeFactory(runtime),
+		askRunsRepository: runs.repository,
+		resolveLibrary: async () => ({
+			id: "99999999-9999-4999-8999-999999999999",
+		}),
+	});
+	const finalizedStages = runs.finalizations[0]?.stages ?? [];
+	const routeStage = finalizedStages.find((stage) => stage.stage === "route");
+	const retrieveStage = finalizedStages.find(
+		(stage) => stage.stage === "retrieve",
+	);
+	const retryStage = finalizedStages.find((stage) => stage.stage === "retry");
+	assert.deepEqual(routeStage?.detail, {
+		route_reason: "prose_superlative_cue",
+		route_layer: "thin_rule",
+	});
+	assert.deepEqual(retrieveStage?.detail, {
+		evidence_dispatch: "evidence_driven_table_operation",
+	});
+	assert.deepEqual(retryStage?.detail, {
+		retry_strategy: "judge_missing_query",
+	});
+	assert.doesNotMatch(
+		JSON.stringify(runs.finalizations),
+		/敏感内容|敏感缺失词/,
+	);
+});
+
 test("Ask run uses the response request ID and reaches a privacy-safe terminal state", async () => {
 	const { handleNativeAskRequest } = await handlerModule;
 	const runs = askRunRecorder();

@@ -12,6 +12,7 @@ export type AskNodePort = (state: AskState) => Awaitable<AskStateUpdate>;
 export interface QueryRoute {
 	queryType: string;
 	reason: string;
+	layer?: string;
 	plan?: AskMetadata;
 }
 

@@ -456,14 +456,22 @@ function executeSingle(
 		}
 		return item.value > best.value ? item : best;
 	});
+	const matchedExtremeRows = numericRows
+		.filter((item) => item.value === chosen.value)
+		.map((item) => item.row);
 	const answer = chosen.value / scale;
+	const rowSummary = matchedExtremeRows
+		.map((row) => describeRow(row, selected.columns))
+		.filter(Boolean)
+		.join("；");
+	const detail = rowSummary ? `（${rowSummary}）` : "";
 	return success(
 		plan.operation,
 		plan.operation,
-		[chosen.row],
+		matchedExtremeRows,
 		selected.columns,
 		answer,
-		`${valueColumn.column}${plan.operation === "min" ? "最小值" : "最大值"}为 ${answer}`,
+		`${valueColumn.column}${plan.operation === "min" ? "最小值" : "最大值"}为 ${answer}${detail}`,
 	);
 }
 

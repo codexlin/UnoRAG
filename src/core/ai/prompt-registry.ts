@@ -66,6 +66,8 @@ export const PROMPT_VERSION_HISTORY = Object.freeze({
 		"1.0.0": "0eb3627d4cf86fb1bc20aea945f6bad8858c43dda7edcd93643d6161a54065d5",
 	}),
 	judge: Object.freeze({
+		"1.17.0":
+			"03d7dc0f6424490205374a5e5d8e046f574a412e2d3ec90cd04e61eb98f99a34",
 		"1.16.0":
 			"af71e85b87ef9301c4e4684fd54542054cb3c25d82785f6114e70b73e530995c",
 		"1.15.0":
@@ -175,12 +177,12 @@ export const PROMPT_REGISTRY = Object.freeze({
 	judge: definePrompt({
 		key: "judge",
 		name: "unorag.evidence.judge",
-		version: "1.16.0",
+		version: "1.17.0",
 		text:
 			"你是证据充分性判断器。仅输出一个完整的 JSON 对象，不使用 Markdown，不输出对象外的文本或填充空白。" +
-			"字段顺序为 reason（不超过80字简短核对关键依据或缺失点）、sufficient（布尔值）、action（generate、retry 或 refuse）、evidence_ids（字符串数组）；可选 can_retry（布尔值）和 top_score（0到1），不输出其他字段。必须先在 reason 中完成核对，再输出与之严格一致的 sufficient、action 和 evidence_ids（generate 时选1至6条，retry 或 refuse 时必须为空数组 []），不得在 reason 得出充分后仍输出 refuse。" +
+			"字段顺序为 reason（不超过80字简短核对关键依据或缺失点）、sufficient（布尔值）、action（generate、retry 或 refuse）、evidence_ids（字符串数组）；可选 can_retry（布尔值）、top_score（0到1）和 missing_query（字符串），不输出其他字段。必须先在 reason 中完成核对，再输出与之严格一致的 sufficient、action 和 evidence_ids（generate 时选1至6条，retry 或 refuse 时必须为空数组 []），不得在 reason 得出充分后仍输出 refuse。仅当 action=retry 且明确知道缺失的实体、年份、指标或子问时，可在 missing_query 填不超过60字、与原问同语种的简短检索词用于定向补查（不得抄写原文段落）；generate 或 refuse 时省略或留空。" +
 			"仅根据给定候选证据判断 generate、retry 或 refuse。" +
-			"资料未覆盖时必须 refuse，不能用模型常识补足业务事实或缺失年份/对象的数据。若问题要求特定对象或对比双方的预测区间、目标范围、上下限或区间宽度，而资料仅给出实际历史波动区间、偏离点数（如偏离多少基点）或定性描述（如“区间震荡”），并未给出所问预测区间的具体上下限数值时，必须判为资料未覆盖并输出 refuse（不得以历史实际波动或部分说明替代拒答）。若 attempts=0 且候选证据仅覆盖了部分子问、部分对象或高度相关上下文但仍有关键缺口、通过二次扩大检索有望补全时，应优先输出 sufficient=false、action=retry、can_retry=true；仅当所有尝试仍未覆盖或属于明确缺失概念/无解范围时才输出 refuse。问题澄清由查询路由器负责，不输出 clarify。" +
+			"资料未覆盖时必须 refuse，不能用模型常识补足业务事实或缺失年份/对象的数据。若问题要求特定对象或对比双方的预测区间、目标范围、上下限或区间宽度，而资料仅给出实际历史波动区间、偏离点数（如偏离多少基点）或定性描述（如“区间震荡”），并未给出所问预测区间的具体上下限数值时，必须判为资料未覆盖并输出 refuse（不得以历史实际波动或部分说明替代拒答）。若当前为首轮检索（尝试次数<=1，即尚未完成二次检索）且候选证据仅覆盖了部分子问、部分对象或高度相关上下文但仍有关键缺口、通过二次扩大检索有望补全时，应优先输出 sufficient=false、action=retry、can_retry=true；仅当二次检索后（尝试次数>=2）仍未覆盖或属于明确缺失概念/无解范围时才输出 refuse。问题澄清由查询路由器负责，不输出 clarify。" +
 			"当问题明确要求基于原文已给出数值计算衍生指标（如复合增长率 CAGR、静态市盈率 PE=总市值/上一完整会计年度归母净利润 或 收盘价/上一完整会计年度每股收益EPS、总资产=负债合计+所有者权益合计、同比增长、差额或比例），且候选证据已完整覆盖同一主体所需各期原始数值时，同度量衡间的确定性十进制单位换算（元、万元、百万元、亿元）及上述标准财务/数学公式均属于可确定执行的计算前提，应判为 sufficient=true、action=generate 并授权回答阶段代入给定原始数值完成计算，不因原文未直接给出计算后结果而判为资料未覆盖；只有真实缺失某期或某项原始输入数值、或同一口径数值存在不可消解矛盾时才判 refuse。" +
 			"同时输出 evidence_ids：generate 时必须从候选证据的真实 id 中选择一至六条能够完整支持回答的最小证据集合；" +
 			"不得编造 id，不得选择与问题无关或仅主题相似的证据。retry 或 refuse 时 evidence_ids 必须为空数组。" +

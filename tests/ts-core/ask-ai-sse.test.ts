@@ -1080,6 +1080,17 @@ test("public rerank diagnostics strip content and reject unclassified strings", 
 		}),
 		{},
 	);
+	assert.deepEqual(
+		projectPublicRetrievalDebug({
+			route_layer: "thin_rule",
+			evidence_dispatch: "evidence_driven_table_operation",
+			private_prompt: "must not leak",
+		}),
+		{
+			route_layer: "thin_rule",
+			evidence_dispatch: "evidence_driven_table_operation",
+		},
+	);
 });
 
 test("structured adapter reports a bounded timeout and does not invent clarify judge actions", async () => {

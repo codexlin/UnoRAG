@@ -10,6 +10,13 @@ export {
 	type TableQueryPlan,
 	TableQueryPlanSchema,
 } from "./contracts";
+export {
+	deriveEvidenceDrivenTableOperationPlan,
+	type EvidenceTableCandidate,
+	type EvidenceTableProbeKind,
+	hasImplicitTableOperationCue,
+	shouldProbeTableEvidence,
+} from "./evidence-dispatch";
 export { executeTableQuery } from "./execute";
 export {
 	assessTableCoverage,

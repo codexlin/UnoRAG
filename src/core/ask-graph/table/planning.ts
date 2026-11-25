@@ -6,20 +6,33 @@ import {
 } from "./normalize";
 import { isDerivedCalculationQuestion } from "./query-intent";
 
-const MINIMUM_CUE = /(?:最小|最低|最少|minimum|\bmin\b)/i;
-const MAXIMUM_CUE = /(?:最大|最高|最多|maximum|\bmax\b)/i;
-const HEADER_CUE = /(?:表头|列名|哪些列|字段名|columns?)/i;
-const COUNT_CUE = /(?:多少|几)\s*(?:行|条|项|个)|(?:行|条|项)数/i;
-const SUM_CUE = /(?:合计|总计|总和|sum)/i;
-const AVERAGE_CUE = /(?:平均|均值|average|\bavg\b)/i;
+const MINIMUM_CUE = /(?:最小|最低|最少|\b(?:minimum|min|lowest|smallest)\b)/i;
+const MAXIMUM_CUE = /(?:最大|最高|最多|\b(?:maximum|max|highest|largest)\b)/i;
+const HEADER_CUE = /(?:表头|列名|哪些列|字段名|\b(?:columns?|headers?)\b)/i;
+const COUNT_CUE =
+	/(?:多少|几)\s*(?:行|条|项|个)|(?:行|条|项)数|\b(?:how\s+many|count\s+of|number\s+of)\b/i;
+const SUM_CUE = /(?:合计|总计|总和|\b(?:sum|total)\b)/i;
+const AVERAGE_CUE = /(?:平均|均值|\b(?:average|avg|mean)\b)/i;
 const ORDINAL_LOOKUP_CUE =
-	/(?:序号|编号)\s*(?:为|是|#)?\s*(\d+(?:\s*[、,，和与及/]\s*\d+)*)/i;
+	/(?:序号|编号|\brow\s*#?)\s*(?:为|是|#)?\s*(\d+(?:\s*[、,，和与及/]\s*\d+)*)/i;
 
 const FILTER_OPERATORS = [
-	{ cue: /(?:大于等于|不少于|不低于|至少|>=|≥)/i, operator: ">=" },
-	{ cue: /(?:小于等于|不高于|不多于|至多|<=|≤)/i, operator: "<=" },
-	{ cue: /(?:超过|大于|>)/i, operator: ">" },
-	{ cue: /(?:低于|小于|<)/i, operator: "<" },
+	{
+		cue: /(?:大于等于|不少于|不低于|至少|>=|≥|\b(?:greater\s+than\s+or\s+equal(?:\s+to)?|at\s+least)\b)/i,
+		operator: ">=",
+	},
+	{
+		cue: /(?:小于等于|不高于|不多于|至多|<=|≤|\b(?:less\s+than\s+or\s+equal(?:\s+to)?|at\s+most)\b)/i,
+		operator: "<=",
+	},
+	{
+		cue: /(?:超过|大于|>|\b(?:greater\s+than|more\s+than|above|over)\b)/i,
+		operator: ">",
+	},
+	{
+		cue: /(?:低于|小于|<|\b(?:less\s+than|fewer\s+than|below|under)\b)/i,
+		operator: "<",
+	},
 ] as const;
 
 const FILTER_VALUE = /([+-]?\d[\d,]*(?:\.\d+)?\s*(?:万|亿)?\s*(?:元|%|％)?)/;

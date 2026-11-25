@@ -5,6 +5,7 @@ import type { AskGraphContext } from "@/core/ask-graph";
 import { groundedQuestion } from "@/core/ask-graph/state";
 import {
 	deriveDeterministicTablePlan,
+	deriveEvidenceDrivenTableOperationPlan,
 	deriveGroundedTableLookup,
 	executeTableQuery,
 	normalizeTablePlanForQuestion,
@@ -116,6 +117,19 @@ export function createTableRuntimePorts({
 				tableId,
 				headers,
 			}));
+			if (state.upgrade_reason === "evidence_driven_table_operation") {
+				const operationPlan = deriveEvidenceDrivenTableOperationPlan(
+					groundedQuestion(state),
+					candidates,
+				);
+				if (!operationPlan) {
+					return {
+						table_query_plan: { invalid: true },
+						refuse_reason: "table_incomplete",
+					};
+				}
+				return { table_query_plan: operationPlan };
+			}
 			const groundedPlan = deriveGroundedTableLookup(
 				groundedQuestion(state),
 				candidates,

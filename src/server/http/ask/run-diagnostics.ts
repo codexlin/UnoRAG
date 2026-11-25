@@ -10,6 +10,7 @@ import {
 } from "@/core/ai/answer-citations";
 import { projectModelUsage } from "@/core/ai/model-usage";
 import type { AskState } from "@/core/ask-graph";
+import { sanitizeRouteReasonCode } from "@/core/ask-graph/nodes/thin-router";
 import { EmbeddingDimensionMismatchError } from "@/core/retrieval/embedding/provider";
 import {
 	projectRerankDiagnostic,
@@ -43,7 +44,11 @@ export type ActiveAskRun = {
 export type AskRunState = Partial<
 	Pick<
 		AskState,
-		"query_type" | "retrieval_debug" | "citations" | "refuse_reason"
+		| "query_type"
+		| "route_reason"
+		| "retrieval_debug"
+		| "citations"
+		| "refuse_reason"
 	>
 >;
 
@@ -98,6 +103,28 @@ export async function finalizeAskRun(input: {
 	const mode = state ? retrievalMode(state) : null;
 	const debug = state?.retrieval_debug;
 	const citations = state?.citations ?? [];
+	const safeRouteReason = sanitizeRouteReasonCode(
+		typeof debug?.route_reason === "string"
+			? debug.route_reason
+			: state?.route_reason,
+	);
+	const safeRouteLayer =
+		debug?.route_layer === "thin_rule" ||
+		debug?.route_layer === "gray_zone_model" ||
+		debug?.route_layer === "gray_zone_fallback"
+			? debug.route_layer
+			: null;
+	const safeEvidenceDispatch =
+		debug?.evidence_dispatch === "grounded_table_lookup" ||
+		debug?.evidence_dispatch === "evidence_driven_table_operation" ||
+		debug?.evidence_dispatch === "none"
+			? debug.evidence_dispatch
+			: null;
+	const safeRetryStrategy =
+		debug?.retry_strategy === "judge_missing_query" ||
+		debug?.retry_strategy === "compact_fallback"
+			? debug.retry_strategy
+			: null;
 	const persistedStages = Array.isArray(debug?.stages)
 		? debug.stages.flatMap((value) => {
 				if (!value || typeof value !== "object" || Array.isArray(value))
@@ -115,6 +142,33 @@ export async function finalizeAskRun(input: {
 				) {
 					return [];
 				}
+				const retrieveDetail: Record<string, number | string | boolean | null> =
+					{
+						...((stage.stage === "retrieve" ||
+							stage.stage === "table_retrieve") &&
+						rerank
+							? Object.fromEntries(
+									Object.entries(rerank).map(([key, value]) => [
+										`rerank_${key}`,
+										value,
+									]),
+								)
+							: {}),
+						...(stage.stage === "retrieve" && safeEvidenceDispatch
+							? { evidence_dispatch: safeEvidenceDispatch }
+							: {}),
+					};
+				const routeDetail: Record<string, number | string | boolean | null> =
+					stage.stage === "route"
+						? {
+								...(safeRouteReason ? { route_reason: safeRouteReason } : {}),
+								...(safeRouteLayer ? { route_layer: safeRouteLayer } : {}),
+							}
+						: {};
+				const retryDetail: Record<string, number | string | boolean | null> =
+					stage.stage === "retry" && safeRetryStrategy
+						? { retry_strategy: safeRetryStrategy }
+						: {};
 				return [
 					{
 						stage: stage.stage,
@@ -128,17 +182,14 @@ export async function finalizeAskRun(input: {
 						...(stage.ok === false && stage.stage === "persist"
 							? { errorCode: "conversation_persist_failed" }
 							: {}),
-						...((stage.stage === "retrieve" ||
-							stage.stage === "table_retrieve") &&
-						rerank
-							? {
-									detail: Object.fromEntries(
-										Object.entries(rerank).map(([key, value]) => [
-											`rerank_${key}`,
-											value,
-										]),
-									),
-								}
+						...(Object.keys(routeDetail).length > 0
+							? { detail: routeDetail }
+							: {}),
+						...(Object.keys(retryDetail).length > 0
+							? { detail: retryDetail }
+							: {}),
+						...(Object.keys(retrieveDetail).length > 0
+							? { detail: retrieveDetail }
 							: {}),
 						...(stage.ok === false &&
 						stage.stage === "judge" &&

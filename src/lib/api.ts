@@ -81,6 +81,9 @@ export type ApiRetrievalDebug = {
 	path?: string;
 	route?: string;
 	route_reason?: string;
+	route_layer?: string;
+	evidence_dispatch?: string;
+	retry_strategy?: string;
 	upgrade?: unknown;
 	upgrade_reason?: string | null;
 	downgrade_reason?: string | null;

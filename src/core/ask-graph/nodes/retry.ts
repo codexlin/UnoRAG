@@ -7,10 +7,27 @@ import {
 
 export const MAX_RETRIEVAL_ATTEMPTS = 2;
 
+export type RetryStrategy = "judge_missing_query" | "compact_fallback";
+
+const MAX_MISSING_QUERY_LENGTH = 100;
+
+export function sanitizeMissingQuery(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const cleaned = value
+		.replace(/[\r\n\t]+/gu, " ")
+		.replace(/\s+/gu, " ")
+		.trim();
+	if (cleaned.length < 2 || cleaned.length > MAX_MISSING_QUERY_LENGTH) {
+		return null;
+	}
+	return cleaned;
+}
+
 function compactRetryQuery(question: string, reason: string): string {
-	const cleaned = question
+	const trimmed = question.trim();
+	const cleaned = trimmed
 		.replace(
-			/^(?:请?结合(?:上述)?资料[，,]?\s*|请问[，,]?\s*|根据(?:所提供)?(?:文档|资料)(?:内容)?[，,]?\s*)/u,
+			/^(?:请?结合(?:上述)?资料[，,]?\s*|请问[，,]?\s*|根据(?:所提供)?(?:文档|资料)(?:内容)?[，,]?\s*|(?:please\s+)?(?:explain|tell\s+me|describe|what\s+(?:is|are)|how\s+(?:do|does|can|to))\s+)/iu,
 			"",
 		)
 		.replace(
@@ -19,24 +36,40 @@ function compactRetryQuery(question: string, reason: string): string {
 		)
 		.replace(/\s+/gu, " ")
 		.trim();
-	if (cleaned.length >= 4 && cleaned !== question.trim()) {
+	if (cleaned.length >= 4 && cleaned !== trimmed) {
 		return cleaned;
 	}
-	const suffix = reason === "weak_match" ? "相关制度 条款 规定" : "关键词 概要";
-	return `${question} ${suffix}`;
+	const hasHan = /\p{Script=Han}/u.test(trimmed);
+	if (hasHan) {
+		const suffix =
+			reason === "weak_match" ? "相关制度 条款 规定" : "关键词 概要";
+		return `${trimmed} ${suffix}`;
+	}
+	const suffix =
+		reason === "weak_match" ? "policy details" : "overview details";
+	return `${trimmed} ${suffix}`;
 }
 
 export function retryNode(state: AskState): AskStateUpdate {
 	const base = state.rewritten_question || requireQuestion(state);
 	const reason = String(state.judgement?.reason ?? "no_hit");
-	const broadened = compactRetryQuery(base, reason);
+	const targetedMissingQuery =
+		state.judgement?.action === "retry"
+			? sanitizeMissingQuery(state.judgement.missing_query)
+			: null;
+	const strategy: RetryStrategy = targetedMissingQuery
+		? "judge_missing_query"
+		: "compact_fallback";
+	const nextQuery = targetedMissingQuery ?? compactRetryQuery(base, reason);
 	return {
-		rewritten_question: broadened,
-		...(state.upgrade_reason === "grounded_table_lookup"
+		rewritten_question: nextQuery,
+		...(state.upgrade_reason === "grounded_table_lookup" ||
+		state.upgrade_reason === "evidence_driven_table_operation"
 			? { upgrade_reason: null }
 			: {}),
 		retrieval_debug: mergeRetrievalDebug(state, {
-			retry: { from: base, to: broadened, reason },
+			retry_strategy: strategy,
+			retry: { from: base, to: nextQuery, reason, strategy },
 		}),
 	};
 }

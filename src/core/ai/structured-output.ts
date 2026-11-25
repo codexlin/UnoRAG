@@ -69,6 +69,7 @@ export const JudgeOutputSchema = z
 		evidence_ids: z.array(z.string().trim().min(1)).max(6),
 		can_retry: z.boolean().optional(),
 		top_score: z.number().min(0).max(1).optional(),
+		missing_query: z.string().trim().max(120).optional(),
 	})
 	.strict();
 

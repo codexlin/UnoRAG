@@ -39,17 +39,21 @@ import {
 } from "@/core/ask-graph/comparison-query";
 import { conflictAnswer } from "@/core/ask-graph/evidence-conflict";
 import { MAX_RETRIEVAL_ATTEMPTS } from "@/core/ask-graph/nodes/retry";
-import { hasFollowupReference } from "@/core/ask-graph/nodes/rewrite";
 import { planForGroundedQuestion } from "@/core/ask-graph/nodes/routing";
-import { groundedQuestion } from "@/core/ask-graph/state";
-import { deriveGroundedTableLookup } from "@/core/ask-graph/table";
-import { isEligibleForGroundedTableLookup } from "@/core/ask-graph/table/planning";
 import {
-	isDerivedCalculationQuestion,
-	isFormFieldLookup,
-	isFormTableOperation,
-	isProseChecklistLookup,
-} from "@/core/ask-graph/table/query-intent";
+	type DecisionRouterPort,
+	isFigureProseQuestion,
+	isMultiAspectFactQuestion,
+	resolveGrayZoneRoute,
+	thinPreRetrievalRoute,
+} from "@/core/ask-graph/nodes/thin-router";
+import { groundedQuestion } from "@/core/ask-graph/state";
+import {
+	deriveEvidenceDrivenTableOperationPlan,
+	deriveGroundedTableLookup,
+	shouldProbeTableEvidence,
+} from "@/core/ask-graph/table";
+import { isDerivedCalculationQuestion } from "@/core/ask-graph/table/query-intent";
 import type { AuthorizedScope, RetrievalFilters } from "@/core/contracts";
 import type {
 	DefaultRetrievalService,
@@ -94,6 +98,7 @@ import { askRetrievalOptions, type NativeAskPolicy } from "./policy";
 import {
 	createTableRuntimePorts,
 	deterministicTableAnswer,
+	executePlannedTableQuery,
 	tableCandidates,
 } from "./table-runtime";
 
@@ -105,12 +110,74 @@ export {
 type RetrievalService = Pick<DefaultRetrievalService, "retrieve"> &
 	Partial<Pick<DefaultRetrievalService, "lookupDocumentRecord">>;
 
-const FALLBACK_TABLE_PATTERN =
-	/(?:表格|表中|表内|明细表|清单|台账|逐行|多少行|表头|列名|字段|序号\s*(?:为|是)?\s*\d+|rows?|row\s*#?\s*\d+)/i;
-const FALLBACK_FOLLOW_UP_PATTERN =
-	/^(?:那|那么|这个|它|上述|前者|后者|还有|为什么|具体呢|分别呢)/i;
-const FIGURE_REFERENCE_PATTERN =
-	/(?:图表|柱状图|折线图|饼图|雷达图|散点图|示意图|流程图|架构图|走势图|趋势图|分布图|对比图|图示|附图|图\s*\d+|figure\s*\d+|chart|diagram|graph|plot|fig\.\s*\d+)/i;
+function mergeEvidenceDocuments(
+	previous: readonly ActiveDocumentDescriptor[],
+	current: readonly ActiveDocumentDescriptor[],
+): ActiveDocumentDescriptor[] {
+	const merged: ActiveDocumentDescriptor[] = [];
+	const seen = new Set<string>();
+	for (const doc of [...current, ...previous]) {
+		const key = `${doc.documentId}:${doc.generationId}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		merged.push(doc);
+	}
+	return merged;
+}
+
+function mergeTargetedRetryCitations(input: {
+	current: readonly InternalCitation[];
+	prior: readonly InternalCitation[];
+	documentScope: readonly ActiveDocumentDescriptor[];
+	limit: number;
+}): { citations: InternalCitation[]; retainedCount: number } {
+	const merged: InternalCitation[] = [];
+	const seen = new Set<string>();
+	const currentDocGenerations = new Map<string, string>();
+	for (const citation of input.current) {
+		if (merged.length >= input.limit) break;
+		if (seen.has(citation.id)) continue;
+		seen.add(citation.id);
+		if (citation.doc_id && citation.generation_id) {
+			currentDocGenerations.set(citation.doc_id, citation.generation_id);
+		}
+		merged.push(citation);
+	}
+	const scopedKeys = input.documentScope.length
+		? new Set(
+				input.documentScope.map(
+					(doc) => `${doc.documentId}:${doc.generationId}`,
+				),
+			)
+		: null;
+	let retainedCount = 0;
+	for (const citation of input.prior) {
+		if (merged.length >= input.limit) break;
+		if (typeof citation.id !== "string" || seen.has(citation.id)) continue;
+		const currentGen = citation.doc_id
+			? currentDocGenerations.get(citation.doc_id)
+			: undefined;
+		if (currentGen && citation.generation_id !== currentGen) {
+			continue;
+		}
+		if (
+			scopedKeys &&
+			!scopedKeys.has(`${citation.doc_id}:${citation.generation_id}`)
+		) {
+			continue;
+		}
+		seen.add(citation.id);
+		merged.push(citation);
+		retainedCount += 1;
+	}
+	return {
+		citations: merged.map((citation, index) => ({
+			...citation,
+			index: index + 1,
+		})),
+		retainedCount,
+	};
+}
 
 function figureObservationKey(
 	citation: Pick<InternalCitation, "doc_id" | "generation_id" | "figure_id">,
@@ -128,6 +195,8 @@ export type NativeAskRuntimeDependencies = {
 	structured: StructuredOutputAdapter;
 	judgeStructured?: StructuredOutputAdapter;
 	judgeIdentity?: { modelId: string; providerName: string };
+	/** Optional System-1 decision router (e.g. Jev Choice or lightweight model) for gray-zone queries. */
+	decisionRouter?: DecisionRouterPort | null;
 	answer: AnswerStreamAdapter;
 	figureReader?: FigureReaderPort | null;
 	loadFigureAsset?: LoadAuthorizedFigureAssetPort;
@@ -153,42 +222,10 @@ export function fallbackQueryRoute(
 	question: string,
 	historyCount = 0,
 ): { queryType: string; reason: string } {
-	const normalized = question.trim();
-	if (isFormFieldLookup(normalized)) {
-		return {
-			queryType: "fact",
-			reason: "structured_router_fallback_form_field",
-		};
-	}
-	if (isProseChecklistLookup(normalized)) {
-		return {
-			queryType: "fact",
-			reason: "structured_router_fallback_checklist_prose",
-		};
-	}
-	if (
-		!isDerivedCalculationQuestion(normalized) &&
-		(FALLBACK_TABLE_PATTERN.test(normalized) ||
-			isFormTableOperation(normalized))
-	) {
-		return { queryType: "table", reason: "structured_router_fallback_table" };
-	}
-	if (
-		historyCount > 0 &&
-		(FALLBACK_FOLLOW_UP_PATTERN.test(normalized) ||
-			hasFollowupReference(normalized))
-	) {
-		return {
-			queryType: "follow_up",
-			reason: "structured_router_fallback_follow_up",
-		};
-	}
-	if (Array.from(normalized).length >= 4) {
-		return { queryType: "fact", reason: "structured_router_fallback_fact" };
-	}
+	const decision = thinPreRetrievalRoute(question, historyCount);
 	return {
-		queryType: "ambiguous",
-		reason: "structured_router_fallback_ambiguous",
+		queryType: decision.queryType,
+		reason: decision.reason,
 	};
 }
 
@@ -390,9 +427,7 @@ export class NativeAskRuntime {
 		const isMultiAspectFact =
 			!input.tableOnly &&
 			state.query_type === "fact" &&
-			/(?:对比|比较|差异|以及|并且|有哪些|分别|应对|措施|战略|合作伙伴)/u.test(
-				mainQuery,
-			);
+			isMultiAspectFactQuestion(mainQuery);
 		const isDerivedCalculation =
 			!input.tableOnly && isDerivedCalculationQuestion(mainQuery);
 		const baseTopK = input.tableOnly
@@ -436,12 +471,17 @@ export class NativeAskRuntime {
 					}
 				: {}),
 		};
+		const isTargetedRetry =
+			isRetryAttempt &&
+			state.retrieval_debug?.retry_strategy === "judge_missing_query";
 		const comparisonSubQueries =
-			!input.tableOnly && state.query_type === "compare"
-				? buildComparisonSubQueries(mainQuery)
-				: !input.tableOnly && state.query_type === "fact" && isMultiAspectFact
-					? buildMultiAspectSubQueries(mainQuery)
-					: [];
+			isTargetedRetry || input.tableOnly
+				? []
+				: state.query_type === "compare"
+					? buildComparisonSubQueries(mainQuery)
+					: state.query_type === "fact" && isMultiAspectFact
+						? buildMultiAspectSubQueries(mainQuery)
+						: [];
 		const subTopK =
 			comparisonSubQueries.length > 0
 				? state.query_type === "compare"
@@ -703,13 +743,65 @@ export class NativeAskRuntime {
 			modelId: "shared",
 			providerName: "injected",
 		};
+		const grayZoneRouter: DecisionRouterPort | null =
+			this.dependencies.decisionRouter !== undefined
+				? this.dependencies.decisionRouter
+				: process.env.ASK_GRAY_ZONE_ROUTER_ENABLED?.trim().toLowerCase() ===
+							"true" && typeof judgeStructured?.route === "function"
+					? {
+							classify: async ({ question, history, signal }) => {
+								const modelHistory = history.flatMap<{
+									role: "user" | "assistant";
+									content: string;
+								}>((item) =>
+									(item.role === "user" || item.role === "assistant") &&
+									typeof item.content === "string"
+										? [{ role: item.role, content: item.content }]
+										: [],
+								);
+								const routed = await judgeStructured.route(
+									{ question, history: modelHistory },
+									{
+										abortSignal: signal,
+										beforeRequest: this.beforeModelRequest,
+									},
+								);
+								return {
+									queryType: routed.query_type,
+									reason: routed.reason,
+									provider: "judge_router",
+								};
+							},
+						}
+					: null;
 		return {
 			queryRouter: {
-				route: ({ question, history }) => {
+				route: async ({ question, history, libraryId }) => {
 					const pending = latestClarification(history);
-					return pending && clarificationSelection(question, pending)
-						? { queryType: "follow_up", reason: "pending_clarification_reply" }
-						: fallbackQueryRoute(question, history.length);
+					if (pending && clarificationSelection(question, pending)) {
+						return {
+							queryType: "follow_up",
+							reason: "pending_clarification_reply",
+							layer: "thin_rule",
+						};
+					}
+					const thin = thinPreRetrievalRoute(question, history.length);
+					const resolved =
+						thin.grayZone && grayZoneRouter
+							? await resolveGrayZoneRoute({
+									thin,
+									question,
+									history,
+									libraryId,
+									decisionRouter: grayZoneRouter,
+									signal: this.signal,
+								})
+							: thin;
+					return {
+						queryType: resolved.queryType,
+						reason: resolved.reason,
+						layer: resolved.layer,
+					};
 				},
 			},
 			queryRewriter: {
@@ -726,7 +818,7 @@ export class NativeAskRuntime {
 					)
 						return rewritten;
 					// Route the restored task, not the short choice (e.g. "B").
-					const route = fallbackQueryRoute(rewritten.query);
+					const route = thinPreRetrievalRoute(rewritten.query, 0);
 					const plan = planForGroundedQuestion(
 						route.queryType,
 						rewritten.query,
@@ -824,10 +916,7 @@ export class NativeAskRuntime {
 								const key = figureObservationKey(citation);
 								return Boolean(key && !this.attemptedFigureKeys.has(key));
 							});
-						if (
-							FIGURE_REFERENCE_PATTERN.test(question) &&
-							hasUnreadFigureCandidate()
-						) {
+						if (isFigureProseQuestion(question) && hasUnreadFigureCandidate()) {
 							await this.enrichFiguresOnDemand(question, citations);
 						}
 
@@ -924,24 +1013,73 @@ export class NativeAskRuntime {
 			},
 			ports: {
 				retrieve: async (state) => {
+					const previousEvidenceDocuments = [...this.evidenceDocuments];
+					const priorCitations = (
+						(state.citations ?? []) as InternalCitation[]
+					).filter(
+						(citation): citation is InternalCitation =>
+							Boolean(citation) && typeof citation.id === "string",
+					);
+					const isTargetedRetry =
+						(state.retrieval_attempts ?? 0) >= 1 &&
+						state.retrieval_debug?.retry_strategy === "judge_missing_query";
 					let result = this.adjudicate(
 						await this.retrieve(state, {
 							tableOnly: false,
 							applyEvidenceThreshold: true,
 						}),
 					);
-					let groundedPlan = deriveGroundedTableLookup(
-						groundedQuestion(state),
-						tableCandidates(result.citations),
-					);
+					let retryRetainedCount = 0;
+					if (isTargetedRetry && priorCitations.length > 0) {
+						const merged = mergeTargetedRetryCitations({
+							current: result.citations,
+							prior: priorCitations,
+							documentScope: this.documentScope,
+							limit: Math.max(
+								12,
+								result.citations.length,
+								this.policy.retrieve_top_k * 2,
+							),
+						});
+						result = { ...result, citations: merged.citations };
+						retryRetainedCount = merged.retainedCount;
+						if (retryRetainedCount > 0) {
+							this.evidenceDocuments = mergeEvidenceDocuments(
+								previousEvidenceDocuments,
+								this.evidenceDocuments,
+							);
+						}
+					}
+					const question = groundedQuestion(state);
+					let upgradeReason:
+						| "grounded_table_lookup"
+						| "evidence_driven_table_operation"
+						| null = null;
+					const directCandidates = tableCandidates(result.citations);
+					if (deriveGroundedTableLookup(question, directCandidates)) {
+						upgradeReason = "grounded_table_lookup";
+					} else {
+						const directOperationPlan = deriveEvidenceDrivenTableOperationPlan(
+							question,
+							directCandidates,
+						);
+						if (
+							directOperationPlan &&
+							executePlannedTableQuery(directOperationPlan, result.citations)
+								?.status === "success"
+						) {
+							upgradeReason = "evidence_driven_table_operation";
+						}
+					}
 					let tableProbe = false;
-					// Normal recall returns text projections without rows. Resolve their
-					// table identity through the same authorized retrieval boundary.
-					if (
-						!groundedPlan &&
-						isEligibleForGroundedTableLookup(groundedQuestion(state)) &&
-						result.citations.some((citation) => citation.table_id)
-					) {
+					// Unified recall returns text projections (chunk/section/table_summary/figure)
+					// without raw table rows. When actual hits contain table_id evidence and the
+					// question matches a lookup or table operation, run one authorized table probe
+					// and upgrade only if a deterministic plan executes cleanly (lossless rollback otherwise).
+					const probeKind = upgradeReason
+						? null
+						: shouldProbeTableEvidence(question, result.citations);
+					if (probeKind) {
 						tableProbe = true;
 						const primaryContext = {
 							documentConstraintStatus: this.documentConstraintStatus,
@@ -949,26 +1087,68 @@ export class NativeAskRuntime {
 							evidenceDocuments: this.evidenceDocuments,
 							outlineAnswer: this.outlineAnswer,
 						};
-						const precise = this.adjudicate(
-							await this.retrieve(state, {
+						const adjudicatedTableKeys = new Set(
+							result.citations.flatMap((citation) =>
+								typeof citation.table_id === "string" && citation.table_id
+									? [
+											`${citation.doc_id}:${citation.document_version_id}:${citation.table_id}`,
+										]
+									: [],
+							),
+						);
+						if (probeKind === "grounded_lookup") {
+							const precise = this.adjudicate(
+								await this.retrieve(state, {
+									tableOnly: true,
+									applyEvidenceThreshold: true,
+								}),
+							);
+							if (
+								deriveGroundedTableLookup(
+									question,
+									tableCandidates(precise.citations),
+								)
+							) {
+								result = precise;
+								upgradeReason = "grounded_table_lookup";
+							}
+						} else {
+							const precise = await this.retrieve(state, {
 								tableOnly: true,
-								applyEvidenceThreshold: true,
-							}),
-						);
-						groundedPlan = deriveGroundedTableLookup(
-							groundedQuestion(state),
-							tableCandidates(precise.citations),
-						);
-						if (groundedPlan) result = precise;
-						else Object.assign(this, primaryContext);
+								applyEvidenceThreshold: false,
+							});
+							const scopedCitations = precise.citations.filter(
+								(citation) =>
+									typeof citation.table_id === "string" &&
+									citation.table_id.length > 0 &&
+									adjudicatedTableKeys.has(
+										`${citation.doc_id}:${citation.document_version_id}:${citation.table_id}`,
+									),
+							);
+							const operationPlan = deriveEvidenceDrivenTableOperationPlan(
+								question,
+								tableCandidates(scopedCitations),
+							);
+							if (
+								operationPlan &&
+								executePlannedTableQuery(operationPlan, scopedCitations)
+									?.status === "success"
+							) {
+								result = { ...precise, citations: scopedCitations };
+								upgradeReason = "evidence_driven_table_operation";
+							}
+						}
+						if (!upgradeReason) {
+							Object.assign(this, primaryContext);
+						}
 					}
 					return {
 						citations:
-							!groundedPlan && state.query_type === "compare"
+							!upgradeReason && state.query_type === "compare"
 								? compactComparisonEvidence(result.citations)
 								: result.citations,
-						...(groundedPlan
-							? { upgrade: "precise", upgrade_reason: "grounded_table_lookup" }
+						...(upgradeReason
+							? { upgrade: "precise", upgrade_reason: upgradeReason }
 							: {}),
 						retrieval_attempts: (state.retrieval_attempts ?? 0) + 1,
 						retrieval_debug: {
@@ -976,14 +1156,21 @@ export class NativeAskRuntime {
 							...result.debug,
 							rerankDiagnostic: result.debug.rerankDiagnostic ?? null,
 							grounded_lookup_probe: tableProbe,
+							evidence_dispatch: upgradeReason ?? "none",
+							...(retryRetainedCount > 0
+								? { retry_retained_count: retryRetainedCount }
+								: {}),
 						},
 					};
 				},
 				tableRetrieve: async (state) => {
 					// Keep the upgrade reason for table planning and the client trace.
 					// The reuse marker makes that transition one-shot.
+					const isEvidenceUpgraded =
+						state.upgrade_reason === "grounded_table_lookup" ||
+						state.upgrade_reason === "evidence_driven_table_operation";
 					if (
-						state.upgrade_reason === "grounded_table_lookup" &&
+						isEvidenceUpgraded &&
 						state.retrieval_debug?.grounded_lookup_reused !== true
 					) {
 						return {
