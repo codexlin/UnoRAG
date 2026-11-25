@@ -63,6 +63,11 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 - **审批门禁自动化部署与安全清理（#330）**：新增 `.github/workflows/deploy.yml`（预检 `SHA256SUMS` 与 Cosign v3 签名，经 GitHub Environment 人工审批后执行 `remote-deploy.sh` 并校验 `/api/rag/health` 版本与 digest），为 `backup.sh` 增加 `--retain N` 校验后备份轮转，新增 `prune-release-images.sh` 与 `upgrade.sh --prune-old-images` 安全清理旧镜像（保留现网与回滚双版本、禁用 `--force`、不触碰卷）。
 - **跨设备 6 位邮箱验证码（OTP）与认证表单修复（#331）**：新增 Drizzle 迁移 `0037_account_email_otp.sql`，邮箱登录与重置密码邮件同时提供 6 位一次性验证码（行级 `token_hash` 加盐 SHA-256、与链接互斥单次消费、5 次错误作废、Redis 账号级消费限流）与同设备链接；前端接入官方 shadcn `base-nova` `InputOTP` 并修复认证表单 64px 空白断层（60/60 Playwright 桌面+移动端与 CI 6/6 全绿）。
 
+### `v0.4.4` 登录直跳优化与部署收口修复（`#333`, `#334`）
+
+- **认证边界直跳 `/app/ask` 与进入工作区加载态（#334）**：登录、邮箱验证登录、首次改密与邀请加入完成后直接通过硬跳转进入 `/app/ask`（保留 `/app` 书签兜底），消除 `/app` → `/app/ask` 多余跳转及 `router.replace()` + `router.refresh()` 竞态；跳转期间保持控件禁用并显示“正在进入工作区…”加载反馈（桌面/移动 Playwright 认证回归 **82/82** 全绿）。
+- **自动化部署巡检参数修复（#333）**：修复 `deploy/compose/scripts/remote-deploy.sh` 调用 `inspect-lifecycle` 时覆写 Compose `command` 导致退出码 `9` 的问题，并补齐自动化测试回归。
+
 下表描述当前源码能力；线上可用范围仍以具体 Release 和部署清单为准。
 
 ## 已具备的闭环

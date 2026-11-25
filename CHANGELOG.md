@@ -5,6 +5,26 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-11-25
+
+- **Direct post-auth navigation & entering-workspace loading state (#334)**:
+  - Navigate directly to `/app/ask` across `/login`, `/account-access`, `/change-password`, and `/invite` instead of hopping through `/app` (keeping `/app` as a bookmark fallback).
+  - Replace `router.replace(...)` + `router.refresh()` on auth boundaries (sign-in, email OTP/link consume, password setup, invite acceptance, and sign-out) with hard document navigation (`window.location.replace(...)`) to avoid duplicate RSC refresh races and stale client router cache entries.
+  - Keep form controls disabled and display entering-workspace loading feedback (`正在进入工作区...`, `正在进入工作区，请稍候…`, `正在前往修改密码...`) with `motion-reduce:hidden` spinners until navigation commits.
+- **Deployment automation `inspect-lifecycle` fix (#333)**:
+  - Fix `deploy/compose/scripts/remote-deploy.sh` so post-upgrade lifecycle inspection invokes `node scripts/inspect-lifecycle.mjs` with `--fail-on-dead --fail-on-stuck --fail-on-acl-projection` instead of overriding the container command with bare flags.
+- **Upgrade note**: Upgrading from `v0.4.3` requires no database migration, configuration change, or reindex.
+
+## [0.4.3] - 2026-11-25
+
+- **Approval-gated deployment workflow & safe image/backup retention (#330)**:
+  - Add `.github/workflows/deploy.yml` with pre-approval `SHA256SUMS` + Cosign v3 digest verification, GitHub Environment manual approval gate, `remote-deploy.sh` execution, and live `/api/rag/health` version/digest verification.
+  - Add `--retain N` verified backup rotation in `backup.sh` and safe old-image pruning (`prune-release-images.sh` / `upgrade.sh --prune-old-images`) retaining active and rollback pins.
+- **Cross-device 6-digit email OTP & auth form polish (#331)**:
+  - Add migration `0037_account_email_otp.sql` supporting 6-digit one-time verification codes alongside single-use magic links for email sign-in and password reset, backed by per-row salted SHA-256 hashes, mutual-exclusion single-use consumption, 5-attempt lockout, and account-scoped Redis rate limits.
+  - Adopt official shadcn `base-nova` `InputOTP` and fix the 64px vertical spacing break on `/login` and `/account-access`.
+- **Upgrade note**: Apply migration `0037` (`drizzle/0037_account_email_otp.sql`) via the standard upgrade flow; no reindex or configuration change is required.
+
 ## [0.4.2] - 2026-11-25
 
 - **Public homepage bilingual & dual-theme motion upgrade**:
