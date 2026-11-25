@@ -382,6 +382,108 @@ test("remote-deploy.sh rejects unsigned manifests and revision mismatches fail-c
 	assert.match(revMismatch.stderr, /does not match expected revision/);
 });
 
+test("remote-deploy.sh runs backup, upgrade, and inspect-lifecycle without overriding compose command", async (t) => {
+	const compose = load(await readRepoFile("deploy/compose/docker-compose.yml"));
+	const inspectService = compose.services["inspect-lifecycle"];
+	assert.deepEqual(inspectService.command, [
+		"node",
+		"scripts/inspect-lifecycle.mjs",
+		"--fail-on-dead",
+		"--fail-on-stuck",
+		"--fail-on-acl-projection",
+	]);
+
+	const { sandbox, scriptsDir, binDir } = await createComposeSandbox(t);
+	const sha = "a".repeat(40);
+	const manifest = join(sandbox, "release-ghcr.env");
+	const callLog = join(sandbox, "calls.jsonl");
+	await writeFile(callLog, "");
+	await writeFile(
+		manifest,
+		`${[
+			`UNORAG_WEB_IMAGE=ghcr.io/codexlin/unorag@sha256:${"1".repeat(64)}`,
+			`UNORAG_WEB_MIGRATOR_IMAGE=ghcr.io/codexlin/unorag@sha256:${"2".repeat(64)}`,
+			`UNORAG_WEB_OPS_IMAGE=ghcr.io/codexlin/unorag@sha256:${"3".repeat(64)}`,
+			`UNORAG_DBOS_WORKER_IMAGE=ghcr.io/codexlin/unorag@sha256:${"4".repeat(64)}`,
+			`UNORAG_DBOS_APPLICATION_VERSION=unorag-${sha.slice(0, 16)}`,
+			"UNORAG_IMAGE_PLATFORM=linux/amd64",
+			"UNORAG_VERSION=0.4.3",
+			`UNORAG_REVISION=${sha}`,
+			"UNORAG_VERIFY_IMAGE_SIGNATURES=true",
+		].join("\n")}\n`,
+	);
+
+	const stubScript = (name) => `#!${process.execPath}
+const fs = require("node:fs");
+fs.appendFileSync(process.env.CALL_LOG, JSON.stringify({ tool: ${JSON.stringify(name)}, args: process.argv.slice(2) }) + "\\n");
+`;
+	await writeFile(join(scriptsDir, "backup.sh"), stubScript("backup"), {
+		mode: 0o755,
+	});
+	await writeFile(join(scriptsDir, "upgrade.sh"), stubScript("upgrade"), {
+		mode: 0o755,
+	});
+	await writeFile(join(binDir, "docker"), stubScript("docker"), {
+		mode: 0o755,
+	});
+
+	const backupRoot = join(sandbox, "backups");
+	const result = spawnSync(
+		"bash",
+		[
+			join(scriptsDir, "remote-deploy.sh"),
+			"--manifest",
+			manifest,
+			"--release-tag",
+			"v0.4.3",
+			"--expected-revision",
+			sha,
+			"--backup-root",
+			backupRoot,
+			"--backup-retain",
+			"3",
+			"--prune-old-images",
+			"--skip-smoke",
+		],
+		{
+			encoding: "utf8",
+			env: {
+				...process.env,
+				PATH: `${binDir}:${process.env.PATH}`,
+				CALL_LOG: callLog,
+			},
+		},
+	);
+	assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+
+	const calls = (await readFile(callLog, "utf8"))
+		.trim()
+		.split("\n")
+		.map((line) => JSON.parse(line));
+
+	const backupCall = calls.find((c) => c.tool === "backup");
+	assert.ok(backupCall);
+	assert.equal(backupCall.args[0], "--retain");
+	assert.equal(backupCall.args[1], "3");
+	assert.match(backupCall.args[2], /\/backups\/pre-v0\.4\.3-/);
+
+	const upgradeCall = calls.find((c) => c.tool === "upgrade");
+	assert.deepEqual(upgradeCall?.args, [
+		"--manifest",
+		manifest,
+		"--skip-smoke",
+		"--prune-old-images",
+	]);
+
+	const inspectCall = calls.find(
+		(c) => c.tool === "docker" && c.args.includes("inspect-lifecycle"),
+	);
+	assert.ok(inspectCall);
+	// Passing extra flags after `inspect-lifecycle` overrides the service `command:`
+	// (`node scripts/inspect-lifecycle.mjs --fail-on-dead ...`) and causes `node: bad option`.
+	assert.equal(inspectCall.args.at(-1), "inspect-lifecycle");
+});
+
 test("deploy.yml enforces pre-approval verification, GitHub Environment approval gate, strict SSH host checks, and valid bash syntax", async () => {
 	const raw = await readRepoFile(".github/workflows/deploy.yml");
 	const workflow = load(raw);
