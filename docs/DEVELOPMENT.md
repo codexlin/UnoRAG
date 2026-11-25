@@ -7,7 +7,7 @@ UnoRAG 是一个根目录 TypeScript 应用：Next.js 提供产品与 HTTP 边�
 ## 环境要求
 
 - Node.js 22
-- pnpm 9
+- pnpm 10（`package.json` 的 `packageManager` 与根目录 `mise.toml` 锁定精确版本）
 - Docker 与 Docker Compose v2
 - 可选：Helm 3，用于 Chart 校验
 - 可选：Python 3，用于宿主机验收和测试数据工具

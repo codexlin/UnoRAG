@@ -10,7 +10,7 @@ ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
 WORKDIR /repo
 RUN useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
-	&& corepack prepare pnpm@9.7.1 --activate
+	&& corepack prepare pnpm@10.34.9 --activate
 COPY package.json pnpm-lock.yaml ./
 COPY scripts/generate-third-party-notices.mjs ./scripts/generate-third-party-notices.mjs
 RUN --mount=type=cache,id=unorag-pnpm-dev,target=/root/.local/share/pnpm/store \
@@ -52,7 +52,7 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
-	&& corepack prepare pnpm@9.7.1 --activate
+	&& corepack prepare pnpm@10.34.9 --activate
 COPY package.json pnpm-lock.yaml ./
 COPY LICENSE NOTICE ./
 COPY --from=deps /repo/THIRD_PARTY_NOTICES.txt ./
@@ -67,7 +67,7 @@ RUN --mount=type=cache,id=unorag-pnpm-prod,target=/root/.local/share/pnpm/store 
 
 FROM node:22-bookworm-slim AS builder
 WORKDIR /repo
-RUN corepack enable && corepack prepare pnpm@9.7.1 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.9 --activate
 COPY --from=deps /repo/node_modules ./node_modules
 COPY package.json pnpm-lock.yaml ./
 COPY src ./src
@@ -97,7 +97,7 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& useradd --system --uid 10001 --create-home unorag \
 	&& corepack enable \
-	&& corepack prepare pnpm@9.7.1 --activate
+	&& corepack prepare pnpm@10.34.9 --activate
 # The migrator has its own committed lockfile so a release rebuild cannot
 # silently select newer migration tooling than the application was tested with.
 COPY deploy/docker/migrator/package.json deploy/docker/migrator/pnpm-lock.yaml ./
