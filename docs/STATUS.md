@@ -68,6 +68,11 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 - **认证边界直跳 `/app/ask` 与进入工作区加载态（#334）**：登录、邮箱验证登录、首次改密与邀请加入完成后直接通过硬跳转进入 `/app/ask`（保留 `/app` 书签兜底），消除 `/app` → `/app/ask` 多余跳转及 `router.replace()` + `router.refresh()` 竞态；跳转期间保持控件禁用并显示“正在进入工作区…”加载反馈（桌面/移动 Playwright 认证回归 **82/82** 全绿）。
 - **自动化部署巡检参数修复（#333）**：修复 `deploy/compose/scripts/remote-deploy.sh` 调用 `inspect-lifecycle` 时覆写 Compose `command` 导致退出码 `9` 的问题，并补齐自动化测试回归。
 
+### `v0.4.5` 全站悬浮滚动条与零布局抖动升级（`#336`）
+
+- **根文档零占位悬浮滚动条与零抖动弹窗锁滚（#336）**：新增 `WindowScrollbar` 挂载至根布局并隐藏浏览器原生 `html` 占位滚动条（同时移除触发 macOS 降级的全局 `*::-webkit-scrollbar` 样式），确保 `window.innerWidth === documentElement.clientWidth` 恒成立，从而让 Base UI `useScrollLock` 始终走零偏移悬浮路径，消除打开 Sheet/Dialog/Select/Popover 时的横向抖动。
+- **全工作台 Overlay `ScrollArea` 与消息列表组合（#336）**：升级 `src/components/ui/scroll-area.tsx`（接入 `ScrollAreaPrimitive.Content`、`no-scrollbar` 防首屏闪烁、悬停/滚动自动淡入淡出及双向滚动支持），将 `MessageScroller` 组合至 `@base-ui/react/scroll-area` 并全量迁移工作台主滚动区、设置页、运行中心、审计面板、抽屉/详情 Sheet、主题切换弹窗及双轴 `LedgerTable`（保留粘性表头）；新增 Playwright 零抖动回归测试（桌面/移动 **92/92** 与 `pnpm test:fast` **1,346/1,346** 全绿）。
+
 下表描述当前源码能力；线上可用范围仍以具体 Release 和部署清单为准。
 
 ## 已具备的闭环

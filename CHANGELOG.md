@@ -5,6 +5,14 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-11-25
+
+- **Full overlay scrollbars & zero scroll-lock layout jitter (#336)**:
+  - Add root `WindowScrollbar` (`src/components/ui/window-scrollbar.tsx`, mounted in `src/app/layout.tsx`) and hide native inset `html` scrollbars while removing global `*::-webkit-scrollbar` overrides so `window.innerWidth === documentElement.clientWidth` holds across desktop browsers, keeping Base UI `useScrollLock` on its zero-shift overlay path when opening sheets, dialogs, popovers, and menus.
+  - Upgrade `src/components/ui/scroll-area.tsx` with `ScrollAreaPrimitive.Content` resize tracking, `no-scrollbar` anti-flash viewport styling, hover/scroll auto-fading overlay `ScrollBar` indicators, and `vertical` / `horizontal` / `both` orientations.
+  - Compose `MessageScroller` (`src/components/ui/message-scroller.tsx`) with `@base-ui/react/scroll-area` and migrate workbench scroll surfaces (`#workspace-content`, Settings, Operations dashboard/error drawer, Ask trace drawer, Document detail sheet, Audit panel, Theme selector, and dual-axis `LedgerTable` with sticky headers) to overlay `ScrollArea`, backed by Playwright zero-jitter regression coverage.
+- **Upgrade note**: Upgrading from `v0.4.3` or `v0.4.4` requires no database migration, configuration change, or reindex.
+
 ## [0.4.4] - 2026-11-25
 
 - **Direct post-auth navigation & entering-workspace loading state (#334)**:
