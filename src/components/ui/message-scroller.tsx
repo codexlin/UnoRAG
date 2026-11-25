@@ -1,5 +1,6 @@
 "use client";
 
+import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import {
 	MessageScroller as MessageScrollerPrimitive,
 	useMessageScroller,
@@ -9,6 +10,7 @@ import {
 import { ArrowDownIcon } from "lucide-react";
 import type * as React from "react";
 import { Button } from "@/components/ui/button";
+import { ScrollBar } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 function MessageScrollerProvider(
@@ -19,6 +21,7 @@ function MessageScrollerProvider(
 
 function MessageScroller({
 	className,
+	children,
 	...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Root>) {
 	return (
@@ -29,36 +32,48 @@ function MessageScroller({
 				className,
 			)}
 			{...props}
-		/>
+		>
+			<ScrollAreaPrimitive.Root className="relative flex size-full min-h-0 flex-1 flex-col overflow-hidden">
+				{children}
+				<ScrollBar className="group-data-[autoscrolling]/message-scroller:opacity-0" />
+			</ScrollAreaPrimitive.Root>
+		</MessageScrollerPrimitive.Root>
 	);
 }
 
 function MessageScrollerViewport({
 	className,
+	children,
 	...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Viewport>) {
 	return (
-		<MessageScrollerPrimitive.Viewport
+		<ScrollAreaPrimitive.Viewport
 			data-slot="message-scroller-viewport"
+			render={<MessageScrollerPrimitive.Viewport {...props} />}
 			className={cn(
-				"size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain contain-content data-autoscrolling:scrollbar-thumb-transparent data-autoscrolling:scrollbar-track-transparent data-pending-scroll:invisible",
+				"no-scrollbar size-full min-h-0 min-w-0 scroll-fade-b overscroll-contain contain-content data-pending-scroll:invisible",
 				className,
 			)}
-			{...props}
-		/>
+		>
+			{children}
+		</ScrollAreaPrimitive.Viewport>
 	);
 }
 
 function MessageScrollerContent({
 	className,
+	children,
 	...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Content>) {
 	return (
-		<MessageScrollerPrimitive.Content
+		<ScrollAreaPrimitive.Content
 			data-slot="message-scroller-content"
-			className={cn("flex h-max min-h-full flex-col gap-6", className)}
-			{...props}
-		/>
+			style={{ minWidth: 0 }}
+			render={<MessageScrollerPrimitive.Content {...props} />}
+			className={cn("flex h-max min-h-full min-w-0 flex-col gap-6", className)}
+		>
+			{children}
+		</ScrollAreaPrimitive.Content>
 	);
 }
 

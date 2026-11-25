@@ -253,3 +253,63 @@ test("mobile menu, anchor links and keyboard bypass stay operable", async ({
 		}),
 	).toBeVisible();
 });
+
+test("overlay scrollbars prevent inset layout shift when opening sheets and scrolling", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/");
+	const windowScrollbar = page.locator('[data-slot="window-scrollbar"]');
+	await expect(windowScrollbar).toBeAttached();
+
+	const before = await page.evaluate(() => {
+		const header = document.querySelector("header")?.getBoundingClientRect();
+		const heading = document.querySelector("h1")?.getBoundingClientRect();
+		return {
+			insetScrollbar: window.innerWidth - document.documentElement.clientWidth,
+			scrollable: document.documentElement.scrollHeight > window.innerHeight,
+			headerWidth: header?.width ?? 0,
+			headingLeft: heading?.left ?? 0,
+		};
+	});
+	expect(before.scrollable).toBe(true);
+	expect(before.insetScrollbar).toBe(0);
+
+	// Scrolling reveals the floating overlay scrollbar without reserving layout width.
+	await page.evaluate(() => window.scrollTo({ top: 400, behavior: "instant" }));
+	await expect(windowScrollbar).toHaveCSS("opacity", "1");
+
+	// Opening the modal Appearance sheet must not shift header/content or inject classic inset scroll-lock.
+	await page.getByRole("button", { name: "外观设置", exact: true }).click();
+	await expect(page.getByRole("dialog")).toBeVisible();
+	const whileOpen = await page.evaluate(() => {
+		const header = document.querySelector("header")?.getBoundingClientRect();
+		const heading = document.querySelector("h1")?.getBoundingClientRect();
+		const sheetViewport = document.querySelector(
+			'[data-slot="sheet-content"] [data-slot="scroll-area-viewport"]',
+		) as HTMLElement | null;
+		return {
+			insetScrollbar: window.innerWidth - document.documentElement.clientWidth,
+			legacyScrollLock: document.documentElement.hasAttribute(
+				"data-base-ui-scroll-locked",
+			),
+			headerWidth: header?.width ?? 0,
+			headingLeft: heading?.left ?? 0,
+			sheetInsetScrollbar: sheetViewport
+				? sheetViewport.offsetWidth - sheetViewport.clientWidth
+				: -1,
+		};
+	});
+	expect(whileOpen.insetScrollbar).toBe(0);
+	expect(whileOpen.legacyScrollLock).toBe(false);
+	expect(Math.abs(whileOpen.headerWidth - before.headerWidth)).toBeLessThan(
+		0.5,
+	);
+	expect(Math.abs(whileOpen.headingLeft - before.headingLeft)).toBeLessThan(
+		0.5,
+	);
+	expect(whileOpen.sheetInsetScrollbar).toBe(0);
+
+	await page.keyboard.press("Escape");
+	await expect(page.getByRole("dialog")).toHaveCount(0);
+});

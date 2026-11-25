@@ -27,6 +27,7 @@ import {
 import { useSession } from "@/components/app/session-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
 	Select,
 	SelectContent,
@@ -778,7 +779,10 @@ export function WorkspaceAuditPanel() {
 									{formatDateTime(selected.created_at)}
 								</SheetDescription>
 							</SheetHeader>
-							<div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
+							<ScrollArea
+								className="min-h-0 flex-1"
+								contentClassName="space-y-5 px-4 py-4"
+							>
 								<dl className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2.5 text-xs">
 									<dt className="text-muted-foreground">
 										{t("操作者", "Actor")}
@@ -847,7 +851,7 @@ export function WorkspaceAuditPanel() {
 										{JSON.stringify(selected.details, null, 2)}
 									</pre>
 								</section>
-							</div>
+							</ScrollArea>
 						</>
 					) : null}
 				</SheetContent>

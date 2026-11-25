@@ -18,6 +18,7 @@ import {
 	stageDisplayName,
 } from "@/components/app/stage-waterfall";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
 	Sheet,
 	SheetContent,
@@ -381,7 +382,10 @@ export function AskTraceDrawerContent({
 		]);
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-5 sm:px-5">
+		<ScrollArea
+			className="min-h-0 flex-1"
+			contentClassName="flex flex-col px-3 pb-5 sm:px-5"
+		>
 			<TraceSection
 				title={t("执行总览与决策链", "Overview and routing")}
 				defaultOpen
@@ -554,7 +558,7 @@ export function AskTraceDrawerContent({
 					</TraceCollapsible>
 				</Trace>
 			</TraceSection>
-		</div>
+		</ScrollArea>
 	);
 }
 

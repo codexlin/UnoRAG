@@ -15,6 +15,7 @@ import { englishOperationsGuidance } from "@/components/app/operations-guidance"
 import { useSession } from "@/components/app/session-provider";
 import { StageWaterfall } from "@/components/app/stage-waterfall";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
 	Sheet,
 	SheetContent,
@@ -473,7 +474,10 @@ export function OperationsErrorDrawer({
 								)}
 					</SheetDescription>
 				</SheetHeader>
-				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+				<ScrollArea
+					className="min-h-0 flex-1"
+					contentClassName="px-5 py-5 sm:px-6"
+				>
 					{!detail && !error ? (
 						<div className="flex items-center gap-2 py-8 text-ui text-muted-foreground">
 							<LoaderCircle className="size-4 animate-spin" />{" "}
@@ -611,7 +615,7 @@ export function OperationsErrorDrawer({
 							</section>
 						</div>
 					) : null}
-				</div>
+				</ScrollArea>
 			</SheetContent>
 		</Sheet>
 	);
