@@ -1,7 +1,6 @@
 "use client";
 
-import { AlertCircle } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,16 +9,16 @@ import { useInterfaceText } from "@/lib/i18n/provider";
 
 export function ChangePasswordForm({ email }: { email: string | null }) {
 	const t = useInterfaceText();
-	const router = useRouter();
 	const [error, setError] = useState<string | null>(null);
 	const [errorField, setErrorField] = useState<
 		"current_password" | "new_password" | "password_confirmation" | null
 	>(null);
 	const [submitting, setSubmitting] = useState(false);
 	const [signingOut, setSigningOut] = useState(false);
+	const [redirecting, setRedirecting] = useState<"app" | "login" | null>(null);
 	const [ready, setReady] = useState(false);
 	useEffect(() => setReady(true), []);
-	const busy = submitting || signingOut;
+	const busy = submitting || signingOut || Boolean(redirecting);
 
 	async function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
@@ -79,6 +78,7 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 		}
 
 		setSubmitting(true);
+		let navigated = false;
 		try {
 			const response = await fetch("/api/auth/password", {
 				method: "POST",
@@ -129,8 +129,9 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 				return;
 			}
 
-			router.replace("/app");
-			router.refresh();
+			navigated = true;
+			setRedirecting("app");
+			window.location.replace("/app/ask");
 		} catch {
 			setError(
 				t(
@@ -139,7 +140,7 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 				),
 			);
 		} finally {
-			setSubmitting(false);
+			if (!navigated) setSubmitting(false);
 		}
 	}
 
@@ -148,6 +149,7 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 		setSigningOut(true);
 		setError(null);
 		setErrorField(null);
+		let navigated = false;
 		try {
 			const response = await fetch("/api/auth/session", { method: "DELETE" });
 			if (!response.ok) {
@@ -156,8 +158,9 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 				);
 				return;
 			}
-			router.replace("/login");
-			router.refresh();
+			navigated = true;
+			setRedirecting("login");
+			window.location.replace("/login");
 		} catch {
 			setError(
 				t(
@@ -166,7 +169,7 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 				),
 			);
 		} finally {
-			setSigningOut(false);
+			if (!navigated) setSigningOut(false);
 		}
 	}
 
@@ -298,9 +301,19 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					type="submit"
 					disabled={!ready || busy}
 				>
-					{submitting
-						? t("正在保存...", "Saving...")
-						: t("保存并进入 UnoRAG", "Save and enter UnoRAG")}
+					{submitting || redirecting === "app" ? (
+						<>
+							<Loader2
+								className="size-4 animate-spin motion-reduce:hidden"
+								aria-hidden
+							/>
+							{redirecting === "app"
+								? t("正在进入工作区...", "Entering workspace...")
+								: t("正在保存...", "Saving...")}
+						</>
+					) : (
+						t("保存并进入 UnoRAG", "Save and enter UnoRAG")
+					)}
 				</Button>
 				<Button
 					className="h-11 w-full"
@@ -309,7 +322,7 @@ export function ChangePasswordForm({ email }: { email: string | null }) {
 					onClick={signOut}
 					disabled={!ready || busy}
 				>
-					{signingOut
+					{signingOut || redirecting === "login"
 						? t("正在退出...", "Signing out...")
 						: t("退出登录", "Sign out")}
 				</Button>

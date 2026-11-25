@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import {
 	createContext,
 	type ReactNode,
@@ -35,7 +34,6 @@ export function SessionProvider({
 	identity: SessionIdentity;
 	children: ReactNode;
 }) {
-	const router = useRouter();
 	const t = useInterfaceText();
 	const caps = useMemo(() => permissionsFor(identity), [identity]);
 
@@ -47,9 +45,8 @@ export function SessionProvider({
 			);
 			return;
 		}
-		router.replace("/login");
-		router.refresh();
-	}, [router, t]);
+		window.location.replace("/login");
+	}, [t]);
 
 	const value = useMemo(
 		() => ({

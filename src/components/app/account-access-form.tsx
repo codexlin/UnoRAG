@@ -2,7 +2,7 @@
 
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +26,6 @@ export function AccountAccessForm() {
 		"如果该邮箱对应可用账户，你将收到 6 位验证码和一次性链接。请检查收件箱和垃圾邮件。",
 		"If the email belongs to an active account, you'll receive a 6-digit code and a sign-in link. Check your inbox and spam folder.",
 	);
-	const router = useRouter();
 	const searchParams = useSearchParams();
 	const [purpose, setPurpose] = useState<Purpose>(
 		searchParams.get("purpose") === "reset" ? "reset" : "login",
@@ -40,6 +39,7 @@ export function AccountAccessForm() {
 	const [errorField, setErrorField] = useState<ErrorField>(null);
 	const [message, setMessage] = useState<string | null>(null);
 	const [completed, setCompleted] = useState(false);
+	const [redirectTarget, setRedirectTarget] = useState<string | null>(null);
 	const [submitting, setSubmitting] = useState(false);
 	const [resending, setResending] = useState(false);
 
@@ -72,8 +72,9 @@ export function AccountAccessForm() {
 		setReady(true);
 	}, [t]);
 
-	const inCodeStep = !completed && !token && Boolean(requestedEmail);
-	const busy = submitting || resending;
+	const inCodeStep =
+		!completed && !redirectTarget && !token && Boolean(requestedEmail);
+	const busy = submitting || resending || Boolean(redirectTarget);
 
 	async function sendRequestEmail(email: string) {
 		const response = await fetch("/api/auth/email/request", {
@@ -209,6 +210,7 @@ export function AccountAccessForm() {
 		}
 
 		setSubmitting(true);
+		let navigated = false;
 		try {
 			const payloadBody = token
 				? {
@@ -297,12 +299,16 @@ export function AccountAccessForm() {
 				setToken(null);
 				return;
 			}
+			const target = identity.mustChangePassword
+				? "/change-password"
+				: "/app/ask";
+			navigated = true;
 			setToken(null);
 			setRequestedEmail(null);
 			setCode("");
-			setCompleted(true);
-			router.replace(identity.mustChangePassword ? "/change-password" : "/app");
-			router.refresh();
+			setMessage(null);
+			setRedirectTarget(target);
+			window.location.replace(target);
 		} catch {
 			setError(
 				t(
@@ -311,7 +317,7 @@ export function AccountAccessForm() {
 				),
 			);
 		} finally {
-			setSubmitting(false);
+			if (!navigated) setSubmitting(false);
 		}
 	}
 
@@ -327,41 +333,73 @@ export function AccountAccessForm() {
 						: t("使用邮箱登录", "Sign in with email")}
 				</h1>
 				<p className="text-sm leading-6 text-muted-foreground">
-					{completed
-						? t("账号访问已更新。", "Account access updated.")
-						: token
-							? purpose === "reset"
-								? t(
-										"设置新密码后，请重新登录。",
-										"Sign in again after setting your new password.",
-									)
-								: t(
-										"确认后将使用此邮件链接登录。链接仅可使用一次。",
-										"Confirm to sign in with this single-use link.",
-									)
-							: inCodeStep
+					{redirectTarget
+						? redirectTarget === "/change-password"
+							? t(
+									"验证成功，正在前往设置新密码。",
+									"Verified. Opening password setup.",
+								)
+							: t(
+									"验证成功，正在进入工作区。",
+									"Verified. Entering your workspace.",
+								)
+						: completed
+							? t("账号访问已更新。", "Account access updated.")
+							: token
 								? purpose === "reset"
 									? t(
-											"输入邮件中的 6 位验证码并设置新密码，也可在同一台设备上直接点击邮件链接。",
-											"Enter the 6-digit code from your email and choose a new password, or open the link on this device.",
+											"设置新密码后，请重新登录。",
+											"Sign in again after setting your new password.",
 										)
 									: t(
-											"输入邮件中的 6 位验证码即可在当前设备登录，也可在同一台设备上直接点击邮件链接。",
-											"Enter the 6-digit code from your email to sign in on this device, or open the link here.",
+											"确认后将使用此邮件链接登录。链接仅可使用一次。",
+											"Confirm to sign in with this single-use link.",
 										)
-								: purpose === "reset"
-									? t(
-											"输入账号邮箱，获取 6 位验证码和密码重置链接。",
-											"Enter your account email to receive a 6-digit code and password reset link.",
-										)
-									: t(
-											"输入账号邮箱，获取 6 位一次性验证码和登录链接。",
-											"Enter your account email to receive a 6-digit verification code and sign-in link.",
-										)}
+								: inCodeStep
+									? purpose === "reset"
+										? t(
+												"输入邮件中的 6 位验证码并设置新密码，也可在同一台设备上直接点击邮件链接。",
+												"Enter the 6-digit code from your email and choose a new password, or open the link on this device.",
+											)
+										: t(
+												"输入邮件中的 6 位验证码即可在当前设备登录，也可在同一台设备上直接点击邮件链接。",
+												"Enter the 6-digit code from your email to sign in on this device, or open the link here.",
+											)
+									: purpose === "reset"
+										? t(
+												"输入账号邮箱，获取 6 位验证码和密码重置链接。",
+												"Enter your account email to receive a 6-digit code and password reset link.",
+											)
+										: t(
+												"输入账号邮箱，获取 6 位一次性验证码和登录链接。",
+												"Enter your account email to receive a 6-digit verification code and sign-in link.",
+											)}
 				</p>
 			</div>
 
-			{message ? (
+			{redirectTarget ? (
+				<div
+					role="status"
+					aria-live="polite"
+					className="flex items-start gap-2.5 rounded-lg border border-border bg-muted/40 px-3.5 py-3 text-sm leading-6 text-foreground"
+				>
+					<Loader2
+						className="mt-1 size-4 shrink-0 animate-spin text-primary motion-reduce:hidden"
+						aria-hidden
+					/>
+					<span>
+						{redirectTarget === "/change-password"
+							? t(
+									"正在前往修改密码，请稍候…",
+									"Opening password setup, please wait…",
+								)
+							: t(
+									"正在进入工作区，请稍候…",
+									"Entering workspace, please wait…",
+								)}
+					</span>
+				</div>
+			) : message ? (
 				<div
 					role="status"
 					className="flex items-start gap-2.5 rounded-lg border border-border bg-muted/40 px-3.5 py-3 text-sm leading-6 text-foreground"
@@ -380,7 +418,7 @@ export function AccountAccessForm() {
 				onSubmit={submit}
 				aria-busy={busy}
 			>
-				{!completed && !token && !inCodeStep ? (
+				{!completed && !redirectTarget && !token && !inCodeStep ? (
 					<div className="space-y-2">
 						<Label htmlFor="email">{t("邮箱", "Email")}</Label>
 						<Input
@@ -578,7 +616,7 @@ export function AccountAccessForm() {
 					</p>
 				) : null}
 
-				{!completed ? (
+				{!completed && !redirectTarget ? (
 					<div className="space-y-2 pt-1">
 						<Button
 							className="h-11 w-full text-sm font-medium shadow-2xs"

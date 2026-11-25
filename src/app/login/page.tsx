@@ -2,7 +2,6 @@
 
 import { AlertCircle, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 import { AuthPageShell } from "@/components/app/auth-page-shell";
 import { Button } from "@/components/ui/button";
@@ -50,18 +49,20 @@ function LoginFormPlaceholder() {
 
 export default function LoginPage() {
 	const t = useInterfaceText();
-	const router = useRouter();
 	const [error, setError] = useState<keyof typeof ERROR_COPY | null>(null);
 	const [submitting, setSubmitting] = useState(false);
+	const [redirectTarget, setRedirectTarget] = useState<string | null>(null);
 	const [ready, setReady] = useState(false);
 	useEffect(() => setReady(true), []);
+	const busy = submitting || Boolean(redirectTarget);
 
 	async function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		if (!ready || submitting) return;
+		if (!ready || busy) return;
 		setSubmitting(true);
 		setError(null);
 		const form = new FormData(event.currentTarget);
+		let navigated = false;
 		try {
 			const response = await fetch("/api/auth/session", {
 				method: "POST",
@@ -84,12 +85,16 @@ export default function LoginPage() {
 			const identity = (await response.json()) as {
 				mustChangePassword?: boolean;
 			};
-			router.replace(identity.mustChangePassword ? "/change-password" : "/app");
-			router.refresh();
+			const target = identity.mustChangePassword
+				? "/change-password"
+				: "/app/ask";
+			navigated = true;
+			setRedirectTarget(target);
+			window.location.replace(target);
 		} catch {
 			setError("network");
 		} finally {
-			setSubmitting(false);
+			if (!navigated) setSubmitting(false);
 		}
 	}
 
@@ -110,7 +115,7 @@ export default function LoginPage() {
 			{!ready ? (
 				<LoginFormPlaceholder />
 			) : (
-				<form method="post" onSubmit={submit} aria-busy={submitting}>
+				<form method="post" onSubmit={submit} aria-busy={busy}>
 					<div className="space-y-4">
 						<div className="space-y-2">
 							<Label htmlFor="email">{t("邮箱", "Email")}</Label>
@@ -123,7 +128,7 @@ export default function LoginPage() {
 								className="h-11 bg-background px-3.5 text-base shadow-2xs md:text-base dark:bg-muted/35 motion-reduce:transition-none"
 								aria-invalid={error === "credentials" || undefined}
 								aria-describedby={error ? "login-error" : undefined}
-								disabled={submitting}
+								disabled={busy}
 								required
 							/>
 						</div>
@@ -137,7 +142,7 @@ export default function LoginPage() {
 								className="h-11 bg-background px-3.5 text-base shadow-2xs md:text-base dark:bg-muted/35 motion-reduce:transition-none"
 								aria-invalid={error === "credentials" || undefined}
 								aria-describedby={error ? "login-error" : undefined}
-								disabled={submitting}
+								disabled={busy}
 								required
 							/>
 						</div>
@@ -157,15 +162,19 @@ export default function LoginPage() {
 					<Button
 						className="h-11 w-full text-sm font-medium shadow-2xs"
 						type="submit"
-						disabled={!ready || submitting}
+						disabled={!ready || busy}
 					>
-						{submitting ? (
+						{busy ? (
 							<>
 								<Loader2
 									className="size-4 animate-spin motion-reduce:hidden"
 									aria-hidden
 								/>
-								{t("正在登录...", "Signing in...")}
+								{redirectTarget === "/change-password"
+									? t("正在前往修改密码...", "Opening password setup...")
+									: redirectTarget
+										? t("正在进入工作区...", "Entering workspace...")
+										: t("正在登录...", "Signing in...")}
 							</>
 						) : (
 							t("登录", "Sign in")

@@ -141,7 +141,7 @@ for (const mustChangePassword of [false, true]) {
 	}) => {
 		const consumes: unknown[] = [];
 		const token = "mail-only-token+/%=";
-		const target = mustChangePassword ? "/change-password" : "/app";
+		const target = mustChangePassword ? "/change-password" : "/app/ask";
 		await page.route(
 			(url) => url.pathname === target,
 			(route) =>
@@ -322,7 +322,7 @@ test("cross-device 6-digit OTP signs in on the requesting browser (mock mail API
 		});
 	});
 	await page.route(
-		(url) => url.pathname === "/app",
+		(url) => url.pathname === "/app/ask",
 		(route) =>
 			route.fulfill({
 				contentType: "text/html",
@@ -346,8 +346,252 @@ test("cross-device 6-digit OTP signs in on the requesting browser (mock mail API
 
 	await otp.fill("482917");
 	await page.getByRole("button", { name: "验证并登录" }).click();
-	await expect(page).toHaveURL(/\/app$/);
+	await expect(page).toHaveURL(/\/app\/ask$/);
 	expect(consumes).toEqual([
 		{ purpose: "login", email: "codexlin@gmail.com", code: "482917" },
 	]);
+});
+
+test("password login shows entering workspace state while navigating directly to /app/ask (mock session API)", async ({
+	page,
+}) => {
+	type LoginSnapshot = {
+		phase: "mutation" | "settled";
+		buttonText: string;
+		buttonDisabled: boolean;
+		emailDisabled: boolean;
+		passwordDisabled: boolean;
+		hasSpinner: boolean;
+	};
+	const snapshots: LoginSnapshot[] = [];
+	let markSettled = () => {};
+	const settledObserved = new Promise<void>((resolve) => {
+		markSettled = resolve;
+	});
+	let submitted = false;
+	const appHopRequests: string[] = [];
+	const rscRequestsAfterSubmit: string[] = [];
+	const appAskRequests: string[] = [];
+	const trackRequests = (request: { url: () => string }) => {
+		if (!submitted) return;
+		const url = new URL(request.url());
+		if (url.pathname === "/app") appHopRequests.push(request.url());
+		if (url.searchParams.has("_rsc"))
+			rscRequestsAfterSubmit.push(request.url());
+		if (url.pathname === "/app/ask") appAskRequests.push(request.url());
+	};
+
+	await page.exposeFunction("__recordLoginState", (snapshot: LoginSnapshot) => {
+		snapshots.push(snapshot);
+		if (snapshot.phase === "settled") markSettled();
+	});
+	await page.route("**/api/auth/session", (route) =>
+		route.fulfill({ status: 200, json: { mustChangePassword: false } }),
+	);
+	await page.route(
+		(url) => url.pathname === "/app/ask",
+		async (route) => {
+			await Promise.race([
+				settledObserved,
+				new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+			]);
+			await route.fulfill({
+				contentType: "text/html",
+				body: "<h1>Mock ask workspace</h1>",
+			});
+		},
+	);
+
+	page.on("request", trackRequests);
+	try {
+		await page.goto("/login");
+		await page.getByLabel("邮箱").fill("member@example.test");
+		await page.getByLabel("密码", { exact: true }).fill("ValidPass7");
+		await page.evaluate(() => {
+			const record = (
+				window as unknown as {
+					__recordLoginState: (snapshot: LoginSnapshot) => void;
+				}
+			).__recordLoginState;
+			const read = (phase: "mutation" | "settled"): LoginSnapshot => {
+				const button = document.querySelector<HTMLButtonElement>(
+					'button[type="submit"]',
+				);
+				const email = document.querySelector<HTMLInputElement>("#email");
+				const password = document.querySelector<HTMLInputElement>("#password");
+				return {
+					phase,
+					buttonText: button?.textContent?.trim() ?? "",
+					buttonDisabled: button?.disabled ?? false,
+					emailDisabled: email?.disabled ?? false,
+					passwordDisabled: password?.disabled ?? false,
+					hasSpinner: Boolean(button?.querySelector("svg.animate-spin")),
+				};
+			};
+			let scheduled = false;
+			const observer = new MutationObserver(() => {
+				const snapshot = read("mutation");
+				record(snapshot);
+				if (!scheduled && snapshot.buttonText === "正在进入工作区...") {
+					scheduled = true;
+					window.setTimeout(() => record(read("settled")), 100);
+				}
+			});
+			observer.observe(document.body, {
+				subtree: true,
+				childList: true,
+				characterData: true,
+				attributes: true,
+			});
+		});
+
+		submitted = true;
+		await page.getByRole("button", { name: "登录", exact: true }).click();
+		await expect(page).toHaveURL(/\/app\/ask$/);
+
+		const settled = snapshots.filter((item) => item.phase === "settled");
+		expect(settled.length).toBeGreaterThanOrEqual(1);
+		expect(settled.at(-1)).toEqual({
+			phase: "settled",
+			buttonText: "正在进入工作区...",
+			buttonDisabled: true,
+			emailDisabled: true,
+			passwordDisabled: true,
+			hasSpinner: true,
+		});
+		const enteringIndex = snapshots.findIndex(
+			(item) => item.buttonText === "正在进入工作区...",
+		);
+		expect(enteringIndex).toBeGreaterThanOrEqual(0);
+		expect(
+			snapshots
+				.slice(enteringIndex)
+				.every(
+					(item) =>
+						item.buttonText === "正在进入工作区..." && item.buttonDisabled,
+				),
+		).toBe(true);
+		expect(appHopRequests).toEqual([]);
+		expect(rscRequestsAfterSubmit).toEqual([]);
+		expect(appAskRequests).toHaveLength(1);
+	} finally {
+		page.off("request", trackRequests);
+	}
+});
+
+test("email login shows entering workspace status while navigating directly to /app/ask (mock mail API)", async ({
+	page,
+}) => {
+	type EmailLoginSnapshot = {
+		phase: "mutation" | "settled";
+		hasSubtitle: boolean;
+		statusText: string;
+		hasSpinner: boolean;
+		submitButtons: number;
+	};
+	const snapshots: EmailLoginSnapshot[] = [];
+	let markSettled = () => {};
+	const settledObserved = new Promise<void>((resolve) => {
+		markSettled = resolve;
+	});
+	let submitted = false;
+	const appHopRequests: string[] = [];
+	const rscRequestsAfterSubmit: string[] = [];
+	const appAskRequests: string[] = [];
+	const trackRequests = (request: { url: () => string }) => {
+		if (!submitted) return;
+		const url = new URL(request.url());
+		if (url.pathname === "/app") appHopRequests.push(request.url());
+		if (url.searchParams.has("_rsc"))
+			rscRequestsAfterSubmit.push(request.url());
+		if (url.pathname === "/app/ask") appAskRequests.push(request.url());
+	};
+
+	await page.exposeFunction(
+		"__recordEmailLoginState",
+		(snapshot: EmailLoginSnapshot) => {
+			snapshots.push(snapshot);
+			if (snapshot.phase === "settled") markSettled();
+		},
+	);
+	await page.route("**/api/auth/email/consume", (route) =>
+		route.fulfill({
+			status: 200,
+			json: { mustChangePassword: false, session_created: true },
+		}),
+	);
+	await page.route(
+		(url) => url.pathname === "/app/ask",
+		async (route) => {
+			await Promise.race([
+				settledObserved,
+				new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+			]);
+			await route.fulfill({
+				contentType: "text/html",
+				body: "<h1>Mock ask workspace</h1>",
+			});
+		},
+	);
+
+	page.on("request", trackRequests);
+	try {
+		await page.goto("/account-access#token=direct-nav-token&purpose=login");
+		const confirm = page.getByRole("button", { name: "确认登录", exact: true });
+		await expect(confirm).toBeEnabled();
+		await page.evaluate(() => {
+			const record = (
+				window as unknown as {
+					__recordEmailLoginState: (snapshot: EmailLoginSnapshot) => void;
+				}
+			).__recordEmailLoginState;
+			const read = (phase: "mutation" | "settled"): EmailLoginSnapshot => {
+				const status = document.querySelector('[role="status"]');
+				return {
+					phase,
+					hasSubtitle: (document.body.textContent ?? "").includes(
+						"验证成功，正在进入工作区。",
+					),
+					statusText: status?.textContent?.trim() ?? "",
+					hasSpinner: Boolean(status?.querySelector("svg.animate-spin")),
+					submitButtons: document.querySelectorAll('button[type="submit"]')
+						.length,
+				};
+			};
+			let scheduled = false;
+			const observer = new MutationObserver(() => {
+				const snapshot = read("mutation");
+				record(snapshot);
+				if (!scheduled && snapshot.statusText === "正在进入工作区，请稍候…") {
+					scheduled = true;
+					window.setTimeout(() => record(read("settled")), 100);
+				}
+			});
+			observer.observe(document.body, {
+				subtree: true,
+				childList: true,
+				characterData: true,
+				attributes: true,
+			});
+		});
+
+		submitted = true;
+		await confirm.click();
+		await expect(page).toHaveURL(/\/app\/ask$/);
+
+		const settled = snapshots.filter((item) => item.phase === "settled");
+		expect(settled.length).toBeGreaterThanOrEqual(1);
+		expect(settled.at(-1)).toEqual({
+			phase: "settled",
+			hasSubtitle: true,
+			statusText: "正在进入工作区，请稍候…",
+			hasSpinner: true,
+			submitButtons: 0,
+		});
+		expect(appHopRequests).toEqual([]);
+		expect(rscRequestsAfterSubmit).toEqual([]);
+		expect(appAskRequests).toHaveLength(1);
+	} finally {
+		page.off("request", trackRequests);
+	}
 });

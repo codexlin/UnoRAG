@@ -11,7 +11,7 @@ export default async function ChangePasswordPage() {
 	const cookieStore = await cookies();
 	const identity = await resolveSessionCookieHeader(cookieStore.toString());
 	if (!identity) redirect("/login");
-	if (!identity.mustChangePassword) redirect("/app");
+	if (!identity.mustChangePassword) redirect("/app/ask");
 	const t = interfaceText((await getRequestLanguage()).locale);
 
 	return (

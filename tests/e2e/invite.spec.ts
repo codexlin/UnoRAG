@@ -328,7 +328,8 @@ test("browser navigation invalidates a delayed accepted invitation without redir
 	const redirects: string[] = [];
 	const trackRedirect = (request: { url: () => string }) => {
 		const url = new URL(request.url());
-		if (url.pathname === "/app") redirects.push(url.pathname);
+		if (url.pathname === "/app" || url.pathname === "/app/ask")
+			redirects.push(url.pathname);
 	};
 	try {
 		await page.goto(`/invite#token=${token}`);
@@ -398,4 +399,92 @@ test("browser navigation invalidates a delayed accepted invitation without redir
 			(window as InviteRaceWindow).__inviteRace?.release(),
 		);
 	}
+});
+
+test("accepted invitation with session navigates directly to /app/ask and keeps entering state", async ({
+	page,
+}) => {
+	type InviteSnapshot = {
+		phase: "mutation" | "settled";
+		buttonText: string;
+		buttonDisabled: boolean;
+		hasSpinner: boolean;
+	};
+	const snapshots: InviteSnapshot[] = [];
+	let markSettled = () => {};
+	const settledObserved = new Promise<void>((resolve) => {
+		markSettled = resolve;
+	});
+	await mockPreview(page, true);
+	await page.exposeFunction(
+		"__recordInviteState",
+		(snapshot: InviteSnapshot) => {
+			snapshots.push(snapshot);
+			if (snapshot.phase === "settled") markSettled();
+		},
+	);
+	await page.route("**/api/auth/invite", (route) =>
+		route.fulfill({ status: 201, json: { session_created: true } }),
+	);
+	await page.route(
+		(url) => url.pathname === "/app/ask",
+		async (route) => {
+			await Promise.race([
+				settledObserved,
+				new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+			]);
+			await route.fulfill({
+				contentType: "text/html",
+				body: "<h1>Mock ask workspace</h1>",
+			});
+		},
+	);
+
+	await page.goto(`/invite#token=${token}`);
+	await page.getByLabel("原密码", { exact: true }).fill("old");
+	await page.evaluate(() => {
+		const record = (
+			window as unknown as {
+				__recordInviteState: (snapshot: InviteSnapshot) => void;
+			}
+		).__recordInviteState;
+		const read = (phase: "mutation" | "settled"): InviteSnapshot => {
+			const button = document.querySelector<HTMLButtonElement>(
+				'button[type="submit"]',
+			);
+			return {
+				phase,
+				buttonText: button?.textContent?.trim() ?? "",
+				buttonDisabled: button?.disabled ?? false,
+				hasSpinner: Boolean(button?.querySelector("svg.animate-spin")),
+			};
+		};
+		let scheduled = false;
+		const observer = new MutationObserver(() => {
+			const snapshot = read("mutation");
+			record(snapshot);
+			if (!scheduled && snapshot.buttonText === "正在进入工作区…") {
+				scheduled = true;
+				window.setTimeout(() => record(read("settled")), 100);
+			}
+		});
+		observer.observe(document.body, {
+			subtree: true,
+			childList: true,
+			characterData: true,
+			attributes: true,
+		});
+	});
+
+	await page.getByRole("button", { name: "加入工作区", exact: true }).click();
+	await expect(page).toHaveURL(/\/app\/ask$/);
+
+	const settled = snapshots.filter((item) => item.phase === "settled");
+	expect(settled.length).toBeGreaterThanOrEqual(1);
+	expect(settled.at(-1)).toEqual({
+		phase: "settled",
+		buttonText: "正在进入工作区…",
+		buttonDisabled: true,
+		hasSpinner: true,
+	});
 });

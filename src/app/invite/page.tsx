@@ -1,5 +1,6 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, Suspense, useEffect, useRef, useState } from "react";
@@ -28,7 +29,11 @@ function InviteForm() {
 	const [error, setError] = useState<string | null>(null);
 	const [passwordError, setPasswordError] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
+	const [redirectTarget, setRedirectTarget] = useState<
+		"/app/ask" | "/login" | null
+	>(null);
 	const submitAttempt = useRef<AbortController | null>(null);
+	const busy = submitting || Boolean(redirectTarget);
 
 	useEffect(() => {
 		setSubmitting(false);
@@ -126,10 +131,11 @@ function InviteForm() {
 
 	async function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		if (!token || !preview || submitting || submitAttempt.current) return;
+		if (!token || !preview || busy || submitAttempt.current) return;
 		setSubmitting(true);
 		setError(null);
 		setPasswordError(false);
+		let navigated = false;
 		const passwordInput = event.currentTarget.elements.namedItem("password");
 		function rejectPassword(message: string) {
 			setError(message);
@@ -237,8 +243,10 @@ function InviteForm() {
 			}
 			const result = (await response.json()) as { session_created?: boolean };
 			if (!isCurrent()) return;
-			router.replace(result.session_created === false ? "/login" : "/app");
-			router.refresh();
+			const target = result.session_created === false ? "/login" : "/app/ask";
+			navigated = true;
+			setRedirectTarget(target);
+			window.location.replace(target);
 		} catch {
 			if (isCurrent())
 				setError(
@@ -248,7 +256,7 @@ function InviteForm() {
 					),
 				);
 		} finally {
-			if (isCurrent()) {
+			if (isCurrent() && !navigated) {
 				submitAttempt.current = null;
 				setSubmitting(false);
 			}
@@ -293,7 +301,7 @@ function InviteForm() {
 						method="post"
 						className="space-y-5"
 						onSubmit={submit}
-						aria-busy={submitting}
+						aria-busy={busy}
 					>
 						{!preview.existingAccount ? (
 							<div className="space-y-2">
@@ -305,7 +313,7 @@ function InviteForm() {
 									name="display_name"
 									autoComplete="name"
 									className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
-									disabled={!token || submitting}
+									disabled={!token || busy}
 									defaultValue={preview.email.split("@")[0] ?? ""}
 								/>
 							</div>
@@ -321,7 +329,7 @@ function InviteForm() {
 								name="password"
 								type="password"
 								className="h-11 px-3 text-base md:text-base motion-reduce:transition-none"
-								disabled={!token || submitting}
+								disabled={!token || busy}
 								aria-invalid={passwordError || undefined}
 								aria-describedby={
 									passwordError
@@ -371,17 +379,29 @@ function InviteForm() {
 						<Button
 							className="h-11 w-full"
 							type="submit"
-							disabled={!token || submitting}
+							disabled={!token || busy}
 						>
-							{submitting
-								? t("正在加入…", "Joining…")
-								: t("加入工作区", "Join workspace")}
+							{busy ? (
+								<>
+									<Loader2
+										className="size-4 animate-spin motion-reduce:hidden"
+										aria-hidden
+									/>
+									{redirectTarget === "/app/ask"
+										? t("正在进入工作区…", "Entering workspace…")
+										: redirectTarget === "/login"
+											? t("正在前往登录…", "Opening sign-in…")
+											: t("正在加入…", "Joining…")}
+								</>
+							) : (
+								t("加入工作区", "Join workspace")
+							)}
 						</Button>
 					</form>
 				</>
 			)}
 			<div className="border-t pt-4">
-				{submitting ? (
+				{busy ? (
 					<Button
 						type="button"
 						variant="link"
