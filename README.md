@@ -41,7 +41,10 @@ explicit refusal, durable processing, and deployment-level acceptance.
 ## One Knowledge Core, Two Product Surfaces
 
 **UnoRAG Workspace** gives administrators and employees a complete product for workspaces, members,
-libraries, document versions, visible jobs, streaming questions, evidence inspection, follow-ups, and archives.
+libraries, document versions, visible jobs, streaming questions, evidence inspection, follow-ups, archives,
+and Owner-only **Models & Providers** management (hot-switching Chat, Judge, Rerank, and VLM online with
+AES-256-GCM encrypted keys, live `/rerank` & `json_schema` probing, and `MODEL_SETTINGS_LOCKED=true`
+deployment lock mode for strict environments).
 
 **UnoRAG Knowledge API** lets existing applications use scoped Service Keys with
 `POST /api/v1/retrieve` and `POST /api/v1/ask`. It shares the Workspace authorization, version,
@@ -66,7 +69,9 @@ flowchart LR
 Chunking is structure first: headings, pages, tables, and code take priority; recursive splitting
 enforces hard limits; semantic splitting is reserved for long narrative regions without explicit
 structure. Hybrid retrieval uses Qdrant server-side named `dense` + `lexical_v1 (modifier: "idf")`
-sparse vectors with RRF fusion (with optional reranking and deterministic table execution).
+sparse vectors with RRF fusion, unified `auto` / `on` / `off` cross-encoder reranking (including
+automatic `sparse-only` escalation and `/rerank` compatibility for vLLM, SiliconFlow, Xinference,
+Jina, Cohere, and Voyage), and deterministic table execution.
 LangGraph.js orchestrates Ask, while Vercel AI SDK streams model output.
 
 ## Private Deployment

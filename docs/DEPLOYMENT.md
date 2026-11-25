@@ -314,7 +314,7 @@ Embedding、Judge、Rerank 与 VLM 均可在 `runtime.advanced.env` 中配置独
   就必须在 `runtime.secret` 提供对应的专用密钥（即使是无鉴权本地服务，也需填 `local-no-auth` 等占位值），防止主密钥意外外发。
 - **Web 与 Worker 一致性**：Web 查询与 Worker 入库必须使用同一组 Embedding 配置；Compose 会同时注入两者。
 - **Control 同步与 VLM 边界**：Compose 会向 `dbos-control` 同步 Web 的 Judge/VLM 绑定与开关，Control 只做配置健康检查，不调用模型。
-  VLM 目前仅 Compose/本地配置已接入；Helm 尚未接入 VLM 配置与凭据注入，仅向 Helm Secret 添加 `VLM_API_KEY` 不会启用 VLM。
+  Helm 的 `web` Deployment 已支持可选注入 `VLM_API_KEY`、`MODEL_SETTINGS_ENCRYPTION_KEY` 与 `MODEL_SETTINGS_ENCRYPTION_KEY_PREVIOUS`，环境变量级 `VLM_ENABLED` 默认仅在 Compose/本地配置接入；Kubernetes 环境下组织 Owner 也可在未开启 `MODEL_SETTINGS_LOCKED=true` 时通过「设置 → 模型与供应商」在线启用 VLM。
 
 ### 5. 本地网关兼容性开关与 Rerank
 
@@ -337,7 +337,7 @@ Embedding、Judge、Rerank 与 VLM 均可在 `runtime.advanced.env` 中配置独
 - **VLM**：发送最小 1×1 PNG 真实校验多模态视觉输入兼容性；
 - **Embedding**：因与 Qdrant 集合向量空间强绑定，在页面中始终保持**只读锁定**，仍需通过部署环境变量变更并新建集合重索引。
 
-安全边界：在线保存的 API Key 使用 `AES-256-GCM`（结合组织 ID 与能力槽位 AAD，密钥由 `MODEL_SETTINGS_ENCRYPTION_KEY` 或 `UNORAG_SESSION_SECRET` 经 HKDF 派生）加密落库，接口永不回显明文；所有修改写入操作审计日志。严苛金融/政企客户可在 `runtime.advanced.env`（或 Helm `config.modelSettingsLocked="true"`）设置 **`MODEL_SETTINGS_LOCKED=true`**，运行时将完全忽略数据库覆盖项并阻止网页修改或自定义 URL 探测。
+安全边界：在线保存的 API Key 使用 `AES-256-GCM`（结合组织 ID 与能力槽位 AAD，密钥由 `MODEL_SETTINGS_ENCRYPTION_KEY` 或 `UNORAG_SESSION_SECRET` 经 HKDF 派生）加密落库，接口永不回显明文；若显式设置了 `MODEL_SETTINGS_ENCRYPTION_KEY` 且长度不足 32 字符将 fail-closed 拒绝加解密；轮换主密钥时可通过 `MODEL_SETTINGS_ENCRYPTION_KEY_PREVIOUS` 实现零停机平滑解密迁移。修改既有密钥槽位的 `base_url` 时强制要求重新填写或清除旧密钥（禁止向新网关转发旧密钥）；`POST /api/organization/model-settings/test` 强制拦截云元数据地址（含 IPv4-mapped/NAT64/link-local IPv6 与 DNS 解析校验）、`?`/`#` 路径注入与 HTTP 重定向，并按组织/Owner 实施每分钟 20 次限流；所有修改写入操作审计日志（`organization.model_settings.updated`）。严苛金融/政企客户可在 `runtime.advanced.env`（或 Helm `config.modelSettingsLocked="true"`）设置 **`MODEL_SETTINGS_LOCKED=true`**，运行时将完全忽略数据库覆盖项并阻止网页修改或自定义 URL 探测。
 
 关于 Rerank：
 

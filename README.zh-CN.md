@@ -39,7 +39,9 @@ UnoRAG 关注真正影响企业上线的完整链路：检索前权限过滤、�
 ## 一个知识内核，两种使用方式
 
 **UnoRAG Workspace** 面向管理员和员工：管理 Workspace、成员、文库、文档版本和任务；
-进行流式问答、查看证据、连续追问并归档会话。
+进行流式问答、查看证据、连续追问并归档会话；支持组织 Owner 在线管理 **模型与供应商**（免重启热切换
+Chat / Judge / Rerank / VLM，API Key 经 AES-256-GCM 加密落库且内置 `/rerank` 与 `json_schema`
+一键连通探测，并保留 `MODEL_SETTINGS_LOCKED=true` 部署级锁定模式满足严苛金融/政企合规边界）。
 
 **UnoRAG Knowledge API** 面向已有业务系统：使用带 scope 的 Service Key 调用
 `POST /api/v1/retrieve` 或 `POST /api/v1/ask`，无需采用 UnoRAG UI，也不会产生第二套权限和索引事实。
@@ -62,7 +64,9 @@ flowchart LR
 
 默认切分策略是**结构优先**：标题、页面、表格和代码边界优先；递归切分负责硬上限；
 语义切分只用于较长、缺少显式结构的叙事区域。混合检索采用 Qdrant 服务端命名 `dense` +
-`lexical_v1 (modifier: "idf")` 稀疏向量与 RRF 融合（可选 Rerank），并支持确定性表格执行。
+`lexical_v1 (modifier: "idf")` 稀疏向量与 RRF 融合，配合统一的 `auto` / `on` / `off` 精排策略
+（覆盖复杂/对比/多轮改写与 `sparse-only` 自动升精排，兼容 DashScope、vLLM、SiliconFlow、Xinference、
+Jina、Cohere、Voyage），并支持确定性表格执行。
 Ask 使用 LangGraph.js 编排并通过 Vercel AI SDK 流式生成。
 
 ## 私有部署
