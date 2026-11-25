@@ -1,8 +1,11 @@
 {
 	"name": "unorag-web-migrator",
 	"private": true,
-	"packageManager": "pnpm@9.7.1",
+	"packageManager": "pnpm@10.34.9",
 	"pnpm": {
+		"onlyBuiltDependencies": [
+			"esbuild"
+		],
 		"overrides": {
 			"esbuild": "0.28.1"
 		}
