@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ThemeProvider } from "@/components/app/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { WindowScrollbar } from "@/components/ui/window-scrollbar";
 import { APPEARANCE_INIT_SCRIPT } from "@/lib/appearance";
 import { interfaceText } from "@/lib/i18n/locale";
 import { LanguageProvider } from "@/lib/i18n/provider";
@@ -75,6 +76,7 @@ export default async function RootLayout({
 					storageKey="unorag-theme"
 				>
 					<LanguageProvider language={language}>{children}</LanguageProvider>
+					<WindowScrollbar />
 					<Toaster position="top-right" richColors closeButton />
 				</ThemeProvider>
 			</body>

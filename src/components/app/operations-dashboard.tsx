@@ -32,6 +32,7 @@ import { useSession } from "@/components/app/session-provider";
 import { localizeHealthRecovery } from "@/components/app/settings/health-recovery";
 import { stageDisplayName } from "@/components/app/stage-waterfall";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { formatDateTime, formatDurationMs } from "@/lib/format";
 import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
@@ -631,7 +632,10 @@ export function OperationsDashboard() {
 						workspaceId={identity.workspaceId}
 					/>
 				) : (
-					<div className="min-h-0 flex-1 space-y-6 overflow-y-auto pb-8 md:pr-1 md:[scrollbar-gutter:stable]">
+					<ScrollArea
+						className="min-h-0 flex-1"
+						contentClassName="space-y-6 pb-8"
+					>
 						{error ? (
 							<div
 								role="alert"
@@ -1104,7 +1108,7 @@ export function OperationsDashboard() {
 								))}
 							</dl>
 						</details>
-					</div>
+					</ScrollArea>
 				)}
 				<OperationsErrorDrawer
 					selected={selectedError}

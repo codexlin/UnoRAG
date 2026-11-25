@@ -14,6 +14,7 @@ import { WorkspaceIntegrationKeysPanel } from "@/components/app/workspace-integr
 import { WorkspaceMembersPanel } from "@/components/app/workspace-members-panel";
 import { WorkspaceNotificationsPanel } from "@/components/app/workspace-notifications-panel";
 import { buttonVariants } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
 	Select,
 	SelectContent,
@@ -203,9 +204,10 @@ export default function SettingsPage() {
 					</ul>
 				</nav>
 
-				<div
-					className="min-h-0 min-w-0 flex-1 overflow-y-auto pt-2 pb-8 md:pr-1 md:[scrollbar-gutter:stable]"
+				<ScrollArea
 					key={active}
+					className="min-h-0 min-w-0 flex-1"
+					contentClassName="pt-2 pb-8"
 				>
 					{!active ? (
 						<p role="status" className="text-sm text-muted-foreground">
@@ -225,7 +227,7 @@ export default function SettingsPage() {
 						<WorkspaceNotificationsPanel onStateChange={reportState} />
 					) : null}
 					{active === "service" ? <WorkspaceServicePanel /> : null}
-				</div>
+				</ScrollArea>
 			</div>
 		</div>
 	);

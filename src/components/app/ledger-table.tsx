@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useId, useMemo } from "react";
 
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
 	Select,
 	SelectContent,
@@ -13,7 +14,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Table, TableHeader } from "@/components/ui/table";
+import { TableHeader } from "@/components/ui/table";
 import { useInterfaceText } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
@@ -47,23 +48,31 @@ export function LedgerTable({
 	desktopOnly?: boolean;
 }) {
 	return (
-		<Table
-			containerProps={{
-				className: cn(
-					"max-w-full rounded-md border border-border/80 bg-card shadow-2xs md:min-h-0 md:flex-1 md:overflow-auto md:[scrollbar-gutter:stable]",
-					desktopOnly && "hidden md:block",
-					loading && "opacity-65 transition-opacity",
-					containerClassName,
-				),
+		<ScrollArea
+			orientation="both"
+			className={cn(
+				"max-w-full rounded-md border border-border/80 bg-card shadow-2xs md:min-h-0 md:flex-1",
+				desktopOnly && "hidden md:block",
+				loading && "opacity-65 transition-opacity",
+				containerClassName,
+			)}
+			viewportProps={{
+				"data-slot": "table-container",
 				tabIndex: 0,
+				className:
+					"focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
 			}}
-			className={className}
 		>
-			<TableHeader className="bg-card md:sticky md:top-0 md:z-10 [&_th]:h-10 [&_th]:text-xs [&_th]:font-medium [&_th]:text-muted-foreground">
-				{header}
-			</TableHeader>
-			{children}
-		</Table>
+			<table
+				data-slot="table"
+				className={cn("w-full caption-bottom text-sm", className)}
+			>
+				<TableHeader className="bg-card md:sticky md:top-0 md:z-10 [&_th]:h-10 [&_th]:text-xs [&_th]:font-medium [&_th]:text-muted-foreground">
+					{header}
+				</TableHeader>
+				{children}
+			</table>
+		</ScrollArea>
 	);
 }
 

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
 	Sheet,
 	SheetContent,
@@ -241,13 +242,13 @@ export function ThemeToggle() {
 				<Palette aria-hidden />
 			</SheetTrigger>
 			<SheetContent
-				className="w-full max-w-sm! gap-0 overflow-y-auto [&>[data-slot=sheet-close]]:size-11"
+				className="w-full max-w-sm! gap-0 overflow-hidden [&>[data-slot=sheet-close]]:size-11"
 				aria-describedby={undefined}
 			>
-				<SheetHeader className="border-b p-5">
+				<SheetHeader className="shrink-0 border-b p-5">
 					<SheetTitle>{t("外观", "Appearance")}</SheetTitle>
 				</SheetHeader>
-				<div className="space-y-7 p-5">
+				<ScrollArea className="min-h-0 flex-1" contentClassName="space-y-7 p-5">
 					<fieldset>
 						<legend className="mb-3 text-sm font-medium">
 							{t("主题", "Theme")}
@@ -341,7 +342,7 @@ export function ThemeToggle() {
 							{t("恢复默认", "Restore defaults")}
 						</Button>
 					</div>
-				</div>
+				</ScrollArea>
 			</SheetContent>
 		</Sheet>
 	);

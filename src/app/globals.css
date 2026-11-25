@@ -101,55 +101,31 @@
 		@apply border-border outline-ring/50;
 	}
 
-	/* Firefox fallback only — setting scrollbar-width on * disables ::-webkit-scrollbar in Chromium 121+ */
-	@supports not selector(::-webkit-scrollbar) {
-		* {
-			scrollbar-width: thin;
-			scrollbar-color: color-mix(
-					in oklab,
-					var(--muted-foreground) 35%,
-					transparent
-				)
-				transparent;
-		}
-	}
-
-	*::-webkit-scrollbar {
-		width: 8px;
-		height: 8px;
-	}
-	*::-webkit-scrollbar-track {
-		background: transparent;
-	}
-	*::-webkit-scrollbar-thumb {
-		background-color: color-mix(
-			in oklab,
-			var(--muted-foreground) 30%,
-			transparent
-		);
-		border-radius: 999px;
-		border: 2px solid transparent;
-		background-clip: content-box;
-	}
-	*::-webkit-scrollbar-thumb:hover {
-		background-color: color-mix(
-			in oklab,
-			var(--muted-foreground) 52%,
-			transparent
-		);
-		border: 2px solid transparent;
-		background-clip: content-box;
-	}
-	*::-webkit-scrollbar-corner {
-		background: transparent;
+	/* Use standard thin scrollbars for secondary native overflow regions without
+	   forcing macOS overlay scrollbars into classic inset bars via ::-webkit-scrollbar. */
+	:not(html) {
+		scrollbar-width: thin;
+		scrollbar-color: color-mix(
+				in oklab,
+				var(--muted-foreground) 32%,
+				transparent
+			)
+			transparent;
 	}
 
 	body {
 		@apply bg-background text-foreground;
 	}
 	html {
-		/* Keep 16px root so Tailwind rem scale stays predictable */
+		/* Keep 16px root so Tailwind rem scale stays predictable.
+		   Hide the root inset scrollbar so viewport width stays invariant (zero layout
+		   shift on route/content transitions and Base UI scroll locks); WindowScrollbar
+		   renders a non-intrusive overlay indicator when the document overflows. */
 		@apply font-sans;
+		scrollbar-width: none;
+	}
+	html::-webkit-scrollbar {
+		display: none;
 	}
 	h1,
 	h2,

@@ -7,6 +7,7 @@ import { IngestJobsProvider } from "@/components/app/ingest-jobs-provider";
 import { NavigationGuardProvider } from "@/components/app/navigation-guard";
 import { QueryProvider } from "@/components/app/query-provider";
 import { SessionProvider } from "@/components/app/session-provider";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { interfaceText } from "@/lib/i18n/locale";
@@ -64,13 +65,18 @@ export default async function AppLayout({
 								<AppSidebar />
 								<SidebarInset className="min-h-0 overflow-hidden bg-transparent">
 									<AppTopbar />
-									<div
-										id="workspace-content"
-										tabIndex={-1}
-										className="flex min-h-0 flex-1 flex-col overflow-y-auto focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+									<ScrollArea
+										className="min-h-0 flex-1"
+										viewportProps={{
+											id: "workspace-content",
+											tabIndex: -1,
+											className:
+												"focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
+										}}
+										contentClassName="flex h-full min-h-0 min-w-0 flex-col"
 									>
 										{children}
-									</div>
+									</ScrollArea>
 								</SidebarInset>
 							</SidebarProvider>
 						</TooltipProvider>

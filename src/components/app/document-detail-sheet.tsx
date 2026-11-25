@@ -14,6 +14,7 @@ import {
 	stageDisplayName,
 } from "@/components/app/stage-waterfall";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
 	Sheet,
 	SheetContent,
@@ -100,7 +101,10 @@ export function DocumentDetailSheet({
 								{document.name}
 							</SheetTitle>
 						</SheetHeader>
-						<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 sm:px-6">
+						<ScrollArea
+							className="min-h-0 flex-1"
+							contentClassName="px-5 sm:px-6"
+						>
 							<section
 								aria-label={t("版本概览", "Version overview")}
 								className="space-y-3 py-5"
@@ -316,7 +320,7 @@ export function DocumentDetailSheet({
 									parseStatus={document.parse_status}
 								/>
 							</section>
-						</div>
+						</ScrollArea>
 						<SheetFooter className="max-h-[35dvh] shrink-0 overflow-y-auto border-t bg-background px-5 py-3 sm:px-6">
 							<div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
 								{actions.map((action) => {
