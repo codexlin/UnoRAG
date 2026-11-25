@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-11-25。本文只维护当前成熟度、已知限制和下一步；架构细节见 [ARCHITECTURE](./ARCHITECTURE.md)，逐版结果见 [验收索引](./evidence/README.md)。
+> 更新日期：2026-11-26。本文只维护当前成熟度、已知限制和下一步；架构细节见 [ARCHITECTURE](./ARCHITECTURE.md)，逐版结果见 [验收索引](./evidence/README.md)。
 
 ## 当前结论
 
@@ -78,6 +78,13 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 - **pnpm 10 工具链与构建脚本供应链收口（#338）**：将根 `package.json`、`deploy/docker/migrator/package.json` 与 `deploy/docker/web.Dockerfile` 4 个 Corepack 阶段的 pnpm 从 9.7.1 升级至 10.34.9，并同步 `docs/DEVELOPMENT.md`；显式配置 `onlyBuiltDependencies: ["esbuild"]` 与 `ignoredBuiltDependencies: ["protobufjs"]`，保持 `pnpm-lock.yaml` 零差异。
 - **mise 自动切换与 CI 单一事实源（#338）**：新增根 `mise.toml`（`node = "22"`、`pnpm = "10.34.9"`）自动切换本地工具链；移除 `.github/workflows/ci.yml` 中重复硬编码的 `version`，让 `pnpm/action-setup@v6` 直接读取 `packageManager`。
 
+### `v0.4.7` 统一自动精排、Owner 在线模型管理与 3 字段问答策略（`#340`）
+
+- **统一 `auto` 精排、`sparse-only` 自动升级与主流 `/rerank` 兼容（#340）**：将 `auto` 重排触发统一覆盖至中英精确编号、多轮改写、`compare`、多方面事实、派生计算与证据不足重试（同时确保 `tableOnly` 确定性表格探针不被误重排）；当混合检索召回 `sparse-only`（`dense_score=null`）候选且允许重排时（含单条命中）自动升级 Cross-Encoder 精排以统一分数尺度；兼容单数 `/rerank` 路径（vLLM / SiliconFlow / Xinference / Jina / Cohere / Voyage）、Voyage `data[]` 与 `top_k` 参数、raw-logit 排序前不提前截断，以及可选 `embedDocumentChunks` 端口。
+- **Owner 级「模型与供应商」在线管理与部署锁定模式（#340）**：新增迁移 `0038_organization_model_settings.sql` 与最小权限角色隔离（`unorag_web` 仅 `SELECT/INSERT/UPDATE`、`unorag_worker` 零访问权限）；新增仅限组织 Owner 的 `/app/settings#models` 页面与 `/api/organization/model-settings`（含 `/test`）接口，支持免重启在线热切换 Chat / Judge / Rerank / VLM、AES-256-GCM（HKDF + 组织/槽位 AAD）只写加密与 `MODEL_SETTINGS_ENCRYPTION_KEY_PREVIOUS` 零停机轮换、实时连通性/`json_schema`/`/rerank`/视觉探测、SSRF/DNS/重定向与密钥-端点同源绑定防护，以及金融/政企 `MODEL_SETTINGS_LOCKED=true` 部署级锁定模式；Embedding 保持部署级只读契约。
+- **工作区「问答策略」收口与环境变量清理（#340）**：将 6 个历史问答策略字段收敛为 3 个清晰字段（`answer_profile`、`reranking: auto | on | off`、`session_memory_enabled`），工作区层默认常开 Qdrant 混合检索（仅保留部署级 `TS_RETRIEVAL_HYBRID_ENABLED=false`，已补充至 ADR-0008）；读时平滑投影历史行、写时严格拒绝旧字段；彻底移除冗余 `TS_RETRIEVAL_RERANK_ENABLED`，仅保留 `TS_RETRIEVAL_RERANK_ALLOWED`。
+- **开发机验证结果（未替代签名镜像正式发布验收与大基准重跑）**：CI 6/6 全绿（含 `ci/web` Postgres/Helm/Playwright、`ci/secrets`、`ci/docker-build`、`ci/offline-evaluation`），本地快测 `ts-core` **1,363/1,363 PASS**；实连 Mac mini（PG 17 + Redis 7 + Qdrant v1.19.0）+ 真实 DashScope 完成 26/26 项功能端到端 QA（`0038` 迁移、3 字段策略、Chat/Rerank 实时探测、SSRF 拦截、审计日志、文档上传索引与 7 轮流式问答/拒答/`auto` vs `off` 实测全部通过；42 题 `pnpm eval:live` 与 135 题 FinanceComplexQA 基准尚未在本提交重跑）。
+
 下表描述当前源码能力；线上可用范围仍以具体 Release 和部署清单为准。
 
 ## 已具备的闭环
@@ -87,7 +94,8 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 | 身份与权限 | 本地登录、首次改密、邀请注册、邮箱链接登录/重置、可撤销 Session、Workspace/角色、文档 ACL、Service Key、审计 |
 | 文档治理 | 上传、替换、版本、重索引、删除；失败保留旧 active generation；DBOS 重试、取消和对账 |
 | 文档理解 | TXT/Markdown/DOCX/XLSX/PDF，LiteParse/MinerU，Markdown 管道表、DocumentIR/TableIR，Token 感知 `v2` 切分与 `>40%` 表格自动 `table_heavy`、多粒度索引及默认关闭的条件式检索上下文增强 |
-| 检索问答 | 作用域强制过滤、默认启用 Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF、重排、改写、证据裁决、按主体均衡配额的对比上下文、拒答、引用、确定性表格执行与 SSE；Admin/Editor 临时检索轨迹检查器；pg_trgm 授权文档目录候选检索 |
+| 检索问答 | 作用域强制过滤、默认常开 Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF、统一 `auto`/`on`/`off` 精排（含 `sparse-only` 自动升级）、多轮改写、证据裁决、按主体均衡配额的对比上下文、拒答、引用、确定性表格执行与 SSE；Admin/Editor 临时检索轨迹检查器；pg_trgm 授权文档目录候选检索 |
+| 模型治理 | Owner 级在线切换 Chat / Judge / Rerank / VLM（AES-256-GCM 只写加密、实时连通性/`json_schema`/`/rerank`/视觉探测、SSRF 与密钥-端点绑定防护）、Embedding 部署级只读锁定，以及 `MODEL_SETTINGS_LOCKED=true` 纯环境变量锁定模式 |
 | 会话 | 带来源授权的短期记忆、实体追问、有限期歧义澄清、归档和继续对话；模型上下文压缩长回复，归档保留原文和来源 |
 | 运维预检 | 健康接口和运行中心校验现有 Qdrant 集合的向量维度、距离、`lexical_v1` IDF 配置及载荷索引，按异常类型给出恢复提示 |
 | 产品界面 | shadcn/Base UI、AI Elements、EN/ZH 双语、Vercel/Claude/Violet Bloom/Modern Minimal 4 套主题、可调圆角、响应式工作台与设置分区；引用/版本/执行链路一致的阅读入口 |

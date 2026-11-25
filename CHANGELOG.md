@@ -5,6 +5,21 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-11-26
+
+- **Unified `auto` reranking, `sparse-only` escalation & `/rerank` provider compatibility (#340)**:
+  - Unify runtime `auto` rerank escalation across bilingual EN/ZH exact lookups, rewritten follow-ups, comparison, multi-aspect facts, derived calculations, and retry attempts, while keeping deterministic `tableOnly` probes fast without unintended auto-reranking.
+  - Automatically upgrade hybrid retrieval to cross-encoder reranking when `sparse-only` (`dense_score=null`) candidates appear (including single sparse-only hits), preserving ADR-0008 `lexical_v1` immutability.
+  - Support singular `/rerank` endpoints (vLLM, SiliconFlow, Xinference, Jina, Cohere, Voyage), Voyage `{ data }` responses with `top_k` payloads, raw-logit sorting prior to score clamping, and an optional `embedDocumentChunks` port for contextualized embedders.
+- **Owner-only Models & Providers settings, live connection probing & deployment lock mode (#340)**:
+  - Add migration `0038_organization_model_settings.sql` and least-privilege role grants (`unorag_web`: `SELECT, INSERT, UPDATE`; `unorag_worker`: `REVOKE ALL`), verified in `verify-runtime-roles.sql`.
+  - Add Owner-only `/app/settings#models` UI and `/api/organization/model-settings` + `/api/organization/model-settings/test` endpoints for online hot-switching of Chat, Judge, Rerank, and VLM with AES-256-GCM envelope encryption (HKDF + org/slot AAD, write-only, zero-downtime rotation via `MODEL_SETTINGS_ENCRYPTION_KEY_PREVIOUS`), live connectivity / `json_schema` / `/rerank` / 1×1 PNG vision probing, SSRF/DNS/redirect hardening, key-to-URL binding, rate limits, and audit logging (`organization.model_settings.updated`).
+  - Keep Embedding deployment-locked and read-only in UI, and add `MODEL_SETTINGS_LOCKED=true` deployment lock mode across Compose, Helm, and `.env.example`.
+- **Simplified 3-field Workspace Ask policy & env cleanup (#340)**:
+  - Collapse 6 legacy workspace Ask settings keys into 3 canonical keys (`answer_profile`, `reranking: auto | on | off`, `session_memory_enabled`), keeping Qdrant hybrid retrieval always enabled at workspace level (deployment kill-switch `TS_RETRIEVAL_HYBRID_ENABLED=false`, documented in ADR-0008).
+  - Project pre-upgrade DB rows seamlessly on read while rejecting retired keys on write; remove redundant `TS_RETRIEVAL_RERANK_ENABLED` across runtime, Compose, Helm, `.env.example`, and `init-config.sh` retirement rules (leaving `TS_RETRIEVAL_RERANK_ALLOWED` as the single deployment rerank kill-switch).
+- **Upgrade note**: Apply migration `0038` (`drizzle/0038_organization_model_settings.sql`) via the standard upgrade flow; run `init-config.sh` to retire `TS_RETRIEVAL_RERANK_ENABLED` if present. Legacy workspace Ask settings project automatically on read; no document reindex is required.
+
 ## [0.4.6] - 2026-11-25
 
 - **Pinned pnpm 10.34.9 toolchain & build-script hardening (#338)**:
