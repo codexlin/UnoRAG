@@ -468,9 +468,8 @@ test("workspace controls remain usable with doubled root text and constrained wi
 	const stamp = "2026-11-13T00:00:00Z";
 	const settings = {
 		answer_profile: "balanced",
-		retrieval_enhancement: "auto",
+		reranking: "auto",
 		session_memory_enabled: true,
-		evidence_requirement: "standard",
 	};
 	await page.route("**/api/workspace/settings", (route) =>
 		route.fulfill({
@@ -580,7 +579,7 @@ test("workspace controls remain usable with doubled root text and constrained wi
 					.toBe(true);
 			}
 			if (path === "/app/settings") {
-				for (const label of ["回答模式", "检索增强", "对话记忆", "证据要求"]) {
+				for (const label of ["回答模式", "检索精排", "对话记忆"]) {
 					const field = page
 						.getByRole("region", { name: "问答策略", exact: true })
 						.locator("label")

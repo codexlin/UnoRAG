@@ -37,8 +37,8 @@ data:
   EMBEDDING_BATCH_SIZE: {{ .Values.config.embeddingBatchSize | quote }}
   EMBEDDING_TIMEOUT_MS: {{ .Values.config.embeddingTimeoutMs | quote }}
   TS_RETRIEVAL_HYBRID_ENABLED: {{ .Values.config.retrievalHybridEnabled | quote }}
-  TS_RETRIEVAL_RERANK_ENABLED: {{ .Values.config.retrievalRerankEnabled | quote }}
   TS_RETRIEVAL_RERANK_ALLOWED: {{ .Values.config.retrievalRerankAllowed | quote }}
+  MODEL_SETTINGS_LOCKED: {{ .Values.config.modelSettingsLocked | quote }}
   RERANK_MODEL: {{ .Values.config.rerankModel | quote }}
   RERANK_TIMEOUT_MS: {{ .Values.config.rerankTimeoutMs | quote }}
   MINERU_PROVIDER: {{ .Values.config.mineruProvider | quote }}

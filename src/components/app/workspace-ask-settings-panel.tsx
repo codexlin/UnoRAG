@@ -22,21 +22,12 @@ import { useInterfaceText } from "@/lib/i18n/provider";
 
 type AskSettings = {
 	answer_profile: "precise" | "balanced" | "exploratory";
-	retrieval_enhancement: "auto" | "off" | "on";
-	hybrid_retrieval: "inherit" | "off" | "on";
-	reranking: "inherit" | "off" | "on";
+	reranking: "auto" | "on" | "off";
 	session_memory_enabled: boolean;
-	evidence_requirement: "strict" | "standard" | "relaxed";
 };
 
 type FieldKey = keyof AskSettings;
 type Copy = readonly [zh: string, en: string];
-
-const RETRIEVAL_OPTIONS = [
-	{ value: "inherit", label: ["跟随检索增强", "Follow policy"] },
-	{ value: "on", label: ["开启", "On"] },
-	{ value: "off", label: ["关闭", "Off"] },
-] satisfies { value: string; label: Copy }[];
 
 const FIELDS: {
 	key: FieldKey;
@@ -50,8 +41,8 @@ const FIELDS: {
 		label: ["回答模式", "Answer mode"],
 		kind: "enum",
 		tip: [
-			"精确模式更保守；探索模式扩大检索范围。所有模式都需要证据支持回答。",
-			"Precise mode is more conservative; exploratory mode broadens retrieval. All modes require evidence.",
+			"统一调节检索召回范围与引用拒答严谨度：精确模式更保守，探索模式扩大覆盖面。所有模式均要求充分证据。",
+			"Controls retrieval breadth and citation strictness: precise is more conservative; exploratory broadens coverage. All modes require grounded evidence.",
 		],
 		options: [
 			{ value: "precise", label: ["精确", "Precise"] },
@@ -60,38 +51,18 @@ const FIELDS: {
 		],
 	},
 	{
-		key: "retrieval_enhancement",
-		label: ["检索增强", "Retrieval enhancement"],
+		key: "reranking",
+		label: ["检索精排", "Retrieval reranking"],
 		kind: "enum",
 		tip: [
-			"自动模式默认启用混合检索，并按问题决定是否重排。混合检索和重排可单独设置。",
-			"Auto uses hybrid retrieval by default and decides whether to rerank based on the question. Hybrid retrieval and reranking can be set independently.",
+			"底座默认启用 Qdrant 混合检索（Dense + Sparse RRF）。精排支持自动（对比、精确编号、多轮改写、sparse-only 命中及重试自动精排）、始终开启或关闭。",
+			"Qdrant hybrid retrieval (Dense + Sparse RRF) stays enabled by default. Reranking can be Auto (complex/rewritten/sparse-only/retry), always On, or Off.",
 		],
 		options: [
 			{ value: "auto", label: ["自动", "Auto"] },
-			{ value: "off", label: ["关闭", "Off"] },
 			{ value: "on", label: ["开启", "On"] },
+			{ value: "off", label: ["关闭", "Off"] },
 		],
-	},
-	{
-		key: "hybrid_retrieval",
-		label: ["混合检索", "Hybrid retrieval"],
-		kind: "enum",
-		tip: [
-			"结合关键词与向量搜索查找证据。",
-			"Find evidence using keyword and vector search.",
-		],
-		options: RETRIEVAL_OPTIONS,
-	},
-	{
-		key: "reranking",
-		label: ["检索重排", "Reranking"],
-		kind: "enum",
-		tip: [
-			"使用部署配置的重排模型重新排列候选片段。",
-			"Reorder results using the deployment’s reranking model.",
-		],
-		options: RETRIEVAL_OPTIONS,
 	},
 	{
 		key: "session_memory_enabled",
@@ -100,20 +71,6 @@ const FIELDS: {
 		tip: [
 			"多轮追问时保留当前会话的短上下文。",
 			"Keep short-term context for follow-up questions in this conversation.",
-		],
-	},
-	{
-		key: "evidence_requirement",
-		label: ["证据要求", "Evidence requirement"],
-		kind: "enum",
-		tip: [
-			"严格/标准/宽松，调节拒答与引用裁决；与回答模式冲突时取更严一侧。",
-			"Adjust refusal and citation strictness. If this conflicts with the answer mode, the stricter setting wins.",
-		],
-		options: [
-			{ value: "strict", label: ["严格", "Strict"] },
-			{ value: "standard", label: ["标准", "Standard"] },
-			{ value: "relaxed", label: ["宽松", "Relaxed"] },
 		],
 	},
 ];

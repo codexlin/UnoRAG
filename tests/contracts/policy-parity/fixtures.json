@@ -8,37 +8,34 @@
       "input": {
         "raw": {
           "answer_profile": "balanced",
-          "retrieval_enhancement": "auto",
-          "session_memory_enabled": true,
-          "evidence_requirement": "standard"
+          "reranking": "auto",
+          "session_memory_enabled": true
         },
         "question": null,
         "policy_version": 1
       }
     },
     {
-      "id": "ask-public-precise-strict",
+      "id": "ask-public-precise-rerank-on",
       "kind": "ask_resolve",
       "input": {
         "raw": {
           "answer_profile": "precise",
-          "retrieval_enhancement": "on",
-          "session_memory_enabled": false,
-          "evidence_requirement": "strict"
+          "reranking": "on",
+          "session_memory_enabled": false
         },
         "question": null,
         "policy_version": null
       }
     },
     {
-      "id": "ask-public-exploratory-relaxed",
+      "id": "ask-public-exploratory-rerank-off",
       "kind": "ask_resolve",
       "input": {
         "raw": {
           "answer_profile": "exploratory",
-          "retrieval_enhancement": "off",
-          "session_memory_enabled": true,
-          "evidence_requirement": "relaxed"
+          "reranking": "off",
+          "session_memory_enabled": true
         },
         "question": null,
         "policy_version": 2
@@ -50,9 +47,8 @@
       "input": {
         "raw": {
           "answer_profile": "balanced",
-          "retrieval_enhancement": "auto",
-          "session_memory_enabled": true,
-          "evidence_requirement": "standard"
+          "reranking": "auto",
+          "session_memory_enabled": true
         },
         "question": "合同编号 HT-2024-001",
         "policy_version": null
@@ -64,9 +60,8 @@
       "input": {
         "raw": {
           "answer_profile": "turbo",
-          "retrieval_enhancement": "maybe",
-          "session_memory_enabled": "yes",
-          "evidence_requirement": "loud"
+          "reranking": "maybe",
+          "session_memory_enabled": "yes"
         },
         "question": null,
         "policy_version": null
@@ -116,6 +111,6 @@
         "scan_handling": "weird",
         "parse_preference": "quality"
       }
-	}
+    }
   ]
 }

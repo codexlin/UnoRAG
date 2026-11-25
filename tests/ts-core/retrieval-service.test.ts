@@ -3101,3 +3101,154 @@ test("DefaultRetrievalService coalesces adjacent short chapter and sub-item micr
 	assert.match(ctx23, /使用本民族语言文字参加听证/);
 	assert.doesNotMatch(ctx23, /证据收集遵循合法性原则/);
 });
+
+test("rerankSparseOnly upgrades hybrid sparse-only hits to cross-encoder scoring and respects deployment/workspace opt-outs", async () => {
+	const denseHit = hit({
+		id: "dense-1",
+		text: "General quarterly summary",
+		chunkIndex: 0,
+		score: 0.72,
+	});
+	const sparseOnlyHit = hit({
+		id: "sparse-1",
+		text: "Exact indemnity clause KX-991 applies to subcontractor delays",
+		chunkIndex: 1,
+		score: 0.015,
+	});
+	let rerankCalls = 0;
+	const reranker: RerankProvider = {
+		async rerank({ documents }) {
+			rerankCalls += 1;
+			return documents.map((doc, index) => ({
+				index,
+				score: doc.includes("KX-991") ? 0.91 : 0.3,
+			}));
+		},
+	};
+	const createService = (
+		hybridHits: QdrantSearchHit[],
+		denseHits: QdrantSearchHit[],
+		options?: Partial<{ rerankAllowed: boolean }>,
+	) =>
+		new DefaultRetrievalService(
+			embeddings,
+			{
+				async search() {
+					return denseHits;
+				},
+				async hybridSearch() {
+					return hybridHits;
+				},
+				async listCorpus() {
+					return [];
+				},
+			},
+			reranker,
+			{
+				hybridEnabled: true,
+				rerankEnabled: false,
+				rerankAllowed: options?.rerankAllowed ?? true,
+				rerankTopK: 6,
+				bm25TopK: 20,
+				rrfK: 60,
+			},
+		);
+
+	// 1. Sparse-only hit present + rerankSparseOnly=true -> auto-triggers rerank to unify score scale.
+	rerankCalls = 0;
+	const upgraded = await createService(
+		[denseHit, sparseOnlyHit],
+		[denseHit],
+	).retrieve({
+		query:
+			"What does the long contract say about KX-991 delays for subcontractors?",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+		options: {
+			rerankEnabled: false,
+			rerankSparseOnly: true,
+			minimumEvidenceScore: 0.4,
+		},
+	});
+	assert.equal(rerankCalls, 1);
+	assert.equal(upgraded.debug.usedRerank, true);
+	assert.deepEqual(
+		upgraded.citations.map((c) => c.id),
+		["sparse-1"],
+	);
+	assert.equal(upgraded.citations[0].used_rerank, true);
+	assert.equal(upgraded.citations[0].score, 0.91);
+
+	// 2. Single sparse-only candidate still gets cross-encoder scored instead of crude lexical coverage.
+	rerankCalls = 0;
+	const singleSparse = await createService([sparseOnlyHit], []).retrieve({
+		query:
+			"请帮我核对一下关于 subcontractor KX-991 延迟免责范围的具体条款要求到底是什么",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+		options: {
+			rerankEnabled: false,
+			rerankSparseOnly: true,
+			minimumEvidenceScore: 0.4,
+		},
+	});
+	assert.equal(rerankCalls, 1);
+	assert.equal(singleSparse.debug.usedRerank, true);
+	assert.equal(singleSparse.citations[0]?.id, "sparse-1");
+	assert.equal(singleSparse.citations[0]?.score, 0.91);
+
+	// 3. No sparse-only hit -> skips rerank to save latency and API cost.
+	rerankCalls = 0;
+	const allDense = await createService([denseHit], [denseHit]).retrieve({
+		query: "General summary",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+		options: {
+			rerankEnabled: false,
+			rerankSparseOnly: true,
+			minimumEvidenceScore: 0.4,
+		},
+	});
+	assert.equal(rerankCalls, 0);
+	assert.equal(allDense.debug.usedRerank, false);
+
+	// 4. Deployment kill-switch rerankAllowed=false hard-blocks sparse-only auto-rerank.
+	rerankCalls = 0;
+	const killed = await createService([denseHit, sparseOnlyHit], [denseHit], {
+		rerankAllowed: false,
+	}).retrieve({
+		query: "KX-991",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+		options: {
+			rerankEnabled: false,
+			rerankSparseOnly: true,
+			minimumEvidenceScore: 0.4,
+		},
+	});
+	assert.equal(rerankCalls, 0);
+	assert.equal(killed.debug.usedRerank, false);
+
+	// 5. Workspace opt-out (rerankSparseOnly=false) never triggers rerank.
+	rerankCalls = 0;
+	const optedOut = await createService(
+		[denseHit, sparseOnlyHit],
+		[denseHit],
+	).retrieve({
+		query: "KX-991",
+		libraryId: "library-a",
+		scope,
+		topK: 2,
+		options: {
+			rerankEnabled: false,
+			rerankSparseOnly: false,
+			minimumEvidenceScore: 0.4,
+		},
+	});
+	assert.equal(rerankCalls, 0);
+	assert.equal(optedOut.debug.usedRerank, false);
+});

@@ -218,9 +218,15 @@ test("deployment inputs map to one application environment contract", async () =
 			.environment.TS_RETRIEVAL_HYBRID_ENABLED,
 		"false",
 	);
+	assert.equal(advanced.has("TS_RETRIEVAL_RERANK_ENABLED"), false);
 	assert.equal(
-		compose.services.web.environment.TS_RETRIEVAL_RERANK_ENABLED,
-		advanced.get("TS_RETRIEVAL_RERANK_ENABLED"),
+		"TS_RETRIEVAL_RERANK_ENABLED" in compose.services.web.environment,
+		false,
+	);
+	assert.equal(
+		"TS_RETRIEVAL_RERANK_ENABLED" in
+			compose.services["dbos-control"].environment,
+		false,
 	);
 	assert.equal(
 		compose.services.web.environment.TS_RETRIEVAL_RERANK_ALLOWED,
@@ -230,6 +236,27 @@ test("deployment inputs map to one application environment contract", async () =
 		renderComposeConfig({ TS_RETRIEVAL_RERANK_ALLOWED: "false" }).services.web
 			.environment.TS_RETRIEVAL_RERANK_ALLOWED,
 		"false",
+	);
+	assert.equal(advanced.get("MODEL_SETTINGS_LOCKED"), "false");
+	assert.equal(compose.services.web.environment.MODEL_SETTINGS_LOCKED, "false");
+	assert.equal(
+		renderComposeConfig({ MODEL_SETTINGS_LOCKED: "true" }).services.web
+			.environment.MODEL_SETTINGS_LOCKED,
+		"true",
+	);
+	assert.equal(
+		"MODEL_SETTINGS_ENCRYPTION_KEY" in compose.services.web.environment,
+		true,
+	);
+	assert.equal(
+		"MODEL_SETTINGS_ENCRYPTION_KEY_PREVIOUS" in
+			compose.services.web.environment,
+		true,
+	);
+	assert.equal(
+		"MODEL_SETTINGS_ENCRYPTION_KEY" in
+			compose.services["dbos-worker"].environment,
+		false,
 	);
 	assert.equal(compose.services.web.environment.AI_INCLUDE_USAGE, "true");
 	assert.equal(advanced.get("AI_INCLUDE_USAGE"), "true");
@@ -884,7 +911,7 @@ test("config reconciliation layers old runtime values without losing custom sett
 	]);
 	await writeFile(
 		advancedPath,
-		"ASK_JUDGE_TIMEOUT_MS=24000\nOBSERVABILITY_ASK_MIN_SAMPLES=24\noperator_tag=night-shift\nCUSTOM_MULTILINE='first\nCUSTOM_INNER=second\nthird'\n",
+		"ASK_JUDGE_TIMEOUT_MS=24000\nOBSERVABILITY_ASK_MIN_SAMPLES=24\nTS_RETRIEVAL_RERANK_ENABLED=false\noperator_tag=night-shift\nCUSTOM_MULTILINE='first\nCUSTOM_INNER=second\nthird'\n",
 	);
 	await writeFile(
 		runtimePath,
@@ -922,6 +949,7 @@ test("config reconciliation layers old runtime values without losing custom sett
 		/^CUSTOM_MULTILINE='first\nCUSTOM_INNER=second\nthird'$/m,
 	);
 	assert.doesNotMatch(advanced, /^MINERU_URL=/m);
+	assert.doesNotMatch(advanced, /^TS_RETRIEVAL_RERANK_ENABLED=/m);
 
 	// Stop at queue validation before any Docker or release operation.
 	const invalidQueues = advanced.replace(

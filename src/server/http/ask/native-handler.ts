@@ -43,6 +43,7 @@ import {
 	canWriteLibraries,
 	findAuthorizedLibrary,
 } from "@/lib/server/library-access";
+import { resolveEffectiveOrganizationModelRuntime } from "@/lib/server/organization-model-settings";
 import { ConversationRepository } from "@/server/conversations/repository";
 import {
 	getSessionMemoryStore,
@@ -780,11 +781,15 @@ async function handleNativeAskRequestInSpan(input: {
 				);
 			}
 		};
+		const modelRuntime = input.runtimeFactory
+			? undefined
+			: await resolveEffectiveOrganizationModelRuntime(input.identity.tenantId);
 		const runtime = (input.runtimeFactory ?? createNativeAskRuntime)({
 			identity: input.identity,
 			libraryId: payload.library_id,
 			signal: executionSignal,
 			policy,
+			...(modelRuntime ? { modelRuntime } : {}),
 			usageRecorder: modelUsage.record,
 			includeTraceDetails,
 			assertAuthorized: (evidence) =>

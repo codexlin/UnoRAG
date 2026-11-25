@@ -4,3 +4,8 @@ const ORGANIZATION_ADMIN_ROLES = new Set(["owner", "admin"]);
 export function canCreateWorkspaces(identity) {
 	return ORGANIZATION_ADMIN_ROLES.has(identity?.organizationRole);
 }
+
+/** Instance/organization model & provider configuration is strictly owner-only. */
+export function canManageOrganizationModels(identity) {
+	return identity?.organizationRole === "owner";
+}

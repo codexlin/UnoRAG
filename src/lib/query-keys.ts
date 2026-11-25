@@ -27,6 +27,8 @@ export const queryKeys = {
 		["workspace-settings", ...scopeKey(scope)] as const,
 	workspaceNotifications: (scope: QueryScope) =>
 		["workspace-notifications", ...scopeKey(scope)] as const,
+	organizationModelSettings: (scope: QueryScope) =>
+		["organization-model-settings", ...scopeKey(scope)] as const,
 	operations: (scope: QueryScope) =>
 		["operations", ...scopeKey(scope)] as const,
 	operationRequests: (scope: QueryScope, filters: string) =>

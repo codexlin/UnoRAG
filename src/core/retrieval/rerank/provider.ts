@@ -1,19 +1,67 @@
 import { z } from "zod";
 import { withActiveSpan } from "@/lib/observability/tracing";
+import { createSafeModelFetch } from "@/lib/server/model-settings-url";
 import { fetchRetrievalProvider } from "../provider-request";
+
+const RerankResultItemSchema = z
+	.object({
+		index: z.number().int().nonnegative(),
+		relevance_score: z.number().finite(),
+	})
+	.passthrough();
 
 const RerankResponseSchema = z
 	.object({
-		results: z.array(
-			z
-				.object({
-					index: z.number().int().nonnegative(),
-					relevance_score: z.number().finite(),
-				})
-				.passthrough(),
-		),
+		results: z.array(RerankResultItemSchema).optional(),
+		data: z.array(RerankResultItemSchema).optional(),
 	})
-	.passthrough();
+	.passthrough()
+	.refine(
+		(payload) =>
+			(payload.results !== undefined) !== (payload.data !== undefined),
+		"rerank response must contain either results or data",
+	);
+
+export function resolveRerankEndpoint(baseUrl: string): string {
+	const trimmed = baseUrl.replace(/\/+$/, "");
+	return /\/reranks?$/i.test(trimmed) ? trimmed : `${trimmed}/reranks`;
+}
+
+export function isVoyageRerankEndpoint(
+	baseUrl: string,
+	model: string,
+): boolean {
+	try {
+		const host = new URL(baseUrl).hostname.toLowerCase();
+		if (host === "api.voyageai.com" || host.endsWith(".voyageai.com")) {
+			return true;
+		}
+	} catch {
+		// Fall back to model heuristic if URL is not yet normalized.
+	}
+	return /^rerank-(?:2(?:\.\d+)?|lite)(?:-|$)/i.test(model.trim());
+}
+
+export function buildRerankRequestBody(input: {
+	baseUrl: string;
+	model: string;
+	query: string;
+	documents: string[];
+	topN: number;
+}): Record<string, unknown> {
+	const limit = Math.min(input.topN, input.documents.length);
+	const body: Record<string, unknown> = {
+		model: input.model,
+		query: input.query,
+		documents: input.documents,
+	};
+	if (isVoyageRerankEndpoint(input.baseUrl, input.model)) {
+		body.top_k = limit;
+	} else {
+		body.top_n = limit;
+	}
+	return body;
+}
 
 export type RerankResult = {
 	index: number;
@@ -41,12 +89,12 @@ export function normalizeRerankResults(
 		}
 		seen.add(item.index);
 	}
-	return ranked
+	return [...ranked]
+		.sort((a, b) => b.score - a.score || a.index - b.index)
 		.map((item) => ({
 			index: item.index,
 			score: Math.max(0, Math.min(1, item.score)),
-		}))
-		.sort((a, b) => b.score - a.score || a.index - b.index);
+		}));
 }
 
 export interface RerankProvider {
@@ -73,7 +121,7 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 
 	constructor(private readonly config: OpenAICompatibleRerankConfig) {
 		if (!config.apiKey.trim()) throw new Error("rerank API key is required");
-		this.fetch = config.fetch ?? globalThis.fetch;
+		this.fetch = config.fetch ?? createSafeModelFetch();
 		this.timeoutMs = config.timeoutMs ?? 10_000;
 		if (!Number.isInteger(this.timeoutMs) || this.timeoutMs <= 0) {
 			throw new Error("rerank timeout must be a positive integer");
@@ -115,8 +163,9 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 			retryBackoffMs: this.config.retryBackoffMs,
 			parse: async (response) => {
 				const payload = RerankResponseSchema.parse(await response.json());
+				const rows = payload.results ?? payload.data ?? [];
 				return normalizeRerankResults(
-					payload.results.map((item) => ({
+					rows.map((item) => ({
 						index: item.index,
 						score: item.relevance_score,
 					})),
@@ -124,18 +173,22 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 				);
 			},
 			request: (requestSignal) =>
-				this.fetch(`${this.config.baseUrl.replace(/\/$/, "")}/reranks`, {
+				this.fetch(resolveRerankEndpoint(this.config.baseUrl), {
 					method: "POST",
+					redirect: "error",
 					headers: {
 						authorization: `Bearer ${this.config.apiKey}`,
 						"content-type": "application/json",
 					},
-					body: JSON.stringify({
-						model: this.config.model,
-						query: input.query,
-						documents: input.documents,
-						top_n: Math.min(input.topN, input.documents.length),
-					}),
+					body: JSON.stringify(
+						buildRerankRequestBody({
+							baseUrl: this.config.baseUrl,
+							model: this.config.model,
+							query: input.query,
+							documents: input.documents,
+							topN: input.topN,
+						}),
+					),
 					signal: requestSignal,
 				}),
 		});

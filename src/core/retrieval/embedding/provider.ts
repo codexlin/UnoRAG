@@ -18,6 +18,15 @@ const EmbeddingResponseSchema = z
 export interface EmbeddingProvider {
 	embedQuery(query: string, signal?: AbortSignal): Promise<number[]>;
 	embedTexts(texts: string[], signal?: AbortSignal): Promise<number[][]>;
+	/**
+	 * Optional document-grouped chunk embedding port for contextualized chunk
+	 * embedding providers (e.g. Voyage `voyage-context-3` `/contextualizedembeddings`)
+	 * that encode all chunks of one document together.
+	 */
+	embedDocumentChunks?(
+		chunks: string[],
+		signal?: AbortSignal,
+	): Promise<number[][]>;
 }
 
 export type OpenAICompatibleEmbeddingConfig = {

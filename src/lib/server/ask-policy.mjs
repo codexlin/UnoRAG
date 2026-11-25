@@ -2,23 +2,18 @@
  * Business-intent ask policy → internal knobs.
  *
  * Public policy profiles are resolved here before entering the native Ask graph.
- *
- * Conflict rule (refusal/citation): take the stricter of answer_profile and
- * evidence_requirement (higher min_score/floor; adjudicate=true preferred).
+ * Hybrid retrieval (Qdrant lexical_v1 IDF + RRF) is always enabled at workspace
+ * level (deployment kill-switch: TS_RETRIEVAL_HYBRID_ENABLED=false).
+ * Reranking exposes three clean modes: auto | on | off.
  */
 
 export const ANSWER_PROFILES = ["precise", "balanced", "exploratory"];
-export const RETRIEVAL_ENHANCEMENTS = ["auto", "off", "on"];
-export const RETRIEVAL_OVERRIDES = ["inherit", "off", "on"];
-export const EVIDENCE_REQUIREMENTS = ["strict", "standard", "relaxed"];
+export const RERANKING_MODES = ["auto", "on", "off"];
 
 export const ASK_PUBLIC_KEYS = [
 	"answer_profile",
-	"retrieval_enhancement",
-	"hybrid_retrieval",
 	"reranking",
 	"session_memory_enabled",
-	"evidence_requirement",
 ];
 
 /** Matches API ASK_DEFAULTS for balanced profile. */
@@ -35,11 +30,8 @@ export const ASK_INTERNAL_DEFAULTS = Object.freeze({
 
 export const PUBLIC_ASK_DEFAULTS = Object.freeze({
 	answer_profile: "balanced",
-	retrieval_enhancement: "auto",
-	hybrid_retrieval: "inherit",
-	reranking: "inherit",
+	reranking: "auto",
 	session_memory_enabled: true,
-	evidence_requirement: "standard",
 });
 
 const ANSWER_PROFILE_BASE = {
@@ -65,27 +57,11 @@ const ANSWER_PROFILE_BASE = {
 	},
 };
 
-const EVIDENCE_FLOORS = {
-	strict: {
-		min_score_floor: 0.5,
-		absolute_floor: 0.4,
-		requires_adjudicate: true,
-	},
-	standard: {
-		min_score_floor: 0,
-		absolute_floor: 0,
-		requires_adjudicate: false,
-	},
-	relaxed: {
-		min_score_floor: 0,
-		absolute_floor: 0,
-		requires_adjudicate: false,
-		min_score_delta: -0.1,
-		absolute_floor_delta: -0.05,
-	},
-};
-
 /**
+ * Normalize stored ask JSON into the canonical 3-field public contract.
+ * Pre-simplification DB rows carrying legacy `retrieval_enhancement` or
+ * `evidence_requirement` are projected cleanly without persisting legacy keys.
+ *
  * @param {unknown} raw
  * @returns {typeof PUBLIC_ASK_DEFAULTS}
  */
@@ -97,37 +73,40 @@ export function normalizePublicAsk(raw) {
 	if (!ANSWER_PROFILES.includes(answer)) {
 		answer = PUBLIC_ASK_DEFAULTS.answer_profile;
 	}
-	let enhancement = String(
-		src.retrieval_enhancement ?? PUBLIC_ASK_DEFAULTS.retrieval_enhancement,
-	)
-		.trim()
-		.toLowerCase();
-	if (!RETRIEVAL_ENHANCEMENTS.includes(enhancement)) {
-		enhancement = PUBLIC_ASK_DEFAULTS.retrieval_enhancement;
+	// Preserve stricter intent for pre-upgrade rows that had evidence_requirement="strict".
+	if (
+		typeof src.evidence_requirement === "string" &&
+		src.evidence_requirement.trim().toLowerCase() === "strict" &&
+		answer !== "precise"
+	) {
+		answer = "precise";
 	}
-	let evidence = String(
-		src.evidence_requirement ?? PUBLIC_ASK_DEFAULTS.evidence_requirement,
-	)
-		.trim()
-		.toLowerCase();
-	if (!EVIDENCE_REQUIREMENTS.includes(evidence)) {
-		evidence = PUBLIC_ASK_DEFAULTS.evidence_requirement;
+
+	const rawReranking =
+		typeof src.reranking === "string" ? src.reranking.trim().toLowerCase() : "";
+	let reranking;
+	if (RERANKING_MODES.includes(rawReranking)) {
+		reranking = rawReranking;
+	} else {
+		// One-way read projection for pre-upgrade rows that stored retrieval_enhancement.
+		const legacyEnhancement =
+			typeof src.retrieval_enhancement === "string"
+				? src.retrieval_enhancement.trim().toLowerCase()
+				: "";
+		reranking = RERANKING_MODES.includes(legacyEnhancement)
+			? legacyEnhancement
+			: PUBLIC_ASK_DEFAULTS.reranking;
 	}
+
 	const memory =
 		typeof src.session_memory_enabled === "boolean"
 			? src.session_memory_enabled
 			: PUBLIC_ASK_DEFAULTS.session_memory_enabled;
+
 	return {
 		answer_profile: answer,
-		retrieval_enhancement: enhancement,
-		hybrid_retrieval: RETRIEVAL_OVERRIDES.includes(src.hybrid_retrieval)
-			? src.hybrid_retrieval
-			: PUBLIC_ASK_DEFAULTS.hybrid_retrieval,
-		reranking: RETRIEVAL_OVERRIDES.includes(src.reranking)
-			? src.reranking
-			: PUBLIC_ASK_DEFAULTS.reranking,
+		reranking,
 		session_memory_enabled: memory,
-		evidence_requirement: evidence,
 	};
 }
 
@@ -140,38 +119,39 @@ function looksLikePreciseLookup(question) {
 	}
 	if (digits >= 3) return true;
 	if (/[A-Za-z]{1,8}[-_/]?\d{2,}/.test(text)) return true;
-	if (/(编号|条款|第\s*\d+|版本|SKU|ID)/i.test(text)) return true;
+	if (
+		/(编号|条款|第\s*\d+|版本|\b(?:SKU|ID)\b|\b(?:clause|section|article|appendix|version|rev(?:ision)?|code|ref(?:erence)?)\s*(?:#|no\.?\s*)?\d+)/i.test(
+			text,
+		)
+	)
+		return true;
 	return false;
 }
 
-function looksRetrievalSensitive(question) {
+export function looksRetrievalSensitive(question) {
 	const text = String(question ?? "").trim();
 	if (!text) return false;
 	return (
 		looksLikePreciseLookup(text) ||
-		/(?:分别|第一个|最(?:高|低|大|小|多|少)|排名|占比|概率区间|提升|降低|图\s*\d+|表头|列名|文末汇总说明|以及|并且|对比|比较|差异|如何应对|有哪些|监管|原则)/i.test(
+		/(?:分别|第一个|最(?:高|低|大|小|多|少)|排名|占比|概率区间|提升|降低|图\s*\d+|表头|列名|文末汇总说明|以及|并且|对比|比较|差异|如何应对|有哪些|监管|原则|\b(?:compare|comparison|versus|vs\.?|difference|differences|differ|highest|lowest|largest|smallest|maximum|minimum|rank|ranking|ratio|percentage|proportion|increase|decrease|growth|total|sum|average)\b|\b(?:table|figure|chart)\s*\d+\b)/i.test(
 			text,
 		)
 	);
 }
 
 /**
- * @returns {[boolean, boolean, string]} hybrid, rerank, resolved mode
+ * @returns {[boolean, string]} rerankEnabled, resolved reranking mode
  */
-export function resolveRetrievalEnhancement(mode, question = null) {
+export function resolveRerankingMode(mode, question = null) {
 	const normalized = String(mode ?? "auto")
 		.trim()
 		.toLowerCase();
-	if (normalized === "off") return [false, false, "off"];
-	if (normalized === "on") return [true, true, "on"];
+	if (normalized === "off") return [false, "off"];
+	if (normalized === "on") return [true, "on"];
 	if (question && looksRetrievalSensitive(question)) {
-		return [true, true, "auto"];
+		return [true, "auto"];
 	}
-	return [
-		ASK_INTERNAL_DEFAULTS.hybrid_enabled,
-		ASK_INTERNAL_DEFAULTS.rerank_enabled,
-		"auto",
-	];
+	return [ASK_INTERNAL_DEFAULTS.rerank_enabled, "auto"];
 }
 
 /**
@@ -184,43 +164,23 @@ export function resolveAskPolicy(raw, opts = {}) {
 		typeof opts.policyVersion === "number" ? opts.policyVersion : null;
 
 	const publicView = normalizePublicAsk(raw);
-	const base = { ...ANSWER_PROFILE_BASE[publicView.answer_profile] };
-	const evidence = EVIDENCE_FLOORS[publicView.evidence_requirement];
-
-	let minScore =
-		Number(base.answer_min_score) + Number(evidence.min_score_delta || 0);
-	let floor =
-		Number(base.citation_adjudicate_absolute_floor) +
-		Number(evidence.absolute_floor_delta || 0);
-	minScore = Math.max(minScore, Number(evidence.min_score_floor));
-	floor = Math.max(floor, Number(evidence.absolute_floor));
-	minScore = Math.max(0, Math.min(1, minScore));
-	floor = Math.max(0, Math.min(1, floor));
-	let adjudicate = Boolean(base.citation_adjudicate_enabled);
-	if (evidence.requires_adjudicate) adjudicate = true;
-
-	const [hybrid, rerank, resolvedEnhancement] = resolveRetrievalEnhancement(
-		publicView.retrieval_enhancement,
+	const base = ANSWER_PROFILE_BASE[publicView.answer_profile];
+	const [rerankEnabled, resolvedReranking] = resolveRerankingMode(
+		publicView.reranking,
 		question,
 	);
 
 	return {
 		public: publicView,
 		retrieve_top_k: base.retrieve_top_k,
-		answer_min_score: minScore,
-		hybrid_enabled:
-			publicView.hybrid_retrieval === "inherit"
-				? hybrid
-				: publicView.hybrid_retrieval === "on",
-		rerank_enabled:
-			publicView.reranking === "inherit"
-				? rerank
-				: publicView.reranking === "on",
-		citation_adjudicate_enabled: adjudicate,
-		citation_adjudicate_absolute_floor: floor,
+		answer_min_score: base.answer_min_score,
+		hybrid_enabled: ASK_INTERNAL_DEFAULTS.hybrid_enabled,
+		rerank_enabled: rerankEnabled,
+		citation_adjudicate_enabled: base.citation_adjudicate_enabled,
+		citation_adjudicate_absolute_floor: base.citation_adjudicate_absolute_floor,
 		session_memory_enabled: publicView.session_memory_enabled,
 		session_memory_max_turns: ASK_INTERNAL_DEFAULTS.session_memory_max_turns,
-		retrieval_enhancement_resolved_from: resolvedEnhancement,
+		reranking_resolved_from: resolvedReranking,
 		policy_version: policyVersion,
 	};
 }
@@ -231,14 +191,7 @@ export function resolvedAskAsOverrideKnobs(resolved) {
 		answer_min_score: resolved.answer_min_score,
 		hybrid_enabled: resolved.hybrid_enabled,
 		rerank_enabled: resolved.rerank_enabled,
-		...(resolved.public.hybrid_retrieval === "off" ||
-		(resolved.public.hybrid_retrieval === "inherit" &&
-			resolved.retrieval_enhancement_resolved_from === "off")
-			? { hybrid_retry_enabled: false }
-			: {}),
-		...(resolved.public.reranking === "off" ||
-		(resolved.public.reranking === "inherit" &&
-			resolved.retrieval_enhancement_resolved_from === "off")
+		...(resolved.public.reranking === "off"
 			? { rerank_retry_enabled: false }
 			: {}),
 		citation_adjudicate_enabled: resolved.citation_adjudicate_enabled,
@@ -253,7 +206,7 @@ export function askPolicySnapshot(resolved) {
 	return {
 		public: { ...resolved.public },
 		resolved: resolvedAskAsOverrideKnobs(resolved),
-		retrieval_enhancement: resolved.retrieval_enhancement_resolved_from,
+		reranking: resolved.reranking_resolved_from,
 		policy_version: resolved.policy_version,
 	};
 }

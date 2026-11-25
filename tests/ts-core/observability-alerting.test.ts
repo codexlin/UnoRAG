@@ -131,7 +131,7 @@ test("provider health reports rerank configuration independently of default exec
 				{
 					environment: {
 						...environment,
-						TS_RETRIEVAL_RERANK_ENABLED: defaultEnabled,
+						TS_RETRIEVAL_RERANK_ALLOWED: defaultEnabled,
 					},
 				},
 			);
@@ -174,7 +174,7 @@ test("provider health disables legitimately absent rerank providers without an a
 				{
 					environment: {
 						...environment,
-						TS_RETRIEVAL_RERANK_ENABLED: defaultEnabled,
+						TS_RETRIEVAL_RERANK_ALLOWED: defaultEnabled,
 					},
 				},
 			);
@@ -226,7 +226,7 @@ test("provider health keeps invalid rerank bindings degraded and alertable", asy
 				checkRedis: async () => undefined,
 				checkQdrant: async () => undefined,
 			},
-			{ environment: { ...environment, TS_RETRIEVAL_RERANK_ENABLED: "false" } },
+			{ environment: { ...environment, TS_RETRIEVAL_RERANK_ALLOWED: "false" } },
 		);
 		const rerank = health.items.find((item) => item.code === "rerank");
 		assert.ok(rerank);
@@ -331,7 +331,7 @@ test("provider health reports missing rerank credentials even when default execu
 					DASHSCOPE_API_KEY: " ",
 					RERANK_BASE_URL: "https://private.example.invalid/rerank",
 					RERANK_MODEL: "private-model",
-					TS_RETRIEVAL_RERANK_ENABLED: defaultEnabled,
+					TS_RETRIEVAL_RERANK_ALLOWED: defaultEnabled,
 				},
 			},
 		);

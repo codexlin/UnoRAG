@@ -1,6 +1,7 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 
+import { createSafeModelFetch } from "@/lib/server/model-settings-url";
 import {
 	AiProviderConfigurationError,
 	llmProviderFromEnv,
@@ -158,6 +159,7 @@ export function createAiProviderRegistry(
 		name: providerName,
 		apiKey,
 		baseURL: baseUrl,
+		fetch: createSafeModelFetch(),
 		supportsStructuredOutputs: config.supportsStructuredOutputs ?? true,
 		includeUsage: config.includeUsage ?? true,
 	});

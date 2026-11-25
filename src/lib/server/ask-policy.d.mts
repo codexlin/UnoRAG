@@ -1,23 +1,19 @@
 export const ANSWER_PROFILES: string[];
-export const RETRIEVAL_ENHANCEMENTS: string[];
-export const RETRIEVAL_OVERRIDES: string[];
-export const EVIDENCE_REQUIREMENTS: string[];
+export const RERANKING_MODES: string[];
 export const ASK_PUBLIC_KEYS: string[];
 export const ASK_INTERNAL_DEFAULTS: Record<string, unknown>;
 export const PUBLIC_ASK_DEFAULTS: {
 	answer_profile: string;
-	retrieval_enhancement: string;
-	hybrid_retrieval: string;
 	reranking: string;
 	session_memory_enabled: boolean;
-	evidence_requirement: string;
 };
 
 export function normalizePublicAsk(raw: unknown): typeof PUBLIC_ASK_DEFAULTS;
-export function resolveRetrievalEnhancement(
+export function looksRetrievalSensitive(question: unknown): boolean;
+export function resolveRerankingMode(
 	mode: unknown,
 	question?: string | null,
-): [boolean, boolean, string];
+): [boolean, string];
 export function resolveAskPolicy(
 	raw: unknown,
 	opts?: { question?: string | null; policyVersion?: number | null },

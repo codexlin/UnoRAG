@@ -11,6 +11,8 @@ export type ScopedRetrievalCacheKeyInput = {
 	options: {
 		hybridEnabled: boolean;
 		rerankEnabled: boolean;
+		rerankSparseOnly?: boolean;
+		rerankCacheTag?: string;
 		preserveFigureLineage?: boolean;
 		lineageMinScore?: number;
 		minimumEvidenceScore?: number;
@@ -67,6 +69,10 @@ export function buildScopedRetrievalCacheKey(
 		options: {
 			hybridEnabled: input.options.hybridEnabled,
 			rerankEnabled: input.options.rerankEnabled,
+			rerankSparseOnly: Boolean(input.options.rerankSparseOnly),
+			...(input.options.rerankCacheTag
+				? { rerankCacheTag: input.options.rerankCacheTag }
+				: {}),
 			preserveFigureLineage: Boolean(input.options.preserveFigureLineage),
 			lineageMinScore: input.options.lineageMinScore ?? null,
 			minimumEvidenceScore: input.options.minimumEvidenceScore ?? null,

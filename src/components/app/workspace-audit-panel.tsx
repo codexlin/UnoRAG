@@ -112,6 +112,10 @@ const ACTION_LABELS: Record<string, readonly [zh: string, en: string]> = {
 	"job.retried": ["重试任务", "Job retried"],
 	"workspace.created": ["创建工作区", "Workspace created"],
 	"workspace.ask_settings.updated": ["更新问答策略", "Ask policy updated"],
+	"organization.model_settings.updated": [
+		"更新模型与供应商配置",
+		"Model & provider settings updated",
+	],
 	[ALERT_THRESHOLDS_UPDATED]: ["更新告警阈值", "Alert thresholds updated"],
 	"workspace.invite.created": ["创建成员邀请", "Invite created"],
 	"workspace.invite.email": ["发送邀请邮件", "Invite email sent"],
@@ -128,6 +132,7 @@ const RESOURCE_LABELS: Record<string, readonly [zh: string, en: string]> = {
 	document_version: ["文档版本", "Document version"],
 	library: ["知识库", "Library"],
 	workspace: ["工作区", "Workspace"],
+	organization: ["组织", "Organization"],
 	workspace_invite: ["成员邀请", "Workspace invite"],
 	service_key: ["服务密钥", "Service key"],
 	user: ["用户账号", "User account"],
@@ -199,6 +204,10 @@ export function WorkspaceAuditPanel() {
 			{ value: "library.*", label: t("知识库管理", "Library events") },
 			{ value: "job.*", label: t("任务控制", "Job events") },
 			{ value: "workspace.*", label: t("工作区与密钥", "Workspace & keys") },
+			{
+				value: "organization.*",
+				label: t("组织模型配置", "Organization models"),
+			},
 			{
 				value: ALERT_THRESHOLDS_UPDATED,
 				label: t(...ACTION_LABELS[ALERT_THRESHOLDS_UPDATED]),
