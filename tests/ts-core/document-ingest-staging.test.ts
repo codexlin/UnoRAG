@@ -591,6 +591,92 @@ test("xlsx stager parses multi-sheet workbook through local xlsx parser without 
 	);
 });
 
+test("worker uses document-grouped embedDocumentChunks when provided and fails closed on vector count mismatch", async () => {
+	const source = new TextEncoder().encode(
+		"# Policy\n\nParagraph one.\n\nParagraph two.",
+	);
+	const hash = createHash("sha256").update(source).digest("hex");
+	let groupedCalls = 0;
+	let groupedInput: string[] = [];
+	let flatCalls = 0;
+	let stagedVectors: number[][] = [];
+	const stager = new DocumentIngestStager(
+		{
+			async load() {
+				return source;
+			},
+		},
+		scopePort(),
+		{
+			async embedQuery() {
+				return [1, 0];
+			},
+			async embedTexts() {
+				flatCalls += 1;
+				return [];
+			},
+			async embedDocumentChunks(chunks) {
+				groupedCalls += 1;
+				groupedInput = chunks;
+				return chunks.map((_, index) => [index + 1, 0]);
+			},
+		},
+		{
+			async stage(input) {
+				stagedVectors = input.vectors;
+				return input.records.length;
+			},
+			async setVisibility() {
+				return 0;
+			},
+		},
+	);
+	await stager.stageDocument({
+		...job(),
+		payload: { ...job().payload, content_hash: hash },
+	});
+	assert.equal(groupedCalls, 1);
+	assert.equal(flatCalls, 0);
+	assert.ok(groupedInput.length > 0);
+	assert.equal(stagedVectors.length, groupedInput.length);
+
+	// Fail closed when embedDocumentChunks returns fewer vectors than records.
+	const brokenStager = new DocumentIngestStager(
+		{
+			async load() {
+				return source;
+			},
+		},
+		scopePort(),
+		{
+			async embedQuery() {
+				return [1, 0];
+			},
+			async embedTexts() {
+				return [];
+			},
+			async embedDocumentChunks() {
+				return [];
+			},
+		},
+		{
+			async stage() {
+				assert.fail("must not stage with mismatched vectors");
+			},
+			async setVisibility() {
+				return 0;
+			},
+		},
+	);
+	await assert.rejects(
+		brokenStager.stageDocument({
+			...job(),
+			payload: { ...job().payload, content_hash: hash },
+		}),
+		/unexpected vector count/,
+	);
+});
+
 function embeddingProvider(): EmbeddingProvider {
 	return {
 		async embedQuery() {

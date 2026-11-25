@@ -267,6 +267,13 @@
       "when": 1795552698373,
       "tag": "0037_account_email_otp",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1795619078929,
+      "tag": "0038_organization_model_settings",
+      "breakpoints": true
     }
   ]
 }

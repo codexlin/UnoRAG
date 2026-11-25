@@ -104,6 +104,16 @@ test("buildScopedRetrievalCacheKey isolates every authorization and generation d
 		buildScopedRetrievalCacheKey({ ...baseInput, libraryId: "lib-2" }),
 		baseKey,
 	);
+	assert.notEqual(
+		buildScopedRetrievalCacheKey({
+			...baseInput,
+			options: { ...baseInput.options, rerankSparseOnly: true },
+		}),
+		buildScopedRetrievalCacheKey({
+			...baseInput,
+			options: { ...baseInput.options, rerankSparseOnly: false },
+		}),
+	);
 });
 
 test("DefaultRetrievalService uses ScopedRetrievalCache safely without cross-scope leaks or TTL staleness", async () => {

@@ -49,6 +49,7 @@ retired_runtime = {
     "UNORAG_DBOS_CLEANUP_ENABLED",
     "MINERU_URL",
     "OBSERVABILITY_ALERT_EMAIL_ENABLED",
+    "TS_RETRIEVAL_RERANK_ENABLED",
 }
 retired_secrets = {
     "UNORAG_INTERNAL_SECRET",

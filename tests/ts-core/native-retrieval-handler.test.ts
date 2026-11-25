@@ -69,7 +69,6 @@ test("native hybrid defaults to on, honors deployment and request opt-outs, and 
 		QDRANT_COLLECTION: "runtime-test",
 		EMBEDDING_DIM: "2",
 		TS_RETRIEVAL_HYBRID_ENABLED: undefined,
-		TS_RETRIEVAL_RERANK_ENABLED: undefined,
 		RETRIEVAL_CACHE_TTL_MS: "0",
 	};
 	const previous = Object.keys(environment).map(
@@ -175,7 +174,6 @@ test("native hybrid defaults to on, honors deployment and request opt-outs, and 
 	queries.length = 0;
 	const workspaceOff = NativeAskPolicySchema.parse({
 		hybrid_enabled: false,
-		hybrid_retry_enabled: false,
 	});
 	const workspaceDense = await service.retrieve({
 		...input,

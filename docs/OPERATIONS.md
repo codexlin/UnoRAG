@@ -343,9 +343,8 @@ Compose 为组件设置 CPU、内存限制和有限保留期，但 Docker 命名
 恢复仍需连续健康周期（`OBSERVABILITY_ALERT_RECOVERY_CYCLES`）。dead/stuck 任务、删除失败和 Provider
 不可用不受最小样本限制。健康评估通过 PostgreSQL advisory lock 支持多 control 副本。
 
-在 **设置 → 问答策略** 中，管理员可以独立启用或关闭混合检索和重排，也可以让每项功能跟随原有检索增强策略。
-改动在下一次 Ask 请求时生效。显式关闭对首轮和重试均有效；跟随已关闭的检索增强策略也不在重试时重新开启。
-自动模式首轮未使用重排，不等于禁止在证据不足时尝试重排。
+在 **设置 → 问答策略** 中，管理员可配置回答模式（`precise` / `balanced` / `exploratory`）、检索精排（`auto` / `on` / `off`）与对话记忆；Qdrant 混合检索底座在工作区层默认常开（整站紧急关闭通过 `TS_RETRIEVAL_HYBRID_ENABLED=false`）。
+改动在下一次 Ask 请求时生效。`reranking="off"` 对首轮、自动升级与重试均有效；`auto` 模式首轮未启用重排时，仍会在改写后的复杂查询、命中 `sparse-only` 候选或证据不足重试时自动启用重排。
 
 Webhook 告警需同时配置 `OBSERVABILITY_ALERT_WEBHOOK_URL`、`OBSERVABILITY_ALERT_WEBHOOK_SECRET` 与 `OBSERVABILITY_ALERT_WEBHOOK_ENABLED=true`。告警邮件复用部署级 Resend 凭据（`EMAIL_PROVIDER=resend`、`EMAIL_FROM`、`RESEND_API_KEY`，仅注入 Web 与 control，不读取 `SMTP_*`）；收件人（最多 5 个）、级别与开关由工作区管理员在 **设置 → 邮件通知** 热配置并持久化到 PostgreSQL。测试邮件按工作区每 60 秒限流一次，与真实告警共用持久化幂等投递队列（仅“服务商已接受”不代表已进收件箱，投递失败结合安全错误码与 Resend 控制台排查）。
 

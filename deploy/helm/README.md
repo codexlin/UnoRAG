@@ -31,6 +31,9 @@ LLM_API_KEY
 EMBEDDING_API_KEY          # optional, required when config.embeddingBaseUrl differs from llmBaseUrl
 JUDGE_API_KEY              # optional, required when config.judgeBaseUrl differs from llmBaseUrl
 RERANK_API_KEY             # optional, required when a custom rerank endpoint is configured
+VLM_API_KEY                # optional, required when a custom VLM endpoint is configured
+MODEL_SETTINGS_ENCRYPTION_KEY          # optional (>= 32 chars), dedicated key for UI-managed model secrets
+MODEL_SETTINGS_ENCRYPTION_KEY_PREVIOUS # optional (>= 32 chars), previous key during zero-downtime rotation
 MINERU_API_KEY             # optional, self-hosted or 302.AI MinerU auth
 OTEL_EXPORTER_OTLP_HEADERS # optional, customer Collector authentication
 COS_SECRET_ID              # required only for objectStorage.driver=cos

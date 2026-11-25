@@ -91,9 +91,8 @@ test("settings keep grouped controls, one-time key clearing and audit navigation
 }, info) => {
 	let settings = {
 		answer_profile: "balanced",
-		retrieval_enhancement: "auto",
+		reranking: "auto",
 		session_memory_enabled: true,
-		evidence_requirement: "standard",
 	};
 	const patches: unknown[] = [];
 	const roleChanges: unknown[] = [];
@@ -254,7 +253,7 @@ test("settings keep grouped controls, one-time key clearing and audit navigation
 			.getByRole("button", { name: "回答模式说明", exact: true })
 			.click();
 		await expect(
-			page.getByRole("dialog").getByText(/所有模式都需要证据/),
+			page.getByRole("dialog").getByText(/所有模式均要求充分证据/),
 		).toBeVisible();
 		await page.keyboard.press("Escape");
 		await expect(
@@ -416,9 +415,8 @@ test("settings protect drafts, block navigation during writes and reload only th
 }, info) => {
 	let settings = {
 		answer_profile: "balanced",
-		retrieval_enhancement: "auto",
+		reranking: "auto",
 		session_memory_enabled: true,
-		evidence_requirement: "standard",
 	};
 	let memberReads = 0;
 	let releaseWrite: (() => void) | undefined;
@@ -550,9 +548,8 @@ test("settings honor current server permissions and preserve drafts after permis
 	let canManage = false;
 	const settings = {
 		answer_profile: "balanced",
-		retrieval_enhancement: "auto",
+		reranking: "auto",
 		session_memory_enabled: true,
-		evidence_requirement: "standard",
 	};
 	await page.route("**/api/workspace/settings", (route) =>
 		route.fulfill(
@@ -886,9 +883,8 @@ test("settings share readable theme tokens across desktop and mobile layouts", a
 	test.setTimeout(90_000);
 	const settings = {
 		answer_profile: "balanced",
-		retrieval_enhancement: "auto",
+		reranking: "auto",
 		session_memory_enabled: true,
-		evidence_requirement: "standard",
 	};
 	let resolveSettings = () => {};
 	const settingsGate = new Promise<void>((resolve) => {

@@ -17,7 +17,10 @@ import {
 	RetrievalProviderDiagnosticSchema,
 	RetrievalProviderError,
 } from "../../src/core/retrieval/provider-request";
-import { OpenAICompatibleRerankProvider } from "../../src/core/retrieval/rerank/provider";
+import {
+	OpenAICompatibleRerankProvider,
+	resolveRerankEndpoint,
+} from "../../src/core/retrieval/rerank/provider";
 
 test("scope binds an authoritative active generation snapshot", () => {
 	const snapshot: ActiveGenerationSnapshot = {
@@ -1006,4 +1009,77 @@ for (const cleanup of ["rejects", "stalls"] as const) {
 
 test("mixed Chinese and English tokenizer keeps the established token semantics", () => {
 	assert.deepEqual(tokenize("合同 penalty"), ["penalty", "合", "同", "合同"]);
+});
+
+test("rerank endpoint resolution supports DashScope base URLs and explicit /rerank endpoints", () => {
+	assert.equal(
+		resolveRerankEndpoint("https://dashscope.aliyuncs.com/compatible-api/v1"),
+		"https://dashscope.aliyuncs.com/compatible-api/v1/reranks",
+	);
+	assert.equal(
+		resolveRerankEndpoint("https://example.test/v1/"),
+		"https://example.test/v1/reranks",
+	);
+	assert.equal(
+		resolveRerankEndpoint("http://host.docker.internal:8002/v1/rerank"),
+		"http://host.docker.internal:8002/v1/rerank",
+	);
+	assert.equal(
+		resolveRerankEndpoint("https://api.siliconflow.cn/v1/rerank/"),
+		"https://api.siliconflow.cn/v1/rerank",
+	);
+	assert.equal(
+		resolveRerankEndpoint(
+			"https://dashscope.aliyuncs.com/compatible-api/v1/reranks",
+		),
+		"https://dashscope.aliyuncs.com/compatible-api/v1/reranks",
+	);
+});
+
+test("rerank provider calls explicit /rerank URL verbatim and accepts Voyage data response shape", async () => {
+	let requestedUrl = "";
+	const provider = new OpenAICompatibleRerankProvider({
+		apiKey: "secret",
+		baseUrl: "https://api.voyageai.com/v1/rerank",
+		model: "rerank-2.5",
+		fetch: async (input) => {
+			requestedUrl = String(input);
+			return Response.json({
+				data: [
+					{ index: 1, relevance_score: 0.94 },
+					{ index: 0, relevance_score: 0.42 },
+				],
+			});
+		},
+	});
+	const ranked = await provider.rerank({
+		query: "revenue growth",
+		documents: ["doc a", "doc b"],
+		topN: 2,
+	});
+	assert.equal(requestedUrl, "https://api.voyageai.com/v1/rerank");
+	assert.deepEqual(ranked, [
+		{ index: 1, score: 0.94 },
+		{ index: 0, score: 0.42 },
+	]);
+
+	// Reject ambiguous responses that supply both results and data.
+	const ambiguous = new OpenAICompatibleRerankProvider({
+		apiKey: "secret",
+		baseUrl: "https://example.test/v1/rerank",
+		model: "rerank-model",
+		fetch: async () =>
+			Response.json({
+				results: [{ index: 0, relevance_score: 0.8 }],
+				data: [{ index: 0, relevance_score: 0.2 }],
+			}),
+	});
+	await assert.rejects(
+		ambiguous.rerank({ query: "q", documents: ["a"], topN: 1 }),
+		(error) => {
+			assert.ok(error instanceof RetrievalProviderError);
+			assert.equal(error.code, "rerank_invalid_response");
+			return true;
+		},
+	);
 });

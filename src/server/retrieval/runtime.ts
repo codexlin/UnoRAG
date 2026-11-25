@@ -78,7 +78,7 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		timeoutMs: positiveInteger("EMBEDDING_TIMEOUT_MS", 15_000),
 	});
 	const rerankAllowed = enabled("TS_RETRIEVAL_RERANK_ALLOWED", true);
-	const rerankEnabled = rerankAllowed && enabled("TS_RETRIEVAL_RERANK_ENABLED");
+	const rerankEnabled = false;
 	const hybridEnabled = enabled("TS_RETRIEVAL_HYBRID_ENABLED", true);
 	const reranker = rerankProvider
 		? new OpenAICompatibleRerankProvider({
@@ -109,6 +109,10 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		},
 	);
 	return runtime;
+}
+
+export function clearTypeScriptRetrievalCacheIfInitialized(): void {
+	runtime?.clearCache();
 }
 
 export function resetTypeScriptRetrievalServiceForTests(): void {

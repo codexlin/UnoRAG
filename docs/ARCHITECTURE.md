@@ -321,6 +321,8 @@ Judge 与生成共享服务端的有界回答粒度提示：名称级要求、�
 
 Ask 的语义门槛在候选去重和 Top-K 前生效，混合检索可补入同次、同授权范围的达标 Dense 候选；
 不拿 RRF 分数当语义分，不用 Dense 高分覆盖重排的明确低分。精确表格与公共 Retrieve 不启用该 Ask 专用筛选。
+在默认 `reranking: "auto"` 模式下，不仅请求入口会基于中英双语精确/对比信号开启首轮重排，`NativeAskRuntime` 也会在多轮改写与路由完成后，对 `compare`、多方面事实、派生计算及改写后的检索敏感查询启用首轮重排；当已配置且允许重排（未被部署级 `TS_RETRIEVAL_RERANK_ALLOWED=false` 或工作区 `reranking: "off"` 关断）且混合检索召回 `sparse-only`（`dense_score=null`）候选时，自动升级一次重排以将稀疏与稠密候选统一至 Cross-Encoder 分数尺度。
+组织 Owner 可通过 `/api/organization/model-settings` 在线覆盖 Chat、Judge、Rerank 与 VLM 配置（`app.organization_model_settings`，仅授予 `unorag_web` 读写权限，`unorag_worker` 无访问权；API Key 经 AES-256-GCM 绑定组织与槽位 AAD 加密落库且永不回显；端点校验拦截云元数据地址与 URL 内嵌凭据）。当部署配置 `MODEL_SETTINGS_LOCKED=true` 时，运行时忽略数据库覆盖项并锁定为纯环境变量模式；Embedding 始终为部署级只读契约。
 对比上下文先保留 Judge 选择的直接证据、Judge 可见的必要正文和冲突摘录，再分配补充来源预算。
 所选必要证据超过数量或上下文预算时受控拒答，不能删除证据后继续沿用 `sufficient=true`。
 

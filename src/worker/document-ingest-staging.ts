@@ -176,19 +176,32 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 		});
 		const vectors: number[][] = [];
 		await onProgress?.({ stage: "embedding", percent: 60 });
-		for (
-			let offset = 0;
-			offset < records.length;
-			offset += CANCELLABLE_EMBEDDING_BATCH_SIZE
-		) {
+		if (this.embeddings.embedDocumentChunks) {
 			await this.assertContinuing(input);
-			vectors.push(
-				...(await this.embeddings.embedTexts(
-					records
-						.slice(offset, offset + CANCELLABLE_EMBEDDING_BATCH_SIZE)
-						.map((record) => record.embed_text),
-				)),
+			const grouped = await this.embeddings.embedDocumentChunks(
+				records.map((record) => record.embed_text),
 			);
+			if (grouped.length !== records.length) {
+				throw new Error(
+					"document embedding provider returned an unexpected vector count",
+				);
+			}
+			vectors.push(...grouped);
+		} else {
+			for (
+				let offset = 0;
+				offset < records.length;
+				offset += CANCELLABLE_EMBEDDING_BATCH_SIZE
+			) {
+				await this.assertContinuing(input);
+				vectors.push(
+					...(await this.embeddings.embedTexts(
+						records
+							.slice(offset, offset + CANCELLABLE_EMBEDDING_BATCH_SIZE)
+							.map((record) => record.embed_text),
+					)),
+				);
+			}
 		}
 		await this.assertContinuing(input);
 		await onProgress?.({ stage: "indexing", percent: 80 });

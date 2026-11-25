@@ -271,9 +271,8 @@ for (const failure of ["network", "json"] as const) {
 	}) => {
 		const settings = {
 			answer_profile: "balanced",
-			retrieval_enhancement: "auto",
+			reranking: "auto",
 			session_memory_enabled: true,
-			evidence_requirement: "standard",
 		};
 		let failLoad = true;
 		let failSave = true;

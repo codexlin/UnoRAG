@@ -284,6 +284,33 @@ export const workspaceSettings = appSchema.table("workspace_settings", {
 });
 
 /**
+ * Organization-level runtime model & provider settings (owner-managed).
+ * Non-secret fields live in `config`; provider API keys live AES-256-GCM
+ * encrypted inside `encrypted_secrets`. Embedding remains deployment-locked.
+ */
+export const organizationModelSettings = appSchema.table(
+	"organization_model_settings",
+	{
+		organizationId: uuid("organization_id")
+			.primaryKey()
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		config: jsonb("config")
+			.$type<Record<string, unknown>>()
+			.default({})
+			.notNull(),
+		encryptedSecrets: jsonb("encrypted_secrets")
+			.$type<Record<string, unknown>>()
+			.default({})
+			.notNull(),
+		policyVersion: integer("policy_version").default(1).notNull(),
+		updatedBy: uuid("updated_by").references(() => users.id, {
+			onDelete: "set null",
+		}),
+		...timestamps,
+	},
+);
+
+/**
  * Workspace-scoped service API keys for Mode B (external retrieve/ask).
  * Raw key is returned once at create; only sha256 hash is stored.
  */

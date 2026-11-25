@@ -6,6 +6,7 @@ import {
 	GuardedLink,
 	useNavigationGuard,
 } from "@/components/app/navigation-guard";
+import { OrganizationModelSettingsPanel } from "@/components/app/organization-model-settings-panel";
 import { useSession } from "@/components/app/session-provider";
 import type { SettingsPanelState } from "@/components/app/settings/use-settings-panel-state";
 import { WorkspaceServicePanel } from "@/components/app/settings/workspace-service-panel";
@@ -31,6 +32,11 @@ const SECTIONS = [
 		id: "ask-settings",
 		label: ["问答策略", "Ask policy"],
 	},
+	{
+		id: "models",
+		label: ["模型与供应商", "Models & providers"],
+		ownerOnly: true,
+	},
 	{ id: "members", label: ["成员与邀请", "Members and invites"] },
 	{ id: "integrations", label: ["集成密钥", "Service keys"] },
 	{
@@ -46,9 +52,12 @@ export default function SettingsPage() {
 	const t = useInterfaceText();
 	const { identity, can } = useSession();
 	const canManage = can("manageMembers");
-	const sections = SECTIONS.filter(
-		(section) => !("adminOnly" in section) || canManage,
-	);
+	const isOrgOwner = identity.organizationRole === "owner";
+	const sections = SECTIONS.filter((section) => {
+		if ("ownerOnly" in section && section.ownerOnly) return isOrgOwner;
+		if ("adminOnly" in section && section.adminOnly) return canManage;
+		return true;
+	});
 	const sectionOptions = sections.map(({ id, label }) => ({
 		value: id,
 		label: t(label[0], label[1]),
@@ -78,10 +87,12 @@ export default function SettingsPage() {
 	useEffect(() => {
 		function fromHash(): SectionId | undefined {
 			const value = window.location.hash.slice(1);
-			return SECTIONS.find(
-				(section) =>
-					section.id === value && (!("adminOnly" in section) || canManage),
-			)?.id;
+			return SECTIONS.find((section) => {
+				if (section.id !== value) return false;
+				if ("ownerOnly" in section && section.ownerOnly) return isOrgOwner;
+				if ("adminOnly" in section && section.adminOnly) return canManage;
+				return true;
+			})?.id;
 		}
 		activeRef.current = fromHash() ?? "ask-settings";
 		setActive(activeRef.current);
@@ -99,7 +110,7 @@ export default function SettingsPage() {
 			window.removeEventListener("popstate", handleHistory);
 			setGuard({ dirty: false, busy: false });
 		};
-	}, [canManage, setGuard]);
+	}, [canManage, isOrgOwner, setGuard]);
 
 	function selectSection(next: SectionId) {
 		if (next === active) return;
@@ -216,6 +227,9 @@ export default function SettingsPage() {
 					) : null}
 					{active === "ask-settings" ? (
 						<WorkspaceAskSettingsPanel onStateChange={reportState} />
+					) : null}
+					{active === "models" && isOrgOwner ? (
+						<OrganizationModelSettingsPanel onStateChange={reportState} />
 					) : null}
 					{active === "members" ? (
 						<WorkspaceMembersPanel onStateChange={reportState} />

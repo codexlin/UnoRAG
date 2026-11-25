@@ -1,17 +1,16 @@
 /**
  * Workspace ask settings: public business-intent contract.
- * Unset / missing → PUBLIC_ASK_DEFAULTS. Stored data uses only public profiles.
+ * Unset / missing → PUBLIC_ASK_DEFAULTS. Stored data uses only the 3 canonical keys.
  */
 
 import {
 	ANSWER_PROFILES,
 	ASK_INTERNAL_DEFAULTS,
 	ASK_PUBLIC_KEYS,
-	EVIDENCE_REQUIREMENTS,
+	askPolicySnapshot,
 	normalizePublicAsk,
 	PUBLIC_ASK_DEFAULTS,
-	RETRIEVAL_ENHANCEMENTS,
-	RETRIEVAL_OVERRIDES,
+	RERANKING_MODES,
 	resolveAskPolicy,
 	resolvedAskAsOverrideKnobs,
 } from "./ask-policy.mjs";
@@ -21,6 +20,7 @@ export {
 	ASK_PUBLIC_KEYS,
 	normalizePublicAsk,
 	PUBLIC_ASK_DEFAULTS,
+	RERANKING_MODES,
 	resolveAskPolicy,
 	resolvedAskAsOverrideKnobs,
 } from "./ask-policy.mjs";
@@ -96,31 +96,10 @@ export function validateAskPatch(partial) {
 				detail: `answer_profile must be one of: ${ANSWER_PROFILES.join(", ")}`,
 			};
 		}
-		if (
-			key === "retrieval_enhancement" &&
-			!RETRIEVAL_ENHANCEMENTS.includes(normalized)
-		) {
+		if (key === "reranking" && !RERANKING_MODES.includes(normalized)) {
 			return {
 				ok: false,
-				detail: `retrieval_enhancement must be one of: ${RETRIEVAL_ENHANCEMENTS.join(", ")}`,
-			};
-		}
-		if (
-			(key === "hybrid_retrieval" || key === "reranking") &&
-			!RETRIEVAL_OVERRIDES.includes(normalized)
-		) {
-			return {
-				ok: false,
-				detail: `${key} must be one of: ${RETRIEVAL_OVERRIDES.join(", ")}`,
-			};
-		}
-		if (
-			key === "evidence_requirement" &&
-			!EVIDENCE_REQUIREMENTS.includes(normalized)
-		) {
-			return {
-				ok: false,
-				detail: `evidence_requirement must be one of: ${EVIDENCE_REQUIREMENTS.join(", ")}`,
+				detail: `reranking must be one of: ${RERANKING_MODES.join(", ")}`,
 			};
 		}
 		patch[key] = normalized;
@@ -156,12 +135,7 @@ export function resolveStoredAskOverrides(storedAsk, opts = {}) {
 	return {
 		public: resolved.public,
 		overrides: resolvedAskAsOverrideKnobs(resolved),
-		snapshot: {
-			public: { ...resolved.public },
-			resolved: resolvedAskAsOverrideKnobs(resolved),
-			retrieval_enhancement: resolved.retrieval_enhancement_resolved_from,
-			policy_version: resolved.policy_version,
-		},
+		snapshot: askPolicySnapshot(resolved),
 	};
 }
 

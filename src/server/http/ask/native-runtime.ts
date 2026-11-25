@@ -54,6 +54,7 @@ import type { AuthorizedScope, RetrievalFilters } from "@/core/contracts";
 import type {
 	DefaultRetrievalService,
 	InternalCitation,
+	RerankProvider,
 	RetrievalResult,
 } from "@/core/retrieval";
 import {
@@ -72,6 +73,7 @@ import {
 	withAskRetrievalCapture,
 } from "@/evaluation/sensitive-capture";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
+import type { EffectiveAskModelRuntime } from "@/lib/server/organization-model-settings";
 import { DrizzleActiveGenerationResolver } from "@/server/retrieval/active-generation-resolver";
 import { resolveAuthorizedRetrievalScope } from "@/server/retrieval/authorized-scope";
 import { loadActiveDocumentCatalog } from "@/server/retrieval/document-catalog";
@@ -121,6 +123,8 @@ function figureObservationKey(
 
 export type NativeAskRuntimeDependencies = {
 	retrieval: RetrievalService;
+	rerankerOverride?: RerankProvider | null;
+	rerankCacheTag?: string;
 	structured: StructuredOutputAdapter;
 	judgeStructured?: StructuredOutputAdapter;
 	judgeIdentity?: { modelId: string; providerName: string };
@@ -389,13 +393,15 @@ export class NativeAskRuntime {
 			/(?:对比|比较|差异|以及|并且|有哪些|分别|应对|措施|战略|合作伙伴)/u.test(
 				mainQuery,
 			);
+		const isDerivedCalculation =
+			!input.tableOnly && isDerivedCalculationQuestion(mainQuery);
 		const baseTopK = input.tableOnly
 			? Math.max(30, this.policy.retrieve_top_k)
 			: state.query_type === "compare"
 				? Math.max(20, this.policy.retrieve_top_k)
 				: state.query_type === "summary" ||
 						isMultiAspectFact ||
-						isDerivedCalculationQuestion(mainQuery)
+						isDerivedCalculation
 					? Math.max(10, this.policy.retrieve_top_k)
 					: this.policy.retrieve_top_k;
 		const targetTopK = isRetryAttempt ? Math.max(12, baseTopK) : baseTopK;
@@ -403,7 +409,19 @@ export class NativeAskRuntime {
 			? { ...filters(state), record_type: "table" }
 			: filters(state);
 		const retrieveOptions = {
-			...askRetrievalOptions(this.policy, isRetryAttempt),
+			...askRetrievalOptions(this.policy, isRetryAttempt, {
+				query: mainQuery,
+				queryType: state.query_type,
+				isMultiAspectFact,
+				isDerivedCalculation,
+				tableOnly: input.tableOnly,
+			}),
+			...(this.dependencies.rerankerOverride !== undefined
+				? { rerankerOverride: this.dependencies.rerankerOverride }
+				: {}),
+			...(this.dependencies.rerankCacheTag
+				? { rerankCacheTag: this.dependencies.rerankCacheTag }
+				: {}),
 			minimumEvidenceScore: input.applyEvidenceThreshold
 				? this.evidenceThreshold()
 				: undefined,
@@ -1088,19 +1106,32 @@ export function createNativeAskRuntime(input: {
 	signal?: AbortSignal;
 	policy: NativeAskPolicy;
 	dependencies?: NativeAskRuntimeDependencies;
+	modelRuntime?: EffectiveAskModelRuntime;
 	usageRecorder?: ModelUsageRecorder;
 	assertAuthorized?: (citations: Record<string, unknown>[]) => Promise<void>;
 	includeTraceDetails?: boolean;
 }): NativeAskRuntime {
 	let dependencies = input.dependencies;
 	if (!dependencies) {
-		const registry = createAiProviderRegistry(aiConfigFromEnv());
-		const judgeRegistry = createAiProviderRegistry(judgeAiConfigFromEnv());
-		const vlmConfig = vlmAiConfigFromEnv();
+		const chatConfig = input.modelRuntime?.chatConfig ?? aiConfigFromEnv();
+		const judgeConfig =
+			input.modelRuntime?.judgeConfig ?? judgeAiConfigFromEnv();
+		const vlmConfig =
+			input.modelRuntime !== undefined
+				? input.modelRuntime.vlmConfig
+				: vlmAiConfigFromEnv();
+		const registry = createAiProviderRegistry(chatConfig);
+		const judgeRegistry = createAiProviderRegistry(judgeConfig);
 		const vlmRegistry = vlmConfig ? createAiProviderRegistry(vlmConfig) : null;
 		const concurrencyGate = getSharedAiConcurrencyGate();
 		dependencies = {
 			retrieval: getTypeScriptRetrievalService(),
+			...(input.modelRuntime?.source === "database"
+				? { rerankerOverride: input.modelRuntime.rerankProvider }
+				: {}),
+			...(input.modelRuntime?.rerankCacheTag
+				? { rerankCacheTag: input.modelRuntime.rerankCacheTag }
+				: {}),
 			loadDocumentCatalog: loadActiveDocumentCatalog,
 			structured: new StructuredOutputAdapter(registry.model, undefined, {
 				timeoutMs: positiveEnvironmentInteger(

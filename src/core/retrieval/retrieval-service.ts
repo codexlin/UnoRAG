@@ -911,6 +911,10 @@ export class DefaultRetrievalService {
 		private readonly options: RetrievalServiceOptions,
 	) {}
 
+	clearCache(): void {
+		this.options.cache?.clear();
+	}
+
 	async lookupDocumentRecord(input: {
 		libraryId: string;
 		scope: AuthorizedScope;
@@ -972,6 +976,12 @@ export class DefaultRetrievalService {
 		options?: {
 			hybridEnabled?: boolean;
 			rerankEnabled?: boolean;
+			/** Auto-trigger rerank when hybrid RRF surfaces sparse-only hits (dense_score === null). */
+			rerankSparseOnly?: boolean;
+			/** Optional per-organization reranker override (respects rerankAllowed). */
+			rerankerOverride?: RerankProvider | null;
+			/** Cache differentiator when a dynamic reranker override is active. */
+			rerankCacheTag?: string;
 			preserveFigureLineage?: boolean;
 			lineageMinScore?: number;
 			/** Ask-only selection floor; omit to retain Public Retrieve ranking semantics. */
@@ -1008,6 +1018,9 @@ export class DefaultRetrievalService {
 		const rerankEnabled =
 			this.options.rerankAllowed !== false &&
 			(input.options?.rerankEnabled ?? this.options.rerankEnabled);
+		const rerankSparseOnly =
+			this.options.rerankAllowed !== false &&
+			input.options?.rerankSparseOnly === true;
 		const cacheKey =
 			this.options.cache && !includeTraceDetails
 				? buildScopedRetrievalCacheKey({
@@ -1019,6 +1032,10 @@ export class DefaultRetrievalService {
 						options: {
 							hybridEnabled,
 							rerankEnabled,
+							rerankSparseOnly,
+							...(input.options?.rerankCacheTag
+								? { rerankCacheTag: input.options.rerankCacheTag }
+								: {}),
 							preserveFigureLineage: input.options?.preserveFigureLineage,
 							lineageMinScore: input.options?.lineageMinScore,
 							minimumEvidenceScore,
@@ -1136,7 +1153,21 @@ export class DefaultRetrievalService {
 					resultCount: number | null;
 			  })
 			| undefined;
-		if (rerankEnabled && this.reranker && candidates.length > 1) {
+		const activeReranker =
+			input.options?.rerankerOverride !== undefined
+				? input.options.rerankerOverride
+				: this.reranker;
+		const hasSparseOnlyCandidate =
+			usedHybrid && candidates.some((hit) => hit.dense_score === null);
+		const shouldRerankForSparseOnly =
+			!rerankEnabled && rerankSparseOnly && hasSparseOnlyCandidate;
+		const shouldRerank = rerankEnabled || shouldRerankForSparseOnly;
+		if (
+			shouldRerank &&
+			activeReranker &&
+			(candidates.length > 1 ||
+				(hasSparseOnlyCandidate && candidates.length === 1))
+		) {
 			const startedAt = Date.now();
 			// Keep enough scored candidates to fill Top-K after overlap deduplication.
 			const requestedCount = candidates.length;
@@ -1153,7 +1184,7 @@ export class DefaultRetrievalService {
 			};
 			let receivedResponse = false;
 			try {
-				const response = await this.reranker.rerank({
+				const response = await activeReranker.rerank({
 					query,
 					documents: candidates.map(hitText),
 					topN: requestedCount,

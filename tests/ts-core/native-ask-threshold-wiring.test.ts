@@ -259,7 +259,6 @@ async function createRuntime(
 			citation_adjudicate_absolute_floor: THRESHOLD,
 			hybrid_enabled: true,
 			rerank_enabled: false,
-			hybrid_retry_enabled: false,
 			rerank_retry_enabled: false,
 			...options.policy,
 		}),

@@ -106,6 +106,7 @@ No changes to ADR-0003 chunking or ADR-0005 ownership are required.
 
 - v0.4.0 默认开启 Hybrid。新部署省略 `TS_RETRIEVAL_HYBRID_ENABLED` 时使用 `true`；
   可设为 `false` 在部署级关闭，工作区也可独立关闭混合检索。
+- 后续策略简化更新：工作区「问答策略」已移除独立的 `hybrid_retrieval` 开关，使所有工作区默认保持 `lexical_v1` IDF + RRF 混合检索常开（旧行读时不再维持工作区级关闭），仅保留部署级紧急开关 `TS_RETRIEVAL_HYBRID_ENABLED=false`。`lexical_v1` 稀疏编码格式本身保持不变。
 
 - [Qdrant hybrid queries](https://qdrant.tech/documentation/search/hybrid-queries/)
 - [Qdrant vectors](https://qdrant.tech/documentation/concepts/vectors/)

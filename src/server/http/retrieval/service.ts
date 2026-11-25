@@ -6,10 +6,12 @@ import type { AuthorizedScope, RetrievalFilters } from "@/core/contracts";
 import type {
 	ActiveGenerationResolver,
 	InternalCitation,
+	RerankProvider,
 	RetrievalResult,
 } from "@/core/retrieval";
 import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
+import { resolveEffectiveOrganizationRerankRuntime } from "@/lib/server/organization-model-settings";
 import { NativeAskPolicySchema } from "@/server/http/ask/policy";
 import { DrizzleActiveGenerationResolver } from "@/server/retrieval/active-generation-resolver";
 import { resolveAuthorizedRetrievalScope } from "@/server/retrieval/authorized-scope";
@@ -68,6 +70,8 @@ export interface NativeRetrievalEngine {
 		options?: {
 			hybridEnabled?: boolean;
 			rerankEnabled?: boolean;
+			rerankerOverride?: RerankProvider | null;
+			rerankCacheTag?: string;
 		};
 		signal?: AbortSignal;
 	}): Promise<RetrievalResult>;
@@ -177,6 +181,12 @@ export async function executeNativeRetrieval(input: {
 	if (!scope) {
 		throw new NativeRetrievalRequestError(404, "library not found");
 	}
+	const rerankRuntime =
+		input.dependencies || !policy.rerank_enabled
+			? undefined
+			: await resolveEffectiveOrganizationRerankRuntime(
+					input.identity.tenantId,
+				);
 	const result = await dependencies.retrieval.retrieve({
 		query: payload.query,
 		libraryId: payload.library_id,
@@ -186,6 +196,17 @@ export async function executeNativeRetrieval(input: {
 		options: {
 			hybridEnabled: policy.hybrid_enabled,
 			rerankEnabled: policy.rerank_enabled,
+			...(rerankRuntime &&
+			(rerankRuntime.source === "database" || rerankRuntime.rerankCacheTag)
+				? {
+						...(rerankRuntime.source === "database"
+							? { rerankerOverride: rerankRuntime.rerankProvider }
+							: {}),
+						...(rerankRuntime.rerankCacheTag
+							? { rerankCacheTag: rerankRuntime.rerankCacheTag }
+							: {}),
+					}
+				: {}),
 		},
 		signal: input.signal,
 	});

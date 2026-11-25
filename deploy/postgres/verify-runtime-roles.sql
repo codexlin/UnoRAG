@@ -8,6 +8,10 @@ BEGIN
 		OR NOT has_table_privilege('unorag_web_login', 'app.users', 'INSERT')
 		OR NOT has_table_privilege('unorag_web_login', 'app.users', 'UPDATE')
 		OR NOT has_table_privilege('unorag_web_login', 'app.users', 'DELETE')
+		OR NOT has_table_privilege('unorag_web_login', 'app.organization_model_settings', 'SELECT')
+		OR NOT has_table_privilege('unorag_web_login', 'app.organization_model_settings', 'INSERT')
+		OR NOT has_table_privilege('unorag_web_login', 'app.organization_model_settings', 'UPDATE')
+		OR has_table_privilege('unorag_web_login', 'app.organization_model_settings', 'DELETE')
 		OR has_schema_privilege('unorag_web_login', 'app', 'CREATE') THEN
 		RAISE EXCEPTION 'unorag_web_login privilege boundary is invalid';
 	END IF;
@@ -39,6 +43,7 @@ BEGIN
 		OR NOT has_table_privilege('unorag_worker_login', 'app.observability_component_health', 'INSERT')
 		OR NOT has_table_privilege('unorag_worker_login', 'app.observability_component_health', 'UPDATE')
 		OR has_table_privilege('unorag_worker_login', 'app.users', 'SELECT')
+		OR has_table_privilege('unorag_worker_login', 'app.organization_model_settings', 'SELECT')
 		OR has_schema_privilege('unorag_worker_login', 'app', 'CREATE') THEN
 		RAISE EXCEPTION 'unorag_worker_login privilege boundary is invalid';
 	END IF;

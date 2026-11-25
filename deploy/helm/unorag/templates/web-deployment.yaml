@@ -82,7 +82,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "unorag.secretName" . }}
                   key: LLM_API_KEY
-            {{- range $key := list "EMBEDDING_API_KEY" "JUDGE_API_KEY" "RERANK_API_KEY" }}
+            {{- range $key := list "EMBEDDING_API_KEY" "JUDGE_API_KEY" "RERANK_API_KEY" "VLM_API_KEY" "MODEL_SETTINGS_ENCRYPTION_KEY" "MODEL_SETTINGS_ENCRYPTION_KEY_PREVIOUS" }}
             - name: {{ $key }}
               valueFrom:
                 secretKeyRef:

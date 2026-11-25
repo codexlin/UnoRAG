@@ -167,6 +167,8 @@ external:
 # ---------------------------------------------------------------------------
 config:
   appEnv: production
+  # Set "true" for strict regulated deployments to lock model settings to env vars only.
+  modelSettingsLocked: "false"
   chatModel: qwen-plus
   aiSupportsStructuredOutputs: "true"
   aiIncludeUsage: "true"
@@ -191,7 +193,6 @@ config:
   contextualRetrievalMaxChunks: "40"
   contextualRetrievalTimeoutMs: "1000"
   retrievalHybridEnabled: "true"
-  retrievalRerankEnabled: "false"
   retrievalRerankAllowed: "true"
   rerankModel: qwen3-rerank
   rerankTimeoutMs: "10000"

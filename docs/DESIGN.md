@@ -49,7 +49,7 @@
 | 文档治理与诊断 | 查看、ACL、替换、重索引、取消/重试、下载、删除、版本历史、入库瀑布、解析报告 | [library-doc-actions.tsx](../src/components/app/library-doc-actions.tsx)、[document-detail-sheet.tsx](../src/components/app/document-detail-sheet.tsx) |
 | 会话历史 | 按日期分组列表、已加载范围搜索/筛库、逐轮回放、继续原 thread | [archive-panel.tsx](../src/components/app/archive-panel.tsx) |
 | 运行中心与审计 | Ask/队列统计、健康状态、告警及投递、请求筛选/翻页、错误抽屉、独立审计页与 CSV 导出 | [operations-dashboard.tsx](../src/components/app/operations-dashboard.tsx)、[operations-requests-panel.tsx](../src/components/app/operations-requests-panel.tsx)、[workspace-audit-panel.tsx](../src/components/app/workspace-audit-panel.tsx) |
-| 设置与账号 | 问答策略与混合检索/重排、成员/邀请、Service Key、告警阈值、邮件通知策略/测试、服务信息；登录/改密/邀请/邮箱访问 | [settings/page.tsx](../src/app/app/settings/page.tsx)、[login/page.tsx](../src/app/login/page.tsx) |
+| 设置与账号 | 问答策略（回答模式 / 检索精排 Auto·开·关 / 对话记忆）、Owner 级模型与供应商配置（含连通性探测与部署锁定态）、成员/邀请、Service Key、告警阈值、邮件通知策略/测试、服务信息；登录/改密/邀请/邮箱访问 | [settings/page.tsx](../src/app/app/settings/page.tsx)、[login/page.tsx](../src/app/login/page.tsx) |
 
 ---
 
@@ -69,7 +69,7 @@
 ### 运行中心与设置
 - 概览状态综合服务端 `overall`、快照新鲜度与活动告警；未知统计保留未知，不填零；Provider 配置就绪不等于调用成功。
 - 阶段瀑布仅在有可信起止时间时称时间轴；仅有 `duration_ms` 时按顺序展示耗时，不猜并行区间。
-- 设置页使用桌面次级导航 + 手机顶部选择器，保留 `#ask-settings` / `#members` / `#integrations` / `#notifications` / `#service` 深链接；一次性 Service Key 与邀请明文关闭前提醒确认并从内存清理，不进入 URL/Toast/日志。
+- 设置页使用桌面次级导航 + 手机顶部选择器，保留 `#ask-settings` / `#models`（仅组织 Owner）/ `#members` / `#integrations` / `#notifications` / `#service` 深链接；一次性 Service Key 与邀请明文关闭前提醒确认并从内存清理，连同模型 API Key 均不回显、不进入 URL/Toast/日志。
 - 双语支持 `简体中文` / `English`（由浏览器 Cookie → `Accept-Language` → English 服务端首屏解析），不加 URL 语言前缀，不改写用户内容与 API 状态值。
 
 ### 对外首页与登录外壳

@@ -84,9 +84,8 @@ UNORAG_COMPOSE_OVERLAY=./docker-compose.local-amd64.yml \
 
 新部署默认启用 Qdrant `lexical_v1` IDF + RRF 混合检索，词法检索无需额外的模型 API 调用。
 在 `runtime.advanced.env` 设置 `TS_RETRIEVAL_HYBRID_ENABLED=false` 可在整个部署禁用混合检索；设置 `TS_RETRIEVAL_RERANK_ALLOWED=false` 可在整个部署硬禁用重排（覆盖工作区的 `reranking` 策略与自动/重试重排）。
-工作区可通过 `hybrid_retrieval: "off"` 禁用混合检索，包括问答重试。选择 `inherit` 时，
-`retrieval_enhancement: "off"` 同样禁用混合检索。自动模式在对比、精确编号等查询的首轮启用重排。
-升级保留已有的显式关闭值。
+工作区「问答策略」精简为三项清晰配置：回答模式（`precise` / `balanced` / `exploratory`）、检索精排（`auto` / `on` / `off`，默认 `auto`）与对话记忆。`auto` 模式在对比、多方面事实、派生计算、中英精确编号及改写后的复杂查询首轮启用重排；当已配置且允许重排、且混合检索召回 `sparse-only`（无稠密分数）候选时，也会自动升级重排以统一证据分数尺度。公共检索接口 `/api/v1/retrieve` 默认保持低延迟粗排契约（不注入工作区 Ask 策略）。
+升级时旧行中的 `retrieval_enhancement` 会平滑投影到 `reranking`，`evidence_requirement="strict"` 投影到 `answer_profile="precise"`；混合检索在工作区层始终开启，如需整站关闭请设置部署级 `TS_RETRIEVAL_HYBRID_ENABLED=false`。
 
 正式安装必须使用发布 workflow 生成的 digest manifest。没有 `--manifest` 时安装脚本会构建当前
 工作树镜像，该模式只用于本地开发，不属于可交付安装。manifest 会同时固定四个镜像和 DBOS
@@ -272,6 +271,39 @@ LLM_API_KEY=local-no-auth
 EMBEDDING_API_KEY=local-no-auth
 ```
 
+#### 示例 C：高预算 / 全内网私有 GPU（vLLM 对话 + Embedding + Reranker + 自托管 MinerU）
+
+面向金融、法律、合规等要求**物理零出域**且追求最高精度的私有 GPU 集群部署（假设内网宿主机分别在 `8000`、`8001`、`8002` 端口启动 vLLM Chat / Embedding / Reranker，在 `6006` 端口启动自托管 MinerU）：
+
+```dotenv
+# deploy/config/runtime.env
+LLM_BASE_URL=http://host.docker.internal:8000/v1
+CHAT_MODEL=Qwen/Qwen3-32B
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIM=1024
+```
+
+```dotenv
+# deploy/config/runtime.advanced.env
+EMBEDDING_BASE_URL=http://host.docker.internal:8001/v1
+# vLLM / SiliconFlow / Xinference / Jina / Cohere / Voyage 等使用单数 /rerank 路径时，填写完整路径即可
+RERANK_BASE_URL=http://host.docker.internal:8002/v1/rerank
+RERANK_MODEL=Qwen/Qwen3-Reranker-8B
+TS_RETRIEVAL_RERANK_ALLOWED=true
+MINERU_PROVIDER=self_hosted
+MINERU_SELF_HOSTED_URL=http://host.docker.internal:6006
+EXTERNAL_PARSER_ALLOWED=false
+```
+
+```dotenv
+# deploy/config/runtime.secret
+LLM_API_KEY=local-no-auth
+EMBEDDING_API_KEY=local-no-auth
+RERANK_API_KEY=local-no-auth
+```
+
+> **中预算云 API 参考**：若暂不自建 GPU，也可保持云端主网关，同时将 `RERANK_BASE_URL` 指向阿里云 DashScope（`https://dashscope.aliyuncs.com/compatible-api/v1` + `qwen3-rerank`）或硅基流动（`https://api.siliconflow.cn/v1/rerank` + `Qwen/Qwen3-Reranker-8B`）并在工作区启用 `auto` 或 `on` 重排。
+
 ### 4. 按能力拆分端点与凭据隔离
 
 Embedding、Judge、Rerank 与 VLM 均可在 `runtime.advanced.env` 中配置独立 `*_BASE_URL` / `*_MODEL`，
@@ -293,15 +325,28 @@ Embedding、Judge、Rerank 与 VLM 均可在 `runtime.advanced.env` 中配置独
 | `AI_SUPPORTS_STRUCTURED_OUTPUTS` | `true` | 对话网关或小参数本地模型不支持 OpenAI `json_schema` 结构化输出时设为 `false` |
 | `JUDGE_SUPPORTS_STRUCTURED_OUTPUTS` | `true` | Judge 模型不支持 `json_schema` 时设为 `false` |
 | `AI_INCLUDE_USAGE` | `true` | 网关拒绝流式 `stream_options.include_usage` 参数时设为 `false`（用量保持未知，不伪造 0） |
-| `TS_RETRIEVAL_RERANK_ALLOWED` | `true` | 需要在整个部署硬禁用重排（覆盖工作区策略）时设为 `false` |
+| `TS_RETRIEVAL_RERANK_ALLOWED` | `true` | 需要在整个部署硬禁用重排（覆盖工作区策略与在线模型配置）时设为 `false` |
+| `MODEL_SETTINGS_LOCKED` | `false` | 金融/政企等严苛环境需禁止 Owner 通过网页修改模型与密钥时设为 `true`，强制仅读服务器环境变量 |
+
+### 在线模型与供应商管理（Owner 级）与部署级锁定模式
+
+组织 **Owner** 可在工作台「设置 → 模型与供应商（`#models`）」在线切换 **Chat、Judge、Rerank 与 VLM** 的模型、端点、结构化输出开关及加密 API Key，并直接点击「测试连接」自动校验：
+
+- **Chat / Judge**：连通性、耗时、`usage` 回传与 `json_schema` 结构化输出兼容性（不支持时给出“一键应用建议配置”）；
+- **Rerank**：自动校验 `/reranks` 与 `/rerank` 单数路径（发现 vLLM/SiliconFlow 等单数端点可用时提示一键修正）以及 `results`/`data` 响应格式；
+- **VLM**：发送最小 1×1 PNG 真实校验多模态视觉输入兼容性；
+- **Embedding**：因与 Qdrant 集合向量空间强绑定，在页面中始终保持**只读锁定**，仍需通过部署环境变量变更并新建集合重索引。
+
+安全边界：在线保存的 API Key 使用 `AES-256-GCM`（结合组织 ID 与能力槽位 AAD，密钥由 `MODEL_SETTINGS_ENCRYPTION_KEY` 或 `UNORAG_SESSION_SECRET` 经 HKDF 派生）加密落库，接口永不回显明文；所有修改写入操作审计日志。严苛金融/政企客户可在 `runtime.advanced.env`（或 Helm `config.modelSettingsLocked="true"`）设置 **`MODEL_SETTINGS_LOCKED=true`**，运行时将完全忽略数据库覆盖项并阻止网页修改或自定义 URL 探测。
 
 关于 Rerank：
 
 - 切换到非 DashScope 主网关且未配置 `RERANK_BASE_URL` 时，UnoRAG 不会创建默认外部 Reranker；运行中心会显示合法的 `disabled`，
-  **不会触发异常告警**。但若配置了非法地址或异端点缺少 `RERANK_API_KEY`，即使 `TS_RETRIEVAL_RERANK_ENABLED=false` 也会显式报 `degraded`。
-- 如需接入自托管 Rerank 服务（如 Xinference、vLLM 或自定义代理），服务端需提供 `POST <RERANK_BASE_URL>/reranks` 接口并返回
-  `{ "results": [{ "index": 0, "relevance_score": 0.92 }] }`，并在 `runtime.advanced.env` 设置 `RERANK_BASE_URL`、`RERANK_MODEL`，
-  在 `runtime.secret` 设置 `RERANK_API_KEY`（无鉴权同样填占位符）。
+  **不会触发异常告警**，也不会悄悄将私有文档片段发往外网。但若配置了非法地址或异端点缺少 `RERANK_API_KEY`，仍会显式报 `degraded`。
+- 接入自托管或第三方 Rerank 服务时，`RERANK_BASE_URL` 同时兼容两类路径写法：
+  - **完整路径（推荐用于 vLLM / Xinference / SiliconFlow / Jina / Cohere / Voyage）**：直接填写以 `/rerank` 或 `/reranks` 结尾的地址（如 `http://host.docker.internal:8002/v1/rerank` 或 `https://api.siliconflow.cn/v1/rerank`），UnoRAG 将原样请求，不重复拼接后缀；
+  - **基础路径（兼容 DashScope）**：填写不含 `/rerank` 的基础路径（如 `https://dashscope.aliyuncs.com/compatible-api/v1`），UnoRAG 自动拼接 `/reranks`。
+- 响应体同时兼容 `{ "results": [{ "index": 0, "relevance_score": 0.92 }] }`（DashScope / vLLM / SiliconFlow / Xinference / Jina / Cohere）与 `{ "data": [{ "index": 0, "relevance_score": 0.92 }] }`（Voyage AI）；并在 `runtime.advanced.env` 设置 `RERANK_MODEL`，在 `runtime.secret` 设置 `RERANK_API_KEY`（无鉴权本地服务填占位符即可）。
 
 ### 6. Embedding 维度、Qdrant 集合与纯本地零云端模式
 
@@ -321,6 +366,21 @@ Embedding、Judge、Rerank 与 VLM 均可在 `runtime.advanced.env` 中配置独
 - **纯本地零外网模式**：将模型端点全部指向本机/内网服务，同时保持 `MINERU_PROVIDER=self_hosted`、`EXTERNAL_PARSER_ALLOWED=false`。
   `MINERU_SELF_HOSTED_URL` 留空时默认使用 Worker 内置 LiteParse + 预装 Tesseract OCR；如需高精度 PDF 解析，可指向内网或宿主机自托管
   MinerU（如 `MINERU_SELF_HOSTED_URL=http://host.docker.internal:6006`）。
+
+#### 数据出域边界矩阵
+
+私有化安全评审可直接核对以下各能力的数据出域范围与内网替代方案：
+
+| 能力模块 | 发送的业务载荷 | 默认出域行为 | 全内网零出域替代 |
+|---|---|---|---|
+| **Chat / Judge** | 用户问题、授权召回片段、压缩后多轮上下文 | 发往 `LLM_BASE_URL` / `JUDGE_BASE_URL` | 内网 vLLM / SGLang / Ollama |
+| **Embedding** | 文档切分正文（入库）与查询词（检索） | 发往 `EMBEDDING_BASE_URL`（默认继承主网关） | 内网 vLLM / Ollama / TEI（如 `bge-m3`） |
+| **Rerank** | 用户问题与授权候选片段文本 | 仅主网关为 DashScope 时继承 DashScope；其他网关默认 `disabled` 不出域 | 内网 vLLM / Xinference（如 `Qwen3-Reranker-8B`）或设 `TS_RETRIEVAL_RERANK_ALLOWED=false` |
+| **VLM 图表读取** | 授权 PDF 图表裁剪图与图注 | 默认关闭（`VLM_ENABLED=false`） | 保持关闭，或指向内网多模态 vLLM |
+| **PDF 解析（Parser）** | 原始 PDF 文件 | 默认本地 LiteParse + Tesseract（零出域）；302.AI 需显式 `EXTERNAL_PARSER_ALLOWED=true` | 保持默认 LiteParse 或内网自托管 MinerU |
+| **对象存储** | 原始文档与裁剪图 | 默认 `local` 本地卷（零出域） | 保持 `DOCUMENT_STORAGE_DRIVER=local` 或内网私有对象存储 |
+| **账号/告警邮件** | 邮箱、一次性登录/重置链接或 metadata-only 告警 | 默认关闭（`EMAIL_PROVIDER=none`） | 保持关闭，通过管理员复制邀请链接 |
+| **OTel / Langfuse** | 严格 `metadata-only` 指标与 Trace（不含问题、回答、chunk 正文或凭据） | 默认关闭（`OTEL_SDK_DISABLED=true`） | 保持关闭，或仅启用内网 Ops Stack（不配 Langfuse Cloud） |
 
 ### 7. 应用配置变更并验证
 

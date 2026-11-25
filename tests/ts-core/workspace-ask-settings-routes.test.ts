@@ -13,7 +13,7 @@ import {
 import { createWorkspaceAskSettingsHandlers } from "../../src/server/http/workspace-ask-settings";
 
 test("only a workspace admin can change retrieval settings, applied on the next Ask including retries", async () => {
-	let ask: Record<string, unknown> = { retrieval_enhancement: "on" };
+	let ask: Record<string, unknown> = { reranking: "on" };
 	let role = "viewer";
 	let policyVersion = 1;
 	const { PATCH } = createWorkspaceAskSettingsHandlers({
@@ -80,53 +80,19 @@ test("only a workspace admin can change retrieval settings, applied on the next 
 		hybridEnabled: true,
 		rerankEnabled: true,
 	});
-	const independent = { hybrid_retrieval: "on", reranking: "off" };
+	const rerankOff = { reranking: "off" };
 	for (const denied of ["viewer", "editor"]) {
 		role = denied;
-		assert.equal((await patch(independent)).status, 403);
+		assert.equal((await patch(rerankOff)).status, 403);
 	}
 	assert.equal(policyVersion, 1);
 	role = "admin";
 	assert.equal((await patch({ reranking: true })).status, 400);
-	assert.equal((await patch(independent)).status, 200);
-	assert.equal(ask.retrieval_enhancement, "on");
-	assert.deepEqual(await retrieve(false), {
-		hybridEnabled: true,
-		rerankEnabled: false,
-	});
-	assert.deepEqual(await retrieve(true), {
-		hybridEnabled: true,
-		rerankEnabled: false,
-	});
-
-	assert.equal(
-		(await patch({ hybrid_retrieval: "off", reranking: "on" })).status,
-		200,
-	);
-	assert.deepEqual(await retrieve(true), {
-		hybridEnabled: false,
-		rerankEnabled: true,
-	});
-	assert.equal(
-		(
-			await patch({
-				hybrid_retrieval: null,
-				reranking: null,
-				retrieval_enhancement: "off",
-			})
-		).status,
-		200,
-	);
-	assert.deepEqual(await retrieve(false), {
-		hybridEnabled: false,
-		rerankEnabled: false,
-	});
-	assert.deepEqual(await retrieve(true), {
-		hybridEnabled: false,
-		rerankEnabled: false,
-	});
-
-	assert.equal((await patch({ hybrid_retrieval: "on" })).status, 200);
+	assert.equal((await patch({ retrieval_enhancement: "off" })).status, 400);
+	assert.equal((await patch({ hybrid_retrieval: "off" })).status, 400);
+	assert.equal((await patch({ evidence_requirement: "strict" })).status, 400);
+	assert.equal((await patch(rerankOff)).status, 200);
+	assert.equal(ask.reranking, "off");
 	assert.deepEqual(await retrieve(false, "对比方案A和方案B"), {
 		hybridEnabled: true,
 		rerankEnabled: false,
@@ -136,16 +102,23 @@ test("only a workspace admin can change retrieval settings, applied on the next 
 		rerankEnabled: false,
 	});
 
-	assert.equal(
-		(await patch({ retrieval_enhancement: "auto", hybrid_retrieval: null }))
-			.status,
-		200,
-	);
+	assert.equal((await patch({ reranking: "auto" })).status, 200);
 	assert.deepEqual(await retrieve(false, "请介绍休假政策。"), {
 		hybridEnabled: true,
 		rerankEnabled: false,
+		rerankSparseOnly: true,
 	});
 	assert.deepEqual(await retrieve(false, "SKU-123"), {
+		hybridEnabled: true,
+		rerankEnabled: true,
+	});
+	assert.deepEqual(await retrieve(true, "请介绍休假政策。"), {
+		hybridEnabled: true,
+		rerankEnabled: true,
+	});
+
+	assert.equal((await patch({ reranking: "on" })).status, 200);
+	assert.deepEqual(await retrieve(false, "请介绍休假政策。"), {
 		hybridEnabled: true,
 		rerankEnabled: true,
 	});
