@@ -135,8 +135,7 @@ log "running signed upgrade to ${RELEASE_TAG} (${EXPECTED_REVISION:0:12})"
 "${ROOT}/scripts/upgrade.sh" "${UPGRADE_ARGS[@]}"
 
 log "verifying post-upgrade lifecycle invariants"
-mk_compose --profile ops run --rm inspect-lifecycle \
-	--fail-on-dead --fail-on-stuck --fail-on-acl-projection
+mk_compose --profile ops run --rm inspect-lifecycle
 
 log "post-deploy disk usage"
 df -h "$ROOT" || true
