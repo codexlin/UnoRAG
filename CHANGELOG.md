@@ -5,6 +5,16 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-11-25
+
+- **Pinned pnpm 10.34.9 toolchain & build-script hardening (#338)**:
+  - Upgrade pinned `pnpm` from `9.7.1` to `10.34.9` across `package.json`, `deploy/docker/migrator/package.json`, all 4 Corepack stages in `deploy/docker/web.Dockerfile`, and `docs/DEVELOPMENT.md`.
+  - Set explicit pnpm 10 build-script hardening with `onlyBuiltDependencies: ["esbuild"]` and `ignoredBuiltDependencies: ["protobufjs"]`; `pnpm-lock.yaml` remains unchanged (0 diff).
+- **Automatic local toolchain switching & CI version alignment (#338)**:
+  - Add root `mise.toml` with `node = "22"` and `pnpm = "10.34.9"` for automatic local toolchain switching.
+  - Remove the duplicate hardcoded `version` from `.github/workflows/ci.yml` so `pnpm/action-setup@v6` reads `packageManager` as the single source of truth.
+- **Upgrade note**: Upgrading from `v0.4.3`, `v0.4.4`, or `v0.4.5` requires no database migration, configuration change, or reindex.
+
 ## [0.4.5] - 2026-11-25
 
 - **Full overlay scrollbars & zero scroll-lock layout jitter (#336)**:
