@@ -105,6 +105,12 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
   - **外部 `FinanceComplexQA`（22 份金融 PDF / 135 题，`--semantic-judge`，零重入库对比 `v0.4.8`）**：回答率升至 **`93.2%`**（110/118，**+1.7pp**）、文档召回 **`92.4%`**（**+1.7pp**）、MRR **`0.915`**（**+0.017**）、数值/术语/综合命中率全面创新高（**`58.7%` / `36.0%` / `45.2%`**，综合 **+1.8pp**）、库外拒答 **`10/10 (100%)`**、冲突误报 **`0`**（`indCN_00505`、`finreport_00175`、`finreport_00251` 均已修复）；`selective` 模式将串行 `conflict` 调用由 108 次压降至 **66 次（-38.9%）**、`conflict` Token 减少 **223k（-36.3%）**、总 Token 下降 **13.3%**，`judge` 阶段 P50 降低 **1.00s**（`5.55s → 4.54s`），基准端到端 P50 降至 **`14.39s`**（服务端 `app.ask_runs` P95 **`22.94s`**），`app.ask_run_stages` 原始 `missing_query` 泄漏数为 **`0`**。
   - **标准活库 `pnpm eval:live`（42 题）与 EN/ZH 15 场景**：`eval:live` Fact Coverage / Doc Recall@K / MRR / Citation Precision 均为 **100%**、拒答 **6/6**、`cross_page_table` **6/6**、`low_contrast_scan` **5/5**、`e2ddb00fe88cf0e2` 通过（正例 35/36，`9640cadfd327022e` 事实与引用 100% 但仍偶发 `qwen-plus` 冲突误报）；15 场景专项 15/15 HTTP 200 且短文档摘要 `S06` 过度拒答已修复。
 
+### `v0.4.10` COS 对象字节级容灾与离线评测依赖清零（`#346`, `#202`）
+
+- **COS 对象字节级备份与 SHA-256 校验恢复（#346）**：新增 `scripts/cos-object-backup.mjs` 并打入 `ops` 镜像及 Compose `profiles: ["ops"]`（`cos-object-backup` 服务）；`backup.sh --include-cos-objects`（或 `UNORAG_BACKUP_COS_OBJECTS=true`）按 PostgreSQL `app.document_versions` 与 `app.document_figure_assets` 引用拉取全部 COS 原文与图表裁剪字节、生成 `documents.cos.tgz` 与每对象 `COS_OBJECTS.sha256` 并纳入 `MANIFEST.txt` / `CHECKSUMS.sha256`（默认保持升级维护窗短小）；`restore.sh` 自动先做全量 SHA-256 预检（篡改或缺失 archive 直接 fail-closed 不写入），通过后以 `ACL=private` 写回 COS 并校验远端 `Content-Length`。
+- **离线评测彻底移除 `diskcache` 并关闭 `#202`（#346）**：通过 `scripts/evaluation/pyproject.toml` 的 `[tool.uv].exclude-dependencies = ["diskcache"]` 将传递依赖 `diskcache v5.6.3`（CVE-2025-69872）彻底移出 `scripts/evaluation/uv.lock`，并在 `ragas_offline.py` 导入前注入 fail-closed 桩模块；`ci/offline-evaluation` 16/16 单测 26 秒全绿，Issue `#202` 已正式关闭。
+- **验证结果（未替代 `linux/amd64` 独立候选环境的签名镜像全量发布验收）**：PR #346 CI 6/6 全绿（含 `ci/web`、`ci/docker-build`、`ci/offline-evaluation`、`ci/secrets`），新增 `tests/cos-object-backup.test.mjs`（5/5 PASS）与 `tests/deploy-automation.test.mjs`（6/6 PASS）；同步在真实 DashScope 实测 `JUDGE_MODEL=qwen-flash` 冲突控制套件仅 21/26 FAIL（漏判 `explicit-precedence` / `explicit-clause`），确认保持 `qwen-plus` 默认 Judge 守住 26/26 冲突红线。
+
 下表描述当前源码能力；线上可用范围仍以具体 Release 和部署清单为准。
 
 ## 已具备的闭环
