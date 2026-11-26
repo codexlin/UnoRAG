@@ -494,6 +494,25 @@ services:
       - internal
     restart: "no"
 
+  cos-object-backup:
+    profiles: ["ops"]
+    image: ${UNORAG_WEB_OPS_IMAGE:-unorag-web-ops:local}
+    working_dir: /repo
+    environment:
+      DATABASE_URL: ${MIGRATOR_DATABASE_URL:-postgresql://${POSTGRES_USER:-unorag}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/${POSTGRES_DB:-unorag}}
+      COS_BUCKET: ${COS_BUCKET:-}
+      COS_REGION: ${COS_REGION:-}
+      COS_SECRET_ID: ${COS_SECRET_ID:-}
+      COS_SECRET_KEY: ${COS_SECRET_KEY:-}
+      COS_SECURITY_TOKEN: ${COS_SECURITY_TOKEN:-}
+    entrypoint: ["node", "scripts/cos-object-backup.mjs"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: "no"
+
   qdrant:
     image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.19.0}
     restart: unless-stopped

@@ -456,10 +456,12 @@ generation 已删除、旧 generation 不可召回，未参与删除的 active �
 ```bash
 cd deploy/compose
 ./scripts/backup.sh ./backups/<backup-id>
+# COS 模式如需同时做对象字节级离线容灾归档（按 PG 引用拉取原文与图表裁剪并生成 SHA-256 清单）：
+./scripts/backup.sh --include-cos-objects ./backups/<backup-id>
 CONFIRM=YES ./scripts/restore.sh ./backups/<backup-id>
 ```
 
-备份覆盖 PostgreSQL、DBOS、Qdrant、manifest 校验值及 `local` 文档卷（COS 模式只记录桶元数据，原文须依赖桶版本控制与独立复制；Redis 可重建）。恢复顺序固定为：**停止应用 → 恢复 PG → 恢复/核验文档对象 → 恢复 Qdrant → 启动应用并验证**（检查登录、active version、既有引用、新上传、Ask、删除、巡检与跨 Workspace 隔离）。
+备份覆盖 PostgreSQL、DBOS、Qdrant、manifest 校验值及 `local` 文档卷（COS 模式默认记录桶元数据以保持升级维护窗短小，传入 `--include-cos-objects` 或 `UNORAG_BACKUP_COS_OBJECTS=true` 时通过 `ops` profile 的 `cos-object-backup` 拉取全部被 PostgreSQL 引用的原文与图表裁剪对象并生成 `documents.cos.tgz` + 每对象 `COS_OBJECTS.sha256` 校验清单；`restore.sh` 检测到 `documents.cos.tgz` 会先逐对象校验 SHA-256 再以 `ACL=private` 写回 COS 桶并核对字节长度；Redis 可重建）。恢复顺序固定为：**停止应用 → 恢复 PG → 恢复/核验文档对象 → 恢复 Qdrant → 启动应用并验证**（检查登录、active version、既有引用、新上传、Ask、删除、巡检与跨 Workspace 隔离）。
 
 以下任一情况即判定恢复失败：active pointer 与可见 generation 不一致、引用指向不存在版本、对象缺失、跨租户数据出现或必须手工改库。轮换 COS CAM 密钥时先让 Web 与 Worker 同步切换新凭据并验证上传/下载/删除后再撤销旧密钥。
 

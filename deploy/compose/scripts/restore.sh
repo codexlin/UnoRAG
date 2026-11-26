@@ -18,9 +18,11 @@ if [[ "${CONFIRM:-}" != "YES" ]]; then
 	exit 1
 fi
 BACKUP_STORAGE_DRIVER="local"
+BACKUP_COS_OBJECTS=""
 if [[ -f "$BACKUP_DIR/MANIFEST.txt" ]]; then
 	BACKUP_STORAGE_DRIVER="$(sed -n 's/^document_storage_driver=//p' "$BACKUP_DIR/MANIFEST.txt" | head -n 1)"
 	BACKUP_STORAGE_DRIVER="${BACKUP_STORAGE_DRIVER:-local}"
+	BACKUP_COS_OBJECTS="$(sed -n 's/^documents_cos_objects=//p' "$BACKUP_DIR/MANIFEST.txt" | head -n 1)"
 fi
 for required in postgres.sql dbos-system.dump qdrant.tgz; do
 	if [[ ! -f "$BACKUP_DIR/$required" ]]; then
@@ -34,6 +36,10 @@ if [[ "$BACKUP_STORAGE_DRIVER" == "local" && ! -f "$BACKUP_DIR/documents.tgz" ]]
 fi
 if [[ "$BACKUP_STORAGE_DRIVER" == "cos" && ! -f "$BACKUP_DIR/documents.cos.txt" ]]; then
 	echo "refusing restore: missing $BACKUP_DIR/documents.cos.txt" >&2
+	exit 1
+fi
+if [[ "$BACKUP_STORAGE_DRIVER" == "cos" && -n "$BACKUP_COS_OBJECTS" && ! -f "$BACKUP_DIR/$BACKUP_COS_OBJECTS" ]]; then
+	echo "refusing restore: manifest declares $BACKUP_COS_OBJECTS but file is missing" >&2
 	exit 1
 fi
 RUNTIME_STORAGE_DRIVER="$(mk_config_get DOCUMENT_STORAGE_DRIVER || echo local)"
@@ -101,8 +107,20 @@ if [[ "$BACKUP_STORAGE_DRIVER" == "local" ]]; then
 		-v "${PROJECT}_document_storage:/data" \
 		-v "$BACKUP_DIR:/backup:ro" \
 		alpine:3.21 sh -c 'rm -rf /data/* /data/.[!.]* 2>/dev/null; tar -C /data -xzf /backup/documents.tgz'
+elif [[ -f "$BACKUP_DIR/${BACKUP_COS_OBJECTS:-documents.cos.tgz}" && "${UNORAG_RESTORE_SKIP_COS_OBJECTS:-false}" != "true" ]]; then
+	COS_ARCHIVE="${BACKUP_COS_OBJECTS:-documents.cos.tgz}"
+	echo "==> restore verified COS object bytes from ${COS_ARCHIVE}"
+	COS_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/unorag-cos-restore.XXXXXX")"
+	trap 'rm -rf -- "$COS_STAGE"' EXIT
+	tar -C "$COS_STAGE" -xzf "$BACKUP_DIR/$COS_ARCHIVE"
+	chmod -R a+rX "$COS_STAGE"
+	mk_compose --profile ops run --rm --no-deps \
+		-v "$COS_STAGE:/backup-cos:ro" \
+		cos-object-backup restore --in /backup-cos
+	rm -rf -- "$COS_STAGE"
+	trap - EXIT
 else
-	echo "==> COS objects are external and are not overwritten by this restore"
+	echo "==> COS objects are external and no object archive was restored"
 	echo "    verify bucket versioning/replication recovery before starting writers"
 fi
 

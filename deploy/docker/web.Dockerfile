@@ -73,7 +73,7 @@ COPY package.json pnpm-lock.yaml ./
 COPY src ./src
 COPY public ./public
 COPY drizzle ./drizzle
-COPY scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/inspect-lifecycle.mjs ./scripts/
+COPY scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/cos-object-backup.mjs scripts/inspect-lifecycle.mjs ./scripts/
 COPY drizzle.config.ts next.config.ts postcss.config.mjs tsconfig.json ./
 COPY contracts ./contracts
 ENV NEXT_TELEMETRY_DISABLED=1 \
@@ -122,7 +122,7 @@ CMD ["./node_modules/.bin/drizzle-kit", "migrate"]
 
 # One-shot bootstrap and operator tooling (no long-running queue consumer).
 FROM runtime-deps AS ops
-COPY --chown=unorag:unorag scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/check-dbos-drain.mjs scripts/inspect-lifecycle.mjs ./scripts/
+COPY --chown=unorag:unorag scripts/backfill-acl-projections.mjs scripts/backfill-conversations.mjs scripts/bootstrap-control-plane.mjs scripts/check-dbos-drain.mjs scripts/cos-object-backup.mjs scripts/inspect-lifecycle.mjs ./scripts/
 WORKDIR /repo
 ENV NODE_ENV=production
 USER unorag

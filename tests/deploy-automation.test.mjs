@@ -35,6 +35,7 @@ async function createComposeSandbox(t, configOverrides = {}) {
 
 	for (const script of [
 		"backup.sh",
+		"restore.sh",
 		"compose-env.sh",
 		"release-env.sh",
 		"prune-release-images.sh",
@@ -540,4 +541,111 @@ test("deploy.yml enforces pre-approval verification, GitHub Environment approval
 			);
 		}
 	}
+});
+
+test("backup.sh --include-cos-objects archives COS objects with checksums and restore.sh restores or fails closed when missing", async (t) => {
+	const { sandbox, scriptsDir, binDir } = await createComposeSandbox(t, {
+		storageDriver: "cos",
+	});
+	const backupOut = join(sandbox, "backups", "unorag-cos-dr");
+	const callLog = join(sandbox, "cos-docker-calls.jsonl");
+	const fakeDocker = `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.CALL_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "compose") {
+	if (args.includes("exec") && args.includes("pg_dump")) {
+		process.stdout.write("-- fixture dump\\n");
+		process.exit(0);
+	}
+	if (args.includes("ps")) {
+		process.stdout.write("container-1\\n");
+		process.exit(0);
+	}
+	if (args.includes("cos-object-backup") && args.includes("backup")) {
+		const vIndex = args.findIndex((a) => a.endsWith(":/backup-cos"));
+		if (vIndex < 0) process.exit(2);
+		const hostDir = args[vIndex].slice(0, -":/backup-cos".length);
+		fs.mkdirSync(path.join(hostDir, "objects/org/o1"), { recursive: true });
+		fs.writeFileSync(path.join(hostDir, "objects/org/o1/doc.pdf"), "pdf-bytes");
+		fs.writeFileSync(path.join(hostDir, "COS_OBJECTS.json"), '{"version":1,"objects":[]}\\n');
+		fs.writeFileSync(path.join(hostDir, "COS_OBJECTS.sha256"), "");
+		process.exit(0);
+	}
+	if (args.includes("cos-object-backup") && args.includes("restore")) {
+		const vIndex = args.findIndex((a) => a.endsWith(":/backup-cos:ro"));
+		if (vIndex < 0) process.exit(3);
+		const hostDir = args[vIndex].slice(0, -":/backup-cos:ro".length);
+		if (!fs.existsSync(path.join(hostDir, "objects/org/o1/doc.pdf"))) {
+			process.stderr.write("missing extracted COS object\\n");
+			process.exit(4);
+		}
+		process.exit(0);
+	}
+	process.exit(0);
+}
+if (args[0] === "run") {
+	const vIndex = args.findIndex((a) => a.endsWith(":/backup"));
+	if (vIndex >= 0) {
+		const hostDir = args[vIndex].slice(0, -":/backup".length);
+		fs.writeFileSync(path.join(hostDir, "qdrant.tgz"), "fixture-qdrant");
+	}
+	process.exit(0);
+}
+process.exit(0);
+`;
+	await writeFile(join(binDir, "docker"), fakeDocker, { mode: 0o755 });
+
+	const env = {
+		...process.env,
+		PATH: `${binDir}:${process.env.PATH}`,
+		CALL_LOG: callLog,
+	};
+	const backupRes = spawnSync(
+		"bash",
+		[join(scriptsDir, "backup.sh"), "--include-cos-objects", backupOut],
+		{ encoding: "utf8", env },
+	);
+	assert.equal(backupRes.status, 0, `${backupRes.stdout}\n${backupRes.stderr}`);
+
+	const manifest = await readFile(join(backupOut, "MANIFEST.txt"), "utf8");
+	const checksums = await readFile(join(backupOut, "CHECKSUMS.sha256"), "utf8");
+	const cosMeta = await readFile(join(backupOut, "documents.cos.txt"), "utf8");
+	assert.match(manifest, /^documents_cos_objects=documents\.cos\.tgz$/m);
+	assert.match(checksums, /documents\.cos\.tgz$/m);
+	assert.match(cosMeta, /^objects_backup=included$/m);
+
+	const restoreRes = spawnSync(
+		"bash",
+		[join(scriptsDir, "restore.sh"), backupOut],
+		{ encoding: "utf8", env: { ...env, CONFIRM: "YES" } },
+	);
+	assert.equal(
+		restoreRes.status,
+		0,
+		`${restoreRes.stdout}\n${restoreRes.stderr}`,
+	);
+	const calls = (await readFile(callLog, "utf8"))
+		.trim()
+		.split("\n")
+		.map((line) => JSON.parse(line));
+	assert.ok(
+		calls.some(
+			(argv) => argv.includes("cos-object-backup") && argv.includes("restore"),
+		),
+	);
+
+	// Removing declared archive must fail closed before touching Postgres/Qdrant.
+	await rm(join(backupOut, "documents.cos.tgz"));
+	const missingArchive = spawnSync(
+		"bash",
+		[join(scriptsDir, "restore.sh"), backupOut],
+		{ encoding: "utf8", env: { ...env, CONFIRM: "YES" } },
+	);
+	assert.notEqual(missingArchive.status, 0);
+	assert.match(
+		missingArchive.stderr,
+		/manifest declares documents\.cos\.tgz but file is missing/,
+	);
 });
