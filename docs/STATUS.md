@@ -85,6 +85,16 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 - **工作区「问答策略」收口与环境变量清理（#340）**：将 6 个历史问答策略字段收敛为 3 个清晰字段（`answer_profile`、`reranking: auto | on | off`、`session_memory_enabled`），工作区层默认常开 Qdrant 混合检索（仅保留部署级 `TS_RETRIEVAL_HYBRID_ENABLED=false`，已补充至 ADR-0008）；读时平滑投影历史行、写时严格拒绝旧字段；彻底移除冗余 `TS_RETRIEVAL_RERANK_ENABLED`，仅保留 `TS_RETRIEVAL_RERANK_ALLOWED`。
 - **开发机验证结果（未替代签名镜像正式发布验收与大基准重跑）**：CI 6/6 全绿（含 `ci/web` Postgres/Helm/Playwright、`ci/secrets`、`ci/docker-build`、`ci/offline-evaluation`），本地快测 `ts-core` **1,363/1,363 PASS**；实连 Mac mini（PG 17 + Redis 7 + Qdrant v1.19.0）+ 真实 DashScope 完成 26/26 项功能端到端 QA（`0038` 迁移、3 字段策略、Chat/Rerank 实时探测、SSRF 拦截、审计日志、文档上传索引与 7 轮流式问答/拒答/`auto` vs `off` 实测全部通过；42 题 `pnpm eval:live` 与 135 题 FinanceComplexQA 基准尚未在本提交重跑）。
 
+### `v0.4.8` 极薄前置路由、证据驱动表格升级与 Judge 缺口定向补查（`#342`）
+
+- **极薄前置路由与中英双语意图覆盖（#342）**：引入跨语料 `thinPreRetrievalRoute`（`src/core/ask-graph/nodes/thin-router.ts`），毫秒级处理中英双语 `compare`/`summary`/显式表格/追问与英文 `Compare A and B on ...` 子问扇出，放行短领域缩略词（`SLA`/`ROI?`/`GDPR` 等）直通检索而不误判完整英文问句；收紧 `SELF_CONTAINED_RETRIEVAL_PATTERN`，并预留默认关闭的 Fail-Open 灰区路由端口（`ASK_GRAY_ZONE_ROUTER_ENABLED=true`，1.5s 超时与 `>=0.6` 置信度门控）。
+- **证据驱动表格升级与极值实体补全（#342）**：对隐式最值/均值/合计/筛选/计数/序数问句不再靠检索前猜意图，而是在统一召回命中真实 `table_id` 后，严格限定 `(doc_id, document_version_id, table_id)` 做本地 `<1ms` 干跑验证通过才升级为确定性表格执行（`evidence_driven_table_operation`），否则无损回退正文链路；单极值 `min`/`max` 结果同步附带 `describeRow(...)` 行实体描述（含并列极值行）。
+- **Judge `missing_query` 定向补查、隐私脱敏与运行时加固（#342）**：注册 `judge@1.17.0` 并在首轮（`attempts<=1`）缺口时输出受限短检索词 `missing_query` 发起定向补查（`retry_strategy: "judge_missing_query"`），合并首轮已授权证据与文档身份并拦截同 `doc_id` 跨 generation 混排；严格维持 `metadata-only`，不将原始 `missing_query` 写入诊断表或公开调试字段，仅持久化脱敏枚举码；同时收口最终轮 Judge 矛盾输出重试与 `retry` 规范化、Qdrant 幂等读（`query`/`scroll`）对 `UND_ERR_SOCKET`/`ECONNRESET`/`EPIPE` 的单次快速重试，以及多轮追问中英空格容错原文主语回溯。
+- **开发机 192 题真模型全量实测结果（连 Mac mini PG 17 + Redis 7 + Qdrant v1.19.0 + 真实 DashScope / 302.AI MinerU，未替代签名镜像正式发布验收）**：
+  - **自动化验证**：PR #342 CI 6/6 全绿（含真实 PG/Qdrant/Redis 集成测试 193/193 含单次断连自动恢复与连续断连诊断验证）、本地 `pnpm verify` 与 `pnpm test:ts-core` **1,404/1,404 PASS**。
+  - **外部 `FinanceComplexQA`（22 份金融 PDF / 135 题，`--semantic-judge`，对比 `v0.4.1` 基线）**：回答率 **`91.5%`**（108/118，**+3.4pp**）、文档召回 **`90.7%`**（**+3.4pp**）、MRR **`0.898`**（**+0.029**）、语义准确率 **`68.2%`**（**+2.9pp**，已作答正确率 **`74.5%`**；`Comparison` 达 **`85.7%`**）、库外不可答拒答 **`10/10 (100%)`**（总体拒答 `15/17`，2 题系跨文档真实召回/诚实部分作答）、P50/P95 `14.91s / 23.32s`；期间在真实金融语料上命中 2 次证据驱动表格升级（`1.73s` / `3.23s`）与 4 次 `judge_missing_query` 定向补查（2 次成功挽回作答），并在测试后针对抓出的 1 次终轮 Judge 矛盾与 1 次局域网 `UND_ERR_SOCKET` 偶发 503 完成加固合入。
+  - **标准活库 `pnpm eval:live`（42 题）**：Fact Coverage **`1.000`**、Doc Recall@K / MRR **`1.000 / 1.000`**、Citation Precision **`100.0%`**、拒答 **`6/6 (100%)`**、跨页表 **`6/6`**、低对比度扫描 **`5/5`**、确定性表格 P50 **`998ms`**（正例 35/36，唯一未过项 `9640cadfd327022e` 事实与引用 100%，系 `qwen-plus` 冲突检测随机误报）；**EN/ZH 路由与定点重试 HTTP 专项（15 场景）** 15/15 HTTP 200，Mac mini `app.ask_run_stages` 全量 192 次运行审计确认原始 `missing_query` 泄漏数为 **`0`**。
+
 下表描述当前源码能力；线上可用范围仍以具体 Release 和部署清单为准。
 
 ## 已具备的闭环
@@ -94,7 +104,7 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 | 身份与权限 | 本地登录、首次改密、邀请注册、邮箱链接登录/重置、可撤销 Session、Workspace/角色、文档 ACL、Service Key、审计 |
 | 文档治理 | 上传、替换、版本、重索引、删除；失败保留旧 active generation；DBOS 重试、取消和对账 |
 | 文档理解 | TXT/Markdown/DOCX/XLSX/PDF，LiteParse/MinerU，Markdown 管道表、DocumentIR/TableIR，Token 感知 `v2` 切分与 `>40%` 表格自动 `table_heavy`、多粒度索引及默认关闭的条件式检索上下文增强 |
-| 检索问答 | 作用域强制过滤、默认常开 Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF、统一 `auto`/`on`/`off` 精排（含 `sparse-only` 自动升级）、多轮改写、证据裁决、按主体均衡配额的对比上下文、拒答、引用、确定性表格执行与 SSE；Admin/Editor 临时检索轨迹检查器；pg_trgm 授权文档目录候选检索 |
+| 检索问答 | 作用域强制过滤、极薄前置双语路由（含可选灰区 Fail-Open 端口）、默认常开 Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF（含幂等读单次 socket 断连自愈）、统一 `auto`/`on`/`off` 精排（含 `sparse-only` 自动升级）、证据驱动确定性表格升级与极值实体保留、Judge 缺口定向补查（`missing_query` + 首轮授权证据留存）、冲突核验、按主体均衡配额的对比上下文、拒答、引用与 SSE；Admin/Editor 临时检索轨迹检查器；pg_trgm 授权文档目录候选检索 |
 | 模型治理 | Owner 级在线切换 Chat / Judge / Rerank / VLM（AES-256-GCM 只写加密、实时连通性/`json_schema`/`/rerank`/视觉探测、SSRF 与密钥-端点绑定防护）、Embedding 部署级只读锁定，以及 `MODEL_SETTINGS_LOCKED=true` 纯环境变量锁定模式 |
 | 会话 | 带来源授权的短期记忆、实体追问、有限期歧义澄清、归档和继续对话；模型上下文压缩长回复，归档保留原文和来源 |
 | 运维预检 | 健康接口和运行中心校验现有 Qdrant 集合的向量维度、距离、`lexical_v1` IDF 配置及载荷索引，按异常类型给出恢复提示 |

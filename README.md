@@ -71,7 +71,8 @@ enforces hard limits; semantic splitting is reserved for long narrative regions 
 structure. Hybrid retrieval uses Qdrant server-side named `dense` + `lexical_v1 (modifier: "idf")`
 sparse vectors with RRF fusion, unified `auto` / `on` / `off` cross-encoder reranking (including
 automatic `sparse-only` escalation and `/rerank` compatibility for vLLM, SiliconFlow, Xinference,
-Jina, Cohere, and Voyage), and deterministic table execution.
+Jina, Cohere, and Voyage), thin bilingual pre-retrieval routing, evidence-driven deterministic table
+execution, and gap-driven targeted Judge retries with authorized first-round evidence retention.
 LangGraph.js orchestrates Ask, while Vercel AI SDK streams model output.
 
 ## Private Deployment
