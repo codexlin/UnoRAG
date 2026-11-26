@@ -1445,6 +1445,29 @@ test("selectiveConflictCheck skips low-risk single-doc thematic queries while en
 		]),
 		false,
 	);
+	assert.equal(
+		shouldSkipLowRiskConflict("OpenAI ChatGPT Pro 服务有哪些核心特点？", [
+			{ doc_id: "d1" },
+		]),
+		true,
+	);
+	assert.equal(
+		shouldSkipLowRiskConflict("What are the key benefits of the platform?", [
+			{ doc_id: "d1" },
+		]),
+		true,
+	);
+	assert.equal(
+		shouldSkipLowRiskConflict(
+			"What are the key benefits and monthly fee of the platform?",
+			[{ doc_id: "d1" }],
+		),
+		false,
+	);
+	assert.equal(
+		shouldSkipLowRiskConflict("2024年报市净率PB是多少？", [{ doc_id: "d1" }]),
+		false,
+	);
 
 	const calls: string[] = [];
 	const adapter = new StructuredOutputAdapter(

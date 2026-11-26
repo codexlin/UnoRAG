@@ -322,7 +322,8 @@ jobs:
             echo "  BatchMode yes"
             echo "  StrictHostKeyChecking yes"
             echo "  UserKnownHostsFile ${ssh_dir}/known_hosts"
-            echo "  ConnectTimeout 15"
+            echo "  ConnectTimeout 30"
+            echo "  ConnectionAttempts 3"
             echo "  ServerAliveInterval 30"
             echo "  ServerAliveCountMax 10"
             echo "  IdentitiesOnly yes"
@@ -364,13 +365,34 @@ jobs:
           backup_root="${DEPLOY_BACKUP_ROOT:-${DEPLOY_DIR}/deploy/compose/backups}"
           use_sudo="${DEPLOY_USE_SUDO:-true}"
 
-          remote_tmp="$(ssh -F "${ssh_cfg}" deploy-target 'mktemp -d /tmp/unorag-deploy.XXXXXX')"
+          remote_tmp=""
+          for ssh_attempt in 1 2 3; do
+            if remote_tmp="$(ssh -F "${ssh_cfg}" deploy-target 'mktemp -d /tmp/unorag-deploy.XXXXXX')" && [[ -n "${remote_tmp}" ]]; then
+              break
+            fi
+            [[ "${ssh_attempt}" -lt 3 ]] || {
+              echo "error: failed to establish SSH session to deploy-target after ${ssh_attempt} attempts" >&2
+              exit 255
+            }
+            echo "SSH handshake failed (attempt ${ssh_attempt}/3); retrying in 5s..." >&2
+            sleep 5
+          done
           cleanup_remote() {
             ssh -F "${ssh_cfg}" deploy-target "rm -rf -- $(printf '%q' "${remote_tmp}")" >/dev/null 2>&1 || true
           }
           trap cleanup_remote EXIT
 
-          scp -F "${ssh_cfg}" "${local_manifest}" "deploy-target:${remote_tmp}/release.env"
+          for scp_attempt in 1 2 3; do
+            if scp -F "${ssh_cfg}" "${local_manifest}" "deploy-target:${remote_tmp}/release.env"; then
+              break
+            fi
+            [[ "${scp_attempt}" -lt 3 ]] || {
+              echo "error: failed to upload release manifest after ${scp_attempt} attempts" >&2
+              exit 255
+            }
+            echo "SCP upload failed (attempt ${scp_attempt}/3); retrying in 5s..." >&2
+            sleep 5
+          done
 
           ssh -F "${ssh_cfg}" deploy-target \
             "bash -s" -- \
