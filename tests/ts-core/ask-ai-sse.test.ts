@@ -1478,3 +1478,62 @@ test("selectiveConflictCheck skips low-risk single-doc thematic queries while en
 	);
 	assert.deepEqual(calls, ["judge"]);
 });
+
+test("judgeWithMetadata retries contradictory sufficient=false generate and normalizes final-attempt retry to refuse", async () => {
+	let judgeCalls = 0;
+	const retryAdapter = new StructuredOutputAdapter(
+		injectedModel,
+		async () => {
+			judgeCalls += 1;
+			if (judgeCalls === 1) {
+				return {
+					sufficient: false,
+					action: "generate",
+					reason: "contradictory first output",
+					evidence_ids: ["e1"],
+				};
+			}
+			return {
+				sufficient: true,
+				action: "generate",
+				reason: "consistent second output",
+				evidence_ids: ["e1"],
+			};
+		},
+		{ maxAttempts: 2 },
+	);
+	const recovered = await retryAdapter.judgeWithMetadata({
+		question: "合同总价是多少？",
+		citations: [{ id: "e1", text: "合同总价为 100 万元。" }],
+		attempts: 1,
+	});
+	assert.equal(judgeCalls, 2);
+	assert.equal(recovered.output.action, "generate");
+	assert.equal(recovered.output.sufficient, true);
+
+	let seenPrompt = "";
+	const finalAttemptAdapter = new StructuredOutputAdapter(
+		injectedModel,
+		async (request) => {
+			seenPrompt = String(request.messages[0]?.content ?? "");
+			return {
+				sufficient: false,
+				action: "retry",
+				can_retry: true,
+				reason: "missing detail after second retrieval",
+				evidence_ids: [],
+				missing_query: "extra detail",
+			};
+		},
+		{ maxAttempts: 2 },
+	);
+	const normalized = await finalAttemptAdapter.judgeWithMetadata({
+		question: "合同总价是多少？",
+		citations: [{ id: "e1", text: "无关内容" }],
+		attempts: 2,
+	});
+	assert.match(seenPrompt, /已达检索上限/);
+	assert.equal(normalized.output.action, "refuse");
+	assert.equal(normalized.output.can_retry, false);
+	assert.equal(normalized.output.missing_query, undefined);
+});

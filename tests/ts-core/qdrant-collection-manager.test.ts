@@ -788,3 +788,85 @@ test("both server prefetch branches and fusion carry the complete mandatory auth
 	);
 	assert.equal(requests.length, 2);
 });
+
+test("retrieval store retries idempotent query and scroll once on transient socket drop", async () => {
+	const scope = {
+		tenantId: "tenant",
+		workspaceId: "workspace",
+		libraryId: "library",
+		principalIds: ["principal"],
+		groupIds: [],
+		activeGenerationIds: ["generation"],
+	};
+	const socketDrop = Object.assign(new TypeError("fetch failed"), {
+		cause: Object.assign(new Error("other side closed"), {
+			code: "UND_ERR_SOCKET",
+		}),
+	});
+	let queryCalls = 0;
+	let scrollCalls = 0;
+	const recoveringClient = {
+		async query() {
+			queryCalls += 1;
+			if (queryCalls === 1) throw socketDrop;
+			return { points: [] };
+		},
+		async scroll() {
+			scrollCalls += 1;
+			if (scrollCalls === 1) throw socketDrop;
+			return { points: [], next_page_offset: null };
+		},
+	} as unknown as QdrantClient;
+	const recoveringStore = new QdrantRetrievalStore(recoveringClient, "test");
+	assert.deepEqual(
+		await recoveringStore.search({ vector: [1, 0], scope, limit: 3 }),
+		[],
+	);
+	assert.equal(queryCalls, 2);
+	assert.deepEqual(await recoveringStore.listCorpus({ scope, limit: 3 }), []);
+	assert.equal(scrollCalls, 2);
+
+	let persistentDrops = 0;
+	const failingStore = new QdrantRetrievalStore(
+		{
+			async query() {
+				persistentDrops += 1;
+				throw socketDrop;
+			},
+		} as unknown as QdrantClient,
+		"test",
+	);
+	await assert.rejects(
+		failingStore.search({ vector: [1, 0], scope, limit: 3 }),
+		(error) => {
+			assert.ok(error instanceof QdrantOperationError);
+			assert.equal(error.diagnostics.transportCode, "UND_ERR_SOCKET");
+			assert.equal(error.diagnostics.attempts, 2);
+			return true;
+		},
+	);
+	assert.equal(persistentDrops, 2);
+
+	let refusedCalls = 0;
+	const refusedStore = new QdrantRetrievalStore(
+		{
+			async query() {
+				refusedCalls += 1;
+				throw Object.assign(new Error("connect ECONNREFUSED"), {
+					code: "ECONNREFUSED",
+				});
+			},
+		} as unknown as QdrantClient,
+		"test",
+	);
+	await assert.rejects(
+		refusedStore.search({ vector: [1, 0], scope, limit: 3 }),
+		(error) => {
+			assert.ok(error instanceof QdrantOperationError);
+			assert.equal(error.diagnostics.transportCode, "ECONNREFUSED");
+			assert.equal(error.diagnostics.attempts, 1);
+			return true;
+		},
+	);
+	assert.equal(refusedCalls, 1);
+});

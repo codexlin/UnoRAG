@@ -60,6 +60,33 @@ function recentExchanges(history: AskHistoryMessage[]): Message[] {
 	return selected;
 }
 
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function findVerbatimSubject(
+	subject: string,
+	messages: readonly Message[],
+): string | null {
+	if (!subject || /[\r\n]/.test(subject)) return null;
+	if (messages.some((message) => message.content.includes(subject))) {
+		return subject;
+	}
+	const compact = subject.replace(/[ \t\u00a0]+/gu, "");
+	if (compact.length < 2 || compact.length > 120) return null;
+	const pattern = new RegExp(
+		[...compact].map(escapeRegExp).join("[ \\t\\u00a0]*"),
+		"u",
+	);
+	for (let i = messages.length - 1; i >= 0; i -= 1) {
+		const match = pattern.exec(messages[i].content);
+		if (match?.[0] && !/[\r\n]/.test(match[0])) {
+			return match[0];
+		}
+	}
+	return null;
+}
+
 function clarify(
 	subjects: string[] = [],
 	pendingClarification?: PendingClarification,
@@ -113,9 +140,13 @@ export async function rewriteFollowup(
 		return hasDanglingReference(question)
 			? clarify()
 			: { query: question, mode: "identity_self_contained" };
-	const subjects = [...new Set(output.subjects)].filter(
-		(s) => !/[\r\n]/.test(s) && messages.some((m) => m.content.includes(s)),
-	);
+	const subjects = [
+		...new Set(
+			output.subjects
+				.map((s) => findVerbatimSubject(s, messages))
+				.filter((s): s is string => s !== null),
+		),
+	];
 	const now = Date.now();
 	if (
 		output.resolution !== "resolved" ||
