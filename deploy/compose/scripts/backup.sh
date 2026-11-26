@@ -11,20 +11,25 @@ source "${ROOT}/scripts/compose-env.sh"
 usage() {
 	cat <<'EOF'
 Usage:
-  backup.sh [--retain N] [OUT_DIR]
+  backup.sh [--retain N] [--include-cos-objects] [OUT_DIR]
 
 Options:
-  --retain N   After verifying the new backup checksums and restoring services,
-               keep the newest N sibling backups (matching unorag-* or pre-*
-               with MANIFEST.txt and CHECKSUMS.sha256) in the same parent
-               directory and remove older ones. Defaults to
-               UNORAG_BACKUP_RETAIN_COUNT when set; unset keeps all backups.
-  -h, --help   Show this help message.
+  --retain N             After verifying the new backup checksums and restoring services,
+                         keep the newest N sibling backups (matching unorag-* or pre-*
+                         with MANIFEST.txt and CHECKSUMS.sha256) in the same parent
+                         directory and remove older ones. Defaults to
+                         UNORAG_BACKUP_RETAIN_COUNT when set; unset keeps all backups.
+  --include-cos-objects  When DOCUMENT_STORAGE_DRIVER=cos, also download all PG-referenced
+                         COS object bytes (document versions + figure crops) into a
+                         SHA-256 verified documents.cos.tgz archive for offline DR.
+                         Can also be enabled with UNORAG_BACKUP_COS_OBJECTS=true.
+  -h, --help             Show this help message.
 EOF
 }
 
 OUT=""
 RETAIN_COUNT="${UNORAG_BACKUP_RETAIN_COUNT:-}"
+INCLUDE_COS_OBJECTS="${UNORAG_BACKUP_COS_OBJECTS:-false}"
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -32,6 +37,10 @@ while [[ $# -gt 0 ]]; do
 			RETAIN_COUNT="${2:-}"
 			[[ -n "$RETAIN_COUNT" ]] || { echo "error: --retain requires a positive integer" >&2; exit 1; }
 			shift 2
+			;;
+		--include-cos-objects)
+			INCLUDE_COS_OBJECTS="true"
+			shift
 			;;
 		-h|--help)
 			usage
@@ -160,7 +169,11 @@ if [[ -n "$(mk_compose --profile dbos ps --status running -q dbos-worker 2>/dev/
 	DBOS_WAS_RUNNING=1
 fi
 
+COS_STAGE=""
 restart_services() {
+	if [[ -n "$COS_STAGE" && -d "$COS_STAGE" ]]; then
+		rm -rf -- "$COS_STAGE" || true
+	fi
 	if [[ "$QDRANT_WAS_RUNNING" -eq 1 ]]; then
 		mk_compose up -d --wait qdrant >/dev/null
 	fi
@@ -193,6 +206,7 @@ mk_compose exec -T postgres \
 	--format=custom --no-owner --no-acl \
 	> "$OUT/dbos-system.dump"
 
+DOCUMENTS_COS_OBJECTS=""
 if [[ "$STORAGE_DRIVER" == "local" ]]; then
 	DOCUMENTS_ARTIFACT="documents.tgz"
 	echo "==> document storage → $OUT/documents.tgz"
@@ -200,14 +214,38 @@ if [[ "$STORAGE_DRIVER" == "local" ]]; then
 		tar -C "$STORAGE_ROOT" -czf - . > "$OUT/documents.tgz"
 elif [[ "$STORAGE_DRIVER" == "cos" ]]; then
 	DOCUMENTS_ARTIFACT="documents.cos.txt"
-	echo "==> COS objects remain in the private bucket; recording remote storage boundary"
-	cat > "$OUT/documents.cos.txt" <<EOF
+	if [[ "$INCLUDE_COS_OBJECTS" == "true" ]]; then
+		DOCUMENTS_COS_OBJECTS="documents.cos.tgz"
+		COS_STAGE="$OUT/.cos-objects-stage"
+		rm -rf -- "$COS_STAGE"
+		mkdir -p "$COS_STAGE"
+		chown 10001:10001 "$COS_STAGE" 2>/dev/null || chmod 0777 "$COS_STAGE"
+		echo "==> COS object bytes → $OUT/documents.cos.tgz"
+		mk_compose --profile ops run --rm --no-deps \
+			-v "$COS_STAGE:/backup-cos" \
+			cos-object-backup backup --out /backup-cos
+		tar -C "$COS_STAGE" -czf "$OUT/documents.cos.tgz" .
+		rm -rf -- "$COS_STAGE"
+		COS_STAGE=""
+		cat > "$OUT/documents.cos.txt" <<EOF
 driver=cos
 bucket=$(mk_config_get COS_BUCKET)
 region=$(mk_config_get COS_REGION)
 public_base_url=$(mk_config_get COS_PUBLIC_BASE_URL || true)
-backup_requirement=Enable COS versioning and an independent replication or inventory policy.
+objects_backup=included
+objects_archive=documents.cos.tgz
 EOF
+	else
+		echo "==> COS objects remain in the private bucket; recording remote storage boundary"
+		cat > "$OUT/documents.cos.txt" <<EOF
+driver=cos
+bucket=$(mk_config_get COS_BUCKET)
+region=$(mk_config_get COS_REGION)
+public_base_url=$(mk_config_get COS_PUBLIC_BASE_URL || true)
+objects_backup=metadata_only
+backup_requirement=Enable COS versioning/replication or pass --include-cos-objects to archive object bytes.
+EOF
+	fi
 else
 	echo "unsupported DOCUMENT_STORAGE_DRIVER=$STORAGE_DRIVER" >&2
 	exit 1
@@ -236,6 +274,9 @@ web_image=$(mk_config_get UNORAG_WEB_IMAGE || true)
 ops_image=$(mk_config_get UNORAG_WEB_OPS_IMAGE || true)
 dbos_worker_image=$(mk_config_get UNORAG_DBOS_WORKER_IMAGE || true)
 EOF
+if [[ -n "$DOCUMENTS_COS_OBJECTS" ]]; then
+	printf 'documents_cos_objects=%s\n' "$DOCUMENTS_COS_OBJECTS" >> "$OUT/MANIFEST.txt"
+fi
 
 (
 	cd "$OUT"
@@ -244,6 +285,9 @@ EOF
 		ARTIFACTS+=(documents.tgz)
 	else
 		ARTIFACTS+=(documents.cos.txt)
+		if [[ -n "$DOCUMENTS_COS_OBJECTS" ]]; then
+			ARTIFACTS+=("$DOCUMENTS_COS_OBJECTS")
+		fi
 	fi
 	if command -v sha256sum >/dev/null 2>&1; then
 		sha256sum "${ARTIFACTS[@]}"

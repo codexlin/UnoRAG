@@ -22,18 +22,24 @@ os.environ["LANGSMITH_TRACING"] = "false"
 
 
 def _disable_diskcache():
-    """Block diskcache pickle cache instantiation (CVE-2025-69872) at runtime."""
+    """Block diskcache pickle cache instantiation (CVE-2025-69872) at runtime.
+
+    diskcache is excluded from uv.lock via [tool.uv].exclude-dependencies; if
+    Ragas or a transitive import requests the module, provide a fail-closed stub
+    so pickle-backed caches can never be instantiated.
+    """
     try:
         import diskcache  # type: ignore[import-not-found]
     except ImportError:
-        return
+        import types
+        diskcache = types.ModuleType("diskcache")
+        sys.modules["diskcache"] = diskcache
 
     def _blocked(*_args, **_kwargs):
         raise EvaluationError("diskcache_disabled")
 
     for attr in ("Cache", "FanoutCache", "Deque", "Index"):
-        if hasattr(diskcache, attr):
-            setattr(diskcache, attr, _blocked)
+        setattr(diskcache, attr, _blocked)
 
 
 _disable_diskcache()

@@ -14,3 +14,4 @@ dependencies = [
 [tool.uv]
 package = false
 constraint-dependencies = ["langchain-openai==1.1.14"]
+exclude-dependencies = ["diskcache"]

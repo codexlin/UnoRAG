@@ -152,8 +152,8 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
   本版抽查仍有一条预算回答省略「约」；若改变金额、资格或决策边界仍为阻断项。
 - 保存的评测 citation 未覆盖全部标题/heading 元数据；原文件支持答案不等于报告能证明所有运行时身份上下文。
 - [#193](https://github.com/codexlin/UnoRAG/issues/193)：历史单次 Qdrant 故障根因未知，等待新的关联证据。
-- [#202](https://github.com/codexlin/UnoRAG/issues/202)：可选离线 Ragas/DiskCache advisory —— `ragas==0.4.4` 已修复 CVE-2026-6587（`#69`/`#72`），`ragas_offline.py` 已在导入前运行时 fail-closed 阻断 `diskcache` 实例化以中和上游未修的 CVE-2025-69872（`#70`）；该 Python 环境不在四个产品镜像内。
-- COS sidecar 只有对象引用，不是文件内容备份；尚未据此证明对象误删或桶级恢复能力。
+- [#202](https://github.com/codexlin/UnoRAG/issues/202)：可选离线 Ragas 评测环境已升级至 `ragas==0.4.4`（修复 CVE-2026-6587）并通过 `[tool.uv].exclude-dependencies` 将传递依赖 `diskcache` 彻底移出 `scripts/evaluation/uv.lock` 同时在运行时安装 fail-closed 桩模块阻断实例化；该 Python 环境不在四个产品镜像内。
+- COS 备份默认记录对象边界以缩短升级维护窗；已内置 `--include-cos-objects`（`cos-object-backup`）提供按 PG 引用逐对象 SHA-256 校验的离线字节备份与恢复能力，生产环境大桶跨地域复制与 RPO/RTO 仍需按客户规模实测验收。
 - [#229](https://github.com/codexlin/UnoRAG/issues/229)：总预算耗尽不再自动重提 staging，补丁已部署。
   本轮标准及扩展矩阵入库通过；开发机首次验收曾轮询超时，不能据服务端最终成功推断网络根因。
   这不解释历史长等待的服务商内部根因，也不证明未来延迟保证或跨重启任务去重；原失败报告不改写。
