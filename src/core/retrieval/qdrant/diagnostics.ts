@@ -42,8 +42,14 @@ export function projectQdrantDiagnostic(
 export function diagnoseQdrantError(
 	operation: QdrantDiagnostic["operation"],
 	error: unknown,
-	metadata: { durationMs?: number; timeoutMs?: number } = {},
+	metadata: { durationMs?: number; timeoutMs?: number; attempts?: number } = {},
 ): QdrantDiagnostic {
+	const attempts =
+		typeof metadata.attempts === "number" &&
+		Number.isInteger(metadata.attempts) &&
+		metadata.attempts >= 0
+			? metadata.attempts
+			: 1;
 	const base: QdrantDiagnostic = {
 		operation,
 		category: "unknown",
@@ -52,7 +58,7 @@ export function diagnoseQdrantError(
 		retryable: false,
 		durationMs: metadata.durationMs ?? 0,
 		timeoutMs: metadata.timeoutMs ?? null,
-		attempts: 1,
+		attempts,
 	};
 	const seen = new Set<unknown>();
 	for (let value = error, depth = 0; value && depth < 6; depth++) {

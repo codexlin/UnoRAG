@@ -17,12 +17,16 @@ import { parseQdrantSearchHit, type QdrantSearchHit } from "./payload";
 type QdrantFilter = Schemas["Filter"];
 type PointOffset = Schemas["ExtendedPointId"];
 
+const RETRYABLE_SOCKET_CODES = new Set<
+	NonNullable<QdrantDiagnostic["transportCode"]>
+>(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
+
 export class QdrantOperationError extends Error {
 	readonly diagnostics: Readonly<QdrantDiagnostic>;
 	constructor(
 		readonly operation: "ready" | "query" | "scroll",
 		cause: unknown,
-		metadata?: { durationMs?: number; timeoutMs?: number },
+		metadata?: { durationMs?: number; timeoutMs?: number; attempts?: number },
 	) {
 		super(`Qdrant ${operation} operation failed`, { cause });
 		this.name = "QdrantOperationError";
@@ -35,26 +39,42 @@ export class QdrantOperationError extends Error {
 async function qdrantOperation<T>(
 	operation: QdrantOperationError["operation"],
 	invoke: () => Promise<T>,
-	options?: { timeoutMs?: number },
+	options?: { timeoutMs?: number; maxAttempts?: number },
 ): Promise<T> {
 	const started = performance.now();
-	try {
-		return await invoke();
-	} catch (error) {
-		if (error instanceof QdrantCollectionContractError) throw error;
-		const failure = new QdrantOperationError(operation, error, {
-			durationMs: Math.max(0, Math.round(performance.now() - started)),
-			timeoutMs: options?.timeoutMs,
-		});
-		setActiveSpanAttributes({
-			"unorag.qdrant.operation": operation,
-			"unorag.qdrant.error_category": failure.diagnostics.category,
-			"unorag.qdrant.status_code": failure.diagnostics.statusCode ?? 0,
-			"unorag.qdrant.transport_code":
-				failure.diagnostics.transportCode ?? "none",
-			"unorag.qdrant.retryable": failure.diagnostics.retryable,
-		});
-		throw failure;
+	const maxAttempts =
+		operation === "ready" ? 1 : Math.max(1, options?.maxAttempts ?? 2);
+	for (let attempt = 1; ; attempt += 1) {
+		try {
+			return await invoke();
+		} catch (error) {
+			if (error instanceof QdrantCollectionContractError) throw error;
+			const elapsed = Math.max(0, Math.round(performance.now() - started));
+			const failure = new QdrantOperationError(operation, error, {
+				durationMs: elapsed,
+				timeoutMs: options?.timeoutMs,
+				attempts: attempt,
+			});
+			const canRetrySocket =
+				attempt < maxAttempts &&
+				failure.diagnostics.category === "transport" &&
+				failure.diagnostics.transportCode !== null &&
+				RETRYABLE_SOCKET_CODES.has(failure.diagnostics.transportCode) &&
+				(options?.timeoutMs === undefined || elapsed < options.timeoutMs);
+			if (canRetrySocket) {
+				continue;
+			}
+			setActiveSpanAttributes({
+				"unorag.qdrant.operation": operation,
+				"unorag.qdrant.error_category": failure.diagnostics.category,
+				"unorag.qdrant.status_code": failure.diagnostics.statusCode ?? 0,
+				"unorag.qdrant.transport_code":
+					failure.diagnostics.transportCode ?? "none",
+				"unorag.qdrant.retryable": failure.diagnostics.retryable,
+				"unorag.qdrant.attempts": failure.diagnostics.attempts,
+			});
+			throw failure;
+		}
 	}
 }
 

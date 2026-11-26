@@ -12,6 +12,7 @@ import {
 } from "./evidence-references";
 import {
 	getStructuredFailureMetadata,
+	type JudgeOutput,
 	type StructuredOutputAdapter,
 	type StructuredRequestMetadata,
 } from "./structured-output";
@@ -160,8 +161,16 @@ export async function assessEvidenceWithMetadata(
 		);
 		completed.sufficiency = judged.metadata;
 		stage = "selected_ids";
-		let decision = {
-			...judged.output,
+		const { missing_query: rawMissingQuery, ...judgeFields } = judged.output;
+		const normalizedMissingQuery =
+			judged.output.action === "retry" && typeof rawMissingQuery === "string"
+				? rawMissingQuery.replace(/\s+/gu, " ").trim() || undefined
+				: undefined;
+		let decision: JudgeOutput = {
+			...judgeFields,
+			...(normalizedMissingQuery
+				? { missing_query: normalizedMissingQuery }
+				: {}),
 			evidence_ids: judged.output.evidence_ids.map((reference) => {
 				const id = references.decodeId(reference);
 				if (id === undefined)

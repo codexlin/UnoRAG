@@ -472,3 +472,30 @@ test("reference resolution forwards only recent complete exchanges and never acc
 		/provider unavailable/,
 	);
 });
+
+test("follow-up rewrite preserves verbatim history subject across CJK/ASCII spacing differences", async () => {
+	const tableTurn = [
+		{ role: "user" as const, content: "GPU 训练服务器的型号是什么？" },
+		{
+			role: "assistant" as const,
+			content: "命中 1 行：\n- 设备名称：GPU 训练服务器，型号：GT-9000 [1]",
+		},
+	];
+	const resolved = await rewriteFollowup("金额呢？", tableTurn, async () => ({
+		resolution: "resolved",
+		subjects: ["GPU训练服务器"],
+	}));
+	assert.equal(resolved.mode, "history_resolved");
+	assert.equal(resolved.query, "GPU 训练服务器：金额呢？");
+
+	const hallucinated = await rewriteFollowup(
+		"金额呢？",
+		tableTurn,
+		async () => ({
+			resolution: "resolved",
+			subjects: ["不存在的服务器"],
+		}),
+	);
+	assert.equal(hallucinated.mode, "clarify_reference");
+	assert.ok(hallucinated.clarification);
+});

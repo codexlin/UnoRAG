@@ -412,7 +412,11 @@ export function createDecisionNode(context: AskGraphContext) {
 				judgement[key] !== undefined ? [[key, judgement[key]]] : [],
 			),
 		);
-		const { conflict_evidence, ...safeJudgement } = judgement;
+		const {
+			conflict_evidence,
+			missing_query: _missingQuery,
+			...safeJudgement
+		} = judgement;
 		return {
 			judgement,
 			...(evidence.citations && !evidence.invalid

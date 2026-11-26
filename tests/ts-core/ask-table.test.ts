@@ -437,8 +437,8 @@ test("table aggregates report values in the header unit and JSON numbers use tha
 	for (const [operation, expected, rendered] of [
 		["sum", 320.5, /预算（万元）合计为 320\.5$/u],
 		["avg", 320.5 / 3, /预算（万元）平均值为 106\.83/u],
-		["min", 0.5, /预算（万元）最小值为 0\.5$/u],
-		["max", 200, /预算（万元）最大值为 200$/u],
+		["min", 0.5, /预算（万元）最小值为 0\.5（项目：A/u],
+		["max", 200, /预算（万元）最大值为 200（项目：C/u],
 		["minMax", { min: 0.5, max: 200 }, /最小值为 0\.5.*最大值为 200/u],
 	] as const) {
 		const result = executeTableQuery({ ...plan, operation }, dataset);

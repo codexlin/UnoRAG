@@ -15,6 +15,7 @@ import {
 	ConflictEvidenceSchema,
 	validateConflictEvidence,
 } from "../ask-graph/evidence-conflict";
+import { MAX_RETRIEVAL_ATTEMPTS } from "../ask-graph/nodes/retry";
 import { type TableQueryPlan, TableQueryPlanSchema } from "../ask-graph/table";
 import {
 	type AiConcurrencyGateLike,
@@ -69,6 +70,7 @@ export const JudgeOutputSchema = z
 		evidence_ids: z.array(z.string().trim().min(1)).max(6),
 		can_retry: z.boolean().optional(),
 		top_score: z.number().min(0).max(1).optional(),
+		missing_query: z.string().trim().max(120).optional(),
 	})
 	.strict();
 
@@ -550,7 +552,7 @@ export class StructuredOutputAdapter {
 		);
 	}
 
-	judgeWithMetadata(
+	async judgeWithMetadata(
 		input: {
 			question: string;
 			citations: unknown[];
@@ -562,18 +564,42 @@ export class StructuredOutputAdapter {
 			beforeRequest?: () => Promise<void>;
 		} = {},
 	): Promise<{ output: JudgeOutput; metadata: StructuredRequestMetadata }> {
-		return this.request(
+		const isFinalAttempt = input.attempts >= MAX_RETRIEVAL_ATTEMPTS;
+		const schema = JudgeOutputSchema.superRefine((value, context) => {
+			if (value.action === "generate" && !value.sufficient) {
+				context.addIssue({
+					code: "custom",
+					message: "generate action requires sufficient=true",
+				});
+			}
+		});
+		const attemptNote = isFinalAttempt
+			? `${input.attempts}（已达检索上限，禁止再输出 retry，请仅输出 generate 或 refuse）`
+			: `${input.attempts}`;
+		const result = await this.request(
 			"judge",
-			JudgeOutputSchema,
+			schema,
 			getPrompt("judge"),
 			[
 				userMessage(
-					`服务端回答粒度：${JSON.stringify(input.requirements ?? { granularity: "unspecified", formal_name_required: false })}\n问题：${input.question.trim()}\n尝试次数：${input.attempts}\n候选证据：${JSON.stringify(input.citations)}`,
+					`服务端回答粒度：${JSON.stringify(input.requirements ?? { granularity: "unspecified", formal_name_required: false })}\n问题：${input.question.trim()}\n尝试次数：${attemptNote}\n候选证据：${JSON.stringify(input.citations)}`,
 				),
 			],
 			options.abortSignal,
 			options.beforeRequest,
 		);
+		if (isFinalAttempt && result.output.action === "retry") {
+			const { missing_query: _droppedMissingQuery, ...rest } = result.output;
+			return {
+				...result,
+				output: {
+					...rest,
+					action: "refuse",
+					can_retry: false,
+				},
+			};
+		}
+		return result;
 	}
 
 	reviewRefusalWithMetadata(

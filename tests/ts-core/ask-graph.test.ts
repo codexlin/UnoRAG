@@ -14,8 +14,16 @@ import {
 	defaultRefuseAnswer,
 } from "../../src/core/ask-graph";
 import { boundedJudgeEvidenceText } from "../../src/core/ask-graph/comparison-evidence";
-import { buildMultiAspectSubQueries } from "../../src/core/ask-graph/comparison-query";
+import {
+	buildComparisonSubQueries,
+	buildMultiAspectSubQueries,
+} from "../../src/core/ask-graph/comparison-query";
 import { conflictAnswer } from "../../src/core/ask-graph/evidence-conflict";
+import {
+	resolveGrayZoneRoute,
+	sanitizeRouteReasonCode,
+	thinPreRetrievalRoute,
+} from "../../src/core/ask-graph/nodes/thin-router";
 import { isEligibleForGroundedTableLookup } from "../../src/core/ask-graph/table/planning";
 import { formatCitationEvidenceText } from "../../src/core/retrieval/citation-mapper";
 import { estimateTokens } from "../../src/core/text/token-estimate";
@@ -363,6 +371,17 @@ test("self-contained compound retrieval overrides an ambiguous model route", asy
 	assert.equal(result.refused, false);
 	assert.match(result.route_reason ?? "", /self_contained_retrieval_cue/);
 	assert.ok(calls.includes("retrieve"));
+
+	// Dangling references containing 中/里 must remain ambiguous rather than hijacking into fact.
+	const danglingCalls: string[] = [];
+	const dangling = await new AskGraphService(
+		createContext({ queryType: "ambiguous", calls: danglingCalls }),
+	).invoke({
+		question: "这里面提到的那个东西到底是什么情况呀？",
+	});
+	assert.equal(dangling.query_type, "ambiguous");
+	assert.equal(dangling.refused, true);
+	assert.deepEqual(danglingCalls, []);
 });
 
 test("retry broadens the query and returns to retrieve", async () => {
@@ -391,12 +410,69 @@ test("retry broadens the query and returns to retrieve", async () => {
 
 	assert.equal(retrieveCalls, 2);
 	assert.equal(queries[0], "Annual leave");
-	assert.equal(queries[1], "Annual leave 关键词 概要");
+	assert.equal(queries[1], "Annual leave overview details");
+	assert.equal(result.retrieval_debug?.retry_strategy, "compact_fallback");
 	assert.equal(result.refused, false);
 	const stages = result.retrieval_debug?.stages as Array<
 		Record<string, unknown>
 	>;
 	assert.equal(JSON.stringify(stages).includes("Annual leave"), false);
+});
+
+test("judge missing_query drives targeted retry without leaking gap text into safe judgement", async () => {
+	let retrieveCalls = 0;
+	const queries: string[] = [];
+	const context = createContext({
+		retrieve: (state) => {
+			retrieveCalls += 1;
+			queries.push(state.rewritten_question ?? "");
+			return {
+				citations:
+					retrieveCalls === 1
+						? [{ id: "chunk-a", score: 0.85, body: "Plan A costs $1200/year." }]
+						: [
+								{ id: "chunk-b", score: 0.9, body: "Plan B costs $1800/year." },
+								{
+									id: "chunk-a",
+									score: 0.85,
+									body: "Plan A costs $1200/year.",
+								},
+							],
+				retrieval_attempts: (state.retrieval_attempts ?? 0) + 1,
+			};
+		},
+		judge: (state) =>
+			(state.citations?.length ?? 0) < 2
+				? {
+						sufficient: false,
+						action: "retry",
+						reason: "missing Plan B price",
+						can_retry: true,
+						evidence_ids: [],
+						missing_query: "Plan B monthly pricing",
+					}
+				: {
+						sufficient: true,
+						action: "generate",
+						reason: "both plans covered",
+						evidence_ids: ["chunk-a", "chunk-b"],
+					},
+	});
+
+	const result = await new AskGraphService(context).invoke({
+		question: "Compare Plan A and Plan B on pricing",
+	});
+
+	assert.equal(retrieveCalls, 2);
+	assert.equal(queries[0], "Compare Plan A and Plan B on pricing");
+	assert.equal(queries[1], "Plan B monthly pricing");
+	assert.equal(result.retrieval_debug?.retry_strategy, "judge_missing_query");
+	assert.equal(result.refused, false);
+	assert.equal(
+		"missing_query" in
+			((result.retrieval_debug?.judgement as Record<string, unknown>) ?? {}),
+		false,
+	);
 });
 
 test("retry is bounded and fails closed after two retrieval attempts", async () => {
@@ -1364,4 +1440,154 @@ test("multi-aspect sub-queries and grounded table probe precheck behave conserva
 		isEligibleForGroundedTableLookup("表格中设备总计金额是多少？"),
 		false,
 	);
+});
+
+test("thin pre-retrieval router handles EN/ZH compare, summary, short acronyms, greetings, and gray-zone inputs", () => {
+	assert.equal(
+		thinPreRetrievalRoute("Compare Plan A and Plan B pricing").queryType,
+		"compare",
+	);
+	assert.equal(
+		thinPreRetrievalRoute(
+			"What is the difference between Option A and Option B?",
+		).queryType,
+		"compare",
+	);
+	assert.equal(
+		thinPreRetrievalRoute("Which vendor has the lowest unit price?").queryType,
+		"compare",
+	);
+	assert.deepEqual(
+		buildComparisonSubQueries("Compare Plan A and Plan B on pricing"),
+		["Plan A pricing", "Plan B pricing"],
+	);
+	assert.equal(
+		thinPreRetrievalRoute("请总结这份安全规范文档的核心内容").queryType,
+		"summary",
+	);
+	assert.equal(
+		thinPreRetrievalRoute("Summarize the key takeaways of the release policy")
+			.queryType,
+		"summary",
+	);
+	assert.equal(
+		thinPreRetrievalRoute("文末汇总说明中，直接采购占比和采购方式是什么？")
+			.queryType,
+		"fact",
+	);
+	for (const acronym of ["SLA", "ROI?", "GDPR", "K8s", "API"]) {
+		const decision = thinPreRetrievalRoute(acronym);
+		assert.equal(decision.queryType, "fact");
+		assert.equal(decision.reason, "thin_router_short_entity_fact");
+		assert.equal(decision.grayZone, false);
+	}
+	const englishSentence = thinPreRetrievalRoute(
+		"What is the average unit price?",
+	);
+	assert.equal(englishSentence.queryType, "fact");
+	assert.equal(englishSentence.reason, "structured_router_fallback_fact");
+	for (const greeting of ["这个", "你好", "hi", "thanks", "it", "???"]) {
+		const decision = thinPreRetrievalRoute(greeting);
+		assert.equal(decision.queryType, "ambiguous");
+		assert.equal(decision.grayZone, false);
+	}
+	const grayZone = thinPreRetrievalRoute("年假");
+	assert.equal(grayZone.queryType, "ambiguous");
+	assert.equal(grayZone.grayZone, true);
+
+	assert.equal(thinPreRetrievalRoute("金额呢？", 2).queryType, "follow_up");
+});
+
+test("gray-zone System-1 decision router honors calibrated confidence, timeout, and fail-open fallback", async () => {
+	const thin = thinPreRetrievalRoute("年假");
+	assert.equal(thin.grayZone, true);
+
+	const accepted = await resolveGrayZoneRoute({
+		thin,
+		question: "年假",
+		history: [],
+		libraryId: "lib",
+		decisionRouter: {
+			classify: async () => ({
+				queryType: "fact",
+				reason: "free form user text 年假",
+				confidence: 0.91,
+				provider: "jev",
+			}),
+		},
+	});
+	assert.equal(accepted.queryType, "fact");
+	assert.equal(accepted.layer, "gray_zone_model");
+	assert.equal(accepted.reason, "gray_zone_jev");
+
+	const lowConfidence = await resolveGrayZoneRoute({
+		thin,
+		question: "年假",
+		history: [],
+		libraryId: "lib",
+		decisionRouter: {
+			classify: async () => ({
+				queryType: "fact",
+				reason: "uncertain",
+				confidence: 0.35,
+				provider: "jev",
+			}),
+		},
+	});
+	assert.equal(lowConfidence.queryType, "ambiguous");
+	assert.equal(lowConfidence.layer, "gray_zone_fallback");
+
+	const timedOut = await resolveGrayZoneRoute({
+		thin,
+		question: "年假",
+		history: [],
+		libraryId: "lib",
+		timeoutMs: 15,
+		decisionRouter: {
+			classify: ({ signal }) =>
+				new Promise((_resolve, reject) => {
+					signal?.addEventListener("abort", () => reject(signal.reason));
+				}),
+		},
+	});
+	assert.equal(timedOut.queryType, "ambiguous");
+	assert.equal(timedOut.layer, "gray_zone_fallback");
+
+	const errored = await resolveGrayZoneRoute({
+		thin,
+		question: "年假",
+		history: [],
+		libraryId: "lib",
+		decisionRouter: {
+			classify: async () => {
+				throw new Error("upstream 503");
+			},
+		},
+	});
+	assert.equal(errored.queryType, "ambiguous");
+	assert.equal(errored.layer, "gray_zone_fallback");
+
+	const controller = new AbortController();
+	controller.abort(new Error("client_cancelled"));
+	await assert.rejects(
+		resolveGrayZoneRoute({
+			thin,
+			question: "年假",
+			history: [],
+			libraryId: "lib",
+			signal: controller.signal,
+			decisionRouter: {
+				classify: async () => {
+					throw controller.signal.reason;
+				},
+			},
+		}),
+		/client_cancelled/,
+	);
+
+	assert.equal(
+		sanitizeRouteReasonCode("prose_superlative_cue: free text 年假"),
+		"prose_superlative_cue",
+	);
+	assert.equal(sanitizeRouteReasonCode("自由文本包含敏感问题"), null);
 });

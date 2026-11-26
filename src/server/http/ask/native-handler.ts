@@ -214,8 +214,11 @@ function conversationDebug(state: AskState) {
 	const pending = PendingClarificationSchema.safeParse(
 		state.retrieval_debug?.pending_clarification,
 	).data;
-	const { conflict_evidence: _conflictEvidence, ...judge } =
-		state.judgement ?? {};
+	const {
+		conflict_evidence: _conflictEvidence,
+		missing_query: _missingQuery,
+		...judge
+	} = state.judgement ?? {};
 	return {
 		...(pending ? { pending_clarification: pending } : {}),
 		mode: "live",

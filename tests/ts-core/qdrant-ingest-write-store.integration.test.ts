@@ -23,7 +23,7 @@ import { DocumentIngestStager } from "../../src/worker/document-ingest-staging";
 
 const qdrantUrl = process.env.QDRANT_INGEST_E2E_URL?.trim();
 
-test("real Qdrant read distinguishes a dropped connection from HTTP failure and recovers without retry", {
+test("real Qdrant read recovers once from a dropped connection and reports transport diagnostics after repeated drops", {
 	skip: qdrantUrl ? false : "QDRANT_INGEST_E2E_URL is not configured",
 }, async () => {
 	assert.ok(qdrantUrl);
@@ -32,11 +32,13 @@ test("real Qdrant read distinguishes a dropped connection from HTTP failure and 
 		checkCompatibility: false,
 	});
 	const collection = `unorag_transport_${randomUUID().replaceAll("-", "")}`;
-	let dropped = false;
+	let remainingDrops = 1;
+	let drops = 0;
 	let forwarded = 0;
 	const proxy = createServer(async (request, response) => {
-		if (!dropped && request.url?.endsWith("/points/query")) {
-			dropped = true;
+		if (remainingDrops > 0 && request.url?.endsWith("/points/query")) {
+			remainingDrops -= 1;
+			drops += 1;
 			request.socket.destroy();
 			return;
 		}
@@ -97,20 +99,31 @@ test("real Qdrant read distinguishes a dropped connection from HTTP failure and 
 				activeGenerationIds: [scope.generationId],
 			},
 		};
+		// Single transient socket drop recovers automatically on retry.
+		const recovered = await store.search(input);
+		assert.equal(recovered.length, 1);
+		assert.equal(recovered[0]?.payload.generation_id, scope.generationId);
+		assert.equal(drops, 1);
+		assert.equal(forwarded, 1);
+
+		// Consecutive drops exhaust retry budget and surface transport diagnostics.
+		remainingDrops = 2;
 		await assert.rejects(store.search(input), (error) => {
 			assert.ok(error instanceof QdrantOperationError);
 			assert.equal(error.diagnostics.category, "transport");
 			assert.equal(error.diagnostics.statusCode, null);
 			assert.equal(error.diagnostics.transportCode, "UND_ERR_SOCKET");
-			assert.equal(error.diagnostics.attempts, 1);
+			assert.equal(error.diagnostics.attempts, 2);
 			assert.equal(error.diagnostics.retryable, true);
 			return true;
 		});
-		assert.equal(forwarded, 0);
+		assert.equal(drops, 3);
+		assert.equal(forwarded, 1);
+
 		const result = await store.search(input);
 		assert.equal(result.length, 1);
 		assert.equal(result[0]?.payload.generation_id, scope.generationId);
-		assert.equal(forwarded, 1);
+		assert.equal(forwarded, 2);
 	} finally {
 		proxy.closeAllConnections();
 		if (proxy.listening)

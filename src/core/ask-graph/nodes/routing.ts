@@ -11,6 +11,14 @@ import {
 	isFormFieldLookup,
 	isProseChecklistLookup,
 } from "../table/query-intent";
+import { hasFollowupReference } from "./rewrite";
+import {
+	isCompareQuestion,
+	isExplicitTableStructureQuestion,
+	isFigureProseQuestion,
+	isSummaryProseReference,
+	PROSE_SUPERLATIVE_COMPARE_PATTERN,
+} from "./thin-router";
 
 const KNOWN_PATHS = new Set(["fast", "precise", "clarify"]);
 const KNOWN_EXECUTE_PATHS = new Set(["short", "table", "clarify"]);
@@ -23,24 +31,25 @@ const KNOWN_QUERY_TYPES = new Set([
 	"section_lookup",
 	"ambiguous",
 ]);
-const EXPLICIT_TABLE_COMPARE_PATTERN =
-	/(?:表格|表中|表内|明细表|清单|台账|逐行|多少行|设备条目|表头|列名|字段|序号\s*(?:为|是)?\s*\d+|rows?|row\s*#?\s*\d+|(?:单价|合计金额?|规格参数|品牌\s*\/\s*型号|采购单位|中标供应商).{0,40}(?:单价|合计金额?|规格参数|品牌\s*\/\s*型号|采购单位|中标供应商))/i;
-const SUMMARY_PROSE_PATTERN = /(?:文末)?汇总说明(?:中|里|声称|称|显示|指出)?/i;
-const IGNORE_SUMMARY_PROSE_PATTERN =
-	/(?:忽略|不看|排除|不要参考)[^，。；;]{0,16}(?:文末)?汇总说明/i;
-const FIGURE_PROSE_PATTERN =
-	/(?:图\s*\d+|图表|折线图|柱状图|堆叠图|饼图|趋势图)/i;
-const PROSE_SUPERLATIVE_COMPARE_PATTERN =
-	/(?:最高|最低|最大|最小|最多|最少)[^，。？?]{0,16}(?:哪一|哪个|何种|什么)|(?:哪一|哪个|何种|什么)[^，。？?]{0,16}(?:最高|最低|最大|最小|最多|最少)/i;
-const PROSE_DIFF_COMPARE_PATTERN =
-	/(?:有何不同|有哪些不同|主要差异|有哪些差异|异同点?|相比(?:较|而言)?[^，。？?]{0,20}(?:如何|怎样|更大|更小|更高|更低|差异|区别)|对比[^，。？?]{0,36}(?:差异|区别|不同|策略|优势|前景))/u;
+// Legacy compatibility guard for injected table routes that name multiple paired table fields.
+const PAIRED_FIELD_TABLE_CUE_PATTERN =
+	/(?:单价|合计金额?|规格参数|品牌\s*\/\s*型号|采购单位|中标供应商).{0,40}(?:单价|合计金额?|规格参数|品牌\s*\/\s*型号|采购单位|中标供应商)/iu;
 const SELF_CONTAINED_RETRIEVAL_PATTERN =
-	/(?:根据|依据|关于|针对|规定|要求|提到|说明|显示|列出|包括|中|里)/i;
+	/(?:根据|依据|关于|针对|规定|要求|提到|说明|显示|列出|包括|\b(?:according\s+to|based\s+on|under|regarding|about|specif(?:y|ies|ied)|requir(?:e|es|ed)|mention(?:s|ed)?|list(?:s|ed)?|includ(?:e|es|ed))\b)/iu;
+
+function hasExplicitTableCue(question: string): boolean {
+	return (
+		isExplicitTableStructureQuestion(question) ||
+		PAIRED_FIELD_TABLE_CUE_PATTERN.test(question)
+	);
+}
 
 function hasSelfContainedRetrievalScope(question: string): boolean {
+	const trimmed = question.trim();
 	return (
-		Array.from(question.trim()).length >= 10 &&
-		SELF_CONTAINED_RETRIEVAL_PATTERN.test(question)
+		Array.from(trimmed).length >= 10 &&
+		!hasFollowupReference(trimmed) &&
+		SELF_CONTAINED_RETRIEVAL_PATTERN.test(trimmed)
 	);
 }
 
@@ -60,38 +69,33 @@ function executionQueryType(rawQueryType: string, question: string): string {
 	}
 	if (
 		["fact", "section_lookup"].includes(rawQueryType) &&
-		(PROSE_SUPERLATIVE_COMPARE_PATTERN.test(question) ||
-			PROSE_DIFF_COMPARE_PATTERN.test(question)) &&
-		!FIGURE_PROSE_PATTERN.test(question) &&
-		!EXPLICIT_TABLE_COMPARE_PATTERN.test(question) &&
+		isCompareQuestion(question) &&
+		!isFigureProseQuestion(question) &&
+		!hasExplicitTableCue(question) &&
 		!isDerivedCalculationQuestion(question)
 	) {
 		return "compare";
 	}
 	if (
 		rawQueryType === "table" &&
-		((SUMMARY_PROSE_PATTERN.test(question) &&
-			!IGNORE_SUMMARY_PROSE_PATTERN.test(question)) ||
-			FIGURE_PROSE_PATTERN.test(question) ||
-			!EXPLICIT_TABLE_COMPARE_PATTERN.test(question))
+		(isSummaryProseReference(question) ||
+			isFigureProseQuestion(question) ||
+			!hasExplicitTableCue(question))
 	) {
 		return "fact";
 	}
 	return rawQueryType === "compare" &&
-		EXPLICIT_TABLE_COMPARE_PATTERN.test(question) &&
+		hasExplicitTableCue(question) &&
 		!isDerivedCalculationQuestion(question)
 		? "table"
 		: rawQueryType;
 }
 
 function factOverrideReason(question: string, fallback: string): string {
-	if (
-		SUMMARY_PROSE_PATTERN.test(question) &&
-		!IGNORE_SUMMARY_PROSE_PATTERN.test(question)
-	) {
+	if (isSummaryProseReference(question)) {
 		return `summary_prose_cue: ${fallback}`;
 	}
-	if (FIGURE_PROSE_PATTERN.test(question)) {
+	if (isFigureProseQuestion(question)) {
 		return `figure_prose_cue: ${fallback}`;
 	}
 	if (isDerivedCalculationQuestion(question)) {
@@ -113,6 +117,9 @@ function routeOverrideReason(
 		PROSE_SUPERLATIVE_COMPARE_PATTERN.test(question)
 	) {
 		return `prose_superlative_cue: ${fallback}`;
+	}
+	if (queryType === "compare") {
+		return `prose_compare_cue: ${fallback}`;
 	}
 	if (queryType === "fact") return factOverrideReason(question, fallback);
 	return `table_execution_cue: ${fallback}`;
@@ -198,6 +205,7 @@ export function createRoutingNodes(context: AskGraphContext) {
 				retrieval_debug: mergeRetrievalDebug(state, {
 					query_type: queryType,
 					route_reason: reason,
+					...(routed.layer ? { route_layer: routed.layer } : {}),
 				}),
 			};
 		},

@@ -1580,3 +1580,498 @@ test("runtime renders verified conflict excerpts without invoking answer generat
 	assert.equal(result.length, 1);
 	assert.match(result[0], /口径不一致/);
 });
+
+test("evidence-driven dispatch upgrades implicit ZH/EN table operations after real table_summary hits", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const rowGroupA = {
+		...citation({
+			id: "row-a",
+			tableId: "catalog",
+			device: "服务器主机",
+			amount: "120000",
+		}),
+		score: 0.78,
+		dense_score: 0.78,
+		headers: ["设备名称", "单价（元）"],
+		rows: [["服务器主机", "120000"]],
+		row_start: 0,
+		row_end: 0,
+		table_row_count: 2,
+	};
+	const rowGroupB = {
+		...citation({
+			id: "row-b",
+			tableId: "catalog",
+			device: "核心交换机",
+			amount: "180000",
+		}),
+		score: 0.31,
+		dense_score: 0.31,
+		headers: ["设备名称", "单价（元）"],
+		rows: [["核心交换机", "180000"]],
+		row_start: 1,
+		row_end: 1,
+		table_row_count: 2,
+	};
+	const foreignSameTableId = {
+		...citation({
+			id: "foreign-row",
+			tableId: "catalog",
+			device: "外来干扰项",
+			amount: "999999",
+		}),
+		doc_id: "doc-other",
+		document_version_id: "ver-other",
+		score: 0.9,
+		dense_score: 0.9,
+		headers: ["设备名称", "单价（元）"],
+		rows: [["外来干扰项", "999999"]],
+		row_start: 0,
+		row_end: 0,
+		table_row_count: 1,
+	};
+	const summaryHit = {
+		...rowGroupA,
+		id: "summary-hit",
+		record_type: "table_summary" as const,
+		score: 0.84,
+		dense_score: 0.84,
+		headers: ["设备名称", "单价（元）"],
+		rows: [],
+	};
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{ structured: {} as never, answer: {} as never, retrieval: {} as never },
+	);
+	const calls: Array<{ tableOnly: boolean; applyEvidenceThreshold: boolean }> =
+		[];
+	Object.defineProperty(runtime, "retrieve", {
+		value: async (
+			_state: AskState,
+			input: { tableOnly: boolean; applyEvidenceThreshold: boolean },
+		) => {
+			calls.push(input);
+			return {
+				citations: input.tableOnly
+					? [rowGroupA, rowGroupB, foreignSameTableId]
+					: [summaryHit],
+				debug: {},
+			};
+		},
+	});
+	// Question never mentions 表格/清单 — pre-retrieval stays thin and evidence drives table execution.
+	const state = await runtime.invoke({
+		question: "单价最高的设备是什么？",
+		session_id: "evidence-op-zh",
+		history: [],
+	});
+	assert.equal(state.upgrade, "precise");
+	assert.equal(state.upgrade_reason, "evidence_driven_table_operation");
+	assert.equal(
+		state.retrieval_debug?.evidence_dispatch,
+		"evidence_driven_table_operation",
+	);
+	assert.equal(state.table_execution?.status, "success");
+	assert.deepEqual(calls, [
+		{ tableOnly: false, applyEvidenceThreshold: true },
+		{ tableOnly: true, applyEvidenceThreshold: false },
+	]);
+	let answer = "";
+	for await (const token of runtime.streamAnswer(state)) answer += token;
+	assert.match(answer, /180000/);
+	assert.match(answer, /核心交换机/);
+	assert.doesNotMatch(answer, /999999/);
+});
+
+test("evidence-driven dispatch upgrades implicit English table operations cleanly", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const rowGroup = {
+		...citation({
+			id: "en-row",
+			tableId: "pricing",
+			device: "Router",
+			amount: "100",
+		}),
+		score: 0.8,
+		dense_score: 0.8,
+		headers: ["Product", "Unit Price"],
+		rows: [
+			["Router", "100"],
+			["Switch", "300"],
+		],
+		row_start: 0,
+		row_end: 1,
+		table_row_count: 2,
+	};
+	const summaryHit = {
+		...rowGroup,
+		id: "en-summary",
+		record_type: "table_summary" as const,
+		rows: [],
+	};
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{ structured: {} as never, answer: {} as never, retrieval: {} as never },
+	);
+	Object.defineProperty(runtime, "retrieve", {
+		value: async (_state: AskState, input: { tableOnly: boolean }) => ({
+			citations: input.tableOnly ? [rowGroup] : [summaryHit],
+			debug: {},
+		}),
+	});
+	const state = await runtime.invoke({
+		question: "What is the average unit price?",
+		session_id: "evidence-op-en",
+		history: [],
+	});
+	assert.equal(state.upgrade_reason, "evidence_driven_table_operation");
+	assert.equal(state.table_execution?.status, "success");
+	let answer = "";
+	for await (const token of runtime.streamAnswer(state)) answer += token;
+	assert.match(answer, /200/);
+});
+
+test("evidence-driven dispatch rolls back cleanly to prose when probed table headers do not match", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const proseChunk = {
+		...citation({
+			id: "prose-hit",
+			tableId: "unrelated",
+			device: "样本",
+			amount: "50",
+		}),
+		record_type: "chunk" as const,
+		score: 0.85,
+		dense_score: 0.85,
+		body: "实验数据集共包含 1200 条标注样本。",
+		text: "实验数据集共包含 1200 条标注样本。",
+		headers: [],
+		rows: [],
+	};
+	const unrelatedTable = {
+		...citation({
+			id: "unrelated-table",
+			tableId: "unrelated",
+			device: "主机",
+			amount: "50",
+		}),
+		score: 0.7,
+		dense_score: 0.7,
+		headers: ["设备名称", "部署位置"],
+		rows: [["主机", "北京"]],
+		row_start: 0,
+		row_end: 0,
+		table_row_count: 1,
+	};
+	const structured = new StructuredOutputAdapter(
+		{} as never,
+		async (request) =>
+			request.schemaName === "conflict"
+				? {
+						comparison: "无冲突",
+						resolution: "consistent",
+						conflict_evidence: [],
+					}
+				: {
+						reason: "正文明确说明样本总数",
+						sufficient: true,
+						action: "generate",
+						evidence_ids: ["e1"],
+					},
+	);
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{
+			structured,
+			judgeStructured: structured,
+			answer: {} as never,
+			retrieval: {} as never,
+		},
+	);
+	Object.defineProperty(runtime, "retrieve", {
+		value: async (_state: AskState, input: { tableOnly: boolean }) => ({
+			citations: input.tableOnly ? [unrelatedTable] : [proseChunk],
+			debug: {},
+		}),
+	});
+	const state = await runtime.invoke({
+		question: "实验数据集包含多少条标注样本？",
+		session_id: "evidence-rollback",
+		history: [],
+	});
+	assert.equal(state.upgrade, null);
+	assert.equal(state.upgrade_reason, null);
+	assert.equal(state.retrieval_debug?.evidence_dispatch, "none");
+	assert.equal(state.refused, false);
+	assert.equal(state.citations?.[0]?.id, "prose-hit");
+});
+
+test("figure questions never trigger evidence-driven table probe even when citations carry a table_id", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const hit = {
+		...citation({
+			id: "fig-hit",
+			tableId: "tbl-1",
+			device: "A",
+			amount: "10",
+		}),
+		record_type: "figure" as const,
+		score: 0.85,
+		dense_score: 0.85,
+		body: "图4 堆叠柱状图展示各部门预算",
+		text: "图4 堆叠柱状图展示各部门预算",
+		headers: [],
+		rows: [],
+	};
+	const structured = new StructuredOutputAdapter(
+		{} as never,
+		async (request) =>
+			request.schemaName === "conflict"
+				? {
+						comparison: "无冲突",
+						resolution: "consistent",
+						conflict_evidence: [],
+					}
+				: {
+						reason: "图注充分",
+						sufficient: true,
+						action: "generate",
+						evidence_ids: ["e1"],
+					},
+	);
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{
+			structured,
+			judgeStructured: structured,
+			answer: {} as never,
+			retrieval: {} as never,
+		},
+	);
+	const probeCalls: boolean[] = [];
+	Object.defineProperty(runtime, "retrieve", {
+		value: async (_state: AskState, input: { tableOnly: boolean }) => {
+			probeCalls.push(input.tableOnly);
+			return { citations: [hit], debug: {} };
+		},
+	});
+	const state = await runtime.invoke({
+		question: "图4（堆叠柱状图）中单价最高的设备是什么？",
+		session_id: "figure-guard",
+		history: [],
+	});
+	assert.deepEqual(probeCalls, [false]);
+	assert.equal(state.upgrade, null);
+	assert.equal(state.retrieval_debug?.evidence_dispatch, "none");
+	assert.equal(state.refused, false);
+});
+
+test("NativeAskRuntime wires pluggable DecisionRouterPort only for gray-zone queries", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const hit = {
+		...citation({
+			id: "leave-hit",
+			tableId: "",
+			device: "",
+			amount: "",
+		}),
+		record_type: "chunk" as const,
+		table_id: null,
+		score: 0.82,
+		dense_score: 0.82,
+		body: "员工年假为每年15天。",
+		text: "员工年假为每年15天。",
+		headers: [],
+		rows: [],
+	};
+	const structured = new StructuredOutputAdapter(
+		{} as never,
+		async (request) =>
+			request.schemaName === "conflict"
+				? {
+						comparison: "无冲突",
+						resolution: "consistent",
+						conflict_evidence: [],
+					}
+				: {
+						reason: "年假条款明确",
+						sufficient: true,
+						action: "generate",
+						evidence_ids: ["e1"],
+					},
+	);
+	let classifyCalls = 0;
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{
+			structured,
+			judgeStructured: structured,
+			answer: {} as never,
+			retrieval: {} as never,
+			decisionRouter: {
+				classify: async () => {
+					classifyCalls += 1;
+					return {
+						queryType: "fact",
+						reason: "user asked about 年假",
+						confidence: 0.92,
+						provider: "jev",
+					};
+				},
+			},
+		},
+	);
+	Object.defineProperty(runtime, "retrieve", {
+		value: async () => ({ citations: [hit], debug: {} }),
+	});
+	// Clear query skips gray-zone classifier completely.
+	await runtime.invoke({
+		question: "员工年假有多少天？",
+		session_id: "clear-query",
+		history: [],
+	});
+	assert.equal(classifyCalls, 0);
+
+	// Short non-greeting CJK gray-zone query invokes DecisionRouterPort.
+	const grayState = await runtime.invoke({
+		question: "年假",
+		session_id: "gray-query",
+		history: [],
+	});
+	assert.equal(classifyCalls, 1);
+	assert.equal(grayState.query_type, "fact");
+	assert.equal(grayState.route_reason, "gray_zone_jev");
+	assert.equal(grayState.retrieval_debug?.route_layer, "gray_zone_model");
+});
+
+test("NativeAskRuntime merges retained first-round evidence with targeted missing_query retry hits", async () => {
+	const { NativeAskRuntime } = await runtimeModule;
+	const hitA = {
+		...citation({
+			id: "plan-a-hit",
+			tableId: "",
+			device: "",
+			amount: "",
+		}),
+		doc_id: "doc-plan-a",
+		generation_id: "gen-a",
+		record_type: "chunk" as const,
+		table_id: null,
+		score: 0.86,
+		dense_score: 0.86,
+		body: "Plan A monthly pricing is $100 and response SLA is 4 hours.",
+		text: "Plan A monthly pricing is $100 and response SLA is 4 hours.",
+		headers: [],
+		rows: [],
+	};
+	const hitB = {
+		...citation({
+			id: "plan-b-hit",
+			tableId: "",
+			device: "",
+			amount: "",
+		}),
+		doc_id: "doc-plan-b",
+		generation_id: "gen-b",
+		record_type: "chunk" as const,
+		table_id: null,
+		score: 0.91,
+		dense_score: 0.91,
+		body: "Plan B monthly pricing is $180 and response SLA is 1 hour.",
+		text: "Plan B monthly pricing is $180 and response SLA is 1 hour.",
+		headers: [],
+		rows: [],
+	};
+	const seenJudgeInputs: string[][] = [];
+	const structured = new StructuredOutputAdapter(
+		{} as never,
+		async (request) => {
+			if (request.schemaName === "conflict") {
+				return {
+					comparison: "无冲突",
+					resolution: "consistent",
+					conflict_evidence: [],
+				};
+			}
+			const payload = String(request.messages[0]?.content ?? "");
+			const hasA = payload.includes("Plan A monthly pricing");
+			const hasB = payload.includes("Plan B monthly pricing");
+			seenJudgeInputs.push([...(hasA ? ["A"] : []), ...(hasB ? ["B"] : [])]);
+			if (!hasB) {
+				return {
+					reason: "Only Plan A found; missing Plan B monthly pricing",
+					sufficient: false,
+					action: "retry",
+					can_retry: true,
+					evidence_ids: [],
+					missing_query: "Plan B monthly pricing",
+				};
+			}
+			return {
+				reason: "Both Plan A and Plan B pricing are covered",
+				sufficient: true,
+				action: "generate",
+				evidence_ids: ["e1", "e2"],
+				missing_query: "",
+			};
+		},
+	);
+	const runtime = new NativeAskRuntime(
+		{} as never,
+		"library",
+		undefined,
+		NativeAskPolicySchema.parse({}),
+		{
+			structured,
+			judgeStructured: structured,
+			answer: {} as never,
+			retrieval: {} as never,
+		},
+	);
+	const retrieveQueries: string[] = [];
+	Object.defineProperty(runtime, "retrieve", {
+		value: async (state: AskState) => {
+			const q = state.rewritten_question ?? state.question ?? "";
+			retrieveQueries.push(q);
+			return {
+				citations: q === "Plan B monthly pricing" ? [hitB] : [hitA],
+				debug: {},
+			};
+		},
+	});
+
+	const state = await runtime.invoke({
+		question: "Compare Plan A and Plan B on monthly pricing",
+		session_id: "targeted-retry-merge",
+		history: [],
+	});
+
+	assert.deepEqual(retrieveQueries, [
+		"Compare Plan A and Plan B on monthly pricing",
+		"Plan B monthly pricing",
+	]);
+	assert.deepEqual(seenJudgeInputs, [["A"], ["A", "B"]]);
+	assert.equal(state.refused, false);
+	assert.equal(state.retrieval_debug?.retry_strategy, "judge_missing_query");
+	assert.equal(state.retrieval_debug?.retry_retained_count, 1);
+	assert.deepEqual(
+		state.citations?.map((c) => c.id),
+		["plan-b-hit", "plan-a-hit"],
+	);
+	assert.equal(state.judgement?.missing_query, undefined);
+});

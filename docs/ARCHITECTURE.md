@@ -290,6 +290,8 @@ route -> plan -> clarify | retrieve -> table execute -> judge
       -> rewrite/retry | refuse | stream answer with citations
 ```
 
+前置路由采用极薄跨语料规则（`thinPreRetrievalRoute`），负责中英双语 `compare`/`summary`/显式表格/追问识别、短领域标识符直通检索与寒暄/悬空指代快速澄清，并在灰区短词上预留可插拔、带超时与置信度门控的 Fail-Open `DecisionRouterPort`（默认关闭，按需通过 `ASK_GRAY_ZONE_ROUTER_ENABLED=true` 启用）；不含单客户领域硬编码词。首轮统一多模态召回（`chunk`/`section`/`table_summary`/`figure`）命中带 `table_id` 的证据且问题含查找或聚合/极值/筛选/计数意图时，按精确 `(doc_id, document_version_id, table_id)` 范围做一次授权表格探针并在本地干跑验证通过后才升级至确定性表格执行（含极值行实体描述），否则无损回滚至原正文链路。当 `judge@1.17.0` 判定 `action=retry` 并给出可选 `missing_query` 时，`retry` 节点以零额外 LLM 调用发起定向补查并与首轮授权证据及文档身份元数据去重合并（拦截同 `doc_id` 跨 generation 混排）；`missing_query` 不落库、不进入公开调试，仅持久化脱敏枚举 `route_reason`/`route_layer`/`evidence_dispatch`/`retry_strategy`。
+
 指定文件名、已识别文号或可唯一匹配的业务阶段主题时，Ask 先从 PG 的**当前 active 版本**解析文档身份，
 再收窄 Qdrant 的 document/generation 过滤。小库最多读取 501 行，授权文档不超过 500 份时返回完整目录；
 超过时在同一授权集合内，按原问中的文件名、文号、引用标题或阶段主题执行 ILIKE/pg_trgm 检索与相似度排序，
