@@ -34,9 +34,9 @@ type Options = Parameters<Adapter["judgeWithMetadata"]>[1] & {
 };
 
 const THEMATIC_LOW_RISK_CUE =
-	/(?:为什么|原因|有哪些|合作伙伴|发展策略|战略|前景|趋势|优势|荣誉|背景|概述|作用|意义|如何应对|怎么应对|影响|提供了哪些服务)/u;
+	/(?:为什么|原因|有哪些|合作伙伴|发展策略|战略|前景|趋势|优势|荣誉|背景|概述|作用|意义|如何应对|怎么应对|影响|提供了哪些服务|特点|特征|亮点|举措|措施|机遇|挑战|布局|表现|走势|因素|机制|简介|介绍|\b(?:why|reasons?|benefits?|features?|impact|strategy|strategies|trends?|overview|takeaways?|partners?)\b)/iu;
 const CONSTRAINT_OR_RULE_CUE =
-	/(?:期限|几日|几天|小时|分钟|条款|第\s*\d+\s*条|规定|要求|门槛|比例|占比|金额|价格|单价|总价|日期|时间|允许|禁止|不得|违约|赔付|处罚|费率|税率|多少|最高|最低|最大|最小|比较|对比|冲突|矛盾|哪个|是否|均值|平均|合计|总计|市盈率|复合增长|\b(?:cagr|pe|eps|roe|roa)\b)/iu;
+	/(?:期限|几日|几天|小时|分钟|条款|第\s*\d+\s*条|规定|要求|门槛|比例|占比|金额|价格|单价|总价|日期|时间|允许|禁止|不得|违约|赔付|处罚|费率|税率|多少|最高|最低|最大|最小|比较|对比|冲突|矛盾|哪个|是否|均值|平均|合计|总计|市盈率|市净率|复合增长|\b(?:cagr|pe|pb|eps|roe|roa|deadline|days?|hours?|clause|rule|threshold|rate|fee|price|amount|date|allowed|prohibited|penalty|conflict|contradict|compare|max|min|average|sum)\b)/iu;
 
 /**
  * Only bypass sequential same-fact conflict verification when all selected

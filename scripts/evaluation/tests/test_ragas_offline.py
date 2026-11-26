@@ -296,6 +296,12 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report["summary"]["factual_correctness"]["mean"], 1)
         self.assertEqual(calls, ["/v1/chat/completions"] * 4)
 
+    def test_diskcache_instantiation_is_blocked_at_runtime(self):
+        import diskcache
+        with self.assertRaises(evaluation.EvaluationError) as ctx:
+            diskcache.Cache("/tmp/should-never-open")
+        self.assertEqual(str(ctx.exception), "diskcache_disabled")
+
 
 if __name__ == "__main__":
     unittest.main()

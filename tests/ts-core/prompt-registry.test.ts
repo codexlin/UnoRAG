@@ -22,30 +22,30 @@ import {
 } from "../../src/core/ai";
 
 const EXPECTED_DIGESTS = {
-	chat: "70960fbce0db42787a4776022ea8bc59fe590f89b198f52396da9bc49e6faf9a",
+	chat: "9a308977947041d41e74b3c2f9677afc7c569a4c7691fa507f39ad0925cac3a5",
 	router: "4f586e259c1fb7b4991d7014038887dd885168785edfd5fe0705cfb8a5862353",
 	rewrite: "515f7cae7e09b2cdeb5dae09eafdebdb8bbdf9b8631d867f1ba1dd6bd604a7da",
 	figure_read:
 		"0eb3627d4cf86fb1bc20aea945f6bad8858c43dda7edcd93643d6161a54065d5",
-	judge: "03d7dc0f6424490205374a5e5d8e046f574a412e2d3ec90cd04e61eb98f99a34",
+	judge: "6144f5644ac97b2d9df04f540a3a306f58b6ee75b928bd1d1aaa9e5cd3aec70c",
 	refusal_review:
 		"5b54ebd0e6c6941028eede4df994d849cad25815a3905aae75dda70c5a2ddf96",
-	conflict: "01f7428282ca08983d90c615dd998303fcb482e1906318a8b13f2832b2de77fe",
+	conflict: "8716d24a3757761050a9505796bd0a51bb644e583aebeb1196c9b15809afadb0",
 	conflict_review:
-		"27a3b3101b76d9ffc994c896d5e9b66b4d447691567cbeaf0ddbf431e17957d9",
+		"e5d7192640af291d2bcc4c6626d8960eba997fa8b08e4802ce35f69bc5879215",
 	table_plan:
 		"074c2f67f29bc44f7a72be0b1525490ef51719be3a9ba9ac4677b33198d5aab7",
 } as const;
 
 const EXPECTED_VERSIONS = {
-	chat: "1.17.0",
+	chat: "1.18.0",
 	router: "1.0.0",
 	rewrite: "2.1.0",
 	figure_read: "1.0.0",
-	judge: "1.17.0",
+	judge: "1.18.0",
 	refusal_review: "1.2.0",
-	conflict: "2.4.0",
-	conflict_review: "1.0.0",
+	conflict: "2.5.0",
+	conflict_review: "1.1.0",
 	table_plan: "1.0.0",
 } as const;
 

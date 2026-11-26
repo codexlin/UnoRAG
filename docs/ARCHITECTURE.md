@@ -363,8 +363,7 @@ Token 兼容归入 `conflict` 用量；OTel 的 `structured_kind` 和独立 Prom
 核验 schema 使用对象根节点以兼容 [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)；
 分类与摘录关系仍由服务端校验，不假定所有兼容 Provider 都执行完整 JSON Schema 约束。
 
-默认保持事实类核验；`ASK_CONFLICT_CHECK_MODE=selective` 仅作为可选优化，在候选均有同一文档身份且命中
-低风险主题规则时跳过，结果仍为 `not_checked`。图表裁剪读取和可选 VLM 均重新检查工作区、文档 ACL、
+默认启用选择性冲突核验（`ASK_CONFLICT_CHECK_MODE=selective`）：对所有涉及规则、日期、门槛、数值、权限、比较或跨文档候选的事实/追问继续执行完整冲突核验；仅当全部候选来自同一文档且命中低风险主题问答（无规则/数值/比较词）时跳过第二段串行调用（结果记为 `not_checked`），如需对所有单文档主题问句也无条件核验可显式配置 `ASK_CONFLICT_CHECK_MODE=always`。图表裁剪读取和可选 VLM 均重新检查工作区、文档 ACL、
 active version 和 generation。归档保留原引用文本，不承诺已替换版本的裁剪图片持续可读。
 
 旧 active generation 不会被原地补写，已有文档须通过正常重索引生成新结构元数据；升级前排空旧任务，

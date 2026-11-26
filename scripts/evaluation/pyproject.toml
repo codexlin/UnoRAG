@@ -3,11 +3,11 @@ name = "unorag-offline-evaluation"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  "ragas==0.4.3",
+  "ragas==0.4.4",
   "openai==2.26.0",
   "httpx==0.28.1",
   "jsonschema==4.26.0",
-  # Ragas 0.4.3 imports the VertexAI compatibility module removed in 0.4.2.
+  # Ragas 0.4.x imports the VertexAI compatibility module removed in 0.4.2.
   "langchain-community==0.4.1",
 ]
 

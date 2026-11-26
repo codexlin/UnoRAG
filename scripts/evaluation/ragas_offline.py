@@ -20,6 +20,24 @@ os.environ["RAGAS_DO_NOT_TRACK"] = "true"
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["LANGSMITH_TRACING"] = "false"
 
+
+def _disable_diskcache():
+    """Block diskcache pickle cache instantiation (CVE-2025-69872) at runtime."""
+    try:
+        import diskcache  # type: ignore[import-not-found]
+    except ImportError:
+        return
+
+    def _blocked(*_args, **_kwargs):
+        raise EvaluationError("diskcache_disabled")
+
+    for attr in ("Cache", "FanoutCache", "Deque", "Index"):
+        if hasattr(diskcache, attr):
+            setattr(diskcache, attr, _blocked)
+
+
+_disable_diskcache()
+
 import httpx
 from jsonschema import Draft202012Validator
 
