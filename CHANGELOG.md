@@ -5,6 +5,16 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-11-26
+
+- **Default selective conflict verification & Ask prompt calibration (#344)**:
+  - Switch `ASK_CONFLICT_CHECK_MODE` default from `always` to `selective` across runtime (`src/server/http/ask/native-runtime.ts`), Compose (`deploy/compose/docker-compose.yml`), advanced config template (`deploy/config/runtime.advanced.env.example`), and `docs/ARCHITECTURE.md`, expanding EN/ZH single-document thematic allowlist cues while strictly preserving full conflict verification for all rules, dates, thresholds, numbers, permissions, comparisons, and multi-document candidates (`ASK_CONFLICT_CHECK_MODE=always` remains available as an explicit opt-in).
+  - Register `chat@1.18.0`, `judge@1.18.0`, `conflict@2.5.0`, and `conflict_review@1.1.0` to support explicit hypothetical "what-if" target inputs, static PB (`收盘价 / BPS`), cross-unit decimal normalization prior to summation, section-covered summary tolerance without requiring a standalone overview paragraph, and calibrated conflict boundaries for blank signature date placeholders and general-law vs specialized-clause scopes.
+- **Approval-gated deployment SSH resiliency & offline Ragas hardening (#344, #202)**:
+  - Increase ephemeral SSH `ConnectTimeout` to `30s`, add `ConnectionAttempts 3`, and add bounded 3-attempt retries only around the idempotent `mktemp` handshake and manifest `scp` upload in `.github/workflows/deploy.yml` (never retrying the remote upgrade command itself).
+  - Upgrade offline evaluation tooling (`scripts/evaluation/pyproject.toml` + `uv.lock`) from `ragas==0.4.3` to `ragas==0.4.4` (resolving CVE-2026-6587 / Dependabot `#69` & `#72`) and fail-close `diskcache` (`Cache`, `FanoutCache`, `Deque`, `Index`) at runtime in `scripts/evaluation/ragas_offline.py` before importing `ragas` to neutralize CVE-2025-69872 (`#70`, still unpatched upstream in offline-only tooling outside all four product images).
+- **Upgrade note**: Upgrading from `v0.4.8` requires no database migration or document reindex. `ASK_CONFLICT_CHECK_MODE` now defaults to `selective`; set `ASK_CONFLICT_CHECK_MODE=always` if your deployment requires unconditional single-document thematic conflict verification.
+
 ## [0.4.8] - 2026-11-26
 
 - **Thin pre-retrieval router & bilingual intent handling (#342)**:
