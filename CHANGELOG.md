@@ -5,6 +5,20 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-11-26
+
+- **Thin pre-retrieval router & bilingual intent handling (#342)**:
+  - Introduce cross-corpus `thinPreRetrievalRoute` (`src/core/ask-graph/nodes/thin-router.ts`) for fast EN/ZH `compare`, `summary`, explicit table, and follow-up classification, English `Compare A and B on ...` sub-query fan-out, and short domain identifier bypass (`SLA`, `ROI?`, `GDPR`, `K8s`, etc.) without misclassifying full English sentences.
+  - Tighten `SELF_CONTAINED_RETRIEVAL_PATTERN` in `routing.ts` and wire an opt-in, fail-open `DecisionRouterPort` (`ASK_GRAY_ZONE_ROUTER_ENABLED=true`, off by default, 1.5s timeout, `>= 0.6` confidence gate) for gray-zone short terms.
+- **Evidence-driven table dispatch & extreme-row entity context (#342)**:
+  - Upgrade implicit EN/ZH aggregation/extremum/filter/count/ordinal questions (`evidence_driven_table_operation`) to deterministic table execution only after unified recall hits real `table_id` evidence, scoped strictly by `(doc_id, document_version_id, table_id)`, verified via local `<1ms` dry-run (`executePlannedTableQuery`), and rolled back losslessly to prose on mismatch.
+  - Append `describeRow(...)` for tied extreme rows in single `min`/`max` table answers so entity names are preserved alongside numeric extrema.
+- **Gap-driven targeted Judge retry & runtime resilience hardening (#342)**:
+  - Register `judge@1.17.0` with optional short `missing_query` and fix the first-attempt threshold (`attempts<=1`); `retryNode` executes targeted follow-up retrieval (`retry_strategy: "judge_missing_query"`) or clean bilingual `compact_fallback`, merging attempt-2 hits with retained authorized first-round citations and `evidenceDocuments` while guarding against same-`doc_id` cross-generation mixing.
+  - Enforce `metadata-only` privacy by stripping raw `missing_query` from `safeJudgement`, conversation debug, public retrieval debug, and `ask_run_stages` (persisting only sanitized enum codes `route_reason`, `route_layer`, `evidence_dispatch`, `retry_strategy`).
+  - Harden `StructuredOutputAdapter.judgeWithMetadata` to retry contradictory `{ action: "generate", sufficient: false }` outputs and normalize unreachable final-attempt `retry` responses to `refuse`; add single automatic retry on stale keep-alive socket drops (`UND_ERR_SOCKET`, `ECONNRESET`, `EPIPE`) for idempotent Qdrant `query`/`scroll` reads; and preserve verbatim history subjects across CJK/ASCII spacing differences during multi-turn follow-up rewriting.
+- **Upgrade note**: Upgrading from `v0.4.7` requires no database migration, configuration change, or document reindex. `ASK_GRAY_ZONE_ROUTER_ENABLED` defaults to `false`.
+
 ## [0.4.7] - 2026-11-26
 
 - **Unified `auto` reranking, `sparse-only` escalation & `/rerank` provider compatibility (#340)**:

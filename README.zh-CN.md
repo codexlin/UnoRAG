@@ -66,7 +66,7 @@ flowchart LR
 语义切分只用于较长、缺少显式结构的叙事区域。混合检索采用 Qdrant 服务端命名 `dense` +
 `lexical_v1 (modifier: "idf")` 稀疏向量与 RRF 融合，配合统一的 `auto` / `on` / `off` 精排策略
 （覆盖复杂/对比/多轮改写与 `sparse-only` 自动升精排，兼容 DashScope、vLLM、SiliconFlow、Xinference、
-Jina、Cohere、Voyage），并支持确定性表格执行。
+Jina、Cohere、Voyage）、极薄双语前置路由、证据驱动的确定性表格升级以及 Judge 缺口定向补查（合并首轮授权证据）。
 Ask 使用 LangGraph.js 编排并通过 Vercel AI SDK 流式生成。
 
 ## 私有部署
