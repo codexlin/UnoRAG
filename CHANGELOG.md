@@ -5,6 +5,16 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.10] - 2026-11-26
+
+- **Verified Tencent COS object-byte backup & disaster recovery (#346)**:
+  - Add `scripts/cos-object-backup.mjs` bundled into the `ops` and `builder` stages in `deploy/docker/web.Dockerfile` and exposed via the `cos-object-backup` service under `profiles: ["ops"]` in `deploy/compose/docker-compose.yml`.
+  - Add `--include-cos-objects` (and `UNORAG_BACKUP_COS_OBJECTS=true`) to `deploy/compose/scripts/backup.sh` to download all PostgreSQL-referenced COS objects (`app.document_versions` + `app.document_figure_assets`) with path-traversal validation and SHA-256 verification into `documents.cos.tgz` (`COS_OBJECTS.json` + `COS_OBJECTS.sha256`), recorded in `MANIFEST.txt` and `CHECKSUMS.sha256`, while keeping default pre-upgrade maintenance backups fast.
+  - Upgrade `deploy/compose/scripts/restore.sh` to automatically verify and restore `documents.cos.tgz` bytes back to COS (`ACL: "private"`, post-upload `headObject` size verification, fail-closed on missing or tampered bytes before uploading anything), backed by `tests/cos-object-backup.test.mjs` and `tests/deploy-automation.test.mjs` and documented in `docs/OPERATIONS.md`.
+- **Complete removal of `diskcache` from offline evaluation tooling (#346, closes #202)**:
+  - Exclude transitive `diskcache` via `[tool.uv].exclude-dependencies = ["diskcache"]` in `scripts/evaluation/pyproject.toml` and regenerate `scripts/evaluation/uv.lock`, removing `diskcache v5.6.3` (CVE-2025-69872) completely while installing a fail-closed stub module in `scripts/evaluation/ragas_offline.py` before importing `ragas` (`ci/offline-evaluation` 16/16 PASS).
+- **Upgrade note**: Upgrading from `v0.4.9` requires no database migration, configuration change, or document reindex. Existing COS deployments can enable offline object-byte disaster recovery archives immediately with `./scripts/backup.sh --include-cos-objects`.
+
 ## [0.4.9] - 2026-11-26
 
 - **Default selective conflict verification & Ask prompt calibration (#344)**:
