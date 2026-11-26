@@ -95,6 +95,16 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
   - **外部 `FinanceComplexQA`（22 份金融 PDF / 135 题，`--semantic-judge`，对比 `v0.4.1` 基线）**：回答率 **`91.5%`**（108/118，**+3.4pp**）、文档召回 **`90.7%`**（**+3.4pp**）、MRR **`0.898`**（**+0.029**）、语义准确率 **`68.2%`**（**+2.9pp**，已作答正确率 **`74.5%`**；`Comparison` 达 **`85.7%`**）、库外不可答拒答 **`10/10 (100%)`**（总体拒答 `15/17`，2 题系跨文档真实召回/诚实部分作答）、P50/P95 `14.91s / 23.32s`；期间在真实金融语料上命中 2 次证据驱动表格升级（`1.73s` / `3.23s`）与 4 次 `judge_missing_query` 定向补查（2 次成功挽回作答），并在测试后针对抓出的 1 次终轮 Judge 矛盾与 1 次局域网 `UND_ERR_SOCKET` 偶发 503 完成加固合入。
   - **标准活库 `pnpm eval:live`（42 题）**：Fact Coverage **`1.000`**、Doc Recall@K / MRR **`1.000 / 1.000`**、Citation Precision **`100.0%`**、拒答 **`6/6 (100%)`**、跨页表 **`6/6`**、低对比度扫描 **`5/5`**、确定性表格 P50 **`998ms`**（正例 35/36，唯一未过项 `9640cadfd327022e` 事实与引用 100%，系 `qwen-plus` 冲突检测随机误报）；**EN/ZH 路由与定点重试 HTTP 专项（15 场景）** 15/15 HTTP 200，Mac mini `app.ask_run_stages` 全量 192 次运行审计确认原始 `missing_query` 泄漏数为 **`0`**。
 
+### `v0.4.9` 选择性冲突核验默认化、提示词校准、离线评测与部署加固（`#344`）
+
+- **默认启用选择性冲突核验（#344）**：在运行时、`deploy/compose/docker-compose.yml`、`deploy/config/runtime.advanced.env.example` 与 `docs/ARCHITECTURE.md` 统一将 `ASK_CONFLICT_CHECK_MODE` 默认值切换为 `selective`（保留 `always` 显式回切），扩展中英单文档主题白名单同时严格守住规则、日期、门槛、数值、权限、比较与跨文档冲突核验红线。
+- **提示词校准（`chat@1.18.0`、`judge@1.18.0`、`conflict@2.5.0`、`conflict_review@1.1.0`）**：补齐假设目标值代入、静态市净率 PB 与跨十进制单位统一换算后再加总规则，修复短文档摘要因缺少独立总则段导致的过度拒答，并校准空白签署占位符与一般法/专项条款冲突边界。
+- **离线评测安全加固与自动化部署 SSH 韧性（#344, #202）**：将 `scripts/evaluation` 中 `ragas` 升级至 `0.4.4` 并重锁 `uv.lock`（修复 CVE-2026-6587 / Dependabot `#69`、`#72`），在 `ragas_offline.py` 导入 `ragas` 前运行时阻断 `diskcache` 各类持久化缓存实例化（中和上游尚未修复的 CVE-2025-69872 / `#70`，4 个产品镜像本身不含 Python/Ragas）；为 `.github/workflows/deploy.yml` 补充 `ConnectTimeout 30`、`ConnectionAttempts 3` 及仅限幂等握手/上传的 3 次重试（不重试远端升级命令），消除经 ProxyJump 的瞬态 banner 超时。
+- **开发机真模型复测结果（连 Mac mini PG 17 + Redis 7 + Qdrant v1.19.0 + 真实 DashScope，未替代签名镜像正式发布验收）**：
+  - **自动化与冲突控制门禁**：PR #344 CI 6/6 全绿（含 `ci/offline-evaluation` 16/16 Python 单测、`ci/web` Postgres/Helm/Playwright、`ci/docker-build`、`ci/secrets`），本地 `pnpm verify`、`pnpm test:ts-core`（**1,404/1,404**）、`pnpm test:contract`（41/41）与 2 轮真实 DashScope 冲突控制套件（`scripts/acceptance/evidence-conflicts.ts`，**26/26 PASS**）全部通过。
+  - **外部 `FinanceComplexQA`（22 份金融 PDF / 135 题，`--semantic-judge`，零重入库对比 `v0.4.8`）**：回答率升至 **`93.2%`**（110/118，**+1.7pp**）、文档召回 **`92.4%`**（**+1.7pp**）、MRR **`0.915`**（**+0.017**）、数值/术语/综合命中率全面创新高（**`58.7%` / `36.0%` / `45.2%`**，综合 **+1.8pp**）、库外拒答 **`10/10 (100%)`**、冲突误报 **`0`**（`indCN_00505`、`finreport_00175`、`finreport_00251` 均已修复）；`selective` 模式将串行 `conflict` 调用由 108 次压降至 **66 次（-38.9%）**、`conflict` Token 减少 **223k（-36.3%）**、总 Token 下降 **13.3%**，`judge` 阶段 P50 降低 **1.00s**（`5.55s → 4.54s`），基准端到端 P50 降至 **`14.39s`**（服务端 `app.ask_runs` P95 **`22.94s`**），`app.ask_run_stages` 原始 `missing_query` 泄漏数为 **`0`**。
+  - **标准活库 `pnpm eval:live`（42 题）与 EN/ZH 15 场景**：`eval:live` Fact Coverage / Doc Recall@K / MRR / Citation Precision 均为 **100%**、拒答 **6/6**、`cross_page_table` **6/6**、`low_contrast_scan` **5/5**、`e2ddb00fe88cf0e2` 通过（正例 35/36，`9640cadfd327022e` 事实与引用 100% 但仍偶发 `qwen-plus` 冲突误报）；15 场景专项 15/15 HTTP 200 且短文档摘要 `S06` 过度拒答已修复。
+
 下表描述当前源码能力；线上可用范围仍以具体 Release 和部署清单为准。
 
 ## 已具备的闭环
@@ -142,7 +152,7 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
   本版抽查仍有一条预算回答省略「约」；若改变金额、资格或决策边界仍为阻断项。
 - 保存的评测 citation 未覆盖全部标题/heading 元数据；原文件支持答案不等于报告能证明所有运行时身份上下文。
 - [#193](https://github.com/codexlin/UnoRAG/issues/193)：历史单次 Qdrant 故障根因未知，等待新的关联证据。
-- [#202](https://github.com/codexlin/UnoRAG/issues/202)：可选离线 Ragas/DiskCache advisory；该 Python 环境不在四个产品镜像内。
+- [#202](https://github.com/codexlin/UnoRAG/issues/202)：可选离线 Ragas/DiskCache advisory —— `ragas==0.4.4` 已修复 CVE-2026-6587（`#69`/`#72`），`ragas_offline.py` 已在导入前运行时 fail-closed 阻断 `diskcache` 实例化以中和上游未修的 CVE-2025-69872（`#70`）；该 Python 环境不在四个产品镜像内。
 - COS sidecar 只有对象引用，不是文件内容备份；尚未据此证明对象误删或桶级恢复能力。
 - [#229](https://github.com/codexlin/UnoRAG/issues/229)：总预算耗尽不再自动重提 staging，补丁已部署。
   本轮标准及扩展矩阵入库通过；开发机首次验收曾轮询超时，不能据服务端最终成功推断网络根因。
