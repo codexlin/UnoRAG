@@ -398,6 +398,56 @@ test("LiteParse releases result payload on fetchResult, allows retry on same key
 	assert.equal(provider.getRetainedTaskStats().taskCount, 0);
 });
 
+test("LiteParse delivers a single large completed result exceeding byte budget on first fetchResult without self-evicting", async () => {
+	const executor = fakeExecutor({
+		pages: [
+			{
+				pageNum: 1,
+				width: 612,
+				height: 792,
+				text: "L".repeat(2_000),
+				textItems: [
+					{ text: "L".repeat(2_000), x: 1, y: 2, width: 3, height: 4 },
+				],
+				complexity: complexity(1, false),
+			},
+		],
+		text: "L".repeat(2_000),
+	});
+	const provider = new LiteParseProvider({
+		executor,
+		maxConcurrency: 1,
+		timeoutMs: 1_000,
+		maxRetainedResultBytes: 128,
+		resultRetentionMs: 60_000,
+		fetch: async () =>
+			new Response(new Uint8Array([37, 80, 68, 70]), { status: 200 }),
+	});
+
+	const submitted = await provider.submit(input, options);
+	const terminal = await eventuallyTerminal(provider, submitted.providerTaskId);
+	assert.equal(terminal.status, "completed");
+
+	const firstFetch = await provider.fetchResult({
+		documentId: input.documentId,
+		providerTaskId: submitted.providerTaskId,
+	});
+	assert.equal(firstFetch.document.id, input.documentId);
+	assert.equal(provider.getRetainedTaskStats().retainedResultCount, 0);
+	assert.equal(provider.getRetainedTaskStats().retainedResultBytes, 0);
+
+	await assert.rejects(
+		provider.fetchResult({
+			documentId: input.documentId,
+			providerTaskId: submitted.providerTaskId,
+		}),
+		(error: unknown) =>
+			error instanceof LiteParseProviderError &&
+			error.code === "provider_result_missing" &&
+			error.retryable === false,
+	);
+});
+
 test("LiteParse duplicate submit is idempotent and conflicting reuse fails", async () => {
 	let executions = 0;
 	const executor = fakeExecutor(

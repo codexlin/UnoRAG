@@ -34,6 +34,10 @@ function threadScope(
 	);
 }
 
+function cursorTimestamp(value: Date | string): string {
+	return value instanceof Date ? value.toISOString() : value;
+}
+
 function threadListFilter(
 	scope: ConversationScope,
 	input: ListConversationThreadsInput,
@@ -51,7 +55,7 @@ function threadListFilter(
 				: undefined;
 	const cursorFilter =
 		options.includeCursor && input.cursor
-			? sql`(${conversationThreads.updatedAt}, ${conversationThreads.createdAt}, ${conversationThreads.id}) < (${input.cursor.updatedAt.toISOString()}::timestamptz, ${input.cursor.createdAt.toISOString()}::timestamptz, ${input.cursor.id}::uuid)`
+			? sql`(${conversationThreads.updatedAt}, ${conversationThreads.createdAt}, ${conversationThreads.id}) < (${cursorTimestamp(input.cursor.updatedAt)}::timestamptz, ${cursorTimestamp(input.cursor.createdAt)}::timestamptz, ${input.cursor.id}::uuid)`
 			: undefined;
 	return and(
 		threadScope(scope, undefined, input.status ?? "active"),
@@ -72,8 +76,8 @@ function turnScope(scope: ConversationScope, threadId: string) {
 	);
 }
 
-function normalizeLimit(limit: number | undefined): number {
-	return Math.max(1, Math.min(limit ?? 50, 200));
+function normalizeLimit(limit: number | undefined, max = 200): number {
+	return Math.max(1, Math.min(limit ?? 50, max));
 }
 
 export class ConversationRepository {
@@ -163,8 +167,12 @@ export class ConversationRepository {
 		scope: ConversationScope,
 		input: ListConversationThreadsInput = {},
 	) {
-		return this.db
-			.select()
+		const rows = await this.db
+			.select({
+				thread: conversationThreads,
+				cursorUpdatedAt: sql<string>`to_char(${conversationThreads.updatedAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+				cursorCreatedAt: sql<string>`to_char(${conversationThreads.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+			})
 			.from(conversationThreads)
 			.where(threadListFilter(scope, input, { includeCursor: true }))
 			.orderBy(
@@ -172,7 +180,13 @@ export class ConversationRepository {
 				desc(conversationThreads.createdAt),
 				desc(conversationThreads.id),
 			)
-			.limit(normalizeLimit(input.limit));
+			// Allow 201 so paginated callers requesting max page size 200 can peek +1.
+			.limit(normalizeLimit(input.limit, 201));
+		return rows.map(({ thread, cursorUpdatedAt, cursorCreatedAt }) => ({
+			...thread,
+			cursorUpdatedAt,
+			cursorCreatedAt,
+		}));
 	}
 
 	async countThreads(

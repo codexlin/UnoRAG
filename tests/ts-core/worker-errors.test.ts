@@ -93,3 +93,13 @@ test("worker error classification redacts inline credentials and provider tokens
 	}
 	assert.match(classified.message, /\[redacted\]/);
 });
+
+test("worker error classification sanitizes free-text provider error codes", () => {
+	const classified = classifyWorkerError({
+		code: "upstream free text leak: confidential clause",
+		retryable: false,
+		message: "provider task failed",
+	});
+	assert.equal(classified.code, "provider_failed");
+	assert.equal(classified.category, "permanent");
+});

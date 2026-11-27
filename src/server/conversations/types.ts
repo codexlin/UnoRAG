@@ -26,8 +26,9 @@ export type CreateConversationThreadInput = {
 };
 
 export type ConversationThreadCursor = {
-	updatedAt: Date;
-	createdAt: Date;
+	/** Exact UTC ISO-8601 string (preserving PostgreSQL microseconds) or Date. */
+	updatedAt: Date | string;
+	createdAt: Date | string;
 	id: string;
 };
 

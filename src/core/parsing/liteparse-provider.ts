@@ -105,6 +105,8 @@ export type LiteParseProviderOptions = {
 
 type TaskStatus = ParseProgress["status"];
 
+type ResultDeliveryState = "awaiting_first_delivery" | "delivered" | "evicted";
+
 type LocalTask = {
 	providerTaskId: string;
 	idempotencyKey: string;
@@ -118,7 +120,7 @@ type LocalTask = {
 	error?: LiteParseProviderError;
 	result?: ParseResult;
 	resultBytes?: number;
-	resultReleased?: boolean;
+	resultDeliveryState?: ResultDeliveryState;
 	completedAtMs?: number;
 };
 
@@ -313,7 +315,7 @@ export class LiteParseProvider implements DurableParserProvider {
 	}
 
 	async poll(task: ProviderTask): Promise<ParseProgress> {
-		this.pruneTerminalTasks();
+		this.pruneTerminalTasks(task.providerTaskId);
 		const local = this.requireTask(task);
 		return {
 			status: local.status,
@@ -328,17 +330,21 @@ export class LiteParseProvider implements DurableParserProvider {
 	}
 
 	async fetchResult(task: ProviderTask): Promise<ParseResult> {
-		this.pruneTerminalTasks();
+		this.pruneTerminalTasks(task.providerTaskId);
 		const local = this.requireTask(task);
 		if (local.status === "completed" && local.result) {
 			const result = local.result;
 			local.result = undefined;
 			local.resultBytes = 0;
-			local.resultReleased = true;
+			local.resultDeliveryState = "delivered";
 			this.pruneTerminalTasks();
 			return result;
 		}
-		if (local.status === "completed" && local.resultReleased) {
+		if (
+			local.status === "completed" &&
+			(local.resultDeliveryState === "delivered" ||
+				local.resultDeliveryState === "evicted")
+		) {
 			throw providerError(
 				"provider_result_missing",
 				"LiteParse result is no longer retained in memory",
@@ -428,7 +434,7 @@ export class LiteParseProvider implements DurableParserProvider {
 			});
 			task.result = normalized;
 			task.resultBytes = estimateParseResultBytes(normalized);
-			task.resultReleased = false;
+			task.resultDeliveryState = "awaiting_first_delivery";
 			task.status = "completed";
 			task.completedAtMs = this.now();
 			this.pruneTerminalTasks(task.providerTaskId);
@@ -445,7 +451,7 @@ export class LiteParseProvider implements DurableParserProvider {
 		}
 	}
 
-	private pruneTerminalTasks(excludeTaskId?: string): void {
+	private pruneTerminalTasks(protectTaskId?: string): void {
 		const now = this.now();
 		const terminal: LocalTask[] = [];
 		for (const task of this.tasks.values()) {
@@ -457,7 +463,6 @@ export class LiteParseProvider implements DurableParserProvider {
 				continue;
 			}
 			if (
-				task.providerTaskId !== excludeTaskId &&
 				task.completedAtMs !== undefined &&
 				now - task.completedAtMs >= this.resultRetentionMs
 			) {
@@ -472,22 +477,45 @@ export class LiteParseProvider implements DurableParserProvider {
 		);
 
 		let retainedBytes = 0;
+		let retainedResultCount = 0;
 		for (const task of terminal) {
-			if (task.result) retainedBytes += task.resultBytes ?? 0;
+			if (task.result) {
+				retainedBytes += task.resultBytes ?? 0;
+				retainedResultCount += 1;
+			}
 		}
+		// Never self-evict a single completed payload awaiting its first delivery
+		// solely because one large document exceeds the aggregate retention budget.
 		for (const task of terminal) {
 			if (retainedBytes <= this.maxRetainedResultBytes) break;
-			if (!task.result || task.providerTaskId === excludeTaskId) continue;
+			if (!task.result || task.providerTaskId === protectTaskId) continue;
+			if (
+				retainedResultCount <= 1 &&
+				task.resultDeliveryState === "awaiting_first_delivery"
+			) {
+				continue;
+			}
 			retainedBytes -= task.resultBytes ?? 0;
+			retainedResultCount -= 1;
 			task.result = undefined;
 			task.resultBytes = 0;
-			task.resultReleased = true;
+			task.resultDeliveryState = "evicted";
 		}
 
 		let excess = terminal.length - this.maxRetainedTasks;
-		for (const task of terminal) {
+		// Prefer reclaiming already-delivered/failed/cancelled metadata first before
+		// touching any completed task still awaiting first delivery.
+		const evictionOrder = [
+			...terminal.filter(
+				(task) => task.resultDeliveryState !== "awaiting_first_delivery",
+			),
+			...terminal.filter(
+				(task) => task.resultDeliveryState === "awaiting_first_delivery",
+			),
+		];
+		for (const task of evictionOrder) {
 			if (excess <= 0) break;
-			if (task.providerTaskId === excludeTaskId) continue;
+			if (task.providerTaskId === protectTaskId) continue;
 			this.deleteTask(task);
 			excess -= 1;
 		}

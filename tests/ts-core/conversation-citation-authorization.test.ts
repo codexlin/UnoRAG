@@ -970,16 +970,70 @@ test("thread list endpoint supports server-side search, library filter, keyset c
 	assert.ok(page.next_cursor);
 	const decoded = decodeThreadCursor(page.next_cursor);
 	assert.equal(decoded.id, secondThread.id);
-	assert.equal(
-		decoded.updatedAt.toISOString(),
-		secondThread.updatedAt.toISOString(),
-	);
+	assert.equal(decoded.updatedAt, secondThread.updatedAt.toISOString());
 	assert.deepEqual(observedInputs[0], {
 		limit: 3,
 		query: "policy",
 		libraryId: null,
 		cursor: undefined,
 	});
+
+	// Cursor preserves full PostgreSQL 6-digit microsecond precision end-to-end.
+	const microsecondCursor = encodeThreadCursor({
+		...secondThread,
+		cursorUpdatedAt: "2026-07-29T00:00:00.123456Z",
+		cursorCreatedAt: "2026-07-29T00:00:00.654321Z",
+	});
+	assert.deepEqual(decodeThreadCursor(microsecondCursor), {
+		updatedAt: "2026-07-29T00:00:00.123456Z",
+		createdAt: "2026-07-29T00:00:00.654321Z",
+		id: secondThread.id,
+	});
+
+	// Max page size (limit=200) peeks 201 rows so has_more is true when 201 exist.
+	const bulkThreads = Array.from({ length: 201 }, (_, index) => ({
+		...baseThread,
+		id: `44444444-4444-4444-8444-${String(index + 1).padStart(12, "0")}`,
+	}));
+	let maxPageObservedLimit = 0;
+	const maxPageResponse = await handleNativeConversationRequest({
+		request: new Request("http://local/v1/threads?paginated=1&limit=200", {
+			method: "GET",
+		}),
+		path: ["v1", "threads"],
+		identity,
+		repository: {
+			...repository,
+			async listThreads(
+				_scope: ConversationScope,
+				input: Record<string, unknown>,
+			) {
+				maxPageObservedLimit = Number(input.limit ?? 0);
+				return bulkThreads.slice(0, maxPageObservedLimit);
+			},
+			async countThreads() {
+				return 201;
+			},
+		} as never,
+		citationAuthorizer,
+		turnCounter: {
+			async countAssistantTurns() {
+				return new Map();
+			},
+		},
+	});
+	assert.equal(maxPageResponse?.status, 200);
+	assert.equal(maxPageObservedLimit, 201);
+	const maxPageBody = (await maxPageResponse?.json()) as {
+		items: Array<{ id: string }>;
+		has_more: boolean;
+		next_cursor: string | null;
+		total: number | null;
+	};
+	assert.equal(maxPageBody.items.length, 200);
+	assert.equal(maxPageBody.total, 201);
+	assert.equal(maxPageBody.has_more, true);
+	assert.ok(maxPageBody.next_cursor);
 
 	// Round-trip cursor works and malformed cursor fails closed with 400.
 	const validCursor = encodeThreadCursor(secondThread);

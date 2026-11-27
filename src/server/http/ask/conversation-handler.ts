@@ -27,10 +27,19 @@ import { recoverArchiveProvenance } from "./authorized-history";
 import { projectPublicRetrievalDebug } from "./legacy-sse";
 
 const UNLINKED_LIBRARY_FILTER = "__unlinked__";
+const CursorTimestampSchema = z
+	.string()
+	.regex(
+		/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/,
+		"invalid cursor timestamp",
+	)
+	.refine((value) => !Number.isNaN(Date.parse(value)), {
+		message: "invalid cursor timestamp",
+	});
 const ThreadCursorPayloadSchema = z
 	.object({
-		u: z.string().datetime(),
-		c: z.string().datetime(),
+		u: CursorTimestampSchema,
+		c: CursorTimestampSchema,
 		i: z.uuid(),
 	})
 	.strict();
@@ -39,11 +48,13 @@ export function encodeThreadCursor(thread: {
 	updatedAt: Date;
 	createdAt: Date;
 	id: string;
+	cursorUpdatedAt?: string;
+	cursorCreatedAt?: string;
 }): string {
 	return Buffer.from(
 		JSON.stringify({
-			u: thread.updatedAt.toISOString(),
-			c: thread.createdAt.toISOString(),
+			u: thread.cursorUpdatedAt ?? thread.updatedAt.toISOString(),
+			c: thread.cursorCreatedAt ?? thread.createdAt.toISOString(),
 			i: thread.id,
 		}),
 		"utf8",
@@ -65,8 +76,8 @@ export function decodeThreadCursor(raw: string): ConversationThreadCursor {
 	}
 	const payload = ThreadCursorPayloadSchema.parse(parsedJson);
 	return {
-		updatedAt: new Date(payload.u),
-		createdAt: new Date(payload.c),
+		updatedAt: payload.u,
+		createdAt: payload.c,
 		id: payload.i,
 	};
 }
@@ -325,8 +336,11 @@ type StoredTurn = Awaited<
 	ReturnType<ConversationRepository["listTurns"]>
 >[number];
 type StoredThread = Awaited<
-	ReturnType<ConversationRepository["listThreads"]>
->[number];
+	ReturnType<ConversationRepository["createThread"]>
+> & {
+	cursorUpdatedAt?: string;
+	cursorCreatedAt?: string;
+};
 
 async function legacyTurns(
 	thread: StoredThread,
@@ -490,7 +504,8 @@ export async function handleNativeConversationRequest(input: {
 			const rawCursor = searchParams.get("cursor")?.trim() ?? "";
 			const cursor = rawCursor ? decodeThreadCursor(rawCursor) : undefined;
 
-			const fetchLimit = paginated ? Math.min(limit + 1, 200) : limit;
+			// Read one extra row (up to 201 when limit=200) so has_more is exact.
+			const fetchLimit = paginated ? limit + 1 : limit;
 			const rawThreads = await repository.listThreads(conversationScope, {
 				limit: fetchLimit,
 				query,

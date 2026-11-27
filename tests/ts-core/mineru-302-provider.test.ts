@@ -209,3 +209,23 @@ test("302.AI ZIP downloads enforce declared and actual byte limits, cancelling o
 		else assert.equal(pulls, 65);
 	}
 });
+
+test("302.AI MinerU poll maps arbitrary upstream failure error_code to internal enum", async () => {
+	const provider = new MinerU302Provider({
+		baseUrl: "https://api.302.ai",
+		headers: { authorization: "Bearer fixture" },
+		fetch: async () =>
+			Response.json({
+				data: {
+					state: "failed",
+					err_code: "Sensitive document text leaked in error field",
+				},
+			}),
+	});
+	const progress = await provider.poll({
+		documentId: input.documentId,
+		providerTaskId: "task-failed-free-text",
+	});
+	assert.equal(progress.status, "failed");
+	assert.equal(progress.errorCode, "provider_failed");
+});

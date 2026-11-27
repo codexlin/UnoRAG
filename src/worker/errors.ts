@@ -8,6 +8,15 @@ export interface WorkerErrorClassification {
 }
 
 const SAFE_MESSAGE_MAX_LENGTH = 500;
+const SAFE_ERROR_CODE_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,63}$/i;
+
+function safeErrorCode(
+	value: string,
+	fallback = "worker_execution_failed",
+): string {
+	const trimmed = value.trim();
+	return SAFE_ERROR_CODE_PATTERN.test(trimmed) ? trimmed : fallback;
+}
 
 function safeMessage(value: unknown): string {
 	const raw = value instanceof Error ? value.message : String(value);
@@ -68,7 +77,7 @@ export function classifyWorkerError(error: unknown): WorkerErrorClassification {
 	if (providerError) {
 		return {
 			category: providerError.retryable ? "transient" : "permanent",
-			code: providerError.code,
+			code: safeErrorCode(providerError.code, "provider_failed"),
 			message: safeMessage(error),
 			retryable: providerError.retryable,
 		};
