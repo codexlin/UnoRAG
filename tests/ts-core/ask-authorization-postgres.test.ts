@@ -48,6 +48,7 @@ const modules = Promise.all([
 	import("../../src/lib/server/rag-proxy"),
 	import("../../src/lib/server/auth/session"),
 	import("../../src/lib/server/auth/session-token"),
+	import("../../src/lib/server/security/redis"),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolveFilename;
 });
@@ -1014,7 +1015,8 @@ test("public Ask refresh reauthenticates the original bearer against current Pos
 test("real PostgreSQL browser RAG proxy allows unlinked, all, and deleted-library thread filters while keeping writes fail-closed", {
 	skip: databaseUrl ? false : "INTEGRATION_DATABASE_URL is required",
 }, async () => {
-	const [, , , , , , , , ragProxy, session, sessionToken] = await modules;
+	const [, , , , , , , , ragProxy, session, sessionToken, securityRedis] =
+		await modules;
 	const previousDatabaseUrl = process.env.DATABASE_URL;
 	const previousSessionSecret = process.env.UNORAG_SESSION_SECRET;
 	process.env.DATABASE_URL = databaseUrl;
@@ -1147,6 +1149,7 @@ test("real PostgreSQL browser RAG proxy allows unlinked, all, and deleted-librar
 				);
 				assert.equal(askSentinelRes.status, 404);
 			} finally {
+				await securityRedis.closeSecurityRedisForTests();
 				await closeGlobalDatabasePool();
 			}
 		});
