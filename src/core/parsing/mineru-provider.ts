@@ -32,12 +32,22 @@ export type MinerUProviderOptions = HttpParserProviderOptions & {
 	fileParsePath?: string;
 	tasksPath?: string;
 	externalDataProcessing?: boolean;
+	syncResultRetentionMs?: number;
+	maxSyncResults?: number;
+	maxSyncResultBytes?: number;
+	now?: () => number;
 };
 
 type CachedSyncResult = {
 	documentId: string;
 	payload: Record<string, unknown>;
+	storedAtMs: number;
+	estimatedBytes: number;
 };
+
+const DEFAULT_SYNC_RESULT_RETENTION_MS = 15 * 60_000;
+const DEFAULT_MAX_SYNC_RESULTS = 16;
+const DEFAULT_MAX_SYNC_RESULT_BYTES = 32 * 1024 * 1024;
 
 const IGNORABLE_PAGE_KINDS = new Set([
 	"discarded",
@@ -65,6 +75,10 @@ export class MinerUProvider
 	readonly transport: MinerUTransport;
 	private readonly fileParsePath: string;
 	private readonly tasksPath: string;
+	private readonly syncResultRetentionMs: number;
+	private readonly maxSyncResults: number;
+	private readonly maxSyncResultBytes: number;
+	private readonly now: () => number;
 	private readonly syncResults = new Map<string, CachedSyncResult>();
 
 	constructor(options: MinerUProviderOptions) {
@@ -73,6 +87,19 @@ export class MinerUProvider
 		this.transport = options.transport ?? "tasks";
 		this.fileParsePath = options.fileParsePath ?? "/file_parse";
 		this.tasksPath = options.tasksPath ?? "/tasks";
+		this.syncResultRetentionMs = positiveInteger(
+			options.syncResultRetentionMs,
+			DEFAULT_SYNC_RESULT_RETENTION_MS,
+		);
+		this.maxSyncResults = positiveInteger(
+			options.maxSyncResults,
+			DEFAULT_MAX_SYNC_RESULTS,
+		);
+		this.maxSyncResultBytes = positiveInteger(
+			options.maxSyncResultBytes,
+			DEFAULT_MAX_SYNC_RESULT_BYTES,
+		);
+		this.now = options.now ?? (() => Date.now());
 		this.capabilities = {
 			formats: ["pdf"],
 			ocr: true,
@@ -82,6 +109,14 @@ export class MinerUProvider
 			asynchronous: this.transport === "tasks",
 			externalDataProcessing: options.externalDataProcessing ?? false,
 		};
+	}
+
+	getSyncResultStats(): { entryCount: number; retainedBytes: number } {
+		let retainedBytes = 0;
+		for (const entry of this.syncResults.values()) {
+			retainedBytes += entry.estimatedBytes;
+		}
+		return { entryCount: this.syncResults.size, retainedBytes };
 	}
 
 	async analyze(input: ParseInput): Promise<DocumentAnalysis> {
@@ -122,6 +157,7 @@ export class MinerUProvider
 			"x-request-id": options.requestId,
 		};
 		if (this.transport === "file-parse") {
+			this.pruneSyncResults();
 			const payload = await this.requestJson(this.fileParsePath, {
 				method: "POST",
 				signal: options.signal,
@@ -129,14 +165,18 @@ export class MinerUProvider
 				body: form,
 			});
 			const providerTaskId = `file-parse:${options.requestId}`;
+			this.syncResults.delete(providerTaskId);
 			this.syncResults.set(providerTaskId, {
 				documentId: input.documentId,
 				payload,
+				storedAtMs: this.now(),
+				estimatedBytes: estimateJsonValueBytes(payload),
 			});
+			this.pruneSyncResults(providerTaskId);
 			return {
 				providerTaskId,
 				status: "completed",
-				submittedAt: new Date().toISOString(),
+				submittedAt: new Date(this.now()).toISOString(),
 			};
 		}
 
@@ -163,13 +203,14 @@ export class MinerUProvider
 
 	async poll(task: ProviderTask): Promise<ParseProgress> {
 		if (this.transport === "file-parse") {
+			this.pruneSyncResults();
+			const cached = this.syncResults.get(task.providerTaskId);
+			const available = Boolean(
+				cached && cached.documentId === task.documentId,
+			);
 			return {
-				status: this.syncResults.has(task.providerTaskId)
-					? "completed"
-					: "failed",
-				errorCode: this.syncResults.has(task.providerTaskId)
-					? undefined
-					: "provider_result_missing",
+				status: available ? "completed" : "failed",
+				errorCode: available ? undefined : "provider_result_missing",
 			};
 		}
 		const response = await this.request(
@@ -200,14 +241,18 @@ export class MinerUProvider
 	async fetchResult(task: ProviderTask): Promise<ParseResult> {
 		let payload: Record<string, unknown>;
 		if (this.transport === "file-parse") {
+			this.pruneSyncResults();
 			const cached = this.syncResults.get(task.providerTaskId);
-			if (!cached) {
+			if (!cached || cached.documentId !== task.documentId) {
 				throw new ParserProviderHttpError({
 					message: "synchronous MinerU result is no longer available",
 					code: "provider_result_missing",
 					retryable: false,
 				});
 			}
+			// Release buffered payload immediately on read (including on parse error)
+			// so continuous PDF ingestion cannot accumulate historical responses.
+			this.syncResults.delete(task.providerTaskId);
 			payload = cached.payload;
 		} else {
 			payload = await this.requestJson(
@@ -225,12 +270,39 @@ export class MinerUProvider
 	async cancel(task: ProviderTask): Promise<void> {
 		if (this.transport === "file-parse") {
 			this.syncResults.delete(task.providerTaskId);
+			this.pruneSyncResults();
 			return;
 		}
 		await this.request(
 			`${this.tasksPath}/${encodeURIComponent(task.providerTaskId)}`,
 			{ method: "DELETE", signal: task.signal },
 		);
+	}
+
+	private pruneSyncResults(excludeTaskId?: string): void {
+		const now = this.now();
+		let totalBytes = 0;
+		for (const [key, entry] of this.syncResults) {
+			if (
+				key !== excludeTaskId &&
+				now - entry.storedAtMs >= this.syncResultRetentionMs
+			) {
+				this.syncResults.delete(key);
+				continue;
+			}
+			totalBytes += entry.estimatedBytes;
+		}
+		for (const [key, entry] of this.syncResults) {
+			if (
+				this.syncResults.size <= this.maxSyncResults &&
+				totalBytes <= this.maxSyncResultBytes
+			) {
+				break;
+			}
+			if (key === excludeTaskId) continue;
+			this.syncResults.delete(key);
+			totalBytes -= entry.estimatedBytes;
+		}
 	}
 }
 
@@ -999,14 +1071,51 @@ function requireSubmissionContext(options: DurableParseOptions): void {
 	}
 }
 
-function responseJsonObject(
+async function responseJsonObject(
 	response: Response,
 ): Promise<Record<string, unknown>> {
-	return response.json().then((value: unknown) => {
-		if (!isRecord(value))
-			throw invalidResponse("MinerU response must be an object");
-		return value;
-	});
+	let value: unknown;
+	try {
+		value = await response.json();
+	} catch {
+		throw invalidResponse("MinerU returned invalid JSON");
+	}
+	if (!isRecord(value)) {
+		throw invalidResponse("MinerU response must be an object");
+	}
+	return value;
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+	if (value === undefined) return fallback;
+	if (!Number.isInteger(value) || value <= 0) {
+		throw new Error("MinerU retention limits must be positive integers");
+	}
+	return value;
+}
+
+function estimateJsonValueBytes(value: unknown, depth = 0): number {
+	if (value === null || value === undefined) return 8;
+	if (typeof value === "string") return value.length * 2 + 16;
+	if (typeof value === "number" || typeof value === "boolean") return 16;
+	if (depth >= 12) return 64;
+	if (Array.isArray(value)) {
+		let bytes = 32;
+		for (const item of value) {
+			bytes += estimateJsonValueBytes(item, depth + 1);
+		}
+		return bytes;
+	}
+	if (typeof value === "object") {
+		let bytes = 64;
+		for (const [key, entry] of Object.entries(
+			value as Record<string, unknown>,
+		)) {
+			bytes += key.length * 2 + estimateJsonValueBytes(entry, depth + 1);
+		}
+		return bytes;
+	}
+	return 16;
 }
 
 function invalidResponse(message: string): ParserProviderHttpError {

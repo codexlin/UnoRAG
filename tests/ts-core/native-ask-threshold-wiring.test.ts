@@ -448,6 +448,7 @@ test("Public Retrieve v1 does not pass an Ask threshold and retains low-score RR
 		retrieveExecutor: (input) =>
 			executeNativeRetrieval({
 				...input,
+				refreshIdentity: async () => input.identity,
 				dependencies: {
 					resolver: {
 						async resolve() {

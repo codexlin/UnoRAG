@@ -97,12 +97,17 @@ export type LiteParseProviderOptions = {
 	tessdataPath?: string;
 	minOcrConfidence?: number;
 	sourceLoader?: ParseSourceLoader;
+	resultRetentionMs?: number;
+	maxRetainedTasks?: number;
+	maxRetainedResultBytes?: number;
+	now?: () => number;
 };
 
 type TaskStatus = ParseProgress["status"];
 
 type LocalTask = {
 	providerTaskId: string;
+	idempotencyKey: string;
 	documentId: string;
 	inputFingerprint: string;
 	submittedAt: string;
@@ -112,7 +117,14 @@ type LocalTask = {
 	totalPages?: number;
 	error?: LiteParseProviderError;
 	result?: ParseResult;
+	resultBytes?: number;
+	resultReleased?: boolean;
+	completedAtMs?: number;
 };
+
+const DEFAULT_RESULT_RETENTION_MS = 15 * 60_000;
+const DEFAULT_MAX_RETAINED_TASKS = 64;
+const DEFAULT_MAX_RETAINED_RESULT_BYTES = 32 * 1024 * 1024;
 
 type LiteParseConstructor = new (
 	config?: Record<string, unknown>,
@@ -146,6 +158,10 @@ export class LiteParseProvider implements DurableParserProvider {
 	private readonly tessdataPath: string | undefined;
 	private readonly minOcrConfidence: number;
 	private readonly sourceLoader?: ParseSourceLoader;
+	private readonly resultRetentionMs: number;
+	private readonly maxRetainedTasks: number;
+	private readonly maxRetainedResultBytes: number;
+	private readonly now: () => number;
 	private readonly tasks = new Map<string, LocalTask>();
 	private readonly idempotencyTasks = new Map<string, string>();
 
@@ -161,6 +177,19 @@ export class LiteParseProvider implements DurableParserProvider {
 			options.tessdataPath?.trim() || process.env.TESSDATA_PREFIX?.trim();
 		this.minOcrConfidence = confidence(options.minOcrConfidence, 0.6);
 		this.sourceLoader = options.sourceLoader;
+		this.resultRetentionMs = positiveInteger(
+			options.resultRetentionMs,
+			DEFAULT_RESULT_RETENTION_MS,
+		);
+		this.maxRetainedTasks = positiveInteger(
+			options.maxRetainedTasks,
+			DEFAULT_MAX_RETAINED_TASKS,
+		);
+		this.maxRetainedResultBytes = positiveInteger(
+			options.maxRetainedResultBytes,
+			DEFAULT_MAX_RETAINED_RESULT_BYTES,
+		);
+		this.now = options.now ?? (() => Date.now());
 		this.capabilities = {
 			formats: ["pdf"],
 			ocr: this.ocrEnabled,
@@ -205,50 +234,75 @@ export class LiteParseProvider implements DurableParserProvider {
 		}
 	}
 
+	getRetainedTaskStats(): {
+		taskCount: number;
+		retainedResultCount: number;
+		retainedResultBytes: number;
+	} {
+		let retainedResultCount = 0;
+		let retainedResultBytes = 0;
+		for (const task of this.tasks.values()) {
+			if (task.result) {
+				retainedResultCount += 1;
+				retainedResultBytes += task.resultBytes ?? 0;
+			}
+		}
+		return {
+			taskCount: this.tasks.size,
+			retainedResultCount,
+			retainedResultBytes,
+		};
+	}
+
 	async submit(
 		input: ParseInput,
 		options: DurableParseOptions,
 	): Promise<ParseSubmission> {
 		requirePdf(input);
 		requireSubmissionContext(options);
+		this.pruneTerminalTasks();
 		const fingerprint = inputFingerprint(input);
 		const existingTaskId = this.idempotencyTasks.get(options.idempotencyKey);
 		if (existingTaskId) {
 			const existing = this.tasks.get(existingTaskId);
 			if (!existing) {
-				throw providerError(
-					"idempotency_state_missing",
-					"LiteParse idempotency state is missing",
-					true,
-				);
+				this.idempotencyTasks.delete(options.idempotencyKey);
+			} else {
+				if (
+					existing.documentId !== input.documentId ||
+					existing.inputFingerprint !== fingerprint
+				) {
+					throw providerError(
+						"idempotency_conflict",
+						"LiteParse idempotency key was already used for another input",
+						false,
+					);
+				}
+				if (existing.status === "failed" && existing.error)
+					throw existing.error;
+				if (existing.status === "cancelled") {
+					throw providerError(
+						"provider_cancelled",
+						"LiteParse task was cancelled",
+						false,
+					);
+				}
+				if (existing.status !== "completed" || existing.result) {
+					return submission(existing);
+				}
+				// Result payload was already consumed or evicted to bound memory.
+				// Re-run cleanly on a retry for the same document and fingerprint.
+				this.deleteTask(existing);
 			}
-			if (
-				existing.documentId !== input.documentId ||
-				existing.inputFingerprint !== fingerprint
-			) {
-				throw providerError(
-					"idempotency_conflict",
-					"LiteParse idempotency key was already used for another input",
-					false,
-				);
-			}
-			if (existing.status === "failed" && existing.error) throw existing.error;
-			if (existing.status === "cancelled") {
-				throw providerError(
-					"provider_cancelled",
-					"LiteParse task was cancelled",
-					false,
-				);
-			}
-			return submission(existing);
 		}
 
 		const providerTaskId = taskId(options.idempotencyKey);
 		const task: LocalTask = {
 			providerTaskId,
+			idempotencyKey: options.idempotencyKey,
 			documentId: input.documentId,
 			inputFingerprint: fingerprint,
-			submittedAt: new Date().toISOString(),
+			submittedAt: new Date(this.now()).toISOString(),
 			status: "pending",
 			controller: new AbortController(),
 		};
@@ -259,6 +313,7 @@ export class LiteParseProvider implements DurableParserProvider {
 	}
 
 	async poll(task: ProviderTask): Promise<ParseProgress> {
+		this.pruneTerminalTasks();
 		const local = this.requireTask(task);
 		return {
 			status: local.status,
@@ -273,8 +328,23 @@ export class LiteParseProvider implements DurableParserProvider {
 	}
 
 	async fetchResult(task: ProviderTask): Promise<ParseResult> {
+		this.pruneTerminalTasks();
 		const local = this.requireTask(task);
-		if (local.status === "completed" && local.result) return local.result;
+		if (local.status === "completed" && local.result) {
+			const result = local.result;
+			local.result = undefined;
+			local.resultBytes = 0;
+			local.resultReleased = true;
+			this.pruneTerminalTasks();
+			return result;
+		}
+		if (local.status === "completed" && local.resultReleased) {
+			throw providerError(
+				"provider_result_missing",
+				"LiteParse result is no longer retained in memory",
+				false,
+			);
+		}
 		if (local.status === "failed" && local.error) throw local.error;
 		if (local.status === "cancelled") {
 			throw providerError(
@@ -291,6 +361,7 @@ export class LiteParseProvider implements DurableParserProvider {
 	}
 
 	async cancel(task: ProviderTask): Promise<void> {
+		this.pruneTerminalTasks();
 		const local = this.requireTask(task);
 		if (
 			local.status === "completed" ||
@@ -300,9 +371,13 @@ export class LiteParseProvider implements DurableParserProvider {
 			return;
 		}
 		local.status = "cancelled";
+		local.result = undefined;
+		local.resultBytes = 0;
+		local.completedAtMs = this.now();
 		local.controller.abort(
 			providerError("provider_cancelled", "cancelled", false),
 		);
+		this.pruneTerminalTasks(local.providerTaskId);
 	}
 
 	private async runTask(
@@ -332,6 +407,8 @@ export class LiteParseProvider implements DurableParserProvider {
 				if (classified.code === "provider_timeout") {
 					task.error = classified;
 					task.status = "failed";
+					task.completedAtMs = this.now();
+					this.pruneTerminalTasks(task.providerTaskId);
 					// Native parsing cannot be force-killed. Hold the concurrency slot
 					// until it actually settles so timed-out work cannot oversubscribe CPU.
 					await execution.catch(() => undefined);
@@ -342,20 +419,88 @@ export class LiteParseProvider implements DurableParserProvider {
 			if (task.controller.signal.aborted) return;
 			task.totalPages = output.pages.length;
 			task.completedPages = output.pages.length;
-			task.result = normalizeLiteParseResult(output, {
+			const normalized = normalizeLiteParseResult(output, {
 				input,
 				providerVersion: this.version,
 				providerTaskId: task.providerTaskId,
 				ocrEnabled: this.ocrEnabled,
 				minOcrConfidence: this.minOcrConfidence,
 			});
+			task.result = normalized;
+			task.resultBytes = estimateParseResultBytes(normalized);
+			task.resultReleased = false;
 			task.status = "completed";
+			task.completedAtMs = this.now();
+			this.pruneTerminalTasks(task.providerTaskId);
 		} catch (error) {
 			if (task.status === "cancelled") return;
 			task.error = classifyError(error);
 			task.status = "failed";
+			task.result = undefined;
+			task.resultBytes = 0;
+			task.completedAtMs = this.now();
+			this.pruneTerminalTasks(task.providerTaskId);
 		} finally {
 			release?.();
+		}
+	}
+
+	private pruneTerminalTasks(excludeTaskId?: string): void {
+		const now = this.now();
+		const terminal: LocalTask[] = [];
+		for (const task of this.tasks.values()) {
+			if (
+				task.status !== "completed" &&
+				task.status !== "failed" &&
+				task.status !== "cancelled"
+			) {
+				continue;
+			}
+			if (
+				task.providerTaskId !== excludeTaskId &&
+				task.completedAtMs !== undefined &&
+				now - task.completedAtMs >= this.resultRetentionMs
+			) {
+				this.deleteTask(task);
+				continue;
+			}
+			terminal.push(task);
+		}
+
+		terminal.sort(
+			(left, right) => (left.completedAtMs ?? 0) - (right.completedAtMs ?? 0),
+		);
+
+		let retainedBytes = 0;
+		for (const task of terminal) {
+			if (task.result) retainedBytes += task.resultBytes ?? 0;
+		}
+		for (const task of terminal) {
+			if (retainedBytes <= this.maxRetainedResultBytes) break;
+			if (!task.result || task.providerTaskId === excludeTaskId) continue;
+			retainedBytes -= task.resultBytes ?? 0;
+			task.result = undefined;
+			task.resultBytes = 0;
+			task.resultReleased = true;
+		}
+
+		let excess = terminal.length - this.maxRetainedTasks;
+		for (const task of terminal) {
+			if (excess <= 0) break;
+			if (task.providerTaskId === excludeTaskId) continue;
+			this.deleteTask(task);
+			excess -= 1;
+		}
+	}
+
+	private deleteTask(task: LocalTask): void {
+		task.result = undefined;
+		task.resultBytes = 0;
+		this.tasks.delete(task.providerTaskId);
+		if (
+			this.idempotencyTasks.get(task.idempotencyKey) === task.providerTaskId
+		) {
+			this.idempotencyTasks.delete(task.idempotencyKey);
 		}
 	}
 
@@ -384,13 +529,22 @@ export class LiteParseProvider implements DurableParserProvider {
 			response = await this.fetchImpl(input.sourceUri, { signal });
 		} catch (error) {
 			if (signal.aborted) throw signal.reason;
+			const code =
+				error instanceof Error &&
+				"code" in error &&
+				typeof (error as { code?: unknown }).code === "string"
+					? (error as { code: string }).code
+					: error instanceof Error
+						? error.name
+						: "network_error";
 			throw providerError(
 				"source_unreachable",
-				`LiteParse source is unreachable: ${errorMessage(error)}`,
+				`LiteParse source is unreachable (${code})`,
 				true,
 			);
 		}
 		if (!response.ok) {
+			await response.body?.cancel().catch(() => undefined);
 			throw providerError(
 				response.status >= 500 ? "source_unreachable" : "source_rejected",
 				`LiteParse source returned HTTP ${response.status}`,
@@ -863,11 +1017,26 @@ function throwIfAborted(signal: AbortSignal): void {
 function positiveInteger(value: number | undefined, fallback: number): number {
 	if (value === undefined) return fallback;
 	if (!Number.isInteger(value) || value <= 0) {
-		throw new Error(
-			"LiteParse concurrency and timeout must be positive integers",
-		);
+		throw new Error("LiteParse numeric limits must be positive integers");
 	}
 	return value;
+}
+
+function estimateParseResultBytes(result: ParseResult): number {
+	let bytes = 512;
+	bytes += (result.document.title?.length ?? 0) * 2;
+	bytes += (result.document.filename?.length ?? 0) * 2;
+	bytes += (result.document.source?.length ?? 0) * 2;
+	for (const node of result.document.nodes) {
+		bytes += 256;
+		bytes += node.text.length * 2;
+		if (node.path) bytes += node.path.length * 2;
+		if (node.figure_desc) bytes += node.figure_desc.length * 2;
+	}
+	for (const asset of result.figureAssets ?? []) {
+		bytes += asset.bytes.byteLength;
+	}
+	return bytes;
 }
 
 function confidence(value: number | undefined, fallback: number): number {

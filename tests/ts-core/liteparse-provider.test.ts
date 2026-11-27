@@ -272,6 +272,132 @@ test("LiteParse classifies malformed parser failures", async () => {
 	assert.equal(progress.errorCode, "invalid_document");
 });
 
+test("LiteParse releases result payload on fetchResult, allows retry on same key, and bounds continuous ingestion memory", async () => {
+	let clock = 10_000;
+	let executions = 0;
+	const executor = fakeExecutor(
+		{
+			pages: [
+				{
+					pageNum: 1,
+					width: 612,
+					height: 792,
+					text: "B".repeat(500),
+					textItems: [
+						{ text: "B".repeat(500), x: 1, y: 2, width: 3, height: 4 },
+					],
+					complexity: complexity(1, false),
+				},
+			],
+			text: "B".repeat(500),
+		},
+		() => {
+			executions += 1;
+		},
+	);
+	const provider = new LiteParseProvider({
+		executor,
+		maxConcurrency: 2,
+		timeoutMs: 1_000,
+		maxRetainedTasks: 3,
+		maxRetainedResultBytes: 2_500,
+		resultRetentionMs: 5_000,
+		now: () => clock,
+		fetch: async () =>
+			new Response(new Uint8Array([37, 80, 68, 70]), { status: 200 }),
+	});
+
+	// 1. fetchResult immediately frees payload bytes while keeping idempotency protection.
+	const first = await provider.submit(input, options);
+	await eventuallyTerminal(provider, first.providerTaskId);
+	assert.equal(provider.getRetainedTaskStats().retainedResultCount, 1);
+	assert.ok(provider.getRetainedTaskStats().retainedResultBytes > 0);
+
+	const result1 = await provider.fetchResult({
+		documentId: input.documentId,
+		providerTaskId: first.providerTaskId,
+	});
+	assert.equal(result1.document.id, input.documentId);
+	assert.equal(provider.getRetainedTaskStats().retainedResultCount, 0);
+	assert.equal(provider.getRetainedTaskStats().retainedResultBytes, 0);
+
+	await assert.rejects(
+		provider.fetchResult({
+			documentId: input.documentId,
+			providerTaskId: first.providerTaskId,
+		}),
+		(error: unknown) =>
+			error instanceof LiteParseProviderError &&
+			error.code === "provider_result_missing" &&
+			error.retryable === false,
+	);
+
+	// Conflicting input on the same key still fails while metadata is retained.
+	await assert.rejects(
+		provider.submit(
+			{ ...input, documentId: "document-conflict", contentHash: "other" },
+			options,
+		),
+		(error: unknown) =>
+			error instanceof LiteParseProviderError &&
+			error.code === "idempotency_conflict",
+	);
+
+	// Re-submitting the exact same document after result release cleanly re-runs (DBOS step retry).
+	const retried = await provider.submit(input, options);
+	await eventuallyTerminal(provider, retried.providerTaskId);
+	const result2 = await provider.fetchResult({
+		documentId: input.documentId,
+		providerTaskId: retried.providerTaskId,
+	});
+	assert.equal(result2.document.id, input.documentId);
+	assert.equal(executions, 2);
+
+	// 2. Continuous ingestion without fetching still stays bounded by byte budget, task cap, and TTL.
+	for (let i = 0; i < 6; i += 1) {
+		clock += 100;
+		const docId = `continuous-doc-${i}`;
+		const submitted = await provider.submit(
+			{ ...input, documentId: docId, contentHash: `sha256:${i}` },
+			{
+				...options,
+				idempotencyKey: `continuous-key-${i}`,
+				requestId: `continuous-req-${i}`,
+			},
+		);
+		for (let attempt = 0; attempt < 100; attempt += 1) {
+			const progress = await provider.poll({
+				documentId: docId,
+				providerTaskId: submitted.providerTaskId,
+			});
+			if (progress.status === "completed") break;
+			await new Promise((resolve) => setTimeout(resolve, 2));
+		}
+	}
+	const afterBatch = provider.getRetainedTaskStats();
+	assert.ok(
+		afterBatch.taskCount <= 3,
+		`expected <=3 tasks, got ${afterBatch.taskCount}`,
+	);
+	assert.ok(
+		afterBatch.retainedResultBytes <= 2_500,
+		`expected <=2500 retained bytes, got ${afterBatch.retainedResultBytes}`,
+	);
+
+	// 3. Advancing past TTL evicts all expired terminal tasks on next access.
+	clock += 6_000;
+	await assert.rejects(
+		provider.poll({
+			documentId: "continuous-doc-5",
+			providerTaskId: "non-existent",
+		}),
+		(error: unknown) =>
+			error instanceof LiteParseProviderError &&
+			error.code === "provider_task_not_found",
+	);
+	assert.equal(provider.getRetainedTaskStats().taskCount, 0);
+});
+
 test("LiteParse duplicate submit is idempotent and conflicting reuse fails", async () => {
 	let executions = 0;
 	const executor = fakeExecutor(

@@ -6,6 +6,7 @@ import { QdrantOperationError } from "@/core/retrieval/qdrant/store";
 
 import { logger, withActiveHttpSpan } from "@/lib/observability";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
+import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
 	observeWebRequest,
 	type WebMetricOutcome,
@@ -34,6 +35,7 @@ export async function handleNativeRetrievalRequest(input: {
 	identity: AuthIdentity;
 	requestId?: string;
 	dependencies?: NativeRetrievalDependencies;
+	refreshIdentity?: () => Promise<AuthIdentity | null>;
 	observeMetrics?: boolean;
 }): Promise<Response | null> {
 	if (!isNativeRetrievalPath(input.path)) return null;
@@ -58,6 +60,7 @@ async function handleNativeRetrievalRequestInSpan(input: {
 	identity: AuthIdentity;
 	requestId?: string;
 	dependencies?: NativeRetrievalDependencies;
+	refreshIdentity?: () => Promise<AuthIdentity | null>;
 	observeMetrics?: boolean;
 }): Promise<Response | null> {
 	const startedAt = performance.now();
@@ -95,6 +98,11 @@ async function handleNativeRetrievalRequestInSpan(input: {
 			requestId,
 			signal: input.request.signal,
 			dependencies: input.dependencies,
+			refreshIdentity:
+				input.refreshIdentity ??
+				(input.dependencies
+					? undefined
+					: () => resolveRequestSession(input.request)),
 		});
 		observe(result.citations.length === 0 ? "empty" : "success");
 		return Response.json(result, { headers });

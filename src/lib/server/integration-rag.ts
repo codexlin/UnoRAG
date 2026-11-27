@@ -516,6 +516,20 @@ export async function forwardIntegrationRag(input: {
 						payload,
 						requestId: input.requestId,
 						signal: AbortSignal.any([input.request.signal, timeoutSignal]),
+						refreshIdentity: async () => {
+							const current = await requireIntegrationServiceKey(
+								input.request,
+								"retrieve",
+							);
+							if (
+								!current.ok ||
+								current.key.id !== input.key.id ||
+								!serviceKeyAllowsLibrary(current.key, libraryId)
+							) {
+								return null;
+							}
+							return serviceKeyToIdentity(current.key);
+						},
 					}),
 			);
 		} catch (error) {
