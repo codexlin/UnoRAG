@@ -20,6 +20,7 @@ import {
 	HttpParserProvider,
 	type HttpParserProviderOptions,
 	isRecord,
+	normalizeExternalParserErrorCode,
 	ParserProviderHttpError,
 	retryAfterMilliseconds,
 } from "./http-parser-provider";
@@ -203,7 +204,7 @@ export class MinerUProvider
 
 	async poll(task: ProviderTask): Promise<ParseProgress> {
 		if (this.transport === "file-parse") {
-			this.pruneSyncResults();
+			this.pruneSyncResults(task.providerTaskId);
 			const cached = this.syncResults.get(task.providerTaskId);
 			const available = Boolean(
 				cached && cached.documentId === task.documentId,
@@ -232,8 +233,9 @@ export class MinerUProvider
 				status === "pending" || status === "running" ? retryAfterMs : undefined,
 			errorCode:
 				status === "failed"
-					? textValue(payload.error_code ?? payload.errorCode) ||
-						"provider_failed"
+					? normalizeExternalParserErrorCode(
+							payload.error_code ?? payload.errorCode,
+						)
 					: undefined,
 		};
 	}
@@ -241,7 +243,7 @@ export class MinerUProvider
 	async fetchResult(task: ProviderTask): Promise<ParseResult> {
 		let payload: Record<string, unknown>;
 		if (this.transport === "file-parse") {
-			this.pruneSyncResults();
+			this.pruneSyncResults(task.providerTaskId);
 			const cached = this.syncResults.get(task.providerTaskId);
 			if (!cached || cached.documentId !== task.documentId) {
 				throw new ParserProviderHttpError({
@@ -279,19 +281,18 @@ export class MinerUProvider
 		);
 	}
 
-	private pruneSyncResults(excludeTaskId?: string): void {
+	private pruneSyncResults(protectTaskId?: string): void {
 		const now = this.now();
 		let totalBytes = 0;
 		for (const [key, entry] of this.syncResults) {
-			if (
-				key !== excludeTaskId &&
-				now - entry.storedAtMs >= this.syncResultRetentionMs
-			) {
+			if (now - entry.storedAtMs >= this.syncResultRetentionMs) {
 				this.syncResults.delete(key);
 				continue;
 			}
 			totalBytes += entry.estimatedBytes;
 		}
+		// Never self-evict a single buffered response awaiting its first fetchResult
+		// solely because one large document exceeds the aggregate byte budget.
 		for (const [key, entry] of this.syncResults) {
 			if (
 				this.syncResults.size <= this.maxSyncResults &&
@@ -299,7 +300,7 @@ export class MinerUProvider
 			) {
 				break;
 			}
-			if (key === excludeTaskId) continue;
+			if (key === protectTaskId || this.syncResults.size <= 1) continue;
 			this.syncResults.delete(key);
 			totalBytes -= entry.estimatedBytes;
 		}

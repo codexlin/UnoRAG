@@ -392,6 +392,85 @@ test("MinerU synchronous file-parse bounds retained payloads by count, bytes, an
 	assert.equal(provider.getSyncResultStats().entryCount, 0);
 });
 
+test("MinerU synchronous file-parse delivers a single result exceeding byte budget on first read without self-evicting", async () => {
+	const provider = new MinerUProvider({
+		baseUrl: "http://mineru.test",
+		transport: "file-parse",
+		maxSyncResultBytes: 64,
+		syncResultRetentionMs: 60_000,
+		fetch: async (request) =>
+			String(request) === input.sourceUri
+				? new Response(new Uint8Array([1]), { status: 200 })
+				: Response.json({
+						results: {
+							"sample.pdf": {
+								content_list: JSON.stringify([
+									{ type: "text", text: "M".repeat(2_000), page_idx: 0 },
+								]),
+							},
+						},
+					}),
+	});
+
+	const submission = await provider.submit(input, submitOptions);
+	const progress = await provider.poll({
+		documentId: input.documentId,
+		providerTaskId: submission.providerTaskId,
+	});
+	assert.equal(progress.status, "completed");
+
+	const result = await provider.fetchResult({
+		documentId: input.documentId,
+		providerTaskId: submission.providerTaskId,
+	});
+	assert.equal(result.document.nodes[0]?.text, "M".repeat(2_000));
+	assert.deepEqual(provider.getSyncResultStats(), {
+		entryCount: 0,
+		retainedBytes: 0,
+	});
+});
+
+test("MinerU poll maps arbitrary upstream error_code text to closed internal enum", async () => {
+	const responses = [
+		{ status: "FAILED", error_code: "CONFIDENTIAL EXCERPT: salary=999000" },
+		{ status: "FAILED", error_code: "ENCRYPTED_PDF" },
+		{ status: "FAILED", error_code: "task_timeout" },
+	];
+	let call = 0;
+	const provider = new MinerUProvider({
+		baseUrl: "http://mineru.test",
+		fetch: async () => Response.json(responses[call++]),
+	});
+
+	assert.equal(
+		(
+			await provider.poll({
+				documentId: input.documentId,
+				providerTaskId: "task-free-text",
+			})
+		).errorCode,
+		"provider_failed",
+	);
+	assert.equal(
+		(
+			await provider.poll({
+				documentId: input.documentId,
+				providerTaskId: "task-encrypted",
+			})
+		).errorCode,
+		"encrypted_document",
+	);
+	assert.equal(
+		(
+			await provider.poll({
+				documentId: input.documentId,
+				providerTaskId: "task-timeout",
+			})
+		).errorCode,
+		"provider_timeout",
+	);
+});
+
 test("MinerU cancellation uses the remote task endpoint", async () => {
 	let request: { url: string; method?: string } | undefined;
 	const provider = new MinerUProvider({

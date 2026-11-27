@@ -244,6 +244,94 @@ function headersToRecord(
 	return Object.fromEntries(new Headers(headers).entries());
 }
 
+export type ExternalParserErrorCode =
+	| "encrypted_document"
+	| "invalid_document"
+	| "unsupported_format"
+	| "ocr_required"
+	| "ocr_failed"
+	| "low_confidence_ocr"
+	| "empty_parse_result"
+	| "source_unreachable"
+	| "source_rejected"
+	| "provider_dependency_missing"
+	| "provider_timeout"
+	| "provider_rate_limited"
+	| "provider_unauthorized"
+	| "provider_request_rejected"
+	| "provider_service_error"
+	| "provider_cancelled"
+	| "provider_result_missing"
+	| "provider_invalid_response"
+	| "provider_parse_failed"
+	| "provider_failed";
+
+const EXTERNAL_PARSER_ERROR_CODE_MAP: ReadonlyMap<
+	string,
+	ExternalParserErrorCode
+> = new Map([
+	["encrypted_document", "encrypted_document"],
+	["password_protected", "encrypted_document"],
+	["encrypted_pdf", "encrypted_document"],
+	["invalid_document", "invalid_document"],
+	["invalid_pdf", "invalid_document"],
+	["corrupt_pdf", "invalid_document"],
+	["malformed_pdf", "invalid_document"],
+	["corrupted_file", "invalid_document"],
+	["unsupported_format", "unsupported_format"],
+	["unsupported_file_type", "unsupported_format"],
+	["unsupported_media_type", "unsupported_format"],
+	["ocr_required", "ocr_required"],
+	["ocr_failed", "ocr_failed"],
+	["low_confidence_ocr", "low_confidence_ocr"],
+	["empty_parse_result", "empty_parse_result"],
+	["empty_document", "empty_parse_result"],
+	["source_unreachable", "source_unreachable"],
+	["source_rejected", "source_rejected"],
+	["provider_dependency_missing", "provider_dependency_missing"],
+	["provider_timeout", "provider_timeout"],
+	["timeout", "provider_timeout"],
+	["timed_out", "provider_timeout"],
+	["task_timeout", "provider_timeout"],
+	["provider_rate_limited", "provider_rate_limited"],
+	["rate_limited", "provider_rate_limited"],
+	["rate_limit_exceeded", "provider_rate_limited"],
+	["too_many_requests", "provider_rate_limited"],
+	["provider_unauthorized", "provider_unauthorized"],
+	["unauthorized", "provider_unauthorized"],
+	["invalid_api_key", "provider_unauthorized"],
+	["authentication_failed", "provider_unauthorized"],
+	["provider_request_rejected", "provider_request_rejected"],
+	["provider_service_error", "provider_service_error"],
+	["service_unavailable", "provider_service_error"],
+	["internal_error", "provider_service_error"],
+	["upstream_error", "provider_service_error"],
+	["provider_cancelled", "provider_cancelled"],
+	["cancelled", "provider_cancelled"],
+	["canceled", "provider_cancelled"],
+	["provider_result_missing", "provider_result_missing"],
+	["result_missing", "provider_result_missing"],
+	["result_expired", "provider_result_missing"],
+	["provider_invalid_response", "provider_invalid_response"],
+	["invalid_response", "provider_invalid_response"],
+	["provider_parse_failed", "provider_parse_failed"],
+	["provider_failed", "provider_failed"],
+]);
+
+/**
+ * Maps any external/provider-reported error code strictly to a closed internal
+ * enum so free-text upstream payloads can never enter persisted job/version
+ * error_code columns.
+ */
+export function normalizeExternalParserErrorCode(
+	raw: unknown,
+): ExternalParserErrorCode {
+	if (typeof raw !== "string") return "provider_failed";
+	const normalized = raw.trim().toLowerCase();
+	if (!normalized) return "provider_failed";
+	return EXTERNAL_PARSER_ERROR_CODE_MAP.get(normalized) ?? "provider_failed";
+}
+
 function safeNetworkReason(error: unknown): string {
 	if (error && typeof error === "object") {
 		const cause = (error as { cause?: { code?: unknown } }).cause;

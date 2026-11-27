@@ -8,7 +8,10 @@ import type {
 	ProviderTask,
 } from "../contracts";
 import { type DocumentIR, DocumentIRSchema } from "../document-ir";
-import type { DurableParserProvider } from "./http-parser-provider";
+import {
+	type DurableParserProvider,
+	normalizeExternalParserErrorCode,
+} from "./http-parser-provider";
 import type { ParserTiming } from "./parser-diagnostics";
 import { ParserRouter } from "./parser-router";
 
@@ -248,7 +251,7 @@ async function executeProvider(
 			status = progress.status;
 			if (status === "failed") {
 				throw parserError(
-					progress.errorCode || "provider_failed",
+					normalizeExternalParserErrorCode(progress.errorCode),
 					`${provider.name} parser task failed`,
 					false,
 				);

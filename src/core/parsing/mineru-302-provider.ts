@@ -17,6 +17,7 @@ import {
 	HttpParserProvider,
 	type HttpParserProviderOptions,
 	isRecord,
+	normalizeExternalParserErrorCode,
 	ParserProviderHttpError,
 	retryAfterMilliseconds,
 } from "./http-parser-provider";
@@ -168,8 +169,9 @@ export class MinerU302Provider
 					: undefined,
 			errorCode:
 				status === "failed"
-					? textAt(deepRecord(payload), ["error_code", "err_code", "code"]) ||
-						"provider_failed"
+					? normalizeExternalParserErrorCode(
+							textAt(deepRecord(payload), ["error_code", "err_code", "code"]),
+						)
 					: undefined,
 		};
 	}

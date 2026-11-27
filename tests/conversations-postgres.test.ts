@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
@@ -253,8 +253,8 @@ test("scoped repository supports server-side search, library filter, wildcard es
 		query: "Quarterly",
 		limit: 2,
 		cursor: {
-			updatedAt: last1.updatedAt,
-			createdAt: last1.createdAt,
+			updatedAt: last1.cursorUpdatedAt,
+			createdAt: last1.cursorCreatedAt,
 			id: last1.id,
 		},
 	});
@@ -269,10 +269,78 @@ test("scoped repository supports server-side search, library filter, wildcard es
 		query: "Quarterly",
 		limit: 2,
 		cursor: {
-			updatedAt: last2.updatedAt,
-			createdAt: last2.createdAt,
+			updatedAt: last2.cursorUpdatedAt,
+			createdAt: last2.cursorCreatedAt,
 			id: last2.id,
 		},
 	});
 	assert.deepEqual(page3, []);
+
+	// Same-millisecond, distinct-microsecond threads must never be skipped by cursor pagination.
+	const usNewer = await repository.createThread(scopeA, {
+		ragLibraryId: "rag-conversation-a",
+		title: "Microsecond pair newer",
+	});
+	const usOlder = await repository.createThread(scopeA, {
+		ragLibraryId: "rag-conversation-a",
+		title: "Microsecond pair older",
+	});
+	await db.execute(
+		sql`UPDATE app.threads SET updated_at = '2026-06-05T00:00:00.123456Z'::timestamptz, created_at = '2026-06-05T00:00:00.123456Z'::timestamptz WHERE id = ${usNewer.id}::uuid`,
+	);
+	await db.execute(
+		sql`UPDATE app.threads SET updated_at = '2026-06-05T00:00:00.123100Z'::timestamptz, created_at = '2026-06-05T00:00:00.123100Z'::timestamptz WHERE id = ${usOlder.id}::uuid`,
+	);
+	const usPage1 = await repository.listThreads(scopeA, {
+		query: "Microsecond pair",
+		limit: 2,
+	});
+	assert.equal(usPage1.length, 2);
+	assert.equal(usPage1[0]?.id, usNewer.id);
+	assert.equal(usPage1[0]?.cursorUpdatedAt, "2026-06-05T00:00:00.123456Z");
+	const usPage2 = await repository.listThreads(scopeA, {
+		query: "Microsecond pair",
+		limit: 1,
+		cursor: {
+			updatedAt: usPage1[0].cursorUpdatedAt,
+			createdAt: usPage1[0].cursorCreatedAt,
+			id: usPage1[0].id,
+		},
+	});
+	assert.deepEqual(
+		usPage2.map((row) => row.id),
+		[usOlder.id],
+	);
+
+	// Internal lookahead limit=201 returns 201 rows when 201 matching records exist.
+	const bulkRows = Array.from({ length: 201 }, (_, idx) => ({
+		organizationId: scopeA.organizationId,
+		workspaceId: scopeA.workspaceId,
+		principalId: scopeA.principalId,
+		ragLibraryId: "rag-conversation-a",
+		title: `Bulk201 item ${String(idx).padStart(3, "0")}`,
+	}));
+	await db.insert(schema.conversationThreads).values(bulkRows);
+	const bulkCount = await repository.countThreads(scopeA, { query: "Bulk201" });
+	assert.equal(bulkCount, 201);
+	const bulkLookahead = await repository.listThreads(scopeA, {
+		query: "Bulk201",
+		limit: 201,
+	});
+	assert.equal(bulkLookahead.length, 201);
+	const row200 = bulkLookahead[199];
+	assert.ok(row200);
+	const bulkTail = await repository.listThreads(scopeA, {
+		query: "Bulk201",
+		limit: 201,
+		cursor: {
+			updatedAt: row200.cursorUpdatedAt,
+			createdAt: row200.cursorCreatedAt,
+			id: row200.id,
+		},
+	});
+	assert.deepEqual(
+		bulkTail.map((row) => row.id),
+		[bulkLookahead[200]?.id],
+	);
 });
