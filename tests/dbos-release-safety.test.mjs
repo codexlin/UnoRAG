@@ -315,15 +315,15 @@ test("all release image families install current Debian runtime security updates
 	const dockerfile = await source("deploy/docker/web.Dockerfile");
 	assert.match(
 		dockerfile,
-		/FROM node:22-bookworm-slim AS runtime-deps[\s\S]*?apt-get install -y --no-install-recommends libpcre2-8-0[\s\S]*?FROM node:22-bookworm-slim AS builder/,
+		/FROM node:22-bookworm-slim AS runtime-deps[\s\S]*?DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends[\s\S]*?apt-get install -y --no-install-recommends libpcre2-8-0[\s\S]*?FROM node:22-bookworm-slim AS builder/,
 	);
 	assert.match(
 		dockerfile,
-		/FROM node:22-bookworm-slim AS migrator[\s\S]*?apt-get install -y --no-install-recommends postgresql-client libpcre2-8-0[\s\S]*?FROM runtime-deps AS ops/,
+		/FROM node:22-bookworm-slim AS migrator[\s\S]*?DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends[\s\S]*?apt-get install -y --no-install-recommends postgresql-client libpcre2-8-0[\s\S]*?FROM runtime-deps AS ops/,
 	);
 	assert.match(
 		dockerfile,
-		/FROM node:22-bookworm-slim AS runner[\s\S]*?apt-get install -y --no-install-recommends curl libpcre2-8-0/,
+		/FROM node:22-bookworm-slim AS runner[\s\S]*?DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends[\s\S]*?apt-get install -y --no-install-recommends curl libpcre2-8-0/,
 	);
 });
 

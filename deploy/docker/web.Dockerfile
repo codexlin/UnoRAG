@@ -45,9 +45,11 @@ WORKDIR /repo
 ENV UNORAG_VERSION=${UNORAG_VERSION} \
 	UNORAG_REVISION=${UNORAG_REVISION} \
 	UNORAG_BUILD_TIME=${UNORAG_BUILD_TIME}
-# Bootstrap patched APT without the retries affected by CVE-2026-109518.
+# Bootstrap patched APT without the retries affected by CVE-2026-109518, then
+# apply current Debian security updates (including linux-pam CVE-2025-6020).
 RUN apt-get update \
 	&& apt-get -o Acquire::Retries=0 install -y --only-upgrade apt libapt-pkg6.0 \
+	&& DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
 	&& apt-get install -y --no-install-recommends libpcre2-8-0 \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& useradd --system --uid 10001 --create-home unorag \
@@ -93,6 +95,7 @@ ENV UNORAG_VERSION=${UNORAG_VERSION} \
 # Keep NODE_ENV unset during install so tooling resolves cleanly; set at runtime via compose if needed.
 RUN apt-get update \
 	&& apt-get -o Acquire::Retries=0 install -y --only-upgrade apt libapt-pkg6.0 \
+	&& DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
 	&& apt-get install -y --no-install-recommends postgresql-client libpcre2-8-0 \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& useradd --system --uid 10001 --create-home unorag \
@@ -157,6 +160,7 @@ ENV NODE_ENV=production \
 
 RUN apt-get update \
 	&& apt-get -o Acquire::Retries=0 install -y --only-upgrade apt libapt-pkg6.0 \
+	&& DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
 	&& apt-get install -y --no-install-recommends curl libpcre2-8-0 \
 	&& rm -rf /var/lib/apt/lists/* \
 		/usr/local/lib/node_modules/npm \
