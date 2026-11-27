@@ -5,6 +5,13 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-11-27
+
+- **Fix Conversation Archive unlinked and historical-library filtering through the browser RAG proxy**:
+  - Skip active-library `findAuthorizedLibrary` precheck exclusively on `GET`/`HEAD /api/rag/v1/threads` in `src/lib/server/rag-proxy.ts` (via `requiresAuthorizedLibraryPrecheck` in `src/lib/server/rag-permissions.mjs`), allowing `library_id=__unlinked__`, `library_id=all`, and archived threads belonging to deleted libraries to reach `handleNativeConversationRequest` (where queries remain strictly scoped to the caller's organization, workspace, and principal) while keeping `POST /v1/threads`, `/v1/retrieve`, `/v1/ask`, and document download routes fail-closed (`404`).
+  - Add unit coverage in `tests/rag-permissions.test.mjs` and real PostgreSQL `proxyRagRequest` integration coverage in `tests/ts-core/ask-authorization-postgres.test.ts`.
+- **Upgrade note**: Upgrading from `v0.4.12` (or `v0.4.10`) requires no database migration, configuration change, or document reindex.
+
 ## [0.4.12] - 2026-11-27
 
 Promotes all `v0.4.11` hardening, streaming COS restore, and server-side pagination/search changes below alongside base-image Debian Bookworm security updates across all four release images.

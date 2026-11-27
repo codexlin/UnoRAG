@@ -10,7 +10,7 @@ UnoRAG 是 Apache-2.0 开源、TypeScript-only 的企业级高可信私有知识
 不是对任意客户环境的 production-ready 或安全认证。默认一位客户一套独立实例，
 Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 
-- **最新发布版本**：[v0.4.12](https://github.com/codexlin/UnoRAG/releases/tag/v0.4.12)（各 `v0.4.x` 演进与 CI/开发机回归见下方逐版记录；参考实例部署状态以审批发布记录为准）。
+- **最新发布版本**：[v0.4.13](https://github.com/codexlin/UnoRAG/releases/tag/v0.4.13)（各 `v0.4.x` 演进与 CI/开发机回归见下方逐版记录；参考实例部署状态以审批发布记录为准）。
 - **最近完成全套签名镜像验收基线**：[v0.3.5](https://github.com/codexlin/UnoRAG/releases/tag/v0.3.5)（[v0.3.5 发布验收](./evidence/2026-11-20-v0.3.5-release.md)，三轮质量 **126/126**、多轮 **9/9**、浏览器 **300/300**，签名镜像完成新装、回滚和恢复验证；这不是实时巡检结果，且 `v0.4.x` 尚未替换该全套验收报告）。
 部署保留既有生效文档版本，并已逐步补充 Qdrant 服务端混合检索、统一自动精排、Owner 在线模型管理、极薄双语路由、选择性冲突核验及 COS 对象字节级容灾备份。
 后续源码或文档提交不会自动改变已部署版本。邮件策略仍在应用内配置，传输凭据只在服务器私有配置。
@@ -109,6 +109,10 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 - **COS 对象字节级备份与 SHA-256 校验恢复（#346）**：新增 `scripts/cos-object-backup.mjs` 并打入 `ops` 镜像及 Compose `profiles: ["ops"]`（`cos-object-backup` 服务）；`backup.sh --include-cos-objects`（或 `UNORAG_BACKUP_COS_OBJECTS=true`）按 PostgreSQL `app.document_versions` 与 `app.document_figure_assets` 引用拉取全部 COS 原文与图表裁剪字节、生成 `documents.cos.tgz` 与每对象 `COS_OBJECTS.sha256` 并纳入 `MANIFEST.txt` / `CHECKSUMS.sha256`（默认保持升级维护窗短小）；`restore.sh` 自动先做全量 SHA-256 预检（篡改或缺失 archive 直接 fail-closed 不写入），通过后以 `ACL=private` 写回 COS 并校验远端 `Content-Length`。
 - **离线评测彻底移除 `diskcache` 并关闭 `#202`（#346）**：通过 `scripts/evaluation/pyproject.toml` 的 `[tool.uv].exclude-dependencies = ["diskcache"]` 将传递依赖 `diskcache v5.6.3`（CVE-2025-69872）彻底移出 `scripts/evaluation/uv.lock`，并在 `ragas_offline.py` 导入前注入 fail-closed 桩模块；`ci/offline-evaluation` 16/16 单测 26 秒全绿，Issue `#202` 已正式关闭。
 - **验证结果（未替代 `linux/amd64` 独立候选环境的签名镜像全量发布验收）**：PR #346 CI 6/6 全绿（含 `ci/web`、`ci/docker-build`、`ci/offline-evaluation`、`ci/secrets`），新增 `tests/cos-object-backup.test.mjs`（5/5 PASS）与 `tests/deploy-automation.test.mjs`（6/6 PASS）；同步在真实 DashScope 实测 `JUDGE_MODEL=qwen-flash` 冲突控制套件仅 21/26 FAIL（漏判 `explicit-precedence` / `explicit-clause`），确认保持 `qwen-plus` 默认 Judge 守住 26/26 冲突红线。
+
+### `v0.4.13` 归档未关联文库与历史删库筛选代理修复
+
+- **修复 `/api/rag/v1/threads` 代理层误拦 `library_id=__unlinked__` / `all` / 历史已删文库筛选**：在 `src/lib/server/rag-permissions.mjs` 新增 `requiresAuthorizedLibraryPrecheck` 并在 `src/lib/server/rag-proxy.ts` 仅对 `GET`/`HEAD /v1/threads` 跳过活跃文库预检（`ConversationRepository` 仍严格按 `organization_id + workspace_id + owner_principal_id` 隔离），同时保持 `POST /v1/threads`、`/v1/retrieve`、`/v1/ask` 与文档下载的 fail-closed `404` 校验，并补齐单测与真实 PostgreSQL `proxyRagRequest` 集成测试。
 
 ### `v0.4.12` 撤权一致性、解析器内存/脱敏加固、服务端分页与基础镜像安全补丁（`#348`, `#349`, `#350`）
 

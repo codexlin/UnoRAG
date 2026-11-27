@@ -45,6 +45,9 @@ const modules = Promise.all([
 	import("../../src/lib/server/service-keys"),
 	import("../../src/server/http/ask/native-handler"),
 	import("../../src/app/api/v1/ask/route"),
+	import("../../src/lib/server/rag-proxy"),
+	import("../../src/lib/server/auth/session"),
+	import("../../src/lib/server/auth/session-token"),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolveFilename;
 });
@@ -1005,5 +1008,150 @@ test("public Ask refresh reauthenticates the original bearer against current Pos
 	} finally {
 		if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
 		else process.env.DATABASE_URL = previousDatabaseUrl;
+	}
+});
+
+test("real PostgreSQL browser RAG proxy allows unlinked, all, and deleted-library thread filters while keeping writes fail-closed", {
+	skip: databaseUrl ? false : "INTEGRATION_DATABASE_URL is required",
+}, async () => {
+	const [, , , , , , , , ragProxy, session, sessionToken] = await modules;
+	const previousDatabaseUrl = process.env.DATABASE_URL;
+	const previousSessionSecret = process.env.UNORAG_SESSION_SECRET;
+	process.env.DATABASE_URL = databaseUrl;
+	process.env.UNORAG_SESSION_SECRET ||=
+		"ask-authorization-test-session-secret-0000000000";
+	try {
+		await withFixture(async (fixture) => {
+			try {
+				const token = await session.issueSessionToken(fixture.identity);
+				const authHeaders = {
+					cookie: `${sessionToken.SESSION_COOKIE}=${token}`,
+					origin: "https://unorag.test",
+					"sec-fetch-site": "same-origin",
+				};
+				const deletedLibraryId = `deleted-${randomUUID().slice(0, 8)}`;
+
+				const linked = await fixture.repository.createThread(fixture.scope, {
+					ragLibraryId: fixture.libraryId,
+					title: "Proxy linked thread",
+				});
+				const unlinked = await fixture.repository.createThread(fixture.scope, {
+					title: "Proxy unlinked thread",
+				});
+				const historicalDeleted = await fixture.repository.createThread(
+					fixture.scope,
+					{
+						ragLibraryId: deletedLibraryId,
+						title: "Proxy deleted library thread",
+					},
+				);
+
+				const unlinkedRes = await ragProxy.proxyRagRequest(
+					new Request(
+						"https://unorag.test/api/rag/v1/threads?paginated=1&limit=10&library_id=__unlinked__",
+						{ method: "GET", headers: authHeaders },
+					),
+					["v1", "threads"],
+				);
+				assert.equal(unlinkedRes.status, 200);
+				const unlinkedPayload = (await unlinkedRes.json()) as {
+					items: Array<{ id: string }>;
+					total: number;
+				};
+				assert.equal(unlinkedPayload.total, 1);
+				assert.deepEqual(
+					unlinkedPayload.items.map((item) => item.id),
+					[unlinked.id],
+				);
+
+				const allRes = await ragProxy.proxyRagRequest(
+					new Request(
+						"https://unorag.test/api/rag/v1/threads?paginated=1&limit=10&library_id=all",
+						{ method: "GET", headers: authHeaders },
+					),
+					["v1", "threads"],
+				);
+				assert.equal(allRes.status, 200);
+				const allPayload = (await allRes.json()) as {
+					items: Array<{ id: string }>;
+					total: number;
+				};
+				assert.equal(allPayload.total, 3);
+				assert.deepEqual(
+					new Set(allPayload.items.map((item) => item.id)),
+					new Set([linked.id, unlinked.id, historicalDeleted.id]),
+				);
+
+				const deletedRes = await ragProxy.proxyRagRequest(
+					new Request(
+						`https://unorag.test/api/rag/v1/threads?paginated=1&limit=10&library_id=${encodeURIComponent(deletedLibraryId)}`,
+						{ method: "GET", headers: authHeaders },
+					),
+					["v1", "threads"],
+				);
+				assert.equal(deletedRes.status, 200);
+				const deletedPayload = (await deletedRes.json()) as {
+					items: Array<{ id: string }>;
+					total: number;
+				};
+				assert.equal(deletedPayload.total, 1);
+				assert.deepEqual(
+					deletedPayload.items.map((item) => item.id),
+					[historicalDeleted.id],
+				);
+
+				const foreignRes = await ragProxy.proxyRagRequest(
+					new Request(
+						"https://unorag.test/api/rag/v1/threads?paginated=1&limit=10&library_id=foreign-nonexistent-lib",
+						{ method: "GET", headers: authHeaders },
+					),
+					["v1", "threads"],
+				);
+				assert.equal(foreignRes.status, 200);
+				const foreignPayload = (await foreignRes.json()) as {
+					items: Array<{ id: string }>;
+					total: number;
+				};
+				assert.equal(foreignPayload.total, 0);
+				assert.deepEqual(foreignPayload.items, []);
+
+				const postSentinelRes = await ragProxy.proxyRagRequest(
+					new Request("https://unorag.test/api/rag/v1/threads", {
+						method: "POST",
+						headers: { ...authHeaders, "content-type": "application/json" },
+						body: JSON.stringify({
+							title: "Must reject sentinel library_id on POST",
+							library_id: "__unlinked__",
+							turns: [{ question: "Q", answer: "A", citations: [] }],
+						}),
+					}),
+					["v1", "threads"],
+				);
+				assert.equal(postSentinelRes.status, 404);
+
+				const retrieveSentinelRes = await ragProxy.proxyRagRequest(
+					new Request("https://unorag.test/api/rag/v1/retrieve", {
+						method: "POST",
+						headers: { ...authHeaders, "content-type": "application/json" },
+						body: JSON.stringify({
+							query: "test",
+							library_id: "__unlinked__",
+						}),
+					}),
+					["v1", "retrieve"],
+				);
+				assert.equal(retrieveSentinelRes.status, 404);
+			} finally {
+				await closeGlobalDatabasePool();
+			}
+		});
+	} finally {
+		if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+		else process.env.DATABASE_URL = previousDatabaseUrl;
+		if (previousSessionSecret === undefined) {
+			delete process.env.UNORAG_SESSION_SECRET;
+		} else {
+			process.env.UNORAG_SESSION_SECRET = previousSessionSecret;
+		}
 	}
 });
