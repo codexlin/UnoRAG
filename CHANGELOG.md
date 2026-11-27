@@ -5,6 +5,20 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-11-27
+
+- **Retrieve post-revocation authorization, parser error sanitization & bounded memory (#348, #350)**:
+  - Bind deterministic `aclRevision` (SHA-256 over active `generationId:aclFingerprint` pairs) in `DrizzleActiveGenerationResolver` -> `AuthorizedScope` -> `buildScopedRetrievalCacheKey`, invalidating cached Retrieve entries immediately after in-place ACL projection on an unchanged generation.
+  - Enforce final delivery identity, library, and batched active-version citation re-authorization (`DrizzleHistoricalCitationAuthorizer(..., versionPolicy: "active")`) in `executeNativeRetrieval` across both workspace session retrieval (`handleNativeRetrievalRequest`) and Knowledge API v1 service-key retrieval (`forwardIntegrationRag`).
+  - Strip upstream HTTP response bodies from `ParserProviderHttpError.message` (retaining only HTTP status, method, code, and regex-allowlisted request IDs), map external parser failure `error_code` values strictly to a closed internal enum across `MinerUProvider`, `MinerU302Provider`, and `DocumentParser`, and fix the double-escaped regex in `src/worker/errors.ts` with slug validation for persisted error codes.
+  - Bound in-memory retention in `LiteParseProvider` and synchronous `MinerUProvider` (`file-parse`) with post-`fetchResult` immediate payload release plus TTL, entry-count, and byte budgets while protecting a single large completed result awaiting its first delivery from self-eviction and keeping DBOS retry compatibility.
+- **Streaming COS archive restore (#348)**:
+  - Refactor `restoreCosObjects()` in `scripts/cos-object-backup.mjs` so Phase 1 stream-verifies every archive file's SHA-256 without buffering the archive in RAM, and Phase 2 streams objects via `createReadStream` with bounded concurrency.
+- **Server-side pagination & search for Conversation Archive and Document Ledger (#349, #350)**:
+  - Extend `ConversationRepository.listThreads` / `countThreads` and `GET /api/rag/v1/threads` with wildcard-escaped server-side title search (`q`), library/unlinked (`__unlinked__`) filtering, PostgreSQL microsecond-preserving `(updated_at, created_at, id)` keyset cursor pagination, and `limit + 1` lookahead up to 201 rows; update `ArchivePanel` with debounced server search and **Load older conversations** beyond the initial 40 threads.
+  - Extend `GET /api/libraries/[libraryId]/documents` with `paginated=1`, NFKC trigram-indexed `q` search, `task=all|processing|failed`, `status`, `include_report=0|1`, and single-pass ACL-scoped summary counts, omitting JSONB `parser_report` / `jobs.payload` from lightweight list projections; add ACL-enforced `GET /api/libraries/[libraryId]/documents/[documentId]` loaded on demand by `DocumentDetailSheet`, and switch Ask sample questions (`limit=12`) and `IngestJobsProvider` polling (`limit=50`) to lightweight queries.
+- **Upgrade note**: Upgrading from `v0.4.10` requires no database migration, configuration change, or document reindex.
+
 ## [0.4.10] - 2026-11-26
 
 - **Verified Tencent COS object-byte backup & disaster recovery (#346)**:

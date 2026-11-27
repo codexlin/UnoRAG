@@ -1,6 +1,6 @@
 # UnoRAG 当前状态
 
-> 更新日期：2026-11-26。本文只维护当前成熟度、已知限制和下一步；架构细节见 [ARCHITECTURE](./ARCHITECTURE.md)，逐版结果见 [验收索引](./evidence/README.md)。
+> 更新日期：2026-11-27。本文只维护当前成熟度、已知限制和下一步；架构细节见 [ARCHITECTURE](./ARCHITECTURE.md)，逐版结果见 [验收索引](./evidence/README.md)。
 
 ## 当前结论
 
@@ -10,7 +10,7 @@ UnoRAG 是 Apache-2.0 开源、TypeScript-only 的企业级高可信私有知识
 不是对任意客户环境的 production-ready 或安全认证。默认一位客户一套独立实例，
 Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 
-- **最新发布版本**：[v0.4.10](https://github.com/codexlin/UnoRAG/releases/tag/v0.4.10)（香港参考实例 `https://unorag.unobyte.dev` 已通过审批门禁与 Cosign v3 验签上线；各 `v0.4.x` 演进与开发机回归见下方逐版记录）。
+- **最新发布版本**：[v0.4.11](https://github.com/codexlin/UnoRAG/releases/tag/v0.4.11)（各 `v0.4.x` 演进与 CI/开发机回归见下方逐版记录；参考实例部署状态以审批发布记录为准）。
 - **最近完成全套签名镜像验收基线**：[v0.3.5](https://github.com/codexlin/UnoRAG/releases/tag/v0.3.5)（[v0.3.5 发布验收](./evidence/2026-11-20-v0.3.5-release.md)，三轮质量 **126/126**、多轮 **9/9**、浏览器 **300/300**，签名镜像完成新装、回滚和恢复验证；这不是实时巡检结果，且 `v0.4.x` 尚未替换该全套验收报告）。
 部署保留既有生效文档版本，并已逐步补充 Qdrant 服务端混合检索、统一自动精排、Owner 在线模型管理、极薄双语路由、选择性冲突核验及 COS 对象字节级容灾备份。
 后续源码或文档提交不会自动改变已部署版本。邮件策略仍在应用内配置，传输凭据只在服务器私有配置。
@@ -109,6 +109,14 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 - **COS 对象字节级备份与 SHA-256 校验恢复（#346）**：新增 `scripts/cos-object-backup.mjs` 并打入 `ops` 镜像及 Compose `profiles: ["ops"]`（`cos-object-backup` 服务）；`backup.sh --include-cos-objects`（或 `UNORAG_BACKUP_COS_OBJECTS=true`）按 PostgreSQL `app.document_versions` 与 `app.document_figure_assets` 引用拉取全部 COS 原文与图表裁剪字节、生成 `documents.cos.tgz` 与每对象 `COS_OBJECTS.sha256` 并纳入 `MANIFEST.txt` / `CHECKSUMS.sha256`（默认保持升级维护窗短小）；`restore.sh` 自动先做全量 SHA-256 预检（篡改或缺失 archive 直接 fail-closed 不写入），通过后以 `ACL=private` 写回 COS 并校验远端 `Content-Length`。
 - **离线评测彻底移除 `diskcache` 并关闭 `#202`（#346）**：通过 `scripts/evaluation/pyproject.toml` 的 `[tool.uv].exclude-dependencies = ["diskcache"]` 将传递依赖 `diskcache v5.6.3`（CVE-2025-69872）彻底移出 `scripts/evaluation/uv.lock`，并在 `ragas_offline.py` 导入前注入 fail-closed 桩模块；`ci/offline-evaluation` 16/16 单测 26 秒全绿，Issue `#202` 已正式关闭。
 - **验证结果（未替代 `linux/amd64` 独立候选环境的签名镜像全量发布验收）**：PR #346 CI 6/6 全绿（含 `ci/web`、`ci/docker-build`、`ci/offline-evaluation`、`ci/secrets`），新增 `tests/cos-object-backup.test.mjs`（5/5 PASS）与 `tests/deploy-automation.test.mjs`（6/6 PASS）；同步在真实 DashScope 实测 `JUDGE_MODEL=qwen-flash` 冲突控制套件仅 21/26 FAIL（漏判 `explicit-precedence` / `explicit-clause`），确认保持 `qwen-plus` 默认 Judge 守住 26/26 冲突红线。
+
+### `v0.4.11` 撤权一致性、解析器内存/脱敏加固与服务端分页（`#348`, `#349`, `#350`）
+
+- **Retrieve 撤权后缓存与交付复核（#348）**：`DrizzleActiveGenerationResolver` 将生效文档 `generationId:aclFingerprint` 摘要作为 `aclRevision` 绑定进 `ScopedRetrievalCache` 键，原地 ACL 投影后旧缓存立即失效；`executeNativeRetrieval` 交付前补齐身份、文库及批量活跃版本引用复核（覆盖工作台与公网 Knowledge API v1）。
+- **解析异常脱敏与 PDF 持续入库内存上限（#348, #350）**：移除 `HttpParserProvider` 对上游错误正文的拼接、修复 `src/worker/errors.ts` 脱敏正则并对外部解析 `error_code` 实施封闭内部枚举映射；`LiteParseProvider` 与同步 `MinerUProvider` 读后立即释放正文载荷并施加 TTL/条数/字节上限，同时区分“等待首次交付”与“已交付可回收”，避免单份大文档在首读前自淘汰。
+- **COS 流式预检与流式恢复（#348）**：`scripts/cos-object-backup.mjs` 改为第一遍流式计算全量 SHA-256（零内存缓冲归档），第二遍按限并发 `createReadStream` 逐对象写回 COS。
+- **归档与文档台账服务端分页/搜索及按需详情（#349, #350）**：会话归档升级为通配符转义服务端标题搜索、筛库与保留 PostgreSQL 微秒精度的 keyset 游标分页（含 `limit=200` 的 `+1` 前瞻），突破最近 40 条限制；文档台账升级为复用 `documents_name_trgm_idx` 的服务端分页/搜索/任务筛选并跳过列表 JSONB `parser_report` 读取，详情抽屉按需拉取受 ACL 保护的单文档接口，Ask 示例与后台轮询改走轻量拉取。
+- **验证结果（未替代 `linux/amd64` 独立候选环境的签名镜像全量发布验收）**：PR #348、#349、#350 均通过全部 6 项 CI（含真实 PostgreSQL 17 集成测试 `conversations-postgres` 与 `document-acl-routes-postgres`、`ci/secrets`、`ci/docker-build`、`ci/offline-evaluation`）。
 
 下表描述当前源码能力；线上可用范围仍以具体 Release 和部署清单为准。
 
