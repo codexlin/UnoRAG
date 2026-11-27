@@ -1023,6 +1023,11 @@ test("real PostgreSQL browser RAG proxy allows unlinked, all, and deleted-librar
 	try {
 		await withFixture(async (fixture) => {
 			try {
+				await fixture.db.insert(schema.localCredentials).values({
+					userId: fixture.identity.principalId,
+					passwordHash: "scrypt$fixture$fixture",
+					mustChangePassword: false,
+				});
 				const token = await session.issueSessionToken(fixture.identity);
 				const authHeaders = {
 					cookie: `${sessionToken.SESSION_COOKIE}=${token}`,
@@ -1129,18 +1134,18 @@ test("real PostgreSQL browser RAG proxy allows unlinked, all, and deleted-librar
 				);
 				assert.equal(postSentinelRes.status, 404);
 
-				const retrieveSentinelRes = await ragProxy.proxyRagRequest(
-					new Request("https://unorag.test/api/rag/v1/retrieve", {
+				const askSentinelRes = await ragProxy.proxyRagRequest(
+					new Request("https://unorag.test/api/rag/v1/ask", {
 						method: "POST",
 						headers: { ...authHeaders, "content-type": "application/json" },
 						body: JSON.stringify({
-							query: "test",
+							question: "test",
 							library_id: "__unlinked__",
 						}),
 					}),
-					["v1", "retrieve"],
+					["v1", "ask"],
 				);
-				assert.equal(retrieveSentinelRes.status, 404);
+				assert.equal(askSentinelRes.status, 404);
 			} finally {
 				await closeGlobalDatabasePool();
 			}
