@@ -5,8 +5,12 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
-## [0.4.11] - 2026-11-27
+## [0.4.12] - 2026-11-27
 
+Promotes all `v0.4.11` hardening, streaming COS restore, and server-side pagination/search changes below alongside base-image Debian Bookworm security updates across all four release images.
+
+- **Release base-image OS security updates (`CVE-2025-6020`)**:
+  - Run `DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends` after bootstrapping patched APT in the `runtime-deps` (`ops`/`worker`), `migrator`, and `runner` (`web`) stages of `deploy/docker/web.Dockerfile`, upgrading `linux-pam` (`libpam0g`, `libpam-modules`, `libpam-modules-bin`, `libpam-runtime`) from `1.5.2-6+deb12u2` to `1.5.2-6+deb12u3` and applying current Debian Bookworm security updates.
 - **Retrieve post-revocation authorization, parser error sanitization & bounded memory (#348, #350)**:
   - Bind deterministic `aclRevision` (SHA-256 over active `generationId:aclFingerprint` pairs) in `DrizzleActiveGenerationResolver` -> `AuthorizedScope` -> `buildScopedRetrievalCacheKey`, invalidating cached Retrieve entries immediately after in-place ACL projection on an unchanged generation.
   - Enforce final delivery identity, library, and batched active-version citation re-authorization (`DrizzleHistoricalCitationAuthorizer(..., versionPolicy: "active")`) in `executeNativeRetrieval` across both workspace session retrieval (`handleNativeRetrievalRequest`) and Knowledge API v1 service-key retrieval (`forwardIntegrationRag`).
@@ -18,6 +22,10 @@ results remain in [`docs/evidence/`](./docs/evidence/).
   - Extend `ConversationRepository.listThreads` / `countThreads` and `GET /api/rag/v1/threads` with wildcard-escaped server-side title search (`q`), library/unlinked (`__unlinked__`) filtering, PostgreSQL microsecond-preserving `(updated_at, created_at, id)` keyset cursor pagination, and `limit + 1` lookahead up to 201 rows; update `ArchivePanel` with debounced server search and **Load older conversations** beyond the initial 40 threads.
   - Extend `GET /api/libraries/[libraryId]/documents` with `paginated=1`, NFKC trigram-indexed `q` search, `task=all|processing|failed`, `status`, `include_report=0|1`, and single-pass ACL-scoped summary counts, omitting JSONB `parser_report` / `jobs.payload` from lightweight list projections; add ACL-enforced `GET /api/libraries/[libraryId]/documents/[documentId]` loaded on demand by `DocumentDetailSheet`, and switch Ask sample questions (`limit=12`) and `IngestJobsProvider` polling (`limit=50`) to lightweight queries.
 - **Upgrade note**: Upgrading from `v0.4.10` requires no database migration, configuration change, or document reindex.
+
+## [0.4.11] - Not Released
+
+The `v0.4.11` tag failed the pre-push Trivy image scan (`CVE-2025-6020` in Debian Bookworm `linux-pam` `1.5.2-6+deb12u2`, fixed in `1.5.2-6+deb12u3`). No images were pushed to GHCR/ACR and no GitHub Release was published; the tag remains immutable and its application changes are promoted in `v0.4.12`.
 
 ## [0.4.10] - 2026-11-26
 
