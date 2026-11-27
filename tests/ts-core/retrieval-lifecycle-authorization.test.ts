@@ -36,4 +36,6 @@ test("active generation resolution excludes deleted libraries and documents", as
 		value,
 		/eq\(documents\.aclFingerprint, documents\.projectedAclFingerprint\)/,
 	);
+	assert.match(value, /aclFingerprint:\s*documents\.aclFingerprint/);
+	assert.match(value, /\baclRevision\b/);
 });

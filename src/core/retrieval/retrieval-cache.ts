@@ -63,6 +63,7 @@ export function buildScopedRetrievalCacheKey(
 				? null
 				: [...input.scope.documentIds].sort(),
 		activeGenerationIds: [...input.scope.activeGenerationIds].sort(),
+		aclRevision: input.scope.aclRevision ?? null,
 		query: input.query.trim(),
 		topK: input.topK,
 		filters: canonicalizeRecord(input.filters),

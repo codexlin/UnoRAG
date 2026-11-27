@@ -13,8 +13,13 @@ function safeMessage(value: unknown): string {
 	const raw = value instanceof Error ? value.message : String(value);
 	return raw
 		.replace(
-			/(authorization|api[-_ ]?key|token|password)=?\\s*[^\\s,;]+/gi,
+			/\b(authorization|(?:[a-z0-9_-]*[-_])?(?:api[-_ ]?key|token|password|secret(?:[-_ ]?(?:id|key))?))\b\s*[:=]\s*(?:bearer\s+)?[^\s,;"'&]+/gi,
 			"$1=[redacted]",
+		)
+		.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/gi, "Bearer [redacted]")
+		.replace(
+			/\b(?:sk-[A-Za-z0-9_-]{8,}|mk_svc_[A-Za-z0-9_-]{8,})/g,
+			"[redacted]",
 		)
 		.slice(0, SAFE_MESSAGE_MAX_LENGTH);
 }

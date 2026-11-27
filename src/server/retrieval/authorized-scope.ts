@@ -25,6 +25,7 @@ export async function resolveAuthorizedRetrievalScope(input: {
 	if (!snapshot) return null;
 	const base = AuthorizedScopeSchema.omit({
 		activeGenerationIds: true,
+		aclRevision: true,
 	}).parse({
 		organizationId: input.identity.tenantId,
 		workspaceId: input.identity.workspaceId,

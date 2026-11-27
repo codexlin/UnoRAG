@@ -270,6 +270,126 @@ test("MinerU supports synchronous file_parse responses", async () => {
 	assert.equal(submission.status, "completed");
 	assert.equal(progress.status, "completed");
 	assert.equal(result.document.nodes[0]?.text, "同步解析正文");
+	assert.deepEqual(provider.getSyncResultStats(), {
+		entryCount: 0,
+		retainedBytes: 0,
+	});
+	await assert.rejects(
+		provider.fetchResult({
+			documentId: input.documentId,
+			providerTaskId: submission.providerTaskId,
+		}),
+		(error: unknown) =>
+			error instanceof ParserProviderHttpError &&
+			error.code === "provider_result_missing" &&
+			error.retryable === false,
+	);
+});
+
+test("MinerU HTTP errors strip upstream response bodies and keep allowlisted request ids", async () => {
+	const leakedToken = ["sk", "upstream", "fixture999"].join("-");
+	const provider = new MinerUProvider({
+		baseUrl: "http://mineru.test",
+		fetch: async (request) =>
+			String(request) === input.sourceUri
+				? new Response(new Uint8Array([1]), { status: 200 })
+				: new Response(
+						JSON.stringify({
+							error: `Authorization: Bearer ${leakedToken}`,
+							excerpt: "CONFIDENTIAL SALARY TABLE 987654",
+						}),
+						{
+							status: 502,
+							headers: { "x-request-id": "req_safe_42" },
+						},
+					),
+	});
+
+	await assert.rejects(
+		provider.submit(input, submitOptions),
+		(error: unknown) => {
+			assert.ok(error instanceof ParserProviderHttpError);
+			assert.equal(error.code, "provider_service_error");
+			assert.equal(error.status, 502);
+			assert.match(error.message, /HTTP 502/);
+			assert.match(error.message, /req_safe_42/);
+			assert.equal(error.message.includes(leakedToken), false);
+			assert.equal(error.message.includes("CONFIDENTIAL SALARY TABLE"), false);
+			return true;
+		},
+	);
+});
+
+test("MinerU synchronous file-parse bounds retained payloads by count, bytes, and TTL", async () => {
+	let clock = 1_000;
+	const provider = new MinerUProvider({
+		baseUrl: "http://mineru.test",
+		transport: "file-parse",
+		maxSyncResults: 2,
+		maxSyncResultBytes: 10_000,
+		syncResultRetentionMs: 5_000,
+		now: () => clock,
+		fetch: async (request) =>
+			String(request) === input.sourceUri
+				? new Response(new Uint8Array([1]), { status: 200 })
+				: Response.json({
+						results: {
+							"sample.pdf": {
+								content_list: JSON.stringify([
+									{ type: "text", text: "A".repeat(400), page_idx: 0 },
+								]),
+							},
+						},
+					}),
+	});
+
+	const first = await provider.submit(input, {
+		...submitOptions,
+		requestId: "req-1",
+		idempotencyKey: "idem-1",
+	});
+	clock += 100;
+	const second = await provider.submit(
+		{ ...input, documentId: "doc-2" },
+		{ ...submitOptions, requestId: "req-2", idempotencyKey: "idem-2" },
+	);
+	clock += 100;
+	const third = await provider.submit(
+		{ ...input, documentId: "doc-3" },
+		{ ...submitOptions, requestId: "req-3", idempotencyKey: "idem-3" },
+	);
+
+	assert.equal(provider.getSyncResultStats().entryCount, 2);
+	assert.equal(
+		(
+			await provider.poll({
+				documentId: input.documentId,
+				providerTaskId: first.providerTaskId,
+			})
+		).status,
+		"failed",
+	);
+	assert.equal(
+		(
+			await provider.poll({
+				documentId: "doc-2",
+				providerTaskId: second.providerTaskId,
+			})
+		).status,
+		"completed",
+	);
+
+	clock += 6_000;
+	assert.equal(
+		(
+			await provider.poll({
+				documentId: "doc-3",
+				providerTaskId: third.providerTaskId,
+			})
+		).status,
+		"failed",
+	);
+	assert.equal(provider.getSyncResultStats().entryCount, 0);
 });
 
 test("MinerU cancellation uses the remote task endpoint", async () => {

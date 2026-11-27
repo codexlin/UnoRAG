@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { and, asc, eq, isNull, notInArray } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
@@ -28,6 +29,7 @@ export class DrizzleActiveGenerationResolver
 			.select({
 				libraryId: libraries.ragLibraryId,
 				generationId: documentVersions.generationId,
+				aclFingerprint: documents.aclFingerprint,
 			})
 			.from(libraries)
 			.leftJoin(
@@ -61,15 +63,30 @@ export class DrizzleActiveGenerationResolver
 			)
 			.orderBy(asc(documents.id));
 		if (!rows.length) return null;
+		const generationIds = [
+			...new Set(
+				rows
+					.map((row) => row.generationId)
+					.filter((value): value is string => typeof value === "string"),
+			),
+		];
+		const aclEntries = [
+			...new Set(
+				rows
+					.filter(
+						(row): row is typeof row & { generationId: string } =>
+							typeof row.generationId === "string",
+					)
+					.map((row) => `${row.generationId}:${row.aclFingerprint ?? ""}`),
+			),
+		].sort();
+		const aclRevision = createHash("sha256")
+			.update(aclEntries.join("\n"))
+			.digest("hex");
 		return ActiveGenerationSnapshotSchema.parse({
 			libraryId: rows[0]?.libraryId,
-			generationIds: [
-				...new Set(
-					rows
-						.map((row) => row.generationId)
-						.filter((value): value is string => typeof value === "string"),
-				),
-			],
+			generationIds,
+			aclRevision,
 			resolvedAt: new Date(),
 		});
 	}

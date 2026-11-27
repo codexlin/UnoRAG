@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import test from "node:test";
 
 import {
@@ -38,8 +39,18 @@ function createFakeCosClient(initialObjects = {}) {
 			};
 		},
 		async putObject({ Key, Body, ContentLength, ContentType, ACL }) {
-			calls.put.push({ Key, ContentLength, ContentType, ACL });
-			const buf = Buffer.isBuffer(Body) ? Body : Buffer.from(Body);
+			const wasStream = Body instanceof Readable;
+			let buf;
+			if (wasStream) {
+				const chunks = [];
+				for await (const chunk of Body) {
+					chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+				}
+				buf = Buffer.concat(chunks);
+			} else {
+				buf = Buffer.isBuffer(Body) ? Body : Buffer.from(Body);
+			}
+			calls.put.push({ Key, ContentLength, ContentType, ACL, wasStream });
 			assert.equal(buf.byteLength, ContentLength);
 			store.set(Key, {
 				body: buf,
@@ -186,6 +197,11 @@ test("backupCosObjects and restoreCosObjects recover deleted COS objects byte-fo
 
 	assert.equal(restored.object_count, 2);
 	assert.equal(restored.total_bytes, pdfBytes.byteLength + pngBytes.byteLength);
+	assert.equal(fakeCos.calls.put.length, 2);
+	assert.ok(
+		fakeCos.calls.put.every((entry) => entry.wasStream),
+		"restoreCosObjects must stream file bodies rather than buffering the full archive in memory",
+	);
 	assert.deepEqual(
 		fakeCos.store.get("org/o1/ws/w1/docs/d1/v1.pdf")?.body,
 		pdfBytes,

@@ -11,7 +11,12 @@ import type {
 } from "@/core/retrieval";
 import { projectRerankDiagnostic } from "@/core/retrieval/provider-request";
 import type { AuthIdentity } from "@/lib/server/auth/provider";
+import { findAuthorizedLibrary } from "@/lib/server/library-access";
 import { resolveEffectiveOrganizationRerankRuntime } from "@/lib/server/organization-model-settings";
+import {
+	DrizzleHistoricalCitationAuthorizer,
+	type HistoricalCitationAuthorizer,
+} from "@/server/http/ask/conversation-handler";
 import { NativeAskPolicySchema } from "@/server/http/ask/policy";
 import { DrizzleActiveGenerationResolver } from "@/server/retrieval/active-generation-resolver";
 import { resolveAuthorizedRetrievalScope } from "@/server/retrieval/authorized-scope";
@@ -80,11 +85,13 @@ export interface NativeRetrievalEngine {
 export type NativeRetrievalDependencies = {
 	resolver: ActiveGenerationResolver;
 	retrieval: NativeRetrievalEngine;
+	resolveLibrary?: typeof findAuthorizedLibrary;
+	citationAuthorizer?: HistoricalCitationAuthorizer;
 };
 
 export class NativeRetrievalRequestError extends Error {
 	constructor(
-		readonly status: 400 | 404,
+		readonly status: 400 | 401 | 403 | 404,
 		message: string,
 	) {
 		super(message);
@@ -152,10 +159,24 @@ function projectDebug(
 	};
 }
 
+function identityScope(identity: AuthIdentity): string {
+	return JSON.stringify([
+		identity.tenantId,
+		identity.workspaceId,
+		identity.principalId,
+		identity.role,
+		identity.organizationRole,
+		[...new Set(identity.groupIds)].sort(),
+		identity.mustChangePassword,
+	]);
+}
+
 function defaultDependencies(): NativeRetrievalDependencies {
 	return {
 		resolver: new DrizzleActiveGenerationResolver(),
 		retrieval: getTypeScriptRetrievalService(),
+		resolveLibrary: findAuthorizedLibrary,
+		citationAuthorizer: new DrizzleHistoricalCitationAuthorizer(),
 	};
 }
 
@@ -165,6 +186,7 @@ export async function executeNativeRetrieval(input: {
 	requestId: string;
 	signal?: AbortSignal;
 	dependencies?: NativeRetrievalDependencies;
+	refreshIdentity?: () => Promise<AuthIdentity | null>;
 }): Promise<NativeRetrievalResponse> {
 	const parsed = NativeRetrievalRequestSchema.safeParse(input.payload);
 	if (!parsed.success) {
@@ -210,7 +232,52 @@ export async function executeNativeRetrieval(input: {
 		},
 		signal: input.signal,
 	});
-	const citations = result.citations.map(projectCitation);
+	let currentIdentity = input.identity;
+	if (input.refreshIdentity) {
+		const refreshed = await input.refreshIdentity();
+		if (
+			!refreshed ||
+			refreshed.mustChangePassword ||
+			identityScope(refreshed) !== identityScope(input.identity)
+		) {
+			throw new NativeRetrievalRequestError(401, "authentication required");
+		}
+		currentIdentity = refreshed;
+	}
+	if (dependencies.resolveLibrary) {
+		const library = await dependencies.resolveLibrary(
+			currentIdentity,
+			payload.library_id,
+		);
+		if (!library) {
+			throw new NativeRetrievalRequestError(404, "library not found");
+		}
+	}
+	let authorizedCitations = result.citations;
+	if (dependencies.citationAuthorizer && result.citations.length > 0) {
+		const allowed = await dependencies.citationAuthorizer.filterAuthorized({
+			identity: currentIdentity,
+			libraryId: payload.library_id,
+			citations: result.citations as unknown as Record<string, unknown>[],
+			versionPolicy: "active",
+		});
+		const allowedRefs = new Set<unknown>(allowed);
+		const allowedIds = new Set(
+			allowed
+				.map((item) => (typeof item.id === "string" ? item.id : null))
+				.filter((id): id is string => id !== null),
+		);
+		authorizedCitations = result.citations.filter(
+			(item) => allowedRefs.has(item) || allowedIds.has(item.id),
+		);
+	}
+	const citations = authorizedCitations.map((citation, index) =>
+		projectCitation(
+			authorizedCitations.length === result.citations.length
+				? citation
+				: { ...citation, index: index + 1 },
+		),
+	);
 	const refused = citations.length === 0;
 	return {
 		query: payload.query,

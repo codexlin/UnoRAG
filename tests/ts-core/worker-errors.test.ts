@@ -56,3 +56,40 @@ test("worker classification preserves native parser failure codes", () => {
 		retryable: false,
 	});
 });
+
+test("worker error classification redacts inline credentials and provider tokens", () => {
+	const bearerFixture = ["jwtHeaderFixture", "jwtPayloadFixture"].join(".");
+	const apiKeyFixture = ["sk", "proj", "fixturekey12345"].join("-");
+	const tokenFixture = ["tok", "fixture", "998877"].join("_");
+	const passwordFixture = ["pass", "fixture", "value"].join("-");
+	const secretFixture = ["secret", "fixture", "value"].join("_");
+	const serviceKeyFixture = ["mk", "svc", "fixture1234567890"].join("_");
+	const classified = classifyWorkerError(
+		new Error(
+			[
+				"upstream auth failed:",
+				`authorization: Bearer ${bearerFixture}`,
+				`api_key=${apiKeyFixture}`,
+				`access_token: ${tokenFixture}`,
+				`password = ${passwordFixture}`,
+				`client_secret=${secretFixture}`,
+				`svc=${serviceKeyFixture}`,
+			].join(" "),
+		),
+	);
+	for (const leak of [
+		bearerFixture,
+		apiKeyFixture,
+		tokenFixture,
+		passwordFixture,
+		secretFixture,
+		serviceKeyFixture,
+	]) {
+		assert.equal(
+			classified.message.includes(leak),
+			false,
+			`expected classified message not to contain ${leak}`,
+		);
+	}
+	assert.match(classified.message, /\[redacted\]/);
+});

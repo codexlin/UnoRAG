@@ -7,6 +7,10 @@ import type {
 	RetrievalResult,
 } from "../../src/core/retrieval";
 import { UNORAG_QDRANT_PAYLOAD_INDEXES } from "../../src/core/retrieval/qdrant/collection-manager";
+import {
+	buildScopedRetrievalCacheKey,
+	ScopedRetrievalCache,
+} from "../../src/core/retrieval/retrieval-cache";
 import type { AuthIdentity } from "../../src/lib/server/auth/provider";
 import type { AuthenticatedServiceKey } from "../../src/lib/server/service-keys";
 import {
@@ -765,6 +769,224 @@ test("public Ask counts Judge unavailability as a service error, not a knowledge
 			metrics,
 			/unorag_web_requests_total\{operation="ask",outcome="refused"/,
 		);
+	} finally {
+		console.info = originalInfo;
+	}
+});
+
+test("retrieval cache key changes when aclRevision changes on identical active generations", () => {
+	const baseInput = {
+		query: "annual leave policy",
+		libraryId: LIBRARY_ID,
+		scope: {
+			organizationId: ORGANIZATION_ID,
+			workspaceId: WORKSPACE_ID,
+			libraryIds: [LIBRARY_ID],
+			principalIds: [PRINCIPAL_ID],
+			groupIds: ["group-1"],
+			activeGenerationIds: [GENERATION_ID],
+			aclRevision: "rev-before-revocation",
+		},
+		topK: 5,
+		filters: {},
+		options: {
+			hybridEnabled: true,
+			rerankEnabled: false,
+			rerankTopK: 10,
+			bm25TopK: 10,
+			rrfK: 60,
+		},
+	};
+	const cache = new ScopedRetrievalCache({ ttlMs: 30_000, maxEntries: 16 });
+	const beforeKey = buildScopedRetrievalCacheKey(baseInput);
+	const afterKey = buildScopedRetrievalCacheKey({
+		...baseInput,
+		scope: {
+			...baseInput.scope,
+			aclRevision: "rev-after-revocation",
+		},
+	});
+	assert.notEqual(beforeKey, afterKey);
+	cache.set(beforeKey, retrievalResult());
+	assert.ok(cache.get(beforeKey));
+	assert.equal(cache.get(afterKey), null);
+});
+
+test("native retrieve enforces final delivery identity, library, and active citation authorization", async () => {
+	const { handleNativeRetrievalRequest } = await handlerModule;
+	const kept = citation();
+	const revoked: InternalCitation = {
+		...citation(),
+		id: "point-revoked",
+		index: 2,
+		doc_id: "document-revoked",
+		title: "Restricted memo",
+		snippet: "Top secret revoked memo",
+		text: "Top secret revoked memo",
+		body: "Top secret revoked memo",
+	};
+
+	const baseDeps = (): NativeRetrievalDependencies => ({
+		resolver: {
+			async resolve() {
+				return {
+					libraryId: LIBRARY_ID,
+					generationIds: [GENERATION_ID],
+					aclRevision: "rev-1",
+					resolvedAt: new Date(),
+				};
+			},
+		},
+		retrieval: {
+			async retrieve() {
+				return retrievalResult([revoked, kept]);
+			},
+		},
+		resolveLibrary: (async () => ({
+			id: "lib-row-1",
+		})) as unknown as NonNullable<
+			NativeRetrievalDependencies["resolveLibrary"]
+		>,
+	});
+
+	// 1. Batch citation re-authorization filters out revoked citations and re-indexes survivors.
+	let observedVersionPolicy: string | undefined;
+	const partial = await handleNativeRetrievalRequest({
+		request: retrieveRequest({ query: "leave", library_id: LIBRARY_ID }),
+		path: ["v1", "retrieve"],
+		identity,
+		requestId: "req-partial",
+		refreshIdentity: async () => identity,
+		dependencies: {
+			...baseDeps(),
+			citationAuthorizer: {
+				async filterAuthorized(input) {
+					observedVersionPolicy = input.versionPolicy;
+					return input.citations.filter((c) => c.doc_id === "document-1");
+				},
+			},
+		},
+	});
+	assert.equal(partial?.status, 200);
+	assert.equal(observedVersionPolicy, "active");
+	const partialBody = (await partial?.json()) as {
+		refused: boolean;
+		refuse_reason: string | null;
+		citations: Array<Record<string, unknown>>;
+	};
+	assert.equal(partialBody.refused, false);
+	assert.equal(partialBody.citations.length, 1);
+	assert.equal(partialBody.citations[0]?.doc_id, "document-1");
+	assert.equal(partialBody.citations[0]?.index, 1);
+
+	// 2. When all citations are revoked before delivery, returns empty refused response.
+	const allRevoked = await handleNativeRetrievalRequest({
+		request: retrieveRequest({ query: "leave", library_id: LIBRARY_ID }),
+		path: ["v1", "retrieve"],
+		identity,
+		requestId: "req-all-revoked",
+		refreshIdentity: async () => identity,
+		dependencies: {
+			...baseDeps(),
+			citationAuthorizer: {
+				async filterAuthorized() {
+					return [];
+				},
+			},
+		},
+	});
+	assert.equal(allRevoked?.status, 200);
+	const allRevokedBody = (await allRevoked?.json()) as {
+		refused: boolean;
+		refuse_reason: string | null;
+		citations: Array<Record<string, unknown>>;
+	};
+	assert.equal(allRevokedBody.refused, true);
+	assert.equal(allRevokedBody.refuse_reason, "no_matching_evidence");
+	assert.deepEqual(allRevokedBody.citations, []);
+
+	// 3. Mutated group membership or revoked session fails closed with 401.
+	const revokedGroup = await handleNativeRetrievalRequest({
+		request: retrieveRequest({ query: "leave", library_id: LIBRARY_ID }),
+		path: ["v1", "retrieve"],
+		identity,
+		requestId: "req-group-changed",
+		refreshIdentity: async () => ({ ...identity, groupIds: [] }),
+		dependencies: baseDeps(),
+	});
+	assert.equal(revokedGroup?.status, 401);
+
+	const revokedSession = await handleNativeRetrievalRequest({
+		request: retrieveRequest({ query: "leave", library_id: LIBRARY_ID }),
+		path: ["v1", "retrieve"],
+		identity,
+		requestId: "req-session-revoked",
+		refreshIdentity: async () => null,
+		dependencies: baseDeps(),
+	});
+	assert.equal(revokedSession?.status, 401);
+
+	// 4. Library deleted mid-request fails closed with 404.
+	const deletedLibrary = await handleNativeRetrievalRequest({
+		request: retrieveRequest({ query: "leave", library_id: LIBRARY_ID }),
+		path: ["v1", "retrieve"],
+		identity,
+		requestId: "req-lib-deleted",
+		refreshIdentity: async () => identity,
+		dependencies: {
+			...baseDeps(),
+			resolveLibrary: (async () => null) as unknown as NonNullable<
+				NativeRetrievalDependencies["resolveLibrary"]
+			>,
+		},
+	});
+	assert.equal(deletedLibrary?.status, 404);
+
+	// 5. Public retrieve passes refreshIdentity and maps mid-request revocation to 401.
+	const { forwardIntegrationRag } = await integrationModule;
+	const serviceKey: AuthenticatedServiceKey = {
+		id: "service-key-revoked",
+		organizationId: ORGANIZATION_ID,
+		workspaceId: WORKSPACE_ID,
+		name: "Integration",
+		prefix: "mk_svc_rev",
+		scopes: ["retrieve"],
+		libraryIds: [LIBRARY_ID],
+		createdBy: null,
+		revokedAt: null,
+		lastUsedAt: null,
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		principalId: "service:service-key-revoked",
+	};
+	let sawRefreshIdentity = false;
+	const originalInfo = console.info;
+	console.info = () => undefined;
+	try {
+		const { executeNativeRetrieval } = await import(
+			"../../src/server/http/retrieval/service"
+		);
+		const revokedPublic = await forwardIntegrationRag({
+			request: retrieveRequest({ query: "leave", library_id: LIBRARY_ID }),
+			key: serviceKey,
+			target: "/v1/retrieve",
+			requestId: "public-revoked-1",
+			retrieveExecutor: async (input) => {
+				sawRefreshIdentity = typeof input.refreshIdentity === "function";
+				return executeNativeRetrieval({
+					...input,
+					refreshIdentity: async () => null,
+					dependencies: baseDeps(),
+				});
+			},
+		});
+		assert.equal(sawRefreshIdentity, true);
+		assert.equal(revokedPublic.status, 401);
+		assert.equal(revokedPublic.headers.get("www-authenticate"), "Bearer");
+		const revokedPublicBody = (await revokedPublic.json()) as {
+			error?: { code?: string };
+		};
+		assert.equal(revokedPublicBody.error?.code, "authentication_failed");
 	} finally {
 		console.info = originalInfo;
 	}

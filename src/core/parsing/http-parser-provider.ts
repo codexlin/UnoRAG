@@ -90,12 +90,13 @@ export abstract class HttpParserProvider {
 			});
 		} catch (error) {
 			throw new ParserProviderHttpError({
-				message: `parser provider is unreachable: ${errorMessage(error)}`,
+				message: `parser provider is unreachable (${safeNetworkReason(error)})`,
 				code: "provider_unreachable",
 				retryable: true,
 			});
 		}
-		if (!response.ok) throw await httpError(response);
+		if (!response.ok)
+			throw await httpError(response, "parser provider", init.method);
 		return response;
 	}
 
@@ -130,12 +131,12 @@ export abstract class HttpParserProvider {
 			response = await this.fetchImpl(input.sourceUri, { signal });
 		} catch (error) {
 			throw new ParserProviderHttpError({
-				message: `parser source is unreachable: ${errorMessage(error)}`,
+				message: `parser source is unreachable (${safeNetworkReason(error)})`,
 				code: "source_unreachable",
 				retryable: true,
 			});
 		}
-		if (!response.ok) throw await httpError(response, "source");
+		if (!response.ok) throw await httpError(response, "source", "GET");
 		return response.blob();
 	}
 }
@@ -159,16 +160,38 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function safeUpstreamRequestId(headers: Headers): string | undefined {
+	for (const name of [
+		"x-request-id",
+		"request-id",
+		"x-trace-id",
+		"x-amzn-requestid",
+	]) {
+		const candidate = headers.get(name)?.trim();
+		if (candidate && /^[A-Za-z0-9._:-]{1,128}$/.test(candidate)) {
+			return candidate;
+		}
+	}
+	return undefined;
+}
+
 async function httpError(
 	response: Response,
 	prefix = "parser provider",
+	method?: string,
 ): Promise<ParserProviderHttpError> {
-	const detail = (await response.text()).slice(0, 1000).trim();
-	const suffix = detail ? `: ${detail}` : "";
+	// Never read or copy upstream HTTP response bodies into persisted errors:
+	// providers may echo document excerpts, signed URLs, or credential details.
+	await response.body?.cancel().catch(() => undefined);
+	const requestId = safeUpstreamRequestId(response.headers);
+	const op = method ? `${method.toUpperCase()} ` : "";
+	const meta = requestId
+		? `HTTP ${response.status}, request_id=${requestId}`
+		: `HTTP ${response.status}`;
 	const retryAfterMs = retryAfterMilliseconds(response.headers);
 	if (response.status === 401 || response.status === 403) {
 		return new ParserProviderHttpError({
-			message: `${prefix} authentication failed (${response.status})${suffix}`,
+			message: `${prefix} ${op}authentication failed (${meta})`,
 			code: "provider_unauthorized",
 			retryable: false,
 			status: response.status,
@@ -176,7 +199,7 @@ async function httpError(
 	}
 	if (response.status === 429) {
 		return new ParserProviderHttpError({
-			message: `${prefix} rate limited${suffix}`,
+			message: `${prefix} ${op}rate limited (${meta})`,
 			code: "provider_rate_limited",
 			retryable: true,
 			status: response.status,
@@ -185,7 +208,7 @@ async function httpError(
 	}
 	if (response.status >= 500) {
 		return new ParserProviderHttpError({
-			message: `${prefix} service error (${response.status})${suffix}`,
+			message: `${prefix} ${op}service error (${meta})`,
 			code: "provider_service_error",
 			retryable: true,
 			status: response.status,
@@ -193,7 +216,7 @@ async function httpError(
 		});
 	}
 	return new ParserProviderHttpError({
-		message: `${prefix} rejected request (${response.status})${suffix}`,
+		message: `${prefix} ${op}rejected request (${meta})`,
 		code: "provider_request_rejected",
 		retryable: false,
 		status: response.status,
@@ -204,9 +227,9 @@ async function httpError(
 async function parseJsonResponse(response: Response): Promise<unknown> {
 	try {
 		return await response.json();
-	} catch (error) {
+	} catch {
 		throw new ParserProviderHttpError({
-			message: `parser provider returned invalid JSON: ${errorMessage(error)}`,
+			message: `parser provider returned invalid JSON (HTTP ${response.status})`,
 			code: "provider_invalid_response",
 			retryable: false,
 			status: response.status,
@@ -221,6 +244,20 @@ function headersToRecord(
 	return Object.fromEntries(new Headers(headers).entries());
 }
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+function safeNetworkReason(error: unknown): string {
+	if (error && typeof error === "object") {
+		const cause = (error as { cause?: { code?: unknown } }).cause;
+		const code =
+			(typeof (error as { code?: unknown }).code === "string"
+				? (error as { code: string }).code
+				: undefined) ??
+			(typeof cause?.code === "string" ? cause.code : undefined);
+		if (code && /^[A-Z0-9_.-]{1,64}$/i.test(code)) {
+			return code;
+		}
+		if (error instanceof Error && /^[A-Za-z0-9_.-]{1,64}$/.test(error.name)) {
+			return error.name;
+		}
+	}
+	return "network_error";
 }

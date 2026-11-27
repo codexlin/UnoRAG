@@ -10,6 +10,7 @@
  *     node scripts/cos-object-backup.mjs restore --in /backup/cos-objects
  */
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -49,6 +50,16 @@ function resolveObjectPath(rootDir, key) {
 
 function sha256Hex(buffer) {
 	return createHash("sha256").update(buffer).digest("hex");
+}
+
+async function sha256FileStream(filePath) {
+	const hash = createHash("sha256");
+	let sizeBytes = 0;
+	for await (const chunk of createReadStream(filePath)) {
+		sizeBytes += chunk.byteLength;
+		hash.update(chunk);
+	}
+	return { sha256: hash.digest("hex"), sizeBytes };
 }
 
 async function runWithConcurrency(items, concurrency, worker) {
@@ -222,7 +233,9 @@ export async function restoreCosObjects({
 		);
 	}
 
-	// Phase 1: fail-closed local integrity verification BEFORE touching COS.
+	// Phase 1: fail-closed streaming local integrity verification BEFORE touching
+	// COS. Keep only file paths and metadata in memory so large archives never
+	// exhaust host RAM during disaster recovery.
 	const verified = [];
 	for (const item of manifest.objects) {
 		const key = validateStorageKey(item?.key);
@@ -237,30 +250,40 @@ export async function restoreCosObjects({
 				`size mismatch for ${key}: expected=${item.sizeBytes}, actual=${info.size}`,
 			);
 		}
-		const bytes = await readFile(filePath);
-		const actualDigest = sha256Hex(bytes);
+		const { sha256: actualDigest, sizeBytes: streamedBytes } =
+			await sha256FileStream(filePath);
+		if (streamedBytes !== item.sizeBytes) {
+			throw new Error(
+				`size mismatch for ${key}: expected=${item.sizeBytes}, actual=${streamedBytes}`,
+			);
+		}
 		if (actualDigest !== expectedDigest) {
 			throw new Error(`SHA-256 verification failed for ${key}`);
 		}
 		verified.push({
 			key,
-			bytes,
-			sizeBytes: bytes.byteLength,
+			filePath,
+			sizeBytes: item.sizeBytes,
 			contentType: item.contentType || "application/octet-stream",
 		});
 	}
 
-	// Phase 2: upload all verified objects and verify remote Content-Length.
+	// Phase 2: stream verified objects with bounded concurrency and confirm remote Content-Length.
 	await runWithConcurrency(verified, concurrency, async (item) => {
-		await cosClient.putObject({
-			Bucket: bucket,
-			Region: region,
-			Key: item.key,
-			Body: item.bytes,
-			ContentLength: item.sizeBytes,
-			ContentType: item.contentType,
-			ACL: "private",
-		});
+		const body = createReadStream(item.filePath);
+		try {
+			await cosClient.putObject({
+				Bucket: bucket,
+				Region: region,
+				Key: item.key,
+				Body: body,
+				ContentLength: item.sizeBytes,
+				ContentType: item.contentType,
+				ACL: "private",
+			});
+		} finally {
+			body.destroy();
+		}
 		const head = await cosClient.headObject({
 			Bucket: bucket,
 			Region: region,

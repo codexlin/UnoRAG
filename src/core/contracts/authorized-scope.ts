@@ -11,6 +11,7 @@ export const AuthorizedScopeSchema = z
 		libraryIds: z.array(IdentifierSchema).min(1),
 		documentIds: z.array(IdentifierSchema).optional(),
 		activeGenerationIds: z.array(IdentifierSchema),
+		aclRevision: IdentifierSchema.optional(),
 	})
 	.strict();
 

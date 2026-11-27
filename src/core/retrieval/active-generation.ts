@@ -6,6 +6,7 @@ export const ActiveGenerationSnapshotSchema = z
 	.object({
 		libraryId: z.string().trim().min(1),
 		generationIds: z.array(z.string().uuid()),
+		aclRevision: z.string().trim().min(1).max(128).optional(),
 		resolvedAt: z.date(),
 	})
 	.strict();
@@ -23,7 +24,7 @@ export interface ActiveGenerationResolver {
 }
 
 export function scopeWithActiveGenerations(
-	scope: Omit<AuthorizedScope, "activeGenerationIds">,
+	scope: Omit<AuthorizedScope, "activeGenerationIds" | "aclRevision">,
 	snapshot: ActiveGenerationSnapshot,
 ): AuthorizedScope {
 	if (!scope.libraryIds.includes(snapshot.libraryId)) {
@@ -32,5 +33,6 @@ export function scopeWithActiveGenerations(
 	return {
 		...scope,
 		activeGenerationIds: [...snapshot.generationIds],
+		...(snapshot.aclRevision ? { aclRevision: snapshot.aclRevision } : {}),
 	};
 }
