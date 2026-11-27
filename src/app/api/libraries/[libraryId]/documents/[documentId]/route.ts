@@ -3,10 +3,12 @@ import { randomUUID } from "node:crypto";
 import { and, eq, ne } from "drizzle-orm";
 
 import { getDatabase } from "@/db";
-import { documents, libraries } from "@/db/schema";
+import { documents, documentVersions, jobs, libraries } from "@/db/schema";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import { enqueueDocumentDelete } from "@/lib/server/document-delete-enqueue";
 import { documentLifecycleV2Enabled } from "@/lib/server/document-lifecycle";
+import { serializeDocumentRow } from "@/lib/server/document-list-serializer";
+import { documentMetadataVisibilitySql } from "@/lib/server/document-visibility";
 import {
 	canManageLibraries,
 	findAuthorizedLibrary,
@@ -18,6 +20,85 @@ export const runtime = "nodejs";
 type RouteContext = {
 	params: Promise<{ libraryId: string; documentId: string }>;
 };
+
+export async function GET(request: Request, context: RouteContext) {
+	const identity = await resolveRequestSession(request);
+	if (!identity) {
+		return Response.json(
+			{ detail: "authentication required" },
+			{ status: 401 },
+		);
+	}
+	const { libraryId, documentId } = await context.params;
+	const library = await findAuthorizedLibrary(identity, libraryId, {
+		allowDeletingForDocumentList: true,
+	});
+	if (!library) {
+		return Response.json({ detail: "library not found" }, { status: 404 });
+	}
+	const db = getDatabase();
+	const [row] = await db
+		.select({
+			document: {
+				id: documents.id,
+				ragDocumentId: documents.ragDocumentId,
+				name: documents.name,
+				filename: documents.filename,
+				contentType: documents.contentType,
+				status: documents.status,
+				createdAt: documents.createdAt,
+				updatedAt: documents.updatedAt,
+			},
+			version: {
+				id: documentVersions.id,
+				chunkCount: documentVersions.chunkCount,
+				sizeBytes: documentVersions.sizeBytes,
+				error: documentVersions.error,
+				storageKey: documentVersions.storageKey,
+				parsePreference: documentVersions.parsePreference,
+				generationId: documentVersions.generationId,
+				parserReport: documentVersions.parserReport,
+			},
+			job: {
+				id: jobs.id,
+				status: jobs.status,
+				stage: jobs.stage,
+				progress: jobs.progress,
+				error: jobs.error,
+				payload: jobs.payload,
+			},
+		})
+		.from(documents)
+		.leftJoin(
+			documentVersions,
+			eq(documentVersions.id, documents.desiredVersionId),
+		)
+		.leftJoin(jobs, eq(jobs.id, documents.latestJobId))
+		.where(
+			and(
+				eq(documents.organizationId, identity.tenantId),
+				eq(documents.workspaceId, identity.workspaceId),
+				eq(documents.libraryId, library.id),
+				eq(documents.ragDocumentId, documentId),
+				ne(documents.status, "deleted"),
+				documentMetadataVisibilitySql(identity, documents.id),
+			),
+		)
+		.limit(1);
+	if (!row) {
+		return Response.json({ detail: "document not found" }, { status: 404 });
+	}
+	return Response.json(
+		serializeDocumentRow({
+			libraryRagId: library.ragLibraryId,
+			document: row.document,
+			version: row.version,
+			job: row.job,
+			includeReport: true,
+		}),
+		{ headers: { "cache-control": "no-store" } },
+	);
+}
 
 /**
  * Tombstone a document and enqueue async document.delete cleanup.

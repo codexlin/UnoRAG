@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { getDatabase } from "@/db";
 import {
 	auditLogs,
@@ -10,9 +10,6 @@ import {
 	jobs,
 	libraries,
 } from "@/db/schema";
-import { redactDiagnosticMessage } from "@/lib/error-diagnostics";
-import { formatParseStatusView } from "@/lib/parse-status-view.mjs";
-import { publicParserReport } from "@/lib/parser-report-public";
 import { resolveRequestSession } from "@/lib/server/auth/session";
 import {
 	documentLifecycleV2Enabled,
@@ -20,6 +17,13 @@ import {
 	validateDocumentUpload,
 } from "@/lib/server/document-lifecycle";
 import { documentIngestExecutionIdentity } from "@/lib/server/document-lifecycle-flag.mjs";
+import {
+	DOCUMENT_ACTIVE_JOB_STATUSES,
+	DOCUMENT_FAILED_JOB_STATUSES,
+	escapeSqlLikePattern,
+	parseDocumentListQuery,
+	serializeDocumentRow,
+} from "@/lib/server/document-list-serializer";
 import {
 	buildDocumentIngestPayload,
 	contentTypeForUpload,
@@ -58,66 +62,150 @@ export async function GET(request: Request, context: RouteContext) {
 	if (!library) {
 		return Response.json({ detail: "library not found" }, { status: 404 });
 	}
+	const listQuery = parseDocumentListQuery(new URL(request.url));
 	const db = getDatabase();
-	const rows = await db
-		.select({
-			document: documents,
-			version: documentVersions,
-			job: jobs,
-		})
+	const baseWhere = and(
+		eq(documents.organizationId, identity.tenantId),
+		eq(documents.workspaceId, identity.workspaceId),
+		eq(documents.libraryId, library.id),
+		ne(documents.status, "deleted"),
+		documentMetadataVisibilitySql(identity, documents.id),
+	);
+
+	const normalizedSearch = listQuery.query
+		? `%${escapeSqlLikePattern(listQuery.query.normalize("NFKC").toLowerCase())}%`
+		: null;
+	const searchFilter = normalizedSearch
+		? or(
+				sql`lower(normalize(${documents.name}, NFKC)) LIKE ${normalizedSearch} ESCAPE '\\'`,
+				sql`lower(normalize(${documents.filename}, NFKC)) LIKE ${normalizedSearch} ESCAPE '\\'`,
+			)
+		: undefined;
+	const taskFilter =
+		listQuery.task === "processing"
+			? inArray(jobs.status, [...DOCUMENT_ACTIVE_JOB_STATUSES])
+			: listQuery.task === "failed"
+				? inArray(jobs.status, [...DOCUMENT_FAILED_JOB_STATUSES])
+				: undefined;
+	const statusFilter = listQuery.status
+		? eq(documents.status, listQuery.status)
+		: undefined;
+	const activeFilter = and(searchFilter, taskFilter, statusFilter);
+	const pageWhere = activeFilter ? and(baseWhere, activeFilter) : baseWhere;
+
+	const selectFields = {
+		document: {
+			id: documents.id,
+			ragDocumentId: documents.ragDocumentId,
+			name: documents.name,
+			filename: documents.filename,
+			contentType: documents.contentType,
+			status: documents.status,
+			createdAt: documents.createdAt,
+			updatedAt: documents.updatedAt,
+		},
+		version: {
+			id: documentVersions.id,
+			chunkCount: documentVersions.chunkCount,
+			sizeBytes: documentVersions.sizeBytes,
+			error: documentVersions.error,
+			storageKey: documentVersions.storageKey,
+			parsePreference: documentVersions.parsePreference,
+			generationId: documentVersions.generationId,
+			...(listQuery.includeReport
+				? { parserReport: documentVersions.parserReport }
+				: {}),
+		},
+		job: {
+			id: jobs.id,
+			status: jobs.status,
+			stage: jobs.stage,
+			progress: jobs.progress,
+			error: jobs.error,
+			...(listQuery.includeReport ? { payload: jobs.payload } : {}),
+		},
+	};
+
+	const baseRowsQuery = db
+		.select(selectFields)
 		.from(documents)
 		.leftJoin(
 			documentVersions,
 			eq(documentVersions.id, documents.desiredVersionId),
 		)
 		.leftJoin(jobs, eq(jobs.id, documents.latestJobId))
-		.where(
-			and(
-				eq(documents.organizationId, identity.tenantId),
-				eq(documents.workspaceId, identity.workspaceId),
-				eq(documents.libraryId, library.id),
-				ne(documents.status, "deleted"),
-				documentMetadataVisibilitySql(identity, documents.id),
+		.where(pageWhere)
+		.orderBy(desc(documents.updatedAt), desc(documents.id));
+
+	const pagedRowsQuery =
+		listQuery.limit !== null
+			? baseRowsQuery.limit(listQuery.limit).offset(listQuery.offset)
+			: listQuery.offset > 0
+				? baseRowsQuery.offset(listQuery.offset)
+				: baseRowsQuery;
+
+	if (!listQuery.paginated) {
+		const rows = await pagedRowsQuery;
+		return Response.json(
+			rows.map(({ document, version, job }) =>
+				serializeDocumentRow({
+					libraryRagId: library.ragLibraryId,
+					document,
+					version,
+					job,
+					includeReport: listQuery.includeReport,
+				}),
 			),
-		)
-		.orderBy(desc(documents.updatedAt));
+			{ headers: { "cache-control": "no-store" } },
+		);
+	}
+
+	const [rows, [counts]] = await Promise.all([
+		pagedRowsQuery,
+		db
+			.select({
+				total: sql<number>`count(*)::int`,
+				completed: sql<number>`count(*) filter (where ${jobs.status} = 'completed')::int`,
+				processing: sql<number>`count(*) filter (where ${inArray(jobs.status, [...DOCUMENT_ACTIVE_JOB_STATUSES])})::int`,
+				failed: sql<number>`count(*) filter (where ${inArray(jobs.status, [...DOCUMENT_FAILED_JOB_STATUSES])})::int`,
+				filteredTotal: activeFilter
+					? sql<number>`count(*) filter (where ${activeFilter})::int`
+					: sql<number>`count(*)::int`,
+			})
+			.from(documents)
+			.leftJoin(jobs, eq(jobs.id, documents.latestJobId))
+			.where(baseWhere),
+	]);
+
+	const items = rows.map(({ document, version, job }) =>
+		serializeDocumentRow({
+			libraryRagId: library.ragLibraryId,
+			document,
+			version,
+			job,
+			includeReport: listQuery.includeReport,
+		}),
+	);
+	const total = Number(counts?.total ?? 0);
+	const filteredTotal = Number(counts?.filteredTotal ?? 0);
+	const limit = listQuery.limit ?? 50;
 
 	return Response.json(
-		rows.map(({ document, version, job }) => {
-			const parser_report = publicParserReport(version?.parserReport);
-			const parse_status = formatParseStatusView({
-				parserReport: parser_report as Record<string, unknown> | null,
-				jobStatus: job?.status ?? null,
-				jobStage: job?.stage ?? null,
-				jobPayload: (job?.payload as Record<string, unknown> | null) ?? null,
-				documentStatus: document.status,
-				parsePreference: version?.parsePreference ?? null,
-			});
-			return {
-				id: document.ragDocumentId,
-				document_id: document.id,
-				library_id: library.ragLibraryId,
-				name: document.name,
-				filename: document.filename,
-				content_type: document.contentType,
-				status: document.status,
-				chunk_count: version?.chunkCount ?? 0,
-				size_bytes: version?.sizeBytes ?? null,
-				error: redactDiagnosticMessage(version?.error ?? job?.error ?? null),
-				has_file: Boolean(version?.storageKey),
-				parser_report,
-				parse_status,
-				parse_preference: version?.parsePreference ?? null,
-				document_version_id: version?.id ?? null,
-				generation_id: version?.generationId ?? null,
-				job_id: job?.id ?? null,
-				job_status: job?.status ?? null,
-				job_stage: job?.stage ?? null,
-				job_progress: job?.progress ?? null,
-				created_at: document.createdAt.toISOString(),
-				updated_at: document.updatedAt.toISOString(),
-			};
-		}),
+		{
+			items,
+			total,
+			filtered_total: filteredTotal,
+			limit,
+			offset: listQuery.offset,
+			has_more: listQuery.offset + items.length < filteredTotal,
+			summary: {
+				total,
+				completed: Number(counts?.completed ?? 0),
+				processing: Number(counts?.processing ?? 0),
+				failed: Number(counts?.failed ?? 0),
+			},
+		},
+		{ headers: { "cache-control": "no-store" } },
 	);
 }
 

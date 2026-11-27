@@ -46,8 +46,8 @@
 | 全局与工作区 | 导航、工作区创建/切换、角色可见性、主题/圆角、语言切换、退出 | [nav-items.ts](../src/components/app/nav-items.ts)、[workspace-switcher.tsx](../src/components/app/workspace-switcher.tsx) |
 | 问答 | 多库选择、就绪提示、流式生成/停止、引用预览与面板、拒答原因、归档、续聊、链路与用量抽屉 | [ask-workspace.tsx](../src/components/app/ask/ask-workspace.tsx)、[ask-trace-drawer.tsx](../src/components/app/ask/ask-trace-drawer.tsx) |
 | 知识库 | 建库、编辑/删除、解析/切分偏好、重索引提示、搜索、多文件上传与逐项结果 | [libraries-panel.tsx](../src/components/app/libraries-panel.tsx)、[library-dialogs.tsx](../src/components/app/libraries/library-dialogs.tsx) |
-| 文档治理与诊断 | 查看、ACL、替换、重索引、取消/重试、下载、删除、版本历史、入库瀑布、解析报告 | [library-doc-actions.tsx](../src/components/app/library-doc-actions.tsx)、[document-detail-sheet.tsx](../src/components/app/document-detail-sheet.tsx) |
-| 会话历史 | 按日期分组列表、已加载范围搜索/筛库、逐轮回放、继续原 thread | [archive-panel.tsx](../src/components/app/archive-panel.tsx) |
+| 文档治理与诊断 | 查看、ACL、替换、重索引、取消/重试、下载、删除、版本历史、入库瀑布、按需解析报告 | [library-doc-actions.tsx](../src/components/app/library-doc-actions.tsx)、[document-detail-sheet.tsx](../src/components/app/document-detail-sheet.tsx) |
+| 会话历史 | 按日期分组列表、服务端搜索/筛库、加载更早会话、逐轮回放、继续原 thread | [archive-panel.tsx](../src/components/app/archive-panel.tsx) |
 | 运行中心与审计 | Ask/队列统计、健康状态、告警及投递、请求筛选/翻页、错误抽屉、独立审计页与 CSV 导出 | [operations-dashboard.tsx](../src/components/app/operations-dashboard.tsx)、[operations-requests-panel.tsx](../src/components/app/operations-requests-panel.tsx)、[workspace-audit-panel.tsx](../src/components/app/workspace-audit-panel.tsx) |
 | 设置与账号 | 问答策略（回答模式 / 检索精排 Auto·开·关 / 对话记忆）、Owner 级模型与供应商配置（含连通性探测与部署锁定态）、成员/邀请、Service Key、告警阈值、邮件通知策略/测试、服务信息；登录/改密/邀请/邮箱访问 | [settings/page.tsx](../src/app/app/settings/page.tsx)、[login/page.tsx](../src/app/login/page.tsx) |
 
@@ -57,7 +57,7 @@
 
 ### 知识库与文档治理
 - **双状态分离**：“现在能否用于问答（可用性）”与“最近一次处理任务”必须分开表达（例如“旧版仍可用”同时显示“新版更新失败”），不能混成一个状态徽标。
-- **数据边界**：不把 UUID 截断当 `v3`，不逐行发起 N+1 版本历史请求；页数、上传字节进度仅在接口真实返回时显示；当前名称搜索仅作用于已加载列表，不标成“全库全文搜索”。
+- **数据边界**：不把 UUID 截断当 `v3`，不逐行发起 N+1 版本历史请求；文档台账按服务端分页、搜索与任务筛选加载轻量列表，打开文档详情时按需读取解析报告；页数、上传字节进度仅在接口真实返回时显示；名称搜索按显示名和原文件名过滤，不标成“全库全文搜索”。
 - **多文件上传结果**：逐文件区分“提交中 / 已接受 / 提交失败”；已接受不等于索引完成，关闭结果区不取消后台任务。
 
 ### 问答、输入区与会话历史

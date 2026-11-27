@@ -212,7 +212,12 @@ function AskWorkspaceContent() {
 		documents: libraryDocuments,
 		fetched: documentsFetched,
 		error: documentsError,
-	} = useDocuments(libraryId, { enabled: Boolean(libraryId && apiReady) });
+	} = useDocuments(libraryId, {
+		enabled: Boolean(libraryId && apiReady),
+		status: "ready",
+		limit: 12,
+		includeReport: false,
+	});
 	const readyDocuments = useMemo(
 		() => libraryDocuments.filter((doc) => doc.status === "ready"),
 		[libraryDocuments],

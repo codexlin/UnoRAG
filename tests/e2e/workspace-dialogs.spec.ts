@@ -292,22 +292,24 @@ test("document ACL retry, filtered selection, saving feedback and readonly contr
 			],
 		}),
 	);
-	await page.route("**/api/libraries/acl-library/documents", (route) =>
-		route.fulfill({
-			json: [
-				{
-					id: "acl-doc",
-					library_id: "acl-library",
-					name,
-					filename: name,
-					status: "ready",
-					content_type: "application/pdf",
-					chunk_count: 3,
-					created_at: stamp,
-					updated_at: stamp,
-				},
-			],
-		}),
+	await page.route(
+		/\/api\/libraries\/acl-library\/documents(?:\?.*)?$/,
+		(route) =>
+			route.fulfill({
+				json: [
+					{
+						id: "acl-doc",
+						library_id: "acl-library",
+						name,
+						filename: name,
+						status: "ready",
+						content_type: "application/pdf",
+						chunk_count: 3,
+						created_at: stamp,
+						updated_at: stamp,
+					},
+				],
+			}),
 	);
 	await page.route("**/api/workspace/members", (route) =>
 		route.fulfill({
@@ -497,23 +499,25 @@ test("workspace controls remain usable with doubled root text and constrained wi
 			],
 		}),
 	);
-	await page.route("**/api/libraries/text-resize-library/documents", (route) =>
-		route.fulfill({
-			json: [
-				{
-					id: "text-resize-doc",
-					library_id: "text-resize-library",
-					name: "季度财务报告与检索说明",
-					filename: "quarterly-finance.md",
-					content_type: "text/markdown",
-					status: "ready",
-					chunk_count: 7,
-					job_status: "failed",
-					created_at: stamp,
-					updated_at: stamp,
-				},
-			],
-		}),
+	await page.route(
+		/\/api\/libraries\/text-resize-library\/documents(?:\?.*)?$/,
+		(route) =>
+			route.fulfill({
+				json: [
+					{
+						id: "text-resize-doc",
+						library_id: "text-resize-library",
+						name: "季度财务报告与检索说明",
+						filename: "quarterly-finance.md",
+						content_type: "text/markdown",
+						status: "ready",
+						chunk_count: 7,
+						job_status: "failed",
+						created_at: stamp,
+						updated_at: stamp,
+					},
+				],
+			}),
 	);
 	await page.route("**/api/rag/v1/threads?*", (route) =>
 		route.fulfill({ json: [] }),

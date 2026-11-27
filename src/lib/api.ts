@@ -158,6 +158,30 @@ export type ApiThreadDetail = ApiThread & {
 	turns: ApiArchiveTurn[];
 };
 
+export type ApiThreadsPage = {
+	items: ApiThread[];
+	has_more: boolean;
+	next_cursor: string | null;
+	total: number | null;
+};
+
+export type ApiDocumentSummary = {
+	total: number;
+	completed: number;
+	processing: number;
+	failed: number;
+};
+
+export type ApiDocumentsPage = {
+	items: ApiDocument[];
+	total: number;
+	filtered_total: number;
+	limit: number;
+	offset: number;
+	has_more: boolean;
+	summary: ApiDocumentSummary;
+};
+
 export type ApiAskResponse = Partial<ApiAskTraceDetails> & {
 	session_id: string;
 	thread_id?: string | null;
@@ -347,26 +371,179 @@ export async function fetchLibraries(
 	return (await response.json()) as ApiLibrary[];
 }
 
+export type FetchDocumentsOptions = {
+	signal?: AbortSignal;
+	limit?: number;
+	offset?: number;
+	query?: string;
+	task?: "all" | "processing" | "failed";
+	status?: string;
+	includeReport?: boolean;
+};
+
 export async function fetchDocuments(
 	libraryId: string,
-	signal?: AbortSignal,
+	signalOrOptions?: AbortSignal | FetchDocumentsOptions,
 ): Promise<ApiDocument[]> {
+	const options: FetchDocumentsOptions =
+		signalOrOptions && "aborted" in signalOrOptions
+			? { signal: signalOrOptions }
+			: (signalOrOptions ?? {});
+	const params = new URLSearchParams();
+	if (options.limit != null) params.set("limit", String(options.limit));
+	if (options.offset != null && options.offset > 0)
+		params.set("offset", String(options.offset));
+	if (options.query?.trim()) params.set("q", options.query.trim());
+	if (options.task && options.task !== "all") params.set("task", options.task);
+	if (options.status?.trim()) params.set("status", options.status.trim());
+	if (options.includeReport === false) params.set("include_report", "0");
+	if (options.includeReport === true) params.set("include_report", "1");
+	const queryString = params.toString();
 	const encodedLibraryId = encodeURIComponent(libraryId);
 	const controlResponse = await fetch(
-		`/api/libraries/${encodedLibraryId}/documents`,
+		`/api/libraries/${encodedLibraryId}/documents${queryString ? `?${queryString}` : ""}`,
 		{
 			method: "GET",
-			signal,
+			signal: options.signal,
 			cache: "no-store",
 		},
 	);
 	if (!controlResponse.ok) {
 		throw new Error(`documents ${controlResponse.status}`);
 	}
-	const controlDocuments = (await controlResponse.json()) as ApiDocument[];
+	const payload = (await controlResponse.json()) as
+		| ApiDocument[]
+		| ApiDocumentsPage;
+	const controlDocuments = Array.isArray(payload) ? payload : payload.items;
 	return controlDocuments.sort((left, right) =>
 		right.updated_at.localeCompare(left.updated_at),
 	);
+}
+
+const ACTIVE_TASK_STATUSES = new Set([
+	"queued",
+	"retry",
+	"running",
+	"cancelling",
+]);
+
+function matchesLegacyDocumentFilters(
+	doc: ApiDocument,
+	options: {
+		query?: string;
+		task?: "all" | "processing" | "failed";
+		status?: string;
+	},
+): boolean {
+	const normalized = options.query?.trim().toLocaleLowerCase() ?? "";
+	if (
+		normalized &&
+		!`${doc.name} ${doc.filename}`.toLocaleLowerCase().includes(normalized)
+	) {
+		return false;
+	}
+	const jobStatus = doc.job_status ?? "";
+	if (options.task === "processing" && !ACTIVE_TASK_STATUSES.has(jobStatus)) {
+		return false;
+	}
+	if (
+		options.task === "failed" &&
+		jobStatus !== "failed" &&
+		jobStatus !== "dead"
+	) {
+		return false;
+	}
+	if (options.status && doc.status !== options.status) {
+		return false;
+	}
+	return true;
+}
+
+export async function fetchDocumentsPage(
+	libraryId: string,
+	options: {
+		limit?: number;
+		offset?: number;
+		query?: string;
+		task?: "all" | "processing" | "failed";
+		status?: string;
+		includeReport?: boolean;
+		signal?: AbortSignal;
+	} = {},
+): Promise<ApiDocumentsPage> {
+	const limit = Math.max(1, Math.min(options.limit ?? 50, 200));
+	const offset = Math.max(0, options.offset ?? 0);
+	const params = new URLSearchParams();
+	params.set("paginated", "1");
+	params.set("limit", String(limit));
+	if (offset > 0) params.set("offset", String(offset));
+	if (options.query?.trim()) params.set("q", options.query.trim());
+	if (options.task && options.task !== "all") params.set("task", options.task);
+	if (options.status?.trim()) params.set("status", options.status.trim());
+	if (options.includeReport === true) params.set("include_report", "1");
+	else params.set("include_report", "0");
+
+	const encodedLibraryId = encodeURIComponent(libraryId);
+	const response = await fetch(
+		`/api/libraries/${encodedLibraryId}/documents?${params.toString()}`,
+		{
+			method: "GET",
+			signal: options.signal,
+			cache: "no-store",
+		},
+	);
+	if (!response.ok) {
+		throw new Error(`documents ${response.status}`);
+	}
+	const payload = (await response.json()) as ApiDocument[] | ApiDocumentsPage;
+	if (!Array.isArray(payload)) {
+		return payload;
+	}
+	const sorted = [...payload].sort((left, right) =>
+		right.updated_at.localeCompare(left.updated_at),
+	);
+	const summary: ApiDocumentSummary = {
+		total: sorted.length,
+		completed: sorted.filter((doc) => doc.job_status === "completed").length,
+		processing: sorted.filter((doc) =>
+			ACTIVE_TASK_STATUSES.has(doc.job_status ?? ""),
+		).length,
+		failed: sorted.filter(
+			(doc) => doc.job_status === "failed" || doc.job_status === "dead",
+		).length,
+	};
+	const filtered = sorted.filter((doc) =>
+		matchesLegacyDocumentFilters(doc, options),
+	);
+	const items = filtered.slice(offset, offset + limit);
+	return {
+		items,
+		total: sorted.length,
+		filtered_total: filtered.length,
+		limit,
+		offset,
+		has_more: offset + items.length < filtered.length,
+		summary,
+	};
+}
+
+export async function fetchDocumentDetail(
+	libraryId: string,
+	docId: string,
+	signal?: AbortSignal,
+): Promise<ApiDocument> {
+	const response = await fetch(
+		`/api/libraries/${encodeURIComponent(libraryId)}/documents/${encodeURIComponent(docId)}`,
+		{
+			method: "GET",
+			signal,
+			cache: "no-store",
+		},
+	);
+	if (!response.ok) {
+		throw new Error(`document ${response.status}`);
+	}
+	return (await response.json()) as ApiDocument;
 }
 
 export async function createLibrary(input: {
@@ -789,12 +966,24 @@ function parseApiError(text: string): string {
 	return trimmed;
 }
 
+export const UNLINKED_THREAD_LIBRARY_FILTER = "__unlinked__";
+
 export async function fetchThreads(input?: {
 	limit?: number;
+	query?: string;
+	libraryId?: string | null;
+	cursor?: string | null;
 	signal?: AbortSignal;
 }): Promise<ApiThread[]> {
 	const params = new URLSearchParams();
 	if (input?.limit) params.set("limit", String(input.limit));
+	if (input?.query?.trim()) params.set("q", input.query.trim());
+	if (input?.libraryId === null) {
+		params.set("library_id", UNLINKED_THREAD_LIBRARY_FILTER);
+	} else if (input?.libraryId && input.libraryId !== "all") {
+		params.set("library_id", input.libraryId);
+	}
+	if (input?.cursor) params.set("cursor", input.cursor);
 	const query = params.toString();
 	const response = await fetch(
 		`${getApiBaseUrl()}/v1/threads${query ? `?${query}` : ""}`,
@@ -807,7 +996,60 @@ export async function fetchThreads(input?: {
 	if (!response.ok) {
 		throw new Error(`threads ${response.status}`);
 	}
-	return (await response.json()) as ApiThread[];
+	const payload = (await response.json()) as ApiThread[] | ApiThreadsPage;
+	return Array.isArray(payload) ? payload : payload.items;
+}
+
+export async function fetchThreadsPage(input?: {
+	limit?: number;
+	query?: string;
+	libraryId?: string | null;
+	cursor?: string | null;
+	signal?: AbortSignal;
+}): Promise<ApiThreadsPage> {
+	const params = new URLSearchParams();
+	params.set("paginated", "1");
+	if (input?.limit) params.set("limit", String(input.limit));
+	if (input?.query?.trim()) params.set("q", input.query.trim());
+	if (input?.libraryId === null) {
+		params.set("library_id", UNLINKED_THREAD_LIBRARY_FILTER);
+	} else if (input?.libraryId && input.libraryId !== "all") {
+		params.set("library_id", input.libraryId);
+	}
+	if (input?.cursor) params.set("cursor", input.cursor);
+	const response = await fetch(
+		`${getApiBaseUrl()}/v1/threads?${params.toString()}`,
+		{
+			method: "GET",
+			signal: input?.signal,
+			cache: "no-store",
+		},
+	);
+	if (!response.ok) {
+		throw new Error(`threads ${response.status}`);
+	}
+	const payload = (await response.json()) as ApiThread[] | ApiThreadsPage;
+	if (!Array.isArray(payload)) {
+		return payload;
+	}
+	const normalized = input?.query?.trim().toLocaleLowerCase() ?? "";
+	const filtered = payload.filter((thread) => {
+		if (input?.libraryId === null && thread.library_id) return false;
+		if (
+			typeof input?.libraryId === "string" &&
+			input.libraryId !== "all" &&
+			(thread.library_id || "") !== input.libraryId
+		) {
+			return false;
+		}
+		return thread.title.toLocaleLowerCase().includes(normalized);
+	});
+	return {
+		items: filtered,
+		has_more: false,
+		next_cursor: null,
+		total: filtered.length,
+	};
 }
 
 export async function fetchThread(

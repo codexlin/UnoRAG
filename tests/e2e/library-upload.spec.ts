@@ -99,59 +99,65 @@ async function installUploads(page: Page, plans: Record<string, UploadPlan>) {
 	await page.route("**/api/libraries/*/documents/*/versions", (route) =>
 		route.fulfill({ json: [] }),
 	);
-	await page.route("**/api/libraries/*/documents", async (route) => {
-		const request = route.request();
-		const libraryId = new URL(request.url()).pathname.split("/")[3];
-		if (request.method() === "GET") {
-			reads.push(libraryId);
-			await route.fulfill({ json: documents.get(libraryId) ?? [] });
-			return;
-		}
-		const form = await new Response(
-			new Uint8Array(request.postDataBuffer() ?? []),
-			{
-				headers: { "Content-Type": request.headers()["content-type"] },
-			},
-		).formData();
-		const file = form.get("file");
-		if (!(file instanceof File))
-			throw new Error("Expected a real multipart file upload");
-		submissions.push({ libraryId, filename: file.name });
-		const plan = plans[file.name];
-		if (!plan) throw new Error(`Unexpected upload: ${file.name}`);
-		await plan.wait;
-		if (typeof plan.status === "number") {
+	await page.route(
+		/\/api\/libraries\/[^/]+\/documents(?:\?.*)?$/,
+		async (route) => {
+			const request = route.request();
+			const libraryId = new URL(request.url()).pathname.split("/")[3];
+			if (request.method() === "GET") {
+				reads.push(libraryId);
+				await route.fulfill({ json: documents.get(libraryId) ?? [] });
+				return;
+			}
+			const form = await new Response(
+				new Uint8Array(request.postDataBuffer() ?? []),
+				{
+					headers: { "Content-Type": request.headers()["content-type"] },
+				},
+			).formData();
+			const file = form.get("file");
+			if (!(file instanceof File))
+				throw new Error("Expected a real multipart file upload");
+			submissions.push({ libraryId, filename: file.name });
+			const plan = plans[file.name];
+			if (!plan) throw new Error(`Unexpected upload: ${file.name}`);
+			await plan.wait;
+			if (typeof plan.status === "number") {
+				await route.fulfill({
+					status: plan.status,
+					json: { detail: plan.error },
+				});
+				return;
+			}
+			const doc: ApiDocument = {
+				id: `uploaded-${file.name}`,
+				library_id: libraryId,
+				name: file.name,
+				filename: file.name,
+				content_type: "text/plain",
+				status: plan.status === "ready" ? "ready" : "processing",
+				chunk_count: plan.status === "ready" ? 1 : 0,
+				created_at: stamp,
+				updated_at: stamp,
+			};
+			if (plan.listed !== false) documents.get(libraryId)?.push(doc);
+			const result: ApiUploadResponse = {
+				library_id: libraryId,
+				doc_id: doc.id,
+				title: doc.name,
+				filename: file.name,
+				chunk_count: doc.chunk_count,
+				status: doc.status,
+				accepted: plan.status === "accepted",
+				mode: "live",
+				simulated: false,
+			};
 			await route.fulfill({
-				status: plan.status,
-				json: { detail: plan.error },
+				status: result.accepted ? 202 : 200,
+				json: result,
 			});
-			return;
-		}
-		const doc: ApiDocument = {
-			id: `uploaded-${file.name}`,
-			library_id: libraryId,
-			name: file.name,
-			filename: file.name,
-			content_type: "text/plain",
-			status: plan.status === "ready" ? "ready" : "processing",
-			chunk_count: plan.status === "ready" ? 1 : 0,
-			created_at: stamp,
-			updated_at: stamp,
-		};
-		if (plan.listed !== false) documents.get(libraryId)?.push(doc);
-		const result: ApiUploadResponse = {
-			library_id: libraryId,
-			doc_id: doc.id,
-			title: doc.name,
-			filename: file.name,
-			chunk_count: doc.chunk_count,
-			status: doc.status,
-			accepted: plan.status === "accepted",
-			mode: "live",
-			simulated: false,
-		};
-		await route.fulfill({ status: result.accepted ? 202 : 200, json: result });
-	});
+		},
+	);
 	await page.goto("/app/libraries");
 	await expect(
 		page.getByRole("button", {

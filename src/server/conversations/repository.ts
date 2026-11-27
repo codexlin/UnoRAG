@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import type * as schema from "@/db/schema";
@@ -16,6 +16,10 @@ import type {
 
 type Database = NodePgDatabase<typeof schema>;
 
+function escapeLikePattern(value: string): string {
+	return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
 function threadScope(
 	scope: ConversationScope,
 	threadId?: string,
@@ -27,6 +31,35 @@ function threadScope(
 		eq(conversationThreads.principalId, scope.principalId),
 		threadId ? eq(conversationThreads.id, threadId) : undefined,
 		status ? eq(conversationThreads.status, status) : undefined,
+	);
+}
+
+function threadListFilter(
+	scope: ConversationScope,
+	input: ListConversationThreadsInput,
+	options: { includeCursor?: boolean } = {},
+) {
+	const trimmedQuery = input.query?.trim();
+	const pattern = trimmedQuery
+		? `%${escapeLikePattern(trimmedQuery.normalize("NFKC"))}%`
+		: null;
+	const libraryFilter =
+		input.libraryId === null
+			? isNull(conversationThreads.ragLibraryId)
+			: typeof input.libraryId === "string" && input.libraryId.trim()
+				? eq(conversationThreads.ragLibraryId, input.libraryId.trim())
+				: undefined;
+	const cursorFilter =
+		options.includeCursor && input.cursor
+			? sql`(${conversationThreads.updatedAt}, ${conversationThreads.createdAt}, ${conversationThreads.id}) < (${input.cursor.updatedAt.toISOString()}::timestamptz, ${input.cursor.createdAt.toISOString()}::timestamptz, ${input.cursor.id}::uuid)`
+			: undefined;
+	return and(
+		threadScope(scope, undefined, input.status ?? "active"),
+		libraryFilter,
+		pattern
+			? sql`coalesce(${conversationThreads.title}, '') ILIKE ${pattern} ESCAPE '\\'`
+			: undefined,
+		cursorFilter,
 	);
 }
 
@@ -133,13 +166,27 @@ export class ConversationRepository {
 		return this.db
 			.select()
 			.from(conversationThreads)
-			.where(threadScope(scope, undefined, input.status ?? "active"))
+			.where(threadListFilter(scope, input, { includeCursor: true }))
 			.orderBy(
 				desc(conversationThreads.updatedAt),
 				desc(conversationThreads.createdAt),
 				desc(conversationThreads.id),
 			)
 			.limit(normalizeLimit(input.limit));
+	}
+
+	async countThreads(
+		scope: ConversationScope,
+		input: Pick<
+			ListConversationThreadsInput,
+			"status" | "query" | "libraryId"
+		> = {},
+	): Promise<number> {
+		const [row] = await this.db
+			.select({ value: sql<number>`count(*)::int` })
+			.from(conversationThreads)
+			.where(threadListFilter(scope, input, { includeCursor: false }));
+		return Number(row?.value ?? 0);
 	}
 
 	async listTurns(scope: ConversationScope, threadId: string, limit = 200) {

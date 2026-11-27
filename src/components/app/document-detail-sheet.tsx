@@ -38,6 +38,9 @@ type Props = {
 	versionsError: unknown;
 	onRefreshVersions: () => Promise<unknown>;
 	versionsLoading: boolean;
+	reportLoading?: boolean;
+	reportError?: unknown;
+	onRefreshDetail?: () => Promise<unknown>;
 	job: ApiJob | null;
 	jobLoading: boolean;
 	busy: boolean;
@@ -54,6 +57,9 @@ export function DocumentDetailSheet({
 	versionsError,
 	onRefreshVersions,
 	versionsLoading,
+	reportLoading = false,
+	reportError = null,
+	onRefreshDetail,
 	job,
 	jobLoading,
 	busy,
@@ -64,6 +70,7 @@ export function DocumentDetailSheet({
 	const t = useInterfaceText();
 	const titleRef = useRef<HTMLHeadingElement>(null);
 	const [versionsRefreshing, setVersionsRefreshing] = useState(false);
+	const [detailRefreshing, setDetailRefreshing] = useState(false);
 	const active = versions.find((version) => version.id === activeVersionId);
 	const desired = versions.find((version) => version.id === desiredVersionId);
 	const hasSeparateDesired = Boolean(
@@ -76,6 +83,16 @@ export function DocumentDetailSheet({
 			await onRefreshVersions();
 		} finally {
 			setVersionsRefreshing(false);
+		}
+	}
+
+	async function refreshDetail() {
+		if (!onRefreshDetail) return;
+		setDetailRefreshing(true);
+		try {
+			await onRefreshDetail();
+		} finally {
+			setDetailRefreshing(false);
 		}
 	}
 
@@ -315,10 +332,38 @@ export function DocumentDetailSheet({
 								<h3 className="text-sm font-medium">
 									{t("解析诊断", "Parser diagnostics")}
 								</h3>
-								<ParserReportCard
-									report={document.parser_report}
-									parseStatus={document.parse_status}
-								/>
+								{reportLoading && document.parser_report === undefined ? (
+									<p role="status" className="text-sm text-muted-foreground">
+										{t("正在读取解析报告…", "Loading parser report…")}
+									</p>
+								) : reportError && document.parser_report === undefined ? (
+									<div className="space-y-2">
+										<p role="alert" className="text-sm text-destructive">
+											{t(
+												"解析报告读取失败，请稍后重试。",
+												"Couldn't load the parser report. Try again.",
+											)}
+										</p>
+										{onRefreshDetail ? (
+											<Button
+												type="button"
+												variant="outline"
+												className="h-11"
+												disabled={detailRefreshing}
+												aria-busy={detailRefreshing}
+												onClick={() => void refreshDetail()}
+											>
+												<RotateCcw data-icon="inline-start" aria-hidden />
+												{t("重试读取解析报告", "Retry loading parser report")}
+											</Button>
+										) : null}
+									</div>
+								) : (
+									<ParserReportCard
+										report={document.parser_report}
+										parseStatus={document.parse_status}
+									/>
+								)}
 							</section>
 						</ScrollArea>
 						<SheetFooter className="max-h-[35dvh] shrink-0 overflow-y-auto border-t bg-background px-5 py-3 sm:px-6">

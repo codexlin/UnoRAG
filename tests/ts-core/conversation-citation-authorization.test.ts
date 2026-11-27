@@ -886,3 +886,142 @@ test("scope-mismatched citations are rejected before querying storage", async ()
 	);
 	assert.equal(queryCalls, 0);
 });
+
+test("thread list endpoint supports server-side search, library filter, keyset cursor, and paginated envelope", async () => {
+	const {
+		decodeThreadCursor,
+		encodeThreadCursor,
+		handleNativeConversationRequest,
+	} = await handlerModule;
+	const baseThread = storedThread();
+	const secondThread = {
+		...baseThread,
+		id: "44444444-4444-4444-8444-444444444445",
+		title: "Second archived policy",
+		updatedAt: new Date("2026-07-29T00:00:00.000Z"),
+		createdAt: new Date("2026-07-29T00:00:00.000Z"),
+	};
+	const thirdThread = {
+		...baseThread,
+		id: "44444444-4444-4444-8444-444444444446",
+		title: "Third archived policy",
+		updatedAt: new Date("2026-07-28T00:00:00.000Z"),
+		createdAt: new Date("2026-07-28T00:00:00.000Z"),
+	};
+
+	const observedInputs: Array<Record<string, unknown>> = [];
+	const repository = {
+		async getThread() {
+			return null;
+		},
+		async listThreads(
+			_scope: ConversationScope,
+			input: Record<string, unknown>,
+		) {
+			observedInputs.push(input);
+			return [baseThread, secondThread, thirdThread].slice(
+				0,
+				Number(input.limit ?? 50),
+			);
+		},
+		async countThreads() {
+			return 3;
+		},
+	};
+	const turnCounter = {
+		async countAssistantTurns() {
+			return new Map([
+				[baseThread.id, 2],
+				[secondThread.id, 1],
+			]);
+		},
+	};
+	const citationAuthorizer = {
+		async filterAuthorized() {
+			throw new Error("thread list must not authorize citations");
+		},
+	};
+
+	// Paginated request fetches limit + 1, returns next_cursor & has_more.
+	const response = await handleNativeConversationRequest({
+		request: new Request(
+			"http://local/v1/threads?paginated=1&limit=2&q=policy&library_id=__unlinked__",
+			{ method: "GET" },
+		),
+		path: ["v1", "threads"],
+		identity,
+		repository: repository as never,
+		citationAuthorizer,
+		turnCounter,
+	});
+	assert.equal(response?.status, 200);
+	const page = (await response?.json()) as {
+		items: Array<{ id: string; turn_count: number }>;
+		has_more: boolean;
+		next_cursor: string | null;
+		total: number | null;
+	};
+	assert.equal(page.has_more, true);
+	assert.equal(page.total, 3);
+	assert.deepEqual(
+		page.items.map((item) => item.id),
+		[baseThread.id, secondThread.id],
+	);
+	assert.ok(page.next_cursor);
+	const decoded = decodeThreadCursor(page.next_cursor);
+	assert.equal(decoded.id, secondThread.id);
+	assert.equal(
+		decoded.updatedAt.toISOString(),
+		secondThread.updatedAt.toISOString(),
+	);
+	assert.deepEqual(observedInputs[0], {
+		limit: 3,
+		query: "policy",
+		libraryId: null,
+		cursor: undefined,
+	});
+
+	// Round-trip cursor works and malformed cursor fails closed with 400.
+	const validCursor = encodeThreadCursor(secondThread);
+	const secondPage = await handleNativeConversationRequest({
+		request: new Request(
+			`http://local/v1/threads?paginated=1&limit=2&cursor=${encodeURIComponent(validCursor)}`,
+			{ method: "GET" },
+		),
+		path: ["v1", "threads"],
+		identity,
+		repository: repository as never,
+		citationAuthorizer,
+		turnCounter,
+	});
+	assert.equal(secondPage?.status, 200);
+	assert.equal(
+		(observedInputs[1]?.cursor as { id?: string } | undefined)?.id,
+		secondThread.id,
+	);
+
+	const invalidCursor = await handleNativeConversationRequest({
+		request: new Request(
+			"http://local/v1/threads?paginated=1&cursor=not-valid-base64-json",
+			{ method: "GET" },
+		),
+		path: ["v1", "threads"],
+		identity,
+		repository: repository as never,
+		citationAuthorizer,
+		turnCounter,
+	});
+	assert.equal(invalidCursor?.status, 400);
+
+	// Legacy unpaginated request keeps plain array response shape.
+	const legacy = await handleNativeConversationRequest({
+		request: new Request("http://local/v1/threads?limit=2", { method: "GET" }),
+		path: ["v1", "threads"],
+		identity,
+		repository: repository as never,
+		citationAuthorizer,
+		turnCounter,
+	});
+	assert.equal(legacy?.status, 200);
+	assert.equal(Array.isArray(await legacy?.json()), true);
+});

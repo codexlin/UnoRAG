@@ -19,9 +19,57 @@ import {
 	getSessionMemoryStore,
 	type SessionMemoryStore,
 } from "@/server/conversations/session-memory";
-import type { ConversationScope } from "@/server/conversations/types";
+import type {
+	ConversationScope,
+	ConversationThreadCursor,
+} from "@/server/conversations/types";
 import { recoverArchiveProvenance } from "./authorized-history";
 import { projectPublicRetrievalDebug } from "./legacy-sse";
+
+const UNLINKED_LIBRARY_FILTER = "__unlinked__";
+const ThreadCursorPayloadSchema = z
+	.object({
+		u: z.string().datetime(),
+		c: z.string().datetime(),
+		i: z.uuid(),
+	})
+	.strict();
+
+export function encodeThreadCursor(thread: {
+	updatedAt: Date;
+	createdAt: Date;
+	id: string;
+}): string {
+	return Buffer.from(
+		JSON.stringify({
+			u: thread.updatedAt.toISOString(),
+			c: thread.createdAt.toISOString(),
+			i: thread.id,
+		}),
+		"utf8",
+	).toString("base64url");
+}
+
+export function decodeThreadCursor(raw: string): ConversationThreadCursor {
+	let parsedJson: unknown;
+	try {
+		parsedJson = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+	} catch {
+		throw new z.ZodError([
+			{
+				code: "custom",
+				path: ["cursor"],
+				message: "invalid cursor encoding",
+			},
+		]);
+	}
+	const payload = ThreadCursorPayloadSchema.parse(parsedJson);
+	return {
+		updatedAt: new Date(payload.u),
+		createdAt: new Date(payload.c),
+		id: payload.i,
+	};
+}
 
 const CitationSchema = z.record(z.string(), z.unknown());
 const ArchiveTurnInputSchema = z
@@ -420,25 +468,66 @@ export async function handleNativeConversationRequest(input: {
 
 	try {
 		if (input.path.length === 2 && input.request.method === "GET") {
+			const searchParams = new URL(input.request.url).searchParams;
 			const limit = Math.max(
 				1,
-				Math.min(
-					Number(new URL(input.request.url).searchParams.get("limit")) || 50,
-					200,
-				),
+				Math.min(Number(searchParams.get("limit")) || 50, 200),
 			);
-			const threads = await repository.listThreads(conversationScope, {
-				limit,
+			const paginatedParam = searchParams
+				.get("paginated")
+				?.trim()
+				.toLowerCase();
+			const paginated = paginatedParam === "1" || paginatedParam === "true";
+			const rawQuery = searchParams.get("q")?.trim() ?? "";
+			const query = rawQuery ? rawQuery.slice(0, 200) : undefined;
+			const rawLibraryId = searchParams.get("library_id")?.trim() ?? "";
+			const libraryId =
+				rawLibraryId === UNLINKED_LIBRARY_FILTER
+					? null
+					: rawLibraryId && rawLibraryId !== "all"
+						? rawLibraryId.slice(0, 128)
+						: undefined;
+			const rawCursor = searchParams.get("cursor")?.trim() ?? "";
+			const cursor = rawCursor ? decodeThreadCursor(rawCursor) : undefined;
+
+			const fetchLimit = paginated ? Math.min(limit + 1, 200) : limit;
+			const rawThreads = await repository.listThreads(conversationScope, {
+				limit: fetchLimit,
+				query,
+				libraryId,
+				cursor,
 			});
+			const hasMore = paginated && rawThreads.length > limit;
+			const threads = hasMore ? rawThreads.slice(0, limit) : rawThreads;
 			const turnCounter =
 				input.turnCounter ?? new DrizzleConversationTurnCounter();
-			const counts = await turnCounter.countAssistantTurns(
-				conversationScope,
-				threads.map((thread) => thread.id),
-			);
+			const [counts, total] = await Promise.all([
+				turnCounter.countAssistantTurns(
+					conversationScope,
+					threads.map((thread) => thread.id),
+				),
+				paginated && typeof repository.countThreads === "function"
+					? repository.countThreads(conversationScope, {
+							query,
+							libraryId,
+						})
+					: Promise.resolve<number | null>(null),
+			]);
 			const response = threads.map((thread) =>
 				threadResponse(thread, counts.get(thread.id) ?? 0),
 			);
+			if (paginated) {
+				const tail = threads[threads.length - 1];
+				return Response.json(
+					{
+						items: response,
+						has_more: hasMore,
+						next_cursor: hasMore && tail ? encodeThreadCursor(tail) : null,
+						total,
+					},
+					{ headers: { "cache-control": "no-store" } },
+				);
+			}
 			return Response.json(response, {
 				headers: { "cache-control": "no-store" },
 			});

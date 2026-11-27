@@ -90,8 +90,17 @@ export function IngestJobsProvider({ children }: { children: ReactNode }) {
 				targetIds.map(async (libraryId) => {
 					try {
 						return await queryClient.fetchQuery({
-							queryKey: queryKeys.documents(scope, libraryId),
-							queryFn: ({ signal }) => fetchDocuments(libraryId, signal),
+							queryKey: queryKeys.documentsSample(
+								scope,
+								libraryId,
+								"ingest-poll",
+							),
+							queryFn: ({ signal }) =>
+								fetchDocuments(libraryId, {
+									limit: 50,
+									includeReport: false,
+									signal,
+								}),
 							staleTime: 0,
 						});
 					} catch (err) {
@@ -124,6 +133,12 @@ export function IngestJobsProvider({ children }: { children: ReactNode }) {
 					statusRef.current[doc.id] = doc.status;
 					if (doc.status === "processing") processing += 1;
 				}
+			}
+			for (const libraryId of targetIds) {
+				void queryClient.invalidateQueries({
+					queryKey: queryKeys.documents(scope, libraryId),
+					refetchType: "active",
+				});
 			}
 			setProcessingCount(processing);
 			setTick((n) => n + 1);

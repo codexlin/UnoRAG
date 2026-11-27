@@ -1,6 +1,8 @@
 "use client";
 
 import {
+	ChevronLeft,
+	ChevronRight,
 	FileText,
 	FileUp,
 	Loader2,
@@ -9,7 +11,6 @@ import {
 	RotateCcw,
 	Search,
 } from "lucide-react";
-import { useMemo, useState } from "react";
 import { AuthButton } from "@/components/app/auth-button";
 import { LedgerTable } from "@/components/app/ledger-table";
 import {
@@ -40,7 +41,7 @@ import {
 	TableHead,
 	TableRow,
 } from "@/components/ui/table";
-import type { ApiDocument, ApiLibrary } from "@/lib/api";
+import type { ApiDocument, ApiDocumentSummary, ApiLibrary } from "@/lib/api";
 import type { PermissionCaps } from "@/lib/client-permissions";
 import { documentProcessingView } from "@/lib/document-processing-view";
 import { formatDateTime, formatFileSize } from "@/lib/format";
@@ -55,6 +56,15 @@ export type DocumentLedgerActions = Omit<
 type LibraryDocumentLedgerProps = {
 	library: ApiLibrary | null;
 	documents: ApiDocument[];
+	summary: ApiDocumentSummary;
+	filteredTotal: number;
+	page: number;
+	pageSize: number;
+	query: string;
+	taskFilter: "all" | "processing" | "failed";
+	onQueryChange: (nextQuery: string) => void;
+	onTaskFilterChange: (nextTask: "all" | "processing" | "failed") => void;
+	onPageChange: (nextPage: number) => void;
 	caps: PermissionCaps;
 	canManageLibraries: boolean;
 	canWriteLibraries: boolean;
@@ -75,6 +85,15 @@ type LibraryDocumentLedgerProps = {
 export function LibraryDocumentLedger({
 	library,
 	documents,
+	summary,
+	filteredTotal,
+	page,
+	pageSize,
+	query,
+	taskFilter,
+	onQueryChange,
+	onTaskFilterChange,
+	onPageChange,
 	caps,
 	canManageLibraries,
 	canWriteLibraries,
@@ -98,34 +117,10 @@ export function LibraryDocumentLedger({
 		{ value: "processing", label: t("任务处理中", "Active jobs") },
 		{ value: "failed", label: t("任务失败", "Failed jobs") },
 	];
-	const [query, setQuery] = useState("");
-	const [taskFilter, setTaskFilter] = useState("all");
-	const filteredDocuments = useMemo(() => {
-		const normalized = query.trim().toLocaleLowerCase();
-		return documents.filter((doc) => {
-			const task = documentProcessingView(doc);
-			return (
-				`${doc.name} ${doc.filename}`
-					.toLocaleLowerCase()
-					.includes(normalized) &&
-				(taskFilter === "all" ||
-					(taskFilter === "processing" && task.processing) ||
-					(taskFilter === "failed" && task.failed))
-			);
-		});
-	}, [documents, query, taskFilter]);
-	const summary = useMemo(
-		() => ({
-			completed: documents.filter(
-				(doc) => documentProcessingView(doc).completed,
-			).length,
-			processing: documents.filter(
-				(doc) => documentProcessingView(doc).processing,
-			).length,
-			failed: documents.filter((doc) => documentProcessingView(doc).failed)
-				.length,
-		}),
-		[documents],
+	const hasActiveFilters = Boolean(query.trim() || taskFilter !== "all");
+	const totalPages = Math.max(1, Math.ceil(filteredTotal / pageSize));
+	const showControls = Boolean(
+		library && (summary.total > 0 || documents.length > 0 || hasActiveFilters),
 	);
 
 	return (
@@ -136,7 +131,7 @@ export function LibraryDocumentLedger({
 					className="grid shrink-0 grid-cols-[repeat(auto-fit,minmax(min(100%,8rem),1fr))] border-b border-border/70 bg-background"
 				>
 					{[
-						[t("文档", "Documents"), documents.length],
+						[t("文档", "Documents"), summary.total],
 						[t("任务完成", "Completed jobs"), summary.completed],
 						[t("任务处理中", "Active jobs"), summary.processing],
 						[t("任务失败", "Failed jobs"), summary.failed],
@@ -152,7 +147,8 @@ export function LibraryDocumentLedger({
 								{label}
 							</p>
 							<p className="mt-1 text-lg font-medium tabular-nums text-foreground">
-								{loading || (loadError && documents.length === 0)
+								{loading ||
+								(loadError && summary.total === 0 && documents.length === 0)
 									? "--"
 									: value}
 							</p>
@@ -171,15 +167,27 @@ export function LibraryDocumentLedger({
 			) : null}
 
 			<div className="flex min-h-0 flex-1 flex-col px-4 py-5 sm:px-6 md:overflow-hidden">
-				{library && documents.length > 0 ? (
+				{showControls ? (
 					<div className="mb-3 flex shrink-0 flex-wrap items-end justify-between gap-3">
 						<div>
 							<p className="text-sm font-medium text-foreground">
 								{t("文档", "Documents")}
 							</p>
 							<p className="mt-1 text-xs text-muted-foreground">
-								{t("显示", "Showing")} {filteredDocuments.length} /{" "}
-								{documents.length} {t("份文档", "documents")}
+								{hasActiveFilters
+									? t(
+											`显示 ${documents.length} / 匹配 ${filteredTotal} 份（共 ${summary.total} 份）`,
+											`Showing ${documents.length} of ${filteredTotal} matching (${summary.total} total)`,
+										)
+									: totalPages > 1
+										? t(
+												`第 ${page} / ${totalPages} 页 · 共 ${filteredTotal} 份文档`,
+												`Page ${page} of ${totalPages} · ${filteredTotal} documents`,
+											)
+										: t(
+												`显示 ${documents.length} / ${summary.total} 份文档`,
+												`Showing ${documents.length} / ${summary.total} documents`,
+											)}
 							</p>
 						</div>
 						<div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
@@ -190,7 +198,13 @@ export function LibraryDocumentLedger({
 								items={taskFilterOptions}
 								value={taskFilter}
 								onValueChange={(value) => {
-									if (value !== null) setTaskFilter(value);
+									if (
+										value === "all" ||
+										value === "processing" ||
+										value === "failed"
+									) {
+										onTaskFilterChange(value);
+									}
 								}}
 							>
 								<SelectTrigger
@@ -216,7 +230,7 @@ export function LibraryDocumentLedger({
 								/>
 								<Input
 									value={query}
-									onChange={(event) => setQuery(event.target.value)}
+									onChange={(event) => onQueryChange(event.target.value)}
 									placeholder={t(
 										"搜索显示名或原文件…",
 										"Search by display name or original file…",
@@ -291,7 +305,9 @@ export function LibraryDocumentLedger({
 							{t("新建知识库", "Create library")}
 						</AuthButton>
 					</div>
-				) : documents.length === 0 ? (
+				) : summary.total === 0 &&
+					documents.length === 0 &&
+					!hasActiveFilters ? (
 					<div className="flex h-full min-h-60 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-border/80 bg-muted/20 px-6 text-center">
 						<p className="text-sm text-muted-foreground">
 							{canWriteLibraries
@@ -312,7 +328,7 @@ export function LibraryDocumentLedger({
 							{t("上传文档", "Upload documents")}
 						</AuthButton>
 					</div>
-				) : filteredDocuments.length === 0 ? (
+				) : documents.length === 0 ? (
 					<div className="flex min-h-48 flex-col items-center justify-center border border-dashed border-border/80 bg-muted/20 px-6 text-center">
 						<p className="text-sm font-medium text-foreground">
 							{t("没有匹配的文档", "No matching documents")}
@@ -329,179 +345,220 @@ export function LibraryDocumentLedger({
 							size="sm"
 							className="mt-2 h-11"
 							onClick={() => {
-								setQuery("");
-								setTaskFilter("all");
+								onQueryChange("");
+								onTaskFilterChange("all");
 							}}
 						>
 							{t("清除筛选", "Clear filters")}
 						</Button>
 					</div>
 				) : (
-					<LedgerTable
-						className="table-fixed"
-						header={
-							<TableRow className="hover:bg-transparent">
-								<TableHead className="w-[44%] 2xl:w-[32%]">
-									{t("文档名称", "Document name")}
-								</TableHead>
-								<TableHead className="hidden 2xl:table-cell 2xl:w-[16%]">
-									{t("原文件", "Original file")}
-								</TableHead>
-								<TableHead className="w-24 md:w-28">
-									{t("最近处理", "Latest job")}
-								</TableHead>
-								<TableHead className="hidden w-20 text-right xl:table-cell">
-									{t("大小", "Size")}
-								</TableHead>
-								<TableHead
-									className="hidden w-20 text-right xl:table-cell"
-									title={t("本次生效片段数", "Chunks in this version")}
-								>
-									{t("片段", "Chunks")}
-								</TableHead>
-								<TableHead className="hidden w-36 lg:table-cell">
-									{t("更新时间", "Updated")}
-								</TableHead>
-								<TableHead className="w-14 text-right">
-									{t("操作", "Actions")}
-								</TableHead>
-							</TableRow>
-						}
-					>
-						<TableBody>
-							{filteredDocuments.map((doc) => {
-								const busy = busyDocId === doc.id;
-								const task = documentProcessingView(doc, locale);
-								const actionContext: DocActionContext = {
-									busy,
-									processing: doc.status === "processing",
-									...actions,
-								};
-								return (
-									<TableRow key={doc.id}>
-										<TableCell className="py-2.5 whitespace-normal">
-											<button
-												type="button"
-												className="flex min-h-11 w-full min-w-0 items-center gap-2.5 text-left font-medium hover:text-evidence focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-9"
-												aria-label={doc.name}
-												onClick={() => actions.onView(doc)}
-											>
-												<FileText
-													className="hidden size-4 shrink-0 text-muted-foreground sm:block"
-													aria-hidden
-												/>
-												<span className="min-w-0">
-													<span
-														className="line-clamp-2 [overflow-wrap:anywhere]"
-														title={doc.name}
-													>
-														{doc.name}
-													</span>
-													{doc.filename !== doc.name ? (
-														<span
-															className="mt-0.5 block truncate text-xs font-normal text-muted-foreground 2xl:hidden"
-															title={doc.filename}
-														>
-															{doc.filename}
-														</span>
-													) : null}
-												</span>
-											</button>
-										</TableCell>
-										<TableCell className="hidden 2xl:table-cell">
-											<span className="text-meta block truncate text-muted-foreground">
-												{doc.filename}
-											</span>
-										</TableCell>
-										<TableCell>
-											<span
-												className={cn(
-													"text-sm",
-													task.failed
-														? "text-destructive"
-														: task.processing
-															? "text-warning-foreground"
-															: task.completed
-																? "text-cite"
-																: "text-muted-foreground",
-												)}
-											>
-												{task.label}
-											</span>
-											{task.stage ? (
-												<span className="mt-0.5 block break-words text-xs text-muted-foreground">
-													{stageDisplayName(task.stage, locale)}
-												</span>
-											) : null}
-											{doc.status === "degraded" ? (
-												<span className="mt-0.5 block text-xs text-warning-foreground">
-													{t("解析降级", "Parsing fallback")}
-												</span>
-											) : null}
-										</TableCell>
-										<TableCell className="hidden text-right font-mono text-meta tabular-nums text-muted-foreground xl:table-cell">
-											{formatFileSize(doc.size_bytes)}
-										</TableCell>
-										<TableCell className="hidden text-right font-mono text-meta tabular-nums xl:table-cell">
-											{task.completed ||
-											["ready", "degraded"].includes(doc.status)
-												? doc.chunk_count
-												: "—"}
-										</TableCell>
-										<TableCell className="hidden font-mono text-meta tabular-nums text-muted-foreground lg:table-cell">
-											{formatDateTime(doc.updated_at)}
-										</TableCell>
-										<TableCell className="text-right">
-											<DropdownMenu>
-												<DropdownMenuTrigger
-													render={
-														<Button
-															variant="ghost"
-															size="icon"
-															className="size-11 rounded-md md:size-9"
-															disabled={busy}
-														/>
-													}
+					<>
+						<LedgerTable
+							className="table-fixed"
+							header={
+								<TableRow className="hover:bg-transparent">
+									<TableHead className="w-[44%] 2xl:w-[32%]">
+										{t("文档名称", "Document name")}
+									</TableHead>
+									<TableHead className="hidden 2xl:table-cell 2xl:w-[16%]">
+										{t("原文件", "Original file")}
+									</TableHead>
+									<TableHead className="w-24 md:w-28">
+										{t("最近处理", "Latest job")}
+									</TableHead>
+									<TableHead className="hidden w-20 text-right xl:table-cell">
+										{t("大小", "Size")}
+									</TableHead>
+									<TableHead
+										className="hidden w-20 text-right xl:table-cell"
+										title={t("本次生效片段数", "Chunks in this version")}
+									>
+										{t("片段", "Chunks")}
+									</TableHead>
+									<TableHead className="hidden w-36 lg:table-cell">
+										{t("更新时间", "Updated")}
+									</TableHead>
+									<TableHead className="w-14 text-right">
+										{t("操作", "Actions")}
+									</TableHead>
+								</TableRow>
+							}
+						>
+							<TableBody>
+								{documents.map((doc) => {
+									const busy = busyDocId === doc.id;
+									const task = documentProcessingView(doc, locale);
+									const actionContext: DocActionContext = {
+										busy,
+										processing: doc.status === "processing",
+										...actions,
+									};
+									return (
+										<TableRow key={doc.id}>
+											<TableCell className="py-2.5 whitespace-normal">
+												<button
+													type="button"
+													className="flex min-h-11 w-full min-w-0 items-center gap-2.5 text-left font-medium hover:text-evidence focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-9"
+													aria-label={doc.name}
+													onClick={() => actions.onView(doc)}
 												>
-													<MoreHorizontal />
-													<span className="sr-only">
-														{t("操作", "Actions")}
+													<FileText
+														className="hidden size-4 shrink-0 text-muted-foreground sm:block"
+														aria-hidden
+													/>
+													<span className="min-w-0">
+														<span
+															className="line-clamp-2 [overflow-wrap:anywhere]"
+															title={doc.name}
+														>
+															{doc.name}
+														</span>
+														{doc.filename !== doc.name ? (
+															<span
+																className="mt-0.5 block truncate text-xs font-normal text-muted-foreground 2xl:hidden"
+																title={doc.filename}
+															>
+																{doc.filename}
+															</span>
+														) : null}
 													</span>
-												</DropdownMenuTrigger>
-												<DropdownMenuContent align="end" className="min-w-40">
-													{resolveDocActions(caps, doc).map((action) => {
-														const Icon = action.icon;
-														return (
-															<div key={action.id}>
-																{action.separatorBefore ? (
-																	<DropdownMenuSeparator />
-																) : null}
-																<DropdownMenuItem
-																	variant={
-																		action.destructive
-																			? "destructive"
-																			: undefined
-																	}
-																	disabled={
-																		action.disabled?.(doc, actionContext) ??
-																		false
-																	}
-																	onClick={() => action.run(doc, actionContext)}
-																>
-																	<Icon />
-																	{t(...action.label)}
-																</DropdownMenuItem>
-															</div>
-														);
-													})}
-												</DropdownMenuContent>
-											</DropdownMenu>
-										</TableCell>
-									</TableRow>
-								);
-							})}
-						</TableBody>
-					</LedgerTable>
+												</button>
+											</TableCell>
+											<TableCell className="hidden 2xl:table-cell">
+												<span className="text-meta block truncate text-muted-foreground">
+													{doc.filename}
+												</span>
+											</TableCell>
+											<TableCell>
+												<span
+													className={cn(
+														"text-sm",
+														task.failed
+															? "text-destructive"
+															: task.processing
+																? "text-warning-foreground"
+																: task.completed
+																	? "text-cite"
+																	: "text-muted-foreground",
+													)}
+												>
+													{task.label}
+												</span>
+												{task.stage ? (
+													<span className="mt-0.5 block break-words text-xs text-muted-foreground">
+														{stageDisplayName(task.stage, locale)}
+													</span>
+												) : null}
+												{doc.status === "degraded" ? (
+													<span className="mt-0.5 block text-xs text-warning-foreground">
+														{t("解析降级", "Parsing fallback")}
+													</span>
+												) : null}
+											</TableCell>
+											<TableCell className="hidden text-right font-mono text-meta tabular-nums text-muted-foreground xl:table-cell">
+												{formatFileSize(doc.size_bytes)}
+											</TableCell>
+											<TableCell className="hidden text-right font-mono text-meta tabular-nums xl:table-cell">
+												{task.completed ||
+												["ready", "degraded"].includes(doc.status)
+													? doc.chunk_count
+													: "—"}
+											</TableCell>
+											<TableCell className="hidden font-mono text-meta tabular-nums text-muted-foreground lg:table-cell">
+												{formatDateTime(doc.updated_at)}
+											</TableCell>
+											<TableCell className="text-right">
+												<DropdownMenu>
+													<DropdownMenuTrigger
+														render={
+															<Button
+																variant="ghost"
+																size="icon"
+																className="size-11 rounded-md md:size-9"
+																disabled={busy}
+															/>
+														}
+													>
+														<MoreHorizontal />
+														<span className="sr-only">
+															{t("操作", "Actions")}
+														</span>
+													</DropdownMenuTrigger>
+													<DropdownMenuContent align="end" className="min-w-40">
+														{resolveDocActions(caps, doc).map((action) => {
+															const Icon = action.icon;
+															return (
+																<div key={action.id}>
+																	{action.separatorBefore ? (
+																		<DropdownMenuSeparator />
+																	) : null}
+																	<DropdownMenuItem
+																		variant={
+																			action.destructive
+																				? "destructive"
+																				: undefined
+																		}
+																		disabled={
+																			action.disabled?.(doc, actionContext) ??
+																			false
+																		}
+																		onClick={() =>
+																			action.run(doc, actionContext)
+																		}
+																	>
+																		<Icon />
+																		{t(...action.label)}
+																	</DropdownMenuItem>
+																</div>
+															);
+														})}
+													</DropdownMenuContent>
+												</DropdownMenu>
+											</TableCell>
+										</TableRow>
+									);
+								})}
+							</TableBody>
+						</LedgerTable>
+						{totalPages > 1 ? (
+							<nav
+								aria-label={t("文档分页", "Document pagination")}
+								className="mt-3 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-3"
+							>
+								<p className="text-xs text-muted-foreground tabular-nums">
+									{t(
+										`第 ${page} / ${totalPages} 页 · 共 ${filteredTotal} 份`,
+										`Page ${page} of ${totalPages} · ${filteredTotal} total`,
+									)}
+								</p>
+								<div className="flex items-center gap-2">
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										className="h-11 min-w-11 md:h-9"
+										disabled={page <= 1 || refreshing}
+										onClick={() => onPageChange(Math.max(1, page - 1))}
+									>
+										<ChevronLeft data-icon="inline-start" aria-hidden />
+										{t("上一页", "Previous")}
+									</Button>
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										className="h-11 min-w-11 md:h-9"
+										disabled={page >= totalPages || refreshing}
+										onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+									>
+										{t("下一页", "Next")}
+										<ChevronRight data-icon="inline-end" aria-hidden />
+									</Button>
+								</div>
+							</nav>
+						) : null}
+					</>
 				)}
 			</div>
 		</>

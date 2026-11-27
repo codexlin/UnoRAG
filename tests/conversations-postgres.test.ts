@@ -177,3 +177,102 @@ test("thread library foreign key rejects a library from another workspace", {
 		}),
 	);
 });
+
+test("scoped repository supports server-side search, library filter, wildcard escaping, and keyset pagination", {
+	skip: !enabled,
+}, async () => {
+	assert.ok(repository && db);
+	const t1 = await repository.createThread(scopeA, {
+		ragLibraryId: "rag-conversation-a",
+		title: "Quarterly 100% revenue review",
+	});
+	const t2 = await repository.createThread(scopeA, {
+		ragLibraryId: "rag-conversation-a",
+		title: "Quarterly 1000 revenue review",
+	});
+	const t3 = await repository.createThread(scopeA, {
+		ragLibraryId: null,
+		title: "Quarterly unlinked notes",
+	});
+	const t4 = await repository.createThread(scopeA, {
+		ragLibraryId: "rag-conversation-a",
+		title: "Quarterly older archive item",
+	});
+
+	// Set deterministic ordering timestamps so keyset cursor order is exact.
+	const stamps = [
+		[t1.id, new Date("2026-06-04T00:00:00.000Z")],
+		[t2.id, new Date("2026-06-03T00:00:00.000Z")],
+		[t3.id, new Date("2026-06-02T00:00:00.000Z")],
+		[t4.id, new Date("2026-06-01T00:00:00.000Z")],
+	] as const;
+	for (const [id, updatedAt] of stamps) {
+		await db
+			.update(schema.conversationThreads)
+			.set({ updatedAt, createdAt: updatedAt })
+			.where(eq(schema.conversationThreads.id, id));
+	}
+
+	// Wildcard '%' must match literally, not match '1000'.
+	const literalPercent = await repository.listThreads(scopeA, {
+		query: "100%",
+		limit: 10,
+	});
+	assert.deepEqual(
+		literalPercent.map((row) => row.id),
+		[t1.id],
+	);
+
+	// Unlinked filter (libraryId: null) returns only unlinked threads.
+	const unlinked = await repository.listThreads(scopeA, {
+		query: "Quarterly",
+		libraryId: null,
+		limit: 10,
+	});
+	assert.deepEqual(
+		unlinked.map((row) => row.id),
+		[t3.id],
+	);
+
+	// Count + keyset pagination across all 4 matching threads in pages of 2.
+	const total = await repository.countThreads(scopeA, { query: "Quarterly" });
+	assert.equal(total, 4);
+
+	const page1 = await repository.listThreads(scopeA, {
+		query: "Quarterly",
+		limit: 2,
+	});
+	assert.deepEqual(
+		page1.map((row) => row.id),
+		[t1.id, t2.id],
+	);
+
+	const last1 = page1[page1.length - 1];
+	assert.ok(last1);
+	const page2 = await repository.listThreads(scopeA, {
+		query: "Quarterly",
+		limit: 2,
+		cursor: {
+			updatedAt: last1.updatedAt,
+			createdAt: last1.createdAt,
+			id: last1.id,
+		},
+	});
+	assert.deepEqual(
+		page2.map((row) => row.id),
+		[t3.id, t4.id],
+	);
+
+	const last2 = page2[page2.length - 1];
+	assert.ok(last2);
+	const page3 = await repository.listThreads(scopeA, {
+		query: "Quarterly",
+		limit: 2,
+		cursor: {
+			updatedAt: last2.updatedAt,
+			createdAt: last2.createdAt,
+			id: last2.id,
+		},
+	});
+	assert.deepEqual(page3, []);
+});

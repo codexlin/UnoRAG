@@ -260,7 +260,7 @@ async function openAsk(page: Page, plans: string[][]) {
 	await page.route("**/api/libraries", (route) =>
 		route.fulfill({ json: libraries }),
 	);
-	await page.route("**/api/libraries/*/documents", (route) => {
+	await page.route(/\/api\/libraries\/[^/]+\/documents(?:\?.*)?$/, (route) => {
 		const libraryId = new URL(route.request().url()).pathname.split("/")[3];
 		const documents: ApiDocument[] = [
 			{
