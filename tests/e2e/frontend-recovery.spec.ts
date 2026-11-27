@@ -56,7 +56,7 @@ test("knowledge library hydrates after the layout has cached the list", async ({
 	await page.route("**/api/libraries", (route) =>
 		route.fulfill({ json: [library] }),
 	);
-	await page.route("**/api/libraries/*/documents", (route) =>
+	await page.route(/\/api\/libraries\/[^/]+\/documents(?:\?.*)?$/, (route) =>
 		route.fulfill({ json: [] }),
 	);
 	const listResponse = page
@@ -150,7 +150,7 @@ for (const failedLoad of ["acl", "members"] as const) {
 		await page.route("**/api/libraries", (route) =>
 			route.fulfill({ json: [library] }),
 		);
-		await page.route("**/api/libraries/*/documents", (route) =>
+		await page.route(/\/api\/libraries\/[^/]+\/documents(?:\?.*)?$/, (route) =>
 			route.fulfill({ json: documents }),
 		);
 		await page.route("**/api/workspace/members", async (route) => {

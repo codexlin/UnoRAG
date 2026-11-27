@@ -1,6 +1,12 @@
 "use client";
 
-import { ArrowLeft, ArrowUp, MessageSquare, Search } from "lucide-react";
+import {
+	ArrowLeft,
+	ArrowUp,
+	Loader2,
+	MessageSquare,
+	Search,
+} from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { CitationSourceCard } from "@/components/app/citation-source-card";
@@ -23,8 +29,9 @@ import {
 	type ApiThread,
 	type ApiThreadDetail,
 	fetchThread,
-	fetchThreads,
+	fetchThreadsPage,
 	isAbortError,
+	UNLINKED_THREAD_LIBRARY_FILTER,
 } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { useInterfaceLanguage, useInterfaceText } from "@/lib/i18n/provider";
@@ -74,6 +81,11 @@ export function ArchivePanel() {
 	const t = useInterfaceText();
 	const { libraries } = useLibraries();
 	const [threads, setThreads] = useState<ApiThread[]>([]);
+	const [totalCount, setTotalCount] = useState<number | null>(null);
+	const [hasMore, setHasMore] = useState(false);
+	const [nextCursor, setNextCursor] = useState<string | null>(null);
+	const [loadingMore, setLoadingMore] = useState(false);
+	const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 	const [selectedId, setSelectedId] = useState("");
 	const [detail, setDetail] = useState<ApiThreadDetail | null>(null);
 	const [selectedTurnId, setSelectedTurnId] = useState("");
@@ -82,6 +94,7 @@ export function ArchivePanel() {
 	const [loading, setLoading] = useState(true);
 	const [detailLoading, setDetailLoading] = useState(false);
 	const [query, setQuery] = useState("");
+	const [debouncedQuery, setDebouncedQuery] = useState("");
 	const [libraryFilter, setLibraryFilter] = useState("all");
 	const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
 	const [listRetry, setListRetry] = useState(0);
@@ -92,24 +105,60 @@ export function ArchivePanel() {
 	const backRef = useRef<HTMLButtonElement | null>(null);
 	const citationTriggerRef = useRef<HTMLElement | null>(null);
 	const citationRefs = useRef(new Map<string, HTMLLIElement>());
+	const loadMoreControllerRef = useRef<AbortController | null>(null);
+
+	useEffect(() => {
+		const trimmed = query.trim();
+		if (!trimmed) {
+			setDebouncedQuery("");
+			return;
+		}
+		const timer = window.setTimeout(() => {
+			setDebouncedQuery(trimmed);
+		}, 200);
+		return () => window.clearTimeout(timer);
+	}, [query]);
+
+	const activeLibraryParam =
+		libraryFilter === "all"
+			? undefined
+			: libraryFilter === UNLINKED_THREAD_LIBRARY_FILTER
+				? null
+				: libraryFilter;
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: Retry intentionally restarts and aborts the request.
 	useEffect(() => {
+		loadMoreControllerRef.current?.abort();
+		loadMoreControllerRef.current = null;
+		setLoadingMore(false);
+		setLoadMoreError(null);
 		const controller = new AbortController();
 		void (async () => {
 			setLoading(true);
 			try {
-				const items = await fetchThreads({
+				const page = await fetchThreadsPage({
 					limit: 40,
+					query: debouncedQuery || undefined,
+					libraryId: activeLibraryParam,
 					signal: controller.signal,
 				});
 				if (controller.signal.aborted) return;
-				setThreads(items);
-				setSelectedId((prev) => prev || items[0]?.id || "");
+				setThreads(page.items);
+				setHasMore(page.has_more);
+				setNextCursor(page.next_cursor);
+				setTotalCount(page.total);
+				setSelectedId((prev) =>
+					prev && page.items.some((item) => item.id === prev)
+						? prev
+						: page.items[0]?.id || "",
+				);
 				setError(null);
 			} catch (err) {
 				if (controller.signal.aborted || isAbortError(err)) return;
 				setThreads([]);
+				setHasMore(false);
+				setNextCursor(null);
+				setTotalCount(null);
 				setError(
 					t(
 						"无法加载归档会话，请稍后重试。",
@@ -121,7 +170,47 @@ export function ArchivePanel() {
 			}
 		})();
 		return () => controller.abort();
-	}, [listRetry]);
+	}, [debouncedQuery, activeLibraryParam, listRetry]);
+
+	async function loadMoreThreads() {
+		if (!hasMore || !nextCursor || loadingMore || loading) return;
+		loadMoreControllerRef.current?.abort();
+		const controller = new AbortController();
+		loadMoreControllerRef.current = controller;
+		setLoadingMore(true);
+		setLoadMoreError(null);
+		try {
+			const page = await fetchThreadsPage({
+				limit: 40,
+				query: debouncedQuery || undefined,
+				libraryId: activeLibraryParam,
+				cursor: nextCursor,
+				signal: controller.signal,
+			});
+			if (controller.signal.aborted) return;
+			setThreads((prev) => {
+				const seen = new Set(prev.map((item) => item.id));
+				const appended = page.items.filter((item) => !seen.has(item.id));
+				return [...prev, ...appended];
+			});
+			setHasMore(page.has_more);
+			setNextCursor(page.next_cursor);
+			if (page.total !== null) setTotalCount(page.total);
+		} catch (err) {
+			if (controller.signal.aborted || isAbortError(err)) return;
+			setLoadMoreError(
+				t(
+					"加载更多会话失败，请重试。",
+					"Couldn't load older conversations. Try again.",
+				),
+			);
+		} finally {
+			if (loadMoreControllerRef.current === controller) {
+				loadMoreControllerRef.current = null;
+			}
+			if (!controller.signal.aborted) setLoadingMore(false);
+		}
+	}
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: Retry intentionally restarts and aborts the request.
 	useEffect(() => {
@@ -176,24 +265,34 @@ export function ArchivePanel() {
 	}
 
 	const libraryNames = new Map(libraries.map((item) => [item.id, item.name]));
+	const hasUnlinkedThreads =
+		libraryFilter === UNLINKED_THREAD_LIBRARY_FILTER ||
+		threads.some((thread) => !thread.library_id);
 	const libraryIds = Array.from(
-		new Set(threads.map((thread) => thread.library_id || "")),
+		new Set([
+			...libraries.map((item) => item.id),
+			...threads
+				.map((thread) => thread.library_id)
+				.filter((id): id is string => Boolean(id)),
+		]),
 	);
 	const libraryName = (id: string | null | undefined) =>
 		id ? libraryNames.get(id) || id : t("未关联知识库", "No linked library");
 	const libraryOptions = [
 		{ value: "all", label: t("全部知识库", "All libraries") },
 		...libraryIds.map((id) => ({ value: id, label: libraryName(id) })),
+		...(hasUnlinkedThreads
+			? [
+					{
+						value: UNLINKED_THREAD_LIBRARY_FILTER,
+						label: t("未关联知识库", "No linked library"),
+					},
+				]
+			: []),
 	];
-	const normalized = query.trim().toLocaleLowerCase();
-	const visibleThreads = threads.filter(
-		(thread) =>
-			(libraryFilter === "all" ||
-				(thread.library_id || "") === libraryFilter) &&
-			thread.title.toLocaleLowerCase().includes(normalized),
-	);
+	const hasActiveFilters = Boolean(debouncedQuery || libraryFilter !== "all");
 	const groups = new Map<string, ApiThread[]>();
-	for (const thread of visibleThreads) {
+	for (const thread of threads) {
 		const label = dateGroup(thread.updated_at, locale, t);
 		const group = groups.get(label) ?? [];
 		group.push(thread);
@@ -232,10 +331,15 @@ export function ArchivePanel() {
 							<p className="text-xs text-muted-foreground" role="status">
 								{loading
 									? t("加载中…", "Loading…")
-									: t(
-											`已加载 ${threads.length} 个`,
-											`Loaded ${threads.length}`,
-										)}
+									: totalCount !== null && totalCount > threads.length
+										? t(
+												`已加载 ${threads.length} / ${totalCount} 个`,
+												`Loaded ${threads.length} of ${totalCount}`,
+											)
+										: t(
+												`已加载 ${threads.length} 个`,
+												`Loaded ${threads.length}`,
+											)}
 							</p>
 						</div>
 						<div className="space-y-1.5">
@@ -243,7 +347,7 @@ export function ArchivePanel() {
 								htmlFor="archive-search"
 								className="text-xs text-muted-foreground"
 							>
-								{t("搜索已加载会话", "Search loaded conversations")}
+								{t("搜索会话", "Search conversations")}
 							</label>
 							<div className="relative">
 								<Search
@@ -315,7 +419,7 @@ export function ArchivePanel() {
 										{t("重试加载列表", "Retry loading the list")}
 									</Button>
 								</div>
-							) : threads.length === 0 ? (
+							) : threads.length === 0 && !hasActiveFilters ? (
 								<div className="space-y-3 px-2 py-6">
 									<p className="text-sm text-muted-foreground">
 										{t("还没有归档会话", "No archived conversations yet")}
@@ -330,7 +434,7 @@ export function ArchivePanel() {
 										{t("开始提问", "Ask a question")}
 									</Link>
 								</div>
-							) : visibleThreads.length === 0 ? (
+							) : threads.length === 0 ? (
 								<p
 									role="status"
 									className="px-2 py-6 text-sm text-muted-foreground"
@@ -338,47 +442,82 @@ export function ArchivePanel() {
 									{t("没有匹配的会话", "No matching conversations")}
 								</p>
 							) : (
-								Array.from(groups, ([label, items]) => (
-									<section key={label} aria-label={label} className="mb-4">
-										<h2 className="px-3 py-3 text-xs font-medium text-muted-foreground">
-											{label}
-										</h2>
-										<ul className="space-y-1">
-											{items.map((thread) => (
-												<li key={thread.id}>
-													<button
-														type="button"
-														aria-current={
-															selectedId === thread.id ? "true" : undefined
-														}
-														onClick={(event) => {
-															listTriggerRef.current = event.currentTarget;
-															setSelectedId(thread.id);
-															setMobileDetailOpen(true);
-														}}
-														className={cn(
-															"min-h-11 w-full rounded-lg border-l-2 px-3 py-3 text-left transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
-															selectedId === thread.id
-																? "border-evidence bg-muted"
-																: "border-transparent hover:bg-muted/60",
-														)}
-													>
-														<span className="block text-sm font-medium leading-6 [overflow-wrap:anywhere]">
-															{thread.title}
-														</span>
-														<span className="mt-1 block text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
-															{libraryName(thread.library_id)}
-														</span>
-														<span className="mt-1 block text-xs leading-5 text-muted-foreground">
-															{formatDateTime(thread.updated_at)} ·{" "}
-															{thread.turn_count} {t("轮", "turns")}
-														</span>
-													</button>
-												</li>
-											))}
-										</ul>
-									</section>
-								))
+								<>
+									{Array.from(groups, ([label, items]) => (
+										<section key={label} aria-label={label} className="mb-4">
+											<h2 className="px-3 py-3 text-xs font-medium text-muted-foreground">
+												{label}
+											</h2>
+											<ul className="space-y-1">
+												{items.map((thread) => (
+													<li key={thread.id}>
+														<button
+															type="button"
+															aria-current={
+																selectedId === thread.id ? "true" : undefined
+															}
+															onClick={(event) => {
+																listTriggerRef.current = event.currentTarget;
+																setSelectedId(thread.id);
+																setMobileDetailOpen(true);
+															}}
+															className={cn(
+																"min-h-11 w-full rounded-lg border-l-2 px-3 py-3 text-left transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
+																selectedId === thread.id
+																	? "border-evidence bg-muted"
+																	: "border-transparent hover:bg-muted/60",
+															)}
+														>
+															<span className="block text-sm font-medium leading-6 [overflow-wrap:anywhere]">
+																{thread.title}
+															</span>
+															<span className="mt-1 block text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+																{libraryName(thread.library_id)}
+															</span>
+															<span className="mt-1 block text-xs leading-5 text-muted-foreground">
+																{formatDateTime(thread.updated_at)} ·{" "}
+																{thread.turn_count} {t("轮", "turns")}
+															</span>
+														</button>
+													</li>
+												))}
+											</ul>
+										</section>
+									))}
+									{loadMoreError ? (
+										<p
+											role="alert"
+											className="px-2 pb-2 text-xs text-destructive"
+										>
+											{loadMoreError}
+										</p>
+									) : null}
+									{hasMore ? (
+										<div className="px-1 pb-2">
+											<Button
+												type="button"
+												variant="outline"
+												className="h-11 w-full"
+												disabled={loadingMore}
+												aria-busy={loadingMore}
+												onClick={() => void loadMoreThreads()}
+											>
+												{loadingMore ? (
+													<Loader2
+														className="size-4 animate-spin motion-reduce:animate-none"
+														aria-hidden
+													/>
+												) : null}
+												{loadingMore
+													? t(
+															"正在加载更早会话…",
+															"Loading older conversations…",
+														)
+													: t("加载更早会话", "Load older conversations")}
+											</Button>
+										</div>
+									) : null}
+								</>
 							)}
 						</div>
 					</ScrollArea>

@@ -26,8 +26,9 @@ import {
 import { LibraryWorkspaceHeader } from "@/components/app/libraries/library-workspace-header";
 import { buildDetailActions } from "@/components/app/library-doc-actions";
 import { useSession } from "@/components/app/session-provider";
+import { useDocumentDetail } from "@/hooks/use-document-detail";
 import { useDocumentVersions } from "@/hooks/use-document-versions";
-import { useDocuments } from "@/hooks/use-documents";
+import { useDocumentsPage } from "@/hooks/use-documents";
 import { useJob } from "@/hooks/use-job";
 import { useLibraries } from "@/hooks/use-libraries";
 import { useQueryScope } from "@/hooks/use-query-scope";
@@ -39,7 +40,6 @@ import {
 	deleteDocument,
 	deleteLibrary,
 	downloadDocument,
-	fetchDocuments,
 	fetchLibraries,
 	reindexDocument,
 	replaceDocument,
@@ -48,7 +48,7 @@ import {
 	uploadDocument,
 } from "@/lib/api";
 import {
-	documentQueryOptions,
+	documentPageQueryOptions,
 	seedAcceptedDocumentDeletion,
 } from "@/lib/document-query-state";
 import { formatDurationMs } from "@/lib/format";
@@ -56,6 +56,8 @@ import { useInterfaceText } from "@/lib/i18n/provider";
 import { seedAcceptedLibraryDeletion } from "@/lib/library-query-state";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchFreshQuery } from "@/lib/query-refresh";
+
+const DOCUMENT_PAGE_SIZE = 50;
 
 type DocumentOverlay =
 	| { kind: "none" }
@@ -81,6 +83,12 @@ export function LibrariesPanel() {
 	const [selectedId, setSelectedId] = useState<string>("");
 	const selectedIdRef = useRef(selectedId);
 	selectedIdRef.current = selectedId;
+	const [documentQuery, setDocumentQuery] = useState("");
+	const [debouncedDocumentQuery, setDebouncedDocumentQuery] = useState("");
+	const [documentTaskFilter, setDocumentTaskFilter] = useState<
+		"all" | "processing" | "failed"
+	>("all");
+	const [documentPage, setDocumentPage] = useState(1);
 	const [uploading, setUploading] = useState(false);
 	const [savingLibrary, setSavingLibrary] = useState(false);
 	const [busyDocId, setBusyDocId] = useState<string | null>(null);
@@ -125,13 +133,39 @@ export function LibrariesPanel() {
 		[libraries, selectedId],
 	);
 	const selectedLibraryExists = Boolean(selectedLibrary);
+
+	useEffect(() => {
+		const trimmed = documentQuery.trim();
+		if (!trimmed) {
+			setDebouncedDocumentQuery("");
+			return;
+		}
+		const timer = window.setTimeout(() => {
+			setDebouncedDocumentQuery(trimmed);
+		}, 200);
+		return () => window.clearTimeout(timer);
+	}, [documentQuery]);
+
+	const activeDocumentFilter = useMemo(
+		() => ({
+			query: debouncedDocumentQuery,
+			task: documentTaskFilter,
+			page: documentPage,
+			pageSize: DOCUMENT_PAGE_SIZE,
+		}),
+		[debouncedDocumentQuery, documentTaskFilter, documentPage],
+	);
 	const {
 		documents,
+		filteredTotal: documentsFilteredTotal,
+		summary: documentsSummary,
 		error: documentsError,
 		loading: documentsLoading,
 		refreshing: documentsRefreshing,
+		queryOptions: documentsQueryOptions,
 		refresh: refreshDocuments,
-	} = useDocuments(selectedId, {
+	} = useDocumentsPage(selectedId, {
+		...activeDocumentFilter,
 		enabled: selectedLibraryExists,
 		libraryDeleting: selectedLibrary?.status === "deleting",
 		deleteJobsActive: selectedLibrary?.delete_jobs_active,
@@ -153,11 +187,28 @@ export function LibrariesPanel() {
 		loading: versionsLoading,
 		refresh: refreshVersions,
 	} = useDocumentVersions(selectedId, detailDocId ?? "");
+	const {
+		document: fetchedDetailDoc,
+		loading: detailDocLoading,
+		error: detailDocError,
+		refresh: refreshDetailDoc,
+	} = useDocumentDetail(selectedId, detailDocId, {
+		enabled: selectedLibraryExists && Boolean(detailDocId),
+	});
 
-	const detailDoc = useMemo(
+	const pageDetailDoc = useMemo(
 		() => documents.find((doc) => doc.id === detailDocId) ?? null,
 		[documents, detailDocId],
 	);
+	const detailDoc = useMemo(() => {
+		if (!detailDocId) return null;
+		if (fetchedDetailDoc && fetchedDetailDoc.id === detailDocId) {
+			return pageDetailDoc
+				? { ...pageDetailDoc, ...fetchedDetailDoc }
+				: fetchedDetailDoc;
+		}
+		return pageDetailDoc;
+	}, [detailDocId, fetchedDetailDoc, pageDetailDoc]);
 	const { job: detailJob, loading: detailJobLoading } = useJob(
 		detailDoc?.job_id,
 	);
@@ -175,13 +226,28 @@ export function LibrariesPanel() {
 		const stillExists = libraries.some((item) => item.id === selectedId);
 		if (!selectedId || !stillExists) {
 			setSelectedId(libraries[0].id);
+			setDocumentQuery("");
+			setDebouncedDocumentQuery("");
+			setDocumentTaskFilter("all");
+			setDocumentPage(1);
 		}
 	}, [libraries, selectedId]);
 
 	useEffect(() => {
+		const totalPages = Math.max(
+			1,
+			Math.ceil(documentsFilteredTotal / DOCUMENT_PAGE_SIZE),
+		);
+		if (documentPage > totalPages && !documentsLoading) {
+			setDocumentPage(totalPages);
+		}
+	}, [documentsFilteredTotal, documentPage, documentsLoading]);
+
+	useEffect(() => {
 		if (!detailDocId || !selectedId || ingestTick === 0) return;
 		void refreshVersions();
-	}, [detailDocId, selectedId, ingestTick, refreshVersions]);
+		void refreshDetailDoc();
+	}, [detailDocId, selectedId, ingestTick, refreshVersions, refreshDetailDoc]);
 
 	async function loadLibraries() {
 		setError(null);
@@ -200,7 +266,15 @@ export function LibrariesPanel() {
 			return;
 		const libraryId = selectedLibrary.id;
 		const libraryKey = queryKeys.libraries(queryScope);
-		const documentKey = queryKeys.documents(queryScope, libraryId);
+		const uploadPageOptions =
+			libraryId === selectedId
+				? documentsQueryOptions
+				: documentPageQueryOptions(queryClient, queryScope, libraryId, {
+						query: "",
+						task: "all",
+						page: 1,
+						pageSize: DOCUMENT_PAGE_SIZE,
+					});
 		const batchId = ++uploadSequenceRef.current;
 		setUploading(true);
 		setError(null);
@@ -310,10 +384,15 @@ export function LibrariesPanel() {
 				fetchFreshQuery(queryClient, libraryKey, ({ signal }) =>
 					fetchLibraries(signal),
 				),
-				fetchFreshQuery(queryClient, documentKey, ({ signal }) =>
-					fetchDocuments(libraryId, signal),
+				fetchFreshQuery(
+					queryClient,
+					uploadPageOptions.queryKey,
+					uploadPageOptions.queryFn,
 				),
 			]);
+			void queryClient.invalidateQueries({
+				queryKey: queryKeys.documents(queryScope, libraryId),
+			});
 		} catch (err) {
 			const message =
 				err instanceof Error
@@ -538,6 +617,7 @@ export function LibrariesPanel() {
 			}
 			await loadLibraries();
 			if (selectedId) await refreshDocuments();
+			if (detailDocId === doc.id) void refreshDetailDoc();
 		} catch (err) {
 			const message =
 				err instanceof Error ? err.message : t("重索引失败", "Reindex failed");
@@ -562,6 +642,7 @@ export function LibrariesPanel() {
 			);
 			await loadLibraries();
 			if (selectedId) await refreshDocuments();
+			if (detailDocId === doc.id) void refreshDetailDoc();
 		} catch (err) {
 			const message =
 				err instanceof Error
@@ -600,6 +681,7 @@ export function LibrariesPanel() {
 			} else {
 				await loadLibraries();
 				if (selectedId) await refreshDocuments();
+				if (detailDocId === doc.id) void refreshDetailDoc();
 			}
 		} catch (err) {
 			const message =
@@ -644,11 +726,15 @@ export function LibrariesPanel() {
 	}
 
 	async function refreshDeletion(libraryId: string) {
-		const { queryKey, queryFn } = documentQueryOptions(
-			queryClient,
-			queryScope,
-			libraryId,
-		);
+		const { queryKey, queryFn } =
+			libraryId === selectedId
+				? documentsQueryOptions
+				: documentPageQueryOptions(queryClient, queryScope, libraryId, {
+						query: "",
+						task: "all",
+						page: 1,
+						pageSize: DOCUMENT_PAGE_SIZE,
+					});
 		// Both queries retain their original workspace/library even after navigation.
 		await Promise.all([
 			fetchFreshQuery(
@@ -803,6 +889,15 @@ export function LibrariesPanel() {
 		t,
 	);
 
+	function selectLibrary(libraryId: string) {
+		setSelectedId(libraryId);
+		setDocumentQuery("");
+		setDebouncedDocumentQuery("");
+		setDocumentTaskFilter("all");
+		setDocumentPage(1);
+		setDocumentOverlay({ kind: "none" });
+	}
+
 	return (
 		<div className="flex min-h-0 flex-1 flex-col md:overflow-hidden">
 			<div className="flex min-h-0 flex-1 flex-col md:flex-row md:overflow-hidden">
@@ -812,10 +907,7 @@ export function LibrariesPanel() {
 					loading={loading}
 					error={librariesError}
 					saving={savingLibrary}
-					onSelect={(libraryId) => {
-						setSelectedId(libraryId);
-						setDocumentOverlay({ kind: "none" });
-					}}
+					onSelect={selectLibrary}
 					onCreate={openCreateLibraryDialog}
 				/>
 
@@ -825,10 +917,7 @@ export function LibrariesPanel() {
 						libraries={libraries}
 						selectedId={selectedId}
 						saving={savingLibrary}
-						onSelect={(libraryId) => {
-							setSelectedId(libraryId);
-							setDocumentOverlay({ kind: "none" });
-						}}
+						onSelect={selectLibrary}
 						onCreate={openCreateLibraryDialog}
 					/>
 
@@ -853,7 +942,7 @@ export function LibrariesPanel() {
 					</Can>
 					<LibraryWorkspaceHeader
 						library={selectedLibrary}
-						documentCount={documents.length}
+						documentCount={documentsSummary.total}
 						canManageLibraries={canManageLibraries}
 						uploading={uploading}
 						uploadDisabled={uploadDisabled}
@@ -888,6 +977,21 @@ export function LibrariesPanel() {
 						key={selectedLibrary?.id ?? "empty"}
 						library={selectedLibrary}
 						documents={documents}
+						summary={documentsSummary}
+						filteredTotal={documentsFilteredTotal}
+						page={documentPage}
+						pageSize={DOCUMENT_PAGE_SIZE}
+						query={documentQuery}
+						taskFilter={documentTaskFilter}
+						onQueryChange={(nextQuery) => {
+							setDocumentQuery(nextQuery);
+							setDocumentPage(1);
+						}}
+						onTaskFilterChange={(nextTask) => {
+							setDocumentTaskFilter(nextTask);
+							setDocumentPage(1);
+						}}
+						onPageChange={(nextPage) => setDocumentPage(nextPage)}
 						caps={caps}
 						canManageLibraries={canManageLibraries}
 						canWriteLibraries={canWriteLibraries}
@@ -929,6 +1033,17 @@ export function LibrariesPanel() {
 				versionsError={versionsError}
 				onRefreshVersions={refreshVersions}
 				versionsLoading={versionsLoading}
+				reportLoading={Boolean(
+					detailDoc &&
+						detailDoc.parser_report === undefined &&
+						detailDocLoading,
+				)}
+				reportError={
+					detailDoc && detailDoc.parser_report === undefined
+						? detailDocError
+						: null
+				}
+				onRefreshDetail={refreshDetailDoc}
 				job={detailJob}
 				jobLoading={detailJobLoading}
 				busy={Boolean(detailDoc && busyDocId === detailDoc.id)}

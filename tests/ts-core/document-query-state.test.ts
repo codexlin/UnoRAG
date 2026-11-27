@@ -7,8 +7,10 @@ import {
 	type DocActionContext,
 	resolveDocActions,
 } from "../../src/components/app/library-doc-actions";
-import type { ApiDocument } from "../../src/lib/api";
+import type { ApiDocument, ApiDocumentsPage } from "../../src/lib/api";
+import { fetchDocumentsPage, fetchThreadsPage } from "../../src/lib/api";
 import {
+	documentPageQueryOptions,
 	documentQueryOptions,
 	documentRefetchInterval,
 	hasFinishedDocumentDeletion,
@@ -492,5 +494,121 @@ test("delete actions prevent duplicate commands and permit manager retry without
 			.find((action) => action.id === "retry")
 			?.disabled?.(ingestRetry, context),
 		true,
+	);
+});
+
+test("paginated document queries support deletion seeding, polling, count refresh, and legacy array fallback", async (t) => {
+	const client = createClient();
+	t.after(() => client.clear());
+	const options = documentPageQueryOptions(client, scope, document.library_id, {
+		query: "example",
+		task: "all",
+		page: 1,
+		pageSize: 50,
+	});
+	const initialPage: ApiDocumentsPage = {
+		items: [deleting],
+		total: 120,
+		filtered_total: 1,
+		limit: 50,
+		offset: 0,
+		has_more: false,
+		summary: { total: 120, completed: 118, processing: 1, failed: 1 },
+	};
+	client.setQueryData(options.queryKey, initialPage);
+
+	const otherPageOptions = documentPageQueryOptions(
+		client,
+		scope,
+		"library-b",
+		{
+			query: "",
+			task: "all",
+			page: 1,
+			pageSize: 50,
+		},
+	);
+	client.setQueryData(otherPageOptions.queryKey, {
+		...initialPage,
+		items: [{ ...document, library_id: "library-b" }],
+	});
+
+	await seedAcceptedDocumentDeletion(client, scope, document, {
+		id: "accepted-paged-delete",
+		status: "queued",
+	});
+	const seeded = client.getQueryData<ApiDocumentsPage>(options.queryKey);
+	assert.equal(seeded?.items[0]?.job_id, "accepted-paged-delete");
+	assert.equal(seeded?.items[0]?.status, "deleting");
+	assert.equal(documentRefetchInterval(seeded?.items), 2_000);
+	assert.equal(
+		client.getQueryData<ApiDocumentsPage>(otherPageOptions.queryKey)?.items[0]
+			?.status,
+		"ready",
+	);
+
+	// Legacy plain-array server/mock responses degrade cleanly into ApiDocumentsPage.
+	t.mock.method(globalThis, "fetch", async (url: string) => {
+		if (url.startsWith("/api/libraries/")) {
+			assert.match(url, /paginated=1/);
+			assert.match(url, /include_report=0/);
+			return Response.json([
+				document,
+				{
+					...document,
+					id: "document-failed",
+					name: "Broken policy",
+					filename: "broken.pdf",
+					job_status: "failed",
+				},
+			]);
+		}
+		return Response.json([
+			{
+				id: "t1",
+				session_id: "s1",
+				library_id: "lib-a",
+				title: "Budget summary",
+				status: "active",
+				turn_count: 2,
+				created_at: "2026-01-02T00:00:00Z",
+				updated_at: "2026-01-02T00:00:00Z",
+			},
+			{
+				id: "t2",
+				session_id: "s2",
+				library_id: "lib-b",
+				title: "Leave rules",
+				status: "active",
+				turn_count: 1,
+				created_at: "2026-01-01T00:00:00Z",
+				updated_at: "2026-01-01T00:00:00Z",
+			},
+		]);
+	});
+	const docPage = await fetchDocumentsPage(document.library_id, {
+		query: "broken",
+		task: "failed",
+		limit: 10,
+		offset: 0,
+	});
+	assert.equal(docPage.total, 2);
+	assert.equal(docPage.filtered_total, 1);
+	assert.equal(docPage.summary.failed, 1);
+	assert.equal(docPage.summary.completed, 1);
+	assert.deepEqual(
+		docPage.items.map((item) => item.id),
+		["document-failed"],
+	);
+
+	const threadPage = await fetchThreadsPage({
+		limit: 40,
+		query: "leave",
+		libraryId: "lib-b",
+	});
+	assert.equal(threadPage.has_more, false);
+	assert.deepEqual(
+		threadPage.items.map((item) => item.id),
+		["t2"],
 	);
 });

@@ -95,14 +95,14 @@ test("archive search, library scope, round replay and evidence stay usable acros
 	await expect(
 		navigation.getByRole("heading", { name: "2026年1月1日" }),
 	).toBeVisible();
-	await navigation.getByLabel("搜索已加载会话").fill("不存在的标题");
+	await navigation.getByLabel("搜索会话").fill("不存在的标题");
 	await expect(
 		navigation.getByRole("status").filter({ hasText: "没有匹配" }),
 	).toBeVisible();
-	await navigation.getByLabel("搜索已加载会话").fill("制度");
+	await navigation.getByLabel("搜索会话").fill("制度");
 	await expect(first).toHaveCount(0);
 	await expect(second).toBeVisible();
-	await navigation.getByLabel("搜索已加载会话").fill("");
+	await navigation.getByLabel("搜索会话").fill("");
 	await chooseSelect(
 		navigation.getByLabel("知识库", { exact: true }),
 		libraries[1].name,

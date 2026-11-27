@@ -25,9 +25,19 @@ export type CreateConversationThreadInput = {
 	title?: string | null;
 };
 
+export type ConversationThreadCursor = {
+	updatedAt: Date;
+	createdAt: Date;
+	id: string;
+};
+
 export type ListConversationThreadsInput = {
 	status?: ConversationThreadStatus;
 	limit?: number;
+	query?: string;
+	/** string = match ragLibraryId; null = unlinked threads; undefined = all libraries */
+	libraryId?: string | null;
+	cursor?: ConversationThreadCursor;
 };
 
 export type AppendConversationTurnInput = {

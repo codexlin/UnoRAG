@@ -163,8 +163,9 @@ test("whole library deletion cancels old reads, retains deleting through read fa
 		);
 	});
 	// Keep the document read unchanged: only library polling can discover its completed removal.
-	await page.route(`**/api/libraries/${library.id}/documents`, (route) =>
-		route.fulfill({ json: [document] }),
+	await page.route(
+		new RegExp(`/api/libraries/${library.id}/documents(?:\\?.*)?$`),
+		(route) => route.fulfill({ json: [document] }),
 	);
 	await page.route(`**/api/libraries/${library.id}`, (route) => {
 		expect(route.request().method()).toBe("DELETE");
@@ -270,28 +271,31 @@ test("whole library deletion recovers a failed job read, backs off terminal jobs
 					],
 		});
 	});
-	await page.route(`**/api/libraries/${library.id}/documents`, (route) => {
-		documentReads += 1;
-		if (accepted && failDocumentRead)
+	await page.route(
+		new RegExp(`/api/libraries/${library.id}/documents(?:\\?.*)?$`),
+		(route) => {
+			documentReads += 1;
+			if (accepted && failDocumentRead)
+				return route.fulfill({
+					status: 503,
+					json: { detail: "fixture read unavailable" },
+				});
 			return route.fulfill({
-				status: 503,
-				json: { detail: "fixture read unavailable" },
+				json: [
+					accepted
+						? {
+								...document,
+								status: "deleting",
+								job_id: retried ? "retried-delete" : "failed-delete",
+								job_status: retried ? "queued" : "failed",
+								has_file: false,
+								error: retried ? null : "fixture cleanup failed",
+							}
+						: document,
+				],
 			});
-		return route.fulfill({
-			json: [
-				accepted
-					? {
-							...document,
-							status: "deleting",
-							job_id: retried ? "retried-delete" : "failed-delete",
-							job_status: retried ? "queued" : "failed",
-							has_file: false,
-							error: retried ? null : "fixture cleanup failed",
-						}
-					: document,
-			],
-		});
-	});
+		},
+	);
 	await page.route(`**/api/libraries/${library.id}`, (route) => {
 		deletes += 1;
 		accepted = true;
@@ -377,21 +381,24 @@ test("external library delete retry replaces a cached failed job with the new jo
 			],
 		});
 	});
-	await page.route(`**/api/libraries/${library.id}/documents`, (route) => {
-		documentReads += 1;
-		return route.fulfill({
-			json: [
-				{
-					...document,
-					status: "deleting",
-					job_id: externalRetry ? "external-new-delete" : "old-failed-delete",
-					job_status: externalRetry ? "queued" : "failed",
-					has_file: false,
-					error: externalRetry ? null : "fixture cleanup failed",
-				},
-			],
-		});
-	});
+	await page.route(
+		new RegExp(`/api/libraries/${library.id}/documents(?:\\?.*)?$`),
+		(route) => {
+			documentReads += 1;
+			return route.fulfill({
+				json: [
+					{
+						...document,
+						status: "deleting",
+						job_id: externalRetry ? "external-new-delete" : "old-failed-delete",
+						job_status: externalRetry ? "queued" : "failed",
+						has_file: false,
+						error: externalRetry ? null : "fixture cleanup failed",
+					},
+				],
+			});
+		},
+	);
 	await page.route("**/api/jobs/*", (route) => {
 		const id = new URL(route.request().url()).pathname.split("/").at(-1) ?? "";
 		jobReads.push(id);
@@ -519,7 +526,7 @@ test("workspace-switch navigation cancels the old library deletion poll and igno
 			})
 			.catch(() => {});
 	});
-	await page.route("**/api/libraries/*/documents", (route) =>
+	await page.route(/\/api\/libraries\/[^/]+\/documents(?:\?.*)?$/, (route) =>
 		route.fulfill({ json: [] }),
 	);
 	page.on("requestfailed", (request) => {
@@ -591,7 +598,7 @@ for (const outcome of ["completed", "failed"] as const) {
 			});
 		});
 		await page.route(
-			`**/api/libraries/${library.id}/documents`,
+			new RegExp(`/api/libraries/${library.id}/documents(?:\\?.*)?$`),
 			async (route) => {
 				documentReads += 1;
 				if (deleteRequests && !held) {
@@ -762,7 +769,7 @@ test("accepted deletion cancels a stale pre-delete list request instead of resto
 	await page.route("**/api/libraries", (route) =>
 		route.fulfill({ json: [library] }),
 	);
-	await page.route(`**${documentPath}`, async (route) => {
+	await page.route(new RegExp(`${documentPath}(?:\\?.*)?$`), async (route) => {
 		if (holdOldRead && !accepted && !held) {
 			held = true;
 			await stale.pending;
@@ -839,27 +846,33 @@ test("delete acceptance after switching libraries refreshes only its original do
 	await page.route("**/api/libraries", (route) =>
 		route.fulfill({ json: [library, other] }),
 	);
-	await page.route(`**/api/libraries/${library.id}/documents`, (route) => {
-		if (accepted) originalRefreshes += 1;
-		return route.fulfill({
-			json: completed
-				? []
-				: accepted
-					? [
-							{
-								...document,
-								status: "deleting",
-								job_id: "delete-job",
-								job_status: "running",
-							},
-						]
-					: [document],
-		});
-	});
-	await page.route(`**/api/libraries/${other.id}/documents`, (route) => {
-		otherReads += 1;
-		return route.fulfill({ json: [otherDocument] });
-	});
+	await page.route(
+		new RegExp(`/api/libraries/${library.id}/documents(?:\\?.*)?$`),
+		(route) => {
+			if (accepted) originalRefreshes += 1;
+			return route.fulfill({
+				json: completed
+					? []
+					: accepted
+						? [
+								{
+									...document,
+									status: "deleting",
+									job_id: "delete-job",
+									job_status: "running",
+								},
+							]
+						: [document],
+			});
+		},
+	);
+	await page.route(
+		new RegExp(`/api/libraries/${other.id}/documents(?:\\?.*)?$`),
+		(route) => {
+			otherReads += 1;
+			return route.fulfill({ json: [otherDocument] });
+		},
+	);
 	await page.route(
 		`**/api/libraries/${library.id}/documents/${document.id}`,
 		async (route) => {
@@ -1036,29 +1049,32 @@ test("pending and failed document reads never masquerade as an empty knowledge b
 		release = resolve;
 	});
 	let failing = true;
-	await page.route(`**/api/libraries/${libraryId}/documents`, async (route) => {
-		await held;
-		await route.fulfill(
-			failing
-				? { status: 503, json: { detail: "fixture read unavailable" } }
-				: {
-						json: [
-							{
-								id: "delayed-doc",
-								library_id: libraryId,
-								name: "加载恢复后的文档",
-								filename: "recovered.md",
-								content_type: "text/markdown",
-								status: "ready",
-								chunk_count: 2,
-								job_status: "completed",
-								created_at: stamp,
-								updated_at: stamp,
-							},
-						],
-					},
-		);
-	});
+	await page.route(
+		new RegExp(`/api/libraries/${libraryId}/documents(?:\\?.*)?$`),
+		async (route) => {
+			await held;
+			await route.fulfill(
+				failing
+					? { status: 503, json: { detail: "fixture read unavailable" } }
+					: {
+							json: [
+								{
+									id: "delayed-doc",
+									library_id: libraryId,
+									name: "加载恢复后的文档",
+									filename: "recovered.md",
+									content_type: "text/markdown",
+									status: "ready",
+									chunk_count: 2,
+									job_status: "completed",
+									created_at: stamp,
+									updated_at: stamp,
+								},
+							],
+						},
+			);
+		},
+	);
 	try {
 		await page.goto("/app/libraries");
 		await expect(
@@ -1128,8 +1144,9 @@ test("latest-task filters do not infer completion from document readiness", asyn
 			],
 		}),
 	);
-	await page.route("**/api/libraries/task-library/documents", (route) =>
-		route.fulfill({ json: docs }),
+	await page.route(
+		/\/api\/libraries\/task-library\/documents(?:\?.*)?$/,
+		(route) => route.fulfill({ json: docs }),
 	);
 	await page.goto("/app/libraries");
 	await expect(
@@ -1192,7 +1209,7 @@ test("library navigation keeps search, selection, collapse and document actions 
 	await page.route("**/api/libraries", (route) =>
 		route.fulfill({ json: libraries }),
 	);
-	await page.route("**/api/libraries/*/documents", (route) => {
+	await page.route(/\/api\/libraries\/[^/]+\/documents(?:\?.*)?$/, (route) => {
 		const libraryId = new URL(route.request().url()).pathname.split("/")[3];
 		const document: ApiDocument = {
 			id: `doc-${libraryId}`,
@@ -1392,27 +1409,30 @@ test("ingest polling cannot cancel the post-create refresh or lose library selec
 			.fulfill({ json: didCreate ? [existing, created] : [existing] })
 			.catch(() => {});
 	});
-	await page.route("**/api/libraries/*/documents", async (route) => {
-		if (didCreate) pollsAfterCreate += 1;
-		const libraryId = new URL(route.request().url()).pathname.split("/")[3];
-		const documents: ApiDocument[] =
-			libraryId === existing.id
-				? [
-						{
-							id: "polling-document",
-							library_id: existing.id,
-							name: "Pending fixture",
-							filename: "pending.pdf",
-							content_type: "application/pdf",
-							status: "processing",
-							chunk_count: 0,
-							created_at: stamp,
-							updated_at: stamp,
-						},
-					]
-				: [];
-		await route.fulfill({ json: documents });
-	});
+	await page.route(
+		/\/api\/libraries\/[^/]+\/documents(?:\?.*)?$/,
+		async (route) => {
+			if (didCreate) pollsAfterCreate += 1;
+			const libraryId = new URL(route.request().url()).pathname.split("/")[3];
+			const documents: ApiDocument[] =
+				libraryId === existing.id
+					? [
+							{
+								id: "polling-document",
+								library_id: existing.id,
+								name: "Pending fixture",
+								filename: "pending.pdf",
+								content_type: "application/pdf",
+								status: "processing",
+								chunk_count: 0,
+								created_at: stamp,
+								updated_at: stamp,
+							},
+						]
+					: [];
+			await route.fulfill({ json: documents });
+		},
+	);
 	try {
 		await page.goto("/app/libraries");
 		const selected = isMobile
@@ -1556,49 +1576,52 @@ for (const refreshFailure of ["delayed", "unavailable"] as const) {
 				})
 				.catch(() => {});
 		});
-		await page.route("**/api/libraries/*/documents", async (route) => {
-			const request = route.request();
-			const libraryId = new URL(request.url()).pathname.split("/")[3];
-			if (request.method() === "GET") {
-				await route.fulfill({ json: documents.get(libraryId) ?? [] });
-				return;
-			}
-			const form = await new Response(
-				new Uint8Array(request.postDataBuffer() ?? []),
-				{
-					headers: { "Content-Type": request.headers()["content-type"] },
-				},
-			).formData();
-			const file = form.get("file");
-			if (!(file instanceof File))
-				throw new Error("Expected a real multipart file upload");
-			expect(await file.text()).toBe("Created library upload target fixture");
-			submissions.push({ libraryId, filename: file.name });
-			const document: ApiDocument = {
-				id: `created-target-${file.name}`,
-				library_id: libraryId,
-				name: file.name,
-				filename: file.name,
-				content_type: "text/plain",
-				status: "ready",
-				chunk_count: 1,
-				created_at: stamp,
-				updated_at: stamp,
-			};
-			documents.get(libraryId)?.push(document);
-			const result: ApiUploadResponse = {
-				library_id: libraryId,
-				doc_id: document.id,
-				title: document.name,
-				filename: file.name,
-				chunk_count: 1,
-				status: "ready",
-				accepted: false,
-				mode: "live",
-				simulated: false,
-			};
-			await route.fulfill({ json: result });
-		});
+		await page.route(
+			/\/api\/libraries\/[^/]+\/documents(?:\?.*)?$/,
+			async (route) => {
+				const request = route.request();
+				const libraryId = new URL(request.url()).pathname.split("/")[3];
+				if (request.method() === "GET") {
+					await route.fulfill({ json: documents.get(libraryId) ?? [] });
+					return;
+				}
+				const form = await new Response(
+					new Uint8Array(request.postDataBuffer() ?? []),
+					{
+						headers: { "Content-Type": request.headers()["content-type"] },
+					},
+				).formData();
+				const file = form.get("file");
+				if (!(file instanceof File))
+					throw new Error("Expected a real multipart file upload");
+				expect(await file.text()).toBe("Created library upload target fixture");
+				submissions.push({ libraryId, filename: file.name });
+				const document: ApiDocument = {
+					id: `created-target-${file.name}`,
+					library_id: libraryId,
+					name: file.name,
+					filename: file.name,
+					content_type: "text/plain",
+					status: "ready",
+					chunk_count: 1,
+					created_at: stamp,
+					updated_at: stamp,
+				};
+				documents.get(libraryId)?.push(document);
+				const result: ApiUploadResponse = {
+					library_id: libraryId,
+					doc_id: document.id,
+					title: document.name,
+					filename: file.name,
+					chunk_count: 1,
+					status: "ready",
+					accepted: false,
+					mode: "live",
+					simulated: false,
+				};
+				await route.fulfill({ json: result });
+			},
+		);
 		async function expectSelected(library: ApiLibrary, label = library.name) {
 			if (isMobile) {
 				await expect(
@@ -1771,8 +1794,12 @@ test("PDF detail shows observed parser phases without inventing upstream compute
 	await page.route("**/api/libraries", (route) =>
 		route.fulfill({ json: [library] }),
 	);
-	await page.route("**/api/libraries/*/documents", (route) =>
+	await page.route(/\/api\/libraries\/[^/]+\/documents(?:\?.*)?$/, (route) =>
 		route.fulfill({ json: [document] }),
+	);
+	await page.route(
+		/\/api\/libraries\/[^/]+\/documents\/[^/?]+(?:\?.*)?$/,
+		(route) => route.fulfill({ json: document }),
 	);
 	await page.route("**/api/libraries/*/documents/*/versions", (route) =>
 		route.fulfill({ json: [] }),

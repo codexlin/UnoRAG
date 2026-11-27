@@ -62,6 +62,9 @@ const routeModules = Promise.all([
 	import("../../src/lib/server/auth/session-token"),
 	import("../../src/server/http/document/download-handler"),
 	import("../../src/app/api/libraries/[libraryId]/route"),
+	import(
+		"../../src/app/api/libraries/[libraryId]/documents/[documentId]/route"
+	),
 ]).finally(() => {
 	nodeModule._resolveFilename = originalResolveFilename;
 });
@@ -231,6 +234,7 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 			sessionTokens,
 			download,
 			libraryRoute,
+			documentDetailRoute,
 		] = await routeModules;
 		await pool.query(
 			`UPDATE app.documents SET projected_acl_fingerprint = acl_fingerprint WHERE id = $1`,
@@ -516,6 +520,89 @@ test("document ACL route enforces roles, metadata visibility, and durable projec
 			documentsContext,
 		);
 		assert.deepEqual(await hiddenDocuments.json(), []);
+
+		// Paginated list enforces ACL visibility in both items and summary counts,
+		// omits parser_report in lightweight mode, and supports task/search filters.
+		const hiddenPaginated = await documentsRoute.GET(
+			new Request(
+				`http://local/api/libraries/${ragLibraryId}/documents?paginated=1&limit=10&offset=0&include_report=0`,
+				{ headers: viewerHeaders },
+			),
+			documentsContext,
+		);
+		assert.equal(hiddenPaginated.status, 200);
+		assert.deepEqual(await hiddenPaginated.json(), {
+			items: [],
+			total: 0,
+			filtered_total: 0,
+			limit: 10,
+			offset: 0,
+			has_more: false,
+			summary: { total: 0, completed: 0, processing: 0, failed: 0 },
+		});
+
+		const ownerCookieHeaders = {
+			cookie: `${session.SESSION_COOKIE}=${ownerToken}`,
+		};
+		const ownerPaginated = await documentsRoute.GET(
+			new Request(
+				`http://local/api/libraries/${ragLibraryId}/documents?paginated=1&limit=10&offset=0&task=failed`,
+				{ headers: ownerCookieHeaders },
+			),
+			documentsContext,
+		);
+		assert.equal(ownerPaginated.status, 200);
+		const ownerPageBody = (await ownerPaginated.json()) as {
+			items: Array<Record<string, unknown>>;
+			total: number;
+			filtered_total: number;
+			has_more: boolean;
+			summary: {
+				total: number;
+				completed: number;
+				processing: number;
+				failed: number;
+			};
+		};
+		assert.equal(ownerPageBody.total, 1);
+		assert.equal(ownerPageBody.filtered_total, 1);
+		assert.equal(ownerPageBody.has_more, false);
+		assert.deepEqual(ownerPageBody.summary, {
+			total: 1,
+			completed: 0,
+			processing: 0,
+			failed: 1,
+		});
+		assert.equal(ownerPageBody.items.length, 1);
+		assert.equal("parser_report" in ownerPageBody.items[0], false);
+		assert.equal("parse_status" in ownerPageBody.items[0], false);
+
+		// On-demand single-document detail enforces ACL and returns full parser_report.
+		const hiddenDetail = await documentDetailRoute.GET(
+			new Request(
+				`http://local/api/libraries/${ragLibraryId}/documents/${ragDocumentId}`,
+				{ headers: viewerHeaders },
+			),
+			context,
+		);
+		assert.equal(hiddenDetail.status, 404);
+
+		const ownerDetail = await documentDetailRoute.GET(
+			new Request(
+				`http://local/api/libraries/${ragLibraryId}/documents/${ragDocumentId}`,
+				{ headers: ownerCookieHeaders },
+			),
+			context,
+		);
+		assert.equal(ownerDetail.status, 200);
+		const ownerDetailBody = (await ownerDetail.json()) as {
+			id: string;
+			parser_report?: { parser?: string } | null;
+			parse_status?: Record<string, unknown> | null;
+		};
+		assert.equal(ownerDetailBody.id, ragDocumentId);
+		assert.equal(ownerDetailBody.parser_report?.parser, "test");
+		assert.ok(ownerDetailBody.parse_status);
 		const hiddenVersions = await versionsRoute.GET(
 			new Request(
 				`http://local/api/libraries/${ragLibraryId}/documents/${ragDocumentId}/versions`,

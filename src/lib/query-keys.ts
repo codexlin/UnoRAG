@@ -11,6 +11,12 @@ export const queryKeys = {
 	libraries: (scope: QueryScope) => ["libraries", ...scopeKey(scope)] as const,
 	documents: (scope: QueryScope, libraryId: string) =>
 		["documents", ...scopeKey(scope), libraryId] as const,
+	documentsSample: (scope: QueryScope, libraryId: string, filters: string) =>
+		["documents", ...scopeKey(scope), libraryId, "sample", filters] as const,
+	documentsPage: (scope: QueryScope, libraryId: string, filters: string) =>
+		["documents", ...scopeKey(scope), libraryId, "page", filters] as const,
+	documentDetail: (scope: QueryScope, libraryId: string, documentId: string) =>
+		["document-detail", ...scopeKey(scope), libraryId, documentId] as const,
 	documentVersions: (
 		scope: QueryScope,
 		libraryId: string,

@@ -131,8 +131,12 @@ async function mockDetails(
 	await page.route("**/api/libraries", (route) =>
 		route.fulfill({ json: [library] }),
 	);
-	await page.route("**/api/libraries/*/documents", (route) =>
+	await page.route(/\/api\/libraries\/[^/]+\/documents(?:\?.*)?$/, (route) =>
 		route.fulfill({ json: [doc] }),
+	);
+	await page.route(
+		/\/api\/libraries\/[^/]+\/documents\/[^/?]+(?:\?.*)?$/,
+		(route) => route.fulfill({ json: doc }),
 	);
 	await page.route("**/api/libraries/*/documents/*/versions", (route) =>
 		route.fulfill({
