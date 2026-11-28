@@ -3,7 +3,7 @@ export const DEFAULT_LLM_BASE_URL =
 const DEFAULT_RERANK_BASE_URL =
 	"https://dashscope.aliyuncs.com/compatible-api/v1";
 
-export const DEFAULT_CHAT_MODEL = "qwen3.7-flash";
+export const DEFAULT_CHAT_MODEL = "qwen3.8-flash";
 export const DEFAULT_EMBEDDING_MODEL = "qwen3.7-text-embedding";
 export const DEFAULT_RERANK_MODEL = "qwen3.7-text-rerank";
 export const DEFAULT_EMBEDDING_DIM = 1_024;

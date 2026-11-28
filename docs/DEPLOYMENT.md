@@ -82,7 +82,7 @@ UNORAG_COMPOSE_OVERLAY=./docker-compose.local-amd64.yml \
 旧版本把所有非敏感项放在 `runtime.env`。首次运行新版本的 `init-config.sh` 或
 `upgrade.sh` 会自动把高级项移入 `runtime.advanced.env`，并保留自定义项。示例中省略的调优项使用内置默认值，仍可在该文件中显式覆盖。
 
-云端默认接入阿里云 DashScope Qwen3.7（`CHAT_MODEL=qwen3.7-flash` 默认关闭思考模式 `enable_thinking=false`、`EMBEDDING_MODEL=qwen3.7-text-embedding` 通过原生接口单次返回 1024 维 `dense&sparse`、`RERANK_MODEL=qwen3.7-text-rerank`），并在 Qdrant 启用 `sparse_v1 (modifier: "none")` + RRF 混合检索；接入 Ollama + `bge-m3` 等私有纯稠密模型时自动切换为纯 Dense 集合与纯 Dense 检索，无需手动调整代码（见 [ADR-0009](./adr/0009-provider-sparse-and-ollama-bge.md)）。
+云端默认接入阿里云 DashScope（`CHAT_MODEL=qwen3.8-flash` 默认关闭思考模式 `enable_thinking=false`、`EMBEDDING_MODEL=qwen3.7-text-embedding` 通过原生接口单次返回 1024 维 `dense&sparse`、`RERANK_MODEL=qwen3.7-text-rerank`），并在 Qdrant 启用 `sparse_v1 (modifier: "none")` + RRF 混合检索；接入 Ollama + `bge-m3` 等私有纯稠密模型时自动切换为纯 Dense 集合与纯 Dense 检索，无需手动调整代码（见 [ADR-0009](./adr/0009-provider-sparse-and-ollama-bge.md)）。
 在 `runtime.advanced.env` 设置 `TS_RETRIEVAL_HYBRID_ENABLED=false` 可在整个部署禁用混合检索；设置 `TS_RETRIEVAL_RERANK_ALLOWED=false` 可在整个部署硬禁用重排（覆盖工作区的 `reranking` 策略与自动/重试重排）。
 工作区「问答策略」精简为三项清晰配置：回答模式（`precise` / `balanced` / `exploratory`）、检索精排（`auto` / `on` / `off`，默认 `auto`）与对话记忆。`auto` 模式在对比、多方面事实、派生计算、中英精确编号及改写后的复杂查询首轮启用重排；当已配置且允许重排、且混合检索召回 `sparse-only`（无稠密分数）候选时，也会自动升级重排以统一证据分数尺度。公共检索接口 `/api/v1/retrieve` 默认保持低延迟粗排契约（不注入工作区 Ask 策略）。
 升级时旧行中的 `retrieval_enhancement` 会平滑投影到 `reranking`，`evidence_requirement="strict"` 投影到 `answer_profile="precise"`；混合检索在工作区层始终开启，如需整站关闭请设置部署级 `TS_RETRIEVAL_HYBRID_ENABLED=false`。
@@ -318,7 +318,7 @@ EMBEDDING_API_KEY=local-no-auth
 RERANK_API_KEY=local-no-auth
 ```
 
-> **云 API 参考**：默认阿里云 DashScope 套餐即使用 `CHAT_MODEL=qwen3.7-flash`（自动附带 `enable_thinking=false`）、`EMBEDDING_MODEL=qwen3.7-text-embedding`（原生 `dense&sparse` + Qdrant `sparse_v1` RRF）与 `RERANK_MODEL=qwen3.7-text-rerank`（`https://dashscope.aliyuncs.com/compatible-api/v1`）；也可将 `RERANK_BASE_URL` 指向硅基流动（`https://api.siliconflow.cn/v1/rerank` + `Qwen/Qwen3-Reranker-8B`）并在工作区启用 `auto` 或 `on` 重排。
+> **云 API 参考**：默认阿里云 DashScope 套餐即使用 `CHAT_MODEL=qwen3.8-flash`（自动附带 `enable_thinking=false`）、`EMBEDDING_MODEL=qwen3.7-text-embedding`（原生 `dense&sparse` + Qdrant `sparse_v1` RRF）与 `RERANK_MODEL=qwen3.7-text-rerank`（`https://dashscope.aliyuncs.com/compatible-api/v1`）；也可将 `RERANK_BASE_URL` 指向硅基流动（`https://api.siliconflow.cn/v1/rerank` + `Qwen/Qwen3-Reranker-8B`）并在工作区启用 `auto` 或 `on` 重排。
 
 ### 4. 按能力拆分端点与凭据隔离
 
@@ -339,7 +339,7 @@ Embedding、Judge、Rerank 与 VLM 均可在 `runtime.advanced.env` 中配置独
 | 变量 | 默认值 | 何时调整 |
 |---|---|---|
 | `AI_SUPPORTS_STRUCTURED_OUTPUTS` | `true` | 对话网关或小参数本地模型不支持 OpenAI `json_schema` 结构化输出时设为 `false` |
-| `AI_ENABLE_THINKING` | `false`（仅 DashScope） | 仅针对 DashScope 混合思考模型（如 `qwen3.7-flash`）生效；默认 `false` 关闭思考以降低延迟并确保 `json_schema` 稳定，非 DashScope 网关不发送该字段 |
+| `AI_ENABLE_THINKING` | `false`（仅 DashScope） | 仅针对 DashScope 混合思考模型（如 `qwen3.8-flash`）生效；默认 `false` 关闭思考以降低延迟并确保 `json_schema` 稳定，非 DashScope 网关不发送该字段 |
 | `JUDGE_SUPPORTS_STRUCTURED_OUTPUTS` | `true` | Judge 模型不支持 `json_schema` 时设为 `false` |
 | `JUDGE_ENABLE_THINKING` | 继承 `AI_ENABLE_THINKING` | 单独控制 DashScope Judge 模型的 `enable_thinking` |
 | `EMBEDDING_PROTOCOL` | `auto` | `auto` 对 DashScope `qwen3.7-text-embedding` / `text-embedding-v3|v4` 自动走原生 `dense&sparse`，其余走 `openai_compatible` 纯稠密；可显式指定 `dashscope_native` 或 `openai_compatible` |

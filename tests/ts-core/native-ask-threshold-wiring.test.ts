@@ -480,3 +480,122 @@ test("Public Retrieve v1 does not pass an Ask threshold and retains low-score RR
 	);
 	assert.equal(fixture.storeQueries(), 2);
 });
+
+test("NativeAskRuntime.adjudicate preserves a reranked lineage-linked figure companion while rejecting sub-floor or unlinked figures", async (t) => {
+	const [{ createNativeAskRuntime }] = await setup(t);
+	const anchorHit = hit("fig4-chunk", 0.72);
+	anchorHit.payload.source_node_ids = ["mineru:16"];
+	const linkedFigure = hit("fig4-figure", 0.7);
+	Object.assign(linkedFigure.payload, {
+		record_type: "figure",
+		figure_id: "figure-16",
+		source_node_ids: ["mineru:16"],
+		text: "图4：各部门信息化预算分配结构（单位：万元）",
+	});
+	const subFloorFigure = hit("fig2-figure", 0.7);
+	Object.assign(subFloorFigure.payload, {
+		record_type: "figure",
+		figure_id: "figure-9",
+		source_node_ids: ["mineru:16"],
+		text: "图2：用户增长趋势",
+	});
+	const unlinkedFigure = hit("fig1-figure", 0.7);
+	Object.assign(unlinkedFigure.payload, {
+		record_type: "figure",
+		figure_id: "figure-4",
+		source_node_ids: ["mineru:4"],
+		text: "图1：营收趋势",
+	});
+	const store: RetrievalVectorStore = {
+		async search() {
+			return [anchorHit, linkedFigure, subFloorFigure, unlinkedFigure];
+		},
+		async hybridSearch() {
+			return [anchorHit, linkedFigure, subFloorFigure, unlinkedFigure].map(
+				(candidate, index) => ({ ...candidate, score: 0.03 - index / 1_000 }),
+			);
+		},
+		async listCorpus() {
+			assert.fail("Unexpected corpus fallback");
+		},
+	};
+	const service = new DefaultRetrievalService(
+		{
+			async embedQuery() {
+				return [1, 0];
+			},
+			async embedTexts() {
+				assert.fail("Unexpected document embedding");
+			},
+		},
+		store,
+		{
+			async rerank() {
+				return [
+					{ index: 0, score: 0.995 },
+					{ index: 1, score: 0.308 },
+					{ index: 2, score: 0.117 },
+					{ index: 3, score: 0.35 },
+				];
+			},
+		},
+		{
+			hybridEnabled: true,
+			rerankEnabled: true,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	let judgeUserPrompt = "";
+	const runtime = createNativeAskRuntime({
+		identity,
+		libraryId: LIBRARY_ID,
+		policy: NativeAskPolicySchema.parse({
+			answer_min_score: 0.4,
+			citation_adjudicate_absolute_floor: 0.35,
+			hybrid_enabled: true,
+			rerank_enabled: true,
+		}),
+		dependencies: {
+			retrieval: service,
+			structured: new StructuredOutputAdapter(
+				{} as LanguageModel,
+				async (request) => {
+					if (request.schemaName === "conflict") {
+						return {
+							resolution: "consistent",
+							comparison: "No conflicting evidence.",
+							conflict_evidence: [],
+						};
+					}
+					judgeUserPrompt = String(request.messages[0]?.content ?? "");
+					return {
+						sufficient: true,
+						action: "generate",
+						reason: "Covered",
+						evidence_ids: ["e1"],
+					};
+				},
+			),
+			answer: new AnswerStreamAdapter({} as LanguageModel, async function* () {
+				yield "";
+			}),
+		},
+	});
+	const state = await runtime.invoke({
+		question: "图4中总预算最高的部门是哪个？",
+	});
+	assert.equal(state.refused, false);
+	assert.equal(state.retrieval_debug?.retrieved_evidence_count, 2);
+	assert.match(judgeUserPrompt, /图4：各部门信息化预算分配结构/);
+	assert.doesNotMatch(judgeUserPrompt, /图2：用户增长趋势|图1：营收趋势/);
+	assert.deepEqual(
+		state.citations?.map((citation) => citation.id),
+		["fig4-chunk", "fig4-figure"],
+	);
+	assert.equal(
+		state.citations?.some((citation) => citation.record_type === "figure"),
+		true,
+	);
+});

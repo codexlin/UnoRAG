@@ -169,7 +169,7 @@ config:
   appEnv: production
   # Set "true" for strict regulated deployments to lock model settings to env vars only.
   modelSettingsLocked: "false"
-  chatModel: qwen3.7-flash
+  chatModel: qwen3.8-flash
   aiSupportsStructuredOutputs: "true"
   aiEnableThinking: "false"
   aiIncludeUsage: "true"

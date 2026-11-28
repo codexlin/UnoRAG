@@ -2,7 +2,7 @@
 
 - Status: Accepted (supersedes [ADR-0008](./0008-qdrant-server-side-sparse-rrf.md))
 - Date: 2026-11-28
-- Scope: embedding protocol, neural sparse indexing (`sparse_v1`), Qdrant collection contract, Qwen3.7 defaults, and private Ollama `bge-m3` deployment
+- Scope: embedding protocol, neural sparse indexing (`sparse_v1`), Qdrant collection contract, Qwen3.7/3.8 cloud defaults, and private Ollama `bge-m3` deployment
 - Preserves: ADR-0005 runtime ownership, PostgreSQL authority, mandatory double-layer authorization filters, and staging/active generation lifecycle
 
 ## Context
@@ -19,10 +19,10 @@ ADR-0008 replaced application-layer BM25 scrolling with Qdrant server-side spars
 1. **Remove hand-written `lexical_v1` sparse encoding completely**:
    - Delete `src/core/retrieval/hybrid/sparse-vector.ts`, `scripts/qdrant-backfill-sparse.ts`, and their tests.
    - UnoRAG no longer synthesizes hash-based sparse vectors in application code.
-2. **Cloud default: Alibaba Cloud DashScope Qwen3.7 stack**:
+2. **Cloud default: Alibaba Cloud DashScope Qwen3.7/3.8 stack**:
    - `EMBEDDING_MODEL=qwen3.7-text-embedding` (`EMBEDDING_DIM=1024`): auto-selects `DashScopeNativeEmbeddingProvider` (`EMBEDDING_PROTOCOL=auto` -> `dashscope_native`), calling `${origin}/api/v1/services/embeddings/text-embedding/text-embedding` with `parameters: { dimension: 1024, output_type: "dense&sparse", text_type: "document" | "query" }`. Both dense and neural sparse vectors are produced in one request (`text_type: "document"` during ingest, `text_type: "query"` during retrieval).
-   - `CHAT_MODEL=qwen3.7-flash` and `JUDGE_MODEL` (inheriting `CHAT_MODEL`): disables DashScope hybrid thinking by default (`enable_thinking: false` injected only for DashScope hosts, configurable via `AI_ENABLE_THINKING` / `JUDGE_ENABLE_THINKING`; never sent to non-DashScope endpoints) so latency, token usage, and `json_schema` structured outputs remain deterministic.
-   - `RERANK_MODEL=qwen3.7-text-rerank` via existing DashScope `/compatible-api/v1/reranks`.
+   - `CHAT_MODEL=qwen3.8-flash` and `JUDGE_MODEL` (inheriting `CHAT_MODEL`): disables DashScope hybrid thinking by default (`enable_thinking: false` injected only for DashScope hosts, configurable via `AI_ENABLE_THINKING` / `JUDGE_ENABLE_THINKING`; never sent to non-DashScope endpoints) so latency, token usage, and `json_schema` structured outputs remain deterministic while maintaining strict refusal & conflict accuracy.
+   - `RERANK_MODEL=qwen3.7-text-rerank` via existing DashScope `/compatible-api/v1/reranks`. Because cross-encoder rerankers score standalone textual answerability and under-score short figure captions whose factual payload lives in pixels or companion prose, authorized lineage-linked `figure` companions of passing anchor chunks remain eligible when pre-rerank `dense_score >= threshold` and rerank score meets the `0.5 * threshold` companion floor (while standalone text chunks retain the full threshold).
 3. **Qdrant neural sparse contract (`sparse_v1`, `modifier: "none"`)**:
    - Because provider neural sparse weights already encode learned term salience (SPLADE-style), Qdrant must **not** apply collection-level IDF a second time.
    - When the configured embedding provider emits sparse vectors (`supportsSparse === true`), new Qdrant collections configure named `dense` + `sparse_v1: { modifier: "none" }`.
