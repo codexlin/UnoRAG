@@ -30,6 +30,7 @@ import { resolveRequestSession } from "./auth/session";
 import { canWriteLibraries, findAuthorizedLibrary } from "./library-access";
 import {
 	isInternalRagPath,
+	requiresAuthorizedLibraryPrecheck,
 	requiresLibraryWritePermission,
 } from "./rag-permissions.mjs";
 import { getWorkspaceAskSettings } from "./workspace-settings";
@@ -162,6 +163,7 @@ async function proxyRagRequestInContext(
 					url.searchParams.get("library_id") ?? (await bodyLibraryId(body));
 				if (
 					requestedLibraryId &&
+					requiresAuthorizedLibraryPrecheck(request.method, path) &&
 					!(await findAuthorizedLibrary(identity, requestedLibraryId))
 				) {
 					return Response.json(

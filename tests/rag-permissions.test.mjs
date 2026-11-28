@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
 	isInternalRagPath,
+	requiresAuthorizedLibraryPrecheck,
 	requiresLibraryWritePermission,
 } from "../src/lib/server/rag-permissions.mjs";
 
@@ -72,4 +73,50 @@ test("internal projection paths are never browser-exposed", () => {
 		true,
 	);
 	assert.equal(isInternalRagPath(["v1", "libraries"]), false);
+});
+
+test("only GET/HEAD thread archive listing skips active-library precheck", () => {
+	assert.equal(
+		requiresAuthorizedLibraryPrecheck("GET", ["v1", "threads"]),
+		false,
+	);
+	assert.equal(
+		requiresAuthorizedLibraryPrecheck("HEAD", ["v1", "threads"]),
+		false,
+	);
+	assert.equal(
+		requiresAuthorizedLibraryPrecheck("POST", ["v1", "threads"]),
+		true,
+	);
+	assert.equal(
+		requiresAuthorizedLibraryPrecheck("GET", ["v1", "threads", "thr-1"]),
+		true,
+	);
+	assert.equal(
+		requiresAuthorizedLibraryPrecheck("POST", [
+			"v1",
+			"threads",
+			"thr-1",
+			"continue",
+		]),
+		true,
+	);
+	assert.equal(
+		requiresAuthorizedLibraryPrecheck("POST", ["v1", "retrieve"]),
+		true,
+	);
+	assert.equal(requiresAuthorizedLibraryPrecheck("POST", ["v1", "ask"]), true);
+	assert.equal(
+		requiresAuthorizedLibraryPrecheck("POST", ["v1", "ask", "stream"]),
+		true,
+	);
+	assert.equal(
+		requiresAuthorizedLibraryPrecheck("GET", [
+			"v1",
+			"documents",
+			"doc-1",
+			"download",
+		]),
+		true,
+	);
 });

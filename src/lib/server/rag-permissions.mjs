@@ -35,3 +35,26 @@ export function requiresLibraryWritePermission(method, pathSegments) {
 export function isInternalRagPath(pathSegments) {
 	return pathSegments[0] === "v1" && pathSegments[1] === "internal";
 }
+
+/**
+ * Whether the browser RAG proxy must pre-authorize `library_id` against an
+ * active workspace library before dispatching.
+ *
+ * `GET /v1/threads` lists only the authenticated principal's own archived
+ * conversations (strictly scoped by organization, workspace, and principal
+ * in `ConversationRepository`), and accepts sentinel filter values
+ * (`__unlinked__`, `all`) as well as historical IDs of deleted libraries
+ * that still own archived threads.
+ *
+ * @param {string} method
+ * @param {string[]} pathSegments
+ */
+export function requiresAuthorizedLibraryPrecheck(method, pathSegments) {
+	const normalizedMethod = method.toUpperCase();
+	const isThreadListRead =
+		(normalizedMethod === "GET" || normalizedMethod === "HEAD") &&
+		pathSegments.length === 2 &&
+		pathSegments[0] === "v1" &&
+		pathSegments[1] === "threads";
+	return !isThreadListRead;
+}
