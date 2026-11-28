@@ -1037,6 +1037,14 @@ test("real PostgreSQL browser RAG proxy allows unlinked, all, and deleted-librar
 					"sec-fetch-site": "same-origin",
 				};
 				const deletedLibraryId = `deleted-${randomUUID().slice(0, 8)}`;
+				await fixture.db.insert(schema.libraries).values({
+					id: randomUUID(),
+					organizationId: fixture.scope.organizationId,
+					workspaceId: fixture.scope.workspaceId,
+					ragLibraryId: deletedLibraryId,
+					name: "Deleted historical library",
+					status: "deleted",
+				});
 
 				const linked = await fixture.repository.createThread(fixture.scope, {
 					ragLibraryId: fixture.libraryId,
