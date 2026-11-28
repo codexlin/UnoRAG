@@ -10,7 +10,8 @@ ADR 解释长期取舍，不是操作手册。当前实现先读 [系统架构](
 | [0003 Policy-driven chunking](./0003-policy-driven-chunking.md) | 结构优先、递归上限、受控语义切分与表格 profile | 已采纳；含 `2026-11-23` 中英文 Token 预算演进注记 |
 | [0005 TypeScript core runtime](./0005-typescript-core-runtime.md) | 运行时所有权、DBOS 与数据边界；迁移步骤属于已完成的历史 | 已实施；含 `2026-11-23` RLS/历史章节校准注记 |
 | [0007 Fully open-source product](./0007-fully-open-source-product-and-services.md) | 单一完整开源产品，无商业功能墙 | 已公开发布；含 `2026-11-23` 分层发版门禁注记 |
-| [0008 Qdrant server-side Sparse + RRF](./0008-qdrant-server-side-sparse-rrf.md) | 命名 Dense + 确定性词法 Sparse（`lexical_v1`，`modifier: "idf"`）与 Qdrant 服务端 RRF；已移除应用层 BM25 回退 | 已采纳；v0.4.0 默认开启 |
+| [0008 Qdrant server-side Sparse + RRF](./0008-qdrant-server-side-sparse-rrf.md) | 命名 Dense + 手写确定性词法 Sparse（`lexical_v1`，`modifier: "idf"`）与 Qdrant 服务端 RRF | 已被 [ADR-0009](./0009-provider-sparse-and-ollama-bge.md) 替代（历史记录） |
+| [0009 Provider-native neural sparse + Ollama bge-m3](./0009-provider-sparse-and-ollama-bge.md) | 移除手写 `lexical_v1`；云端默认 DashScope 原生 `qwen3.7-text-embedding`（`dense&sparse` → `sparse_v1` `modifier: "none"`）+ `qwen3.7-flash`（`enable_thinking: false`）+ `qwen3.7-text-rerank`；私有化推荐 Ollama + `bge-m3` 纯 Dense 模式 | 已采纳 |
 
 ## 架构红线 vs 可演进边界
 

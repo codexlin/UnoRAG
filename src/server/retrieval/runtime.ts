@@ -3,13 +3,16 @@ import "server-only";
 import { QdrantClient } from "@qdrant/js-client-rest";
 
 import {
+	DEFAULT_EMBEDDING_DIM,
+	DEFAULT_EMBEDDING_MODEL,
+	DEFAULT_RERANK_MODEL,
 	modelProviderOverrideFromEnv,
 	rerankProviderFromEnv,
 } from "@/core/ai/model-environment";
 
 import {
+	createEmbeddingProvider,
 	DefaultRetrievalService,
-	OpenAICompatibleEmbeddingProvider,
 	OpenAICompatibleRerankProvider,
 	QdrantRetrievalStore,
 	ScopedRetrievalCache,
@@ -61,29 +64,32 @@ export function getTypeScriptRetrievalService(): DefaultRetrievalService {
 		checkCompatibility: true,
 	});
 	const collection = required("QDRANT_COLLECTION", "unorag_chunks");
-	const dimensions = positiveInteger("EMBEDDING_DIM", 1_024);
+	const dimensions = positiveInteger("EMBEDDING_DIM", DEFAULT_EMBEDDING_DIM);
+	const embeddings = createEmbeddingProvider({
+		...embeddingProvider,
+		model: required("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
+		dimensions,
+		protocol: process.env.EMBEDDING_PROTOCOL,
+		sendDimensions: process.env.EMBEDDING_SEND_DIMENSIONS,
+		batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
+		timeoutMs: positiveInteger("EMBEDDING_TIMEOUT_MS", 15_000),
+	});
 	const collectionReady = new QdrantCollectionManager(qdrant, {
 		collection,
 		vectorSize: dimensions,
 		distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
+		expectSparse: embeddings.supportsSparse === true,
 	}).ensure();
 	const vectorSchema = collectionReady.then((result) => result.vectorSchema);
 	// Observe the chained rejection until the store can await the contract.
 	void vectorSchema.catch(() => undefined);
-	const embeddings = new OpenAICompatibleEmbeddingProvider({
-		...embeddingProvider,
-		model: required("EMBEDDING_MODEL", "text-embedding-v3"),
-		dimensions,
-		batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
-		timeoutMs: positiveInteger("EMBEDDING_TIMEOUT_MS", 15_000),
-	});
 	const rerankAllowed = enabled("TS_RETRIEVAL_RERANK_ALLOWED", true);
 	const rerankEnabled = false;
 	const hybridEnabled = enabled("TS_RETRIEVAL_HYBRID_ENABLED", true);
 	const reranker = rerankProvider
 		? new OpenAICompatibleRerankProvider({
 				...rerankProvider,
-				model: required("RERANK_MODEL", "qwen3-rerank"),
+				model: required("RERANK_MODEL", DEFAULT_RERANK_MODEL),
 				timeoutMs: positiveInteger("RERANK_TIMEOUT_MS", 10_000),
 			})
 		: null;

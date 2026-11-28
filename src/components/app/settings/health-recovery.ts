@@ -6,7 +6,7 @@ const COLLECTION_EMPTY_ZH =
 
 const RECOVERY_ZH: Record<string, string> = {
 	qdrant_schema_mismatch:
-		"检查 Qdrant 的稠密向量、维度、距离、lexical_v1 IDF 修饰符和载荷索引。请恢复符合要求的集合，或在新集合中重新索引。",
+		"检查 Qdrant 的稠密向量、维度、距离、sparse_v1 稀疏向量配置（modifier: none）和载荷索引。请恢复符合要求的集合，或在新集合中重新索引。",
 	qdrant_collection_missing: COLLECTION_EMPTY_ZH,
 	qdrant_index_missing: COLLECTION_EMPTY_ZH,
 	llm_not_configured:

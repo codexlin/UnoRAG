@@ -240,7 +240,7 @@ Parsing produces DocumentIR before chunking. The policy is structure-first:
 OCR/降级解析的叙事块。`CONTEXTUAL_RETRIEVAL_MAX_CHUNKS` 默认及硬上限均为 40，
 `CONTEXTUAL_RETRIEVAL_TIMEOUT_MS` 默认 1000、上限 5000 毫秒；Compose 高级配置与 Helm Worker 同步支持。
 默认前缀只使用同文档标题、文件名、最近标题和页码；可注入 `Contextualizer` 实现有界的一句定位，
-默认不调用外部 LLM。前缀最多 240 字符，单独存入 `contextual_prefix`，仅加入向量化与 `lexical_v1` 稀疏索引输入，
+默认不调用外部 LLM。前缀最多 240 字符，单独存入 `contextual_prefix`，仅加入向量化（含云端原生 `sparse_v1` 稀疏输出）输入，
 不进入引用正文、snippet、重排、去重或表格/图片/章节/文档记录。超时会发出取消信号；
 异常或超时静默保留原文，并停止该文档的后续增强尝试，迟到结果不会修改索引。
 此步骤不改变 ADR-0003 的分块边界或语义切分降级策略；同 generation 的清单一致性校验继续生效，
@@ -269,17 +269,25 @@ when truncated; citations continue to point at every contributing row group.
 ### 混合检索与集合契约
 
 Native Retrieve resolves scope, embeds the query, applies mandatory Qdrant filters,
-optionally reranks results, and maps strict citations. Collections always configure named
-`dense` + deterministic tokenizer/hash `lexical_v1` sparse vectors (`modifier: "idf"`)
-and use Qdrant Query API prefetch/RRF as the default retrieval path. Dense and sparse
-prefetches and the fused query each carry the complete mandatory filter; every returned hit
+optionally reranks results, and maps strict citations. Following [ADR-0009](./adr/0009-provider-sparse-and-ollama-bge.md):
+
+- **Cloud default (DashScope native `qwen3.7-text-embedding`)**: collections configure named
+  `dense` + provider-native neural `sparse_v1` (`modifier: "none"`), using one native
+  `output_type: "dense&sparse"` request (`text_type: "document"` on ingest, `text_type: "query"` on search)
+  and Qdrant Query API prefetch/RRF.
+- **Private recommended mode (Ollama `bge-m3` or other dense-only OpenAI-compatible embeddings)**:
+  collections configure named `dense` only (no `sparse_vectors` required) and retrieval executes
+  authorized dense search cleanly (`usedHybrid: false`, `hybridFailed: false`).
+
+Dense and sparse prefetches and the fused query each carry the complete mandatory filter; every returned hit
 is rechecked for scope, ACL, active generation and lifecycle before use. RRF scores are kept
 separate from original dense semantic scores; sparse-only evidence has no dense confidence.
 
-集合启动时强制校验 `dense`（或已回填的未命名 dense）与 `lexical_v1 (modifier: "idf")` 契约，缺失或非 IDF
-配置直接失败关闭，不自动原地修改集合，也不再使用受 10,000 条上限约束的应用层内存 BM25 语料回退。
-无词元查询或瞬时服务端混合检索异常安全回落至同一授权范围内的 dense 候选。旧 dense-only 集合的
-离线回填步骤见 [ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md)。
+集合启动与健康预检按当前 Embedding Provider 能力强制校验契约：支持原生稀疏（如 DashScope `qwen3.7-text-embedding`）时要求
+`dense` + `sparse_v1 (modifier: "none")`，拒绝缺失 `sparse_v1`、遗留 `lexical_v1` 或误配 `modifier: "idf"` 的集合；
+纯稠密 Provider（如 Ollama `bge-m3`）自动校验 `dense` 维度、距离与 13 项载荷索引。均不自动原地修改集合，
+也不使用应用层内存 BM25 回退；瞬时服务端混合检索异常安全回落至同一授权范围内的 dense 候选。
+迁移与私有化配置见 [ADR-0009](./adr/0009-provider-sparse-and-ollama-bge.md)。
 
 ### Ask 编排与文档身份定位
 

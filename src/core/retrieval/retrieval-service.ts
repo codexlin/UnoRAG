@@ -15,7 +15,7 @@ import {
 	type RetrievalUserFilters,
 	RetrievalUserFiltersSchema,
 } from "./contracts";
-import type { EmbeddingProvider } from "./embedding/provider";
+import type { EmbeddingProvider, SparseVector } from "./embedding/provider";
 import { sharesEvidenceLineage } from "./evidence-lineage";
 import { tokenize } from "./hybrid/tokenizer";
 import {
@@ -1055,7 +1055,18 @@ export class DefaultRetrievalService {
 			this.options.rerankTopK,
 			this.options.bm25TopK,
 		);
-		const vector = await this.embeddings.embedQuery(query, input.signal);
+		let vector: number[];
+		let querySparse: SparseVector | undefined;
+		if (hybridEnabled && this.embeddings.embedQueryWithSparse) {
+			const embedded = await this.embeddings.embedQueryWithSparse(
+				query,
+				input.signal,
+			);
+			vector = embedded.dense;
+			querySparse = embedded.sparse;
+		} else {
+			vector = await this.embeddings.embedQuery(query, input.signal);
+		}
 		input.signal?.throwIfAborted();
 		const dense = assertAuthorizedHits(
 			await this.store.search({
@@ -1072,11 +1083,17 @@ export class DefaultRetrievalService {
 		);
 		let usedHybrid = false;
 		let hybridError: string | null = null;
-		if (hybridEnabled) {
+		const canRunHybrid =
+			hybridEnabled &&
+			this.embeddings.supportsSparse !== false &&
+			(!this.embeddings.embedQueryWithSparse ||
+				Boolean(querySparse?.indices.length));
+		if (canRunHybrid) {
 			try {
 				const serverHits = await this.store.hybridSearch?.({
 					vector,
 					query,
+					sparseVector: querySparse,
 					scope,
 					userFilters: filters,
 					limit: denseK,

@@ -20,11 +20,13 @@ data:
   APP_ENV: {{ .Values.config.appEnv | quote }}
   CHAT_MODEL: {{ .Values.config.chatModel | quote }}
   AI_SUPPORTS_STRUCTURED_OUTPUTS: {{ .Values.config.aiSupportsStructuredOutputs | quote }}
+  AI_ENABLE_THINKING: {{ .Values.config.aiEnableThinking | quote }}
   AI_INCLUDE_USAGE: {{ .Values.config.aiIncludeUsage | quote }}
   JUDGE_MODEL: {{ .Values.config.judgeModel | quote }}
   JUDGE_BASE_URL: {{ .Values.config.judgeBaseUrl | quote }}
   JUDGE_PROVIDER_NAME: {{ .Values.config.judgeProviderName | quote }}
   JUDGE_SUPPORTS_STRUCTURED_OUTPUTS: {{ .Values.config.judgeSupportsStructuredOutputs | quote }}
+  JUDGE_ENABLE_THINKING: {{ .Values.config.judgeEnableThinking | quote }}
   ASK_JUDGE_TIMEOUT_MS: {{ .Values.config.askJudgeTimeoutMs | quote }}
   ASK_JUDGE_MAX_ATTEMPTS: {{ .Values.config.askJudgeMaxAttempts | quote }}
   ASK_JUDGE_MAX_OUTPUT_TOKENS: {{ .Values.config.askJudgeMaxOutputTokens | quote }}
@@ -33,6 +35,8 @@ data:
   LLM_QUEUE_TIMEOUT_MS: {{ .Values.config.llmQueueTimeoutMs | quote }}
   EMBEDDING_MODEL: {{ .Values.config.embeddingModel | quote }}
   EMBEDDING_BASE_URL: {{ .Values.config.embeddingBaseUrl | quote }}
+  EMBEDDING_PROTOCOL: {{ .Values.config.embeddingProtocol | quote }}
+  EMBEDDING_SEND_DIMENSIONS: {{ .Values.config.embeddingSendDimensions | quote }}
   EMBEDDING_DIM: {{ .Values.config.embeddingDim | quote }}
   EMBEDDING_BATCH_SIZE: {{ .Values.config.embeddingBatchSize | quote }}
   EMBEDDING_TIMEOUT_MS: {{ .Values.config.embeddingTimeoutMs | quote }}

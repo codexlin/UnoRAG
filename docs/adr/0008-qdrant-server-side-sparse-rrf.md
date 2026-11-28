@@ -1,7 +1,7 @@
 # ADR-0008: Qdrant server-side Sparse + RRF
 
-- Status: Accepted (sole hybrid retrieval path; application-layer BM25 fallback removed)
-- Date: 2026-11-15 (accepted 2026-11-23 after IDF & FinanceComplexQA / live release-gate verification)
+- Status: Superseded by [ADR-0009](./0009-provider-sparse-and-ollama-bge.md) (hand-written `lexical_v1` FNV-1a encoder and backfill script removed in favor of provider-native neural `sparse_v1` and dense-only private Ollama `bge-m3` mode)
+- Date: 2026-11-15 (accepted 2026-11-23; superseded 2026-11-28 by ADR-0009)
 - Scope: lexical projection, collection contract and authorized hybrid retrieval
 - Preserves: ADR-0005 runtime ownership, PostgreSQL authority and staging/active lifecycle
 

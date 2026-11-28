@@ -3,9 +3,14 @@ import "server-only";
 import { eq } from "drizzle-orm";
 
 import {
+	DEFAULT_CHAT_MODEL,
+	DEFAULT_EMBEDDING_DIM,
+	DEFAULT_EMBEDDING_MODEL,
 	DEFAULT_LLM_BASE_URL,
+	DEFAULT_RERANK_MODEL,
 	type ModelProviderBinding,
 	modelProviderOverrideFromEnv,
+	parseOptionalBooleanEnv,
 	rerankProviderFromEnv,
 } from "@/core/ai/model-environment";
 import {
@@ -427,7 +432,7 @@ export function resolveEffectiveBindings(input: {
 		chatOverride.model ??
 		envChat?.chatModel ??
 		configured(env.CHAT_MODEL) ??
-		"qwen-plus";
+		DEFAULT_CHAT_MODEL;
 	const chatProviderName =
 		chatOverride.provider_name ??
 		envChat?.providerName ??
@@ -513,7 +518,9 @@ export function resolveEffectiveBindings(input: {
 	const rerankHasDbOverride =
 		Object.keys(rerankOverride).length > 0 || Boolean(secrets.rerank);
 	const rerankModel =
-		rerankOverride.model ?? configured(env.RERANK_MODEL) ?? "qwen3-rerank";
+		rerankOverride.model ??
+		configured(env.RERANK_MODEL) ??
+		DEFAULT_RERANK_MODEL;
 	// Only inherit explicit RERANK_BASE_URL from env; implicit DashScope rerank follows the
 	// effective chatBaseUrl so switching Chat to a private/LAN gateway never leaks chunks to DashScope.
 	const rerankBaseUrl =
@@ -671,7 +678,9 @@ function buildView(input: {
 				...(unreadable.has("chat") ? { api_key_unreadable: true } : {}),
 				env_base_url: envChat?.baseUrl ?? DEFAULT_LLM_BASE_URL,
 				env_model:
-					envChat?.chatModel ?? configured(env.CHAT_MODEL) ?? "qwen-plus",
+					envChat?.chatModel ??
+					configured(env.CHAT_MODEL) ??
+					DEFAULT_CHAT_MODEL,
 			},
 			judge: {
 				source: effective.judge.inheritChat
@@ -698,7 +707,7 @@ function buildView(input: {
 					envJudge?.chatModel ??
 					envChat?.chatModel ??
 					configured(env.CHAT_MODEL) ??
-					"qwen-plus",
+					DEFAULT_CHAT_MODEL,
 			},
 			rerank: {
 				source: !effective.rerank.allowed
@@ -723,7 +732,7 @@ function buildView(input: {
 					normalizeOptionalEnvUrl(env.RERANK_BASE_URL) ??
 					envRerank?.baseUrl ??
 					null,
-				env_model: configured(env.RERANK_MODEL) ?? "qwen3-rerank",
+				env_model: configured(env.RERANK_MODEL) ?? DEFAULT_RERANK_MODEL,
 			},
 			vlm: {
 				source: !effective.vlm.enabled
@@ -747,8 +756,8 @@ function buildView(input: {
 		},
 		embedding: {
 			locked: true,
-			model: configured(env.EMBEDDING_MODEL) ?? "text-embedding-v3",
-			dimensions: positiveIntEnv("EMBEDDING_DIM", 1024, env),
+			model: configured(env.EMBEDDING_MODEL) ?? DEFAULT_EMBEDDING_MODEL,
+			dimensions: positiveIntEnv("EMBEDDING_DIM", DEFAULT_EMBEDDING_DIM, env),
 			collection: configured(env.QDRANT_COLLECTION) ?? "unorag_chunks",
 			base_url: envEmbedding?.baseUrl ?? null,
 		},
@@ -1399,6 +1408,13 @@ function buildEffectiveRuntimeFromBindings(input: {
 	if (!bindings.judge.apiKey) {
 		throw new Error("effective judge API key is missing");
 	}
+	const aiEnableThinking = parseOptionalBooleanEnv(env.AI_ENABLE_THINKING);
+	const judgeEnableThinking = parseOptionalBooleanEnv(
+		env.JUDGE_ENABLE_THINKING,
+	);
+	const effectiveJudgeThinking =
+		judgeEnableThinking !== undefined ? judgeEnableThinking : aiEnableThinking;
+	const vlmEnableThinking = parseOptionalBooleanEnv(env.VLM_ENABLE_THINKING);
 	const chatConfig: OpenAICompatibleAiConfig = {
 		apiKey: bindings.chat.apiKey,
 		baseUrl: bindings.chat.baseUrl,
@@ -1406,6 +1422,9 @@ function buildEffectiveRuntimeFromBindings(input: {
 		providerName: bindings.chat.providerName,
 		supportsStructuredOutputs: bindings.chat.supportsStructuredOutputs,
 		includeUsage: bindings.chat.includeUsage,
+		...(aiEnableThinking !== undefined
+			? { enableThinking: aiEnableThinking }
+			: {}),
 	};
 	const judgeConfig: OpenAICompatibleAiConfig = {
 		apiKey: bindings.judge.apiKey,
@@ -1414,6 +1433,9 @@ function buildEffectiveRuntimeFromBindings(input: {
 		providerName: bindings.judge.providerName,
 		supportsStructuredOutputs: bindings.judge.supportsStructuredOutputs,
 		includeUsage: bindings.chat.includeUsage,
+		...(effectiveJudgeThinking !== undefined
+			? { enableThinking: effectiveJudgeThinking }
+			: {}),
 	};
 	const vlmConfig: VlmAiConfig | null =
 		bindings.vlm.enabled &&
@@ -1428,6 +1450,9 @@ function buildEffectiveRuntimeFromBindings(input: {
 					providerName: bindings.vlm.providerName,
 					supportsStructuredOutputs: false,
 					includeUsage: bindings.chat.includeUsage,
+					...(vlmEnableThinking !== undefined
+						? { enableThinking: vlmEnableThinking }
+						: {}),
 					timeoutMs: boundedIntEnv(
 						"VLM_TIMEOUT_MS",
 						15_000,

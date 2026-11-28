@@ -21,7 +21,10 @@ import {
 	parseDocxDocument,
 	parseXlsxDocument,
 } from "../core/parsing";
-import type { EmbeddingProvider } from "../core/retrieval/embedding/provider";
+import type {
+	EmbeddingProvider,
+	SparseVector,
+} from "../core/retrieval/embedding/provider";
 import { resolveDocumentPolicy } from "../lib/server/document-policy.mjs";
 import type { DocumentIngestJob } from "./contracts";
 import { WorkerTaskError } from "./errors";
@@ -60,6 +63,7 @@ export interface DocumentIngestVectorStore {
 	stage(input: {
 		records: IndexWritePayload[];
 		vectors: number[][];
+		sparseVectors?: SparseVector[];
 		scope: IngestPointScope;
 		beforeBatch?: () => Promise<void>;
 	}): Promise<number>;
@@ -175,6 +179,8 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 			document,
 		});
 		const vectors: number[][] = [];
+		const sparseVectors: SparseVector[] = [];
+		let hasSparseVectors = false;
 		await onProgress?.({ stage: "embedding", percent: 60 });
 		if (this.embeddings.embedDocumentChunks) {
 			await this.assertContinuing(input);
@@ -187,6 +193,26 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 				);
 			}
 			vectors.push(...grouped);
+		} else if (this.embeddings.embedTextsWithSparse) {
+			hasSparseVectors = this.embeddings.supportsSparse === true;
+			for (
+				let offset = 0;
+				offset < records.length;
+				offset += CANCELLABLE_EMBEDDING_BATCH_SIZE
+			) {
+				await this.assertContinuing(input);
+				const batch = await this.embeddings.embedTextsWithSparse(
+					records
+						.slice(offset, offset + CANCELLABLE_EMBEDDING_BATCH_SIZE)
+						.map((record) => record.embed_text),
+				);
+				for (const item of batch) {
+					vectors.push(item.dense);
+					if (hasSparseVectors) {
+						sparseVectors.push(item.sparse ?? { indices: [], values: [] });
+					}
+				}
+			}
 		} else {
 			for (
 				let offset = 0;
@@ -208,6 +234,7 @@ export class DocumentIngestStager implements DocumentIngestExternalPort {
 		const pointCount = await this.qdrant.stage({
 			records,
 			vectors,
+			...(hasSparseVectors ? { sparseVectors } : {}),
 			scope,
 			beforeBatch: () => this.assertContinuing(input),
 		});

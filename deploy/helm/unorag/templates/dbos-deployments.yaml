@@ -127,6 +127,10 @@ spec:
               value: {{ .Values.config.embeddingBaseUrl | quote }}
             - name: EMBEDDING_MODEL
               value: {{ .Values.config.embeddingModel | quote }}
+            - name: EMBEDDING_PROTOCOL
+              value: {{ .Values.config.embeddingProtocol | quote }}
+            - name: EMBEDDING_SEND_DIMENSIONS
+              value: {{ .Values.config.embeddingSendDimensions | quote }}
             - name: EMBEDDING_DIM
               value: {{ .Values.config.embeddingDim | quote }}
             - name: EMBEDDING_BATCH_SIZE
@@ -307,10 +311,16 @@ spec:
               value: {{ .Values.config.embeddingBaseUrl | quote }}
             - name: EMBEDDING_MODEL
               value: {{ .Values.config.embeddingModel | quote }}
+            - name: EMBEDDING_PROTOCOL
+              value: {{ .Values.config.embeddingProtocol | quote }}
+            - name: EMBEDDING_SEND_DIMENSIONS
+              value: {{ .Values.config.embeddingSendDimensions | quote }}
             - name: EMBEDDING_DIM
               value: {{ .Values.config.embeddingDim | quote }}
             - name: AI_SUPPORTS_STRUCTURED_OUTPUTS
               value: {{ .Values.config.aiSupportsStructuredOutputs | quote }}
+            - name: AI_ENABLE_THINKING
+              value: {{ .Values.config.aiEnableThinking | quote }}
             - name: AI_INCLUDE_USAGE
               value: {{ .Values.config.aiIncludeUsage | quote }}
             - name: JUDGE_MODEL
@@ -321,6 +331,8 @@ spec:
               value: {{ .Values.config.judgeProviderName | quote }}
             - name: JUDGE_SUPPORTS_STRUCTURED_OUTPUTS
               value: {{ .Values.config.judgeSupportsStructuredOutputs | quote }}
+            - name: JUDGE_ENABLE_THINKING
+              value: {{ .Values.config.judgeEnableThinking | quote }}
             - name: RERANK_BASE_URL
               value: {{ .Values.config.rerankBaseUrl | quote }}
             - name: RERANK_MODEL

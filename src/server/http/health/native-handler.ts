@@ -3,8 +3,11 @@ import "server-only";
 import { sql } from "drizzle-orm";
 
 import {
+	DEFAULT_CHAT_MODEL,
+	DEFAULT_EMBEDDING_MODEL,
 	modelProviderOverrideFromEnv,
 	rerankProviderFromEnv,
+	resolveEmbeddingCapabilityFromEnv,
 	resolveLlmApiKey,
 } from "@/core/ai/model-environment";
 import {
@@ -48,7 +51,10 @@ function modelConfigurationError(): string | null {
 		["llm_not_configured", () => aiConfigFromEnv()],
 		[
 			"embedding_not_configured",
-			() => modelProviderOverrideFromEnv("EMBEDDING"),
+			() => {
+				modelProviderOverrideFromEnv("EMBEDDING");
+				return resolveEmbeddingCapabilityFromEnv();
+			},
 		],
 		["rerank_not_configured", () => rerankProviderFromEnv()],
 		["judge_not_configured", () => judgeAiConfigFromEnv()],
@@ -85,7 +91,7 @@ async function buildHealthResponse(
 	if (!qdrantOk) reasons.push(contractError?.code ?? "qdrant_unavailable");
 	if (modelError) reasons.push(modelError);
 	const askReady = metadataOk && qdrantOk && !modelError;
-	const chatModel = process.env.CHAT_MODEL?.trim() || "qwen-plus";
+	const chatModel = process.env.CHAT_MODEL?.trim() || DEFAULT_CHAT_MODEL;
 	const release = resolveReleaseInfo(process.env);
 
 	return Response.json(
@@ -99,7 +105,7 @@ async function buildHealthResponse(
 			chat_model: chatModel,
 			judge_model: process.env.JUDGE_MODEL?.trim() || chatModel,
 			embedding_model:
-				process.env.EMBEDDING_MODEL?.trim() || "text-embedding-v3",
+				process.env.EMBEDDING_MODEL?.trim() || DEFAULT_EMBEDDING_MODEL,
 			rerank_model: process.env.RERANK_MODEL?.trim() || null,
 			ask_mode: "typescript",
 			effective_mode: "typescript",

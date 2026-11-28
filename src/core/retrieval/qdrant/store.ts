@@ -5,8 +5,8 @@ import {
 } from "@/lib/observability/tracing";
 
 import type { RetrievalScope, RetrievalUserFilters } from "../contracts";
+import type { SparseVector } from "../embedding/provider";
 import { buildMandatoryQdrantFilter } from "../filters/qdrant-filter";
-import { sparseVector } from "../hybrid/sparse-vector";
 import {
 	QdrantCollectionContractError,
 	type QdrantVectorSchema,
@@ -80,7 +80,8 @@ async function qdrantOperation<T>(
 
 export type HybridSearchInput = {
 	vector: number[];
-	query: string;
+	query?: string;
+	sparseVector?: SparseVector | null;
 	scope: RetrievalScope;
 	userFilters?: RetrievalUserFilters;
 	limit: number;
@@ -200,12 +201,10 @@ export class QdrantRetrievalStore implements RetrievalVectorStore {
 		await qdrantOperation("ready", () => this.ready, this.options);
 		const schema = await this.options.vectorSchema;
 		if (!schema?.sparseVectorName) {
-			throw new QdrantCollectionContractError(
-				"Qdrant collection schema is missing lexical_v1 sparse vector",
-			);
+			return null;
 		}
-		const sparse = sparseVector(input.query);
-		if (!sparse.indices.length) return null;
+		const sparse = input.sparseVector;
+		if (!sparse?.indices.length) return null;
 		const filter = buildMandatoryQdrantFilter({
 			scope: input.scope,
 			userFilters: input.userFilters,

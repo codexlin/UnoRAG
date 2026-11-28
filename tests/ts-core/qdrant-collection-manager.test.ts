@@ -139,7 +139,16 @@ function collectionInfo(input?: {
 	size?: number;
 	distance?: "Cosine" | "Euclid" | "Dot" | "Manhattan";
 	indexes?: Record<string, "keyword" | "integer">;
+	sparseVectors?: CollectionInfo["config"]["params"]["sparse_vectors"] | null;
 }): CollectionInfo {
+	const sparseVectors =
+		input?.sparseVectors === null
+			? undefined
+			: (input?.sparseVectors ?? {
+					sparse_v1: {
+						modifier: "none" as const,
+					},
+				});
 	return {
 		status: "green",
 		optimizer_status: "ok",
@@ -152,11 +161,7 @@ function collectionInfo(input?: {
 						distance: input?.distance ?? "Cosine",
 					},
 				},
-				sparse_vectors: {
-					lexical_v1: {
-						modifier: "idf",
-					},
-				},
+				...(sparseVectors ? { sparse_vectors: sparseVectors } : {}),
 				shard_number: 1,
 				replication_factor: 1,
 				write_consistency_factor: 1,
@@ -210,8 +215,28 @@ test("shared collection snapshot validation is strict and does not mutate schema
 	const snapshot = structuredClone(info);
 	assert.deepEqual(assertQdrantCollectionSchema(info, contract), {
 		denseVectorName: "dense",
-		sparseVectorName: "lexical_v1",
+		sparseVectorName: "sparse_v1",
 	});
+	// Qdrant may omit modifier when it is default "none"; sparse_v1: {} is valid.
+	const omittedModifier = structuredClone(info);
+	omittedModifier.config.params.sparse_vectors = { sparse_v1: {} };
+	assert.deepEqual(assertQdrantCollectionSchema(omittedModifier, contract), {
+		denseVectorName: "dense",
+		sparseVectorName: "sparse_v1",
+	});
+	// Dense-only contract (e.g. Ollama bge-m3) accepts collections without sparse_vectors.
+	const denseOnlyInfo = structuredClone(info);
+	delete denseOnlyInfo.config.params.sparse_vectors;
+	assert.deepEqual(
+		assertQdrantCollectionSchema(denseOnlyInfo, {
+			...contract,
+			expectSparse: false,
+		}),
+		{
+			denseVectorName: "dense",
+			sparseVectorName: null,
+		},
+	);
 	assert.deepEqual(info, snapshot);
 	for (const mutate of [
 		(value: CollectionInfo) => {
@@ -228,7 +253,10 @@ test("shared collection snapshot validation is strict and does not mutate schema
 			value.config.params.vectors = { dense: { size: 1024, distance: "Dot" } };
 		},
 		(value: CollectionInfo) => {
-			value.config.params.sparse_vectors = { lexical_v1: {} };
+			value.config.params.sparse_vectors = { sparse_v1: { modifier: "idf" } };
+		},
+		(value: CollectionInfo) => {
+			value.config.params.sparse_vectors = { lexical_v1: { modifier: "idf" } };
 		},
 		(value: CollectionInfo) => {
 			delete value.config.params.sparse_vectors;
@@ -300,14 +328,14 @@ function fakeClient(input?: {
 					throw input.createCollectionError;
 				}
 				exists = true;
-				info = collectionInfo();
+				info = collectionInfo({
+					sparseVectors: request.sparse_vectors
+						? (request.sparse_vectors as CollectionInfo["config"]["params"]["sparse_vectors"])
+						: null,
+				});
 				if (request.vectors) {
 					info.config.params.vectors =
 						request.vectors as CollectionInfo["config"]["params"]["vectors"];
-				}
-				if (request.sparse_vectors) {
-					info.config.params.sparse_vectors =
-						request.sparse_vectors as CollectionInfo["config"]["params"]["sparse_vectors"];
 				}
 				return true;
 			},
@@ -631,13 +659,13 @@ test("retrieval store uses the universal query API with mandatory scope", async 
 	);
 });
 
-test("collection capability detects named and migrated unnamed dense schemas", async () => {
+test("collection capability detects named and unnamed dense schemas with sparse_v1 or dense-only mode", async () => {
 	for (const named of [false, true]) {
 		const info = collectionInfo();
 		info.config.params.vectors = named
 			? { dense: { size: 1024, distance: "Cosine" } }
 			: { size: 1024, distance: "Cosine" };
-		info.config.params.sparse_vectors = { lexical_v1: { modifier: "idf" } };
+		info.config.params.sparse_vectors = { sparse_v1: { modifier: "none" } };
 		const { client } = fakeClient({ exists: true, info });
 		const result = await new QdrantCollectionManager(client, {
 			collection: "test",
@@ -646,18 +674,18 @@ test("collection capability detects named and migrated unnamed dense schemas", a
 		}).ensure();
 		assert.deepEqual(result.vectorSchema, {
 			denseVectorName: named ? "dense" : null,
-			sparseVectorName: "lexical_v1",
+			sparseVectorName: "sparse_v1",
 		});
 	}
-	const legacyInfo = collectionInfo();
-	legacyInfo.config.params.vectors = { size: 1024, distance: "Cosine" };
-	delete legacyInfo.config.params.sparse_vectors;
-	const { client, calls } = fakeClient({ exists: true, info: legacyInfo });
+	const denseOnlyInfo = collectionInfo({ sparseVectors: null });
+	denseOnlyInfo.config.params.vectors = { size: 1024, distance: "Cosine" };
+	const { client, calls } = fakeClient({ exists: true, info: denseOnlyInfo });
 	await assert.rejects(
 		new QdrantCollectionManager(client, {
 			collection: "legacy",
 			vectorSize: 1024,
 			distance: "Cosine",
+			expectSparse: true,
 		}).ensure(),
 		QdrantCollectionContractError,
 	);
@@ -665,11 +693,22 @@ test("collection capability detects named and migrated unnamed dense schemas", a
 		calls.some((call) => call.name === "createCollection"),
 		false,
 	);
+	// Same dense-only collection succeeds under expectSparse: false (e.g. Ollama bge-m3).
+	const denseOnlyResult = await new QdrantCollectionManager(client, {
+		collection: "ollama_bge",
+		vectorSize: 1024,
+		distance: "Cosine",
+		expectSparse: false,
+	}).ensure();
+	assert.deepEqual(denseOnlyResult.vectorSchema, {
+		denseVectorName: null,
+		sparseVectorName: null,
+	});
 });
 
-test("creating a collection always configures named dense and lexical_v1 with Qdrant IDF modifier", async () => {
-	const { client, calls } = fakeClient({ exists: false });
-	const result = await new QdrantCollectionManager(client, {
+test("creating a collection configures named dense + sparse_v1 (modifier: none) by default and dense-only when expectSparse is false", async () => {
+	const sparseRun = fakeClient({ exists: false });
+	const result = await new QdrantCollectionManager(sparseRun.client, {
 		collection: "hybrid_new",
 		vectorSize: 1024,
 		distance: "Cosine",
@@ -677,24 +716,45 @@ test("creating a collection always configures named dense and lexical_v1 with Qd
 	assert.equal(result.created, true);
 	assert.deepEqual(result.vectorSchema, {
 		denseVectorName: "dense",
-		sparseVectorName: "lexical_v1",
+		sparseVectorName: "sparse_v1",
 	});
-	const createCall = calls.find((call) => call.name === "createCollection");
+	const createCall = sparseRun.calls.find(
+		(call) => call.name === "createCollection",
+	);
 	assert.ok(createCall);
 	assert.equal(createCall.createCollection, "hybrid_new");
 	assert.deepEqual(createCall.createRequest, {
 		vectors: { dense: { size: 1024, distance: "Cosine" } },
-		sparse_vectors: { lexical_v1: { modifier: "idf" } },
+		sparse_vectors: { sparse_v1: { modifier: "none" } },
+	});
+
+	const denseRun = fakeClient({ exists: false });
+	const denseResult = await new QdrantCollectionManager(denseRun.client, {
+		collection: "ollama_bge_new",
+		vectorSize: 1024,
+		distance: "Cosine",
+		expectSparse: false,
+	}).ensure();
+	assert.equal(denseResult.created, true);
+	assert.deepEqual(denseResult.vectorSchema, {
+		denseVectorName: "dense",
+		sparseVectorName: null,
+	});
+	const denseCreate = denseRun.calls.find(
+		(call) => call.name === "createCollection",
+	);
+	assert.deepEqual(denseCreate?.createRequest, {
+		vectors: { dense: { size: 1024, distance: "Cosine" } },
 	});
 });
 
-test("incompatible named dimensions, unknown dense names and missing or non-IDF sparse fail closed", async () => {
+test("incompatible named dimensions, unknown dense names, legacy lexical_v1 and IDF-modified sparse_v1 fail closed", async () => {
 	for (const params of [
 		{ vectors: { dense: { size: 3, distance: "Cosine" as const } } },
 		{ vectors: { unknown: { size: 1024, distance: "Cosine" as const } } },
 		{ sparse_vectors: undefined },
-		{ sparse_vectors: { lexical_v1: {} } },
-		{ sparse_vectors: { lexical_v1: { modifier: "none" as const } } },
+		{ sparse_vectors: { lexical_v1: { modifier: "idf" as const } } },
+		{ sparse_vectors: { sparse_v1: { modifier: "idf" as const } } },
 	]) {
 		const info = collectionInfo();
 		Object.assign(info.config.params, params);
@@ -733,7 +793,7 @@ test("both server prefetch branches and fusion carry the complete mandatory auth
 	const store = new QdrantRetrievalStore(client, "test", Promise.resolve(), {
 		vectorSchema: Promise.resolve({
 			denseVectorName: "dense",
-			sparseVectorName: "lexical_v1",
+			sparseVectorName: "sparse_v1",
 		}),
 	});
 	await store.search({ vector: [1, 0], scope, limit: 5 });
@@ -741,6 +801,7 @@ test("both server prefetch branches and fusion carry the complete mandatory auth
 	const result = await store.hybridSearch({
 		vector: [1, 0],
 		query: "合同 ZXQ987",
+		sparseVector: { indices: [101, 202], values: [1.8, 0.9] },
 		scope,
 		userFilters: { document_version_id: "version" },
 		limit: 5,
@@ -774,11 +835,28 @@ test("both server prefetch branches and fusion carry the complete mandatory auth
 			assert.ok(encoded.includes(value), value);
 	}
 	assert.equal(request.prefetch[0].using, "dense");
-	assert.equal(request.prefetch[1].using, "lexical_v1");
+	assert.equal(request.prefetch[1].using, "sparse_v1");
+	assert.deepEqual(request.prefetch[1].query, {
+		indices: [101, 202],
+		values: [1.8, 0.9],
+	});
 	assert.equal(
 		await store.hybridSearch({
 			vector: [1, 0],
 			query: "!?",
+			sparseVector: { indices: [], values: [] },
+			scope,
+			limit: 5,
+			sparseLimit: 5,
+			rrfK: 60,
+		}),
+		null,
+	);
+	assert.equal(
+		await store.hybridSearch({
+			vector: [1, 0],
+			query: "dense only",
+			sparseVector: null,
 			scope,
 			limit: 5,
 			sparseLimit: 5,

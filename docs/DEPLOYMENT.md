@@ -82,7 +82,7 @@ UNORAG_COMPOSE_OVERLAY=./docker-compose.local-amd64.yml \
 旧版本把所有非敏感项放在 `runtime.env`。首次运行新版本的 `init-config.sh` 或
 `upgrade.sh` 会自动把高级项移入 `runtime.advanced.env`，并保留自定义项。示例中省略的调优项使用内置默认值，仍可在该文件中显式覆盖。
 
-新部署默认启用 Qdrant `lexical_v1` IDF + RRF 混合检索，词法检索无需额外的模型 API 调用。
+云端默认接入阿里云 DashScope Qwen3.7（`CHAT_MODEL=qwen3.7-flash` 默认关闭思考模式 `enable_thinking=false`、`EMBEDDING_MODEL=qwen3.7-text-embedding` 通过原生接口单次返回 1024 维 `dense&sparse`、`RERANK_MODEL=qwen3.7-text-rerank`），并在 Qdrant 启用 `sparse_v1 (modifier: "none")` + RRF 混合检索；接入 Ollama + `bge-m3` 等私有纯稠密模型时自动切换为纯 Dense 集合与纯 Dense 检索，无需手动调整代码（见 [ADR-0009](./adr/0009-provider-sparse-and-ollama-bge.md)）。
 在 `runtime.advanced.env` 设置 `TS_RETRIEVAL_HYBRID_ENABLED=false` 可在整个部署禁用混合检索；设置 `TS_RETRIEVAL_RERANK_ALLOWED=false` 可在整个部署硬禁用重排（覆盖工作区的 `reranking` 策略与自动/重试重排）。
 工作区「问答策略」精简为三项清晰配置：回答模式（`precise` / `balanced` / `exploratory`）、检索精排（`auto` / `on` / `off`，默认 `auto`）与对话记忆。`auto` 模式在对比、多方面事实、派生计算、中英精确编号及改写后的复杂查询首轮启用重排；当已配置且允许重排、且混合检索召回 `sparse-only`（无稠密分数）候选时，也会自动升级重排以统一证据分数尺度。公共检索接口 `/api/v1/retrieve` 默认保持低延迟粗排契约（不注入工作区 Ask 策略）。
 升级时旧行中的 `retrieval_enhancement` 会平滑投影到 `reranking`，`evidence_requirement="strict"` 投影到 `answer_profile="precise"`；混合检索在工作区层始终开启，如需整站关闭请设置部署级 `TS_RETRIEVAL_HYBRID_ENABLED=false`。
@@ -232,9 +232,15 @@ LLM_API_KEY=sk-your-provider-key
 3. **无鉴权本地服务的 API Key**：UnoRAG 会严格校验所选命名空间存在非空 `LLM_API_KEY`；对不校验 Token 的本地服务，
    在 `runtime.secret` 中填写任意非空占位符即可（例如 `LLM_API_KEY=local-no-auth`）。
 
-#### 示例 A：单机全本地 Ollama
+#### 示例 A：私有化推荐方案 — 单机/内网全本地 Ollama + `bge-m3`（纯 Dense 零出域）
 
-先在宿主机拉取模型并确保监听 `0.0.0.0:11434`（如 `ollama pull qwen2.5:14b && ollama pull bge-m3`）：
+面向内网私有化交付且追求部署简单、免独立稀疏服务维护的场景，推荐使用 **Ollama + `bge-m3`（1024 维）**。
+UnoRAG 检测到 Ollama（`:11434` / `ollama`）或 `bge-m3` 时会自动：
+- 省略 OpenAI `/v1/embeddings` 请求体中的 `dimensions` 字段（避免 Ollama/非 MRL 模型参数报错），但仍严格校验返回向量长度为 `1024`；
+- 将 Qdrant 集合契约自动切换为纯 Dense（不要求 `sparse_v1`），检索链路以纯 Dense 无告警运行；
+- 结合默认本地 LiteParse + 预装 Tesseract OCR 与 `EXTERNAL_PARSER_ALLOWED=false`，实现 **100% 零业务数据出域**。
+
+先在宿主机或内网机器拉取模型并确保 Ollama 监听 `0.0.0.0:11434`（例如 `ollama pull qwen2.5:14b && ollama pull bge-m3`）：
 
 ```dotenv
 # deploy/config/runtime.env
@@ -245,9 +251,19 @@ EMBEDDING_DIM=1024
 ```
 
 ```dotenv
+# deploy/config/runtime.advanced.env（默认即可，可按需显式确认零出域）
+EMBEDDING_PROTOCOL=auto
+EMBEDDING_SEND_DIMENSIONS=auto
+MINERU_PROVIDER=self_hosted
+EXTERNAL_PARSER_ALLOWED=false
+```
+
+```dotenv
 # deploy/config/runtime.secret
 LLM_API_KEY=local-no-auth
 ```
+
+> 若后续希望在纯本地环境进一步提升精排效果，可额外在独立端口部署 Xinference / vLLM Reranker 并配置 `RERANK_BASE_URL`、`RERANK_MODEL` 与 `RERANK_API_KEY`；未配置时 Rerank 自动处于合法的 `disabled` 状态，绝不向公网发送任何文本。
 
 #### 示例 B：vLLM 对话 + 独立本地 Embedding（拆分端点）
 
@@ -302,7 +318,7 @@ EMBEDDING_API_KEY=local-no-auth
 RERANK_API_KEY=local-no-auth
 ```
 
-> **中预算云 API 参考**：若暂不自建 GPU，也可保持云端主网关，同时将 `RERANK_BASE_URL` 指向阿里云 DashScope（`https://dashscope.aliyuncs.com/compatible-api/v1` + `qwen3-rerank`）或硅基流动（`https://api.siliconflow.cn/v1/rerank` + `Qwen/Qwen3-Reranker-8B`）并在工作区启用 `auto` 或 `on` 重排。
+> **云 API 参考**：默认阿里云 DashScope 套餐即使用 `CHAT_MODEL=qwen3.7-flash`（自动附带 `enable_thinking=false`）、`EMBEDDING_MODEL=qwen3.7-text-embedding`（原生 `dense&sparse` + Qdrant `sparse_v1` RRF）与 `RERANK_MODEL=qwen3.7-text-rerank`（`https://dashscope.aliyuncs.com/compatible-api/v1`）；也可将 `RERANK_BASE_URL` 指向硅基流动（`https://api.siliconflow.cn/v1/rerank` + `Qwen/Qwen3-Reranker-8B`）并在工作区启用 `auto` 或 `on` 重排。
 
 ### 4. 按能力拆分端点与凭据隔离
 
@@ -323,7 +339,11 @@ Embedding、Judge、Rerank 与 VLM 均可在 `runtime.advanced.env` 中配置独
 | 变量 | 默认值 | 何时调整 |
 |---|---|---|
 | `AI_SUPPORTS_STRUCTURED_OUTPUTS` | `true` | 对话网关或小参数本地模型不支持 OpenAI `json_schema` 结构化输出时设为 `false` |
+| `AI_ENABLE_THINKING` | `false`（仅 DashScope） | 仅针对 DashScope 混合思考模型（如 `qwen3.7-flash`）生效；默认 `false` 关闭思考以降低延迟并确保 `json_schema` 稳定，非 DashScope 网关不发送该字段 |
 | `JUDGE_SUPPORTS_STRUCTURED_OUTPUTS` | `true` | Judge 模型不支持 `json_schema` 时设为 `false` |
+| `JUDGE_ENABLE_THINKING` | 继承 `AI_ENABLE_THINKING` | 单独控制 DashScope Judge 模型的 `enable_thinking` |
+| `EMBEDDING_PROTOCOL` | `auto` | `auto` 对 DashScope `qwen3.7-text-embedding` / `text-embedding-v3|v4` 自动走原生 `dense&sparse`，其余走 `openai_compatible` 纯稠密；可显式指定 `dashscope_native` 或 `openai_compatible` |
+| `EMBEDDING_SEND_DIMENSIONS` | `auto` | `auto` 对 Ollama 及 `bge-m3` 等固定维度模型自动省略请求体 `dimensions`（仍严格校验返回向量长度）；可显式指定 `true` / `false` |
 | `AI_INCLUDE_USAGE` | `true` | 网关拒绝流式 `stream_options.include_usage` 参数时设为 `false`（用量保持未知，不伪造 0） |
 | `TS_RETRIEVAL_RERANK_ALLOWED` | `true` | 需要在整个部署硬禁用重排（覆盖工作区策略与在线模型配置）时设为 `false` |
 | `MODEL_SETTINGS_LOCKED` | `false` | 金融/政企等严苛环境需禁止 Owner 通过网页修改模型与密钥时设为 `true`，强制仅读服务器环境变量 |
@@ -354,7 +374,7 @@ Embedding、Judge、Rerank 与 VLM 均可在 `runtime.advanced.env` 中配置独
 
 | 常见 Embedding 模型 | `EMBEDDING_DIM` |
 |---|---|
-| `text-embedding-v3` / `BAAI/bge-m3` / `bge-m3` | `1024` |
+| `qwen3.7-text-embedding` / `text-embedding-v4` / `text-embedding-v3` / `BAAI/bge-m3` / `bge-m3` | `1024` |
 | `nomic-embed-text` / `BAAI/bge-base-zh-v1.5` | `768` |
 | `text-embedding-3-small` | `1536` |
 | `text-embedding-3-large` | `3072` |

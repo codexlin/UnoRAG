@@ -41,7 +41,7 @@ function healthyCollection() {
 		config: {
 			params: {
 				vectors: { dense: { size: 1024, distance: "Cosine" } },
-				sparse_vectors: { lexical_v1: { modifier: "idf" } },
+				sparse_vectors: { sparse_v1: { modifier: "none" } },
 			},
 		},
 		payload_schema: Object.fromEntries(
@@ -63,11 +63,12 @@ test("health checks the retrieval schema read-only and distinguishes empty metad
 	});
 	const cases = [
 		{ name: "valid", code: null },
-		{ name: "no-idf", code: "qdrant_schema_mismatch" },
-		{ name: "absent-idf", code: "qdrant_schema_mismatch" },
+		{ name: "omitted-modifier", code: null },
+		{ name: "ollama-dense-only", code: null },
+		{ name: "wrong-idf", code: "qdrant_schema_mismatch" },
 		{ name: "no-sparse", code: "qdrant_schema_mismatch" },
-		{ name: "wrong-sparse-name", code: "qdrant_schema_mismatch" },
-		{ name: "hybrid-disabled-no-idf", code: "qdrant_schema_mismatch" },
+		{ name: "legacy-lexical-v1", code: "qdrant_schema_mismatch" },
+		{ name: "hybrid-disabled-wrong-idf", code: "qdrant_schema_mismatch" },
 		{ name: "distance", code: "qdrant_schema_mismatch" },
 		{ name: "unknown-dense", code: "qdrant_schema_mismatch" },
 		{ name: "dimension", code: "embedding_dimension_mismatch" },
@@ -86,28 +87,34 @@ test("health checks the retrieval schema read-only and distinguishes empty metad
 	];
 	for (const { name, code } of cases) {
 		await t.test(name, async (t) => {
-			const environment = {
+			const environment: Record<string, string | undefined> = {
 				QDRANT_URL: "http://127.0.0.1:1",
 				QDRANT_COLLECTION: "offline-health",
 				EMBEDDING_DIM: name === "invalid-dimension" ? "invalid" : "1024",
 				QDRANT_DISTANCE: name === "invalid-distance" ? "invalid" : "Cosine",
 				TS_RETRIEVAL_HYBRID_ENABLED:
-					name === "hybrid-disabled-no-idf" ? "false" : undefined,
+					name === "hybrid-disabled-wrong-idf" ? "false" : undefined,
+				...(name === "ollama-dense-only"
+					? {
+							LLM_BASE_URL: "http://127.0.0.1:11434/v1",
+							EMBEDDING_MODEL: "bge-m3",
+						}
+					: {}),
 			};
 			if (name === "configured-distance") environment.QDRANT_DISTANCE = "Dot";
 			const info = healthyCollection();
 			if (name.startsWith("empty-")) info.points_count = 0;
-			if (name === "no-idf" || name === "hybrid-disabled-no-idf")
-				info.config.params.sparse_vectors.lexical_v1.modifier = "none";
-			if (name === "absent-idf")
+			if (name === "wrong-idf" || name === "hybrid-disabled-wrong-idf")
+				info.config.params.sparse_vectors.sparse_v1.modifier = "idf";
+			if (name === "omitted-modifier")
 				Object.assign(info.config.params, {
-					sparse_vectors: { lexical_v1: {} },
+					sparse_vectors: { sparse_v1: {} },
 				});
-			if (name === "no-sparse")
+			if (name === "no-sparse" || name === "ollama-dense-only")
 				Object.assign(info.config.params, { sparse_vectors: undefined });
-			if (name === "wrong-sparse-name")
+			if (name === "legacy-lexical-v1")
 				Object.assign(info.config.params, {
-					sparse_vectors: { lexical_v2: { modifier: "idf" } },
+					sparse_vectors: { lexical_v1: { modifier: "idf" } },
 				});
 			if (name === "distance" || name === "configured-distance")
 				info.config.params.vectors.dense.distance = "Dot";

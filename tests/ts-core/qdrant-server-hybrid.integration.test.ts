@@ -10,8 +10,11 @@ import {
 	QdrantIngestWriteStore,
 } from "../../src/core/ingest/qdrant-write-store";
 import type { RetrievalScope } from "../../src/core/retrieval/contracts";
+import type {
+	EmbeddingProvider,
+	SparseVector,
+} from "../../src/core/retrieval/embedding/provider";
 import { buildMandatoryQdrantFilter } from "../../src/core/retrieval/filters/qdrant-filter";
-import { sparseVector } from "../../src/core/retrieval/hybrid/sparse-vector";
 import {
 	QdrantCollectionContractError,
 	QdrantCollectionManager,
@@ -25,7 +28,53 @@ const integration = {
 	skip: url ? false : "QDRANT_INGEST_E2E_URL is not configured",
 };
 const query = "ZXQ987 合同违约金";
-const embeddings = {
+
+// Test-only fixture mapping simulating DashScope qwen3.7-text-embedding neural sparse output.
+const TEST_NEURAL_VOCAB: ReadonlyArray<[string, number, number]> = [
+	["zxq987", 987, 3.6],
+	["合同", 1001, 2.2],
+	["违约金", 1002, 2.9],
+	["annual", 2001, 0.4],
+	["report", 2002, 0.3],
+];
+
+function fixtureNeuralSparse(text: string): SparseVector {
+	const lower = text.toLowerCase();
+	const indices: number[] = [];
+	const values: number[] = [];
+	for (const [term, id, weight] of TEST_NEURAL_VOCAB) {
+		if (lower.includes(term)) {
+			indices.push(id);
+			values.push(weight);
+		}
+	}
+	return { indices, values };
+}
+
+const neuralSparseEmbeddings: EmbeddingProvider = {
+	supportsSparse: true,
+	async embedQuery() {
+		return [1, 0];
+	},
+	async embedTexts(texts: string[]) {
+		return texts.map(() => [1, 0]);
+	},
+	async embedQueryWithSparse(text: string) {
+		return {
+			dense: [1, 0],
+			sparse: fixtureNeuralSparse(text),
+		};
+	},
+	async embedTextsWithSparse(texts: string[]) {
+		return texts.map((text) => ({
+			dense: [1, 0],
+			sparse: fixtureNeuralSparse(text),
+		}));
+	},
+};
+
+const denseOnlyEmbeddings: EmbeddingProvider = {
+	supportsSparse: false,
 	async embedQuery() {
 		return [1, 0];
 	},
@@ -96,12 +145,15 @@ function vectorMap(
 ): Schemas["VectorStruct"] {
 	return {
 		[schema.denseVectorName ?? ""]: vector,
-		[schema.sparseVectorName ?? "lexical_v1"]: sparseVector(text),
+		[schema.sparseVectorName ?? "sparse_v1"]: fixtureNeuralSparse(text),
 	};
 }
 
-function service(store: QdrantRetrievalStore) {
-	return new DefaultRetrievalService(embeddings, store, null, {
+function service(
+	store: QdrantRetrievalStore,
+	provider: EmbeddingProvider = neuralSparseEmbeddings,
+) {
+	return new DefaultRetrievalService(provider, store, null, {
 		hybridEnabled: true,
 		rerankEnabled: false,
 		bm25TopK: 10,
@@ -111,7 +163,7 @@ function service(store: QdrantRetrievalStore) {
 }
 
 test(
-	"real Qdrant sparse prefetch and RRF enforce every authorization dimension and deletion boundary",
+	"real Qdrant sparse_v1 prefetch and RRF enforce every authorization dimension and deletion boundary",
 	integration,
 	async () => {
 		const client = new QdrantClient({ url, checkCompatibility: true });
@@ -121,12 +173,19 @@ test(
 				collection,
 				vectorSize: 2,
 				distance: "Cosine",
+				expectSparse: true,
 			}).ensure();
 			const { vectorSchema } = await ready;
 			assert.deepEqual(vectorSchema, {
 				denseVectorName: "dense",
-				sparseVectorName: "lexical_v1",
+				sparseVectorName: "sparse_v1",
 			});
+			const info = await client.getCollection(collection);
+			assert.ok(info.config.params.sparse_vectors?.sparse_v1);
+			assert.notEqual(
+				info.config.params.sparse_vectors?.sparse_v1?.modifier,
+				"idf",
+			);
 			const writer = new QdrantIngestWriteStore(client, collection, {
 				vectorSchema,
 			});
@@ -140,6 +199,10 @@ test(
 					[0, 1],
 					[1, 0],
 				],
+				sparseVectors: [
+					fixtureNeuralSparse(exact.embed_text),
+					fixtureNeuralSparse(decoy.embed_text),
+				],
 			});
 			await writer.setVisibility(scope, "active");
 			const stored = (
@@ -149,10 +212,19 @@ test(
 					with_payload: true,
 				})
 			)[0];
+			const storedSparse = (stored.vector as Record<string, unknown>)
+				.sparse_v1 as SparseVector;
 			assert.deepEqual(
-				(stored.vector as Record<string, unknown>).lexical_v1,
-				sparseVector(query),
+				storedSparse.indices,
+				fixtureNeuralSparse(query).indices,
 			);
+			for (let idx = 0; idx < storedSparse.values.length; idx += 1) {
+				assert.ok(
+					Math.abs(
+						storedSparse.values[idx] - fixtureNeuralSparse(query).values[idx],
+					) < 1e-4,
+				);
+			}
 			const payload = stored.payload ?? {};
 			const principalId = randomUUID();
 			const groupId = randomUUID();
@@ -221,7 +293,7 @@ test(
 			// Assert both legs directly, so final fusion/post-filtering cannot conceal a leak.
 			for (const request of [
 				{ query: [1, 0], using: "dense" },
-				{ query: sparseVector(query), using: "lexical_v1" },
+				{ query: fixtureNeuralSparse(query), using: "sparse_v1" },
 			]) {
 				const leg = await client.query(collection, {
 					...request,
@@ -241,6 +313,7 @@ test(
 			const fused = await store.hybridSearch({
 				vector: [1, 0],
 				query,
+				sparseVector: fixtureNeuralSparse(query),
 				scope: scopeFilter,
 				limit: 100,
 				sparseLimit: 100,
@@ -274,8 +347,8 @@ test(
 				result.citations.every((citation) => allowedIds.includes(citation.id)),
 			);
 			const chinese = await client.query(collection, {
-				query: sparseVector("违约金"),
-				using: "lexical_v1",
+				query: fixtureNeuralSparse("违约金"),
+				using: "sparse_v1",
 				filter,
 				limit: 100,
 			});
@@ -286,6 +359,7 @@ test(
 			const constrained = await store.hybridSearch({
 				vector: [1, 0],
 				query,
+				sparseVector: fixtureNeuralSparse(query),
 				scope: scopeFilter,
 				userFilters: { document_version_id: "wrong-version" },
 				limit: 100,
@@ -301,6 +375,7 @@ test(
 					await store.hybridSearch({
 						vector: [1, 0],
 						query,
+						sparseVector: fixtureNeuralSparse(query),
 						scope: emptyScope,
 						limit: 100,
 						sparseLimit: 100,
@@ -312,6 +387,7 @@ test(
 			const noGroups = await store.hybridSearch({
 				vector: [1, 0],
 				query,
+				sparseVector: fixtureNeuralSparse(query),
 				scope: {
 					...scopeFilter,
 					groupIds: [],
@@ -332,6 +408,7 @@ test(
 			const deleted = await store.hybridSearch({
 				vector: [1, 0],
 				query,
+				sparseVector: fixtureNeuralSparse(query),
 				scope: scopeFilter,
 				limit: 100,
 				sparseLimit: 100,
@@ -345,24 +422,39 @@ test(
 	},
 );
 
-for (const named of [false, true]) {
+for (const scenario of [
+	{ name: "named dense without sparse_v1", named: true, sparse: undefined },
+	{ name: "unnamed dense without sparse_v1", named: false, sparse: undefined },
+	{
+		name: "legacy lexical_v1 (idf)",
+		named: true,
+		sparse: { lexical_v1: { modifier: "idf" as const } },
+	},
+	{
+		name: "sparse_v1 with wrong idf modifier",
+		named: true,
+		sparse: { sparse_v1: { modifier: "idf" as const } },
+	},
+]) {
 	test(
-		`real Qdrant ${named ? "named" : "legacy unnamed"} dense without lexical_v1 fails closed`,
+		`real Qdrant ${scenario.name} fails closed when expectSparse is true`,
 		integration,
 		async () => {
 			const client = new QdrantClient({ url, checkCompatibility: true });
 			const collection = `unorag_sparse_legacy_${randomUUID().replaceAll("-", "")}`;
 			try {
 				await client.createCollection(collection, {
-					vectors: named
+					vectors: scenario.named
 						? { dense: { size: 2, distance: "Cosine" } }
 						: { size: 2, distance: "Cosine" },
+					...(scenario.sparse ? { sparse_vectors: scenario.sparse } : {}),
 				});
 				await assert.rejects(
 					new QdrantCollectionManager(client, {
 						collection,
 						vectorSize: 2,
 						distance: "Cosine",
+						expectSparse: true,
 					}).ensure(),
 					QdrantCollectionContractError,
 				);
@@ -375,48 +467,43 @@ for (const named of [false, true]) {
 }
 
 test(
-	"real Qdrant migrated unnamed dense plus lexical_v1 IDF supports dual writes and server hybrid retrieval",
+	"real Qdrant dense-only mode (Ollama bge-m3) stages and retrieves cleanly without sparse vectors",
 	integration,
 	async () => {
 		const client = new QdrantClient({ url, checkCompatibility: true });
-		const collection = `unorag_sparse_migrated_${randomUUID().replaceAll("-", "")}`;
+		const collection = `unorag_ollama_dense_${randomUUID().replaceAll("-", "")}`;
 		try {
-			await client.createCollection(collection, {
-				vectors: { size: 2, distance: "Cosine" },
-				sparse_vectors: { lexical_v1: { modifier: "idf" } },
-			});
 			const ready = new QdrantCollectionManager(client, {
 				collection,
 				vectorSize: 2,
 				distance: "Cosine",
+				expectSparse: false,
 			}).ensure();
 			const { vectorSchema } = await ready;
 			assert.deepEqual(vectorSchema, {
-				denseVectorName: null,
-				sparseVectorName: "lexical_v1",
+				denseVectorName: "dense",
+				sparseVectorName: null,
 			});
 			const scope = createScope();
-			const exact = record(scope, query);
+			const doc = record(scope, "private local bge-m3 chunk");
 			const writer = new QdrantIngestWriteStore(client, collection, {
 				vectorSchema,
 			});
-			await writer.stage({ scope, records: [exact], vectors: [[1, 0]] });
+			await writer.stage({ scope, records: [doc], vectors: [[1, 0]] });
 			await writer.setVisibility(scope, "active");
 			const store = new QdrantRetrievalStore(client, collection, ready, {
 				vectorSchema: ready.then((result) => result.vectorSchema),
 			});
-			store.listCorpus = async () => {
-				assert.fail("server hybrid must not scroll full corpus");
-			};
-			const result = await service(store).retrieve({
-				query,
+			const result = await service(store, denseOnlyEmbeddings).retrieve({
+				query: "local bge-m3",
 				libraryId: scope.libraryId,
 				scope: authorized(retrievalScope(scope)),
 				topK: 1,
 			});
-			assert.equal(result.citations[0].id, exact._point_id);
-			assert.equal(result.debug.usedHybrid, true);
+			assert.equal(result.citations[0].id, doc._point_id);
+			assert.equal(result.debug.usedHybrid, false);
 			assert.equal(result.debug.hybridFailed, false);
+			assert.equal(result.debug.retrievalMode, "dense");
 		} finally {
 			if ((await client.collectionExists(collection)).exists)
 				await client.deleteCollection(collection);
@@ -425,29 +512,25 @@ test(
 );
 
 test(
-	"real Qdrant lexical_v1 IDF modifier ranks rare term matches above high-TF boilerplate",
+	"real Qdrant sparse_v1 (modifier: none) preserves neural sparse term weights directly without double IDF",
 	integration,
 	async () => {
 		const client = new QdrantClient({ url, checkCompatibility: true });
-		const collection = `unorag_sparse_idf_${randomUUID().replaceAll("-", "")}`;
+		const collection = `unorag_sparse_neural_${randomUUID().replaceAll("-", "")}`;
 		try {
 			const ready = new QdrantCollectionManager(client, {
 				collection,
 				vectorSize: 2,
 				distance: "Cosine",
+				expectSparse: true,
 			}).ensure();
 			const { vectorSchema } = await ready;
-			const info = await client.getCollection(collection);
-			assert.equal(
-				info.config.params.sparse_vectors?.lexical_v1?.modifier,
-				"idf",
-			);
 			const scope = createScope();
-			const boilerplate = Array.from({ length: 8 }, () =>
-				record(scope, "annual annual annual report report summary"),
+			const boilerplate = Array.from({ length: 4 }, () =>
+				record(scope, "annual report"),
 			);
-			const rare = record(scope, "ZXQ987");
-			const records = [...boilerplate, rare];
+			const salient = record(scope, "ZXQ987");
+			const records = [...boilerplate, salient];
 			const writer = new QdrantIngestWriteStore(client, collection, {
 				vectorSchema,
 			});
@@ -455,18 +538,21 @@ test(
 				scope,
 				records,
 				vectors: records.map(() => [1, 0]),
+				sparseVectors: records.map((item) =>
+					fixtureNeuralSparse(item.embed_text),
+				),
 			});
 			await writer.setVisibility(scope, "active");
 			const sparseHits = await client.query(collection, {
-				query: sparseVector("annual report ZXQ987"),
-				using: "lexical_v1",
+				query: fixtureNeuralSparse("annual report ZXQ987"),
+				using: "sparse_v1",
 				filter: buildMandatoryQdrantFilter({
 					scope: retrievalScope(scope),
 				}) as Schemas["Filter"],
 				limit: 3,
 				with_payload: false,
 			});
-			assert.equal(sparseHits.points[0]?.id, rare._point_id);
+			assert.equal(sparseHits.points[0]?.id, salient._point_id);
 		} finally {
 			if ((await client.collectionExists(collection)).exists)
 				await client.deleteCollection(collection);

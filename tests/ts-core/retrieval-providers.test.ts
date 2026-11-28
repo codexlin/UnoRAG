@@ -8,8 +8,12 @@ import {
 	scopeWithActiveGenerations,
 } from "../../src/core/retrieval/active-generation";
 import {
+	createEmbeddingProvider,
+	DashScopeNativeEmbeddingProvider,
 	EmbeddingDimensionMismatchError,
+	normalizeProviderSparseVector,
 	OpenAICompatibleEmbeddingProvider,
+	resolveDashScopeNativeEmbeddingEndpoint,
 } from "../../src/core/retrieval/embedding/provider";
 import { tokenize } from "../../src/core/retrieval/hybrid/tokenizer";
 import {
@@ -66,6 +70,141 @@ test("embedding provider orders and validates vectors", async () => {
 		[1, 2],
 		[3, 4],
 	]);
+});
+
+test("DashScope native embedding provider sends dense&sparse with asymmetric text_type and normalizes neural sparse vectors", async () => {
+	assert.equal(
+		resolveDashScopeNativeEmbeddingEndpoint(
+			"https://dashscope.aliyuncs.com/compatible-mode/v1",
+		),
+		"https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding",
+	);
+	assert.equal(
+		resolveDashScopeNativeEmbeddingEndpoint(
+			"https://dashscope-intl.aliyuncs.com/compatible-mode/v1/",
+		),
+		"https://dashscope-intl.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding",
+	);
+	assert.deepEqual(
+		normalizeProviderSparseVector([
+			{ index: 30, value: 0.7 },
+			{ index: 10, value: 1.2 },
+			{ index: 10, value: 0.3 },
+			{ index: 20, value: 0 },
+			{ index: 25, value: -1 },
+		]),
+		{ indices: [10, 30], values: [1.5, 0.7] },
+	);
+
+	const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+	const provider = createEmbeddingProvider({
+		apiKey: "dashscope-secret",
+		baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		model: "qwen3.7-text-embedding",
+		dimensions: 2,
+		batchSize: 25,
+		fetch: async (input, init) => {
+			const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+				string,
+				unknown
+			>;
+			requests.push({ url: String(input), body });
+			const texts = (body.input as { texts: string[] }).texts;
+			return Response.json({
+				output: {
+					embeddings: texts.map((_, index) => ({
+						text_index: texts.length - 1 - index,
+						embedding: [texts.length - index, 0.5],
+						sparse_embedding: [
+							{ index: 500 + (texts.length - 1 - index), value: 1.25 },
+							{ index: 10, value: 0.5 },
+						],
+					})),
+				},
+			});
+		},
+	});
+	assert.ok(provider instanceof DashScopeNativeEmbeddingProvider);
+	assert.equal(provider.supportsSparse, true);
+
+	const queryVec = await provider.embedQueryWithSparse?.("违约金条款");
+	assert.ok(queryVec);
+	assert.deepEqual(queryVec.dense, [1, 0.5]);
+	assert.deepEqual(queryVec.sparse, {
+		indices: [10, 500],
+		values: [0.5, 1.25],
+	});
+	assert.equal(
+		requests[0]?.url,
+		"https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding",
+	);
+	assert.deepEqual(requests[0]?.body, {
+		model: "qwen3.7-text-embedding",
+		input: { texts: ["违约金条款"] },
+		parameters: {
+			dimension: 2,
+			output_type: "dense&sparse",
+			text_type: "query",
+		},
+	});
+
+	// 21 texts must be split at qwen3.7-text-embedding's sync cap of 20 per request.
+	const docs = Array.from({ length: 21 }, (_, idx) => `doc-${idx}`);
+	const docVecs = await provider.embedTextsWithSparse?.(docs);
+	assert.equal(docVecs?.length, 21);
+	assert.equal(requests.length, 3);
+	const firstDocBatch = requests[1];
+	const secondDocBatch = requests[2];
+	assert.ok(firstDocBatch);
+	assert.ok(secondDocBatch);
+	assert.equal(
+		(firstDocBatch.body.input as { texts: string[] }).texts.length,
+		20,
+	);
+	assert.equal(
+		(secondDocBatch.body.input as { texts: string[] }).texts.length,
+		1,
+	);
+	assert.equal(
+		(firstDocBatch.body.parameters as Record<string, unknown>).text_type,
+		"document",
+	);
+});
+
+test("Ollama bge-m3 embedding provider omits dimensions in request body while enforcing EMBEDDING_DIM on response", async () => {
+	const bodies: Record<string, unknown>[] = [];
+	const provider = createEmbeddingProvider({
+		apiKey: "local-no-auth",
+		baseUrl: "http://host.docker.internal:11434/v1",
+		model: "bge-m3",
+		dimensions: 3,
+		fetch: async (_input, init) => {
+			bodies.push(JSON.parse(String(init?.body ?? "{}")));
+			return Response.json({
+				data: [{ index: 0, embedding: [0.1, 0.2, 0.3] }],
+			});
+		},
+	});
+	assert.ok(provider instanceof OpenAICompatibleEmbeddingProvider);
+	assert.equal(provider.supportsSparse, false);
+	assert.deepEqual(
+		await provider.embedQuery("local question"),
+		[0.1, 0.2, 0.3],
+	);
+	assert.equal("dimensions" in (bodies[0] ?? {}), false);
+
+	const mismatch = createEmbeddingProvider({
+		apiKey: "local-no-auth",
+		baseUrl: "http://host.docker.internal:11434/v1",
+		model: "bge-m3",
+		dimensions: 1024,
+		fetch: async () =>
+			Response.json({ data: [{ index: 0, embedding: [0.1, 0.2] }] }),
+	});
+	await assert.rejects(
+		mismatch.embedQuery("wrong dim"),
+		EmbeddingDimensionMismatchError,
+	);
 });
 
 test("embedding dimension errors give model and reindex guidance without credentials", async () => {

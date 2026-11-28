@@ -42,8 +42,9 @@ test("real Qdrant collection ensure is idempotent and materializes filter indexe
 			vectors && !("size" in vectors) ? vectors.dense?.size : undefined,
 			2,
 		);
-		assert.equal(
-			info.config.params.sparse_vectors?.lexical_v1?.modifier,
+		assert.ok(info.config.params.sparse_vectors?.sparse_v1);
+		assert.notEqual(
+			info.config.params.sparse_vectors?.sparse_v1?.modifier,
 			"idf",
 		);
 		for (const index of UNORAG_QDRANT_PAYLOAD_INDEXES) {
@@ -59,7 +60,7 @@ test("real Qdrant collection ensure is idempotent and materializes filter indexe
 					id: pointId,
 					vector: {
 						dense: [1, 0],
-						lexical_v1: { indices: [1], values: [1] },
+						sparse_v1: { indices: [1], values: [1.5] },
 					},
 					payload: tablePayload(),
 				},
@@ -73,6 +74,52 @@ test("real Qdrant collection ensure is idempotent and materializes filter indexe
 		assert.equal(payload.cell_rows?.[0]?.cells[1]?.normalized_value, 120000);
 		assert.deepEqual(payload.cell_rows?.[0]?.cells[1]?.bbox, [31, 20, 60, 40]);
 		assert.equal(payload.table_quality?.cross_page_merged, true);
+	} finally {
+		if ((await client.collectionExists(collection)).exists) {
+			await client.deleteCollection(collection);
+		}
+	}
+});
+
+test("real Qdrant dense-only collection mode (e.g. Ollama bge-m3) omits sparse_vectors and accepts dense upserts", {
+	skip: qdrantUrl
+		? false
+		: "QDRANT_COLLECTION_E2E_URL or QDRANT_INGEST_E2E_URL is not configured",
+}, async () => {
+	assert.ok(qdrantUrl);
+	const client = new QdrantClient({
+		url: qdrantUrl,
+		checkCompatibility: true,
+	});
+	const collection = `unorag_dense_only_e2e_${randomUUID().replaceAll("-", "")}`;
+	const manager = new QdrantCollectionManager(client, {
+		collection,
+		vectorSize: 2,
+		distance: "Cosine",
+		expectSparse: false,
+	});
+
+	try {
+		const ready = await manager.ensure();
+		assert.deepEqual(ready.vectorSchema, {
+			denseVectorName: "dense",
+			sparseVectorName: null,
+		});
+		const info = await client.getCollection(collection);
+		assert.equal(info.config.params.sparse_vectors?.sparse_v1, undefined);
+		const pointId = randomUUID();
+		const upsert = await client.upsert(collection, {
+			wait: true,
+			ordering: "strong",
+			points: [
+				{
+					id: pointId,
+					vector: { dense: [1, 0] },
+					payload: tablePayload(),
+				},
+			],
+		});
+		assert.equal(upsert.status, "completed");
 	} finally {
 		if ((await client.collectionExists(collection)).exists) {
 			await client.deleteCollection(collection);

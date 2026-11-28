@@ -134,10 +134,10 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 | 身份与权限 | 本地登录、首次改密、邀请注册、邮箱链接登录/重置、可撤销 Session、Workspace/角色、文档 ACL、Service Key、审计 |
 | 文档治理 | 上传、替换、版本、重索引、删除；失败保留旧 active generation；DBOS 重试、取消和对账 |
 | 文档理解 | TXT/Markdown/DOCX/XLSX/PDF，LiteParse/MinerU，Markdown 管道表、DocumentIR/TableIR，Token 感知 `v2` 切分与 `>40%` 表格自动 `table_heavy`、多粒度索引及默认关闭的条件式检索上下文增强 |
-| 检索问答 | 作用域强制过滤、极薄前置双语路由（含可选灰区 Fail-Open 端口）、默认常开 Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF（含幂等读单次 socket 断连自愈）、统一 `auto`/`on`/`off` 精排（含 `sparse-only` 自动升级）、证据驱动确定性表格升级与极值实体保留、Judge 缺口定向补查（`missing_query` + 首轮授权证据留存）、冲突核验、按主体均衡配额的对比上下文、拒答、引用与 SSE；Admin/Editor 临时检索轨迹检查器；pg_trgm 授权文档目录候选检索 |
+| 检索问答 | 作用域强制过滤、极薄前置双语路由（含可选灰区 Fail-Open 端口）、云端默认 DashScope 原生 `qwen3.7-text-embedding`（`dense&sparse` → Qdrant `sparse_v1 (modifier: "none")` + RRF，含幂等读单次 socket 断连自愈）与私有化推荐 Ollama `bge-m3` 自动纯 Dense 模式（[ADR-0009](./adr/0009-provider-sparse-and-ollama-bge.md)）、统一 `auto`/`on`/`off` 精排（默认 `qwen3.7-text-rerank`，含 `sparse-only` 自动升级）、`qwen3.7-flash` 默认关闭思考模式（`enable_thinking: false`）、证据驱动确定性表格升级与极值实体保留、Judge 缺口定向补查（`missing_query` + 首轮授权证据留存）、冲突核验、按主体均衡配额的对比上下文、拒答、引用与 SSE；Admin/Editor 临时检索轨迹检查器；pg_trgm 授权文档目录候选检索 |
 | 模型治理 | Owner 级在线切换 Chat / Judge / Rerank / VLM（AES-256-GCM 只写加密、实时连通性/`json_schema`/`/rerank`/视觉探测、SSRF 与密钥-端点绑定防护）、Embedding 部署级只读锁定，以及 `MODEL_SETTINGS_LOCKED=true` 纯环境变量锁定模式 |
 | 会话 | 带来源授权的短期记忆、实体追问、有限期歧义澄清、归档和继续对话；模型上下文压缩长回复，归档保留原文和来源 |
-| 运维预检 | 健康接口和运行中心校验现有 Qdrant 集合的向量维度、距离、`lexical_v1` IDF 配置及载荷索引，按异常类型给出恢复提示 |
+| 运维预检 | 健康接口和运行中心按当前 Embedding Provider 能力校验 Qdrant 集合的向量维度、距离、`sparse_v1 (modifier: "none")`（或纯 Dense 契约）及载荷索引，按异常类型给出恢复提示 |
 | 产品界面 | shadcn/Base UI、AI Elements、EN/ZH 双语、Vercel/Claude/Violet Bloom/Modern Minimal 4 套主题、可调圆角、响应式工作台与设置分区；引用/版本/执行链路一致的阅读入口 |
 | 运维交付 | 原生阶段瀑布/请求诊断/工作区可配告警阈值、工作区邮件策略及持久化投递、精简环境变量与标准别名、可选 OTel/Langfuse、签名镜像、安装升级、备份与恢复工具 |
 | 反馈闭环 | Ask 赞/踩与原因标签、运行中心处理状态、待人工补全的黄金集样本骨架；不是自动采纳用户反馈为真值 |
@@ -202,7 +202,7 @@ Staging/Active 原子切换、检索前置强权限与黄金集稳定性门禁�
 
 ### 后续：按实际需求扩展
 
-1. **大规模语料容量验收**：已全面切换至 Qdrant 服务端命名 Dense + `lexical_v1 (modifier: "idf")` Sparse/RRF（[ADR-0008](./adr/0008-qdrant-server-side-sparse-rrf.md) 已采纳，移除 10,000 条应用层 BM25 语料回退），后续在百万级客户语料上继续验证 Qdrant 稀疏索引与 PostgreSQL `pg_trgm` 授权目录检索的延迟与容量边界。
+1. **大规模语料容量验收**：已按 [ADR-0009](./adr/0009-provider-sparse-and-ollama-bge.md) 移除手写 `lexical_v1` 稀疏编码，云端默认切换为 DashScope 原生 `qwen3.7-text-embedding` `dense&sparse` + Qdrant `sparse_v1 (modifier: "none")` RRF（私有化推荐 Ollama `bge-m3` 自动纯 Dense），后续在百万级客户语料上继续验证 Qdrant 神经稀疏索引与 PostgreSQL `pg_trgm` 授权目录检索的延迟与容量边界。
 2. **稳定文档生命周期 Public API 与外置连接器**：开放幂等上传/替换/删除与状态查询公共 API，以独立外置 Sync Adapter 对接飞书、钉钉、Confluence、SharePoint 或对象存储事件，不将第三方 SDK 耦合进 DBOS 核心。
 3. **解析增强效果验收**：对默认关闭的条件式 Contextual Retrieval，在获授权的无标题层级/OCR 降级语料上验证召回质量与成本，验收通过后再决定启用范围。
 

@@ -3,7 +3,6 @@ export * from "./citation-mapper";
 export * from "./contracts";
 export * from "./embedding/provider";
 export * from "./filters/qdrant-filter";
-export * from "./hybrid/sparse-vector";
 export * from "./hybrid/tokenizer";
 export * from "./qdrant/payload";
 export * from "./qdrant/store";
