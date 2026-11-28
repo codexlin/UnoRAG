@@ -61,18 +61,21 @@ const PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const GENERATION_ID = "44444444-4444-4444-8444-444444444444";
 const LIBRARY_ID = "library-1";
 
-test("native hybrid defaults to on, honors deployment and request opt-outs, and falls back to authorized dense", async (t) => {
+test("native hybrid defaults to DashScope sparse_v1, honors opt-outs, falls back to dense, and adapts Ollama bge-m3 dense-only cleanly", async (t) => {
 	const {
 		getTypeScriptRetrievalService,
 		resetTypeScriptRetrievalServiceForTests,
 	} = await retrievalRuntime;
 	const environment = {
 		LLM_API_KEY: "runtime-test-credential",
-		LLM_BASE_URL: "https://embedding.example/v1",
+		LLM_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		EMBEDDING_MODEL: "qwen3.7-text-embedding",
+		EMBEDDING_PROTOCOL: undefined as string | undefined,
+		EMBEDDING_SEND_DIMENSIONS: undefined as string | undefined,
 		QDRANT_URL: "http://qdrant.example",
 		QDRANT_COLLECTION: "runtime-test",
 		EMBEDDING_DIM: "2",
-		TS_RETRIEVAL_HYBRID_ENABLED: undefined,
+		TS_RETRIEVAL_HYBRID_ENABLED: undefined as string | undefined,
 		RETRIEVAL_CACHE_TTL_MS: "0",
 	};
 	const previous = Object.keys(environment).map(
@@ -88,9 +91,14 @@ test("native hybrid defaults to on, honors deployment and request opt-outs, and 
 	});
 	for (const [name, value] of Object.entries(environment)) setEnv(name, value);
 
-	const queries: { prefetch?: { filter: unknown }[]; filter: unknown }[] = [];
+	const queries: {
+		prefetch?: { filter: unknown; using?: string }[];
+		filter: unknown;
+	}[] = [];
+	const embeddingBodies: Record<string, unknown>[] = [];
 	const unexpected: string[] = [];
 	let hybridFails = false;
+	let collectionMode: "sparse" | "dense_only" = "sparse";
 	t.mock.method(
 		globalThis,
 		"fetch",
@@ -99,8 +107,29 @@ test("native hybrid defaults to on, honors deployment and request opt-outs, and 
 			switch (pathname) {
 				case "/":
 					return Response.json({ version: "1.19.0" });
-				case "/v1/embeddings":
+				case "/api/v1/services/embeddings/text-embedding/text-embedding": {
+					const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+					embeddingBodies.push(body);
+					return Response.json({
+						output: {
+							embeddings: [
+								{
+									text_index: 0,
+									embedding: [1, 0],
+									sparse_embedding: [
+										{ index: 42, value: 1.75 },
+										{ index: 7, value: 0.85 },
+									],
+								},
+							],
+						},
+					});
+				}
+				case "/v1/embeddings": {
+					const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+					embeddingBodies.push(body);
 					return Response.json({ data: [{ index: 0, embedding: [1, 0] }] });
+				}
 				case "/collections/runtime-test/exists":
 					return Response.json({ result: { exists: true } });
 				case "/collections/runtime-test":
@@ -109,7 +138,9 @@ test("native hybrid defaults to on, honors deployment and request opt-outs, and 
 							config: {
 								params: {
 									vectors: { dense: { size: 2, distance: "Cosine" } },
-									sparse_vectors: { lexical_v1: { modifier: "idf" } },
+									...(collectionMode === "sparse"
+										? { sparse_vectors: { sparse_v1: { modifier: "none" } } }
+										: {}),
 								},
 							},
 							payload_schema: Object.fromEntries(
@@ -159,6 +190,11 @@ test("native hybrid defaults to on, honors deployment and request opt-outs, and 
 	const hybrid = await service.retrieve(input);
 	assert.equal(hybrid.debug.retrievalMode, "hybrid");
 	assert.equal(hybrid.debug.usedRerank, false);
+	assert.equal(queries[1]?.prefetch?.[1]?.using, "sparse_v1");
+	assert.deepEqual(
+		(embeddingBodies[0]?.parameters as Record<string, unknown>) ?? {},
+		{ dimension: 2, output_type: "dense&sparse", text_type: "query" },
+	);
 
 	queries.length = 0;
 	hybridFails = true;
@@ -200,6 +236,26 @@ test("native hybrid defaults to on, honors deployment and request opt-outs, and 
 		assert.equal(queries.length, 1);
 		assert.equal(queries[0].prefetch, undefined);
 	}
+
+	// Private Ollama + bge-m3 runs cleanly in dense-only mode without sending `dimensions`.
+	queries.length = 0;
+	embeddingBodies.length = 0;
+	hybridFails = false;
+	collectionMode = "dense_only";
+	setEnv("TS_RETRIEVAL_HYBRID_ENABLED", undefined);
+	setEnv("LLM_BASE_URL", "http://127.0.0.1:11434/v1");
+	setEnv("EMBEDDING_MODEL", "bge-m3");
+	resetTypeScriptRetrievalServiceForTests();
+	const ollamaDense = await getTypeScriptRetrievalService().retrieve({
+		...input,
+		options: askRetrievalOptions(policy, false),
+	});
+	assert.equal(ollamaDense.debug.retrievalMode, "dense");
+	assert.equal(ollamaDense.debug.usedHybrid, false);
+	assert.equal(ollamaDense.debug.hybridFailed, false);
+	assert.equal(queries.length, 1);
+	assert.equal(queries[0].prefetch, undefined);
+	assert.equal("dimensions" in (embeddingBodies[0] ?? {}), false);
 	assert.deepEqual(unexpected, []);
 });
 

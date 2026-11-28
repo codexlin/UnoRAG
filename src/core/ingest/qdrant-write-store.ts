@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { Schemas } from "@qdrant/js-client-rest";
-import { sparseVector } from "../retrieval/hybrid/sparse-vector";
+import type { SparseVector } from "../retrieval/embedding/provider";
 import type { QdrantVectorSchema } from "../retrieval/qdrant/collection-manager";
 
 import type { IndexWritePayload } from "./index-records";
@@ -94,6 +94,7 @@ export class QdrantIngestWriteStore {
 	async stage(input: {
 		records: IndexWritePayload[];
 		vectors: number[][];
+		sparseVectors?: SparseVector[];
 		scope: IngestPointScope;
 		beforeBatch?: () => Promise<void>;
 	}): Promise<number> {
@@ -103,6 +104,16 @@ export class QdrantIngestWriteStore {
 		}
 		if (input.records.length !== input.vectors.length) {
 			throw new Error("record and embedding counts do not match");
+		}
+		const sparseVectorName =
+			this.options.vectorSchema?.sparseVectorName ?? null;
+		if (sparseVectorName) {
+			if (
+				!input.sparseVectors ||
+				input.sparseVectors.length !== input.records.length
+			) {
+				throw new Error("record and sparse vector counts do not match");
+			}
 		}
 		const dimensions = input.vectors[0]?.length ?? 0;
 		if (dimensions === 0) throw new Error("embedding vectors are empty");
@@ -123,19 +134,31 @@ export class QdrantIngestWriteStore {
 			) {
 				throw new Error("embedding vector dimensions or values are invalid");
 			}
+			const sparse = sparseVectorName
+				? input.sparseVectors?.[index]
+				: undefined;
+			if (sparseVectorName) {
+				if (
+					!sparse ||
+					sparse.indices.length !== sparse.values.length ||
+					sparse.indices.some((idx) => !Number.isInteger(idx) || idx < 0) ||
+					sparse.values.some((value) => !Number.isFinite(value))
+				) {
+					throw new Error("sparse vector indices or values are invalid");
+				}
+			}
 			assertRecordScope(record, input.scope);
 			return {
 				id: record._point_id,
-				vector: this.options.vectorSchema?.sparseVectorName
-					? {
-							[this.options.vectorSchema.denseVectorName ?? ""]: vector,
-							[this.options.vectorSchema.sparseVectorName]: sparseVector(
-								record.embed_text,
-							),
-						}
-					: this.options.vectorSchema?.denseVectorName
-						? { [this.options.vectorSchema.denseVectorName]: vector }
-						: vector,
+				vector:
+					sparseVectorName && sparse
+						? {
+								[this.options.vectorSchema?.denseVectorName ?? ""]: vector,
+								[sparseVectorName]: sparse,
+							}
+						: this.options.vectorSchema?.denseVectorName
+							? { [this.options.vectorSchema.denseVectorName]: vector }
+							: vector,
 				payload: {
 					...storedPayload(record, input.scope),
 					ingest_manifest_hash: manifestHash,

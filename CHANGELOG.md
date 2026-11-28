@@ -5,6 +5,14 @@ results remain in [`docs/evidence/`](./docs/evidence/).
 
 ## [Unreleased]
 
+- **Provider-native neural sparse (`sparse_v1`), Qwen3.7 defaults, and Ollama `bge-m3` private mode ([ADR-0009](./docs/adr/0009-provider-sparse-and-ollama-bge.md), supersedes ADR-0008)**:
+  - Remove the hand-written UTF-8 FNV-1a `lexical_v1` sparse encoder (`src/core/retrieval/hybrid/sparse-vector.ts`) and offline backfill script (`scripts/qdrant-backfill-sparse.ts`).
+  - Add `DashScopeNativeEmbeddingProvider` (auto-selected via `EMBEDDING_PROTOCOL=auto` for DashScope `qwen3.7-text-embedding` / `text-embedding-v3|v4`), calling `/api/v1/services/embeddings/text-embedding/text-embedding` with `output_type: "dense&sparse"` and asymmetric `text_type: "document" | "query"` to retrieve both 1024d MRL dense and learned neural sparse vectors in one request.
+  - Switch Qdrant neural sparse schema to `sparse_v1` with `modifier: "none"` (preventing double IDF weighting on neural sparse outputs and failing closed on legacy `lexical_v1` or `modifier: "idf"` collections).
+  - Adapt `OpenAICompatibleEmbeddingProvider`, `QdrantCollectionManager`, health probes, and retrieval runtime for **Ollama + `bge-m3`** private deployments: automatically omit `dimensions` for Ollama / fixed-dimension local models (`EMBEDDING_SEND_DIMENSIONS=auto`) while strictly validating returned vector length against `EMBEDDING_DIM`, create/accept dense-only Qdrant collections (`expectSparse: false`), and run pure dense retrieval cleanly without fallback errors.
+  - Update default cloud models to `CHAT_MODEL=qwen3.7-flash`, `EMBEDDING_MODEL=qwen3.7-text-embedding`, and `RERANK_MODEL=qwen3.7-text-rerank`, injecting `enable_thinking: false` by default only on DashScope chat/judge/VLM requests and connection probes (`AI_ENABLE_THINKING` / `JUDGE_ENABLE_THINKING` overrideable; never sent to non-DashScope endpoints).
+- **Upgrade note**: Migrating an existing ADR-0008 (`lexical_v1`) deployment to `qwen3.7-text-embedding` (`sparse_v1`) or Ollama `bge-m3` requires pointing `QDRANT_COLLECTION` to a fresh collection (or clearing test collections) and reindexing active documents.
+
 ## [0.4.13] - 2026-11-27
 
 - **Fix Conversation Archive unlinked and historical-library filtering through the browser RAG proxy**:

@@ -1,11 +1,11 @@
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
 
 export const QDRANT_DENSE_VECTOR = "dense";
-export const QDRANT_SPARSE_VECTOR = "lexical_v1";
+export const QDRANT_SPARSE_VECTOR = "sparse_v1";
 
 export type QdrantVectorSchema = {
 	denseVectorName: string | null;
-	sparseVectorName: typeof QDRANT_SPARSE_VECTOR;
+	sparseVectorName: typeof QDRANT_SPARSE_VECTOR | null;
 };
 
 export const qdrantDistances = [
@@ -59,6 +59,13 @@ export type QdrantCollectionContract = {
 	collection: string;
 	vectorSize: number;
 	distance: QdrantDistance;
+	/**
+	 * True (default) when the embedding provider emits neural sparse vectors
+	 * (e.g. DashScope qwen3.7-text-embedding dense&sparse), requiring `sparse_v1`
+	 * with `modifier: "none"`. False for dense-only providers such as Ollama
+	 * `bge-m3` or standard OpenAI-compatible embeddings.
+	 */
+	expectSparse?: boolean;
 };
 
 export type QdrantCollectionEnsureResult = QdrantCollectionContract & {
@@ -70,7 +77,7 @@ export type QdrantCollectionEnsureResult = QdrantCollectionContract & {
 export class QdrantCollectionContractError extends Error {
 	readonly code: string = "qdrant_schema_mismatch";
 	readonly recovery: string =
-		"Check the Qdrant dense vector, dimensions, distance, lexical_v1 IDF modifier and payload indexes. Restore the expected collection or reindex into a new collection.";
+		"Check the Qdrant dense vector, dimensions, distance, sparse_v1 (modifier: none) configuration and payload indexes. Restore the expected collection or reindex into a new collection.";
 
 	constructor(message: string) {
 		super(message);
@@ -188,6 +195,7 @@ export class QdrantCollectionManager {
 			this.contract.collection,
 		);
 		if (existing.exists) return false;
+		const expectSparse = this.contract.expectSparse ?? true;
 		try {
 			const created = await this.client.createCollection(
 				this.contract.collection,
@@ -198,7 +206,13 @@ export class QdrantCollectionManager {
 							distance: this.contract.distance,
 						},
 					},
-					sparse_vectors: { [QDRANT_SPARSE_VECTOR]: { modifier: "idf" } },
+					...(expectSparse
+						? {
+								sparse_vectors: {
+									[QDRANT_SPARSE_VECTOR]: { modifier: "none" },
+								},
+							}
+						: {}),
 				},
 			);
 			if (!created) {
@@ -279,6 +293,7 @@ function validateContract(contract: QdrantCollectionContract): void {
 
 export function detectQdrantVectorSchema(
 	info: CollectionInfo,
+	options: { expectSparse?: boolean } = {},
 ): QdrantVectorSchema {
 	const vectors = info.config.params.vectors;
 	if (
@@ -289,16 +304,23 @@ export function detectQdrantVectorSchema(
 			"Qdrant collection has no supported dense vector",
 		);
 	}
+	const expectSparse = options.expectSparse ?? true;
 	const sparse = info.config.params.sparse_vectors?.[QDRANT_SPARSE_VECTOR];
-	// lexical_v1 relies on Qdrant's built-in IDF modifier for BM25-like term weighting (ADR-0008).
-	if (sparse?.modifier !== "idf") {
+	// Provider-native neural sparse vectors (ADR-0009) already encode learned term
+	// importance and must not apply Qdrant's collection-level IDF modifier.
+	if (sparse?.modifier === "idf") {
 		throw new QdrantCollectionContractError(
-			"Qdrant collection must configure lexical_v1 with the idf modifier",
+			"Qdrant collection sparse_v1 must use modifier: none (not idf)",
+		);
+	}
+	if (expectSparse && !sparse) {
+		throw new QdrantCollectionContractError(
+			"Qdrant collection must configure sparse_v1 with modifier: none; reindex into a new collection when migrating from dense-only or legacy lexical_v1 schemas",
 		);
 	}
 	return {
 		denseVectorName: isUnnamedDenseVector(vectors) ? null : QDRANT_DENSE_VECTOR,
-		sparseVectorName: QDRANT_SPARSE_VECTOR,
+		sparseVectorName: expectSparse ? QDRANT_SPARSE_VECTOR : null,
 	};
 }
 
@@ -335,7 +357,7 @@ function validateCollectionInfo(
 		);
 	}
 	const vectors = assertQdrantEmbeddingDimension(info, contract);
-	detectQdrantVectorSchema(info);
+	detectQdrantVectorSchema(info, { expectSparse: contract.expectSparse });
 	if (vectors.distance !== contract.distance) {
 		throw new QdrantCollectionContractError(
 			`Qdrant collection ${contract.collection} distance mismatch: expected ${contract.distance}, received ${vectors.distance}`,
@@ -356,7 +378,9 @@ export function assertQdrantCollectionSchema(
 			info.payload_schema?.[index.fieldName]?.data_type,
 		);
 	}
-	return detectQdrantVectorSchema(info);
+	return detectQdrantVectorSchema(info, {
+		expectSparse: contract.expectSparse,
+	});
 }
 
 function assertPayloadIndexType(

@@ -4,13 +4,14 @@ import type { LanguageModel } from "ai";
 import { createSafeModelFetch } from "@/lib/server/model-settings-url";
 import {
 	AiProviderConfigurationError,
+	DEFAULT_CHAT_MODEL,
+	isDashScopeEndpoint,
 	llmProviderFromEnv,
 	modelProviderOverrideFromEnv,
+	parseOptionalBooleanEnv,
 } from "./model-environment";
 
 export { AiProviderConfigurationError } from "./model-environment";
-
-const DEFAULT_CHAT_MODEL = "qwen-plus";
 
 export interface OpenAICompatibleAiConfig {
 	apiKey: string;
@@ -19,6 +20,12 @@ export interface OpenAICompatibleAiConfig {
 	providerName?: string;
 	supportsStructuredOutputs?: boolean;
 	includeUsage?: boolean;
+	/**
+	 * DashScope hybrid-thinking models (e.g. qwen3.7-flash) enable thinking by
+	 * default. UnoRAG disables thinking on DashScope endpoints unless explicitly
+	 * opted in, and never sends this field to non-DashScope endpoints.
+	 */
+	enableThinking?: boolean;
 }
 
 export interface VlmAiConfig extends OpenAICompatibleAiConfig {
@@ -64,6 +71,8 @@ export function aiConfigFromEnv(
 		"CHAT_MODEL",
 	);
 
+	const enableThinking = parseOptionalBooleanEnv(env.AI_ENABLE_THINKING);
+
 	return {
 		apiKey,
 		baseUrl,
@@ -72,6 +81,7 @@ export function aiConfigFromEnv(
 		supportsStructuredOutputs:
 			env.AI_SUPPORTS_STRUCTURED_OUTPUTS?.trim().toLowerCase() !== "false",
 		includeUsage: env.AI_INCLUDE_USAGE?.trim().toLowerCase() !== "false",
+		...(enableThinking !== undefined ? { enableThinking } : {}),
 	};
 }
 
@@ -80,6 +90,9 @@ export function judgeAiConfigFromEnv(
 	env: NodeJS.ProcessEnv = process.env,
 ): OpenAICompatibleAiConfig {
 	const base = aiConfigFromEnv(env);
+	const judgeThinking = parseOptionalBooleanEnv(env.JUDGE_ENABLE_THINKING);
+	const enableThinking =
+		judgeThinking !== undefined ? judgeThinking : base.enableThinking;
 	return {
 		...modelProviderOverrideFromEnv("JUDGE", env, base),
 		chatModel: env.JUDGE_MODEL?.trim() || base.chatModel,
@@ -89,6 +102,7 @@ export function judgeAiConfigFromEnv(
 			env.JUDGE_SUPPORTS_STRUCTURED_OUTPUTS?.trim().toLowerCase() === "false"
 				? false
 				: base.supportsStructuredOutputs,
+		...(enableThinking !== undefined ? { enableThinking } : {}),
 	};
 }
 
@@ -119,6 +133,7 @@ export function vlmAiConfigFromEnv(
 	}
 	const { apiKey, baseUrl } = modelProviderOverrideFromEnv("VLM", env);
 	const chatModel = required(env.VLM_MODEL, "VLM_MODEL");
+	const enableThinking = parseOptionalBooleanEnv(env.VLM_ENABLE_THINKING);
 	return {
 		enabled: true,
 		apiKey,
@@ -130,6 +145,7 @@ export function vlmAiConfigFromEnv(
 			"openai-compatible",
 		supportsStructuredOutputs: false,
 		includeUsage: env.AI_INCLUDE_USAGE?.trim().toLowerCase() !== "false",
+		...(enableThinking !== undefined ? { enableThinking } : {}),
 		timeoutMs: boundedEnvInt(env, "VLM_TIMEOUT_MS", 15_000, 1_000, 60_000),
 		maxFiguresPerRequest: boundedEnvInt(
 			env,
@@ -150,18 +166,29 @@ export function vlmAiConfigFromEnv(
 
 export function createAiProviderRegistry(
 	config: OpenAICompatibleAiConfig,
+	options?: { fetch?: typeof globalThis.fetch },
 ): AiProviderRegistry {
 	const apiKey = required(config.apiKey, "apiKey");
 	const baseUrl = httpUrl(required(config.baseUrl, "baseUrl"), "baseUrl");
 	const modelId = required(config.chatModel, "chatModel");
 	const providerName = config.providerName?.trim() || "openai-compatible";
+	const dashscope = isDashScopeEndpoint(baseUrl);
+	const enableThinking = config.enableThinking === true;
 	const provider = createOpenAICompatible({
 		name: providerName,
 		apiKey,
 		baseURL: baseUrl,
-		fetch: createSafeModelFetch(),
+		fetch: options?.fetch ?? createSafeModelFetch(),
 		supportsStructuredOutputs: config.supportsStructuredOutputs ?? true,
 		includeUsage: config.includeUsage ?? true,
+		...(dashscope
+			? {
+					transformRequestBody: (args) => ({
+						...args,
+						enable_thinking: enableThinking,
+					}),
+				}
+			: {}),
 	});
 
 	return {

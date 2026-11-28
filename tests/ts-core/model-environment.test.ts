@@ -3,10 +3,15 @@ import { createServer } from "node:http";
 import test from "node:test";
 import {
 	AiProviderConfigurationError,
+	isDashScopeEndpoint,
 	llmProviderFromEnv,
 	modelProviderOverrideFromEnv,
 	rerankProviderFromEnv,
+	resolveEmbeddingCapabilityFromEnv,
+	resolveEmbeddingProtocol,
+	resolveEmbeddingSendDimensions,
 } from "../../src/core/ai/model-environment";
+import { createAiProviderRegistry } from "../../src/core/ai/provider-registry";
 import { OpenAICompatibleEmbeddingProvider } from "../../src/core/retrieval/embedding/provider";
 import { OpenAICompatibleRerankProvider } from "../../src/core/retrieval/rerank/provider";
 
@@ -156,4 +161,120 @@ test("two local gateways receive only their own configured credentials and disab
 			{ gateway: "B", authorization: "Bearer dummy-b-only" },
 		],
 	);
+});
+
+test("embedding capability and DashScope thinking toggle resolve cleanly across Cloud Qwen3.7 and private Ollama bge-m3", async () => {
+	assert.equal(
+		isDashScopeEndpoint("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+		true,
+	);
+	assert.equal(
+		isDashScopeEndpoint(
+			"https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+		),
+		true,
+	);
+	assert.equal(
+		isDashScopeEndpoint("http://host.docker.internal:11434/v1"),
+		false,
+	);
+
+	// Cloud default: DashScope + qwen3.7-text-embedding => dashscope_native dense&sparse.
+	const cloudDefault = resolveEmbeddingCapabilityFromEnv({});
+	assert.equal(cloudDefault.model, "qwen3.7-text-embedding");
+	assert.equal(cloudDefault.protocol, "dashscope_native");
+	assert.equal(cloudDefault.supportsSparse, true);
+
+	// Explicit dense-only override on DashScope.
+	assert.equal(
+		resolveEmbeddingProtocol({
+			baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+			model: "qwen3.7-text-embedding",
+			protocol: "openai_compatible",
+		}),
+		"openai_compatible",
+	);
+
+	// Private recommended: Ollama + bge-m3 => openai_compatible dense-only, omits dimensions.
+	const ollamaPrivate = resolveEmbeddingCapabilityFromEnv({
+		LLM_BASE_URL: "http://host.docker.internal:11434/v1",
+		EMBEDDING_MODEL: "bge-m3",
+	});
+	assert.equal(ollamaPrivate.protocol, "openai_compatible");
+	assert.equal(ollamaPrivate.supportsSparse, false);
+	assert.equal(ollamaPrivate.sendDimensions, false);
+
+	// OpenAI MRL model keeps dimensions enabled by default.
+	assert.equal(
+		resolveEmbeddingSendDimensions({
+			baseUrl: "https://api.openai.com/v1",
+			model: "text-embedding-3-small",
+		}),
+		true,
+	);
+	assert.throws(
+		() =>
+			resolveEmbeddingProtocol({
+				baseUrl: "https://api.openai.com/v1",
+				model: "text-embedding-3-small",
+				protocol: "invalid_proto",
+			}),
+		AiProviderConfigurationError,
+	);
+
+	// createAiProviderRegistry injects enable_thinking: false on DashScope by default,
+	// allows explicit opt-in, and omits enable_thinking on non-DashScope endpoints.
+	const { generateText } = await import("ai");
+	const sentBodies: Record<string, unknown>[] = [];
+	const mockFetch: typeof globalThis.fetch = async (_url, init) => {
+		sentBodies.push(JSON.parse(String(init?.body ?? "{}")));
+		return Response.json({
+			id: "chatcmpl-test",
+			object: "chat.completion",
+			created: 1_700_000_000,
+			model: "qwen3.7-flash",
+			choices: [
+				{
+					index: 0,
+					message: { role: "assistant", content: "ok" },
+					finish_reason: "stop",
+				},
+			],
+			usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+		});
+	};
+
+	const dashscopeDefault = createAiProviderRegistry(
+		{
+			apiKey: "test-key",
+			baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+			chatModel: "qwen3.7-flash",
+		},
+		{ fetch: mockFetch },
+	);
+	await generateText({ model: dashscopeDefault.model, prompt: "ping" });
+	assert.equal(sentBodies[0]?.enable_thinking, false);
+
+	const dashscopeOptIn = createAiProviderRegistry(
+		{
+			apiKey: "test-key",
+			baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+			chatModel: "qwen3.7-flash",
+			enableThinking: true,
+		},
+		{ fetch: mockFetch },
+	);
+	await generateText({ model: dashscopeOptIn.model, prompt: "ping" });
+	assert.equal(sentBodies[1]?.enable_thinking, true);
+
+	const ollamaRegistry = createAiProviderRegistry(
+		{
+			apiKey: "local-no-auth",
+			baseUrl: "http://127.0.0.1:11434/v1",
+			chatModel: "qwen2.5:14b",
+		},
+		{ fetch: mockFetch },
+	);
+	await generateText({ model: ollamaRegistry.model, prompt: "ping" });
+	assert.equal("enable_thinking" in (sentBodies[2] ?? {}), false);
 });

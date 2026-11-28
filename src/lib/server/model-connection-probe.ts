@@ -1,3 +1,4 @@
+import { isDashScopeEndpoint } from "@/core/ai/model-environment";
 import {
 	buildRerankRequestBody,
 	resolveRerankEndpoint,
@@ -444,6 +445,9 @@ export async function probeModelConnection(
 	}
 
 	const completionsUrl = `${safeBaseUrl}/chat/completions`;
+	const dashscopeThinkingOff = isDashScopeEndpoint(safeBaseUrl)
+		? { enable_thinking: false }
+		: {};
 
 	if (input.slot === "vlm") {
 		const vision = await postJsonProbe({
@@ -453,6 +457,7 @@ export async function probeModelConnection(
 				model,
 				max_tokens: 16,
 				temperature: 0,
+				...dashscopeThinkingOff,
 				messages: [
 					{
 						role: "user",
@@ -534,6 +539,7 @@ export async function probeModelConnection(
 			model,
 			max_tokens: 16,
 			temperature: 0,
+			...dashscopeThinkingOff,
 			messages: [{ role: "user", content: "Reply with ok." }],
 		},
 		deadlineMs,
@@ -586,6 +592,7 @@ export async function probeModelConnection(
 			model,
 			max_tokens: 32,
 			temperature: 0,
+			...dashscopeThinkingOff,
 			messages: [
 				{
 					role: "user",

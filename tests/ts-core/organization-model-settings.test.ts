@@ -209,18 +209,42 @@ test("probeModelConnection verifies Chat json_schema support and recommends disa
 		slot: "chat",
 		baseUrl: "https://gateway.example/v1",
 		apiKey: "test-probe-token",
-		model: "qwen-plus",
-		fetch: async () =>
-			Response.json({
+		model: "qwen3.7-flash",
+		fetch: async (_url, init) => {
+			const body = JSON.parse(String(init?.body ?? "{}"));
+			// Non-DashScope endpoints must never receive DashScope-specific enable_thinking.
+			assert.equal("enable_thinking" in body, false);
+			return Response.json({
 				choices: [{ message: { content: '{"ok":true}' } }],
 				usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
-			}),
+			});
+		},
 	});
 	assert.equal(supported.ok, true);
 	assert.equal(supported.checks.connectivity, true);
 	assert.equal(supported.checks.structured_outputs, true);
 	assert.equal(supported.checks.include_usage, true);
 	assert.deepEqual(supported.suggestions, {});
+
+	// DashScope probes inject enable_thinking: false so qwen3.7-flash passes fast & deterministic json_schema checks.
+	const dashscopeBodies: Record<string, unknown>[] = [];
+	const dashscopeProbe = await probeModelConnection({
+		slot: "chat",
+		baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		apiKey: "test-dashscope-token",
+		model: "qwen3.7-flash",
+		fetch: async (_url, init) => {
+			dashscopeBodies.push(JSON.parse(String(init?.body ?? "{}")));
+			return Response.json({
+				choices: [{ message: { content: '{"ok":true}' } }],
+				usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+			});
+		},
+	});
+	assert.equal(dashscopeProbe.ok, true);
+	assert.equal(dashscopeBodies.length, 2);
+	assert.equal(dashscopeBodies[0]?.enable_thinking, false);
+	assert.equal(dashscopeBodies[1]?.enable_thinking, false);
 
 	// Case 2: basic chat succeeds without usage, json_schema rejected with HTTP 400
 	let calls = 0;
@@ -946,7 +970,7 @@ test("organization-model-settings service enforces Compose empty-env fallback, k
 		"https://dashscope.aliyuncs.com/compatible-mode/v1",
 	);
 	assert.equal(vlmBindings.vlm.apiKey, "test-env-dashscope-key");
-	assert.equal(vlmBindings.rerank.model, "qwen3-rerank");
+	assert.equal(vlmBindings.rerank.model, "qwen3.7-text-rerank");
 
 	// 2. Moving org Chat to private LAN vLLM must NOT silently leak Judge or Rerank to cloud DashScope env!
 	const lanChatKey = encryptModelApiKey(

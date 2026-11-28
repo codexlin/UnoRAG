@@ -169,14 +169,16 @@ config:
   appEnv: production
   # Set "true" for strict regulated deployments to lock model settings to env vars only.
   modelSettingsLocked: "false"
-  chatModel: qwen-plus
+  chatModel: qwen3.7-flash
   aiSupportsStructuredOutputs: "true"
+  aiEnableThinking: "false"
   aiIncludeUsage: "true"
   # Empty keeps the Judge on chatModel; set only after evaluation gates pass.
   judgeModel: ""
   judgeBaseUrl: ""
   judgeProviderName: ""
   judgeSupportsStructuredOutputs: "true"
+  judgeEnableThinking: ""
   askJudgeTimeoutMs: "15000"
   askJudgeMaxAttempts: "2"
   askJudgeMaxOutputTokens: "1024"
@@ -184,8 +186,10 @@ config:
   llmMaxInflight: "4"
   llmMaxQueue: "32"
   llmQueueTimeoutMs: "30000"
-  embeddingModel: text-embedding-v3
+  embeddingModel: qwen3.7-text-embedding
   embeddingBaseUrl: ""
+  embeddingProtocol: auto
+  embeddingSendDimensions: auto
   embeddingDim: "1024"
   embeddingBatchSize: "10"
   embeddingTimeoutMs: "15000"
@@ -194,7 +198,7 @@ config:
   contextualRetrievalTimeoutMs: "1000"
   retrievalHybridEnabled: "true"
   retrievalRerankAllowed: "true"
-  rerankModel: qwen3-rerank
+  rerankModel: qwen3.7-text-rerank
   rerankTimeoutMs: "10000"
   mineruProvider: self_hosted
   mineruSelfHostedUrl: ""

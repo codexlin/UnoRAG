@@ -4,6 +4,7 @@ import { createClient } from "redis";
 import {
 	modelProviderOverrideFromEnv,
 	rerankProviderFromEnv,
+	resolveEmbeddingCapabilityFromEnv,
 } from "../../core/ai/model-environment";
 import {
 	aiConfigFromEnv,
@@ -226,6 +227,15 @@ export function createQdrantHealthCheck(
 			);
 		}
 		const distance = parseQdrantDistance(environment.QDRANT_DISTANCE);
+		let expectSparse = true;
+		try {
+			expectSparse =
+				resolveEmbeddingCapabilityFromEnv(environment).supportsSparse;
+		} catch {
+			// Invalid EMBEDDING_PROTOCOL/SEND_DIMENSIONS is reported via embedding config check;
+			// keep Qdrant schema check strict against sparse_v1 when capability cannot be parsed.
+			expectSparse = true;
+		}
 		const client = new QdrantClient({
 			url: environment.QDRANT_URL?.trim() || "http://localhost:6333",
 			apiKey: environment.QDRANT_API_KEY?.trim() || undefined,
@@ -244,7 +254,12 @@ export function createQdrantHealthCheck(
 			return;
 		}
 		const info = await client.getCollection(collection);
-		assertQdrantCollectionSchema(info, { collection, vectorSize, distance });
+		assertQdrantCollectionSchema(info, {
+			collection,
+			vectorSize,
+			distance,
+			expectSparse,
+		});
 		if (
 			info.points_count === 0 &&
 			(!dependencies.hasActiveDocuments ||
@@ -312,9 +327,10 @@ export async function readProviderHealth(
 	const llmConfigured = providerConfigured(() =>
 		aiConfigFromEnv(environment as NodeJS.ProcessEnv),
 	);
-	const embeddingConfigured = providerConfigured(() =>
-		modelProviderOverrideFromEnv("EMBEDDING", environment),
-	);
+	const embeddingConfigured = providerConfigured(() => {
+		modelProviderOverrideFromEnv("EMBEDDING", environment);
+		return resolveEmbeddingCapabilityFromEnv(environment);
+	});
 	let rerankEnabled = true;
 	const rerankConfigured = providerConfigured(() => {
 		const config = rerankProviderFromEnv(environment);

@@ -2,8 +2,10 @@
  * Business-intent ask policy → internal knobs.
  *
  * Public policy profiles are resolved here before entering the native Ask graph.
- * Hybrid retrieval (Qdrant lexical_v1 IDF + RRF) is always enabled at workspace
- * level (deployment kill-switch: TS_RETRIEVAL_HYBRID_ENABLED=false).
+ * Hybrid retrieval (Qdrant sparse_v1 + RRF when supported by the embedding
+ * provider; dense-only for dense-only providers such as Ollama bge-m3) is
+ * always enabled at workspace level (deployment kill-switch:
+ * TS_RETRIEVAL_HYBRID_ENABLED=false).
  * Reranking exposes three clean modes: auto | on | off.
  */
 

@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { QdrantClient, type Schemas } from "@qdrant/js-client-rest";
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
-import { modelProviderOverrideFromEnv } from "../core/ai/model-environment";
+import {
+	DEFAULT_EMBEDDING_MODEL,
+	modelProviderOverrideFromEnv,
+} from "../core/ai/model-environment";
 import type { ParsedFigureAsset } from "../core/contracts";
 import { QdrantIngestWriteStore } from "../core/ingest";
 import type { DocumentObjectStorage } from "../core/object-storage/contracts";
@@ -15,7 +18,7 @@ import {
 	type ParseSourceLoader,
 	PdfDocumentParser,
 } from "../core/parsing";
-import { OpenAICompatibleEmbeddingProvider } from "../core/retrieval/embedding/provider";
+import { createEmbeddingProvider } from "../core/retrieval/embedding/provider";
 import {
 	parseQdrantDistance,
 	QdrantCollectionManager,
@@ -801,8 +804,10 @@ export async function createWorkerPorts(
 	const documentIngestConfig = {
 		apiKey,
 		baseUrl,
-		model: requiredEnvironment("EMBEDDING_MODEL"),
+		model: requiredEnvironment("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
 		dimensions: embeddingDimensions,
+		protocol: process.env.EMBEDDING_PROTOCOL,
+		sendDimensions: process.env.EMBEDDING_SEND_DIMENSIONS,
 		batchSize: positiveInteger("EMBEDDING_BATCH_SIZE", 10),
 		timeoutMs: positiveInteger("EMBEDDING_TIMEOUT_MS", 15_000),
 		maxUploadBytes: positiveInteger(
@@ -810,6 +815,16 @@ export async function createWorkerPorts(
 			50 * 1024 * 1024,
 		),
 	};
+	const embeddings = createEmbeddingProvider({
+		apiKey: documentIngestConfig.apiKey,
+		baseUrl: documentIngestConfig.baseUrl,
+		model: documentIngestConfig.model,
+		dimensions: documentIngestConfig.dimensions,
+		protocol: documentIngestConfig.protocol,
+		sendDimensions: documentIngestConfig.sendDimensions,
+		batchSize: documentIngestConfig.batchSize,
+		timeoutMs: documentIngestConfig.timeoutMs,
+	});
 	const pool = observePostgresPoolErrors(
 		new Pool({
 			connectionString: databaseUrl,
@@ -831,6 +846,7 @@ export async function createWorkerPorts(
 			collection: qdrantCollection,
 			vectorSize: embeddingDimensions,
 			distance: parseQdrantDistance(process.env.QDRANT_DISTANCE),
+			expectSparse: embeddings.supportsSparse === true,
 		}).ensure();
 		vectorSchema = ready.vectorSchema;
 	} catch (error) {
@@ -864,14 +880,6 @@ export async function createWorkerPorts(
 			await pool.end();
 		},
 	};
-	const embeddings = new OpenAICompatibleEmbeddingProvider({
-		apiKey: documentIngestConfig.apiKey,
-		baseUrl: documentIngestConfig.baseUrl,
-		model: documentIngestConfig.model,
-		dimensions: documentIngestConfig.dimensions,
-		batchSize: documentIngestConfig.batchSize,
-		timeoutMs: documentIngestConfig.timeoutMs,
-	});
 	const source = remoteStorage
 		? new ObjectStorageDocumentIngestSource(
 				remoteStorage,
