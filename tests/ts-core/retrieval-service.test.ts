@@ -1718,6 +1718,189 @@ test("only one companion is restored even when two selected chunks have differen
 	assert.equal(result.debug.rerankDiagnostic?.restoredFigureCount, 1);
 });
 
+test("reranked lineage-linked figure companion below minimumEvidenceScore is restored when dense_score passes and rerank meets companion floor", async () => {
+	const anchor = hit({
+		id: "fig4-chunk",
+		text: "图4展示了六个主要参与部门的预算分配，公安部门总预算2,200万元，基础设施投入占比54.5%。",
+		chunkIndex: 9,
+		score: 0.713,
+		recordType: "chunk",
+	});
+	anchor.payload.source_node_ids = ["mineru:14", "mineru:15", "mineru:16"];
+	const figure = hit({
+		id: "fig4-figure",
+		text: "Fig 4: Dept Budget Allocation Structure 图4：各部门信息化预算分配结构（单位：万元）",
+		chunkIndex: 8,
+		score: 0.698,
+		recordType: "figure",
+		figureId: "figure-16",
+	});
+	figure.payload.source_node_ids = ["mineru:16"];
+	const distractorFigure = hit({
+		id: "fig1-figure",
+		text: "Fig 1: Quarterly Revenue Trend",
+		chunkIndex: 1,
+		score: 0.324,
+		recordType: "figure",
+		figureId: "figure-4",
+	});
+	distractorFigure.payload.source_node_ids = ["mineru:4"];
+
+	const store = new FakeStore();
+	store.search = async () => [anchor, figure, distractorFigure];
+	store.hybridSearch = async () => [
+		{ ...anchor, score: 0.032 },
+		{ ...figure, score: 0.031 },
+		{ ...distractorFigure, score: 0.029 },
+	];
+	const service = new DefaultRetrievalService(
+		embeddings,
+		store,
+		{
+			async rerank() {
+				return [
+					{ index: 0, score: 0.995 },
+					{ index: 1, score: 0.308 },
+					{ index: 2, score: 0.03 },
+				];
+			},
+		},
+		{
+			hybridEnabled: true,
+			rerankEnabled: true,
+			rerankTopK: 6,
+			bm25TopK: 20,
+			rrfK: 60,
+		},
+	);
+	const result = await service.retrieve({
+		query: "图4中总预算最高的部门是哪个？基础设施投入占比多少？",
+		libraryId: "library-a",
+		scope,
+		topK: 6,
+		options: {
+			minimumEvidenceScore: 0.4,
+			preserveFigureLineage: true,
+			lineageMinScore: 0.4,
+			includeTraceDetails: true,
+			evidenceThreshold: 0.4,
+			expandParentContext: false,
+		},
+	});
+	assert.deepEqual(
+		result.citations.map((item) => item.id),
+		["fig4-chunk", "fig4-figure"],
+	);
+	assert.equal(result.citations[1].record_type, "figure");
+	assert.equal(result.citations[1].dense_score, 0.698);
+	assert.equal(result.citations[1].score, 0.308);
+	assert.equal(result.debug.rerankDiagnostic?.figureCountAfterDedup, 0);
+	assert.equal(result.debug.rerankDiagnostic?.figureCountAfterTopK, 1);
+	assert.equal(result.debug.rerankDiagnostic?.restoredFigureCount, 1);
+	const inspectedFig4 = result.debug.inspection?.candidates.find(
+		(candidate) => candidate.id === "fig4-figure",
+	);
+	assert.equal(inspectedFig4?.outcome, "selected");
+	assert.equal(inspectedFig4?.final_rank, 2);
+});
+
+for (const scenario of [
+	{
+		name: "sub-floor rerank score (0.117 < 0.20)",
+		denseScore: 0.504,
+		rerankScore: 0.117,
+		anchorRerankScore: 0.995,
+		sparseOnly: false,
+	},
+	{
+		name: "low dense score (0.39 < 0.40)",
+		denseScore: 0.39,
+		rerankScore: 0.31,
+		anchorRerankScore: 0.995,
+		sparseOnly: false,
+	},
+	{
+		name: "sparse-only figure without dense score",
+		denseScore: 0.698,
+		rerankScore: 0.31,
+		anchorRerankScore: 0.995,
+		sparseOnly: true,
+	},
+	{
+		name: "negative query with no passing anchor chunk",
+		denseScore: 0.698,
+		rerankScore: 0.31,
+		anchorRerankScore: 0.12,
+		sparseOnly: false,
+	},
+]) {
+	test(`reranked figure companion rejects ${scenario.name}`, async () => {
+		const anchor = hit({
+			id: "anchor-chunk",
+			text: "正文段落",
+			chunkIndex: 1,
+			score: 0.72,
+			recordType: "chunk",
+		});
+		anchor.payload.source_node_ids = ["mineru:16"];
+		const figure = hit({
+			id: "companion-figure",
+			text: "图注说明",
+			chunkIndex: 0,
+			score: scenario.denseScore,
+			recordType: "figure",
+			figureId: "figure-16",
+		});
+		figure.payload.source_node_ids = ["mineru:16"];
+		const store = new FakeStore();
+		store.search = async () =>
+			scenario.sparseOnly ? [anchor] : [anchor, figure];
+		store.hybridSearch = async () => [
+			{ ...anchor, score: 0.032 },
+			{ ...figure, score: 0.031 },
+		];
+		const service = new DefaultRetrievalService(
+			embeddings,
+			store,
+			{
+				async rerank() {
+					return [
+						{ index: 0, score: scenario.anchorRerankScore },
+						{ index: 1, score: scenario.rerankScore },
+					];
+				},
+			},
+			{
+				hybridEnabled: true,
+				rerankEnabled: true,
+				rerankTopK: 6,
+				bm25TopK: 20,
+				rrfK: 60,
+			},
+		);
+		const result = await service.retrieve({
+			query: "测试查询",
+			libraryId: "library-a",
+			scope,
+			topK: 6,
+			options: {
+				minimumEvidenceScore: 0.4,
+				preserveFigureLineage: true,
+				lineageMinScore: 0.4,
+				expandParentContext: false,
+			},
+		});
+		assert.equal(
+			result.citations.some((item) => item.id === "companion-figure"),
+			false,
+		);
+		assert.equal(result.debug.rerankDiagnostic?.restoredFigureCount, 0);
+		if (scenario.anchorRerankScore < 0.4) {
+			assert.deepEqual(result.citations, []);
+		}
+	});
+}
+
 for (const violation of ["workspace", "generation", "acl"] as const) {
 	test(`opt-in figure retention does not bypass ${violation} authorization`, async () => {
 		const pool = lineagePool();

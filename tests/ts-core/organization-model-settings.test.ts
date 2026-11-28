@@ -209,7 +209,7 @@ test("probeModelConnection verifies Chat json_schema support and recommends disa
 		slot: "chat",
 		baseUrl: "https://gateway.example/v1",
 		apiKey: "test-probe-token",
-		model: "qwen3.7-flash",
+		model: "qwen3.8-flash",
 		fetch: async (_url, init) => {
 			const body = JSON.parse(String(init?.body ?? "{}"));
 			// Non-DashScope endpoints must never receive DashScope-specific enable_thinking.
@@ -226,13 +226,13 @@ test("probeModelConnection verifies Chat json_schema support and recommends disa
 	assert.equal(supported.checks.include_usage, true);
 	assert.deepEqual(supported.suggestions, {});
 
-	// DashScope probes inject enable_thinking: false so qwen3.7-flash passes fast & deterministic json_schema checks.
+	// DashScope probes inject enable_thinking: false so qwen3.8-flash passes fast & deterministic json_schema checks.
 	const dashscopeBodies: Record<string, unknown>[] = [];
 	const dashscopeProbe = await probeModelConnection({
 		slot: "chat",
 		baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
 		apiKey: "test-dashscope-token",
-		model: "qwen3.7-flash",
+		model: "qwen3.8-flash",
 		fetch: async (_url, init) => {
 			dashscopeBodies.push(JSON.parse(String(init?.body ?? "{}")));
 			return Response.json({

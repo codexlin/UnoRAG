@@ -134,7 +134,7 @@ Workspace 用于企业内部治理，不是公网共享多租户 SaaS。
 | 身份与权限 | 本地登录、首次改密、邀请注册、邮箱链接登录/重置、可撤销 Session、Workspace/角色、文档 ACL、Service Key、审计 |
 | 文档治理 | 上传、替换、版本、重索引、删除；失败保留旧 active generation；DBOS 重试、取消和对账 |
 | 文档理解 | TXT/Markdown/DOCX/XLSX/PDF，LiteParse/MinerU，Markdown 管道表、DocumentIR/TableIR，Token 感知 `v2` 切分与 `>40%` 表格自动 `table_heavy`、多粒度索引及默认关闭的条件式检索上下文增强 |
-| 检索问答 | 作用域强制过滤、极薄前置双语路由（含可选灰区 Fail-Open 端口）、云端默认 DashScope 原生 `qwen3.7-text-embedding`（`dense&sparse` → Qdrant `sparse_v1 (modifier: "none")` + RRF，含幂等读单次 socket 断连自愈）与私有化推荐 Ollama `bge-m3` 自动纯 Dense 模式（[ADR-0009](./adr/0009-provider-sparse-and-ollama-bge.md)）、统一 `auto`/`on`/`off` 精排（默认 `qwen3.7-text-rerank`，含 `sparse-only` 自动升级）、`qwen3.7-flash` 默认关闭思考模式（`enable_thinking: false`）、证据驱动确定性表格升级与极值实体保留、Judge 缺口定向补查（`missing_query` + 首轮授权证据留存）、冲突核验、按主体均衡配额的对比上下文、拒答、引用与 SSE；Admin/Editor 临时检索轨迹检查器；pg_trgm 授权文档目录候选检索 |
+| 检索问答 | 作用域强制过滤、极薄前置双语路由（含可选灰区 Fail-Open 端口）、云端默认 DashScope 原生 `qwen3.7-text-embedding`（`dense&sparse` → Qdrant `sparse_v1 (modifier: "none")` + RRF，含幂等读单次 socket 断连自愈）与私有化推荐 Ollama `bge-m3` 自动纯 Dense 模式（[ADR-0009](./adr/0009-provider-sparse-and-ollama-bge.md)）、统一 `auto`/`on`/`off` 精排（默认 `qwen3.7-text-rerank`，含 `sparse-only` 自动升级与跨编码器重排下的同谱系图表伴随留存）、`qwen3.8-flash` 默认关闭思考模式（`enable_thinking: false`）、证据驱动确定性表格升级与极值实体保留、Judge 缺口定向补查（`missing_query` + 首轮授权证据留存）、冲突核验、按主体均衡配额的对比上下文、拒答、引用与 SSE；Admin/Editor 临时检索轨迹检查器；pg_trgm 授权文档目录候选检索 |
 | 模型治理 | Owner 级在线切换 Chat / Judge / Rerank / VLM（AES-256-GCM 只写加密、实时连通性/`json_schema`/`/rerank`/视觉探测、SSRF 与密钥-端点绑定防护）、Embedding 部署级只读锁定，以及 `MODEL_SETTINGS_LOCKED=true` 纯环境变量锁定模式 |
 | 会话 | 带来源授权的短期记忆、实体追问、有限期歧义澄清、归档和继续对话；模型上下文压缩长回复，归档保留原文和来源 |
 | 运维预检 | 健康接口和运行中心按当前 Embedding Provider 能力校验 Qdrant 集合的向量维度、距离、`sparse_v1 (modifier: "none")`（或纯 Dense 契约）及载荷索引，按异常类型给出恢复提示 |

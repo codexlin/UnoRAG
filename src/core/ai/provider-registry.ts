@@ -21,7 +21,7 @@ export interface OpenAICompatibleAiConfig {
 	supportsStructuredOutputs?: boolean;
 	includeUsage?: boolean;
 	/**
-	 * DashScope hybrid-thinking models (e.g. qwen3.7-flash) enable thinking by
+	 * DashScope hybrid-thinking models (e.g. qwen3.8-flash) enable thinking by
 	 * default. UnoRAG disables thinking on DashScope endpoints unless explicitly
 	 * opted in, and never sends this field to non-DashScope endpoints.
 	 */

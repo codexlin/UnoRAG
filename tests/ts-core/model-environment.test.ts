@@ -232,7 +232,7 @@ test("embedding capability and DashScope thinking toggle resolve cleanly across 
 			id: "chatcmpl-test",
 			object: "chat.completion",
 			created: 1_700_000_000,
-			model: "qwen3.7-flash",
+			model: "qwen3.8-flash",
 			choices: [
 				{
 					index: 0,
@@ -248,7 +248,7 @@ test("embedding capability and DashScope thinking toggle resolve cleanly across 
 		{
 			apiKey: "test-key",
 			baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-			chatModel: "qwen3.7-flash",
+			chatModel: "qwen3.8-flash",
 		},
 		{ fetch: mockFetch },
 	);
@@ -259,7 +259,7 @@ test("embedding capability and DashScope thinking toggle resolve cleanly across 
 		{
 			apiKey: "test-key",
 			baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-			chatModel: "qwen3.7-flash",
+			chatModel: "qwen3.8-flash",
 			enableThinking: true,
 		},
 		{ fetch: mockFetch },

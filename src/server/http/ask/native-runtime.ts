@@ -69,6 +69,10 @@ import type {
 	ActiveDocumentCatalog,
 	ActiveDocumentDescriptor,
 } from "@/core/retrieval/document-constraints";
+import {
+	isLinkedFigureCompanion,
+	passesFigureCompanionThreshold,
+} from "@/core/retrieval/evidence-lineage";
 import type { RetrievalInspection } from "@/core/retrieval/retrieval-service";
 import {
 	captureAskGenerationStream,
@@ -720,10 +724,24 @@ export class NativeAskRuntime {
 
 	private adjudicate(result: RetrievalResult): RetrievalResult {
 		const threshold = this.evidenceThreshold();
-		const citations = result.citations.filter(
+		const directlyEligible = result.citations.filter(
 			(citation) =>
 				citation.id === this.outlineAnswer?.citationId ||
 				semanticEvidenceScore(citation) >= threshold,
+		);
+		const directlyEligibleIds = new Set(
+			directlyEligible.map((citation) => citation.id),
+		);
+		const anchorChunks = directlyEligible.filter(
+			(citation) => citation.record_type === "chunk",
+		);
+		const citations = result.citations.filter(
+			(citation) =>
+				directlyEligibleIds.has(citation.id) ||
+				(passesFigureCompanionThreshold(citation, threshold) &&
+					anchorChunks.some((anchor) =>
+						isLinkedFigureCompanion(anchor, citation),
+					)),
 		);
 		return {
 			...result,

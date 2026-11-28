@@ -16,7 +16,10 @@ import {
 	RetrievalUserFiltersSchema,
 } from "./contracts";
 import type { EmbeddingProvider, SparseVector } from "./embedding/provider";
-import { sharesEvidenceLineage } from "./evidence-lineage";
+import {
+	isLinkedFigureCompanion,
+	passesFigureCompanionThreshold,
+} from "./evidence-lineage";
 import { tokenize } from "./hybrid/tokenizer";
 import {
 	projectRerankDiagnostic,
@@ -289,7 +292,8 @@ function retainFigureCompanion(
 	pool: QdrantSearchHit[],
 	topK: number,
 	options?: { preserveFigureLineage?: boolean; lineageMinScore?: number },
-): { selected: QdrantSearchHit[]; restoredFigureCount: number } {
+	companionPool: readonly QdrantSearchHit[] = pool,
+): { selected: QdrantSearchHit[]; restoredFigureIds: Set<string> } {
 	const selected = pool.slice(0, topK);
 	const threshold = options?.lineageMinScore;
 	if (
@@ -300,10 +304,9 @@ function retainFigureCompanion(
 		threshold < 0 ||
 		threshold > 1
 	)
-		return { selected, restoredFigureCount: 0 };
-	// Lineage can insert an image from outside Top-K. Keep its original
-	// dense/reranked relevance gate even when lexical evidence is eligible for recall.
-	const passesLineageThreshold = (hit: QdrantSearchHit) =>
+		return { selected, restoredFigureIds: new Set() };
+	// Anchor chunks must pass the full dense/reranked gate without lexical bypass.
+	const passesAnchorThreshold = (hit: QdrantSearchHit) =>
 		(!hit.used_hybrid || hit.used_rerank || hit.dense_score != null) &&
 		semanticEvidenceScore(hit) >= threshold;
 	const selectedIds = new Set(selected.map((hit) => String(hit.id)));
@@ -311,30 +314,22 @@ function retainFigureCompanion(
 		if (
 			anchorIndex >= topK - 1 ||
 			anchor.payload.record_type !== "chunk" ||
-			!passesLineageThreshold(anchor)
+			!passesAnchorThreshold(anchor)
 		)
 			continue;
 		const directFigureId = anchor.payload.figure_id?.trim()
 			? anchor.payload.figure_id
 			: null;
-		const anchorNodes = new Set(
-			anchor.payload.source_node_ids?.filter((node) => node.trim()),
-		);
 		const directFigure = (hit: QdrantSearchHit) =>
 			directFigureId !== null && directFigureId === hit.payload.figure_id;
-		const nodeOverlap = (hit: QdrantSearchHit) =>
-			hit.payload.source_node_ids?.some((node) => anchorNodes.has(node)) ??
-			false;
 		const isCompanion = (hit: QdrantSearchHit) =>
-			hit.payload.record_type === "figure" &&
-			(directFigure(hit) || nodeOverlap(hit)) &&
-			sharesEvidenceLineage(anchor.payload, hit.payload);
+			isLinkedFigureCompanion(anchor.payload, hit.payload);
 		if (selected.some(isCompanion)) continue;
-		const eligible = pool.filter(
+		const eligible = companionPool.filter(
 			(hit) =>
 				!selectedIds.has(String(hit.id)) &&
 				isCompanion(hit) &&
-				passesLineageThreshold(hit),
+				passesFigureCompanionThreshold(hit, threshold),
 		);
 		const companion = eligible.find(directFigure) ?? eligible[0];
 		if (!companion) continue;
@@ -345,10 +340,10 @@ function retainFigureCompanion(
 				companion,
 				...selected.slice(anchorIndex + 1),
 			].slice(0, topK),
-			restoredFigureCount: 1,
+			restoredFigureIds: new Set([String(companion.id)]),
 		};
 	}
-	return { selected, restoredFigureCount: 0 };
+	return { selected, restoredFigureIds: new Set() };
 }
 
 const MAX_PARENT_CONTEXT_TOKENS = 1_200;
@@ -508,6 +503,7 @@ function inspectCandidates(input: {
 	evidenceThreshold: number | null;
 	usedHybrid: boolean;
 	belowThresholdIds?: ReadonlySet<string>;
+	restoredFigureIds?: ReadonlySet<string>;
 }): RetrievalInspectionCandidate[] {
 	const deduplicatedIds = new Set(
 		input.deduplicated.map(({ id }) => String(id)),
@@ -520,7 +516,8 @@ function inspectCandidates(input: {
 	for (const citation of input.citations) {
 		if (
 			input.evidenceThreshold === null ||
-			semanticEvidenceScore(citation) >= input.evidenceThreshold
+			semanticEvidenceScore(citation) >= input.evidenceThreshold ||
+			input.restoredFigureIds?.has(citation.id)
 		) {
 			finalRanks.set(citation.id, ++finalRank);
 		}
@@ -1259,22 +1256,30 @@ export class DefaultRetrievalService {
 				: candidates.filter(
 						(hit) => semanticEvidenceScore(hit) >= minimumEvidenceScore,
 					);
+		const deduplicated = deduplicateOverlappingHits(eligible);
+		const companionPool =
+			minimumEvidenceScore === undefined
+				? deduplicated
+				: deduplicateOverlappingHits(candidates);
+		const { selected, restoredFigureIds } = retainFigureCompanion(
+			deduplicated,
+			input.topK,
+			input.options,
+			companionPool,
+		);
+		const restoredFigureCount = restoredFigureIds.size;
 		const belowThresholdIds =
 			includeTraceDetails && minimumEvidenceScore !== undefined
 				? new Set(
 						candidates
 							.filter(
-								(hit) => semanticEvidenceScore(hit) < minimumEvidenceScore,
+								(hit) =>
+									semanticEvidenceScore(hit) < minimumEvidenceScore &&
+									!restoredFigureIds.has(String(hit.id)),
 							)
 							.map(({ id }) => String(id)),
 					)
 				: undefined;
-		const deduplicated = deduplicateOverlappingHits(eligible);
-		const { selected, restoredFigureCount } = retainFigureCompanion(
-			deduplicated,
-			input.topK,
-			input.options,
-		);
 		const parentContexts = await expandParentContexts({
 			selected,
 			knownSections,
@@ -1348,6 +1353,7 @@ export class DefaultRetrievalService {
 									evidenceThreshold,
 									usedHybrid,
 									belowThresholdIds,
+									restoredFigureIds,
 								}),
 							},
 						}
